@@ -13,7 +13,7 @@ data LogicalLine = LogicalLine
   { llText      :: Text        -- ^ The joined logical line
   , llStartLine :: Int         -- ^ First physical line number
   , llEndLine   :: Int         -- ^ Last physical line number
-  } deriving (Show, Eq)
+  } deriving (Show, Eq, Ord)
 
 -- | Normalize newlines, strip trailing spaces, and join continuation lines.
 normalizeText :: Text -> [LogicalLine]

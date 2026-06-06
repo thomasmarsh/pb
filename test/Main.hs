@@ -4,6 +4,7 @@ import PB.Prelude
 import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText, stripHeaders)
 import qualified MaskTest
 import qualified SplitterTest
+import qualified StreamTest
 import qualified TokenTest
 
 import Hedgehog (Property, assert, forAll, property, (===))
@@ -25,6 +26,7 @@ tests = testGroup "pb-ast"
   [ MaskTest.tests
   , TokenTest.tests
   , SplitterTest.tests
+  , StreamTest.tests
   , testGroup "Pipeline"
     [ testGroup "Preprocess"
       [ testCase "single line passthrough" $

@@ -11,7 +11,7 @@ import PB.Pipeline.Preprocess (LogicalLine)
 data Statement = Statement
   { stmtTokens :: [Token]
   , stmtSource :: LogicalLine
-  } deriving (Eq, Show)
+  } deriving (Eq, Ord, Show)
 
 splitStatements :: [LexLine] -> [Either LexError Statement]
 splitStatements = concatMap splitLine

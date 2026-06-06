@@ -13,7 +13,7 @@ data SourceSpan = SourceSpan
   { ssStartLine :: Int
   , ssEndLine   :: Int
   , ssCol       :: Int
-  } deriving (Eq, Show)
+  } deriving (Eq, Ord, Show)
 
 data TokenKind
   = TkHeaderLine
@@ -52,10 +52,10 @@ data TokenKind
   | TkColon
   | TkLabel
   | TkIdent
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 data Token = Token
   { tkKind :: TokenKind
   , tkText :: Text
   , tkSpan :: SourceSpan
-  } deriving (Eq, Show)
+  } deriving (Eq, Ord, Show)

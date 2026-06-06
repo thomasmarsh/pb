@@ -251,6 +251,17 @@ data EventBlock      = EventBlock      { evSig :: EventSig, evBody :: [Statement
 data OnBlock         = OnBlock         { obQualName :: Text, obOwner :: Text, obEvent :: Text, obBody :: [Statement] }
 ```
 
+### `PB.Grammar.Stream`
+
+```haskell
+newtype StmtStream = StmtStream [Statement]
+type FileParser = Parsec Void StmtStream
+
+satisfyStmt :: (Statement -> Bool) -> FileParser Statement
+leadingKind  :: TokenKind -> FileParser Statement
+leadingText  :: Text -> FileParser Statement
+```
+
 All other modules are currently stubs (`PB.Lexing.*`, `PB.Grammar.*`, `PB.Pipeline.Sentinel`, `PB.Pipeline.WalkTree`, `PB.AST.Library`, `PB.AST.Script`, `PB.AST.Statement`, `PB.AST.Types`, `PB.AST.Workspace`).
 
 ---
