@@ -30,6 +30,11 @@ pEndKw kw = () <$ leadingText ("end " <> kw)
 isMod :: Token -> Bool
 isMod t = tkKind t `elem` [TkAccessModifier, TkStorageModifier]
 
+isFnMod :: Token -> Bool
+isFnMod t = isMod t
+         || (tkKind t == TkDeclKw  && T.toLower (tkText t) `elem` ["external", "intrinsic"])
+         || (tkKind t == TkOtherKw && T.toLower (tkText t) == "rpcfunc")
+
 isTypeDecl :: Statement -> Bool
 isTypeDecl s =
   let rest = dropWhile isMod (stmtTokens s)
@@ -117,14 +122,14 @@ isProtosOpener s = case stmtTokens s of
 
 isFnDecl :: Statement -> Bool
 isFnDecl s =
-  let rest = dropWhile isMod (stmtTokens s)
+  let rest = dropWhile isFnMod (stmtTokens s)
   in case rest of
     (t:_) -> T.toLower (tkText t) == "function"
     _     -> False
 
 isSubDecl :: Statement -> Bool
 isSubDecl s =
-  let rest = dropWhile isMod (stmtTokens s)
+  let rest = dropWhile isFnMod (stmtTokens s)
   in case rest of
     (t:_) -> T.toLower (tkText t) == "subroutine"
     _     -> False
@@ -138,7 +143,7 @@ isEvDecl s =
 
 extractFnSig :: Statement -> Maybe FnSig
 extractFnSig s =
-  let (modToks, rest) = span isMod (stmtTokens s)
+  let (modToks, rest) = span isFnMod (stmtTokens s)
       mods = map tkText modToks
   in case rest of
     (_kw : retTy : name : lparen : more)
@@ -154,7 +159,7 @@ extractFnSig s =
 
 extractSubSig :: Statement -> Maybe SubSig
 extractSubSig s =
-  let (modToks, rest) = span isMod (stmtTokens s)
+  let (modToks, rest) = span isFnMod (stmtTokens s)
       mods = map tkText modToks
   in case rest of
     (_kw : name : lparen : more)

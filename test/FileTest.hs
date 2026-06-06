@@ -210,6 +210,42 @@ tests = testGroup "Grammar.File"
         case runSection pPrototypesBlock stmts of
           Left _  -> pure ()
           Right _ -> assertFailure "expected parse failure when 'end prototypes' is missing"
+
+    , testCase "positive: external function prototype" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "prototypes")]
+              , mkStmt [ (TkDeclKw, "external"), (TkDeclKw, "function")
+                       , (TkDatatype, "integer"), (TkIdent, "getCount")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end prototypes")]
+              ]
+        runSection pPrototypesBlock stmts @?=
+          Right (PrototypesBlock [ProtoFn (FnSig ["external"] "integer" "getCount" "" Nothing)])
+
+    , testCase "positive: rpcfunc subroutine prototype" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "prototypes")]
+              , mkStmt [ (TkOtherKw, "rpcfunc"), (TkDeclKw, "subroutine")
+                       , (TkIdent, "doRemote")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end prototypes")]
+              ]
+        runSection pPrototypesBlock stmts @?=
+          Right (PrototypesBlock [ProtoSub (SubSig ["rpcfunc"] "doRemote" "" Nothing)])
+
+    , testCase "positive: intrinsic function prototype" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "prototypes")]
+              , mkStmt [ (TkDeclKw, "intrinsic"), (TkDeclKw, "function")
+                       , (TkDatatype, "string"), (TkIdent, "getName")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end prototypes")]
+              ]
+        runSection pPrototypesBlock stmts @?=
+          Right (PrototypesBlock [ProtoFn (FnSig ["intrinsic"] "string" "getName" "" Nothing)])
     ]
 
   , testGroup "pTypeDecl"
