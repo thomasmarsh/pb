@@ -189,7 +189,7 @@ prop_tokensCorrectLine = property $ do
         assert (ssEndLine   (tkSpan tk) == 7)
     _ -> success   -- LexError is also acceptable
 
--- Concatenating tkText of all tokens from a successful lex reproduces the
+-- Concatenating tkText of all tokens from a successful lex reproduces theo
 -- original input modulo whitespace (tokens are non-whitespace runs).
 prop_tokenTextReconstructsInput :: Property
 prop_tokenTextReconstructsInput = property $ do

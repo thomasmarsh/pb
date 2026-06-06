@@ -33,6 +33,7 @@ library
     PB.Lexing.Layout
     PB.Lexing.Lexer
     PB.Lexing.Mask
+    PB.Lexing.Splitter
     PB.Lexing.StringMode
     PB.Lexing.Token
     PB.Pipeline.Preprocess
@@ -66,7 +67,7 @@ test-suite pb-ast-test
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
-  other-modules: MaskTest, TokenTest
+  other-modules: MaskTest, SplitterTest, TokenTest
   build-depends:
     , base ^>=4.20.2.0
     , pb-ast
