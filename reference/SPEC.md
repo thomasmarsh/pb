@@ -32,12 +32,14 @@ All regex patterns are given in their raw string form (PCRE-compatible, case-ins
 ### 2.1 Identifiers
 
 ```
-IdentStart  ::= [A-Za-z_$#%]
+IdentStart  ::= [A-Za-z_]
 IdentCont   ::= [A-Za-z0-9_$#%\-]
 Identifier  ::= IdentStart IdentCont*
 ```
 
-Hyphens (`-`) are valid in identifier bodies. `$`, `#`, `%` are valid in both positions. The entire language is **case-insensitive**; normalize to lowercase for all comparisons. Maximum identifier length: **40 characters**.
+Hyphens (`-`) are valid in identifier bodies. `$`, `#`, `%` are valid in body positions only (per official docs). The entire language is **case-insensitive**; normalize to lowercase for all comparisons. Maximum identifier length: **40 characters**.
+
+**Corpus verdict (2025-06-06):** No identifiers starting with `$`, `#`, or `%` found in the corpus. The `$PBExportHeader$` lines in `.srd` files are file-format headers (§2.11), not PowerScript identifiers. `IdentStart` is correctly restricted to `[A-Za-z_]`.
 
 For type references (ancestor names, `within` targets, type annotations), backtick is additionally allowed:
 
@@ -190,7 +192,9 @@ Examples: `Black!`, `Primary!`, `True!`. The `!` is part of the token; it must n
 
 **Line comment:** `//` to end-of-line.
 
-**Block comment:** `/* ... */`. Can span multiple physical lines. The official language reference states block comments **can be nested**; however, the reference TypeScript implementation (`vsc-powersyntax`) treats them as non-nested by default (`nested: true` is an opt-in). Real-world PB source in the wild does not appear to use nested block comments, so non-nested is the safe default. Revisit if the corpus proves otherwise.
+**Block comment:** `/* ... */`. Can span multiple physical lines. The official language reference states block comments **can be nested**; however, the reference TypeScript implementation (`vsc-powersyntax`) treats them as non-nested by default (`nested: true` is an opt-in).
+
+**Corpus verdict (2025-06-06):** No nested block comments (`/*` inside a `/* */` span) found in the corpus. Non-nested is confirmed correct; no change needed.
 
 ### 2.9 Operators
 
@@ -240,6 +244,8 @@ s = "Eastern United States and&
 ```
 
 The reference TypeScript implementation classifies `&` as `String`-class when inside a string, so it does **not** trigger continuation. This implementation choice is safe in practice: PB documentation itself describes this as error-prone and recommends the close-and-reopen pattern instead (`"part one " & + "part two"`). Our masking algorithm follows the reference implementation (String-class `&` = not continuation).
+
+**Corpus verdict (2025-06-06):** No instances of `&` as last character inside an open string literal found in the corpus. The reference implementation's behaviour is confirmed correct; `PB.Lexing.Mask` does not need to be revised.
 
 ### 2.11 File Headers
 
