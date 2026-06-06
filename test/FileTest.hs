@@ -1,9 +1,9 @@
 module FileTest (tests) where
 
 import PB.Prelude
-import PB.Grammar.File        (pForwardBlock, pTypeDecl)
+import PB.Grammar.File        (pForwardBlock, pTypeDecl, pVariablesBlock, pVarDecl)
 import PB.Grammar.Stream      (FileParser, StmtStream (..))
-import PB.AST.Object          (ForwardBlock (..), TypeDecl (..))
+import PB.AST.Object          (ForwardBlock (..), TypeDecl (..), VariablesBlock (..), VarScope (..), VarDecl (..))
 import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
@@ -99,6 +99,77 @@ tests = testGroup "Grammar.File"
         prop_typeDecl_names_nonempty
     ]
 
+  , testGroup "pVarDecl"
+    [ testCase "simple: string s_name" $ do
+        let stmt = mkStmt [(TkDatatype, "string"), (TkIdent, "s_name")]
+        runSection pVarDecl [stmt] @?= Right (VarDecl [] "string" "s_name")
+
+    , testCase "with modifier: public integer i_count" $ do
+        let stmt = mkStmt
+              [ (TkAccessModifier, "public")
+              , (TkDatatype,       "integer")
+              , (TkIdent,          "i_count")
+              ]
+        runSection pVarDecl [stmt] @?= Right (VarDecl ["public"] "integer" "i_count")
+
+    , testCase "negative: keyword as type name is rejected" $ do
+        let stmt = mkStmt [(TkDeclKw, "function"), (TkIdent, "i_count")]
+        case runSection pVarDecl [stmt] of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected parse failure when keyword is used as type name"
+    ]
+
+  , testGroup "pVariablesBlock"
+    [ testCase "positive: global variables, one VarDecl" $ do
+        let stmts =
+              [ mkStmt [(TkAccessModifier, "global"), (TkDeclKw, "variables")]
+              , mkStmt [(TkDatatype, "string"), (TkIdent, "s_name")]
+              , mkStmt [(TkDeclKw, "end variables")]
+              ]
+        runSection pVariablesBlock stmts @?=
+          Right (VariablesBlock GlobalVars [VarDecl [] "string" "s_name"])
+
+    , testCase "positive: shared variables, scope is TypeVars" $ do
+        let stmts =
+              [ mkStmt [(TkAccessModifier, "shared"), (TkDeclKw, "variables")]
+              , mkStmt [(TkDatatype, "integer"), (TkIdent, "i_count")]
+              , mkStmt [(TkDeclKw, "end variables")]
+              ]
+        runSection pVariablesBlock stmts @?=
+          Right (VariablesBlock TypeVars [VarDecl [] "integer" "i_count"])
+
+    , testCase "positive: type variables, two VarDecls" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type variables")]
+              , mkStmt [(TkDatatype, "string"), (TkIdent, "s_name")]
+              , mkStmt [(TkAccessModifier, "public"), (TkDatatype, "integer"), (TkIdent, "i_count")]
+              , mkStmt [(TkDeclKw, "end variables")]
+              ]
+        runSection pVariablesBlock stmts @?=
+          Right (VariablesBlock TypeVars [ VarDecl [] "string" "s_name"
+                                         , VarDecl ["public"] "integer" "i_count"
+                                         ])
+
+    , testCase "positive: empty variables block" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "variables")]
+              , mkStmt [(TkDeclKw, "end variables")]
+              ]
+        runSection pVariablesBlock stmts @?= Right (VariablesBlock TypeVars [])
+
+    , testCase "negative: missing end variables" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "variables")]
+              , mkStmt [(TkDatatype, "string"), (TkIdent, "s_name")]
+              ]
+        case runSection pVariablesBlock stmts of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected parse failure when 'end variables' is missing"
+
+    , testProperty "variable names non-empty"
+        prop_varDecl_names_nonempty
+    ]
+
   , testGroup "pTypeDecl"
     [ testCase "simple: type Name from Ancestor" $ do
         let stmt = mkStmt
@@ -136,6 +207,18 @@ tests = testGroup "Grammar.File"
 
 -- ---------------------------------------------------------------------------
 -- Properties
+
+prop_varDecl_names_nonempty :: Property
+prop_varDecl_names_nonempty = property $ do
+  name <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+  typ  <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+  let stmt = mkStmt
+        [ (TkDatatype, typ)
+        , (TkIdent,    name)
+        ]
+  case runSection pVarDecl [stmt] of
+    Right vd -> assert (not (T.null (vdName vd)))
+    Left _   -> pure ()
 
 prop_typeDecl_names_nonempty :: Property
 prop_typeDecl_names_nonempty = property $ do
