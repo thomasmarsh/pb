@@ -2,6 +2,7 @@ module Main (main) where
 
 import PB.Prelude
 import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText, stripHeaders)
+import qualified FileTest
 import qualified MaskTest
 import qualified SplitterTest
 import qualified StreamTest
@@ -23,7 +24,8 @@ main = defaultMain tests
 
 tests :: TestTree
 tests = testGroup "pb-ast"
-  [ MaskTest.tests
+  [ FileTest.tests
+  , MaskTest.tests
   , TokenTest.tests
   , SplitterTest.tests
   , StreamTest.tests

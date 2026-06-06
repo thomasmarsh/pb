@@ -30,6 +30,7 @@ library
     PB.AST.Statement
     PB.AST.Types
     PB.AST.Workspace
+    PB.Grammar.File
     PB.Grammar.Stream
     PB.Lexing.Layout
     PB.Lexing.Lexer
@@ -68,7 +69,7 @@ test-suite pb-ast-test
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
-  other-modules: MaskTest, SplitterTest, StreamTest, TokenTest
+  other-modules: FileTest, MaskTest, SplitterTest, StreamTest, TokenTest
   build-depends:
     , base ^>=4.20.2.0
     , pb-ast

@@ -251,6 +251,14 @@ data EventBlock      = EventBlock      { evSig :: EventSig, evBody :: [Statement
 data OnBlock         = OnBlock         { obQualName :: Text, obOwner :: Text, obEvent :: Text, obBody :: [Statement] }
 ```
 
+### `PB.Grammar.File` _(in progress — API not final until Plan 04-03)_
+
+```haskell
+pEndKw        :: Text -> FileParser ()
+pTypeDecl     :: FileParser TypeDecl
+pForwardBlock :: FileParser ForwardBlock
+```
+
 ### `PB.Grammar.Stream`
 
 ```haskell
@@ -262,7 +270,7 @@ leadingKind  :: TokenKind -> FileParser Statement
 leadingText  :: Text -> FileParser Statement
 ```
 
-All other modules are currently stubs (`PB.Lexing.*`, `PB.Grammar.*`, `PB.Pipeline.Sentinel`, `PB.Pipeline.WalkTree`, `PB.AST.Library`, `PB.AST.Script`, `PB.AST.Statement`, `PB.AST.Types`, `PB.AST.Workspace`).
+All other modules are currently stubs (`PB.Lexing.*`, `PB.Pipeline.Sentinel`, `PB.Pipeline.WalkTree`, `PB.AST.Library`, `PB.AST.Script`, `PB.AST.Statement`, `PB.AST.Types`, `PB.AST.Workspace`).
 
 ---
 
