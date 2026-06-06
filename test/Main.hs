@@ -49,6 +49,18 @@ tests = testGroup "pb-ast"
       , testCase "ampersand inside string is not a continuation" $
           map llText (normalizeText "\"&\"\nfoo") @?= ["\"&\"", "foo"]
 
+      , testCase "continuation: & outside ~\"-escaped string is joined" $ do
+          let input = "string s = \"say ~\"hello\" and &\nworld!\""
+          normalizeText input @?=
+            [ LogicalLine "string s = \"say ~\"hello\" and  world!\"" 1 2 ]
+
+      , testCase "continuation: & inside open string with ~\" escape is not joined" $ do
+          let input = "string s = \"say ~\"hi &\nworld!\""
+          normalizeText input @?=
+            [ LogicalLine "string s = \"say ~\"hi &" 1 1
+            , LogicalLine "world!\"" 2 2
+            ]
+
       , testCase "empty input yields one empty logical line" $
           normalizeText "" @?= [LogicalLine "" 1 1]
 

@@ -82,7 +82,7 @@ insideString t =
   in odd quoteCount
 
 removeEscapedQuotes :: Text -> Text
-removeEscapedQuotes = T.replace "\\\"" ""
+removeEscapedQuotes = T.replace "~\"" ""
 
 -- | Strip leading $PBExport*$ header lines (SPEC §2.11).
 stripHeaders :: [LogicalLine] -> ([Text], [LogicalLine])

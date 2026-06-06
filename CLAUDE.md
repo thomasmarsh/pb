@@ -36,7 +36,7 @@ A proposal must name:
 
 ### Stage 2 — Failing Tests
 
-Write tests first. Each stub uses `assertFailure "unimplemented: <reason>"` where `<reason>` matches the Stage 1 proposal item. Verify:
+Write tests first with real assertions expressing the correct behaviour. The tests must fail because the production code is wrong or absent — not because the test itself is a placeholder. Verify:
 
 ```text
 cabal build --enable-tests   # must compile cleanly
@@ -44,6 +44,8 @@ cabal test                   # tests must appear and fail, not error/crash
 ```
 
 Do not proceed until tests are failing for the right reason.
+
+Use `assertFailure "unimplemented: <reason>"` only when the unit under test does not exist yet and you need a temporary stub in the production code to keep the project compiling. Once the production stub exists, replace the `assertFailure` with a real assertion before Stage 3.
 
 ### Stage 3 — Implementation
 
@@ -97,11 +99,13 @@ testGroup "Pipeline"
   ]
 ```
 
-**Stub format.** Do not use `undefined` or `error` in test stubs. Use:
+**Stub format.** Write real assertions wherever possible. Use `assertFailure "unimplemented: <reason>"` only when the production function does not exist yet and a stub is needed to make the project compile:
 
 ```haskell
 testCase "some thing" $ assertFailure "unimplemented: continuation across 3+ lines"
 ```
+
+Replace it with a real assertion before Stage 3 — a test that permanently says "unimplemented" is not a test.
 
 **HUnit vs Hedgehog:**
 
