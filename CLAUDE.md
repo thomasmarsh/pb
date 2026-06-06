@@ -117,9 +117,11 @@ testCase "some thing" $ assertFailure "unimplemented: continuation across 3+ lin
 
 **Table-driven tests.** When 3+ test cases share the same assertion shape, use a list and `mapM_` or a helper — do not repeat identical structure.
 
-**No external snapshot files.** Inline expected values in assertions. Use a locally-defined `Text` literal for multi-line output.
+**No external snapshot files.** Inline expected values in assertions. Use a locally-defined `Text` literal for multi-line output. Longer term we may loosen this requirement. Make a recommendation if unsure.
 
 **Megaparsec exploration.** Use `parseTest` from `Text.Megaparsec` in the REPL to get human-readable failure output. In tests, use `parse` with `assertBool`/`assertEqual` and a descriptive message.
+
+**Structuring.** Keep test files short and have a master test runner in `test/Main.hs` that imports and aggregates them. Keep PBT and unit tests separate. Don't refer to "phase numbers" or anything like that which has temporal implications, just give everything logical names.
 
 ---
 
@@ -127,12 +129,12 @@ testCase "some thing" $ assertFailure "unimplemented: continuation across 3+ lin
 
 The custom Prelude is in `src/PB/Prelude.hs`. These rules are non-negotiable.
 
-| Rule | Detail |
-| --- | --- |
-| `Text` everywhere | No `String` in exposed APIs; `OverloadedStrings` is set |
-| No partial functions | `head`, `tail`, `(!!)`, `fromJust`, `read`, `cycle`, `maximum`, `minimum` are hidden |
-| No `undefined` | Hidden from Prelude; use `error "impossible: <reason>"` only when GHC cannot prove totality |
-| Text IO | `putStr`/`putStrLn`/`readFile` re-exported from `Data.Text.IO` |
+| Rule                 | Detail                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------- |
+| `Text` everywhere    | No `String` in exposed APIs; `OverloadedStrings` is set                                     |
+| No partial functions | `head`, `tail`, `(!!)`, `fromJust`, `read`, `cycle`, `maximum`, `minimum` are hidden        |
+| No `undefined`       | Hidden from Prelude; use `error "impossible: <reason>"` only when GHC cannot prove totality |
+| Text IO              | `putStr`/`putStrLn`/`readFile` re-exported from `Data.Text.IO`                              |
 
 All new modules must start with `import PB.Prelude` under `NoImplicitPrelude` (set in `common-settings` in the cabal file).
 
@@ -140,15 +142,27 @@ All new modules must start with `import PB.Prelude` under `NoImplicitPrelude` (s
 
 ---
 
+## General Coding Guidance
+
+- Always prefer short, flattened code - no huge monolithic functions
+- Always rename Aeson serialized fields ergonomic JSON (not just the raw Haskell names)
+- app/Main.hs should have no functionality other than to call into src/PB/Pipeline/Runner.hs with two arguments 1) input source dir path and 2) output JSON AST tree path
+- Accept no hacky solutions or greedy operations that will cause pain down the line: if we can't reliable detect the beginning / end of a regions (e.g., FUNCTION / END FUNCTION), we can't start working on it yet.
+- Be creative and comprehensive in generating PBT and pathological unit test cases; PB has lots of issues like `foo()bar()` smashed together ` & // comment`
+- Ensure the preprocess step is principled and resilient
+- We always strongly type everything we can. E.g., in a DataWindow we will see `..(retrieve="..SQL string", ...)`. Rather than a map of properties, we should have an explicit record type that captures the possible known fields.
+
+---
+
 ## Module Placement
 
-| Module | Purpose |
-| --- | --- |
-| `PB.AST.*` | Data types only — no parsing logic |
-| `PB.Lexing.*` | Tokenization, layout, string mode |
-| `PB.Grammar.*` | megaparsec parsers |
+| Module          | Purpose                                                 |
+| --------------- | ------------------------------------------------------- |
+| `PB.AST.*`      | Data types only — no parsing logic                      |
+| `PB.Lexing.*`   | Tokenization, layout, string mode                       |
+| `PB.Grammar.*`  | megaparsec parsers                                      |
 | `PB.Pipeline.*` | Multi-step transformations (preprocess, walk, sentinel) |
-| `PB.Prelude` | Custom Prelude — no parsing or transformation logic |
+| `PB.Prelude`    | Custom Prelude — no parsing or transformation logic     |
 
 New modules go in the most specific matching directory. If a new layer is needed, propose it in Stage 1.
 

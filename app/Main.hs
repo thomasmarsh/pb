@@ -1,6 +1,63 @@
 module Main (main) where
 
 import PB.Prelude
+import PB.Pipeline.Runner (runFile)
+
+import Data.Aeson               (encode, object, (.=))
+import qualified Data.ByteString.Lazy as BL
+
+import Options.Applicative
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, listDirectory)
+import System.FilePath  (makeRelative, takeDirectory, takeExtension, (</>))
+
+data Options = Options
+  { inputDir  :: FilePath
+  , outputDir :: FilePath
+  }
+
+optParser :: Parser Options
+optParser = Options
+  <$> strOption (long "input"  <> short 'i' <> metavar "DIR" <> help "Source root directory")
+  <*> strOption (long "output" <> short 'o' <> metavar "DIR" <> help "Output root directory")
 
 main :: IO ()
-main = putStrLn "pb-runner: not yet implemented"
+main = do
+  opts  <- execParser (info (optParser <**> helper) desc)
+  files <- walkSr (inputDir opts)
+  mapM_ (processFile opts) files
+  where
+    desc = fullDesc <> progDesc "Parse a PowerBuilder source tree to a mirrored JSON AST tree"
+
+-- | Recursively collect all *.sr? files under root.
+walkSr :: FilePath -> IO [FilePath]
+walkSr root = do
+  entries <- listDirectory root
+  concat <$> mapM step entries
+  where
+    step entry = do
+      let path = root </> entry
+      isDir <- doesDirectoryExist path
+      if isDir
+        then walkSr path
+        else pure (if isSrFile path then [path] else [])
+
+-- | Match extensions of the form .sr<single-char> (e.g. .srd .srx .srm .srv .srs).
+isSrFile :: FilePath -> Bool
+isSrFile fp = case splitAt 3 (takeExtension fp) of
+  (".sr", [_]) -> True
+  _            -> False
+
+-- | Parse one file and write its JSON to the mirrored output path.
+processFile :: Options -> FilePath -> IO ()
+processFile opts src = do
+  let rel     = makeRelative (inputDir opts) src
+      outPath = outputDir opts </> rel <> ".json"
+      outDir  = takeDirectory outPath
+  createDirectoryIfMissing True outDir
+  contents <- readFile src
+  case runFile src contents of
+    Left  err -> BL.writeFile outPath $ encode $ object
+                   [ "file"  .= src
+                   , "error" .= err
+                   ]
+    Right val -> BL.writeFile outPath (encode val)

@@ -32,14 +32,19 @@ library
     PB.AST.Workspace
     PB.Lexing.Layout
     PB.Lexing.Lexer
+    PB.Lexing.Mask
     PB.Lexing.StringMode
     PB.Lexing.Token
     PB.Pipeline.Preprocess
+    PB.Pipeline.Runner
     PB.Pipeline.Sentinel
     PB.Pipeline.WalkTree
   build-depends:
     , base ^>=4.20.2.0
     , text
+    , megaparsec
+    , aeson
+    , filepath >=1.4
 
 executable pb-runner
   import: common-settings
@@ -49,12 +54,18 @@ executable pb-runner
     , base ^>=4.20.2.0
     , pb-ast
     , text
+    , aeson
+    , bytestring   ^>=0.12
+    , directory    ^>=1.3
+    , filepath     >=1.4
+    , optparse-applicative ^>=0.18
 
 test-suite pb-ast-test
   import: common-settings
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
+  other-modules: MaskTest
   build-depends:
     , base ^>=4.20.2.0
     , pb-ast
@@ -62,3 +73,6 @@ test-suite pb-ast-test
     , tasty
     , tasty-hunit
     , tasty-hedgehog
+    , hedgehog       >=1.4
+    , megaparsec
+    , aeson

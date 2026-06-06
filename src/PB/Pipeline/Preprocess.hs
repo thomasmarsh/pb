@@ -35,23 +35,24 @@ stripTrailing = map (\(n, t) -> (n, T.dropWhileEnd isSpace t))
 joinContinuations :: [(Int, Text)] -> [LogicalLine]
 joinContinuations [] = []
 joinContinuations ((n, t) : rest) =
-    let (joined, endLine, remaining) = consumeContinuation n t rest
+    let (joined, endLine, remaining) = consumeContinuation n n t rest
     in LogicalLine joined n endLine : joinContinuations remaining
 
 consumeContinuation
-  :: Int
+  :: Int           -- ^ startLine (first physical line of this logical line)
+  -> Int           -- ^ currentEnd (last physical line consumed so far)
   -> Text
   -> [(Int, Text)]
   -> (Text, Int, [(Int, Text)])
-consumeContinuation startLine current [] =
-  (current, startLine, [])
-consumeContinuation startLine current ((n, t) : rest)
+consumeContinuation _startLine currentEnd current [] =
+  (current, currentEnd, [])
+consumeContinuation startLine currentEnd current ((n, t) : rest)
   | endsWithContinuation current =
       let stripped = stripContinuationMarker current
           newText  = stripped <> " " <> t
-      in consumeContinuation startLine newText rest
+      in consumeContinuation startLine n newText rest
   | otherwise =
-      (current, startLine, (n, t) : rest)
+      (current, currentEnd, (n, t) : rest)
 
 -- | True if the last non-space character is '&' AND it is not inside a string.
 endsWithContinuation :: Text -> Bool
