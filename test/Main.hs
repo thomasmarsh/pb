@@ -1,7 +1,7 @@
 module Main (main) where
 
 import PB.Prelude
-import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText)
+import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText, stripHeaders)
 import qualified MaskTest
 import qualified SplitterTest
 import qualified TokenTest
@@ -57,6 +57,35 @@ tests = testGroup "pb-ast"
       , testProperty "idempotence" prop_idempotent
       , testProperty "monotone line numbers" prop_monotone
       , testProperty "no trailing continuation marker" prop_noTrailingAmpersand
+
+      , testCase "stripHeaders: single header extracted" $ do
+          let h = LogicalLine "$PBExportHeader$foo.srs" 1 1
+              r = LogicalLine "x = 1" 2 2
+          stripHeaders [h, r] @?= (["$PBExportHeader$foo.srs"], [r])
+
+      , testCase "stripHeaders: non-header line not extracted" $ do
+          let l = LogicalLine "x = 1" 1 1
+          stripHeaders [l] @?= ([], [l])
+
+      , testCase "stripHeaders: two headers then code" $ do
+          let h1 = LogicalLine "$PBExportHeader$foo.srs" 1 1
+              h2 = LogicalLine "$PBExportComments$some text" 2 2
+              r  = LogicalLine "x = 1" 3 3
+          stripHeaders [h1, h2, r] @?= (["$PBExportHeader$foo.srs", "$PBExportComments$some text"], [r])
+
+      , testCase "stripHeaders: empty list returns empty headers" $
+          stripHeaders [] @?= ([], [])
+
+      , testCase "stripHeaders: stops at first non-header even if later line looks like header" $ do
+          let h  = LogicalLine "$PBExportHeader$foo.srs" 1 1
+              r  = LogicalLine "x = 1" 2 2
+              h2 = LogicalLine "$PBExportComments$later" 3 3
+          stripHeaders [h, r, h2] @?= (["$PBExportHeader$foo.srs"], [r, h2])
+
+      , testProperty "stripHeaders: header count + remaining count == total count" $
+          prop_stripHeaders_countInvariant
+      , testProperty "stripHeaders: all returned headers start with $" $
+          prop_stripHeaders_allHeadersStartWithDollar
       ]
     ]
   ]
@@ -81,3 +110,17 @@ prop_noTrailingAmpersand = property $ do
   let lls    = normalizeText t
       trimEnd = T.dropWhileEnd (\c -> c == ' ' || c == '\t')
   for_ lls $ \ll -> assert (not (T.isSuffixOf "&" (trimEnd (llText ll))))
+
+prop_stripHeaders_countInvariant :: Property
+prop_stripHeaders_countInvariant = property $ do
+  lls <- forAll $ Gen.list (Range.linear 0 20)
+           ((\t -> LogicalLine t 1 1) <$> Gen.text (Range.linear 0 40) Gen.unicode)
+  let (hdrs, rest) = stripHeaders lls
+  length hdrs + length rest === length lls
+
+prop_stripHeaders_allHeadersStartWithDollar :: Property
+prop_stripHeaders_allHeadersStartWithDollar = property $ do
+  lls <- forAll $ Gen.list (Range.linear 0 20)
+           ((\t -> LogicalLine t 1 1) <$> Gen.text (Range.linear 0 40) Gen.unicode)
+  let (hdrs, _) = stripHeaders lls
+  for_ hdrs $ \h -> assert (T.isPrefixOf "$" h)

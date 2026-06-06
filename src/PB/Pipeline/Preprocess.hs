@@ -1,5 +1,6 @@
 module PB.Pipeline.Preprocess
   ( normalizeText
+  , stripHeaders
   , LogicalLine(..)
   ) where
 
@@ -82,3 +83,11 @@ insideString t =
 
 removeEscapedQuotes :: Text -> Text
 removeEscapedQuotes = T.replace "\\\"" ""
+
+-- | Strip leading $PBExport*$ header lines (SPEC §2.11).
+stripHeaders :: [LogicalLine] -> ([Text], [LogicalLine])
+stripHeaders lls =
+  let (headers, rest) = span (isHeaderText . llText) lls
+  in (map llText headers, rest)
+  where
+    isHeaderText t = T.isPrefixOf "$" t && T.isInfixOf "$" (T.drop 1 t)

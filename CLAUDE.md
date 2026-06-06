@@ -206,6 +206,7 @@ Maintained here to avoid re-scanning the tree. Update when new exports are added
 
 ```haskell
 normalizeText :: Text -> [LogicalLine]
+stripHeaders  :: [LogicalLine] -> ([Text], [LogicalLine])
 
 data LogicalLine = LogicalLine
   { llText      :: Text
