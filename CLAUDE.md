@@ -215,7 +215,43 @@ data LogicalLine = LogicalLine
   }
 ```
 
-All other modules are currently stubs (`PB.Lexing.*`, `PB.Grammar.*`, `PB.Pipeline.Sentinel`, `PB.Pipeline.WalkTree`, `PB.AST.*`).
+### `PB.AST.Object`
+
+```haskell
+data SrFile = SrFile
+  { srHeaders     :: [Text]
+  , srForward     :: Maybe ForwardBlock
+  , srPrototypes  :: Maybe PrototypesBlock
+  , srVariables   :: Maybe VariablesBlock
+  , srTypeBlocks  :: [TypeBlock]
+  , srOnBlocks    :: [OnBlock]
+  , srEvents      :: [EventBlock]
+  , srFunctions   :: [FunctionBlock]
+  , srSubroutines :: [SubroutineBlock]
+  }
+
+data ForwardBlock    = ForwardBlock    { fwdTypes   :: [TypeDecl] }
+data PrototypesBlock = PrototypesBlock { protoDecls :: [ProtoDecl] }
+data ProtoDecl       = ProtoFn FnSig | ProtoSub SubSig | ProtoEv EventSig
+
+data VariablesBlock = VariablesBlock { varScope :: VarScope, varDecls :: [VarDecl] }
+data VarScope       = GlobalVars | TypeVars
+
+data TypeDecl = TypeDecl { tdName :: Text, tdAncestor :: Text, tdWithin :: Maybe Text }
+data TypeBlock = TypeBlock { tbDecl :: TypeDecl, tbVarDecls :: [VarDecl] }
+data VarDecl   = VarDecl  { vdModifiers :: [Text], vdType :: Text, vdName :: Text }
+
+data FnSig  = FnSig  { fnsMods :: [Text], fnsRetType :: Text, fnsName :: Text, fnsParams :: Text, fnsThrows :: Maybe Text }
+data SubSig = SubSig { ssMods  :: [Text], ssName :: Text, ssParams :: Text, ssThrows :: Maybe Text }
+data EventSig = EventSig { esName :: Text, esRawSig :: Text }
+
+data FunctionBlock   = FunctionBlock   { fbSig :: FnSig,   fbBody :: [Statement] }
+data SubroutineBlock = SubroutineBlock { sbSig :: SubSig,  sbBody :: [Statement] }
+data EventBlock      = EventBlock      { evSig :: EventSig, evBody :: [Statement] }
+data OnBlock         = OnBlock         { obQualName :: Text, obOwner :: Text, obEvent :: Text, obBody :: [Statement] }
+```
+
+All other modules are currently stubs (`PB.Lexing.*`, `PB.Grammar.*`, `PB.Pipeline.Sentinel`, `PB.Pipeline.WalkTree`, `PB.AST.Library`, `PB.AST.Script`, `PB.AST.Statement`, `PB.AST.Types`, `PB.AST.Workspace`).
 
 ---
 
