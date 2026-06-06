@@ -1,0 +1,64 @@
+cabal-version:      3.4
+name:               pb-ast
+version:            0.1.0.0
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             Thomas Marsh
+maintainer:         thomas.marsh2@gmail.com
+category:           Language
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common common-settings
+  default-language: GHC2024
+  default-extensions:
+    NoImplicitPrelude
+    OverloadedStrings
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Wincomplete-patterns
+
+library
+  import: common-settings
+  hs-source-dirs: src
+  exposed-modules:
+    PB.Prelude
+    PB.AST.Library
+    PB.AST.Object
+    PB.AST.Script
+    PB.AST.Statement
+    PB.AST.Types
+    PB.AST.Workspace
+    PB.Lexing.Layout
+    PB.Lexing.Lexer
+    PB.Lexing.StringMode
+    PB.Lexing.Token
+    PB.Pipeline.Preprocess
+    PB.Pipeline.Sentinel
+    PB.Pipeline.WalkTree
+  build-depends:
+    , base ^>=4.20.2.0
+    , text
+
+executable pb-runner
+  import: common-settings
+  hs-source-dirs: app
+  main-is: Main.hs
+  build-depends:
+    , base ^>=4.20.2.0
+    , pb-ast
+    , text
+
+test-suite pb-ast-test
+  import: common-settings
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
+  build-depends:
+    , base ^>=4.20.2.0
+    , pb-ast
+    , text
+    , tasty
+    , tasty-hunit
+    , tasty-hedgehog
