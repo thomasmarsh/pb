@@ -44,6 +44,7 @@ library
     , text
     , megaparsec
     , aeson
+    , containers >=0.6
     , filepath >=1.4
 
 executable pb-runner
@@ -65,7 +66,7 @@ test-suite pb-ast-test
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
-  other-modules: MaskTest
+  other-modules: MaskTest, TokenTest
   build-depends:
     , base ^>=4.20.2.0
     , pb-ast

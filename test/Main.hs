@@ -3,6 +3,7 @@ module Main (main) where
 import PB.Prelude
 import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText)
 import qualified MaskTest
+import qualified TokenTest
 
 import Hedgehog (Property, assert, forAll, property, (===))
 import qualified Hedgehog.Gen   as Gen
@@ -21,6 +22,7 @@ main = defaultMain tests
 tests :: TestTree
 tests = testGroup "pb-ast"
   [ MaskTest.tests
+  , TokenTest.tests
   , testGroup "Pipeline"
     [ testGroup "Preprocess"
       [ testCase "single line passthrough" $
