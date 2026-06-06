@@ -1,9 +1,9 @@
 module FileTest (tests) where
 
 import PB.Prelude
-import PB.Grammar.File        (pForwardBlock, pTypeDecl, pVariablesBlock, pVarDecl)
+import PB.Grammar.File        (pForwardBlock, pPrototypesBlock, pVariablesBlock, pTypeDecl, pVarDecl)
 import PB.Grammar.Stream      (FileParser, StmtStream (..))
-import PB.AST.Object          (ForwardBlock (..), TypeDecl (..), VariablesBlock (..), VarScope (..), VarDecl (..))
+import PB.AST.Object          (ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..), TypeDecl (..), VariablesBlock (..), VarScope (..), VarDecl (..), FnSig (..), SubSig (..))
 import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
@@ -168,6 +168,48 @@ tests = testGroup "Grammar.File"
 
     , testProperty "variable names non-empty"
         prop_varDecl_names_nonempty
+    ]
+
+  , testGroup "pPrototypesBlock"
+    [ testCase "positive: function prototype" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "prototypes")]
+              , mkStmt [ (TkDeclKw, "function"), (TkDatatype, "integer"), (TkIdent, "getCount")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end prototypes")]
+              ]
+        runSection pPrototypesBlock stmts @?=
+          Right (PrototypesBlock [ProtoFn (FnSig [] "integer" "getCount" "" Nothing)])
+
+    , testCase "positive: subroutine prototype" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "prototypes")]
+              , mkStmt [ (TkDeclKw, "subroutine"), (TkIdent, "doSomething")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end prototypes")]
+              ]
+        runSection pPrototypesBlock stmts @?=
+          Right (PrototypesBlock [ProtoSub (SubSig [] "doSomething" "" Nothing)])
+
+    , testCase "positive: forward prototypes opener" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "forward prototypes")]
+              , mkStmt [(TkDeclKw, "end prototypes")]
+              ]
+        runSection pPrototypesBlock stmts @?= Right (PrototypesBlock [])
+
+    , testCase "negative: unclosed prototypes" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "prototypes")]
+              , mkStmt [ (TkDeclKw, "function"), (TkDatatype, "integer"), (TkIdent, "getCount")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              ]
+        case runSection pPrototypesBlock stmts of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected parse failure when 'end prototypes' is missing"
     ]
 
   , testGroup "pTypeDecl"

@@ -251,12 +251,17 @@ data EventBlock      = EventBlock      { evSig :: EventSig, evBody :: [Statement
 data OnBlock         = OnBlock         { obQualName :: Text, obOwner :: Text, obEvent :: Text, obBody :: [Statement] }
 ```
 
-### `PB.Grammar.File` _(in progress — API not final until Plan 04-03)_
+### `PB.Grammar.File`
 
 ```haskell
-pEndKw        :: Text -> FileParser ()
-pTypeDecl     :: FileParser TypeDecl
-pForwardBlock :: FileParser ForwardBlock
+parseSrFile      :: [Text] -> [Statement] -> Either Text SrFile
+pForwardBlock    :: FileParser ForwardBlock
+pPrototypesBlock :: FileParser PrototypesBlock
+pVariablesBlock  :: FileParser VariablesBlock
+pTypeDecl        :: FileParser TypeDecl
+pVarDecl         :: FileParser VarDecl
+pProtoDecl       :: FileParser ProtoDecl
+pEndKw           :: Text -> FileParser ()
 ```
 
 ### `PB.Grammar.Stream`
