@@ -154,6 +154,36 @@ All new modules must start with `import PB.Prelude` under `NoImplicitPrelude` (s
 
 ---
 
+## Reference Docs
+
+The parser specification is in `reference/SPEC.md` — consult it first for any question about lexical rules, token forms, file structure, or DataWindow syntax. It is synthesized from the battle-tested reference implementation and amended with corrections from the official Appeon docs.
+
+The official Appeon PowerBuilder 2025 R2 reference docs are in `reference/docs/markdown/` (converted from HTML; content-equivalent but ~30× smaller). Three doc trees:
+
+| Tree | Path | Use for |
+| ---- | ---- | ------- |
+| PowerScript Reference | `powerscript_reference/` | Language syntax, statements, functions |
+| DataWindow Reference | `datawindow_reference/` | DW expression functions, property names |
+| Objects and Controls | `objects_and_controls/` | System object properties and type hierarchy |
+
+**Key Language Basics files** (most parser-relevant, consult before implementing a lexer rule):
+
+```text
+powerscript_reference/xREF_94732_Comments.md           — // and /* */ comment forms
+powerscript_reference/xREF_89555_Statement.md          — & continuation rules + exceptions
+powerscript_reference/xREF_20385_Statement.md          — ; statement separation
+powerscript_reference/xREF_81473_White_space.md        — dash-in-identifier ambiguity
+powerscript_reference/xREF_55923_Identifier_names.md   — identifier character rules
+powerscript_reference/xREF_80481_Reserved_words.md     — full reserved word list
+powerscript_reference/xREF_87805_Standard_datatypes.md — all primitive types + literal forms
+powerscript_reference/xREF_22106_Conditional.md        — #if DEFINED preprocessor
+powerscript_reference/xREF_36556_Special_ASCII.md      — ~ escape sequences in strings
+```
+
+The individual function/property pages (one file per item) are thin reference stubs useful only for looking up a specific signature — not for understanding syntax or behaviour.
+
+---
+
 ## Module Placement
 
 | Module          | Purpose                                                 |

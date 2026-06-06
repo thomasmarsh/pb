@@ -37,7 +37,7 @@ IdentCont   ::= [A-Za-z0-9_$#%\-]
 Identifier  ::= IdentStart IdentCont*
 ```
 
-Hyphens (`-`) are valid in identifier bodies. `$`, `#`, `%` are valid in both positions. The entire language is **case-insensitive**; normalize to lowercase for all comparisons.
+Hyphens (`-`) are valid in identifier bodies. `$`, `#`, `%` are valid in both positions. The entire language is **case-insensitive**; normalize to lowercase for all comparisons. Maximum identifier length: **40 characters**.
 
 For type references (ancestor names, `within` targets, type annotations), backtick is additionally allowed:
 
@@ -138,18 +138,32 @@ See `reference/code/vsc-powersyntax/src/server/parsing/grammar.ts` → `PB_BUILT
 
 PB has two string delimiters. The escape character is `~` (not backslash).
 
-| Escape sequence | Meaning                      |
-| --------------- | ---------------------------- |
-| `~oNNN`         | Octal character (3 digits)   |
-| `~hNN`          | Hex character (2 hex digits) |
-| `~.`            | Literal next character       |
-| `~~`            | Literal tilde                |
+**Named escapes** (from official docs):
+
+| Escape  | Meaning                  |
+|---------|--------------------------|
+| `~n`    | Newline                  |
+| `~t`    | Tab                      |
+| `~r`    | Carriage return          |
+| `~v`    | Vertical tab             |
+| `~f`    | Form feed                |
+| `~b`    | Backspace                |
+| `~"`    | Double quote             |
+| `~'`    | Single quote             |
+| `~~`    | Literal tilde            |
+| `~NNN`  | Decimal ASCII (000–255)  |
+| `~hNN`  | Hex ASCII (01–FF)        |
+| `~oNNN` | Octal ASCII (000–377)    |
+
+`~.` (tilde then any other character) is also consumed as an escape (literal next character).
 
 **Double-quoted strings** — span until the closing `"` on the **same or subsequent lines** (the tmLanguage grammar does not have an EOL anchor on end). No newline escaping is needed; the string continues across physical lines.
 
 **Single-quoted strings** — terminate at the closing `'` OR at end-of-line (pattern: `'|(?=$)`). A single-quoted string that is not closed before EOL ends at EOL.
 
 **DataWindow attribute strings** — use `~"` to embed a literal `"` inside a double-quoted attribute value (e.g., `retrieve="SELECT * FROM t WHERE name = ~"foo~""`).
+
+**Nested string quoting** — when a string passes through multiple evaluation layers (e.g. the argument to `Modify`), each pass strips the outermost quotes and resolves tildes: two tildes become one, tilde-quote becomes the bare quote. Allows arbitrary nesting depth.
 
 ### 2.6 Numeric Literals
 
@@ -176,7 +190,7 @@ Examples: `Black!`, `Primary!`, `True!`. The `!` is part of the token; it must n
 
 **Line comment:** `//` to end-of-line.
 
-**Block comment:** `/* ... */`. These **do not nest** in standard PB; the reference implementation tracks nesting depth only as an opt-in (`nested: true`). Default: non-nested. Block comments can span multiple physical lines.
+**Block comment:** `/* ... */`. Can span multiple physical lines. The official language reference states block comments **can be nested**; however, the reference TypeScript implementation (`vsc-powersyntax`) treats them as non-nested by default (`nested: true` is an opt-in). Real-world PB source in the wild does not appear to use nested block comments, so non-nested is the safe default. Revisit if the corpus proves otherwise.
 
 ### 2.9 Operators
 
@@ -216,7 +230,16 @@ Pattern (applied to the stripped line, after comment removal):
 &\s*$
 ```
 
-`&` inside a string or comment is never a continuation.
+`&` inside a comment is never a continuation.
+
+**`&` inside string literals — official behaviour vs. implementation:** The official language reference documents that `&` may appear inside a string literal to continue it to the next physical line, with all whitespace before the `&` and at the start of the continuation line included verbatim in the string value:
+
+```
+s = "Eastern United States and&
+      Eastern Canada"    // tab indent becomes part of the string
+```
+
+The reference TypeScript implementation classifies `&` as `String`-class when inside a string, so it does **not** trigger continuation. This implementation choice is safe in practice: PB documentation itself describes this as error-prone and recommends the close-and-reopen pattern instead (`"part one " & + "part two"`). Our masking algorithm follows the reference implementation (String-class `&` = not continuation).
 
 ### 2.11 File Headers
 
