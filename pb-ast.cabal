@@ -24,24 +24,16 @@ library
   hs-source-dirs: src
   exposed-modules:
     PB.Prelude
-    PB.AST.Library
     PB.AST.Object
-    PB.AST.Script
-    PB.AST.Statement
-    PB.AST.Types
-    PB.AST.Workspace
     PB.Grammar.File
     PB.Grammar.Stream
-    PB.Lexing.Layout
     PB.Lexing.Lexer
     PB.Lexing.Mask
     PB.Lexing.Splitter
-    PB.Lexing.StringMode
     PB.Lexing.Token
     PB.Pipeline.Preprocess
     PB.Pipeline.Runner
     PB.Pipeline.Sentinel
-    PB.Pipeline.WalkTree
   build-depends:
     , base ^>=4.20.2.0
     , text
