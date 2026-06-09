@@ -47,6 +47,8 @@ data TokenKind
   | TkRParen
   | TkLBracket
   | TkRBracket
+  | TkLBrace
+  | TkRBrace
   | TkComma
   | TkSemi
   | TkColon

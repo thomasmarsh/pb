@@ -74,7 +74,7 @@ oneToken sl el = do
     , try (pDateLiteral mk)
     , try (pTimeLiteral mk)
     , try (pFloatLiteral mk)
-    , pIntLiteral mk
+    , try (pIntLiteral mk)
     , pIdentOrEnum c mk
     , pOperator mk
     , pPunctuation mk
@@ -232,7 +232,7 @@ isIdentStart :: Char -> Bool
 isIdentStart c = isAlpha c || c == '_'
 
 isIdentCont :: Char -> Bool
-isIdentCont c = isAlphaNum c || c `elem` ("_$#%-" :: String)
+isIdentCont c = isAlphaNum c || c `elem` ("_$#%`-" :: String)
 
 -- ---------------------------------------------------------------------------
 -- Operators  (§2.9; multi-char alternatives tried first)
@@ -270,6 +270,8 @@ pPunctuation mk = choice
   , char ')' >> return (mk TkRParen   ")")
   , char '[' >> return (mk TkLBracket "[")
   , char ']' >> return (mk TkRBracket "]")
+  , char '{' >> return (mk TkLBrace   "{")
+  , char '}' >> return (mk TkRBrace   "}")
   , char ',' >> return (mk TkComma    ",")
   , char ';' >> return (mk TkSemi     ";")
   ]

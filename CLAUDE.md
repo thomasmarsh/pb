@@ -24,6 +24,8 @@ Infer the charter from the user's intent. If ambiguous, ask before reading any c
 - Same root cause as the current fix → fix it in this session (it is within charter)
 - Different root cause → one-line entry in `plan/BACKLOG.md`; continue with the current charter
 
+**Primary failures hide secondary failures.** Corpus error counts are keyed on the *first* failing line per file. A dominant failure mode can mask other bugs in the same file. Fix the primary mode, rerun the corpus check, then re-categorize the remaining errors before drawing conclusions.
+
 **Stop condition.** Charter goal met + `cabal test` passes → stop. Do not pick up the next visible problem.
 
 **`plan/BACKLOG.md`** is the authoritative work queue. The user sets priority order. The assistant only appends — never reorders. Read it at session start to confirm the charter matches the top unfinished item.
@@ -44,6 +46,30 @@ rg -l "LogicalLine" src/
 ```
 
 No change is proposed without a prior read of all relevant modules. Locate callers before modifying a function.
+
+**Diagnosing corpus failures.** When the charter is to reduce corpus errors, sample raw error messages before touching code:
+
+```bash
+bash scripts/check-corpus.sh 2>&1 | grep "Files processed"   # get count
+
+# sample 5 error messages from a temporary run:
+OUT=$(mktemp -d)
+cabal run pb-runner -v0 -- -i example/openpay -o "$OUT" 2>/dev/null
+python3 -c "
+import json, os, glob
+for f in list(glob.glob('$OUT/**/*.json', recursive=True))[:5]:
+    d = json.load(open(f))
+    if 'error' in d: print(d['error'][:200])
+"
+rm -rf "$OUT"
+```
+
+Map the error message to its layer before reading code:
+
+- `"lex error at line N"` → look at physical line N in the source file; the issue is in `Lexer.hs` or `Preprocess.hs`
+- Megaparsec grammar message → issue is in `Grammar/File.hs` or `Grammar/Stream.hs`
+
+**Confirm hypotheses with a narrow test before Stage 1.** After reading code and forming a theory, write a one-line `testCase` that asserts the correct output and run it. A test that currently fails is worth more than a long analysis. Do not skip this step.
 
 ### Stage 1 — Propose
 
@@ -169,6 +195,7 @@ All new modules must start with `import PB.Prelude` under `NoImplicitPrelude` (s
 
 ## General Coding Guidance
 
+- **Megaparsec `try` invariant:** In a `choice`, every alternative that can consume input before failing must be wrapped in `try`. Without it, a partial match (e.g. consuming a sign character before failing on a non-digit) propagates the error and skips all remaining alternatives. Audit any `choice` whose alternatives share a leading character.
 - Always prefer short, flattened code - no huge monolithic functions
 - Always rename Aeson serialized fields ergonomic JSON (not just the raw Haskell names)
 - app/Main.hs should have no functionality other than to call into src/PB/Pipeline/Runner.hs with two arguments 1) input source dir path and 2) output JSON AST tree path
@@ -347,6 +374,8 @@ collectStatements :: [LexLine] -> Either Text [Statement]
 -- runFile dispatches on extension: .srd → runDataWindow (stub), _ → runPowerScript
 -- runPowerScript: normalizeText → stripHeaders → tokenize → collectStatements → parseSrFile → encodeSrFile
 -- collectStatements filters empty-token statements and surfaces the first LexError as Left Text
+-- Note: leOffset in a LexError is always 0 (reports initial position state, not error position).
+--       Only llStartLine (leSource e) is meaningful for diagnosis.
 ```
 
 All other modules are currently stubs (`PB.Pipeline.Sentinel`, `PB.Pipeline.WalkTree`, `PB.AST.Library`, `PB.AST.Script`, `PB.AST.Statement`, `PB.AST.Types`, `PB.AST.Workspace`).
@@ -368,6 +397,6 @@ All other modules are currently stubs (`PB.Pipeline.Sentinel`, `PB.Pipeline.Walk
 - Do not commit with a warning-dirty `cabal build`
 - Failing test stubs (Stage 2) may be committed; mark them clearly with `assertFailure "unimplemented: ..."`
 - Before committing parser changes: `bash scripts/check-corpus.sh`
-  The error count must not increase. Baseline: 380 errors / 777 files;
-  22 clean (all `.srs`). All non-`.srs` file types currently fail.
+  The error count must not increase. Baseline: 173 errors / 777 files;
+  22 clean (all `.srs`), 262 DataWindow stubs (always pass).
 - Any new failure categories found during a session must be recorded in `plan/BACKLOG.md` before committing.

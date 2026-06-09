@@ -150,6 +150,45 @@ tests = testGroup "Lexing"
             r <- tokenKinds "end release"
             r @?= [TkControlKw, TkIdent]
         ]
+    , testGroup "binary operators (pIntLiteral must not swallow sign)"
+        [ testCase "a + b: plus between identifiers" $ do
+            r <- tokenKinds "a + b"
+            r @?= [TkIdent, TkArithOp, TkIdent]
+
+        , testCase "x - y: minus between identifiers" $ do
+            r <- tokenKinds "x - y"
+            r @?= [TkIdent, TkArithOp, TkIdent]
+
+        , testCase "ii_count++: postfix increment" $ do
+            r <- tokenKinds "ii_count++"
+            r @?= [TkIdent, TkAugmentOp]
+
+        , testCase "x += 1: augmented assignment" $ do
+            r <- tokenKinds "x += 1"
+            r @?= [TkIdent, TkAugmentOp, TkIntLiteral]
+
+        , testCase "x -= y: augmented minus" $ do
+            r <- tokenKinds "x -= y"
+            r @?= [TkIdent, TkAugmentOp, TkIdent]
+        ]
+    , testGroup "brace literals (array/struct initializers)"
+        [ testCase "open brace is TkLBrace" $ do
+            r <- tokenKinds "{"
+            r @?= [TkLBrace]
+
+        , testCase "close brace is TkRBrace" $ do
+            r <- tokenKinds "}"
+            r @?= [TkRBrace]
+
+        , testCase "array literal {a, b}" $ do
+            r <- tokenKinds "{a, b}"
+            r @?= [TkLBrace, TkIdent, TkComma, TkIdent, TkRBrace]
+        ]
+    , testGroup "backtick in type references"
+        [ testCase "ancestor`control in type ref" $ do
+            r <- tokenKindTexts "w_parent`cb_ok"
+            r @?= [(TkIdent, "w_parent`cb_ok")]
+        ]
     , testGroup "properties"
         [ testProperty "tokens carry correct line number" prop_tokensCorrectLine
         , testProperty "token text reconstructs input"   prop_tokenTextReconstructsInput
