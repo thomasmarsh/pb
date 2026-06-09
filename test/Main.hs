@@ -94,6 +94,11 @@ tests = testGroup "pb-ast"
       , testCase "stripHeaders: empty list returns empty headers" $
           stripHeaders [] @?= ([], [])
 
+      , testCase "stripHeaders: HA$ prefix is stripped and normalised" $ do
+          let h = LogicalLine "HA$PBExportHeader$foo.srf" 1 1
+              r = LogicalLine "global type foo from function_object" 2 2
+          stripHeaders [h, r] @?= (["$PBExportHeader$foo.srf"], [r])
+
       , testCase "stripHeaders: stops at first non-header even if later line looks like header" $ do
           let h  = LogicalLine "$PBExportHeader$foo.srs" 1 1
               r  = LogicalLine "x = 1" 2 2

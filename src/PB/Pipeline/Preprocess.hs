@@ -85,9 +85,14 @@ removeEscapedQuotes :: Text -> Text
 removeEscapedQuotes = T.replace "~\"" ""
 
 -- | Strip leading $PBExport*$ header lines (SPEC §2.11).
+-- Handles the real-world "HA$PBExportHeader$" form: the two leading "HA" bytes
+-- are a PowerBuilder marker and are dropped before storing the header text.
 stripHeaders :: [LogicalLine] -> ([Text], [LogicalLine])
 stripHeaders lls =
   let (headers, rest) = span (isHeaderText . llText) lls
-  in (map llText headers, rest)
-  where
-    isHeaderText t = T.isPrefixOf "$" t && T.isInfixOf "$" (T.drop 1 t)
+  in (map (T.dropWhile (/= '$') . llText) headers, rest)
+
+isHeaderText :: Text -> Bool
+isHeaderText t =
+  let t' = T.dropWhile (/= '$') t
+  in T.isPrefixOf "$PBExport" t' && T.isInfixOf "$" (T.drop 1 t')

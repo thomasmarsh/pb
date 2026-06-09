@@ -188,6 +188,35 @@ The individual function/property pages (one file per item) are thin reference st
 
 ---
 
+## Corpus Coverage Checklist
+
+Every distinct top-level construct found in the 515 non-DataWindow corpus files.
+Mark done/pending as body parsers land.
+
+| Construct                                   | File types          | Status  |
+|---------------------------------------------|---------------------|---------|
+| `forward … end forward`                     | .srw, .sru          | done    |
+| `forward prototypes … end prototypes`       | .srw, .sru          | done    |
+| `type prototypes … end prototypes`          | .srf, .sru          | done    |
+| `prototypes … end prototypes`               | .srf                | done    |
+| `global variables … end variables`          | .srw, .sru          | done    |
+| `type variables … end variables`            | .srw, .sru          | done    |
+| `global type … end type`                    | .srw, .sru          | done    |
+| `public function … end function`            | .srw, .sru          | done    |
+| `protected subroutine … end subroutine`     | .srw, .sru          | done    |
+| `on … end on`                               | .srw, .sru          | done    |
+| `event … end event`                         | .srw, .sru          | done    |
+| `type … end type` (TypeBlock)               | .srw, .sru          | done    |
+| Body: `if … end if`                         | all                 | pending |
+| Body: `choose case … end choose`            | all                 | pending |
+| Body: `for … next`                          | all                 | pending |
+| Body: `do … loop`                           | all                 | pending |
+| Body: `try … catch … end try`               | all                 | pending |
+| Body: embedded SQL                          | .srw, .sru          | pending |
+| Body: assignment / call statements          | all                 | pending |
+
+---
+
 ## Module Placement
 
 | Module          | Purpose                                                 |
@@ -312,3 +341,6 @@ All other modules are currently stubs (`PB.Pipeline.Sentinel`, `PB.Pipeline.Walk
 - Commit message: what changed and why, not how
 - Do not commit with a warning-dirty `cabal build`
 - Failing test stubs (Stage 2) may be committed; mark them clearly with `assertFailure "unimplemented: ..."`
+- Before committing parser changes: `bash scripts/check-corpus.sh`
+  The error count must not increase. Baseline (Plan 10): 493 errors / 777 files;
+  22 clean (all `.srs`). All non-`.srs` file types currently fail.

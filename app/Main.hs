@@ -5,7 +5,9 @@ import PB.Pipeline.Runner (runFile)
 
 import Data.Aeson               (encode, object, (.=))
 import qualified Data.ByteString.Lazy as BL
+import qualified Data.Text            as T
 
+import Control.Exception        (SomeException, try)
 import Options.Applicative
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, listDirectory)
 import System.FilePath  (makeRelative, takeDirectory, takeExtension, (</>))
@@ -48,16 +50,18 @@ isSrFile fp = case splitAt 3 (takeExtension fp) of
   _            -> False
 
 -- | Parse one file and write its JSON to the mirrored output path.
+-- Encoding errors (e.g. Windows-1253 OpenPay files) produce an error JSON
+-- rather than crashing the process.
 processFile :: Options -> FilePath -> IO ()
 processFile opts src = do
   let rel     = makeRelative (inputDir opts) src
       outPath = outputDir opts </> rel <> ".json"
       outDir  = takeDirectory outPath
   createDirectoryIfMissing True outDir
-  contents <- readFile src
-  case runFile src contents of
-    Left  err -> BL.writeFile outPath $ encode $ object
-                   [ "file"  .= src
-                   , "error" .= err
-                   ]
-    Right val -> BL.writeFile outPath (encode val)
+  readResult <- try (readFile src) :: IO (Either SomeException Text)
+  let outcome = case readResult of
+        Left  ex       -> Left ("encoding error: " <> T.pack (show ex))
+        Right contents -> runFile src contents
+  BL.writeFile outPath $ case outcome of
+    Left  err -> encode $ object ["file" .= src, "error" .= err]
+    Right val -> encode val
