@@ -266,6 +266,11 @@ pTypeDecl        :: FileParser TypeDecl
 pVarDecl         :: FileParser VarDecl
 pProtoDecl       :: FileParser ProtoDecl
 pEndKw           :: Text -> FileParser ()
+pTypeBlock       :: FileParser TypeBlock
+pOnBlock         :: FileParser OnBlock
+pEventBlock      :: FileParser EventBlock
+pFunctionBlock   :: FileParser FunctionBlock
+pSubroutineBlock :: FileParser SubroutineBlock
 ```
 
 ### `PB.Grammar.Stream`

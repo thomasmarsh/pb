@@ -7,20 +7,27 @@ module PB.Grammar.File
   , pVarDecl
   , pProtoDecl
   , pEndKw
+  , pTypeBlock
+  , pOnBlock
+  , pEventBlock
+  , pFunctionBlock
+  , pSubroutineBlock
   ) where
 
 import PB.Prelude
 import PB.Grammar.Stream  (FileParser, StmtStream (..), leadingText, satisfyStmt)
 import PB.AST.Object
   ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
-  , TypeDecl (..), VariablesBlock (..), VarScope (..), VarDecl (..)
+  , TypeDecl (..), TypeBlock (..)
+  , VariablesBlock (..), VarScope (..), VarDecl (..)
   , FnSig (..), SubSig (..), EventSig (..)
+  , FunctionBlock (..), SubroutineBlock (..), EventBlock (..), OnBlock (..)
   , SrFile (..)
   )
 import PB.Lexing.Splitter (Statement (..))
 import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
 
-import Text.Megaparsec (many, try, optional, eof, parse, (<|>))
+import Text.Megaparsec (many, manyTill, try, optional, eof, parse, (<|>))
 import Text.Megaparsec.Error (errorBundlePretty)
 import qualified Data.Text as T
 
@@ -214,26 +221,100 @@ pPrototypesBlock = do
   return (PrototypesBlock decls)
 
 -- ---------------------------------------------------------------------------
+-- Body-block helpers
+
+anyStmt :: FileParser Statement
+anyStmt = satisfyStmt (const True)
+
+isOnDecl :: Statement -> Bool
+isOnDecl s = case stmtTokens s of
+  (t:rest) -> T.toLower (tkText t) == "on" && any (\tok -> tkKind tok == TkDot) rest
+  _        -> False
+
+extractOnParts :: Statement -> Maybe (Text, Text, Text)
+extractOnParts s = case stmtTokens s of
+  (_:rest) ->
+    let idents   = [tkText t | t <- rest, tkKind t /= TkDot]
+        qualName = T.intercalate "." idents
+    in case reverse idents of
+      []            -> Nothing
+      [_]           -> Nothing
+      (ev:ownerRev) -> Just (qualName, T.intercalate "." (reverse ownerRev), ev)
+  _ -> Nothing
+
+-- ---------------------------------------------------------------------------
+-- Body-block parsers
+
+pTypeBlock :: FileParser TypeBlock
+pTypeBlock = do
+  decl <- pTypeDecl
+  vars <- many (try pVarDecl)
+  pEndKw "type"
+  return (TypeBlock decl vars)
+
+pOnBlock :: FileParser OnBlock
+pOnBlock = do
+  s <- satisfyStmt isOnDecl
+  case extractOnParts s of
+    Nothing              -> fail "malformed on-block opener"
+    Just (qual, own, ev) -> do
+      body <- manyTill anyStmt (pEndKw "on")
+      return (OnBlock qual own ev body)
+
+pEventBlock :: FileParser EventBlock
+pEventBlock = do
+  s <- satisfyStmt isEvDecl
+  case extractEvSig s of
+    Nothing  -> fail "malformed event opener"
+    Just sig -> do
+      body <- manyTill anyStmt (pEndKw "event")
+      return (EventBlock sig body)
+
+pFunctionBlock :: FileParser FunctionBlock
+pFunctionBlock = do
+  s <- satisfyStmt isFnDecl
+  case extractFnSig s of
+    Nothing  -> fail "malformed function opener"
+    Just sig -> do
+      body <- manyTill anyStmt (pEndKw "function")
+      return (FunctionBlock sig body)
+
+pSubroutineBlock :: FileParser SubroutineBlock
+pSubroutineBlock = do
+  s <- satisfyStmt isSubDecl
+  case extractSubSig s of
+    Nothing  -> fail "malformed subroutine opener"
+    Just sig -> do
+      body <- manyTill anyStmt (pEndKw "subroutine")
+      return (SubroutineBlock sig body)
+
+-- ---------------------------------------------------------------------------
 -- Top-level entry point
 
 parseSrFile :: [Text] -> [Statement] -> Either Text SrFile
-parseSrFile headers stmts = case parse pFile "" (StmtStream stmts) of
-  Right f  -> Right f
+parseSrFile headers stmts = case parse pSrFile "" (StmtStream stmts) of
+  Right f  -> Right (f { srHeaders = headers })
   Left err -> Left (T.pack (errorBundlePretty err))
-  where
-    pFile = do
-      fwd   <- optional (try pForwardBlock)
-      proto <- optional (try pPrototypesBlock)
-      vars  <- optional (try pVariablesBlock)
-      eof
-      return SrFile
-        { srHeaders     = headers
-        , srForward     = fwd
-        , srPrototypes  = proto
-        , srVariables   = vars
-        , srTypeBlocks  = []
-        , srOnBlocks    = []
-        , srEvents      = []
-        , srFunctions   = []
-        , srSubroutines = []
-        }
+
+pSrFile :: FileParser SrFile
+pSrFile = do
+  fwd   <- optional (try pForwardBlock)
+  proto <- optional (try pPrototypesBlock)
+  vars  <- optional (try pVariablesBlock)
+  types <- many (try pTypeBlock)
+  ons   <- many (try pOnBlock)
+  evts  <- many (try pEventBlock)
+  fns   <- many (try pFunctionBlock)
+  subs  <- many (try pSubroutineBlock)
+  eof
+  return SrFile
+    { srHeaders     = []
+    , srForward     = fwd
+    , srPrototypes  = proto
+    , srVariables   = vars
+    , srTypeBlocks  = types
+    , srOnBlocks    = ons
+    , srEvents      = evts
+    , srFunctions   = fns
+    , srSubroutines = subs
+    }

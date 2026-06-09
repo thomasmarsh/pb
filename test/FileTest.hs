@@ -1,9 +1,18 @@
 module FileTest (tests) where
 
 import PB.Prelude
-import PB.Grammar.File        (pForwardBlock, pPrototypesBlock, pVariablesBlock, pTypeDecl, pVarDecl)
+import PB.Grammar.File        ( pForwardBlock, pPrototypesBlock, pVariablesBlock, pTypeDecl, pVarDecl
+                              , pTypeBlock, pOnBlock, pEventBlock, pFunctionBlock, pSubroutineBlock
+                              , parseSrFile
+                              )
 import PB.Grammar.Stream      (FileParser, StmtStream (..))
-import PB.AST.Object          (ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..), TypeDecl (..), VariablesBlock (..), VarScope (..), VarDecl (..), FnSig (..), SubSig (..))
+import PB.AST.Object          ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
+                              , TypeDecl (..), TypeBlock (..)
+                              , VariablesBlock (..), VarScope (..), VarDecl (..)
+                              , FnSig (..), SubSig (..), EventSig (..)
+                              , FunctionBlock (..), SubroutineBlock (..), EventBlock (..), OnBlock (..)
+                              , SrFile (..)
+                              )
 import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
@@ -281,6 +290,267 @@ tests = testGroup "Grammar.File"
           Left _  -> pure ()
           Right _ -> assertFailure "expected parse failure when 'from' keyword is missing"
     ]
+
+  , testGroup "pTypeBlock"
+    [ testCase "positive: type Name from Ancestor, empty body" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "w_foo"), (TkDeclKw, "from"), (TkIdent, "window")]
+              , mkStmt [(TkDeclKw, "end type")]
+              ]
+        runSection pTypeBlock stmts @?=
+          Right (TypeBlock (TypeDecl "w_foo" "window" Nothing) [])
+
+    , testCase "positive: type Name from Ancestor within Container" $ do
+        let stmts =
+              [ mkStmt [ (TkDeclKw, "type"), (TkIdent, "w_sub"), (TkDeclKw, "from")
+                       , (TkIdent, "window"), (TkDeclKw, "within"), (TkIdent, "w_main")
+                       ]
+              , mkStmt [(TkDeclKw, "end type")]
+              ]
+        runSection pTypeBlock stmts @?=
+          Right (TypeBlock (TypeDecl "w_sub" "window" (Just "w_main")) [])
+
+    , testCase "positive: type block with VarDecls" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "w_foo"), (TkDeclKw, "from"), (TkIdent, "window")]
+              , mkStmt [(TkDatatype, "integer"), (TkIdent, "i_count")]
+              , mkStmt [(TkDatatype, "string"),  (TkIdent, "s_name")]
+              , mkStmt [(TkDeclKw, "end type")]
+              ]
+        runSection pTypeBlock stmts @?=
+          Right (TypeBlock (TypeDecl "w_foo" "window" Nothing)
+                           [VarDecl [] "integer" "i_count", VarDecl [] "string" "s_name"])
+
+    , testCase "negative: missing end type" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "w_foo"), (TkDeclKw, "from"), (TkIdent, "window")]
+              ]
+        case runSection pTypeBlock stmts of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected parse failure when 'end type' is missing"
+
+    , testProperty "tbAncestor always non-empty" prop_typeBlock_ancestor_nonempty
+    ]
+
+  , testGroup "pOnBlock"
+    [ testCase "positive: on w_main.create" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "on"), (TkIdent, "w_main"), (TkDot, "."), (TkIdent, "create")]
+              , mkStmt [(TkDeclKw, "end on")]
+              ]
+        runSection pOnBlock stmts @?=
+          Right (OnBlock "w_main.create" "w_main" "create" [])
+
+    , testCase "positive: on w_main.destroy, body with statements" $ do
+        let bodyStmt = mkStmt [(TkIdent, "i"), (TkAssignOp, "="), (TkIntLiteral, "0")]
+            stmts =
+              [ mkStmt [(TkDeclKw, "on"), (TkIdent, "w_main"), (TkDot, "."), (TkIdent, "destroy")]
+              , bodyStmt
+              , mkStmt [(TkDeclKw, "end on")]
+              ]
+        runSection pOnBlock stmts @?=
+          Right (OnBlock "w_main.destroy" "w_main" "destroy" [bodyStmt])
+
+    , testCase "negative: on with no dot (single-segment name)" $ do
+        let stmts = [mkStmt [(TkDeclKw, "on"), (TkIdent, "w_main")]]
+        case runSection pOnBlock stmts of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected parse failure when on has no dot"
+
+    , testCase "negative: missing end on" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "on"), (TkIdent, "w_main"), (TkDot, "."), (TkIdent, "create")]
+              ]
+        case runSection pOnBlock stmts of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected parse failure when 'end on' is missing"
+
+    , testProperty "obOwner and obEvent non-empty" prop_onBlock_parts_nonempty
+    ]
+
+  , testGroup "pEventBlock"
+    [ testCase "positive: event ue_custom" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "event"), (TkIdent, "ue_custom")]
+              , mkStmt [(TkDeclKw, "end event")]
+              ]
+        runSection pEventBlock stmts @?=
+          Right (EventBlock (EventSig "ue_custom" "") [])
+
+    , testCase "positive: event with params" $ do
+        let stmts =
+              [ mkStmt [ (TkDeclKw, "event"), (TkIdent, "ue_custom")
+                       , (TkLParen, "("), (TkDatatype, "integer"), (TkIdent, "al_value"), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end event")]
+              ]
+        runSection pEventBlock stmts @?=
+          Right (EventBlock (EventSig "ue_custom" "( integer al_value )") [])
+
+    , testCase "negative: missing end event" $ do
+        let stmts = [mkStmt [(TkDeclKw, "event"), (TkIdent, "ue_custom")]]
+        case runSection pEventBlock stmts of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected parse failure when 'end event' is missing"
+    ]
+
+  , testGroup "pFunctionBlock"
+    [ testCase "positive: public function integer f_compute()" $ do
+        let stmts =
+              [ mkStmt [ (TkAccessModifier, "public"), (TkDeclKw, "function")
+                       , (TkDatatype, "integer"), (TkIdent, "f_compute")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end function")]
+              ]
+        runSection pFunctionBlock stmts @?=
+          Right (FunctionBlock (FnSig ["public"] "integer" "f_compute" "" Nothing) [])
+
+    , testCase "positive: private function string f_name() throws SomeError" $ do
+        let stmts =
+              [ mkStmt [ (TkAccessModifier, "private"), (TkDeclKw, "function")
+                       , (TkDatatype, "string"), (TkIdent, "f_name")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       , (TkDeclKw, "throws"), (TkIdent, "SomeError")
+                       ]
+              , mkStmt [(TkDeclKw, "end function")]
+              ]
+        runSection pFunctionBlock stmts @?=
+          Right (FunctionBlock (FnSig ["private"] "string" "f_name" "" (Just "SomeError")) [])
+
+    , testCase "positive: body with nested if statements" $ do
+        let ifStmt    = mkStmt [(TkControlKw, "if")]
+            endIfStmt = mkStmt [(TkControlKw, "end if")]
+            stmts =
+              [ mkStmt [ (TkDeclKw, "function"), (TkDatatype, "integer"), (TkIdent, "f_nested")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              , ifStmt
+              , endIfStmt
+              , mkStmt [(TkDeclKw, "end function")]
+              ]
+        runSection pFunctionBlock stmts @?=
+          Right (FunctionBlock (FnSig [] "integer" "f_nested" "" Nothing) [ifStmt, endIfStmt])
+
+    , testCase "negative: missing end function" $ do
+        let stmts =
+              [ mkStmt [ (TkDeclKw, "function"), (TkDatatype, "integer"), (TkIdent, "f_compute")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              ]
+        case runSection pFunctionBlock stmts of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected parse failure when 'end function' is missing"
+
+    , testCase "negative: external function not parsed as body block" $ do
+        let stmts =
+              [ mkStmt [ (TkDeclKw, "external"), (TkDeclKw, "function")
+                       , (TkDatatype, "integer"), (TkIdent, "getCount")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              ]
+        case runSection pFunctionBlock stmts of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected parse failure: external function has no body"
+
+    , testProperty "fnsName non-empty" prop_fnBlock_name_nonempty
+    ]
+
+  , testGroup "pSubroutineBlock"
+    [ testCase "positive: subroutine of_setup()" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "subroutine"), (TkIdent, "of_setup"), (TkLParen, "("), (TkRParen, ")")]
+              , mkStmt [(TkDeclKw, "end subroutine")]
+              ]
+        runSection pSubroutineBlock stmts @?=
+          Right (SubroutineBlock (SubSig [] "of_setup" "" Nothing) [])
+
+    , testCase "negative: missing end subroutine" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "subroutine"), (TkIdent, "of_setup"), (TkLParen, "("), (TkRParen, ")")]
+              ]
+        case runSection pSubroutineBlock stmts of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected parse failure when 'end subroutine' is missing"
+
+    , testProperty "ssName non-empty" prop_subBlock_name_nonempty
+    ]
+
+  , testGroup "parseSrFile (integration)"
+    [ testCase "empty file" $
+        parseSrFile [] [] @?=
+          Right (SrFile [] Nothing Nothing Nothing [] [] [] [] [])
+
+    , testCase "header + forward block + one function" $ do
+        let headers = ["$PBExportHeader$foo.srf"]
+            stmts =
+              [ mkStmt [(TkDeclKw, "forward")]
+              , mkStmt [(TkDeclKw, "end forward")]
+              , mkStmt [ (TkDeclKw, "function"), (TkDatatype, "integer"), (TkIdent, "f_run")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end function")]
+              ]
+        parseSrFile headers stmts @?=
+          Right SrFile
+            { srHeaders     = headers
+            , srForward     = Just (ForwardBlock [])
+            , srPrototypes  = Nothing
+            , srVariables   = Nothing
+            , srTypeBlocks  = []
+            , srOnBlocks    = []
+            , srEvents      = []
+            , srFunctions   = [FunctionBlock (FnSig [] "integer" "f_run" "" Nothing) []]
+            , srSubroutines = []
+            }
+
+    , testCase "multiple functions in sequence" $ do
+        let stmts =
+              [ mkStmt [ (TkDeclKw, "function"), (TkDatatype, "integer"), (TkIdent, "f_one")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end function")]
+              , mkStmt [ (TkDeclKw, "function"), (TkDatatype, "string"), (TkIdent, "f_two")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end function")]
+              ]
+        parseSrFile [] stmts @?=
+          Right SrFile
+            { srHeaders     = []
+            , srForward     = Nothing
+            , srPrototypes  = Nothing
+            , srVariables   = Nothing
+            , srTypeBlocks  = []
+            , srOnBlocks    = []
+            , srEvents      = []
+            , srFunctions   =
+                [ FunctionBlock (FnSig [] "integer" "f_one" "" Nothing) []
+                , FunctionBlock (FnSig [] "string"  "f_two" "" Nothing) []
+                ]
+            , srSubroutines = []
+            }
+
+    , testCase "real-world snippet: global type + on block" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "w_main"), (TkDeclKw, "from"), (TkIdent, "window")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "on"), (TkIdent, "w_main"), (TkDot, "."), (TkIdent, "create")]
+              , mkStmt [(TkDeclKw, "end on")]
+              ]
+        parseSrFile [] stmts @?=
+          Right SrFile
+            { srHeaders     = []
+            , srForward     = Nothing
+            , srPrototypes  = Nothing
+            , srVariables   = Nothing
+            , srTypeBlocks  = [TypeBlock (TypeDecl "w_main" "window" Nothing) []]
+            , srOnBlocks    = [OnBlock "w_main.create" "w_main" "create" []]
+            , srEvents      = []
+            , srFunctions   = []
+            , srSubroutines = []
+            }
+    ]
   ]
 
 -- ---------------------------------------------------------------------------
@@ -310,4 +580,54 @@ prop_typeDecl_names_nonempty = property $ do
         ]
   case runSection pTypeDecl [stmt] of
     Right td -> assert (not (T.null (tdName td)))
+    Left _   -> pure ()
+
+prop_typeBlock_ancestor_nonempty :: Property
+prop_typeBlock_ancestor_nonempty = property $ do
+  name <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+  anc  <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+  let stmts =
+        [ mkStmt [(TkDeclKw, "type"), (TkIdent, name), (TkDeclKw, "from"), (TkIdent, anc)]
+        , mkStmt [(TkDeclKw, "end type")]
+        ]
+  case runSection pTypeBlock stmts of
+    Right tb -> assert (not (T.null (tdAncestor (tbDecl tb))))
+    Left _   -> pure ()
+
+prop_onBlock_parts_nonempty :: Property
+prop_onBlock_parts_nonempty = property $ do
+  owner <- forAll $ Gen.text (Range.linear 1 10) Gen.alphaNum
+  event <- forAll $ Gen.text (Range.linear 1 10) Gen.alphaNum
+  let stmts =
+        [ mkStmt [(TkDeclKw, "on"), (TkIdent, owner), (TkDot, "."), (TkIdent, event)]
+        , mkStmt [(TkDeclKw, "end on")]
+        ]
+  case runSection pOnBlock stmts of
+    Right ob -> do
+      assert (not (T.null (obOwner ob)))
+      assert (not (T.null (obEvent ob)))
+    Left _ -> pure ()
+
+prop_fnBlock_name_nonempty :: Property
+prop_fnBlock_name_nonempty = property $ do
+  name <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+  let stmts =
+        [ mkStmt [ (TkDeclKw, "function"), (TkDatatype, "integer"), (TkIdent, name)
+                 , (TkLParen, "("), (TkRParen, ")")
+                 ]
+        , mkStmt [(TkDeclKw, "end function")]
+        ]
+  case runSection pFunctionBlock stmts of
+    Right fb -> assert (not (T.null (fnsName (fbSig fb))))
+    Left _   -> pure ()
+
+prop_subBlock_name_nonempty :: Property
+prop_subBlock_name_nonempty = property $ do
+  name <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+  let stmts =
+        [ mkStmt [(TkDeclKw, "subroutine"), (TkIdent, name), (TkLParen, "("), (TkRParen, ")")]
+        , mkStmt [(TkDeclKw, "end subroutine")]
+        ]
+  case runSection pSubroutineBlock stmts of
+    Right sb -> assert (not (T.null (ssName (sbSig sb))))
     Left _   -> pure ()
