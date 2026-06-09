@@ -440,11 +440,45 @@ tests = testGroup "Grammar.File"
         runSection pOnBlock stmts @?=
           Right (OnBlock "w_main.destroy" "w_main" "destroy" [bodyStmt])
 
-    , testCase "negative: on with no dot (single-segment name)" $ do
-        let stmts = [mkStmt [(TkDeclKw, "on"), (TkIdent, "w_main")]]
+    , testCase "positive: bare on modified (ident event name)" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "on"), (TkIdent, "modified")]
+              , mkStmt [(TkDeclKw, "end on")]
+              ]
+        runSection pOnBlock stmts @?=
+          Right (OnBlock "modified" "" "modified" [])
+
+    , testCase "positive: bare on close (OtherKw event name)" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "on"), (TkOtherKw, "close")]
+              , mkStmt [(TkDeclKw, "end on")]
+              ]
+        runSection pOnBlock stmts @?=
+          Right (OnBlock "close" "" "close" [])
+
+    , testCase "positive: bare on char (Datatype event name)" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "on"), (TkDatatype, "char")]
+              , mkStmt [(TkDeclKw, "end on")]
+              ]
+        runSection pOnBlock stmts @?=
+          Right (OnBlock "char" "" "char" [])
+
+    , testCase "positive: bare on ue_keypress with body" $ do
+        let bodyStmt = mkStmt [(TkIdent, "call"), (TkIdent, "super")]
+            stmts =
+              [ mkStmt [(TkDeclKw, "on"), (TkIdent, "ue_keypress")]
+              , bodyStmt
+              , mkStmt [(TkDeclKw, "end on")]
+              ]
+        runSection pOnBlock stmts @?=
+          Right (OnBlock "ue_keypress" "" "ue_keypress" [bodyStmt])
+
+    , testCase "negative: on alone (no event name)" $ do
+        let stmts = [mkStmt [(TkDeclKw, "on")]]
         case runSection pOnBlock stmts of
           Left _  -> pure ()
-          Right _ -> assertFailure "expected parse failure when on has no dot"
+          Right _ -> assertFailure "expected parse failure when on has no event name"
 
     , testCase "negative: missing end on" $ do
         let stmts =
@@ -454,7 +488,7 @@ tests = testGroup "Grammar.File"
           Left _  -> pure ()
           Right _ -> assertFailure "expected parse failure when 'end on' is missing"
 
-    , testProperty "obOwner and obEvent non-empty" prop_onBlock_parts_nonempty
+    , testProperty "obEvent non-empty" prop_onBlock_event_nonempty
     ]
 
   , testGroup "pEventBlock"
@@ -849,8 +883,8 @@ prop_typeBlock_ancestor_nonempty = property $ do
     Right tb -> assert (not (T.null (tdAncestor (tbDecl tb))))
     Left _   -> pure ()
 
-prop_onBlock_parts_nonempty :: Property
-prop_onBlock_parts_nonempty = property $ do
+prop_onBlock_event_nonempty :: Property
+prop_onBlock_event_nonempty = property $ do
   owner <- forAll $ Gen.text (Range.linear 1 10) Gen.alphaNum
   event <- forAll $ Gen.text (Range.linear 1 10) Gen.alphaNum
   let stmts =
@@ -858,10 +892,8 @@ prop_onBlock_parts_nonempty = property $ do
         , mkStmt [(TkDeclKw, "end on")]
         ]
   case runSection pOnBlock stmts of
-    Right ob -> do
-      assert (not (T.null (obOwner ob)))
-      assert (not (T.null (obEvent ob)))
-    Left _ -> pure ()
+    Right ob -> assert (not (T.null (obEvent ob)))
+    Left _   -> pure ()
 
 prop_fnBlock_name_nonempty :: Property
 prop_fnBlock_name_nonempty = property $ do

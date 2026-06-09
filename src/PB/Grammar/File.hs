@@ -250,18 +250,22 @@ anyStmt = satisfyStmt (const True)
 
 isOnDecl :: Statement -> Bool
 isOnDecl s = case stmtTokens s of
-  (t:rest) -> T.toLower (tkText t) == "on" && any (\tok -> tkKind tok == TkDot) rest
-  _        -> False
+  (t:t2:_) -> T.toLower (tkText t) == "on"
+              && tkKind t2 `elem` [ TkIdent, TkDeclKw, TkControlKw, TkOtherKw
+                                  , TkDatatype, TkAccessModifier, TkStorageModifier
+                                  , TkBoolTrue, TkBoolFalse ]
+  _         -> False
 
 extractOnParts :: Statement -> Maybe (Text, Text, Text)
 extractOnParts s = case stmtTokens s of
   (_:rest) ->
-    let idents   = [tkText t | t <- rest, tkKind t /= TkDot]
-        qualName = T.intercalate "." idents
-    in case reverse idents of
+    let idents = [tkText t | t <- rest, tkKind t /= TkDot]
+    in case idents of
       []            -> Nothing
-      [_]           -> Nothing
-      (ev:ownerRev) -> Just (qualName, T.intercalate "." (reverse ownerRev), ev)
+      [ev]          -> Just (ev, "", ev)
+      _             -> case reverse idents of
+        []            -> Nothing
+        (ev:ownerRev) -> Just (T.intercalate "." idents, T.intercalate "." (reverse ownerRev), ev)
   _ -> Nothing
 
 -- ---------------------------------------------------------------------------
