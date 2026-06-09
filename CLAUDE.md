@@ -284,7 +284,17 @@ leadingKind  :: TokenKind -> FileParser Statement
 leadingText  :: Text -> FileParser Statement
 ```
 
-All other modules are currently stubs (`PB.Lexing.*`, `PB.Pipeline.Sentinel`, `PB.Pipeline.WalkTree`, `PB.AST.Library`, `PB.AST.Script`, `PB.AST.Statement`, `PB.AST.Types`, `PB.AST.Workspace`).
+### `PB.Pipeline.Runner`
+
+```haskell
+runFile           :: FilePath -> Text -> Either Text Value
+collectStatements :: [LexLine] -> Either Text [Statement]
+-- runFile dispatches on extension: .srd → runDataWindow (stub), _ → runPowerScript
+-- runPowerScript: normalizeText → stripHeaders → tokenize → collectStatements → parseSrFile → encodeSrFile
+-- collectStatements filters empty-token statements and surfaces the first LexError as Left Text
+```
+
+All other modules are currently stubs (`PB.Pipeline.Sentinel`, `PB.Pipeline.WalkTree`, `PB.AST.Library`, `PB.AST.Script`, `PB.AST.Statement`, `PB.AST.Types`, `PB.AST.Workspace`).
 
 ---
 

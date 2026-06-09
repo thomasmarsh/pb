@@ -568,21 +568,34 @@ Inside a SQL region, `:identifier` (colon prefix) is a PowerScript host variable
 
 DataWindow files are completely different from PowerScript. Do not run them through the PowerScript lexer.
 
+**Corpus facts (262 `.srd` files, 2025-06-09):** control types seen: `text` (526×), `column` (453×), `compute` (228×), `line` (27×), `report` (17×), `groupbox` (11×), `button` (5×), `bitmap` (5×), `htmltable`, `htmlgen`. Top-level structural keywords: `datawindow`, `table`, `header`, `detail`, `footer`, `summary`, `htmltable`, `htmlgen`.
+
 ### 7.1 Overall Structure
 
-A `.srd` file is a sequence of **attribute blocks** at the top level:
+After the standard `HA$PBExportHeader$` and `$PBExportComments$` header lines (§2.11),
+a `.srd` file begins with a **release line**, then a sequence of **attribute blocks**:
 
 ```
+release 9;
 datawindow(attr=val attr="val" ...)
 table(...)
 header(...)
-detail(...)
-footer(...)
 summary(...)
-<controltype>(...)
+footer(...)
+detail(...)
+htmltable(...)
+htmlgen(...)
+<controltype>(band=<band> ...)
 ```
 
-Each block is a keyword followed by parenthesis-balanced content. Blocks may span multiple lines.
+The `release` line declares the DataWindow format version. Observed values: `9`.
+
+Each block is a keyword followed by parenthesis-balanced content. Blocks may span
+multiple lines. The parser must use depth counting, not line scanning.
+
+**Structural keyword disambiguation:** `column` appears both as a top-level control
+block (has `band=` attribute) and as a sub-block attribute inside `table(...)` using
+`column=(...)` notation (the `=` makes it an attribute-with-block-value, not a keyword).
 
 ### 7.2 Attribute Value Syntax
 
@@ -591,17 +604,50 @@ Two value forms:
 - **Unquoted:** `attr=value` — value runs until whitespace or `)` at depth 0.
 - **Quoted:** `attr="value"` — value runs until unescaped `"`. Inside quoted values, `~"` is the escape for a literal `"`.
 
+A third form used only inside `table(...)`:
+
+- **Sub-block:** `attr=(...)` — value is a nested paren-balanced block. Used for
+  `column=(...)` and `arguments=(...)`. The content follows the same attribute syntax
+  recursively.
+
 ### 7.3 `table(...)` Block
 
-Contains:
+Contains column sub-blocks, a retrieve query, and optional argument declarations:
 
 ```
-column=(type=<pbtype> name=<ident> dbname="<table.col>" [update=yes] [dddw.name=<ident>] ...)
-retrieve="<SQL string>"
-arguments=("argname", argtype)
+table(
+  column=(type=<pbtype> updatewhereclause=yes name=<ident> dbname="<table.col>"
+          [update=yes] [dddw.name=<ident>] ...)
+  column=(...)
+  retrieve="<SQL string>"
+  arguments=(("argname", argtype) ...)
+)
 ```
 
-Multiple `column=(...)` sub-blocks allowed. The `retrieve` value is the full SQL SELECT statement.
+`column=()` uses the sub-block `attr=(...)` form — not a top-level control block.
+Multiple `column=(...)` entries are allowed. The `retrieve` value is the full SQL
+SELECT statement, which may use `PBSELECT(...)` DSL syntax or plain SQL.
+
+#### PBSELECT DSL
+
+The PowerBuilder visual query builder emits a `PBSELECT(...)` expression instead of
+plain SQL for queries built via the IDE. Key elements:
+
+```
+retrieve="PBSELECT(
+  VERSION(400)
+  TABLE(NAME=~"tablename~")
+  COLUMN(NAME=~"table.col~")
+  JOIN(LEFT=~"t1.col~" OP=~"=~" RIGHT=~"t2.col~" [OUTER1=~"t1.col~"])
+  WHERE(EXP1=~"(col~" OP=~"=~" EXP2=~":arg )~")
+)
+ARG(NAME=~"argname~" TYPE=string)"
+```
+
+`~"` inside the quoted retrieve string escapes a literal `"`. `ARG(...)` within the
+retrieve string is part of the PBSELECT DSL, distinct from the top-level
+`arguments=(...)` attribute (both may be present simultaneously — they carry the same
+information in different formats for backwards compatibility).
 
 ### 7.4 Band Blocks
 
@@ -609,24 +655,39 @@ Multiple `column=(...)` sub-blocks allowed. The `retrieve` value is the full SQL
 BandName ::= header | detail | footer | summary
 ```
 
-Each band block is `bandname(...)`.
+Each band block is `bandname(height=N color="N" ...)`.
 
 ### 7.5 Control Blocks
 
-Any word that is not a band name, `datawindow`, `table`, or `report` and is followed by `(` is a control block:
+Any word that is not a band name, `datawindow`, `table`, `htmltable`, `htmlgen`, or
+`report` and is followed by `(` at the top level is a control block. Control blocks
+carry a `band=<bandname>` attribute identifying which band they belong to.
 
-```
-text(band=detail x=0 y=0 ... expression="..." ...)
-column(band=detail name=cust_name ... )
-compute(...)
-graph(...)
-```
+**Corpus-observed control types:**
 
-Key attributes: `name`, `band`, `id`, `x`, `y`, `width`, `height`.
+| Type       | Description                       |
+|------------|-----------------------------------|
+| `text`     | Static label or computed text     |
+| `column`   | Data-bound column (with `band=`)  |
+| `compute`  | Computed field                    |
+| `line`     | Horizontal or vertical rule       |
+| `report`   | Nested sub-report DataWindow      |
+| `groupbox` | Visual group box                  |
+| `button`   | Push button                       |
+| `bitmap`   | Image/bitmap                      |
+
+Key attributes present on most controls: `name`, `band`, `id`, `x`, `y`, `width`,
+`height`, `visible`, `expression`.
+
+**Disambiguation:** `column(band=detail ...)` (top-level control) vs.
+`column=(type=char ...)` (sub-block inside `table`). The presence of `=` immediately
+after the keyword is the distinguishing token.
 
 ### 7.6 Expression Values
 
-Inside attribute `expression="..."` the value is a DataWindow expression. Other attributes may have the form `"staticvalue~tdynexpr"` where `~t` separates a static display value (before) from a dynamic expression (after).
+Inside attribute `expression="..."` the value is a DataWindow expression. Other
+attributes may have the form `"staticvalue~tdynexpr"` where `~t` separates a static
+display value (before) from a dynamic expression (after).
 
 ### 7.7 `report(...)` Block
 
@@ -634,15 +695,19 @@ Nested DataWindow (sub-report). Key attribute: `dataobject="dw_name"`.
 
 ### 7.8 Retrieve Arguments
 
-Two formats:
+Two formats, often both present in the same file:
 
 ```
--- Format 1: arguments clause inside table(...)
-arguments=("argname", argtype)
+-- Format 1: top-level arguments attribute inside table(...)
+arguments=(("argname", argtype) ...)
 
--- Format 2: ARG blocks (older format)
-ARG(NAME="argname" TYPE=argtype)
+-- Format 2: ARG blocks embedded at the end of the retrieve string (PBSELECT DSL)
+ARG(NAME=~"argname~" TYPE=argtype)
 ```
+
+Format 1 is the canonical form. Format 2 appears inside the `retrieve="..."` value
+when PBSELECT DSL is used. Treat them as redundant — parse both and reconcile if
+they differ.
 
 ### 7.9 Parsing Strategy
 
@@ -653,6 +718,22 @@ extractParenthesizedBlock :: [Text] -> Int -> (Text, Int)
 -- returns (blockContent, endLineIndex)
 -- tracks depth; enters at '(' on startLine, exits when depth returns to 0
 ```
+
+**Top-level parse loop:**
+
+1. Skip the `release N;` line.
+2. Read the block keyword (up to `(`).
+3. If keyword is `column` and the next non-whitespace char is `=`, this is a
+   `table` sub-block attribute, not a top-level control. (This case only arises
+   inside `table(...)` content — the top-level loop will never see a bare
+   `column=(...)` because it is always consumed as part of `table(...)` content.)
+4. Call `extractParenthesizedBlock` to collect the block body.
+5. Dispatch to the appropriate attribute extractor by keyword.
+
+**Quote handling inside quoted attribute values:** when scanning for the closing `"`,
+the sequence `~"` is not a close — skip both characters and continue. The `~"` escape
+is the only relevant escape inside DataWindow quoted values (unlike PowerScript which
+has a full `~x` escape set).
 
 ---
 
