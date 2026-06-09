@@ -69,17 +69,18 @@ collectStatements lexLines =
 
 encodeSrFile :: FilePath -> SrFile -> Value
 encodeSrFile path sf = object
-  [ "file"        .= path
-  , "kind"        .= ("powerscript" :: Text)
-  , "headers"     .= srHeaders sf
-  , "forward"     .= fmap encodeForwardBlock (srForward sf)
-  , "prototypes"  .= fmap encodePrototypesBlock (srPrototypes sf)
-  , "variables"   .= fmap encodeVariablesBlock (srVariables sf)
-  , "typeBlocks"  .= map encodeTypeBlock (srTypeBlocks sf)
-  , "onBlocks"    .= map encodeOnBlock (srOnBlocks sf)
-  , "events"      .= map encodeEventBlock (srEvents sf)
-  , "functions"   .= map encodeFunctionBlock (srFunctions sf)
-  , "subroutines" .= map encodeSubroutineBlock (srSubroutines sf)
+  [ "file"            .= path
+  , "kind"            .= ("powerscript" :: Text)
+  , "headers"         .= srHeaders sf
+  , "forward"         .= fmap encodeForwardBlock (srForward sf)
+  , "prototypes"      .= fmap encodePrototypesBlock (srPrototypes sf)
+  , "variables"       .= fmap encodeVariablesBlock (srVariables sf)
+  , "globalInstances" .= map encodeGlobalInstance (srGlobalInstances sf)
+  , "typeBlocks"      .= map encodeTypeBlock (srTypeBlocks sf)
+  , "onBlocks"        .= map encodeOnBlock (srOnBlocks sf)
+  , "events"          .= map encodeEventBlock (srEvents sf)
+  , "functions"       .= map encodeFunctionBlock (srFunctions sf)
+  , "subroutines"     .= map encodeSubroutineBlock (srSubroutines sf)
   ]
 
 encodeForwardBlock :: ForwardBlock -> Value
@@ -118,6 +119,12 @@ encodeVarDecl vd = object
   [ "modifiers" .= vdModifiers vd
   , "type"      .= vdType vd
   , "name"      .= vdName vd
+  ]
+
+encodeGlobalInstance :: GlobalInstance -> Value
+encodeGlobalInstance gi = object
+  [ "type" .= giType gi
+  , "name" .= giName gi
   ]
 
 encodeProtoDecl :: ProtoDecl -> Value

@@ -364,6 +364,12 @@ end prototypes]
   [variable declarations]*
 end variables]
 
+[global TypeName InstanceName]
+// Singleton instance declaration: one statement, no block delimiters.
+// Appears after the forward block (and before the variables block) in .sru files.
+// The type name is always a user-defined identifier (TkIdent), never a primitive.
+// Example: global u_range_checker u_range_checker
+
 [global type Name from Ancestor
   ...
 end type]

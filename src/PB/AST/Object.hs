@@ -8,6 +8,7 @@ module PB.AST.Object
   , TypeDecl (..)
   , TypeBlock (..)
   , VarDecl (..)
+  , GlobalInstance (..)
   , FnSig (..)
   , SubSig (..)
   , EventSig (..)
@@ -21,15 +22,16 @@ import PB.Prelude
 import PB.Lexing.Splitter (Statement)
 
 data SrFile = SrFile
-  { srHeaders     :: [Text]
-  , srForward     :: Maybe ForwardBlock
-  , srPrototypes  :: Maybe PrototypesBlock
-  , srVariables   :: Maybe VariablesBlock
-  , srTypeBlocks  :: [TypeBlock]
-  , srOnBlocks    :: [OnBlock]
-  , srEvents      :: [EventBlock]
-  , srFunctions   :: [FunctionBlock]
-  , srSubroutines :: [SubroutineBlock]
+  { srHeaders         :: [Text]
+  , srForward         :: Maybe ForwardBlock
+  , srPrototypes      :: Maybe PrototypesBlock
+  , srVariables       :: Maybe VariablesBlock
+  , srGlobalInstances :: [GlobalInstance]
+  , srTypeBlocks      :: [TypeBlock]
+  , srOnBlocks        :: [OnBlock]
+  , srEvents          :: [EventBlock]
+  , srFunctions       :: [FunctionBlock]
+  , srSubroutines     :: [SubroutineBlock]
   } deriving (Eq, Show)
 
 data ForwardBlock = ForwardBlock
@@ -69,6 +71,11 @@ data VarDecl = VarDecl
   { vdModifiers :: [Text]
   , vdType      :: Text
   , vdName      :: Text
+  } deriving (Eq, Show)
+
+data GlobalInstance = GlobalInstance
+  { giType :: Text
+  , giName :: Text
   } deriving (Eq, Show)
 
 data FnSig = FnSig

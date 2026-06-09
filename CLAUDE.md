@@ -275,15 +275,16 @@ data LogicalLine = LogicalLine
 
 ```haskell
 data SrFile = SrFile
-  { srHeaders     :: [Text]
-  , srForward     :: Maybe ForwardBlock
-  , srPrototypes  :: Maybe PrototypesBlock
-  , srVariables   :: Maybe VariablesBlock
-  , srTypeBlocks  :: [TypeBlock]
-  , srOnBlocks    :: [OnBlock]
-  , srEvents      :: [EventBlock]
-  , srFunctions   :: [FunctionBlock]
-  , srSubroutines :: [SubroutineBlock]
+  { srHeaders         :: [Text]
+  , srForward         :: Maybe ForwardBlock
+  , srPrototypes      :: Maybe PrototypesBlock
+  , srVariables       :: Maybe VariablesBlock
+  , srGlobalInstances :: [GlobalInstance]
+  , srTypeBlocks      :: [TypeBlock]
+  , srOnBlocks        :: [OnBlock]
+  , srEvents          :: [EventBlock]
+  , srFunctions       :: [FunctionBlock]
+  , srSubroutines     :: [SubroutineBlock]
   }
 
 data ForwardBlock    = ForwardBlock    { fwdTypes   :: [TypeDecl] }
@@ -296,6 +297,7 @@ data VarScope       = GlobalVars | TypeVars
 data TypeDecl = TypeDecl { tdName :: Text, tdAncestor :: Text, tdWithin :: Maybe Text }
 data TypeBlock = TypeBlock { tbDecl :: TypeDecl, tbVarDecls :: [VarDecl] }
 data VarDecl   = VarDecl  { vdModifiers :: [Text], vdType :: Text, vdName :: Text }
+data GlobalInstance = GlobalInstance { giType :: Text, giName :: Text }
 
 data FnSig  = FnSig  { fnsMods :: [Text], fnsRetType :: Text, fnsName :: Text, fnsParams :: Text, fnsThrows :: Maybe Text }
 data SubSig = SubSig { ssMods  :: [Text], ssName :: Text, ssParams :: Text, ssThrows :: Maybe Text }
@@ -314,6 +316,7 @@ parseSrFile      :: [Text] -> [Statement] -> Either Text SrFile
 pForwardBlock    :: FileParser ForwardBlock
 pPrototypesBlock :: FileParser PrototypesBlock
 pVariablesBlock  :: FileParser VariablesBlock
+pGlobalInstance  :: FileParser GlobalInstance
 pTypeDecl        :: FileParser TypeDecl
 pVarDecl         :: FileParser VarDecl
 pProtoDecl       :: FileParser ProtoDecl

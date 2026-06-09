@@ -7,6 +7,7 @@ module PB.Grammar.File
   , pVarDecl
   , pProtoDecl
   , pEndKw
+  , pGlobalInstance
   , pTypeBlock
   , pOnBlock
   , pEventBlock
@@ -20,6 +21,7 @@ import PB.AST.Object
   ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
   , TypeDecl (..), TypeBlock (..)
   , VariablesBlock (..), VarScope (..), VarDecl (..)
+  , GlobalInstance (..)
   , FnSig (..), SubSig (..), EventSig (..)
   , FunctionBlock (..), SubroutineBlock (..), EventBlock (..), OnBlock (..)
   , SrFile (..)
@@ -102,6 +104,23 @@ pVarDecl :: FileParser VarDecl
 pVarDecl = do
   s <- satisfyStmt isVarDecl
   return (buildVarDecl s)
+
+isGlobalInstance :: Statement -> Bool
+isGlobalInstance s = case stmtTokens s of
+  [t0, t1, t2]
+    | T.toLower (tkText t0) == "global"
+    , tkKind t0 == TkAccessModifier
+    , tkKind t1 == TkIdent
+    , tkKind t2 == TkIdent
+    -> True
+  _ -> False
+
+pGlobalInstance :: FileParser GlobalInstance
+pGlobalInstance = do
+  s <- satisfyStmt isGlobalInstance
+  case stmtTokens s of
+    [_, typT, nameT] -> return (GlobalInstance (tkText typT) (tkText nameT))
+    _                -> fail "malformed global instance declaration"
 
 pVariablesBlock :: FileParser VariablesBlock
 pVariablesBlock = do
@@ -295,25 +314,27 @@ pSubroutineBlock = do
 -- Top-level entry point
 
 data TopLevelBlock
-  = TLFwd   ForwardBlock
-  | TLProto PrototypesBlock
-  | TLVars  VariablesBlock
-  | TLType  TypeBlock
-  | TLOn    OnBlock
-  | TLEvent EventBlock
-  | TLFn    FunctionBlock
-  | TLSub   SubroutineBlock
+  = TLFwd        ForwardBlock
+  | TLProto      PrototypesBlock
+  | TLVars       VariablesBlock
+  | TLGlobalInst GlobalInstance
+  | TLType       TypeBlock
+  | TLOn         OnBlock
+  | TLEvent      EventBlock
+  | TLFn         FunctionBlock
+  | TLSub        SubroutineBlock
 
 pAnyTopLevelBlock :: FileParser TopLevelBlock
 pAnyTopLevelBlock =
-      TLFwd   <$> try pForwardBlock
-  <|> TLProto <$> try pPrototypesBlock
-  <|> TLVars  <$> try pVariablesBlock
-  <|> TLType  <$> try pTypeBlock
-  <|> TLOn    <$> try pOnBlock
-  <|> TLEvent <$> try pEventBlock
-  <|> TLFn    <$> try pFunctionBlock
-  <|> TLSub   <$> pSubroutineBlock
+      TLFwd        <$> try pForwardBlock
+  <|> TLProto      <$> try pPrototypesBlock
+  <|> TLVars       <$> try pVariablesBlock
+  <|> TLGlobalInst <$> try pGlobalInstance
+  <|> TLType       <$> try pTypeBlock
+  <|> TLOn         <$> try pOnBlock
+  <|> TLEvent      <$> try pEventBlock
+  <|> TLFn         <$> try pFunctionBlock
+  <|> TLSub        <$> pSubroutineBlock
 
 parseSrFile :: [Text] -> [Statement] -> Either Text SrFile
 parseSrFile headers stmts = case parse pSrFile "" (StmtStream stmts) of
@@ -325,13 +346,14 @@ pSrFile = do
   blocks <- many (try pAnyTopLevelBlock)
   eof
   return SrFile
-    { srHeaders     = []
-    , srForward     = listToMaybe [f | TLFwd   f <- blocks]
-    , srPrototypes  = listToMaybe [p | TLProto p <- blocks]
-    , srVariables   = listToMaybe [v | TLVars  v <- blocks]
-    , srTypeBlocks  = [t | TLType  t <- blocks]
-    , srOnBlocks    = [o | TLOn    o <- blocks]
-    , srEvents      = [e | TLEvent e <- blocks]
-    , srFunctions   = [f | TLFn    f <- blocks]
-    , srSubroutines = [s | TLSub   s <- blocks]
+    { srHeaders         = []
+    , srForward         = listToMaybe [f  | TLFwd        f  <- blocks]
+    , srPrototypes      = listToMaybe [p  | TLProto      p  <- blocks]
+    , srVariables       = listToMaybe [v  | TLVars       v  <- blocks]
+    , srGlobalInstances = [gi | TLGlobalInst gi <- blocks]
+    , srTypeBlocks      = [t  | TLType       t  <- blocks]
+    , srOnBlocks        = [o  | TLOn         o  <- blocks]
+    , srEvents          = [e  | TLEvent      e  <- blocks]
+    , srFunctions       = [f  | TLFn         f  <- blocks]
+    , srSubroutines     = [s  | TLSub        s  <- blocks]
     }

@@ -2,6 +2,7 @@ module FileTest (tests) where
 
 import PB.Prelude
 import PB.Grammar.File        ( pForwardBlock, pPrototypesBlock, pVariablesBlock, pTypeDecl, pVarDecl
+                              , pGlobalInstance
                               , pTypeBlock, pOnBlock, pEventBlock, pFunctionBlock, pSubroutineBlock
                               , parseSrFile
                               )
@@ -9,6 +10,7 @@ import PB.Grammar.Stream      (FileParser, StmtStream (..))
 import PB.AST.Object          ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
                               , TypeDecl (..), TypeBlock (..)
                               , VariablesBlock (..), VarScope (..), VarDecl (..)
+                              , GlobalInstance (..)
                               , FnSig (..), SubSig (..), EventSig (..)
                               , FunctionBlock (..), SubroutineBlock (..), EventBlock (..), OnBlock (..)
                               , SrFile (..)
@@ -163,6 +165,56 @@ tests = testGroup "Grammar.File"
         case runSection pVarDecl [stmt] of
           Left _  -> pure ()
           Right _ -> assertFailure "expected parse failure when keyword is used as type name"
+    ]
+
+  , testGroup "pGlobalInstance"
+    [ testCase "positive: global u_foo u_foo (same type and name)" $ do
+        let stmt = mkStmt
+              [ (TkAccessModifier, "global")
+              , (TkIdent,          "u_foo")
+              , (TkIdent,          "u_foo")
+              ]
+        runSection pGlobalInstance [stmt] @?=
+          Right (GlobalInstance "u_foo" "u_foo")
+
+    , testCase "positive: type name differs from instance name" $ do
+        let stmt = mkStmt
+              [ (TkAccessModifier, "global")
+              , (TkIdent,          "u_base")
+              , (TkIdent,          "u_derived_inst")
+              ]
+        runSection pGlobalInstance [stmt] @?=
+          Right (GlobalInstance "u_base" "u_derived_inst")
+
+    , testCase "negative: global type X from Y is not a global instance" $ do
+        let stmt = mkStmt
+              [ (TkAccessModifier, "global")
+              , (TkDeclKw,         "type")
+              , (TkIdent,          "u_foo")
+              , (TkDeclKw,         "from")
+              , (TkIdent,          "nonvisualobject")
+              ]
+        case runSection pGlobalInstance [stmt] of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected parse failure: global type declaration is not a global instance"
+
+    , testCase "negative: global variables opener is not a global instance" $ do
+        let stmt = mkStmt
+              [ (TkAccessModifier, "global")
+              , (TkDeclKw,         "variables")
+              ]
+        case runSection pGlobalInstance [stmt] of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected parse failure: global variables opener is not a global instance"
+
+    , testCase "negative: bare identifier pair without global is not a global instance" $ do
+        let stmt = mkStmt [(TkIdent, "u_foo"), (TkIdent, "u_foo")]
+        case runSection pGlobalInstance [stmt] of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected parse failure: missing global modifier"
+
+    , testProperty "giType and giName are non-empty after successful parse"
+        prop_globalInstance_nonempty
     ]
 
   , testGroup "pVariablesBlock"
@@ -527,15 +579,16 @@ tests = testGroup "Grammar.File"
               ]
         parseSrFile [] stmts @?=
           Right SrFile
-            { srHeaders     = []
-            , srForward     = Nothing
-            , srPrototypes  = Just (PrototypesBlock [])
-            , srVariables   = Nothing
-            , srTypeBlocks  = [TypeBlock (TypeDecl "n_foo" "nonvisualobject" Nothing) []]
-            , srOnBlocks    = []
-            , srEvents      = []
-            , srFunctions   = [FunctionBlock (FnSig [] "integer" "f_run" "" Nothing) []]
-            , srSubroutines = []
+            { srHeaders         = []
+            , srForward         = Nothing
+            , srPrototypes      = Just (PrototypesBlock [])
+            , srVariables       = Nothing
+            , srGlobalInstances = []
+            , srTypeBlocks      = [TypeBlock (TypeDecl "n_foo" "nonvisualobject" Nothing) []]
+            , srOnBlocks        = []
+            , srEvents          = []
+            , srFunctions       = [FunctionBlock (FnSig [] "integer" "f_run" "" Nothing) []]
+            , srSubroutines     = []
             }
 
     , testCase "positive: ForwardBlock then TypeBlock then VariablesBlock (.sru pattern)" $ do
@@ -553,15 +606,16 @@ tests = testGroup "Grammar.File"
               ]
         parseSrFile [] stmts @?=
           Right SrFile
-            { srHeaders     = []
-            , srForward     = Just (ForwardBlock [TypeDecl "n_base" "nonvisualobject" Nothing])
-            , srPrototypes  = Just (PrototypesBlock [])
-            , srVariables   = Just (VariablesBlock TypeVars [VarDecl [] "integer" "i_count"])
-            , srTypeBlocks  = [TypeBlock (TypeDecl "n_base" "nonvisualobject" Nothing) []]
-            , srOnBlocks    = []
-            , srEvents      = []
-            , srFunctions   = []
-            , srSubroutines = []
+            { srHeaders         = []
+            , srForward         = Just (ForwardBlock [TypeDecl "n_base" "nonvisualobject" Nothing])
+            , srPrototypes      = Just (PrototypesBlock [])
+            , srVariables       = Just (VariablesBlock TypeVars [VarDecl [] "integer" "i_count"])
+            , srGlobalInstances = []
+            , srTypeBlocks      = [TypeBlock (TypeDecl "n_base" "nonvisualobject" Nothing) []]
+            , srOnBlocks        = []
+            , srEvents          = []
+            , srFunctions       = []
+            , srSubroutines     = []
             }
 
     , testCase "positive: TypeBlocks interleaved with OnBlocks (.srw/.srm pattern)" $ do
@@ -579,19 +633,20 @@ tests = testGroup "Grammar.File"
               ]
         parseSrFile [] stmts @?=
           Right SrFile
-            { srHeaders     = []
-            , srForward     = Nothing
-            , srPrototypes  = Nothing
-            , srVariables   = Nothing
-            , srTypeBlocks  = [ TypeBlock (TypeDecl "w_foo" "window" Nothing) []
-                              , TypeBlock (TypeDecl "cb_ok" "commandbutton" (Just "w_foo")) []
-                              ]
-            , srOnBlocks    = [ OnBlock "w_foo.create" "w_foo" "create" []
-                              , OnBlock "cb_ok.clicked" "cb_ok" "clicked" []
-                              ]
-            , srEvents      = []
-            , srFunctions   = []
-            , srSubroutines = []
+            { srHeaders         = []
+            , srForward         = Nothing
+            , srPrototypes      = Nothing
+            , srVariables       = Nothing
+            , srGlobalInstances = []
+            , srTypeBlocks      = [ TypeBlock (TypeDecl "w_foo" "window" Nothing) []
+                                  , TypeBlock (TypeDecl "cb_ok" "commandbutton" (Just "w_foo")) []
+                                  ]
+            , srOnBlocks        = [ OnBlock "w_foo.create" "w_foo" "create" []
+                                  , OnBlock "cb_ok.clicked" "cb_ok" "clicked" []
+                                  ]
+            , srEvents          = []
+            , srFunctions       = []
+            , srSubroutines     = []
             }
 
     , testCase "negative: unrecognised statement causes eof failure" $ do
@@ -616,7 +671,7 @@ tests = testGroup "Grammar.File"
   , testGroup "parseSrFile (integration)"
     [ testCase "empty file" $
         parseSrFile [] [] @?=
-          Right (SrFile [] Nothing Nothing Nothing [] [] [] [] [])
+          Right (SrFile [] Nothing Nothing Nothing [] [] [] [] [] [])
 
     , testCase "header + forward block + one function" $ do
         let headers = ["$PBExportHeader$foo.srf"]
@@ -630,15 +685,16 @@ tests = testGroup "Grammar.File"
               ]
         parseSrFile headers stmts @?=
           Right SrFile
-            { srHeaders     = headers
-            , srForward     = Just (ForwardBlock [])
-            , srPrototypes  = Nothing
-            , srVariables   = Nothing
-            , srTypeBlocks  = []
-            , srOnBlocks    = []
-            , srEvents      = []
-            , srFunctions   = [FunctionBlock (FnSig [] "integer" "f_run" "" Nothing) []]
-            , srSubroutines = []
+            { srHeaders         = headers
+            , srForward         = Just (ForwardBlock [])
+            , srPrototypes      = Nothing
+            , srVariables       = Nothing
+            , srGlobalInstances = []
+            , srTypeBlocks      = []
+            , srOnBlocks        = []
+            , srEvents          = []
+            , srFunctions       = [FunctionBlock (FnSig [] "integer" "f_run" "" Nothing) []]
+            , srSubroutines     = []
             }
 
     , testCase "multiple functions in sequence" $ do
@@ -654,18 +710,64 @@ tests = testGroup "Grammar.File"
               ]
         parseSrFile [] stmts @?=
           Right SrFile
-            { srHeaders     = []
-            , srForward     = Nothing
-            , srPrototypes  = Nothing
-            , srVariables   = Nothing
-            , srTypeBlocks  = []
-            , srOnBlocks    = []
-            , srEvents      = []
-            , srFunctions   =
+            { srHeaders         = []
+            , srForward         = Nothing
+            , srPrototypes      = Nothing
+            , srVariables       = Nothing
+            , srGlobalInstances = []
+            , srTypeBlocks      = []
+            , srOnBlocks        = []
+            , srEvents          = []
+            , srFunctions       =
                 [ FunctionBlock (FnSig [] "integer" "f_one" "" Nothing) []
                 , FunctionBlock (FnSig [] "string"  "f_two" "" Nothing) []
                 ]
-            , srSubroutines = []
+            , srSubroutines     = []
+            }
+
+    , testCase "positive: forward block + global instance + variables (.sru pattern)" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "forward")]
+              , mkStmt [ (TkAccessModifier, "global"), (TkDeclKw, "type"), (TkIdent, "u_svc")
+                       , (TkDeclKw, "from"), (TkIdent, "nonvisualobject")
+                       ]
+              , mkStmt [(TkDeclKw, "end forward")]
+              , mkStmt [(TkAccessModifier, "global"), (TkIdent, "u_svc"), (TkIdent, "u_svc")]
+              , mkStmt [(TkDeclKw, "type variables")]
+              , mkStmt [(TkDatatype, "integer"), (TkIdent, "i_count")]
+              , mkStmt [(TkDeclKw, "end variables")]
+              ]
+        parseSrFile [] stmts @?=
+          Right SrFile
+            { srHeaders         = []
+            , srForward         = Just (ForwardBlock [TypeDecl "u_svc" "nonvisualobject" Nothing])
+            , srPrototypes      = Nothing
+            , srVariables       = Just (VariablesBlock TypeVars [VarDecl [] "integer" "i_count"])
+            , srGlobalInstances = [GlobalInstance "u_svc" "u_svc"]
+            , srTypeBlocks      = []
+            , srOnBlocks        = []
+            , srEvents          = []
+            , srFunctions       = []
+            , srSubroutines     = []
+            }
+
+    , testCase "positive: two global instances are both collected" $ do
+        let stmts =
+              [ mkStmt [(TkAccessModifier, "global"), (TkIdent, "u_foo"), (TkIdent, "u_foo")]
+              , mkStmt [(TkAccessModifier, "global"), (TkIdent, "u_bar"), (TkIdent, "u_bar")]
+              ]
+        parseSrFile [] stmts @?=
+          Right SrFile
+            { srHeaders         = []
+            , srForward         = Nothing
+            , srPrototypes      = Nothing
+            , srVariables       = Nothing
+            , srGlobalInstances = [GlobalInstance "u_foo" "u_foo", GlobalInstance "u_bar" "u_bar"]
+            , srTypeBlocks      = []
+            , srOnBlocks        = []
+            , srEvents          = []
+            , srFunctions       = []
+            , srSubroutines     = []
             }
 
     , testCase "real-world snippet: global type + on block" $ do
@@ -677,21 +779,37 @@ tests = testGroup "Grammar.File"
               ]
         parseSrFile [] stmts @?=
           Right SrFile
-            { srHeaders     = []
-            , srForward     = Nothing
-            , srPrototypes  = Nothing
-            , srVariables   = Nothing
-            , srTypeBlocks  = [TypeBlock (TypeDecl "w_main" "window" Nothing) []]
-            , srOnBlocks    = [OnBlock "w_main.create" "w_main" "create" []]
-            , srEvents      = []
-            , srFunctions   = []
-            , srSubroutines = []
+            { srHeaders         = []
+            , srForward         = Nothing
+            , srPrototypes      = Nothing
+            , srVariables       = Nothing
+            , srGlobalInstances = []
+            , srTypeBlocks      = [TypeBlock (TypeDecl "w_main" "window" Nothing) []]
+            , srOnBlocks        = [OnBlock "w_main.create" "w_main" "create" []]
+            , srEvents          = []
+            , srFunctions       = []
+            , srSubroutines     = []
             }
     ]
   ]
 
 -- ---------------------------------------------------------------------------
 -- Properties
+
+prop_globalInstance_nonempty :: Property
+prop_globalInstance_nonempty = property $ do
+  typName  <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+  instName <- forAll $ Gen.text (Range.linear 1 20) Gen.alphaNum
+  let stmt = mkStmt
+        [ (TkAccessModifier, "global")
+        , (TkIdent,          typName)
+        , (TkIdent,          instName)
+        ]
+  case runSection pGlobalInstance [stmt] of
+    Right gi -> do
+      assert (not (T.null (giType gi)))
+      assert (not (T.null (giName gi)))
+    Left _ -> pure ()
 
 prop_varDecl_names_nonempty :: Property
 prop_varDecl_names_nonempty = property $ do
