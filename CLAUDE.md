@@ -368,6 +368,6 @@ All other modules are currently stubs (`PB.Pipeline.Sentinel`, `PB.Pipeline.Walk
 - Do not commit with a warning-dirty `cabal build`
 - Failing test stubs (Stage 2) may be committed; mark them clearly with `assertFailure "unimplemented: ..."`
 - Before committing parser changes: `bash scripts/check-corpus.sh`
-  The error count must not increase. Baseline (Plan 10): 493 errors / 777 files;
+  The error count must not increase. Baseline: 380 errors / 777 files;
   22 clean (all `.srs`). All non-`.srs` file types currently fail.
 - Any new failure categories found during a session must be recorded in `plan/BACKLOG.md` before committing.
