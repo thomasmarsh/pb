@@ -111,10 +111,13 @@ pVariablesBlock = do
   pEndKw "variables"
   return (VariablesBlock scope decls)
 
+pFwdTypeEntry :: FileParser TypeDecl
+pFwdTypeEntry = try (pTypeDecl <* pEndKw "type") <|> pTypeDecl
+
 pForwardBlock :: FileParser ForwardBlock
 pForwardBlock = do
   _ <- leadingText "forward"
-  types <- many (try pTypeDecl)
+  types <- many (try pFwdTypeEntry)
   pEndKw "forward"
   return (ForwardBlock types)
 

@@ -104,6 +104,43 @@ tests = testGroup "Grammar.File"
           Left _  -> pure ()
           Right _ -> assertFailure "expected parse failure with wrong end keyword"
 
+    , testCase "positive: full type…end type pair inside forward" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "forward")]
+              , mkStmt [(TkAccessModifier, "global"), (TkDeclKw, "type"), (TkIdent, "u_foo"), (TkDeclKw, "from"), (TkIdent, "userobject")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "end forward")]
+              ]
+        runSection pForwardBlock stmts @?=
+          Right (ForwardBlock [TypeDecl "u_foo" "userobject" Nothing])
+
+    , testCase "positive: two full type blocks inside forward" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "forward")]
+              , mkStmt [(TkAccessModifier, "global"), (TkDeclKw, "type"), (TkIdent, "u_foo"), (TkDeclKw, "from"), (TkIdent, "userobject")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkAccessModifier, "global"), (TkDeclKw, "type"), (TkIdent, "u_bar"), (TkDeclKw, "from"), (TkIdent, "nonvisualobject")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "end forward")]
+              ]
+        runSection pForwardBlock stmts @?=
+          Right (ForwardBlock [ TypeDecl "u_foo" "userobject" Nothing
+                              , TypeDecl "u_bar" "nonvisualobject" Nothing
+                              ])
+
+    , testCase "positive: mixed bare and full type entries" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "forward")]
+              , mkStmt [(TkDeclKw, "type"), (TkIdent, "w_foo"), (TkDeclKw, "from"), (TkIdent, "window")]
+              , mkStmt [(TkAccessModifier, "global"), (TkDeclKw, "type"), (TkIdent, "u_bar"), (TkDeclKw, "from"), (TkIdent, "userobject")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "end forward")]
+              ]
+        runSection pForwardBlock stmts @?=
+          Right (ForwardBlock [ TypeDecl "w_foo" "window" Nothing
+                              , TypeDecl "u_bar" "userobject" Nothing
+                              ])
+
     , testProperty "all TypeDecl names are non-empty"
         prop_typeDecl_names_nonempty
     ]
