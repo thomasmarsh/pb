@@ -27,7 +27,7 @@ import PB.AST.Object
 import PB.Lexing.Splitter (Statement (..))
 import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
 
-import Text.Megaparsec (many, manyTill, try, optional, eof, parse, (<|>))
+import Text.Megaparsec (many, manyTill, try, eof, parse, (<|>))
 import Text.Megaparsec.Error (errorBundlePretty)
 import qualified Data.Text as T
 
@@ -291,6 +291,27 @@ pSubroutineBlock = do
 -- ---------------------------------------------------------------------------
 -- Top-level entry point
 
+data TopLevelBlock
+  = TLFwd   ForwardBlock
+  | TLProto PrototypesBlock
+  | TLVars  VariablesBlock
+  | TLType  TypeBlock
+  | TLOn    OnBlock
+  | TLEvent EventBlock
+  | TLFn    FunctionBlock
+  | TLSub   SubroutineBlock
+
+pAnyTopLevelBlock :: FileParser TopLevelBlock
+pAnyTopLevelBlock =
+      TLFwd   <$> try pForwardBlock
+  <|> TLProto <$> try pPrototypesBlock
+  <|> TLVars  <$> try pVariablesBlock
+  <|> TLType  <$> try pTypeBlock
+  <|> TLOn    <$> try pOnBlock
+  <|> TLEvent <$> try pEventBlock
+  <|> TLFn    <$> try pFunctionBlock
+  <|> TLSub   <$> pSubroutineBlock
+
 parseSrFile :: [Text] -> [Statement] -> Either Text SrFile
 parseSrFile headers stmts = case parse pSrFile "" (StmtStream stmts) of
   Right f  -> Right (f { srHeaders = headers })
@@ -298,23 +319,16 @@ parseSrFile headers stmts = case parse pSrFile "" (StmtStream stmts) of
 
 pSrFile :: FileParser SrFile
 pSrFile = do
-  fwd   <- optional (try pForwardBlock)
-  proto <- optional (try pPrototypesBlock)
-  vars  <- optional (try pVariablesBlock)
-  types <- many (try pTypeBlock)
-  ons   <- many (try pOnBlock)
-  evts  <- many (try pEventBlock)
-  fns   <- many (try pFunctionBlock)
-  subs  <- many (try pSubroutineBlock)
+  blocks <- many (try pAnyTopLevelBlock)
   eof
   return SrFile
     { srHeaders     = []
-    , srForward     = fwd
-    , srPrototypes  = proto
-    , srVariables   = vars
-    , srTypeBlocks  = types
-    , srOnBlocks    = ons
-    , srEvents      = evts
-    , srFunctions   = fns
-    , srSubroutines = subs
+    , srForward     = listToMaybe [f | TLFwd   f <- blocks]
+    , srPrototypes  = listToMaybe [p | TLProto p <- blocks]
+    , srVariables   = listToMaybe [v | TLVars  v <- blocks]
+    , srTypeBlocks  = [t | TLType  t <- blocks]
+    , srOnBlocks    = [o | TLOn    o <- blocks]
+    , srEvents      = [e | TLEvent e <- blocks]
+    , srFunctions   = [f | TLFn    f <- blocks]
+    , srSubroutines = [s | TLSub   s <- blocks]
     }

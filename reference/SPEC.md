@@ -347,8 +347,14 @@ A PowerScript SR\* file follows this section order (all sections optional):
 ```
 [HeaderLines]
 [forward
-  [type Name from Ancestor]*
+  [type Name from Ancestor [end type]]*
 end forward]
+// Note: the corpus shows two variants inside a forward block:
+//   (a) bare header line:  type Name from Ancestor
+//   (b) full block:        type Name from Ancestor / end type
+// Variant (b) appears in .sru files exported by PowerBuilder; the parser
+// must accept both.  The forward block never contains variable declarations
+// between the type header and end type.
 
 [forward prototypes | prototypes | type prototypes
   [function/event/subroutine prototypes]*

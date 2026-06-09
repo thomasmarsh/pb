@@ -476,6 +476,106 @@ tests = testGroup "Grammar.File"
     , testProperty "ssName non-empty" prop_subBlock_name_nonempty
     ]
 
+  , testGroup "pSrFile (flexible ordering)"
+    [ testCase "positive: TypeBlock before PrototypesBlock (.srf pattern)" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "n_foo"), (TkDeclKw, "from"), (TkIdent, "nonvisualobject")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "prototypes")]
+              , mkStmt [(TkDeclKw, "end prototypes")]
+              , mkStmt [ (TkDeclKw, "function"), (TkDatatype, "integer"), (TkIdent, "f_run")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end function")]
+              ]
+        parseSrFile [] stmts @?=
+          Right SrFile
+            { srHeaders     = []
+            , srForward     = Nothing
+            , srPrototypes  = Just (PrototypesBlock [])
+            , srVariables   = Nothing
+            , srTypeBlocks  = [TypeBlock (TypeDecl "n_foo" "nonvisualobject" Nothing) []]
+            , srOnBlocks    = []
+            , srEvents      = []
+            , srFunctions   = [FunctionBlock (FnSig [] "integer" "f_run" "" Nothing) []]
+            , srSubroutines = []
+            }
+
+    , testCase "positive: ForwardBlock then TypeBlock then VariablesBlock (.sru pattern)" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "forward")]
+              , mkStmt [(TkDeclKw, "type"), (TkIdent, "n_base"), (TkDeclKw, "from"), (TkIdent, "nonvisualobject")]
+              , mkStmt [(TkDeclKw, "end forward")]
+              , mkStmt [(TkDeclKw, "type"), (TkIdent, "n_base"), (TkDeclKw, "from"), (TkIdent, "nonvisualobject")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "type variables")]
+              , mkStmt [(TkDatatype, "integer"), (TkIdent, "i_count")]
+              , mkStmt [(TkDeclKw, "end variables")]
+              , mkStmt [(TkDeclKw, "prototypes")]
+              , mkStmt [(TkDeclKw, "end prototypes")]
+              ]
+        parseSrFile [] stmts @?=
+          Right SrFile
+            { srHeaders     = []
+            , srForward     = Just (ForwardBlock [TypeDecl "n_base" "nonvisualobject" Nothing])
+            , srPrototypes  = Just (PrototypesBlock [])
+            , srVariables   = Just (VariablesBlock TypeVars [VarDecl [] "integer" "i_count"])
+            , srTypeBlocks  = [TypeBlock (TypeDecl "n_base" "nonvisualobject" Nothing) []]
+            , srOnBlocks    = []
+            , srEvents      = []
+            , srFunctions   = []
+            , srSubroutines = []
+            }
+
+    , testCase "positive: TypeBlocks interleaved with OnBlocks (.srw/.srm pattern)" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "w_foo"), (TkDeclKw, "from"), (TkIdent, "window")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "on"), (TkIdent, "w_foo"), (TkDot, "."), (TkIdent, "create")]
+              , mkStmt [(TkDeclKw, "end on")]
+              , mkStmt [ (TkDeclKw, "type"), (TkIdent, "cb_ok"), (TkDeclKw, "from"), (TkIdent, "commandbutton")
+                       , (TkDeclKw, "within"), (TkIdent, "w_foo")
+                       ]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "on"), (TkIdent, "cb_ok"), (TkDot, "."), (TkIdent, "clicked")]
+              , mkStmt [(TkDeclKw, "end on")]
+              ]
+        parseSrFile [] stmts @?=
+          Right SrFile
+            { srHeaders     = []
+            , srForward     = Nothing
+            , srPrototypes  = Nothing
+            , srVariables   = Nothing
+            , srTypeBlocks  = [ TypeBlock (TypeDecl "w_foo" "window" Nothing) []
+                              , TypeBlock (TypeDecl "cb_ok" "commandbutton" (Just "w_foo")) []
+                              ]
+            , srOnBlocks    = [ OnBlock "w_foo.create" "w_foo" "create" []
+                              , OnBlock "cb_ok.clicked" "cb_ok" "clicked" []
+                              ]
+            , srEvents      = []
+            , srFunctions   = []
+            , srSubroutines = []
+            }
+
+    , testCase "negative: unrecognised statement causes eof failure" $ do
+        let stmts = [mkStmt [(TkIdent, "xyz")]]
+        case parseSrFile [] stmts of
+          Left _  -> pure ()
+          Right _ -> assertFailure "expected parse failure on unrecognised statement"
+
+    , testProperty "forward+type vs type+forward: same srForward and srTypeBlocks"
+        prop_flexible_forward_type_order
+
+    , testProperty "at most one forward block extracted"
+        prop_at_most_one_forward
+
+    , testProperty "at most one prototypes block extracted"
+        prop_at_most_one_prototypes
+
+    , testProperty "at most one variables block extracted"
+        prop_at_most_one_variables
+    ]
+
   , testGroup "parseSrFile (integration)"
     [ testCase "empty file" $
         parseSrFile [] [] @?=
@@ -631,3 +731,48 @@ prop_subBlock_name_nonempty = property $ do
   case runSection pSubroutineBlock stmts of
     Right sb -> assert (not (T.null (ssName (sbSig sb))))
     Left _   -> pure ()
+
+prop_flexible_forward_type_order :: Property
+prop_flexible_forward_type_order = property $ do
+  name <- forAll $ Gen.text (Range.linear 1 10) Gen.alphaNum
+  anc  <- forAll $ Gen.text (Range.linear 1 10) Gen.alphaNum
+  let fwdStmts  = [ mkStmt [(TkDeclKw, "forward")], mkStmt [(TkDeclKw, "end forward")] ]
+  let typeStmts = [ mkStmt [(TkDeclKw, "type"), (TkIdent, name), (TkDeclKw, "from"), (TkIdent, anc)]
+                  , mkStmt [(TkDeclKw, "end type")]
+                  ]
+  case (parseSrFile [] (fwdStmts ++ typeStmts), parseSrFile [] (typeStmts ++ fwdStmts)) of
+    (Right sf1, Right sf2) -> do
+      assert (srForward    sf1 == srForward    sf2)
+      assert (srTypeBlocks sf1 == srTypeBlocks sf2)
+    _ -> assert False
+
+prop_at_most_one_forward :: Property
+prop_at_most_one_forward = property $ do
+  name <- forAll $ Gen.text (Range.linear 1 10) Gen.alphaNum
+  anc  <- forAll $ Gen.text (Range.linear 1 10) Gen.alphaNum
+  let stmts = [ mkStmt [(TkDeclKw, "forward")]
+              , mkStmt [(TkDeclKw, "type"), (TkIdent, name), (TkDeclKw, "from"), (TkIdent, anc)]
+              , mkStmt [(TkDeclKw, "end forward")]
+              ]
+  case parseSrFile [] stmts of
+    Right sf -> assert (isJust (srForward sf))
+    Left _   -> assert False
+
+prop_at_most_one_prototypes :: Property
+prop_at_most_one_prototypes = property $ do
+  let stmts = [ mkStmt [(TkDeclKw, "prototypes")], mkStmt [(TkDeclKw, "end prototypes")] ]
+  case parseSrFile [] stmts of
+    Right sf -> assert (isJust (srPrototypes sf))
+    Left _   -> assert False
+
+prop_at_most_one_variables :: Property
+prop_at_most_one_variables = property $ do
+  typ  <- forAll $ Gen.text (Range.linear 1 10) Gen.alphaNum
+  name <- forAll $ Gen.text (Range.linear 1 10) Gen.alphaNum
+  let stmts = [ mkStmt [(TkDeclKw, "type variables")]
+              , mkStmt [(TkDatatype, typ), (TkIdent, name)]
+              , mkStmt [(TkDeclKw, "end variables")]
+              ]
+  case parseSrFile [] stmts of
+    Right sf -> assert (isJust (srVariables sf))
+    Left _   -> assert False

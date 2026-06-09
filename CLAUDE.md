@@ -9,6 +9,27 @@ cabal test                            # run test suite
 cabal test --test-show-details=direct # verbose output
 ```
 
+## Session Scoping
+
+**Charter first.** Before Stage 0, state a one-sentence charter:
+
+> "This session delivers X. [Y is out of scope.]"
+
+Infer the charter from the user's intent. If ambiguous, ask before reading any code. No work starts until the charter is written.
+
+**Scope is fixed for the session.** If new problems surface mid-session, log them to `plan/BACKLOG.md` — do not expand the current session's scope without explicit user approval.
+
+**Classifying new failures.** When a fix exposes additional failures:
+
+- Same root cause as the current fix → fix it in this session (it is within charter)
+- Different root cause → one-line entry in `plan/BACKLOG.md`; continue with the current charter
+
+**Stop condition.** Charter goal met + `cabal test` passes → stop. Do not pick up the next visible problem.
+
+**`plan/BACKLOG.md`** is the authoritative work queue. The user sets priority order. The assistant only appends — never reorders. Read it at session start to confirm the charter matches the top unfinished item.
+
+---
+
 ## The Staged Verification Loop
 
 Scale gates to the size of the change. Trivial changes (typo, rename, single-line fix) may auto-proceed. Non-trivial changes stop at Stage 1 and optionally Stage 3.
@@ -161,6 +182,8 @@ All new modules must start with `import PB.Prelude` under `NoImplicitPrelude` (s
 ## Reference Docs
 
 The parser specification is in `reference/SPEC.md` — consult it first for any question about lexical rules, token forms, file structure, or DataWindow syntax. It is synthesized from the battle-tested reference implementation and amended with corrections from the official Appeon docs.
+
+**When the corpus contradicts SPEC.md, the corpus wins.** Real exported files are ground truth. Update SPEC.md to document the discrepancy before or alongside the parser fix — do not silently accept corpus patterns without recording them in the spec.
 
 The official Appeon PowerBuilder 2025 R2 reference docs are in `reference/docs/markdown/` (converted from HTML; content-equivalent but ~30× smaller). Three doc trees:
 
@@ -344,3 +367,4 @@ All other modules are currently stubs (`PB.Pipeline.Sentinel`, `PB.Pipeline.Walk
 - Before committing parser changes: `bash scripts/check-corpus.sh`
   The error count must not increase. Baseline (Plan 10): 493 errors / 777 files;
   22 clean (all `.srs`). All non-`.srs` file types currently fail.
+- Any new failure categories found during a session must be recorded in `plan/BACKLOG.md` before committing.
