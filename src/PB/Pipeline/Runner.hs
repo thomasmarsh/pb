@@ -85,7 +85,9 @@ encodeSrFile path sf = object
 
 encodeForwardBlock :: ForwardBlock -> Value
 encodeForwardBlock fb = object
-  [ "types" .= map encodeTypeDecl (fwdTypes fb) ]
+  [ "types"     .= map encodeTypeDecl      (fwdTypes     fb)
+  , "instances" .= map encodeGlobalInstance (fwdInstances fb)
+  ]
 
 encodePrototypesBlock :: PrototypesBlock -> Value
 encodePrototypesBlock pb = object
@@ -110,8 +112,8 @@ encodeTypeDecl td = object
 
 encodeTypeBlock :: TypeBlock -> Value
 encodeTypeBlock tb = object
-  [ "decl"     .= encodeTypeDecl (tbDecl tb)
-  , "varDecls" .= map encodeVarDecl (tbVarDecls tb)
+  [ "decl" .= encodeTypeDecl (tbDecl tb)
+  , "body" .= encodeBody     (tbBody  tb)
   ]
 
 encodeVarDecl :: VarDecl -> Value

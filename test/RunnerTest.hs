@@ -52,6 +52,7 @@ tests = testGroup "Pipeline.Runner"
         let src = T.unlines
               [ "forward"
               , "type w_foo from window"
+              , "end type"
               , "end forward"
               ]
         case runFile "foo.srw" src of
@@ -90,5 +91,108 @@ tests = testGroup "Pipeline.Runner"
             let sig = lookupObj "sig" (firstOf (lookupObj "functions" v))
             lookupObj "name"       sig @?= String "f_add"
             lookupObj "returnType" sig @?= String "integer"
+
+    , testCase "type block with event decl + child instance in body" $ do
+        let src = T.unlines
+              [ "global type w_loadfilter from w_singleform"
+              , "string title = \"\""
+              , "event ie_checkbuttons ( )"
+              , "cb_delete cb_delete"
+              , "end type"
+              ]
+        case runFile "w_loadfilter.srw" src of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right v  -> arrayLen (lookupObj "typeBlocks" v) @?= 1
+
+    , testCase "forward block with type+vars inside (w_misth_ypal_form.srw pattern)" $ do
+        let src = T.unlines
+              [ "forward"
+              , "type page3 from userobject within tab1"
+              , "uo_yvar uo_yvar"
+              , "end type"
+              , "end forward"
+              ]
+        case runFile "test.srw" src of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right v  -> arrayLen (lookupObj "types" (lookupObj "forward" v)) @?= 1
+
+    , testCase "forward block with global instances inside (.sra pattern)" $ do
+        let src = T.unlines
+              [ "forward"
+              , "global type openpay from application"
+              , "end type"
+              , "global transaction sqlca"
+              , "global error error"
+              , "end forward"
+              ]
+        case runFile "test.sra" src of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right v  ->
+            arrayLen (lookupObj "types" (lookupObj "forward" v)) @?= 1
+
+    , testCase "multi-line block comment does not cause lex error" $ do
+        let src = T.unlines
+              [ "public function boolean of_check (ref datawindow adw, long row);/*"
+              , "string lstring"
+              , "long   llong"
+              , "*/"
+              , "end function"
+              ]
+        case runFile "test.srw" src of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right _  -> pure ()
+
+    , testCase "on open/close blocks are parsed (TkSqlKw event names)" $ do
+        let src = T.unlines
+              [ "global type w_foo from window"
+              , "end type"
+              , "on open;"
+              , "end on"
+              , "on close;"
+              , "end on"
+              ]
+        case runFile "test.srw" src of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right v  -> arrayLen (lookupObj "onBlocks" v) @?= 2
+
+    , testCase "type variables after global instance (w_dynsql_format4 pattern)" $ do
+        let src = T.unlines
+              [ "global type w_dynsql_format4 from w_center"
+              , "end type"
+              , "global w_dynsql_format4 w_dynsql_format4"
+              , "type variables"
+              , "integer i_count"
+              , "end variables"
+              ]
+        case runFile "test.srw" src of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right v  -> do
+            arrayLen (lookupObj "typeBlocks" v) @?= 1
+            arrayLen (lookupObj "globalInstances" v) @?= 1
+
+    , testCase "variables block with declare cursor body (w_dynsql pattern)" $ do
+        let src = T.unlines
+              [ "type variables"
+              , "declare ic_cursor dynamic cursor for sqlsa;"
+              , "integer i_count"
+              , "end variables"
+              ]
+        case runFile "test.srw" src of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right _  -> pure ()
+
+    , testCase "inline comment with /* pattern does not merge lines (f_dept_lookup pattern)" $ do
+        let src = T.unlines
+              [ "forward prototypes"
+              , "global function boolean f_test (string a)"
+              , "end prototypes"
+              , "global function boolean f_test (string a);//***"
+              , "// some comment"
+              , "boolean lb_result"
+              , "end function"
+              ]
+        case runFile "test.srf" src of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right v  -> arrayLen (lookupObj "functions" v) @?= 1
     ]
   ]

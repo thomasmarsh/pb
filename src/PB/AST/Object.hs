@@ -35,7 +35,8 @@ data SrFile = SrFile
   } deriving (Eq, Show)
 
 data ForwardBlock = ForwardBlock
-  { fwdTypes :: [TypeDecl]
+  { fwdTypes     :: [TypeDecl]
+  , fwdInstances :: [GlobalInstance]
   } deriving (Eq, Show)
 
 data PrototypesBlock = PrototypesBlock
@@ -63,8 +64,8 @@ data TypeDecl = TypeDecl
   } deriving (Eq, Show)
 
 data TypeBlock = TypeBlock
-  { tbDecl     :: TypeDecl
-  , tbVarDecls :: [VarDecl]
+  { tbDecl :: TypeDecl
+  , tbBody :: [Statement]
   } deriving (Eq, Show)
 
 data VarDecl = VarDecl

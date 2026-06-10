@@ -15,10 +15,12 @@ data LogicalLine = LogicalLine
   , llEndLine   :: Int         -- ^ Last physical line number
   } deriving (Show, Eq, Ord)
 
--- | Normalize newlines, strip trailing spaces, and join continuation lines.
+-- | Normalize newlines, strip trailing spaces, join continuation lines,
+--   and merge physical lines that span a block comment /* … */.
 normalizeText :: Text -> [LogicalLine]
 normalizeText =
-    joinContinuations
+    joinBlockComments
+  . joinContinuations
   . stripTrailing
   . splitNormalized
 
@@ -83,6 +85,38 @@ insideString t =
 
 removeEscapedQuotes :: Text -> Text
 removeEscapedQuotes = T.replace "~\"" ""
+
+-- | Join physical lines that span a /* … */ block comment.
+--   Tracks open/close depth per line (stripping // suffixes first) so that
+--   // line comments containing /* or */ do not confuse the count.
+joinBlockComments :: [LogicalLine] -> [LogicalLine]
+joinBlockComments [] = []
+joinBlockComments (ll : rest)
+  | lineCommentDepth (llText ll) > 0 =
+      let (joined, endLine, remaining) =
+            consumeBlockComment (llEndLine ll) (llText ll)
+                                (lineCommentDepth (llText ll)) rest
+      in LogicalLine joined (llStartLine ll) endLine
+           : joinBlockComments remaining
+  | otherwise = ll : joinBlockComments rest
+
+consumeBlockComment
+  :: Int -> Text -> Int -> [LogicalLine] -> (Text, Int, [LogicalLine])
+consumeBlockComment currentEnd acc _depth [] = (acc, currentEnd, [])
+consumeBlockComment _currentEnd acc depth (ll : rest) =
+  let newAcc   = acc <> " " <> llText ll
+      newDepth = depth + lineCommentDepth (llText ll)
+  in if newDepth > 0
+     then consumeBlockComment (llEndLine ll) newAcc newDepth rest
+     else (newAcc, llEndLine ll, rest)
+
+-- | Net /* … */ depth contributed by a single line.
+--   Strips the // line-comment suffix first so that // comments containing
+--   /* or */ tokens do not affect the count.
+lineCommentDepth :: Text -> Int
+lineCommentDepth t =
+  let code = fst (T.breakOn "//" t)
+  in T.count "/*" code - T.count "*/" code
 
 -- | Strip leading $PBExport*$ header lines (SPEC §2.11).
 -- Handles the real-world "HA$PBExportHeader$" form: the two leading "HA" bytes

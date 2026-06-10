@@ -63,6 +63,18 @@ tests = testGroup "pb-ast"
             , LogicalLine "world!\"" 2 2
             ]
 
+      , testCase "block comment spanning two lines is joined" $ do
+          map llText (normalizeText "/* start\nend */") @?=
+            ["/* start end */"]
+
+      , testCase "block comment after code, spanning lines" $ do
+          map llText (normalizeText "code; /* begin\nstill comment\nend */ more") @?=
+            ["code; /* begin still comment end */ more"]
+
+      , testCase "closed block comment on one line is not joined" $ do
+          map llText (normalizeText "x = /* inline */ 1\ny = 2") @?=
+            ["x = /* inline */ 1", "y = 2"]
+
       , testCase "empty input yields one empty logical line" $
           normalizeText "" @?= [LogicalLine "" 1 1]
 

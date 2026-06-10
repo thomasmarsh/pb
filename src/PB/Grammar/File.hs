@@ -110,8 +110,8 @@ isGlobalInstance s = case stmtTokens s of
   [t0, t1, t2]
     | T.toLower (tkText t0) == "global"
     , tkKind t0 == TkAccessModifier
-    , tkKind t1 == TkIdent
-    , tkKind t2 == TkIdent
+    , tkKind t1 `elem` [TkIdent, TkOtherKw]
+    , tkKind t2 `elem` [TkIdent, TkOtherKw]
     -> True
   _ -> False
 
@@ -126,19 +126,26 @@ pVariablesBlock :: FileParser VariablesBlock
 pVariablesBlock = do
   opener <- satisfyStmt isVarsOpener
   let scope = scopeFromOpener opener
-  decls <- many (try pVarDecl)
-  pEndKw "variables"
-  return (VariablesBlock scope decls)
+  body <- manyTill anyStmt (pEndKw "variables")
+  return (VariablesBlock scope [buildVarDecl s | s <- body, isVarDecl s])
 
 pFwdTypeEntry :: FileParser TypeDecl
-pFwdTypeEntry = try (pTypeDecl <* pEndKw "type") <|> pTypeDecl
+pFwdTypeEntry = tbDecl <$> pTypeBlock
+
+data FwdEntry = FwdTy TypeDecl | FwdGI GlobalInstance
+
+pFwdEntry :: FileParser FwdEntry
+pFwdEntry = (FwdTy <$> try pFwdTypeEntry) <|> (FwdGI <$> pGlobalInstance)
 
 pForwardBlock :: FileParser ForwardBlock
 pForwardBlock = do
   _ <- leadingText "forward"
-  types <- many (try pFwdTypeEntry)
+  entries <- many (try pFwdEntry)
   pEndKw "forward"
-  return (ForwardBlock types)
+  return ForwardBlock
+    { fwdTypes     = [d | FwdTy d <- entries]
+    , fwdInstances = [g | FwdGI g <- entries]
+    }
 
 -- ---------------------------------------------------------------------------
 -- Prototypes block
@@ -253,7 +260,7 @@ isOnDecl s = case stmtTokens s of
   (t:t2:_) -> T.toLower (tkText t) == "on"
               && tkKind t2 `elem` [ TkIdent, TkDeclKw, TkControlKw, TkOtherKw
                                   , TkDatatype, TkAccessModifier, TkStorageModifier
-                                  , TkBoolTrue, TkBoolFalse ]
+                                  , TkBoolTrue, TkBoolFalse, TkSqlKw ]
   _         -> False
 
 extractOnParts :: Statement -> Maybe (Text, Text, Text)
@@ -274,9 +281,8 @@ extractOnParts s = case stmtTokens s of
 pTypeBlock :: FileParser TypeBlock
 pTypeBlock = do
   decl <- pTypeDecl
-  vars <- many (try pVarDecl)
-  pEndKw "type"
-  return (TypeBlock decl vars)
+  body <- manyTill anyStmt (pEndKw "type")
+  return (TypeBlock decl body)
 
 pOnBlock :: FileParser OnBlock
 pOnBlock = do
