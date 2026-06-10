@@ -4,8 +4,8 @@ module PB.Pipeline.Runner
   ) where
 
 import PB.Prelude
-import PB.AST.BodyStmt      (AugOp (..), BodyStmt (..), IfStmt (..), ForStmt (..), DoCondition (..), DoStmt (..), CaseClause (..), ChooseStmt (..))
-import PB.AST.Expr          ( CallExpr (..), Expr (..), Literal (..)
+import PB.AST.BodyStmt      (AugOp (..), BodyStmt (..), PbCall (..), IfStmt (..), ForStmt (..), DoCondition (..), DoStmt (..), CaseClause (..), ChooseStmt (..))
+import PB.AST.Expr          ( CallExpr (..), CreateExpr (..), Expr (..), Literal (..)
                             , LvSegment (..), Lvalue (..)
                             , lvsName, lvsSubscript, lvSegments )
 import PB.AST.Object
@@ -216,6 +216,8 @@ encodeBodyStmt (BsAugAssign  lhs op rhs) = object ["tag" .= ("aug_assign" :: Tex
 encodeBodyStmt (BsInc        lhs)        = object ["tag" .= ("inc"        :: Text), "lhs" .= map tkText lhs]
 encodeBodyStmt (BsDec        lhs)        = object ["tag" .= ("dec"        :: Text), "lhs" .= map tkText lhs]
 encodeBodyStmt (BsCall       expr)       = object ["tag" .= ("call"       :: Text), "expr" .= encodeExpr expr]
+encodeBodyStmt (BsPbCall     pc)         = object ["tag" .= ("pb_call"    :: Text), "ancestor" .= pbcAncestor pc, "event" .= pbcEvent pc]
+encodeBodyStmt (BsDestroy    lv)         = object ["tag" .= ("destroy"    :: Text), "lvalue" .= encodeLvalue lv]
 encodeBodyStmt (BsReturn     Nothing)    = object ["tag" .= ("return"     :: Text)]
 encodeBodyStmt (BsReturn     (Just e))   = object ["tag" .= ("return"     :: Text), "value" .= encodeExpr e]
 encodeBodyStmt (BsIf         is)         = encodeIfStmt is
@@ -275,6 +277,8 @@ encodeExpr (ExLit    lit)  = encodeLiteral lit
 encodeExpr (ExEnum   name) = object ["tag" .= ("enum"   :: Text), "name" .= name]
 encodeExpr (ExLvalue lv)   = object ["tag" .= ("lvalue" :: Text), "segments" .= map encodeSegment (lvSegments lv)]
 encodeExpr (ExCall   ce)   = encodeCallExpr ce
+encodeExpr (ExCreate (CreateClass cls)) = object ["tag" .= ("create"       :: Text), "class" .= cls]
+encodeExpr (ExCreate (CreateUsing e))  = object ["tag" .= ("create_using"  :: Text), "expr"  .= encodeExpr e]
 encodeExpr (ExRaw    ts)   = object ["tag" .= ("raw"    :: Text), "tokens" .= map tkText ts]
 
 encodeLiteral :: Literal -> Value

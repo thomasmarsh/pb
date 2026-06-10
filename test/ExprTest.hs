@@ -1,7 +1,7 @@
 module ExprTest (tests) where
 
 import PB.Prelude
-import PB.AST.Expr        (CallExpr (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
+import PB.AST.Expr        (CallExpr (..), CreateExpr (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
 import PB.Grammar.Body    (parseExpr)
 import PB.Lexing.Token    (Token (..), TokenKind (..), SourceSpan (..))
 
@@ -137,6 +137,21 @@ tests = testGroup "Expr"
                            ])
       ]
 
+    , testGroup "create"
+      [ testCase "create ident class → ExCreate (CreateClass)" $
+          parseExpr [mkTok TkOtherKw "create", mkTok TkIdent "n_service"]
+            @?= ExCreate (CreateClass "n_service")
+
+      , testCase "create datatype class → ExCreate (CreateClass)" $
+          parseExpr [mkTok TkOtherKw "create", mkTok TkDatatype "DataStore"]
+            @?= ExCreate (CreateClass "DataStore")
+
+      , testCase "create using variable → ExCreate (CreateUsing (ExLvalue))" $
+          parseExpr [ mkTok TkOtherKw "create", mkTok TkOtherKw "using"
+                    , mkTok TkIdent "ls_wintype" ]
+            @?= ExCreate (CreateUsing (ExLvalue (Lvalue [LvSegment "ls_wintype" Nothing])))
+      ]
+
     , testGroup "ExRaw fallback"
       [ testCase "empty token list → ExRaw []" $
           parseExpr [] @?= ExRaw []
@@ -187,6 +202,7 @@ propParseExprTotal = property $ do
     ExEnum   _ -> True
     ExLvalue _ -> True
     ExCall   _ -> True
+    ExCreate _ -> True
     ExRaw    _ -> True
 
 propExRawRoundtrip :: Property

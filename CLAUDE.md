@@ -69,6 +69,37 @@ Map the error message to its layer before reading code:
 - `"lex error at line N"` → look at physical line N in the source file; the issue is in `Lexer.hs` or `Preprocess.hs`
 - Megaparsec grammar message → issue is in `Grammar/File.hs` or `Grammar/Stream.hs`
 
+**JSON body-statement encoding.** Know these tags before writing corpus sampling scripts — they are not obvious:
+
+| Constructor | JSON `"tag"` | Distinguishing field |
+|-------------|--------------|----------------------|
+| `BsRaw s` | `"raw"` | `"text"` (source string) |
+| `BsCall (ExCall ...)` | `"call"` | `"expr": {"tag":"call_expr", ...}` |
+| `BsCall (ExRaw ...)` | `"call"` | `"expr": {"tag":"raw", "tokens":[...]}` |
+| `BsAssign lv e` | `"assign"` | `"lhs"`, `"rhs"` |
+| `BsReturn` | `"return"` | optional `"expr"` |
+| `BsIf` | `"if"` | `"cond"`, `"then"`, `"elseIfs"`, `"else"` |
+| `BsFor` | `"for"` | `"var"`, `"from"`, `"to"`, `"step"`, `"body"` |
+| `BsDo` | `"do"` | `"cond"`, `"body"`, `"loop"` |
+| `BsChoose` | `"choose"` | `"expr"`, `"clauses"` |
+
+`ExRaw` tokens are **text strings** in `"tokens":[...]`, not objects. `BsRaw` has `"text"` (not `"tokens"`). A construct like `create ClassName` or `call super :: event` that has no parse failure will appear as `BsCall {"tag":"call", "expr":{"tag":"raw","tokens":["create","ClassName"]}}` — it is **not** in `BsRaw` unless the classifier explicitly emits one.
+
+To search for unclassified statements starting with a keyword:
+
+```python
+def walk_bsraw_leading(node, keyword):
+    if isinstance(node, list):
+        for x in node: yield from walk_bsraw_leading(x, keyword)
+    elif isinstance(node, dict):
+        if node.get('tag') == 'raw' and 'text' in node:
+            if node['text'].strip().lower().startswith(keyword):
+                yield node['text'].strip()
+        for v in node.values():
+            if isinstance(v, (dict, list)):
+                yield from walk_bsraw_leading(v, keyword)
+```
+
 **Confirm hypotheses with a narrow test before Stage 1.** After reading code and forming a theory, write a one-line `testCase` that asserts the correct output and run it. A test that currently fails is worth more than a long analysis. Do not skip this step.
 
 ### Stage 1 — Propose

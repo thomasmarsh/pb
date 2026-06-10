@@ -1,7 +1,7 @@
 module BodyStmtTest (tests) where
 
 import PB.Prelude
-import PB.AST.BodyStmt        (AugOp (..), BodyStmt (..))
+import PB.AST.BodyStmt        (AugOp (..), BodyStmt (..), PbCall (..))
 import PB.AST.Expr            (CallExpr (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
 import PB.Grammar.Body        (classifyBodyStmt, parseBodyStmts, parseLvalue)
 import PB.Lexing.Splitter     (Statement (..))
@@ -161,6 +161,62 @@ tests = testGroup "Body"
         propClassifyTotal
     ]
 
+  , testGroup "PbCall"
+    [ testCase "call super :: open" $
+        classifyBodyStmt
+          (mkStmt [ (TkOtherKw, "call"), (TkOtherKw, "super")
+                  , (TkDoubleColon, "::"), (TkIdent, "open") ])
+          @?= BsPbCall (PbCall "super" "open")
+
+    , testCase "call named ancestor :: event" $
+        classifyBodyStmt
+          (mkStmt [ (TkOtherKw, "call"), (TkIdent, "w_ancestor")
+                  , (TkDoubleColon, "::"), (TkIdent, "clicked") ])
+          @?= BsPbCall (PbCall "w_ancestor" "clicked")
+
+    , testCase "call ancestor with backtick control :: event (single ident token)" $
+        classifyBodyStmt
+          (mkStmt [ (TkOtherKw, "call"), (TkIdent, "w_emp`cb_close")
+                  , (TkDoubleColon, "::"), (TkIdent, "clicked") ])
+          @?= BsPbCall (PbCall "w_emp`cb_close" "clicked")
+
+    , testCase "call where event name is a keyword token (e.g. create)" $
+        classifyBodyStmt
+          (mkStmt [ (TkOtherKw, "call"), (TkOtherKw, "super")
+                  , (TkDoubleColon, "::"), (TkOtherKw, "create") ])
+          @?= BsPbCall (PbCall "super" "create")
+
+    , testCase "call missing :: falls to BsRaw" $
+        case classifyBodyStmt
+               (mkStmt [(TkOtherKw, "call"), (TkOtherKw, "super"), (TkIdent, "open")]) of
+          BsRaw _ -> return ()
+          other   -> assertFailure ("expected BsRaw, got: " <> show other)
+    ]
+
+  , testGroup "Destroy"
+    [ testCase "destroy simple variable" $
+        classifyBodyStmt
+          (mkStmt [(TkOtherKw, "destroy"), (TkIdent, "obj")])
+          @?= BsDestroy (Lvalue [LvSegment "obj" Nothing])
+
+    , testCase "destroy dotted lvalue" $
+        classifyBodyStmt
+          (mkStmt [ (TkOtherKw, "destroy"), (TkIdent, "Category")
+                  , (TkDot, "."), (TkIdent, "DispAttr") ])
+          @?= BsDestroy (Lvalue [LvSegment "Category" Nothing, LvSegment "DispAttr" Nothing])
+
+    , testCase "destroy subscripted lvalue" $
+        classifyBodyStmt
+          (mkStmt [ (TkOtherKw, "destroy"), (TkIdent, "ids_Data")
+                  , (TkLBracket, "["), (TkIdent, "li_Cnt"), (TkRBracket, "]") ])
+          @?= BsDestroy (Lvalue [LvSegment "ids_Data" (Just [mkTok TkIdent "li_Cnt"])])
+
+    , testCase "destroy with empty rest falls to BsRaw" $
+        case classifyBodyStmt (mkStmt [(TkOtherKw, "destroy")]) of
+          BsRaw _ -> return ()
+          other   -> assertFailure ("expected BsRaw, got: " <> show other)
+    ]
+
   , testGroup "parseBodyStmts"
     [ testCase "empty list" $
         parseBodyStmts [] @?= []
@@ -283,6 +339,7 @@ tag (BsAugAssign _ _ _) = "aug_assign"
 tag (BsInc       _)     = "inc"
 tag (BsDec       _)     = "dec"
 tag (BsCall      _)     = "call"
+tag (BsPbCall    _)     = "pb_call"
 tag (BsReturn    _)     = "return"
 tag (BsIf        _)     = "if"
 tag (BsFor       _)     = "for"
@@ -290,6 +347,7 @@ tag (BsDo        _)     = "do"
 tag (BsChoose    _)     = "choose"
 tag BsExit              = "exit"
 tag BsContinue          = "continue"
+tag (BsDestroy   _)     = "destroy"
 tag (BsRaw       _)     = "raw"
 
 propClassifyTotal :: Property
@@ -320,6 +378,7 @@ propClassifyTotal = property $ do
     BsInc       _     -> True
     BsDec       _     -> True
     BsCall      _     -> True
+    BsPbCall    _     -> True
     BsReturn    _     -> True
     BsIf        _     -> True
     BsFor       _     -> True
@@ -327,4 +386,5 @@ propClassifyTotal = property $ do
     BsChoose    _     -> True
     BsExit            -> True
     BsContinue        -> True
+    BsDestroy   _     -> True
     BsRaw       _     -> True

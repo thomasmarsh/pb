@@ -8,11 +8,11 @@ module PB.Grammar.Body
 
 import PB.Prelude
 import PB.AST.BodyStmt
-  ( AugOp (..), BodyStmt (..)
+  ( AugOp (..), BodyStmt (..), PbCall (..)
   , IfStmt (..), ForStmt (..), DoCondition (..), DoStmt (..)
   , CaseClause (..), ChooseStmt (..)
   )
-import PB.AST.Expr        (CallExpr (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
+import PB.AST.Expr        (CallExpr (..), CreateExpr (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
 import PB.Grammar.Stream  (FileParser, satisfyStmt)
 import PB.Lexing.Splitter (Statement (..))
 import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
@@ -140,6 +140,9 @@ splitArgs ts = go (0 :: Int) [] ts
 parseExpr :: [Token] -> Expr
 parseExpr []  = ExRaw []
 parseExpr [t] = parseSingleToken t
+parseExpr ts@(t:_)
+  | tkKind t == TkOtherKw && T.toLower (tkText t) == "create"
+  = maybe (ExRaw ts) ExCreate (parseCreateExpr ts)
 parseExpr ts  = fromMaybe (ExRaw ts) (tryLvalueOrCall ts)
 
 parseSingleToken :: Token -> Expr
@@ -174,6 +177,34 @@ tryLvalueOrCall ts = do
     _ -> Nothing        -- non-'(' remainder: binary op or other → ExRaw
 
 -- ---------------------------------------------------------------------------
+-- PB CALL and DESTROY parsers
+
+-- | Parse a CALL statement token list: [call, ancestor, ::, event] (exactly 4).
+-- Accepts TkIdent and TkOtherKw for both ancestor and event positions.
+parsePbCall :: [Token] -> Maybe PbCall
+parsePbCall [callT, ancT, sepT, evT]
+  | tkKind callT == TkOtherKw
+  , tkKind ancT  `elem` [TkIdent, TkOtherKw]
+  , tkKind sepT  == TkDoubleColon
+  , tkKind evT   `elem` [TkIdent, TkOtherKw]
+  = Just (PbCall (tkText ancT) (tkText evT))
+parsePbCall _ = Nothing
+
+-- | Parse a CREATE expression token list starting with the "create" token.
+-- Syntax 1: [create, ClassName]  → CreateClass
+-- Syntax 2: [create, using, ...] → CreateUsing
+parseCreateExpr :: [Token] -> Maybe CreateExpr
+parseCreateExpr [_, cls]
+  | tkKind cls `elem` [TkIdent, TkOtherKw, TkDatatype]
+  = Just (CreateClass (tkText cls))
+parseCreateExpr (_ : usingT : rest)
+  | tkKind usingT == TkOtherKw
+  , T.toLower (tkText usingT) == "using"
+  , not (null rest)
+  = Just (CreateUsing (parseExpr rest))
+parseCreateExpr _ = Nothing
+
+-- ---------------------------------------------------------------------------
 -- Statement classifier
 
 classifyBodyStmt :: Statement -> BodyStmt
@@ -187,8 +218,19 @@ classifyBodyStmt s = case stmtTokens s of
           "continue" -> BsContinue
           _          -> BsRaw s
     | tkKind t `elem` [TkSqlKw, TkDeclKw] -> BsRaw s
+    | tkKind t == TkOtherKw ->
+        case T.toLower (tkText t) of
+          "call"    -> maybe (BsRaw s) BsPbCall (parsePbCall (stmtTokens s))
+          "destroy" -> maybe (BsRaw s) BsDestroy (parseLvalue rest)
+          _         ->
+            let ts           = stmtTokens s
+                (_, skipped) = span isModifier ts
+            in case skipped of
+                 (typeT : nameT : _)
+                   | isTypeName typeT && tkKind nameT == TkIdent -> BsLocalVar ts
+                 _ -> scanForOp s ts
     | otherwise ->
-        let ts          = stmtTokens s
+        let ts           = stmtTokens s
             (_, skipped) = span isModifier ts
         in case skipped of
              (typeT : nameT : _)

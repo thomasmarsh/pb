@@ -1,6 +1,7 @@
 module PB.AST.BodyStmt
   ( BodyStmt (..)
   , AugOp (..)
+  , PbCall (..)
   , IfStmt (..)
   , ForStmt (..)
   , DoCondition (..)
@@ -16,6 +17,12 @@ import PB.Lexing.Token    (Token)
 
 data AugOp = AugAdd | AugSub | AugMul | AugDiv
   deriving (Eq, Show)
+
+-- | PB CALL statement: CALL ancestorobject [`controlname] :: event
+data PbCall = PbCall
+  { pbcAncestor :: Text   -- "super", "parent", or named ancestor (backtick form is one ident)
+  , pbcEvent    :: Text   -- event name
+  } deriving (Eq, Show)
 
 -- | if/elseif/else/end if — covers both inline and multi-line forms.
 -- Inline: ifThen is a singleton derived from the tokens after "then";
@@ -68,6 +75,7 @@ data BodyStmt
   | BsInc       [Token]               -- lhs_tokens ++
   | BsDec       [Token]               -- lhs_tokens --
   | BsCall      Expr                  -- standalone call expression
+  | BsPbCall    PbCall                -- CALL ancestor[`ctrl] :: event
   | BsReturn    (Maybe Expr)          -- return [expr]
   | BsIf        IfStmt                -- if/elseif/else/end if
   | BsFor       ForStmt               -- for … next
@@ -75,5 +83,6 @@ data BodyStmt
   | BsChoose    ChooseStmt            -- choose case … end choose
   | BsExit                            -- exit
   | BsContinue                        -- continue
+  | BsDestroy   Lvalue                -- DESTROY objectvariable
   | BsRaw       Statement             -- SQL, event decls, unclassified
   deriving (Eq, Show)
