@@ -7,7 +7,7 @@ import PB.Prelude
 import PB.AST.BodyStmt      ( AugOp (..), BodyStmt (..), PbCall (..)
                             , IfStmt (..), ForStmt (..), DoCondition (..)
                             , DoStmt (..), CaseClause (..), ChooseStmt (..) )
-import PB.AST.Expr          ( CallExpr (..), CreateExpr (..), Expr (..)
+import PB.AST.Expr          ( BinOp (..), CallExpr (..), CreateExpr (..), Expr (..)
                             , Literal (..), LvSegment (..), Lvalue (..) )
 import PB.AST.SourceFile
 import PB.Lexing.Splitter   (Statement (..))
@@ -209,6 +209,22 @@ jsonChooseStmt cs = object
 -- ---------------------------------------------------------------------------
 -- Expr
 
+instance ToJSON BinOp where
+  toJSON BopAdd = String "+"
+  toJSON BopSub = String "-"
+  toJSON BopMul = String "*"
+  toJSON BopDiv = String "/"
+  toJSON BopPow = String "^"
+  toJSON BopEq  = String "="
+  toJSON BopNe  = String "<>"
+  toJSON BopLt  = String "<"
+  toJSON BopGt  = String ">"
+  toJSON BopLe  = String "<="
+  toJSON BopGe  = String ">="
+  toJSON BopAnd = String "and"
+  toJSON BopOr  = String "or"
+  toJSON BopXor = String "xor"
+
 instance ToJSON Expr where
   toJSON (ExLit    lit)  = toJSON lit
   toJSON (ExEnum   name) = object ["tag" .= ("enum"         :: Text), "name"  .= name]
@@ -217,9 +233,11 @@ instance ToJSON Expr where
   toJSON (ExCreate (CreateClass cls)) = object ["tag" .= ("create"       :: Text), "class" .= cls]
   toJSON (ExCreate (CreateUsing e))   = object ["tag" .= ("create_using" :: Text), "expr"  .= e]
   toJSON (ExArray  elems) = object ["tag" .= ("array" :: Text), "items" .= elems]
-  toJSON (ExNot     e)    = object ["tag" .= ("not"          :: Text), "expr"     .= e]
-  toJSON (ExHostVar lv)  = object ["tag" .= ("host_var"     :: Text), "lvalue"   .= toJSON lv]
-  toJSON (ExRaw     ts)  = object ["tag" .= ("raw"          :: Text), "tokens"   .= map tkText ts]
+  toJSON (ExNot        e) = object ["tag" .= ("not"          :: Text), "expr"  .= e]
+  toJSON (ExHostVar   lv) = object ["tag" .= ("host_var"     :: Text), "lvalue" .= toJSON lv]
+  toJSON (ExBinOp l op r) = object ["tag" .= ("binop" :: Text), "op" .= op, "lhs" .= l, "rhs" .= r]
+  toJSON (ExUnaryMinus e) = object ["tag" .= ("neg"   :: Text), "expr" .= e]
+  toJSON (ExRaw       ts) = object ["tag" .= ("raw"          :: Text), "tokens" .= map tkText ts]
 
 instance ToJSON Literal where
   toJSON (LitBool b) = object ["tag" .= ("bool"   :: Text), "value" .= b]

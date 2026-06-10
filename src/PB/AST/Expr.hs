@@ -4,6 +4,7 @@ module PB.AST.Expr
   , Literal (..)
   , CallExpr (..)
   , CreateExpr (..)
+  , BinOp (..)
   , Expr (..)
   ) where
 
@@ -43,6 +44,21 @@ data CreateExpr
   | CreateUsing Expr   -- CREATE USING expr (dynamic)
   deriving (Eq, Show)
 
+-- | Binary operators, lowest precedence first within each group.
+-- Precedence (lowest → highest):
+--   1  or   xor          TkOtherKw          left
+--   2  and               TkOtherKw          left
+--   3  not               TkOtherKw          prefix (handled in parseAtom)
+--   4  = <> < > <= >=    TkAssignOp / TkCompareOp  left
+--   5  + -               TkArithOp          left
+--   6  * /               TkArithOp          left
+--   7  ^                 TkArithOp          right
+data BinOp
+  = BopAdd | BopSub | BopMul | BopDiv | BopPow   -- +  -  *  /  ^
+  | BopEq  | BopNe  | BopLt  | BopGt  | BopLe | BopGe  -- =  <>  <  >  <=  >=
+  | BopAnd | BopOr  | BopXor                      -- and  or  xor
+  deriving (Eq, Show)
+
 data Expr
   = ExLit     Literal    -- boolean, numeric, string, date/time, null
   | ExEnum    Text       -- PowerBuilder enum constant; name without trailing '!'
@@ -50,7 +66,9 @@ data Expr
   | ExCall    CallExpr   -- function or method call
   | ExCreate  CreateExpr -- CREATE ClassName / CREATE USING expr
   | ExArray   [Expr]     -- { e1, e2, ... } array literal
-  | ExNot     Expr       -- NOT expr (unary boolean negation)
-  | ExHostVar Lvalue     -- SQL host variable: :varname or :struct.field
-  | ExRaw     [Token]    -- binary ops, chained calls, or anything unrecognized
+  | ExNot        Expr          -- NOT expr (unary boolean negation)
+  | ExHostVar    Lvalue        -- SQL host variable: :varname or :struct.field
+  | ExBinOp      Expr BinOp Expr  -- left op right
+  | ExUnaryMinus Expr          -- unary - expr
+  | ExRaw        [Token]       -- unrecognized or dynamic-dispatch
   deriving (Eq, Show)

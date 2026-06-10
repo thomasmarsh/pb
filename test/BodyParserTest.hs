@@ -6,7 +6,7 @@ import PB.AST.BodyStmt
   , IfStmt (..), ForStmt (..), DoCondition (..), DoStmt (..)
   , CaseClause (..), ChooseStmt (..)
   )
-import PB.AST.Expr            (Expr (..), Literal (..), LvSegment (..), Lvalue (..))
+import PB.AST.Expr            (BinOp (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
 import PB.Grammar.Body        (pBodyStmt)
 import PB.Grammar.Stream      (StmtStream (..))
 import PB.Lexing.Splitter     (Statement (..))
@@ -44,9 +44,10 @@ endIf = mkStmt [(TkControlKw, "end if")]
 endChoose :: Statement
 endChoose = mkStmt [(TkControlKw, "end choose")]
 
--- Simple "n = 0" condition tokens
-condN0 :: [Token]
-condN0 = [mkTok TkIdent "n", mkTok TkAssignOp "=", mkTok TkIntLiteral "0"]
+-- "n = k" as a parsed Expr (ExBinOp BopEq after B2)
+condExpr :: Text -> Expr
+condExpr k =
+  ExBinOp (ExLvalue (Lvalue [LvSegment "n" Nothing])) BopEq (ExLit (LitInt k))
 
 -- y = 1 statement
 stmtY1 :: Statement
@@ -75,7 +76,7 @@ tests = testGroup "Grammar.Body.Parser"
                    , (TkControlKw,"then"), (TkControlKw,"return") ] ]
           @?= Right
             [ BsIf (IfStmt
-                { ifCond    = ExRaw condN0
+                { ifCond    = condExpr "0"
                 , ifThen    = [BsReturn Nothing]
                 , ifElseIfs = []
                 , ifElse    = Nothing
@@ -91,7 +92,7 @@ tests = testGroup "Grammar.Body.Parser"
                    , (TkIdent,"z"), (TkAssignOp,"="), (TkIntLiteral,"2") ] ]
           @?= Right
             [ BsIf (IfStmt
-                { ifCond    = ExRaw condN0
+                { ifCond    = condExpr "0"
                 , ifThen    = [assignY1]
                 , ifElseIfs = []
                 , ifElse    = Just [assignZ2]
@@ -105,7 +106,7 @@ tests = testGroup "Grammar.Body.Parser"
           , endIf ]
           @?= Right
             [ BsIf (IfStmt
-                { ifCond    = ExRaw condN0
+                { ifCond    = condExpr "0"
                 , ifThen    = [assignY1]
                 , ifElseIfs = []
                 , ifElse    = Nothing
@@ -121,7 +122,7 @@ tests = testGroup "Grammar.Body.Parser"
           , endIf ]
           @?= Right
             [ BsIf (IfStmt
-                { ifCond    = ExRaw condN0
+                { ifCond    = condExpr "0"
                 , ifThen    = [assignY1]
                 , ifElseIfs = []
                 , ifElse    = Just [assignZ2]
@@ -129,8 +130,7 @@ tests = testGroup "Grammar.Body.Parser"
 
     , testCase "multi-line with elseif chain" $
         -- if n = 0 then / y = 1 / elseif n = 1 then / z = 2 / end if
-        let condN1 = [mkTok TkIdent "n", mkTok TkAssignOp "=", mkTok TkIntLiteral "1"]
-        in runBodyStmts
+        runBodyStmts
           [ mkStmt [(TkControlKw,"if"), (TkIdent,"n"), (TkAssignOp,"="), (TkIntLiteral,"0"), (TkControlKw,"then")]
           , stmtY1
           , mkStmt [(TkControlKw,"elseif"), (TkIdent,"n"), (TkAssignOp,"="), (TkIntLiteral,"1"), (TkControlKw,"then")]
@@ -138,9 +138,9 @@ tests = testGroup "Grammar.Body.Parser"
           , endIf ]
           @?= Right
             [ BsIf (IfStmt
-                { ifCond    = ExRaw condN0
+                { ifCond    = condExpr "0"
                 , ifThen    = [assignY1]
-                , ifElseIfs = [(ExRaw condN1, [assignZ2])]
+                , ifElseIfs = [(condExpr "1", [assignZ2])]
                 , ifElse    = Nothing
                 }) ]
     ]
@@ -225,7 +225,7 @@ tests = testGroup "Grammar.Body.Parser"
           , mkStmt [(TkControlKw,"loop")] ]
           @?= Right
             [ BsDo (DoStmt
-                { doCond = Just (DoWhile (ExRaw condN0))
+                { doCond = Just (DoWhile (condExpr "0"))
                 , doBody = [assignY1]
                 , doLoop = Nothing
                 }) ]
@@ -240,7 +240,7 @@ tests = testGroup "Grammar.Body.Parser"
             [ BsDo (DoStmt
                 { doCond = Nothing
                 , doBody = [assignY1]
-                , doLoop = Just (DoUntil (ExRaw condN0))
+                , doLoop = Just (DoUntil (condExpr "0"))
                 }) ]
 
     , testCase "bare do loop while" $
@@ -253,7 +253,7 @@ tests = testGroup "Grammar.Body.Parser"
             [ BsDo (DoStmt
                 { doCond = Nothing
                 , doBody = [assignY1]
-                , doLoop = Just (DoWhile (ExRaw condN0))
+                , doLoop = Just (DoWhile (condExpr "0"))
                 }) ]
     ]
 

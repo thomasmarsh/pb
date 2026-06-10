@@ -349,16 +349,31 @@ data CallExpr = CallExpr
   , ceArgs   :: [[Token]]  -- each arg as raw tokens (split on ',' at depth 0)
   }
 
+-- Operator precedence (lowest → highest):
+--   1  or   xor          TkOtherKw                left
+--   2  and               TkOtherKw                left
+--   3  not               TkOtherKw                prefix (parseAtom)
+--   4  = <> < > <= >=    TkAssignOp / TkCompareOp left
+--   5  + -               TkArithOp                left
+--   6  * /               TkArithOp                left
+--   7  ^                 TkArithOp                right
+data BinOp
+  = BopAdd | BopSub | BopMul | BopDiv | BopPow   -- +  -  *  /  ^
+  | BopEq  | BopNe  | BopLt  | BopGt  | BopLe | BopGe  -- =  <>  <  >  <=  >=
+  | BopAnd | BopOr  | BopXor                      -- and  or  xor
+
 data Expr
-  = ExLit    Literal    -- bool / numeric / string / date-time / null
-  | ExEnum   Text       -- PowerBuilder enum name (without trailing '!')
-  | ExLvalue Lvalue     -- bare ident / member chain / subscript
-  | ExCall   CallExpr   -- function or method call
-  | ExCreate CreateExpr -- CREATE ClassName / CREATE USING expr
-  | ExArray  [Expr]     -- { e1, e2, ... } array literal
-  | ExNot     Expr      -- NOT expr (unary boolean negation)
-  | ExHostVar Lvalue    -- SQL host variable (:varname or :struct.field)
-  | ExRaw     [Token]   -- binary ops, chained calls, or unrecognized
+  = ExLit        Literal          -- bool / numeric / string / date-time / null
+  | ExEnum       Text             -- PowerBuilder enum name (without trailing '!')
+  | ExLvalue     Lvalue           -- bare ident / member chain / subscript
+  | ExCall       CallExpr         -- function or method call
+  | ExCreate     CreateExpr       -- CREATE ClassName / CREATE USING expr
+  | ExArray      [Expr]           -- { e1, e2, ... } array literal
+  | ExNot        Expr             -- NOT expr (unary boolean negation)
+  | ExHostVar    Lvalue           -- SQL host variable (:varname or :struct.field)
+  | ExBinOp      Expr BinOp Expr  -- left op right (precedence-climbing parser)
+  | ExUnaryMinus Expr             -- unary - expr
+  | ExRaw        [Token]          -- dynamic dispatch, SQL fragments, or unrecognized
 ```
 
 ### `PB.AST.BodyStmt`
@@ -412,8 +427,8 @@ data BodyStmt
 classifyBodyStmt :: Statement -> BodyStmt   -- leaf classifier; exit/continue/return/var/assign
 parseBodyStmts   :: [Statement] -> [BodyStmt]  -- flat map; use pBodyStmt for recursive parsing
 parseLvalue      :: [Token] -> Maybe Lvalue
-parseExpr        :: [Token] -> Expr   -- total; ExRaw fallback
-parseArrayExpr   :: [Token] -> Maybe Expr  -- { e1, e2, ... } array literal; Nothing if no leading '{'
+parseExpr        :: [Token] -> Expr   -- total; ExRaw fallback; TkColon guard for SQL host vars
+-- Internal helpers (not exported): lookupBinOp, parseAtom, climbPrec
 pBodyStmt        :: FileParser BodyStmt  -- recursive; dispatches to pIfStmt/pForStmt/pDoStmt/pChooseStmt
 ```
 

@@ -12,7 +12,7 @@ import PB.AST.BodyStmt
   , IfStmt (..), ForStmt (..), DoCondition (..), DoStmt (..)
   , CaseClause (..), ChooseStmt (..)
   )
-import PB.AST.Expr        (CallExpr (..), CreateExpr (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
+import PB.AST.Expr        (BinOp (..), CallExpr (..), CreateExpr (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
 import PB.Grammar.Stream  (FileParser, satisfyStmt, isModifierToken)
 import PB.Lexing.Splitter (Statement (..))
 import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
@@ -130,40 +130,114 @@ splitArgs ts = go (0 :: Int) [] ts
     isClose t = tkKind t `elem` [TkRParen, TkRBracket, TkRBrace]
 
 -- ---------------------------------------------------------------------------
--- Expr parser
+-- Precedence-climbing expression parser
 
--- | Parse a { e1, e2, ... } array literal.
--- Returns Nothing if the tokens don't start with '{' or the closing '}' is missing.
-parseArrayExpr :: [Token] -> Maybe Expr
-parseArrayExpr ts = case ts of
-  (lb : rest)
-    | tkKind lb == TkLBrace
-    -> case reverse rest of
-         (rb : revInner) | tkKind rb == TkRBrace ->
-           Just (ExArray (map parseExpr (splitArgs (reverse revInner))))
-         _ -> Nothing
-  _ -> Nothing
+-- | Map a token to its binary-operator info: (constructor, precedence, isRightAssoc).
+lookupBinOp :: Token -> Maybe (BinOp, Int, Bool)
+lookupBinOp t = case (tkKind t, T.toLower (tkText t)) of
+  (TkOtherKw,   "or" ) -> Just (BopOr,  1, False)
+  (TkOtherKw,   "xor") -> Just (BopXor, 1, False)
+  (TkOtherKw,   "and") -> Just (BopAnd, 2, False)
+  (TkAssignOp,  "="  ) -> Just (BopEq,  4, False)
+  (TkCompareOp, "<>" ) -> Just (BopNe,  4, False)
+  (TkCompareOp, "<"  ) -> Just (BopLt,  4, False)
+  (TkCompareOp, ">"  ) -> Just (BopGt,  4, False)
+  (TkCompareOp, "<=" ) -> Just (BopLe,  4, False)
+  (TkCompareOp, ">=" ) -> Just (BopGe,  4, False)
+  (TkArithOp,   "+"  ) -> Just (BopAdd, 5, False)
+  (TkArithOp,   "-"  ) -> Just (BopSub, 5, False)
+  (TkArithOp,   "*"  ) -> Just (BopMul, 6, False)
+  (TkArithOp,   "/"  ) -> Just (BopDiv, 6, False)
+  (TkArithOp,   "^"  ) -> Just (BopPow, 7, True)
+  _                    -> Nothing
+
+-- | Parse one atom: a leaf expression that can appear as an operand.
+-- Returns (parsed-expr, remaining-tokens), or Nothing if no atom starts here.
+parseAtom :: [Token] -> Maybe (Expr, [Token])
+parseAtom [] = Nothing
+parseAtom (t:rest)
+  | tkKind t == TkLParen
+  = case findMatchingClose rest of
+      Nothing             -> Nothing
+      Just (inner, after) -> Just (parseExpr inner, after)
+  | tkKind t == TkArithOp && tkText t == "-"
+  = case parseAtom rest of
+      Nothing     -> Nothing
+      Just (e, r) -> Just (ExUnaryMinus e, r)
+  | tkKind t == TkOtherKw && T.toLower (tkText t) == "not"
+  = case parseAtom rest of
+      Nothing     -> Just (ExNot (ExRaw rest), [])
+      Just (e, r) -> let (e', r') = climbPrec 4 e r in Just (ExNot e', r')
+  | tkKind t == TkOtherKw && T.toLower (tkText t) == "create"
+  = case rest of
+      (uT:r) | tkKind uT == TkOtherKw && T.toLower (tkText uT) == "using"
+        -> case parseAtom r of
+             Nothing      -> Nothing
+             Just (e, r') -> Just (ExCreate (CreateUsing e), r')
+      (cls:r) | tkKind cls `elem` [TkIdent, TkOtherKw, TkDatatype]
+        -> Just (ExCreate (CreateClass (tkText cls)), r)
+      _ -> Nothing
+  | tkKind t == TkLBrace
+  = let go _     _   []     = Nothing
+        go depth acc (x:xs)
+          | tkKind x == TkRBrace && depth == 0
+          = Just (ExArray (map parseExpr (splitArgs (reverse acc))), xs)
+          | tkKind x == TkRBrace = go (depth - 1) (x:acc) xs
+          | tkKind x == TkLBrace = go (depth + 1) (x:acc) xs
+          | otherwise            = go depth        (x:acc) xs
+    in go (0 :: Int) [] rest
+  | isSegmentName t
+  = case lvaluePrefix (t:rest) of
+      Nothing -> Nothing
+      Just (segs, remaining) ->
+        case remaining of
+          (lp:r) | tkKind lp == TkLParen ->
+            case findMatchingClose r of
+              Nothing             -> Nothing
+              Just (inner, after) ->
+                Just (ExCall (CallExpr (Lvalue segs) (splitArgs inner)), after)
+          _ -> Just (ExLvalue (Lvalue segs), remaining)
+  | otherwise
+  = case parseSingleToken t of
+      ExRaw _ -> Nothing
+      atom    -> Just (atom, rest)
+
+-- | Consume binary operators at precedence >= minPrec, building a left-fold.
+-- Never fails: returns (result-expr, remaining-tokens).
+climbPrec :: Int -> Expr -> [Token] -> (Expr, [Token])
+climbPrec minPrec lhs ts = case ts of
+  (op:rest)
+    | Just (bop, prec, rightAssoc) <- lookupBinOp op
+    , prec >= minPrec ->
+        case parseAtom rest of
+          Nothing         -> (lhs, ts)
+          Just (rhs0, r0) ->
+            let nextMinPrec    = if rightAssoc then prec else prec + 1
+                (rhs, r)       = climbPrec nextMinPrec rhs0 r0
+                (lhs', r')     = climbPrec minPrec (ExBinOp lhs bop rhs) r
+            in (lhs', r')
+  _ -> (lhs, ts)
+
+-- ---------------------------------------------------------------------------
+-- Expr parser
 
 -- | Parse a token list as an expression.
 -- Total function: unrecognized shapes become ExRaw.
 parseExpr :: [Token] -> Expr
-parseExpr []  = ExRaw []
-parseExpr (t:rest)
-  | tkKind t == TkOtherKw && T.toLower (tkText t) == "not"
-  = ExNot (parseExpr rest)
-parseExpr [t] = parseSingleToken t
-parseExpr ts@(t:_)
-  | tkKind t == TkOtherKw && T.toLower (tkText t) == "create"
-  = maybe (ExRaw ts) ExCreate (parseCreateExpr ts)
-parseExpr ts@(t:_)
-  | tkKind t == TkLBrace
-  = maybe (ExRaw ts) id (parseArrayExpr ts)
-parseExpr (t:rest)
+parseExpr [] = ExRaw []
+parseExpr ts@(t:rest)
+  -- Host variable: keep greedy lvalue parse, discarding tokens after it.
+  -- This preserves the :varname, form used in embedded SQL arguments.
   | tkKind t == TkColon
   = case lvaluePrefix rest of
       Just (segs, _) | not (null segs) -> ExHostVar (Lvalue segs)
-      _                                -> ExRaw (t:rest)
-parseExpr ts  = fromMaybe (ExRaw ts) (tryLvalueOrCall ts)
+      _                                -> ExRaw ts
+  | otherwise
+  = case parseAtom ts of
+      Nothing     -> ExRaw ts
+      Just (e, r) ->
+        let (e', leftover) = climbPrec 0 e r
+        in if null leftover then e' else ExRaw ts
 
 parseSingleToken :: Token -> Expr
 parseSingleToken t = case tkKind t of
@@ -182,21 +256,6 @@ parseSingleToken t = case tkKind t of
   TkDatatype    -> ExLvalue (Lvalue [LvSegment (tkText t) Nothing])
   _             -> ExRaw [t]
 
--- | Try to parse as lvalue chain, or lvalue followed by '(' args ')'.
--- Returns Nothing if the tokens don't fit either shape.
-tryLvalueOrCall :: [Token] -> Maybe Expr
-tryLvalueOrCall ts = do
-  (segs, remaining) <- lvaluePrefix ts
-  case remaining of
-    [] ->
-      Just (ExLvalue (Lvalue segs))
-    (lp : rest) | tkKind lp == TkLParen -> do
-      (inner, after) <- findMatchingClose rest
-      case after of
-        [] -> Just (ExCall (CallExpr (Lvalue segs) (splitArgs inner)))
-        _  -> Nothing   -- tokens after ')': chained call or binary op → ExRaw
-    _ -> Nothing        -- non-'(' remainder: binary op or other → ExRaw
-
 -- ---------------------------------------------------------------------------
 -- PB CALL and DESTROY parsers
 
@@ -210,20 +269,6 @@ parsePbCall [callT, ancT, sepT, evT]
   , tkKind evT   `elem` [TkIdent, TkOtherKw]
   = Just (PbCall (tkText ancT) (tkText evT))
 parsePbCall _ = Nothing
-
--- | Parse a CREATE expression token list starting with the "create" token.
--- Syntax 1: [create, ClassName]  → CreateClass
--- Syntax 2: [create, using, ...] → CreateUsing
-parseCreateExpr :: [Token] -> Maybe CreateExpr
-parseCreateExpr [_, cls]
-  | tkKind cls `elem` [TkIdent, TkOtherKw, TkDatatype]
-  = Just (CreateClass (tkText cls))
-parseCreateExpr (_ : usingT : rest)
-  | tkKind usingT == TkOtherKw
-  , T.toLower (tkText usingT) == "using"
-  , not (null rest)
-  = Just (CreateUsing (parseExpr rest))
-parseCreateExpr _ = Nothing
 
 -- ---------------------------------------------------------------------------
 -- Statement classifier

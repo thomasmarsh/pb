@@ -1,7 +1,7 @@
 module ExprTest (tests) where
 
 import PB.Prelude
-import PB.AST.Expr        (CallExpr (..), CreateExpr (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
+import PB.AST.Expr        (BinOp (..), CallExpr (..), CreateExpr (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
 import PB.Grammar.Body    (parseExpr)
 import PB.Lexing.Token    (Token (..), TokenKind (..), SourceSpan (..))
 
@@ -190,11 +190,15 @@ tests = testGroup "Expr"
           parseExpr [mkTok TkDatatype "Integer"]
             @?= ExLvalue (Lvalue [LvSegment "Integer" Nothing])
 
-      , testCase "Integer(x) + 1 → ExRaw (trailing tokens prevent ExCall)" $
-          let ts = [ mkTok TkDatatype "Integer", mkTok TkLParen "("
-                   , mkTok TkIdent "x", mkTok TkRParen ")"
-                   , mkTok TkArithOp "+", mkTok TkIntLiteral "1" ]
-          in parseExpr ts @?= ExRaw ts
+      , testCase "Integer(x) + 1 → ExBinOp BopAdd (call + literal)" $
+          parseExpr [ mkTok TkDatatype "Integer", mkTok TkLParen "("
+                    , mkTok TkIdent "x", mkTok TkRParen ")"
+                    , mkTok TkArithOp "+", mkTok TkIntLiteral "1" ]
+            @?= ExBinOp
+                  (ExCall (CallExpr (Lvalue [LvSegment "Integer" Nothing])
+                           [[mkTok TkIdent "x"]]))
+                  BopAdd
+                  (ExLit (LitInt "1"))
       ]
 
     , testGroup "create"
@@ -227,11 +231,13 @@ tests = testGroup "Expr"
             @?= ExNot (ExCall (CallExpr (Lvalue [LvSegment "IsNull" Nothing])
                                [[mkTok TkIdent "x"]]))
 
-      , testCase "not complex (binary op operand) → ExNot (ExRaw)" $
-          let opToks = [ mkTok TkIdent "ll_rc", mkTok TkCompareOp ">"
-                       , mkTok TkIntLiteral "0" ]
-          in parseExpr (mkTok TkOtherKw "not" : opToks)
-               @?= ExNot (ExRaw opToks)
+      , testCase "not ll_rc > 0 → ExNot (ExBinOp BopGt)" $
+          parseExpr [ mkTok TkOtherKw "not", mkTok TkIdent "ll_rc"
+                    , mkTok TkCompareOp ">", mkTok TkIntLiteral "0" ]
+            @?= ExNot (ExBinOp
+                        (ExLvalue (Lvalue [LvSegment "ll_rc" Nothing]))
+                        BopGt
+                        (ExLit (LitInt "0")))
 
       , testCase "bare not (no operand) → ExNot (ExRaw [])" $
           parseExpr [mkTok TkOtherKw "not"]
@@ -268,9 +274,12 @@ tests = testGroup "Expr"
       [ testCase "empty token list → ExRaw []" $
           parseExpr [] @?= ExRaw []
 
-      , testCase "binary op sequence → ExRaw" $
-          let ts = [mkTok TkIdent "ll_aa", mkTok TkArithOp "+", mkTok TkIntLiteral "1"]
-          in parseExpr ts @?= ExRaw ts
+      , testCase "lvalue + literal → ExBinOp BopAdd" $
+          parseExpr [mkTok TkIdent "ll_aa", mkTok TkArithOp "+", mkTok TkIntLiteral "1"]
+            @?= ExBinOp
+                  (ExLvalue (Lvalue [LvSegment "ll_aa" Nothing]))
+                  BopAdd
+                  (ExLit (LitInt "1"))
 
       , testCase "chained call result().method() → ExRaw (tokens after first close)" $
           let ts = [ mkTok TkIdent "parentwindow", mkTok TkLParen "(", mkTok TkRParen ")"
@@ -281,6 +290,119 @@ tests = testGroup "Expr"
       , testCase "unmatched open paren → ExRaw" $
           let ts = [mkTok TkIdent "f", mkTok TkLParen "(", mkTok TkIdent "x"]
           in parseExpr ts @?= ExRaw ts
+      ]
+
+    , testGroup "binary operators"
+      [ testCase "a > 0 → ExBinOp BopGt" $
+          parseExpr [ mkTok TkIdent "a", mkTok TkCompareOp ">", mkTok TkIntLiteral "0" ]
+            @?= ExBinOp (ExLvalue (Lvalue [LvSegment "a" Nothing])) BopGt (ExLit (LitInt "0"))
+
+      , testCase "a = b → ExBinOp BopEq (not assignment)" $
+          parseExpr [ mkTok TkIdent "a", mkTok TkAssignOp "=", mkTok TkIdent "b" ]
+            @?= ExBinOp
+                  (ExLvalue (Lvalue [LvSegment "a" Nothing]))
+                  BopEq
+                  (ExLvalue (Lvalue [LvSegment "b" Nothing]))
+
+      , testCase "a <> b → ExBinOp BopNe" $
+          parseExpr [ mkTok TkIdent "a", mkTok TkCompareOp "<>", mkTok TkIdent "b" ]
+            @?= ExBinOp
+                  (ExLvalue (Lvalue [LvSegment "a" Nothing]))
+                  BopNe
+                  (ExLvalue (Lvalue [LvSegment "b" Nothing]))
+
+      , testCase "a + b * c → mul binds tighter than add" $
+          parseExpr [ mkTok TkIdent "a", mkTok TkArithOp "+", mkTok TkIdent "b"
+                    , mkTok TkArithOp "*", mkTok TkIdent "c" ]
+            @?= ExBinOp
+                  (ExLvalue (Lvalue [LvSegment "a" Nothing]))
+                  BopAdd
+                  (ExBinOp
+                    (ExLvalue (Lvalue [LvSegment "b" Nothing]))
+                    BopMul
+                    (ExLvalue (Lvalue [LvSegment "c" Nothing])))
+
+      , testCase "a or b or c → left-associative" $
+          parseExpr [ mkTok TkIdent "a", mkTok TkOtherKw "or", mkTok TkIdent "b"
+                    , mkTok TkOtherKw "or", mkTok TkIdent "c" ]
+            @?= ExBinOp
+                  (ExBinOp
+                    (ExLvalue (Lvalue [LvSegment "a" Nothing]))
+                    BopOr
+                    (ExLvalue (Lvalue [LvSegment "b" Nothing])))
+                  BopOr
+                  (ExLvalue (Lvalue [LvSegment "c" Nothing]))
+
+      , testCase "a ^ b ^ c → right-associative" $
+          parseExpr [ mkTok TkIdent "a", mkTok TkArithOp "^", mkTok TkIdent "b"
+                    , mkTok TkArithOp "^", mkTok TkIdent "c" ]
+            @?= ExBinOp
+                  (ExLvalue (Lvalue [LvSegment "a" Nothing]))
+                  BopPow
+                  (ExBinOp
+                    (ExLvalue (Lvalue [LvSegment "b" Nothing]))
+                    BopPow
+                    (ExLvalue (Lvalue [LvSegment "c" Nothing])))
+
+      , testCase "a xor b → ExBinOp BopXor" $
+          parseExpr [ mkTok TkIdent "a", mkTok TkOtherKw "xor", mkTok TkIdent "b" ]
+            @?= ExBinOp
+                  (ExLvalue (Lvalue [LvSegment "a" Nothing]))
+                  BopXor
+                  (ExLvalue (Lvalue [LvSegment "b" Nothing]))
+
+      , testCase "(a + b) * c → paren transparent" $
+          parseExpr [ mkTok TkLParen "(", mkTok TkIdent "a", mkTok TkArithOp "+"
+                    , mkTok TkIdent "b", mkTok TkRParen ")"
+                    , mkTok TkArithOp "*", mkTok TkIdent "c" ]
+            @?= ExBinOp
+                  (ExBinOp
+                    (ExLvalue (Lvalue [LvSegment "a" Nothing]))
+                    BopAdd
+                    (ExLvalue (Lvalue [LvSegment "b" Nothing])))
+                  BopMul
+                  (ExLvalue (Lvalue [LvSegment "c" Nothing]))
+
+      , testCase "(x) → paren transparent: ExLvalue x" $
+          parseExpr [ mkTok TkLParen "(", mkTok TkIdent "x", mkTok TkRParen ")" ]
+            @?= ExLvalue (Lvalue [LvSegment "x" Nothing])
+
+      , testCase "IsNull(x) or y → ExBinOp BopOr call lvalue" $
+          parseExpr [ mkTok TkIdent "IsNull", mkTok TkLParen "("
+                    , mkTok TkIdent "x", mkTok TkRParen ")"
+                    , mkTok TkOtherKw "or", mkTok TkIdent "y" ]
+            @?= ExBinOp
+                  (ExCall (CallExpr (Lvalue [LvSegment "IsNull" Nothing])
+                           [[mkTok TkIdent "x"]]))
+                  BopOr
+                  (ExLvalue (Lvalue [LvSegment "y" Nothing]))
+
+      , testCase "not a > b → ExNot (ExBinOp BopGt): not binds below comparison" $
+          parseExpr [ mkTok TkOtherKw "not", mkTok TkIdent "a"
+                    , mkTok TkCompareOp ">", mkTok TkIdent "b" ]
+            @?= ExNot
+                  (ExBinOp
+                    (ExLvalue (Lvalue [LvSegment "a" Nothing]))
+                    BopGt
+                    (ExLvalue (Lvalue [LvSegment "b" Nothing])))
+
+      , testCase "not a and b → (ExNot a) and b" $
+          parseExpr [ mkTok TkOtherKw "not", mkTok TkIdent "a"
+                    , mkTok TkOtherKw "and", mkTok TkIdent "b" ]
+            @?= ExBinOp
+                  (ExNot (ExLvalue (Lvalue [LvSegment "a" Nothing])))
+                  BopAnd
+                  (ExLvalue (Lvalue [LvSegment "b" Nothing]))
+      ]
+
+    , testGroup "unary minus"
+      [ testCase "- x → ExUnaryMinus (ExLvalue x)" $
+          parseExpr [ mkTok TkArithOp "-", mkTok TkIdent "x" ]
+            @?= ExUnaryMinus (ExLvalue (Lvalue [LvSegment "x" Nothing]))
+
+      , testCase "- 1 → ExUnaryMinus (ExLit (LitInt))" $
+          parseExpr [ mkTok TkArithOp "-", mkTok TkIntLiteral "1" ]
+            @?= ExUnaryMinus (ExLit (LitInt "1"))
       ]
 
     , testProperty "total: parseExpr never raises" propParseExprTotal
@@ -314,15 +436,17 @@ propParseExprTotal = property $ do
       ])
   let ts = map (uncurry mkTok) pairs
   assert $ case parseExpr ts of
-    ExLit     _ -> True
-    ExEnum    _ -> True
-    ExLvalue  _ -> True
-    ExCall    _ -> True
-    ExCreate  _ -> True
-    ExArray   _ -> True
-    ExNot     _ -> True
-    ExHostVar _ -> True
-    ExRaw     _ -> True
+    ExLit          _ -> True
+    ExEnum         _ -> True
+    ExLvalue       _ -> True
+    ExCall         _ -> True
+    ExCreate       _ -> True
+    ExArray        _ -> True
+    ExNot          _ -> True
+    ExHostVar      _ -> True
+    ExBinOp      _ _ _ -> True
+    ExUnaryMinus _ -> True
+    ExRaw          _ -> True
 
 propExRawRoundtrip :: Property
 propExRawRoundtrip = property $ do
