@@ -64,7 +64,7 @@ classifyByOp s ts =
 -- Lvalue helpers
 
 isSegmentName :: Token -> Bool
-isSegmentName t = tkKind t `elem` [TkIdent, TkOtherKw]
+isSegmentName t = tkKind t `elem` [TkIdent, TkOtherKw, TkSqlKw]
 
 -- | Parse a greedy lvalue prefix; returns (segments, remaining_tokens).
 -- Returns Nothing if the first token is not a valid segment name.
@@ -214,7 +214,10 @@ classifyBodyStmt s = case stmtTokens s of
           "exit"     -> BsExit
           "continue" -> BsContinue
           _          -> BsRaw s
-    | tkKind t `elem` [TkSqlKw, TkDeclKw] -> BsRaw s
+    | tkKind t `elem` [TkSqlKw, TkDeclKw] ->
+        case rest of
+          (lp:_) | tkKind lp == TkLParen -> classifyByOp s (stmtTokens s)
+          _                              -> BsRaw s
     | tkKind t == TkOtherKw ->
         case T.toLower (tkText t) of
           "call"    -> maybe (BsRaw s) BsPbCall (parsePbCall (stmtTokens s))

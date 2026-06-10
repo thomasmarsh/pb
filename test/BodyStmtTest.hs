@@ -157,6 +157,48 @@ tests = testGroup "Body"
           BsRaw _ -> return ()
           other   -> assertFailure ("expected BsRaw, got: " <> show other)
 
+    , testCase "call: close(parent) — sql-kw callee no space" $
+        classifyBodyStmt
+          (mkStmt [(TkSqlKw, "close"), (TkLParen, "("), (TkIdent, "parent"), (TkRParen, ")")])
+          @?= BsCall (ExCall (CallExpr
+                (Lvalue [LvSegment "close" Nothing])
+                [[mkTok TkIdent "parent"]]))
+
+    , testCase "call: Close (lw_sheet) — sql-kw callee with space before paren" $
+        classifyBodyStmt
+          (mkStmt [(TkSqlKw, "Close"), (TkLParen, "("), (TkIdent, "lw_sheet"), (TkRParen, ")")])
+          @?= BsCall (ExCall (CallExpr
+                (Lvalue [LvSegment "Close" Nothing])
+                [[mkTok TkIdent "lw_sheet"]]))
+
+    , testCase "call: open(w_main) — single-arg open" $
+        classifyBodyStmt
+          (mkStmt [(TkSqlKw, "open"), (TkLParen, "("), (TkIdent, "w_main"), (TkRParen, ")")])
+          @?= BsCall (ExCall (CallExpr
+                (Lvalue [LvSegment "open" Nothing])
+                [[mkTok TkIdent "w_main"]]))
+
+    , testCase "call: open(w_main, this) — two-arg open" $
+        classifyBodyStmt
+          (mkStmt [ (TkSqlKw, "open"), (TkLParen, "(")
+                  , (TkIdent, "w_main"), (TkComma, ","), (TkOtherKw, "this")
+                  , (TkRParen, ")")])
+          @?= BsCall (ExCall (CallExpr
+                (Lvalue [LvSegment "open" Nothing])
+                [[mkTok TkIdent "w_main"], [mkTok TkOtherKw "this"]]))
+
+    , testCase "raw: OPEN DYNAMIC — sql cursor op stays BsRaw" $
+        case classifyBodyStmt
+               (mkStmt [(TkSqlKw, "OPEN"), (TkOtherKw, "DYNAMIC"), (TkIdent, "lc_dept")]) of
+          BsRaw _ -> return ()
+          other   -> assertFailure ("expected BsRaw, got: " <> show other)
+
+    , testCase "raw: CLOSE cur — sql cursor close stays BsRaw" $
+        case classifyBodyStmt
+               (mkStmt [(TkSqlKw, "CLOSE"), (TkIdent, "cur")]) of
+          BsRaw _ -> return ()
+          other   -> assertFailure ("expected BsRaw, got: " <> show other)
+
     , testProperty "total: classifyBodyStmt never raises for any token list"
         propClassifyTotal
     ]
@@ -306,6 +348,15 @@ tests = testGroup "Body"
       , testCase "unmatched open bracket returns Nothing" $
           parseLvalue [mkTok TkIdent "arr", mkTok TkLBracket "[", mkTok TkIdent "i"]
             @?= Nothing
+
+      , testCase "TkSqlKw segment in dotted path (obj.object.open[i])" $
+          parseLvalue [ mkTok TkIdent "adw", mkTok TkDot "."
+                      , mkTok TkIdent "object", mkTok TkDot "."
+                      , mkTok TkSqlKw "open"
+                      , mkTok TkLBracket "[", mkTok TkIdent "i", mkTok TkRBracket "]" ]
+            @?= Just (Lvalue [ LvSegment "adw"    Nothing
+                              , LvSegment "object" Nothing
+                              , LvSegment "open"   (Just [mkTok TkIdent "i"]) ])
       ]
 
     , testGroup "classifyBodyStmt BsAssign with Lvalue"
@@ -336,6 +387,18 @@ tests = testGroup "Body"
                          , (TkAssignOp, "="), (TkIntLiteral, "1") ]) of
             BsRaw _ -> return ()
             other   -> assertFailure ("expected BsRaw, got: " <> show other)
+
+      , testCase "assign: sql-kw segment in dotted lhs (adw.object.open[i] = 0)" $
+          classifyBodyStmt
+            (mkStmt [ (TkIdent, "adw"), (TkDot, "."), (TkIdent, "object"), (TkDot, ".")
+                    , (TkSqlKw, "open")
+                    , (TkLBracket, "["), (TkIdent, "i"), (TkRBracket, "]")
+                    , (TkAssignOp, "="), (TkIntLiteral, "0") ])
+            @?= BsAssign
+                  (Lvalue [ LvSegment "adw"    Nothing
+                           , LvSegment "object" Nothing
+                           , LvSegment "open"   (Just [mkTok TkIdent "i"]) ])
+                  (ExLit (LitInt "0"))
       ]
     ]
   ]
