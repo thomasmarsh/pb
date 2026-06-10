@@ -216,6 +216,7 @@ instance ToJSON Expr where
   toJSON (ExCall   ce)   = toJSON ce
   toJSON (ExCreate (CreateClass cls)) = object ["tag" .= ("create"       :: Text), "class" .= cls]
   toJSON (ExCreate (CreateUsing e))   = object ["tag" .= ("create_using" :: Text), "expr"  .= e]
+  toJSON (ExArray  elems) = object ["tag" .= ("array" :: Text), "items" .= elems]
   toJSON (ExRaw    ts)   = object ["tag" .= ("raw"          :: Text), "tokens" .= map tkText ts]
 
 instance ToJSON Literal where

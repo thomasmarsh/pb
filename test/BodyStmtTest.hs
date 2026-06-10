@@ -399,6 +399,24 @@ tests = testGroup "Body"
                            , LvSegment "object" Nothing
                            , LvSegment "open"   (Just [mkTok TkIdent "i"]) ])
                   (ExLit (LitInt "0"))
+
+      , testCase "array literal rhs: this.Item[]={this.m_file, this.m_edit}" $
+          classifyBodyStmt
+            (mkStmt [ (TkOtherKw, "this"), (TkDot, "."), (TkIdent, "Item")
+                    , (TkLBracket, "["), (TkRBracket, "]")
+                    , (TkAssignOp, "=")
+                    , (TkLBrace, "{")
+                    , (TkOtherKw, "this"), (TkDot, "."), (TkIdent, "m_file")
+                    , (TkComma, ",")
+                    , (TkOtherKw, "this"), (TkDot, "."), (TkIdent, "m_edit")
+                    , (TkRBrace, "}") ])
+            @?= BsAssign
+                  (Lvalue [ LvSegment "this" Nothing
+                           , LvSegment "Item" (Just []) ])
+                  (ExArray [ ExLvalue (Lvalue [ LvSegment "this"   Nothing
+                                              , LvSegment "m_file" Nothing ])
+                           , ExLvalue (Lvalue [ LvSegment "this"   Nothing
+                                              , LvSegment "m_edit" Nothing ]) ])
       ]
     ]
   ]

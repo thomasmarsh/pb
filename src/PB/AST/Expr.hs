@@ -49,5 +49,6 @@ data Expr
   | ExLvalue Lvalue     -- bare variable / dotted member chain / subscript
   | ExCall   CallExpr   -- function or method call
   | ExCreate CreateExpr -- CREATE ClassName / CREATE USING expr
+  | ExArray  [Expr]     -- { e1, e2, ... } array literal
   | ExRaw    [Token]    -- binary ops, chained calls, or anything unrecognized
   deriving (Eq, Show)

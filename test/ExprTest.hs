@@ -137,6 +137,42 @@ tests = testGroup "Expr"
                            ])
       ]
 
+    , testGroup "array"
+      [ testCase "empty array {} → ExArray []" $
+          parseExpr [ mkTok TkLBrace "{", mkTok TkRBrace "}" ]
+            @?= ExArray []
+
+      , testCase "single-element {this.m_file} → ExArray [ExLvalue]" $
+          parseExpr [ mkTok TkLBrace "{"
+                    , mkTok TkOtherKw "this", mkTok TkDot ".", mkTok TkIdent "m_file"
+                    , mkTok TkRBrace "}" ]
+            @?= ExArray [ ExLvalue (Lvalue [ LvSegment "this"   Nothing
+                                           , LvSegment "m_file" Nothing ]) ]
+
+      , testCase "multi-element {a, b} → ExArray [ExLvalue, ExLvalue]" $
+          parseExpr [ mkTok TkLBrace "{"
+                    , mkTok TkOtherKw "this", mkTok TkDot ".", mkTok TkIdent "m_file"
+                    , mkTok TkComma ","
+                    , mkTok TkOtherKw "this", mkTok TkDot ".", mkTok TkIdent "m_edit"
+                    , mkTok TkRBrace "}" ]
+            @?= ExArray [ ExLvalue (Lvalue [ LvSegment "this"   Nothing
+                                           , LvSegment "m_file" Nothing ])
+                        , ExLvalue (Lvalue [ LvSegment "this"   Nothing
+                                           , LvSegment "m_edit" Nothing ]) ]
+
+      , testCase "nested array {{a}} → ExArray [ExArray [ExLvalue]]" $
+          parseExpr [ mkTok TkLBrace "{"
+                    , mkTok TkLBrace "{"
+                    , mkTok TkIdent "a"
+                    , mkTok TkRBrace "}"
+                    , mkTok TkRBrace "}" ]
+            @?= ExArray [ ExArray [ ExLvalue (Lvalue [LvSegment "a" Nothing]) ] ]
+
+      , testCase "unclosed brace → ExRaw fallback" $
+          let ts = [ mkTok TkLBrace "{", mkTok TkIdent "a" ]
+          in parseExpr ts @?= ExRaw ts
+      ]
+
     , testGroup "create"
       [ testCase "create ident class → ExCreate (CreateClass)" $
           parseExpr [mkTok TkOtherKw "create", mkTok TkIdent "n_service"]
@@ -192,6 +228,8 @@ propParseExprTotal = property $ do
       , (TkDot,         ".")
       , (TkLParen,      "(")
       , (TkRParen,      ")")
+      , (TkLBrace,      "{")
+      , (TkRBrace,      "}")
       , (TkComma,       ",")
       , (TkArithOp,     "+")
       , (TkNull,        "null")
@@ -203,6 +241,7 @@ propParseExprTotal = property $ do
     ExLvalue _ -> True
     ExCall   _ -> True
     ExCreate _ -> True
+    ExArray  _ -> True
     ExRaw    _ -> True
 
 propExRawRoundtrip :: Property

@@ -8,8 +8,8 @@ cabal build --enable-tests            # compile tests too
 cabal test                            # run test suite
 cabal test --test-show-details=direct # verbose output
 bash scripts/check-corpus.sh          # 0 errors / 777 files = baseline
-python3 scripts/analyze-bsraw.py      # categorized BsRaw breakdown (both corpora)
-python3 scripts/analyze-bsraw.py --no-build  # same, skip build step
+python3 scripts/analyze-debt.py       # BsRaw + ExRaw debt breakdown (both corpora)
+python3 scripts/analyze-debt.py --no-build  # same, skip build step
 ```
 
 ## Session Scoping
@@ -103,13 +103,18 @@ def walk_bsraw_leading(node, keyword):
                 yield from walk_bsraw_leading(v, keyword)
 ```
 
-**Diagnosing BsRaw coverage.** When the charter targets BsRaw reduction, run the analysis script first — do NOT re-derive the breakdown from scratch:
+**Diagnosing implementation debt.** When the charter targets BsRaw or ExRaw reduction, run the debt analyser first — do NOT re-derive the breakdown from scratch:
 
 ```bash
-python3 scripts/analyze-bsraw.py --no-build
+python3 scripts/analyze-debt.py --no-build
 ```
 
-This prints per-corpus category counts (`sql`, `decl`, `ctrl`, `handled`, `array_init`, `other`) and a ranked "other" breakdown with examples. The `other` category is the actionable target; all other categories are either correct BsRaw (SQL, decl) or already handled.
+This prints:
+
+- Per-corpus BsRaw category counts (`sql`, `decl`, `ctrl`, `handled`, `other`) — `other` is the actionable BsRaw target; the rest are correct or already handled.
+- A ranked ExRaw breakdown by leading token with examples — these are expression-level `ExRaw` fallbacks still to be promoted to typed `Expr` constructors. Use this to pick the highest-value next ExRaw charter.
+
+**Keep `analyze-debt.py` in sync with any new `Expr` constructors.** When a new `ExXxx` constructor is added, confirm the ExRaw count drops correspondingly in the script output — it requires no code changes because it walks the live JSON, but the BACKLOG entry should quote the before/after counts.
 
 **BACKLOG entries for BsRaw work are pre-loaded with Stage 0 analysis.** Each open BsRaw item records: current count, root cause (token kind + guard line), which shapes must stay BsRaw, and the Stage 1 fix sketch. Confirm the counts still match the script output, then proceed directly to Stage 1 — no re-sampling required.
 
@@ -345,11 +350,13 @@ data CallExpr = CallExpr
   }
 
 data Expr
-  = ExLit    Literal   -- bool / numeric / string / date-time / null
-  | ExEnum   Text      -- PowerBuilder enum name (without trailing '!')
-  | ExLvalue Lvalue    -- bare ident / member chain / subscript
-  | ExCall   CallExpr  -- function or method call
-  | ExRaw    [Token]   -- binary ops, chained calls, or unrecognized
+  = ExLit    Literal    -- bool / numeric / string / date-time / null
+  | ExEnum   Text       -- PowerBuilder enum name (without trailing '!')
+  | ExLvalue Lvalue     -- bare ident / member chain / subscript
+  | ExCall   CallExpr   -- function or method call
+  | ExCreate CreateExpr -- CREATE ClassName / CREATE USING expr
+  | ExArray  [Expr]     -- { e1, e2, ... } array literal
+  | ExRaw    [Token]    -- binary ops, chained calls, or unrecognized
 ```
 
 ### `PB.AST.BodyStmt`
@@ -379,20 +386,22 @@ data ChooseStmt = ChooseStmt
   { chooseExpr :: Expr, chooseClauses :: [CaseClause] }
 
 data BodyStmt
-  = BsLocalVar  [Token]
-  | BsAssign    Lvalue Expr           -- rhs is parsed Expr
-  | BsAugAssign [Token] AugOp [Token]
-  | BsInc       [Token]
-  | BsDec       [Token]
-  | BsCall      Expr
-  | BsReturn    (Maybe Expr)
+  = BsLocalVar  [Token]               -- Type Name [= init …]
+  | BsAssign    Lvalue Expr           -- lhs = rhs
+  | BsAugAssign [Token] AugOp [Token] -- lhs_tokens op= rhs_tokens
+  | BsInc       [Token]               -- lhs_tokens ++
+  | BsDec       [Token]               -- lhs_tokens --
+  | BsCall      Expr                  -- standalone call expression
+  | BsPbCall    PbCall                -- CALL ancestor[`ctrl] :: event
+  | BsReturn    (Maybe Expr)          -- return [expr]
   | BsIf        IfStmt
   | BsFor       ForStmt
   | BsDo        DoStmt
   | BsChoose    ChooseStmt
   | BsExit
   | BsContinue
-  | BsRaw       Statement
+  | BsDestroy   Lvalue                -- DESTROY objectvariable
+  | BsRaw       Statement             -- SQL, event decls, unclassified
 ```
 
 ### `PB.Grammar.Body`
@@ -402,6 +411,7 @@ classifyBodyStmt :: Statement -> BodyStmt   -- leaf classifier; exit/continue/re
 parseBodyStmts   :: [Statement] -> [BodyStmt]  -- flat map; use pBodyStmt for recursive parsing
 parseLvalue      :: [Token] -> Maybe Lvalue
 parseExpr        :: [Token] -> Expr   -- total; ExRaw fallback
+parseArrayExpr   :: [Token] -> Maybe Expr  -- { e1, e2, ... } array literal; Nothing if no leading '{'
 pBodyStmt        :: FileParser BodyStmt  -- recursive; dispatches to pIfStmt/pForStmt/pDoStmt/pChooseStmt
 ```
 

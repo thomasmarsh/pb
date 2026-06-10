@@ -132,6 +132,18 @@ splitArgs ts = go (0 :: Int) [] ts
 -- ---------------------------------------------------------------------------
 -- Expr parser
 
+-- | Parse a { e1, e2, ... } array literal.
+-- Returns Nothing if the tokens don't start with '{' or the closing '}' is missing.
+parseArrayExpr :: [Token] -> Maybe Expr
+parseArrayExpr ts = case ts of
+  (lb : rest)
+    | tkKind lb == TkLBrace
+    -> case reverse rest of
+         (rb : revInner) | tkKind rb == TkRBrace ->
+           Just (ExArray (map parseExpr (splitArgs (reverse revInner))))
+         _ -> Nothing
+  _ -> Nothing
+
 -- | Parse a token list as an expression.
 -- Total function: unrecognized shapes become ExRaw.
 parseExpr :: [Token] -> Expr
@@ -140,6 +152,9 @@ parseExpr [t] = parseSingleToken t
 parseExpr ts@(t:_)
   | tkKind t == TkOtherKw && T.toLower (tkText t) == "create"
   = maybe (ExRaw ts) ExCreate (parseCreateExpr ts)
+parseExpr ts@(t:_)
+  | tkKind t == TkLBrace
+  = maybe (ExRaw ts) id (parseArrayExpr ts)
 parseExpr ts  = fromMaybe (ExRaw ts) (tryLvalueOrCall ts)
 
 parseSingleToken :: Token -> Expr

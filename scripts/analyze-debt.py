@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
 """
-Categorize BsRaw body statements across both corpora.
+Implementation-debt analyser: measure remaining BsRaw and ExRaw across both corpora.
+
+BsRaw  = statement-level fallback (tag=raw with 'text' field).
+ExRaw  = expression-level fallback (tag=raw with 'tokens' field).
 
 Usage:
-    python3 scripts/analyze-bsraw.py            # build + run
-    python3 scripts/analyze-bsraw.py --no-build # skip cabal build
+    python3 scripts/analyze-debt.py            # build + run
+    python3 scripts/analyze-debt.py --no-build # skip cabal build
 
-Output: per-corpus category counts and a combined 'other' breakdown with
-examples. Use this at Stage 0 for any charter targeting BsRaw reduction.
+Output:
+  - Per-corpus BsRaw category counts (sql/decl/ctrl/handled/other).
+  - BsRaw 'other' breakdown with examples — these are the actionable BsRaw targets.
+  - ExRaw breakdown by leading token with examples — expression-level fallbacks
+    to target next (binary ops, 'not' prefix, type-cast calls, etc.).
+
+Use this at Stage 0 for any charter targeting BsRaw or ExRaw reduction.
 """
 import argparse, json, os, glob, subprocess, sys, tempfile
 from collections import Counter, defaultdict
@@ -41,6 +49,7 @@ HANDLED = {"return", "exit", "continue", "call", "destroy", "create", "halt"}
 
 
 def walk_bsraw(node):
+    """Yield BsRaw text strings (tag=raw with 'text' field — statement level)."""
     if isinstance(node, list):
         for x in node:
             yield from walk_bsraw(x)
@@ -50,6 +59,21 @@ def walk_bsraw(node):
         for v in node.values():
             if isinstance(v, (dict, list)):
                 yield from walk_bsraw(v)
+
+
+def walk_exraw(node):
+    """Yield (first_token, full_token_list) for ExRaw expressions (tag=raw with 'tokens' field)."""
+    if isinstance(node, list):
+        for x in node:
+            yield from walk_exraw(x)
+    elif isinstance(node, dict):
+        if node.get("tag") == "raw" and "tokens" in node:
+            toks = node["tokens"]
+            if toks:
+                yield toks[0], toks
+        for v in node.values():
+            if isinstance(v, (dict, list)):
+                yield from walk_exraw(v)
 
 
 def categorize(text):
@@ -81,6 +105,9 @@ def analyze_dir(out_dir):
     other_words = Counter()
     examples    = defaultdict(list)
     total       = 0
+    exraw_total   = 0
+    exraw_words   = Counter()
+    exraw_examples = defaultdict(list)
     for f in glob.glob(os.path.join(out_dir, "**", "*.json"), recursive=True):
         try:
             d = json.load(open(f))
@@ -96,7 +123,13 @@ def analyze_dir(out_dir):
                 other_words[key] += 1
                 if len(examples[key]) < 3:
                     examples[key].append(text.strip()[:100])
-    return total, counts, other_words, examples
+        for first, toks in walk_exraw(d):
+            exraw_total += 1
+            key = first.lower().rstrip(";(")
+            exraw_words[key] += 1
+            if len(exraw_examples[key]) < 3:
+                exraw_examples[key].append(" ".join(toks[:8]))
+    return total, counts, other_words, examples, exraw_total, exraw_words, exraw_examples
 
 
 def main():
@@ -125,16 +158,21 @@ def main():
         run_corpus("openpay", OPENPAY, openpay_out)
         print()
 
-        grand_total     = 0
-        all_other_words = Counter()
-        all_examples    = defaultdict(list)
+        grand_total       = 0
+        all_other_words   = Counter()
+        all_examples      = defaultdict(list)
+        grand_exraw       = 0
+        all_exraw_words   = Counter()
+        all_exraw_examples = defaultdict(list)
 
         for name, out_dir in [("Appeon", appeon_out), ("OpenPay", openpay_out)]:
-            total, counts, other_words, examples = analyze_dir(out_dir)
-            grand_total += total
+            total, counts, other_words, examples, exraw_total, exraw_words, exraw_examples \
+                = analyze_dir(out_dir)
+            grand_total  += total
+            grand_exraw  += exraw_total
             files = len(list(glob.glob(os.path.join(out_dir, "**", "*.json"),
                                        recursive=True)))
-            print(f"=== {name}: {files} files, {total} BsRaw ===")
+            print(f"=== {name}: {files} files, {total} BsRaw, {exraw_total} ExRaw ===")
             for cat in ("sql", "decl", "ctrl", "handled", "array_init", "other"):
                 n = counts.get(cat, 0)
                 if n:
@@ -145,16 +183,28 @@ def main():
                 for ex in examples[w]:
                     if len(all_examples[w]) < 3:
                         all_examples[w].append(ex)
+            for w, c in exraw_words.most_common():
+                all_exraw_words[w] += c
+                for ex in exraw_examples[w]:
+                    if len(all_exraw_examples[w]) < 3:
+                        all_exraw_examples[w].append(ex)
 
         other_total = sum(all_other_words.values())
-        print(f"=== TOTALS: {grand_total} BsRaw across both corpora ===")
-        print(f"    'other' (actionable): {other_total}")
+        print(f"=== TOTALS: {grand_total} BsRaw, {grand_exraw} ExRaw across both corpora ===")
+        print(f"    BsRaw 'other' (actionable): {other_total}")
         print()
         if all_other_words:
-            print("'Other' breakdown (not SQL/ctrl/decl/handled/array_init):")
+            print("BsRaw 'other' breakdown (not SQL/ctrl/decl/handled/array_init):")
             for word, count in all_other_words.most_common(40):
                 print(f"  {word!r:42s}  {count:5d}")
                 for ex in all_examples[word][:2]:
+                    print(f"      {ex!r}")
+            print()
+        if all_exraw_words:
+            print(f"ExRaw breakdown by leading token (top 40, total {grand_exraw}):")
+            for word, count in all_exraw_words.most_common(40):
+                print(f"  {word!r:42s}  {count:5d}")
+                for ex in all_exraw_examples[word][:2]:
                     print(f"      {ex!r}")
 
 
