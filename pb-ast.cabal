@@ -64,7 +64,7 @@ test-suite pb-ast-test
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
-  other-modules: BodyStmtTest, CorpusTest, FileTest, MaskTest, RunnerTest, SplitterTest, StreamTest, TokenTest
+  other-modules: BodyStmtTest, CorpusTest, ExprTest, FileTest, MaskTest, RunnerTest, SplitterTest, StreamTest, TokenTest
   build-depends:
     , base ^>=4.20.2.0
     , pb-ast

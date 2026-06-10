@@ -5,7 +5,9 @@ module PB.Pipeline.Runner
 
 import PB.Prelude
 import PB.AST.BodyStmt      (AugOp (..), BodyStmt (..))
-import PB.AST.Expr          (LvSegment (..), Lvalue (..), lvsName, lvsSubscript, lvSegments)
+import PB.AST.Expr          ( CallExpr (..), Expr (..), Literal (..)
+                            , LvSegment (..), Lvalue (..)
+                            , lvsName, lvsSubscript, lvSegments )
 import PB.AST.Object
 import PB.Grammar.File      (parseSrFile)
 import PB.Lexing.Lexer      (LexError (..), LexLine (..), tokenize)
@@ -208,15 +210,38 @@ encodeBody :: [BodyStmt] -> Value
 encodeBody = toJSON . map encodeBodyStmt
 
 encodeBodyStmt :: BodyStmt -> Value
-encodeBodyStmt (BsLocalVar   ts)         = object ["tag" .= ("local_var"   :: Text), "tokens" .= map tkText ts]
-encodeBodyStmt (BsAssign     lhs rhs)    = object ["tag" .= ("assign"      :: Text), "lhs" .= encodeLvalue lhs, "rhs" .= map tkText rhs]
-encodeBodyStmt (BsAugAssign  lhs op rhs) = object ["tag" .= ("aug_assign"  :: Text), "lhs" .= map tkText lhs, "op" .= encodeAugOp op, "rhs" .= map tkText rhs]
-encodeBodyStmt (BsInc        lhs)        = object ["tag" .= ("inc"         :: Text), "lhs" .= map tkText lhs]
-encodeBodyStmt (BsDec        lhs)        = object ["tag" .= ("dec"         :: Text), "lhs" .= map tkText lhs]
-encodeBodyStmt (BsCall       ts)         = object ["tag" .= ("call"        :: Text), "tokens" .= map tkText ts]
-encodeBodyStmt (BsReturn     Nothing)    = object ["tag" .= ("return"      :: Text)]
-encodeBodyStmt (BsReturn     (Just ts))  = object ["tag" .= ("return"      :: Text), "value" .= map tkText ts]
-encodeBodyStmt (BsRaw        s)          = object ["tag" .= ("raw"         :: Text), "text"  .= (llText . stmtSource) s]
+encodeBodyStmt (BsLocalVar   ts)         = object ["tag" .= ("local_var"  :: Text), "tokens" .= map tkText ts]
+encodeBodyStmt (BsAssign     lhs rhs)    = object ["tag" .= ("assign"     :: Text), "lhs" .= encodeLvalue lhs, "rhs" .= encodeExpr rhs]
+encodeBodyStmt (BsAugAssign  lhs op rhs) = object ["tag" .= ("aug_assign" :: Text), "lhs" .= map tkText lhs, "op" .= encodeAugOp op, "rhs" .= map tkText rhs]
+encodeBodyStmt (BsInc        lhs)        = object ["tag" .= ("inc"        :: Text), "lhs" .= map tkText lhs]
+encodeBodyStmt (BsDec        lhs)        = object ["tag" .= ("dec"        :: Text), "lhs" .= map tkText lhs]
+encodeBodyStmt (BsCall       expr)       = object ["tag" .= ("call"       :: Text), "expr" .= encodeExpr expr]
+encodeBodyStmt (BsReturn     Nothing)    = object ["tag" .= ("return"     :: Text)]
+encodeBodyStmt (BsReturn     (Just e))   = object ["tag" .= ("return"     :: Text), "value" .= encodeExpr e]
+encodeBodyStmt (BsRaw        s)          = object ["tag" .= ("raw"        :: Text), "text"  .= (llText . stmtSource) s]
+
+encodeExpr :: Expr -> Value
+encodeExpr (ExLit    lit)  = encodeLiteral lit
+encodeExpr (ExEnum   name) = object ["tag" .= ("enum"   :: Text), "name" .= name]
+encodeExpr (ExLvalue lv)   = object ["tag" .= ("lvalue" :: Text), "segments" .= map encodeSegment (lvSegments lv)]
+encodeExpr (ExCall   ce)   = encodeCallExpr ce
+encodeExpr (ExRaw    ts)   = object ["tag" .= ("raw"    :: Text), "tokens" .= map tkText ts]
+
+encodeLiteral :: Literal -> Value
+encodeLiteral (LitBool b)  = object ["tag" .= ("bool"   :: Text), "value" .= b]
+encodeLiteral (LitInt  t)  = object ["tag" .= ("int"    :: Text), "value" .= t]
+encodeLiteral (LitReal t)  = object ["tag" .= ("real"   :: Text), "value" .= t]
+encodeLiteral (LitStr  t)  = object ["tag" .= ("string" :: Text), "value" .= t]
+encodeLiteral (LitDate t)  = object ["tag" .= ("date"   :: Text), "value" .= t]
+encodeLiteral (LitTime t)  = object ["tag" .= ("time"   :: Text), "value" .= t]
+encodeLiteral LitNull      = object ["tag" .= ("null"   :: Text)]
+
+encodeCallExpr :: CallExpr -> Value
+encodeCallExpr ce = object
+  [ "tag"    .= ("call_expr" :: Text)
+  , "callee" .= encodeLvalue (ceCallee ce)
+  , "args"   .= map (map tkText) (ceArgs ce)
+  ]
 
 encodeLvalue :: Lvalue -> Value
 encodeLvalue lv = object ["segments" .= map encodeSegment (lvSegments lv)]

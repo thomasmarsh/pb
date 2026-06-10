@@ -288,14 +288,24 @@ Maintained here to avoid re-scanning the tree. Update when new exports are added
 ### `PB.AST.Expr`
 
 ```haskell
-data LvSegment = LvSegment
-  { lvsName      :: Text
-  , lvsSubscript :: Maybe [Token]
+data LvSegment = LvSegment { lvsName :: Text, lvsSubscript :: Maybe [Token] }
+data Lvalue    = Lvalue    { lvSegments :: [LvSegment] }   -- non-empty
+
+data Literal
+  = LitBool Bool | LitInt Text | LitReal Text | LitStr Text
+  | LitDate Text | LitTime Text | LitNull
+
+data CallExpr = CallExpr
+  { ceCallee :: Lvalue     -- dotted name chain before '('
+  , ceArgs   :: [[Token]]  -- each arg as raw tokens (split on ',' at depth 0)
   }
 
-data Lvalue = Lvalue
-  { lvSegments :: [LvSegment]   -- non-empty
-  }
+data Expr
+  = ExLit    Literal   -- bool / numeric / string / date-time / null
+  | ExEnum   Text      -- PowerBuilder enum name (without trailing '!')
+  | ExLvalue Lvalue    -- bare ident / member chain / subscript
+  | ExCall   CallExpr  -- function or method call
+  | ExRaw    [Token]   -- binary ops, chained calls, or unrecognized
 ```
 
 ### `PB.AST.BodyStmt`
@@ -305,12 +315,12 @@ data AugOp = AugAdd | AugSub | AugMul | AugDiv
 
 data BodyStmt
   = BsLocalVar  [Token]
-  | BsAssign    Lvalue [Token]
+  | BsAssign    Lvalue Expr           -- rhs is parsed Expr
   | BsAugAssign [Token] AugOp [Token]
   | BsInc       [Token]
   | BsDec       [Token]
-  | BsCall      [Token]
-  | BsReturn    (Maybe [Token])
+  | BsCall      Expr
+  | BsReturn    (Maybe Expr)
   | BsRaw       Statement
 ```
 
@@ -320,6 +330,7 @@ data BodyStmt
 classifyBodyStmt :: Statement -> BodyStmt
 parseBodyStmts   :: [Statement] -> [BodyStmt]
 parseLvalue      :: [Token] -> Maybe Lvalue
+parseExpr        :: [Token] -> Expr   -- total; ExRaw fallback
 ```
 
 ### `PB.Pipeline.Preprocess`

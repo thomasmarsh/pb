@@ -2,7 +2,7 @@ module BodyStmtTest (tests) where
 
 import PB.Prelude
 import PB.AST.BodyStmt        (AugOp (..), BodyStmt (..))
-import PB.AST.Expr            (LvSegment (..), Lvalue (..))
+import PB.AST.Expr            (CallExpr (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
 import PB.Grammar.Body        (classifyBodyStmt, parseBodyStmts, parseLvalue)
 import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
@@ -58,7 +58,7 @@ tests = testGroup "Body"
 
     , testCase "assign: simple ident = int literal" $
         classifyBodyStmt (mkStmt [(TkIdent, "ll_row"), (TkAssignOp, "="), (TkIntLiteral, "0")])
-          @?= BsAssign (Lvalue [LvSegment "ll_row" Nothing]) [mkTok TkIntLiteral "0"]
+          @?= BsAssign (Lvalue [LvSegment "ll_row" Nothing]) (ExLit (LitInt "0"))
 
     , testCase "assign: property set (obj.field = val)" $
         classifyBodyStmt
@@ -67,7 +67,7 @@ tests = testGroup "Body"
                   ])
           @?= BsAssign
                 (Lvalue [LvSegment "idw_main" Nothing, LvSegment "enabled" Nothing])
-                [mkTok TkBoolFalse "false"]
+                (ExLit (LitBool False))
 
     , testCase "assign: rhs is a method call" $
         classifyBodyStmt
@@ -77,9 +77,9 @@ tests = testGroup "Body"
                   ])
           @?= BsAssign
                 (Lvalue [LvSegment "ll_row" Nothing])
-                [ mkTok TkIdent "dw_main", mkTok TkDot ".", mkTok TkIdent "getrow"
-                , mkTok TkLParen "(", mkTok TkRParen ")"
-                ]
+                (ExCall (CallExpr
+                  (Lvalue [LvSegment "dw_main" Nothing, LvSegment "getrow" Nothing])
+                  []))
 
     , testCase "aug_assign: +=" $
         classifyBodyStmt
@@ -115,19 +115,21 @@ tests = testGroup "Body"
                   , (TkLParen, "("), (TkRParen, ")")
                   ])
           @?= BsCall
-                [ mkTok TkIdent "dw_main", mkTok TkDot ".", mkTok TkIdent "accepttext"
-                , mkTok TkLParen "(", mkTok TkRParen ")"
-                ]
+                (ExCall (CallExpr
+                  (Lvalue [LvSegment "dw_main" Nothing, LvSegment "accepttext" Nothing])
+                  []))
 
     , testCase "call: free function (f(arg))" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "messagebox"), (TkLParen, "("), (TkIdent, "msg"), (TkRParen, ")")])
           @?= BsCall
-                [mkTok TkIdent "messagebox", mkTok TkLParen "(", mkTok TkIdent "msg", mkTok TkRParen ")"]
+                (ExCall (CallExpr
+                  (Lvalue [LvSegment "messagebox" Nothing])
+                  [[mkTok TkIdent "msg"]]))
 
     , testCase "return: with value" $
         classifyBodyStmt (mkStmt [(TkControlKw, "return"), (TkBoolTrue, "true")])
-          @?= BsReturn (Just [mkTok TkBoolTrue "true"])
+          @?= BsReturn (Just (ExLit (LitBool True)))
 
     , testCase "return: bare (no expression)" $
         classifyBodyStmt (mkStmt [(TkControlKw, "return")])
@@ -165,7 +167,7 @@ tests = testGroup "Body"
 
     , testCase "single assign becomes singleton" $
         parseBodyStmts [mkStmt [(TkIdent, "x"), (TkAssignOp, "="), (TkIntLiteral, "1")]]
-          @?= [BsAssign (Lvalue [LvSegment "x" Nothing]) [mkTok TkIntLiteral "1"]]
+          @?= [BsAssign (Lvalue [LvSegment "x" Nothing]) (ExLit (LitInt "1"))]
 
     , testCase "mixed stmts: var decl, assign, return — order preserved" $
         let stmts =
@@ -246,7 +248,7 @@ tests = testGroup "Body"
       [ testCase "simple assign produces structured lhs" $
           classifyBodyStmt
             (mkStmt [(TkIdent, "foo"), (TkAssignOp, "="), (TkIntLiteral, "1")])
-            @?= BsAssign (Lvalue [LvSegment "foo" Nothing]) [mkTok TkIntLiteral "1"]
+            @?= BsAssign (Lvalue [LvSegment "foo" Nothing]) (ExLit (LitInt "1"))
 
       , testCase "member chain assign" $
           classifyBodyStmt
@@ -254,7 +256,7 @@ tests = testGroup "Body"
                     , (TkAssignOp, "="), (TkBoolFalse, "false") ])
             @?= BsAssign
                   (Lvalue [LvSegment "cb_ok" Nothing, LvSegment "enabled" Nothing])
-                  [mkTok TkBoolFalse "false"]
+                  (ExLit (LitBool False))
 
       , testCase "array subscript assign" $
           classifyBodyStmt
@@ -262,7 +264,7 @@ tests = testGroup "Body"
                     , (TkAssignOp, "="), (TkIntLiteral, "0") ])
             @?= BsAssign
                   (Lvalue [LvSegment "arr" (Just [mkTok TkIdent "i"])])
-                  [mkTok TkIntLiteral "0"]
+                  (ExLit (LitInt "0"))
 
       , testCase "unparseable lhs falls back to BsRaw" $
           case classifyBodyStmt
