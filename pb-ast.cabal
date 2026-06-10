@@ -64,7 +64,7 @@ test-suite pb-ast-test
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
-  other-modules: BodyParserTest, BodyStmtTest, CorpusTest, ExprTest, FileTest, MaskTest, RunnerTest, SerialiseTest, SplitterTest, StreamTest, TokenTest
+  other-modules: BodyParserTest, BodyStmtTest, CorpusInvariantTest, CorpusTest, ExprTest, FileTest, MaskTest, RunnerTest, SerialiseTest, SplitterTest, StreamTest, TokenTest
   build-depends:
     , base ^>=4.20.2.0
     , pb-ast
@@ -75,3 +75,5 @@ test-suite pb-ast-test
     , hedgehog       >=1.4
     , megaparsec
     , aeson
+    , directory    ^>=1.3
+    , filepath     >=1.4

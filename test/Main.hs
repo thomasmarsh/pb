@@ -5,6 +5,7 @@ import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText, stripHeaders)
 import qualified BodyParserTest
 import qualified BodyStmtTest
 import qualified ExprTest
+import qualified CorpusInvariantTest
 import qualified CorpusTest
 import qualified FileTest
 import qualified MaskTest
@@ -33,6 +34,7 @@ tests = testGroup "pb-ast"
   [ BodyParserTest.tests
   , BodyStmtTest.tests
   , ExprTest.tests
+  , CorpusInvariantTest.tests
   , CorpusTest.tests
   , FileTest.tests
   , MaskTest.tests
