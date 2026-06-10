@@ -25,6 +25,7 @@ library
   exposed-modules:
     PB.Prelude
     PB.AST.BodyStmt
+    PB.AST.Expr
     PB.AST.Object
     PB.Grammar.Body
     PB.Grammar.File

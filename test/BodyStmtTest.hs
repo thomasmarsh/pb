@@ -2,7 +2,8 @@ module BodyStmtTest (tests) where
 
 import PB.Prelude
 import PB.AST.BodyStmt        (AugOp (..), BodyStmt (..))
-import PB.Grammar.Body        (classifyBodyStmt, parseBodyStmts)
+import PB.AST.Expr            (LvSegment (..), Lvalue (..))
+import PB.Grammar.Body        (classifyBodyStmt, parseBodyStmts, parseLvalue)
 import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
@@ -57,7 +58,7 @@ tests = testGroup "Body"
 
     , testCase "assign: simple ident = int literal" $
         classifyBodyStmt (mkStmt [(TkIdent, "ll_row"), (TkAssignOp, "="), (TkIntLiteral, "0")])
-          @?= BsAssign [mkTok TkIdent "ll_row"] [mkTok TkIntLiteral "0"]
+          @?= BsAssign (Lvalue [LvSegment "ll_row" Nothing]) [mkTok TkIntLiteral "0"]
 
     , testCase "assign: property set (obj.field = val)" $
         classifyBodyStmt
@@ -65,7 +66,7 @@ tests = testGroup "Body"
                   , (TkAssignOp, "="), (TkBoolFalse, "false")
                   ])
           @?= BsAssign
-                [mkTok TkIdent "idw_main", mkTok TkDot ".", mkTok TkIdent "enabled"]
+                (Lvalue [LvSegment "idw_main" Nothing, LvSegment "enabled" Nothing])
                 [mkTok TkBoolFalse "false"]
 
     , testCase "assign: rhs is a method call" $
@@ -75,7 +76,7 @@ tests = testGroup "Body"
                   , (TkLParen, "("), (TkRParen, ")")
                   ])
           @?= BsAssign
-                [mkTok TkIdent "ll_row"]
+                (Lvalue [LvSegment "ll_row" Nothing])
                 [ mkTok TkIdent "dw_main", mkTok TkDot ".", mkTok TkIdent "getrow"
                 , mkTok TkLParen "(", mkTok TkRParen ")"
                 ]
@@ -164,7 +165,7 @@ tests = testGroup "Body"
 
     , testCase "single assign becomes singleton" $
         parseBodyStmts [mkStmt [(TkIdent, "x"), (TkAssignOp, "="), (TkIntLiteral, "1")]]
-          @?= [BsAssign [mkTok TkIdent "x"] [mkTok TkIntLiteral "1"]]
+          @?= [BsAssign (Lvalue [LvSegment "x" Nothing]) [mkTok TkIntLiteral "1"]]
 
     , testCase "mixed stmts: var decl, assign, return — order preserved" $
         let stmts =
@@ -174,6 +175,102 @@ tests = testGroup "Body"
               ]
             tags = map tag (parseBodyStmts stmts)
         in tags @?= ["var", "assign", "return"]
+    ]
+
+  , testGroup "Lvalue"
+    [ testGroup "parseLvalue"
+      [ testCase "simple identifier" $
+          parseLvalue [mkTok TkIdent "foo"]
+            @?= Just (Lvalue [LvSegment "foo" Nothing])
+
+      , testCase "single member access" $
+          parseLvalue [mkTok TkIdent "cb_ok", mkTok TkDot ".", mkTok TkIdent "enabled"]
+            @?= Just (Lvalue [LvSegment "cb_ok" Nothing, LvSegment "enabled" Nothing])
+
+      , testCase "three-level chain" $
+          parseLvalue [ mkTok TkIdent "tab1", mkTok TkDot "."
+                      , mkTok TkIdent "page1", mkTok TkDot "."
+                      , mkTok TkIdent "text" ]
+            @?= Just (Lvalue [ LvSegment "tab1"  Nothing
+                              , LvSegment "page1" Nothing
+                              , LvSegment "text"  Nothing ])
+
+      , testCase "array subscript only" $
+          parseLvalue [ mkTok TkIdent "is_steps"
+                      , mkTok TkLBracket "["
+                      , mkTok TkIdent "ii_steps"
+                      , mkTok TkRBracket "]" ]
+            @?= Just (Lvalue [LvSegment "is_steps" (Just [mkTok TkIdent "ii_steps"])])
+
+      , testCase "chain plus subscript on last segment" $
+          parseLvalue [ mkTok TkIdent "adw",    mkTok TkDot "."
+                      , mkTok TkIdent "object", mkTok TkDot "."
+                      , mkTok TkIdent "kodypal"
+                      , mkTok TkLBracket "[", mkTok TkIdent "row", mkTok TkRBracket "]" ]
+            @?= Just (Lvalue [ LvSegment "adw"     Nothing
+                              , LvSegment "object"  Nothing
+                              , LvSegment "kodypal" (Just [mkTok TkIdent "row"]) ])
+
+      , testCase "TkOtherKw head (this.member)" $
+          parseLvalue [mkTok TkOtherKw "this", mkTok TkDot ".", mkTok TkIdent "enabled"]
+            @?= Just (Lvalue [LvSegment "this" Nothing, LvSegment "enabled" Nothing])
+
+      , testCase "complex subscript expression" $ do
+          let subTokens = [ mkTok TkIdent "UpperBound", mkTok TkLParen "("
+                          , mkTok TkOtherKw "this", mkTok TkDot "."
+                          , mkTok TkIdent "Item", mkTok TkRParen ")"
+                          , mkTok TkArithOp "+", mkTok TkIntLiteral "1" ]
+              input = [ mkTok TkOtherKw "this", mkTok TkDot "."
+                      , mkTok TkIdent "Item", mkTok TkLBracket "[" ]
+                      <> subTokens
+                      <> [mkTok TkRBracket "]"]
+          parseLvalue input
+            @?= Just (Lvalue [ LvSegment "this" Nothing
+                              , LvSegment "Item" (Just subTokens) ])
+
+      , testCase "empty tokens returns Nothing" $
+          parseLvalue [] @?= Nothing
+
+      , testCase "starts with dot returns Nothing" $
+          parseLvalue [mkTok TkDot ".", mkTok TkIdent "foo"] @?= Nothing
+
+      , testCase "two adjacent idents (no dot) returns Nothing" $
+          parseLvalue [mkTok TkIdent "foo", mkTok TkIdent "bar"] @?= Nothing
+
+      , testCase "unmatched open bracket returns Nothing" $
+          parseLvalue [mkTok TkIdent "arr", mkTok TkLBracket "[", mkTok TkIdent "i"]
+            @?= Nothing
+      ]
+
+    , testGroup "classifyBodyStmt BsAssign with Lvalue"
+      [ testCase "simple assign produces structured lhs" $
+          classifyBodyStmt
+            (mkStmt [(TkIdent, "foo"), (TkAssignOp, "="), (TkIntLiteral, "1")])
+            @?= BsAssign (Lvalue [LvSegment "foo" Nothing]) [mkTok TkIntLiteral "1"]
+
+      , testCase "member chain assign" $
+          classifyBodyStmt
+            (mkStmt [ (TkIdent, "cb_ok"), (TkDot, "."), (TkIdent, "enabled")
+                    , (TkAssignOp, "="), (TkBoolFalse, "false") ])
+            @?= BsAssign
+                  (Lvalue [LvSegment "cb_ok" Nothing, LvSegment "enabled" Nothing])
+                  [mkTok TkBoolFalse "false"]
+
+      , testCase "array subscript assign" $
+          classifyBodyStmt
+            (mkStmt [ (TkIdent, "arr"), (TkLBracket, "["), (TkIdent, "i"), (TkRBracket, "]")
+                    , (TkAssignOp, "="), (TkIntLiteral, "0") ])
+            @?= BsAssign
+                  (Lvalue [LvSegment "arr" (Just [mkTok TkIdent "i"])])
+                  [mkTok TkIntLiteral "0"]
+
+      , testCase "unparseable lhs falls back to BsRaw" $
+          case classifyBodyStmt
+                 (mkStmt [ (TkAssignOp, "="), (TkIdent, "foo")
+                         , (TkAssignOp, "="), (TkIntLiteral, "1") ]) of
+            BsRaw _ -> return ()
+            other   -> assertFailure ("expected BsRaw, got: " <> show other)
+      ]
     ]
   ]
 

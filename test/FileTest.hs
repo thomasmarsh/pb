@@ -16,6 +16,7 @@ import PB.AST.Object          ( ForwardBlock (..), PrototypesBlock (..), ProtoDe
                               , SrFile (..)
                               )
 import PB.AST.BodyStmt        (BodyStmt (..))
+import PB.AST.Expr            (LvSegment (..), Lvalue (..))
 import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
@@ -525,7 +526,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pOnBlock stmts @?=
           Right (OnBlock "w_main.destroy" "w_main" "destroy"
-                   [BsAssign [mkTok TkIdent "i"] [mkTok TkIntLiteral "0"]])
+                   [BsAssign (Lvalue [LvSegment "i" Nothing]) [mkTok TkIntLiteral "0"]])
 
     , testCase "positive: bare on modified (ident event name)" $ do
         let stmts =

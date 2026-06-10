@@ -285,6 +285,19 @@ New modules go in the most specific matching directory. If a new layer is needed
 
 Maintained here to avoid re-scanning the tree. Update when new exports are added.
 
+### `PB.AST.Expr`
+
+```haskell
+data LvSegment = LvSegment
+  { lvsName      :: Text
+  , lvsSubscript :: Maybe [Token]
+  }
+
+data Lvalue = Lvalue
+  { lvSegments :: [LvSegment]   -- non-empty
+  }
+```
+
 ### `PB.AST.BodyStmt`
 
 ```haskell
@@ -292,7 +305,7 @@ data AugOp = AugAdd | AugSub | AugMul | AugDiv
 
 data BodyStmt
   = BsLocalVar  [Token]
-  | BsAssign    [Token] [Token]
+  | BsAssign    Lvalue [Token]
   | BsAugAssign [Token] AugOp [Token]
   | BsInc       [Token]
   | BsDec       [Token]
@@ -306,6 +319,7 @@ data BodyStmt
 ```haskell
 classifyBodyStmt :: Statement -> BodyStmt
 parseBodyStmts   :: [Statement] -> [BodyStmt]
+parseLvalue      :: [Token] -> Maybe Lvalue
 ```
 
 ### `PB.Pipeline.Preprocess`
