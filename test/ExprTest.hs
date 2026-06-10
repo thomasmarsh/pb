@@ -5,7 +5,7 @@ import PB.AST.Expr        (BinOp (..), CallExpr (..), CreateExpr (..), Expr (..)
 import PB.Grammar.Body    (parseExpr)
 import PB.Lexing.Token    (Token (..), TokenKind (..), SourceSpan (..))
 
-import Hedgehog (Property, assert, forAll, property, (===))
+import Hedgehog (Property, assert, failure, footnote, forAll, property, (===))
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import Test.Tasty              (TestTree, testGroup)
@@ -405,6 +405,13 @@ tests = testGroup "Expr"
             @?= ExUnaryMinus (ExLit (LitInt "1"))
       ]
 
+    , testGroup "precedence properties"
+      [ testProperty "lower-prec op is root" propLowerPrecIsRoot
+      , testProperty "left-associative operators chain left" propLeftAssoc
+      , testProperty "^ is right-associative" propRightAssocPow
+      , testProperty "not binds below comparison" propNotBindsBelowComparison
+      , testProperty "not binds tighter than and/or/xor" propNotBindsAboveAnd
+      ]
     , testProperty "total: parseExpr never raises" propParseExprTotal
     , testProperty "roundtrip: ExRaw tokens identical to input" propExRawRoundtrip
     ]
@@ -461,3 +468,102 @@ propExRawRoundtrip = property $ do
   case parseExpr ts of
     ExRaw toks -> toks === ts
     _          -> pure ()
+
+-- ---------------------------------------------------------------------------
+-- Precedence properties
+
+-- (op text, token kind, BinOp constructor)
+-- max(lowOps prec)=2  <  min(highOps prec)=4, so constraint holds for all pairs
+lowOps, highOps :: [(Text, TokenKind, BinOp)]
+lowOps  = [ ("or",  TkOtherKw,   BopOr)
+          , ("xor", TkOtherKw,   BopXor)
+          , ("and", TkOtherKw,   BopAnd)
+          ]
+highOps = [ (">",   TkCompareOp, BopGt)
+          , ("<",   TkCompareOp, BopLt)
+          , ("+",   TkArithOp,   BopAdd)
+          , ("-",   TkArithOp,   BopSub)
+          , ("*",   TkArithOp,   BopMul)
+          , ("/",   TkArithOp,   BopDiv)
+          ]
+
+leftAssocOps :: [(Text, TokenKind, BinOp)]
+leftAssocOps =
+  [ ("+",   TkArithOp,   BopAdd), ("-",   TkArithOp,   BopSub)
+  , ("*",   TkArithOp,   BopMul), ("/",   TkArithOp,   BopDiv)
+  , ("and", TkOtherKw,   BopAnd), ("or",  TkOtherKw,   BopOr)
+  , ("xor", TkOtherKw,   BopXor)
+  , ("=",   TkAssignOp,  BopEq),  ("<>",  TkCompareOp, BopNe)
+  , ("<",   TkCompareOp, BopLt),  (">",   TkCompareOp, BopGt)
+  , ("<=",  TkCompareOp, BopLe),  (">=",  TkCompareOp, BopGe)
+  ]
+
+comparisonOps :: [(Text, TokenKind, BinOp)]
+comparisonOps =
+  [ ("=",  TkAssignOp,  BopEq), ("<>", TkCompareOp, BopNe)
+  , ("<",  TkCompareOp, BopLt), (">",  TkCompareOp, BopGt)
+  , ("<=", TkCompareOp, BopLe), (">=", TkCompareOp, BopGe)
+  ]
+
+logicalOps :: [(Text, TokenKind, BinOp)]
+logicalOps = [ ("and", TkOtherKw, BopAnd)
+             , ("or",  TkOtherKw, BopOr)
+             , ("xor", TkOtherKw, BopXor)
+             ]
+
+-- | x lowOp y highOp z → lowOp is the root, highOp is the right child's op.
+propLowerPrecIsRoot :: Property
+propLowerPrecIsRoot = property $ do
+  (loTxt, loKind, loBop) <- forAll $ Gen.element lowOps
+  (hiTxt, hiKind, hiBop) <- forAll $ Gen.element highOps
+  let ts = [ mkTok TkIdent "x", mkTok loKind loTxt
+           , mkTok TkIdent "y", mkTok hiKind hiTxt
+           , mkTok TkIdent "z" ]
+  case parseExpr ts of
+    ExBinOp _ root (ExBinOp _ inner _)
+      | root == loBop && inner == hiBop -> pure ()
+    other -> footnote (show other) >> failure
+
+-- | x op y op z → left-leaning tree for every left-associative operator.
+propLeftAssoc :: Property
+propLeftAssoc = property $ do
+  (opTxt, opKind, bop) <- forAll $ Gen.element leftAssocOps
+  let ts = [ mkTok TkIdent "x", mkTok opKind opTxt
+           , mkTok TkIdent "y", mkTok opKind opTxt
+           , mkTok TkIdent "z" ]
+  case parseExpr ts of
+    ExBinOp (ExBinOp _ op1 _) op2 _
+      | op1 == bop && op2 == bop -> pure ()
+    other -> footnote (show other) >> failure
+
+-- | x ^ y ^ z → right-leaning tree (only ^ is right-associative).
+propRightAssocPow :: Property
+propRightAssocPow = property $ do
+  let ts = [ mkTok TkIdent "x", mkTok TkArithOp "^"
+           , mkTok TkIdent "y", mkTok TkArithOp "^"
+           , mkTok TkIdent "z" ]
+  case parseExpr ts of
+    ExBinOp _ BopPow (ExBinOp _ BopPow _) -> pure ()
+    other -> footnote (show other) >> failure
+
+-- | not a cmpOp b → ExNot wraps the whole comparison.
+-- climbPrec 4 inside the not-atom consumes comparison ops (prec 4 >= 4).
+propNotBindsBelowComparison :: Property
+propNotBindsBelowComparison = property $ do
+  (cmpTxt, cmpKind, cmp) <- forAll $ Gen.element comparisonOps
+  let ts = [ mkTok TkOtherKw "not", mkTok TkIdent "a"
+           , mkTok cmpKind cmpTxt,   mkTok TkIdent "b" ]
+  case parseExpr ts of
+    ExNot (ExBinOp _ op _) | op == cmp -> pure ()
+    other -> footnote (show other) >> failure
+
+-- | not a logicalOp b → ExNot wraps only a; logical op becomes the root.
+-- climbPrec 4 stops before and/or/xor (prec 1-2 < 4).
+propNotBindsAboveAnd :: Property
+propNotBindsAboveAnd = property $ do
+  (logTxt, logKind, logBop) <- forAll $ Gen.element logicalOps
+  let ts = [ mkTok TkOtherKw "not", mkTok TkIdent "a"
+           , mkTok logKind logTxt,   mkTok TkIdent "b" ]
+  case parseExpr ts of
+    ExBinOp (ExNot _) op _ | op == logBop -> pure ()
+    other -> footnote (show other) >> failure
