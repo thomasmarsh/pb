@@ -284,6 +284,12 @@ tag (BsInc       _)     = "inc"
 tag (BsDec       _)     = "dec"
 tag (BsCall      _)     = "call"
 tag (BsReturn    _)     = "return"
+tag (BsIf        _)     = "if"
+tag (BsFor       _)     = "for"
+tag (BsDo        _)     = "do"
+tag (BsChoose    _)     = "choose"
+tag BsExit              = "exit"
+tag BsContinue          = "continue"
 tag (BsRaw       _)     = "raw"
 
 propClassifyTotal :: Property
@@ -315,4 +321,10 @@ propClassifyTotal = property $ do
     BsDec       _     -> True
     BsCall      _     -> True
     BsReturn    _     -> True
+    BsIf        _     -> True
+    BsFor       _     -> True
+    BsDo        _     -> True
+    BsChoose    _     -> True
+    BsExit            -> True
+    BsContinue        -> True
     BsRaw       _     -> True

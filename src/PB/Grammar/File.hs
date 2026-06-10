@@ -16,7 +16,7 @@ module PB.Grammar.File
   ) where
 
 import PB.Prelude
-import PB.Grammar.Body    (parseBodyStmts)
+import PB.Grammar.Body    (pBodyStmt)
 import PB.Grammar.Stream  (FileParser, StmtStream (..), leadingText, satisfyStmt)
 import PB.AST.BodyStmt    (BodyStmt)
 import PB.AST.Object
@@ -268,7 +268,7 @@ anyStmt :: FileParser Statement
 anyStmt = satisfyStmt (const True)
 
 pBodyUntil :: Text -> FileParser [BodyStmt]
-pBodyUntil kw = parseBodyStmts <$> manyTill anyStmt (pEndKw kw)
+pBodyUntil kw = manyTill pBodyStmt (pEndKw kw)
 
 isOnDecl :: Statement -> Bool
 isOnDecl s = case stmtTokens s of

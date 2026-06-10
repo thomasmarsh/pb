@@ -4,7 +4,7 @@ module PB.Pipeline.Runner
   ) where
 
 import PB.Prelude
-import PB.AST.BodyStmt      (AugOp (..), BodyStmt (..))
+import PB.AST.BodyStmt      (AugOp (..), BodyStmt (..), IfStmt (..), ForStmt (..), DoCondition (..), DoStmt (..), CaseClause (..), ChooseStmt (..))
 import PB.AST.Expr          ( CallExpr (..), Expr (..), Literal (..)
                             , LvSegment (..), Lvalue (..)
                             , lvsName, lvsSubscript, lvSegments )
@@ -218,7 +218,57 @@ encodeBodyStmt (BsDec        lhs)        = object ["tag" .= ("dec"        :: Tex
 encodeBodyStmt (BsCall       expr)       = object ["tag" .= ("call"       :: Text), "expr" .= encodeExpr expr]
 encodeBodyStmt (BsReturn     Nothing)    = object ["tag" .= ("return"     :: Text)]
 encodeBodyStmt (BsReturn     (Just e))   = object ["tag" .= ("return"     :: Text), "value" .= encodeExpr e]
+encodeBodyStmt (BsIf         is)         = encodeIfStmt is
+encodeBodyStmt (BsFor        fs)         = encodeForStmt fs
+encodeBodyStmt (BsDo         ds)         = encodeDoStmt ds
+encodeBodyStmt (BsChoose     cs)         = encodeChooseStmt cs
+encodeBodyStmt BsExit                    = object ["tag" .= ("exit"       :: Text)]
+encodeBodyStmt BsContinue                = object ["tag" .= ("continue"   :: Text)]
 encodeBodyStmt (BsRaw        s)          = object ["tag" .= ("raw"        :: Text), "text"  .= (llText . stmtSource) s]
+
+encodeIfStmt :: IfStmt -> Value
+encodeIfStmt is = object
+  [ "tag"      .= ("if"  :: Text)
+  , "cond"     .= encodeExpr (ifCond is)
+  , "then"     .= encodeBody (ifThen is)
+  , "elseIfs"  .= map (\(c, b) -> object ["cond" .= encodeExpr c, "body" .= encodeBody b]) (ifElseIfs is)
+  , "else"     .= fmap encodeBody (ifElse is)
+  ]
+
+encodeForStmt :: ForStmt -> Value
+encodeForStmt fs = object
+  [ "tag"  .= ("for" :: Text)
+  , "var"  .= encodeLvalue (forVar  fs)
+  , "from" .= encodeExpr   (forFrom fs)
+  , "to"   .= encodeExpr   (forTo   fs)
+  , "step" .= fmap encodeExpr (forStep fs)
+  , "body" .= encodeBody (forBody fs)
+  ]
+
+encodeDoStmt :: DoStmt -> Value
+encodeDoStmt ds = object
+  [ "tag"  .= ("do"  :: Text)
+  , "cond" .= fmap encodeDoCondition (doCond ds)
+  , "body" .= encodeBody (doBody ds)
+  , "loop" .= fmap encodeDoCondition (doLoop ds)
+  ]
+
+encodeDoCondition :: DoCondition -> Value
+encodeDoCondition (DoWhile e) = object ["kind" .= ("while" :: Text), "expr" .= encodeExpr e]
+encodeDoCondition (DoUntil e) = object ["kind" .= ("until" :: Text), "expr" .= encodeExpr e]
+
+encodeChooseStmt :: ChooseStmt -> Value
+encodeChooseStmt cs = object
+  [ "tag"     .= ("choose" :: Text)
+  , "expr"    .= encodeExpr (chooseExpr cs)
+  , "clauses" .= map encodeCaseClause (chooseClauses cs)
+  ]
+
+encodeCaseClause :: CaseClause -> Value
+encodeCaseClause cl = object
+  [ "expr" .= fmap (map tkText) (ccExpr cl)
+  , "body" .= encodeBody (ccBody cl)
+  ]
 
 encodeExpr :: Expr -> Value
 encodeExpr (ExLit    lit)  = encodeLiteral lit

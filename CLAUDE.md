@@ -257,13 +257,13 @@ Mark done/pending as body parsers land.
 | `on … end on`                               | .srw, .sru          | done    |
 | `event … end event`                         | .srw, .sru          | done    |
 | `type … end type` (TypeBlock)               | .srw, .sru          | done    |
-| Body: `if … end if`                         | all                 | pending |
-| Body: `choose case … end choose`            | all                 | pending |
-| Body: `for … next`                          | all                 | pending |
-| Body: `do … loop`                           | all                 | pending |
+| Body: `if … end if`                         | all                 | done    |
+| Body: `choose case … end choose`            | all                 | done    |
+| Body: `for … next`                          | all                 | done    |
+| Body: `do … loop`                           | all                 | done    |
 | Body: `try … catch … end try`               | all                 | pending |
 | Body: embedded SQL                          | .srw, .sru          | pending |
-| Body: assignment / call statements          | all                 | pending |
+| Body: assignment / call statements          | all                 | done    |
 
 ---
 
@@ -313,6 +313,27 @@ data Expr
 ```haskell
 data AugOp = AugAdd | AugSub | AugMul | AugDiv
 
+data IfStmt = IfStmt
+  { ifCond :: Expr, ifThen :: [BodyStmt]
+  , ifElseIfs :: [(Expr, [BodyStmt])], ifElse :: Maybe [BodyStmt] }
+
+data ForStmt = ForStmt
+  { forVar :: Lvalue, forFrom :: Expr, forTo :: Expr
+  , forStep :: Maybe Expr, forBody :: [BodyStmt] }
+
+data DoCondition = DoWhile Expr | DoUntil Expr
+
+data DoStmt = DoStmt
+  { doCond :: Maybe DoCondition, doBody :: [BodyStmt]
+  , doLoop :: Maybe DoCondition }
+
+data CaseClause = CaseClause
+  { ccExpr :: Maybe [Token]   -- Nothing = "case else"
+  , ccBody :: [BodyStmt] }
+
+data ChooseStmt = ChooseStmt
+  { chooseExpr :: Expr, chooseClauses :: [CaseClause] }
+
 data BodyStmt
   = BsLocalVar  [Token]
   | BsAssign    Lvalue Expr           -- rhs is parsed Expr
@@ -321,16 +342,23 @@ data BodyStmt
   | BsDec       [Token]
   | BsCall      Expr
   | BsReturn    (Maybe Expr)
+  | BsIf        IfStmt
+  | BsFor       ForStmt
+  | BsDo        DoStmt
+  | BsChoose    ChooseStmt
+  | BsExit
+  | BsContinue
   | BsRaw       Statement
 ```
 
 ### `PB.Grammar.Body`
 
 ```haskell
-classifyBodyStmt :: Statement -> BodyStmt
-parseBodyStmts   :: [Statement] -> [BodyStmt]
+classifyBodyStmt :: Statement -> BodyStmt   -- leaf classifier; exit/continue/return/var/assign
+parseBodyStmts   :: [Statement] -> [BodyStmt]  -- flat map; use pBodyStmt for recursive parsing
 parseLvalue      :: [Token] -> Maybe Lvalue
 parseExpr        :: [Token] -> Expr   -- total; ExRaw fallback
+pBodyStmt        :: FileParser BodyStmt  -- recursive; dispatches to pIfStmt/pForStmt/pDoStmt/pChooseStmt
 ```
 
 ### `PB.Pipeline.Preprocess`

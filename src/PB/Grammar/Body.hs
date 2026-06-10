@@ -3,14 +3,21 @@ module PB.Grammar.Body
   , parseBodyStmts
   , parseLvalue
   , parseExpr
+  , pBodyStmt
   ) where
 
 import PB.Prelude
-import PB.AST.BodyStmt    (AugOp (..), BodyStmt (..))
+import PB.AST.BodyStmt
+  ( AugOp (..), BodyStmt (..)
+  , IfStmt (..), ForStmt (..), DoCondition (..), DoStmt (..)
+  , CaseClause (..), ChooseStmt (..)
+  )
 import PB.AST.Expr        (CallExpr (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
+import PB.Grammar.Stream  (FileParser, satisfyStmt)
 import PB.Lexing.Splitter (Statement (..))
 import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
 
+import Text.Megaparsec (lookAhead, many, manyTill, optional, try, (<|>))
 import qualified Data.Text as T
 
 -- ---------------------------------------------------------------------------
@@ -174,9 +181,11 @@ classifyBodyStmt s = case stmtTokens s of
   [] -> BsRaw s
   (t : rest)
     | tkKind t == TkControlKw ->
-        if T.toLower (tkText t) == "return"
-          then BsReturn (if null rest then Nothing else Just (parseExpr rest))
-          else BsRaw s
+        case T.toLower (tkText t) of
+          "return"   -> BsReturn (if null rest then Nothing else Just (parseExpr rest))
+          "exit"     -> BsExit
+          "continue" -> BsContinue
+          _          -> BsRaw s
     | tkKind t `elem` [TkSqlKw, TkDeclKw] -> BsRaw s
     | otherwise ->
         let ts          = stmtTokens s
@@ -189,3 +198,154 @@ classifyBodyStmt s = case stmtTokens s of
 -- | Classify a list of raw statements into typed body statements.
 parseBodyStmts :: [Statement] -> [BodyStmt]
 parseBodyStmts = map classifyBodyStmt
+
+-- ---------------------------------------------------------------------------
+-- Control-flow predicates
+
+isCtrl :: Text -> Token -> Bool
+isCtrl txt t = tkKind t == TkControlKw && T.toLower (tkText t) == txt
+
+leadingCtrl :: Text -> Statement -> Bool
+leadingCtrl txt s = case stmtTokens s of
+  (t:_) -> isCtrl txt t
+  []    -> False
+
+isElseOrEndIf :: Statement -> Bool
+isElseOrEndIf s =
+  leadingCtrl "elseif" s || leadingCtrl "else" s || leadingCtrl "end if" s
+
+isCaseOrEndChoose :: Statement -> Bool
+isCaseOrEndChoose s = leadingCtrl "case" s || leadingCtrl "end choose" s
+
+-- ---------------------------------------------------------------------------
+-- Control-flow token extractors
+
+-- | Split tokens [if, cond..., then, rest...] into (condToks, rest).
+-- Returns Nothing if no "then" found.
+splitAtThen :: [Token] -> Maybe ([Token], [Token])
+splitAtThen = go []
+  where
+    go _   []     = Nothing
+    go acc (t:ts)
+      | isCtrl "then" t = Just (reverse acc, ts)
+      | otherwise       = go (t:acc) ts
+
+-- | Parse "for VAR = FROM to TO [step STEP]" token list.
+-- Input must start with the "for" token.
+splitForParts :: [Token] -> Maybe (Lvalue, Expr, Expr, Maybe Expr)
+splitForParts ts = do
+  rest <- case ts of { (t:r) | isCtrl "for" t -> Just r; _ -> Nothing }
+  let (varToks, rest1) = break (\t -> tkKind t == TkAssignOp) rest
+  rest2 <- case rest1 of { (_:r) -> Just r; [] -> Nothing }
+  lv    <- parseLvalue varToks
+  let (fromToks, rest3) = break (isCtrl "to") rest2
+  rest4 <- case rest3 of { (_:r) -> Just r; [] -> Nothing }
+  let (toToks, rest5) = break (isCtrl "step") rest4
+      stepM = case rest5 of
+        (_:stepRest) -> Just (parseExpr stepRest)
+        []           -> Nothing
+  return (lv, parseExpr fromToks, parseExpr toToks, stepM)
+
+-- | Parse an optional do/loop condition: [while/until EXPR] → DoCondition.
+parseDoCondition :: [Token] -> Maybe DoCondition
+parseDoCondition (t:rest)
+  | isCtrl "while" t = Just (DoWhile (parseExpr rest))
+  | isCtrl "until" t = Just (DoUntil (parseExpr rest))
+parseDoCondition _ = Nothing
+
+-- ---------------------------------------------------------------------------
+-- Control-flow parsers
+
+pIfStmt :: FileParser BodyStmt
+pIfStmt = do
+  s <- satisfyStmt (leadingCtrl "if")
+  let ts = drop 1 (stmtTokens s)   -- strip leading "if"
+  case splitAtThen ts of
+    Nothing -> return (BsRaw s)     -- malformed: no "then"
+    Just (condToks, afterThen) ->
+      let cond = parseExpr condToks
+      in if null afterThen
+         -- multi-line block: ends with bare "then"
+         then do
+           thenBody <- manyTill pBodyStmt (lookAhead (satisfyStmt isElseOrEndIf))
+           elseIfs  <- many (try pElseIfClause)
+           elseBody <- optional $ do
+             _ <- satisfyStmt (leadingCtrl "else")
+             manyTill pBodyStmt (lookAhead (satisfyStmt (leadingCtrl "end if")))
+           _ <- satisfyStmt (leadingCtrl "end if")
+           return (BsIf (IfStmt cond thenBody elseIfs elseBody))
+         -- inline: tokens after "then" form the body (and optional else)
+         else do
+           let (thenToks, elseM) = splitAtElse afterThen
+               mkSub toks = classifyBodyStmt (Statement toks (stmtSource s))
+               thenBody = [mkSub thenToks]
+               elseBody = fmap (\eToks -> [mkSub eToks]) elseM
+           return (BsIf (IfStmt cond thenBody [] elseBody))
+
+-- | Split inline [thenToks..., else, elseToks...] into (thenToks, Just elseToks)
+-- or (thenToks, Nothing) if no "else".
+splitAtElse :: [Token] -> ([Token], Maybe [Token])
+splitAtElse = go []
+  where
+    go acc []     = (reverse acc, Nothing)
+    go acc (t:ts)
+      | isCtrl "else" t = (reverse acc, Just ts)
+      | otherwise       = go (t:acc) ts
+
+pElseIfClause :: FileParser (Expr, [BodyStmt])
+pElseIfClause = do
+  s <- satisfyStmt (leadingCtrl "elseif")
+  let condToks = takeWhile (not . isCtrl "then") (drop 1 (stmtTokens s))
+      cond     = parseExpr condToks
+  body <- manyTill pBodyStmt (lookAhead (satisfyStmt isElseOrEndIf))
+  return (cond, body)
+
+pForStmt :: FileParser BodyStmt
+pForStmt = do
+  s <- satisfyStmt (leadingCtrl "for")
+  case splitForParts (stmtTokens s) of
+    Nothing -> return (BsRaw s)
+    Just (lv, from, to, step) -> do
+      body <- manyTill pBodyStmt (lookAhead (satisfyStmt (leadingCtrl "next")))
+      _ <- satisfyStmt (leadingCtrl "next")
+      return (BsFor (ForStmt lv from to step body))
+
+pDoStmt :: FileParser BodyStmt
+pDoStmt = do
+  s <- satisfyStmt (leadingCtrl "do")
+  let cond = parseDoCondition (drop 1 (stmtTokens s))
+  body <- manyTill pBodyStmt (lookAhead (satisfyStmt (leadingCtrl "loop")))
+  loopS <- satisfyStmt (leadingCtrl "loop")
+  let loopCond = parseDoCondition (drop 1 (stmtTokens loopS))
+  return (BsDo (DoStmt cond body loopCond))
+
+pChooseStmt :: FileParser BodyStmt
+pChooseStmt = do
+  s <- satisfyStmt (leadingCtrl "choose case")
+  let expr = parseExpr (drop 1 (stmtTokens s))
+  clauses <- many (try pCaseClause)
+  _ <- satisfyStmt (leadingCtrl "end choose")
+  return (BsChoose (ChooseStmt expr clauses))
+
+pCaseClause :: FileParser CaseClause
+pCaseClause = do
+  s <- satisfyStmt (leadingCtrl "case")
+  let patToks = drop 1 (stmtTokens s)
+      pat = case patToks of
+        (t:_) | isCtrl "else" t -> Nothing
+        _                       -> Just patToks
+  body <- manyTill pBodyStmt (lookAhead (satisfyStmt isCaseOrEndChoose))
+  return (CaseClause pat body)
+
+-- ---------------------------------------------------------------------------
+-- FileParser body-statement entry point
+
+-- | Parse one body statement from the statement stream, handling control-flow
+-- constructs recursively. Falls through to 'classifyBodyStmt' for leaf forms.
+pBodyStmt :: FileParser BodyStmt
+pBodyStmt =
+      try pIfStmt
+  <|> try pForStmt
+  <|> try pDoStmt
+  <|> try pChooseStmt
+  <|> (classifyBodyStmt <$> satisfyStmt (const True))

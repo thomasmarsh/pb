@@ -2,6 +2,7 @@ module Main (main) where
 
 import PB.Prelude
 import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText, stripHeaders)
+import qualified BodyParserTest
 import qualified BodyStmtTest
 import qualified ExprTest
 import qualified CorpusTest
@@ -28,7 +29,8 @@ main = defaultMain tests
 
 tests :: TestTree
 tests = testGroup "pb-ast"
-  [ BodyStmtTest.tests
+  [ BodyParserTest.tests
+  , BodyStmtTest.tests
   , ExprTest.tests
   , CorpusTest.tests
   , FileTest.tests
