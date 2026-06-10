@@ -7,6 +7,9 @@ cabal build                           # compile library + executables
 cabal build --enable-tests            # compile tests too
 cabal test                            # run test suite
 cabal test --test-show-details=direct # verbose output
+bash scripts/check-corpus.sh          # 0 errors / 777 files = baseline
+python3 scripts/analyze-bsraw.py      # categorized BsRaw breakdown (both corpora)
+python3 scripts/analyze-bsraw.py --no-build  # same, skip build step
 ```
 
 ## Session Scoping
@@ -99,6 +102,16 @@ def walk_bsraw_leading(node, keyword):
             if isinstance(v, (dict, list)):
                 yield from walk_bsraw_leading(v, keyword)
 ```
+
+**Diagnosing BsRaw coverage.** When the charter targets BsRaw reduction, run the analysis script first — do NOT re-derive the breakdown from scratch:
+
+```bash
+python3 scripts/analyze-bsraw.py --no-build
+```
+
+This prints per-corpus category counts (`sql`, `decl`, `ctrl`, `handled`, `array_init`, `other`) and a ranked "other" breakdown with examples. The `other` category is the actionable target; all other categories are either correct BsRaw (SQL, decl) or already handled.
+
+**BACKLOG entries for BsRaw work are pre-loaded with Stage 0 analysis.** Each open BsRaw item records: current count, root cause (token kind + guard line), which shapes must stay BsRaw, and the Stage 1 fix sketch. Confirm the counts still match the script output, then proceed directly to Stage 1 — no re-sampling required.
 
 **Confirm hypotheses with a narrow test before Stage 1.** After reading code and forming a theory, write a one-line `testCase` that asserts the correct output and run it. A test that currently fails is worth more than a long analysis. Do not skip this step.
 
