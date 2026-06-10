@@ -189,6 +189,19 @@ tests = testGroup "Lexing"
             r <- tokenKindTexts "w_parent`cb_ok"
             r @?= [(TkIdent, "w_parent`cb_ok")]
         ]
+    , testGroup "embedded SQL at-sign identifiers"
+        [ testCase "@action tokenizes as TkIdent with @ included" $ do
+            r <- tokenKindTexts "@action"
+            r @?= [(TkIdent, "@action")]
+
+        , testCase "@contact_id tokenizes as single TkIdent" $ do
+            r <- tokenKinds "@contact_id"
+            r @?= [TkIdent]
+
+        , testCase "@param = :var tokenizes correctly" $ do
+            r <- tokenKinds "@param = :var"
+            r @?= [TkIdent, TkAssignOp, TkColon, TkIdent]
+        ]
     , testGroup "properties"
         [ testProperty "tokens carry correct line number" prop_tokensCorrectLine
         , testProperty "token text reconstructs input"   prop_tokenTextReconstructsInput

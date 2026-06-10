@@ -20,7 +20,7 @@ cabal run pb-runner --project-dir "$REPO" -v0 -- \
   -i "$EXAMPLE/openpay" \
   -o "$OUT/openpay"
 
-ERRORS=$(grep -rl '"error"' "$OUT" 2>/dev/null | wc -l | tr -d ' ')
+ERRORS=$(grep -rl '"error":' "$OUT" 2>/dev/null | wc -l | tr -d ' ') || ERRORS=0
 TOTAL=$(find "$OUT" -name "*.json" | wc -l | tr -d ' ')
 
 echo ""
@@ -29,6 +29,6 @@ echo "Files processed: $TOTAL  |  Errors: $ERRORS"
 if [ "$ERRORS" -gt 0 ]; then
   echo ""
   echo "--- failing files ---"
-  grep -rl '"error"' "$OUT"
+  grep -rl '"error":' "$OUT"
   exit 1
 fi

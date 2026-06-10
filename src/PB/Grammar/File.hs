@@ -242,12 +242,22 @@ pEvProto = do
 pProtoDecl :: FileParser ProtoDecl
 pProtoDecl = try pFnProto <|> try pSubProto <|> pEvProto
 
+isAccessModifierHeader :: Statement -> Bool
+isAccessModifierHeader s = case stmtTokens s of
+  [t] -> tkKind t == TkLabel
+      && T.toLower (tkText t) `elem` ["public:", "protected:", "private:"]
+  _ -> False
+
+pProtoDeclOrSkip :: FileParser (Maybe ProtoDecl)
+pProtoDeclOrSkip =
+  (Just <$> try pProtoDecl) <|> (Nothing <$ satisfyStmt isAccessModifierHeader)
+
 pPrototypesBlock :: FileParser PrototypesBlock
 pPrototypesBlock = do
   _ <- satisfyStmt isProtosOpener
-  decls <- many (try pProtoDecl)
+  items <- many (try pProtoDeclOrSkip)
   pEndKw "prototypes"
-  return (PrototypesBlock decls)
+  return (PrototypesBlock [d | Just d <- items])
 
 -- ---------------------------------------------------------------------------
 -- Body-block helpers

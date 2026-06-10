@@ -373,6 +373,46 @@ tests = testGroup "Grammar.File"
               ]
         runSection pPrototypesBlock stmts @?=
           Right (PrototypesBlock [ProtoFn (FnSig ["intrinsic"] "string" "getName" "" Nothing)])
+
+    , testCase "positive: public: header before function is skipped (.srx pattern)" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "forward prototypes")]
+              , mkStmt [(TkLabel, "public:")]
+              , mkStmt [ (TkDeclKw, "function"), (TkDatatype, "long"), (TkIdent, "SetConnect")
+                       , (TkLParen, "("), (TkIdent, "connection"), (TkIdent, "theConn"), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end prototypes")]
+              ]
+        runSection pPrototypesBlock stmts @?=
+          Right (PrototypesBlock [ProtoFn (FnSig [] "long" "SetConnect" "connection theConn" Nothing)])
+
+    , testCase "positive: interleaved public: protected: headers all skipped" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "forward prototypes")]
+              , mkStmt [(TkLabel, "public:")]
+              , mkStmt [ (TkDeclKw, "function"), (TkDatatype, "integer"), (TkIdent, "f1")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkLabel, "protected:")]
+              , mkStmt [ (TkDeclKw, "function"), (TkDatatype, "integer"), (TkIdent, "f2")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end prototypes")]
+              ]
+        runSection pPrototypesBlock stmts @?=
+          Right (PrototypesBlock
+            [ ProtoFn (FnSig [] "integer" "f1" "" Nothing)
+            , ProtoFn (FnSig [] "integer" "f2" "" Nothing)
+            ])
+
+    , testCase "positive: only access-modifier headers yields empty decl list" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "forward prototypes")]
+              , mkStmt [(TkLabel, "public:")]
+              , mkStmt [(TkLabel, "private:")]
+              , mkStmt [(TkDeclKw, "end prototypes")]
+              ]
+        runSection pPrototypesBlock stmts @?= Right (PrototypesBlock [])
     ]
 
   , testGroup "pTypeDecl"

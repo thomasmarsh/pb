@@ -229,7 +229,7 @@ identText = do
   return (T.cons h t)
 
 isIdentStart :: Char -> Bool
-isIdentStart c = isAlpha c || c == '_'
+isIdentStart c = isAlpha c || c == '_' || c == '@'
 
 isIdentCont :: Char -> Bool
 isIdentCont c = isAlphaNum c || c `elem` ("_$#%`-" :: String)

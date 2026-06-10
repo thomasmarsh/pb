@@ -21,13 +21,17 @@ import System.FilePath (takeExtension)
 runFile :: FilePath -> Text -> Either Text Value
 runFile path src = case classifyFile path of
   DataWindow  -> runDataWindow  path src
+  Pipeline    -> runPipeline    path src
+  Project     -> runProject     path src
   PowerScript -> runPowerScript path src
 
-data FileKind = DataWindow | PowerScript
+data FileKind = DataWindow | Pipeline | Project | PowerScript
 
 classifyFile :: FilePath -> FileKind
 classifyFile fp = case map toLower (takeExtension fp) of
   ".srd" -> DataWindow
+  ".srp" -> Pipeline
+  ".srj" -> Project
   _      -> PowerScript
 
 -- ---------------------------------------------------------------------------
@@ -37,6 +41,20 @@ runDataWindow :: FilePath -> Text -> Either Text Value
 runDataWindow path _src = Right $ object
   [ "file"   .= path
   , "kind"   .= ("datawindow" :: Text)
+  , "status" .= ("unimplemented" :: Text)
+  ]
+
+runPipeline :: FilePath -> Text -> Either Text Value
+runPipeline path _src = Right $ object
+  [ "file"   .= path
+  , "kind"   .= ("pipeline" :: Text)
+  , "status" .= ("unimplemented" :: Text)
+  ]
+
+runProject :: FilePath -> Text -> Either Text Value
+runProject path _src = Right $ object
+  [ "file"   .= path
+  , "kind"   .= ("project" :: Text)
   , "status" .= ("unimplemented" :: Text)
   ]
 

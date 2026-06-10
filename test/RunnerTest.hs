@@ -194,5 +194,49 @@ tests = testGroup "Pipeline.Runner"
         case runFile "test.srf" src of
           Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
           Right v  -> arrayLen (lookupObj "functions" v) @?= 1
+
+    , testCase "@action in function body does not cause lex error (w_sp_update pattern)" $ do
+        let src = T.unlines
+              [ "public function boolean f_test ()"
+              , "declare sp procedure for sp_do"
+              , "@action = :ls_action,"
+              , "@id = :li_id"
+              , "end function"
+              ]
+        case runFile "test.srw" src of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right _  -> pure ()
+
+    , testCase "forward prototypes with public: access header parses (.srx pattern)" $ do
+        let src = T.unlines
+              [ "global type uo_sales from NonVisualObject"
+              , "end type"
+              , "forward prototypes"
+              , "public:"
+              , "function long SetConnect (connection theConnection)"
+              , "end prototypes"
+              ]
+        case runFile "test.srx" src of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right v  -> arrayLen (lookupObj "decls" (lookupObj "prototypes" v)) @?= 1
+    ]
+  , testGroup "runFile stub extensions"
+    [ testCase ".srp returns pipeline stub without touching the lexer" $ do
+        case runFile "test.srp" "PIPELINE(source_connect=foo)\n" of
+          Left err -> assertFailure ("expected Right stub, got: " <> T.unpack err)
+          Right v  -> do
+            lookupObj "kind"   v @?= String "pipeline"
+            lookupObj "status" v @?= String "unimplemented"
+
+    , testCase ".srj returns project stub without touching the lexer" $ do
+        case runFile "test.srj" "EXE:test.exe,,0,1\n" of
+          Left err -> assertFailure ("expected Right stub, got: " <> T.unpack err)
+          Right v  -> do
+            lookupObj "kind"   v @?= String "project"
+            lookupObj "status" v @?= String "unimplemented"
+
+    , testCase ".srp and .srj extension matching is case-insensitive" $ do
+        assertBool ".SRP should stub" (isRight (runFile "X.SRP" ""))
+        assertBool ".SRJ should stub" (isRight (runFile "X.SRJ" ""))
     ]
   ]

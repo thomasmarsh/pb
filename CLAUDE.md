@@ -397,7 +397,5 @@ All other modules are currently stubs (`PB.Pipeline.Sentinel`, `PB.Pipeline.Walk
 - Do not commit with a warning-dirty `cabal build`
 - Failing test stubs (Stage 2) may be committed; mark them clearly with `assertFailure "unimplemented: ..."`
 - Before committing parser changes: `bash scripts/check-corpus.sh`
-  The error count must not increase. Baseline: 10 errors / 777 files;
-  22 clean (all `.srs`), 262 DataWindow stubs (always pass).
-  Remaining 10: 3× `.srp` pipeline stubs, 4× `.srj` project stubs, 1× `.srx` (access-modifier in prototypes), 1× `.srw` lex error L224, 1× openpay `.srj`.
+  The error count must not increase. Baseline: 0 errors / 777 files.
 - Any new failure categories found during a session must be recorded in `plan/BACKLOG.md` before committing.
