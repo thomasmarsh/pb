@@ -64,7 +64,7 @@ classifyByOp s ts =
 -- Lvalue helpers
 
 isSegmentName :: Token -> Bool
-isSegmentName t = tkKind t `elem` [TkIdent, TkOtherKw, TkSqlKw]
+isSegmentName t = tkKind t `elem` [TkIdent, TkOtherKw, TkSqlKw, TkDatatype]
 
 -- | Parse a greedy lvalue prefix; returns (segments, remaining_tokens).
 -- Returns Nothing if the first token is not a valid segment name.
@@ -179,6 +179,7 @@ parseSingleToken t = case tkKind t of
   TkEnumLiteral -> ExEnum (T.dropEnd 1 (tkText t))
   TkIdent       -> ExLvalue (Lvalue [LvSegment (tkText t) Nothing])
   TkOtherKw     -> ExLvalue (Lvalue [LvSegment (tkText t) Nothing])
+  TkDatatype    -> ExLvalue (Lvalue [LvSegment (tkText t) Nothing])
   _             -> ExRaw [t]
 
 -- | Try to parse as lvalue chain, or lvalue followed by '(' args ')'.

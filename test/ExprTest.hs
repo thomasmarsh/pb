@@ -173,6 +173,30 @@ tests = testGroup "Expr"
           in parseExpr ts @?= ExRaw ts
       ]
 
+    , testGroup "datatype conversions"
+      [ testCase "Integer(x) → ExCall" $
+          parseExpr [ mkTok TkDatatype "Integer", mkTok TkLParen "("
+                    , mkTok TkIdent "x", mkTok TkRParen ")" ]
+            @?= ExCall (CallExpr (Lvalue [LvSegment "Integer" Nothing])
+                        [[mkTok TkIdent "x"]])
+
+      , testCase "String(x) → ExCall" $
+          parseExpr [ mkTok TkDatatype "String", mkTok TkLParen "("
+                    , mkTok TkIdent "myhours", mkTok TkRParen ")" ]
+            @?= ExCall (CallExpr (Lvalue [LvSegment "String" Nothing])
+                        [[mkTok TkIdent "myhours"]])
+
+      , testCase "bare Integer → ExLvalue" $
+          parseExpr [mkTok TkDatatype "Integer"]
+            @?= ExLvalue (Lvalue [LvSegment "Integer" Nothing])
+
+      , testCase "Integer(x) + 1 → ExRaw (trailing tokens prevent ExCall)" $
+          let ts = [ mkTok TkDatatype "Integer", mkTok TkLParen "("
+                   , mkTok TkIdent "x", mkTok TkRParen ")"
+                   , mkTok TkArithOp "+", mkTok TkIntLiteral "1" ]
+          in parseExpr ts @?= ExRaw ts
+      ]
+
     , testGroup "create"
       [ testCase "create ident class → ExCreate (CreateClass)" $
           parseExpr [mkTok TkOtherKw "create", mkTok TkIdent "n_service"]
