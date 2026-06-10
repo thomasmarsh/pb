@@ -218,7 +218,7 @@ classifyBodyStmt s = case stmtTokens s of
     | tkKind t == TkOtherKw ->
         case T.toLower (tkText t) of
           "call"    -> maybe (BsRaw s) BsPbCall (parsePbCall (stmtTokens s))
-          "destroy" -> maybe (BsRaw s) BsDestroy (parseLvalue rest)
+          "destroy" -> maybe (classifyByOp s (stmtTokens s)) BsDestroy (parseLvalue rest)
           _         ->
             let ts           = stmtTokens s
                 (_, skipped) = span isModifierToken ts

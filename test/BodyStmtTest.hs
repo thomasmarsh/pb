@@ -211,10 +211,18 @@ tests = testGroup "Body"
                   , (TkLBracket, "["), (TkIdent, "li_Cnt"), (TkRBracket, "]") ])
           @?= BsDestroy (Lvalue [LvSegment "ids_Data" (Just [mkTok TkIdent "li_Cnt"])])
 
-    , testCase "destroy with empty rest falls to BsRaw" $
-        case classifyBodyStmt (mkStmt [(TkOtherKw, "destroy")]) of
-          BsRaw _ -> return ()
-          other   -> assertFailure ("expected BsRaw, got: " <> show other)
+    , testCase "destroy with no argument emits BsCall" $
+        classifyBodyStmt (mkStmt [(TkOtherKw, "destroy")])
+          @?= BsCall (ExLvalue (Lvalue [LvSegment "destroy" Nothing]))
+
+    , testCase "destroy function-call form emits BsCall" $
+        classifyBodyStmt
+          (mkStmt [ (TkOtherKw, "destroy"), (TkLParen, "(")
+                  , (TkOtherKw, "this"), (TkDot, "."), (TkIdent, "m_foo")
+                  , (TkRParen, ")") ])
+          @?= BsCall (ExCall (CallExpr
+                (Lvalue [LvSegment "destroy" Nothing])
+                [[mkTok TkOtherKw "this", mkTok TkDot ".", mkTok TkIdent "m_foo"]]))
     ]
 
   , testGroup "parseBodyStmts"
