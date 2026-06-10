@@ -17,9 +17,9 @@ module PB.Grammar.File
 
 import PB.Prelude
 import PB.Grammar.Body    (pBodyStmt)
-import PB.Grammar.Stream  (FileParser, StmtStream (..), leadingText, satisfyStmt)
+import PB.Grammar.Stream  (FileParser, StmtStream (..), leadingText, satisfyStmt, isModifierToken)
 import PB.AST.BodyStmt    (BodyStmt)
-import PB.AST.Object
+import PB.AST.SourceFile
   ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
   , TypeDecl (..), TypeBlock (..)
   , VariablesBlock (..), VarScope (..), VarDecl (..)
@@ -38,24 +38,21 @@ import qualified Data.Text as T
 pEndKw :: Text -> FileParser ()
 pEndKw kw = () <$ leadingText ("end " <> kw)
 
-isMod :: Token -> Bool
-isMod t = tkKind t `elem` [TkAccessModifier, TkStorageModifier]
-
 isFnMod :: Token -> Bool
-isFnMod t = isMod t
+isFnMod t = isModifierToken t
          || (tkKind t == TkDeclKw  && T.toLower (tkText t) `elem` ["external", "intrinsic"])
          || (tkKind t == TkOtherKw && T.toLower (tkText t) == "rpcfunc")
 
 isTypeDecl :: Statement -> Bool
 isTypeDecl s =
-  let rest = dropWhile isMod (stmtTokens s)
+  let rest = dropWhile isModifierToken (stmtTokens s)
   in case rest of
     (t0:_:t2:_) -> T.toLower (tkText t0) == "type" && T.toLower (tkText t2) == "from"
     _            -> False
 
 extractTypeDecl :: Statement -> Maybe TypeDecl
 extractTypeDecl s =
-  let rest = dropWhile isMod (stmtTokens s)
+  let rest = dropWhile isModifierToken (stmtTokens s)
   in case rest of
     (_:nameT:_:ancT:remainder) ->
       let within = case remainder of
@@ -86,14 +83,14 @@ scopeFromOpener s = case stmtTokens s of
 
 isVarDecl :: Statement -> Bool
 isVarDecl s =
-  let rest = dropWhile isMod (stmtTokens s)
+  let rest = dropWhile isModifierToken (stmtTokens s)
   in case rest of
     (t:_:_) -> tkKind t `elem` [TkDatatype, TkIdent]
     _       -> False
 
 buildVarDecl :: Statement -> VarDecl
 buildVarDecl s =
-  let (mods, rest) = span isMod (stmtTokens s)
+  let (mods, rest) = span isModifierToken (stmtTokens s)
   in case rest of
     (typeT:nameT:_) -> VarDecl
       { vdModifiers = map tkText mods
@@ -174,7 +171,7 @@ isSubDecl s =
 
 isEvDecl :: Statement -> Bool
 isEvDecl s =
-  let rest = dropWhile isMod (stmtTokens s)
+  let rest = dropWhile isModifierToken (stmtTokens s)
   in case rest of
     (t:_) -> T.toLower (tkText t) == "event"
     _     -> False
@@ -213,7 +210,7 @@ extractSubSig s =
 
 extractEvSig :: Statement -> Maybe EventSig
 extractEvSig s =
-  let rest = dropWhile isMod (stmtTokens s)
+  let rest = dropWhile isModifierToken (stmtTokens s)
   in case rest of
     (_kw : name : remainder) ->
         let rawSig = T.intercalate " " (map tkText remainder)

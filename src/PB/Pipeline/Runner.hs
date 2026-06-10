@@ -5,7 +5,7 @@ module PB.Pipeline.Runner
   ) where
 
 import PB.Prelude
-import PB.AST.Object
+import PB.AST.SourceFile
 import PB.Grammar.File      (parseSrFile)
 import PB.Lexing.Lexer      (LexError (..), LexLine (..), tokenize)
 import PB.Lexing.Splitter   (Statement (..), splitStatements)
@@ -22,7 +22,7 @@ import System.FilePath     (takeExtension)
 -- Entry point
 
 runFile :: FilePath -> Text -> Either Text Value
-runFile path src = case classifyFile path of
+runFile path src = case fileKind path of
   DataWindow  -> runDataWindow  path src
   Pipeline    -> runPipeline    path src
   Project     -> runProject     path src
@@ -30,8 +30,8 @@ runFile path src = case classifyFile path of
 
 data FileKind = DataWindow | Pipeline | Project | PowerScript
 
-classifyFile :: FilePath -> FileKind
-classifyFile fp = case map toLower (takeExtension fp) of
+fileKind :: FilePath -> FileKind
+fileKind fp = case map toLower (takeExtension fp) of
   ".srd" -> DataWindow
   ".srp" -> Pipeline
   ".srj" -> Project

@@ -9,7 +9,7 @@ import PB.AST.BodyStmt      ( AugOp (..), BodyStmt (..), PbCall (..)
                             , DoStmt (..), CaseClause (..), ChooseStmt (..) )
 import PB.AST.Expr          ( CallExpr (..), CreateExpr (..), Expr (..)
                             , Literal (..), LvSegment (..), Lvalue (..) )
-import PB.AST.Object
+import PB.AST.SourceFile
 import PB.Lexing.Splitter   (Statement (..))
 import PB.Lexing.Token      (tkText)
 import PB.Pipeline.Preprocess (LogicalLine (..))

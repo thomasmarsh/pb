@@ -405,7 +405,7 @@ data LogicalLine = LogicalLine
   }
 ```
 
-### `PB.AST.Object`
+### `PB.AST.SourceFile`
 
 ```haskell
 data SrFile = SrFile
@@ -469,9 +469,10 @@ pSubroutineBlock :: FileParser SubroutineBlock
 newtype StmtStream = StmtStream [Statement]
 type FileParser = Parsec Void StmtStream
 
-satisfyStmt :: (Statement -> Bool) -> FileParser Statement
-leadingKind  :: TokenKind -> FileParser Statement
-leadingText  :: Text -> FileParser Statement
+satisfyStmt      :: (Statement -> Bool) -> FileParser Statement
+leadingKind      :: TokenKind -> FileParser Statement
+leadingText      :: Text -> FileParser Statement
+isModifierToken  :: Token -> Bool   -- TkAccessModifier | TkStorageModifier
 ```
 
 ### `PB.Pipeline.Runner`
@@ -480,7 +481,7 @@ leadingText  :: Text -> FileParser Statement
 runFile           :: FilePath -> Text -> Either Text Value
 collectStatements :: [LexLine] -> Either Text [Statement]
 wrapSrFile        :: FilePath -> SrFile -> Value
--- runFile dispatches on extension: .srd → runDataWindow (stub), _ → runPowerScript
+-- runFile calls fileKind to dispatch on extension: .srd → runDataWindow (stub), _ → runPowerScript
 -- runPowerScript: normalizeText → stripHeaders → tokenize → collectStatements → parseSrFile → wrapSrFile
 -- wrapSrFile: calls toJSON sf (via Serialise instances), merges "file" and "kind" metadata fields
 -- collectStatements filters empty-token statements and surfaces the first LexError as Left Text
@@ -498,7 +499,7 @@ wrapSrFile        :: FilePath -> SrFile -> Value
 -- DoCondition: was "kind" pre-plan-13; now "tag".
 ```
 
-All other modules are currently stubs (`PB.Pipeline.Sentinel`, `PB.Pipeline.WalkTree`, `PB.AST.Library`, `PB.AST.Script`, `PB.AST.Statement`, `PB.AST.Types`, `PB.AST.Workspace`).
+All other modules are currently stubs (`PB.Pipeline.WalkTree`, `PB.AST.Library`, `PB.AST.Statement`, `PB.AST.Types`, `PB.AST.Workspace`).
 
 ---
 

@@ -26,7 +26,7 @@ library
     PB.Prelude
     PB.AST.BodyStmt
     PB.AST.Expr
-    PB.AST.Object
+    PB.AST.SourceFile
     PB.Grammar.Body
     PB.Grammar.File
     PB.Grammar.Stream
@@ -37,7 +37,6 @@ library
     PB.Pipeline.Preprocess
     PB.Pipeline.Runner
     PB.Pipeline.Serialise
-    PB.Pipeline.Sentinel
   build-depends:
     , base ^>=4.20.2.0
     , text

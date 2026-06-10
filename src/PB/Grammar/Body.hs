@@ -13,7 +13,7 @@ import PB.AST.BodyStmt
   , CaseClause (..), ChooseStmt (..)
   )
 import PB.AST.Expr        (CallExpr (..), CreateExpr (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
-import PB.Grammar.Stream  (FileParser, satisfyStmt)
+import PB.Grammar.Stream  (FileParser, satisfyStmt, isModifierToken)
 import PB.Lexing.Splitter (Statement (..))
 import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
 
@@ -22,9 +22,6 @@ import qualified Data.Text as T
 
 -- ---------------------------------------------------------------------------
 -- Token predicates
-
-isModifier :: Token -> Bool
-isModifier t = tkKind t `elem` [TkAccessModifier, TkStorageModifier]
 
 isTypeName :: Token -> Bool
 isTypeName t = tkKind t `elem` [TkDatatype, TkIdent]
@@ -44,8 +41,8 @@ augOp _    = Nothing
 
 -- | Split at first operator token; build the appropriate BodyStmt.
 -- Falls back to BsRaw if lhs is empty or op text is unrecognised.
-scanForOp :: Statement -> [Token] -> BodyStmt
-scanForOp s ts =
+classifyByOp :: Statement -> [Token] -> BodyStmt
+classifyByOp s ts =
   let (lhs, rest) = span (not . isOperator) ts
   in case rest of
        []             -> BsCall (parseExpr ts)
@@ -224,18 +221,18 @@ classifyBodyStmt s = case stmtTokens s of
           "destroy" -> maybe (BsRaw s) BsDestroy (parseLvalue rest)
           _         ->
             let ts           = stmtTokens s
-                (_, skipped) = span isModifier ts
+                (_, skipped) = span isModifierToken ts
             in case skipped of
                  (typeT : nameT : _)
                    | isTypeName typeT && tkKind nameT == TkIdent -> BsLocalVar ts
-                 _ -> scanForOp s ts
+                 _ -> classifyByOp s ts
     | otherwise ->
         let ts           = stmtTokens s
-            (_, skipped) = span isModifier ts
+            (_, skipped) = span isModifierToken ts
         in case skipped of
              (typeT : nameT : _)
                | isTypeName typeT && tkKind nameT == TkIdent -> BsLocalVar ts
-             _ -> scanForOp s ts
+             _ -> classifyByOp s ts
 
 -- | Classify a list of raw statements into typed body statements.
 parseBodyStmts :: [Statement] -> [BodyStmt]

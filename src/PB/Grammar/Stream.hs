@@ -5,11 +5,13 @@ module PB.Grammar.Stream
   , satisfyStmt
   , leadingKind
   , leadingText
+  , isModifierToken
   ) where
 
 import PB.Prelude
 import PB.Lexing.Splitter     (Statement (..))
-import PB.Lexing.Token        (TokenKind, tkKind, tkText)
+import qualified PB.Lexing.Token as LT
+import PB.Lexing.Token        (TokenKind (..), tkKind, tkText)
 import PB.Pipeline.Preprocess (LogicalLine (..), llText, llStartLine)
 
 import Data.List.NonEmpty (toList)
@@ -66,6 +68,9 @@ instance TraversableStream StmtStream where
        )
 
 type FileParser = Parsec Void StmtStream
+
+isModifierToken :: LT.Token -> Bool
+isModifierToken t = tkKind t `elem` [TkAccessModifier, TkStorageModifier]
 
 satisfyStmt :: (Statement -> Bool) -> FileParser Statement
 satisfyStmt f = token (\s -> if f s then Just s else Nothing) Set.empty

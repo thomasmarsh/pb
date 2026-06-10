@@ -1,4 +1,4 @@
-module PB.AST.Object
+module PB.AST.SourceFile
   ( SrFile (..)
   , ForwardBlock (..)
   , PrototypesBlock (..)

@@ -3,7 +3,7 @@ module SerialiseTest (tests) where
 import PB.Prelude
 import PB.AST.BodyStmt  (BodyStmt (..), DoCondition (..))
 import PB.AST.Expr      (Expr (..), Literal (..), LvSegment (..))
-import PB.AST.Object    (SrFile (..))
+import PB.AST.SourceFile (SrFile (..))
 import PB.Pipeline.Runner     (wrapSrFile)
 import PB.Pipeline.Serialise  ()
 

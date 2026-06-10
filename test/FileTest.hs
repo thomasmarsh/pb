@@ -7,7 +7,7 @@ import PB.Grammar.File        ( pForwardBlock, pPrototypesBlock, pVariablesBlock
                               , parseSrFile
                               )
 import PB.Grammar.Stream      (FileParser, StmtStream (..))
-import PB.AST.Object          ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
+import PB.AST.SourceFile      ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
                               , TypeDecl (..), TypeBlock (..)
                               , VariablesBlock (..), VarScope (..), VarDecl (..)
                               , GlobalInstance (..)
