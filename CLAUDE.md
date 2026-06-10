@@ -356,6 +356,7 @@ data Expr
   | ExCall   CallExpr   -- function or method call
   | ExCreate CreateExpr -- CREATE ClassName / CREATE USING expr
   | ExArray  [Expr]     -- { e1, e2, ... } array literal
+  | ExNot    Expr       -- NOT expr (unary boolean negation)
   | ExRaw    [Token]    -- binary ops, chained calls, or unrecognized
 ```
 

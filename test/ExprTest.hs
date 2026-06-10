@@ -188,6 +188,32 @@ tests = testGroup "Expr"
             @?= ExCreate (CreateUsing (ExLvalue (Lvalue [LvSegment "ls_wintype" Nothing])))
       ]
 
+    , testGroup "not negation"
+      [ testCase "not true → ExNot (ExLit (LitBool True))" $
+          parseExpr [mkTok TkOtherKw "not", mkTok TkBoolTrue "true"]
+            @?= ExNot (ExLit (LitBool True))
+
+      , testCase "not lvalue → ExNot (ExLvalue)" $
+          parseExpr [mkTok TkOtherKw "not", mkTok TkIdent "ib_debug"]
+            @?= ExNot (ExLvalue (Lvalue [LvSegment "ib_debug" Nothing]))
+
+      , testCase "not call → ExNot (ExCall)" $
+          parseExpr [ mkTok TkOtherKw "not", mkTok TkIdent "IsNull"
+                    , mkTok TkLParen "(", mkTok TkIdent "x", mkTok TkRParen ")" ]
+            @?= ExNot (ExCall (CallExpr (Lvalue [LvSegment "IsNull" Nothing])
+                               [[mkTok TkIdent "x"]]))
+
+      , testCase "not complex (binary op operand) → ExNot (ExRaw)" $
+          let opToks = [ mkTok TkIdent "ll_rc", mkTok TkCompareOp ">"
+                       , mkTok TkIntLiteral "0" ]
+          in parseExpr (mkTok TkOtherKw "not" : opToks)
+               @?= ExNot (ExRaw opToks)
+
+      , testCase "bare not (no operand) → ExNot (ExRaw [])" $
+          parseExpr [mkTok TkOtherKw "not"]
+            @?= ExNot (ExRaw [])
+      ]
+
     , testGroup "ExRaw fallback"
       [ testCase "empty token list → ExRaw []" $
           parseExpr [] @?= ExRaw []
@@ -221,6 +247,7 @@ propParseExprTotal = property $ do
     (Gen.element
       [ (TkIdent,       "foo")
       , (TkOtherKw,     "today")
+      , (TkOtherKw,     "not")
       , (TkBoolTrue,    "true")
       , (TkBoolFalse,   "false")
       , (TkIntLiteral,  "1")
@@ -242,6 +269,7 @@ propParseExprTotal = property $ do
     ExCall   _ -> True
     ExCreate _ -> True
     ExArray  _ -> True
+    ExNot    _ -> True
     ExRaw    _ -> True
 
 propExRawRoundtrip :: Property

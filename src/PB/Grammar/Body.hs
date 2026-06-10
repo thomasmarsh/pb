@@ -148,6 +148,9 @@ parseArrayExpr ts = case ts of
 -- Total function: unrecognized shapes become ExRaw.
 parseExpr :: [Token] -> Expr
 parseExpr []  = ExRaw []
+parseExpr (t:rest)
+  | tkKind t == TkOtherKw && T.toLower (tkText t) == "not"
+  = ExNot (parseExpr rest)
 parseExpr [t] = parseSingleToken t
 parseExpr ts@(t:_)
   | tkKind t == TkOtherKw && T.toLower (tkText t) == "create"
