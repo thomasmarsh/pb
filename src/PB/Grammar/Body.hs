@@ -158,6 +158,11 @@ parseExpr ts@(t:_)
 parseExpr ts@(t:_)
   | tkKind t == TkLBrace
   = maybe (ExRaw ts) id (parseArrayExpr ts)
+parseExpr (t:rest)
+  | tkKind t == TkColon
+  = case lvaluePrefix rest of
+      Just (segs, _) | not (null segs) -> ExHostVar (Lvalue segs)
+      _                                -> ExRaw (t:rest)
 parseExpr ts  = fromMaybe (ExRaw ts) (tryLvalueOrCall ts)
 
 parseSingleToken :: Token -> Expr

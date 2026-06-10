@@ -217,8 +217,9 @@ instance ToJSON Expr where
   toJSON (ExCreate (CreateClass cls)) = object ["tag" .= ("create"       :: Text), "class" .= cls]
   toJSON (ExCreate (CreateUsing e))   = object ["tag" .= ("create_using" :: Text), "expr"  .= e]
   toJSON (ExArray  elems) = object ["tag" .= ("array" :: Text), "items" .= elems]
-  toJSON (ExNot    e)    = object ["tag" .= ("not"          :: Text), "expr"   .= e]
-  toJSON (ExRaw    ts)   = object ["tag" .= ("raw"          :: Text), "tokens" .= map tkText ts]
+  toJSON (ExNot     e)    = object ["tag" .= ("not"          :: Text), "expr"     .= e]
+  toJSON (ExHostVar lv)  = object ["tag" .= ("host_var"     :: Text), "lvalue"   .= toJSON lv]
+  toJSON (ExRaw     ts)  = object ["tag" .= ("raw"          :: Text), "tokens"   .= map tkText ts]
 
 instance ToJSON Literal where
   toJSON (LitBool b) = object ["tag" .= ("bool"   :: Text), "value" .= b]

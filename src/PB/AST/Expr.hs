@@ -44,12 +44,13 @@ data CreateExpr
   deriving (Eq, Show)
 
 data Expr
-  = ExLit    Literal    -- boolean, numeric, string, date/time, null
-  | ExEnum   Text       -- PowerBuilder enum constant; name without trailing '!'
-  | ExLvalue Lvalue     -- bare variable / dotted member chain / subscript
-  | ExCall   CallExpr   -- function or method call
-  | ExCreate CreateExpr -- CREATE ClassName / CREATE USING expr
-  | ExArray  [Expr]     -- { e1, e2, ... } array literal
-  | ExNot    Expr       -- NOT expr (unary boolean negation)
-  | ExRaw    [Token]    -- binary ops, chained calls, or anything unrecognized
+  = ExLit     Literal    -- boolean, numeric, string, date/time, null
+  | ExEnum    Text       -- PowerBuilder enum constant; name without trailing '!'
+  | ExLvalue  Lvalue     -- bare variable / dotted member chain / subscript
+  | ExCall    CallExpr   -- function or method call
+  | ExCreate  CreateExpr -- CREATE ClassName / CREATE USING expr
+  | ExArray   [Expr]     -- { e1, e2, ... } array literal
+  | ExNot     Expr       -- NOT expr (unary boolean negation)
+  | ExHostVar Lvalue     -- SQL host variable: :varname or :struct.field
+  | ExRaw     [Token]    -- binary ops, chained calls, or anything unrecognized
   deriving (Eq, Show)

@@ -214,6 +214,32 @@ tests = testGroup "Expr"
             @?= ExNot (ExRaw [])
       ]
 
+    , testGroup "host variable"
+      [ testCase ":varname → ExHostVar" $
+          parseExpr [ mkTok TkColon ":", mkTok TkIdent "ll_id" ]
+            @?= ExHostVar (Lvalue [LvSegment "ll_id" Nothing])
+
+      , testCase ":varname, (trailing comma discarded) → ExHostVar" $
+          parseExpr [ mkTok TkColon ":", mkTok TkIdent "ll_id", mkTok TkComma "," ]
+            @?= ExHostVar (Lvalue [LvSegment "ll_id" Nothing])
+
+      , testCase ":struct.field → ExHostVar dotted lvalue" $
+          parseExpr [ mkTok TkColon ":", mkTok TkIdent "asc_report"
+                    , mkTok TkDot ".", mkTok TkIdent "kodreport" ]
+            @?= ExHostVar (Lvalue [ LvSegment "asc_report" Nothing
+                                  , LvSegment "kodreport"  Nothing ])
+
+      , testCase ":struct.field, (trailing comma discarded) → ExHostVar" $
+          parseExpr [ mkTok TkColon ":", mkTok TkIdent "asc_report"
+                    , mkTok TkDot ".", mkTok TkIdent "kodreport", mkTok TkComma "," ]
+            @?= ExHostVar (Lvalue [ LvSegment "asc_report" Nothing
+                                  , LvSegment "kodreport"  Nothing ])
+
+      , testCase "bare colon with no name → ExRaw fallback" $
+          parseExpr [ mkTok TkColon ":", mkTok TkComma "," ]
+            @?= ExRaw [ mkTok TkColon ":", mkTok TkComma "," ]
+      ]
+
     , testGroup "ExRaw fallback"
       [ testCase "empty token list → ExRaw []" $
           parseExpr [] @?= ExRaw []
@@ -260,17 +286,19 @@ propParseExprTotal = property $ do
       , (TkComma,       ",")
       , (TkArithOp,     "+")
       , (TkNull,        "null")
+      , (TkColon,       ":")
       ])
   let ts = map (uncurry mkTok) pairs
   assert $ case parseExpr ts of
-    ExLit    _ -> True
-    ExEnum   _ -> True
-    ExLvalue _ -> True
-    ExCall   _ -> True
-    ExCreate _ -> True
-    ExArray  _ -> True
-    ExNot    _ -> True
-    ExRaw    _ -> True
+    ExLit     _ -> True
+    ExEnum    _ -> True
+    ExLvalue  _ -> True
+    ExCall    _ -> True
+    ExCreate  _ -> True
+    ExArray   _ -> True
+    ExNot     _ -> True
+    ExHostVar _ -> True
+    ExRaw     _ -> True
 
 propExRawRoundtrip :: Property
 propExRawRoundtrip = property $ do
