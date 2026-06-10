@@ -36,6 +36,7 @@ library
     PB.Lexing.Token
     PB.Pipeline.Preprocess
     PB.Pipeline.Runner
+    PB.Pipeline.Serialise
     PB.Pipeline.Sentinel
   build-depends:
     , base ^>=4.20.2.0
@@ -64,7 +65,7 @@ test-suite pb-ast-test
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
-  other-modules: BodyParserTest, BodyStmtTest, CorpusTest, ExprTest, FileTest, MaskTest, RunnerTest, SplitterTest, StreamTest, TokenTest
+  other-modules: BodyParserTest, BodyStmtTest, CorpusTest, ExprTest, FileTest, MaskTest, RunnerTest, SerialiseTest, SplitterTest, StreamTest, TokenTest
   build-depends:
     , base ^>=4.20.2.0
     , pb-ast

@@ -9,6 +9,7 @@ import qualified CorpusTest
 import qualified FileTest
 import qualified MaskTest
 import qualified RunnerTest
+import qualified SerialiseTest
 import qualified SplitterTest
 import qualified StreamTest
 import qualified TokenTest
@@ -36,6 +37,7 @@ tests = testGroup "pb-ast"
   , FileTest.tests
   , MaskTest.tests
   , RunnerTest.tests
+  , SerialiseTest.tests
   , TokenTest.tests
   , SplitterTest.tests
   , StreamTest.tests

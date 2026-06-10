@@ -479,11 +479,23 @@ leadingText  :: Text -> FileParser Statement
 ```haskell
 runFile           :: FilePath -> Text -> Either Text Value
 collectStatements :: [LexLine] -> Either Text [Statement]
+wrapSrFile        :: FilePath -> SrFile -> Value
 -- runFile dispatches on extension: .srd → runDataWindow (stub), _ → runPowerScript
--- runPowerScript: normalizeText → stripHeaders → tokenize → collectStatements → parseSrFile → encodeSrFile
+-- runPowerScript: normalizeText → stripHeaders → tokenize → collectStatements → parseSrFile → wrapSrFile
+-- wrapSrFile: calls toJSON sf (via Serialise instances), merges "file" and "kind" metadata fields
 -- collectStatements filters empty-token statements and surfaces the first LexError as Left Text
 -- Note: leOffset in a LexError is always 0 (reports initial position state, not error position).
 --       Only llStartLine (leSource e) is meaningful for diagnosis.
+```
+
+### `PB.Pipeline.Serialise`
+
+```haskell
+-- Orphan ToJSON instances for all PB.AST.* types.
+-- Import as: import PB.Pipeline.Serialise ()
+-- Brings ToJSON instances into scope; exports nothing explicitly.
+-- Sum-type discriminator: "tag" key (string).
+-- DoCondition: was "kind" pre-plan-13; now "tag".
 ```
 
 All other modules are currently stubs (`PB.Pipeline.Sentinel`, `PB.Pipeline.WalkTree`, `PB.AST.Library`, `PB.AST.Script`, `PB.AST.Statement`, `PB.AST.Types`, `PB.AST.Workspace`).
