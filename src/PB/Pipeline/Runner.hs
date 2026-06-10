@@ -4,10 +4,12 @@ module PB.Pipeline.Runner
   ) where
 
 import PB.Prelude
+import PB.AST.BodyStmt      (AugOp (..), BodyStmt (..))
 import PB.AST.Object
 import PB.Grammar.File      (parseSrFile)
 import PB.Lexing.Lexer      (LexError (..), LexLine (..), tokenize)
 import PB.Lexing.Splitter   (Statement (..), splitStatements)
+import PB.Lexing.Token      (tkText)
 import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText, stripHeaders)
 
 import Data.Aeson  (Value, object, toJSON, (.=))
@@ -201,5 +203,22 @@ encodeOnBlock ob = object
   , "body"     .= encodeBody (obBody ob)
   ]
 
-encodeBody :: [Statement] -> Value
-encodeBody = toJSON . map (llText . stmtSource)
+encodeBody :: [BodyStmt] -> Value
+encodeBody = toJSON . map encodeBodyStmt
+
+encodeBodyStmt :: BodyStmt -> Value
+encodeBodyStmt (BsLocalVar   ts)         = object ["tag" .= ("local_var"   :: Text), "tokens" .= map tkText ts]
+encodeBodyStmt (BsAssign     lhs rhs)    = object ["tag" .= ("assign"      :: Text), "lhs" .= map tkText lhs, "rhs" .= map tkText rhs]
+encodeBodyStmt (BsAugAssign  lhs op rhs) = object ["tag" .= ("aug_assign"  :: Text), "lhs" .= map tkText lhs, "op" .= encodeAugOp op, "rhs" .= map tkText rhs]
+encodeBodyStmt (BsInc        lhs)        = object ["tag" .= ("inc"         :: Text), "lhs" .= map tkText lhs]
+encodeBodyStmt (BsDec        lhs)        = object ["tag" .= ("dec"         :: Text), "lhs" .= map tkText lhs]
+encodeBodyStmt (BsCall       ts)         = object ["tag" .= ("call"        :: Text), "tokens" .= map tkText ts]
+encodeBodyStmt (BsReturn     Nothing)    = object ["tag" .= ("return"      :: Text)]
+encodeBodyStmt (BsReturn     (Just ts))  = object ["tag" .= ("return"      :: Text), "value" .= map tkText ts]
+encodeBodyStmt (BsRaw        s)          = object ["tag" .= ("raw"         :: Text), "text"  .= (llText . stmtSource) s]
+
+encodeAugOp :: AugOp -> Text
+encodeAugOp AugAdd = "add"
+encodeAugOp AugSub = "sub"
+encodeAugOp AugMul = "mul"
+encodeAugOp AugDiv = "div"

@@ -16,7 +16,9 @@ module PB.Grammar.File
   ) where
 
 import PB.Prelude
+import PB.Grammar.Body    (parseBodyStmts)
 import PB.Grammar.Stream  (FileParser, StmtStream (..), leadingText, satisfyStmt)
+import PB.AST.BodyStmt    (BodyStmt)
 import PB.AST.Object
   ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
   , TypeDecl (..), TypeBlock (..)
@@ -265,6 +267,9 @@ pPrototypesBlock = do
 anyStmt :: FileParser Statement
 anyStmt = satisfyStmt (const True)
 
+pBodyUntil :: Text -> FileParser [BodyStmt]
+pBodyUntil kw = parseBodyStmts <$> manyTill anyStmt (pEndKw kw)
+
 isOnDecl :: Statement -> Bool
 isOnDecl s = case stmtTokens s of
   (t:t2:_) -> T.toLower (tkText t) == "on"
@@ -291,7 +296,7 @@ extractOnParts s = case stmtTokens s of
 pTypeBlock :: FileParser TypeBlock
 pTypeBlock = do
   decl <- pTypeDecl
-  body <- manyTill anyStmt (pEndKw "type")
+  body <- pBodyUntil "type"
   return (TypeBlock decl body)
 
 pOnBlock :: FileParser OnBlock
@@ -300,7 +305,7 @@ pOnBlock = do
   case extractOnParts s of
     Nothing              -> fail "malformed on-block opener"
     Just (qual, own, ev) -> do
-      body <- manyTill anyStmt (pEndKw "on")
+      body <- pBodyUntil "on"
       return (OnBlock qual own ev body)
 
 pEventBlock :: FileParser EventBlock
@@ -309,7 +314,7 @@ pEventBlock = do
   case extractEvSig s of
     Nothing  -> fail "malformed event opener"
     Just sig -> do
-      body <- manyTill anyStmt (pEndKw "event")
+      body <- pBodyUntil "event"
       return (EventBlock sig body)
 
 pFunctionBlock :: FileParser FunctionBlock
@@ -318,7 +323,7 @@ pFunctionBlock = do
   case extractFnSig s of
     Nothing  -> fail "malformed function opener"
     Just sig -> do
-      body <- manyTill anyStmt (pEndKw "function")
+      body <- pBodyUntil "function"
       return (FunctionBlock sig body)
 
 pSubroutineBlock :: FileParser SubroutineBlock
@@ -327,7 +332,7 @@ pSubroutineBlock = do
   case extractSubSig s of
     Nothing  -> fail "malformed subroutine opener"
     Just sig -> do
-      body <- manyTill anyStmt (pEndKw "subroutine")
+      body <- pBodyUntil "subroutine"
       return (SubroutineBlock sig body)
 
 -- ---------------------------------------------------------------------------

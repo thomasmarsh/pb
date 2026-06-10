@@ -285,6 +285,29 @@ New modules go in the most specific matching directory. If a new layer is needed
 
 Maintained here to avoid re-scanning the tree. Update when new exports are added.
 
+### `PB.AST.BodyStmt`
+
+```haskell
+data AugOp = AugAdd | AugSub | AugMul | AugDiv
+
+data BodyStmt
+  = BsLocalVar  [Token]
+  | BsAssign    [Token] [Token]
+  | BsAugAssign [Token] AugOp [Token]
+  | BsInc       [Token]
+  | BsDec       [Token]
+  | BsCall      [Token]
+  | BsReturn    (Maybe [Token])
+  | BsRaw       Statement
+```
+
+### `PB.Grammar.Body`
+
+```haskell
+classifyBodyStmt :: Statement -> BodyStmt
+parseBodyStmts   :: [Statement] -> [BodyStmt]
+```
+
 ### `PB.Pipeline.Preprocess`
 
 ```haskell
@@ -322,7 +345,7 @@ data VariablesBlock = VariablesBlock { varScope :: VarScope, varDecls :: [VarDec
 data VarScope       = GlobalVars | TypeVars
 
 data TypeDecl = TypeDecl { tdName :: Text, tdAncestor :: Text, tdWithin :: Maybe Text }
-data TypeBlock = TypeBlock { tbDecl :: TypeDecl, tbBody :: [Statement] }
+data TypeBlock = TypeBlock { tbDecl :: TypeDecl, tbBody :: [BodyStmt] }
 data VarDecl   = VarDecl  { vdModifiers :: [Text], vdType :: Text, vdName :: Text }
 data GlobalInstance = GlobalInstance { giType :: Text, giName :: Text }
 
@@ -330,10 +353,10 @@ data FnSig  = FnSig  { fnsMods :: [Text], fnsRetType :: Text, fnsName :: Text, f
 data SubSig = SubSig { ssMods  :: [Text], ssName :: Text, ssParams :: Text, ssThrows :: Maybe Text }
 data EventSig = EventSig { esName :: Text, esRawSig :: Text }
 
-data FunctionBlock   = FunctionBlock   { fbSig :: FnSig,   fbBody :: [Statement] }
-data SubroutineBlock = SubroutineBlock { sbSig :: SubSig,  sbBody :: [Statement] }
-data EventBlock      = EventBlock      { evSig :: EventSig, evBody :: [Statement] }
-data OnBlock         = OnBlock         { obQualName :: Text, obOwner :: Text, obEvent :: Text, obBody :: [Statement] }
+data FunctionBlock   = FunctionBlock   { fbSig :: FnSig,   fbBody :: [BodyStmt] }
+data SubroutineBlock = SubroutineBlock { sbSig :: SubSig,  sbBody :: [BodyStmt] }
+data EventBlock      = EventBlock      { evSig :: EventSig, evBody :: [BodyStmt] }
+data OnBlock         = OnBlock         { obQualName :: Text, obOwner :: Text, obEvent :: Text, obBody :: [BodyStmt] }
 ```
 
 ### `PB.Grammar.File`
@@ -348,6 +371,7 @@ pTypeDecl        :: FileParser TypeDecl
 pVarDecl         :: FileParser VarDecl
 pProtoDecl       :: FileParser ProtoDecl
 pEndKw           :: Text -> FileParser ()
+pBodyUntil       :: Text -> FileParser [BodyStmt]
 pTypeBlock       :: FileParser TypeBlock
 pOnBlock         :: FileParser OnBlock
 pEventBlock      :: FileParser EventBlock

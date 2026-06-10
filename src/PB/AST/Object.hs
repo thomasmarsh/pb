@@ -19,7 +19,7 @@ module PB.AST.Object
   ) where
 
 import PB.Prelude
-import PB.Lexing.Splitter (Statement)
+import PB.AST.BodyStmt    (BodyStmt)
 
 data SrFile = SrFile
   { srHeaders         :: [Text]
@@ -65,7 +65,7 @@ data TypeDecl = TypeDecl
 
 data TypeBlock = TypeBlock
   { tbDecl :: TypeDecl
-  , tbBody :: [Statement]
+  , tbBody :: [BodyStmt]
   } deriving (Eq, Show)
 
 data VarDecl = VarDecl
@@ -101,22 +101,22 @@ data EventSig = EventSig
 
 data FunctionBlock = FunctionBlock
   { fbSig  :: FnSig
-  , fbBody :: [Statement]
+  , fbBody :: [BodyStmt]
   } deriving (Eq, Show)
 
 data SubroutineBlock = SubroutineBlock
   { sbSig  :: SubSig
-  , sbBody :: [Statement]
+  , sbBody :: [BodyStmt]
   } deriving (Eq, Show)
 
 data EventBlock = EventBlock
   { evSig  :: EventSig
-  , evBody :: [Statement]
+  , evBody :: [BodyStmt]
   } deriving (Eq, Show)
 
 data OnBlock = OnBlock
   { obQualName :: Text
   , obOwner    :: Text
   , obEvent    :: Text
-  , obBody     :: [Statement]
+  , obBody     :: [BodyStmt]
   } deriving (Eq, Show)
