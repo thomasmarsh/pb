@@ -16,10 +16,7 @@ data SourceSpan = SourceSpan
   } deriving (Eq, Ord, Show)
 
 data TokenKind
-  = TkHeaderLine
-  | TkLineComment
-  | TkBlockComment
-  | TkStringDouble
+  = TkStringDouble
   | TkStringSingle
   | TkBoolTrue
   | TkBoolFalse
@@ -40,7 +37,6 @@ data TokenKind
   | TkAugmentOp
   | TkAssignOp
   | TkArithOp
-  | TkContinuation
   | TkDot
   | TkDoubleColon
   | TkLParen
