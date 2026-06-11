@@ -302,6 +302,141 @@ tests = testGroup "DataWindow"
             Just (Map.singleton "values" "A/B/")
       ]
 
+  , testGroup "DwControl"
+      [ testCase "text control — name, band, position" $ do
+          let src = dwMin <> "\ntext(band=header name=lbl_title x=\"9\" y=\"8\" width=\"500\" height=\"56\" visible=\"1\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> do
+                dwcType    c @?= "text"
+                dwcName    c @?= Just "lbl_title"
+                dwcBand    c @?= Just BkHeader
+                dwcX       c @?= Just 9
+                dwcY       c @?= Just 8
+                dwcWidth   c @?= Just 500
+                dwcHeight  c @?= Just 56
+                dwcVisible c @?= Just True
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "column control — id, tabsequence" $ do
+          let src = dwMin <> "\ncolumn(band=detail id=2 tabsequence=32766 name=qty x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> do
+                dwcId     c @?= Just 2
+                dwcTabSeq c @?= Just 32766
+                dwcName   c @?= Just "qty"
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "compute control — expression field" $ do
+          let src = dwMin <> "\ncompute(band=summary name=cmp1 x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" expression=\"sum(amount for all)\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> dwcExpression c @?= Just "sum(amount for all)"
+              cs  -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "report control — dataobject in attrs" $ do
+          let src = dwMin <> "\nreport(band=detail dataobject=\"sprn_sub\" x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> do
+                dwcType c @?= "report"
+                assertBool "dataobject in attrs"
+                  (Map.member "dataobject" (dwcAttrs c))
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "graph control — attrs populated" $ do
+          let src = dwMin <> "\ngraph(band=footer name=gr1 x=\"0\" y=\"0\" width=\"200\" height=\"100\" visible=\"1\" graphtype=0 )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> do
+                dwcType c @?= "graph"
+                dwcName c @?= Just "gr1"
+                assertBool "graphtype in attrs"
+                  (Map.member "graphtype" (dwcAttrs c))
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "band=header.2 → BkGroupHeader 2" $ do
+          let src = dwMin <> "\ntext(band=header.2 name=lbl x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> dwcBand c @?= Just (BkGroupHeader 2)
+              cs  -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "band=header[3] → BkGroupHeader 3" $ do
+          let src = dwMin <> "\ntext(band=header[3] name=lbl x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> dwcBand c @?= Just (BkGroupHeader 3)
+              cs  -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "band=background → BkBackground" $ do
+          let src = dwMin <> "\ntext(band=background name=lbl x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> dwcBand c @?= Just BkBackground
+              cs  -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "visible=1 → True (unquoted)" $ do
+          let src = dwMin <> "\ntext(band=detail name=lbl x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=1 )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> dwcVisible c @?= Just True
+              cs  -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "visible=\"0\" → False (quoted)" $ do
+          let src = dwMin <> "\ntext(band=detail name=lbl x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"0\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> dwcVisible c @?= Just False
+              cs  -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "control without name — name is Nothing" $ do
+          let src = dwMin <> "\ntext(band=detail x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> dwcName c @?= Nothing
+              cs  -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "unknown control type — stored in dwcType" $ do
+          let src = dwMin <> "\nfoobarctrl(band=detail name=x x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> dwcType c @?= "foobarctrl"
+              cs  -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "structural keys absent from dwcAttrs" $ do
+          let src = dwMin <> "\ntext(band=header name=lbl id=1 x=\"9\" y=\"8\" width=\"500\" height=\"56\" visible=\"1\" tabsequence=10 color=\"0\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> do
+                let ks = Map.keys (dwcAttrs c)
+                assertBool "name not in attrs"   (notElem "name"       ks)
+                assertBool "band not in attrs"   (notElem "band"       ks)
+                assertBool "id not in attrs"     (notElem "id"         ks)
+                assertBool "x not in attrs"      (notElem "x"          ks)
+                assertBool "y not in attrs"      (notElem "y"          ks)
+                assertBool "width not in attrs"  (notElem "width"      ks)
+                assertBool "height not in attrs" (notElem "height"     ks)
+                assertBool "visible not in attrs" (notElem "visible"   ks)
+                assertBool "tab_seq not in attrs" (notElem "tabsequence" ks)
+                assertBool "color in attrs" (elem "color" ks)
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+      ]
+
   , testGroup "DwTable"
       [ testCase "no columns, no retrieve" $
           parseDwTable (scanBlockAttrs "") @?=
@@ -365,6 +500,15 @@ tests = testGroup "DataWindow"
           length cols @?= 1
           dcName (head' cols) @?= "ok"
       ]
+  ]
+
+-- | Minimal DW header for control test sources.
+dwMin :: Text
+dwMin = T.intercalate "\n"
+  [ "HA$PBExportHeader$test.srd"
+  , "$PBExportComments$"
+  , "release 9;"
+  , "datawindow(units=0 )"
   ]
 
 -- | Total head for test use — list is always non-empty at call site.

@@ -42,7 +42,7 @@ classifyBlock dw (DwBlock kw content) = case kw of
     "datawindow" ->
         dw { dwObject = parseDwObjectAttrs content }
     "table" ->
-        dw { dwTable = Just (parseDwTable []) }
+        dw { dwTable = Just (parseDwTable (scanBlockAttrs content)) }
     "group" ->
         dw { dwGroups = dwGroups dw ++ [parseDwGroupStub content] }
     _ | Just bk <- parseBandKind kw ->
@@ -50,7 +50,7 @@ classifyBlock dw (DwBlock kw content) = case kw of
       | "." `T.isInfixOf` kw ->
             dw { dwMeta = Map.insert kw Map.empty (dwMeta dw) }
       | otherwise ->
-            dw { dwControls = dwControls dw ++ [parseDwControlStub kw content] }
+            dw { dwControls = dwControls dw ++ [parseDwControl kw content] }
 
 -- ---------------------------------------------------------------------------
 -- Band kind
@@ -239,7 +239,58 @@ dedupeArgs = nubBy (\a b -> T.toLower (daName a) == T.toLower (daName b)
                           && T.toLower (daType a) == T.toLower (daType b))
 
 -- ---------------------------------------------------------------------------
--- Stub block parsers (populated in DW-A3 through DW-A5)
+-- Control block parser
+
+parseDwControl :: Text -> Text -> DwControl
+parseDwControl kw content =
+    let attrs     = scanBlockAttrs content
+        knownKeys = ["name","band","id","x","y","width","height",
+                     "visible","expression","tabsequence"]
+    in DwControl
+        { dwcType       = kw
+        , dwcName       = lookupUnquoted "name" attrs
+        , dwcBand       = parseBandKind =<< lookupUnquoted "band" attrs
+        , dwcId         = parseIntAttr  "id"          attrs
+        , dwcX          = parseIntAttr  "x"           attrs
+        , dwcY          = parseIntAttr  "y"           attrs
+        , dwcWidth      = parseIntAttr  "width"       attrs
+        , dwcHeight     = parseIntAttr  "height"      attrs
+        , dwcVisible    = parseBoolAttr "visible"     attrs
+        , dwcExpression = lookupQuoted  "expression"  attrs
+        , dwcTabSeq     = parseIntAttr  "tabsequence" attrs
+        , dwcAttrs      = collectResidualAttrs knownKeys attrs
+        }
+
+parseIntAttr :: Text -> [DwAttr] -> Maybe Int
+parseIntAttr key attrs =
+    readMaybe . T.unpack =<<
+        (lookupUnquoted key attrs <|> lookupQuoted key attrs)
+
+parseBoolAttr :: Text -> [DwAttr] -> Maybe Bool
+parseBoolAttr key attrs =
+    interpretBool =<<
+        (lookupQuoted key attrs <|> lookupUnquoted key attrs)
+
+interpretBool :: Text -> Maybe Bool
+interpretBool v = case T.toLower v of
+    "1"     -> Just True
+    "yes"   -> Just True
+    "true"  -> Just True
+    "0"     -> Just False
+    "no"    -> Just False
+    "false" -> Just False
+    _       -> Nothing
+
+collectResidualAttrs :: [Text] -> [DwAttr] -> Map.Map Text Text
+collectResidualAttrs excluded attrs = Map.fromList
+    [ (k, v)
+    | attr <- attrs
+    , let (k, v) = attrKV attr
+    , T.toLower k `notElem` excluded
+    ]
+
+-- ---------------------------------------------------------------------------
+-- Stub block parsers (populated in DW-A4 through DW-A5)
 
 parseDwObjectAttrs :: Text -> DwObjectAttrs
 parseDwObjectAttrs _ = DwObjectAttrs Map.empty
@@ -249,8 +300,3 @@ parseDwBandStub bk _ = DwBand bk Nothing Nothing False Map.empty
 
 parseDwGroupStub :: Text -> DwGroup
 parseDwGroupStub _ = DwGroup 0 Nothing Nothing [] False Map.empty
-
-parseDwControlStub :: Text -> Text -> DwControl
-parseDwControlStub kw _ =
-    DwControl kw Nothing Nothing Nothing Nothing Nothing
-              Nothing Nothing Nothing Nothing Nothing Map.empty

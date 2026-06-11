@@ -133,6 +133,33 @@ def analyze_dir(out_dir):
     return total, counts, other_words, examples, exraw_total, exraw_words, exraw_examples
 
 
+DW_STRUCT_FIELDS = ["name", "band", "id", "x", "y", "width", "height",
+                    "visible", "expression", "tab_seq"]
+
+
+def analyze_dw_controls(out_dir):
+    """Walk DW JSON output and count structural-field coverage per control."""
+    dw_files = 0
+    total    = 0
+    field_counts = Counter()
+    type_counts  = Counter()
+    for f in glob.glob(os.path.join(out_dir, "**", "*.json"), recursive=True):
+        try:
+            d = json.load(open(f))
+        except Exception:
+            continue
+        if d.get("kind") != "datawindow" or "error" in d:
+            continue
+        dw_files += 1
+        for ctrl in d.get("controls", []):
+            total += 1
+            type_counts[ctrl.get("type", "?")] += 1
+            for field in DW_STRUCT_FIELDS:
+                if ctrl.get(field) is not None:
+                    field_counts[field] += 1
+    return dw_files, total, field_counts, type_counts
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -207,6 +234,35 @@ def main():
                 print(f"  {word!r:42s}  {count:5d}")
                 for ex in all_exraw_examples[word][:2]:
                     print(f"      {ex!r}")
+
+        # DW control structural-field coverage
+        print()
+        print("=== DW Control Coverage ===")
+        grand_dw_files    = 0
+        grand_dw_controls = 0
+        grand_field_counts = Counter()
+        grand_type_counts  = Counter()
+        for name, out_dir in [("Appeon", appeon_out), ("OpenPay", openpay_out)]:
+            dw_files, total, field_counts, type_counts = analyze_dw_controls(out_dir)
+            grand_dw_files    += dw_files
+            grand_dw_controls += total
+            grand_field_counts += field_counts
+            grand_type_counts  += type_counts
+            pct = lambda n: f"{n/total*100:5.1f}%" if total else "   n/a"
+            print(f"  {name}: {dw_files} DW files, {total} controls")
+            for field in DW_STRUCT_FIELDS:
+                n = field_counts.get(field, 0)
+                print(f"    {field:12s}  {n:5d} / {total}  ({pct(n)})")
+        if grand_dw_controls:
+            print(f"  TOTAL: {grand_dw_files} DW files, {grand_dw_controls} controls")
+            pct = lambda n: f"{n/grand_dw_controls*100:5.1f}%"
+            for field in DW_STRUCT_FIELDS:
+                n = grand_field_counts.get(field, 0)
+                print(f"    {field:12s}  {n:5d} / {grand_dw_controls}  ({pct(n)})")
+            print()
+            print("  Control types (top 15):")
+            for typ, cnt in grand_type_counts.most_common(15):
+                print(f"    {typ:20s}  {cnt:5d}")
 
 
 if __name__ == "__main__":

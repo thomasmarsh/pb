@@ -8,7 +8,7 @@ cabal build --enable-tests            # compile tests too
 cabal test                            # run test suite
 cabal test --test-show-details=direct # verbose output
 bash scripts/check-corpus.sh          # 0 errors / 777 files = baseline
-python3 scripts/analyze-debt.py       # BsRaw + ExRaw debt breakdown (both corpora)
+python3 scripts/analyze-debt.py       # BsRaw + ExRaw debt + DW control coverage (both corpora)
 python3 scripts/analyze-debt.py --no-build  # same, skip build step
 ```
 
@@ -112,7 +112,7 @@ def walk_bsraw_leading(node, keyword):
                 yield from walk_bsraw_leading(v, keyword)
 ```
 
-**Diagnosing implementation debt.** When the charter targets BsRaw or ExRaw reduction, run the debt analyser first — do NOT re-derive the breakdown from scratch:
+**Diagnosing implementation debt.** When the charter targets BsRaw, ExRaw, or DW structural-field coverage, run the debt analyser first — do NOT re-derive the breakdown from scratch:
 
 ```bash
 python3 scripts/analyze-debt.py --no-build
@@ -122,8 +122,11 @@ This prints:
 
 - Per-corpus BsRaw category counts (`sql`, `decl`, `ctrl`, `handled`, `other`) — `other` is the actionable BsRaw target; the rest are correct or already handled.
 - A ranked ExRaw breakdown by leading token with examples — these are expression-level `ExRaw` fallbacks still to be promoted to typed `Expr` constructors. Use this to pick the highest-value next ExRaw charter.
+- **DW control coverage** — per-field percentage of `DwControl` structural fields (`name`, `band`, `id`, `x`, `y`, `width`, `height`, `visible`, `expression`, `tab_seq`) that are non-null across both corpora; top 15 control types by frequency. Use this to baseline before any DW-track session and confirm improvement after. Expected coverage for "real" display controls (text/column/compute/line/report/groupbox/rectangle/graph): ~78% on positional fields; `htmltable`/`htmlgen`/etc. export-generator controls will always be ~0% on these fields.
 
 **Keep `analyze-debt.py` in sync with any new `Expr` constructors.** When a new `ExXxx` constructor is added, confirm the ExRaw count drops correspondingly in the script output — it requires no code changes because it walks the live JSON, but the BACKLOG entry should quote the before/after counts.
+
+**The DW coverage section is always-on** (not gated on a flag). Quote the before/after coverage percentages in BACKLOG entries for DW-track sessions.
 
 **BACKLOG entries for BsRaw work are pre-loaded with Stage 0 analysis.** Each open BsRaw item records: current count, root cause (token kind + guard line), which shapes must stay BsRaw, and the Stage 1 fix sketch. Confirm the counts still match the script output, then proceed directly to Stage 1 — no re-sampling required.
 
