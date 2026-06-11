@@ -1,6 +1,7 @@
 -- Ratchet gate: assert that ExRaw and BsRaw "other" counts stay below
 -- their thresholds. Update after each B-track session; never increase.
 --
+--   ExRaw ≤ 1     after B5 (SQL body joining + TkLabel guard), 2026-06-10
 --   ExRaw ≤ 133   after B4 (ExMethodCall chain + dec{N} localvar), 2026-06-10
 --   ExRaw ≤ 156   after B3 (ExDispatch), 2026-06-10
 --   BsRaw other ≤ 18  after open/close SQL cursor fix, 2026-06-10
@@ -98,6 +99,7 @@ isBsRawOther v
                               (w:_) -> T.toLower (T.dropWhileEnd (== ';') w)
                               []    -> ""
             in not (T.isPrefixOf "{" stripped)
+               && not (T.isSuffixOf ":" firstWord)   -- TkLabel: goto/access-modifier headers
                && not (isSqlKw firstWord || isCtrlKw firstWord
                        || isDeclKw firstWord || isHandledKw firstWord)
         _ -> False
@@ -107,10 +109,10 @@ isBsRawOther v
 
 tests :: TestTree
 tests = testGroup "Corpus.Debt"
-    [ testCase "ExRaw total \8804 133" $ do
+    [ testCase "ExRaw total \8804 1" $ do
         vals <- loadCorpus
         let total = sum (map (countWhere isExRaw) vals)
-        assertBool ("ExRaw total = " <> show total <> ", expected \8804 133") (total <= 133)
+        assertBool ("ExRaw total = " <> show total <> ", expected \8804 1") (total <= 1)
     , testCase "BsRaw 'other' \8804 18" $ do
         vals <- loadCorpus
         let total = sum (map (countWhere isBsRawOther) vals)

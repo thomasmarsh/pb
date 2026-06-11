@@ -18,6 +18,7 @@ import PB.AST.Expr        ( BinOp (..), CallExpr (..), CreateExpr (..), Expr (..
 import PB.Grammar.Stream  (FileParser, satisfyStmt, isModifierToken)
 import PB.Lexing.Splitter (Statement (..))
 import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
+import PB.Pipeline.Preprocess (LogicalLine (..))
 
 import Text.Megaparsec (lookAhead, many, manyTill, optional, try, (<|>))
 import qualified Data.Text as T
@@ -360,6 +361,8 @@ parsePbCall _ = Nothing
 classifyBodyStmt :: Statement -> BodyStmt
 classifyBodyStmt s = case stmtTokens s of
   [] -> BsRaw s
+  (t : _)
+    | tkKind t == TkLabel -> BsRaw s
   (t : rest)
     | tkKind t == TkControlKw ->
         case T.toLower (tkText t) of
@@ -540,11 +543,37 @@ pCaseClause = do
 -- ---------------------------------------------------------------------------
 -- FileParser body-statement entry point
 
+-- | Consume a SQL body statement, merging multi-line SQL (no & continuations)
+-- into a single BsRaw. Detects end by checking whether the source line text
+-- ends with ';' (which segmentOnSemi strips from stmtTokens but leaves in
+-- stmtSource.llText).
+pSqlBodyStmt :: FileParser BodyStmt
+pSqlBodyStmt = do
+  first <- satisfyStmt isSqlStart
+  conts <- if endsWithSemi first then return [] else moreConts
+  return (BsRaw (foldl mergeStmt first conts))
+  where
+    -- Exclude TkSqlKw followed by '(' — those are function calls (open/close/etc.),
+    -- not embedded SQL statements. Real SQL always uses keyword + non-paren continuation.
+    isSqlStart s = case stmtTokens s of
+      (t:lp:_) -> tkKind t == TkSqlKw && tkKind lp /= TkLParen
+      (t:_)    -> tkKind t == TkSqlKw
+      []       -> False
+    endsWithSemi s = ";" `T.isSuffixOf` T.stripEnd (llText (stmtSource s))
+    mergeStmt acc s = acc
+      { stmtTokens = stmtTokens acc <> stmtTokens s
+      , stmtSource = (stmtSource acc) { llEndLine = llEndLine (stmtSource s) }
+      }
+    moreConts = do
+      s <- satisfyStmt (const True)
+      if endsWithSemi s then return [s] else (s:) <$> moreConts
+
 -- | Parse one body statement from the statement stream, handling control-flow
 -- constructs recursively. Falls through to 'classifyBodyStmt' for leaf forms.
 pBodyStmt :: FileParser BodyStmt
 pBodyStmt =
-      try pIfStmt
+      try pSqlBodyStmt
+  <|> try pIfStmt
   <|> try pForStmt
   <|> try pDoStmt
   <|> try pChooseStmt

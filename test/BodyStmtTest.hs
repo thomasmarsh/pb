@@ -213,6 +213,11 @@ tests = testGroup "Body"
           BsRaw _ -> return ()
           other   -> assertFailure ("expected BsRaw, got: " <> show other)
 
+    , testCase "raw: TkLabel access-modifier header → BsRaw" $
+        case classifyBodyStmt (mkStmt [(TkLabel, "public:")]) of
+          BsRaw _ -> return ()
+          other   -> assertFailure ("expected BsRaw, got: " <> show other)
+
     , testProperty "total: classifyBodyStmt never raises for any token list"
         propClassifyTotal
     ]

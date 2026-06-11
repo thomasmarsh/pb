@@ -82,11 +82,12 @@ def categorize(text):
     if not words:
         return "empty", ""
     first = words[0].lower().rstrip(";")
-    if first in SQL_KWS:    return "sql",        first
-    if first in CTRL_KWS:   return "ctrl",       first
-    if first in DECL_KWS:   return "decl",       first
-    if first in HANDLED:    return "handled",    first
-    if txt.startswith("{"):  return "array_init", first
+    if first in SQL_KWS:      return "sql",        first
+    if first in CTRL_KWS:     return "ctrl",       first
+    if first in DECL_KWS:     return "decl",       first
+    if first in HANDLED:      return "handled",    first
+    if first.endswith(":"):   return "handled",    first  # TkLabel: goto/access-modifier headers
+    if txt.startswith("{"):   return "array_init", first
     return "other", first
 
 

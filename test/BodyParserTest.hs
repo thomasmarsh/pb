@@ -30,6 +30,13 @@ mkStmt pairs = Statement
   , stmtSource = LogicalLine "" 1 1
   }
 
+-- | Like mkStmt but with a source-text string, used to test ';'-detection.
+mkStmtSrc :: Text -> [(TokenKind, Text)] -> Statement
+mkStmtSrc src pairs = Statement
+  { stmtTokens = map (uncurry mkTok) pairs
+  , stmtSource = LogicalLine src 1 1
+  }
+
 runBodyStmts :: [Statement] -> Either String [BodyStmt]
 runBodyStmts stmts = case parse (many pBodyStmt <* eof) "" (StmtStream stmts) of
   Right bs -> Right bs
@@ -314,5 +321,54 @@ tests = testGroup "Grammar.Body.Parser"
     , testCase "continue becomes BsContinue" $
         runBodyStmts [mkStmt [(TkControlKw,"continue")]]
           @?= Right [BsContinue]
+    ]
+
+  , testGroup "SQL body statement joining"
+    [ testCase "single-line SQL: no joining needed (regression)" $
+        -- COMMIT USING sqlca; — complete on one line
+        let s = mkStmtSrc "COMMIT USING sqlca;" [(TkSqlKw,"commit"),(TkOtherKw,"using"),(TkOtherKw,"sqlca")]
+        in runBodyStmts [s] @?= Right [BsRaw s]
+
+    , testCase "multi-line SELECT joined into one BsRaw" $
+        -- SELECT count(*)
+        --   INTO :li_rc
+        --   FROM ole
+        --   WHERE id = :var;
+        let sel   = mkStmtSrc "SELECT count(*)"
+                      [(TkSqlKw,"select"),(TkIdent,"count"),(TkLParen,"("),(TkArithOp,"*"),(TkRParen,")")]
+            into  = mkStmtSrc "  INTO :li_rc"
+                      [(TkOtherKw,"into"),(TkColon,":"),(TkIdent,"li_rc")]
+            frm   = mkStmtSrc "  FROM ole"
+                      [(TkDeclKw,"from"),(TkIdent,"ole")]
+            whr   = mkStmtSrc "  WHERE id = :var;"
+                      [(TkIdent,"where"),(TkIdent,"id"),(TkAssignOp,"="),(TkColon,":"),(TkIdent,"var")]
+            merged = Statement
+              { stmtTokens = stmtTokens sel <> stmtTokens into <> stmtTokens frm <> stmtTokens whr
+              , stmtSource = (stmtSource sel) { llEndLine = llEndLine (stmtSource whr) }
+              }
+        in runBodyStmts [sel, into, frm, whr] @?= Right [BsRaw merged]
+
+    , testCase "multi-line INSERT joined into one BsRaw" $
+        -- INSERT INTO ole
+        --   ( id, description )
+        --   VALUES ( :var1, :var2 );
+        let ins   = mkStmtSrc "INSERT INTO ole"
+                      [(TkSqlKw,"insert"),(TkOtherKw,"into"),(TkIdent,"ole")]
+            cols  = mkStmtSrc "  ( id, description )"
+                      [(TkLParen,"("),(TkIdent,"id"),(TkComma,","),(TkIdent,"description"),(TkRParen,")")]
+            vals  = mkStmtSrc "  VALUES ( :var1, :var2 );"
+                      [(TkIdent,"values"),(TkLParen,"("),(TkColon,":"),(TkIdent,"var1"),(TkComma,","),(TkColon,":"),(TkIdent,"var2"),(TkRParen,")")]
+            merged = Statement
+              { stmtTokens = stmtTokens ins <> stmtTokens cols <> stmtTokens vals
+              , stmtSource = (stmtSource ins) { llEndLine = llEndLine (stmtSource vals) }
+              }
+        in runBodyStmts [ins, cols, vals] @?= Right [BsRaw merged]
+
+    , testCase "SQL block followed by non-SQL statement" $
+        -- SELECT x FROM t;   (single-line)
+        -- y = 1
+        let sqlS  = mkStmtSrc "SELECT x FROM t;"
+                      [(TkSqlKw,"select"),(TkIdent,"x"),(TkDeclKw,"from"),(TkIdent,"t")]
+        in runBodyStmts [sqlS, stmtY1] @?= Right [BsRaw sqlS, assignY1]
     ]
   ]
