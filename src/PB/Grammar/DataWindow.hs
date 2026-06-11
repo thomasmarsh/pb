@@ -3,6 +3,10 @@ module PB.Grammar.DataWindow
   , parseBandKind
   , parseDwTable
   , parseColumn
+  , parseDwBand
+  , parseDwGroup
+  , parseGroupBy
+  , parseDwObjectAttrs
   ) where
 
 import PB.Prelude
@@ -44,9 +48,9 @@ classifyBlock dw (DwBlock kw content) = case kw of
     "table" ->
         dw { dwTable = Just (parseDwTable (scanBlockAttrs content)) }
     "group" ->
-        dw { dwGroups = dwGroups dw ++ [parseDwGroupStub content] }
+        dw { dwGroups = dwGroups dw ++ maybe [] (:[]) (parseDwGroup content) }
     _ | Just bk <- parseBandKind kw ->
-            dw { dwBands = dwBands dw ++ [parseDwBandStub bk content] }
+            dw { dwBands = dwBands dw ++ [parseDwBand bk content] }
       | "." `T.isInfixOf` kw ->
             dw { dwMeta = Map.insert kw Map.empty (dwMeta dw) }
       | otherwise ->
@@ -290,13 +294,51 @@ collectResidualAttrs excluded attrs = Map.fromList
     ]
 
 -- ---------------------------------------------------------------------------
--- Stub block parsers (populated in DW-A4 through DW-A5)
+-- Band / group / datawindow-object block parsers
 
 parseDwObjectAttrs :: Text -> DwObjectAttrs
-parseDwObjectAttrs _ = DwObjectAttrs Map.empty
+parseDwObjectAttrs content =
+    DwObjectAttrs $ collectResidualAttrs [] (scanBlockAttrs content)
 
-parseDwBandStub :: DwBandKind -> Text -> DwBand
-parseDwBandStub bk _ = DwBand bk Nothing Nothing False Map.empty
+parseDwBand :: DwBandKind -> Text -> DwBand
+parseDwBand bk content =
+    let attrs = scanBlockAttrs content
+    in DwBand
+        { dbKind     = bk
+        , dbHeight   = parseIntAttr "height" attrs
+        , dbColor    = lookupQuoted "color" attrs <|> lookupUnquoted "color" attrs
+        , dbAutoSize = lookupUnquoted "height.autosize" attrs == Just "yes"
+        , dbAttrs    = collectResidualAttrs ["height","color","height.autosize"] attrs
+        }
 
-parseDwGroupStub :: Text -> DwGroup
-parseDwGroupStub _ = DwGroup 0 Nothing Nothing [] False Map.empty
+parseDwGroup :: Text -> Maybe DwGroup
+parseDwGroup content = do
+    let attrs = scanBlockAttrs content
+    level <- parseIntAttr "level" attrs
+    return DwGroup
+        { dgLevel         = level
+        , dgHeaderHeight  = parseIntAttr "header.height"  attrs
+        , dgTrailerHeight = parseIntAttr "trailer.height" attrs
+        , dgBy            = parseGroupBy content
+        , dgNewPage       = parseBool (lookupUnquoted "newpage" attrs) False
+        , dgAttrs         = collectResidualAttrs
+                              ["level","header.height","trailer.height","by","newpage"] attrs
+        }
+
+parseGroupBy :: Text -> [Text]
+parseGroupBy content =
+    case subBlockContents "by" (scanBlockAttrs content) of
+        []      -> []
+        (blk:_) ->
+            [ stripped
+            | seg <- T.splitOn "," blk
+            , let t = T.strip seg
+            , not (T.null t)
+            , let stripped = stripOuterQuotes t
+            , not (T.null stripped)
+            ]
+  where
+    stripOuterQuotes t
+        | T.length t >= 2 && T.head t == '"' && T.last t == '"'
+        = T.init (T.tail t)
+        | otherwise = t

@@ -142,7 +142,9 @@ skipSp = skipMany (satisfy (`elem` (" \t\n\r" :: String)))
 pOneAttr :: DwParser DwAttr
 pOneAttr = do
     key <- pAttrKey
+    skipSp
     _   <- char '='
+    skipSp
     pAttrVal key
 
 pAttrKey :: DwParser Text

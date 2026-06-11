@@ -3,7 +3,8 @@ module DataWindowTest (tests) where
 import PB.Prelude
 import PB.AST.DataWindow
 import PB.Lexing.DataWindow  (DwAttr (..), extractParenBlock, scanBlockAttrs)
-import PB.Grammar.DataWindow (parseDataWindow, parseBandKind, parseDwTable, parseColumn)
+import PB.Grammar.DataWindow (parseDataWindow, parseBandKind, parseDwTable, parseColumn,
+                               parseDwBand, parseDwGroup, parseGroupBy, parseDwObjectAttrs)
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Text       as T
@@ -224,6 +225,13 @@ tests = testGroup "DataWindow"
             [ DwAttrUnquoted "update" "yes"
             , DwAttrUnquoted "updatewhere" "0"
             , DwAttrUnquoted "updatewhereclause" "yes"
+            ]
+
+      , testCase "spaces around = are accepted" $
+          scanBlockAttrs "units=0 print.orientation = 0 color=1" @?=
+            [ DwAttrUnquoted "units" "0"
+            , DwAttrUnquoted "print.orientation" "0"
+            , DwAttrUnquoted "color" "1"
             ]
       ]
 
@@ -499,6 +507,64 @@ tests = testGroup "DataWindow"
           let cols = dtColumns (parseDwTable attrs)
           length cols @?= 1
           dcName (head' cols) @?= "ok"
+      ]
+
+  , testGroup "DwBand"
+      [ testCase "header band — height and color" $
+          parseDwBand BkHeader "height=72 color=\"536870912\" " @?=
+            DwBand BkHeader (Just 72) (Just "536870912") False Map.empty
+
+      , testCase "detail band with height.autosize=yes" $
+          parseDwBand BkDetail "height=88 color=\"536870912\"  height.autosize=yes" @?=
+            DwBand BkDetail (Just 88) (Just "536870912") True Map.empty
+
+      , testCase "footer band — no height" $
+          parseDwBand BkFooter "" @?=
+            DwBand BkFooter Nothing Nothing False Map.empty
+
+      , testCase "summary band — residual attrs captured" $
+          parseDwBand BkSummary "height=100 color=\"0\" extra=foo" @?=
+            DwBand BkSummary (Just 100) (Just "0") False (Map.singleton "extra" "foo")
+      ]
+
+  , testGroup "DwGroup"
+      [ testCase "single by-column" $
+          parseDwGroup "level=1 header.height=96 trailer.height=80 by=(\"emp_id\" )" @?=
+            Just (DwGroup 1 (Just 96) (Just 80) ["emp_id"] False Map.empty)
+
+      , testCase "multiple by-columns" $
+          parseDwGroup "level=2 header.height=120 trailer.height=80 by=(\"col1\" , \"col2\" )" @?=
+            Just (DwGroup 2 (Just 120) (Just 80) ["col1","col2"] False Map.empty)
+
+      , testCase "newpage=yes" $
+          parseDwGroup "level=1 header.height=0 trailer.height=0 newpage=yes by=(\"x\" )" @?=
+            Just (DwGroup 1 (Just 0) (Just 0) ["x"] True Map.empty)
+
+      , testCase "group missing level — Nothing" $
+          parseDwGroup "header.height=96 trailer.height=80 by=(\"x\" )" @?= Nothing
+      ]
+
+  , testGroup "parseGroupBy"
+      [ testCase "single quoted column" $
+          parseGroupBy "level=1 by=(\"emp_id\" )" @?= ["emp_id"]
+
+      , testCase "multiple quoted columns with spaces around comma" $
+          parseGroupBy "level=1 by=(\"col1\" , \"col2\" , \"col3\" )" @?= ["col1","col2","col3"]
+
+      , testCase "unquoted column name" $
+          parseGroupBy "level=1 by=(foo )" @?= ["foo"]
+
+      , testCase "empty by=()" $
+          parseGroupBy "level=1 by=( )" @?= []
+      ]
+
+  , testGroup "DwObjectAttrs"
+      [ testCase "attrs collected into map" $
+          parseDwObjectAttrs "units=0 timer_interval=0 color=1073741824" @?=
+            DwObjectAttrs (Map.fromList [("units","0"),("timer_interval","0"),("color","1073741824")])
+
+      , testCase "empty datawindow block" $
+          parseDwObjectAttrs "" @?= DwObjectAttrs Map.empty
       ]
   ]
 
