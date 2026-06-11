@@ -6,6 +6,7 @@ module PB.Grammar.Stream
   , leadingKind
   , leadingText
   , isModifierToken
+  , currentLine
   ) where
 
 import PB.Prelude
@@ -19,7 +20,7 @@ import qualified Data.Text as T
 
 import Text.Megaparsec
   ( Parsec, Stream (..), VisualStream (..), TraversableStream (..)
-  , PosState (..), SourcePos (..), token
+  , PosState (..), SourcePos (..), token, getSourcePos
   )
 import Text.Megaparsec.Pos (mkPos, unPos)
 
@@ -67,6 +68,9 @@ instance TraversableStream StmtStream where
        )
 
 type FileParser = Parsec Void StmtStream
+
+currentLine :: FileParser Int
+currentLine = unPos . sourceLine <$> getSourcePos
 
 isModifierToken :: LT.Token -> Bool
 isModifierToken t = tkKind t `elem` [TkAccessModifier, TkStorageModifier]

@@ -4,6 +4,7 @@ import PB.Prelude
 import PB.AST.BodyStmt  (BodyStmt (..), DoCondition (..))
 import PB.AST.Expr      (Expr (..), Literal (..), LvSegment (..))
 import PB.AST.SourceFile (SrFile (..))
+import PB.Grammar.File        (SrSpans (..))
 import PB.Pipeline.Runner     (wrapSrFile)
 import PB.Pipeline.Serialise  ()
 
@@ -32,13 +33,16 @@ emptySrFile = SrFile
   , srOnBlocks = [], srEvents = [], srFunctions = [], srSubroutines = []
   }
 
+emptySrSpans :: SrSpans
+emptySrSpans = SrSpans [] [] [] []
+
 -- ---------------------------------------------------------------------------
 -- Tests
 
 tests :: TestTree
 tests = testGroup "Serialise"
   [ testCase "SrFile round-trip: file/kind fields present in wrapSrFile output" $ do
-      let v = wrapSrFile "test.srf" emptySrFile
+      let v = wrapSrFile "test.srf" emptySrFile emptySrSpans
       field "file" v @?= String "test.srf"
       field "kind" v @?= String "powerscript"
 

@@ -8,7 +8,7 @@ import PB.Prelude
 import PB.AST.DataWindow
 import PB.AST.SourceFile
 import PB.Grammar.DataWindow (parseDataWindow)
-import PB.Grammar.File       (parseSrFile)
+import PB.Grammar.File       (parseSrFileWithSpans, SrSpans (..))
 import PB.Lexing.Lexer      (LexError (..), LexLine (..), tokenize)
 import PB.Lexing.Splitter   (Statement (..), splitStatements)
 import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText, stripHeaders)
@@ -72,14 +72,40 @@ runPowerScript path src = do
   let logicalLines         = normalizeText src
       (headers, bodyLines) = stripHeaders logicalLines
       lexLines             = tokenize bodyLines
-  stmts  <- collectStatements lexLines
-  srFile <- parseSrFile headers stmts
-  Right (wrapSrFile path srFile)
+  stmts          <- collectStatements lexLines
+  (srFile, spans) <- parseSrFileWithSpans headers stmts
+  Right (wrapSrFile path srFile spans)
 
-wrapSrFile :: FilePath -> SrFile -> Value
-wrapSrFile path sf = case toJSON sf of
-  Object o -> Object (KM.fromList ["file" .= path, "kind" .= ("powerscript" :: Text)] <> o)
-  v        -> v
+wrapSrFile :: FilePath -> SrFile -> SrSpans -> Value
+wrapSrFile path sf spans =
+    let (objName, ancestor) = case srTypeBlocks sf of
+          (tb:_) -> (tdName (tbDecl tb), Just (tdAncestor (tbDecl tb)))
+          []     -> (T.pack path, Nothing)
+        injectMeta :: (Int, Int) -> Value -> Value
+        injectMeta (start, end) (Object o) =
+            Object (KM.fromList ["meta" .= metaVal] <> o)
+          where metaVal = object
+                  [ "file"      .= T.pack path
+                  , "object"    .= objName
+                  , "ancestor"  .= ancestor
+                  , "startLine" .= start
+                  , "endLine"   .= end
+                  ]
+        injectMeta _ v = v
+    in object
+        [ "file"            .= path
+        , "kind"            .= ("powerscript" :: Text)
+        , "headers"         .= srHeaders sf
+        , "forward"         .= srForward sf
+        , "prototypes"      .= srPrototypes sf
+        , "variables"       .= srVariables sf
+        , "globalInstances" .= srGlobalInstances sf
+        , "typeBlocks"      .= srTypeBlocks sf
+        , "onBlocks"        .= zipWith injectMeta (spOnBlocks    spans) (map toJSON (srOnBlocks    sf))
+        , "events"          .= zipWith injectMeta (spEvents      spans) (map toJSON (srEvents      sf))
+        , "functions"       .= zipWith injectMeta (spFunctions   spans) (map toJSON (srFunctions   sf))
+        , "subroutines"     .= zipWith injectMeta (spSubroutines spans) (map toJSON (srSubroutines sf))
+        ]
 
 -- | Convert lex results to statements, failing on the first lex error.
 --   Empty-token statements (blank lines) are filtered out so the grammar

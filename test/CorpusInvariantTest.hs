@@ -192,6 +192,47 @@ chkSubNames _ v = case lk "subroutines" v of
     _        -> []
 
 -- ---------------------------------------------------------------------------
+-- PS meta checks
+
+-- Collects all callable blocks from a PS file value.
+psCallableBlocks :: Value -> [Value]
+psCallableBlocks v
+    | lk "kind" v /= String "powerscript" = []
+    | otherwise = concatMap (\k -> case lk k v of { Array bs -> toList bs; _ -> [] })
+                            ["functions", "events", "onBlocks", "subroutines"]
+
+chkPsMetaFile :: FilePath -> Value -> [Text]
+chkPsMetaFile _ v =
+    [ "callable block missing meta.file"
+    | b <- psCallableBlocks v
+    , case lk "file" (lk "meta" b) of { String _ -> False; _ -> True }
+    ]
+
+chkPsMetaObject :: FilePath -> Value -> [Text]
+chkPsMetaObject _ v =
+    [ "callable block missing meta.object"
+    | b <- psCallableBlocks v
+    , case lk "object" (lk "meta" b) of { String _ -> False; _ -> True }
+    ]
+
+chkPsMetaStartLine :: FilePath -> Value -> [Text]
+chkPsMetaStartLine _ v =
+    [ "callable block meta.startLine not > 0"
+    | b <- psCallableBlocks v
+    , case lk "startLine" (lk "meta" b) of { Number n -> n <= 0; _ -> True }
+    ]
+
+chkPsMetaEndLine :: FilePath -> Value -> [Text]
+chkPsMetaEndLine _ v =
+    [ "callable block meta.endLine < meta.startLine"
+    | b <- psCallableBlocks v
+    , let meta = lk "meta" b
+    , case (lk "startLine" meta, lk "endLine" meta) of
+        (Number sl, Number el) -> el < sl
+        _                      -> True
+    ]
+
+-- ---------------------------------------------------------------------------
 -- DW-specific node and file checks
 
 chkDwNotStub :: FilePath -> Value -> [Text]
@@ -265,6 +306,12 @@ tests = testGroup "Corpus.Invariants"
     , invariant "choose expr not empty ExRaw"        chkChooseExpr
     , fileInvariant "function sig.name non-empty"    chkFnNames
     , fileInvariant "subroutine sig.name non-empty"  chkSubNames
+    , testGroup "Corpus.Meta.PS"
+        [ fileInvariant "callable blocks have meta.file"                 chkPsMetaFile
+        , fileInvariant "callable blocks have meta.object"               chkPsMetaObject
+        , fileInvariant "callable blocks have meta.startLine > 0"        chkPsMetaStartLine
+        , fileInvariant "callable blocks have meta.endLine >= startLine"  chkPsMetaEndLine
+        ]
     , testGroup "Corpus.DW.Invariants"
         [ fileInvariantDw "DW files not stub"          chkDwNotStub
         , fileInvariantDw "DW bands non-empty"         chkDwBandsNonEmpty

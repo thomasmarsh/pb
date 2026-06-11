@@ -1,5 +1,7 @@
 module PB.Grammar.File
   ( parseSrFile
+  , parseSrFileWithSpans
+  , SrSpans (..)
   , pForwardBlock
   , pPrototypesBlock
   , pVariablesBlock
@@ -17,7 +19,7 @@ module PB.Grammar.File
 
 import PB.Prelude
 import PB.Grammar.Body    (pBodyStmt)
-import PB.Grammar.Stream  (FileParser, StmtStream (..), leadingText, satisfyStmt, isModifierToken)
+import PB.Grammar.Stream  (FileParser, StmtStream (..), leadingText, satisfyStmt, isModifierToken, currentLine)
 import PB.AST.BodyStmt    (BodyStmt)
 import PB.AST.SourceFile
   ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
@@ -31,7 +33,7 @@ import PB.AST.SourceFile
 import PB.Lexing.Splitter (Statement (..))
 import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
 
-import Text.Megaparsec (many, manyTill, try, eof, parse)
+import Text.Megaparsec (many, manyTill, lookAhead, try, eof, parse)
 import Text.Megaparsec.Error (errorBundlePretty)
 import qualified Data.Text as T
 
@@ -264,8 +266,12 @@ pPrototypesBlock = do
 anyStmt :: FileParser Statement
 anyStmt = satisfyStmt (const True)
 
-pBodyUntil :: Text -> FileParser [BodyStmt]
-pBodyUntil kw = manyTill pBodyStmt (pEndKw kw)
+pBodyUntil :: Text -> FileParser ([BodyStmt], Int)
+pBodyUntil kw = do
+  body <- manyTill pBodyStmt (lookAhead (pEndKw kw))
+  end  <- currentLine
+  _    <- pEndKw kw
+  return (body, end)
 
 isOnDecl :: Statement -> Bool
 isOnDecl s = case stmtTokens s of
@@ -292,48 +298,71 @@ extractOnParts s = case stmtTokens s of
 
 pTypeBlock :: FileParser TypeBlock
 pTypeBlock = do
-  decl <- pTypeDecl
-  body <- pBodyUntil "type"
+  decl        <- pTypeDecl
+  (body, _)   <- pBodyUntil "type"
   return (TypeBlock decl body)
 
-pOnBlock :: FileParser OnBlock
-pOnBlock = do
-  s <- satisfyStmt isOnDecl
+pOnBlockSpanned_ :: FileParser (Int, Int, OnBlock)
+pOnBlockSpanned_ = do
+  start <- currentLine
+  s     <- satisfyStmt isOnDecl
   case extractOnParts s of
     Nothing              -> fail "malformed on-block opener"
     Just (qual, own, ev) -> do
-      body <- pBodyUntil "on"
-      return (OnBlock qual own ev body)
+      (body, end) <- pBodyUntil "on"
+      return (start, end, OnBlock qual own ev body)
 
-pEventBlock :: FileParser EventBlock
-pEventBlock = do
-  s <- satisfyStmt isEvDecl
+pOnBlock :: FileParser OnBlock
+pOnBlock = (\(_, _, b) -> b) <$> pOnBlockSpanned_
+
+pEventBlockSpanned_ :: FileParser (Int, Int, EventBlock)
+pEventBlockSpanned_ = do
+  start <- currentLine
+  s     <- satisfyStmt isEvDecl
   case extractEvSig s of
     Nothing  -> fail "malformed event opener"
     Just sig -> do
-      body <- pBodyUntil "event"
-      return (EventBlock sig body)
+      (body, end) <- pBodyUntil "event"
+      return (start, end, EventBlock sig body)
 
-pFunctionBlock :: FileParser FunctionBlock
-pFunctionBlock = do
-  s <- satisfyStmt isFnDecl
+pEventBlock :: FileParser EventBlock
+pEventBlock = (\(_, _, b) -> b) <$> pEventBlockSpanned_
+
+pFunctionBlockSpanned_ :: FileParser (Int, Int, FunctionBlock)
+pFunctionBlockSpanned_ = do
+  start <- currentLine
+  s     <- satisfyStmt isFnDecl
   case extractFnSig s of
     Nothing  -> fail "malformed function opener"
     Just sig -> do
-      body <- pBodyUntil "function"
-      return (FunctionBlock sig body)
+      (body, end) <- pBodyUntil "function"
+      return (start, end, FunctionBlock sig body)
 
-pSubroutineBlock :: FileParser SubroutineBlock
-pSubroutineBlock = do
-  s <- satisfyStmt isSubDecl
+pFunctionBlock :: FileParser FunctionBlock
+pFunctionBlock = (\(_, _, b) -> b) <$> pFunctionBlockSpanned_
+
+pSubroutineBlockSpanned_ :: FileParser (Int, Int, SubroutineBlock)
+pSubroutineBlockSpanned_ = do
+  start <- currentLine
+  s     <- satisfyStmt isSubDecl
   case extractSubSig s of
     Nothing  -> fail "malformed subroutine opener"
     Just sig -> do
-      body <- pBodyUntil "subroutine"
-      return (SubroutineBlock sig body)
+      (body, end) <- pBodyUntil "subroutine"
+      return (start, end, SubroutineBlock sig body)
+
+pSubroutineBlock :: FileParser SubroutineBlock
+pSubroutineBlock = (\(_, _, b) -> b) <$> pSubroutineBlockSpanned_
 
 -- ---------------------------------------------------------------------------
 -- Top-level entry point
+
+data SrSpans = SrSpans
+  { spOnBlocks    :: [(Int, Int)]
+  , spEvents      :: [(Int, Int)]
+  , spFunctions   :: [(Int, Int)]
+  , spSubroutines :: [(Int, Int)]
+  }
 
 data TopLevelBlock
   = TLFwd        ForwardBlock
@@ -341,10 +370,10 @@ data TopLevelBlock
   | TLVars       VariablesBlock
   | TLGlobalInst GlobalInstance
   | TLType       TypeBlock
-  | TLOn         OnBlock
-  | TLEvent      EventBlock
-  | TLFn         FunctionBlock
-  | TLSub        SubroutineBlock
+  | TLOn         Int Int OnBlock
+  | TLEvent      Int Int EventBlock
+  | TLFn         Int Int FunctionBlock
+  | TLSub        Int Int SubroutineBlock
 
 pAnyTopLevelBlock :: FileParser TopLevelBlock
 pAnyTopLevelBlock =
@@ -353,29 +382,39 @@ pAnyTopLevelBlock =
   <|> TLVars       <$> try pVariablesBlock
   <|> TLGlobalInst <$> try pGlobalInstance
   <|> TLType       <$> try pTypeBlock
-  <|> TLOn         <$> try pOnBlock
-  <|> TLEvent      <$> try pEventBlock
-  <|> TLFn         <$> try pFunctionBlock
-  <|> TLSub        <$> pSubroutineBlock
+  <|> (\(s,e,b) -> TLOn   s e b) <$> try pOnBlockSpanned_
+  <|> (\(s,e,b) -> TLEvent s e b) <$> try pEventBlockSpanned_
+  <|> (\(s,e,b) -> TLFn   s e b) <$> try pFunctionBlockSpanned_
+  <|> (\(s,e,b) -> TLSub  s e b) <$>     pSubroutineBlockSpanned_
 
 parseSrFile :: [Text] -> [Statement] -> Either Text SrFile
-parseSrFile headers stmts = case parse pSrFile "" (StmtStream stmts) of
-  Right f  -> Right (f { srHeaders = headers })
-  Left err -> Left (T.pack (errorBundlePretty err))
+parseSrFile headers stmts = fmap fst (parseSrFileWithSpans headers stmts)
 
-pSrFile :: FileParser SrFile
+parseSrFileWithSpans :: [Text] -> [Statement] -> Either Text (SrFile, SrSpans)
+parseSrFileWithSpans headers stmts = case parse pSrFile "" (StmtStream stmts) of
+  Right (f, spans) -> Right (f { srHeaders = headers }, spans)
+  Left err         -> Left (T.pack (errorBundlePretty err))
+
+pSrFile :: FileParser (SrFile, SrSpans)
 pSrFile = do
   blocks <- many (try pAnyTopLevelBlock)
   eof
-  return SrFile
-    { srHeaders         = []
-    , srForward         = listToMaybe [f  | TLFwd        f  <- blocks]
-    , srPrototypes      = listToMaybe [p  | TLProto      p  <- blocks]
-    , srVariables       = listToMaybe [v  | TLVars       v  <- blocks]
-    , srGlobalInstances = [gi | TLGlobalInst gi <- blocks]
-    , srTypeBlocks      = [t  | TLType       t  <- blocks]
-    , srOnBlocks        = [o  | TLOn         o  <- blocks]
-    , srEvents          = [e  | TLEvent      e  <- blocks]
-    , srFunctions       = [f  | TLFn         f  <- blocks]
-    , srSubroutines     = [s  | TLSub        s  <- blocks]
-    }
+  let sf = SrFile
+        { srHeaders         = []
+        , srForward         = listToMaybe [f  | TLFwd        f       <- blocks]
+        , srPrototypes      = listToMaybe [p  | TLProto      p       <- blocks]
+        , srVariables       = listToMaybe [v  | TLVars       v       <- blocks]
+        , srGlobalInstances = [gi | TLGlobalInst gi         <- blocks]
+        , srTypeBlocks      = [t  | TLType       t          <- blocks]
+        , srOnBlocks        = [o  | TLOn    _ _ o           <- blocks]
+        , srEvents          = [e  | TLEvent _ _ e           <- blocks]
+        , srFunctions       = [f  | TLFn    _ _ f           <- blocks]
+        , srSubroutines     = [s  | TLSub   _ _ s           <- blocks]
+        }
+      spans = SrSpans
+        { spOnBlocks    = [(s, e) | TLOn    s e _ <- blocks]
+        , spEvents      = [(s, e) | TLEvent s e _ <- blocks]
+        , spFunctions   = [(s, e) | TLFn    s e _ <- blocks]
+        , spSubroutines = [(s, e) | TLSub   s e _ <- blocks]
+        }
+  return (sf, spans)
