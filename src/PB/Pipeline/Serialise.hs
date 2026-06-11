@@ -7,6 +7,7 @@ import PB.Prelude
 import PB.AST.BodyStmt      ( AugOp (..), BodyStmt (..), PbCall (..)
                             , IfStmt (..), ForStmt (..), DoCondition (..)
                             , DoStmt (..), CaseClause (..), ChooseStmt (..) )
+import PB.AST.DataWindow
 import PB.AST.Expr          ( BinOp (..), CallExpr (..), CreateExpr (..), Expr (..)
                             , DispatchMode (..), DispatchExpr (..)
                             , Literal (..), LvSegment (..), Lvalue (..) )
@@ -285,3 +286,94 @@ instance ToJSON LvSegment where
     case lvsSubscript seg of
       Nothing  -> ["subscript" .= (Nothing :: Maybe Value)]
       Just sub -> ["subscript" .= map tkText sub]
+
+-- ---------------------------------------------------------------------------
+-- DataWindow
+
+instance ToJSON DataWindowFile where
+  toJSON dw = object
+    [ "release"  .= dwRelease  dw
+    , "object"   .= dwObject   dw
+    , "table"    .= dwTable    dw
+    , "bands"    .= dwBands    dw
+    , "groups"   .= dwGroups   dw
+    , "controls" .= dwControls dw
+    , "meta"     .= dwMeta     dw
+    ]
+
+instance ToJSON DwObjectAttrs where
+  toJSON (DwObjectAttrs attrs) = object ["attrs" .= attrs]
+
+instance ToJSON DwTable where
+  toJSON dt = object
+    [ "columns"      .= dtColumns     dt
+    , "retrieve"     .= dtRetrieve    dt
+    , "update"       .= dtUpdate      dt
+    , "update_where" .= dtUpdateWhere dt
+    , "arguments"    .= dtArguments   dt
+    ]
+
+instance ToJSON DwColumn where
+  toJSON dc = object
+    [ "name"          .= dcName        dc
+    , "type"          .= dcType        dc
+    , "db_name"       .= dcDbName      dc
+    , "update"        .= dcUpdate      dc
+    , "key"           .= dcKey         dc
+    , "update_where"  .= dcUpdateWhere dc
+    , "dddw_name"     .= dcDddwName    dc
+    , "attrs"         .= dcAttrs       dc
+    ]
+
+instance ToJSON DwArgument where
+  toJSON da = object
+    [ "name" .= daName da
+    , "type" .= daType da
+    ]
+
+instance ToJSON DwBandKind where
+  toJSON bk = case bk of
+    BkHeader          -> object ["tag" .= ("header"        :: Text)]
+    BkDetail          -> object ["tag" .= ("detail"        :: Text)]
+    BkFooter          -> object ["tag" .= ("footer"        :: Text)]
+    BkSummary         -> object ["tag" .= ("summary"       :: Text)]
+    BkBackground      -> object ["tag" .= ("background"    :: Text)]
+    BkForeground      -> object ["tag" .= ("foreground"    :: Text)]
+    BkGroupHeader  n  -> object ["tag" .= ("group_header"  :: Text), "level" .= n]
+    BkGroupTrailer n  -> object ["tag" .= ("group_trailer" :: Text), "level" .= n]
+    BkTreeLevel    n  -> object ["tag" .= ("tree_level"    :: Text), "level" .= n]
+
+instance ToJSON DwBand where
+  toJSON db = object
+    [ "kind"      .= dbKind     db
+    , "height"    .= dbHeight   db
+    , "color"     .= dbColor    db
+    , "auto_size" .= dbAutoSize db
+    , "attrs"     .= dbAttrs    db
+    ]
+
+instance ToJSON DwGroup where
+  toJSON dg = object
+    [ "level"          .= dgLevel         dg
+    , "header_height"  .= dgHeaderHeight  dg
+    , "trailer_height" .= dgTrailerHeight dg
+    , "by"             .= dgBy            dg
+    , "new_page"       .= dgNewPage       dg
+    , "attrs"          .= dgAttrs         dg
+    ]
+
+instance ToJSON DwControl where
+  toJSON dc = object
+    [ "type"       .= dwcType       dc
+    , "name"       .= dwcName       dc
+    , "band"       .= dwcBand       dc
+    , "id"         .= dwcId         dc
+    , "x"          .= dwcX          dc
+    , "y"          .= dwcY          dc
+    , "width"      .= dwcWidth      dc
+    , "height"     .= dwcHeight     dc
+    , "visible"    .= dwcVisible    dc
+    , "expression" .= dwcExpression dc
+    , "tab_seq"    .= dwcTabSeq     dc
+    , "attrs"      .= dwcAttrs      dc
+    ]

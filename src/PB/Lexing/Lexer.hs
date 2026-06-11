@@ -5,6 +5,7 @@ module PB.Lexing.Lexer
   ) where
 
 import PB.Prelude
+import PB.Lexing.Escape (pbStringChunk)
 import PB.Lexing.Token (SourceSpan (..), Token (..), TokenKind (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
 
@@ -123,20 +124,6 @@ pStringLiteral mk = do
   _ <- char delim
   return (mk kind (T.singleton delim <> T.concat chunks <> T.singleton delim))
 
--- One chunk inside a PB string: an escape sequence or a single non-delimiter char.
-pbStringChunk :: Char -> Lexer Text
-pbStringChunk delim = pbEscape <|> fmap T.singleton (satisfy (\c -> c /= delim && c /= '\n'))
-
-pbEscape :: Lexer Text
-pbEscape = do
-  _ <- char '~'
-  c <- anySingle
-  case c of
-    'o' -> do { d1 <- anySingle; d2 <- anySingle; d3 <- anySingle
-              ; return (T.pack ['~','o',d1,d2,d3]) }
-    'h' -> do { d1 <- anySingle; d2 <- anySingle
-              ; return (T.pack ['~','h',d1,d2]) }
-    _   -> return (T.pack ['~', c])
 
 -- ---------------------------------------------------------------------------
 -- Numeric literals  (§2.6)

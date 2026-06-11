@@ -25,11 +25,15 @@ library
   exposed-modules:
     PB.Prelude
     PB.AST.BodyStmt
+    PB.AST.DataWindow
     PB.AST.Expr
     PB.AST.SourceFile
     PB.Grammar.Body
+    PB.Grammar.DataWindow
     PB.Grammar.File
     PB.Grammar.Stream
+    PB.Lexing.DataWindow
+    PB.Lexing.Escape
     PB.Lexing.Lexer
     PB.Lexing.Mask
     PB.Lexing.Splitter
@@ -68,6 +72,7 @@ test-suite pb-ast-test
       BodyParserTest
     , BodyStmtTest
     , CorpusDebtTest
+    , DataWindowTest
     , CorpusInvariantTest
     , CorpusTest
     , ExprTest
@@ -89,5 +94,6 @@ test-suite pb-ast-test
     , hedgehog       >=1.4
     , megaparsec
     , aeson
+    , containers   >=0.6
     , directory    ^>=1.3
     , filepath     >=1.4

@@ -5,8 +5,10 @@ module PB.Pipeline.Runner
   ) where
 
 import PB.Prelude
+import PB.AST.DataWindow
 import PB.AST.SourceFile
-import PB.Grammar.File      (parseSrFile)
+import PB.Grammar.DataWindow (parseDataWindow)
+import PB.Grammar.File       (parseSrFile)
 import PB.Lexing.Lexer      (LexError (..), LexLine (..), tokenize)
 import PB.Lexing.Splitter   (Statement (..), splitStatements)
 import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText, stripHeaders)
@@ -38,14 +40,15 @@ fileKind fp = case map toLower (takeExtension fp) of
   _      -> PowerScript
 
 -- ---------------------------------------------------------------------------
--- DataWindow (stub)
+-- DataWindow
 
 runDataWindow :: FilePath -> Text -> Either Text Value
-runDataWindow path _src = Right $ object
-  [ "file"   .= path
-  , "kind"   .= ("datawindow" :: Text)
-  , "status" .= ("unimplemented" :: Text)
-  ]
+runDataWindow path src = fmap (wrapDwFile path) (parseDataWindow src)
+
+wrapDwFile :: FilePath -> DataWindowFile -> Value
+wrapDwFile path dw = case toJSON dw of
+  Object o -> Object (KM.fromList ["file" .= path, "kind" .= ("datawindow" :: Text)] <> o)
+  v        -> v
 
 runPipeline :: FilePath -> Text -> Either Text Value
 runPipeline path _src = Right $ object

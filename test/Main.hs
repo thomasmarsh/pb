@@ -6,6 +6,7 @@ import qualified ExprTest
 import qualified CorpusDebtTest
 import qualified CorpusInvariantTest
 import qualified CorpusTest
+import qualified DataWindowTest
 import qualified FileTest
 import qualified MaskTest
 import qualified PipelineTest
@@ -30,6 +31,7 @@ tests = testGroup "pb-ast"
   , CorpusDebtTest.tests
   , CorpusInvariantTest.tests
   , CorpusTest.tests
+  , DataWindowTest.tests
   , FileTest.tests
   , MaskTest.tests
   , PipelineTest.tests

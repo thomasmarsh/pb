@@ -46,6 +46,17 @@ collectFiles dir = do
             else pure [path | takeExtension path `elem` [".srf",".srw",".sru",".srm",".sra",".srx"]]
         ) entries
 
+collectDwFiles :: FilePath -> IO [FilePath]
+collectDwFiles dir = do
+    entries <- listDirectory dir
+    fmap concat $ mapM (\e -> do
+        let path = dir </> e
+        isDir <- doesDirectoryExist path
+        if isDir
+            then collectDwFiles path
+            else pure [path | takeExtension path == ".srd"]
+        ) entries
+
 loadCorpus :: IO [Value]
 loadCorpus = do
     paths <- fmap concat $ mapM collectFiles
@@ -117,4 +128,17 @@ tests = testGroup "Corpus.Debt"
         vals <- loadCorpus
         let total = sum (map (countWhere isBsRawOther) vals)
         assertBool ("BsRaw 'other' total = " <> show total <> ", expected \8804 18") (total <= 18)
+    , testCase "DW files not stub" $ do
+        paths <- fmap concat $ mapM collectDwFiles
+            [ "example/PowerBuilder-Example/export"
+            , "example/openpay" ]
+        results <- mapM (\p -> do
+            src <- readFile p
+            pure $ runFile p src
+            ) paths
+        let stubCount = length
+              [ () | Right v <- results
+                   , String "unimplemented" <- [lk "status" v] ]
+        assertBool ("DW stub count = " <> show stubCount <> ", expected 0")
+                   (stubCount == 0)
     ]
