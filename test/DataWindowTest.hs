@@ -566,6 +566,101 @@ tests = testGroup "DataWindow"
       , testCase "empty datawindow block" $
           parseDwObjectAttrs "" @?= DwObjectAttrs Map.empty
       ]
+
+  , testGroup "Meta-blocks"
+      [ testCase "export.pdf inner attrs parsed" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "export.pdf(method=0 distill.custompostscript=\"0\" )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> case Map.lookup "export.pdf" (dwMeta dw) of
+              Nothing -> assertFailure "export.pdf key missing from meta"
+              Just m  -> do
+                Map.lookup "method" m @?= Just "0"
+                Map.lookup "distill.custompostscript" m @?= Just "0"
+
+      , testCase "export.xml inner attrs parsed" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "export.xml(headgroups=\"1\" includewhitespace=\"0\" )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> case Map.lookup "export.xml" (dwMeta dw) of
+              Nothing -> assertFailure "export.xml key missing from meta"
+              Just m  -> do
+                Map.lookup "headgroups"      m @?= Just "1"
+                Map.lookup "includewhitespace" m @?= Just "0"
+
+      , testCase "import.xml empty inner map" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "import.xml()"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> case Map.lookup "import.xml" (dwMeta dw) of
+              Nothing -> assertFailure "import.xml key missing from meta"
+              Just m  -> m @?= Map.empty
+
+      , testCase "export.xhtml empty inner map" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "export.xhtml()"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> case Map.lookup "export.xhtml" (dwMeta dw) of
+              Nothing -> assertFailure "export.xhtml key missing from meta"
+              Just m  -> m @?= Map.empty
+
+      , testCase "multiple meta-blocks — all keys present with attrs" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "export.pdf(method=0 )"
+                , "import.xml()"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> do
+              let meta = dwMeta dw
+              assertBool "export.pdf in meta" (Map.member "export.pdf" meta)
+              assertBool "import.xml in meta" (Map.member "import.xml" meta)
+              case Map.lookup "export.pdf" meta of
+                Nothing -> assertFailure "export.pdf missing"
+                Just m  -> Map.lookup "method" m @?= Just "0"
+
+      , testCase "unknown dotted keyword stored in meta with attrs" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "foo.bar(x=1 )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> case Map.lookup "foo.bar" (dwMeta dw) of
+              Nothing -> assertFailure "foo.bar key missing from meta"
+              Just m  -> m @?= Map.singleton "x" "1"
+      ]
   ]
 
 -- | Minimal DW header for control test sources.

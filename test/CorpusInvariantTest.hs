@@ -2,7 +2,7 @@ module CorpusInvariantTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.Runner (runFile)
-import PB.Pipeline.Walk   (walkPsFiles)
+import PB.Pipeline.Walk   (walkDwFiles, walkPsFiles)
 
 import Data.Aeson (Value (..))
 import qualified Data.Aeson.Key    as Key
@@ -61,6 +61,16 @@ loadCorpus = do
     results <- mapM loadFile paths
     pure (concatMap maybeToList results)
 
+-- Load all successfully-parsed .srd files.
+loadDwCorpus :: IO [(FilePath, Value)]
+loadDwCorpus = do
+    paths <- fmap concat $ mapM walkDwFiles
+        [ "example/PowerBuilder-Example/export"
+        , "example/openpay"
+        ]
+    results <- mapM loadFile paths
+    pure (concatMap maybeToList results)
+
 -- ---------------------------------------------------------------------------
 -- Invariant runner
 
@@ -76,6 +86,16 @@ runNodeCheck check = do
 runFileCheck :: (FilePath -> Value -> [Text]) -> IO [(FilePath, Text)]
 runFileCheck check = do
     pairs <- loadCorpus
+    pure [(f, msg) | (f, v) <- pairs, msg <- check f v]
+
+runDwNodeCheck :: NodeCheck -> IO [(FilePath, Text)]
+runDwNodeCheck check = do
+    pairs <- loadDwCorpus
+    pure [(f, msg) | (f, v) <- pairs, msg <- walkTree check v]
+
+runDwFileCheck :: (FilePath -> Value -> [Text]) -> IO [(FilePath, Text)]
+runDwFileCheck check = do
+    pairs <- loadDwCorpus
     pure [(f, msg) | (f, v) <- pairs, msg <- check f v]
 
 assertNoViolations :: String -> [(FilePath, Text)] -> IO ()
@@ -172,6 +192,43 @@ chkSubNames _ v = case lk "subroutines" v of
     _        -> []
 
 -- ---------------------------------------------------------------------------
+-- DW-specific node and file checks
+
+chkDwNotStub :: FilePath -> Value -> [Text]
+chkDwNotStub _ v
+    | lk "kind"   v == String "datawindow"
+    , lk "status" v == String "unimplemented" = ["DW file is stub"]
+    | otherwise = []
+
+chkDwBandsNonEmpty :: FilePath -> Value -> [Text]
+chkDwBandsNonEmpty _ v
+    | lk "kind" v /= String "datawindow" = []
+    | otherwise = case lk "bands" v of
+        Array bs | not (null (toList bs)) -> []
+        _                                 -> ["DW file has no bands"]
+
+-- Fires on DwControl nodes with type="column" that are missing an id.
+-- "column" is a DW control type; PB data types (long/char/date/etc.) are
+-- never literally "column", so this safely identifies DwControl column nodes.
+chkDwColumnControlHasId :: NodeCheck
+chkDwColumnControlHasId v
+    | lk "type" v == String "column"
+    , lk "id"   v == Null = ["column control has null id"]
+    | otherwise = []
+
+-- Fires on DwColumn nodes (identified by presence of "db_name" key) that
+-- have a null or empty "name".  Uses KM.member to distinguish "absent" from
+-- "present but null" when checking for the discriminating key.
+chkDwTableColumnNameNonEmpty :: NodeCheck
+chkDwTableColumnNameNonEmpty (Object m)
+    | KM.member (Key.fromText "db_name") m =
+        case KM.lookup (Key.fromText "name") m of
+          Just (String t) | T.null t -> ["table column with empty name"]
+          Just (String _)            -> []
+          _                          -> ["table column with null name"]
+chkDwTableColumnNameNonEmpty _ = []
+
+-- ---------------------------------------------------------------------------
 -- Test tree
 
 invariant :: String -> NodeCheck -> TestTree
@@ -182,6 +239,16 @@ invariant name check = testCase name $ do
 fileInvariant :: String -> (FilePath -> Value -> [Text]) -> TestTree
 fileInvariant name check = testCase name $ do
     viols <- runFileCheck check
+    assertNoViolations name viols
+
+invariantDw :: String -> NodeCheck -> TestTree
+invariantDw name check = testCase name $ do
+    viols <- runDwNodeCheck check
+    assertNoViolations name viols
+
+fileInvariantDw :: String -> (FilePath -> Value -> [Text]) -> TestTree
+fileInvariantDw name check = testCase name $ do
+    viols <- runDwFileCheck check
     assertNoViolations name viols
 
 tests :: TestTree
@@ -198,4 +265,10 @@ tests = testGroup "Corpus.Invariants"
     , invariant "choose expr not empty ExRaw"        chkChooseExpr
     , fileInvariant "function sig.name non-empty"    chkFnNames
     , fileInvariant "subroutine sig.name non-empty"  chkSubNames
+    , testGroup "Corpus.DW.Invariants"
+        [ fileInvariantDw "DW files not stub"          chkDwNotStub
+        , fileInvariantDw "DW bands non-empty"         chkDwBandsNonEmpty
+        , invariantDw     "column control has id"       chkDwColumnControlHasId
+        , invariantDw     "table column name non-empty" chkDwTableColumnNameNonEmpty
+        ]
     ]

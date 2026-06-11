@@ -52,7 +52,8 @@ classifyBlock dw (DwBlock kw content) = case kw of
     _ | Just bk <- parseBandKind kw ->
             dw { dwBands = dwBands dw ++ [parseDwBand bk content] }
       | "." `T.isInfixOf` kw ->
-            dw { dwMeta = Map.insert kw Map.empty (dwMeta dw) }
+            let innerMap = collectResidualAttrs [] (scanBlockAttrs content)
+            in dw { dwMeta = Map.insertWith Map.union kw innerMap (dwMeta dw) }
       | otherwise ->
             dw { dwControls = dwControls dw ++ [parseDwControl kw content] }
 

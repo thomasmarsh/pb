@@ -116,4 +116,16 @@ tests = testGroup "Corpus.Debt"
                    , String "unimplemented" <- [lk "status" v] ]
         assertBool ("DW stub count = " <> show stubCount <> ", expected 0")
                    (stubCount == 0)
+    , testCase "DW table-block parsed" $ do
+        paths <- fmap concat $ mapM walkDwFiles
+            [ "example/PowerBuilder-Example/export"
+            , "example/openpay" ]
+        triples <- mapM (\p -> do
+            src <- readFile p
+            let hasTable = any (T.isPrefixOf "table(") (T.lines src)
+            pure (p, hasTable, runFile p src)
+            ) paths
+        let missing = [ p | (p, True, Right v) <- triples, lk "table" v == Null ]
+        assertBool ("DW files with table(...) but null table field: "
+                    <> show (length missing)) (null missing)
     ]
