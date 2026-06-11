@@ -31,6 +31,15 @@ Infer the charter from the user's intent. If ambiguous, ask before reading any c
 
 **Stop condition.** Charter goal met + `cabal test` passes → stop. Do not pick up the next visible problem.
 
+**Post-task grooming.** After the stop condition is met, before proposing the commit message, update planning artifacts to reflect new understanding:
+
+- Mark completed BACKLOG items `[x]` with a short completion note and date.
+- Update `plan/STRATEGY.md`: current-state metrics, track status, recommended session order.
+- Update any plan files (e.g. `plan/20-dw-a1.md`) that reference superseded counts, signatures, or status.
+- If the session revealed new scope, append to BACKLOG — do not silently discard the finding.
+
+This grooming step is mandatory; do not skip it to save time.
+
 **`plan/BACKLOG.md`** is the authoritative work queue. The user sets priority order. The assistant only appends — never reorders. Read it at session start to confirm the charter matches the top unfinished item.
 
 ---
@@ -554,6 +563,32 @@ All other modules are currently stubs (`PB.Pipeline.WalkTree`, `PB.AST.Library`,
 ---
 
 ## Commit Discipline
+
+**Do not run `git add` or `git commit`.** At the end of a session, after post-task grooming is complete, output two code blocks:
+
+1. **Recommended commit message** — follows conventional-commit style; one subject line (≤72 chars) describing what changed and why; an optional blank-line body for multi-file changes.
+
+```
+feat(dw): implement block scanner + AST skeleton (DW-A1)
+
+Parse .srd files into DataWindowFile with typed band/control/table stubs.
+Corpus gate: 262 DW files return non-stub JSON.
+```
+
+1. **Recommended next-session seed prompt** — a self-contained paragraph the user can paste to start the next session. Include: charter, which plan file to read, key counts/baselines, and any prerequisite check.
+
+```
+Charter: DW-A2 — implement typed `table(...)` parsing per plan/21-dw-a2.md.
+Prerequisite: DW-A1 complete and `cabal test` passing (619 tests).
+Baseline: 262 DW files non-stub; ExRaw ≤ 1; BsRaw other ≤ 18.
+Start at Stage 0: read plan/21-dw-a2.md in full, then read
+PB.AST.DataWindow and PB.Grammar.DataWindow to locate the stub functions
+that need replacing.
+```
+
+These are proposals only — the user decides when and whether to commit.
+
+**Other commit rules (when the user does commit):**
 
 - One commit per stage (or per logical unit within a stage)
 - Commit message: what changed and why, not how

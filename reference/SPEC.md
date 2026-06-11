@@ -600,10 +600,19 @@ htmlgen(...)
 <controltype>(band=<band> ...)
 ```
 
-The `release` line declares the DataWindow format version. Observed values: `9`.
+The `release` line declares the DataWindow format version. Observed values in corpus: `9`.
+The release number can vary — parse it dynamically, do not hardcode `9`.
 
 Each block is a keyword followed by parenthesis-balanced content. Blocks may span
 multiple lines. The parser must use depth counting, not line scanning.
+
+**Full set of top-level block keywords (2026-06-11 corpus survey):**
+
+| Category | Keywords |
+|---|---|
+| Structural | `datawindow`, `table`, `header`, `detail`, `footer`, `summary`, `group` |
+| Control types | `text`, `column`, `compute`, `line`, `report`, `groupbox`, `button`, `bitmap`, `graph`, `rectangle`, `sparse` |
+| Meta (dotted) | `export.pdf`, `export.xml`, `export.xhtml`, `import.xml`, `htmltable`, `htmlgen`, `jsgen`, `xhtmlgen`, `xmlgen` |
 
 **Structural keyword disambiguation:** `column` appears both as a top-level control
 block (has `band=` attribute) and as a sub-block attribute inside `table(...)` using
@@ -664,36 +673,84 @@ information in different formats for backwards compatibility).
 ### 7.4 Band Blocks
 
 ```
-BandName ::= header | detail | footer | summary
+BandName   ::= header | detail | footer | summary
+             | background | foreground
+             | header.N | trailer.N        (N = group level number, e.g. header.1)
+             | header[N] | trailer[N]      (bracket notation, older format variant)
+             | tree.level.N                (TreeView DataWindows; not in 2026-06-11 corpus)
 ```
 
-Each band block is `bandname(height=N color="N" ...)`.
+Each structural band block (`header`, `detail`, `footer`, `summary`) appears as a
+top-level block: `bandname(height=N color="N" ...)`.
+
+The `background` and `foreground` band kinds are overlay layers, not report bands.
+The `header.N` / `trailer.N` / `header[N]` / `trailer[N]` names appear only as
+`band=` attribute values on controls (not as top-level blocks); they identify
+which group level a control belongs to.
 
 ### 7.5 Control Blocks
 
-Any word that is not a band name, `datawindow`, `table`, `htmltable`, `htmlgen`, or
-`report` and is followed by `(` at the top level is a control block. Control blocks
-carry a `band=<bandname>` attribute identifying which band they belong to.
+Any word that is not a structural band name, `datawindow`, `table`, `group`, or a
+dotted meta-keyword, and is followed by `(` at the top level is a control block.
+Control blocks carry a `band=<bandname>` attribute identifying which band they belong to.
 
-**Corpus-observed control types:**
+**Corpus-observed control types (2026-06-11):**
 
-| Type       | Description                       |
-|------------|-----------------------------------|
-| `text`     | Static label or computed text     |
-| `column`   | Data-bound column (with `band=`)  |
-| `compute`  | Computed field                    |
-| `line`     | Horizontal or vertical rule       |
-| `report`   | Nested sub-report DataWindow      |
-| `groupbox` | Visual group box                  |
-| `button`   | Push button                       |
-| `bitmap`   | Image/bitmap                      |
+| Type       | Description                          |
+|------------|--------------------------------------|
+| `text`     | Static label or computed text (526×) |
+| `column`   | Data-bound column (with `band=`) (453×) |
+| `compute`  | Computed field (228×)                |
+| `line`     | Horizontal or vertical rule (27×)    |
+| `report`   | Nested sub-report DataWindow (17×)   |
+| `groupbox` | Visual group box (11×)               |
+| `button`   | Push button (5×)                     |
+| `bitmap`   | Image/bitmap (5×)                    |
+| `graph`    | Chart/graph control                  |
+| `rectangle`| Drawn rectangle                      |
+| `sparse`   | Sparse display control               |
 
-Key attributes present on most controls: `name`, `band`, `id`, `x`, `y`, `width`,
-`height`, `visible`, `expression`.
+Key attributes present on most controls: `name`, `band`, `id`, `tabsequence`,
+`x`, `y`, `width`, `height`, `visible`, `expression`.
+
+**`~t` separator in attribute values:** some attributes (e.g. `text=`, `format=`)
+use the form `"staticvalue~tdynexpr"` where `~t` separates a static display value
+(before `~t`) from a dynamic DataWindow expression (after `~t`). The expression
+part follows DataWindow expression syntax (not PowerScript).
 
 **Disambiguation:** `column(band=detail ...)` (top-level control) vs.
 `column=(type=char ...)` (sub-block inside `table`). The presence of `=` immediately
 after the keyword is the distinguishing token.
+
+### 7.5a Meta-blocks (dotted keywords)
+
+Blocks with dotted keywords carry output format settings. They have no structural
+role in the data model. Parse their content as flat `key=value` attribute maps.
+
+| Keyword | Purpose |
+|---|---|
+| `export.pdf` | PDF export settings |
+| `export.xml` | XML export settings |
+| `export.xhtml` | XHTML export settings |
+| `import.xml` | XML import settings |
+| `htmltable` | HTML table rendering |
+| `htmlgen` | HTML generation settings |
+| `jsgen` | JavaScript generation settings |
+| `xhtmlgen` | XHTML generation settings |
+| `xmlgen` | XML generation settings |
+
+### 7.5b `group(...)` Block
+
+Report grouping definition. Multiple `group(...)` blocks may appear (one per level).
+
+```
+group(level=<int> header.height=<int> trailer.height=<int>
+      by=("<col1>" , "<col2>" ...) [newpage=yes] ...)
+```
+
+`by=(...)` is a paren-balanced block containing a comma-separated list of
+quoted column names. Parse by scanning to the matching `)` then splitting on
+`,` at depth 0.
 
 ### 7.6 Expression Values
 
@@ -746,6 +803,16 @@ extractParenthesizedBlock :: [Text] -> Int -> (Text, Int)
 the sequence `~"` is not a close — skip both characters and continue. The `~"` escape
 is the only relevant escape inside DataWindow quoted values (unlike PowerScript which
 has a full `~x` escape set).
+
+**`~~"` edge case:** the sequence `~~"` means an escaped tilde (`~~`) followed by
+a real closing `"`. A naïve lookbehind of `prev != '~'` will incorrectly treat this
+as still-inside-the-string. Use a proper state machine: track whether the preceding
+character was an unescaped `~`; if so, `~~` consumes the tilde pair and leaves the
+state as "not escaped", so the following `"` closes the string.
+
+**Quote-aware depth counter:** `extractParenBlock` must not count `(` and `)` inside
+quoted string regions. Track quote state while scanning depth — enter string state on
+`"`, exit on an unescaped `"` (using the `~~"` rule above).
 
 ---
 
