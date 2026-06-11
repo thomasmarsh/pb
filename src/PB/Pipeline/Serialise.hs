@@ -8,6 +8,7 @@ import PB.AST.BodyStmt      ( AugOp (..), BodyStmt (..), PbCall (..)
                             , IfStmt (..), ForStmt (..), DoCondition (..)
                             , DoStmt (..), CaseClause (..), ChooseStmt (..) )
 import PB.AST.Expr          ( BinOp (..), CallExpr (..), CreateExpr (..), Expr (..)
+                            , DispatchMode (..), DispatchExpr (..)
                             , Literal (..), LvSegment (..), Lvalue (..) )
 import PB.AST.SourceFile
 import PB.Lexing.Splitter   (Statement (..))
@@ -209,6 +210,11 @@ jsonChooseStmt cs = object
 -- ---------------------------------------------------------------------------
 -- Expr
 
+instance ToJSON DispatchMode where
+  toJSON DmPost    = String "post"
+  toJSON DmTrigger = String "trigger"
+  toJSON DmSync    = String "sync"
+
 instance ToJSON BinOp where
   toJSON BopAdd = String "+"
   toJSON BopSub = String "-"
@@ -237,6 +243,15 @@ instance ToJSON Expr where
   toJSON (ExHostVar   lv) = object ["tag" .= ("host_var"     :: Text), "lvalue" .= toJSON lv]
   toJSON (ExBinOp l op r) = object ["tag" .= ("binop" :: Text), "op" .= op, "lhs" .= l, "rhs" .= r]
   toJSON (ExUnaryMinus e) = object ["tag" .= ("neg"   :: Text), "expr" .= e]
+  toJSON (ExDispatch  de) = object
+    [ "tag"     .= ("dispatch" :: Text)
+    , "object"  .= dspObject de
+    , "mode"    .= dspMode de
+    , "dynamic" .= dspDynamic de
+    , "event"   .= dspEvent de
+    , "name"    .= dspName de
+    , "args"    .= map (map tkText) (dspArgs de)
+    ]
   toJSON (ExRaw       ts) = object ["tag" .= ("raw"          :: Text), "tokens" .= map tkText ts]
 
 instance ToJSON Literal where

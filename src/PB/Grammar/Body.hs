@@ -12,7 +12,9 @@ import PB.AST.BodyStmt
   , IfStmt (..), ForStmt (..), DoCondition (..), DoStmt (..)
   , CaseClause (..), ChooseStmt (..)
   )
-import PB.AST.Expr        (BinOp (..), CallExpr (..), CreateExpr (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
+import PB.AST.Expr        ( BinOp (..), CallExpr (..), CreateExpr (..), Expr (..)
+                          , DispatchExpr (..), DispatchMode (..)
+                          , Literal (..), LvSegment (..), Lvalue (..) )
 import PB.Grammar.Stream  (FileParser, satisfyStmt, isModifierToken)
 import PB.Lexing.Splitter (Statement (..))
 import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
@@ -100,6 +102,73 @@ parseLvalue ts = case lvaluePrefix ts of
   _                                 -> Nothing
 
 -- ---------------------------------------------------------------------------
+-- Dispatch parser helpers
+
+-- | True for tokens that introduce or qualify a dispatch expression:
+-- TkOtherKw "post"/"trigger"/"dynamic" or TkDeclKw "event".
+isDispatchKw :: Token -> Bool
+isDispatchKw t =
+  (tkKind t == TkOtherKw && lw `elem` ["post", "trigger", "dynamic"]) ||
+  (tkKind t == TkDeclKw  && lw == "event")
+  where lw = T.toLower (tkText t)
+
+-- | Find the leftmost dispatch keyword at paren/bracket/brace depth 0.
+-- Returns (tokens before it, from-that-token onward), or Nothing.
+findDispatchSplit :: [Token] -> Maybe ([Token], [Token])
+findDispatchSplit = go (0 :: Int) []
+  where
+    go _ _   []     = Nothing
+    go d acc (t:ts)
+      | d == 0 && isDispatchKw t = Just (reverse acc, t:ts)
+      | tkKind t `elem` [TkLParen, TkLBracket, TkLBrace] = go (d+1) (t:acc) ts
+      | tkKind t `elem` [TkRParen, TkRBracket, TkRBrace] = go (max 0 (d-1)) (t:acc) ts
+      | otherwise = go d (t:acc) ts
+
+-- | Validate the pre-dispatch token slice (tokens before the first dispatch kw).
+-- [] → Nothing (no object, implicit self)
+-- [lv_tokens…, TkDot] → Just (lvalue) after stripping the trailing dot
+-- anything else → Nothing (not a valid object prefix)
+parseObjFromPre :: [Token] -> Maybe (Maybe Lvalue)
+parseObjFromPre [] = Just Nothing
+parseObjFromPre toks =
+  case reverse toks of
+    (dot:revLv) | tkKind dot == TkDot -> fmap Just (parseLvalue (reverse revLv))
+    _                                 -> Nothing
+
+-- | Consume dispatch qualifiers (post/trigger/dynamic/event) then a name then
+-- parenthesised args. Accepts qualifiers in any order. Returns Nothing if the
+-- next non-qualifier token is not a name, or there is no '(' after the name.
+parseDispBodyTokens :: Maybe Lvalue -> [Token] -> Maybe (Expr, [Token])
+parseDispBodyTokens objLv = go DmSync False False
+  where
+    go _    _   _    []     = Nothing
+    go mode dyn isEv (t:ts)
+      | kwIs "post"    t = go DmPost    dyn  isEv  ts
+      | kwIs "trigger" t = go DmTrigger dyn  isEv  ts
+      | kwIs "dynamic" t = go mode      True isEv  ts
+      | kwIs "event"   t = go mode      dyn  True  ts
+      | tkKind t `elem` [TkIdent, TkOtherKw, TkDatatype] =
+          case ts of
+            (lp:r) | tkKind lp == TkLParen ->
+              case findMatchingClose r of
+                Nothing             -> Nothing
+                Just (inner, after) ->
+                  Just (ExDispatch (DispatchExpr objLv mode dyn isEv (tkText t) (splitArgs inner)), after)
+            _ -> Nothing
+      | otherwise = Nothing
+    kwIs kw tok = tkKind tok `elem` [TkOtherKw, TkDeclKw]
+               && T.toLower (tkText tok) == kw
+
+-- | Try to parse a full token list as a dispatch expression.
+-- Locates the first dispatch keyword at depth 0, validates the preceding
+-- tokens as an optional object lvalue, then parses the dispatch body.
+tryDispatchAtom :: [Token] -> Maybe (Expr, [Token])
+tryDispatchAtom ts = do
+  (preToks, dispToks) <- findDispatchSplit ts
+  objLv               <- parseObjFromPre preToks
+  parseDispBodyTokens objLv dispToks
+
+-- ---------------------------------------------------------------------------
 -- Expr parser helpers
 
 -- | Find the ')' that matches the implicit open '(' already consumed.
@@ -156,27 +225,28 @@ lookupBinOp t = case (tkKind t, T.toLower (tkText t)) of
 parseAtom :: [Token] -> Maybe (Expr, [Token])
 parseAtom [] = Nothing
 parseAtom (t:rest)
-  | tkKind t == TkLParen
-  = case findMatchingClose rest of
-      Nothing             -> Nothing
-      Just (inner, after) -> Just (parseExpr inner, after)
-  | tkKind t == TkArithOp && tkText t == "-"
-  = case parseAtom rest of
-      Nothing     -> Nothing
-      Just (e, r) -> Just (ExUnaryMinus e, r)
+  | tkKind t == TkLParen = do
+      (inner, after) <- findMatchingClose rest
+      pure (parseExpr inner, after)
+
+  | tkKind t == TkArithOp && tkText t == "-" = do
+      (e, r) <- parseAtom rest
+      pure (ExUnaryMinus e, r)
+
   | tkKind t == TkOtherKw && T.toLower (tkText t) == "not"
   = case parseAtom rest of
       Nothing     -> Just (ExNot (ExRaw rest), [])
       Just (e, r) -> let (e', r') = climbPrec 4 e r in Just (ExNot e', r')
+
   | tkKind t == TkOtherKw && T.toLower (tkText t) == "create"
   = case rest of
-      (uT:r) | tkKind uT == TkOtherKw && T.toLower (tkText uT) == "using"
-        -> case parseAtom r of
-             Nothing      -> Nothing
-             Just (e, r') -> Just (ExCreate (CreateUsing e), r')
+      (uT:r) | tkKind uT == TkOtherKw && T.toLower (tkText uT) == "using" -> do
+        (e, r') <- parseAtom r
+        pure (ExCreate (CreateUsing e), r')
       (cls:r) | tkKind cls `elem` [TkIdent, TkOtherKw, TkDatatype]
         -> Just (ExCreate (CreateClass (tkText cls)), r)
       _ -> Nothing
+
   | tkKind t == TkLBrace
   = let go _     _   []     = Nothing
         go depth acc (x:xs)
@@ -186,17 +256,16 @@ parseAtom (t:rest)
           | tkKind x == TkLBrace = go (depth + 1) (x:acc) xs
           | otherwise            = go depth        (x:acc) xs
     in go (0 :: Int) [] rest
+
   | isSegmentName t
-  = case lvaluePrefix (t:rest) of
-      Nothing -> Nothing
-      Just (segs, remaining) ->
-        case remaining of
-          (lp:r) | tkKind lp == TkLParen ->
-            case findMatchingClose r of
-              Nothing             -> Nothing
-              Just (inner, after) ->
-                Just (ExCall (CallExpr (Lvalue segs) (splitArgs inner)), after)
-          _ -> Just (ExLvalue (Lvalue segs), remaining)
+  = tryDispatchAtom (t:rest) <|> do
+      (segs, remaining) <- lvaluePrefix (t:rest)
+      case remaining of
+        (lp:r) | tkKind lp == TkLParen -> do
+          (inner, after) <- findMatchingClose r
+          pure (ExCall (CallExpr (Lvalue segs) (splitArgs inner)), after)
+        _ -> pure (ExLvalue (Lvalue segs), remaining)
+
   | otherwise
   = case parseSingleToken t of
       ExRaw _ -> Nothing

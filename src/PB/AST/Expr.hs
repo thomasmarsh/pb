@@ -5,6 +5,8 @@ module PB.AST.Expr
   , CallExpr (..)
   , CreateExpr (..)
   , BinOp (..)
+  , DispatchMode (..)
+  , DispatchExpr (..)
   , Expr (..)
   ) where
 
@@ -59,6 +61,27 @@ data BinOp
   | BopAnd | BopOr  | BopXor                      -- and  or  xor
   deriving (Eq, Show)
 
+-- | Dispatch mode qualifier: POST (async), TRIGGER (explicit sync), or neither.
+data DispatchMode = DmPost | DmTrigger | DmSync
+  deriving (Eq, Show)
+
+-- | A POST/TRIGGER/DYNAMIC/EVENT dispatch expression.
+-- Covers all corpus forms:
+--   [obj.] Post  [Dynamic] Event  name(args)
+--   [obj.] Trigger [Dynamic] Event name(args)
+--   [obj.] Dynamic method(args)
+--   [obj.] Post [Dynamic] method(args)
+--   [obj.] Event name(args)             (no post/trigger qualifier)
+--   obj.   Event Trigger Dynamic name(args)  (keyword order variant)
+data DispatchExpr = DispatchExpr
+  { dspObject  :: Maybe Lvalue  -- Nothing = implicit self
+  , dspMode    :: DispatchMode
+  , dspDynamic :: Bool          -- DYNAMIC keyword present
+  , dspEvent   :: Bool          -- EVENT keyword present
+  , dspName    :: Text          -- event or method name
+  , dspArgs    :: [[Token]]     -- raw arg tokens (depth-0 comma split)
+  } deriving (Eq, Show)
+
 data Expr
   = ExLit     Literal    -- boolean, numeric, string, date/time, null
   | ExEnum    Text       -- PowerBuilder enum constant; name without trailing '!'
@@ -70,5 +93,6 @@ data Expr
   | ExHostVar    Lvalue        -- SQL host variable: :varname or :struct.field
   | ExBinOp      Expr BinOp Expr  -- left op right
   | ExUnaryMinus Expr          -- unary - expr
+  | ExDispatch   DispatchExpr  -- POST/TRIGGER/DYNAMIC/EVENT dispatch
   | ExRaw        [Token]       -- unrecognized or dynamic-dispatch
   deriving (Eq, Show)

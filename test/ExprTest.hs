@@ -1,7 +1,7 @@
 module ExprTest (tests) where
 
 import PB.Prelude
-import PB.AST.Expr        (BinOp (..), CallExpr (..), CreateExpr (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
+import PB.AST.Expr        (BinOp (..), CallExpr (..), CreateExpr (..), DispatchExpr (..), DispatchMode (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
 import PB.Grammar.Body    (parseExpr)
 import PB.Lexing.Token    (Token (..), TokenKind (..), SourceSpan (..))
 
@@ -405,6 +405,107 @@ tests = testGroup "Expr"
             @?= ExUnaryMinus (ExLit (LitInt "1"))
       ]
 
+    , testGroup "dispatch"
+      [ testCase "bare Post Event name() → ExDispatch Nothing DmPost isEvent" $
+          parseExpr [ mkTok TkOtherKw "Post", mkTok TkDeclKw "Event"
+                    , mkTok TkIdent "ue_refresh", mkTok TkLParen "(", mkTok TkRParen ")" ]
+            @?= ExDispatch (DispatchExpr Nothing DmPost False True "ue_refresh" [])
+
+      , testCase "bare Trigger Event name() → ExDispatch Nothing DmTrigger isEvent" $
+          parseExpr [ mkTok TkOtherKw "Trigger", mkTok TkDeclKw "Event"
+                    , mkTok TkIdent "ue_retrieve", mkTok TkLParen "(", mkTok TkRParen ")" ]
+            @?= ExDispatch (DispatchExpr Nothing DmTrigger False True "ue_retrieve" [])
+
+      , testCase "lvalue.Post Event name() → ExDispatch (Just lv) DmPost isEvent" $
+          parseExpr [ mkTok TkIdent "iw_Frame", mkTok TkDot "."
+                    , mkTok TkOtherKw "Post", mkTok TkDeclKw "Event"
+                    , mkTok TkIdent "ue_opensheet", mkTok TkLParen "(", mkTok TkRParen ")" ]
+            @?= ExDispatch (DispatchExpr
+                  (Just (Lvalue [LvSegment "iw_Frame" Nothing]))
+                  DmPost False True "ue_opensheet" [])
+
+      , testCase "lvalue.Post Dynamic Event name() → DmPost dynamic isEvent" $
+          parseExpr [ mkTok TkOtherKw "ParentWindow", mkTok TkDot "."
+                    , mkTok TkOtherKw "Post", mkTok TkOtherKw "Dynamic"
+                    , mkTok TkDeclKw "Event"
+                    , mkTok TkIdent "ue_save", mkTok TkLParen "(", mkTok TkRParen ")" ]
+            @?= ExDispatch (DispatchExpr
+                  (Just (Lvalue [LvSegment "ParentWindow" Nothing]))
+                  DmPost True True "ue_save" [])
+
+      , testCase "lvalue.Dynamic method() → DmSync dynamic not-event" $
+          parseExpr [ mkTok TkOtherKw "ParentWindow", mkTok TkDot "."
+                    , mkTok TkOtherKw "Dynamic"
+                    , mkTok TkIdent "of_isprintpreview"
+                    , mkTok TkLParen "(", mkTok TkRParen ")" ]
+            @?= ExDispatch (DispatchExpr
+                  (Just (Lvalue [LvSegment "ParentWindow" Nothing]))
+                  DmSync True False "of_isprintpreview" [])
+
+      , testCase "lvalue.Post Dynamic method() → DmPost dynamic not-event" $
+          parseExpr [ mkTok TkOtherKw "ParentWindow", mkTok TkDot "."
+                    , mkTok TkOtherKw "Post", mkTok TkOtherKw "Dynamic"
+                    , mkTok TkIdent "of_new"
+                    , mkTok TkLParen "(", mkTok TkRParen ")" ]
+            @?= ExDispatch (DispatchExpr
+                  (Just (Lvalue [LvSegment "ParentWindow" Nothing]))
+                  DmPost True False "of_new" [])
+
+      , testCase "lvalue.Trigger Event name(complex-arg) → args kept raw" $
+          let argToks = [ mkTok TkIdent "dw_dept", mkTok TkDot "."
+                        , mkTok TkIdent "GetRow", mkTok TkLParen "(", mkTok TkRParen ")" ]
+          in parseExpr ([ mkTok TkIdent "dw_dept", mkTok TkDot "."
+                        , mkTok TkOtherKw "Trigger", mkTok TkDeclKw "Event"
+                        , mkTok TkIdent "RowFocusChanged", mkTok TkLParen "(" ]
+                        <> argToks
+                        <> [mkTok TkRParen ")"])
+               @?= ExDispatch (DispatchExpr
+                     (Just (Lvalue [LvSegment "dw_dept" Nothing]))
+                     DmTrigger False True "RowFocusChanged" [argToks])
+
+      , testCase "lvalue.Event name() (no qualifier) → DmSync isEvent" $
+          parseExpr [ mkTok TkIdent "gb_htick", mkTok TkDot "."
+                    , mkTok TkDeclKw "Event"
+                    , mkTok TkIdent "ue_ChangeTicks"
+                    , mkTok TkLParen "(", mkTok TkRParen ")" ]
+            @?= ExDispatch (DispatchExpr
+                  (Just (Lvalue [LvSegment "gb_htick" Nothing]))
+                  DmSync False True "ue_ChangeTicks" [])
+
+      , testCase "lvalue.Event Trigger Dynamic name(arg) → reversed-order variant" $
+          let argToks = [mkTok TkIdent "dw"]
+          in parseExpr ([ mkTok TkIdent "MenuID", mkTok TkDot "."
+                        , mkTok TkDeclKw "Event", mkTok TkOtherKw "Trigger"
+                        , mkTok TkOtherKw "Dynamic"
+                        , mkTok TkIdent "ie_checkmenu", mkTok TkLParen "(" ]
+                        <> argToks
+                        <> [mkTok TkRParen ")"])
+               @?= ExDispatch (DispatchExpr
+                     (Just (Lvalue [LvSegment "MenuID" Nothing]))
+                     DmTrigger True True "ie_checkmenu" [argToks])
+
+      , testCase "deep-chain lvalue.Post Event name() → all segments in object" $
+          parseExpr [ mkTok TkIdent "lm_Menu",    mkTok TkDot "."
+                    , mkTok TkIdent "m_buffers",  mkTok TkDot "."
+                    , mkTok TkIdent "m_openall",  mkTok TkDot "."
+                    , mkTok TkOtherKw "Post",     mkTok TkDeclKw "Event"
+                    , mkTok TkIdent "ue_opensheet"
+                    , mkTok TkLParen "(", mkTok TkRParen ")" ]
+            @?= ExDispatch (DispatchExpr
+                  (Just (Lvalue [ LvSegment "lm_Menu"   Nothing
+                                , LvSegment "m_buffers" Nothing
+                                , LvSegment "m_openall" Nothing ]))
+                  DmPost False True "ue_opensheet" [])
+
+      , testCase "regression: obj.post() with no name → falls through to ExCall" $
+          parseExpr [ mkTok TkIdent "obj", mkTok TkDot "."
+                    , mkTok TkOtherKw "post"
+                    , mkTok TkLParen "(", mkTok TkRParen ")" ]
+            @?= ExCall (CallExpr
+                  (Lvalue [LvSegment "obj" Nothing, LvSegment "post" Nothing])
+                  [])
+      ]
+
     , testGroup "precedence properties"
       [ testProperty "lower-prec op is root" propLowerPrecIsRoot
       , testProperty "left-associative operators chain left" propLeftAssoc
@@ -453,6 +554,7 @@ propParseExprTotal = property $ do
     ExHostVar      _ -> True
     ExBinOp      _ _ _ -> True
     ExUnaryMinus _ -> True
+    ExDispatch   _ -> True
     ExRaw          _ -> True
 
 propExRawRoundtrip :: Property
