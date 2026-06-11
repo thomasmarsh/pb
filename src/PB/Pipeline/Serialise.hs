@@ -152,6 +152,7 @@ instance ToJSON BodyStmt where
   toJSON (BsCall       expr)       = object ["tag" .= ("call"       :: Text), "expr" .= expr]
   toJSON (BsPbCall     pc)         = object ["tag" .= ("pb_call"    :: Text), "ancestor" .= pbcAncestor pc, "event" .= pbcEvent pc]
   toJSON (BsDestroy    lv)         = object ["tag" .= ("destroy"    :: Text), "lvalue" .= lv]
+  toJSON (BsAssignExpr lhs rhs)   = object ["tag" .= ("assign_expr" :: Text), "lhs" .= lhs, "rhs" .= rhs]
   toJSON (BsReturn     Nothing)    = object ["tag" .= ("return"     :: Text)]
   toJSON (BsReturn     (Just e))   = object ["tag" .= ("return"     :: Text), "value" .= e]
   toJSON (BsIf         is)         = jsonIfStmt is

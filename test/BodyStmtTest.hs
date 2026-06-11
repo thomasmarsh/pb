@@ -95,6 +95,21 @@ tests = testGroup "Body"
                   (Lvalue [LvSegment "dw_main" Nothing, LvSegment "getrow" Nothing])
                   []))
 
+    , testCase "assign: chained-call LHS → BsAssignExpr" $
+        -- obj.cells(1).value = 42 — lvaluePrefix stops at cells; falls back to expr-based assign
+        classifyBodyStmt
+          (mkStmt [ (TkIdent, "obj"), (TkDot, "."), (TkIdent, "cells")
+                  , (TkLParen, "("), (TkIntLiteral, "1"), (TkRParen, ")")
+                  , (TkDot, "."), (TkIdent, "value")
+                  , (TkAssignOp, "="), (TkIntLiteral, "42") ])
+          @?= BsAssignExpr
+                (ExMethodCall
+                  (ExCall (CallExpr
+                    (Lvalue [LvSegment "obj" Nothing, LvSegment "cells" Nothing])
+                    [[mkTok TkIntLiteral "1"]]))
+                  "value" [])
+                (ExLit (LitInt "42"))
+
     , testCase "aug_assign: +=" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "n"), (TkAugmentOp, "+="), (TkIntLiteral, "1")])
@@ -455,8 +470,9 @@ tag (BsDo        _)     = "do"
 tag (BsChoose    _)     = "choose"
 tag BsExit              = "exit"
 tag BsContinue          = "continue"
-tag (BsDestroy   _)     = "destroy"
-tag (BsRaw       _)     = "raw"
+tag (BsDestroy    _)    = "destroy"
+tag (BsAssignExpr _ _)  = "assign_expr"
+tag (BsRaw        _)    = "raw"
 
 propClassifyTotal :: Property
 propClassifyTotal = property $ do
@@ -494,5 +510,6 @@ propClassifyTotal = property $ do
     BsChoose    _     -> True
     BsExit            -> True
     BsContinue        -> True
-    BsDestroy   _     -> True
-    BsRaw       _     -> True
+    BsDestroy    _    -> True
+    BsAssignExpr _ _  -> True
+    BsRaw        _    -> True

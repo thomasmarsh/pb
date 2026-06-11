@@ -84,5 +84,6 @@ data BodyStmt
   | BsExit                            -- exit
   | BsContinue                        -- continue
   | BsDestroy   Lvalue                -- DESTROY objectvariable
+  | BsAssignExpr Expr Expr            -- complex LHS = rhs (method-call chain . property)
   | BsRaw       Statement             -- SQL, event decls, unclassified
   deriving (Eq, Show)

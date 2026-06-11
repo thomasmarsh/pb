@@ -26,15 +26,15 @@ OPENPAY = os.path.join(REPO, "example", "openpay")
 
 # Leading-word sets used for categorization (lower-cased, semicolons stripped).
 # Keep in sync with Lexer.hs sqlKws / controlKws / declKws / otherKws.
-# Note: "open" and "close" are intentionally excluded here — they appear both
-# as SQL cursor ops ("OPEN DYNAMIC cur") and PowerScript calls ("open(w_main)").
-# Both land in "other" so the examples reveal which is which.
+# "open" and "close" are included: open()/close() call forms are BsCall (not BsRaw)
+# so all remaining BsRaw with these keywords are cursor ops.
 SQL_KWS = {
     "select", "selectblob", "insert", "update", "updateblob", "delete",
     "commit", "rollback", "connect", "disconnect", "declare", "cursor",
     "execute", "fetch", "prepare", "describe", "descriptor",
     "from", "and", "or", "into", "using", "where", "having",
     "group", "order", "join",
+    "open", "close",
 }
 CTRL_KWS = {
     "if", "else", "elseif", "end", "choose", "case",

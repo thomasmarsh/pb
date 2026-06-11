@@ -306,6 +306,28 @@ tests = testGroup "Expr"
                    (ExCall (CallExpr (Lvalue [LvSegment "f" Nothing]) []))
                    "a" [])
                  "b" []
+
+      , testCase "f().prop — property access on call result → ExMethodCall []" $
+          let ts = [ mkTok TkIdent "f", mkTok TkLParen "(", mkTok TkRParen ")"
+                   , mkTok TkDot ".", mkTok TkIdent "value" ]
+          in parseExpr ts @?=
+               ExMethodCall
+                 (ExCall (CallExpr (Lvalue [LvSegment "f" Nothing]) []))
+                 "value" []
+
+      , testCase "obj.cells(1,1).value — call in chain then property → ExMethodCall []" $
+          let ts = [ mkTok TkIdent "obj"
+                   , mkTok TkDot ".", mkTok TkIdent "cells"
+                   , mkTok TkLParen "(", mkTok TkIntLiteral "1"
+                   , mkTok TkComma ",", mkTok TkIntLiteral "1"
+                   , mkTok TkRParen ")"
+                   , mkTok TkDot ".", mkTok TkIdent "value" ]
+          in parseExpr ts @?=
+               ExMethodCall
+                 (ExCall (CallExpr
+                   (Lvalue [LvSegment "obj" Nothing, LvSegment "cells" Nothing])
+                   [[mkTok TkIntLiteral "1"], [mkTok TkIntLiteral "1"]]))
+                 "value" []
       ]
 
     , testGroup "ExRaw fallback"

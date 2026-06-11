@@ -1,9 +1,8 @@
--- Ratchet gate: assert that ExRaw and BsRaw "other" counts stay below
--- their thresholds. Update after each B-track session; never increase.
+-- Ratchet gate: assert that ExRaw and BsRaw "other" counts stay at zero.
 --
+--   ExRaw = 0     after chainCalls property-access fix, 2026-06-11
 --   ExRaw ≤ 1     after B5 (SQL body joining + TkLabel guard), 2026-06-10
---   ExRaw ≤ 133   after B4 (ExMethodCall chain + dec{N} localvar), 2026-06-10
---   ExRaw ≤ 156   after B3 (ExDispatch), 2026-06-10
+--   BsRaw other = 0  after open/close cursor reclassification + BsAssignExpr, 2026-06-11
 --   BsRaw other ≤ 18  after open/close SQL cursor fix, 2026-06-10
 module CorpusDebtTest (tests) where
 
@@ -63,7 +62,8 @@ isSqlKw w = w `elem`
     [ "select","selectblob","insert","update","updateblob","delete"
     , "commit","rollback","connect","disconnect","declare","cursor"
     , "execute","fetch","prepare","describe","descriptor"
-    , "from","and","or","into","using","where","having","group","order","join" ]
+    , "from","and","or","into","using","where","having","group","order","join"
+    , "open","close" ]  -- cursor ops; open()/close() call forms are BsCall, not BsRaw
 isCtrlKw w = w `elem`
     [ "if","else","elseif","end","choose","case","for","do","loop"
     , "while","until","try","catch","finally" ]
@@ -95,14 +95,14 @@ isBsRawOther v
 
 tests :: TestTree
 tests = testGroup "Corpus.Debt"
-    [ testCase "ExRaw total \8804 1" $ do
+    [ testCase "ExRaw total = 0" $ do
         vals <- loadCorpus
         let total = sum (map (countWhere isExRaw) vals)
-        assertBool ("ExRaw total = " <> show total <> ", expected \8804 1") (total <= 1)
-    , testCase "BsRaw 'other' \8804 18" $ do
+        assertBool ("ExRaw total = " <> show total <> ", expected 0") (total == 0)
+    , testCase "BsRaw 'other' = 0" $ do
         vals <- loadCorpus
         let total = sum (map (countWhere isBsRawOther) vals)
-        assertBool ("BsRaw 'other' total = " <> show total <> ", expected \8804 18") (total <= 18)
+        assertBool ("BsRaw 'other' total = " <> show total <> ", expected 0") (total == 0)
     , testCase "DW files not stub" $ do
         paths <- fmap concat $ mapM walkDwFiles
             [ "example/PowerBuilder-Example/export"

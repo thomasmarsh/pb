@@ -56,7 +56,11 @@ classifyByOp s ts =
            in case opText of
                 "="  -> case parseLvalue lhs of
                           Just lv -> BsAssign lv (parseExpr rhs)
-                          Nothing -> BsRaw s
+                          Nothing ->
+                            let lhsExpr = parseExpr lhs
+                            in case lhsExpr of
+                                 ExRaw _ -> BsRaw s
+                                 _       -> BsAssignExpr lhsExpr (parseExpr rhs)
                 "++" -> BsInc       lhs
                 "--" -> BsDec       lhs
                 _    -> case augOp opText of
@@ -232,6 +236,10 @@ chainCalls e (dot : name : lp : rest)
       Nothing             -> (e, dot : name : lp : rest)
       Just (inner, after) ->
         chainCalls (ExMethodCall e (tkText name) (splitArgs inner)) after
+chainCalls e (dot : name : rest)
+  | tkKind dot == TkDot
+  , isSegmentName name
+  = chainCalls (ExMethodCall e (tkText name) []) rest
 chainCalls e ts = (e, ts)
 
 -- | Parse one atom: a leaf expression that can appear as an operand.
