@@ -2,6 +2,10 @@ module PB.Pipeline.Runner
   ( runFile
   , collectStatements
   , wrapSrFile
+  , runModeFiles
+  , runModeJsonl
+  , ManifestEntry (..)
+  , manifestEntry
   ) where
 
 import PB.Prelude
@@ -14,11 +18,17 @@ import PB.Lexing.Splitter   (Statement (..), splitStatements)
 import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText, stripHeaders)
 import PB.Pipeline.Serialise  ()
 
-import Data.Aeson          (Value (..), object, toJSON, (.=))
+import Data.Aeson          (ToJSON (..), Value (..), encode, object, toJSON, (.=))
+import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
+import qualified Data.ByteString.Lazy as BSL
+import Control.Exception   (SomeException, try)
 import Data.Char           (toLower)
 import qualified Data.Text as T
-import System.FilePath     (takeExtension)
+import System.Directory    (createDirectoryIfMissing)
+import System.FilePath     (makeRelative, takeBaseName, takeDirectory
+                           , takeExtension, (</>))
+import PB.Pipeline.Walk    (walkAllSrFiles)
 
 -- ---------------------------------------------------------------------------
 -- Entry point
@@ -47,7 +57,14 @@ runDataWindow path src = fmap (wrapDwFile path) (parseDataWindow src)
 
 wrapDwFile :: FilePath -> DataWindowFile -> Value
 wrapDwFile path dw = case toJSON dw of
-  Object o -> Object (KM.fromList ["file" .= path, "kind" .= ("datawindow" :: Text)] <> o)
+  Object o -> Object (KM.fromList
+    [ "file" .= path
+    , "kind" .= ("datawindow" :: Text)
+    , "meta" .= object
+        [ "object"   .= T.pack (takeBaseName path)
+        , "ancestor" .= (Nothing :: Maybe Text)
+        ]
+    ] <> o)
   v        -> v
 
 runPipeline :: FilePath -> Text -> Either Text Value
@@ -95,6 +112,7 @@ wrapSrFile path sf spans =
     in object
         [ "file"            .= path
         , "kind"            .= ("powerscript" :: Text)
+        , "meta"            .= object ["object" .= objName, "ancestor" .= ancestor]
         , "headers"         .= srHeaders sf
         , "forward"         .= srForward sf
         , "prototypes"      .= srPrototypes sf
@@ -118,4 +136,94 @@ collectStatements lexLines =
         ("lex error at offset " <> T.pack (show (leOffset e))
          <> " line "            <> T.pack (show (llStartLine (leSource e))))
     [] -> Right [s | Right s <- results, not (null (stmtTokens s))]
+
+-- ---------------------------------------------------------------------------
+-- Manifest
+
+data ManifestEntry = ManifestEntry
+  { meFile     :: Text
+  , meKind     :: Text
+  , meObject   :: Text
+  , meAncestor :: Maybe Text
+  }
+
+instance ToJSON ManifestEntry where
+  toJSON e = object
+    [ "file"     .= meFile     e
+    , "kind"     .= meKind     e
+    , "object"   .= meObject   e
+    , "ancestor" .= meAncestor e
+    ]
+
+-- | Extract a String value at val[k].
+topStr :: Text -> Value -> Maybe Text
+topStr k (Object o) = case KM.lookup (Key.fromText k) o of
+  Just (String s) -> Just s
+  _               -> Nothing
+topStr _ _ = Nothing
+
+-- | Extract a String value at val[k1][k2].
+nestedStr :: Text -> Text -> Value -> Maybe Text
+nestedStr k1 k2 (Object o) = case KM.lookup (Key.fromText k1) o of
+  Just inner -> topStr k2 inner
+  _          -> Nothing
+nestedStr _ _ _ = Nothing
+
+manifestEntry :: FilePath -> Value -> ManifestEntry
+manifestEntry path v = ManifestEntry
+  { meFile     = T.pack path
+  , meKind     = fromMaybe "unknown" (topStr "kind" v)
+  , meObject   = fromMaybe (T.pack path) (nestedStr "meta" "object" v)
+  , meAncestor = nestedStr "meta" "ancestor" v
+  }
+
+-- ---------------------------------------------------------------------------
+-- Output modes
+
+runModeFiles :: FilePath -> FilePath -> IO ()
+runModeFiles srcDir outDir = do
+  files   <- walkAllSrFiles srcDir
+  entries <- mapM (processOneFile srcDir outDir) files
+  BSL.writeFile (outDir </> "manifest.json") (encode (catMaybes entries))
+
+runModeJsonl :: FilePath -> IO ()
+runModeJsonl srcDir = do
+  files <- walkAllSrFiles srcDir
+  mapM_ emitLine files
+  where
+    emitLine src = do
+      readResult <- try (readFile src) :: IO (Either SomeException Text)
+      let line = case readResult of
+            Left ex ->
+              encode $ object
+                [ "file" .= src, "kind" .= ("error" :: Text)
+                , "error" .= T.pack (show ex) ]
+            Right contents -> case runFile src contents of
+              Left  err -> encode $ object
+                [ "file" .= src, "kind" .= ("error" :: Text), "error" .= err ]
+              Right v   -> encode v
+      BSL.putStr (line <> "\n")
+
+-- | Parse one file, write its JSON to the mirrored output path, return a
+--   manifest entry on success (Nothing on encoding or parse error).
+processOneFile :: FilePath -> FilePath -> FilePath -> IO (Maybe ManifestEntry)
+processOneFile srcDir outDir src = do
+  let rel     = makeRelative srcDir src
+      outPath = outDir </> rel <> ".json"
+  createDirectoryIfMissing True (takeDirectory outPath)
+  readResult <- try (readFile src) :: IO (Either SomeException Text)
+  let (bytes, mEntry) = case readResult of
+        Left ex ->
+          ( encode $ object
+              [ "file" .= src, "kind" .= ("error" :: Text)
+              , "error" .= T.pack (show ex) ]
+          , Nothing )
+        Right contents -> case runFile src contents of
+          Left err ->
+            ( encode $ object
+                [ "file" .= src, "kind" .= ("error" :: Text), "error" .= err ]
+            , Nothing )
+          Right v  -> (encode v, Just (manifestEntry src v))
+  BSL.writeFile outPath bytes
+  pure mEntry
 
