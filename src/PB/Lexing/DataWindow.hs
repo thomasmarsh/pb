@@ -1,6 +1,8 @@
 module PB.Lexing.DataWindow
   ( DwBlock (..)
+  , DwAttr (..)
   , scanBlocks
+  , scanBlockAttrs
   , extractParenBlock
   ) where
 
@@ -112,6 +114,57 @@ pDwString = do
 
 pNonCloseParen :: DwParser Text
 pNonCloseParen = T.singleton <$> satisfy (/= ')')
+
+-- ---------------------------------------------------------------------------
+-- DwAttr — structured attribute token for block content
+
+-- | One key=value attribute parsed from a DwBlock's content string.
+data DwAttr
+  = DwAttrUnquoted Text Text  -- key, unquoted value (ends at whitespace)
+  | DwAttrQuoted   Text Text  -- key, quoted value (verbatim, tilde-escapes preserved)
+  | DwAttrSubBlock Text Text  -- key, raw inner content of key=(...)
+  deriving (Eq, Show)
+
+-- | Tokenize a block's content string into structured attributes.
+-- Returns [] on parse failure (malformed content is silently dropped).
+scanBlockAttrs :: Text -> [DwAttr]
+scanBlockAttrs src =
+    case parse pBlockAttrs "" src of
+        Left  _ -> []
+        Right as -> as
+
+pBlockAttrs :: DwParser [DwAttr]
+pBlockAttrs = skipSp *> many (pOneAttr <* skipSp) <* eof
+
+skipSp :: DwParser ()
+skipSp = skipMany (satisfy (`elem` (" \t\n\r" :: String)))
+
+pOneAttr :: DwParser DwAttr
+pOneAttr = do
+    key <- pAttrKey
+    _   <- char '='
+    pAttrVal key
+
+pAttrKey :: DwParser Text
+pAttrKey = takeWhile1P (Just "attr key") (\c -> isAlphaNum c || c == '_' || c == '.')
+
+pAttrVal :: Text -> DwParser DwAttr
+pAttrVal key =
+    (char '(' >> DwAttrSubBlock key <$> pBlockContent) <|>
+    (char '"' >> DwAttrQuoted   key <$> pQuotedContent) <|>
+    DwAttrUnquoted key <$> pUnquotedVal
+
+pQuotedContent :: DwParser Text
+pQuotedContent = do
+    chunks <- many (pbDwStringChunk '"')
+    _      <- char '"'
+    return (T.concat chunks)
+
+-- Reads until whitespace; intentionally does NOT stop at ')' so that
+-- type names like char(10) or decimal(0) are captured whole.
+pUnquotedVal :: DwParser Text
+pUnquotedVal = takeWhile1P (Just "unquoted value")
+    (\c -> c /= ' ' && c /= '\t' && c /= '\n' && c /= '\r')
 
 -- ---------------------------------------------------------------------------
 -- extractParenBlock — exported for unit testing

@@ -2,6 +2,7 @@ module Main (main) where
 
 import PB.Prelude
 import PB.Pipeline.Runner (runFile)
+import PB.Pipeline.Walk   (walkAllSrFiles)
 
 import Data.Aeson               (encode, object, (.=))
 import qualified Data.ByteString.Lazy as BL
@@ -9,8 +10,8 @@ import qualified Data.Text            as T
 
 import Control.Exception        (SomeException, try)
 import Options.Applicative
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, listDirectory)
-import System.FilePath  (makeRelative, takeDirectory, takeExtension, (</>))
+import System.Directory (createDirectoryIfMissing)
+import System.FilePath  (makeRelative, takeDirectory, (</>))
 
 data Options = Options
   { inputDir  :: FilePath
@@ -25,29 +26,10 @@ optParser = Options
 main :: IO ()
 main = do
   opts  <- execParser (info (optParser <**> helper) desc)
-  files <- walkSr (inputDir opts)
+  files <- walkAllSrFiles (inputDir opts)
   mapM_ (processFile opts) files
   where
     desc = fullDesc <> progDesc "Parse a PowerBuilder source tree to a mirrored JSON AST tree"
-
--- | Recursively collect all *.sr? files under root.
-walkSr :: FilePath -> IO [FilePath]
-walkSr root = do
-  entries <- listDirectory root
-  concat <$> mapM step entries
-  where
-    step entry = do
-      let path = root </> entry
-      isDir <- doesDirectoryExist path
-      if isDir
-        then walkSr path
-        else pure (if isSrFile path then [path] else [])
-
--- | Match extensions of the form .sr<single-char> (e.g. .srd .srx .srm .srv .srs).
-isSrFile :: FilePath -> Bool
-isSrFile fp = case splitAt 3 (takeExtension fp) of
-  (".sr", [_]) -> True
-  _            -> False
 
 -- | Parse one file and write its JSON to the mirrored output path.
 -- Encoding errors (e.g. Windows-1253 OpenPay files) produce an error JSON

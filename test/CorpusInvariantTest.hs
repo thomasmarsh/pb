@@ -2,15 +2,12 @@ module CorpusInvariantTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.Runner (runFile)
+import PB.Pipeline.Walk   (walkPsFiles)
 
 import Data.Aeson (Value (..))
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
-import Data.Foldable (toList)
 import qualified Data.Text as T
-
-import System.Directory (listDirectory, doesDirectoryExist)
-import System.FilePath  ((</>), takeExtension)
 
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase)
@@ -46,18 +43,6 @@ walkTree check val = check val ++ case val of
 -- ---------------------------------------------------------------------------
 -- Corpus loader
 
--- Collect all parseable source files under a directory recursively.
-collectFiles :: FilePath -> IO [FilePath]
-collectFiles dir = do
-    entries <- listDirectory dir
-    fmap concat $ mapM (\e -> do
-        let path = dir </> e
-        isDir <- doesDirectoryExist path
-        if isDir
-            then collectFiles path
-            else pure [path | takeExtension path `elem` [".srf",".srw",".sru",".srm",".sra",".srx"]]
-        ) entries
-
 -- Run the parser on one file; return Nothing on Left (parse error).
 loadFile :: FilePath -> IO (Maybe (FilePath, Value))
 loadFile path = do
@@ -69,12 +54,12 @@ loadFile path = do
 -- Load all successfully-parsed files from both corpora.
 loadCorpus :: IO [(FilePath, Value)]
 loadCorpus = do
-    paths <- fmap concat $ mapM collectFiles
+    paths <- fmap concat $ mapM walkPsFiles
         [ "example/PowerBuilder-Example/export"
         , "example/openpay"
         ]
     results <- mapM loadFile paths
-    pure (concatMap toList results)
+    pure (concatMap maybeToList results)
 
 -- ---------------------------------------------------------------------------
 -- Invariant runner

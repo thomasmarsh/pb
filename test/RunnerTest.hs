@@ -7,7 +7,6 @@ import Data.Aeson (Value (..))
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Text         as T
-import Data.Foldable (toList)
 
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))

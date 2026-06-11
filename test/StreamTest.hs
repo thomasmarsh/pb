@@ -12,7 +12,7 @@ import qualified Hedgehog.Range as Range
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 import Test.Tasty.Hedgehog (testProperty)
-import Text.Megaparsec (parse, (<|>))
+import Text.Megaparsec (parse)
 
 -- ---------------------------------------------------------------------------
 -- Helpers

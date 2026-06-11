@@ -18,16 +18,19 @@ import Prelude as X hiding
   , lines, unlines, words, unwords
   )
 
-import Control.Arrow as X ((>>>))
-import Data.Maybe    as X ( fromMaybe, catMaybes, mapMaybe
-                          , listToMaybe, maybeToList
-                          , isJust, isNothing )
-import Data.Either   as X ( fromLeft, fromRight, partitionEithers
-                          , isLeft, isRight )
-import Data.Void     as X ( Void, absurd )
-import Data.Function as X ( on )
-import Data.Text.IO  as X ( putStr, putStrLn
-                          , readFile, writeFile, appendFile
-                          , getLine )
+import Control.Applicative as X ((<|>))
+import Control.Arrow      as X ((>>>))
+import Control.Monad      as X (guard, when, unless, void)
+import Data.Foldable      as X (toList, for_, traverse_)
+import Data.Maybe         as X ( fromMaybe, catMaybes, mapMaybe
+                               , listToMaybe, maybeToList
+                               , isJust, isNothing )
+import Data.Either        as X ( fromLeft, fromRight, partitionEithers
+                               , isLeft, isRight )
+import Data.Void          as X ( Void, absurd )
+import Data.Function      as X ( on )
+import Data.Text.IO       as X ( putStr, putStrLn
+                               , readFile, writeFile, appendFile
+                               , getLine )
 
 import Data.Text (Text)

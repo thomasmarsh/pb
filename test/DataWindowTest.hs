@@ -2,8 +2,8 @@ module DataWindowTest (tests) where
 
 import PB.Prelude
 import PB.AST.DataWindow
-import PB.Lexing.DataWindow  (extractParenBlock)
-import PB.Grammar.DataWindow (parseDataWindow, parseBandKind)
+import PB.Lexing.DataWindow  (DwAttr (..), extractParenBlock, scanBlockAttrs)
+import PB.Grammar.DataWindow (parseDataWindow, parseBandKind, parseDwTable, parseColumn)
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Text       as T
@@ -173,4 +173,201 @@ tests = testGroup "DataWindow"
           assertBool "should fail when release line is absent"
             (isLeft (parseDataWindow src))
       ]
+
+  , testGroup "scanBlockAttrs"
+      [ testCase "empty string → []" $
+          scanBlockAttrs "" @?= []
+
+      , testCase "single unquoted attr" $
+          scanBlockAttrs "type=long" @?= [DwAttrUnquoted "type" "long"]
+
+      , testCase "multiple unquoted attrs separated by space" $
+          scanBlockAttrs "update=yes key=no" @?=
+            [DwAttrUnquoted "update" "yes", DwAttrUnquoted "key" "no"]
+
+      , testCase "quoted attr value" $
+          scanBlockAttrs "dbname=\"foo.bar\"" @?=
+            [DwAttrQuoted "dbname" "foo.bar"]
+
+      , testCase "sub-block attr" $
+          scanBlockAttrs "column=(type=long name=foo )" @?=
+            [DwAttrSubBlock "column" "type=long name=foo "]
+
+      , testCase "type with parens captured whole — char(10)" $
+          scanBlockAttrs "type=char(10) name=x" @?=
+            [DwAttrUnquoted "type" "char(10)", DwAttrUnquoted "name" "x"]
+
+      , testCase "type with parens captured whole — decimal(0)" $
+          scanBlockAttrs "type=decimal(0) update=yes" @?=
+            [DwAttrUnquoted "type" "decimal(0)", DwAttrUnquoted "update" "yes"]
+
+      , testCase "dotted key" $
+          scanBlockAttrs "dddw.name=pick_foo" @?=
+            [DwAttrUnquoted "dddw.name" "pick_foo"]
+
+      , testCase "tilde-escaped quote preserved verbatim in quoted value" $
+          scanBlockAttrs "retrieve=\"a~\"b\"" @?=
+            [DwAttrQuoted "retrieve" "a~\"b"]
+
+      , testCase "multiline — newlines treated as whitespace between attrs" $
+          scanBlockAttrs "type=long\nname=x" @?=
+            [DwAttrUnquoted "type" "long", DwAttrUnquoted "name" "x"]
+
+      , testCase "multiple sub-blocks" $
+          scanBlockAttrs "column=(type=long name=a ) column=(type=char(10) name=b )" @?=
+            [ DwAttrSubBlock "column" "type=long name=a "
+            , DwAttrSubBlock "column" "type=char(10) name=b "
+            ]
+
+      , testCase "update= and updatewhere= are distinct keys" $
+          scanBlockAttrs "update=yes updatewhere=0 updatewhereclause=yes" @?=
+            [ DwAttrUnquoted "update" "yes"
+            , DwAttrUnquoted "updatewhere" "0"
+            , DwAttrUnquoted "updatewhereclause" "yes"
+            ]
+      ]
+
+  , testGroup "parseColumn"
+      [ testCase "returns Nothing when name absent" $
+          parseColumn [DwAttrUnquoted "type" "long"] @?= Nothing
+
+      , testCase "returns Nothing when type absent" $
+          parseColumn [DwAttrUnquoted "name" "aa"] @?= Nothing
+
+      , testCase "returns Nothing for empty attr list" $
+          parseColumn [] @?= Nothing
+
+      , testCase "minimal column — name and type only" $
+          parseColumn [DwAttrUnquoted "type" "long", DwAttrUnquoted "name" "aa"] @?=
+            Just DwColumn
+              { dcName        = "aa"
+              , dcType        = "long"
+              , dcDbName      = Nothing
+              , dcUpdate      = False
+              , dcKey         = False
+              , dcUpdateWhere = False
+              , dcDddwName    = Nothing
+              , dcAttrs       = Map.empty
+              }
+
+      , testCase "update=yes and key=yes parsed as Bool" $
+          parseColumn [ DwAttrUnquoted "type" "long"
+                      , DwAttrUnquoted "name" "id"
+                      , DwAttrUnquoted "update" "yes"
+                      , DwAttrUnquoted "key" "yes"
+                      , DwAttrUnquoted "updatewhereclause" "yes"
+                      ] @?=
+            Just DwColumn
+              { dcName        = "id"
+              , dcType        = "long"
+              , dcDbName      = Nothing
+              , dcUpdate      = True
+              , dcKey         = True
+              , dcUpdateWhere = True
+              , dcDddwName    = Nothing
+              , dcAttrs       = Map.empty
+              }
+
+      , testCase "dbname extracted from quoted attr" $
+          parseColumn [ DwAttrUnquoted "type" "long"
+                      , DwAttrUnquoted "name" "aa"
+                      , DwAttrQuoted   "dbname" "tbl.aa"
+                      ] @?=
+            Just DwColumn
+              { dcName        = "aa"
+              , dcType        = "long"
+              , dcDbName      = Just "tbl.aa"
+              , dcUpdate      = False
+              , dcKey         = False
+              , dcUpdateWhere = False
+              , dcDddwName    = Nothing
+              , dcAttrs       = Map.empty
+              }
+
+      , testCase "char(50) type stored verbatim" $
+          fmap dcType (parseColumn [ DwAttrUnquoted "type" "char(50)"
+                                   , DwAttrUnquoted "name" "foo" ]) @?=
+            Just "char(50)"
+
+      , testCase "dddw.name captured" $
+          fmap dcDddwName (parseColumn [ DwAttrUnquoted "type" "long"
+                                       , DwAttrUnquoted "name" "x"
+                                       , DwAttrUnquoted "dddw.name" "pick_foo" ]) @?=
+            Just (Just "pick_foo")
+
+      , testCase "unknown attrs go into dcAttrs map" $
+          fmap dcAttrs (parseColumn [ DwAttrUnquoted "type" "long"
+                                    , DwAttrUnquoted "name" "x"
+                                    , DwAttrUnquoted "values" "A/B/" ]) @?=
+            Just (Map.singleton "values" "A/B/")
+      ]
+
+  , testGroup "DwTable"
+      [ testCase "no columns, no retrieve" $
+          parseDwTable (scanBlockAttrs "") @?=
+            DwTable [] Nothing Nothing Nothing []
+
+      , testCase "single column extracted" $ do
+          let attrs = scanBlockAttrs
+                "column=(type=long name=aa dbname=\"aa\" ) "
+          let tbl = parseDwTable attrs
+          length (dtColumns tbl) @?= 1
+          dcName (head' (dtColumns tbl)) @?= "aa"
+          dcType (head' (dtColumns tbl)) @?= "long"
+
+      , testCase "multiple columns extracted" $ do
+          let attrs = scanBlockAttrs
+                "column=(type=long name=a ) column=(type=char(10) name=b )"
+          length (dtColumns (parseDwTable attrs)) @?= 2
+
+      , testCase "retrieve string preserved verbatim" $ do
+          let attrs = scanBlockAttrs "retrieve=\"SELECT 1 FROM dual\" "
+          dtRetrieve (parseDwTable attrs) @?= Just "SELECT 1 FROM dual"
+
+      , testCase "PBSELECT retrieve string preserved verbatim" $ do
+          let attrs = scanBlockAttrs "retrieve=\"PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") )\" "
+          dtRetrieve (parseDwTable attrs) @?= Just "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") )"
+
+      , testCase "update table name extracted" $ do
+          let attrs = scanBlockAttrs "update=\"misth_ypal\" updatewhere=0 "
+          dtUpdate      (parseDwTable attrs) @?= Just "misth_ypal"
+          dtUpdateWhere (parseDwTable attrs) @?= Just 0
+
+      , testCase "arguments=((...)) format parsed" $ do
+          let attrs = scanBlockAttrs
+                "arguments=((\"arg1\", string),(\"arg2\", long)) "
+          dtArguments (parseDwTable attrs) @?=
+            [DwArgument "arg1" "string", DwArgument "arg2" "long"]
+
+      , testCase "ARG() format parsed from retrieve when arguments= absent" $ do
+          let attrs = scanBlockAttrs
+                "retrieve=\"PBSELECT( ARG(NAME = ~\"myarg~\" TYPE = string) )\" "
+          dtArguments (parseDwTable attrs) @?= [DwArgument "myarg" "string"]
+
+      , testCase "both arg formats present — deduplicated" $ do
+          let attrs = scanBlockAttrs $ T.unwords
+                [ "retrieve=\"PBSELECT( ARG(NAME = ~\"a~\" TYPE = string) )\""
+                , "arguments=((\"a\", string))"
+                ]
+          dtArguments (parseDwTable attrs) @?= [DwArgument "a" "string"]
+
+      , testCase "column with dddw.name" $ do
+          let attrs = scanBlockAttrs
+                "column=(type=long name=x dddw.name=pick_foo ) "
+          let cols = dtColumns (parseDwTable attrs)
+          length cols @?= 1
+          dcDddwName (head' cols) @?= Just "pick_foo"
+
+      , testCase "column missing name skipped" $ do
+          let attrs = scanBlockAttrs
+                "column=(type=long ) column=(type=char(10) name=ok ) "
+          let cols = dtColumns (parseDwTable attrs)
+          length cols @?= 1
+          dcName (head' cols) @?= "ok"
+      ]
   ]
+
+-- | Total head for test use — list is always non-empty at call site.
+head' :: [a] -> a
+head' (x:_) = x
+head' []    = error "impossible: head' called on empty list in test"

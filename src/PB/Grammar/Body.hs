@@ -20,7 +20,7 @@ import PB.Lexing.Splitter (Statement (..))
 import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
 import PB.Pipeline.Preprocess (LogicalLine (..))
 
-import Text.Megaparsec (lookAhead, many, manyTill, optional, try, (<|>))
+import Text.Megaparsec (lookAhead, many, manyTill, optional, try)
 import qualified Data.Text as T
 
 -- ---------------------------------------------------------------------------

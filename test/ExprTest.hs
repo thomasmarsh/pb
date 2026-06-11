@@ -590,8 +590,9 @@ propParseExprTotal = property $ do
     ExNot          _ -> True
     ExHostVar      _ -> True
     ExBinOp      _ _ _ -> True
-    ExUnaryMinus _ -> True
-    ExDispatch   _ -> True
+    ExUnaryMinus   _ -> True
+    ExDispatch     _ -> True
+    ExMethodCall _ _ _ -> True
     ExRaw          _ -> True
 
 propExRawRoundtrip :: Property

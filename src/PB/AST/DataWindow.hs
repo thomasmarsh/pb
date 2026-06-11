@@ -21,9 +21,10 @@ data DataWindowFile = DataWindowFile
   , dwGroups   :: [DwGroup]
   , dwControls :: [DwControl]
   , dwMeta     :: Map Text (Map Text Text)
-  }
+  } deriving (Eq, Show)
 
 newtype DwObjectAttrs = DwObjectAttrs { doaAttrs :: Map Text Text }
+  deriving (Eq, Show)
 
 data DwTable = DwTable
   { dtColumns     :: [DwColumn]
@@ -31,7 +32,7 @@ data DwTable = DwTable
   , dtUpdate      :: Maybe Text
   , dtUpdateWhere :: Maybe Int
   , dtArguments   :: [DwArgument]
-  }
+  } deriving (Eq, Show)
 
 data DwColumn = DwColumn
   { dcName        :: Text
@@ -42,12 +43,12 @@ data DwColumn = DwColumn
   , dcUpdateWhere :: Bool
   , dcDddwName    :: Maybe Text
   , dcAttrs       :: Map Text Text
-  }
+  } deriving (Eq, Show)
 
 data DwArgument = DwArgument
   { daName :: Text
   , daType :: Text
-  }
+  } deriving (Eq, Show)
 
 data DwBandKind
   = BkHeader
@@ -67,7 +68,7 @@ data DwBand = DwBand
   , dbColor    :: Maybe Text
   , dbAutoSize :: Bool
   , dbAttrs    :: Map Text Text
-  }
+  } deriving (Eq, Show)
 
 data DwGroup = DwGroup
   { dgLevel         :: Int
@@ -76,7 +77,7 @@ data DwGroup = DwGroup
   , dgBy            :: [Text]
   , dgNewPage       :: Bool
   , dgAttrs         :: Map Text Text
-  }
+  } deriving (Eq, Show)
 
 data DwControl = DwControl
   { dwcType       :: Text
@@ -91,4 +92,4 @@ data DwControl = DwControl
   , dwcExpression :: Maybe Text
   , dwcTabSeq     :: Maybe Int
   , dwcAttrs      :: Map Text Text
-  }
+  } deriving (Eq, Show)

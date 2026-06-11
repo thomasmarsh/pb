@@ -12,7 +12,6 @@ import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import qualified Data.Text      as T
 
-import Data.Foldable (for_)
 
 tests :: TestTree
 tests = testGroup "Pipeline"

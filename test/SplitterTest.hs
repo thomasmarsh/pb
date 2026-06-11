@@ -6,7 +6,6 @@ import PB.Lexing.Splitter (Statement (..), splitStatements)
 import PB.Lexing.Token (Token (..), TokenKind (..))
 import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText)
 
-import Data.Foldable (for_)
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import Hedgehog (Property, assert, forAll, property, success, (===))

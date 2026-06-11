@@ -9,15 +9,12 @@ module CorpusDebtTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.Runner (runFile)
+import PB.Pipeline.Walk   (walkDwFiles, walkPsFiles)
 
 import Data.Aeson (Value (..))
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
-import Data.Foldable (toList)
 import qualified Data.Text as T
-
-import System.Directory (listDirectory, doesDirectoryExist)
-import System.FilePath  ((</>), takeExtension)
 
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase)
@@ -35,31 +32,9 @@ tagOf v = case lk "tag" v of { String t -> t; _ -> "" }
 -- ---------------------------------------------------------------------------
 -- Corpus loader
 
-collectFiles :: FilePath -> IO [FilePath]
-collectFiles dir = do
-    entries <- listDirectory dir
-    fmap concat $ mapM (\e -> do
-        let path = dir </> e
-        isDir <- doesDirectoryExist path
-        if isDir
-            then collectFiles path
-            else pure [path | takeExtension path `elem` [".srf",".srw",".sru",".srm",".sra",".srx"]]
-        ) entries
-
-collectDwFiles :: FilePath -> IO [FilePath]
-collectDwFiles dir = do
-    entries <- listDirectory dir
-    fmap concat $ mapM (\e -> do
-        let path = dir </> e
-        isDir <- doesDirectoryExist path
-        if isDir
-            then collectDwFiles path
-            else pure [path | takeExtension path == ".srd"]
-        ) entries
-
 loadCorpus :: IO [Value]
 loadCorpus = do
-    paths <- fmap concat $ mapM collectFiles
+    paths <- fmap concat $ mapM walkPsFiles
         [ "example/PowerBuilder-Example/export"
         , "example/openpay"
         ]
@@ -67,7 +42,7 @@ loadCorpus = do
         src <- readFile p
         pure $ case runFile p src of { Left _ -> Nothing; Right v -> Just v }
         ) paths
-    pure (concatMap toList results)
+    pure (concatMap maybeToList results)
 
 -- ---------------------------------------------------------------------------
 -- Debt counters
@@ -129,7 +104,7 @@ tests = testGroup "Corpus.Debt"
         let total = sum (map (countWhere isBsRawOther) vals)
         assertBool ("BsRaw 'other' total = " <> show total <> ", expected \8804 18") (total <= 18)
     , testCase "DW files not stub" $ do
-        paths <- fmap concat $ mapM collectDwFiles
+        paths <- fmap concat $ mapM walkDwFiles
             [ "example/PowerBuilder-Example/export"
             , "example/openpay" ]
         results <- mapM (\p -> do

@@ -5,7 +5,6 @@ import PB.Lexing.Lexer (LexError (..), LexLine (..), tokenize)
 import PB.Lexing.Token (SourceSpan (..), Token (..), TokenKind (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
 
-import Data.Foldable (for_)
 import qualified Data.Text as T
 
 import Hedgehog (Property, assert, forAll, property, success)

@@ -1,13 +1,16 @@
 module PB.Grammar.DataWindow
   ( parseDataWindow
   , parseBandKind
+  , parseDwTable
+  , parseColumn
   ) where
 
 import PB.Prelude
 import PB.AST.DataWindow
-import PB.Lexing.DataWindow (DwBlock (..), scanBlocks)
+import PB.Lexing.DataWindow (DwBlock (..), DwAttr (..), scanBlocks, scanBlockAttrs, extractParenBlock)
 
-import Control.Monad (guard)
+import Data.List     (nubBy)
+import Text.Read     (readMaybe)
 import qualified Data.Map.Strict  as Map
 import qualified Data.Text        as T
 import qualified Data.Text.Read   as TR
@@ -39,7 +42,7 @@ classifyBlock dw (DwBlock kw content) = case kw of
     "datawindow" ->
         dw { dwObject = parseDwObjectAttrs content }
     "table" ->
-        dw { dwTable = Just (parseDwTableStub content) }
+        dw { dwTable = Just (parseDwTable []) }
     "group" ->
         dw { dwGroups = dwGroups dw ++ [parseDwGroupStub content] }
     _ | Just bk <- parseBandKind kw ->
@@ -88,13 +91,158 @@ readAllDigits t = case TR.decimal t of
     _             -> Nothing
 
 -- ---------------------------------------------------------------------------
--- Stub block parsers (populated in DW-A2 through DW-A5)
+-- Table block
+
+parseDwTable :: [DwAttr] -> DwTable
+parseDwTable attrs = DwTable
+    { dtColumns     = extractColumns attrs
+    , dtRetrieve    = lookupQuoted "retrieve" attrs
+    , dtUpdate      = lookupQuoted "update" attrs
+                      <|> lookupUnquoted "update" attrs
+    , dtUpdateWhere = readMaybe . T.unpack =<< lookupUnquoted "updatewhere" attrs
+    , dtArguments   = dedupeArgs (extractArguments attrs ++ argFromRetrieve)
+    }
+  where
+    argFromRetrieve = maybe [] extractArgEntries (lookupQuoted "retrieve" attrs)
+
+-- ---------------------------------------------------------------------------
+-- Attr lookup helpers
+
+lookupUnquoted :: Text -> [DwAttr] -> Maybe Text
+lookupUnquoted key attrs =
+    listToMaybe [v | DwAttrUnquoted k v <- attrs, T.toLower k == T.toLower key]
+
+lookupQuoted :: Text -> [DwAttr] -> Maybe Text
+lookupQuoted key attrs =
+    listToMaybe [v | DwAttrQuoted k v <- attrs, T.toLower k == T.toLower key]
+
+subBlockContents :: Text -> [DwAttr] -> [Text]
+subBlockContents key attrs =
+    [c | DwAttrSubBlock k c <- attrs, T.toLower k == T.toLower key]
+
+attrKV :: DwAttr -> (Text, Text)
+attrKV (DwAttrUnquoted k v) = (k, v)
+attrKV (DwAttrQuoted   k v) = (k, v)
+attrKV (DwAttrSubBlock k _) = (k, "")
+
+parseBool :: Maybe Text -> Bool -> Bool
+parseBool (Just "yes") _ = True
+parseBool (Just "no")  _ = False
+parseBool _            d = d
+
+-- ---------------------------------------------------------------------------
+-- Column extraction
+
+extractColumns :: [DwAttr] -> [DwColumn]
+extractColumns attrs =
+    mapMaybe (parseColumn . scanBlockAttrs) (subBlockContents "column" attrs)
+
+parseColumn :: [DwAttr] -> Maybe DwColumn
+parseColumn attrs = do
+    name     <- lookupUnquoted "name" attrs
+    typ      <- lookupUnquoted "type" attrs
+    let dbName   = lookupQuoted "dbname" attrs
+        upd      = parseBool (lookupUnquoted "update"            attrs) False
+        key      = parseBool (lookupUnquoted "key"               attrs) False
+        updWhere = parseBool (lookupUnquoted "updatewhereclause" attrs) False
+        dddwName = lookupUnquoted "dddw.name" attrs
+                   <|> lookupQuoted "dddw.name" attrs
+        knownKeys = ["name","type","dbname","update","key","updatewhereclause","dddw.name"]
+        extras   = Map.fromList
+                     [ (k, v)
+                     | attr  <- attrs
+                     , let (k, v) = attrKV attr
+                     , T.toLower k `notElem` knownKeys
+                     ]
+    return DwColumn
+        { dcName        = name
+        , dcType        = typ
+        , dcDbName      = dbName
+        , dcUpdate      = upd
+        , dcKey         = key
+        , dcUpdateWhere = updWhere
+        , dcDddwName    = dddwName
+        , dcAttrs       = extras
+        }
+
+-- ---------------------------------------------------------------------------
+-- Argument extraction
+
+extractArguments :: [DwAttr] -> [DwArgument]
+extractArguments attrs =
+    case subBlockContents "arguments" attrs of
+        []        -> []
+        (blk : _) -> parseArgPairs blk 0
+
+parseArgPairs :: Text -> Int -> [DwArgument]
+parseArgPairs t off =
+    let off' = off + T.length (T.takeWhile (\c -> c == ',' || c == ' ' || c == '\t' || c == '\n') (T.drop off t))
+    in case T.drop off' t of
+        rest | T.null rest    -> []
+             | T.head rest /= '(' -> []
+             | otherwise ->
+                 case extractParenBlock t off' of
+                     Left  _           -> []
+                     Right (pair, end) ->
+                         case parseArgPair pair of
+                             Just arg -> arg : parseArgPairs t end
+                             Nothing  -> parseArgPairs t end
+
+parseArgPair :: Text -> Maybe DwArgument
+parseArgPair p = do
+    let p' = T.dropWhile (\c -> c == ' ' || c == '\t') p
+    guard (not (T.null p') && T.head p' == '"')
+    let nameRaw = T.takeWhile (/= '"') (T.tail p')
+        rest    = T.drop (T.length nameRaw + 2) p'  -- past closing "
+        typ     = T.strip (T.dropWhile (\c -> c == ',' || c == ' ' || c == '\t') rest)
+    guard (not (T.null nameRaw) && not (T.null typ))
+    return (DwArgument nameRaw typ)
+
+-- | Extract ARG(NAME=~"name~" TYPE=type) entries from a verbatim retrieve string.
+-- ARG inner content never contains nested parens, so we use takeWhile (/= ')')
+-- rather than the pBlockContent-based extractParenBlock (which treats bare '"'
+-- as a string delimiter and fails on tilde-escaped pairs like ~"name~").
+-- Argument count is always tiny so O(n) linear scan is appropriate.
+extractArgEntries :: Text -> [DwArgument]
+extractArgEntries retrieve = go 0
+  where
+    go off =
+        case T.breakOn "ARG(" (T.drop off retrieve) of
+            (_, "")    -> []
+            (before, _) ->
+                let innerStart = off + T.length before + 4  -- past "ARG("
+                    inner      = T.takeWhile (/= ')') (T.drop innerStart retrieve)
+                    endOff     = innerStart + T.length inner + 1
+                in case parseArgEntry inner of
+                    Just arg -> arg : go endOff
+                    Nothing  -> go endOff
+
+parseArgEntry :: Text -> Maybe DwArgument
+parseArgEntry inner = do
+    -- inner: NAME = ~"argname~" TYPE = string
+    let (_, tl) = T.breakOn "~\"" inner
+    guard (not (T.null tl))
+    let (name, tl2) = T.breakOn "~\"" (T.drop 2 tl)
+    guard (not (T.null name) && not (T.null tl2))
+    let afterClose = T.drop 2 tl2
+        (_, eqPart) = T.breakOn "=" afterClose
+    guard (not (T.null eqPart))
+    let typeVal = T.strip
+                    (T.takeWhile (\c -> c /= ' ' && c /= '\t' && c /= '\n' && c /= '\r' && c /= ')')
+                       (T.dropWhile (\c -> c == '=' || c == ' ' || c == '\t') eqPart))
+    guard (not (T.null typeVal))
+    return (DwArgument name typeVal)
+
+-- Tiny lists (always < 10 entries) so O(n²) nubBy is fine here.
+dedupeArgs :: [DwArgument] -> [DwArgument]
+dedupeArgs = nubBy (\a b -> T.toLower (daName a) == T.toLower (daName b)
+                          && T.toLower (daType a) == T.toLower (daType b))
+
+-- ---------------------------------------------------------------------------
+-- Stub block parsers (populated in DW-A3 through DW-A5)
 
 parseDwObjectAttrs :: Text -> DwObjectAttrs
 parseDwObjectAttrs _ = DwObjectAttrs Map.empty
-
-parseDwTableStub :: Text -> DwTable
-parseDwTableStub _ = DwTable [] Nothing Nothing Nothing []
 
 parseDwBandStub :: DwBandKind -> Text -> DwBand
 parseDwBandStub bk _ = DwBand bk Nothing Nothing False Map.empty

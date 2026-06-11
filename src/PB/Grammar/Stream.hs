@@ -14,7 +14,6 @@ import qualified PB.Lexing.Token as LT
 import PB.Lexing.Token        (TokenKind (..), tkKind, tkText)
 import PB.Pipeline.Preprocess (LogicalLine (..), llText, llStartLine)
 
-import Data.List.NonEmpty (toList)
 import qualified Data.Set  as Set
 import qualified Data.Text as T
 

@@ -31,7 +31,7 @@ import PB.AST.SourceFile
 import PB.Lexing.Splitter (Statement (..))
 import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
 
-import Text.Megaparsec (many, manyTill, try, eof, parse, (<|>))
+import Text.Megaparsec (many, manyTill, try, eof, parse)
 import Text.Megaparsec.Error (errorBundlePretty)
 import qualified Data.Text as T
 
