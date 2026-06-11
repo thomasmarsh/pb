@@ -220,6 +220,19 @@ lookupBinOp t = case (tkKind t, T.toLower (tkText t)) of
   (TkArithOp,   "^"  ) -> Just (BopPow, 7, True)
   _                    -> Nothing
 
+-- | After parsing a call or paren-group, greedily consume .name(args) chains.
+-- Returns the original expression unchanged if no chain is present.
+chainCalls :: Expr -> [Token] -> (Expr, [Token])
+chainCalls e (dot : name : lp : rest)
+  | tkKind dot  == TkDot
+  , isSegmentName name
+  , tkKind lp   == TkLParen
+  = case findMatchingClose rest of
+      Nothing             -> (e, dot : name : lp : rest)
+      Just (inner, after) ->
+        chainCalls (ExMethodCall e (tkText name) (splitArgs inner)) after
+chainCalls e ts = (e, ts)
+
 -- | Parse one atom: a leaf expression that can appear as an operand.
 -- Returns (parsed-expr, remaining-tokens), or Nothing if no atom starts here.
 parseAtom :: [Token] -> Maybe (Expr, [Token])
@@ -227,7 +240,8 @@ parseAtom [] = Nothing
 parseAtom (t:rest)
   | tkKind t == TkLParen = do
       (inner, after) <- findMatchingClose rest
-      pure (parseExpr inner, after)
+      let (e', r') = chainCalls (parseExpr inner) after
+      pure (e', r')
 
   | tkKind t == TkArithOp && tkText t == "-" = do
       (e, r) <- parseAtom rest
@@ -263,7 +277,8 @@ parseAtom (t:rest)
       case remaining of
         (lp:r) | tkKind lp == TkLParen -> do
           (inner, after) <- findMatchingClose r
-          pure (ExCall (CallExpr (Lvalue segs) (splitArgs inner)), after)
+          let (e', r') = chainCalls (ExCall (CallExpr (Lvalue segs) (splitArgs inner))) after
+          pure (e', r')
         _ -> pure (ExLvalue (Lvalue segs), remaining)
 
   | otherwise
@@ -373,6 +388,11 @@ classifyBodyStmt s = case stmtTokens s of
         in case skipped of
              (typeT : nameT : _)
                | isTypeName typeT && tkKind nameT == TkIdent -> BsLocalVar ts
+             (typeT : lb : _ : rb : nameT : _)
+               | isTypeName typeT
+               , tkKind lb   == TkLBrace
+               , tkKind rb   == TkRBrace
+               , tkKind nameT == TkIdent -> BsLocalVar ts
              _ -> classifyByOp s ts
 
 -- | Classify a list of raw statements into typed body statements.

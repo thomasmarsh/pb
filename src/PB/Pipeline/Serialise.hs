@@ -252,6 +252,12 @@ instance ToJSON Expr where
     , "name"    .= dspName de
     , "args"    .= map (map tkText) (dspArgs de)
     ]
+  toJSON (ExMethodCall recv method args) = object
+    [ "tag"      .= ("method_call" :: Text)
+    , "receiver" .= recv
+    , "method"   .= method
+    , "args"     .= map (map tkText) args
+    ]
   toJSON (ExRaw       ts) = object ["tag" .= ("raw"          :: Text), "tokens" .= map tkText ts]
 
 instance ToJSON Literal where

@@ -270,6 +270,44 @@ tests = testGroup "Expr"
             @?= ExRaw [ mkTok TkColon ":", mkTok TkComma "," ]
       ]
 
+    , testGroup "ExMethodCall"
+      [ testCase "f().method() → ExMethodCall with no args" $
+          let ts = [ mkTok TkIdent "getparent", mkTok TkLParen "(", mkTok TkRParen ")"
+                   , mkTok TkDot ".", mkTok TkIdent "TriggerEvent"
+                   , mkTok TkLParen "(", mkTok TkStringDouble "\"ie_checkbuttons\"", mkTok TkRParen ")" ]
+          in parseExpr ts @?=
+               ExMethodCall
+                 (ExCall (CallExpr (Lvalue [LvSegment "getparent" Nothing]) []))
+                 "TriggerEvent"
+                 [[mkTok TkStringDouble "\"ie_checkbuttons\""]]
+
+      , testCase "a.b().method(x) — dotted lvalue receiver" $
+          let ts = [ mkTok TkIdent "ParentWindow"
+                   , mkTok TkDot ".", mkTok TkIdent "GetActiveSheet"
+                   , mkTok TkLParen "(", mkTok TkRParen ")"
+                   , mkTok TkDot ".", mkTok TkIdent "TriggerEvent"
+                   , mkTok TkLParen "(", mkTok TkStringDouble "\"graph_color\"", mkTok TkRParen ")" ]
+          in parseExpr ts @?=
+               ExMethodCall
+                 (ExCall (CallExpr
+                   (Lvalue [LvSegment "ParentWindow" Nothing, LvSegment "GetActiveSheet" Nothing]) []))
+                 "TriggerEvent"
+                 [[mkTok TkStringDouble "\"graph_color\""]]
+
+      , testCase "f().a().b() — chain of two → nested ExMethodCall" $
+          let ts = [ mkTok TkIdent "f", mkTok TkLParen "(", mkTok TkRParen ")"
+                   , mkTok TkDot ".", mkTok TkIdent "a"
+                   , mkTok TkLParen "(", mkTok TkRParen ")"
+                   , mkTok TkDot ".", mkTok TkIdent "b"
+                   , mkTok TkLParen "(", mkTok TkRParen ")" ]
+          in parseExpr ts @?=
+               ExMethodCall
+                 (ExMethodCall
+                   (ExCall (CallExpr (Lvalue [LvSegment "f" Nothing]) []))
+                   "a" [])
+                 "b" []
+      ]
+
     , testGroup "ExRaw fallback"
       [ testCase "empty token list → ExRaw []" $
           parseExpr [] @?= ExRaw []
@@ -281,10 +319,9 @@ tests = testGroup "Expr"
                   BopAdd
                   (ExLit (LitInt "1"))
 
-      , testCase "chained call result().method() → ExRaw (tokens after first close)" $
-          let ts = [ mkTok TkIdent "parentwindow", mkTok TkLParen "(", mkTok TkRParen ")"
-                   , mkTok TkDot ".", mkTok TkIdent "pointerx"
-                   , mkTok TkLParen "(", mkTok TkRParen ")" ]
+      , testCase "unmatched dot-method suffix without args → ExRaw" $
+          let ts = [ mkTok TkIdent "f", mkTok TkLParen "(", mkTok TkRParen ")"
+                   , mkTok TkDot "." ]
           in parseExpr ts @?= ExRaw ts
 
       , testCase "unmatched open paren → ExRaw" $

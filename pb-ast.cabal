@@ -67,6 +67,7 @@ test-suite pb-ast-test
   other-modules:
       BodyParserTest
     , BodyStmtTest
+    , CorpusDebtTest
     , CorpusInvariantTest
     , CorpusTest
     , ExprTest

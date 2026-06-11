@@ -56,6 +56,20 @@ tests = testGroup "Body"
                          , mkTok TkAssignOp "=",   mkTok TkIntLiteral "0"
                          ]
 
+    , testCase "local var: dec{0} precision specifier → BsLocalVar" $
+        classifyBodyStmt
+          (mkStmt [(TkDatatype,"dec"),(TkLBrace,"{"),(TkIntLiteral,"0"),(TkRBrace,"}"),(TkIdent,"lc_0")])
+          @?= BsLocalVar [ mkTok TkDatatype "dec", mkTok TkLBrace "{"
+                         , mkTok TkIntLiteral "0",  mkTok TkRBrace "}"
+                         , mkTok TkIdent "lc_0" ]
+
+    , testCase "local var: dec{10} two-digit precision → BsLocalVar" $
+        classifyBodyStmt
+          (mkStmt [(TkDatatype,"dec"),(TkLBrace,"{"),(TkIntLiteral,"10"),(TkRBrace,"}"),(TkIdent,"lc_10")])
+          @?= BsLocalVar [ mkTok TkDatatype "dec", mkTok TkLBrace "{"
+                         , mkTok TkIntLiteral "10", mkTok TkRBrace "}"
+                         , mkTok TkIdent "lc_10" ]
+
     , testCase "assign: simple ident = int literal" $
         classifyBodyStmt (mkStmt [(TkIdent, "ll_row"), (TkAssignOp, "="), (TkIntLiteral, "0")])
           @?= BsAssign (Lvalue [LvSegment "ll_row" Nothing]) (ExLit (LitInt "0"))

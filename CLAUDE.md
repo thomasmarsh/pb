@@ -373,7 +373,9 @@ data Expr
   | ExHostVar    Lvalue           -- SQL host variable (:varname or :struct.field)
   | ExBinOp      Expr BinOp Expr  -- left op right (precedence-climbing parser)
   | ExUnaryMinus Expr             -- unary - expr
-  | ExRaw        [Token]          -- dynamic dispatch, SQL fragments, or unrecognized
+  | ExDispatch   DispatchExpr     -- POST/TRIGGER/DYNAMIC/EVENT dispatch
+  | ExMethodCall Expr Text [[Token]] -- receiver.method(raw-arg-lists); chained call
+  | ExRaw        [Token]          -- SQL fragments or unrecognized
 ```
 
 ### `PB.AST.BodyStmt`
@@ -428,7 +430,7 @@ classifyBodyStmt :: Statement -> BodyStmt   -- leaf classifier; exit/continue/re
 parseBodyStmts   :: [Statement] -> [BodyStmt]  -- flat map; use pBodyStmt for recursive parsing
 parseLvalue      :: [Token] -> Maybe Lvalue
 parseExpr        :: [Token] -> Expr   -- total; ExRaw fallback; TkColon guard for SQL host vars
--- Internal helpers (not exported): lookupBinOp, parseAtom, climbPrec
+-- Internal helpers (not exported): lookupBinOp, parseAtom, climbPrec, chainCalls
 pBodyStmt        :: FileParser BodyStmt  -- recursive; dispatches to pIfStmt/pForStmt/pDoStmt/pChooseStmt
 ```
 

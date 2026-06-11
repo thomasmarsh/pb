@@ -94,5 +94,6 @@ data Expr
   | ExBinOp      Expr BinOp Expr  -- left op right
   | ExUnaryMinus Expr          -- unary - expr
   | ExDispatch   DispatchExpr  -- POST/TRIGGER/DYNAMIC/EVENT dispatch
+  | ExMethodCall Expr Text [[Token]] -- expr.method(raw-arg-lists)
   | ExRaw        [Token]       -- unrecognized or dynamic-dispatch
   deriving (Eq, Show)

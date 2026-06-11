@@ -3,6 +3,7 @@ module Main (main) where
 import qualified BodyParserTest
 import qualified BodyStmtTest
 import qualified ExprTest
+import qualified CorpusDebtTest
 import qualified CorpusInvariantTest
 import qualified CorpusTest
 import qualified FileTest
@@ -26,6 +27,7 @@ tests = testGroup "pb-ast"
   [ BodyParserTest.tests
   , BodyStmtTest.tests
   , ExprTest.tests
+  , CorpusDebtTest.tests
   , CorpusInvariantTest.tests
   , CorpusTest.tests
   , FileTest.tests
