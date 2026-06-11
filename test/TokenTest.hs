@@ -213,13 +213,13 @@ tests = testGroup "Lexing"
             r <- tokenKinds "."
             r @?= [TkDot]
 
-        , testCase "int with explicit plus: +42" $ do
+        , testCase "int with explicit plus: +42 -> sign + int" $ do
             r <- tokenKindTexts "+42"
-            r @?= [(TkIntLiteral, "+42")]
+            r @?= [(TkArithOp, "+"), (TkIntLiteral, "42")]
 
-        , testCase "int with explicit minus: -42" $ do
+        , testCase "int with explicit minus: -42 -> sign + int" $ do
             r <- tokenKindTexts "-42"
-            r @?= [(TkIntLiteral, "-42")]
+            r @?= [(TkArithOp, "-"), (TkIntLiteral, "42")]
 
         , testCase "signed float with uppercase exponent: +1.5E-3" $ do
             r <- tokenKindTexts "+1.5E-3"

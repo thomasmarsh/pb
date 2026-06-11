@@ -194,10 +194,9 @@ pExp = do
 
 pIntLiteral :: (TokenKind -> Text -> Token) -> Lexer Token
 pIntLiteral mk = do
-  sign <- option "" (T.singleton <$> (char '+' <|> char '-'))
-  ds   <- T.pack <$> some digitChar
+  ds <- T.pack <$> some digitChar
   notFollowedBy (satisfy isIdentCont)
-  return (mk TkIntLiteral (sign <> ds))
+  return (mk TkIntLiteral ds)
 
 -- ---------------------------------------------------------------------------
 -- Identifiers, keywords, enum literals, labels  (§2.1, §2.2, §2.7)
