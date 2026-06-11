@@ -4,6 +4,9 @@ module PB.AST.DataWindow
   , DwTable (..)
   , DwColumn (..)
   , DwArgument (..)
+  , DwWhereClause (..)
+  , DwRetrieve (..)
+  , DwRetrieveOrRaw (..)
   , DwBand (..)
   , DwBandKind (..)
   , DwGroup (..)
@@ -28,11 +31,31 @@ newtype DwObjectAttrs = DwObjectAttrs { doaAttrs :: Map Text Text }
 
 data DwTable = DwTable
   { dtColumns     :: [DwColumn]
-  , dtRetrieve    :: Maybe Text
+  , dtRetrieve    :: Maybe DwRetrieveOrRaw
   , dtUpdate      :: Maybe Text
   , dtUpdateWhere :: Maybe Int
   , dtArguments   :: [DwArgument]
   } deriving (Eq, Show)
+
+data DwWhereClause = DwWhereClause
+  { dwcExp1  :: Text
+  , dwcOp    :: Text
+  , dwcExp2  :: Text
+  , dwcLogic :: Maybe Text
+  } deriving (Eq, Show)
+
+data DwRetrieve = DwRetrieve
+  { drVersion   :: Int
+  , drTables    :: [Text]
+  , drColumns   :: [Text]
+  , drArguments :: [DwArgument]
+  , drWhere     :: [DwWhereClause]
+  } deriving (Eq, Show)
+
+data DwRetrieveOrRaw
+  = DwRetrieveOk  DwRetrieve
+  | DwRetrieveRaw Text
+  deriving (Eq, Show)
 
 data DwColumn = DwColumn
   { dcName        :: Text

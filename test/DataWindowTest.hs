@@ -3,8 +3,9 @@ module DataWindowTest (tests) where
 import PB.Prelude
 import PB.AST.DataWindow
 import PB.Lexing.DataWindow  (DwAttr (..), extractParenBlock, scanBlockAttrs)
-import PB.Grammar.DataWindow (parseDataWindow, parseBandKind, parseDwTable, parseColumn,
-                               parseDwBand, parseDwGroup, parseGroupBy, parseDwObjectAttrs)
+import PB.Grammar.DataWindow (parseDataWindow, parseBandKind, parseDwTable, parsePbSelect,
+                               parseColumn, parseDwBand, parseDwGroup, parseGroupBy,
+                               parseDwObjectAttrs)
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Text       as T
@@ -463,13 +464,14 @@ tests = testGroup "DataWindow"
                 "column=(type=long name=a ) column=(type=char(10) name=b )"
           length (dtColumns (parseDwTable attrs)) @?= 2
 
-      , testCase "retrieve string preserved verbatim" $ do
+      , testCase "raw SQL retrieve stored as DwRetrieveRaw" $ do
           let attrs = scanBlockAttrs "retrieve=\"SELECT 1 FROM dual\" "
-          dtRetrieve (parseDwTable attrs) @?= Just "SELECT 1 FROM dual"
+          dtRetrieve (parseDwTable attrs) @?= Just (DwRetrieveRaw "SELECT 1 FROM dual")
 
-      , testCase "PBSELECT retrieve string preserved verbatim" $ do
+      , testCase "PBSELECT retrieve parsed into DwRetrieveOk" $ do
           let attrs = scanBlockAttrs "retrieve=\"PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") )\" "
-          dtRetrieve (parseDwTable attrs) @?= Just "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") )"
+          dtRetrieve (parseDwTable attrs) @?=
+              Just (DwRetrieveOk (DwRetrieve 400 ["t"] [] [] []))
 
       , testCase "update table name extracted" $ do
           let attrs = scanBlockAttrs "update=\"misth_ypal\" updatewhere=0 "
@@ -507,6 +509,67 @@ tests = testGroup "DataWindow"
           let cols = dtColumns (parseDwTable attrs)
           length cols @?= 1
           dcName (head' cols) @?= "ok"
+      ]
+
+  , testGroup "PBSELECT"
+      [ testCase "single table, no where" $
+          parsePbSelect "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") )"
+          @?= DwRetrieveOk (DwRetrieve 400 ["t"] [] [] [])
+
+      , testCase "single table with column" $
+          parsePbSelect
+            "PBSELECT( VERSION(400) TABLE(NAME=~\"emp~\") COLUMN(NAME=~\"emp.id~\") )"
+          @?= DwRetrieveOk (DwRetrieve 400 ["emp"] ["emp.id"] [] [])
+
+      , testCase "single table, one where clause" $
+          parsePbSelect
+            ( "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") COLUMN(NAME=~\"t.x~\")"
+           <> "WHERE( EXP1 =~\"t.x~\" OP =~\"=~\" EXP2 =~\":arg_x~\" ) )" )
+          @?= DwRetrieveOk (DwRetrieve 400 ["t"] ["t.x"] []
+                [DwWhereClause "t.x" "=" ":arg_x" Nothing])
+
+      , testCase "multi-table, multiple where clauses with LOGIC" $
+          parsePbSelect
+            ( "PBSELECT( VERSION(400) TABLE(NAME=~\"a~\") TABLE(NAME=~\"b~\")"
+           <> " COLUMN(NAME=~\"a.x~\")"
+           <> " WHERE( EXP1 =~\"a.x~\" OP =~\"=~\" EXP2 =~\":p~\" LOGIC =~\"and~\" )"
+           <> " WHERE( EXP1 =~\"b.y~\" OP =~\"=~\" EXP2 =~\":q~\" ) )" )
+          @?= DwRetrieveOk (DwRetrieve 400 ["a","b"] ["a.x"] []
+                [ DwWhereClause "a.x" "=" ":p" (Just "and")
+                , DwWhereClause "b.y" "=" ":q" Nothing ])
+
+      , testCase "host var in EXP2 retains colon prefix" $ do
+          let result = parsePbSelect
+                "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") \
+                \WHERE( EXP1 =~\"t.id~\" OP =~\"=~\" EXP2 =~\":my_arg~\" ) )"
+          case result of
+            DwRetrieveRaw _ -> assertFailure "expected DwRetrieveOk"
+            DwRetrieveOk dr -> dwcExp2 (head' (drWhere dr)) @?= ":my_arg"
+
+      , testCase "operator with multi-char value" $
+          parsePbSelect
+            "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") \
+            \WHERE( EXP1 =~\"t.x~\" OP =~\"is not~\" EXP2 =~\"null~\" ) )"
+          @?= DwRetrieveOk (DwRetrieve 400 ["t"] [] []
+                [DwWhereClause "t.x" "is not" "null" Nothing])
+
+      , testCase "ARG outside outer paren parsed" $
+          parsePbSelect
+            ( "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\")"
+           <> " WHERE( EXP1 =~\"t.id~\" OP =~\"=~\" EXP2 =~\":aid~\" ) )"
+           <> " ARG(NAME = ~\"aid~\" TYPE = string)" )
+          @?= DwRetrieveOk (DwRetrieve 400 ["t"] []
+                [DwArgument "aid" "string"]
+                [DwWhereClause "t.id" "=" ":aid" Nothing])
+
+      , testCase "ARG date type" $
+          parsePbSelect
+            "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") ) ARG(NAME = ~\"dt~\" TYPE = date)"
+          @?= DwRetrieveOk (DwRetrieve 400 ["t"] [] [DwArgument "dt" "date"] [])
+
+      , testCase "fallback raw on non-PBSELECT input" $
+          parsePbSelect "SELECT x FROM t"
+          @?= DwRetrieveRaw "SELECT x FROM t"
       ]
 
   , testGroup "DwBand"

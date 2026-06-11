@@ -659,16 +659,31 @@ retrieve="PBSELECT(
   VERSION(400)
   TABLE(NAME=~"tablename~")
   COLUMN(NAME=~"table.col~")
+  COMPUTE(NAME=~"expr~")
   JOIN(LEFT=~"t1.col~" OP=~"=~" RIGHT=~"t2.col~" [OUTER1=~"t1.col~"])
-  WHERE(EXP1=~"(col~" OP=~"=~" EXP2=~":arg )~")
+  WHERE(EXP1=~"col~" OP=~"=~" EXP2=~":arg~" [LOGIC=~"and~"])
+  GROUP(NAME=~"table.col~")
 )
+ORDER(NAME=~"table.col~" ASC=yes)
 ARG(NAME=~"argname~" TYPE=string)"
 ```
 
-`~"` inside the quoted retrieve string escapes a literal `"`. `ARG(...)` within the
-retrieve string is part of the PBSELECT DSL, distinct from the top-level
-`arguments=(...)` attribute (both may be present simultaneously — they carry the same
-information in different formats for backwards compatibility).
+String delimiters in PBSELECT values are `~"..."~"` (tilde-quoted). Inside a
+tilde-string, `~~` is a literal `~` and `~~"` (three chars) is a literal `"` — this
+allows SQL double-quoted identifiers to be stored (e.g. `~~~"tablename~~~"` encodes
+`"tablename"` in the logical value). The sequence `~~~"` must NOT be treated as
+`~~` (escaped tilde) + `~"` (closing delimiter): the chunk parser must consume
+`~~"` atomically before attempting to match `~"` as the string close.
+
+Some corpus files use single-quoted values `'...'` instead of tilde-quoted values.
+`VERSION(...)` is optional (absent in ~15% of corpus files).
+`COMPUTE`, `JOIN`, `GROUP`, and unknown block names may appear inside the outer `()`
+and should be skipped by a generic named-block skipper.
+`ORDER(...)` and `ARG(...)` appear after the outer `)` (ARG before ORDER in some files).
+
+`ARG(...)` outside the retrieve string matches the top-level `arguments=(...)`.
+Both carry the same argument information in different formats for
+backwards compatibility (both may be present simultaneously).
 
 ### 7.4 Band Blocks
 

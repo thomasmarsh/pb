@@ -305,6 +305,27 @@ instance ToJSON DataWindowFile where
 instance ToJSON DwObjectAttrs where
   toJSON (DwObjectAttrs attrs) = object ["attrs" .= attrs]
 
+instance ToJSON DwWhereClause where
+  toJSON wc = object
+    [ "exp1"  .= dwcExp1  wc
+    , "op"    .= dwcOp    wc
+    , "exp2"  .= dwcExp2  wc
+    , "logic" .= dwcLogic wc
+    ]
+
+instance ToJSON DwRetrieve where
+  toJSON dr = object
+    [ "version"   .= drVersion   dr
+    , "tables"    .= drTables    dr
+    , "columns"   .= drColumns   dr
+    , "arguments" .= drArguments dr
+    , "where"     .= drWhere     dr
+    ]
+
+instance ToJSON DwRetrieveOrRaw where
+  toJSON (DwRetrieveOk  dr) = toJSON dr
+  toJSON (DwRetrieveRaw t)  = object ["raw" .= t]
+
 instance ToJSON DwTable where
   toJSON dt = object
     [ "columns"      .= dtColumns     dt

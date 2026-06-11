@@ -2,6 +2,7 @@ module PB.Lexing.Escape
   ( pbEscape
   , pbStringChunk
   , pbDwStringChunk
+  , pbSelectTildeStr
   ) where
 
 import PB.Prelude
@@ -30,3 +31,17 @@ pbStringChunk delim =
 pbDwStringChunk :: Char -> Parsec Void Text Text
 pbDwStringChunk delim =
   pbEscape <|> fmap T.singleton (satisfy (/= delim))
+
+-- | Parse a PBSELECT tilde-quoted string ~"..."~" and return the raw content.
+-- Handles ~~" (3-char unit for escaped ~") and ~~ (2-char unit for escaped ~)
+-- so that embedded ~" sequences never prematurely close the string.
+pbSelectTildeStr :: Parsec Void Text Text
+pbSelectTildeStr = do
+    _ <- string "~\""
+    chunks <- manyTill pChunk (string "~\"")
+    return (T.concat chunks)
+  where
+    pChunk =
+        try (string "~~\"") <|>
+        try (string "~~")   <|>
+        fmap T.singleton anySingle

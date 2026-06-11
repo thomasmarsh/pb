@@ -2,6 +2,7 @@ module PB.Grammar.DataWindow
   ( parseDataWindow
   , parseBandKind
   , parseDwTable
+  , parsePbSelect
   , parseColumn
   , parseDwBand
   , parseDwGroup
@@ -11,13 +12,18 @@ module PB.Grammar.DataWindow
 
 import PB.Prelude
 import PB.AST.DataWindow
-import PB.Lexing.DataWindow (DwBlock (..), DwAttr (..), scanBlocks, scanBlockAttrs, extractParenBlock)
+import PB.Lexing.DataWindow  (DwBlock (..), DwAttr (..), scanBlocks, scanBlockAttrs, extractParenBlock)
+import PB.Lexing.Escape      (pbSelectTildeStr)
 
 import Data.List     (nubBy)
 import Text.Read     (readMaybe)
 import qualified Data.Map.Strict  as Map
 import qualified Data.Text        as T
 import qualified Data.Text.Read   as TR
+
+import Text.Megaparsec
+import Text.Megaparsec.Char         (char, string')
+import qualified Text.Megaparsec.Char.Lexer as L
 
 -- ---------------------------------------------------------------------------
 -- Entry point
@@ -101,14 +107,15 @@ readAllDigits t = case TR.decimal t of
 parseDwTable :: [DwAttr] -> DwTable
 parseDwTable attrs = DwTable
     { dtColumns     = extractColumns attrs
-    , dtRetrieve    = lookupQuoted "retrieve" attrs
+    , dtRetrieve    = fmap parsePbSelect rawRetrieve
     , dtUpdate      = lookupQuoted "update" attrs
                       <|> lookupUnquoted "update" attrs
     , dtUpdateWhere = readMaybe . T.unpack =<< lookupUnquoted "updatewhere" attrs
     , dtArguments   = dedupeArgs (extractArguments attrs ++ argFromRetrieve)
     }
   where
-    argFromRetrieve = maybe [] extractArgEntries (lookupQuoted "retrieve" attrs)
+    rawRetrieve     = lookupQuoted "retrieve" attrs
+    argFromRetrieve = maybe [] extractArgEntries rawRetrieve
 
 -- ---------------------------------------------------------------------------
 -- Attr lookup helpers
@@ -343,3 +350,142 @@ parseGroupBy content =
         | T.length t >= 2 && T.head t == '"' && T.last t == '"'
         = T.init (T.tail t)
         | otherwise = t
+
+-- ---------------------------------------------------------------------------
+-- PBSELECT parser
+
+type PbsP = Parsec Void Text
+
+parsePbSelect :: Text -> DwRetrieveOrRaw
+parsePbSelect src = case parse pPbSelect "" src of
+    Left  _ -> DwRetrieveRaw src
+    Right r -> DwRetrieveOk r
+
+pPbsWs :: PbsP ()
+pPbsWs = skipMany (satisfy (`elem` (" \t\n\r" :: String)))
+
+-- Parse KEYWORD(inner) — inner is responsible for consuming up to but not
+-- including the closing ')'; pPbsBlock consumes it.
+pPbsBlock :: Text -> PbsP a -> PbsP a
+pPbsBlock kw inner = do
+    _ <- string' kw
+    pPbsWs
+    _ <- char '('
+    result <- inner
+    pPbsWs
+    _ <- char ')'
+    pure result
+
+-- A PBSELECT string value: either ~"..."~" (tilde-quoted) or '...' (single-quoted).
+pPbsStr :: PbsP Text
+pPbsStr =
+    pbSelectTildeStr <|>
+    (char '\'' *> (T.pack <$> manyTill anySingle (char '\'')))
+
+-- KEY ws* = ws* <pPbsStr>
+pKvStr :: Text -> PbsP Text
+pKvStr key = do
+    pPbsWs
+    _ <- string' key
+    pPbsWs
+    _ <- char '='
+    pPbsWs
+    pPbsStr
+
+pVersionBlock :: PbsP Int
+pVersionBlock = pPbsBlock "VERSION" (pPbsWs *> L.decimal <* pPbsWs)
+
+pTableBlock :: PbsP Text
+pTableBlock = pPbsBlock "TABLE" (pKvStr "NAME" <* pPbsWs)
+
+pColumnBlock :: PbsP Text
+pColumnBlock = pPbsBlock "COLUMN" (pKvStr "NAME" <* pPbsWs)
+
+pWhereBlock :: PbsP DwWhereClause
+pWhereBlock = pPbsBlock "WHERE" $ do
+    exp1  <- pKvStr "EXP1"
+    op    <- pKvStr "OP"
+    exp2  <- pKvStr "EXP2"
+    logic <- optional (try (pKvStr "LOGIC"))
+    pPbsWs
+    pure (DwWhereClause exp1 op exp2 logic)
+
+pArgBlock :: PbsP DwArgument
+pArgBlock = pPbsBlock "ARG" $ do
+    name <- pKvStr "NAME"
+    pPbsWs
+    _ <- string' "TYPE"
+    pPbsWs
+    _ <- char '='
+    pPbsWs
+    typ  <- takeWhile1P (Just "type name")
+                (\c -> c /= ')' && c /= ' ' && c /= '\t' && c /= '\n' && c /= '\r')
+    pPbsWs
+    pure (DwArgument name typ)
+
+-- Skip the content of any block, handling tilde strings and nested parens,
+-- stopping before the unmatched ')'.
+pSkipPbsContent :: PbsP ()
+pSkipPbsContent = skipMany pSkipAtom
+  where
+    pSkipAtom :: PbsP ()
+    pSkipAtom =
+        try pSkipTildeStr <|>
+        try pSkipNested   <|>
+        (() <$ satisfy (/= ')'))
+    pSkipTildeStr :: PbsP ()
+    pSkipTildeStr = () <$ pbSelectTildeStr
+    pSkipNested :: PbsP ()
+    pSkipNested = do
+        _ <- char '('
+        pSkipPbsContent
+        _ <- char ')'
+        pure ()
+
+-- Skip any named block whose name is not known to the caller.
+-- Matches BLOCK_NAME( ... ) where BLOCK_NAME is any non-whitespace, non-paren chars.
+pSkipAnyNamedBlock :: PbsP ()
+pSkipAnyNamedBlock = do
+    _ <- takeWhile1P (Just "block name")
+             (\c -> c /= '(' && c /= ')' && c /= ' ' && c /= '\t' && c /= '\n' && c /= '\r')
+    pPbsWs
+    _ <- char '('
+    pSkipPbsContent
+    _ <- char ')'
+    pure ()
+
+data PbsInner  = PbsTable Text | PbsColumn Text | PbsWhere DwWhereClause | PbsInnerSkip
+data PbsOuter  = PbsArg DwArgument | PbsOuterSkip
+
+pInnerBlock :: PbsP PbsInner
+pInnerBlock =
+    PbsTable      <$> try pTableBlock  <|>
+    PbsColumn     <$> try pColumnBlock <|>
+    PbsWhere      <$> try pWhereBlock  <|>
+    PbsInnerSkip  <$  try pSkipAnyNamedBlock
+
+pOuterBlock :: PbsP PbsOuter
+pOuterBlock =
+    PbsArg       <$> try pArgBlock <|>
+    PbsOuterSkip <$  try pSkipAnyNamedBlock
+
+pPbSelect :: PbsP DwRetrieve
+pPbSelect = do
+    pPbsWs
+    _ <- string' "PBSELECT"
+    pPbsWs
+    _ <- char '('
+    pPbsWs
+    version <- fromMaybe 0 <$> optional (try pVersionBlock)
+    pPbsWs
+    inner   <- many (try pInnerBlock <* pPbsWs)
+    _ <- optional (char ')')
+    pPbsWs
+    outer   <- many (try pOuterBlock <* pPbsWs)
+    pPbsWs
+    eof
+    let tables  = [t | PbsTable  t <- inner]
+        columns = [c | PbsColumn c <- inner]
+        wheres  = [w | PbsWhere  w <- inner]
+        args    = [a | PbsArg    a <- outer]
+    pure (DwRetrieve version tables columns args wheres)

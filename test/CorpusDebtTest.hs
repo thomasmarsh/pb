@@ -116,6 +116,21 @@ tests = testGroup "Corpus.Debt"
                    , String "unimplemented" <- [lk "status" v] ]
         assertBool ("DW stub count = " <> show stubCount <> ", expected 0")
                    (stubCount == 0)
+    , testCase "PBSELECT: zero parse failures" $ do
+        paths <- fmap concat $ mapM walkDwFiles
+            [ "example/PowerBuilder-Example/export"
+            , "example/openpay" ]
+        results <- mapM (\p -> do
+            src <- readFile p
+            pure $ runFile p src
+            ) paths
+        let failCount = length
+              [ () | Right v <- results
+                   , let r = lk "retrieve" (lk "table" v)
+                   , String raw <- [lk "raw" r]
+                   , "PBSELECT" `T.isPrefixOf` raw ]
+        assertBool ("PBSELECT parse failures: " <> show failCount <> ", expected 0")
+                   (failCount == 0)
     , testCase "DW table-block parsed" $ do
         paths <- fmap concat $ mapM walkDwFiles
             [ "example/PowerBuilder-Example/export"

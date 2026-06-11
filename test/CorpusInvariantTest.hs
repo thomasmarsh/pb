@@ -235,6 +235,21 @@ chkPsMetaEndLine _ v =
 -- ---------------------------------------------------------------------------
 -- DW-specific node and file checks
 
+chkDwArgConsistency :: FilePath -> Value -> [Text]
+chkDwArgConsistency _ v
+    | lk "kind" v /= String "datawindow" = []
+    | otherwise =
+        let tableV = lk "table" v
+            retrieve = lk "retrieve" tableV
+        in case lk "version" retrieve of
+            Null -> []  -- DwRetrieveRaw or no table: skip
+            _    ->
+                let dtCount = case lk "arguments" tableV  of { Array xs -> length (toList xs); _ -> 0 }
+                    drCount = case lk "arguments" retrieve of { Array xs -> length (toList xs); _ -> 0 }
+                in if dtCount == drCount then []
+                   else [ "dtArguments count " <> T.pack (show dtCount)
+                        <> " != drArguments count " <> T.pack (show drCount) ]
+
 chkDwNotStub :: FilePath -> Value -> [Text]
 chkDwNotStub _ v
     | lk "kind"   v == String "datawindow"
@@ -313,9 +328,10 @@ tests = testGroup "Corpus.Invariants"
         , fileInvariant "callable blocks have meta.endLine >= startLine"  chkPsMetaEndLine
         ]
     , testGroup "Corpus.DW.Invariants"
-        [ fileInvariantDw "DW files not stub"          chkDwNotStub
-        , fileInvariantDw "DW bands non-empty"         chkDwBandsNonEmpty
-        , invariantDw     "column control has id"       chkDwColumnControlHasId
-        , invariantDw     "table column name non-empty" chkDwTableColumnNameNonEmpty
+        [ fileInvariantDw "DW files not stub"                   chkDwNotStub
+        , fileInvariantDw "DW bands non-empty"                  chkDwBandsNonEmpty
+        , invariantDw     "column control has id"                chkDwColumnControlHasId
+        , invariantDw     "table column name non-empty"          chkDwTableColumnNameNonEmpty
+        , fileInvariantDw "dtArguments == drArguments count"     chkDwArgConsistency
         ]
     ]
