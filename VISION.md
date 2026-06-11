@@ -1,190 +1,383 @@
 # Architectural Specification: PowerBuilder-to-JSON AST Compiler Front-End
 
-## Subtitle: Static Analysis & LLM-Driven Code Querying via Structured Metadata
+## Subtitle: Static Analysis & LLM-Driven Code Querying via DuckDB SQL
 
 ---
 
 ## 1. Executive Summary & Core Philosophy
 
-This document defines the architectural strategy, data design, and downstream workflow for compiling a legacy PowerBuilder codebase (~300KLOC across 1,700 source files) into a unified, rich Abstract Syntax Tree (AST) serialized as JSON.
+This document defines the architectural strategy, data design, and downstream workflow for
+compiling a legacy PowerBuilder codebase (~300KLOC across 1,700 source files) into a
+unified, rich Abstract Syntax Tree (AST) serialised as JSON, then into a **DuckDB
+relational database** that enables SQL-based cross-file analysis.
 
 ### The Core Problem
 
-Legacy PowerBuilder codebases (`.srd`, `.sru`, `.srw`, `.srm`, `.sjp`) are inherently hostile to modern static analysis tools and Large Language Models (LLMs). They are heavily polluted with visual layout metadata (coordinates, font metrics, color bytes), rely on complex implicit object-oriented inheritance loops, and embed a unique mix of procedural PowerScript, proprietary `PBSELECT` metadata, and native PL/SQL blocks. Feeding raw source files into an LLM causes prompt context exhaustion, high token costs, and catastrophic model hallucinations due to the language training gap.
+Legacy PowerBuilder codebases (`.srd`, `.sru`, `.srw`, `.srm`, `.sjp`) are inherently
+hostile to modern static analysis tools and Large Language Models (LLMs). They are
+heavily polluted with visual layout metadata (coordinates, font metrics, colour bytes),
+rely on complex implicit object-oriented inheritance loops, and embed a unique mix of
+procedural PowerScript, proprietary `PBSELECT` metadata, and native PL/SQL blocks.
+Feeding raw source files into an LLM causes prompt context exhaustion, high token costs,
+and catastrophic model hallucinations due to the language training gap.
 
-### The Solution: Structural Separation
+### The Solution: Structural Separation + Relational Query
 
-We bypass text-based reading by transforming the codebase into a dense, normalized JSON AST using a **Megaparsec** compiler front-end.
+We bypass text-based reading by transforming the codebase into a dense, normalised JSON
+AST using a **Megaparsec** compiler front-end, then extracting a **DuckDB** relational
+database of canonical fact tables. This enables:
 
-By separating **structural query execution** from **semantic reasoning**, we shift the LLM's role:
-
-- **The LLM is NOT a source reader:** It never processes raw `.sr*` or text blobs directly.
-- **The LLM IS a query architect:** It converts natural language technical questions into deterministic `jq` queries executed locally against the structured JSON AST.
-- **The LLM IS a semantic summarizer:** It takes the hyper-focused, minimal JSON payloads extracted by `jq` and translates them into architectural checklists, documentation, or dependency graphs.
+- **The LLM writes SQL, not code searches:** It converts natural language questions into
+  deterministic SQL queries against `pb.duckdb`, executed locally in milliseconds.
+- **The LLM reads pseudo-PBScript, not JSON:** The `pb-render` tool converts any
+  function or event body from the AST back to readable PowerScript, reducing context
+  token cost and hallucination risk.
+- **Diagrams communicate structure:** `pb-diagram` generates GraphViz SVGs for
+  inheritance hierarchies, call graphs, DW-table dependencies, and complexity heatmaps.
 
 ---
 
-## 2. LLM + `jq` Integration Workflow (Agentic Tool-Use)
+## 2. LLM + DuckDB Integration Workflow (Agentic Tool-Use)
 
-To execute complex system-wide audits—such as discovering every form validation rule or tracing database lineage—the system runs a multi-stage Agentic RAG loop.
+To execute complex system-wide audits — discovering every form validation rule or tracing
+database lineage — the system runs a multi-stage agentic loop.
 
 ```
-┌──────────────────┐      1. Natural Language Question       ┌───────────┐
-│                  ├────────────────────────────────────────>│           │
-│                  │                                         │    LLM    │
-│                  │      2. Generates Precise jq Query      │           │
-│                  │<────────────────────────────────────────┤           │
-│       User       │                                         └───────────┘
+┌──────────────────┐   1. Natural Language Question    ┌───────────┐
+│                  ├─────────────────────────────────>│           │
+│                  │                                   │    LLM    │
+│                  │   2. Generates SQL Query          │           │
+│                  │<─────────────────────────────────┤           │
+│       User       │                                   └───────────┘
 │   (or Agentic    │
-│    Pipeline)     │      3. Executes jq query locally
-│                  ├──────────────────────────────┐
-│                  │                              ▼
-│                  │                     ┌─────────────────┐
-│                  │                     │  JSON AST File  │
-│                  │                     └────────┬────────┘
-│                  │                              │ 4. Extracts tiny,
-│                  │                              │    highly-focused
-│                  │<─────────────────────────────┘    context snippet
-└──────────────────┘      5. (Optional) Final LLM Call:
-                             Summarizes the precise snippet
-                             back into English
-
+│    Pipeline)     │   3. Executes SQL locally
+│                  ├──────────────────────┐
+│                  │                      ▼
+│                  │             ┌─────────────────┐
+│                  │             │   pb.duckdb     │
+│                  │             │  fact tables    │
+│                  │             └────────┬────────┘
+│                  │                      │ 4. Returns focused
+│                  │                      │    tabular result
+│                  │<─────────────────────┘
+└──────────────────┘   5. (Optional) LLM call:
+                           pb-render shows code body;
+                           LLM summarises into English
 ```
+
+### Why DuckDB SQL (not jq or Datalog)
+
+| Concern | jq | Datalog (Soufflé) | DuckDB SQL |
+|---|---|---|---|
+| LLM query accuracy | fragile on novel shapes | almost no training data | excellent |
+| Cross-file joins | impossible | natural | natural |
+| Recursive queries | impossible | native | recursive CTEs |
+| Graph metrics | impossible | native | via Python NetworkX |
+| Setup | zero | compile step | zero (embedded) |
+
+**Soufflé/Datalog** is the theoretically correct model for fixed-point program analysis
+(call-graph reachability, points-to analysis). It is noted here as a deferred second-tier
+tool: if DuckDB recursive CTEs prove insufficient for a specific analysis, pre-compute the
+result in Soufflé and load it back into DuckDB as an additional table. No evidence of
+this need exists yet for the stated use cases.
 
 ### Complete Operational Pipeline
 
-1. **The Question:** A developer asks: _"What field validations are enforced when updating an invoice, and what database tables do they hit?"_
-2. **Query Generation:** The LLM receives the system's known JSON schema definitions. It synthesizes a precise, multi-stage `jq` filter designed to isolate validation events and embedded DML operations.
-3. **Local Execution:** The system runs the `jq` filter natively over the AST repository. This instantly filters out gigabytes of layout noise, reducing the search space to precise syntax nodes.
-4. **Context Injection & Synthesis:** The dense, structured JSON result is injected into the LLM's context window. The LLM translates the logic into a clear markdown analysis sheet.
+1. **Question:** A developer asks: *"What field validations are enforced when updating
+   an invoice, and what database tables do they hit?"*
+2. **Query Generation:** The LLM receives the `pb.duckdb` schema (§5) and generates SQL.
+3. **Local Execution:** DuckDB runs the query against indexed fact tables — milliseconds,
+   not minutes.
+4. **Render (optional):** The LLM calls `pb-render --object X --proc itemchanged` to get
+   a readable pseudo-PBScript body for any procedure in the result set.
+5. **Synthesis:** The LLM translates the focused result into a markdown analysis.
 
 ### Concrete Simulation: Analysis of Form Validations
 
 #### Input Scenario
 
-The codebase contains a DataWindow control inside a window (`w_invoice_entry.srw`) tracking a data object (`d_invoice_detail.srd`). Validations are split across the visual field rules (`.srd` text properties), the `ItemChanged` event trigger, and an inline PL/SQL check inside a user object.
+A DataWindow control inside `w_invoice_entry.srw` tracks `d_invoice_detail.srd`.
+Validations are split across DW field expressions, the `ItemChanged` event, and an
+inline validation function.
 
-#### Step 1: LLM-Generated `jq` Query
+#### Step 1: LLM-Generated SQL Query
 
-The LLM writes this command to sweep the entire compiled AST artifact for validation frameworks:
+```sql
+-- Find all validation-related procedures and DW expressions for invoice forms
+WITH invoice_objects AS (
+    SELECT name, ancestor FROM objects
+    WHERE name LIKE '%invoice%'
+),
+val_procs AS (
+    SELECT p.file, p.object, p.proc_type, p.name, p.start_line, p.end_line
+    FROM procedures p
+    JOIN invoice_objects o ON p.object = o.name
+    WHERE p.name IN ('itemchanged', 'pbm_dwnitemchange')
+       OR lower(p.name) LIKE '%validate%'
+       OR lower(p.name) LIKE '%check%'
+       OR lower(p.name) LIKE '%verify%'
+),
+val_dw AS (
+    SELECT dc.file, dc.dw_name, dc.control_name, dc.expression
+    FROM dw_controls dc
+    JOIN invoice_objects o ON dc.file LIKE '%' || lower(o.name) || '%'
+    WHERE dc.expression IS NOT NULL
+),
+referenced_tables AS (
+    SELECT dt.file, dt.table_name
+    FROM dw_retrieve_tables dt
+    WHERE dt.file LIKE '%invoice%'
+)
+SELECT
+    p.file AS source_file,
+    p.object AS context_object,
+    o.ancestor AS ancestor_class,
+    p.proc_type AS logic_type,
+    p.name AS identifier,
+    p.start_line,
+    p.end_line,
+    (SELECT json_group_array(rt.table_name)
+     FROM referenced_tables rt WHERE rt.file = p.file) AS referenced_tables
+FROM val_procs p
+JOIN invoice_objects o ON p.object = o.name
+
+UNION ALL
+
+SELECT
+    dc.file, dc.dw_name, 'w_invoice_entry', 'dw_expression',
+    dc.control_name, NULL, NULL,
+    '[]'
+FROM val_dw dc;
+```
+
+#### Step 2: Focused Result (fed back to LLM)
+
+```
+source_file                  | context_object    | logic_type    | identifier      | start_line | referenced_tables
+d_invoice_detail.srd         | d_invoice_detail  | dw_expression | invoice_amt     | -          | []
+w_invoice_entry.srw          | w_invoice_entry   | event         | itemchanged     | 147        | ["customer"]
+w_invoice_entry.srw          | w_invoice_entry   | function      | of_check_amount | 203        | []
+```
+
+#### Step 3: Optional — render the event body
 
 ```bash
-cat codebase_ast.json | jq '[
-  .. |
-  select(
-    (.nodeType == "DataWindowProperty" and (.propertyName | contains("validation") or .propertyName == "verify")) or
-    (.nodeType == "EventScript" and (.eventName == "itemchanged" or .eventName == "pbm_dwnitemchange")) or
-    (.nodeType == "PowerScriptFunction" and (.name | ascii_downcase | test("validate|check|verify|auth")))
-  ) |
-  {
-    sourceFile: .meta.file,
-    contextObject: .meta.object,
-    ancestorClass: .meta.inheritedFrom,
-    logicType: .nodeType,
-    identifier: (.name // .propertyName),
-    extractedScript: .body,
-    referencedTables: [.. | select(.nodeType? == "SqlTableReference") | .tableName]
-  }
-]'
+pb-runner --render -i ./src --object w_invoice_entry --proc itemchanged
 ```
 
-#### Step 2: The Filtered JSON Payload (Fed back to LLM)
+```powerscript
+// itemchanged  [event]
+// object: w_invoice_entry  •  ancestor: w_master_entry
+// file:   src/w_invoice_entry.srw  •  lines: 147–178
 
-Instead of processing thousands of lines of visual scaffolding, the LLM receives this clean, high-density structural context block:
-
-```json
-[
-  {
-    "sourceFile": "d_invoice_detail.srd",
-    "contextObject": "dw_invoice",
-    "ancestorClass": null,
-    "logicType": "DataWindowProperty",
-    "identifier": "invoice_amt.validation",
-    "extractedScript": "real(data) > 0.00",
-    "referencedTables": []
-  },
-  {
-    "sourceFile": "w_invoice_entry.srw",
-    "contextObject": "dw_1",
-    "ancestorClass": "w_master_entry",
-    "logicType": "EventScript",
-    "identifier": "itemchanged",
-    "extractedScript": "IF dwo.name = 'customer_id' THEN\n  IF :customer.status FROM db WHERE id = :data IS 'SUSPENDED' THEN\n    REJECT\n  END IF;\nEND IF;",
-    "referencedTables": ["customer"]
-  }
-]
+if dwo.name = 'customer_id' then
+  if :customer.status from db where id = :data is 'SUSPENDED' then
+    reject
+  end if
+end if
 ```
 
-#### Step 3: Final Semantic Output
+#### Step 4: Final Semantic Output
 
-The LLM processes this micro-payload and immediately outputs human-readable systems documentation:
+The LLM processes the SQL result and pseudo-PBScript body and outputs:
 
 > ### Invoice Form Validation Summary
 >
-> - **Client-Side DataWindow Bounds:** The field `invoice_amt` explicitly blocks any entry less than or equal to `0.00` directly at the data layer engine (`d_invoice_detail.srd`).
-> - **State-Based Lifecycle Validations:** The `itemchanged` script inside `w_invoice_entry.srw` dynamically traps updates to `customer_id`. It fires a query against the `customer` table, blocking updates if the customer status evaluates to `'SUSPENDED'`.
+> - **DataWindow Bounds:** `d_invoice_detail.srd` enforces `invoice_amt > 0.00` at the
+>   data layer via a column expression.
+> - **State-Based Lifecycle:** The `itemchanged` event in `w_invoice_entry.srw` (lines
+>   147–178) checks `customer.status = 'SUSPENDED'` and rejects the update.
+> - **DB Tables Hit:** `customer` (via the `itemchanged` host variable query).
 
 ---
 
-## 3. JSON Serialization & Schema Guidance
+## 3. JSON Serialisation & Schema Guidance
 
-To ensure the compiled AST supports clean `jq` querying and scales safely without memory degradation, the serialization schema must enforce strict design patterns.
+### Crucial Data Anchors (on every callable block node)
 
-### Crucial Data Anchors (Include on Every Node)
+- **`.meta.file`**: Repository-relative path to the `.sr*` file.
+- **`.meta.object`**: Name of the owning `global type` declaration.
+- **`.meta.ancestor`**: Declared ancestor class from the file's own `TypeDecl`. Not
+  cross-file resolved — join across the `objects` manifest to walk the full chain.
+- **`.meta.startLine`** / **`.meta.endLine`**: Physical source line range of the block.
+  Populated from the logical-line preprocessor output (`llStartLine`). Enables
+  navigation to any procedure without grep.
+- **`.nodeType`** equivalent: the `"tag"` field on every AST node (already present).
 
-- **`.meta.file`**: The absolute or repository-relative path to the originating `.sr*` file.
-- **`.meta.object`**: The parent control block or structural context (e.g., `"uo_client_validator"`, `"dw_1"`).
-- **`.meta.inheritedFrom`**: The explicit ancestor object chain parsed from the class descriptor header. This is critical for resolving PowerBuilder’s deep inheritance trees.
-- **`.nodeType`**: A string literal tag using clear PascalCase descriptors (`"EventScript"`, `"PowerScriptFunction"`, `"SqlTableReference"`, `"DataWindowProperty"`).
+### Source line conventions
 
-### Handling the PowerBuilder Mixed-Language Problem
+- Line numbers are **logical** (after `&` continuation joining), 1-indexed.
+- `startLine` = line of the `public function` / `on clicked` / etc. header statement.
+- `endLine` = line of the corresponding `end function` / `end on` terminator.
+- Column tracking is omitted: PowerScript is line-oriented; column positions inside a
+  joined logical line are meaningless for on-disk navigation.
 
-#### 1. DataWindows and `PBSELECT`
+### DataWindow controls
 
-- **Do not treat `PBSELECT` as raw text strings.**
-- When the Megaparsec parser encounters `retrieve="PBSELECT(VERSION(400)...)"`, parse the structured parameters directly.
-- Extract the tables, columns, arguments, and where clauses into structured JSON nodes. This bypasses the need for an expensive SQL string engine for DataWindow queries.
+Every `DwControl` node carries:
 
 ```json
 {
-  "nodeType": "DataWindowRetrieval",
-  "sourceType": "PBSELECT",
-  "version": 400,
-  "tables": ["employee", "department"],
-  "columns": ["employee.emp_id", "employee.emp_fname", "department.dept_name"],
-  "arguments": [{ "name": "al_dept_id", "type": "number" }]
+  "meta": {
+    "file": "example/openpay/dw_misth_kratapod_list.srd",
+    "dw": "dw_misth_kratapod_list",
+    "sourceLine": 88
+  }
 }
 ```
 
-#### 2. Inline PowerScript SQL & PL/SQL Blocks
+### PBSELECT (DataWindow retrieval)
 
-- Embed an implicit **Island Parser** pattern within Megaparsec.
-- When executing inline SQL, match PowerBuilder Host Variables (identifiers prefixed with a colon, like `:ls_invoice_id` or `:dw_1.Object.Data`) as distinct expression elements (`"nodeType": "HostVariable"`). This ensures standard off-the-shelf SQL parser tokens don't break on non-ANSI syntax.
-- Preserve code comments (`//` and `/* */`) and serialize them under an explicit `.comments` array attached to the closest functional statement node. Developers frequently store vital validation hints inside legacy code comments.
+Do not treat `PBSELECT` as a raw text string. Parse it into a typed node:
+
+```json
+{
+  "retrieve": {
+    "version": 400,
+    "tables": ["misth_kratapod"],
+    "columns": ["misth_kratapod.kodkratapod", "misth_kratapod.kodxrisi"],
+    "arguments": [{"name": "arg_kodxrisi", "type": "string"}],
+    "where": [
+      {"exp1": "misth_kratapod.kodxrisi", "op": "=", "exp2": ":arg_kodxrisi", "logic": null}
+    ]
+  }
+}
+```
+
+This enables the `dw_retrieve_tables` fact table in DuckDB, which is the core of the
+"what DB tables does this form read?" use case.
+
+### Inline PowerScript SQL & PL/SQL Blocks
+
+Host variables (`:ls_invoice_id`, `:dw_1.Object.Data`) are serialised as
+`{"tag":"host_var","lvalue":{...}}` — distinct from regular lvalues so SQL parsers
+do not choke on the colon syntax. Currently classified as `ExHostVar` in the AST.
+
+Preserve `//` and `/* */` comments under a `.comments` array attached to the nearest
+statement node (deferred to E8 — requires lexer changes).
 
 ---
 
-## 4. Scalable Compilation Pipeline Strategy
-
-Processing 300KLOC across 1,700 source files will cause massive memory usage or schema nesting errors if serialized poorly.
-
-### Architectural Rules for Serialization
+## 4. Scalable Compilation Pipeline
 
 ```
 [ 1,700 Source Files ]
          │
-         ▼  (Megaparsec Compiler Front-End)
-[ Individual .json AST Files ]  <─── High-speed parallel disk writes
+         ▼  pb-runner (Haskell Megaparsec compiler)
+[ Individual .json AST Files ]     ← -i <srcdir> -o <outdir>
+[ manifest.json ]                  ← object/ancestor index
          │
-         ▼  (Aggregation Pipeline)
-[ Flat JSONL Stream / Indexed Map File ]
+         ▼  pb-runner --jsonl (streaming mode)
+[ JSONL stream ]                   ← one line per file to stdout
          │
-         ▼
-[ JQ Engine / LLM Tool Window Execution ]
+         ▼  pb-index (Python, reads JSONL → DuckDB)
+[ pb.duckdb ]
+  ├── objects          (one row per source file / type declaration)
+  ├── procedures       (functions, subroutines, events, on-blocks)
+  ├── dw_controls      (DataWindow visual controls)
+  ├── dw_retrieve_*    (PBSELECT tables, columns, where clauses, args)
+  ├── inherits         (declared ancestry edges)
+  ├── calls            (call graph edges — populated by pb-analyze)
+  └── object_metrics   (PageRank, betweenness, cyclomatic — pb-analyze)
+         │
+         ├──▶  SQL queries (LLM-generated, answers any structural question)
+         ├──▶  pb-analyze  (NetworkX graph metrics → object_metrics)
+         ├──▶  pb-diagram  (GraphViz SVG: inheritance, calls, DW-tables, heatmap)
+         └──▶  pb-runner --render  (pseudo-PBScript body output for LLM injection)
 ```
 
-1. **Do Not Generate One Giant JSON Array:** Serializing the entire codebase into a single monolithic JSON file array will easily hit system memory ceilings, slow down parser emission, and complicate disk writes.
-2. **Utilize a Flat JSONL (JSON Lines) Format or Linked Map File:**
-   - **Approach A:** Emit an isolated `.json` file for every compiled `.sr*` file inside an output mirror directory. Create a global metadata manifest pointing to them.
-   - **Approach B (Best for `jq`):** Compile the output into a single unified stream of JSON Lines (`.jsonl`), where each independent line represents the isolated top-level object tree of a single component file. This allows `jq` to run in streaming mode (`jq --stream`) with a tiny, flat memory footprint across thousands of application classes.
-3. **Preserve Native Unescaping Before SQL Hand-off:** Ensure that nested string delimiters characteristic of DataWindow objects (e.g., `~"`, `~~"`) are fully normalized back into single-escaped standard quotes _prior_ to populating the `.body` or `.extractedScript` fields. This protects external validators and downstream LLM tools from breaking on custom PowerBuilder string layout escaping schemes.
+### Serialisation rules
+
+1. **Do not generate one giant JSON file.** Use per-file `.json` output (`-o` mode) or
+   streaming JSONL (`--jsonl` mode). DuckDB `read_ndjson_auto` can query JSONL directly
+   without loading all files into memory.
+2. **JSONL for bulk processing:** `pb-runner --jsonl | python3 scripts/pb_index.py`
+   populates `pb.duckdb` in a single streaming pass.
+3. **Tilde-escaping:** Normalise `~"` → `"` and `~~` → `~` in all string values before
+   serialisation. The `pbDwStringChunk` lexer function handles this.
+
+---
+
+## 5. Canonical DuckDB Schema
+
+This is the authoritative query contract. LLMs and scripts should target these tables.
+
+```sql
+-- One row per source file (or per global type declaration in multi-type files)
+objects (file TEXT, name TEXT, kind TEXT, ancestor TEXT)
+
+-- Every callable unit: functions, subroutines, events, on-blocks
+procedures (
+    file TEXT, object TEXT, proc_type TEXT, name TEXT,
+    modifiers TEXT, params TEXT, return_type TEXT,
+    start_line INT, end_line INT,
+    cyclomatic INT,         -- McCabe complexity (branches + 1)
+    body_json JSON          -- full body for ad-hoc inspection / pb-render
+)
+
+-- DataWindow visual controls
+dw_controls (
+    file TEXT, dw_name TEXT, control_name TEXT, control_type TEXT,
+    band TEXT, x INT, y INT, width INT, height INT,
+    expression TEXT, tab_seq INT, source_line INT
+)
+
+-- PBSELECT retrieval decomposition
+dw_retrieve_tables  (file TEXT, dw_name TEXT, table_name TEXT)
+dw_retrieve_columns (file TEXT, dw_name TEXT, column_fqn TEXT, table_name TEXT, column_name TEXT)
+dw_retrieve_where   (file TEXT, dw_name TEXT, idx INT, exp1 TEXT, op TEXT, exp2 TEXT, logic TEXT)
+dw_arguments        (file TEXT, dw_name TEXT, arg_name TEXT, arg_type TEXT)
+
+-- Graph edges
+inherits (from_object TEXT, to_object TEXT)
+calls    (file TEXT, object TEXT, from_proc TEXT, to_name TEXT, call_type TEXT)
+
+-- Pre-computed graph metrics (populated by pb-analyze)
+object_metrics (
+    object TEXT, in_degree INT, out_degree INT,
+    betweenness DOUBLE, pagerank DOUBLE,
+    max_cyclomatic INT, avg_cyclomatic DOUBLE, dit INT
+)
+```
+
+### Example canonical queries
+
+```sql
+-- What DB tables does w_invoice_entry read?
+SELECT DISTINCT dt.table_name
+FROM objects o
+JOIN dw_retrieve_tables dt ON o.file = dt.file
+WHERE o.name = 'w_invoice_entry';
+
+-- Full inheritance chain for an object
+WITH RECURSIVE anc AS (
+  SELECT name, ancestor FROM objects WHERE name = 'w_invoice_entry'
+  UNION ALL
+  SELECT o.name, o.ancestor FROM objects o
+    JOIN anc a ON o.name = a.ancestor WHERE o.ancestor IS NOT NULL
+)
+SELECT * FROM anc;
+
+-- Top 10 complexity hotspots
+SELECT o.name, m.max_cyclomatic, m.in_degree, m.pagerank
+FROM objects o JOIN object_metrics m ON o.name = m.object
+ORDER BY m.max_cyclomatic DESC LIMIT 10;
+
+-- All compute expressions referencing a specific DB function
+SELECT file, dw_name, control_name, expression
+FROM dw_controls
+WHERE expression LIKE '%fn_misth%';
+```
+
+---
+
+## 6. Tool Reference
+
+| Tool | Language | Input | Output | Plan |
+|---|---|---|---|---|
+| `pb-runner -o` | Haskell | source dir | per-file JSON + manifest.json | plan/28 |
+| `pb-runner --jsonl` | Haskell | source dir | JSONL stream | plan/28 |
+| `pb-runner --render` | Haskell | source dir + object/proc | pseudo-PBScript | plan/32 |
+| `pb-index` | Python | JSONL | pb.duckdb | plan/29 |
+| `pb-analyze` | Python | pb.duckdb | object_metrics, calls tables | plan/30 |
+| `pb-diagram` | Python | pb.duckdb | GraphViz SVG | plan/31 |
