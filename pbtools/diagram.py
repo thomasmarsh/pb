@@ -1,35 +1,30 @@
-#!/usr/bin/env python3
 """
-pb_diagram — generate SVG diagrams from pb.duckdb.
+pb diagram — generate SVG diagrams from pb.duckdb.
 
-Usage:
-    python3 scripts/pb_diagram.py --inheritance [--root X] [-o out.svg]
-    python3 scripts/pb_diagram.py --calls --object X [--depth 2] [-o out.svg]
-    python3 scripts/pb_diagram.py --dw-tables [--table T] [-o out.svg]
-    python3 scripts/pb_diagram.py --heatmap [-o out.svg]
+Usage (CLI):
+    pb diagram inheritance [--db PATH] [--root NAME] [-o FILE] [--dot]
+    pb diagram calls --object NAME [--db PATH] [--depth N] [-o FILE] [--dot]
+    pb diagram dw-tables [--db PATH] [--table NAME] [-o FILE] [--dot]
+    pb diagram heatmap [--db PATH] [-o FILE] [--dot]
 
-Add --dot to any command to print the raw DOT source instead of rendering SVG.
+Library:
+    from pbtools.diagram import diagram_inheritance, diagram_calls, diagram_dw_tables, diagram_heatmap
 """
-
-import argparse
 import os
 import sys
 
 import duckdb
 import graphviz
+import networkx as nx
 
-# ---------------------------------------------------------------------------
-# Colour palette
-# ---------------------------------------------------------------------------
 
 KIND_COLORS = {
-    'powerscript': '#5B8DD9',   # steel blue
-    'datawindow':  '#56A85D',   # soft green
-    'project':     '#B0B0B0',   # light grey
+    'powerscript': '#5B8DD9',
+    'datawindow':  '#56A85D',
+    'project':     '#B0B0B0',
 }
 KIND_DEFAULT = '#D0D0D0'
 
-# 9-step perceptually-uniform yellow → red (Brewer YlOrRd)
 _GRADIENT = [
     '#FFFFB2', '#FECC5C', '#FD8D3C',
     '#F03B20', '#BD0026', '#7A0177',
@@ -64,11 +59,7 @@ def kind_color(kind: str) -> str:
     return KIND_COLORS.get(kind, KIND_DEFAULT)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _open_db(db_path: str) -> duckdb.DuckDBPyConnection:
+def open_db(db_path: str) -> duckdb.DuckDBPyConnection:
     if not os.path.exists(db_path):
         sys.exit(f"error: database not found: {db_path}")
     return duckdb.connect(db_path, read_only=True)
@@ -78,7 +69,6 @@ def _render(dot: graphviz.Graph | graphviz.Digraph, output: str, emit_dot: bool)
     if emit_dot:
         print(dot.source)
         return
-    stem = output.removesuffix('.svg')
     dot.render(outfile=output, format='svg', cleanup=True)
     print(f"Written: {output}", file=sys.stderr)
 
@@ -91,13 +81,13 @@ def _apply_defaults(dot, node_extra=None, edge_extra=None) -> None:
     dot.attr('edge', **ee)
 
 
-# ---------------------------------------------------------------------------
-# A. Inheritance hierarchy
-# ---------------------------------------------------------------------------
-
-def diagram_inheritance(conn, root: str | None, output: str, emit_dot: bool) -> None:
+def diagram_inheritance(
+    conn: duckdb.DuckDBPyConnection,
+    root: str | None,
+    output: str = 'inheritance.svg',
+    emit_dot: bool = False,
+) -> None:
     if root:
-        # Descendants: objects that (transitively) inherit from `root`
         edges = conn.execute("""
             WITH RECURSIVE sub AS (
                 SELECT from_object, to_object FROM inherits WHERE to_object = ?
@@ -136,7 +126,6 @@ def diagram_inheritance(conn, root: str | None, output: str, emit_dot: bool) -> 
         dot.edge(src, dst)
 
     if root and root not in seen:
-        # Ensure the root itself is present even with no descendants
         kind = kind_map.get(root, '')
         dot.node(root, shape='doubleoctagon', style='filled',
                  fillcolor='#FFD700', fontcolor='#1C1C1E',
@@ -145,12 +134,15 @@ def diagram_inheritance(conn, root: str | None, output: str, emit_dot: bool) -> 
     _render(dot, output, emit_dot)
 
 
-# ---------------------------------------------------------------------------
-# B. Call ego-graph
-# ---------------------------------------------------------------------------
-
-def diagram_calls(conn, focal: str, depth: int, output: str, emit_dot: bool) -> None:
-    import networkx as nx
+def diagram_calls(
+    conn: duckdb.DuckDBPyConnection,
+    focal: str,
+    depth: int = 2,
+    output: str | None = None,
+    emit_dot: bool = False,
+) -> None:
+    if output is None:
+        output = f"calls_{focal}.svg"
 
     raw_edges = conn.execute("SELECT object, to_name FROM calls").fetchall()
     G: nx.DiGraph = nx.DiGraph(raw_edges)
@@ -167,8 +159,6 @@ def diagram_calls(conn, focal: str, depth: int, output: str, emit_dot: bool) -> 
         "SELECT name, max(cyclomatic) FROM procedures GROUP BY name"
     ).fetchall())
 
-    kind_map = dict(conn.execute("SELECT name, kind FROM objects").fetchall())
-
     dot = graphviz.Digraph(engine='fdp', name='calls')
     _apply_defaults(dot)
     dot.attr(overlap='false', splines='curved', K='0.8')
@@ -177,14 +167,13 @@ def diagram_calls(conn, focal: str, depth: int, output: str, emit_dot: bool) -> 
         cc = cc_map.get(name) or 0
         is_focal = (name == focal)
         fill = '#FFD700' if is_focal else complexity_color(cc)
-        fcolor = '#1C1C1E'
         shape = 'doublecircle' if is_focal else 'ellipse'
         width = '1.4' if is_focal else str(max(0.5, min(0.5 + cc / 8, 1.8)))
         label = f"{name}\\ncc={cc}" if cc > 3 else name
         dot.node(
             name,
             label=label, shape=shape,
-            style='filled', fillcolor=fill, fontcolor=fcolor,
+            style='filled', fillcolor=fill, fontcolor='#1C1C1E',
             width=width, height=width, fixedsize='false',
             tooltip=f"{name} [cc={cc}]",
         )
@@ -198,11 +187,12 @@ def diagram_calls(conn, focal: str, depth: int, output: str, emit_dot: bool) -> 
     _render(dot, output, emit_dot)
 
 
-# ---------------------------------------------------------------------------
-# C. DW → DB table bipartite dependency
-# ---------------------------------------------------------------------------
-
-def diagram_dw_tables(conn, filter_table: str | None, output: str, emit_dot: bool) -> None:
+def diagram_dw_tables(
+    conn: duckdb.DuckDBPyConnection,
+    filter_table: str | None = None,
+    output: str = 'dw_tables.svg',
+    emit_dot: bool = False,
+) -> None:
     rows = conn.execute("""
         SELECT dw_name, table_name FROM dw_retrieve_tables
         WHERE (? IS NULL) OR table_name = ?
@@ -255,11 +245,11 @@ def diagram_dw_tables(conn, filter_table: str | None, output: str, emit_dot: boo
     _render(dot, output, emit_dot)
 
 
-# ---------------------------------------------------------------------------
-# D. Complexity heatmap
-# ---------------------------------------------------------------------------
-
-def diagram_heatmap(conn, output: str, emit_dot: bool) -> None:
+def diagram_heatmap(
+    conn: duckdb.DuckDBPyConnection,
+    output: str = 'heatmap.svg',
+    emit_dot: bool = False,
+) -> None:
     rows = conn.execute("""
         SELECT o.name, o.kind,
                COALESCE(m.max_cyclomatic, 0),
@@ -280,13 +270,12 @@ def diagram_heatmap(conn, output: str, emit_dot: bool) -> None:
         overlap='prism', splines='curved',
         outputorder='edgesfirst', K='1.2',
     )
-    dot.attr('edge', style='invis')  # layout guidance only
+    dot.attr('edge', style='invis')
 
     for name, kind, cc, fan_in in rows:
         fill = complexity_color(cc)
         size_f = round(max(0.3, min(fan_in / 15 + 0.35, 2.4)), 2)
         size = str(size_f)
-        # Only show a label when the circle is large enough to contain text
         show_label = size_f >= 0.7 and (cc >= 5 or fan_in >= 10)
         label = name if show_label else ''
         fsize = '8' if show_label else '0'
@@ -302,7 +291,6 @@ def diagram_heatmap(conn, output: str, emit_dot: bool) -> None:
     for src, dst in inherit_edges:
         dot.edge(src, dst)
 
-    # Legend
     with dot.subgraph(name='cluster_legend') as lg:
         lg.attr(
             label='Cyclomatic complexity',
@@ -328,73 +316,3 @@ def diagram_heatmap(conn, output: str, emit_dot: bool) -> None:
             prev = nid
 
     _render(dot, output, emit_dot)
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-def main() -> None:
-    ap = argparse.ArgumentParser(
-        description='Generate SVG diagrams from pb.duckdb',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    ap.add_argument('--db', default='pb.duckdb', metavar='PATH',
-                    help='path to pb.duckdb (default: pb.duckdb)')
-    ap.add_argument('-o', '--output', default=None, metavar='FILE',
-                    help='output file (default: <diagram-type>.svg)')
-    ap.add_argument('--dot', action='store_true',
-                    help='emit raw DOT source instead of rendering SVG')
-
-    mode = ap.add_mutually_exclusive_group(required=True)
-    mode.add_argument('--inheritance', action='store_true',
-                      help='inheritance hierarchy')
-    mode.add_argument('--calls',       action='store_true',
-                      help='call ego-graph (requires --object)')
-    mode.add_argument('--dw-tables',   action='store_true',
-                      help='DataWindow → DB table bipartite graph')
-    mode.add_argument('--heatmap',     action='store_true',
-                      help='complexity heatmap over all objects')
-
-    ap.add_argument('--root',   metavar='NAME',
-                    help='[--inheritance] root object (show subtree only)')
-    ap.add_argument('--object', metavar='NAME',
-                    help='[--calls] focal object')
-    ap.add_argument('--depth',  type=int, default=2, metavar='N',
-                    help='[--calls] ego radius (default: 2)')
-    ap.add_argument('--table',  metavar='NAME',
-                    help='[--dw-tables] filter to a single DB table')
-
-    args = ap.parse_args()
-
-    if args.calls and not args.object:
-        ap.error('--calls requires --object NAME')
-
-    conn = _open_db(args.db)
-
-    defaults = {
-        'inheritance': 'inheritance.svg',
-        'calls':       f"calls_{args.object}.svg" if args.object else 'calls.svg',
-        'dw_tables':   'dw_tables.svg',
-        'heatmap':     'heatmap.svg',
-    }
-
-    if args.inheritance:
-        out = args.output or defaults['inheritance']
-        diagram_inheritance(conn, args.root, out, args.dot)
-    elif args.calls:
-        out = args.output or defaults['calls']
-        diagram_calls(conn, args.object, args.depth, out, args.dot)
-    elif args.dw_tables:
-        out = args.output or defaults['dw_tables']
-        diagram_dw_tables(conn, args.table, out, args.dot)
-    elif args.heatmap:
-        out = args.output or defaults['heatmap']
-        diagram_heatmap(conn, out, args.dot)
-
-    conn.close()
-
-
-if __name__ == '__main__':
-    main()

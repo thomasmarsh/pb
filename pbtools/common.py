@@ -1,6 +1,4 @@
-"""
-pb_common — shared DuckDB schema and INSERT statements for pb_index and friends.
-"""
+"""Shared DuckDB schema and INSERT statements for pb_index and friends."""
 
 TABLES = [
     'objects',

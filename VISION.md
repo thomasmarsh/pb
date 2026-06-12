@@ -291,7 +291,7 @@ statement node (deferred to E8 — requires lexer changes).
 1. **Do not generate one giant JSON file.** Use per-file `.json` output (`-o` mode) or
    streaming JSONL (`--jsonl` mode). DuckDB `read_ndjson_auto` can query JSONL directly
    without loading all files into memory.
-2. **JSONL for bulk processing:** `pb-runner --jsonl | python3 scripts/pb_index.py`
+2. **JSONL for bulk processing:** `pb-runner --jsonl | uv run pb index`
    populates `pb.duckdb` in a single streaming pass.
 3. **Tilde-escaping:** Normalise `~"` → `"` and `~~` → `~` in all string values before
    serialisation. The `pbDwStringChunk` lexer function handles this.

@@ -8,8 +8,9 @@ cabal build --enable-tests            # compile tests too
 cabal test                            # run test suite
 cabal test --test-show-details=direct # verbose output
 bash scripts/check-corpus.sh          # 0 errors / 777 files = baseline
-python3 scripts/analyze-debt.py       # BsRaw + ExRaw debt + DW control coverage (both corpora)
-python3 scripts/analyze-debt.py --no-build  # same, skip build step
+uv run pb debt                        # BsRaw + ExRaw debt + DW control coverage (both corpora)
+uv run pb debt --no-build             # same, skip build step
+uv run pytest                         # Python tool tests (pytests/ directory)
 ```
 
 ## Session Scoping
@@ -115,7 +116,7 @@ def walk_bsraw_leading(node, keyword):
 **Diagnosing implementation debt.** When the charter targets BsRaw, ExRaw, or DW structural-field coverage, run the debt analyser first — do NOT re-derive the breakdown from scratch:
 
 ```bash
-python3 scripts/analyze-debt.py --no-build
+uv run pb debt --no-build
 ```
 
 This prints:
@@ -124,7 +125,7 @@ This prints:
 - A ranked ExRaw breakdown by leading token with examples — these are expression-level `ExRaw` fallbacks still to be promoted to typed `Expr` constructors. Use this to pick the highest-value next ExRaw charter.
 - **DW control coverage** — per-field percentage of `DwControl` structural fields (`name`, `band`, `id`, `x`, `y`, `width`, `height`, `visible`, `expression`, `tab_seq`) that are non-null across both corpora; top 15 control types by frequency. Use this to baseline before any DW-track session and confirm improvement after. Expected coverage for "real" display controls (text/column/compute/line/report/groupbox/rectangle/graph): ~78% on positional fields; `htmltable`/`htmlgen`/etc. export-generator controls will always be ~0% on these fields.
 
-**Keep `analyze-debt.py` in sync with any new `Expr` constructors.** When a new `ExXxx` constructor is added, confirm the ExRaw count drops correspondingly in the script output — it requires no code changes because it walks the live JSON, but the BACKLOG entry should quote the before/after counts.
+**Keep `pbtools/debt.py` in sync with any new `Expr` constructors.** When a new `ExXxx` constructor is added, confirm the ExRaw count drops correspondingly in the script output — it requires no code changes because it walks the live JSON, but the BACKLOG entry should quote the before/after counts.
 
 **The DW coverage section is always-on** (not gated on a flag). Quote the before/after coverage percentages in BACKLOG entries for DW-track sessions.
 

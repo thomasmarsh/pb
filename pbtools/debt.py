@@ -1,33 +1,22 @@
-#!/usr/bin/env python3
 """
-Implementation-debt analyser: measure remaining BsRaw and ExRaw across both corpora.
+pb debt — analyze BsRaw + ExRaw debt and DW control coverage across both corpora.
 
-BsRaw  = statement-level fallback (tag=raw with 'text' field).
-ExRaw  = expression-level fallback (tag=raw with 'tokens' field).
+Usage (CLI):
+    pb debt [--no-build] [--repo PATH]
 
-Usage:
-    python3 scripts/analyze-debt.py            # build + run
-    python3 scripts/analyze-debt.py --no-build # skip cabal build
-
-Output:
-  - Per-corpus BsRaw category counts (sql/decl/ctrl/handled/other).
-  - BsRaw 'other' breakdown with examples — these are the actionable BsRaw targets.
-  - ExRaw breakdown by leading token with examples — expression-level fallbacks
-    to target next (binary ops, 'not' prefix, type-cast calls, etc.).
-
-Use this at Stage 0 for any charter targeting BsRaw or ExRaw reduction.
+Library:
+    from pbtools.debt import run
 """
-import argparse, json, os, glob, subprocess, sys, tempfile
+import glob
+import json
+import os
+import subprocess
+import sys
+import tempfile
 from collections import Counter, defaultdict
+from pathlib import Path
 
-REPO    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-APPEON  = os.path.join(REPO, "example", "PowerBuilder-Example", "export")
-OPENPAY = os.path.join(REPO, "example", "openpay")
 
-# Leading-word sets used for categorization (lower-cased, semicolons stripped).
-# Keep in sync with Lexer.hs sqlKws / controlKws / declKws / otherKws.
-# "open" and "close" are included: open()/close() call forms are BsCall (not BsRaw)
-# so all remaining BsRaw with these keywords are cursor ops.
 SQL_KWS = {
     "select", "selectblob", "insert", "update", "updateblob", "delete",
     "commit", "rollback", "connect", "disconnect", "declare", "cursor",
@@ -47,9 +36,23 @@ DECL_KWS = {
 }
 HANDLED = {"return", "exit", "continue", "call", "destroy", "create", "halt"}
 
+DW_STRUCT_FIELDS = ["name", "band", "id", "x", "y", "width", "height",
+                    "visible", "expression", "tab_seq"]
+
+
+def find_repo(repo: Path | None) -> Path:
+    if repo:
+        return repo
+    for p in [Path.cwd(), *Path.cwd().parents]:
+        if (p / "pb-ast.cabal").exists():
+            return p
+    sys.exit(
+        "error: cannot locate repo root (no pb-ast.cabal found). "
+        "Run from within the pb repo, or pass --repo."
+    )
+
 
 def walk_bsraw(node):
-    """Yield BsRaw text strings (tag=raw with 'text' field — statement level)."""
     if isinstance(node, list):
         for x in node:
             yield from walk_bsraw(x)
@@ -62,7 +65,6 @@ def walk_bsraw(node):
 
 
 def walk_exraw(node):
-    """Yield (first_token, full_token_list) for ExRaw expressions (tag=raw with 'tokens' field)."""
     if isinstance(node, list):
         for x in node:
             yield from walk_exraw(x)
@@ -86,28 +88,28 @@ def categorize(text):
     if first in CTRL_KWS:     return "ctrl",       first
     if first in DECL_KWS:     return "decl",       first
     if first in HANDLED:      return "handled",    first
-    if first.endswith(":"):   return "handled",    first  # TkLabel: goto/access-modifier headers
+    if first.endswith(":"):   return "handled",    first
     if txt.startswith("{"):   return "array_init", first
     return "other", first
 
 
-def run_corpus(name, src_dir, out_dir):
+def run_corpus(name: str, src_dir: str, out_dir: str, repo: Path) -> None:
     r = subprocess.run(
         ["cabal", "run", "pb-runner", "-v0", "--", "-i", src_dir, "-o", out_dir],
-        capture_output=True, text=True, cwd=REPO,
+        capture_output=True, text=True, cwd=str(repo),
     )
     if r.returncode != 0:
         print(f"[ERROR] pb-runner failed on {name}:\n{r.stderr[:400]}", file=sys.stderr)
         sys.exit(1)
 
 
-def analyze_dir(out_dir):
-    counts      = Counter()
-    other_words = Counter()
-    examples    = defaultdict(list)
-    total       = 0
-    exraw_total   = 0
-    exraw_words   = Counter()
+def analyze_dir(out_dir: str):
+    counts       = Counter()
+    other_words  = Counter()
+    examples     = defaultdict(list)
+    total        = 0
+    exraw_total  = 0
+    exraw_words  = Counter()
     exraw_examples = defaultdict(list)
     for f in glob.glob(os.path.join(out_dir, "**", "*.json"), recursive=True):
         try:
@@ -133,12 +135,7 @@ def analyze_dir(out_dir):
     return total, counts, other_words, examples, exraw_total, exraw_words, exraw_examples
 
 
-DW_STRUCT_FIELDS = ["name", "band", "id", "x", "y", "width", "height",
-                    "visible", "expression", "tab_seq"]
-
-
-def analyze_dw_controls(out_dir):
-    """Walk DW JSON output and count structural-field coverage per control."""
+def analyze_dw_controls(out_dir: str):
     dw_files = 0
     total    = 0
     field_counts = Counter()
@@ -160,16 +157,15 @@ def analyze_dw_controls(out_dir):
     return dw_files, total, field_counts, type_counts
 
 
-def main():
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--no-build", action="store_true", help="Skip cabal build")
-    args = p.parse_args()
+def run(repo: Path | None = None, no_build: bool = False) -> None:
+    repo_path = find_repo(repo)
+    appeon  = str(repo_path / "example" / "PowerBuilder-Example" / "export")
+    openpay = str(repo_path / "example" / "openpay")
 
-    if not args.no_build:
+    if not no_build:
         print("Building pb-runner...", flush=True)
         r = subprocess.run(["cabal", "build", "pb-runner", "-v0"],
-                           cwd=REPO, capture_output=True, text=True)
+                           cwd=str(repo_path), capture_output=True, text=True)
         if r.returncode != 0:
             print(r.stderr, file=sys.stderr)
             sys.exit(1)
@@ -181,16 +177,16 @@ def main():
         os.makedirs(openpay_out)
 
         print("Running Appeon corpus...",  flush=True)
-        run_corpus("appeon",  APPEON,  appeon_out)
+        run_corpus("appeon",  appeon,  appeon_out,  repo_path)
         print("Running OpenPay corpus...", flush=True)
-        run_corpus("openpay", OPENPAY, openpay_out)
+        run_corpus("openpay", openpay, openpay_out, repo_path)
         print()
 
-        grand_total       = 0
-        all_other_words   = Counter()
-        all_examples      = defaultdict(list)
-        grand_exraw       = 0
-        all_exraw_words   = Counter()
+        grand_total        = 0
+        all_other_words    = Counter()
+        all_examples       = defaultdict(list)
+        grand_exraw        = 0
+        all_exraw_words    = Counter()
         all_exraw_examples = defaultdict(list)
 
         for name, out_dir in [("Appeon", appeon_out), ("OpenPay", openpay_out)]:
@@ -198,8 +194,7 @@ def main():
                 = analyze_dir(out_dir)
             grand_total  += total
             grand_exraw  += exraw_total
-            files = len(list(glob.glob(os.path.join(out_dir, "**", "*.json"),
-                                       recursive=True)))
+            files = len(list(glob.glob(os.path.join(out_dir, "**", "*.json"), recursive=True)))
             print(f"=== {name}: {files} files, {total} BsRaw, {exraw_total} ExRaw ===")
             for cat in ("sql", "decl", "ctrl", "handled", "array_init", "other"):
                 n = counts.get(cat, 0)
@@ -235,7 +230,6 @@ def main():
                 for ex in all_exraw_examples[word][:2]:
                     print(f"      {ex!r}")
 
-        # DW control structural-field coverage
         print()
         print("=== DW Control Coverage ===")
         grand_dw_files    = 0
@@ -263,7 +257,3 @@ def main():
             print("  Control types (top 15):")
             for typ, cnt in grand_type_counts.most_common(15):
                 print(f"    {typ:20s}  {cnt:5d}")
-
-
-if __name__ == "__main__":
-    main()

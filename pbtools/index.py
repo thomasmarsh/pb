@@ -1,31 +1,34 @@
-#!/usr/bin/env python3
 """
-pb_index — populate pb.duckdb from pb-runner JSONL output.
+pb index — populate pb.duckdb from pb-runner JSONL output.
 
-Usage:
-    pb-runner -i <srcdir> --jsonl | python3 scripts/pb_index.py [pb.duckdb]
-    python3 scripts/pb_index.py [pb.duckdb] < codebase.jsonl
+Usage (CLI):
+    pb-runner -i <srcdir> --jsonl | pb index [DB]
+    pb-runner -i <srcdir> --jsonl | pb index < codebase.jsonl
+
+Library:
+    from pbtools.index import run_from_jsonl_lines
 """
-import sys
 import json
-import argparse
+import sys
+from typing import Iterable
+
 import duckdb
 
-from pb_common import TABLES, INSERT, create_schema
+from pbtools.common import TABLES, INSERT, create_schema
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('db', nargs='?', default='pb.duckdb',
-                        help='DuckDB database path (default: pb.duckdb)')
-    args = parser.parse_args()
+def run(db: str = 'pb.duckdb') -> None:
+    """Read JSONL from stdin and populate the database."""
+    run_from_jsonl_lines(sys.stdin, db)
 
-    conn = duckdb.connect(args.db)
+
+def run_from_jsonl_lines(lines: Iterable[str], db: str = 'pb.duckdb') -> None:
+    conn = duckdb.connect(db)
     create_schema(conn)
 
     rows: dict[str, list] = {t: [] for t in TABLES}
-    for line in sys.stdin:
-        line = line.strip()
+    for line in lines:
+        line = line.strip() if isinstance(line, str) else line.strip()
         if not line:
             continue
         obj = json.loads(line)
@@ -37,12 +40,8 @@ def main() -> None:
 
     conn.close()
     total = sum(len(v) for v in rows.values())
-    print(f"Indexed {total} rows into {args.db}", file=sys.stderr)
+    print(f"Indexed {total} rows into {db}", file=sys.stderr)
 
-
-# ---------------------------------------------------------------------------
-# Per-file dispatch
-# ---------------------------------------------------------------------------
 
 def ingest_file(obj: dict, rows: dict) -> None:
     file = obj.get('file', '')
@@ -68,10 +67,6 @@ def extract_object_name(obj: dict) -> str:
     return stem.rsplit('.', 1)[0] if '.' in stem else stem
 
 
-# ---------------------------------------------------------------------------
-# PowerScript ingestion
-# ---------------------------------------------------------------------------
-
 def ingest_ps(obj: dict, file: str, rows: dict) -> None:
     for proc_type, key in [
         ('function',   'functions'),
@@ -90,7 +85,6 @@ def _proc_row(file: str, proc_type: str, block: dict) -> tuple:
     end_line    = meta.get('endLine')
 
     if proc_type == 'on':
-        # onBlocks have no sig; identity comes from qualName / event fields
         name        = block.get('event', '')
         modifiers   = None
         params      = None
@@ -107,10 +101,6 @@ def _proc_row(file: str, proc_type: str, block: dict) -> tuple:
     return (file, object_name, proc_type, name, modifiers, params,
             return_type, start_line, end_line, body_json)
 
-
-# ---------------------------------------------------------------------------
-# DataWindow ingestion
-# ---------------------------------------------------------------------------
 
 def ingest_dw(obj: dict, file: str, rows: dict) -> None:
     dw_name = extract_object_name(obj)
@@ -146,7 +136,6 @@ def ingest_dw(obj: dict, file: str, rows: dict) -> None:
 
 def _ctrl_row(file: str, dw_name: str, ctrl: dict) -> tuple:
     band = ctrl.get('band')
-    # band is serialised as {"tag": "header"} etc.
     if isinstance(band, dict):
         band = band.get('tag')
     meta = ctrl.get('meta') or {}
@@ -160,7 +149,3 @@ def _ctrl_row(file: str, dw_name: str, ctrl: dict) -> tuple:
         ctrl.get('tab_seq'),
         meta.get('sourceLine'),
     )
-
-
-if __name__ == '__main__':
-    main()

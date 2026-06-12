@@ -1,26 +1,23 @@
-#!/usr/bin/env python3
 """
-pb_analyze — compute graph metrics and populate object_metrics in pb.duckdb.
+pb analyze — compute graph metrics and populate object_metrics in pb.duckdb.
 
-Usage:
-    pb-runner -i <srcdir> --jsonl | python3 scripts/pb_index.py [db]
-    python3 scripts/pb_analyze.py [pb.duckdb]
+Usage (CLI):
+    pb analyze [DB]
+
+Library:
+    from pbtools.analyze import run
 """
 import json
-import os
 import sys
 
 import duckdb
 import networkx as nx
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 
 BRANCH_TAGS = {'if', 'for', 'do', 'choose'}
 
 
-def main() -> None:
-    db = sys.argv[1] if len(sys.argv) > 1 else 'pb.duckdb'
+def run(db: str = 'pb.duckdb') -> None:
     conn = duckdb.connect(db)
 
     print("Extracting call graph...", file=sys.stderr)
@@ -35,10 +32,6 @@ def main() -> None:
     conn.close()
     print("Done.", file=sys.stderr)
 
-
-# ---------------------------------------------------------------------------
-# Call extraction
-# ---------------------------------------------------------------------------
 
 def extract_calls(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("DROP TABLE IF EXISTS calls")
@@ -84,10 +77,6 @@ def walk_calls(node) -> list[tuple[str, str]]:
     return results
 
 
-# ---------------------------------------------------------------------------
-# Cyclomatic complexity
-# ---------------------------------------------------------------------------
-
 def count_branches(node) -> int:
     count = 0
     if isinstance(node, dict):
@@ -116,14 +105,9 @@ def compute_cyclomatic(conn: duckdb.DuckDBPyConnection) -> None:
         conn.execute("UPDATE procedures SET cyclomatic = ? WHERE rowid = ?", [cc, rowid])
 
 
-# ---------------------------------------------------------------------------
-# Graph metrics
-# ---------------------------------------------------------------------------
-
 def compute_dit(conn: duckdb.DuckDBPyConnection) -> dict[str, int]:
     """Depth of inheritance tree: max hops from a base class (no parent)."""
     edges = conn.execute("SELECT from_object, to_object FROM inherits").fetchall()
-    # Table stores (child, parent); build parent→child for BFS from roots.
     I = nx.DiGraph((parent, child) for child, parent in edges)
     roots = {n for n in I.nodes() if I.in_degree(n) == 0}
     dit: dict[str, int] = {n: 0 for n in I.nodes()}
@@ -190,7 +174,3 @@ def compute_metrics(conn: duckdb.DuckDBPyConnection) -> None:
 
     if rows:
         conn.executemany("INSERT INTO object_metrics VALUES (?,?,?,?,?,?,?,?,?)", rows)
-
-
-if __name__ == '__main__':
-    main()
