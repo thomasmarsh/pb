@@ -240,6 +240,7 @@ pOperator mk = choice
   , try (string "-=" >> return (mk TkAugmentOp "-="))
   , try (string "*=" >> return (mk TkAugmentOp "*="))
   , try (string "/=" >> return (mk TkAugmentOp "/="))
+  , try (string "||" >> return (mk TkArithOp     "||"))
   , try (string "::" >> return (mk TkDoubleColon "::"))
   , char '>'  >> return (mk TkCompareOp ">")
   , char '<'  >> return (mk TkCompareOp "<")

@@ -39,12 +39,10 @@ tests = testGroup "Pipeline"
             normalizeText input @?=
                 [ LogicalLine "string s = \"say ~\"hello\" and  world!\"" 1 2 ]
 
-        , testCase "continuation: & inside open string with ~\" escape is not joined" $ do
+        , testCase "continuation: & inside open string with ~\" escape is joined" $ do
             let input = "string s = \"say ~\"hi &\nworld!\""
             normalizeText input @?=
-                [ LogicalLine "string s = \"say ~\"hi &" 1 1
-                , LogicalLine "world!\"" 2 2
-                ]
+                [ LogicalLine "string s = \"say ~\"hi  world!\"" 1 2 ]
 
         , testCase "block comment spanning two lines is joined" $ do
             map llText (normalizeText "/* start\nend */") @?=

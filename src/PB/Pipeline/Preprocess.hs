@@ -57,12 +57,14 @@ consumeContinuation startLine currentEnd current ((n, t) : rest)
   | otherwise =
       (current, currentEnd, (n, t) : rest)
 
--- | True if the last non-space character is '&' AND it is not inside a string.
+-- | True if the last non-space character is '&'.
+-- PowerBuilder allows & continuation both outside strings (statement
+-- continuation) and inside open string literals (string continuation);
+-- both cases require joining with the next physical line.
 endsWithContinuation :: Text -> Bool
 endsWithContinuation t =
   case lastNonSpace t of
-    Nothing  -> False
-    Just '&' -> not (insideString t)
+    Just '&' -> True
     _        -> False
 
 stripContinuationMarker :: Text -> Text
@@ -75,16 +77,6 @@ lastNonSpace =
   fmap snd
   . T.unsnoc
   . T.dropWhileEnd (\c -> c == ' ' || c == '\t')
-
--- | Heuristic: count unescaped quotes to detect whether '&' is inside a string.
-insideString :: Text -> Bool
-insideString t =
-  let stripped = removeEscapedQuotes t
-      quoteCount = T.count "\"" stripped
-  in odd quoteCount
-
-removeEscapedQuotes :: Text -> Text
-removeEscapedQuotes = T.replace "~\"" ""
 
 -- | Join physical lines that span a /* … */ block comment.
 --   Tracks open/close depth per line (stripping // suffixes first) so that
