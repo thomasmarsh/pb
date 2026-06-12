@@ -39,13 +39,20 @@ scanBlocks src =
 
 pFile :: DwParser (Int, [DwBlock])
 pFile = do
-    skipLine   -- HA$PBExportHeader$...
-    skipLine   -- $PBExportComments$
+    skipMany (try skipHeaderLine)
     n      <- pRelease
     blocks <- many (try pDwBlock)
     skipMany (satisfy (`elem` (" \t\n\r" :: String)))
     eof
     return (n, blocks)
+
+-- Skip one line that does not begin (after optional whitespace) with "release".
+-- Used to consume any number of export-header preamble lines before release N;.
+-- The eof guard prevents an infinite loop when skipLine succeeds at EOF
+-- consuming zero characters.
+skipHeaderLine :: DwParser ()
+skipHeaderLine = notFollowedBy (eof <|> releaseKw) >> skipLine
+  where releaseKw = skipMany (satisfy (`elem` (" \t\r\n" :: String))) >> void (string' "release")
 
 skipLine :: DwParser ()
 skipLine = do

@@ -225,6 +225,24 @@ tests = testGroup "Pipeline.Runner"
         case runFile "test.srx" src of
           Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
           Right v  -> arrayLen (lookupObj "decls" (lookupObj "prototypes" v)) @?= 1
+
+    , testCase "UTF-8 BOM is stripped — no lex error" $
+        let src = "\xFEFF" <> "public function integer f_test ()\nend function\n"
+        in case runFile "test.sru" src of
+             Left  err -> assertFailure ("expected Right, got: " <> T.unpack err)
+             Right _   -> pure ()
+
+    , testCase "UTF-8 BOM with leading comment before forward — no lex error" $
+        let src = "\xFEFF" <> T.unlines
+              [ "//objectcomments NVO for summary"
+              , "forward"
+              , "global type uo_test from nonvisualobject"
+              , "end type"
+              , "end forward"
+              ]
+        in case runFile "test.sru" src of
+             Left  err -> assertFailure ("expected Right, got: " <> T.unpack err)
+             Right v   -> arrayLen (lookupObj "types" (lookupObj "forward" v)) @?= 1
     ]
   , testGroup "runFile meta field"
     [ testCase "wrapSrFile emits top-level meta.object and meta.ancestor" $ do

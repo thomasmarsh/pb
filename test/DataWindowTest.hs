@@ -807,6 +807,46 @@ tests = testGroup "DataWindow"
           length result @?= 2
           lookupUnquoted "b" result @?= Just "2"
       ]
+
+  , testGroup "scanBlocks header flexibility"
+      [ testCase "three header lines before release — parses" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "// extra comment line"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "detail(height=80 )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> length (dwBands dw) @?= 1
+
+      , testCase "one header line before release — parses" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "detail(height=80 )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> length (dwBands dw) @?= 1
+
+      , testCase "five header lines before release — parses" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "// line 3"
+                , "// line 4"
+                , "// line 5"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> dwRelease dw @?= 9
+      ]
   ]
 
 -- | Minimal DW header for control test sources.

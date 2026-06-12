@@ -34,11 +34,16 @@ import PB.Pipeline.Walk    (walkAllSrFiles)
 -- Entry point
 
 runFile :: FilePath -> Text -> Either Text Value
-runFile path src = case fileKind path of
-  DataWindow  -> runDataWindow  path src
-  Pipeline    -> runPipeline    path src
-  Project     -> runProject     path src
-  PowerScript -> runPowerScript path src
+runFile path src0 =
+  let src = stripBom src0
+  in case fileKind path of
+    DataWindow  -> runDataWindow  path src
+    Pipeline    -> runPipeline    path src
+    Project     -> runProject     path src
+    PowerScript -> runPowerScript path src
+
+stripBom :: Text -> Text
+stripBom t = fromMaybe t (T.stripPrefix "\xFEFF" t)
 
 data FileKind = DataWindow | Pipeline | Project | PowerScript
 
