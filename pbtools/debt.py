@@ -16,6 +16,7 @@ import tempfile
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from pbtools.build import build_runner, find_binary, find_repo
 
 SQL_KWS = {
     "select", "selectblob", "insert", "update", "updateblob", "delete",
@@ -38,18 +39,6 @@ HANDLED = {"return", "exit", "continue", "call", "destroy", "create", "halt"}
 
 DW_STRUCT_FIELDS = ["name", "band", "id", "x", "y", "width", "height",
                     "visible", "expression", "tab_seq"]
-
-
-def find_repo(repo: Path | None) -> Path:
-    if repo:
-        return repo
-    for p in [Path.cwd(), *Path.cwd().parents]:
-        if (p / "pb-ast.cabal").exists():
-            return p
-    sys.exit(
-        "error: cannot locate repo root (no pb-ast.cabal found). "
-        "Run from within the pb repo, or pass --repo."
-    )
 
 
 def walk_bsraw(node):
@@ -93,10 +82,10 @@ def categorize(text):
     return "other", first
 
 
-def run_corpus(name: str, src_dir: str, out_dir: str, repo: Path) -> None:
+def run_corpus(name: str, src_dir: str, out_dir: str, binary: Path) -> None:
     r = subprocess.run(
-        ["cabal", "run", "pb-runner", "-v0", "--", "-i", src_dir, "-o", out_dir],
-        capture_output=True, text=True, cwd=str(repo),
+        [str(binary), "-i", src_dir, "-o", out_dir],
+        capture_output=True, text=True,
     )
     if r.returncode != 0:
         print(f"[ERROR] pb-runner failed on {name}:\n{r.stderr[:400]}", file=sys.stderr)
@@ -164,11 +153,9 @@ def run(repo: Path | None = None, no_build: bool = False) -> None:
 
     if not no_build:
         print("Building pb-runner...", flush=True)
-        r = subprocess.run(["cabal", "build", "pb-runner", "-v0"],
-                           cwd=str(repo_path), capture_output=True, text=True)
-        if r.returncode != 0:
-            print(r.stderr, file=sys.stderr)
-            sys.exit(1)
+        binary = build_runner(repo_path)
+    else:
+        binary = find_binary(repo_path)
 
     with tempfile.TemporaryDirectory() as tmp:
         appeon_out  = os.path.join(tmp, "appeon")
@@ -177,9 +164,9 @@ def run(repo: Path | None = None, no_build: bool = False) -> None:
         os.makedirs(openpay_out)
 
         print("Running Appeon corpus...",  flush=True)
-        run_corpus("appeon",  appeon,  appeon_out,  repo_path)
+        run_corpus("appeon",  appeon,  appeon_out,  binary)
         print("Running OpenPay corpus...", flush=True)
-        run_corpus("openpay", openpay, openpay_out, repo_path)
+        run_corpus("openpay", openpay, openpay_out, binary)
         print()
 
         grand_total        = 0

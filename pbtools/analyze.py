@@ -8,7 +8,6 @@ Library:
     from pbtools.analyze import run
 """
 import json
-import sys
 
 import duckdb
 import networkx as nx
@@ -17,20 +16,21 @@ import networkx as nx
 BRANCH_TAGS = {'if', 'for', 'do', 'choose'}
 
 
-def run(db: str = 'pb.duckdb') -> None:
+def run(db: str = 'pb.duckdb', console=None) -> None:
+    if console is None:
+        from rich.console import Console
+        console = Console(stderr=True)
     conn = duckdb.connect(db)
-
-    print("Extracting call graph...", file=sys.stderr)
-    extract_calls(conn)
-
-    print("Computing cyclomatic complexity...", file=sys.stderr)
-    compute_cyclomatic(conn)
-
-    print("Computing graph metrics...", file=sys.stderr)
-    compute_metrics(conn)
-
+    _step(console, 1, 3, "Extracting call graph",           extract_calls,      conn)
+    _step(console, 2, 3, "Computing cyclomatic complexity", compute_cyclomatic, conn)
+    _step(console, 3, 3, "Computing graph metrics",         compute_metrics,    conn)
     conn.close()
-    print("Done.", file=sys.stderr)
+
+
+def _step(console, i: int, total: int, name: str, fn, *args) -> None:
+    with console.status(f"[dim][{i}/{total}] {name}...[/dim]"):
+        fn(*args)
+    console.print(f"[dim][{i}/{total}] {name}[/dim] [green]✓[/green]")
 
 
 def extract_calls(conn: duckdb.DuckDBPyConnection) -> None:

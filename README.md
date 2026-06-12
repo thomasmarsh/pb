@@ -5,9 +5,9 @@ you can query with plain SQL, or hand to an LLM as a tool. This avoids
 the need for grepping or manual reading.
 
 ```
-pb-runner parses .sr* files → JSONL stream → pb index → pb.duckdb
-                                                     ↓
-              SQL queries  ←  fact tables  →  pb analyze  →  pb diagram
+.sr* source files  →  pb run  →  pb.duckdb  →  SQL queries
+                                      ↓              ↑
+                               pb analyze       pb diagram
 ```
 
 ---
@@ -15,26 +15,36 @@ pb-runner parses .sr* files → JSONL stream → pb index → pb.duckdb
 ## Quick start
 
 ```bash
-# 1. Build the parser (Haskell + cabal)
-cabal build pb-runner
-
-# 2. Install Python tooling
+# 1. Install Python tooling (also builds the Haskell parser on first use)
 uv sync
 
-# 3. Parse and index your source tree in one pipeline
-cabal run pb-runner -- -i /path/to/src --jsonl | uv run pb index
+# 2. Parse, index, and analyze in one command — incremental by default
+uv run pb run -i /path/to/src
 
-# 4. Compute graph metrics (call graph, cyclomatic complexity, PageRank)
-uv run pb analyze
-
-# 5. Query
+# 3. Query
 uv run pb top              # most complex procedures
 uv run pb pagerank         # most important objects
 uv run pb --help           # full command list
 ```
 
+On the first run `pb run` builds the Haskell parser automatically. Every
+subsequent run only re-parses files whose content has changed — unchanged
+files are skipped instantly.
+
 `pb.duckdb` now contains every object, procedure, DataWindow
 control, database reference, and inheritance edge in your codebase.
+
+### Modes
+
+| Command | What it does |
+|---------|-------------|
+| `pb run -i DIR [--db DB]` | Parse → index → analyze (incremental). Default DB: `pb.duckdb`. |
+| `pb run -i DIR --reset` | Full re-parse, drop and recreate all tables. |
+| `pb dump -i DIR -o OUTDIR` | Parse to a mirrored JSON file tree (one-shot snapshot). |
+| `pb analyze [DB]` | Re-run graph metrics on an existing database. |
+
+`pb run` prints a progress bar while parsing, shows rich error panels for any
+files that fail (with source context), and reports a summary on stderr.
 
 ---
 
@@ -123,7 +133,7 @@ WHERE dit IS NOT NULL ORDER BY dit DESC LIMIT 10;
 
 ## Diagrams
 
-Requires `pb.duckdb` populated with `pb analyze` first.
+Requires `pb.duckdb` populated via `pb run` (or `pb analyze` standalone).
 
 ```bash
 # Inheritance hierarchy (all objects)

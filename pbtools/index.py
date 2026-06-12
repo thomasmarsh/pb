@@ -22,6 +22,19 @@ def run(db: str = 'pb.duckdb') -> None:
     run_from_jsonl_lines(sys.stdin, db)
 
 
+def ingest_batch(objects, conn) -> int:
+    """Ingest an iterable of parsed file dicts into an open connection. Returns row count."""
+    rows: dict[str, list] = {t: [] for t in TABLES}
+    for obj in objects:
+        ingest_file(obj, rows)
+    total = 0
+    for table, data in rows.items():
+        if data:
+            conn.executemany(INSERT[table], data)
+            total += len(data)
+    return total
+
+
 def run_from_jsonl_lines(lines: Iterable[str], db: str = 'pb.duckdb') -> None:
     conn = duckdb.connect(db)
     create_schema(conn)

@@ -101,3 +101,9 @@ def create_schema(conn) -> None:
         stmt = stmt.strip()
         if stmt:
             conn.execute(stmt)
+
+
+def drop_tables(conn) -> None:
+    """Drop all data tables and file_state (full reset)."""
+    for t in TABLES + ['file_state']:
+        conn.execute(f"DROP TABLE IF EXISTS {t}")

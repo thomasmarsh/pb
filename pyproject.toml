@@ -6,6 +6,7 @@ dependencies = [
     "duckdb>=0.10",
     "graphviz>=0.21",
     "networkx>=3.3",
+    "rich>=13.0",
     "scipy>=1.11",
     "typer>=0.12",
 ]
