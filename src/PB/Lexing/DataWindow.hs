@@ -76,6 +76,7 @@ pDwBlock :: DwParser DwBlock
 pDwBlock = do
     skipMany (satisfy (`elem` (" \t\n\r" :: String)))
     kw      <- pDwKeyword
+    skipMany (satisfy (`elem` (" \t" :: String)))
     _       <- char '('
     content <- pBlockContent
     return (DwBlock kw content)

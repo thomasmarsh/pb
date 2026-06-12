@@ -74,8 +74,18 @@ tests = testGroup "Pipeline.Runner"
           Left err -> assertFailure (T.unpack err)
           Right v  -> arrayLen (lookupObj "functions" v) @?= 1
 
-    , testCase "lex error in body returns Left" $
-        assertBool "expected Left" (isLeft (runFile "foo.srf" "@@@\n"))
+    , testCase "unrecognised character causes Left" $
+        -- '@' is a valid ident-start so @@@ lexes fine; '~' outside a string
+        -- is not handled by any token parser, so it produces a real lex error.
+        assertBool "expected Left" (isLeft (runFile "foo.srf" "~illegal\n"))
+
+    , testCase "lex error message includes content and hex lines" $ do
+        -- '~' outside a string is unrecognised — confirms the diagnostic format.
+        case runFile "foo.srf" "public function integer f ()\n~bad\nend function\n" of
+          Right _ -> assertFailure "expected Left for lex error"
+          Left err -> do
+            assertBool "error contains 'content:'" ("content:" `T.isInfixOf` err)
+            assertBool "error contains 'hex:'"     ("hex:"     `T.isInfixOf` err)
 
     , testCase "real snippet: global type + on create + function" $ do
         let src = T.unlines
@@ -315,6 +325,86 @@ tests = testGroup "Pipeline.Runner"
               lookupObj "kind"   e @?= String "powerscript"
               lookupObj "object" e @?= String "w_tmp"
             _   -> assertFailure ("expected 1 manifest entry, got " <> show (length entries))
+    ]
+
+  , testGroup "runFile regression: parse errors in corpus"
+    -- Issue 1a: basic consecutive functions (sanity check — must pass)
+    [ testCase "two consecutive functions in same .sru file" $ do
+        let src = T.unlines
+              [ "public function boolean uf_init ()"
+              , "end function"
+              , "public function boolean uf_save ()"
+              , "end function"
+              ]
+        case runFile "test.sru" src of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right v  -> arrayLen (lookupObj "functions" v) @?= 2
+
+    -- Issue 1b: SQL with trailing // comment after the semicolon on the same line.
+    -- endsWithSemi checks llText which includes the comment, so "from t; // x" does
+    -- NOT end with ';'. moreConts then consumes 'end function' and the second
+    -- function is never seen by the file parser.
+    , testCase "SQL terminated by ; with trailing // comment: second function still parsed" $ do
+        let src = T.unlines
+              [ "public function boolean uf_first ()"
+              , "select a from b; // retrieves data"
+              , "end function"
+              , "public function boolean uf_save ()"
+              , "end function"
+              ]
+        case runFile "test.sru" src of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right v  -> arrayLen (lookupObj "functions" v) @?= 2
+
+    -- Issue 2: multi-line SQL with a // comment line between continuation lines.
+    -- The comment is filtered from the statement stream, so the SQL merger should
+    -- stitch select .. count(*) .. id .. from t; into a single BsRaw without error.
+    , testCase "multi-line SQL with // comment between continuation lines" $ do
+        let src = T.unlines
+              [ "public function boolean uf_retrieve ()"
+              , "select 1,"
+              , "    count(*)"
+              , "    // comment"
+              , "    , id"
+              , "from table1;"
+              , "end function"
+              ]
+        case runFile "test.sru" src of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right _  -> pure ()
+
+    -- Issue 2 variant: SQL where the semicolon-bearing line has an inline // comment.
+    -- This hits the same endsWithSemi bug as Issue 1b.
+    , testCase "multi-line SQL where terminal ; line has trailing // comment" $ do
+        let src = T.unlines
+              [ "public function boolean uf_retrieve ()"
+              , "select 1,"
+              , "    count(*)"
+              , "    , id"
+              , "from table1; // end sql"
+              , "end function"
+              ]
+        case runFile "test.sru" src of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right _  -> pure ()
+
+    -- Issue 3: lex error at offset 0 on what appears to be an innocuous assignment
+    -- line inside a function. next_str contains the keyword prefix "next" but the
+    -- underscore makes it a valid identifier; string() is a known function call.
+    -- This test may pass — if so, the actual corpus file contains something not
+    -- captured here and needs its content to reproduce.
+    , testCase "assignments with next_-prefixed identifiers parse without lex error" $ do
+        let src = T.unlines
+              [ "public function boolean uf_test ()"
+              , "long next_long"
+              , "string next_id, next_str"
+              , "next_id = string(next_long)"
+              , "next_str = string(next_id, 5, 0)"
+              , "end function"
+              ]
+        case runFile "test.sru" src of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right _  -> pure ()
     ]
 
   , testGroup "runFile stub extensions"

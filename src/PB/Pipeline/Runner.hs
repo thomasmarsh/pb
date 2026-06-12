@@ -21,10 +21,12 @@ import PB.Pipeline.Serialise  ()
 import Data.Aeson          (ToJSON (..), Value (..), encode, object, toJSON, (.=))
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
+import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
 import Control.Exception   (SomeException, try)
-import Data.Char           (toLower)
-import qualified Data.Text as T
+import Data.Char           (intToDigit, toLower)
+import qualified Data.Text          as T
+import qualified Data.Text.Encoding as TE
 import System.Directory    (createDirectoryIfMissing)
 import System.FilePath     (makeRelative, takeBaseName, takeDirectory
                            , takeExtension, (</>))
@@ -137,10 +139,23 @@ collectStatements :: [LexLine] -> Either Text [Statement]
 collectStatements lexLines =
   let results = splitStatements lexLines
   in case [err | Left err <- results] of
-    (e : _) -> Left
-        ("lex error at offset " <> T.pack (show (leOffset e))
-         <> " line "            <> T.pack (show (llStartLine (leSource e))))
-    [] -> Right [s | Right s <- results, not (null (stmtTokens s))]
+    (e : _) -> Left (formatLexErr e)
+    []      -> Right [s | Right s <- results, not (null (stmtTokens s))]
+
+-- | Human-readable lex error: line number, raw content, and UTF-8 hex dump.
+-- The hex dump exposes BOMs, CRLF, non-printable bytes, and unusual Unicode
+-- that would otherwise be invisible in a plain-text error message.
+formatLexErr :: LexError -> Text
+formatLexErr e =
+  let ll      = leSource e
+      raw     = T.take 120 (llText ll)
+      hexStr  = T.unwords (map fmtByte (BS.unpack (TE.encodeUtf8 raw)))
+      fmtByte b = let hi = fromIntegral b `div` 16
+                      lo = fromIntegral b `mod` 16
+                  in T.pack [intToDigit hi, intToDigit lo]
+  in "lex error at line " <> T.pack (show (llStartLine ll))
+  <> "\n  content: " <> raw
+  <> "\n  hex:     " <> hexStr
 
 -- ---------------------------------------------------------------------------
 -- Manifest

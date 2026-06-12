@@ -846,6 +846,37 @@ tests = testGroup "DataWindow"
           case parseDataWindow src of
             Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
             Right dw  -> dwRelease dw @?= 9
+
+      -- Issue 4: block keyword followed by a space before '(' is not parsed.
+      -- pDwBlock expects keyword immediately followed by '(' with no whitespace gap.
+      -- tableblob (band=detail table=...) — the space causes pDwBlock to fail,
+      -- many stops early, and eof fails with "unexpected 't'".
+      , testCase "block keyword with space before '(' parses (tableblob pattern)" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "detail(height=80 )"
+                , "tableblob (band=detail table=t id=1 )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> length (dwControls dw) @?= 1
+
+      -- Issue 4 variant: any block keyword with a space before '(' should be handled.
+      , testCase "standard control keyword with space before '(' parses (column pattern)" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "detail(height=80 )"
+                , "column (band=detail name=id id=1 x=0 y=0 width=100 height=20 )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> length (dwControls dw) @?= 1
       ]
   ]
 
