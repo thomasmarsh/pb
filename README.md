@@ -28,7 +28,9 @@ cabal run pb-runner -- -i /path/to/src --jsonl | uv run pb index
 uv run pb analyze
 
 # 5. Query
-duckdb pb.duckdb
+uv run pb top              # most complex procedures
+uv run pb pagerank         # most important objects
+uv run pb --help           # full command list
 ```
 
 `pb.duckdb` now contains every object, procedure, DataWindow
@@ -55,176 +57,66 @@ control, database reference, and inheritance edge in your codebase.
 
 ## Queries
 
-Open a shell: `duckdb pb.duckdb`
+Built-in commands cover the most common analyses — no SQL required:
 
-### Most complex procedures
+```bash
+uv run pb top                              # most complex procedures
+uv run pb pagerank                         # most important objects by PageRank
+uv run pb callers fn_sqlerror             # who calls this function
+uv run pb dead-code                        # uncalled non-public procedures
+uv run pb god-objects                      # high fan-in + high complexity
+uv run pb ancestors m_misth_zpstath_grid  # inheritance chain upward
+uv run pb descendants w_list              # all objects extending w_list
+uv run pb dw dw_misth_ypal_yvar_list      # tables/columns for a DataWindow
+uv run pb db-coverage                     # all referenced database tables
+uv run pb coupling                        # most tightly coupled object pairs
+```
+
+Most commands accept `--n` to change the row limit and `--db` to target a
+different database file. Run `uv run pb <command> --help` for details.
+
+### Adding queries
+
+Drop a `.sql` file into `queries/` and it becomes a `pb` command automatically.
+The leading comment block sets the description and parameters:
 
 ```sql
-SELECT object, name, proc_type, cyclomatic
-FROM procedures
-ORDER BY cyclomatic DESC
-LIMIT 15;
+-- One-line description shown in pb --help.
+-- :name TEXT          ← required positional argument
+-- :n INT 20           ← optional --n flag with default 20
+SELECT ...
+WHERE col = $name
+LIMIT $n;
 ```
 
-```
-object               name             proc_type  cyclomatic
-w_app                doubleclicked    event      29
-w_krat_total_search  of_createwhere   function   17
-w_pbgrid             me_delrec        event      13
-...
-```
+### Ad-hoc SQL
 
-### Most important objects (PageRank)
+For queries not covered by the built-ins, open a DuckDB shell directly:
 
-Higher PageRank = more of the codebase depends on this object, directly or
-transitively. The first place to look when planning a refactor.
+```bash
+duckdb pb.duckdb
+```
 
 ```sql
-SELECT object, pagerank, in_degree, out_degree, max_cyclomatic
-FROM object_metrics
-ORDER BY pagerank DESC
-LIMIT 10;
-```
-
-### God objects — high complexity AND high fan-in
-
-```sql
-SELECT m.object, m.in_degree, m.max_cyclomatic, m.avg_cyclomatic,
-       count(p.name) AS proc_count
-FROM object_metrics m
-JOIN procedures p ON p.object = m.object
-GROUP BY m.object, m.in_degree, m.max_cyclomatic, m.avg_cyclomatic
-HAVING m.in_degree >= 5 AND m.max_cyclomatic >= 3
-ORDER BY m.in_degree * m.max_cyclomatic DESC;
-```
-
-Scale the thresholds to your codebase size. For the bundled `example/openpay`
-corpus `>= 5` and `>= 3` are appropriate; larger codebases may want `> 10 / > 10`.
-
-### Who calls this function?
-
-```sql
-SELECT DISTINCT object AS caller, from_proc, call_type
-FROM calls
-WHERE to_name = 'fn_sqlerror'
-ORDER BY caller;
-```
-
-### Dead code candidates — procedures never called
-
-```sql
-SELECT p.object, p.proc_type, p.name, p.start_line
-FROM procedures p
-LEFT JOIN calls c ON c.to_name = p.name
-WHERE c.to_name IS NULL
-  AND p.proc_type IN ('function', 'subroutine')
-  AND p.modifiers NOT LIKE '%public%'
-ORDER BY p.object, p.name;
-```
-
-### What database tables does a DataWindow read?
-
-```sql
-SELECT dt.dw_name, dt.table_name,
-       string_agg(dc.column_name, ', ' ORDER BY dc.column_name) AS columns
-FROM dw_retrieve_tables dt
-JOIN dw_retrieve_columns dc
-  ON dc.dw_name = dt.dw_name AND dc.table_name = dt.table_name
-WHERE dt.dw_name = 'dw_misth_ypal_yvar_list'
-GROUP BY dt.dw_name, dt.table_name;
-```
-
-### Which forms read from a specific database table?
-
-```sql
-SELECT DISTINCT dt.dw_name, dt.file
-FROM dw_retrieve_tables dt
-WHERE dt.table_name = 'misth_ypal'
-ORDER BY dt.dw_name;
-```
-
-### DataWindows with parameterised retrieval (retrieval arguments)
-
-```sql
-SELECT da.dw_name, da.arg_name, da.arg_type,
-       string_agg(dw.exp1 || ' ' || dw.op || ' ' || dw.exp2, ' AND ')
-         AS where_clause
-FROM dw_arguments da
-JOIN dw_retrieve_where dw ON dw.dw_name = da.dw_name
-WHERE da.dw_name = 'dw_misth_ypal_yvar_list'
-GROUP BY da.dw_name, da.arg_name, da.arg_type
-ORDER BY da.dw_name;
-```
-
-### Full inheritance chain for an object
-
-```sql
-WITH RECURSIVE chain AS (
-    SELECT from_object AS obj, to_object AS parent, 1 AS depth
-    FROM inherits
-    WHERE from_object = 'm_misth_zpstath_grid'
-  UNION ALL
-    SELECT chain.obj, i.to_object, chain.depth + 1
-    FROM inherits i
-    JOIN chain ON chain.parent = i.from_object
-)
-SELECT depth, parent FROM chain ORDER BY depth;
-```
-
-### All descendants of a base class
-
-```sql
-WITH RECURSIVE sub AS (
-    SELECT from_object, to_object FROM inherits WHERE to_object = 'w_list'
-  UNION ALL
-    SELECT i.from_object, i.to_object
-    FROM inherits i JOIN sub ON i.to_object = sub.from_object
-)
-SELECT DISTINCT from_object AS descendant FROM sub ORDER BY 1;
-```
-
-### Objects with the deepest inheritance tree
-
-```sql
-SELECT object, dit
-FROM object_metrics
-WHERE dit IS NOT NULL
-ORDER BY dit DESC
-LIMIT 10;
-```
-
-### Database table coverage — which tables are referenced across the whole codebase
-
-```sql
-SELECT table_name,
-       count(DISTINCT dw_name) AS datawindow_count,
-       string_agg(DISTINCT dw_name, ', ') AS datawindows
-FROM dw_retrieve_tables
-GROUP BY table_name
-ORDER BY datawindow_count DESC;
-```
-
-### Procedures larger than N lines
-
-```sql
+-- Procedures larger than N lines
 SELECT object, proc_type, name, start_line, end_line,
        (end_line - start_line) AS line_count
 FROM procedures
 WHERE end_line IS NOT NULL
 ORDER BY line_count DESC
 LIMIT 20;
-```
 
-### Cross-object coupling — which object pairs call each other most?
+-- DataWindows with parameterised retrieval
+SELECT da.dw_name, da.arg_name, da.arg_type,
+       string_agg(dw.exp1 || ' ' || dw.op || ' ' || dw.exp2, ' AND ') AS where_clause
+FROM dw_arguments da
+JOIN dw_retrieve_where dw ON dw.dw_name = da.dw_name
+GROUP BY da.dw_name, da.arg_name, da.arg_type
+ORDER BY da.dw_name;
 
-```sql
-SELECT c.object AS caller, c.to_name AS callee, count(*) AS edge_count
-FROM calls c
-WHERE c.object != c.to_name
-GROUP BY c.object, c.to_name
-HAVING count(*) > 3
-ORDER BY edge_count DESC
-LIMIT 20;
+-- Objects with the deepest inheritance tree
+SELECT object, dit FROM object_metrics
+WHERE dit IS NOT NULL ORDER BY dit DESC LIMIT 10;
 ```
 
 ---
