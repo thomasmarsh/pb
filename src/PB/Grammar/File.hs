@@ -32,8 +32,9 @@ import PB.AST.SourceFile
   )
 import PB.Lexing.Splitter (Statement (..))
 import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
+import PB.Pipeline.Preprocess (llStartLine, llText)
 
-import Text.Megaparsec (many, manyTill, lookAhead, try, eof, parse)
+import Text.Megaparsec (many, manyTill, lookAhead, try, parse, getInput)
 import Text.Megaparsec.Error (errorBundlePretty)
 import qualified Data.Text as T
 
@@ -406,7 +407,13 @@ parseSrFileWithSpans headers stmts = case parse pSrFile "" (StmtStream stmts) of
 pSrFile :: FileParser (SrFile, SrSpans)
 pSrFile = do
   blocks <- many (try pAnyTopLevelBlock)
-  eof
+  StmtStream remaining <- getInput
+  case remaining of
+    (s:_) -> fail $
+      "parser stuck at line " <> show (llStartLine (stmtSource s))
+      <> " after parsing " <> show (length blocks) <> " top-level block(s)\n"
+      <> "  unrecognized construct: " <> T.unpack (T.take 200 (llText (stmtSource s)))
+    [] -> return ()
   let sf = SrFile
         { srHeaders         = []
         , srForward         = listToMaybe [f  | TLFwd        f       <- blocks]
