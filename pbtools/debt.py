@@ -116,7 +116,7 @@ def analyze_dir(out_dir: str):
             d = json.load(open(f))
         except Exception:
             continue
-        if "error" in d:
+        if not isinstance(d, dict) or "error" in d:
             continue
         for text in walk_bsraw(d):
             total += 1
@@ -145,7 +145,7 @@ def analyze_dw_controls(out_dir: str):
             d = json.load(open(f))
         except Exception:
             continue
-        if d.get("kind") != "datawindow" or "error" in d:
+        if not isinstance(d, dict) or d.get("kind") != "datawindow" or "error" in d:
             continue
         dw_files += 1
         for ctrl in d.get("controls", []):

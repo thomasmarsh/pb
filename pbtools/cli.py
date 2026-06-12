@@ -5,6 +5,8 @@ from typing import Optional
 
 import typer
 
+from pbtools.queries import register_queries
+
 app = typer.Typer(
     name="pb",
     no_args_is_help=True,
@@ -17,6 +19,7 @@ diagram_app = typer.Typer(
     help="Generate SVG diagrams from pb.duckdb.",
 )
 app.add_typer(diagram_app, name="diagram")
+register_queries(app)
 
 
 # ---------------------------------------------------------------------------
