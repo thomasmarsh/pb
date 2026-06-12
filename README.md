@@ -67,10 +67,10 @@ LIMIT 15;
 ```
 
 ```
-object              name                proc_type  cyclomatic
-w_app               doubleclicked       event      29
-w_main              wf_process_input    function   24
-nvo_validation      of_validate         function   21
+object               name             proc_type  cyclomatic
+w_app                doubleclicked    event      29
+w_krat_total_search  of_createwhere   function   17
+w_pbgrid             me_delrec        event      13
 ...
 ```
 
@@ -94,16 +94,19 @@ SELECT m.object, m.in_degree, m.max_cyclomatic, m.avg_cyclomatic,
 FROM object_metrics m
 JOIN procedures p ON p.object = m.object
 GROUP BY m.object, m.in_degree, m.max_cyclomatic, m.avg_cyclomatic
-HAVING m.in_degree > 10 AND m.max_cyclomatic > 10
+HAVING m.in_degree >= 5 AND m.max_cyclomatic >= 3
 ORDER BY m.in_degree * m.max_cyclomatic DESC;
 ```
+
+Scale the thresholds to your codebase size. For the bundled `example/openpay`
+corpus `>= 5` and `>= 3` are appropriate; larger codebases may want `> 10 / > 10`.
 
 ### Who calls this function?
 
 ```sql
 SELECT DISTINCT object AS caller, from_proc, call_type
 FROM calls
-WHERE to_name = 'of_validate'
+WHERE to_name = 'fn_sqlerror'
 ORDER BY caller;
 ```
 
@@ -127,7 +130,7 @@ SELECT dt.dw_name, dt.table_name,
 FROM dw_retrieve_tables dt
 JOIN dw_retrieve_columns dc
   ON dc.dw_name = dt.dw_name AND dc.table_name = dt.table_name
-WHERE dt.dw_name = 'd_invoice_detail'
+WHERE dt.dw_name = 'dw_misth_ypal_yvar_list'
 GROUP BY dt.dw_name, dt.table_name;
 ```
 
@@ -136,7 +139,7 @@ GROUP BY dt.dw_name, dt.table_name;
 ```sql
 SELECT DISTINCT dt.dw_name, dt.file
 FROM dw_retrieve_tables dt
-WHERE dt.table_name = 'customer'
+WHERE dt.table_name = 'misth_ypal'
 ORDER BY dt.dw_name;
 ```
 
@@ -148,6 +151,7 @@ SELECT da.dw_name, da.arg_name, da.arg_type,
          AS where_clause
 FROM dw_arguments da
 JOIN dw_retrieve_where dw ON dw.dw_name = da.dw_name
+WHERE da.dw_name = 'dw_misth_ypal_yvar_list'
 GROUP BY da.dw_name, da.arg_name, da.arg_type
 ORDER BY da.dw_name;
 ```
@@ -158,7 +162,7 @@ ORDER BY da.dw_name;
 WITH RECURSIVE chain AS (
     SELECT from_object AS obj, to_object AS parent, 1 AS depth
     FROM inherits
-    WHERE from_object = 'w_invoice_entry'
+    WHERE from_object = 'm_misth_zpstath_grid'
   UNION ALL
     SELECT chain.obj, i.to_object, chain.depth + 1
     FROM inherits i
@@ -171,7 +175,7 @@ SELECT depth, parent FROM chain ORDER BY depth;
 
 ```sql
 WITH RECURSIVE sub AS (
-    SELECT from_object, to_object FROM inherits WHERE to_object = 'w_master'
+    SELECT from_object, to_object FROM inherits WHERE to_object = 'w_list'
   UNION ALL
     SELECT i.from_object, i.to_object
     FROM inherits i JOIN sub ON i.to_object = sub.from_object
@@ -218,7 +222,7 @@ SELECT c.object AS caller, c.to_name AS callee, count(*) AS edge_count
 FROM calls c
 WHERE c.object != c.to_name
 GROUP BY c.object, c.to_name
-HAVING count(*) > 5
+HAVING count(*) > 3
 ORDER BY edge_count DESC
 LIMIT 20;
 ```
