@@ -182,32 +182,40 @@ extractFnSig :: Statement -> Maybe FnSig
 extractFnSig s =
   let (modToks, rest) = span isFnMod (stmtTokens s)
       mods = map tkText modToks
+      parseSig retTy name more =
+        let (paramToks, afterParams) = break (\t -> tkKind t == TkRParen) more
+            params = T.intercalate " " (map tkText paramToks)
+            throws = case afterParams of
+              (_rparen : throwsKw : exName : _)
+                | T.toLower (tkText throwsKw) == "throws" -> Just (tkText exName)
+              _ -> Nothing
+        in Just (FnSig mods (tkText retTy) (tkText name) params throws)
   in case rest of
     (_kw : retTy : name : lparen : more)
-      | tkKind lparen == TkLParen ->
-          let (paramToks, afterParams) = break (\t -> tkKind t == TkRParen) more
-              params = T.intercalate " " (map tkText paramToks)
-              throws = case afterParams of
-                (_rparen : throwsKw : exName : _)
-                  | T.toLower (tkText throwsKw) == "throws" -> Just (tkText exName)
-                _ -> Nothing
-          in Just (FnSig mods (tkText retTy) (tkText name) params throws)
+      | tkKind lparen == TkLParen -> parseSig retTy name more
+    (_kw : retTy : name : dot : lparen : more)
+      | tkKind dot   == TkDot
+      , tkKind lparen == TkLParen -> parseSig retTy name more
     _ -> Nothing
 
 extractSubSig :: Statement -> Maybe SubSig
 extractSubSig s =
   let (modToks, rest) = span isFnMod (stmtTokens s)
       mods = map tkText modToks
+      parseSig name more =
+        let (paramToks, afterParams) = break (\t -> tkKind t == TkRParen) more
+            params = T.intercalate " " (map tkText paramToks)
+            throws = case afterParams of
+              (_rparen : throwsKw : exName : _)
+                | T.toLower (tkText throwsKw) == "throws" -> Just (tkText exName)
+              _ -> Nothing
+        in Just (SubSig mods (tkText name) params throws)
   in case rest of
     (_kw : name : lparen : more)
-      | tkKind lparen == TkLParen ->
-          let (paramToks, afterParams) = break (\t -> tkKind t == TkRParen) more
-              params = T.intercalate " " (map tkText paramToks)
-              throws = case afterParams of
-                (_rparen : throwsKw : exName : _)
-                  | T.toLower (tkText throwsKw) == "throws" -> Just (tkText exName)
-                _ -> Nothing
-          in Just (SubSig mods (tkText name) params throws)
+      | tkKind lparen == TkLParen -> parseSig name more
+    (_kw : name : dot : lparen : more)
+      | tkKind dot   == TkDot
+      , tkKind lparen == TkLParen -> parseSig name more
     _ -> Nothing
 
 extractEvSig :: Statement -> Maybe EventSig

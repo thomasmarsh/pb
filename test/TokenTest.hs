@@ -549,8 +549,17 @@ tests = testGroup "Lexing"
             assertLexError "a % b"
         ]
     , testGroup "numeric sign and ident disambiguation"
-        [ testCase "1-foo: notFollowedBy isIdentCont fires, lex error" $
-            assertLexError "1-foo"
+        [ testCase "1-foo: int minus ident without spaces" $ do
+            r <- tokenKindTexts "1-foo"
+            r @?= [(TkIntLiteral, "1"), (TkArithOp, "-"), (TkIdent, "foo")]
+        , testCase "10-len: int minus ident (corpus: id += fill(\" \", 10-len(id)))" $ do
+            r <- tokenKindTexts "10-len"
+            r @?= [(TkIntLiteral, "10"), (TkArithOp, "-"), (TkIdent, "len")]
+        , testCase "3.14-x: float minus ident without spaces" $ do
+            r <- tokenKindTexts "3.14-x"
+            r @?= [(TkFloatLiteral, "3.14"), (TkArithOp, "-"), (TkIdent, "x")]
+        , testCase "1abc: int followed by alpha is still a lex error" $
+            assertLexError "1abc"
         , testCase "1 - foo: spaced subtraction tokenizes correctly" $ do
             r <- tokenKindTexts "1 - foo"
             r @?= [(TkIntLiteral, "1"), (TkArithOp, "-"), (TkIdent, "foo")]

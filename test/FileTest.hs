@@ -655,6 +655,20 @@ tests = testGroup "Grammar.File"
           Left _  -> pure ()
           Right _ -> assertFailure "expected parse failure when 'end function' is missing"
 
+    , testCase "positive: function name with trailing dot before paren (corpus: uf_fn.)" $ do
+        let stmts =
+              [ mkStmt [ (TkAccessModifier, "public"), (TkDeclKw, "function")
+                       , (TkDatatype, "boolean"), (TkIdent, "uf_zz_import_results")
+                       , (TkDot, "."), (TkLParen, "(")
+                       , (TkStorageModifier, "ref"), (TkDatatype, "boolean"), (TkIdent, "results_imported")
+                       , (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end function")]
+              ]
+        runSection pFunctionBlock stmts @?=
+          Right (FunctionBlock (FnSig ["public"] "boolean" "uf_zz_import_results"
+                                      "ref boolean results_imported" Nothing) [])
+
     , testCase "negative: external function not parsed as body block" $ do
         let stmts =
               [ mkStmt [ (TkDeclKw, "external"), (TkDeclKw, "function")

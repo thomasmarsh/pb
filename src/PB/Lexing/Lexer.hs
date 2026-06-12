@@ -142,7 +142,7 @@ pDateLiteral mk = try $ do
   mo <- T.pack <$> count 2 digitChar
   _  <- char '-'
   d  <- T.pack <$> count 2 digitChar
-  notFollowedBy (satisfy isIdentCont)
+  notFollowedBy (satisfy isNumericCont)
   return (mk TkDateLiteral (y <> "-" <> mo <> "-" <> d))
 
 -- HH:MM:SS[.frac]
@@ -154,7 +154,7 @@ pTimeLiteral mk = try $ do
   _  <- char ':'
   s  <- T.pack <$> count 2 digitChar
   fr <- option "" $ do { _ <- char '.'; ds <- T.pack <$> some digitChar; return ("." <> ds) }
-  notFollowedBy (satisfy isIdentCont)
+  notFollowedBy (satisfy isNumericCont)
   return (mk TkTimeLiteral (h <> ":" <> m <> ":" <> s <> fr))
 
 -- Floating-point: must contain a '.' or exponent
@@ -166,12 +166,12 @@ pFloatLiteral mk = try $ do
   case dot of
     Nothing -> do
       exp' <- pExp
-      notFollowedBy (satisfy isIdentCont)
+      notFollowedBy (satisfy isNumericCont)
       return (mk TkFloatLiteral (sign <> intPart <> exp'))
     Just _  -> do
       fracPart <- T.pack <$> many digitChar
       exp'     <- option "" pExp
-      notFollowedBy (satisfy isIdentCont)
+      notFollowedBy (satisfy isNumericCont)
       let raw = sign <> intPart <> "." <> fracPart <> exp'
       -- Require at least one digit on either side of the dot
       if T.null intPart && T.null fracPart
@@ -188,7 +188,7 @@ pExp = do
 pIntLiteral :: (TokenKind -> Text -> Token) -> Lexer Token
 pIntLiteral mk = do
   ds <- T.pack <$> some digitChar
-  notFollowedBy (satisfy isIdentCont)
+  notFollowedBy (satisfy isNumericCont)
   return (mk TkIntLiteral ds)
 
 -- ---------------------------------------------------------------------------
@@ -225,6 +225,11 @@ isIdentStart c = isAlpha c || c == '_' || c == '@'
 
 isIdentCont :: Char -> Bool
 isIdentCont c = isAlphaNum c || c `elem` ("_$#%`-" :: String)
+
+-- '-' is always an arithmetic operator when it follows a numeric literal,
+-- never an identifier continuation in that position.
+isNumericCont :: Char -> Bool
+isNumericCont c = isAlphaNum c || c `elem` ("_$#%`" :: String)
 
 -- ---------------------------------------------------------------------------
 -- Operators  (§2.9; multi-char alternatives tried first)
