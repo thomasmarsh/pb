@@ -25,6 +25,7 @@ import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
 import Control.Exception   (SomeException, try)
 import Data.Char           (intToDigit, toLower)
+import Data.Word           (Word8)
 import qualified Data.Text          as T
 import qualified Data.Text.Encoding as TE
 import System.Directory    (createDirectoryIfMissing)
@@ -142,20 +143,69 @@ collectStatements lexLines =
     (e : _) -> Left (formatLexErr e)
     []      -> Right [s | Right s <- results, not (null (stmtTokens s))]
 
--- | Human-readable lex error: line number, raw content, and UTF-8 hex dump.
--- The hex dump exposes BOMs, CRLF, non-printable bytes, and unusual Unicode
--- that would otherwise be invisible in a plain-text error message.
+-- | Human-readable lex error: line span, unexpected char, content, xxd hex dump.
 formatLexErr :: LexError -> Text
 formatLexErr e =
-  let ll      = leSource e
-      raw     = T.take 120 (llText ll)
-      hexStr  = T.unwords (map fmtByte (BS.unpack (TE.encodeUtf8 raw)))
-      fmtByte b = let hi = fromIntegral b `div` 16
-                      lo = fromIntegral b `mod` 16
-                  in T.pack [intToDigit hi, intToDigit lo]
-  in "lex error at line " <> T.pack (show (llStartLine ll))
-  <> "\n  content: " <> raw
-  <> "\n  hex:     " <> hexStr
+  let ll    = leSource e
+      off   = leOffset e
+      raw   = llText ll
+      bytes = BS.unpack (TE.encodeUtf8 raw)
+      lineSpan
+        | llStartLine ll == llEndLine ll =
+            "line "  <> T.pack (show (llStartLine ll))
+        | otherwise =
+            "lines " <> T.pack (show (llStartLine ll))
+                     <> "-" <> T.pack (show (llEndLine ll))
+      badChar
+        | off < T.length raw =
+            let c  = T.index raw off
+                cp = fromEnum c
+                repr = if c >= ' ' && c <= '~' then " '" <> T.singleton c <> "'" else ""
+            in "\n  unexpected char at offset " <> T.pack (show off)
+               <> ": 0x" <> T.pack (map intToDigit [cp `div` 16, cp `mod` 16])
+               <> repr
+        | otherwise = ""
+  in "lex error at " <> lineSpan <> ":"
+  <> "\n  content: " <> T.take 120 raw
+  <> badChar
+  <> "\n" <> T.intercalate "\n" (xxdDump bytes)
+
+xxdDump :: [Word8] -> [Text]
+xxdDump = go 0
+  where
+    go _    [] = []
+    go addr bs = fmtXxdRow addr (take 16 bs) : go (addr + 16) (drop 16 bs)
+
+fmtXxdRow :: Int -> [Word8] -> Text
+fmtXxdRow addr bs =
+  "  " <> fmtHexAddr addr <> ": " <> fmtHexSection bs <> "  " <> T.pack (map asciiOf bs)
+
+fmtHexAddr :: Int -> Text
+fmtHexAddr n =
+  T.pack [intToDigit ((n `div` d) `mod` 16) | d <- [268435456, 16777216, 1048576, 65536, 4096, 256, 16, 1]]
+
+-- Formats up to 16 bytes as xxd-style pairs, padded to 40 chars so the
+-- ASCII column stays aligned on short final rows.
+fmtHexSection :: [Word8] -> Text
+fmtHexSection bs = t <> T.replicate (max 0 (40 - T.length t)) " "
+  where
+    pairs  = toPairs bs
+    nPairs = length pairs
+    t      = T.concat (zipWith mkPair [0 ..] pairs)
+    mkPair i pair =
+      let hex = T.concat [T.pack [intToDigit (fromIntegral b `div` 16), intToDigit (fromIntegral b `mod` 16)] | b <- pair]
+          sep | i == nPairs - 1 = ""
+              | i == 3          = "  "
+              | otherwise       = " "
+      in hex <> sep
+    toPairs []       = []
+    toPairs [x]      = [[x]]
+    toPairs (x:y:zs) = [x, y] : toPairs zs
+
+asciiOf :: Word8 -> Char
+asciiOf b
+  | b >= 0x20 && b <= 0x7e = toEnum (fromIntegral b)
+  | otherwise               = '.'
 
 -- ---------------------------------------------------------------------------
 -- Manifest

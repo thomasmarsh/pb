@@ -79,13 +79,14 @@ tests = testGroup "Pipeline.Runner"
         -- is not handled by any token parser, so it produces a real lex error.
         assertBool "expected Left" (isLeft (runFile "foo.srf" "~illegal\n"))
 
-    , testCase "lex error message includes content and hex lines" $ do
+    , testCase "lex error message includes content, offset, and xxd dump" $ do
         -- '~' outside a string is unrecognised — confirms the diagnostic format.
         case runFile "foo.srf" "public function integer f ()\n~bad\nend function\n" of
           Right _ -> assertFailure "expected Left for lex error"
           Left err -> do
-            assertBool "error contains 'content:'" ("content:" `T.isInfixOf` err)
-            assertBool "error contains 'hex:'"     ("hex:"     `T.isInfixOf` err)
+            assertBool "error contains 'content:'"          ("content:"  `T.isInfixOf` err)
+            assertBool "error contains 'unexpected char'"   ("unexpected" `T.isInfixOf` err)
+            assertBool "error contains xxd address (0000:)" ("0000:"      `T.isInfixOf` err)
 
     , testCase "real snippet: global type + on create + function" $ do
         let src = T.unlines

@@ -10,6 +10,7 @@ import PB.Lexing.Token (SourceSpan (..), Token (..), TokenKind (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
 
 import Data.Char (isAlpha, isAlphaNum, isSpace)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 
@@ -41,11 +42,16 @@ tokenize = map tokenizeLine
 tokenizeLine :: LogicalLine -> LexLine
 tokenizeLine ll =
   case parse (sc *> many (oneToken sl el <* sc) <* eof) "" (llText ll) of
-    Left  bundle -> LexLine ll (Left  (LexError ll (pstateOffset (bundlePosState bundle))))
+    Left  bundle -> LexLine ll (Left  (LexError ll (bundleErrorOffset bundle)))
     Right ts     -> LexLine ll (Right ts)
   where
     sl = llStartLine ll
     el = llEndLine ll
+
+bundleErrorOffset :: ParseErrorBundle Text Void -> Int
+bundleErrorOffset bundle = case NE.head (bundleErrors bundle) of
+  TrivialError o _ _ -> o
+  FancyError   o _   -> o
 
 -- ---------------------------------------------------------------------------
 -- Megaparsec internals
