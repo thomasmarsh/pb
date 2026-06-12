@@ -41,6 +41,7 @@ emptyDwFile n = DataWindowFile
     , dwBands    = []
     , dwGroups   = []
     , dwControls = []
+    , dwUnknowns = []
     , dwMeta     = Map.empty
     }
 
@@ -60,29 +61,37 @@ classifyBlock dw (DwBlock kw content) = case kw of
       | "." `T.isInfixOf` kw ->
             let innerMap = collectResidualAttrs [] (scanBlockAttrs content)
             in dw { dwMeta = Map.insertWith Map.union kw innerMap (dwMeta dw) }
+      | kw `elem` knownNonControlDirectives ->
+            let innerAttrs = collectResidualAttrs [] (scanBlockAttrs content)
+            in dw { dwUnknowns = dwUnknowns dw ++ [DwUnknownBlock kw innerAttrs] }
       | otherwise ->
             dw { dwControls = dwControls dw ++ [parseDwControl kw content] }
+
+-- Non-control block keywords known to appear in .srd files.
+-- Anything NOT in this list falls through to dwControls, so unknown
+-- control types remain accessible rather than being silently lost.
+knownNonControlDirectives :: [Text]
+knownNonControlDirectives =
+    [ "sort", "filter", "sparse", "crosstab", "data" ]
 
 -- ---------------------------------------------------------------------------
 -- Band kind
 
 parseBandKind :: Text -> Maybe DwBandKind
-parseBandKind kw = case kw of
-    "header"     -> Just BkHeader
-    "detail"     -> Just BkDetail
-    "footer"     -> Just BkFooter
-    "summary"    -> Just BkSummary
-    "background" -> Just BkBackground
-    "foreground" -> Just BkForeground
-    _            -> tryGroupBand kw
-
-tryGroupBand :: Text -> Maybe DwBandKind
-tryGroupBand kw
+parseBandKind kw
+    | kw == "header"     = Just BkHeader
+    | kw == "detail"     = Just BkDetail
+    | kw == "footer"     = Just BkFooter
+    | kw == "summary"    = Just BkSummary
+    | kw == "background" = Just BkBackground
+    | kw == "foreground" = Just BkForeground
     | Just n <- readDotNum  "header"  kw = Just (BkGroupHeader  n)
     | Just n <- readDotNum  "trailer" kw = Just (BkGroupTrailer n)
     | Just n <- readBrackNum "header"  kw = Just (BkGroupHeader  n)
     | Just n <- readBrackNum "trailer" kw = Just (BkGroupTrailer n)
-    | otherwise                           = Nothing
+    | Just n <- readDotNum  "tree.level" kw = Just (BkTreeLevel n)
+    | Just n <- readBrackNum "tree.level" kw = Just (BkTreeLevel n)
+    | otherwise = Nothing
 
 readDotNum :: Text -> Text -> Maybe Int
 readDotNum prefix kw = do

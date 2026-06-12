@@ -11,6 +11,7 @@ module PB.AST.DataWindow
   , DwBandKind (..)
   , DwGroup (..)
   , DwControl (..)
+  , DwUnknownBlock (..)
   ) where
 
 import PB.Prelude
@@ -23,6 +24,7 @@ data DataWindowFile = DataWindowFile
   , dwBands    :: [DwBand]
   , dwGroups   :: [DwGroup]
   , dwControls :: [DwControl]
+  , dwUnknowns :: [DwUnknownBlock]
   , dwMeta     :: Map Text (Map Text Text)
   } deriving (Eq, Show)
 
@@ -115,4 +117,9 @@ data DwControl = DwControl
   , dwcExpression :: Maybe Text
   , dwcTabSeq     :: Maybe Int
   , dwcAttrs      :: Map Text Text
+  } deriving (Eq, Show)
+
+data DwUnknownBlock = DwUnknownBlock
+  { dubKeyword :: Text
+  , dubAttrs   :: Map Text Text
   } deriving (Eq, Show)

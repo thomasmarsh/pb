@@ -1,6 +1,7 @@
 dist-newstyle/
 reference/code
 reference/docs/
+docs/
 plan/
 output/
 example/
@@ -8,3 +9,5 @@ example/
 __pycache__
 .venv
 *.pyc
+pb.duckdb
+.mimocode/

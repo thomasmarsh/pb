@@ -126,7 +126,7 @@ data DwAttr
   deriving (Eq, Show)
 
 -- | Tokenize a block's content string into structured attributes.
--- Returns [] on parse failure (malformed content is silently dropped).
+-- Malformed tokens between valid attributes are skipped (error recovery).
 scanBlockAttrs :: Text -> [DwAttr]
 scanBlockAttrs src =
     case parse pBlockAttrs "" src of
@@ -134,7 +134,15 @@ scanBlockAttrs src =
         Right as -> as
 
 pBlockAttrs :: DwParser [DwAttr]
-pBlockAttrs = skipSp *> many (pOneAttr <* skipSp) <* eof
+pBlockAttrs = skipSp *> go
+  where
+    go = (:) <$> try pOneAttr <* skipSp <*> go
+         <|> try (skipBadToken *> skipSp *> go)
+         <|> pure []
+
+skipBadToken :: DwParser ()
+skipBadToken = void $ takeWhile1P (Just "bad token")
+    (\c -> c /= ' ' && c /= '\t' && c /= '\n' && c /= '\r' && c /= ')')
 
 skipSp :: DwParser ()
 skipSp = skipMany (satisfy (`elem` (" \t\n\r" :: String)))
@@ -154,7 +162,8 @@ pAttrVal :: Text -> DwParser DwAttr
 pAttrVal key =
     (char '(' >> DwAttrSubBlock key <$> pBlockContent) <|>
     (char '"' >> DwAttrQuoted   key <$> pQuotedContent) <|>
-    DwAttrUnquoted key <$> pUnquotedVal
+    (DwAttrUnquoted key <$> pUnquotedVal) <|>
+    pure (DwAttrUnquoted key "")
 
 pQuotedContent :: DwParser Text
 pQuotedContent = do

@@ -299,6 +299,7 @@ instance ToJSON DataWindowFile where
     , "bands"    .= dwBands    dw
     , "groups"   .= dwGroups   dw
     , "controls" .= dwControls dw
+    , "unknowns" .= dwUnknowns dw
     , "meta"     .= dwMeta     dw
     ]
 
@@ -398,4 +399,10 @@ instance ToJSON DwControl where
     , "expression" .= dwcExpression dc
     , "tab_seq"    .= dwcTabSeq     dc
     , "attrs"      .= dwcAttrs      dc
+    ]
+
+instance ToJSON DwUnknownBlock where
+  toJSON dub = object
+    [ "keyword" .= dubKeyword dub
+    , "attrs"   .= dubAttrs   dub
     ]

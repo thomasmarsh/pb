@@ -66,6 +66,12 @@ tests = testGroup "DataWindow"
           parseBandKind "trailer.3"  @?= Just (BkGroupTrailer 3)
       , testCase "header[1] → BkGroupHeader 1" $
           parseBandKind "header[1]"  @?= Just (BkGroupHeader 1)
+      , testCase "tree.level.1 → BkTreeLevel 1" $
+          parseBandKind "tree.level.1" @?= Just (BkTreeLevel 1)
+      , testCase "tree.level.3 → BkTreeLevel 3" $
+          parseBandKind "tree.level.3" @?= Just (BkTreeLevel 3)
+      , testCase "tree.level[2] → BkTreeLevel 2" $
+          parseBandKind "tree.level[2]" @?= Just (BkTreeLevel 2)
       , testCase "unknown → Nothing" $
           parseBandKind "htmltable"  @?= Nothing
       ]
@@ -724,6 +730,83 @@ tests = testGroup "DataWindow"
               Nothing -> assertFailure "foo.bar key missing from meta"
               Just m  -> m @?= Map.singleton "x" "1"
       ]
+
+  , testGroup "DwUnknownBlock"
+      [ testCase "sparse block routed to unknowns" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "detail(height=80 )"
+                , "sparse(names=\"col1\\tcol2\" )"
+                , "table(column=(type=long name=x ) )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> do
+              null (dwControls dw) @?= True
+              length (dwUnknowns dw) @?= 1
+              dubKeyword (head' (dwUnknowns dw)) @?= "sparse"
+
+      , testCase "sort block routed to unknowns with attrs" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "sort(names=\"emp_lname A\" )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> do
+              length (dwUnknowns dw) @?= 1
+              let u = head' (dwUnknowns dw)
+              dubKeyword u @?= "sort"
+              Map.lookup "names" (dubAttrs u) @?= Just "emp_lname A"
+
+      , testCase "tree.level.1 parsed as band, not unknown" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "tree.level.1(height=100 color=\"0\" )"
+                , "detail(height=80 )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> do
+              length (dwBands dw) @?= 2
+              dbKind (head' (dwBands dw)) @?= BkTreeLevel 1
+              null (dwUnknowns dw) @?= True
+
+      , testCase "multiple unknown blocks preserved" $ do
+          let src = T.intercalate "\n"
+                [ "HA$PBExportHeader$test.srd"
+                , "$PBExportComments$"
+                , "release 9;"
+                , "datawindow(units=0 )"
+                , "sparse(names=\"a\" )"
+                , "sort(names=\"b\" )"
+                ]
+          case parseDataWindow src of
+            Left  err -> assertFailure ("unexpected parse error: " <> T.unpack err)
+            Right dw  -> length (dwUnknowns dw) @?= 2
+      ]
+
+  , testGroup "scanBlockAttrs resilience"
+      [ testCase "malformed token between valid attrs — attrs before and after preserved" $ do
+          let result = scanBlockAttrs "x=1 !!!??? y=2"
+          length result @?= 2
+          lookupUnquoted "x" result @?= Just "1"
+          lookupUnquoted "y" result @?= Just "2"
+
+      , testCase "sub-block attr value preserved through recovery" $ do
+          let result = scanBlockAttrs "a=(inner=1 ) b=2"
+          length result @?= 2
+          lookupUnquoted "b" result @?= Just "2"
+      ]
   ]
 
 -- | Minimal DW header for control test sources.
@@ -739,3 +822,8 @@ dwMin = T.intercalate "\n"
 head' :: [a] -> a
 head' (x:_) = x
 head' []    = error "impossible: head' called on empty list in test"
+
+-- | Lookup an unquoted attribute value by key.
+lookupUnquoted :: Text -> [DwAttr] -> Maybe Text
+lookupUnquoted key attrs =
+    listToMaybe [v | DwAttrUnquoted k v <- attrs, T.toLower k == T.toLower key]
