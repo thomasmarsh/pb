@@ -14,11 +14,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache GHC
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/.ghcup
+          key: ghcup-${{ runner.os }}-ghc-9.10.2
+
       - name: Set up GHC
         uses: haskell-actions/setup@v2
         with:
           ghc-version: "9.10.2"
-          cabal-version: "latest"
+          cabal-version: "3.12"
 
       - name: Cache cabal store
         uses: actions/cache@v4
