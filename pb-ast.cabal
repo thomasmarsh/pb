@@ -39,18 +39,23 @@ library
     PB.Lexing.Splitter
     PB.Lexing.Token
     PB.Pipeline.Preprocess
+    PB.Pipeline.Codec
     PB.Pipeline.Runner
+    PB.Pipeline.Schema
     PB.Pipeline.Serialise
     PB.Pipeline.Walk
   build-depends:
     , base ^>=4.20.1.0
     , text
     , megaparsec
-    , aeson
+    , aeson >=2.0
+    , autodocodec >=0.4
+    , autodocodec-schema
     , bytestring  ^>=0.12
     , containers >=0.6
     , directory  ^>=1.3
     , filepath   >=1.4
+    , unordered-containers >=0.2
 
 executable pb-runner
   import: common-settings
