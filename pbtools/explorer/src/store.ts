@@ -1,38 +1,36 @@
-// store.ts — Typed store with dispatch, subscribe, getState.
+// store.ts — SolidJS createStore adapter wrapping the reducer.
 
+import { createStore, reconcile } from "solid-js/store";
 import type { AppState } from "./types/state.js";
 import type { AppAction } from "./types/actions.js";
-import type { Dispatch, GetState, Env } from "./core.js";
+import type { Dispatch, GetState, Env, Effect } from "./core.js";
 
 export interface Store {
-  getState: GetState;
+  state: AppState;
   dispatch: Dispatch;
-  subscribe(fn: (state: AppState) => void): () => boolean;
+  getState: GetState;
 }
 
-export function createStore(
-  initialState: AppState,
-  reducerFn: (state: AppState, action: AppAction) => [AppState, ((dispatch: Dispatch, getState: GetState, env: Env) => Promise<void>) | null],
+type ReducerFn = (state: AppState, action: AppAction) => [AppState, Effect | null];
+
+export function createStoreAdapter(
+  init: AppState,
+  reducerFn: ReducerFn,
   env: Env,
 ): Store {
-  let state = initialState;
-  const listeners = new Set<(state: AppState) => void>();
+  const [state, setState] = createStore<AppState>(init);
 
   function dispatch(action: AppAction): void {
-    const [next, effect] = reducerFn(state, action);
-    state = next;
-    for (const fn of listeners) fn(state);
+    const [next, effect] = reducerFn(state as AppState, action);
+    setState(reconcile(next));
     if (effect) {
-      effect(dispatch, () => state, env);
+      effect(dispatch, () => state as AppState, env);
     }
   }
 
   return {
-    getState: () => state,
+    state,
     dispatch,
-    subscribe(fn) {
-      listeners.add(fn);
-      return () => listeners.delete(fn);
-    },
+    getState: () => state as AppState,
   };
 }

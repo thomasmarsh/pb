@@ -1,0 +1,134 @@
+// Dashboard.tsx — Dashboard view.
+
+import { Show, For, createMemo } from "solid-js";
+import { useStore } from "../context.js";
+import type { ProcedureRow } from "../types/api.js";
+
+function procBadge(t: string): string {
+  return { function: "func", subroutine: "sub", event: "event", on: "on" }[t] ?? "func";
+}
+
+function ProcedureTable(props: { title: string; procs: ProcedureRow[] }) {
+  const store = useStore();
+  return (
+    <div class="card">
+      <div class="card-header"><h2>{props.title}</h2></div>
+      <table class="data-table">
+        <thead>
+          <tr><th>Object</th><th>Procedure</th><th>Type</th><th>Cyclomatic</th></tr>
+        </thead>
+        <tbody>
+          <For each={props.procs}>
+            {(p) => (
+              <tr class="clickable"
+                  onClick={() => store.dispatch({ type: "PROCEDURE_SELECTED", objectName: p.object, procName: p.name })}>
+                <td class="name-cell">{p.object}</td>
+                <td>{p.name}</td>
+                <td><span class={`badge badge-${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
+                <td>{p.cyclomatic != null ? <span class="badge badge-cc">{String(p.cyclomatic)}</span> : "\u2013"}</td>
+              </tr>
+            )}
+          </For>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ObjectTable(props: { title: string; objs: { object: string; pagerank: number; in_degree: number; out_degree: number }[] }) {
+  const store = useStore();
+  return (
+    <div class="card">
+      <div class="card-header"><h2>{props.title}</h2></div>
+      <table class="data-table">
+        <thead>
+          <tr><th>Object</th><th>PageRank</th><th>In</th><th>Out</th></tr>
+        </thead>
+        <tbody>
+          <For each={props.objs}>
+            {(p) => (
+              <tr class="clickable"
+                  onClick={() => store.dispatch({ type: "OBJECT_SELECTED", name: p.object })}>
+                <td class="name-cell">{p.object}</td>
+                <td>{String(p.pagerank)}</td>
+                <td>{String(p.in_degree)}</td>
+                <td>{String(p.out_degree)}</td>
+              </tr>
+            )}
+          </For>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Loading() {
+  return (
+    <div class="loading-overlay">
+      <div class="spinner" /> Loading...
+    </div>
+  );
+}
+
+export function Dashboard() {
+  const store = useStore();
+  const s = () => store.state.stats;
+
+  const metrics = createMemo(() => {
+    const stats = s();
+    if (!stats) return [];
+    return [
+      ["Objects", stats.objects],
+      ["Procedures", stats.procedures],
+      ["DataWindows", stats.by_kind?.find(k => k.kind === "datawindow")?.count],
+      ["Inheritance edges", stats.inherits],
+      ["Call edges", stats.calls],
+      ["DW Controls", stats.dw_controls],
+    ] as [string, number | undefined][];
+  });
+
+  return (
+    <Show when={s()} fallback={<Loading />}>
+      <div class="metric-grid">
+        <For each={metrics()}>
+          {([label, val]) => (
+            <div class="metric-card">
+              <div class="label">{label}</div>
+              <div class="value">{String(val ?? "\u2013")}</div>
+            </div>
+          )}
+        </For>
+      </div>
+
+      <Show when={s()!.by_kind && s()!.by_kind!.length > 0}>
+        <div class="card">
+          <div class="card-header"><h2>Object Types</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Kind</th><th>Count</th></tr></thead>
+            <tbody>
+              <For each={s()!.by_kind!}>
+                {(k: { kind: string; count: number }) => {
+                  const bc = k.kind === "powerscript" ? "ps" : k.kind === "datawindow" ? "dw" : "proj";
+                  return (
+                    <tr>
+                      <td class="name-cell"><span class={`badge badge-${bc}`}>{k.kind}</span></td>
+                      <td>{String(k.count)}</td>
+                    </tr>
+                  );
+                }}
+              </For>
+            </tbody>
+          </table>
+        </div>
+      </Show>
+
+      <Show when={s()!.top_complex && s()!.top_complex!.length > 0}>
+        <ProcedureTable title="Most Complex Procedures" procs={s()!.top_complex!} />
+      </Show>
+
+      <Show when={s()!.top_pagerank && s()!.top_pagerank!.length > 0}>
+        <ObjectTable title="Most Important Objects (PageRank)" objs={s()!.top_pagerank!} />
+      </Show>
+    </Show>
+  );
+}

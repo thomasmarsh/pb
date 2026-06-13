@@ -9,40 +9,10 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<div class="app-layout">
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>pb explore</h1>
-            <div class="subtitle">PowerBuilder Codebase Explorer</div>
-        </div>
-        <nav class="sidebar-nav">
-            <a href="#" data-view="dashboard" class="active">
-                <span class="icon">&#9632;</span><span>Dashboard</span>
-            </a>
-            <a href="#" data-view="objects">
-                <span class="icon">&#9654;</span><span>Objects</span>
-            </a>
-            <a href="#" data-view="datawindows">
-                <span class="icon">&#9635;</span><span>DataWindows</span>
-            </a>
-            <a href="#" data-view="diagrams">
-                <span class="icon">&#11044;</span><span>Diagrams</span>
-            </a>
-            <a href="#" data-view="queries">
-                <span class="icon">&#8984;</span><span>Queries</span>
-            </a>
-            <a href="#" data-view="search">
-                <span class="icon">&#128269;</span><span>Search</span>
-            </a>
-        </nav>
-        <div class="sidebar-stats" id="sidebar-stats"></div>
-    </aside>
-
-    <main class="main-content" id="main-content">
-        <div class="loading-overlay"><div class="spinner"></div> Loading...</div>
-    </main>
+<div id="app">
+    <div class="loading-overlay"><div class="spinner"></div> Loading...</div>
 </div>
 
-<script type="module" src="/static/dist/app.js"></script>
+<script type="module" src="/static/dist/App.js"></script>
 </body>
 </html>
