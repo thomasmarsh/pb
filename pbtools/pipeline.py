@@ -1,4 +1,4 @@
-"""Implementation of `pb run` — incremental parse → index → analyze pipeline."""
+"""Implementation of `pb ingest` — incremental parse → index → analyze pipeline."""
 from __future__ import annotations
 
 import shutil

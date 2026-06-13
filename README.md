@@ -13,9 +13,9 @@ flowchart LR
 
     subgraph pipeline["  pipeline  "]
         direction TB
-        run(["⚙ pb run"])
+        ingest(["⚙ pb ingest"])
         analyze(["📊 pb analyze"])
-        run -.-> analyze
+        ingest -.-> analyze
     end
 
     db[("pb.duckdb")]
@@ -26,8 +26,8 @@ flowchart LR
         diagram(["🎨 pb diagram"])
     end
 
-    src     --> run
-    run     -- parse & index --> db
+    src     --> ingest
+    ingest  -- parse & index --> db
     analyze -- metrics       --> db
     db      --> query
     db      --> diagram
@@ -55,7 +55,7 @@ flowchart LR
 uv sync
 
 # 2. Parse, index, and analyze in one command — incremental by default
-uv run pb run -i /path/to/src
+uv run pb ingest -i /path/to/src
 
 # 3. Query
 uv run pb query top              # most complex procedures
@@ -63,23 +63,29 @@ uv run pb query pagerank         # most important objects
 uv run pb query --help           # full command list
 ```
 
-On the first run `pb run` builds the Haskell parser automatically. Every
+On the first run `pb ingest` builds the Haskell parser automatically. Every
 subsequent run only re-parses files whose content has changed — unchanged
 files are skipped instantly.
+
+`-i` accepts a directory of `.sr*` source files, a single `.pbl` library
+file, or a directory of `.pbl` files — extraction happens transparently,
+no separate `pb extract` step required.
 
 `pb.duckdb` now contains every object, procedure, DataWindow
 control, database reference, and inheritance edge in your codebase.
 
 ### Modes
 
-| Command                    | What it does                                                    |
-| -------------------------- | --------------------------------------------------------------- |
-| `pb run -i DIR [--db DB]`  | Parse → index → analyze (incremental). Default DB: `pb.duckdb`. |
-| `pb run -i DIR --reset`    | Full re-parse, drop and recreate all tables.                    |
-| `pb dump -i DIR -o OUTDIR` | Parse to a mirrored JSON file tree (one-shot snapshot).         |
-| `pb analyze [DB]`          | Re-run graph metrics on an existing database.                   |
+| Command                      | What it does                                                    |
+| ---------------------------- | --------------------------------------------------------------- |
+| `pb ingest -i DIR [--db DB]` | Parse → index → analyze (incremental). Default DB: `pb.duckdb`. |
+| `pb ingest -i DIR --reset`   | Full re-parse, drop and recreate all tables.                    |
+| `pb dump -i DIR -o OUTDIR`   | Parse to a mirrored JSON file tree (one-shot snapshot).         |
+| `pb analyze [DB]`            | Re-run graph metrics on an existing database.                   |
 
-`pb run` prints a progress bar while parsing, shows rich error panels for any
+All commands accept `.pbl` inputs directly — source extraction is automatic.
+
+`pb ingest` prints a progress bar while parsing, shows rich error panels for any
 files that fail (with source context), and reports a summary on stderr.
 
 ---
@@ -169,7 +175,7 @@ WHERE dit IS NOT NULL ORDER BY dit DESC LIMIT 10;
 
 ## Diagrams
 
-Requires `pb.duckdb` populated via `pb run` (or `pb analyze` standalone).
+Requires `pb.duckdb` populated via `pb ingest` (or `pb analyze` standalone).
 
 ```bash
 # Inheritance hierarchy (all objects)

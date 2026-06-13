@@ -59,10 +59,10 @@ def dump(
         run_dump(src_dir, Path(output_dir), binary, reporter)
 
 
-# ── pb run ─────────────────────────────────────────────────────────────────────
+# ── pb ingest ──────────────────────────────────────────────────────────────────
 
 @app.command()
-def run(
+def ingest(
     input_path: Path = typer.Option(..., '-i', '--input', help="Source directory or .pbl file."),
     db: str          = typer.Option('pb.duckdb', '--db',  help="DuckDB database path."),
     no_build: bool   = typer.Option(False, '--no-build',  help="Skip cabal build step."),
@@ -97,7 +97,7 @@ def extract(
     """Extract .pbl library files to per-library source directories.
 
     Each foo.pbl produces an output/foo.pbl/ directory of .sr* source files.
-    Run once as a setup step before 'pb dump', 'pb run', or 'cabal test'.
+    Run once as a setup step before 'pb dump', 'pb ingest', or 'cabal test'.
     """
     from pbtools.pbl import extract_to_dir
     from pbtools.reporter import LiveReporter
@@ -142,7 +142,7 @@ def debt(
 def index(
     db: str = typer.Argument("pb.duckdb", help="DuckDB database path."),
 ) -> None:
-    """Populate pb.duckdb from pb-runner JSONL output (reads stdin). Use 'pb run' instead."""
+    """Populate pb.duckdb from pb-runner JSONL output (reads stdin). Use 'pb ingest' instead."""
     from pbtools.index import run_from_jsonl_lines
     run_from_jsonl_lines(sys.stdin, db)
 
