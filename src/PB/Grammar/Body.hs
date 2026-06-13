@@ -576,18 +576,18 @@ pSqlBodyStmt = do
       s <- satisfyStmt (const True)
       if endsWithSemi s then return [s] else (s:) <$> moreConts
 
--- Declaration-level block terminators (end function / end subroutine /
--- end event / end on / end type etc.) must never be consumed as leaf body
--- statements. Doing so silently swallows 'end function' when a nested
--- control structure is missing its own terminator, causing confusing
+-- Terminators that directly enclose a callable body must never be consumed
+-- as leaf body statements. Doing so silently swallows 'end function' when a
+-- nested control structure is missing its own terminator, causing confusing
 -- stuck-at errors far from the real problem.
--- Control-flow terminators (end if / end choose / end try) are TkControlKw
--- and are intentionally excluded: they can appear as orphans after a
--- malformed 'if' that has no 'then' and was classified as BsRaw.
+-- 'end type' / 'end variables' / etc. are intentionally excluded because
+-- PowerBuilder allows local type declarations inside function bodies, so
+-- 'end type' can legitimately appear as a BsRaw leaf.
 isBlockTerminator :: Statement -> Bool
 isBlockTerminator s = case stmtTokens s of
   (t:_) -> tkKind t == TkDeclKw
-        && ("end " `T.isPrefixOf` T.toLower (tkText t))
+        && T.toLower (tkText t) `elem`
+             ["end function", "end subroutine", "end event", "end on"]
   _     -> False
 
 -- | Parse one body statement from the statement stream, handling control-flow
