@@ -341,6 +341,7 @@ body {
     flex: 1;
     overflow-x: auto;
     position: relative;
+    white-space: pre;
 }
 .source-code-area pre {
     margin: 0;

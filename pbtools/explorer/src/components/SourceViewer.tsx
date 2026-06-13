@@ -229,9 +229,9 @@ export function SourceViewer(props: SourceViewerProps) {
             const lineNum = i() + 1;
             const proc = procFirstLine().get(lineNum);
             return (
-              <span
+              <div
                 class={proc ? "source-line-highlight" : undefined}
-                innerHTML={html + "\n"}
+                innerHTML={html}
               />
             );
           }}
