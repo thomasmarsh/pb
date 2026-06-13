@@ -1,4 +1,4 @@
-// App.tsx — SolidJS entry point. Pure TCA: store owns navigation.
+// App.tsx — SolidJS entry point. Pure TCA with deep linking.
 
 import { render, Show } from "solid-js/web";
 import { StoreProvider } from "./context.js";
@@ -14,11 +14,17 @@ import { Diagrams } from "./components/Diagrams.js";
 import { Queries } from "./components/Queries.js";
 import { Search } from "./components/Search.js";
 import { useStore } from "./context.js";
+import { initViewFromUrl, setupPopstateHandler } from "./navigation.js";
 
 const env = { api: createApiClient() };
 const store = createStoreAdapter(initialState(), reducer, env);
 
-store.dispatch({ type: "STATS_LOAD" });
+// Bootstrap: read URL and dispatch initial actions
+initViewFromUrl(store.dispatch);
+setupPopstateHandler(store.dispatch);
+
+// Load stats for dashboard (always needed for sidebar)
+if (!store.getState().stats) store.dispatch({ type: "STATS_LOAD" });
 
 function ViewRouter() {
   const store = useStore();

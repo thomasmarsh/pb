@@ -390,6 +390,16 @@ body {
     background: rgba(108, 140, 255, 0.06);
     display: block;
 }
+.src-link {
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 2px;
+}
+.src-link-proc { color: #a78bfa; }
+.src-link-proc:hover { color: #c4b5fd; }
+.src-link-obj { color: #5B8DD9; }
+.src-link-obj:hover { color: #7ba8e8; }
 .source-file-header {
     display: flex;
     align-items: center;

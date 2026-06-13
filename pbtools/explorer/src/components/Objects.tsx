@@ -2,6 +2,7 @@
 
 import { Show, For, onMount } from "solid-js";
 import { useStore } from "../context.js";
+import { SourceViewer } from "./SourceViewer.js";
 
 function shortFile(f: string | null | undefined): string {
   if (!f) return "";
@@ -243,10 +244,16 @@ export function ObjectDetail() {
                     <div class="source-file-path">{o.file}</div>
                   </div>
                   <Show
-                    when={src() && "lines" in (src() ?? {}) && (src() as { lines?: string[] }).lines && (src() as { lines: string[] }).lines.length > 0}
+                    when={src() && "lines" in (src() ?? {}) && (src() as { lines?: string[] }).lines && (src() as { lines: string[] }).lines!.length > 0}
                     fallback={<Show when={src() && "error" in (src() ?? {})}><p style={{ color: "var(--red)", "font-size": "12px" }}>{(src() as { error: string }).error}</p></Show>}
                   >
-                    <div class="loading-overlay"><div class="spinner" /> Source viewer TODO</div>
+                    <SourceViewer
+                      lines={(src() as { lines: string[] }).lines}
+                      procedures={(src() as { procedures: import("../types/api.js").ProcedureInfo[] }).procedures}
+                      knownObjects={(src() as { knownObjects: { name: string; kind: string }[] }).knownObjects}
+                      knownProcs={(src() as { knownProcs: { name: string; object: string; proc_type: string }[] }).knownProcs}
+                      objectName={o.name}
+                    />
                   </Show>
                 </div>
               </Show>
