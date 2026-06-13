@@ -14,6 +14,7 @@ export function Diagrams() {
   const [tableInput, setTableInput] = createSignal("");
 
   onMount(() => {
+    store.dispatch({ type: "NAVIGATE", view: "diagrams" });
     if (!store.state.allObjects.length) {
       store.getState(); // ensure state is read
     }

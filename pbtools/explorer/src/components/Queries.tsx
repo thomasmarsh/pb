@@ -1,12 +1,17 @@
 // Queries.tsx — SQL queries view.
 
-import { Show, For } from "solid-js";
+import { Show, For, onMount } from "solid-js";
 import { useStore } from "../context.js";
 
 export function Queries() {
   const store = useStore();
   const q = () => store.state.queries;
   const inputs = new Map<string, HTMLInputElement>();
+
+  onMount(() => {
+    store.dispatch({ type: "NAVIGATE", view: "queries" });
+    if (!q().items.length) store.dispatch({ type: "QUERIES_LOAD" });
+  });
 
   function handleRun(queryName: string, params: { name: string; type: string; default: string | null }[]) {
     const bound: Record<string, string> = {};

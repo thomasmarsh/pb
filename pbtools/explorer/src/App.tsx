@@ -1,7 +1,6 @@
-// App.tsx — SolidJS entry point with Router.
+// App.tsx — SolidJS entry point. Pure TCA: store owns navigation.
 
-import { render } from "solid-js/web";
-import { Router, Route } from "@solidjs/router";
+import { render, Show } from "solid-js/web";
 import { StoreProvider } from "./context.js";
 import { createStoreAdapter } from "./store.js";
 import { initialState, reducer } from "./core.js";
@@ -14,26 +13,36 @@ import { DataWindows, DWDetail } from "./components/DataWindows.js";
 import { Diagrams } from "./components/Diagrams.js";
 import { Queries } from "./components/Queries.js";
 import { Search } from "./components/Search.js";
+import { useStore } from "./context.js";
 
 const env = { api: createApiClient() };
 const store = createStoreAdapter(initialState(), reducer, env);
 
 store.dispatch({ type: "STATS_LOAD" });
 
+function ViewRouter() {
+  const store = useStore();
+  const view = () => store.state.view;
+
+  return (
+    <Layout>
+      <Show when={view() === "dashboard"}><Dashboard /></Show>
+      <Show when={view() === "objects"}><Objects /></Show>
+      <Show when={view() === "objectDetail"}><ObjectDetail /></Show>
+      <Show when={view() === "procedureDetail"}><ProcedureDetail /></Show>
+      <Show when={view() === "datawindows"}><DataWindows /></Show>
+      <Show when={view() === "dwDetail"}><DWDetail /></Show>
+      <Show when={view() === "diagrams"}><Diagrams /></Show>
+      <Show when={view() === "queries"}><Queries /></Show>
+      <Show when={view() === "search"}><Search /></Show>
+    </Layout>
+  );
+}
+
 function App() {
   return (
     <StoreProvider store={store} env={env}>
-      <Router root={Layout}>
-        <Route path="/" component={Dashboard} />
-        <Route path="/objects" component={Objects} />
-        <Route path="/objects/:name" component={ObjectDetail} />
-        <Route path="/procedures/:object/:proc" component={ProcedureDetail} />
-        <Route path="/datawindows" component={DataWindows} />
-        <Route path="/datawindows/:name" component={DWDetail} />
-        <Route path="/diagrams" component={Diagrams} />
-        <Route path="/queries" component={Queries} />
-        <Route path="/search" component={Search} />
-      </Router>
+      <ViewRouter />
     </StoreProvider>
   );
 }

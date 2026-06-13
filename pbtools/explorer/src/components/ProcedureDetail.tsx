@@ -1,7 +1,6 @@
 // ProcedureDetail.tsx — Procedure detail view with tabs.
 
-import { Show, createSignal, createMemo } from "solid-js";
-import { useNavigate, useParams } from "@solidjs/router";
+import { Show, createSignal } from "solid-js";
 import { Tabs } from "@kobalte/core/tabs";
 import { useStore } from "../context.js";
 
@@ -15,18 +14,8 @@ function Loading() {
 
 export function ProcedureDetail() {
   const store = useStore();
-  const navigate = useNavigate();
-  const params = useParams();
   const proc = () => store.state.procedureDetail;
   const [activeTab, setActiveTab] = createSignal("original");
-
-  // Trigger load on mount
-  createMemo(() => {
-    const p = proc();
-    if (p && "object" in p && p.object === params.object && p.name === params.proc) return true;
-    store.dispatch({ type: "PROCEDURE_SELECTED", objectName: params.object ?? "", procName: params.proc ?? "" });
-    return false;
-  });
 
   return (
     <Show when={proc()} fallback={<Loading />}>
@@ -39,7 +28,7 @@ export function ProcedureDetail() {
 
           return (
             <>
-              <button class="back-btn" onClick={() => navigate(`/objects/${p.object}`)}>
+              <button class="back-btn" onClick={() => store.dispatch({ type: "OBJECT_SELECTED", name: p.object })}>
                 {"\u2190"} Back to {p.object}
               </button>
 

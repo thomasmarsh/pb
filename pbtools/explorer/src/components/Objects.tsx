@@ -1,7 +1,6 @@
 // Objects.tsx — Objects list and detail views.
 
 import { Show, For, onMount } from "solid-js";
-import { useNavigate } from "@solidjs/router";
 import { useStore } from "../context.js";
 
 function shortFile(f: string | null | undefined): string {
@@ -22,6 +21,7 @@ export function Objects() {
   const os = () => store.state.objects;
 
   onMount(() => {
+    store.dispatch({ type: "NAVIGATE", view: "objects" });
     store.dispatch({ type: "OBJECTS_SEARCH", q: os().q });
   });
 
@@ -114,14 +114,17 @@ export function Objects() {
 
 export function ObjectDetail() {
   const store = useStore();
-  const navigate = useNavigate();
   const obj = () => store.state.objectDetail;
   const src = () => store.state.sourceDetail;
+
+  onMount(() => {
+    store.dispatch({ type: "NAVIGATE", view: "objectDetail" });
+  });
 
   return (
     <Show when={obj()} fallback={<Loading />}>
       <Show when={!("error" in obj()!)} fallback={<div class="card"><p style={{ color: "var(--red)" }}>Error: {"error" in obj()! ? (obj() as { error: string }).error : ""}</p></div>}>
-        <button class="back-btn" onClick={() => navigate("/objects")}>{"\u2190"} Back to Objects</button>
+        <button class="back-btn" onClick={() => store.dispatch({ type: "NAVIGATE", view: "objects" })}>{"\u2190"} Back to Objects</button>
 
         {(() => {
           const o = obj()!;

@@ -1,6 +1,6 @@
 // Search.tsx — Global search view.
 
-import { Show, For, createSignal } from "solid-js";
+import { Show, For, createSignal, onMount } from "solid-js";
 import { useStore } from "../context.js";
 
 function shortFile(f: string | null | undefined): string {
@@ -102,6 +102,10 @@ export function Search() {
   const store = useStore();
   const se = () => store.state.search;
   const [term, setTerm] = createSignal(se().term ?? "");
+
+  onMount(() => {
+    store.dispatch({ type: "NAVIGATE", view: "search" });
+  });
 
   const doSearch = debounce((val: string) => {
     if (val.length >= 2) store.dispatch({ type: "SEARCH_TERM", term: val });

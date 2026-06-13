@@ -1,7 +1,6 @@
 // DataWindows.tsx — DataWindows list and detail views.
 
 import { Show, For, onMount } from "solid-js";
-import { useNavigate } from "@solidjs/router";
 import { useStore } from "../context.js";
 
 function shortFile(f: string | null | undefined): string {
@@ -18,6 +17,7 @@ export function DataWindows() {
   const dw = () => store.state.datawindows;
 
   onMount(() => {
+    store.dispatch({ type: "NAVIGATE", view: "datawindows" });
     store.dispatch({ type: "DW_SEARCH", q: dw().q });
   });
 
@@ -58,8 +58,11 @@ export function DataWindows() {
 
 export function DWDetail() {
   const store = useStore();
-  const navigate = useNavigate();
   const dw = () => store.state.dwDetail;
+
+  onMount(() => {
+    store.dispatch({ type: "NAVIGATE", view: "dwDetail" });
+  });
 
   return (
     <Show when={dw()} fallback={<Loading />}>
@@ -69,7 +72,7 @@ export function DWDetail() {
           if ("error" in d) return null;
           return (
             <>
-              <button class="back-btn" onClick={() => navigate("/datawindows")}>
+              <button class="back-btn" onClick={() => store.dispatch({ type: "NAVIGATE", view: "datawindows" })}>
                 {"\u2190"} Back to DataWindows
               </button>
               <h2 style={{ "margin-bottom": "16px", "font-size": "20px" }}>

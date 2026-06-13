@@ -1,6 +1,6 @@
 // Dashboard.tsx — Dashboard view.
 
-import { Show, For, createMemo } from "solid-js";
+import { Show, For, createMemo, onMount } from "solid-js";
 import { useStore } from "../context.js";
 import type { ProcedureRow } from "../types/api.js";
 
@@ -72,6 +72,12 @@ function Loading() {
 
 export function Dashboard() {
   const store = useStore();
+
+  onMount(() => {
+    store.dispatch({ type: "NAVIGATE", view: "dashboard" });
+    if (!store.state.stats) store.dispatch({ type: "STATS_LOAD" });
+  });
+
   const s = () => store.state.stats;
 
   const metrics = createMemo(() => {
