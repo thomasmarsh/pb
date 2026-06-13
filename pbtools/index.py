@@ -1,13 +1,4 @@
-"""
-pb index — populate pb.duckdb from pb-runner JSONL output.
-
-Usage (CLI):
-    pb-runner -i <srcdir> --jsonl | pb index [DB]
-    pb-runner -i <srcdir> --jsonl | pb index < codebase.jsonl
-
-Library:
-    from pbtools.index import run_from_jsonl_lines
-"""
+"""Ingest pb-runner JSON output into DuckDB."""
 import json
 import sys
 from typing import Iterable
@@ -17,31 +8,13 @@ import duckdb
 from pbtools.common import TABLES, INSERT, create_schema
 
 
-def run(db: str = 'pb.duckdb') -> None:
-    """Read JSONL from stdin and populate the database."""
-    run_from_jsonl_lines(sys.stdin, db)
-
-
-def ingest_batch(objects, conn) -> int:
-    """Ingest an iterable of parsed file dicts into an open connection. Returns row count."""
-    rows: dict[str, list] = {t: [] for t in TABLES}
-    for obj in objects:
-        ingest_file(obj, rows)
-    total = 0
-    for table, data in rows.items():
-        if data:
-            conn.executemany(INSERT[table], data)
-            total += len(data)
-    return total
-
-
 def run_from_jsonl_lines(lines: Iterable[str], db: str = 'pb.duckdb') -> None:
     conn = duckdb.connect(db)
     create_schema(conn)
 
     rows: dict[str, list] = {t: [] for t in TABLES}
     for line in lines:
-        line = line.strip() if isinstance(line, str) else line.strip()
+        line = line.strip()
         if not line:
             continue
         obj = json.loads(line)
@@ -56,10 +29,23 @@ def run_from_jsonl_lines(lines: Iterable[str], db: str = 'pb.duckdb') -> None:
     print(f"Indexed {total} rows into {db}", file=sys.stderr)
 
 
+def ingest_batch(objects: Iterable[dict], conn) -> int:
+    """Ingest an iterable of parsed file dicts into an open connection. Returns row count."""
+    rows: dict[str, list] = {t: [] for t in TABLES}
+    for obj in objects:
+        ingest_file(obj, rows)
+    total = 0
+    for table, data in rows.items():
+        if data:
+            conn.executemany(INSERT[table], data)
+            total += len(data)
+    return total
+
+
 def ingest_file(obj: dict, rows: dict) -> None:
     file = obj.get('file', '')
     kind = obj.get('kind', '')
-    name = extract_object_name(obj)
+    name = _object_name(obj)
     ancestor = obj.get('meta', {}).get('ancestor')
 
     rows['objects'].append((file, name, kind, ancestor))
@@ -67,20 +53,20 @@ def ingest_file(obj: dict, rows: dict) -> None:
         rows['inherits'].append((name, ancestor))
 
     if kind == 'powerscript':
-        ingest_ps(obj, file, rows)
+        _ingest_ps(obj, file, rows)
     elif kind == 'datawindow':
-        ingest_dw(obj, file, rows)
+        _ingest_dw(obj, file, rows)
 
 
-def extract_object_name(obj: dict) -> str:
-    """Primary object name from E1 file-level meta, falling back to filename stem."""
+def _object_name(obj: dict) -> str:
+    """Primary object name from file-level meta, falling back to filename stem."""
     if name := obj.get('meta', {}).get('object'):
         return name
     stem = obj.get('file', '').split('/')[-1]
     return stem.rsplit('.', 1)[0] if '.' in stem else stem
 
 
-def ingest_ps(obj: dict, file: str, rows: dict) -> None:
+def _ingest_ps(obj: dict, file: str, rows: dict) -> None:
     for proc_type, key in [
         ('function',   'functions'),
         ('subroutine', 'subroutines'),
@@ -93,36 +79,30 @@ def ingest_ps(obj: dict, file: str, rows: dict) -> None:
 
 def _proc_row(file: str, proc_type: str, block: dict) -> tuple:
     meta = block.get('meta') or {}
-    object_name = meta.get('object', '')
-    start_line  = meta.get('startLine')
-    end_line    = meta.get('endLine')
-
     if proc_type == 'on':
-        name        = block.get('event', '')
-        modifiers   = None
-        params      = None
-        return_type = None
+        name, modifiers, params, return_type = block.get('event', ''), None, None, None
     else:
-        sig         = block.get('sig') or {}
-        name        = sig.get('name', '')
-        mods        = sig.get('modifiers') or []
+        sig = block.get('sig') or {}
+        name = sig.get('name', '')
+        mods = sig.get('modifiers') or []
         modifiers   = ' '.join(mods) if mods else None
         params      = sig.get('params') or sig.get('rawSig')
         return_type = sig.get('returnType')
+    return (
+        file, meta.get('object', ''), proc_type, name,
+        modifiers, params, return_type,
+        meta.get('startLine'), meta.get('endLine'),
+        json.dumps(block.get('body', [])),
+    )
 
-    body_json = json.dumps(block.get('body', []))
-    return (file, object_name, proc_type, name, modifiers, params,
-            return_type, start_line, end_line, body_json)
 
-
-def ingest_dw(obj: dict, file: str, rows: dict) -> None:
-    dw_name = extract_object_name(obj)
+def _ingest_dw(obj: dict, file: str, rows: dict) -> None:
+    dw_name = _object_name(obj)
 
     for ctrl in obj.get('controls', []):
         rows['dw_controls'].append(_ctrl_row(file, dw_name, ctrl))
 
-    tbl      = obj.get('table') or {}
-    retrieve = tbl.get('retrieve') or {}
+    retrieve = (obj.get('table') or {}).get('retrieve') or {}
     if not isinstance(retrieve, dict):
         return
 
@@ -154,11 +134,8 @@ def _ctrl_row(file: str, dw_name: str, ctrl: dict) -> tuple:
     meta = ctrl.get('meta') or {}
     return (
         file, dw_name,
-        ctrl.get('name'),
-        ctrl.get('type'),
-        band,
+        ctrl.get('name'), ctrl.get('type'), band,
         ctrl.get('x'), ctrl.get('y'), ctrl.get('width'), ctrl.get('height'),
-        ctrl.get('expression'),
-        ctrl.get('tab_seq'),
+        ctrl.get('expression'), ctrl.get('tab_seq'),
         meta.get('sourceLine'),
     )

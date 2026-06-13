@@ -1,14 +1,4 @@
-"""
-Tests for pbtools.analyze.
-
-Run from repo root:
-  uv run pytest tests/test_analyze.py
-
-Requires:
-  - cabal build (pb-runner compiled)
-  - uv sync (duckdb, networkx, scipy)
-"""
-import json
+"""Tests for pbtools.analyze."""
 import os
 import subprocess
 import tempfile
@@ -21,9 +11,9 @@ OPENPAY_DIR = os.path.join(REPO_ROOT, 'example', 'openpay')
 
 
 @pytest.fixture(scope='module')
-def analyzed_conn():
+def db_path():
     tmp_dir = tempfile.mkdtemp()
-    db_path = os.path.join(tmp_dir, 'test.duckdb')
+    path = os.path.join(tmp_dir, 'test.duckdb')
 
     runner = subprocess.run(
         ['cabal', 'run', 'pb-runner', '-v0', '--', '-i', OPENPAY_DIR, '--jsonl'],
@@ -35,19 +25,27 @@ def analyzed_conn():
     from pbtools.analyze import run as analyze_run
 
     lines = runner.stdout.decode().splitlines()
-    run_from_jsonl_lines(lines, db_path)
-    analyze_run(db_path)
+    run_from_jsonl_lines(lines, path)
+    analyze_run(path)
 
+    yield path
+
+    os.unlink(path)
+    os.rmdir(tmp_dir)
+
+
+@pytest.fixture(scope='module')
+def analyzed_conn(db_path):
     conn = duckdb.connect(db_path, read_only=True)
     yield conn
     conn.close()
-    os.unlink(db_path)
-    os.rmdir(tmp_dir)
 
 
 def q(conn, sql: str):
     return conn.execute(sql).fetchone()[0]
 
+
+# ── unit tests (no db needed) ─────────────────────────────────────────────────
 
 def test_cyclomatic_nonzero_for_function_with_if():
     from pbtools.analyze import count_branches
@@ -58,7 +56,7 @@ def test_cyclomatic_nonzero_for_function_with_if():
         "elseIfs": [],
         "else": None,
     }]
-    assert count_branches(body) == 1, "one 'if' node should count as one branch"
+    assert count_branches(body) == 1
     assert count_branches(body) + 1 == 2
 
     nested = [{"tag": "for", "body": body}]
@@ -66,6 +64,33 @@ def test_cyclomatic_nonzero_for_function_with_if():
 
     assert count_branches([]) == 0
 
+
+# ── reporter integration ──────────────────────────────────────────────────────
+
+def test_analyze_run_emits_reporter_events(db_path):
+    from pbtools.analyze import run as analyze_run
+    from pbtools.reporter import RecordingReporter
+
+    reporter = RecordingReporter()
+    analyze_run(db_path, reporter)
+
+    types = {e['type'] for e in reporter.events}
+    assert 'analyze_start' in types
+    assert 'analyze_end' in types
+
+    n_procs = next(e['n_procs'] for e in reporter.events if e['type'] == 'analyze_start')
+    assert n_procs > 0
+
+    extract_count    = sum(1 for e in reporter.events if e['type'] == 'analyze_extract')
+    cyclomatic_count = sum(1 for e in reporter.events if e['type'] == 'analyze_cyclomatic')
+    assert extract_count == n_procs
+    assert cyclomatic_count == n_procs
+
+    metric_labels = [e['label'] for e in reporter.events if e['type'] == 'analyze_metrics']
+    assert 'done' in metric_labels
+
+
+# ── integration tests ─────────────────────────────────────────────────────────
 
 def test_calls_table_populated_after_extract(analyzed_conn):
     count = q(analyzed_conn, "SELECT count(*) FROM calls")
@@ -105,6 +130,5 @@ def test_high_fanin_objects_identified(analyzed_conn):
     assert top is not None, "no rows in object_metrics"
     obj, indegree = top
     assert indegree > 5, (
-        f"top in_degree object '{obj}' has only {indegree} incoming edges — "
-        "expected a recognisable utility hub with more callers"
+        f"top in_degree object '{obj}' has only {indegree} incoming edges"
     )

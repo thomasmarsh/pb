@@ -20,7 +20,7 @@ import pytest
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH   = os.path.join(REPO_ROOT, 'pb.duckdb')
 
-from pbtools.diagram import (
+from pbtools.diagram import (  # noqa: E402
     diagram_calls,
     diagram_dw_tables,
     diagram_heatmap,

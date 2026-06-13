@@ -1,17 +1,7 @@
-"""
-pb diagram — generate SVG diagrams from pb.duckdb.
-
-Usage (CLI):
-    pb diagram inheritance [--db PATH] [--root NAME] [-o FILE] [--dot]
-    pb diagram calls --object NAME [--db PATH] [--depth N] [-o FILE] [--dot]
-    pb diagram dw-tables [--db PATH] [--table NAME] [-o FILE] [--dot]
-    pb diagram heatmap [--db PATH] [-o FILE] [--dot]
-
-Library:
-    from pbtools.diagram import diagram_inheritance, diagram_calls, diagram_dw_tables, diagram_heatmap
-"""
+"""SVG diagram generators for pb.duckdb."""
 import os
 import sys
+from contextlib import contextmanager
 
 import duckdb
 import graphviz
@@ -63,6 +53,15 @@ def open_db(db_path: str) -> duckdb.DuckDBPyConnection:
     if not os.path.exists(db_path):
         sys.exit(f"error: database not found: {db_path}")
     return duckdb.connect(db_path, read_only=True)
+
+
+@contextmanager
+def connect(db_path: str):
+    conn = open_db(db_path)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def _render(dot: graphviz.Graph | graphviz.Digraph, output: str, emit_dot: bool) -> None:

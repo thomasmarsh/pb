@@ -1,58 +1,38 @@
-"""
-pb analyze — compute graph metrics and populate object_metrics in pb.duckdb.
+"""Compute call graph metrics and populate object_metrics in pb.duckdb."""
+from __future__ import annotations
 
-Usage (CLI):
-    pb analyze [DB]
-
-Library:
-    from pbtools.analyze import run
-"""
 import json
+from typing import TYPE_CHECKING
 
 import duckdb
 import networkx as nx
 
+if TYPE_CHECKING:
+    from pbtools.reporter import AnalyzeProgress, Reporter
 
 BRANCH_TAGS = {'if', 'for', 'do', 'choose'}
 
 
-def run(db: str = 'pb.duckdb', console=None) -> None:
-    if console is None:
-        from rich.console import Console
-        console = Console(stderr=True)
-
-    from rich.progress import (
-        BarColumn, MofNCompleteColumn, Progress,
-        SpinnerColumn, TextColumn, TimeElapsedColumn,
-    )
+def run(db: str = 'pb.duckdb', reporter: Reporter | None = None) -> None:
+    if reporter is None:
+        from pbtools.reporter import LiveReporter
+        reporter = LiveReporter()
 
     conn = duckdb.connect(db)
-
-    n_procs = conn.execute(
+    row = conn.execute(
         "SELECT COUNT(*) FROM procedures WHERE body_json IS NOT NULL"
-    ).fetchone()[0]
+    ).fetchone()
+    n_procs: int = row[0] if row else 0
 
-    with Progress(
-        SpinnerColumn(finished_text='[green]✓[/green]'),
-        TextColumn('[bold]{task.description}'),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TimeElapsedColumn(),
-        console=console,
-    ) as prog:
-        t1 = prog.add_task('[1/3] Extracting call graph      ', total=n_procs)
-        extract_calls(conn, prog, t1)
-
-        t2 = prog.add_task('[2/3] Cyclomatic complexity       ', total=n_procs)
-        compute_cyclomatic(conn, prog, t2)
-
-        t3 = prog.add_task('[3/3] Graph metrics: build graph  ', total=4)
-        compute_metrics(conn, prog, t3)
+    with reporter.analyze_progress(n_procs) as progress:
+        extract_calls(conn, progress)
+        compute_cyclomatic(conn, progress)
+        compute_metrics(conn, progress)
 
     conn.close()
 
 
-def extract_calls(conn, prog=None, task_id=None) -> None:
+def extract_calls(conn, progress: AnalyzeProgress) -> None:
     conn.execute("DROP TABLE IF EXISTS calls")
     conn.execute("""
         CREATE TABLE calls (
@@ -68,12 +48,10 @@ def extract_calls(conn, prog=None, task_id=None) -> None:
     ).fetchall()
     rows = []
     for file, obj, name, body_json in procs:
-        body = json.loads(body_json)
-        for callee, call_type in walk_calls(body):
+        for callee, call_type in walk_calls(json.loads(body_json)):
             if callee:
                 rows.append((file, obj, name, callee, call_type))
-        if prog is not None:
-            prog.advance(task_id)
+        progress.advance_extract()
     if rows:
         conn.executemany("INSERT INTO calls VALUES (?, ?, ?, ?, ?)", rows)
 
@@ -111,7 +89,7 @@ def count_branches(node) -> int:
     return count
 
 
-def compute_cyclomatic(conn, prog=None, task_id=None) -> None:
+def compute_cyclomatic(conn, progress: AnalyzeProgress) -> None:
     try:
         conn.execute("ALTER TABLE procedures ADD COLUMN cyclomatic INT DEFAULT 0")
     except Exception:
@@ -121,26 +99,24 @@ def compute_cyclomatic(conn, prog=None, task_id=None) -> None:
         "SELECT rowid, body_json FROM procedures WHERE body_json IS NOT NULL"
     ).fetchall()
     for rowid, body_json in procs:
-        body = json.loads(body_json)
-        cc = count_branches(body) + 1
+        cc = count_branches(json.loads(body_json)) + 1
         conn.execute("UPDATE procedures SET cyclomatic = ? WHERE rowid = ?", [cc, rowid])
-        if prog is not None:
-            prog.advance(task_id)
+        progress.advance_cyclomatic()
 
 
 def compute_dit(conn) -> dict[str, int]:
     """Depth of inheritance tree: max hops from a base class (no parent)."""
     edges = conn.execute("SELECT from_object, to_object FROM inherits").fetchall()
-    I = nx.DiGraph((parent, child) for child, parent in edges)
-    roots = {n for n in I.nodes() if I.in_degree(n) == 0}
-    dit: dict[str, int] = {n: 0 for n in I.nodes()}
+    igraph = nx.DiGraph((parent, child) for child, parent in edges)
+    roots = {n for n in igraph.nodes() if igraph.in_degree(n) == 0}
+    dit: dict[str, int] = {n: 0 for n in igraph.nodes()}
     for root in roots:
-        for node, depth in nx.single_source_shortest_path_length(I, root).items():
+        for node, depth in nx.single_source_shortest_path_length(igraph, root).items():
             dit[node] = max(dit.get(node, 0), depth)
     return dit
 
 
-def compute_metrics(conn, prog=None, task_id=None) -> None:
+def compute_metrics(conn, progress: AnalyzeProgress) -> None:
     conn.execute("DROP TABLE IF EXISTS object_metrics")
     conn.execute("""
         CREATE TABLE object_metrics (
@@ -156,29 +132,23 @@ def compute_metrics(conn, prog=None, task_id=None) -> None:
         )
     """)
 
-    def _advance(desc: str) -> None:
-        if prog is not None:
-            prog.advance(task_id)
-            prog.update(task_id, description=f'[3/3] Graph metrics: {desc}')
-
     edges = conn.execute("""
         SELECT object AS src, to_name AS dst FROM calls
         WHERE to_name != '' AND object != to_name
     """).fetchall()
     G = nx.DiGraph()
     G.add_edges_from(edges)
-    _advance('betweenness centrality')
+    progress.advance_metrics('betweenness centrality')
 
     if not G.nodes():
-        if prog is not None:
-            prog.update(task_id, completed=4)
+        for _ in range(3):
+            progress.advance_metrics('done')
         return
 
     betweenness = nx.betweenness_centrality(G)
-    _advance('PageRank + DIT       ')
+    progress.advance_metrics('PageRank + DIT')
 
     pr = nx.pagerank(G, alpha=0.85)
-
     cyc = conn.execute("""
         SELECT object, max(cyclomatic), avg(cyclomatic)
         FROM procedures
@@ -187,23 +157,19 @@ def compute_metrics(conn, prog=None, task_id=None) -> None:
     """).fetchall()
     cyc_map = {obj: (int(max_c), float(avg_c)) for obj, max_c, avg_c in cyc}
     dit_map = compute_dit(conn)
-    _advance('inserting rows       ')
+    progress.advance_metrics('inserting rows')
 
-    rows = []
-    for node in G.nodes():
-        max_c, avg_c = cyc_map.get(node, (None, None))
-        rows.append((
+    rows = [
+        (
             node,
-            G.in_degree(node),
-            G.out_degree(node),
-            betweenness.get(node, 0.0),
-            pr.get(node, 0.0),
-            max_c,
-            avg_c,
+            G.in_degree(node), G.out_degree(node),
+            betweenness.get(node, 0.0), pr.get(node, 0.0),
+            *cyc_map.get(node, (None, None)),
             dit_map.get(node),
             None,  # CBO deferred
-        ))
-
+        )
+        for node in G.nodes()
+    ]
     if rows:
         conn.executemany("INSERT INTO object_metrics VALUES (?,?,?,?,?,?,?,?,?)", rows)
-    _advance('done                 ')
+    progress.advance_metrics('done')

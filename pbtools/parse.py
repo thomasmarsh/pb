@@ -27,7 +27,7 @@ def _context(file_path: str, line_no: int | None) -> str | None:
         return None
     if line_no is None:
         snippet = lines[:min(6, len(lines))]
-        return '\n'.join(f'   {i+1:4d}  {l}' for i, l in enumerate(snippet))
+        return '\n'.join(f'   {i+1:4d}  {ln}' for i, ln in enumerate(snippet))
     lo = max(0, line_no - _CTX - 1)
     hi = min(len(lines), line_no + _CTX)
     out = []
@@ -71,8 +71,10 @@ def parse_stream(
         text=True,
         bufsize=1,
     )
+    if proc.stdout is None:
+        proc.wait()
+        return
     try:
-        assert proc.stdout is not None
         for raw in proc.stdout:
             raw = raw.strip()
             if not raw:

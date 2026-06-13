@@ -1,4 +1,4 @@
-"""Auto-register queries/*.sql files as top-level pb CLI commands."""
+"""Auto-register queries/*.sql files as commands on a typer sub-app (pb query <name>)."""
 from __future__ import annotations
 
 import re
@@ -96,14 +96,14 @@ def _make_command(sql_file: Path):
         annotation=str,
     ))
 
-    _run.__signature__ = Signature(sig)
+    _run.__signature__ = Signature(sig)  # type: ignore[attr-defined]
     _run.__doc__ = description
     _run.__name__ = sql_file.stem
     return _run
 
 
 def register_queries(app: typer.Typer) -> None:
-    """Register every queries/*.sql file as a top-level pb command."""
+    """Register every queries/*.sql file as a command on the given typer app."""
     if not QUERIES_DIR.is_dir():
         return
     for sql_file in sorted(QUERIES_DIR.glob("*.sql")):

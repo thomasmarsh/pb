@@ -1,13 +1,47 @@
-# pb — PowerBuilder codebase intelligence
+# PowerBuilder Codebase Analysis
 
 Parse a legacy PowerBuilder source tree into a DuckDB relational database
 you can query with plain SQL, or hand to an LLM as a tool. This avoids
 the need for grepping or manual reading.
 
-```
-.sr* source files  →  pb run  →  pb.duckdb  →  SQL queries
-                                      ↓              ↑
-                               pb analyze       pb diagram
+```mermaid
+%%{init: {'themeVariables': {'edgeLabelBackground': 'transparent'}}}%%
+flowchart LR
+    src(["📂 .sr* sources"])
+
+    subgraph pipeline["  pipeline  "]
+        direction TB
+        run(["⚙ pb run"])
+        analyze(["📊 pb analyze"])
+        run -.-> analyze
+    end
+
+    db[("pb.duckdb")]
+
+    subgraph explore["  explore  "]
+        direction TB
+        query(["🔍 pb query "])
+        diagram(["🎨 pb diagram"])
+    end
+
+    src     --> run
+    run     -- parse & index --> db
+    analyze -- metrics       --> db
+    db      --> query
+    db      --> diagram
+
+    style pipeline fill:transparent,stroke:#2980b9
+    style explore  fill:transparent,stroke:#8e44ad
+
+    classDef src fill:#546e7a,stroke:#90a4ae,color:#fff
+    classDef cmd fill:#1565c0,stroke:#90caf9,color:#fff
+    classDef db  fill:#37474f,stroke:#90a4ae,color:#fff
+    classDef out fill:#6a1b9a,stroke:#ce93d8,color:#fff
+
+    class src src
+    class run,analyze cmd
+    class db db
+    class query,diagram out
 ```
 
 ---
@@ -22,9 +56,9 @@ uv sync
 uv run pb run -i /path/to/src
 
 # 3. Query
-uv run pb top              # most complex procedures
-uv run pb pagerank         # most important objects
-uv run pb --help           # full command list
+uv run pb query top              # most complex procedures
+uv run pb query pagerank         # most important objects
+uv run pb query --help           # full command list
 ```
 
 On the first run `pb run` builds the Haskell parser automatically. Every
@@ -36,12 +70,12 @@ control, database reference, and inheritance edge in your codebase.
 
 ### Modes
 
-| Command | What it does |
-|---------|-------------|
-| `pb run -i DIR [--db DB]` | Parse → index → analyze (incremental). Default DB: `pb.duckdb`. |
-| `pb run -i DIR --reset` | Full re-parse, drop and recreate all tables. |
-| `pb dump -i DIR -o OUTDIR` | Parse to a mirrored JSON file tree (one-shot snapshot). |
-| `pb analyze [DB]` | Re-run graph metrics on an existing database. |
+| Command                    | What it does                                                    |
+| -------------------------- | --------------------------------------------------------------- |
+| `pb run -i DIR [--db DB]`  | Parse → index → analyze (incremental). Default DB: `pb.duckdb`. |
+| `pb run -i DIR --reset`    | Full re-parse, drop and recreate all tables.                    |
+| `pb dump -i DIR -o OUTDIR` | Parse to a mirrored JSON file tree (one-shot snapshot).         |
+| `pb analyze [DB]`          | Re-run graph metrics on an existing database.                   |
 
 `pb run` prints a progress bar while parsing, shows rich error panels for any
 files that fail (with source context), and reports a summary on stderr.
@@ -70,16 +104,16 @@ files that fail (with source context), and reports a summary on stderr.
 Built-in commands cover the most common analyses — no SQL required:
 
 ```bash
-uv run pb top                              # most complex procedures
-uv run pb pagerank                         # most important objects by PageRank
-uv run pb callers fn_sqlerror             # who calls this function
-uv run pb dead-code                        # uncalled non-public procedures
-uv run pb god-objects                      # high fan-in + high complexity
-uv run pb ancestors m_misth_zpstath_grid  # inheritance chain upward
-uv run pb descendants w_list              # all objects extending w_list
-uv run pb dw dw_misth_ypal_yvar_list      # tables/columns for a DataWindow
-uv run pb db-coverage                     # all referenced database tables
-uv run pb coupling                        # most tightly coupled object pairs
+uv run pb query top                              # most complex procedures
+uv run pb query pagerank                         # most important objects by PageRank
+uv run pb query callers fn_sqlerror             # who calls this function
+uv run pb query dead-code                        # uncalled non-public procedures
+uv run pb query god-objects                      # high fan-in + high complexity
+uv run pb query ancestors m_misth_zpstath_grid  # inheritance chain upward
+uv run pb query descendants w_list              # all objects extending w_list
+uv run pb query dw dw_misth_ypal_yvar_list      # tables/columns for a DataWindow
+uv run pb query db-coverage                     # all referenced database tables
+uv run pb query coupling                        # most tightly coupled object pairs
 ```
 
 Most commands accept `--n` to change the row limit and `--db` to target a
