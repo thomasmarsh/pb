@@ -34,7 +34,7 @@ register_queries(query_app)
 
 @app.command()
 def dump(
-    input_path: Path = typer.Option(..., '-i', '--input',  help="Source directory or .pbl file."),
+    input_path: Path = typer.Argument(..., help="Source directory or .pbl file."),
     output_dir: Path = typer.Option(..., '-o', '--output', help="Output JSON tree directory."),
     no_build: bool   = typer.Option(False, '--no-build',   help="Skip cabal build step."),
     force: bool      = typer.Option(False, '--force',      help="Wipe OUTDIR if it exists."),
@@ -63,7 +63,7 @@ def dump(
 
 @app.command()
 def ingest(
-    input_path: Path = typer.Option(..., '-i', '--input', help="Source directory or .pbl file."),
+    input_path: Path = typer.Argument(..., help="Source directory or .pbl file."),
     db: str          = typer.Option('pb.duckdb', '--db',  help="DuckDB database path."),
     no_build: bool   = typer.Option(False, '--no-build',  help="Skip cabal build step."),
     reset: bool      = typer.Option(False, '--reset',     help="Drop all tables and do a full re-parse."),
@@ -90,7 +90,7 @@ def ingest(
 
 @app.command()
 def extract(
-    input_dir: Path  = typer.Option(..., '-i', '--input',  help="Directory containing .pbl library files."),
+    input_dir: Path  = typer.Argument(..., help="Directory containing .pbl library files."),
     output_dir: Path = typer.Option(..., '-o', '--output', help="Output root for extracted source files."),
     force: bool      = typer.Option(False, '--force',      help="Wipe output if non-empty."),
 ) -> None:

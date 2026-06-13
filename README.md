@@ -9,7 +9,7 @@ the need for grepping or manual reading.
 ```mermaid
 %%{init: {'themeVariables': {'edgeLabelBackground': 'transparent'}}}%%
 flowchart LR
-    src(["📂 .sr* sources"])
+    src(["📂 .pbl files"])
 
     subgraph pipeline["  pipeline  "]
         direction TB
@@ -20,7 +20,7 @@ flowchart LR
 
     db[("pb.duckdb")]
 
-    subgraph explore["  explore  "]
+    subgraph explore["  investigate  "]
         direction TB
         web(["🌐 pb explore"])
         query(["🔍 pb query "])
@@ -57,7 +57,7 @@ flowchart LR
 uv sync
 
 # 2. Parse, index, and analyze in one command — incremental by default
-uv run pb ingest -i /path/to/src
+uv run pb ingest /path/to/src
 
 # 3. Query
 uv run pb query top              # most complex procedures
@@ -83,9 +83,9 @@ control, database reference, and inheritance edge in your codebase.
 
 | Command                      | What it does                                                    |
 | ---------------------------- | --------------------------------------------------------------- |
-| `pb ingest -i DIR [--db DB]` | Parse → index → analyze (incremental). Default DB: `pb.duckdb`. |
-| `pb ingest -i DIR --reset`   | Full re-parse, drop and recreate all tables.                    |
-| `pb dump -i DIR -o OUTDIR`   | Parse to a mirrored JSON file tree (one-shot snapshot).         |
+| `pb ingest DIR [--db DB]`    | Parse → index → analyze (incremental). Default DB: `pb.duckdb`. |
+| `pb ingest DIR --reset`      | Full re-parse, drop and recreate all tables.                    |
+| `pb dump DIR -o OUTDIR`      | Parse to a mirrored JSON file tree (one-shot snapshot).         |
 | `pb analyze [DB]`            | Re-run graph metrics on an existing database.                   |
 | `pb explore [--db DB]`       | Interactive web UI (auto-builds frontend on first run).         |
 

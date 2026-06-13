@@ -58,7 +58,7 @@ jobs:
           version: "11.3.0"
 
       - name: Extract openpay corpus
-        run: uv run pb extract -i example/openpay -o example/openpay-src
+        run: uv run pb extract example/openpay -o example/openpay-src
 
       - name: Build
         run: cabal build --enable-tests
