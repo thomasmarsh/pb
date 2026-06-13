@@ -69,6 +69,10 @@ jobs:
       - name: Test (Python)
         run: uv run pytest
 
-      - name: Test (JavaScript)
-        working-directory: js_tests
-        run: pnpm install --frozen-lockfile && pnpm test
+      - name: Test (TypeScript)
+        working-directory: pbtools/explorer
+        run: pnpm install --frozen-lockfile && pnpm typecheck && pnpm test
+
+      - name: Build (TypeScript)
+        working-directory: pbtools/explorer
+        run: pnpm build

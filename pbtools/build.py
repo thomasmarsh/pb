@@ -60,3 +60,27 @@ def walk_sr_files(src_dir: Path) -> list[Path]:
 
 def count_sr_files(src_dir: Path) -> int:
     return len(walk_sr_files(src_dir))
+
+
+def ensure_explorer_built(repo: Path, verbose: bool = False) -> None:
+    """Ensure the TypeScript explorer is built. Runs pnpm install + build if needed."""
+    dist_js = repo / "pbtools" / "explorer" / "static" / "dist" / "app.js"
+    if dist_js.exists():
+        return
+    explorer_dir = repo / "pbtools" / "explorer"
+    if not (explorer_dir / "package.json").exists():
+        sys.exit("error: pbtools/explorer/package.json not found — cannot auto-build explorer")
+    print("Building explorer frontend...", file=sys.stderr)
+    for cmd in [["pnpm", "install", "--frozen-lockfile"], ["pnpm", "build"]]:
+        r = subprocess.run(
+            cmd,
+            cwd=str(explorer_dir),
+            capture_output=not verbose,
+            text=True,
+        )
+        if r.returncode != 0:
+            if not verbose:
+                print(r.stderr, file=sys.stderr)
+            sys.exit(f"error: explorer build failed ({' '.join(cmd)})")
+    if not dist_js.exists():
+        sys.exit("error: explorer build produced no output")

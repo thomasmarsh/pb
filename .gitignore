@@ -13,3 +13,5 @@ __pycache__
 pb.duckdb
 .mimocode/
 node_modules
+pbtools/explorer/static/dist/
+pbtools/explorer/node_modules/

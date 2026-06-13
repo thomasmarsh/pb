@@ -11,6 +11,9 @@ bash scripts/check-corpus.sh          # 0 errors / 777 files = baseline
 uv run pb debt                        # BsRaw + ExRaw debt + DW control coverage (both corpora)
 uv run pb debt --no-build             # same, skip build step
 uv run pytest                         # Python tool tests (pytests/ directory)
+cd pbtools/explorer && pnpm typecheck # TypeScript type check (explorer)
+cd pbtools/explorer && pnpm test      # Explorer reducer tests (39 tests)
+cd pbtools/explorer && pnpm build     # Build explorer TS → static/dist/
 ```
 
 ## Session Scoping

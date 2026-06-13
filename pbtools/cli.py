@@ -225,6 +225,10 @@ def explore(
     """Start the interactive DuckDB explorer web UI."""
     import uvicorn
     from pbtools.explorer import create_app
+    from pbtools.build import find_repo, ensure_explorer_built
+
+    repo = find_repo()
+    ensure_explorer_built(repo)
 
     app = create_app(db)
 

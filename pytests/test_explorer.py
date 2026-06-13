@@ -57,16 +57,15 @@ def test_static_css(client):
 
 
 def test_static_js(client):
-    r = client.get("/static/app.js")
+    r = client.get("/static/dist/app.js")
     assert r.status_code == 200
-    assert "store.dispatch" in r.text
 
 
 def test_static_core(client):
-    r = client.get("/static/core.js")
+    r = client.get("/static/dist/app.js")
     assert r.status_code == 200
-    assert "export function reducer" in r.text
-    assert "export function initialState" in r.text
+    assert "NAVIGATE" in r.text
+    assert "dashboard" in r.text
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────

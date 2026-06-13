@@ -1,12 +1,17 @@
 {
-  "name": "pb-explorer-tests",
+  "name": "pb-explorer",
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "typescript": "^5.7",
+    "vite": "^6.0",
     "vitest": "^3.2",
     "happy-dom": "^18.0"
   }
