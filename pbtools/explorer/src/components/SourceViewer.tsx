@@ -104,18 +104,26 @@ export function SourceViewer(props: SourceViewerProps) {
     return map;
   });
 
-  // Highlighted lines
-  const highlightedLines = createMemo(() => {
+  // Full HTML as a single block — no per-line elements, zero drift
+  const fullHtml = createMemo(() => {
     const code = props.lines.join("\n");
     const highlighted = highlightPowerScript(code);
-    return highlighted.split("\n");
-  });
-
-  // Linked lines (with cross-references)
-  const linkedLines = createMemo(() => {
-    return highlightedLines().map((line) =>
+    const lines = highlighted.split("\n").map((line) =>
       linkIdentifiers(line, objectMap(), procMap(), props.objectName)
     );
+    const pfl = procFirstLine();
+    const parts: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const lineNum = i + 1;
+      const proc = pfl.get(lineNum);
+      if (proc) {
+        parts.push(`<div class="source-line-highlight">${lines[i]!}</div>`);
+      } else {
+        parts.push(lines[i]!);
+        parts.push("\n");
+      }
+    }
+    return parts.join("");
   });
 
   // Handle mouse events for tooltips and clicks
@@ -224,18 +232,7 @@ export function SourceViewer(props: SourceViewerProps) {
         onMouseOut={handleMouseOut}
         onClick={handleClick}
       >
-        <For each={linkedLines()}>
-          {(html, i) => {
-            const lineNum = i() + 1;
-            const proc = procFirstLine().get(lineNum);
-            return (
-              <div
-                class={proc ? "source-line-highlight" : undefined}
-                innerHTML={html}
-              />
-            );
-          }}
-        </For>
+        <pre innerHTML={fullHtml()} />
 
         {/* Procedure overlay bars */}
         <For each={props.procedures}>

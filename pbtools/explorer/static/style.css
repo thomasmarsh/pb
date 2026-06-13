@@ -321,6 +321,7 @@ body {
 .source-gutter {
     display: flex;
     flex-direction: column;
+    flex-shrink: 0;
     background: #0a0c14;
     border-right: 1px solid var(--border);
     user-select: none;
@@ -330,27 +331,24 @@ body {
 .source-gutter-line {
     padding: 0 8px 0 4px;
     color: var(--text-muted);
-    font-size: 11px;
-    line-height: 1.6;
+    background: #0a0c14;
     height: 20.8px;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
+    line-height: 20.8px;
+    text-align: right;
 }
 .source-code-area {
     flex: 1;
-    overflow-x: auto;
+    min-width: 0;
     position: relative;
     white-space: pre;
 }
 .source-code-area pre {
     margin: 0;
     padding: 0 16px;
-    background: transparent !important;
-}
-.source-code-area code {
-    background: transparent !important;
-    padding: 0 !important;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: 20.8px;
+    background: transparent;
 }
 .source-proc-bar {
     position: absolute;
