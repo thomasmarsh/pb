@@ -1,0 +1,18 @@
+HA$PBExportHeader$fn_gettext.srf
+$PBExportComments$
+global type fn_gettext from function_object
+end type
+
+forward prototypes
+global function string fn_gettext (string as_title)
+end prototypes
+
+global function string fn_gettext (string as_title);// Άνοιγμα του παραθύρου w_gettext και επιστροφή του κειμένου
+	string	ls_text
+	
+	Openwithparm(w_gettext, as_title)
+	ls_text = Message.StringParm
+	
+	return ls_text
+end function
+

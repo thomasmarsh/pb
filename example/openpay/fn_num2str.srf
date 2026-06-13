@@ -1,0 +1,35 @@
+HA$PBExportHeader$fn_num2str.srf
+$PBExportComments$
+global type fn_num2str from function_object
+end type
+
+forward prototypes
+global function string fn_num2str (long al_num, integer ai_digits)
+end prototypes
+
+global function string fn_num2str (long al_num, integer ai_digits);// Μετατροπή του al_num σε string
+// αποτελούμενου από ai_digits ψηφία
+
+string		ls_num
+integer		li_zeros 	// 0's to be prefixed
+integer		i
+
+ls_num = string(al_num)
+li_zeros = ai_digits - len(ls_num)
+
+// Προσθήκη 0's αν περισεύουν ψηφία
+	if li_zeros > 0 then
+		for i = 1 to li_zeros
+			ls_num = "0" + ls_num
+		next
+		return ls_num
+	end if
+
+// Αποκοπή αριθμού αν τα ψηφία είναι λιγότερα από το μήκος του
+	if li_zeros < 0 then	return right(ls_num, ai_digits)
+
+// Επιστροφή του αριθμού όπως είναι αν τα ψηφία είναι ίσα με το μήκος
+	if li_zeros = 0 then return ls_num
+
+end function
+

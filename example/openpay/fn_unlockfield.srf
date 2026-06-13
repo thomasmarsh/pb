@@ -1,0 +1,28 @@
+HA$PBExportHeader$fn_unlockfield.srf
+$PBExportComments$
+global type fn_unlockfield from function_object
+end type
+
+forward prototypes
+global subroutine fn_unlockfield (ref datawindow adw, string col, integer tabseq)
+end prototypes
+
+global subroutine fn_unlockfield (ref datawindow adw, string col, integer tabseq);// Απενεργοποιεί το col του adw:
+// 1) Tabsequence = tabseq
+// 2) Background color = λευκό (255,255,255)
+	
+// Αν το tabSequence δεν είναι 0 είναι ήδη ξεκλειδωμένο
+	string	ls_lockstate
+	ls_lockstate = adw.Describe(col + ".TabSequence")
+	if ls_lockstate <> "0" then return
+	
+	long	ll_bkcolor
+	
+	// Παίρνουμε το bkcolor του detail του ls_dw
+		ll_bkcolor = rgb(255,255,255)
+		
+	// Αλλαγή tabsequence και background of col
+		adw.Modify(col + ".Background.Color='" + string(ll_bkcolor) + "'")
+		adw.Modify(col + ".TabSequence='" + string(tabseq) + "'")
+end subroutine
+

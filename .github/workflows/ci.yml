@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up GHC
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.10.2"
+          cabal-version: "latest"
+
+      - name: Cache cabal store
+        uses: actions/cache@v4
+        with:
+          path: ~/.cabal/store
+          key: cabal-${{ runner.os }}-ghc-9.10.2-${{ hashFiles('pb-ast.cabal') }}
+          restore-keys: |
+            cabal-${{ runner.os }}-ghc-9.10.2-
+
+      - name: Build
+        run: cabal build --enable-tests
+
+      - name: Test (Haskell)
+        run: cabal test --test-show-details=direct
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Test (Python)
+        run: uv run pytest

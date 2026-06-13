@@ -1,5 +1,7 @@
 # PowerBuilder Codebase Analysis
 
+[![CI](https://github.com/thomasmarsh/pb/actions/workflows/ci.yml/badge.svg)](https://github.com/thomasmarsh/pb/actions/workflows/ci.yml)
+
 Parse a legacy PowerBuilder source tree into a DuckDB relational database
 you can query with plain SQL, or hand to an LLM as a tool. This avoids
 the need for grepping or manual reading.

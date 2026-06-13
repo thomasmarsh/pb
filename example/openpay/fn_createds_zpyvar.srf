@@ -1,0 +1,44 @@
+HA$PBExportHeader$fn_createds_zpyvar.srf
+$PBExportComments$
+global type fn_createds_zpyvar from function_object
+end type
+
+forward prototypes
+global function datastore fn_createds_zpyvar (ref datawindow adw)
+end prototypes
+
+global function datastore fn_createds_zpyvar (ref datawindow adw);// Δημιουργία datastore με τις μεταβλητές υπαλλήλου
+// που ήδη έχουμε καταχωρήσει στο adw πριν την τρέχουσα γραμμή
+
+// Παίρνουμε την τρέχουσα εγγραφή
+	long	ll_row
+	ll_row = adw.getrow()
+
+// Δημιουργία datastore του τύπου edw_var
+	datastore		lds_yvar
+	lds_yvar = fn_createds("edw_var")
+	
+// Μεταφορά από dw για όλες τις γραμμές που προηγούνται
+	string	ls_kodyvar, ls_descyvar
+	long		i, ll_newrow
+	
+	for i = 1 to ll_row - 1
+		
+		ll_newrow = lds_yvar.insertrow(0)
+		
+		ls_kodyvar = adw.object.kodyvar[i]
+				
+		select descyvar into :ls_descyvar
+		from   misth_zpyvar
+		where  kodyvar = :ls_kodyvar and kodxrisi = :gs_kodxrisi;
+		fn_sqlerror()
+		
+		lds_yvar.object.kodvar[ll_newrow] = ls_kodyvar
+		lds_yvar.object.descvar[ll_newrow] = ls_descyvar
+		
+	next
+	
+// Επιστροφή
+	return lds_yvar
+end function
+

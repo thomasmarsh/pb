@@ -1,0 +1,43 @@
+HA$PBExportHeader$fn_createds_zpepidom_fylo.srf
+$PBExportComments$
+global type fn_createds_zpepidom_fylo from function_object
+end type
+
+forward prototypes
+global function datastore fn_createds_zpepidom_fylo (ref datawindow adw)
+end prototypes
+
+global function datastore fn_createds_zpepidom_fylo (ref datawindow adw);// Δημιουργία datastore με όλα τα επιδόματα
+// που έχουμε καταχωρήσει σε φύλο υπολογισμού
+
+// Δημιουργία datastore του τύπου edw_var
+	datastore		lds_epidom
+	lds_epidom = fn_createds("edw_var")
+	
+// Μεταφορά από adw για όλες τις γραμμές 
+// (εκτώς από την τελευταία που είναι η νέα εγγραφή)
+	string	ls_kodepidom, ls_descepidom
+	long		i, ll_newrow, ll_rows
+	
+	ll_rows = adw.rowcount() - 1
+	
+	for i = 1 to ll_rows 
+		
+		ll_newrow = lds_epidom.insertrow(0)
+		
+		ls_kodepidom = adw.object.kodepidom[i]
+				
+		select descepidom into :ls_descepidom
+		from   misth_zpepidom
+		where  kodepidom = :ls_kodepidom and kodxrisi = :gs_kodxrisi;
+		fn_sqlerror()
+		
+		lds_epidom.object.kodvar[ll_newrow] = ls_kodepidom
+		lds_epidom.object.descvar[ll_newrow] = ls_descepidom
+		
+	next
+	
+// Επιστροφή
+	return lds_epidom
+end function
+

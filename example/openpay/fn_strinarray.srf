@@ -1,0 +1,27 @@
+HA$PBExportHeader$fn_strinarray.srf
+$PBExportComments$
+global type fn_strinarray from function_object
+end type
+
+forward prototypes
+global function boolean fn_strinarray (readonly string aarray[], string astr)
+end prototypes
+
+global function boolean fn_strinarray (readonly string aarray[], string astr);// Επιστρέφει true αν το astr περιέχετε στον aarray
+
+// Βρίσκουμε το πλήθος των στοιχείων του aarray
+	long		ll_records
+	
+	ll_records = UpperBound(aarray[])
+	
+// Έλεγχος για το astr
+	long	i
+	for i = 1 to ll_records
+		if aarray[i] = astr then	return true
+	next
+	
+// Αν φτάσουμε εδώ, το astr δεν υπάρχει
+	return false
+		
+end function
+

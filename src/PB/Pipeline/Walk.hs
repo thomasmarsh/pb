@@ -11,10 +11,13 @@ import System.Directory (doesDirectoryExist, listDirectory)
 import System.FilePath  (takeExtension, (</>))
 
 -- | Recursively collect files matching a predicate under a root directory.
+-- Returns [] if the root does not exist.
 walkFiles :: (FilePath -> Bool) -> FilePath -> IO [FilePath]
 walkFiles keep root = do
-  entries <- listDirectory root
-  fmap concat $ mapM step entries
+  exists <- doesDirectoryExist root
+  if not exists then pure [] else do
+    entries <- listDirectory root
+    fmap concat $ mapM step entries
   where
     step entry = do
       let path = root </> entry

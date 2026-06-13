@@ -1,0 +1,41 @@
+HA$PBExportHeader$fn_transfer_final_ypal.srf
+$PBExportComments$
+global type fn_transfer_final_ypal from function_object
+end type
+
+forward prototypes
+global subroutine fn_transfer_final_ypal (long al_kodfinal, long al_kodypal, string as_toxrisi)
+end prototypes
+
+global subroutine fn_transfer_final_ypal (long al_kodfinal, long al_kodypal, string as_toxrisi);// Εισαγωγή του υπαλλήλου al_kodypal στον κατάλογο al_kodfinal
+// στη χρήση as_toxrisi
+// Αν ο υπάλληλος υπάρχει, επιστροφή
+	
+// Έλεγχος αν ο υπάλληλος υπάρχει στον κατάλογο προορισμού
+	long	ll_count
+	
+	select 	count(kodypal) into :ll_count
+	from		misth_final_ypal
+	where		kodfinal = :al_kodfinal
+	and		kodypal = :al_kodypal
+	and		kodxrisi = :as_toxrisi;
+	fn_sqlerror()
+	
+	if ll_count > 0 then return
+	
+// Εισαγωγή του υπαλλήλου
+	insert into misth_final_ypal(
+				kodfinal,
+				kodypal,
+				kodxrisi)
+	values(
+				:al_kodfinal,
+				:al_kodypal,
+				:as_toxrisi);
+	
+	fn_sqlerror()
+	
+	commit;
+	
+end subroutine
+
