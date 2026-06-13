@@ -237,7 +237,7 @@ def run(repo: Path | None = None, no_build: bool = False) -> None:
 
     corpus_srcs = [
         ("Appeon",  repo_path / "example" / "PowerBuilder-Example" / "export"),
-        ("OpenPay", repo_path / "example" / "openpay"),
+        ("OpenPay", repo_path / "example" / "openpay-src"),
     ]
 
     with tempfile.TemporaryDirectory() as tmp:

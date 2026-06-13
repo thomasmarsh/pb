@@ -8,7 +8,7 @@ import duckdb
 import pytest
 
 REPO_ROOT   = Path(__file__).parent.parent
-OPENPAY_DIR = REPO_ROOT / "example" / "openpay"
+OPENPAY_DIR = REPO_ROOT / "example" / "openpay-src"
 QUERIES_DIR = REPO_ROOT / "queries"
 
 

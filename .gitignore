@@ -5,6 +5,7 @@ docs/
 plan/
 output/
 example/PowerBuilder-Example/
+example/openpay-src/
 .DS_Store
 __pycache__
 .venv

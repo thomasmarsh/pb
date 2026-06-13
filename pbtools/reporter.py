@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Iterator, Protocol
 
 from pbtools.state import FileDiff
@@ -93,6 +94,7 @@ class _RecordingAnalyzeProgress:
 class Reporter(Protocol):
     def building(self) -> None: ...
     def status(self, msg: str): ...
+    def extracting(self, pbl_path: Path) -> None: ...
     def diff_summary(self, diff: FileDiff) -> None: ...
     def parse_progress(self, total: int, label: str): ...
     def analyze_progress(self, n_procs: int): ...
@@ -113,6 +115,9 @@ class LiveReporter:
 
     def status(self, msg: str):
         return self._c.status(f'[dim]{msg}[/dim]')
+
+    def extracting(self, pbl_path: Path) -> None:
+        self._c.print(f'[dim]Extracting {pbl_path.name}[/dim]')
 
     def diff_summary(self, diff: FileDiff) -> None:
         parts = []
@@ -202,6 +207,9 @@ class RecordingReporter:
     def status(self, msg: str) -> Iterator[None]:
         self.events.append({'type': 'status', 'msg': msg})
         yield
+
+    def extracting(self, pbl_path: Path) -> None:
+        self.events.append({'type': 'extracting', 'pbl': pbl_path.name})
 
     def diff_summary(self, diff: FileDiff) -> None:
         self.events.append({

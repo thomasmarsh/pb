@@ -56,7 +56,7 @@ loadCorpus :: IO [(FilePath, Value)]
 loadCorpus = do
     paths <- fmap concat $ mapM walkPsFiles
         [ "example/PowerBuilder-Example/export"
-        , "example/openpay"
+        , "example/openpay-src"
         ]
     results <- mapM loadFile paths
     pure (concatMap maybeToList results)
@@ -66,7 +66,7 @@ loadDwCorpus :: IO [(FilePath, Value)]
 loadDwCorpus = do
     paths <- fmap concat $ mapM walkDwFiles
         [ "example/PowerBuilder-Example/export"
-        , "example/openpay"
+        , "example/openpay-src"
         ]
     results <- mapM loadFile paths
     pure (concatMap maybeToList results)

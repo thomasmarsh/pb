@@ -34,45 +34,94 @@ register_queries(query_app)
 
 @app.command()
 def dump(
-    input_dir: Path  = typer.Option(..., '-i', '--input',  help="Source root directory."),
+    input_path: Path = typer.Option(..., '-i', '--input',  help="Source directory or .pbl file."),
     output_dir: Path = typer.Option(..., '-o', '--output', help="Output JSON tree directory."),
     no_build: bool   = typer.Option(False, '--no-build',   help="Skip cabal build step."),
     force: bool      = typer.Option(False, '--force',      help="Wipe OUTDIR if it exists."),
     repo: Optional[Path] = typer.Option(None, '--repo',    help="Repo root (auto-detect if omitted)."),
 ) -> None:
-    """Parse a PowerBuilder source tree to a mirrored JSON file tree."""
+    """Parse a PowerBuilder source tree to a mirrored JSON file tree.
+
+    INPUT may be a directory of .sr* source files, a single .pbl library file,
+    or a directory containing .pbl files (extracted transparently).
+    """
     from pbtools.build import find_repo, find_binary
     from pbtools.dump import run as run_dump
+    from pbtools.pbl import resolve_source_dir
     from pbtools.reporter import LiveReporter
 
     reporter = LiveReporter()
     repo_path = find_repo(repo)
-    src_dir = Path(input_dir).resolve()
 
     _prepare_output(Path(output_dir), force)
     binary = find_binary(repo_path) if no_build else _build(repo_path, reporter)
-    run_dump(src_dir, Path(output_dir), binary, reporter)
+    with resolve_source_dir(Path(input_path), reporter) as src_dir:
+        run_dump(src_dir, Path(output_dir), binary, reporter)
 
 
 # ── pb run ─────────────────────────────────────────────────────────────────────
 
 @app.command()
 def run(
-    input_dir: Path = typer.Option(..., '-i', '--input', help="Source root directory."),
-    db: str         = typer.Option('pb.duckdb', '--db',  help="DuckDB database path."),
-    no_build: bool  = typer.Option(False, '--no-build',  help="Skip cabal build step."),
-    reset: bool     = typer.Option(False, '--reset',     help="Drop all tables and do a full re-parse."),
-    repo: Optional[Path] = typer.Option(None, '--repo',  help="Repo root (auto-detect if omitted)."),
+    input_path: Path = typer.Option(..., '-i', '--input', help="Source directory or .pbl file."),
+    db: str          = typer.Option('pb.duckdb', '--db',  help="DuckDB database path."),
+    no_build: bool   = typer.Option(False, '--no-build',  help="Skip cabal build step."),
+    reset: bool      = typer.Option(False, '--reset',     help="Drop all tables and do a full re-parse."),
+    repo: Optional[Path] = typer.Option(None, '--repo',   help="Repo root (auto-detect if omitted)."),
 ) -> None:
-    """Parse → index → analyze, incremental by default (only changed files)."""
+    """Parse → index → analyze, incremental by default (only changed files).
+
+    INPUT may be a directory of .sr* source files, a single .pbl library file,
+    or a directory containing .pbl files (extracted transparently).
+    """
     from pbtools.build import find_repo, find_binary
     from pbtools.pipeline import run as run_pipeline
+    from pbtools.pbl import resolve_source_dir
     from pbtools.reporter import LiveReporter
 
     reporter = LiveReporter()
     repo_path = find_repo(repo)
     binary = find_binary(repo_path) if no_build else _build(repo_path, reporter)
-    run_pipeline(Path(input_dir).resolve(), db, binary, reporter, reset=reset)
+    with resolve_source_dir(Path(input_path), reporter) as src_dir:
+        run_pipeline(src_dir, db, binary, reporter, reset=reset)
+
+
+# ── pb extract ────────────────────────────────────────────────────────────────
+
+@app.command()
+def extract(
+    input_dir: Path  = typer.Option(..., '-i', '--input',  help="Directory containing .pbl library files."),
+    output_dir: Path = typer.Option(..., '-o', '--output', help="Output root for extracted source files."),
+    force: bool      = typer.Option(False, '--force',      help="Wipe output if non-empty."),
+) -> None:
+    """Extract .pbl library files to per-library source directories.
+
+    Each foo.pbl produces an output/foo.pbl/ directory of .sr* source files.
+    Run once as a setup step before 'pb dump', 'pb run', or 'cabal test'.
+    """
+    from pbtools.pbl import extract_to_dir
+    from pbtools.reporter import LiveReporter
+
+    src = Path(input_dir).resolve()
+    out = Path(output_dir)
+
+    pbls = sorted(p for p in src.iterdir() if p.is_file() and p.suffix.lower() == '.pbl')
+    if not pbls:
+        typer.echo(f"No .pbl files found in {src}", err=True)
+        raise typer.Exit(1)
+
+    _prepare_output(out, force)
+    reporter = LiveReporter()
+
+    total = 0
+    for pbl in pbls:
+        reporter.extracting(pbl)
+        sub = out / pbl.name
+        sub.mkdir(parents=True, exist_ok=True)
+        written = extract_to_dir(pbl, sub)
+        total += len(written)
+
+    typer.echo(f"Extracted {total} source files from {len(pbls)} libraries to {out}")
 
 
 # ── pb debt ────────────────────────────────────────────────────────────────────

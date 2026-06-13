@@ -3,6 +3,7 @@
 These tests require no cabal build and no duckdb — pure Python.
 """
 import json
+from pathlib import Path
 
 from pbtools.reporter import RecordingReporter
 from pbtools.state import FileDiff
@@ -23,6 +24,12 @@ def test_building():
     r = RecordingReporter()
     r.building()
     assert r.events == [{'type': 'building'}]
+
+
+def test_extracting():
+    r = RecordingReporter()
+    r.extracting(Path('/some/path/mylib.pbl'))
+    assert r.events == [{'type': 'extracting', 'pbl': 'mylib.pbl'}]
 
 
 def test_status_is_context_manager_and_records():
@@ -146,6 +153,7 @@ def test_done_nothing_to_do():
 def test_all_events_are_json_serialisable():
     r = RecordingReporter()
     r.building()
+    r.extracting(Path('/p/mylib.pbl'))
     with r.status('s'):
         pass
     r.diff_summary(_diff(new=1, changed=1, deleted=1, unchanged=1))

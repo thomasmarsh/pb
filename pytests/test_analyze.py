@@ -7,7 +7,7 @@ import duckdb
 import pytest
 
 REPO_ROOT   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OPENPAY_DIR = os.path.join(REPO_ROOT, 'example', 'openpay')
+OPENPAY_DIR = os.path.join(REPO_ROOT, 'example', 'openpay-src')
 
 
 @pytest.fixture(scope='module')

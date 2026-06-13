@@ -10,6 +10,13 @@ trap 'rm -rf "$OUT"' EXIT
 echo "Building pb-runner..."
 cabal build pb-runner --project-dir "$REPO" -v0
 
+# Extract openpay .pbl files if the source dir is not already present.
+OPENPAY_SRC="$EXAMPLE/openpay-src"
+if [ ! -d "$OPENPAY_SRC" ] || [ -z "$(ls -A "$OPENPAY_SRC" 2>/dev/null)" ]; then
+  echo "Extracting openpay .pbl libraries..."
+  uv run pb extract -i "$EXAMPLE/openpay" -o "$OPENPAY_SRC"
+fi
+
 echo "Processing Appeon example corpus..."
 cabal run pb-runner --project-dir "$REPO" -v0 -- \
   -i "$EXAMPLE/PowerBuilder-Example/export" \
@@ -17,7 +24,7 @@ cabal run pb-runner --project-dir "$REPO" -v0 -- \
 
 echo "Processing OpenPay corpus..."
 cabal run pb-runner --project-dir "$REPO" -v0 -- \
-  -i "$EXAMPLE/openpay" \
+  -i "$OPENPAY_SRC" \
   -o "$OUT/openpay"
 
 ERRORS=$(grep -rl '"error":' "$OUT" 2>/dev/null | wc -l | tr -d ' ') || ERRORS=0

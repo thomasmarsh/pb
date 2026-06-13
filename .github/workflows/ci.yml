@@ -34,12 +34,6 @@ jobs:
           restore-keys: |
             cabal-${{ runner.os }}-ghc-9.10.2-
 
-      - name: Build
-        run: cabal build --enable-tests
-
-      - name: Test (Haskell)
-        run: cabal test --test-show-details=direct
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -47,6 +41,15 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
+
+      - name: Extract openpay corpus
+        run: uv run pb extract -i example/openpay -o example/openpay-src
+
+      - name: Build
+        run: cabal build --enable-tests
+
+      - name: Test (Haskell)
+        run: cabal test --test-show-details=direct
 
       - name: Test (Python)
         run: uv run pytest
