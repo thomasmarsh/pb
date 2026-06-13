@@ -49,6 +49,8 @@ jobs:
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
+        with:
+          version: "11.3.0"
 
       - name: Extract openpay corpus
         run: uv run pb extract -i example/openpay -o example/openpay-src
