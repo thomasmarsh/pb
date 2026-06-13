@@ -138,6 +138,22 @@ def test_get_object_not_found(client):
 
 # ── Procedures ────────────────────────────────────────────────────────────────
 
+def test_get_object_source(client):
+    r = client.get("/api/objects/fn_sqlerror/source")
+    assert r.status_code == 200
+    data = r.json()
+    assert "file" in data
+    assert "lines" in data
+    assert "procedures" in data
+    assert isinstance(data["lines"], list)
+    assert isinstance(data["procedures"], list)
+
+
+def test_get_object_source_not_found(client):
+    r = client.get("/api/objects/__nonexistent__/source")
+    assert r.status_code == 404
+
+
 def test_get_procedure(client):
     r = client.get("/api/procedures/fn_sqlerror/fn_sqlerror")
     assert r.status_code == 200
@@ -267,7 +283,6 @@ def test_render_body_simple_call():
     body = [{"tag": "call", "expr": {"tag": "call_expr", "callee": {"segments": [{"name": "setnull"}]}, "args": [["x"]]} }]
     result = render_body(body)
     assert "setnull" in result
-    assert ";" in result
 
 
 def test_render_body_return():
@@ -293,8 +308,8 @@ def test_render_body_exit_continue():
     from pbtools.explorer.render import render_body
     body = [{"tag": "exit"}, {"tag": "continue"}]
     result = render_body(body)
-    assert "exit;" in result
-    assert "continue;" in result
+    assert "exit" in result
+    assert "continue" in result
 
 
 def test_render_body_assign():
@@ -303,7 +318,7 @@ def test_render_body_assign():
              "lhs": {"segments": [{"name": "ls_result"}]},
              "rhs": {"tag": "lvalue", "segments": [{"name": "ls_value"}]}}]
     result = render_body(body)
-    assert "ls_result = ls_value;" in result
+    assert "ls_result = ls_value" in result
 
 
 def test_render_body_for():
@@ -316,5 +331,5 @@ def test_render_body_for():
              "body": [{"tag": "continue"}]}]
     result = render_body(body)
     assert "for i = 1 to 10" in result
-    assert "continue;" in result
+    assert "continue" in result
     assert "next" in result

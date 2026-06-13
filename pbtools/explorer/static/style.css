@@ -237,6 +237,172 @@ body {
 }
 .back-btn:hover { border-color: var(--accent); color: var(--text-primary); }
 
+/* Typeahead */
+.typeahead { position: relative; flex: 1; max-width: 400px; }
+.typeahead input {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.15s;
+}
+.typeahead input:focus { border-color: var(--accent); }
+.typeahead input::placeholder { color: var(--text-muted); }
+.typeahead-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0; right: 0;
+    margin-top: 4px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    max-height: 240px;
+    overflow-y: auto;
+    z-index: 50;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.typeahead-item {
+    padding: 8px 12px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid rgba(42,45,62,0.4);
+}
+.typeahead-item:last-child { border-bottom: none; }
+.typeahead-item:hover,
+.typeahead-item.active {
+    background: rgba(108,140,255,0.1);
+    color: var(--text-primary);
+}
+.typeahead-item .ta-kind {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    opacity: 0.6;
+    min-width: 50px;
+}
+.typeahead-item .ta-name { font-weight: 500; }
+.typeahead-item .ta-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: auto;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.typeahead-empty {
+    padding: 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+/* Source viewer */
+.source-viewer {
+    display: flex;
+    background: #1e1e2e;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: auto;
+    max-height: 600px;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+}
+.source-gutter {
+    display: flex;
+    flex-direction: column;
+    background: #0a0c14;
+    border-right: 1px solid var(--border);
+    user-select: none;
+    min-width: 50px;
+    text-align: right;
+}
+.source-gutter-line {
+    padding: 0 8px 0 4px;
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.6;
+    height: 20.8px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+.source-code-area {
+    flex: 1;
+    overflow-x: auto;
+    position: relative;
+}
+.source-code-area pre {
+    margin: 0;
+    padding: 0 16px;
+    background: transparent !important;
+}
+.source-code-area code {
+    background: transparent !important;
+    padding: 0 !important;
+}
+.source-proc-bar {
+    position: absolute;
+    left: 0;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    cursor: pointer;
+    transition: width 0.15s;
+    z-index: 2;
+}
+.source-proc-bar:hover {
+    width: 6px;
+}
+.source-proc-bar.proc-function { background: #a78bfa; }
+.source-proc-bar.proc-subroutine { background: #fb923c; }
+.source-proc-bar.proc-event { background: #facc15; }
+.source-proc-bar.proc-on { background: #4ade80; }
+.source-proc-tooltip {
+    display: none;
+    position: fixed;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--text-primary);
+    z-index: 100;
+    max-width: 400px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    pointer-events: none;
+    font-family: 'Inter', sans-serif;
+}
+.source-proc-tooltip.visible { display: block; }
+.source-proc-tooltip .tt-name { font-weight: 600; margin-bottom: 4px; }
+.source-proc-tooltip .tt-meta { color: var(--text-muted); font-size: 11px; }
+.source-proc-tooltip .tt-cc { margin-top: 4px; }
+.source-line-highlight {
+    background: rgba(108, 140, 255, 0.06);
+    display: block;
+}
+.source-file-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+.source-file-path {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+    word-break: break-all;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

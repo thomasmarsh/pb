@@ -25,44 +25,44 @@ def _render_stmt(stmt: dict[str, Any], indent: int) -> str | None:
 
     if tag == "call":
         inner = stmt.get("expr", {})
-        return pad + _render_expr(inner) + ";"
+        return pad + _render_expr(inner)
 
     if tag == "call_expr":
-        return pad + _render_call_expr(stmt) + ";"
+        return pad + _render_call_expr(stmt)
 
     if tag == "method_call":
-        return pad + _render_method_call(stmt) + ";"
+        return pad + _render_method_call(stmt)
 
     if tag == "dispatch":
-        return pad + _render_dispatch(stmt) + ";"
+        return pad + _render_dispatch(stmt)
 
     if tag == "return":
-        expr = stmt.get("expr")
+        expr = stmt.get("value") or stmt.get("expr")
         if expr:
-            return pad + "return " + _render_expr(expr) + ";"
-        return pad + "return;"
+            return pad + "return " + _render_expr(expr)
+        return pad + "return"
 
     if tag == "assign":
         lhs = _render_lvalue(stmt.get("lhs", {}))
         rhs = _render_expr(stmt.get("rhs", {}))
-        return pad + f"{lhs} = {rhs};"
+        return pad + f"{lhs} = {rhs}"
 
     if tag == "aug_assign":
         tokens = stmt.get("tokens", [])
         op = stmt.get("op", "+=")
-        return pad + " ".join(str(t) for t in tokens) + ";"
+        return pad + " ".join(str(t) for t in tokens)
 
     if tag == "inc":
         tokens = stmt.get("tokens", [])
-        return pad + " ".join(str(t) for t in tokens) + ";"
+        return pad + " ".join(str(t) for t in tokens)
 
     if tag == "dec":
         tokens = stmt.get("tokens", [])
-        return pad + " ".join(str(t) for t in tokens) + ";"
+        return pad + " ".join(str(t) for t in tokens)
 
     if tag == "local_var":
         tokens = stmt.get("tokens", [])
-        return pad + " ".join(str(t) for t in tokens) + ";"
+        return pad + " ".join(str(t) for t in tokens)
 
     if tag == "if":
         return pad + _render_if(stmt, indent)
@@ -77,15 +77,15 @@ def _render_stmt(stmt: dict[str, Any], indent: int) -> str | None:
         return pad + _render_choose(stmt, indent)
 
     if tag == "exit":
-        return pad + "exit;"
+        return pad + "exit"
 
     if tag == "continue":
-        return pad + "continue;"
+        return pad + "continue"
 
     if tag == "destroy":
         lval = stmt.get("lvalue", {})
         name = _render_lvalue(lval) if lval else _tokens_to_text(stmt.get("tokens", []))
-        return pad + f"destroy {name};"
+        return pad + f"destroy {name}"
 
     if tag == "raw":
         text = stmt.get("text", "")
@@ -165,8 +165,8 @@ def _render_choose(stmt: dict[str, Any], indent: int) -> str:
     expr = _render_expr(stmt.get("expr", {}))
     parts = [f"{pad}choose case {expr}"]
     for clause in stmt.get("clauses", []):
-        cc_expr = clause.get("ccExpr")
-        cc_body = _render_body_list(clause.get("ccBody", []), indent + 1)
+        cc_expr = clause.get("expr")
+        cc_body = _render_body_list(clause.get("body", []), indent + 1)
         if cc_expr:
             case_text = _tokens_to_text(cc_expr) if isinstance(cc_expr, list) else str(cc_expr)
             parts.append(f"{pad}case {case_text}")

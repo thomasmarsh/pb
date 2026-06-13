@@ -153,6 +153,62 @@ async def get_object(name: str, request: Request):
         conn.close()
 
 
+@router.get("/api/objects/{name}/source")
+async def get_object_source(name: str, request: Request):
+    conn = _conn(request)
+    try:
+        obj_rows = _rows(conn.execute(
+            "SELECT name, kind, file FROM objects WHERE name = ?", [name]
+        ))
+        if not obj_rows:
+            raise HTTPException(status_code=404, detail=f"Object not found: {name}")
+
+        file_path = obj_rows[0]["file"]
+        lines = []
+        if file_path and os.path.exists(file_path):
+            try:
+                with open(file_path, "r", errors="replace") as f:
+                    lines = f.read().splitlines()
+            except OSError:
+                pass
+
+        procs = _rows(conn.execute(
+            "SELECT name, proc_type, modifiers, params, return_type, "
+            "start_line, end_line, cyclomatic "
+            "FROM procedures WHERE object = ? "
+            "AND start_line IS NOT NULL AND end_line IS NOT NULL "
+            "ORDER BY start_line",
+            [name],
+        ))
+
+        known_objects = _rows(conn.execute(
+            "SELECT name, kind FROM objects WHERE name != ? ORDER BY name", [name]
+        ))
+
+        known_procs = _rows(conn.execute(
+            "SELECT DISTINCT p.name, p.object, p.proc_type "
+            "FROM procedures p "
+            "JOIN calls c ON c.to_name = p.name "
+            "WHERE c.object = ? "
+            "UNION "
+            "SELECT DISTINCT p.name, p.object, p.proc_type "
+            "FROM procedures p "
+            "WHERE p.object = ? AND p.proc_type IN ('function', 'subroutine') "
+            "ORDER BY p.name",
+            [name, name],
+        ))
+
+        return {
+            "file": file_path,
+            "lines": lines,
+            "procedures": procs,
+            "knownObjects": known_objects,
+            "knownProcs": known_procs,
+        }
+    finally:
+        conn.close()
+
+
 # ── Procedures ─────────────────────────────────────────────────────────────────
 
 @router.get("/api/procedures/{object_name}/{proc_name}")

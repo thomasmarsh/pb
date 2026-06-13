@@ -1,6 +1,200 @@
 /* app.js — pb explore UI. Imports core.js for state management. */
 import { initialState, reducer } from "./core.js";
 
+// ── PowerScript syntax highlighter ────────────────────────────────────────
+
+const _PS_KEYWORDS = new Set([
+    "and","or","not","xor","if","then","else","elseif","end","choose","case",
+    "for","to","step","next","do","while","loop","until","exit","continue",
+    "try","catch","finally","throw","throws","return","halt","goto",
+    "call","post","trigger","dynamic","with","close","open","create","destroy","using",
+    "set","values","where","from","into","of","is","null","as","on","in",
+    "select","selectblob","insert","update","updateblob","delete",
+    "commit","rollback","connect","disconnect","declare","cursor","procedure",
+    "execute","fetch","prepare","describe","immediate","prior","first","last",
+    "between","like","exists","having","group","order","union","all","distinct",
+    "asc","desc","shared","system","readonly","constant","ref","static",
+    "indirect","global","rpcfunc","alias","library","external","native",
+    "namespace","enumerated","intrinsic","autoinstantiate","prototype","forward",
+    "type","within","true","false",
+    "public","private","protected",
+    "privateread","privatewrite","protectedread","protectedwrite",
+    "systemread","systemwrite",
+]);
+
+const _PS_TYPES = new Set([
+    "any","blob","boolean","byte","char","character",
+    "date","datetime","dec","decimal","double",
+    "int","integer","long","longlong","longptr","real","string","time",
+    "uint","ulong","unsignedint","unsignedinteger","unsignedlong",
+    "transaction","error","message","application",
+    "window","menu","datawindow","datastore","datawindowchild",
+    "nonvisualobject","function_object","powerobject",
+    "oleobject","olecontrol",
+    "treeview","listview","tab","graph","groupbox",
+    "commandbutton","checkbox","radiobutton",
+    "singlelineedit","multilineedit","editmask","richtextedit",
+    "statictext","picture","line","rectangle","roundrectangle","oval",
+    "hprogressbar","vprogressbar","hscrollbar","vscrollbar",
+    "httpclient","restclient","inet",
+    "jsonparser","jsongenerator","jsonpackage",
+    "pipeline","timing","structure","environment",
+    "coderobject","compressorobject","crypterobject",
+    "errorlogging","exception",
+    "profilercall","profileclass","profileline","profileroutine",
+]);
+
+const _PS_BUILTINS = new Set([
+    "abs","acos","asin","atan","ceiling","cos","exp","fact",
+    "log","logten","max","min","mod","pi","rand","randomize","round","sign",
+    "sin","sqrt","tan","truncate",
+    "string","integer","long","double","dec","date","time","now","today",
+    "year","month","day","hour","minute","second",
+    "upper","lower","trim","len","pos","right","left","mid","replace",
+    "isnull","isvalid","messagebox","triggerevent",
+    "classname","upperbound","lowerbound",
+    "fileopen","fileclose","fileread","filewrite","fileseek",
+    "filelength","fileexists",
+    "setnull","setattribute","getitem",
+    "retrieve","update","insertrow","deleterow",
+    "setrow","getrow","rowcount",
+    "accepttext","reset","filter","print","pagesetup","preview",
+    "sharedata","settransobject","dataobject",
+]);
+
+const _PS_PRONOUNS = new Set([
+    "this","parent","super","parentwindow",
+    "sqlca","sqlda","sqlsa","error","message",
+]);
+
+const _PS_COLORS = {
+    keyword: "#c586c0",
+    type: "#4ec9b0",
+    builtin: "#dcdcaa",
+    string: "#ce9178",
+    comment: "#6a9955",
+    number: "#b5cea8",
+    pronoun: "#569cd6",
+    enum: "#4fc1ff",
+    operator: "#d4d4d4",
+    punctuation: "#808080",
+};
+
+function _highlightPowerScript(code) {
+    const lines = code.split("\n");
+    return lines.map(line => _highlightLine(line)).join("\n");
+}
+
+function _highlightLine(line) {
+    let result = "";
+    let i = 0;
+    while (i < line.length) {
+        // Line comment
+        if (line[i] === "/" && line[i + 1] === "/") {
+            result += `<span style="color:${_PS_COLORS.comment}">${_escapeHtml(line.slice(i))}</span>`;
+            return result;
+        }
+        // Block comment start (simplified — single line)
+        if (line[i] === "/" && line[i + 1] === "*") {
+            const end = line.indexOf("*/", i + 2);
+            if (end !== -1) {
+                result += `<span style="color:${_PS_COLORS.comment}">${_escapeHtml(line.slice(i, end + 2))}</span>`;
+                i = end + 2;
+                continue;
+            } else {
+                result += `<span style="color:${_PS_COLORS.comment}">${_escapeHtml(line.slice(i))}</span>`;
+                return result;
+            }
+        }
+        // Double-quoted string
+        if (line[i] === '"') {
+            let j = i + 1;
+            while (j < line.length) {
+                if (line[j] === "~" && j + 1 < line.length) { j += 2; continue; }
+                if (line[j] === '"') { j++; break; }
+                j++;
+            }
+            result += `<span style="color:${_PS_COLORS.string}">${_escapeHtml(line.slice(i, j))}</span>`;
+            i = j;
+            continue;
+        }
+        // Single-quoted string
+        if (line[i] === "'") {
+            let j = i + 1;
+            while (j < line.length) {
+                if (line[j] === "~" && j + 1 < line.length) { j += 2; continue; }
+                if (line[j] === "'") { j++; break; }
+                j++;
+            }
+            result += `<span style="color:${_PS_COLORS.string}">${_escapeHtml(line.slice(i, j))}</span>`;
+            i = j;
+            continue;
+        }
+        // Tilde-quoted string (PB-specific)
+        if (line[i] === "~" && line[i + 1] === '"') {
+            let j = i + 2;
+            while (j < line.length) {
+                if (line[j] === "~" && j + 1 < line.length && line[j + 1] === "~") { j += 2; continue; }
+                if (line[j] === "~" && j + 1 < line.length && line[j + 1] === '"') { j += 2; break; }
+                j++;
+            }
+            result += `<span style="color:${_PS_COLORS.string}">${_escapeHtml(line.slice(i, j))}</span>`;
+            i = j;
+            continue;
+        }
+        // Numbers
+        if (/[0-9]/.test(line[i]) && (i === 0 || /[\s(+\-*/^=<>,]/.test(line[i - 1]))) {
+            let j = i;
+            while (j < line.length && /[0-9._eE+-]/.test(line[j])) j++;
+            result += `<span style="color:${_PS_COLORS.number}">${_escapeHtml(line.slice(i, j))}</span>`;
+            i = j;
+            continue;
+        }
+        // Enum (ident ending with !)
+        if (/[A-Za-z_]/.test(line[i])) {
+            let j = i;
+            while (j < line.length && /[\w$#%\-]/.test(line[j])) j++;
+            const word = line.slice(i, j);
+            const lower = word.toLowerCase();
+            // Check for enum (ends with !)
+            if (j < line.length && line[j] === "!") {
+                result += `<span style="color:${_PS_COLORS.enum}">${_escapeHtml(word)}!</span>`;
+                i = j + 1;
+                continue;
+            }
+            // Check keyword/type/builtin/pronoun
+            let color = null;
+            if (_PS_KEYWORDS.has(lower)) color = _PS_COLORS.keyword;
+            else if (_PS_TYPES.has(lower)) color = _PS_COLORS.type;
+            else if (_PS_BUILTINS.has(lower)) color = _PS_COLORS.builtin;
+            else if (_PS_PRONOUNS.has(lower)) color = _PS_COLORS.pronoun;
+            if (color) {
+                result += `<span style="color:${color}">${_escapeHtml(word)}</span>`;
+            } else {
+                result += _escapeHtml(word);
+            }
+            i = j;
+            continue;
+        }
+        // Operators
+        if (/[<>=+\-*/^]/.test(line[i])) {
+            let j = i + 1;
+            if (i + 1 < line.length && /=<>>/.test(line[i + 1])) j++;
+            result += `<span style="color:${_PS_COLORS.operator}">${_escapeHtml(line.slice(i, j))}</span>`;
+            i = j;
+            continue;
+        }
+        // Default
+        result += _escapeHtml(line[i]);
+        i++;
+    }
+    return result;
+}
+
+function _escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 // ── DOM helpers ────────────────────────────────────────────────────────────
 
 const $ = (sel, ctx) => (ctx || document).querySelector(sel);
@@ -10,7 +204,7 @@ const el = (tag, attrs, ...children) => {
         if (k === "className") e.className = v;
         else if (k === "html") e.innerHTML = v;
         else if (k === "dataset") Object.entries(v).forEach(([dk, dv]) => e.dataset[dk] = dv);
-        else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+        else if (k.startsWith("on")) e.addEventListener(k.slice(2).toLowerCase(), v);
         else e.setAttribute(k, v);
     });
     children.forEach(c => {
@@ -60,6 +254,16 @@ const env = {
         },
         async getObject(name) {
             const r = await fetch("/api/objects/" + encodeURIComponent(name));
+            if (!r.ok) throw new Error(`API ${r.status}`);
+            return r.json();
+        },
+        async getObjectSource(name) {
+            const r = await fetch("/api/objects/" + encodeURIComponent(name) + "/source");
+            if (!r.ok) throw new Error(`API ${r.status}`);
+            return r.json();
+        },
+        async getAllObjects() {
+            const r = await fetch("/api/objects?limit=500");
             if (!r.ok) throw new Error(`API ${r.status}`);
             return r.json();
         },
@@ -119,6 +323,112 @@ const store = {
     dispatch,
 };
 
+// ── Typeahead component ────────────────────────────────────────────────────
+
+function _renderTypeahead({ id, options, value, placeholder, onSelect, formatItem }) {
+    let query = value || "";
+    let isOpen = false;
+    let activeIdx = -1;
+
+    const wrapper = el("div", { className: "typeahead" });
+    const input = el("input", { type: "text", placeholder: placeholder || "Type to search...", value: query });
+    const dropdown = el("div", { className: "typeahead-dropdown", style: "display:none" });
+    wrapper.appendChild(input);
+    wrapper.appendChild(dropdown);
+
+    function getFiltered() {
+        const q = query.toLowerCase().trim();
+        if (!q) return options.slice(0, 20);
+        return options.filter(o => o.toLowerCase().includes(q)).slice(0, 20);
+    }
+
+    function renderDropdown() {
+        dropdown.innerHTML = "";
+        const items = getFiltered();
+        activeIdx = -1;
+        if (items.length === 0 && query.trim()) {
+            dropdown.appendChild(el("div", { className: "typeahead-empty" }, "No matches"));
+        } else {
+            items.forEach((item, i) => {
+                const fmt = formatItem ? formatItem(item) : { name: item };
+                const row = el("div", { className: "typeahead-item", dataset: { idx: String(i) } });
+                if (fmt.kind) row.appendChild(el("span", { className: "ta-kind" }, fmt.kind));
+                row.appendChild(el("span", { className: "ta-name" }, fmt.name || item));
+                if (fmt.sub) row.appendChild(el("span", { className: "ta-sub" }, fmt.sub));
+                row.addEventListener("mousedown", e => {
+                    e.preventDefault();
+                    selectItem(item);
+                });
+                dropdown.appendChild(row);
+            });
+        }
+    }
+
+    function selectItem(item) {
+        query = item;
+        input.value = item;
+        isOpen = false;
+        dropdown.style.display = "none";
+        if (onSelect) onSelect(item);
+    }
+
+    function showDropdown() {
+        isOpen = true;
+        renderDropdown();
+        dropdown.style.display = "";
+    }
+
+    function hideDropdown() {
+        isOpen = false;
+        dropdown.style.display = "none";
+    }
+
+    input.addEventListener("input", () => {
+        query = input.value;
+        showDropdown();
+    });
+
+    input.addEventListener("focus", () => {
+        showDropdown();
+    });
+
+    input.addEventListener("blur", () => {
+        setTimeout(hideDropdown, 150);
+    });
+
+    input.addEventListener("keydown", e => {
+        const items = dropdown.querySelectorAll(".typeahead-item");
+        if (e.key === "ArrowDown") {
+            e.preventDefault();
+            activeIdx = Math.min(activeIdx + 1, items.length - 1);
+            items.forEach((el, i) => el.classList.toggle("active", i === activeIdx));
+            if (items[activeIdx]) items[activeIdx].scrollIntoView({ block: "nearest" });
+        } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            activeIdx = Math.max(activeIdx - 1, 0);
+            items.forEach((el, i) => el.classList.toggle("active", i === activeIdx));
+            if (items[activeIdx]) items[activeIdx].scrollIntoView({ block: "nearest" });
+        } else if (e.key === "Enter") {
+            e.preventDefault();
+            if (activeIdx >= 0 && items[activeIdx]) {
+                const filtered = getFiltered();
+                selectItem(filtered[activeIdx]);
+            } else if (query.trim()) {
+                selectItem(query.trim());
+            }
+        } else if (e.key === "Escape") {
+            hideDropdown();
+            input.blur();
+        }
+    });
+
+    // Expose input value getter
+    wrapper._getValue = () => input.value;
+    wrapper._setValue = (v) => { query = v; input.value = v; };
+
+    return wrapper;
+}
+
 // ── Render ─────────────────────────────────────────────────────────────────
 
 function render(state) {
@@ -127,8 +437,7 @@ function render(state) {
 
     // Update sidebar active state
     $$("[data-view]").forEach(a => {
-        const view = a.dataset.view;
-        const isActive = view === a.dataset.view
+        const isActive = a.dataset.view === state.view
             || (state.view === "objectDetail" && a.dataset.view === "objects")
             || (state.view === "procedureDetail" && a.dataset.view === "objects")
             || (state.view === "dwDetail" && a.dataset.view === "datawindows");
@@ -242,14 +551,31 @@ function _objectTable(title, objs) {
 function renderObjects(state, root) {
     const os = state.objects;
 
+    // Build object names list for typeahead
+    const allObjNames = (os.items || []).map(o => o.name);
+    const objMeta = {};
+    (os.items || []).forEach(o => { objMeta[o.name] = o; });
+
     const search = el("div", { className: "search-bar" });
-    const input = el("input", {
-        className: "search-input", placeholder: "Search objects...", value: os.q,
+    const ta = _renderTypeahead({
+        id: "objects-search",
+        options: allObjNames,
+        value: os.q,
+        placeholder: "Search objects — type to filter or jump to...",
+        formatItem: (name) => {
+            const o = objMeta[name] || {};
+            const kindColors = { powerscript: "#5B8DD9", datawindow: "#56A85D", project: "#B0B0B0" };
+            return {
+                name,
+                kind: o.kind ? o.kind.charAt(0).toUpperCase() : "",
+                sub: o.ancestor || (o.file ? shortFile(o.file) : ""),
+            };
+        },
+        onSelect: (name) => {
+            store.dispatch({ type: "OBJECT_SELECTED", name });
+        },
     });
-    input.addEventListener("input", debounce(() => {
-        store.dispatch({ type: "OBJECTS_SEARCH", q: input.value });
-    }, 300));
-    search.appendChild(input);
+    search.appendChild(ta);
     root.appendChild(search);
 
     const pills = el("div", { className: "filter-pills" });
@@ -311,6 +637,195 @@ function renderObjects(state, root) {
     }
     root.appendChild(card);
 }
+
+// ── Source viewer ──────────────────────────────────────────────────────────
+
+const _procColors = { function: "proc-function", subroutine: "proc-subroutine", event: "proc-event", on: "proc-on" };
+const _procBadgeColors = { function: "#a78bfa", subroutine: "#fb923c", event: "#facc15", on: "#4ade80" };
+
+function _renderSourceViewer(src, objectName) {
+    const viewer = el("div", { className: "source-viewer" });
+    const gutter = el("div", { className: "source-gutter" });
+    const codeArea = el("div", { className: "source-code-area" });
+
+    const procFirstLine = {};
+    (src.procedures || []).forEach(p => { procFirstLine[p.start_line] = p; });
+
+    // Build lookup maps for cross-linking
+    const objectMap = {};
+    (src.knownObjects || []).forEach(o => { objectMap[o.name.toLowerCase()] = o; });
+    const procMap = {};
+    (src.knownProcs || []).forEach(p => { procMap[p.name.toLowerCase()] = p; });
+    (src.procedures || []).forEach(p => {
+        procMap[p.name.toLowerCase()] = { name: p.name, object: objectName, proc_type: p.proc_type, start_line: p.start_line, params: p.params, return_type: p.return_type, cyclomatic: p.cyclomatic };
+    });
+
+    // Highlight
+    const code = src.lines.join("\n");
+    const highlighted = _highlightPowerScript(code);
+    const highlightedLines = highlighted.split("\n");
+
+    // Tooltip
+    const tooltip = el("div", { className: "source-proc-tooltip" });
+    document.body.appendChild(tooltip);
+
+    function showTooltip(target, html) {
+        tooltip.innerHTML = html;
+        tooltip.classList.add("visible");
+        const rect = target.getBoundingClientRect();
+        let left = rect.right + 8;
+        let top = rect.top;
+        if (left + 400 > window.innerWidth) left = rect.left - 410;
+        if (top + 120 > window.innerHeight) top = window.innerHeight - 130;
+        tooltip.style.left = left + "px";
+        tooltip.style.top = top + "px";
+    }
+
+    function hideTooltip() { tooltip.classList.remove("visible"); }
+
+    // Render lines with cross-linked identifiers
+    src.lines.forEach((line, i) => {
+        const lineNum = i + 1;
+
+        // Gutter
+        const gl = el("div", { className: "source-gutter-line" }, String(lineNum));
+        if (procFirstLine[lineNum]) {
+            gl.style.color = _procBadgeColors[procFirstLine[lineNum].proc_type] || "var(--text-muted)";
+            gl.style.fontWeight = "600";
+        }
+        gutter.appendChild(gl);
+
+        // Code line — replace known identifiers with linked spans
+        let html = highlightedLines[i] || "";
+        html = _linkIdentifiers(html, objectMap, procMap, objectName);
+
+        const lineEl = el("span", { html: html + "\n" });
+        if (procFirstLine[lineNum]) lineEl.className = "source-line-highlight";
+
+        // Attach event listeners to linked spans
+        lineEl.querySelectorAll("[data-link-type]").forEach(span => {
+            const linkType = span.dataset.linkType;
+            const linkName = span.dataset.linkName;
+
+            span.style.cursor = "pointer";
+            span.style.textDecoration = "underline";
+            span.style.textDecorationStyle = "dotted";
+            span.style.textUnderlineOffset = "2px";
+
+            if (linkType === "object") {
+                const obj = objectMap[linkName.toLowerCase()];
+                span.style.color = obj && obj.kind === "datawindow" ? "#56A85D" : "#5B8DD9";
+                span.addEventListener("mouseenter", () => {
+                    const kind = obj ? obj.kind : "object";
+                    showTooltip(span, `<div class="tt-name" style="color:#5B8DD9">${linkName}</div><div class="tt-meta">${kind}</div>`);
+                });
+                span.addEventListener("mouseleave", hideTooltip);
+                span.addEventListener("click", () => { hideTooltip(); store.dispatch({ type: "OBJECT_SELECTED", name: linkName }); });
+            } else if (linkType === "procedure") {
+                const proc = procMap[linkName.toLowerCase()];
+                const color = proc ? (_procBadgeColors[proc.proc_type] || "#a78bfa") : "#a78bfa";
+                span.style.color = color;
+                span.addEventListener("mouseenter", () => {
+                    if (!proc) return showTooltip(span, `<div class="tt-name" style="color:${color}">${linkName}</div>`);
+                    const ret = proc.return_type ? ` → ${proc.return_type}` : "";
+                    const cc = proc.cyclomatic != null ? `<div class="tt-cc"><span class="badge badge-cc">CC: ${proc.cyclomatic}</span></div>` : "";
+                    showTooltip(span, `<div class="tt-name" style="color:${color}">${proc.name}</div>` +
+                        `<div class="tt-meta">${proc.proc_type}${ret}</div>` +
+                        (proc.params ? `<div class="tt-meta">(${proc.params})</div>` : "") +
+                        `<div class="tt-meta">${proc.object}</div>${cc}`);
+                });
+                span.addEventListener("mouseleave", hideTooltip);
+                span.addEventListener("click", (e) => {
+                    hideTooltip();
+                    if (proc.start_line != null) {
+                        store.dispatch({ type: "PROCEDURE_SELECTED", objectName: proc.object, procName: proc.name });
+                    } else {
+                        store.dispatch({ type: "OBJECT_SELECTED", name: proc.object });
+                    }
+                });
+            }
+        });
+
+        codeArea.appendChild(lineEl);
+    });
+
+    // Procedure overlay bars
+    (src.procedures || []).forEach(p => {
+        const barTop = (p.start_line - 1) * 20.8;
+        const barHeight = (p.end_line - p.start_line + 1) * 20.8;
+        const bar = el("div", {
+            className: "source-proc-bar " + (_procColors[p.proc_type] || ""),
+            style: `top:${barTop}px;height:${barHeight}px`,
+        });
+
+        bar.addEventListener("mouseenter", () => {
+            const cc = p.cyclomatic != null ? `CC: ${p.cyclomatic}` : "";
+            const ret = p.return_type ? ` → ${p.return_type}` : "";
+            showTooltip(bar,
+                `<div class="tt-name" style="color:${_procBadgeColors[p.proc_type] || '#fff'}">${p.name}</div>` +
+                `<div class="tt-meta">${p.proc_type} ${p.modifiers || ""}${ret}</div>` +
+                (p.params ? `<div class="tt-meta">(${p.params})</div>` : "") +
+                `<div class="tt-meta">Lines ${p.start_line}–${p.end_line}</div>` +
+                (cc ? `<div class="tt-cc"><span class="badge badge-cc">${cc}</span></div>` : ""));
+        });
+        bar.addEventListener("mouseleave", hideTooltip);
+        bar.addEventListener("click", () => {
+            hideTooltip();
+            store.dispatch({ type: "PROCEDURE_SELECTED", objectName, procName: p.name });
+        });
+
+        codeArea.appendChild(bar);
+    });
+
+    codeArea.style.position = "relative";
+    viewer.appendChild(gutter);
+    viewer.appendChild(codeArea);
+
+    const observer = new MutationObserver(() => {
+        if (!document.body.contains(viewer)) { tooltip.remove(); observer.disconnect(); }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    return viewer;
+}
+
+function _linkIdentifiers(html, objectMap, procMap, selfName) {
+    // Match highlighted identifiers (word boundaries) that are NOT inside HTML tags
+    // We match word tokens and check against our lookup maps
+    return html.replace(/\b([A-Za-z_][\w$#%-]*)\b/g, (match, word) => {
+        const lower = word.toLowerCase();
+        // Skip highlight.js wrapper tags that got caught
+        if (match.startsWith("<") || match.startsWith("/")) return match;
+        // Skip self-references
+        if (lower === selfName.toLowerCase()) return match;
+        // Skip PB keywords
+        if (_PB_KEYWORDS.has(lower)) return match;
+        if (procMap[lower]) return `<span data-link-type="procedure" data-link-name="${word}">${match}</span>`;
+        if (objectMap[lower]) return `<span data-link-type="object" data-link-name="${word}">${match}</span>`;
+        return match;
+    });
+}
+
+const _PB_KEYWORDS = new Set([
+    "and","or","not","xor","if","then","else","elseif","end","choose","case",
+    "for","to","step","next","do","while","loop","until","exit","continue",
+    "try","catch","finally","throw","throws","return","halt","goto",
+    "call","post","trigger","dynamic","with","close","open","create","destroy","using",
+    "set","values","where","from","into","of","is","null","as","on","in",
+    "select","selectblob","insert","update","updateblob","delete",
+    "commit","rollback","connect","disconnect","declare","cursor","procedure",
+    "execute","fetch","prepare","describe","immediate","prior","first","last",
+    "between","like","exists","having","group","order","union","all","distinct",
+    "asc","desc","shared","system","readonly","constant","ref","static",
+    "indirect","global","rpcfunc","alias","library","external","native",
+    "namespace","enumerated","intrinsic","autoinstantiate","prototype","forward",
+    "type","within","true","false","this","parent","super","parentwindow",
+    "sqlca","sqlda","sqlsa","error","message",
+    "function","subroutine","event","on",
+    "public","private","protected",
+    "privateread","privatewrite","protectedread","protectedwrite",
+    "systemread","systemwrite",
+]);
 
 // ── Object detail ──────────────────────────────────────────────────────────
 
@@ -400,9 +915,21 @@ function renderObjectDetail(state, root) {
     }
 
     if (obj.file) {
+        const src = state.sourceDetail;
         const card = el("div", { className: "card" });
-        card.appendChild(el("div", { className: "card-header" }, el("h3", null, "Source File")));
-        card.appendChild(el("div", { style: "font-size:12px;color:var(--text-muted);word-break:break-all" }, obj.file));
+        const header = el("div", { className: "source-file-header" });
+        header.appendChild(el("div", { className: "card-header" }, el("h3", null, "Source")));
+        header.appendChild(el("div", { className: "source-file-path" }, obj.file));
+        card.appendChild(header);
+
+        if (src && src.lines && src.lines.length) {
+            card.appendChild(_renderSourceViewer(src, obj.name));
+        } else if (src && src.error) {
+            card.appendChild(el("p", { style: "color:var(--red);font-size:12px" }, src.error));
+        } else {
+            card.appendChild(el("div", { className: "loading-overlay" },
+                el("div", { className: "spinner" }), " Loading source..."));
+        }
         root.appendChild(card);
     }
 }
@@ -446,11 +973,11 @@ function renderProcedureDetail(state, root) {
 
     const code = activeTab === "original" ? proc.source_original : proc.source_rendered;
     if (code) {
+        const baseLine = proc.start_line || 1;
         const viewer = el("div", { className: "code-viewer" });
         code.split("\n").forEach((line, i) => {
-            const lineNum = activeTab === "original" ? (proc.start_line || 1) + i : i + 1;
             viewer.appendChild(el("div", { className: "code-line" },
-                el("span", { className: "code-line-num" }, String(lineNum)),
+                el("span", { className: "code-line-num" }, String(baseLine + i)),
                 el("span", { className: "code-line-content" }, line)));
         });
         root.appendChild(viewer);
@@ -464,10 +991,27 @@ function renderProcedureDetail(state, root) {
 
 function renderDataWindows(state, root) {
     const dw = state.datawindows;
+
+    const dwNames = (dw.items || []).map(d => d.name);
+    const dwMeta = {};
+    (dw.items || []).forEach(d => { dwMeta[d.name] = d; });
+
     const search = el("div", { className: "search-bar" });
-    const input = el("input", { className: "search-input", placeholder: "Search DataWindows...", value: dw.q });
-    input.addEventListener("input", debounce(() => store.dispatch({ type: "DW_SEARCH", q: input.value }), 300));
-    search.appendChild(input);
+    const ta = _renderTypeahead({
+        id: "dw-search",
+        options: dwNames,
+        value: dw.q,
+        placeholder: "Search DataWindows — type to filter or jump to...",
+        formatItem: (name) => ({
+            name,
+            kind: "DW",
+            sub: dwMeta[name] ? shortFile(dwMeta[name].file) : "",
+        }),
+        onSelect: (name) => {
+            store.dispatch({ type: "DW_SELECTED", name });
+        },
+    });
+    search.appendChild(ta);
     root.appendChild(search);
 
     if (dw.loading && !dw.items.length)
@@ -607,26 +1151,46 @@ function renderDiagrams(state, root) {
     const controls = el("div", { className: "card", style: "padding:12px 20px" });
     const row = el("div", { style: "display:flex;gap:8px;align-items:center" });
 
+    const allNames = (state.allObjects || []).map(o => o.name);
+    const allMeta = {};
+    (state.allObjects || []).forEach(o => { allMeta[o.name] = o; });
+    const dwNames = allNames.filter(n => allMeta[n] && allMeta[n].kind === "datawindow");
+
     if (dg.active === "inheritance") {
-        const inp = el("input", { className: "search-input", placeholder: "Root object (optional)", style: "max-width:300px" });
-        row.appendChild(inp);
+        const ta = _renderTypeahead({
+            id: "diag-root", options: allNames, value: "",
+            placeholder: "Root object (optional)",
+            formatItem: (n) => ({ name: n, kind: allMeta[n] ? allMeta[n].kind.charAt(0).toUpperCase() : "" }),
+            onSelect: () => {},
+        });
+        row.appendChild(ta);
         row.appendChild(el("button", { className: "filter-pill active", onClick: () => {
-            store.dispatch({ type: "DIAGRAM_PARAMS", params: { root: inp.value } });
+            store.dispatch({ type: "DIAGRAM_PARAMS", params: { root: ta._getValue() } });
             store.dispatch({ type: "DIAGRAM_GENERATE" });
         } }, "Generate"));
     } else if (dg.active === "calls") {
-        const focal = el("input", { className: "search-input", placeholder: "Focal object", style: "max-width:300px" });
+        const ta = _renderTypeahead({
+            id: "diag-focal", options: allNames, value: "",
+            placeholder: "Focal object",
+            formatItem: (n) => ({ name: n, kind: allMeta[n] ? allMeta[n].kind.charAt(0).toUpperCase() : "" }),
+            onSelect: () => {},
+        });
         const depth = el("input", { className: "search-input", type: "number", value: "2", min: "1", max: "5", style: "max-width:80px" });
-        row.appendChild(focal); row.appendChild(depth);
+        row.appendChild(ta); row.appendChild(depth);
         row.appendChild(el("button", { className: "filter-pill active", onClick: () => {
-            store.dispatch({ type: "DIAGRAM_PARAMS", params: { focal: focal.value, depth: depth.value } });
+            store.dispatch({ type: "DIAGRAM_PARAMS", params: { focal: ta._getValue(), depth: depth.value } });
             store.dispatch({ type: "DIAGRAM_GENERATE" });
         } }, "Generate"));
     } else if (dg.active === "dw-tables") {
-        const tbl = el("input", { className: "search-input", placeholder: "Filter table (optional)", style: "max-width:300px" });
-        row.appendChild(tbl);
+        const ta = _renderTypeahead({
+            id: "diag-table", options: dwNames, value: "",
+            placeholder: "Filter table (optional)",
+            formatItem: (n) => ({ name: n, kind: "DW" }),
+            onSelect: () => {},
+        });
+        row.appendChild(ta);
         row.appendChild(el("button", { className: "filter-pill active", onClick: () => {
-            store.dispatch({ type: "DIAGRAM_PARAMS", params: { table: tbl.value } });
+            store.dispatch({ type: "DIAGRAM_PARAMS", params: { table: ta._getValue() } });
             store.dispatch({ type: "DIAGRAM_GENERATE" });
         } }, "Generate"));
     } else {
@@ -714,9 +1278,21 @@ function renderQueries(state, root) {
 function renderSearch(state, root) {
     const se = state.search;
     const search = el("div", { className: "search-bar" });
-    const input = el("input", { className: "search-input", placeholder: "Search everything...", value: se.term });
-    input.addEventListener("keydown", e => { if (e.key === "Enter") store.dispatch({ type: "SEARCH_TERM", term: input.value }); });
-    input.addEventListener("input", debounce(() => store.dispatch({ type: "SEARCH_TERM", term: input.value }), 400));
+    const input = el("input", { className: "search-input", placeholder: "Search everything..." });
+    // Restore value from state if we have a term
+    if (se.term) input.value = se.term;
+    // Live search as you type
+    const doSearch = debounce(() => {
+        const val = input.value.trim();
+        if (val.length >= 2) store.dispatch({ type: "SEARCH_TERM", term: val });
+    }, 300);
+    input.addEventListener("input", doSearch);
+    input.addEventListener("keydown", e => {
+        if (e.key === "Enter") {
+            const val = input.value.trim();
+            if (val.length >= 1) store.dispatch({ type: "SEARCH_TERM", term: val });
+        }
+    });
     search.appendChild(input);
     root.appendChild(search);
 
@@ -785,7 +1361,7 @@ function _renderSearchResults(container, data) {
 
 // ── Sidebar wiring ─────────────────────────────────────────────────────────
 
-$$("[data-nav]").forEach(a => {
+$$("[data-view]").forEach(a => {
     a.addEventListener("click", e => {
         e.preventDefault();
         const view = a.dataset.view;
@@ -793,8 +1369,15 @@ $$("[data-nav]").forEach(a => {
         if (view === "dashboard" && !state.stats) store.dispatch({ type: "STATS_LOAD" });
         else if (view === "objects") store.dispatch({ type: "OBJECTS_SEARCH", q: state.objects.q });
         else if (view === "datawindows") store.dispatch({ type: "DW_SEARCH", q: state.datawindows.q });
-        else if (view === "diagrams" && (state.diagrams.active === "heatmap" || state.diagrams.active === "inheritance"))
-            store.dispatch({ type: "DIAGRAM_GENERATE" });
+        else if (view === "diagrams") {
+            if (!state.allObjects.length) {
+                env.api.getAllObjects().then(data => {
+                    store.dispatch({ type: "ALL_OBJECTS_LOADED", data: data.items || [] });
+                }).catch(() => {});
+            }
+            if (state.diagrams.active === "heatmap" || state.diagrams.active === "inheritance")
+                store.dispatch({ type: "DIAGRAM_GENERATE" });
+        }
         else if (view === "queries" && !state.queries.items.length)
             store.dispatch({ type: "QUERIES_LOAD" });
     });

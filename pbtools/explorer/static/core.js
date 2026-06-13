@@ -21,7 +21,9 @@ export function initialState() {
             offset: 0, loading: false,
         },
         objectDetail: null,
+        sourceDetail: null,
         procedureDetail: null,
+        allObjects: [],
         datawindows: { items: [], total: 0, q: "", loading: false },
         dwDetail: null,
         diagrams: { active: "inheritance", svg: null, loading: false, params: {} },
@@ -138,12 +140,32 @@ export function reducer(state, action) {
 
     // Object detail
     case "OBJECT_SELECTED":
-        return [{ ...state, objectDetail: null, view: "objectDetail" },
-            asyncFetch(api => api.getObject(action.name), "OBJECT_LOADED", "OBJECT_LOAD_ERROR")];
+        return [{ ...state, objectDetail: null, sourceDetail: null, view: "objectDetail" }, async (dispatch, env) => {
+            try {
+                const [data, source] = await Promise.all([
+                    env.api.getObject(action.name),
+                    env.api.getObjectSource(action.name),
+                ]);
+                dispatch({ type: "OBJECT_LOADED", data });
+                dispatch({ type: "SOURCE_LOADED", data: source });
+            } catch (e) {
+                dispatch({ type: "OBJECT_LOAD_ERROR", error: e.message });
+            }
+        }];
     case "OBJECT_LOADED":
         return [{ ...state, objectDetail: { ...action.data, loading: false } }, null];
     case "OBJECT_LOAD_ERROR":
         return [{ ...state, objectDetail: { error: action.error } }, null];
+
+    // Source
+    case "SOURCE_LOADED":
+        return [{ ...state, sourceDetail: { ...action.data, loading: false } }, null];
+    case "SOURCE_ERROR":
+        return [{ ...state, sourceDetail: { error: action.error } }, null];
+
+    // All objects preload
+    case "ALL_OBJECTS_LOADED":
+        return [{ ...state, allObjects: action.data }, null];
 
     // Procedure detail
     case "PROCEDURE_SELECTED":
