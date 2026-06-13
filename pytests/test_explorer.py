@@ -57,15 +57,15 @@ def test_static_css(client):
 
 
 def test_static_js(client):
-    r = client.get("/static/dist/app.js")
+    r = client.get("/static/index.html")
     assert r.status_code == 200
+    assert "pb explore" in r.text
 
 
 def test_static_core(client):
-    r = client.get("/static/dist/app.js")
+    r = client.get("/static/style.css")
     assert r.status_code == 200
-    assert "NAVIGATE" in r.text
-    assert "dashboard" in r.text
+    assert "var(--bg-primary)" in r.text
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
