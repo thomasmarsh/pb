@@ -15,6 +15,7 @@ import { Queries } from "./components/Queries.js";
 import { Search } from "./components/Search.js";
 import { useStore } from "./context.js";
 import { initViewFromUrl, setupPopstateHandler } from "./navigation.js";
+import { HealthCheck } from "./components/HealthCheck.js";
 
 const env = { api: createApiClient() };
 const store = createStoreAdapter(initialState(), reducer, env);
@@ -49,6 +50,7 @@ function App() {
   return (
     <StoreProvider store={store} env={env}>
       <ViewRouter />
+      <HealthCheck />
     </StoreProvider>
   );
 }

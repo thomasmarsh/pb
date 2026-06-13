@@ -215,6 +215,13 @@ def diagram_heatmap(
 
 # ── pb explore ─────────────────────────────────────────────────────────────────
 
+def _port_in_use(host: str, port: int) -> bool:
+    """Check if a port is already in use."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex((host, port)) == 0
+
+
 @app.command()
 def explore(
     db: str   = typer.Option("pb.duckdb", "--db",  help="DuckDB database path."),
@@ -227,6 +234,18 @@ def explore(
     from pbtools.explorer import create_app
     from pbtools.build import find_repo, ensure_explorer_built
 
+    url = f"http://{host}:{port}"
+
+    # If port is already in use, assume server is running — just open browser
+    if _port_in_use(host, port):
+        if open_browser:
+            import webbrowser
+            typer.echo(f"Explorer already running at {url} — opening browser.")
+            webbrowser.open(url)
+        else:
+            typer.echo(f"Explorer already running at {url}.")
+        return
+
     repo = find_repo()
     ensure_explorer_built(repo)
 
@@ -235,7 +254,7 @@ def explore(
     if open_browser:
         import webbrowser
         from threading import Timer
-        Timer(1.0, webbrowser.open, args=[f"http://{host}:{port}"]).start()
+        Timer(1.0, webbrowser.open, args=[url]).start()
 
     uvicorn.run(app, host=host, port=port, log_level="info")
 
