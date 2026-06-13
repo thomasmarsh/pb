@@ -213,6 +213,29 @@ def diagram_heatmap(
         _d(conn, output, dot)
 
 
+# ── pb explore ─────────────────────────────────────────────────────────────────
+
+@app.command()
+def explore(
+    db: str   = typer.Option("pb.duckdb", "--db",  help="DuckDB database path."),
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind host."),
+    port: int = typer.Option(8000, "--port",         help="Bind port."),
+    open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser on start."),
+) -> None:
+    """Start the interactive DuckDB explorer web UI."""
+    import uvicorn
+    from pbtools.explorer import create_app
+
+    app = create_app(db)
+
+    if open_browser:
+        import webbrowser
+        from threading import Timer
+        Timer(1.0, webbrowser.open, args=[f"http://{host}:{port}"]).start()
+
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
 # ── private helpers ────────────────────────────────────────────────────────────
 
 def _build(repo_path: Path, reporter) -> Path:

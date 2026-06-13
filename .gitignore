@@ -12,3 +12,4 @@ __pycache__
 *.pyc
 pb.duckdb
 .mimocode/
+node_modules
