@@ -3,6 +3,7 @@
 import { Show, createSignal } from "solid-js";
 import { Tabs } from "@kobalte/core/tabs";
 import { useStore } from "../context.js";
+import { CodeBlock } from "./CodeBlock.js";
 
 function procBadge(t: string): string {
   return { function: "func", subroutine: "sub", event: "event", on: "on" }[t] ?? "func";
@@ -24,7 +25,6 @@ export function ProcedureDetail() {
           const p = proc()!;
           if ("error" in p) return null;
           const bc = procBadge(p.proc_type);
-          const baseLine = p.start_line ?? 1;
 
           return (
             <>
@@ -57,14 +57,7 @@ export function ProcedureDetail() {
 
                   <Tabs.Content value="original">
                     <Show when={p.source_original}>
-                      <div class="code-viewer">
-                        {p.source_original!.split("\n").map((line, i) => (
-                          <div class="code-line">
-                            <span class="code-line-num">{String(baseLine + i)}</span>
-                            <span class="code-line-content">{line}</span>
-                          </div>
-                        ))}
-                      </div>
+                      <CodeBlock code={p.source_original!} baseLine={p.start_line ?? 1} />
                       <Show when={p.file}>
                         <div style={{ "font-size": "11px", color: "var(--text-muted)", "margin-top": "8px" }}>
                           {p.file}:{p.start_line ?? ""}-{p.end_line ?? ""}
@@ -75,14 +68,7 @@ export function ProcedureDetail() {
 
                   <Tabs.Content value="rendered">
                     <Show when={p.source_rendered}>
-                      <div class="code-viewer">
-                        {p.source_rendered!.split("\n").map((line, i) => (
-                          <div class="code-line">
-                            <span class="code-line-num">{String(baseLine + i)}</span>
-                            <span class="code-line-content">{line}</span>
-                          </div>
-                        ))}
-                      </div>
+                      <CodeBlock code={p.source_rendered!} baseLine={p.start_line ?? 1} />
                     </Show>
                   </Tabs.Content>
                 </Tabs>

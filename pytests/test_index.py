@@ -91,3 +91,76 @@ def test_dw_retrieve_tables_populated_when_e2_done(db_conn):
         WHERE o.file IS NULL
     """)
     assert unknown == 0, f"{unknown} dw_retrieve_tables rows reference unknown files"
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for _ingest_dw tag dispatch (no DB, no pb-runner)
+# ---------------------------------------------------------------------------
+
+from pbtools.index import _ingest_dw
+from pbtools.common import TABLES
+
+
+def _rows():
+    return {t: [] for t in TABLES}
+
+
+def _ok_retrieve(**extra):
+    return {"tag": "ok", "version": 400, "tables": [], "columns": [],
+            "arguments": [], "where": [], **extra}
+
+
+def _dw_obj(retrieve=None):
+    obj = {"file": "test.srd", "kind": "datawindow",
+           "meta": {"object": "d_test"}, "controls": []}
+    if retrieve is not None:
+        obj["table"] = {"retrieve": retrieve}
+    return obj
+
+
+def test_tag_ok_inserts_table():
+    rows = _rows()
+    _ingest_dw(_dw_obj(_ok_retrieve(tables=["emp"])), "test.srd", rows)
+    assert len(rows['dw_retrieve_tables']) == 1
+
+
+def test_tag_ok_inserts_columns_split():
+    rows = _rows()
+    _ingest_dw(_dw_obj(_ok_retrieve(columns=["emp.id", "emp.name"])), "test.srd", rows)
+    assert len(rows['dw_retrieve_columns']) == 2
+    table_names = {r[3] for r in rows['dw_retrieve_columns']}
+    col_names   = {r[4] for r in rows['dw_retrieve_columns']}
+    assert table_names == {"emp"}
+    assert col_names == {"id", "name"}
+
+
+def test_tag_ok_inserts_where():
+    rows = _rows()
+    where = [{"exp1": "t.id", "op": "=", "exp2": ":p", "logic": None}]
+    _ingest_dw(_dw_obj(_ok_retrieve(where=where)), "test.srd", rows)
+    assert len(rows['dw_retrieve_where']) == 1
+
+
+def test_tag_ok_inserts_arguments():
+    rows = _rows()
+    args = [{"name": "aid", "type": "string"}]
+    _ingest_dw(_dw_obj(_ok_retrieve(arguments=args)), "test.srd", rows)
+    assert len(rows['dw_arguments']) == 1
+
+
+def test_tag_raw_inserts_nothing():
+    rows = _rows()
+    _ingest_dw(_dw_obj({"tag": "raw", "text": "SELECT 1"}), "test.srd", rows)
+    assert rows['dw_retrieve_tables'] == []
+    assert rows['dw_retrieve_columns'] == []
+    assert rows['dw_retrieve_where'] == []
+    assert rows['dw_arguments'] == []
+
+
+def test_no_retrieve_inserts_nothing():
+    rows = _rows()
+    _ingest_dw(_dw_obj(), "test.srd", rows)
+    assert rows['dw_retrieve_tables'] == []
+    assert rows['dw_retrieve_columns'] == []
+    assert rows['dw_retrieve_where'] == []
+    assert rows['dw_arguments'] == []

@@ -102,8 +102,8 @@ def _ingest_dw(obj: dict, file: str, rows: dict) -> None:
     for ctrl in obj.get('controls', []):
         rows['dw_controls'].append(_ctrl_row(file, dw_name, ctrl))
 
-    retrieve = (obj.get('table') or {}).get('retrieve') or {}
-    if not isinstance(retrieve, dict):
+    retrieve = (obj.get('table') or {}).get('retrieve')
+    if not isinstance(retrieve, dict) or retrieve.get('tag') != 'ok':
         return
 
     for t in retrieve.get('tables', []):

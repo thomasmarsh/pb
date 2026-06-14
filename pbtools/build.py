@@ -63,24 +63,37 @@ def count_sr_files(src_dir: Path) -> int:
 
 
 def ensure_explorer_built(repo: Path, verbose: bool = False) -> None:
-    """Ensure the TypeScript explorer is built. Runs pnpm install + build if needed."""
-    dist_js = repo / "pbtools" / "explorer" / "static" / "dist" / "app.js"
-    if dist_js.exists():
-        return
+    """Ensure the explorer TypeScript bundle is up-to-date.
+
+    Rebuilds the TypeScript bundle if any source file is newer than the bundle
+    output. The prebuild step (pnpm prebuild) regenerates ast.generated.ts via
+    cabal run pb-runner --emit-ts automatically when pnpm build is invoked.
+    """
     explorer_dir = repo / "pbtools" / "explorer"
-    if not (explorer_dir / "package.json").exists():
-        sys.exit("error: pbtools/explorer/package.json not found — cannot auto-build explorer")
-    print("Building explorer frontend...", file=sys.stderr)
-    for cmd in [["pnpm", "install", "--frozen-lockfile"], ["pnpm", "build"]]:
-        r = subprocess.run(
-            cmd,
-            cwd=str(explorer_dir),
-            capture_output=not verbose,
-            text=True,
-        )
-        if r.returncode != 0:
-            if not verbose:
-                print(r.stderr, file=sys.stderr)
-            sys.exit(f"error: explorer build failed ({' '.join(cmd)})")
+    dist_js      = explorer_dir / "static" / "dist" / "app.js"
+
+    if _bundle_stale(explorer_dir, dist_js):
+        print("Building explorer frontend...", file=sys.stderr)
+        _run_explorer(explorer_dir, ["pnpm", "install", "--frozen-lockfile"], verbose)
+        _run_explorer(explorer_dir, ["pnpm", "build"], verbose)
+        if not dist_js.exists():
+            sys.exit("error: explorer build produced no output")
+
+
+def _bundle_stale(explorer_dir: "Path", dist_js: "Path") -> bool:
     if not dist_js.exists():
-        sys.exit("error: explorer build produced no output")
+        return True
+    cutoff = dist_js.stat().st_mtime
+    for pattern in ["src/**/*.ts", "src/**/*.tsx", "package.json", "vite.config.ts"]:
+        if any(f.stat().st_mtime > cutoff for f in explorer_dir.glob(pattern)):
+            return True
+    return False
+
+
+def _run_explorer(explorer_dir: "Path", cmd: "list[str]", verbose: bool) -> None:
+    r = subprocess.run(cmd, cwd=str(explorer_dir),
+                       capture_output=not verbose, text=True)
+    if r.returncode != 0:
+        if not verbose:
+            print(r.stderr, file=sys.stderr)
+        sys.exit(f"error: explorer build failed ({' '.join(cmd)})")

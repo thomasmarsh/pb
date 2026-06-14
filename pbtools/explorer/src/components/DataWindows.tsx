@@ -2,6 +2,7 @@
 
 import { Show, For, onMount } from "solid-js";
 import { useStore } from "../context.js";
+import { CodeBlock } from "./CodeBlock.js";
 
 function shortFile(f: string | null | undefined): string {
   if (!f) return "";
@@ -174,14 +175,7 @@ export function DWDetail() {
               <Show when={d.source}>
                 <div class="card">
                   <div class="card-header"><h3>Source</h3></div>
-                  <div class="code-viewer">
-                    {d.source!.split("\n").map((line, i) => (
-                      <div class="code-line">
-                        <span class="code-line-num">{String(i + 1)}</span>
-                        <span class="code-line-content">{line}</span>
-                      </div>
-                    ))}
-                  </div>
+                  <CodeBlock code={d.source!} />
                 </div>
               </Show>
             </>

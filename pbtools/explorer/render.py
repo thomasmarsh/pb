@@ -48,17 +48,18 @@ def _render_stmt(stmt: dict[str, Any], indent: int) -> str | None:
         return pad + f"{lhs} = {rhs}"
 
     if tag == "aug_assign":
-        tokens = stmt.get("tokens", [])
+        lhs = " ".join(str(t) for t in stmt.get("lhs", []))
         op = stmt.get("op", "+=")
-        return pad + " ".join(str(t) for t in tokens)
+        rhs = " ".join(str(t) for t in stmt.get("rhs", []))
+        return pad + f"{lhs} {op} {rhs}"
 
     if tag == "inc":
-        tokens = stmt.get("tokens", [])
-        return pad + " ".join(str(t) for t in tokens)
+        lhs = " ".join(str(t) for t in stmt.get("lhs", []))
+        return pad + f"{lhs}++"
 
     if tag == "dec":
-        tokens = stmt.get("tokens", [])
-        return pad + " ".join(str(t) for t in tokens)
+        lhs = " ".join(str(t) for t in stmt.get("lhs", []))
+        return pad + f"{lhs}--"
 
     if tag == "local_var":
         tokens = stmt.get("tokens", [])
@@ -220,22 +221,21 @@ def _render_expr(expr: Any) -> str:
         return "not " + _render_expr(expr.get("expr", {}))
 
     if tag == "binop":
-        left = _render_expr(expr.get("left", {}))
+        left = _render_expr(expr.get("lhs", {}))
         op = expr.get("op", "")
-        right = _render_expr(expr.get("right", {}))
+        right = _render_expr(expr.get("rhs", {}))
         return f"{left} {op} {right}"
 
-    if tag == "unary_minus":
+    if tag == "neg":
         return "-" + _render_expr(expr.get("expr", {}))
 
     if tag == "host_var":
         return ":" + _render_lvalue(expr.get("lvalue", expr))
 
     if tag == "create":
-        target = expr.get("using", expr.get("className", ""))
-        if isinstance(target, dict):
-            return "create " + _render_expr(target)
-        return f"create {target}"
+        return "create " + str(expr.get("class", ""))
+    if tag == "create_using":
+        return "create using " + _render_expr(expr.get("expr", {}))
 
     if tag == "array":
         items = [_render_expr(e) for e in expr.get("elements", expr.get("items", []))]
