@@ -25,12 +25,14 @@ export function registerRoute(view: ViewName, segment: RouteSegment): void {
 
 // ── Built-in routes (simple views, no segments) ─────────────────────────────
 
-registerRoute("dashboard", { toPath: () => [], fromPath: () => ({}) });
-registerRoute("objects", { toPath: () => [], fromPath: () => ({}) });
-registerRoute("datawindows", { toPath: () => [], fromPath: () => ({}) });
-registerRoute("diagrams", { toPath: () => [], fromPath: () => ({}) });
-registerRoute("queries", { toPath: () => [], fromPath: () => ({}) });
-registerRoute("search", { toPath: () => [], fromPath: () => ({}) });
+const _exact: RouteSegment = { toPath: () => [], fromPath: (segs) => segs.length === 0 ? {} : null };
+registerRoute("dashboard", _exact);
+registerRoute("objects", _exact);
+registerRoute("datawindows", _exact);
+registerRoute("diagrams", _exact);
+registerRoute("queries", _exact);
+registerRoute("search", _exact);
+registerRoute("explore", _exact);
 
 // ── Entity routes (registered by components) ────────────────────────────────
 
@@ -71,23 +73,28 @@ export interface ResolvedView {
 export function pathToView(pathname: string): ResolvedView {
   const segs = pathname.split("/").filter(Boolean);
 
-  // Try each registered route — longest segment match first
+  // Strip the view prefix before matching — fromPath receives only entity segments.
   const candidates = routes
-    .map(r => ({ route: r, match: r.segment.fromPath(segs) }))
-    .filter((c): c is { route: RegisteredRoute; match: Record<string, string> } => c.match !== null)
+    .map(r => {
+      const prefixSegs = (VIEW_PREFIX[r.view] ?? "/").split("/").filter(Boolean);
+      if (segs.length < prefixSegs.length) return null;
+      for (let i = 0; i < prefixSegs.length; i++) {
+        if (segs[i] !== prefixSegs[i]) return null;
+      }
+      const rest = segs.slice(prefixSegs.length);
+      const match = r.segment.fromPath(rest);
+      return match !== null ? { route: r, match, prefixLen: prefixSegs.length } : null;
+    })
+    .filter((c): c is { route: RegisteredRoute; match: Record<string, string>; prefixLen: number } => c !== null)
     .sort((a, b) => {
-      const aLen = a.route.segment.toPath({}).length;
-      const bLen = b.route.segment.toPath({}).length;
-      return bLen - aLen; // longest segments first (most specific)
+      // Most specific first: prefer longer prefix + more entity segments
+      const aSpec = a.prefixLen + a.route.segment.toPath({}).length;
+      const bSpec = b.prefixLen + b.route.segment.toPath({}).length;
+      return bSpec - aSpec;
     });
 
   if (candidates.length > 0) {
-    const best = candidates[0]!;
-    // Only use segment routes if they consumed all segments
-    const consumed = best.route.segment.toPath({}).length;
-    if (consumed === segs.length || consumed === 0) {
-      return { view: best.route.view, params: best.match };
-    }
+    return { view: candidates[0]!.route.view, params: candidates[0]!.match };
   }
 
   return { view: "dashboard", params: {} };
@@ -105,6 +112,7 @@ const VIEW_PREFIX: Record<ViewName, string> = {
   diagrams: "/diagrams",
   queries: "/queries",
   search: "/search",
+  explore: "/explore",
 };
 
 export function viewToPath(view: ViewName, state: Record<string, unknown>): string {
@@ -144,9 +152,7 @@ export function syncUrlFromState(
 
 // ── Initialize from URL ─────────────────────────────────────────────────────
 
-export function initViewFromUrl(dispatch: Dispatch): void {
-  const { view, params } = pathToView(window.location.pathname);
-
+function dispatchFromResolved(dispatch: Dispatch, view: ViewName, params: Record<string, string>): void {
   if (view === "objectDetail" && params.objectName) {
     dispatch({ type: "OBJECT_SELECTED", name: params.objectName });
   } else if (view === "procedureDetail" && params.procObject && params.procName) {
@@ -158,20 +164,16 @@ export function initViewFromUrl(dispatch: Dispatch): void {
   }
 }
 
+export function initViewFromUrl(dispatch: Dispatch): void {
+  const { view, params } = pathToView(window.location.pathname);
+  dispatchFromResolved(dispatch, view, params);
+}
+
 // ── Browser back/forward ────────────────────────────────────────────────────
 
 export function setupPopstateHandler(dispatch: Dispatch): void {
   window.addEventListener("popstate", () => {
     const { view, params } = pathToView(window.location.pathname);
-
-    if (view === "objectDetail" && params.objectName) {
-      dispatch({ type: "OBJECT_SELECTED", name: params.objectName });
-    } else if (view === "procedureDetail" && params.procObject && params.procName) {
-      dispatch({ type: "PROCEDURE_SELECTED", objectName: params.procObject, procName: params.procName });
-    } else if (view === "dwDetail" && params.dwName) {
-      dispatch({ type: "DW_SELECTED", name: params.dwName });
-    } else {
-      dispatch({ type: "NAVIGATE", view });
-    }
+    dispatchFromResolved(dispatch, view, params);
   });
 }

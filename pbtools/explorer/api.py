@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 from pathlib import Path
@@ -614,6 +615,112 @@ async def run_query(name: str, request: Request):
         rows = _rows(result)
         cols = [d[0] for d in result.description] if result.description else []
         return {"columns": cols, "rows": rows}
+    finally:
+        conn.close()
+
+
+# ── Explore tree ───────────────────────────────────────────────────────────────
+
+@router.get("/api/explore/tree")
+async def explore_tree(request: Request):
+    conn = _conn(request)
+    try:
+        obj_rows = _rows(conn.execute(
+            "SELECT name, kind, file FROM objects ORDER BY kind, name"
+        ))
+        proc_rows = _rows(conn.execute(
+            "SELECT object, proc_type, name, modifiers, params, return_type, "
+            "start_line, end_line, cyclomatic "
+            "FROM procedures ORDER BY object, proc_type, name"
+        ))
+        procs_by_obj: dict[str, list[dict[str, Any]]] = {}
+        for p in proc_rows:
+            procs_by_obj.setdefault(p["object"], []).append(p)
+
+        libraries: dict[str, list[dict[str, Any]]] = {}
+        for obj in obj_rows:
+            fpath = obj.get("file", "")
+            lib = _pbl_name(fpath)
+            obj_entry = {
+                "name": obj["name"],
+                "kind": obj["kind"],
+                "file": fpath,
+                "procedures": procs_by_obj.get(obj["name"], []),
+            }
+            libraries.setdefault(lib, []).append(obj_entry)
+
+        result = [
+            {"name": lib, "objects": objs}
+            for lib, objs in sorted(libraries.items())
+        ]
+        return {"libraries": result}
+    finally:
+        conn.close()
+
+
+def _pbl_name(file_path: str) -> str:
+    """Extract .pbl library name from an extracted file path."""
+    import ntpath
+    parts = file_path.replace("\\", "/").split("/")
+    for part in parts:
+        if part.lower().endswith(".pbl"):
+            return part
+    if len(parts) >= 2:
+        return parts[-2]
+    return "(unknown)"
+
+
+@router.get("/api/explore/procedure/{object_name}/{proc_name}")
+async def explore_procedure(object_name: str, proc_name: str, request: Request):
+    conn = _conn(request)
+    try:
+        rows = _rows(conn.execute(
+            "SELECT body_json FROM procedures WHERE object = ? AND name = ?",
+            [object_name, proc_name],
+        ))
+        if not rows:
+            raise HTTPException(status_code=404, detail="Procedure not found")
+        body_json = rows[0].get("body_json")
+        if body_json is None:
+            return {"ast": None}
+        if isinstance(body_json, str):
+            body_json = json.loads(body_json)
+        return {"ast": body_json}
+    finally:
+        conn.close()
+
+
+@router.get("/api/explore/datawindow/{name}")
+async def explore_datawindow(name: str, request: Request):
+    conn = _conn(request)
+    try:
+        controls = _rows(conn.execute(
+            "SELECT control_name, control_type, band, x, y, width, height, "
+            "expression, tab_seq, source_line "
+            "FROM dw_controls WHERE dw_name = ? ORDER BY band, y, x", [name]
+        ))
+        tables = _rows(conn.execute(
+            "SELECT table_name FROM dw_retrieve_tables WHERE dw_name = ? ORDER BY table_name", [name]
+        ))
+        columns = _rows(conn.execute(
+            "SELECT column_fqn, table_name, column_name "
+            "FROM dw_retrieve_columns WHERE dw_name = ? ORDER BY table_name, column_name", [name]
+        ))
+        where = _rows(conn.execute(
+            "SELECT idx, exp1, op, exp2, logic "
+            "FROM dw_retrieve_where WHERE dw_name = ? ORDER BY idx", [name]
+        ))
+        arguments = _rows(conn.execute(
+            "SELECT arg_name, arg_type FROM dw_arguments WHERE dw_name = ? ORDER BY arg_name", [name]
+        ))
+        return {
+            "name": name,
+            "controls": controls,
+            "retrieve_tables": [t["table_name"] for t in tables],
+            "retrieve_columns": columns,
+            "retrieve_where": where,
+            "arguments": arguments,
+        }
     finally:
         conn.close()
 

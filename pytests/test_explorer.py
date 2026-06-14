@@ -268,6 +268,49 @@ def test_run_query_not_found(client):
     assert r.status_code == 404
 
 
+# ── Explore tree ──────────────────────────────────────────────────────────────
+
+def test_explore_tree(client):
+    r = client.get("/api/explore/tree")
+    assert r.status_code == 200
+    data = r.json()
+    assert "libraries" in data
+    assert isinstance(data["libraries"], list)
+    assert len(data["libraries"]) > 0
+    lib = data["libraries"][0]
+    assert "name" in lib
+    assert "objects" in lib
+    assert isinstance(lib["objects"], list)
+    if lib["objects"]:
+        obj = lib["objects"][0]
+        assert "name" in obj
+        assert "kind" in obj
+        assert "procedures" in obj
+        assert isinstance(obj["procedures"], list)
+
+
+def test_explore_procedure(client):
+    r = client.get("/api/objects")
+    objs = r.json()["items"]
+    if not objs:
+        pytest.skip("No objects in database")
+    obj_name = objs[0]["name"]
+    r2 = client.get(f"/api/objects/{obj_name}")
+    procs = r2.json().get("procedures", [])
+    if not procs:
+        pytest.skip("No procedures in database")
+    proc_name = procs[0]["name"]
+    r3 = client.get(f"/api/explore/procedure/{obj_name}/{proc_name}")
+    assert r3.status_code == 200
+    data = r3.json()
+    assert "ast" in data
+
+
+def test_explore_procedure_not_found(client):
+    r = client.get("/api/explore/procedure/__no_obj__/__no_proc__")
+    assert r.status_code == 404
+
+
 # ── Render module ─────────────────────────────────────────────────────────────
 
 def test_render_body_empty():

@@ -10,6 +10,8 @@ import type {
   StatsResponse,
   QueryDef,
   QueryResult,
+  ExploreTreeResponse,
+  DwExploreDetail,
 } from "./types/api.js";
 import type { ApiClient } from "./core.js";
 
@@ -73,6 +75,18 @@ export function createApiClient(): ApiClient {
 
     async runQuery(name: string, params: Record<string, string>): Promise<QueryResult> {
       return fetchJson(`/api/queries/${name}/run?` + apiParams(params));
+    },
+
+    async getExploreTree(): Promise<ExploreTreeResponse> {
+      return fetchJson("/api/explore/tree");
+    },
+
+    async getExploreProcedure(objectName: string, procName: string): Promise<{ ast: unknown }> {
+      return fetchJson(`/api/explore/procedure/${encodeURIComponent(objectName)}/${encodeURIComponent(procName)}`);
+    },
+
+    async getExploreDatawindow(name: string): Promise<DwExploreDetail> {
+      return fetchJson(`/api/explore/datawindow/${encodeURIComponent(name)}`);
     },
   };
 }

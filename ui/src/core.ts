@@ -19,7 +19,14 @@ import type {
   QueryResult,
   SearchResponse,
   StatsResponse,
+  ExploreTreeResponse,
+  DwExploreDetail,
 } from "./types/api.js";
+
+// ── Node ID helpers ──────────────────────────────────────────────────────────
+
+function libId(name: string): string { return `lib:${name}`; }
+function objId(lib: string, name: string): string { return `obj:${lib}:${name}`; }
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -41,6 +48,9 @@ export interface ApiClient {
   getDiagram(kind: string, params: Record<string, string | number>): Promise<string>;
   getQueries(): Promise<{ queries: import("./types/api.js").QueryDef[] }>;
   runQuery(name: string, params: Record<string, string>): Promise<QueryResult>;
+  getExploreTree(): Promise<ExploreTreeResponse>;
+  getExploreProcedure(objectName: string, procName: string): Promise<{ ast: unknown }>;
+  getExploreDatawindow(name: string): Promise<DwExploreDetail>;
 }
 
 export interface Env {
@@ -67,6 +77,14 @@ export function initialState(): AppState {
     diagrams: { active: "inheritance", svg: null, loading: false, params: {} },
     queries: { items: [], results: null, resultsName: "", loading: false },
     search: { term: "", results: null, loading: false },
+    explore: {
+      libraries: [],
+      expandedNodes: new Set<string>(),
+      selectedNode: null,
+      astCache: {},
+      dwCache: {},
+      loading: false,
+    },
   };
 }
 
@@ -307,6 +325,109 @@ export function reducer(state: AppState, action: AppAction): ReducerResult {
 
   case "SEARCH_LOADED":
     return [{ ...state, search: { ...state.search, results: action.data, loading: false } }, null];
+
+  // Explore
+  case "EXPLORE_LOAD":
+    return [{ ...state, explore: { ...state.explore, loading: true } },
+      async (dispatch, _getState, env) => {
+        try {
+          const data = await env.api.getExploreTree();
+          dispatch({ type: "EXPLORE_LOADED", data });
+        } catch (e) {
+          console.error("explore tree load failed:", e);
+          dispatch({ type: "EXPLORE_LOADED", data: { libraries: [] } });
+        }
+      }];
+
+  case "EXPLORE_LOADED":
+    return [{ ...state, explore: { ...state.explore, libraries: action.data.libraries, loading: false } }, null];
+
+  case "EXPLORE_TOGGLE": {
+    const expanded = new Set(state.explore.expandedNodes);
+    if (expanded.has(action.nodeId)) {
+      expanded.delete(action.nodeId);
+    } else {
+      expanded.add(action.nodeId);
+    }
+    return [{ ...state, explore: { ...state.explore, expandedNodes: expanded } }, null];
+  }
+
+  case "EXPLORE_SELECT":
+    return [{ ...state, explore: { ...state.explore, selectedNode: action.nodeId } }, null];
+
+  case "EXPLORE_PROC_EXPAND": {
+    const expanded = new Set(state.explore.expandedNodes);
+    const wasExpanded = expanded.has(action.nodeId);
+    if (wasExpanded) {
+      expanded.delete(action.nodeId);
+    } else {
+      expanded.add(action.nodeId);
+    }
+    const next = { ...state, explore: { ...state.explore, expandedNodes: expanded } };
+    const alreadyCached = action.nodeId in state.explore.astCache;
+    if (!wasExpanded && !alreadyCached) {
+      return [next, async (dispatch, _getState, env) => {
+        try {
+          const data = await env.api.getExploreProcedure(action.objectName, action.procName);
+          dispatch({ type: "EXPLORE_AST_LOADED", nodeId: action.nodeId, ast: data.ast });
+        } catch (e) {
+          dispatch({ type: "EXPLORE_AST_ERROR", nodeId: action.nodeId, error: String(e) });
+        }
+      }];
+    }
+    return [next, null];
+  }
+
+  case "EXPLORE_AST_LOADED": {
+    const cache = { ...state.explore.astCache, [action.nodeId]: action.ast };
+    return [{ ...state, explore: { ...state.explore, astCache: cache } }, null];
+  }
+
+  case "EXPLORE_AST_ERROR":
+    return [{ ...state, explore: { ...state.explore, astCache: { ...state.explore.astCache, [action.nodeId]: { error: action.error } } } }, null];
+
+  case "EXPLORE_EXPAND_ALL": {
+    const expanded = new Set<string>();
+    for (const lib of state.explore.libraries) {
+      expanded.add(libId(lib.name));
+      for (const obj of lib.objects) {
+        expanded.add(objId(lib.name, obj.name));
+      }
+    }
+    return [{ ...state, explore: { ...state.explore, expandedNodes: expanded } }, null];
+  }
+
+  case "EXPLORE_COLLAPSE_ALL":
+    return [{ ...state, explore: { ...state.explore, expandedNodes: new Set<string>() } }, null];
+
+  case "EXPLORE_DW_EXPAND": {
+    const expanded = new Set(state.explore.expandedNodes);
+    const wasExpanded = expanded.has(action.nodeId);
+    if (wasExpanded) {
+      expanded.delete(action.nodeId);
+    } else {
+      expanded.add(action.nodeId);
+    }
+    const next = { ...state, explore: { ...state.explore, expandedNodes: expanded } };
+    const alreadyCached = action.nodeId in state.explore.dwCache;
+    if (!wasExpanded && !alreadyCached) {
+      return [next, async (dispatch, _getState, env) => {
+        try {
+          const data = await env.api.getExploreDatawindow(action.dwName);
+          dispatch({ type: "EXPLORE_DW_LOADED", nodeId: action.nodeId, data });
+        } catch (e) {
+          dispatch({ type: "EXPLORE_DW_ERROR", nodeId: action.nodeId, error: String(e) });
+        }
+      }];
+    }
+    return [next, null];
+  }
+
+  case "EXPLORE_DW_LOADED":
+    return [{ ...state, explore: { ...state.explore, dwCache: { ...state.explore.dwCache, [action.nodeId]: action.data } } }, null];
+
+  case "EXPLORE_DW_ERROR":
+    return [{ ...state, explore: { ...state.explore, dwCache: { ...state.explore.dwCache, [action.nodeId]: { error: action.error } as unknown as import("./types/api.js").DwExploreDetail } } }, null];
 
   default:
     return [state, null];

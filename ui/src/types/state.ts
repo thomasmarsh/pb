@@ -17,7 +17,8 @@ export type ViewName =
   | "dwDetail"
   | "diagrams"
   | "queries"
-  | "search";
+  | "search"
+  | "explore";
 
 export interface ObjectsState {
   items: ObjectRow[];
@@ -58,6 +59,15 @@ export interface SearchState {
   loading: boolean;
 }
 
+export interface ExploreState {
+  libraries: import("./api.js").ExploreLibrary[];
+  expandedNodes: Set<string>;
+  selectedNode: string | null;
+  astCache: Record<string, unknown>;
+  dwCache: Record<string, import("./api.js").DwExploreDetail>;
+  loading: boolean;
+}
+
 export interface AppState {
   view: ViewName;
   stats: StatsResponse | null;
@@ -71,4 +81,5 @@ export interface AppState {
   diagrams: DiagramsState;
   queries: QueriesState;
   search: SearchState;
+  explore: ExploreState;
 }

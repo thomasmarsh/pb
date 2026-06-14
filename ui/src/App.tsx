@@ -13,6 +13,7 @@ import { DataWindows, DWDetail } from "./components/DataWindows.js";
 import { Diagrams } from "./components/Diagrams.js";
 import { Queries } from "./components/Queries.js";
 import { Search } from "./components/Search.js";
+import { Explore } from "./components/Explore.js";
 import { useStore } from "./context.js";
 import { initViewFromUrl, setupPopstateHandler } from "./navigation.js";
 import { HealthCheck } from "./components/HealthCheck.js";
@@ -42,6 +43,7 @@ function ViewRouter() {
       <Show when={view() === "diagrams"}><Diagrams /></Show>
       <Show when={view() === "queries"}><Queries /></Show>
       <Show when={view() === "search"}><Search /></Show>
+      <Show when={view() === "explore"}><Explore /></Show>
     </Layout>
   );
 }

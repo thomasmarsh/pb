@@ -142,3 +142,43 @@ export interface QueryResult {
   columns: string[];
   rows: Record<string, unknown>[];
 }
+
+// ── Explore tree ─────────────────────────────────────────────────────────────
+
+export interface ExploreProcedure {
+  object: string;
+  proc_type: string;
+  name: string;
+  modifiers: string | null;
+  params: string | null;
+  return_type: string | null;
+  start_line: number | null;
+  end_line: number | null;
+  cyclomatic: number | null;
+}
+
+export interface ExploreObject {
+  name: string;
+  kind: string;
+  file: string;
+  procedures: ExploreProcedure[];
+}
+
+export interface ExploreLibrary {
+  name: string;
+  objects: ExploreObject[];
+}
+
+export interface ExploreTreeResponse {
+  libraries: ExploreLibrary[];
+}
+
+export interface DwExploreDetail {
+  name: string;
+  controls: DwControlRow[];
+  retrieve_tables: string[];
+  retrieve_columns: { column_fqn: string; table_name: string; column_name: string }[];
+  retrieve_where: { idx: number; exp1: string; op: string; exp2: string; logic: string }[];
+  arguments: { arg_name: string; arg_type: string }[];
+  error?: string;
+}

@@ -27,12 +27,7 @@ def render_body(body_json: str | list) -> str:
         body = json.loads(body_json)
     else:
         body = body_json
-    lines: list[str] = []
-    for stmt in body:
-        rendered = _render_stmt(stmt, indent=0)
-        if rendered is not None:
-            lines.append(rendered)
-    return "\n".join(lines)
+    return _render_body_list(body, indent=0)
 
 
 def _render_stmt(stmt: dict[str, Any], indent: int) -> str | None:
@@ -241,12 +236,8 @@ def _render_expr(expr: Any) -> str:
     if tag == "ExLvalue":
         return _render_lvalue(c if isinstance(c, dict) else {})
 
-    if tag in ("ExBool",):
-        if c is True:
-            return "true"
-        if c is False:
-            return "false"
-        return str(c)
+    if tag == "ExBool":
+        return "true" if c else "false"
 
     if tag in ("ExInt", "ExReal", "ExStr", "ExDate", "ExTime"):
         return str(c) if c is not None else ""

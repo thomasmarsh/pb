@@ -99,10 +99,13 @@ def compute_cyclomatic(conn, progress: AnalyzeProgress) -> None:
     procs = conn.execute(
         "SELECT rowid, body_json FROM procedures WHERE body_json IS NOT NULL"
     ).fetchall()
+    rows = []
     for rowid, body_json in procs:
         cc = count_branches(json.loads(body_json)) + 1
-        conn.execute("UPDATE procedures SET cyclomatic = ? WHERE rowid = ?", [cc, rowid])
+        rows.append([cc, rowid])
         progress.advance_cyclomatic()
+    if rows:
+        conn.executemany("UPDATE procedures SET cyclomatic = ? WHERE rowid = ?", rows)
 
 
 def compute_dit(conn) -> dict[str, int]:

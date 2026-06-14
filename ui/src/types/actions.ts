@@ -12,6 +12,8 @@ import type {
   QueryDef,
   QueryResult,
   SearchResponse,
+  ExploreTreeResponse,
+  DwExploreDetail,
 } from "./api.js";
 
 export type AppAction =
@@ -60,4 +62,17 @@ export type AppAction =
   | { type: "QUERY_ERROR"; error: string }
   // Search
   | { type: "SEARCH_TERM"; term: string }
-  | { type: "SEARCH_LOADED"; data: SearchResponse };
+  | { type: "SEARCH_LOADED"; data: SearchResponse }
+  // Explore
+  | { type: "EXPLORE_LOAD" }
+  | { type: "EXPLORE_LOADED"; data: ExploreTreeResponse }
+  | { type: "EXPLORE_TOGGLE"; nodeId: string }
+  | { type: "EXPLORE_SELECT"; nodeId: string }
+  | { type: "EXPLORE_PROC_EXPAND"; objectName: string; procName: string; nodeId: string }
+  | { type: "EXPLORE_AST_LOADED"; nodeId: string; ast: unknown }
+  | { type: "EXPLORE_AST_ERROR"; nodeId: string; error: string }
+  | { type: "EXPLORE_EXPAND_ALL" }
+  | { type: "EXPLORE_COLLAPSE_ALL" }
+  | { type: "EXPLORE_DW_EXPAND"; dwName: string; nodeId: string }
+  | { type: "EXPLORE_DW_LOADED"; nodeId: string; data: DwExploreDetail }
+  | { type: "EXPLORE_DW_ERROR"; nodeId: string; error: string };

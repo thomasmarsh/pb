@@ -36,6 +36,8 @@ const mockEnv: Env = {
     getDiagram: vi.fn(),
     getQueries: vi.fn(),
     runQuery: vi.fn(),
+    getExploreTree: vi.fn(),
+    getExploreProcedure: vi.fn(),
   } as ApiClient,
 };
 
@@ -57,6 +59,10 @@ describe("initialState", () => {
     expect(s.diagrams).toEqual({ active: "inheritance", svg: null, loading: false, params: {} });
     expect(s.queries).toEqual({ items: [], results: null, resultsName: "", loading: false });
     expect(s.search).toEqual({ term: "", results: null, loading: false });
+    expect(s.explore).toEqual({
+      libraries: [], expandedNodes: expect.any(Set), selectedNode: null,
+      astCache: {}, dwCache: {}, loading: false,
+    });
   });
 
   it("returns fresh object each call", () => {
@@ -393,6 +399,116 @@ describe("SEARCH_LOADED", () => {
   });
 });
 
+// ── Explore ─────────────────────────────────────────────────────────────────
+
+describe("EXPLORE_LOAD", () => {
+  it("sets loading, returns effect", () => {
+    const [s, effect] = reducer(initialState(), { type: "EXPLORE_LOAD" });
+    expect(s.explore.loading).toBe(true);
+    expect(effect).toBeTypeOf("function");
+  });
+});
+
+describe("EXPLORE_LOADED", () => {
+  it("sets libraries, clears loading", () => {
+    const data = { libraries: [{ name: "lib1.pbl", objects: [] }] };
+    const s0 = initialState();
+    s0.explore.loading = true;
+    const [s1] = reducer(s0, { type: "EXPLORE_LOADED", data });
+    expect(s1.explore.libraries).toHaveLength(1);
+    expect(s1.explore.libraries[0].name).toBe("lib1.pbl");
+    expect(s1.explore.loading).toBe(false);
+  });
+});
+
+describe("EXPLORE_TOGGLE", () => {
+  it("adds node to expanded set", () => {
+    const [s] = reducer(initialState(), { type: "EXPLORE_TOGGLE", nodeId: "lib:foo" });
+    expect(s.explore.expandedNodes.has("lib:foo")).toBe(true);
+  });
+
+  it("removes node if already expanded", () => {
+    const s0 = initialState();
+    s0.explore.expandedNodes = new Set(["lib:foo"]);
+    const [s1] = reducer(s0, { type: "EXPLORE_TOGGLE", nodeId: "lib:foo" });
+    expect(s1.explore.expandedNodes.has("lib:foo")).toBe(false);
+  });
+});
+
+describe("EXPLORE_SELECT", () => {
+  it("sets selectedNode", () => {
+    const [s] = reducer(initialState(), { type: "EXPLORE_SELECT", nodeId: "proc:obj:fn" });
+    expect(s.explore.selectedNode).toBe("proc:obj:fn");
+  });
+});
+
+describe("EXPLORE_PROC_EXPAND", () => {
+  it("toggles node and returns lazy-load effect when expanding", () => {
+    const [s, effect] = reducer(initialState(), {
+      type: "EXPLORE_PROC_EXPAND", objectName: "o", procName: "p", nodeId: "proc:o:p",
+    });
+    expect(s.explore.expandedNodes.has("proc:o:p")).toBe(true);
+    expect(effect).toBeTypeOf("function");
+  });
+
+  it("no effect when AST already cached", () => {
+    const s0 = initialState();
+    s0.explore.astCache["proc:o:p"] = [{ tag: "BsReturn" }];
+    const [s1, effect] = reducer(s0, {
+      type: "EXPLORE_PROC_EXPAND", objectName: "o", procName: "p", nodeId: "proc:o:p",
+    });
+    expect(s1.explore.expandedNodes.has("proc:o:p")).toBe(true);
+    expect(effect).toBeNull();
+  });
+
+  it("collapses when already expanded", () => {
+    const s0 = initialState();
+    s0.explore.expandedNodes = new Set(["proc:o:p"]);
+    const [s1] = reducer(s0, {
+      type: "EXPLORE_PROC_EXPAND", objectName: "o", procName: "p", nodeId: "proc:o:p",
+    });
+    expect(s1.explore.expandedNodes.has("proc:o:p")).toBe(false);
+  });
+});
+
+describe("EXPLORE_AST_LOADED", () => {
+  it("caches AST data", () => {
+    const ast = [{ tag: "BsReturn", contents: null }];
+    const [s] = reducer(initialState(), { type: "EXPLORE_AST_LOADED", nodeId: "proc:o:p", ast });
+    expect(s.explore.astCache["proc:o:p"]).toEqual(ast);
+  });
+});
+
+describe("EXPLORE_AST_ERROR", () => {
+  it("caches error", () => {
+    const [s] = reducer(initialState(), { type: "EXPLORE_AST_ERROR", nodeId: "proc:o:p", error: "not found" });
+    expect(s.explore.astCache["proc:o:p"]).toEqual({ error: "not found" });
+  });
+});
+
+describe("EXPLORE_EXPAND_ALL", () => {
+  it("expands all libraries and objects", () => {
+    const s0 = initialState();
+    s0.explore.libraries = [
+      { name: "a.pbl", objects: [{ name: "o1", kind: "powerscript", file: "f", procedures: [] }] },
+      { name: "b.pbl", objects: [] },
+    ];
+    const [s1] = reducer(s0, { type: "EXPLORE_EXPAND_ALL" });
+    expect(s1.explore.expandedNodes.has("lib:a.pbl")).toBe(true);
+    expect(s1.explore.expandedNodes.has("lib:b.pbl")).toBe(true);
+    expect(s1.explore.expandedNodes.has("obj:a.pbl:o1")).toBe(true);
+  });
+});
+
+describe("EXPLORE_COLLAPSE_ALL", () => {
+  it("clears all expanded nodes", () => {
+    const s0 = initialState();
+    s0.explore.expandedNodes = new Set(["lib:x", "obj:x:y"]);
+    const [s1] = reducer(s0, { type: "EXPLORE_COLLAPSE_ALL" });
+    expect(s1.explore.expandedNodes.size).toBe(0);
+  });
+});
+
 // ── Unknown action ──────────────────────────────────────────────────────────
 
 describe("unknown action", () => {
@@ -420,6 +536,9 @@ describe("immutability", () => {
       { type: "DW_SEARCH", q: "x" },
       { type: "DIAGRAM_SELECT", kind: "calls" },
       { type: "SEARCH_TERM", term: "ab" },
+      { type: "EXPLORE_TOGGLE", nodeId: "lib:x" },
+      { type: "EXPLORE_SELECT", nodeId: "proc:o:p" },
+      { type: "EXPLORE_COLLAPSE_ALL" },
     ];
     const original = JSON.stringify(s0);
     for (const a of actions) {

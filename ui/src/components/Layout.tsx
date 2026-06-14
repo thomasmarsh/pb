@@ -8,6 +8,7 @@ const NAV_ITEMS: { path: ViewName; icon: string; label: string }[] = [
   { path: "dashboard", icon: "\u25A6", label: "Dashboard" },
   { path: "objects", icon: "\u25B6", label: "Objects" },
   { path: "datawindows", icon: "\u25A4", label: "DataWindows" },
+  { path: "explore", icon: "\u25B8", label: "Explore" },
   { path: "diagrams", icon: "\u25CF", label: "Diagrams" },
   { path: "queries", icon: "\u2318", label: "Queries" },
   { path: "search", icon: "\uD83D\uDD0D", label: "Search" },

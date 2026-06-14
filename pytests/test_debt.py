@@ -60,24 +60,24 @@ def test_categorize_empty():
 # ── walk_bsraw ────────────────────────────────────────────────────────────────
 
 def test_walk_bsraw_finds_raw_text():
-    node = {"tag": "raw", "text": "select 1"}
+    node = {"tag": "BsRaw", "contents": "select 1"}
     assert list(walk_bsraw(node)) == ["select 1"]
 
 
 def test_walk_bsraw_recurses_into_body():
-    node = {"tag": "if", "body": [{"tag": "raw", "text": "select 1"}]}
+    node = {"tag": "BsIf", "body": [{"tag": "BsRaw", "contents": "select 1"}]}
     assert list(walk_bsraw(node)) == ["select 1"]
 
 
 def test_walk_bsraw_ignores_exraw():
-    node = {"tag": "raw", "tokens": ["foo", "bar"]}
+    node = {"tag": "ExRaw", "contents": ["foo", "bar"]}
     assert list(walk_bsraw(node)) == []
 
 
 def test_walk_bsraw_handles_list():
     nodes = [
-        {"tag": "raw", "text": "a"},
-        {"tag": "raw", "text": "b"},
+        {"tag": "BsRaw", "contents": "a"},
+        {"tag": "BsRaw", "contents": "b"},
     ]
     assert list(walk_bsraw(nodes)) == ["a", "b"]
 
@@ -90,7 +90,7 @@ def test_walk_bsraw_empty():
 # ── walk_exraw ────────────────────────────────────────────────────────────────
 
 def test_walk_exraw_finds_raw_with_tokens():
-    node = {"tag": "raw", "tokens": ["create", "ClassName"]}
+    node = {"tag": "ExRaw", "contents": ["create", "ClassName"]}
     results = list(walk_exraw(node))
     assert len(results) == 1
     first, toks = results[0]
@@ -99,17 +99,17 @@ def test_walk_exraw_finds_raw_with_tokens():
 
 
 def test_walk_exraw_skips_empty_tokens():
-    node = {"tag": "raw", "tokens": []}
+    node = {"tag": "ExRaw", "contents": []}
     assert list(walk_exraw(node)) == []
 
 
 def test_walk_exraw_ignores_bsraw():
-    node = {"tag": "raw", "text": "select 1"}
+    node = {"tag": "BsRaw", "contents": "select 1"}
     assert list(walk_exraw(node)) == []
 
 
 def test_walk_exraw_recurses():
-    node = {"tag": "call", "expr": {"tag": "raw", "tokens": ["post", "event"]}}
+    node = {"tag": "BsCall", "contents": {"tag": "ExRaw", "contents": ["post", "event"]}}
     results = list(walk_exraw(node))
     assert len(results) == 1
     assert results[0][0] == "post"
