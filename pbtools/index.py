@@ -93,6 +93,7 @@ def _proc_row(file: str, proc_type: str, block: dict) -> tuple:
         modifiers, params, return_type,
         meta.get('startLine'), meta.get('endLine'),
         json.dumps(block.get('body', [])),
+        block.get('source_rendered', ''),
     )
 
 

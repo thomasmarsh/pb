@@ -13,8 +13,6 @@ import graphviz
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 
-from pbtools.explorer.render import render_body
-
 router = APIRouter()
 
 QUERIES_DIR = Path(__file__).parent.parent.parent / "queries"
@@ -229,11 +227,7 @@ async def get_procedure(object_name: str, proc_name: str, request: Request):
             )
         proc = rows[0]
 
-        body_json = proc.get("body_json")
-        if body_json:
-            proc["source_rendered"] = render_body(body_json)
-        else:
-            proc["source_rendered"] = ""
+        proc["source_rendered"] = proc.get("source_rendered") or ""
 
         source_file = proc.get("file")
         start = proc.get("start_line")

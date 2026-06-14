@@ -20,16 +20,17 @@ CREATE TABLE IF NOT EXISTS objects (
 );
 
 CREATE TABLE IF NOT EXISTS procedures (
-    file        TEXT NOT NULL,
-    object      TEXT NOT NULL,
-    proc_type   TEXT NOT NULL,
-    name        TEXT NOT NULL,
-    modifiers   TEXT,
-    params      TEXT,
-    return_type TEXT,
-    start_line  INT,
-    end_line    INT,
-    body_json   JSON
+    file             TEXT NOT NULL,
+    object           TEXT NOT NULL,
+    proc_type        TEXT NOT NULL,
+    name             TEXT NOT NULL,
+    modifiers        TEXT,
+    params           TEXT,
+    return_type      TEXT,
+    start_line       INT,
+    end_line         INT,
+    body_json        JSON,
+    source_rendered  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS dw_controls (
@@ -86,7 +87,7 @@ CREATE TABLE IF NOT EXISTS inherits (
 
 INSERT = {
     'objects':             'INSERT INTO objects VALUES (?,?,?,?)',
-    'procedures':          'INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?)',
+    'procedures':          'INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?)',
     'dw_controls':         'INSERT INTO dw_controls VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
     'dw_retrieve_tables':  'INSERT INTO dw_retrieve_tables VALUES (?,?,?)',
     'dw_retrieve_columns': 'INSERT INTO dw_retrieve_columns VALUES (?,?,?,?,?)',
