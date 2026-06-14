@@ -1,12 +1,10 @@
 // core.ts — Pure state management for pb explore.
 //
-// No DOM, no side effects, no imports except types. Fully testable.
-//
 // Architecture:
 //   State   — single immutable object (AppState)
 //   Action  — discriminated union (AppAction)
-//   Effect  — (dispatch, getState, env) => Promise<void>
-//   Reducer — (state, action) -> [newState, Effect | null]
+//   Effect  — class wrapping (send: (a: A) => void) => Promise<void>; supports .map()
+//   Reducer — (state, action, env) -> [newState, Effect<AppAction> | null]
 
 import type { AppState } from "./types/state.js";
 import type { AppAction } from "./types/actions.js";
@@ -21,6 +19,7 @@ import type {
   StatsResponse,
   ExploreTreeResponse,
   DwExploreDetail,
+  QueryDef,
 } from "./types/api.js";
 import type { BodyStmt } from "./types/ast.generated.js";
 
@@ -28,15 +27,61 @@ import type { BodyStmt } from "./types/ast.generated.js";
 
 function libId(name: string): string { return `lib:${name}`; }
 function objId(lib: string, name: string): string { return `obj:${lib}:${name}`; }
+function errMsg(e: unknown): string { return e instanceof Error ? e.message : String(e); }
 
-// ── Types ───────────────────────────────────────────────────────────────────
+// ── Effect ───────────────────────────────────────────────────────────────────
+
+type Runner<A> = (send: (a: A) => void) => Promise<void>;
+
+export class Effect<A> {
+  private constructor(private readonly runner: Runner<A>) {}
+
+  /** An effect that does nothing. */
+  static none<A>(): Effect<A> {
+    return new Effect(() => Promise.resolve());
+  }
+
+  /** An effect that immediately sends a single value. Useful in tests. */
+  static send<A>(a: A): Effect<A> {
+    return new Effect(send => { send(a); return Promise.resolve(); });
+  }
+
+  /** Lift a promise thunk; errors propagate (store catches unhandled rejections). */
+  static fromPromise<A>(thunk: () => Promise<A>): Effect<A> {
+    return new Effect(send => thunk().then(a => { send(a); }));
+  }
+
+  /** Run all effects concurrently; each sends into the same channel. */
+  static merge<A>(...effects: Effect<A>[]): Effect<A> {
+    return new Effect(send =>
+      Promise.all(effects.map(e => e.runner(send))).then(() => {})
+    );
+  }
+
+  map<B>(f: (a: A) => B): Effect<B> {
+    return new Effect(send => this.runner(a => send(f(a))));
+  }
+
+  /** Convert a rejected promise into a sent value rather than a thrown error. */
+  catch(onReject: (e: unknown) => A): Effect<A> {
+    return new Effect(send =>
+      this.runner(send).catch(e => { send(onReject(e)); })
+    );
+  }
+
+  /** @internal — called by the store. */
+  execute(send: (a: A) => void): Promise<void> {
+    return this.runner(send);
+  }
+}
+
+// ── Types ────────────────────────────────────────────────────────────────────
 
 export type Dispatch = (action: AppAction) => void;
 export type GetState = () => AppState;
-export type Effect = (dispatch: Dispatch, getState: GetState, env: Env) => Promise<void>;
-export type ReducerResult = [AppState, Effect | null];
-export type Reducer = (state: AppState, action: AppAction) => ReducerResult;
+export type Reducer = (state: AppState, action: AppAction, env: Env) => [AppState, Effect<AppAction> | null];
 
+// ApiClient — Promise-based adapter implemented in api-client.ts.
 export interface ApiClient {
   getStats(): Promise<StatsResponse>;
   getObjects(params: Record<string, string | number>): Promise<ListObjectsResponse>;
@@ -47,18 +92,33 @@ export interface ApiClient {
   search(q: string): Promise<SearchResponse>;
   getDW(name: string): Promise<DwDetailResponse>;
   getDiagram(kind: string, params: Record<string, string | number>): Promise<string>;
-  getQueries(): Promise<{ queries: import("./types/api.js").QueryDef[] }>;
+  getQueries(): Promise<{ queries: QueryDef[] }>;
   runQuery(name: string, params: Record<string, string>): Promise<QueryResult>;
   getExploreTree(): Promise<ExploreTreeResponse>;
   getExploreProcedure(objectName: string, procName: string): Promise<{ ast: BodyStmt[] | null }>;
   getExploreDatawindow(name: string): Promise<DwExploreDetail>;
 }
 
+// Env — Effect-based environment. All effects in the reducer are produced via
+// calls to env. Tests replace individual methods via object spread.
 export interface Env {
-  api: ApiClient;
+  getStats(): Effect<StatsResponse>;
+  getObjects(params: Record<string, string | number>): Effect<ListObjectsResponse>;
+  getObject(name: string): Effect<ObjectDetailResponse>;
+  getObjectSource(name: string): Effect<ObjectSourceResponse>;
+  getAllObjects(): Effect<ListObjectsResponse>;
+  getProcedure(obj: string, proc: string): Effect<ProcedureDetailResponse>;
+  search(q: string): Effect<SearchResponse>;
+  getDW(name: string): Effect<DwDetailResponse>;
+  getDiagram(kind: string, params: Record<string, string | number>): Effect<string>;
+  getQueries(): Effect<{ queries: QueryDef[] }>;
+  runQuery(name: string, params: Record<string, string>): Effect<QueryResult>;
+  getExploreTree(): Effect<ExploreTreeResponse>;
+  getExploreProcedure(objectName: string, procName: string): Effect<{ ast: BodyStmt[] | null }>;
+  getExploreDatawindow(name: string): Effect<DwExploreDetail>;
 }
 
-// ── State ───────────────────────────────────────────────────────────────────
+// ── State ────────────────────────────────────────────────────────────────────
 
 export function initialState(): AppState {
   return {
@@ -89,59 +149,9 @@ export function initialState(): AppState {
   };
 }
 
-// ── Effects ─────────────────────────────────────────────────────────────────
+// ── Reducer ──────────────────────────────────────────────────────────────────
 
-export async function fetchObjectsEffect(dispatch: Dispatch, getState: GetState, env: Env): Promise<void> {
-  const s = getState();
-  const p = {
-    q: s.objects.q, kind: s.objects.kind,
-    sort: s.objects.sort, order: s.objects.order,
-    limit: 100, offset: s.objects.offset,
-  };
-  try {
-    const data = await env.api.getObjects(p);
-    dispatch({ type: "OBJECTS_LOADED", data });
-  } catch (e) { console.error("objects fetch failed:", e); }
-}
-
-export async function fetchDWListEffect(dispatch: Dispatch, getState: GetState, env: Env): Promise<void> {
-  const s = getState();
-  const p = { q: s.datawindows.q, kind: "datawindow", limit: 200 };
-  try {
-    const data = await env.api.getObjects(p);
-    dispatch({ type: "DW_LOADED", data });
-  } catch (e) { console.error("dw fetch failed:", e); }
-}
-
-export async function doSearchEffect(dispatch: Dispatch, getState: GetState, env: Env): Promise<void> {
-  const s = getState();
-  const q = s.search.term;
-  if (!q || q.length < 2) return;
-  try {
-    const data = await env.api.search(q);
-    dispatch({ type: "SEARCH_LOADED", data });
-  } catch (e) { console.error("search failed:", e); }
-}
-
-function asyncFetch<T>(
-  apiCall: (api: ApiClient) => Promise<T>,
-  loadedType: string,
-  errorType: string,
-): Effect {
-  return async (dispatch, _getState, env) => {
-    try {
-      const data = await apiCall(env.api);
-      dispatch({ type: loadedType, data } as AppAction);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      dispatch({ type: errorType, error: msg } as AppAction);
-    }
-  };
-}
-
-// ── Reducer ─────────────────────────────────────────────────────────────────
-
-export function reducer(state: AppState, action: AppAction): ReducerResult {
+export function reducer(state: AppState, action: AppAction, env: Env): [AppState, Effect<AppAction> | null] {
   switch (action.type) {
 
   // Navigation
@@ -150,46 +160,46 @@ export function reducer(state: AppState, action: AppAction): ReducerResult {
 
   // Stats
   case "STATS_LOAD":
-    return [state, async (dispatch, _getState, env) => {
-      try {
-        const stats = await env.api.getStats();
-        dispatch({ type: "STATS_LOADED", stats });
-      } catch (e) { console.error("stats load failed:", e); }
-    }];
+    return [state, env.getStats()
+      .map((stats): AppAction => ({ type: "STATS_LOADED", stats }))];
   case "STATS_LOADED":
     return [{ ...state, stats: action.stats }, null];
 
   // Objects
-  case "OBJECTS_SEARCH":
-    return [{
-      ...state,
-      objects: { ...state.objects, q: action.q, offset: 0, loading: true },
-    }, fetchObjectsEffect];
+  case "OBJECTS_SEARCH": {
+    const p = { q: action.q, kind: state.objects.kind, sort: state.objects.sort, order: state.objects.order, limit: 100, offset: 0 };
+    return [
+      { ...state, objects: { ...state.objects, q: action.q, offset: 0, loading: true } },
+      env.getObjects(p).map((data): AppAction => ({ type: "OBJECTS_LOADED", data })),
+    ];
+  }
 
-  case "OBJECTS_FILTER_KIND":
-    return [{
-      ...state,
-      objects: { ...state.objects, kind: action.kind, offset: 0, loading: true },
-    }, fetchObjectsEffect];
+  case "OBJECTS_FILTER_KIND": {
+    const p = { q: state.objects.q, kind: action.kind, sort: state.objects.sort, order: state.objects.order, limit: 100, offset: 0 };
+    return [
+      { ...state, objects: { ...state.objects, kind: action.kind, offset: 0, loading: true } },
+      env.getObjects(p).map((data): AppAction => ({ type: "OBJECTS_LOADED", data })),
+    ];
+  }
 
-  case "OBJECTS_SORT":
-    return [{
-      ...state,
-      objects: {
-        ...state.objects,
-        sort: action.col,
-        order: state.objects.sort === action.col
-          ? (state.objects.order === "asc" ? "desc" : "asc")
-          : "asc",
-        offset: 0, loading: true,
-      },
-    }, fetchObjectsEffect];
+  case "OBJECTS_SORT": {
+    const order = state.objects.sort === action.col
+      ? (state.objects.order === "asc" ? "desc" : "asc")
+      : "asc";
+    const p = { q: state.objects.q, kind: state.objects.kind, sort: action.col, order, limit: 100, offset: 0 };
+    return [
+      { ...state, objects: { ...state.objects, sort: action.col, order, offset: 0, loading: true } },
+      env.getObjects(p).map((data): AppAction => ({ type: "OBJECTS_LOADED", data })),
+    ];
+  }
 
-  case "OBJECTS_PAGE":
-    return [{
-      ...state,
-      objects: { ...state.objects, offset: action.offset, loading: true },
-    }, fetchObjectsEffect];
+  case "OBJECTS_PAGE": {
+    const p = { q: state.objects.q, kind: state.objects.kind, sort: state.objects.sort, order: state.objects.order, limit: 100, offset: action.offset };
+    return [
+      { ...state, objects: { ...state.objects, offset: action.offset, loading: true } },
+      env.getObjects(p).map((data): AppAction => ({ type: "OBJECTS_LOADED", data })),
+    ];
+  }
 
   case "OBJECTS_LOADED":
     return [{
@@ -199,19 +209,17 @@ export function reducer(state: AppState, action: AppAction): ReducerResult {
 
   // Object detail
   case "OBJECT_SELECTED":
-    return [{ ...state, objectDetail: null, sourceDetail: null, view: "objectDetail" }, async (dispatch, _getState, env) => {
-      try {
-        const [data, source] = await Promise.all([
-          env.api.getObject(action.name),
-          env.api.getObjectSource(action.name),
-        ]);
-        dispatch({ type: "OBJECT_LOADED", data });
-        dispatch({ type: "SOURCE_LOADED", data: source });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        dispatch({ type: "OBJECT_LOAD_ERROR", error: msg });
-      }
-    }];
+    return [
+      { ...state, objectDetail: null, sourceDetail: null, view: "objectDetail" },
+      Effect.merge<AppAction>(
+        env.getObject(action.name)
+          .map((data): AppAction => ({ type: "OBJECT_LOADED", data }))
+          .catch((e): AppAction => ({ type: "OBJECT_LOAD_ERROR", error: errMsg(e) })),
+        env.getObjectSource(action.name)
+          .map((data): AppAction => ({ type: "SOURCE_LOADED", data }))
+          .catch((e): AppAction => ({ type: "SOURCE_ERROR", error: errMsg(e) })),
+      ),
+    ];
   case "OBJECT_LOADED":
     return [{ ...state, objectDetail: { ...action.data, loading: false } }, null];
   case "OBJECT_LOAD_ERROR":
@@ -229,11 +237,12 @@ export function reducer(state: AppState, action: AppAction): ReducerResult {
 
   // Procedure detail
   case "PROCEDURE_SELECTED":
-    return [{ ...state, procedureDetail: null, view: "procedureDetail" },
-      asyncFetch(
-        api => api.getProcedure(action.objectName, action.procName),
-        "PROCEDURE_LOADED", "PROCEDURE_LOAD_ERROR",
-      )];
+    return [
+      { ...state, procedureDetail: null, view: "procedureDetail" },
+      env.getProcedure(action.objectName, action.procName)
+        .map((data): AppAction => ({ type: "PROCEDURE_LOADED", data }))
+        .catch((e): AppAction => ({ type: "PROCEDURE_LOAD_ERROR", error: errMsg(e) })),
+    ];
   case "PROCEDURE_LOADED":
     return [{ ...state, procedureDetail: { ...action.data, activeTab: "original", loading: false } }, null];
   case "PROCEDURE_LOAD_ERROR":
@@ -247,11 +256,13 @@ export function reducer(state: AppState, action: AppAction): ReducerResult {
     }, null];
 
   // DataWindows
-  case "DW_SEARCH":
-    return [{
-      ...state,
-      datawindows: { ...state.datawindows, q: action.q, loading: true },
-    }, fetchDWListEffect];
+  case "DW_SEARCH": {
+    const p = { q: action.q, kind: "datawindow", limit: 200 };
+    return [
+      { ...state, datawindows: { ...state.datawindows, q: action.q, loading: true } },
+      env.getObjects(p).map((data): AppAction => ({ type: "DW_LOADED", data })),
+    ];
+  }
 
   case "DW_LOADED":
     return [{
@@ -260,8 +271,12 @@ export function reducer(state: AppState, action: AppAction): ReducerResult {
     }, null];
 
   case "DW_SELECTED":
-    return [{ ...state, dwDetail: null, view: "dwDetail" },
-      asyncFetch(api => api.getDW(action.name), "DW_LOADED_DETAIL", "DW_LOAD_ERROR")];
+    return [
+      { ...state, dwDetail: null, view: "dwDetail" },
+      env.getDW(action.name)
+        .map((data): AppAction => ({ type: "DW_LOADED_DETAIL", data }))
+        .catch((e): AppAction => ({ type: "DW_LOAD_ERROR", error: errMsg(e) })),
+    ];
   case "DW_LOADED_DETAIL":
     return [{ ...state, dwDetail: { ...action.data, loading: false } }, null];
   case "DW_LOAD_ERROR":
@@ -275,24 +290,15 @@ export function reducer(state: AppState, action: AppAction): ReducerResult {
     }, null];
 
   case "DIAGRAM_PARAMS":
-    return [{
-      ...state,
-      diagrams: { ...state.diagrams, params: action.params },
-    }, null];
+    return [{ ...state, diagrams: { ...state.diagrams, params: action.params } }, null];
 
   case "DIAGRAM_GENERATE":
-    return [{ ...state, diagrams: { ...state.diagrams, loading: true } },
-      async (dispatch, getState, env) => {
-        try {
-          const s = getState();
-          const kind = s.diagrams.active;
-          const svg = await env.api.getDiagram(kind, s.diagrams.params);
-          dispatch({ type: "DIAGRAM_LOADED", svg });
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          dispatch({ type: "DIAGRAM_ERROR", error: msg });
-        }
-      }];
+    return [
+      { ...state, diagrams: { ...state.diagrams, loading: true } },
+      env.getDiagram(state.diagrams.active, state.diagrams.params)
+        .map((svg): AppAction => ({ type: "DIAGRAM_LOADED", svg }))
+        .catch((e): AppAction => ({ type: "DIAGRAM_ERROR", error: errMsg(e) })),
+    ];
   case "DIAGRAM_LOADED":
     return [{ ...state, diagrams: { ...state.diagrams, svg: action.svg, loading: false } }, null];
   case "DIAGRAM_ERROR":
@@ -300,56 +306,50 @@ export function reducer(state: AppState, action: AppAction): ReducerResult {
 
   // Queries
   case "QUERIES_LOAD":
-    return [{ ...state, queries: { ...state.queries, loading: true } }, async (dispatch, _getState, env) => {
-      try {
-        const data = await env.api.getQueries();
-        dispatch({ type: "QUERIES_LOADED", items: data.queries });
-      } catch (e) { console.error("queries load failed:", e); }
-    }];
+    return [
+      { ...state, queries: { ...state.queries, loading: true } },
+      env.getQueries().map((data): AppAction => ({ type: "QUERIES_LOADED", items: data.queries })),
+    ];
   case "QUERIES_LOADED":
     return [{ ...state, queries: { ...state.queries, items: action.items, loading: false } }, null];
 
   case "QUERY_RUN":
-    return [{ ...state, queries: { ...state.queries, results: null, resultsName: action.name } },
-      asyncFetch(api => api.runQuery(action.name, action.params), "QUERY_LOADED", "QUERY_ERROR")];
+    return [
+      { ...state, queries: { ...state.queries, results: null, resultsName: action.name } },
+      env.runQuery(action.name, action.params)
+        .map((data): AppAction => ({ type: "QUERY_LOADED", data }))
+        .catch((e): AppAction => ({ type: "QUERY_ERROR", error: errMsg(e) })),
+    ];
   case "QUERY_LOADED":
     return [{ ...state, queries: { ...state.queries, results: action.data, loading: false } }, null];
   case "QUERY_ERROR":
     return [{ ...state, queries: { ...state.queries, results: { error: action.error }, loading: false } }, null];
 
   // Search
-  case "SEARCH_TERM":
-    return [{
-      ...state,
-      search: { ...state.search, term: action.term },
-    }, action.term.length >= 2 ? doSearchEffect : null];
+  case "SEARCH_TERM": {
+    const next = { ...state, search: { ...state.search, term: action.term } };
+    if (action.term.length < 2) return [next, null];
+    return [next, env.search(action.term).map((data): AppAction => ({ type: "SEARCH_LOADED", data }))];
+  }
 
   case "SEARCH_LOADED":
     return [{ ...state, search: { ...state.search, results: action.data, loading: false } }, null];
 
   // Explore
   case "EXPLORE_LOAD":
-    return [{ ...state, explore: { ...state.explore, loading: true } },
-      async (dispatch, _getState, env) => {
-        try {
-          const data = await env.api.getExploreTree();
-          dispatch({ type: "EXPLORE_LOADED", data });
-        } catch (e) {
-          console.error("explore tree load failed:", e);
-          dispatch({ type: "EXPLORE_LOADED", data: { libraries: [] } });
-        }
-      }];
+    return [
+      { ...state, explore: { ...state.explore, loading: true } },
+      env.getExploreTree()
+        .map((data): AppAction => ({ type: "EXPLORE_LOADED", data }))
+        .catch((): AppAction => ({ type: "EXPLORE_LOADED", data: { libraries: [] } })),
+    ];
 
   case "EXPLORE_LOADED":
     return [{ ...state, explore: { ...state.explore, libraries: action.data.libraries, loading: false } }, null];
 
   case "EXPLORE_TOGGLE": {
     const expanded = new Set(state.explore.expandedNodes);
-    if (expanded.has(action.nodeId)) {
-      expanded.delete(action.nodeId);
-    } else {
-      expanded.add(action.nodeId);
-    }
+    if (expanded.has(action.nodeId)) { expanded.delete(action.nodeId); } else { expanded.add(action.nodeId); }
     return [{ ...state, explore: { ...state.explore, expandedNodes: expanded } }, null];
   }
 
@@ -359,22 +359,12 @@ export function reducer(state: AppState, action: AppAction): ReducerResult {
   case "EXPLORE_PROC_EXPAND": {
     const expanded = new Set(state.explore.expandedNodes);
     const wasExpanded = expanded.has(action.nodeId);
-    if (wasExpanded) {
-      expanded.delete(action.nodeId);
-    } else {
-      expanded.add(action.nodeId);
-    }
+    if (wasExpanded) { expanded.delete(action.nodeId); } else { expanded.add(action.nodeId); }
     const next = { ...state, explore: { ...state.explore, expandedNodes: expanded } };
-    const alreadyCached = action.nodeId in state.explore.astCache;
-    if (!wasExpanded && !alreadyCached) {
-      return [next, async (dispatch, _getState, env) => {
-        try {
-          const data = await env.api.getExploreProcedure(action.objectName, action.procName);
-          dispatch({ type: "EXPLORE_AST_LOADED", nodeId: action.nodeId, ast: data.ast });
-        } catch (e) {
-          dispatch({ type: "EXPLORE_AST_ERROR", nodeId: action.nodeId, error: String(e) });
-        }
-      }];
+    if (!wasExpanded && !(action.nodeId in state.explore.astCache)) {
+      return [next, env.getExploreProcedure(action.objectName, action.procName)
+        .map((data): AppAction => ({ type: "EXPLORE_AST_LOADED", nodeId: action.nodeId, ast: data.ast }))
+        .catch((e): AppAction => ({ type: "EXPLORE_AST_ERROR", nodeId: action.nodeId, error: String(e) }))];
     }
     return [next, null];
   }
@@ -391,9 +381,7 @@ export function reducer(state: AppState, action: AppAction): ReducerResult {
     const expanded = new Set<string>();
     for (const lib of state.explore.libraries) {
       expanded.add(libId(lib.name));
-      for (const obj of lib.objects) {
-        expanded.add(objId(lib.name, obj.name));
-      }
+      for (const obj of lib.objects) { expanded.add(objId(lib.name, obj.name)); }
     }
     return [{ ...state, explore: { ...state.explore, expandedNodes: expanded } }, null];
   }
@@ -404,22 +392,12 @@ export function reducer(state: AppState, action: AppAction): ReducerResult {
   case "EXPLORE_DW_EXPAND": {
     const expanded = new Set(state.explore.expandedNodes);
     const wasExpanded = expanded.has(action.nodeId);
-    if (wasExpanded) {
-      expanded.delete(action.nodeId);
-    } else {
-      expanded.add(action.nodeId);
-    }
+    if (wasExpanded) { expanded.delete(action.nodeId); } else { expanded.add(action.nodeId); }
     const next = { ...state, explore: { ...state.explore, expandedNodes: expanded } };
-    const alreadyCached = action.nodeId in state.explore.dwCache;
-    if (!wasExpanded && !alreadyCached) {
-      return [next, async (dispatch, _getState, env) => {
-        try {
-          const data = await env.api.getExploreDatawindow(action.dwName);
-          dispatch({ type: "EXPLORE_DW_LOADED", nodeId: action.nodeId, data });
-        } catch (e) {
-          dispatch({ type: "EXPLORE_DW_ERROR", nodeId: action.nodeId, error: String(e) });
-        }
-      }];
+    if (!wasExpanded && !(action.nodeId in state.explore.dwCache)) {
+      return [next, env.getExploreDatawindow(action.dwName)
+        .map((data): AppAction => ({ type: "EXPLORE_DW_LOADED", nodeId: action.nodeId, data }))
+        .catch((e): AppAction => ({ type: "EXPLORE_DW_ERROR", nodeId: action.nodeId, error: String(e) }))];
     }
     return [next, null];
   }

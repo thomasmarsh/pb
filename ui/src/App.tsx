@@ -4,7 +4,7 @@ import { render, Show } from "solid-js/web";
 import { StoreProvider } from "./context.js";
 import { createStoreAdapter } from "./store.js";
 import { initialState, reducer } from "./core.js";
-import { createApiClient } from "./api-client.js";
+import { createApiClient, createEnv } from "./api-client.js";
 import { Layout } from "./components/Layout.js";
 import { Dashboard } from "./components/Dashboard.js";
 import { Objects, ObjectDetail } from "./components/Objects.js";
@@ -18,7 +18,7 @@ import { useStore } from "./context.js";
 import { initViewFromUrl, setupPopstateHandler } from "./navigation.js";
 import { HealthCheck } from "./components/HealthCheck.js";
 
-const env = { api: createApiClient() };
+const env = createEnv(createApiClient());
 const store = createStoreAdapter(initialState(), reducer, env);
 
 // Bootstrap: read URL and dispatch initial actions
@@ -26,7 +26,7 @@ initViewFromUrl(store.dispatch);
 setupPopstateHandler(store.dispatch);
 
 // Load stats for dashboard (always needed for sidebar)
-if (!store.getState().stats) store.dispatch({ type: "STATS_LOAD" });
+if (!store.state.stats) store.dispatch({ type: "STATS_LOAD" });
 
 function ViewRouter() {
   const store = useStore();

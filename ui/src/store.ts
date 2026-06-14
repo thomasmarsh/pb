@@ -4,16 +4,13 @@
 import { createStore, reconcile } from "solid-js/store";
 import type { AppState } from "./types/state.js";
 import type { AppAction } from "./types/actions.js";
-import type { Dispatch, GetState, Env, Effect } from "./core.js";
+import type { Dispatch, Env, Reducer } from "./core.js";
 import { syncUrlFromState } from "./navigation.js";
 
 export interface Store {
   state: AppState;
   dispatch: Dispatch;
-  getState: GetState;
 }
-
-type ReducerFn = (state: AppState, action: AppAction) => [AppState, Effect | null];
 
 // Actions that change the view — sync URL after these
 const VIEW_ACTIONS = new Set([
@@ -22,16 +19,15 @@ const VIEW_ACTIONS = new Set([
 
 export function createStoreAdapter(
   init: AppState,
-  reducerFn: ReducerFn,
+  reducerFn: Reducer,
   env: Env,
 ): Store {
   const [state, setState] = createStore<AppState>(init);
 
   function dispatch(action: AppAction): void {
-    const [next, effect] = reducerFn(state as AppState, action);
+    const [next, effect] = reducerFn(state as AppState, action, env);
     setState(reconcile(next));
 
-    // Sync URL after view-changing actions
     if (VIEW_ACTIONS.has(action.type)) {
       syncUrlFromState(next.view, {
         objectDetail: next.objectDetail,
@@ -41,13 +37,9 @@ export function createStoreAdapter(
     }
 
     if (effect) {
-      effect(dispatch, () => state as AppState, env);
+      effect.execute(dispatch).catch(e => console.error("unhandled effect error:", e));
     }
   }
 
-  return {
-    state,
-    dispatch,
-    getState: () => state as AppState,
-  };
+  return { state, dispatch };
 }

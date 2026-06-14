@@ -15,9 +15,6 @@ export function Diagrams() {
 
   onMount(() => {
     store.dispatch({ type: "NAVIGATE", view: "diagrams" });
-    if (!store.state.allObjects.length) {
-      store.getState(); // ensure state is read
-    }
   });
 
   function handleGenerate() {
