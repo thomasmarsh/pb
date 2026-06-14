@@ -24,36 +24,34 @@ pb/
 │   ├── queries.py          Auto-register queries/*.sql as `pb query` commands
 │   ├── state.py            Incremental state tracking (file mtimes)
 │   ├── pbl.py              .pbl extraction via powerbuilder-pbl-dump
-│   └── explorer/           FastAPI backend + SolidJS frontend (pb explore)
+│   └── explorer/           FastAPI backend (pb explore)
 │       ├── api.py          FastAPI router — all /api/* endpoints
 │       ├── app.py          App factory — mounts router + static files
 │       ├── render.py       AST body_json → human-readable PBScript
-│       ├── static/         Served at /static/
-│       │   ├── index.html  SPA shell page
-│       │   ├── style.css
-│       │   └── dist/       Vite build output (App.js) — not in git
-│       ├── src/            TypeScript / SolidJS source — not in git after build
-│       │   ├── App.tsx     SPA root component
-│       │   ├── api-client.ts  Typed wrappers around /api/* endpoints
-│       │   ├── components/ One file per UI panel (Objects, DataWindows, …)
-│       │   └── types/
-│       │       ├── api.ts          Hand-written API response shapes
-│       │       ├── state.ts        SolidJS store shape
-│       │       ├── actions.ts      Reducer action types
-│       │       └── ast.generated.ts  Generated from Haskell — not in git
-│       ├── package.json    pnpm project (SolidJS, Vite, Vitest)
-│       └── vite.config.ts  Builds src/App.tsx → static/dist/App.js
+│       └── static/         Served at /static/
+│           ├── index.html  SPA shell page
+│           ├── style.css
+│           └── dist/       Vite build output (app.js) — not in git
+├── ui/                     TypeScript / SolidJS SPA source
+│   ├── src/
+│   │   ├── App.tsx         SPA root component
+│   │   ├── api-client.ts   Typed wrappers around /api/* endpoints
+│   │   ├── components/     One file per UI panel (Objects, DataWindows, …)
+│   │   └── types/
+│   │       ├── api.ts              Hand-written API response shapes
+│   │       ├── state.ts            SolidJS store shape
+│   │       ├── actions.ts          Reducer action types
+│   │       └── ast.generated.ts    Generated from Haskell — not in git
+│   ├── tests/              Vitest test suite
+│   ├── package.json        pnpm project (SolidJS, Vite, Vitest)
+│   ├── vite.config.ts      Builds src/App.tsx → ../pbtools/explorer/static/dist/
+│   └── tsconfig.json
 ├── queries/                SQL files served as `pb query <name>` commands
 ├── pytests/                pytest test suite for Python tools
 ├── example/                Corpus data (openpay, openpay-src)
 ├── reference/              SPEC.md + Appeon docs (markdown)
 └── plan/                   Planning artifacts (BACKLOG, STRATEGY, session plans)
 ```
-
-> **Planned restructuring:** `pbtools/explorer/src/` (and `package.json`,
-> `vite.config.ts`, `tests/`) will be extracted to a top-level `ui/` directory.
-> The Vite output path will continue to target `pbtools/explorer/static/dist/`
-> so the Python serving layer is unchanged.  Track this in BACKLOG.
 
 ---
 
@@ -69,7 +67,7 @@ flowchart TD
     ANALYZE["pb analyze\n(pbtools/analyze.py)\ncall graph · cyclomatic complexity"]
     EXPLORE["pb explore\n(pbtools/cli.py)"]
     API["FastAPI\n(pbtools/explorer/api.py)"]
-    SPA["SolidJS SPA\n(pbtools/explorer/src/)"]
+    SPA["SolidJS SPA\n(ui/src/)"]
 
     SRC -->|"cabal run pb-runner\n-i SRC --jsonl"| RUNNER
     RUNNER --> JSONL
@@ -100,7 +98,7 @@ flowchart LR
         PY_ANA["analyze.py\nwalk_calls · count_branches"]
         PY_API["explorer/api.py\nFastAPI"]
     end
-    subgraph TS["TypeScript (explorer/src/)"]
+    subgraph TS["TypeScript (ui/src/)"]
         TS_TYPES["types/ast.generated.ts\n(build artifact)"]
         TS_APP["App.tsx\nSolidJS SPA"]
     end
@@ -120,7 +118,7 @@ The `prebuild` npm script writes this output to
 `src/types/ast.generated.ts` each time `pnpm build` is invoked:
 
 ```json
-"prebuild": "cabal run --project-dir ../.. pb-runner -v0 -- --emit-ts > src/types/ast.generated.ts"
+"prebuild": "cabal run --project-dir .. pb-runner -v0 -- --emit-ts > src/types/ast.generated.ts"
 ```
 
 `ast.generated.ts` is a build artifact — it is not committed to git and not
@@ -152,8 +150,8 @@ constructor name.
 runs `prebuild` (emits TypeScript types) then Vite, writing
 `static/dist/App.js`.  The FastAPI app mounts `static/` at `/static/`.
 
-Staleness is determined by comparing the mtime of `static/dist/app.js`
-against `src/**/*.ts`, `src/**/*.tsx`, `package.json`, and `vite.config.ts`.
+Staleness is determined by comparing the mtime of `pbtools/explorer/static/dist/app.js`
+against `ui/src/**/*.ts`, `ui/src/**/*.tsx`, `ui/package.json`, and `ui/vite.config.ts`.
 
 ### TypeScript → FastAPI: HTTP
 
@@ -178,9 +176,9 @@ generation for the API contract — changes to `api.py` must be reflected in
 | FastAPI endpoints | `pbtools/explorer/api.py` |
 | AST → PBScript rendering | `pbtools/explorer/render.py` |
 | Explorer build orchestration | `pbtools/build.py:ensure_explorer_built` |
-| SPA root | `pbtools/explorer/src/App.tsx` |
-| SPA state | `pbtools/explorer/src/store.ts` |
-| Generated TS types | `pbtools/explorer/src/types/ast.generated.ts` |
+| SPA root | `ui/src/App.tsx` |
+| SPA state | `ui/src/store.ts` |
+| Generated TS types | `ui/src/types/ast.generated.ts` |
 | SQL query commands | `queries/*.sql` |
 
 ---
@@ -191,7 +189,7 @@ generation for the API contract — changes to `api.py` must be reflected in
 |-------|---------|----------|
 | Haskell | `cabal test` | `test/` |
 | Python | `uv run pytest` | `pytests/` |
-| TypeScript | `pnpm test` (in `pbtools/explorer/`) | `pbtools/explorer/tests/` |
+| TypeScript | `pnpm test` (in `ui/`) | `ui/tests/` |
 | Corpus regression | `bash scripts/check-corpus.sh` | uses `example/openpay` |
 | Debt gate | `uv run pb debt` | checks ExRaw, BsRaw, DW coverage |
 

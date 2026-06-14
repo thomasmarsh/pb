@@ -10,7 +10,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "exactOptionalPropertyTypes": false,
-    "outDir": "static/dist",
+    "outDir": "../pbtools/explorer/static/dist",
     "rootDir": "src",
     "declaration": true,
     "sourceMap": true,

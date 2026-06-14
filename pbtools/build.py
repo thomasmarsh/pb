@@ -69,13 +69,13 @@ def ensure_explorer_built(repo: Path, verbose: bool = False) -> None:
     output. The prebuild step (pnpm prebuild) regenerates ast.generated.ts via
     cabal run pb-runner --emit-ts automatically when pnpm build is invoked.
     """
-    explorer_dir = repo / "pbtools" / "explorer"
-    dist_js      = explorer_dir / "static" / "dist" / "app.js"
+    ui_dir  = repo / "ui"
+    dist_js = repo / "pbtools" / "explorer" / "static" / "dist" / "app.js"
 
-    if _bundle_stale(explorer_dir, dist_js):
+    if _bundle_stale(ui_dir, dist_js):
         print("Building explorer frontend...", file=sys.stderr)
-        _run_explorer(explorer_dir, ["pnpm", "install", "--frozen-lockfile"], verbose)
-        _run_explorer(explorer_dir, ["pnpm", "build"], verbose)
+        _run_explorer(ui_dir, ["pnpm", "install", "--frozen-lockfile"], verbose)
+        _run_explorer(ui_dir, ["pnpm", "build"], verbose)
         if not dist_js.exists():
             sys.exit("error: explorer build produced no output")
 
