@@ -2,6 +2,8 @@ module SerialiseTest (tests) where
 
 import PB.Prelude
 import PB.AST.BodyStmt  (BodyStmt (..), DoCondition (..))
+import PB.AST.DataWindow (DwArgument (..), DwRetrieve (..), DwRetrieveOrRaw (..),
+                          DwWhereClause (..))
 import PB.AST.Expr      (Expr (..), Literal (..), LvSegment (..))
 import PB.AST.SourceFile (SrFile (..))
 import PB.Grammar.File        (SrSpans (..))
@@ -73,4 +75,47 @@ tests = testGroup "Serialise"
       let v = toJSON (LvSegment { lvsName = "x", lvsSubscript = Nothing })
       field "name"      v @?= String "x"
       field "subscript" v @?= Null
+
+  , testGroup "DwRetrieveOrRaw"
+      [ testCase "DwRetrieveOk emits tag=ok with inline retrieve fields" $ do
+          let dr = DwRetrieve { drVersion = 400, drTables = ["emp"], drColumns = ["emp.id"]
+                              , drArguments = [], drWhere = [] }
+              v  = toJSON (DwRetrieveOk dr)
+          field "tag"     v @?= String "ok"
+          field "version" v @?= toJSON (400 :: Int)
+          field "tables"  v @?= toJSON (["emp"] :: [Text])
+          field "columns" v @?= toJSON (["emp.id"] :: [Text])
+
+      , testCase "DwRetrieveRaw emits tag=raw with text field" $ do
+          let v = toJSON (DwRetrieveRaw "SELECT 1 FROM dual")
+          field "tag"  v @?= String "raw"
+          field "text" v @?= String "SELECT 1 FROM dual"
+
+      , testCase "DwRetrieveOk has no text field" $ do
+          let dr = DwRetrieve { drVersion = 1, drTables = [], drColumns = []
+                              , drArguments = [], drWhere = [] }
+              v  = toJSON (DwRetrieveOk dr)
+          assertBool "DwRetrieveOk must not have 'text' field" (not (hasField "text" v))
+
+      , testCase "DwRetrieveRaw has no tables field" $ do
+          let v = toJSON (DwRetrieveRaw "raw sql")
+          assertBool "DwRetrieveRaw must not have 'tables' field" (not (hasField "tables" v))
+
+      , testCase "DwRetrieveOk with where clause serialises clause fields" $ do
+          let wc = DwWhereClause { dwcExp1 = "t.id", dwcOp = "=", dwcExp2 = ":arg"
+                                 , dwcLogic = Nothing }
+              dr = DwRetrieve { drVersion = 400, drTables = ["t"], drColumns = []
+                              , drArguments = [], drWhere = [wc] }
+              v  = toJSON (DwRetrieveOk dr)
+          field "tag" v @?= String "ok"
+          assertBool "DwRetrieveOk must not have 'text' field" (not (hasField "text" v))
+
+      , testCase "DwRetrieveOk with argument serialises argument fields" $ do
+          let arg = DwArgument { daName = "p_id", daType = "long" }
+              dr  = DwRetrieve { drVersion = 400, drTables = ["t"], drColumns = []
+                               , drArguments = [arg], drWhere = [] }
+              v   = toJSON (DwRetrieveOk dr)
+          field "tag"       v @?= String "ok"
+          field "arguments" v @?= toJSON [arg]
+      ]
   ]

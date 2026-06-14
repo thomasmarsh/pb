@@ -21,7 +21,6 @@ import PB.Lexing.Splitter   (Statement (..))
 import PB.Lexing.Token      (Token, tkText)
 import PB.Pipeline.Preprocess (LogicalLine (..))
 
-import qualified Data.Aeson           as A
 import qualified Data.HashMap.Strict  as HashMap
 
 -- ---------------------------------------------------------------------------
@@ -192,27 +191,25 @@ instance HasCodec DwBandKind where
       , ("group_trailer", ("BkGroupTrailer", mapToDecoder BkGroupTrailer (requiredField "level" "")))
       , ("tree_level",    ("BkTreeLevel",    mapToDecoder BkTreeLevel    (requiredField "level" ""))) ])
 
-instance HasCodec DwRetrieve where
-  codec = object "DwRetrieve" $ DwRetrieve
-    <$> requiredField "version"   "" .= drVersion
-    <*> requiredField "tables"    "" .= drTables
-    <*> requiredField "columns"   "" .= drColumns
-    <*> requiredField "arguments" "" .= drArguments
-    <*> requiredField "where"     "" .= drWhere
+dwRetrieveObjCodec :: ObjectCodec DwRetrieve DwRetrieve
+dwRetrieveObjCodec = DwRetrieve
+  <$> requiredField "version"   "" .= drVersion
+  <*> requiredField "tables"    "" .= drTables
+  <*> requiredField "columns"   "" .= drColumns
+  <*> requiredField "arguments" "" .= drArguments
+  <*> requiredField "where"     "" .= drWhere
 
--- DwRetrieveOrRaw cannot use discriminatedUnionCodec because the current JSON
--- format has no tag field: DwRetrieveOk encodes as the DwRetrieve object
--- directly and DwRetrieveRaw encodes as {"raw":"…"}.
--- We use bimapCodec over Value to preserve the exact JSON structure.
+instance HasCodec DwRetrieve where
+  codec = object "DwRetrieve" dwRetrieveObjCodec
+
 instance HasCodec DwRetrieveOrRaw where
-  codec = bimapCodec
-    (\_ -> Left "DwRetrieveOrRaw decode not supported")
-    encDRoR
-    (codec @A.Value)
-    where
-      encDRoR :: DwRetrieveOrRaw -> A.Value
-      encDRoR (DwRetrieveOk  dr) = toJSONViaCodec dr
-      encDRoR (DwRetrieveRaw t)  = A.object ["raw" A..= t]
+  codec = object "DwRetrieveOrRaw" $ discriminatedUnionCodec "tag"
+    (\case
+      DwRetrieveOk  dr -> ("ok",  mapToEncoder dr dwRetrieveObjCodec)
+      DwRetrieveRaw t  -> ("raw", mapToEncoder t  (requiredField "text" "")))
+    (HashMap.fromList
+      [ ("ok",  ("DwRetrieveOk",  mapToDecoder DwRetrieveOk  dwRetrieveObjCodec))
+      , ("raw", ("DwRetrieveRaw", mapToDecoder DwRetrieveRaw (requiredField "text" ""))) ])
 
 -- ---------------------------------------------------------------------------
 -- Phase 4 — Recursive Expr
