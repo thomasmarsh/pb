@@ -40,6 +40,7 @@ library
     PB.Lexing.Splitter
     PB.Lexing.Token
     PB.Pipeline.Preprocess
+    PB.Pipeline.PrettyPrint
     PB.Pipeline.Runner
     PB.Pipeline.Serialise
     PB.Pipeline.Walk
@@ -76,7 +77,8 @@ test-suite pb-ast-test
   hs-source-dirs: test
   main-is: Main.hs
   other-modules:
-      BodyParserTest
+      PrettyPrintTest
+    , BodyParserTest
     , BodyStmtTest
     , CorpusDebtTest
     , DataWindowTest

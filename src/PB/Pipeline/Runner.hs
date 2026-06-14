@@ -15,8 +15,9 @@ import PB.Grammar.DataWindow (parseDataWindow)
 import PB.Grammar.File       (parseSrFileWithSpans, SrSpans (..))
 import PB.Lexing.Lexer      (LexError (..), LexLine (..), tokenize)
 import PB.Lexing.Splitter   (Statement (..), splitStatements)
-import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText, stripHeaders)
-import PB.Pipeline.Serialise  ()
+import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
+import PB.Pipeline.PrettyPrint (prettyBodyStmts)
+import PB.Pipeline.Serialise   ()
 
 import Data.Aeson          (ToJSON (..), Value (..), encode, object, toJSON, (.=))
 import qualified Data.Aeson.Key    as Key
@@ -117,6 +118,9 @@ wrapSrFile path sf spans =
                   , "endLine"   .= end
                   ]
         injectMeta _ v = v
+        injectRendered body (Object o) =
+            Object (KM.insert "source_rendered" (toJSON (prettyBodyStmts body)) o)
+        injectRendered _ v = v
     in object
         [ "file"            .= path
         , "kind"            .= ("powerscript" :: Text)
@@ -127,10 +131,14 @@ wrapSrFile path sf spans =
         , "variables"       .= srVariables sf
         , "globalInstances" .= srGlobalInstances sf
         , "typeBlocks"      .= srTypeBlocks sf
-        , "onBlocks"        .= zipWith injectMeta (spOnBlocks    spans) (map toJSON (srOnBlocks    sf))
-        , "events"          .= zipWith injectMeta (spEvents      spans) (map toJSON (srEvents      sf))
-        , "functions"       .= zipWith injectMeta (spFunctions   spans) (map toJSON (srFunctions   sf))
-        , "subroutines"     .= zipWith injectMeta (spSubroutines spans) (map toJSON (srSubroutines sf))
+        , "onBlocks"    .= [ injectRendered (obBody ob) (injectMeta sp (toJSON ob))
+                           | (sp, ob) <- zip (spOnBlocks    spans) (srOnBlocks    sf) ]
+        , "events"      .= [ injectRendered (evBody ev) (injectMeta sp (toJSON ev))
+                           | (sp, ev) <- zip (spEvents      spans) (srEvents      sf) ]
+        , "functions"   .= [ injectRendered (fbBody fn) (injectMeta sp (toJSON fn))
+                           | (sp, fn) <- zip (spFunctions   spans) (srFunctions   sf) ]
+        , "subroutines" .= [ injectRendered (sbBody sb) (injectMeta sp (toJSON sb))
+                           | (sp, sb) <- zip (spSubroutines spans) (srSubroutines sf) ]
         ]
 
 -- | Convert lex results to statements, failing on the first lex error.
