@@ -18,9 +18,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            /usr/local/.ghcup/ghc
+            /usr/local/.ghcup/ghc/9.10.2
             /usr/local/.ghcup/bin
-          key: ghcup-${{ runner.os }}-ghc-9.10.2
+          key: ghcup-${{ runner.os }}-ghc-9.10.2-v2
 
       - name: Set up GHC
         uses: haskell-actions/setup@v2
