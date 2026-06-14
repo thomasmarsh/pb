@@ -9,15 +9,12 @@ import pytest
 
 REPO_ROOT   = Path(__file__).parent.parent
 OPENPAY_DIR = REPO_ROOT / "example" / "openpay-src"
-DB_PATH     = REPO_ROOT / "pb.duckdb"
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
 def db_path():
-    if os.path.exists(DB_PATH):
-        return str(DB_PATH)
     tmp = tempfile.mkdtemp()
     db = os.path.join(tmp, "test.duckdb")
     runner = subprocess.run(
@@ -30,7 +27,9 @@ def db_path():
     run_from_jsonl_lines(io.StringIO(runner.stdout.decode()), db)
     from pbtools.analyze import run as analyze
     analyze(db)
-    return db
+    yield db
+    os.unlink(db)
+    os.rmdir(tmp)
 
 
 @pytest.fixture(scope="module")
@@ -277,58 +276,155 @@ def test_render_body_empty():
     assert render_body([]) == ""
 
 
-def test_render_body_simple_call():
+def test_render_body_empty_passthrough():
+    # Sanity: empty body always works regardless of format
     from pbtools.explorer.render import render_body
-    body = [{"tag": "call", "expr": {"tag": "call_expr", "callee": {"segments": [{"name": "setnull"}]}, "args": [["x"]]} }]
-    result = render_body(body)
-    assert "setnull" in result
+    assert render_body("[]") == ""
+    assert render_body([]) == ""
 
 
-def test_render_body_return():
+# ── render tests: new JSON format (genericToJSON / aeson-typescript) ──────────
+# These use the actual tag names and "contents" structure emitted by pb-runner
+# after the 6fa3e1a serialise rewrite.  Each test must FAIL before render.py
+# is updated and PASS after.
+
+_lv = lambda *names: {"segments": [{"name": n, "subscript": None} for n in names]}
+_exlv = lambda *names: {"tag": "ExLvalue", "contents": _lv(*names)}
+_exint = lambda n: {"tag": "ExInt", "contents": str(n)}
+_excall = lambda fn, *args: {
+    "tag": "ExCall",
+    "callee": _lv(fn),
+    "args": list(args),
+}
+
+
+def test_render_new_bs_call():
     from pbtools.explorer.render import render_body
-    body = [{"tag": "return", "expr": {"tag": "lvalue", "segments": [{"name": "result"}]}}]
+    body = [{"tag": "BsCall", "contents": _excall("setnull", ["x"])}]
     result = render_body(body)
-    assert "return" in result
-    assert "result" in result
+    assert "setnull" in result, f"BsCall not rendered; got: {result!r}"
+    assert "/* unknown" not in result
 
 
-def test_render_body_if():
+def test_render_new_bs_return_with_expr():
     from pbtools.explorer.render import render_body
-    body = [{"tag": "if", "cond": {"tag": "lvalue", "segments": [{"name": "x"}]},
-             "then": [{"tag": "return", "expr": {"tag": "lvalue", "segments": [{"name": "y"}]}}],
-             "elseIfs": [], "else": None}]
+    body = [{"tag": "BsReturn", "contents": {"tag": "ExBool", "contents": True}}]
     result = render_body(body)
-    assert "if x then" in result
-    assert "return y" in result
-    assert "end if" in result
+    assert "return" in result, f"BsReturn not rendered; got: {result!r}"
+    assert "/* unknown" not in result
 
 
-def test_render_body_exit_continue():
+def test_render_new_bs_assign():
     from pbtools.explorer.render import render_body
-    body = [{"tag": "exit"}, {"tag": "continue"}]
+    body = [{"tag": "BsAssign", "contents": [_lv("ls_result"), _exlv("ls_value")]}]
     result = render_body(body)
-    assert "exit" in result
-    assert "continue" in result
+    assert "ls_result" in result and "ls_value" in result, f"BsAssign not rendered; got: {result!r}"
+    assert "=" in result
+    assert "/* unknown" not in result
 
 
-def test_render_body_assign():
+def test_render_new_bs_local_var():
     from pbtools.explorer.render import render_body
-    body = [{"tag": "assign",
-             "lhs": {"segments": [{"name": "ls_result"}]},
-             "rhs": {"tag": "lvalue", "segments": [{"name": "ls_value"}]}}]
+    body = [{"tag": "BsLocalVar", "contents": ["string", "ls_name"]}]
     result = render_body(body)
-    assert "ls_result = ls_value" in result
+    assert "string" in result and "ls_name" in result, f"BsLocalVar not rendered; got: {result!r}"
+    assert "/* unknown" not in result
 
 
-def test_render_body_for():
+def test_render_new_bs_if():
     from pbtools.explorer.render import render_body
-    body = [{"tag": "for",
-             "var": {"segments": [{"name": "i"}]},
-             "from": {"tag": "lvalue", "segments": [{"name": "1"}]},
-             "to": {"tag": "lvalue", "segments": [{"name": "10"}]},
-             "step": None,
-             "body": [{"tag": "continue"}]}]
+    body = [{
+        "tag": "BsIf",
+        "contents": {
+            "cond": {"tag": "ExBool", "contents": True},
+            "then": [{"tag": "BsReturn", "contents": _exint(1)}],
+            "elseIfs": [],
+            "else": None,
+        },
+    }]
     result = render_body(body)
-    assert "for i = 1 to 10" in result
-    assert "continue" in result
-    assert "next" in result
+    assert "if" in result and "end if" in result, f"BsIf not rendered; got: {result!r}"
+    assert "/* unknown" not in result
+
+
+def test_render_new_bs_for():
+    from pbtools.explorer.render import render_body
+    body = [{
+        "tag": "BsFor",
+        "contents": {
+            "var": _lv("i"),
+            "from": _exint(1),
+            "to": _exint(10),
+            "step": None,
+            "body": [{"tag": "BsContinue"}],
+        },
+    }]
+    result = render_body(body)
+    assert "for" in result and "next" in result, f"BsFor not rendered; got: {result!r}"
+    assert "/* unknown" not in result
+
+
+def test_render_new_bs_exit_continue():
+    from pbtools.explorer.render import render_body
+    body = [{"tag": "BsExit"}, {"tag": "BsContinue"}]
+    result = render_body(body)
+    assert "exit" in result and "continue" in result, f"BsExit/Continue not rendered; got: {result!r}"
+    assert "/* unknown" not in result
+
+
+def test_render_new_bs_destroy():
+    from pbtools.explorer.render import render_body
+    body = [{"tag": "BsDestroy", "contents": _lv("lds_obj")}]
+    result = render_body(body)
+    assert "destroy" in result and "lds_obj" in result, f"BsDestroy not rendered; got: {result!r}"
+    assert "/* unknown" not in result
+
+
+def test_render_new_bs_raw():
+    from pbtools.explorer.render import render_body
+    body = [{"tag": "BsRaw", "contents": "FETCH cur_x INTO :ll_id;"}]
+    result = render_body(body)
+    assert "FETCH" in result, f"BsRaw not rendered; got: {result!r}"
+    assert "/* unknown" not in result
+
+
+def test_render_new_ex_call_callee_name():
+    from pbtools.explorer.render import render_body
+    body = [{"tag": "BsCall", "contents": _excall("MessageBox", ["'Info'"], ["'Hello'"])}]
+    result = render_body(body)
+    assert "MessageBox" in result, f"ExCall callee name not rendered; got: {result!r}"
+
+
+def test_render_new_ex_lvalue_dotted():
+    from pbtools.explorer.render import render_body
+    body = [{"tag": "BsAssign", "contents": [_lv("dw_1", "object"), _exlv("dw_2", "object")]}]
+    result = render_body(body)
+    assert "dw_1.object" in result, f"dotted lvalue not rendered; got: {result!r}"
+
+
+def test_render_new_ex_binop():
+    from pbtools.explorer.render import render_body
+    binop = {
+        "tag": "ExBinOp",
+        "lhs": _exlv("x"),
+        "op": "BopEq",
+        "rhs": _exint(0),
+    }
+    body = [{"tag": "BsReturn", "contents": binop}]
+    result = render_body(body)
+    assert "x" in result and "0" in result, f"ExBinOp not rendered; got: {result!r}"
+    assert "/* unknown" not in result
+
+
+def test_render_new_ex_method_call():
+    from pbtools.explorer.render import render_body
+    method_expr = {
+        "tag": "ExMethodCall",
+        "receiver": _excall("getparent"),
+        "method": "Reset",
+        "args": [],
+    }
+    body = [{"tag": "BsCall", "contents": method_expr}]
+    result = render_body(body)
+    assert "Reset" in result, f"ExMethodCall not rendered; got: {result!r}"
+    assert "/* unknown" not in result

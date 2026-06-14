@@ -106,8 +106,11 @@ def _rows():
 
 
 def _ok_retrieve(**extra):
-    return {"tag": "ok", "version": 400, "tables": [], "columns": [],
-            "arguments": [], "where": [], **extra}
+    # New format from pb-runner (genericToJSON): {"tag":"DwRetrieveOk","contents":{...}}
+    return {"tag": "DwRetrieveOk", "contents": {
+        "version": 400, "tables": [], "columns": [], "arguments": [], "where": [],
+        **extra,
+    }}
 
 
 def _dw_obj(retrieve=None):
@@ -149,8 +152,9 @@ def test_tag_ok_inserts_arguments():
 
 
 def test_tag_raw_inserts_nothing():
+    # New format: {"tag":"DwRetrieveRaw","contents":"SELECT ..."}
     rows = _rows()
-    _ingest_dw(_dw_obj({"tag": "raw", "text": "SELECT 1"}), "test.srd", rows)
+    _ingest_dw(_dw_obj({"tag": "DwRetrieveRaw", "contents": "SELECT 1"}), "test.srd", rows)
     assert rows['dw_retrieve_tables'] == []
     assert rows['dw_retrieve_columns'] == []
     assert rows['dw_retrieve_where'] == []

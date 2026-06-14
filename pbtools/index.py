@@ -103,13 +103,15 @@ def _ingest_dw(obj: dict, file: str, rows: dict) -> None:
         rows['dw_controls'].append(_ctrl_row(file, dw_name, ctrl))
 
     retrieve = (obj.get('table') or {}).get('retrieve')
-    if not isinstance(retrieve, dict) or retrieve.get('tag') != 'ok':
+    if not isinstance(retrieve, dict) or retrieve.get('tag') != 'DwRetrieveOk':
         return
 
-    for t in retrieve.get('tables', []):
+    contents = retrieve.get('contents') or {}
+
+    for t in contents.get('tables', []):
         rows['dw_retrieve_tables'].append((file, dw_name, t))
 
-    for col in retrieve.get('columns', []):
+    for col in contents.get('columns', []):
         parts = col.split('.', 1)
         rows['dw_retrieve_columns'].append((
             file, dw_name, col,
@@ -117,13 +119,13 @@ def _ingest_dw(obj: dict, file: str, rows: dict) -> None:
             parts[1] if len(parts) == 2 else col,
         ))
 
-    for i, w in enumerate(retrieve.get('where', [])):
+    for i, w in enumerate(contents.get('where', [])):
         rows['dw_retrieve_where'].append((
             file, dw_name, i,
             w.get('exp1'), w.get('op'), w.get('exp2'), w.get('logic'),
         ))
 
-    for a in retrieve.get('arguments', []):
+    for a in contents.get('arguments', []):
         rows['dw_arguments'].append((file, dw_name, a.get('name'), a.get('type')))
 
 

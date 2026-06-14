@@ -15,3 +15,4 @@ pb.duckdb
 node_modules
 pbtools/explorer/static/dist/
 pbtools/explorer/node_modules/
+pbtools/explorer/src/types/ast.generated.ts

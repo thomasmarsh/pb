@@ -10,7 +10,7 @@ import networkx as nx
 if TYPE_CHECKING:
     from pbtools.reporter import AnalyzeProgress, Reporter
 
-BRANCH_TAGS = {'if', 'for', 'do', 'choose'}
+BRANCH_TAGS = {'BsIf', 'BsFor', 'BsDo', 'BsChoose'}
 
 
 def run(db: str = 'pb.duckdb', reporter: Reporter | None = None) -> None:
@@ -60,14 +60,15 @@ def walk_calls(node) -> list[tuple[str, str]]:
     results = []
     if isinstance(node, dict):
         tag = node.get('tag')
-        if tag == 'call_expr':
+        if tag == 'ExCall':
             segs = node.get('callee', {}).get('segments', [])
             if segs:
-                results.append((segs[-1].get('name', ''), 'call_expr'))
-        elif tag == 'method_call':
-            results.append((node.get('method', ''), 'method_call'))
-        elif tag == 'dispatch':
-            results.append((node.get('name', ''), 'dispatch'))
+                results.append((segs[-1].get('name', ''), 'ExCall'))
+        elif tag == 'ExMethodCall':
+            results.append((node.get('method', ''), 'ExMethodCall'))
+        elif tag == 'ExDispatch':
+            name = node.get('contents', {}).get('name', '') or node.get('name', '')
+            results.append((name, 'ExDispatch'))
         for v in node.values():
             results.extend(walk_calls(v))
     elif isinstance(node, list):

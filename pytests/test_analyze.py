@@ -47,22 +47,79 @@ def q(conn, sql: str):
 
 # ── unit tests (no db needed) ─────────────────────────────────────────────────
 
-def test_cyclomatic_nonzero_for_function_with_if():
+def test_count_branches_uses_bs_tags():
+    # Tags in body_json are BsIf/BsFor/BsDo/BsChoose (Haskell constructor names),
+    # not the old short forms 'if'/'for'/'do'/'choose'.
     from pbtools.analyze import count_branches
-    body = [{
-        "tag": "if",
-        "cond": {"tag": "raw", "tokens": []},
-        "then": [{"tag": "return", "expr": None}],
-        "elseIfs": [],
-        "else": None,
-    }]
-    assert count_branches(body) == 1
-    assert count_branches(body) + 1 == 2
+    bs_if = {
+        "tag": "BsIf",
+        "contents": {
+            "cond": {"tag": "ExBool", "contents": True},
+            "then": [{"tag": "BsReturn", "contents": None}],
+            "elseIfs": [],
+            "else": None,
+        },
+    }
+    assert count_branches([bs_if]) == 1, "BsIf should count as one branch"
 
-    nested = [{"tag": "for", "body": body}]
-    assert count_branches(nested) == 2
+    bs_for = {"tag": "BsFor", "contents": {"body": [bs_if]}}
+    assert count_branches([bs_for]) == 2, "BsFor + nested BsIf should count as 2"
 
     assert count_branches([]) == 0
+
+
+def test_count_branches_old_tags_not_matched():
+    # Regression: old tag names ('if', 'for') must NOT match — they no longer
+    # appear in pb-runner output after the aeson-typescript rewrite.
+    from pbtools.analyze import count_branches
+    old_if = {"tag": "if", "cond": {}, "then": [], "elseIfs": [], "else": None}
+    assert count_branches([old_if]) == 0, "old 'if' tag must not be counted"
+
+
+def test_walk_calls_ex_call():
+    from pbtools.analyze import walk_calls
+    node = {
+        "tag": "ExCall",
+        "callee": {"segments": [{"name": "isnull", "subscript": None}]},
+        "args": [["x"]],
+    }
+    results = walk_calls(node)
+    assert any(name == "isnull" for name, _ in results), (
+        f"ExCall callee 'isnull' not extracted; got {results}"
+    )
+
+
+def test_walk_calls_ex_method_call():
+    from pbtools.analyze import walk_calls
+    node = {
+        "tag": "ExMethodCall",
+        "receiver": {"tag": "ExLvalue", "contents": {"segments": [{"name": "dw_1", "subscript": None}]}},
+        "method": "Reset",
+        "args": [],
+    }
+    results = walk_calls(node)
+    assert any(name == "Reset" for name, _ in results), (
+        f"ExMethodCall method 'Reset' not extracted; got {results}"
+    )
+
+
+def test_walk_calls_ex_dispatch():
+    from pbtools.analyze import walk_calls
+    node = {
+        "tag": "ExDispatch",
+        "contents": {
+            "name": "ie_checkmenu",
+            "mode": "DmTrigger",
+            "dynamic": True,
+            "event": True,
+            "object": None,
+            "args": [],
+        },
+    }
+    results = walk_calls(node)
+    assert any(name == "ie_checkmenu" for name, _ in results), (
+        f"ExDispatch name 'ie_checkmenu' not extracted; got {results}"
+    )
 
 
 # ── reporter integration ──────────────────────────────────────────────────────
@@ -99,7 +156,7 @@ def test_calls_table_populated_after_extract(analyzed_conn):
     call_types = {r[0] for r in analyzed_conn.execute(
         "SELECT DISTINCT call_type FROM calls"
     ).fetchall()}
-    assert 'call_expr' in call_types, f"no call_expr rows; found types: {call_types}"
+    assert 'ExCall' in call_types, f"no ExCall rows; found types: {call_types}"
 
 
 def test_object_metrics_has_all_objects(analyzed_conn):
