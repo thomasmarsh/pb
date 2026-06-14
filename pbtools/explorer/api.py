@@ -157,7 +157,7 @@ async def get_object_source(name: str, request: Request):
     conn = _conn(request)
     try:
         obj_rows = _rows(conn.execute(
-            "SELECT name, kind, file FROM objects WHERE name = ?", [name]
+            "SELECT name, kind, file, source_text FROM objects WHERE name = ?", [name]
         ))
         if not obj_rows:
             raise HTTPException(status_code=404, detail=f"Object not found: {name}")
@@ -170,6 +170,8 @@ async def get_object_source(name: str, request: Request):
                     lines = f.read().splitlines()
             except OSError:
                 pass
+        if not lines and obj_rows[0].get("source_text"):
+            lines = obj_rows[0]["source_text"].splitlines()
 
         procs = _rows(conn.execute(
             "SELECT name, proc_type, modifiers, params, return_type, "
@@ -200,6 +202,7 @@ async def get_object_source(name: str, request: Request):
         return {
             "file": file_path,
             "lines": lines,
+            "source_available": bool(lines),
             "procedures": procs,
             "knownObjects": known_objects,
             "knownProcs": known_procs,
@@ -216,7 +219,7 @@ async def get_procedure(object_name: str, proc_name: str, request: Request):
     try:
         rows = _rows(conn.execute(
             "SELECT file, object, proc_type, name, modifiers, params, "
-            "return_type, start_line, end_line, body_json, cyclomatic "
+            "return_type, start_line, end_line, body_json, cyclomatic, source_rendered "
             "FROM procedures WHERE object = ? AND name = ?",
             [object_name, proc_name],
         ))

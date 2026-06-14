@@ -48,7 +48,7 @@ def ingest_file(obj: dict, rows: dict) -> None:
     name = _object_name(obj)
     ancestor = obj.get('meta', {}).get('ancestor')
 
-    rows['objects'].append((file, name, kind, ancestor))
+    rows['objects'].append((file, name, kind, ancestor, obj.get('source_text')))
     if ancestor:
         rows['inherits'].append((name, ancestor))
 

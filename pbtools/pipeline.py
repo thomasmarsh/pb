@@ -23,6 +23,7 @@ from pbtools.state import (
 
 
 def run(src_dir: Path, db: str, binary: Path, reporter: Reporter, reset: bool = False) -> None:
+    src_dir = src_dir.resolve()  # normalise /var → /private/var symlink on macOS
     conn = duckdb.connect(db)
     if reset:
         drop_tables(conn)
@@ -76,6 +77,10 @@ def _parse_subset(
                 if is_err:
                     progress.on_error(obj)
                 else:
+                    try:
+                        obj['source_text'] = Path(obj['file']).read_text(errors='replace')
+                    except OSError:
+                        obj['source_text'] = None
                     objects.append(obj)
                 progress.advance()
         return objects, progress.error_count

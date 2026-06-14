@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS objects (
     file        TEXT NOT NULL,
     name        TEXT NOT NULL,
     kind        TEXT NOT NULL,
-    ancestor    TEXT
+    ancestor    TEXT,
+    source_text TEXT
 );
 
 CREATE TABLE IF NOT EXISTS procedures (
@@ -86,7 +87,7 @@ CREATE TABLE IF NOT EXISTS inherits (
 """
 
 INSERT = {
-    'objects':             'INSERT INTO objects VALUES (?,?,?,?)',
+    'objects':             'INSERT INTO objects VALUES (?,?,?,?,?)',
     'procedures':          'INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?)',
     'dw_controls':         'INSERT INTO dw_controls VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
     'dw_retrieve_tables':  'INSERT INTO dw_retrieve_tables VALUES (?,?,?)',

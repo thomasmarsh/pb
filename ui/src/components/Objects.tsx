@@ -245,7 +245,14 @@ export function ObjectDetail() {
                   </div>
                   <Show
                     when={src() && "lines" in (src() ?? {}) && (src() as { lines?: string[] }).lines && (src() as { lines: string[] }).lines!.length > 0}
-                    fallback={<Show when={src() && "error" in (src() ?? {})}><p style={{ color: "var(--red)", "font-size": "12px" }}>{(src() as { error: string }).error}</p></Show>}
+                    fallback={
+                      <Show when={src()}>
+                        {"error" in (src() as object)
+                          ? <p style={{ color: "var(--red)", "font-size": "12px" }}>{(src() as { error: string }).error}</p>
+                          : <p style={{ color: "var(--text-muted)", "font-size": "12px" }}>Source not available — re-index to restore it.</p>
+                        }
+                      </Show>
+                    }
                   >
                     <SourceViewer
                       lines={(src() as { lines: string[] }).lines}
