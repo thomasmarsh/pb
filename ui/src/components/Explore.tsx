@@ -4,6 +4,7 @@ import { Show, For, onMount, createMemo, type JSX } from "solid-js";
 import { useStore } from "../context.js";
 import { highlightPowerScript } from "../highlight.js";
 import type { ExploreLibrary, ExploreObject, ExploreProcedure, DwExploreDetail } from "../types/api.js";
+import type { BodyStmt, ChooseStmt } from "../types/ast.generated.js";
 
 // ── Node IDs ──────────────────────────────────────────────────────────────────
 
@@ -361,14 +362,16 @@ const RENDERERS: Record<string, NodeRenderer> = {
     },
   ),
   BsChoose: compound(
-    (n) => "choose case " + exprSum(n.contents),
     (n) => {
-      const clauses = n.contents;
-      if (!Array.isArray(clauses)) return [];
-      return clauses.map((clause, i) => {
-        const c = clause as Record<string, unknown>;
-        const label = c.expr != null ? `case ${exprSum(c.expr)}` : "case else";
-        return { key: `clause_${i}`, label, value: c.body ?? [] };
+      const c = n.contents as ChooseStmt | undefined;
+      return "choose case " + (c ? exprSum(c.expr) : "...");
+    },
+    (n) => {
+      const c = n.contents as ChooseStmt | undefined;
+      if (!c || !Array.isArray(c.clauses)) return [];
+      return c.clauses.map((clause, i) => {
+        const label = clause.expr != null ? `case ${exprSum(clause.expr)}` : "case else";
+        return { key: `clause_${i}`, label, value: clause.body };
       });
     },
   ),
@@ -387,7 +390,7 @@ function resolveRenderer(_node: Record<string, unknown>, tag: string): NodeRende
 // ── AST Node Renderer ─────────────────────────────────────────────────────────
 
 function AstNode(props: {
-  node: unknown;
+  node: BodyStmt | BodyStmt[] | unknown;
   nodeId: string;
   depth: number;
 }): JSX.Element {
@@ -523,7 +526,7 @@ function ProcNode(props: { objName: string; proc: ExploreProcedure; depth: numbe
             fallback={<div class="tree-loading">Loading AST...</div>}
           >
             <Show
-              when={astData() !== null && !(astData() as Record<string, unknown>)?.error}
+              when={Array.isArray(astData())}
               fallback={<div class="tree-empty">No AST body</div>}
             >
               <AstNode node={astData()} nodeId={`${nodeId()}.root`} depth={0} />
@@ -553,7 +556,7 @@ function DwNode(props: { name: string; depth: number }): JSX.Element {
 
   const summary = createMemo(() => {
     const d = dwData();
-    if (!d || !d.controls) return "";
+    if (!d || !('controls' in d)) return "";
     const parts: string[] = [];
     if (d.controls.length > 0) parts.push(`${d.controls.length} controls`);
     if (d.retrieve_tables.length > 0) parts.push(`${d.retrieve_tables.length} tables`);
@@ -577,10 +580,10 @@ function DwNode(props: { name: string; depth: number }): JSX.Element {
             fallback={<div class="tree-loading">Loading DataWindow...</div>}
           >
             <Show
-              when={dwData() && dwData()!.controls}
+              when={dwData() && 'controls' in dwData()!}
               fallback={<div class="tree-empty">No data</div>}
             >
-              <DwDetailTree data={dwData()!} />
+              <DwDetailTree data={dwData() as DwExploreDetail} />
             </Show>
           </Show>
         </div>

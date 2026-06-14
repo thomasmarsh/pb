@@ -121,9 +121,11 @@ The `prebuild` npm script writes this output to
 "prebuild": "cabal run --project-dir .. pb-runner -v0 -- --emit-ts > src/types/ast.generated.ts"
 ```
 
-`ast.generated.ts` is a build artifact — it is not committed to git and not
-imported by anything yet, but it is available for typed access to parsed AST
-data returned by the API.
+`ast.generated.ts` is a build artifact (not committed to git) that emits
+`export type` / `export interface` declarations.  It is imported by
+`ui/src/types/state.ts`, `actions.ts`, `core.ts`, `api-client.ts`, and
+`components/Explore.tsx` to type the `BodyStmt[]` AST payloads flowing
+through the explore API.
 
 ### Haskell → Python: JSONL
 
@@ -178,7 +180,7 @@ generation for the API contract — changes to `api.py` must be reflected in
 | Explorer build orchestration | `pbtools/build.py:ensure_explorer_built` |
 | SPA root | `ui/src/App.tsx` |
 | SPA state | `ui/src/store.ts` |
-| Generated TS types | `ui/src/types/ast.generated.ts` |
+| Generated AST types (TS) | `ui/src/types/ast.generated.ts` (build artifact; `pnpm prebuild` regenerates) |
 | SQL query commands | `queries/*.sql` |
 
 ---

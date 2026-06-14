@@ -14,6 +14,7 @@ import type {
   DwExploreDetail,
 } from "./types/api.js";
 import type { ApiClient } from "./core.js";
+import type { BodyStmt } from "./types/ast.generated.js";
 
 function apiParams(obj: Record<string, string | number>): string {
   const p = new URLSearchParams();
@@ -81,7 +82,7 @@ export function createApiClient(): ApiClient {
       return fetchJson("/api/explore/tree");
     },
 
-    async getExploreProcedure(objectName: string, procName: string): Promise<{ ast: unknown }> {
+    async getExploreProcedure(objectName: string, procName: string): Promise<{ ast: BodyStmt[] | null }> {
       return fetchJson(`/api/explore/procedure/${encodeURIComponent(objectName)}/${encodeURIComponent(procName)}`);
     },
 

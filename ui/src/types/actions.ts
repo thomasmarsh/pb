@@ -15,6 +15,7 @@ import type {
   ExploreTreeResponse,
   DwExploreDetail,
 } from "./api.js";
+import type { BodyStmt } from "./ast.generated.js";
 
 export type AppAction =
   // Navigation
@@ -69,7 +70,7 @@ export type AppAction =
   | { type: "EXPLORE_TOGGLE"; nodeId: string }
   | { type: "EXPLORE_SELECT"; nodeId: string }
   | { type: "EXPLORE_PROC_EXPAND"; objectName: string; procName: string; nodeId: string }
-  | { type: "EXPLORE_AST_LOADED"; nodeId: string; ast: unknown }
+  | { type: "EXPLORE_AST_LOADED"; nodeId: string; ast: BodyStmt[] | null }
   | { type: "EXPLORE_AST_ERROR"; nodeId: string; error: string }
   | { type: "EXPLORE_EXPAND_ALL" }
   | { type: "EXPLORE_COLLAPSE_ALL" }

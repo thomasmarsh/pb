@@ -1,8 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 module PB.Pipeline.Serialise
-  ( allTypeScriptDeclarations
-  , formatTSDeclarations
+  ( emitTypeScript
   ) where
 
 import PB.Prelude
@@ -10,6 +9,7 @@ import Data.Aeson              (Options (..), ToJSON (..), defaultOptions, gener
 import Data.Aeson.TypeScript.TH (TSDeclaration, TypeScript (..), deriveTypeScript, formatTSDeclarations)
 import Data.Char               (isLower, toLower)
 import Data.Proxy              (Proxy (..))
+import qualified Data.Text as T
 
 import PB.AST.BodyStmt
 import PB.AST.DataWindow
@@ -165,3 +165,16 @@ allTypeScriptDeclarations = concat
   , getTypeScriptDeclarations (Proxy @DwUnknownBlock)
   , getTypeScriptDeclarations (Proxy @DataWindowFile)
   ]
+
+emitTypeScript :: Text
+emitTypeScript
+  = T.unlines
+  . map exportLine
+  . T.lines
+  . T.pack
+  $ formatTSDeclarations allTypeScriptDeclarations
+  where
+    exportLine l
+      | "type "      `T.isPrefixOf` l = "export " <> l
+      | "interface " `T.isPrefixOf` l = "export " <> l
+      | otherwise                      = l

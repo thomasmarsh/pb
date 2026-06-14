@@ -22,6 +22,7 @@ import type {
   ExploreTreeResponse,
   DwExploreDetail,
 } from "./types/api.js";
+import type { BodyStmt } from "./types/ast.generated.js";
 
 // ── Node ID helpers ──────────────────────────────────────────────────────────
 
@@ -49,7 +50,7 @@ export interface ApiClient {
   getQueries(): Promise<{ queries: import("./types/api.js").QueryDef[] }>;
   runQuery(name: string, params: Record<string, string>): Promise<QueryResult>;
   getExploreTree(): Promise<ExploreTreeResponse>;
-  getExploreProcedure(objectName: string, procName: string): Promise<{ ast: unknown }>;
+  getExploreProcedure(objectName: string, procName: string): Promise<{ ast: BodyStmt[] | null }>;
   getExploreDatawindow(name: string): Promise<DwExploreDetail>;
 }
 
@@ -427,7 +428,7 @@ export function reducer(state: AppState, action: AppAction): ReducerResult {
     return [{ ...state, explore: { ...state.explore, dwCache: { ...state.explore.dwCache, [action.nodeId]: action.data } } }, null];
 
   case "EXPLORE_DW_ERROR":
-    return [{ ...state, explore: { ...state.explore, dwCache: { ...state.explore.dwCache, [action.nodeId]: { error: action.error } as unknown as import("./types/api.js").DwExploreDetail } } }, null];
+    return [{ ...state, explore: { ...state.explore, dwCache: { ...state.explore.dwCache, [action.nodeId]: { error: action.error } } } }, null];
 
   default:
     return [state, null];

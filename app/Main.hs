@@ -2,9 +2,8 @@ module Main (main) where
 
 import PB.Prelude
 import PB.Pipeline.Runner (runModeFiles, runModeJsonl)
-import PB.Pipeline.Serialise (allTypeScriptDeclarations, formatTSDeclarations)
+import PB.Pipeline.Serialise (emitTypeScript)
 
-import qualified Data.Text as T
 import Options.Applicative
 import System.Exit (die)
 
@@ -26,7 +25,7 @@ main :: IO ()
 main = do
   opts <- execParser (info (optParser <**> helper) desc)
   if optEmitTs opts
-    then putStrLn (T.pack (formatTSDeclarations allTypeScriptDeclarations))
+    then putStr emitTypeScript
     else case (optInput opts, optOutput opts, optJsonl opts) of
       (Just inp, Just d,  False) -> runModeFiles inp d
       (Just inp, Nothing, True)  -> runModeJsonl inp
