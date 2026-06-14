@@ -2,6 +2,7 @@ module PB.AST.BodyStmt
   ( BodyStmt (..)
   , AugOp (..)
   , PbCall (..)
+  , ElseIf (..)
   , IfStmt (..)
   , ForStmt (..)
   , DoCondition (..)
@@ -12,28 +13,30 @@ module PB.AST.BodyStmt
 
 import PB.Prelude
 import PB.AST.Expr        (Expr, Lvalue)
-import PB.Lexing.Splitter (Statement)
-import PB.Lexing.Token    (Token)
+import GHC.Generics       (Generic)
 
 data AugOp = AugAdd | AugSub | AugMul | AugDiv
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 -- | PB CALL statement: CALL ancestorobject [`controlname] :: event
 data PbCall = PbCall
-  { pbcAncestor :: Text   -- "super", "parent", or named ancestor (backtick form is one ident)
-  , pbcEvent    :: Text   -- event name
-  } deriving (Eq, Show)
+  { pbcAncestor :: Text
+  , pbcEvent    :: Text
+  } deriving (Eq, Show, Generic)
 
--- | if/elseif/else/end if — covers both inline and multi-line forms.
--- Inline: ifThen is a singleton derived from the tokens after "then";
---         ifElseIfs is []; ifElse is Nothing or a singleton.
--- Multi-line: ifThen / elseif chains / else are full [BodyStmt] bodies.
+-- | One elseif branch: condition + body.
+data ElseIf = ElseIf
+  { eifCond :: Expr
+  , eifBody :: [BodyStmt]
+  } deriving (Eq, Show, Generic)
+
+-- | if/elseif/else/end if
 data IfStmt = IfStmt
   { ifCond    :: Expr
   , ifThen    :: [BodyStmt]
-  , ifElseIfs :: [(Expr, [BodyStmt])]
+  , ifElseIfs :: [ElseIf]
   , ifElse    :: Maybe [BodyStmt]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 -- | for VAR = FROM to TO [step STEP] … next
 data ForStmt = ForStmt
@@ -42,48 +45,48 @@ data ForStmt = ForStmt
   , forTo   :: Expr
   , forStep :: Maybe Expr
   , forBody :: [BodyStmt]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 -- | Condition attached to a do or loop line.
 data DoCondition = DoWhile Expr | DoUntil Expr
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 -- | do [while/until COND] … loop [while/until COND]
 data DoStmt = DoStmt
-  { doCond :: Maybe DoCondition   -- condition on `do` line
+  { doCond :: Maybe DoCondition
   , doBody :: [BodyStmt]
-  , doLoop :: Maybe DoCondition   -- condition on `loop` line
-  } deriving (Eq, Show)
+  , doLoop :: Maybe DoCondition
+  } deriving (Eq, Show, Generic)
 
 -- | One branch inside a choose case block.
 -- ccExpr = Nothing means "case else".
 data CaseClause = CaseClause
-  { ccExpr :: Maybe [Token]
+  { ccExpr :: Maybe [Text]
   , ccBody :: [BodyStmt]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 -- | choose case EXPR … end choose
 data ChooseStmt = ChooseStmt
   { chooseExpr    :: Expr
   , chooseClauses :: [CaseClause]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data BodyStmt
-  = BsLocalVar  [Token]               -- Type Name [= init …]
+  = BsLocalVar  [Text]               -- Type Name [= init …] (raw token texts)
   | BsAssign    Lvalue Expr           -- lhs = rhs
-  | BsAugAssign [Token] AugOp [Token] -- lhs_tokens op= rhs_tokens
-  | BsInc       [Token]               -- lhs_tokens ++
-  | BsDec       [Token]               -- lhs_tokens --
+  | BsAugAssign [Text] AugOp [Text]  -- lhs_tokens op= rhs_tokens
+  | BsInc       [Text]               -- lhs_tokens ++
+  | BsDec       [Text]               -- lhs_tokens --
   | BsCall      Expr                  -- standalone call expression
   | BsPbCall    PbCall                -- CALL ancestor[`ctrl] :: event
   | BsReturn    (Maybe Expr)          -- return [expr]
-  | BsIf        IfStmt                -- if/elseif/else/end if
-  | BsFor       ForStmt               -- for … next
-  | BsDo        DoStmt                -- do … loop
-  | BsChoose    ChooseStmt            -- choose case … end choose
-  | BsExit                            -- exit
-  | BsContinue                        -- continue
-  | BsDestroy   Lvalue                -- DESTROY objectvariable
+  | BsIf        IfStmt
+  | BsFor       ForStmt
+  | BsDo        DoStmt
+  | BsChoose    ChooseStmt
+  | BsExit
+  | BsContinue
+  | BsDestroy   Lvalue
   | BsAssignExpr Expr Expr            -- complex LHS = rhs (method-call chain . property)
-  | BsRaw       Statement             -- SQL, event decls, unclassified
-  deriving (Eq, Show)
+  | BsRaw       Text                  -- SQL, event decls, unclassified (source text)
+  deriving (Eq, Show, Generic)

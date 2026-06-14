@@ -4,7 +4,7 @@ import PB.Prelude
 import PB.AST.BodyStmt  (BodyStmt (..), DoCondition (..))
 import PB.AST.DataWindow (DwArgument (..), DwRetrieve (..), DwRetrieveOrRaw (..),
                           DwWhereClause (..))
-import PB.AST.Expr      (Expr (..), Literal (..), LvSegment (..))
+import PB.AST.Expr      (Expr (..), LvSegment (..))
 import PB.AST.SourceFile (SrFile (..))
 import PB.Grammar.File        (SrSpans (..))
 import PB.Pipeline.Runner     (wrapSrFile)
@@ -48,54 +48,56 @@ tests = testGroup "Serialise"
       field "file" v @?= String "test.srf"
       field "kind" v @?= String "powerscript"
 
-  , testCase "DoCondition uses tag not kind" $ do
-      let vw = toJSON (DoWhile (ExLit LitNull))
-          vu = toJSON (DoUntil (ExLit LitNull))
-      field "tag" vw @?= String "while"
-      field "tag" vu @?= String "until"
+  , testCase "DoCondition tag uses constructor name" $ do
+      let vw = toJSON (DoWhile ExNull)
+          vu = toJSON (DoUntil ExNull)
+      field "tag" vw @?= String "DoWhile"
+      field "tag" vu @?= String "DoUntil"
       assertBool "DoWhile must not have 'kind' field" (not (hasField "kind" vw))
       assertBool "DoUntil must not have 'kind' field" (not (hasField "kind" vu))
 
-  , testCase "BodyStmt BsReturn without value omits value field" $ do
+  , testCase "BodyStmt BsReturn without value has null contents" $ do
       let v = toJSON (BsReturn Nothing)
-      field "tag" v @?= String "return"
-      assertBool "value field must be absent" (not (hasField "value" v))
+      field "tag"      v @?= String "BsReturn"
+      field "contents" v @?= Null
 
-  , testCase "BodyStmt BsReturn with value includes value field" $ do
-      let v = toJSON (BsReturn (Just (ExLit LitNull)))
-      field "tag" v @?= String "return"
-      assertBool "value field must be present" (hasField "value" v)
+  , testCase "BodyStmt BsReturn with value has non-null contents" $ do
+      let v = toJSON (BsReturn (Just ExNull))
+      field "tag" v @?= String "BsReturn"
+      assertBool "contents field must be present" (hasField "contents" v)
 
-  , testCase "Expr ExRaw encodes tokens as text list" $ do
+  , testCase "Expr ExRaw encodes tokens list under 'contents'" $ do
       let v = toJSON (ExRaw [])
-      field "tag"    v @?= String "raw"
-      field "tokens" v @?= toJSON ([] :: [Text])
+      field "tag"      v @?= String "ExRaw"
+      field "contents" v @?= toJSON ([] :: [Text])
 
   , testCase "LvSegment with no subscript encodes subscript as null" $ do
-      let v = toJSON (LvSegment { lvsName = "x", lvsSubscript = Nothing })
+      let v = toJSON (LvSegment { name = "x", subscript = Nothing } :: LvSegment)
       field "name"      v @?= String "x"
       field "subscript" v @?= Null
 
   , testGroup "DwRetrieveOrRaw"
-      [ testCase "DwRetrieveOk emits tag=ok with inline retrieve fields" $ do
+      [ testCase "DwRetrieveOk emits tag=DwRetrieveOk with retrieve nested in contents" $ do
           let dr = DwRetrieve { drVersion = 400, drTables = ["emp"], drColumns = ["emp.id"]
                               , drArguments = [], drWhere = [] }
               v  = toJSON (DwRetrieveOk dr)
-          field "tag"     v @?= String "ok"
-          field "version" v @?= toJSON (400 :: Int)
-          field "tables"  v @?= toJSON (["emp"] :: [Text])
-          field "columns" v @?= toJSON (["emp.id"] :: [Text])
+          field "tag"                        v @?= String "DwRetrieveOk"
+          field "version" (field "contents" v) @?= toJSON (400 :: Int)
+          field "tables"  (field "contents" v) @?= toJSON (["emp"] :: [Text])
+          field "columns" (field "contents" v) @?= toJSON (["emp.id"] :: [Text])
 
-      , testCase "DwRetrieveRaw emits tag=raw with text field" $ do
+      , testCase "DwRetrieveRaw emits tag=DwRetrieveRaw with text in contents" $ do
           let v = toJSON (DwRetrieveRaw "SELECT 1 FROM dual")
-          field "tag"  v @?= String "raw"
-          field "text" v @?= String "SELECT 1 FROM dual"
+          field "tag"      v @?= String "DwRetrieveRaw"
+          field "contents" v @?= String "SELECT 1 FROM dual"
 
       , testCase "DwRetrieveOk has no text field" $ do
           let dr = DwRetrieve { drVersion = 1, drTables = [], drColumns = []
                               , drArguments = [], drWhere = [] }
               v  = toJSON (DwRetrieveOk dr)
           assertBool "DwRetrieveOk must not have 'text' field" (not (hasField "text" v))
+          assertBool "DwRetrieveOk contents must not have 'text' field"
+            (not (hasField "text" (field "contents" v)))
 
       , testCase "DwRetrieveRaw has no tables field" $ do
           let v = toJSON (DwRetrieveRaw "raw sql")
@@ -107,15 +109,15 @@ tests = testGroup "Serialise"
               dr = DwRetrieve { drVersion = 400, drTables = ["t"], drColumns = []
                               , drArguments = [], drWhere = [wc] }
               v  = toJSON (DwRetrieveOk dr)
-          field "tag" v @?= String "ok"
-          assertBool "DwRetrieveOk must not have 'text' field" (not (hasField "text" v))
+          field "tag" v @?= String "DwRetrieveOk"
+          assertBool "DwRetrieveOk must not have top-level 'text' field" (not (hasField "text" v))
 
       , testCase "DwRetrieveOk with argument serialises argument fields" $ do
           let arg = DwArgument { daName = "p_id", daType = "long" }
               dr  = DwRetrieve { drVersion = 400, drTables = ["t"], drColumns = []
                                , drArguments = [arg], drWhere = [] }
               v   = toJSON (DwRetrieveOk dr)
-          field "tag"       v @?= String "ok"
-          field "arguments" v @?= toJSON [arg]
+          field "tag" v @?= String "DwRetrieveOk"
+          field "arguments" (field "contents" v) @?= toJSON [arg]
       ]
   ]

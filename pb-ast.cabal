@@ -14,6 +14,7 @@ common common-settings
   default-extensions:
     NoImplicitPrelude
     OverloadedStrings
+    DuplicateRecordFields
   ghc-options:
     -Wall
     -Wcompat
@@ -39,9 +40,7 @@ library
     PB.Lexing.Splitter
     PB.Lexing.Token
     PB.Pipeline.Preprocess
-    PB.Pipeline.Codec
     PB.Pipeline.Runner
-    PB.Pipeline.Schema
     PB.Pipeline.Serialise
     PB.Pipeline.Walk
   build-depends:
@@ -49,8 +48,8 @@ library
     , text
     , megaparsec
     , aeson >=2.0
-    , autodocodec >=0.4
-    , autodocodec-schema
+    , aeson-typescript >=0.6
+    , template-haskell >=2.21
     , bytestring  ^>=0.12
     , containers >=0.6
     , directory  ^>=1.3

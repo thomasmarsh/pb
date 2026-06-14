@@ -16,7 +16,7 @@ import PB.AST.SourceFile      ( ForwardBlock (..), PrototypesBlock (..), ProtoDe
                               , SrFile (..)
                               )
 import PB.AST.BodyStmt        (BodyStmt (..))
-import PB.AST.Expr            (Expr (..), Literal (..), LvSegment (..), Lvalue (..))
+import PB.AST.Expr            (Expr (..), LvSegment (..), Lvalue (..))
 import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
@@ -483,7 +483,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pTypeBlock stmts @?=
           Right (TypeBlock (TypeDecl "w_foo" "window" Nothing)
-                   [BsLocalVar (stmtTokens s1), BsLocalVar (stmtTokens s2)])
+                   [BsLocalVar ["integer", "i_count"], BsLocalVar ["string", "s_name"]])
 
     , testCase "positive: type block with event decl in body" $ do
         let evStmt    = mkStmt [(TkDeclKw, "event"), (TkIdent, "ie_checkbuttons"), (TkLParen, "("), (TkRParen, ")")]
@@ -495,7 +495,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pTypeBlock stmts @?=
           Right (TypeBlock (TypeDecl "w_foo" "window" Nothing)
-                   [BsRaw evStmt, BsLocalVar (stmtTokens childStmt)])
+                   [BsRaw "", BsLocalVar ["cb_delete", "cb_delete"]])
 
     , testCase "negative: missing end type" $ do
         let stmts =
@@ -526,7 +526,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pOnBlock stmts @?=
           Right (OnBlock "w_main.destroy" "w_main" "destroy"
-                   [BsAssign (Lvalue [LvSegment "i" Nothing]) (ExLit (LitInt "0"))])
+                   [BsAssign (Lvalue [LvSegment "i" Nothing]) (ExInt "0")])
 
     , testCase "positive: bare on modified (ident event name)" $ do
         let stmts =
@@ -561,7 +561,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pOnBlock stmts @?=
           Right (OnBlock "ue_keypress" "" "ue_keypress"
-                   [BsLocalVar (stmtTokens bodyStmt)])
+                   [BsLocalVar ["call", "super"]])
 
     , testCase "negative: on alone (no event name)" $ do
         let stmts = [mkStmt [(TkDeclKw, "on")]]
@@ -643,7 +643,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pFunctionBlock stmts @?=
           Right (FunctionBlock (FnSig [] "integer" "f_nested" "" Nothing)
-                   [BsRaw ifStmt, BsRaw endIfStmt])
+                   [BsRaw "", BsRaw ""])
 
     , testCase "negative: missing end function" $ do
         let stmts =

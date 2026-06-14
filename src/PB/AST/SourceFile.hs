@@ -20,6 +20,7 @@ module PB.AST.SourceFile
 
 import PB.Prelude
 import PB.AST.BodyStmt    (BodyStmt)
+import GHC.Generics       (Generic)
 
 data SrFile = SrFile
   { srHeaders         :: [Text]
@@ -32,91 +33,91 @@ data SrFile = SrFile
   , srEvents          :: [EventBlock]
   , srFunctions       :: [FunctionBlock]
   , srSubroutines     :: [SubroutineBlock]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data ForwardBlock = ForwardBlock
   { fwdTypes     :: [TypeDecl]
   , fwdInstances :: [GlobalInstance]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data PrototypesBlock = PrototypesBlock
   { protoDecls :: [ProtoDecl]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data ProtoDecl
   = ProtoFn  FnSig
   | ProtoSub SubSig
   | ProtoEv  EventSig
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data VariablesBlock = VariablesBlock
   { varScope :: VarScope
   , varDecls :: [VarDecl]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data VarScope = GlobalVars | TypeVars
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data TypeDecl = TypeDecl
   { tdName     :: Text
   , tdAncestor :: Text
   , tdWithin   :: Maybe Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data TypeBlock = TypeBlock
   { tbDecl :: TypeDecl
   , tbBody :: [BodyStmt]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data VarDecl = VarDecl
   { vdModifiers :: [Text]
   , vdType      :: Text
   , vdName      :: Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data GlobalInstance = GlobalInstance
   { giType :: Text
   , giName :: Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data FnSig = FnSig
   { fnsMods    :: [Text]
-  , fnsRetType :: Text
+  , fnsReturnType :: Text
   , fnsName    :: Text
   , fnsParams  :: Text
   , fnsThrows  :: Maybe Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data SubSig = SubSig
   { ssMods   :: [Text]
   , ssName   :: Text
   , ssParams :: Text
   , ssThrows :: Maybe Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data EventSig = EventSig
   { esName   :: Text
   , esRawSig :: Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data FunctionBlock = FunctionBlock
   { fbSig  :: FnSig
   , fbBody :: [BodyStmt]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data SubroutineBlock = SubroutineBlock
   { sbSig  :: SubSig
   , sbBody :: [BodyStmt]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data EventBlock = EventBlock
   { evSig  :: EventSig
   , evBody :: [BodyStmt]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data OnBlock = OnBlock
   { obQualName :: Text
   , obOwner    :: Text
   , obEvent    :: Text
   , obBody     :: [BodyStmt]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)

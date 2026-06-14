@@ -16,6 +16,7 @@ module PB.AST.DataWindow
 
 import PB.Prelude
 import Data.Map.Strict (Map)
+import GHC.Generics    (Generic)
 
 data DataWindowFile = DataWindowFile
   { dwRelease  :: Int
@@ -26,10 +27,10 @@ data DataWindowFile = DataWindowFile
   , dwControls :: [DwControl]
   , dwUnknowns :: [DwUnknownBlock]
   , dwMeta     :: Map Text (Map Text Text)
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 newtype DwObjectAttrs = DwObjectAttrs { doaAttrs :: Map Text Text }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data DwTable = DwTable
   { dtColumns     :: [DwColumn]
@@ -37,14 +38,14 @@ data DwTable = DwTable
   , dtUpdate      :: Maybe Text
   , dtUpdateWhere :: Maybe Int
   , dtArguments   :: [DwArgument]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data DwWhereClause = DwWhereClause
   { dwcExp1  :: Text
   , dwcOp    :: Text
   , dwcExp2  :: Text
   , dwcLogic :: Maybe Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data DwRetrieve = DwRetrieve
   { drVersion   :: Int
@@ -52,12 +53,12 @@ data DwRetrieve = DwRetrieve
   , drColumns   :: [Text]
   , drArguments :: [DwArgument]
   , drWhere     :: [DwWhereClause]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data DwRetrieveOrRaw
   = DwRetrieveOk  DwRetrieve
   | DwRetrieveRaw Text
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data DwColumn = DwColumn
   { dcName        :: Text
@@ -68,12 +69,12 @@ data DwColumn = DwColumn
   , dcUpdateWhere :: Bool
   , dcDddwName    :: Maybe Text
   , dcAttrs       :: Map Text Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data DwArgument = DwArgument
   { daName :: Text
   , daType :: Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data DwBandKind
   = BkHeader
@@ -85,7 +86,7 @@ data DwBandKind
   | BkGroupHeader Int
   | BkGroupTrailer Int
   | BkTreeLevel Int
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data DwBand = DwBand
   { dbKind     :: DwBandKind
@@ -93,7 +94,7 @@ data DwBand = DwBand
   , dbColor    :: Maybe Text
   , dbAutoSize :: Bool
   , dbAttrs    :: Map Text Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data DwGroup = DwGroup
   { dgLevel         :: Int
@@ -102,7 +103,7 @@ data DwGroup = DwGroup
   , dgBy            :: [Text]
   , dgNewPage       :: Bool
   , dgAttrs         :: Map Text Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data DwControl = DwControl
   { dwcType       :: Text
@@ -117,9 +118,9 @@ data DwControl = DwControl
   , dwcExpression :: Maybe Text
   , dwcTabSeq     :: Maybe Int
   , dwcAttrs      :: Map Text Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data DwUnknownBlock = DwUnknownBlock
   { dubKeyword :: Text
   , dubAttrs   :: Map Text Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)

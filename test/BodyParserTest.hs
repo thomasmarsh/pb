@@ -3,10 +3,11 @@ module BodyParserTest (tests) where
 import PB.Prelude
 import PB.AST.BodyStmt
   ( BodyStmt (..)
+  , ElseIf (..)
   , IfStmt (..), ForStmt (..), DoCondition (..), DoStmt (..)
   , CaseClause (..), ChooseStmt (..)
   )
-import PB.AST.Expr            (BinOp (..), Expr (..), Literal (..), LvSegment (..), Lvalue (..))
+import PB.AST.Expr            (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
 import PB.Grammar.Body        (pBodyStmt)
 import PB.Grammar.Stream      (StmtStream (..))
 import PB.Lexing.Splitter     (Statement (..))
@@ -54,21 +55,21 @@ endChoose = mkStmt [(TkControlKw, "end choose")]
 -- "n = k" as a parsed Expr (ExBinOp BopEq after B2)
 condExpr :: Text -> Expr
 condExpr k =
-  ExBinOp (ExLvalue (Lvalue [LvSegment "n" Nothing])) BopEq (ExLit (LitInt k))
+  ExBinOp (ExLvalue (Lvalue [LvSegment "n" Nothing])) BopEq (ExInt k)
 
 -- y = 1 statement
 stmtY1 :: Statement
 stmtY1 = mkStmt [(TkIdent, "y"), (TkAssignOp, "="), (TkIntLiteral, "1")]
 
 assignY1 :: BodyStmt
-assignY1 = BsAssign (Lvalue [LvSegment "y" Nothing]) (ExLit (LitInt "1"))
+assignY1 = BsAssign (Lvalue [LvSegment "y" Nothing]) (ExInt "1")
 
 -- z = 2 statement / body-stmt
 stmtZ2 :: Statement
 stmtZ2 = mkStmt [(TkIdent, "z"), (TkAssignOp, "="), (TkIntLiteral, "2")]
 
 assignZ2 :: BodyStmt
-assignZ2 = BsAssign (Lvalue [LvSegment "z" Nothing]) (ExLit (LitInt "2"))
+assignZ2 = BsAssign (Lvalue [LvSegment "z" Nothing]) (ExInt "2")
 
 -- ---------------------------------------------------------------------------
 -- Tests
@@ -147,7 +148,7 @@ tests = testGroup "Grammar.Body.Parser"
             [ BsIf (IfStmt
                 { ifCond    = condExpr "0"
                 , ifThen    = [assignY1]
-                , ifElseIfs = [(condExpr "1", [assignZ2])]
+                , ifElseIfs = [ElseIf (condExpr "1") [assignZ2]]
                 , ifElse    = Nothing
                 }) ]
     ]
@@ -163,8 +164,8 @@ tests = testGroup "Grammar.Body.Parser"
           @?= Right
             [ BsFor (ForStmt
                 { forVar  = Lvalue [LvSegment "i" Nothing]
-                , forFrom = ExLit (LitInt "1")
-                , forTo   = ExLit (LitInt "10")
+                , forFrom = ExInt "1"
+                , forTo   = ExInt "10"
                 , forStep = Nothing
                 , forBody = [assignY1]
                 }) ]
@@ -180,9 +181,9 @@ tests = testGroup "Grammar.Body.Parser"
           @?= Right
             [ BsFor (ForStmt
                 { forVar  = Lvalue [LvSegment "i" Nothing]
-                , forFrom = ExLit (LitInt "0")
-                , forTo   = ExLit (LitInt "10")
-                , forStep = Just (ExLit (LitInt "2"))
+                , forFrom = ExInt "0"
+                , forTo   = ExInt "10"
+                , forStep = Just (ExInt "2")
                 , forBody = [assignY1]
                 }) ]
 
@@ -197,13 +198,13 @@ tests = testGroup "Grammar.Body.Parser"
           @?= Right
             [ BsFor (ForStmt
                 { forVar  = Lvalue [LvSegment "i" Nothing]
-                , forFrom = ExLit (LitInt "1")
-                , forTo   = ExLit (LitInt "2")
+                , forFrom = ExInt "1"
+                , forTo   = ExInt "2"
                 , forStep = Nothing
                 , forBody = [ BsFor (ForStmt
                                 { forVar  = Lvalue [LvSegment "j" Nothing]
-                                , forFrom = ExLit (LitInt "1")
-                                , forTo   = ExLit (LitInt "3")
+                                , forFrom = ExInt "1"
+                                , forTo   = ExInt "3"
                                 , forStep = Nothing
                                 , forBody = [assignY1]
                                 }) ]
@@ -275,7 +276,7 @@ tests = testGroup "Grammar.Body.Parser"
           @?= Right
             [ BsChoose (ChooseStmt
                 { chooseExpr    = ExLvalue (Lvalue [LvSegment "x" Nothing])
-                , chooseClauses = [ CaseClause (Just [mkTok TkIntLiteral "1"]) [assignY1] ]
+                , chooseClauses = [ CaseClause (Just ["1"]) [assignY1] ]
                 }) ]
 
     , testCase "multiple clauses" $
@@ -290,8 +291,8 @@ tests = testGroup "Grammar.Body.Parser"
           @?= Right
             [ BsChoose (ChooseStmt
                 { chooseExpr    = ExLvalue (Lvalue [LvSegment "x" Nothing])
-                , chooseClauses = [ CaseClause (Just [mkTok TkIntLiteral "1"]) [assignY1]
-                                  , CaseClause (Just [mkTok TkIntLiteral "2"]) [assignZ2]
+                , chooseClauses = [ CaseClause (Just ["1"]) [assignY1]
+                                  , CaseClause (Just ["2"]) [assignZ2]
                                   ]
                 }) ]
 
@@ -307,8 +308,8 @@ tests = testGroup "Grammar.Body.Parser"
           @?= Right
             [ BsChoose (ChooseStmt
                 { chooseExpr    = ExLvalue (Lvalue [LvSegment "x" Nothing])
-                , chooseClauses = [ CaseClause (Just [mkTok TkIntLiteral "1"]) [assignY1]
-                                  , CaseClause Nothing                          [assignZ2]
+                , chooseClauses = [ CaseClause (Just ["1"]) [assignY1]
+                                  , CaseClause Nothing       [assignZ2]
                                   ]
                 }) ]
     ]
@@ -327,48 +328,42 @@ tests = testGroup "Grammar.Body.Parser"
     [ testCase "single-line SQL: no joining needed (regression)" $
         -- COMMIT USING sqlca; — complete on one line
         let s = mkStmtSrc "COMMIT USING sqlca;" [(TkSqlKw,"commit"),(TkOtherKw,"using"),(TkOtherKw,"sqlca")]
-        in runBodyStmts [s] @?= Right [BsRaw s]
+        in runBodyStmts [s] @?= Right [BsRaw "COMMIT USING sqlca;"]
 
     , testCase "multi-line SELECT joined into one BsRaw" $
         -- SELECT count(*)
         --   INTO :li_rc
         --   FROM ole
         --   WHERE id = :var;
-        let sel   = mkStmtSrc "SELECT count(*)"
-                      [(TkSqlKw,"select"),(TkIdent,"count"),(TkLParen,"("),(TkArithOp,"*"),(TkRParen,")")]
-            into  = mkStmtSrc "  INTO :li_rc"
-                      [(TkOtherKw,"into"),(TkColon,":"),(TkIdent,"li_rc")]
-            frm   = mkStmtSrc "  FROM ole"
-                      [(TkDeclKw,"from"),(TkIdent,"ole")]
-            whr   = mkStmtSrc "  WHERE id = :var;"
-                      [(TkIdent,"where"),(TkIdent,"id"),(TkAssignOp,"="),(TkColon,":"),(TkIdent,"var")]
-            merged = Statement
-              { stmtTokens = stmtTokens sel <> stmtTokens into <> stmtTokens frm <> stmtTokens whr
-              , stmtSource = (stmtSource sel) { llEndLine = llEndLine (stmtSource whr) }
-              }
-        in runBodyStmts [sel, into, frm, whr] @?= Right [BsRaw merged]
+        let sel  = mkStmtSrc "SELECT count(*)"
+                     [(TkSqlKw,"select"),(TkIdent,"count"),(TkLParen,"("),(TkArithOp,"*"),(TkRParen,")")]
+            into = mkStmtSrc "  INTO :li_rc"
+                     [(TkOtherKw,"into"),(TkColon,":"),(TkIdent,"li_rc")]
+            frm  = mkStmtSrc "  FROM ole"
+                     [(TkDeclKw,"from"),(TkIdent,"ole")]
+            whr  = mkStmtSrc "  WHERE id = :var;"
+                     [(TkIdent,"where"),(TkIdent,"id"),(TkAssignOp,"="),(TkColon,":"),(TkIdent,"var")]
+        in runBodyStmts [sel, into, frm, whr]
+             @?= Right [BsRaw "SELECT count(*)\n  INTO :li_rc\n  FROM ole\n  WHERE id = :var;"]
 
     , testCase "multi-line INSERT joined into one BsRaw" $
         -- INSERT INTO ole
         --   ( id, description )
         --   VALUES ( :var1, :var2 );
-        let ins   = mkStmtSrc "INSERT INTO ole"
-                      [(TkSqlKw,"insert"),(TkOtherKw,"into"),(TkIdent,"ole")]
-            cols  = mkStmtSrc "  ( id, description )"
-                      [(TkLParen,"("),(TkIdent,"id"),(TkComma,","),(TkIdent,"description"),(TkRParen,")")]
-            vals  = mkStmtSrc "  VALUES ( :var1, :var2 );"
-                      [(TkIdent,"values"),(TkLParen,"("),(TkColon,":"),(TkIdent,"var1"),(TkComma,","),(TkColon,":"),(TkIdent,"var2"),(TkRParen,")")]
-            merged = Statement
-              { stmtTokens = stmtTokens ins <> stmtTokens cols <> stmtTokens vals
-              , stmtSource = (stmtSource ins) { llEndLine = llEndLine (stmtSource vals) }
-              }
-        in runBodyStmts [ins, cols, vals] @?= Right [BsRaw merged]
+        let ins  = mkStmtSrc "INSERT INTO ole"
+                     [(TkSqlKw,"insert"),(TkOtherKw,"into"),(TkIdent,"ole")]
+            cols = mkStmtSrc "  ( id, description )"
+                     [(TkLParen,"("),(TkIdent,"id"),(TkComma,","),(TkIdent,"description"),(TkRParen,")")]
+            vals = mkStmtSrc "  VALUES ( :var1, :var2 );"
+                     [(TkIdent,"values"),(TkLParen,"("),(TkColon,":"),(TkIdent,"var1"),(TkComma,","),(TkColon,":"),(TkIdent,"var2"),(TkRParen,")")]
+        in runBodyStmts [ins, cols, vals]
+             @?= Right [BsRaw "INSERT INTO ole\n  ( id, description )\n  VALUES ( :var1, :var2 );"]
 
     , testCase "SQL block followed by non-SQL statement" $
         -- SELECT x FROM t;   (single-line)
         -- y = 1
-        let sqlS  = mkStmtSrc "SELECT x FROM t;"
-                      [(TkSqlKw,"select"),(TkIdent,"x"),(TkDeclKw,"from"),(TkIdent,"t")]
-        in runBodyStmts [sqlS, stmtY1] @?= Right [BsRaw sqlS, assignY1]
+        let sqlS = mkStmtSrc "SELECT x FROM t;"
+                     [(TkSqlKw,"select"),(TkIdent,"x"),(TkDeclKw,"from"),(TkIdent,"t")]
+        in runBodyStmts [sqlS, stmtY1] @?= Right [BsRaw "SELECT x FROM t;", assignY1]
     ]
   ]
