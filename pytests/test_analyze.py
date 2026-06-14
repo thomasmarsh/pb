@@ -1,44 +1,5 @@
 """Tests for pbtools.analyze."""
-import os
-import subprocess
-import tempfile
-
-import duckdb
 import pytest
-
-REPO_ROOT   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OPENPAY_DIR = os.path.join(REPO_ROOT, 'example', 'openpay-src')
-
-
-@pytest.fixture(scope='module')
-def db_path():
-    tmp_dir = tempfile.mkdtemp()
-    path = os.path.join(tmp_dir, 'test.duckdb')
-
-    runner = subprocess.run(
-        ['cabal', 'run', 'pb-runner', '-v0', '--', '-i', OPENPAY_DIR, '--jsonl'],
-        capture_output=True, cwd=REPO_ROOT,
-    )
-    assert runner.returncode == 0, f"pb-runner failed: {runner.stderr.decode()[:500]}"
-
-    from pbtools.index import run_from_jsonl_lines
-    from pbtools.analyze import run as analyze_run
-
-    lines = runner.stdout.decode().splitlines()
-    run_from_jsonl_lines(lines, path)
-    analyze_run(path)
-
-    yield path
-
-    os.unlink(path)
-    os.rmdir(tmp_dir)
-
-
-@pytest.fixture(scope='module')
-def analyzed_conn(db_path):
-    conn = duckdb.connect(db_path, read_only=True)
-    yield conn
-    conn.close()
 
 
 def q(conn, sql: str):
@@ -149,20 +110,20 @@ def test_analyze_run_emits_reporter_events(db_path):
 
 # ── integration tests ─────────────────────────────────────────────────────────
 
-def test_calls_table_populated_after_extract(analyzed_conn):
-    count = q(analyzed_conn, "SELECT count(*) FROM calls")
+def test_calls_table_populated_after_extract(db_conn):
+    count = q(db_conn, "SELECT count(*) FROM calls")
     assert count > 0, "calls table is empty after extract_calls"
 
-    call_types = {r[0] for r in analyzed_conn.execute(
+    call_types = {r[0] for r in db_conn.execute(
         "SELECT DISTINCT call_type FROM calls"
     ).fetchall()}
     assert 'ExCall' in call_types, f"no ExCall rows; found types: {call_types}"
 
 
-def test_object_metrics_has_all_objects(analyzed_conn):
-    metric_objects = q(analyzed_conn, "SELECT count(*) FROM object_metrics")
+def test_object_metrics_has_all_objects(db_conn):
+    metric_objects = q(db_conn, "SELECT count(*) FROM object_metrics")
     assert metric_objects > 0, "object_metrics table is empty"
-    missing = q(analyzed_conn, """
+    missing = q(db_conn, """
         SELECT count(DISTINCT c.object) FROM calls c
         LEFT JOIN object_metrics m ON c.object = m.object
         WHERE m.object IS NULL
@@ -172,16 +133,16 @@ def test_object_metrics_has_all_objects(analyzed_conn):
     )
 
 
-def test_pagerank_sums_to_one(analyzed_conn):
-    total = analyzed_conn.execute(
+def test_pagerank_sums_to_one(db_conn):
+    total = db_conn.execute(
         "SELECT sum(pagerank) FROM object_metrics WHERE pagerank IS NOT NULL"
     ).fetchone()[0]
     assert total is not None, "no pagerank values in object_metrics"
     assert abs(total - 1.0) < 0.01, f"pagerank sum {total:.4f} is not close to 1.0"
 
 
-def test_high_fanin_objects_identified(analyzed_conn):
-    top = analyzed_conn.execute(
+def test_high_fanin_objects_identified(db_conn):
+    top = db_conn.execute(
         "SELECT object, in_degree FROM object_metrics ORDER BY in_degree DESC LIMIT 1"
     ).fetchone()
     assert top is not None, "no rows in object_metrics"

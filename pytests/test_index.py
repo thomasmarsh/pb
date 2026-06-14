@@ -8,37 +8,7 @@ Requires:
 Run:
   uv run pytest tests/test_index.py
 """
-import os
-import subprocess
-import tempfile
-
-import duckdb
 import pytest
-
-REPO_ROOT   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OPENPAY_DIR = os.path.join(REPO_ROOT, 'example', 'openpay-src')
-
-
-@pytest.fixture(scope='module')
-def db_conn():
-    tmp_dir = tempfile.mkdtemp()
-    db_path = os.path.join(tmp_dir, 'test.duckdb')
-
-    runner = subprocess.run(
-        ['cabal', 'run', 'pb-runner', '-v0', '--', '-i', OPENPAY_DIR, '--jsonl'],
-        capture_output=True, cwd=REPO_ROOT,
-    )
-    assert runner.returncode == 0, f"pb-runner failed: {runner.stderr.decode()[:500]}"
-
-    from pbtools.index import run_from_jsonl_lines
-    lines = runner.stdout.decode().splitlines()
-    run_from_jsonl_lines(lines, db_path)
-
-    conn = duckdb.connect(db_path, read_only=True)
-    yield conn
-    conn.close()
-    os.unlink(db_path)
-    os.rmdir(tmp_dir)
 
 
 def q(conn, sql: str):

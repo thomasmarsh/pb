@@ -1,36 +1,11 @@
 """Tests for pbtools.queries auto-registration."""
-import os
-import subprocess
-import tempfile
 from pathlib import Path
 
 import duckdb
 import pytest
 
-REPO_ROOT   = Path(__file__).parent.parent
-OPENPAY_DIR = REPO_ROOT / "example" / "openpay-src"
+REPO_ROOT = Path(__file__).parent.parent
 QUERIES_DIR = REPO_ROOT / "queries"
-
-
-@pytest.fixture(scope="module")
-def db_path():
-    tmp = tempfile.mkdtemp()
-    db = os.path.join(tmp, "test.duckdb")
-
-    runner = subprocess.run(
-        ["cabal", "run", "pb-runner", "-v0", "--", "-i", str(OPENPAY_DIR), "--jsonl"],
-        capture_output=True, cwd=str(REPO_ROOT),
-    )
-    assert runner.returncode == 0, runner.stderr.decode()
-
-    from pbtools.index import run_from_jsonl_lines
-    import io
-    run_from_jsonl_lines(io.StringIO(runner.stdout.decode()), db)
-
-    from pbtools.analyze import run as analyze
-    analyze(db)
-
-    return db
 
 
 # ---------------------------------------------------------------------------

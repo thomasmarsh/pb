@@ -369,9 +369,9 @@ const RENDERERS: Record<string, NodeRenderer> = {
     (n) => {
       const c = n.contents as ChooseStmt | undefined;
       if (!c || !Array.isArray(c.clauses)) return [];
-      return c.clauses.map((clause, i) => {
+      return c.clauses.map((clause: { expr?: unknown; body?: unknown }, i: number) => {
         const label = clause.expr != null ? `case ${exprSum(clause.expr)}` : "case else";
-        return { key: `clause_${i}`, label, value: clause.body };
+        return { key: `clause_${i}`, label, value: clause.body ?? [] };
       });
     },
   ),

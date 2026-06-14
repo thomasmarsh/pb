@@ -1,36 +1,10 @@
 """Tests for pbtools.explorer — API endpoints and render module."""
-import os
-import subprocess
-import tempfile
 from pathlib import Path
 
-import duckdb
 import pytest
-
-REPO_ROOT   = Path(__file__).parent.parent
-OPENPAY_DIR = REPO_ROOT / "example" / "openpay-src"
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
-
-@pytest.fixture(scope="module")
-def db_path():
-    tmp = tempfile.mkdtemp()
-    db = os.path.join(tmp, "test.duckdb")
-    runner = subprocess.run(
-        ["cabal", "run", "pb-runner", "-v0", "--", "-i", str(OPENPAY_DIR), "--jsonl"],
-        capture_output=True, cwd=str(REPO_ROOT),
-    )
-    assert runner.returncode == 0, runner.stderr.decode()
-    from pbtools.index import run_from_jsonl_lines
-    import io
-    run_from_jsonl_lines(io.StringIO(runner.stdout.decode()), db)
-    from pbtools.analyze import run as analyze
-    analyze(db)
-    yield db
-    os.unlink(db)
-    os.rmdir(tmp)
-
 
 @pytest.fixture(scope="module")
 def client(db_path):
