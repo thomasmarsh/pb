@@ -13,6 +13,8 @@ import type {
   ExploreTreeResponse,
   DwExploreDetail,
   ExploreProcDetail,
+  TableSummary,
+  TableDetail,
 } from "./types/api.js";
 import { Effect } from "./core.js";
 import type { ApiClient, Env } from "./core.js";
@@ -49,6 +51,8 @@ export function createEnv(api: ApiClient): Env {
     getExploreTree: () => lift(() => api.getExploreTree()),
     getExploreProcedure: (o, p) => lift(() => api.getExploreProcedure(o, p)),
     getExploreDatawindow: (n) => lift(() => api.getExploreDatawindow(n)),
+    getTables: () => lift(() => api.getTables()),
+    getTableDetail: (n) => lift(() => api.getTableDetail(n)),
   };
 }
 
@@ -128,6 +132,14 @@ export function createApiClient(): ApiClient {
 
     async getExploreDatawindow(name: string): Promise<DwExploreDetail> {
       return fetchJson(`/api/explore/datawindow/${encodeURIComponent(name)}`);
+    },
+
+    async getTables(): Promise<TableSummary[]> {
+      return fetchJson("/api/tables");
+    },
+
+    async getTableDetail(name: string): Promise<TableDetail> {
+      return fetchJson(`/api/tables/${encodeURIComponent(name)}`);
     },
   };
 }

@@ -283,3 +283,51 @@ def test_explore_procedure(client):
 def test_explore_procedure_not_found(client):
     r = client.get("/api/explore/procedure/__no_obj__/__no_proc__")
     assert r.status_code == 404
+
+
+# ── Tables ────────────────────────────────────────────────────────────────────
+
+def test_list_tables_returns_ranked_list(client):
+    r = client.get("/api/tables")
+    assert r.status_code == 200
+    data = r.json()
+    assert isinstance(data, list)
+    assert len(data) > 0
+    counts = [row["dw_count"] for row in data]
+    assert counts == sorted(counts, reverse=True)
+
+
+def test_list_tables_has_required_fields(client):
+    r = client.get("/api/tables")
+    assert r.status_code == 200
+    row = r.json()[0]
+    assert "table_name" in row
+    assert "dw_count" in row
+    assert "file_count" in row
+    assert "dw_names" in row
+    assert isinstance(row["dw_names"], list)
+    assert row["dw_count"] >= 1
+
+
+def test_get_table_detail_returns_lineage(client):
+    tables = client.get("/api/tables").json()
+    if not tables:
+        pytest.skip("No tables in database")
+    table_name = tables[0]["table_name"]
+    r = client.get(f"/api/tables/{table_name}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["table_name"] == table_name
+    assert "dw_count" in data
+    assert "datawindows" in data
+    assert "columns" in data
+    assert "where" in data
+    assert isinstance(data["datawindows"], list)
+    assert len(data["datawindows"]) > 0
+    assert "dw_name" in data["datawindows"][0]
+    assert "file" in data["datawindows"][0]
+
+
+def test_get_table_detail_404_unknown(client):
+    r = client.get("/api/tables/__nonexistent_table__")
+    assert r.status_code == 404

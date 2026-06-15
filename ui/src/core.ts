@@ -21,6 +21,8 @@ import type {
   DwExploreDetail,
   ExploreProcDetail,
   QueryDef,
+  TableSummary,
+  TableDetail,
 } from "./types/api.js";
 
 // ── Node ID helpers ──────────────────────────────────────────────────────────
@@ -97,6 +99,8 @@ export interface ApiClient {
   getExploreTree(): Promise<ExploreTreeResponse>;
   getExploreProcedure(objectName: string, procName: string): Promise<ExploreProcDetail>;
   getExploreDatawindow(name: string): Promise<DwExploreDetail>;
+  getTables(): Promise<TableSummary[]>;
+  getTableDetail(name: string): Promise<TableDetail>;
 }
 
 // Env — Effect-based environment. All effects in the reducer are produced via
@@ -116,6 +120,8 @@ export interface Env {
   getExploreTree(): Effect<ExploreTreeResponse>;
   getExploreProcedure(objectName: string, procName: string): Effect<ExploreProcDetail>;
   getExploreDatawindow(name: string): Effect<DwExploreDetail>;
+  getTables(): Effect<TableSummary[]>;
+  getTableDetail(name: string): Effect<TableDetail>;
 }
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -149,6 +155,15 @@ export function initialState(): AppState {
       activeTab: "source" as const,
       treeFilter: "",
       highlightedLine: null,
+      leftTab: "objects" as const,
+      tables: {
+        items: [],
+        filter: "",
+        selected: null,
+        detail: null,
+        loading: false,
+        detailLoading: false,
+      },
     },
   };
 }
@@ -409,6 +424,49 @@ export function reducer(state: AppState, action: AppAction, env: Env): [AppState
 
   case "EXPLORE_HIGHLIGHT_LINE":
     return [{ ...state, explore: { ...state.explore, highlightedLine: action.line } }, null];
+
+  // Tables browser
+  case "EXPLORE_LEFT_TAB": {
+    const clearSel = action.tab === "tables"
+      ? { selectedProc: null, selectedDw: null }
+      : { tables: { ...state.explore.tables, selected: null, detail: null } };
+    const next = { ...state, explore: { ...state.explore, leftTab: action.tab, ...clearSel } };
+    if (action.tab === "tables" && state.explore.tables.items.length === 0 && !state.explore.tables.loading) {
+      return [{ ...next, explore: { ...next.explore, tables: { ...next.explore.tables, loading: true } } },
+        env.getTables()
+          .map((items): AppAction => ({ type: "TABLES_LOADED", items }))
+          .catch((): AppAction => ({ type: "TABLES_LOADED", items: [] }))];
+    }
+    return [next, null];
+  }
+
+  case "TABLES_LOAD":
+    return [
+      { ...state, explore: { ...state.explore, tables: { ...state.explore.tables, loading: true } } },
+      env.getTables()
+        .map((items): AppAction => ({ type: "TABLES_LOADED", items }))
+        .catch((): AppAction => ({ type: "TABLES_LOADED", items: [] })),
+    ];
+
+  case "TABLES_LOADED":
+    return [{ ...state, explore: { ...state.explore, tables: { ...state.explore.tables, items: action.items, loading: false } } }, null];
+
+  case "TABLES_FILTER":
+    return [{ ...state, explore: { ...state.explore, tables: { ...state.explore.tables, filter: action.q } } }, null];
+
+  case "TABLE_SELECT":
+    return [
+      { ...state, explore: { ...state.explore, selectedDw: null, selectedProc: null, tables: { ...state.explore.tables, selected: action.tableName, detail: null, detailLoading: true } } },
+      env.getTableDetail(action.tableName)
+        .map((detail): AppAction => ({ type: "TABLE_DETAIL_LOADED", tableName: action.tableName, detail }))
+        .catch((e): AppAction => ({ type: "TABLE_DETAIL_ERROR", tableName: action.tableName, error: errMsg(e) })),
+    ];
+
+  case "TABLE_DETAIL_LOADED":
+    return [{ ...state, explore: { ...state.explore, tables: { ...state.explore.tables, detail: action.detail, detailLoading: false } } }, null];
+
+  case "TABLE_DETAIL_ERROR":
+    return [{ ...state, explore: { ...state.explore, tables: { ...state.explore.tables, detail: { error: action.error }, detailLoading: false } } }, null];
 
   default:
     return [state, null];

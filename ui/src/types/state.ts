@@ -1,6 +1,6 @@
 // App state types — the single immutable state tree.
 
-import type { ObjectRow, StatsResponse, QueryDef, QueryResult, SearchResponse, DwExploreDetail, ExploreProcDetail } from "./api.js";
+import type { ObjectRow, StatsResponse, QueryDef, QueryResult, SearchResponse, DwExploreDetail, ExploreProcDetail, TableSummary, TableDetail } from "./api.js";
 import type {
   ObjectDetailResponse,
   ObjectSourceResponse,
@@ -59,6 +59,15 @@ export interface SearchState {
   loading: boolean;
 }
 
+export interface TablesState {
+  items: TableSummary[];
+  filter: string;
+  selected: string | null;
+  detail: TableDetail | { error: string } | null;
+  loading: boolean;
+  detailLoading: boolean;
+}
+
 export interface ExploreState {
   libraries: import("./api.js").ExploreLibrary[];
   expandedNodes: Set<string>;
@@ -70,6 +79,8 @@ export interface ExploreState {
   activeTab: "source" | "ast";
   treeFilter: string;
   highlightedLine: number | null;
+  leftTab: "objects" | "tables";
+  tables: TablesState;
 }
 
 export interface AppState {

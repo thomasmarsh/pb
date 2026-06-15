@@ -15,6 +15,8 @@ import type {
   ExploreTreeResponse,
   DwExploreDetail,
   ExploreProcDetail,
+  TableSummary,
+  TableDetail,
 } from "./api.js";
 
 export type AppAction =
@@ -78,4 +80,12 @@ export type AppAction =
   | { type: "EXPLORE_DW_ERROR"; nodeId: string; error: string }
   | { type: "EXPLORE_TAB"; tab: "source" | "ast" }
   | { type: "EXPLORE_FILTER"; q: string }
-  | { type: "EXPLORE_HIGHLIGHT_LINE"; line: number | null };
+  | { type: "EXPLORE_HIGHLIGHT_LINE"; line: number | null }
+  // Tables browser
+  | { type: "EXPLORE_LEFT_TAB"; tab: "objects" | "tables" }
+  | { type: "TABLES_LOAD" }
+  | { type: "TABLES_LOADED"; items: TableSummary[] }
+  | { type: "TABLES_FILTER"; q: string }
+  | { type: "TABLE_SELECT"; tableName: string }
+  | { type: "TABLE_DETAIL_LOADED"; tableName: string; detail: TableDetail }
+  | { type: "TABLE_DETAIL_ERROR"; tableName: string; error: string };

@@ -795,6 +795,50 @@ body {
 .dw-ctrl-table td.ct-expr { color: var(--text-muted); max-width: 300px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Tables browser */
+.table-list { overflow-y: auto; }
+.table-list-row {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 5px 12px; cursor: pointer; border-radius: 4px;
+    font-size: 12px; gap: 8px;
+}
+.table-list-row:hover { background: rgba(108, 140, 255, 0.08); }
+.table-list-row.selected { background: rgba(108, 140, 255, 0.18); }
+.table-list-name {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-primary); font-size: 12px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.table-list-meta { color: var(--text-muted); font-size: 11px; flex-shrink: 0; }
+
+.table-detail-dw-list { padding: 2px 0 6px 0; }
+.table-detail-dw-row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 3px 12px; font-size: 12px; border-radius: 4px;
+}
+.table-detail-dw-row.clickable { cursor: pointer; }
+.table-detail-dw-row.clickable:hover { background: rgba(108, 140, 255, 0.08); }
+.table-detail-dw-name {
+    font-family: 'JetBrains Mono', monospace; color: var(--text-primary);
+}
+
+.dw-attrs-table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+    margin: 0 0 8px 0;
+}
+.dw-attrs-table th {
+    text-align: left; padding: 3px 10px;
+    font-size: 10px; font-weight: 600;
+    color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px;
+    border-bottom: 1px solid var(--border);
+}
+.dw-sql-cell {
+    padding: 2px 10px; vertical-align: top;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.dw-sql-cell.mono { font-family: 'JetBrains Mono', monospace; }
+.dw-sql-cell.dim { color: var(--text-muted); }
+
 /* Health check modal */
 .health-overlay {
     position: fixed;

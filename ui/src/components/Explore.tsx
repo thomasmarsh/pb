@@ -8,6 +8,7 @@ import { TreeNode } from "./TreeNode.js";
 import { AstNode } from "./ast-node.js";
 import { DetailShell } from "./DetailShell.js";
 import { DwDetailTree } from "./DwDetailTree.js";
+import { TableList, TableDetailPanel } from "./Tables.js";
 
 // ── Node IDs ──────────────────────────────────────────────────────────────────
 
@@ -295,7 +296,7 @@ function DwDetailPanel(props: { nodeId: string }) {
 
 // ── Detail Panel ──────────────────────────────────────────────────────────────
 
-function DetailPanel() {
+function ObjectsDetailPanel() {
   const store = useStore();
   const selectedProc = () => store.state.explore.selectedProc;
   const selectedDw = () => store.state.explore.selectedDw;
@@ -309,6 +310,17 @@ function DetailPanel() {
       </Show>
     }>
       {(nodeId) => <ProcDetailPanel nodeId={nodeId()} />}
+    </Show>
+  );
+}
+
+function TablesRightPanel() {
+  const store = useStore();
+  const selectedDw = () => store.state.explore.selectedDw;
+
+  return (
+    <Show when={selectedDw()} fallback={<TableDetailPanel />}>
+      {(nodeId) => <DwDetailPanel nodeId={nodeId()} />}
     </Show>
   );
 }
@@ -336,49 +348,67 @@ export function Explore() {
     )
   );
 
+  const leftTab = () => store.state.explore.leftTab;
+
   return (
     <div class="explore-split">
       <div class="explore-left">
         <div class="explore-left-header">
           <h2>AST Explorer</h2>
-          <div class="explore-meta">
-            <span>{store.state.explore.libraries.length} libraries</span>
-            <span>{totalObjects()} objects</span>
-            <span>{totalProcs()} procedures</span>
+          <div class="explore-tabs" style={{ "margin-bottom": "6px" }}>
+            <button
+              class={`explore-tab-btn${leftTab() === "objects" ? " active" : ""}`}
+              onClick={() => store.dispatch({ type: "EXPLORE_LEFT_TAB", tab: "objects" })}
+            >Objects</button>
+            <button
+              class={`explore-tab-btn${leftTab() === "tables" ? " active" : ""}`}
+              onClick={() => store.dispatch({ type: "EXPLORE_LEFT_TAB", tab: "tables" })}
+            >Tables</button>
           </div>
-          <div class="explore-left-actions">
-            <button class="filter-pill" onClick={() => store.dispatch({ type: "EXPLORE_EXPAND_ALL" })}>
-              Expand All
-            </button>
-            <button class="filter-pill" onClick={() => store.dispatch({ type: "EXPLORE_COLLAPSE_ALL" })}>
-              Collapse All
-            </button>
-          </div>
-          <input
-            class="explore-filter-input"
-            placeholder="Filter\u2026"
-            value={store.state.explore.treeFilter}
-            onInput={(e) => store.dispatch({ type: "EXPLORE_FILTER", q: e.currentTarget.value })}
-          />
+          <Show when={leftTab() === "objects"}>
+            <div class="explore-meta">
+              <span>{store.state.explore.libraries.length} libraries</span>
+              <span>{totalObjects()} objects</span>
+              <span>{totalProcs()} procedures</span>
+            </div>
+            <div class="explore-left-actions">
+              <button class="filter-pill" onClick={() => store.dispatch({ type: "EXPLORE_EXPAND_ALL" })}>
+                Expand All
+              </button>
+              <button class="filter-pill" onClick={() => store.dispatch({ type: "EXPLORE_COLLAPSE_ALL" })}>
+                Collapse All
+              </button>
+            </div>
+            <input
+              class="explore-filter-input"
+              placeholder="Filter\u2026"
+              value={store.state.explore.treeFilter}
+              onInput={(e) => store.dispatch({ type: "EXPLORE_FILTER", q: e.currentTarget.value })}
+            />
+          </Show>
         </div>
         <div class="explore-left-tree">
-          <Show
-            when={!store.state.explore.loading}
-            fallback={<div class="loading-overlay"><div class="spinner" /> Loading AST tree...</div>}
-          >
+          <Show when={leftTab() === "objects"} fallback={<TableList />}>
             <Show
-              when={store.state.explore.libraries.length > 0}
-              fallback={<div class="tree-empty">No data. Run <code>pb ingest</code> first.</div>}
+              when={!store.state.explore.loading}
+              fallback={<div class="loading-overlay"><div class="spinner" /> Loading AST tree...</div>}
             >
-              <For each={store.state.explore.libraries}>
-                {(lib) => <LibraryNode lib={lib} depth={0} />}
-              </For>
+              <Show
+                when={store.state.explore.libraries.length > 0}
+                fallback={<div class="tree-empty">No data. Run <code>pb ingest</code> first.</div>}
+              >
+                <For each={store.state.explore.libraries}>
+                  {(lib) => <LibraryNode lib={lib} depth={0} />}
+                </For>
+              </Show>
             </Show>
           </Show>
         </div>
       </div>
       <div class="explore-right">
-        <DetailPanel />
+        <Show when={leftTab() === "objects"} fallback={<TablesRightPanel />}>
+          <ObjectsDetailPanel />
+        </Show>
       </div>
     </div>
   );

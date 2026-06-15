@@ -46,6 +46,8 @@ describe("initialState", () => {
       libraries: [], expandedNodes: expect.any(Set), selectedProc: null,
       selectedDw: null, procCache: {}, dwCache: {}, loading: false,
       activeTab: "source", treeFilter: "", highlightedLine: null,
+      leftTab: "objects",
+      tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
     });
   });
 

@@ -145,6 +145,23 @@ export interface QueryResult {
   rows: Record<string, unknown>[];
 }
 
+// ── Tables ───────────────────────────────────────────────────────────────────
+
+export interface TableSummary {
+  table_name: string;
+  dw_count: number;
+  file_count: number;
+  dw_names: string[];
+}
+
+export interface TableDetail {
+  table_name: string;
+  dw_count: number;
+  datawindows: { dw_name: string; file: string }[];
+  columns: { dw_name: string; column_fqn: string; column_name: string }[];
+  where: { dw_name: string; idx: number; exp1: string; op: string; exp2: string; logic: string }[];
+}
+
 // ── Explore tree ─────────────────────────────────────────────────────────────
 
 export interface ExploreProcedure {

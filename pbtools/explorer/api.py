@@ -737,6 +737,59 @@ async def explore_datawindow(name: str, request: Request):
         conn.close()
 
 
+# ── Tables ─────────────────────────────────────────────────────────────────────
+
+@router.get("/api/tables")
+async def list_tables(request: Request):
+    conn = _conn(request)
+    try:
+        rows = _rows(conn.execute("""
+            SELECT
+                t.table_name,
+                count(DISTINCT t.dw_name)  AS dw_count,
+                count(DISTINCT t.file)     AS file_count,
+                array_agg(DISTINCT t.dw_name ORDER BY t.dw_name) AS dw_names
+            FROM dw_retrieve_tables t
+            GROUP BY t.table_name
+            ORDER BY dw_count DESC, t.table_name
+        """))
+        return rows
+    finally:
+        conn.close()
+
+
+@router.get("/api/tables/{table_name}")
+async def get_table(table_name: str, request: Request):
+    conn = _conn(request)
+    try:
+        dws = _rows(conn.execute(
+            "SELECT DISTINCT dw_name, file FROM dw_retrieve_tables "
+            "WHERE table_name = ? ORDER BY dw_name",
+            [table_name],
+        ))
+        if not dws:
+            raise HTTPException(status_code=404, detail=f"Table not found: {table_name}")
+        columns = _rows(conn.execute(
+            "SELECT dw_name, column_fqn, column_name "
+            "FROM dw_retrieve_columns WHERE table_name = ? ORDER BY dw_name, column_name",
+            [table_name],
+        ))
+        where = _rows(conn.execute(
+            "SELECT dw_name, idx, exp1, op, exp2, logic "
+            "FROM dw_retrieve_where WHERE exp1 LIKE ? OR exp2 LIKE ? ORDER BY dw_name, idx",
+            [f"%{table_name}%", f"%{table_name}%"],
+        ))
+        return {
+            "table_name": table_name,
+            "dw_count": len(dws),
+            "datawindows": dws,
+            "columns": columns,
+            "where": where,
+        }
+    finally:
+        conn.close()
+
+
 # ── Stats ──────────────────────────────────────────────────────────────────────
 
 @router.get("/api/stats")
