@@ -280,7 +280,10 @@ statements and expressions). Useful for tracking parser coverage.
 
 ## Further reading
 
-- **`VISION.md`** — architectural rationale, LLM integration workflow, schema
-  design decisions, and the full operational pipeline.
+- **`[architecture.md](doc/architecture.md)`** — component map, data flow, cross-component
+  interfaces, testing, and build sequence.
+- **`[vision.md](doc/vision.md)`** — architectural rationale, LLM integration workflow,
+  DuckDB schema design, and the full operational pipeline.
+- **`[skills-draft.md](doc/skills-draft.md)`** — draft of a skills file that could be used for generating new queries
 - **`CLAUDE.md`** — development protocol: staged verification loop, corpus
   gates, module placement guide, and code index.

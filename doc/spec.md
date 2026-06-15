@@ -1,7 +1,6 @@
 # PowerBuilder Parser — Implementation Reference Specification
 
-Synthesized from `reference/code/vsc-powersyntax/` (battle-tested TypeScript implementation)
-and `reference/code/vsc-powersyntax/syntaxes/powerbuilder.tmLanguage.json` (authoritative grammar).
+Synthesized from `vsc-powersyntax` (battle-tested TypeScript implementation) and PowerBuilder docs.
 
 All regex patterns are given in their raw string form (PCRE-compatible, case-insensitive unless noted).
 
@@ -134,7 +133,7 @@ error message application window menu datawindow
 nonvisualobject function_object
 ```
 
-See `reference/code/vsc-powersyntax/src/server/parsing/grammar.ts` → `PB_BUILTIN_TYPES` for the ~230-entry complete list including all visual controls, PDF objects, HTTP/REST classes, and reflection types.
+See `vsc-powersyntax/src/server/parsing/grammar.ts` → `PB_BUILTIN_TYPES` for the ~230-entry complete list including all visual controls, PDF objects, HTTP/REST classes, and reflection types.
 
 ### 2.5 String Literals
 

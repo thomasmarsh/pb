@@ -1,6 +1,6 @@
 # SKILLS.md: Automated Code Analysis via `jq` & PowerBuilder AST
 
-> **NOTE:** This is a speculative skills document based on ideas specified in [VISION.md](VISION.md)
+> **NOTE:** This is a speculative skills document based on ideas specified in [vision.md](vision.md)
 
 ## 1. Skill Profile & Core Mandate
 
