@@ -40,13 +40,26 @@ pb/
 │   └── uv.lock               Python dependency lockfile
 ├── ui/                       TypeScript / SolidJS SPA source
 │   ├── src/
-│   │   ├── App.tsx           SPA root component
-│   │   ├── api-client.ts     Typed wrappers around /api/* endpoints
-│   │   ├── components/       One file per UI panel (Objects, DataWindows, …)
+│   │   ├── App.tsx           SPA root component — wires store + routes
+│   │   ├── core/             TCA-style framework primitives
+│   │   │   ├── reducer.ts    Reducer<S,A,Env> type, pullback(), combine()
+│   │   │   ├── effect.ts     Effect<A> class for async side effects
+│   │   │   └── store.ts      createStore(), useSnapshot(), scope()
+│   │   ├── app/              App-level wiring
+│   │   │   ├── state.ts      AppState shape (single state tree)
+│   │   │   ├── actions.ts    AppAction tagged union (routes to feature reducers)
+│   │   │   ├── reducer.ts    combine() + pullback() for all feature reducers
+│   │   │   └── api-client.ts Typed wrappers around /api/* endpoints
+│   │   ├── features/         One sub-directory per feature slice
+│   │   │   ├── navigation/   View routing, stats, detail panels
+│   │   │   ├── objects/      Object list, search, sort, pagination
+│   │   │   ├── diagrams/     SVG call-graph and lineage diagrams
+│   │   │   ├── queries/      Custom SQL query runner
+│   │   │   ├── search/       Full-text search
+│   │   │   └── explore/      AST explorer (procedure body viewer)
+│   │   ├── components/       SolidJS UI components (one file per panel)
 │   │   └── types/
 │   │       ├── api.ts              Hand-written API response shapes
-│   │       ├── state.ts            SolidJS store shape
-│   │       ├── actions.ts          Reducer action types
 │   │       └── ast.generated.ts    Generated from Haskell — not in git
 │   ├── tests/                Vitest test suite
 │   ├── package.json          pnpm project (SolidJS, Vite, Vitest)
@@ -277,6 +290,64 @@ generation for the API contract — changes to `api.py` must be reflected in
 
 ---
 
+## UI state architecture
+
+The SPA uses a TCA 1.0–inspired architecture (`core/`) layered over
+[Valtio](https://github.com/pmndrs/valtio) for reactive state and SolidJS
+signals for rendering.
+
+### Core abstractions
+
+**`Reducer<S, A, Env>`** (`core/reducer.ts`)
+
+A pure function `(draft: S, action: A, env: Env) => Effect<A> | null`.
+Reducers mutate `draft` in place (Valtio proxy) and optionally return an
+`Effect` describing async side work.  Two composition helpers:
+
+- `pullback(child, get, match, widen, getEnv)` — scopes a child reducer to a
+  slice of parent state and a subset of parent actions.
+- `combine(...reducers)` — runs all reducers over the same draft and merges
+  any returned effects.
+
+**`Effect<A>`** (`core/effect.ts`)
+
+An opaque wrapper around `(send: (a: A) => void) => Promise<void>`.  Effects
+are returned from reducers; the store executes them after the synchronous
+mutation is complete and dispatches the resulting actions back into the store.
+Combinators: `Effect.fromPromise`, `Effect.send`, `Effect.merge`, `.map`,
+`.catch`.
+
+**`createStore`** (`core/store.ts`)
+
+Creates a Valtio `proxy` and a `dispatch` function.  Each `dispatch` call
+runs the top-level reducer synchronously (mutating the proxy), then executes
+any returned `Effect` asynchronously.  `useSnapshot` bridges the proxy to a
+SolidJS reactive getter; `scope` narrows a parent store to a child state/action
+slice for prop-drilling.
+
+### Feature slices
+
+Each feature under `features/` is self-contained:
+
+| File | Purpose |
+|------|---------|
+| `types.ts` | State shape for this feature |
+| `actions.ts` | Tagged action union for this feature |
+| `reducer.ts` | `*Reducer` + `*Env` interface (API dependencies) |
+
+The `*Env` interface lists every external dependency (API calls, etc.) as
+`Effect`-returning methods.  This keeps reducers pure and trivially testable —
+tests inject a fake `Env` with `Effect.send`.
+
+### Wiring
+
+`app/reducer.ts` calls `combine(pullback(navReducer, …), pullback(objectsReducer, …), …)`
+to produce the single top-level `AppState` / `AppAction` reducer.
+`App.tsx` calls `createStore(initialState(), reducer, env)` once and passes
+`dispatch` (and scoped stores) down the component tree.
+
+---
+
 ## Key files by concern
 
 | Concern | File(s) |
@@ -292,7 +363,10 @@ generation for the API contract — changes to `api.py` must be reflected in
 | AST → PBScript rendering | `cli/pb_cli/explorer/render.py` |
 | Explorer build orchestration | `cli/pb_cli/build.py:ensure_explorer_built` |
 | SPA root | `ui/src/App.tsx` |
-| SPA state | `ui/src/store.ts` |
+| SPA state shape | `ui/src/app/state.ts`, `ui/src/features/*/types.ts` |
+| SPA actions | `ui/src/app/actions.ts`, `ui/src/features/*/actions.ts` |
+| SPA reducer + store | `ui/src/core/reducer.ts`, `ui/src/core/store.ts`, `ui/src/app/reducer.ts` |
+| SPA async effects | `ui/src/core/effect.ts` |
 | Generated AST types (TS) | `ui/src/types/ast.generated.ts` (build artifact; `pnpm prebuild` regenerates) |
 | SQL query commands | `queries/*.sql` |
 
