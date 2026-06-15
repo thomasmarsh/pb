@@ -19,7 +19,7 @@ export interface ExploreState {
   procCache: Record<string, ExploreProcDetail | { error: string }>;
   dwCache: Record<string, DwExploreDetail | { error: string }>;
   loading: boolean;
-  activeTab: "source" | "ast";
+  activeTab: "source" | "ast" | "sql";
   treeFilter: string;
   highlightedLine: number | null;
   leftTab: "objects" | "tables";

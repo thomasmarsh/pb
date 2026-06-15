@@ -202,6 +202,18 @@ export interface DwExploreDetail {
   error?: string;
 }
 
+export interface SqlStatementRow {
+  stmt_idx: number;
+  operation: string;
+  raw_sql: string;
+  formatted_sql: string;
+  tables: string[] | null;
+  columns: string[] | null;
+  has_into: boolean;
+  has_cursor: boolean;
+  parse_ok: boolean;
+}
+
 export interface ExploreProcDetail {
   ast: Located<BodyStmt>[] | null;
   source_rendered: string;
@@ -212,4 +224,5 @@ export interface ExploreProcDetail {
   start_line: number | null;
   end_line: number | null;
   cyclomatic: number | null;
+  sql_statements: SqlStatementRow[];
 }

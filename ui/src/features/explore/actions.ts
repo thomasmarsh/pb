@@ -15,7 +15,7 @@ export type ExploreAction =
   | { type: "dw-select"; dwName: string; nodeId: string }
   | { type: "dw-loaded"; nodeId: string; data: DwExploreDetail }
   | { type: "dw-error"; nodeId: string; error: string }
-  | { type: "tab"; tab: "source" | "ast" }
+  | { type: "tab"; tab: "source" | "ast" | "sql" }
   | { type: "filter"; q: string }
   | { type: "highlight-line"; line: number | null }
   | { type: "left-tab"; tab: "objects" | "tables" }

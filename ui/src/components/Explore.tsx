@@ -7,7 +7,7 @@ import type { AppState } from "../app/state.js";
 import type { AppAction } from "../app/actions.js";
 import { ExploreStoreContext, useExploreStore } from "./ExploreContext.js";
 import { highlightPowerScript } from "../highlight.js";
-import type { ExploreLibrary, ExploreObject, ExploreProcedure, DwExploreDetail, ExploreProcDetail } from "../types/api.js";
+import type { ExploreLibrary, ExploreObject, ExploreProcedure, DwExploreDetail, ExploreProcDetail, SqlStatementRow } from "../types/api.js";
 import { TreeNode } from "./TreeNode.js";
 import { AstNode } from "./ast-node.js";
 import { DetailShell } from "./DetailShell.js";
@@ -234,6 +234,12 @@ function ProcDetailPanel(props: { nodeId: string }) {
                   class={`explore-tab-btn${activeTab() === "ast" ? " active" : ""}`}
                   onClick={() => store.dispatch({ tag: "explore", action: { type: "tab", tab: "ast" } })}
                 >AST</button>
+                <Show when={d.sql_statements.length > 0}>
+                  <button
+                    class={`explore-tab-btn${activeTab() === "sql" ? " active" : ""}`}
+                    onClick={() => store.dispatch({ tag: "explore", action: { type: "tab", tab: "sql" } })}
+                  >SQL ({d.sql_statements.length})</button>
+                </Show>
               </div>
             </div>
             <div class="explore-right-body">
@@ -267,6 +273,26 @@ function ProcDetailPanel(props: { nodeId: string }) {
               </Show>
               <Show when={activeTab() === "ast"}>
                 <AstNode node={d.ast} nodeId={props.nodeId + ".ast"} depth={0} />
+              </Show>
+              <Show when={activeTab() === "sql"}>
+                <div class="sql-tab-body">
+                  <For each={d.sql_statements}>
+                    {(stmt: SqlStatementRow) => (
+                      <div class="sql-stmt-block">
+                        <div class="sql-stmt-header">
+                          <span class="badge badge-sql">{stmt.operation}</span>
+                          <Show when={stmt.tables && stmt.tables.length > 0}>
+                            <span class="sql-tables-label">{stmt.tables!.join(", ")}</span>
+                          </Show>
+                          <Show when={!stmt.parse_ok}>
+                            <span class="badge badge-warn">unparsed</span>
+                          </Show>
+                        </div>
+                        <pre class="code-viewer sql-code">{stmt.formatted_sql}</pre>
+                      </div>
+                    )}
+                  </For>
+                </div>
               </Show>
             </div>
           </>

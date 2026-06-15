@@ -1,6 +1,8 @@
 """Tests for pb_cli.explorer — API endpoints and render module."""
+import shutil
 from pathlib import Path
 
+import duckdb
 import pytest
 
 
@@ -11,6 +13,32 @@ def client(db_path):
     from fastapi.testclient import TestClient
     from pb_cli.explorer import create_app
     app = create_app(db_path)
+    return TestClient(app)
+
+
+@pytest.fixture(scope="module")
+def client_with_sql(db_path, tmp_path_factory):
+    """Client backed by a DB copy with a synthetic sql_statements row.
+
+    openpay has no embedded SQL body statements, so we inject one row to exercise
+    the non-empty code paths without touching the shared session-scoped DB.
+    """
+    tmp = tmp_path_factory.mktemp("db_sql")
+    db_copy = str(tmp / "test_sql.duckdb")
+    shutil.copy(db_path, db_copy)
+
+    conn = duckdb.connect(db_copy)
+    conn.execute(
+        "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        ["", "fn_sqlerror", "fn_sqlerror", 0, "SELECT",
+         "SELECT id FROM synthetic_test_table WHERE id = 1",
+         None, ["synthetic_test_table"], ["id"], False, False, True],
+    )
+    conn.close()
+
+    from fastapi.testclient import TestClient
+    from pb_cli.explorer import create_app
+    app = create_app(db_copy)
     return TestClient(app)
 
 
@@ -330,3 +358,33 @@ def test_get_table_detail_returns_lineage(client):
 def test_get_table_detail_404_unknown(client):
     r = client.get("/api/tables/__nonexistent_table__")
     assert r.status_code == 404
+
+
+# ── Explore SQL statements ─────────────────────────────────────────────────────
+
+def test_explore_procedure_has_sql_statements_field(client):
+    """sql_statements key is always present, even when empty."""
+    r = client.get("/api/objects/fn_sqlerror")
+    assert r.status_code == 200
+    procs = r.json().get("procedures", [])
+    if not procs:
+        pytest.skip("fn_sqlerror has no procedures")
+    proc_name = procs[0]["name"]
+    r2 = client.get(f"/api/explore/procedure/fn_sqlerror/{proc_name}")
+    assert r2.status_code == 200
+    data = r2.json()
+    assert "sql_statements" in data
+    assert isinstance(data["sql_statements"], list)
+
+
+def test_explore_procedure_sql_statements_have_formatted_sql(client_with_sql):
+    """Each sql_statements row has a formatted_sql string field."""
+    r = client_with_sql.get("/api/explore/procedure/fn_sqlerror/fn_sqlerror")
+    if r.status_code == 404:
+        pytest.skip("fn_sqlerror not found")
+    data = r.json()
+    stmts = data.get("sql_statements", [])
+    assert len(stmts) > 0, "synthetic SQL row should be present"
+    for stmt in stmts:
+        assert "formatted_sql" in stmt
+        assert isinstance(stmt["formatted_sql"], str)

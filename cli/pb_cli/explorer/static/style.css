@@ -872,3 +872,27 @@ body {
     color: var(--text-muted);
     margin-bottom: 16px;
 }
+
+/* ── SQL tab ─────────────────────────────────────────────────────────────────── */
+
+.badge-sql {
+    background: rgba(74, 222, 128, 0.15); color: var(--green);
+    border: 1px solid rgba(74, 222, 128, 0.3);
+    padding: 1px 6px; border-radius: 4px;
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+}
+.badge-warn {
+    background: rgba(251, 146, 60, 0.15); color: var(--orange);
+    border: 1px solid rgba(251, 146, 60, 0.3);
+    padding: 1px 6px; border-radius: 4px;
+    font-size: 10px; font-weight: 600;
+}
+.sql-tab-body { padding: 8px 0; overflow: auto; }
+.sql-stmt-block { margin-bottom: 16px; }
+.sql-stmt-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 12px 4px; font-size: 12px;
+}
+.sql-tables-label { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+.sql-code { font-size: 12px; margin: 0 12px; padding: 8px 12px; }
+.ast-badge { margin-left: 6px; font-size: 10px; vertical-align: middle; }

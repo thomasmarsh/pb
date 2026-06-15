@@ -66,6 +66,11 @@ export function AstNode(props: {
     return null;
   });
 
+  const badgeText = createMemo(() => {
+    if (Array.isArray(props.node) || !isNode(props.node)) return null;
+    return renderer()?.badge?.(props.node) ?? null;
+  });
+
   function toggle() {
     if (hasChildren()) {
       store.dispatch({ tag: "explore", action: { type: "toggle", nodeId: props.nodeId } });
@@ -106,6 +111,9 @@ export function AstNode(props: {
         >
           <span class="ast-leaf-text ast-highlighted" innerHTML={highlightedHtml()!} />
         </Show>
+        <Show when={badgeText()}>
+          <span class="badge-sql ast-badge">{badgeText()}</span>
+        </Show>
       </div>
     );
   }
@@ -120,6 +128,9 @@ export function AstNode(props: {
           fallback={<span class="ast-branch-text">{summaryText()}</span>}
         >
           <span class="ast-branch-text ast-highlighted" innerHTML={highlightedHtml()!} />
+        </Show>
+        <Show when={badgeText()}>
+          <span class="badge-sql ast-badge">{badgeText()}</span>
         </Show>
       </div>
       <Show when={isExpanded()}>

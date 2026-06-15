@@ -91,7 +91,10 @@ export interface RendererEntry {
   summary: (n: Record<string, unknown>) => string;
   source?: (n: Record<string, unknown>) => string | null;
   children?: (n: Record<string, unknown>) => AstChild[];
+  badge?: (n: Record<string, unknown>) => string | null;
 }
+
+const SQL_LEADING_RE = /^\s*(SELECT|INSERT|UPDATE|DELETE|DECLARE|OPEN|FETCH|CLOSE|COMMIT|ROLLBACK|EXECUTE|CONNECT|DISCONNECT)\b/i;
 
 // ── Renderer registry ─────────────────────────────────────────────────────────
 
@@ -195,6 +198,10 @@ export const RENDERERS: Record<string, RendererEntry> = {
   BsRaw: {
     summary: (n) => truncStr(n.contents, 60),
     source: (n) => strOrNull(n.contents),
+    badge: (n) => {
+      const text = typeof n.contents === "string" ? n.contents : null;
+      return text && SQL_LEADING_RE.test(text) ? "SQL" : null;
+    },
   },
   BsInc: {
     summary: (n) => arrJoin(n.contents) + "++",
