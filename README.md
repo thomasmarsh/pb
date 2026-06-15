@@ -81,13 +81,13 @@ control, database reference, and inheritance edge in your codebase.
 
 ### Modes
 
-| Command                      | What it does                                                    |
-| ---------------------------- | --------------------------------------------------------------- |
-| `pb ingest DIR [--db DB]`    | Parse → index → analyze (incremental). Default DB: `pb.duckdb`. |
-| `pb ingest DIR --reset`      | Full re-parse, drop and recreate all tables.                    |
-| `pb dump DIR -o OUTDIR`      | Parse to a mirrored JSON file tree (one-shot snapshot).         |
-| `pb analyze [DB]`            | Re-run graph metrics on an existing database.                   |
-| `pb explore [--db DB]`       | Interactive web UI (auto-builds frontend on first run).         |
+| Command                   | What it does                                                    |
+| ------------------------- | --------------------------------------------------------------- |
+| `pb ingest DIR [--db DB]` | Parse → index → analyze (incremental). Default DB: `pb.duckdb`. |
+| `pb ingest DIR --reset`   | Full re-parse, drop and recreate all tables.                    |
+| `pb dump DIR -o OUTDIR`   | Parse to a mirrored JSON file tree (one-shot snapshot).         |
+| `pb analyze [DB]`         | Re-run graph metrics on an existing database.                   |
+| `pb explore [--db DB]`    | Interactive web UI (auto-builds frontend on first run).         |
 
 All commands accept `.pbl` inputs directly — source extraction is automatic.
 
@@ -124,15 +124,15 @@ pnpm build            # compile TS → static/dist/
 
 ## Build overview
 
-| Component        | Command                                    | What it does                         |
-| ---------------- | ------------------------------------------ | ------------------------------------ |
-| Haskell parser   | `cd parser && cabal build`                 | Compile library + executables        |
-| Haskell tests    | `cd parser && cabal test`                  | Run 768 property + unit tests        |
-| Python tools     | `./pb ingest`                              | Parse → index → analyze pipeline     |
-| Python tests     | `cd cli && uv run pytest`                  | 125 tests across tooling             |
-| Explorer TS      | `pnpm build` (in `ui/`)                    | Bundle TS → JS for the web UI        |
-| Explorer tests   | `pnpm test` (in `ui/`)                     | 39 reducer + state management tests  |
-| Corpus check     | `./pb check-corpus`                        | 0 errors / 777 files baseline        |
+| Component      | Command                    | What it does                        |
+| -------------- | -------------------------- | ----------------------------------- |
+| Haskell parser | `cd parser && cabal build` | Compile library + executables       |
+| Haskell tests  | `cd parser && cabal test`  | Run 768 property + unit tests       |
+| Python tools   | `./pb ingest`              | Parse → index → analyze pipeline    |
+| Python tests   | `cd cli && uv run pytest`  | 125 tests across tooling            |
+| Explorer TS    | `pnpm build` (in `ui/`)    | Bundle TS → JS for the web UI       |
+| Explorer tests | `pnpm test` (in `ui/`)     | 39 reducer + state management tests |
+| Corpus check   | `./pb check-corpus`        | 0 errors / 777 files baseline       |
 
 CI runs all of these on every push to `main`.
 
@@ -280,10 +280,10 @@ statements and expressions). Useful for tracking parser coverage.
 
 ## Further reading
 
-- **`[architecture.md](doc/architecture.md)`** — component map, data flow, cross-component
+- **[`doc/architecture.md`](doc/architecture.md)** — component map, data flow, cross-component
   interfaces, testing, and build sequence.
-- **`[vision.md](doc/vision.md)`** — architectural rationale, LLM integration workflow,
+- **[`doc/vision.md`](doc/vision.md)** — architectural rationale, LLM integration workflow,
   DuckDB schema design, and the full operational pipeline.
-- **`[skills-draft.md](doc/skills-draft.md)`** — draft of a skills file that could be used for generating new queries
+- **[`doc/skills-draft.md`](doc/skills-draft.md)** — draft of a skills file that could be used for generating new queries
 - **`CLAUDE.md`** — development protocol: staged verification loop, corpus
   gates, module placement guide, and code index.
