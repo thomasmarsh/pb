@@ -5,7 +5,7 @@ import { useSnapshot } from "../core/store.js";
 import type { Store } from "../core/store.js";
 import type { AppState } from "../app/state.js";
 import type { AppAction } from "../app/actions.js";
-import { highlightSql } from "../highlight.js";
+import { SqlBlock } from "./CodeBlock.js";
 
 export function Queries(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
@@ -66,8 +66,7 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
               </Show>
             </div>
             <Show when={shownSql().has(query.name) && query.sql}>
-              <pre class="code-viewer sql-code" style={{ "margin-top": "8px", "font-size": "11px" }}
-                   innerHTML={highlightSql(query.sql!)} />
+              <SqlBlock code={query.sql!} style={{ "margin-top": "8px", "font-size": "11px" }} />
             </Show>
           </div>
         )}

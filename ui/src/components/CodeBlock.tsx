@@ -1,7 +1,12 @@
-// CodeBlock.tsx — Simple syntax-highlighted code block with line numbers.
+// CodeBlock.tsx — Syntax-highlighted code blocks (PowerScript + SQL).
 
 import { For } from "solid-js";
-import { highlightPowerScript } from "../highlight.js";
+import type { JSX } from "solid-js";
+import { highlightPowerScript, highlightSql } from "../highlight.js";
+
+export function SqlBlock(props: { code: string; style?: JSX.CSSProperties }) {
+  return <pre class="code-viewer sql-code" style={props.style} innerHTML={highlightSql(props.code)} />;
+}
 
 interface CodeBlockProps {
   code: string;

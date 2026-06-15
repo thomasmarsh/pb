@@ -6,11 +6,12 @@ import type { Store } from "../core/store.js";
 import type { AppState } from "../app/state.js";
 import type { AppAction } from "../app/actions.js";
 import { ExploreStoreContext, useExploreStore } from "./ExploreContext.js";
-import { highlightPowerScript, highlightSql } from "../highlight.js";
+import { highlightPowerScript } from "../highlight.js";
 import type { ExploreLibrary, ExploreObject, ExploreProcedure, DwExploreDetail, ExploreProcDetail, SqlStatementRow } from "../types/api.js";
 import { TreeNode } from "./TreeNode.js";
 import { AstNode } from "./ast-node.js";
 import { DetailShell } from "./DetailShell.js";
+import { SqlBlock } from "./CodeBlock.js";
 import { DwDetailTree } from "./DwDetailTree.js";
 import { TableList, TableDetailPanel } from "./Tables.js";
 
@@ -288,7 +289,7 @@ function ProcDetailPanel(props: { nodeId: string }) {
                             <span class="badge badge-warn">unparsed</span>
                           </Show>
                         </div>
-                        <pre class="code-viewer sql-code" innerHTML={highlightSql(stmt.formatted_sql)} />
+                        <SqlBlock code={stmt.formatted_sql} />
                       </div>
                     )}
                   </For>

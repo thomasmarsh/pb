@@ -4,6 +4,7 @@ import { Show, For, createMemo, type JSX } from "solid-js";
 import { useSnapshot } from "../core/store.js";
 import { useExploreStore } from "./ExploreContext.js";
 import type { DwExploreDetail } from "../types/api.js";
+import { SqlBlock } from "./CodeBlock.js";
 
 function chevron(expanded: boolean): string { return expanded ? "▾" : "▸"; }
 
@@ -90,7 +91,7 @@ export function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
         <div class="dw-section-header">
           <span class="dw-section-title">SQL</span>
         </div>
-        <pre class="code-viewer" style={{ margin: "0 8px 4px", padding: "10px 14px", "font-size": "12px", "max-height": "200px" }}>{retrieveSql()}</pre>
+        <SqlBlock code={retrieveSql()!} style={{ margin: "0 8px 4px", padding: "10px 14px", "font-size": "12px", "max-height": "200px" }} />
       </Show>
 
       <Show when={props.data.arguments.length > 0}>
