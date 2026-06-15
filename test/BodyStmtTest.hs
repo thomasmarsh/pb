@@ -3,6 +3,7 @@ module BodyStmtTest (tests) where
 import PB.Prelude
 import PB.AST.BodyStmt        (AugOp (..), BodyStmt (..), PbCall (..))
 import PB.AST.Expr            (Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Located         (Located (..))
 import PB.Grammar.Body        (classifyBodyStmt, parseBodyStmts, parseLvalue)
 import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
@@ -275,10 +276,10 @@ tests = testGroup "Body"
 
   , testGroup "parseBodyStmts"
     [ testCase "empty list" $
-        parseBodyStmts [] @?= []
+        map locNode (parseBodyStmts []) @?= []
 
     , testCase "single assign becomes singleton" $
-        parseBodyStmts [mkStmt [(TkIdent, "x"), (TkAssignOp, "="), (TkIntLiteral, "1")]]
+        map locNode (parseBodyStmts [mkStmt [(TkIdent, "x"), (TkAssignOp, "="), (TkIntLiteral, "1")]])
           @?= [BsAssign (Lvalue [LvSegment "x" Nothing]) (ExInt "1")]
 
     , testCase "mixed stmts: var decl, assign, return — order preserved" $
@@ -287,7 +288,7 @@ tests = testGroup "Body"
               , mkStmt [(TkIdent, "n"), (TkAssignOp, "="), (TkIntLiteral, "5")]
               , mkStmt [(TkControlKw, "return"), (TkIdent, "n")]
               ]
-            tags = map tag (parseBodyStmts stmts)
+            tags = map (tag . locNode) (parseBodyStmts stmts)
         in tags @?= ["var", "assign", "return"]
     ]
 

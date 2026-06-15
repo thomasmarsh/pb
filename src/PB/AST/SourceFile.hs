@@ -20,6 +20,7 @@ module PB.AST.SourceFile
 
 import PB.Prelude
 import PB.AST.BodyStmt    (BodyStmt)
+import PB.AST.Located     (Located)
 import GHC.Generics       (Generic)
 
 data SrFile = SrFile
@@ -66,7 +67,7 @@ data TypeDecl = TypeDecl
 
 data TypeBlock = TypeBlock
   { tbDecl :: TypeDecl
-  , tbBody :: [BodyStmt]
+  , tbBody :: [Located BodyStmt]
   } deriving (Eq, Show, Generic)
 
 data VarDecl = VarDecl
@@ -102,22 +103,22 @@ data EventSig = EventSig
 
 data FunctionBlock = FunctionBlock
   { fbSig  :: FnSig
-  , fbBody :: [BodyStmt]
+  , fbBody :: [Located BodyStmt]
   } deriving (Eq, Show, Generic)
 
 data SubroutineBlock = SubroutineBlock
   { sbSig  :: SubSig
-  , sbBody :: [BodyStmt]
+  , sbBody :: [Located BodyStmt]
   } deriving (Eq, Show, Generic)
 
 data EventBlock = EventBlock
   { evSig  :: EventSig
-  , evBody :: [BodyStmt]
+  , evBody :: [Located BodyStmt]
   } deriving (Eq, Show, Generic)
 
 data OnBlock = OnBlock
   { obQualName :: Text
   , obOwner    :: Text
   , obEvent    :: Text
-  , obBody     :: [BodyStmt]
+  , obBody     :: [Located BodyStmt]
   } deriving (Eq, Show, Generic)

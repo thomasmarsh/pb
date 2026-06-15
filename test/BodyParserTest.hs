@@ -8,6 +8,7 @@ import PB.AST.BodyStmt
   , CaseClause (..), ChooseStmt (..)
   )
 import PB.AST.Expr            (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Located         (Located (..))
 import PB.Grammar.Body        (pBodyStmt)
 import PB.Grammar.Stream      (StmtStream (..))
 import PB.Lexing.Splitter     (Statement (..))
@@ -15,7 +16,7 @@ import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
 
 import Test.Tasty              (TestTree, testGroup)
-import Test.Tasty.HUnit        (testCase, (@?=))
+import Test.Tasty.HUnit        (assertFailure, testCase, (@?=))
 import Text.Megaparsec         (eof, many, parse)
 import Text.Megaparsec.Error   (errorBundlePretty)
 
@@ -31,6 +32,12 @@ mkStmt pairs = Statement
   , stmtSource = LogicalLine "" 1 1
   }
 
+mkStmtAt :: Int -> [(TokenKind, Text)] -> Statement
+mkStmtAt ln pairs = Statement
+  { stmtTokens = map (uncurry mkTok) pairs
+  , stmtSource = LogicalLine "" ln ln
+  }
+
 -- | Like mkStmt but with a source-text string, used to test ';'-detection.
 mkStmtSrc :: Text -> [(TokenKind, Text)] -> Statement
 mkStmtSrc src pairs = Statement
@@ -38,7 +45,11 @@ mkStmtSrc src pairs = Statement
   , stmtSource = LogicalLine src 1 1
   }
 
-runBodyStmts :: [Statement] -> Either String [BodyStmt]
+-- | Wrap a BodyStmt with line 1 (matching mkStmt's LogicalLine).
+loc1 :: a -> Located a
+loc1 = Located 1
+
+runBodyStmts :: [Statement] -> Either String [Located BodyStmt]
 runBodyStmts stmts = case parse (many pBodyStmt <* eof) "" (StmtStream stmts) of
   Right bs -> Right bs
   Left err -> Left (errorBundlePretty err)
@@ -83,12 +94,12 @@ tests = testGroup "Grammar.Body.Parser"
           [ mkStmt [ (TkControlKw,"if"), (TkIdent,"n"), (TkAssignOp,"="), (TkIntLiteral,"0")
                    , (TkControlKw,"then"), (TkControlKw,"return") ] ]
           @?= Right
-            [ BsIf (IfStmt
+            [ loc1 (BsIf (IfStmt
                 { ifCond    = condExpr "0"
-                , ifThen    = [BsReturn Nothing]
+                , ifThen    = [loc1 (BsReturn Nothing)]
                 , ifElseIfs = []
                 , ifElse    = Nothing
-                }) ]
+                })) ]
 
     , testCase "inline with else" $
         -- "if n = 0 then y = 1 else z = 2"  (single statement)
@@ -99,12 +110,12 @@ tests = testGroup "Grammar.Body.Parser"
                    , (TkControlKw,"else")
                    , (TkIdent,"z"), (TkAssignOp,"="), (TkIntLiteral,"2") ] ]
           @?= Right
-            [ BsIf (IfStmt
+            [ loc1 (BsIf (IfStmt
                 { ifCond    = condExpr "0"
-                , ifThen    = [assignY1]
+                , ifThen    = [loc1 assignY1]
                 , ifElseIfs = []
-                , ifElse    = Just [assignZ2]
-                }) ]
+                , ifElse    = Just [loc1 assignZ2]
+                })) ]
 
     , testCase "multi-line single branch" $
         -- if n = 0 then / y = 1 / end if
@@ -113,12 +124,12 @@ tests = testGroup "Grammar.Body.Parser"
           , stmtY1
           , endIf ]
           @?= Right
-            [ BsIf (IfStmt
+            [ loc1 (BsIf (IfStmt
                 { ifCond    = condExpr "0"
-                , ifThen    = [assignY1]
+                , ifThen    = [loc1 assignY1]
                 , ifElseIfs = []
                 , ifElse    = Nothing
-                }) ]
+                })) ]
 
     , testCase "multi-line with else" $
         -- if n = 0 then / y = 1 / else / z = 2 / end if
@@ -129,12 +140,12 @@ tests = testGroup "Grammar.Body.Parser"
           , stmtZ2
           , endIf ]
           @?= Right
-            [ BsIf (IfStmt
+            [ loc1 (BsIf (IfStmt
                 { ifCond    = condExpr "0"
-                , ifThen    = [assignY1]
+                , ifThen    = [loc1 assignY1]
                 , ifElseIfs = []
-                , ifElse    = Just [assignZ2]
-                }) ]
+                , ifElse    = Just [loc1 assignZ2]
+                })) ]
 
     , testCase "multi-line with elseif chain" $
         -- if n = 0 then / y = 1 / elseif n = 1 then / z = 2 / end if
@@ -145,12 +156,12 @@ tests = testGroup "Grammar.Body.Parser"
           , stmtZ2
           , endIf ]
           @?= Right
-            [ BsIf (IfStmt
+            [ loc1 (BsIf (IfStmt
                 { ifCond    = condExpr "0"
-                , ifThen    = [assignY1]
-                , ifElseIfs = [ElseIf (condExpr "1") [assignZ2]]
+                , ifThen    = [loc1 assignY1]
+                , ifElseIfs = [ElseIf (condExpr "1") [loc1 assignZ2]]
                 , ifElse    = Nothing
-                }) ]
+                })) ]
     ]
 
   , testGroup "for"
@@ -162,13 +173,13 @@ tests = testGroup "Grammar.Body.Parser"
           , stmtY1
           , mkStmt [(TkControlKw,"next")] ]
           @?= Right
-            [ BsFor (ForStmt
+            [ loc1 (BsFor (ForStmt
                 { forVar  = Lvalue [LvSegment "i" Nothing]
                 , forFrom = ExInt "1"
                 , forTo   = ExInt "10"
                 , forStep = Nothing
-                , forBody = [assignY1]
-                }) ]
+                , forBody = [loc1 assignY1]
+                })) ]
 
     , testCase "for-to-step" $
         -- for i = 0 to 10 step 2 / y = 1 / next
@@ -179,13 +190,13 @@ tests = testGroup "Grammar.Body.Parser"
           , stmtY1
           , mkStmt [(TkControlKw,"next")] ]
           @?= Right
-            [ BsFor (ForStmt
+            [ loc1 (BsFor (ForStmt
                 { forVar  = Lvalue [LvSegment "i" Nothing]
                 , forFrom = ExInt "0"
                 , forTo   = ExInt "10"
                 , forStep = Just (ExInt "2")
-                , forBody = [assignY1]
-                }) ]
+                , forBody = [loc1 assignY1]
+                })) ]
 
     , testCase "nested for loops" $
         -- for i = 1 to 2 / for j = 1 to 3 / y = 1 / next / next
@@ -196,19 +207,19 @@ tests = testGroup "Grammar.Body.Parser"
           , mkStmt [(TkControlKw,"next")]
           , mkStmt [(TkControlKw,"next")] ]
           @?= Right
-            [ BsFor (ForStmt
+            [ loc1 (BsFor (ForStmt
                 { forVar  = Lvalue [LvSegment "i" Nothing]
                 , forFrom = ExInt "1"
                 , forTo   = ExInt "2"
                 , forStep = Nothing
-                , forBody = [ BsFor (ForStmt
+                , forBody = [ loc1 (BsFor (ForStmt
                                 { forVar  = Lvalue [LvSegment "j" Nothing]
                                 , forFrom = ExInt "1"
                                 , forTo   = ExInt "3"
                                 , forStep = Nothing
-                                , forBody = [assignY1]
-                                }) ]
-                }) ]
+                                , forBody = [loc1 assignY1]
+                                })) ]
+                })) ]
     ]
 
   , testGroup "do"
@@ -219,11 +230,11 @@ tests = testGroup "Grammar.Body.Parser"
           , stmtY1
           , mkStmt [(TkControlKw,"loop")] ]
           @?= Right
-            [ BsDo (DoStmt
+            [ loc1 (BsDo (DoStmt
                 { doCond = Nothing
-                , doBody = [assignY1]
+                , doBody = [loc1 assignY1]
                 , doLoop = Nothing
-                }) ]
+                })) ]
 
     , testCase "do while" $
         -- do while n = 0 / y = 1 / loop
@@ -232,11 +243,11 @@ tests = testGroup "Grammar.Body.Parser"
           , stmtY1
           , mkStmt [(TkControlKw,"loop")] ]
           @?= Right
-            [ BsDo (DoStmt
+            [ loc1 (BsDo (DoStmt
                 { doCond = Just (DoWhile (condExpr "0"))
-                , doBody = [assignY1]
+                , doBody = [loc1 assignY1]
                 , doLoop = Nothing
-                }) ]
+                })) ]
 
     , testCase "bare do loop until" $
         -- do / y = 1 / loop until n = 0
@@ -245,11 +256,11 @@ tests = testGroup "Grammar.Body.Parser"
           , stmtY1
           , mkStmt [(TkControlKw,"loop"),(TkControlKw,"until"),(TkIdent,"n"),(TkAssignOp,"="),(TkIntLiteral,"0")] ]
           @?= Right
-            [ BsDo (DoStmt
+            [ loc1 (BsDo (DoStmt
                 { doCond = Nothing
-                , doBody = [assignY1]
+                , doBody = [loc1 assignY1]
                 , doLoop = Just (DoUntil (condExpr "0"))
-                }) ]
+                })) ]
 
     , testCase "bare do loop while" $
         -- do / y = 1 / loop while n = 0
@@ -258,11 +269,11 @@ tests = testGroup "Grammar.Body.Parser"
           , stmtY1
           , mkStmt [(TkControlKw,"loop"),(TkControlKw,"while"),(TkIdent,"n"),(TkAssignOp,"="),(TkIntLiteral,"0")] ]
           @?= Right
-            [ BsDo (DoStmt
+            [ loc1 (BsDo (DoStmt
                 { doCond = Nothing
-                , doBody = [assignY1]
+                , doBody = [loc1 assignY1]
                 , doLoop = Just (DoWhile (condExpr "0"))
-                }) ]
+                })) ]
     ]
 
   , testGroup "choose"
@@ -274,10 +285,10 @@ tests = testGroup "Grammar.Body.Parser"
           , stmtY1
           , endChoose ]
           @?= Right
-            [ BsChoose (ChooseStmt
+            [ loc1 (BsChoose (ChooseStmt
                 { chooseExpr    = ExLvalue (Lvalue [LvSegment "x" Nothing])
-                , chooseClauses = [ CaseClause (Just ["1"]) [assignY1] ]
-                }) ]
+                , chooseClauses = [ CaseClause (Just ["1"]) [loc1 assignY1] ]
+                })) ]
 
     , testCase "multiple clauses" $
         -- choose case x / case 1 / y = 1 / case 2 / z = 2 / end choose
@@ -289,12 +300,12 @@ tests = testGroup "Grammar.Body.Parser"
           , stmtZ2
           , endChoose ]
           @?= Right
-            [ BsChoose (ChooseStmt
+            [ loc1 (BsChoose (ChooseStmt
                 { chooseExpr    = ExLvalue (Lvalue [LvSegment "x" Nothing])
-                , chooseClauses = [ CaseClause (Just ["1"]) [assignY1]
-                                  , CaseClause (Just ["2"]) [assignZ2]
+                , chooseClauses = [ CaseClause (Just ["1"]) [loc1 assignY1]
+                                  , CaseClause (Just ["2"]) [loc1 assignZ2]
                                   ]
-                }) ]
+                })) ]
 
     , testCase "case else clause" $
         -- choose case x / case 1 / y = 1 / case else / z = 2 / end choose
@@ -306,29 +317,29 @@ tests = testGroup "Grammar.Body.Parser"
           , stmtZ2
           , endChoose ]
           @?= Right
-            [ BsChoose (ChooseStmt
+            [ loc1 (BsChoose (ChooseStmt
                 { chooseExpr    = ExLvalue (Lvalue [LvSegment "x" Nothing])
-                , chooseClauses = [ CaseClause (Just ["1"]) [assignY1]
-                                  , CaseClause Nothing       [assignZ2]
+                , chooseClauses = [ CaseClause (Just ["1"]) [loc1 assignY1]
+                                  , CaseClause Nothing       [loc1 assignZ2]
                                   ]
-                }) ]
+                })) ]
     ]
 
   , testGroup "leaf"
     [ testCase "exit becomes BsExit" $
         runBodyStmts [mkStmt [(TkControlKw,"exit")]]
-          @?= Right [BsExit]
+          @?= Right [loc1 BsExit]
 
     , testCase "continue becomes BsContinue" $
         runBodyStmts [mkStmt [(TkControlKw,"continue")]]
-          @?= Right [BsContinue]
+          @?= Right [loc1 BsContinue]
     ]
 
   , testGroup "SQL body statement joining"
     [ testCase "single-line SQL: no joining needed (regression)" $
         -- COMMIT USING sqlca; — complete on one line
         let s = mkStmtSrc "COMMIT USING sqlca;" [(TkSqlKw,"commit"),(TkOtherKw,"using"),(TkOtherKw,"sqlca")]
-        in runBodyStmts [s] @?= Right [BsRaw "COMMIT USING sqlca;"]
+        in runBodyStmts [s] @?= Right [loc1 (BsRaw "COMMIT USING sqlca;")]
 
     , testCase "multi-line SELECT joined into one BsRaw" $
         -- SELECT count(*)
@@ -344,7 +355,7 @@ tests = testGroup "Grammar.Body.Parser"
             whr  = mkStmtSrc "  WHERE id = :var;"
                      [(TkIdent,"where"),(TkIdent,"id"),(TkAssignOp,"="),(TkColon,":"),(TkIdent,"var")]
         in runBodyStmts [sel, into, frm, whr]
-             @?= Right [BsRaw "SELECT count(*)\n  INTO :li_rc\n  FROM ole\n  WHERE id = :var;"]
+             @?= Right [loc1 (BsRaw "SELECT count(*)\n  INTO :li_rc\n  FROM ole\n  WHERE id = :var;")]
 
     , testCase "multi-line INSERT joined into one BsRaw" $
         -- INSERT INTO ole
@@ -357,13 +368,35 @@ tests = testGroup "Grammar.Body.Parser"
             vals = mkStmtSrc "  VALUES ( :var1, :var2 );"
                      [(TkIdent,"values"),(TkLParen,"("),(TkColon,":"),(TkIdent,"var1"),(TkComma,","),(TkColon,":"),(TkIdent,"var2"),(TkRParen,")")]
         in runBodyStmts [ins, cols, vals]
-             @?= Right [BsRaw "INSERT INTO ole\n  ( id, description )\n  VALUES ( :var1, :var2 );"]
+             @?= Right [loc1 (BsRaw "INSERT INTO ole\n  ( id, description )\n  VALUES ( :var1, :var2 );")]
 
     , testCase "SQL block followed by non-SQL statement" $
         -- SELECT x FROM t;   (single-line)
         -- y = 1
         let sqlS = mkStmtSrc "SELECT x FROM t;"
                      [(TkSqlKw,"select"),(TkIdent,"x"),(TkDeclKw,"from"),(TkIdent,"t")]
-        in runBodyStmts [sqlS, stmtY1] @?= Right [BsRaw "SELECT x FROM t;", assignY1]
+        in runBodyStmts [sqlS, stmtY1] @?= Right [loc1 (BsRaw "SELECT x FROM t;"), loc1 assignY1]
+    ]
+
+  , testGroup "line anchors"
+    [ testCase "locLine of leaf stmt matches stmtSource llStartLine" $ do
+        let s = mkStmtAt 42 [(TkIdent,"x"),(TkAssignOp,"="),(TkIntLiteral,"1")]
+        case parse (many pBodyStmt <* eof) "" (StmtStream [s]) of
+          Right [ls] -> locLine ls @?= 42
+          other      -> assertFailure ("unexpected result: " <> show other)
+
+    , testCase "locLine of compound for stmt is the for-line" $ do
+        let forS  = mkStmtAt 10 [(TkControlKw,"for"),(TkIdent,"i"),(TkAssignOp,"="),(TkIntLiteral,"1"),(TkControlKw,"to"),(TkIntLiteral,"3")]
+            bodyS = mkStmtAt 11 [(TkIdent,"y"),(TkAssignOp,"="),(TkIntLiteral,"1")]
+            nextS = mkStmtAt 12 [(TkControlKw,"next")]
+        case parse (many pBodyStmt <* eof) "" (StmtStream [forS, bodyS, nextS]) of
+          Right [ls] -> do
+            locLine ls @?= 10
+            case locNode ls of
+              BsFor fs -> case forBody fs of
+                [inner] -> locLine inner @?= 11
+                other   -> assertFailure ("unexpected body: " <> show other)
+              other -> assertFailure ("expected BsFor, got: " <> show other)
+          other -> assertFailure ("unexpected result: " <> show other)
     ]
   ]

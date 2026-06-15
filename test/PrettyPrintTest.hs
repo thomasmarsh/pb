@@ -7,6 +7,7 @@ import Data.Text        (Text)
 
 import PB.AST.BodyStmt
 import PB.AST.Expr
+import PB.AST.Located         (Located (..))
 import PB.Pipeline.PrettyPrint
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
@@ -16,6 +17,9 @@ lv n = Lvalue [LvSegment n Nothing]
 
 lvDot :: [Text] -> Lvalue
 lvDot ns = Lvalue [LvSegment n Nothing | n <- ns]
+
+loc1 :: a -> Located a
+loc1 = Located 1
 
 -- ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -92,63 +96,63 @@ tests = testGroup "PrettyPrint"
 
   , testGroup "Compound"
     [ testCase "if then only" $
-        prettyStmt (BsIf (IfStmt (ExBool True) [BsReturn Nothing] [] Nothing))
+        prettyStmt (BsIf (IfStmt (ExBool True) [loc1 (BsReturn Nothing)] [] Nothing))
         @?= "if true then\n    return\nend if"
 
     , testCase "if elseif else" $
         prettyStmt (BsIf (IfStmt
           (ExBinOp (ExLvalue (lv "x")) BopEq (ExInt "1"))
-          [BsExit]
-          [ElseIf (ExBinOp (ExLvalue (lv "x")) BopEq (ExInt "2")) [BsContinue]]
-          (Just [BsReturn (Just (ExInt "0"))])))
+          [loc1 BsExit]
+          [ElseIf (ExBinOp (ExLvalue (lv "x")) BopEq (ExInt "2")) [loc1 BsContinue]]
+          (Just [loc1 (BsReturn (Just (ExInt "0")))])))
         @?= "if x = 1 then\n    exit\nelseif x = 2 then\n    continue\nelse\n    return 0\nend if"
 
     , testCase "for no step" $
         prettyStmt (BsFor ForStmt { forVar = lv "i", forFrom = ExInt "1", forTo = ExInt "10"
-                                  , forStep = Nothing, forBody = [BsContinue] })
+                                  , forStep = Nothing, forBody = [loc1 BsContinue] })
         @?= "for i = 1 to 10\n    continue\nnext"
 
     , testCase "for with step" $
         prettyStmt (BsFor ForStmt { forVar = lv "i", forFrom = ExInt "0", forTo = ExInt "100"
-                                  , forStep = Just (ExInt "5"), forBody = [BsContinue] })
+                                  , forStep = Just (ExInt "5"), forBody = [loc1 BsContinue] })
         @?= "for i = 0 to 100 step 5\n    continue\nnext"
 
     , testCase "do while top" $
         prettyStmt (BsDo DoStmt { doCond = Just (DoWhile (ExBool True))
-                                , doBody = [BsExit], doLoop = Nothing })
+                                , doBody = [loc1 BsExit], doLoop = Nothing })
         @?= "do while true\n    exit\nloop"
 
     , testCase "do until bottom" $
         prettyStmt (BsDo DoStmt { doCond = Nothing
-                                , doBody = [BsExit], doLoop = Just (DoUntil (ExBool True)) })
+                                , doBody = [loc1 BsExit], doLoop = Just (DoUntil (ExBool True)) })
         @?= "do\n    exit\nloop until true"
 
     , testCase "do bare" $
-        prettyStmt (BsDo DoStmt { doCond = Nothing, doBody = [BsExit], doLoop = Nothing })
+        prettyStmt (BsDo DoStmt { doCond = Nothing, doBody = [loc1 BsExit], doLoop = Nothing })
         @?= "do\n    exit\nloop"
 
     , testCase "choose case" $
         prettyStmt (BsChoose ChooseStmt
           { chooseExpr = ExLvalue (lv "x")
           , chooseClauses =
-              [ CaseClause (Just ["1"]) [BsReturn (Just (ExInt "1"))]
-              , CaseClause Nothing      [BsReturn (Just (ExInt "0"))]
+              [ CaseClause (Just ["1"]) [loc1 (BsReturn (Just (ExInt "1")))]
+              , CaseClause Nothing      [loc1 (BsReturn (Just (ExInt "0")))]
               ]
           })
         @?= "choose case x\ncase 1\n    return 1\ncase else\n    return 0\nend choose"
     ]
 
   , testGroup "Body"
-    [ testCase "empty"              $ prettyBodyStmts []                           @?= ""
-    , testCase "single stmt"        $ prettyBodyStmts [BsExit]                    @?= "exit"
-    , testCase "multi stmt"         $ prettyBodyStmts [BsExit, BsContinue]        @?= "exit\ncontinue"
-    , testCase "raw empty filtered" $ prettyBodyStmts [BsRaw "", BsExit, BsRaw "   "] @?= "exit"
+    [ testCase "empty"              $ prettyBodyStmts []                                           @?= ""
+    , testCase "single stmt"        $ prettyBodyStmts [loc1 BsExit]                               @?= "exit"
+    , testCase "multi stmt"         $ prettyBodyStmts [loc1 BsExit, loc1 BsContinue]              @?= "exit\ncontinue"
+    , testCase "raw empty filtered" $ prettyBodyStmts [loc1 (BsRaw ""), loc1 BsExit, loc1 (BsRaw "   ")] @?= "exit"
     , testCase "nested indent" $
         prettyStmt (BsFor ForStmt
           { forVar = lv "i", forFrom = ExInt "1", forTo = ExInt "10"
           , forStep = Nothing
-          , forBody = [BsIf (IfStmt (ExBinOp (ExLvalue (lv "i")) BopEq (ExInt "5"))
-                                    [BsExit] [] Nothing)]
+          , forBody = [loc1 (BsIf (IfStmt (ExBinOp (ExLvalue (lv "i")) BopEq (ExInt "5"))
+                                          [loc1 BsExit] [] Nothing))]
           })
         @?= "for i = 1 to 10\n    if i = 5 then\n        exit\n    end if\nnext"
     ]

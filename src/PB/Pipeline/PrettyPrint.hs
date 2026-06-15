@@ -8,15 +8,16 @@ module PB.Pipeline.PrettyPrint
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
+import PB.AST.Located     (Located (..))
 import qualified Data.Text as T
 
 -- | Render a list of body statements to indented PowerScript text.
-prettyBodyStmts :: [BodyStmt] -> Text
+prettyBodyStmts :: [Located BodyStmt] -> Text
 prettyBodyStmts = prettyBodyStmtsAt 0
 
-prettyBodyStmtsAt :: Int -> [BodyStmt] -> Text
+prettyBodyStmtsAt :: Int -> [Located BodyStmt] -> Text
 prettyBodyStmtsAt n =
-  T.intercalate "\n" . filter (not . T.null . T.strip) . map (prettyStmtAt n)
+  T.intercalate "\n" . filter (not . T.null . T.strip) . map (prettyStmtAt n . locNode)
 
 -- | Render a single body statement at indent level 0.
 prettyStmt :: BodyStmt -> Text
@@ -46,7 +47,7 @@ prettyStmtAt n stmt =
     BsChoose    s              -> prettyChoose n s
 
 -- Only include body text when non-empty (avoids spurious blank lines in empty blocks).
-bodyBlock :: Int -> [BodyStmt] -> [Text]
+bodyBlock :: Int -> [Located BodyStmt] -> [Text]
 bodyBlock n stmts =
   let rendered = prettyBodyStmtsAt n stmts
   in [rendered | not (T.null rendered)]

@@ -17,6 +17,7 @@ import PB.AST.SourceFile      ( ForwardBlock (..), PrototypesBlock (..), ProtoDe
                               )
 import PB.AST.BodyStmt        (BodyStmt (..))
 import PB.AST.Expr            (Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Located         (Located (..))
 import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
@@ -47,6 +48,9 @@ runSection :: FileParser a -> [Statement] -> Either String a
 runSection p stmts = case parse p "" (StmtStream stmts) of
   Right x  -> Right x
   Left err -> Left (errorBundlePretty err)
+
+loc1 :: a -> Located a
+loc1 = Located 1
 
 -- ---------------------------------------------------------------------------
 -- Tests
@@ -483,7 +487,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pTypeBlock stmts @?=
           Right (TypeBlock (TypeDecl "w_foo" "window" Nothing)
-                   [BsLocalVar ["integer", "i_count"], BsLocalVar ["string", "s_name"]])
+                   [loc1 (BsLocalVar ["integer", "i_count"]), loc1 (BsLocalVar ["string", "s_name"])])
 
     , testCase "positive: type block with event decl in body" $ do
         let evStmt    = mkStmt [(TkDeclKw, "event"), (TkIdent, "ie_checkbuttons"), (TkLParen, "("), (TkRParen, ")")]
@@ -495,7 +499,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pTypeBlock stmts @?=
           Right (TypeBlock (TypeDecl "w_foo" "window" Nothing)
-                   [BsRaw "", BsLocalVar ["cb_delete", "cb_delete"]])
+                   [loc1 (BsRaw ""), loc1 (BsLocalVar ["cb_delete", "cb_delete"])])
 
     , testCase "negative: missing end type" $ do
         let stmts =
@@ -526,7 +530,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pOnBlock stmts @?=
           Right (OnBlock "w_main.destroy" "w_main" "destroy"
-                   [BsAssign (Lvalue [LvSegment "i" Nothing]) (ExInt "0")])
+                   [loc1 (BsAssign (Lvalue [LvSegment "i" Nothing]) (ExInt "0"))])
 
     , testCase "positive: bare on modified (ident event name)" $ do
         let stmts =
@@ -561,7 +565,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pOnBlock stmts @?=
           Right (OnBlock "ue_keypress" "" "ue_keypress"
-                   [BsLocalVar ["call", "super"]])
+                   [loc1 (BsLocalVar ["call", "super"])])
 
     , testCase "negative: on alone (no event name)" $ do
         let stmts = [mkStmt [(TkDeclKw, "on")]]
@@ -643,7 +647,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pFunctionBlock stmts @?=
           Right (FunctionBlock (FnSig [] "integer" "f_nested" "" Nothing)
-                   [BsRaw "", BsRaw ""])
+                   [loc1 (BsRaw ""), loc1 (BsRaw "")])
 
     , testCase "negative: missing end function" $ do
         let stmts =

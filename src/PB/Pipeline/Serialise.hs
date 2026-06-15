@@ -14,6 +14,7 @@ import qualified Data.Text as T
 import PB.AST.BodyStmt
 import PB.AST.DataWindow
 import PB.AST.Expr
+import PB.AST.Located     (Located)
 import PB.AST.SourceFile
 
 -- | Strip a camelCase field-name prefix, e.g. "fnsMods" → "mods",
@@ -42,6 +43,7 @@ instance ToJSON DispatchExpr where toJSON = genericToJSON customOptions
 instance ToJSON Expr         where toJSON = genericToJSON customOptions
 
 -- BodyStmt layer
+instance ToJSON a => ToJSON (Located a) where toJSON = genericToJSON customOptions
 instance ToJSON AugOp        where toJSON = genericToJSON customOptions
 instance ToJSON PbCall       where toJSON = genericToJSON customOptions
 instance ToJSON ElseIf       where toJSON = genericToJSON customOptions
@@ -98,6 +100,7 @@ $(let strip s = case span isLower s of { ([], _) -> s; (_, []) -> s; (_, c:cs) -
   -- Expr layer
   [ ''LvSegment, ''Lvalue, ''BinOp, ''DispatchMode, ''DispatchExpr, ''Expr
   -- BodyStmt layer
+  , ''Located
   , ''AugOp, ''PbCall, ''ElseIf, ''IfStmt, ''ForStmt, ''DoCondition, ''DoStmt
   , ''CaseClause, ''ChooseStmt, ''BodyStmt
   -- SourceFile layer
@@ -122,6 +125,7 @@ allTypeScriptDeclarations = concat
   , getTypeScriptDeclarations (Proxy @DispatchExpr)
   , getTypeScriptDeclarations (Proxy @Expr)
   -- BodyStmt layer
+  , getTypeScriptDeclarations (Proxy @(Located BodyStmt))
   , getTypeScriptDeclarations (Proxy @AugOp)
   , getTypeScriptDeclarations (Proxy @PbCall)
   , getTypeScriptDeclarations (Proxy @ElseIf)

@@ -21,6 +21,7 @@ import PB.Prelude
 import PB.Grammar.Body    (pBodyStmt)
 import PB.Grammar.Stream  (FileParser, StmtStream (..), leadingText, satisfyStmt, isModifierToken, currentLine)
 import PB.AST.BodyStmt    (BodyStmt)
+import PB.AST.Located     (Located)
 import PB.AST.SourceFile
   ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
   , TypeDecl (..), TypeBlock (..)
@@ -275,7 +276,7 @@ pPrototypesBlock = do
 anyStmt :: FileParser Statement
 anyStmt = satisfyStmt (const True)
 
-pBodyUntil :: Text -> FileParser ([BodyStmt], Int)
+pBodyUntil :: Text -> FileParser ([Located BodyStmt], Int)
 pBodyUntil kw = do
   body <- manyTill pBodyStmt (lookAhead (pEndKw kw))
   end  <- currentLine

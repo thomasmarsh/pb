@@ -350,6 +350,15 @@ New modules go in the most specific matching directory. If a new layer is needed
 
 Maintained here to avoid re-scanning the tree. Update when new exports are added.
 
+### `PB.AST.Located`
+
+```haskell
+data Located a = Located
+  { locLine :: Int   -- source start line (llStartLine of the originating LogicalLine)
+  , locNode :: a
+  } deriving (Eq, Show, Generic)
+```
+
 ### `PB.AST.Expr`
 
 ```haskell
@@ -400,22 +409,22 @@ data Expr
 data AugOp = AugAdd | AugSub | AugMul | AugDiv
 
 data IfStmt = IfStmt
-  { ifCond :: Expr, ifThen :: [BodyStmt]
-  , ifElseIfs :: [(Expr, [BodyStmt])], ifElse :: Maybe [BodyStmt] }
+  { ifCond :: Expr, ifThen :: [Located BodyStmt]
+  , ifElseIfs :: [(Expr, [Located BodyStmt])], ifElse :: Maybe [Located BodyStmt] }
 
 data ForStmt = ForStmt
   { forVar :: Lvalue, forFrom :: Expr, forTo :: Expr
-  , forStep :: Maybe Expr, forBody :: [BodyStmt] }
+  , forStep :: Maybe Expr, forBody :: [Located BodyStmt] }
 
 data DoCondition = DoWhile Expr | DoUntil Expr
 
 data DoStmt = DoStmt
-  { doCond :: Maybe DoCondition, doBody :: [BodyStmt]
+  { doCond :: Maybe DoCondition, doBody :: [Located BodyStmt]
   , doLoop :: Maybe DoCondition }
 
 data CaseClause = CaseClause
   { ccExpr :: Maybe [Token]   -- Nothing = "case else"
-  , ccBody :: [BodyStmt] }
+  , ccBody :: [Located BodyStmt] }
 
 data ChooseStmt = ChooseStmt
   { chooseExpr :: Expr, chooseClauses :: [CaseClause] }
@@ -442,12 +451,12 @@ data BodyStmt
 ### `PB.Grammar.Body`
 
 ```haskell
-classifyBodyStmt :: Statement -> BodyStmt   -- leaf classifier; exit/continue/return/var/assign
-parseBodyStmts   :: [Statement] -> [BodyStmt]  -- flat map; use pBodyStmt for recursive parsing
+classifyBodyStmt :: Statement -> BodyStmt          -- leaf classifier; exit/continue/return/var/assign
+parseBodyStmts   :: [Statement] -> [Located BodyStmt]  -- flat map; uses llStartLine for locLine
 parseLvalue      :: [Token] -> Maybe Lvalue
 parseExpr        :: [Token] -> Expr   -- total; ExRaw fallback; TkColon guard for SQL host vars
 -- Internal helpers (not exported): lookupBinOp, parseAtom, climbPrec, chainCalls
-pBodyStmt        :: FileParser BodyStmt  -- recursive; dispatches to pIfStmt/pForStmt/pDoStmt/pChooseStmt
+pBodyStmt        :: FileParser (Located BodyStmt)  -- captures currentLine before dispatching
 ```
 
 ### `PB.Pipeline.Preprocess`
@@ -487,7 +496,7 @@ data VariablesBlock = VariablesBlock { varScope :: VarScope, varDecls :: [VarDec
 data VarScope       = GlobalVars | TypeVars
 
 data TypeDecl = TypeDecl { tdName :: Text, tdAncestor :: Text, tdWithin :: Maybe Text }
-data TypeBlock = TypeBlock { tbDecl :: TypeDecl, tbBody :: [BodyStmt] }
+data TypeBlock = TypeBlock { tbDecl :: TypeDecl, tbBody :: [Located BodyStmt] }
 data VarDecl   = VarDecl  { vdModifiers :: [Text], vdType :: Text, vdName :: Text }
 data GlobalInstance = GlobalInstance { giType :: Text, giName :: Text }
 
@@ -495,10 +504,10 @@ data FnSig  = FnSig  { fnsMods :: [Text], fnsRetType :: Text, fnsName :: Text, f
 data SubSig = SubSig { ssMods  :: [Text], ssName :: Text, ssParams :: Text, ssThrows :: Maybe Text }
 data EventSig = EventSig { esName :: Text, esRawSig :: Text }
 
-data FunctionBlock   = FunctionBlock   { fbSig :: FnSig,   fbBody :: [BodyStmt] }
-data SubroutineBlock = SubroutineBlock { sbSig :: SubSig,  sbBody :: [BodyStmt] }
-data EventBlock      = EventBlock      { evSig :: EventSig, evBody :: [BodyStmt] }
-data OnBlock         = OnBlock         { obQualName :: Text, obOwner :: Text, obEvent :: Text, obBody :: [BodyStmt] }
+data FunctionBlock   = FunctionBlock   { fbSig :: FnSig,   fbBody :: [Located BodyStmt] }
+data SubroutineBlock = SubroutineBlock { sbSig :: SubSig,  sbBody :: [Located BodyStmt] }
+data EventBlock      = EventBlock      { evSig :: EventSig, evBody :: [Located BodyStmt] }
+data OnBlock         = OnBlock         { obQualName :: Text, obOwner :: Text, obEvent :: Text, obBody :: [Located BodyStmt] }
 ```
 
 ### `PB.Grammar.File`
@@ -513,7 +522,7 @@ pTypeDecl        :: FileParser TypeDecl
 pVarDecl         :: FileParser VarDecl
 pProtoDecl       :: FileParser ProtoDecl
 pEndKw           :: Text -> FileParser ()
-pBodyUntil       :: Text -> FileParser [BodyStmt]
+pBodyUntil       :: Text -> FileParser ([Located BodyStmt], Int)
 pTypeBlock       :: FileParser TypeBlock
 pOnBlock         :: FileParser OnBlock
 pEventBlock      :: FileParser EventBlock
@@ -531,6 +540,7 @@ satisfyStmt      :: (Statement -> Bool) -> FileParser Statement
 leadingKind      :: TokenKind -> FileParser Statement
 leadingText      :: Text -> FileParser Statement
 isModifierToken  :: Token -> Bool   -- TkAccessModifier | TkStorageModifier
+currentLine      :: FileParser Int  -- llStartLine of the next statement (without consuming)
 ```
 
 ### `PB.Pipeline.Runner`

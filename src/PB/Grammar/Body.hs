@@ -16,10 +16,11 @@ import PB.AST.BodyStmt
 import PB.AST.Expr        ( BinOp (..), Expr (..)
                           , DispatchExpr (..), DispatchMode (..)
                           , LvSegment (..), Lvalue (..) )
-import PB.Grammar.Stream  (FileParser, satisfyStmt, isModifierToken)
+import PB.AST.Located     (Located (..))
+import PB.Grammar.Stream  (FileParser, satisfyStmt, isModifierToken, currentLine)
 import PB.Lexing.Splitter (Statement (..))
 import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
-import PB.Pipeline.Preprocess (LogicalLine (..), llText)
+import PB.Pipeline.Preprocess (LogicalLine (..), llText, llStartLine)
 
 import Text.Megaparsec (lookAhead, many, manyTill, optional, try)
 import qualified Data.Text as T
@@ -383,8 +384,8 @@ classifyBodyStmt s = case stmtTokens s of
                , tkKind nameT == TkIdent -> BsLocalVar (map tkText ts)
              _ -> classifyByOp s ts
 
-parseBodyStmts :: [Statement] -> [BodyStmt]
-parseBodyStmts = map classifyBodyStmt
+parseBodyStmts :: [Statement] -> [Located BodyStmt]
+parseBodyStmts = map (\s -> Located (llStartLine (stmtSource s)) (classifyBodyStmt s))
 
 -- ---------------------------------------------------------------------------
 -- Control-flow predicates
@@ -457,7 +458,8 @@ pIfStmt = do
            return (BsIf (IfStmt cond thenBody elseIfs elseBody))
          else do
            let (thenToks, elseM) = splitAtElse afterThen
-               mkSub toks = classifyBodyStmt (Statement toks (stmtSource s))
+               ln = llStartLine (stmtSource s)
+               mkSub toks = Located ln (classifyBodyStmt (Statement toks (stmtSource s)))
                thenBody = [mkSub thenToks]
                elseBody = fmap (\eToks -> [mkSub eToks]) elseM
            return (BsIf (IfStmt cond thenBody [] elseBody))
@@ -544,11 +546,13 @@ isBlockTerminator s = case stmtTokens s of
              ["end function", "end subroutine", "end event", "end on"]
   _     -> False
 
-pBodyStmt :: FileParser BodyStmt
-pBodyStmt =
-      try pSqlBodyStmt
-  <|> try pIfStmt
-  <|> try pForStmt
-  <|> try pDoStmt
-  <|> try pChooseStmt
-  <|> (classifyBodyStmt <$> satisfyStmt (not . isBlockTerminator))
+pBodyStmt :: FileParser (Located BodyStmt)
+pBodyStmt = do
+  ln <- currentLine
+  stmt <-   try pSqlBodyStmt
+        <|> try pIfStmt
+        <|> try pForStmt
+        <|> try pDoStmt
+        <|> try pChooseStmt
+        <|> (classifyBodyStmt <$> satisfyStmt (not . isBlockTerminator))
+  pure (Located ln stmt)

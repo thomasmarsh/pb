@@ -28,6 +28,7 @@ library
     PB.AST.BodyStmt
     PB.AST.DataWindow
     PB.AST.Expr
+    PB.AST.Located
     PB.AST.SourceFile
     PB.Grammar.Body
     PB.Grammar.DataWindow

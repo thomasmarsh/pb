@@ -9,6 +9,7 @@ dependencies = [
     "networkx>=3.3",
     "rich>=13.0",
     "scipy>=1.11",
+    "sqlglot>=30.11.0",
     "typer>=0.12",
     "uvicorn[standard]>=0.30",
 ]

@@ -13,6 +13,7 @@ module PB.AST.BodyStmt
 
 import PB.Prelude
 import PB.AST.Expr        (Expr, Lvalue)
+import PB.AST.Located     (Located)
 import GHC.Generics       (Generic)
 
 data AugOp = AugAdd | AugSub | AugMul | AugDiv
@@ -27,15 +28,15 @@ data PbCall = PbCall
 -- | One elseif branch: condition + body.
 data ElseIf = ElseIf
   { eifCond :: Expr
-  , eifBody :: [BodyStmt]
+  , eifBody :: [Located BodyStmt]
   } deriving (Eq, Show, Generic)
 
 -- | if/elseif/else/end if
 data IfStmt = IfStmt
   { ifCond    :: Expr
-  , ifThen    :: [BodyStmt]
+  , ifThen    :: [Located BodyStmt]
   , ifElseIfs :: [ElseIf]
-  , ifElse    :: Maybe [BodyStmt]
+  , ifElse    :: Maybe [Located BodyStmt]
   } deriving (Eq, Show, Generic)
 
 -- | for VAR = FROM to TO [step STEP] … next
@@ -44,7 +45,7 @@ data ForStmt = ForStmt
   , forFrom :: Expr
   , forTo   :: Expr
   , forStep :: Maybe Expr
-  , forBody :: [BodyStmt]
+  , forBody :: [Located BodyStmt]
   } deriving (Eq, Show, Generic)
 
 -- | Condition attached to a do or loop line.
@@ -54,7 +55,7 @@ data DoCondition = DoWhile Expr | DoUntil Expr
 -- | do [while/until COND] … loop [while/until COND]
 data DoStmt = DoStmt
   { doCond :: Maybe DoCondition
-  , doBody :: [BodyStmt]
+  , doBody :: [Located BodyStmt]
   , doLoop :: Maybe DoCondition
   } deriving (Eq, Show, Generic)
 
@@ -62,7 +63,7 @@ data DoStmt = DoStmt
 -- ccExpr = Nothing means "case else".
 data CaseClause = CaseClause
   { ccExpr :: Maybe [Text]
-  , ccBody :: [BodyStmt]
+  , ccBody :: [Located BodyStmt]
   } deriving (Eq, Show, Generic)
 
 -- | choose case EXPR … end choose
