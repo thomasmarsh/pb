@@ -3,7 +3,7 @@
 import { describe, it } from "vitest";
 import { Effect } from "../../src/core/effect.js";
 import { createTestStore } from "../test-store.js";
-import { objectsReducer, type ObjectsEnv } from "../../src/features/objects/reducer.js";
+import { objectsReducer, initialObjectsState, type ObjectsEnv } from "../../src/features/objects/reducer.js";
 import type { ListObjectsResponse } from "../../src/types/api.js";
 
 const mockEnv: ObjectsEnv = {
@@ -13,7 +13,7 @@ const mockEnv: ObjectsEnv = {
 describe("objects reducer", () => {
   describe("objects/search", () => {
     it("sets q and triggers loading", () => {
-      const ts = createTestStore(objectsReducer, mockEnv, objectsReducer.initialState());
+      const ts = createTestStore(objectsReducer, mockEnv, initialObjectsState);
       ts.send({ type: "search", q: "test" }, (s) => {
         s.q = "test";
         s.loading = true;
@@ -23,7 +23,7 @@ describe("objects reducer", () => {
 
   describe("objects/filter-kind", () => {
     it("sets kind and triggers loading", () => {
-      const ts = createTestStore(objectsReducer, mockEnv, objectsReducer.initialState());
+      const ts = createTestStore(objectsReducer, mockEnv, initialObjectsState);
       ts.send({ type: "filter-kind", kind: "datawindow" }, (s) => {
         s.kind = "datawindow";
         s.loading = true;
@@ -33,7 +33,7 @@ describe("objects reducer", () => {
 
   describe("objects/sort", () => {
     it("sets sort col and triggers loading", () => {
-      const ts = createTestStore(objectsReducer, mockEnv, objectsReducer.initialState());
+      const ts = createTestStore(objectsReducer, mockEnv, initialObjectsState);
       ts.send({ type: "sort", col: "kind" }, (s) => {
         s.sort = "kind";
         s.loading = true;
@@ -41,7 +41,7 @@ describe("objects reducer", () => {
     });
 
     it("toggles order when sorting by the same col", () => {
-      const ts = createTestStore(objectsReducer, mockEnv, objectsReducer.initialState());
+      const ts = createTestStore(objectsReducer, mockEnv, initialObjectsState);
       ts.send({ type: "sort", col: "name" }, (s) => {
         s.order = "desc";
         s.loading = true;
@@ -51,7 +51,7 @@ describe("objects reducer", () => {
 
   describe("objects/page", () => {
     it("sets offset and triggers loading", () => {
-      const ts = createTestStore(objectsReducer, mockEnv, objectsReducer.initialState());
+      const ts = createTestStore(objectsReducer, mockEnv, initialObjectsState);
       ts.send({ type: "page", offset: 100 }, (s) => {
         s.offset = 100;
         s.loading = true;
@@ -65,7 +65,7 @@ describe("objects reducer", () => {
         items: [{ name: "foo", kind: "powerscript", file: "x", ancestor: null }],
         total: 42, offset: 0, limit: 100,
       };
-      const ts = createTestStore(objectsReducer, mockEnv, objectsReducer.initialState());
+      const ts = createTestStore(objectsReducer, mockEnv, initialObjectsState);
       ts.send({ type: "loaded", data }, (s) => {
         s.items = data.items;
         s.total = 42;
