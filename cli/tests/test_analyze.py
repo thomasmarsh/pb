@@ -85,24 +85,28 @@ def test_walk_calls_ex_dispatch():
 
 # ── reporter integration ──────────────────────────────────────────────────────
 
-def test_analyze_run_emits_reporter_events(db_path):
+def test_analyze_run_emits_reporter_events(tmp_path):
+    # Use an isolated DB so we don't conflict with the session-scoped read-only db_conn.
+    import duckdb
+    from pb_cli.common import create_schema
     from pb_cli.analyze import run as analyze_run
     from pb_cli.reporter import RecordingReporter
 
+    db = str(tmp_path / "test.duckdb")
+    conn = duckdb.connect(db)
+    create_schema(conn)
+    conn.close()
+
     reporter = RecordingReporter()
-    analyze_run(db_path, reporter)
+    analyze_run(db, reporter)
 
     types = {e['type'] for e in reporter.events}
     assert 'analyze_start' in types
     assert 'analyze_end' in types
 
-    n_procs = next(e['n_procs'] for e in reporter.events if e['type'] == 'analyze_start')
-    assert n_procs > 0
-
-    extract_count    = sum(1 for e in reporter.events if e['type'] == 'analyze_extract')
-    cyclomatic_count = sum(1 for e in reporter.events if e['type'] == 'analyze_cyclomatic')
-    assert extract_count == n_procs
-    assert cyclomatic_count == n_procs
+    # call extraction and cyclomatic are now done during indexing, not analyze
+    assert not any(e['type'] == 'analyze_extract' for e in reporter.events)
+    assert not any(e['type'] == 'analyze_cyclomatic' for e in reporter.events)
 
     metric_labels = [e['label'] for e in reporter.events if e['type'] == 'analyze_metrics']
     assert 'done' in metric_labels
@@ -150,3 +154,27 @@ def test_high_fanin_objects_identified(db_conn):
     assert indegree > 5, (
         f"top in_degree object '{obj}' has only {indegree} incoming edges"
     )
+
+
+def test_betweenness_values_in_range(db_conn):
+    rows = db_conn.execute(
+        "SELECT object, betweenness FROM object_metrics WHERE betweenness IS NOT NULL"
+    ).fetchall()
+    assert rows, "no betweenness values in object_metrics"
+    out_of_range = [(obj, b) for obj, b in rows if not (0.0 <= b <= 1.0)]
+    assert not out_of_range, (
+        f"betweenness values outside [0,1]: {out_of_range[:5]}"
+    )
+
+
+def test_cyclomatic_populated_by_indexing(db_conn):
+    null_count = q(db_conn,
+        "SELECT count(*) FROM procedures WHERE body_json IS NOT NULL AND cyclomatic IS NULL"
+    )
+    assert null_count == 0, (
+        f"{null_count} procedures with body_json have NULL cyclomatic — "
+        "cyclomatic should be set during indexing"
+    )
+
+    min_cc = q(db_conn, "SELECT min(cyclomatic) FROM procedures WHERE cyclomatic IS NOT NULL")
+    assert min_cc >= 1, f"cyclomatic minimum should be 1 (no branches), got {min_cc}"

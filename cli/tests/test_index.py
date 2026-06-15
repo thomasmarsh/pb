@@ -67,12 +67,129 @@ def test_dw_retrieve_tables_populated_when_e2_done(db_conn):
 # Unit tests for _ingest_dw tag dispatch (no DB, no pb-runner)
 # ---------------------------------------------------------------------------
 
-from pb_cli.index import _ingest_dw
-from pb_cli.common import TABLES
+from pb_cli.index import _ingest_dw, _proc_row, ingest_file
+from pb_cli.common import TABLES, INSERT
 
 
 def _rows():
     return {t: [] for t in TABLES}
+
+
+# ---------------------------------------------------------------------------
+# Schema/INSERT consistency guard
+# ---------------------------------------------------------------------------
+
+def test_proc_row_length_matches_insert():
+    block = {
+        'meta': {'object': 'w_test', 'startLine': 1, 'endLine': 5},
+        'sig': {'name': 'f_test', 'modifiers': [], 'params': '', 'returnType': 'integer'},
+        'body': [], 'source_rendered': '',
+    }
+    row = _proc_row('test.sru', 'function', block, [])
+    n_placeholders = INSERT['procedures'].count('?')
+    assert len(row) == n_placeholders, (
+        f"_proc_row returns {len(row)} values but INSERT has {n_placeholders} placeholders"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cyclomatic complexity computed during indexing
+# ---------------------------------------------------------------------------
+
+def test_proc_row_cyclomatic_empty_body():
+    block = {
+        'meta': {'object': 'w_test', 'startLine': 1, 'endLine': 5},
+        'sig': {'name': 'f_test', 'modifiers': [], 'params': '', 'returnType': 'integer'},
+        'body': [], 'source_rendered': '',
+    }
+    row = _proc_row('test.sru', 'function', block, [])
+    assert row[-1] == 1, f"empty body → cyclomatic=1, got {row[-1]}"
+
+
+def test_proc_row_cyclomatic_with_branches():
+    body = [
+        {"tag": "BsIf",     "contents": {"cond": {}, "then": [], "elseIfs": [], "else": None}},
+        {"tag": "BsFor",    "contents": {"body": []}},
+        {"tag": "BsChoose", "contents": {"expr": {}, "clauses": []}},
+    ]
+    block = {
+        'meta': {'object': 'w_test', 'startLine': 1, 'endLine': 10},
+        'sig': {'name': 'f_test', 'modifiers': [], 'params': '', 'returnType': 'integer'},
+        'body': body, 'source_rendered': '',
+    }
+    row = _proc_row('test.sru', 'function', block, body)
+    assert row[-1] == 4, f"3 branches → cyclomatic=4, got {row[-1]}"
+
+
+def test_proc_row_cyclomatic_nested():
+    inner = {"tag": "BsIf", "contents": {"cond": {}, "then": [], "elseIfs": [], "else": None}}
+    outer = {"tag": "BsFor", "contents": {"body": [inner]}}
+    body = [outer]
+    block = {
+        'meta': {'object': 'w_test', 'startLine': 1, 'endLine': 10},
+        'sig': {'name': 'f_test', 'modifiers': [], 'params': '', 'returnType': 'integer'},
+        'body': body, 'source_rendered': '',
+    }
+    row = _proc_row('test.sru', 'function', block, body)
+    assert row[-1] == 3, f"nested BsFor(BsIf) → cyclomatic=3, got {row[-1]}"
+
+
+# ---------------------------------------------------------------------------
+# Call extraction during indexing
+# ---------------------------------------------------------------------------
+
+def _ps_obj_with_body(proc_name: str, body: list) -> dict:
+    return {
+        "file": "test.sru",
+        "kind": "powerscript",
+        "meta": {"object": "w_test"},
+        "functions": [{
+            "meta": {"object": "w_test", "startLine": 1, "endLine": 10},
+            "sig": {"name": proc_name, "modifiers": [], "params": "", "returnType": "integer"},
+            "body": body,
+            "source_rendered": "",
+        }],
+        "subroutines": [], "events": [], "onBlocks": [],
+    }
+
+
+def test_ingest_file_extracts_ex_call():
+    rows = _rows()
+    body = [{"tag": "ExCall",
+             "callee": {"segments": [{"name": "messagebox", "subscript": None}]},
+             "args": []}]
+    ingest_file(_ps_obj_with_body("f_test", body), rows)
+    callee_names = {r[3] for r in rows['calls']}
+    assert 'messagebox' in callee_names, f"ExCall not extracted; calls: {callee_names}"
+
+
+def test_ingest_file_extracts_method_call():
+    rows = _rows()
+    body = [{"tag": "ExMethodCall", "method": "Reset", "receiver": {}, "args": []}]
+    ingest_file(_ps_obj_with_body("f_test", body), rows)
+    callee_names = {r[3] for r in rows['calls']}
+    assert 'Reset' in callee_names, f"ExMethodCall not extracted; calls: {callee_names}"
+
+
+def test_ingest_file_calls_linked_to_object():
+    rows = _rows()
+    body = [{"tag": "ExCall",
+             "callee": {"segments": [{"name": "getitem", "subscript": None}]},
+             "args": []}]
+    ingest_file(_ps_obj_with_body("f_query", body), rows)
+    assert rows['calls'], "no calls rows produced"
+    file, obj, proc, callee, call_type = rows['calls'][0]
+    assert file == "test.sru"
+    assert obj == "w_test"
+    assert proc == "f_query"
+    assert callee == "getitem"
+    assert call_type == "ExCall"
+
+
+def test_ingest_file_no_calls_in_empty_body():
+    rows = _rows()
+    ingest_file(_ps_obj_with_body("f_empty", []), rows)
+    assert rows['calls'] == [], "empty body should produce no calls"
 
 
 def _ok_retrieve(**extra):
@@ -144,7 +261,7 @@ def test_no_retrieve_inserts_nothing():
 # Unit tests for SQL extraction from PowerScript procedure bodies
 # ---------------------------------------------------------------------------
 
-from pb_cli.index import ingest_file, _extract_sql
+from pb_cli.index import _extract_sql
 
 
 def _ps_obj(proc_name: str, body_nodes: list) -> dict:

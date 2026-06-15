@@ -77,36 +77,22 @@ class _RecordingParseProgress:
 # ── AnalyzeProgress ────────────────────────────────────────────────────────────
 
 class AnalyzeProgress(Protocol):
-    def advance_extract(self) -> None: ...
-    def advance_cyclomatic(self) -> None: ...
     def advance_metrics(self, label: str) -> None: ...
 
 
 class _LiveAnalyzeProgress:
-    def __init__(self, progress, t1, t2, t3) -> None:
+    def __init__(self, progress, task) -> None:
         self._progress = progress
-        self._t1, self._t2, self._t3 = t1, t2, t3
-
-    def advance_extract(self) -> None:
-        self._progress.advance(self._t1)
-
-    def advance_cyclomatic(self) -> None:
-        self._progress.advance(self._t2)
+        self._task = task
 
     def advance_metrics(self, label: str) -> None:
-        self._progress.advance(self._t3)
-        self._progress.update(self._t3, description=f'[4/4] Graph metrics: {label:<22}')
+        self._progress.advance(self._task)
+        self._progress.update(self._task, description=f'[2/2] Graph metrics: {label:<22}')
 
 
 class _RecordingAnalyzeProgress:
     def __init__(self, events: list[dict]) -> None:
         self._events = events
-
-    def advance_extract(self) -> None:
-        self._events.append({'type': 'analyze_extract'})
-
-    def advance_cyclomatic(self) -> None:
-        self._events.append({'type': 'analyze_cyclomatic'})
 
     def advance_metrics(self, label: str) -> None:
         self._events.append({'type': 'analyze_metrics', 'label': label})
@@ -120,7 +106,7 @@ class Reporter(Protocol):
     def extracting_progress(self, total: int): ...
     def parse_progress(self, total: int, label: str): ...
     def indexing_step(self): ...
-    def analyze_progress(self, n_procs: int): ...
+    def analyze_progress(self): ...
     def done(self, *, parsed: int, errors: int,
              rows: int | None = None, diff: FileDiff | None = None) -> None: ...
 
@@ -183,35 +169,31 @@ class LiveReporter:
             TimeElapsedColumn(),
             console=self._c,
         ) as progress:
-            task = progress.add_task('[1/4] Indexing', total=None)
+            task = progress.add_task('[1/2] Indexing', total=None)
 
             def advance(n: int) -> None:
                 nonlocal total_rows
                 total_rows += n
-                progress.update(task, description=f'[1/4] Indexing  {total_rows:,} rows')
+                progress.update(task, description=f'[1/2] Indexing  {total_rows:,} rows')
 
             yield advance
             progress.update(task, total=1, completed=1,
-                            description=f'[1/4] Indexing  {total_rows:,} rows')
+                            description=f'[1/2] Indexing  {total_rows:,} rows')
 
     @contextmanager
-    def analyze_progress(self, n_procs: int) -> Iterator[_LiveAnalyzeProgress]:
+    def analyze_progress(self) -> Iterator[_LiveAnalyzeProgress]:
         from rich.progress import (
-            BarColumn, MofNCompleteColumn, Progress,
-            SpinnerColumn, TextColumn, TimeElapsedColumn,
+            Progress, SpinnerColumn, TextColumn, TimeElapsedColumn,
         )
         with Progress(
             SpinnerColumn(finished_text='[green]✓[/green]'),
             TextColumn('[bold]{task.description}'),
-            BarColumn(),
-            MofNCompleteColumn(),
             TimeElapsedColumn(),
             console=self._c,
         ) as progress:
-            t1 = progress.add_task('[2/4] Extracting call graph      ', total=n_procs)
-            t2 = progress.add_task('[3/4] Cyclomatic complexity       ', total=n_procs)
-            t3 = progress.add_task('[4/4] Graph metrics: build graph  ', total=4)
-            yield _LiveAnalyzeProgress(progress, t1, t2, t3)
+            task = progress.add_task('[2/2] Graph metrics: build graph  ', total=4)
+            yield _LiveAnalyzeProgress(progress, task)
+            
 
     def done(self, *, parsed: int, errors: int,
              rows: int | None = None, diff: FileDiff | None = None) -> None:
@@ -276,8 +258,8 @@ class RecordingReporter:
         self.events.append({'type': 'indexing_end'})
 
     @contextmanager
-    def analyze_progress(self, n_procs: int) -> Iterator[_RecordingAnalyzeProgress]:
-        self.events.append({'type': 'analyze_start', 'n_procs': n_procs})
+    def analyze_progress(self) -> Iterator[_RecordingAnalyzeProgress]:
+        self.events.append({'type': 'analyze_start'})
         prog = _RecordingAnalyzeProgress(self.events)
         yield prog
         self.events.append({'type': 'analyze_end'})

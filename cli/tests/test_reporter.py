@@ -99,25 +99,16 @@ def test_parse_error_count_accessible_after_context():
 
 def test_analyze_progress_records_all_stage_types():
     r = RecordingReporter()
-    with r.analyze_progress(10) as prog:
-        for _ in range(3):
-            prog.advance_extract()
-        for _ in range(3):
-            prog.advance_cyclomatic()
+    with r.analyze_progress() as prog:
         prog.advance_metrics('betweenness')
         prog.advance_metrics('pagerank')
         prog.advance_metrics('inserting rows')
         prog.advance_metrics('done')
 
-    assert r.events[0] == {'type': 'analyze_start', 'n_procs': 10}
+    assert r.events[0] == {'type': 'analyze_start'}
     assert r.events[-1] == {'type': 'analyze_end'}
 
-    extract_count    = sum(1 for e in r.events if e['type'] == 'analyze_extract')
-    cyclomatic_count = sum(1 for e in r.events if e['type'] == 'analyze_cyclomatic')
-    metrics_labels   = [e['label'] for e in r.events if e['type'] == 'analyze_metrics']
-
-    assert extract_count == 3
-    assert cyclomatic_count == 3
+    metrics_labels = [e['label'] for e in r.events if e['type'] == 'analyze_metrics']
     assert metrics_labels == ['betweenness', 'pagerank', 'inserting rows', 'done']
 
 
@@ -166,9 +157,7 @@ def test_all_events_are_json_serialisable():
     with r.indexing_step() as advance:
         advance(50)
         advance(49)
-    with r.analyze_progress(1) as ap:
-        ap.advance_extract()
-        ap.advance_cyclomatic()
+    with r.analyze_progress() as ap:
         ap.advance_metrics('done')
     r.done(parsed=2, errors=1, rows=99, diff=_diff(new=1, changed=1))
 

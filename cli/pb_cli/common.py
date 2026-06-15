@@ -3,6 +3,7 @@
 TABLES = [
     'objects',
     'procedures',
+    'calls',
     'dw_controls',
     'dw_retrieve_tables',
     'dw_retrieve_columns',
@@ -32,7 +33,16 @@ CREATE TABLE IF NOT EXISTS procedures (
     start_line       INT,
     end_line         INT,
     body_json        JSON,
-    source_rendered  TEXT
+    source_rendered  TEXT,
+    cyclomatic       INT
+);
+
+CREATE TABLE IF NOT EXISTS calls (
+    file       TEXT,
+    object     TEXT,
+    from_proc  TEXT,
+    to_name    TEXT,
+    call_type  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS dw_controls (
@@ -130,7 +140,8 @@ CREATE OR REPLACE VIEW all_sql_tables AS
 
 INSERT = {
     'objects':             'INSERT INTO objects VALUES (?,?,?,?,?)',
-    'procedures':          'INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+    'procedures':          'INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+    'calls':               'INSERT INTO calls VALUES (?,?,?,?,?)',
     'dw_controls':         'INSERT INTO dw_controls VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
     'dw_retrieve_tables':  'INSERT INTO dw_retrieve_tables VALUES (?,?,?)',
     'dw_retrieve_columns': 'INSERT INTO dw_retrieve_columns VALUES (?,?,?,?,?)',

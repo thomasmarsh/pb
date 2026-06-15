@@ -93,6 +93,111 @@ JSON emitted by `pb-runner`.
 
 ---
 
+## Ingest pipeline internals
+
+`pb ingest` drives a two-phase pipeline: **indexing** then **graph metrics**.
+Understanding where time goes matters because the pipeline takes several minutes
+on a mid-size codebase (~777 files, 50 000 DB rows).
+
+### Phase breakdown
+
+| Phase | Typical time | Bottleneck |
+|-------|-------------|-----------|
+| Parsing (subprocess) | ~13 s | Haskell GC + file I/O |
+| Indexing | ~3 m 40 s | JSON (de)serialisation, sqlglot SQL parsing, DuckDB writes |
+| Graph metrics | ~3 m 30 s | NetworkX betweenness centrality — O(V²E) exact algorithm |
+| **Total** | **~10 min** | |
+
+### Indexing phase (`cli/pb_cli/index.py`)
+
+`ingest_batch` accumulates all rows from the parsed object stream into Python
+lists (one list per table), then flushes in chunks of 5 000 rows inside a
+single explicit `BEGIN`/`COMMIT` transaction.
+
+The following work happens **in-memory before any DB write** to avoid
+re-reading the `procedures` table later:
+
+- **Cyclomatic complexity** — `count_branches(body) + 1` is computed on the
+  already-deserialized body dict in `_proc_row()` and stored directly in the
+  `procedures.cyclomatic` column.
+- **Call extraction** — `walk_calls(body)` runs on the same dict in
+  `_ingest_ps()` and populates `rows['calls']` directly.
+
+Both operations were previously a separate analyze sub-phase that re-fetched
+every procedure from the DB and re-parsed `body_json` through `json.loads`.
+Merging them into indexing eliminates ~2 m 10 s of redundant work.
+
+SQL statements embedded in procedure bodies (`SELECT`, `INSERT`, etc.) are
+identified by `_is_sql()` and parsed by `sqlglot` (with Oracle dialect) to
+extract table/column references.  This is the remaining CPU cost inside
+indexing.
+
+### Graph metrics phase (`cli/pb_cli/analyze.py`)
+
+`compute_metrics` rebuilds `object_metrics` from scratch on every run using
+four NetworkX operations over the call graph:
+
+1. **Betweenness centrality** — approximated by sampling `k = min(500, |V|)`
+   pivot nodes (`nx.betweenness_centrality(G, k=k)`).  Exact computation is
+   O(V²E) and dominates runtime for large graphs; sampling gives directionally
+   correct values at a fraction of the cost.
+2. **PageRank** — iterative power method (default 100 iterations, tol 1e-6).
+3. **DIT** (depth of inheritance tree) — BFS from each root of the inheritance
+   graph.
+4. **Row assembly + insert** — one bulk `executemany` into `object_metrics`.
+
+`object_metrics` and `calls` are treated differently:
+
+- `object_metrics` is always fully rebuilt (DROP + CREATE + INSERT).
+- `calls` is an incremental table in the permanent schema: rows for modified or
+  deleted files are pruned by `delete_file_rows` before re-ingestion, so
+  partial re-runs stay consistent.
+
+### Data flow inside `pb ingest`
+
+```mermaid
+flowchart TD
+    SRC["Source files\n.srw .sru .srd …"]
+    RUNNER["pb-runner\n(Haskell, subprocess)"]
+    JSONL["JSONL stream"]
+    PARSE["parse_stream()\ncli/pb_cli/parse.py"]
+    INGEST["ingest_batch()\ncli/pb_cli/index.py"]
+    SCHEMA["DuckDB schema\ncli/pb_cli/common.py"]
+
+    subgraph INGEST_DETAIL["ingest_batch — per procedure"]
+        PROC_ROW["_proc_row()\n• json.dumps(body)\n• count_branches → cyclomatic"]
+        WALK["walk_calls(body)\n→ rows['calls']"]
+        SQL_PARSE["_extract_sql()\nsqlglot → sql_statements"]
+    end
+
+    DB[("pb.duckdb")]
+    METRICS["compute_metrics()\ncli/pb_cli/analyze.py"]
+
+    subgraph METRICS_DETAIL["compute_metrics"]
+        BC["betweenness_centrality\n(k=min(500,|V|) sampling)"]
+        PR["pagerank"]
+        DIT["compute_dit()"]
+        INS["INSERT object_metrics"]
+    end
+
+    SRC --> RUNNER --> JSONL --> PARSE --> INGEST
+    SCHEMA --> DB
+    INGEST --> INGEST_DETAIL
+    INGEST_DETAIL -->|"BEGIN … COMMIT\n5000-row chunks"| DB
+    DB --> METRICS --> METRICS_DETAIL --> DB
+```
+
+### Incremental re-runs
+
+`pipeline.py` hashes every source file with SHA-256 and stores results in
+`file_state`.  On re-run, only new or changed files are parsed and re-ingested.
+`delete_file_rows` prunes all rows for the changed file across every table in
+`TABLES` (including `calls`) before the new rows are inserted.  `object_metrics`
+is always fully rebuilt from the current `calls` and `procedures` tables after
+any indexing activity.
+
+---
+
 ## Cross-component interfaces
 
 ```mermaid

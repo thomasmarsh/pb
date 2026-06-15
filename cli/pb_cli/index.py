@@ -5,6 +5,7 @@ from typing import Callable, Iterable
 
 import duckdb
 
+from pb_cli.analyze import count_branches, walk_calls
 from pb_cli.common import TABLES, INSERT, create_schema
 from pb_cli.sql_parser import parse_pb_sql
 
@@ -42,7 +43,7 @@ def run_from_jsonl_lines(
     print(f"Indexed {total} rows into {db}", file=sys.stderr)
 
 
-_CHUNK = 500
+_CHUNK = 5000
 
 
 def ingest_batch(
@@ -54,13 +55,19 @@ def ingest_batch(
     for obj in objects:
         ingest_file(obj, rows, dialect)
     total = 0
-    for table, data in rows.items():
-        for i in range(0, len(data), _CHUNK):
-            chunk = data[i:i + _CHUNK]
-            conn.executemany(INSERT[table], chunk)
-            total += len(chunk)
-            if on_progress:
-                on_progress(len(chunk))
+    conn.execute("BEGIN")
+    try:
+        for table, data in rows.items():
+            for i in range(0, len(data), _CHUNK):
+                chunk = data[i:i + _CHUNK]
+                conn.executemany(INSERT[table], chunk)
+                total += len(chunk)
+                if on_progress:
+                    on_progress(len(chunk))
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
     return total
 
 
@@ -97,11 +104,14 @@ def _ingest_ps(obj: dict, file: str, rows: dict, dialect: str = 'oracle') -> Non
         ('on',         'onBlocks'),
     ]:
         for block in obj.get(key, []):
-            row = _proc_row(file, proc_type, block)
+            body = block.get('body') or []
+            row = _proc_row(file, proc_type, block, body)
             rows['procedures'].append(row)
             proc_name = row[3]
-            body_json = row[9]
-            _extract_sql(file, obj_name, proc_name, body_json, dialect, rows)
+            for callee, call_type in walk_calls(body):
+                if callee:
+                    rows['calls'].append((file, obj_name, proc_name, callee, call_type))
+            _extract_sql(file, obj_name, proc_name, row[9], dialect, rows)
 
 
 def _extract_sql(
@@ -125,7 +135,7 @@ def _extract_sql(
                 ))
 
 
-def _proc_row(file: str, proc_type: str, block: dict) -> tuple:
+def _proc_row(file: str, proc_type: str, block: dict, body: list) -> tuple:
     meta = block.get('meta') or {}
     if proc_type == 'on':
         name, modifiers, params, return_type = block.get('event', ''), None, None, None
@@ -140,8 +150,9 @@ def _proc_row(file: str, proc_type: str, block: dict) -> tuple:
         file, meta.get('object', ''), proc_type, name,
         modifiers, params, return_type,
         meta.get('startLine'), meta.get('endLine'),
-        json.dumps(block.get('body', [])),
+        json.dumps(body),
         block.get('source_rendered', ''),
+        count_branches(body) + 1,
     )
 
 

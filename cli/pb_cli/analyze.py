@@ -1,7 +1,6 @@
 """Compute call graph metrics and populate object_metrics in pb.duckdb."""
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 import duckdb
@@ -19,42 +18,9 @@ def run(db: str = 'pb.duckdb', reporter: Reporter | None = None) -> None:
         reporter = LiveReporter()
 
     conn = duckdb.connect(db)
-    row = conn.execute(
-        "SELECT COUNT(*) FROM procedures WHERE body_json IS NOT NULL"
-    ).fetchone()
-    n_procs: int = row[0] if row else 0
-
-    with reporter.analyze_progress(n_procs) as progress:
-        extract_calls(conn, progress)
-        compute_cyclomatic(conn, progress)
+    with reporter.analyze_progress() as progress:
         compute_metrics(conn, progress)
-
     conn.close()
-
-
-def extract_calls(conn, progress: AnalyzeProgress) -> None:
-    conn.execute("DROP TABLE IF EXISTS calls")
-    conn.execute("""
-        CREATE TABLE calls (
-            file       TEXT,
-            object     TEXT,
-            from_proc  TEXT,
-            to_name    TEXT,
-            call_type  TEXT
-        )
-    """)
-    rows = []
-    result = conn.execute(
-        "SELECT file, object, name, body_json FROM procedures WHERE body_json IS NOT NULL"
-    )
-    while row := result.fetchone():
-        file, obj, name, body_json = row
-        for callee, call_type in walk_calls(json.loads(body_json)):
-            if callee:
-                rows.append((file, obj, name, callee, call_type))
-        progress.advance_extract()
-    if rows:
-        conn.executemany("INSERT INTO calls VALUES (?, ?, ?, ?, ?)", rows)
 
 
 def walk_calls(node) -> list[tuple[str, str]]:
@@ -89,23 +55,6 @@ def count_branches(node) -> int:
         for item in node:
             count += count_branches(item)
     return count
-
-
-def compute_cyclomatic(conn, progress: AnalyzeProgress) -> None:
-    conn.execute("ALTER TABLE procedures DROP COLUMN IF EXISTS cyclomatic")
-    conn.execute("ALTER TABLE procedures ADD COLUMN cyclomatic INT DEFAULT 0")
-
-    rows = []
-    result = conn.execute(
-        "SELECT rowid, body_json FROM procedures WHERE body_json IS NOT NULL"
-    )
-    while row := result.fetchone():
-        rowid, body_json = row
-        cc = count_branches(json.loads(body_json)) + 1
-        rows.append([cc, rowid])
-        progress.advance_cyclomatic()
-    if rows:
-        conn.executemany("UPDATE procedures SET cyclomatic = ? WHERE rowid = ?", rows)
 
 
 def compute_dit(conn) -> dict[str, int]:
@@ -149,7 +98,8 @@ def compute_metrics(conn, progress: AnalyzeProgress) -> None:
             progress.advance_metrics('done')
         return
 
-    betweenness = nx.betweenness_centrality(G)
+    k = min(500, len(G.nodes()))
+    betweenness = nx.betweenness_centrality(G, k=k)
     progress.advance_metrics('PageRank + DIT')
 
     pr = nx.pagerank(G, alpha=0.85)
