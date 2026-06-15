@@ -1,7 +1,10 @@
 // DataWindows.tsx — DataWindows list and detail views.
 
 import { Show, For, onMount } from "solid-js";
-import { useStore } from "../context.js";
+import { useSnapshot } from "../core/store.js";
+import type { Store } from "../core/store.js";
+import type { AppState } from "../app/state.js";
+import type { AppAction } from "../app/actions.js";
 import { CodeBlock } from "./CodeBlock.js";
 
 function shortFile(f: string | null | undefined): string {
@@ -13,13 +16,14 @@ function Loading() {
   return <div class="loading-overlay"><div class="spinner" /> Loading...</div>;
 }
 
-export function DataWindows() {
-  const store = useStore();
-  const dw = () => store.state.datawindows;
+export function DataWindows(props: { store: Store<AppState, AppAction> }) {
+  const store = props.store;
+  const snap = useSnapshot(store.state);
+  const dw = () => snap().nav.datawindows;
 
   onMount(() => {
-    store.dispatch({ type: "NAVIGATE", view: "datawindows" });
-    store.dispatch({ type: "DW_SEARCH", q: dw().q });
+    store.dispatch({ tag: "nav", action: { type: "navigate", view: "datawindows" } });
+    store.dispatch({ tag: "nav", action: { type: "dw-search", q: dw().q } });
   });
 
   return (
@@ -30,7 +34,7 @@ export function DataWindows() {
           type="text"
           placeholder="Search DataWindows..."
           value={dw().q}
-          onInput={(e) => store.dispatch({ type: "DW_SEARCH", q: e.currentTarget.value })}
+          onInput={(e) => store.dispatch({ tag: "nav", action: { type: "dw-search", q: e.currentTarget.value } })}
         />
       </div>
 
@@ -43,7 +47,7 @@ export function DataWindows() {
               <For each={dw().items}>
                 {(d) => (
                   <tr class="clickable"
-                      onClick={() => store.dispatch({ type: "DW_SELECTED", name: d.name })}>
+                      onClick={() => store.dispatch({ tag: "nav", action: { type: "dw-selected", name: d.name } })}>
                     <td class="name-cell">{d.name}</td>
                     <td style={{ "font-size": "11px", color: "var(--text-muted)" }}>{shortFile(d.file)}</td>
                   </tr>
@@ -57,12 +61,13 @@ export function DataWindows() {
   );
 }
 
-export function DWDetail() {
-  const store = useStore();
-  const dw = () => store.state.dwDetail;
+export function DWDetail(props: { store: Store<AppState, AppAction> }) {
+  const store = props.store;
+  const snap = useSnapshot(store.state);
+  const dw = () => snap().nav.dwDetail;
 
   onMount(() => {
-    store.dispatch({ type: "NAVIGATE", view: "dwDetail" });
+    store.dispatch({ tag: "nav", action: { type: "navigate", view: "dwDetail" } });
   });
 
   return (
@@ -73,7 +78,7 @@ export function DWDetail() {
           if ("error" in d) return null;
           return (
             <>
-              <button class="back-btn" onClick={() => store.dispatch({ type: "NAVIGATE", view: "datawindows" })}>
+              <button class="back-btn" onClick={() => store.dispatch({ tag: "nav", action: { type: "navigate", view: "datawindows" } })}>
                 {"\u2190"} Back to DataWindows
               </button>
               <h2 style={{ "margin-bottom": "16px", "font-size": "20px" }}>

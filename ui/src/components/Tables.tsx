@@ -1,19 +1,23 @@
 // Tables.tsx — DB table browser (PBSELECT / DataWindow source).
 
 import { Show, For, createMemo } from "solid-js";
-import { useStore } from "../context.js";
+import { useSnapshot } from "../core/store.js";
+import type { Store } from "../core/store.js";
+import type { AppState } from "../app/state.js";
+import type { AppAction } from "../app/actions.js";
 import type { TableDetail } from "../types/api.js";
 
 // ── Left panel: table list ────────────────────────────────────────────────────
 
-export function TableList() {
-  const store = useStore();
-  const tables = () => store.state.explore.tables;
+export function TableList(props: { store: Store<AppState, AppAction> }) {
+  const store = props.store;
+  const snap = useSnapshot(store.state);
+  const tables = () => snap().explore.tables;
 
   const visible = createMemo(() => {
     const q = tables().filter.toLowerCase();
     if (!q) return tables().items;
-    return tables().items.filter(t => t.table_name.toLowerCase().includes(q));
+    return tables().items.filter((t: { table_name: string }) => t.table_name.toLowerCase().includes(q));
   });
 
   return (
@@ -22,7 +26,7 @@ export function TableList() {
         class="explore-filter-input"
         placeholder="Filter tables…"
         value={tables().filter}
-        onInput={(e) => store.dispatch({ type: "TABLES_FILTER", q: e.currentTarget.value })}
+        onInput={(e) => store.dispatch({ tag: "explore", action: { type: "tables-filter", q: e.currentTarget.value } })}
       />
       <Show when={tables().loading}>
         <div class="loading-overlay"><div class="spinner" /> Loading tables…</div>
@@ -39,7 +43,7 @@ export function TableList() {
                 return (
                   <div
                     class={`table-list-row${isSelected() ? " selected" : ""}`}
-                    onClick={() => store.dispatch({ type: "TABLE_SELECT", tableName: t.table_name })}
+                    onClick={() => store.dispatch({ tag: "explore", action: { type: "tables-select", tableName: t.table_name } })}
                   >
                     <span class="table-list-name">{t.table_name}</span>
                     <span class="table-list-meta">{t.dw_count} DW · {t.file_count} file{t.file_count !== 1 ? "s" : ""}</span>
@@ -69,9 +73,10 @@ function WhereRow(props: { row: { dw_name: string; idx: number; exp1: string; op
   );
 }
 
-export function TableDetailPanel() {
-  const store = useStore();
-  const tables = () => store.state.explore.tables;
+export function TableDetailPanel(props: { store: Store<AppState, AppAction> }) {
+  const store = props.store;
+  const snap = useSnapshot(store.state);
+  const tables = () => snap().explore.tables;
   const selected = () => tables().selected;
   const detail = () => tables().detail;
 
@@ -100,9 +105,9 @@ export function TableDetailPanel() {
                       class="filter-pill"
                       style={{ "margin-left": "auto" }}
                       onClick={() => {
-                        store.dispatch({ type: "DIAGRAM_SELECT", kind: "dw-tables" });
-                        store.dispatch({ type: "DIAGRAM_PARAMS", params: { table: name() } });
-                        store.dispatch({ type: "NAVIGATE", view: "diagrams" });
+                        store.dispatch({ tag: "diagrams", action: { type: "select", kind: "dw-tables" } });
+                        store.dispatch({ tag: "diagrams", action: { type: "params", params: { table: name() } } });
+                        store.dispatch({ tag: "nav", action: { type: "navigate", view: "diagrams" } });
                       }}
                     >Show in diagram</button>
                   </div>
@@ -115,9 +120,8 @@ export function TableDetailPanel() {
                           <div
                             class="table-detail-dw-row clickable"
                             onClick={() => store.dispatch({
-                              type: "EXPLORE_DW_SELECT",
-                              dwName: dw.dw_name,
-                              nodeId: `dw:${dw.dw_name}`,
+                              tag: "explore",
+                              action: { type: "dw-select", dwName: dw.dw_name, nodeId: `dw:${dw.dw_name}` },
                             })}
                           >
                             <span class="badge badge-dw">dw</span>

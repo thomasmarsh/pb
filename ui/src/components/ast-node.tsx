@@ -1,7 +1,8 @@
 // ast-node.tsx — Recursive AST tree renderer.
 
 import { Show, For, createMemo, type JSX } from "solid-js";
-import { useStore } from "../context.js";
+import { useSnapshot } from "../core/store.js";
+import { useExploreStore } from "./ExploreContext.js";
 import { highlightPowerScript } from "../highlight.js";
 import { resolveRenderer, type AstChild } from "./ast-renderers.js";
 
@@ -18,7 +19,7 @@ function nodeTag(n: unknown): string | null {
   return null;
 }
 
-function chevron(expanded: boolean): string { return expanded ? "\u25BE" : "\u25B8"; }
+function chevron(expanded: boolean): string { return expanded ? "▾" : "▸"; }
 
 function isLocated(v: unknown): v is { line: number; node: unknown } {
   return isNode(v) && typeof v.line === "number" && "node" in v;
@@ -31,8 +32,9 @@ export function AstNode(props: {
   nodeId: string;
   depth: number;
 }): JSX.Element {
-  const store = useStore();
-  const isExpanded = () => store.state.explore.expandedNodes.has(props.nodeId);
+  const store = useExploreStore();
+  const snap = useSnapshot(store.state);
+  const isExpanded = () => snap().explore.expandedNodes.has(props.nodeId);
 
   const tag = createMemo(() => nodeTag(props.node));
 
@@ -66,7 +68,7 @@ export function AstNode(props: {
 
   function toggle() {
     if (hasChildren()) {
-      store.dispatch({ type: "EXPLORE_TOGGLE", nodeId: props.nodeId });
+      store.dispatch({ tag: "explore", action: { type: "toggle", nodeId: props.nodeId } });
     }
   }
 
@@ -80,8 +82,8 @@ export function AstNode(props: {
               const lineNum = item.line;
               return (
                 <div class="ast-located-row" onClick={() => {
-                  store.dispatch({ type: "EXPLORE_HIGHLIGHT_LINE", line: lineNum });
-                  store.dispatch({ type: "EXPLORE_TAB", tab: "source" });
+                  store.dispatch({ tag: "explore", action: { type: "highlight-line", line: lineNum } });
+                  store.dispatch({ tag: "explore", action: { type: "tab", tab: "source" } });
                 }}>
                   <AstNode node={item.node} nodeId={`${props.nodeId}.${i()}`} depth={props.depth} />
                 </div>

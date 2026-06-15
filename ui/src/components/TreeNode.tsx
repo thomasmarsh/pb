@@ -1,9 +1,10 @@
 // TreeNode.tsx — Generic expandable tree node.
 
 import { Show, children, type ParentProps, type JSX } from "solid-js";
-import { useStore } from "../context.js";
+import { useSnapshot } from "../core/store.js";
+import { useExploreStore } from "./ExploreContext.js";
 
-function chevron(expanded: boolean): string { return expanded ? "\u25BE" : "\u25B8"; }
+function chevron(expanded: boolean): string { return expanded ? "▾" : "▸"; }
 
 export interface TreeNodeProps {
   nodeId: string;
@@ -18,19 +19,16 @@ export interface TreeNodeProps {
 }
 
 export function TreeNode(props: ParentProps<TreeNodeProps>): JSX.Element {
-  const store = useStore();
-  const isExpanded = () => store.state.explore.expandedNodes.has(props.nodeId);
+  const store = useExploreStore();
+  const snap = useSnapshot(store.state);
+  const isExpanded = () => snap().explore.expandedNodes.has(props.nodeId);
   const resolved = children(() => props.children);
   const hasChildren = () => !!resolved();
 
   function toggle() {
-    console.log("[TreeNode] toggle", props.nodeId, "hasChildren:", hasChildren(), "onClick:", !!props.onClick);
     props.onClick?.();
     if (hasChildren()) {
-      console.log("[TreeNode] dispatching EXPLORE_TOGGLE for", props.nodeId);
-      store.dispatch({ type: "EXPLORE_TOGGLE", nodeId: props.nodeId });
-    } else {
-      console.log("[TreeNode] no children, skipping toggle dispatch");
+      store.dispatch({ tag: "explore", action: { type: "toggle", nodeId: props.nodeId } });
     }
   }
 

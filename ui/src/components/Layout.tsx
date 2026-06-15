@@ -1,10 +1,12 @@
-// Layout.tsx — Sidebar layout. Pure TCA: dispatch NAVIGATE actions.
+// Layout.tsx — Sidebar layout. Prop-drilled store.
 
 import { For, type ParentProps } from "solid-js";
-import { useStore } from "../context.js";
-import type { ViewName } from "../types/state.js";
+import { useSnapshot } from "../core/store.js";
+import type { Store } from "../core/store.js";
+import type { AppState } from "../app/state.js";
+import type { AppAction } from "../app/actions.js";
 
-const NAV_ITEMS: { path: ViewName; icon: string; label: string }[] = [
+const NAV_ITEMS: { path: string; icon: string; label: string }[] = [
   { path: "dashboard", icon: "\u25A6", label: "Dashboard" },
   { path: "objects", icon: "\u25B6", label: "Objects" },
   { path: "datawindows", icon: "\u25A4", label: "DataWindows" },
@@ -14,21 +16,23 @@ const NAV_ITEMS: { path: ViewName; icon: string; label: string }[] = [
   { path: "search", icon: "\uD83D\uDD0D", label: "Search" },
 ];
 
-// Map view names to their sub-detail views for active highlighting
-const VIEW_GROUPS: Record<string, ViewName[]> = {
+const VIEW_GROUPS: Record<string, string[]> = {
   objects: ["objects", "objectDetail", "procedureDetail"],
   datawindows: ["datawindows", "dwDetail"],
 };
 
-function isActive(itemPath: ViewName, currentView: ViewName): boolean {
+function isActive(itemPath: string, currentView: string): boolean {
   if (itemPath === currentView) return true;
   const group = VIEW_GROUPS[itemPath];
   return group ? group.includes(currentView) : false;
 }
 
-export function Layout(props: ParentProps) {
-  const store = useStore();
+interface LayoutProps {
+  store: Store<AppState, AppAction>;
+}
 
+export function Layout(props: ParentProps<LayoutProps>) {
+  const snap = useSnapshot(props.store.state);
   return (
     <div class="app-layout">
       <aside class="sidebar">
@@ -41,10 +45,10 @@ export function Layout(props: ParentProps) {
             {(item) => (
               <a
                 href="#"
-                class={isActive(item.path, store.state.view) ? "active" : ""}
+                class={isActive(item.path, snap().nav.view) ? "active" : ""}
                 onClick={(e) => {
                   e.preventDefault();
-                  store.dispatch({ type: "NAVIGATE", view: item.path });
+                  props.store.dispatch({ tag: "nav", action: { type: "navigate", view: item.path as AppState["nav"]["view"] } });
                 }}
               >
                 <span class="icon">{item.icon}</span>

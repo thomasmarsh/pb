@@ -1,7 +1,10 @@
 // Search.tsx — Global search view.
 
 import { Show, For, createSignal, onMount } from "solid-js";
-import { useStore } from "../context.js";
+import { useSnapshot } from "../core/store.js";
+import type { Store } from "../core/store.js";
+import type { AppState } from "../app/state.js";
+import type { AppAction } from "../app/actions.js";
 
 function shortFile(f: string | null | undefined): string {
   if (!f) return "";
@@ -17,8 +20,8 @@ function debounce<T extends (...args: never[]) => void>(fn: T, ms: number): T {
   return ((...args: never[]) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); }) as T;
 }
 
-function SearchResults(props: { data: { objects: { name: string; kind: string; file: string }[]; procedures: { object: string; name: string; proc_type: string; start_line: number | null }[]; datawindows: { dw_name: string; control_name: string; control_type: string }[] } }) {
-  const store = useStore();
+function SearchResults(props: { store: Store<AppState, AppAction>; data: { objects: { name: string; kind: string; file: string }[]; procedures: { object: string; name: string; proc_type: string; start_line: number | null }[]; datawindows: { dw_name: string; control_name: string; control_type: string }[] } }) {
+  const store = props.store;
   const data = props.data;
   const total = data.objects.length + data.procedures.length + data.datawindows.length;
 
@@ -39,7 +42,7 @@ function SearchResults(props: { data: { objects: { name: string; kind: string; f
                   const bc = o.kind === "powerscript" ? "ps" : "dw";
                   return (
                     <tr class="clickable"
-                        onClick={() => store.dispatch({ type: "OBJECT_SELECTED", name: o.name })}>
+                        onClick={() => store.dispatch({ tag: "nav", action: { type: "object-selected", name: o.name } })}>
                       <td class="name-cell">{o.name}</td>
                       <td><span class={`badge badge-${bc}`}>{o.kind}</span></td>
                       <td style={{ "font-size": "11px", color: "var(--text-muted)" }}>{shortFile(o.file)}</td>
@@ -61,7 +64,7 @@ function SearchResults(props: { data: { objects: { name: string; kind: string; f
               <For each={data.procedures}>
                 {(p) => (
                   <tr class="clickable"
-                      onClick={() => store.dispatch({ type: "PROCEDURE_SELECTED", objectName: p.object, procName: p.name })}>
+                      onClick={() => store.dispatch({ tag: "nav", action: { type: "procedure-selected", objectName: p.object, procName: p.name } })}>
                     <td>{p.object}</td>
                     <td class="name-cell">{p.name}</td>
                     <td><span class={`badge badge-${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
@@ -83,9 +86,9 @@ function SearchResults(props: { data: { objects: { name: string; kind: string; f
               <For each={data.datawindows}>
                 {(d) => (
                   <tr class="clickable"
-                      onClick={() => store.dispatch({ type: "DW_SELECTED", name: d.dw_name })}>
+                      onClick={() => store.dispatch({ tag: "nav", action: { type: "dw-selected", name: d.dw_name } })}>
                     <td class="name-cell">{d.dw_name}</td>
-                    <td>{d.control_name ?? "\u2013"}</td>
+                    <td>{d.control_name ?? "–"}</td>
                     <td>{d.control_type ?? ""}</td>
                   </tr>
                 )}
@@ -98,17 +101,18 @@ function SearchResults(props: { data: { objects: { name: string; kind: string; f
   );
 }
 
-export function Search() {
-  const store = useStore();
-  const se = () => store.state.search;
+export function Search(props: { store: Store<AppState, AppAction> }) {
+  const store = props.store;
+  const snap = useSnapshot(store.state);
+  const se = () => snap().search;
   const [term, setTerm] = createSignal(se().term ?? "");
 
   onMount(() => {
-    store.dispatch({ type: "NAVIGATE", view: "search" });
+    store.dispatch({ tag: "nav", action: { type: "navigate", view: "search" } });
   });
 
   const doSearch = debounce((val: string) => {
-    if (val.length >= 2) store.dispatch({ type: "SEARCH_TERM", term: val });
+    if (val.length >= 2) store.dispatch({ tag: "search", action: { type: "term", term: val } });
   }, 300);
 
   return (
@@ -126,7 +130,7 @@ export function Search() {
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               const val = term().trim();
-              if (val.length >= 1) store.dispatch({ type: "SEARCH_TERM", term: val });
+              if (val.length >= 1) store.dispatch({ tag: "search", action: { type: "term", term: val } });
             }
           }}
         />
@@ -137,7 +141,7 @@ export function Search() {
       </Show>
 
       <Show when={se().results}>
-        <SearchResults data={se().results!} />
+        <SearchResults store={store} data={se().results!} />
       </Show>
     </>
   );

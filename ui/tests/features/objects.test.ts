@@ -1,0 +1,76 @@
+// tests/features/objects.test.ts — Tests for objects feature reducer.
+
+import { describe, it } from "vitest";
+import { Effect } from "../../src/core/effect.js";
+import { createTestStore } from "../test-store.js";
+import { objectsReducer, type ObjectsEnv } from "../../src/features/objects/reducer.js";
+import type { ListObjectsResponse } from "../../src/types/api.js";
+
+const mockEnv: ObjectsEnv = {
+  getObjects: () => Effect.none(),
+};
+
+describe("objects reducer", () => {
+  describe("objects/search", () => {
+    it("sets q and triggers loading", () => {
+      const ts = createTestStore(objectsReducer, mockEnv, objectsReducer.initialState());
+      ts.send({ type: "search", q: "test" }, (s) => {
+        s.q = "test";
+        s.loading = true;
+      });
+    });
+  });
+
+  describe("objects/filter-kind", () => {
+    it("sets kind and triggers loading", () => {
+      const ts = createTestStore(objectsReducer, mockEnv, objectsReducer.initialState());
+      ts.send({ type: "filter-kind", kind: "datawindow" }, (s) => {
+        s.kind = "datawindow";
+        s.loading = true;
+      });
+    });
+  });
+
+  describe("objects/sort", () => {
+    it("sets sort col and triggers loading", () => {
+      const ts = createTestStore(objectsReducer, mockEnv, objectsReducer.initialState());
+      ts.send({ type: "sort", col: "kind" }, (s) => {
+        s.sort = "kind";
+        s.loading = true;
+      });
+    });
+
+    it("toggles order when sorting by the same col", () => {
+      const ts = createTestStore(objectsReducer, mockEnv, objectsReducer.initialState());
+      ts.send({ type: "sort", col: "name" }, (s) => {
+        s.order = "desc";
+        s.loading = true;
+      });
+    });
+  });
+
+  describe("objects/page", () => {
+    it("sets offset and triggers loading", () => {
+      const ts = createTestStore(objectsReducer, mockEnv, objectsReducer.initialState());
+      ts.send({ type: "page", offset: 100 }, (s) => {
+        s.offset = 100;
+        s.loading = true;
+      });
+    });
+  });
+
+  describe("objects/loaded", () => {
+    it("populates items, total, and clears loading", () => {
+      const data: ListObjectsResponse = {
+        items: [{ name: "foo", kind: "powerscript", file: "x", ancestor: null }],
+        total: 42, offset: 0, limit: 100,
+      };
+      const ts = createTestStore(objectsReducer, mockEnv, objectsReducer.initialState());
+      ts.send({ type: "loaded", data }, (s) => {
+        s.items = data.items;
+        s.total = 42;
+        s.loading = false;
+      });
+    });
+  });
+});

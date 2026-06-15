@@ -1,13 +1,15 @@
 // DwDetailTree.tsx — DataWindow controls/SQL/arguments detail tree.
 
 import { Show, For, createMemo, type JSX } from "solid-js";
-import { useStore } from "../context.js";
+import { useSnapshot } from "../core/store.js";
+import { useExploreStore } from "./ExploreContext.js";
 import type { DwExploreDetail } from "../types/api.js";
 
-function chevron(expanded: boolean): string { return expanded ? "\u25BE" : "\u25B8"; }
+function chevron(expanded: boolean): string { return expanded ? "▾" : "▸"; }
 
 export function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
-  const store = useStore();
+  const store = useExploreStore();
+  const snap = useSnapshot(store.state);
 
   const retrieveSql = createMemo(() => {
     const cols = props.data.retrieve_columns
@@ -36,11 +38,11 @@ export function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
   });
 
   function toggleBand(band: string) {
-    store.dispatch({ type: "EXPLORE_TOGGLE", nodeId: `dwband:${props.data.name}:${band}` });
+    store.dispatch({ tag: "explore", action: { type: "toggle", nodeId: `dwband:${props.data.name}:${band}` } });
   }
 
   const isBandExpanded = (band: string) =>
-    store.state.explore.expandedNodes.has(`dwband:${props.data.name}:${band}`);
+    snap().explore.expandedNodes.has(`dwband:${props.data.name}:${band}`);
 
   return (
     <div class="dw-detail">

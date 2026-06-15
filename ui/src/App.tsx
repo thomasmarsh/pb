@@ -1,9 +1,12 @@
-// App.tsx — SolidJS entry point. Pure TCA with deep linking.
+// App.tsx — SolidJS entry point. Valtio proxy store, prop-drilled.
 
 import { render, Show } from "solid-js/web";
-import { StoreProvider } from "./context.js";
-import { createStoreAdapter } from "./store.js";
-import { initialState, reducer } from "./core.js";
+import type { JSX } from "solid-js";
+import { createStore, useSnapshot } from "./core/store.js";
+import type { Store } from "./core/store.js";
+import { initialState, reducer } from "./app/reducer.js";
+import type { AppState } from "./app/state.js";
+import type { AppAction } from "./app/actions.js";
 import { createApiClient, createEnv } from "./api-client.js";
 import { Layout } from "./components/Layout.js";
 import { Dashboard } from "./components/Dashboard.js";
@@ -14,46 +17,51 @@ import { Diagrams } from "./components/Diagrams.js";
 import { Queries } from "./components/Queries.js";
 import { Search } from "./components/Search.js";
 import { Explore } from "./components/Explore.js";
-import { useStore } from "./context.js";
-import { initViewFromUrl, setupPopstateHandler } from "./navigation.js";
+import { initViewFromUrl, setupPopstateHandler, syncUrlFromState, NAV_SYNC_ACTIONS } from "./features/navigation/url-sync.js";
 import { HealthCheck } from "./components/HealthCheck.js";
 
 const env = createEnv(createApiClient());
-const store = createStoreAdapter(initialState(), reducer, env);
+const store = createStore(initialState(), reducer, env, (action, state) => {
+  if (action.tag === "nav" && NAV_SYNC_ACTIONS.has(action.action.type)) {
+    syncUrlFromState(state.nav.view, {
+      objectDetail: state.nav.objectDetail,
+      procedureDetail: state.nav.procedureDetail,
+      dwDetail: state.nav.dwDetail,
+    }, action.action);
+  }
+});
 
 // Bootstrap: read URL and dispatch initial actions
 initViewFromUrl(store.dispatch);
 setupPopstateHandler(store.dispatch);
 
-// Load stats for dashboard (always needed for sidebar)
-if (!store.state.stats) store.dispatch({ type: "STATS_LOAD" });
+// Load stats for dashboard
+store.dispatch({ tag: "nav", action: { type: "stats-load" } });
 
-function ViewRouter() {
-  const store = useStore();
-  const view = () => store.state.view;
-
+function ViewRouter(props: { store: Store<AppState, AppAction> }): JSX.Element {
+  const snap = useSnapshot(props.store.state);
   return (
-    <Layout>
-      <Show when={view() === "dashboard"}><Dashboard /></Show>
-      <Show when={view() === "objects"}><Objects /></Show>
-      <Show when={view() === "objectDetail"}><ObjectDetail /></Show>
-      <Show when={view() === "procedureDetail"}><ProcedureDetail /></Show>
-      <Show when={view() === "datawindows"}><DataWindows /></Show>
-      <Show when={view() === "dwDetail"}><DWDetail /></Show>
-      <Show when={view() === "diagrams"}><Diagrams /></Show>
-      <Show when={view() === "queries"}><Queries /></Show>
-      <Show when={view() === "search"}><Search /></Show>
-      <Show when={view() === "explore"}><Explore /></Show>
+    <Layout store={props.store}>
+      <Show when={snap().nav.view === "dashboard"}><Dashboard store={props.store} /></Show>
+      <Show when={snap().nav.view === "objects"}><Objects store={props.store} /></Show>
+      <Show when={snap().nav.view === "objectDetail"}><ObjectDetail store={props.store} /></Show>
+      <Show when={snap().nav.view === "procedureDetail"}><ProcedureDetail store={props.store} /></Show>
+      <Show when={snap().nav.view === "datawindows"}><DataWindows store={props.store} /></Show>
+      <Show when={snap().nav.view === "dwDetail"}><DWDetail store={props.store} /></Show>
+      <Show when={snap().nav.view === "diagrams"}><Diagrams store={props.store} /></Show>
+      <Show when={snap().nav.view === "queries"}><Queries store={props.store} /></Show>
+      <Show when={snap().nav.view === "search"}><Search store={props.store} /></Show>
+      <Show when={snap().nav.view === "explore"}><Explore store={props.store} /></Show>
     </Layout>
   );
 }
 
-function App() {
+function App(): JSX.Element {
   return (
-    <StoreProvider store={store} env={env}>
-      <ViewRouter />
+    <>
+      <ViewRouter store={store} />
       <HealthCheck />
-    </StoreProvider>
+    </>
   );
 }
 

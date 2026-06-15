@@ -16,8 +16,27 @@ import type {
   TableSummary,
   TableDetail,
 } from "./types/api.js";
-import { Effect } from "./core.js";
-import type { ApiClient, Env } from "./core.js";
+import { Effect } from "./core/effect.js";
+import type { AppEnv as Env } from "./app/reducer.js";
+
+export interface ApiClient {
+  getStats(): Promise<StatsResponse>;
+  getObjects(params: Record<string, string | number>): Promise<ListObjectsResponse>;
+  getObject(name: string): Promise<ObjectDetailResponse>;
+  getObjectSource(name: string): Promise<ObjectSourceResponse>;
+  getAllObjects(): Promise<ListObjectsResponse>;
+  getProcedure(obj: string, proc: string): Promise<ProcedureDetailResponse>;
+  search(q: string): Promise<SearchResponse>;
+  getDW(name: string): Promise<DwDetailResponse>;
+  getDiagram(kind: string, params: Record<string, string | number>): Promise<string>;
+  getQueries(): Promise<{ queries: QueryDef[] }>;
+  runQuery(name: string, params: Record<string, string>): Promise<QueryResult>;
+  getExploreTree(): Promise<ExploreTreeResponse>;
+  getExploreProcedure(objectName: string, procName: string): Promise<ExploreProcDetail>;
+  getExploreDatawindow(name: string): Promise<DwExploreDetail>;
+  getTables(): Promise<TableSummary[]>;
+  getTableDetail(name: string): Promise<TableDetail>;
+}
 
 function apiParams(obj: Record<string, string | number>): string {
   const p = new URLSearchParams();

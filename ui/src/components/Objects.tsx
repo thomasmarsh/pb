@@ -1,7 +1,10 @@
 // Objects.tsx — Objects list and detail views.
 
 import { Show, For, onMount } from "solid-js";
-import { useStore } from "../context.js";
+import { useSnapshot } from "../core/store.js";
+import type { Store } from "../core/store.js";
+import type { AppState } from "../app/state.js";
+import type { AppAction } from "../app/actions.js";
 import { SourceViewer } from "./SourceViewer.js";
 
 function shortFile(f: string | null | undefined): string {
@@ -17,13 +20,14 @@ function Loading() {
   return <div class="loading-overlay"><div class="spinner" /> Loading...</div>;
 }
 
-export function Objects() {
-  const store = useStore();
-  const os = () => store.state.objects;
+export function Objects(props: { store: Store<AppState, AppAction> }) {
+  const store = props.store;
+  const snap = useSnapshot(store.state);
+  const os = () => snap().objects;
 
   onMount(() => {
-    store.dispatch({ type: "NAVIGATE", view: "objects" });
-    store.dispatch({ type: "OBJECTS_SEARCH", q: os().q });
+    store.dispatch({ tag: "nav", action: { type: "navigate", view: "objects" } });
+    store.dispatch({ tag: "objects", action: { type: "search", q: os().q } });
   });
 
   return (
@@ -34,7 +38,7 @@ export function Objects() {
           type="text"
           placeholder="Search objects..."
           value={os().q}
-          onInput={(e) => store.dispatch({ type: "OBJECTS_SEARCH", q: e.currentTarget.value })}
+          onInput={(e) => store.dispatch({ tag: "objects", action: { type: "search", q: e.currentTarget.value } })}
         />
       </div>
 
@@ -43,7 +47,7 @@ export function Objects() {
           {(k) => (
             <button
               class={`filter-pill${os().kind === k ? " active" : ""}`}
-              onClick={() => store.dispatch({ type: "OBJECTS_FILTER_KIND", kind: k })}
+              onClick={() => store.dispatch({ tag: "objects", action: { type: "filter-kind", kind: k } })}
             >
               {k || "All"}
             </button>
@@ -58,11 +62,11 @@ export function Objects() {
             <thead>
               <tr>
                 <th class={os().sort === "name" ? "sorted" : ""}
-                    onClick={() => store.dispatch({ type: "OBJECTS_SORT", col: "name" })}>
+                    onClick={() => store.dispatch({ tag: "objects", action: { type: "sort", col: "name" } })}>
                   Name{os().sort === "name" ? (os().order === "asc" ? " \u25B2" : " \u25BC") : ""}
                 </th>
                 <th class={os().sort === "kind" ? "sorted" : ""}
-                    onClick={() => store.dispatch({ type: "OBJECTS_SORT", col: "kind" })}>
+                    onClick={() => store.dispatch({ tag: "objects", action: { type: "sort", col: "kind" } })}>
                   Kind{os().sort === "kind" ? (os().order === "asc" ? " \u25B2" : " \u25BC") : ""}
                 </th>
                 <th>File</th><th>Ancestor</th>
@@ -74,7 +78,7 @@ export function Objects() {
                   const bc = obj.kind === "powerscript" ? "ps" : obj.kind === "datawindow" ? "dw" : "proj";
                   return (
                     <tr class="clickable"
-                        onClick={() => store.dispatch({ type: "OBJECT_SELECTED", name: obj.name })}>
+                        onClick={() => store.dispatch({ tag: "nav", action: { type: "object-selected", name: obj.name } })}>
                       <td class="name-cell">{obj.name}</td>
                       <td><span class={`badge badge-${bc}`}>{obj.kind}</span></td>
                       <td style={{ "font-size": "11px", color: "var(--text-muted)", "max-width": "300px", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
@@ -92,7 +96,7 @@ export function Objects() {
             <div style={{ display: "flex", gap: "8px", "margin-top": "12px", "justify-content": "center" }}>
               <Show when={os().offset > 0}>
                 <button class="filter-pill"
-                    onClick={() => store.dispatch({ type: "OBJECTS_PAGE", offset: Math.max(0, os().offset - 100) })}>
+                    onClick={() => store.dispatch({ tag: "objects", action: { type: "page", offset: Math.max(0, os().offset - 100) } })}>
                   \u2190 Previous
                 </button>
               </Show>
@@ -101,7 +105,7 @@ export function Objects() {
               </span>
               <Show when={os().offset + 100 < os().total}>
                 <button class="filter-pill"
-                    onClick={() => store.dispatch({ type: "OBJECTS_PAGE", offset: os().offset + 100 })}>
+                    onClick={() => store.dispatch({ tag: "objects", action: { type: "page", offset: os().offset + 100 } })}>
                   Next \u2192
                 </button>
               </Show>
@@ -113,19 +117,20 @@ export function Objects() {
   );
 }
 
-export function ObjectDetail() {
-  const store = useStore();
-  const obj = () => store.state.objectDetail;
-  const src = () => store.state.sourceDetail;
+export function ObjectDetail(props: { store: Store<AppState, AppAction> }) {
+  const store = props.store;
+  const snap = useSnapshot(store.state);
+  const obj = () => snap().nav.objectDetail;
+  const src = () => snap().nav.sourceDetail;
 
   onMount(() => {
-    store.dispatch({ type: "NAVIGATE", view: "objectDetail" });
+    store.dispatch({ tag: "nav", action: { type: "navigate", view: "objectDetail" } });
   });
 
   return (
     <Show when={obj()} fallback={<Loading />}>
       <Show when={!("error" in obj()!)} fallback={<div class="card"><p style={{ color: "var(--red)" }}>Error: {"error" in obj()! ? (obj() as { error: string }).error : ""}</p></div>}>
-        <button class="back-btn" onClick={() => store.dispatch({ type: "NAVIGATE", view: "objects" })}>{"\u2190"} Back to Objects</button>
+        <button class="back-btn" onClick={() => store.dispatch({ tag: "nav", action: { type: "navigate", view: "objects" } })}>{"\u2190"} Back to Objects</button>
 
         {(() => {
           const o = obj()!;
@@ -162,7 +167,7 @@ export function ObjectDetail() {
                   <div class="card-header"><h3>Inheritance</h3></div>
                   <div style={{ display: "flex", "flex-wrap": "wrap", gap: "6px" }}>
                     <span class="badge badge-ps" style={{ cursor: "pointer" }}
-                          onClick={() => store.dispatch({ type: "OBJECT_SELECTED", name: o.name })}>
+                          onClick={() => store.dispatch({ tag: "nav", action: { type: "object-selected", name: o.name } })}>
                       {o.name}
                     </span>
                     <For each={o.ancestors}>
@@ -170,7 +175,7 @@ export function ObjectDetail() {
                         <>
                           <span style={{ color: "var(--text-muted)" }}>{"\u2192"}</span>
                           <span class="badge badge-ps" style={{ cursor: "pointer" }}
-                                onClick={() => store.dispatch({ type: "OBJECT_SELECTED", name: a })}>
+                                onClick={() => store.dispatch({ tag: "nav", action: { type: "object-selected", name: a } })}>
                             {a}
                           </span>
                         </>
@@ -195,7 +200,7 @@ export function ObjectDetail() {
                               <For each={items!}>
                                 {(c) => (
                                   <span class="badge badge-func" style={{ cursor: "pointer" }}
-                                        onClick={() => store.dispatch({ type: "OBJECT_SELECTED", name: c })}>
+                                        onClick={() => store.dispatch({ tag: "nav", action: { type: "object-selected", name: c } })}>
                                     {c}
                                   </span>
                                 )}
@@ -220,7 +225,7 @@ export function ObjectDetail() {
                       <For each={o.procedures!}>
                         {(p) => (
                           <tr class="clickable"
-                              onClick={() => store.dispatch({ type: "PROCEDURE_SELECTED", objectName: o.name, procName: p.name })}>
+                              onClick={() => store.dispatch({ tag: "nav", action: { type: "procedure-selected", objectName: o.name, procName: p.name } })}>
                             <td class="name-cell">{p.name}</td>
                             <td><span class={`badge badge-${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
                             <td style={{ "font-size": "12px" }}>{p.modifiers ?? ""}</td>
@@ -255,6 +260,7 @@ export function ObjectDetail() {
                     }
                   >
                     <SourceViewer
+                      store={store}
                       lines={(src() as { lines: string[] }).lines}
                       procedures={(src() as { procedures: import("../types/api.js").ProcedureInfo[] }).procedures}
                       knownObjects={(src() as { knownObjects: { name: string; kind: string }[] }).knownObjects}

@@ -1,16 +1,20 @@
 // Queries.tsx — SQL queries view.
 
 import { Show, For, onMount } from "solid-js";
-import { useStore } from "../context.js";
+import { useSnapshot } from "../core/store.js";
+import type { Store } from "../core/store.js";
+import type { AppState } from "../app/state.js";
+import type { AppAction } from "../app/actions.js";
 
-export function Queries() {
-  const store = useStore();
-  const q = () => store.state.queries;
+export function Queries(props: { store: Store<AppState, AppAction> }) {
+  const store = props.store;
+  const snap = useSnapshot(store.state);
+  const q = () => snap().queries;
   const inputs = new Map<string, HTMLInputElement>();
 
   onMount(() => {
-    store.dispatch({ type: "NAVIGATE", view: "queries" });
-    if (!q().items.length) store.dispatch({ type: "QUERIES_LOAD" });
+    store.dispatch({ tag: "nav", action: { type: "navigate", view: "queries" } });
+    if (!q().items.length) store.dispatch({ tag: "queries", action: { type: "load" } });
   });
 
   function handleRun(queryName: string, params: { name: string; type: string; default: string | null }[]) {
@@ -20,7 +24,7 @@ export function Queries() {
       if (inp?.value) bound[p.name] = inp.value;
       else if (p.default) bound[p.name] = p.default;
     }
-    store.dispatch({ type: "QUERY_RUN", name: queryName, params: bound });
+    store.dispatch({ tag: "queries", action: { type: "run", name: queryName, params: bound } });
   }
 
   return (

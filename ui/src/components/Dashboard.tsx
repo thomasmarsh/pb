@@ -1,15 +1,17 @@
 // Dashboard.tsx — Dashboard view.
 
 import { Show, For, createMemo, onMount } from "solid-js";
-import { useStore } from "../context.js";
+import { useSnapshot } from "../core/store.js";
+import type { Store } from "../core/store.js";
+import type { AppState } from "../app/state.js";
+import type { AppAction } from "../app/actions.js";
 import type { ProcedureRow } from "../types/api.js";
 
 function procBadge(t: string): string {
   return { function: "func", subroutine: "sub", event: "event", on: "on" }[t] ?? "func";
 }
 
-function ProcedureTable(props: { title: string; procs: ProcedureRow[] }) {
-  const store = useStore();
+function ProcedureTable(props: { title: string; procs: ProcedureRow[]; store: Store<AppState, AppAction> }) {
   return (
     <div class="card">
       <div class="card-header"><h2>{props.title}</h2></div>
@@ -21,7 +23,7 @@ function ProcedureTable(props: { title: string; procs: ProcedureRow[] }) {
           <For each={props.procs}>
             {(p) => (
               <tr class="clickable"
-                  onClick={() => store.dispatch({ type: "PROCEDURE_SELECTED", objectName: p.object, procName: p.name })}>
+                  onClick={() => props.store.dispatch({ tag: "nav", action: { type: "procedure-selected", objectName: p.object, procName: p.name } })}>
                 <td class="name-cell">{p.object}</td>
                 <td>{p.name}</td>
                 <td><span class={`badge badge-${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
@@ -35,8 +37,7 @@ function ProcedureTable(props: { title: string; procs: ProcedureRow[] }) {
   );
 }
 
-function ObjectTable(props: { title: string; objs: { object: string; pagerank: number; in_degree: number; out_degree: number }[] }) {
-  const store = useStore();
+function ObjectTable(props: { title: string; objs: { object: string; pagerank: number; in_degree: number; out_degree: number }[]; store: Store<AppState, AppAction> }) {
   return (
     <div class="card">
       <div class="card-header"><h2>{props.title}</h2></div>
@@ -48,7 +49,7 @@ function ObjectTable(props: { title: string; objs: { object: string; pagerank: n
           <For each={props.objs}>
             {(p) => (
               <tr class="clickable"
-                  onClick={() => store.dispatch({ type: "OBJECT_SELECTED", name: p.object })}>
+                  onClick={() => props.store.dispatch({ tag: "nav", action: { type: "object-selected", name: p.object } })}>
                 <td class="name-cell">{p.object}</td>
                 <td>{String(p.pagerank)}</td>
                 <td>{String(p.in_degree)}</td>
@@ -70,15 +71,16 @@ function Loading() {
   );
 }
 
-export function Dashboard() {
-  const store = useStore();
+export function Dashboard(props: { store: Store<AppState, AppAction> }) {
+  const store = props.store;
+  const snap = useSnapshot(store.state);
 
   onMount(() => {
-    store.dispatch({ type: "NAVIGATE", view: "dashboard" });
-    if (!store.state.stats) store.dispatch({ type: "STATS_LOAD" });
+    store.dispatch({ tag: "nav", action: { type: "navigate", view: "dashboard" } });
+    if (!snap().nav.stats) store.dispatch({ tag: "nav", action: { type: "stats-load" } });
   });
 
-  const s = () => store.state.stats;
+  const s = () => snap().nav.stats;
 
   const metrics = createMemo(() => {
     const stats = s();
@@ -129,11 +131,11 @@ export function Dashboard() {
       </Show>
 
       <Show when={s()!.top_complex && s()!.top_complex!.length > 0}>
-        <ProcedureTable title="Most Complex Procedures" procs={s()!.top_complex!} />
+        <ProcedureTable title="Most Complex Procedures" procs={s()!.top_complex!} store={store} />
       </Show>
 
       <Show when={s()!.top_pagerank && s()!.top_pagerank!.length > 0}>
-        <ObjectTable title="Most Important Objects (PageRank)" objs={s()!.top_pagerank!} />
+        <ObjectTable title="Most Important Objects (PageRank)" objs={s()!.top_pagerank!} store={store} />
       </Show>
     </Show>
   );

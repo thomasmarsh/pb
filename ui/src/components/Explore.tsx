@@ -1,7 +1,11 @@
 // Explore.tsx — Interactive AST tree explorer (layout + wiring).
 
 import { Show, For, onMount, createMemo, createEffect, createSignal } from "solid-js";
-import { useStore } from "../context.js";
+import { useSnapshot } from "../core/store.js";
+import type { Store } from "../core/store.js";
+import type { AppState } from "../app/state.js";
+import type { AppAction } from "../app/actions.js";
+import { ExploreStoreContext, useExploreStore } from "./ExploreContext.js";
 import { highlightPowerScript } from "../highlight.js";
 import type { ExploreLibrary, ExploreObject, ExploreProcedure, DwExploreDetail, ExploreProcDetail } from "../types/api.js";
 import { TreeNode } from "./TreeNode.js";
@@ -20,7 +24,7 @@ function dwId(name: string): string { return `dw:${name}`; }
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max) + "\u2026" : s;
+  return s.length > max ? s.slice(0, max) + "…" : s;
 }
 
 const KIND_BADGES: Record<string, string> = {
@@ -36,9 +40,10 @@ function procBadge(t: string): string { return PROC_BADGES[t] ?? "badge-func"; }
 // ── Procedure Tree Node ───────────────────────────────────────────────────────
 
 function ProcNode(props: { objName: string; proc: ExploreProcedure; depth: number }) {
-  const store = useStore();
+  const store = useExploreStore();
+  const snap = useSnapshot(store.state);
   const nodeId = () => procId(props.objName, props.proc.name);
-  const isSelected = () => store.state.explore.selectedProc === nodeId();
+  const isSelected = () => snap().explore.selectedProc === nodeId();
 
   const summary = createMemo(() => {
     const p = props.proc;
@@ -58,10 +63,8 @@ function ProcNode(props: { objName: string; proc: ExploreProcedure; depth: numbe
       summary={summary()}
       selected={isSelected()}
       onClick={() => store.dispatch({
-        type: "EXPLORE_PROC_SELECT",
-        objectName: props.objName,
-        procName: props.proc.name,
-        nodeId: nodeId(),
+        tag: "explore",
+        action: { type: "proc-select", objectName: props.objName, procName: props.proc.name, nodeId: nodeId() },
       })}
     />
   );
@@ -70,9 +73,10 @@ function ProcNode(props: { objName: string; proc: ExploreProcedure; depth: numbe
 // ── DataWindow Tree Node ──────────────────────────────────────────────────────
 
 function DwNode(props: { name: string; depth: number }) {
-  const store = useStore();
+  const store = useExploreStore();
+  const snap = useSnapshot(store.state);
   const nodeId = () => dwId(props.name);
-  const isSelected = () => store.state.explore.selectedDw === nodeId();
+  const isSelected = () => snap().explore.selectedDw === nodeId();
 
   return (
     <TreeNode
@@ -81,7 +85,7 @@ function DwNode(props: { name: string; depth: number }) {
       badge={{ text: "datawindow", cls: "badge-dw" }}
       name={props.name}
       selected={isSelected()}
-      onClick={() => store.dispatch({ type: "EXPLORE_DW_SELECT", dwName: props.name, nodeId: nodeId() })}
+      onClick={() => store.dispatch({ tag: "explore", action: { type: "dw-select", dwName: props.name, nodeId: nodeId() } })}
     />
   );
 }
@@ -89,11 +93,12 @@ function DwNode(props: { name: string; depth: number }) {
 // ── Object Tree Node ──────────────────────────────────────────────────────────
 
 function ObjectNode(props: { lib: string; obj: ExploreObject; depth: number }) {
-  const store = useStore();
+  const store = useExploreStore();
+  const snap = useSnapshot(store.state);
   const nodeId = () => objId(props.lib, props.obj.name);
   const isDw = () => props.obj.kind === "datawindow";
 
-  const treeFilter = () => store.state.explore.treeFilter.toLowerCase();
+  const treeFilter = () => snap().explore.treeFilter.toLowerCase();
 
   const visibleProcs = createMemo(() => {
     const q = treeFilter();
@@ -141,10 +146,11 @@ function ObjectNode(props: { lib: string; obj: ExploreObject; depth: number }) {
 // ── Library Tree Node ─────────────────────────────────────────────────────────
 
 function LibraryNode(props: { lib: ExploreLibrary; depth: number }) {
-  const store = useStore();
+  const store = useExploreStore();
+  const snap = useSnapshot(store.state);
   const nodeId = () => libId(props.lib.name);
 
-  const treeFilter = () => store.state.explore.treeFilter.toLowerCase();
+  const treeFilter = () => snap().explore.treeFilter.toLowerCase();
 
   const hasVisibleObjects = createMemo(() => {
     const q = treeFilter();
@@ -161,7 +167,7 @@ function LibraryNode(props: { lib: ExploreLibrary; depth: number }) {
       <TreeNode
         nodeId={nodeId()}
         depth={props.depth}
-        icon={"\u25A3"}
+        icon={"▣"}
         name={props.lib.name}
         summary={`${props.lib.objects.length} objects`}
       >
@@ -176,11 +182,12 @@ function LibraryNode(props: { lib: ExploreLibrary; depth: number }) {
 // ── Proc Detail Panel ─────────────────────────────────────────────────────────
 
 function ProcDetailPanel(props: { nodeId: string }) {
-  const store = useStore();
-  const entry = () => store.state.explore.procCache[props.nodeId];
+  const store = useExploreStore();
+  const snap = useSnapshot(store.state);
+  const entry = () => snap().explore.procCache[props.nodeId];
   const procName = () => props.nodeId.split(":")[2] ?? "";
 
-  const activeTab = () => store.state.explore.activeTab;
+  const activeTab = () => snap().explore.activeTab;
 
   return (
     <DetailShell<ExploreProcDetail> entry={entry()} loadingMsg="Loading...">
@@ -189,7 +196,7 @@ function ProcDetailPanel(props: { nodeId: string }) {
         const highlighted = createMemo(() => d.source_rendered ? highlightPowerScript(d.source_rendered) : "");
 
         const highlightIdx = createMemo(() => {
-          const hl = store.state.explore.highlightedLine;
+          const hl = snap().explore.highlightedLine;
           if (hl == null) return null;
           const idx = hl - (d.start_line ?? 1);
           if (idx < 0 || idx >= lines().length) return null;
@@ -213,7 +220,7 @@ function ProcDetailPanel(props: { nodeId: string }) {
                 <span class="proc-params">({d.params})</span>
               </Show>
               <Show when={d.return_type}>
-                <span class="proc-params">{"\u2192"} {d.return_type}</span>
+                <span class="proc-params">{"→"} {d.return_type}</span>
               </Show>
               <Show when={d.cyclomatic != null}>
                 <span class="badge badge-cc">CC: {d.cyclomatic}</span>
@@ -221,11 +228,11 @@ function ProcDetailPanel(props: { nodeId: string }) {
               <div class="explore-tabs" style={{ "margin-left": "auto" }}>
                 <button
                   class={`explore-tab-btn${activeTab() === "source" ? " active" : ""}`}
-                  onClick={() => store.dispatch({ type: "EXPLORE_TAB", tab: "source" })}
+                  onClick={() => store.dispatch({ tag: "explore", action: { type: "tab", tab: "source" } })}
                 >Source</button>
                 <button
                   class={`explore-tab-btn${activeTab() === "ast" ? " active" : ""}`}
-                  onClick={() => store.dispatch({ type: "EXPLORE_TAB", tab: "ast" })}
+                  onClick={() => store.dispatch({ tag: "explore", action: { type: "tab", tab: "ast" } })}
                 >AST</button>
               </div>
             </div>
@@ -272,8 +279,9 @@ function ProcDetailPanel(props: { nodeId: string }) {
 // ── DW Detail Panel ───────────────────────────────────────────────────────────
 
 function DwDetailPanel(props: { nodeId: string }) {
-  const store = useStore();
-  const entry = () => store.state.explore.dwCache[props.nodeId];
+  const store = useExploreStore();
+  const snap = useSnapshot(store.state);
+  const entry = () => snap().explore.dwCache[props.nodeId];
   const dwName = () => props.nodeId.replace(/^dw:/, "");
 
   return (
@@ -297,9 +305,10 @@ function DwDetailPanel(props: { nodeId: string }) {
 // ── Detail Panel ──────────────────────────────────────────────────────────────
 
 function ObjectsDetailPanel() {
-  const store = useStore();
-  const selectedProc = () => store.state.explore.selectedProc;
-  const selectedDw = () => store.state.explore.selectedDw;
+  const store = useExploreStore();
+  const snap = useSnapshot(store.state);
+  const selectedProc = () => snap().explore.selectedProc;
+  const selectedDw = () => snap().explore.selectedDw;
 
   return (
     <Show when={selectedProc()} fallback={
@@ -314,12 +323,12 @@ function ObjectsDetailPanel() {
   );
 }
 
-function TablesRightPanel() {
-  const store = useStore();
-  const selectedDw = () => store.state.explore.selectedDw;
+function TablesRightPanel(props: { store: Store<AppState, AppAction> }) {
+  const snap = useSnapshot(props.store.state);
+  const selectedDw = () => snap().explore.selectedDw;
 
   return (
-    <Show when={selectedDw()} fallback={<TableDetailPanel />}>
+    <Show when={selectedDw()} fallback={<TableDetailPanel store={props.store} />}>
       {(nodeId) => <DwDetailPanel nodeId={nodeId()} />}
     </Show>
   );
@@ -327,89 +336,92 @@ function TablesRightPanel() {
 
 // ── Main Explore Component ────────────────────────────────────────────────────
 
-export function Explore() {
-  const store = useStore();
+export function Explore(props: { store: Store<AppState, AppAction> }) {
+  const store = props.store;
+  const snap = useSnapshot(store.state);
 
   onMount(() => {
-    store.dispatch({ type: "NAVIGATE", view: "explore" });
-    if (store.state.explore.libraries.length === 0 && !store.state.explore.loading) {
-      store.dispatch({ type: "EXPLORE_LOAD" });
+    store.dispatch({ tag: "nav", action: { type: "navigate", view: "explore" } });
+    if (snap().explore.libraries.length === 0 && !snap().explore.loading) {
+      store.dispatch({ tag: "explore", action: { type: "load" } });
     }
   });
 
   const totalObjects = createMemo(() =>
-    store.state.explore.libraries.reduce((sum, lib) => sum + lib.objects.length, 0)
+    snap().explore.libraries.reduce((sum: number, lib: ExploreLibrary) => sum + lib.objects.length, 0)
   );
 
   const totalProcs = createMemo(() =>
-    store.state.explore.libraries.reduce(
-      (sum, lib) => sum + lib.objects.reduce((s, obj) => s + obj.procedures.length, 0),
+    snap().explore.libraries.reduce(
+      (sum: number, lib: ExploreLibrary) => sum + lib.objects.reduce((s: number, obj: ExploreObject) => s + obj.procedures.length, 0),
       0
     )
   );
 
-  const leftTab = () => store.state.explore.leftTab;
+  const leftTab = () => snap().explore.leftTab;
 
   return (
-    <div class="explore-split">
-      <div class="explore-left">
-        <div class="explore-left-header">
-          <h2>AST Explorer</h2>
-          <div class="explore-tabs" style={{ "margin-bottom": "6px" }}>
-            <button
-              class={`explore-tab-btn${leftTab() === "objects" ? " active" : ""}`}
-              onClick={() => store.dispatch({ type: "EXPLORE_LEFT_TAB", tab: "objects" })}
-            >Objects</button>
-            <button
-              class={`explore-tab-btn${leftTab() === "tables" ? " active" : ""}`}
-              onClick={() => store.dispatch({ type: "EXPLORE_LEFT_TAB", tab: "tables" })}
-            >Tables</button>
+    <ExploreStoreContext.Provider value={store}>
+      <div class="explore-split">
+        <div class="explore-left">
+          <div class="explore-left-header">
+            <h2>AST Explorer</h2>
+            <div class="explore-tabs" style={{ "margin-bottom": "6px" }}>
+              <button
+                class={`explore-tab-btn${leftTab() === "objects" ? " active" : ""}`}
+                onClick={() => store.dispatch({ tag: "explore", action: { type: "left-tab", tab: "objects" } })}
+              >Objects</button>
+              <button
+                class={`explore-tab-btn${leftTab() === "tables" ? " active" : ""}`}
+                onClick={() => store.dispatch({ tag: "explore", action: { type: "left-tab", tab: "tables" } })}
+              >Tables</button>
+            </div>
+            <Show when={leftTab() === "objects"}>
+              <div class="explore-meta">
+                <span>{snap().explore.libraries.length} libraries</span>
+                <span>{totalObjects()} objects</span>
+                <span>{totalProcs()} procedures</span>
+              </div>
+              <div class="explore-left-actions">
+                <button class="filter-pill" onClick={() => store.dispatch({ tag: "explore", action: { type: "expand-all" } })}>
+                  Expand All
+                </button>
+                <button class="filter-pill" onClick={() => store.dispatch({ tag: "explore", action: { type: "collapse-all" } })}>
+                  Collapse All
+                </button>
+              </div>
+              <input
+                class="explore-filter-input"
+                placeholder="Filter…"
+                value={snap().explore.treeFilter}
+                onInput={(e) => store.dispatch({ tag: "explore", action: { type: "filter", q: e.currentTarget.value } })}
+              />
+            </Show>
           </div>
-          <Show when={leftTab() === "objects"}>
-            <div class="explore-meta">
-              <span>{store.state.explore.libraries.length} libraries</span>
-              <span>{totalObjects()} objects</span>
-              <span>{totalProcs()} procedures</span>
-            </div>
-            <div class="explore-left-actions">
-              <button class="filter-pill" onClick={() => store.dispatch({ type: "EXPLORE_EXPAND_ALL" })}>
-                Expand All
-              </button>
-              <button class="filter-pill" onClick={() => store.dispatch({ type: "EXPLORE_COLLAPSE_ALL" })}>
-                Collapse All
-              </button>
-            </div>
-            <input
-              class="explore-filter-input"
-              placeholder="Filter\u2026"
-              value={store.state.explore.treeFilter}
-              onInput={(e) => store.dispatch({ type: "EXPLORE_FILTER", q: e.currentTarget.value })}
-            />
-          </Show>
-        </div>
-        <div class="explore-left-tree">
-          <Show when={leftTab() === "objects"} fallback={<TableList />}>
-            <Show
-              when={!store.state.explore.loading}
-              fallback={<div class="loading-overlay"><div class="spinner" /> Loading AST tree...</div>}
-            >
+          <div class="explore-left-tree">
+            <Show when={leftTab() === "objects"} fallback={<TableList store={store} />}>
               <Show
-                when={store.state.explore.libraries.length > 0}
-                fallback={<div class="tree-empty">No data. Run <code>pb ingest</code> first.</div>}
+                when={!snap().explore.loading}
+                fallback={<div class="loading-overlay"><div class="spinner" /> Loading AST tree...</div>}
               >
-                <For each={store.state.explore.libraries}>
-                  {(lib) => <LibraryNode lib={lib} depth={0} />}
-                </For>
+                <Show
+                  when={snap().explore.libraries.length > 0}
+                  fallback={<div class="tree-empty">No data. Run <code>pb ingest</code> first.</div>}
+                >
+                  <For each={snap().explore.libraries}>
+                    {(lib) => <LibraryNode lib={lib} depth={0} />}
+                  </For>
+                </Show>
               </Show>
             </Show>
+          </div>
+        </div>
+        <div class="explore-right">
+          <Show when={leftTab() === "objects"} fallback={<TablesRightPanel store={store} />}>
+            <ObjectsDetailPanel />
           </Show>
         </div>
       </div>
-      <div class="explore-right">
-        <Show when={leftTab() === "objects"} fallback={<TablesRightPanel />}>
-          <ObjectsDetailPanel />
-        </Show>
-      </div>
-    </div>
+    </ExploreStoreContext.Provider>
   );
 }

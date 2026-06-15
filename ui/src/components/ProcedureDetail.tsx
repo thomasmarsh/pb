@@ -2,7 +2,10 @@
 
 import { Show, createSignal } from "solid-js";
 import { Tabs } from "@kobalte/core/tabs";
-import { useStore } from "../context.js";
+import { useSnapshot } from "../core/store.js";
+import type { Store } from "../core/store.js";
+import type { AppState } from "../app/state.js";
+import type { AppAction } from "../app/actions.js";
 import { CodeBlock } from "./CodeBlock.js";
 
 function procBadge(t: string): string {
@@ -13,9 +16,10 @@ function Loading() {
   return <div class="loading-overlay"><div class="spinner" /> Loading...</div>;
 }
 
-export function ProcedureDetail() {
-  const store = useStore();
-  const proc = () => store.state.procedureDetail;
+export function ProcedureDetail(props: { store: Store<AppState, AppAction> }) {
+  const store = props.store;
+  const snap = useSnapshot(store.state);
+  const proc = () => snap().nav.procedureDetail;
   const [activeTab, setActiveTab] = createSignal("original");
 
   return (
@@ -28,7 +32,7 @@ export function ProcedureDetail() {
 
           return (
             <>
-              <button class="back-btn" onClick={() => store.dispatch({ type: "OBJECT_SELECTED", name: p.object })}>
+              <button class="back-btn" onClick={() => store.dispatch({ tag: "nav", action: { type: "object-selected", name: p.object } })}>
                 {"\u2190"} Back to {p.object}
               </button>
 

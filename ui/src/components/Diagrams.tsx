@@ -2,11 +2,15 @@
 
 import { Show, For, createSignal, onMount } from "solid-js";
 import { Tabs } from "@kobalte/core/tabs";
-import { useStore } from "../context.js";
+import { useSnapshot } from "../core/store.js";
+import type { Store } from "../core/store.js";
+import type { AppState } from "../app/state.js";
+import type { AppAction } from "../app/actions.js";
 
-export function Diagrams() {
-  const store = useStore();
-  const dg = () => store.state.diagrams;
+export function Diagrams(props: { store: Store<AppState, AppAction> }) {
+  const store = props.store;
+  const snap = useSnapshot(store.state);
+  const dg = () => snap().diagrams;
   const [activeTab, setActiveTab] = createSignal("inheritance");
   const [focalInput, setFocalInput] = createSignal("");
   const [depthInput, setDepthInput] = createSignal("2");
@@ -14,27 +18,27 @@ export function Diagrams() {
   const [tableInput, setTableInput] = createSignal("");
 
   onMount(() => {
-    store.dispatch({ type: "NAVIGATE", view: "diagrams" });
+    store.dispatch({ tag: "nav", action: { type: "navigate", view: "diagrams" } });
   });
 
   function handleGenerate() {
     const kind = activeTab();
     if (kind === "calls") {
-      store.dispatch({ type: "DIAGRAM_PARAMS", params: { focal: focalInput(), depth: depthInput() } });
+      store.dispatch({ tag: "diagrams", action: { type: "params", params: { focal: focalInput(), depth: depthInput() } } });
     } else if (kind === "inheritance") {
-      store.dispatch({ type: "DIAGRAM_PARAMS", params: { root: rootInput() } });
+      store.dispatch({ tag: "diagrams", action: { type: "params", params: { root: rootInput() } } });
     } else if (kind === "dw-tables") {
-      store.dispatch({ type: "DIAGRAM_PARAMS", params: { table: tableInput() } });
+      store.dispatch({ tag: "diagrams", action: { type: "params", params: { table: tableInput() } } });
     }
-    store.dispatch({ type: "DIAGRAM_GENERATE" });
+    store.dispatch({ tag: "diagrams", action: { type: "generate" } });
   }
 
   return (
     <>
       <Tabs value={activeTab()} onChange={(v) => {
         setActiveTab(v);
-        store.dispatch({ type: "DIAGRAM_SELECT", kind: v as "inheritance" | "calls" | "dw-tables" | "heatmap" });
-        if (v === "heatmap" || v === "inheritance") store.dispatch({ type: "DIAGRAM_GENERATE" });
+        store.dispatch({ tag: "diagrams", action: { type: "select", kind: v as "inheritance" | "calls" | "dw-tables" | "heatmap" } });
+        if (v === "heatmap" || v === "inheritance") store.dispatch({ tag: "diagrams", action: { type: "generate" } });
       }}>
         <Tabs.List class="tab-bar">
           <For each={["inheritance", "calls", "dw-tables", "heatmap"]}>
