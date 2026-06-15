@@ -8,7 +8,9 @@ from pathlib import Path
 import duckdb
 import typer
 
-QUERIES_DIR = Path(__file__).parent.parent.parent / "queries"
+from pb_cli.build import find_repo
+
+QUERIES_DIR = find_repo() / "queries"
 
 _INT_TYPES = {"INT", "INTEGER", "BIGINT"}
 

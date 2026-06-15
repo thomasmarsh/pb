@@ -4,7 +4,9 @@ from pathlib import Path
 import duckdb
 import pytest
 
-REPO_ROOT = Path(__file__).parent.parent
+from pb_cli.build import find_repo
+
+REPO_ROOT = find_repo()
 QUERIES_DIR = REPO_ROOT / "queries"
 
 

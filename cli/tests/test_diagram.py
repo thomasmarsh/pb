@@ -12,13 +12,14 @@ Requires:
 import io
 import re
 import subprocess
-import os
 
 import duckdb
 import pytest
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH   = os.path.join(REPO_ROOT, 'pb.duckdb')
+from pb_cli.build import find_repo
+
+REPO_ROOT = find_repo()
+DB_PATH   = str(REPO_ROOT / 'pb.duckdb')
 
 from pb_cli.diagram import (  # noqa: E402
     diagram_calls,

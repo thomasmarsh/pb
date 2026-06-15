@@ -13,9 +13,11 @@ import graphviz
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 
+from pb_cli.build import find_repo
+
 router = APIRouter()
 
-QUERIES_DIR = Path(__file__).parent.parent.parent.parent / "queries"
+QUERIES_DIR = find_repo() / "queries"
 
 
 def _conn(request: Request) -> duckdb.DuckDBPyConnection:

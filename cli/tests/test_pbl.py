@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from pb_cli.build import find_repo
+
 from pb_cli.pbl import (
     PBL_COMMENTS,
     PBL_HEADER,
@@ -292,7 +294,7 @@ def test_resolve_extracting_event_includes_pbl_name(tmp_path):
 
 # ── openpay corpus integration test ──────────────────────────────────────────
 
-_OPENPAY_DIR = Path(__file__).parent.parent / 'example' / 'openpay'
+_OPENPAY_DIR = find_repo() / 'example' / 'openpay'
 _OPENPAY_PBLS = sorted(
     p for p in _OPENPAY_DIR.iterdir()
     if p.is_file() and p.suffix.lower() == '.pbl'
