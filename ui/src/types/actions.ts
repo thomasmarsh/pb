@@ -77,4 +77,5 @@ export type AppAction =
   | { type: "EXPLORE_DW_LOADED"; nodeId: string; data: DwExploreDetail }
   | { type: "EXPLORE_DW_ERROR"; nodeId: string; error: string }
   | { type: "EXPLORE_TAB"; tab: "source" | "ast" }
-  | { type: "EXPLORE_FILTER"; q: string };
+  | { type: "EXPLORE_FILTER"; q: string }
+  | { type: "EXPLORE_HIGHLIGHT_LINE"; line: number | null };

@@ -1,6 +1,6 @@
 // API types derived from DuckDB schema (pbtools/common.py) and api.py routes.
 
-import type { BodyStmt } from "./ast.generated.js";
+import type { BodyStmt, Located } from "./ast.generated.js";
 
 // ── DuckDB table rows ───────────────────────────────────────────────────────
 
@@ -186,7 +186,7 @@ export interface DwExploreDetail {
 }
 
 export interface ExploreProcDetail {
-  ast: BodyStmt[] | null;
+  ast: Located<BodyStmt>[] | null;
   source_rendered: string;
   proc_type: string;
   params: string | null;

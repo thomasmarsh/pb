@@ -1,6 +1,6 @@
 // Explore.tsx — Interactive AST tree explorer.
 
-import { Show, For, onMount, createMemo, type JSX } from "solid-js";
+import { Show, For, onMount, createMemo, createEffect, createSignal, type JSX } from "solid-js";
 import { useStore } from "../context.js";
 import { highlightPowerScript } from "../highlight.js";
 import type { ExploreLibrary, ExploreObject, ExploreProcedure, DwExploreDetail, ExploreProcDetail } from "../types/api.js";
@@ -32,6 +32,10 @@ function truncate(s: string, max: number): string {
 
 function isNode(n: unknown): n is Record<string, unknown> {
   return n !== null && typeof n === "object" && !Array.isArray(n);
+}
+
+function isLocated(v: unknown): v is { line: number; node: unknown } {
+  return isNode(v) && typeof v.line === "number" && "node" in v;
 }
 
 function nodeTag(n: unknown): string | null {
@@ -410,10 +414,21 @@ export function AstNode(props: {
   if (Array.isArray(props.node)) {
     return (
       <div class="ast-body">
-        <For each={props.node}>
-          {(item, i) => (
-            <AstNode node={item} nodeId={`${props.nodeId}.${i()}`} depth={props.depth} />
-          )}
+        <For each={props.node as unknown[]}>
+          {(item, i) => {
+            if (isLocated(item)) {
+              const lineNum = item.line;
+              return (
+                <div class="ast-located-row" onClick={() => {
+                  store.dispatch({ type: "EXPLORE_HIGHLIGHT_LINE", line: lineNum });
+                  store.dispatch({ type: "EXPLORE_TAB", tab: "source" });
+                }}>
+                  <AstNode node={item.node} nodeId={`${props.nodeId}.${i()}`} depth={props.depth} />
+                </div>
+              );
+            }
+            return <AstNode node={item} nodeId={`${props.nodeId}.${i()}`} depth={props.depth} />;
+          }}
         </For>
       </div>
     );
@@ -756,6 +771,23 @@ function ProcDetailPanel(props: { nodeId: string }): JSX.Element {
 
   const activeTab = () => store.state.explore.activeTab;
 
+  const highlightIdx = createMemo(() => {
+    const hl = store.state.explore.highlightedLine;
+    const d = data();
+    if (hl == null || !d) return null;
+    const idx = hl - (d.start_line ?? 1);
+    if (idx < 0 || idx >= lines().length) return null;
+    return idx;
+  });
+
+  const [sourceViewerEl, setSourceViewerEl] = createSignal<HTMLDivElement | null>(null);
+  createEffect(() => {
+    const idx = highlightIdx();
+    const el = sourceViewerEl();
+    if (idx == null || !el) return;
+    el.scrollTop = Math.max(0, idx * 20.8 - 80);
+  });
+
   return (
     <Show when={entry() !== undefined} fallback={
       <div class="explore-right-body">
@@ -794,15 +826,29 @@ function ProcDetailPanel(props: { nodeId: string }): JSX.Element {
             </div>
             <div class="explore-right-body">
               <Show when={activeTab() === "source"}>
-                <div class="source-viewer">
+                <div class="source-viewer" ref={setSourceViewerEl}>
                   <div class="source-gutter">
                     <For each={lines()}>
                       {(_, i) => (
-                        <div class="source-gutter-line">{(d().start_line ?? 1) + i()}</div>
+                        <div
+                          class="source-gutter-line"
+                          style={i() === highlightIdx() ? {
+                            color: "#fb923c", "font-weight": "600",
+                            background: "rgba(251, 146, 60, 0.12)",
+                          } : undefined}
+                        >
+                          {(d().start_line ?? 1) + i()}
+                        </div>
                       )}
                     </For>
                   </div>
                   <div class="source-code-area">
+                    <Show when={highlightIdx() != null}>
+                      <div class="ast-line-highlight" style={{
+                        top: `${highlightIdx()! * 20.8}px`,
+                        height: "20.8px",
+                      }} />
+                    </Show>
                     <pre innerHTML={highlighted()} />
                   </div>
                 </div>

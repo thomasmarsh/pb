@@ -45,7 +45,7 @@ describe("initialState", () => {
     expect(s.explore).toEqual({
       libraries: [], expandedNodes: expect.any(Set), selectedProc: null,
       selectedDw: null, procCache: {}, dwCache: {}, loading: false,
-      activeTab: "source", treeFilter: "",
+      activeTab: "source", treeFilter: "", highlightedLine: null,
     });
   });
 
@@ -579,6 +579,39 @@ describe("EXPLORE_PROC_SELECT resets activeTab", () => {
       type: "EXPLORE_PROC_SELECT", objectName: "o", procName: "p", nodeId: "proc:o:p",
     }, defaultMockEnv);
     expect(s1.explore.activeTab).toBe("source");
+  });
+
+  it("clears highlightedLine when selecting a new proc", () => {
+    const s0 = { ...initialState(), explore: { ...initialState().explore, highlightedLine: 42 } };
+    const [s1] = reducer(s0, {
+      type: "EXPLORE_PROC_SELECT", objectName: "o", procName: "p", nodeId: "proc:o:p",
+    }, defaultMockEnv);
+    expect(s1.explore.highlightedLine).toBeNull();
+  });
+});
+
+describe("EXPLORE_HIGHLIGHT_LINE", () => {
+  it("sets highlightedLine", () => {
+    const [s] = reducer(initialState(), { type: "EXPLORE_HIGHLIGHT_LINE", line: 57 }, defaultMockEnv);
+    expect(s.explore.highlightedLine).toBe(57);
+  });
+
+  it("null clears highlightedLine", () => {
+    const s0 = { ...initialState(), explore: { ...initialState().explore, highlightedLine: 57 } };
+    const [s1] = reducer(s0, { type: "EXPLORE_HIGHLIGHT_LINE", line: null }, defaultMockEnv);
+    expect(s1.explore.highlightedLine).toBeNull();
+  });
+
+  it("returns no Effect", () => {
+    const [, effect] = reducer(initialState(), { type: "EXPLORE_HIGHLIGHT_LINE", line: 10 }, defaultMockEnv);
+    expect(effect).toBeNull();
+  });
+
+  it("does not mutate other explore state", () => {
+    const s0 = { ...initialState(), explore: { ...initialState().explore, treeFilter: "foo", activeTab: "ast" as const } };
+    const [s1] = reducer(s0, { type: "EXPLORE_HIGHLIGHT_LINE", line: 5 }, defaultMockEnv);
+    expect(s1.explore.treeFilter).toBe("foo");
+    expect(s1.explore.activeTab).toBe("ast");
   });
 });
 

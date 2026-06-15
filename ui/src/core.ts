@@ -148,6 +148,7 @@ export function initialState(): AppState {
       loading: false,
       activeTab: "source" as const,
       treeFilter: "",
+      highlightedLine: null,
     },
   };
 }
@@ -357,7 +358,7 @@ export function reducer(state: AppState, action: AppAction, env: Env): [AppState
   }
 
   case "EXPLORE_PROC_SELECT": {
-    const next = { ...state, explore: { ...state.explore, selectedProc: action.nodeId, selectedDw: null, activeTab: "source" as const } };
+    const next = { ...state, explore: { ...state.explore, selectedProc: action.nodeId, selectedDw: null, activeTab: "source" as const, highlightedLine: null } };
     if (!(action.nodeId in state.explore.procCache)) {
       return [next, env.getExploreProcedure(action.objectName, action.procName)
         .map((data): AppAction => ({ type: "EXPLORE_PROC_LOADED", nodeId: action.nodeId, data }))
@@ -385,7 +386,7 @@ export function reducer(state: AppState, action: AppAction, env: Env): [AppState
     return [{ ...state, explore: { ...state.explore, expandedNodes: new Set<string>() } }, null];
 
   case "EXPLORE_DW_SELECT": {
-    const next = { ...state, explore: { ...state.explore, selectedDw: action.nodeId, selectedProc: null } };
+    const next = { ...state, explore: { ...state.explore, selectedDw: action.nodeId, selectedProc: null, highlightedLine: null } };
     if (!(action.nodeId in state.explore.dwCache)) {
       return [next, env.getExploreDatawindow(action.dwName)
         .map((data): AppAction => ({ type: "EXPLORE_DW_LOADED", nodeId: action.nodeId, data }))
@@ -405,6 +406,9 @@ export function reducer(state: AppState, action: AppAction, env: Env): [AppState
 
   case "EXPLORE_FILTER":
     return [{ ...state, explore: { ...state.explore, treeFilter: action.q } }, null];
+
+  case "EXPLORE_HIGHLIGHT_LINE":
+    return [{ ...state, explore: { ...state.explore, highlightedLine: action.line } }, null];
 
   default:
     return [state, null];

@@ -69,6 +69,7 @@ export interface ExploreState {
   loading: boolean;
   activeTab: "source" | "ast";
   treeFilter: string;
+  highlightedLine: number | null;
 }
 
 export interface AppState {
