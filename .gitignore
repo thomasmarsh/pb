@@ -1,8 +1,7 @@
 dist-newstyle/
-reference/code
-reference/docs/
-docs/
-plan/
+doc/reference/code
+doc/reference/docs/
+doc/plan/
 output/
 example/PowerBuilder-Example/
 example/openpay-src/

@@ -137,6 +137,18 @@ def debt(
     run(repo=repo, no_build=no_build)
 
 
+# ── pb check-corpus ──────────────────────────────────────────────────────────
+
+@app.command("check-corpus")
+def check_corpus(
+    no_build: bool = typer.Option(False, "--no-build", help="Skip cabal build step."),
+    repo: Optional[Path] = typer.Option(None, "--repo", help="Repo root (auto-detect if omitted)."),
+) -> None:
+    """Run pb-runner on both corpora and fail if any files contain parse errors."""
+    from pb_cli.corpus import run
+    run(repo=repo, no_build=no_build)
+
+
 # ── pb index (legacy) ─────────────────────────────────────────────────────────
 
 @app.command()

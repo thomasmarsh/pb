@@ -53,10 +53,12 @@ pb/
 │   ├── vite.config.ts        Builds src/App.tsx → ../cli/pb_cli/explorer/static/dist/
 │   └── tsconfig.json
 ├── pb                        Top-level wrapper: uv run --project cli pb_cli $*
+├── doc/                      Documentation and planning
+│   ├── plan/                 Planning artifacts (BACKLOG, STRATEGY, session plans)
+│   ├── spec.md               Parser specification
+│   └── pbl-spec.txt          PBL file format spec
 ├── queries/                  SQL files served as `pb query <name>` commands
-├── example/                  Corpus data (openpay, openpay-src)
-├── reference/                SPEC.md + Appeon docs (markdown)
-└── plan/                     Planning artifacts (BACKLOG, STRATEGY, session plans)
+└── example/                  Corpus data (openpay, openpay-src)
 ```
 
 ---
@@ -198,7 +200,6 @@ generation for the API contract — changes to `api.py` must be reflected in
 | Haskell | `cabal test` (in `parser/`) | `parser/test/` |
 | Python | `uv run pytest` (in `cli/`) | `cli/tests/` |
 | TypeScript | `pnpm test` (in `ui/`) | `ui/tests/` |
-| Corpus regression | `bash scripts/check-corpus.sh` | uses `example/openpay` |
 | Debt gate | `uv run --project cli pb_cli debt` | checks ExRaw, BsRaw, DW coverage |
 
 Haskell tests include corpus oracle tests (`test/CorpusDebtTest.hs`,

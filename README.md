@@ -132,7 +132,7 @@ pnpm build            # compile TS → static/dist/
 | Python tests     | `cd cli && uv run pytest`                  | 125 tests across tooling             |
 | Explorer TS      | `pnpm build` (in `ui/`)                    | Bundle TS → JS for the web UI        |
 | Explorer tests   | `pnpm test` (in `ui/`)                     | 39 reducer + state management tests  |
-| Corpus check     | `bash scripts/check-corpus.sh`             | 0 errors / 777 files baseline        |
+| Corpus check     | `./pb check-corpus`                        | 0 errors / 777 files baseline        |
 
 CI runs all of these on every push to `main`.
 
@@ -258,7 +258,7 @@ statements and expressions). Useful for tracking parser coverage.
 ## Parser coverage check
 
 ```bash
-bash scripts/check-corpus.sh   # 0 errors / 777 files = baseline
+./pb check-corpus   # 0 errors / 777 files = baseline
 ```
 
 ---

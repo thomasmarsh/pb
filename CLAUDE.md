@@ -7,7 +7,7 @@ cd parser && cabal build                          # compile library + executable
 cd parser && cabal build --enable-tests           # compile tests too
 cd parser && cabal test                           # run test suite
 cd parser && cabal test --test-show-details=direct # verbose output
-bash scripts/check-corpus.sh                      # 0 errors / 777 files = baseline
+./pb check-corpus                    # 0 errors / 777 files = baseline
 ./pb debt                        # BsRaw + ExRaw debt + DW control coverage (both corpora)
 ./pb debt --no-build             # same, skip build step
 cd cli && uv run pytest         # Python tool tests (cli/tests/ directory)
@@ -24,12 +24,12 @@ cd ui && pnpm build             # Build explorer TS → static/dist/
 
 Infer the charter from the user's intent. If ambiguous, ask before reading any code. No work starts until the charter is written.
 
-**Scope is fixed for the session.** If new problems surface mid-session, log them to `plan/BACKLOG.md` — do not expand the current session's scope without explicit user approval.
+**Scope is fixed for the session.** If new problems surface mid-session, log them to `doc/plan/BACKLOG.md` — do not expand the current session's scope without explicit user approval.
 
 **Classifying new failures.** When a fix exposes additional failures:
 
 - Same root cause as the current fix → fix it in this session (it is within charter)
-- Different root cause → one-line entry in `plan/BACKLOG.md`; continue with the current charter
+- Different root cause → one-line entry in `doc/plan/BACKLOG.md`; continue with the current charter
 
 **Primary failures hide secondary failures.** Corpus error counts are keyed on the *first* failing line per file. A dominant failure mode can mask other bugs in the same file. Fix the primary mode, rerun the corpus check, then re-categorize the remaining errors before drawing conclusions.
 
@@ -38,13 +38,13 @@ Infer the charter from the user's intent. If ambiguous, ask before reading any c
 **Post-task grooming.** After the stop condition is met, before proposing the commit message, update planning artifacts to reflect new understanding:
 
 - Mark completed BACKLOG items `[x]` with a short completion note and date.
-- Update `plan/STRATEGY.md`: current-state metrics, track status, recommended session order.
-- Update any plan files (e.g. `plan/20-dw-a1.md`) that reference superseded counts, signatures, or status.
+- Update `doc/plan/STRATEGY.md`: current-state metrics, track status, recommended session order.
+- Update any plan files (e.g. `doc/plan/20-dw-a1.md`) that reference superseded counts, signatures, or status.
 - If the session revealed new scope, append to BACKLOG — do not silently discard the finding.
 
 This grooming step is mandatory; do not skip it to save time.
 
-**`plan/BACKLOG.md`** is the authoritative work queue. The user sets priority order. The assistant only appends — never reorders. Read it at session start to confirm the charter matches the top unfinished item.
+**`doc/plan/BACKLOG.md`** is the authoritative work queue. The user sets priority order. The assistant only appends — never reorders. Read it at session start to confirm the charter matches the top unfinished item.
 
 ---
 
@@ -66,7 +66,7 @@ No change is proposed without a prior read of all relevant modules. Locate calle
 **Diagnosing corpus failures.** When the charter is to reduce corpus errors, sample raw error messages before touching code:
 
 ```bash
-bash scripts/check-corpus.sh 2>&1 | grep "Files processed"   # get count
+./pb check-corpus 2>&1 | grep "Files processed"   # get count
 
 # sample 5 error messages from a temporary run:
 OUT=$(mktemp -d)
@@ -273,33 +273,9 @@ All new modules must start with `import PB.Prelude` under `NoImplicitPrelude` (s
 
 ## Reference Docs
 
-The parser specification is in `reference/SPEC.md` — consult it first for any question about lexical rules, token forms, file structure, or DataWindow syntax. It is synthesized from the battle-tested reference implementation and amended with corrections from the official Appeon docs.
+The parser specification is in `doc/spec.md` — consult it first for any question about lexical rules, token forms, file structure, or DataWindow syntax. It is synthesized from the battle-tested reference implementation and amended with corrections from the official Appeon docs.
 
 **When the corpus contradicts SPEC.md, the corpus wins.** Real exported files are ground truth. Update SPEC.md to document the discrepancy before or alongside the parser fix — do not silently accept corpus patterns without recording them in the spec.
-
-The official Appeon PowerBuilder 2025 R2 reference docs are in `reference/docs/markdown/` (converted from HTML; content-equivalent but ~30× smaller). Three doc trees:
-
-| Tree | Path | Use for |
-| ---- | ---- | ------- |
-| PowerScript Reference | `powerscript_reference/` | Language syntax, statements, functions |
-| DataWindow Reference | `datawindow_reference/` | DW expression functions, property names |
-| Objects and Controls | `objects_and_controls/` | System object properties and type hierarchy |
-
-**Key Language Basics files** (most parser-relevant, consult before implementing a lexer rule):
-
-```text
-powerscript_reference/xREF_94732_Comments.md           — // and /* */ comment forms
-powerscript_reference/xREF_89555_Statement.md          — & continuation rules + exceptions
-powerscript_reference/xREF_20385_Statement.md          — ; statement separation
-powerscript_reference/xREF_81473_White_space.md        — dash-in-identifier ambiguity
-powerscript_reference/xREF_55923_Identifier_names.md   — identifier character rules
-powerscript_reference/xREF_80481_Reserved_words.md     — full reserved word list
-powerscript_reference/xREF_87805_Standard_datatypes.md — all primitive types + literal forms
-powerscript_reference/xREF_22106_Conditional.md        — #if DEFINED preprocessor
-powerscript_reference/xREF_36556_Special_ASCII.md      — ~ escape sequences in strings
-```
-
-The individual function/property pages (one file per item) are thin reference stubs useful only for looking up a specific signature — not for understanding syntax or behaviour.
 
 ---
 
@@ -595,10 +571,10 @@ Corpus gate: 262 DW files return non-stub JSON.
 1. **Recommended next-session seed prompt** — a self-contained paragraph the user can paste to start the next session. Include: charter, which plan file to read, key counts/baselines, and any prerequisite check.
 
 ```
-Charter: DW-A2 — implement typed `table(...)` parsing per plan/21-dw-a2.md.
+Charter: DW-A2 — implement typed `table(...)` parsing per doc/plan/21-dw-a2.md.
 Prerequisite: DW-A1 complete and `cabal test` passing (619 tests).
 Baseline: 262 DW files non-stub; ExRaw ≤ 1; BsRaw other ≤ 18.
-Start at Stage 0: read plan/21-dw-a2.md in full, then read
+Start at Stage 0: read doc/plan/21-dw-a2.md in full, then read
 PB.AST.DataWindow and PB.Grammar.DataWindow to locate the stub functions
 that need replacing.
 ```
@@ -611,6 +587,6 @@ These are proposals only — the user decides when and whether to commit.
 - Commit message: what changed and why, not how
 - Do not commit with a warning-dirty `cabal build`
 - Failing test stubs (Stage 2) may be committed; mark them clearly with `assertFailure "unimplemented: ..."`
-- Before committing parser changes: `bash scripts/check-corpus.sh`
+- Before committing parser changes: `./pb check-corpus`
   The error count must not increase. Baseline: 0 errors / 777 files.
-- Any new failure categories found during a session must be recorded in `plan/BACKLOG.md` before committing.
+- Any new failure categories found during a session must be recorded in `doc/plan/BACKLOG.md` before committing.
