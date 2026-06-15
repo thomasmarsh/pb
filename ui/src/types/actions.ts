@@ -14,8 +14,8 @@ import type {
   SearchResponse,
   ExploreTreeResponse,
   DwExploreDetail,
+  ExploreProcDetail,
 } from "./api.js";
-import type { BodyStmt } from "./ast.generated.js";
 
 export type AppAction =
   // Navigation
@@ -68,12 +68,11 @@ export type AppAction =
   | { type: "EXPLORE_LOAD" }
   | { type: "EXPLORE_LOADED"; data: ExploreTreeResponse }
   | { type: "EXPLORE_TOGGLE"; nodeId: string }
-  | { type: "EXPLORE_SELECT"; nodeId: string }
-  | { type: "EXPLORE_PROC_EXPAND"; objectName: string; procName: string; nodeId: string }
-  | { type: "EXPLORE_AST_LOADED"; nodeId: string; ast: BodyStmt[] | null }
-  | { type: "EXPLORE_AST_ERROR"; nodeId: string; error: string }
+  | { type: "EXPLORE_PROC_SELECT"; objectName: string; procName: string; nodeId: string }
+  | { type: "EXPLORE_PROC_LOADED"; nodeId: string; data: ExploreProcDetail }
+  | { type: "EXPLORE_PROC_ERROR"; nodeId: string; error: string }
   | { type: "EXPLORE_EXPAND_ALL" }
   | { type: "EXPLORE_COLLAPSE_ALL" }
-  | { type: "EXPLORE_DW_EXPAND"; dwName: string; nodeId: string }
+  | { type: "EXPLORE_DW_SELECT"; dwName: string; nodeId: string }
   | { type: "EXPLORE_DW_LOADED"; nodeId: string; data: DwExploreDetail }
   | { type: "EXPLORE_DW_ERROR"; nodeId: string; error: string };

@@ -672,17 +672,32 @@ async def explore_procedure(object_name: str, proc_name: str, request: Request):
     conn = _conn(request)
     try:
         rows = _rows(conn.execute(
-            "SELECT body_json FROM procedures WHERE object = ? AND name = ?",
+            "SELECT body_json, source_rendered, proc_type, params, return_type, "
+            "modifiers, start_line, end_line, cyclomatic "
+            "FROM procedures WHERE object = ? AND name = ?",
             [object_name, proc_name],
         ))
         if not rows:
             raise HTTPException(status_code=404, detail="Procedure not found")
-        body_json = rows[0].get("body_json")
+        row = rows[0]
+        body_json = row.get("body_json")
         if body_json is None:
-            return {"ast": None}
-        if isinstance(body_json, str):
-            body_json = json.loads(body_json)
-        return {"ast": body_json}
+            ast = None
+        elif isinstance(body_json, str):
+            ast = json.loads(body_json)
+        else:
+            ast = body_json
+        return {
+            "ast": ast,
+            "source_rendered": row.get("source_rendered") or "",
+            "proc_type": row.get("proc_type"),
+            "params": row.get("params"),
+            "return_type": row.get("return_type"),
+            "modifiers": row.get("modifiers"),
+            "start_line": row.get("start_line"),
+            "end_line": row.get("end_line"),
+            "cyclomatic": row.get("cyclomatic"),
+        }
     finally:
         conn.close()
 

@@ -12,10 +12,10 @@ import type {
   QueryResult,
   ExploreTreeResponse,
   DwExploreDetail,
+  ExploreProcDetail,
 } from "./types/api.js";
 import { Effect } from "./core.js";
 import type { ApiClient, Env } from "./core.js";
-import type { BodyStmt } from "./types/ast.generated.js";
 
 function apiParams(obj: Record<string, string | number>): string {
   const p = new URLSearchParams();
@@ -120,7 +120,7 @@ export function createApiClient(): ApiClient {
     async getExploreProcedure(
       objectName: string,
       procName: string,
-    ): Promise<{ ast: BodyStmt[] | null }> {
+    ): Promise<ExploreProcDetail> {
       return fetchJson(
         `/api/explore/procedure/${encodeURIComponent(objectName)}/${encodeURIComponent(procName)}`,
       );

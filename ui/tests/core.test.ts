@@ -43,8 +43,8 @@ describe("initialState", () => {
     expect(s.queries).toEqual({ items: [], results: null, resultsName: "", loading: false });
     expect(s.search).toEqual({ term: "", results: null, loading: false });
     expect(s.explore).toEqual({
-      libraries: [], expandedNodes: expect.any(Set), selectedNode: null,
-      astCache: {}, dwCache: {}, loading: false,
+      libraries: [], expandedNodes: expect.any(Set), selectedProc: null,
+      selectedDw: null, procCache: {}, dwCache: {}, loading: false,
     });
   });
 
@@ -473,59 +473,54 @@ describe("EXPLORE_TOGGLE", () => {
   });
 });
 
-describe("EXPLORE_SELECT", () => {
-  it("sets selectedNode", () => {
-    const [s] = reducer(initialState(), { type: "EXPLORE_SELECT", nodeId: "proc:obj:fn" }, defaultMockEnv);
-    expect(s.explore.selectedNode).toBe("proc:obj:fn");
-  });
-});
+describe("EXPLORE_PROC_SELECT", () => {
+  const mockDetail = { ast: null, source_rendered: "", proc_type: "event", params: null, return_type: null, modifiers: null, start_line: null, end_line: null, cyclomatic: null };
 
-describe("EXPLORE_PROC_EXPAND", () => {
-  it("toggles node and returns lazy-load Effect when expanding", () => {
+  it("sets selectedProc, clears selectedDw, returns Effect when not cached", () => {
     const [s, effect] = reducer(initialState(), {
-      type: "EXPLORE_PROC_EXPAND", objectName: "o", procName: "p", nodeId: "proc:o:p",
+      type: "EXPLORE_PROC_SELECT", objectName: "o", procName: "p", nodeId: "proc:o:p",
     }, defaultMockEnv);
-    expect(s.explore.expandedNodes.has("proc:o:p")).toBe(true);
+    expect(s.explore.selectedProc).toBe("proc:o:p");
+    expect(s.explore.selectedDw).toBeNull();
     expect(effect).toBeInstanceOf(Effect);
   });
 
-  it("no effect when AST already cached", () => {
-    const s0 = { ...initialState(), explore: { ...initialState().explore, astCache: { "proc:o:p": [{ tag: "BsReturn" }] } } };
+  it("no effect when proc already cached", () => {
+    const s0 = { ...initialState(), explore: { ...initialState().explore, procCache: { "proc:o:p": mockDetail } } };
     const [s1, effect] = reducer(s0, {
-      type: "EXPLORE_PROC_EXPAND", objectName: "o", procName: "p", nodeId: "proc:o:p",
+      type: "EXPLORE_PROC_SELECT", objectName: "o", procName: "p", nodeId: "proc:o:p",
     }, defaultMockEnv);
-    expect(s1.explore.expandedNodes.has("proc:o:p")).toBe(true);
+    expect(s1.explore.selectedProc).toBe("proc:o:p");
     expect(effect).toBeNull();
   });
 
-  it("collapses when already expanded", () => {
-    const s0 = { ...initialState(), explore: { ...initialState().explore, expandedNodes: new Set(["proc:o:p"]) } };
-    const [s1] = reducer(s0, {
-      type: "EXPLORE_PROC_EXPAND", objectName: "o", procName: "p", nodeId: "proc:o:p",
+  it("does not toggle expandedNodes", () => {
+    const [s] = reducer(initialState(), {
+      type: "EXPLORE_PROC_SELECT", objectName: "o", procName: "p", nodeId: "proc:o:p",
     }, defaultMockEnv);
-    expect(s1.explore.expandedNodes.has("proc:o:p")).toBe(false);
+    expect(s.explore.expandedNodes.has("proc:o:p")).toBe(false);
   });
 
-  it("dispatches EXPLORE_AST_LOADED with fetched AST", async () => {
-    const ast = [{ tag: "BsReturn", contents: null }];
-    const ts = createTestStore({ getExploreProcedure: () => Effect.send({ ast }) });
-    await ts.send({ type: "EXPLORE_PROC_EXPAND", objectName: "o", procName: "p", nodeId: "proc:o:p" });
-    ts.receive({ type: "EXPLORE_AST_LOADED", nodeId: "proc:o:p", ast });
-  });
-});
-
-describe("EXPLORE_AST_LOADED", () => {
-  it("caches AST data", () => {
-    const ast = [{ tag: "BsReturn", contents: null }];
-    const [s] = reducer(initialState(), { type: "EXPLORE_AST_LOADED", nodeId: "proc:o:p", ast }, defaultMockEnv);
-    expect(s.explore.astCache["proc:o:p"]).toEqual(ast);
+  it("dispatches EXPLORE_PROC_LOADED with fetched data", async () => {
+    const data = { ast: null, source_rendered: "return", proc_type: "event", params: null, return_type: null, modifiers: null, start_line: 1, end_line: 2, cyclomatic: 1 };
+    const ts = createTestStore({ getExploreProcedure: () => Effect.send(data) });
+    await ts.send({ type: "EXPLORE_PROC_SELECT", objectName: "o", procName: "p", nodeId: "proc:o:p" });
+    ts.receive({ type: "EXPLORE_PROC_LOADED", nodeId: "proc:o:p", data });
   });
 });
 
-describe("EXPLORE_AST_ERROR", () => {
+describe("EXPLORE_PROC_LOADED", () => {
+  it("caches proc detail", () => {
+    const data = { ast: null, source_rendered: "", proc_type: "event", params: null, return_type: null, modifiers: null, start_line: null, end_line: null, cyclomatic: null };
+    const [s] = reducer(initialState(), { type: "EXPLORE_PROC_LOADED", nodeId: "proc:o:p", data }, defaultMockEnv);
+    expect(s.explore.procCache["proc:o:p"]).toEqual(data);
+  });
+});
+
+describe("EXPLORE_PROC_ERROR", () => {
   it("caches error", () => {
-    const [s] = reducer(initialState(), { type: "EXPLORE_AST_ERROR", nodeId: "proc:o:p", error: "not found" }, defaultMockEnv);
-    expect(s.explore.astCache["proc:o:p"]).toEqual({ error: "not found" });
+    const [s] = reducer(initialState(), { type: "EXPLORE_PROC_ERROR", nodeId: "proc:o:p", error: "not found" }, defaultMockEnv);
+    expect(s.explore.procCache["proc:o:p"]).toEqual({ error: "not found" });
   });
 });
 
@@ -578,7 +573,6 @@ describe("immutability", () => {
       { type: "DIAGRAM_SELECT", kind: "calls" },
       { type: "SEARCH_TERM", term: "ab" },
       { type: "EXPLORE_TOGGLE", nodeId: "lib:x" },
-      { type: "EXPLORE_SELECT", nodeId: "proc:o:p" },
       { type: "EXPLORE_COLLAPSE_ALL" },
     ];
     const original = JSON.stringify(s0);

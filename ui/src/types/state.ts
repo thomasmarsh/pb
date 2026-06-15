@@ -1,13 +1,12 @@
 // App state types — the single immutable state tree.
 
-import type { ObjectRow, StatsResponse, QueryDef, QueryResult, SearchResponse, DwExploreDetail } from "./api.js";
+import type { ObjectRow, StatsResponse, QueryDef, QueryResult, SearchResponse, DwExploreDetail, ExploreProcDetail } from "./api.js";
 import type {
   ObjectDetailResponse,
   ObjectSourceResponse,
   ProcedureDetailResponse,
   DwDetailResponse,
 } from "./api.js";
-import type { BodyStmt } from "./ast.generated.js";
 
 export type ViewName =
   | "dashboard"
@@ -63,8 +62,9 @@ export interface SearchState {
 export interface ExploreState {
   libraries: import("./api.js").ExploreLibrary[];
   expandedNodes: Set<string>;
-  selectedNode: string | null;
-  astCache: Record<string, BodyStmt[] | { error: string } | null>;
+  selectedProc: string | null;
+  selectedDw: string | null;
+  procCache: Record<string, ExploreProcDetail | { error: string }>;
   dwCache: Record<string, DwExploreDetail | { error: string }>;
   loading: boolean;
 }

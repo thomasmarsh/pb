@@ -1,5 +1,7 @@
 // API types derived from DuckDB schema (pbtools/common.py) and api.py routes.
 
+import type { BodyStmt } from "./ast.generated.js";
+
 // ── DuckDB table rows ───────────────────────────────────────────────────────
 
 export interface ObjectRow {
@@ -181,4 +183,16 @@ export interface DwExploreDetail {
   retrieve_where: { idx: number; exp1: string; op: string; exp2: string; logic: string }[];
   arguments: { arg_name: string; arg_type: string }[];
   error?: string;
+}
+
+export interface ExploreProcDetail {
+  ast: BodyStmt[] | null;
+  source_rendered: string;
+  proc_type: string;
+  params: string | null;
+  return_type: string | null;
+  modifiers: string | null;
+  start_line: number | null;
+  end_line: number | null;
+  cyclomatic: number | null;
 }

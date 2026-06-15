@@ -3,7 +3,7 @@
 import { Show, For, onMount, createMemo, type JSX } from "solid-js";
 import { useStore } from "../context.js";
 import { highlightPowerScript } from "../highlight.js";
-import type { ExploreLibrary, ExploreObject, ExploreProcedure, DwExploreDetail } from "../types/api.js";
+import type { ExploreLibrary, ExploreObject, ExploreProcedure, DwExploreDetail, ExploreProcDetail } from "../types/api.js";
 import type { BodyStmt, ChooseStmt } from "../types/ast.generated.js";
 
 // ── Node IDs ──────────────────────────────────────────────────────────────────
@@ -11,6 +11,7 @@ import type { BodyStmt, ChooseStmt } from "../types/ast.generated.js";
 function libId(name: string): string { return `lib:${name}`; }
 function objId(lib: string, name: string): string { return `obj:${lib}:${name}`; }
 function procId(obj: string, name: string): string { return `proc:${obj}:${name}`; }
+function dwId(name: string): string { return `dw:${name}`; }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -23,10 +24,10 @@ const PROC_BADGES: Record<string, string> = {
 
 function kindBadge(kind: string): string { return KIND_BADGES[kind] ?? "badge-proj"; }
 function procBadge(t: string): string { return PROC_BADGES[t] ?? "badge-func"; }
-function chevron(expanded: boolean): string { return expanded ? "\u25BE" : "\u25B8"; }
+function chevron(expanded: boolean): string { return expanded ? "▾" : "▸"; }
 
 function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max) + "\u2026" : s;
+  return s.length > max ? s.slice(0, max) + "…" : s;
 }
 
 function isNode(n: unknown): n is Record<string, unknown> {
@@ -79,7 +80,6 @@ interface NodeRenderer {
   children(node: Record<string, unknown>, tag: string): AstChild[];
 }
 
-// Expression summary — used by both expression renderers and as fallback
 function exprSum(node: unknown): string {
   if (node === null || node === undefined) return "null";
   if (typeof node === "string") return truncate(node, 60);
@@ -377,7 +377,6 @@ const RENDERERS: Record<string, NodeRenderer> = {
   ),
 };
 
-// Fallback renderer for unknown tags
 const FALLBACK: NodeRenderer = {
   summary: (_n, tag) => tag ?? "{...}",
   children: () => [],
@@ -388,8 +387,9 @@ function resolveRenderer(_node: Record<string, unknown>, tag: string): NodeRende
 }
 
 // ── AST Node Renderer ─────────────────────────────────────────────────────────
+// Exported so it can be used by EX-2's AST tab without triggering noUnusedLocals.
 
-function AstNode(props: {
+export function AstNode(props: {
   node: BodyStmt | BodyStmt[] | unknown;
   nodeId: string;
   depth: number;
@@ -433,7 +433,6 @@ function AstNode(props: {
     }
   }
 
-  // Top-level array: render children directly
   if (Array.isArray(props.node)) {
     return (
       <div class="ast-body">
@@ -446,7 +445,6 @@ function AstNode(props: {
     );
   }
 
-  // Leaf node: no chevron, syntax-highlighted source
   if (!hasChildren()) {
     return (
       <div class="ast-leaf" style={{ "margin-left": `${props.depth * 18}px` }}>
@@ -460,7 +458,6 @@ function AstNode(props: {
     );
   }
 
-  // Compound node: chevron + header, expandable children
   return (
     <div class="ast-branch" style={{ "margin-left": `${props.depth * 18}px` }}>
       <div class="ast-branch-header clickable" onClick={toggle}>
@@ -490,12 +487,11 @@ function AstNode(props: {
 function ProcNode(props: { objName: string; proc: ExploreProcedure; depth: number }): JSX.Element {
   const store = useStore();
   const nodeId = () => procId(props.objName, props.proc.name);
-  const isExpanded = () => store.state.explore.expandedNodes.has(nodeId());
-  const astData = () => store.state.explore.astCache[nodeId()];
+  const isSelected = () => store.state.explore.selectedProc === nodeId();
 
-  function toggle() {
+  function select() {
     store.dispatch({
-      type: "EXPLORE_PROC_EXPAND",
+      type: "EXPLORE_PROC_SELECT",
       objectName: props.objName,
       procName: props.proc.name,
       nodeId: nodeId(),
@@ -513,27 +509,11 @@ function ProcNode(props: { objName: string; proc: ExploreProcedure; depth: numbe
 
   return (
     <div class="tree-node proc-node" style={{ "padding-left": `${props.depth * 14}px` }}>
-      <div class="tree-node-row clickable" onClick={toggle}>
-        <span class="tree-chevron">{chevron(isExpanded())}</span>
+      <div class={`tree-node-row clickable${isSelected() ? " selected" : ""}`} onClick={select}>
         <span class={`badge ${procBadge(props.proc.proc_type)}`}>{props.proc.proc_type}</span>
         <span class="tree-name">{props.proc.name}</span>
         <span class="tree-summary">{summary()}</span>
       </div>
-      <Show when={isExpanded()}>
-        <div class="tree-children">
-          <Show
-            when={astData() !== undefined}
-            fallback={<div class="tree-loading">Loading AST...</div>}
-          >
-            <Show
-              when={Array.isArray(astData())}
-              fallback={<div class="tree-empty">No AST body</div>}
-            >
-              <AstNode node={astData()} nodeId={`${nodeId()}.root`} depth={0} />
-            </Show>
-          </Show>
-        </div>
-      </Show>
     </div>
   );
 }
@@ -542,52 +522,19 @@ function ProcNode(props: { objName: string; proc: ExploreProcedure; depth: numbe
 
 function DwNode(props: { name: string; depth: number }): JSX.Element {
   const store = useStore();
-  const nodeId = () => `dw:${props.name}`;
-  const isExpanded = () => store.state.explore.expandedNodes.has(nodeId());
-  const dwData = () => store.state.explore.dwCache[nodeId()];
+  const nodeId = () => dwId(props.name);
+  const isSelected = () => store.state.explore.selectedDw === nodeId();
 
-  function toggle() {
-    store.dispatch({
-      type: "EXPLORE_DW_EXPAND",
-      dwName: props.name,
-      nodeId: nodeId(),
-    });
+  function select() {
+    store.dispatch({ type: "EXPLORE_DW_SELECT", dwName: props.name, nodeId: nodeId() });
   }
-
-  const summary = createMemo(() => {
-    const d = dwData();
-    if (!d || !('controls' in d)) return "";
-    const parts: string[] = [];
-    if (d.controls.length > 0) parts.push(`${d.controls.length} controls`);
-    if (d.retrieve_tables.length > 0) parts.push(`${d.retrieve_tables.length} tables`);
-    if (d.arguments.length > 0) parts.push(`${d.arguments.length} args`);
-    return parts.join(" ");
-  });
 
   return (
     <div class="tree-node dw-node" style={{ "padding-left": `${props.depth * 14}px` }}>
-      <div class="tree-node-row clickable" onClick={toggle}>
-        <span class="tree-chevron">{chevron(isExpanded())}</span>
+      <div class={`tree-node-row clickable${isSelected() ? " selected" : ""}`} onClick={select}>
+        <span class="badge badge-dw">datawindow</span>
         <span class="tree-name">{props.name}</span>
-        <Show when={summary()}>
-          <span class="tree-summary">{summary()}</span>
-        </Show>
       </div>
-      <Show when={isExpanded()}>
-        <div class="tree-children">
-          <Show
-            when={dwData() !== undefined}
-            fallback={<div class="tree-loading">Loading DataWindow...</div>}
-          >
-            <Show
-              when={dwData() && 'controls' in dwData()!}
-              fallback={<div class="tree-empty">No data</div>}
-            >
-              <DwDetailTree data={dwData() as DwExploreDetail} />
-            </Show>
-          </Show>
-        </div>
-      </Show>
     </div>
   );
 }
@@ -615,7 +562,6 @@ function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
 
   return (
     <div class="dw-detail">
-      {/* Controls by band */}
       <Show when={props.data.controls.length > 0}>
         <div class="dw-section-header">
           <span class="dw-section-title">Controls</span>
@@ -649,7 +595,6 @@ function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
         </For>
       </Show>
 
-      {/* Retrieve tables */}
       <Show when={props.data.retrieve_tables.length > 0}>
         <div class="dw-section-header">
           <span class="dw-section-title">Retrieve Tables</span>
@@ -659,7 +604,6 @@ function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
         </For>
       </Show>
 
-      {/* Retrieve columns */}
       <Show when={props.data.retrieve_columns.length > 0}>
         <div class="dw-section-header">
           <span class="dw-section-title">Columns</span>
@@ -676,7 +620,6 @@ function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
         </For>
       </Show>
 
-      {/* Retrieve where */}
       <Show when={props.data.retrieve_where.length > 0}>
         <div class="dw-section-header">
           <span class="dw-section-title">Where Clauses</span>
@@ -693,7 +636,6 @@ function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
         </For>
       </Show>
 
-      {/* Arguments */}
       <Show when={props.data.arguments.length > 0}>
         <div class="dw-section-header">
           <span class="dw-section-title">Arguments</span>
@@ -719,8 +661,8 @@ function ObjectNode(props: { lib: string; obj: ExploreObject; depth: number }): 
   const isExpanded = () => store.state.explore.expandedNodes.has(nodeId());
   const isDw = () => props.obj.kind === "datawindow";
 
-  const summary = createMemo(() => {
-    if (isDw()) return ""; // DW summary comes from DwNode after load
+  const procCount = createMemo(() => {
+    if (isDw()) return "";
     const count = props.obj.procedures.length;
     return `${count} procedure${count !== 1 ? "s" : ""}`;
   });
@@ -734,7 +676,9 @@ function ObjectNode(props: { lib: string; obj: ExploreObject; depth: number }): 
         <span class="tree-chevron">{chevron(isExpanded())}</span>
         <span class={`badge ${kindBadge(props.obj.kind)}`}>{props.obj.kind}</span>
         <span class="tree-name">{props.obj.name}</span>
-        <span class="tree-summary">{summary()}</span>
+        <Show when={!isDw()}>
+          <span class="tree-summary">{procCount()}</span>
+        </Show>
       </div>
       <Show when={isExpanded()}>
         <div class="tree-children">
@@ -767,7 +711,7 @@ function LibraryNode(props: { lib: ExploreLibrary; depth: number }): JSX.Element
         onClick={() => store.dispatch({ type: "EXPLORE_TOGGLE", nodeId: nodeId() })}
       >
         <span class="tree-chevron">{chevron(isExpanded())}</span>
-        <span class="tree-icon">{"\u25A3"}</span>
+        <span class="tree-icon">{"▣"}</span>
         <span class="tree-name">{props.lib.name}</span>
         <span class="tree-summary">{props.lib.objects.length} objects</span>
       </div>
@@ -779,6 +723,149 @@ function LibraryNode(props: { lib: ExploreLibrary; depth: number }): JSX.Element
         </div>
       </Show>
     </div>
+  );
+}
+
+// ── Proc Detail Panel ─────────────────────────────────────────────────────────
+
+function ProcDetailPanel(props: { nodeId: string }): JSX.Element {
+  const store = useStore();
+  const entry = () => store.state.explore.procCache[props.nodeId];
+  const procName = () => props.nodeId.split(":")[2] ?? "";
+
+  const data = (): ExploreProcDetail | null => {
+    const e = entry();
+    if (!e || "error" in e) return null;
+    return e as ExploreProcDetail;
+  };
+
+  const errorMsg = (): string | null => {
+    const e = entry();
+    if (e && "error" in e) return (e as { error: string }).error;
+    return null;
+  };
+
+  const lines = createMemo(() => {
+    const d = data();
+    return d?.source_rendered ? d.source_rendered.split("\n") : [];
+  });
+
+  const highlighted = createMemo(() => {
+    const d = data();
+    return d?.source_rendered ? highlightPowerScript(d.source_rendered) : "";
+  });
+
+  return (
+    <Show when={entry() !== undefined} fallback={
+      <div class="explore-right-body">
+        <div class="loading-overlay"><div class="spinner" /> Loading...</div>
+      </div>
+    }>
+      <Show when={data()} fallback={
+        <div class="explore-right-body">
+          <div class="tree-error">{errorMsg()}</div>
+        </div>
+      }>
+        {(d) => (
+          <>
+            <div class="explore-right-header">
+              <span class={`badge ${procBadge(d().proc_type)}`}>{d().proc_type}</span>
+              <span class="proc-name">{procName()}</span>
+              <Show when={d().params}>
+                <span class="proc-params">({d().params})</span>
+              </Show>
+              <Show when={d().return_type}>
+                <span class="proc-params">{"→"} {d().return_type}</span>
+              </Show>
+              <Show when={d().cyclomatic != null}>
+                <span class="badge badge-cc">CC: {d().cyclomatic}</span>
+              </Show>
+            </div>
+            <div class="explore-right-body">
+              <div class="source-viewer">
+                <div class="source-gutter">
+                  <For each={lines()}>
+                    {(_, i) => (
+                      <div class="source-gutter-line">{(d().start_line ?? 1) + i()}</div>
+                    )}
+                  </For>
+                </div>
+                <div class="source-code-area">
+                  <pre innerHTML={highlighted()} />
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </Show>
+    </Show>
+  );
+}
+
+// ── DW Detail Panel ───────────────────────────────────────────────────────────
+
+function DwDetailPanel(props: { nodeId: string }): JSX.Element {
+  const store = useStore();
+  const entry = () => store.state.explore.dwCache[props.nodeId];
+  const dwName = () => props.nodeId.replace(/^dw:/, "");
+
+  const data = (): DwExploreDetail | null => {
+    const e = entry();
+    if (!e || "error" in e) return null;
+    return e as DwExploreDetail;
+  };
+
+  const errorMsg = (): string | null => {
+    const e = entry();
+    if (e && "error" in e) return (e as { error: string }).error;
+    return null;
+  };
+
+  return (
+    <Show when={entry() !== undefined} fallback={
+      <div class="explore-right-body">
+        <div class="loading-overlay"><div class="spinner" /> Loading DataWindow...</div>
+      </div>
+    }>
+      <Show when={data()} fallback={
+        <div class="explore-right-body">
+          <div class="tree-error">{errorMsg()}</div>
+        </div>
+      }>
+        {(d) => (
+          <>
+            <div class="explore-right-header">
+              <span class="badge badge-dw">datawindow</span>
+              <span class="proc-name">{dwName()}</span>
+              <span class="proc-params">{d().controls.length} controls</span>
+            </div>
+            <div class="explore-right-body">
+              <DwDetailTree data={d()} />
+            </div>
+          </>
+        )}
+      </Show>
+    </Show>
+  );
+}
+
+// ── Detail Panel ──────────────────────────────────────────────────────────────
+
+function DetailPanel(): JSX.Element {
+  const store = useStore();
+  const selectedProc = () => store.state.explore.selectedProc;
+  const selectedDw = () => store.state.explore.selectedDw;
+
+  return (
+    <Show when={selectedProc()} fallback={
+      <Show when={selectedDw()} fallback={
+        <div class="explore-empty">Select a procedure or DataWindow</div>
+      }>
+        {(nodeId) => <DwDetailPanel nodeId={nodeId()} />}
+      </Show>
+    }>
+      {(nodeId) => <ProcDetailPanel nodeId={nodeId()} />}
+    </Show>
   );
 }
 
@@ -806,38 +893,43 @@ export function Explore() {
   );
 
   return (
-    <div class="explore-container">
-      <div class="explore-header">
-        <h2>AST Explorer</h2>
-        <div class="explore-meta">
-          <span>{store.state.explore.libraries.length} libraries</span>
-          <span>{totalObjects()} objects</span>
-          <span>{totalProcs()} procedures</span>
+    <div class="explore-split">
+      <div class="explore-left">
+        <div class="explore-left-header">
+          <h2>AST Explorer</h2>
+          <div class="explore-meta">
+            <span>{store.state.explore.libraries.length} libraries</span>
+            <span>{totalObjects()} objects</span>
+            <span>{totalProcs()} procedures</span>
+          </div>
+          <div class="explore-left-actions">
+            <button class="filter-pill" onClick={() => store.dispatch({ type: "EXPLORE_EXPAND_ALL" })}>
+              Expand All
+            </button>
+            <button class="filter-pill" onClick={() => store.dispatch({ type: "EXPLORE_COLLAPSE_ALL" })}>
+              Collapse All
+            </button>
+          </div>
         </div>
-        <div class="explore-actions">
-          <button class="filter-pill" onClick={() => store.dispatch({ type: "EXPLORE_EXPAND_ALL" })}>
-            Expand All
-          </button>
-          <button class="filter-pill" onClick={() => store.dispatch({ type: "EXPLORE_COLLAPSE_ALL" })}>
-            Collapse All
-          </button>
+        <div class="explore-left-tree">
+          <Show
+            when={!store.state.explore.loading}
+            fallback={<div class="loading-overlay"><div class="spinner" /> Loading AST tree...</div>}
+          >
+            <Show
+              when={store.state.explore.libraries.length > 0}
+              fallback={<div class="tree-empty">No data. Run <code>pb ingest</code> first.</div>}
+            >
+              <For each={store.state.explore.libraries}>
+                {(lib) => <LibraryNode lib={lib} depth={0} />}
+              </For>
+            </Show>
+          </Show>
         </div>
       </div>
-      <Show
-        when={!store.state.explore.loading}
-        fallback={<div class="loading-overlay"><div class="spinner" /> Loading AST tree...</div>}
-      >
-        <Show
-          when={store.state.explore.libraries.length > 0}
-          fallback={<div class="tree-empty">No data available. Run <code>pb ingest</code> first.</div>}
-        >
-          <div class="explore-tree">
-            <For each={store.state.explore.libraries}>
-              {(lib) => <LibraryNode lib={lib} depth={0} />}
-            </For>
-          </div>
-        </Show>
-      </Show>
+      <div class="explore-right">
+        <DetailPanel />
+      </div>
     </div>
   );
 }

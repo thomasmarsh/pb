@@ -19,9 +19,9 @@ import type {
   StatsResponse,
   ExploreTreeResponse,
   DwExploreDetail,
+  ExploreProcDetail,
   QueryDef,
 } from "./types/api.js";
-import type { BodyStmt } from "./types/ast.generated.js";
 
 // ── Node ID helpers ──────────────────────────────────────────────────────────
 
@@ -95,7 +95,7 @@ export interface ApiClient {
   getQueries(): Promise<{ queries: QueryDef[] }>;
   runQuery(name: string, params: Record<string, string>): Promise<QueryResult>;
   getExploreTree(): Promise<ExploreTreeResponse>;
-  getExploreProcedure(objectName: string, procName: string): Promise<{ ast: BodyStmt[] | null }>;
+  getExploreProcedure(objectName: string, procName: string): Promise<ExploreProcDetail>;
   getExploreDatawindow(name: string): Promise<DwExploreDetail>;
 }
 
@@ -114,7 +114,7 @@ export interface Env {
   getQueries(): Effect<{ queries: QueryDef[] }>;
   runQuery(name: string, params: Record<string, string>): Effect<QueryResult>;
   getExploreTree(): Effect<ExploreTreeResponse>;
-  getExploreProcedure(objectName: string, procName: string): Effect<{ ast: BodyStmt[] | null }>;
+  getExploreProcedure(objectName: string, procName: string): Effect<ExploreProcDetail>;
   getExploreDatawindow(name: string): Effect<DwExploreDetail>;
 }
 
@@ -141,8 +141,9 @@ export function initialState(): AppState {
     explore: {
       libraries: [],
       expandedNodes: new Set<string>(),
-      selectedNode: null,
-      astCache: {},
+      selectedProc: null,
+      selectedDw: null,
+      procCache: {},
       dwCache: {},
       loading: false,
     },
@@ -353,29 +354,21 @@ export function reducer(state: AppState, action: AppAction, env: Env): [AppState
     return [{ ...state, explore: { ...state.explore, expandedNodes: expanded } }, null];
   }
 
-  case "EXPLORE_SELECT":
-    return [{ ...state, explore: { ...state.explore, selectedNode: action.nodeId } }, null];
-
-  case "EXPLORE_PROC_EXPAND": {
-    const expanded = new Set(state.explore.expandedNodes);
-    const wasExpanded = expanded.has(action.nodeId);
-    if (wasExpanded) { expanded.delete(action.nodeId); } else { expanded.add(action.nodeId); }
-    const next = { ...state, explore: { ...state.explore, expandedNodes: expanded } };
-    if (!wasExpanded && !(action.nodeId in state.explore.astCache)) {
+  case "EXPLORE_PROC_SELECT": {
+    const next = { ...state, explore: { ...state.explore, selectedProc: action.nodeId, selectedDw: null } };
+    if (!(action.nodeId in state.explore.procCache)) {
       return [next, env.getExploreProcedure(action.objectName, action.procName)
-        .map((data): AppAction => ({ type: "EXPLORE_AST_LOADED", nodeId: action.nodeId, ast: data.ast }))
-        .catch((e): AppAction => ({ type: "EXPLORE_AST_ERROR", nodeId: action.nodeId, error: String(e) }))];
+        .map((data): AppAction => ({ type: "EXPLORE_PROC_LOADED", nodeId: action.nodeId, data }))
+        .catch((e): AppAction => ({ type: "EXPLORE_PROC_ERROR", nodeId: action.nodeId, error: String(e) }))];
     }
     return [next, null];
   }
 
-  case "EXPLORE_AST_LOADED": {
-    const cache = { ...state.explore.astCache, [action.nodeId]: action.ast };
-    return [{ ...state, explore: { ...state.explore, astCache: cache } }, null];
-  }
+  case "EXPLORE_PROC_LOADED":
+    return [{ ...state, explore: { ...state.explore, procCache: { ...state.explore.procCache, [action.nodeId]: action.data } } }, null];
 
-  case "EXPLORE_AST_ERROR":
-    return [{ ...state, explore: { ...state.explore, astCache: { ...state.explore.astCache, [action.nodeId]: { error: action.error } } } }, null];
+  case "EXPLORE_PROC_ERROR":
+    return [{ ...state, explore: { ...state.explore, procCache: { ...state.explore.procCache, [action.nodeId]: { error: action.error } } } }, null];
 
   case "EXPLORE_EXPAND_ALL": {
     const expanded = new Set<string>();
@@ -389,12 +382,9 @@ export function reducer(state: AppState, action: AppAction, env: Env): [AppState
   case "EXPLORE_COLLAPSE_ALL":
     return [{ ...state, explore: { ...state.explore, expandedNodes: new Set<string>() } }, null];
 
-  case "EXPLORE_DW_EXPAND": {
-    const expanded = new Set(state.explore.expandedNodes);
-    const wasExpanded = expanded.has(action.nodeId);
-    if (wasExpanded) { expanded.delete(action.nodeId); } else { expanded.add(action.nodeId); }
-    const next = { ...state, explore: { ...state.explore, expandedNodes: expanded } };
-    if (!wasExpanded && !(action.nodeId in state.explore.dwCache)) {
+  case "EXPLORE_DW_SELECT": {
+    const next = { ...state, explore: { ...state.explore, selectedDw: action.nodeId, selectedProc: null } };
+    if (!(action.nodeId in state.explore.dwCache)) {
       return [next, env.getExploreDatawindow(action.dwName)
         .map((data): AppAction => ({ type: "EXPLORE_DW_LOADED", nodeId: action.nodeId, data }))
         .catch((e): AppAction => ({ type: "EXPLORE_DW_ERROR", nodeId: action.nodeId, error: String(e) }))];
