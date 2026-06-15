@@ -31,7 +31,7 @@ from pb_cli.diagram import (  # noqa: E402
 
 @pytest.fixture(scope='module')
 def conn():
-    if not os.path.exists(DB_PATH):
+    if not Path(DB_PATH).exists():
         pytest.skip(f"pb.duckdb not found at {DB_PATH} — run `pb index` + `pb analyze` first")
     c = duckdb.connect(DB_PATH, read_only=True)
     yield c
