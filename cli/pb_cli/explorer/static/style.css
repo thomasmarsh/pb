@@ -896,3 +896,17 @@ body {
 .sql-tables-label { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
 .sql-code { font-size: 12px; margin: 0 12px; padding: 8px 12px; }
 .ast-badge { margin-left: 6px; font-size: 10px; vertical-align: middle; }
+
+/* highlight.js SQL theme — scoped to keep specificity contained */
+.sql-code .hljs-keyword                       { color: #c586c0; }
+.sql-code .hljs-built_in                      { color: #dcdcaa; }
+.sql-code .hljs-title.function_,
+.sql-code .hljs-title.function_.invoke__      { color: #dcdcaa; }
+.sql-code .hljs-string                        { color: #ce9178; }
+.sql-code .hljs-comment                       { color: #6a9955; font-style: normal; }
+.sql-code .hljs-number                        { color: #b5cea8; }
+.sql-code .hljs-operator                      { color: #d4d4d4; }
+.sql-code .hljs-variable,
+.sql-code .hljs-params                        { color: #4fc1ff; }
+/* suppress hljs background so .code-viewer background wins */
+.sql-code.hljs, pre.sql-code code.hljs        { background: transparent; padding: 0; }

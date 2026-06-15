@@ -196,6 +196,16 @@ export function highlightPowerScript(code: string): string {
   return code.split("\n").map(line => highlightLine(line)).join("\n");
 }
 
+// ── SQL highlighting via highlight.js ────────────────────────────────────────
+
+import hljs from "highlight.js/lib/core";
+import sql from "highlight.js/lib/languages/sql";
+hljs.registerLanguage("sql", sql);
+
+export function highlightSql(code: string): string {
+  return hljs.highlight(code, { language: "sql" }).value;
+}
+
 // Keyword set for identifier linking (used by source viewer)
 export const PB_KEYWORDS = new Set([
   ...PS_KEYWORDS,

@@ -587,11 +587,12 @@ async def list_queries():
         return {"queries": []}
     items = []
     for sql_file in sorted(QUERIES_DIR.glob("*.sql")):
-        description, params, _ = _query_info(sql_file.stem)
+        description, params, sql_body = _query_info(sql_file.stem)
         items.append({
             "name": sql_file.stem,
             "description": description,
             "params": [{"name": n, "type": t, "default": d} for n, t, d in params],
+            "sql": sql_body,
         })
     return {"queries": items}
 

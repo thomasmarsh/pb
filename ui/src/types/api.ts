@@ -138,6 +138,7 @@ export interface QueryDef {
   name: string;
   description: string;
   params: QueryParam[];
+  sql?: string;
 }
 
 export interface QueryResult {

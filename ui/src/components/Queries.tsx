@@ -1,16 +1,26 @@
 // Queries.tsx — SQL queries view.
 
-import { Show, For, onMount } from "solid-js";
+import { Show, For, onMount, createSignal } from "solid-js";
 import { useSnapshot } from "../core/store.js";
 import type { Store } from "../core/store.js";
 import type { AppState } from "../app/state.js";
 import type { AppAction } from "../app/actions.js";
+import { highlightSql } from "../highlight.js";
 
 export function Queries(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
   const snap = useSnapshot(store.state);
   const q = () => snap().queries;
   const inputs = new Map<string, HTMLInputElement>();
+  const [shownSql, setShownSql] = createSignal<Set<string>>(new Set());
+
+  function toggleSql(name: string) {
+    setShownSql(prev => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+  }
 
   onMount(() => {
     store.dispatch({ tag: "nav", action: { type: "navigate", view: "queries" } });
@@ -49,7 +59,16 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
                       onClick={() => handleRun(query.name, query.params)}>
                 Run
               </button>
+              <Show when={query.sql}>
+                <button class="filter-pill" onClick={() => toggleSql(query.name)}>
+                  {shownSql().has(query.name) ? "Hide SQL" : "SQL"}
+                </button>
+              </Show>
             </div>
+            <Show when={shownSql().has(query.name) && query.sql}>
+              <pre class="code-viewer sql-code" style={{ "margin-top": "8px", "font-size": "11px" }}
+                   innerHTML={highlightSql(query.sql!)} />
+            </Show>
           </div>
         )}
       </For>
