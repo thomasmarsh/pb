@@ -303,9 +303,8 @@ def test_list_tables_has_required_fields(client):
     row = r.json()[0]
     assert "table_name" in row
     assert "dw_count" in row
+    assert "ps_count" in row
     assert "file_count" in row
-    assert "dw_names" in row
-    assert isinstance(row["dw_names"], list)
     assert row["dw_count"] >= 1
 
 

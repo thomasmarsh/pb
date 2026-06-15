@@ -22,7 +22,10 @@ from pbtools.state import (
 )
 
 
-def run(src_dir: Path, db: str, binary: Path, reporter: Reporter, reset: bool = False) -> None:
+def run(
+    src_dir: Path, db: str, binary: Path, reporter: Reporter,
+    reset: bool = False, dialect: str = 'oracle',
+) -> None:
     src_dir = src_dir.resolve()  # normalise /var → /private/var symlink on macOS
     conn = duckdb.connect(db)
     if reset:
@@ -55,7 +58,7 @@ def run(src_dir: Path, db: str, binary: Path, reporter: Reporter, reset: bool = 
     objects, errors = _parse_subset(src_dir, binary, to_parse, reporter)
 
     with reporter.status('Indexing...'):
-        row_count = ingest_batch(objects, conn)
+        row_count = ingest_batch(objects, conn, dialect)
     reporter.indexed(row_count)
 
     parsed_files = {obj['file'] for obj in objects}

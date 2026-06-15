@@ -6,9 +6,22 @@ from typing import Iterable
 import duckdb
 
 from pbtools.common import TABLES, INSERT, create_schema
+from pbtools.sql_parser import parse_pb_sql
+
+_SQL_KEYWORDS = {
+    'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'DECLARE', 'OPEN', 'FETCH',
+    'CLOSE', 'COMMIT', 'ROLLBACK', 'EXECUTE', 'CONNECT', 'DISCONNECT',
+}
 
 
-def run_from_jsonl_lines(lines: Iterable[str], db: str = 'pb.duckdb') -> None:
+def _is_sql(text: str) -> bool:
+    first = text.strip().split()[0].upper() if text.strip() else ''
+    return first in _SQL_KEYWORDS
+
+
+def run_from_jsonl_lines(
+    lines: Iterable[str], db: str = 'pb.duckdb', dialect: str = 'oracle'
+) -> None:
     conn = duckdb.connect(db)
     create_schema(conn)
 
@@ -18,7 +31,7 @@ def run_from_jsonl_lines(lines: Iterable[str], db: str = 'pb.duckdb') -> None:
         if not line:
             continue
         obj = json.loads(line)
-        ingest_file(obj, rows)
+        ingest_file(obj, rows, dialect)
 
     for table, data in rows.items():
         if data:
@@ -29,11 +42,11 @@ def run_from_jsonl_lines(lines: Iterable[str], db: str = 'pb.duckdb') -> None:
     print(f"Indexed {total} rows into {db}", file=sys.stderr)
 
 
-def ingest_batch(objects: Iterable[dict], conn) -> int:
+def ingest_batch(objects: Iterable[dict], conn, dialect: str = 'oracle') -> int:
     """Ingest an iterable of parsed file dicts into an open connection. Returns row count."""
     rows: dict[str, list] = {t: [] for t in TABLES}
     for obj in objects:
-        ingest_file(obj, rows)
+        ingest_file(obj, rows, dialect)
     total = 0
     for table, data in rows.items():
         if data:
@@ -42,7 +55,7 @@ def ingest_batch(objects: Iterable[dict], conn) -> int:
     return total
 
 
-def ingest_file(obj: dict, rows: dict) -> None:
+def ingest_file(obj: dict, rows: dict, dialect: str = 'oracle') -> None:
     file = obj.get('file', '')
     kind = obj.get('kind', '')
     name = _object_name(obj)
@@ -53,7 +66,7 @@ def ingest_file(obj: dict, rows: dict) -> None:
         rows['inherits'].append((name, ancestor))
 
     if kind == 'powerscript':
-        _ingest_ps(obj, file, rows)
+        _ingest_ps(obj, file, rows, dialect)
     elif kind == 'datawindow':
         _ingest_dw(obj, file, rows)
 
@@ -66,7 +79,8 @@ def _object_name(obj: dict) -> str:
     return stem.rsplit('.', 1)[0] if '.' in stem else stem
 
 
-def _ingest_ps(obj: dict, file: str, rows: dict) -> None:
+def _ingest_ps(obj: dict, file: str, rows: dict, dialect: str = 'oracle') -> None:
+    obj_name = obj.get('meta', {}).get('object', '')
     for proc_type, key in [
         ('function',   'functions'),
         ('subroutine', 'subroutines'),
@@ -74,7 +88,32 @@ def _ingest_ps(obj: dict, file: str, rows: dict) -> None:
         ('on',         'onBlocks'),
     ]:
         for block in obj.get(key, []):
-            rows['procedures'].append(_proc_row(file, proc_type, block))
+            row = _proc_row(file, proc_type, block)
+            rows['procedures'].append(row)
+            proc_name = row[3]
+            body_json = row[9]
+            _extract_sql(file, obj_name, proc_name, body_json, dialect, rows)
+
+
+def _extract_sql(
+    file: str, obj_name: str, proc_name: str,
+    body_json: object, dialect: str, rows: dict,
+) -> None:
+    stmts = json.loads(body_json) if isinstance(body_json, str) else body_json
+    for idx, stmt in enumerate(stmts or []):
+        node = stmt.get('node', stmt)
+        if node.get('tag') == 'raw':
+            raw = node.get('text', '')
+            if _is_sql(raw):
+                parsed, tables, cols, meta = parse_pb_sql(raw, dialect)
+                rows['sql_statements'].append((
+                    file, obj_name, proc_name, idx,
+                    meta['operation'], raw,
+                    json.dumps(parsed) if parsed is not None else None,
+                    tables, cols,
+                    meta['has_into'], meta['has_cursor'],
+                    parsed is not None,
+                ))
 
 
 def _proc_row(file: str, proc_type: str, block: dict) -> tuple:

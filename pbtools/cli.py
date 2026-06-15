@@ -67,6 +67,7 @@ def ingest(
     db: str          = typer.Option('pb.duckdb', '--db',  help="DuckDB database path."),
     no_build: bool   = typer.Option(False, '--no-build',  help="Skip cabal build step."),
     reset: bool      = typer.Option(False, '--reset',     help="Drop all tables and do a full re-parse."),
+    sql_dialect: str = typer.Option('oracle', '--sql-dialect', help="SQL dialect for sqlglot (oracle/tsql/sybase)."),
     repo: Optional[Path] = typer.Option(None, '--repo',   help="Repo root (auto-detect if omitted)."),
 ) -> None:
     """Parse → index → analyze, incremental by default (only changed files).
@@ -83,7 +84,7 @@ def ingest(
     repo_path = find_repo(repo)
     binary = find_binary(repo_path) if no_build else _build(repo_path, reporter)
     with resolve_source_dir(Path(input_path), reporter) as src_dir:
-        run_pipeline(src_dir, db, binary, reporter, reset=reset)
+        run_pipeline(src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect)
 
 
 # ── pb extract ────────────────────────────────────────────────────────────────

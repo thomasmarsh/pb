@@ -9,6 +9,7 @@ TABLES = [
     'dw_retrieve_where',
     'dw_arguments',
     'inherits',
+    'sql_statements',
 ]
 
 SCHEMA_SQL = """
@@ -84,6 +85,47 @@ CREATE TABLE IF NOT EXISTS inherits (
     from_object TEXT NOT NULL,
     to_object   TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS sql_statements (
+    file        TEXT NOT NULL,
+    object      TEXT NOT NULL,
+    proc_name   TEXT NOT NULL,
+    stmt_idx    INT  NOT NULL,
+    operation   TEXT,
+    raw_sql     TEXT,
+    parsed_json JSON,
+    tables      TEXT[],
+    columns     TEXT[],
+    has_into    BOOLEAN,
+    has_cursor  BOOLEAN,
+    parse_ok    BOOLEAN
+);
+"""
+
+_ALL_SQL_TABLES_VIEW = """
+CREATE OR REPLACE VIEW all_sql_tables AS
+    SELECT
+        t.file,
+        t.dw_name   AS object,
+        'datawindow' AS source,
+        'retrieve'   AS operation,
+        t.table_name,
+        NULL         AS proc_name,
+        NULL::INT    AS stmt_idx
+    FROM dw_retrieve_tables t
+
+    UNION ALL
+
+    SELECT
+        s.file,
+        s.object,
+        'powerscript' AS source,
+        s.operation,
+        unnest(s.tables) AS table_name,
+        s.proc_name,
+        s.stmt_idx
+    FROM sql_statements s
+    WHERE s.tables IS NOT NULL AND len(s.tables) > 0
 """
 
 INSERT = {
@@ -95,6 +137,7 @@ INSERT = {
     'dw_retrieve_where':   'INSERT INTO dw_retrieve_where VALUES (?,?,?,?,?,?,?)',
     'dw_arguments':        'INSERT INTO dw_arguments VALUES (?,?,?,?)',
     'inherits':            'INSERT INTO inherits VALUES (?,?)',
+    'sql_statements':      'INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
 }
 
 
@@ -103,9 +146,11 @@ def create_schema(conn) -> None:
         stmt = stmt.strip()
         if stmt:
             conn.execute(stmt)
+    conn.execute(_ALL_SQL_TABLES_VIEW)
 
 
 def drop_tables(conn) -> None:
     """Drop all data tables and file_state (full reset)."""
+    conn.execute("DROP VIEW IF EXISTS all_sql_tables")
     for t in TABLES + ['file_state']:
         conn.execute(f"DROP TABLE IF EXISTS {t}")

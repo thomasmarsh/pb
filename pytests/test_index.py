@@ -138,3 +138,90 @@ def test_no_retrieve_inserts_nothing():
     assert rows['dw_retrieve_columns'] == []
     assert rows['dw_retrieve_where'] == []
     assert rows['dw_arguments'] == []
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for SQL extraction from PowerScript procedure bodies
+# ---------------------------------------------------------------------------
+
+from pbtools.index import ingest_file, _extract_sql
+
+
+def _ps_obj(proc_name: str, body_nodes: list) -> dict:
+    """Minimal PowerScript object fixture with one function containing body_nodes."""
+    return {
+        "file": "test.sru",
+        "kind": "powerscript",
+        "meta": {"object": "w_test"},
+        "functions": [{
+            "meta": {"object": "w_test", "startLine": 1, "endLine": 10},
+            "sig": {
+                "name": proc_name,
+                "modifiers": [],
+                "params": "",
+                "returnType": "integer",
+            },
+            "body": body_nodes,
+            "source_rendered": "",
+        }],
+        "subroutines": [], "events": [], "onBlocks": [],
+    }
+
+
+def _sql_node(text: str) -> dict:
+    """Simulate a BsRaw JSON node as produced by pb-runner."""
+    return {"node": {"tag": "raw", "text": text}}
+
+
+def test_select_extracted_from_proc():
+    rows = _rows()
+    obj = _ps_obj(
+        "f_query",
+        [_sql_node("SELECT cust_name INTO :ls_name FROM customer WHERE cust_id = :li_id")],
+    )
+    ingest_file(obj, rows)
+    assert len(rows['sql_statements']) == 1
+    row = rows['sql_statements'][0]
+    # (file, object, proc_name, stmt_idx, operation, raw_sql, parsed_json,
+    #  tables, columns, has_into, has_cursor, parse_ok)
+    assert row[0] == "test.sru"
+    assert row[1] == "w_test"
+    assert row[2] == "f_query"
+    assert row[3] == 0
+    assert row[4] == "SELECT"
+    assert "customer" in row[7]
+    assert row[9] is True   # has_into
+    assert row[11] is True  # parse_ok
+
+
+def test_non_sql_bsraw_not_extracted():
+    rows = _rows()
+    obj = _ps_obj("f_other", [_sql_node("CALL super::constructor")])
+    ingest_file(obj, rows)
+    assert rows['sql_statements'] == []
+
+
+def test_multiple_sql_stmts_indexed():
+    rows = _rows()
+    obj = _ps_obj("f_multi", [
+        _sql_node("INSERT INTO audit_log (user_id, action) VALUES (:li_id, :ls_action)"),
+        _sql_node("COMMIT USING SQLCA"),
+    ])
+    ingest_file(obj, rows)
+    assert len(rows['sql_statements']) == 2
+    ops = {r[4] for r in rows['sql_statements']}
+    assert ops == {'INSERT', 'COMMIT'}
+
+
+def test_all_sql_tables_view(db_conn):
+    """all_sql_tables view must exist and include dw_retrieve_tables rows."""
+    count = db_conn.execute(
+        "SELECT count(*) FROM all_sql_tables WHERE source = 'datawindow'"
+    ).fetchone()[0]
+    assert count > 0, "all_sql_tables should include DataWindow PBSELECT rows"
+
+
+def test_sql_statements_table_exists(db_conn):
+    """sql_statements table must exist even when corpus has no body SQL."""
+    count = db_conn.execute("SELECT count(*) FROM sql_statements").fetchone()[0]
+    assert count == 0, "openpay corpus has no body-level SQL; table should be empty"

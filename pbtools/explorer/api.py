@@ -745,13 +745,13 @@ async def list_tables(request: Request):
     try:
         rows = _rows(conn.execute("""
             SELECT
-                t.table_name,
-                count(DISTINCT t.dw_name)  AS dw_count,
-                count(DISTINCT t.file)     AS file_count,
-                array_agg(DISTINCT t.dw_name ORDER BY t.dw_name) AS dw_names
-            FROM dw_retrieve_tables t
-            GROUP BY t.table_name
-            ORDER BY dw_count DESC, t.table_name
+                table_name,
+                count(*) FILTER (WHERE source = 'datawindow')  AS dw_count,
+                count(*) FILTER (WHERE source = 'powerscript') AS ps_count,
+                count(DISTINCT file)                           AS file_count
+            FROM all_sql_tables
+            GROUP BY table_name
+            ORDER BY (dw_count + ps_count) DESC, table_name
         """))
         return rows
     finally:
@@ -762,13 +762,19 @@ async def list_tables(request: Request):
 async def get_table(table_name: str, request: Request):
     conn = _conn(request)
     try:
+        all_refs = _rows(conn.execute(
+            "SELECT source, object, proc_name, stmt_idx, operation, file "
+            "FROM all_sql_tables WHERE table_name = ? ORDER BY source, object",
+            [table_name],
+        ))
+        if not all_refs:
+            raise HTTPException(status_code=404, detail=f"Table not found: {table_name}")
+
         dws = _rows(conn.execute(
             "SELECT DISTINCT dw_name, file FROM dw_retrieve_tables "
             "WHERE table_name = ? ORDER BY dw_name",
             [table_name],
         ))
-        if not dws:
-            raise HTTPException(status_code=404, detail=f"Table not found: {table_name}")
         columns = _rows(conn.execute(
             "SELECT dw_name, column_fqn, column_name "
             "FROM dw_retrieve_columns WHERE table_name = ? ORDER BY dw_name, column_name",
@@ -779,12 +785,20 @@ async def get_table(table_name: str, request: Request):
             "FROM dw_retrieve_where WHERE exp1 LIKE ? OR exp2 LIKE ? ORDER BY dw_name, idx",
             [f"%{table_name}%", f"%{table_name}%"],
         ))
+        procedures = _rows(conn.execute(
+            "SELECT DISTINCT object, proc_name, operation "
+            "FROM all_sql_tables "
+            "WHERE table_name = ? AND source = 'powerscript' ORDER BY object, proc_name",
+            [table_name],
+        ))
         return {
             "table_name": table_name,
             "dw_count": len(dws),
+            "ps_count": len(procedures),
             "datawindows": dws,
             "columns": columns,
             "where": where,
+            "procedures": procedures,
         }
     finally:
         conn.close()
