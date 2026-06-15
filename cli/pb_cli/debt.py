@@ -7,7 +7,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pbtools.build import build_runner, find_binary, find_repo
+from pb_cli.build import build_runner, find_binary, find_repo
 
 SQL_KWS = {
     "select", "selectblob", "insert", "update", "updateblob", "delete",

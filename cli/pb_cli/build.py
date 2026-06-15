@@ -9,10 +9,10 @@ def find_repo(repo: Path | None = None) -> Path:
     if repo:
         return repo
     for p in [Path.cwd(), *Path.cwd().parents]:
-        if (p / "pb-ast.cabal").exists():
+        if (p / "parser" / "pb-ast.cabal").exists():
             return p
     sys.exit(
-        "error: cannot locate repo root (no pb-ast.cabal found). "
+        "error: cannot locate repo root (no parser/pb-ast.cabal found). "
         "Run from within the pb repo, or pass --repo."
     )
 
@@ -21,7 +21,7 @@ def find_binary(repo: Path) -> Path:
     """Return the compiled pb-runner binary path without triggering a build."""
     r = subprocess.run(
         ["cabal", "list-bin", "pb-runner"],
-        cwd=str(repo),
+        cwd=str(repo / "parser"),
         capture_output=True,
         text=True,
     )
@@ -38,7 +38,7 @@ def build_runner(repo: Path, verbose: bool = False) -> Path:
     verbosity = [] if verbose else ["-v0"]
     r = subprocess.run(
         ["cabal", "build", "pb-runner"] + verbosity,
-        cwd=str(repo),
+        cwd=str(repo / "parser"),
         capture_output=not verbose,
         text=True,
     )
@@ -70,7 +70,7 @@ def ensure_explorer_built(repo: Path, verbose: bool = False) -> None:
     cabal run pb-runner --emit-ts automatically when pnpm build is invoked.
     """
     ui_dir  = repo / "ui"
-    dist_js = repo / "pbtools" / "explorer" / "static" / "dist" / "app.js"
+    dist_js = repo / "cli" / "pb_cli" / "explorer" / "static" / "dist" / "App.js"
 
     if _bundle_stale(ui_dir, dist_js):
         print("Building explorer frontend...", file=sys.stderr)

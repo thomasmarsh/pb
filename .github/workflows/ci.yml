@@ -32,7 +32,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cabal/store
-          key: cabal-${{ runner.os }}-ghc-9.10.2-${{ hashFiles('pb-ast.cabal') }}
+          key: cabal-${{ runner.os }}-ghc-9.10.2-${{ hashFiles('parser/pb-ast.cabal') }}
           restore-keys: |
             cabal-${{ runner.os }}-ghc-9.10.2-
 
@@ -60,15 +60,18 @@ jobs:
           version: "11.3.0"
 
       - name: Extract openpay corpus
-        run: uv run pb extract example/openpay -o example/openpay-src
+        run: uv run --project cli pb_cli extract example/openpay -o example/openpay-src
 
       - name: Build
+        working-directory: parser
         run: cabal build --enable-tests
 
       - name: Test (Haskell)
+        working-directory: parser
         run: cabal test --test-show-details=direct
 
       - name: Test (Python)
+        working-directory: cli
         run: uv run pytest
 
       - name: Test (TypeScript)

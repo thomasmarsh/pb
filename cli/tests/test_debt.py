@@ -1,5 +1,5 @@
-"""Unit tests for pbtools.debt — pure Python, no cabal needed."""
-from pbtools.debt import (
+"""Unit tests for pb_cli.debt — pure Python, no cabal needed."""
+from pb_cli.debt import (
     BsRawStats, DwStats,
     categorize,
     walk_bsraw, walk_exraw,

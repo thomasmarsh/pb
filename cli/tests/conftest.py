@@ -29,10 +29,10 @@ def db_path(jsonl_text: str, tmp_path_factory) -> str:
     tmp = tmp_path_factory.mktemp("db")
     db = str(tmp / "test.duckdb")
 
-    from pbtools.index import run_from_jsonl_lines
+    from pb_cli.index import run_from_jsonl_lines
     run_from_jsonl_lines(io.StringIO(jsonl_text), db)
 
-    from pbtools.analyze import run as analyze
+    from pb_cli.analyze import run as analyze
     analyze(db)
 
     return db

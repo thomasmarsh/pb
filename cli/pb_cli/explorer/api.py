@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, Response
 
 router = APIRouter()
 
-QUERIES_DIR = Path(__file__).parent.parent.parent / "queries"
+QUERIES_DIR = Path(__file__).parent.parent.parent.parent / "queries"
 
 
 def _conn(request: Request) -> duckdb.DuckDBPyConnection:

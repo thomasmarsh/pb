@@ -54,18 +54,18 @@ flowchart LR
 
 ```bash
 # 1. Install Python tooling (also builds the Haskell parser on first use)
-uv sync
+cd cli && uv sync
 
 # 2. Parse, index, and analyze in one command — incremental by default
-uv run pb ingest /path/to/src
+./pb ingest /path/to/src
 
 # 3. Query
-uv run pb query top              # most complex procedures
-uv run pb query pagerank         # most important objects
-uv run pb query --help           # full command list
+./pb query top              # most complex procedures
+./pb query pagerank         # most important objects
+./pb query --help           # full command list
 
 # 4. Explore interactively
-uv run pb explore                # builds frontend on first run, opens browser
+./pb explore                # builds frontend on first run, opens browser
 ```
 
 On the first run `pb ingest` builds the Haskell parser automatically. Every
@@ -103,16 +103,16 @@ The interactive explorer is a TypeScript SPA served by FastAPI.
 
 ```bash
 # Serve the explorer (auto-builds frontend + opens browser)
-uv run pb explore
+./pb explore
 
 # Or explicitly:
-uv run pb explore --db pb.duckdb --port 8000
+./pb explore --db pb.duckdb --port 8000
 ```
 
 ### Frontend development
 
 ```bash
-cd pbtools/explorer
+cd ui
 pnpm install
 pnpm dev              # Vite dev server with HMR on :5173
 pnpm typecheck        # tsc --noEmit
@@ -124,15 +124,15 @@ pnpm build            # compile TS → static/dist/
 
 ## Build overview
 
-| Component        | Command                              | What it does                         |
-| ---------------- | ------------------------------------ | ------------------------------------ |
-| Haskell parser   | `cabal build`                        | Compile library + executables        |
-| Haskell tests    | `cabal test`                         | Run 768 property + unit tests        |
-| Python tools     | `uv run pb ingest`                   | Parse → index → analyze pipeline     |
-| Python tests     | `uv run pytest`                      | 125 tests across tooling             |
-| Explorer TS      | `pnpm build` (in `pbtools/explorer`) | Bundle TS → JS for the web UI        |
-| Explorer tests   | `pnpm test` (in `pbtools/explorer`)  | 39 reducer + state management tests  |
-| Corpus check     | `bash scripts/check-corpus.sh`       | 0 errors / 777 files baseline        |
+| Component        | Command                                    | What it does                         |
+| ---------------- | ------------------------------------------ | ------------------------------------ |
+| Haskell parser   | `cd parser && cabal build`                 | Compile library + executables        |
+| Haskell tests    | `cd parser && cabal test`                  | Run 768 property + unit tests        |
+| Python tools     | `./pb ingest`                              | Parse → index → analyze pipeline     |
+| Python tests     | `cd cli && uv run pytest`                  | 125 tests across tooling             |
+| Explorer TS      | `pnpm build` (in `ui/`)                    | Bundle TS → JS for the web UI        |
+| Explorer tests   | `pnpm test` (in `ui/`)                     | 39 reducer + state management tests  |
+| Corpus check     | `bash scripts/check-corpus.sh`             | 0 errors / 777 files baseline        |
 
 CI runs all of these on every push to `main`.
 
@@ -160,20 +160,20 @@ CI runs all of these on every push to `main`.
 Built-in commands cover the most common analyses — no SQL required:
 
 ```bash
-uv run pb query top                              # most complex procedures
-uv run pb query pagerank                         # most important objects by PageRank
-uv run pb query callers fn_sqlerror             # who calls this function
-uv run pb query dead-code                        # uncalled non-public procedures
-uv run pb query god-objects                      # high fan-in + high complexity
-uv run pb query ancestors m_misth_zpstath_grid  # inheritance chain upward
-uv run pb query descendants w_list              # all objects extending w_list
-uv run pb query dw dw_misth_ypal_yvar_list      # tables/columns for a DataWindow
-uv run pb query db-coverage                     # all referenced database tables
-uv run pb query coupling                        # most tightly coupled object pairs
+./pb query top                              # most complex procedures
+./pb query pagerank                         # most important objects by PageRank
+./pb query callers fn_sqlerror             # who calls this function
+./pb query dead-code                        # uncalled non-public procedures
+./pb query god-objects                      # high fan-in + high complexity
+./pb query ancestors m_misth_zpstath_grid  # inheritance chain upward
+./pb query descendants w_list              # all objects extending w_list
+./pb query dw dw_misth_ypal_yvar_list      # tables/columns for a DataWindow
+./pb query db-coverage                     # all referenced database tables
+./pb query coupling                        # most tightly coupled object pairs
 ```
 
 Most commands accept `--n` to change the row limit and `--db` to target a
-different database file. Run `uv run pb <command> --help` for details.
+different database file. Run `./pb <command> --help` for details.
 
 ### Adding queries
 
@@ -227,19 +227,19 @@ Requires `pb.duckdb` populated via `pb ingest` (or `pb analyze` standalone).
 
 ```bash
 # Inheritance hierarchy (all objects)
-uv run pb diagram inheritance -o inheritance.svg
+./pb diagram inheritance -o inheritance.svg
 
 # Call ego-graph centred on a high-PageRank object
-uv run pb diagram calls --object nvo_validation --depth 2 -o calls.svg
+./pb diagram calls --object nvo_validation --depth 2 -o calls.svg
 
 # DataWindow → DB table bipartite dependency graph
-uv run pb diagram dw-tables -o dw_tables.svg
+./pb diagram dw-tables -o dw_tables.svg
 
 # Complexity heatmap (all objects, size = fan-in, colour = cyclomatic)
-uv run pb diagram heatmap -o heatmap.svg
+./pb diagram heatmap -o heatmap.svg
 
 # Emit raw DOT source for any diagram (pipe to dot or graphviz tools)
-uv run pb diagram inheritance --dot | dot -Tpng > inheritance.png
+./pb diagram inheritance --dot | dot -Tpng > inheritance.png
 ```
 
 ---
@@ -250,7 +250,7 @@ Measure how much of the AST is still in raw fallback form (unclassified
 statements and expressions). Useful for tracking parser coverage.
 
 ```bash
-uv run pb debt --no-build   # skips cabal build if pb-runner is already fresh
+./pb debt --no-build   # skips cabal build if pb-runner is already fresh
 ```
 
 ---

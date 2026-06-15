@@ -5,7 +5,7 @@ import solid from "vite-plugin-solid";
 export default defineConfig({
   plugins: [solid()],
   build: {
-    outDir: "../pbtools/explorer/static/dist",
+    outDir: "../cli/pb_cli/explorer/static/dist",
     emptyOutDir: true,
     lib: {
       entry: resolve(__dirname, "src/App.tsx"),

@@ -1,4 +1,4 @@
-"""Tests for pbtools.pbl — .pbl binary extraction.
+"""Tests for pb_cli.pbl — .pbl binary extraction.
 
 Unit tests use synthetic in-memory fixtures; the integration test against the
 openpay corpus is skipped when example/openpay/ contains no .pbl files.
@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from pbtools.pbl import (
+from pb_cli.pbl import (
     PBL_COMMENTS,
     PBL_HEADER,
     PblEntry,
@@ -22,7 +22,7 @@ from pbtools.pbl import (
     extract_to_dir,
     resolve_source_dir,
 )
-from pbtools.reporter import RecordingReporter
+from pb_cli.reporter import RecordingReporter
 
 # ── synthetic fixture builder ─────────────────────────────────────────────────
 

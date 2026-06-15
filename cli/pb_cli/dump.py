@@ -4,9 +4,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pbtools.build import count_sr_files
-from pbtools.parse import parse_stream
-from pbtools.reporter import Reporter
+from pb_cli.build import count_sr_files
+from pb_cli.parse import parse_stream
+from pb_cli.reporter import Reporter
 
 
 def run(src_dir: Path, out: Path, binary: Path, reporter: Reporter) -> None:

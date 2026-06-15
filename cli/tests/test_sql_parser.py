@@ -1,10 +1,10 @@
-"""Unit tests for pbtools/sql_parser.py — 10 representative PB SQL patterns.
+"""Unit tests for pb_cli/sql_parser.py — 10 representative PB SQL patterns.
 
 Tests verify table/column extraction, metadata flags, and fallback behaviour.
 All tests fail until sql_parser.py is created (Stage 2 gate).
 """
 import pytest
-from pbtools.sql_parser import parse_pb_sql, pb_sql_to_standard
+from pb_cli.sql_parser import parse_pb_sql, pb_sql_to_standard
 
 
 # ──────────────────────────────────────────────────────────────────────────────

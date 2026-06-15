@@ -1,5 +1,5 @@
 """
-Integration tests for pbtools.index.
+Integration tests for pb_cli.index.
 
 Requires:
   - cabal build (pb-runner compiled)
@@ -67,8 +67,8 @@ def test_dw_retrieve_tables_populated_when_e2_done(db_conn):
 # Unit tests for _ingest_dw tag dispatch (no DB, no pb-runner)
 # ---------------------------------------------------------------------------
 
-from pbtools.index import _ingest_dw
-from pbtools.common import TABLES
+from pb_cli.index import _ingest_dw
+from pb_cli.common import TABLES
 
 
 def _rows():
@@ -144,7 +144,7 @@ def test_no_retrieve_inserts_nothing():
 # Unit tests for SQL extraction from PowerScript procedure bodies
 # ---------------------------------------------------------------------------
 
-from pbtools.index import ingest_file, _extract_sql
+from pb_cli.index import ingest_file, _extract_sql
 
 
 def _ps_obj(proc_name: str, body_nodes: list) -> dict:

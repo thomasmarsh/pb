@@ -1,4 +1,4 @@
-"""Tests for pbtools.explorer — API endpoints and render module."""
+"""Tests for pb_cli.explorer — API endpoints and render module."""
 from pathlib import Path
 
 import pytest
@@ -9,7 +9,7 @@ import pytest
 @pytest.fixture(scope="module")
 def client(db_path):
     from fastapi.testclient import TestClient
-    from pbtools.explorer import create_app
+    from pb_cli.explorer import create_app
     app = create_app(db_path)
     return TestClient(app)
 

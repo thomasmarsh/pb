@@ -6,7 +6,7 @@ from typing import Optional
 
 import typer
 
-from pbtools.queries import register_queries
+from pb_cli.queries import register_queries
 
 app = typer.Typer(
     name="pb",
@@ -45,10 +45,10 @@ def dump(
     INPUT may be a directory of .sr* source files, a single .pbl library file,
     or a directory containing .pbl files (extracted transparently).
     """
-    from pbtools.build import find_repo, find_binary
-    from pbtools.dump import run as run_dump
-    from pbtools.pbl import resolve_source_dir
-    from pbtools.reporter import LiveReporter
+    from pb_cli.build import find_repo, find_binary
+    from pb_cli.dump import run as run_dump
+    from pb_cli.pbl import resolve_source_dir
+    from pb_cli.reporter import LiveReporter
 
     reporter = LiveReporter()
     repo_path = find_repo(repo)
@@ -75,10 +75,10 @@ def ingest(
     INPUT may be a directory of .sr* source files, a single .pbl library file,
     or a directory containing .pbl files (extracted transparently).
     """
-    from pbtools.build import find_repo, find_binary
-    from pbtools.pipeline import run as run_pipeline
-    from pbtools.pbl import resolve_source_dir
-    from pbtools.reporter import LiveReporter
+    from pb_cli.build import find_repo, find_binary
+    from pb_cli.pipeline import run as run_pipeline
+    from pb_cli.pbl import resolve_source_dir
+    from pb_cli.reporter import LiveReporter
 
     reporter = LiveReporter()
     repo_path = find_repo(repo)
@@ -100,8 +100,8 @@ def extract(
     Each foo.pbl produces an output/foo.pbl/ directory of .sr* source files.
     Run once as a setup step before 'pb dump', 'pb ingest', or 'cabal test'.
     """
-    from pbtools.pbl import extract_to_dir
-    from pbtools.reporter import LiveReporter
+    from pb_cli.pbl import extract_to_dir
+    from pb_cli.reporter import LiveReporter
 
     src = Path(input_dir).resolve()
     out = Path(output_dir)
@@ -133,7 +133,7 @@ def debt(
     repo: Optional[Path] = typer.Option(None, "--repo", help="Repo root (auto-detect if omitted)."),
 ) -> None:
     """Analyze BsRaw + ExRaw debt and DW control coverage across both corpora."""
-    from pbtools.debt import run
+    from pb_cli.debt import run
     run(repo=repo, no_build=no_build)
 
 
@@ -144,7 +144,7 @@ def index(
     db: str = typer.Argument("pb.duckdb", help="DuckDB database path."),
 ) -> None:
     """Populate pb.duckdb from pb-runner JSONL output (reads stdin). Use 'pb ingest' instead."""
-    from pbtools.index import run_from_jsonl_lines
+    from pb_cli.index import run_from_jsonl_lines
     run_from_jsonl_lines(sys.stdin, db)
 
 
@@ -155,8 +155,8 @@ def analyze(
     db: str = typer.Argument("pb.duckdb", help="DuckDB database path."),
 ) -> None:
     """Compute call graph metrics and populate object_metrics in pb.duckdb."""
-    from pbtools.analyze import run
-    from pbtools.reporter import LiveReporter
+    from pb_cli.analyze import run
+    from pb_cli.reporter import LiveReporter
     run(db, LiveReporter())
 
 
@@ -170,7 +170,7 @@ def diagram_inheritance(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """Inheritance hierarchy diagram."""
-    from pbtools.diagram import connect, diagram_inheritance as _d
+    from pb_cli.diagram import connect, diagram_inheritance as _d
     with connect(db) as conn:
         _d(conn, root, output, dot)
 
@@ -184,7 +184,7 @@ def diagram_calls(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """Call ego-graph centred on a named object."""
-    from pbtools.diagram import connect, diagram_calls as _d
+    from pb_cli.diagram import connect, diagram_calls as _d
     with connect(db) as conn:
         _d(conn, object_name, depth, output, dot)
 
@@ -197,7 +197,7 @@ def diagram_dw_tables(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """DataWindow → DB table bipartite dependency graph."""
-    from pbtools.diagram import connect, diagram_dw_tables as _d
+    from pb_cli.diagram import connect, diagram_dw_tables as _d
     with connect(db) as conn:
         _d(conn, table, output, dot)
 
@@ -209,7 +209,7 @@ def diagram_heatmap(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """Complexity heatmap over all PowerScript objects."""
-    from pbtools.diagram import connect, diagram_heatmap as _d
+    from pb_cli.diagram import connect, diagram_heatmap as _d
     with connect(db) as conn:
         _d(conn, output, dot)
 
@@ -232,8 +232,8 @@ def explore(
 ) -> None:
     """Start the interactive DuckDB explorer web UI."""
     import uvicorn
-    from pbtools.explorer import create_app
-    from pbtools.build import find_repo, ensure_explorer_built
+    from pb_cli.explorer import create_app
+    from pb_cli.build import find_repo, ensure_explorer_built
 
     url = f"http://{host}:{port}"
 
@@ -263,7 +263,7 @@ def explore(
 # ── private helpers ────────────────────────────────────────────────────────────
 
 def _build(repo_path: Path, reporter) -> Path:
-    from pbtools.build import build_runner
+    from pb_cli.build import build_runner
     reporter.building()
     return build_runner(repo_path)
 

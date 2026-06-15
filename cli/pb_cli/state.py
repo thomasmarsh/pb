@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from pbtools.build import walk_sr_files
-from pbtools.common import TABLES
+from pb_cli.build import walk_sr_files
+from pb_cli.common import TABLES
 
 
 FILE_STATE_SQL = """

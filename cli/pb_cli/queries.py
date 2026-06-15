@@ -8,7 +8,7 @@ from pathlib import Path
 import duckdb
 import typer
 
-QUERIES_DIR = Path(__file__).parent.parent / "queries"
+QUERIES_DIR = Path(__file__).parent.parent.parent / "queries"
 
 _INT_TYPES = {"INT", "INTEGER", "BIGINT"}
 

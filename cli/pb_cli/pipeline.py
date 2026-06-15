@@ -6,12 +6,12 @@ from pathlib import Path
 
 import duckdb
 
-from pbtools.analyze import run as _analyze
-from pbtools.common import create_schema, drop_tables
-from pbtools.index import ingest_batch
-from pbtools.parse import parse_stream
-from pbtools.reporter import Reporter
-from pbtools.state import (
+from pb_cli.analyze import run as _analyze
+from pb_cli.common import create_schema, drop_tables
+from pb_cli.index import ingest_batch
+from pb_cli.parse import parse_stream
+from pb_cli.reporter import Reporter
+from pb_cli.state import (
     build_subset_tmpdir,
     create_state_table,
     delete_file_rows,

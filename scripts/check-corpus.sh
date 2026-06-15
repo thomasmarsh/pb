@@ -8,22 +8,22 @@ OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 
 echo "Building pb-runner..."
-cabal build pb-runner --project-dir "$REPO" -v0
+cabal build pb-runner --project-dir "$REPO/parser" -v0
 
 # Extract openpay .pbl files if the source dir is not already present.
 OPENPAY_SRC="$EXAMPLE/openpay-src"
 if [ ! -d "$OPENPAY_SRC" ] || [ -z "$(ls -A "$OPENPAY_SRC" 2>/dev/null)" ]; then
   echo "Extracting openpay .pbl libraries..."
-  uv run pb extract -i "$EXAMPLE/openpay" -o "$OPENPAY_SRC"
+  uv run --project "$REPO/cli" pb_cli extract -i "$EXAMPLE/openpay" -o "$OPENPAY_SRC"
 fi
 
 echo "Processing Appeon example corpus..."
-cabal run pb-runner --project-dir "$REPO" -v0 -- \
+cabal run pb-runner --project-dir "$REPO/parser" -v0 -- \
   -i "$EXAMPLE/PowerBuilder-Example/export" \
   -o "$OUT/appeon"
 
 echo "Processing OpenPay corpus..."
-cabal run pb-runner --project-dir "$REPO" -v0 -- \
+cabal run pb-runner --project-dir "$REPO/parser" -v0 -- \
   -i "$OPENPAY_SRC" \
   -o "$OUT/openpay"
 

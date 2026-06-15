@@ -10,47 +10,53 @@ analyses that JSON, and **TypeScript** presents it as an interactive web UI.
 
 ```
 pb/
-├── src/ app/ test/         Haskell library + executable + tests
-├── pb-ast.cabal            Cabal project configuration
-├── pyproject.toml          uv Python project configuration
-├── pbtools/                Python tooling package  (uv run pb …)
-│   ├── cli.py              Entry point — all `pb` CLI sub-commands
-│   ├── build.py            Build management: locate cabal binary, drive pnpm
-│   ├── common.py           DuckDB schema (CREATE TABLE) + INSERT statements
-│   ├── index.py            JSONL → DuckDB ingestion (pb ingest / pb index)
-│   ├── analyze.py          Call graph metrics, cyclomatic complexity (pb analyze)
-│   ├── diagram.py          GraphViz SVG generation (pb diagram)
-│   ├── debt.py             BsRaw / ExRaw / DW coverage analyser (pb debt)
-│   ├── queries.py          Auto-register queries/*.sql as `pb query` commands
-│   ├── state.py            Incremental state tracking (file mtimes)
-│   ├── pbl.py              .pbl extraction via powerbuilder-pbl-dump
-│   └── explorer/           FastAPI backend (pb explore)
-│       ├── api.py          FastAPI router — all /api/* endpoints
-│       ├── app.py          App factory — mounts router + static files
-│       ├── render.py       AST body_json → human-readable PBScript
-│       └── static/         Served at /static/
-│           ├── index.html  SPA shell page
-│           ├── style.css
-│           └── dist/       Vite build output (app.js) — not in git
-├── ui/                     TypeScript / SolidJS SPA source
+├── parser/                   Haskell parser (pb-ast)
+│   ├── src/                  Library (PB.* modules)
+│   ├── app/                  pb-runner executable
+│   ├── test/                 Test suite
+│   └── pb-ast.cabal          Cabal project configuration
+├── cli/                      Python CLI tools
+│   ├── pb_cli/               Python package (./pb or uv run --project cli pb_cli)
+│   │   ├── cli.py            Entry point — all CLI sub-commands
+│   │   ├── build.py          Build management: locate cabal binary, drive pnpm
+│   │   ├── common.py         DuckDB schema (CREATE TABLE) + INSERT statements
+│   │   ├── index.py          JSONL → DuckDB ingestion (pb ingest / pb index)
+│   │   ├── analyze.py        Call graph metrics, cyclomatic complexity (pb analyze)
+│   │   ├── diagram.py        GraphViz SVG generation (pb diagram)
+│   │   ├── debt.py           BsRaw / ExRaw / DW coverage analyser (pb debt)
+│   │   ├── queries.py        Auto-register queries/*.sql as `pb query` commands
+│   │   ├── state.py          Incremental state tracking (file mtimes)
+│   │   ├── pbl.py            .pbl extraction via powerbuilder-pbl-dump
+│   │   └── explorer/         FastAPI backend (pb explore)
+│   │       ├── api.py        FastAPI router — all /api/* endpoints
+│   │       ├── app.py        App factory — mounts router + static files
+│   │       ├── render.py     AST body_json → human-readable PBScript
+│   │       └── static/       Served at /static/
+│   │           ├── index.html  SPA shell page
+│   │           ├── style.css
+│   │           └── dist/     Vite build output (app.js) — not in git
+│   ├── tests/                pytest test suite
+│   ├── pyproject.toml        Python project configuration
+│   └── uv.lock               Python dependency lockfile
+├── ui/                       TypeScript / SolidJS SPA source
 │   ├── src/
-│   │   ├── App.tsx         SPA root component
-│   │   ├── api-client.ts   Typed wrappers around /api/* endpoints
-│   │   ├── components/     One file per UI panel (Objects, DataWindows, …)
+│   │   ├── App.tsx           SPA root component
+│   │   ├── api-client.ts     Typed wrappers around /api/* endpoints
+│   │   ├── components/       One file per UI panel (Objects, DataWindows, …)
 │   │   └── types/
 │   │       ├── api.ts              Hand-written API response shapes
 │   │       ├── state.ts            SolidJS store shape
 │   │       ├── actions.ts          Reducer action types
 │   │       └── ast.generated.ts    Generated from Haskell — not in git
-│   ├── tests/              Vitest test suite
-│   ├── package.json        pnpm project (SolidJS, Vite, Vitest)
-│   ├── vite.config.ts      Builds src/App.tsx → ../pbtools/explorer/static/dist/
+│   ├── tests/                Vitest test suite
+│   ├── package.json          pnpm project (SolidJS, Vite, Vitest)
+│   ├── vite.config.ts        Builds src/App.tsx → ../cli/pb_cli/explorer/static/dist/
 │   └── tsconfig.json
-├── queries/                SQL files served as `pb query <name>` commands
-├── pytests/                pytest test suite for Python tools
-├── example/                Corpus data (openpay, openpay-src)
-├── reference/              SPEC.md + Appeon docs (markdown)
-└── plan/                   Planning artifacts (BACKLOG, STRATEGY, session plans)
+├── pb                        Top-level wrapper: uv run --project cli pb_cli $*
+├── queries/                  SQL files served as `pb query <name>` commands
+├── example/                  Corpus data (openpay, openpay-src)
+├── reference/                SPEC.md + Appeon docs (markdown)
+└── plan/                     Planning artifacts (BACKLOG, STRATEGY, session plans)
 ```
 
 ---
@@ -62,11 +68,11 @@ flowchart TD
     SRC["PowerBuilder source files\n.srw .sru .srd …"]
     RUNNER["pb-runner\n(Haskell binary)"]
     JSONL["JSONL stream\none JSON object per file"]
-    INGEST["pb ingest\n(pbtools/index.py)"]
+    INGEST["pb ingest\n(cli/pb_cli/index.py)"]
     DB[("pb.duckdb")]
-    ANALYZE["pb analyze\n(pbtools/analyze.py)\ncall graph · cyclomatic complexity"]
-    EXPLORE["pb explore\n(pbtools/cli.py)"]
-    API["FastAPI\n(pbtools/explorer/api.py)"]
+    ANALYZE["pb analyze\n(cli/pb_cli/analyze.py)\ncall graph · cyclomatic complexity"]
+    EXPLORE["pb explore\n(cli/pb_cli/cli.py)"]
+    API["FastAPI\n(cli/pb_cli/explorer/api.py)"]
     SPA["SolidJS SPA\n(ui/src/)"]
 
     SRC -->|"cabal run pb-runner\n-i SRC --jsonl"| RUNNER
@@ -92,7 +98,7 @@ flowchart LR
     subgraph Haskell["Haskell (pb-runner)"]
         HS_SER["Serialise.hs\naeson + aeson-typescript"]
     end
-    subgraph Python["Python (pbtools/)"]
+    subgraph Python["Python (cli/pb_cli/)"]
         PY_BUILD["build.py\nensure_explorer_built"]
         PY_IDX["index.py\nrun_from_jsonl_lines"]
         PY_ANA["analyze.py\nwalk_calls · count_branches"]
@@ -118,7 +124,7 @@ The `prebuild` npm script writes this output to
 `src/types/ast.generated.ts` each time `pnpm build` is invoked:
 
 ```json
-"prebuild": "cabal run --project-dir .. pb-runner -v0 -- --emit-ts > src/types/ast.generated.ts"
+"prebuild": "cabal run --project-dir ../parser pb-runner -v0 -- --emit-ts > src/types/ast.generated.ts"
 ```
 
 `ast.generated.ts` is a build artifact (not committed to git) that emits
@@ -130,7 +136,7 @@ through the explore API.
 ### Haskell → Python: JSONL
 
 `pb-runner -i SRC_DIR --jsonl` prints one JSON object per file to stdout.
-`pbtools/index.py:run_from_jsonl_lines` reads this stream and populates
+`cli/pb_cli/index.py:run_from_jsonl_lines` reads this stream and populates
 DuckDB.  The JSON encoding follows `genericToJSON` conventions:
 
 | Shape | Haskell | JSON |
@@ -147,12 +153,12 @@ constructor name.
 
 ### Python → TypeScript: static files
 
-`pbtools/build.py:ensure_explorer_built` calls `pnpm build` (with
+`cli/pb_cli/build.py:ensure_explorer_built` calls `pnpm build` (with
 `--frozen-lockfile install` first if `node_modules` is absent).  `pnpm build`
 runs `prebuild` (emits TypeScript types) then Vite, writing
 `static/dist/App.js`.  The FastAPI app mounts `static/` at `/static/`.
 
-Staleness is determined by comparing the mtime of `pbtools/explorer/static/dist/app.js`
+Staleness is determined by comparing the mtime of `cli/pb_cli/explorer/static/dist/app.js`
 against `ui/src/**/*.ts`, `ui/src/**/*.tsx`, `ui/package.json`, and `ui/vite.config.ts`.
 
 ### TypeScript → FastAPI: HTTP
@@ -168,16 +174,16 @@ generation for the API contract — changes to `api.py` must be reflected in
 
 | Concern | File(s) |
 |---------|---------|
-| Parsing PowerBuilder syntax | `src/PB/Lexing/`, `src/PB/Grammar/` |
-| AST data types | `src/PB/AST/` |
-| JSON serialisation + TS codegen | `src/PB/Pipeline/Serialise.hs` |
-| CLI entry point (Haskell) | `app/Main.hs` |
-| DuckDB schema | `pbtools/common.py` |
-| JSON → DuckDB ingestion | `pbtools/index.py` |
-| Call graph + cyclomatic complexity | `pbtools/analyze.py` |
-| FastAPI endpoints | `pbtools/explorer/api.py` |
-| AST → PBScript rendering | `pbtools/explorer/render.py` |
-| Explorer build orchestration | `pbtools/build.py:ensure_explorer_built` |
+| Parsing PowerBuilder syntax | `parser/src/PB/Lexing/`, `parser/src/PB/Grammar/` |
+| AST data types | `parser/src/PB/AST/` |
+| JSON serialisation + TS codegen | `parser/src/PB/Pipeline/Serialise.hs` |
+| CLI entry point (Haskell) | `parser/app/Main.hs` |
+| DuckDB schema | `cli/pb_cli/common.py` |
+| JSON → DuckDB ingestion | `cli/pb_cli/index.py` |
+| Call graph + cyclomatic complexity | `cli/pb_cli/analyze.py` |
+| FastAPI endpoints | `cli/pb_cli/explorer/api.py` |
+| AST → PBScript rendering | `cli/pb_cli/explorer/render.py` |
+| Explorer build orchestration | `cli/pb_cli/build.py:ensure_explorer_built` |
 | SPA root | `ui/src/App.tsx` |
 | SPA state | `ui/src/store.ts` |
 | Generated AST types (TS) | `ui/src/types/ast.generated.ts` (build artifact; `pnpm prebuild` regenerates) |
@@ -189,11 +195,11 @@ generation for the API contract — changes to `api.py` must be reflected in
 
 | Layer | Command | Location |
 |-------|---------|----------|
-| Haskell | `cabal test` | `test/` |
-| Python | `uv run pytest` | `pytests/` |
+| Haskell | `cabal test` (in `parser/`) | `parser/test/` |
+| Python | `uv run pytest` (in `cli/`) | `cli/tests/` |
 | TypeScript | `pnpm test` (in `ui/`) | `ui/tests/` |
 | Corpus regression | `bash scripts/check-corpus.sh` | uses `example/openpay` |
-| Debt gate | `uv run pb debt` | checks ExRaw, BsRaw, DW coverage |
+| Debt gate | `uv run --project cli pb_cli debt` | checks ExRaw, BsRaw, DW coverage |
 
 Haskell tests include corpus oracle tests (`test/CorpusDebtTest.hs`,
 `test/CorpusInvariantTest.hs`) that gate on zero corpus errors and ratcheted
@@ -205,16 +211,16 @@ ExRaw/BsRaw counts.
 
 ```bash
 # 1. Build and test Haskell
-cabal build && cabal test
+cd parser && cabal build && cabal test
 
 # 2. Install Python deps
-uv sync
+cd cli && uv sync
 
 # 3. Run pb ingest to populate pb.duckdb
-uv run pb ingest example/openpay
+./pb ingest example/openpay
 
 # 4. Start the explorer (auto-builds TS on first run)
-uv run pb explore
+./pb explore
 ```
 
 ---
@@ -230,7 +236,7 @@ must use the full name.
 **`contents` wrapping.**  Single-value constructors always put their payload
 under `"contents"`.  Record constructors put fields at the same level as
 `"tag"`.  There is no way to tell from the tag name alone — consult
-`src/PB/Pipeline/Serialise.hs` or `src/types/ast.generated.ts`.
+`parser/src/PB/Pipeline/Serialise.hs` or `ui/src/types/ast.generated.ts`.
 
 **`ast.generated.ts` is not in git.**  It is regenerated by `pnpm prebuild`
 on every `pnpm build`.  If TypeScript compilation fails on a clean checkout,

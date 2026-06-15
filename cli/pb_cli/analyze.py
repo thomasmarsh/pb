@@ -8,14 +8,14 @@ import duckdb
 import networkx as nx
 
 if TYPE_CHECKING:
-    from pbtools.reporter import AnalyzeProgress, Reporter
+    from pb_cli.reporter import AnalyzeProgress, Reporter
 
 BRANCH_TAGS = {'BsIf', 'BsFor', 'BsDo', 'BsChoose'}
 
 
 def run(db: str = 'pb.duckdb', reporter: Reporter | None = None) -> None:
     if reporter is None:
-        from pbtools.reporter import LiveReporter
+        from pb_cli.reporter import LiveReporter
         reporter = LiveReporter()
 
     conn = duckdb.connect(db)

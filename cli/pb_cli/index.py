@@ -5,8 +5,8 @@ from typing import Iterable
 
 import duckdb
 
-from pbtools.common import TABLES, INSERT, create_schema
-from pbtools.sql_parser import parse_pb_sql
+from pb_cli.common import TABLES, INSERT, create_schema
+from pb_cli.sql_parser import parse_pb_sql
 
 _SQL_KEYWORDS = {
     'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'DECLARE', 'OPEN', 'FETCH',

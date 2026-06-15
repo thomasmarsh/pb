@@ -1,5 +1,5 @@
 """
-Tests for pbtools.diagram.
+Tests for pb_cli.diagram.
 
 Run from repo root:
   uv run pytest tests/test_diagram.py
@@ -20,7 +20,7 @@ import pytest
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH   = os.path.join(REPO_ROOT, 'pb.duckdb')
 
-from pbtools.diagram import (  # noqa: E402
+from pb_cli.diagram import (  # noqa: E402
     diagram_calls,
     diagram_dw_tables,
     diagram_heatmap,

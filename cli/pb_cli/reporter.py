@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator, Protocol
 
-from pbtools.state import FileDiff
+from pb_cli.state import FileDiff
 
 
 # ── ParseProgress ──────────────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ class _LiveParseProgress:
         self._progress.advance(self._task)
 
     def on_error(self, obj: dict) -> None:
-        from pbtools.parse import render_error
+        from pb_cli.parse import render_error
         self.error_count += 1
         self._progress.update(self._task, err_str=f'[red]⚠ {self.error_count} errors[/red]')
         self._progress.console.print(render_error(obj))

@@ -3,17 +3,17 @@
 ## Quick Reference
 
 ```text
-cabal build                           # compile library + executables
-cabal build --enable-tests            # compile tests too
-cabal test                            # run test suite
-cabal test --test-show-details=direct # verbose output
-bash scripts/check-corpus.sh          # 0 errors / 777 files = baseline
-uv run pb debt                        # BsRaw + ExRaw debt + DW control coverage (both corpora)
-uv run pb debt --no-build             # same, skip build step
-uv run pytest                         # Python tool tests (pytests/ directory)
-cd ui && pnpm typecheck               # TypeScript type check (explorer)
-cd ui && pnpm test                    # Explorer reducer tests (64 tests)
-cd ui && pnpm build                   # Build explorer TS → static/dist/
+cd parser && cabal build                          # compile library + executables
+cd parser && cabal build --enable-tests           # compile tests too
+cd parser && cabal test                           # run test suite
+cd parser && cabal test --test-show-details=direct # verbose output
+bash scripts/check-corpus.sh                      # 0 errors / 777 files = baseline
+./pb debt                        # BsRaw + ExRaw debt + DW control coverage (both corpora)
+./pb debt --no-build             # same, skip build step
+cd cli && uv run pytest         # Python tool tests (cli/tests/ directory)
+cd ui && pnpm typecheck         # TypeScript type check (explorer)
+cd ui && pnpm test              # Explorer reducer tests (64 tests)
+cd ui && pnpm build             # Build explorer TS → static/dist/
 ```
 
 ## Session Scoping
@@ -57,8 +57,8 @@ Scale gates to the size of the change. Trivial changes (typo, rename, single-lin
 Before proposing any change, read every file that will be touched. Use `rg` to locate the relevant section before reading the full file:
 
 ```text
-rg -n "functionName" src/
-rg -l "LogicalLine" src/
+rg -n "functionName" parser/src/
+rg -l "LogicalLine" parser/src/
 ```
 
 No change is proposed without a prior read of all relevant modules. Locate callers before modifying a function.
@@ -70,7 +70,7 @@ bash scripts/check-corpus.sh 2>&1 | grep "Files processed"   # get count
 
 # sample 5 error messages from a temporary run:
 OUT=$(mktemp -d)
-cabal run pb-runner -v0 -- -i example/openpay -o "$OUT" 2>/dev/null
+cabal run --project-dir parser pb-runner -v0 -- -i example/openpay -o "$OUT" 2>/dev/null
 python3 -c "
 import json, os, glob
 for f in list(glob.glob('$OUT/**/*.json', recursive=True))[:5]:
@@ -119,7 +119,7 @@ def walk_bsraw_leading(node, keyword):
 **Diagnosing implementation debt.** When the charter targets BsRaw, ExRaw, or DW structural-field coverage, run the debt analyser first — do NOT re-derive the breakdown from scratch:
 
 ```bash
-uv run pb debt --no-build
+./pb debt --no-build
 ```
 
 This prints:
@@ -128,7 +128,7 @@ This prints:
 - A ranked ExRaw breakdown by leading token with examples — these are expression-level `ExRaw` fallbacks still to be promoted to typed `Expr` constructors. Use this to pick the highest-value next ExRaw charter.
 - **DW control coverage** — per-field percentage of `DwControl` structural fields (`name`, `band`, `id`, `x`, `y`, `width`, `height`, `visible`, `expression`, `tab_seq`) that are non-null across both corpora; top 15 control types by frequency. Use this to baseline before any DW-track session and confirm improvement after. Expected coverage for "real" display controls (text/column/compute/line/report/groupbox/rectangle/graph): ~78% on positional fields; `htmltable`/`htmlgen`/etc. export-generator controls will always be ~0% on these fields.
 
-**Keep `pbtools/debt.py` in sync with any new `Expr` constructors.** When a new `ExXxx` constructor is added, confirm the ExRaw count drops correspondingly in the script output — it requires no code changes because it walks the live JSON, but the BACKLOG entry should quote the before/after counts.
+**Keep `cli/pb_cli/debt.py` in sync with any new `Expr` constructors.** When a new `ExXxx` constructor is added, confirm the ExRaw count drops correspondingly in the script output — it requires no code changes because it walks the live JSON, but the BACKLOG entry should quote the before/after counts.
 
 **The DW coverage section is always-on** (not gated on a flag). Quote the before/after coverage percentages in BACKLOG entries for DW-track sessions.
 
@@ -243,7 +243,7 @@ Replace it with a real assertion before Stage 3 — a test that permanently says
 
 ## Prelude and Safety Rules
 
-The custom Prelude is in `src/PB/Prelude.hs`. These rules are non-negotiable.
+The custom Prelude is in `parser/src/PB/Prelude.hs`. These rules are non-negotiable.
 
 | Rule                 | Detail                                                                                      |
 | -------------------- | ------------------------------------------------------------------------------------------- |
@@ -263,7 +263,7 @@ All new modules must start with `import PB.Prelude` under `NoImplicitPrelude` (s
 - **Megaparsec `try` invariant:** In a `choice`, every alternative that can consume input before failing must be wrapped in `try`. Without it, a partial match (e.g. consuming a sign character before failing on a non-digit) propagates the error and skips all remaining alternatives. Audit any `choice` whose alternatives share a leading character.
 - Always prefer short, flattened code - no huge monolithic functions
 - Always rename Aeson serialized fields ergonomic JSON (not just the raw Haskell names)
-- app/Main.hs should have no functionality other than to call into src/PB/Pipeline/Runner.hs with two arguments 1) input source dir path and 2) output JSON AST tree path
+- parser/app/Main.hs should have no functionality other than to call into parser/src/PB/Pipeline/Runner.hs with two arguments 1) input source dir path and 2) output JSON AST tree path
 - Accept no hacky solutions or greedy operations that will cause pain down the line: if we can't reliable detect the beginning / end of a regions (e.g., FUNCTION / END FUNCTION), we can't start working on it yet.
 - Be creative and comprehensive in generating PBT and pathological unit test cases; PB has lots of issues like `foo()bar()` smashed together ` & // comment`
 - Ensure the preprocess step is principled and resilient
