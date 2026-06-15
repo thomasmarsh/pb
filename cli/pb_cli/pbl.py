@@ -191,8 +191,9 @@ def resolve_source_dir(path: Path, reporter) -> Iterator[Path]:
     if path.is_file() and path.suffix.lower() == '.pbl':
         with tempfile.TemporaryDirectory(prefix='pb-extract-') as tmp:
             dest = Path(tmp)
-            reporter.extracting(path)
-            extract_to_dir(path, dest)
+            with reporter.extracting_progress(1) as prog:
+                extract_to_dir(path, dest)
+                prog.advance()
             yield dest
 
     elif path.is_dir():
@@ -202,11 +203,12 @@ def resolve_source_dir(path: Path, reporter) -> Iterator[Path]:
         )
         if pbls:
             with tempfile.TemporaryDirectory(prefix='pb-extract-') as tmp:
-                for pbl in pbls:
-                    reporter.extracting(pbl)
-                    sub = Path(tmp) / pbl.name   # e.g. "afxlib.pbl/"
-                    sub.mkdir()
-                    extract_to_dir(pbl, sub)
+                with reporter.extracting_progress(len(pbls)) as prog:
+                    for pbl in pbls:
+                        sub = Path(tmp) / pbl.name   # e.g. "afxlib.pbl/"
+                        sub.mkdir()
+                        extract_to_dir(pbl, sub)
+                        prog.advance()
                 yield Path(tmp)
         else:
             yield path

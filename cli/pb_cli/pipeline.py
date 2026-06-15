@@ -43,8 +43,6 @@ def run(
         conn.close()
         return
 
-    reporter.diff_summary(diff)
-
     for path in diff.deleted + diff.changed:
         delete_file_rows(conn, path)
 
@@ -57,9 +55,9 @@ def run(
 
     objects, errors = _parse_subset(src_dir, binary, to_parse, reporter)
 
-    with reporter.status('Indexing...'):
+    with reporter.indexing_step() as complete:
         row_count = ingest_batch(objects, conn, dialect)
-    reporter.indexed(row_count)
+        complete(row_count)
 
     parsed_files = {obj['file'] for obj in objects}
     save_file_state(conn, {f: current[f] for f in to_parse if f in parsed_files})
@@ -75,7 +73,7 @@ def _parse_subset(
     tmpdir = build_subset_tmpdir(src_dir, to_parse)
     try:
         objects: list[dict] = []
-        with reporter.parse_progress(len(to_parse), 'Parsing  ') as progress:
+        with reporter.parse_progress(len(to_parse), 'Parsing') as progress:
             for is_err, obj in parse_stream(tmpdir, binary, remap_from=tmpdir, remap_to=src_dir):
                 if is_err:
                     progress.on_error(obj)

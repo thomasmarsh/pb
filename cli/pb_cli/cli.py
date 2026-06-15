@@ -115,12 +115,13 @@ def extract(
     reporter = LiveReporter()
 
     total = 0
-    for pbl in pbls:
-        reporter.extracting(pbl)
-        sub = out / pbl.name
-        sub.mkdir(parents=True, exist_ok=True)
-        written = extract_to_dir(pbl, sub)
-        total += len(written)
+    with reporter.extracting_progress(len(pbls)) as prog:
+        for pbl in pbls:
+            sub = out / pbl.name
+            sub.mkdir(parents=True, exist_ok=True)
+            written = extract_to_dir(pbl, sub)
+            total += len(written)
+            prog.advance()
 
     typer.echo(f"Extracted {total} source files from {len(pbls)} libraries to {out}")
 

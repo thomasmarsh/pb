@@ -26,10 +26,14 @@ def test_building():
     assert r.events == [{'type': 'building'}]
 
 
-def test_extracting():
+def test_extracting_progress():
     r = RecordingReporter()
-    r.extracting(Path('/some/path/mylib.pbl'))
-    assert r.events == [{'type': 'extracting', 'pbl': 'mylib.pbl'}]
+    with r.extracting_progress(3) as prog:
+        prog.advance()
+        prog.advance()
+    assert r.events[0] == {'type': 'extracting_start', 'total': 3}
+    assert sum(1 for e in r.events if e['type'] == 'extracting_advance') == 2
+    assert r.events[-1] == {'type': 'extracting_end'}
 
 
 def test_status_is_context_manager_and_records():
@@ -39,21 +43,17 @@ def test_status_is_context_manager_and_records():
     assert r.events == [{'type': 'status', 'msg': 'scanning'}]
 
 
-def test_indexed():
+# ── indexing_step ─────────────────────────────────────────────────────────────
+
+def test_indexing_step_records_start_complete_end():
     r = RecordingReporter()
-    r.indexed(1234)
-    assert r.events == [{'type': 'indexed', 'row_count': 1234}]
-
-
-# ── diff_summary ──────────────────────────────────────────────────────────────
-
-def test_diff_summary():
-    r = RecordingReporter()
-    r.diff_summary(_diff(new=3, changed=2, deleted=1, unchanged=10))
-    assert r.events == [{
-        'type': 'diff_summary',
-        'new': 3, 'changed': 2, 'deleted': 1, 'unchanged': 10,
-    }]
+    with r.indexing_step() as complete:
+        complete(9999)
+    assert r.events == [
+        {'type': 'indexing_start'},
+        {'type': 'indexed', 'row_count': 9999},
+        {'type': 'indexing_end'},
+    ]
 
 
 # ── parse_progress ────────────────────────────────────────────────────────────
@@ -153,18 +153,20 @@ def test_done_nothing_to_do():
 def test_all_events_are_json_serialisable():
     r = RecordingReporter()
     r.building()
-    r.extracting(Path('/p/mylib.pbl'))
+    with r.extracting_progress(2) as ep:
+        ep.advance()
+        ep.advance()
     with r.status('s'):
         pass
-    r.diff_summary(_diff(new=1, changed=1, deleted=1, unchanged=1))
     with r.parse_progress(2, 'P') as prog:
         prog.advance()
         prog.on_error({'file': 'f', 'error': 'e'})
+    with r.indexing_step() as complete:
+        complete(99)
     with r.analyze_progress(1) as ap:
         ap.advance_extract()
         ap.advance_cyclomatic()
         ap.advance_metrics('done')
-    r.indexed(99)
     r.done(parsed=2, errors=1, rows=99, diff=_diff(new=1, changed=1))
 
     # Must not raise

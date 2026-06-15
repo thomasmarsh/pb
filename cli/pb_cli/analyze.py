@@ -43,11 +43,12 @@ def extract_calls(conn, progress: AnalyzeProgress) -> None:
             call_type  TEXT
         )
     """)
-    procs = conn.execute(
-        "SELECT file, object, name, body_json FROM procedures WHERE body_json IS NOT NULL"
-    ).fetchall()
     rows = []
-    for file, obj, name, body_json in procs:
+    result = conn.execute(
+        "SELECT file, object, name, body_json FROM procedures WHERE body_json IS NOT NULL"
+    )
+    while row := result.fetchone():
+        file, obj, name, body_json = row
         for callee, call_type in walk_calls(json.loads(body_json)):
             if callee:
                 rows.append((file, obj, name, callee, call_type))
@@ -91,16 +92,15 @@ def count_branches(node) -> int:
 
 
 def compute_cyclomatic(conn, progress: AnalyzeProgress) -> None:
-    try:
-        conn.execute("ALTER TABLE procedures ADD COLUMN cyclomatic INT DEFAULT 0")
-    except Exception:
-        conn.execute("UPDATE procedures SET cyclomatic = 0")
+    conn.execute("ALTER TABLE procedures DROP COLUMN IF EXISTS cyclomatic")
+    conn.execute("ALTER TABLE procedures ADD COLUMN cyclomatic INT DEFAULT 0")
 
-    procs = conn.execute(
-        "SELECT rowid, body_json FROM procedures WHERE body_json IS NOT NULL"
-    ).fetchall()
     rows = []
-    for rowid, body_json in procs:
+    result = conn.execute(
+        "SELECT rowid, body_json FROM procedures WHERE body_json IS NOT NULL"
+    )
+    while row := result.fetchone():
+        rowid, body_json = row
         cc = count_branches(json.loads(body_json)) + 1
         rows.append([cc, rowid])
         progress.advance_cyclomatic()

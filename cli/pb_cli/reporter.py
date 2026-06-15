@@ -9,9 +9,32 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator, Protocol
+from typing import Callable, Iterator, Protocol
 
 from pb_cli.state import FileDiff
+
+
+# ── ExtractProgress ────────────────────────────────────────────────────────────
+
+class ExtractProgress(Protocol):
+    def advance(self) -> None: ...
+
+
+class _LiveExtractProgress:
+    def __init__(self, progress, task) -> None:
+        self._progress = progress
+        self._task = task
+
+    def advance(self) -> None:
+        self._progress.advance(self._task)
+
+
+class _RecordingExtractProgress:
+    def __init__(self, events: list[dict]) -> None:
+        self._events = events
+
+    def advance(self) -> None:
+        self._events.append({'type': 'extracting_advance'})
 
 
 # ── ParseProgress ──────────────────────────────────────────────────────────────
@@ -72,7 +95,7 @@ class _LiveAnalyzeProgress:
 
     def advance_metrics(self, label: str) -> None:
         self._progress.advance(self._t3)
-        self._progress.update(self._t3, description=f'[3/3] Graph metrics: {label:<22}')
+        self._progress.update(self._t3, description=f'[4/4] Graph metrics: {label:<22}')
 
 
 class _RecordingAnalyzeProgress:
@@ -94,11 +117,10 @@ class _RecordingAnalyzeProgress:
 class Reporter(Protocol):
     def building(self) -> None: ...
     def status(self, msg: str): ...
-    def extracting(self, pbl_path: Path) -> None: ...
-    def diff_summary(self, diff: FileDiff) -> None: ...
+    def extracting_progress(self, total: int): ...
     def parse_progress(self, total: int, label: str): ...
+    def indexing_step(self): ...
     def analyze_progress(self, n_procs: int): ...
-    def indexed(self, row_count: int) -> None: ...
     def done(self, *, parsed: int, errors: int,
              rows: int | None = None, diff: FileDiff | None = None) -> None: ...
 
@@ -116,29 +138,32 @@ class LiveReporter:
     def status(self, msg: str):
         return self._c.status(f'[dim]{msg}[/dim]')
 
-    def extracting(self, pbl_path: Path) -> None:
-        self._c.print(f'[dim]Extracting {pbl_path.name}[/dim]')
-
-    def diff_summary(self, diff: FileDiff) -> None:
-        parts = []
-        if diff.new:
-            parts.append(f'{len(diff.new)} new')
-        if diff.changed:
-            parts.append(f'{len(diff.changed)} changed')
-        if diff.deleted:
-            parts.append(f'{len(diff.deleted)} deleted')
-        if diff.unchanged:
-            parts.append(f'{len(diff.unchanged)} unchanged')
-        if parts:
-            self._c.print('[dim]' + ' · '.join(parts) + '[/dim]')
+    @contextmanager
+    def extracting_progress(self, total: int) -> Iterator[_LiveExtractProgress]:
+        from rich.progress import (
+            BarColumn, MofNCompleteColumn, Progress,
+            SpinnerColumn, TextColumn, TimeElapsedColumn,
+        )
+        with Progress(
+            SpinnerColumn(finished_text='[green]✓[/green]'),
+            TextColumn('[bold]{task.description}'),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=self._c,
+        ) as progress:
+            task = progress.add_task('Extracting PBLs', total=total)
+            yield _LiveExtractProgress(progress, task)
 
     @contextmanager
     def parse_progress(self, total: int, label: str) -> Iterator[_LiveParseProgress]:
         from rich.progress import (
-            BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn,
+            BarColumn, MofNCompleteColumn, Progress,
+            SpinnerColumn, TextColumn, TimeElapsedColumn,
         )
         with Progress(
-            TextColumn('[bold blue]{task.description}[/bold blue]'),
+            SpinnerColumn(finished_text='[green]✓[/green]'),
+            TextColumn('[bold]{task.description}[/bold]'),
             BarColumn(),
             MofNCompleteColumn(),
             TimeElapsedColumn(),
@@ -147,6 +172,22 @@ class LiveReporter:
         ) as progress:
             task = progress.add_task(label, total=total, err_str='')
             yield _LiveParseProgress(progress, task)
+
+    @contextmanager
+    def indexing_step(self) -> Iterator[Callable[[int], None]]:
+        from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+        with Progress(
+            SpinnerColumn(finished_text='[green]✓[/green]'),
+            TextColumn('[bold]{task.description}[/bold]'),
+            TimeElapsedColumn(),
+            console=self._c,
+        ) as progress:
+            task = progress.add_task('[1/4] Indexing', total=1)
+
+            def complete(row_count: int) -> None:
+                progress.update(task, description=f'[1/4] Indexing  {row_count:,} rows', completed=1)
+
+            yield complete
 
     @contextmanager
     def analyze_progress(self, n_procs: int) -> Iterator[_LiveAnalyzeProgress]:
@@ -162,13 +203,10 @@ class LiveReporter:
             TimeElapsedColumn(),
             console=self._c,
         ) as progress:
-            t1 = progress.add_task('[1/3] Extracting call graph      ', total=n_procs)
-            t2 = progress.add_task('[2/3] Cyclomatic complexity       ', total=n_procs)
-            t3 = progress.add_task('[3/3] Graph metrics: build graph  ', total=4)
+            t1 = progress.add_task('[2/4] Extracting call graph      ', total=n_procs)
+            t2 = progress.add_task('[3/4] Cyclomatic complexity       ', total=n_procs)
+            t3 = progress.add_task('[4/4] Graph metrics: build graph  ', total=4)
             yield _LiveAnalyzeProgress(progress, t1, t2, t3)
-
-    def indexed(self, row_count: int) -> None:
-        self._c.print(f'[dim]Indexed {row_count:,} rows[/dim]')
 
     def done(self, *, parsed: int, errors: int,
              rows: int | None = None, diff: FileDiff | None = None) -> None:
@@ -208,15 +246,12 @@ class RecordingReporter:
         self.events.append({'type': 'status', 'msg': msg})
         yield
 
-    def extracting(self, pbl_path: Path) -> None:
-        self.events.append({'type': 'extracting', 'pbl': pbl_path.name})
-
-    def diff_summary(self, diff: FileDiff) -> None:
-        self.events.append({
-            'type': 'diff_summary',
-            'new': len(diff.new), 'changed': len(diff.changed),
-            'deleted': len(diff.deleted), 'unchanged': len(diff.unchanged),
-        })
+    @contextmanager
+    def extracting_progress(self, total: int) -> Iterator[_RecordingExtractProgress]:
+        self.events.append({'type': 'extracting_start', 'total': total})
+        prog = _RecordingExtractProgress(self.events)
+        yield prog
+        self.events.append({'type': 'extracting_end'})
 
     @contextmanager
     def parse_progress(self, total: int, label: str) -> Iterator[_RecordingParseProgress]:
@@ -226,14 +261,21 @@ class RecordingReporter:
         self.events.append({'type': 'parse_end', 'errors': prog.error_count})
 
     @contextmanager
+    def indexing_step(self) -> Iterator[Callable[[int], None]]:
+        self.events.append({'type': 'indexing_start'})
+
+        def complete(row_count: int) -> None:
+            self.events.append({'type': 'indexed', 'row_count': row_count})
+
+        yield complete
+        self.events.append({'type': 'indexing_end'})
+
+    @contextmanager
     def analyze_progress(self, n_procs: int) -> Iterator[_RecordingAnalyzeProgress]:
         self.events.append({'type': 'analyze_start', 'n_procs': n_procs})
         prog = _RecordingAnalyzeProgress(self.events)
         yield prog
         self.events.append({'type': 'analyze_end'})
-
-    def indexed(self, row_count: int) -> None:
-        self.events.append({'type': 'indexed', 'row_count': row_count})
 
     def done(self, *, parsed: int, errors: int,
              rows: int | None = None, diff: FileDiff | None = None) -> None:

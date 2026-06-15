@@ -241,7 +241,7 @@ def test_resolve_passthrough_plain_src_dir(tmp_path):
     with resolve_source_dir(tmp_path, reporter) as src:
         assert src == tmp_path
 
-    assert not any(e['type'] == 'extracting' for e in reporter.events)
+    assert not any(e['type'] == 'extracting_start' for e in reporter.events)
 
 def test_resolve_single_pbl_file(tmp_path):
     """Single .pbl → extract to temp dir, yield that dir."""
@@ -254,7 +254,8 @@ def test_resolve_single_pbl_file(tmp_path):
         text = (src / 'w_main.srw').read_text()
         assert PBL_HEADER in text
 
-    assert sum(1 for e in reporter.events if e['type'] == 'extracting') == 1
+    assert any(e == {'type': 'extracting_start', 'total': 1} for e in reporter.events)
+    assert sum(1 for e in reporter.events if e['type'] == 'extracting_advance') == 1
 
 def test_resolve_directory_of_pbls(tmp_path):
     """Directory of .pbl files → each in its own foo.pbl/ sub-dir."""
@@ -266,7 +267,8 @@ def test_resolve_directory_of_pbls(tmp_path):
         assert (src / 'a.pbl' / 'w_main.srw').exists()
         assert (src / 'b.pbl' / 'u_svc.sru').exists()
 
-    assert sum(1 for e in reporter.events if e['type'] == 'extracting') == 2
+    assert any(e == {'type': 'extracting_start', 'total': 2} for e in reporter.events)
+    assert sum(1 for e in reporter.events if e['type'] == 'extracting_advance') == 2
 
 def test_resolve_temp_dir_cleaned_up(tmp_path):
     """Temp dir is removed after the context exits."""
@@ -280,7 +282,7 @@ def test_resolve_temp_dir_cleaned_up(tmp_path):
 
     assert not captured[0].exists()
 
-def test_resolve_extracting_event_includes_pbl_name(tmp_path):
+def test_resolve_extracting_progress_total(tmp_path):
     pbl = tmp_path / 'mylib.pbl'
     pbl.write_bytes(_make_ansi_pbl([('w_main.srw', 'x')]))
     reporter = RecordingReporter()
@@ -288,8 +290,8 @@ def test_resolve_extracting_event_includes_pbl_name(tmp_path):
     with resolve_source_dir(pbl, reporter):
         pass
 
-    ext_events = [e for e in reporter.events if e['type'] == 'extracting']
-    assert ext_events == [{'type': 'extracting', 'pbl': 'mylib.pbl'}]
+    assert any(e == {'type': 'extracting_start', 'total': 1} for e in reporter.events)
+    assert any(e == {'type': 'extracting_end'} for e in reporter.events)
 
 
 # ── openpay corpus integration test ──────────────────────────────────────────
