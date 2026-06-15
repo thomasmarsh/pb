@@ -26,6 +26,11 @@ export function createStoreAdapter(
 
   function dispatch(action: AppAction): void {
     const [next, effect] = reducerFn(state as AppState, action, env);
+
+    // reconcile doesn't track Set mutations — patch Set paths directly
+    if (state.explore.expandedNodes !== next.explore.expandedNodes) {
+      setState("explore", "expandedNodes", next.explore.expandedNodes);
+    }
     setState(reconcile(next));
 
     if (VIEW_ACTIONS.has(action.type)) {
