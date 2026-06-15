@@ -45,13 +45,15 @@ def test_status_is_context_manager_and_records():
 
 # ── indexing_step ─────────────────────────────────────────────────────────────
 
-def test_indexing_step_records_start_complete_end():
+def test_indexing_step_records_chunks():
     r = RecordingReporter()
-    with r.indexing_step() as complete:
-        complete(9999)
+    with r.indexing_step() as advance:
+        advance(500)
+        advance(300)
     assert r.events == [
         {'type': 'indexing_start'},
-        {'type': 'indexed', 'row_count': 9999},
+        {'type': 'index_chunk', 'n': 500},
+        {'type': 'index_chunk', 'n': 300},
         {'type': 'indexing_end'},
     ]
 
@@ -161,8 +163,9 @@ def test_all_events_are_json_serialisable():
     with r.parse_progress(2, 'P') as prog:
         prog.advance()
         prog.on_error({'file': 'f', 'error': 'e'})
-    with r.indexing_step() as complete:
-        complete(99)
+    with r.indexing_step() as advance:
+        advance(50)
+        advance(49)
     with r.analyze_progress(1) as ap:
         ap.advance_extract()
         ap.advance_cyclomatic()

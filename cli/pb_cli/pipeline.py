@@ -55,9 +55,8 @@ def run(
 
     objects, errors = _parse_subset(src_dir, binary, to_parse, reporter)
 
-    with reporter.indexing_step() as complete:
-        row_count = ingest_batch(objects, conn, dialect)
-        complete(row_count)
+    with reporter.indexing_step() as advance:
+        row_count = ingest_batch(objects, conn, dialect, on_progress=advance)
 
     parsed_files = {obj['file'] for obj in objects}
     save_file_state(conn, {f: current[f] for f in to_parse if f in parsed_files})

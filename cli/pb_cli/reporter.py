@@ -176,18 +176,23 @@ class LiveReporter:
     @contextmanager
     def indexing_step(self) -> Iterator[Callable[[int], None]]:
         from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+        total_rows = 0
         with Progress(
             SpinnerColumn(finished_text='[green]✓[/green]'),
             TextColumn('[bold]{task.description}[/bold]'),
             TimeElapsedColumn(),
             console=self._c,
         ) as progress:
-            task = progress.add_task('[1/4] Indexing', total=1)
+            task = progress.add_task('[1/4] Indexing', total=None)
 
-            def complete(row_count: int) -> None:
-                progress.update(task, description=f'[1/4] Indexing  {row_count:,} rows', completed=1)
+            def advance(n: int) -> None:
+                nonlocal total_rows
+                total_rows += n
+                progress.update(task, description=f'[1/4] Indexing  {total_rows:,} rows')
 
-            yield complete
+            yield advance
+            progress.update(task, total=1, completed=1,
+                            description=f'[1/4] Indexing  {total_rows:,} rows')
 
     @contextmanager
     def analyze_progress(self, n_procs: int) -> Iterator[_LiveAnalyzeProgress]:
@@ -264,10 +269,10 @@ class RecordingReporter:
     def indexing_step(self) -> Iterator[Callable[[int], None]]:
         self.events.append({'type': 'indexing_start'})
 
-        def complete(row_count: int) -> None:
-            self.events.append({'type': 'indexed', 'row_count': row_count})
+        def advance(n: int) -> None:
+            self.events.append({'type': 'index_chunk', 'n': n})
 
-        yield complete
+        yield advance
         self.events.append({'type': 'indexing_end'})
 
     @contextmanager
