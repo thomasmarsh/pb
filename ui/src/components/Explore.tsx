@@ -6,7 +6,7 @@ import type { Store } from "../core/store.js";
 import type { AppState } from "../app/state.js";
 import type { AppAction } from "../app/actions.js";
 import { ExploreStoreContext, useExploreStore } from "./ExploreContext.js";
-import { highlightPowerScript } from "../highlight.js";
+import { highlightPowerScript } from "../lib/highlight.js";
 import type { ExploreLibrary, ExploreObject, ExploreProcedure, DwExploreDetail, ExploreProcDetail, SqlStatementRow } from "../types/api.js";
 import { TreeNode } from "./TreeNode.js";
 import { AstNode } from "./ast-node.js";

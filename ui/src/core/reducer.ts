@@ -5,6 +5,8 @@
 
 import { Effect } from "./effect.js";
 
+export type Dispatch<A> = (a: A) => void;
+
 export type Reducer<S, A, Env> = (
   draft: S,
   action: A,

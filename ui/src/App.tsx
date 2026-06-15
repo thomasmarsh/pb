@@ -7,7 +7,7 @@ import type { Store } from "./core/store.js";
 import { initialState, reducer } from "./app/reducer.js";
 import type { AppState } from "./app/state.js";
 import type { AppAction } from "./app/actions.js";
-import { createApiClient, createEnv } from "./api-client.js";
+import { createApiClient, createEnv } from "./app/api-client.js";
 import { Layout } from "./components/Layout.js";
 import { Dashboard } from "./components/Dashboard.js";
 import { Objects, ObjectDetail } from "./components/Objects.js";
@@ -18,6 +18,7 @@ import { Queries } from "./components/Queries.js";
 import { Search } from "./components/Search.js";
 import { Explore } from "./components/Explore.js";
 import { initViewFromUrl, setupPopstateHandler, syncUrlFromState, NAV_SYNC_ACTIONS } from "./features/navigation/url-sync.js";
+import type { NavigationAction } from "./features/navigation/types.js";
 import { HealthCheck } from "./components/HealthCheck.js";
 
 const env = createEnv(createApiClient());
@@ -32,8 +33,9 @@ const store = createStore(initialState(), reducer, env, (action, state) => {
 });
 
 // Bootstrap: read URL and dispatch initial actions
-initViewFromUrl(store.dispatch);
-setupPopstateHandler(store.dispatch);
+const navDispatch = (a: NavigationAction) => store.dispatch({ tag: "nav", action: a });
+initViewFromUrl(navDispatch);
+setupPopstateHandler(navDispatch);
 
 // Load stats for dashboard
 store.dispatch({ tag: "nav", action: { type: "stats-load" } });

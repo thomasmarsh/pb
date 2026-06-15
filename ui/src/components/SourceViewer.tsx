@@ -1,7 +1,7 @@
 // SourceViewer.tsx — Source code viewer with cross-linked identifiers.
 
 import { For, Show, createSignal, createMemo } from "solid-js";
-import { highlightPowerScript, PB_KEYWORDS } from "../highlight.js";
+import { highlightPowerScript, PB_KEYWORDS } from "../lib/highlight.js";
 import type { ProcedureInfo } from "../types/api.js";
 import type { Store } from "../core/store.js";
 import type { AppState } from "../app/state.js";

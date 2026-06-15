@@ -14,5 +14,3 @@ export type AppAction =
   | { tag: "diagrams"; action: DiagramsAction }
   | { tag: "queries"; action: QueriesAction }
   | { tag: "search"; action: SearchAction };
-
-export type Dispatch = (action: AppAction) => void;

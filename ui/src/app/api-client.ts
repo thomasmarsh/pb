@@ -15,9 +15,9 @@ import type {
   ExploreProcDetail,
   TableSummary,
   TableDetail,
-} from "./types/api.js";
-import { Effect } from "./core/effect.js";
-import type { AppEnv as Env } from "./app/reducer.js";
+} from "../types/api.js";
+import { Effect } from "../core/effect.js";
+import type { AppEnv as Env } from "./reducer.js";
 
 export interface ApiClient {
   getStats(): Promise<StatsResponse>;

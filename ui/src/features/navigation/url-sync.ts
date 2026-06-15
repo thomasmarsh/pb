@@ -1,8 +1,7 @@
 // features/navigation/url-sync.ts — URL synchronization.
 
-import type { ViewName } from "./types.js";
-import type { Dispatch } from "../../app/actions.js";
-import type { NavigationAction } from "./types.js";
+import type { ViewName, NavigationAction } from "./types.js";
+import type { Dispatch } from "../../core/reducer.js";
 import { viewToPath, pathToView } from "./routes.js";
 
 /** Action types that require a URL push after dispatch. */
@@ -35,26 +34,26 @@ export function syncUrlFromState(
 
 // ── Initialize from URL ─────────────────────────────────────────────────────
 
-function dispatchFromResolved(dispatch: Dispatch, view: ViewName, params: Record<string, string>): void {
+function dispatchFromResolved(dispatch: Dispatch<NavigationAction>, view: ViewName, params: Record<string, string>): void {
   if (view === "objectDetail" && params.objectName) {
-    dispatch({ tag: "nav", action: { type: "object-selected", name: params.objectName } });
+    dispatch({ type: "object-selected", name: params.objectName });
   } else if (view === "procedureDetail" && params.procObject && params.procName) {
-    dispatch({ tag: "nav", action: { type: "procedure-selected", objectName: params.procObject, procName: params.procName } });
+    dispatch({ type: "procedure-selected", objectName: params.procObject, procName: params.procName });
   } else if (view === "dwDetail" && params.dwName) {
-    dispatch({ tag: "nav", action: { type: "dw-selected", name: params.dwName } });
+    dispatch({ type: "dw-selected", name: params.dwName });
   } else {
-    dispatch({ tag: "nav", action: { type: "navigate", view } });
+    dispatch({ type: "navigate", view });
   }
 }
 
-export function initViewFromUrl(dispatch: Dispatch): void {
+export function initViewFromUrl(dispatch: Dispatch<NavigationAction>): void {
   const { view, params } = pathToView(window.location.pathname);
   dispatchFromResolved(dispatch, view, params);
 }
 
 // ── Browser back/forward ────────────────────────────────────────────────────
 
-export function setupPopstateHandler(dispatch: Dispatch): void {
+export function setupPopstateHandler(dispatch: Dispatch<NavigationAction>): void {
   window.addEventListener("popstate", () => {
     const { view, params } = pathToView(window.location.pathname);
     dispatchFromResolved(dispatch, view, params);
