@@ -259,42 +259,16 @@ const RENDERERS: Record<string, NodeRenderer> = {
   BsReturn: leafFromTag((n) => "return" + (n.contents ? " " + exprSum(n.contents) : "")),
 
   // ── Statements (compound) ──
-  BsAssign: compound(
-    (n) => {
-      const c = n.contents;
-      if (Array.isArray(c) && c.length === 2) {
-        return getLvalue(c[0]) + " = " + exprSum(c[1]);
-      }
-      return "assign";
-    },
-    (n) => {
-      const c = n.contents;
-      if (Array.isArray(c) && c.length === 2) {
-        return [
-          { key: "lhs", label: "lhs", value: c[0] },
-          { key: "rhs", label: "rhs", value: c[1] },
-        ];
-      }
-      return [];
-    },
-  ),
-  BsAssignExpr: compound(
-    (n) => {
-      const c = n.contents;
-      if (Array.isArray(c) && c.length === 2) return exprSum(c[0]) + " = " + exprSum(c[1]);
-      return "assign";
-    },
-    (n) => {
-      const c = n.contents;
-      if (Array.isArray(c) && c.length === 2) {
-        return [
-          { key: "lhs", label: "lhs", value: c[0] },
-          { key: "rhs", label: "rhs", value: c[1] },
-        ];
-      }
-      return [];
-    },
-  ),
+  BsAssign: leafFromTag((n) => {
+    const c = n.contents;
+    if (Array.isArray(c) && c.length === 2) return getLvalue(c[0]) + " = " + exprSum(c[1]);
+    return "assign";
+  }),
+  BsAssignExpr: leafFromTag((n) => {
+    const c = n.contents;
+    if (Array.isArray(c) && c.length === 2) return exprSum(c[0]) + " = " + exprSum(c[1]);
+    return "assign";
+  }),
   BsAugAssign: leafFromTag((n) => {
     const c = n.contents;
     if (Array.isArray(c) && c.length === 3) {
@@ -544,6 +518,22 @@ function DwNode(props: { name: string; depth: number }): JSX.Element {
 function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
   const store = useStore();
 
+  const retrieveSql = createMemo(() => {
+    const cols = props.data.retrieve_columns
+      .map(c => `${c.table_name}.${c.column_name}`)
+      .join(", ");
+    const tables = props.data.retrieve_tables.join(", ");
+    const where = props.data.retrieve_where
+      .map((w, i) => (i === 0 ? "" : `${w.logic ?? "AND"} `) + `${w.exp1} ${w.op} ${w.exp2}`)
+      .join("\n        ");
+    const lines = [
+      cols   ? `SELECT  ${cols}`   : null,
+      tables ? `FROM    ${tables}` : null,
+      where  ? `WHERE   ${where}`  : null,
+    ].filter(Boolean);
+    return lines.length > 0 ? lines.join("\n") : null;
+  });
+
   const controlBands = createMemo(() => {
     const bands = new Map<string, typeof props.data.controls>();
     for (const c of props.data.controls) {
@@ -576,64 +566,37 @@ function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
                 <span class="dw-section-count">{controlBands().get(band)!.length}</span>
               </div>
               <Show when={isBandExpanded(band)}>
-                <div class="dw-band-controls">
-                  <For each={controlBands().get(band)!}>
-                    {(ctrl) => (
-                      <div class="dw-control">
-                        <span class="dw-ctrl-type">{ctrl.control_type}</span>
-                        <span class="dw-ctrl-name">{ctrl.control_name}</span>
-                        <Show when={ctrl.expression}>
-                          <span class="dw-ctrl-expr">{ctrl.expression}</span>
-                        </Show>
-                      </div>
-                    )}
-                  </For>
-                </div>
+                <table class="dw-ctrl-table">
+                  <thead>
+                    <tr>
+                      <th>type</th>
+                      <th>name</th>
+                      <th>expression</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <For each={controlBands().get(band)!}>
+                      {(ctrl) => (
+                        <tr>
+                          <td class="ct-type">{ctrl.control_type}</td>
+                          <td class="ct-name">{ctrl.control_name}</td>
+                          <td class="ct-expr">{ctrl.expression ?? ""}</td>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
               </Show>
             </div>
           )}
         </For>
       </Show>
 
-      <Show when={props.data.retrieve_tables.length > 0}>
+      <Show when={retrieveSql()}>
         <div class="dw-section-header">
-          <span class="dw-section-title">Retrieve Tables</span>
+          <span class="dw-section-title">SQL</span>
         </div>
-        <For each={props.data.retrieve_tables}>
-          {(table) => <div class="dw-table-name">{table}</div>}
-        </For>
-      </Show>
-
-      <Show when={props.data.retrieve_columns.length > 0}>
-        <div class="dw-section-header">
-          <span class="dw-section-title">Columns</span>
-          <span class="dw-section-count">{props.data.retrieve_columns.length}</span>
-        </div>
-        <For each={props.data.retrieve_columns}>
-          {(col) => (
-            <div class="dw-column">
-              <span class="dw-col-table">{col.table_name}</span>
-              <span class="dw-col-dot">.</span>
-              <span class="dw-col-name">{col.column_name}</span>
-            </div>
-          )}
-        </For>
-      </Show>
-
-      <Show when={props.data.retrieve_where.length > 0}>
-        <div class="dw-section-header">
-          <span class="dw-section-title">Where Clauses</span>
-        </div>
-        <For each={props.data.retrieve_where}>
-          {(w) => (
-            <div class="dw-where">
-              <span class="dw-where-exp">{w.exp1}</span>
-              <span class="dw-where-op">{w.op}</span>
-              <span class="dw-where-exp">{w.exp2}</span>
-              <Show when={w.logic}><span class="dw-where-logic">{w.logic}</span></Show>
-            </div>
-          )}
-        </For>
+        <pre class="code-viewer" style={{ margin: "0 8px 4px", padding: "10px 14px", "font-size": "12px", "max-height": "200px" }}>{retrieveSql()}</pre>
       </Show>
 
       <Show when={props.data.arguments.length > 0}>
@@ -658,8 +621,26 @@ function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
 function ObjectNode(props: { lib: string; obj: ExploreObject; depth: number }): JSX.Element {
   const store = useStore();
   const nodeId = () => objId(props.lib, props.obj.name);
-  const isExpanded = () => store.state.explore.expandedNodes.has(nodeId());
   const isDw = () => props.obj.kind === "datawindow";
+
+  const treeFilter = () => store.state.explore.treeFilter.toLowerCase();
+
+  const visibleProcs = createMemo(() => {
+    const q = treeFilter();
+    if (!q) return props.obj.procedures;
+    return props.obj.procedures.filter(p => p.name.toLowerCase().includes(q));
+  });
+
+  const isVisible = createMemo(() => {
+    const q = treeFilter();
+    if (!q) return true;
+    if (props.obj.name.toLowerCase().includes(q)) return true;
+    if (isDw()) return false;
+    return visibleProcs().length > 0;
+  });
+
+  const isExpanded = () =>
+    store.state.explore.expandedNodes.has(nodeId()) || (treeFilter() !== "" && isVisible());
 
   const procCount = createMemo(() => {
     if (isDw()) return "";
@@ -668,32 +649,34 @@ function ObjectNode(props: { lib: string; obj: ExploreObject; depth: number }): 
   });
 
   return (
-    <div class="tree-node obj-node" style={{ "padding-left": `${props.depth * 14}px` }}>
-      <div
-        class="tree-node-row clickable"
-        onClick={() => store.dispatch({ type: "EXPLORE_TOGGLE", nodeId: nodeId() })}
-      >
-        <span class="tree-chevron">{chevron(isExpanded())}</span>
-        <span class={`badge ${kindBadge(props.obj.kind)}`}>{props.obj.kind}</span>
-        <span class="tree-name">{props.obj.name}</span>
-        <Show when={!isDw()}>
-          <span class="tree-summary">{procCount()}</span>
-        </Show>
-      </div>
-      <Show when={isExpanded()}>
-        <div class="tree-children">
-          <Show when={isDw()} fallback={
-            <Show when={props.obj.procedures.length > 0} fallback={<div class="tree-empty">No procedures</div>}>
-              <For each={props.obj.procedures}>
-                {(proc) => <ProcNode objName={props.obj.name} proc={proc} depth={props.depth + 1} />}
-              </For>
-            </Show>
-          }>
-            <DwNode name={props.obj.name} depth={props.depth + 1} />
+    <Show when={isVisible()}>
+      <div class="tree-node obj-node" style={{ "padding-left": `${props.depth * 14}px` }}>
+        <div
+          class="tree-node-row clickable"
+          onClick={() => store.dispatch({ type: "EXPLORE_TOGGLE", nodeId: nodeId() })}
+        >
+          <span class="tree-chevron">{chevron(isExpanded())}</span>
+          <span class={`badge ${kindBadge(props.obj.kind)}`}>{props.obj.kind}</span>
+          <span class="tree-name">{props.obj.name}</span>
+          <Show when={!isDw()}>
+            <span class="tree-summary">{procCount()}</span>
           </Show>
         </div>
-      </Show>
-    </div>
+        <Show when={isExpanded()}>
+          <div class="tree-children">
+            <Show when={isDw()} fallback={
+              <Show when={visibleProcs().length > 0} fallback={<div class="tree-empty">No procedures</div>}>
+                <For each={visibleProcs()}>
+                  {(proc) => <ProcNode objName={props.obj.name} proc={proc} depth={props.depth + 1} />}
+                </For>
+              </Show>
+            }>
+              <DwNode name={props.obj.name} depth={props.depth + 1} />
+            </Show>
+          </div>
+        </Show>
+      </div>
+    </Show>
   );
 }
 
@@ -702,27 +685,43 @@ function ObjectNode(props: { lib: string; obj: ExploreObject; depth: number }): 
 function LibraryNode(props: { lib: ExploreLibrary; depth: number }): JSX.Element {
   const store = useStore();
   const nodeId = () => libId(props.lib.name);
-  const isExpanded = () => store.state.explore.expandedNodes.has(nodeId());
+
+  const treeFilter = () => store.state.explore.treeFilter.toLowerCase();
+
+  const hasVisibleObjects = createMemo(() => {
+    const q = treeFilter();
+    if (!q) return true;
+    return props.lib.objects.some(obj => {
+      if (obj.name.toLowerCase().includes(q)) return true;
+      if (obj.kind === "datawindow") return false;
+      return obj.procedures.some(p => p.name.toLowerCase().includes(q));
+    });
+  });
+
+  const isExpanded = () =>
+    store.state.explore.expandedNodes.has(nodeId()) || (treeFilter() !== "" && hasVisibleObjects());
 
   return (
-    <div class="tree-node lib-node" style={{ "padding-left": `${props.depth * 14}px` }}>
-      <div
-        class="tree-node-row clickable"
-        onClick={() => store.dispatch({ type: "EXPLORE_TOGGLE", nodeId: nodeId() })}
-      >
-        <span class="tree-chevron">{chevron(isExpanded())}</span>
-        <span class="tree-icon">{"▣"}</span>
-        <span class="tree-name">{props.lib.name}</span>
-        <span class="tree-summary">{props.lib.objects.length} objects</span>
-      </div>
-      <Show when={isExpanded()}>
-        <div class="tree-children">
-          <For each={props.lib.objects}>
-            {(obj) => <ObjectNode lib={props.lib.name} obj={obj} depth={props.depth + 1} />}
-          </For>
+    <Show when={hasVisibleObjects()}>
+      <div class="tree-node lib-node" style={{ "padding-left": `${props.depth * 14}px` }}>
+        <div
+          class="tree-node-row clickable"
+          onClick={() => store.dispatch({ type: "EXPLORE_TOGGLE", nodeId: nodeId() })}
+        >
+          <span class="tree-chevron">{chevron(isExpanded())}</span>
+          <span class="tree-icon">{"▣"}</span>
+          <span class="tree-name">{props.lib.name}</span>
+          <span class="tree-summary">{props.lib.objects.length} objects</span>
         </div>
-      </Show>
-    </div>
+        <Show when={isExpanded()}>
+          <div class="tree-children">
+            <For each={props.lib.objects}>
+              {(obj) => <ObjectNode lib={props.lib.name} obj={obj} depth={props.depth + 1} />}
+            </For>
+          </div>
+        </Show>
+      </div>
+    </Show>
   );
 }
 
@@ -755,6 +754,8 @@ function ProcDetailPanel(props: { nodeId: string }): JSX.Element {
     return d?.source_rendered ? highlightPowerScript(d.source_rendered) : "";
   });
 
+  const activeTab = () => store.state.explore.activeTab;
+
   return (
     <Show when={entry() !== undefined} fallback={
       <div class="explore-right-body">
@@ -780,20 +781,35 @@ function ProcDetailPanel(props: { nodeId: string }): JSX.Element {
               <Show when={d().cyclomatic != null}>
                 <span class="badge badge-cc">CC: {d().cyclomatic}</span>
               </Show>
+              <div class="explore-tabs" style={{ "margin-left": "auto" }}>
+                <button
+                  class={`explore-tab-btn${activeTab() === "source" ? " active" : ""}`}
+                  onClick={() => store.dispatch({ type: "EXPLORE_TAB", tab: "source" })}
+                >Source</button>
+                <button
+                  class={`explore-tab-btn${activeTab() === "ast" ? " active" : ""}`}
+                  onClick={() => store.dispatch({ type: "EXPLORE_TAB", tab: "ast" })}
+                >AST</button>
+              </div>
             </div>
             <div class="explore-right-body">
-              <div class="source-viewer">
-                <div class="source-gutter">
-                  <For each={lines()}>
-                    {(_, i) => (
-                      <div class="source-gutter-line">{(d().start_line ?? 1) + i()}</div>
-                    )}
-                  </For>
+              <Show when={activeTab() === "source"}>
+                <div class="source-viewer">
+                  <div class="source-gutter">
+                    <For each={lines()}>
+                      {(_, i) => (
+                        <div class="source-gutter-line">{(d().start_line ?? 1) + i()}</div>
+                      )}
+                    </For>
+                  </div>
+                  <div class="source-code-area">
+                    <pre innerHTML={highlighted()} />
+                  </div>
                 </div>
-                <div class="source-code-area">
-                  <pre innerHTML={highlighted()} />
-                </div>
-              </div>
+              </Show>
+              <Show when={activeTab() === "ast"}>
+                <AstNode node={d().ast} nodeId={props.nodeId + ".ast"} depth={0} />
+              </Show>
             </div>
           </>
         )}
@@ -910,6 +926,12 @@ export function Explore() {
               Collapse All
             </button>
           </div>
+          <input
+            class="explore-filter-input"
+            placeholder="Filter…"
+            value={store.state.explore.treeFilter}
+            onInput={(e) => store.dispatch({ type: "EXPLORE_FILTER", q: e.currentTarget.value })}
+          />
         </div>
         <div class="explore-left-tree">
           <Show

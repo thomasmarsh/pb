@@ -146,6 +146,8 @@ export function initialState(): AppState {
       procCache: {},
       dwCache: {},
       loading: false,
+      activeTab: "source" as const,
+      treeFilter: "",
     },
   };
 }
@@ -355,7 +357,7 @@ export function reducer(state: AppState, action: AppAction, env: Env): [AppState
   }
 
   case "EXPLORE_PROC_SELECT": {
-    const next = { ...state, explore: { ...state.explore, selectedProc: action.nodeId, selectedDw: null } };
+    const next = { ...state, explore: { ...state.explore, selectedProc: action.nodeId, selectedDw: null, activeTab: "source" as const } };
     if (!(action.nodeId in state.explore.procCache)) {
       return [next, env.getExploreProcedure(action.objectName, action.procName)
         .map((data): AppAction => ({ type: "EXPLORE_PROC_LOADED", nodeId: action.nodeId, data }))
@@ -397,6 +399,12 @@ export function reducer(state: AppState, action: AppAction, env: Env): [AppState
 
   case "EXPLORE_DW_ERROR":
     return [{ ...state, explore: { ...state.explore, dwCache: { ...state.explore.dwCache, [action.nodeId]: { error: action.error } } } }, null];
+
+  case "EXPLORE_TAB":
+    return [{ ...state, explore: { ...state.explore, activeTab: action.tab } }, null];
+
+  case "EXPLORE_FILTER":
+    return [{ ...state, explore: { ...state.explore, treeFilter: action.q } }, null];
 
   default:
     return [state, null];

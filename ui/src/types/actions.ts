@@ -75,4 +75,6 @@ export type AppAction =
   | { type: "EXPLORE_COLLAPSE_ALL" }
   | { type: "EXPLORE_DW_SELECT"; dwName: string; nodeId: string }
   | { type: "EXPLORE_DW_LOADED"; nodeId: string; data: DwExploreDetail }
-  | { type: "EXPLORE_DW_ERROR"; nodeId: string; error: string };
+  | { type: "EXPLORE_DW_ERROR"; nodeId: string; error: string }
+  | { type: "EXPLORE_TAB"; tab: "source" | "ast" }
+  | { type: "EXPLORE_FILTER"; q: string };

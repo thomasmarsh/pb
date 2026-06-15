@@ -45,6 +45,7 @@ describe("initialState", () => {
     expect(s.explore).toEqual({
       libraries: [], expandedNodes: expect.any(Set), selectedProc: null,
       selectedDw: null, procCache: {}, dwCache: {}, loading: false,
+      activeTab: "source", treeFilter: "",
     });
   });
 
@@ -542,6 +543,42 @@ describe("EXPLORE_COLLAPSE_ALL", () => {
     const s0 = { ...initialState(), explore: { ...initialState().explore, expandedNodes: new Set(["lib:x", "obj:x:y"]) } };
     const [s1] = reducer(s0, { type: "EXPLORE_COLLAPSE_ALL" }, defaultMockEnv);
     expect(s1.explore.expandedNodes.size).toBe(0);
+  });
+});
+
+describe("EXPLORE_TAB", () => {
+  it("sets activeTab to ast", () => {
+    const [s] = reducer(initialState(), { type: "EXPLORE_TAB", tab: "ast" }, defaultMockEnv);
+    expect(s.explore.activeTab).toBe("ast");
+  });
+
+  it("sets activeTab back to source", () => {
+    const s0 = { ...initialState(), explore: { ...initialState().explore, activeTab: "ast" as const } };
+    const [s1] = reducer(s0, { type: "EXPLORE_TAB", tab: "source" }, defaultMockEnv);
+    expect(s1.explore.activeTab).toBe("source");
+  });
+});
+
+describe("EXPLORE_FILTER", () => {
+  it("sets treeFilter", () => {
+    const [s] = reducer(initialState(), { type: "EXPLORE_FILTER", q: "fn_" }, defaultMockEnv);
+    expect(s.explore.treeFilter).toBe("fn_");
+  });
+
+  it("empty string clears treeFilter", () => {
+    const s0 = { ...initialState(), explore: { ...initialState().explore, treeFilter: "old" } };
+    const [s1] = reducer(s0, { type: "EXPLORE_FILTER", q: "" }, defaultMockEnv);
+    expect(s1.explore.treeFilter).toBe("");
+  });
+});
+
+describe("EXPLORE_PROC_SELECT resets activeTab", () => {
+  it("resets activeTab to source when selecting a new proc", () => {
+    const s0 = { ...initialState(), explore: { ...initialState().explore, activeTab: "ast" as const } };
+    const [s1] = reducer(s0, {
+      type: "EXPLORE_PROC_SELECT", objectName: "o", procName: "p", nodeId: "proc:o:p",
+    }, defaultMockEnv);
+    expect(s1.explore.activeTab).toBe("source");
   });
 });
 

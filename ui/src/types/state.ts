@@ -67,6 +67,8 @@ export interface ExploreState {
   procCache: Record<string, ExploreProcDetail | { error: string }>;
   dwCache: Record<string, DwExploreDetail | { error: string }>;
   loading: boolean;
+  activeTab: "source" | "ast";
+  treeFilter: string;
 }
 
 export interface AppState {
