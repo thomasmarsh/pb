@@ -388,3 +388,23 @@ def test_explore_procedure_sql_statements_have_formatted_sql(client_with_sql):
     for stmt in stmts:
         assert "formatted_sql" in stmt
         assert isinstance(stmt["formatted_sql"], str)
+
+
+# ── SQL lineage diagrams ───────────────────────────────────────────────────────
+
+def test_diagram_sql_lineage(client_with_sql):
+    r = client_with_sql.get("/api/diagram/sql-lineage")
+    assert r.status_code == 200
+    assert "image/svg+xml" in r.headers["content-type"]
+    assert "<svg" in r.text
+
+
+def test_diagram_table_lineage_requires_table(client_with_sql):
+    r = client_with_sql.get("/api/diagram/table-lineage")
+    assert r.status_code == 400
+
+
+def test_diagram_table_lineage_with_table(client_with_sql):
+    r = client_with_sql.get("/api/diagram/table-lineage", params={"table": "synthetic_test_table"})
+    assert r.status_code == 200
+    assert "<svg" in r.text

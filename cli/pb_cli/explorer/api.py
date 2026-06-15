@@ -298,6 +298,10 @@ def _render_diagram(kind: str, **kwargs) -> str:
         dot = _build_dw_tables(**kwargs)
     elif kind == "heatmap":
         dot = _build_heatmap(**kwargs)
+    elif kind == "sql-lineage":
+        dot = _build_sql_lineage(**kwargs)
+    elif kind == "table-lineage":
+        dot = _build_table_lineage(**kwargs)
     else:
         raise HTTPException(status_code=400, detail=f"Unknown diagram: {kind}")
 
@@ -322,6 +326,14 @@ _EDGE_DEFAULTS = {
     "penwidth": "0.8",
 }
 _KIND_COLORS = {"powerscript": "#5B8DD9", "datawindow": "#56A85D", "project": "#B0B0B0"}
+_OP_COLORS = {
+    "SELECT":   "#5B8DD9",
+    "INSERT":   "#56A85D",
+    "UPDATE":   "#fb923c",
+    "DELETE":   "#f87171",
+    "retrieve": "#4ade80",
+}
+_DEFAULT_OP_COLOR = "#B0B0B0"
 _GRADIENT = ["#FFFFB2", "#FECC5C", "#FD8D3C", "#F03B20", "#BD0026", "#7A0177", "#49006A", "#2D004B", "#0D0221"]
 
 
@@ -496,6 +508,81 @@ def _build_heatmap(conn):
     return dot
 
 
+def _build_sql_lineage(conn, focal=""):
+    rows = conn.execute(
+        "SELECT DISTINCT object, table_name, operation "
+        "FROM all_sql_tables "
+        "WHERE source = 'powerscript'"
+        + (" AND object = ?" if focal else ""),
+        [focal] if focal else [],
+    ).fetchall()
+
+    dot = graphviz.Digraph(engine="dot", name="sql_lineage")
+    _apply_dark(dot)
+    dot.attr(rankdir="LR", splines="ortho", nodesep="0.3", ranksep="1.2")
+    dot.attr("node", shape="box", style="filled,rounded")
+
+    seen_objects: set[str] = set()
+    seen_tables: set[str] = set()
+
+    for obj, tbl, op in rows:
+        if obj not in seen_objects:
+            dot.node(f"obj_{obj}", label=obj, fillcolor="#2A3050", fontcolor="#E8E8E8", fontsize="9")
+            seen_objects.add(obj)
+        if tbl not in seen_tables:
+            dot.node(f"tbl_{tbl}", label=tbl, shape="cylinder", fillcolor="#1F2F1F",
+                     fontcolor="#C8F0CA", fontsize="9")
+            seen_tables.add(tbl)
+        color = _OP_COLORS.get(op, _DEFAULT_OP_COLOR)
+        dot.edge(f"obj_{obj}", f"tbl_{tbl}", color=color, label=op,
+                 fontcolor=color, fontsize="7", penwidth="0.8")
+
+    if not rows:
+        dot.node("empty", label="No PowerScript SQL statements found",
+                 shape="plaintext", fontcolor="#5c5f72")
+
+    return dot
+
+
+def _build_table_lineage(conn, table_name=""):
+    if not table_name:
+        raise HTTPException(status_code=400, detail="table param is required for table-lineage")
+
+    rows = conn.execute(
+        "SELECT DISTINCT object, source, operation "
+        "FROM all_sql_tables WHERE table_name = ? ORDER BY source, object",
+        [table_name],
+    ).fetchall()
+
+    dot = graphviz.Digraph(engine="dot", name="table_lineage")
+    _apply_dark(dot)
+    dot.attr(rankdir="LR", splines="ortho", nodesep="0.2", ranksep="1.4")
+    dot.attr("node", shape="box", style="filled,rounded")
+
+    dot.node("__table__", label=table_name, shape="cylinder",
+             style="filled", fillcolor="#2E5E32", fontcolor="#C8F0CA", fontsize="10")
+
+    seen_objects: set[str] = set()
+    for obj, source, op in rows:
+        node_id = f"obj_{obj}"
+        if node_id not in seen_objects:
+            is_dw = source == "datawindow"
+            fill = "#2A3A4A" if is_dw else "#2A3050"
+            badge = "dw" if is_dw else "ps"
+            dot.node(node_id, label=f"{obj}\\n[{badge}]",
+                     fillcolor=fill, fontcolor="#E8E8E8", fontsize="8")
+            seen_objects.add(node_id)
+        color = _OP_COLORS.get(op, _DEFAULT_OP_COLOR)
+        dot.edge(node_id, "__table__", label=op, color=color, fontcolor=color,
+                 fontsize="7", penwidth="0.8")
+
+    if not rows:
+        dot.node("empty", label=f"No references found for table: {table_name}",
+                 shape="plaintext", fontcolor="#5c5f72")
+
+    return dot
+
+
 @router.get("/api/diagram/{kind}")
 async def get_diagram(
     kind: str,
@@ -505,7 +592,7 @@ async def get_diagram(
     depth: int = Query(2, description="Ego-graph radius (calls)"),
     table: str = Query("", description="Filter DB table (dw-tables)"),
 ):
-    if kind not in ("inheritance", "calls", "dw-tables", "heatmap"):
+    if kind not in ("inheritance", "calls", "dw-tables", "heatmap", "sql-lineage", "table-lineage"):
         raise HTTPException(status_code=400, detail=f"Unknown diagram: {kind}")
 
     conn = _conn(request)
@@ -518,6 +605,10 @@ async def get_diagram(
             kwargs["depth"] = depth
         elif kind == "dw-tables" and table:
             kwargs["filter_table"] = table
+        elif kind == "sql-lineage" and focal:
+            kwargs["focal"] = focal
+        elif kind == "table-lineage":
+            kwargs["table_name"] = table or ""
 
         svg = _render_diagram(kind, **kwargs)
         return Response(content=svg, media_type="image/svg+xml")

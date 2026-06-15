@@ -1,6 +1,9 @@
 // Diagrams.tsx — Diagrams view with tabs and controls.
 
 import { Show, For, createSignal, onMount } from "solid-js";
+import type { DiagramsState } from "../features/diagrams/types.js";
+
+type DiagramKind = DiagramsState["active"];
 import { Tabs } from "@kobalte/core/tabs";
 import { useSnapshot } from "../core/store.js";
 import type { Store } from "../core/store.js";
@@ -29,6 +32,10 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
       store.dispatch({ tag: "diagrams", action: { type: "params", params: { root: rootInput() } } });
     } else if (kind === "dw-tables") {
       store.dispatch({ tag: "diagrams", action: { type: "params", params: { table: tableInput() } } });
+    } else if (kind === "sql-lineage") {
+      store.dispatch({ tag: "diagrams", action: { type: "params", params: { focal: focalInput() } } });
+    } else if (kind === "table-lineage") {
+      store.dispatch({ tag: "diagrams", action: { type: "params", params: { table: tableInput() } } });
     }
     store.dispatch({ tag: "diagrams", action: { type: "generate" } });
   }
@@ -37,11 +44,11 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
     <>
       <Tabs value={activeTab()} onChange={(v) => {
         setActiveTab(v);
-        store.dispatch({ tag: "diagrams", action: { type: "select", kind: v as "inheritance" | "calls" | "dw-tables" | "heatmap" } });
-        if (v === "heatmap" || v === "inheritance") store.dispatch({ tag: "diagrams", action: { type: "generate" } });
+        store.dispatch({ tag: "diagrams", action: { type: "select", kind: v as DiagramKind } });
+        if (v === "heatmap" || v === "inheritance" || v === "sql-lineage") store.dispatch({ tag: "diagrams", action: { type: "generate" } });
       }}>
         <Tabs.List class="tab-bar">
-          <For each={["inheritance", "calls", "dw-tables", "heatmap"]}>
+          <For each={["inheritance", "calls", "dw-tables", "heatmap", "sql-lineage", "table-lineage"] as DiagramKind[]}>
             {(kind) => <Tabs.Trigger value={kind} class="tab-btn">{kind}</Tabs.Trigger>}
           </For>
         </Tabs.List>
@@ -62,6 +69,14 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
           </Show>
           <Show when={activeTab() === "dw-tables"}>
             <input class="search-input" placeholder="Filter table (optional)" value={tableInput()}
+                   onInput={(e) => setTableInput(e.currentTarget.value)} />
+          </Show>
+          <Show when={activeTab() === "sql-lineage"}>
+            <input class="search-input" placeholder="Focal object (optional)" value={focalInput()}
+                   onInput={(e) => setFocalInput(e.currentTarget.value)} />
+          </Show>
+          <Show when={activeTab() === "table-lineage"}>
+            <input class="search-input" placeholder="Table name (required)" value={tableInput()}
                    onInput={(e) => setTableInput(e.currentTarget.value)} />
           </Show>
           <button class="filter-pill active" onClick={handleGenerate}>Generate</button>
