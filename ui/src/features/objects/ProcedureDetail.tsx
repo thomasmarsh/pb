@@ -7,14 +7,8 @@ import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import { CodeBlock } from "../../components/CodeBlock.js";
-
-function procBadge(t: string): string {
-  return { function: "func", subroutine: "sub", event: "event", on: "on" }[t] ?? "func";
-}
-
-function Loading() {
-  return <div class="loading-overlay"><div class="spinner" /> Loading...</div>;
-}
+import { procBadge } from "../../utils/format.js";
+import { Loading } from "../../components/Loading.js";
 
 export function ProcedureDetail(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;

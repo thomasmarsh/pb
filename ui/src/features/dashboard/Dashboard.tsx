@@ -6,10 +6,7 @@ import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import type { ProcedureRow } from "../../types/api.js";
-
-function procBadge(t: string): string {
-  return { function: "func", subroutine: "sub", event: "event", on: "on" }[t] ?? "func";
-}
+import { procBadge } from "../../utils/format.js";
 
 function ProcedureTable(props: { title: string; procs: ProcedureRow[]; store: Store<AppState, AppAction> }) {
   return (
@@ -26,7 +23,7 @@ function ProcedureTable(props: { title: string; procs: ProcedureRow[]; store: St
                   onClick={() => props.store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: p.object, procName: p.name } })}>
                 <td class="name-cell">{p.object}</td>
                 <td>{p.name}</td>
-                <td><span class={`badge badge-${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
+                <td><span class={`badge ${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
                 <td>{p.cyclomatic != null ? <span class="badge badge-cc">{String(p.cyclomatic)}</span> : "\u2013"}</td>
               </tr>
             )}
@@ -63,13 +60,7 @@ function ObjectTable(props: { title: string; objs: { object: string; pagerank: n
   );
 }
 
-function Loading() {
-  return (
-    <div class="loading-overlay">
-      <div class="spinner" /> Loading...
-    </div>
-  );
-}
+import { Loading } from "../../components/Loading.js";
 
 export function Dashboard(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;

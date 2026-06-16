@@ -3,8 +3,7 @@
 import { Show, children, type ParentProps, type JSX } from "solid-js";
 import { useSnapshot } from "../../core/store.js";
 import { useExploreStore } from "./ExploreContext.js";
-
-function chevron(expanded: boolean): string { return expanded ? "▾" : "▸"; }
+import { chevron } from "../../utils/format.js";
 
 export interface TreeNodeProps {
   nodeId: string;

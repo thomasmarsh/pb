@@ -28,15 +28,13 @@ function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "…" : s;
 }
 
+import { procBadge } from "../../utils/format.js";
+
 const KIND_BADGES: Record<string, string> = {
   powerscript: "badge-ps", datawindow: "badge-dw", project: "badge-proj",
 };
-const PROC_BADGES: Record<string, string> = {
-  function: "badge-func", subroutine: "badge-sub", event: "badge-event", on: "badge-on",
-};
 
 function kindBadge(kind: string): string { return KIND_BADGES[kind] ?? "badge-proj"; }
-function procBadge(t: string): string { return PROC_BADGES[t] ?? "badge-func"; }
 
 // ── Procedure Tree Node ───────────────────────────────────────────────────────
 

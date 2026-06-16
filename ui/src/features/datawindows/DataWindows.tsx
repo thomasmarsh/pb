@@ -6,15 +6,8 @@ import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import { CodeBlock } from "../../components/CodeBlock.js";
-
-function shortFile(f: string | null | undefined): string {
-  if (!f) return "";
-  return f.replace(/\\/g, "/").split("/").slice(-2).join("/");
-}
-
-function Loading() {
-  return <div class="loading-overlay"><div class="spinner" /> Loading...</div>;
-}
+import { shortFile } from "../../utils/format.js";
+import { Loading } from "../../components/Loading.js";
 
 export function DataWindows(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;

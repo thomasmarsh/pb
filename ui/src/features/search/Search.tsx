@@ -5,15 +5,7 @@ import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
-
-function shortFile(f: string | null | undefined): string {
-  if (!f) return "";
-  return f.replace(/\\/g, "/").split("/").slice(-2).join("/");
-}
-
-function procBadge(t: string): string {
-  return { function: "func", subroutine: "sub", event: "event", on: "on" }[t] ?? "func";
-}
+import { procBadge, shortFile } from "../../utils/format.js";
 
 function debounce<T extends (...args: never[]) => void>(fn: T, ms: number): T {
   let timer: ReturnType<typeof setTimeout>;
@@ -67,7 +59,7 @@ function SearchResults(props: { store: Store<AppState, AppAction>; data: { objec
                       onClick={() => store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: p.object, procName: p.name } })}>
                     <td>{p.object}</td>
                     <td class="name-cell">{p.name}</td>
-                    <td><span class={`badge badge-${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
+                    <td><span class={`badge ${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
                     <td style={{ "font-size": "11px", color: "var(--text-muted)" }}>{p.start_line ? String(p.start_line) : ""}</td>
                   </tr>
                 )}

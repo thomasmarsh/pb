@@ -6,19 +6,8 @@ import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import { SourceViewer } from "./SourceViewer.js";
-
-function shortFile(f: string | null | undefined): string {
-  if (!f) return "";
-  return f.replace(/\\/g, "/").split("/").slice(-2).join("/");
-}
-
-function procBadge(t: string): string {
-  return { function: "func", subroutine: "sub", event: "event", on: "on" }[t] ?? "func";
-}
-
-function Loading() {
-  return <div class="loading-overlay"><div class="spinner" /> Loading...</div>;
-}
+import { procBadge, shortFile } from "../../utils/format.js";
+import { Loading } from "../../components/Loading.js";
 
 export function Objects(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
@@ -223,7 +212,7 @@ export function ObjectDetail(props: { store: Store<AppState, AppAction> }) {
                           <tr class="clickable"
                               onClick={() => store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: o.name, procName: p.name } })}>
                             <td class="name-cell">{p.name}</td>
-                            <td><span class={`badge badge-${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
+                            <td><span class={`badge ${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
                             <td style={{ "font-size": "12px" }}>{p.modifiers ?? ""}</td>
                             <td style={{ "font-size": "12px", "max-width": "200px", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{p.params ?? ""}</td>
                             <td>{p.cyclomatic != null ? <span class="badge badge-cc">{String(p.cyclomatic)}</span> : "–"}</td>

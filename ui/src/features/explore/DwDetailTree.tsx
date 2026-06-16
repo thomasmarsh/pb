@@ -5,8 +5,7 @@ import { useSnapshot } from "../../core/store.js";
 import { useExploreStore } from "./ExploreContext.js";
 import type { DwExploreDetail } from "../../types/api.js";
 import { SqlBlock } from "../../components/CodeBlock.js";
-
-function chevron(expanded: boolean): string { return expanded ? "▾" : "▸"; }
+import { chevron } from "../../utils/format.js";
 
 export function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
   const store = useExploreStore();

@@ -19,7 +19,7 @@ function nodeTag(n: unknown): string | null {
   return null;
 }
 
-function chevron(expanded: boolean): string { return expanded ? "▾" : "▸"; }
+import { chevron } from "../../utils/format.js";
 
 function isLocated(v: unknown): v is { line: number; node: unknown } {
   return isNode(v) && typeof v.line === "number" && "node" in v;
