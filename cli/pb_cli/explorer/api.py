@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -692,6 +693,53 @@ async def list_tables(request: Request):
         conn.close()
 
 
+_WRITE_OPS = {"INSERT", "UPDATE", "DELETE"}
+
+
+def _column_lineage(conn, table_name: str) -> list[dict]:
+    """Per-column DW/PS read and write breakdown for a table."""
+    dw_cols = _rows(conn.execute(
+        "SELECT column_name, dw_name "
+        "FROM dw_retrieve_columns WHERE table_name = ? "
+        "ORDER BY column_name, dw_name",
+        [table_name],
+    ))
+    ps_cols = _rows(conn.execute(
+        "SELECT unnest(columns) AS col, object, proc_name, operation "
+        "FROM sql_statements "
+        "WHERE ? = ANY(tables) AND columns IS NOT NULL AND len(columns) > 0",
+        [table_name],
+    ))
+
+    col_map: dict[str, dict] = defaultdict(lambda: {
+        "dw_readers": [], "ps_readers": [], "ps_writers": [],
+    })
+
+    for r in dw_cols:
+        col = r["column_name"]
+        if r["dw_name"] not in col_map[col]["dw_readers"]:
+            col_map[col]["dw_readers"].append(r["dw_name"])
+
+    for r in ps_cols:
+        col = r["col"]
+        ref = {"object": r["object"], "proc_name": r["proc_name"], "operation": r["operation"]}
+        bucket = "ps_writers" if r["operation"] in _WRITE_OPS else "ps_readers"
+        col_map[col][bucket].append(ref)
+
+    return [
+        {
+            "column": col,
+            "dw_readers":  data["dw_readers"],
+            "ps_readers":  data["ps_readers"],
+            "ps_writers":  data["ps_writers"],
+            "read_count":  len(data["dw_readers"]) + len(data["ps_readers"]),
+            "write_count": len(data["ps_writers"]),
+        }
+        for col, data in sorted(col_map.items())
+        if data["dw_readers"] or data["ps_readers"] or data["ps_writers"]
+    ]
+
+
 @router.get("/api/tables/{table_name}")
 async def get_table(table_name: str, request: Request):
     conn = _conn(request)
@@ -731,6 +779,7 @@ async def get_table(table_name: str, request: Request):
             "ps_count": len(procedures),
             "datawindows": dws,
             "columns": columns,
+            "columns_detail": _column_lineage(conn, table_name),
             "where": where,
             "procedures": procedures,
         }

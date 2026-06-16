@@ -34,6 +34,10 @@ def client_with_sql(db_path, tmp_path_factory):
          "SELECT id FROM synthetic_test_table WHERE id = 1",
          None, ["synthetic_test_table"], ["id"], False, False, True],
     )
+    conn.execute(
+        "INSERT INTO dw_retrieve_columns VALUES (?,?,?,?,?)",
+        ["", "dw_synth", "synthetic_test_table.id", "synthetic_test_table", "id"],
+    )
     conn.close()
 
     from fastapi.testclient import TestClient
@@ -358,6 +362,36 @@ def test_get_table_detail_returns_lineage(client):
 def test_get_table_detail_404_unknown(client):
     r = client.get("/api/tables/__nonexistent_table__")
     assert r.status_code == 404
+
+
+def test_table_detail_has_columns_detail(client):
+    tables = client.get("/api/tables").json()
+    if not tables:
+        pytest.skip("No tables in database")
+    table_name = tables[0]["table_name"]
+    r = client.get(f"/api/tables/{table_name}")
+    assert r.status_code == 200
+    data = r.json()
+    assert "columns_detail" in data
+    assert isinstance(data["columns_detail"], list)
+    assert len(data["columns_detail"]) > 0
+    entry = data["columns_detail"][0]
+    assert set(entry) == {"column", "dw_readers", "ps_readers", "ps_writers", "read_count", "write_count"}
+
+
+def test_table_detail_columns_detail_dw_and_ps(client_with_sql):
+    r = client_with_sql.get("/api/tables/synthetic_test_table")
+    assert r.status_code == 200
+    data = r.json()
+    by_col = {c["column"]: c for c in data["columns_detail"]}
+    assert "id" in by_col
+    col = by_col["id"]
+    assert col["dw_readers"] == ["dw_synth"]
+    assert len(col["ps_readers"]) == 1
+    assert col["ps_readers"][0]["operation"] == "SELECT"
+    assert col["ps_writers"] == []
+    assert col["read_count"] == 2
+    assert col["write_count"] == 0
 
 
 # ── Explore SQL statements ─────────────────────────────────────────────────────

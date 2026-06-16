@@ -7,6 +7,7 @@ import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import type { TableDetail as TableDetailData, TableProcedureRef } from "../../types/api.js";
 import { Loading } from "../../components/Loading.js";
+import { ColumnRow } from "../../components/ColumnRow.js";
 
 type Tab = "readers" | "writers" | "columns" | "impact";
 
@@ -107,9 +108,22 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
       </Show>
 
       <Show when={tab() === "columns"}>
-        <div class="card" style={{ padding: "32px", "text-align": "center", color: "var(--text-muted)" }}>
-          Column-level lineage coming in Plan 55.
-        </div>
+        <Show when={d.columns_detail.length > 0} fallback={
+          <div class="card" style={{ padding: "32px", "text-align": "center", color: "var(--text-muted)" }}>
+            No column-level data available for this table.
+          </div>
+        }>
+          <table class="data-table">
+            <thead>
+              <tr><th>Column</th><th>DW reads</th><th>PS reads</th><th>PS writes</th></tr>
+            </thead>
+            <tbody>
+              <For each={d.columns_detail}>
+                {(col) => <ColumnRow col={col} store={props.store} />}
+              </For>
+            </tbody>
+          </table>
+        </Show>
       </Show>
 
       <Show when={tab() === "impact"}>

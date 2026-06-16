@@ -163,14 +163,30 @@ export interface TableProcedureRef {
   operation: string;
 }
 
+export interface ColumnPsRef {
+  object:    string;
+  proc_name: string | null;
+  operation: string;
+}
+
+export interface ColumnDetail {
+  column:      string;
+  dw_readers:  string[];
+  ps_readers:  ColumnPsRef[];
+  ps_writers:  ColumnPsRef[];
+  read_count:  number;
+  write_count: number;
+}
+
 export interface TableDetail {
-  table_name:  string;
-  dw_count:    number;
-  ps_count:    number;
-  datawindows: { dw_name: string; file: string }[];
-  columns:     { dw_name: string; column_fqn: string; column_name: string }[];
-  where:       { dw_name: string; idx: number; exp1: string; op: string; exp2: string; logic: string }[];
-  procedures:  TableProcedureRef[];
+  table_name:     string;
+  dw_count:       number;
+  ps_count:       number;
+  datawindows:    { dw_name: string; file: string }[];
+  columns:        { dw_name: string; column_fqn: string; column_name: string }[];
+  columns_detail: ColumnDetail[];
+  where:          { dw_name: string; idx: number; exp1: string; op: string; exp2: string; logic: string }[];
+  procedures:     TableProcedureRef[];
 }
 
 // ── Explore tree ─────────────────────────────────────────────────────────────
