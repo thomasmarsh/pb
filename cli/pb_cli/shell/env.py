@@ -16,6 +16,7 @@ default and keyword-only arguments on the real implementation are preserved
 in the field's type — callers and test doubles are still checked against the
 real signature, not an erased one.
 """
+
 from __future__ import annotations
 
 from contextlib import AbstractContextManager
@@ -94,8 +95,12 @@ class EnsureExplorerBuilt(Protocol):
 
 class ParseStream(Protocol):
     def __call__(
-        self, src_dir: Path, binary: Path, *,
-        remap_from: Path | None = None, remap_to: Path | None = None,
+        self,
+        src_dir: Path,
+        binary: Path,
+        *,
+        remap_from: Path | None = None,
+        remap_to: Path | None = None,
     ) -> Iterator[tuple[bool, dict]]: ...
 
 
@@ -137,13 +142,16 @@ class BuildSubsetTmpdir(Protocol):
 
 class IngestBatch(Protocol):
     def __call__(
-        self, objects: Iterable[dict], conn: Conn, dialect: str = 'oracle',
+        self,
+        objects: Iterable[dict],
+        conn: Conn,
+        dialect: str = "oracle",
         on_progress: Callable[[int], None] | None = None,
     ) -> int: ...
 
 
 class RunFromJsonlLines(Protocol):
-    def __call__(self, lines: Iterable[str], db: str = 'pb.duckdb', dialect: str = 'oracle') -> None: ...
+    def __call__(self, lines: Iterable[str], db: str = "pb.duckdb", dialect: str = "oracle") -> None: ...
 
 
 class ComputeMetrics(Protocol):
@@ -156,26 +164,37 @@ class Connect(Protocol):
 
 class DiagramInheritance(Protocol):
     def __call__(
-        self, conn: Conn, root: str | None, output: str = 'inheritance.svg', emit_dot: bool = False,
+        self,
+        conn: Conn,
+        root: str | None,
+        output: str = "inheritance.svg",
+        emit_dot: bool = False,
     ) -> None: ...
 
 
 class DiagramCalls(Protocol):
     def __call__(
-        self, conn: Conn, focal: str, depth: int = 2,
-        output: str | None = None, emit_dot: bool = False,
+        self,
+        conn: Conn,
+        focal: str,
+        depth: int = 2,
+        output: str | None = None,
+        emit_dot: bool = False,
     ) -> None: ...
 
 
 class DiagramDwTables(Protocol):
     def __call__(
-        self, conn: Conn, filter_table: str | None = None,
-        output: str = 'dw_tables.svg', emit_dot: bool = False,
+        self,
+        conn: Conn,
+        filter_table: str | None = None,
+        output: str = "dw_tables.svg",
+        emit_dot: bool = False,
     ) -> None: ...
 
 
 class DiagramHeatmap(Protocol):
-    def __call__(self, conn: Conn, output: str = 'heatmap.svg', emit_dot: bool = False) -> None: ...
+    def __call__(self, conn: Conn, output: str = "heatmap.svg", emit_dot: bool = False) -> None: ...
 
 
 @dataclass

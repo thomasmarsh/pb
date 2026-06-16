@@ -1,0 +1,235 @@
+"""Table inventory, per-table lineage detail, and DB-wide stats."""
+
+from __future__ import annotations
+
+from collections import defaultdict
+
+from fastapi import APIRouter, HTTPException, Request
+
+from pb_cli.explorer.routes.dependencies import _WRITE_OPS, get_conn, rows
+
+router = APIRouter()
+
+
+@router.get("/api/tables")
+async def list_tables(request: Request):
+    conn = get_conn(request)
+    try:
+        return rows(
+            conn.execute("""
+            SELECT
+                table_name,
+                count(*) FILTER (WHERE source = 'datawindow')  AS dw_count,
+                count(*) FILTER (WHERE source = 'powerscript') AS ps_count,
+                count(DISTINCT file)                           AS file_count
+            FROM all_sql_tables
+            GROUP BY table_name
+            ORDER BY (dw_count + ps_count) DESC, table_name
+        """)
+        )
+    finally:
+        conn.close()
+
+
+def _column_lineage(conn, table_name: str) -> list[dict]:
+    """Per-column DW/PS read and write breakdown for a table."""
+    dw_cols = rows(
+        conn.execute(
+            "SELECT column_name, dw_name FROM dw_retrieve_columns WHERE table_name = ? ORDER BY column_name, dw_name",
+            [table_name],
+        )
+    )
+    ps_cols = rows(
+        conn.execute(
+            "SELECT unnest(columns) AS col, object, proc_name, operation "
+            "FROM sql_statements "
+            "WHERE ? = ANY(tables) AND columns IS NOT NULL AND len(columns) > 0",
+            [table_name],
+        )
+    )
+
+    col_map: dict[str, dict] = defaultdict(
+        lambda: {
+            "dw_readers": [],
+            "ps_readers": [],
+            "ps_writers": [],
+        }
+    )
+
+    for r in dw_cols:
+        col = r["column_name"]
+        if r["dw_name"] not in col_map[col]["dw_readers"]:
+            col_map[col]["dw_readers"].append(r["dw_name"])
+
+    for r in ps_cols:
+        col = r["col"]
+        ref = {"object": r["object"], "proc_name": r["proc_name"], "operation": r["operation"]}
+        bucket = "ps_writers" if r["operation"] in _WRITE_OPS else "ps_readers"
+        col_map[col][bucket].append(ref)
+
+    return [
+        {
+            "column": col,
+            "dw_readers": data["dw_readers"],
+            "ps_readers": data["ps_readers"],
+            "ps_writers": data["ps_writers"],
+            "read_count": len(data["dw_readers"]) + len(data["ps_readers"]),
+            "write_count": len(data["ps_writers"]),
+        }
+        for col, data in sorted(col_map.items())
+        if data["dw_readers"] or data["ps_readers"] or data["ps_writers"]
+    ]
+
+
+def _impact_lineage(conn, table_name: str) -> dict:
+    """Direct accessors of `table_name` plus descendants that inherit that access
+    through the `inherits` graph."""
+    direct_rows = rows(
+        conn.execute(
+            "SELECT DISTINCT object, source, operation FROM all_sql_tables WHERE table_name = ? ORDER BY object",
+            [table_name],
+        )
+    )
+    direct_objects = {r["object"] for r in direct_rows}
+
+    if not direct_objects:
+        return {"direct": [], "inherited": []}
+
+    placeholders = ", ".join("?" * len(direct_objects))
+    inherited_rows = rows(
+        conn.execute(
+            f"""
+        WITH RECURSIVE desc_cte AS (
+            SELECT from_object AS descendant, to_object AS ancestor, 1 AS depth
+            FROM inherits
+            WHERE to_object IN ({placeholders})
+            UNION ALL
+            SELECT i.from_object, dc.ancestor, dc.depth + 1
+            FROM inherits i
+            JOIN desc_cte dc ON i.to_object = dc.descendant
+            WHERE dc.depth < 15
+        )
+        SELECT descendant, ancestor, min(depth) AS depth
+        FROM desc_cte
+        GROUP BY descendant, ancestor
+        ORDER BY depth, ancestor, descendant
+    """,
+            list(direct_objects),
+        )
+    )
+
+    return {
+        "direct": direct_rows,
+        "inherited": inherited_rows,
+    }
+
+
+@router.get("/api/tables/{table_name}")
+async def get_table(table_name: str, request: Request):
+    conn = get_conn(request)
+    try:
+        all_refs = rows(
+            conn.execute(
+                "SELECT source, object, proc_name, stmt_idx, operation, file "
+                "FROM all_sql_tables WHERE table_name = ? ORDER BY source, object",
+                [table_name],
+            )
+        )
+        if not all_refs:
+            raise HTTPException(status_code=404, detail=f"Table not found: {table_name}")
+
+        dws = rows(
+            conn.execute(
+                "SELECT DISTINCT dw_name, file FROM dw_retrieve_tables WHERE table_name = ? ORDER BY dw_name",
+                [table_name],
+            )
+        )
+        columns = rows(
+            conn.execute(
+                "SELECT dw_name, column_fqn, column_name "
+                "FROM dw_retrieve_columns WHERE table_name = ? ORDER BY dw_name, column_name",
+                [table_name],
+            )
+        )
+        where = rows(
+            conn.execute(
+                "SELECT dw_name, idx, exp1, op, exp2, logic "
+                "FROM dw_retrieve_where WHERE exp1 LIKE ? OR exp2 LIKE ? ORDER BY dw_name, idx",
+                [f"%{table_name}%", f"%{table_name}%"],
+            )
+        )
+        procedures = rows(
+            conn.execute(
+                "SELECT DISTINCT object, proc_name, operation "
+                "FROM all_sql_tables "
+                "WHERE table_name = ? AND source = 'powerscript' ORDER BY object, proc_name",
+                [table_name],
+            )
+        )
+        return {
+            "table_name": table_name,
+            "dw_count": len(dws),
+            "ps_count": len(procedures),
+            "datawindows": dws,
+            "columns": columns,
+            "columns_detail": _column_lineage(conn, table_name),
+            "where": where,
+            "procedures": procedures,
+            "impact": _impact_lineage(conn, table_name),
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/api/stats")
+async def get_stats(request: Request):
+    conn = get_conn(request)
+    try:
+        stats = {}
+        for table in (
+            "objects",
+            "procedures",
+            "dw_controls",
+            "dw_retrieve_tables",
+            "dw_retrieve_columns",
+            "inherits",
+            "calls",
+            "object_metrics",
+        ):
+            try:
+                row = conn.execute(f"SELECT count(*) FROM {table}").fetchone()
+                stats[table] = row[0] if row else 0
+            except Exception:
+                stats[table] = 0
+
+        kind_counts = rows(
+            conn.execute("SELECT kind, count(*) AS count FROM objects GROUP BY kind ORDER BY count DESC")
+        )
+        stats["by_kind"] = kind_counts
+
+        top_complex = rows(
+            conn.execute(
+                "SELECT object, name, proc_type, cyclomatic "
+                "FROM procedures WHERE cyclomatic IS NOT NULL "
+                "ORDER BY cyclomatic DESC LIMIT 10"
+            )
+        )
+        stats["top_complex"] = top_complex
+
+        top_pagerank = rows(
+            conn.execute(
+                "SELECT object, round(pagerank, 6) AS pagerank, in_degree, out_degree "
+                "FROM object_metrics ORDER BY pagerank DESC LIMIT 10"
+            )
+        )
+        stats["top_pagerank"] = top_pagerank
+
+        try:
+            row = conn.execute("SELECT count(DISTINCT table_name) FROM all_sql_tables").fetchone()
+            stats["tables"] = row[0] if row else 0
+        except Exception:
+            stats["tables"] = 0
+
+        return stats
+    finally:
+        conn.close()

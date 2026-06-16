@@ -1,4 +1,5 @@
 """Implementation of `pb ingest` — incremental parse → index → analyze pipeline."""
+
 from __future__ import annotations
 
 import shutil
@@ -10,8 +11,12 @@ from pb_cli.shell.env import env
 
 
 def run(
-    src_dir: Path, db: str, binary: Path, reporter: Reporter,
-    reset: bool = False, dialect: str = 'oracle',
+    src_dir: Path,
+    db: str,
+    binary: Path,
+    reporter: Reporter,
+    reset: bool = False,
+    dialect: str = "oracle",
 ) -> None:
     src_dir = src_dir.resolve()  # normalise /var → /private/var symlink on macOS
     to_parse = None
@@ -24,7 +29,7 @@ def run(
         env.storage.create_schema(conn)
         env.storage.create_state_table(conn)
 
-        with reporter.status('Scanning source files...'):
+        with reporter.status("Scanning source files..."):
             current = env.build.hash_source_dir(src_dir)
         stored = env.storage.load_file_state(conn)
         diff = diff_state(current, stored)
@@ -43,7 +48,7 @@ def run(
             with reporter.indexing_step() as advance:
                 row_count = env.storage.ingest_batch(objects, conn, dialect, on_progress=advance)
 
-            parsed_files = {obj['file'] for obj in objects}
+            parsed_files = {obj["file"] for obj in objects}
             env.storage.save_file_state(conn, {f: current[f] for f in to_parse if f in parsed_files})
 
     with env.storage.db_connection(db) as conn, reporter.analyze_progress() as progress:
@@ -56,20 +61,23 @@ def run(
 
 
 def _parse_subset(
-    src_dir: Path, binary: Path, to_parse: list[str], reporter: Reporter,
+    src_dir: Path,
+    binary: Path,
+    to_parse: list[str],
+    reporter: Reporter,
 ) -> tuple[list[dict], int]:
     tmpdir = env.storage.build_subset_tmpdir(src_dir, to_parse)
     try:
         objects: list[dict] = []
-        with reporter.parse_progress(len(to_parse), 'Parsing') as progress:
+        with reporter.parse_progress(len(to_parse), "Parsing") as progress:
             for is_err, obj in env.runner.parse_stream(tmpdir, binary, remap_from=tmpdir, remap_to=src_dir):
                 if is_err:
                     progress.on_error(obj)
                 else:
                     try:
-                        obj['source_text'] = Path(obj['file']).read_text(errors='replace')
+                        obj["source_text"] = Path(obj["file"]).read_text(errors="replace")
                     except OSError:
-                        obj['source_text'] = None
+                        obj["source_text"] = None
                     objects.append(obj)
                 progress.advance()
         return objects, progress.error_count

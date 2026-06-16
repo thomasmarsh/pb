@@ -1,4 +1,5 @@
 """Run pb-runner on both corpora and fail if any files contain parse errors."""
+
 import json
 import subprocess
 import sys
@@ -18,7 +19,7 @@ def run(repo: Path | None = None, no_build: bool = False) -> None:
         binary = env.build.find_binary(repo_path)
 
     corpus_srcs = [
-        ("Appeon",  repo_path / "example" / "PowerBuilder-Example" / "export"),
+        ("Appeon", repo_path / "example" / "PowerBuilder-Example" / "export"),
         ("OpenPay", repo_path / "example" / "openpay-src"),
     ]
 
@@ -36,7 +37,8 @@ def run(repo: Path | None = None, no_build: bool = False) -> None:
             print(f"Processing {name} corpus...", flush=True)
             r = subprocess.run(
                 [str(binary), "-i", str(src), "-o", str(out)],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             if r.returncode != 0:
                 print(f"[ERROR] pb-runner failed on {name}:\n{r.stderr[:400]}", file=sys.stderr)

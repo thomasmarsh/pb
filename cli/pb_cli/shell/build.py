@@ -1,4 +1,5 @@
 """Build management: find repo root, build pb-runner, enumerate source files."""
+
 import hashlib
 import re
 import subprocess
@@ -13,8 +14,7 @@ def find_repo(repo: Path | None = None) -> Path:
         if (p / "parser" / "pb-ast.cabal").exists():
             return p
     sys.exit(
-        "error: cannot locate repo root (no parser/pb-ast.cabal found). "
-        "Run from within the pb repo, or pass --repo."
+        "error: cannot locate repo root (no parser/pb-ast.cabal found). Run from within the pb repo, or pass --repo."
     )
 
 
@@ -55,13 +55,13 @@ def build_runner(repo: Path, verbose: bool = False) -> Path:
     return find_binary(repo)
 
 
-_SR_EXT = re.compile(r'\.sr[a-z]$', re.IGNORECASE)
+_SR_EXT = re.compile(r"\.sr[a-z]$", re.IGNORECASE)
 
 
 def walk_sr_files(src_dir: Path) -> list[Path]:
     """Return all .sr<x> source files under src_dir as absolute Paths."""
     root = Path(src_dir).resolve()
-    return [f for f in root.rglob('*') if f.is_file() and _SR_EXT.search(f.name)]
+    return [f for f in root.rglob("*") if f.is_file() and _SR_EXT.search(f.name)]
 
 
 def count_sr_files(src_dir: Path) -> int:
@@ -84,7 +84,7 @@ def ensure_explorer_built(repo: Path, verbose: bool = False) -> None:
     output. The prebuild step (pnpm prebuild) regenerates ast.generated.ts via
     cabal run pb-runner --emit-ts automatically when pnpm build is invoked.
     """
-    ui_dir  = repo / "ui"
+    ui_dir = repo / "ui"
     dist_js = repo / "cli" / "pb_cli" / "explorer" / "static" / "dist" / "App.js"
 
     if _bundle_stale(ui_dir, dist_js):
@@ -106,8 +106,7 @@ def _bundle_stale(explorer_dir: "Path", dist_js: "Path") -> bool:
 
 
 def _run_explorer(explorer_dir: "Path", cmd: "list[str]", verbose: bool) -> None:
-    r = subprocess.run(cmd, cwd=str(explorer_dir),
-                       capture_output=not verbose, text=True)
+    r = subprocess.run(cmd, cwd=str(explorer_dir), capture_output=not verbose, text=True)
     if r.returncode != 0:
         if not verbose:
             print(r.stderr, file=sys.stderr)

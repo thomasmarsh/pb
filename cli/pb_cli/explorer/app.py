@@ -1,4 +1,5 @@
 """FastAPI application factory for pb explore."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,7 +8,16 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from pb_cli.explorer.api import router
+from pb_cli.explorer.routes import (
+    datawindows,
+    diagrams,
+    objects,
+    procedures,
+    queries,
+    search,
+    static,
+    tables,
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
 INDEX_HTML = STATIC_DIR / "index.html"
@@ -16,7 +26,14 @@ INDEX_HTML = STATIC_DIR / "index.html"
 def create_app(db_path: str = "pb.duckdb") -> FastAPI:
     app = FastAPI(title="pb explore", version="0.1.0")
     app.state.db_path = db_path
-    app.include_router(router)
+    app.include_router(objects.router)
+    app.include_router(procedures.router)
+    app.include_router(search.router)
+    app.include_router(diagrams.router)
+    app.include_router(datawindows.router)
+    app.include_router(queries.router)
+    app.include_router(tables.router)
+    app.include_router(static.router)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     # SPA catch-all: serve index.html for any non-API, non-static path
@@ -26,6 +43,7 @@ def create_app(db_path: str = "pb.duckdb") -> FastAPI:
         # Don't intercept API or static routes
         if path.startswith("api/") or path.startswith("static/"):
             from fastapi import HTTPException
+
             raise HTTPException(status_code=404)
         return HTMLResponse(content=INDEX_HTML.read_text())
 

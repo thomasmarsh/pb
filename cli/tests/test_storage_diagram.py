@@ -208,3 +208,10 @@ class TestDotBinaryRoundtrip:
         result = self._render(src)
         assert result.returncode == 0, f"dot failed:\n{result.stderr[:400]}"
         assert '<svg' in result.stdout
+
+
+def test_op_colors_defined():
+    from pb_cli.storage import _OP_COLORS
+    assert "SELECT" in _OP_COLORS
+    assert "INSERT" in _OP_COLORS
+    assert "retrieve" in _OP_COLORS

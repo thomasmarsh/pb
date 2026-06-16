@@ -1,4 +1,5 @@
 """Analyze BsRaw + ExRaw debt and DW control coverage across both corpora."""
+
 import json
 import subprocess
 import sys
@@ -13,26 +14,28 @@ from pb_cli.shell.env import env
 
 # ── Analysis dataclasses ──────────────────────────────────────────────────────
 
+
 @dataclass
 class BsRawStats:
-    bsraw_total:  int = 0
-    exraw_total:  int = 0
-    counts:       Counter[str] = field(default_factory=Counter)
-    other:        Counter[str] = field(default_factory=Counter)
-    other_ex:     dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))
-    exraw_words:  Counter[str] = field(default_factory=Counter)
-    exraw_ex:     dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))
+    bsraw_total: int = 0
+    exraw_total: int = 0
+    counts: Counter[str] = field(default_factory=Counter)
+    other: Counter[str] = field(default_factory=Counter)
+    other_ex: dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))
+    exraw_words: Counter[str] = field(default_factory=Counter)
+    exraw_ex: dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))
 
 
 @dataclass
 class DwStats:
-    files:  int = 0
-    total:  int = 0
+    files: int = 0
+    total: int = 0
     fields: Counter[str] = field(default_factory=Counter)
-    types:  Counter[str] = field(default_factory=Counter)
+    types: Counter[str] = field(default_factory=Counter)
 
 
 # ── Per-directory analysis ────────────────────────────────────────────────────
+
 
 def _load_dicts(out_dir: Path):
     for path in out_dir.rglob("*.json"):
@@ -81,6 +84,7 @@ def _analyze_dw(out_dir: Path) -> DwStats:
 
 
 # ── Report printers ───────────────────────────────────────────────────────────
+
 
 def _pct(n: int, total: int) -> str:
     return f"{n / total * 100:5.1f}%" if total else "   n/a"
@@ -142,7 +146,7 @@ def _print_dw_report(corpora: list[tuple[str, Path]]) -> None:
         grand.files += s.files
         grand.total += s.total
         grand.fields += s.fields
-        grand.types  += s.types
+        grand.types += s.types
         print(f"  {name}: {s.files} DW files, {s.total} controls")
         for f in DW_STRUCT_FIELDS:
             n = s.fields.get(f, 0)
@@ -161,6 +165,7 @@ def _print_dw_report(corpora: list[tuple[str, Path]]) -> None:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+
 def run(repo: Path | None = None, no_build: bool = False) -> None:
     repo_path = env.build.find_repo(repo)
     if not no_build:
@@ -170,7 +175,7 @@ def run(repo: Path | None = None, no_build: bool = False) -> None:
         binary = env.build.find_binary(repo_path)
 
     corpus_srcs = [
-        ("Appeon",  repo_path / "example" / "PowerBuilder-Example" / "export"),
+        ("Appeon", repo_path / "example" / "PowerBuilder-Example" / "export"),
         ("OpenPay", repo_path / "example" / "openpay-src"),
     ]
 
@@ -182,7 +187,8 @@ def run(repo: Path | None = None, no_build: bool = False) -> None:
             print(f"Running {name} corpus...", flush=True)
             r = subprocess.run(
                 [str(binary), "-i", str(src), "-o", str(out)],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             if r.returncode != 0:
                 print(f"[ERROR] pb-runner failed on {name}:\n{r.stderr[:400]}", file=sys.stderr)

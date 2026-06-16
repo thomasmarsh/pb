@@ -1,4 +1,5 @@
 """Pure row types and batch container — no I/O dependencies."""
+
 from __future__ import annotations
 
 from typing import NamedTuple, TypedDict
@@ -130,14 +131,14 @@ def new_row_batch() -> RowBatch:
 
 
 TABLES = [
-    'objects',
-    'procedures',
-    'calls',
-    'dw_controls',
-    'dw_retrieve_tables',
-    'dw_retrieve_columns',
-    'dw_retrieve_where',
-    'dw_arguments',
-    'inherits',
-    'sql_statements',
+    "objects",
+    "procedures",
+    "calls",
+    "dw_controls",
+    "dw_retrieve_tables",
+    "dw_retrieve_columns",
+    "dw_retrieve_where",
+    "dw_arguments",
+    "inherits",
+    "sql_statements",
 ]

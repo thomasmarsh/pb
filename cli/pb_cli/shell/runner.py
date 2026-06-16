@@ -1,4 +1,5 @@
 """Stream parse results from pb-runner --jsonl, with rich error rendering."""
+
 import json
 import re
 import subprocess
@@ -8,7 +9,7 @@ from typing import Iterator
 from rich.panel import Panel
 from rich.text import Text
 
-_LINE_RE = re.compile(r'\bline[: ]+(\d+)', re.IGNORECASE)
+_LINE_RE = re.compile(r"\bline[: ]+(\d+)", re.IGNORECASE)
 _CTX = 3
 
 
@@ -19,35 +20,35 @@ def _extract_line(msg: str) -> int | None:
 
 def _context(file_path: str, line_no: int | None) -> str | None:
     try:
-        lines = Path(file_path).read_text(errors='replace').splitlines()
+        lines = Path(file_path).read_text(errors="replace").splitlines()
     except OSError:
         return None
     if not lines:
         return None
     if line_no is None:
-        snippet = lines[:min(6, len(lines))]
-        return '\n'.join(f'   {i+1:4d}  {ln}' for i, ln in enumerate(snippet))
+        snippet = lines[: min(6, len(lines))]
+        return "\n".join(f"   {i + 1:4d}  {ln}" for i, ln in enumerate(snippet))
     lo = max(0, line_no - _CTX - 1)
     hi = min(len(lines), line_no + _CTX)
     out = []
     for i in range(lo, hi):
-        pfx = '→' if i == line_no - 1 else ' '
-        out.append(f'  {pfx} {i+1:4d}  {lines[i]}')
-    return '\n'.join(out)
+        pfx = "→" if i == line_no - 1 else " "
+        out.append(f"  {pfx} {i + 1:4d}  {lines[i]}")
+    return "\n".join(out)
 
 
 def render_error(obj: dict) -> Panel:
     """Build a rich Panel for a single parse-error JSON object."""
-    fp  = obj.get('file', '<unknown>')
-    msg = obj.get('error', '<no message>')
+    fp = obj.get("file", "<unknown>")
+    msg = obj.get("error", "<no message>")
     ctx = _context(fp, _extract_line(msg))
     t = Text()
-    t.append(f'{fp}\n', style='bold yellow')
-    t.append(msg, style='red')
+    t.append(f"{fp}\n", style="bold yellow")
+    t.append(msg, style="red")
     if ctx:
-        t.append('\n\n')
-        t.append(ctx, style='dim white')
-    return Panel(t, title='[red bold]parse error[/red bold]', border_style='red', expand=False)
+        t.append("\n\n")
+        t.append(ctx, style="dim white")
+    return Panel(t, title="[red bold]parse error[/red bold]", border_style="red", expand=False)
 
 
 def parse_stream(
@@ -64,7 +65,7 @@ def parse_stream(
     paths back to remap_to-rooted paths (used when parsing a subset tmpdir).
     """
     proc = subprocess.Popen(
-        [str(binary), '-i', str(src_dir), '--jsonl'],
+        [str(binary), "-i", str(src_dir), "--jsonl"],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
@@ -82,13 +83,13 @@ def parse_stream(
                 obj = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            if remap_from and remap_to and 'file' in obj:
+            if remap_from and remap_to and "file" in obj:
                 try:
-                    rel = Path(obj['file']).relative_to(remap_from)
-                    obj['file'] = str(remap_to / rel)
+                    rel = Path(obj["file"]).relative_to(remap_from)
+                    obj["file"] = str(remap_to / rel)
                 except ValueError:
                     pass
-            yield obj.get('kind') == 'error', obj
+            yield obj.get("kind") == "error", obj
     finally:
         proc.stdout.close()
         proc.wait()

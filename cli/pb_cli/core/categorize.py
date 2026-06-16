@@ -1,26 +1,67 @@
 """Keyword-driven classification of BsRaw statement text — no I/O dependencies."""
+
 from __future__ import annotations
 
 SQL_KWS = {
-    "select", "selectblob", "insert", "update", "updateblob", "delete",
-    "commit", "rollback", "connect", "disconnect", "declare", "cursor",
-    "execute", "fetch", "prepare", "describe", "descriptor",
-    "from", "and", "or", "into", "using", "where", "having",
-    "group", "order", "join", "open", "close",
+    "select",
+    "selectblob",
+    "insert",
+    "update",
+    "updateblob",
+    "delete",
+    "commit",
+    "rollback",
+    "connect",
+    "disconnect",
+    "declare",
+    "cursor",
+    "execute",
+    "fetch",
+    "prepare",
+    "describe",
+    "descriptor",
+    "from",
+    "and",
+    "or",
+    "into",
+    "using",
+    "where",
+    "having",
+    "group",
+    "order",
+    "join",
+    "open",
+    "close",
 }
 CTRL_KWS = {
-    "if", "else", "elseif", "end", "choose", "case",
-    "for", "do", "loop", "while", "until",
-    "try", "catch", "finally",
+    "if",
+    "else",
+    "elseif",
+    "end",
+    "choose",
+    "case",
+    "for",
+    "do",
+    "loop",
+    "while",
+    "until",
+    "try",
+    "catch",
+    "finally",
 }
 DECL_KWS = {
-    "event", "on", "function", "subroutine", "type",
-    "variables", "forward", "prototypes",
+    "event",
+    "on",
+    "function",
+    "subroutine",
+    "type",
+    "variables",
+    "forward",
+    "prototypes",
 }
 HANDLED = {"return", "exit", "continue", "call", "destroy", "create", "halt"}
 
-DW_STRUCT_FIELDS = ["name", "band", "id", "x", "y", "width", "height",
-                    "visible", "expression", "tab_seq"]
+DW_STRUCT_FIELDS = ["name", "band", "id", "x", "y", "width", "height", "visible", "expression", "tab_seq"]
 
 
 def categorize(text: str) -> tuple[str, str]:

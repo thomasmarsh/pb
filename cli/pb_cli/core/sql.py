@@ -1,4 +1,5 @@
 """PowerBuilder SQL parser — wraps sqlglot with PB-specific pre-processing."""
+
 from __future__ import annotations
 
 import re
@@ -8,7 +9,7 @@ from sqlglot import exp
 
 # Statements with no parseable SQL structure — extract metadata only
 _SKIP_RE = re.compile(
-    r'^\s*(CONNECT|DISCONNECT|OPEN|CLOSE|FETCH|EXECUTE\s+(?:IMMEDIATE|PROCEDURE))',
+    r"^\s*(CONNECT|DISCONNECT|OPEN|CLOSE|FETCH|EXECUTE\s+(?:IMMEDIATE|PROCEDURE))",
     re.I,
 )
 
@@ -16,16 +17,19 @@ _SKIP_RE = re.compile(
 # Each entry is (compiled_pattern, replacement).  Replacement may be a string
 # or a callable (re.sub-compatible).
 _REWRITES: list[tuple[re.Pattern, object]] = [
-    (re.compile(r'\bCOMMIT\s+USING\s+\w+', re.I), 'COMMIT'),
-    (re.compile(r'\bROLLBACK\s+USING\s+\w+', re.I), 'ROLLBACK'),
+    (re.compile(r"\bCOMMIT\s+USING\s+\w+", re.I), "COMMIT"),
+    (re.compile(r"\bROLLBACK\s+USING\s+\w+", re.I), "ROLLBACK"),
     # Strip PB host-variable INTO clause: SELECT ... INTO :v1, :v2 FROM ...
     # INSERT INTO tablename is safe — table names don't start with ':'.
-    (re.compile(r'\bINTO\b\s+:\w+(?:\s*,\s*:\w+)*', re.I), ''),
+    (re.compile(r"\bINTO\b\s+:\w+(?:\s*,\s*:\w+)*", re.I), ""),
     # Strip DECLARE cursor wrapper; keep inner SELECT
-    (re.compile(
-        r'DECLARE\s+\w+\s+CURSOR\s+FOR\s*\(?(SELECT.*)\)?',
-        re.I | re.S,
-    ), lambda m: m.group(1)),
+    (
+        re.compile(
+            r"DECLARE\s+\w+\s+CURSOR\s+FOR\s*\(?(SELECT.*)\)?",
+            re.I | re.S,
+        ),
+        lambda m: m.group(1),
+    ),
 ]
 
 
@@ -70,9 +74,7 @@ def parse_pb_sql(
     dialects = [dialect] if dialect == "oracle" else [dialect, "oracle"]
     for d in dialects:
         try:
-            ast = sqlglot.parse_one(
-                standard, dialect=d, error_level=sqlglot.ErrorLevel.RAISE
-            )
+            ast = sqlglot.parse_one(standard, dialect=d, error_level=sqlglot.ErrorLevel.RAISE)
             tables = extract_tables(ast)
             columns = extract_columns(ast)
             return ast.dump(), tables, columns, meta

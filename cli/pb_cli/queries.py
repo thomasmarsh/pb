@@ -1,4 +1,5 @@
 """Auto-register queries/*.sql files as commands on a typer sub-app (pb query <name>)."""
+
 from __future__ import annotations
 
 from inspect import Parameter, Signature
@@ -33,8 +34,8 @@ def _print_result(cursor) -> None:
 def _make_command(sql_file: Path):
     description, params, sql = parse_sql_file(sql_file)
     pos_params = [(n, t, d) for n, t, d in params if d is None]
-    kw_params  = [(n, t, d) for n, t, d in params if d is not None]
-    all_names  = [n for n, _, _ in pos_params + kw_params]
+    kw_params = [(n, t, d) for n, t, d in params if d is not None]
+    all_names = [n for n, _, _ in pos_params + kw_params]
 
     def _run(**kwargs):
         db = kwargs["db"]
@@ -54,23 +55,32 @@ def _make_command(sql_file: Path):
 
     sig: list[Parameter] = []
     for name, typ, _ in pos_params:
-        sig.append(Parameter(
-            name, Parameter.POSITIONAL_OR_KEYWORD,
-            annotation=int if typ in _INT_TYPES else str,
-        ))
+        sig.append(
+            Parameter(
+                name,
+                Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=int if typ in _INT_TYPES else str,
+            )
+        )
     for name, typ, default in kw_params:
         py_type = int if typ in _INT_TYPES else str
         dv = int(default) if typ in _INT_TYPES else default
-        sig.append(Parameter(
-            name, Parameter.KEYWORD_ONLY,
-            default=typer.Option(dv, f"--{name.replace('_', '-')}"),
-            annotation=py_type,
-        ))
-    sig.append(Parameter(
-        "db", Parameter.KEYWORD_ONLY,
-        default=typer.Option("pb.duckdb", "--db", help="DuckDB database path."),
-        annotation=str,
-    ))
+        sig.append(
+            Parameter(
+                name,
+                Parameter.KEYWORD_ONLY,
+                default=typer.Option(dv, f"--{name.replace('_', '-')}"),
+                annotation=py_type,
+            )
+        )
+    sig.append(
+        Parameter(
+            "db",
+            Parameter.KEYWORD_ONLY,
+            default=typer.Option("pb.duckdb", "--db", help="DuckDB database path."),
+            annotation=str,
+        )
+    )
 
     _run.__signature__ = Signature(sig)  # type: ignore[attr-defined]
     _run.__doc__ = description
