@@ -76,7 +76,7 @@ jobs:
 
       - name: Test (TypeScript)
         working-directory: ui
-        run: pnpm install --frozen-lockfile && pnpm codegen && pnpm typecheck && pnpm test
+        run: pnpm install --frozen-lockfile && pnpm codegen && pnpm lint && pnpm typecheck && pnpm test
 
       - name: Build (TypeScript)
         working-directory: ui
