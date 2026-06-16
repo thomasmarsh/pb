@@ -11,13 +11,13 @@ from typing import Optional
 import typer
 import uvicorn
 
-from pb_cli.core.pbl import extract_to_dir, resolve_source_dir
 from pb_cli.shell.commands.clean import ALL_TARGETS as CLEAN_TARGETS
 from pb_cli.shell.commands.clean import run as run_clean
 from pb_cli.shell.commands.corpus import run as run_corpus
 from pb_cli.shell.commands.debt import run as run_debt
 from pb_cli.shell.commands.dump import run as run_dump
 from pb_cli.shell.env import env
+from pb_cli.shell.pbl import extract_to_dir, resolve_source_dir
 from pb_cli.shell.pipeline import run as run_pipeline
 from pb_cli.shell.queries import register_queries
 

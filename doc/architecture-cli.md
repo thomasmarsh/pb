@@ -148,7 +148,6 @@ needed where the real signature adds nothing a `Callable` cannot express.
 | `state.py` | Pure file-state diffing | `FileDiff`, `diff_state` |
 | `categorize.py` | Keyword-driven classification of BsRaw statement text | `categorize`, `SQL_KWS`, `DW_STRUCT_FIELDS` |
 | `diagram_builder.py` | Pure diagram styling and GraphViz render functions | `render_calls`, `render_dw_tables`, `render_heatmap`, `render_inheritance`, `render_proc_tables`, `render_sql_lineage`, `render_table_lineage`, `KIND_COLORS`, `GRAPH_ATTRS` |
-| `pbl.py` | PBL binary library format extraction | `extract_to_dir`, `resolve_source_dir`, `list_pbl_contents` |
 
 ### `shell/` — Imperative boundary (I/O-bound)
 
@@ -163,6 +162,7 @@ needed where the real signature adds nothing a `Callable` cannot express.
 | `metrics.py` | Graph metric computation (PageRank, betweenness, DIT) | `compute_metrics`, `compute_dit` |
 | `diagrams.py` | DOT/SVG diagram building and rendering (delegates to `core/diagram_builder`) | `diagram_inheritance`, `diagram_calls`, `diagram_dw_tables`, `diagram_heatmap` |
 | `pipeline.py` | Incremental `pb ingest` orchestration | `run` |
+| `pbl.py` | PBL binary library extraction (filesystem, temp dirs, file writes) | `extract`, `extract_to_dir`, `resolve_source_dir`, `PblEntry` |
 | `reporter.py` | Unified output protocol for pipeline operations | `Reporter`, `LiveReporter`, `RecordingReporter` |
 | `queries.py` | Auto-register `queries/*.sql` files as `pb query <name>` commands | `register_queries` |
 | `commands/corpus.py` | `pb check-corpus` implementation | `run` |

@@ -50,11 +50,6 @@ class _Entry(NamedTuple):
     name: str
 
 
-class _Nod(NamedTuple):
-    next_offset: int
-    entries: list[_Entry]
-
-
 # ── encoding ───────────────────────────────────────────────────────────────────
 
 
@@ -111,7 +106,8 @@ def _parse_entry(chunk: bytes, unicode: bool) -> tuple[_Entry, int]:
     return _Entry(dat_offset, comment_len, name), p + object_len
 
 
-def _parse_nod(path: Path, address: int, unicode: bool) -> _Nod:
+def _parse_nod(path: Path, address: int, unicode: bool) -> tuple[int, list[_Entry]]:
+    """Parse a NOD* block at the given address. Returns (next_offset, entries)."""
     raw = _read(path, address, _NODE_BLOCK)
     if raw[:4] != b"NOD*":
         raise ValueError(f"Expected NOD* at offset {address:#x}, got {raw[:4]!r}")
@@ -127,7 +123,7 @@ def _parse_nod(path: Path, address: int, unicode: bool) -> _Nod:
         entries.append(entry)
         pos += consumed
 
-    return _Nod(next_offset, entries)
+    return next_offset, entries
 
 
 def _read_entry_text(path: Path, entry: _Entry, unicode: bool) -> str:
@@ -149,7 +145,8 @@ def _read_entry_text(path: Path, entry: _Entry, unicode: bool) -> str:
 
 
 def _is_source(name: str) -> bool:
-    return Path(name).suffix.lower() in _SOURCE_EXTENSIONS
+    dot = name.rfind(".")
+    return name[dot:].lower() in _SOURCE_EXTENSIONS if dot >= 0 else False
 
 
 # ── public API ─────────────────────────────────────────────────────────────────
@@ -171,11 +168,11 @@ def extract(pbl_path: Path) -> list[PblEntry]:
     address = nod_start
     while address > 0:
         nod = _parse_nod(pbl_path, address, unicode)
-        for e in nod.entries:
+        for e in nod[1]:
             if _is_source(e.name):
                 text = _read_entry_text(pbl_path, e, unicode)
                 entries.append(PblEntry(name=e.name, content=text))
-        address = nod.next_offset
+        address = nod[0]
 
     return entries
 
