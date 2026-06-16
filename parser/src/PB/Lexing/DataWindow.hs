@@ -9,7 +9,7 @@ module PB.Lexing.DataWindow
 import PB.Prelude
 import PB.Lexing.Escape (pbDwStringChunk)
 
-import Data.Char (isAlpha, isAlphaNum)
+import Data.Char (isAlpha, isAlphaNum, isDigit)
 import qualified Data.Text as T
 import Text.Megaparsec hiding (Token)
 import Text.Megaparsec.Char
@@ -66,7 +66,7 @@ pRelease = do
     _ <- string' "release"
     skipMany (satisfy (\c -> c == ' ' || c == '\t'))
     n <- L.decimal
-    _ <- optional (char '.' >> takeWhileP Nothing (\c -> c >= '0' && c <= '9'))
+    _ <- optional (char '.' >> takeWhileP Nothing isDigit)
     skipMany (satisfy (\c -> c == ' ' || c == '\t'))
     _ <- char ';'
     _ <- optional (char '\n')
@@ -78,8 +78,7 @@ pDwBlock = do
     kw      <- pDwKeyword
     skipMany (satisfy (`elem` (" \t" :: String)))
     _       <- char '('
-    content <- pBlockContent
-    return (DwBlock kw content)
+    DwBlock kw <$> pBlockContent
 
 -- Dotted identifiers with optional [N] suffix: keyword, export.pdf, header[1], etc.
 -- All lower-cased.
@@ -89,7 +88,7 @@ pDwKeyword = do
     t <- takeWhileP Nothing (\c -> isAlphaNum c || c == '_' || c == '.')
     bracket <- optional $ do
         _ <- char '['
-        ds <- takeWhileP Nothing (\c -> c >= '0' && c <= '9')
+        ds <- takeWhileP Nothing isDigit
         _ <- char ']'
         return ("[" <> ds <> "]")
     return (T.toLower (T.cons h t <> fromMaybe "" bracket))

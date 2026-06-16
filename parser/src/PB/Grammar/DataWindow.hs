@@ -55,7 +55,7 @@ classifyBlock dw (DwBlock kw content) = case kw of
     "table" ->
         dw { dwTable = Just (parseDwTable (scanBlockAttrs content)) }
     "group" ->
-        dw { dwGroups = dwGroups dw ++ maybe [] (:[]) (parseDwGroup content) }
+        dw { dwGroups = dwGroups dw ++ maybeToList (parseDwGroup content) }
     _ | Just bk <- parseBandKind kw ->
             dw { dwBands = dwBands dw ++ [parseDwBand bk content] }
       | "." `T.isInfixOf` kw ->
@@ -441,9 +441,9 @@ pSkipPbsContent = skipMany pSkipAtom
     pSkipAtom =
         try pSkipTildeStr <|>
         try pSkipNested   <|>
-        (() <$ satisfy (/= ')'))
+        void (satisfy (/= ')'))
     pSkipTildeStr :: PbsP ()
-    pSkipTildeStr = () <$ pbSelectTildeStr
+    pSkipTildeStr = void pbSelectTildeStr
     pSkipNested :: PbsP ()
     pSkipNested = do
         _ <- char '('

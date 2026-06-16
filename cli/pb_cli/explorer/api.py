@@ -1,7 +1,6 @@
 """API routes for pb explore."""
 from __future__ import annotations
 
-import io
 import json
 import os
 import re
@@ -20,10 +19,6 @@ from pb_cli.diagram import (
     build_dw_tables,
     build_heatmap,
     build_inheritance,
-    complexity_color,
-    EDGE_DEFAULTS,
-    GRAPH_ATTRS,
-    NODE_DEFAULTS,
 )
 
 router = APIRouter()
@@ -297,7 +292,6 @@ async def search(request: Request, q: str = Query(..., min_length=1)):
 # ── Diagrams ───────────────────────────────────────────────────────────────────
 
 def _render_diagram(kind: str, **kwargs) -> str:
-    import graphviz as gv
 
     if kind == "inheritance":
         dot = build_inheritance(**kwargs)
@@ -571,7 +565,6 @@ async def explore_tree(request: Request):
 
 def _pbl_name(file_path: str) -> str:
     """Extract .pbl library name from an extracted file path."""
-    import ntpath
     parts = file_path.replace("\\", "/").split("/")
     for part in parts:
         if part.lower().endswith(".pbl"):

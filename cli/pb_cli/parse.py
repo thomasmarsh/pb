@@ -8,7 +8,6 @@ from typing import Iterator
 from rich.panel import Panel
 from rich.text import Text
 
-
 _LINE_RE = re.compile(r'\bline[: ]+(\d+)', re.IGNORECASE)
 _CTX = 3
 

@@ -10,7 +10,6 @@ from typing import NamedTuple
 from pb_cli.build import walk_sr_files
 from pb_cli.common import TABLES
 
-
 FILE_STATE_SQL = """
 CREATE TABLE IF NOT EXISTS file_state (
     file      TEXT PRIMARY KEY,

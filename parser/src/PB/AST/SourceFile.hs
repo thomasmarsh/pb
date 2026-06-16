@@ -41,7 +41,7 @@ data ForwardBlock = ForwardBlock
   , fwdInstances :: [GlobalInstance]
   } deriving (Eq, Show, Generic)
 
-data PrototypesBlock = PrototypesBlock
+newtype PrototypesBlock = PrototypesBlock
   { protoDecls :: [ProtoDecl]
   } deriving (Eq, Show, Generic)
 

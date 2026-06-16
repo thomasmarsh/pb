@@ -1,0 +1,9 @@
+- arguments: [--color]
+- warn: {name: "Redundant do"}
+- warn: {name: "Redundant bracket"}
+- warn: {name: "Redundant $"}
+- warn: {name: "Use <$>"}
+- warn: {name: "Use void"}
+- warn: {name: "Use print"}
+- warn: {name: "Use string"}
+- ignore: {name: "Use camelCase"}

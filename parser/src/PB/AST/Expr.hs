@@ -17,7 +17,7 @@ data LvSegment = LvSegment
   , subscript :: Maybe [Text]
   } deriving (Eq, Show, Generic)
 
-data Lvalue = Lvalue
+newtype Lvalue = Lvalue
   { segments :: [LvSegment]
   } deriving (Eq, Show, Generic)
 

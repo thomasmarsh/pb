@@ -40,7 +40,7 @@ import Text.Megaparsec.Error (errorBundlePretty)
 import qualified Data.Text as T
 
 pEndKw :: Text -> FileParser ()
-pEndKw kw = () <$ leadingText ("end " <> kw)
+pEndKw kw = void (leadingText ("end " <> kw))
 
 isFnMod :: Token -> Bool
 isFnMod t = isModifierToken t
@@ -268,7 +268,7 @@ pPrototypesBlock = do
   _ <- satisfyStmt isProtosOpener
   items <- many (try pProtoDeclOrSkip)
   pEndKw "prototypes"
-  return (PrototypesBlock [d | Just d <- items])
+  return (PrototypesBlock (catMaybes items))
 
 -- ---------------------------------------------------------------------------
 -- Body-block helpers

@@ -5,6 +5,7 @@ module PB.Pipeline.Preprocess
   ) where
 
 import PB.Prelude
+import Data.Bifunctor (second)
 import qualified Data.Text as T
 
 -- | A logical line after preprocessing.
@@ -31,7 +32,7 @@ splitNormalized txt =
   in zip [1..] ls
 
 stripTrailing :: [(Int, Text)] -> [(Int, Text)]
-stripTrailing = map (\(n, t) -> (n, T.dropWhileEnd isSpace t))
+stripTrailing = map (second (T.dropWhileEnd isSpace))
   where
     isSpace c = c == ' ' || c == '\t'
 

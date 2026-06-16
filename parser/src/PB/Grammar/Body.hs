@@ -46,7 +46,7 @@ augOp _    = Nothing
 
 classifyByOp :: Statement -> [Token] -> BodyStmt
 classifyByOp s ts =
-  let (lhs, rest) = span (not . isOperator) ts
+  let (lhs, rest) = break isOperator ts
   in case rest of
        []             -> BsCall (parseExpr ts)
        (op : rhs)

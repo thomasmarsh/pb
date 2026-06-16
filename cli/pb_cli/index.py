@@ -7,12 +7,22 @@ from typing import Callable, Iterable
 
 from pb_cli.analyze import count_branches, walk_calls
 from pb_cli.common import (
-    TABLES, INSERT, Conn, RowBatch, new_row_batch,
-    db_connection,
-    CallRow, DwArgumentRow, DwControlRow, DwRetrieveColumnRow,
-    DwRetrieveTableRow, DwRetrieveWhereRow, InheritsRow,
-    ObjectRow, ProcedureRow, SqlStatementRow,
+    INSERT,
+    CallRow,
+    Conn,
+    DwArgumentRow,
+    DwControlRow,
+    DwRetrieveColumnRow,
+    DwRetrieveTableRow,
+    DwRetrieveWhereRow,
+    InheritsRow,
+    ObjectRow,
+    ProcedureRow,
+    RowBatch,
+    SqlStatementRow,
     create_schema,
+    db_connection,
+    new_row_batch,
 )
 from pb_cli.sql_parser import parse_pb_sql
 

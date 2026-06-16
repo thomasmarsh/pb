@@ -45,7 +45,7 @@ def dump(
     INPUT may be a directory of .sr* source files, a single .pbl library file,
     or a directory containing .pbl files (extracted transparently).
     """
-    from pb_cli.build import find_repo, find_binary
+    from pb_cli.build import find_binary, find_repo
     from pb_cli.dump import run as run_dump
     from pb_cli.pbl import resolve_source_dir
     from pb_cli.reporter import LiveReporter
@@ -75,9 +75,9 @@ def ingest(
     INPUT may be a directory of .sr* source files, a single .pbl library file,
     or a directory containing .pbl files (extracted transparently).
     """
-    from pb_cli.build import find_repo, find_binary
-    from pb_cli.pipeline import run as run_pipeline
+    from pb_cli.build import find_binary, find_repo
     from pb_cli.pbl import resolve_source_dir
+    from pb_cli.pipeline import run as run_pipeline
     from pb_cli.reporter import LiveReporter
 
     reporter = LiveReporter()
@@ -183,7 +183,8 @@ def diagram_inheritance(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """Inheritance hierarchy diagram."""
-    from pb_cli.diagram import connect, diagram_inheritance as _d
+    from pb_cli.diagram import connect
+    from pb_cli.diagram import diagram_inheritance as _d
     with connect(db) as conn:
         _d(conn, root, output, dot)
 
@@ -197,7 +198,8 @@ def diagram_calls(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """Call ego-graph centred on a named object."""
-    from pb_cli.diagram import connect, diagram_calls as _d
+    from pb_cli.diagram import connect
+    from pb_cli.diagram import diagram_calls as _d
     with connect(db) as conn:
         _d(conn, object_name, depth, output, dot)
 
@@ -210,7 +212,8 @@ def diagram_dw_tables(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """DataWindow → DB table bipartite dependency graph."""
-    from pb_cli.diagram import connect, diagram_dw_tables as _d
+    from pb_cli.diagram import connect
+    from pb_cli.diagram import diagram_dw_tables as _d
     with connect(db) as conn:
         _d(conn, table, output, dot)
 
@@ -222,7 +225,8 @@ def diagram_heatmap(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """Complexity heatmap over all PowerScript objects."""
-    from pb_cli.diagram import connect, diagram_heatmap as _d
+    from pb_cli.diagram import connect
+    from pb_cli.diagram import diagram_heatmap as _d
     with connect(db) as conn:
         _d(conn, output, dot)
 
@@ -245,8 +249,9 @@ def explore(
 ) -> None:
     """Start the interactive DuckDB explorer web UI."""
     import uvicorn
+
+    from pb_cli.build import ensure_explorer_built, find_repo
     from pb_cli.explorer import create_app
-    from pb_cli.build import find_repo, ensure_explorer_built
 
     url = f"http://{host}:{port}"
 

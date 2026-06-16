@@ -17,7 +17,7 @@ walkFiles keep root = do
   exists <- doesDirectoryExist root
   if not exists then pure [] else do
     entries <- listDirectory root
-    fmap concat $ mapM step entries
+    concat <$> mapM step entries
   where
     step entry = do
       let path = root </> entry

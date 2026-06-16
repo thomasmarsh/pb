@@ -116,7 +116,7 @@ cd ui
 pnpm install
 pnpm dev              # Vite dev server with HMR on :5173
 pnpm typecheck        # tsc --noEmit
-pnpm test             # vitest (39 reducer tests)
+pnpm test             # vitest (180 reducer tests)
 pnpm build            # compile TS → static/dist/
 ```
 
@@ -127,11 +127,11 @@ pnpm build            # compile TS → static/dist/
 | Component      | Command                    | What it does                        |
 | -------------- | -------------------------- | ----------------------------------- |
 | Haskell parser | `cd parser && cabal build` | Compile library + executables       |
-| Haskell tests  | `cd parser && cabal test`  | Run 768 property + unit tests       |
+| Haskell tests  | `cd parser && cabal test`  | Run 815 property + unit tests       |
 | Python tools   | `./pb ingest`              | Parse → index → analyze pipeline    |
-| Python tests   | `cd cli && uv run pytest`  | 125 tests across tooling            |
+| Python tests   | `cd cli && uv run pytest`  | 169 tests across tooling            |
 | Explorer TS    | `pnpm build` (in `ui/`)    | Bundle TS → JS for the web UI       |
-| Explorer tests | `pnpm test` (in `ui/`)     | 39 reducer + state management tests |
+| Explorer tests | `pnpm test` (in `ui/`)     | 180 reducer + state management tests |
 | Corpus check   | `./pb check-corpus`        | 0 errors / 777 files baseline       |
 
 CI runs all of these on every push to `main`.

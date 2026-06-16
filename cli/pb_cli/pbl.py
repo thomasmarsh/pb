@@ -81,11 +81,14 @@ def _parse_entry(chunk: bytes, unicode: bool) -> tuple[_Entry, int]:
     # Layout (ANSI):    4(magic) 4(ver) 4(offset) 4(size) 4(date) 2(commentlen) 2(objectlen) name
     # Layout (Unicode): 4(magic) 8(ver) 4(offset) 4(size) 4(date) 2(commentlen) 2(objectlen) name
     p = 4 + (8 if unicode else 4)          # skip magic + version
-    dat_offset = struct.unpack_from('<I', chunk, p)[0]; p += 4
+    dat_offset = struct.unpack_from('<I', chunk, p)[0]
+    p += 4
     p += 4                                 # skip objectsize
     p += 4                                 # skip date
-    comment_len = struct.unpack_from('<H', chunk, p)[0]; p += 2
-    object_len  = struct.unpack_from('<H', chunk, p)[0]; p += 2
+    comment_len = struct.unpack_from('<H', chunk, p)[0]
+    p += 2
+    object_len  = struct.unpack_from('<H', chunk, p)[0]
+    p += 2
     name_bytes  = chunk[p:p + object_len]
     decode = _decode_unicode if unicode else _decode_ansi
     name = decode(name_bytes).rstrip('\x00')

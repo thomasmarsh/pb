@@ -7,7 +7,6 @@ import duckdb
 import graphviz
 import networkx as nx
 
-
 KIND_COLORS = {
     'powerscript': '#5B8DD9',
     'datawindow':  '#56A85D',

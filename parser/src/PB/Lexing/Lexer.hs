@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 module PB.Lexing.Lexer
   ( tokenize
   , LexLine (..)
@@ -63,7 +64,7 @@ sc :: Lexer ()
 sc = L.space space1 (L.skipLineComment "//") (L.skipBlockComment "/*" "*/")
 
 currentCol :: Lexer Int
-currentCol = (fromIntegral . unPos . sourceColumn) <$> getSourcePos
+currentCol = fromIntegral . unPos . sourceColumn <$> getSourcePos
 
 mkTok :: Int -> Int -> Int -> TokenKind -> Text -> Token
 mkTok sl el c k t = Token k t (SourceSpan sl el c)
@@ -293,7 +294,7 @@ keywordMap = Map.fromList $
   <> withKind TkControlKw       controlKws
   <> withKind TkOtherKw         otherKws
   where
-    withKind k = map (\x -> (x, k))
+    withKind k = map (, k)
 
 accessMods :: [Text]
 accessMods =

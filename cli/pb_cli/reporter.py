@@ -8,11 +8,9 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Callable, Iterator, Protocol
 
 from pb_cli.state import FileDiff
-
 
 # ── ExtractProgress ────────────────────────────────────────────────────────────
 
@@ -127,8 +125,12 @@ class LiveReporter:
     @contextmanager
     def extracting_progress(self, total: int) -> Iterator[_LiveExtractProgress]:
         from rich.progress import (
-            BarColumn, MofNCompleteColumn, Progress,
-            SpinnerColumn, TextColumn, TimeElapsedColumn,
+            BarColumn,
+            MofNCompleteColumn,
+            Progress,
+            SpinnerColumn,
+            TextColumn,
+            TimeElapsedColumn,
         )
         with Progress(
             SpinnerColumn(finished_text='[green]✓[/green]'),
@@ -144,8 +146,12 @@ class LiveReporter:
     @contextmanager
     def parse_progress(self, total: int, label: str) -> Iterator[_LiveParseProgress]:
         from rich.progress import (
-            BarColumn, MofNCompleteColumn, Progress,
-            SpinnerColumn, TextColumn, TimeElapsedColumn,
+            BarColumn,
+            MofNCompleteColumn,
+            Progress,
+            SpinnerColumn,
+            TextColumn,
+            TimeElapsedColumn,
         )
         with Progress(
             SpinnerColumn(finished_text='[green]✓[/green]'),
@@ -183,7 +189,10 @@ class LiveReporter:
     @contextmanager
     def analyze_progress(self) -> Iterator[_LiveAnalyzeProgress]:
         from rich.progress import (
-            Progress, SpinnerColumn, TextColumn, TimeElapsedColumn,
+            Progress,
+            SpinnerColumn,
+            TextColumn,
+            TimeElapsedColumn,
         )
         with Progress(
             SpinnerColumn(finished_text='[green]✓[/green]'),
@@ -193,7 +202,7 @@ class LiveReporter:
         ) as progress:
             task = progress.add_task('[2/2] Graph metrics: build graph  ', total=4)
             yield _LiveAnalyzeProgress(progress, task)
-            
+
 
     def done(self, *, parsed: int, errors: int,
              rows: int | None = None, diff: FileDiff | None = None) -> None:

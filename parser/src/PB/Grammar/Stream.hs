@@ -33,7 +33,7 @@ instance Stream StmtStream where
   tokenToChunk  _ s  = [s]
   tokensToChunk _ ss = ss
   chunkToTokens _ ss = ss
-  chunkLength   _ ss = length ss
+  chunkLength   _ = length
   chunkEmpty    _    = null
   take1_ (StmtStream [])     = Nothing
   take1_ (StmtStream (s:ss)) = Just (s, StmtStream ss)

@@ -26,6 +26,7 @@ import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
 import Control.Exception   (SomeException, try)
 import Data.Char           (intToDigit, toLower)
+import Data.Either         (lefts)
 import Data.Word           (Word8)
 import qualified Data.Text          as T
 import qualified Data.Text.Encoding as TE
@@ -147,7 +148,7 @@ wrapSrFile path sf spans =
 collectStatements :: [LexLine] -> Either Text [Statement]
 collectStatements lexLines =
   let results = splitStatements lexLines
-  in case [err | Left err <- results] of
+  in case lefts results of
     (e : _) -> Left (formatLexErr e)
     []      -> Right [s | Right s <- results, not (null (stmtTokens s))]
 
