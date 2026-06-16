@@ -11,6 +11,7 @@ import { dashboardReducer, type DashboardEnv, initialDashboardState } from "../f
 import { exploreReducer, makeInitialExploreState, type ExploreEnv } from "../features/explore/reducer.js";
 import { objectsReducer, type ObjectsEnv, initialObjectsState } from "../features/objects/reducer.js";
 import { datawindowsReducer, type DatawindowsEnv, initialDatawindowsState } from "../features/datawindows/reducer.js";
+import { tablesReducer, type TablesEnv, initialTablesState } from "../features/tables/reducer.js";
 import { diagramsReducer, type DiagramsEnv, initialDiagramsState } from "../features/diagrams/reducer.js";
 import { queriesReducer, type QueriesEnv, initialQueriesState } from "../features/queries/reducer.js";
 import { searchReducer, type SearchEnv, initialSearchState } from "../features/search/reducer.js";
@@ -20,11 +21,12 @@ import type { DashboardAction } from "../features/dashboard/actions.js";
 import type { ExploreAction } from "../features/explore/actions.js";
 import type { ObjectsAction } from "../features/objects/actions.js";
 import type { DatawindowsAction } from "../features/datawindows/actions.js";
+import type { TablesAction } from "../features/tables/actions.js";
 import type { DiagramsAction } from "../features/diagrams/actions.js";
 import type { QueriesAction } from "../features/queries/actions.js";
 import type { SearchAction } from "../features/search/actions.js";
 
-export type AppEnv = NavEnv & DashboardEnv & ExploreEnv & ObjectsEnv & DatawindowsEnv & DiagramsEnv & QueriesEnv & SearchEnv;
+export type AppEnv = NavEnv & DashboardEnv & ExploreEnv & ObjectsEnv & DatawindowsEnv & TablesEnv & DiagramsEnv & QueriesEnv & SearchEnv;
 
 // ── Lenses (app-level: connect features to AppState) ─────────────────────────
 
@@ -33,6 +35,7 @@ const matchDashboard   = (a: AppAction): DashboardAction   | null => a.tag === "
 const matchExplore     = (a: AppAction): ExploreAction     | null => a.tag === "explore"      ? a.action : null;
 const matchObjects     = (a: AppAction): ObjectsAction     | null => a.tag === "objects"      ? a.action : null;
 const matchDatawindows = (a: AppAction): DatawindowsAction | null => a.tag === "datawindows"  ? a.action : null;
+const matchTables      = (a: AppAction): TablesAction      | null => a.tag === "tables"       ? a.action : null;
 const matchDiagrams    = (a: AppAction): DiagramsAction    | null => a.tag === "diagrams"     ? a.action : null;
 const matchQueries     = (a: AppAction): QueriesAction     | null => a.tag === "queries"      ? a.action : null;
 const matchSearch      = (a: AppAction): SearchAction      | null => a.tag === "search"       ? a.action : null;
@@ -45,6 +48,7 @@ export function initialState(): AppState {
     dashboard: initialDashboardState,
     objects: initialObjectsState,
     datawindows: initialDatawindowsState,
+    tables: initialTablesState,
     diagrams: initialDiagramsState,
     queries: initialQueriesState,
     search: initialSearchState,
@@ -62,6 +66,7 @@ const _combined = combine<AppState, AppAction, AppEnv>(
   pullbackWithNav(exploreReducer,     (s) => s.explore,     matchExplore,     (a): AppAction => ({ tag: "explore",     action: a }), (env) => env, toNav),
   pullbackWithNav(objectsReducer,     (s) => s.objects,     matchObjects,     (a): AppAction => ({ tag: "objects",     action: a }), (env) => env, toNav),
   pullbackWithNav(datawindowsReducer, (s) => s.datawindows, matchDatawindows, (a): AppAction => ({ tag: "datawindows", action: a }), (env) => env, toNav),
+  pullbackWithNav(tablesReducer,      (s) => s.tables,      matchTables,      (a): AppAction => ({ tag: "tables",      action: a }), (env) => env, toNav),
   pullbackWithNav(diagramsReducer,    (s) => s.diagrams,    matchDiagrams,    (a): AppAction => ({ tag: "diagrams",    action: a }), (env) => env, toNav),
   pullbackWithNav(queriesReducer,     (s) => s.queries,     matchQueries,     (a): AppAction => ({ tag: "queries",     action: a }), (env) => env, toNav),
   pullbackWithNav(searchReducer,      (s) => s.search,      matchSearch,      (a): AppAction => ({ tag: "search",      action: a }), (env) => env, toNav),

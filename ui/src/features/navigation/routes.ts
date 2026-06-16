@@ -13,6 +13,8 @@ export function print(route: Route): string {
                                     + "/"           + encodeURIComponent(route.proc);
     case "datawindows":      return "/datawindows";
     case "dwDetail":         return "/datawindows/" + encodeURIComponent(route.name);
+    case "tables":           return "/tables";
+    case "tableDetail":      return "/tables/"      + encodeURIComponent(route.name);
     case "diagrams":         return "/diagrams";
     case "queries":          return "/queries";
     case "search":           return "/search";
@@ -32,6 +34,9 @@ export function parse(path: string): Route {
     case "datawindows":
       if (segs[1]) return { view: "dwDetail", name: decodeURIComponent(segs[1]) };
       return { view: "datawindows" };
+    case "tables":
+      if (segs[1]) return { view: "tableDetail", name: decodeURIComponent(segs[1]) };
+      return { view: "tables" };
     case "diagrams":  return { view: "diagrams" };
     case "queries":   return { view: "queries" };
     case "search":    return { view: "search" };

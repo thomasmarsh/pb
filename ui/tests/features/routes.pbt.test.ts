@@ -7,7 +7,8 @@ import type { Route, ViewName } from "../../src/features/navigation/types.js";
 
 const viewNames: ViewName[] = [
   "dashboard", "objects", "objectDetail", "procedureDetail",
-  "datawindows", "dwDetail", "diagrams", "queries", "search", "explore",
+  "datawindows", "dwDetail", "tables", "tableDetail",
+  "diagrams", "queries", "search", "explore",
 ];
 
 describe("routes — property-based", () => {
@@ -29,6 +30,7 @@ describe("routes — property-based", () => {
       { view: "dashboard" },
       { view: "objects" },
       { view: "datawindows" },
+      { view: "tables" },
       { view: "diagrams" },
       { view: "queries" },
       { view: "search" },

@@ -8,6 +8,7 @@ import type { DiagramsState } from "../features/diagrams/types.js";
 import type { QueriesState } from "../features/queries/types.js";
 import type { SearchState } from "../features/search/types.js";
 import type { ExploreState } from "../features/explore/types.js";
+import type { TablesState } from "../features/tables/types.js";
 
 export type { ViewName } from "../features/navigation/types.js";
 
@@ -16,6 +17,7 @@ export interface AppState {
   dashboard: DashboardState;
   objects: ObjectsState;
   datawindows: DatawindowsState;
+  tables: TablesState;
   diagrams: DiagramsState;
   queries: QueriesState;
   search: SearchState;

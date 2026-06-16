@@ -20,6 +20,9 @@ function dispatchFromRoute(dispatch: Dispatch<AppAction>, route: Route): void {
     case "dwDetail":
       dispatch({ tag: "datawindows", action: { type: "select", name: route.name } });
       break;
+    case "tableDetail":
+      dispatch({ tag: "tables", action: { type: "select", name: route.name } });
+      break;
     default:
       dispatch({ tag: "nav", action: { type: "navigate", route } });
   }

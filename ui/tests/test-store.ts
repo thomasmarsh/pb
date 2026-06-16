@@ -18,6 +18,7 @@ export class TestStore<S, A, Env> {
   private reducer: Reducer<S, A, Env>;
   private environment: Env;
   private pending: A[] = [];
+  private effectPromises: Promise<void>[] = [];
 
   constructor(reducer: Reducer<S, A, Env>, environment: Env, initialState: S) {
     this.state = structuredClone(initialState);
@@ -37,9 +38,21 @@ export class TestStore<S, A, Env> {
     if (assert) expect(draft).toEqual(expected);
 
     this.state = draft;
-    if (effect) effect.execute((a) => this.pending.push(a)).catch(() => {});
+    if (effect) {
+      const p = effect.execute((a) => this.pending.push(a)).catch(() => {});
+      this.effectPromises.push(p);
+    }
 
     return this;
+  }
+
+  /** Settle all pending async effects (Promise-based). Call before receive()
+   *  when the effect under test is async (e.g. a rejection path). */
+  async drain(): Promise<void> {
+    while (this.effectPromises.length > 0) {
+      const batch = this.effectPromises.splice(0);
+      await Promise.all(batch);
+    }
   }
 
   /** Assert the next pending action equals expected, then dispatch it. */
@@ -69,6 +82,10 @@ export function createTestStore<S, A, Env>(
   initialState: S,
 ): TestStore<S, A, Env> {
   const store = new TestStore(reducer, environment, initialState);
-  afterEach(() => { store.assertDrained(); });
+  // async afterEach: settle any stray async effects before asserting empty queue
+  afterEach(async () => {
+    await store.drain();
+    store.assertDrained();
+  });
   return store;
 }

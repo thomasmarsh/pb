@@ -4,6 +4,7 @@ import type { DashboardAction } from "../features/dashboard/actions.js";
 import type { ExploreAction } from "../features/explore/actions.js";
 import type { ObjectsAction } from "../features/objects/actions.js";
 import type { DatawindowsAction } from "../features/datawindows/actions.js";
+import type { TablesAction } from "../features/tables/actions.js";
 import type { DiagramsAction } from "../features/diagrams/actions.js";
 import type { QueriesAction } from "../features/queries/actions.js";
 import type { SearchAction } from "../features/search/actions.js";
@@ -15,6 +16,7 @@ export type AppAction =
   | { tag: "explore"; action: ExploreAction }
   | { tag: "objects"; action: ObjectsAction }
   | { tag: "datawindows"; action: DatawindowsAction }
-  | { tag: "diagrams"; action: DiagramsAction }
+  | { tag: "tables";      action: TablesAction }
+  | { tag: "diagrams";    action: DiagramsAction }
   | { tag: "queries"; action: QueriesAction }
   | { tag: "search"; action: SearchAction };

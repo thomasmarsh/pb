@@ -30,6 +30,18 @@ describe("parse", () => {
     expect(parse("/datawindows/MyDW")).toEqual({ view: "dwDetail", name: "MyDW" });
   });
 
+  it('"/tables" resolves to tables', () => {
+    expect(parse("/tables")).toEqual({ view: "tables" });
+  });
+
+  it('"/tables/MY_TABLE" resolves to tableDetail', () => {
+    expect(parse("/tables/MY_TABLE")).toEqual({ view: "tableDetail", name: "MY_TABLE" });
+  });
+
+  it('"/tables/schema.table%20name" decodes URL-encoded table names', () => {
+    expect(parse("/tables/schema.table%20name")).toEqual({ view: "tableDetail", name: "schema.table name" });
+  });
+
   it('"/diagrams" resolves to diagrams', () => {
     expect(parse("/diagrams")).toEqual({ view: "diagrams" });
   });
@@ -78,6 +90,19 @@ describe("print", () => {
 
   it('dwDetail maps to "/datawindows/{name}"', () => {
     expect(print({ view: "dwDetail", name: "MyDW" })).toBe("/datawindows/MyDW");
+  });
+
+  it('tables maps to "/tables"', () => {
+    expect(print({ view: "tables" })).toBe("/tables");
+  });
+
+  it('tableDetail maps to "/tables/{name}"', () => {
+    expect(print({ view: "tableDetail", name: "MY_TABLE" })).toBe("/tables/MY_TABLE");
+  });
+
+  it('round-trip: tableDetail preserves name', () => {
+    const route = { view: "tableDetail" as const, name: "schema.orders" };
+    expect(parse(print(route))).toEqual(route);
   });
 
   it('datawindows maps to "/datawindows"', () => {

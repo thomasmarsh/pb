@@ -7,6 +7,8 @@ export type Route =
   | { view: "procedureDetail"; name: string; proc: string }
   | { view: "datawindows" }
   | { view: "dwDetail";        name: string }
+  | { view: "tables" }
+  | { view: "tableDetail";     name: string }
   | { view: "diagrams" }
   | { view: "queries" }
   | { view: "search" }
