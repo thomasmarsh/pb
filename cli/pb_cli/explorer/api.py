@@ -27,7 +27,7 @@ def _conn(request: Request) -> duckdb.DuckDBPyConnection:
     return duckdb.connect(db_path, read_only=True)
 
 
-def _rows(cursor) -> list[dict[str, Any]]:
+def _rows(cursor: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     cols = [d[0] for d in cursor.description]
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
@@ -347,7 +347,7 @@ def _apply_dark(dot):
     dot.attr("edge", **_EDGE_DEFAULTS)
 
 
-def _build_inheritance(conn, root=None):
+def _build_inheritance(conn: duckdb.DuckDBPyConnection, root=None):
     if root:
         edges = conn.execute(
             "WITH RECURSIVE sub AS ("
@@ -385,7 +385,7 @@ def _build_inheritance(conn, root=None):
     return dot
 
 
-def _build_calls(conn, focal="", depth=2):
+def _build_calls(conn: duckdb.DuckDBPyConnection, focal="", depth=2):
     import networkx as nx
 
     raw_edges = conn.execute("SELECT object, to_name FROM calls").fetchall()
@@ -426,7 +426,7 @@ def _build_calls(conn, focal="", depth=2):
     return dot
 
 
-def _build_dw_tables(conn, filter_table=None):
+def _build_dw_tables(conn: duckdb.DuckDBPyConnection, filter_table=None):
     rows = conn.execute(
         "SELECT dw_name, table_name FROM dw_retrieve_tables "
         "WHERE (? IS NULL) OR table_name = ? "
@@ -466,7 +466,7 @@ def _build_dw_tables(conn, filter_table=None):
     return dot
 
 
-def _build_heatmap(conn):
+def _build_heatmap(conn: duckdb.DuckDBPyConnection):
     rows = conn.execute(
         "SELECT o.name, o.kind, COALESCE(m.max_cyclomatic, 0), COALESCE(m.in_degree, 0) "
         "FROM objects o LEFT JOIN object_metrics m ON o.name = m.object "
@@ -508,7 +508,7 @@ def _build_heatmap(conn):
     return dot
 
 
-def _build_sql_lineage(conn, focal=""):
+def _build_sql_lineage(conn: duckdb.DuckDBPyConnection, focal=""):
     rows = conn.execute(
         "SELECT DISTINCT object, table_name, operation "
         "FROM all_sql_tables "
@@ -544,7 +544,7 @@ def _build_sql_lineage(conn, focal=""):
     return dot
 
 
-def _build_table_lineage(conn, table_name=""):
+def _build_table_lineage(conn: duckdb.DuckDBPyConnection, table_name=""):
     if not table_name:
         raise HTTPException(status_code=400, detail="table param is required for table-lineage")
 

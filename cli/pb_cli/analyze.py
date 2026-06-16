@@ -57,7 +57,7 @@ def count_branches(node) -> int:
     return count
 
 
-def compute_dit(conn) -> dict[str, int]:
+def compute_dit(conn: duckdb.DuckDBPyConnection) -> dict[str, int]:
     """Depth of inheritance tree: max hops from a base class (no parent)."""
     edges = conn.execute("SELECT from_object, to_object FROM inherits").fetchall()
     igraph = nx.DiGraph((parent, child) for child, parent in edges)
@@ -69,7 +69,7 @@ def compute_dit(conn) -> dict[str, int]:
     return dit
 
 
-def compute_metrics(conn, progress: AnalyzeProgress) -> None:
+def compute_metrics(conn: duckdb.DuckDBPyConnection, progress: AnalyzeProgress) -> None:
     conn.execute("DROP TABLE IF EXISTS object_metrics")
     conn.execute("""
         CREATE TABLE object_metrics (
