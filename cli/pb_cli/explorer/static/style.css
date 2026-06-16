@@ -897,6 +897,33 @@ body {
 .sql-code { font-size: 12px; margin: 0 12px; padding: 8px 12px; }
 .ast-badge { margin-left: 6px; font-size: 10px; vertical-align: middle; }
 
+/* TableChip */
+.table-chip {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 2px 8px; border-radius: 10px;
+    background: rgba(74, 222, 128, 0.12); color: var(--green);
+    border: 1px solid rgba(74, 222, 128, 0.25);
+    font-size: 12px; font-family: 'JetBrains Mono', monospace;
+    cursor: pointer; user-select: none;
+    transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
+}
+.table-chip:hover { background: rgba(74, 222, 128, 0.22); border-color: rgba(74, 222, 128, 0.5); }
+.table-chip:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
+.table-chip-sm { font-size: 11px; padding: 1px 6px; }
+
+/* DW explore tables chips row */
+.dw-tables-chips {
+    display: flex; flex-wrap: wrap; gap: 4px;
+    padding: 2px 8px 6px 18px;
+}
+
+/* SqlStatementCard tables row */
+.sql-tables-row {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+    padding: 4px 12px 8px;
+}
+
 /* highlight.js SQL theme — scoped to keep specificity contained */
 .sql-code .hljs-keyword                       { color: #c586c0; }
 .sql-code .hljs-built_in                      { color: #dcdcaa; }

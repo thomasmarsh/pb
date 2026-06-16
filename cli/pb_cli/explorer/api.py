@@ -284,7 +284,16 @@ async def search(request: Request, q: str = Query(..., min_length=1)):
             "LIMIT 50",
             [like, like],
         ))
-        return {"objects": objects, "procedures": procs, "datawindows": dw}
+        tables = _rows(conn.execute(
+            "SELECT DISTINCT table_name, "
+            "  count(*) FILTER (WHERE source='datawindow')  AS dw_count, "
+            "  count(*) FILTER (WHERE source='powerscript') AS ps_count "
+            "FROM all_sql_tables "
+            "WHERE lower(table_name) LIKE ? "
+            "GROUP BY table_name ORDER BY (dw_count+ps_count) DESC LIMIT 20",
+            [f"%{q.lower()}%"],
+        ))
+        return {"objects": objects, "procedures": procs, "datawindows": dw, "tables": tables}
     finally:
         conn.close()
 
@@ -761,6 +770,14 @@ async def get_stats(request: Request):
             "FROM object_metrics ORDER BY pagerank DESC LIMIT 10"
         ))
         stats["top_pagerank"] = top_pagerank
+
+        try:
+            row = conn.execute(
+                "SELECT count(DISTINCT table_name) FROM all_sql_tables"
+            ).fetchone()
+            stats["tables"] = row[0] if row else 0
+        except Exception:
+            stats["tables"] = 0
 
         return stats
     finally:

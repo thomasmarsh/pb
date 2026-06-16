@@ -112,6 +112,7 @@ export interface SearchResponse {
   objects: ObjectRow[];
   procedures: { object: string; proc_type: string; name: string; modifiers: string; start_line: number }[];
   datawindows: { dw_name: string; control_name: string; control_type: string }[];
+  tables: { table_name: string; dw_count: number; ps_count: number }[];
 }
 
 export interface StatsResponse {
@@ -123,6 +124,7 @@ export interface StatsResponse {
   inherits: number;
   calls: number;
   object_metrics: number;
+  tables: number;
   by_kind: { kind: string; count: number }[];
   top_complex: ProcedureRow[];
   top_pagerank: { object: string; pagerank: number; in_degree: number; out_degree: number }[];

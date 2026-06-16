@@ -7,7 +7,7 @@ import { highlightPowerScript } from "../../lib/highlight.js";
 import type { ExploreProcDetail, SqlStatementRow } from "../../types/api.js";
 import { AstNode } from "./AstNode.js";
 import { DetailShell } from "../../components/DetailShell.js";
-import { SqlBlock } from "../../components/CodeBlock.js";
+import { SqlStatementCard } from "../../components/SqlStatementCard.js";
 import { procBadge } from "../../utils/format.js";
 
 export function ProcDetailPanel(props: { nodeId: string }) {
@@ -107,18 +107,7 @@ export function ProcDetailPanel(props: { nodeId: string }) {
                 <div class="sql-tab-body">
                   <For each={d.sql_statements}>
                     {(stmt: SqlStatementRow) => (
-                      <div class="sql-stmt-block">
-                        <div class="sql-stmt-header">
-                          <span class="badge badge-sql">{stmt.operation}</span>
-                          <Show when={stmt.tables && stmt.tables.length > 0}>
-                            <span class="sql-tables-label">{stmt.tables!.join(", ")}</span>
-                          </Show>
-                          <Show when={!stmt.parse_ok}>
-                            <span class="badge badge-warn">unparsed</span>
-                          </Show>
-                        </div>
-                        <SqlBlock code={stmt.formatted_sql} />
-                      </div>
+                      <SqlStatementCard stmt={stmt} store={store} />
                     )}
                   </For>
                 </div>

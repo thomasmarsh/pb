@@ -5,6 +5,7 @@ import { useSnapshot } from "../../core/store.js";
 import { useExploreStore } from "./ExploreContext.js";
 import type { DwExploreDetail } from "../../types/api.js";
 import { SqlBlock } from "../../components/CodeBlock.js";
+import { TableChip } from "../../components/TableChip.js";
 import { chevron } from "../../utils/format.js";
 
 export function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
@@ -84,6 +85,18 @@ export function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
             </div>
           )}
         </For>
+      </Show>
+
+      <Show when={props.data.retrieve_tables.length > 0}>
+        <div class="dw-section-header">
+          <span class="dw-section-title">Tables</span>
+          <span class="dw-section-count">{props.data.retrieve_tables.length}</span>
+        </div>
+        <div class="dw-tables-chips">
+          <For each={props.data.retrieve_tables}>
+            {(t) => <TableChip name={t} store={store} size="sm" />}
+          </For>
+        </div>
       </Show>
 
       <Show when={retrieveSql()}>

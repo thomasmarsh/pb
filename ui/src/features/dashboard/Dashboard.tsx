@@ -1,11 +1,12 @@
 // Dashboard.tsx — Dashboard view.
 
-import { Show, For, createMemo, onMount } from "solid-js";
+import { Show, For, createMemo, createResource, onMount } from "solid-js";
 import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
-import type { ProcedureRow } from "../../types/api.js";
+import type { ProcedureRow, TableSummary } from "../../types/api.js";
+import { TableChip } from "../../components/TableChip.js";
 import { procBadge } from "../../utils/format.js";
 
 function ProcedureTable(props: { title: string; procs: ProcedureRow[]; store: Store<AppState, AppAction> }) {
@@ -24,7 +25,7 @@ function ProcedureTable(props: { title: string; procs: ProcedureRow[]; store: St
                 <td class="name-cell">{p.object}</td>
                 <td>{p.name}</td>
                 <td><span class={`badge ${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
-                <td>{p.cyclomatic != null ? <span class="badge badge-cc">{String(p.cyclomatic)}</span> : "\u2013"}</td>
+                <td>{p.cyclomatic != null ? <span class="badge badge-cc">{String(p.cyclomatic)}</span> : "–"}</td>
               </tr>
             )}
           </For>
@@ -60,6 +61,35 @@ function ObjectTable(props: { title: string; objs: { object: string; pagerank: n
   );
 }
 
+function TopTablesWidget(props: { store: Store<AppState, AppAction> }) {
+  const [tables] = createResource<TableSummary[]>(() =>
+    fetch("/api/tables").then((r) => r.json() as Promise<TableSummary[]>),
+  );
+  const top = () => (tables() ?? []).slice(0, 10);
+
+  return (
+    <Show when={top().length > 0}>
+      <div class="card">
+        <div class="card-header"><h2>Most-Referenced DB Tables</h2></div>
+        <table class="data-table">
+          <thead><tr><th>Table</th><th>DW refs</th><th>PS refs</th></tr></thead>
+          <tbody>
+            <For each={top()}>
+              {(t) => (
+                <tr>
+                  <td><TableChip name={t.table_name} store={props.store} /></td>
+                  <td style={{ color: "var(--text-muted)" }}>{String(t.dw_count)}</td>
+                  <td style={{ color: "var(--text-muted)" }}>{String(t.ps_count)}</td>
+                </tr>
+              )}
+            </For>
+          </tbody>
+        </table>
+      </div>
+    </Show>
+  );
+}
+
 import { Loading } from "../../components/Loading.js";
 
 export function Dashboard(props: { store: Store<AppState, AppAction> }) {
@@ -80,6 +110,7 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
       ["Objects", stats.objects],
       ["Procedures", stats.procedures],
       ["DataWindows", stats.by_kind?.find(k => k.kind === "datawindow")?.count],
+      ["DB Tables", stats.tables],
       ["Inheritance edges", stats.inherits],
       ["Call edges", stats.calls],
       ["DW Controls", stats.dw_controls],
@@ -93,7 +124,7 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
           {([label, val]) => (
             <div class="metric-card">
               <div class="label">{label}</div>
-              <div class="value">{String(val ?? "\u2013")}</div>
+              <div class="value">{String(val ?? "–")}</div>
             </div>
           )}
         </For>
@@ -128,6 +159,8 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
       <Show when={s()!.top_pagerank && s()!.top_pagerank!.length > 0}>
         <ObjectTable title="Most Important Objects (PageRank)" objs={s()!.top_pagerank!} store={store} />
       </Show>
+
+      <TopTablesWidget store={store} />
     </Show>
   );
 }

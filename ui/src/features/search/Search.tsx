@@ -5,6 +5,8 @@ import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
+import type { SearchResponse } from "../../types/api.js";
+import { TableChip } from "../../components/TableChip.js";
 import { procBadge, shortFile } from "../../utils/format.js";
 
 function debounce<T extends (...args: never[]) => void>(fn: T, ms: number): T {
@@ -12,10 +14,11 @@ function debounce<T extends (...args: never[]) => void>(fn: T, ms: number): T {
   return ((...args: never[]) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); }) as T;
 }
 
-function SearchResults(props: { store: Store<AppState, AppAction>; data: { objects: { name: string; kind: string; file: string }[]; procedures: { object: string; name: string; proc_type: string; start_line: number | null }[]; datawindows: { dw_name: string; control_name: string; control_type: string }[] } }) {
+function SearchResults(props: { store: Store<AppState, AppAction>; data: SearchResponse }) {
   const store = props.store;
   const data = props.data;
-  const total = data.objects.length + data.procedures.length + data.datawindows.length;
+  const tables = () => data.tables ?? [];
+  const total = data.objects.length + data.procedures.length + data.datawindows.length + tables().length;
 
   if (total === 0) {
     return <div class="card"><p style={{ color: "var(--text-muted)" }}>No results found</p></div>;
@@ -82,6 +85,26 @@ function SearchResults(props: { store: Store<AppState, AppAction>; data: { objec
                     <td class="name-cell">{d.dw_name}</td>
                     <td>{d.control_name ?? "–"}</td>
                     <td>{d.control_type ?? ""}</td>
+                  </tr>
+                )}
+              </For>
+            </tbody>
+          </table>
+        </div>
+      </Show>
+
+      <Show when={tables().length > 0}>
+        <div class="card">
+          <div class="card-header"><h3>DB Tables ({tables().length})</h3></div>
+          <table class="data-table">
+            <thead><tr><th>Table</th><th>DW refs</th><th>PS refs</th></tr></thead>
+            <tbody>
+              <For each={tables()}>
+                {(t) => (
+                  <tr>
+                    <td><TableChip name={t.table_name} store={store} /></td>
+                    <td style={{ color: "var(--text-muted)" }}>{String(t.dw_count)}</td>
+                    <td style={{ color: "var(--text-muted)" }}>{String(t.ps_count)}</td>
                   </tr>
                 )}
               </For>

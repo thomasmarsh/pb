@@ -6,6 +6,7 @@ import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import { CodeBlock } from "../../components/CodeBlock.js";
+import { TableChip } from "../../components/TableChip.js";
 import { shortFile } from "../../utils/format.js";
 import { Loading } from "../../components/Loading.js";
 
@@ -94,7 +95,7 @@ export function DWDetail(props: { store: Store<AppState, AppAction> }) {
                   <div class="card-header"><h3>Retrieve Tables</h3></div>
                   <div style={{ display: "flex", "flex-wrap": "wrap", gap: "6px" }}>
                     <For each={d.retrieve_tables}>
-                      {(t) => <span class="badge badge-dw">{t}</span>}
+                      {(t) => <TableChip name={t} store={store} />}
                     </For>
                   </div>
                 </div>
