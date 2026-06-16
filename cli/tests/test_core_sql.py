@@ -2,6 +2,7 @@
 
 Tests verify table/column extraction, metadata flags, and fallback behaviour.
 """
+
 import importlib
 
 import pytest
@@ -53,10 +54,7 @@ def test_select_no_into():
 # Pattern 4: INSERT with host variables
 # ──────────────────────────────────────────────────────────────────────────────
 def test_insert():
-    raw = (
-        "INSERT INTO audit_log (user_id, action, log_date) "
-        "VALUES (:li_user, :ls_action, :ld_today)"
-    )
+    raw = "INSERT INTO audit_log (user_id, action, log_date) VALUES (:li_user, :ls_action, :ld_today)"
     parsed, tables, columns, meta = parse_pb_sql(raw)
     assert parsed is not None, "INSERT should parse"
     assert "audit_log" in tables
@@ -131,14 +129,17 @@ def test_declare_cursor_rewrite():
 # ──────────────────────────────────────────────────────────────────────────────
 # Pattern 10: OPEN / FETCH / CLOSE / CONNECT → skipped, return None
 # ──────────────────────────────────────────────────────────────────────────────
-@pytest.mark.parametrize("raw,expected_op", [
-    ("OPEN cur_order",                                      "OPEN"),
-    ("FETCH cur_order INTO :li_id, :ld_date",              "FETCH"),
-    ("CLOSE cur_order",                                     "CLOSE"),
-    ("CONNECT USING SQLCA",                                 "CONNECT"),
-    ("DISCONNECT USING SQLCA",                              "DISCONNECT"),
-    ("EXECUTE IMMEDIATE :ls_dynamic_sql",                   "EXECUTE"),
-])
+@pytest.mark.parametrize(
+    "raw,expected_op",
+    [
+        ("OPEN cur_order", "OPEN"),
+        ("FETCH cur_order INTO :li_id, :ld_date", "FETCH"),
+        ("CLOSE cur_order", "CLOSE"),
+        ("CONNECT USING SQLCA", "CONNECT"),
+        ("DISCONNECT USING SQLCA", "DISCONNECT"),
+        ("EXECUTE IMMEDIATE :ls_dynamic_sql", "EXECUTE"),
+    ],
+)
 def test_skip_unstructured(raw, expected_op):
     parsed, tables, columns, meta = parse_pb_sql(raw)
     assert parsed is None, f"{expected_op} should not be parsed (got: {parsed!r})"

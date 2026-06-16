@@ -1,4 +1,5 @@
 """Tests for pb_cli.storage (DB-boundary: schema, connection, inserts, state)."""
+
 from pb_cli.storage import (
     create_schema,
     create_state_table,

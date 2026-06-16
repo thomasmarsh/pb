@@ -4,11 +4,15 @@ from pb_cli.core.models import new_row_batch
 
 def test_ingest_powerscript_object():
     obj = {
-        "file": "test.srw", "kind": "powerscript",
+        "file": "test.srw",
+        "kind": "powerscript",
         "meta": {"object": "w_main", "ancestor": "w_base"},
-        "functions": [{"sig": {"name": "uf_init", "modifiers": ["public"], "params": "()",
-                               "returnType": "void"},
-                       "body": [{"tag": "BsReturn", "contents": {}}]}],
+        "functions": [
+            {
+                "sig": {"name": "uf_init", "modifiers": ["public"], "params": "()", "returnType": "void"},
+                "body": [{"tag": "BsReturn", "contents": {}}],
+            }
+        ],
     }
     rows = new_row_batch()
     ingest_file(obj, rows)
@@ -22,10 +26,12 @@ def test_ingest_powerscript_object():
 
 def test_ingest_datawindow_object():
     obj = {
-        "file": "d_test.srd", "kind": "datawindow",
+        "file": "d_test.srd",
+        "kind": "datawindow",
         "meta": {"object": "d_test"},
-        "controls": [{"name": "col_1", "type": "column", "band": "detail",
-                      "x": 10, "y": 20, "width": 100, "height": 24}],
+        "controls": [
+            {"name": "col_1", "type": "column", "band": "detail", "x": 10, "y": 20, "width": 100, "height": 24}
+        ],
     }
     rows = new_row_batch()
     ingest_file(obj, rows)

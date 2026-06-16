@@ -12,8 +12,10 @@ QUERIES_DIR = REPO_ROOT / "queries"
 # _parse_sql_file
 # ---------------------------------------------------------------------------
 
+
 def test_parse_no_params():
     from pb_cli.storage import parse_sql_file
+
     sql_file = QUERIES_DIR / "dead-code.sql"
     desc, params, sql = parse_sql_file(sql_file)
     assert desc
@@ -23,6 +25,7 @@ def test_parse_no_params():
 
 def test_parse_int_param_with_default():
     from pb_cli.storage import parse_sql_file
+
     sql_file = QUERIES_DIR / "top.sql"
     desc, params, sql = parse_sql_file(sql_file)
     assert len(params) == 1
@@ -33,6 +36,7 @@ def test_parse_int_param_with_default():
 
 def test_parse_text_param_no_default():
     from pb_cli.storage import parse_sql_file
+
     sql_file = QUERIES_DIR / "callers.sql"
     desc, params, sql = parse_sql_file(sql_file)
     assert len(params) == 1
@@ -45,10 +49,12 @@ def test_parse_text_param_no_default():
 # register_queries
 # ---------------------------------------------------------------------------
 
+
 def test_all_sql_files_register(db_path):
     import typer
 
     from pb_cli.queries import register_queries
+
     app = typer.Typer()
     register_queries(app)
     registered = {c.name for c in app.registered_commands}
@@ -60,11 +66,11 @@ def test_all_sql_files_register(db_path):
 # query execution
 # ---------------------------------------------------------------------------
 
+
 def test_top_returns_rows(db_path):
     conn = duckdb.connect(db_path, read_only=True)
     rows = conn.execute(
-        "SELECT object, name, proc_type, cyclomatic FROM procedures ORDER BY cyclomatic DESC LIMIT $n",
-        {"n": 5}
+        "SELECT object, name, proc_type, cyclomatic FROM procedures ORDER BY cyclomatic DESC LIMIT $n", {"n": 5}
     ).fetchall()
     conn.close()
     assert len(rows) == 5
@@ -74,8 +80,7 @@ def test_top_returns_rows(db_path):
 def test_callers_returns_rows(db_path):
     conn = duckdb.connect(db_path, read_only=True)
     rows = conn.execute(
-        "SELECT DISTINCT object FROM calls WHERE to_name = $name ORDER BY object",
-        {"name": "fn_sqlerror"}
+        "SELECT DISTINCT object FROM calls WHERE to_name = $name ORDER BY object", {"name": "fn_sqlerror"}
     ).fetchall()
     conn.close()
     assert len(rows) > 0
@@ -104,7 +109,8 @@ def test_dead_code_no_false_negatives(db_path):
 
 def test_ancestors_chain(db_path):
     conn = duckdb.connect(db_path, read_only=True)
-    rows = conn.execute("""
+    rows = conn.execute(
+        """
         WITH RECURSIVE chain AS (
             SELECT from_object, to_object, 1 AS depth FROM inherits
             WHERE from_object = $name
@@ -113,7 +119,9 @@ def test_ancestors_chain(db_path):
             FROM inherits i JOIN chain ON chain.to_object = i.from_object
         )
         SELECT depth, to_object AS parent FROM chain ORDER BY depth
-    """, {"name": "m_misth_zpstath_grid"}).fetchall()
+    """,
+        {"name": "m_misth_zpstath_grid"},
+    ).fetchall()
     conn.close()
     assert len(rows) >= 1
     assert rows[0][1] == "m_main_pbgrid"
@@ -121,10 +129,7 @@ def test_ancestors_chain(db_path):
 
 def test_pagerank_ordered(db_path):
     conn = duckdb.connect(db_path, read_only=True)
-    rows = conn.execute(
-        "SELECT pagerank FROM object_metrics ORDER BY pagerank DESC LIMIT $n",
-        {"n": 10}
-    ).fetchall()
+    rows = conn.execute("SELECT pagerank FROM object_metrics ORDER BY pagerank DESC LIMIT $n", {"n": 10}).fetchall()
     conn.close()
     assert len(rows) > 0
     prs = [r[0] for r in rows]

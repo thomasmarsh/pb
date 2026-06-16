@@ -1,4 +1,5 @@
 """Unit tests for pb_cli.debt — pure Python, no cabal needed."""
+
 from pb_cli.debt import (
     BsRawStats,
     DwStats,
@@ -8,6 +9,7 @@ from pb_cli.debt import (
 )
 
 # ── categorize ────────────────────────────────────────────────────────────────
+
 
 def test_categorize_sql():
     for kw in ("SELECT foo FROM bar", "INSERT INTO t", "commit", "rollback"):
@@ -60,6 +62,7 @@ def test_categorize_empty():
 
 # ── walk_bsraw ────────────────────────────────────────────────────────────────
 
+
 def test_walk_bsraw_finds_raw_text():
     node = {"tag": "BsRaw", "contents": "select 1"}
     assert list(walk_bsraw(node)) == ["select 1"]
@@ -90,6 +93,7 @@ def test_walk_bsraw_empty():
 
 # ── walk_exraw ────────────────────────────────────────────────────────────────
 
+
 def test_walk_exraw_finds_raw_with_tokens():
     node = {"tag": "ExRaw", "contents": ["create", "ClassName"]}
     results = list(walk_exraw(node))
@@ -117,6 +121,7 @@ def test_walk_exraw_recurses():
 
 
 # ── dataclasses ───────────────────────────────────────────────────────────────
+
 
 def test_bsraw_stats_defaults():
     s = BsRawStats()

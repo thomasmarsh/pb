@@ -1,4 +1,5 @@
 """Shared fixtures — session-scoped to avoid rebuilding pb-runner output 4x."""
+
 import io
 import subprocess
 
@@ -15,9 +16,20 @@ OPENPAY_DIR = REPO_ROOT / "example" / "openpay-src"
 def jsonl_text() -> str:
     """Run pb-runner once for the entire test session."""
     runner = subprocess.run(
-        ["cabal", "run", "--project-dir", str(REPO_ROOT / "parser"),
-         "pb-runner", "-v0", "--", "-i", str(OPENPAY_DIR), "--jsonl"],
-        capture_output=True, cwd=str(REPO_ROOT / "parser"),
+        [
+            "cabal",
+            "run",
+            "--project-dir",
+            str(REPO_ROOT / "parser"),
+            "pb-runner",
+            "-v0",
+            "--",
+            "-i",
+            str(OPENPAY_DIR),
+            "--jsonl",
+        ],
+        capture_output=True,
+        cwd=str(REPO_ROOT / "parser"),
     )
     assert runner.returncode == 0, runner.stderr.decode()
     return runner.stdout.decode()
@@ -31,6 +43,7 @@ def db_path(jsonl_text: str, tmp_path_factory) -> str:
 
     from pb_cli.reporter import LiveReporter
     from pb_cli.storage import compute_metrics, db_connection, run_from_jsonl_lines
+
     run_from_jsonl_lines(io.StringIO(jsonl_text), db)
 
     reporter = LiveReporter()

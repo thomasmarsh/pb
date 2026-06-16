@@ -1,4 +1,5 @@
 """Unit tests for pb_cli.shell.env.ShellEnv — field wiring, not behavior."""
+
 from pb_cli.reporter import LiveReporter, RecordingReporter
 from pb_cli.shell.env import ShellEnv
 

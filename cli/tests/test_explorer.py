@@ -1,4 +1,5 @@
 """Tests for pb_cli.explorer — API endpoints and render module."""
+
 import shutil
 
 import duckdb
@@ -6,11 +7,13 @@ import pytest
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture(scope="module")
 def client(db_path):
     from fastapi.testclient import TestClient
 
     from pb_cli.explorer import create_app
+
     app = create_app(db_path)
     return TestClient(app)
 
@@ -29,9 +32,20 @@ def client_with_sql(db_path, tmp_path_factory):
     conn = duckdb.connect(db_copy)
     conn.execute(
         "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-        ["", "fn_sqlerror", "fn_sqlerror", 0, "SELECT",
-         "SELECT id FROM synthetic_test_table WHERE id = 1",
-         None, ["synthetic_test_table"], ["id"], False, False, True],
+        [
+            "",
+            "fn_sqlerror",
+            "fn_sqlerror",
+            0,
+            "SELECT",
+            "SELECT id FROM synthetic_test_table WHERE id = 1",
+            None,
+            ["synthetic_test_table"],
+            ["id"],
+            False,
+            False,
+            True,
+        ],
     )
     conn.execute(
         "INSERT INTO dw_retrieve_columns VALUES (?,?,?,?,?)",
@@ -46,11 +60,13 @@ def client_with_sql(db_path, tmp_path_factory):
     from fastapi.testclient import TestClient
 
     from pb_cli.explorer import create_app
+
     app = create_app(db_copy)
     return TestClient(app)
 
 
 # ── SPA ───────────────────────────────────────────────────────────────────────
+
 
 def test_index_returns_html(client):
     r = client.get("/")
@@ -79,6 +95,7 @@ def test_static_core(client):
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
+
 def test_stats_returns_counts(client):
     r = client.get("/api/stats")
     assert r.status_code == 200
@@ -91,6 +108,7 @@ def test_stats_returns_counts(client):
 
 
 # ── Objects ───────────────────────────────────────────────────────────────────
+
 
 def test_list_objects(client):
     r = client.get("/api/objects")
@@ -146,6 +164,7 @@ def test_get_object_not_found(client):
 
 # ── Procedures ────────────────────────────────────────────────────────────────
 
+
 def test_get_object_source(client):
     r = client.get("/api/objects/fn_sqlerror/source")
     assert r.status_code == 200
@@ -178,6 +197,7 @@ def test_get_procedure_not_found(client):
 
 # ── Search ────────────────────────────────────────────────────────────────────
 
+
 def test_search_returns_results(client):
     r = client.get("/api/search", params={"q": "fn_sqlerror"})
     assert r.status_code == 200
@@ -193,6 +213,7 @@ def test_search_case_insensitive(client):
 
 
 # ── DataWindows ───────────────────────────────────────────────────────────────
+
 
 def test_dw_detail(client):
     r = client.get("/api/objects", params={"kind": "datawindow", "limit": 1})
@@ -215,6 +236,7 @@ def test_dw_not_found(client):
 
 
 # ── Diagrams ──────────────────────────────────────────────────────────────────
+
 
 def test_diagram_inheritance(client):
     r = client.get("/api/diagram/inheritance")
@@ -248,6 +270,7 @@ def test_diagram_invalid_kind(client):
 
 # ── Queries ───────────────────────────────────────────────────────────────────
 
+
 def test_list_queries(client):
     r = client.get("/api/queries")
     assert r.status_code == 200
@@ -279,6 +302,7 @@ def test_run_query_not_found(client):
 
 
 # ── Explore tree ──────────────────────────────────────────────────────────────
+
 
 def test_explore_tree(client):
     r = client.get("/api/explore/tree")
@@ -322,6 +346,7 @@ def test_explore_procedure_not_found(client):
 
 
 # ── Tables ────────────────────────────────────────────────────────────────────
+
 
 def test_list_tables_returns_ranked_list(client):
     r = client.get("/api/tables")
@@ -400,6 +425,7 @@ def test_table_detail_columns_detail_dw_and_ps(client_with_sql):
 
 # ── Explore SQL statements ─────────────────────────────────────────────────────
 
+
 def test_explore_procedure_has_sql_statements_field(client):
     """sql_statements key is always present, even when empty."""
     r = client.get("/api/objects/fn_sqlerror")
@@ -430,6 +456,7 @@ def test_explore_procedure_sql_statements_have_formatted_sql(client_with_sql):
 
 # ── SQL lineage diagrams ───────────────────────────────────────────────────────
 
+
 def test_diagram_sql_lineage(client_with_sql):
     r = client_with_sql.get("/api/diagram/sql-lineage")
     assert r.status_code == 200
@@ -449,6 +476,7 @@ def test_diagram_table_lineage_with_table(client_with_sql):
 
 
 # ── Impact tab + proc-tables diagram ───────────────────────────────────────────
+
 
 def test_table_detail_impact(client_with_sql):
     r = client_with_sql.get("/api/tables/synthetic_test_table")
