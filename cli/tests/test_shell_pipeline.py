@@ -50,6 +50,7 @@ def fake_env(tmp_path):
     e.storage.delete_file_rows = lambda conn, file_path: conn.deleted.append(file_path)  # type: ignore[attr-defined]
     e.storage.save_file_state = lambda conn, states: conn.saved_state.update(states)  # type: ignore[attr-defined]
     e.storage.compute_metrics = lambda conn, progress: setattr(conn, "metrics_computed", True)
+    e.storage.count_sql_parse_failures = lambda conn: 0
     e.storage.build_subset_tmpdir = lambda src_dir, files: subset_dir
     e.storage.ingest_batch = lambda objects, conn, dialect="oracle", on_progress=None: len(objects)  # type: ignore[assignment]
 

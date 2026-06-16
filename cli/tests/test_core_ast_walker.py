@@ -1,4 +1,4 @@
-from pb_cli.core.ast_walker import count_branches, walk_bsraw, walk_calls, walk_exraw
+from pb_cli.core.ast_walker import count_branches, walk_bsraw, walk_bsraw_located, walk_calls, walk_exraw, walk_tagged
 
 
 def test_walk_calls_excall():
@@ -32,23 +32,82 @@ def test_count_branches_nested():
     assert count_branches(node) == 2
 
 
+# ── walk_tagged ────────────────────────────────────────────────────────────
+
+
+def test_walk_tagged_finds_top_level_tag():
+    node = {"tag": "BsRaw", "contents": "select 1"}
+    results = list(walk_tagged(node))
+    assert results == [("BsRaw", node, None)]
+
+
+def test_walk_tagged_tracks_located_line():
+    node = {"line": 42, "node": {"tag": "BsRaw", "contents": "select 1"}}
+    results = list(walk_tagged(node))
+    tags = {(tag, line) for tag, _n, line in results}
+    assert ("BsRaw", 42) in tags
+
+
+def test_walk_tagged_line_does_not_leak_across_siblings():
+    """A node's own 'line' must not get overwritten by an unrelated sibling subtree."""
+    node = [
+        {"line": 1, "node": {"tag": "BsRaw", "contents": "a"}},
+        {"line": 2, "node": {"tag": "BsRaw", "contents": "b"}},
+    ]
+    results = [(tag, line) for tag, n, line in walk_tagged(node) if tag == "BsRaw"]
+    assert results == [("BsRaw", 1), ("BsRaw", 2)]
+
+
+def test_walk_tagged_recurses_through_unknown_wrapper_shapes():
+    """No hand-coded field names: a BsRaw nested under an arbitrarily-named
+    future field must still be found, since walk_tagged recurses into every
+    dict value unconditionally."""
+    node = {"tag": "BsTryCatch", "contents": {"tryBody": [{"tag": "BsRaw", "contents": "select 1"}]}}
+    tags = [tag for tag, _n, _line in walk_tagged(node)]
+    assert "BsRaw" in tags
+
+
+# ── walk_bsraw / walk_bsraw_located ──────────────────────────────────────────
+
+
 def test_walk_bsraw():
-    node = {"tag": "raw", "text": "SELECT 1"}
+    node = {"tag": "BsRaw", "contents": "SELECT 1"}
     assert list(walk_bsraw(node)) == ["SELECT 1"]
 
 
 def test_walk_bsraw_nested():
     node = {
-        "tag": "if",
-        "cond": {},
-        "then": [{"tag": "raw", "text": "INSERT INTO t"}],
-        "elseIfs": [],
-        "else": None,
+        "tag": "BsIf",
+        "contents": {
+            "cond": {},
+            "then": [{"tag": "BsRaw", "contents": "INSERT INTO t"}],
+            "elseIfs": [],
+            "else": None,
+        },
     }
     assert list(walk_bsraw(node)) == ["INSERT INTO t"]
 
 
+def test_walk_bsraw_located_reports_real_line():
+    node = {
+        "line": 1,
+        "node": {
+            "tag": "BsIf",
+            "contents": {
+                "cond": {},
+                "then": [{"line": 7, "node": {"tag": "BsRaw", "contents": "SELECT 1"}}],
+                "elseIfs": [],
+                "else": None,
+            },
+        },
+    }
+    assert list(walk_bsraw_located(node)) == [("SELECT 1", 7)]
+
+
+# ── walk_exraw ────────────────────────────────────────────────────────────
+
+
 def test_walk_exraw():
-    node = {"tag": "raw", "contents": ["foo", "bar"]}
+    node = {"tag": "ExRaw", "contents": ["foo", "bar"]}
     results = list(walk_exraw(node))
     assert results == [("foo", ["foo", "bar"])]

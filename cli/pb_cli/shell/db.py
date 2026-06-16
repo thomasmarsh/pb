@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS sql_statements (
     file        TEXT NOT NULL,
     object      TEXT NOT NULL,
     proc_name   TEXT NOT NULL,
-    stmt_idx    INT  NOT NULL,
+    line    INT  NOT NULL,
     operation   TEXT,
     raw_sql     TEXT,
     parsed_json JSON,
@@ -133,7 +133,7 @@ CREATE OR REPLACE VIEW all_sql_tables AS
         'retrieve'   AS operation,
         t.table_name,
         NULL         AS proc_name,
-        NULL::INT    AS stmt_idx
+        NULL::INT    AS line
     FROM dw_retrieve_tables t
 
     UNION ALL
@@ -145,7 +145,7 @@ CREATE OR REPLACE VIEW all_sql_tables AS
         s.operation,
         unnest(s.tables) AS table_name,
         s.proc_name,
-        s.stmt_idx
+        s.line
     FROM sql_statements s
     WHERE s.tables IS NOT NULL AND len(s.tables) > 0
 """
@@ -170,6 +170,21 @@ def create_schema(conn: Conn) -> None:
         if stmt:
             conn.execute(stmt)
     conn.execute(_ALL_SQL_TABLES_VIEW)
+
+
+def count_sql_parse_failures(conn: Conn) -> int:
+    """Count SQL statements that looked like SQL but sqlglot couldn't parse.
+
+    Excludes statements that are intentionally never parsed (cursor ops,
+    CONNECT/DISCONNECT, EXECUTE IMMEDIATE/PROCEDURE — see sql.py's _SKIP_RE),
+    since those report parse_ok=False by design, not by failure.
+    """
+    row = conn.execute(
+        "SELECT count(*) FROM sql_statements "
+        "WHERE NOT parse_ok AND NOT has_cursor "
+        "AND operation NOT IN ('CONNECT', 'DISCONNECT', 'EXECUTE')"
+    ).fetchone()
+    return row[0] if row else 0
 
 
 def drop_tables(conn: Conn) -> None:

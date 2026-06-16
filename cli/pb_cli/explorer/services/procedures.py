@@ -65,9 +65,9 @@ def get_procedure_explore(conn: duckdb.DuckDBPyConnection, object_name: str, pro
 
     sql_stmts = rows(
         conn.execute(
-            "SELECT stmt_idx, operation, raw_sql, tables, columns, "
+            "SELECT line, operation, raw_sql, tables, columns, "
             "has_into, has_cursor, parse_ok "
-            "FROM sql_statements WHERE object = ? AND proc_name = ? ORDER BY stmt_idx",
+            "FROM sql_statements WHERE object = ? AND proc_name = ? ORDER BY line",
             [object_name, proc_name],
         )
     )

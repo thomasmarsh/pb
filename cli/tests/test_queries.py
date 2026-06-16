@@ -1,5 +1,7 @@
 """Tests for pb_cli.queries auto-registration."""
 
+import inspect
+
 import duckdb
 import typer
 
@@ -139,7 +141,7 @@ def test_make_command_positional_params(tmp_path):
     sql_file = tmp_path / "test.sql"
     sql_file.write_text("-- Test query\n-- :name TEXT\nSELECT * FROM t WHERE name = $name\n")
     cmd = _make_command(sql_file)
-    sig = cmd.__signature__
+    sig = inspect.signature(cmd)
     positional = [p for p in sig.parameters.values() if p.kind == p.POSITIONAL_OR_KEYWORD and p.name != "db"]
     assert len(positional) == 1
     assert positional[0].name == "name"
@@ -150,7 +152,7 @@ def test_make_command_keyword_params_with_defaults(tmp_path):
     sql_file = tmp_path / "test.sql"
     sql_file.write_text("-- Test\n-- :limit INT 10\nSELECT * FROM t LIMIT $limit\n")
     cmd = _make_command(sql_file)
-    sig = cmd.__signature__
+    sig = inspect.signature(cmd)
     kw = [p for p in sig.parameters.values() if p.kind == p.KEYWORD_ONLY and p.name != "db"]
     assert len(kw) == 1
     assert kw[0].name == "limit"

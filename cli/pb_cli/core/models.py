@@ -91,7 +91,7 @@ class SqlStatementRow(NamedTuple):
     file: str
     object: str
     proc_name: str
-    stmt_idx: int
+    line: int
     operation: str | None
     raw_sql: str
     parsed_json: str | None

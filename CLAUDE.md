@@ -86,35 +86,34 @@ Map the error message to its layer before reading code:
 - `"lex error at line N"` → look at physical line N in the source file; the issue is in `Lexer.hs` or `Preprocess.hs`
 - Megaparsec grammar message → issue is in `Grammar/File.hs` or `Grammar/Stream.hs`
 
-**JSON body-statement encoding.** Know these tags before writing corpus sampling scripts — they are not obvious:
+**JSON body-statement encoding.** `PB.Pipeline.Serialise` sets no `constructorTagModifier`, so
+the `"tag"` value on every node is the **literal Haskell constructor name** — `BsRaw`, `BsIf`,
+`ExCall`, etc, never lowercased or renamed. Two encoding shapes (see the doc comment atop
+`PB.AST.Expr`):
 
-| Constructor | JSON `"tag"` | Distinguishing field |
-|-------------|--------------|----------------------|
-| `BsRaw s` | `"raw"` | `"text"` (source string) |
-| `BsCall (ExCall ...)` | `"call"` | `"expr": {"tag":"call_expr", ...}` |
-| `BsCall (ExRaw ...)` | `"call"` | `"expr": {"tag":"raw", "tokens":[...]}` |
-| `BsAssign lv e` | `"assign"` | `"lhs"`, `"rhs"` |
-| `BsReturn` | `"return"` | optional `"expr"` |
-| `BsIf` | `"if"` | `"cond"`, `"then"`, `"elseIfs"`, `"else"` |
-| `BsFor` | `"for"` | `"var"`, `"from"`, `"to"`, `"step"`, `"body"` |
-| `BsDo` | `"do"` | `"cond"`, `"body"`, `"loop"` |
-| `BsChoose` | `"choose"` | `"expr"`, `"clauses"` |
+- A constructor with **one positional field** wraps its payload in `"contents"`:
+  `BsRaw Text` → `{"tag":"BsRaw","contents":"<source text>"}`;
+  `ExRaw [Text]` → `{"tag":"ExRaw","contents":["tok1","tok2"]}`.
+- A constructor with **multiple named fields** (record syntax, e.g. `ExCall{callee,callArgs}`)
+  flattens those fields alongside `"tag"` — no `"contents"` wrapper. Field names go through
+  `stripCamelCasePrefix` (`callArgs` → `args`, `ifThen` → `then`, `forBody` → `body`, etc).
+- Every body statement is `Located BodyStmt`, serialized as **`{"line": Int, "node": {...}}`** —
+  always unwrap `"node"` to reach the tagged value, at every nesting level (top-level statements
+  *and* everything inside `then`/`elseIfs`/`else`/`body`/`clauses`).
 
-`ExRaw` tokens are **text strings** in `"tokens":[...]`, not objects. `BsRaw` has `"text"` (not `"tokens"`). A construct like `create ClassName` or `call super :: event` that has no parse failure will appear as `BsCall {"tag":"call", "expr":{"tag":"raw","tokens":["create","ClassName"]}}` — it is **not** in `BsRaw` unless the classifier explicitly emits one.
+Do not hand-roll a walker that special-cases field names per constructor — it is fragile to
+exactly this kind of schema drift (this bit us once: see BACKLOG's `pb ingest` SQL-extraction
+entry). Use `pb_cli.core.ast_walker.walk_tagged`, which recurses into every dict value and list
+item unconditionally and can't miss a tag regardless of which field a constructor nests its
+children under. `walk_calls`/`count_branches`/`walk_bsraw`/`walk_exraw` are all built on it.
 
-To search for unclassified statements starting with a keyword:
+If you need ground truth on the wire format, don't trust committed example JSON (`output/` is
+gitignored scratch and may be stale) — rebuild and run the binary directly:
 
-```python
-def walk_bsraw_leading(node, keyword):
-    if isinstance(node, list):
-        for x in node: yield from walk_bsraw_leading(x, keyword)
-    elif isinstance(node, dict):
-        if node.get('tag') == 'raw' and 'text' in node:
-            if node['text'].strip().lower().startswith(keyword):
-                yield node['text'].strip()
-        for v in node.values():
-            if isinstance(v, (dict, list)):
-                yield from walk_bsraw_leading(v, keyword)
+```bash
+cabal build --project-dir parser pb-runner
+BIN=$(cabal list-bin --project-dir parser pb-runner)
+$BIN -i <dir-with-one-srf> -o /tmp/pbout && python3 -m json.tool /tmp/pbout/*.json
 ```
 
 **Diagnosing implementation debt.** When the charter targets BsRaw, ExRaw, or DW structural-field coverage, run the debt analyser first — do NOT re-derive the breakdown from scratch:

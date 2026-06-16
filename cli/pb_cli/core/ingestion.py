@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from pb_cli.core.ast_walker import count_branches, walk_calls
+from pb_cli.core.ast_walker import count_branches, walk_bsraw_located, walk_calls
 from pb_cli.core.models import (
     CallRow,
     DwArgumentRow,
@@ -85,44 +85,6 @@ def _ingest_ps(obj: dict, file: str, rows: RowBatch, dialect: str = "oracle") ->
             _extract_sql(file, obj_name, proc_name, row[9], dialect, rows)
 
 
-def _walk_body_raw(stmts):
-    """Yield (idx, text) for every 'raw' node in body stmts, recursing into control-flow."""
-    for idx, stmt in enumerate(stmts or []):
-        tag = stmt.get("tag", "")
-        if tag == "raw":
-            text = stmt.get("text", "")
-            if text:
-                yield idx, text
-        elif tag == "if":
-            for child in stmt.get("then", []):
-                if isinstance(child, dict):
-                    yield from _walk_body_raw([child])
-            for ei in stmt.get("elseIfs", []):
-                if isinstance(ei, dict):
-                    for child in ei.get("body", []):
-                        if isinstance(child, dict):
-                            yield from _walk_body_raw([child])
-            else_body = stmt.get("else")
-            if isinstance(else_body, list):
-                for child in else_body:
-                    if isinstance(child, dict):
-                        yield from _walk_body_raw([child])
-        elif tag == "for":
-            for child in stmt.get("body", []):
-                if isinstance(child, dict):
-                    yield from _walk_body_raw([child])
-        elif tag == "do":
-            for child in stmt.get("body", []):
-                if isinstance(child, dict):
-                    yield from _walk_body_raw([child])
-        elif tag == "choose":
-            for clause in stmt.get("clauses", []):
-                if isinstance(clause, dict):
-                    for child in clause.get("body", []):
-                        if isinstance(child, dict):
-                            yield from _walk_body_raw([child])
-
-
 def _extract_sql(
     file: str,
     obj_name: str,
@@ -132,7 +94,7 @@ def _extract_sql(
     rows: RowBatch,
 ) -> None:
     stmts = json.loads(body_json) if isinstance(body_json, str) else []
-    for idx, raw in _walk_body_raw(stmts):
+    for raw, line in walk_bsraw_located(stmts):
         if _is_sql(raw):
             parsed, tables, cols, meta = parse_pb_sql(raw, dialect)
             rows["sql_statements"].append(
@@ -140,7 +102,7 @@ def _extract_sql(
                     file,
                     obj_name,
                     proc_name,
-                    idx,
+                    line if line is not None else -1,
                     meta["operation"],
                     raw,
                     json.dumps(parsed) if parsed is not None else None,

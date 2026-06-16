@@ -129,6 +129,7 @@ def test_done_without_diff():
         "parsed": 777,
         "errors": 0,
         "rows": None,
+        "sql_parse_failures": None,
         "diff": None,
     }
 

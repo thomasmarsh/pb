@@ -248,7 +248,7 @@ export interface DwExploreDetail {
 }
 
 export interface SqlStatementRow {
-  stmt_idx: number;
+  line: number;
   operation: string;
   raw_sql: string;
   formatted_sql: string;

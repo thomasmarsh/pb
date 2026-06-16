@@ -35,7 +35,7 @@ def run(
         diff = diff_state(current, stored)
 
         if not diff.new and not diff.changed and not diff.deleted:
-            reporter.done(parsed=0, errors=0, diff=diff)
+            reporter.done(parsed=0, errors=0, diff=diff, sql_parse_failures=env.storage.count_sql_parse_failures(conn))
             return
 
         for path in diff.deleted + diff.changed:
@@ -53,11 +53,14 @@ def run(
 
     with env.storage.db_connection(db) as conn, reporter.analyze_progress() as progress:
         env.storage.compute_metrics(conn, progress)
+        sql_parse_failures = env.storage.count_sql_parse_failures(conn)
 
     if to_parse:
-        reporter.done(parsed=len(to_parse), errors=errors, rows=row_count, diff=diff)
+        reporter.done(
+            parsed=len(to_parse), errors=errors, rows=row_count, diff=diff, sql_parse_failures=sql_parse_failures
+        )
     else:
-        reporter.done(parsed=0, errors=0, diff=diff)
+        reporter.done(parsed=0, errors=0, diff=diff, sql_parse_failures=sql_parse_failures)
 
 
 def _parse_subset(

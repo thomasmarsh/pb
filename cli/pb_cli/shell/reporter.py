@@ -113,7 +113,15 @@ class Reporter(Protocol):
     def parse_progress(self, total: int, label: str) -> AbstractContextManager[ParseProgress]: ...
     def indexing_step(self) -> AbstractContextManager[Callable[[int], None]]: ...
     def analyze_progress(self) -> AbstractContextManager[AnalyzeProgress]: ...
-    def done(self, *, parsed: int, errors: int, rows: int | None = None, diff: FileDiff | None = None) -> None: ...
+    def done(
+        self,
+        *,
+        parsed: int,
+        errors: int,
+        rows: int | None = None,
+        diff: FileDiff | None = None,
+        sql_parse_failures: int | None = None,
+    ) -> None: ...
 
 
 # ── LiveReporter ───────────────────────────────────────────────────────────────
@@ -217,8 +225,17 @@ class LiveReporter:
             task = progress.add_task("[2/2] Graph metrics: build graph  ", total=4)
             yield _LiveAnalyzeProgress(progress, task)
 
-    def done(self, *, parsed: int, errors: int, rows: int | None = None, diff: FileDiff | None = None) -> None:
+    def done(
+        self,
+        *,
+        parsed: int,
+        errors: int,
+        rows: int | None = None,
+        diff: FileDiff | None = None,
+        sql_parse_failures: int | None = None,
+    ) -> None:
         parts: list[str] = []
+        no_source_changes = diff is not None and not diff.new and not diff.changed and not diff.deleted
         if diff is not None:
             if diff.new:
                 parts.append(f"{len(diff.new)} new")
@@ -237,6 +254,16 @@ class LiveReporter:
             self._c.print(f"[yellow]Done[/yellow] ({summary}) · [red]⚠ {errors} parse error(s)[/red]")
         else:
             self._c.print(f"[green]Done[/green] ({summary})")
+        if no_source_changes:
+            self._c.print(
+                "[dim]No source files changed, so nothing was re-extracted. If you changed ingestion/"
+                "extraction logic (not source), run with --reset to rebuild all rows.[/dim]"
+            )
+        if sql_parse_failures:
+            self._c.print(
+                f"[yellow]⚠ {sql_parse_failures} SQL statement(s) failed to parse[/yellow] "
+                "(see sql_statements WHERE NOT parse_ok)"
+            )
 
 
 # ── RecordingReporter (tests) ──────────────────────────────────────────────────
@@ -287,13 +314,22 @@ class RecordingReporter:
         yield prog
         self.events.append({"type": "analyze_end"})
 
-    def done(self, *, parsed: int, errors: int, rows: int | None = None, diff: FileDiff | None = None) -> None:
+    def done(
+        self,
+        *,
+        parsed: int,
+        errors: int,
+        rows: int | None = None,
+        diff: FileDiff | None = None,
+        sql_parse_failures: int | None = None,
+    ) -> None:
         self.events.append(
             {
                 "type": "done",
                 "parsed": parsed,
                 "errors": errors,
                 "rows": rows,
+                "sql_parse_failures": sql_parse_failures,
                 "diff": {
                     "new": len(diff.new),
                     "changed": len(diff.changed),

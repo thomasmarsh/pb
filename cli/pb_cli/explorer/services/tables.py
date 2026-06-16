@@ -118,7 +118,7 @@ def impact_lineage(conn: duckdb.DuckDBPyConnection, table_name: str) -> dict:
 def get_table_detail(conn: duckdb.DuckDBPyConnection, table_name: str) -> dict[str, Any] | None:
     all_refs = rows(
         conn.execute(
-            "SELECT source, object, proc_name, stmt_idx, operation, file "
+            "SELECT source, object, proc_name, line, operation, file "
             "FROM all_sql_tables WHERE table_name = ? ORDER BY source, object",
             [table_name],
         )

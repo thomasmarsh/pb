@@ -307,26 +307,26 @@ def _ps_obj(proc_name: str, body_nodes: list) -> dict:
     }
 
 
-def _sql_node(text: str) -> dict:
-    """Simulate a BsRaw JSON node as produced by pb-runner."""
-    return {"tag": "raw", "text": text}
+def _sql_node(text: str, line: int = 1) -> dict:
+    """Simulate a Located BsRaw JSON node as produced by pb-runner."""
+    return {"line": line, "node": {"tag": "BsRaw", "contents": text}}
 
 
 def test_select_extracted_from_proc():
     rows = _rows()
     obj = _ps_obj(
         "f_query",
-        [_sql_node("SELECT cust_name INTO :ls_name FROM customer WHERE cust_id = :li_id")],
+        [_sql_node("SELECT cust_name INTO :ls_name FROM customer WHERE cust_id = :li_id", line=5)],
     )
     ingest_file(obj, rows)
     assert len(rows["sql_statements"]) == 1
     row = rows["sql_statements"][0]
-    # (file, object, proc_name, stmt_idx, operation, raw_sql, parsed_json,
+    # (file, object, proc_name, line, operation, raw_sql, parsed_json,
     #  tables, columns, has_into, has_cursor, parse_ok)
     assert row[0] == "test.sru"
     assert row[1] == "w_test"
     assert row[2] == "f_query"
-    assert row[3] == 0
+    assert row[3] == 5
     assert row[4] == "SELECT"
     assert row.tables is not None
     assert "customer" in row.tables
@@ -346,8 +346,8 @@ def test_multiple_sql_stmts_indexed():
     obj = _ps_obj(
         "f_multi",
         [
-            _sql_node("INSERT INTO audit_log (user_id, action) VALUES (:li_id, :ls_action)"),
-            _sql_node("COMMIT USING SQLCA"),
+            _sql_node("INSERT INTO audit_log (user_id, action) VALUES (:li_id, :ls_action)", line=2),
+            _sql_node("COMMIT USING SQLCA", line=3),
         ],
     )
     ingest_file(obj, rows)
@@ -356,13 +356,106 @@ def test_multiple_sql_stmts_indexed():
     assert ops == {"INSERT", "COMMIT"}
 
 
+def test_sql_nested_in_if_is_extracted():
+    """SQL wrapped in a conditional (the common error-check pattern) must not be skipped."""
+    rows = _rows()
+    obj = _ps_obj(
+        "f_guarded",
+        [
+            {
+                "line": 1,
+                "node": {
+                    "tag": "BsIf",
+                    "contents": {
+                        "cond": {"tag": "ExBool", "contents": True},
+                        "then": [_sql_node("SELECT id FROM orders", line=2)],
+                        "elseIfs": [],
+                        "else": None,
+                    },
+                },
+            }
+        ],
+    )
+    ingest_file(obj, rows)
+    assert len(rows["sql_statements"]) == 1
+    row = rows["sql_statements"][0]
+    assert row.line == 2
+    assert row.tables is not None
+    assert "orders" in row.tables
+
+
+def test_sql_nested_in_for_loop_is_extracted():
+    rows = _rows()
+    obj = _ps_obj(
+        "f_loop",
+        [
+            {
+                "line": 1,
+                "node": {
+                    "tag": "BsFor",
+                    "contents": {
+                        "var": {"segments": [{"name": "i", "subscript": None}]},
+                        "from": {"tag": "ExInt", "contents": "1"},
+                        "to": {"tag": "ExInt", "contents": "10"},
+                        "step": None,
+                        "body": [_sql_node("UPDATE invoices SET paid = 1", line=2)],
+                    },
+                },
+            }
+        ],
+    )
+    ingest_file(obj, rows)
+    assert len(rows["sql_statements"]) == 1
+    tables = rows["sql_statements"][0].tables
+    assert tables is not None
+    assert "invoices" in tables
+
+
+def test_sql_nested_in_choose_case_is_extracted():
+    rows = _rows()
+    obj = _ps_obj(
+        "f_switch",
+        [
+            {
+                "line": 1,
+                "node": {
+                    "tag": "BsChoose",
+                    "contents": {
+                        "expr": {"tag": "ExInt", "contents": "1"},
+                        "clauses": [
+                            {"expr": ["1"], "body": [_sql_node("DELETE FROM sessions", line=2)]},
+                        ],
+                    },
+                },
+            }
+        ],
+    )
+    ingest_file(obj, rows)
+    assert len(rows["sql_statements"]) == 1
+    tables = rows["sql_statements"][0].tables
+    assert tables is not None
+    assert "sessions" in tables
+
+
 def test_all_sql_tables_view(db_conn):
     """all_sql_tables view must exist and include dw_retrieve_tables rows."""
     count = db_conn.execute("SELECT count(*) FROM all_sql_tables WHERE source = 'datawindow'").fetchone()[0]
     assert count > 0, "all_sql_tables should include DataWindow PBSELECT rows"
 
 
-def test_sql_statements_table_exists(db_conn):
-    """sql_statements table must exist even when corpus has no body SQL."""
+def test_sql_statements_populated_from_real_corpus(db_conn):
+    """End-to-end regression test: openpay-src has real body-level SQL (selects,
+    inserts, cursor ops) wrapped inside if/for/do blocks. This must come from the
+    real pb-runner binary's output, not a hand-written fixture — a previous bug
+    where ingestion code assumed the wrong JSON tag/wrapper shape passed every
+    fixture-based unit test while silently extracting zero rows against real output."""
     count = db_conn.execute("SELECT count(*) FROM sql_statements").fetchone()[0]
-    assert count == 0, "openpay corpus has no body-level SQL; table should be empty"
+    assert count > 0, "openpay-src has real body-level SQL; sql_statements must not be empty"
+
+    ps_tables = {
+        r[0]
+        for r in db_conn.execute(
+            "SELECT DISTINCT table_name FROM all_sql_tables WHERE source = 'powerscript'"
+        ).fetchall()
+    }
+    assert "misth_final" in ps_tables, "known table referenced only inside nested control-flow SQL"

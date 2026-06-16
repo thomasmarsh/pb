@@ -354,7 +354,7 @@ def test_list_tables_returns_ranked_list(client):
     data = r.json()
     assert isinstance(data, list)
     assert len(data) > 0
-    counts = [row["dw_count"] for row in data]
+    counts = [row["dw_count"] + row["ps_count"] for row in data]
     assert counts == sorted(counts, reverse=True)
 
 

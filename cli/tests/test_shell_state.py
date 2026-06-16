@@ -9,6 +9,10 @@ from pb_cli.shell.state import (
 )
 
 
+def q(conn, sql: str):
+    return conn.execute(sql).fetchone()[0]
+
+
 def test_load_file_state_empty_db(tmp_path):
     with db_connection(str(tmp_path / "test.duckdb")) as conn:
         result = load_file_state(conn)
@@ -34,8 +38,8 @@ def test_delete_file_rows_cleans_inherits(tmp_path):
         )
         conn.execute("INSERT INTO inherits VALUES (?, ?)", ("w_child", "w_base"))
         delete_file_rows(conn, "child.srw")
-        assert conn.execute("SELECT count(*) FROM objects").fetchone()[0] == 0
-        assert conn.execute("SELECT count(*) FROM inherits").fetchone()[0] == 0
+        assert q(conn, "SELECT count(*) FROM objects") == 0
+        assert q(conn, "SELECT count(*) FROM inherits") == 0
 
 
 def test_delete_file_rows_no_objects(tmp_path):

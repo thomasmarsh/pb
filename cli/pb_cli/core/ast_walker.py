@@ -1,67 +1,83 @@
-"""Pure recursive walkers over parsed AST JSON — no I/O dependencies."""
+"""Pure recursive walkers over parsed AST JSON — no I/O dependencies.
+
+JSON shape (verified against PB.Pipeline.Serialise — no constructorTagModifier
+is set, so tags are literal Haskell constructor names):
+  - Located BodyStmt -> {"line": Int, "node": {...}}
+  - single positional-field constructors (e.g. BsRaw Text, ExRaw [Text]) ->
+    {"tag": "...", "contents": <value>}
+  - multi-field record constructors (e.g. ExCall, ExMethodCall) -> fields
+    flattened alongside "tag", no "contents" wrapper
+
+walk_tagged() does not special-case any of this: it recurses into every dict
+value and list item unconditionally, so it can't miss a tag regardless of
+which fields a future constructor nests its children under.
+"""
 
 from __future__ import annotations
+
+from collections.abc import Iterator
 
 BRANCH_TAGS = {"BsIf", "BsFor", "BsDo", "BsChoose"}
 
 
+def walk_tagged(node, line: int | None = None) -> Iterator[tuple[str, dict, int | None]]:
+    """Yield (tag, node, line) for every tagged node anywhere under `node`.
+
+    `line` tracks the nearest enclosing Located.line (propagated downward
+    whenever a dict carries an integer "line" field) so callers can report
+    a real source location instead of a synthetic position.
+    """
+    if isinstance(node, dict):
+        cur_line = node["line"] if isinstance(node.get("line"), int) else line
+        tag = node.get("tag")
+        if tag is not None:
+            yield tag, node, cur_line
+        for v in node.values():
+            yield from walk_tagged(v, cur_line)
+    elif isinstance(node, list):
+        for item in node:
+            yield from walk_tagged(item, line)
+
+
 def walk_calls(node) -> list[tuple[str, str]]:
     results = []
-    if isinstance(node, dict):
-        tag = node.get("tag")
+    for tag, n, _line in walk_tagged(node):
         if tag == "ExCall":
-            segs = node.get("callee", {}).get("segments", [])
+            segs = n.get("callee", {}).get("segments", [])
             if segs:
                 results.append((segs[-1].get("name", ""), "ExCall"))
         elif tag == "ExMethodCall":
-            results.append((node.get("method", ""), "ExMethodCall"))
+            results.append((n.get("method", ""), "ExMethodCall"))
         elif tag == "ExDispatch":
-            name = node.get("contents", {}).get("name", "") or node.get("name", "")
+            contents = n.get("contents", {})
+            name = contents.get("name", "") or n.get("name", "")
             results.append((name, "ExDispatch"))
-        for v in node.values():
-            results.extend(walk_calls(v))
-    elif isinstance(node, list):
-        for item in node:
-            results.extend(walk_calls(item))
     return results
 
 
 def count_branches(node) -> int:
-    count = 0
-    if isinstance(node, dict):
-        if node.get("tag") in BRANCH_TAGS:
-            count += 1
-        for v in node.values():
-            count += count_branches(v)
-    elif isinstance(node, list):
-        for item in node:
-            count += count_branches(item)
-    return count
+    return sum(1 for tag, _n, _line in walk_tagged(node) if tag in BRANCH_TAGS)
 
 
-def walk_bsraw(node):
-    if isinstance(node, list):
-        for x in node:
-            yield from walk_bsraw(x)
-    elif isinstance(node, dict):
-        if node.get("tag") == "raw":
-            text = node.get("text", "")
+def walk_bsraw(node) -> Iterator[str]:
+    """Yield the raw text of every BsRaw statement anywhere under `node`."""
+    for text, _line in walk_bsraw_located(node):
+        yield text
+
+
+def walk_bsraw_located(node) -> Iterator[tuple[str, int | None]]:
+    """Yield (text, line) for every BsRaw statement anywhere under `node`."""
+    for tag, n, line in walk_tagged(node):
+        if tag == "BsRaw":
+            text = n.get("contents", "")
             if isinstance(text, str) and text:
-                yield text
-        for v in node.values():
-            if isinstance(v, (dict, list)):
-                yield from walk_bsraw(v)
+                yield text, line
 
 
-def walk_exraw(node):
-    if isinstance(node, list):
-        for x in node:
-            yield from walk_exraw(x)
-    elif isinstance(node, dict):
-        if node.get("tag") == "raw":
-            toks = node.get("contents", [])
+def walk_exraw(node) -> Iterator[tuple[str, list[str]]]:
+    """Yield (leading_token, tokens) for every ExRaw expression anywhere under `node`."""
+    for tag, n, _line in walk_tagged(node):
+        if tag == "ExRaw":
+            toks = n.get("contents", [])
             if isinstance(toks, list) and toks:
                 yield toks[0], toks
-        for v in node.values():
-            if isinstance(v, (dict, list)):
-                yield from walk_exraw(v)

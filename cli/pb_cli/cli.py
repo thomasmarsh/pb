@@ -12,6 +12,8 @@ import typer
 import uvicorn
 
 from pb_cli.core.pbl import extract_to_dir, resolve_source_dir
+from pb_cli.shell.commands.clean import ALL_TARGETS as CLEAN_TARGETS
+from pb_cli.shell.commands.clean import run as run_clean
 from pb_cli.shell.commands.corpus import run as run_corpus
 from pb_cli.shell.commands.debt import run as run_debt
 from pb_cli.shell.commands.dump import run as run_dump
@@ -137,6 +139,27 @@ def debt(
 ) -> None:
     """Analyze BsRaw + ExRaw debt and DW control coverage across both corpora."""
     run_debt(repo=repo, no_build=no_build)
+
+
+# ── pb clean ───────────────────────────────────────────────────────────────────
+
+
+@app.command()
+def clean(
+    only: Optional[str] = typer.Option(
+        None,
+        "--only",
+        help=f"Comma-separated subset of {{{','.join(CLEAN_TARGETS)}}}. Default: all.",
+    ),
+    repo: Optional[Path] = typer.Option(None, "--repo", help="Repo root (auto-detect if omitted)."),
+) -> None:
+    """Remove build artifacts: cabal dist-newstyle, ui node_modules/built explorer
+    assets, Python caches, and .venv (including cli/.venv, which 'pb' itself may
+    be running from via 'uv run --project cli' — removed last, after everything
+    else, since unlinking files a running process still has open is safe on POSIX
+    but not guaranteed on Windows)."""
+    targets = [t.strip() for t in only.split(",")] if only else None
+    run_clean(repo=repo, targets=targets)
 
 
 # ── pb check-corpus ──────────────────────────────────────────────────────────

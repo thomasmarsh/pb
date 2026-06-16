@@ -30,8 +30,8 @@ def test_analyze_bsraw_counts(tmp_path):
             "functions": [
                 {
                     "body": [
-                        {"tag": "raw", "text": "SELECT * FROM t"},
-                        {"tag": "raw", "text": "if x > 0 then"},
+                        {"tag": "BsRaw", "contents": "SELECT * FROM t"},
+                        {"tag": "BsRaw", "contents": "if x > 0 then"},
                     ]
                 }
             ]
@@ -50,7 +50,7 @@ def test_analyze_bsraw_other_category(tmp_path):
             "functions": [
                 {
                     "body": [
-                        {"tag": "raw", "text": "MessageBox('hello')"},
+                        {"tag": "BsRaw", "contents": "MessageBox('hello')"},
                     ]
                 }
             ]
@@ -68,7 +68,7 @@ def test_analyze_bsraw_exraw(tmp_path):
             "functions": [
                 {
                     "body": [
-                        {"tag": "call", "expr": {"tag": "raw", "contents": ["foo", "bar"]}},
+                        {"tag": "BsCall", "contents": {"tag": "ExRaw", "contents": ["foo", "bar"]}},
                     ]
                 }
             ]
