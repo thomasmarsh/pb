@@ -1,14 +1,4 @@
-"""
-Tests for pb_cli.diagram.
-
-Run from repo root:
-  uv run pytest tests/test_diagram.py
-
-Requires:
-  - pb.duckdb populated (run `pb index` + `pb analyze` first)
-  - uv sync (graphviz, duckdb, networkx)
-  - dot binary on PATH
-"""
+"""Tests for pb_cli.shell.diagrams — GraphViz diagram generation."""
 
 import io
 import re

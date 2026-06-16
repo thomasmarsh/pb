@@ -6,11 +6,11 @@ import subprocess
 import duckdb
 import pytest
 
-from pb_cli.shell.reporter import LiveReporter
 from pb_cli.shell.build import find_repo
 from pb_cli.shell.db import db_connection
 from pb_cli.shell.ingest import run_from_jsonl_lines
 from pb_cli.shell.metrics import compute_metrics
+from pb_cli.shell.reporter import LiveReporter
 
 REPO_ROOT = find_repo()
 OPENPAY_DIR = REPO_ROOT / "example" / "openpay-src"

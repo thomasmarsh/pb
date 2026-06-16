@@ -3,9 +3,9 @@
 import duckdb
 import typer
 
-from pb_cli.shell.queries import register_queries
 from pb_cli.shell.build import find_repo
 from pb_cli.shell.db import parse_sql_file
+from pb_cli.shell.queries import register_queries
 
 REPO_ROOT = find_repo()
 QUERIES_DIR = REPO_ROOT / "queries"

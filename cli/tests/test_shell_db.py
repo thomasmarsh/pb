@@ -1,4 +1,4 @@
-"""Tests for pb_cli.shell.db + shell.ingest + shell.state (DB-boundary operations)."""
+"""Tests for pb_cli.shell.db, shell.ingest, shell.state (DB-boundary operations)."""
 
 from pb_cli.core.ingestion import ingest_file
 from pb_cli.core.models import new_row_batch
