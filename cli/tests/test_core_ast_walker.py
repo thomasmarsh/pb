@@ -33,19 +33,22 @@ def test_count_branches_nested():
 
 
 def test_walk_bsraw():
-    node = {"tag": "BsRaw", "contents": "SELECT 1"}
+    node = {"tag": "raw", "text": "SELECT 1"}
     assert list(walk_bsraw(node)) == ["SELECT 1"]
 
 
 def test_walk_bsraw_nested():
     node = {
-        "tag": "BsIf",
-        "contents": {"cond": {}, "then": [{"tag": "BsRaw", "contents": "INSERT INTO t"}], "elseIfs": [], "else": None},
+        "tag": "if",
+        "cond": {},
+        "then": [{"tag": "raw", "text": "INSERT INTO t"}],
+        "elseIfs": [],
+        "else": None,
     }
     assert list(walk_bsraw(node)) == ["INSERT INTO t"]
 
 
 def test_walk_exraw():
-    node = {"tag": "ExRaw", "contents": ["foo", "bar"]}
+    node = {"tag": "raw", "contents": ["foo", "bar"]}
     results = list(walk_exraw(node))
     assert results == [("foo", ["foo", "bar"])]

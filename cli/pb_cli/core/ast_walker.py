@@ -44,9 +44,9 @@ def walk_bsraw(node):
         for x in node:
             yield from walk_bsraw(x)
     elif isinstance(node, dict):
-        if node.get("tag") == "BsRaw":
-            text = node.get("contents", "")
-            if isinstance(text, str):
+        if node.get("tag") == "raw":
+            text = node.get("text", "")
+            if isinstance(text, str) and text:
                 yield text
         for v in node.values():
             if isinstance(v, (dict, list)):
@@ -58,9 +58,9 @@ def walk_exraw(node):
         for x in node:
             yield from walk_exraw(x)
     elif isinstance(node, dict):
-        if node.get("tag") == "ExRaw":
+        if node.get("tag") == "raw":
             toks = node.get("contents", [])
-            if toks:
+            if isinstance(toks, list) and toks:
                 yield toks[0], toks
         for v in node.values():
             if isinstance(v, (dict, list)):

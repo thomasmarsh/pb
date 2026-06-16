@@ -309,7 +309,7 @@ def _ps_obj(proc_name: str, body_nodes: list) -> dict:
 
 def _sql_node(text: str) -> dict:
     """Simulate a BsRaw JSON node as produced by pb-runner."""
-    return {"node": {"tag": "raw", "text": text}}
+    return {"tag": "raw", "text": text}
 
 
 def test_select_extracted_from_proc():
