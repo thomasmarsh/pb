@@ -177,8 +177,9 @@ def count_sql_parse_failures(conn: Conn) -> int:
 
     Excludes statements that are intentionally never parsed (cursor ops,
     CONNECT/DISCONNECT, EXECUTE IMMEDIATE/PROCEDURE, DECLARE ... DYNAMIC
-    CURSOR FOR <prepared-stmt-id> — see sql.py's _SKIP_RE), since those
-    report parse_ok=False by design, not by failure.
+    CURSOR FOR <prepared-stmt-id>, DECLARE ... PROCEDURE FOR <storedproc> —
+    see sql.py's _SKIP_RE), since those report parse_ok=False by design,
+    not by failure.
     """
     row = conn.execute(
         "SELECT count(*) FROM sql_statements "
@@ -187,6 +188,8 @@ def count_sql_parse_failures(conn: Conn) -> int:
         "('CONNECT', 'DISCONNECT', 'EXECUTE', 'OPEN', 'FETCH', 'CLOSE') "
         "AND NOT (operation = 'DECLARE' "
         "AND regexp_matches(raw_sql, 'DYNAMIC\\s+CURSOR\\s+FOR\\s+\\w+\\s*;?\\s*$', 'i'))"
+        "AND NOT (operation = 'DECLARE' "
+        "AND regexp_matches(raw_sql, '\\w+\\s+PROCEDURE\\s+FOR\\s+\\w+', 'i'))"
     ).fetchone()
     return row[0] if row else 0
 

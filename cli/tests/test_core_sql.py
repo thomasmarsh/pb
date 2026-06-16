@@ -159,6 +159,28 @@ def test_skip_dynamic_cursor_declare():
     assert meta["operation"] == "DECLARE"
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Pattern 12: DECLARE ... PROCEDURE FOR <storedproc> (...) → skipped
+# (stored-procedure declare; no inline SELECT to extract; Oracle/Sybase/Watcom
+# param styles all reduce to the same unparseable shape)
+# ──────────────────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "declare update_contacts procedure for sp_contacts\n\t\t(:ls_action,\n\t\t:li_id);",
+        "declare update_contacts procedure for sp_contacts\n\t\t@action = :ls_action,\n\t\t@contact_id = :li_id;",
+        "declare update_contacts procedure for sp_contacts\n\t\taction = :ls_action,\n\t\tcontact_id = :li_id;",
+    ],
+)
+def test_skip_procedure_declare(raw):
+    assert pb_sql_to_standard(raw) is None, "should be skipped by _SKIP_RE, not handed to sqlglot"
+
+    parsed, tables, columns, meta = parse_pb_sql(raw)
+    assert parsed is None
+    assert tables == []
+    assert meta["operation"] == "DECLARE"
+
+
 def test_core_sql_has_no_io_imports():
     """core/sql.py must not import duckdb, subprocess, or pathlib."""
     mod = importlib.import_module("pb_cli.core.sql")

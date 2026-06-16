@@ -10,7 +10,8 @@ from sqlglot import exp
 # Statements with no parseable SQL structure — extract metadata only
 _SKIP_RE = re.compile(
     r"^\s*(CONNECT|DISCONNECT|OPEN|CLOSE|FETCH|EXECUTE\s+(?:IMMEDIATE|PROCEDURE)"
-    r"|DECLARE\s+\w+\s+DYNAMIC\s+CURSOR\s+FOR\s+\w+\s*;?\s*$)",
+    r"|DECLARE\s+\w+\s+DYNAMIC\s+CURSOR\s+FOR\s+\w+\s*;?\s*$"
+    r"|DECLARE\s+\w+\s+PROCEDURE\s+FOR\s+\w+)",
     re.I,
 )
 
