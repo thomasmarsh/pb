@@ -1,0 +1,136 @@
+// tests/components/Objects.test.tsx — Tests for Objects list component.
+
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { screen, fireEvent } from "@solidjs/testing-library";
+import { renderWithStore } from "../helpers.js";
+import { Objects } from "../../src/features/objects/Objects.js";
+
+const sampleItems = [
+  { name: "w_main", kind: "powerscript", file: "app.pbl", ancestor: "w_base" },
+  { name: "d_emp", kind: "datawindow", file: "app.pbl", ancestor: null },
+  { name: "p_util", kind: "project", file: "app.pbl", ancestor: null },
+];
+
+describe("Objects component", () => {
+  it("renders search input with placeholder", () => {
+    renderWithStore(Objects);
+    expect(screen.getByPlaceholderText("Search objects...")).toBeDefined();
+  });
+
+  it("dispatches objects/search on input", () => {
+    const { captured } = renderWithStore(Objects);
+    const input = screen.getByPlaceholderText("Search objects...");
+    fireEvent.input(input, { target: { value: "w_" } });
+    const searchActions = captured.filter(
+      (a) => a.tag === "objects" && a.action.type === "search",
+    );
+    expect(searchActions.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders filter pills", () => {
+    renderWithStore(Objects);
+    expect(screen.getByText("All")).toBeDefined();
+    expect(screen.getByText("powerscript")).toBeDefined();
+    expect(screen.getByText("datawindow")).toBeDefined();
+  });
+
+  it("clicking filter pill dispatches filter-kind", () => {
+    const { captured } = renderWithStore(Objects);
+    fireEvent.click(screen.getByText("datawindow"));
+    const filterActions = captured.filter(
+      (a) => a.tag === "objects" && a.action.type === "filter-kind",
+    );
+    expect(filterActions.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders object table when items exist", () => {
+    renderWithStore(Objects, {
+      objects: {
+        items: sampleItems,
+        total: 3,
+        q: "",
+        kind: "",
+        sort: "name",
+        order: "asc",
+        offset: 0,
+        loading: false,
+        detail: null,
+        sourceDetail: null,
+        procedureDetail: null,
+        allObjects: [],
+      },
+    });
+    expect(screen.getByText("w_main")).toBeDefined();
+    expect(screen.getByText("d_emp")).toBeDefined();
+    expect(screen.getByText("p_util")).toBeDefined();
+  });
+
+  it("clicking object row dispatches select", () => {
+    const { captured } = renderWithStore(Objects, {
+      objects: {
+        items: sampleItems,
+        total: 3,
+        q: "",
+        kind: "",
+        sort: "name",
+        order: "asc",
+        offset: 0,
+        loading: false,
+        detail: null,
+        sourceDetail: null,
+        procedureDetail: null,
+        allObjects: [],
+      },
+    });
+    fireEvent.click(screen.getByText("w_main"));
+    const selectActions = captured.filter(
+      (a) => a.tag === "objects" && a.action.type === "select",
+    );
+    expect(selectActions.length).toBe(1);
+    expect(selectActions[0]).toEqual({ tag: "objects", action: { type: "select", name: "w_main" } });
+  });
+
+  it("clicking column header dispatches sort", () => {
+    const { captured } = renderWithStore(Objects, {
+      objects: {
+        items: sampleItems,
+        total: 3,
+        q: "",
+        kind: "",
+        sort: "name",
+        order: "asc",
+        offset: 0,
+        loading: false,
+        detail: null,
+        sourceDetail: null,
+        procedureDetail: null,
+        allObjects: [],
+      },
+    });
+    fireEvent.click(screen.getByText(/^Kind/));
+    const sortActions = captured.filter(
+      (a) => a.tag === "objects" && a.action.type === "sort",
+    );
+    expect(sortActions.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("shows loading when loading and no items", () => {
+    renderWithStore(Objects, {
+      objects: {
+        items: [],
+        total: 0,
+        q: "test",
+        kind: "",
+        sort: "name",
+        order: "asc",
+        offset: 0,
+        loading: true,
+        detail: null,
+        sourceDetail: null,
+        procedureDetail: null,
+        allObjects: [],
+      },
+    });
+    expect(screen.getByText("Loading...")).toBeDefined();
+  });
+});
