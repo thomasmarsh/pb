@@ -168,3 +168,155 @@ def test_cyclomatic_populated_by_indexing(db_conn):
 
     min_cc = q(db_conn, "SELECT min(cyclomatic) FROM procedures WHERE cyclomatic IS NOT NULL")
     assert min_cc >= 1, f"cyclomatic minimum should be 1 (no branches), got {min_cc}"
+
+
+# ── compute_dit split tests ──────────────────────────────────────────────────
+
+
+def test_fetch_inheritance_edges_returns_tuples(tmp_path):
+    import duckdb
+
+    from pb_cli.storage import create_schema, fetch_inheritance_edges
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    create_schema(conn)
+    conn.execute("INSERT INTO inherits VALUES ('parent', 'child')")
+    edges = fetch_inheritance_edges(conn)
+    conn.close()
+    assert edges == [("parent", "child")]
+
+
+def test_fetch_inheritance_edges_empty(tmp_path):
+    import duckdb
+
+    from pb_cli.storage import create_schema, fetch_inheritance_edges
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    create_schema(conn)
+    edges = fetch_inheritance_edges(conn)
+    conn.close()
+    assert edges == []
+
+
+def test_compute_dit_from_edges_empty():
+    from pb_cli.storage import compute_dit_from_edges
+
+    assert compute_dit_from_edges([]) == {}
+
+
+def test_compute_dit_from_edges_single_chain():
+    from pb_cli.storage import compute_dit_from_edges
+
+    # A → B → C means parent=A child=B, parent=B child=C
+    # The graph edges are (child, parent) per existing code's DiGraph construction
+    edges = [("B", "A"), ("C", "B")]
+    dit = compute_dit_from_edges(edges)
+    assert dit["A"] == 0
+    assert dit["B"] == 1
+    assert dit["C"] == 2
+
+
+def test_compute_dit_from_edges_diamond():
+    from pb_cli.storage import compute_dit_from_edges
+
+    # Diamond: A→B, A→C, B→D, C→D
+    edges = [("B", "A"), ("C", "A"), ("D", "B"), ("D", "C")]
+    dit = compute_dit_from_edges(edges)
+    assert dit["A"] == 0
+    assert dit["B"] == 1
+    assert dit["C"] == 1
+    assert dit["D"] == 2
+
+
+def test_compute_dit_matches_old_behavior():
+    from pb_cli.storage import compute_dit_from_edges
+
+    edges = [("X", "A"), ("Y", "X"), ("Z", "Y")]
+    dit = compute_dit_from_edges(edges)
+    assert dit["A"] == 0
+    assert dit["X"] == 1
+    assert dit["Y"] == 2
+    assert dit["Z"] == 3
+
+
+# ── compute_metrics split tests ──────────────────────────────────────────────
+
+
+def test_fetch_metrics_data_returns_shapes(tmp_path):
+    import duckdb
+
+    from pb_cli.storage import create_schema, fetch_metrics_data
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    create_schema(conn)
+    conn.execute("INSERT INTO calls VALUES ('f1', 'obj_a', 'proc1', 'obj_b', 'ExCall')")
+    conn.execute(
+        "INSERT INTO procedures VALUES ('f1', 'obj_a', 'function', 'proc1', '', '', 'int', 1, 10, '{\"tag\":\"BsReturn\"}', 'return 1', 1)"
+    )
+    edges, cyc_rows, inherit_edges = fetch_metrics_data(conn)
+    conn.close()
+    assert len(edges) >= 1
+    assert edges[0] == ("obj_a", "obj_b")
+    assert len(cyc_rows) >= 1
+    assert isinstance(inherit_edges, list)
+
+
+def test_compute_metrics_from_data_empty():
+    from pb_cli.storage import compute_metrics_from_data
+
+    rows = compute_metrics_from_data([], [], [])
+    assert rows == []
+
+
+def test_compute_metrics_from_data_linear():
+    from pb_cli.storage import compute_metrics_from_data
+
+    # Linear chain: A → B → C
+    edges = [("A", "B"), ("B", "C")]
+    cyc_rows = [("A", 5, 5.0), ("B", 3, 3.0), ("C", 1, 1.0)]
+    rows = compute_metrics_from_data(edges, cyc_rows, [])
+    row_map = {r[0]: r for r in rows}
+    assert "A" in row_map
+    assert "B" in row_map
+    assert "C" in row_map
+    # A has out_degree 1, B has in_degree 1 out_degree 1, C has in_degree 1
+    assert row_map["A"][2] == 1  # out_degree
+    assert row_map["B"][1] == 1  # in_degree
+    assert row_map["B"][2] == 1  # out_degree
+    assert row_map["C"][1] == 1  # in_degree
+    # Cyclomatic mapping
+    assert row_map["A"][5] == 5  # max_cyclomatic
+    assert row_map["B"][6] == 3.0  # avg_cyclomatic
+
+
+def test_compute_metrics_from_data_empty_graph():
+    from pb_cli.storage import compute_metrics_from_data
+
+    rows = compute_metrics_from_data([], [("A", 3, 3.0)], [])
+    # Empty graph = no nodes, so no rows even though cyc data exists
+    assert rows == []
+
+
+def test_write_metrics_populates_table(tmp_path):
+    import duckdb
+
+    from pb_cli.storage import create_schema, write_metrics
+
+    conn = duckdb.connect(str(tmp_path / "test.duckdb"))
+    create_schema(conn)
+    conn.execute("""
+        CREATE TABLE object_metrics (
+            object TEXT, in_degree INT, out_degree INT,
+            betweenness DOUBLE, pagerank DOUBLE,
+            max_cyclomatic INT, avg_cyclomatic DOUBLE,
+            dit INT, cbo INT
+        )
+    """)
+    rows = [
+        ("obj_a", 1, 2, 0.5, 0.3, 5, 5.0, 0, None),
+        ("obj_b", 3, 0, 0.0, 0.7, None, None, 2, None),
+    ]
+    write_metrics(conn, rows)
+    count = conn.execute("SELECT count(*) FROM object_metrics").fetchone()[0]
+    conn.close()
+    assert count == 2

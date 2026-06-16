@@ -42,6 +42,7 @@ from pb_cli.shell.runner import parse_stream, render_error
 from pb_cli.storage import (
     Conn,
     build_subset_tmpdir,
+    compute_dit,
     compute_metrics,
     connect,
     create_schema,
@@ -137,6 +138,7 @@ class StorageEnv:
     build_subset_tmpdir: Callable[[Path, list[str]], Path] = field(default=build_subset_tmpdir)
     ingest_batch: IngestBatch = field(default=ingest_batch)
     run_from_jsonl_lines: RunFromJsonlLines = field(default=run_from_jsonl_lines)
+    compute_dit: Callable[[Conn], dict[str, int]] = field(default=compute_dit)
     compute_metrics: Callable[[Conn, AnalyzeProgress], None] = field(default=compute_metrics)
     connect: Callable[[str], AbstractContextManager[Conn]] = field(default=connect)
     diagram_inheritance: Callable[[Conn, str | None, str, bool], None] = field(default=diagram_inheritance)
