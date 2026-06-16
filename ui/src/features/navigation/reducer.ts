@@ -2,7 +2,7 @@
 
 import type { Reducer } from "../../core/reducer.js";
 import type { NavState, NavigationAction } from "./types.js";
-import { VIEW_PREFIX } from "./routes.js";
+import { print } from "./routes.js";
 import { Effect } from "../../core/effect.js";
 
 export interface NavEnv {
@@ -12,8 +12,8 @@ export interface NavEnv {
 function reduce(draft: NavState, action: NavigationAction, env: NavEnv): Effect<NavigationAction> | null {
   switch (action.type) {
   case "navigate":
-    draft.view = action.view;
-    env.pushUrl(VIEW_PREFIX[action.view] ?? "/");
+    draft.route = action.route;
+    env.pushUrl(print(action.route));
     return null;
   default:
     return null;

@@ -11,7 +11,6 @@ export interface DatawindowsEnv {
   getObjects(params: Record<string, string | number>): Effect<ListObjectsResponse>;
   getDW(name: string): Effect<DwDetailResponse>;
   navigate(action: NavigationAction): Effect<never>;
-  pushUrl(path: string): void;
 }
 
 export const initialDatawindowsState: DatawindowsState = {
@@ -25,7 +24,7 @@ function reduce(draft: DatawindowsState, action: DatawindowsAction, env: Datawin
   case "search":
     draft.q = action.q;
     draft.loading = true;
-    env.navigate({ type: "navigate", view: "datawindows" });
+    env.navigate({ type: "navigate", route: { view: "datawindows" } });
     return env.getObjects({ q: action.q, kind: "datawindow", limit: 200 })
       .map((data): DatawindowsAction => ({ type: "loaded", data }));
   case "loaded":
@@ -35,8 +34,7 @@ function reduce(draft: DatawindowsState, action: DatawindowsAction, env: Datawin
     return null;
   case "select":
     draft.dwDetail = null;
-    env.navigate({ type: "navigate", view: "dwDetail" });
-    env.pushUrl("/datawindows/" + encodeURIComponent(action.name));
+    env.navigate({ type: "navigate", route: { view: "dwDetail", name: action.name } });
     return env.getDW(action.name)
       .map((data): DatawindowsAction => ({ type: "detail-loaded", data }))
       .catch((e): DatawindowsAction => ({ type: "detail-error", error: errMsg(e) }));

@@ -21,7 +21,7 @@ export function ObjectDetail(props: { store: Store<AppState, AppAction> }) {
   return (
     <Show when={obj()} fallback={<Loading />}>
       <Show when={!("error" in obj()!)} fallback={<div class="card"><p style={{ color: "var(--red)" }}>Error: {"error" in obj()! ? (obj() as { error: string }).error : ""}</p></div>}>
-        <button class="back-btn" onClick={() => store.dispatch({ tag: "nav", action: { type: "navigate", view: "objects" } })}>{"←"} Back to Objects</button>
+        <button class="back-btn" onClick={() => store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "objects" } } })}>{"←"} Back to Objects</button>
 
         {(() => {
           const o = obj()!;

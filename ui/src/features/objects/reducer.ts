@@ -17,7 +17,6 @@ export interface ObjectsEnv {
   getObjectSource(name: string): Effect<ObjectSourceResponse>;
   getProcedure(obj: string, proc: string): Effect<ProcedureDetailResponse>;
   navigate(action: NavigationAction): Effect<never>;
-  pushUrl(path: string): void;
 }
 
 export const initialObjectsState: ObjectsState = {
@@ -65,8 +64,7 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
   case "select":
     draft.detail = null;
     draft.sourceDetail = null;
-    env.navigate({ type: "navigate", view: "objectDetail" });
-    env.pushUrl("/objects/" + encodeURIComponent(action.name));
+    env.navigate({ type: "navigate", route: { view: "objectDetail", name: action.name } });
     return Effect.merge<ObjectsAction>(
       env.getObject(action.name)
         .map((data): ObjectsAction => ({ type: "detail-loaded", data }))
@@ -92,8 +90,7 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
     return null;
   case "proc-select":
     draft.procedureDetail = null;
-    env.navigate({ type: "navigate", view: "procedureDetail" });
-    env.pushUrl("/objects/" + encodeURIComponent(action.objectName) + "/" + encodeURIComponent(action.procName));
+    env.navigate({ type: "navigate", route: { view: "procedureDetail", name: action.objectName, proc: action.procName } });
     return env.getProcedure(action.objectName, action.procName)
       .map((data): ObjectsAction => ({ type: "proc-loaded", data }))
       .catch((e): ObjectsAction => ({ type: "proc-error", error: errMsg(e) }));

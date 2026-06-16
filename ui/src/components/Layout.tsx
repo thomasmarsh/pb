@@ -3,7 +3,8 @@
 import { For, type ParentProps } from "solid-js";
 import { useSnapshot } from "../core/store.js";
 import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
+import type { AppState, ViewName } from "../app/state.js";
+import type { Route } from "../features/navigation/types.js";
 import type { AppAction } from "../app/actions.js";
 
 const NAV_ITEMS: { path: string; icon: string; label: string }[] = [
@@ -45,10 +46,10 @@ export function Layout(props: ParentProps<LayoutProps>) {
             {(item) => (
               <a
                 href="#"
-                class={isActive(item.path, snap().nav.view) ? "active" : ""}
+                class={isActive(item.path, snap().nav.route.view) ? "active" : ""}
                 onClick={(e) => {
                   e.preventDefault();
-                  props.store.dispatch({ tag: "nav", action: { type: "navigate", view: item.path as AppState["nav"]["view"] } });
+                  props.store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: item.path as ViewName } as Route } });
                 }}
               >
                 <span class="icon">{item.icon}</span>

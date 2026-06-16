@@ -67,7 +67,7 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
   const snap = useSnapshot(store.state);
 
   onMount(() => {
-    store.dispatch({ tag: "nav", action: { type: "navigate", view: "dashboard" } });
+    store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "dashboard" } } });
     if (!snap().dashboard.stats) store.dispatch({ tag: "dashboard", action: { type: "load" } });
   });
 

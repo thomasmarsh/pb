@@ -14,7 +14,7 @@ export function Objects(props: { store: Store<AppState, AppAction> }) {
   const os = () => snap().objects;
 
   onMount(() => {
-    store.dispatch({ tag: "nav", action: { type: "navigate", view: "objects" } });
+    store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "objects" } } });
     store.dispatch({ tag: "objects", action: { type: "search", q: os().q } });
   });
 

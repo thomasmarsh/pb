@@ -21,7 +21,7 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   const [tableInput, setTableInput] = createSignal("");
 
   onMount(() => {
-    store.dispatch({ tag: "nav", action: { type: "navigate", view: "diagrams" } });
+    store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "diagrams" } } });
   });
 
   function handleGenerate() {

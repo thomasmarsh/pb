@@ -10,7 +10,6 @@ const mockEnv: DatawindowsEnv = {
   getObjects: () => Effect.none(),
   getDW: () => Effect.none(),
   navigate: () => Effect.none(),
-  pushUrl: () => {},
 };
 
 describe("datawindows reducer", () => {
@@ -19,7 +18,7 @@ describe("datawindows reducer", () => {
       const navigateCalls: string[] = [];
       const env: DatawindowsEnv = {
         ...mockEnv,
-        navigate: (action) => { navigateCalls.push(action.view); return Effect.none(); },
+        navigate: (action) => { navigateCalls.push(action.route.view); return Effect.none(); },
       };
       const ts = createTestStore(datawindowsReducer, env, initialDatawindowsState);
       ts.send({ type: "search", q: "test" }, (s) => {
@@ -67,20 +66,17 @@ describe("datawindows reducer", () => {
   });
 
   describe("datawindows/select", () => {
-    it("clears dwDetail, emits navigate to dwDetail, and calls pushUrl", () => {
-      const navigateCalls: string[] = [];
-      const pushUrls: string[] = [];
+    it("clears dwDetail and emits navigate with dwDetail route", () => {
+      const navigateRoutes: object[] = [];
       const env: DatawindowsEnv = {
         ...mockEnv,
-        navigate: (action) => { navigateCalls.push(action.view); return Effect.none(); },
-        pushUrl: (path) => { pushUrls.push(path); },
+        navigate: (action) => { navigateRoutes.push(action.route); return Effect.none(); },
       };
       const ts = createTestStore(datawindowsReducer, env, initialDatawindowsState);
       ts.send({ type: "select", name: "MyDW" }, (s) => {
         s.dwDetail = null;
       });
-      expect(navigateCalls).toEqual(["dwDetail"]);
-      expect(pushUrls).toEqual(["/datawindows/MyDW"]);
+      expect(navigateRoutes).toEqual([{ view: "dwDetail", name: "MyDW" }]);
     });
 
     it("fires getDW effect via receive", () => {

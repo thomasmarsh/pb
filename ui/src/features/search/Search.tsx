@@ -100,7 +100,7 @@ export function Search(props: { store: Store<AppState, AppAction> }) {
   const [term, setTerm] = createSignal(se().term ?? "");
 
   onMount(() => {
-    store.dispatch({ tag: "nav", action: { type: "navigate", view: "search" } });
+    store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "search" } } });
   });
 
   const doSearch = debounce((val: string) => {

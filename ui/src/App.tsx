@@ -35,16 +35,16 @@ function ViewRouter(props: { store: Store<AppState, AppAction> }): JSX.Element {
   const snap = useSnapshot(props.store.state);
   return (
     <Layout store={props.store}>
-      <Show when={snap().nav.view === "dashboard"}><Dashboard store={props.store} /></Show>
-      <Show when={snap().nav.view === "objects"}><Objects store={props.store} /></Show>
-      <Show when={snap().nav.view === "objectDetail"}><ObjectDetail store={props.store} /></Show>
-      <Show when={snap().nav.view === "procedureDetail"}><ProcedureDetail store={props.store} /></Show>
-      <Show when={snap().nav.view === "datawindows"}><DataWindows store={props.store} /></Show>
-      <Show when={snap().nav.view === "dwDetail"}><DWDetail store={props.store} /></Show>
-      <Show when={snap().nav.view === "diagrams"}><Diagrams store={props.store} /></Show>
-      <Show when={snap().nav.view === "queries"}><Queries store={props.store} /></Show>
-      <Show when={snap().nav.view === "search"}><Search store={props.store} /></Show>
-      <Show when={snap().nav.view === "explore"}><Explore store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "dashboard"}><Dashboard store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "objects"}><Objects store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "objectDetail"}><ObjectDetail store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "procedureDetail"}><ProcedureDetail store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "datawindows"}><DataWindows store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "dwDetail"}><DWDetail store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "diagrams"}><Diagrams store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "queries"}><Queries store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "search"}><Search store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "explore"}><Explore store={props.store} /></Show>
     </Layout>
   );
 }

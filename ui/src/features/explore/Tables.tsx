@@ -107,7 +107,7 @@ export function TableDetailPanel(props: { store: Store<AppState, AppAction> }) {
                       onClick={() => {
                         store.dispatch({ tag: "diagrams", action: { type: "select", kind: "dw-tables" } });
                         store.dispatch({ tag: "diagrams", action: { type: "params", params: { table: name() } } });
-                        store.dispatch({ tag: "nav", action: { type: "navigate", view: "diagrams" } });
+                        store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "diagrams" } } });
                       }}
                     >Show in diagram</button>
                   </div>

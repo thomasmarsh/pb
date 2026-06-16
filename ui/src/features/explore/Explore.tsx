@@ -18,7 +18,7 @@ export function Explore(props: { store: Store<AppState, AppAction> }) {
   const snap = useSnapshot(store.state);
 
   onMount(() => {
-    store.dispatch({ tag: "nav", action: { type: "navigate", view: "explore" } });
+    store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "explore" } } });
     if (snap().explore.libraries.length === 0 && !snap().explore.loading) {
       store.dispatch({ tag: "explore", action: { type: "load" } });
     }

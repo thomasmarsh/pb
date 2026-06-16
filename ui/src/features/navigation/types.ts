@@ -1,20 +1,22 @@
 // features/navigation/types.ts — Navigation types and actions.
 
+export type Route =
+  | { view: "dashboard" }
+  | { view: "objects" }
+  | { view: "objectDetail";    name: string }
+  | { view: "procedureDetail"; name: string; proc: string }
+  | { view: "datawindows" }
+  | { view: "dwDetail";        name: string }
+  | { view: "diagrams" }
+  | { view: "queries" }
+  | { view: "search" }
+  | { view: "explore" };
+
+export type ViewName = Route["view"];
+
 export interface NavState {
-  view: ViewName;
+  route: Route;
 }
 
-export type ViewName =
-  | "dashboard"
-  | "objects"
-  | "objectDetail"
-  | "procedureDetail"
-  | "datawindows"
-  | "dwDetail"
-  | "diagrams"
-  | "queries"
-  | "search"
-  | "explore";
-
 export type NavigationAction =
-  | { type: "navigate"; view: ViewName };
+  | { type: "navigate"; route: Route };

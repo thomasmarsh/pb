@@ -23,7 +23,7 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
   }
 
   onMount(() => {
-    store.dispatch({ tag: "nav", action: { type: "navigate", view: "queries" } });
+    store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "queries" } } });
     if (!q().items.length) store.dispatch({ tag: "queries", action: { type: "load" } });
   });
 

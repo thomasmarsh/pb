@@ -41,7 +41,7 @@ const matchSearch      = (a: AppAction): SearchAction      | null => a.tag === "
 
 export function initialState(): AppState {
   return {
-    nav: { view: "dashboard" },
+    nav: { route: { view: "dashboard" } },
     dashboard: initialDashboardState,
     objects: initialObjectsState,
     datawindows: initialDatawindowsState,
