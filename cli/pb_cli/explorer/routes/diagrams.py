@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from pb_cli.explorer.routes.dependencies import get_conn
-from pb_cli.storage import (
+from pb_cli.shell.diagrams import (
     build_calls,
     build_dw_tables,
     build_heatmap,

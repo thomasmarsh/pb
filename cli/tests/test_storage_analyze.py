@@ -1,5 +1,19 @@
 """Tests for pb_cli.analyze."""
 
+import duckdb
+
+from pb_cli.core.ast_walker import count_branches, walk_calls
+from pb_cli.reporter import RecordingReporter
+from pb_cli.shell.db import create_schema
+from pb_cli.shell.metrics import (
+    compute_dit_from_edges,
+    compute_metrics,
+    compute_metrics_from_data,
+    fetch_inheritance_edges,
+    fetch_metrics_data,
+    write_metrics,
+)
+
 
 def q(conn, sql: str):
     return conn.execute(sql).fetchone()[0]
@@ -11,8 +25,6 @@ def q(conn, sql: str):
 def test_count_branches_uses_bs_tags():
     # Tags in body_json are BsIf/BsFor/BsDo/BsChoose (Haskell constructor names),
     # not the old short forms 'if'/'for'/'do'/'choose'.
-    from pb_cli.core.ast_walker import count_branches
-
     bs_if = {
         "tag": "BsIf",
         "contents": {
@@ -33,15 +45,11 @@ def test_count_branches_uses_bs_tags():
 def test_count_branches_old_tags_not_matched():
     # Regression: old tag names ('if', 'for') must NOT match — they no longer
     # appear in pb-runner output after the aeson-typescript rewrite.
-    from pb_cli.core.ast_walker import count_branches
-
     old_if = {"tag": "if", "cond": {}, "then": [], "elseIfs": [], "else": None}
     assert count_branches([old_if]) == 0, "old 'if' tag must not be counted"
 
 
 def test_walk_calls_ex_call():
-    from pb_cli.core.ast_walker import walk_calls
-
     node = {
         "tag": "ExCall",
         "callee": {"segments": [{"name": "isnull", "subscript": None}]},
@@ -52,8 +60,6 @@ def test_walk_calls_ex_call():
 
 
 def test_walk_calls_ex_method_call():
-    from pb_cli.core.ast_walker import walk_calls
-
     node = {
         "tag": "ExMethodCall",
         "receiver": {"tag": "ExLvalue", "contents": {"segments": [{"name": "dw_1", "subscript": None}]}},
@@ -65,8 +71,6 @@ def test_walk_calls_ex_method_call():
 
 
 def test_walk_calls_ex_dispatch():
-    from pb_cli.core.ast_walker import walk_calls
-
     node = {
         "tag": "ExDispatch",
         "contents": {
@@ -89,11 +93,6 @@ def test_walk_calls_ex_dispatch():
 
 def test_analyze_run_emits_reporter_events(tmp_path):
     # Use an isolated DB so we don't conflict with the session-scoped read-only db_conn.
-    import duckdb
-
-    from pb_cli.reporter import RecordingReporter
-    from pb_cli.storage import compute_metrics, create_schema
-
     db = str(tmp_path / "test.duckdb")
     conn = duckdb.connect(db)
     create_schema(conn)
@@ -174,10 +173,6 @@ def test_cyclomatic_populated_by_indexing(db_conn):
 
 
 def test_fetch_inheritance_edges_returns_tuples(tmp_path):
-    import duckdb
-
-    from pb_cli.storage import create_schema, fetch_inheritance_edges
-
     conn = duckdb.connect(str(tmp_path / "test.duckdb"))
     create_schema(conn)
     conn.execute("INSERT INTO inherits VALUES ('parent', 'child')")
@@ -187,10 +182,6 @@ def test_fetch_inheritance_edges_returns_tuples(tmp_path):
 
 
 def test_fetch_inheritance_edges_empty(tmp_path):
-    import duckdb
-
-    from pb_cli.storage import create_schema, fetch_inheritance_edges
-
     conn = duckdb.connect(str(tmp_path / "test.duckdb"))
     create_schema(conn)
     edges = fetch_inheritance_edges(conn)
@@ -199,14 +190,10 @@ def test_fetch_inheritance_edges_empty(tmp_path):
 
 
 def test_compute_dit_from_edges_empty():
-    from pb_cli.storage import compute_dit_from_edges
-
     assert compute_dit_from_edges([]) == {}
 
 
 def test_compute_dit_from_edges_single_chain():
-    from pb_cli.storage import compute_dit_from_edges
-
     # A → B → C means parent=A child=B, parent=B child=C
     # The graph edges are (child, parent) per existing code's DiGraph construction
     edges = [("B", "A"), ("C", "B")]
@@ -217,8 +204,6 @@ def test_compute_dit_from_edges_single_chain():
 
 
 def test_compute_dit_from_edges_diamond():
-    from pb_cli.storage import compute_dit_from_edges
-
     # Diamond: A→B, A→C, B→D, C→D
     edges = [("B", "A"), ("C", "A"), ("D", "B"), ("D", "C")]
     dit = compute_dit_from_edges(edges)
@@ -229,8 +214,6 @@ def test_compute_dit_from_edges_diamond():
 
 
 def test_compute_dit_matches_old_behavior():
-    from pb_cli.storage import compute_dit_from_edges
-
     edges = [("X", "A"), ("Y", "X"), ("Z", "Y")]
     dit = compute_dit_from_edges(edges)
     assert dit["A"] == 0
@@ -243,10 +226,6 @@ def test_compute_dit_matches_old_behavior():
 
 
 def test_fetch_metrics_data_returns_shapes(tmp_path):
-    import duckdb
-
-    from pb_cli.storage import create_schema, fetch_metrics_data
-
     conn = duckdb.connect(str(tmp_path / "test.duckdb"))
     create_schema(conn)
     conn.execute("INSERT INTO calls VALUES ('f1', 'obj_a', 'proc1', 'obj_b', 'ExCall')")
@@ -262,15 +241,11 @@ def test_fetch_metrics_data_returns_shapes(tmp_path):
 
 
 def test_compute_metrics_from_data_empty():
-    from pb_cli.storage import compute_metrics_from_data
-
     rows = compute_metrics_from_data([], [], [])
     assert rows == []
 
 
 def test_compute_metrics_from_data_linear():
-    from pb_cli.storage import compute_metrics_from_data
-
     # Linear chain: A → B → C
     edges = [("A", "B"), ("B", "C")]
     cyc_rows = [("A", 5, 5.0), ("B", 3, 3.0), ("C", 1, 1.0)]
@@ -290,18 +265,12 @@ def test_compute_metrics_from_data_linear():
 
 
 def test_compute_metrics_from_data_empty_graph():
-    from pb_cli.storage import compute_metrics_from_data
-
     rows = compute_metrics_from_data([], [("A", 3, 3.0)], [])
     # Empty graph = no nodes, so no rows even though cyc data exists
     assert rows == []
 
 
 def test_write_metrics_populates_table(tmp_path):
-    import duckdb
-
-    from pb_cli.storage import create_schema, write_metrics
-
     conn = duckdb.connect(str(tmp_path / "test.duckdb"))
     create_schema(conn)
     conn.execute("""
@@ -317,6 +286,8 @@ def test_write_metrics_populates_table(tmp_path):
         ("obj_b", 3, 0, 0.0, 0.7, None, None, 2, None),
     ]
     write_metrics(conn, rows)
-    count = conn.execute("SELECT count(*) FROM object_metrics").fetchone()[0]
+    result = conn.execute("SELECT count(*) FROM object_metrics").fetchone()
+    assert result is not None
+    count = result[0]
     conn.close()
     assert count == 2

@@ -378,7 +378,7 @@ def render_proc_tables(
             )
             seen_tables.add(tbl_id)
 
-        color = _OP_COLORS.get(r["operation"], _DEFAULT_OP_COLOR)
+        color = _OP_COLORS.get(r["operation"] or "", _DEFAULT_OP_COLOR)
         dot.edge(proc_id, tbl_id, color=color, label=r["operation"], fontcolor=color, fontsize="7", penwidth="0.8")
 
     if not rows:

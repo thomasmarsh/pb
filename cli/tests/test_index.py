@@ -11,7 +11,7 @@ Run:
 
 from pb_cli.core.ingestion import _ingest_dw, _proc_row, ingest_file
 from pb_cli.core.models import new_row_batch
-from pb_cli.storage import INSERT
+from pb_cli.shell.db import INSERT
 
 
 def q(conn, sql: str):

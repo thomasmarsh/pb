@@ -8,8 +8,8 @@ from pathlib import Path
 import duckdb
 import typer
 
+from pb_cli.shell.db import parse_sql_file
 from pb_cli.shell.env import env
-from pb_cli.storage import parse_sql_file
 
 _INT_TYPES = {"INT", "INTEGER", "BIGINT"}
 

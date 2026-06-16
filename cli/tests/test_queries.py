@@ -1,8 +1,11 @@
 """Tests for pb_cli.queries auto-registration."""
 
 import duckdb
+import typer
 
+from pb_cli.queries import register_queries
 from pb_cli.shell.build import find_repo
+from pb_cli.shell.db import parse_sql_file
 
 REPO_ROOT = find_repo()
 QUERIES_DIR = REPO_ROOT / "queries"
@@ -14,8 +17,6 @@ QUERIES_DIR = REPO_ROOT / "queries"
 
 
 def test_parse_no_params():
-    from pb_cli.storage import parse_sql_file
-
     sql_file = QUERIES_DIR / "dead-code.sql"
     desc, params, sql = parse_sql_file(sql_file)
     assert desc
@@ -24,8 +25,6 @@ def test_parse_no_params():
 
 
 def test_parse_int_param_with_default():
-    from pb_cli.storage import parse_sql_file
-
     sql_file = QUERIES_DIR / "top.sql"
     desc, params, sql = parse_sql_file(sql_file)
     assert len(params) == 1
@@ -35,8 +34,6 @@ def test_parse_int_param_with_default():
 
 
 def test_parse_text_param_no_default():
-    from pb_cli.storage import parse_sql_file
-
     sql_file = QUERIES_DIR / "callers.sql"
     desc, params, sql = parse_sql_file(sql_file)
     assert len(params) == 1
@@ -51,10 +48,6 @@ def test_parse_text_param_no_default():
 
 
 def test_all_sql_files_register(db_path):
-    import typer
-
-    from pb_cli.queries import register_queries
-
     app = typer.Typer()
     register_queries(app)
     registered = {c.name for c in app.registered_commands}

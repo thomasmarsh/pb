@@ -5,8 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from pb_cli.explorer.routes.dependencies import get_conn, rows
+from pb_cli.shell.db import parse_sql_file
 from pb_cli.shell.env import env
-from pb_cli.storage import parse_sql_file
 
 router = APIRouter()
 

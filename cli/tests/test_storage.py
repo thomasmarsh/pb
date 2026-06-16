@@ -1,14 +1,10 @@
-"""Tests for pb_cli.storage (DB-boundary: schema, connection, inserts, state)."""
+"""Tests for pb_cli.shell.db + shell.ingest + shell.state (DB-boundary operations)."""
 
-from pb_cli.storage import (
-    create_schema,
-    create_state_table,
-    db_connection,
-    ingest_batch,
-    load_file_state,
-    parse_sql_file,
-    save_file_state,
-)
+from pb_cli.core.ingestion import ingest_file
+from pb_cli.core.models import new_row_batch
+from pb_cli.shell.db import create_schema, db_connection, parse_sql_file
+from pb_cli.shell.ingest import ingest_batch
+from pb_cli.shell.state import create_state_table, load_file_state, save_file_state
 
 
 def test_create_drop_schema(tmp_path):
@@ -20,13 +16,11 @@ def test_create_drop_schema(tmp_path):
             ("test.srw", "w_test", "powerscript", None, None),
         )
         row = conn.execute("SELECT name FROM objects").fetchone()
+        assert row is not None
         assert row[0] == "w_test"
 
 
 def test_ingest_batch(tmp_path):
-    from pb_cli.core.ingestion import ingest_file
-    from pb_cli.core.models import new_row_batch
-
     db = str(tmp_path / "test.duckdb")
     obj = {"file": "test.srw", "kind": "powerscript", "meta": {"object": "w_test"}}
     with db_connection(db) as conn:

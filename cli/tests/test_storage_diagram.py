@@ -13,6 +13,7 @@ Requires:
 import io
 import re
 import subprocess
+from contextlib import redirect_stdout
 from pathlib import Path
 
 import duckdb
@@ -23,7 +24,7 @@ from pb_cli.shell.build import find_repo
 REPO_ROOT = find_repo()
 DB_PATH = str(REPO_ROOT / "pb.duckdb")
 
-from pb_cli.storage import (  # noqa: E402
+from pb_cli.shell.diagrams import (  # noqa: E402
     diagram_calls,
     diagram_dw_tables,
     diagram_heatmap,
@@ -41,8 +42,6 @@ def conn():
 
 
 def dot_source(fn, *args) -> str:
-    from contextlib import redirect_stdout
-
     buf = io.StringIO()
     with redirect_stdout(buf):
         fn(*args, output="out.svg", emit_dot=True)

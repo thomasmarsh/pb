@@ -6,7 +6,11 @@ import subprocess
 import duckdb
 import pytest
 
+from pb_cli.reporter import LiveReporter
 from pb_cli.shell.build import find_repo
+from pb_cli.shell.db import db_connection
+from pb_cli.shell.ingest import run_from_jsonl_lines
+from pb_cli.shell.metrics import compute_metrics
 
 REPO_ROOT = find_repo()
 OPENPAY_DIR = REPO_ROOT / "example" / "openpay-src"
@@ -40,9 +44,6 @@ def db_path(jsonl_text: str, tmp_path_factory) -> str:
     """Create an analyzed DuckDB once for the entire session."""
     tmp = tmp_path_factory.mktemp("db")
     db = str(tmp / "test.duckdb")
-
-    from pb_cli.reporter import LiveReporter
-    from pb_cli.storage import compute_metrics, db_connection, run_from_jsonl_lines
 
     run_from_jsonl_lines(io.StringIO(jsonl_text), db)
 

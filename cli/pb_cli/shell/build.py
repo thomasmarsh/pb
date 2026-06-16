@@ -1,9 +1,12 @@
 """Build management: find repo root, build pb-runner, enumerate source files."""
 
 import hashlib
+import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -111,3 +114,25 @@ def _run_explorer(explorer_dir: "Path", cmd: "list[str]", verbose: bool) -> None
         if not verbose:
             print(r.stderr, file=sys.stderr)
         sys.exit(f"error: explorer build failed ({' '.join(cmd)})")
+
+
+def build_subset_tmpdir(src_dir: Path, files: list[str]) -> Path:
+    """
+    Copy a subset of source files into a fresh tmpdir preserving relative paths.
+    Uses hard links where possible, falls back to shutil.copy2 for cross-volume.
+    Caller must clean up the returned directory (shutil.rmtree).
+    """
+    tmpdir = Path(tempfile.mkdtemp())
+    for abs_path in files:
+        src = Path(abs_path)
+        try:
+            rel = src.relative_to(src_dir)
+        except ValueError:
+            rel = Path(src.name)
+        dst = tmpdir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.link(src, dst)
+        except OSError:
+            shutil.copy2(src, dst)
+    return tmpdir
