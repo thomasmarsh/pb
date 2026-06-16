@@ -7,77 +7,9 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pb_cli.build import build_runner, find_binary, find_repo
-
-SQL_KWS = {
-    "select", "selectblob", "insert", "update", "updateblob", "delete",
-    "commit", "rollback", "connect", "disconnect", "declare", "cursor",
-    "execute", "fetch", "prepare", "describe", "descriptor",
-    "from", "and", "or", "into", "using", "where", "having",
-    "group", "order", "join", "open", "close",
-}
-CTRL_KWS = {
-    "if", "else", "elseif", "end", "choose", "case",
-    "for", "do", "loop", "while", "until",
-    "try", "catch", "finally",
-}
-DECL_KWS = {
-    "event", "on", "function", "subroutine", "type",
-    "variables", "forward", "prototypes",
-}
-HANDLED = {"return", "exit", "continue", "call", "destroy", "create", "halt"}
-
-DW_STRUCT_FIELDS = ["name", "band", "id", "x", "y", "width", "height",
-                    "visible", "expression", "tab_seq"]
-
-
-# ── AST walkers ───────────────────────────────────────────────────────────────
-
-def walk_bsraw(node):
-    if isinstance(node, list):
-        for x in node:
-            yield from walk_bsraw(x)
-    elif isinstance(node, dict):
-        if node.get("tag") == "BsRaw":
-            text = node.get("contents", "")
-            if isinstance(text, str):
-                yield text
-        for v in node.values():
-            if isinstance(v, (dict, list)):
-                yield from walk_bsraw(v)
-
-
-def walk_exraw(node):
-    if isinstance(node, list):
-        for x in node:
-            yield from walk_exraw(x)
-    elif isinstance(node, dict):
-        if node.get("tag") == "ExRaw":
-            toks = node.get("contents", [])
-            if toks:
-                yield toks[0], toks
-        for v in node.values():
-            if isinstance(v, (dict, list)):
-                yield from walk_exraw(v)
-
-
-def categorize(text: str) -> tuple[str, str]:
-    words = text.strip().split()
-    if not words:
-        return "empty", ""
-    first = words[0].lower().rstrip(";")
-    if first in SQL_KWS:
-        return "sql", first
-    if first in CTRL_KWS:
-        return "ctrl", first
-    if first in DECL_KWS:
-        return "decl", first
-    if first in HANDLED or first.endswith(":"):
-        return "handled", first
-    if text.strip().startswith("{"):
-        return "array_init", first
-    return "other", first
-
+from pb_cli.core.ast_walker import walk_bsraw, walk_exraw
+from pb_cli.core.categorize import DW_STRUCT_FIELDS, categorize
+from pb_cli.shell.env import env
 
 # ── Analysis dataclasses ──────────────────────────────────────────────────────
 
@@ -230,12 +162,12 @@ def _print_dw_report(corpora: list[tuple[str, Path]]) -> None:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def run(repo: Path | None = None, no_build: bool = False) -> None:
-    repo_path = find_repo(repo)
+    repo_path = env.build.find_repo(repo)
     if not no_build:
         print("Building pb-runner...", flush=True)
-        binary = build_runner(repo_path)
+        binary = env.build.build_runner(repo_path)
     else:
-        binary = find_binary(repo_path)
+        binary = env.build.find_binary(repo_path)
 
     corpus_srcs = [
         ("Appeon",  repo_path / "example" / "PowerBuilder-Example" / "export"),

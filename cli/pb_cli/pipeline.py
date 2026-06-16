@@ -6,15 +6,14 @@ from pathlib import Path
 
 from pb_cli.analyze import run as _analyze
 from pb_cli.common import create_schema, db_connection, drop_tables
+from pb_cli.core.state import diff_state
 from pb_cli.index import ingest_batch
-from pb_cli.parse import parse_stream
 from pb_cli.reporter import Reporter
+from pb_cli.shell.env import env
 from pb_cli.state import (
     build_subset_tmpdir,
     create_state_table,
     delete_file_rows,
-    diff_state,
-    hash_source_dir,
     load_file_state,
     save_file_state,
 )
@@ -36,7 +35,7 @@ def run(
         create_state_table(conn)
 
         with reporter.status('Scanning source files...'):
-            current = hash_source_dir(src_dir)
+            current = env.build.hash_source_dir(src_dir)
         stored = load_file_state(conn)
         diff = diff_state(current, stored)
 
@@ -71,7 +70,7 @@ def _parse_subset(
     try:
         objects: list[dict] = []
         with reporter.parse_progress(len(to_parse), 'Parsing') as progress:
-            for is_err, obj in parse_stream(tmpdir, binary, remap_from=tmpdir, remap_to=src_dir):
+            for is_err, obj in env.runner.parse_stream(tmpdir, binary, remap_from=tmpdir, remap_to=src_dir):
                 if is_err:
                     progress.on_error(obj)
                 else:

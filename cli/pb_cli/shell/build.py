@@ -1,4 +1,5 @@
 """Build management: find repo root, build pb-runner, enumerate source files."""
+import hashlib
 import re
 import subprocess
 import sys
@@ -65,6 +66,15 @@ def walk_sr_files(src_dir: Path) -> list[Path]:
 
 def count_sr_files(src_dir: Path) -> int:
     return len(walk_sr_files(src_dir))
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def hash_source_dir(src_dir: Path) -> dict[str, str]:
+    """SHA256-hash every .sr* file under src_dir. Keys are absolute path strings."""
+    return {str(f): _sha256(f) for f in walk_sr_files(src_dir)}
 
 
 def ensure_explorer_built(repo: Path, verbose: bool = False) -> None:

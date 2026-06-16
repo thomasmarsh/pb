@@ -1,10 +1,11 @@
 """Unit tests for pb_cli.debt — pure Python, no cabal needed."""
 from pb_cli.debt import (
-    BsRawStats, DwStats,
+    BsRawStats,
+    DwStats,
     categorize,
-    walk_bsraw, walk_exraw,
+    walk_bsraw,
+    walk_exraw,
 )
-
 
 # ── categorize ────────────────────────────────────────────────────────────────
 

@@ -45,16 +45,16 @@ def dump(
     INPUT may be a directory of .sr* source files, a single .pbl library file,
     or a directory containing .pbl files (extracted transparently).
     """
-    from pb_cli.build import find_binary, find_repo
     from pb_cli.dump import run as run_dump
     from pb_cli.pbl import resolve_source_dir
     from pb_cli.reporter import LiveReporter
+    from pb_cli.shell.env import env
 
     reporter = LiveReporter()
-    repo_path = find_repo(repo)
+    repo_path = env.build.find_repo(repo)
 
     _prepare_output(Path(output_dir), force)
-    binary = find_binary(repo_path) if no_build else _build(repo_path, reporter)
+    binary = env.build.find_binary(repo_path) if no_build else _build(repo_path, reporter)
     with resolve_source_dir(Path(input_path), reporter) as src_dir:
         run_dump(src_dir, Path(output_dir), binary, reporter)
 
@@ -75,14 +75,14 @@ def ingest(
     INPUT may be a directory of .sr* source files, a single .pbl library file,
     or a directory containing .pbl files (extracted transparently).
     """
-    from pb_cli.build import find_binary, find_repo
     from pb_cli.pbl import resolve_source_dir
     from pb_cli.pipeline import run as run_pipeline
     from pb_cli.reporter import LiveReporter
+    from pb_cli.shell.env import env
 
     reporter = LiveReporter()
-    repo_path = find_repo(repo)
-    binary = find_binary(repo_path) if no_build else _build(repo_path, reporter)
+    repo_path = env.build.find_repo(repo)
+    binary = env.build.find_binary(repo_path) if no_build else _build(repo_path, reporter)
     with resolve_source_dir(Path(input_path), reporter) as src_dir:
         run_pipeline(src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect)
 
@@ -250,8 +250,8 @@ def explore(
     """Start the interactive DuckDB explorer web UI."""
     import uvicorn
 
-    from pb_cli.build import ensure_explorer_built, find_repo
     from pb_cli.explorer import create_app
+    from pb_cli.shell.env import env
 
     url = f"http://{host}:{port}"
 
@@ -265,8 +265,8 @@ def explore(
             typer.echo(f"Explorer already running at {url}.")
         return
 
-    repo = find_repo()
-    ensure_explorer_built(repo)
+    repo = env.build.find_repo()
+    env.build.ensure_explorer_built(repo)
 
     app = create_app(db)
 
@@ -281,9 +281,9 @@ def explore(
 # ── private helpers ────────────────────────────────────────────────────────────
 
 def _build(repo_path: Path, reporter) -> Path:
-    from pb_cli.build import build_runner
+    from pb_cli.shell.env import env
     reporter.building()
-    return build_runner(repo_path)
+    return env.build.build_runner(repo_path)
 
 
 def _prepare_output(out: Path, force: bool) -> None:

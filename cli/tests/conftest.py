@@ -5,7 +5,7 @@ import subprocess
 import duckdb
 import pytest
 
-from pb_cli.build import find_repo
+from pb_cli.shell.build import find_repo
 
 REPO_ROOT = find_repo()
 OPENPAY_DIR = REPO_ROOT / "example" / "openpay-src"

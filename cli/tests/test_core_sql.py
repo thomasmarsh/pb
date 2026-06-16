@@ -1,10 +1,12 @@
-"""Unit tests for pb_cli/sql_parser.py — 10 representative PB SQL patterns.
+"""Unit tests for pb_cli/core/sql.py — 10 representative PB SQL patterns.
 
 Tests verify table/column extraction, metadata flags, and fallback behaviour.
-All tests fail until sql_parser.py is created (Stage 2 gate).
 """
+import importlib
+
 import pytest
-from pb_cli.sql_parser import parse_pb_sql, pb_sql_to_standard
+
+from pb_cli.core.sql import parse_pb_sql, pb_sql_to_standard
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -142,3 +144,12 @@ def test_skip_unstructured(raw, expected_op):
     assert parsed is None, f"{expected_op} should not be parsed (got: {parsed!r})"
     assert tables == []
     assert meta["operation"] == expected_op
+
+
+def test_core_sql_has_no_io_imports():
+    """core/sql.py must not import duckdb, subprocess, or pathlib."""
+    mod = importlib.import_module("pb_cli.core.sql")
+    assert mod.__file__ is not None
+    src = open(mod.__file__).read()
+    for forbidden in ["import duckdb", "import subprocess", "from pathlib"]:
+        assert forbidden not in src, f"core/sql.py must not contain {forbidden!r}"

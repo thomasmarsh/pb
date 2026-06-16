@@ -1,10 +1,8 @@
 """Tests for pb_cli.queries auto-registration."""
-from pathlib import Path
 
 import duckdb
-import pytest
 
-from pb_cli.build import find_repo
+from pb_cli.shell.build import find_repo
 
 REPO_ROOT = find_repo()
 QUERIES_DIR = REPO_ROOT / "queries"
@@ -49,6 +47,7 @@ def test_parse_text_param_no_default():
 
 def test_all_sql_files_register(db_path):
     import typer
+
     from pb_cli.queries import register_queries
     app = typer.Typer()
     register_queries(app)

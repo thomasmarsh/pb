@@ -10,8 +10,6 @@ from pathlib import Path
 
 import pytest
 
-from pb_cli.build import find_repo
-
 from pb_cli.pbl import (
     PBL_COMMENTS,
     PBL_HEADER,
@@ -25,6 +23,7 @@ from pb_cli.pbl import (
     resolve_source_dir,
 )
 from pb_cli.reporter import RecordingReporter
+from pb_cli.shell.build import find_repo
 
 # ── synthetic fixture builder ─────────────────────────────────────────────────
 

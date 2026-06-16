@@ -10,8 +10,6 @@ from pb_cli.common import Conn, db_connection
 if TYPE_CHECKING:
     from pb_cli.reporter import AnalyzeProgress, Reporter
 
-BRANCH_TAGS = {'BsIf', 'BsFor', 'BsDo', 'BsChoose'}
-
 
 def run(db: str = 'pb.duckdb', reporter: Reporter | None = None) -> None:
     if reporter is None:
@@ -21,40 +19,6 @@ def run(db: str = 'pb.duckdb', reporter: Reporter | None = None) -> None:
     with db_connection(db) as conn:
         with reporter.analyze_progress() as progress:
             compute_metrics(conn, progress)
-
-
-def walk_calls(node) -> list[tuple[str, str]]:
-    results = []
-    if isinstance(node, dict):
-        tag = node.get('tag')
-        if tag == 'ExCall':
-            segs = node.get('callee', {}).get('segments', [])
-            if segs:
-                results.append((segs[-1].get('name', ''), 'ExCall'))
-        elif tag == 'ExMethodCall':
-            results.append((node.get('method', ''), 'ExMethodCall'))
-        elif tag == 'ExDispatch':
-            name = node.get('contents', {}).get('name', '') or node.get('name', '')
-            results.append((name, 'ExDispatch'))
-        for v in node.values():
-            results.extend(walk_calls(v))
-    elif isinstance(node, list):
-        for item in node:
-            results.extend(walk_calls(item))
-    return results
-
-
-def count_branches(node) -> int:
-    count = 0
-    if isinstance(node, dict):
-        if node.get('tag') in BRANCH_TAGS:
-            count += 1
-        for v in node.values():
-            count += count_branches(v)
-    elif isinstance(node, list):
-        for item in node:
-            count += count_branches(item)
-    return count
 
 
 def compute_dit(conn: Conn) -> dict[str, int]:

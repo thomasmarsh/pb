@@ -8,7 +8,9 @@ Requires:
 Run:
   uv run pytest tests/test_index.py
 """
-import pytest
+from pb_cli.common import INSERT
+from pb_cli.core.ingestion import _ingest_dw, _proc_row, ingest_file
+from pb_cli.core.models import new_row_batch
 
 
 def q(conn, sql: str):
@@ -66,10 +68,6 @@ def test_dw_retrieve_tables_populated_when_e2_done(db_conn):
 # ---------------------------------------------------------------------------
 # Unit tests for _ingest_dw tag dispatch (no DB, no pb-runner)
 # ---------------------------------------------------------------------------
-
-from pb_cli.index import _ingest_dw, _proc_row, ingest_file
-from pb_cli.common import TABLES, INSERT, new_row_batch
-
 
 def _rows():
     return new_row_batch()
@@ -261,7 +259,6 @@ def test_no_retrieve_inserts_nothing():
 # Unit tests for SQL extraction from PowerScript procedure bodies
 # ---------------------------------------------------------------------------
 
-from pb_cli.index import _extract_sql
 
 
 def _ps_obj(proc_name: str, body_nodes: list) -> dict:

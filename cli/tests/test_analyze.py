@@ -1,5 +1,4 @@
 """Tests for pb_cli.analyze."""
-import pytest
 
 
 def q(conn, sql: str):
@@ -11,7 +10,7 @@ def q(conn, sql: str):
 def test_count_branches_uses_bs_tags():
     # Tags in body_json are BsIf/BsFor/BsDo/BsChoose (Haskell constructor names),
     # not the old short forms 'if'/'for'/'do'/'choose'.
-    from pb_cli.analyze import count_branches
+    from pb_cli.core.ast_walker import count_branches
     bs_if = {
         "tag": "BsIf",
         "contents": {
@@ -32,13 +31,13 @@ def test_count_branches_uses_bs_tags():
 def test_count_branches_old_tags_not_matched():
     # Regression: old tag names ('if', 'for') must NOT match — they no longer
     # appear in pb-runner output after the aeson-typescript rewrite.
-    from pb_cli.analyze import count_branches
+    from pb_cli.core.ast_walker import count_branches
     old_if = {"tag": "if", "cond": {}, "then": [], "elseIfs": [], "else": None}
     assert count_branches([old_if]) == 0, "old 'if' tag must not be counted"
 
 
 def test_walk_calls_ex_call():
-    from pb_cli.analyze import walk_calls
+    from pb_cli.core.ast_walker import walk_calls
     node = {
         "tag": "ExCall",
         "callee": {"segments": [{"name": "isnull", "subscript": None}]},
@@ -51,7 +50,7 @@ def test_walk_calls_ex_call():
 
 
 def test_walk_calls_ex_method_call():
-    from pb_cli.analyze import walk_calls
+    from pb_cli.core.ast_walker import walk_calls
     node = {
         "tag": "ExMethodCall",
         "receiver": {"tag": "ExLvalue", "contents": {"segments": [{"name": "dw_1", "subscript": None}]}},
@@ -65,7 +64,7 @@ def test_walk_calls_ex_method_call():
 
 
 def test_walk_calls_ex_dispatch():
-    from pb_cli.analyze import walk_calls
+    from pb_cli.core.ast_walker import walk_calls
     node = {
         "tag": "ExDispatch",
         "contents": {
@@ -88,8 +87,9 @@ def test_walk_calls_ex_dispatch():
 def test_analyze_run_emits_reporter_events(tmp_path):
     # Use an isolated DB so we don't conflict with the session-scoped read-only db_conn.
     import duckdb
-    from pb_cli.common import create_schema
+
     from pb_cli.analyze import run as analyze_run
+    from pb_cli.common import create_schema
     from pb_cli.reporter import RecordingReporter
 
     db = str(tmp_path / "test.duckdb")

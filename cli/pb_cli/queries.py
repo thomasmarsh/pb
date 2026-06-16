@@ -8,7 +8,7 @@ from pathlib import Path
 import duckdb
 import typer
 
-from pb_cli.build import get_queries_dir
+from pb_cli.shell.env import env
 
 _INT_TYPES = {"INT", "INTEGER", "BIGINT"}
 
@@ -104,7 +104,7 @@ def _make_command(sql_file: Path):
 
 def register_queries(app: typer.Typer) -> None:
     """Register every queries/*.sql file as a command on the given typer app."""
-    queries_dir = get_queries_dir()
+    queries_dir = env.build.get_queries_dir()
     if not queries_dir.is_dir():
         return
     for sql_file in sorted(queries_dir.glob("*.sql")):

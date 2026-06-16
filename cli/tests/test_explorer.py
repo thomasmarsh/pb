@@ -1,16 +1,15 @@
 """Tests for pb_cli.explorer — API endpoints and render module."""
 import shutil
-from pathlib import Path
 
 import duckdb
 import pytest
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
 def client(db_path):
     from fastapi.testclient import TestClient
+
     from pb_cli.explorer import create_app
     app = create_app(db_path)
     return TestClient(app)
@@ -45,6 +44,7 @@ def client_with_sql(db_path, tmp_path_factory):
     conn.close()
 
     from fastapi.testclient import TestClient
+
     from pb_cli.explorer import create_app
     app = create_app(db_copy)
     return TestClient(app)

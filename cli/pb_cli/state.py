@@ -1,14 +1,11 @@
-"""Incremental state: SHA256 hashing, file_state table, diff logic, subset tmpdir."""
-import hashlib
+"""Incremental state: file_state table I/O, subset tmpdir (DB-boundary)."""
 import os
 import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import NamedTuple
 
-from pb_cli.build import walk_sr_files
-from pb_cli.common import TABLES
+from pb_cli.core.models import TABLES
 
 FILE_STATE_SQL = """
 CREATE TABLE IF NOT EXISTS file_state (
@@ -19,24 +16,8 @@ CREATE TABLE IF NOT EXISTS file_state (
 """
 
 
-class FileDiff(NamedTuple):
-    new:       list[str]
-    changed:   list[str]
-    deleted:   list[str]
-    unchanged: list[str]
-
-
 def create_state_table(conn) -> None:
     conn.execute(FILE_STATE_SQL)
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def hash_source_dir(src_dir: Path) -> dict[str, str]:
-    """SHA256-hash every .sr* file under src_dir. Keys are absolute path strings."""
-    return {str(f): _sha256(f) for f in walk_sr_files(src_dir)}
 
 
 def load_file_state(conn) -> dict[str, str]:
@@ -46,14 +27,6 @@ def load_file_state(conn) -> dict[str, str]:
         return {r[0]: r[1] for r in rows}
     except Exception:
         return {}
-
-
-def diff_state(current: dict[str, str], stored: dict[str, str]) -> FileDiff:
-    new       = [f for f in current if f not in stored]
-    changed   = [f for f in current if f in stored and current[f] != stored[f]]
-    deleted   = [f for f in stored  if f not in current]
-    unchanged = [f for f in current if f in stored and current[f] == stored[f]]
-    return FileDiff(new=new, changed=changed, deleted=deleted, unchanged=unchanged)
 
 
 def delete_file_rows(conn, file_path: str) -> None:

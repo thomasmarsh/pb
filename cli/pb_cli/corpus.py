@@ -5,17 +5,17 @@ import sys
 import tempfile
 from pathlib import Path
 
-from pb_cli.build import build_runner, find_binary, find_repo
+from pb_cli.shell.env import env
 
 
 def run(repo: Path | None = None, no_build: bool = False) -> None:
     """Run pb-runner on both corpora and fail if any files contain errors."""
-    repo_path = find_repo(repo)
+    repo_path = env.build.find_repo(repo)
     if not no_build:
         print("Building pb-runner...", flush=True)
-        binary = build_runner(repo_path)
+        binary = env.build.build_runner(repo_path)
     else:
-        binary = find_binary(repo_path)
+        binary = env.build.find_binary(repo_path)
 
     corpus_srcs = [
         ("Appeon",  repo_path / "example" / "PowerBuilder-Example" / "export"),

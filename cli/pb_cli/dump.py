@@ -4,15 +4,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pb_cli.build import count_sr_files
-from pb_cli.parse import parse_stream
 from pb_cli.reporter import Reporter
+from pb_cli.shell.env import env
 
 
 def run(src_dir: Path, out: Path, binary: Path, reporter: Reporter) -> None:
-    total = count_sr_files(src_dir)
+    total = env.build.count_sr_files(src_dir)
     with reporter.parse_progress(total, 'Parsing ') as progress:
-        for is_err, obj in parse_stream(src_dir, binary):
+        for is_err, obj in env.runner.parse_stream(src_dir, binary):
             if is_err:
                 progress.on_error(obj)
             else:

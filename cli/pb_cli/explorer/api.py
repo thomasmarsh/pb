@@ -13,7 +13,6 @@ import graphviz
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 
-from pb_cli.build import get_queries_dir
 from pb_cli.diagram import (
     apply_defaults,
     build_calls,
@@ -21,6 +20,7 @@ from pb_cli.diagram import (
     build_heatmap,
     build_inheritance,
 )
+from pb_cli.shell.env import env
 
 router = APIRouter()
 
@@ -38,7 +38,7 @@ def _rows(cursor: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
 
 
 def _query_info(name: str) -> tuple[str, list[tuple[str, str, str | None]], str]:
-    sql_file = get_queries_dir() / f"{name}.sql"
+    sql_file = env.build.get_queries_dir() / f"{name}.sql"
     if not sql_file.exists():
         raise HTTPException(status_code=404, detail=f"Query not found: {name}")
     lines = sql_file.read_text().splitlines()
@@ -562,7 +562,7 @@ async def get_datawindow(name: str, request: Request):
 
 @router.get("/api/queries")
 async def list_queries():
-    queries_dir = get_queries_dir()
+    queries_dir = env.build.get_queries_dir()
     if not queries_dir.is_dir():
         return {"queries": []}
     items = []

@@ -11,7 +11,7 @@ from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from pb_cli.state import FileDiff
+from pb_cli.core.state import FileDiff
 
 # ── ExtractProgress ────────────────────────────────────────────────────────────
 
@@ -54,10 +54,10 @@ class _LiveParseProgress:
         self._progress.advance(self._task)
 
     def on_error(self, obj: dict) -> None:
-        from pb_cli.parse import render_error
+        from pb_cli.shell.env import env
         self.error_count += 1
         self._progress.update(self._task, err_str=f'[red]⚠ {self.error_count} errors[/red]')
-        self._progress.console.print(render_error(obj))
+        self._progress.console.print(env.runner.render_error(obj))
 
 
 class _RecordingParseProgress:

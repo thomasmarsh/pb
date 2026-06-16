@@ -129,7 +129,7 @@ pnpm build            # compile TS → static/dist/
 | Haskell parser | `cd parser && cabal build` | Compile library + executables       |
 | Haskell tests  | `cd parser && cabal test`  | Run 815 property + unit tests       |
 | Python tools   | `./pb ingest`              | Parse → index → analyze pipeline    |
-| Python tests   | `cd cli && uv run pytest`  | 169 tests across tooling            |
+| Python tests   | `cd cli && uv run pytest`  | 204 tests across tooling            |
 | Explorer TS    | `pnpm build` (in `ui/`)    | Bundle TS → JS for the web UI       |
 | Explorer tests | `pnpm test` (in `ui/`)     | 180 reducer + state management tests |
 | Corpus check   | `./pb check-corpus`        | 0 errors / 777 files baseline       |
