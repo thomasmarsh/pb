@@ -2,107 +2,37 @@
 
 from __future__ import annotations
 
-import json
-import os
+import duckdb
+from fastapi import APIRouter, Depends, HTTPException
 
-from fastapi import APIRouter, HTTPException, Request
-
-from pb_cli.explorer.routes.dependencies import get_conn, rows
+from pb_cli.explorer.routes.dependencies import get_db
+from pb_cli.explorer.services.procedures import get_procedure_detail, get_procedure_explore
 
 router = APIRouter()
 
 
 @router.get("/api/procedures/{object_name}/{proc_name}")
-async def get_procedure(object_name: str, proc_name: str, request: Request):
-    conn = get_conn(request)
-    try:
-        proc_rows = rows(
-            conn.execute(
-                "SELECT file, object, proc_type, name, modifiers, params, "
-                "return_type, start_line, end_line, body_json, cyclomatic, source_rendered "
-                "FROM procedures WHERE object = ? AND name = ?",
-                [object_name, proc_name],
-            )
+async def get_procedure(
+    object_name: str,
+    proc_name: str,
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    proc = get_procedure_detail(conn, object_name, proc_name)
+    if proc is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Procedure not found: {object_name}.{proc_name}",
         )
-        if not proc_rows:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Procedure not found: {object_name}.{proc_name}",
-            )
-        proc = proc_rows[0]
-
-        proc["source_rendered"] = proc.get("source_rendered") or ""
-
-        source_file = proc.get("file")
-        start = proc.get("start_line")
-        end = proc.get("end_line")
-        if source_file and start and end and os.path.exists(source_file):
-            try:
-                with open(source_file, "r", errors="replace") as f:
-                    all_lines = f.readlines()
-                snippet = "".join(all_lines[max(0, start - 1) : end])
-                proc["source_original"] = snippet
-            except (OSError, IndexError):
-                proc["source_original"] = None
-        else:
-            proc["source_original"] = None
-
-        return proc
-    finally:
-        conn.close()
+    return proc
 
 
 @router.get("/api/explore/procedure/{object_name}/{proc_name}")
-async def explore_procedure(object_name: str, proc_name: str, request: Request):
-    conn = get_conn(request)
-    try:
-        proc_rows = rows(
-            conn.execute(
-                "SELECT body_json, source_rendered, proc_type, params, return_type, "
-                "modifiers, start_line, end_line, cyclomatic "
-                "FROM procedures WHERE object = ? AND name = ?",
-                [object_name, proc_name],
-            )
-        )
-        if not proc_rows:
-            raise HTTPException(status_code=404, detail="Procedure not found")
-        row = proc_rows[0]
-        body_json = row.get("body_json")
-        if body_json is None:
-            ast = None
-        elif isinstance(body_json, str):
-            ast = json.loads(body_json)
-        else:
-            ast = body_json
-
-        sql_stmts = rows(
-            conn.execute(
-                "SELECT stmt_idx, operation, raw_sql, tables, columns, "
-                "has_into, has_cursor, parse_ok "
-                "FROM sql_statements WHERE object = ? AND proc_name = ? ORDER BY stmt_idx",
-                [object_name, proc_name],
-            )
-        )
-        import sqlglot as _sqlglot
-
-        for stmt in sql_stmts:
-            raw = stmt.get("raw_sql") or ""
-            try:
-                stmt["formatted_sql"] = _sqlglot.transpile(raw, read="oracle", write="oracle", pretty=True)[0]
-            except Exception:
-                stmt["formatted_sql"] = raw
-
-        return {
-            "ast": ast,
-            "source_rendered": row.get("source_rendered") or "",
-            "proc_type": row.get("proc_type"),
-            "params": row.get("params"),
-            "return_type": row.get("return_type"),
-            "modifiers": row.get("modifiers"),
-            "start_line": row.get("start_line"),
-            "end_line": row.get("end_line"),
-            "cyclomatic": row.get("cyclomatic"),
-            "sql_statements": sql_stmts,
-        }
-    finally:
-        conn.close()
+async def explore_procedure(
+    object_name: str,
+    proc_name: str,
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    result = get_procedure_explore(conn, object_name, proc_name)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Procedure not found")
+    return result

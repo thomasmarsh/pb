@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+import duckdb
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from pb_cli.explorer.routes.dependencies import get_conn, rows
+from pb_cli.explorer.routes.dependencies import get_db, rows
 from pb_cli.shell.db import parse_sql_file
 from pb_cli.shell.env import env
 
@@ -38,22 +39,18 @@ async def list_queries():
 
 
 @router.get("/api/queries/{name}/run")
-async def run_query(name: str, request: Request):
+async def run_query(name: str, request: Request, conn: duckdb.DuckDBPyConnection = Depends(get_db)):
     description, params, sql = _query_info(name)
 
-    conn = get_conn(request)
-    try:
-        bound = {}
-        for pname, ptype, pdefault in params:
-            raw = request.query_params.get(pname)
-            if raw is not None:
-                bound[pname] = int(raw) if ptype in ("INT", "INTEGER", "BIGINT") else raw
-            elif pdefault is not None:
-                bound[pname] = int(pdefault) if ptype in ("INT", "INTEGER", "BIGINT") else pdefault
+    bound = {}
+    for pname, ptype, pdefault in params:
+        raw = request.query_params.get(pname)
+        if raw is not None:
+            bound[pname] = int(raw) if ptype in ("INT", "INTEGER", "BIGINT") else raw
+        elif pdefault is not None:
+            bound[pname] = int(pdefault) if ptype in ("INT", "INTEGER", "BIGINT") else pdefault
 
-        result = conn.execute(sql, bound)
-        result_rows = rows(result)
-        cols = [d[0] for d in result.description] if result.description else []
-        return {"columns": cols, "rows": result_rows}
-    finally:
-        conn.close()
+    result = conn.execute(sql, bound)
+    result_rows = rows(result)
+    cols = [d[0] for d in result.description] if result.description else []
+    return {"columns": cols, "rows": result_rows}

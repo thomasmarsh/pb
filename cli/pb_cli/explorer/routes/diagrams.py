@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+import duckdb
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
-from pb_cli.explorer.routes.dependencies import get_conn
+from pb_cli.explorer.routes.dependencies import get_db
 from pb_cli.shell.diagrams import (
     build_calls,
     build_dw_tables,
@@ -58,7 +59,7 @@ def _render_diagram(kind: str, **kwargs) -> str:
 @router.get("/api/diagram/{kind}")
 async def get_diagram(
     kind: str,
-    request: Request,
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
     root: str = Query("", description="Root object (inheritance)"),
     focal: str = Query("", description="Focal object (calls)"),
     depth: int = Query(2, description="Ego-graph radius (calls)"),
@@ -67,26 +68,22 @@ async def get_diagram(
     if kind not in _KINDS:
         raise HTTPException(status_code=400, detail=f"Unknown diagram: {kind}")
 
-    conn = get_conn(request)
-    try:
-        kwargs: dict[str, Any] = {"conn": conn}
-        if kind == "inheritance" and root:
-            kwargs["root"] = root
-        elif kind == "calls":
-            kwargs["focal"] = focal or "fn_sqlerror"
-            kwargs["depth"] = depth
-        elif kind == "dw-tables" and table:
-            kwargs["filter_table"] = table
-        elif kind == "sql-lineage" and focal:
+    kwargs: dict[str, Any] = {"conn": conn}
+    if kind == "inheritance" and root:
+        kwargs["root"] = root
+    elif kind == "calls":
+        kwargs["focal"] = focal or "fn_sqlerror"
+        kwargs["depth"] = depth
+    elif kind == "dw-tables" and table:
+        kwargs["filter_table"] = table
+    elif kind == "sql-lineage" and focal:
+        kwargs["focal"] = focal
+    elif kind == "table-lineage":
+        kwargs["table_name"] = table or ""
+    elif kind == "proc-tables":
+        kwargs["table_name"] = table or ""
+        if focal:
             kwargs["focal"] = focal
-        elif kind == "table-lineage":
-            kwargs["table_name"] = table or ""
-        elif kind == "proc-tables":
-            kwargs["table_name"] = table or ""
-            if focal:
-                kwargs["focal"] = focal
 
-        svg = _render_diagram(kind, **kwargs)
-        return Response(content=svg, media_type="image/svg+xml")
-    finally:
-        conn.close()
+    svg = _render_diagram(kind, **kwargs)
+    return Response(content=svg, media_type="image/svg+xml")
