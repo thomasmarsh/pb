@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pb_cli.reporter import Reporter
 from pb_cli.shell.env import env
+from pb_cli.shell.reporter import Reporter
 
 
 def run(src_dir: Path, out: Path, binary: Path, reporter: Reporter) -> None:

@@ -6,8 +6,8 @@ import shutil
 from pathlib import Path
 
 from pb_cli.core.state import diff_state
-from pb_cli.reporter import Reporter
 from pb_cli.shell.env import env
+from pb_cli.shell.reporter import Reporter
 
 
 def run(

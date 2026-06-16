@@ -3,7 +3,7 @@
 import duckdb
 import typer
 
-from pb_cli.queries import register_queries
+from pb_cli.shell.queries import register_queries
 from pb_cli.shell.build import find_repo
 from pb_cli.shell.db import parse_sql_file
 

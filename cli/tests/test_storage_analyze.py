@@ -3,7 +3,7 @@
 import duckdb
 
 from pb_cli.core.ast_walker import count_branches, walk_calls
-from pb_cli.reporter import RecordingReporter
+from pb_cli.shell.reporter import RecordingReporter
 from pb_cli.shell.db import create_schema
 from pb_cli.shell.metrics import (
     compute_dit_from_edges,

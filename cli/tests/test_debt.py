@@ -1,6 +1,6 @@
 """Unit tests for pb_cli.debt — pure Python, no cabal needed."""
 
-from pb_cli.debt import (
+from pb_cli.shell.commands.debt import (
     BsRawStats,
     DwStats,
     categorize,

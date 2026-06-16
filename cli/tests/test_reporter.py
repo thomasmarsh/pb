@@ -6,7 +6,7 @@ These tests require no cabal build and no duckdb — pure Python.
 import json
 
 from pb_cli.core.state import FileDiff
-from pb_cli.reporter import RecordingReporter
+from pb_cli.shell.reporter import RecordingReporter
 
 
 def _diff(new=0, changed=0, deleted=0, unchanged=0) -> FileDiff:

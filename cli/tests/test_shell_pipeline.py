@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from pb_cli.reporter import RecordingReporter
+from pb_cli.shell.reporter import RecordingReporter
 from pb_cli.shell.env import ShellEnv
 from pb_cli.shell.pipeline import run
 

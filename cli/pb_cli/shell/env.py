@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Callable, Iterable, Iterator, Protocol
 
 from rich.panel import Panel
 
-from pb_cli.reporter import LiveReporter, Reporter
 from pb_cli.shell.build import (
     build_runner,
     build_subset_tmpdir,
@@ -48,6 +47,7 @@ from pb_cli.shell.diagrams import (
 )
 from pb_cli.shell.ingest import ingest_batch, run_from_jsonl_lines
 from pb_cli.shell.metrics import compute_dit, compute_metrics
+from pb_cli.shell.reporter import LiveReporter, Reporter
 from pb_cli.shell.runner import parse_stream, render_error
 from pb_cli.shell.state import (
     create_state_table,
@@ -57,7 +57,7 @@ from pb_cli.shell.state import (
 )
 
 if TYPE_CHECKING:
-    from pb_cli.reporter import AnalyzeProgress
+    from pb_cli.shell.reporter import AnalyzeProgress
 
 
 ConnOp = Callable[[Conn], None]

@@ -6,7 +6,7 @@ import subprocess
 import duckdb
 import pytest
 
-from pb_cli.reporter import LiveReporter
+from pb_cli.shell.reporter import LiveReporter
 from pb_cli.shell.build import find_repo
 from pb_cli.shell.db import db_connection
 from pb_cli.shell.ingest import run_from_jsonl_lines

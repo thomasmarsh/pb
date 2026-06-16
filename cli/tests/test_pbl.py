@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from pb_cli.pbl import (
+from pb_cli.core.pbl import (
     PBL_COMMENTS,
     PBL_HEADER,
     PblEntry,
@@ -23,7 +23,7 @@ from pb_cli.pbl import (
     extract_to_dir,
     resolve_source_dir,
 )
-from pb_cli.reporter import RecordingReporter
+from pb_cli.shell.reporter import RecordingReporter
 from pb_cli.shell.build import find_repo
 
 # ── synthetic fixture builder ─────────────────────────────────────────────────

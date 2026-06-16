@@ -9,7 +9,7 @@ import networkx as nx
 from pb_cli.shell.db import Conn
 
 if TYPE_CHECKING:
-    from pb_cli.reporter import AnalyzeProgress
+    from pb_cli.shell.reporter import AnalyzeProgress
 
 
 def fetch_inheritance_edges(conn: Conn) -> list[tuple[str, str]]:

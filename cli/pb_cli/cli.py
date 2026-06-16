@@ -1,13 +1,23 @@
 """pb — PowerBuilder codebase analysis tools."""
 
 import shutil
+import socket
 import sys
+import webbrowser
 from pathlib import Path
+from threading import Timer
 from typing import Optional
 
 import typer
+import uvicorn
 
-from pb_cli.queries import register_queries
+from pb_cli.core.pbl import extract_to_dir, resolve_source_dir
+from pb_cli.shell.commands.corpus import run as run_corpus
+from pb_cli.shell.commands.debt import run as run_debt
+from pb_cli.shell.commands.dump import run as run_dump
+from pb_cli.shell.env import env
+from pb_cli.shell.pipeline import run as run_pipeline
+from pb_cli.shell.queries import register_queries
 
 app = typer.Typer(
     name="pb",
@@ -47,10 +57,6 @@ def dump(
     INPUT may be a directory of .sr* source files, a single .pbl library file,
     or a directory containing .pbl files (extracted transparently).
     """
-    from pb_cli.dump import run as run_dump
-    from pb_cli.pbl import resolve_source_dir
-    from pb_cli.shell.env import env
-
     reporter = env.reporter
     repo_path = env.build.find_repo(repo)
 
@@ -77,10 +83,6 @@ def ingest(
     INPUT may be a directory of .sr* source files, a single .pbl library file,
     or a directory containing .pbl files (extracted transparently).
     """
-    from pb_cli.pbl import resolve_source_dir
-    from pb_cli.shell.env import env
-    from pb_cli.shell.pipeline import run as run_pipeline
-
     reporter = env.reporter
     repo_path = env.build.find_repo(repo)
     binary = env.build.find_binary(repo_path) if no_build else _build(repo_path, reporter)
@@ -102,9 +104,6 @@ def extract(
     Each foo.pbl produces an output/foo.pbl/ directory of .sr* source files.
     Run once as a setup step before 'pb dump', 'pb ingest', or 'cabal test'.
     """
-    from pb_cli.pbl import extract_to_dir
-    from pb_cli.shell.env import env
-
     src = Path(input_dir).resolve()
     out = Path(output_dir)
 
@@ -137,9 +136,7 @@ def debt(
     repo: Optional[Path] = typer.Option(None, "--repo", help="Repo root (auto-detect if omitted)."),
 ) -> None:
     """Analyze BsRaw + ExRaw debt and DW control coverage across both corpora."""
-    from pb_cli.debt import run
-
-    run(repo=repo, no_build=no_build)
+    run_debt(repo=repo, no_build=no_build)
 
 
 # ── pb check-corpus ──────────────────────────────────────────────────────────
@@ -151,9 +148,7 @@ def check_corpus(
     repo: Optional[Path] = typer.Option(None, "--repo", help="Repo root (auto-detect if omitted)."),
 ) -> None:
     """Run pb-runner on both corpora and fail if any files contain parse errors."""
-    from pb_cli.corpus import run
-
-    run(repo=repo, no_build=no_build)
+    run_corpus(repo=repo, no_build=no_build)
 
 
 # ── pb index (legacy) ─────────────────────────────────────────────────────────
@@ -164,8 +159,6 @@ def index(
     db: str = typer.Argument("pb.duckdb", help="DuckDB database path."),
 ) -> None:
     """Populate pb.duckdb from pb-runner JSONL output (reads stdin). Use 'pb ingest' instead."""
-    from pb_cli.shell.env import env
-
     env.storage.run_from_jsonl_lines(sys.stdin, db)
 
 
@@ -177,8 +170,6 @@ def analyze(
     db: str = typer.Argument("pb.duckdb", help="DuckDB database path."),
 ) -> None:
     """Compute call graph metrics and populate object_metrics in pb.duckdb."""
-    from pb_cli.shell.env import env
-
     reporter = env.reporter
     with env.storage.db_connection(db) as conn, reporter.analyze_progress() as progress:
         env.storage.compute_metrics(conn, progress)
@@ -195,8 +186,6 @@ def diagram_inheritance(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """Inheritance hierarchy diagram."""
-    from pb_cli.shell.env import env
-
     with env.storage.connect(db) as conn:
         env.storage.diagram_inheritance(conn, root, output, dot)
 
@@ -210,8 +199,6 @@ def diagram_calls(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """Call ego-graph centred on a named object."""
-    from pb_cli.shell.env import env
-
     with env.storage.connect(db) as conn:
         env.storage.diagram_calls(conn, object_name, depth, output, dot)
 
@@ -224,8 +211,6 @@ def diagram_dw_tables(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """DataWindow → DB table bipartite dependency graph."""
-    from pb_cli.shell.env import env
-
     with env.storage.connect(db) as conn:
         env.storage.diagram_dw_tables(conn, table, output, dot)
 
@@ -237,8 +222,6 @@ def diagram_heatmap(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """Complexity heatmap over all PowerScript objects."""
-    from pb_cli.shell.env import env
-
     with env.storage.connect(db) as conn:
         env.storage.diagram_heatmap(conn, output, dot)
 
@@ -248,8 +231,6 @@ def diagram_heatmap(
 
 def _port_in_use(host: str, port: int) -> bool:
     """Check if a port is already in use."""
-    import socket
-
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex((host, port)) == 0
 
@@ -262,18 +243,13 @@ def explore(
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser on start."),
 ) -> None:
     """Start the interactive DuckDB explorer web UI."""
-    import uvicorn
-
     from pb_cli.explorer import create_app
-    from pb_cli.shell.env import env
 
     url = f"http://{host}:{port}"
 
     # If port is already in use, assume server is running — just open browser
     if _port_in_use(host, port):
         if open_browser:
-            import webbrowser
-
             typer.echo(f"Explorer already running at {url} — opening browser.")
             webbrowser.open(url)
         else:
@@ -286,9 +262,6 @@ def explore(
     app = create_app(db)
 
     if open_browser:
-        import webbrowser
-        from threading import Timer
-
         Timer(1.0, webbrowser.open, args=[url]).start()
 
     uvicorn.run(app, host=host, port=port, log_level="info")
@@ -298,8 +271,6 @@ def explore(
 
 
 def _build(repo_path: Path, reporter) -> Path:
-    from pb_cli.shell.env import env
-
     reporter.building()
     return env.build.build_runner(repo_path)
 
