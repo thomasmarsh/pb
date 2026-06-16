@@ -72,7 +72,7 @@ def _render(dot: graphviz.Graph | graphviz.Digraph, output: str, emit_dot: bool)
     print(f"Written: {output}", file=sys.stderr)
 
 
-def _apply_defaults(dot, node_extra=None, edge_extra=None) -> None:
+def apply_defaults(dot, node_extra=None, edge_extra=None) -> None:
     dot.attr(**GRAPH_ATTRS)
     ne = {**NODE_DEFAULTS, **(node_extra or {})}
     ee = {**EDGE_DEFAULTS, **(edge_extra or {})}
@@ -80,12 +80,10 @@ def _apply_defaults(dot, node_extra=None, edge_extra=None) -> None:
     dot.attr('edge', **ee)
 
 
-def diagram_inheritance(
+def build_inheritance(
     conn: duckdb.DuckDBPyConnection,
-    root: str | None,
-    output: str = 'inheritance.svg',
-    emit_dot: bool = False,
-) -> None:
+    root: str | None = None,
+) -> graphviz.Digraph:
     if root:
         edges = conn.execute("""
             WITH RECURSIVE sub AS (
@@ -104,7 +102,7 @@ def diagram_inheritance(
     kind_map = dict(conn.execute("SELECT name, kind FROM objects").fetchall())
 
     dot = graphviz.Digraph(engine='dot', name='inheritance')
-    _apply_defaults(dot)
+    apply_defaults(dot)
     dot.attr(rankdir='TB', splines='ortho', nodesep='0.3', ranksep='0.6')
     dot.attr('edge', color='#8888AA', arrowsize='0.5', penwidth='0.7')
 
@@ -130,19 +128,24 @@ def diagram_inheritance(
                  fillcolor='#FFD700', fontcolor='#1C1C1E',
                  tooltip=f"{root} [root]")
 
+    return dot
+
+
+def diagram_inheritance(
+    conn: duckdb.DuckDBPyConnection,
+    root: str | None,
+    output: str = 'inheritance.svg',
+    emit_dot: bool = False,
+) -> None:
+    dot = build_inheritance(conn, root)
     _render(dot, output, emit_dot)
 
 
-def diagram_calls(
+def build_calls(
     conn: duckdb.DuckDBPyConnection,
-    focal: str,
+    focal: str = '',
     depth: int = 2,
-    output: str | None = None,
-    emit_dot: bool = False,
-) -> None:
-    if output is None:
-        output = f"calls_{focal}.svg"
-
+) -> graphviz.Digraph:
     raw_edges = conn.execute("SELECT object, to_name FROM calls").fetchall()
     G: nx.DiGraph = nx.DiGraph(raw_edges)
 
@@ -159,7 +162,7 @@ def diagram_calls(
     ).fetchall())
 
     dot = graphviz.Digraph(engine='fdp', name='calls')
-    _apply_defaults(dot)
+    apply_defaults(dot)
     dot.attr(overlap='false', splines='curved', K='0.8')
 
     for name in sub_nodes:
@@ -183,15 +186,26 @@ def diagram_calls(
         else:
             dot.edge(u, v)
 
+    return dot
+
+
+def diagram_calls(
+    conn: duckdb.DuckDBPyConnection,
+    focal: str,
+    depth: int = 2,
+    output: str | None = None,
+    emit_dot: bool = False,
+) -> None:
+    if output is None:
+        output = f"calls_{focal}.svg"
+    dot = build_calls(conn, focal, depth)
     _render(dot, output, emit_dot)
 
 
-def diagram_dw_tables(
+def build_dw_tables(
     conn: duckdb.DuckDBPyConnection,
     filter_table: str | None = None,
-    output: str = 'dw_tables.svg',
-    emit_dot: bool = False,
-) -> None:
+) -> graphviz.Digraph:
     rows = conn.execute("""
         SELECT dw_name, table_name FROM dw_retrieve_tables
         WHERE (? IS NULL) OR table_name = ?
@@ -206,7 +220,7 @@ def diagram_dw_tables(
     ).fetchall())
 
     dot = graphviz.Digraph(engine='dot', name='dw_tables')
-    _apply_defaults(dot, node_extra={'shape': 'box'})
+    apply_defaults(dot, node_extra={'shape': 'box'})
     dot.attr(rankdir='LR', splines='ortho', nodesep='0.2', ranksep='1.2')
 
     with dot.subgraph(name='cluster_dw') as c:
@@ -241,14 +255,22 @@ def diagram_dw_tables(
         dot.edge(f"dw_{dw}", f"t_{tbl}",
                  color='#56A85D88', arrowsize='0.5', penwidth='0.7')
 
+    return dot
+
+
+def diagram_dw_tables(
+    conn: duckdb.DuckDBPyConnection,
+    filter_table: str | None = None,
+    output: str = 'dw_tables.svg',
+    emit_dot: bool = False,
+) -> None:
+    dot = build_dw_tables(conn, filter_table)
     _render(dot, output, emit_dot)
 
 
-def diagram_heatmap(
+def build_heatmap(
     conn: duckdb.DuckDBPyConnection,
-    output: str = 'heatmap.svg',
-    emit_dot: bool = False,
-) -> None:
+) -> graphviz.Graph:
     rows = conn.execute("""
         SELECT o.name, o.kind,
                COALESCE(m.max_cyclomatic, 0),
@@ -264,7 +286,7 @@ def diagram_heatmap(
     ).fetchall()
 
     dot = graphviz.Graph(engine='sfdp', name='heatmap')
-    _apply_defaults(dot)
+    apply_defaults(dot)
     dot.attr(
         overlap='prism', splines='curved',
         outputorder='edgesfirst', K='1.2',
@@ -314,4 +336,13 @@ def diagram_heatmap(
             lg.edge(prev, nid, style='invis')
             prev = nid
 
+    return dot
+
+
+def diagram_heatmap(
+    conn: duckdb.DuckDBPyConnection,
+    output: str = 'heatmap.svg',
+    emit_dot: bool = False,
+) -> None:
+    dot = build_heatmap(conn)
     _render(dot, output, emit_dot)

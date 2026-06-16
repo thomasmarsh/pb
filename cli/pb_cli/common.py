@@ -1,11 +1,23 @@
 """Shared DuckDB schema and INSERT statements for pb_index and friends."""
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 from typing import NamedTuple, TypedDict
 
 import duckdb
 
 Conn = duckdb.DuckDBPyConnection
+
+
+@contextmanager
+def db_connection(path: str | Path, read_only: bool = False) -> Iterator[Conn]:
+    conn = duckdb.connect(str(path), read_only=read_only)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 # ── Row types (one NamedTuple per table) ───────────────────────────────────────

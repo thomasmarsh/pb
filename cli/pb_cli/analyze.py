@@ -3,8 +3,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import duckdb
 import networkx as nx
+
+from pb_cli.common import Conn, db_connection
 
 if TYPE_CHECKING:
     from pb_cli.reporter import AnalyzeProgress, Reporter
@@ -17,10 +18,9 @@ def run(db: str = 'pb.duckdb', reporter: Reporter | None = None) -> None:
         from pb_cli.reporter import LiveReporter
         reporter = LiveReporter()
 
-    conn = duckdb.connect(db)
-    with reporter.analyze_progress() as progress:
-        compute_metrics(conn, progress)
-    conn.close()
+    with db_connection(db) as conn:
+        with reporter.analyze_progress() as progress:
+            compute_metrics(conn, progress)
 
 
 def walk_calls(node) -> list[tuple[str, str]]:
@@ -57,7 +57,7 @@ def count_branches(node) -> int:
     return count
 
 
-def compute_dit(conn: duckdb.DuckDBPyConnection) -> dict[str, int]:
+def compute_dit(conn: Conn) -> dict[str, int]:
     """Depth of inheritance tree: max hops from a base class (no parent)."""
     edges = conn.execute("SELECT from_object, to_object FROM inherits").fetchall()
     igraph = nx.DiGraph((parent, child) for child, parent in edges)
@@ -69,7 +69,7 @@ def compute_dit(conn: duckdb.DuckDBPyConnection) -> dict[str, int]:
     return dit
 
 
-def compute_metrics(conn: duckdb.DuckDBPyConnection, progress: AnalyzeProgress) -> None:
+def compute_metrics(conn: Conn, progress: AnalyzeProgress) -> None:
     conn.execute("DROP TABLE IF EXISTS object_metrics")
     conn.execute("""
         CREATE TABLE object_metrics (

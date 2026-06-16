@@ -4,10 +4,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-import duckdb
-
 from pb_cli.analyze import run as _analyze
-from pb_cli.common import create_schema, drop_tables
+from pb_cli.common import create_schema, db_connection, drop_tables
 from pb_cli.index import ingest_batch
 from pb_cli.parse import parse_stream
 from pb_cli.reporter import Reporter
@@ -27,43 +25,43 @@ def run(
     reset: bool = False, dialect: str = 'oracle',
 ) -> None:
     src_dir = src_dir.resolve()  # normalise /var → /private/var symlink on macOS
-    conn = duckdb.connect(db)
-    if reset:
-        drop_tables(conn)
-    create_schema(conn)
-    create_state_table(conn)
+    to_parse = None
+    errors = 0
+    row_count = 0
 
-    with reporter.status('Scanning source files...'):
-        current = hash_source_dir(src_dir)
-    stored = load_file_state(conn)
-    diff = diff_state(current, stored)
+    with db_connection(db) as conn:
+        if reset:
+            drop_tables(conn)
+        create_schema(conn)
+        create_state_table(conn)
 
-    if not diff.new and not diff.changed and not diff.deleted:
-        reporter.done(parsed=0, errors=0, diff=diff)
-        conn.close()
-        return
+        with reporter.status('Scanning source files...'):
+            current = hash_source_dir(src_dir)
+        stored = load_file_state(conn)
+        diff = diff_state(current, stored)
 
-    for path in diff.deleted + diff.changed:
-        delete_file_rows(conn, path)
+        if not diff.new and not diff.changed and not diff.deleted:
+            reporter.done(parsed=0, errors=0, diff=diff)
+            return
 
-    to_parse = diff.new + diff.changed
-    if not to_parse:
-        conn.close()
-        _analyze(db, reporter)
-        reporter.done(parsed=0, errors=0, diff=diff)
-        return
+        for path in diff.deleted + diff.changed:
+            delete_file_rows(conn, path)
 
-    objects, errors = _parse_subset(src_dir, binary, to_parse, reporter)
+        to_parse = diff.new + diff.changed
+        if to_parse:
+            objects, errors = _parse_subset(src_dir, binary, to_parse, reporter)
 
-    with reporter.indexing_step() as advance:
-        row_count = ingest_batch(objects, conn, dialect, on_progress=advance)
+            with reporter.indexing_step() as advance:
+                row_count = ingest_batch(objects, conn, dialect, on_progress=advance)
 
-    parsed_files = {obj['file'] for obj in objects}
-    save_file_state(conn, {f: current[f] for f in to_parse if f in parsed_files})
-    conn.close()
+            parsed_files = {obj['file'] for obj in objects}
+            save_file_state(conn, {f: current[f] for f in to_parse if f in parsed_files})
 
     _analyze(db, reporter)
-    reporter.done(parsed=len(to_parse), errors=errors, rows=row_count, diff=diff)
+    if to_parse:
+        reporter.done(parsed=len(to_parse), errors=errors, rows=row_count, diff=diff)
+    else:
+        reporter.done(parsed=0, errors=0, diff=diff)
 
 
 def _parse_subset(

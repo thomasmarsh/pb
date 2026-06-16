@@ -13,11 +13,20 @@ import graphviz
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 
-from pb_cli.build import find_repo
+from pb_cli.build import get_queries_dir
+from pb_cli.diagram import (
+    apply_defaults,
+    build_calls,
+    build_dw_tables,
+    build_heatmap,
+    build_inheritance,
+    complexity_color,
+    EDGE_DEFAULTS,
+    GRAPH_ATTRS,
+    NODE_DEFAULTS,
+)
 
 router = APIRouter()
-
-QUERIES_DIR = find_repo() / "queries"
 
 
 def _conn(request: Request) -> duckdb.DuckDBPyConnection:
@@ -33,7 +42,7 @@ def _rows(cursor: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
 
 
 def _query_info(name: str) -> tuple[str, list[tuple[str, str, str | None]], str]:
-    sql_file = QUERIES_DIR / f"{name}.sql"
+    sql_file = get_queries_dir() / f"{name}.sql"
     if not sql_file.exists():
         raise HTTPException(status_code=404, detail=f"Query not found: {name}")
     lines = sql_file.read_text().splitlines()
@@ -291,13 +300,13 @@ def _render_diagram(kind: str, **kwargs) -> str:
     import graphviz as gv
 
     if kind == "inheritance":
-        dot = _build_inheritance(**kwargs)
+        dot = build_inheritance(**kwargs)
     elif kind == "calls":
-        dot = _build_calls(**kwargs)
+        dot = build_calls(**kwargs)
     elif kind == "dw-tables":
-        dot = _build_dw_tables(**kwargs)
+        dot = build_dw_tables(**kwargs)
     elif kind == "heatmap":
-        dot = _build_heatmap(**kwargs)
+        dot = build_heatmap(**kwargs)
     elif kind == "sql-lineage":
         dot = _build_sql_lineage(**kwargs)
     elif kind == "table-lineage":
@@ -308,24 +317,6 @@ def _render_diagram(kind: str, **kwargs) -> str:
     return dot.pipe(format="svg").decode("utf-8")
 
 
-_GRAPH_ATTRS = {
-    "bgcolor": "#1C1C1E",
-    "fontname": "Helvetica Neue,Helvetica,Arial,sans-serif",
-    "fontcolor": "#E8E8E8",
-    "pad": "0.4",
-}
-_NODE_DEFAULTS = {
-    "fontname": "Helvetica Neue,Helvetica,Arial,sans-serif",
-    "fontsize": "9",
-    "fontcolor": "#1C1C1E",
-    "penwidth": "0",
-}
-_EDGE_DEFAULTS = {
-    "color": "#606060",
-    "arrowsize": "0.6",
-    "penwidth": "0.8",
-}
-_KIND_COLORS = {"powerscript": "#5B8DD9", "datawindow": "#56A85D", "project": "#B0B0B0"}
 _OP_COLORS = {
     "SELECT":   "#5B8DD9",
     "INSERT":   "#56A85D",
@@ -334,178 +325,6 @@ _OP_COLORS = {
     "retrieve": "#4ade80",
 }
 _DEFAULT_OP_COLOR = "#B0B0B0"
-_GRADIENT = ["#FFFFB2", "#FECC5C", "#FD8D3C", "#F03B20", "#BD0026", "#7A0177", "#49006A", "#2D004B", "#0D0221"]
-
-
-def _cc_color(cc: int) -> str:
-    return _GRADIENT[min(cc // 3, len(_GRADIENT) - 1)]
-
-
-def _apply_dark(dot):
-    dot.attr(**_GRAPH_ATTRS)
-    dot.attr("node", **_NODE_DEFAULTS)
-    dot.attr("edge", **_EDGE_DEFAULTS)
-
-
-def _build_inheritance(conn: duckdb.DuckDBPyConnection, root=None):
-    if root:
-        edges = conn.execute(
-            "WITH RECURSIVE sub AS ("
-            "  SELECT from_object, to_object FROM inherits WHERE to_object = ? "
-            "  UNION ALL "
-            "  SELECT i.from_object, i.to_object "
-            "  FROM inherits i JOIN sub s ON i.to_object = s.from_object"
-            ") SELECT DISTINCT from_object, to_object FROM sub",
-            [root],
-        ).fetchall()
-    else:
-        edges = conn.execute("SELECT from_object, to_object FROM inherits").fetchall()
-
-    kind_map = dict(conn.execute("SELECT name, kind FROM objects").fetchall())
-
-    dot = graphviz.Digraph(engine="dot", name="inheritance")
-    _apply_dark(dot)
-    dot.attr(rankdir="TB", splines="ortho", nodesep="0.3", ranksep="0.6")
-    dot.attr("edge", color="#8888AA", arrowsize="0.5", penwidth="0.7")
-
-    seen: set[str] = set()
-    for src, dst in edges:
-        for name in (src, dst):
-            if name not in seen:
-                kind = kind_map.get(name, "")
-                fill = _KIND_COLORS.get(kind, "#D0D0D0")
-                shape = "box" if kind == "datawindow" else "ellipse"
-                dot.node(name, shape=shape, style="filled,rounded", fillcolor=fill)
-                seen.add(name)
-        dot.edge(src, dst)
-
-    if root and root not in seen:
-        dot.node(root, shape="doubleoctagon", style="filled", fillcolor="#FFD700", fontcolor="#1C1C1E")
-
-    return dot
-
-
-def _build_calls(conn: duckdb.DuckDBPyConnection, focal="", depth=2):
-    import networkx as nx
-
-    raw_edges = conn.execute("SELECT object, to_name FROM calls").fetchall()
-    G = nx.DiGraph(raw_edges)
-
-    if focal in G:
-        ego = nx.ego_graph(G, focal, radius=depth, undirected=True)
-        sub_nodes = set(ego.nodes())
-        sub_edges = [(u, v) for u, v in G.edges() if u in sub_nodes and v in sub_nodes]
-    else:
-        sub_nodes = {focal}
-        sub_edges = []
-
-    cc_map = dict(conn.execute(
-        "SELECT name, max(cyclomatic) FROM procedures GROUP BY name"
-    ).fetchall())
-
-    dot = graphviz.Digraph(engine="fdp", name="calls")
-    _apply_dark(dot)
-    dot.attr(overlap="false", splines="curved", K="0.8")
-
-    for name in sub_nodes:
-        cc = cc_map.get(name) or 0
-        is_focal = name == focal
-        fill = "#FFD700" if is_focal else _cc_color(cc)
-        shape = "doublecircle" if is_focal else "ellipse"
-        width = "1.4" if is_focal else str(max(0.5, min(0.5 + cc / 8, 1.8)))
-        label = f"{name}\\ncc={cc}" if cc > 3 else name
-        dot.node(name, label=label, shape=shape, style="filled", fillcolor=fill,
-                 fontcolor="#1C1C1E", width=width, height=width, fixedsize="false")
-
-    for u, v in sub_edges:
-        if u == focal or v == focal:
-            dot.edge(u, v, color="#FFD700AA", penwidth="1.2")
-        else:
-            dot.edge(u, v)
-
-    return dot
-
-
-def _build_dw_tables(conn: duckdb.DuckDBPyConnection, filter_table=None):
-    rows = conn.execute(
-        "SELECT dw_name, table_name FROM dw_retrieve_tables "
-        "WHERE (? IS NULL) OR table_name = ? "
-        "ORDER BY dw_name, table_name",
-        [filter_table, filter_table],
-    ).fetchall()
-
-    dw_names = sorted({r[0] for r in rows})
-    tbl_names = sorted({r[1] for r in rows})
-    count_map = dict(conn.execute(
-        "SELECT dw_name, count(*) FROM dw_retrieve_tables GROUP BY dw_name"
-    ).fetchall())
-
-    dot = graphviz.Digraph(engine="dot", name="dw_tables")
-    _apply_dark(dot)
-    dot.attr(rankdir="LR", splines="ortho", nodesep="0.2", ranksep="1.2")
-    dot.attr("node", shape="box")
-
-    with dot.subgraph(name="cluster_dw") as c:
-        c.attr(label="DataWindows", style="rounded", color="#5B8DD9",
-               fontcolor="#E8E8E8", bgcolor="#2A2A3A")
-        for dw in dw_names:
-            nc = count_map.get(dw, 1)
-            c.node(f"dw_{dw}", label=dw, shape="box", style="filled,rounded",
-                   fillcolor=_cc_color(nc - 1), fontsize="8")
-
-    with dot.subgraph(name="cluster_tables") as c:
-        c.attr(label="DB Tables", style="rounded", color="#56A85D",
-               fontcolor="#E8E8E8", bgcolor="#1F2F1F")
-        for tbl in tbl_names:
-            c.node(f"t_{tbl}", label=tbl, shape="cylinder", style="filled",
-                   fillcolor="#2E5E32", fontcolor="#C8F0CA", fontsize="8")
-
-    for dw, tbl in rows:
-        dot.edge(f"dw_{dw}", f"t_{tbl}", color="#56A85D88", arrowsize="0.5", penwidth="0.7")
-
-    return dot
-
-
-def _build_heatmap(conn: duckdb.DuckDBPyConnection):
-    rows = conn.execute(
-        "SELECT o.name, o.kind, COALESCE(m.max_cyclomatic, 0), COALESCE(m.in_degree, 0) "
-        "FROM objects o LEFT JOIN object_metrics m ON o.name = m.object "
-        "WHERE o.kind = 'powerscript' ORDER BY COALESCE(m.max_cyclomatic, 0) DESC"
-    ).fetchall()
-    inherit_edges = conn.execute("SELECT from_object, to_object FROM inherits").fetchall()
-
-    dot = graphviz.Graph(engine="sfdp", name="heatmap")
-    _apply_dark(dot)
-    dot.attr(overlap="prism", splines="curved", outputorder="edgesfirst", K="1.2")
-    dot.attr("edge", style="invis")
-
-    for name, kind, cc, fan_in in rows:
-        fill = _cc_color(cc)
-        size_f = round(max(0.3, min(fan_in / 15 + 0.35, 2.4)), 2)
-        show_label = size_f >= 0.7 and (cc >= 5 or fan_in >= 10)
-        label = name if show_label else ""
-        fsize = "8" if show_label else "0"
-        dot.node(name, label=label, shape="circle", style="filled", fillcolor=fill,
-                 fontcolor="#FFFFFFCC", width=str(size_f), height=str(size_f),
-                 fixedsize="true", fontsize=fsize)
-
-    for src, dst in inherit_edges:
-        dot.edge(src, dst)
-
-    with dot.subgraph(name="cluster_legend") as lg:
-        lg.attr(label="Cyclomatic complexity", style="rounded", color="#555555",
-                bgcolor="#2A2A2A", fontcolor="#E8E8E8", fontsize="9")
-        prev = "legend_anchor"
-        lg.node(prev, style="invis", width="0", height="0", label="")
-        for i, (label, fill) in enumerate([("0–2", _GRADIENT[0]), ("3–5", _GRADIENT[1]),
-                                            ("6–8", _GRADIENT[2]), ("9+", _GRADIENT[4])]):
-            nid = f"legend_{i}"
-            lg.node(nid, label=label, shape="circle", style="filled", fillcolor=fill,
-                    fontcolor="#1C1C1E", fontsize="7", width="0.5", height="0.5")
-            lg.edge(prev, nid, style="invis")
-            prev = nid
-
-    return dot
 
 
 def _build_sql_lineage(conn: duckdb.DuckDBPyConnection, focal=""):
@@ -518,7 +337,7 @@ def _build_sql_lineage(conn: duckdb.DuckDBPyConnection, focal=""):
     ).fetchall()
 
     dot = graphviz.Digraph(engine="dot", name="sql_lineage")
-    _apply_dark(dot)
+    apply_defaults(dot)
     dot.attr(rankdir="LR", splines="ortho", nodesep="0.3", ranksep="1.2")
     dot.attr("node", shape="box", style="filled,rounded")
 
@@ -555,7 +374,7 @@ def _build_table_lineage(conn: duckdb.DuckDBPyConnection, table_name=""):
     ).fetchall()
 
     dot = graphviz.Digraph(engine="dot", name="table_lineage")
-    _apply_dark(dot)
+    apply_defaults(dot)
     dot.attr(rankdir="LR", splines="ortho", nodesep="0.2", ranksep="1.4")
     dot.attr("node", shape="box", style="filled,rounded")
 
@@ -674,10 +493,11 @@ async def get_datawindow(name: str, request: Request):
 
 @router.get("/api/queries")
 async def list_queries():
-    if not QUERIES_DIR.is_dir():
+    queries_dir = get_queries_dir()
+    if not queries_dir.is_dir():
         return {"queries": []}
     items = []
-    for sql_file in sorted(QUERIES_DIR.glob("*.sql")):
+    for sql_file in sorted(queries_dir.glob("*.sql")):
         description, params, sql_body = _query_info(sql_file.stem)
         items.append({
             "name": sql_file.stem,

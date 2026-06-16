@@ -5,11 +5,10 @@ import json
 import sys
 from typing import Callable, Iterable
 
-import duckdb
-
 from pb_cli.analyze import count_branches, walk_calls
 from pb_cli.common import (
     TABLES, INSERT, Conn, RowBatch, new_row_batch,
+    db_connection,
     CallRow, DwArgumentRow, DwControlRow, DwRetrieveColumnRow,
     DwRetrieveTableRow, DwRetrieveWhereRow, InheritsRow,
     ObjectRow, ProcedureRow, SqlStatementRow,
@@ -31,9 +30,6 @@ def _is_sql(text: str) -> bool:
 def run_from_jsonl_lines(
     lines: Iterable[str], db: str = 'pb.duckdb', dialect: str = 'oracle'
 ) -> None:
-    conn = duckdb.connect(db)
-    create_schema(conn)
-
     rows = new_row_batch()
     for line in lines:
         line = line.strip()
@@ -42,11 +38,12 @@ def run_from_jsonl_lines(
         obj = json.loads(line)
         ingest_file(obj, rows, dialect)
 
-    for table, data in rows.items():
-        if data:
-            conn.executemany(INSERT[table], data)
+    with db_connection(db) as conn:
+        create_schema(conn)
+        for table, data in rows.items():
+            if data:
+                conn.executemany(INSERT[table], data)
 
-    conn.close()
     total = sum(len(v) for v in rows.values())
     print(f"Indexed {total} rows into {db}", file=sys.stderr)
 

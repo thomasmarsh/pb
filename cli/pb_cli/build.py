@@ -17,6 +17,11 @@ def find_repo(repo: Path | None = None) -> Path:
     )
 
 
+def get_queries_dir() -> Path:
+    """Lazy accessor for the queries/ directory — avoids import-time find_repo()."""
+    return find_repo() / "queries"
+
+
 def find_binary(repo: Path) -> Path:
     """Return the compiled pb-runner binary path without triggering a build."""
     r = subprocess.run(

@@ -8,9 +8,7 @@ from pathlib import Path
 import duckdb
 import typer
 
-from pb_cli.build import find_repo
-
-QUERIES_DIR = find_repo() / "queries"
+from pb_cli.build import get_queries_dir
 
 _INT_TYPES = {"INT", "INTEGER", "BIGINT"}
 
@@ -106,7 +104,8 @@ def _make_command(sql_file: Path):
 
 def register_queries(app: typer.Typer) -> None:
     """Register every queries/*.sql file as a command on the given typer app."""
-    if not QUERIES_DIR.is_dir():
+    queries_dir = get_queries_dir()
+    if not queries_dir.is_dir():
         return
-    for sql_file in sorted(QUERIES_DIR.glob("*.sql")):
+    for sql_file in sorted(queries_dir.glob("*.sql")):
         app.command(name=sql_file.stem)(_make_command(sql_file))
