@@ -5,7 +5,8 @@ import typer
 
 from pb_cli.shell.build import find_repo
 from pb_cli.shell.db import parse_sql_file
-from pb_cli.shell.queries import register_queries
+from pb_cli.shell.env import env
+from pb_cli.shell.queries import _make_command, _print_result, register_queries
 
 REPO_ROOT = find_repo()
 QUERIES_DIR = REPO_ROOT / "queries"
@@ -127,3 +128,71 @@ def test_pagerank_ordered(db_path):
     assert len(rows) > 0
     prs = [r[0] for r in rows]
     assert prs == sorted(prs, reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# _make_command signature construction
+# ---------------------------------------------------------------------------
+
+
+def test_make_command_positional_params(tmp_path):
+    sql_file = tmp_path / "test.sql"
+    sql_file.write_text("-- Test query\n-- :name TEXT\nSELECT * FROM t WHERE name = $name\n")
+    cmd = _make_command(sql_file)
+    sig = cmd.__signature__
+    positional = [p for p in sig.parameters.values() if p.kind == p.POSITIONAL_OR_KEYWORD and p.name != "db"]
+    assert len(positional) == 1
+    assert positional[0].name == "name"
+    assert positional[0].annotation is str
+
+
+def test_make_command_keyword_params_with_defaults(tmp_path):
+    sql_file = tmp_path / "test.sql"
+    sql_file.write_text("-- Test\n-- :limit INT 10\nSELECT * FROM t LIMIT $limit\n")
+    cmd = _make_command(sql_file)
+    sig = cmd.__signature__
+    kw = [p for p in sig.parameters.values() if p.kind == p.KEYWORD_ONLY and p.name != "db"]
+    assert len(kw) == 1
+    assert kw[0].name == "limit"
+    assert kw[0].annotation is int
+
+
+# ---------------------------------------------------------------------------
+# _print_result formatting
+# ---------------------------------------------------------------------------
+
+
+def test_print_result_empty(capsys):
+    class FakeCursor:
+        description = [("col1",)]
+
+        def fetchall(self):
+            return []
+
+    _print_result(FakeCursor())
+    assert "(no results)" in capsys.readouterr().out
+
+
+def test_print_result_with_nones(capsys):
+    class FakeCursor:
+        description = [("a",), ("b",)]
+
+        def fetchall(self):
+            return [(1, None), (None, "x")]
+
+    _print_result(FakeCursor())
+    out = capsys.readouterr().out
+    assert "1" in out
+    assert "x" in out
+
+
+# ---------------------------------------------------------------------------
+# register_queries empty dir
+# ---------------------------------------------------------------------------
+
+
+def test_register_queries_empty_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(env.build, "get_queries_dir", lambda: tmp_path / "nonexistent")
+    app = typer.Typer()
+    register_queries(app)
+    assert len(app.registered_commands) == 0
