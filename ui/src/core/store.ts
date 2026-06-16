@@ -26,7 +26,9 @@ export interface ScopedStore<NarrowState, NarrowAction> {
 
 export function useSnapshot<S extends object>(proxyState: S): () => S {
   // createSignal overload requires Exclude<T, Function>; cast via any since S is always a plain object
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [snap, setSnap] = createSignal<S>(snapshot(proxyState as any) as any);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const unsub = subscribe(proxyState as any, () => setSnap(snapshot(proxyState as any) as any));
   onCleanup(unsub);
   return snap;

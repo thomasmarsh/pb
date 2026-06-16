@@ -105,6 +105,7 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
     return null;
   case "proc-tab":
     if (draft.procedureDetail && "activeTab" in draft.procedureDetail) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (draft.procedureDetail as any).activeTab = action.tab;
     }
     return null;

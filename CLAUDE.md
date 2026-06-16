@@ -12,6 +12,7 @@ cd parser && cabal test --test-show-details=direct # verbose output
 ./pb debt --no-build             # same, skip build step
 cd cli && uv run pytest         # Python tool tests (cli/tests/ directory)
 cd ui && pnpm typecheck         # TypeScript type check (explorer)
+cd ui && pnpm lint              # ESLint (explorer)
 cd ui && pnpm test              # Explorer reducer tests (64 tests)
 cd ui && pnpm build             # Build explorer TS → static/dist/
 ```
