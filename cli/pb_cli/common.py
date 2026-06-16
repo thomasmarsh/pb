@@ -1,7 +1,7 @@
 """Shared DuckDB schema and INSERT statements for pb_index and friends."""
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple, TypedDict
@@ -12,7 +12,7 @@ Conn = duckdb.DuckDBPyConnection
 
 
 @contextmanager
-def db_connection(path: str | Path, read_only: bool = False) -> Iterator[Conn]:
+def db_connection(path: str | Path, read_only: bool = False) -> Generator[Conn, None, None]:
     conn = duckdb.connect(str(path), read_only=read_only)
     try:
         yield conn

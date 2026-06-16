@@ -1,0 +1,9 @@
+{
+  "include": ["cli/pb_cli", "cli/tests"],
+  "exclude": ["**/node_modules", "**/__pycache__", "**/.venv"],
+  "reportMissingImports": false,
+  "reportMissingTypeStubs": false,
+  "pythonVersion": "3.12",
+  "venvPath": "cli",
+  "venv": ".venv"
+}

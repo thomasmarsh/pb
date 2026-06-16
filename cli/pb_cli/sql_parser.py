@@ -1,6 +1,7 @@
 """PowerBuilder SQL parser — wraps sqlglot with PB-specific pre-processing."""
+from __future__ import annotations
+
 import re
-from typing import Optional
 
 import sqlglot
 from sqlglot import exp
@@ -28,7 +29,7 @@ _REWRITES: list[tuple[re.Pattern, object]] = [
 ]
 
 
-def pb_sql_to_standard(sql_text: str) -> Optional[str]:
+def pb_sql_to_standard(sql_text: str) -> str | None:
     """Pre-process PB SQL into standard SQL. Returns None for unstructured forms."""
     if _SKIP_RE.match(sql_text.strip()):
         return None
@@ -49,7 +50,7 @@ def extract_columns(ast) -> list[str]:
 def parse_pb_sql(
     raw_sql: str,
     dialect: str = "oracle",
-) -> tuple[Optional[dict], list[str], list[str], dict]:
+) -> tuple[list[dict] | None, list[str], list[str], dict]:
     """Parse PB embedded SQL.
 
     Returns (parsed_dict, tables, columns, metadata).

@@ -222,7 +222,7 @@ def build_dw_tables(
     apply_defaults(dot, node_extra={'shape': 'box'})
     dot.attr(rankdir='LR', splines='ortho', nodesep='0.2', ranksep='1.2')
 
-    with dot.subgraph(name='cluster_dw') as c:
+    with dot.subgraph(name='cluster_dw') as c:  # pyright: ignore[reportOptionalContextManager]
         c.attr(
             label='DataWindows', style='rounded',
             color='#5B8DD9', fontcolor='#E8E8E8', bgcolor='#2A2A3A',
@@ -237,7 +237,7 @@ def build_dw_tables(
                 tooltip=f"{dw} ({nc} tables)",
             )
 
-    with dot.subgraph(name='cluster_tables') as c:
+    with dot.subgraph(name='cluster_tables') as c:  # pyright: ignore[reportOptionalContextManager]
         c.attr(
             label='DB Tables', style='rounded',
             color='#56A85D', fontcolor='#E8E8E8', bgcolor='#1F2F1F',
@@ -311,7 +311,7 @@ def build_heatmap(
     for src, dst in inherit_edges:
         dot.edge(src, dst)
 
-    with dot.subgraph(name='cluster_legend') as lg:
+    with dot.subgraph(name='cluster_legend') as lg:  # pyright: ignore[reportOptionalContextManager]
         lg.attr(
             label='Cyclomatic complexity',
             style='rounded', color='#555555',

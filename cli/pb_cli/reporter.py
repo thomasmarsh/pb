@@ -6,9 +6,10 @@ Two implementations:
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
-from typing import Callable, Iterator, Protocol
+from typing import Protocol
 
 from pb_cli.state import FileDiff
 
@@ -100,11 +101,11 @@ class _RecordingAnalyzeProgress:
 
 class Reporter(Protocol):
     def building(self) -> None: ...
-    def status(self, msg: str): ...
-    def extracting_progress(self, total: int): ...
-    def parse_progress(self, total: int, label: str): ...
-    def indexing_step(self): ...
-    def analyze_progress(self): ...
+    def status(self, msg: str) -> AbstractContextManager[None]: ...
+    def extracting_progress(self, total: int) -> AbstractContextManager[ExtractProgress]: ...
+    def parse_progress(self, total: int, label: str) -> AbstractContextManager[ParseProgress]: ...
+    def indexing_step(self) -> AbstractContextManager[Callable[[int], None]]: ...
+    def analyze_progress(self) -> AbstractContextManager[AnalyzeProgress]: ...
     def done(self, *, parsed: int, errors: int,
              rows: int | None = None, diff: FileDiff | None = None) -> None: ...
 
@@ -119,8 +120,10 @@ class LiveReporter:
     def building(self) -> None:
         self._c.print('[bold]Building pb-runner...[/bold]', highlight=False)
 
-    def status(self, msg: str):
-        return self._c.status(f'[dim]{msg}[/dim]')
+    @contextmanager
+    def status(self, msg: str) -> Iterator[None]:
+        with self._c.status(f'[dim]{msg}[/dim]'):
+            yield
 
     @contextmanager
     def extracting_progress(self, total: int) -> Iterator[_LiveExtractProgress]:

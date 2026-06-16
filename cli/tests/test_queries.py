@@ -97,7 +97,8 @@ def test_dead_code_no_false_negatives(db_path):
         # Spot-check: first result really has no callers
         name = rows[0][1]
         conn2 = duckdb.connect(db_path, read_only=True)
-        callers = conn2.execute("SELECT count(*) FROM calls WHERE to_name = ?", [name]).fetchone()[0]
+        row = conn2.execute("SELECT count(*) FROM calls WHERE to_name = ?", [name]).fetchone()
+        callers = row[0] if row else 0
         conn2.close()
         assert callers == 0
 

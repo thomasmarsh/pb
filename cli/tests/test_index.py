@@ -68,11 +68,11 @@ def test_dw_retrieve_tables_populated_when_e2_done(db_conn):
 # ---------------------------------------------------------------------------
 
 from pb_cli.index import _ingest_dw, _proc_row, ingest_file
-from pb_cli.common import TABLES, INSERT
+from pb_cli.common import TABLES, INSERT, new_row_batch
 
 
 def _rows():
-    return {t: [] for t in TABLES}
+    return new_row_batch()
 
 
 # ---------------------------------------------------------------------------
@@ -306,7 +306,8 @@ def test_select_extracted_from_proc():
     assert row[2] == "f_query"
     assert row[3] == 0
     assert row[4] == "SELECT"
-    assert "customer" in row[7]
+    assert row.tables is not None
+    assert "customer" in row.tables
     assert row[9] is True   # has_into
     assert row[11] is True  # parse_ok
 

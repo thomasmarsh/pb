@@ -8,6 +8,7 @@ from typing import Callable, Iterable
 from pb_cli.analyze import count_branches, walk_calls
 from pb_cli.common import (
     INSERT,
+    TABLES,
     CallRow,
     Conn,
     DwArgumentRow,
@@ -50,11 +51,12 @@ def run_from_jsonl_lines(
 
     with db_connection(db) as conn:
         create_schema(conn)
-        for table, data in rows.items():
+        for table in TABLES:
+            data = rows[table]
             if data:
                 conn.executemany(INSERT[table], data)
 
-    total = sum(len(v) for v in rows.values())
+    total = sum(len(rows[t]) for t in TABLES)
     print(f"Indexed {total} rows into {db}", file=sys.stderr)
 
 
@@ -72,7 +74,8 @@ def ingest_batch(
     total = 0
     conn.execute("BEGIN")
     try:
-        for table, data in rows.items():
+        for table in TABLES:
+            data = rows[table]
             for i in range(0, len(data), _CHUNK):
                 chunk = data[i:i + _CHUNK]
                 conn.executemany(INSERT[table], chunk)
@@ -131,9 +134,9 @@ def _ingest_ps(obj: dict, file: str, rows: RowBatch, dialect: str = 'oracle') ->
 
 def _extract_sql(
     file: str, obj_name: str, proc_name: str,
-    body_json: object, dialect: str, rows: RowBatch,
+    body_json: str | None, dialect: str, rows: RowBatch,
 ) -> None:
-    stmts = json.loads(body_json) if isinstance(body_json, str) else body_json
+    stmts = json.loads(body_json) if isinstance(body_json, str) else []
     for idx, stmt in enumerate(stmts or []):
         node = stmt.get('node', stmt)
         if node.get('tag') == 'raw':
