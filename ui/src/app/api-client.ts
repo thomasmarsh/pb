@@ -15,6 +15,7 @@ import type {
   ExploreProcDetail,
   TableSummary,
   TableDetail,
+  ErrorListResponse,
 } from "../types/api.js";
 import { Effect } from "../core/effect.js";
 import type { AppEnv as Env } from "./reducer.js";
@@ -37,6 +38,7 @@ export interface ApiClient {
   getExploreDatawindow(name: string): Promise<DwExploreDetail>;
   getTables(): Promise<TableSummary[]>;
   getTableDetail(name: string): Promise<TableDetail>;
+  getErrors(params: { kind?: string; q?: string }): Promise<ErrorListResponse>;
 }
 
 function apiParams(obj: Record<string, string | number>): string {
@@ -73,6 +75,7 @@ export function createEnv(api: ApiClient): Env {
     getExploreDatawindow: (n) => lift(() => api.getExploreDatawindow(n)),
     getTables: () => lift(() => api.getTables()),
     getTableDetail: (n) => lift(() => api.getTableDetail(n)),
+    getErrors: (p) => lift(() => api.getErrors(p)),
     // Placeholder: pullbackWithNav always overrides this with the real capture implementation.
     navigate: (_action: NavigationAction): Effect<never> => Effect.none(),
     pushUrl: (path: string): void => {
@@ -166,6 +169,10 @@ export function createApiClient(): ApiClient {
 
     async getTableDetail(name: string): Promise<TableDetail> {
       return fetchJson(`/api/tables/${encodeURIComponent(name)}`);
+    },
+
+    async getErrors(params: { kind?: string; q?: string }): Promise<ErrorListResponse> {
+      return fetchJson("/api/errors?" + apiParams({ kind: params.kind ?? "", q: params.q ?? "" }));
     },
   };
 }

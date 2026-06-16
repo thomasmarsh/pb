@@ -254,6 +254,33 @@ def test_extract_sql_non_sql_raw_skipped():
     assert len(rows["sql_statements"]) == 0
 
 
+def test_extract_sql_records_parse_error_row_on_failure():
+    body = _make_func_body([_raw("SELECT * FROM (", 7)])
+    rows = new_row_batch()
+    _extract_sql("test.srw", "w_main", "uf_init", body, "oracle", rows)
+    assert len(rows["sql_statements"]) == 1
+    assert rows["sql_statements"][0].parse_ok is False
+    assert len(rows["parse_errors"]) == 1
+    err = rows["parse_errors"][0]
+    assert err.file == "test.srw"
+    assert err.error_kind == "sql"
+    assert err.object == "w_main"
+    assert err.proc_name == "uf_init"
+    assert err.line == 7
+    assert err.message
+    assert err.snippet == "SELECT * FROM ("
+
+
+def test_extract_sql_no_parse_error_row_for_intentional_skips():
+    """OPEN/CLOSE/etc. report parse_ok=False by design — not a parse_errors row."""
+    body = _make_func_body([_raw("OPEN cur_order", 1)])
+    rows = new_row_batch()
+    _extract_sql("test.srw", "w_main", "uf_init", body, "oracle", rows)
+    assert len(rows["sql_statements"]) == 1
+    assert rows["sql_statements"][0].parse_ok is False
+    assert len(rows["parse_errors"]) == 0
+
+
 def test_extract_sql_empty_body():
     rows = new_row_batch()
     _extract_sql("test.srw", "w_main", "uf_init", None, "oracle", rows)

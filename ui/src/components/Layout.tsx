@@ -16,6 +16,7 @@ const NAV_ITEMS: { path: string; icon: string; label: string }[] = [
   { path: "diagrams", icon: "\u25CF", label: "Diagrams" },
   { path: "queries", icon: "\u2318", label: "Queries" },
   { path: "search", icon: "\uD83D\uDD0D", label: "Search" },
+  { path: "errors", icon: "\u26A0", label: "Errors" },
 ];
 
 const VIEW_GROUPS: Record<string, string[]> = {

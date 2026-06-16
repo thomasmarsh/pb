@@ -15,6 +15,7 @@ import { tablesReducer, type TablesEnv, initialTablesState } from "../features/t
 import { diagramsReducer, type DiagramsEnv, initialDiagramsState } from "../features/diagrams/reducer.js";
 import { queriesReducer, type QueriesEnv, initialQueriesState } from "../features/queries/reducer.js";
 import { searchReducer, type SearchEnv, initialSearchState } from "../features/search/reducer.js";
+import { errorsReducer, type ErrorsEnv, initialErrorsState } from "../features/errors/reducer.js";
 
 import type { NavigationAction } from "../features/navigation/types.js";
 import type { DashboardAction } from "../features/dashboard/actions.js";
@@ -25,8 +26,9 @@ import type { TablesAction } from "../features/tables/actions.js";
 import type { DiagramsAction } from "../features/diagrams/actions.js";
 import type { QueriesAction } from "../features/queries/actions.js";
 import type { SearchAction } from "../features/search/actions.js";
+import type { ErrorsAction } from "../features/errors/actions.js";
 
-export type AppEnv = NavEnv & DashboardEnv & ExploreEnv & ObjectsEnv & DatawindowsEnv & TablesEnv & DiagramsEnv & QueriesEnv & SearchEnv;
+export type AppEnv = NavEnv & DashboardEnv & ExploreEnv & ObjectsEnv & DatawindowsEnv & TablesEnv & DiagramsEnv & QueriesEnv & SearchEnv & ErrorsEnv;
 
 // ── Lenses (app-level: connect features to AppState) ─────────────────────────
 
@@ -39,6 +41,7 @@ const matchTables      = (a: AppAction): TablesAction      | null => a.tag === "
 const matchDiagrams    = (a: AppAction): DiagramsAction    | null => a.tag === "diagrams"     ? a.action : null;
 const matchQueries     = (a: AppAction): QueriesAction     | null => a.tag === "queries"      ? a.action : null;
 const matchSearch      = (a: AppAction): SearchAction      | null => a.tag === "search"       ? a.action : null;
+const matchErrors      = (a: AppAction): ErrorsAction      | null => a.tag === "errors"       ? a.action : null;
 
 // ── Initial state ─────────────────────────────────────────────────────────────
 
@@ -53,6 +56,7 @@ export function initialState(): AppState {
     queries: initialQueriesState,
     search: initialSearchState,
     explore: makeInitialExploreState(),
+    errors: initialErrorsState,
   };
 }
 
@@ -70,6 +74,7 @@ const _combined = combine<AppState, AppAction, AppEnv>(
   pullbackWithNav(diagramsReducer,    (s) => s.diagrams,    matchDiagrams,    (a): AppAction => ({ tag: "diagrams",    action: a }), (env) => env, toNav),
   pullbackWithNav(queriesReducer,     (s) => s.queries,     matchQueries,     (a): AppAction => ({ tag: "queries",     action: a }), (env) => env, toNav),
   pullbackWithNav(searchReducer,      (s) => s.search,      matchSearch,      (a): AppAction => ({ tag: "search",      action: a }), (env) => env, toNav),
+  pullback(errorsReducer,             (s) => s.errors,      matchErrors,      (a): AppAction => ({ tag: "errors",      action: a }), (env) => env),
 );
 
 export function reducer(draft: AppState, action: AppAction, env: AppEnv): Effect<AppAction> | null {

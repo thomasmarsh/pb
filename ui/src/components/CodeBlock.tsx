@@ -11,24 +11,43 @@ export function SqlBlock(props: { code: string; style?: JSX.CSSProperties }) {
 interface CodeBlockProps {
   code: string;
   baseLine?: number;
+  highlightLine?: number;
 }
 
 export function CodeBlock(props: CodeBlockProps) {
-  const highlighted = () => highlightPowerScript(props.code);
-  const lines = () => props.code.split("\n");
+  const highlightedLines = () => highlightPowerScript(props.code).split("\n");
   const base = () => props.baseLine ?? 1;
+  const isErrorLine = (i: number) => base() + i === props.highlightLine;
 
   return (
     <div class="source-viewer">
       <div class="source-gutter">
-        <For each={lines()}>
+        <For each={highlightedLines()}>
           {(_line, i) => (
-            <div class="source-gutter-line">{String(base() + i())}</div>
+            <div
+              class="source-gutter-line"
+              classList={{ "source-gutter-line--error": isErrorLine(i()) }}
+            >
+              {String(base() + i())}
+            </div>
           )}
         </For>
       </div>
       <div class="source-code-area">
-        <pre innerHTML={highlighted()} />
+        <pre>
+          <For each={highlightedLines()}>
+            {(line, i) => (
+              <>
+                <span
+                  class="source-code-line"
+                  classList={{ "source-code-line--error": isErrorLine(i()) }}
+                  innerHTML={line}
+                />
+                {i() < highlightedLines().length - 1 ? "\n" : ""}
+              </>
+            )}
+          </For>
+        </pre>
       </div>
     </div>
   );

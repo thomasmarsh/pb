@@ -13,7 +13,7 @@ _LINE_RE = re.compile(r"\bline[: ]+(\d+)", re.IGNORECASE)
 _CTX = 3
 
 
-def _extract_line(msg: str) -> int | None:
+def extract_line(msg: str) -> int | None:
     m = _LINE_RE.search(msg)
     return int(m.group(1)) if m else None
 
@@ -41,7 +41,7 @@ def render_error(obj: dict) -> Panel:
     """Build a rich Panel for a single parse-error JSON object."""
     fp = obj.get("file", "<unknown>")
     msg = obj.get("error", "<no message>")
-    ctx = _context(fp, _extract_line(msg))
+    ctx = _context(fp, extract_line(msg))
     t = Text()
     t.append(f"{fp}\n", style="bold yellow")
     t.append(msg, style="red")

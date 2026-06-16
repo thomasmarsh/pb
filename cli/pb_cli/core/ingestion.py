@@ -14,6 +14,7 @@ from pb_cli.core.models import (
     DwRetrieveWhereRow,
     InheritsRow,
     ObjectRow,
+    ParseErrorRow,
     ProcedureRow,
     RowBatch,
     SqlStatementRow,
@@ -97,12 +98,13 @@ def _extract_sql(
     for raw, line in walk_bsraw_located(stmts):
         if _is_sql(raw):
             parsed, tables, cols, meta = parse_pb_sql(raw, dialect)
+            line_no = line if line is not None else -1
             rows["sql_statements"].append(
                 SqlStatementRow(
                     file,
                     obj_name,
                     proc_name,
-                    line if line is not None else -1,
+                    line_no,
                     meta["operation"],
                     raw,
                     json.dumps(parsed) if parsed is not None else None,
@@ -113,6 +115,10 @@ def _extract_sql(
                     parsed is not None,
                 )
             )
+            if "error" in meta:
+                rows["parse_errors"].append(
+                    ParseErrorRow(file, "sql", meta["error"], obj_name, proc_name, line, raw)
+                )
 
 
 def _proc_row(file: str, proc_type: str, block: dict, body: list) -> ProcedureRow:

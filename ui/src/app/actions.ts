@@ -8,6 +8,7 @@ import type { TablesAction } from "../features/tables/actions.js";
 import type { DiagramsAction } from "../features/diagrams/actions.js";
 import type { QueriesAction } from "../features/queries/actions.js";
 import type { SearchAction } from "../features/search/actions.js";
+import type { ErrorsAction } from "../features/errors/actions.js";
 import type { NavigationAction } from "../features/navigation/types.js";
 
 export type AppAction =
@@ -19,4 +20,5 @@ export type AppAction =
   | { tag: "tables";      action: TablesAction }
   | { tag: "diagrams";    action: DiagramsAction }
   | { tag: "queries"; action: QueriesAction }
-  | { tag: "search"; action: SearchAction };
+  | { tag: "search"; action: SearchAction }
+  | { tag: "errors"; action: ErrorsAction };

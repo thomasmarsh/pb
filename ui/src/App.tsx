@@ -19,6 +19,7 @@ import { Diagrams } from "./features/diagrams/Diagrams.js";
 import { Queries } from "./features/queries/Queries.js";
 import { Search } from "./features/search/Search.js";
 import { Explore } from "./features/explore/Explore.js";
+import { Errors } from "./features/errors/Errors.js";
 import { initViewFromUrl, setupPopstateHandler } from "./features/navigation/url-sync.js";
 import { HealthCheck } from "./components/HealthCheck.js";
 
@@ -47,6 +48,7 @@ function ViewRouter(props: { store: Store<AppState, AppAction> }): JSX.Element {
       <Show when={snap().nav.route.view === "queries"}><Queries store={props.store} /></Show>
       <Show when={snap().nav.route.view === "search"}><Search store={props.store} /></Show>
       <Show when={snap().nav.route.view === "explore"}><Explore store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "errors"}><Errors store={props.store} /></Show>
     </Layout>
   );
 }

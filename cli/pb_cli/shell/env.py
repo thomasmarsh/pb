@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Callable, Iterable, Iterator, Protocol
 
 from rich.panel import Panel
 
+from pb_cli.core.models import ParseErrorRow
 from pb_cli.shell.build import (
     build_runner,
     build_subset_tmpdir,
@@ -38,7 +39,15 @@ from pb_cli.shell.build import (
     hash_source_dir,
     walk_sr_files,
 )
-from pb_cli.shell.db import Conn, connect, count_sql_parse_failures, create_schema, db_connection, drop_tables
+from pb_cli.shell.db import (
+    Conn,
+    connect,
+    count_sql_parse_failures,
+    create_schema,
+    db_connection,
+    drop_tables,
+    insert_parse_errors,
+)
 from pb_cli.shell.diagrams import (
     diagram_calls,
     diagram_dw_tables,
@@ -136,6 +145,7 @@ class StorageEnv:
     run_from_jsonl_lines: RunFromJsonlLines = field(default=run_from_jsonl_lines)
     compute_dit: Callable[[Conn], dict[str, int]] = field(default=compute_dit)
     count_sql_parse_failures: Callable[[Conn], int] = field(default=count_sql_parse_failures)
+    insert_parse_errors: Callable[[Conn, list[ParseErrorRow]], None] = field(default=insert_parse_errors)
     compute_metrics: Callable[[Conn, AnalyzeProgress], None] = field(default=compute_metrics)
     connect: Callable[[str], AbstractContextManager[Conn]] = field(default=connect)
     diagram_inheritance: Callable[[Conn, str | None, str, bool], None] = field(default=diagram_inheritance)

@@ -19,6 +19,7 @@ export function print(route: Route): string {
     case "queries":          return "/queries";
     case "search":           return "/search";
     case "explore":          return "/explore";
+    case "errors":           return "/errors";
   }
 }
 
@@ -41,6 +42,7 @@ export function parse(path: string): Route {
     case "queries":   return { view: "queries" };
     case "search":    return { view: "search" };
     case "explore":   return { view: "explore" };
+    case "errors":    return { view: "errors" };
     default:          return { view: "dashboard" };
   }
 }

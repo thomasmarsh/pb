@@ -181,6 +181,24 @@ def test_skip_procedure_declare(raw):
     assert meta["operation"] == "DECLARE"
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Pattern 13: genuinely malformed SQL → meta carries the sqlglot error message
+# ──────────────────────────────────────────────────────────────────────────────
+def test_parse_failure_captures_error_message():
+    raw = "SELECT * FROM ("
+    parsed, tables, columns, meta = parse_pb_sql(raw)
+    assert parsed is None
+    assert "error" in meta, "meta must carry the sqlglot failure message for genuine parse errors"
+    assert meta["error"], "error message must not be empty"
+
+
+def test_skip_unstructured_has_no_error_key():
+    """Intentionally-skipped forms (OPEN/CLOSE/...) are not failures — no 'error' key."""
+    parsed, tables, columns, meta = parse_pb_sql("OPEN cur_order")
+    assert parsed is None
+    assert "error" not in meta
+
+
 def test_core_sql_has_no_io_imports():
     """core/sql.py must not import duckdb, subprocess, or pathlib."""
     mod = importlib.import_module("pb_cli.core.sql")

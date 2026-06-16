@@ -34,6 +34,27 @@ describe("CodeBlock", () => {
     expect(pre!.innerHTML.length).toBeGreaterThan(0);
   });
 
+  it("highlights the gutter line matching highlightLine", () => {
+    const { container } = render(() => (
+      <CodeBlock code={"line1\nline2\nline3"} highlightLine={2} />
+    ));
+    const gutter = container.querySelectorAll(".source-gutter-line");
+    expect(gutter[0]!.classList.contains("source-gutter-line--error")).toBe(false);
+    expect(gutter[1]!.classList.contains("source-gutter-line--error")).toBe(true);
+    expect(gutter[2]!.classList.contains("source-gutter-line--error")).toBe(false);
+  });
+
+  it("highlights the code line matching highlightLine, honoring baseLine", () => {
+    const { container } = render(() => (
+      <CodeBlock code={"a\nb\nc"} baseLine={10} highlightLine={11} />
+    ));
+    const codeLines = container.querySelectorAll(".source-code-line");
+    expect(codeLines.length).toBe(3);
+    expect(codeLines[0]!.classList.contains("source-code-line--error")).toBe(false);
+    expect(codeLines[1]!.classList.contains("source-code-line--error")).toBe(true);
+    expect(codeLines[2]!.classList.contains("source-code-line--error")).toBe(false);
+  });
+
   it("handles single line code", () => {
     const { container } = render(() => (
       <CodeBlock code="single line" />

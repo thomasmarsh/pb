@@ -259,6 +259,23 @@ export interface SqlStatementRow {
   parse_ok: boolean;
 }
 
+export interface ParseErrorRow {
+  file: string;
+  error_kind: "powerscript" | "sql";
+  message: string;
+  object: string | null;
+  proc_name: string | null;
+  line: number | null;
+  snippet: string | null;
+}
+
+export interface ErrorListResponse {
+  total: number;
+  offset: number;
+  limit: number;
+  items: ParseErrorRow[];
+}
+
 export interface ExploreProcDetail {
   ast: Located<BodyStmt>[] | null;
   source_rendered: string;

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import duckdb
 
-from pb_cli.core.models import TABLES
+from pb_cli.core.models import TABLES, ParseErrorRow
 
 Conn = duckdb.DuckDBPyConnection
 
@@ -122,6 +122,16 @@ CREATE TABLE IF NOT EXISTS sql_statements (
     has_cursor  BOOLEAN,
     parse_ok    BOOLEAN
 );
+
+CREATE TABLE IF NOT EXISTS parse_errors (
+    file        TEXT NOT NULL,
+    error_kind  TEXT NOT NULL,
+    message     TEXT NOT NULL,
+    object      TEXT,
+    proc_name   TEXT,
+    line        INT,
+    snippet     TEXT
+);
 """
 
 _ALL_SQL_TABLES_VIEW = """
@@ -161,6 +171,7 @@ INSERT = {
     "dw_arguments": "INSERT INTO dw_arguments VALUES (?,?,?,?)",
     "inherits": "INSERT INTO inherits VALUES (?,?)",
     "sql_statements": "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+    "parse_errors": "INSERT INTO parse_errors VALUES (?,?,?,?,?,?,?)",
 }
 
 
@@ -192,6 +203,11 @@ def count_sql_parse_failures(conn: Conn) -> int:
         "AND regexp_matches(raw_sql, '\\w+\\s+PROCEDURE\\s+FOR\\s+\\w+', 'i'))"
     ).fetchone()
     return row[0] if row else 0
+
+
+def insert_parse_errors(conn: Conn, rows: list[ParseErrorRow]) -> None:
+    if rows:
+        conn.executemany(INSERT["parse_errors"], rows)
 
 
 def drop_tables(conn: Conn) -> None:

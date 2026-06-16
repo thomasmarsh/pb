@@ -12,7 +12,8 @@ export type Route =
   | { view: "diagrams" }
   | { view: "queries" }
   | { view: "search" }
-  | { view: "explore" };
+  | { view: "explore" }
+  | { view: "errors" };
 
 export type ViewName = Route["view"];
 

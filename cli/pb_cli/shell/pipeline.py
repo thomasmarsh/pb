@@ -5,9 +5,11 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from pb_cli.core.models import ParseErrorRow
 from pb_cli.core.state import diff_state
 from pb_cli.shell.env import env
 from pb_cli.shell.reporter import Reporter
+from pb_cli.shell.runner import extract_line
 
 
 def run(
@@ -43,10 +45,11 @@ def run(
 
         to_parse = diff.new + diff.changed
         if to_parse:
-            objects, errors = _parse_subset(src_dir, binary, to_parse, reporter)
+            objects, errors, parse_errors = _parse_subset(src_dir, binary, to_parse, reporter)
 
             with reporter.indexing_step() as advance:
                 row_count = env.storage.ingest_batch(objects, conn, dialect, on_progress=advance)
+            env.storage.insert_parse_errors(conn, parse_errors)
 
             parsed_files = {obj["file"] for obj in objects}
             env.storage.save_file_state(conn, {f: current[f] for f in to_parse if f in parsed_files})
@@ -68,14 +71,23 @@ def _parse_subset(
     binary: Path,
     to_parse: list[str],
     reporter: Reporter,
-) -> tuple[list[dict], int]:
+) -> tuple[list[dict], int, list[ParseErrorRow]]:
     tmpdir = env.storage.build_subset_tmpdir(src_dir, to_parse)
     try:
         objects: list[dict] = []
+        parse_errors: list[ParseErrorRow] = []
         with reporter.parse_progress(len(to_parse), "Parsing") as progress:
             for is_err, obj in env.runner.parse_stream(tmpdir, binary, remap_from=tmpdir, remap_to=src_dir):
                 if is_err:
                     progress.on_error(obj)
+                    message = obj.get("error", "")
+                    try:
+                        snippet = Path(obj["file"]).read_text(errors="replace")
+                    except OSError:
+                        snippet = None
+                    parse_errors.append(
+                        ParseErrorRow(obj.get("file", ""), "powerscript", message, None, None, extract_line(message), snippet)
+                    )
                 else:
                     try:
                         obj["source_text"] = Path(obj["file"]).read_text(errors="replace")
@@ -83,6 +95,6 @@ def _parse_subset(
                         obj["source_text"] = None
                     objects.append(obj)
                 progress.advance()
-        return objects, progress.error_count
+        return objects, progress.error_count, parse_errors
     finally:
         shutil.rmtree(tmpdir)

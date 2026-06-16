@@ -74,13 +74,17 @@ def parse_pb_sql(
         return None, [], [], meta
 
     dialects = [dialect] if dialect == "oracle" else [dialect, "oracle"]
+    last_error: Exception | None = None
     for d in dialects:
         try:
             ast = sqlglot.parse_one(standard, dialect=d, error_level=sqlglot.ErrorLevel.RAISE)
             tables = extract_tables(ast)
             columns = extract_columns(ast)
             return ast.dump(), tables, columns, meta
-        except Exception:
+        except Exception as e:
+            last_error = e
             continue
 
+    if last_error is not None:
+        meta["error"] = str(last_error)
     return None, [], [], meta

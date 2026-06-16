@@ -53,6 +53,8 @@ def fake_env(tmp_path):
     e.storage.count_sql_parse_failures = lambda conn: 0
     e.storage.build_subset_tmpdir = lambda src_dir, files: subset_dir
     e.storage.ingest_batch = lambda objects, conn, dialect="oracle", on_progress=None: len(objects)  # type: ignore[assignment]
+    e.storage.insert_parse_errors = lambda conn, rows: conn.inserted_parse_errors.extend(rows)  # type: ignore[attr-defined]
+    db.inserted_parse_errors = []
 
     return e, db
 
@@ -181,3 +183,22 @@ def test_parse_error_propagates_to_done_event(monkeypatch, fake_env):
     assert len(done) == 1
     assert done[0]["errors"] == 1
     assert done[0]["parsed"] == 1
+
+
+def test_parse_error_is_persisted_with_extracted_line(monkeypatch, fake_env):
+    e, db = fake_env
+    e.build.hash_source_dir = lambda src_dir: {"bad.srw": "hash1"}
+    e.runner.parse_stream = lambda src_dir, binary, *, remap_from=None, remap_to=None: iter(
+        [(True, {"file": "bad.srw", "error": "lex error at line 42: unexpected character"})]
+    )
+    _patch_env(monkeypatch, e)
+
+    reporter = RecordingReporter()
+    run(Path("/fake"), "test.duckdb", Path("/fake/bin"), reporter)
+
+    assert len(db.inserted_parse_errors) == 1
+    err = db.inserted_parse_errors[0]
+    assert err.file == "bad.srw"
+    assert err.error_kind == "powerscript"
+    assert err.line == 42
+    assert "unexpected character" in err.message

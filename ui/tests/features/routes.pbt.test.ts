@@ -8,7 +8,7 @@ import type { Route, ViewName } from "../../src/features/navigation/types.js";
 const viewNames: ViewName[] = [
   "dashboard", "objects", "objectDetail", "procedureDetail",
   "datawindows", "dwDetail", "tables", "tableDetail",
-  "diagrams", "queries", "search", "explore",
+  "diagrams", "queries", "search", "explore", "errors",
 ];
 
 describe("routes — property-based", () => {
@@ -35,6 +35,7 @@ describe("routes — property-based", () => {
       { view: "queries" },
       { view: "search" },
       { view: "explore" },
+      { view: "errors" },
     ];
     for (const route of simpleRoutes) {
       expect(parse(print(route))).toEqual(route);

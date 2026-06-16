@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pb_cli.explorer.routes import (
     datawindows,
     diagrams,
+    errors,
     objects,
     procedures,
     queries,
@@ -33,6 +34,7 @@ def create_app(db_path: str = "pb.duckdb") -> FastAPI:
     app.include_router(datawindows.router)
     app.include_router(queries.router)
     app.include_router(tables.router)
+    app.include_router(errors.router)
     app.include_router(static.router)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 

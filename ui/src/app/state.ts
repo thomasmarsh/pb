@@ -9,6 +9,7 @@ import type { QueriesState } from "../features/queries/types.js";
 import type { SearchState } from "../features/search/types.js";
 import type { ExploreState } from "../features/explore/types.js";
 import type { TablesState } from "../features/tables/types.js";
+import type { ErrorsState } from "../features/errors/types.js";
 
 export type { ViewName } from "../features/navigation/types.js";
 
@@ -22,4 +23,5 @@ export interface AppState {
   queries: QueriesState;
   search: SearchState;
   explore: ExploreState;
+  errors: ErrorsState;
 }

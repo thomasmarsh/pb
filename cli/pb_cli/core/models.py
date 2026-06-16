@@ -102,6 +102,16 @@ class SqlStatementRow(NamedTuple):
     parse_ok: bool
 
 
+class ParseErrorRow(NamedTuple):
+    file: str
+    error_kind: str  # "powerscript" | "sql"
+    message: str
+    object: str | None
+    proc_name: str | None
+    line: int | None
+    snippet: str | None
+
+
 class RowBatch(TypedDict):
     objects: list[ObjectRow]
     procedures: list[ProcedureRow]
@@ -113,6 +123,7 @@ class RowBatch(TypedDict):
     dw_arguments: list[DwArgumentRow]
     inherits: list[InheritsRow]
     sql_statements: list[SqlStatementRow]
+    parse_errors: list[ParseErrorRow]
 
 
 def new_row_batch() -> RowBatch:
@@ -127,6 +138,7 @@ def new_row_batch() -> RowBatch:
         dw_arguments=[],
         inherits=[],
         sql_statements=[],
+        parse_errors=[],
     )
 
 
@@ -141,4 +153,5 @@ TABLES = [
     "dw_arguments",
     "inherits",
     "sql_statements",
+    "parse_errors",
 ]

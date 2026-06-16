@@ -507,3 +507,48 @@ def test_diagram_proc_tables_filtered(client_with_sql):
     r = client_with_sql.get("/api/diagram/proc-tables", params={"table": "synthetic_test_table"})
     assert r.status_code == 200
     assert "<svg" in r.text
+
+
+# ── /api/errors ───────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def client_with_errors(db_path, tmp_path_factory):
+    """Client backed by a DB copy with synthetic parse_errors rows."""
+    tmp = tmp_path_factory.mktemp("db_errors_route")
+    db_copy = str(tmp / "test_errors.duckdb")
+    shutil.copy(db_path, db_copy)
+
+    conn = duckdb.connect(db_copy)
+    conn.execute(
+        "INSERT INTO parse_errors VALUES (?,?,?,?,?,?,?)",
+        ["a.srw", "powerscript", "lex error at line 3", None, None, 3, "garbled source"],
+    )
+    conn.execute(
+        "INSERT INTO parse_errors VALUES (?,?,?,?,?,?,?)",
+        ["b.srw", "sql", "Invalid expression", "obj", "proc", 7, "SELECT * FROM ("],
+    )
+    conn.close()
+
+    from fastapi.testclient import TestClient
+
+    from pb_cli.explorer import create_app
+
+    app = create_app(db_copy)
+    return TestClient(app)
+
+
+def test_list_errors(client_with_errors):
+    r = client_with_errors.get("/api/errors")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] == 2
+    assert len(data["items"]) == 2
+
+
+def test_list_errors_filter_kind(client_with_errors):
+    r = client_with_errors.get("/api/errors", params={"kind": "sql"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] == 1
+    assert data["items"][0]["file"] == "b.srw"

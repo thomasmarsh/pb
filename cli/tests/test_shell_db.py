@@ -1,8 +1,8 @@
 """Tests for pb_cli.shell.db, shell.ingest, shell.state (DB-boundary operations)."""
 
 from pb_cli.core.ingestion import ingest_file
-from pb_cli.core.models import new_row_batch
-from pb_cli.shell.db import count_sql_parse_failures, create_schema, db_connection, parse_sql_file
+from pb_cli.core.models import ParseErrorRow, new_row_batch
+from pb_cli.shell.db import count_sql_parse_failures, create_schema, db_connection, insert_parse_errors, parse_sql_file
 from pb_cli.shell.ingest import ingest_batch
 from pb_cli.shell.state import create_state_table, load_file_state, save_file_state
 
@@ -106,6 +106,23 @@ def test_count_sql_parse_failures_counts_real_failures(tmp_path):
             ("f.srw", "obj", "proc", 1, "SELECT", "SELECT 1 FROM", None, [], [], False, False, False),
         )
         assert count_sql_parse_failures(conn) == 1
+
+
+def test_insert_parse_errors_roundtrip(tmp_path):
+    db = str(tmp_path / "test.duckdb")
+    with db_connection(db) as conn:
+        create_schema(conn)
+        insert_parse_errors(
+            conn,
+            [
+                ParseErrorRow("bad.srw", "powerscript", "lex error at line 3", None, None, 3, "garbled source"),
+                ParseErrorRow("f.srw", "sql", "Invalid expression", "obj", "proc", 7, "SELECT * FROM ("),
+            ],
+        )
+        rows = conn.execute("SELECT file, error_kind, message, object, proc_name, line, snippet FROM parse_errors ORDER BY file").fetchall()
+        assert len(rows) == 2
+        assert rows[0] == ("bad.srw", "powerscript", "lex error at line 3", None, None, 3, "garbled source")
+        assert rows[1] == ("f.srw", "sql", "Invalid expression", "obj", "proc", 7, "SELECT * FROM (")
 
 
 def test_file_state_roundtrip(tmp_path):

@@ -58,6 +58,10 @@ describe("parse", () => {
     expect(parse("/explore")).toEqual({ view: "explore" });
   });
 
+  it('"/errors" resolves to errors', () => {
+    expect(parse("/errors")).toEqual({ view: "errors" });
+  });
+
   it('"/unknown" falls back to dashboard', () => {
     expect(parse("/unknown")).toEqual({ view: "dashboard" });
   });
