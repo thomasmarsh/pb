@@ -1,14 +1,14 @@
 // Diagrams.tsx — Diagrams view with tabs and controls.
 
 import { Show, For, createSignal, onMount } from "solid-js";
-import type { DiagramsState } from "../features/diagrams/types.js";
+import type { DiagramsState } from "./types.js";
 
 type DiagramKind = DiagramsState["active"];
 import { Tabs } from "@kobalte/core/tabs";
-import { useSnapshot } from "../core/store.js";
-import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
+import { useSnapshot } from "../../core/store.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../app/state.js";
+import type { AppAction } from "../../app/actions.js";
 
 export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;

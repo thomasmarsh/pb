@@ -5,9 +5,11 @@ import type { Reducer } from "../../core/reducer.js";
 import type { SearchState } from "./types.js";
 import type { SearchAction } from "./actions.js";
 import type { SearchResponse } from "../../types/api.js";
+import type { NavigationAction } from "../navigation/types.js";
 
 export interface SearchEnv {
   search(q: string): Effect<SearchResponse>;
+  navigate(action: NavigationAction): Effect<never>;
 }
 
 export const initialSearchState: SearchState = {

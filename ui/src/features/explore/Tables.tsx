@@ -1,11 +1,11 @@
 // Tables.tsx — DB table browser (PBSELECT / DataWindow source).
 
 import { Show, For, createMemo } from "solid-js";
-import { useSnapshot } from "../core/store.js";
-import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
-import type { TableDetail } from "../types/api.js";
+import { useSnapshot } from "../../core/store.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../app/state.js";
+import type { AppAction } from "../../app/actions.js";
+import type { TableDetail } from "../../types/api.js";
 
 // ── Left panel: table list ────────────────────────────────────────────────────
 

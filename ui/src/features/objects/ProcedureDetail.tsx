@@ -2,11 +2,11 @@
 
 import { Show, createSignal } from "solid-js";
 import { Tabs } from "@kobalte/core/tabs";
-import { useSnapshot } from "../core/store.js";
-import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
-import { CodeBlock } from "./CodeBlock.js";
+import { useSnapshot } from "../../core/store.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../app/state.js";
+import type { AppAction } from "../../app/actions.js";
+import { CodeBlock } from "../../components/CodeBlock.js";
 
 function procBadge(t: string): string {
   return { function: "func", subroutine: "sub", event: "event", on: "on" }[t] ?? "func";
@@ -19,7 +19,7 @@ function Loading() {
 export function ProcedureDetail(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
   const snap = useSnapshot(store.state);
-  const proc = () => snap().nav.procedureDetail;
+  const proc = () => snap().objects.procedureDetail;
   const [activeTab, setActiveTab] = createSignal("original");
 
   return (
@@ -32,8 +32,8 @@ export function ProcedureDetail(props: { store: Store<AppState, AppAction> }) {
 
           return (
             <>
-              <button class="back-btn" onClick={() => store.dispatch({ tag: "nav", action: { type: "object-selected", name: p.object } })}>
-                {"\u2190"} Back to {p.object}
+              <button class="back-btn" onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: p.object } })}>
+                {"←"} Back to {p.object}
               </button>
 
               <h2 style={{ "margin-bottom": "4px", "font-size": "18px" }}>
@@ -64,7 +64,7 @@ export function ProcedureDetail(props: { store: Store<AppState, AppAction> }) {
                       <CodeBlock code={p.source_original!} baseLine={p.start_line ?? 1} />
                       <Show when={p.file}>
                         <div style={{ "font-size": "11px", color: "var(--text-muted)", "margin-top": "8px" }}>
-                          {p.file}:{p.start_line ?? ""}-{p.end_line ?? ""}
+                          {p.file}:{p.start_line ?? ""}–{p.end_line ?? ""}
                         </div>
                       </Show>
                     </Show>

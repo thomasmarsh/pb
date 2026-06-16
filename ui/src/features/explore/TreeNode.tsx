@@ -1,7 +1,7 @@
 // TreeNode.tsx — Generic expandable tree node.
 
 import { Show, children, type ParentProps, type JSX } from "solid-js";
-import { useSnapshot } from "../core/store.js";
+import { useSnapshot } from "../../core/store.js";
 import { useExploreStore } from "./ExploreContext.js";
 
 function chevron(expanded: boolean): string { return expanded ? "▾" : "▸"; }

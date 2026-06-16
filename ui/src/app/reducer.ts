@@ -1,56 +1,50 @@
 // app/reducer.ts — App-level reducer: combines all feature reducers.
 // Owns initialState() factory, the top-level reducer, and all app↔feature lenses.
 
-import { pullback, combine } from "../core/reducer.js";
+import { pullback, pullbackWithNav, combine } from "../core/reducer.js";
 import { Effect } from "../core/effect.js";
 import type { AppState } from "./state.js";
 import type { AppAction } from "./actions.js";
 
 import { navReducer, type NavEnv } from "../features/navigation/reducer.js";
+import { dashboardReducer, type DashboardEnv, initialDashboardState } from "../features/dashboard/reducer.js";
 import { exploreReducer, makeInitialExploreState, type ExploreEnv } from "../features/explore/reducer.js";
 import { objectsReducer, type ObjectsEnv, initialObjectsState } from "../features/objects/reducer.js";
+import { datawindowsReducer, type DatawindowsEnv, initialDatawindowsState } from "../features/datawindows/reducer.js";
 import { diagramsReducer, type DiagramsEnv, initialDiagramsState } from "../features/diagrams/reducer.js";
 import { queriesReducer, type QueriesEnv, initialQueriesState } from "../features/queries/reducer.js";
 import { searchReducer, type SearchEnv, initialSearchState } from "../features/search/reducer.js";
 
-import type { NavigationAction, NavState } from "../features/navigation/types.js";
+import type { NavigationAction } from "../features/navigation/types.js";
+import type { DashboardAction } from "../features/dashboard/actions.js";
 import type { ExploreAction } from "../features/explore/actions.js";
-import type { ExploreState } from "../features/explore/types.js";
 import type { ObjectsAction } from "../features/objects/actions.js";
-import type { ObjectsState } from "../features/objects/types.js";
+import type { DatawindowsAction } from "../features/datawindows/actions.js";
 import type { DiagramsAction } from "../features/diagrams/actions.js";
-import type { DiagramsState } from "../features/diagrams/types.js";
 import type { QueriesAction } from "../features/queries/actions.js";
-import type { QueriesState } from "../features/queries/types.js";
 import type { SearchAction } from "../features/search/actions.js";
-import type { SearchState } from "../features/search/types.js";
 
-export type AppEnv = NavEnv & ExploreEnv & ObjectsEnv & DiagramsEnv & QueriesEnv & SearchEnv;
+export type AppEnv = NavEnv & DashboardEnv & ExploreEnv & ObjectsEnv & DatawindowsEnv & DiagramsEnv & QueriesEnv & SearchEnv;
 
 // ── Lenses (app-level: connect features to AppState) ─────────────────────────
 
-const matchNav      = (a: AppAction): NavigationAction | null => a.tag === "nav"      ? a.action : null;
-const matchExplore  = (a: AppAction): ExploreAction   | null => a.tag === "explore"   ? a.action : null;
-const matchObjects  = (a: AppAction): ObjectsAction   | null => a.tag === "objects"   ? a.action : null;
-const matchDiagrams = (a: AppAction): DiagramsAction  | null => a.tag === "diagrams"  ? a.action : null;
-const matchQueries  = (a: AppAction): QueriesAction   | null => a.tag === "queries"   ? a.action : null;
-const matchSearch   = (a: AppAction): SearchAction    | null => a.tag === "search"    ? a.action : null;
+const matchNav         = (a: AppAction): NavigationAction  | null => a.tag === "nav"         ? a.action : null;
+const matchDashboard   = (a: AppAction): DashboardAction   | null => a.tag === "dashboard"    ? a.action : null;
+const matchExplore     = (a: AppAction): ExploreAction     | null => a.tag === "explore"      ? a.action : null;
+const matchObjects     = (a: AppAction): ObjectsAction     | null => a.tag === "objects"      ? a.action : null;
+const matchDatawindows = (a: AppAction): DatawindowsAction | null => a.tag === "datawindows"  ? a.action : null;
+const matchDiagrams    = (a: AppAction): DiagramsAction    | null => a.tag === "diagrams"     ? a.action : null;
+const matchQueries     = (a: AppAction): QueriesAction     | null => a.tag === "queries"      ? a.action : null;
+const matchSearch      = (a: AppAction): SearchAction      | null => a.tag === "search"       ? a.action : null;
 
 // ── Initial state ─────────────────────────────────────────────────────────────
 
 export function initialState(): AppState {
   return {
-    nav: {
-      view: "dashboard",
-      stats: null,
-      objectDetail: null,
-      sourceDetail: null,
-      procedureDetail: null,
-      allObjects: [],
-      datawindows: { items: [], total: 0, q: "", loading: false },
-      dwDetail: null,
-    },
+    nav: { view: "dashboard" },
+    dashboard: initialDashboardState,
     objects: initialObjectsState,
+    datawindows: initialDatawindowsState,
     diagrams: initialDiagramsState,
     queries: initialQueriesState,
     search: initialSearchState,
@@ -60,49 +54,17 @@ export function initialState(): AppState {
 
 // ── Combined reducer ──────────────────────────────────────────────────────────
 
+const toNav = (nav: NavigationAction): AppAction => ({ tag: "nav", action: nav });
+
 const _combined = combine<AppState, AppAction, AppEnv>(
-  pullback<NavState, NavigationAction, AppState, AppAction, NavEnv, AppEnv>(
-    navReducer,
-    (s) => s.nav,
-    matchNav,
-    (a): AppAction => ({ tag: "nav", action: a }),
-    (env) => env,
-  ),
-  pullback<ExploreState, ExploreAction, AppState, AppAction, ExploreEnv, AppEnv>(
-    exploreReducer,
-    (s) => s.explore,
-    matchExplore,
-    (a): AppAction => ({ tag: "explore", action: a }),
-    (env) => env,
-  ),
-  pullback<ObjectsState, ObjectsAction, AppState, AppAction, ObjectsEnv, AppEnv>(
-    objectsReducer,
-    (s) => s.objects,
-    matchObjects,
-    (a): AppAction => ({ tag: "objects", action: a }),
-    (env) => env,
-  ),
-  pullback<DiagramsState, DiagramsAction, AppState, AppAction, DiagramsEnv, AppEnv>(
-    diagramsReducer,
-    (s) => s.diagrams,
-    matchDiagrams,
-    (a): AppAction => ({ tag: "diagrams", action: a }),
-    (env) => env,
-  ),
-  pullback<QueriesState, QueriesAction, AppState, AppAction, QueriesEnv, AppEnv>(
-    queriesReducer,
-    (s) => s.queries,
-    matchQueries,
-    (a): AppAction => ({ tag: "queries", action: a }),
-    (env) => env,
-  ),
-  pullback<SearchState, SearchAction, AppState, AppAction, SearchEnv, AppEnv>(
-    searchReducer,
-    (s) => s.search,
-    matchSearch,
-    (a): AppAction => ({ tag: "search", action: a }),
-    (env) => env,
-  ),
+  pullback(navReducer,                (s) => s.nav,         matchNav,         (a): AppAction => ({ tag: "nav",         action: a }), (env) => env),
+  pullback(dashboardReducer,          (s) => s.dashboard,   matchDashboard,   (a): AppAction => ({ tag: "dashboard",   action: a }), (env) => env),
+  pullbackWithNav(exploreReducer,     (s) => s.explore,     matchExplore,     (a): AppAction => ({ tag: "explore",     action: a }), (env) => env, toNav),
+  pullbackWithNav(objectsReducer,     (s) => s.objects,     matchObjects,     (a): AppAction => ({ tag: "objects",     action: a }), (env) => env, toNav),
+  pullbackWithNav(datawindowsReducer, (s) => s.datawindows, matchDatawindows, (a): AppAction => ({ tag: "datawindows", action: a }), (env) => env, toNav),
+  pullbackWithNav(diagramsReducer,    (s) => s.diagrams,    matchDiagrams,    (a): AppAction => ({ tag: "diagrams",    action: a }), (env) => env, toNav),
+  pullbackWithNav(queriesReducer,     (s) => s.queries,     matchQueries,     (a): AppAction => ({ tag: "queries",     action: a }), (env) => env, toNav),
+  pullbackWithNav(searchReducer,      (s) => s.search,      matchSearch,      (a): AppAction => ({ tag: "search",      action: a }), (env) => env, toNav),
 );
 
 export function reducer(draft: AppState, action: AppAction, env: AppEnv): Effect<AppAction> | null {

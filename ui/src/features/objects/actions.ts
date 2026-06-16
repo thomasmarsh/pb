@@ -1,7 +1,6 @@
 // features/objects/actions.ts — Objects feature actions (self-contained).
 
-import type { ListObjectsResponse } from "../../types/api.js";
-import type { NavigationAction } from "../navigation/types.js";
+import type { ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ObjectRow } from "../../types/api.js";
 
 export type ObjectsAction =
   | { type: "search"; q: string }
@@ -9,5 +8,14 @@ export type ObjectsAction =
   | { type: "sort"; col: string }
   | { type: "page"; offset: number }
   | { type: "loaded"; data: ListObjectsResponse }
-  | { type: "navigate"; action: NavigationAction }
+  | { type: "select"; name: string }
+  | { type: "detail-loaded"; data: ObjectDetailResponse }
+  | { type: "detail-error"; error: string }
+  | { type: "source-loaded"; data: ObjectSourceResponse }
+  | { type: "source-error"; error: string }
+  | { type: "all-objects-loaded"; data: ObjectRow[] }
+  | { type: "proc-select"; objectName: string; procName: string }
+  | { type: "proc-loaded"; data: ProcedureDetailResponse }
+  | { type: "proc-error"; error: string }
+  | { type: "proc-tab"; tab: string }
   ;

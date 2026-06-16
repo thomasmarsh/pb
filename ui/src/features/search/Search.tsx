@@ -1,10 +1,10 @@
 // Search.tsx — Global search view.
 
 import { Show, For, createSignal, onMount } from "solid-js";
-import { useSnapshot } from "../core/store.js";
-import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
+import { useSnapshot } from "../../core/store.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../app/state.js";
+import type { AppAction } from "../../app/actions.js";
 
 function shortFile(f: string | null | undefined): string {
   if (!f) return "";
@@ -42,7 +42,7 @@ function SearchResults(props: { store: Store<AppState, AppAction>; data: { objec
                   const bc = o.kind === "powerscript" ? "ps" : "dw";
                   return (
                     <tr class="clickable"
-                        onClick={() => store.dispatch({ tag: "nav", action: { type: "object-selected", name: o.name } })}>
+                        onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: o.name } })}>
                       <td class="name-cell">{o.name}</td>
                       <td><span class={`badge badge-${bc}`}>{o.kind}</span></td>
                       <td style={{ "font-size": "11px", color: "var(--text-muted)" }}>{shortFile(o.file)}</td>
@@ -64,7 +64,7 @@ function SearchResults(props: { store: Store<AppState, AppAction>; data: { objec
               <For each={data.procedures}>
                 {(p) => (
                   <tr class="clickable"
-                      onClick={() => store.dispatch({ tag: "nav", action: { type: "procedure-selected", objectName: p.object, procName: p.name } })}>
+                      onClick={() => store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: p.object, procName: p.name } })}>
                     <td>{p.object}</td>
                     <td class="name-cell">{p.name}</td>
                     <td><span class={`badge badge-${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
@@ -86,7 +86,7 @@ function SearchResults(props: { store: Store<AppState, AppAction>; data: { objec
               <For each={data.datawindows}>
                 {(d) => (
                   <tr class="clickable"
-                      onClick={() => store.dispatch({ tag: "nav", action: { type: "dw-selected", name: d.dw_name } })}>
+                      onClick={() => store.dispatch({ tag: "datawindows", action: { type: "select", name: d.dw_name } })}>
                     <td class="name-cell">{d.dw_name}</td>
                     <td>{d.control_name ?? "–"}</td>
                     <td>{d.control_type ?? ""}</td>

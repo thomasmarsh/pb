@@ -1,17 +1,17 @@
 // Explore.tsx — Interactive AST tree explorer (layout + wiring).
 
 import { Show, For, onMount, createMemo, createEffect, createSignal } from "solid-js";
-import { useSnapshot } from "../core/store.js";
-import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
+import { useSnapshot } from "../../core/store.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../app/state.js";
+import type { AppAction } from "../../app/actions.js";
 import { ExploreStoreContext, useExploreStore } from "./ExploreContext.js";
-import { highlightPowerScript } from "../lib/highlight.js";
-import type { ExploreLibrary, ExploreObject, ExploreProcedure, DwExploreDetail, ExploreProcDetail, SqlStatementRow } from "../types/api.js";
+import { highlightPowerScript } from "../../lib/highlight.js";
+import type { ExploreLibrary, ExploreObject, ExploreProcedure, DwExploreDetail, ExploreProcDetail, SqlStatementRow } from "../../types/api.js";
 import { TreeNode } from "./TreeNode.js";
-import { AstNode } from "./ast-node.js";
-import { DetailShell } from "./DetailShell.js";
-import { SqlBlock } from "./CodeBlock.js";
+import { AstNode } from "./AstNode.js";
+import { DetailShell } from "../../components/DetailShell.js";
+import { SqlBlock } from "../../components/CodeBlock.js";
 import { DwDetailTree } from "./DwDetailTree.js";
 import { TableList, TableDetailPanel } from "./Tables.js";
 

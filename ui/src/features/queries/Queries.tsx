@@ -1,11 +1,11 @@
 // Queries.tsx — SQL queries view.
 
 import { Show, For, onMount, createSignal } from "solid-js";
-import { useSnapshot } from "../core/store.js";
-import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
-import { SqlBlock } from "./CodeBlock.js";
+import { useSnapshot } from "../../core/store.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../app/state.js";
+import type { AppAction } from "../../app/actions.js";
+import { SqlBlock } from "../../components/CodeBlock.js";
 
 export function Queries(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;

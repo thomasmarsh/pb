@@ -1,7 +1,7 @@
 // ast-renderers.ts — Data-driven registry for AST node rendering.
 // No JSX — pure functions. AstNode component consumes this.
 
-import type { ChooseStmt } from "../types/ast.generated.js";
+import type { ChooseStmt } from "../../types/ast.generated.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

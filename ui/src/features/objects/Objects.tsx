@@ -1,10 +1,10 @@
 // Objects.tsx — Objects list and detail views.
 
 import { Show, For, onMount } from "solid-js";
-import { useSnapshot } from "../core/store.js";
-import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
+import { useSnapshot } from "../../core/store.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../app/state.js";
+import type { AppAction } from "../../app/actions.js";
 import { SourceViewer } from "./SourceViewer.js";
 
 function shortFile(f: string | null | undefined): string {
@@ -63,11 +63,11 @@ export function Objects(props: { store: Store<AppState, AppAction> }) {
               <tr>
                 <th class={os().sort === "name" ? "sorted" : ""}
                     onClick={() => store.dispatch({ tag: "objects", action: { type: "sort", col: "name" } })}>
-                  Name{os().sort === "name" ? (os().order === "asc" ? " \u25B2" : " \u25BC") : ""}
+                  Name{os().sort === "name" ? (os().order === "asc" ? " ▲" : " ▼") : ""}
                 </th>
                 <th class={os().sort === "kind" ? "sorted" : ""}
                     onClick={() => store.dispatch({ tag: "objects", action: { type: "sort", col: "kind" } })}>
-                  Kind{os().sort === "kind" ? (os().order === "asc" ? " \u25B2" : " \u25BC") : ""}
+                  Kind{os().sort === "kind" ? (os().order === "asc" ? " ▲" : " ▼") : ""}
                 </th>
                 <th>File</th><th>Ancestor</th>
               </tr>
@@ -78,7 +78,7 @@ export function Objects(props: { store: Store<AppState, AppAction> }) {
                   const bc = obj.kind === "powerscript" ? "ps" : obj.kind === "datawindow" ? "dw" : "proj";
                   return (
                     <tr class="clickable"
-                        onClick={() => store.dispatch({ tag: "nav", action: { type: "object-selected", name: obj.name } })}>
+                        onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: obj.name } })}>
                       <td class="name-cell">{obj.name}</td>
                       <td><span class={`badge badge-${bc}`}>{obj.kind}</span></td>
                       <td style={{ "font-size": "11px", color: "var(--text-muted)", "max-width": "300px", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
@@ -97,16 +97,16 @@ export function Objects(props: { store: Store<AppState, AppAction> }) {
               <Show when={os().offset > 0}>
                 <button class="filter-pill"
                     onClick={() => store.dispatch({ tag: "objects", action: { type: "page", offset: Math.max(0, os().offset - 100) } })}>
-                  \u2190 Previous
+                  ← Previous
                 </button>
               </Show>
               <span style={{ color: "var(--text-muted)", "font-size": "12px", padding: "4px 8px" }}>
-                {os().offset + 1}\u2013{Math.min(os().offset + 100, os().total)} of {os().total}
+                {os().offset + 1}–{Math.min(os().offset + 100, os().total)} of {os().total}
               </span>
               <Show when={os().offset + 100 < os().total}>
                 <button class="filter-pill"
                     onClick={() => store.dispatch({ tag: "objects", action: { type: "page", offset: os().offset + 100 } })}>
-                  Next \u2192
+                  Next →
                 </button>
               </Show>
             </div>
@@ -120,17 +120,13 @@ export function Objects(props: { store: Store<AppState, AppAction> }) {
 export function ObjectDetail(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
   const snap = useSnapshot(store.state);
-  const obj = () => snap().nav.objectDetail;
-  const src = () => snap().nav.sourceDetail;
-
-  onMount(() => {
-    store.dispatch({ tag: "nav", action: { type: "navigate", view: "objectDetail" } });
-  });
+  const obj = () => snap().objects.detail;
+  const src = () => snap().objects.sourceDetail;
 
   return (
     <Show when={obj()} fallback={<Loading />}>
       <Show when={!("error" in obj()!)} fallback={<div class="card"><p style={{ color: "var(--red)" }}>Error: {"error" in obj()! ? (obj() as { error: string }).error : ""}</p></div>}>
-        <button class="back-btn" onClick={() => store.dispatch({ tag: "nav", action: { type: "navigate", view: "objects" } })}>{"\u2190"} Back to Objects</button>
+        <button class="back-btn" onClick={() => store.dispatch({ tag: "nav", action: { type: "navigate", view: "objects" } })}>{"←"} Back to Objects</button>
 
         {(() => {
           const o = obj()!;
@@ -148,14 +144,14 @@ export function ObjectDetail(props: { store: Store<AppState, AppAction> }) {
                     ["In Degree", o.metrics!.in_degree],
                     ["Out Degree", o.metrics!.out_degree],
                     ["Max CC", o.metrics!.max_cyclomatic],
-                    ["Avg CC", o.metrics!.avg_cyclomatic ? parseFloat(String(o.metrics!.avg_cyclomatic)).toFixed(1) : "\u2013"],
-                    ["PageRank", o.metrics!.pagerank ? parseFloat(String(o.metrics!.pagerank)).toFixed(4) : "\u2013"],
-                    ["DIT", o.metrics!.dit ?? "\u2013"],
+                    ["Avg CC", o.metrics!.avg_cyclomatic ? parseFloat(String(o.metrics!.avg_cyclomatic)).toFixed(1) : "–"],
+                    ["PageRank", o.metrics!.pagerank ? parseFloat(String(o.metrics!.pagerank)).toFixed(4) : "–"],
+                    ["DIT", o.metrics!.dit ?? "–"],
                   ] as [string, string | number | null | undefined][]}>
                     {([l, v]) => (
                       <div class="metric-card">
                         <div class="label">{l}</div>
-                        <div class="value">{String(v ?? "\u2013")}</div>
+                        <div class="value">{String(v ?? "–")}</div>
                       </div>
                     )}
                   </For>
@@ -167,15 +163,15 @@ export function ObjectDetail(props: { store: Store<AppState, AppAction> }) {
                   <div class="card-header"><h3>Inheritance</h3></div>
                   <div style={{ display: "flex", "flex-wrap": "wrap", gap: "6px" }}>
                     <span class="badge badge-ps" style={{ cursor: "pointer" }}
-                          onClick={() => store.dispatch({ tag: "nav", action: { type: "object-selected", name: o.name } })}>
+                          onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: o.name } })}>
                       {o.name}
                     </span>
                     <For each={o.ancestors}>
                       {(a) => (
                         <>
-                          <span style={{ color: "var(--text-muted)" }}>{"\u2192"}</span>
+                          <span style={{ color: "var(--text-muted)" }}>{"→"}</span>
                           <span class="badge badge-ps" style={{ cursor: "pointer" }}
-                                onClick={() => store.dispatch({ tag: "nav", action: { type: "object-selected", name: a } })}>
+                                onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: a } })}>
                             {a}
                           </span>
                         </>
@@ -200,7 +196,7 @@ export function ObjectDetail(props: { store: Store<AppState, AppAction> }) {
                               <For each={items!}>
                                 {(c) => (
                                   <span class="badge badge-func" style={{ cursor: "pointer" }}
-                                        onClick={() => store.dispatch({ tag: "nav", action: { type: "object-selected", name: c } })}>
+                                        onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: c } })}>
                                     {c}
                                   </span>
                                 )}
@@ -225,14 +221,14 @@ export function ObjectDetail(props: { store: Store<AppState, AppAction> }) {
                       <For each={o.procedures!}>
                         {(p) => (
                           <tr class="clickable"
-                              onClick={() => store.dispatch({ tag: "nav", action: { type: "procedure-selected", objectName: o.name, procName: p.name } })}>
+                              onClick={() => store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: o.name, procName: p.name } })}>
                             <td class="name-cell">{p.name}</td>
                             <td><span class={`badge badge-${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
                             <td style={{ "font-size": "12px" }}>{p.modifiers ?? ""}</td>
                             <td style={{ "font-size": "12px", "max-width": "200px", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{p.params ?? ""}</td>
-                            <td>{p.cyclomatic != null ? <span class="badge badge-cc">{String(p.cyclomatic)}</span> : "\u2013"}</td>
+                            <td>{p.cyclomatic != null ? <span class="badge badge-cc">{String(p.cyclomatic)}</span> : "–"}</td>
                             <td style={{ "font-size": "12px", color: "var(--text-muted)" }}>
-                              {p.start_line && p.end_line ? `${p.start_line}\u2013${p.end_line}` : "\u2013"}
+                              {p.start_line && p.end_line ? `${p.start_line}–${p.end_line}` : "–"}
                             </td>
                           </tr>
                         )}
@@ -262,7 +258,7 @@ export function ObjectDetail(props: { store: Store<AppState, AppAction> }) {
                     <SourceViewer
                       store={store}
                       lines={(src() as { lines: string[] }).lines}
-                      procedures={(src() as { procedures: import("../types/api.js").ProcedureInfo[] }).procedures}
+                      procedures={(src() as { procedures: import("../../types/api.js").ProcedureInfo[] }).procedures}
                       knownObjects={(src() as { knownObjects: { name: string; kind: string }[] }).knownObjects}
                       knownProcs={(src() as { knownProcs: { name: string; object: string; proc_type: string }[] }).knownProcs}
                       objectName={o.name}

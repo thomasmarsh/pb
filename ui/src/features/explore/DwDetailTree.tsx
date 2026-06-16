@@ -1,10 +1,10 @@
 // DwDetailTree.tsx — DataWindow controls/SQL/arguments detail tree.
 
 import { Show, For, createMemo, type JSX } from "solid-js";
-import { useSnapshot } from "../core/store.js";
+import { useSnapshot } from "../../core/store.js";
 import { useExploreStore } from "./ExploreContext.js";
-import type { DwExploreDetail } from "../types/api.js";
-import { SqlBlock } from "./CodeBlock.js";
+import type { DwExploreDetail } from "../../types/api.js";
+import { SqlBlock } from "../../components/CodeBlock.js";
 
 function chevron(expanded: boolean): string { return expanded ? "▾" : "▸"; }
 

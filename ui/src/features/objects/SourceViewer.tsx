@@ -1,11 +1,11 @@
 // SourceViewer.tsx — Source code viewer with cross-linked identifiers.
 
 import { For, Show, createSignal, createMemo } from "solid-js";
-import { highlightPowerScript, PB_KEYWORDS } from "../lib/highlight.js";
-import type { ProcedureInfo } from "../types/api.js";
-import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
+import { highlightPowerScript, PB_KEYWORDS } from "../../lib/highlight.js";
+import type { ProcedureInfo } from "../../types/api.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../app/state.js";
+import type { AppAction } from "../../app/actions.js";
 
 const PROC_COLORS: Record<string, string> = {
   function: "proc-function",
@@ -195,13 +195,13 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
     if (!linkType || !linkName) return;
 
     if (linkType === "object") {
-      store.dispatch({ tag: "nav", action: { type: "object-selected", name: linkName } });
+      store.dispatch({ tag: "objects", action: { type: "select", name: linkName } });
     } else if (linkType === "procedure") {
       const proc = procMap().get(linkName.toLowerCase());
       if (proc) {
-        store.dispatch({ tag: "nav", action: { type: "procedure-selected", objectName: proc.object, procName: proc.name } });
+        store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: proc.object, procName: proc.name } });
       } else {
-        store.dispatch({ tag: "nav", action: { type: "object-selected", name: linkName } });
+        store.dispatch({ tag: "objects", action: { type: "select", name: linkName } });
       }
     }
   }
@@ -264,7 +264,7 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
                 }}
                 onMouseLeave={() => setTooltip(null)}
                 onClick={() => {
-                  store.dispatch({ tag: "nav", action: { type: "procedure-selected", objectName: props.objectName, procName: p.name } });
+                  store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: props.objectName, procName: p.name } });
                 }}
               />
             );

@@ -1,7 +1,6 @@
 // features/explore/actions.ts — Explore feature actions (self-contained).
 
 import type { ExploreTreeResponse, DwExploreDetail, ExploreProcDetail, TableSummary, TableDetail } from "../../types/api.js";
-import type { NavigationAction } from "../navigation/types.js";
 
 export type ExploreAction =
   | { type: "load" }
@@ -25,5 +24,4 @@ export type ExploreAction =
   | { type: "tables-select"; tableName: string }
   | { type: "tables-detail-loaded"; tableName: string; detail: TableDetail }
   | { type: "tables-detail-error"; tableName: string; error: string }
-  | { type: "navigate"; action: NavigationAction }
   ;

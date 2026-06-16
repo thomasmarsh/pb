@@ -5,10 +5,12 @@ import type { Reducer } from "../../core/reducer.js";
 import type { QueriesState } from "./types.js";
 import type { QueriesAction } from "./actions.js";
 import type { QueryDef, QueryResult } from "../../types/api.js";
+import type { NavigationAction } from "../navigation/types.js";
 
 export interface QueriesEnv {
   getQueries(): Effect<{ queries: QueryDef[] }>;
   runQuery(name: string, params: Record<string, string>): Effect<QueryResult>;
+  navigate(action: NavigationAction): Effect<never>;
 }
 
 export const initialQueriesState: QueriesState = {

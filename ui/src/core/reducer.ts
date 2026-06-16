@@ -29,6 +29,42 @@ export function pullback<S, A, PS, PA, FEnv, PEnv>(
   };
 }
 
+/**
+ * Like pullback, but injects `env.navigate` into the child env so reducers
+ * can emit navigation side-effects without polluting their own action types.
+ * Calls to `env.navigate` are captured synchronously during reduce and emitted
+ * as parent-level effects via `widenNav`, interleaved with any feature effects.
+ */
+export function pullbackWithNav<NavAction, S, A, E extends { navigate(a: NavAction): Effect<never> }, PS, PA, PEnv>(
+  child: Reducer<S, A, E>,
+  get: (parent: PS) => S,
+  match: (action: PA) => A | null,
+  widen: (a: A) => PA,
+  getEnv: (env: PEnv) => Omit<E, "navigate">,
+  widenNav: (nav: NavAction) => PA,
+): Reducer<PS, PA, PEnv> {
+  return (draft, action, env) => {
+    const local = match(action);
+    if (!local) return null;
+    const pending: PA[] = [];
+    const childEnv = {
+      ...(getEnv(env) as E),
+      navigate: (nav: NavAction): Effect<never> => {
+        pending.push(widenNav(nav));
+        return Effect.none();
+      },
+    };
+    const eff = child(get(draft), local, childEnv);
+    const navEff = pending.length > 0
+      ? Effect.merge(...pending.map(a => Effect.send<PA>(a)))
+      : null;
+    if (!eff && !navEff) return null;
+    if (!eff) return navEff;
+    if (!navEff) return eff.map(widen);
+    return Effect.merge(eff.map(widen), navEff);
+  };
+}
+
 export function combine<S, A, Env>(
   ...reducers: Reducer<S, A, Env>[]
 ): Reducer<S, A, Env> {

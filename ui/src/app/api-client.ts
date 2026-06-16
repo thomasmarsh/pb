@@ -18,6 +18,7 @@ import type {
 } from "../types/api.js";
 import { Effect } from "../core/effect.js";
 import type { AppEnv as Env } from "./reducer.js";
+import type { NavigationAction } from "../features/navigation/types.js";
 
 export interface ApiClient {
   getStats(): Promise<StatsResponse>;
@@ -72,6 +73,12 @@ export function createEnv(api: ApiClient): Env {
     getExploreDatawindow: (n) => lift(() => api.getExploreDatawindow(n)),
     getTables: () => lift(() => api.getTables()),
     getTableDetail: (n) => lift(() => api.getTableDetail(n)),
+    // Placeholder: pullbackWithNav always overrides this with the real capture implementation.
+    navigate: (_action: NavigationAction): Effect<never> => Effect.none(),
+    pushUrl: (path: string): void => {
+      const current = window.location.pathname + window.location.search;
+      if (path !== current) history.pushState({}, "", path);
+    },
   };
 }
 

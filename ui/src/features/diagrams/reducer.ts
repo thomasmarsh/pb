@@ -4,9 +4,11 @@ import { Effect } from "../../core/effect.js";
 import type { Reducer } from "../../core/reducer.js";
 import type { DiagramsState } from "./types.js";
 import type { DiagramsAction } from "./actions.js";
+import type { NavigationAction } from "../navigation/types.js";
 
 export interface DiagramsEnv {
   getDiagram(kind: string, params: Record<string, string | number>): Effect<string>;
+  navigate(action: NavigationAction): Effect<never>;
 }
 
 export const initialDiagramsState: DiagramsState = {

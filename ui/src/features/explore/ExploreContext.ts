@@ -2,9 +2,9 @@
 // Provided by Explore, consumed by TreeNode, AstNode, DwDetailTree (exclusively used there).
 
 import { createContext, useContext } from "solid-js";
-import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../app/state.js";
+import type { AppAction } from "../../app/actions.js";
 
 export const ExploreStoreContext = createContext<Store<AppState, AppAction>>();
 

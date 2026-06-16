@@ -9,36 +9,26 @@ import type { AppState } from "./app/state.js";
 import type { AppAction } from "./app/actions.js";
 import { createApiClient, createEnv } from "./app/api-client.js";
 import { Layout } from "./components/Layout.js";
-import { Dashboard } from "./components/Dashboard.js";
-import { Objects, ObjectDetail } from "./components/Objects.js";
-import { ProcedureDetail } from "./components/ProcedureDetail.js";
-import { DataWindows, DWDetail } from "./components/DataWindows.js";
-import { Diagrams } from "./components/Diagrams.js";
-import { Queries } from "./components/Queries.js";
-import { Search } from "./components/Search.js";
-import { Explore } from "./components/Explore.js";
-import { initViewFromUrl, setupPopstateHandler, syncUrlFromState, NAV_SYNC_ACTIONS } from "./features/navigation/url-sync.js";
-import type { NavigationAction } from "./features/navigation/types.js";
+import { Dashboard } from "./features/dashboard/Dashboard.js";
+import { Objects, ObjectDetail } from "./features/objects/Objects.js";
+import { ProcedureDetail } from "./features/objects/ProcedureDetail.js";
+import { DataWindows, DWDetail } from "./features/datawindows/DataWindows.js";
+import { Diagrams } from "./features/diagrams/Diagrams.js";
+import { Queries } from "./features/queries/Queries.js";
+import { Search } from "./features/search/Search.js";
+import { Explore } from "./features/explore/Explore.js";
+import { initViewFromUrl, setupPopstateHandler } from "./features/navigation/url-sync.js";
 import { HealthCheck } from "./components/HealthCheck.js";
 
 const env = createEnv(createApiClient());
-const store = createStore(initialState(), reducer, env, (action, state) => {
-  if (action.tag === "nav" && NAV_SYNC_ACTIONS.has(action.action.type)) {
-    syncUrlFromState(state.nav.view, {
-      objectDetail: state.nav.objectDetail,
-      procedureDetail: state.nav.procedureDetail,
-      dwDetail: state.nav.dwDetail,
-    }, action.action);
-  }
-});
+const store = createStore(initialState(), reducer, env);
 
 // Bootstrap: read URL and dispatch initial actions
-const navDispatch = (a: NavigationAction) => store.dispatch({ tag: "nav", action: a });
-initViewFromUrl(navDispatch);
-setupPopstateHandler(navDispatch);
+initViewFromUrl((a: AppAction) => store.dispatch(a));
+setupPopstateHandler((a: AppAction) => store.dispatch(a));
 
 // Load stats for dashboard
-store.dispatch({ tag: "nav", action: { type: "stats-load" } });
+store.dispatch({ tag: "dashboard", action: { type: "load" } });
 
 function ViewRouter(props: { store: Store<AppState, AppAction> }): JSX.Element {
   const snap = useSnapshot(props.store.state);

@@ -1,9 +1,9 @@
 // ast-node.tsx — Recursive AST tree renderer.
 
 import { Show, For, createMemo, type JSX } from "solid-js";
-import { useSnapshot } from "../core/store.js";
+import { useSnapshot } from "../../core/store.js";
 import { useExploreStore } from "./ExploreContext.js";
-import { highlightPowerScript } from "../lib/highlight.js";
+import { highlightPowerScript } from "../../lib/highlight.js";
 import { resolveRenderer, type AstChild } from "./ast-renderers.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

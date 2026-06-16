@@ -1,11 +1,11 @@
 // Dashboard.tsx — Dashboard view.
 
 import { Show, For, createMemo, onMount } from "solid-js";
-import { useSnapshot } from "../core/store.js";
-import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
-import type { ProcedureRow } from "../types/api.js";
+import { useSnapshot } from "../../core/store.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../app/state.js";
+import type { AppAction } from "../../app/actions.js";
+import type { ProcedureRow } from "../../types/api.js";
 
 function procBadge(t: string): string {
   return { function: "func", subroutine: "sub", event: "event", on: "on" }[t] ?? "func";
@@ -23,7 +23,7 @@ function ProcedureTable(props: { title: string; procs: ProcedureRow[]; store: St
           <For each={props.procs}>
             {(p) => (
               <tr class="clickable"
-                  onClick={() => props.store.dispatch({ tag: "nav", action: { type: "procedure-selected", objectName: p.object, procName: p.name } })}>
+                  onClick={() => props.store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: p.object, procName: p.name } })}>
                 <td class="name-cell">{p.object}</td>
                 <td>{p.name}</td>
                 <td><span class={`badge badge-${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
@@ -49,7 +49,7 @@ function ObjectTable(props: { title: string; objs: { object: string; pagerank: n
           <For each={props.objs}>
             {(p) => (
               <tr class="clickable"
-                  onClick={() => props.store.dispatch({ tag: "nav", action: { type: "object-selected", name: p.object } })}>
+                  onClick={() => props.store.dispatch({ tag: "objects", action: { type: "select", name: p.object } })}>
                 <td class="name-cell">{p.object}</td>
                 <td>{String(p.pagerank)}</td>
                 <td>{String(p.in_degree)}</td>
@@ -77,10 +77,10 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
 
   onMount(() => {
     store.dispatch({ tag: "nav", action: { type: "navigate", view: "dashboard" } });
-    if (!snap().nav.stats) store.dispatch({ tag: "nav", action: { type: "stats-load" } });
+    if (!snap().dashboard.stats) store.dispatch({ tag: "dashboard", action: { type: "load" } });
   });
 
-  const s = () => snap().nav.stats;
+  const s = () => snap().dashboard.stats;
 
   const metrics = createMemo(() => {
     const stats = s();
