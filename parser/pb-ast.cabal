@@ -37,7 +37,6 @@ library
     PB.Lexing.DataWindow
     PB.Lexing.Escape
     PB.Lexing.Lexer
-    PB.Lexing.Mask
     PB.Lexing.Splitter
     PB.Lexing.Token
     PB.Pipeline.Preprocess
@@ -87,7 +86,6 @@ test-suite pb-ast-test
     , CorpusTest
     , ExprTest
     , FileTest
-    , MaskTest
     , PipelineTest
     , RunnerTest
     , SerialiseTest

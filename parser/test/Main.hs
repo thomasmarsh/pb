@@ -9,7 +9,6 @@ import qualified CorpusInvariantTest
 import qualified CorpusTest
 import qualified DataWindowTest
 import qualified FileTest
-import qualified MaskTest
 import qualified PipelineTest
 import qualified RunnerTest
 import qualified SerialiseTest
@@ -35,7 +34,6 @@ tests = testGroup "pb-ast"
   , CorpusTest.tests
   , DataWindowTest.tests
   , FileTest.tests
-  , MaskTest.tests
   , PipelineTest.tests
   , RunnerTest.tests
   , SerialiseTest.tests

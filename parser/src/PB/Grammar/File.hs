@@ -180,44 +180,44 @@ isEvDecl s =
     (t:_) -> T.toLower (tkText t) == "event"
     _     -> False
 
+parseParamsAndThrows :: [Token] -> (Text, Maybe Text)
+parseParamsAndThrows more =
+  let (paramToks, afterParams) = break (\t -> tkKind t == TkRParen) more
+      params = T.intercalate " " (map tkText paramToks)
+      throws = case afterParams of
+        (_rparen : throwsKw : exName : _)
+          | T.toLower (tkText throwsKw) == "throws" -> Just (tkText exName)
+        _ -> Nothing
+  in (params, throws)
+
 extractFnSig :: Statement -> Maybe FnSig
 extractFnSig s =
   let (modToks, rest) = span isFnMod (stmtTokens s)
       mods = map tkText modToks
-      parseSig retTy name more =
-        let (paramToks, afterParams) = break (\t -> tkKind t == TkRParen) more
-            params = T.intercalate " " (map tkText paramToks)
-            throws = case afterParams of
-              (_rparen : throwsKw : exName : _)
-                | T.toLower (tkText throwsKw) == "throws" -> Just (tkText exName)
-              _ -> Nothing
+      finish retTy name more =
+        let (params, throws) = parseParamsAndThrows more
         in Just (FnSig mods (tkText retTy) (tkText name) params throws)
   in case rest of
     (_kw : retTy : name : lparen : more)
-      | tkKind lparen == TkLParen -> parseSig retTy name more
+      | tkKind lparen == TkLParen -> finish retTy name more
     (_kw : retTy : name : dot : lparen : more)
       | tkKind dot   == TkDot
-      , tkKind lparen == TkLParen -> parseSig retTy name more
+      , tkKind lparen == TkLParen -> finish retTy name more
     _ -> Nothing
 
 extractSubSig :: Statement -> Maybe SubSig
 extractSubSig s =
   let (modToks, rest) = span isFnMod (stmtTokens s)
       mods = map tkText modToks
-      parseSig name more =
-        let (paramToks, afterParams) = break (\t -> tkKind t == TkRParen) more
-            params = T.intercalate " " (map tkText paramToks)
-            throws = case afterParams of
-              (_rparen : throwsKw : exName : _)
-                | T.toLower (tkText throwsKw) == "throws" -> Just (tkText exName)
-              _ -> Nothing
+      finish name more =
+        let (params, throws) = parseParamsAndThrows more
         in Just (SubSig mods (tkText name) params throws)
   in case rest of
     (_kw : name : lparen : more)
-      | tkKind lparen == TkLParen -> parseSig name more
+      | tkKind lparen == TkLParen -> finish name more
     (_kw : name : dot : lparen : more)
       | tkKind dot   == TkDot
-      , tkKind lparen == TkLParen -> parseSig name more
+      , tkKind lparen == TkLParen -> finish name more
     _ -> Nothing
 
 extractEvSig :: Statement -> Maybe EventSig
@@ -312,54 +312,36 @@ pTypeBlock = do
   (body, _)   <- pBodyUntil "type"
   return (TypeBlock decl body)
 
-pOnBlockSpanned_ :: FileParser (Int, Int, OnBlock)
-pOnBlockSpanned_ = do
+pBlockSpanned :: (Statement -> Bool) -> (Statement -> Maybe sig) -> (sig -> [Located BodyStmt] -> blk) -> Text -> FileParser (Int, Int, blk)
+pBlockSpanned isDecl extractSig mkBlock endKw = do
   start <- currentLine
-  s     <- satisfyStmt isOnDecl
-  case extractOnParts s of
-    Nothing              -> fail "malformed on-block opener"
-    Just (qual, own, ev) -> do
-      (body, end) <- pBodyUntil "on"
-      return (start, end, OnBlock qual own ev body)
+  s     <- satisfyStmt isDecl
+  case extractSig s of
+    Nothing  -> fail "malformed block opener"
+    Just sig -> do
+      (body, end) <- pBodyUntil endKw
+      return (start, end, mkBlock sig body)
+
+pOnBlockSpanned_ :: FileParser (Int, Int, OnBlock)
+pOnBlockSpanned_ = pBlockSpanned isOnDecl extractOnParts (\(q, o, e) -> OnBlock q o e) "on"
 
 pOnBlock :: FileParser OnBlock
 pOnBlock = (\(_, _, b) -> b) <$> pOnBlockSpanned_
 
 pEventBlockSpanned_ :: FileParser (Int, Int, EventBlock)
-pEventBlockSpanned_ = do
-  start <- currentLine
-  s     <- satisfyStmt isEvDecl
-  case extractEvSig s of
-    Nothing  -> fail "malformed event opener"
-    Just sig -> do
-      (body, end) <- pBodyUntil "event"
-      return (start, end, EventBlock sig body)
+pEventBlockSpanned_ = pBlockSpanned isEvDecl extractEvSig EventBlock "event"
 
 pEventBlock :: FileParser EventBlock
 pEventBlock = (\(_, _, b) -> b) <$> pEventBlockSpanned_
 
 pFunctionBlockSpanned_ :: FileParser (Int, Int, FunctionBlock)
-pFunctionBlockSpanned_ = do
-  start <- currentLine
-  s     <- satisfyStmt isFnDecl
-  case extractFnSig s of
-    Nothing  -> fail "malformed function opener"
-    Just sig -> do
-      (body, end) <- pBodyUntil "function"
-      return (start, end, FunctionBlock sig body)
+pFunctionBlockSpanned_ = pBlockSpanned isFnDecl extractFnSig FunctionBlock "function"
 
 pFunctionBlock :: FileParser FunctionBlock
 pFunctionBlock = (\(_, _, b) -> b) <$> pFunctionBlockSpanned_
 
 pSubroutineBlockSpanned_ :: FileParser (Int, Int, SubroutineBlock)
-pSubroutineBlockSpanned_ = do
-  start <- currentLine
-  s     <- satisfyStmt isSubDecl
-  case extractSubSig s of
-    Nothing  -> fail "malformed subroutine opener"
-    Just sig -> do
-      (body, end) <- pBodyUntil "subroutine"
-      return (start, end, SubroutineBlock sig body)
+pSubroutineBlockSpanned_ = pBlockSpanned isSubDecl extractSubSig SubroutineBlock "subroutine"
 
 pSubroutineBlock :: FileParser SubroutineBlock
 pSubroutineBlock = (\(_, _, b) -> b) <$> pSubroutineBlockSpanned_
