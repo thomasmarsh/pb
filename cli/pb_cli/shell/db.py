@@ -176,13 +176,17 @@ def count_sql_parse_failures(conn: Conn) -> int:
     """Count SQL statements that looked like SQL but sqlglot couldn't parse.
 
     Excludes statements that are intentionally never parsed (cursor ops,
-    CONNECT/DISCONNECT, EXECUTE IMMEDIATE/PROCEDURE — see sql.py's _SKIP_RE),
-    since those report parse_ok=False by design, not by failure.
+    CONNECT/DISCONNECT, EXECUTE IMMEDIATE/PROCEDURE, DECLARE ... DYNAMIC
+    CURSOR FOR <prepared-stmt-id> — see sql.py's _SKIP_RE), since those
+    report parse_ok=False by design, not by failure.
     """
     row = conn.execute(
         "SELECT count(*) FROM sql_statements "
-        "WHERE NOT parse_ok AND NOT has_cursor "
-        "AND operation NOT IN ('CONNECT', 'DISCONNECT', 'EXECUTE')"
+        "WHERE NOT parse_ok "
+        "AND operation NOT IN "
+        "('CONNECT', 'DISCONNECT', 'EXECUTE', 'OPEN', 'FETCH', 'CLOSE') "
+        "AND NOT (operation = 'DECLARE' "
+        "AND regexp_matches(raw_sql, 'DYNAMIC\\s+CURSOR\\s+FOR\\s+\\w+\\s*;?\\s*$', 'i'))"
     ).fetchone()
     return row[0] if row else 0
 

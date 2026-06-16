@@ -2,7 +2,7 @@
 
 from pb_cli.core.ingestion import ingest_file
 from pb_cli.core.models import new_row_batch
-from pb_cli.shell.db import create_schema, db_connection, parse_sql_file
+from pb_cli.shell.db import count_sql_parse_failures, create_schema, db_connection, parse_sql_file
 from pb_cli.shell.ingest import ingest_batch
 from pb_cli.shell.state import create_state_table, load_file_state, save_file_state
 
@@ -29,6 +29,83 @@ def test_ingest_batch(tmp_path):
         ingest_file(obj, rows)
         count = ingest_batch([obj], conn)
         assert count > 0
+
+
+def test_count_sql_parse_failures_excludes_cursor_ops(tmp_path):
+    """OPEN/FETCH/CLOSE are intentionally unparsed (see sql.py's _SKIP_RE) and
+    must not be counted as real failures, even though their literal text never
+    contains the word CURSOR (only the originating DECLARE does)."""
+    db = str(tmp_path / "test.duckdb")
+    with db_connection(db) as conn:
+        create_schema(conn)
+        for op, raw in [
+            ("OPEN", "OPEN DYNAMIC cur;"),
+            ("FETCH", "FETCH cur into :ll_count;"),
+            ("CLOSE", "CLOSE cur;"),
+        ]:
+            conn.execute(
+                "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("f.srw", "obj", "proc", 1, op, raw, None, [], [], False, False, False),
+            )
+        assert count_sql_parse_failures(conn) == 0
+
+
+def test_count_sql_parse_failures_excludes_dynamic_cursor_declare(tmp_path):
+    """DECLARE ... DYNAMIC CURSOR FOR <prepared-stmt-id> has no inline SQL to
+    extract and is skipped by design — must not count as a real failure. A
+    DECLARE ... CURSOR FOR SELECT that genuinely fails to parse must still
+    count, so the exclusion is keyed on the DYNAMIC ... FOR <bareword> shape."""
+    db = str(tmp_path / "test.duckdb")
+    with db_connection(db) as conn:
+        create_schema(conn)
+        conn.execute(
+            "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "f.srw",
+                "obj",
+                "proc",
+                1,
+                "DECLARE",
+                "DECLARE cur DYNAMIC CURSOR FOR SQLSA;",
+                None,
+                [],
+                [],
+                False,
+                True,
+                False,
+            ),
+        )
+        assert count_sql_parse_failures(conn) == 0
+
+        conn.execute(
+            "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "f.srw",
+                "obj",
+                "proc",
+                2,
+                "DECLARE",
+                "DECLARE cur_order CURSOR FOR SELECT garbage(((",
+                None,
+                [],
+                [],
+                False,
+                True,
+                False,
+            ),
+        )
+        assert count_sql_parse_failures(conn) == 1
+
+
+def test_count_sql_parse_failures_counts_real_failures(tmp_path):
+    db = str(tmp_path / "test.duckdb")
+    with db_connection(db) as conn:
+        create_schema(conn)
+        conn.execute(
+            "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("f.srw", "obj", "proc", 1, "SELECT", "SELECT 1 FROM", None, [], [], False, False, False),
+        )
+        assert count_sql_parse_failures(conn) == 1
 
 
 def test_file_state_roundtrip(tmp_path):

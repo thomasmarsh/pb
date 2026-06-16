@@ -147,6 +147,18 @@ def test_skip_unstructured(raw, expected_op):
     assert meta["operation"] == expected_op
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Pattern 11: DECLARE ... DYNAMIC CURSOR FOR <prepared-stmt-id> → skipped
+# (no inline SQL text to extract; differs from DECLARE ... CURSOR FOR SELECT)
+# ──────────────────────────────────────────────────────────────────────────────
+def test_skip_dynamic_cursor_declare():
+    raw = "DECLARE cur DYNAMIC CURSOR FOR SQLSA;"
+    parsed, tables, columns, meta = parse_pb_sql(raw)
+    assert parsed is None
+    assert tables == []
+    assert meta["operation"] == "DECLARE"
+
+
 def test_core_sql_has_no_io_imports():
     """core/sql.py must not import duckdb, subprocess, or pathlib."""
     mod = importlib.import_module("pb_cli.core.sql")
