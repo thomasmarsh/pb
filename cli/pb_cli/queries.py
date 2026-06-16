@@ -1,7 +1,6 @@
 """Auto-register queries/*.sql files as commands on a typer sub-app (pb query <name>)."""
 from __future__ import annotations
 
-import re
 from inspect import Parameter, Signature
 from pathlib import Path
 
@@ -9,32 +8,9 @@ import duckdb
 import typer
 
 from pb_cli.shell.env import env
+from pb_cli.storage import parse_sql_file
 
 _INT_TYPES = {"INT", "INTEGER", "BIGINT"}
-
-
-def _parse_sql_file(path: Path) -> tuple[str, list[tuple[str, str, str | None]], str]:
-    """Return (description, params, sql).
-
-    Leading comment block is consumed; remainder is executed verbatim.
-    Param lines: ``-- :name TYPE [default]``
-    """
-    lines = path.read_text().splitlines()
-    description = ""
-    params: list[tuple[str, str, str | None]] = []
-    sql_start = len(lines)
-    for i, raw in enumerate(lines):
-        line = raw.strip()
-        if not line.startswith("--"):
-            sql_start = i
-            break
-        m = re.match(r"^--\s+:(\w+)\s+(\w+)(?:\s+(\S+))?$", line)
-        if m:
-            pname, ptype, pdefault = m.groups()
-            params.append((pname, ptype.upper(), pdefault))
-        elif not description:
-            description = line.lstrip("-").strip()
-    return description, params, "\n".join(lines[sql_start:]).strip()
 
 
 def _print_result(cursor) -> None:
@@ -55,7 +31,7 @@ def _print_result(cursor) -> None:
 
 
 def _make_command(sql_file: Path):
-    description, params, sql = _parse_sql_file(sql_file)
+    description, params, sql = parse_sql_file(sql_file)
     pos_params = [(n, t, d) for n, t, d in params if d is None]
     kw_params  = [(n, t, d) for n, t, d in params if d is not None]
     all_names  = [n for n, _, _ in pos_params + kw_params]

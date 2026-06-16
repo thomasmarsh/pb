@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -13,14 +12,15 @@ import graphviz
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 
-from pb_cli.diagram import (
-    apply_defaults,
+from pb_cli.core.diagram_builder import apply_defaults
+from pb_cli.shell.env import env
+from pb_cli.storage import (
     build_calls,
     build_dw_tables,
     build_heatmap,
     build_inheritance,
+    parse_sql_file,
 )
-from pb_cli.shell.env import env
 
 router = APIRouter()
 
@@ -41,21 +41,7 @@ def _query_info(name: str) -> tuple[str, list[tuple[str, str, str | None]], str]
     sql_file = env.build.get_queries_dir() / f"{name}.sql"
     if not sql_file.exists():
         raise HTTPException(status_code=404, detail=f"Query not found: {name}")
-    lines = sql_file.read_text().splitlines()
-    description = ""
-    params: list[tuple[str, str, str | None]] = []
-    sql_start = len(lines)
-    for i, raw in enumerate(lines):
-        line = raw.strip()
-        if not line.startswith("--"):
-            sql_start = i
-            break
-        m = re.match(r"^--\s+:(\w+)\s+(\w+)(?:\s+(\S+))?$", line)
-        if m:
-            params.append((m.group(1), m.group(2).upper(), m.group(3)))
-        elif not description:
-            description = line.lstrip("-").strip()
-    return description, params, "\n".join(lines[sql_start:]).strip()
+    return parse_sql_file(sql_file)
 
 
 # ── SPA ────────────────────────────────────────────────────────────────────────

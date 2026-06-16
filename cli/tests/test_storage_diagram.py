@@ -22,7 +22,7 @@ from pb_cli.shell.build import find_repo
 REPO_ROOT = find_repo()
 DB_PATH   = str(REPO_ROOT / 'pb.duckdb')
 
-from pb_cli.diagram import (  # noqa: E402
+from pb_cli.storage import (  # noqa: E402
     diagram_calls,
     diagram_dw_tables,
     diagram_heatmap,

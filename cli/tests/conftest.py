@@ -29,11 +29,13 @@ def db_path(jsonl_text: str, tmp_path_factory) -> str:
     tmp = tmp_path_factory.mktemp("db")
     db = str(tmp / "test.duckdb")
 
-    from pb_cli.index import run_from_jsonl_lines
+    from pb_cli.reporter import LiveReporter
+    from pb_cli.storage import compute_metrics, db_connection, run_from_jsonl_lines
     run_from_jsonl_lines(io.StringIO(jsonl_text), db)
 
-    from pb_cli.analyze import run as analyze
-    analyze(db)
+    reporter = LiveReporter()
+    with db_connection(db) as conn, reporter.analyze_progress() as progress:
+        compute_metrics(conn, progress)
 
     return db
 

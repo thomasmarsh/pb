@@ -4,19 +4,9 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from pb_cli.analyze import run as _analyze
-from pb_cli.common import create_schema, db_connection, drop_tables
 from pb_cli.core.state import diff_state
-from pb_cli.index import ingest_batch
 from pb_cli.reporter import Reporter
 from pb_cli.shell.env import env
-from pb_cli.state import (
-    build_subset_tmpdir,
-    create_state_table,
-    delete_file_rows,
-    load_file_state,
-    save_file_state,
-)
 
 
 def run(
@@ -28,15 +18,15 @@ def run(
     errors = 0
     row_count = 0
 
-    with db_connection(db) as conn:
+    with env.storage.db_connection(db) as conn:
         if reset:
-            drop_tables(conn)
-        create_schema(conn)
-        create_state_table(conn)
+            env.storage.drop_tables(conn)
+        env.storage.create_schema(conn)
+        env.storage.create_state_table(conn)
 
         with reporter.status('Scanning source files...'):
             current = env.build.hash_source_dir(src_dir)
-        stored = load_file_state(conn)
+        stored = env.storage.load_file_state(conn)
         diff = diff_state(current, stored)
 
         if not diff.new and not diff.changed and not diff.deleted:
@@ -44,19 +34,21 @@ def run(
             return
 
         for path in diff.deleted + diff.changed:
-            delete_file_rows(conn, path)
+            env.storage.delete_file_rows(conn, path)
 
         to_parse = diff.new + diff.changed
         if to_parse:
             objects, errors = _parse_subset(src_dir, binary, to_parse, reporter)
 
             with reporter.indexing_step() as advance:
-                row_count = ingest_batch(objects, conn, dialect, on_progress=advance)
+                row_count = env.storage.ingest_batch(objects, conn, dialect, on_progress=advance)
 
             parsed_files = {obj['file'] for obj in objects}
-            save_file_state(conn, {f: current[f] for f in to_parse if f in parsed_files})
+            env.storage.save_file_state(conn, {f: current[f] for f in to_parse if f in parsed_files})
 
-    _analyze(db, reporter)
+    with env.storage.db_connection(db) as conn, reporter.analyze_progress() as progress:
+        env.storage.compute_metrics(conn, progress)
+
     if to_parse:
         reporter.done(parsed=len(to_parse), errors=errors, rows=row_count, diff=diff)
     else:
@@ -66,7 +58,7 @@ def run(
 def _parse_subset(
     src_dir: Path, binary: Path, to_parse: list[str], reporter: Reporter,
 ) -> tuple[list[dict], int]:
-    tmpdir = build_subset_tmpdir(src_dir, to_parse)
+    tmpdir = env.storage.build_subset_tmpdir(src_dir, to_parse)
     try:
         objects: list[dict] = []
         with reporter.parse_progress(len(to_parse), 'Parsing') as progress:

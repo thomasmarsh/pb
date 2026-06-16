@@ -76,9 +76,9 @@ def ingest(
     or a directory containing .pbl files (extracted transparently).
     """
     from pb_cli.pbl import resolve_source_dir
-    from pb_cli.pipeline import run as run_pipeline
     from pb_cli.reporter import LiveReporter
     from pb_cli.shell.env import env
+    from pb_cli.shell.pipeline import run as run_pipeline
 
     reporter = LiveReporter()
     repo_path = env.build.find_repo(repo)
@@ -157,8 +157,8 @@ def index(
     db: str = typer.Argument("pb.duckdb", help="DuckDB database path."),
 ) -> None:
     """Populate pb.duckdb from pb-runner JSONL output (reads stdin). Use 'pb ingest' instead."""
-    from pb_cli.index import run_from_jsonl_lines
-    run_from_jsonl_lines(sys.stdin, db)
+    from pb_cli.shell.env import env
+    env.storage.run_from_jsonl_lines(sys.stdin, db)
 
 
 # ── pb analyze ────────────────────────────────────────────────────────────────
@@ -168,9 +168,12 @@ def analyze(
     db: str = typer.Argument("pb.duckdb", help="DuckDB database path."),
 ) -> None:
     """Compute call graph metrics and populate object_metrics in pb.duckdb."""
-    from pb_cli.analyze import run
     from pb_cli.reporter import LiveReporter
-    run(db, LiveReporter())
+    from pb_cli.shell.env import env
+
+    reporter = LiveReporter()
+    with env.storage.db_connection(db) as conn, reporter.analyze_progress() as progress:
+        env.storage.compute_metrics(conn, progress)
 
 
 # ── pb diagram * ──────────────────────────────────────────────────────────────
@@ -183,10 +186,9 @@ def diagram_inheritance(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """Inheritance hierarchy diagram."""
-    from pb_cli.diagram import connect
-    from pb_cli.diagram import diagram_inheritance as _d
-    with connect(db) as conn:
-        _d(conn, root, output, dot)
+    from pb_cli.shell.env import env
+    with env.storage.connect(db) as conn:
+        env.storage.diagram_inheritance(conn, root, output, dot)
 
 
 @diagram_app.command("calls")
@@ -198,10 +200,9 @@ def diagram_calls(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """Call ego-graph centred on a named object."""
-    from pb_cli.diagram import connect
-    from pb_cli.diagram import diagram_calls as _d
-    with connect(db) as conn:
-        _d(conn, object_name, depth, output, dot)
+    from pb_cli.shell.env import env
+    with env.storage.connect(db) as conn:
+        env.storage.diagram_calls(conn, object_name, depth, output, dot)
 
 
 @diagram_app.command("dw-tables")
@@ -212,10 +213,9 @@ def diagram_dw_tables(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """DataWindow → DB table bipartite dependency graph."""
-    from pb_cli.diagram import connect
-    from pb_cli.diagram import diagram_dw_tables as _d
-    with connect(db) as conn:
-        _d(conn, table, output, dot)
+    from pb_cli.shell.env import env
+    with env.storage.connect(db) as conn:
+        env.storage.diagram_dw_tables(conn, table, output, dot)
 
 
 @diagram_app.command("heatmap")
@@ -225,10 +225,9 @@ def diagram_heatmap(
     dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
 ) -> None:
     """Complexity heatmap over all PowerScript objects."""
-    from pb_cli.diagram import connect
-    from pb_cli.diagram import diagram_heatmap as _d
-    with connect(db) as conn:
-        _d(conn, output, dot)
+    from pb_cli.shell.env import env
+    with env.storage.connect(db) as conn:
+        env.storage.diagram_heatmap(conn, output, dot)
 
 
 # ── pb explore ─────────────────────────────────────────────────────────────────

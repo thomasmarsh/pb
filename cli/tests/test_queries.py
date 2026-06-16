@@ -13,18 +13,18 @@ QUERIES_DIR = REPO_ROOT / "queries"
 # ---------------------------------------------------------------------------
 
 def test_parse_no_params():
-    from pb_cli.queries import _parse_sql_file
+    from pb_cli.storage import parse_sql_file
     sql_file = QUERIES_DIR / "dead-code.sql"
-    desc, params, sql = _parse_sql_file(sql_file)
+    desc, params, sql = parse_sql_file(sql_file)
     assert desc
     assert params == []
     assert "FROM procedures" in sql
 
 
 def test_parse_int_param_with_default():
-    from pb_cli.queries import _parse_sql_file
+    from pb_cli.storage import parse_sql_file
     sql_file = QUERIES_DIR / "top.sql"
-    desc, params, sql = _parse_sql_file(sql_file)
+    desc, params, sql = parse_sql_file(sql_file)
     assert len(params) == 1
     name, typ, default = params[0]
     assert name == "n" and typ == "INT" and default == "15"
@@ -32,9 +32,9 @@ def test_parse_int_param_with_default():
 
 
 def test_parse_text_param_no_default():
-    from pb_cli.queries import _parse_sql_file
+    from pb_cli.storage import parse_sql_file
     sql_file = QUERIES_DIR / "callers.sql"
-    desc, params, sql = _parse_sql_file(sql_file)
+    desc, params, sql = parse_sql_file(sql_file)
     assert len(params) == 1
     name, typ, default = params[0]
     assert name == "name" and typ == "TEXT" and default is None

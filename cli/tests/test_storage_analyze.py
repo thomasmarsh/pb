@@ -88,9 +88,8 @@ def test_analyze_run_emits_reporter_events(tmp_path):
     # Use an isolated DB so we don't conflict with the session-scoped read-only db_conn.
     import duckdb
 
-    from pb_cli.analyze import run as analyze_run
-    from pb_cli.common import create_schema
     from pb_cli.reporter import RecordingReporter
+    from pb_cli.storage import compute_metrics, create_schema
 
     db = str(tmp_path / "test.duckdb")
     conn = duckdb.connect(db)
@@ -98,7 +97,8 @@ def test_analyze_run_emits_reporter_events(tmp_path):
     conn.close()
 
     reporter = RecordingReporter()
-    analyze_run(db, reporter)
+    with duckdb.connect(db) as conn, reporter.analyze_progress() as progress:
+        compute_metrics(conn, progress)
 
     types = {e['type'] for e in reporter.events}
     assert 'analyze_start' in types

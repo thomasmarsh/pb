@@ -8,7 +8,7 @@ Requires:
 Run:
   uv run pytest tests/test_index.py
 """
-from pb_cli.common import INSERT
+from pb_cli.storage import INSERT
 from pb_cli.core.ingestion import _ingest_dw, _proc_row, ingest_file
 from pb_cli.core.models import new_row_batch
 
