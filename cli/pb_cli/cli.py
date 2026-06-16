@@ -49,10 +49,9 @@ def dump(
     """
     from pb_cli.dump import run as run_dump
     from pb_cli.pbl import resolve_source_dir
-    from pb_cli.reporter import LiveReporter
     from pb_cli.shell.env import env
 
-    reporter = LiveReporter()
+    reporter = env.reporter
     repo_path = env.build.find_repo(repo)
 
     _prepare_output(Path(output_dir), force)
@@ -79,11 +78,10 @@ def ingest(
     or a directory containing .pbl files (extracted transparently).
     """
     from pb_cli.pbl import resolve_source_dir
-    from pb_cli.reporter import LiveReporter
     from pb_cli.shell.env import env
     from pb_cli.shell.pipeline import run as run_pipeline
 
-    reporter = LiveReporter()
+    reporter = env.reporter
     repo_path = env.build.find_repo(repo)
     binary = env.build.find_binary(repo_path) if no_build else _build(repo_path, reporter)
     with resolve_source_dir(Path(input_path), reporter) as src_dir:
@@ -105,7 +103,7 @@ def extract(
     Run once as a setup step before 'pb dump', 'pb ingest', or 'cabal test'.
     """
     from pb_cli.pbl import extract_to_dir
-    from pb_cli.reporter import LiveReporter
+    from pb_cli.shell.env import env
 
     src = Path(input_dir).resolve()
     out = Path(output_dir)
@@ -116,7 +114,7 @@ def extract(
         raise typer.Exit(1)
 
     _prepare_output(out, force)
-    reporter = LiveReporter()
+    reporter = env.reporter
 
     total = 0
     with reporter.extracting_progress(len(pbls)) as prog:
@@ -179,10 +177,9 @@ def analyze(
     db: str = typer.Argument("pb.duckdb", help="DuckDB database path."),
 ) -> None:
     """Compute call graph metrics and populate object_metrics in pb.duckdb."""
-    from pb_cli.reporter import LiveReporter
     from pb_cli.shell.env import env
 
-    reporter = LiveReporter()
+    reporter = env.reporter
     with env.storage.db_connection(db) as conn, reporter.analyze_progress() as progress:
         env.storage.compute_metrics(conn, progress)
 

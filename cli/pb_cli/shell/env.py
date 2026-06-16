@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Callable, Iterable, Iterator, Protocol
 
 from rich.panel import Panel
 
+from pb_cli.reporter import LiveReporter, Reporter
 from pb_cli.shell.build import (
     build_runner,
     count_sr_files,
@@ -240,6 +241,7 @@ class ShellEnv:
     build: BuildEnv = field(default_factory=BuildEnv)
     runner: RunnerEnv = field(default_factory=RunnerEnv)
     storage: StorageEnv = field(default_factory=StorageEnv)
+    reporter: Reporter = field(default_factory=LiveReporter)
 
 
 env = ShellEnv()
