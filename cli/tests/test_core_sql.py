@@ -192,6 +192,46 @@ def test_parse_failure_captures_error_message():
     assert meta["error"], "error message must not be empty"
 
 
+def test_parse_failure_replaces_ansi_codes_with_plain_markers():
+    """sqlglot embeds \\x1b[4m...\\x1b[0m underline codes around the offending
+    token; the UI's Raw tab is not a terminal, so the raw escape bytes must
+    not leak through — but the highlighted token is useful, so it's kept,
+    wrapped in plain »...« markers instead of being discarded."""
+    raw = "SELECT * FROM (("
+    parsed, tables, columns, meta = parse_pb_sql(raw)
+    assert parsed is None
+    assert "error" in meta
+    assert "\x1b" not in meta["error"], "raw ANSI escape byte must not leak into stored error message"
+
+
+def test_using_transobject_clause_stripped_on_any_statement():
+    """USING <transaction-object> is valid PB syntax on UPDATE/DELETE/SELECT/
+    INSERT too, not just COMMIT/ROLLBACK — must not be reported as a parse
+    failure."""
+    raw = (
+        "UPDATE t SET x = 1 WHERE (:foo is null or :foo = foo) "
+        "and (:bar is null or :bar = bar) using sqlca ;"
+    )
+    parsed, tables, columns, meta = parse_pb_sql(raw)
+    assert parsed is not None, meta.get("error")
+    assert "error" not in meta
+
+
+def test_join_using_column_list_not_clobbered():
+    """USING (col) join syntax must survive the transaction-object strip."""
+    raw = "SELECT * FROM a JOIN b USING (id);"
+    parsed, tables, columns, meta = parse_pb_sql(raw)
+    assert parsed is not None, meta.get("error")
+
+
+def test_pb_style_line_comment_stripped():
+    """PB embedded SQL may contain '//' line comments; sqlglot treats bare
+    '//' as division and fails, so they must be stripped before parsing."""
+    raw = "SELECT x FROM t // pb style comment\nWHERE y = 1;"
+    parsed, tables, columns, meta = parse_pb_sql(raw)
+    assert parsed is not None, meta.get("error")
+
+
 def test_skip_unstructured_has_no_error_key():
     """Intentionally-skipped forms (OPEN/CLOSE/...) are not failures — no 'error' key."""
     parsed, tables, columns, meta = parse_pb_sql("OPEN cur_order")

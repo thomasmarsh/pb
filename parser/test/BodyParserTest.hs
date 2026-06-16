@@ -376,6 +376,20 @@ tests = testGroup "Grammar.Body.Parser"
         let sqlS = mkStmtSrc "SELECT x FROM t;"
                      [(TkSqlKw,"select"),(TkIdent,"x"),(TkDeclKw,"from"),(TkIdent,"t")]
         in runBodyStmts [sqlS, stmtY1] @?= Right [loc1 (BsRaw "SELECT x FROM t;"), loc1 assignY1]
+
+    , testCase "HYPOTHESIS: trailing line comment after ';' should not swallow following statements" $
+        -- SELECT x FROM t;  // note
+        -- y = 1
+        -- z = 2  <- has its own trailing ';' in source text, so moreConts stops here
+        let sqlS = mkStmtSrc "SELECT x FROM t;  // note"
+                     [(TkSqlKw,"select"),(TkIdent,"x"),(TkDeclKw,"from"),(TkIdent,"t")]
+            y1   = mkStmtSrc "y = 1" [(TkIdent,"y"),(TkAssignOp,"="),(TkIntLiteral,"1")]
+            z2   = mkStmtSrc "z = 2;" [(TkIdent,"z"),(TkAssignOp,"="),(TkIntLiteral,"2")]
+        in runBodyStmts [sqlS, y1, z2]
+             @?= Right [ loc1 (BsRaw "SELECT x FROM t;  // note")
+                       , loc1 (BsAssign (Lvalue [LvSegment "y" Nothing]) (ExInt "1"))
+                       , loc1 (BsAssign (Lvalue [LvSegment "z" Nothing]) (ExInt "2"))
+                       ]
     ]
 
   , testGroup "line anchors"

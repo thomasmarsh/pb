@@ -7,6 +7,13 @@ import re
 import sqlglot
 from sqlglot import exp
 
+# sqlglot embeds raw ANSI underline codes (\x1b[4m...\x1b[0m) around the
+# offending token in ParseError messages, for terminal display. The Raw tab
+# isn't a terminal, so the escape bytes render as literal "[4m...[0m" — but
+# the highlighted token itself is useful, so swap the ANSI markers for plain
+# »...« brackets rather than discarding the highlight entirely.
+_ANSI_HIGHLIGHT_RE = re.compile(r"\x1b\[4m(.*?)\x1b\[0m")
+
 # Statements with no parseable SQL structure — extract metadata only
 _SKIP_RE = re.compile(
     r"^\s*(CONNECT|DISCONNECT|OPEN|CLOSE|FETCH|EXECUTE\s+(?:IMMEDIATE|PROCEDURE)"
@@ -19,8 +26,14 @@ _SKIP_RE = re.compile(
 # Each entry is (compiled_pattern, replacement).  Replacement may be a string
 # or a callable (re.sub-compatible).
 _REWRITES: list[tuple[re.Pattern, object]] = [
-    (re.compile(r"\bCOMMIT\s+USING\s+\w+", re.I), "COMMIT"),
-    (re.compile(r"\bROLLBACK\s+USING\s+\w+", re.I), "ROLLBACK"),
+    # Strip PB's "// line comment" — not a standard SQL line-comment marker
+    # (sqlglot reads bare "//" as division), so it must go before any other
+    # rewrite that might be confused by trailing comment text.
+    (re.compile(r"//[^\n]*"), ""),
+    # Strip the PB transaction-object clause: COMMIT/ROLLBACK/SELECT/UPDATE/
+    # DELETE/INSERT ... USING <transobject>. Not standard SQL. Negative
+    # lookahead on "(" avoids clobbering real `JOIN ... USING (col)` syntax.
+    (re.compile(r"\bUSING\s+\w+\b(?!\s*\()", re.I), ""),
     # Strip PB host-variable INTO clause: SELECT ... INTO :v1, :v2 FROM ...
     # INSERT INTO tablename is safe — table names don't start with ':'.
     (re.compile(r"\bINTO\b\s+:\w+(?:\s*,\s*:\w+)*", re.I), ""),
@@ -86,5 +99,5 @@ def parse_pb_sql(
             continue
 
     if last_error is not None:
-        meta["error"] = str(last_error)
+        meta["error"] = _ANSI_HIGHLIGHT_RE.sub(r"»\1«", str(last_error))
     return None, [], [], meta
