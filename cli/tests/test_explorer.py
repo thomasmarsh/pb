@@ -38,6 +38,10 @@ def client_with_sql(db_path, tmp_path_factory):
         "INSERT INTO dw_retrieve_columns VALUES (?,?,?,?,?)",
         ["", "dw_synth", "synthetic_test_table.id", "synthetic_test_table", "id"],
     )
+    conn.execute(
+        "INSERT INTO inherits VALUES (?,?)",
+        ["synthetic_child_obj", "fn_sqlerror"],
+    )
     conn.close()
 
     from fastapi.testclient import TestClient
@@ -440,5 +444,38 @@ def test_diagram_table_lineage_requires_table(client_with_sql):
 
 def test_diagram_table_lineage_with_table(client_with_sql):
     r = client_with_sql.get("/api/diagram/table-lineage", params={"table": "synthetic_test_table"})
+    assert r.status_code == 200
+    assert "<svg" in r.text
+
+
+# ── Impact tab + proc-tables diagram ───────────────────────────────────────────
+
+def test_table_detail_impact(client_with_sql):
+    r = client_with_sql.get("/api/tables/synthetic_test_table")
+    assert r.status_code == 200
+    data = r.json()
+    assert "impact" in data
+    impact = data["impact"]
+    assert {"direct", "inherited"} == set(impact)
+
+    direct_objects = {row["object"] for row in impact["direct"]}
+    assert "fn_sqlerror" in direct_objects
+
+    inherited_by_descendant = {row["descendant"]: row for row in impact["inherited"]}
+    assert "synthetic_child_obj" in inherited_by_descendant
+    child_row = inherited_by_descendant["synthetic_child_obj"]
+    assert child_row["ancestor"] == "fn_sqlerror"
+    assert child_row["depth"] == 1
+
+
+def test_diagram_proc_tables(client_with_sql):
+    r = client_with_sql.get("/api/diagram/proc-tables")
+    assert r.status_code == 200
+    assert "image/svg+xml" in r.headers["content-type"]
+    assert "<svg" in r.text
+
+
+def test_diagram_proc_tables_filtered(client_with_sql):
+    r = client_with_sql.get("/api/diagram/proc-tables", params={"table": "synthetic_test_table"})
     assert r.status_code == 200
     assert "<svg" in r.text

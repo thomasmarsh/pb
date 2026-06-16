@@ -14,7 +14,7 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
   const snap = useSnapshot(store.state);
   const dg = () => snap().diagrams;
-  const [activeTab, setActiveTab] = createSignal("inheritance");
+  const [activeTab, setActiveTab] = createSignal(snap().diagrams.active);
   const [focalInput, setFocalInput] = createSignal("");
   const [depthInput, setDepthInput] = createSignal("2");
   const [rootInput, setRootInput] = createSignal("");
@@ -36,6 +36,8 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
       store.dispatch({ tag: "diagrams", action: { type: "params", params: { focal: focalInput() } } });
     } else if (kind === "table-lineage") {
       store.dispatch({ tag: "diagrams", action: { type: "params", params: { table: tableInput() } } });
+    } else if (kind === "proc-tables") {
+      store.dispatch({ tag: "diagrams", action: { type: "params", params: { table: tableInput(), focal: focalInput() } } });
     }
     store.dispatch({ tag: "diagrams", action: { type: "generate" } });
   }
@@ -43,12 +45,12 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   return (
     <>
       <Tabs value={activeTab()} onChange={(v) => {
-        setActiveTab(v);
+        setActiveTab(v as DiagramKind);
         store.dispatch({ tag: "diagrams", action: { type: "select", kind: v as DiagramKind } });
-        if (v === "heatmap" || v === "inheritance" || v === "sql-lineage") store.dispatch({ tag: "diagrams", action: { type: "generate" } });
+        if (v === "heatmap" || v === "inheritance" || v === "sql-lineage" || v === "proc-tables") store.dispatch({ tag: "diagrams", action: { type: "generate" } });
       }}>
         <Tabs.List class="tab-bar">
-          <For each={["inheritance", "calls", "dw-tables", "heatmap", "sql-lineage", "table-lineage"] as DiagramKind[]}>
+          <For each={["inheritance", "calls", "dw-tables", "heatmap", "sql-lineage", "table-lineage", "proc-tables"] as DiagramKind[]}>
             {(kind) => <Tabs.Trigger value={kind} class="tab-btn">{kind}</Tabs.Trigger>}
           </For>
         </Tabs.List>
@@ -78,6 +80,12 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
           <Show when={activeTab() === "table-lineage"}>
             <input class="search-input" placeholder="Table name (required)" value={tableInput()}
                    onInput={(e) => setTableInput(e.currentTarget.value)} />
+          </Show>
+          <Show when={activeTab() === "proc-tables"}>
+            <input class="search-input" placeholder="Table name (optional — filters diagram)" value={tableInput()}
+                   onInput={(e) => setTableInput(e.currentTarget.value)} />
+            <input class="search-input" placeholder="Focal object (optional)" value={focalInput()}
+                   onInput={(e) => setFocalInput(e.currentTarget.value)} />
           </Show>
           <button class="filter-pill active" onClick={handleGenerate}>Generate</button>
         </div>

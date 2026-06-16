@@ -315,6 +315,8 @@ def _render_diagram(kind: str, **kwargs) -> str:
         dot = _build_sql_lineage(**kwargs)
     elif kind == "table-lineage":
         dot = _build_table_lineage(**kwargs)
+    elif kind == "proc-tables":
+        dot = _build_proc_tables(**kwargs)
     else:
         raise HTTPException(status_code=400, detail=f"Unknown diagram: {kind}")
 
@@ -406,6 +408,64 @@ def _build_table_lineage(conn: duckdb.DuckDBPyConnection, table_name=""):
     return dot
 
 
+def _build_proc_tables(
+    conn: duckdb.DuckDBPyConnection,
+    table_name: str = "",
+    focal: str = "",
+) -> graphviz.Digraph:
+    where_clauses = []
+    params: list = []
+    if table_name:
+        where_clauses.append("table_name = ?")
+        params.append(table_name)
+    if focal:
+        where_clauses.append("object = ?")
+        params.append(focal)
+
+    where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+    rows = _rows(conn.execute(
+        f"SELECT DISTINCT object, proc_name, table_name, operation, source "
+        f"FROM all_sql_tables {where_sql} ORDER BY object, table_name",
+        params,
+    ))
+
+    dot = graphviz.Digraph(engine="dot", name="proc_tables")
+    apply_defaults(dot)
+    dot.attr(rankdir="LR", splines="ortho", nodesep="0.2", ranksep="1.4")
+    dot.attr("node", shape="box", style="filled,rounded")
+
+    seen_procs: set[str] = set()
+    seen_tables: set[str] = set()
+
+    for r in rows:
+        proc_label = r["proc_name"] or r["object"]
+        proc_id = f"proc_{r['object']}_{proc_label}"
+        tbl_id = f"tbl_{r['table_name']}"
+        node_label = f"{r['object']}\\n{proc_label}" if r["proc_name"] else r["object"]
+
+        if proc_id not in seen_procs:
+            is_dw = r["source"] == "datawindow"
+            fill = "#2A3A4A" if is_dw else "#2A3050"
+            dot.node(proc_id, label=node_label, fillcolor=fill, fontcolor="#E8E8E8", fontsize="8")
+            seen_procs.add(proc_id)
+        if tbl_id not in seen_tables:
+            dot.node(tbl_id, label=r["table_name"], shape="cylinder",
+                     fillcolor="#1F2F1F", fontcolor="#C8F0CA", fontsize="9")
+            seen_tables.add(tbl_id)
+
+        color = _OP_COLORS.get(r["operation"], _DEFAULT_OP_COLOR)
+        dot.edge(proc_id, tbl_id, color=color, label=r["operation"],
+                 fontcolor=color, fontsize="7", penwidth="0.8")
+
+    if not rows:
+        msg = "No references found"
+        if table_name:
+            msg += f" for table: {table_name}"
+        dot.node("empty", label=msg, shape="plaintext", fontcolor="#5c5f72")
+
+    return dot
+
+
 @router.get("/api/diagram/{kind}")
 async def get_diagram(
     kind: str,
@@ -415,7 +475,8 @@ async def get_diagram(
     depth: int = Query(2, description="Ego-graph radius (calls)"),
     table: str = Query("", description="Filter DB table (dw-tables)"),
 ):
-    if kind not in ("inheritance", "calls", "dw-tables", "heatmap", "sql-lineage", "table-lineage"):
+    if kind not in ("inheritance", "calls", "dw-tables", "heatmap", "sql-lineage",
+                     "table-lineage", "proc-tables"):
         raise HTTPException(status_code=400, detail=f"Unknown diagram: {kind}")
 
     conn = _conn(request)
@@ -432,6 +493,10 @@ async def get_diagram(
             kwargs["focal"] = focal
         elif kind == "table-lineage":
             kwargs["table_name"] = table or ""
+        elif kind == "proc-tables":
+            kwargs["table_name"] = table or ""
+            if focal:
+                kwargs["focal"] = focal
 
         svg = _render_diagram(kind, **kwargs)
         return Response(content=svg, media_type="image/svg+xml")
@@ -740,6 +805,43 @@ def _column_lineage(conn, table_name: str) -> list[dict]:
     ]
 
 
+def _impact_lineage(conn, table_name: str) -> dict:
+    """Direct accessors of `table_name` plus descendants that inherit that access
+    through the `inherits` graph."""
+    direct_rows = _rows(conn.execute(
+        "SELECT DISTINCT object, source, operation "
+        "FROM all_sql_tables WHERE table_name = ? ORDER BY object",
+        [table_name],
+    ))
+    direct_objects = {r["object"] for r in direct_rows}
+
+    if not direct_objects:
+        return {"direct": [], "inherited": []}
+
+    placeholders = ", ".join("?" * len(direct_objects))
+    inherited_rows = _rows(conn.execute(f"""
+        WITH RECURSIVE desc_cte AS (
+            SELECT from_object AS descendant, to_object AS ancestor, 1 AS depth
+            FROM inherits
+            WHERE to_object IN ({placeholders})
+            UNION ALL
+            SELECT i.from_object, dc.ancestor, dc.depth + 1
+            FROM inherits i
+            JOIN desc_cte dc ON i.to_object = dc.descendant
+            WHERE dc.depth < 15
+        )
+        SELECT descendant, ancestor, min(depth) AS depth
+        FROM desc_cte
+        GROUP BY descendant, ancestor
+        ORDER BY depth, ancestor, descendant
+    """, list(direct_objects)))
+
+    return {
+        "direct": direct_rows,
+        "inherited": inherited_rows,
+    }
+
+
 @router.get("/api/tables/{table_name}")
 async def get_table(table_name: str, request: Request):
     conn = _conn(request)
@@ -782,6 +884,7 @@ async def get_table(table_name: str, request: Request):
             "columns_detail": _column_lineage(conn, table_name),
             "where": where,
             "procedures": procedures,
+            "impact": _impact_lineage(conn, table_name),
         }
     finally:
         conn.close()

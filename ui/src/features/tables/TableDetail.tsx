@@ -5,7 +5,7 @@ import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
-import type { TableDetail as TableDetailData, TableProcedureRef } from "../../types/api.js";
+import type { TableDetail as TableDetailData, TableProcedureRef, ImpactInheritedRef } from "../../types/api.js";
 import { Loading } from "../../components/Loading.js";
 import { ColumnRow } from "../../components/ColumnRow.js";
 
@@ -40,6 +40,97 @@ function ProcTable(props: { rows: TableProcedureRef[]; store: Store<AppState, Ap
         </For>
       </tbody>
     </table>
+  );
+}
+
+function groupByDepth(rows: ImpactInheritedRef[]): [number, ImpactInheritedRef[]][] {
+  const byDepth = new Map<number, ImpactInheritedRef[]>();
+  for (const row of rows) {
+    const bucket = byDepth.get(row.depth);
+    if (bucket) bucket.push(row);
+    else byDepth.set(row.depth, [row]);
+  }
+  return [...byDepth.entries()].sort((a, b) => a[0] - b[0]);
+}
+
+function ImpactTab(props: { detail: TableDetailData; store: Store<AppState, AppAction> }) {
+  const impact = props.detail.impact;
+  const isEmpty = impact.direct.length === 0 && impact.inherited.length === 0;
+
+  return (
+    <>
+      <div class="card" style={{ padding: "12px 16px", display: "flex", "justify-content": "flex-end" }}>
+        <button class="btn-secondary" onClick={() => {
+          props.store.dispatch({ tag: "diagrams", action: { type: "select", kind: "proc-tables" } });
+          props.store.dispatch({ tag: "diagrams", action: { type: "params", params: { table: props.detail.table_name } } });
+          props.store.dispatch({ tag: "diagrams", action: { type: "generate" } });
+          props.store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "diagrams" } } });
+        }}>
+          Show proc-tables diagram ↗
+        </button>
+      </div>
+
+      <Show when={!isEmpty} fallback={
+        <div class="card" style={{ padding: "32px", "text-align": "center", color: "var(--text-muted)" }}>
+          No inheritance relationships found for this table.
+        </div>
+      }>
+        <div class="card">
+          <div class="card-header"><h3>Direct access ({impact.direct.length})</h3></div>
+          <table class="data-table">
+            <thead><tr><th>Object</th><th>Source</th><th>Operation</th></tr></thead>
+            <tbody>
+              <For each={impact.direct} fallback={
+                <tr><td colspan="3" style={{ color: "var(--text-muted)", padding: "12px" }}>None.</td></tr>
+              }>
+                {(row) => (
+                  <tr>
+                    <td class="name-cell clickable"
+                        onClick={() => props.store.dispatch(
+                          row.source === "datawindow"
+                            ? { tag: "datawindows", action: { type: "select", name: row.object } }
+                            : { tag: "objects", action: { type: "select", name: row.object } },
+                        )}>
+                      {row.object}
+                    </td>
+                    <td><span class={`badge ${row.source === "datawindow" ? "badge-dw" : "badge-on"}`}>{row.source}</span></td>
+                    <td>{row.operation}</td>
+                  </tr>
+                )}
+              </For>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>Inherited access ({impact.inherited.length})</h3></div>
+          <Show when={impact.inherited.length > 0} fallback={
+            <p style={{ color: "var(--text-muted)", padding: "12px 16px" }}>No descendants inherit access to this table.</p>
+          }>
+            <For each={groupByDepth(impact.inherited)}>
+              {([depth, rows]) => (
+                <table class="data-table">
+                  <thead><tr><th colspan="2">depth {depth}</th></tr></thead>
+                  <tbody>
+                    <For each={rows}>
+                      {(row) => (
+                        <tr>
+                          <td class="name-cell clickable"
+                              onClick={() => props.store.dispatch({ tag: "objects", action: { type: "select", name: row.descendant } })}>
+                            {row.descendant}
+                          </td>
+                          <td style={{ color: "var(--text-muted)" }}>inherits from {row.ancestor}</td>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
+              )}
+            </For>
+          </Show>
+        </div>
+      </Show>
+    </>
   );
 }
 
@@ -127,9 +218,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
       </Show>
 
       <Show when={tab() === "impact"}>
-        <div class="card" style={{ padding: "32px", "text-align": "center", color: "var(--text-muted)" }}>
-          Inheritance impact coming in Plan 56.
-        </div>
+        <ImpactTab detail={d} store={props.store} />
       </Show>
     </>
   );

@@ -178,6 +178,23 @@ export interface ColumnDetail {
   write_count: number;
 }
 
+export interface ImpactDirectRef {
+  object:    string;
+  source:    "datawindow" | "powerscript";
+  operation: string;
+}
+
+export interface ImpactInheritedRef {
+  descendant: string;
+  ancestor:   string;
+  depth:      number;
+}
+
+export interface TableImpact {
+  direct:    ImpactDirectRef[];
+  inherited: ImpactInheritedRef[];
+}
+
 export interface TableDetail {
   table_name:     string;
   dw_count:       number;
@@ -187,6 +204,7 @@ export interface TableDetail {
   columns_detail: ColumnDetail[];
   where:          { dw_name: string; idx: number; exp1: string; op: string; exp2: string; logic: string }[];
   procedures:     TableProcedureRef[];
+  impact:         TableImpact;
 }
 
 // ── Explore tree ─────────────────────────────────────────────────────────────
