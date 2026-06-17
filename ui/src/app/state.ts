@@ -13,7 +13,10 @@ import type { ErrorsState } from "../features/errors/types.js";
 
 export type { ViewName } from "../features/navigation/types.js";
 
+export type Theme = "dark" | "light";
+
 export interface AppState {
+  theme: Theme;
   nav: NavState;
   dashboard: DashboardState;
   objects: ObjectsState;

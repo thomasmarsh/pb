@@ -37,12 +37,20 @@ interface LayoutProps {
 
 export function Layout(props: ParentProps<LayoutProps>) {
   const snap = useSnapshot(props.store.state);
+  const isDark = () => snap().theme === "dark";
   return (
     <div class="app-layout">
       <aside class="sidebar">
         <div class="sidebar-header">
           <h1>pb explore</h1>
           <div class="subtitle">PowerBuilder Codebase Explorer</div>
+          <button
+            class="theme-toggle"
+            onClick={() => props.store.dispatch({ tag: "theme", action: { type: "toggle" } })}
+            title={isDark() ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {isDark() ? "\u2600" : "\u263E"}
+          </button>
         </div>
         <nav class="sidebar-nav">
           <For each={NAV_ITEMS}>

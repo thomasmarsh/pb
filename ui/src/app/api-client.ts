@@ -19,7 +19,9 @@ import type {
 } from "../types/api.js";
 import { Effect } from "../core/effect.js";
 import type { AppEnv as Env } from "./reducer.js";
+import type { Theme } from "./state.js";
 import type { NavigationAction } from "../features/navigation/types.js";
+
 
 export interface ApiClient {
   getStats(): Promise<StatsResponse>;
@@ -76,6 +78,16 @@ export function createEnv(api: ApiClient): Env {
     getTables: () => lift(() => api.getTables()),
     getTableDetail: (n) => lift(() => api.getTableDetail(n)),
     getErrors: (p) => lift(() => api.getErrors(p)),
+    loadTheme: (): Effect<Theme> => {
+      const stored = localStorage.getItem("pb-theme");
+      const theme: Theme = stored === "light" || stored === "dark" ? stored : "dark";
+      return Effect.send(theme);
+    },
+    applyTheme: (theme: Theme): Effect<never> => {
+      localStorage.setItem("pb-theme", theme);
+      document.documentElement.setAttribute("data-theme", theme);
+      return Effect.none();
+    },
     // Placeholder: pullbackWithNav always overrides this with the real capture implementation.
     navigate: (_action: NavigationAction): Effect<never> => Effect.none(),
     pushUrl: (path: string): void => {

@@ -28,7 +28,14 @@ import type { QueriesAction } from "../features/queries/actions.js";
 import type { SearchAction } from "../features/search/actions.js";
 import type { ErrorsAction } from "../features/errors/actions.js";
 
-export type AppEnv = NavEnv & DashboardEnv & ExploreEnv & ObjectsEnv & DatawindowsEnv & TablesEnv & DiagramsEnv & QueriesEnv & SearchEnv & ErrorsEnv;
+import type { Theme } from "./state.js";
+
+export type AppEnv = NavEnv & DashboardEnv & ExploreEnv & ObjectsEnv & DatawindowsEnv & TablesEnv & DiagramsEnv & QueriesEnv & SearchEnv & ErrorsEnv & ThemeEnv;
+
+export interface ThemeEnv {
+  loadTheme(): Effect<Theme>;
+  applyTheme(theme: Theme): Effect<never>;
+}
 
 // ── Lenses (app-level: connect features to AppState) ─────────────────────────
 
@@ -47,6 +54,7 @@ const matchErrors      = (a: AppAction): ErrorsAction      | null => a.tag === "
 
 export function initialState(): AppState {
   return {
+    theme: "dark",
     nav: { route: { view: "dashboard" } },
     dashboard: initialDashboardState,
     objects: initialObjectsState,
@@ -78,5 +86,18 @@ const _combined = combine<AppState, AppAction, AppEnv>(
 );
 
 export function reducer(draft: AppState, action: AppAction, env: AppEnv): Effect<AppAction> | null {
+  if (action.tag === "theme") {
+    switch (action.action.type) {
+    case "load":
+      return env.loadTheme().map((theme): AppAction => ({ tag: "theme", action: { type: "loaded", theme } }));
+    case "loaded":
+      draft.theme = action.action.theme;
+      return env.applyTheme(action.action.theme);
+    case "toggle": {
+      draft.theme = draft.theme === "dark" ? "light" : "dark";
+      return env.applyTheme(draft.theme);
+    }
+    }
+  }
   return _combined(draft, action, env);
 }

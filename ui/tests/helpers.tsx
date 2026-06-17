@@ -30,8 +30,11 @@ export const mockEnv: AppEnv = {
   getExploreDatawindow: () => Effect.none(),
   getTables: () => Effect.none(),
   getTableDetail: () => Effect.none(),
+  getErrors: () => Effect.none(),
   navigate: () => Effect.none(),
   pushUrl: () => {},
+  loadTheme: () => Effect.send("dark"),
+  applyTheme: () => Effect.none(),
 };
 
 // ── Store + action capture ────────────────────────────────────────────────────

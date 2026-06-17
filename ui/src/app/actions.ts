@@ -10,8 +10,12 @@ import type { QueriesAction } from "../features/queries/actions.js";
 import type { SearchAction } from "../features/search/actions.js";
 import type { ErrorsAction } from "../features/errors/actions.js";
 import type { NavigationAction } from "../features/navigation/types.js";
+import type { Theme } from "./state.js";
+
+export type ThemeAction = { type: "load" } | { type: "toggle" } | { type: "loaded"; theme: Theme };
 
 export type AppAction =
+  | { tag: "theme"; action: ThemeAction }
   | { tag: "nav"; action: NavigationAction }
   | { tag: "dashboard"; action: DashboardAction }
   | { tag: "explore"; action: ExploreAction }
