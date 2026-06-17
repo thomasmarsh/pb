@@ -93,14 +93,16 @@ def build_calls(
 def build_dw_tables(
     conn: Conn,
     filter_table: str | None = None,
+    filter_dw: str | None = None,
 ) -> graphviz.Digraph:
     rows = conn.execute(
         """
         SELECT dw_name, table_name FROM dw_retrieve_tables
-        WHERE (? IS NULL) OR table_name = ?
+        WHERE (? IS NULL OR table_name = ?)
+          AND (? IS NULL OR dw_name = ?)
         ORDER BY dw_name, table_name
     """,
-        [filter_table, filter_table],
+        [filter_table, filter_table, filter_dw, filter_dw],
     ).fetchall()
 
     count_map: dict[str, int] = dict(
@@ -192,7 +194,11 @@ def render_svg(kind: str, conn: Conn, **params: Any) -> str:
     builders = {
         "inheritance": lambda: build_inheritance(conn, root=params.get("root")),
         "calls": lambda: build_calls(conn, focal=params.get("focal", ""), depth=params.get("depth", 2)),
-        "dw-tables": lambda: build_dw_tables(conn, filter_table=params.get("filter_table")),
+        "dw-tables": lambda: build_dw_tables(
+            conn,
+            filter_table=params.get("filter_table"),
+            filter_dw=params.get("filter_dw"),
+        ),
         "heatmap": lambda: build_heatmap(conn),
         "sql-lineage": lambda: build_sql_lineage(conn, focal=params.get("focal", "")),
         "table-lineage": lambda: build_table_lineage(conn, table_name=params.get("table_name", "")),

@@ -33,6 +33,7 @@ async def get_diagram(
     focal: str = Query("", description="Focal object (calls)"),
     depth: int = Query(2, description="Ego-graph radius (calls)"),
     table: str = Query("", description="Filter DB table (dw-tables)"),
+    dw: str = Query("", description="Filter by DW name (dw-tables)"),
 ):
     if kind not in _KINDS:
         raise HTTPException(status_code=400, detail=f"Unknown diagram: {kind}")
@@ -43,8 +44,11 @@ async def get_diagram(
     elif kind == "calls":
         params["focal"] = focal or "fn_sqlerror"
         params["depth"] = depth
-    elif kind == "dw-tables" and table:
-        params["filter_table"] = table
+    elif kind == "dw-tables":
+        if table:
+            params["filter_table"] = table
+        if dw:
+            params["filter_dw"] = dw
     elif kind == "sql-lineage" and focal:
         params["focal"] = focal
     elif kind == "table-lineage":

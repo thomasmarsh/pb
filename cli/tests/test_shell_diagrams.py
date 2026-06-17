@@ -115,6 +115,22 @@ def test_dw_tables_table_filter(conn):
     assert f"t_{tbl}" in src
 
 
+def test_dw_tables_dw_filter(conn):
+    row = conn.execute("SELECT dw_name FROM dw_retrieve_tables LIMIT 1").fetchone()
+    if row is None:
+        pytest.skip("dw_retrieve_tables is empty")
+    dw_name = row[0]
+    src = dot_source(build_dw_tables, conn, None, dw_name)
+    assert "digraph" in src
+    assert dw_name in src
+
+
+def test_dw_tables_dw_filter_nonexistent(conn):
+    src = dot_source(build_dw_tables, conn, None, "__nonexistent_dw__")
+    assert "digraph" in src
+    assert "->" not in src
+
+
 # ---------------------------------------------------------------------------
 # D. Complexity heatmap
 # ---------------------------------------------------------------------------

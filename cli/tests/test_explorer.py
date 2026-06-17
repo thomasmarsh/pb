@@ -263,6 +263,12 @@ def test_diagram_dw_tables(client):
     assert "<svg" in r.text
 
 
+def test_diagram_dw_tables_dw_filter(client):
+    r = client.get("/api/diagram/dw-tables", params={"dw": "nonexistent_dw"})
+    assert r.status_code == 200
+    assert "image/svg+xml" in r.headers["content-type"]
+
+
 def test_diagram_invalid_kind(client):
     r = client.get("/api/diagram/invalid_kind")
     assert r.status_code == 400
