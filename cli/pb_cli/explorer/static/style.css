@@ -169,6 +169,29 @@ body {
 .search-input:focus { border-color: var(--accent); }
 .search-input::placeholder { color: var(--text-muted); }
 
+/* Combobox typeahead */
+.combobox-wrapper { position: relative; flex: 1; }
+.combobox-control { display: flex; }
+.combobox-control .search-input { width: 100%; box-sizing: border-box; }
+.combobox-content {
+    position: absolute; z-index: 100; top: 100%; left: 0; right: 0;
+    background: var(--bg-secondary); border: 1px solid var(--border);
+    border-radius: 8px; margin-top: 4px; max-height: 240px; overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.combobox-listbox { list-style: none; margin: 0; padding: 4px 0; }
+.combobox-listbox [role="option"] {
+    padding: 6px 12px; cursor: pointer; font-size: 13px;
+    color: var(--text-primary);
+}
+.combobox-listbox [role="option"]:hover,
+.combobox-listbox [role="option"][data-highlighted] {
+    background: var(--bg-tertiary);
+}
+.combobox-listbox [role="option"][aria-selected="true"] {
+    color: var(--accent);
+}
+
 /* Filter pills */
 .filter-pills { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
 .filter-pill {

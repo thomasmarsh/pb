@@ -8,4 +8,6 @@ export type DiagramsAction =
   | { type: "generate" }
   | { type: "loaded"; svg: string }
   | { type: "error"; error: string }
+  | { type: "loadItems" }
+  | { type: "itemsLoaded"; tableNames: string[]; objectNames: string[] }
   ;

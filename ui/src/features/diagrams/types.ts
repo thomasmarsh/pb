@@ -6,4 +6,7 @@ export interface DiagramsState {
   loading: boolean;
   params: Record<string, string | number>;
   error?: string;
+  tableNames: string[];
+  objectNames: string[];
+  itemsLoaded: boolean;
 }

@@ -6,6 +6,7 @@ import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import type { TableDetail } from "../../types/api.js";
+import { ComboboxInput } from "../../components/ComboboxInput.js";
 
 // ── Left panel: table list ────────────────────────────────────────────────────
 
@@ -13,6 +14,8 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
   const snap = useSnapshot(store.state);
   const tables = () => snap().explore.tables;
+
+  const tableNames = createMemo(() => tables().items.map((t: { table_name: string }) => t.table_name));
 
   const visible = createMemo(() => {
     const q = tables().filter.toLowerCase();
@@ -22,11 +25,11 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
 
   return (
     <>
-      <input
-        class="explore-filter-input"
-        placeholder="Filter tables…"
+      <ComboboxInput
         value={tables().filter}
-        onInput={(e) => store.dispatch({ tag: "explore", action: { type: "tables-filter", q: e.currentTarget.value } })}
+        onChange={(v) => store.dispatch({ tag: "explore", action: { type: "tables-filter", q: v } })}
+        options={tableNames()}
+        placeholder="Filter tables…"
       />
       <Show when={tables().loading}>
         <div class="loading-overlay"><div class="spinner" /> Loading tables…</div>

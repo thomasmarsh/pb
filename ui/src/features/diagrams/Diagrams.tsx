@@ -9,6 +9,7 @@ import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
+import { ComboboxInput } from "../../components/ComboboxInput.js";
 
 export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
@@ -22,6 +23,9 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
 
   onMount(() => {
     store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "diagrams" } } });
+    if (!dg().itemsLoaded) {
+      store.dispatch({ tag: "diagrams", action: { type: "loadItems" } });
+    }
   });
 
   function handleGenerate() {
@@ -59,33 +63,26 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
       <div class="card" style={{ padding: "12px 20px" }}>
         <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
           <Show when={activeTab() === "inheritance"}>
-            <input class="search-input" placeholder="Root object (optional)" value={rootInput()}
-                   onInput={(e) => setRootInput(e.currentTarget.value)} />
+            <ComboboxInput value={rootInput()} onChange={setRootInput} options={dg().objectNames} placeholder="Root object (optional)" />
           </Show>
           <Show when={activeTab() === "calls"}>
-            <input class="search-input" placeholder="Focal object" value={focalInput()}
-                   onInput={(e) => setFocalInput(e.currentTarget.value)} />
+            <ComboboxInput value={focalInput()} onChange={setFocalInput} options={dg().objectNames} placeholder="Focal object" />
             <input class="search-input" type="number" value={depthInput()} min="1" max="5"
                    style={{ "max-width": "80px" }}
                    onInput={(e) => setDepthInput(e.currentTarget.value)} />
           </Show>
           <Show when={activeTab() === "dw-tables"}>
-            <input class="search-input" placeholder="Filter table (optional)" value={tableInput()}
-                   onInput={(e) => setTableInput(e.currentTarget.value)} />
+            <ComboboxInput value={tableInput()} onChange={setTableInput} options={dg().tableNames} placeholder="Filter table (optional)" />
           </Show>
           <Show when={activeTab() === "sql-lineage"}>
-            <input class="search-input" placeholder="Focal object (optional)" value={focalInput()}
-                   onInput={(e) => setFocalInput(e.currentTarget.value)} />
+            <ComboboxInput value={focalInput()} onChange={setFocalInput} options={dg().objectNames} placeholder="Focal object (optional)" />
           </Show>
           <Show when={activeTab() === "table-lineage"}>
-            <input class="search-input" placeholder="Table name (required)" value={tableInput()}
-                   onInput={(e) => setTableInput(e.currentTarget.value)} />
+            <ComboboxInput value={tableInput()} onChange={setTableInput} options={dg().tableNames} placeholder="Table name (required)" />
           </Show>
           <Show when={activeTab() === "proc-tables"}>
-            <input class="search-input" placeholder="Table name (optional — filters diagram)" value={tableInput()}
-                   onInput={(e) => setTableInput(e.currentTarget.value)} />
-            <input class="search-input" placeholder="Focal object (optional)" value={focalInput()}
-                   onInput={(e) => setFocalInput(e.currentTarget.value)} />
+            <ComboboxInput value={tableInput()} onChange={setTableInput} options={dg().tableNames} placeholder="Table name (optional)" />
+            <ComboboxInput value={focalInput()} onChange={setFocalInput} options={dg().objectNames} placeholder="Focal object (optional)" />
           </Show>
           <button class="filter-pill active" onClick={handleGenerate}>Generate</button>
         </div>
