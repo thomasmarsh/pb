@@ -91,6 +91,7 @@ function TopTablesWidget(props: { store: Store<AppState, AppAction> }) {
 }
 
 import { Loading } from "../../components/Loading.js";
+import { InlineDiagram } from "../../components/InlineDiagram.js";
 
 export function Dashboard(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
@@ -128,6 +129,13 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
             </div>
           )}
         </For>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Complexity Heatmap</h2>
+        </div>
+        <InlineDiagram kind="heatmap" store={store} compact />
       </div>
 
       <Show when={s()!.by_kind && s()!.by_kind!.length > 0}>

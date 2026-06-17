@@ -1,6 +1,6 @@
 // tests/components/Dashboard.test.tsx — Tests for Dashboard component.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { screen, fireEvent } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
 import { Dashboard } from "../../src/features/dashboard/Dashboard.js";
@@ -24,6 +24,10 @@ const sampleStats = {
     { object: "w_main", pagerank: 0.03, in_degree: 20, out_degree: 15 },
   ],
 };
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("Dashboard component", () => {
   it("shows loading when stats is null", () => {
@@ -70,6 +74,27 @@ describe("Dashboard component", () => {
       (a) => a.tag === "objects" && a.action.type === "proc-select",
     );
     expect(procSelectActions.length).toBe(1);
+  });
+
+  it("renders complexity heatmap section", async () => {
+    vi.stubGlobal("fetch", (url: string) => {
+      if (url.includes("/api/diagram/heatmap")) {
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve('<svg id="heatmap-svg"></svg>'),
+        });
+      }
+      if (url.includes("/api/tables")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(sampleStats) });
+    });
+    const { container } = renderWithStore(Dashboard, {
+      dashboard: { stats: sampleStats },
+    });
+    await vi.waitUntil(() => container.querySelector("#heatmap-svg") != null);
+    const headers = [...container.querySelectorAll(".card-header h2")];
+    expect(headers.some((h) => h.textContent === "Complexity Heatmap")).toBe(true);
   });
 
   it("renders most important objects table", () => {
