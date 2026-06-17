@@ -8,6 +8,7 @@ import type { ExploreProcDetail, SqlStatementRow } from "../../types/api.js";
 import { AstNode } from "./AstNode.js";
 import { DetailShell } from "../../components/DetailShell.js";
 import { SqlStatementCard } from "../../components/SqlStatementCard.js";
+import { InlineDiagram } from "../../components/InlineDiagram.js";
 import { procBadge } from "../../utils/format.js";
 
 export function ProcDetailPanel(props: { nodeId: string }) {
@@ -15,6 +16,7 @@ export function ProcDetailPanel(props: { nodeId: string }) {
   const snap = useSnapshot(store.state);
   const entry = () => snap().explore.procCache[props.nodeId];
   const procName = () => props.nodeId.split(":")[2] ?? "";
+  const objectName = () => props.nodeId.split(":")[1] ?? "";
 
   const activeTab = () => snap().explore.activeTab;
 
@@ -78,6 +80,12 @@ export function ProcDetailPanel(props: { nodeId: string }) {
                     onClick={() => store.dispatch({ tag: "explore", action: { type: "tab", tab: "sql" } })}
                   >SQL ({d.sql_statements.length})</button>
                 </Show>
+                <Show when={d.sql_statements.length > 0}>
+                  <button
+                    class={`explore-tab-btn${activeTab() === "diagram" ? " active" : ""}`}
+                    onClick={() => store.dispatch({ tag: "explore", action: { type: "tab", tab: "diagram" } })}
+                  >Diagram</button>
+                </Show>
               </div>
             </div>
             <div class="explore-right-body">
@@ -124,6 +132,16 @@ export function ProcDetailPanel(props: { nodeId: string }) {
                       <SqlStatementCard stmt={stmt} store={store} />
                     )}
                   </For>
+                </div>
+              </Show>
+              <Show when={activeTab() === "diagram"}>
+                <div class="sql-tab-body">
+                  <InlineDiagram
+                    kind="sql-lineage"
+                    params={{ focal: objectName() }}
+                    store={store}
+                    compact
+                  />
                 </div>
               </Show>
             </div>

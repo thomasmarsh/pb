@@ -7,6 +7,7 @@ import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import type { TableDetail } from "../../types/api.js";
 import { ComboboxInput } from "../../components/ComboboxInput.js";
+import { InlineDiagram } from "../../components/InlineDiagram.js";
 
 // ── Left panel: table list ────────────────────────────────────────────────────
 
@@ -100,19 +101,10 @@ export function TableDetailPanel(props: { store: Store<AppState, AppAction> }) {
               const d = detail() as TableDetail;
               return (
                 <>
-                  <div class="explore-right-header">
+                    <div class="explore-right-header">
                     <span class="badge badge-dw">table</span>
                     <span class="proc-name">{name()}</span>
                     <span class="proc-params">{d.dw_count} DataWindow{d.dw_count !== 1 ? "s" : ""}</span>
-                    <button
-                      class="filter-pill"
-                      style={{ "margin-left": "auto" }}
-                      onClick={() => {
-                        store.dispatch({ tag: "diagrams", action: { type: "select", kind: "dw-tables" } });
-                        store.dispatch({ tag: "diagrams", action: { type: "params", params: { table: name() } } });
-                        store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "diagrams" } } });
-                      }}
-                    >Show in diagram</button>
                   </div>
                   <div class="explore-right-body" style={{ overflow: "auto" }}>
 
@@ -133,6 +125,9 @@ export function TableDetailPanel(props: { store: Store<AppState, AppAction> }) {
                         )}
                       </For>
                     </div>
+
+                    <div class="dw-section-header">DW–Table Diagram</div>
+                    <InlineDiagram kind="dw-tables" params={{ table: name() }} store={props.store} compact />
 
                     <Show when={d.columns.length > 0}>
                       <div class="dw-section-header">Columns selected</div>
