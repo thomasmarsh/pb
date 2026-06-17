@@ -1,14 +1,24 @@
 // ProcDetailPanel.tsx — Procedure detail with Source/AST/SQL tabs.
 
-import { Show, For, createMemo, createSignal, createEffect } from "solid-js";
+import { Show, For, createMemo, createSignal, createResource } from "solid-js";
 import { useSnapshot } from "../../core/store.js";
 import { useExploreStore } from "./ExploreContext.js";
-import { highlightPowerScript } from "../../lib/highlight.js";
+import { highlightPowerScriptChunked } from "../../lib/highlight.js";
 import type { ExploreProcDetail, SqlStatementRow } from "../../types/api.js";
 import { AstNode } from "./AstNode.js";
 import { DetailShell } from "../../components/DetailShell.js";
 import { SqlStatementCard } from "../../components/SqlStatementCard.js";
 import { procBadge } from "../../utils/format.js";
+
+function highlightAsync(code: string): Promise<string> {
+  return new Promise((resolve) => {
+    let result = "";
+    highlightPowerScriptChunked(code, (chunk, done) => {
+      result += chunk;
+      if (done) resolve(result);
+    });
+  });
+}
 
 export function ProcDetailPanel(props: { nodeId: string }) {
   const store = useExploreStore();
@@ -22,7 +32,15 @@ export function ProcDetailPanel(props: { nodeId: string }) {
     <DetailShell<ExploreProcDetail> entry={entry()} loadingMsg="Loading...">
       {(d) => {
         const lines = createMemo(() => d.source_rendered ? d.source_rendered.split("\n") : []);
-        const highlighted = createMemo(() => d.source_rendered ? highlightPowerScript(d.source_rendered) : "");
+
+        const [highlighted] = createResource(
+          () => ({ src: d.source_rendered, tab: activeTab() }),
+          ({ src, tab }) => {
+            if (!src || tab !== "source") return Promise.resolve("");
+            return highlightAsync(src);
+          },
+          { initialValue: "" },
+        );
 
         const highlightIdx = createMemo(() => {
           const hl = snap().explore.highlightedLine;
@@ -33,7 +51,8 @@ export function ProcDetailPanel(props: { nodeId: string }) {
         });
 
         const [sourceViewerEl, setSourceViewerEl] = createSignal<HTMLDivElement | null>(null);
-        createEffect(() => {
+
+        createMemo(() => {
           const idx = highlightIdx();
           const el = sourceViewerEl();
           if (idx == null || !el) return;
@@ -96,7 +115,12 @@ export function ProcDetailPanel(props: { nodeId: string }) {
                         height: "20.8px",
                       }} />
                     </Show>
-                    <pre innerHTML={highlighted()} />
+                    <Show
+                      when={!highlighted.loading}
+                      fallback={<div class="loading-overlay"><div class="spinner" /> Highlighting...</div>}
+                    >
+                      <pre innerHTML={highlighted()} />
+                    </Show>
                   </div>
                 </div>
               </Show>

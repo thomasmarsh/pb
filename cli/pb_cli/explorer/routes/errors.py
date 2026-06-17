@@ -6,7 +6,7 @@ import duckdb
 from fastapi import APIRouter, Depends, Query
 
 from pb_cli.explorer.routes.dependencies import get_db
-from pb_cli.explorer.services.errors import list_errors
+from pb_cli.explorer.services.errors import get_error_source, list_errors
 
 router = APIRouter()
 
@@ -20,3 +20,11 @@ async def list_errors_route(
     offset: int = Query(0, ge=0),
 ):
     return list_errors(conn, kind=kind, q=q, limit=limit, offset=offset)
+
+
+@router.get("/api/errors/source")
+async def error_source_route(
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
+    file: str = Query(..., description="File path"),
+):
+    return get_error_source(conn, file)

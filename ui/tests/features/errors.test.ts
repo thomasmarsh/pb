@@ -25,20 +25,32 @@ describe("errors reducer", () => {
   });
 
   describe("errors/setFilterKind", () => {
-    it("updates filterKind and sets loading", () => {
-      const ts = createTestStore(errorsReducer, mockEnv, initialErrorsState);
+    it("updates filterKind, resets page, and sets loading", () => {
+      const ts = createTestStore(errorsReducer, mockEnv, { ...initialErrorsState, page: 3 });
       ts.send({ type: "setFilterKind", kind: "sql" }, (s) => {
         s.filterKind = "sql";
+        s.page = 0;
         s.loading = true;
       });
     });
   });
 
   describe("errors/setQuery", () => {
-    it("updates query and sets loading", () => {
-      const ts = createTestStore(errorsReducer, mockEnv, initialErrorsState);
+    it("updates query, resets page, and sets loading", () => {
+      const ts = createTestStore(errorsReducer, mockEnv, { ...initialErrorsState, page: 2 });
       ts.send({ type: "setQuery", query: "invalid" }, (s) => {
         s.query = "invalid";
+        s.page = 0;
+        s.loading = true;
+      });
+    });
+  });
+
+  describe("errors/setPage", () => {
+    it("updates page and sets loading", () => {
+      const ts = createTestStore(errorsReducer, mockEnv, initialErrorsState);
+      ts.send({ type: "setPage", page: 1 }, (s) => {
+        s.page = 1;
         s.loading = true;
       });
     });

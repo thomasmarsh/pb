@@ -8,6 +8,7 @@ export type ErrorsAction =
   | { type: "loaded"; items: ParseErrorRow[]; total: number }
   | { type: "setFilterKind"; kind: ErrorKindFilter }
   | { type: "setQuery"; query: string }
+  | { type: "setPage"; page: number }
   | { type: "select"; row: ParseErrorRow | null }
   | { type: "error"; error: string }
   ;

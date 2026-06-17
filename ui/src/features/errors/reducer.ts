@@ -3,15 +3,16 @@
 import { Effect } from "../../core/effect.js";
 import type { Reducer } from "../../core/reducer.js";
 import type { ErrorsState } from "./types.js";
+import { PAGE_SIZE } from "./types.js";
 import type { ErrorsAction } from "./actions.js";
 import type { ErrorListResponse } from "../../types/api.js";
 
 export interface ErrorsEnv {
-  getErrors(params: { kind?: string; q?: string }): Effect<ErrorListResponse>;
+  getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Effect<ErrorListResponse>;
 }
 
 export const initialErrorsState: ErrorsState = {
-  items: [], total: 0, loading: false, filterKind: "all", query: "", selected: null,
+  items: [], total: 0, loading: false, filterKind: "all", query: "", page: 0, selected: null,
 };
 
 function fetchErrors(draft: ErrorsState, env: ErrorsEnv): Effect<ErrorsAction> {
@@ -19,6 +20,8 @@ function fetchErrors(draft: ErrorsState, env: ErrorsEnv): Effect<ErrorsAction> {
     .getErrors({
       kind: draft.filterKind === "all" ? undefined : draft.filterKind,
       q: draft.query || undefined,
+      limit: PAGE_SIZE,
+      offset: draft.page * PAGE_SIZE,
     })
     .map((data): ErrorsAction => ({ type: "loaded", items: data.items, total: data.total }))
     .catch((e): ErrorsAction => ({ type: "error", error: String(e) }));
@@ -36,10 +39,16 @@ function reduce(draft: ErrorsState, action: ErrorsAction, env: ErrorsEnv): Effec
     return null;
   case "setFilterKind":
     draft.filterKind = action.kind;
+    draft.page = 0;
     draft.loading = true;
     return fetchErrors(draft, env);
   case "setQuery":
     draft.query = action.query;
+    draft.page = 0;
+    draft.loading = true;
+    return fetchErrors(draft, env);
+  case "setPage":
+    draft.page = action.page;
     draft.loading = true;
     return fetchErrors(draft, env);
   case "select":

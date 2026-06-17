@@ -40,7 +40,7 @@ export interface ApiClient {
   getExploreDatawindow(name: string): Promise<DwExploreDetail>;
   getTables(): Promise<TableSummary[]>;
   getTableDetail(name: string): Promise<TableDetail>;
-  getErrors(params: { kind?: string; q?: string }): Promise<ErrorListResponse>;
+  getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse>;
 }
 
 function apiParams(obj: Record<string, string | number>): string {
@@ -183,8 +183,8 @@ export function createApiClient(): ApiClient {
       return fetchJson(`/api/tables/${encodeURIComponent(name)}`);
     },
 
-    async getErrors(params: { kind?: string; q?: string }): Promise<ErrorListResponse> {
-      return fetchJson("/api/errors?" + apiParams({ kind: params.kind ?? "", q: params.q ?? "" }));
+    async getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse> {
+      return fetchJson("/api/errors?" + apiParams({ kind: params.kind ?? "", q: params.q ?? "", limit: params.limit ?? 200, offset: params.offset ?? 0 }));
     },
   };
 }

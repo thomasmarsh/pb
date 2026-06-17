@@ -80,7 +80,7 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function highlightLine(line: string): string {
+export function highlightLine(line: string): string {
   let result = "";
   let i = 0;
   const len = line.length;
@@ -194,6 +194,28 @@ function highlightLine(line: string): string {
 
 export function highlightPowerScript(code: string): string {
   return code.split("\n").map(line => highlightLine(line)).join("\n");
+}
+
+const CHUNK_SIZE = 200;
+
+export function highlightPowerScriptChunked(
+  code: string,
+  onChunk: (partial: string, done: boolean) => void,
+): void {
+  const lines = code.split("\n");
+  let i = 0;
+  function nextChunk() {
+    const end = Math.min(i + CHUNK_SIZE, lines.length);
+    const chunk = lines.slice(i, end).map(line => highlightLine(line)).join("\n");
+    i = end;
+    if (i >= lines.length) {
+      onChunk(chunk, true);
+    } else {
+      onChunk(chunk, false);
+      setTimeout(nextChunk, 0);
+    }
+  }
+  nextChunk();
 }
 
 // ── SQL highlighting via highlight.js ────────────────────────────────────────
