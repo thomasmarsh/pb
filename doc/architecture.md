@@ -20,7 +20,7 @@ pb/
 │   │   ├── cli.py            Entry point — all CLI sub-commands
 │   │   ├── build.py          Build management: locate cabal binary, drive pnpm
 │   │   ├── common.py         DuckDB schema (CREATE TABLE) + INSERT statements
-│   │   ├── index.py          JSONL → DuckDB ingestion (pb ingest / pb index)
+│   │   ├── index.py          JSONL → DuckDB ingestion (pb index)
 │   │   ├── analyze.py        Call graph metrics, cyclomatic complexity (pb analyze)
 │   │   ├── diagram.py        GraphViz SVG generation (pb diagram)
 │   │   ├── debt.py           BsRaw / ExRaw / DW coverage analyser (pb debt)
@@ -44,7 +44,7 @@ pb/
 │   │   ├── core/             TCA-style framework primitives
 │   │   │   ├── reducer.ts    Reducer<S,A,Env> type, pullback(), combine()
 │   │   │   ├── effect.ts     Effect<A> class for async side effects
-│   │   │   └── store.ts      createStore(), useSnapshot(), scope()
+│   │   │   └── store.ts      createStore(), scope() — getState() on Store/ScopedStore
 │   │   ├── app/              App-level wiring
 │   │   │   ├── state.ts      AppState shape (single state tree)
 │   │   │   ├── actions.ts    AppAction tagged union (routes to feature reducers)
@@ -83,7 +83,7 @@ flowchart TD
     SRC["PowerBuilder source files\n.srw .sru .srd …"]
     RUNNER["pb-runner\n(Haskell binary)"]
     JSONL["JSONL stream\none JSON object per file"]
-    INGEST["pb ingest\n(cli/pb_cli/index.py)"]
+    INDEX["pb index\n(cli/pb_cli/index.py)"]
     DB[("pb.duckdb")]
     ANALYZE["pb analyze\n(cli/pb_cli/analyze.py)\ncall graph · cyclomatic complexity"]
     EXPLORE["pb explore\n(cli/pb_cli/cli.py)"]
@@ -92,8 +92,8 @@ flowchart TD
 
     SRC -->|"cabal run pb-runner\n-i SRC --jsonl"| RUNNER
     RUNNER --> JSONL
-    JSONL --> INGEST
-    INGEST --> DB
+    JSONL --> INDEX
+    INDEX --> DB
     DB --> ANALYZE
     ANALYZE --> DB
     DB --> EXPLORE
@@ -108,7 +108,7 @@ JSON emitted by `pb-runner`.
 
 ## Ingest pipeline internals
 
-`pb ingest` drives a two-phase pipeline: **indexing** then **graph metrics**.
+`pb index` drives a two-phase pipeline: **import** then **graph metrics**.
 Understanding where time goes matters because the pipeline takes several minutes
 on a mid-size codebase (~777 files, 50 000 DB rows).
 
@@ -123,7 +123,7 @@ on a mid-size codebase (~777 files, 50 000 DB rows).
 
 ### Indexing phase (`cli/pb_cli/index.py`)
 
-`ingest_batch` accumulates all rows from the parsed object stream into Python
+`import_batch` accumulates all rows from the parsed object stream into Python
 lists (one list per table), then flushes in chunks of 5 000 rows inside a
 single explicit `BEGIN`/`COMMIT` transaction.
 
@@ -134,7 +134,7 @@ re-reading the `procedures` table later:
   already-deserialized body dict in `_proc_row()` and stored directly in the
   `procedures.cyclomatic` column.
 - **Call extraction** — `walk_calls(body)` runs on the same dict in
-  `_ingest_ps()` and populates `rows['calls']` directly.
+  `_import_ps()` and populates `rows['calls']` directly.
 
 Both operations were previously a separate analyze sub-phase that re-fetched
 every procedure from the DB and re-parsed `body_json` through `json.loads`.
@@ -166,7 +166,7 @@ four NetworkX operations over the call graph:
   deleted files are pruned by `delete_file_rows` before re-ingestion, so
   partial re-runs stay consistent.
 
-### Data flow inside `pb ingest`
+### Data flow inside `pb index`
 
 ```mermaid
 flowchart TD
@@ -174,10 +174,10 @@ flowchart TD
     RUNNER["pb-runner\n(Haskell, subprocess)"]
     JSONL["JSONL stream"]
     PARSE["parse_stream()\ncli/pb_cli/parse.py"]
-    INGEST["ingest_batch()\ncli/pb_cli/index.py"]
+    IMPORT["import_batch()\ncli/pb_cli/importing.py"]
     SCHEMA["DuckDB schema\ncli/pb_cli/common.py"]
 
-    subgraph INGEST_DETAIL["ingest_batch — per procedure"]
+    subgraph IMPORT_DETAIL["import_batch — per procedure"]
         PROC_ROW["_proc_row()\n• json.dumps(body)\n• count_branches → cyclomatic"]
         WALK["walk_calls(body)\n→ rows['calls']"]
         SQL_PARSE["_extract_sql()\nsqlglot → sql_statements"]
@@ -193,10 +193,10 @@ flowchart TD
         INS["INSERT object_metrics"]
     end
 
-    SRC --> RUNNER --> JSONL --> PARSE --> INGEST
+    SRC --> RUNNER --> JSONL --> PARSE --> IMPORT
     SCHEMA --> DB
-    INGEST --> INGEST_DETAIL
-    INGEST_DETAIL -->|"BEGIN … COMMIT\n5000-row chunks"| DB
+    IMPORT --> IMPORT_DETAIL
+    IMPORT_DETAIL -->|"BEGIN … COMMIT\n5000-row chunks"| DB
     DB --> METRICS --> METRICS_DETAIL --> DB
 ```
 
@@ -321,9 +321,9 @@ Combinators: `Effect.fromPromise`, `Effect.send`, `Effect.merge`, `.map`,
 
 Creates a Valtio `proxy` and a `dispatch` function.  Each `dispatch` call
 runs the top-level reducer synchronously (mutating the proxy), then executes
-any returned `Effect` asynchronously.  `useSnapshot` bridges the proxy to a
-SolidJS reactive getter; `scope` narrows a parent store to a child state/action
-slice for prop-drilling.
+any returned `Effect` asynchronously.  `store.getState()` returns a SolidJS
+reactive accessor for the current state snapshot (call inside a component);
+`scope` narrows a parent store to a child state/action slice for prop-drilling.
 
 ### Feature slices
 
@@ -396,8 +396,8 @@ cd parser && cabal build && cabal test
 # 2. Install Python deps
 cd cli && uv sync
 
-# 3. Run pb ingest to populate pb.duckdb
-./pb ingest example/openpay
+# 3. Run pb index to populate pb.duckdb
+./pb index example/openpay
 
 # 4. Start the explorer (auto-builds TS on first run)
 ./pb explore

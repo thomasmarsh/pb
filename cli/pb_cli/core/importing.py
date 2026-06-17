@@ -43,7 +43,7 @@ def _is_sql(text: str) -> bool:
     return first in _SQL_KEYWORDS
 
 
-def ingest_file(obj: dict, rows: RowBatch, dialect: str = "oracle") -> None:
+def import_file(obj: dict, rows: RowBatch, dialect: str = "oracle") -> None:
     file = obj.get("file", "")
     kind = obj.get("kind", "")
     name = _object_name(obj)
@@ -54,9 +54,9 @@ def ingest_file(obj: dict, rows: RowBatch, dialect: str = "oracle") -> None:
         rows["inherits"].append(InheritsRow(name, ancestor))
 
     if kind == "powerscript":
-        _ingest_ps(obj, file, rows, dialect)
+        _import_ps(obj, file, rows, dialect)
     elif kind == "datawindow":
-        _ingest_dw(obj, file, rows)
+        _import_dw(obj, file, rows)
 
 
 def _object_name(obj: dict) -> str:
@@ -67,7 +67,7 @@ def _object_name(obj: dict) -> str:
     return stem.rsplit(".", 1)[0] if "." in stem else stem
 
 
-def _ingest_ps(obj: dict, file: str, rows: RowBatch, dialect: str = "oracle") -> None:
+def _import_ps(obj: dict, file: str, rows: RowBatch, dialect: str = "oracle") -> None:
     obj_name = obj.get("meta", {}).get("object", "")
     for proc_type, key in [
         ("function", "functions"),
@@ -148,7 +148,7 @@ def _proc_row(file: str, proc_type: str, block: dict, body: list) -> ProcedureRo
     )
 
 
-def _ingest_dw(obj: dict, file: str, rows: RowBatch) -> None:
+def _import_dw(obj: dict, file: str, rows: RowBatch) -> None:
     dw_name = _object_name(obj)
 
     for ctrl in obj.get("controls", []):

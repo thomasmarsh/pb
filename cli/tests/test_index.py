@@ -9,7 +9,7 @@ Run:
   uv run pytest tests/test_index.py
 """
 
-from pb_cli.core.ingestion import _ingest_dw, _proc_row, ingest_file
+from pb_cli.core.importing import _import_dw, _proc_row, import_file
 from pb_cli.core.models import new_row_batch
 from pb_cli.shell.db import INSERT
 
@@ -74,7 +74,7 @@ def test_dw_retrieve_tables_populated_when_e2_done(db_conn):
 
 
 # ---------------------------------------------------------------------------
-# Unit tests for _ingest_dw tag dispatch (no DB, no pb-runner)
+# Unit tests for _import_dw tag dispatch (no DB, no pb-runner)
 # ---------------------------------------------------------------------------
 
 
@@ -171,26 +171,26 @@ def _ps_obj_with_body(proc_name: str, body: list) -> dict:
     }
 
 
-def test_ingest_file_extracts_ex_call():
+def test_import_file_extracts_ex_call():
     rows = _rows()
     body = [{"tag": "ExCall", "callee": {"segments": [{"name": "messagebox", "subscript": None}]}, "args": []}]
-    ingest_file(_ps_obj_with_body("f_test", body), rows)
+    import_file(_ps_obj_with_body("f_test", body), rows)
     callee_names = {r[3] for r in rows["calls"]}
     assert "messagebox" in callee_names, f"ExCall not extracted; calls: {callee_names}"
 
 
-def test_ingest_file_extracts_method_call():
+def test_import_file_extracts_method_call():
     rows = _rows()
     body = [{"tag": "ExMethodCall", "method": "Reset", "receiver": {}, "args": []}]
-    ingest_file(_ps_obj_with_body("f_test", body), rows)
+    import_file(_ps_obj_with_body("f_test", body), rows)
     callee_names = {r[3] for r in rows["calls"]}
     assert "Reset" in callee_names, f"ExMethodCall not extracted; calls: {callee_names}"
 
 
-def test_ingest_file_calls_linked_to_object():
+def test_import_file_calls_linked_to_object():
     rows = _rows()
     body = [{"tag": "ExCall", "callee": {"segments": [{"name": "getitem", "subscript": None}]}, "args": []}]
-    ingest_file(_ps_obj_with_body("f_query", body), rows)
+    import_file(_ps_obj_with_body("f_query", body), rows)
     assert rows["calls"], "no calls rows produced"
     file, obj, proc, callee, call_type = rows["calls"][0]
     assert file == "test.sru"
@@ -200,9 +200,9 @@ def test_ingest_file_calls_linked_to_object():
     assert call_type == "ExCall"
 
 
-def test_ingest_file_no_calls_in_empty_body():
+def test_import_file_no_calls_in_empty_body():
     rows = _rows()
-    ingest_file(_ps_obj_with_body("f_empty", []), rows)
+    import_file(_ps_obj_with_body("f_empty", []), rows)
     assert rows["calls"] == [], "empty body should produce no calls"
 
 
@@ -230,13 +230,13 @@ def _dw_obj(retrieve=None):
 
 def test_tag_ok_inserts_table():
     rows = _rows()
-    _ingest_dw(_dw_obj(_ok_retrieve(tables=["emp"])), "test.srd", rows)
+    _import_dw(_dw_obj(_ok_retrieve(tables=["emp"])), "test.srd", rows)
     assert len(rows["dw_retrieve_tables"]) == 1
 
 
 def test_tag_ok_inserts_columns_split():
     rows = _rows()
-    _ingest_dw(_dw_obj(_ok_retrieve(columns=["emp.id", "emp.name"])), "test.srd", rows)
+    _import_dw(_dw_obj(_ok_retrieve(columns=["emp.id", "emp.name"])), "test.srd", rows)
     assert len(rows["dw_retrieve_columns"]) == 2
     table_names = {r[3] for r in rows["dw_retrieve_columns"]}
     col_names = {r[4] for r in rows["dw_retrieve_columns"]}
@@ -247,21 +247,21 @@ def test_tag_ok_inserts_columns_split():
 def test_tag_ok_inserts_where():
     rows = _rows()
     where = [{"exp1": "t.id", "op": "=", "exp2": ":p", "logic": None}]
-    _ingest_dw(_dw_obj(_ok_retrieve(where=where)), "test.srd", rows)
+    _import_dw(_dw_obj(_ok_retrieve(where=where)), "test.srd", rows)
     assert len(rows["dw_retrieve_where"]) == 1
 
 
 def test_tag_ok_inserts_arguments():
     rows = _rows()
     args = [{"name": "aid", "type": "string"}]
-    _ingest_dw(_dw_obj(_ok_retrieve(arguments=args)), "test.srd", rows)
+    _import_dw(_dw_obj(_ok_retrieve(arguments=args)), "test.srd", rows)
     assert len(rows["dw_arguments"]) == 1
 
 
 def test_tag_raw_inserts_nothing():
     # New format: {"tag":"DwRetrieveRaw","contents":"SELECT ..."}
     rows = _rows()
-    _ingest_dw(_dw_obj({"tag": "DwRetrieveRaw", "contents": "SELECT 1"}), "test.srd", rows)
+    _import_dw(_dw_obj({"tag": "DwRetrieveRaw", "contents": "SELECT 1"}), "test.srd", rows)
     assert rows["dw_retrieve_tables"] == []
     assert rows["dw_retrieve_columns"] == []
     assert rows["dw_retrieve_where"] == []
@@ -270,7 +270,7 @@ def test_tag_raw_inserts_nothing():
 
 def test_no_retrieve_inserts_nothing():
     rows = _rows()
-    _ingest_dw(_dw_obj(), "test.srd", rows)
+    _import_dw(_dw_obj(), "test.srd", rows)
     assert rows["dw_retrieve_tables"] == []
     assert rows["dw_retrieve_columns"] == []
     assert rows["dw_retrieve_where"] == []
@@ -318,7 +318,7 @@ def test_select_extracted_from_proc():
         "f_query",
         [_sql_node("SELECT cust_name INTO :ls_name FROM customer WHERE cust_id = :li_id", line=5)],
     )
-    ingest_file(obj, rows)
+    import_file(obj, rows)
     assert len(rows["sql_statements"]) == 1
     row = rows["sql_statements"][0]
     # (file, object, proc_name, line, operation, raw_sql, parsed_json,
@@ -337,7 +337,7 @@ def test_select_extracted_from_proc():
 def test_non_sql_bsraw_not_extracted():
     rows = _rows()
     obj = _ps_obj("f_other", [_sql_node("CALL super::constructor")])
-    ingest_file(obj, rows)
+    import_file(obj, rows)
     assert rows["sql_statements"] == []
 
 
@@ -350,7 +350,7 @@ def test_multiple_sql_stmts_indexed():
             _sql_node("COMMIT USING SQLCA", line=3),
         ],
     )
-    ingest_file(obj, rows)
+    import_file(obj, rows)
     assert len(rows["sql_statements"]) == 2
     ops = {r[4] for r in rows["sql_statements"]}
     assert ops == {"INSERT", "COMMIT"}
@@ -376,7 +376,7 @@ def test_sql_nested_in_if_is_extracted():
             }
         ],
     )
-    ingest_file(obj, rows)
+    import_file(obj, rows)
     assert len(rows["sql_statements"]) == 1
     row = rows["sql_statements"][0]
     assert row.line == 2
@@ -404,7 +404,7 @@ def test_sql_nested_in_for_loop_is_extracted():
             }
         ],
     )
-    ingest_file(obj, rows)
+    import_file(obj, rows)
     assert len(rows["sql_statements"]) == 1
     tables = rows["sql_statements"][0].tables
     assert tables is not None
@@ -430,7 +430,7 @@ def test_sql_nested_in_choose_case_is_extracted():
             }
         ],
     )
-    ingest_file(obj, rows)
+    import_file(obj, rows)
     assert len(rows["sql_statements"]) == 1
     tables = rows["sql_statements"][0].tables
     assert tables is not None

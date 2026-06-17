@@ -82,7 +82,7 @@ export function Explore(props: { store: Store<AppState, AppAction> }) {
               >
                 <Show
                   when={snap().explore.libraries.length > 0}
-                  fallback={<div class="tree-empty">No data. Run <code>pb ingest</code> first.</div>}
+                  fallback={<div class="tree-empty">No data. Run <code>pb index</code> first.</div>}
                 >
                   <For each={snap().explore.libraries}>
                     {(lib) => <LibraryNode lib={lib} depth={0} />}

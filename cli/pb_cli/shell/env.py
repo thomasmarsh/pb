@@ -48,7 +48,7 @@ from pb_cli.shell.db import (
     drop_tables,
     insert_parse_errors,
 )
-from pb_cli.shell.ingest import ingest_batch, run_from_jsonl_lines
+from pb_cli.shell.importing import import_batch, run_from_jsonl_lines
 from pb_cli.shell.metrics import compute_dit, compute_metrics
 from pb_cli.shell.reporter import LiveReporter, Reporter
 from pb_cli.shell.runner import parse_stream, render_error
@@ -93,7 +93,7 @@ class DbConnection(Protocol):
     def __call__(self, path: str | Path, read_only: bool = False) -> AbstractContextManager[Conn]: ...
 
 
-class IngestBatch(Protocol):
+class ImportBatch(Protocol):
     def __call__(
         self,
         objects: Iterable[dict],
@@ -135,7 +135,7 @@ class StorageEnv:
     delete_file_rows: Callable[[Conn, str], None] = field(default=delete_file_rows)
     save_file_state: Callable[[Conn, dict[str, str]], None] = field(default=save_file_state)
     build_subset_tmpdir: Callable[[Path, list[str]], Path] = field(default=build_subset_tmpdir)
-    ingest_batch: IngestBatch = field(default=ingest_batch)
+    import_batch: ImportBatch = field(default=import_batch)
     run_from_jsonl_lines: RunFromJsonlLines = field(default=run_from_jsonl_lines)
     compute_dit: Callable[[Conn], dict[str, int]] = field(default=compute_dit)
     count_sql_parse_failures: Callable[[Conn], int] = field(default=count_sql_parse_failures)

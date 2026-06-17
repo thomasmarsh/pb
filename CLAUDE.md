@@ -102,7 +102,7 @@ the `"tag"` value on every node is the **literal Haskell constructor name** — 
   *and* everything inside `then`/`elseIfs`/`else`/`body`/`clauses`).
 
 Do not hand-roll a walker that special-cases field names per constructor — it is fragile to
-exactly this kind of schema drift (this bit us once: see BACKLOG's `pb ingest` SQL-extraction
+exactly this kind of schema drift (this bit us once: see BACKLOG's `pb index` SQL-extraction
 entry). Use `pb_cli.core.ast_walker.walk_tagged`, which recurses into every dict value and list
 item unconditionally and can't miss a tag regardless of which field a constructor nests its
 children under. `walk_calls`/`count_branches`/`walk_bsraw`/`walk_exraw` are all built on it.

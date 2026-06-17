@@ -1,4 +1,4 @@
-"""Implementation of `pb ingest` — incremental parse → index → analyze pipeline."""
+"""Implementation of `pb index` — incremental parse → import → analyze pipeline."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def run(
             objects, errors, parse_errors = _parse_subset(src_dir, binary, to_parse, reporter)
 
             with reporter.indexing_step() as advance:
-                row_count = env.storage.ingest_batch(objects, conn, dialect, on_progress=advance)
+                row_count = env.storage.import_batch(objects, conn, dialect, on_progress=advance)
             env.storage.insert_parse_errors(conn, parse_errors)
 
             parsed_files = {obj["file"] for obj in objects}

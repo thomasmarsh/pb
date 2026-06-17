@@ -61,11 +61,11 @@ def dump(
         run_dump(src_dir, Path(output_dir), binary, reporter)
 
 
-# ── pb ingest ──────────────────────────────────────────────────────────────────
+# ── pb index ───────────────────────────────────────────────────────────────────
 
 
 @app.command()
-def ingest(
+def index(
     input_path: Path = typer.Argument(..., help="Source directory or .pbl file."),
     db: str = typer.Option("pb.duckdb", "--db", help="DuckDB database path."),
     no_build: bool = typer.Option(False, "--no-build", help="Skip cabal build step."),
@@ -73,7 +73,7 @@ def ingest(
     sql_dialect: str = typer.Option("oracle", "--sql-dialect", help="SQL dialect for sqlglot (oracle/tsql/sybase)."),
     repo: Optional[Path] = typer.Option(None, "--repo", help="Repo root (auto-detect if omitted)."),
 ) -> None:
-    """Parse → index → analyze, incremental by default (only changed files).
+    """Parse → import → analyze, incremental by default (only changed files).
 
     INPUT may be a directory of .sr* source files, a single .pbl library file,
     or a directory containing .pbl files (extracted transparently).
@@ -97,7 +97,7 @@ def extract(
     """Extract .pbl library files to per-library source directories.
 
     Each foo.pbl produces an output/foo.pbl/ directory of .sr* source files.
-    Run once as a setup step before 'pb dump', 'pb ingest', or 'cabal test'.
+    Run once as a setup step before 'pb dump', 'pb index', or 'cabal test'.
     """
     src = Path(input_dir).resolve()
     out = Path(output_dir)
@@ -167,14 +167,14 @@ def check_corpus(
     run_corpus(repo=repo, no_build=no_build)
 
 
-# ── pb index (legacy) ─────────────────────────────────────────────────────────
+# ── pb import ─────────────────────────────────────────────────────────────────
 
 
-@app.command()
-def index(
+@app.command("import")
+def import_cmd(
     db: str = typer.Argument("pb.duckdb", help="DuckDB database path."),
 ) -> None:
-    """Populate pb.duckdb from pb-runner JSONL output (reads stdin). Use 'pb ingest' instead."""
+    """Populate pb.duckdb from pb-runner JSONL output (reads stdin). Use 'pb index' instead."""
     env.storage.run_from_jsonl_lines(sys.stdin, db)
 
 
@@ -202,17 +202,30 @@ def _port_in_use(host: str, port: int) -> bool:
 
 @app.command()
 def explore(
+    input_path: Optional[Path] = typer.Argument(None, help="Source directory or .pbl file. If given, index first."),
     db: str = typer.Option("pb.duckdb", "--db", help="DuckDB database path."),
     host: str = typer.Option("127.0.0.1", "--host", help="Bind host."),
     port: int = typer.Option(8000, "--port", help="Bind port."),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser on start."),
+    no_build: bool = typer.Option(False, "--no-build", help="Skip cabal build step."),
+    reset: bool = typer.Option(False, "--reset", help="Drop all tables and do a full re-parse."),
+    sql_dialect: str = typer.Option("oracle", "--sql-dialect", help="SQL dialect for sqlglot (oracle/tsql/sybase)."),
+    repo: Optional[Path] = typer.Option(None, "--repo", help="Repo root (auto-detect if omitted)."),
 ) -> None:
-    """Start the interactive DuckDB explorer web UI."""
-    from pb_cli.explorer import create_app
+    """Start the interactive DuckDB explorer web UI.
+
+    If INPUT is given, index the source tree first (equivalent to `pb index`).
+    """
+    reporter = env.reporter
+
+    if input_path is not None:
+        repo_path = env.build.find_repo(repo)
+        binary = env.build.find_binary(repo_path) if no_build else _build(repo_path, reporter)
+        with resolve_source_dir(Path(input_path), reporter) as src_dir:
+            run_pipeline(src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect)
 
     url = f"http://{host}:{port}"
 
-    # If port is already in use, assume server is running — just open browser
     if _port_in_use(host, port):
         if open_browser:
             typer.echo(f"Explorer already running at {url} — opening browser.")
@@ -223,6 +236,8 @@ def explore(
 
     repo = env.build.find_repo()
     env.build.ensure_explorer_built(repo)
+
+    from pb_cli.explorer import create_app
 
     app = create_app(db)
 

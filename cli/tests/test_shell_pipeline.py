@@ -2,7 +2,7 @@
 
 Uses in-memory fakes for every env.storage/env.build field `run()` touches, so no
 cabal build and no real DuckDB connection are needed. Full corpus-backed integration
-coverage (real parse → real ingest → real metrics) stays in test_explorer.py's
+coverage (real parse → real import → real metrics) stays in test_explorer.py's
 db_path fixture, which exercises run_from_jsonl_lines + compute_metrics directly.
 """
 
@@ -52,7 +52,7 @@ def fake_env(tmp_path):
     e.storage.compute_metrics = lambda conn, progress: setattr(conn, "metrics_computed", True)
     e.storage.count_sql_parse_failures = lambda conn: 0
     e.storage.build_subset_tmpdir = lambda src_dir, files: subset_dir
-    e.storage.ingest_batch = lambda objects, conn, dialect="oracle", on_progress=None: len(objects)  # type: ignore[assignment]
+    e.storage.import_batch = lambda objects, conn, dialect="oracle", on_progress=None: len(objects)  # type: ignore[assignment]
     e.storage.insert_parse_errors = lambda conn, rows: conn.inserted_parse_errors.extend(rows)  # type: ignore[attr-defined]
     db.inserted_parse_errors = []
 
@@ -80,7 +80,7 @@ def test_no_changes_short_circuits(monkeypatch, fake_env):
     assert not db.metrics_computed
 
 
-def test_new_files_parsed_and_ingested(monkeypatch, fake_env):
+def test_new_files_parsed_and_imported(monkeypatch, fake_env):
     e, db = fake_env
     e.build.hash_source_dir = lambda src_dir: {"new.srw": "hash1"}
     e.runner.parse_stream = lambda src_dir, binary, *, remap_from=None, remap_to=None: iter(
@@ -99,7 +99,7 @@ def test_new_files_parsed_and_ingested(monkeypatch, fake_env):
     assert db.saved_state == {"new.srw": "hash1"}
 
 
-def test_changed_file_triggers_delete_then_reingest(monkeypatch, fake_env):
+def test_changed_file_triggers_delete_then_reimport(monkeypatch, fake_env):
     e, db = fake_env
     db.file_state = {"old.srw": "old_hash"}
     e.build.hash_source_dir = lambda src_dir: {"old.srw": "new_hash"}

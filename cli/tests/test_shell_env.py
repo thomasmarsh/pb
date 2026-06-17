@@ -48,7 +48,7 @@ def test_storage_env_defaults_are_real_functions():
     assert callable(s.delete_file_rows)
     assert callable(s.save_file_state)
     assert callable(s.build_subset_tmpdir)
-    assert callable(s.ingest_batch)
+    assert callable(s.import_batch)
     assert callable(s.run_from_jsonl_lines)
     assert callable(s.compute_dit)
     assert callable(s.compute_metrics)

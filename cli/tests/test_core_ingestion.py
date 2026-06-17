@@ -1,10 +1,10 @@
 import json
 
-from pb_cli.core.ingestion import _extract_sql, ingest_file
+from pb_cli.core.importing import _extract_sql, import_file
 from pb_cli.core.models import new_row_batch
 
 
-def test_ingest_powerscript_object():
+def test_import_powerscript_object():
     obj = {
         "file": "test.srw",
         "kind": "powerscript",
@@ -17,7 +17,7 @@ def test_ingest_powerscript_object():
         ],
     }
     rows = new_row_batch()
-    ingest_file(obj, rows)
+    import_file(obj, rows)
     assert len(rows["objects"]) == 1
     assert rows["objects"][0].name == "w_main"
     assert rows["objects"][0].ancestor == "w_base"
@@ -26,7 +26,7 @@ def test_ingest_powerscript_object():
     assert rows["procedures"][0].name == "uf_init"
 
 
-def test_ingest_datawindow_object():
+def test_import_datawindow_object():
     obj = {
         "file": "d_test.srd",
         "kind": "datawindow",
@@ -36,7 +36,7 @@ def test_ingest_datawindow_object():
         ],
     }
     rows = new_row_batch()
-    ingest_file(obj, rows)
+    import_file(obj, rows)
     assert len(rows["dw_controls"]) == 1
     assert rows["dw_controls"][0].control_name == "col_1"
 
@@ -281,7 +281,7 @@ def test_extract_sql_no_parse_error_row_for_intentional_skips():
     assert len(rows["parse_errors"]) == 0
 
 
-def test_ingest_dw_table_names_lowercased():
+def test_import_dw_table_names_lowercased():
     """DW retrieve table names and column FQN/column names must be lowercased on
     ingest — Oracle is case-insensitive, so MYTABLE and mytable are the same."""
     obj = {
@@ -301,7 +301,7 @@ def test_ingest_dw_table_names_lowercased():
         },
     }
     rows = new_row_batch()
-    ingest_file(obj, rows)
+    import_file(obj, rows)
     assert [r.table_name for r in rows["dw_retrieve_tables"]] == ["mytable", "othertable"]
     cols = rows["dw_retrieve_columns"]
     assert [r.table_name for r in cols] == ["mytable", "othertable"]

@@ -1,4 +1,4 @@
-"""Batch ingestion of parsed file dicts into DuckDB."""
+"""Batch import of parsed file dicts into DuckDB."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import sys
 from collections.abc import Iterable
 from typing import Callable
 
-from pb_cli.core.ingestion import ingest_file
+from pb_cli.core.importing import import_file
 from pb_cli.core.models import TABLES, new_row_batch
 from pb_cli.shell.db import INSERT, Conn, create_schema, db_connection
 
@@ -21,7 +21,7 @@ def run_from_jsonl_lines(lines: Iterable[str], db: str = "pb.duckdb", dialect: s
         if not line:
             continue
         obj = json.loads(line)
-        ingest_file(obj, rows, dialect)
+        import_file(obj, rows, dialect)
 
     with db_connection(db) as conn:
         create_schema(conn)
@@ -34,16 +34,16 @@ def run_from_jsonl_lines(lines: Iterable[str], db: str = "pb.duckdb", dialect: s
     print(f"Indexed {total} rows into {db}", file=sys.stderr)
 
 
-def ingest_batch(
+def import_batch(
     objects: Iterable[dict],
     conn: Conn,
     dialect: str = "oracle",
     on_progress: Callable[[int], None] | None = None,
 ) -> int:
-    """Ingest an iterable of parsed file dicts into an open connection. Returns row count."""
+    """Import an iterable of parsed file dicts into an open connection. Returns row count."""
     rows = new_row_batch()
     for obj in objects:
-        ingest_file(obj, rows, dialect)
+        import_file(obj, rows, dialect)
     total = 0
     conn.execute("BEGIN")
     try:

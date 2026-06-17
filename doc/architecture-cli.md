@@ -51,7 +51,7 @@ The import graph is strictly layered:
 |---|---|---|
 | `core/` → `shell/` | **No** | Never |
 | `core/` → `explorer/` | **No** | Never |
-| `shell/` → `core/` | **Yes** | `shell/ingest.py` imports `core/ingestion.py` |
+| `shell/` → `core/` | **Yes** | `shell/importing.py` imports `core/importing.py` |
 | `explorer/` → `core/` | **Yes** | `explorer/services/` imports `core/models.py` |
 | `explorer/` → `shell/` | **Yes** | `explorer/routes/dependencies.py` connects to DuckDB |
 | `cli.py` → `shell/` | **Yes** | `cli.py` imports `shell/env.py`, `shell/commands/` |
@@ -93,10 +93,10 @@ Fields: `parse_stream`, `render_error`.
 
 ### `StorageEnv` (15 fields)
 DuckDB connection management, schema DDL, incremental state tracking,
-batch ingestion, and metric computation.
+batch import, and metric computation.
 Fields: `db_connection`, `create_schema`, `drop_tables`,
 `create_state_table`, `load_file_state`, `delete_file_rows`,
-`save_file_state`, `build_subset_tmpdir`, `ingest_batch`,
+`save_file_state`, `build_subset_tmpdir`, `import_batch`,
 `run_from_jsonl_lines`, `compute_dit`, `compute_metrics`, `connect`.
 
 ### `reporter`
@@ -126,7 +126,7 @@ test_env = ShellEnv(
 Fields whose real function has keyword-only parameters or defaults that
 call sites rely on use a `Protocol` class preserving the full signature
 (e.g., `ParseStream`, `FindRepo`, `BuildRunner`, `EnsureExplorerBuilt`,
-`DbConnection`, `IngestBatch`, `RunFromJsonlLines`). All other fields use
+`DbConnection`, `ImportBatch`, `RunFromJsonlLines`). All other fields use
 plain `Callable[[...], ...]` annotations — pyright still checks the
 assigned function against the field's type, but no class boilerplate is
 needed where the real signature adds nothing a `Callable` cannot express.
@@ -141,7 +141,7 @@ needed where the real signature adds nothing a `Callable` cannot express.
 |---|---|---|
 | `models.py` | Row types (`NamedTuple`) and `RowBatch` container | `ObjectRow`, `ProcedureRow`, `CallRow`, `DwControlRow`, `SqlStatementRow`, `InheritsRow`, `RowBatch`, `new_row_batch`, `TABLES` |
 | `ast_walker.py` | Recursive walkers over parsed AST JSON | `walk_calls`, `walk_exraw`, `walk_bsraw`, `count_branches`, `walk_dw_controls` |
-| `ingestion.py` | JSON → `RowBatch` transforms | `ingest_file` |
+| `importing.py` | JSON → `RowBatch` transforms | `import_file` |
 | `sql.py` | PowerBuilder SQL parser (wraps sqlglot with PB-specific rewrites) | `parse_pb_sql` |
 | `state.py` | Pure file-state diffing | `FileDiff`, `diff_state` |
 | `categorize.py` | Keyword-driven classification of BsRaw statement text | `categorize`, `SQL_KWS`, `DW_STRUCT_FIELDS` |
@@ -155,11 +155,11 @@ needed where the real signature adds nothing a `Callable` cannot express.
 | `build.py` | Repo discovery, `pb-runner` binary build, file enumeration | `find_repo`, `build_runner`, `find_binary`, `walk_sr_files`, `count_sr_files`, `hash_source_dir`, `ensure_explorer_built`, `build_subset_tmpdir`, `get_queries_dir` |
 | `runner.py` | Stream parse results from `pb-runner --jsonl` | `parse_stream`, `render_error` |
 | `db.py` | DuckDB schema DDL, connection management, query parsing | `db_connection`, `connect`, `create_schema`, `drop_tables`, `Conn`, `INSERT`, `parse_sql_file` |
-| `ingest.py` | Batch ingestion of parsed file dicts into DuckDB | `ingest_batch`, `run_from_jsonl_lines` |
+| `importing.py` | Batch import of parsed file dicts into DuckDB | `import_batch`, `run_from_jsonl_lines` |
 | `state.py` | Incremental file-state persistence (DB-backed) | `create_state_table`, `load_file_state`, `save_file_state`, `delete_file_rows` |
 | `metrics.py` | Graph metric computation (PageRank, betweenness, DIT) | `compute_metrics`, `compute_dit` |
 | `diagrams.py` | DOT/SVG diagram building, LRU-cached rendering with Bezier fallback | `render_svg`, `build_inheritance`, `build_calls`, `build_dw_tables`, `build_heatmap`, `build_sql_lineage`, `build_table_lineage`, `build_proc_tables` |
-| `pipeline.py` | Incremental `pb ingest` orchestration | `run` |
+| `pipeline.py` | Incremental `pb index` orchestration | `run` |
 | `pbl.py` | PBL binary library extraction (filesystem, temp dirs, file writes) | `extract`, `extract_to_dir`, `resolve_source_dir`, `PblEntry` |
 | `reporter.py` | Unified output protocol for pipeline operations | `Reporter`, `LiveReporter`, `RecordingReporter` |
 | `queries.py` | Auto-register `queries/*.sql` files as `pb query <name>` commands | `register_queries` |

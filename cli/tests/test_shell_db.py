@@ -1,9 +1,9 @@
-"""Tests for pb_cli.shell.db, shell.ingest, shell.state (DB-boundary operations)."""
+"""Tests for pb_cli.shell.db, shell.importing, shell.state (DB-boundary operations)."""
 
-from pb_cli.core.ingestion import ingest_file
+from pb_cli.core.importing import import_file
 from pb_cli.core.models import ParseErrorRow, new_row_batch
 from pb_cli.shell.db import count_sql_parse_failures, create_schema, db_connection, insert_parse_errors, parse_sql_file
-from pb_cli.shell.ingest import ingest_batch
+from pb_cli.shell.importing import import_batch
 from pb_cli.shell.state import create_state_table, load_file_state, save_file_state
 
 
@@ -20,14 +20,14 @@ def test_create_drop_schema(tmp_path):
         assert row[0] == "w_test"
 
 
-def test_ingest_batch(tmp_path):
+def test_import_batch(tmp_path):
     db = str(tmp_path / "test.duckdb")
     obj = {"file": "test.srw", "kind": "powerscript", "meta": {"object": "w_test"}}
     with db_connection(db) as conn:
         create_schema(conn)
         rows = new_row_batch()
-        ingest_file(obj, rows)
-        count = ingest_batch([obj], conn)
+        import_file(obj, rows)
+        count = import_batch([obj], conn)
         assert count > 0
 
 
