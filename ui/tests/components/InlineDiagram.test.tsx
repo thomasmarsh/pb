@@ -88,8 +88,8 @@ describe("InlineDiagram", () => {
     await vi.waitUntil(() => container.querySelector("a") != null);
     fireEvent.click(container.querySelector("a")!);
     expect(captured).toContainEqual({
-      tag: "nav",
-      action: { type: "navigate", route: { view: "tableDetail", name: "customer" } },
+      tag: "datawindows",
+      action: { type: "select", name: "customer" },
     });
   });
 });

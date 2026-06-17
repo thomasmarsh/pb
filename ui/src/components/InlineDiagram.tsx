@@ -19,6 +19,11 @@ export function InlineDiagram(props: InlineDiagramProps) {
 
   onCleanup(() => { if (hideTimer) clearTimeout(hideTimer); });
 
+  function navigateTo(kind: "object" | "table", name: string) {
+    const tag = kind === "object" ? "objects" : "datawindows";
+    props.store.dispatch({ tag, action: { type: "select", name } });
+  }
+
   const key = () => JSON.stringify({ kind: props.kind, params: props.params });
   const [svg] = createResource(key, async () => {
     const url = diagramUrl(props.kind, props.params);
@@ -34,11 +39,7 @@ export function InlineDiagram(props: InlineDiagramProps) {
     if (!parsed) return;
     e.preventDefault();
     e.stopPropagation();
-    const view = parsed.kind === "object" ? "objectDetail" : "tableDetail";
-    props.store.dispatch({
-      tag: "nav",
-      action: { type: "navigate", route: { view, name: parsed.name } },
-    });
+    navigateTo(parsed.kind, parsed.name);
   }
 
   function handleSvgMouseOver(e: MouseEvent) {
@@ -112,12 +113,8 @@ export function InlineDiagram(props: InlineDiagramProps) {
           <div class="diagram-tooltip-actions">
             <a class="diagram-tooltip-link" onClick={() => {
               const t = tooltip()!;
-              const view = t.kind === "object" ? "objectDetail" : "tableDetail";
               setTooltip(null);
-              props.store.dispatch({
-                tag: "nav",
-                action: { type: "navigate", route: { view, name: t.name } },
-              });
+              navigateTo(t.kind, t.name);
             }}>detail</a>
           </div>
         </div>
