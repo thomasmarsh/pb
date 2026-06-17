@@ -7,7 +7,7 @@ import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import { CodeBlock } from "../../components/CodeBlock.js";
 import { TableChip } from "../../components/TableChip.js";
-import { InlineDiagram } from "../../components/InlineDiagram.js";
+import { DiagramCard } from "../../components/DiagramCard.js";
 import { shortFile } from "../../utils/format.js";
 import { Loading } from "../../components/Loading.js";
 
@@ -191,10 +191,7 @@ export function DWDetail(props: { store: Store<AppState, AppAction> }) {
               </Show>
 
               <Show when={tab() === "diagram"}>
-                <div class="card">
-                  <div class="card-header"><h3>DW → Table Relationships</h3></div>
-                  <InlineDiagram kind="dw-tables" params={{ dw: d.name }} store={store} />
-                </div>
+                <DiagramCard title="DW → Table Relationships" kind="dw-tables" params={{ dw: d.name }} store={store} />
               </Show>
 
               <Show when={tab() === "source"}>

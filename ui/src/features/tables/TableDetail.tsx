@@ -8,7 +8,7 @@ import type { AppAction } from "../../app/actions.js";
 import type { TableDetail as TableDetailData, TableProcedureRef, ImpactInheritedRef } from "../../types/api.js";
 import { Loading } from "../../components/Loading.js";
 import { ColumnRow } from "../../components/ColumnRow.js";
-import { InlineDiagram } from "../../components/InlineDiagram.js";
+import { DiagramCard } from "../../components/DiagramCard.js";
 
 type Tab = "readers" | "writers" | "columns" | "impact" | "diagram";
 
@@ -207,14 +207,8 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
       </Show>
 
       <Show when={tab() === "diagram"}>
-        <div class="card">
-          <div class="card-header"><h3>Procedure → Table Relationships</h3></div>
-          <InlineDiagram kind="proc-tables" params={{ table: d.table_name }} store={props.store} />
-        </div>
-        <div class="card">
-          <div class="card-header"><h3>Table Lineage</h3></div>
-          <InlineDiagram kind="table-lineage" params={{ table: d.table_name }} store={props.store} />
-        </div>
+        <DiagramCard title="Procedure → Table Relationships" kind="proc-tables" params={{ table: d.table_name }} store={props.store} />
+        <DiagramCard title="Table Lineage" kind="table-lineage" params={{ table: d.table_name }} store={props.store} />
       </Show>
     </>
   );

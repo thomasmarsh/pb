@@ -6,7 +6,7 @@ import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import { Loading } from "../../components/Loading.js";
-import { InlineDiagram } from "../../components/InlineDiagram.js";
+import { DiagramCard } from "../../components/DiagramCard.js";
 import { MetricsGrid } from "./detail/MetricsGrid.js";
 import { InheritanceCard } from "./detail/InheritanceCard.js";
 import { CallGraphCard } from "./detail/CallGraphCard.js";
@@ -60,18 +60,8 @@ export function ObjectDetail(props: { store: Store<AppState, AppAction> }) {
               </Show>
 
               <Show when={tab() === "diagram"}>
-                {hasCalls && (
-                  <div class="card">
-                    <div class="card-header"><h3>Call Graph</h3></div>
-                    <InlineDiagram kind="calls" params={{ focal: o.name, depth: 2 }} store={store} />
-                  </div>
-                )}
-                {hasAncestors && (
-                  <div class="card">
-                    <div class="card-header"><h3>Inheritance Tree</h3></div>
-                    <InlineDiagram kind="inheritance" params={{ root: o.name }} store={store} />
-                  </div>
-                )}
+                {hasCalls && <DiagramCard title="Call Graph" kind="calls" params={{ focal: o.name, depth: 2 }} store={store} />}
+                {hasAncestors && <DiagramCard title="Inheritance Tree" kind="inheritance" params={{ root: o.name }} store={store} />}
               </Show>
 
               <Show when={tab() === "source"}>
