@@ -1,11 +1,12 @@
 // ObjectDetail.tsx — Object detail view orchestrator.
 
-import { Show } from "solid-js";
+import { Show, createSignal, createEffect } from "solid-js";
 import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import { Loading } from "../../components/Loading.js";
+import { InlineDiagram } from "../../components/InlineDiagram.js";
 import { MetricsGrid } from "./detail/MetricsGrid.js";
 import { InheritanceCard } from "./detail/InheritanceCard.js";
 import { CallGraphCard } from "./detail/CallGraphCard.js";
@@ -27,18 +28,55 @@ export function ObjectDetail(props: { store: Store<AppState, AppAction> }) {
         {(() => {
           const o = obj()!;
           if ("error" in o) return null;
+
+          const [tab, setTab] = createSignal<"overview" | "diagram" | "source">("overview");
+          createEffect(() => { obj(); setTab("overview"); });
+
+          const hasCalls = (o.callers?.length ?? 0) + (o.callees?.length ?? 0) > 0;
+          const hasAncestors = (o.ancestors?.length ?? 0) > 0;
           const bc = o.kind === "powerscript" ? "ps" : o.kind === "datawindow" ? "dw" : "proj";
+
           return (
             <>
               <h2 style={{ "margin-bottom": "16px", "font-size": "20px" }}>
                 {o.name} <span class={`badge badge-${bc}`}>{o.kind}</span>
               </h2>
 
-              <MetricsGrid metrics={o.metrics ?? {}} />
-              {(o.ancestors?.length ?? 0) > 0 && <InheritanceCard store={store} name={o.name} ancestors={o.ancestors!} />}
-              {((o.callers?.length ?? 0) > 0 || (o.callees?.length ?? 0) > 0) && <CallGraphCard store={store} callers={o.callers} callees={o.callees} />}
-              {(o.procedures?.length ?? 0) > 0 && <ProceduresCard store={store} objectName={o.name} procedures={o.procedures!} />}
-              {o.file && <SourceCard store={store} file={o.file} objectName={o.name} sourceDetail={src()} />}
+              <div class="tab-bar" style={{ "margin-bottom": "16px" }}>
+                <button class={tab() === "overview" ? "tab-btn active" : "tab-btn"} onClick={() => setTab("overview")}>Overview</button>
+                <Show when={hasCalls || hasAncestors}>
+                  <button class={tab() === "diagram" ? "tab-btn active" : "tab-btn"} onClick={() => setTab("diagram")}>Diagram</button>
+                </Show>
+                <Show when={o.file}>
+                  <button class={tab() === "source" ? "tab-btn active" : "tab-btn"} onClick={() => setTab("source")}>Source</button>
+                </Show>
+              </div>
+
+              <Show when={tab() === "overview"}>
+                <MetricsGrid metrics={o.metrics ?? {}} />
+                {hasAncestors && <InheritanceCard store={store} name={o.name} ancestors={o.ancestors!} />}
+                {(hasCalls) && <CallGraphCard store={store} callers={o.callers} callees={o.callees} />}
+                {(o.procedures?.length ?? 0) > 0 && <ProceduresCard store={store} objectName={o.name} procedures={o.procedures!} />}
+              </Show>
+
+              <Show when={tab() === "diagram"}>
+                {hasCalls && (
+                  <div class="card">
+                    <div class="card-header"><h3>Call Graph</h3></div>
+                    <InlineDiagram kind="calls" params={{ focal: o.name, depth: 2 }} store={store} />
+                  </div>
+                )}
+                {hasAncestors && (
+                  <div class="card">
+                    <div class="card-header"><h3>Inheritance Tree</h3></div>
+                    <InlineDiagram kind="inheritance" params={{ root: o.name }} store={store} />
+                  </div>
+                )}
+              </Show>
+
+              <Show when={tab() === "source"}>
+                {o.file && <SourceCard store={store} file={o.file} objectName={o.name} sourceDetail={src()} />}
+              </Show>
             </>
           );
         })()}
