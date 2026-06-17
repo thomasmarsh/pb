@@ -27,13 +27,6 @@ app = typer.Typer(
     help="PowerBuilder codebase analysis tools.",
 )
 
-diagram_app = typer.Typer(
-    name="diagram",
-    no_args_is_help=True,
-    help="Generate SVG diagrams from pb.duckdb.",
-)
-app.add_typer(diagram_app, name="diagram")
-
 query_app = typer.Typer(
     name="query",
     no_args_is_help=True,
@@ -196,57 +189,6 @@ def analyze(
     reporter = env.reporter
     with env.storage.db_connection(db) as conn, reporter.analyze_progress() as progress:
         env.storage.compute_metrics(conn, progress)
-
-
-# ── pb diagram * ──────────────────────────────────────────────────────────────
-
-
-@diagram_app.command("inheritance")
-def diagram_inheritance(
-    db: str = typer.Option("pb.duckdb", "--db", help="DuckDB database path."),
-    root: Optional[str] = typer.Option(None, "--root", help="Show subtree rooted at NAME."),
-    output: str = typer.Option("inheritance.svg", "-o", "--output", help="Output file."),
-    dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
-) -> None:
-    """Inheritance hierarchy diagram."""
-    with env.storage.connect(db) as conn:
-        env.storage.diagram_inheritance(conn, root, output, dot)
-
-
-@diagram_app.command("calls")
-def diagram_calls(
-    object_name: str = typer.Option(..., "--object", help="Focal object name."),
-    db: str = typer.Option("pb.duckdb", "--db", help="DuckDB database path."),
-    depth: int = typer.Option(2, "--depth", help="Ego-graph radius."),
-    output: Optional[str] = typer.Option(None, "-o", "--output", help="Output file."),
-    dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
-) -> None:
-    """Call ego-graph centred on a named object."""
-    with env.storage.connect(db) as conn:
-        env.storage.diagram_calls(conn, object_name, depth, output, dot)
-
-
-@diagram_app.command("dw-tables")
-def diagram_dw_tables(
-    db: str = typer.Option("pb.duckdb", "--db", help="DuckDB database path."),
-    table: Optional[str] = typer.Option(None, "--table", help="Filter to a single DB table."),
-    output: str = typer.Option("dw_tables.svg", "-o", "--output", help="Output file."),
-    dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
-) -> None:
-    """DataWindow → DB table bipartite dependency graph."""
-    with env.storage.connect(db) as conn:
-        env.storage.diagram_dw_tables(conn, table, output, dot)
-
-
-@diagram_app.command("heatmap")
-def diagram_heatmap(
-    db: str = typer.Option("pb.duckdb", "--db", help="DuckDB database path."),
-    output: str = typer.Option("heatmap.svg", "-o", "--output", help="Output file."),
-    dot: bool = typer.Option(False, "--dot", help="Emit raw DOT source instead of SVG."),
-) -> None:
-    """Complexity heatmap over all PowerScript objects."""
-    with env.storage.connect(db) as conn:
-        env.storage.diagram_heatmap(conn, output, dot)
 
 
 # ── pb explore ─────────────────────────────────────────────────────────────────

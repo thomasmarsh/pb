@@ -16,9 +16,17 @@ export interface ComboboxInputProps {
   onChange: (value: string) => void;
   options: string[];
   placeholder?: string;
+  onEnter?: () => void;
 }
 
 export function ComboboxInput(props: ComboboxInputProps) {
+  function handleKeyDown(e: KeyboardEvent) {
+    if (e.key === "Enter" && props.onEnter) {
+      e.preventDefault();
+      props.onEnter!();
+    }
+  }
+
   return (
     <Combobox
       value={props.value}
@@ -32,7 +40,7 @@ export function ComboboxInput(props: ComboboxInputProps) {
       itemComponent={OptionItem}
     >
       <Combobox.Control class="combobox-control">
-        <Combobox.Input class="search-input" />
+        <Combobox.Input class="search-input" onKeyDown={handleKeyDown as any} />
       </Combobox.Control>
       <Combobox.Portal>
         <Combobox.Content class="combobox-content">

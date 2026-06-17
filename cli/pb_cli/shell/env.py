@@ -48,12 +48,6 @@ from pb_cli.shell.db import (
     drop_tables,
     insert_parse_errors,
 )
-from pb_cli.shell.diagrams import (
-    diagram_calls,
-    diagram_dw_tables,
-    diagram_heatmap,
-    diagram_inheritance,
-)
 from pb_cli.shell.ingest import ingest_batch, run_from_jsonl_lines
 from pb_cli.shell.metrics import compute_dit, compute_metrics
 from pb_cli.shell.reporter import LiveReporter, Reporter
@@ -148,10 +142,6 @@ class StorageEnv:
     insert_parse_errors: Callable[[Conn, list[ParseErrorRow]], None] = field(default=insert_parse_errors)
     compute_metrics: Callable[[Conn, AnalyzeProgress], None] = field(default=compute_metrics)
     connect: Callable[[str], AbstractContextManager[Conn]] = field(default=connect)
-    diagram_inheritance: Callable[[Conn, str | None, str, bool], None] = field(default=diagram_inheritance)
-    diagram_calls: Callable[[Conn, str, int, str | None, bool], None] = field(default=diagram_calls)
-    diagram_dw_tables: Callable[[Conn, str | None, str, bool], None] = field(default=diagram_dw_tables)
-    diagram_heatmap: Callable[[Conn, str, bool], None] = field(default=diagram_heatmap)
 
 
 @dataclass

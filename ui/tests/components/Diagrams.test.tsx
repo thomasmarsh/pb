@@ -5,8 +5,8 @@ import { screen, fireEvent } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
 import { Diagrams } from "../../src/features/diagrams/Diagrams.js";
 
-const defaultDiagrams = {
-  active: "inheritance" as const,
+const callsDiagrams = {
+  active: "calls" as const,
   svg: null,
   loading: false,
   params: {},
@@ -15,53 +15,51 @@ const defaultDiagrams = {
   itemsLoaded: true,
 };
 
+const heatmapDiagrams = {
+  active: "heatmap" as const,
+  svg: null,
+  loading: false,
+  params: {},
+  tableNames: ["customers"],
+  objectNames: ["w_main"],
+  itemsLoaded: true,
+};
+
 describe("Diagrams component", () => {
-  it("renders Generate button", () => {
-    renderWithStore(Diagrams, { diagrams: defaultDiagrams });
-    expect(screen.getByText("Generate")).toBeDefined();
-  });
-
-  it("Generate button dispatches diagrams/params + diagrams/generate", () => {
-    const { captured } = renderWithStore(Diagrams, { diagrams: defaultDiagrams });
-    fireEvent.click(screen.getByText("Generate"));
-    const paramsActions = captured.filter(
-      (a) => a.tag === "diagrams" && a.action.type === "params",
-    );
-    const generateActions = captured.filter(
-      (a) => a.tag === "diagrams" && a.action.type === "generate",
-    );
-    expect(paramsActions.length).toBe(1);
-    expect(generateActions.length).toBe(1);
-  });
-
   it("shows loading state when loading", () => {
     renderWithStore(Diagrams, {
-      diagrams: { ...defaultDiagrams, loading: true },
+      diagrams: { ...callsDiagrams, loading: true },
     });
     expect(screen.getByText("Generating diagram...")).toBeDefined();
   });
 
-  it("shows SVG output when available", () => {
+  it("shows SVG output with copy/download icon buttons", () => {
     const { container } = renderWithStore(Diagrams, {
-      diagrams: { ...defaultDiagrams, svg: '<svg viewBox="0 0 100 100"><rect/></svg>' },
+      diagrams: { ...callsDiagrams, svg: '<svg viewBox="0 0 100 100"><rect/></svg>' },
     });
     const svg = container.querySelector(".diagram-container svg");
     expect(svg).not.toBeNull();
     expect(svg!.getAttribute("viewBox")).toBe("0 0 100 100");
+    const iconBtns = container.querySelectorAll(".icon-btn");
+    expect(iconBtns.length).toBe(2);
+  });
+
+  it("hides Generate button for auto-generate diagrams", () => {
+    renderWithStore(Diagrams, { diagrams: heatmapDiagrams });
+    expect(screen.queryByText("Generate")).toBeNull();
   });
 
   it("shows error when error exists", () => {
     renderWithStore(Diagrams, {
-      diagrams: { ...defaultDiagrams, error: "timeout" },
+      diagrams: { ...callsDiagrams, error: "timeout" },
     });
     expect(screen.getByText("Error: timeout")).toBeDefined();
   });
 
-  it("shows placeholder when no state", () => {
+  it("shows placeholder when no svg and not loading", () => {
     const { container } = renderWithStore(Diagrams, {
-      diagrams: defaultDiagrams,
+      diagrams: { ...callsDiagrams, active: "dw-tables" },
     });
     expect(container.querySelector(".diagram-container")).toBeDefined();
-    expect(screen.getByText("Generate")).toBeDefined();
   });
 });

@@ -91,15 +91,13 @@ explorer build management. Fields: `find_repo`, `get_queries_dir`,
 Parsing via the `pb-runner` Haskell binary and rich error rendering.
 Fields: `parse_stream`, `render_error`.
 
-### `StorageEnv` (16 fields)
+### `StorageEnv` (15 fields)
 DuckDB connection management, schema DDL, incremental state tracking,
-batch ingestion, metric computation, and diagram rendering.
+batch ingestion, and metric computation.
 Fields: `db_connection`, `create_schema`, `drop_tables`,
 `create_state_table`, `load_file_state`, `delete_file_rows`,
 `save_file_state`, `build_subset_tmpdir`, `ingest_batch`,
-`run_from_jsonl_lines`, `compute_dit`, `compute_metrics`, `connect`,
-`diagram_inheritance`, `diagram_calls`, `diagram_dw_tables`,
-`diagram_heatmap`.
+`run_from_jsonl_lines`, `compute_dit`, `compute_metrics`, `connect`.
 
 ### `reporter`
 A `Reporter` protocol instance (default: `LiveReporter`). Alternatives
@@ -160,7 +158,7 @@ needed where the real signature adds nothing a `Callable` cannot express.
 | `ingest.py` | Batch ingestion of parsed file dicts into DuckDB | `ingest_batch`, `run_from_jsonl_lines` |
 | `state.py` | Incremental file-state persistence (DB-backed) | `create_state_table`, `load_file_state`, `save_file_state`, `delete_file_rows` |
 | `metrics.py` | Graph metric computation (PageRank, betweenness, DIT) | `compute_metrics`, `compute_dit` |
-| `diagrams.py` | DOT/SVG diagram building and rendering (delegates to `core/diagram_builder`) | `diagram_inheritance`, `diagram_calls`, `diagram_dw_tables`, `diagram_heatmap` |
+| `diagrams.py` | DOT/SVG diagram building, LRU-cached rendering with Bezier fallback | `render_svg`, `build_inheritance`, `build_calls`, `build_dw_tables`, `build_heatmap`, `build_sql_lineage`, `build_table_lineage`, `build_proc_tables` |
 | `pipeline.py` | Incremental `pb ingest` orchestration | `run` |
 | `pbl.py` | PBL binary library extraction (filesystem, temp dirs, file writes) | `extract`, `extract_to_dir`, `resolve_source_dir`, `PblEntry` |
 | `reporter.py` | Unified output protocol for pipeline operations | `Reporter`, `LiveReporter`, `RecordingReporter` |
@@ -193,7 +191,7 @@ needed where the real signature adds nothing a `Callable` cannot express.
 
 | Module | Purpose | Key exports |
 |---|---|---|
-| `cli.py` | Thin Typer dispatch — wires commands to `shell/commands/` | `app`, `diagram_app`, `query_app` |
+| `cli.py` | Thin Typer dispatch — wires commands to `shell/commands/` | `app`, `query_app` |
 
 ---
 

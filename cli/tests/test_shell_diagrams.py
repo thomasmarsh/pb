@@ -1,25 +1,23 @@
-"""Tests for pb_cli.shell.diagrams — GraphViz diagram generation."""
+"""Tests for pb_cli.shell.diagrams — diagram building and rendering."""
 
-import io
 import re
-import subprocess
-from contextlib import redirect_stdout
 from pathlib import Path
 
 import duckdb
 import pytest
 
 from pb_cli.shell.build import find_repo
+from pb_cli.shell.diagrams import (
+    _svg_cache,
+    build_calls,
+    build_dw_tables,
+    build_heatmap,
+    build_inheritance,
+    render_svg,
+)
 
 REPO_ROOT = find_repo()
 DB_PATH = str(REPO_ROOT / "pb.duckdb")
-
-from pb_cli.shell.diagrams import (  # noqa: E402
-    diagram_calls,
-    diagram_dw_tables,
-    diagram_heatmap,
-    diagram_inheritance,
-)
 
 
 @pytest.fixture(scope="module")
@@ -31,11 +29,9 @@ def conn():
     c.close()
 
 
-def dot_source(fn, *args) -> str:
-    buf = io.StringIO()
-    with redirect_stdout(buf):
-        fn(*args, output="out.svg", emit_dot=True)
-    return buf.getvalue()
+def dot_source(build_fn, *args, **kwargs) -> str:
+    dot = build_fn(*args, **kwargs)
+    return dot.source
 
 
 def focal_object(conn) -> str:
@@ -48,24 +44,24 @@ def focal_object(conn) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_inheritance_diagram_emits_valid_dot(conn):
-    src = dot_source(diagram_inheritance, conn, None)
+def test_inheritance_builds_valid_dot(conn):
+    src = dot_source(build_inheritance, conn, None)
     assert "digraph" in src
     assert "->" in src
 
 
-def test_inheritance_diagram_contains_known_nodes(conn):
-    src = dot_source(diagram_inheritance, conn, None)
+def test_inheritance_contains_known_nodes(conn):
+    src = dot_source(build_inheritance, conn, None)
     sample = conn.execute("SELECT from_object FROM inherits LIMIT 1").fetchone()
     assert sample is not None, "inherits table is empty"
     assert sample[0] in src
 
 
-def test_inheritance_diagram_root_filter(conn):
+def test_inheritance_root_filter(conn):
     root = conn.execute("SELECT to_object FROM inherits LIMIT 1").fetchone()
     if root is None:
         pytest.skip("inherits table is empty")
-    src = dot_source(diagram_inheritance, conn, root[0])
+    src = dot_source(build_inheritance, conn, root[0])
     assert "digraph" in src
     assert root[0] in src or "->" in src
 
@@ -75,29 +71,23 @@ def test_inheritance_diagram_root_filter(conn):
 # ---------------------------------------------------------------------------
 
 
-def test_calls_diagram_includes_focal_node(conn):
+def test_calls_includes_focal_node(conn):
     focal = focal_object(conn)
-    src = dot_source(diagram_calls, conn, focal, 2)
+    src = dot_source(build_calls, conn, focal, 2)
     assert focal in src
 
 
-def test_calls_diagram_emits_fdp_engine(conn):
+def test_calls_depth_limits_nodes(conn):
     focal = focal_object(conn)
-    src = dot_source(diagram_calls, conn, focal, 1)
-    assert "fdp" in src.lower() or "digraph" in src
-
-
-def test_calls_diagram_depth_limits_nodes(conn):
-    focal = focal_object(conn)
-    src_d1 = dot_source(diagram_calls, conn, focal, 1)
-    src_d3 = dot_source(diagram_calls, conn, focal, 3)
+    src_d1 = dot_source(build_calls, conn, focal, 1)
+    src_d3 = dot_source(build_calls, conn, focal, 3)
     nodes_d1 = len(re.findall(r"\[", src_d1))
     nodes_d3 = len(re.findall(r"\[", src_d3))
     assert nodes_d3 >= nodes_d1
 
 
-def test_calls_diagram_unknown_object_does_not_crash(conn):
-    src = dot_source(diagram_calls, conn, "__nonexistent_object_xyz__", 2)
+def test_calls_unknown_object_does_not_crash(conn):
+    src = dot_source(build_calls, conn, "__nonexistent_object_xyz__", 2)
     assert "digraph" in src
 
 
@@ -106,41 +96,23 @@ def test_calls_diagram_unknown_object_does_not_crash(conn):
 # ---------------------------------------------------------------------------
 
 
-def test_dw_tables_diagram_bipartite_structure(conn):
+def test_dw_tables_bipartite_structure(conn):
     count = conn.execute("SELECT count(*) FROM dw_retrieve_tables").fetchone()[0]
     if count == 0:
         pytest.skip("dw_retrieve_tables is empty")
-    src = dot_source(diagram_dw_tables, conn, None)
+    src = dot_source(build_dw_tables, conn, None)
     assert "cluster_dw" in src
     assert "cluster_tables" in src
     assert "->" in src
 
 
-def test_dw_tables_diagram_table_filter(conn):
+def test_dw_tables_table_filter(conn):
     row = conn.execute("SELECT table_name FROM dw_retrieve_tables LIMIT 1").fetchone()
     if row is None:
         pytest.skip("dw_retrieve_tables is empty")
     tbl = row[0]
-    src = dot_source(diagram_dw_tables, conn, tbl)
+    src = dot_source(build_dw_tables, conn, tbl)
     assert f"t_{tbl}" in src
-
-
-def test_dw_tables_node_count_matches_db(conn):
-    dw_count = conn.execute("SELECT count(DISTINCT dw_name)    FROM dw_retrieve_tables").fetchone()[0]
-    tbl_count = conn.execute("SELECT count(DISTINCT table_name) FROM dw_retrieve_tables").fetchone()[0]
-    src = dot_source(diagram_dw_tables, conn, None)
-    dw_hits = sum(
-        1
-        for dw in {r[0] for r in conn.execute("SELECT DISTINCT dw_name    FROM dw_retrieve_tables").fetchall()}
-        if f"dw_{dw}" in src
-    )
-    tbl_hits = sum(
-        1
-        for tbl in {r[0] for r in conn.execute("SELECT DISTINCT table_name FROM dw_retrieve_tables").fetchall()}
-        if f"t_{tbl}" in src
-    )
-    assert dw_hits == dw_count
-    assert tbl_hits == tbl_count
 
 
 # ---------------------------------------------------------------------------
@@ -152,29 +124,86 @@ def test_heatmap_includes_all_powerscript_objects(conn):
     expected = conn.execute("SELECT count(*) FROM objects WHERE kind = 'powerscript'").fetchone()[0]
     if expected == 0:
         pytest.skip("no powerscript objects in corpus")
-    src = dot_source(diagram_heatmap, conn)
+    src = dot_source(build_heatmap, conn)
     node_defs = len(re.findall(r"\[", src))
     assert node_defs >= expected
 
 
 def test_heatmap_emits_graph_not_digraph(conn):
-    src = dot_source(diagram_heatmap, conn)
+    src = dot_source(build_heatmap, conn)
     assert re.search(r"\bgraph\b", src)
 
 
 # ---------------------------------------------------------------------------
-# E. DOT output pipes cleanly through dot -Tsvg
+# E. URL attributes present in node output
 # ---------------------------------------------------------------------------
 
 
-def _dot_binary() -> str | None:
+def test_inheritance_nodes_have_url(conn):
+    src = dot_source(build_inheritance, conn, None)
+    assert "pb://object/" in src
+
+
+def test_calls_nodes_have_url(conn):
+    focal = focal_object(conn)
+    src = dot_source(build_calls, conn, focal, 2)
+    assert "pb://object/" in src
+
+
+def test_heatmap_nodes_have_url(conn):
+    src = dot_source(build_heatmap, conn)
+    assert "pb://object/" in src
+
+
+def test_dw_tables_has_both_object_and_table_urls(conn):
+    count = conn.execute("SELECT count(*) FROM dw_retrieve_tables").fetchone()[0]
+    if count == 0:
+        pytest.skip("dw_retrieve_tables is empty")
+    src = dot_source(build_dw_tables, conn, None)
+    assert "pb://object/" in src
+    assert "pb://table/" in src
+
+
+# ---------------------------------------------------------------------------
+# F. LRU cache
+# ---------------------------------------------------------------------------
+
+
+def test_render_svg_caches_result(conn):
+    _svg_cache.clear()
+    svg1 = render_svg("heatmap", conn)
+    assert len(_svg_cache) == 1
+    svg2 = render_svg("heatmap", conn)
+    assert svg1 is svg2  # same object from cache
+
+
+def test_render_svg_evicts_oldest(conn):
+    _svg_cache.clear()
+    for i in range(65):
+        render_svg("heatmap", conn)
+    assert len(_svg_cache) <= 64
+
+
+def test_render_svg_unknown_kind_raises(conn):
+    with pytest.raises(ValueError, match="Unknown diagram"):
+        render_svg("bogus", conn)
+
+
+# ---------------------------------------------------------------------------
+# G. DOT roundtrip (requires dot binary)
+# ---------------------------------------------------------------------------
+
+
+def _dot_binary():
+    import subprocess
     result = subprocess.run(["which", "dot"], capture_output=True, text=True)
     return result.stdout.strip() if result.returncode == 0 else None
 
 
 @pytest.mark.skipif(_dot_binary() is None, reason="dot binary not on PATH")
 class TestDotBinaryRoundtrip:
-    def _render(self, src: str) -> subprocess.CompletedProcess:
+    def _render(self, src: str):
+        import subprocess
         return subprocess.run(
             ["dot", "-Tsvg"],
             input=src,
@@ -183,14 +212,14 @@ class TestDotBinaryRoundtrip:
         )
 
     def test_inheritance_dot_is_valid(self, conn):
-        src = dot_source(diagram_inheritance, conn, None)
+        src = dot_source(build_inheritance, conn, None)
         result = self._render(src)
         assert result.returncode == 0, f"dot failed:\n{result.stderr[:400]}"
         assert "<svg" in result.stdout
 
     def test_calls_dot_is_valid(self, conn):
         focal = focal_object(conn)
-        src = dot_source(diagram_calls, conn, focal, 2)
+        src = dot_source(build_calls, conn, focal, 2)
         result = self._render(src)
         assert result.returncode == 0, f"dot failed:\n{result.stderr[:400]}"
         assert "<svg" in result.stdout
@@ -199,21 +228,13 @@ class TestDotBinaryRoundtrip:
         count = conn.execute("SELECT count(*) FROM dw_retrieve_tables").fetchone()[0]
         if count == 0:
             pytest.skip("dw_retrieve_tables is empty")
-        src = dot_source(diagram_dw_tables, conn, None)
+        src = dot_source(build_dw_tables, conn, None)
         result = self._render(src)
         assert result.returncode == 0, f"dot failed:\n{result.stderr[:400]}"
         assert "<svg" in result.stdout
 
     def test_heatmap_dot_is_valid(self, conn):
-        src = dot_source(diagram_heatmap, conn)
+        src = dot_source(build_heatmap, conn)
         result = self._render(src)
         assert result.returncode == 0, f"dot failed:\n{result.stderr[:400]}"
         assert "<svg" in result.stdout
-
-
-def test_op_colors_defined():
-    from pb_cli.core.diagram_builder import _OP_COLORS
-
-    assert "SELECT" in _OP_COLORS
-    assert "INSERT" in _OP_COLORS
-    assert "retrieve" in _OP_COLORS

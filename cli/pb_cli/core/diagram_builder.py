@@ -92,6 +92,7 @@ def render_inheritance(
                     style="filled,rounded",
                     fillcolor=fill,
                     tooltip=f"{name} [{kind}]",
+                    URL=f"pb://object/{name}",
                 )
                 seen.add(name)
         dot.edge(src, dst)
@@ -105,6 +106,7 @@ def render_inheritance(
             fillcolor="#FFD700",
             fontcolor="#1C1C1E",
             tooltip=f"{root} [root]",
+            URL=f"pb://object/{root}",
         )
 
     return dot
@@ -138,6 +140,7 @@ def render_calls(
             height=width,
             fixedsize="false",
             tooltip=f"{name} [cc={cc}]",
+            URL=f"pb://object/{name}",
         )
 
     for u, v in sub_edges:
@@ -179,6 +182,7 @@ def render_dw_tables(
                 fillcolor=fill,
                 fontsize="8",
                 tooltip=f"{dw} ({nc} tables)",
+                URL=f"pb://object/{dw}",
             )
 
     with dot.subgraph(name="cluster_tables") as c:  # pyright: ignore[reportOptionalContextManager]
@@ -199,6 +203,7 @@ def render_dw_tables(
                 fontcolor="#C8F0CA",
                 fontsize="8",
                 tooltip=tbl,
+                URL=f"pb://table/{tbl}",
             )
 
     for dw, tbl in rows:
@@ -240,6 +245,7 @@ def render_heatmap(
             fixedsize="true",
             fontsize=fsize,
             tooltip=f"{name}  cc={cc}  fan-in={fan_in}",
+            URL=f"pb://object/{name}",
         )
 
     for src, dst in inherit_edges:
@@ -295,13 +301,13 @@ def render_sql_lineage(
 
     for obj, tbl, op in rows:
         if obj not in seen_objects:
-            dot.node(f"obj_{obj}", label=obj, fillcolor="#2A3050", fontcolor="#E8E8E8", fontsize="9")
+            dot.node(f"obj_{obj}", label=obj, fillcolor="#2A3050", fontcolor="#E8E8E8", fontsize="9", URL=f"pb://object/{obj}")
             seen_objects.add(obj)
         if tbl not in seen_tables:
-            dot.node(f"tbl_{tbl}", label=tbl, shape="cylinder", fillcolor="#1F2F1F", fontcolor="#C8F0CA", fontsize="9")
+            dot.node(f"tbl_{tbl}", label=tbl, shape="cylinder", fillcolor="#1F2F1F", fontcolor="#C8F0CA", fontsize="9", URL=f"pb://table/{tbl}")
             seen_tables.add(tbl)
         color = _OP_COLORS.get(op, _DEFAULT_OP_COLOR)
-        dot.edge(f"obj_{obj}", f"tbl_{tbl}", color=color, label=op, fontcolor=color, fontsize="7", penwidth="0.8")
+        dot.edge(f"obj_{obj}", f"tbl_{tbl}", color=color, xlabel=op, fontcolor=color, fontsize="7", penwidth="0.8")
 
     if not rows:
         dot.node("empty", label="No PowerScript SQL statements found", shape="plaintext", fontcolor="#5c5f72")
@@ -329,6 +335,7 @@ def render_table_lineage(
         fillcolor="#2E5E32",
         fontcolor="#C8F0CA",
         fontsize="10",
+        URL=f"pb://table/{table_name}",
     )
 
     seen_objects: set[str] = set()
@@ -338,10 +345,10 @@ def render_table_lineage(
             is_dw = source == "datawindow"
             fill = "#2A3A4A" if is_dw else "#2A3050"
             badge = "dw" if is_dw else "ps"
-            dot.node(node_id, label=f"{obj}\\n[{badge}]", fillcolor=fill, fontcolor="#E8E8E8", fontsize="8")
+            dot.node(node_id, label=f"{obj}\\n[{badge}]", fillcolor=fill, fontcolor="#E8E8E8", fontsize="8", URL=f"pb://object/{obj}")
             seen_objects.add(node_id)
         color = _OP_COLORS.get(op, _DEFAULT_OP_COLOR)
-        dot.edge(node_id, "__table__", label=op, color=color, fontcolor=color, fontsize="7", penwidth="0.8")
+        dot.edge(node_id, "__table__", xlabel=op, color=color, fontcolor=color, fontsize="7", penwidth="0.8")
 
     if not rows:
         dot.node("empty", label=f"No references found for table: {table_name}", shape="plaintext", fontcolor="#5c5f72")
@@ -370,16 +377,17 @@ def render_proc_tables(
         if proc_id not in seen_procs:
             is_dw = r["source"] == "datawindow"
             fill = "#2A3A4A" if is_dw else "#2A3050"
-            dot.node(proc_id, label=node_label, fillcolor=fill, fontcolor="#E8E8E8", fontsize="8")
+            dot.node(proc_id, label=node_label, fillcolor=fill, fontcolor="#E8E8E8", fontsize="8", URL=f"pb://object/{r['object']}")
             seen_procs.add(proc_id)
         if tbl_id not in seen_tables:
             dot.node(
-                tbl_id, label=r["table_name"], shape="cylinder", fillcolor="#1F2F1F", fontcolor="#C8F0CA", fontsize="9"
+                tbl_id, label=r["table_name"], shape="cylinder", fillcolor="#1F2F1F", fontcolor="#C8F0CA", fontsize="9",
+                URL=f"pb://table/{r['table_name']}",
             )
             seen_tables.add(tbl_id)
 
         color = _OP_COLORS.get(r["operation"] or "", _DEFAULT_OP_COLOR)
-        dot.edge(proc_id, tbl_id, color=color, label=r["operation"], fontcolor=color, fontsize="7", penwidth="0.8")
+        dot.edge(proc_id, tbl_id, color=color, xlabel=r["operation"], fontcolor=color, fontsize="7", penwidth="0.8")
 
     if not rows:
         msg = "No references found"

@@ -1,8 +1,10 @@
-"""DOT/SVG diagram building and rendering."""
+"""DOT/SVG diagram building and rendering (shell layer — I/O boundary)."""
 
 from __future__ import annotations
 
-import sys
+import logging
+from collections import OrderedDict
+from typing import Any
 
 import graphviz
 import networkx as nx
@@ -18,13 +20,28 @@ from pb_cli.core.diagram_builder import (
 )
 from pb_cli.shell.db import Conn
 
+log = logging.getLogger(__name__)
 
-def _render(dot: graphviz.Graph | graphviz.Digraph, output: str, emit_dot: bool) -> None:
-    if emit_dot:
-        print(dot.source)
-        return
-    dot.render(outfile=output, format="svg", cleanup=True)
-    print(f"Written: {output}", file=sys.stderr)
+_CACHE_MAX = 64
+_svg_cache: OrderedDict[str, str] = OrderedDict()
+
+
+def _cache_key(kind: str, params: dict[str, Any]) -> str:
+    parts = [f"{k}={v}" for k, v in sorted(params.items()) if k != "conn"]
+    return kind + "|" + "|".join(parts)
+
+
+def _render_svg(dot) -> str:
+    """Render a graphviz object to SVG. Falls back to Bezier splines if the
+    primary engine fails (e.g. missing triangulate on RHEL)."""
+    try:
+        return dot.pipe(format="svg").decode("utf-8")
+    except graphviz.backend.execute.ExecutableNotFound:
+        raise
+    except Exception:
+        log.warning("Primary render failed, retrying with splines=true", exc_info=True)
+        dot.attr(splines="true")
+        return dot.pipe(format="svg").decode("utf-8")
 
 
 def build_inheritance(
@@ -52,16 +69,6 @@ def build_inheritance(
     return render_inheritance(edges, kind_map, root)
 
 
-def diagram_inheritance(
-    conn: Conn,
-    root: str | None,
-    output: str = "inheritance.svg",
-    emit_dot: bool = False,
-) -> None:
-    dot = build_inheritance(conn, root)
-    _render(dot, output, emit_dot)
-
-
 def build_calls(
     conn: Conn,
     focal: str = "",
@@ -81,19 +88,6 @@ def build_calls(
     cc_map: dict[str, int] = dict(conn.execute("SELECT name, max(cyclomatic) FROM procedures GROUP BY name").fetchall())
 
     return render_calls(sub_nodes, sub_edges, cc_map, focal)
-
-
-def diagram_calls(
-    conn: Conn,
-    focal: str,
-    depth: int = 2,
-    output: str | None = None,
-    emit_dot: bool = False,
-) -> None:
-    if output is None:
-        output = f"calls_{focal}.svg"
-    dot = build_calls(conn, focal, depth)
-    _render(dot, output, emit_dot)
 
 
 def build_dw_tables(
@@ -116,16 +110,6 @@ def build_dw_tables(
     return render_dw_tables(rows, count_map)
 
 
-def diagram_dw_tables(
-    conn: Conn,
-    filter_table: str | None = None,
-    output: str = "dw_tables.svg",
-    emit_dot: bool = False,
-) -> None:
-    dot = build_dw_tables(conn, filter_table)
-    _render(dot, output, emit_dot)
-
-
 def build_heatmap(
     conn: Conn,
 ) -> graphviz.Graph:
@@ -142,15 +126,6 @@ def build_heatmap(
     inherit_edges = conn.execute("SELECT from_object, to_object FROM inherits").fetchall()
 
     return render_heatmap(rows, inherit_edges)
-
-
-def diagram_heatmap(
-    conn: Conn,
-    output: str = "heatmap.svg",
-    emit_dot: bool = False,
-) -> None:
-    dot = build_heatmap(conn)
-    _render(dot, output, emit_dot)
 
 
 def build_sql_lineage(conn: Conn, focal: str = "") -> graphviz.Digraph:
@@ -200,3 +175,40 @@ def build_proc_tables(
     rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
 
     return render_proc_tables(rows, table_name)
+
+
+def render_svg(kind: str, conn: Conn, **params: Any) -> str:
+    """Build and render a diagram to SVG with LRU caching.
+
+    This is the single entry point for the explorer API. It handles
+    cache lookup, dot object construction, rendering with Bezier fallback,
+    and cache storage.
+    """
+    key = _cache_key(kind, params)
+    if key in _svg_cache:
+        _svg_cache.move_to_end(key)
+        return _svg_cache[key]
+
+    builders = {
+        "inheritance": lambda: build_inheritance(conn, root=params.get("root")),
+        "calls": lambda: build_calls(conn, focal=params.get("focal", ""), depth=params.get("depth", 2)),
+        "dw-tables": lambda: build_dw_tables(conn, filter_table=params.get("filter_table")),
+        "heatmap": lambda: build_heatmap(conn),
+        "sql-lineage": lambda: build_sql_lineage(conn, focal=params.get("focal", "")),
+        "table-lineage": lambda: build_table_lineage(conn, table_name=params.get("table_name", "")),
+        "proc-tables": lambda: build_proc_tables(
+            conn, table_name=params.get("table_name", ""), focal=params.get("focal", ""),
+        ),
+    }
+    builder = builders.get(kind)
+    if builder is None:
+        raise ValueError(f"Unknown diagram: {kind}")
+
+    dot = builder()
+    svg = _render_svg(dot)
+
+    _svg_cache[key] = svg
+    if len(_svg_cache) > _CACHE_MAX:
+        _svg_cache.popitem(last=False)
+
+    return svg

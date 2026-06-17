@@ -53,10 +53,6 @@ def test_storage_env_defaults_are_real_functions():
     assert callable(s.compute_dit)
     assert callable(s.compute_metrics)
     assert callable(s.connect)
-    assert callable(s.diagram_inheritance)
-    assert callable(s.diagram_calls)
-    assert callable(s.diagram_dw_tables)
-    assert callable(s.diagram_heatmap)
 
 
 def test_shell_env_has_all_sub_envs():

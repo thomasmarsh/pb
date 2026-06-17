@@ -1,23 +1,16 @@
-"""DOT/SVG diagram rendering for all `pb explore` graph views."""
+"""DOT/SVG diagram endpoints — thin route layer, delegates to shell.diagrams."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import duckdb
+import graphviz
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from pb_cli.explorer.routes.dependencies import get_db
-from pb_cli.shell.diagrams import (
-    build_calls,
-    build_dw_tables,
-    build_heatmap,
-    build_inheritance,
-    build_proc_tables,
-    build_sql_lineage,
-    build_table_lineage,
-)
+from pb_cli.shell.diagrams import render_svg
 
 router = APIRouter()
 
@@ -32,30 +25,6 @@ _KINDS = (
 )
 
 
-def _render_diagram(kind: str, **kwargs) -> str:
-    if kind == "inheritance":
-        dot = build_inheritance(**kwargs)
-    elif kind == "calls":
-        dot = build_calls(**kwargs)
-    elif kind == "dw-tables":
-        dot = build_dw_tables(**kwargs)
-    elif kind == "heatmap":
-        dot = build_heatmap(**kwargs)
-    elif kind == "sql-lineage":
-        dot = build_sql_lineage(**kwargs)
-    elif kind == "table-lineage":
-        try:
-            dot = build_table_lineage(**kwargs)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-    elif kind == "proc-tables":
-        dot = build_proc_tables(**kwargs)
-    else:
-        raise HTTPException(status_code=400, detail=f"Unknown diagram: {kind}")
-
-    return dot.pipe(format="svg").decode("utf-8")
-
-
 @router.get("/api/diagram/{kind}")
 async def get_diagram(
     kind: str,
@@ -68,22 +37,30 @@ async def get_diagram(
     if kind not in _KINDS:
         raise HTTPException(status_code=400, detail=f"Unknown diagram: {kind}")
 
-    kwargs: dict[str, Any] = {"conn": conn}
+    params: dict[str, Any] = {}
     if kind == "inheritance" and root:
-        kwargs["root"] = root
+        params["root"] = root
     elif kind == "calls":
-        kwargs["focal"] = focal or "fn_sqlerror"
-        kwargs["depth"] = depth
+        params["focal"] = focal or "fn_sqlerror"
+        params["depth"] = depth
     elif kind == "dw-tables" and table:
-        kwargs["filter_table"] = table
+        params["filter_table"] = table
     elif kind == "sql-lineage" and focal:
-        kwargs["focal"] = focal
+        params["focal"] = focal
     elif kind == "table-lineage":
-        kwargs["table_name"] = table or ""
+        params["table_name"] = table or ""
     elif kind == "proc-tables":
-        kwargs["table_name"] = table or ""
+        params["table_name"] = table or ""
         if focal:
-            kwargs["focal"] = focal
+            params["focal"] = focal
 
-    svg = _render_diagram(kind, **kwargs)
+    try:
+        svg = render_svg(kind, conn, **params)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except graphviz.backend.execute.ExecutableNotFound:
+        raise HTTPException(status_code=503, detail="graphviz 'dot' binary not found on PATH")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Diagram rendering failed: {e}") from e
+
     return Response(content=svg, media_type="image/svg+xml")
