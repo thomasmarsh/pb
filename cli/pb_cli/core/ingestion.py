@@ -161,7 +161,7 @@ def _ingest_dw(obj: dict, file: str, rows: RowBatch) -> None:
     contents = retrieve.get("contents") or {}
 
     for t in contents.get("tables", []):
-        rows["dw_retrieve_tables"].append(DwRetrieveTableRow(file, dw_name, t))
+        rows["dw_retrieve_tables"].append(DwRetrieveTableRow(file, dw_name, t.lower()))
 
     for col in contents.get("columns", []):
         parts = col.split(".", 1)
@@ -170,7 +170,7 @@ def _ingest_dw(obj: dict, file: str, rows: RowBatch) -> None:
                 file,
                 dw_name,
                 col,
-                parts[0] if len(parts) == 2 else None,
+                parts[0].lower() if len(parts) == 2 else None,
                 parts[1] if len(parts) == 2 else col,
             )
         )

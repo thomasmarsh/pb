@@ -239,6 +239,14 @@ def test_skip_unstructured_has_no_error_key():
     assert "error" not in meta
 
 
+def test_extract_tables_normalizes_to_lowercase():
+    """Oracle table names are case-insensitive; extracted names must be
+    lowercased so MYTABLE and mytable don't appear as separate entries."""
+    _, tables, _, _ = parse_pb_sql("SELECT id FROM MYTABLE WHERE x = 1")
+    assert "mytable" in tables
+    assert "MYTABLE" not in tables
+
+
 def test_core_sql_has_no_io_imports():
     """core/sql.py must not import duckdb, subprocess, or pathlib."""
     mod = importlib.import_module("pb_cli.core.sql")

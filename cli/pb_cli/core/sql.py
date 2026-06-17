@@ -59,7 +59,7 @@ def pb_sql_to_standard(sql_text: str) -> str | None:
 
 
 def extract_tables(ast) -> list[str]:
-    return [t.name for t in ast.find_all(exp.Table) if t.name]
+    return [t.name.lower() for t in ast.find_all(exp.Table) if t.name]
 
 
 def extract_columns(ast) -> list[str]:

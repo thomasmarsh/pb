@@ -281,6 +281,31 @@ def test_extract_sql_no_parse_error_row_for_intentional_skips():
     assert len(rows["parse_errors"]) == 0
 
 
+def test_ingest_dw_table_names_lowercased():
+    """DW retrieve table names and column table prefixes must be lowercased on
+    ingest — Oracle is case-insensitive, so MYTABLE and mytable are the same."""
+    obj = {
+        "file": "d_test.srd",
+        "kind": "datawindow",
+        "meta": {"object": "d_test"},
+        "controls": [],
+        "table": {
+            "retrieve": {
+                "tag": "DwRetrieveOk",
+                "contents": {
+                    "tables": ["MYTABLE", "OtherTable"],
+                    "columns": ["MYTABLE.col1", "OtherTable.COL2"],
+                    "where": [],
+                },
+            }
+        },
+    }
+    rows = new_row_batch()
+    ingest_file(obj, rows)
+    assert [r.table_name for r in rows["dw_retrieve_tables"]] == ["mytable", "othertable"]
+    assert [r.table_name for r in rows["dw_retrieve_columns"]] == ["mytable", "othertable"]
+
+
 def test_extract_sql_empty_body():
     rows = new_row_batch()
     _extract_sql("test.srw", "w_main", "uf_init", None, "oracle", rows)
