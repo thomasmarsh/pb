@@ -104,12 +104,17 @@ consumeBlockComment _currentEnd acc depth (ll : rest) =
      else (newAcc, llEndLine ll, rest)
 
 -- | Net /* … */ depth contributed by a single line.
---   Strips the // line-comment suffix first so that // comments containing
---   /* or */ tokens do not affect the count.
+--   Scans left-to-right so that */ immediately before // (e.g. "*///")
+--   is counted before the // line-comment terminates the scan.
 lineCommentDepth :: Text -> Int
-lineCommentDepth t =
-  let code = fst (T.breakOn "//" t)
-  in T.count "/*" code - T.count "*/" code
+lineCommentDepth = go 0
+  where
+    go !acc t
+      | T.null t             = acc
+      | T.isPrefixOf "//" t  = acc
+      | T.isPrefixOf "/*" t  = go (acc + 1) (T.drop 2 t)
+      | T.isPrefixOf "*/" t  = go (acc - 1) (T.drop 2 t)
+      | otherwise            = go acc (T.tail t)
 
 -- | Strip leading $PBExport*$ header lines (SPEC §2.11).
 -- Handles the real-world "HA$PBExportHeader$" form: the two leading "HA" bytes

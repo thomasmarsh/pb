@@ -56,6 +56,19 @@ tests = testGroup "Pipeline"
             map llText (normalizeText "x = /* inline */ 1\ny = 2") @?=
                 ["x = /* inline */ 1", "y = 2"]
 
+        , testCase "block comment closed by */ immediately before // line comment" $ do
+            -- The closing */ and a line comment // share the same slash:
+            -- "end *///" — the * and first / close the block, // is a line comment.
+            -- lineCommentDepth must not strip // before counting */.
+            map llText (normalizeText "/* start\nend *///") @?=
+                ["/* start end *///"]
+
+        , testCase "block comment closed by */ before // does not swallow next line" $ do
+            -- If lineCommentDepth mishandles *// the block comment is never
+            -- closed and the next logical line is consumed into it.
+            map llText (normalizeText "code /* open\n*/// line cmt\nnext line") @?=
+                ["code /* open */// line cmt", "next line"]
+
         , testCase "empty input yields one empty logical line" $
             normalizeText "" @?= [LogicalLine "" 1 1]
 
