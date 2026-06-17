@@ -218,6 +218,16 @@ export function highlightPowerScriptChunked(
   nextChunk();
 }
 
+export function highlightAsync(code: string): Promise<string> {
+  return new Promise((resolve) => {
+    let result = "";
+    highlightPowerScriptChunked(code, (chunk, done) => {
+      result += chunk;
+      if (done) resolve(result);
+    });
+  });
+}
+
 // ── SQL highlighting via highlight.js ────────────────────────────────────────
 
 import hljs from "highlight.js/lib/core";

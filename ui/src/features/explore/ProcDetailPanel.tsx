@@ -3,22 +3,12 @@
 import { Show, For, createMemo, createSignal, createResource } from "solid-js";
 import { useSnapshot } from "../../core/store.js";
 import { useExploreStore } from "./ExploreContext.js";
-import { highlightPowerScriptChunked } from "../../lib/highlight.js";
+import { highlightAsync } from "../../lib/highlight.js";
 import type { ExploreProcDetail, SqlStatementRow } from "../../types/api.js";
 import { AstNode } from "./AstNode.js";
 import { DetailShell } from "../../components/DetailShell.js";
 import { SqlStatementCard } from "../../components/SqlStatementCard.js";
 import { procBadge } from "../../utils/format.js";
-
-function highlightAsync(code: string): Promise<string> {
-  return new Promise((resolve) => {
-    let result = "";
-    highlightPowerScriptChunked(code, (chunk, done) => {
-      result += chunk;
-      if (done) resolve(result);
-    });
-  });
-}
 
 export function ProcDetailPanel(props: { nodeId: string }) {
   const store = useExploreStore();

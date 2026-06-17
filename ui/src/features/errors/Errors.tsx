@@ -12,6 +12,7 @@ import type { ParseErrorRow } from "../../types/api.js";
 import { CodeBlock } from "../../components/CodeBlock.js";
 import { CopyButton } from "../../components/CopyButton.js";
 import { anonymizeText } from "../../core/anonymize.js";
+import { highlightAsync } from "../../lib/highlight.js";
 
 const KIND_FILTERS: { value: ErrorKindFilter; label: string }[] = [
   { value: "all", label: "All" },
@@ -165,18 +166,21 @@ export function Errors(props: { store: Store<AppState, AppAction> }) {
 }
 
 function ErrorFileContext(props: { row: ParseErrorRow }) {
-  const [source] = createResource(
+  const [raw] = createResource(
     () => props.row.file,
     (file) => fetch("/api/errors/source?file=" + encodeURIComponent(file))
       .then(r => r.json() as Promise<{ lines: string[] }>),
     { initialValue: { lines: [] as string[] } },
   );
 
-  const fileSource = createMemo(() => {
-    const data = source();
-    if (!data || data.lines.length === 0) return null;
-    return data.lines.join("\n");
-  });
+  const [highlighted] = createResource(
+    () => raw()?.lines,
+    (lines) => {
+      if (!lines || lines.length === 0) return Promise.resolve("");
+      return highlightAsync(lines.join("\n"));
+    },
+    { initialValue: "" },
+  );
 
   const line = () => props.row.line ?? 1;
 
@@ -186,10 +190,10 @@ function ErrorFileContext(props: { row: ParseErrorRow }) {
         <p>Full file source — error at line {line()}</p>
       </div>
       <Show
-        when={!source.loading && fileSource()}
+        when={!highlighted.loading && highlighted()}
         fallback={<div class="loading-overlay"><div class="spinner" /> Loading file source...</div>}
       >
-        <CodeBlock code={fileSource()!} baseLine={1} highlightLine={line()} />
+        <CodeBlock code={highlighted()!} baseLine={1} highlightLine={line()} />
       </Show>
     </div>
   );
