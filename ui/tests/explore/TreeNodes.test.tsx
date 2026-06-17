@@ -5,7 +5,7 @@ import { screen, fireEvent } from "@solidjs/testing-library";
 import { render } from "@solidjs/testing-library";
 import { ExploreStoreContext } from "../../src/features/explore/ExploreContext.js";
 import { createTestStore } from "../helpers.js";
-import { ProcNode, DwNode, ObjectNode, LibraryNode } from "../../src/features/explore/TreeNodes.js";
+import { ProcNode, ObjectNode, LibraryNode } from "../../src/features/explore/TreeNodes.js";
 
 function renderWithExplore(overrides?: Record<string, unknown>) {
   const { store, captured } = createTestStore({
@@ -88,9 +88,9 @@ describe("ProcNode", () => {
   });
 });
 
-describe("DwNode", () => {
-  it("renders DW name with badge", () => {
-    const { store } = createTestStore({
+describe("ObjectNode (datawindow)", () => {
+  it("renders DW name with badge and dispatches dw-select on click", () => {
+    const { store, captured } = createTestStore({
       explore: {
         libraries: [], expandedNodes: new Set(), selectedProc: null, selectedDw: null,
         procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
@@ -100,11 +100,14 @@ describe("DwNode", () => {
     });
     render(() => (
       <ExploreStoreContext.Provider value={store}>
-        <DwNode name="d_emp" depth={1} />
+        <ObjectNode lib="app.pbl" obj={{ name: "d_emp", kind: "datawindow", file: "app.pbl", procedures: [] }} depth={1} />
       </ExploreStoreContext.Provider>
     ));
     expect(screen.getByText("d_emp")).toBeDefined();
     expect(screen.getByText("datawindow")).toBeDefined();
+    fireEvent.click(screen.getByText("d_emp"));
+    const actions = captured.filter(a => a.tag === "explore" && a.action.type === "dw-select");
+    expect(actions.length).toBe(1);
   });
 });
 

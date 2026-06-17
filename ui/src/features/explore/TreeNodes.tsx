@@ -10,7 +10,6 @@ import type { ExploreLibrary, ExploreObject, ExploreProcedure } from "../../type
 export function libId(name: string): string { return `lib:${name}`; }
 export function objId(lib: string, name: string): string { return `obj:${lib}:${name}`; }
 export function procId(obj: string, name: string): string { return `proc:${obj}:${name}`; }
-export function dwId(name: string): string { return `dw:${name}`; }
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "…" : s;
@@ -55,26 +54,6 @@ export function ProcNode(props: { objName: string; proc: ExploreProcedure; depth
   );
 }
 
-// ── DataWindow Tree Node ──────────────────────────────────────────────────────
-
-export function DwNode(props: { name: string; depth: number }) {
-  const store = useExploreStore();
-  const snap = useSnapshot(store.state);
-  const nodeId = () => dwId(props.name);
-  const isSelected = () => snap().explore.selectedDw === nodeId();
-
-  return (
-    <TreeNode
-      nodeId={nodeId()}
-      depth={props.depth}
-      badge={{ text: "datawindow", cls: "badge-dw" }}
-      name={props.name}
-      selected={isSelected()}
-      onClick={() => store.dispatch({ tag: "explore", action: { type: "dw-select", dwName: props.name, nodeId: nodeId() } })}
-    />
-  );
-}
-
 // ── Object Tree Node ──────────────────────────────────────────────────────────
 
 export function ObjectNode(props: { lib: string; obj: ExploreObject; depth: number }) {
@@ -113,15 +92,14 @@ export function ObjectNode(props: { lib: string; obj: ExploreObject; depth: numb
         badge={{ text: props.obj.kind, cls: kindBadge(props.obj.kind) }}
         name={props.obj.name}
         summary={isDw() ? undefined : procCount()}
+        onClick={isDw() ? () => store.dispatch({ tag: "explore", action: { type: "dw-select", dwName: props.obj.name, nodeId: nodeId() } }) : undefined}
       >
-        <Show when={isDw()} fallback={
+        <Show when={!isDw()}>
           <Show when={visibleProcs().length > 0} fallback={<div class="tree-empty">No procedures</div>}>
             <For each={visibleProcs()}>
               {(proc) => <ProcNode objName={props.obj.name} proc={proc} depth={props.depth + 1} />}
             </For>
           </Show>
-        }>
-          <DwNode name={props.obj.name} depth={props.depth + 1} />
         </Show>
       </TreeNode>
     </Show>
