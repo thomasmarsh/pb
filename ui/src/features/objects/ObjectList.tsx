@@ -1,7 +1,6 @@
 // ObjectList.tsx — Object listing with search, filters, and pagination.
 
 import { Show, For } from "solid-js";
-import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
@@ -10,7 +9,7 @@ import { Loading } from "../../components/Loading.js";
 
 export function ObjectList(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const os = () => snap().objects;
 
   return (

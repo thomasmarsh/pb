@@ -2,7 +2,6 @@
 
 import { Show, createSignal } from "solid-js";
 import { Tabs } from "@kobalte/core/tabs";
-import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
@@ -12,7 +11,7 @@ import { Loading } from "../../components/Loading.js";
 
 export function ProcedureDetail(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const proc = () => snap().objects.procedureDetail;
   const objectName = () => {
     const r = snap().nav.route;

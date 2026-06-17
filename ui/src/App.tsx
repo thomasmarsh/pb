@@ -2,7 +2,7 @@
 
 import { render, Show } from "solid-js/web";
 import type { JSX } from "solid-js";
-import { createStore, useSnapshot } from "./core/store.js";
+import { createStore } from "./core/store.js";
 import type { Store } from "./core/store.js";
 import { initialState, reducer } from "./app/reducer.js";
 import type { AppState } from "./app/state.js";
@@ -35,7 +35,7 @@ store.dispatch({ tag: "theme", action: { type: "load" } });
 store.dispatch({ tag: "dashboard", action: { type: "load" } });
 
 function ViewRouter(props: { store: Store<AppState, AppAction> }): JSX.Element {
-  const snap = useSnapshot(props.store.state);
+  const snap = props.store.getState();
   return (
     <Layout store={props.store}>
       <Show when={snap().nav.route.view === "dashboard"}><Dashboard store={props.store} /></Show>

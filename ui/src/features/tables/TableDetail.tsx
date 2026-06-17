@@ -1,7 +1,6 @@
 // features/tables/TableDetail.tsx — Detail view with Readers / Writers tabs.
 
 import { For, Show, createSignal } from "solid-js";
-import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
@@ -215,7 +214,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
 }
 
 export function TableDetail(props: { store: Store<AppState, AppAction> }) {
-  const snap = useSnapshot(props.store.state);
+  const snap = props.store.getState();
   const ts = () => snap().tables;
 
   return (

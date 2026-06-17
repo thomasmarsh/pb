@@ -1,7 +1,6 @@
 // Layout.tsx — Sidebar layout. Prop-drilled store.
 
 import { For, type ParentProps } from "solid-js";
-import { useSnapshot } from "../core/store.js";
 import type { Store } from "../core/store.js";
 import type { AppState, ViewName } from "../app/state.js";
 import type { Route } from "../features/navigation/types.js";
@@ -36,7 +35,7 @@ interface LayoutProps {
 }
 
 export function Layout(props: ParentProps<LayoutProps>) {
-  const snap = useSnapshot(props.store.state);
+  const snap = props.store.getState();
   const isDark = () => snap().theme === "dark";
   return (
     <div class="app-layout">

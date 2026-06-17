@@ -1,7 +1,6 @@
 // Queries.tsx — SQL queries view.
 
 import { Show, For, onMount, createSignal } from "solid-js";
-import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
@@ -11,7 +10,7 @@ type ParamDef = { name: string; type: string; default: string | null };
 
 export function Queries(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const q = () => snap().queries;
   const [paramValues, setParamValues] = createSignal<Record<string, string>>({});
   const [shownSql, setShownSql] = createSignal<Set<string>>(new Set());

@@ -2,7 +2,6 @@
 
 import { For, Show, createMemo, createResource, onMount } from "solid-js";
 import { Tabs } from "@kobalte/core/tabs";
-import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
@@ -22,7 +21,7 @@ const KIND_FILTERS: { value: ErrorKindFilter; label: string }[] = [
 
 export function Errors(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const e = () => snap().errors;
 
   onMount(() => {

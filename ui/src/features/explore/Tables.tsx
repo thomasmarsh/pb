@@ -1,7 +1,6 @@
 // Tables.tsx — DB table browser (PBSELECT / DataWindow source).
 
 import { Show, For, createMemo } from "solid-js";
-import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
@@ -13,7 +12,7 @@ import { InlineDiagram } from "../../components/InlineDiagram.js";
 
 export function TableList(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const tables = () => snap().explore.tables;
 
   const tableNames = createMemo(() => tables().items.map((t: { table_name: string }) => t.table_name));
@@ -79,7 +78,7 @@ function WhereRow(props: { row: { dw_name: string; idx: number; exp1: string; op
 
 export function TableDetailPanel(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const tables = () => snap().explore.tables;
   const selected = () => tables().selected;
   const detail = () => tables().detail;

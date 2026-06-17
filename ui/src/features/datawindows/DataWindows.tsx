@@ -1,7 +1,6 @@
 // DataWindows.tsx — DataWindows list and detail views.
 
 import { Show, For, onMount, createSignal } from "solid-js";
-import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
@@ -158,7 +157,7 @@ function DWDetailContent(props: { d: DwDetailResponse; store: Store<AppState, Ap
 
 export function DataWindows(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const dw = () => snap().datawindows;
 
   onMount(() => {
@@ -202,7 +201,7 @@ export function DataWindows(props: { store: Store<AppState, AppAction> }) {
 
 export function DWDetail(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const dw = () => snap().datawindows.dwDetail;
 
   return (

@@ -1,7 +1,6 @@
 // ObjectsDetailPanel.tsx — Router between proc/DW/tables detail panels.
 
 import { Show } from "solid-js";
-import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
@@ -12,7 +11,7 @@ import { TableDetailPanel } from "./Tables.js";
 
 export function ObjectsDetailPanel() {
   const store = useExploreStore();
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const selectedProc = () => snap().explore.selectedProc;
   const selectedDw = () => snap().explore.selectedDw;
 
@@ -30,7 +29,7 @@ export function ObjectsDetailPanel() {
 }
 
 export function TablesRightPanel(props: { store: Store<AppState, AppAction> }) {
-  const snap = useSnapshot(props.store.state);
+  const snap = props.store.getState();
   const selectedDw = () => snap().explore.selectedDw;
 
   return (

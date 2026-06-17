@@ -1,7 +1,6 @@
 // ObjectDetail.tsx — Object detail view orchestrator.
 
 import { Show, createSignal, createEffect } from "solid-js";
-import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
@@ -22,7 +21,7 @@ function ObjectDetailContent(props: {
 }) {
   const o = props.o;
   const store = props.store;
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const src = () => snap().objects.sourceDetail;
   const [tab, setTab] = createSignal<"overview" | "diagram" | "source">("overview");
   createEffect(() => { props.obj(); setTab("overview"); });
@@ -68,7 +67,7 @@ function ObjectDetailContent(props: {
 
 export function ObjectDetail(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const obj = () => snap().objects.detail;
 
   return (

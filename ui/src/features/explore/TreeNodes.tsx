@@ -1,7 +1,6 @@
 // TreeNodes.tsx — Library/Object/Proc/DW tree node components.
 
 import { Show, For, createMemo } from "solid-js";
-import { useSnapshot } from "../../core/store.js";
 import { useExploreStore } from "./ExploreContext.js";
 import { TreeNode } from "./TreeNode.js";
 import { procBadge } from "../../utils/format.js";
@@ -25,7 +24,7 @@ function kindBadge(kind: string): string { return KIND_BADGES[kind] ?? "badge-pr
 
 export function ProcNode(props: { objName: string; proc: ExploreProcedure; depth: number }) {
   const store = useExploreStore();
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const nodeId = () => procId(props.objName, props.proc.name);
   const isSelected = () => snap().explore.selectedProc === nodeId();
 
@@ -58,7 +57,7 @@ export function ProcNode(props: { objName: string; proc: ExploreProcedure; depth
 
 export function ObjectNode(props: { lib: string; obj: ExploreObject; depth: number }) {
   const store = useExploreStore();
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const nodeId = () => objId(props.lib, props.obj.name);
   const isDw = () => props.obj.kind === "datawindow";
 
@@ -110,7 +109,7 @@ export function ObjectNode(props: { lib: string; obj: ExploreObject; depth: numb
 
 export function LibraryNode(props: { lib: ExploreLibrary; depth: number }) {
   const store = useExploreStore();
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const nodeId = () => libId(props.lib.name);
 
   const treeFilter = () => snap().explore.treeFilter.toLowerCase();

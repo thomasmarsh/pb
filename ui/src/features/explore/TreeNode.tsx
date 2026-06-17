@@ -1,7 +1,6 @@
 // TreeNode.tsx — Generic expandable tree node.
 
 import { Show, children, type ParentProps, type JSX } from "solid-js";
-import { useSnapshot } from "../../core/store.js";
 import { useExploreStore } from "./ExploreContext.js";
 import { chevron } from "../../utils/format.js";
 
@@ -19,7 +18,7 @@ export interface TreeNodeProps {
 
 export function TreeNode(props: ParentProps<TreeNodeProps>): JSX.Element {
   const store = useExploreStore();
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const isExpanded = () => snap().explore.expandedNodes.has(props.nodeId);
   const resolved = children(() => props.children);
   const hasChildren = () => !!resolved();

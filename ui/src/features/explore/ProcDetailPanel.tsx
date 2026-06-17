@@ -1,7 +1,6 @@
 // ProcDetailPanel.tsx — Procedure detail with Source/AST/SQL tabs.
 
 import { Show, For, createMemo, createSignal, createResource } from "solid-js";
-import { useSnapshot } from "../../core/store.js";
 import { useExploreStore } from "./ExploreContext.js";
 import { highlightAsync } from "../../lib/highlight.js";
 import type { ExploreProcDetail, SqlStatementRow } from "../../types/api.js";
@@ -13,7 +12,7 @@ import { procBadge } from "../../utils/format.js";
 
 export function ProcDetailPanel(props: { nodeId: string }) {
   const store = useExploreStore();
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
   const entry = () => snap().explore.procCache[props.nodeId];
   const procName = () => props.nodeId.split(":")[2] ?? "";
   const objectName = () => props.nodeId.split(":")[1] ?? "";

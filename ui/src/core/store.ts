@@ -1,7 +1,7 @@
 // core/store.ts — Valtio proxy store with SolidJS snapshot bridge + scope.
 
 import { proxy, snapshot, subscribe } from "valtio/vanilla";
-import { createSignal, onCleanup } from "solid-js";
+import { createMemo, createSignal, onCleanup } from "solid-js";
 import type { Effect } from "./effect.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -11,6 +11,8 @@ export interface Store<AppState, AppAction> {
   state: AppState;
   /** Dispatch a tagged action through the reducer. */
   dispatch: (action: AppAction) => void;
+  /** Returns a reactive SolidJS accessor for the current state snapshot. Call inside a component. */
+  getState: () => () => AppState;
 }
 
 /**
@@ -20,11 +22,13 @@ export interface Store<AppState, AppAction> {
 export interface ScopedStore<NarrowState, NarrowAction> {
   state: NarrowState;
   dispatch: (action: NarrowAction) => void;
+  /** Returns a reactive SolidJS accessor for the current state snapshot. Call inside a component. */
+  getState: () => () => NarrowState;
 }
 
-// ── Snapshot hook ────────────────────────────────────────────────────────────
+// ── Snapshot (internal) ──────────────────────────────────────────────────────
 
-export function useSnapshot<S extends object>(proxyState: S): () => S {
+function useSnapshot<S extends object>(proxyState: S): () => S {
   // createSignal overload requires Exclude<T, Function>; cast via any since S is always a plain object
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [snap, setSnap] = createSignal<S>(snapshot(proxyState as any) as any);
@@ -57,6 +61,7 @@ export function scope<PS extends object, PA, NS, NA, NEnv, AppEnv>(
     get state(): NS { return get(parent.state); },
     dispatch: (a: NA) => parent.dispatch(widen(a)),
     env: narrowEnv(env),
+    getState: () => { const p = parent.getState(); return createMemo(() => get(p())); },
   };
 }
 
@@ -78,5 +83,5 @@ export function createStore<S extends object, A, Env>(
     }
   }
 
-  return { state, dispatch };
+  return { state, dispatch, getState: () => useSnapshot(state) };
 }

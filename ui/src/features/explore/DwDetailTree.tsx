@@ -1,7 +1,6 @@
 // DwDetailTree.tsx — DataWindow controls/SQL/arguments detail tree.
 
 import { Show, For, createMemo, type JSX } from "solid-js";
-import { useSnapshot } from "../../core/store.js";
 import { useExploreStore } from "./ExploreContext.js";
 import type { DwExploreDetail } from "../../types/api.js";
 import { SqlBlock } from "../../components/CodeBlock.js";
@@ -10,7 +9,7 @@ import { chevron } from "../../utils/format.js";
 
 export function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
   const store = useExploreStore();
-  const snap = useSnapshot(store.state);
+  const snap = store.getState();
 
   const retrieveSql = createMemo(() => {
     const cols = props.data.retrieve_columns

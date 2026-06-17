@@ -1,14 +1,13 @@
 // features/tables/TableList.tsx — Searchable list of DB tables.
 
 import { For, Show, onMount } from "solid-js";
-import { useSnapshot } from "../../core/store.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import { Loading } from "../../components/Loading.js";
 
 export function TableList(props: { store: Store<AppState, AppAction> }) {
-  const snap = useSnapshot(props.store.state);
+  const snap = props.store.getState();
   const ts = () => snap().tables;
 
   onMount(() => {
