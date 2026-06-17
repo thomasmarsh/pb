@@ -92,7 +92,7 @@ tests = testGroup "StatementSplitter"
     , testCase "empty token list produces one empty statement" $ do
         let ll      = mkLine ""
             lexLine = LexLine ll (Right [])
-        splitStatements [lexLine] @?= [Right (Statement [] ll)]
+        splitStatements [lexLine] @?= [Right (Statement [] ll False)]
 
     , testCase "stmtSource matches originating LogicalLine" $ do
         let ll     = mkLine "a; b"

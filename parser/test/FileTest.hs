@@ -40,8 +40,9 @@ mkTok k t = Token k t (SourceSpan 1 1 1)
 
 mkStmt :: [(TokenKind, Text)] -> Statement
 mkStmt pairs = Statement
-  { stmtTokens = map (uncurry mkTok) pairs
-  , stmtSource = LogicalLine "" 1 1
+  { stmtTokens    = map (uncurry mkTok) pairs
+  , stmtSource    = LogicalLine "" 1 1
+  , stmtTerminated = False
   }
 
 runSection :: FileParser a -> [Statement] -> Either String a

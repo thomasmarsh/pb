@@ -28,21 +28,26 @@ mkTok k t = Token k t (SourceSpan 1 1 1)
 
 mkStmt :: [(TokenKind, Text)] -> Statement
 mkStmt pairs = Statement
-  { stmtTokens = map (uncurry mkTok) pairs
-  , stmtSource = LogicalLine "" 1 1
+  { stmtTokens    = map (uncurry mkTok) pairs
+  , stmtSource    = LogicalLine "" 1 1
+  , stmtTerminated = False
   }
 
 mkStmtAt :: Int -> [(TokenKind, Text)] -> Statement
 mkStmtAt ln pairs = Statement
-  { stmtTokens = map (uncurry mkTok) pairs
-  , stmtSource = LogicalLine "" ln ln
+  { stmtTokens    = map (uncurry mkTok) pairs
+  , stmtSource    = LogicalLine "" ln ln
+  , stmtTerminated = False
   }
 
--- | Like mkStmt but with a source-text string, used to test ';'-detection.
-mkStmtSrc :: Text -> [(TokenKind, Text)] -> Statement
-mkStmtSrc src pairs = Statement
-  { stmtTokens = map (uncurry mkTok) pairs
-  , stmtSource = LogicalLine src 1 1
+-- | Like mkStmt but with a source-text string and explicit termination flag.
+-- term = True when the statement was closed by a TkSemi token (as set by
+-- segmentOnSemi in the real pipeline); False for continuation lines.
+mkStmtSrc :: Bool -> Text -> [(TokenKind, Text)] -> Statement
+mkStmtSrc term src pairs = Statement
+  { stmtTokens    = map (uncurry mkTok) pairs
+  , stmtSource    = LogicalLine src 1 1
+  , stmtTerminated = term
   }
 
 -- | Wrap a BodyStmt with line 1 (matching mkStmt's LogicalLine).
@@ -338,7 +343,7 @@ tests = testGroup "Grammar.Body.Parser"
   , testGroup "SQL body statement joining"
     [ testCase "single-line SQL: no joining needed (regression)" $
         -- COMMIT USING sqlca; — complete on one line
-        let s = mkStmtSrc "COMMIT USING sqlca;" [(TkSqlKw,"commit"),(TkOtherKw,"using"),(TkOtherKw,"sqlca")]
+        let s = mkStmtSrc True "COMMIT USING sqlca;" [(TkSqlKw,"commit"),(TkOtherKw,"using"),(TkOtherKw,"sqlca")]
         in runBodyStmts [s] @?= Right [loc1 (BsRaw "COMMIT USING sqlca;")]
 
     , testCase "multi-line SELECT joined into one BsRaw" $
@@ -346,13 +351,13 @@ tests = testGroup "Grammar.Body.Parser"
         --   INTO :li_rc
         --   FROM ole
         --   WHERE id = :var;
-        let sel  = mkStmtSrc "SELECT count(*)"
+        let sel  = mkStmtSrc False "SELECT count(*)"
                      [(TkSqlKw,"select"),(TkIdent,"count"),(TkLParen,"("),(TkArithOp,"*"),(TkRParen,")")]
-            into = mkStmtSrc "  INTO :li_rc"
+            into = mkStmtSrc False "  INTO :li_rc"
                      [(TkOtherKw,"into"),(TkColon,":"),(TkIdent,"li_rc")]
-            frm  = mkStmtSrc "  FROM ole"
+            frm  = mkStmtSrc False "  FROM ole"
                      [(TkDeclKw,"from"),(TkIdent,"ole")]
-            whr  = mkStmtSrc "  WHERE id = :var;"
+            whr  = mkStmtSrc True "  WHERE id = :var;"
                      [(TkIdent,"where"),(TkIdent,"id"),(TkAssignOp,"="),(TkColon,":"),(TkIdent,"var")]
         in runBodyStmts [sel, into, frm, whr]
              @?= Right [loc1 (BsRaw "SELECT count(*)\n  INTO :li_rc\n  FROM ole\n  WHERE id = :var;")]
@@ -361,11 +366,11 @@ tests = testGroup "Grammar.Body.Parser"
         -- INSERT INTO ole
         --   ( id, description )
         --   VALUES ( :var1, :var2 );
-        let ins  = mkStmtSrc "INSERT INTO ole"
+        let ins  = mkStmtSrc False "INSERT INTO ole"
                      [(TkSqlKw,"insert"),(TkOtherKw,"into"),(TkIdent,"ole")]
-            cols = mkStmtSrc "  ( id, description )"
+            cols = mkStmtSrc False "  ( id, description )"
                      [(TkLParen,"("),(TkIdent,"id"),(TkComma,","),(TkIdent,"description"),(TkRParen,")")]
-            vals = mkStmtSrc "  VALUES ( :var1, :var2 );"
+            vals = mkStmtSrc True "  VALUES ( :var1, :var2 );"
                      [(TkIdent,"values"),(TkLParen,"("),(TkColon,":"),(TkIdent,"var1"),(TkComma,","),(TkColon,":"),(TkIdent,"var2"),(TkRParen,")")]
         in runBodyStmts [ins, cols, vals]
              @?= Right [loc1 (BsRaw "INSERT INTO ole\n  ( id, description )\n  VALUES ( :var1, :var2 );")]
@@ -373,18 +378,18 @@ tests = testGroup "Grammar.Body.Parser"
     , testCase "SQL block followed by non-SQL statement" $
         -- SELECT x FROM t;   (single-line)
         -- y = 1
-        let sqlS = mkStmtSrc "SELECT x FROM t;"
+        let sqlS = mkStmtSrc True "SELECT x FROM t;"
                      [(TkSqlKw,"select"),(TkIdent,"x"),(TkDeclKw,"from"),(TkIdent,"t")]
         in runBodyStmts [sqlS, stmtY1] @?= Right [loc1 (BsRaw "SELECT x FROM t;"), loc1 assignY1]
 
-    , testCase "HYPOTHESIS: trailing line comment after ';' should not swallow following statements" $
-        -- SELECT x FROM t;  // note
+    , testCase "trailing line comment after ';' does not swallow following statements" $
+        -- SELECT x FROM t;  // note  <- TkSemi seen before comment: stmtTerminated = True
         -- y = 1
-        -- z = 2  <- has its own trailing ';' in source text, so moreConts stops here
-        let sqlS = mkStmtSrc "SELECT x FROM t;  // note"
+        -- z = 2
+        let sqlS = mkStmtSrc True "SELECT x FROM t;  // note"
                      [(TkSqlKw,"select"),(TkIdent,"x"),(TkDeclKw,"from"),(TkIdent,"t")]
-            y1   = mkStmtSrc "y = 1" [(TkIdent,"y"),(TkAssignOp,"="),(TkIntLiteral,"1")]
-            z2   = mkStmtSrc "z = 2;" [(TkIdent,"z"),(TkAssignOp,"="),(TkIntLiteral,"2")]
+            y1   = mkStmtSrc False "y = 1" [(TkIdent,"y"),(TkAssignOp,"="),(TkIntLiteral,"1")]
+            z2   = mkStmtSrc False "z = 2" [(TkIdent,"z"),(TkAssignOp,"="),(TkIntLiteral,"2")]
         in runBodyStmts [sqlS, y1, z2]
              @?= Right [ loc1 (BsRaw "SELECT x FROM t;  // note")
                        , loc1 (BsAssign (Lvalue [LvSegment "y" Nothing]) (ExInt "1"))

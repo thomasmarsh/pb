@@ -19,8 +19,9 @@ import Text.Megaparsec (parse)
 
 mkStmt :: [(TokenKind, Text)] -> Statement
 mkStmt pairs = Statement
-  { stmtTokens = [ Token k t (SourceSpan 1 1 1) | (k, t) <- pairs ]
-  , stmtSource = LogicalLine "" 1 1
+  { stmtTokens    = [ Token k t (SourceSpan 1 1 1) | (k, t) <- pairs ]
+  , stmtSource    = LogicalLine "" 1 1
+  , stmtTerminated = False
   }
 
 genStmt :: Gen Statement

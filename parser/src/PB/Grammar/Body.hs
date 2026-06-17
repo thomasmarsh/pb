@@ -459,7 +459,7 @@ pIfStmt = do
          else do
            let (thenToks, elseM) = splitAtElse afterThen
                ln = llStartLine (stmtSource s)
-               mkSub toks = Located ln (classifyBodyStmt (Statement toks (stmtSource s)))
+               mkSub toks = Located ln (classifyBodyStmt (Statement toks (stmtSource s) False))
                thenBody = [mkSub thenToks]
                elseBody = fmap (\eToks -> [mkSub eToks]) elseM
            return (BsIf (IfStmt cond thenBody [] elseBody))
@@ -523,7 +523,7 @@ pCaseClause = do
 pSqlBodyStmt :: FileParser BodyStmt
 pSqlBodyStmt = do
   first <- satisfyStmt isSqlStart
-  if endsWithSemi first
+  if stmtTerminated first
     then return (BsRaw (llText (stmtSource first)))
     else do
       conts <- moreConts
@@ -534,10 +534,19 @@ pSqlBodyStmt = do
       (t:lp:_) -> tkKind t == TkSqlKw && tkKind lp /= TkLParen
       (t:_)    -> tkKind t == TkSqlKw
       []       -> False
-    endsWithSemi s = ";" `T.isSuffixOf` T.stripEnd (llText (stmtSource s))
+    -- Stop at block terminators, control-flow headers, and new SQL starts
+    -- so that SQL without a closing ';' cannot swallow subsequent PowerScript.
+    -- TkDeclKw is NOT in the stop set because PB's lexer classifies SQL
+    -- keywords like FROM as TkDeclKw; use isBlockTerminator for the specific
+    -- "end function/subroutine/event/on" multi-word tokens instead.
+    isContinuable s = not (isBlockTerminator s) && case stmtTokens s of
+      (t:_) -> tkKind t `notElem` [TkControlKw, TkSqlKw]
+      []    -> False
     moreConts = do
-      s <- satisfyStmt (const True)
-      if endsWithSemi s then return [s] else (s:) <$> moreConts
+      ms <- optional (satisfyStmt isContinuable)
+      case ms of
+        Nothing -> return []
+        Just s  -> if stmtTerminated s then return [s] else (s:) <$> moreConts
 
 isBlockTerminator :: Statement -> Bool
 isBlockTerminator s = case stmtTokens s of
