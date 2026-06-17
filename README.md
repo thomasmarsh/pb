@@ -33,11 +33,10 @@ flowchart LR
 
 ## Quick start
 
-```bash
-# 1. Install Python tooling (also builds the Haskell parser on first use)
-cd cli && uv sync
+**Prerequisites:** [GHCup](https://www.haskell.org/ghcup/) (installs GHC + Cabal), [pnpm](https://pnpm.io/), and [uv](https://docs.astral.sh/uv/).
 
-# 2. Index and explore in one step — incremental by default
+```bash
+# Index and explore in one step — incremental by default
 ./pb explore /path/to/src     # builds, indexes, and opens browser
 ```
 
