@@ -40,7 +40,7 @@ export function ComboboxInput(props: ComboboxInputProps) {
       itemComponent={OptionItem}
     >
       <Combobox.Control class="combobox-control">
-        <Combobox.Input class="search-input" onKeyDown={handleKeyDown as any} />
+        <Combobox.Input class="search-input" onKeyDown={(e: KeyboardEvent) => handleKeyDown(e)} />
       </Combobox.Control>
       <Combobox.Portal>
         <Combobox.Content class="combobox-content">

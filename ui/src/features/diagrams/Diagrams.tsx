@@ -28,7 +28,7 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   onMount(() => {
     store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "diagrams" } } });
     if (!dg().itemsLoaded) {
-      store.dispatch({ tag: "diagrams", action: { type: "loadItems" } } as any);
+      store.dispatch({ tag: "diagrams", action: { type: "loadItems" } });
     }
   });
 

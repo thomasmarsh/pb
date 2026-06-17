@@ -8,8 +8,9 @@ import type { AppAction } from "../../app/actions.js";
 import type { TableDetail as TableDetailData, TableProcedureRef, ImpactInheritedRef } from "../../types/api.js";
 import { Loading } from "../../components/Loading.js";
 import { ColumnRow } from "../../components/ColumnRow.js";
+import { InlineDiagram } from "../../components/InlineDiagram.js";
 
-type Tab = "readers" | "writers" | "columns" | "impact";
+type Tab = "readers" | "writers" | "columns" | "impact" | "diagram";
 
 const WRITE_OPS = new Set(["INSERT", "UPDATE", "DELETE"]);
 
@@ -59,17 +60,6 @@ function ImpactTab(props: { detail: TableDetailData; store: Store<AppState, AppA
 
   return (
     <>
-      <div class="card" style={{ padding: "12px 16px", display: "flex", "justify-content": "flex-end" }}>
-        <button class="btn-secondary" onClick={() => {
-          props.store.dispatch({ tag: "diagrams", action: { type: "select", kind: "proc-tables" } });
-          props.store.dispatch({ tag: "diagrams", action: { type: "params", params: { table: props.detail.table_name } } });
-          props.store.dispatch({ tag: "diagrams", action: { type: "generate" } });
-          props.store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "diagrams" } } });
-        }}>
-          Show proc-tables diagram ↗
-        </button>
-      </div>
-
       <Show when={!isEmpty} fallback={
         <div class="card" style={{ padding: "32px", "text-align": "center", color: "var(--text-muted)" }}>
           No inheritance relationships found for this table.
@@ -151,7 +141,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
       </p>
 
       <div class="tab-bar" style={{ display: "flex", gap: "8px", "margin-bottom": "16px" }}>
-        {(["readers", "writers", "columns", "impact"] as Tab[]).map((t) => (
+        {(["readers", "writers", "columns", "impact", "diagram"] as Tab[]).map((t) => (
           <button
             class={tab() === t ? "tab-btn active" : "tab-btn"}
             onClick={() => setTab(t)}
@@ -214,6 +204,17 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
 
       <Show when={tab() === "impact"}>
         <ImpactTab detail={d} store={props.store} />
+      </Show>
+
+      <Show when={tab() === "diagram"}>
+        <div class="card">
+          <div class="card-header"><h3>Procedure → Table Relationships</h3></div>
+          <InlineDiagram kind="proc-tables" params={{ table: d.table_name }} store={props.store} />
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Table Lineage</h3></div>
+          <InlineDiagram kind="table-lineage" params={{ table: d.table_name }} store={props.store} />
+        </div>
       </Show>
     </>
   );
