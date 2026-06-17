@@ -273,6 +273,21 @@ body {
     color: var(--text-primary);
     font-weight: 500;
 }
+.diagram-tooltip-badge {
+    background: var(--accent); color: #fff;
+    font-size: 10px; padding: 1px 5px; border-radius: 3px;
+    margin-left: 6px; font-weight: 500;
+}
+.diagram-tooltip-meta {
+    color: var(--text-secondary);
+    font-size: 11px; margin-top: 2px;
+}
+.diagram-tooltip-header {
+    display: flex; align-items: center;
+}
+.diagram-tooltip-actions {
+    margin-top: 3px;
+}
 .diagram-tooltip-sep {
     color: var(--text-secondary);
     margin: 0 3px;

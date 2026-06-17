@@ -18,16 +18,16 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
   const [showErrors, setShowErrors] = createSignal<Set<string>>(new Set());
 
   function handleParamInput(queryName: string, paramName: string, value: string) {
-    setParamValues(prev => ({ ...prev, [paramName]: value }));
+    setParamValues(prev => ({ ...prev, [`${queryName}.${paramName}`]: value }));
     if (showErrors().has(queryName)) {
       setShowErrors(prev => { const next = new Set(prev); next.delete(queryName); return next; });
     }
   }
 
-  function requiredMissing(query: { params: ParamDef[] }): string[] {
+  function requiredMissing(query: { name: string; params: ParamDef[] }): string[] {
     const vals = paramValues();
     return query.params
-      .filter(p => p.default === null && !(vals[p.name] ?? "").trim())
+      .filter(p => p.default === null && !(vals[`${query.name}.${p.name}`] ?? "").trim())
       .map(p => p.name);
   }
 
@@ -53,7 +53,8 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
     const bound: Record<string, string> = {};
     const vals = paramValues();
     for (const p of query.params) {
-      if (vals[p.name]) bound[p.name] = vals[p.name]!;
+      const v = vals[`${query.name}.${p.name}`];
+      if (v) bound[p.name] = v;
       else if (p.default) bound[p.name] = p.default;
     }
     store.dispatch({ tag: "queries", action: { type: "run", name: query.name, params: bound } });

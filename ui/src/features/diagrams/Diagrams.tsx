@@ -11,18 +11,28 @@ import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import { ComboboxInput } from "../../components/ComboboxInput.js";
 
-const AUTO_GENERATE: ReadonlySet<DiagramKind> = new Set(["heatmap", "inheritance", "sql-lineage", "proc-tables"]);
+const AUTO_GENERATE: ReadonlySet<DiagramKind> = new Set(["heatmap", "inheritance", "dw-tables", "sql-lineage", "proc-tables"]);
 const HAS_FOCUS: ReadonlySet<DiagramKind> = new Set(["calls", "dw-tables", "sql-lineage", "table-lineage", "proc-tables"]);
 
-function parsePbUrl(href: string | null): { kind: "object" | "table"; name: string } | null {
+function parsePbUrl(href: string | null): { kind: "object" | "table"; name: string; meta: Record<string, string> } | null {
   if (!href || !href.startsWith("pb://")) return null;
   const rest = href.slice(5); // strip "pb://"
-  const slash = rest.indexOf("/");
+  const hashIdx = rest.indexOf("#");
+  const path = hashIdx >= 0 ? rest.slice(0, hashIdx) : rest;
+  const fragment = hashIdx >= 0 ? rest.slice(hashIdx + 1) : "";
+  const slash = path.indexOf("/");
   if (slash < 0) return null;
-  const kind = rest.slice(0, slash);
-  const name = rest.slice(slash + 1);
+  const kind = path.slice(0, slash);
+  const name = path.slice(slash + 1);
   if ((kind === "object" || kind === "table") && name.length > 0) {
-    return { kind, name };
+    const meta: Record<string, string> = {};
+    if (fragment) {
+      for (const pair of fragment.split(",")) {
+        const eq = pair.indexOf("=");
+        if (eq > 0) meta[pair.slice(0, eq)] = pair.slice(eq + 1);
+      }
+    }
+    return { kind, name, meta };
   }
   return null;
 }
@@ -43,7 +53,7 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   const [copied, setCopied] = createSignal(false);
 
   // Hover tooltip state
-  const [tooltip, setTooltip] = createSignal<{ x: number; y: number; kind: "object" | "table"; name: string } | null>(null);
+  const [tooltip, setTooltip] = createSignal<{ x: number; y: number; kind: "object" | "table"; name: string; meta: Record<string, string> } | null>(null);
   let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
   onCleanup(() => { if (hideTimer) clearTimeout(hideTimer); });
@@ -92,7 +102,7 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
     const parsed = parsePbUrl(href);
     if (!parsed) { setTooltip(null); return; }
     const rect = anchor.getBoundingClientRect();
-    setTooltip({ x: rect.left + rect.width / 2, y: rect.top - 8, kind: parsed.kind, name: parsed.name });
+    setTooltip({ x: rect.left + rect.width / 2, y: rect.top - 8, kind: parsed.kind, name: parsed.name, meta: parsed.meta });
   }
 
   function handleSvgMouseOut(e: MouseEvent) {
@@ -240,13 +250,24 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
           onMouseOver={handleTooltipMouseOver}
           onMouseOut={handleTooltipMouseOut}
         >
-          <span class="diagram-tooltip-name">{tooltip()!.name}</span>
-          <span class="diagram-tooltip-sep">&middot;</span>
-          <a class="diagram-tooltip-link" onClick={() => navigateTo(tooltip()!.kind, tooltip()!.name, "detail")}>detail</a>
-          <Show when={HAS_FOCUS.has(activeTab())}>
-            <span class="diagram-tooltip-sep">&middot;</span>
-            <a class="diagram-tooltip-link" onClick={() => navigateTo(tooltip()!.kind, tooltip()!.name, "focus")}>focus</a>
+          <div class="diagram-tooltip-header">
+            <span class="diagram-tooltip-name">{tooltip()!.name}</span>
+            <Show when={tooltip()!.meta["kind"]}>
+              <span class="diagram-tooltip-badge">{tooltip()!.meta["kind"]}</span>
+            </Show>
+          </div>
+          <Show when={Object.keys(tooltip()!.meta).length > 0 && !tooltip()!.meta["kind"]}>
+            <div class="diagram-tooltip-meta">
+              {Object.entries(tooltip()!.meta).map(([k, v]) => `${k}=${v}`).join(" · ")}
+            </div>
           </Show>
+          <div class="diagram-tooltip-actions">
+            <a class="diagram-tooltip-link" onClick={() => navigateTo(tooltip()!.kind, tooltip()!.name, "detail")}>detail</a>
+            <Show when={HAS_FOCUS.has(activeTab())}>
+              <span class="diagram-tooltip-sep">&middot;</span>
+              <a class="diagram-tooltip-link" onClick={() => navigateTo(tooltip()!.kind, tooltip()!.name, "focus")}>focus</a>
+            </Show>
+          </div>
         </div>
       </Show>
     </>

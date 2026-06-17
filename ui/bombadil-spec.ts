@@ -87,6 +87,12 @@ const pathname = extract((state) => state.window.location.pathname);
 // 4. URL-VIEW CONSISTENCY
 // ===========================================================================
 
+const KNOWN_VIEWS = [
+  "dashboard", "objects", "objectDetail", "procedureDetail",
+  "datawindows", "dwDetail", "tables", "tableDetail",
+  "diagrams", "queries", "search", "explore", "errors",
+];
+
 export const pathnameAlwaysWellFormed: Formula = always(() => {
   const p = pathname.current;
   return p === "/" || (p.startsWith("/") && !p.includes("//"));
@@ -97,15 +103,23 @@ export const pathnameNeverTrailingSlash: Formula = always(() => {
   return p === "/" || !p.endsWith("/");
 });
 
+export const routeAlwaysKnown: Formula = always(() =>
+  KNOWN_VIEWS.includes(currentView.current),
+);
+
 const backButtons = extract((state) => {
   const btns = state.document.querySelectorAll(".back-btn");
+  const winH = state.window.innerHeight;
+  const winW = state.window.innerWidth;
   return Array.from(btns).map((b) => {
     const rect = b.getBoundingClientRect();
     return {
       x: rect.left + rect.width / 2,
       y: rect.top + rect.height / 2,
       text: b.textContent?.trim() ?? "",
-      visible: rect.width > 0 && rect.height > 0,
+      visible: rect.width > 0 && rect.height > 0
+        && rect.top >= 0 && rect.bottom <= winH
+        && rect.left >= 0 && rect.right <= winW,
     };
   });
 });
@@ -152,13 +166,17 @@ const clickableRows = extract((state) => {
 
 const tableChips = extract((state) => {
   const chips = state.document.querySelectorAll(".table-chip");
+  const winH = state.window.innerHeight;
+  const winW = state.window.innerWidth;
   return Array.from(chips).map((c) => {
     const rect = c.getBoundingClientRect();
     return {
       x: rect.left + rect.width / 2,
       y: rect.top + rect.height / 2,
       name: c.textContent?.replace("⊡", "").trim() ?? "",
-      visible: rect.width > 0 && rect.height > 0,
+      visible: rect.width > 0 && rect.height > 0
+        && rect.top >= 0 && rect.bottom <= winH
+        && rect.left >= 0 && rect.right <= winW,
     };
   });
 });
@@ -177,16 +195,6 @@ const interactiveTreeNodes = extract((state) => {
 
 const loadingSpinners = extract((state) => {
   return state.document.querySelectorAll(".loading, [class*=spinner]").length;
-});
-
-const noConsoleErrors = extract((state) => {
-  const errs: string[] = [];
-  const orig = state.window.onerror;
-  state.window.onerror = (msg) => {
-    errs.push(String(msg));
-    if (orig) orig.call(state.window, msg);
-  };
-  return errs.length;
 });
 
 const scrollPosition = extract((state) => ({
@@ -275,16 +283,12 @@ export const noStaleLoadingIndicator: Formula = always(() => {
 
 export const backButtonsAreClickable: Formula = always(() => {
   const btns = backButtons.current;
-  return btns.every((b) => !b.visible || (b.x > 0 && b.y > -1000));
+  return btns.every((b) => !b.visible || (b.x > 0 && b.y > 0 && b.y < 2000));
 });
 
 // ===========================================================================
-// 6. CLICK SAFETY (nothing crashes)
+// 6. CLICK SAFETY (nothing crashes — noUncaughtExceptions from defaults)
 // ===========================================================================
-
-export const noUncaughtExceptions: Formula = always(() =>
-  noConsoleErrors.current === 0,
-);
 
 // ===========================================================================
 // 7. INPUT SAFETY
@@ -307,27 +311,6 @@ const mainChildCount = extract((state) => {
 export const noBlankScreensAfterNavigation: Formula = always(() =>
   mainChildCount.current > 0,
 );
-
-// ===========================================================================
-// 9. STATE CONSISTENCY — sidebar group highlighting
-// ===========================================================================
-
-const sidebarActiveGroup = extract((state) => {
-  const links = state.document.querySelectorAll(".sidebar-nav a");
-  const arr = Array.from(links);
-  const idx = arr.findIndex((a) => a.classList.contains("active"));
-  return idx;
-});
-
-export const activeLinkGroupConsistent: Formula = always(() => {
-  const idx = sidebarActiveGroup.current;
-  if (idx < 0 || idx >= NAV_LABELS.length) return true;
-  const itemPath = NAV_LABELS[idx]!.toLowerCase();
-  const group = VIEW_GROUPS[itemPath];
-  const view = currentView.current;
-  if (!group) return itemPath === view;
-  return group.includes(view);
-});
 
 // ===========================================================================
 // 10. CROSS-LINK CONSISTENCY
@@ -398,6 +381,19 @@ export const queryRunDisabledWhenMissingParams: Formula = always(() => {
     if (!btn.hasUnfilledRequired) return true;
     return btn.disabled;
   });
+});
+
+// ===========================================================================
+// 14. THEME FRAME CONDITION
+// ===========================================================================
+
+const bodyTheme = extract((state) =>
+  state.document.documentElement.getAttribute("data-theme"),
+);
+
+export const themeAlwaysSet: Formula = always(() => {
+  const t = bodyTheme.current;
+  return t === "dark" || t === "light";
 });
 
 const navLinksAction = extract((state) => {

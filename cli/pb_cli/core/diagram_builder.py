@@ -91,8 +91,7 @@ def render_inheritance(
                     shape=shape,
                     style="filled,rounded",
                     fillcolor=fill,
-                    tooltip=f"{name} [{kind}]",
-                    URL=f"pb://object/{name}",
+                    URL=f"pb://object/{name}#kind={kind}",
                 )
                 seen.add(name)
         dot.edge(src, dst)
@@ -105,8 +104,7 @@ def render_inheritance(
             style="filled",
             fillcolor="#FFD700",
             fontcolor="#1C1C1E",
-            tooltip=f"{root} [root]",
-            URL=f"pb://object/{root}",
+            URL=f"pb://object/{root}#kind={kind}",
         )
 
     return dot
@@ -139,8 +137,7 @@ def render_calls(
             width=width,
             height=width,
             fixedsize="false",
-            tooltip=f"{name} [cc={cc}]",
-            URL=f"pb://object/{name}",
+            URL=f"pb://object/{name}#cc={cc}",
         )
 
     for u, v in sub_edges:
@@ -181,8 +178,7 @@ def render_dw_tables(
                 style="filled,rounded",
                 fillcolor=fill,
                 fontsize="8",
-                tooltip=f"{dw} ({nc} tables)",
-                URL=f"pb://object/{dw}",
+                URL=f"pb://object/{dw}#tables={nc}",
             )
 
     with dot.subgraph(name="cluster_tables") as c:  # pyright: ignore[reportOptionalContextManager]
@@ -202,7 +198,6 @@ def render_dw_tables(
                 fillcolor="#2E5E32",
                 fontcolor="#C8F0CA",
                 fontsize="8",
-                tooltip=tbl,
                 URL=f"pb://table/{tbl}",
             )
 
@@ -244,8 +239,7 @@ def render_heatmap(
             height=size,
             fixedsize="true",
             fontsize=fsize,
-            tooltip=f"{name}  cc={cc}  fan-in={fan_in}",
-            URL=f"pb://object/{name}",
+            URL=f"pb://object/{name}#cc={cc},fan-in={fan_in}",
         )
 
     for src, dst in inherit_edges:
