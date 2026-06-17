@@ -80,6 +80,12 @@ def hash_source_dir(src_dir: Path) -> dict[str, str]:
     return {str(f): _sha256(f) for f in walk_sr_files(src_dir)}
 
 
+def hash_pbl_dir(input_path: Path) -> dict[str, str]:
+    """SHA256-hash every .pbl file under input_path. Keys are absolute path strings."""
+    path = input_path.resolve()
+    return {str(p): _sha256(p) for p in sorted(path.iterdir()) if p.is_file() and p.suffix.lower() == ".pbl"}
+
+
 def ensure_explorer_built(repo: Path, verbose: bool = False) -> None:
     """Ensure the explorer TypeScript bundle is up-to-date.
 

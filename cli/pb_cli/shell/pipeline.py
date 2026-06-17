@@ -12,6 +12,33 @@ from pb_cli.shell.reporter import Reporter
 from pb_cli.shell.runner import extract_line
 
 
+def db_is_current(input_path: Path, db: str) -> bool:
+    """Return True if pb.duckdb already reflects the source input.
+
+    For .pbl directories, compares per-.pbl-file hashes via file_state.
+    For plain directories, compares per-.sr*-file hashes via file_state.
+    """
+    if not Path(db).exists():
+        return False
+    try:
+        with env.storage.db_connection(db, read_only=True) as conn:
+            p = input_path.resolve()
+            is_pbl = p.is_dir() and any(f.suffix.lower() == ".pbl" for f in p.iterdir() if f.is_file())
+            if is_pbl:
+                current = env.build.hash_pbl_dir(input_path)
+            else:
+                current = env.build.hash_source_dir(input_path)
+            stored = env.storage.load_file_state(conn)
+            # Only compare entries relevant to this input type
+            ext = ".pbl" if is_pbl else None
+            if ext:
+                stored = {k: v for k, v in stored.items() if k.endswith(ext)}
+            diff = diff_state(current, stored)
+            return not diff.new and not diff.changed and not diff.deleted
+    except Exception:
+        return False
+
+
 def run(
     src_dir: Path,
     db: str,
@@ -19,6 +46,7 @@ def run(
     reporter: Reporter,
     reset: bool = False,
     dialect: str = "oracle",
+    input_path: Path | None = None,
 ) -> None:
     src_dir = src_dir.resolve()  # normalise /var → /private/var symlink on macOS
     to_parse = None
@@ -53,6 +81,13 @@ def run(
 
             parsed_files = {obj["file"] for obj in objects}
             env.storage.save_file_state(conn, {f: current[f] for f in to_parse if f in parsed_files})
+
+        if input_path is not None:
+            p = input_path.resolve()
+            if p.is_dir() and any(f.suffix.lower() == ".pbl" for f in p.iterdir() if f.is_file()):
+                pbl_hashes = env.build.hash_pbl_dir(input_path)
+                if pbl_hashes:
+                    env.storage.save_file_state(conn, pbl_hashes)
 
     with env.storage.db_connection(db) as conn, reporter.analyze_progress() as progress:
         env.storage.compute_metrics(conn, progress)

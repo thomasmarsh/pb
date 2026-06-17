@@ -18,7 +18,7 @@ from pb_cli.shell.commands.debt import run as run_debt
 from pb_cli.shell.commands.dump import run as run_dump
 from pb_cli.shell.env import env
 from pb_cli.shell.pbl import extract_to_dir, resolve_source_dir
-from pb_cli.shell.pipeline import run as run_pipeline
+from pb_cli.shell.pipeline import db_is_current, run as run_pipeline
 from pb_cli.shell.queries import register_queries
 
 app = typer.Typer(
@@ -82,7 +82,7 @@ def index(
     repo_path = env.build.find_repo(repo)
     binary = env.build.find_binary(repo_path) if no_build else _build(repo_path, reporter)
     with resolve_source_dir(Path(input_path), reporter) as src_dir:
-        run_pipeline(src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect)
+        run_pipeline(src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect, input_path=input_path)
 
 
 # ── pb extract ────────────────────────────────────────────────────────────────
@@ -219,10 +219,13 @@ def explore(
     reporter = env.reporter
 
     if input_path is not None:
-        repo_path = env.build.find_repo(repo)
-        binary = env.build.find_binary(repo_path) if no_build else _build(repo_path, reporter)
-        with resolve_source_dir(Path(input_path), reporter) as src_dir:
-            run_pipeline(src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect)
+        if reset or not db_is_current(input_path, db):
+            repo_path = env.build.find_repo(repo)
+            binary = env.build.find_binary(repo_path) if no_build else _build(repo_path, reporter)
+            with resolve_source_dir(Path(input_path), reporter) as src_dir:
+                run_pipeline(src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect, input_path=input_path)
+        else:
+            typer.echo("Database is up-to-date, skipping index.")
 
     url = f"http://{host}:{port}"
 

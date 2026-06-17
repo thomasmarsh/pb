@@ -159,7 +159,7 @@ needed where the real signature adds nothing a `Callable` cannot express.
 | `state.py` | Incremental file-state persistence (DB-backed) | `create_state_table`, `load_file_state`, `save_file_state`, `delete_file_rows` |
 | `metrics.py` | Graph metric computation (PageRank, betweenness, DIT) | `compute_metrics`, `compute_dit` |
 | `diagrams.py` | DOT/SVG diagram building, LRU-cached rendering with Bezier fallback | `render_svg`, `build_inheritance`, `build_calls`, `build_dw_tables`, `build_heatmap`, `build_sql_lineage`, `build_table_lineage`, `build_proc_tables` |
-| `pipeline.py` | Incremental `pb index` orchestration | `run` |
+| `pipeline.py` | Incremental `pb index` orchestration | `run`, `db_is_current` |
 | `pbl.py` | PBL binary library extraction (filesystem, temp dirs, file writes) | `extract`, `extract_to_dir`, `resolve_source_dir`, `PblEntry` |
 | `reporter.py` | Unified output protocol for pipeline operations | `Reporter`, `LiveReporter`, `RecordingReporter` |
 | `queries.py` | Auto-register `queries/*.sql` files as `pb query <name>` commands | `register_queries` |

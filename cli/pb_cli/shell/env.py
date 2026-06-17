@@ -36,6 +36,7 @@ from pb_cli.shell.build import (
     find_binary,
     find_repo,
     get_queries_dir,
+    hash_pbl_dir,
     hash_source_dir,
     walk_sr_files,
 )
@@ -116,6 +117,7 @@ class BuildEnv:
     walk_sr_files: Callable[[Path], list[Path]] = field(default=walk_sr_files)
     count_sr_files: Callable[[Path], int] = field(default=count_sr_files)
     hash_source_dir: Callable[[Path], dict[str, str]] = field(default=hash_source_dir)
+    hash_pbl_dir: Callable[[Path], dict[str, str]] = field(default=hash_pbl_dir)
     ensure_explorer_built: EnsureExplorerBuilt = field(default=ensure_explorer_built)
 
 
