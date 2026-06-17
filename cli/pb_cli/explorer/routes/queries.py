@@ -43,14 +43,27 @@ async def run_query(name: str, request: Request, conn: duckdb.DuckDBPyConnection
     description, params, sql = _query_info(name)
 
     bound = {}
+    missing: list[str] = []
     for pname, ptype, pdefault in params:
         raw = request.query_params.get(pname)
         if raw is not None:
             bound[pname] = int(raw) if ptype in ("INT", "INTEGER", "BIGINT") else raw
         elif pdefault is not None:
             bound[pname] = int(pdefault) if ptype in ("INT", "INTEGER", "BIGINT") else pdefault
+        else:
+            missing.append(pname)
 
-    result = conn.execute(sql, bound)
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required parameters: {', '.join(missing)}",
+        )
+
+    try:
+        result = conn.execute(sql, bound)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     result_rows = rows(result)
     cols = [d[0] for d in result.description] if result.description else []
     return {"columns": cols, "rows": result_rows}

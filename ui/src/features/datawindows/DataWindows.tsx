@@ -67,7 +67,7 @@ export function DWDetail(props: { store: Store<AppState, AppAction> }) {
           if ("error" in d) return null;
           return (
             <>
-              <button class="back-btn" onClick={() => store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "datawindows" } } })}>
+              <button class="back-btn" onClick={() => store.dispatch({ tag: "datawindows", action: { type: "back-to-datawindows" } })}>
                 {"←"} Back to DataWindows
               </button>
               <h2 style={{ "margin-bottom": "16px", "font-size": "20px" }}>

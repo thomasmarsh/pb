@@ -3,6 +3,7 @@
 import type { ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ObjectRow } from "../../types/api.js";
 
 export type ObjectsAction =
+  | { type: "back-to-objects" }
   | { type: "search"; q: string }
   | { type: "filter-kind"; kind: string }
   | { type: "sort"; col: string }

@@ -21,6 +21,9 @@ function errMsg(e: unknown): string { return e instanceof Error ? e.message : St
 
 function reduce(draft: DatawindowsState, action: DatawindowsAction, env: DatawindowsEnv): Effect<DatawindowsAction> | null {
   switch (action.type) {
+  case "back-to-datawindows":
+    draft.dwDetail = null;
+    return env.navigate({ type: "navigate", route: { view: "datawindows" } });
   case "search":
     draft.q = action.q;
     draft.loading = true;

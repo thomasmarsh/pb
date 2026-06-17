@@ -16,6 +16,16 @@ def list_errors(
     limit: int = 200,
     offset: int = 0,
 ) -> dict[str, Any]:
+    try:
+        table_check = conn.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_name = 'parse_errors'"
+        ).fetchone()
+    except Exception:
+        table_check = None
+
+    if not table_check:
+        return {"total": 0, "offset": offset, "limit": limit, "items": []}
+
     conditions: list[str] = []
     params: list[Any] = []
     if kind:

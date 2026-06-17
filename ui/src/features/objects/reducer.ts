@@ -28,6 +28,11 @@ function errMsg(e: unknown): string { return e instanceof Error ? e.message : St
 
 function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Effect<ObjectsAction> | null {
   switch (action.type) {
+  case "back-to-objects":
+    draft.detail = null;
+    draft.sourceDetail = null;
+    draft.procedureDetail = null;
+    return env.navigate({ type: "navigate", route: { view: "objects" } });
   case "search": {
     draft.q = action.q;
     draft.offset = 0;

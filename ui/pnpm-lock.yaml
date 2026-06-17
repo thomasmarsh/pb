@@ -21,6 +21,9 @@ importers:
         specifier: ^2.3.2
         version: 2.3.2
     devDependencies:
+      '@antithesishq/bombadil':
+        specifier: ^0.6.0
+        version: 0.6.0
       '@solidjs/testing-library':
         specifier: ^0.8.10
         version: 0.8.10(solid-js@1.9.13)
@@ -62,6 +65,10 @@ packages:
 
   '@adobe/css-tools@4.5.0':
     resolution: {integrity: sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q==}
+
+  '@antithesishq/bombadil@0.6.0':
+    resolution: {integrity: sha512-7XVk10FJult7P5wVzKXfCo69oaZEGCJDRICnJzXsGy0rWv+HZe1zF/w/QNaLHvaUTMTQEjD+zqEq0wCYYfRqRQ==}
+    hasBin: true
 
   '@babel/code-frame@7.29.7':
     resolution: {integrity: sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==}
@@ -1335,6 +1342,8 @@ packages:
 snapshots:
 
   '@adobe/css-tools@4.5.0': {}
+
+  '@antithesishq/bombadil@0.6.0': {}
 
   '@babel/code-frame@7.29.7':
     dependencies:

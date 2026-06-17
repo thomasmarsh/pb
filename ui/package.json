@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "bombadil": "bombadil browser test http://localhost:8000 bombadil-spec.ts --exit-on-violation --time-limit 5m --output-path /tmp/bombadil-pb",
+    "bombadil:long": "bombadil browser test http://localhost:8000 bombadil-spec.ts --time-limit 5m --output-path /tmp/bombadil-pb"
   },
   "dependencies": {
     "@kobalte/core": "^0.13.0",
@@ -19,6 +21,7 @@
     "valtio": "^2.3.2"
   },
   "devDependencies": {
+    "@antithesishq/bombadil": "^0.6.0",
     "@solidjs/testing-library": "^0.8.10",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/user-event": "^14.6.1",
