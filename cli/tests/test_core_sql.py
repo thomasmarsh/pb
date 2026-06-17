@@ -247,6 +247,16 @@ def test_extract_tables_normalizes_to_lowercase():
     assert "MYTABLE" not in tables
 
 
+def test_extract_columns_normalizes_to_lowercase():
+    """Oracle column names are case-insensitive; extracted names must be
+    lowercased so COL1 and col1 don't appear as separate entries."""
+    _, _, columns, _ = parse_pb_sql("SELECT MyCol, OTHER_COL FROM t WHERE x = 1")
+    assert "mycol" in columns
+    assert "other_col" in columns
+    assert "MyCol" not in columns
+    assert "OTHER_COL" not in columns
+
+
 def test_core_sql_has_no_io_imports():
     """core/sql.py must not import duckdb, subprocess, or pathlib."""
     mod = importlib.import_module("pb_cli.core.sql")

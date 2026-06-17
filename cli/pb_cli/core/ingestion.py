@@ -165,13 +165,15 @@ def _ingest_dw(obj: dict, file: str, rows: RowBatch) -> None:
 
     for col in contents.get("columns", []):
         parts = col.split(".", 1)
+        col_fqn = col.lower() if len(parts) == 2 else col
+        col_name = parts[1].lower() if len(parts) == 2 else col.lower()
         rows["dw_retrieve_columns"].append(
             DwRetrieveColumnRow(
                 file,
                 dw_name,
-                col,
+                col_fqn,
                 parts[0].lower() if len(parts) == 2 else None,
-                parts[1] if len(parts) == 2 else col,
+                col_name,
             )
         )
 

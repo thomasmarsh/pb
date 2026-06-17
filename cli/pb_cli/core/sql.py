@@ -63,7 +63,7 @@ def extract_tables(ast) -> list[str]:
 
 
 def extract_columns(ast) -> list[str]:
-    return [c.name for c in ast.find_all(exp.Column) if c.name]
+    return [c.name.lower() for c in ast.find_all(exp.Column) if c.name]
 
 
 def parse_pb_sql(

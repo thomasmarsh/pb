@@ -282,7 +282,7 @@ def test_extract_sql_no_parse_error_row_for_intentional_skips():
 
 
 def test_ingest_dw_table_names_lowercased():
-    """DW retrieve table names and column table prefixes must be lowercased on
+    """DW retrieve table names and column FQN/column names must be lowercased on
     ingest — Oracle is case-insensitive, so MYTABLE and mytable are the same."""
     obj = {
         "file": "d_test.srd",
@@ -303,7 +303,10 @@ def test_ingest_dw_table_names_lowercased():
     rows = new_row_batch()
     ingest_file(obj, rows)
     assert [r.table_name for r in rows["dw_retrieve_tables"]] == ["mytable", "othertable"]
-    assert [r.table_name for r in rows["dw_retrieve_columns"]] == ["mytable", "othertable"]
+    cols = rows["dw_retrieve_columns"]
+    assert [r.table_name for r in cols] == ["mytable", "othertable"]
+    assert [r.column_fqn for r in cols] == ["mytable.col1", "othertable.col2"]
+    assert [r.column_name for r in cols] == ["col1", "col2"]
 
 
 def test_extract_sql_empty_body():
