@@ -19,9 +19,10 @@ export function ObjectDetail(props: { store: Store<AppState, AppAction> }) {
   const src = () => snap().objects.sourceDetail;
 
   return (
-    <Show when={obj()} fallback={<Loading />}>
-      <Show when={!("error" in obj()!)} fallback={<div class="card"><p style={{ color: "var(--red)" }}>Error: {"error" in obj()! ? (obj() as { error: string }).error : ""}</p></div>}>
-        <button class="back-btn" onClick={() => store.dispatch({ tag: "objects", action: { type: "back-to-objects" } })}>{"←"} Back to Objects</button>
+    <>
+      <button class="back-btn" onClick={() => store.dispatch({ tag: "objects", action: { type: "back-to-objects" } })}>{"←"} Back to Objects</button>
+      <Show when={obj()} fallback={<Loading />}>
+        <Show when={!("error" in obj()!)} fallback={<div class="card"><p style={{ color: "var(--red)" }}>Error: {"error" in obj()! ? (obj() as { error: string }).error : ""}</p></div>}>
 
         {(() => {
           const o = obj()!;
@@ -41,7 +42,8 @@ export function ObjectDetail(props: { store: Store<AppState, AppAction> }) {
             </>
           );
         })()}
+        </Show>
       </Show>
-    </Show>
+    </>
   );
 }

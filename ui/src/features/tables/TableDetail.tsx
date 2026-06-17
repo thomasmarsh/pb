@@ -142,11 +142,6 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
 
   return (
     <>
-      <button class="back-btn"
-              onClick={() => props.store.dispatch({ tag: "tables", action: { type: "back" } })}>
-        {"←"} Back to Tables
-      </button>
-
       <h2 style={{ "margin-bottom": "8px", "font-size": "20px" }}>
         {d.table_name}{" "}
         <span class="badge badge-dw">table</span>
@@ -229,14 +224,20 @@ export function TableDetail(props: { store: Store<AppState, AppAction> }) {
   const ts = () => snap().tables;
 
   return (
-    <Show when={ts().detail} fallback={
-      <Show when={ts().error} fallback={<Loading />}>
-        <div class="card">
-          <p style={{ color: "var(--red)", padding: "16px" }}>Error: {ts().error}</p>
-        </div>
+    <>
+      <button class="back-btn"
+              onClick={() => props.store.dispatch({ tag: "tables", action: { type: "back" } })}>
+        {"←"} Back to Tables
+      </button>
+      <Show when={ts().detail} fallback={
+        <Show when={ts().error} fallback={<Loading />}>
+          <div class="card">
+            <p style={{ color: "var(--red)", padding: "16px" }}>Error: {ts().error}</p>
+          </div>
+        </Show>
+      }>
+        {(detail) => <DetailContent detail={detail()} store={props.store} />}
       </Show>
-    }>
-      {(detail) => <DetailContent detail={detail()} store={props.store} />}
-    </Show>
+    </>
   );
 }

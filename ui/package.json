@@ -11,9 +11,9 @@
     "lint": "eslint src/",
     "test": "vitest run",
     "test:watch": "vitest",
-    "bombadil": "bombadil browser test http://localhost:8000 bombadil-spec.ts --headless --exit-on-violation --time-limit 5m --output-path /tmp/bombadil-pb --output-path-overwrite",
-    "bombadil:long": "bombadil browser test http://localhost:8000 bombadil-spec.ts --headless --time-limit 5m --output-path /tmp/bombadil-pb --output-path-overwrite",
-    "bombadil:headed": "bombadil browser test http://localhost:8000 bombadil-spec.ts --exit-on-violation --time-limit 5m --output-path /tmp/bombadil-pb --output-path-overwrite"
+    "bombadil": "bombadil browser test http://localhost:8000 bombadil-spec.ts --headless --exit-on-violation --time-limit 5m --output-path /tmp/bombadil-pb",
+    "bombadil:long": "bombadil browser test http://localhost:8000 bombadil-spec.ts --headless --time-limit 5m --output-path /tmp/bombadil-pb",
+    "bombadil:headed": "bombadil browser test http://localhost:8000 bombadil-spec.ts --exit-on-violation --time-limit 5m --output-path /tmp/bombadil-pb"
   },
   "dependencies": {
     "@kobalte/core": "^0.13.0",

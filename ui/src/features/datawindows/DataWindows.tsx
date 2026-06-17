@@ -60,16 +60,17 @@ export function DWDetail(props: { store: Store<AppState, AppAction> }) {
   const dw = () => snap().datawindows.dwDetail;
 
   return (
-    <Show when={dw()} fallback={<Loading />}>
-      <Show when={!("error" in dw()!)} fallback={<div class="card"><p style={{ color: "var(--red)" }}>Error: {(dw() as { error: string }).error}</p></div>}>
-        {(() => {
-          const d = dw()!;
-          if ("error" in d) return null;
-          return (
-            <>
-              <button class="back-btn" onClick={() => store.dispatch({ tag: "datawindows", action: { type: "back-to-datawindows" } })}>
-                {"←"} Back to DataWindows
-              </button>
+    <>
+      <button class="back-btn" onClick={() => store.dispatch({ tag: "datawindows", action: { type: "back-to-datawindows" } })}>
+        {"←"} Back to DataWindows
+      </button>
+      <Show when={dw()} fallback={<Loading />}>
+        <Show when={!("error" in dw()!)} fallback={<div class="card"><p style={{ color: "var(--red)" }}>Error: {(dw() as { error: string }).error}</p></div>}>
+          {(() => {
+            const d = dw()!;
+            if ("error" in d) return null;
+            return (
+              <>
               <h2 style={{ "margin-bottom": "16px", "font-size": "20px" }}>
                 {d.name} <span class="badge badge-dw">datawindow</span>
               </h2>
@@ -172,10 +173,11 @@ export function DWDetail(props: { store: Store<AppState, AppAction> }) {
                   <CodeBlock code={d.source!} />
                 </div>
               </Show>
-            </>
-          );
-        })()}
+              </>
+            );
+          })()}
+        </Show>
       </Show>
-    </Show>
+    </>
   );
 }

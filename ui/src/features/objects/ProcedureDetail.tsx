@@ -14,21 +14,26 @@ export function ProcedureDetail(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
   const snap = useSnapshot(store.state);
   const proc = () => snap().objects.procedureDetail;
+  const objectName = () => {
+    const r = snap().nav.route;
+    return r.view === "procedureDetail" ? r.name : "";
+  };
   const [activeTab, setActiveTab] = createSignal("original");
 
   return (
-    <Show when={proc()} fallback={<Loading />}>
-      <Show when={!("error" in proc()!)} fallback={<div class="card"><p style={{ color: "var(--red)" }}>Error: {(proc() as { error: string }).error}</p></div>}>
-        {(() => {
-          const p = proc()!;
-          if ("error" in p) return null;
-          const bc = procBadge(p.proc_type);
+    <>
+      <button class="back-btn" onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: objectName() } })}>
+        {"←"} Back to {objectName()}
+      </button>
+      <Show when={proc()} fallback={<Loading />}>
+        <Show when={!("error" in proc()!)} fallback={<div class="card"><p style={{ color: "var(--red)" }}>Error: {(proc() as { error: string }).error}</p></div>}>
+          {(() => {
+            const p = proc()!;
+            if ("error" in p) return null;
+            const bc = procBadge(p.proc_type);
 
-          return (
-            <>
-              <button class="back-btn" onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: p.object } })}>
-                {"←"} Back to {p.object}
-              </button>
+            return (
+              <>
 
               <h2 style={{ "margin-bottom": "4px", "font-size": "18px" }}>
                 {p.object}.<span style={{ color: "var(--accent)" }}>{p.name}</span>{" "}
@@ -71,10 +76,11 @@ export function ProcedureDetail(props: { store: Store<AppState, AppAction> }) {
                   </Tabs.Content>
                 </Tabs>
               </Show>
-            </>
-          );
-        })()}
+              </>
+            );
+          })()}
+        </Show>
       </Show>
-    </Show>
+    </>
   );
 }

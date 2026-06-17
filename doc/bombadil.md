@@ -78,6 +78,11 @@ strings in the trace, not objects — the `if type == "string"` branch handles t
 Click 4612, TypeText 379, ScrollDown 158, PressKey 9, ScrollUp 3,
 plus Back/Reload/Forward/Wait from defaults (counted separately as bare strings).
 
+**B2 observed distribution (5m headless run, 2026-06-17):**
+Click 930, Back 144, Forward 131, ScrollDown 128, ScrollUp 113, TypeText 83.
+No PressKey — `export *` from defaults replaced with selective import; `clearSearch` unexported.
+`--output-path-overwrite` flag removed from package.json (dropped in Bombadil 0.6.0).
+
 ---
 
 ## Trace Output Skill
@@ -137,8 +142,8 @@ correct each entry.
 | Theme class          | `document.documentElement[data-theme]`  | ✅ validated (B1) |
 | Error panel          | TBD — confirm in BOM-B3                 | ⬜ pending        |
 | Success detail panel | TBD — confirm in BOM-B3                 | ⬜ pending        |
-| Sortable headers     | TBD — confirm in BOM-B2                 | ⬜ pending        |
-| Pagination buttons   | TBD — confirm in BOM-B2                 | ⬜ pending        |
+| Sortable headers     | `th.sortable, th[data-sort]`            | ⬜ no elements yet (B2: no `<th>` in UI) |
+| Pagination buttons   | `.pagination button, button[data-page]` | ⬜ no elements yet (B2: no pagination in UI) |
 | Detail heading       | TBD — confirm in BOM-B3                 | ⬜ pending        |
 | Explore active tab   | TBD — confirm in BOM-B5                 | ⬜ pending        |
 
@@ -170,6 +175,7 @@ correct each entry.
 | `queryRunDisabledWhenMissingParams` | Form safety     | ✅ validated (B1 — fixed `paramValues` namespace bug)   |
 | `routeAlwaysKnown`                  | State coherence | ✅ validated (B1)                                       |
 | `themeAlwaysSet`                    | Frame condition | ✅ validated (B1)                                       |
+| `detailViewsAlwaysHaveBackButton`   | Navigation      | ✅ validated (B2 — found+fixed real bug: back btn was inside `<Show when={data}>` on all 4 detail views; refined to `length > 0` not viewport-visible) |
 
 Removed in B1 (dead code):
 
@@ -201,24 +207,27 @@ Removed in B1 (dead code):
 
 ## Action Generators (current)
 
-| Generator          | Weight | Notes                    |
-| ------------------ | ------ | ------------------------ |
-| `clickNavLinks`    | 15     | Primary navigation       |
-| `clickTableRows`   | 8      | List → detail navigation |
-| `clickBackButtons` | 5      | Detail → list navigation |
-| `clickTableChips`  | 4      | Cross-link navigation    |
-| `clickAllButtons`  | 3      | Catch-all                |
-| `clickTreeNodes`   | 2      | Explore feature          |
-| `typeIntoSearch`   | 2      | Search feature           |
+| Generator           | Weight | Notes                                                      |
+| ------------------- | ------ | ---------------------------------------------------------- |
+| `clickNavLinks`     | 15     | Primary navigation                                         |
+| `clickTableRows`    | 8      | List → detail navigation                                   |
+| `clickBackButtons`  | 5      | Detail → list navigation                                   |
+| `clickTableChips`   | 4      | Cross-link navigation                                      |
+| `clickAllButtons`   | 3      | Catch-all                                                  |
+| `browserNavActions` | 3      | Browser Back/Forward — tests `setupPopstateHandler` (B2)   |
+| `scrollActions`     | 2      | ScrollDown/ScrollUp — replaces defaultActions (B2)         |
+| `clickTreeNodes`    | 2      | Explore feature                                            |
+| `typeIntoSearch`    | 2      | Search feature                                             |
+| `clickSortHeaders`  | 2      | Sort headers — no `<th>` in UI yet; noop (B2)              |
+| `clickPagination`   | 2      | Pagination — no pagination in UI yet; noop (B2)            |
 
-### Planned additions (B2)
+**`clearSearch` deferred**: PressKey hangs headless Chrome (Bombadil 0.6.0 + chromiumoxide). Not exported. Test in headed mode first before re-enabling. `export * from defaults` replaced with selective import to avoid `defaultActions` (which also includes PressKey).
 
-| Generator                      | Reason                                                   |
-| ------------------------------ | -------------------------------------------------------- |
-| Browser `"Back"` / `"Forward"` | Tests `setupPopstateHandler` — currently never exercised |
-| `clickSortHeaders`             | Tests sort state transitions                             |
-| `clickPagination`              | Tests page offset monotonicity                           |
-| `clearSearch`                  | Tests search-clear state handling                        |
+### Planned additions (B3+)
+
+| Generator                      | Reason                            |
+| ------------------------------ | --------------------------------- |
+| `clearSearch`                  | Re-enable once PressKey confirmed safe in headless |
 
 ---
 

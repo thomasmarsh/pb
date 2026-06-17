@@ -24,7 +24,10 @@ import {
   weighted,
   type Formula,
 } from "@antithesishq/bombadil";
-export * from "@antithesishq/bombadil/browser/defaults";
+import type { State, Action } from "@antithesishq/bombadil/browser";
+// Selective defaults import — omits defaultActions which includes PressKey.
+// PressKey hangs headless Chrome (Bombadil 0.6.0 + chromiumoxide); use headed mode to re-enable.
+export { noUncaughtExceptions, noUnhandledPromiseRejections } from "@antithesishq/bombadil/browser/defaults";
 
 // ===========================================================================
 // Helpers
@@ -387,6 +390,7 @@ export const queryRunDisabledWhenMissingParams: Formula = always(() => {
 // 14. THEME FRAME CONDITION
 // ===========================================================================
 
+
 const bodyTheme = extract((state) =>
   state.document.documentElement.getAttribute("data-theme"),
 );
@@ -394,6 +398,44 @@ const bodyTheme = extract((state) =>
 export const themeAlwaysSet: Formula = always(() => {
   const t = bodyTheme.current;
   return t === "dark" || t === "light";
+});
+
+// ===========================================================================
+// 15. NAVIGATION SAFETY
+// ===========================================================================
+
+const DETAIL_VIEWS = ["objectDetail", "procedureDetail", "dwDetail", "tableDetail"];
+
+export const detailViewsAlwaysHaveBackButton: Formula = always(() => {
+  if (!DETAIL_VIEWS.includes(currentView.current)) return true;
+  // Button may be scrolled off-screen — require it exists, not that it's in viewport
+  return backButtons.current.length > 0;
+});
+
+const sortableHeaders = extract((state: State) => {
+  const ths = state.document.querySelectorAll("th.sortable, th[data-sort]");
+  return Array.from(ths).map((th) => {
+    const rect = (th as Element).getBoundingClientRect();
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+      visible: rect.width > 0 && rect.height > 0,
+    };
+  });
+});
+
+const paginationButtons = extract((state: State) => {
+  const btns = state.document.querySelectorAll(
+    ".pagination button:not([disabled]), button[data-page]:not([disabled])"
+  );
+  return Array.from(btns).map((b) => {
+    const rect = (b as Element).getBoundingClientRect();
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+      visible: rect.width > 0 && rect.height > 0,
+    };
+  });
 });
 
 const navLinksAction = extract((state) => {
@@ -462,6 +504,43 @@ export const typeIntoSearch = actions(() => {
   ];
 });
 
+export const browserNavActions = actions((): Action[] => ["Back", "Forward"]);
+
+export const scrollActions = actions((): Action[] => [
+  { ScrollDown: { origin: { x: 512, y: 400 }, distance: 300 } },
+  { ScrollUp:   { origin: { x: 512, y: 400 }, distance: 300 } },
+]);
+
+export const clickSortHeaders = actions(() =>
+  sortableHeaders.current
+    .filter((h) => h.visible)
+    .map((h, i) => ({
+      Click: { name: `sort-${i}`, point: { x: h.x, y: h.y } },
+    }))
+);
+
+export const clickPagination = actions(() =>
+  paginationButtons.current
+    .filter((b) => b.visible)
+    .map((b, i) => ({
+      Click: { name: `page-${i}`, point: { x: b.x, y: b.y } },
+    }))
+);
+
+const clearSearch = actions((): Action[] => {
+  const inputs = searchInputs.current.filter((i) => i.visible && i.value.length > 0);
+  if (inputs.length === 0) return [];
+  const inp = inputs[0]!;
+  const backspaces: Action[] = Array.from(
+    { length: Math.min(inp.value.length + 1, 30) },
+    () => ({ PressKey: { code: 8 } })
+  );
+  return [
+    { Click: { name: "search-clear-focus", point: { x: inp.x, y: inp.y } } },
+    ...backspaces,
+  ];
+});
+
 // ===========================================================================
 // COMPOSITE ACTION GENERATORS (weighted)
 // ===========================================================================
@@ -472,6 +551,11 @@ export const navigationActions = weighted([
   [5,  clickBackButtons],
   [4,  clickTableChips],
   [3,  clickAllButtons],
+  [3,  browserNavActions],
+  [2,  scrollActions],
   [2,  clickTreeNodes],
   [2,  typeIntoSearch],
+  [2,  clickSortHeaders],
+  [2,  clickPagination],
+  // clearSearch (weight 1) omitted — PressKey stalls headless Chrome; test in headed mode first
 ]);
