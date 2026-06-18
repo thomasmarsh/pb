@@ -1,20 +1,37 @@
-// Queries.tsx — SQL queries view.
+// Queries.tsx — SQL queries view (Ask surface).
 
 import { Show, For, onMount, createSignal } from "solid-js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import { SqlBlock } from "../../components/CodeBlock.js";
+import { EntityCard } from "../../components/EntityCard.js";
+import type { EntityType } from "../../components/EntityCard.js";
+import type { QueryColumn } from "../../types/api.js";
+
+const PAGE_SIZE = 50;
 
 type ParamDef = { name: string; type: string; default: string | null };
+
+const ENTITY_TYPE_MAP: Record<string, EntityType> = {
+  object:     "object",
+  procedure:  "procedure",
+  datawindow: "datawindow",
+  table:      "table",
+};
 
 export function Queries(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
   const snap = store.getState();
   const q = () => snap().queries;
+
   const [paramValues, setParamValues] = createSignal<Record<string, string>>({});
   const [shownSql, setShownSql] = createSignal<Set<string>>(new Set());
   const [showErrors, setShowErrors] = createSignal<Set<string>>(new Set());
+
+  onMount(() => {
+    if (!q().items.length) store.dispatch({ tag: "queries", action: { type: "load" } });
+  });
 
   function handleParamInput(queryName: string, paramName: string, value: string) {
     setParamValues(prev => ({ ...prev, [`${queryName}.${paramName}`]: value }));
@@ -29,19 +46,6 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
       .filter(p => p.default === null && !(vals[`${query.name}.${p.name}`] ?? "").trim())
       .map(p => p.name);
   }
-
-  function toggleSql(name: string) {
-    setShownSql(prev => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name); else next.add(name);
-      return next;
-    });
-  }
-
-  onMount(() => {
-    store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "queries" } } });
-    if (!q().items.length) store.dispatch({ tag: "queries", action: { type: "load" } });
-  });
 
   function attemptRun(query: { name: string; params: ParamDef[] }) {
     const missing = requiredMissing(query);
@@ -58,6 +62,74 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
     }
     store.dispatch({ tag: "queries", action: { type: "run", name: query.name, params: bound } });
   }
+
+  function toggleSql(name: string) {
+    setShownSql(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  }
+
+  // ── Sorted + paged row helpers ─────────────────────────────────────────────
+
+  function sortedRows(): Record<string, unknown>[] {
+    const state = q();
+    const results = state.results;
+    if (!results || "error" in results || !("rows" in results)) return [];
+    const rows = (results as { rows: Record<string, unknown>[] }).rows;
+    if (!state.sortCol) return rows;
+    const col = state.sortCol;
+    const dir = state.sortDir;
+    return [...rows].sort((a, b) => {
+      const cmp = String(a[col] ?? "").localeCompare(String(b[col] ?? ""), undefined, { numeric: true });
+      return dir === "asc" ? cmp : -cmp;
+    });
+  }
+
+  function pagedRows() {
+    const page = q().page;
+    return sortedRows().slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  }
+
+  function totalPages() {
+    return Math.max(1, Math.ceil(sortedRows().length / PAGE_SIZE));
+  }
+
+  function handleEntityClick(col: QueryColumn, row: Record<string, unknown>) {
+    const entityName = String(row[col.name] ?? "");
+    const results = q().results;
+    const columns: QueryColumn[] = (results && "columns" in results) ? (results as { columns: QueryColumn[] }).columns : [];
+    const objectCol = columns.find(c => c.entity_type === "object");
+    const objectName = objectCol ? String(row[objectCol.name] ?? "") : null;
+    store.dispatch({
+      tag: "queries",
+      action: { type: "navigate-to-entity", entityType: col.entity_type!, entityName, objectName },
+    });
+  }
+
+  function renderCell(col: QueryColumn, row: Record<string, unknown>) {
+    const val = row[col.name];
+    const display = val != null ? String(val) : "";
+    const entityType = display && col.entity_type ? ENTITY_TYPE_MAP[col.entity_type] : null;
+    if (entityType) {
+      return (
+        <td>
+          <EntityCard
+            type={entityType}
+            name={display}
+            onClick={() => handleEntityClick(col, row)}
+          />
+        </td>
+      );
+    }
+    return <td>{display}</td>;
+  }
+
+  const hasResults = () => {
+    const r = q().results;
+    return !!(r && "rows" in r && (r as { rows: unknown[] }).rows?.length);
+  };
 
   return (
     <div class="card">
@@ -80,7 +152,7 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
                              "max-width": "160px",
                              padding: "6px 10px",
                              "font-size": "12px",
-                             ...(p.default === null && showErrors().has(query.name) && !(paramValues()[p.name] ?? "").trim()
+                             ...(p.default === null && showErrors().has(query.name) && !(paramValues()[`${query.name}.${p.name}`] ?? "").trim()
                                ? { border: "1px solid var(--red)", "box-shadow": "0 0 0 1px var(--red)" }
                                : {}),
                            }}
@@ -115,31 +187,56 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
 
       <Show when={q().results}>
         <Show when={"error" in (q().results ?? {})} fallback={
-          <Show when={q().results && "rows" in (q().results ?? {}) && (q().results as { rows: unknown[] }).rows?.length}>
+          <Show when={hasResults()}>
             <div class="card">
               <div class="card-header">
-                <h3>{q().resultsName} {"\u2014"} {(q().results as { rows: unknown[] }).rows.length} rows</h3>
+                <h3>{q().resultsName} — {(q().results as { rows: unknown[] }).rows.length} rows</h3>
               </div>
               <table class="data-table">
                 <thead>
                   <tr>
-                    <For each={(q().results as { columns: string[] }).columns}>
-                      {(c) => <th>{c}</th>}
+                    <For each={(q().results as { columns: QueryColumn[] }).columns}>
+                      {(col) => (
+                        <th
+                          style={{ cursor: "pointer", "user-select": "none" }}
+                          onClick={() => store.dispatch({ tag: "queries", action: { type: "sort", col: col.name } })}
+                        >
+                          {col.name}
+                          <Show when={q().sortCol === col.name}>
+                            {" "}{q().sortDir === "asc" ? "▲" : "▼"}
+                          </Show>
+                        </th>
+                      )}
                     </For>
                   </tr>
                 </thead>
                 <tbody>
-                  <For each={(q().results as { rows: Record<string, unknown>[] }).rows}>
+                  <For each={pagedRows()}>
                     {(row) => (
                       <tr>
-                        <For each={(q().results as { columns: string[] }).columns}>
-                          {(c) => <td>{row[c] != null ? String(row[c]) : ""}</td>}
+                        <For each={(q().results as { columns: QueryColumn[] }).columns}>
+                          {(col) => renderCell(col, row)}
                         </For>
                       </tr>
                     )}
                   </For>
                 </tbody>
               </table>
+              <Show when={totalPages() > 1}>
+                <div style={{ display: "flex", gap: "8px", padding: "8px", "align-items": "center", "font-size": "12px" }}>
+                  <button class="filter-pill"
+                          disabled={q().page === 0}
+                          onClick={() => store.dispatch({ tag: "queries", action: { type: "set-page", page: q().page - 1 } })}>
+                    ← Prev
+                  </button>
+                  <span>Page {q().page + 1} of {totalPages()}</span>
+                  <button class="filter-pill"
+                          disabled={q().page >= totalPages() - 1}
+                          onClick={() => store.dispatch({ tag: "queries", action: { type: "set-page", page: q().page + 1 } })}>
+                    Next →
+                  </button>
+                </div>
+              </Show>
             </div>
           </Show>
         }>

@@ -4,7 +4,7 @@ import { describe, it, expect } from "vitest";
 import { createTestStore } from "../test-store.js";
 import { navReducer, type NavEnv } from "../../src/features/navigation/reducer.js";
 import type { NavState, Route } from "../../src/features/navigation/types.js";
-import { crumbsForRoute } from "../../src/features/navigation/breadcrumb.js";
+import { crumbsForRoute, ICONS } from "../../src/features/navigation/breadcrumb.js";
 
 function makeNavEnv(): NavEnv & { lastPush: string | null } {
   const env: NavEnv & { lastPush: string | null } = {
@@ -20,6 +20,7 @@ function makeInitial(route: Route = { view: "dashboard" }): NavState {
     crumbs: crumbsForRoute(route),
     history: [route],
     historyIdx: 0,
+    askContext: null,
   };
 }
 
@@ -196,6 +197,53 @@ describe("navigation reducer", () => {
         s.route = { view: "dashboard" };
         s.crumbs = crumbsForRoute({ view: "dashboard" });
         s.historyIdx = 0;
+      });
+    });
+  });
+
+  describe("navigate-from-ask", () => {
+    it("sets askContext with queryName and queryRoute", () => {
+      const env = makeNavEnv();
+      const ts = createTestStore(navReducer, env, makeInitial());
+      const queryRoute: Route = { view: "queries", queryName: "top" };
+      const entityRoute: Route = { view: "objectDetail", name: "w_payment" };
+      ts.send(
+        { type: "navigate-from-ask", route: entityRoute, queryName: "top", queryRoute },
+        (s) => {
+          s.route = entityRoute;
+          s.askContext = { queryName: "top", queryRoute };
+          s.crumbs = [
+            { icon: ICONS.ask, label: "top", route: queryRoute },
+            { icon: ICONS.object, label: "w_payment", route: entityRoute },
+          ];
+          s.history = [{ view: "dashboard" }, entityRoute];
+          s.historyIdx = 1;
+        },
+      );
+    });
+
+    it("drops the leading list crumb from the entity chain", () => {
+      const env = makeNavEnv();
+      const ts = createTestStore(navReducer, env, makeInitial());
+      const queryRoute: Route = { view: "queries", queryName: "top" };
+      const entityRoute: Route = { view: "procedureDetail", name: "w_pay", proc: "f_validate" };
+      ts.send({ type: "navigate-from-ask", route: entityRoute, queryName: "top", queryRoute });
+      const state = env.lastPush;
+      // breadcrumb should NOT start with the list (Objects) segment
+      expect(state).toBe("/objects/w_pay/f_validate");
+    });
+
+    it("navigate after navigate-from-ask clears askContext", () => {
+      const env = makeNavEnv();
+      const ts = createTestStore(navReducer, env, makeInitial());
+      const queryRoute: Route = { view: "queries", queryName: "top" };
+      ts.send({ type: "navigate-from-ask", route: { view: "objectDetail", name: "w_pay" }, queryName: "top", queryRoute });
+      ts.send({ type: "navigate", route: { view: "objects" } }, (s) => {
+        s.route = { view: "objects" };
+        s.crumbs = crumbsForRoute({ view: "objects" });
+        s.askContext = null;
+        s.history = [{ view: "dashboard" }, { view: "objectDetail", name: "w_pay" }, { view: "objects" }];
+        s.historyIdx = 2;
       });
     });
   });

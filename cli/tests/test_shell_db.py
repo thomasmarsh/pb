@@ -137,7 +137,7 @@ def test_file_state_roundtrip(tmp_path):
 def test_parse_sql_file_with_params(tmp_path):
     sql_file = tmp_path / "test.sql"
     sql_file.write_text("-- My query\n-- :name TEXT\n-- :limit INT 10\nSELECT * FROM t\n")
-    desc, params, sql = parse_sql_file(sql_file)
+    desc, params, sql, _ = parse_sql_file(sql_file)
     assert desc == "My query"
     assert len(params) == 2
     assert params[0] == ("name", "TEXT", None)

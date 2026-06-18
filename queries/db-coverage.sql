@@ -1,4 +1,5 @@
 -- Database tables referenced across all DataWindows, ranked by frequency.
+-- @entity table_name table
 SELECT table_name,
        count(DISTINCT dw_name) AS datawindow_count,
        string_agg(DISTINCT dw_name, ', ' ORDER BY dw_name) AS datawindows

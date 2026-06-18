@@ -255,25 +255,33 @@ def connect(db_path: str) -> Generator[Conn, None, None]:
         conn.close()
 
 
-def parse_sql_file(path: Path) -> tuple[str, list[tuple[str, str, str | None]], str]:
-    """Return (description, params, sql).
+def parse_sql_file(
+    path: Path,
+) -> tuple[str, list[tuple[str, str, str | None]], str, dict[str, str]]:
+    """Return (description, params, sql, entity_types).
 
     Leading comment block is consumed; remainder is executed verbatim.
     Param lines: ``-- :name TYPE [default]``
+    Entity annotation lines: ``-- @entity col_name entity_type``
     """
     lines = path.read_text().splitlines()
     description = ""
     params: list[tuple[str, str, str | None]] = []
+    entity_types: dict[str, str] = {}
     sql_start = len(lines)
     for i, raw in enumerate(lines):
         line = raw.strip()
         if not line.startswith("--"):
             sql_start = i
             break
-        m = re.match(r"^--\s+:(\w+)\s+(\w+)(?:\s+(\S+))?$", line)
-        if m:
-            pname, ptype, pdefault = m.groups()
+        entity_m = re.match(r"^--\s+@entity\s+(\w+)\s+(\w+)$", line)
+        if entity_m:
+            entity_types[entity_m.group(1)] = entity_m.group(2)
+            continue
+        param_m = re.match(r"^--\s+:(\w+)\s+(\w+)(?:\s+(\S+))?$", line)
+        if param_m:
+            pname, ptype, pdefault = param_m.groups()
             params.append((pname, ptype.upper(), pdefault))
         elif not description:
             description = line.lstrip("-").strip()
-    return description, params, "\n".join(lines[sql_start:]).strip()
+    return description, params, "\n".join(lines[sql_start:]).strip(), entity_types

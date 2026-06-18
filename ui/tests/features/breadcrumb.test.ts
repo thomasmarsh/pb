@@ -71,6 +71,12 @@ describe("crumbsForRoute", () => {
     expect(crumbs[0]!.label).toBe("Ask");
   });
 
+  it("queries with queryName still shows Ask label (query name lives in navigate-from-ask crumb)", () => {
+    const crumbs = crumbsForRoute({ view: "queries", queryName: "top-complex" });
+    expect(crumbs[0]!.icon).toBe(ICONS.ask);
+    expect(crumbs[0]!.label).toBe("Ask");
+  });
+
   it("last crumb route matches the input route exactly", () => {
     const route = { view: "objectDetail" as const, name: "w_admin" };
     const crumbs = crumbsForRoute(route);

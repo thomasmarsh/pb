@@ -11,7 +11,7 @@ export type Route =
   | { view: "tables" }
   | { view: "tableDetail";     name: string }
   | { view: "diagrams" }
-  | { view: "queries" }
+  | { view: "queries"; queryName?: string; queryParams?: Record<string, string> }
   | { view: "search" }
   | { view: "explore" }
   | { view: "errors" }
@@ -33,9 +33,11 @@ export interface NavState {
   crumbs: BreadcrumbSegment[];
   history: Route[];
   historyIdx: number;
+  askContext: { queryName: string; queryRoute: Route } | null;
 }
 
 export type NavigationAction =
   | { type: "navigate"; route: Route }
+  | { type: "navigate-from-ask"; route: Route; queryName: string; queryRoute: Route }
   | { type: "back" }
   | { type: "forward" };

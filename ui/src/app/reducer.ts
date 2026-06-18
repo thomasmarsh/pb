@@ -61,6 +61,7 @@ export function initialState(): AppState {
       crumbs: crumbsForRoute({ view: "dashboard" }),
       history: [{ view: "dashboard" }],
       historyIdx: 0,
+      askContext: null,
     },
     dashboard: initialDashboardState,
     objects: initialObjectsState,

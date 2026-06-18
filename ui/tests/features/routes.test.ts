@@ -46,8 +46,24 @@ describe("parse", () => {
     expect(parse("/diagrams")).toEqual({ view: "diagrams" });
   });
 
-  it('"/queries" resolves to queries', () => {
+  it('"/queries" resolves to queries with no queryName', () => {
     expect(parse("/queries")).toEqual({ view: "queries" });
+  });
+
+  it('"/queries" with ?q=top resolves to queries with queryName', () => {
+    expect(parse("/queries", "?q=top")).toEqual({ view: "queries", queryName: "top", queryParams: {} });
+  });
+
+  it('"/queries" with ?q=top&p_n=15 includes queryParams', () => {
+    expect(parse("/queries", "?q=top&p_n=15")).toEqual({
+      view: "queries", queryName: "top", queryParams: { n: "15" },
+    });
+  });
+
+  it('"/queries" with search without leading ? still works', () => {
+    expect(parse("/queries", "q=top&p_n=5")).toEqual({
+      view: "queries", queryName: "top", queryParams: { n: "5" },
+    });
   });
 
   it('"/search" resolves to search', () => {
@@ -120,5 +136,25 @@ describe("print", () => {
   it('round-trip: parse(print(route)) preserves the route', () => {
     const route = { view: "objectDetail" as const, name: "TestObj" };
     expect(parse(print(route))).toEqual(route);
+  });
+
+  it('queries without queryName maps to "/queries"', () => {
+    expect(print({ view: "queries" })).toBe("/queries");
+  });
+
+  it('queries with queryName maps to "/queries?q=name"', () => {
+    expect(print({ view: "queries", queryName: "top" })).toBe("/queries?q=top");
+  });
+
+  it('queries with queryName and queryParams maps to "/queries?q=name&p_key=val"', () => {
+    const result = print({ view: "queries", queryName: "top", queryParams: { n: "5" } });
+    expect(result).toBe("/queries?q=top&p_n=5");
+  });
+
+  it('round-trip: queries with queryName and queryParams preserves route', () => {
+    const route = { view: "queries" as const, queryName: "callers", queryParams: { name: "f_proc" } };
+    const printed = print(route);
+    const [pathname, search] = printed.split("?");
+    expect(parse(pathname!, search ? `?${search}` : undefined)).toEqual(route);
   });
 });

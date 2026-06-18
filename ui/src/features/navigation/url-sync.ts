@@ -23,19 +23,25 @@ function dispatchFromRoute(dispatch: Dispatch<AppAction>, route: Route): void {
     case "tableDetail":
       dispatch({ tag: "tables", action: { type: "select", name: route.name } });
       break;
+    case "queries":
+      dispatch({ tag: "nav", action: { type: "navigate", route } });
+      if (route.queryName) {
+        dispatch({ tag: "queries", action: { type: "restore", name: route.queryName, params: route.queryParams ?? {} } });
+      }
+      break;
     default:
       dispatch({ tag: "nav", action: { type: "navigate", route } });
   }
 }
 
 export function initViewFromUrl(dispatch: Dispatch<AppAction>): void {
-  dispatchFromRoute(dispatch, parse(window.location.pathname));
+  dispatchFromRoute(dispatch, parse(window.location.pathname, window.location.search));
 }
 
 // ── Browser back/forward ────────────────────────────────────────────────────
 
 export function setupPopstateHandler(dispatch: Dispatch<AppAction>): void {
   window.addEventListener("popstate", () => {
-    dispatchFromRoute(dispatch, parse(window.location.pathname));
+    dispatchFromRoute(dispatch, parse(window.location.pathname, window.location.search));
   });
 }

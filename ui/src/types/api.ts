@@ -168,8 +168,13 @@ export interface QueryDef {
   sql?: string;
 }
 
+export interface QueryColumn {
+  name: string;
+  entity_type: string | null;
+}
+
 export interface QueryResult {
-  columns: string[];
+  columns: QueryColumn[];
   rows: Record<string, unknown>[];
 }
 

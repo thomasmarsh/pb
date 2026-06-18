@@ -1,4 +1,6 @@
 -- Non-public procedures never called from anywhere in the codebase.
+-- @entity object object
+-- @entity name procedure
 SELECT p.object, p.proc_type, p.name, p.start_line
 FROM procedures p
 LEFT JOIN calls c ON c.to_name = p.name

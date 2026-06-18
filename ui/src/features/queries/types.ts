@@ -6,5 +6,9 @@ export interface QueriesState {
   items: QueryDef[];
   results: QueryResult | { error: string } | null;
   resultsName: string;
+  queryParams: Record<string, string>;
+  sortCol: string | null;
+  sortDir: "asc" | "desc";
+  page: number;
   loading: boolean;
 }

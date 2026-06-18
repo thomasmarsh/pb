@@ -32,7 +32,7 @@ def _print_result(cursor) -> None:
 
 
 def _make_command(sql_file: Path):
-    description, params, sql = parse_sql_file(sql_file)
+    description, params, sql, _ = parse_sql_file(sql_file)
     pos_params = [(n, t, d) for n, t, d in params if d is None]
     kw_params = [(n, t, d) for n, t, d in params if d is not None]
     all_names = [n for n, _, _ in pos_params + kw_params]

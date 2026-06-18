@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import { screen, fireEvent } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
 import { Queries } from "../../src/features/queries/Queries.js";
+import { initialQueriesState } from "../../src/features/queries/reducer.js";
 
 const sampleQueries = [
   {
@@ -17,7 +18,7 @@ const sampleQueries = [
 describe("Queries component", () => {
   it("renders query list from store state", () => {
     renderWithStore(Queries, {
-      queries: { items: sampleQueries, results: null, resultsName: "", loading: false },
+      queries: { ...initialQueriesState, items: sampleQueries },
     });
     expect(screen.getByText("top_complex")).toBeDefined();
     expect(screen.getByText("Most complex procedures")).toBeDefined();
@@ -25,7 +26,7 @@ describe("Queries component", () => {
 
   it("Run button dispatches queries/run with bound params", () => {
     const { captured } = renderWithStore(Queries, {
-      queries: { items: sampleQueries, results: null, resultsName: "", loading: false },
+      queries: { ...initialQueriesState, items: sampleQueries },
     });
     fireEvent.click(screen.getByText("Run"));
     const runActions = captured.filter(
@@ -40,7 +41,7 @@ describe("Queries component", () => {
 
   it("SQL toggle button shows/hides SQL block", () => {
     const { container } = renderWithStore(Queries, {
-      queries: { items: sampleQueries, results: null, resultsName: "", loading: false },
+      queries: { ...initialQueriesState, items: sampleQueries },
     });
     expect(screen.getByText("SQL")).toBeDefined();
     fireEvent.click(screen.getByText("SQL"));
@@ -55,10 +56,16 @@ describe("Queries component", () => {
   it("renders results table when results exist", () => {
     renderWithStore(Queries, {
       queries: {
+        ...initialQueriesState,
         items: [],
-        results: { columns: ["name", "cc"], rows: [{ name: "of_calc", cc: 15 }, { name: "of_draw", cc: 8 }] },
+        results: {
+          columns: [
+            { name: "name", entity_type: null },
+            { name: "cc",   entity_type: null },
+          ],
+          rows: [{ name: "of_calc", cc: 15 }, { name: "of_draw", cc: 8 }],
+        },
         resultsName: "top_complex",
-        loading: false,
       },
     });
     expect(screen.getByText(/top_complex/)).toBeDefined();
@@ -69,10 +76,10 @@ describe("Queries component", () => {
   it("renders error message when results contain error", () => {
     renderWithStore(Queries, {
       queries: {
+        ...initialQueriesState,
         items: [],
         results: { error: "connection refused" },
         resultsName: "top_complex",
-        loading: false,
       },
     });
     expect(screen.getByText("connection refused")).toBeDefined();
@@ -80,7 +87,7 @@ describe("Queries component", () => {
 
   it("renders query param inputs with default values", () => {
     renderWithStore(Queries, {
-      queries: { items: sampleQueries, results: null, resultsName: "", loading: false },
+      queries: { ...initialQueriesState, items: sampleQueries },
     });
     const input = screen.getByPlaceholderText(/n/);
     expect(input).toBeDefined();

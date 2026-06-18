@@ -12,7 +12,7 @@ from pb_cli.shell.env import env
 router = APIRouter()
 
 
-def _query_info(name: str) -> tuple[str, list[tuple[str, str, str | None]], str]:
+def _query_info(name: str) -> tuple[str, list[tuple[str, str, str | None]], str, dict[str, str]]:
     sql_file = env.build.get_queries_dir() / f"{name}.sql"
     if not sql_file.exists():
         raise HTTPException(status_code=404, detail=f"Query not found: {name}")
@@ -26,7 +26,7 @@ async def list_queries():
         return {"queries": []}
     items = []
     for sql_file in sorted(queries_dir.glob("*.sql")):
-        description, params, sql_body = _query_info(sql_file.stem)
+        description, params, sql_body, _entity_types = _query_info(sql_file.stem)
         items.append(
             {
                 "name": sql_file.stem,
@@ -40,7 +40,7 @@ async def list_queries():
 
 @router.get("/api/queries/{name}/run")
 async def run_query(name: str, request: Request, conn: duckdb.DuckDBPyConnection = Depends(get_db)):
-    description, params, sql = _query_info(name)
+    description, params, sql, entity_types = _query_info(name)
 
     bound = {}
     missing: list[str] = []
@@ -65,5 +65,9 @@ async def run_query(name: str, request: Request, conn: duckdb.DuckDBPyConnection
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     result_rows = rows(result)
-    cols = [d[0] for d in result.description] if result.description else []
-    return {"columns": cols, "rows": result_rows}
+    col_names = [d[0] for d in result.description] if result.description else []
+    columns = [
+        {"name": col, "entity_type": entity_types.get(col)}
+        for col in col_names
+    ]
+    return {"columns": columns, "rows": result_rows}

@@ -18,7 +18,14 @@ export function print(route: Route): string {
     case "tableDetail":      return "/tables/"      + encodeURIComponent(route.name);
     case "libraryDetail":    return "/library/"     + encodeURIComponent(route.name);
     case "diagrams":         return "/diagrams";
-    case "queries":          return "/queries";
+    case "queries": {
+      if (!route.queryName) return "/queries";
+      const p = new URLSearchParams({ q: route.queryName });
+      if (route.queryParams) {
+        for (const [k, v] of Object.entries(route.queryParams)) p.set(`p_${k}`, v);
+      }
+      return "/queries?" + p.toString();
+    }
     case "search":           return "/search";
     case "explore":          return "/explore";
     case "errors":           return "/errors";
@@ -28,7 +35,7 @@ export function print(route: Route): string {
   }
 }
 
-export function parse(path: string): Route {
+export function parse(path: string, search?: string): Route {
   const segs = path.split("/").filter(Boolean);
   switch (segs[0]) {
     case "objects":
@@ -47,7 +54,17 @@ export function parse(path: string): Route {
       if (segs[1]) return { view: "libraryDetail", name: decodeURIComponent(segs[1]) };
       return { view: "dashboard" };
     case "diagrams":   return { view: "diagrams" };
-    case "queries":    return { view: "queries" };
+    case "queries": {
+      const raw = search ? (search.startsWith("?") ? search.slice(1) : search) : "";
+      const sp = new URLSearchParams(raw);
+      const q = sp.get("q");
+      if (!q) return { view: "queries" };
+      const params: Record<string, string> = {};
+      for (const [k, v] of sp.entries()) {
+        if (k.startsWith("p_")) params[k.slice(2)] = v;
+      }
+      return { view: "queries", queryName: q, queryParams: params };
+    }
     case "search":     return { view: "search" };
     case "explore":    return { view: "explore" };
     case "errors":     return { view: "errors" };

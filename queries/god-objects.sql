@@ -1,4 +1,5 @@
 -- Objects with both high fan-in (in_degree) and high cyclomatic complexity.
+-- @entity object object
 -- Scale thresholds to your codebase; defaults suit a medium corpus.
 -- :min_degree INT 5
 -- :min_cyclomatic INT 3

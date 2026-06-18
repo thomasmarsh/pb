@@ -1,5 +1,6 @@
 -- All objects that directly or transitively extend a base class.
 -- :name TEXT
+-- @entity descendant object
 WITH RECURSIVE sub AS (
     SELECT from_object, to_object FROM inherits WHERE to_object = $name
   UNION ALL
