@@ -9,6 +9,9 @@ import type { ExploreLibrary, ExploreObject, ExploreProcedure } from "../../type
 export function libId(name: string): string { return `lib:${name}`; }
 export function objId(lib: string, name: string): string { return `obj:${lib}:${name}`; }
 export function procId(obj: string, name: string): string { return `proc:${obj}:${name}`; }
+export function kindGroupId(objName: string, kind: "functions" | "events" | "subroutines"): string {
+  return `kg:${objName}:${kind}`;
+}
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "…" : s;
@@ -19,6 +22,12 @@ const KIND_BADGES: Record<string, string> = {
 };
 
 function kindBadge(kind: string): string { return KIND_BADGES[kind] ?? "badge-proj"; }
+
+function procKindGroup(procType: string): "functions" | "events" | "subroutines" {
+  if (procType === "function") return "functions";
+  if (procType === "subroutine") return "subroutines";
+  return "events";
+}
 
 // ── Procedure Tree Node ───────────────────────────────────────────────────────
 
@@ -53,6 +62,26 @@ export function ProcNode(props: { objName: string; proc: ExploreProcedure; depth
   );
 }
 
+// ── Proc Group Node (Functions / Events / Subroutines) ────────────────────────
+
+function ProcGroupNode(props: {
+  nodeId: string;
+  label: string;
+  procs: ExploreProcedure[];
+  objName: string;
+  depth: number;
+}) {
+  return (
+    <Show when={props.procs.length > 0}>
+      <TreeNode nodeId={props.nodeId} depth={props.depth} name={props.label}>
+        <For each={props.procs}>
+          {(proc) => <ProcNode objName={props.objName} proc={proc} depth={props.depth + 1} />}
+        </For>
+      </TreeNode>
+    </Show>
+  );
+}
+
 // ── Object Tree Node ──────────────────────────────────────────────────────────
 
 export function ObjectNode(props: { lib: string; obj: ExploreObject; depth: number }) {
@@ -77,10 +106,13 @@ export function ObjectNode(props: { lib: string; obj: ExploreObject; depth: numb
     return visibleProcs().length > 0;
   });
 
-  const procCount = createMemo(() => {
-    if (isDw()) return "";
-    const count = props.obj.procedures.length;
-    return `${count} procedure${count !== 1 ? "s" : ""}`;
+  const grouped = createMemo(() => {
+    const procs = visibleProcs();
+    return {
+      functions:   procs.filter(p => procKindGroup(p.proc_type) === "functions"),
+      events:      procs.filter(p => procKindGroup(p.proc_type) === "events"),
+      subroutines: procs.filter(p => procKindGroup(p.proc_type) === "subroutines"),
+    };
   });
 
   return (
@@ -90,15 +122,30 @@ export function ObjectNode(props: { lib: string; obj: ExploreObject; depth: numb
         depth={props.depth}
         badge={{ text: props.obj.kind, cls: kindBadge(props.obj.kind) }}
         name={props.obj.name}
-        summary={isDw() ? undefined : procCount()}
         onClick={isDw() ? () => store.dispatch({ tag: "explore", action: { type: "dw-select", dwName: props.obj.name, nodeId: nodeId() } }) : undefined}
       >
         <Show when={!isDw()}>
-          <Show when={visibleProcs().length > 0} fallback={<div class="tree-empty">No procedures</div>}>
-            <For each={visibleProcs()}>
-              {(proc) => <ProcNode objName={props.obj.name} proc={proc} depth={props.depth + 1} />}
-            </For>
-          </Show>
+          <ProcGroupNode
+            nodeId={kindGroupId(props.obj.name, "functions")}
+            label={`Functions (${grouped().functions.length})`}
+            procs={grouped().functions}
+            objName={props.obj.name}
+            depth={props.depth + 1}
+          />
+          <ProcGroupNode
+            nodeId={kindGroupId(props.obj.name, "events")}
+            label={`Events (${grouped().events.length})`}
+            procs={grouped().events}
+            objName={props.obj.name}
+            depth={props.depth + 1}
+          />
+          <ProcGroupNode
+            nodeId={kindGroupId(props.obj.name, "subroutines")}
+            label={`Subroutines (${grouped().subroutines.length})`}
+            procs={grouped().subroutines}
+            objName={props.obj.name}
+            depth={props.depth + 1}
+          />
         </Show>
       </TreeNode>
     </Show>

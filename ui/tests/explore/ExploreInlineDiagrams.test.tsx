@@ -66,7 +66,8 @@ function makeExploreState(overrides?: Partial<Record<string, unknown>>) {
     activeTab: "source" as const,
     treeFilter: "",
     highlightedLine: null,
-    leftTab: "objects" as const,
+    sidebarGroups: { sourceTree: true, entityNav: false, analysisNav: false },
+    sidebarCollapsed: false,
     tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
     ...overrides,
   };
@@ -94,7 +95,6 @@ describe("Explore Tables — InlineDiagram", () => {
     vi.stubGlobal("fetch", () => new Promise(() => {}));
     const { store } = createTestStore({
       explore: makeExploreState({
-        leftTab: "tables",
         tables: {
           items: [{ table_name: "orders", dw_count: 1, file_count: 1 }],
           filter: "",
@@ -120,7 +120,6 @@ describe("Explore Tables — InlineDiagram", () => {
     vi.stubGlobal("fetch", () => new Promise(() => {}));
     const { store } = createTestStore({
       explore: makeExploreState({
-        leftTab: "tables",
         tables: {
           items: [{ table_name: "orders", dw_count: 1, file_count: 1 }],
           filter: "",

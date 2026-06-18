@@ -5,20 +5,26 @@ import { screen, fireEvent } from "@solidjs/testing-library";
 import { render } from "@solidjs/testing-library";
 import { ExploreStoreContext } from "../../src/features/explore/ExploreContext.js";
 import { createTestStore } from "../helpers.js";
-import { ProcNode, ObjectNode, LibraryNode } from "../../src/features/explore/TreeNodes.js";
+import { ProcNode, ObjectNode, LibraryNode, kindGroupId } from "../../src/features/explore/TreeNodes.js";
 
-// Removed unused renderWithExplore helper
+const DEFAULT_SIDEBAR = {
+  sidebarGroups: { sourceTree: true, entityNav: false, analysisNav: false },
+  sidebarCollapsed: false,
+};
+
+const TABLES_STATE = { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false };
+
+function makeExploreBase() {
+  return {
+    libraries: [], expandedNodes: new Set<string>(), selectedProc: null, selectedDw: null,
+    procCache: {}, dwCache: {}, loading: false, activeTab: "source" as const, treeFilter: "",
+    highlightedLine: null, tables: TABLES_STATE, ...DEFAULT_SIDEBAR,
+  };
+}
 
 describe("ProcNode", () => {
   it("renders procedure name", () => {
-    const { store } = createTestStore({
-      explore: {
-        libraries: [], expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
+    const { store } = createTestStore({ explore: makeExploreBase() });
     render(() => (
       <ExploreStoreContext.Provider value={store}>
         <ProcNode objName="w_main" proc={{ name: "of_init", proc_type: "function", params: "(n)", return_type: "void", cyclomatic: 3, start_line: 10, end_line: 20, object: "w_main", modifiers: null }} depth={1} />
@@ -28,14 +34,7 @@ describe("ProcNode", () => {
   });
 
   it("shows proc_type badge", () => {
-    const { store } = createTestStore({
-      explore: {
-        libraries: [], expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
+    const { store } = createTestStore({ explore: makeExploreBase() });
     render(() => (
       <ExploreStoreContext.Provider value={store}>
         <ProcNode objName="w_main" proc={{ name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null, object: "w_main", modifiers: null }} depth={1} />
@@ -45,14 +44,7 @@ describe("ProcNode", () => {
   });
 
   it("dispatches proc-select on click", () => {
-    const { store, captured } = createTestStore({
-      explore: {
-        libraries: [], expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
+    const { store, captured } = createTestStore({ explore: makeExploreBase() });
     render(() => (
       <ExploreStoreContext.Provider value={store}>
         <ProcNode objName="w_main" proc={{ name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null, object: "w_main", modifiers: null }} depth={1} />
@@ -66,14 +58,7 @@ describe("ProcNode", () => {
 
 describe("ObjectNode (datawindow)", () => {
   it("renders DW name with badge and dispatches dw-select on click", () => {
-    const { store, captured } = createTestStore({
-      explore: {
-        libraries: [], expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
+    const { store, captured } = createTestStore({ explore: makeExploreBase() });
     render(() => (
       <ExploreStoreContext.Provider value={store}>
         <ObjectNode lib="app.pbl" obj={{ name: "d_emp", kind: "datawindow", file: "app.pbl", procedures: [] }} depth={1} />
@@ -89,14 +74,7 @@ describe("ObjectNode (datawindow)", () => {
 
 describe("ObjectNode", () => {
   it("renders object name and kind badge", () => {
-    const { store } = createTestStore({
-      explore: {
-        libraries: [], expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
+    const { store } = createTestStore({ explore: makeExploreBase() });
     render(() => (
       <ExploreStoreContext.Provider value={store}>
         <ObjectNode lib="app.pbl" obj={{ name: "w_main", kind: "powerscript", file: "app.pbl", procedures: [] }} depth={1} />
@@ -106,13 +84,11 @@ describe("ObjectNode", () => {
     expect(screen.getByText("powerscript")).toBeDefined();
   });
 
-  it("shows procedure count for non-DW objects", () => {
+  it("groups procs by kind — shows Functions and Subroutines groups", () => {
     const { store } = createTestStore({
       explore: {
-        libraries: [], expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
+        ...makeExploreBase(),
+        expandedNodes: new Set(["obj:app.pbl:w_main"]),
       },
     });
     render(() => (
@@ -120,20 +96,35 @@ describe("ObjectNode", () => {
         <ObjectNode lib="app.pbl" obj={{ name: "w_main", kind: "powerscript", file: "app.pbl", procedures: [
           { name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null, object: "w_main", modifiers: null },
           { name: "of_close", proc_type: "subroutine", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null, object: "w_main", modifiers: null },
-       ] }} depth={1} />
+        ] }} depth={1} />
       </ExploreStoreContext.Provider>
     ));
-    expect(screen.getByText("2 procedures")).toBeDefined();
+    expect(screen.getByText("Functions (1)")).toBeDefined();
+    expect(screen.getByText("Subroutines (1)")).toBeDefined();
+  });
+
+  it("hides empty kind groups", () => {
+    const { store } = createTestStore({
+      explore: {
+        ...makeExploreBase(),
+        expandedNodes: new Set(["obj:app.pbl:w_main"]),
+      },
+    });
+    render(() => (
+      <ExploreStoreContext.Provider value={store}>
+        <ObjectNode lib="app.pbl" obj={{ name: "w_main", kind: "powerscript", file: "app.pbl", procedures: [
+          { name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null, object: "w_main", modifiers: null },
+        ] }} depth={1} />
+      </ExploreStoreContext.Provider>
+    ));
+    expect(screen.getByText("Functions (1)")).toBeDefined();
+    expect(screen.queryByText(/Events/)).toBeNull();
+    expect(screen.queryByText(/Subroutines/)).toBeNull();
   });
 
   it("hides DW objects when filtered out", () => {
     const { store } = createTestStore({
-      explore: {
-        libraries: [], expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "zzz",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
+      explore: { ...makeExploreBase(), treeFilter: "zzz" },
     });
     render(() => (
       <ExploreStoreContext.Provider value={store}>
@@ -146,14 +137,7 @@ describe("ObjectNode", () => {
 
 describe("LibraryNode", () => {
   it("renders library name with object count", () => {
-    const { store } = createTestStore({
-      explore: {
-        libraries: [], expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
+    const { store } = createTestStore({ explore: makeExploreBase() });
     render(() => (
       <ExploreStoreContext.Provider value={store}>
         <LibraryNode lib={{ name: "app.pbl", objects: [] }} depth={0} />
@@ -161,5 +145,13 @@ describe("LibraryNode", () => {
     ));
     expect(screen.getByText("app.pbl")).toBeDefined();
     expect(screen.getByText("0 objects")).toBeDefined();
+  });
+});
+
+describe("kindGroupId", () => {
+  it("returns correct node ids", () => {
+    expect(kindGroupId("w_main", "functions")).toBe("kg:w_main:functions");
+    expect(kindGroupId("w_main", "events")).toBe("kg:w_main:events");
+    expect(kindGroupId("w_main", "subroutines")).toBe("kg:w_main:subroutines");
   });
 });

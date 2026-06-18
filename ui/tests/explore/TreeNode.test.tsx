@@ -23,7 +23,8 @@ function renderTreeNode(
       activeTab: "source",
       treeFilter: "",
       highlightedLine: null,
-      leftTab: "objects",
+      sidebarGroups: { sourceTree: true, entityNav: false, analysisNav: false },
+      sidebarCollapsed: false,
       tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
     },
   });

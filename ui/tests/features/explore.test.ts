@@ -87,6 +87,23 @@ describe("explore reducer", () => {
         s.selectedProc = "proc:o:p";
       });
     });
+
+    it("auto-reveals library and object when library data is loaded", () => {
+      const init = makeInitialExploreState();
+      init.libraries = [
+        { name: "app.pbl", objects: [
+          { name: "w_main", kind: "powerscript", file: "app.pbl", procedures: [
+            { name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null, object: "w_main", modifiers: null },
+          ] },
+        ] },
+      ];
+      const ts = createTestStore(exploreReducer, mockEnv, init);
+      ts.send({ type: "proc-select", objectName: "w_main", procName: "of_init", nodeId: "proc:w_main:of_init" }, (s) => {
+        s.selectedProc = "proc:w_main:of_init";
+        s.expandedNodes = new Set(["lib:app.pbl", "obj:app.pbl:w_main", "kg:w_main:functions"]);
+        s.sidebarGroups = { sourceTree: true, entityNav: false, analysisNav: false };
+      });
+    });
   });
 
   describe("explore/filter", () => {
@@ -103,6 +120,92 @@ describe("explore reducer", () => {
       const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
       ts.send({ type: "tab", tab: "ast" }, (s) => {
         s.activeTab = "ast";
+      });
+    });
+  });
+
+  describe("sidebar accordion", () => {
+    it("sidebar-toggle-group flips sourceTree from true to false", () => {
+      const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
+      ts.send({ type: "sidebar-toggle-group", group: "sourceTree" }, (s) => {
+        s.sidebarGroups = { sourceTree: false, entityNav: false, analysisNav: false };
+      });
+    });
+
+    it("sidebar-toggle-group flips entityNav from false to true", () => {
+      const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
+      ts.send({ type: "sidebar-toggle-group", group: "entityNav" }, (s) => {
+        s.sidebarGroups = { sourceTree: true, entityNav: true, analysisNav: false };
+      });
+    });
+
+    it("sidebar-set-collapsed sets sidebarCollapsed true", () => {
+      const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
+      ts.send({ type: "sidebar-set-collapsed", collapsed: true }, (s) => {
+        s.sidebarCollapsed = true;
+      });
+    });
+
+    it("sidebar-set-collapsed sets sidebarCollapsed false", () => {
+      const init = makeInitialExploreState();
+      init.sidebarCollapsed = true;
+      const ts = createTestStore(exploreReducer, mockEnv, init);
+      ts.send({ type: "sidebar-set-collapsed", collapsed: false }, (s) => {
+        s.sidebarCollapsed = false;
+      });
+    });
+  });
+
+  describe("sidebar-reveal", () => {
+    it("adds library and object to expandedNodes when object found", () => {
+      const init = makeInitialExploreState();
+      init.libraries = [
+        { name: "app.pbl", objects: [
+          { name: "w_main", kind: "powerscript", file: "app.pbl", procedures: [] },
+        ] },
+      ];
+      const ts = createTestStore(exploreReducer, mockEnv, init);
+      ts.send({ type: "sidebar-reveal", objectName: "w_main" }, (s) => {
+        s.expandedNodes = new Set(["lib:app.pbl", "obj:app.pbl:w_main"]);
+        s.sidebarGroups = { sourceTree: true, entityNav: false, analysisNav: false };
+      });
+    });
+
+    it("adds kind group node when procName matches", () => {
+      const init = makeInitialExploreState();
+      init.libraries = [
+        { name: "app.pbl", objects: [
+          { name: "w_main", kind: "powerscript", file: "app.pbl", procedures: [
+            { name: "ue_open", proc_type: "event", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null, object: "w_main", modifiers: null },
+          ] },
+        ] },
+      ];
+      const ts = createTestStore(exploreReducer, mockEnv, init);
+      ts.send({ type: "sidebar-reveal", objectName: "w_main", procName: "ue_open" }, (s) => {
+        s.expandedNodes = new Set(["lib:app.pbl", "obj:app.pbl:w_main", "kg:w_main:events"]);
+        s.sidebarGroups = { sourceTree: true, entityNav: false, analysisNav: false };
+      });
+    });
+
+    it("does not collapse previously expanded nodes", () => {
+      const init = makeInitialExploreState();
+      init.expandedNodes = new Set(["lib:other.pbl"]);
+      init.libraries = [
+        { name: "app.pbl", objects: [
+          { name: "w_main", kind: "powerscript", file: "app.pbl", procedures: [] },
+        ] },
+        { name: "other.pbl", objects: [] },
+      ];
+      const ts = createTestStore(exploreReducer, mockEnv, init);
+      ts.send({ type: "sidebar-reveal", objectName: "w_main" }, (s) => {
+        s.expandedNodes = new Set(["lib:other.pbl", "lib:app.pbl", "obj:app.pbl:w_main"]);
+      });
+    });
+
+    it("no-op when objectName not found in libraries", () => {
+      const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
+      ts.send({ type: "sidebar-reveal", objectName: "nonexistent" }, (s) => {
+        s.expandedNodes = new Set();
       });
     });
   });

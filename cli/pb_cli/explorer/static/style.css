@@ -48,7 +48,7 @@ body {
 /* Layout */
 .app-layout { display: flex; min-height: 100vh; }
 .sidebar {
-    width: 220px; min-width: 220px;
+    width: 280px; min-width: 280px;
     background: var(--bg-secondary);
     border-right: 1px solid var(--border);
     display: flex; flex-direction: column;
@@ -96,10 +96,11 @@ body {
 .sidebar-stats .stat-val { color: var(--text-secondary); font-weight: 600; }
 
 .main-content {
-    margin-left: 220px; flex: 1;
+    margin-left: 280px; flex: 1;
     padding: 24px 32px;
     max-width: 1200px;
 }
+.sidebar-is-collapsed .main-content { margin-left: 44px; }
 
 /* Cards */
 .card {
@@ -579,6 +580,65 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
+/* Sidebar accordion structure */
+.sidebar-collapsed { width: 44px !important; min-width: 44px !important; overflow: hidden; }
+.sidebar-header-row { display: flex; align-items: center; justify-content: space-between; }
+.sidebar-collapse-btn {
+    background: none; border: none; cursor: pointer; padding: 2px 4px;
+    color: var(--text-muted); font-size: 14px; line-height: 1;
+    border-radius: 4px; transition: color 0.15s;
+}
+.sidebar-collapse-btn:hover { color: var(--text-primary); }
+.sidebar-util-nav { padding: 6px 8px 0; border-bottom: 1px solid var(--border); }
+.sidebar-util-link {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 10px; border-radius: 5px;
+    color: var(--text-secondary); text-decoration: none;
+    font-size: 12px; font-weight: 500;
+    transition: all 0.15s ease;
+}
+.sidebar-util-link:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.sidebar-util-link.active { color: var(--accent); }
+.sidebar-util-link .icon { width: 16px; text-align: center; font-size: 12px; }
+.sidebar-groups { flex: 1; overflow-y: auto; padding: 4px 0; }
+.sidebar-group { border-bottom: 1px solid var(--border); }
+.sidebar-group-header {
+    display: flex; align-items: center; gap: 7px;
+    width: 100%; padding: 8px 12px;
+    background: none; border: none; cursor: pointer;
+    color: var(--text-secondary); font-size: 12px; font-weight: 600;
+    text-align: left; text-transform: uppercase; letter-spacing: 0.4px;
+    transition: color 0.15s;
+}
+.sidebar-group-header:hover { color: var(--text-primary); }
+.sidebar-group-icon { font-size: 13px; }
+.sidebar-group-label { flex: 1; }
+.sidebar-group-chevron { font-size: 11px; color: var(--text-muted); }
+.sidebar-group-body { padding: 0 0 6px; }
+.sidebar-tree-controls { display: flex; gap: 4px; padding: 4px 10px; }
+.sidebar-tree-body { overflow-y: auto; max-height: 40vh; }
+.sidebar-entity-nav { padding: 2px 6px; }
+.sidebar-entity-link {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-radius: 5px;
+    color: var(--text-secondary); text-decoration: none;
+    font-size: 13px; font-weight: 500;
+    transition: all 0.15s ease;
+}
+.sidebar-entity-link:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.sidebar-entity-link.active { background: rgba(108, 140, 255, 0.12); color: var(--accent); }
+.sidebar-entity-link .icon { width: 18px; text-align: center; font-size: 13px; }
+.sidebar-rail { display: flex; flex-direction: column; align-items: center; padding: 6px 0; gap: 2px; }
+.sidebar-rail-icon {
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 6px;
+    background: none; border: none; cursor: pointer;
+    color: var(--text-muted); font-size: 15px;
+    transition: all 0.15s;
+}
+.sidebar-rail-icon:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.sidebar-rail-icon.active { color: var(--accent); }
+
 /* Responsive */
 @media (max-width: 768px) {
     .sidebar { width: 60px; min-width: 60px; }
@@ -589,14 +649,15 @@ body {
     .main-content { margin-left: 60px; padding: 16px; }
 }
 
-/* Two-panel split (Explore view) */
+/* Two-panel split (Explore view — legacy, kept for detail panel) */
 .explore-split {
     position: fixed;
-    left: 220px; right: 0; top: 0; bottom: 0;
+    left: 280px; right: 0; top: 0; bottom: 0;
     display: flex;
     background: var(--bg-primary);
     overflow: hidden;
 }
+.sidebar-is-collapsed .explore-split { left: 44px; }
 .explore-left {
     width: 340px; min-width: 200px; max-width: 480px;
     flex-shrink: 0;

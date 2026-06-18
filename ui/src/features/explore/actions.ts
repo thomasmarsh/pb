@@ -17,7 +17,9 @@ export type ExploreAction =
   | { type: "tab"; tab: "source" | "ast" | "sql" | "diagram" }
   | { type: "filter"; q: string }
   | { type: "highlight-line"; line: number | null }
-  | { type: "left-tab"; tab: "objects" | "tables" }
+  | { type: "sidebar-toggle-group"; group: "sourceTree" | "entityNav" | "analysisNav" }
+  | { type: "sidebar-set-collapsed"; collapsed: boolean }
+  | { type: "sidebar-reveal"; objectName: string; procName?: string }
   | { type: "tables-load" }
   | { type: "tables-loaded"; items: TableSummary[] }
   | { type: "tables-filter"; q: string }

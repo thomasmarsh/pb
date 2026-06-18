@@ -32,9 +32,38 @@ function makeInitialExploreState(): ExploreState {
     activeTab: "source",
     treeFilter: "",
     highlightedLine: null,
-    leftTab: "objects",
+    sidebarGroups: { sourceTree: true, entityNav: false, analysisNav: false },
+    sidebarCollapsed: false,
     tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
   };
+}
+
+// ── Auto-reveal helper ────────────────────────────────────────────────────────
+
+function procKindGroup(procType: string): "functions" | "events" | "subroutines" {
+  if (procType === "function") return "functions";
+  if (procType === "subroutine") return "subroutines";
+  return "events"; // "event" | "on"
+}
+
+function revealInTree(draft: ExploreState, objectName: string, procName?: string): void {
+  const lib = draft.libraries.find(l => l.objects.some(o => o.name === objectName));
+  if (!lib) return;
+
+  const next = new Set(draft.expandedNodes);
+  next.add(`lib:${lib.name}`);
+  next.add(`obj:${lib.name}:${objectName}`);
+
+  if (procName) {
+    const obj = lib.objects.find(o => o.name === objectName);
+    const proc = obj?.procedures.find(p => p.name === procName);
+    if (proc) {
+      next.add(`kg:${objectName}:${procKindGroup(proc.proc_type)}`);
+    }
+  }
+
+  draft.expandedNodes = next;
+  draft.sidebarGroups = { ...draft.sidebarGroups, sourceTree: true };
 }
 
 // ── Reducer (mutates draft) ──────────────────────────────────────────────────
@@ -70,6 +99,8 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
     draft.selectedDw = null;
     draft.activeTab = "source";
     draft.highlightedLine = null;
+    revealInTree(draft, action.objectName, action.procName);
+    env.navigate({ type: "navigate", route: { view: "explore" } });
     if (!(action.nodeId in draft.procCache)) {
       return env.getExploreProcedure(action.objectName, action.procName)
         .map((data): ExploreAction => ({ type: "proc-loaded", nodeId: action.nodeId, data }))
@@ -103,6 +134,8 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
     draft.selectedDw = action.nodeId;
     draft.selectedProc = null;
     draft.highlightedLine = null;
+    revealInTree(draft, action.dwName);
+    env.navigate({ type: "navigate", route: { view: "explore" } });
     if (!(action.nodeId in draft.dwCache)) {
       return env.getExploreDatawindow(action.dwName)
         .map((data): ExploreAction => ({ type: "dw-loaded", nodeId: action.nodeId, data }))
@@ -130,25 +163,22 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
     draft.highlightedLine = action.line;
     return null;
 
-  // Tables browser
-  case "left-tab": {
-    draft.leftTab = action.tab;
-    if (action.tab === "tables") {
-      draft.selectedProc = null;
-      draft.selectedDw = null;
-      if (draft.tables.items.length === 0 && !draft.tables.loading) {
-        draft.tables.loading = true;
-        return env.getTables()
-          .map((items): ExploreAction => ({ type: "tables-loaded", items }))
-          .catch((): ExploreAction => ({ type: "tables-loaded", items: [] }));
-      }
-    } else {
-      draft.tables.selected = null;
-      draft.tables.detail = null;
-    }
+  case "sidebar-toggle-group":
+    draft.sidebarGroups = {
+      ...draft.sidebarGroups,
+      [action.group]: !draft.sidebarGroups[action.group],
+    };
     return null;
-  }
 
+  case "sidebar-set-collapsed":
+    draft.sidebarCollapsed = action.collapsed;
+    return null;
+
+  case "sidebar-reveal":
+    revealInTree(draft, action.objectName, action.procName);
+    return null;
+
+  // Tables browser (state kept; UI now accessed via Entity Navigation → Tables route)
   case "tables-load":
     draft.tables.loading = true;
     return env.getTables()

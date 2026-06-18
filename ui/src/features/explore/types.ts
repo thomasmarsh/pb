@@ -11,6 +11,12 @@ export interface TablesState {
   detailLoading: boolean;
 }
 
+export interface SidebarGroups {
+  sourceTree: boolean;
+  entityNav: boolean;
+  analysisNav: boolean;
+}
+
 export interface ExploreState {
   libraries: ExploreLibrary[];
   expandedNodes: Set<string>;
@@ -22,6 +28,7 @@ export interface ExploreState {
   activeTab: "source" | "ast" | "sql" | "diagram";
   treeFilter: string;
   highlightedLine: number | null;
-  leftTab: "objects" | "tables";
+  sidebarGroups: SidebarGroups;
+  sidebarCollapsed: boolean;
   tables: TablesState;
 }

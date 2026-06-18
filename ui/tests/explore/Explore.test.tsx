@@ -1,9 +1,16 @@
-// tests/components/Explore.test.tsx — Tests for Explore component.
+// tests/explore/Explore.test.tsx — Tests for the Explore detail panel component.
 
 import { describe, it, expect } from "vitest";
-import { screen, fireEvent } from "@solidjs/testing-library";
+import { screen } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
 import { Explore } from "../../src/features/explore/Explore.js";
+
+const DEFAULT_SIDEBAR = {
+  sidebarGroups: { sourceTree: true, entityNav: false, analysisNav: false },
+  sidebarCollapsed: false,
+};
+
+const TABLES_STATE = { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false };
 
 const sampleLibraries = [
   {
@@ -17,139 +24,17 @@ const sampleLibraries = [
   },
 ];
 
-describe("Explore component", () => {
-  it("renders AST Explorer heading", () => {
-    renderWithStore(Explore, {
-      explore: {
-        libraries: sampleLibraries, expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
-    expect(screen.getByText("AST Explorer")).toBeDefined();
-  });
+function makeExplore(overrides?: object) {
+  return {
+    libraries: sampleLibraries, expandedNodes: new Set<string>(), selectedProc: null, selectedDw: null,
+    procCache: {}, dwCache: {}, loading: false, activeTab: "source" as const, treeFilter: "",
+    highlightedLine: null, tables: TABLES_STATE, ...DEFAULT_SIDEBAR, ...overrides,
+  };
+}
 
-  it("renders Objects/Tables tabs", () => {
-    renderWithStore(Explore, {
-      explore: {
-        libraries: [], expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
-    expect(screen.getByText("Objects")).toBeDefined();
-    expect(screen.getByText("Tables")).toBeDefined();
-  });
-
-  it("renders Expand All and Collapse All buttons", () => {
-    renderWithStore(Explore, {
-      explore: {
-        libraries: [], expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
-    expect(screen.getByText("Expand All")).toBeDefined();
-    expect(screen.getByText("Collapse All")).toBeDefined();
-  });
-
-  it("Expand All dispatches explore/expand-all", () => {
-    const { captured } = renderWithStore(Explore, {
-      explore: {
-        libraries: sampleLibraries, expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
-    fireEvent.click(screen.getByText("Expand All"));
-    const expandActions = captured.filter(
-      (a) => a.tag === "explore" && a.action.type === "expand-all",
-    );
-    expect(expandActions.length).toBe(1);
-  });
-
-  it("Collapse All dispatches explore/collapse-all", () => {
-    const { captured } = renderWithStore(Explore, {
-      explore: {
-        libraries: sampleLibraries, expandedNodes: new Set(["lib:app.pbl"]), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
-    fireEvent.click(screen.getByText("Collapse All"));
-    const collapseActions = captured.filter(
-      (a) => a.tag === "explore" && a.action.type === "collapse-all",
-    );
-    expect(collapseActions.length).toBe(1);
-  });
-
-  it("filter input dispatches explore/filter", () => {
-    const { captured } = renderWithStore(Explore, {
-      explore: {
-        libraries: [], expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
-    const input = screen.getByPlaceholderText(/Filter/);
-    fireEvent.input(input, { target: { value: "w_" } });
-    const filterActions = captured.filter(
-      (a) => a.tag === "explore" && a.action.type === "filter",
-    );
-    expect(filterActions.length).toBe(1);
-  });
-
-  it("shows loading when loading and no libraries", () => {
-    renderWithStore(Explore, {
-      explore: {
-        libraries: [], expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: true, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
-    expect(screen.getByText(/Loading AST tree/)).toBeDefined();
-  });
-
-  it("shows empty state when no libraries and not loading", () => {
-    renderWithStore(Explore, {
-      explore: {
-        libraries: [], expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
-    expect(screen.getByText(/No data/)).toBeDefined();
-  });
-
-  it("renders library nodes when libraries exist", () => {
-    renderWithStore(Explore, {
-      explore: {
-        libraries: sampleLibraries, expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
-    expect(screen.getByText("app.pbl")).toBeDefined();
-  });
-
-  it("shows 'Select a procedure or DataWindow' in detail panel", () => {
-    renderWithStore(Explore, {
-      explore: {
-        libraries: sampleLibraries, expandedNodes: new Set(), selectedProc: null, selectedDw: null,
-        procCache: {}, dwCache: {}, loading: false, activeTab: "source", treeFilter: "",
-        highlightedLine: null, leftTab: "objects",
-        tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      },
-    });
+describe("Explore detail panel", () => {
+  it("shows empty state when nothing is selected", () => {
+    renderWithStore(Explore, { explore: makeExplore() });
     expect(screen.getByText("Select a procedure or DataWindow")).toBeDefined();
   });
 });
