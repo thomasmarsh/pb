@@ -14,6 +14,7 @@ pb.duckdb
 node_modules
 cli/pb_cli/explorer/static/dist/
 ui/src/types/ast.generated.ts
+cli/pb_cli/core/ast_generated.py
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
