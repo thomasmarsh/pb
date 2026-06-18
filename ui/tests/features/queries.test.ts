@@ -7,11 +7,13 @@ import { queriesReducer, initialQueriesState, type QueriesEnv } from "../../src/
 import type { QueriesState } from "../../src/features/queries/types.js";
 import type { NavigationAction } from "../../src/features/navigation/types.js";
 
-function makeMockEnv(): QueriesEnv & { lastNavigate: NavigationAction | null } {
-  const env: QueriesEnv & { lastNavigate: NavigationAction | null } = {
+function makeMockEnv(): QueriesEnv & { lastNavigate: NavigationAction | null; lastSql: string | null } {
+  const env: QueriesEnv & { lastNavigate: NavigationAction | null; lastSql: string | null } = {
     lastNavigate: null,
+    lastSql: null,
     getQueries: () => Effect.none(),
     runQuery: () => Effect.none(),
+    runSql: (sql) => { env.lastSql = sql; return Effect.none(); },
     navigate: (action) => { env.lastNavigate = action; return Effect.none(); },
   };
   return env;
@@ -170,6 +172,24 @@ describe("queries reducer", () => {
       ts.send({ tag: "navigate-to-entity", entityType: "unknown", entityName: "x", objectName: null });
       expect(env.lastNavigate).toBeNull();
     });
+
+    it("in SQL mode uses sqlText queryRoute", () => {
+      const sql = "SELECT name FROM objects";
+      const init: QueriesState = {
+        ...initialQueriesState,
+        resultsName: "SELECT name FROM ob",
+        generatedSql: sql,
+        isSqlMode: true,
+      };
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, init);
+      ts.send({ tag: "navigate-to-entity", entityType: "object", entityName: "w_pay", objectName: null });
+      expect(env.lastNavigate).toMatchObject({
+        tag: "navigate-from-ask",
+        route: { view: "objectDetail", name: "w_pay" },
+        queryRoute: { view: "queries", sqlText: sql },
+      });
+    });
   });
 
   describe("queries/sort", () => {
@@ -222,6 +242,198 @@ describe("queries reducer", () => {
       ts.send({ tag: "set-page", page: 2 }, (s) => {
         s.page = 2;
       });
+    });
+  });
+
+  // ── AskInput free-text actions ─────────────────────────────────────────────
+
+  describe("queries/set-ask-text", () => {
+    it("updates askText", () => {
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, initialQueriesState);
+      ts.send({ tag: "set-ask-text", text: "SELECT name FROM objects" }, (s) => {
+        s.askText = "SELECT name FROM objects";
+      });
+    });
+  });
+
+  describe("queries/toggle-query-pane", () => {
+    it("opens pane when closed", () => {
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, initialQueriesState);
+      ts.send({ tag: "toggle-query-pane" }, (s) => {
+        s.queryPaneOpen = true;
+      });
+    });
+
+    it("closes pane when open", () => {
+      const init: QueriesState = { ...initialQueriesState, queryPaneOpen: true };
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, init);
+      ts.send({ tag: "toggle-query-pane" }, (s) => {
+        s.queryPaneOpen = false;
+      });
+    });
+  });
+
+  describe("queries/set-generated-sql", () => {
+    it("updates generatedSql", () => {
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, initialQueriesState);
+      ts.send({ tag: "set-generated-sql", sql: "SELECT 1" }, (s) => {
+        s.generatedSql = "SELECT 1";
+      });
+    });
+  });
+
+  describe("queries/run-sql", () => {
+    it("sets generatedSql, resultsName (truncated), isSqlMode, clears results", () => {
+      const sql = "SELECT name, object FROM procedures ORDER BY cyclomatic DESC LIMIT 20";
+      const init: QueriesState = { ...initialQueriesState, results: { columns: [], rows: [] } };
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, init);
+      ts.send({ tag: "run-sql", sql }, (s) => {
+        s.generatedSql = sql;
+        s.resultsName = sql.slice(0, 50);
+        s.isSqlMode = true;
+        s.results = null;
+        s.page = 0;
+        s.loading = true;
+        s.recentQueries = [sql];
+      });
+    });
+
+    it("pushes to recentQueries (most-recent first, max 5)", () => {
+      const existing = ["q1", "q2", "q3", "q4", "q5"];
+      const init: QueriesState = { ...initialQueriesState, recentQueries: existing };
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, init);
+      ts.send({ tag: "run-sql", sql: "SELECT 1" }, (s) => {
+        s.generatedSql = "SELECT 1";
+        s.resultsName = "SELECT 1";
+        s.isSqlMode = true;
+        s.results = null;
+        s.page = 0;
+        s.loading = true;
+        s.recentQueries = ["SELECT 1", "q1", "q2", "q3", "q4"];
+      });
+    });
+
+    it("does not duplicate the same query at the front", () => {
+      const init: QueriesState = { ...initialQueriesState, recentQueries: ["SELECT 1", "q2"] };
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, init);
+      ts.send({ tag: "run-sql", sql: "SELECT 1" }, (s) => {
+        s.generatedSql = "SELECT 1";
+        s.resultsName = "SELECT 1";
+        s.isSqlMode = true;
+        s.results = null;
+        s.page = 0;
+        s.loading = true;
+        s.recentQueries = ["SELECT 1", "q2"];
+      });
+    });
+
+    it("navigates to queries route with sqlText", () => {
+      const sql = "SELECT name FROM objects";
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, initialQueriesState);
+      ts.send({ tag: "run-sql", sql });
+      expect(env.lastNavigate).toEqual({
+        tag: "navigate",
+        route: { view: "queries", sqlText: sql },
+      });
+    });
+
+    it("calls env.runSql with the sql", () => {
+      const sql = "SELECT name FROM objects";
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, initialQueriesState);
+      ts.send({ tag: "run-sql", sql });
+      expect(env.lastSql).toBe(sql);
+    });
+
+    it("on failure: sets error and opens query pane", async () => {
+      const sql = "SELECT invalid";
+      const env: QueriesEnv & { lastNavigate: NavigationAction | null; lastSql: string | null } = {
+        lastNavigate: null,
+        lastSql: null,
+        getQueries: () => Effect.none(),
+        runQuery: () => Effect.none(),
+        runSql: () => Effect.fromPromise(() => Promise.reject(new Error("syntax error"))),
+        navigate: (action) => { env.lastNavigate = action; return Effect.none(); },
+      };
+      const ts = createTestStore(queriesReducer, env, initialQueriesState);
+      ts.send({ tag: "run-sql", sql });
+      await ts.drain();
+      ts.receive({ tag: "error", error: "Error: syntax error" }, (s) => {
+        s.results = { error: "Error: syntax error" };
+        s.loading = false;
+        s.queryPaneOpen = true;
+      });
+    });
+  });
+
+  describe("queries/submit-ask", () => {
+    it("SQL input (SELECT prefix) dispatches run-sql", () => {
+      const init: QueriesState = { ...initialQueriesState, askText: "SELECT name FROM objects" };
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, init);
+      ts.send({ tag: "submit-ask" });
+      expect(env.lastSql).toBe("SELECT name FROM objects");
+    });
+
+    it("SQL detection is case-insensitive", () => {
+      const init: QueriesState = { ...initialQueriesState, askText: "select name from objects" };
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, init);
+      ts.send({ tag: "submit-ask" });
+      expect(env.lastSql).toBe("select name from objects");
+    });
+
+    it("WITH prefix also routes to SQL", () => {
+      const init: QueriesState = { ...initialQueriesState, askText: "WITH cte AS (SELECT 1) SELECT * FROM cte" };
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, init);
+      ts.send({ tag: "submit-ask" });
+      expect(env.lastSql).not.toBeNull();
+    });
+
+    it("NL input sets error result (no LLM at P1)", () => {
+      const init: QueriesState = { ...initialQueriesState, askText: "which procedures call f_validate?" };
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, init);
+      ts.send({ tag: "submit-ask" }, (s) => {
+        s.results = { error: expect.stringContaining("SELECT") as unknown as string };
+      });
+      expect(env.lastSql).toBeNull();
+    });
+
+    it("empty askText does nothing", () => {
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, initialQueriesState);
+      ts.send({ tag: "submit-ask" });
+      expect(env.lastSql).toBeNull();
+      expect(env.lastNavigate).toBeNull();
+    });
+  });
+
+  describe("queries/run-recent", () => {
+    it("re-runs a SQL query from the recent strip", () => {
+      const sql = "SELECT name FROM objects";
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, initialQueriesState);
+      ts.send({ tag: "run-recent", text: sql }, (s) => {
+        s.askText = sql;
+        s.generatedSql = sql;
+        s.resultsName = sql.slice(0, 50);
+        s.isSqlMode = true;
+        s.results = null;
+        s.page = 0;
+        s.loading = true;
+        s.recentQueries = [sql];
+      });
+      expect(env.lastSql).toBe(sql);
     });
   });
 });

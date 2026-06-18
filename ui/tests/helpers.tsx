@@ -26,6 +26,7 @@ export const mockEnv: AppEnv = {
   getDiagram: () => Effect.none(),
   getQueries: () => Effect.none(),
   runQuery: () => Effect.none(),
+  runSql: () => Effect.none(),
   getExploreTree: () => Effect.none(),
   getExploreProcedure: () => Effect.none(),
   getExploreDatawindow: () => Effect.none(),

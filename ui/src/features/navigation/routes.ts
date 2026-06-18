@@ -19,6 +19,9 @@ export function print(route: Route): string {
     case "libraryDetail":    return "/library/"     + encodeURIComponent(route.name);
     case "diagrams":         return "/diagrams";
     case "queries": {
+      if (route.sqlText) {
+        return "/queries?" + new URLSearchParams({ sql: route.sqlText }).toString();
+      }
       if (!route.queryName) return "/queries";
       const p = new URLSearchParams({ q: route.queryName });
       if (route.queryParams) {
@@ -57,6 +60,8 @@ export function parse(path: string, search?: string): Route {
     case "queries": {
       const raw = search ? (search.startsWith("?") ? search.slice(1) : search) : "";
       const sp = new URLSearchParams(raw);
+      const sql = sp.get("sql");
+      if (sql) return { view: "queries", sqlText: sql };
       const q = sp.get("q");
       if (!q) return { view: "queries" };
       const params: Record<string, string> = {};

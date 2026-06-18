@@ -11,7 +11,7 @@ export type Route =
   | { view: "tables" }
   | { view: "tableDetail";     name: string }
   | { view: "diagrams" }
-  | { view: "queries"; queryName?: string; queryParams?: Record<string, string> }
+  | { view: "queries"; queryName?: string; queryParams?: Record<string, string>; sqlText?: string }
   | { view: "search" }
   | { view: "explore" }
   | { view: "errors" }

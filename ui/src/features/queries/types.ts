@@ -11,4 +11,10 @@ export interface QueriesState {
   sortDir: "asc" | "desc";
   page: number;
   loading: boolean;
+  // AskInput free-text state
+  askText: string;
+  generatedSql: string | null;
+  queryPaneOpen: boolean;
+  recentQueries: string[];   // most-recent first, max 5
+  isSqlMode: boolean;        // last query was direct SQL (not a named query)
 }

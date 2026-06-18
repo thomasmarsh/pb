@@ -37,6 +37,7 @@ export interface ApiClient {
   getDiagram(kind: string, params: Record<string, string | number>): Promise<string>;
   getQueries(): Promise<{ queries: QueryDef[] }>;
   runQuery(name: string, params: Record<string, string>): Promise<QueryResult>;
+  runSql(sql: string): Promise<QueryResult>;
   getExploreTree(): Promise<ExploreTreeResponse>;
   getExploreProcedure(objectName: string, procName: string): Promise<ExploreProcDetail>;
   getExploreDatawindow(name: string): Promise<DwExploreDetail>;
@@ -75,6 +76,7 @@ export function createEnv(api: ApiClient): Env {
     getDiagram: (k, p) => lift(() => api.getDiagram(k, p)),
     getQueries: () => lift(() => api.getQueries()),
     runQuery: (n, p) => lift(() => api.runQuery(n, p)),
+    runSql: (sql) => lift(() => api.runSql(sql)),
     getExploreTree: () => lift(() => api.getExploreTree()),
     getExploreProcedure: (o, p) => lift(() => api.getExploreProcedure(o, p)),
     getExploreDatawindow: (n) => lift(() => api.getExploreDatawindow(n)),
@@ -163,6 +165,18 @@ export function createApiClient(): ApiClient {
       params: Record<string, string>,
     ): Promise<QueryResult> {
       return fetchJson(`/api/queries/${name}/run?` + apiParams(params));
+    },
+
+    async runSql(sql: string): Promise<QueryResult> {
+      const r = await fetch("/api/queries/run-sql", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sql }),
+      });
+      if (!r.ok) throw new Error(await r.text().then((t) => {
+        try { return (JSON.parse(t) as { detail: string }).detail; } catch { return `API ${r.status}`; }
+      }));
+      return r.json() as Promise<QueryResult>;
     },
 
     async getExploreTree(): Promise<ExploreTreeResponse> {

@@ -10,8 +10,8 @@ from pb_cli.explorer.routes.dependencies import rows
 
 
 def _pbl_like_params(name: str) -> list[str]:
-    """Return LIKE patterns that match an object whose file path contains /<name>/."""
-    return [f"%/{name}/%", f"%\\{name}\\%"]
+    """Return LIKE patterns that match an object whose file path starts with or contains /<name>/."""
+    return [f"{name}/%", f"%/{name}/%"]
 
 
 def get_library_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:

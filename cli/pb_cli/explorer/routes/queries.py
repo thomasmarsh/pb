@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import duckdb
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 
 from pb_cli.explorer.routes.dependencies import get_db, rows
 from pb_cli.shell.db import parse_sql_file
@@ -70,4 +71,24 @@ async def run_query(name: str, request: Request, conn: duckdb.DuckDBPyConnection
         {"name": col, "entity_type": entity_types.get(col)}
         for col in col_names
     ]
+    return {"columns": columns, "rows": result_rows}
+
+
+class RunSqlBody(BaseModel):
+    sql: str
+
+
+@router.post("/api/queries/run-sql")
+async def run_sql_adhoc(body: RunSqlBody, conn: duckdb.DuckDBPyConnection = Depends(get_db)):
+    sql = body.sql.strip()
+    upper = sql.upper()
+    if not (upper.startswith("SELECT") or upper.startswith("WITH")):
+        raise HTTPException(status_code=400, detail="Only SELECT or WITH queries are allowed")
+    try:
+        result = conn.execute(sql)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result_rows = rows(result)
+    col_names = [d[0] for d in result.description] if result.description else []
+    columns = [{"name": col, "entity_type": None} for col in col_names]
     return {"columns": columns, "rows": result_rows}

@@ -89,7 +89,7 @@ describe("Queries component", () => {
     renderWithStore(Queries, {
       queries: { ...initialQueriesState, items: sampleQueries },
     });
-    const input = screen.getByPlaceholderText(/n/);
+    const input = screen.getByPlaceholderText("n (10)");
     expect(input).toBeDefined();
   });
 });

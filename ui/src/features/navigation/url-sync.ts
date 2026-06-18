@@ -25,7 +25,9 @@ function dispatchFromRoute(dispatch: Dispatch<AppAction>, route: Route): void {
       break;
     case "queries":
       dispatch({ tag: "nav", action: { tag: "navigate", route } });
-      if (route.queryName) {
+      if (route.sqlText) {
+        dispatch({ tag: "queries", action: { tag: "run-sql", sql: route.sqlText } });
+      } else if (route.queryName) {
         dispatch({ tag: "queries", action: { tag: "restore", name: route.queryName, params: route.queryParams ?? {} } });
       }
       break;

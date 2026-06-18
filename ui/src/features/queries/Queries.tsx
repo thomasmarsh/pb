@@ -1,4 +1,4 @@
-// Queries.tsx — SQL queries view (Ask surface).
+// Queries.tsx — Ask surface: free-text NL/SQL input + predefined SQL query catalogue.
 
 import { Show, For, onMount, createSignal } from "solid-js";
 import type { Store } from "../../core/store.js";
@@ -32,6 +32,8 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
   onMount(() => {
     if (!q().items.length) store.dispatch({ tag: "queries", action: { tag: "load" } });
   });
+
+  // ── Predefined query helpers ───────────────────────────────────────────────
 
   function handleParamInput(queryName: string, paramName: string, value: string) {
     setParamValues(prev => ({ ...prev, [`${queryName}.${paramName}`]: value }));
@@ -70,6 +72,17 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
       return next;
     });
   }
+
+  // ── AskInput: free-text textarea ──────────────────────────────────────────
+
+  function handleAskKeyDown(e: KeyboardEvent) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      store.dispatch({ tag: "queries", action: { tag: "submit-ask" } });
+    }
+  }
+
+  const queryPaneLabel = () => q().isSqlMode ? "SQL query" : "generated query";
 
   // ── Sorted + paged row helpers ─────────────────────────────────────────────
 
@@ -133,62 +146,149 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
 
   return (
     <div class="card">
-      <div class="card-header"><h2>SQL Queries</h2></div>
+      <div class="card-header"><h2>Ask</h2></div>
 
-      <For each={q().items}>
-        {(query) => {
-          const missing = () => requiredMissing(query);
-          const isDisabled = () => missing().length > 0;
-          return (
-            <div style={{ "margin-bottom": "16px", "padding-bottom": "16px", "border-bottom": "1px solid var(--border)" }}>
-              <div style={{ "font-weight": "600", "margin-bottom": "4px" }}>{query.name}</div>
-              <div style={{ "font-size": "12px", color: "var(--text-muted)", "margin-bottom": "8px" }}>{query.description}</div>
-              <div style={{ display: "flex", gap: "6px", "align-items": "center", "flex-wrap": "wrap" }}>
-                <For each={query.params}>
-                  {(p) => (
-                    <input class="search-input"
-                           placeholder={p.name + (p.default ? ` (${p.default})` : "")}
-                           style={{
-                             "max-width": "160px",
-                             padding: "6px 10px",
-                             "font-size": "12px",
-                             ...(p.default === null && showErrors().has(query.name) && !(paramValues()[`${query.name}.${p.name}`] ?? "").trim()
-                               ? { border: "1px solid var(--red)", "box-shadow": "0 0 0 1px var(--red)" }
-                               : {}),
-                           }}
-                           onInput={(e) => handleParamInput(query.name, p.name, e.currentTarget.value)}
-                           onKeyDown={(e) => { if (e.key === "Enter") attemptRun(query); }} />
-                  )}
-                </For>
-                <button class="filter-pill active"
-                        disabled={isDisabled()}
-                        data-query={query.name}
-                        onClick={() => attemptRun(query)}>
-                  Run
+      {/* ── AskInput ─────────────────────────────────────────────────────── */}
+      <div style={{ padding: "12px 16px", "border-bottom": "1px solid var(--border)" }}>
+        <div style={{ display: "flex", gap: "8px", "align-items": "flex-start" }}>
+          <textarea
+            class="search-input"
+            placeholder="Ask pb anything… or start with SELECT to write SQL directly."
+            rows={2}
+            disabled={q().loading}
+            value={q().askText}
+            style={{ flex: "1", resize: "vertical", "min-height": "40px", padding: "8px 10px", "font-size": "13px", "font-family": "inherit" }}
+            onInput={(e) => store.dispatch({ tag: "queries", action: { tag: "set-ask-text", text: e.currentTarget.value } })}
+            onKeyDown={handleAskKeyDown}
+          />
+          <button
+            class="filter-pill active"
+            disabled={q().loading || !q().askText.trim()}
+            style={{ "white-space": "nowrap", "align-self": "flex-end" }}
+            onClick={() => store.dispatch({ tag: "queries", action: { tag: "submit-ask" } })}
+          >
+            {q().loading ? "Running…" : "Ask"}
+          </button>
+        </div>
+
+        {/* Generated query toggle */}
+        <Show when={q().generatedSql !== null}>
+          <div style={{ "margin-top": "6px" }}>
+            <button
+              class="filter-pill"
+              style={{ "font-size": "11px" }}
+              onClick={() => store.dispatch({ tag: "queries", action: { tag: "toggle-query-pane" } })}
+            >
+              {q().queryPaneOpen ? `▲ Hide ${queryPaneLabel()}` : `▼ Show ${queryPaneLabel()}`}
+            </button>
+          </div>
+        </Show>
+
+        {/* Expandable generated-query pane */}
+        <Show when={q().queryPaneOpen && q().generatedSql !== null}>
+          <div style={{ "margin-top": "8px", border: "1px solid var(--border)", "border-radius": "4px", overflow: "hidden" }}>
+            <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center", padding: "4px 8px", background: "var(--bg-secondary)", "font-size": "11px", color: "var(--text-muted)" }}>
+              <span>{q().isSqlMode ? "SQL Query" : "Generated Query"}</span>
+              <button
+                class="filter-pill active"
+                style={{ "font-size": "11px", padding: "2px 8px" }}
+                onClick={() => {
+                  const sql = q().generatedSql;
+                  if (sql) store.dispatch({ tag: "queries", action: { tag: "run-sql", sql } });
+                }}
+              >
+                Run
+              </button>
+            </div>
+            <textarea
+              style={{ width: "100%", "min-height": "80px", padding: "8px", "font-family": "monospace", "font-size": "12px", background: "var(--bg-code)", color: "var(--text)", border: "none", resize: "vertical", "box-sizing": "border-box" }}
+              value={q().generatedSql ?? ""}
+              onInput={(e) => store.dispatch({ tag: "queries", action: { tag: "set-generated-sql", sql: e.currentTarget.value } })}
+            />
+          </div>
+        </Show>
+
+        {/* Recent queries strip */}
+        <Show when={q().recentQueries.length > 0 && !q().askText.trim()}>
+          <div style={{ display: "flex", gap: "6px", "margin-top": "8px", "flex-wrap": "wrap", "align-items": "center" }}>
+            <span style={{ "font-size": "11px", color: "var(--text-muted)", "white-space": "nowrap" }}>Recent:</span>
+            <For each={q().recentQueries}>
+              {(text) => (
+                <button
+                  class="filter-pill"
+                  style={{ "font-size": "11px", "max-width": "220px", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}
+                  title={text}
+                  onClick={() => store.dispatch({ tag: "queries", action: { tag: "run-recent", text } })}
+                >
+                  {text.length > 40 ? text.slice(0, 40) + "…" : text}
                 </button>
-                <Show when={query.sql}>
-                  <button class="filter-pill" onClick={() => toggleSql(query.name)}>
-                    {shownSql().has(query.name) ? "Hide SQL" : "SQL"}
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+
+      {/* ── Predefined SQL query catalogue ─────────────────────────────────── */}
+      <Show when={q().items.length > 0}>
+        <div style={{ padding: "8px 16px 0", "font-size": "11px", "font-weight": "600", color: "var(--text-muted)", "text-transform": "uppercase", "letter-spacing": "0.05em" }}>
+          SQL Queries
+        </div>
+        <For each={q().items}>
+          {(query) => {
+            const missing = () => requiredMissing(query);
+            const isDisabled = () => missing().length > 0;
+            return (
+              <div style={{ margin: "8px 16px", "padding-bottom": "12px", "border-bottom": "1px solid var(--border)" }}>
+                <div style={{ "font-weight": "600", "margin-bottom": "4px" }}>{query.name}</div>
+                <div style={{ "font-size": "12px", color: "var(--text-muted)", "margin-bottom": "8px" }}>{query.description}</div>
+                <div style={{ display: "flex", gap: "6px", "align-items": "center", "flex-wrap": "wrap" }}>
+                  <For each={query.params}>
+                    {(p) => (
+                      <input class="search-input"
+                             placeholder={p.name + (p.default ? ` (${p.default})` : "")}
+                             style={{
+                               "max-width": "160px",
+                               padding: "6px 10px",
+                               "font-size": "12px",
+                               ...(p.default === null && showErrors().has(query.name) && !(paramValues()[`${query.name}.${p.name}`] ?? "").trim()
+                                 ? { border: "1px solid var(--red)", "box-shadow": "0 0 0 1px var(--red)" }
+                                 : {}),
+                             }}
+                             onInput={(e) => handleParamInput(query.name, p.name, e.currentTarget.value)}
+                             onKeyDown={(e) => { if (e.key === "Enter") attemptRun(query); }} />
+                    )}
+                  </For>
+                  <button class="filter-pill active"
+                          disabled={isDisabled()}
+                          data-query={query.name}
+                          onClick={() => attemptRun(query)}>
+                    Run
                   </button>
+                  <Show when={query.sql}>
+                    <button class="filter-pill" onClick={() => toggleSql(query.name)}>
+                      {shownSql().has(query.name) ? "Hide SQL" : "SQL"}
+                    </button>
+                  </Show>
+                </div>
+                <Show when={showErrors().has(query.name) && missing().length > 0}>
+                  <div style={{ color: "var(--red)", "font-size": "12px", "margin-top": "4px" }}>
+                    Required: {missing().join(", ")}
+                  </div>
+                </Show>
+                <Show when={shownSql().has(query.name) && query.sql}>
+                  <SqlBlock code={query.sql!} style={{ "margin-top": "8px", "font-size": "11px" }} />
                 </Show>
               </div>
-              <Show when={showErrors().has(query.name) && missing().length > 0}>
-                <div style={{ color: "var(--red)", "font-size": "12px", "margin-top": "4px" }}>
-                  Required: {missing().join(", ")}
-                </div>
-              </Show>
-              <Show when={shownSql().has(query.name) && query.sql}>
-                <SqlBlock code={query.sql!} style={{ "margin-top": "8px", "font-size": "11px" }} />
-              </Show>
-            </div>
-          );
-        }}
-      </For>
+            );
+          }}
+        </For>
+      </Show>
 
+      {/* ── Results ─────────────────────────────────────────────────────────── */}
       <Show when={q().results}>
         <Show when={"error" in (q().results ?? {})} fallback={
           <Show when={hasResults()}>
-            <div class="card">
+            <div class="card" style={{ margin: "12px 16px 0" }}>
               <div class="card-header">
                 <h3>{q().resultsName} — {(q().results as { rows: unknown[] }).rows.length} rows</h3>
               </div>
@@ -240,7 +340,7 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
             </div>
           </Show>
         }>
-          <p style={{ color: "var(--red)", padding: "8px" }}>{(q().results as { error: string }).error}</p>
+          <p style={{ color: "var(--red)", padding: "8px 16px" }}>{(q().results as { error: string }).error}</p>
         </Show>
       </Show>
     </div>

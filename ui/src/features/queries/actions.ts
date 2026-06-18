@@ -12,4 +12,11 @@ export type QueriesAction =
   | { tag: "navigate-to-entity"; entityType: string; entityName: string; objectName: string | null }
   | { tag: "sort"; col: string }
   | { tag: "set-page"; page: number }
+  // AskInput free-text actions
+  | { tag: "set-ask-text"; text: string }
+  | { tag: "submit-ask" }
+  | { tag: "toggle-query-pane" }
+  | { tag: "set-generated-sql"; sql: string }
+  | { tag: "run-sql"; sql: string }
+  | { tag: "run-recent"; text: string }
   ;

@@ -157,4 +157,21 @@ describe("print", () => {
     const [pathname, search] = printed.split("?");
     expect(parse(pathname!, search ? `?${search}` : undefined)).toEqual(route);
   });
+
+  it('queries with sqlText maps to "/queries?sql=..."', () => {
+    const sql = "SELECT name FROM objects";
+    const result = print({ view: "queries", sqlText: sql });
+    expect(result).toBe("/queries?sql=SELECT+name+FROM+objects");
+  });
+
+  it('parse queries with ?sql=... returns sqlText route', () => {
+    expect(parse("/queries", "?sql=SELECT+1")).toEqual({ view: "queries", sqlText: "SELECT 1" });
+  });
+
+  it('round-trip: queries with sqlText preserves route', () => {
+    const route = { view: "queries" as const, sqlText: "SELECT name, object FROM procedures WHERE cyclomatic > 5" };
+    const printed = print(route);
+    const [pathname, search] = printed.split("?");
+    expect(parse(pathname!, search ? `?${search}` : undefined)).toEqual(route);
+  });
 });
