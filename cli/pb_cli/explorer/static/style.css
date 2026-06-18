@@ -1555,3 +1555,13 @@ kbd.kbd {
     padding: 8px 12px 12px 18px;
     font-size: 12px; color: var(--text-secondary); line-height: 1.6;
 }
+
+/* ── Entity detail layout ────────────────────────────────────────────────── */
+.detail-header {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 16px; margin-bottom: 16px; flex-wrap: wrap;
+}
+.detail-body { overflow-y: auto; }
+.entity-card-list { display: flex; flex-direction: column; gap: 4px; }
+.card-meta { font-size: 11px; color: var(--text-muted); }
+.muted-note { font-size: 13px; color: var(--text-muted); margin: 0; padding: 4px 0; }

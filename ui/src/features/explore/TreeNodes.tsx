@@ -54,10 +54,10 @@ export function ProcNode(props: { objName: string; proc: ExploreProcedure; depth
       name={props.proc.name}
       summary={summary()}
       selected={isSelected()}
-      onClick={() => store.dispatch({
-        tag: "explore",
-        action: { type: "proc-select", objectName: props.objName, procName: props.proc.name, nodeId: nodeId() },
-      })}
+      onClick={() => {
+        store.dispatch({ tag: "explore", action: { type: "proc-select", objectName: props.objName, procName: props.proc.name, nodeId: nodeId() } });
+        store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: props.objName, procName: props.proc.name } });
+      }}
     />
   );
 }

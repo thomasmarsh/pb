@@ -40,6 +40,31 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
     else:
         proc["source_original"] = None
 
+    callers = rows(conn.execute(
+        "SELECT DISTINCT c.object AS caller_object, c.from_proc AS caller_proc "
+        "FROM calls c "
+        "WHERE c.to_name = ? "
+        "ORDER BY c.object, c.from_proc",
+        [proc_name],
+    ))
+    proc["callers"] = [{"object": c["caller_object"], "proc": c["caller_proc"]} for c in callers]
+
+    callees = rows(conn.execute(
+        "SELECT DISTINCT c.to_name AS callee "
+        "FROM calls c "
+        "WHERE c.object = ? AND c.from_proc = ? "
+        "ORDER BY c.to_name",
+        [object_name, proc_name],
+    ))
+    proc["callees"] = [c["callee"] for c in callees]
+
+    sql_stmts = rows(conn.execute(
+        "SELECT line, operation, raw_sql, tables, columns, has_into, has_cursor, parse_ok "
+        "FROM sql_statements WHERE object = ? AND proc_name = ? ORDER BY line",
+        [object_name, proc_name],
+    ))
+    proc["sql_statements"] = sql_stmts
+
     return proc
 
 

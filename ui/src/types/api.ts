@@ -65,6 +65,8 @@ export interface ObjectDetailResponse extends ObjectRow {
   descendants: string[];
   callers: string[];
   callees: string[];
+  dws_used?: string[];
+  tables_accessed?: string[];
   loading?: boolean;
 }
 
@@ -88,10 +90,18 @@ export interface ObjectSourceResponse {
   loading?: boolean;
 }
 
+export interface ProcCallerInfo {
+  object: string;
+  proc: string;
+}
+
 export interface ProcedureDetailResponse extends ProcedureRow {
   file?: string;
   source_original: string | null;
   source_rendered: string;
+  callers?: ProcCallerInfo[];
+  callees?: string[];
+  sql_statements?: SqlStatementRow[];
   activeTab?: string;
   loading?: boolean;
 }

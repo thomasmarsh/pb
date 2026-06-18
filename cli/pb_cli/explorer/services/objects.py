@@ -52,6 +52,29 @@ def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
     callees = rows(conn.execute("SELECT DISTINCT to_name AS callee FROM calls WHERE object = ?", [name]))
     obj["callees"] = [c["callee"] for c in callees]
 
+    dws = rows(conn.execute(
+        "SELECT DISTINCT c.to_name AS dw_name "
+        "FROM calls c "
+        "JOIN objects o ON o.name = c.to_name AND o.kind = 'datawindow' "
+        "WHERE c.object = ? "
+        "ORDER BY c.to_name",
+        [name],
+    ))
+    obj["dws_used"] = [d["dw_name"] for d in dws]
+
+    tables = rows(conn.execute(
+        "SELECT DISTINCT t.table_name "
+        "FROM all_sql_tables t "
+        "WHERE (t.object = ? AND t.source = 'powerscript') "
+        "   OR (t.source = 'datawindow' AND t.object IN ("
+        "       SELECT DISTINCT c.to_name FROM calls c "
+        "       JOIN objects o ON o.name = c.to_name AND o.kind = 'datawindow' "
+        "       WHERE c.object = ?)) "
+        "ORDER BY t.table_name",
+        [name, name],
+    ))
+    obj["tables_accessed"] = [t["table_name"] for t in tables if t.get("table_name")]
+
     return obj
 
 
