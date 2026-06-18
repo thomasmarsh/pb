@@ -4,11 +4,11 @@ import type { ParseErrorRow } from "../../types/api.js";
 import type { ErrorKindFilter } from "./types.js";
 
 export type ErrorsAction =
-  | { type: "load" }
-  | { type: "loaded"; items: ParseErrorRow[]; total: number }
-  | { type: "setFilterKind"; kind: ErrorKindFilter }
-  | { type: "setQuery"; query: string }
-  | { type: "setPage"; page: number }
-  | { type: "select"; row: ParseErrorRow | null }
-  | { type: "error"; error: string }
+  | { tag: "load" }
+  | { tag: "loaded"; items: ParseErrorRow[]; total: number }
+  | { tag: "setFilterKind"; kind: ErrorKindFilter }
+  | { tag: "setQuery"; query: string }
+  | { tag: "setPage"; page: number }
+  | { tag: "select"; row: ParseErrorRow | null }
+  | { tag: "error"; error: string }
   ;

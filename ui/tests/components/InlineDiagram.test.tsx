@@ -97,7 +97,7 @@ describe("InlineDiagram", () => {
     fireEvent.click(container.querySelector("a")!);
     expect(captured).toContainEqual({
       tag: "objects",
-      action: { type: "select", name: "w_main" },
+      action: { tag: "select", name: "w_main" },
     });
   });
 
@@ -114,7 +114,7 @@ describe("InlineDiagram", () => {
     fireEvent.click(container.querySelector("a")!);
     expect(captured).toContainEqual({
       tag: "datawindows",
-      action: { type: "select", name: "customer" },
+      action: { tag: "select", name: "customer" },
     });
   });
 });

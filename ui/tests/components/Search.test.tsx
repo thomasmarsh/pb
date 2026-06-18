@@ -25,10 +25,10 @@ describe("Search component", () => {
     fireEvent.input(input, { target: { value: "fn" } });
     await vi.advanceTimersByTimeAsync(350);
     const searchActions = captured.filter(
-      (a) => a.tag === "search" && a.action.type === "term",
+      (a) => a.tag === "search" && a.action.tag === "term",
     );
     expect(searchActions.length).toBe(1);
-    expect(searchActions[0]).toEqual({ tag: "search", action: { type: "term", term: "fn" } });
+    expect(searchActions[0]).toEqual({ tag: "search", action: { tag: "term", term: "fn" } });
   });
 
   it("Enter key dispatches immediately for 1+ char", () => {
@@ -37,10 +37,10 @@ describe("Search component", () => {
     fireEvent.input(input, { target: { value: "f" } });
     fireEvent.keyDown(input, { key: "Enter" });
     const searchActions = captured.filter(
-      (a) => a.tag === "search" && a.action.type === "term",
+      (a) => a.tag === "search" && a.action.tag === "term",
     );
     expect(searchActions.length).toBe(1);
-    expect(searchActions[0]).toEqual({ tag: "search", action: { type: "term", term: "f" } });
+    expect(searchActions[0]).toEqual({ tag: "search", action: { tag: "term", term: "f" } });
   });
 
   it("dispatches debounced search only for 2+ char terms", async () => {
@@ -49,7 +49,7 @@ describe("Search component", () => {
     fireEvent.input(input, { target: { value: "a" } });
     await vi.advanceTimersByTimeAsync(400);
     const searchActions = captured.filter(
-      (a) => a.tag === "search" && a.action.type === "term",
+      (a) => a.tag === "search" && a.action.tag === "term",
     );
     expect(searchActions.length).toBe(0);
   });
@@ -110,9 +110,9 @@ describe("Search component", () => {
     });
     fireEvent.click(screen.getByText("w_main"));
     const selectActions = captured.filter(
-      (a) => a.tag === "objects" && a.action.type === "select",
+      (a) => a.tag === "objects" && a.action.tag === "select",
     );
     expect(selectActions.length).toBe(1);
-    expect(selectActions[0]).toEqual({ tag: "objects", action: { type: "select", name: "w_main" } });
+    expect(selectActions[0]).toEqual({ tag: "objects", action: { tag: "select", name: "w_main" } });
   });
 });

@@ -23,12 +23,12 @@ function fetchErrors(draft: ErrorsState, env: ErrorsEnv): Effect<ErrorsAction> {
       limit: PAGE_SIZE,
       offset: draft.page * PAGE_SIZE,
     })
-    .map((data): ErrorsAction => ({ type: "loaded", items: data.items, total: data.total }))
-    .catch((e): ErrorsAction => ({ type: "error", error: String(e) }));
+    .map((data): ErrorsAction => ({ tag: "loaded", items: data.items, total: data.total }))
+    .catch((e): ErrorsAction => ({ tag: "error", error: String(e) }));
 }
 
 function reduce(draft: ErrorsState, action: ErrorsAction, env: ErrorsEnv): Effect<ErrorsAction> | null {
-  switch (action.type) {
+  switch (action.tag) {
   case "load":
     draft.loading = true;
     return fetchErrors(draft, env);

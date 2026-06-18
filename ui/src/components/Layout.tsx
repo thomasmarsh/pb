@@ -22,11 +22,11 @@ export function Layout(props: ParentProps<LayoutProps>): JSX.Element {
   const sidebarCollapsed = () => explore().sidebarCollapsed;
 
   function toggleGroup(group: "sourceTree" | "entityNav" | "analysisNav"): void {
-    props.store.dispatch({ tag: "explore", action: { type: "sidebar-toggle-group", group } });
+    props.store.dispatch({ tag: "explore", action: { tag: "sidebar-toggle-group", group } });
   }
 
   function setCollapsed(collapsed: boolean): void {
-    props.store.dispatch({ tag: "explore", action: { type: "sidebar-set-collapsed", collapsed } });
+    props.store.dispatch({ tag: "explore", action: { tag: "sidebar-set-collapsed", collapsed } });
   }
 
   useKeyboardShortcuts(props.store);
@@ -49,12 +49,12 @@ export function Layout(props: ParentProps<LayoutProps>): JSX.Element {
               <button
                 class="top-bar-btn"
                 title="Search (press /)"
-                onClick={() => props.store.dispatch({ tag: "search", action: { type: "overlay-open" } })}
+                onClick={() => props.store.dispatch({ tag: "search", action: { tag: "overlay-open" } })}
               >🔍</button>
               <button
                 class="top-bar-btn"
                 title="Keyboard shortcuts (press ?)"
-                onClick={() => props.store.dispatch({ tag: "explore", action: { type: "help-overlay-toggle" } })}
+                onClick={() => props.store.dispatch({ tag: "explore", action: { tag: "help-overlay-toggle" } })}
               >?</button>
             </div>
           </div>

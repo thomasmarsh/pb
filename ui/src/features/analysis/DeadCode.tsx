@@ -22,7 +22,7 @@ export function DeadCode(props: { store: Store<AppState, AppAction> }) {
   );
 
   function navigateToProc(objectName: string, procName: string): void {
-    store.dispatch({ tag: "objects", action: { type: "proc-select", objectName, procName } });
+    store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName, procName } });
   }
 
   // Group items by object name.

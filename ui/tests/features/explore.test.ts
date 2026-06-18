@@ -19,7 +19,7 @@ describe("explore reducer", () => {
   describe("explore/toggle", () => {
     it("adds node to expanded set", () => {
       const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
-      ts.send({ type: "toggle", nodeId: "lib:foo" }, (s) => {
+      ts.send({ tag: "toggle", nodeId: "lib:foo" }, (s) => {
         s.expandedNodes = new Set(["lib:foo"]);
       });
     });
@@ -28,7 +28,7 @@ describe("explore reducer", () => {
       const init = makeInitialExploreState();
       init.expandedNodes.add("lib:foo");
       const ts = createTestStore(exploreReducer, mockEnv, init);
-      ts.send({ type: "toggle", nodeId: "lib:foo" }, (s) => {
+      ts.send({ tag: "toggle", nodeId: "lib:foo" }, (s) => {
         s.expandedNodes = new Set();
       });
     });
@@ -41,7 +41,7 @@ describe("explore reducer", () => {
         { name: "a.pbl", objects: [{ name: "o1", kind: "powerscript", file: "f", procedures: [] }] },
       ];
       const ts = createTestStore(exploreReducer, mockEnv, init);
-      ts.send({ type: "expand-all" }, (s) => {
+      ts.send({ tag: "expand-all" }, (s) => {
         s.expandedNodes = new Set(["lib:a.pbl", "obj:a.pbl:o1"]);
       });
     });
@@ -52,7 +52,7 @@ describe("explore reducer", () => {
       const init = makeInitialExploreState();
       init.expandedNodes.add("lib:x");
       const ts = createTestStore(exploreReducer, mockEnv, init);
-      ts.send({ type: "collapse-all" }, (s) => {
+      ts.send({ tag: "collapse-all" }, (s) => {
         s.expandedNodes = new Set();
       });
     });
@@ -61,7 +61,7 @@ describe("explore reducer", () => {
   describe("explore/load", () => {
     it("sets loading", () => {
       const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
-      ts.send({ type: "load" }, (s) => {
+      ts.send({ tag: "load" }, (s) => {
         s.loading = true;
       });
     });
@@ -70,10 +70,10 @@ describe("explore reducer", () => {
       const data: ExploreTreeResponse = { libraries: [{ name: "lib1", objects: [] }] };
       const env: ExploreEnv = { ...mockEnv, getExploreTree: () => Effect.send(data) };
       const ts = createTestStore(exploreReducer, env, makeInitialExploreState());
-      ts.send({ type: "load" }, (s) => {
+      ts.send({ tag: "load" }, (s) => {
         s.loading = true;
       });
-      ts.receive({ type: "loaded", data }, (s) => {
+      ts.receive({ tag: "loaded", data }, (s) => {
         s.libraries = data.libraries;
         s.loading = false;
       });
@@ -83,7 +83,7 @@ describe("explore reducer", () => {
   describe("explore/proc-select", () => {
     it("sets selectedProc and clears selectedDw", () => {
       const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
-      ts.send({ type: "proc-select", objectName: "o", procName: "p", nodeId: "proc:o:p" }, (s) => {
+      ts.send({ tag: "proc-select", objectName: "o", procName: "p", nodeId: "proc:o:p" }, (s) => {
         s.selectedProc = "proc:o:p";
       });
     });
@@ -98,7 +98,7 @@ describe("explore reducer", () => {
         ] },
       ];
       const ts = createTestStore(exploreReducer, mockEnv, init);
-      ts.send({ type: "proc-select", objectName: "w_main", procName: "of_init", nodeId: "proc:w_main:of_init" }, (s) => {
+      ts.send({ tag: "proc-select", objectName: "w_main", procName: "of_init", nodeId: "proc:w_main:of_init" }, (s) => {
         s.selectedProc = "proc:w_main:of_init";
         s.expandedNodes = new Set(["lib:app.pbl", "obj:app.pbl:w_main", "kg:w_main:functions"]);
         s.sidebarGroups = { sourceTree: true, entityNav: false, analysisNav: false };
@@ -109,7 +109,7 @@ describe("explore reducer", () => {
   describe("explore/filter", () => {
     it("sets treeFilter", () => {
       const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
-      ts.send({ type: "filter", q: "foo" }, (s) => {
+      ts.send({ tag: "filter", q: "foo" }, (s) => {
         s.treeFilter = "foo";
       });
     });
@@ -118,7 +118,7 @@ describe("explore reducer", () => {
   describe("explore/tab", () => {
     it("sets activeTab", () => {
       const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
-      ts.send({ type: "tab", tab: "ast" }, (s) => {
+      ts.send({ tag: "tab", tab: "ast" }, (s) => {
         s.activeTab = "ast";
       });
     });
@@ -127,21 +127,21 @@ describe("explore reducer", () => {
   describe("sidebar accordion", () => {
     it("sidebar-toggle-group flips sourceTree from true to false", () => {
       const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
-      ts.send({ type: "sidebar-toggle-group", group: "sourceTree" }, (s) => {
+      ts.send({ tag: "sidebar-toggle-group", group: "sourceTree" }, (s) => {
         s.sidebarGroups = { sourceTree: false, entityNav: false, analysisNav: false };
       });
     });
 
     it("sidebar-toggle-group flips entityNav from false to true", () => {
       const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
-      ts.send({ type: "sidebar-toggle-group", group: "entityNav" }, (s) => {
+      ts.send({ tag: "sidebar-toggle-group", group: "entityNav" }, (s) => {
         s.sidebarGroups = { sourceTree: true, entityNav: true, analysisNav: false };
       });
     });
 
     it("sidebar-set-collapsed sets sidebarCollapsed true", () => {
       const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
-      ts.send({ type: "sidebar-set-collapsed", collapsed: true }, (s) => {
+      ts.send({ tag: "sidebar-set-collapsed", collapsed: true }, (s) => {
         s.sidebarCollapsed = true;
       });
     });
@@ -150,7 +150,7 @@ describe("explore reducer", () => {
       const init = makeInitialExploreState();
       init.sidebarCollapsed = true;
       const ts = createTestStore(exploreReducer, mockEnv, init);
-      ts.send({ type: "sidebar-set-collapsed", collapsed: false }, (s) => {
+      ts.send({ tag: "sidebar-set-collapsed", collapsed: false }, (s) => {
         s.sidebarCollapsed = false;
       });
     });
@@ -165,7 +165,7 @@ describe("explore reducer", () => {
         ] },
       ];
       const ts = createTestStore(exploreReducer, mockEnv, init);
-      ts.send({ type: "sidebar-reveal", objectName: "w_main" }, (s) => {
+      ts.send({ tag: "sidebar-reveal", objectName: "w_main" }, (s) => {
         s.expandedNodes = new Set(["lib:app.pbl", "obj:app.pbl:w_main"]);
         s.sidebarGroups = { sourceTree: true, entityNav: false, analysisNav: false };
       });
@@ -181,7 +181,7 @@ describe("explore reducer", () => {
         ] },
       ];
       const ts = createTestStore(exploreReducer, mockEnv, init);
-      ts.send({ type: "sidebar-reveal", objectName: "w_main", procName: "ue_open" }, (s) => {
+      ts.send({ tag: "sidebar-reveal", objectName: "w_main", procName: "ue_open" }, (s) => {
         s.expandedNodes = new Set(["lib:app.pbl", "obj:app.pbl:w_main", "kg:w_main:events"]);
         s.sidebarGroups = { sourceTree: true, entityNav: false, analysisNav: false };
       });
@@ -197,14 +197,14 @@ describe("explore reducer", () => {
         { name: "other.pbl", objects: [] },
       ];
       const ts = createTestStore(exploreReducer, mockEnv, init);
-      ts.send({ type: "sidebar-reveal", objectName: "w_main" }, (s) => {
+      ts.send({ tag: "sidebar-reveal", objectName: "w_main" }, (s) => {
         s.expandedNodes = new Set(["lib:other.pbl", "lib:app.pbl", "obj:app.pbl:w_main"]);
       });
     });
 
     it("no-op when objectName not found in libraries", () => {
       const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
-      ts.send({ type: "sidebar-reveal", objectName: "nonexistent" }, (s) => {
+      ts.send({ tag: "sidebar-reveal", objectName: "nonexistent" }, (s) => {
         s.expandedNodes = new Set();
       });
     });

@@ -34,7 +34,7 @@ function ProcTable(props: { rows: TableProcedureRef[]; store: Store<AppState, Ap
                 <EntityCard
                   type="object"
                   name={row.object}
-                  onClick={() => props.store.dispatch({ tag: "objects", action: { type: "select", name: row.object } })}
+                  onClick={() => props.store.dispatch({ tag: "objects", action: { tag: "select", name: row.object } })}
                 />
               </td>
               <td>{row.proc_name ?? "–"}</td>
@@ -87,7 +87,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
         phaseLabel="P1"
         store={store}
         onToggle={(newFace, scrollTop) => {
-          store.dispatch({ tag: "tables", action: { type: "set-table-face", name: d.table_name, face: newFace, scrollTop } });
+          store.dispatch({ tag: "tables", action: { tag: "set-table-face", name: d.table_name, face: newFace, scrollTop } });
         }}
         scrollAreaRef={() => scrollEl}
         subtitle={
@@ -135,7 +135,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
                     <EntityCard
                       type="datawindow"
                       name={dw.dw_name}
-                      onClick={() => store.dispatch({ tag: "datawindows", action: { type: "select", name: dw.dw_name } })}
+                      onClick={() => store.dispatch({ tag: "datawindows", action: { tag: "select", name: dw.dw_name } })}
                     />
                   )}
                 </For>
@@ -172,8 +172,8 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
                             name={row.object}
                             onClick={() => store.dispatch(
                               row.source === "datawindow"
-                                ? { tag: "datawindows", action: { type: "select", name: row.object } }
-                                : { tag: "objects", action: { type: "select", name: row.object } },
+                                ? { tag: "datawindows", action: { tag: "select", name: row.object } }
+                                : { tag: "objects", action: { tag: "select", name: row.object } },
                             )}
                           />
                         </td>
@@ -201,7 +201,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
                                 <EntityCard
                                   type="object"
                                   name={row.descendant}
-                                  onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: row.descendant } })}
+                                  onClick={() => store.dispatch({ tag: "objects", action: { tag: "select", name: row.descendant } })}
                                 />
                               </td>
                               <td style={{ color: "var(--text-muted)" }}>inherits from {row.ancestor}</td>
@@ -241,7 +241,7 @@ export function TableDetail(props: { store: Store<AppState, AppAction> }) {
 
   return (
     <>
-      <BackButton label="Tables" onClick={() => props.store.dispatch({ tag: "tables", action: { type: "back" } })} />
+      <BackButton label="Tables" onClick={() => props.store.dispatch({ tag: "tables", action: { tag: "back" } })} />
       <Show when={ts().detail} fallback={
         <Show when={ts().error} fallback={<Loading />}>
           <div class="card">

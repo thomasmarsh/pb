@@ -20,7 +20,7 @@ describe("objects reducer", () => {
   describe("objects/search", () => {
     it("sets q and triggers loading", () => {
       const ts = createTestStore(objectsReducer, mockEnv, initialObjectsState);
-      ts.send({ type: "search", q: "test" }, (s) => {
+      ts.send({ tag: "search", q: "test" }, (s) => {
         s.q = "test";
         s.loading = true;
       });
@@ -30,7 +30,7 @@ describe("objects reducer", () => {
   describe("objects/filter-kind", () => {
     it("sets kind and triggers loading", () => {
       const ts = createTestStore(objectsReducer, mockEnv, initialObjectsState);
-      ts.send({ type: "filter-kind", kind: "datawindow" }, (s) => {
+      ts.send({ tag: "filter-kind", kind: "datawindow" }, (s) => {
         s.kind = "datawindow";
         s.loading = true;
       });
@@ -40,7 +40,7 @@ describe("objects reducer", () => {
   describe("objects/sort", () => {
     it("sets sort col and triggers loading", () => {
       const ts = createTestStore(objectsReducer, mockEnv, initialObjectsState);
-      ts.send({ type: "sort", col: "kind" }, (s) => {
+      ts.send({ tag: "sort", col: "kind" }, (s) => {
         s.sort = "kind";
         s.loading = true;
       });
@@ -48,7 +48,7 @@ describe("objects reducer", () => {
 
     it("toggles order when sorting by the same col", () => {
       const ts = createTestStore(objectsReducer, mockEnv, initialObjectsState);
-      ts.send({ type: "sort", col: "name" }, (s) => {
+      ts.send({ tag: "sort", col: "name" }, (s) => {
         s.order = "desc";
         s.loading = true;
       });
@@ -58,7 +58,7 @@ describe("objects reducer", () => {
   describe("objects/page", () => {
     it("sets offset and triggers loading", () => {
       const ts = createTestStore(objectsReducer, mockEnv, initialObjectsState);
-      ts.send({ type: "page", offset: 100 }, (s) => {
+      ts.send({ tag: "page", offset: 100 }, (s) => {
         s.offset = 100;
         s.loading = true;
       });
@@ -72,7 +72,7 @@ describe("objects reducer", () => {
         total: 42, offset: 0, limit: 100,
       };
       const ts = createTestStore(objectsReducer, mockEnv, initialObjectsState);
-      ts.send({ type: "loaded", data }, (s) => {
+      ts.send({ tag: "loaded", data }, (s) => {
         s.items = data.items;
         s.total = 42;
         s.loading = false;

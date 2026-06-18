@@ -33,25 +33,25 @@ export const initialObjectsState: ObjectsState = {
 function errMsg(e: unknown): string { return e instanceof Error ? e.message : String(e); }
 
 function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Effect<ObjectsAction> | null {
-  switch (action.type) {
+  switch (action.tag) {
   case "back-to-objects":
     draft.detail = null;
     draft.sourceDetail = null;
     draft.procedureDetail = null;
-    return env.navigate({ type: "navigate", route: { view: "objects" } });
+    return env.navigate({ tag: "navigate", route: { view: "objects" } });
   case "search": {
     draft.q = action.q;
     draft.offset = 0;
     draft.loading = true;
     const p = { q: action.q, kind: draft.kind, sort: draft.sort, order: draft.order, limit: 100, offset: 0 };
-    return env.getObjects(p).map((data): ObjectsAction => ({ type: "loaded", data }));
+    return env.getObjects(p).map((data): ObjectsAction => ({ tag: "loaded", data }));
   }
   case "filter-kind": {
     draft.kind = action.kind;
     draft.offset = 0;
     draft.loading = true;
     const p = { q: draft.q, kind: action.kind, sort: draft.sort, order: draft.order, limit: 100, offset: 0 };
-    return env.getObjects(p).map((data): ObjectsAction => ({ type: "loaded", data }));
+    return env.getObjects(p).map((data): ObjectsAction => ({ tag: "loaded", data }));
   }
   case "sort": {
     draft.order = draft.sort === action.col ? (draft.order === "asc" ? "desc" : "asc") : "asc";
@@ -59,13 +59,13 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
     draft.offset = 0;
     draft.loading = true;
     const p = { q: draft.q, kind: draft.kind, sort: action.col, order: draft.order, limit: 100, offset: 0 };
-    return env.getObjects(p).map((data): ObjectsAction => ({ type: "loaded", data }));
+    return env.getObjects(p).map((data): ObjectsAction => ({ tag: "loaded", data }));
   }
   case "page": {
     draft.offset = action.offset;
     draft.loading = true;
     const p = { q: draft.q, kind: draft.kind, sort: draft.sort, order: draft.order, limit: 100, offset: action.offset };
-    return env.getObjects(p).map((data): ObjectsAction => ({ type: "loaded", data }));
+    return env.getObjects(p).map((data): ObjectsAction => ({ tag: "loaded", data }));
   }
   case "loaded":
     draft.items = action.data.items;
@@ -75,14 +75,14 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
   case "select":
     draft.detail = null;
     draft.sourceDetail = null;
-    env.navigate({ type: "navigate", route: { view: "objectDetail", name: action.name } });
+    env.navigate({ tag: "navigate", route: { view: "objectDetail", name: action.name } });
     return Effect.merge<ObjectsAction>(
       env.getObject(action.name)
-        .map((data): ObjectsAction => ({ type: "detail-loaded", data }))
-        .catch((e): ObjectsAction => ({ type: "detail-error", error: errMsg(e) })),
+        .map((data): ObjectsAction => ({ tag: "detail-loaded", data }))
+        .catch((e): ObjectsAction => ({ tag: "detail-error", error: errMsg(e) })),
       env.getObjectSource(action.name)
-        .map((data): ObjectsAction => ({ type: "source-loaded", data }))
-        .catch((e): ObjectsAction => ({ type: "source-error", error: errMsg(e) })),
+        .map((data): ObjectsAction => ({ tag: "source-loaded", data }))
+        .catch((e): ObjectsAction => ({ tag: "source-error", error: errMsg(e) })),
     );
   case "detail-loaded":
     draft.detail = { ...action.data, loading: false };
@@ -101,10 +101,10 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
     return null;
   case "proc-select":
     draft.procedureDetail = null;
-    env.navigate({ type: "navigate", route: { view: "procedureDetail", name: action.objectName, proc: action.procName } });
+    env.navigate({ tag: "navigate", route: { view: "procedureDetail", name: action.objectName, proc: action.procName } });
     return env.getProcedure(action.objectName, action.procName)
-      .map((data): ObjectsAction => ({ type: "proc-loaded", data }))
-      .catch((e): ObjectsAction => ({ type: "proc-error", error: errMsg(e) }));
+      .map((data): ObjectsAction => ({ tag: "proc-loaded", data }))
+      .catch((e): ObjectsAction => ({ tag: "proc-error", error: errMsg(e) }));
   case "proc-loaded":
     draft.procedureDetail = { ...action.data, activeTab: "original", loading: false };
     return null;
@@ -137,14 +137,14 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
   }
   case "procs-list-load":
     if (draft.proceduresList !== null) {
-      env.navigate({ type: "navigate", route: { view: "proceduresList" } });
+      env.navigate({ tag: "navigate", route: { view: "proceduresList" } });
       return null;
     }
     draft.proceduresListLoading = true;
-    env.navigate({ type: "navigate", route: { view: "proceduresList" } });
+    env.navigate({ tag: "navigate", route: { view: "proceduresList" } });
     return env.getProcedures()
-      .map((data): ObjectsAction => ({ type: "procs-list-loaded", data }))
-      .catch((e): ObjectsAction => ({ type: "procs-list-error", error: errMsg(e) }));
+      .map((data): ObjectsAction => ({ tag: "procs-list-loaded", data }))
+      .catch((e): ObjectsAction => ({ tag: "procs-list-error", error: errMsg(e) }));
   case "procs-list-loaded":
     draft.proceduresList = action.data;
     draft.proceduresListLoading = false;

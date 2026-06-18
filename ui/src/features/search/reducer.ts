@@ -31,12 +31,12 @@ function addRecent(recent: string[], term: string): string[] {
 }
 
 function reduce(draft: SearchState, action: SearchAction, env: SearchEnv): Effect<SearchAction> | null {
-  switch (action.type) {
+  switch (action.tag) {
   case "term":
     draft.term = action.term;
     if (action.term.length < 2) return null;
     draft.recentSearches = addRecent(draft.recentSearches, action.term);
-    return env.search(action.term).map((data): SearchAction => ({ type: "loaded", data }));
+    return env.search(action.term).map((data): SearchAction => ({ tag: "loaded", data }));
 
   case "loaded":
     draft.results = action.data;
@@ -60,7 +60,7 @@ function reduce(draft: SearchState, action: SearchAction, env: SearchEnv): Effec
       return null;
     }
     draft.overlayLoading = true;
-    return env.search(action.term).map((data): SearchAction => ({ type: "overlay-loaded", data }));
+    return env.search(action.term).map((data): SearchAction => ({ tag: "overlay-loaded", data }));
 
   case "overlay-loaded":
     draft.overlayResults = action.data;

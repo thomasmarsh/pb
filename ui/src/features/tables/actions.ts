@@ -3,12 +3,12 @@
 import type { TableSummary, TableDetail } from "../../types/api.js";
 
 export type TablesAction =
-  | { type: "search";        q: string }
-  | { type: "filter";        q: string }
-  | { type: "loaded";        items: TableSummary[] }
-  | { type: "select";        name: string }
-  | { type: "detail-loaded"; detail: TableDetail }
-  | { type: "detail-error";  error: string }
-  | { type: "back" }
-  | { type: "set-table-face"; name: string; face: import("./types.js").Face; scrollTop: number }
+  | { tag: "search";        q: string }
+  | { tag: "filter";        q: string }
+  | { tag: "loaded";        items: TableSummary[] }
+  | { tag: "select";        name: string }
+  | { tag: "detail-loaded"; detail: TableDetail }
+  | { tag: "detail-error";  error: string }
+  | { tag: "back" }
+  | { tag: "set-table-face"; name: string; face: import("./types.js").Face; scrollTop: number }
   ;

@@ -19,16 +19,16 @@ export interface TablesEnv {
 function errMsg(e: unknown): string { return e instanceof Error ? e.message : String(e); }
 
 function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effect<TablesAction> | null {
-  switch (action.type) {
+  switch (action.tag) {
   case "filter":
     draft.q = action.q;
     return null;
   case "search":
     draft.q = action.q;
     draft.loading = true;
-    env.navigate({ type: "navigate", route: { view: "tables" } });
+    env.navigate({ tag: "navigate", route: { view: "tables" } });
     return env.getTables()
-      .map((items): TablesAction => ({ type: "loaded", items }));
+      .map((items): TablesAction => ({ tag: "loaded", items }));
   case "loaded":
     draft.items = action.items;
     draft.total = action.items.length;
@@ -37,10 +37,10 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
   case "select":
     draft.detail = null;
     draft.error = null;
-    env.navigate({ type: "navigate", route: { view: "tableDetail", name: action.name } });
+    env.navigate({ tag: "navigate", route: { view: "tableDetail", name: action.name } });
     return env.getTableDetail(action.name)
-      .map((detail): TablesAction => ({ type: "detail-loaded", detail }))
-      .catch((e): TablesAction => ({ type: "detail-error", error: errMsg(e) }));
+      .map((detail): TablesAction => ({ tag: "detail-loaded", detail }))
+      .catch((e): TablesAction => ({ tag: "detail-error", error: errMsg(e) }));
   case "detail-loaded":
     draft.detail = action.detail;
     draft.loading = false;
@@ -52,7 +52,7 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
   case "back":
     draft.detail = null;
     draft.error = null;
-    env.navigate({ type: "navigate", route: { view: "tables" } });
+    env.navigate({ tag: "navigate", route: { view: "tables" } });
     return null;
   case "set-table-face": {
     const prev = draft.tableScrollPos[action.name] ?? { source: 0, analysis: 0 };

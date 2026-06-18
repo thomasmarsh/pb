@@ -36,7 +36,7 @@ export function InlineDiagram(props: InlineDiagramProps) {
 
   function navigateTo(kind: "object" | "table", name: string) {
     const tag = kind === "object" ? "objects" : "datawindows";
-    props.store.dispatch({ tag, action: { type: "select", name } });
+    props.store.dispatch({ tag, action: { tag: "select", name } });
   }
 
   const key = () => JSON.stringify({ kind: props.kind, params: props.params });

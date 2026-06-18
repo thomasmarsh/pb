@@ -56,7 +56,7 @@ function ProcedureDetailContent(props: {
         phaseLabel="P1"
         store={store}
         onToggle={(newFace, scrollTop) => {
-          store.dispatch({ tag: "objects", action: { type: "set-proc-face", key: procKey, face: newFace, scrollTop } });
+          store.dispatch({ tag: "objects", action: { tag: "set-proc-face", key: procKey, face: newFace, scrollTop } });
         }}
         scrollAreaRef={() => scrollEl}
         subtitle={
@@ -75,7 +75,7 @@ function ProcedureDetailContent(props: {
               name={props.objectName}
               context="containing object"
               tooltip={`Navigate to ${props.objectName}`}
-              onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: props.objectName } })}
+              onClick={() => store.dispatch({ tag: "objects", action: { tag: "select", name: props.objectName } })}
             />
           </div>
           <Show when={p.source_original || p.source_rendered}>
@@ -115,7 +115,7 @@ function ProcedureDetailContent(props: {
               name: caller.object,
               context: caller.proc,
               tooltip: `${caller.object}.${caller.proc}`,
-              onClick: () => store.dispatch({ tag: "objects", action: { type: "select", name: caller.object } }),
+              onClick: () => store.dispatch({ tag: "objects", action: { tag: "select", name: caller.object } }),
             }))}
             emptyText="No callers found."
           />
@@ -130,9 +130,9 @@ function ProcedureDetailContent(props: {
                 onClick: () => {
                   const dotIdx = callee.indexOf(".");
                   if (dotIdx > 0) {
-                    store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: callee.slice(0, dotIdx), procName: callee.slice(dotIdx + 1) } });
+                    store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: callee.slice(0, dotIdx), procName: callee.slice(dotIdx + 1) } });
                   } else {
-                    store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: p.object, procName: callee } });
+                    store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: p.object, procName: callee } });
                   }
                 },
               }))}
@@ -180,7 +180,7 @@ export function ProcedureDetail(props: { store: Store<AppState, AppAction> }) {
     <>
       <BackButton
         label={objectName()}
-        onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: objectName() } })}
+        onClick={() => store.dispatch({ tag: "objects", action: { tag: "select", name: objectName() } })}
       />
       <Show when={proc()} fallback={<Loading />}>
         {(entry) => {

@@ -70,13 +70,13 @@ function revealInTree(draft: ExploreState, objectName: string, procName?: string
 // ── Reducer (mutates draft) ──────────────────────────────────────────────────
 
 function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Effect<ExploreAction> | null {
-  switch (action.type) {
+  switch (action.tag) {
 
   case "load":
     draft.loading = true;
     return env.getExploreTree()
-      .map((data): ExploreAction => ({ type: "loaded", data }))
-      .catch((): ExploreAction => ({ type: "loaded", data: { libraries: [] } }));
+      .map((data): ExploreAction => ({ tag: "loaded", data }))
+      .catch((): ExploreAction => ({ tag: "loaded", data: { libraries: [] } }));
 
   case "loaded":
     draft.libraries = action.data.libraries;
@@ -101,11 +101,11 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
     draft.activeTab = "source";
     draft.highlightedLine = null;
     revealInTree(draft, action.objectName, action.procName);
-    env.navigate({ type: "navigate", route: { view: "explore" } });
+    env.navigate({ tag: "navigate", route: { view: "explore" } });
     if (!(action.nodeId in draft.procCache)) {
       return env.getExploreProcedure(action.objectName, action.procName)
-        .map((data): ExploreAction => ({ type: "proc-loaded", nodeId: action.nodeId, data }))
-        .catch((e): ExploreAction => ({ type: "proc-error", nodeId: action.nodeId, error: String(e) }));
+        .map((data): ExploreAction => ({ tag: "proc-loaded", nodeId: action.nodeId, data }))
+        .catch((e): ExploreAction => ({ tag: "proc-error", nodeId: action.nodeId, error: String(e) }));
     }
     return null;
 
@@ -136,11 +136,11 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
     draft.selectedProc = null;
     draft.highlightedLine = null;
     revealInTree(draft, action.dwName);
-    env.navigate({ type: "navigate", route: { view: "explore" } });
+    env.navigate({ tag: "navigate", route: { view: "explore" } });
     if (!(action.nodeId in draft.dwCache)) {
       return env.getExploreDatawindow(action.dwName)
-        .map((data): ExploreAction => ({ type: "dw-loaded", nodeId: action.nodeId, data }))
-        .catch((e): ExploreAction => ({ type: "dw-error", nodeId: action.nodeId, error: String(e) }));
+        .map((data): ExploreAction => ({ tag: "dw-loaded", nodeId: action.nodeId, data }))
+        .catch((e): ExploreAction => ({ tag: "dw-error", nodeId: action.nodeId, error: String(e) }));
     }
     return null;
 
@@ -192,8 +192,8 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
   case "tables-load":
     draft.tables.loading = true;
     return env.getTables()
-      .map((items): ExploreAction => ({ type: "tables-loaded", items }))
-      .catch((): ExploreAction => ({ type: "tables-loaded", items: [] }));
+      .map((items): ExploreAction => ({ tag: "tables-loaded", items }))
+      .catch((): ExploreAction => ({ tag: "tables-loaded", items: [] }));
 
   case "tables-loaded":
     draft.tables.items = action.items;
@@ -211,8 +211,8 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
     draft.tables.detail = null;
     draft.tables.detailLoading = true;
     return env.getTableDetail(action.tableName)
-      .map((detail): ExploreAction => ({ type: "tables-detail-loaded", tableName: action.tableName, detail }))
-      .catch((e): ExploreAction => ({ type: "tables-detail-error", tableName: action.tableName, error: String(e) }));
+      .map((detail): ExploreAction => ({ tag: "tables-detail-loaded", tableName: action.tableName, detail }))
+      .catch((e): ExploreAction => ({ tag: "tables-detail-error", tableName: action.tableName, error: String(e) }));
 
   case "tables-detail-loaded":
     draft.tables.detail = action.detail;

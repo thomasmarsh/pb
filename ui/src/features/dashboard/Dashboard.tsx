@@ -23,7 +23,7 @@ function ProcedureTable(props: { title: string; procs: ProcedureRow[]; store: St
           <For each={props.procs}>
             {(p) => (
               <tr class="clickable"
-                  onClick={() => props.store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: p.object, procName: p.name } })}>
+                  onClick={() => props.store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: p.object, procName: p.name } })}>
                 <td class="name-cell">{p.object}</td>
                 <td>{p.name}</td>
                 <td><span class={`badge ${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
@@ -49,7 +49,7 @@ function ObjectTable(props: { title: string; objs: { object: string; pagerank: n
           <For each={props.objs}>
             {(p) => (
               <tr class="clickable"
-                  onClick={() => props.store.dispatch({ tag: "objects", action: { type: "select", name: p.object } })}>
+                  onClick={() => props.store.dispatch({ tag: "objects", action: { tag: "select", name: p.object } })}>
                 <td class="name-cell">{p.object}</td>
                 <td>{String(p.pagerank)}</td>
                 <td>{String(p.in_degree)}</td>
@@ -105,7 +105,7 @@ interface PhaseHealthRowProps {
 function PhaseHealthRow(props: PhaseHealthRowProps) {
   const navigate = () => {
     if (props.route) {
-      props.store.dispatch({ tag: "nav", action: { type: "navigate", route: props.route } });
+      props.store.dispatch({ tag: "nav", action: { tag: "navigate", route: props.route } });
     }
   };
 
@@ -174,8 +174,8 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
             <div class="metric-card linked"
                  role="button"
                  tabIndex={0}
-                 onClick={() => store.dispatch({ tag: "nav", action: { type: "navigate", route: tile.route } })}
-                 onKeyDown={(e) => e.key === "Enter" && store.dispatch({ tag: "nav", action: { type: "navigate", route: tile.route } })}>
+                 onClick={() => store.dispatch({ tag: "nav", action: { tag: "navigate", route: tile.route } })}
+                 onKeyDown={(e) => e.key === "Enter" && store.dispatch({ tag: "nav", action: { tag: "navigate", route: tile.route } })}>
               <div class="label">{tile.label}</div>
               <div class="value">{tile.value}</div>
             </div>
@@ -193,7 +193,7 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
         <div class="parse-error-banner">
           <span>⚠ {fmt(s()!.parse_error_count)} file{(s()!.parse_error_count ?? 1) === 1 ? "" : "s"} failed to parse</span>
           <button class="parse-error-banner-link"
-                  onClick={() => store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "errors" } } })}>
+                  onClick={() => store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "errors" } } })}>
             Diagnostics →
           </button>
         </div>

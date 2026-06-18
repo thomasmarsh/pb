@@ -76,7 +76,7 @@ describe("Dashboard component", () => {
     });
     fireEvent.click(screen.getByText("of_init"));
     const procSelectActions = captured.filter(
-      (a) => a.tag === "objects" && a.action.type === "proc-select",
+      (a) => a.tag === "objects" && a.action.tag === "proc-select",
     );
     expect(procSelectActions.length).toBe(1);
   });
@@ -116,7 +116,7 @@ describe("Dashboard component", () => {
     });
     fireEvent.click(screen.getByText("w_base"));
     const selectActions = captured.filter(
-      (a) => a.tag === "objects" && a.action.type === "select",
+      (a) => a.tag === "objects" && a.action.tag === "select",
     );
     expect(selectActions.length).toBe(1);
   });

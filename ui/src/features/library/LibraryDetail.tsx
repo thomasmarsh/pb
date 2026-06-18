@@ -32,11 +32,11 @@ export function LibraryDetail(props: { store: Store<AppState, AppAction> }) {
   const [face, setFace] = createSignal<Face>("source");
 
   function navigate(name: string): void {
-    store.dispatch({ tag: "objects", action: { type: "select", name } });
+    store.dispatch({ tag: "objects", action: { tag: "select", name } });
   }
 
   function navigateToDead(): void {
-    store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "deadCode" } } });
+    store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "deadCode" } } });
   }
 
   return (

@@ -27,7 +27,7 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
     <>
       <ComboboxInput
         value={tables().filter}
-        onChange={(v) => store.dispatch({ tag: "explore", action: { type: "tables-filter", q: v } })}
+        onChange={(v) => store.dispatch({ tag: "explore", action: { tag: "tables-filter", q: v } })}
         options={tableNames()}
         placeholder="Filter tables…"
       />
@@ -46,7 +46,7 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
                 return (
                   <div
                     class={`table-list-row${isSelected() ? " selected" : ""}`}
-                    onClick={() => store.dispatch({ tag: "explore", action: { type: "tables-select", tableName: t.table_name } })}
+                    onClick={() => store.dispatch({ tag: "explore", action: { tag: "tables-select", tableName: t.table_name } })}
                   >
                     <span class="table-list-name">{t.table_name}</span>
                     <span class="table-list-meta">{t.dw_count} DW · {t.file_count} file{t.file_count !== 1 ? "s" : ""}</span>
@@ -115,7 +115,7 @@ export function TableDetailPanel(props: { store: Store<AppState, AppAction> }) {
                             class="table-detail-dw-row clickable"
                             onClick={() => store.dispatch({
                               tag: "explore",
-                              action: { type: "dw-select", dwName: dw.dw_name, nodeId: `dw:${dw.dw_name}` },
+                              action: { tag: "dw-select", dwName: dw.dw_name, nodeId: `dw:${dw.dw_name}` },
                             })}
                           >
                             <span class="badge badge-dw">dw</span>

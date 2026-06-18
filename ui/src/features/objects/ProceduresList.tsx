@@ -40,12 +40,12 @@ export function ProceduresList(props: { store: Store<AppState, AppAction> }) {
   const ps = () => snap().objects;
 
   onMount(() => {
-    store.dispatch({ tag: "objects", action: { type: "procs-list-load" } });
+    store.dispatch({ tag: "objects", action: { tag: "procs-list-load" } });
   });
 
   useListKeyboard({
     items: () => filtered().map((item) => ({
-      select: () => store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: item.object, procName: item.name } }),
+      select: () => store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: item.object, procName: item.name } }),
     })),
     tableSelector: ".procs-list-table",
   });
@@ -69,7 +69,7 @@ export function ProceduresList(props: { store: Store<AppState, AppAction> }) {
       <th
         class={active() ? "sorted" : ""}
         style={{ cursor: "pointer" }}
-        onClick={() => store.dispatch({ tag: "objects", action: { type: "procs-list-sort", col } })}
+        onClick={() => store.dispatch({ tag: "objects", action: { tag: "procs-list-sort", col } })}
       >
         {label}{arrow()}
       </th>
@@ -95,7 +95,7 @@ export function ProceduresList(props: { store: Store<AppState, AppAction> }) {
           placeholder="Search procedures or objects…"
           value={ps().proceduresListQ}
           onInput={(e) => {
-            store.dispatch({ tag: "objects", action: { type: "procs-list-filter", q: e.currentTarget.value } });
+            store.dispatch({ tag: "objects", action: { tag: "procs-list-filter", q: e.currentTarget.value } });
           }}
         />
       </div>
@@ -106,7 +106,7 @@ export function ProceduresList(props: { store: Store<AppState, AppAction> }) {
             <button
               class={`filter-pill${ps().proceduresListKind === k ? " active" : ""}`}
               onClick={() => {
-                store.dispatch({ tag: "objects", action: { type: "procs-list-filter-kind", kind: k } });
+                store.dispatch({ tag: "objects", action: { tag: "procs-list-filter-kind", kind: k } });
               }}
             >
               {k ? KIND_LABELS[k] ?? k : "All"}
@@ -139,14 +139,14 @@ export function ProceduresList(props: { store: Store<AppState, AppAction> }) {
                         type="procedure"
                         name={p.name}
                         tooltip={`${p.object}.${p.name}`}
-                        onClick={() => store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: p.object, procName: p.name } })}
+                        onClick={() => store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: p.object, procName: p.name } })}
                       />
                     </td>
                     <td style={{ padding: "4px 8px" }}>
                       <EntityCard
                         type="object"
                         name={p.object}
-                        onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: p.object } })}
+                        onClick={() => store.dispatch({ tag: "objects", action: { tag: "select", name: p.object } })}
                       />
                     </td>
                     <td>

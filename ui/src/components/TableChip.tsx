@@ -15,7 +15,7 @@ export function TableChip(props: TableChipProps): JSX.Element {
   function navigate() {
     props.store.dispatch({
       tag: "nav",
-      action: { type: "navigate", route: { view: "tableDetail", name: props.name } },
+      action: { tag: "navigate", route: { view: "tableDetail", name: props.name } },
     });
   }
   return (

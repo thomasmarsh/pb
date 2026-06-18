@@ -23,7 +23,7 @@ describe("Objects component", () => {
     const input = screen.getByPlaceholderText("Search objects…");
     fireEvent.input(input, { target: { value: "w_" } });
     const searchActions = captured.filter(
-      (a) => a.tag === "objects" && a.action.type === "search",
+      (a) => a.tag === "objects" && a.action.tag === "search",
     );
     expect(searchActions.length).toBeGreaterThanOrEqual(1);
   });
@@ -39,7 +39,7 @@ describe("Objects component", () => {
     const { captured } = renderWithStore(Objects);
     fireEvent.click(screen.getByText("datawindow"));
     const filterActions = captured.filter(
-      (a) => a.tag === "objects" && a.action.type === "filter-kind",
+      (a) => a.tag === "objects" && a.action.tag === "filter-kind",
     );
     expect(filterActions.length).toBeGreaterThanOrEqual(1);
   });
@@ -63,10 +63,10 @@ describe("Objects component", () => {
     });
     fireEvent.click(screen.getByText("w_main"));
     const selectActions = captured.filter(
-      (a) => a.tag === "objects" && a.action.type === "select",
+      (a) => a.tag === "objects" && a.action.tag === "select",
     );
     expect(selectActions.length).toBe(1);
-    expect(selectActions[0]).toEqual({ tag: "objects", action: { type: "select", name: "w_main" } });
+    expect(selectActions[0]).toEqual({ tag: "objects", action: { tag: "select", name: "w_main" } });
   });
 
   it("clicking column header dispatches sort", () => {
@@ -77,7 +77,7 @@ describe("Objects component", () => {
     });
     fireEvent.click(screen.getByText(/^Kind/));
     const sortActions = captured.filter(
-      (a) => a.tag === "objects" && a.action.type === "sort",
+      (a) => a.tag === "objects" && a.action.tag === "sort",
     );
     expect(sortActions.length).toBeGreaterThanOrEqual(1);
   });

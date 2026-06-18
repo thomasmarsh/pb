@@ -23,7 +23,7 @@ describe("queries reducer", () => {
       const items = [{ name: "top", description: "Most complex", params: [] }];
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, initialQueriesState);
-      ts.send({ type: "loaded", items }, (s) => {
+      ts.send({ tag: "loaded", items }, (s) => {
         s.items = items;
         s.loading = false;
       });
@@ -35,7 +35,7 @@ describe("queries reducer", () => {
       const init: QueriesState = { ...initialQueriesState, results: { columns: [], rows: [{ x: 1 }] } };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ type: "run", name: "top", params: { n: "5" } }, (s) => {
+      ts.send({ tag: "run", name: "top", params: { n: "5" } }, (s) => {
         s.results = null;
         s.resultsName = "top";
         s.queryParams = { n: "5" };
@@ -45,9 +45,9 @@ describe("queries reducer", () => {
     it("emits navigate to queries URL with queryName and params", () => {
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, initialQueriesState);
-      ts.send({ type: "run", name: "top", params: { n: "5" } });
+      ts.send({ tag: "run", name: "top", params: { n: "5" } });
       expect(env.lastNavigate).toEqual({
-        type: "navigate",
+        tag: "navigate",
         route: { view: "queries", queryName: "top", queryParams: { n: "5" } },
       });
     });
@@ -58,7 +58,7 @@ describe("queries reducer", () => {
       const data = { columns: [{ name: "obj", entity_type: null }], rows: [{ obj: "foo" }] };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, initialQueriesState);
-      ts.send({ type: "result", data }, (s) => {
+      ts.send({ tag: "result", data }, (s) => {
         s.results = data;
         s.loading = false;
       });
@@ -79,14 +79,14 @@ describe("queries reducer", () => {
       };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ type: "restore", name: "top", params: { n: "5" } });
+      ts.send({ tag: "restore", name: "top", params: { n: "5" } });
       expect(env.lastNavigate).toBeNull();
     });
 
     it("re-runs query when resultsName differs", () => {
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, initialQueriesState);
-      ts.send({ type: "restore", name: "callers", params: { name: "f_proc" } }, (s) => {
+      ts.send({ tag: "restore", name: "callers", params: { name: "f_proc" } }, (s) => {
         s.resultsName = "callers";
         s.queryParams = { name: "f_proc" };
       });
@@ -96,7 +96,7 @@ describe("queries reducer", () => {
       const init: QueriesState = { ...initialQueriesState, resultsName: "top", results: null };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ type: "restore", name: "top", params: {} }, (s) => {
+      ts.send({ tag: "restore", name: "top", params: {} }, (s) => {
         s.queryParams = {};
       });
     });
@@ -111,9 +111,9 @@ describe("queries reducer", () => {
       };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ type: "navigate-to-entity", entityType: "object", entityName: "w_payment", objectName: null });
+      ts.send({ tag: "navigate-to-entity", entityType: "object", entityName: "w_payment", objectName: null });
       expect(env.lastNavigate).toEqual({
-        type: "navigate-from-ask",
+        tag: "navigate-from-ask",
         route: { view: "objectDetail", name: "w_payment" },
         queryName: "top",
         queryRoute: { view: "queries", queryName: "top", queryParams: { n: "5" } },
@@ -129,13 +129,13 @@ describe("queries reducer", () => {
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
       ts.send({
-        type: "navigate-to-entity",
+        tag: "navigate-to-entity",
         entityType: "procedure",
         entityName: "f_validate",
         objectName: "w_payment",
       });
       expect(env.lastNavigate).toEqual({
-        type: "navigate-from-ask",
+        tag: "navigate-from-ask",
         route: { view: "procedureDetail", name: "w_payment", proc: "f_validate" },
         queryName: "callers",
         queryRoute: { view: "queries", queryName: "callers", queryParams: { name: "f_validate" } },
@@ -146,9 +146,9 @@ describe("queries reducer", () => {
       const init: QueriesState = { ...initialQueriesState, resultsName: "dw", queryParams: {} };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ type: "navigate-to-entity", entityType: "datawindow", entityName: "d_grid", objectName: null });
+      ts.send({ tag: "navigate-to-entity", entityType: "datawindow", entityName: "d_grid", objectName: null });
       expect(env.lastNavigate).toMatchObject({
-        type: "navigate-from-ask",
+        tag: "navigate-from-ask",
         route: { view: "dwDetail", name: "d_grid" },
       });
     });
@@ -157,9 +157,9 @@ describe("queries reducer", () => {
       const init: QueriesState = { ...initialQueriesState, resultsName: "sql_tables", queryParams: {} };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ type: "navigate-to-entity", entityType: "table", entityName: "accounts", objectName: null });
+      ts.send({ tag: "navigate-to-entity", entityType: "table", entityName: "accounts", objectName: null });
       expect(env.lastNavigate).toMatchObject({
-        type: "navigate-from-ask",
+        tag: "navigate-from-ask",
         route: { view: "tableDetail", name: "accounts" },
       });
     });
@@ -167,7 +167,7 @@ describe("queries reducer", () => {
     it("does nothing for unknown entity type", () => {
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, initialQueriesState);
-      ts.send({ type: "navigate-to-entity", entityType: "unknown", entityName: "x", objectName: null });
+      ts.send({ tag: "navigate-to-entity", entityType: "unknown", entityName: "x", objectName: null });
       expect(env.lastNavigate).toBeNull();
     });
   });
@@ -176,7 +176,7 @@ describe("queries reducer", () => {
     it("sets sortCol and defaults to asc", () => {
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, initialQueriesState);
-      ts.send({ type: "sort", col: "name" }, (s) => {
+      ts.send({ tag: "sort", col: "name" }, (s) => {
         s.sortCol = "name";
         s.sortDir = "asc";
         s.page = 0;
@@ -187,7 +187,7 @@ describe("queries reducer", () => {
       const init: QueriesState = { ...initialQueriesState, sortCol: "name", sortDir: "asc" };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ type: "sort", col: "name" }, (s) => {
+      ts.send({ tag: "sort", col: "name" }, (s) => {
         s.sortDir = "desc";
         s.page = 0;
       });
@@ -197,7 +197,7 @@ describe("queries reducer", () => {
       const init: QueriesState = { ...initialQueriesState, sortCol: "name", sortDir: "desc" };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ type: "sort", col: "name" }, (s) => {
+      ts.send({ tag: "sort", col: "name" }, (s) => {
         s.sortDir = "asc";
         s.page = 0;
       });
@@ -207,7 +207,7 @@ describe("queries reducer", () => {
       const init: QueriesState = { ...initialQueriesState, sortCol: "name", sortDir: "desc", page: 3 };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ type: "sort", col: "cyclomatic" }, (s) => {
+      ts.send({ tag: "sort", col: "cyclomatic" }, (s) => {
         s.sortCol = "cyclomatic";
         s.sortDir = "asc";
         s.page = 0;
@@ -219,7 +219,7 @@ describe("queries reducer", () => {
     it("sets page number", () => {
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, initialQueriesState);
-      ts.send({ type: "set-page", page: 2 }, (s) => {
+      ts.send({ tag: "set-page", page: 2 }, (s) => {
         s.page = 2;
       });
     });

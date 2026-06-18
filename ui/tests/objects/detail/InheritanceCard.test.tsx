@@ -23,8 +23,8 @@ describe("InheritanceCard", () => {
       <InheritanceCard store={store} name="w_main" ancestors={["w_base"]} />
     ));
     fireEvent.click(screen.getByText("w_base"));
-    const actions = captured.filter(a => a.tag === "objects" && a.action.type === "select");
+    const actions = captured.filter(a => a.tag === "objects" && a.action.tag === "select");
     expect(actions.length).toBe(1);
-    expect(actions[0]).toEqual({ tag: "objects", action: { type: "select", name: "w_base" } });
+    expect(actions[0]).toEqual({ tag: "objects", action: { tag: "select", name: "w_base" } });
   });
 });

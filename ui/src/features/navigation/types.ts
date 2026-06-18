@@ -37,7 +37,7 @@ export interface NavState {
 }
 
 export type NavigationAction =
-  | { type: "navigate"; route: Route }
-  | { type: "navigate-from-ask"; route: Route; queryName: string; queryRoute: Route }
-  | { type: "back" }
-  | { type: "forward" };
+  | { tag: "navigate"; route: Route }
+  | { tag: "navigate-from-ask"; route: Route; queryName: string; queryRoute: Route }
+  | { tag: "back" }
+  | { tag: "forward" };

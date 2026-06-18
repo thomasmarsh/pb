@@ -14,13 +14,13 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
 
   onMount(() => {
     if (ts().items.length === 0) {
-      props.store.dispatch({ tag: "tables", action: { type: "search", q: "" } });
+      props.store.dispatch({ tag: "tables", action: { tag: "search", q: "" } });
     }
   });
 
   useListKeyboard({
     items: () => filtered().map((item) => ({
-      select: () => props.store.dispatch({ tag: "tables", action: { type: "select", name: item.table_name } }),
+      select: () => props.store.dispatch({ tag: "tables", action: { tag: "select", name: item.table_name } }),
     })),
     tableSelector: ".table-list-table",
   });
@@ -48,7 +48,7 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
           placeholder="Search tables…"
           value={ts().q}
           onInput={(e) => {
-            props.store.dispatch({ tag: "tables", action: { type: "filter", q: e.currentTarget.value } });
+            props.store.dispatch({ tag: "tables", action: { tag: "filter", q: e.currentTarget.value } });
           }}
         />
       </div>
@@ -76,7 +76,7 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
                     <EntityCard
                       type="table"
                       name={t.table_name}
-                      onClick={() => props.store.dispatch({ tag: "tables", action: { type: "select", name: t.table_name } })}
+                      onClick={() => props.store.dispatch({ tag: "tables", action: { tag: "select", name: t.table_name } })}
                     />
                   </td>
                   <td>{String(t.dw_count)}</td>

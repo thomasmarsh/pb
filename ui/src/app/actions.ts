@@ -12,7 +12,7 @@ import type { ErrorsAction } from "../features/errors/actions.js";
 import type { NavigationAction } from "../features/navigation/types.js";
 import type { Theme } from "./state.js";
 
-export type ThemeAction = { type: "load" } | { type: "toggle" } | { type: "loaded"; theme: Theme };
+export type ThemeAction = { tag: "load" } | { tag: "toggle" } | { tag: "loaded"; theme: Theme };
 
 export type AppAction =
   | { tag: "theme"; action: ThemeAction }

@@ -18,7 +18,7 @@ describe("diagrams reducer", () => {
     it("updates active kind and clears svg", () => {
       const init: DiagramsState = { ...initialDiagramsState, svg: "<svg>old</svg>" };
       const ts = createTestStore(diagramsReducer, mockEnv, init);
-      ts.send({ type: "select", kind: "calls" }, (s) => {
+      ts.send({ tag: "select", kind: "calls" }, (s) => {
         s.active = "calls";
         s.svg = null;
       });
@@ -28,7 +28,7 @@ describe("diagrams reducer", () => {
   describe("diagrams/params", () => {
     it("merges params into state", () => {
       const ts = createTestStore(diagramsReducer, mockEnv, { ...initialDiagramsState });
-      ts.send({ type: "params", params: { root: "foo" } }, (s) => {
+      ts.send({ tag: "params", params: { root: "foo" } }, (s) => {
         s.params = { root: "foo" };
       });
     });
@@ -37,7 +37,7 @@ describe("diagrams reducer", () => {
   describe("diagrams/generate", () => {
     it("sets loading", () => {
       const ts = createTestStore(diagramsReducer, mockEnv, { ...initialDiagramsState });
-      ts.send({ type: "generate" }, (s) => {
+      ts.send({ tag: "generate" }, (s) => {
         s.loading = true;
       });
     });
@@ -45,10 +45,10 @@ describe("diagrams reducer", () => {
     it("populates svg via effect", () => {
       const env: DiagramsEnv = { ...mockEnv, getDiagram: () => Effect.send("<svg>ok</svg>") };
       const ts = createTestStore(diagramsReducer, env, { ...initialDiagramsState });
-      ts.send({ type: "generate" }, (s) => {
+      ts.send({ tag: "generate" }, (s) => {
         s.loading = true;
       });
-      ts.receive({ type: "loaded", svg: "<svg>ok</svg>" }, (s) => {
+      ts.receive({ tag: "loaded", svg: "<svg>ok</svg>" }, (s) => {
         s.svg = "<svg>ok</svg>";
         s.loading = false;
       });
@@ -58,7 +58,7 @@ describe("diagrams reducer", () => {
   describe("diagrams/error", () => {
     it("clears loading and records error", () => {
       const ts = createTestStore(diagramsReducer, mockEnv, { ...initialDiagramsState });
-      ts.send({ type: "error", error: "timeout" }, (s) => {
+      ts.send({ tag: "error", error: "timeout" }, (s) => {
         s.error = "timeout";
       });
     });

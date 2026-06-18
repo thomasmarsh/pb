@@ -58,9 +58,9 @@ describe("ProceduresCard", () => {
       <ProceduresCard store={store} objectName="w_main" procedures={sampleProcs} />
     ));
     fireEvent.click(screen.getByText("of_init"));
-    const actions = captured.filter(a => a.tag === "objects" && a.action.type === "proc-select");
+    const actions = captured.filter(a => a.tag === "objects" && a.action.tag === "proc-select");
     expect(actions.length).toBe(1);
-    expect(actions[0]).toEqual({ tag: "objects", action: { type: "proc-select", objectName: "w_main", procName: "of_init" } });
+    expect(actions[0]).toEqual({ tag: "objects", action: { tag: "proc-select", objectName: "w_main", procName: "of_init" } });
   });
 
   it("shows CC badge when cyclomatic is present", () => {

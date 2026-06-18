@@ -13,8 +13,8 @@ export function Objects(props: { store: Store<AppState, AppAction> }) {
   const os = () => snap().objects;
 
   onMount(() => {
-    store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "objects" } } });
-    store.dispatch({ tag: "objects", action: { type: "search", q: os().q } });
+    store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "objects" } } });
+    store.dispatch({ tag: "objects", action: { tag: "search", q: os().q } });
   });
 
   return (

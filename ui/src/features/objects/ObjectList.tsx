@@ -17,13 +17,13 @@ export function ObjectList(props: { store: Store<AppState, AppAction> }) {
 
   onMount(() => {
     if (os().items.length === 0) {
-      store.dispatch({ tag: "objects", action: { type: "search", q: os().q } });
+      store.dispatch({ tag: "objects", action: { tag: "search", q: os().q } });
     }
   });
 
   useListKeyboard({
     items: () => os().items.map((obj) => ({
-      select: () => store.dispatch({ tag: "objects", action: { type: "select", name: obj.name } }),
+      select: () => store.dispatch({ tag: "objects", action: { tag: "select", name: obj.name } }),
     })),
     tableSelector: ".object-list-table",
   });
@@ -42,7 +42,7 @@ export function ObjectList(props: { store: Store<AppState, AppAction> }) {
           type="text"
           placeholder="Search objects…"
           value={os().q}
-          onInput={(e) => store.dispatch({ tag: "objects", action: { type: "search", q: e.currentTarget.value } })}
+          onInput={(e) => store.dispatch({ tag: "objects", action: { tag: "search", q: e.currentTarget.value } })}
         />
       </div>
 
@@ -51,7 +51,7 @@ export function ObjectList(props: { store: Store<AppState, AppAction> }) {
           {(k) => (
             <button
               class={`filter-pill${os().kind === k ? " active" : ""}`}
-              onClick={() => store.dispatch({ tag: "objects", action: { type: "filter-kind", kind: k } })}
+              onClick={() => store.dispatch({ tag: "objects", action: { tag: "filter-kind", kind: k } })}
             >
               {k || "All"}
             </button>
@@ -66,11 +66,11 @@ export function ObjectList(props: { store: Store<AppState, AppAction> }) {
             <thead>
               <tr>
                 <th class={os().sort === "name" ? "sorted" : ""}
-                    onClick={() => store.dispatch({ tag: "objects", action: { type: "sort", col: "name" } })}>
+                    onClick={() => store.dispatch({ tag: "objects", action: { tag: "sort", col: "name" } })}>
                   Name{os().sort === "name" ? (os().order === "asc" ? " ▲" : " ▼") : ""}
                 </th>
                 <th class={os().sort === "kind" ? "sorted" : ""}
-                    onClick={() => store.dispatch({ tag: "objects", action: { type: "sort", col: "kind" } })}>
+                    onClick={() => store.dispatch({ tag: "objects", action: { tag: "sort", col: "kind" } })}>
                   Kind{os().sort === "kind" ? (os().order === "asc" ? " ▲" : " ▼") : ""}
                 </th>
                 <th>File</th><th>Ancestor</th>
@@ -86,7 +86,7 @@ export function ObjectList(props: { store: Store<AppState, AppAction> }) {
                         <EntityCard
                           type={entityType}
                           name={obj.name}
-                          onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: obj.name } })}
+                          onClick={() => store.dispatch({ tag: "objects", action: { tag: "select", name: obj.name } })}
                         />
                       </td>
                       <td>
@@ -111,7 +111,7 @@ export function ObjectList(props: { store: Store<AppState, AppAction> }) {
               totalPages={Math.ceil(os().total / 100)}
               total={os().total}
               pageSize={100}
-              onPageChange={(p) => store.dispatch({ tag: "objects", action: { type: "page", offset: p * 100 } })}
+              onPageChange={(p) => store.dispatch({ tag: "objects", action: { tag: "page", offset: p * 100 } })}
             />
           </Show>
         </div>

@@ -70,7 +70,7 @@ function DWDetailContent(props: { d: DwDetailResponse; store: Store<AppState, Ap
         phaseLabel="P1"
         store={store}
         onToggle={(newFace, scrollTop) => {
-          store.dispatch({ tag: "datawindows", action: { type: "set-dw-face", name: d.name, face: newFace, scrollTop } });
+          store.dispatch({ tag: "datawindows", action: { tag: "set-dw-face", name: d.name, face: newFace, scrollTop } });
         }}
         scrollAreaRef={() => scrollEl}
       />
@@ -96,7 +96,7 @@ function DWDetailContent(props: { d: DwDetailResponse; store: Store<AppState, Ap
               items={d.retrieve_tables.map((t) => ({
                 type: "table" as const,
                 name: t,
-                onClick: () => store.dispatch({ tag: "tables", action: { type: "select", name: t } }),
+                onClick: () => store.dispatch({ tag: "tables", action: { tag: "select", name: t } }),
               }))}
             />
           </Show>
@@ -108,7 +108,7 @@ function DWDetailContent(props: { d: DwDetailResponse; store: Store<AppState, Ap
               items={d.used_by_objects!.map((obj) => ({
                 type: "object" as const,
                 name: obj,
-                onClick: () => store.dispatch({ tag: "objects", action: { type: "select", name: obj } }),
+                onClick: () => store.dispatch({ tag: "objects", action: { tag: "select", name: obj } }),
               }))}
             />
           </Show>
@@ -122,7 +122,7 @@ function DWDetailContent(props: { d: DwDetailResponse; store: Store<AppState, Ap
                 name: ref.proc,
                 context: ref.object,
                 tooltip: `${ref.object}.${ref.proc}`,
-                onClick: () => store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: ref.object, procName: ref.proc } }),
+                onClick: () => store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: ref.object, procName: ref.proc } }),
               }))}
             />
           </Show>
@@ -182,7 +182,7 @@ export function DWDetail(props: { store: Store<AppState, AppAction> }) {
 
   return (
     <>
-      <BackButton label="DataWindows" onClick={() => store.dispatch({ tag: "datawindows", action: { type: "back-to-datawindows" } })} />
+      <BackButton label="DataWindows" onClick={() => store.dispatch({ tag: "datawindows", action: { tag: "back-to-datawindows" } })} />
       <Show when={dw()} fallback={<Loading />}>
         {(entry) => {
           if ("error" in entry()) {

@@ -24,11 +24,11 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
   });
 
   const doSearch = debounce((val: string) => {
-    store.dispatch({ tag: "search", action: { type: "overlay-term", term: val } });
+    store.dispatch({ tag: "search", action: { tag: "overlay-term", term: val } });
   }, 250);
 
   function close(): void {
-    store.dispatch({ tag: "search", action: { type: "overlay-close" } });
+    store.dispatch({ tag: "search", action: { tag: "overlay-close" } });
   }
 
   function navigateAndClose(dispatchFn: () => void): void {
@@ -67,7 +67,7 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
           <For each={recent()}>
             {(q) => (
               <button class="gs-recent-item" onClick={() => {
-                store.dispatch({ tag: "search", action: { type: "overlay-term", term: q } });
+                store.dispatch({ tag: "search", action: { tag: "overlay-term", term: q } });
               }}>
                 <span class="gs-recent-icon" aria-hidden="true">⏱</span>
                 {q}
@@ -93,7 +93,7 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
               <For each={results()!.objects.slice(0, 8)}>
                 {(o) => (
                   <button class="gs-result-item" onClick={() => navigateAndClose(() =>
-                    store.dispatch({ tag: "objects", action: { type: "select", name: o.name } })
+                    store.dispatch({ tag: "objects", action: { tag: "select", name: o.name } })
                   )}>
                     <span class="gs-result-icon" aria-hidden="true">{entityIcon(o.kind)}</span>
                     <span class="gs-result-name">{o.name}</span>
@@ -110,7 +110,7 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
               <For each={results()!.procedures.slice(0, 8)}>
                 {(p) => (
                   <button class="gs-result-item" onClick={() => navigateAndClose(() =>
-                    store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: p.object, procName: p.name } })
+                    store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: p.object, procName: p.name } })
                   )}>
                     <span class="gs-result-icon" aria-hidden="true">{entityIcon("procedure")}</span>
                     <span class="gs-result-name">{p.name}</span>
@@ -128,7 +128,7 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
               <For each={results()!.datawindows.slice(0, 8)}>
                 {(d) => (
                   <button class="gs-result-item" onClick={() => navigateAndClose(() =>
-                    store.dispatch({ tag: "datawindows", action: { type: "select", name: d.dw_name } })
+                    store.dispatch({ tag: "datawindows", action: { tag: "select", name: d.dw_name } })
                   )}>
                     <span class="gs-result-icon" aria-hidden="true">{entityIcon("datawindow")}</span>
                     <span class="gs-result-name">{d.dw_name}</span>
@@ -145,7 +145,7 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
               <For each={results()!.tables!.slice(0, 8)}>
                 {(t) => (
                   <button class="gs-result-item" onClick={() => navigateAndClose(() =>
-                    store.dispatch({ tag: "tables", action: { type: "select", name: t.table_name } })
+                    store.dispatch({ tag: "tables", action: { tag: "select", name: t.table_name } })
                   )}>
                     <span class="gs-result-icon" aria-hidden="true">{entityIcon("table")}</span>
                     <span class="gs-result-name">{t.table_name}</span>

@@ -11,7 +11,7 @@ export function InheritanceCard(props: { store: Store<AppState, AppAction>; name
       <div class="card-header"><h3>Inheritance</h3></div>
       <div style={{ display: "flex", "flex-wrap": "wrap", gap: "6px" }}>
         <span class="badge badge-ps" style={{ cursor: "pointer" }}
-              onClick={() => props.store.dispatch({ tag: "objects", action: { type: "select", name: props.name } })}>
+              onClick={() => props.store.dispatch({ tag: "objects", action: { tag: "select", name: props.name } })}>
           {props.name}
         </span>
         <For each={props.ancestors}>
@@ -19,7 +19,7 @@ export function InheritanceCard(props: { store: Store<AppState, AppAction>; name
             <>
               <span style={{ color: "var(--text-muted)" }}>{"→"}</span>
               <span class="badge badge-ps" style={{ cursor: "pointer" }}
-                    onClick={() => props.store.dispatch({ tag: "objects", action: { type: "select", name: a } })}>
+                    onClick={() => props.store.dispatch({ tag: "objects", action: { tag: "select", name: a } })}>
                 {a}
               </span>
             </>

@@ -3,13 +3,13 @@
 import type { QueryDef, QueryResult } from "../../types/api.js";
 
 export type QueriesAction =
-  | { type: "load" }
-  | { type: "loaded"; items: QueryDef[] }
-  | { type: "run"; name: string; params: Record<string, string> }
-  | { type: "result"; data: QueryResult }
-  | { type: "error"; error: string }
-  | { type: "restore"; name: string; params: Record<string, string> }
-  | { type: "navigate-to-entity"; entityType: string; entityName: string; objectName: string | null }
-  | { type: "sort"; col: string }
-  | { type: "set-page"; page: number }
+  | { tag: "load" }
+  | { tag: "loaded"; items: QueryDef[] }
+  | { tag: "run"; name: string; params: Record<string, string> }
+  | { tag: "result"; data: QueryResult }
+  | { tag: "error"; error: string }
+  | { tag: "restore"; name: string; params: Record<string, string> }
+  | { tag: "navigate-to-entity"; entityType: string; entityName: string; objectName: string | null }
+  | { tag: "sort"; col: string }
+  | { tag: "set-page"; page: number }
   ;

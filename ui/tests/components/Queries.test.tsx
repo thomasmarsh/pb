@@ -30,12 +30,12 @@ describe("Queries component", () => {
     });
     fireEvent.click(screen.getByText("Run"));
     const runActions = captured.filter(
-      (a) => a.tag === "queries" && a.action.type === "run",
+      (a) => a.tag === "queries" && a.action.tag === "run",
     );
     expect(runActions.length).toBe(1);
     expect(runActions[0]).toEqual({
       tag: "queries",
-      action: { type: "run", name: "top_complex", params: { n: "10" } },
+      action: { tag: "run", name: "top_complex", params: { n: "10" } },
     });
   });
 

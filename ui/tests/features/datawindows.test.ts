@@ -18,10 +18,10 @@ describe("datawindows reducer", () => {
       const navigateCalls: string[] = [];
       const env: DatawindowsEnv = {
         ...mockEnv,
-        navigate: (action) => { if (action.type === "navigate") navigateCalls.push(action.route.view); return Effect.none(); },
+        navigate: (action) => { if (action.tag === "navigate") navigateCalls.push(action.route.view); return Effect.none(); },
       };
       const ts = createTestStore(datawindowsReducer, env, initialDatawindowsState);
-      ts.send({ type: "search", q: "test" }, (s) => {
+      ts.send({ tag: "search", q: "test" }, (s) => {
         s.q = "test";
         s.loading = true;
       });
@@ -35,11 +35,11 @@ describe("datawindows reducer", () => {
       };
       const env: DatawindowsEnv = { ...mockEnv, getObjects: () => Effect.send(data) };
       const ts = createTestStore(datawindowsReducer, env, initialDatawindowsState);
-      ts.send({ type: "search", q: "dw" }, (s) => {
+      ts.send({ tag: "search", q: "dw" }, (s) => {
         s.q = "dw";
         s.loading = true;
       });
-      ts.receive({ type: "loaded", data }, (s) => {
+      ts.receive({ tag: "loaded", data }, (s) => {
         s.items = data.items;
         s.total = 1;
         s.loading = false;
@@ -57,7 +57,7 @@ describe("datawindows reducer", () => {
         total: 2, offset: 0, limit: 200,
       };
       const ts = createTestStore(datawindowsReducer, mockEnv, initialDatawindowsState);
-      ts.send({ type: "loaded", data }, (s) => {
+      ts.send({ tag: "loaded", data }, (s) => {
         s.items = data.items;
         s.total = 2;
         s.loading = false;
@@ -70,10 +70,10 @@ describe("datawindows reducer", () => {
       const navigateRoutes: object[] = [];
       const env: DatawindowsEnv = {
         ...mockEnv,
-        navigate: (action) => { if (action.type === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
+        navigate: (action) => { if (action.tag === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
       };
       const ts = createTestStore(datawindowsReducer, env, initialDatawindowsState);
-      ts.send({ type: "select", name: "MyDW" }, (s) => {
+      ts.send({ tag: "select", name: "MyDW" }, (s) => {
         s.dwDetail = null;
       });
       expect(navigateRoutes).toEqual([{ view: "dwDetail", name: "MyDW" }]);
@@ -83,10 +83,10 @@ describe("datawindows reducer", () => {
       const detailData: DwDetailResponse = { name: "MyDW", source: "select 1" } as DwDetailResponse;
       const env: DatawindowsEnv = { ...mockEnv, getDW: () => Effect.send(detailData) };
       const ts = createTestStore(datawindowsReducer, env, initialDatawindowsState);
-      ts.send({ type: "select", name: "MyDW" }, (s) => {
+      ts.send({ tag: "select", name: "MyDW" }, (s) => {
         s.dwDetail = null;
       });
-      ts.receive({ type: "detail-loaded", data: detailData }, (s) => {
+      ts.receive({ tag: "detail-loaded", data: detailData }, (s) => {
         s.dwDetail = { ...detailData, loading: false };
       });
     });
@@ -96,7 +96,7 @@ describe("datawindows reducer", () => {
     it("populates dwDetail and clears loading", () => {
       const data: DwDetailResponse = { name: "dw1", source: "select 1" } as DwDetailResponse;
       const ts = createTestStore(datawindowsReducer, mockEnv, initialDatawindowsState);
-      ts.send({ type: "detail-loaded", data }, (s) => {
+      ts.send({ tag: "detail-loaded", data }, (s) => {
         s.dwDetail = { ...data, loading: false };
       });
     });
@@ -105,7 +105,7 @@ describe("datawindows reducer", () => {
   describe("datawindows/detail-error", () => {
     it("records error string", () => {
       const ts = createTestStore(datawindowsReducer, mockEnv, initialDatawindowsState);
-      ts.send({ type: "detail-error", error: "timeout" }, (s) => {
+      ts.send({ tag: "detail-error", error: "timeout" }, (s) => {
         s.dwDetail = { error: "timeout" };
       });
     });

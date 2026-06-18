@@ -22,13 +22,13 @@ export function useKeyboardShortcuts(store: Store<AppState, AppAction>): void {
         clearChord();
         switch (e.key.toLowerCase()) {
           case "d":
-            store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "dashboard" } } });
+            store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "dashboard" } } });
             return;
           case "a":
-            store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "queries" } } });
+            store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "queries" } } });
             return;
           case "e":
-            store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "errors" } } });
+            store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "errors" } } });
             return;
         }
         return;
@@ -39,36 +39,36 @@ export function useKeyboardShortcuts(store: Store<AppState, AppAction>): void {
       switch (e.key) {
         case "/":
           e.preventDefault();
-          store.dispatch({ tag: "search", action: { type: "overlay-open" } });
+          store.dispatch({ tag: "search", action: { tag: "overlay-open" } });
           break;
         case "?":
-          store.dispatch({ tag: "explore", action: { type: "help-overlay-toggle" } });
+          store.dispatch({ tag: "explore", action: { tag: "help-overlay-toggle" } });
           break;
         case "Escape":
           if (snap().search.overlayOpen) {
-            store.dispatch({ tag: "search", action: { type: "overlay-close" } });
+            store.dispatch({ tag: "search", action: { tag: "overlay-close" } });
           } else if (snap().explore.helpOverlayOpen) {
-            store.dispatch({ tag: "explore", action: { type: "help-overlay-toggle" } });
+            store.dispatch({ tag: "explore", action: { tag: "help-overlay-toggle" } });
           }
           break;
         case "[":
-          store.dispatch({ tag: "nav", action: { type: "back" } });
+          store.dispatch({ tag: "nav", action: { tag: "back" } });
           break;
         case "]":
-          store.dispatch({ tag: "nav", action: { type: "forward" } });
+          store.dispatch({ tag: "nav", action: { tag: "forward" } });
           break;
         case "g":
           pendingChord = "g";
           chordTimer = setTimeout(clearChord, 1000);
           break;
         case "1":
-          store.dispatch({ tag: "explore", action: { type: "sidebar-focus-group", group: "sourceTree" } });
+          store.dispatch({ tag: "explore", action: { tag: "sidebar-focus-group", group: "sourceTree" } });
           break;
         case "2":
-          store.dispatch({ tag: "explore", action: { type: "sidebar-focus-group", group: "entityNav" } });
+          store.dispatch({ tag: "explore", action: { tag: "sidebar-focus-group", group: "entityNav" } });
           break;
         case "3":
-          store.dispatch({ tag: "explore", action: { type: "sidebar-focus-group", group: "analysisNav" } });
+          store.dispatch({ tag: "explore", action: { tag: "sidebar-focus-group", group: "analysisNav" } });
           break;
       }
     }

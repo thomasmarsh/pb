@@ -54,7 +54,7 @@ describe("ObjectDetail face/toggle", () => {
       .find((b) => b.textContent === "Analysis")!;
     fireEvent.click(analysisBtn);
     const faceActions = captured.filter(
-      (a) => a.tag === "objects" && a.action.type === "set-object-face",
+      (a) => a.tag === "objects" && a.action.tag === "set-object-face",
     );
     expect(faceActions.length).toBeGreaterThanOrEqual(1);
     expect((faceActions[0] as any).action.face).toBe("analysis");

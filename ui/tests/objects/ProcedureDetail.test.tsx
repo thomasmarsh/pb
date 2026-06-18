@@ -59,7 +59,7 @@ describe("ProcedureDetail face/toggle", () => {
       .find((b) => b.textContent === "Analysis")!;
     fireEvent.click(analysisBtn);
     const faceActions = captured.filter(
-      (a) => a.tag === "objects" && a.action.type === "set-proc-face",
+      (a) => a.tag === "objects" && a.action.tag === "set-proc-face",
     );
     expect(faceActions.length).toBeGreaterThanOrEqual(1);
     expect((faceActions[0] as any).action.face).toBe("analysis");

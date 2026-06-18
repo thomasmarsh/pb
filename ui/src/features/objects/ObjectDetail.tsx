@@ -49,7 +49,7 @@ function ObjectDetailContent(props: {
         phaseLabel="P1"
         store={store}
         onToggle={(newFace, scrollTop) => {
-          store.dispatch({ tag: "objects", action: { type: "set-object-face", name: o.name, face: newFace, scrollTop } });
+          store.dispatch({ tag: "objects", action: { tag: "set-object-face", name: o.name, face: newFace, scrollTop } });
         }}
         scrollAreaRef={() => scrollEl}
       />
@@ -78,7 +78,7 @@ function ObjectDetailContent(props: {
             items={(o.callers ?? []).map((caller) => ({
               type: "object" as const,
               name: caller,
-              onClick: () => store.dispatch({ tag: "objects", action: { type: "select", name: caller } }),
+              onClick: () => store.dispatch({ tag: "objects", action: { tag: "select", name: caller } }),
             }))}
             emptyText="No callers found."
           />
@@ -90,7 +90,7 @@ function ObjectDetailContent(props: {
               items={o.dws_used!.map((dw) => ({
                 type: "datawindow" as const,
                 name: dw,
-                onClick: () => store.dispatch({ tag: "datawindows", action: { type: "select", name: dw } }),
+                onClick: () => store.dispatch({ tag: "datawindows", action: { tag: "select", name: dw } }),
               }))}
             />
           </Show>
@@ -103,7 +103,7 @@ function ObjectDetailContent(props: {
               items={o.tables_accessed!.map((tbl) => ({
                 type: "table" as const,
                 name: tbl,
-                onClick: () => store.dispatch({ tag: "tables", action: { type: "select", name: tbl } }),
+                onClick: () => store.dispatch({ tag: "tables", action: { tag: "select", name: tbl } }),
               }))}
             />
           </Show>
@@ -127,7 +127,7 @@ export function ObjectDetail(props: { store: Store<AppState, AppAction> }) {
 
   return (
     <>
-      <BackButton label="Objects" onClick={() => store.dispatch({ tag: "objects", action: { type: "back-to-objects" } })} />
+      <BackButton label="Objects" onClick={() => store.dispatch({ tag: "objects", action: { tag: "back-to-objects" } })} />
       <Show when={obj()} fallback={<Loading />}>
         {(entry) => {
           if ("error" in entry()) {

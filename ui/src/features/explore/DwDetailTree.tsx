@@ -38,7 +38,7 @@ export function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
   });
 
   function toggleBand(band: string) {
-    store.dispatch({ tag: "explore", action: { type: "toggle", nodeId: `dwband:${props.data.name}:${band}` } });
+    store.dispatch({ tag: "explore", action: { tag: "toggle", nodeId: `dwband:${props.data.name}:${band}` } });
   }
 
   const isBandExpanded = (band: string) =>

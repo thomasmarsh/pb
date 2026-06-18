@@ -195,13 +195,13 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
     if (!linkType || !linkName) return;
 
     if (linkType === "object") {
-      store.dispatch({ tag: "objects", action: { type: "select", name: linkName } });
+      store.dispatch({ tag: "objects", action: { tag: "select", name: linkName } });
     } else if (linkType === "procedure") {
       const proc = procMap().get(linkName.toLowerCase());
       if (proc) {
-        store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: proc.object, procName: proc.name } });
+        store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: proc.object, procName: proc.name } });
       } else {
-        store.dispatch({ tag: "objects", action: { type: "select", name: linkName } });
+        store.dispatch({ tag: "objects", action: { tag: "select", name: linkName } });
       }
     }
   }
@@ -264,7 +264,7 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
                 }}
                 onMouseLeave={() => setTooltip(null)}
                 onClick={() => {
-                  store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: props.objectName, procName: p.name } });
+                  store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: props.objectName, procName: p.name } });
                 }}
               />
             );

@@ -38,10 +38,10 @@ describe("tables reducer", () => {
       const navigateCalls: string[] = [];
       const env: TablesEnv = {
         ...mockEnv,
-        navigate: (action) => { if (action.type === "navigate") navigateCalls.push(action.route.view); return Effect.none(); },
+        navigate: (action) => { if (action.tag === "navigate") navigateCalls.push(action.route.view); return Effect.none(); },
       };
       const ts = createTestStore(tablesReducer, env, initialTablesState);
-      ts.send({ type: "search", q: "ord" }, (s) => {
+      ts.send({ tag: "search", q: "ord" }, (s) => {
         s.q = "ord";
         s.loading = true;
       });
@@ -52,11 +52,11 @@ describe("tables reducer", () => {
       const items = [row("orders"), row("customers")];
       const env: TablesEnv = { ...mockEnv, getTables: () => Effect.send(items) };
       const ts = createTestStore(tablesReducer, env, initialTablesState);
-      ts.send({ type: "search", q: "" }, (s) => {
+      ts.send({ tag: "search", q: "" }, (s) => {
         s.q = "";
         s.loading = true;
       });
-      ts.receive({ type: "loaded", items }, (s) => {
+      ts.receive({ tag: "loaded", items }, (s) => {
         s.items = items;
         s.total = 2;
         s.loading = false;
@@ -68,7 +68,7 @@ describe("tables reducer", () => {
     it("populates items + total, clears loading", () => {
       const items = [row("orders")];
       const ts = createTestStore(tablesReducer, mockEnv, initialTablesState);
-      ts.send({ type: "loaded", items }, (s) => {
+      ts.send({ tag: "loaded", items }, (s) => {
         s.items = items;
         s.total = 1;
         s.loading = false;
@@ -78,7 +78,7 @@ describe("tables reducer", () => {
     it("total reflects item count (not a separate field from backend)", () => {
       const items = [row("a"), row("b"), row("c")];
       const ts = createTestStore(tablesReducer, mockEnv, initialTablesState);
-      ts.send({ type: "loaded", items }, (s) => {
+      ts.send({ tag: "loaded", items }, (s) => {
         s.items = items;
         s.total = 3;
         s.loading = false;
@@ -91,10 +91,10 @@ describe("tables reducer", () => {
       const navigateRoutes: object[] = [];
       const env: TablesEnv = {
         ...mockEnv,
-        navigate: (action) => { if (action.type === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
+        navigate: (action) => { if (action.tag === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
       };
       const ts = createTestStore(tablesReducer, env, initialTablesState);
-      ts.send({ type: "select", name: "orders" }, (s) => {
+      ts.send({ tag: "select", name: "orders" }, (s) => {
         s.detail = null;
         s.error  = null;
       });
@@ -104,11 +104,11 @@ describe("tables reducer", () => {
     it("fires getTableDetail; receive populates detail", () => {
       const env: TablesEnv = { ...mockEnv, getTableDetail: () => Effect.send(detail) };
       const ts = createTestStore(tablesReducer, env, initialTablesState);
-      ts.send({ type: "select", name: "orders" }, (s) => {
+      ts.send({ tag: "select", name: "orders" }, (s) => {
         s.detail = null;
         s.error  = null;
       });
-      ts.receive({ type: "detail-loaded", detail }, (s) => {
+      ts.receive({ tag: "detail-loaded", detail }, (s) => {
         s.detail = detail;
         s.loading = false;
       });
@@ -120,12 +120,12 @@ describe("tables reducer", () => {
         getTableDetail: () => Effect.fromPromise(() => Promise.reject(new Error("timeout"))),
       };
       const ts = createTestStore(tablesReducer, env, initialTablesState);
-      ts.send({ type: "select", name: "orders" }, (s) => {
+      ts.send({ tag: "select", name: "orders" }, (s) => {
         s.detail = null;
         s.error  = null;
       });
       await ts.drain();
-      ts.receive({ type: "detail-error", error: "timeout" }, (s) => {
+      ts.receive({ tag: "detail-error", error: "timeout" }, (s) => {
         s.error   = "timeout";
         s.loading = false;
       });
@@ -135,7 +135,7 @@ describe("tables reducer", () => {
   describe("tables/detail-loaded", () => {
     it("sets detail and clears loading", () => {
       const ts = createTestStore(tablesReducer, mockEnv, initialTablesState);
-      ts.send({ type: "detail-loaded", detail }, (s) => {
+      ts.send({ tag: "detail-loaded", detail }, (s) => {
         s.detail  = detail;
         s.loading = false;
       });
@@ -145,7 +145,7 @@ describe("tables reducer", () => {
   describe("tables/detail-error", () => {
     it("records error string and clears loading", () => {
       const ts = createTestStore(tablesReducer, mockEnv, initialTablesState);
-      ts.send({ type: "detail-error", error: "not found" }, (s) => {
+      ts.send({ tag: "detail-error", error: "not found" }, (s) => {
         s.error   = "not found";
         s.loading = false;
       });
@@ -157,14 +157,14 @@ describe("tables reducer", () => {
       const navigateRoutes: object[] = [];
       const env: TablesEnv = {
         ...mockEnv,
-        navigate: (action) => { if (action.type === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
+        navigate: (action) => { if (action.tag === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
       };
       const ts = createTestStore(tablesReducer, env, {
         ...initialTablesState,
         detail,
         error: null,
       } as TablesState);
-      ts.send({ type: "back" }, (s) => {
+      ts.send({ tag: "back" }, (s) => {
         s.detail = null;
         s.error  = null;
       });
@@ -177,7 +177,7 @@ describe("tables reducer", () => {
         detail: null,
         error: "previous error",
       } as TablesState);
-      ts.send({ type: "back" }, (s) => {
+      ts.send({ tag: "back" }, (s) => {
         s.detail = null;
         s.error  = null;
       });

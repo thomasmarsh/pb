@@ -13,9 +13,9 @@ export interface DashboardEnv {
 export const initialDashboardState: DashboardState = { stats: null };
 
 function reduce(draft: DashboardState, action: DashboardAction, env: DashboardEnv): Effect<DashboardAction> | null {
-  switch (action.type) {
+  switch (action.tag) {
   case "load":
-    return env.getStats().map((stats): DashboardAction => ({ type: "loaded", stats }));
+    return env.getStats().map((stats): DashboardAction => ({ tag: "loaded", stats }));
   case "loaded":
     draft.stats = action.stats;
     return null;

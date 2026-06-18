@@ -94,9 +94,9 @@ const _combined = combine<AppState, AppAction, AppEnv>(
 
 export function reducer(draft: AppState, action: AppAction, env: AppEnv): Effect<AppAction> | null {
   if (action.tag === "theme") {
-    switch (action.action.type) {
+    switch (action.action.tag) {
     case "load":
-      return env.loadTheme().map((theme): AppAction => ({ tag: "theme", action: { type: "loaded", theme } }));
+      return env.loadTheme().map((theme): AppAction => ({ tag: "theme", action: { tag: "loaded", theme } }));
     case "loaded":
       draft.theme = action.action.theme;
       return env.applyTheme(action.action.theme);

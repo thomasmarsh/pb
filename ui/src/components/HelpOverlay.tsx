@@ -32,7 +32,7 @@ export function HelpOverlay(props: { store: Store<AppState, AppAction> }) {
   const isOpen = () => snap().explore.helpOverlayOpen;
 
   function close(): void {
-    props.store.dispatch({ tag: "explore", action: { type: "help-overlay-toggle" } });
+    props.store.dispatch({ tag: "explore", action: { tag: "help-overlay-toggle" } });
   }
 
   return (

@@ -3,10 +3,10 @@
 import type { SearchResponse } from "../../types/api.js";
 
 export type SearchAction =
-  | { type: "term"; term: string }
-  | { type: "loaded"; data: SearchResponse }
-  | { type: "overlay-open" }
-  | { type: "overlay-close" }
-  | { type: "overlay-term"; term: string }
-  | { type: "overlay-loaded"; data: SearchResponse }
+  | { tag: "term"; term: string }
+  | { tag: "loaded"; data: SearchResponse }
+  | { tag: "overlay-open" }
+  | { tag: "overlay-close" }
+  | { tag: "overlay-term"; term: string }
+  | { tag: "overlay-loaded"; data: SearchResponse }
   ;

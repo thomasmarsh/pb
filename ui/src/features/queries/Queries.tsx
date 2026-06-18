@@ -30,7 +30,7 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
   const [showErrors, setShowErrors] = createSignal<Set<string>>(new Set());
 
   onMount(() => {
-    if (!q().items.length) store.dispatch({ tag: "queries", action: { type: "load" } });
+    if (!q().items.length) store.dispatch({ tag: "queries", action: { tag: "load" } });
   });
 
   function handleParamInput(queryName: string, paramName: string, value: string) {
@@ -60,7 +60,7 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
       if (v) bound[p.name] = v;
       else if (p.default) bound[p.name] = p.default;
     }
-    store.dispatch({ tag: "queries", action: { type: "run", name: query.name, params: bound } });
+    store.dispatch({ tag: "queries", action: { tag: "run", name: query.name, params: bound } });
   }
 
   function toggleSql(name: string) {
@@ -104,7 +104,7 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
     const objectName = objectCol ? String(row[objectCol.name] ?? "") : null;
     store.dispatch({
       tag: "queries",
-      action: { type: "navigate-to-entity", entityType: col.entity_type!, entityName, objectName },
+      action: { tag: "navigate-to-entity", entityType: col.entity_type!, entityName, objectName },
     });
   }
 
@@ -199,7 +199,7 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
                       {(col) => (
                         <th
                           style={{ cursor: "pointer", "user-select": "none" }}
-                          onClick={() => store.dispatch({ tag: "queries", action: { type: "sort", col: col.name } })}
+                          onClick={() => store.dispatch({ tag: "queries", action: { tag: "sort", col: col.name } })}
                         >
                           {col.name}
                           <Show when={q().sortCol === col.name}>
@@ -226,13 +226,13 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
                 <div style={{ display: "flex", gap: "8px", padding: "8px", "align-items": "center", "font-size": "12px" }}>
                   <button class="filter-pill"
                           disabled={q().page === 0}
-                          onClick={() => store.dispatch({ tag: "queries", action: { type: "set-page", page: q().page - 1 } })}>
+                          onClick={() => store.dispatch({ tag: "queries", action: { tag: "set-page", page: q().page - 1 } })}>
                     ← Prev
                   </button>
                   <span>Page {q().page + 1} of {totalPages()}</span>
                   <button class="filter-pill"
                           disabled={q().page >= totalPages() - 1}
-                          onClick={() => store.dispatch({ tag: "queries", action: { type: "set-page", page: q().page + 1 } })}>
+                          onClick={() => store.dispatch({ tag: "queries", action: { tag: "set-page", page: q().page + 1 } })}>
                     Next →
                   </button>
                 </div>

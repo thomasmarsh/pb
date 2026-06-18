@@ -67,22 +67,22 @@ export function ProcDetailPanel(props: { nodeId: string }) {
               <div class="explore-tabs" style={{ "margin-left": "auto" }}>
                 <button
                   class={`explore-tab-btn${activeTab() === "source" ? " active" : ""}`}
-                  onClick={() => store.dispatch({ tag: "explore", action: { type: "tab", tab: "source" } })}
+                  onClick={() => store.dispatch({ tag: "explore", action: { tag: "tab", tab: "source" } })}
                 >Source</button>
                 <button
                   class={`explore-tab-btn${activeTab() === "ast" ? " active" : ""}`}
-                  onClick={() => store.dispatch({ tag: "explore", action: { type: "tab", tab: "ast" } })}
+                  onClick={() => store.dispatch({ tag: "explore", action: { tag: "tab", tab: "ast" } })}
                 >AST</button>
                 <Show when={d.sql_statements.length > 0}>
                   <button
                     class={`explore-tab-btn${activeTab() === "sql" ? " active" : ""}`}
-                    onClick={() => store.dispatch({ tag: "explore", action: { type: "tab", tab: "sql" } })}
+                    onClick={() => store.dispatch({ tag: "explore", action: { tag: "tab", tab: "sql" } })}
                   >SQL ({d.sql_statements.length})</button>
                 </Show>
                 <Show when={d.sql_statements.length > 0}>
                   <button
                     class={`explore-tab-btn${activeTab() === "diagram" ? " active" : ""}`}
-                    onClick={() => store.dispatch({ tag: "explore", action: { type: "tab", tab: "diagram" } })}
+                    onClick={() => store.dispatch({ tag: "explore", action: { tag: "tab", tab: "diagram" } })}
                   >Diagram</button>
                 </Show>
               </div>

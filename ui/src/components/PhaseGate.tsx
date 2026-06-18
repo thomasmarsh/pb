@@ -23,7 +23,7 @@ export function PhaseGate(props: PhaseGateProps): JSX.Element {
         Current analysis depth: P1 &mdash;{" "}
         <button
           class="link-btn"
-          onClick={() => props.store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "dashboard" } } })}
+          onClick={() => props.store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "dashboard" } } })}
         >
           Dashboard
         </button>

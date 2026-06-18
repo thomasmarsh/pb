@@ -51,7 +51,7 @@ describe("ProcNode", () => {
       </ExploreStoreContext.Provider>
     ));
     fireEvent.click(screen.getByText("of_init"));
-    const actions = captured.filter(a => a.tag === "explore" && a.action.type === "proc-select");
+    const actions = captured.filter(a => a.tag === "explore" && a.action.tag === "proc-select");
     expect(actions.length).toBe(1);
   });
 });
@@ -67,7 +67,7 @@ describe("ObjectNode (datawindow)", () => {
     expect(screen.getByText("d_emp")).toBeDefined();
     expect(screen.getByText("datawindow")).toBeDefined();
     fireEvent.click(screen.getByText("d_emp"));
-    const actions = captured.filter(a => a.tag === "explore" && a.action.type === "dw-select");
+    const actions = captured.filter(a => a.tag === "explore" && a.action.tag === "dw-select");
     expect(actions.length).toBe(1);
   });
 });

@@ -55,8 +55,8 @@ export function ProcNode(props: { objName: string; proc: ExploreProcedure; depth
       summary={summary()}
       selected={isSelected()}
       onClick={() => {
-        store.dispatch({ tag: "explore", action: { type: "proc-select", objectName: props.objName, procName: props.proc.name, nodeId: nodeId() } });
-        store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: props.objName, procName: props.proc.name } });
+        store.dispatch({ tag: "explore", action: { tag: "proc-select", objectName: props.objName, procName: props.proc.name, nodeId: nodeId() } });
+        store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: props.objName, procName: props.proc.name } });
       }}
     />
   );
@@ -122,7 +122,7 @@ export function ObjectNode(props: { lib: string; obj: ExploreObject; depth: numb
         depth={props.depth}
         badge={{ text: props.obj.kind, cls: kindBadge(props.obj.kind) }}
         name={props.obj.name}
-        onClick={isDw() ? () => store.dispatch({ tag: "explore", action: { type: "dw-select", dwName: props.obj.name, nodeId: nodeId() } }) : undefined}
+        onClick={isDw() ? () => store.dispatch({ tag: "explore", action: { tag: "dw-select", dwName: props.obj.name, nodeId: nodeId() } }) : undefined}
       >
         <Show when={!isDw()}>
           <ProcGroupNode
@@ -179,7 +179,7 @@ export function LibraryNode(props: { lib: ExploreLibrary; depth: number }) {
         icon={"▣"}
         name={props.lib.name}
         summary={`${props.lib.objects.length} objects`}
-        onClick={() => store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "libraryDetail", name: props.lib.name } } })}
+        onClick={() => store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "libraryDetail", name: props.lib.name } } })}
       >
         <For each={props.lib.objects}>
           {(obj) => <ObjectNode lib={props.lib.name} obj={obj} depth={props.depth + 1} />}

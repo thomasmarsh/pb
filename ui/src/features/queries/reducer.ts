@@ -35,10 +35,10 @@ function entityRoute(entityType: string, entityName: string, objectName: string 
 }
 
 function reduce(draft: QueriesState, action: QueriesAction, env: QueriesEnv): Effect<QueriesAction> | null {
-  switch (action.type) {
+  switch (action.tag) {
   case "load":
     draft.loading = true;
-    return env.getQueries().map((data): QueriesAction => ({ type: "loaded", items: data.queries }));
+    return env.getQueries().map((data): QueriesAction => ({ tag: "loaded", items: data.queries }));
   case "loaded":
     draft.items = action.items;
     draft.loading = false;
@@ -48,10 +48,10 @@ function reduce(draft: QueriesState, action: QueriesAction, env: QueriesEnv): Ef
     draft.resultsName = action.name;
     draft.queryParams = action.params;
     draft.page = 0;
-    env.navigate({ type: "navigate", route: { view: "queries", queryName: action.name, queryParams: action.params } });
+    env.navigate({ tag: "navigate", route: { view: "queries", queryName: action.name, queryParams: action.params } });
     return env.runQuery(action.name, action.params)
-      .map((data): QueriesAction => ({ type: "result", data }))
-      .catch((e): QueriesAction => ({ type: "error", error: String(e) }));
+      .map((data): QueriesAction => ({ tag: "result", data }))
+      .catch((e): QueriesAction => ({ tag: "error", error: String(e) }));
   case "result":
     draft.results = action.data;
     draft.loading = false;
@@ -65,13 +65,13 @@ function reduce(draft: QueriesState, action: QueriesAction, env: QueriesEnv): Ef
     draft.resultsName = action.name;
     draft.queryParams = action.params;
     return env.runQuery(action.name, action.params)
-      .map((data): QueriesAction => ({ type: "result", data }))
-      .catch((e): QueriesAction => ({ type: "error", error: String(e) }));
+      .map((data): QueriesAction => ({ tag: "result", data }))
+      .catch((e): QueriesAction => ({ tag: "error", error: String(e) }));
   case "navigate-to-entity": {
     const route = entityRoute(action.entityType, action.entityName, action.objectName);
     if (!route) return null;
     const queryRoute: Route = { view: "queries", queryName: draft.resultsName, queryParams: draft.queryParams };
-    env.navigate({ type: "navigate-from-ask", route, queryName: draft.resultsName, queryRoute });
+    env.navigate({ tag: "navigate-from-ask", route, queryName: draft.resultsName, queryRoute });
     return null;
   }
   case "sort":

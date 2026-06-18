@@ -68,7 +68,7 @@ describe("TreeNode", () => {
     );
     fireEvent.click(screen.getByText("test.pbl"));
     const toggleActions = captured.filter(
-      (a) => a.tag === "explore" && a.action.type === "toggle",
+      (a) => a.tag === "explore" && a.action.tag === "toggle",
     );
     expect(toggleActions.length).toBe(1);
   });

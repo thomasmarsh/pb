@@ -26,16 +26,16 @@ export function Errors(props: { store: Store<AppState, AppAction> }) {
   const e = () => snap().errors;
 
   onMount(() => {
-    store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "errors" } } });
-    store.dispatch({ tag: "errors", action: { type: "load" } });
+    store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "errors" } } });
+    store.dispatch({ tag: "errors", action: { tag: "load" } });
   });
 
   function select(row: ParseErrorRow) {
-    store.dispatch({ tag: "errors", action: { type: "select", row } });
+    store.dispatch({ tag: "errors", action: { tag: "select", row } });
   }
 
   function openSource(object: string) {
-    store.dispatch({ tag: "objects", action: { type: "select", name: object } });
+    store.dispatch({ tag: "objects", action: { tag: "select", name: object } });
   }
 
   const totalPages = () => Math.max(1, Math.ceil(e().total / PAGE_SIZE));
@@ -49,7 +49,7 @@ export function Errors(props: { store: Store<AppState, AppAction> }) {
           {(f) => (
             <button
               class={`filter-pill ${e().filterKind === f.value ? "active" : ""}`}
-              onClick={() => store.dispatch({ tag: "errors", action: { type: "setFilterKind", kind: f.value } })}
+              onClick={() => store.dispatch({ tag: "errors", action: { tag: "setFilterKind", kind: f.value } })}
             >
               {f.label}
             </button>
@@ -59,7 +59,7 @@ export function Errors(props: { store: Store<AppState, AppAction> }) {
           class="search-input"
           placeholder="Search message / file / snippet"
           value={e().query}
-          onInput={(ev) => store.dispatch({ tag: "errors", action: { type: "setQuery", query: ev.currentTarget.value } })}
+          onInput={(ev) => store.dispatch({ tag: "errors", action: { tag: "setQuery", query: ev.currentTarget.value } })}
         />
       </div>
 
@@ -110,7 +110,7 @@ export function Errors(props: { store: Store<AppState, AppAction> }) {
           <button
             class="filter-pill"
             disabled={e().page === 0}
-            onClick={() => store.dispatch({ tag: "errors", action: { type: "setPage", page: e().page - 1 } })}
+            onClick={() => store.dispatch({ tag: "errors", action: { tag: "setPage", page: e().page - 1 } })}
           >Prev</button>
           <span style={{ "font-size": "12px", color: "var(--text-muted)" }}>
             Page {e().page + 1} of {totalPages()} ({e().total} total)
@@ -118,7 +118,7 @@ export function Errors(props: { store: Store<AppState, AppAction> }) {
           <button
             class="filter-pill"
             disabled={e().page >= totalPages() - 1}
-            onClick={() => store.dispatch({ tag: "errors", action: { type: "setPage", page: e().page + 1 } })}
+            onClick={() => store.dispatch({ tag: "errors", action: { tag: "setPage", page: e().page + 1 } })}
           >Next</button>
         </div>
       </Show>

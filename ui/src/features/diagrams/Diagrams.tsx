@@ -26,26 +26,26 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   onCleanup(() => { if (hideTimer) clearTimeout(hideTimer); });
 
   onMount(() => {
-    store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "diagrams" } } });
+    store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "diagrams" } } });
     if (!dg().itemsLoaded) {
-      store.dispatch({ tag: "diagrams", action: { type: "loadItems" } });
+      store.dispatch({ tag: "diagrams", action: { tag: "loadItems" } });
     }
   });
 
   function handleGenerate() {
     const kind = activeTab();
     if (kind === "calls") {
-      store.dispatch({ tag: "diagrams", action: { type: "params", params: { focal: focalInput(), depth: depthInput() } } });
+      store.dispatch({ tag: "diagrams", action: { tag: "params", params: { focal: focalInput(), depth: depthInput() } } });
     } else if (kind === "dw-tables") {
-      store.dispatch({ tag: "diagrams", action: { type: "params", params: { table: tableInput() } } });
+      store.dispatch({ tag: "diagrams", action: { tag: "params", params: { table: tableInput() } } });
     } else if (kind === "sql-lineage") {
-      store.dispatch({ tag: "diagrams", action: { type: "params", params: { focal: focalInput() } } });
+      store.dispatch({ tag: "diagrams", action: { tag: "params", params: { focal: focalInput() } } });
     } else if (kind === "table-lineage") {
-      store.dispatch({ tag: "diagrams", action: { type: "params", params: { table: tableInput() } } });
+      store.dispatch({ tag: "diagrams", action: { tag: "params", params: { table: tableInput() } } });
     } else if (kind === "proc-tables") {
-      store.dispatch({ tag: "diagrams", action: { type: "params", params: { table: tableInput(), focal: focalInput() } } });
+      store.dispatch({ tag: "diagrams", action: { tag: "params", params: { table: tableInput(), focal: focalInput() } } });
     }
-    store.dispatch({ tag: "diagrams", action: { type: "generate" } });
+    store.dispatch({ tag: "diagrams", action: { tag: "generate" } });
   }
 
   // Click handler: intercept pb:// links and navigate
@@ -92,19 +92,19 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
     setTooltip(null);
     if (target === "detail") {
       if (kind === "object") {
-        store.dispatch({ tag: "objects", action: { type: "select", name } });
+        store.dispatch({ tag: "objects", action: { tag: "select", name } });
       } else {
-        store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "tableDetail", name } } });
+        store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "tableDetail", name } } });
       }
     } else if (target === "focus") {
       if (kind === "object") {
         setFocalInput(name);
-        store.dispatch({ tag: "diagrams", action: { type: "params", params: { focal: name } } });
+        store.dispatch({ tag: "diagrams", action: { tag: "params", params: { focal: name } } });
       } else {
         setTableInput(name);
-        store.dispatch({ tag: "diagrams", action: { type: "params", params: { table: name } } });
+        store.dispatch({ tag: "diagrams", action: { tag: "params", params: { table: name } } });
       }
-      store.dispatch({ tag: "diagrams", action: { type: "generate" } });
+      store.dispatch({ tag: "diagrams", action: { tag: "generate" } });
     }
   }
 
@@ -132,8 +132,8 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
     <>
       <Tabs value={activeTab()} onChange={(v) => {
         setActiveTab(v as DiagramKind);
-        store.dispatch({ tag: "diagrams", action: { type: "select", kind: v as DiagramKind } });
-        if (AUTO_GENERATE.has(v as DiagramKind)) store.dispatch({ tag: "diagrams", action: { type: "generate" } });
+        store.dispatch({ tag: "diagrams", action: { tag: "select", kind: v as DiagramKind } });
+        if (AUTO_GENERATE.has(v as DiagramKind)) store.dispatch({ tag: "diagrams", action: { tag: "generate" } });
       }}>
         <Tabs.List class="tab-bar">
           <For each={["inheritance", "calls", "dw-tables", "heatmap", "sql-lineage", "table-lineage", "proc-tables"] as DiagramKind[]}>

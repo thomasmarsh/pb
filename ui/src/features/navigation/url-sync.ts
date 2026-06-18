@@ -11,26 +11,26 @@ import { parse } from "./routes.js";
 function dispatchFromRoute(dispatch: Dispatch<AppAction>, route: Route): void {
   switch (route.view) {
     case "objectDetail":
-      dispatch({ tag: "objects", action: { type: "select", name: route.name } });
+      dispatch({ tag: "objects", action: { tag: "select", name: route.name } });
       break;
     case "procedureDetail":
       dispatch({ tag: "objects",
-                 action: { type: "proc-select", objectName: route.name, procName: route.proc } });
+                 action: { tag: "proc-select", objectName: route.name, procName: route.proc } });
       break;
     case "dwDetail":
-      dispatch({ tag: "datawindows", action: { type: "select", name: route.name } });
+      dispatch({ tag: "datawindows", action: { tag: "select", name: route.name } });
       break;
     case "tableDetail":
-      dispatch({ tag: "tables", action: { type: "select", name: route.name } });
+      dispatch({ tag: "tables", action: { tag: "select", name: route.name } });
       break;
     case "queries":
-      dispatch({ tag: "nav", action: { type: "navigate", route } });
+      dispatch({ tag: "nav", action: { tag: "navigate", route } });
       if (route.queryName) {
-        dispatch({ tag: "queries", action: { type: "restore", name: route.queryName, params: route.queryParams ?? {} } });
+        dispatch({ tag: "queries", action: { tag: "restore", name: route.queryName, params: route.queryParams ?? {} } });
       }
       break;
     default:
-      dispatch({ tag: "nav", action: { type: "navigate", route } });
+      dispatch({ tag: "nav", action: { tag: "navigate", route } });
   }
 }
 

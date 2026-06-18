@@ -16,7 +16,7 @@ describe("errors reducer", () => {
         { file: "a.srw", error_kind: "powerscript" as const, message: "lex error", object: null, proc_name: null, line: 3, snippet: "garble" },
       ];
       const ts = createTestStore(errorsReducer, mockEnv, initialErrorsState);
-      ts.send({ type: "loaded", items, total: 1 }, (s) => {
+      ts.send({ tag: "loaded", items, total: 1 }, (s) => {
         s.items = items;
         s.total = 1;
         s.loading = false;
@@ -27,7 +27,7 @@ describe("errors reducer", () => {
   describe("errors/setFilterKind", () => {
     it("updates filterKind, resets page, and sets loading", () => {
       const ts = createTestStore(errorsReducer, mockEnv, { ...initialErrorsState, page: 3 });
-      ts.send({ type: "setFilterKind", kind: "sql" }, (s) => {
+      ts.send({ tag: "setFilterKind", kind: "sql" }, (s) => {
         s.filterKind = "sql";
         s.page = 0;
         s.loading = true;
@@ -38,7 +38,7 @@ describe("errors reducer", () => {
   describe("errors/setQuery", () => {
     it("updates query, resets page, and sets loading", () => {
       const ts = createTestStore(errorsReducer, mockEnv, { ...initialErrorsState, page: 2 });
-      ts.send({ type: "setQuery", query: "invalid" }, (s) => {
+      ts.send({ tag: "setQuery", query: "invalid" }, (s) => {
         s.query = "invalid";
         s.page = 0;
         s.loading = true;
@@ -49,7 +49,7 @@ describe("errors reducer", () => {
   describe("errors/setPage", () => {
     it("updates page and sets loading", () => {
       const ts = createTestStore(errorsReducer, mockEnv, initialErrorsState);
-      ts.send({ type: "setPage", page: 1 }, (s) => {
+      ts.send({ tag: "setPage", page: 1 }, (s) => {
         s.page = 1;
         s.loading = true;
       });
@@ -60,7 +60,7 @@ describe("errors reducer", () => {
     it("sets the selected error", () => {
       const row = { file: "a.srw", error_kind: "sql" as const, message: "bad", object: "o", proc_name: "p", line: 1, snippet: "SELECT" };
       const ts = createTestStore(errorsReducer, mockEnv, initialErrorsState);
-      ts.send({ type: "select", row }, (s) => {
+      ts.send({ tag: "select", row }, (s) => {
         s.selected = row;
       });
     });

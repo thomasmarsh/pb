@@ -40,7 +40,7 @@ export function BreadcrumbBar(props: { store: Store<AppState, AppAction> }): JSX
   const crumbs = () => snap().nav.crumbs;
 
   function navigateTo(route: Route): void {
-    props.store.dispatch({ tag: "nav", action: { type: "navigate", route } });
+    props.store.dispatch({ tag: "nav", action: { tag: "navigate", route } });
   }
 
   function renderItem(item: DisplayItem, idx: number): JSX.Element {

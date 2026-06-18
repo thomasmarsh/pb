@@ -49,9 +49,9 @@ function isActive(itemView: string, currentView: string): boolean {
 
 function navigateTo(store: Store<AppState, AppAction>, view: string): void {
   if (view === "proceduresList") {
-    store.dispatch({ tag: "objects", action: { type: "procs-list-load" } });
+    store.dispatch({ tag: "objects", action: { tag: "procs-list-load" } });
   } else {
-    store.dispatch({ tag: "nav", action: { type: "navigate", route: { view } as Route } });
+    store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view } as Route } });
   }
 }
 
@@ -138,7 +138,7 @@ export function Sidebar(props: SidebarProps): JSX.Element {
           <div class="subtitle">PowerBuilder Codebase Explorer</div>
           <button
             class="theme-toggle"
-            onClick={() => store.dispatch({ tag: "theme", action: { type: "toggle" } })}
+            onClick={() => store.dispatch({ tag: "theme", action: { tag: "toggle" } })}
             title={snap().theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
           >
             {snap().theme === "dark" ? "☀" : "☾"}
@@ -201,14 +201,14 @@ export function Sidebar(props: SidebarProps): JSX.Element {
             icon="🌲"
           >
             <div class="sidebar-tree-controls">
-              <button class="filter-pill" onClick={() => store.dispatch({ tag: "explore", action: { type: "expand-all" } })}>Expand All</button>
-              <button class="filter-pill" onClick={() => store.dispatch({ tag: "explore", action: { type: "collapse-all" } })}>Collapse All</button>
+              <button class="filter-pill" onClick={() => store.dispatch({ tag: "explore", action: { tag: "expand-all" } })}>Expand All</button>
+              <button class="filter-pill" onClick={() => store.dispatch({ tag: "explore", action: { tag: "collapse-all" } })}>Collapse All</button>
             </div>
             <input
               class="explore-filter-input"
               placeholder="Filter…"
               value={explore().treeFilter}
-              onInput={(e) => store.dispatch({ tag: "explore", action: { type: "filter", q: e.currentTarget.value } })}
+              onInput={(e) => store.dispatch({ tag: "explore", action: { tag: "filter", q: e.currentTarget.value } })}
             />
             <div class="sidebar-tree-body">
               <Show

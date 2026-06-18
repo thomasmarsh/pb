@@ -3,29 +3,29 @@
 import type { ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ObjectRow, ProcedureListItem } from "../../types/api.js";
 
 export type ObjectsAction =
-  | { type: "back-to-objects" }
-  | { type: "search"; q: string }
-  | { type: "filter-kind"; kind: string }
-  | { type: "sort"; col: string }
-  | { type: "page"; offset: number }
-  | { type: "loaded"; data: ListObjectsResponse }
-  | { type: "select"; name: string }
-  | { type: "detail-loaded"; data: ObjectDetailResponse }
-  | { type: "detail-error"; error: string }
-  | { type: "source-loaded"; data: ObjectSourceResponse }
-  | { type: "source-error"; error: string }
-  | { type: "all-objects-loaded"; data: ObjectRow[] }
-  | { type: "proc-select"; objectName: string; procName: string }
-  | { type: "proc-loaded"; data: ProcedureDetailResponse }
-  | { type: "proc-error"; error: string }
-  | { type: "proc-tab"; tab: string }
-  | { type: "set-object-face"; name: string; face: import("./types.js").Face; scrollTop: number }
-  | { type: "set-proc-face"; key: string; face: import("./types.js").Face; scrollTop: number }
+  | { tag: "back-to-objects" }
+  | { tag: "search"; q: string }
+  | { tag: "filter-kind"; kind: string }
+  | { tag: "sort"; col: string }
+  | { tag: "page"; offset: number }
+  | { tag: "loaded"; data: ListObjectsResponse }
+  | { tag: "select"; name: string }
+  | { tag: "detail-loaded"; data: ObjectDetailResponse }
+  | { tag: "detail-error"; error: string }
+  | { tag: "source-loaded"; data: ObjectSourceResponse }
+  | { tag: "source-error"; error: string }
+  | { tag: "all-objects-loaded"; data: ObjectRow[] }
+  | { tag: "proc-select"; objectName: string; procName: string }
+  | { tag: "proc-loaded"; data: ProcedureDetailResponse }
+  | { tag: "proc-error"; error: string }
+  | { tag: "proc-tab"; tab: string }
+  | { tag: "set-object-face"; name: string; face: import("./types.js").Face; scrollTop: number }
+  | { tag: "set-proc-face"; key: string; face: import("./types.js").Face; scrollTop: number }
   // Procedures list
-  | { type: "procs-list-load" }
-  | { type: "procs-list-loaded"; data: ProcedureListItem[] }
-  | { type: "procs-list-error"; error: string }
-  | { type: "procs-list-filter"; q: string }
-  | { type: "procs-list-filter-kind"; kind: string }
-  | { type: "procs-list-sort"; col: "name" | "object" | "cyclomatic" | "caller_count" }
+  | { tag: "procs-list-load" }
+  | { tag: "procs-list-loaded"; data: ProcedureListItem[] }
+  | { tag: "procs-list-error"; error: string }
+  | { tag: "procs-list-filter"; q: string }
+  | { tag: "procs-list-filter-kind"; kind: string }
+  | { tag: "procs-list-sort"; col: "name" | "object" | "cyclomatic" | "caller_count" }
   ;

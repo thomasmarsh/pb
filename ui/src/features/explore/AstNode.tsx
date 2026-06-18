@@ -72,7 +72,7 @@ export function AstNode(props: {
 
   function toggle() {
     if (hasChildren()) {
-      store.dispatch({ tag: "explore", action: { type: "toggle", nodeId: props.nodeId } });
+      store.dispatch({ tag: "explore", action: { tag: "toggle", nodeId: props.nodeId } });
     }
   }
 
@@ -86,8 +86,8 @@ export function AstNode(props: {
               const lineNum = item.line;
               return (
                 <div class="ast-located-row" onClick={() => {
-                  store.dispatch({ tag: "explore", action: { type: "highlight-line", line: lineNum } });
-                  store.dispatch({ tag: "explore", action: { type: "tab", tab: "source" } });
+                  store.dispatch({ tag: "explore", action: { tag: "highlight-line", line: lineNum } });
+                  store.dispatch({ tag: "explore", action: { tag: "tab", tab: "source" } });
                 }}>
                   <AstNode node={item.node} nodeId={`${props.nodeId}.${i()}`} depth={props.depth} />
                 </div>

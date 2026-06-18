@@ -32,7 +32,7 @@ function SearchResults(props: { store: Store<AppState, AppAction>; data: SearchR
                   const bc = o.kind === "powerscript" ? "ps" : "dw";
                   return (
                     <tr class="clickable"
-                        onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: o.name } })}>
+                        onClick={() => store.dispatch({ tag: "objects", action: { tag: "select", name: o.name } })}>
                       <td class="name-cell">{o.name}</td>
                       <td><span class={`badge badge-${bc}`}>{o.kind}</span></td>
                       <td style={{ "font-size": "11px", color: "var(--text-muted)" }}>{shortFile(o.file)}</td>
@@ -54,7 +54,7 @@ function SearchResults(props: { store: Store<AppState, AppAction>; data: SearchR
               <For each={data.procedures}>
                 {(p) => (
                   <tr class="clickable"
-                      onClick={() => store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: p.object, procName: p.name } })}>
+                      onClick={() => store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: p.object, procName: p.name } })}>
                     <td>{p.object}</td>
                     <td class="name-cell">{p.name}</td>
                     <td><span class={`badge ${procBadge(p.proc_type)}`}>{p.proc_type}</span></td>
@@ -76,7 +76,7 @@ function SearchResults(props: { store: Store<AppState, AppAction>; data: SearchR
               <For each={data.datawindows}>
                 {(d) => (
                   <tr class="clickable"
-                      onClick={() => store.dispatch({ tag: "datawindows", action: { type: "select", name: d.dw_name } })}>
+                      onClick={() => store.dispatch({ tag: "datawindows", action: { tag: "select", name: d.dw_name } })}>
                     <td class="name-cell">{d.dw_name}</td>
                     <td>{d.control_name ?? "–"}</td>
                     <td>{d.control_type ?? ""}</td>
@@ -118,11 +118,11 @@ export function Search(props: { store: Store<AppState, AppAction> }) {
   const [term, setTerm] = createSignal(se().term ?? "");
 
   onMount(() => {
-    store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "search" } } });
+    store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "search" } } });
   });
 
   const doSearch = debounce((val: string) => {
-    if (val.length >= 2) store.dispatch({ tag: "search", action: { type: "term", term: val } });
+    if (val.length >= 2) store.dispatch({ tag: "search", action: { tag: "term", term: val } });
   }, 300);
 
   return (
@@ -140,7 +140,7 @@ export function Search(props: { store: Store<AppState, AppAction> }) {
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               const val = term().trim();
-              if (val.length >= 1) store.dispatch({ tag: "search", action: { type: "term", term: val } });
+              if (val.length >= 1) store.dispatch({ tag: "search", action: { tag: "term", term: val } });
             }
           }}
         />

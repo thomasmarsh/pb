@@ -3,11 +3,11 @@
 import type { DiagramsState } from "./types.js";
 
 export type DiagramsAction =
-  | { type: "select"; kind: DiagramsState["active"] }
-  | { type: "params"; params: Record<string, string | number> }
-  | { type: "generate" }
-  | { type: "loaded"; svg: string }
-  | { type: "error"; error: string }
-  | { type: "loadItems" }
-  | { type: "itemsLoaded"; tableNames: string[]; objectNames: string[] }
+  | { tag: "select"; kind: DiagramsState["active"] }
+  | { tag: "params"; params: Record<string, string | number> }
+  | { tag: "generate" }
+  | { tag: "loaded"; svg: string }
+  | { tag: "error"; error: string }
+  | { tag: "loadItems" }
+  | { tag: "itemsLoaded"; tableNames: string[]; objectNames: string[] }
   ;

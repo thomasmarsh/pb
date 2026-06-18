@@ -16,13 +16,13 @@ export function DWList(props: { store: Store<AppState, AppAction> }) {
 
   onMount(() => {
     if (dw().items.length === 0) {
-      store.dispatch({ tag: "datawindows", action: { type: "search", q: dw().q } });
+      store.dispatch({ tag: "datawindows", action: { tag: "search", q: dw().q } });
     }
   });
 
   useListKeyboard({
     items: () => dw().items.map((item) => ({
-      select: () => store.dispatch({ tag: "datawindows", action: { type: "select", name: item.name } }),
+      select: () => store.dispatch({ tag: "datawindows", action: { tag: "select", name: item.name } }),
     })),
     tableSelector: ".dw-list-table",
   });
@@ -35,7 +35,7 @@ export function DWList(props: { store: Store<AppState, AppAction> }) {
           type="text"
           placeholder="Search DataWindows…"
           value={dw().q}
-          onInput={(e) => store.dispatch({ tag: "datawindows", action: { type: "search", q: e.currentTarget.value } })}
+          onInput={(e) => store.dispatch({ tag: "datawindows", action: { tag: "search", q: e.currentTarget.value } })}
         />
       </div>
 
@@ -54,7 +54,7 @@ export function DWList(props: { store: Store<AppState, AppAction> }) {
                       <EntityCard
                         type="datawindow"
                         name={d.name}
-                        onClick={() => store.dispatch({ tag: "datawindows", action: { type: "select", name: d.name } })}
+                        onClick={() => store.dispatch({ tag: "datawindows", action: { tag: "select", name: d.name } })}
                       />
                     </td>
                     <td style={{ "font-size": "11px", color: "var(--text-muted)" }}>{shortFile(d.file)}</td>

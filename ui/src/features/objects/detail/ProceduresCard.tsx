@@ -32,7 +32,7 @@ function ProcGroup(props: {
             <For each={props.procs}>
               {(p) => (
                 <tr class="clickable"
-                    onClick={() => props.store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: props.objectName, procName: p.name } })}>
+                    onClick={() => props.store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: props.objectName, procName: p.name } })}>
                   <td class="name-cell">{p.name}</td>
                   <td style={{ "font-size": "12px" }}>{p.modifiers ?? ""}</td>
                   <td style={{ "font-size": "12px", "max-width": "200px", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{p.params ?? ""}</td>

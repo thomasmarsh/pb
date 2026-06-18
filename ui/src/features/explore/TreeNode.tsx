@@ -26,7 +26,7 @@ export function TreeNode(props: ParentProps<TreeNodeProps>): JSX.Element {
   function toggle() {
     props.onClick?.();
     if (hasChildren()) {
-      store.dispatch({ tag: "explore", action: { type: "toggle", nodeId: props.nodeId } });
+      store.dispatch({ tag: "explore", action: { tag: "toggle", nodeId: props.nodeId } });
     }
   }
 

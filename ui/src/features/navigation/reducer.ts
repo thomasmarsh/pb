@@ -11,7 +11,7 @@ export interface NavEnv {
 }
 
 function reduce(draft: NavState, action: NavigationAction, env: NavEnv): Effect<NavigationAction> | null {
-  switch (action.type) {
+  switch (action.tag) {
   case "navigate": {
     draft.route = action.route;
     draft.crumbs = crumbsForRoute(action.route);

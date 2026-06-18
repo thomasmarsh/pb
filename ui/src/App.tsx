@@ -38,9 +38,9 @@ initViewFromUrl((a: AppAction) => store.dispatch(a));
 setupPopstateHandler((a: AppAction) => store.dispatch(a));
 
 // Load initial state for features
-store.dispatch({ tag: "theme", action: { type: "load" } });
-store.dispatch({ tag: "dashboard", action: { type: "load" } });
-store.dispatch({ tag: "explore", action: { type: "load" } });
+store.dispatch({ tag: "theme", action: { tag: "load" } });
+store.dispatch({ tag: "dashboard", action: { tag: "load" } });
+store.dispatch({ tag: "explore", action: { tag: "load" } });
 
 function ViewRouter(props: { store: Store<AppState, AppAction> }): JSX.Element {
   const snap = props.store.getState();

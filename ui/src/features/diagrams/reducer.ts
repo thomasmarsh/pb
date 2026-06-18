@@ -20,7 +20,7 @@ export const initialDiagramsState: DiagramsState = {
 };
 
 function reduce(draft: DiagramsState, action: DiagramsAction, env: DiagramsEnv): Effect<DiagramsAction> | null {
-  switch (action.type) {
+  switch (action.tag) {
   case "select":
     draft.active = action.kind;
     draft.svg = null;
@@ -32,8 +32,8 @@ function reduce(draft: DiagramsState, action: DiagramsAction, env: DiagramsEnv):
   case "generate":
     draft.loading = true;
     return env.getDiagram(draft.active, draft.params)
-      .map((svg): DiagramsAction => ({ type: "loaded", svg }))
-      .catch((e): DiagramsAction => ({ type: "error", error: String(e) }));
+      .map((svg): DiagramsAction => ({ tag: "loaded", svg }))
+      .catch((e): DiagramsAction => ({ tag: "error", error: String(e) }));
   case "loaded":
     draft.svg = action.svg;
     draft.loading = false;
@@ -48,13 +48,13 @@ function reduce(draft: DiagramsState, action: DiagramsAction, env: DiagramsEnv):
     return Effect.merge(
       env.getTables()
         .map((tables): DiagramsAction => ({
-          type: "itemsLoaded",
+          tag: "itemsLoaded",
           tableNames: tables.map(t => t.table_name),
           objectNames: draft.objectNames,
         })),
       env.getAllObjects()
         .map((data): DiagramsAction => ({
-          type: "itemsLoaded",
+          tag: "itemsLoaded",
           tableNames: draft.tableNames,
           objectNames: data.items.map(o => o.name),
         })),
