@@ -16,6 +16,7 @@ export function print(route: Route): string {
     case "dwDetail":         return "/datawindows/" + encodeURIComponent(route.name);
     case "tables":           return "/tables";
     case "tableDetail":      return "/tables/"      + encodeURIComponent(route.name);
+    case "libraryDetail":    return "/library/"     + encodeURIComponent(route.name);
     case "diagrams":         return "/diagrams";
     case "queries":          return "/queries";
     case "search":           return "/search";
@@ -42,6 +43,9 @@ export function parse(path: string): Route {
     case "tables":
       if (segs[1]) return { view: "tableDetail", name: decodeURIComponent(segs[1]) };
       return { view: "tables" };
+    case "library":
+      if (segs[1]) return { view: "libraryDetail", name: decodeURIComponent(segs[1]) };
+      return { view: "dashboard" };
     case "diagrams":   return { view: "diagrams" };
     case "queries":    return { view: "queries" };
     case "search":     return { view: "search" };

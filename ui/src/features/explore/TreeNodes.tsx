@@ -179,6 +179,7 @@ export function LibraryNode(props: { lib: ExploreLibrary; depth: number }) {
         icon={"▣"}
         name={props.lib.name}
         summary={`${props.lib.objects.length} objects`}
+        onClick={() => store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "libraryDetail", name: props.lib.name } } })}
       >
         <For each={props.lib.objects}>
           {(obj) => <ObjectNode lib={props.lib.name} obj={obj} depth={props.depth + 1} />}

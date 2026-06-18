@@ -1,4 +1,4 @@
-// Errors.tsx — Parse/ingestion error browser: list + raw/anonymized detail.
+// Errors.tsx — Diagnostics: parse/ingestion error browser with source links.
 
 import { For, Show, createMemo, createResource, onMount } from "solid-js";
 import { Tabs } from "@kobalte/core/tabs";
@@ -10,6 +10,7 @@ import { PAGE_SIZE } from "./types.js";
 import type { ParseErrorRow } from "../../types/api.js";
 import { CodeBlock } from "../../components/CodeBlock.js";
 import { CopyButton } from "../../components/CopyButton.js";
+import { PhaseGateInline } from "../../components/PhaseGate.js";
 import { anonymizeText } from "../../core/anonymize.js";
 import { highlightAsync } from "../../lib/highlight.js";
 
@@ -33,11 +34,15 @@ export function Errors(props: { store: Store<AppState, AppAction> }) {
     store.dispatch({ tag: "errors", action: { type: "select", row } });
   }
 
+  function openSource(object: string) {
+    store.dispatch({ tag: "objects", action: { type: "select", name: object } });
+  }
+
   const totalPages = () => Math.max(1, Math.ceil(e().total / PAGE_SIZE));
 
   return (
     <div class="card">
-      <div class="card-header"><h2>Parse Errors</h2></div>
+      <div class="card-header"><h2>Diagnostics</h2></div>
 
       <div class="filter-pills">
         <For each={KIND_FILTERS}>
@@ -72,7 +77,20 @@ export function Errors(props: { store: Store<AppState, AppAction> }) {
             <For each={e().items}>
               {(row) => (
                 <tr class="error-list-item" onClick={() => select(row)}>
-                  <td class="name-cell">{row.file}</td>
+                  <td class="name-cell">
+                    <Show
+                      when={row.object}
+                      fallback={<span>{row.file}</span>}
+                    >
+                      <button
+                        class="link-btn"
+                        onClick={(ev) => { ev.stopPropagation(); openSource(row.object!); }}
+                        title="Open source face"
+                      >
+                        {row.file}
+                      </button>
+                    </Show>
+                  </td>
                   <td>{row.error_kind}</td>
                   <td>{row.line ?? ""}</td>
                   <td>{row.message}</td>
@@ -160,6 +178,19 @@ export function Errors(props: { store: Store<AppState, AppAction> }) {
           );
         })()}
       </Show>
+
+      <PhaseGateInline
+        phase={2}
+        section="Type Errors"
+        label="requires typing pass"
+        description="Type checking errors are surfaced during the P2 typing pass."
+      />
+      <PhaseGateInline
+        phase={3}
+        section="Taint Warnings"
+        label="requires taint analysis"
+        description="Data-flow taint warnings are surfaced during the P3 taint analysis pass."
+      />
     </div>
   );
 }

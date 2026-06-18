@@ -42,7 +42,7 @@ const UTIL_NAV: { label: string; view: ViewName; icon: string }[] = [
   { label: "Dashboard", view: "dashboard", icon: "◆" },
   { label: "Ask",       view: "queries",   icon: "?" },
   { label: "Search",    view: "search",    icon: "🔍" },
-  { label: "Errors",    view: "errors",    icon: "⚠" },
+  { label: "Diagnostics", view: "errors",  icon: "⚠" },
 ];
 
 // ── Active-state helper ───────────────────────────────────────────────────────

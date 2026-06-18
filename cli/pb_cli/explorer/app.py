@@ -10,9 +10,11 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from pb_cli.explorer.routes import (
+    analysis,
     datawindows,
     diagrams,
     errors,
+    libraries,
     objects,
     procedures,
     queries,
@@ -36,6 +38,8 @@ def create_app(db_path: str = "pb.duckdb") -> FastAPI:
 
     app = FastAPI(title="pb explore", version="0.1.0")
     app.state.db_path = db_path
+    app.include_router(analysis.router)
+    app.include_router(libraries.router)
     app.include_router(objects.router)
     app.include_router(procedures.router)
     app.include_router(search.router)

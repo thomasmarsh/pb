@@ -301,6 +301,31 @@ export interface ErrorListResponse {
   items: ParseErrorRow[];
 }
 
+export interface LibraryObject {
+  name: string;
+  kind: string;
+  proc_count: number;
+}
+
+export interface LibraryDetailResponse {
+  name: string;
+  objects: LibraryObject[];
+  object_count: number;
+  uncalled_proc_count: number;
+}
+
+export interface DeadCodeItem {
+  name: string;
+  object: string;
+  proc_type: string;
+  cyclomatic: number | null;
+}
+
+export interface DeadCodeResponse {
+  items: DeadCodeItem[];
+  total: number;
+}
+
 export interface ExploreProcDetail {
   ast: Located<BodyStmt>[] | null;
   source_rendered: string;

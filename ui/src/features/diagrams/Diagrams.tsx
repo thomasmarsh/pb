@@ -90,8 +90,11 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   function navigateTo(kind: "object" | "table", name: string, target: "detail" | "focus") {
     setTooltip(null);
     if (target === "detail") {
-      const tag = kind === "object" ? "objects" : "datawindows";
-      store.dispatch({ tag, action: { type: "select", name } });
+      if (kind === "object") {
+        store.dispatch({ tag: "objects", action: { type: "select", name } });
+      } else {
+        store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "tableDetail", name } } });
+      }
     } else if (target === "focus") {
       if (kind === "object") {
         setFocalInput(name);

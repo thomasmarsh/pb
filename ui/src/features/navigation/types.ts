@@ -15,6 +15,7 @@ export type Route =
   | { view: "search" }
   | { view: "explore" }
   | { view: "errors" }
+  | { view: "libraryDetail"; name: string }
   | { view: "deadCode" }
   | { view: "taintExplorer" }
   | { view: "formalReports" };
