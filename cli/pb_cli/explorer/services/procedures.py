@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
+from pathlib import Path
 from typing import Any
 
 import duckdb
 
 from pb_cli.explorer.routes.dependencies import rows
+from pb_cli.explorer.services.objects import _get_root
 
 
 def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc_name: str) -> dict[str, Any] | None:
@@ -29,16 +30,28 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
     source_file = proc.get("file")
     start = proc.get("start_line")
     end = proc.get("end_line")
-    if source_file and start and end and os.path.exists(source_file):
-        try:
-            with open(source_file, "r", errors="replace") as f:
-                all_lines = f.readlines()
-            snippet = "".join(all_lines[max(0, start - 1) : end])
-            proc["source_original"] = snippet
-        except (OSError, IndexError):
-            proc["source_original"] = None
-    else:
-        proc["source_original"] = None
+
+    source_original = None
+    if start and end:
+        obj_rows = rows(conn.execute(
+            "SELECT source_text FROM objects WHERE name = ?", [object_name]
+        ))
+        if obj_rows and obj_rows[0].get("source_text"):
+            all_lines = obj_rows[0]["source_text"].splitlines()
+            source_original = "".join(all_lines[max(0, start - 1) : end])
+
+    if not source_original and source_file and start and end:
+        root = _get_root(conn)
+        disk_path = (root / source_file) if root else Path(source_file)
+        if disk_path.exists():
+            try:
+                with open(disk_path, "r", errors="replace") as f:
+                    all_lines = f.readlines()
+                source_original = "".join(all_lines[max(0, start - 1) : end])
+            except (OSError, IndexError):
+                pass
+
+    proc["source_original"] = source_original
 
     callers = rows(conn.execute(
         "SELECT DISTINCT c.object AS caller_object, c.from_proc AS caller_proc "

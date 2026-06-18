@@ -76,14 +76,15 @@ def _sha256(path: Path) -> str:
 
 
 def hash_source_dir(src_dir: Path) -> dict[str, str]:
-    """SHA256-hash every .sr* file under src_dir. Keys are absolute path strings."""
-    return {str(f): _sha256(f) for f in walk_sr_files(src_dir)}
+    """SHA256-hash every .sr* file under src_dir. Keys are relative path strings."""
+    root = Path(src_dir).resolve()
+    return {str(f.relative_to(root)): _sha256(f) for f in walk_sr_files(src_dir)}
 
 
 def hash_pbl_dir(input_path: Path) -> dict[str, str]:
-    """SHA256-hash every .pbl file under input_path. Keys are absolute path strings."""
+    """SHA256-hash every .pbl file under input_path. Keys are relative path strings."""
     path = input_path.resolve()
-    return {str(p): _sha256(p) for p in sorted(path.iterdir()) if p.is_file() and p.suffix.lower() == ".pbl"}
+    return {str(p.name): _sha256(p) for p in sorted(path.iterdir()) if p.is_file() and p.suffix.lower() == ".pbl"}
 
 
 def ensure_explorer_built(repo: Path, verbose: bool = False) -> None:
@@ -129,13 +130,9 @@ def build_subset_tmpdir(src_dir: Path, files: list[str]) -> Path:
     Caller must clean up the returned directory (shutil.rmtree).
     """
     tmpdir = Path(tempfile.mkdtemp())
-    for abs_path in files:
-        src = Path(abs_path)
-        try:
-            rel = src.relative_to(src_dir)
-        except ValueError:
-            rel = Path(src.name)
-        dst = tmpdir / rel
+    for f in files:
+        src = src_dir / f
+        dst = tmpdir / f
         dst.parent.mkdir(parents=True, exist_ok=True)
         try:
             os.link(src, dst)

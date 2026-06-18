@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-import os
+from pathlib import Path
 from typing import Any
 
 import duckdb
 
 from pb_cli.explorer.routes.dependencies import rows
+
+
+def _get_root(conn: duckdb.DuckDBPyConnection) -> Path | None:
+    """Return the ingestion root directory from metadata, or None."""
+    row = conn.execute("SELECT value FROM metadata WHERE key = 'ingestion_root'").fetchone()
+    return Path(row[0]) if row else None
 
 
 def pbl_name(file_path: str) -> str:
@@ -85,12 +91,15 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
 
     file_path = obj_rows[0]["file"]
     lines = []
-    if file_path and os.path.exists(file_path):
-        try:
-            with open(file_path, "r", errors="replace") as f:
-                lines = f.read().splitlines()
-        except OSError:
-            pass
+    if file_path:
+        root = _get_root(conn)
+        disk_path = (root / file_path) if root else Path(file_path)
+        if disk_path.exists():
+            try:
+                with open(disk_path, "r", errors="replace") as f:
+                    lines = f.read().splitlines()
+            except OSError:
+                pass
     if not lines and obj_rows[0].get("source_text"):
         lines = obj_rows[0]["source_text"].splitlines()
 

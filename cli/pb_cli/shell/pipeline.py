@@ -58,6 +58,7 @@ def run(
             env.storage.drop_tables(conn)
         env.storage.create_schema(conn)
         env.storage.create_state_table(conn)
+        conn.execute("INSERT OR REPLACE INTO metadata VALUES (?, ?)", ["ingestion_root", str(src_dir.resolve())])
 
         with reporter.status("Scanning source files..."):
             current = env.build.hash_source_dir(src_dir)
@@ -128,6 +129,10 @@ def _parse_subset(
                         obj["source_text"] = Path(obj["file"]).read_text(errors="replace")
                     except OSError:
                         obj["source_text"] = None
+                    try:
+                        obj["file"] = str(Path(obj["file"]).relative_to(src_dir))
+                    except ValueError:
+                        pass
                     objects.append(obj)
                 progress.advance()
         return objects, progress.error_count, parse_errors

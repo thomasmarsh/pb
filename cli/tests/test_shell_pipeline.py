@@ -29,6 +29,12 @@ class FakeDb:
         self.state_table_created = False
         self.saved_state: dict[str, str] = {}
         self.metrics_computed = False
+        self.metadata: dict[str, str] = {}
+
+    def execute(self, sql: str, params=None):
+        if "INSERT OR REPLACE INTO metadata" in sql and params:
+            self.metadata[params[0]] = params[1]
+        return self
 
 
 @pytest.fixture

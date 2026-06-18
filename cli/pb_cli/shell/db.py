@@ -148,6 +148,11 @@ CREATE TABLE IF NOT EXISTS user_types (
     ancestor    TEXT,
     within_type TEXT
 );
+
+CREATE TABLE IF NOT EXISTS metadata (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 _ALL_SQL_TABLES_VIEW = """
@@ -231,7 +236,7 @@ def insert_parse_errors(conn: Conn, rows: list[ParseErrorRow]) -> None:
 def drop_tables(conn: Conn) -> None:
     """Drop all data tables and file_state (full reset)."""
     conn.execute("DROP VIEW IF EXISTS all_sql_tables")
-    for t in TABLES + ["file_state"]:
+    for t in TABLES + ["file_state", "metadata"]:
         conn.execute(f"DROP TABLE IF EXISTS {t}")
 
 

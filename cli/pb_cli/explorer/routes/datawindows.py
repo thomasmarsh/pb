@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import duckdb
@@ -10,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from pb_cli.explorer.routes.dependencies import get_db, rows
 from pb_cli.explorer.services.datawindows import get_dw_detail
+from pb_cli.explorer.services.objects import _get_root
 
 router = APIRouter()
 
@@ -21,12 +21,22 @@ async def get_datawindow(name: str, conn: duckdb.DuckDBPyConnection = Depends(ge
         raise HTTPException(status_code=404, detail=f"DataWindow not found: {name}")
 
     source_file = file_rows[0]["file"]
+
     source_original = None
-    if os.path.exists(source_file):
-        try:
-            source_original = Path(source_file).read_text(errors="replace")
-        except OSError:
-            pass
+    source_rows = rows(conn.execute(
+        "SELECT source_text FROM objects WHERE name = ?", [name]
+    ))
+    if source_rows and source_rows[0].get("source_text"):
+        source_original = source_rows[0]["source_text"]
+
+    if not source_original:
+        root = _get_root(conn)
+        disk_path = (root / source_file) if root else Path(source_file)
+        if disk_path.exists():
+            try:
+                source_original = disk_path.read_text(errors="replace")
+            except OSError:
+                pass
 
     return {
         "name": name,
