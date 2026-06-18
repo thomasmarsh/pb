@@ -14,6 +14,7 @@ module PB.AST.BodyStmt
 import PB.Prelude
 import PB.AST.Expr        (Expr, Lvalue)
 import PB.AST.Located     (Located)
+import PB.AST.Type        (PbType)
 import GHC.Generics       (Generic)
 
 data AugOp = AugAdd | AugSub | AugMul | AugDiv
@@ -73,7 +74,12 @@ data ChooseStmt = ChooseStmt
   } deriving (Eq, Show, Generic)
 
 data BodyStmt
-  = BsLocalVar  [Text]               -- Type Name [= init …] (raw token texts)
+  = BsLocalVar
+      { varMods  :: [Text]        -- ["constant", "public", etc.]
+      , varType  :: PbType        -- the declared type
+      , varName  :: Text          -- variable name
+      , varInit  :: Maybe Expr    -- optional initializer
+      }
   | BsAssign    Lvalue Expr           -- lhs = rhs
   | BsAugAssign [Text] AugOp [Text]  -- lhs_tokens op= rhs_tokens
   | BsInc       [Text]               -- lhs_tokens ++

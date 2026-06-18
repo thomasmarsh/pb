@@ -15,6 +15,7 @@ import qualified SerialiseTest
 import qualified SplitterTest
 import qualified StreamTest
 import qualified TokenTest
+import qualified TypeEnvTest
 
 
 import Prelude
@@ -40,4 +41,5 @@ tests = testGroup "pb-ast"
   , TokenTest.tests
   , SplitterTest.tests
   , StreamTest.tests
+  , TypeEnvTest.tests
   ]

@@ -18,6 +18,7 @@ import PB.AST.SourceFile      ( ForwardBlock (..), PrototypesBlock (..), ProtoDe
 import PB.AST.BodyStmt        (BodyStmt (..))
 import PB.AST.Expr            (Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Located         (Located (..))
+import PB.AST.Type            (PbType (..))
 import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
@@ -488,7 +489,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pTypeBlock stmts @?=
           Right (TypeBlock (TypeDecl "w_foo" "window" Nothing)
-                   [loc1 (BsLocalVar ["integer", "i_count"]), loc1 (BsLocalVar ["string", "s_name"])])
+                   [loc1 (BsLocalVar [] (PtPrimitive "integer") "i_count" Nothing), loc1 (BsLocalVar [] (PtPrimitive "string") "s_name" Nothing)])
 
     , testCase "positive: type block with event decl in body" $ do
         let evStmt    = mkStmt [(TkDeclKw, "event"), (TkIdent, "ie_checkbuttons"), (TkLParen, "("), (TkRParen, ")")]
@@ -500,7 +501,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pTypeBlock stmts @?=
           Right (TypeBlock (TypeDecl "w_foo" "window" Nothing)
-                   [loc1 (BsRaw ""), loc1 (BsLocalVar ["cb_delete", "cb_delete"])])
+                   [loc1 (BsRaw ""), loc1 (BsLocalVar [] (PtUserDefined "cb_delete") "cb_delete" Nothing)])
 
     , testCase "negative: missing end type" $ do
         let stmts =
@@ -566,7 +567,7 @@ tests = testGroup "Grammar.File"
               ]
         runSection pOnBlock stmts @?=
           Right (OnBlock "ue_keypress" "" "ue_keypress"
-                   [loc1 (BsLocalVar ["call", "super"])])
+                   [loc1 (BsLocalVar [] (PtUserDefined "call") "super" Nothing)])
 
     , testCase "negative: on alone (no event name)" $ do
         let stmts = [mkStmt [(TkDeclKw, "on")]]

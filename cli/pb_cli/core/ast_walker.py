@@ -81,3 +81,26 @@ def walk_exraw(node) -> Iterator[tuple[str, list[str]]]:
             toks = n.get("contents", [])
             if isinstance(toks, list) and toks:
                 yield toks[0], toks
+
+
+def walk_local_vars(node) -> list[tuple[str, str]]:
+    """Yield (var_name, var_type) for every BsLocalVar anywhere under `node`."""
+    results = []
+    for tag, n, _line in walk_tagged(node):
+        if tag == "BsLocalVar":
+            name = n.get("name", "")
+            ty = n.get("type", {})
+            if isinstance(ty, dict):
+                type_tag = ty.get("tag", "")
+                if type_tag == "PtAny":
+                    type_str = "any"
+                elif type_tag == "PtDecimalPrec":
+                    prec = ty.get("contents", 0)
+                    type_str = f"decimal{{{prec}}}"
+                else:
+                    type_str = ty.get("contents", "")
+            else:
+                type_str = str(ty)
+            if name and type_str:
+                results.append((name, type_str))
+    return results

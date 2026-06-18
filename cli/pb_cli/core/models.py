@@ -112,6 +112,22 @@ class ParseErrorRow(NamedTuple):
     snippet: str | None
 
 
+class LocalVarRow(NamedTuple):
+    file: str
+    object: str
+    proc_name: str
+    var_name: str
+    var_type: str
+    start_line: int | None
+
+
+class UserTypeRow(NamedTuple):
+    file: str
+    type_name: str
+    ancestor: str | None
+    within_type: str | None
+
+
 class RowBatch(TypedDict):
     objects: list[ObjectRow]
     procedures: list[ProcedureRow]
@@ -124,6 +140,8 @@ class RowBatch(TypedDict):
     inherits: list[InheritsRow]
     sql_statements: list[SqlStatementRow]
     parse_errors: list[ParseErrorRow]
+    local_variables: list[LocalVarRow]
+    user_types: list[UserTypeRow]
 
 
 def new_row_batch() -> RowBatch:
@@ -139,6 +157,8 @@ def new_row_batch() -> RowBatch:
         inherits=[],
         sql_statements=[],
         parse_errors=[],
+        local_variables=[],
+        user_types=[],
     )
 
 
@@ -154,4 +174,6 @@ TABLES = [
     "inherits",
     "sql_statements",
     "parse_errors",
+    "local_variables",
+    "user_types",
 ]

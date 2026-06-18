@@ -8,6 +8,7 @@ import Data.Text        (Text)
 import PB.AST.BodyStmt
 import PB.AST.Expr
 import PB.AST.Located         (Located (..))
+import PB.AST.Type            (PbType (..))
 import PB.Pipeline.PrettyPrint
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
@@ -75,7 +76,7 @@ tests = testGroup "PrettyPrint"
     , testCase "return expr"    $ prettyStmt (BsReturn (Just (ExInt "0")))          @?= "return 0"
     , testCase "exit"           $ prettyStmt BsExit                                 @?= "exit"
     , testCase "continue"       $ prettyStmt BsContinue                             @?= "continue"
-    , testCase "local var"      $ prettyStmt (BsLocalVar ["integer", "i"])          @?= "integer i"
+    , testCase "local var"      $ prettyStmt (BsLocalVar [] (PtPrimitive "integer") "i" Nothing)  @?= "integer i"
     , testCase "assign"         $ prettyStmt (BsAssign (lv "x") (ExInt "1"))       @?= "x = 1"
     , testCase "augassign +="   $ prettyStmt (BsAugAssign ["x"] AugAdd ["1"])      @?= "x += 1"
     , testCase "augassign -="   $ prettyStmt (BsAugAssign ["x"] AugSub ["y"])      @?= "x -= y"

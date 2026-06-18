@@ -17,6 +17,7 @@ import PB.AST.Expr        ( BinOp (..), Expr (..)
                           , DispatchExpr (..), DispatchMode (..)
                           , LvSegment (..), Lvalue (..) )
 import PB.AST.Located     (Located (..))
+import PB.AST.Type         (PbType (..))
 import PB.Grammar.Stream  (FileParser, satisfyStmt, isModifierToken, currentLine)
 import PB.Lexing.Splitter (Statement (..))
 import PB.Lexing.Token    (Token (..), TokenKind (..), tkKind, tkText)
@@ -33,6 +34,34 @@ isTypeName t = tkKind t `elem` [TkDatatype, TkIdent]
 
 isOperator :: Token -> Bool
 isOperator t = tkKind t == TkAssignOp || tkKind t == TkAugmentOp
+
+-- ---------------------------------------------------------------------------
+-- Local variable parsing helpers
+
+-- | Parse a PbType from a token and the following tokens (for precision spec).
+parseTypeFromTokens :: Token -> [Token] -> PbType
+parseTypeFromTokens t _
+  | tkKind t == TkDatatype, T.toLower (tkText t) == "any" = PtAny
+  | tkKind t == TkDatatype = PtPrimitive (T.toLower (tkText t))
+  | otherwise = PtUserDefined (tkText t)
+
+-- | Parse a PbType with precision specification (e.g., decimal{10}).
+parseTypeWithPrecision :: Token -> Token -> PbType
+parseTypeWithPrecision t prec =
+  case reads (T.unpack (tkText prec)) of
+    [(n, "")] -> PtDecimalPrec n
+    _         -> PtPrimitive (T.toLower (tkText t))
+
+-- | Parse an optional initializer from tokens after the variable name.
+parseInit :: [Token] -> Maybe Expr
+parseInit [] = Nothing
+parseInit (t:rest)
+  | tkKind t == TkAssignOp = Just (parseExpr rest)
+  | otherwise = Nothing
+
+-- | Parse modifiers from the beginning of a token list.
+parseModifiers :: [Token] -> [Text]
+parseModifiers = map tkText . takeWhile isModifierToken
 
 -- ---------------------------------------------------------------------------
 -- Operator dispatch
@@ -366,22 +395,36 @@ classifyBodyStmt s = case stmtTokens s of
           "destroy" -> maybe (classifyByOp s (stmtTokens s)) BsDestroy (parseLvalue rest)
           _         ->
             let ts           = stmtTokens s
+                mods         = parseModifiers ts
                 (_, skipped) = span isModifierToken ts
             in case skipped of
-                 (typeT : nameT : _)
-                   | isTypeName typeT && tkKind nameT == TkIdent -> BsLocalVar (map tkText ts)
+                 (typeT : nameT : rest')
+                   | isTypeName typeT && tkKind nameT == TkIdent ->
+                       let ty    = parseTypeFromTokens typeT rest'
+                           name  = tkText nameT
+                           initE = parseInit rest'
+                       in BsLocalVar mods ty name initE
                  _ -> classifyByOp s ts
     | otherwise ->
         let ts           = stmtTokens s
+            mods         = parseModifiers ts
             (_, skipped) = span isModifierToken ts
         in case skipped of
-             (typeT : nameT : _)
-               | isTypeName typeT && tkKind nameT == TkIdent -> BsLocalVar (map tkText ts)
-             (typeT : lb : _ : rb : nameT : _)
+             (typeT : nameT : rest')
+               | isTypeName typeT && tkKind nameT == TkIdent ->
+                   let ty    = parseTypeFromTokens typeT rest'
+                       name  = tkText nameT
+                       initE = parseInit rest'
+                   in BsLocalVar mods ty name initE
+             (typeT : lb : prec : rb : nameT : rest')
                | isTypeName typeT
                , tkKind lb   == TkLBrace
                , tkKind rb   == TkRBrace
-               , tkKind nameT == TkIdent -> BsLocalVar (map tkText ts)
+               , tkKind nameT == TkIdent ->
+                   let ty    = parseTypeWithPrecision typeT prec
+                       name  = tkText nameT
+                       initE = parseInit rest'
+                   in BsLocalVar mods ty name initE
              _ -> classifyByOp s ts
 
 parseBodyStmts :: [Statement] -> [Located BodyStmt]

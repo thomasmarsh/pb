@@ -30,6 +30,7 @@ library
     PB.AST.Expr
     PB.AST.Located
     PB.AST.SourceFile
+    PB.AST.Type
     PB.Grammar.Body
     PB.Grammar.DataWindow
     PB.Grammar.File
@@ -43,6 +44,7 @@ library
     PB.Pipeline.PrettyPrint
     PB.Pipeline.Runner
     PB.Pipeline.Serialise
+    PB.Pipeline.TypeEnv
     PB.Pipeline.Walk
   build-depends:
     , base ^>=4.20.1.0
@@ -92,6 +94,7 @@ test-suite pb-ast-test
     , SplitterTest
     , StreamTest
     , TokenTest
+    , TypeEnvTest
   build-depends:
     , base ^>=4.20.1.0
     , pb-ast

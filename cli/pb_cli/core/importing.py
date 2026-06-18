@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from pb_cli.core.ast_walker import count_branches, walk_bsraw_located, walk_calls
+from pb_cli.core.ast_walker import count_branches, walk_bsraw_located, walk_calls, walk_local_vars
 from pb_cli.core.models import (
     CallRow,
     DwArgumentRow,
@@ -13,11 +13,13 @@ from pb_cli.core.models import (
     DwRetrieveTableRow,
     DwRetrieveWhereRow,
     InheritsRow,
+    LocalVarRow,
     ObjectRow,
     ParseErrorRow,
     ProcedureRow,
     RowBatch,
     SqlStatementRow,
+    UserTypeRow,
 )
 from pb_cli.core.sql import parse_pb_sql
 
@@ -55,6 +57,7 @@ def import_file(obj: dict, rows: RowBatch, dialect: str = "oracle") -> None:
 
     if kind == "powerscript":
         _import_ps(obj, file, rows, dialect)
+        _import_user_types(obj, file, rows)
     elif kind == "datawindow":
         _import_dw(obj, file, rows)
 
@@ -84,6 +87,11 @@ def _import_ps(obj: dict, file: str, rows: RowBatch, dialect: str = "oracle") ->
                 if callee:
                     rows["calls"].append(CallRow(file, obj_name, proc_name, callee, call_type))
             _extract_sql(file, obj_name, proc_name, row[9], dialect, rows)
+            for var_name, var_type in walk_local_vars(body):
+                rows["local_variables"].append(LocalVarRow(
+                    file=file, object=obj_name, proc_name=proc_name,
+                    var_name=var_name, var_type=var_type, start_line=None
+                ))
 
 
 def _extract_sql(
@@ -213,3 +221,24 @@ def _ctrl_row(file: str, dw_name: str, ctrl: dict) -> DwControlRow:
         ctrl.get("tab_seq"),
         meta.get("sourceLine"),
     )
+
+
+def _import_user_types(obj: dict, file: str, rows: RowBatch) -> None:
+    """Extract user type declarations from type blocks and forward blocks."""
+    for tb in obj.get("typeBlocks", []):
+        decl = tb.get("decl", {})
+        rows["user_types"].append(UserTypeRow(
+            file=file,
+            type_name=decl.get("name", ""),
+            ancestor=decl.get("ancestor"),
+            within_type=decl.get("within"),
+        ))
+
+    fwd = obj.get("forward") or {}
+    for td in fwd.get("types", []):
+        rows["user_types"].append(UserTypeRow(
+            file=file,
+            type_name=td.get("name", ""),
+            ancestor=td.get("ancestor"),
+            within_type=None,
+        ))

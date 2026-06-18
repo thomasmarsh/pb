@@ -1,4 +1,4 @@
-from pb_cli.core.ast_walker import count_branches, walk_bsraw, walk_bsraw_located, walk_calls, walk_exraw, walk_tagged
+from pb_cli.core.ast_walker import count_branches, walk_bsraw, walk_bsraw_located, walk_calls, walk_exraw, walk_local_vars, walk_tagged
 
 
 def test_walk_calls_excall():
@@ -111,3 +111,94 @@ def test_walk_exraw():
     node = {"tag": "ExRaw", "contents": ["foo", "bar"]}
     results = list(walk_exraw(node))
     assert results == [("foo", ["foo", "bar"])]
+
+
+# ── walk_local_vars ────────────────────────────────────────────────────────
+
+
+def test_walk_local_vars_simple():
+    node = {
+        "tag": "BsLocalVar",
+        "mods": [],
+        "type": {"tag": "PtPrimitive", "contents": "integer"},
+        "name": "i_count",
+        "init": None,
+    }
+    results = walk_local_vars(node)
+    assert results == [("i_count", "integer")]
+
+
+def test_walk_local_vars_with_mods():
+    node = {
+        "tag": "BsLocalVar",
+        "mods": ["constant"],
+        "type": {"tag": "PtPrimitive", "contents": "long"},
+        "name": "ll_max",
+        "init": {"tag": "ExInt", "contents": "100"},
+    }
+    results = walk_local_vars(node)
+    assert results == [("ll_max", "long")]
+
+
+def test_walk_local_vars_user_defined_type():
+    node = {
+        "tag": "BsLocalVar",
+        "mods": [],
+        "type": {"tag": "PtUserDefined", "contents": "n_cst_service"},
+        "name": "svc",
+        "init": None,
+    }
+    results = walk_local_vars(node)
+    assert results == [("svc", "n_cst_service")]
+
+
+def test_walk_local_vars_any_type():
+    node = {
+        "tag": "BsLocalVar",
+        "mods": [],
+        "type": {"tag": "PtAny"},
+        "name": "ax",
+        "init": None,
+    }
+    results = walk_local_vars(node)
+    assert results == [("ax", "any")]
+
+
+def test_walk_local_vars_decimal_precision():
+    node = {
+        "tag": "BsLocalVar",
+        "mods": [],
+        "type": {"tag": "PtDecimalPrec", "contents": 10},
+        "name": "lc_val",
+        "init": None,
+    }
+    results = walk_local_vars(node)
+    assert results == [("lc_val", "decimal{10}")]
+
+
+def test_walk_local_vars_nested_in_if():
+    node = {
+        "tag": "BsIf",
+        "contents": {
+            "cond": {},
+            "then": [
+                {
+                    "tag": "BsLocalVar",
+                    "mods": [],
+                    "type": {"tag": "PtPrimitive", "contents": "string"},
+                    "name": "ls_name",
+                    "init": None,
+                }
+            ],
+            "elseIfs": [],
+            "else": None,
+        },
+    }
+    results = walk_local_vars(node)
+    assert results == [("ls_name", "string")]
+
+
+def test_walk_local_vars_empty_body():
+    node = {"tag": "BsIf", "contents": {"cond": {}, "then": [], "elseIfs": [], "else": None}}
+    results = walk_local_vars(node)
+    assert results == []

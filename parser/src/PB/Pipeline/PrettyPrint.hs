@@ -9,6 +9,7 @@ import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
 import PB.AST.Located     (Located (..))
+import PB.AST.Type         (renderPbType)
 import qualified Data.Text as T
 
 -- | Render a list of body statements to indented PowerScript text.
@@ -27,7 +28,10 @@ prettyStmtAt :: Int -> BodyStmt -> Text
 prettyStmtAt n stmt =
   let pad = T.replicate (n * 4) " "
   in case stmt of
-    BsLocalVar  toks           -> pad <> T.unwords toks
+    BsLocalVar { varMods = mods, varType = ty, varName = name, varInit = initE } ->
+      let prefix = if null mods then "" else T.unwords mods <> " "
+      in pad <> prefix <> renderPbType ty <> " " <> name
+         <> maybe "" (\e -> " = " <> prettyExpr e) initE
     BsAssign    lval e         -> pad <> prettyLvalue lval <> " = " <> prettyExpr e
     BsAugAssign lhs op rhs     -> pad <> T.unwords lhs <> " " <> prettyAugOp op <> " " <> T.unwords rhs
     BsInc       toks           -> pad <> T.unwords toks <> "++"

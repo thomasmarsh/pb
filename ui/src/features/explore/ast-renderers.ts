@@ -33,6 +33,19 @@ function truncStr(v: unknown, max: number): string {
   return "raw";
 }
 
+function renderPbType(t: unknown): string {
+  if (!isNode(t)) return "?";
+  const tag = t.tag;
+  if (tag === "PtAny") return "any";
+  if (tag === "PtPrimitive" || tag === "PtUserDefined") {
+    return typeof t.contents === "string" ? t.contents : "?";
+  }
+  if (tag === "PtDecimalPrec") {
+    return "decimal{" + String(t.contents) + "}";
+  }
+  return "?";
+}
+
 // ── Lvalue rendering ──────────────────────────────────────────────────────────
 
 function renderLvalue(node: Record<string, unknown>): string {
@@ -192,8 +205,18 @@ export const RENDERERS: Record<string, RendererEntry> = {
   BsContinue: { summary: () => "continue" },
   BsDestroy: { summary: (n) => "destroy " + exprSum(n.contents) },
   BsLocalVar: {
-    summary: (n) => arrJoin(n.contents),
-    source: (n) => arrJoin(n.contents),
+    summary: (n) => {
+      const mods = (n.mods as string[] | undefined) ?? [];
+      const prefix = mods.length > 0 ? mods.join(" ") + " " : "";
+      const init = n.init ? " = " + exprSum(n.init) : "";
+      return prefix + renderPbType(n.type) + " " + String(n.name ?? "") + init;
+    },
+    source: (n) => {
+      const mods = (n.mods as string[] | undefined) ?? [];
+      const prefix = mods.length > 0 ? mods.join(" ") + " " : "";
+      const init = n.init ? " = " + exprSum(n.init) : "";
+      return prefix + renderPbType(n.type) + " " + String(n.name ?? "") + init;
+    },
   },
   BsRaw: {
     summary: (n) => truncStr(n.contents, 60),

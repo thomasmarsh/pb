@@ -132,6 +132,22 @@ CREATE TABLE IF NOT EXISTS parse_errors (
     line        INT,
     snippet     TEXT
 );
+
+CREATE TABLE IF NOT EXISTS local_variables (
+    file        TEXT NOT NULL,
+    object      TEXT NOT NULL,
+    proc_name   TEXT NOT NULL,
+    var_name    TEXT NOT NULL,
+    var_type    TEXT NOT NULL,
+    start_line  INT
+);
+
+CREATE TABLE IF NOT EXISTS user_types (
+    file        TEXT NOT NULL,
+    type_name   TEXT NOT NULL,
+    ancestor    TEXT,
+    within_type TEXT
+);
 """
 
 _ALL_SQL_TABLES_VIEW = """
@@ -172,6 +188,8 @@ INSERT = {
     "inherits": "INSERT INTO inherits VALUES (?,?)",
     "sql_statements": "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
     "parse_errors": "INSERT INTO parse_errors VALUES (?,?,?,?,?,?,?)",
+    "local_variables": "INSERT INTO local_variables VALUES (?,?,?,?,?,?)",
+    "user_types": "INSERT INTO user_types VALUES (?,?,?,?)",
 }
 
 

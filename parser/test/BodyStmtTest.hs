@@ -4,6 +4,7 @@ import PB.Prelude
 import PB.AST.BodyStmt        (AugOp (..), BodyStmt (..), PbCall (..))
 import PB.AST.Expr            (Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Located         (Located (..))
+import PB.AST.Type            (PbType (..))
 import PB.Grammar.Body        (classifyBodyStmt, parseBodyStmts, parseLvalue)
 import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
@@ -37,31 +38,31 @@ tests = testGroup "Body"
   [ testGroup "classifyBodyStmt"
     [ testCase "local var: builtin type + name" $
         classifyBodyStmt (mkStmt [(TkDatatype, "long"), (TkIdent, "ll_row")])
-          @?= BsLocalVar ["long", "ll_row"]
+          @?= BsLocalVar [] (PtPrimitive "long") "ll_row" Nothing
 
     , testCase "local var: user-defined type + name (both TkIdent)" $
         classifyBodyStmt (mkStmt [(TkIdent, "cb_delete"), (TkIdent, "cb_delete")])
-          @?= BsLocalVar ["cb_delete", "cb_delete"]
+          @?= BsLocalVar [] (PtUserDefined "cb_delete") "cb_delete" Nothing
 
     , testCase "local var: storage modifier + type + name" $
         classifyBodyStmt
           (mkStmt [(TkStorageModifier, "constant"), (TkDatatype, "long"), (TkIdent, "max_val")])
-          @?= BsLocalVar ["constant", "long", "max_val"]
+          @?= BsLocalVar ["constant"] (PtPrimitive "long") "max_val" Nothing
 
     , testCase "local var: type + name + initializer (all tokens kept)" $
         classifyBodyStmt
           (mkStmt [(TkDatatype, "long"), (TkIdent, "ll_row"), (TkAssignOp, "="), (TkIntLiteral, "0")])
-          @?= BsLocalVar ["long", "ll_row", "=", "0"]
+          @?= BsLocalVar [] (PtPrimitive "long") "ll_row" (Just (ExInt "0"))
 
     , testCase "local var: dec{0} precision specifier → BsLocalVar" $
         classifyBodyStmt
           (mkStmt [(TkDatatype,"dec"),(TkLBrace,"{"),(TkIntLiteral,"0"),(TkRBrace,"}"),(TkIdent,"lc_0")])
-          @?= BsLocalVar ["dec", "{", "0", "}", "lc_0"]
+          @?= BsLocalVar [] (PtDecimalPrec 0) "lc_0" Nothing
 
     , testCase "local var: dec{10} two-digit precision → BsLocalVar" $
         classifyBodyStmt
           (mkStmt [(TkDatatype,"dec"),(TkLBrace,"{"),(TkIntLiteral,"10"),(TkRBrace,"}"),(TkIdent,"lc_10")])
-          @?= BsLocalVar ["dec", "{", "10", "}", "lc_10"]
+          @?= BsLocalVar [] (PtDecimalPrec 10) "lc_10" Nothing
 
     , testCase "assign: simple ident = int literal" $
         classifyBodyStmt (mkStmt [(TkIdent, "ll_row"), (TkAssignOp, "="), (TkIntLiteral, "0")])
@@ -430,7 +431,7 @@ tests = testGroup "Body"
   ]
 
 tag :: BodyStmt -> Text
-tag (BsLocalVar  _)     = "var"
+tag (BsLocalVar  _ _ _ _) = "var"
 tag (BsAssign    _ _)   = "assign"
 tag (BsAugAssign _ _ _) = "aug_assign"
 tag (BsInc       _)     = "inc"
@@ -470,7 +471,7 @@ propClassifyTotal = property $ do
   let stmt   = mkStmt pairs
       result = classifyBodyStmt stmt
   assert $ case result of
-    BsLocalVar  _     -> True
+    BsLocalVar  _ _ _ _ -> True
     BsAssign    _ _   -> True
     BsAugAssign _ _ _ -> True
     BsInc       _     -> True
