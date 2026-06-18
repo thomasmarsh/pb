@@ -117,23 +117,31 @@ AnyModifier ::= (AccessModifier | StorageModifier | FuncModifier)\s+)*
 
 ### 2.4 Primitive Types
 
-The complete authoritative list (lowercase; ~230 entries in the generated catalog):
+Types fall into two categories with different semantics:
+
+**Scalar primitives** (~24 types) — have implicit coercion rules and special runtime behavior:
 
 ```
--- Scalar primitives
 any blob boolean byte char character
 date datetime dec decimal double
 int integer long longlong longptr
 real string time uint ulong
 unsignedint unsignedinteger unsignedlong
+```
 
--- Transaction/system
+`any` is the dynamic catch-all: it can hold any value at runtime, and its actual type is determined dynamically. This makes static type inference impossible for `any`-typed variables.
+
+**System/transaction types** (~11 types) — represent runtime objects, no special coercion:
+
+```
 transaction dynamicdescriptionarea dynamicstagingarea
 error message application window menu datawindow
 nonvisualobject function_object
 ```
 
-See `vsc-powersyntax/src/server/parsing/grammar.ts` → `PB_BUILTIN_TYPES` for the ~230-entry complete list including all visual controls, PDF objects, HTTP/REST classes, and reflection types.
+**Visual control and framework classes** (~195 additional names) — `commandbutton`, `treeview`, `httpclient`, etc. These are class names, not primitives with special type semantics. For type-checking purposes they behave like user-defined types: resolved from forward declarations and type blocks, no implicit coercion.
+
+The full catalog is in `vsc-powersyntax/src/server/parsing/grammar.ts` → `PB_BUILTIN_TYPES`. A type annotation pass needs only the ~35 scalar and system types above; the rest are class names resolved from the object hierarchy.
 
 ### 2.5 String Literals
 

@@ -1,383 +1,226 @@
-# Architectural Specification: PowerBuilder-to-JSON AST Compiler Front-End
+# pb — A Code Intelligence Tool for PowerBuilder
 
-## Subtitle: Static Analysis & LLM-Driven Code Querying via DuckDB SQL
+## The Problem
 
----
+Large PowerBuilder codebases are structurally opaque. A typical enterprise
+system spans hundreds of thousands of lines across thousands of source files.
+The IDE shows you one object at a time. There is no way to ask "what tables does
+this form read?", "what calls this function?", or "where does this DataWindow
+retrieve its data?" without opening files manually and reading code line by line.
+The format mixes visual layout metadata, SQL, and PowerScript in a way that
+resists ordinary text search, and there is no tooling that understands the
+language well enough to answer structural questions automatically.
 
-## 1. Executive Summary & Core Philosophy
+The result is that the people who need answers most — developers tracing a bug,
+modernization teams inventorying what a feature does, auditors checking data
+flows — spend most of their time just finding where to look.
 
-This document defines the architectural strategy, data design, and downstream workflow for
-compiling a legacy PowerBuilder codebase (~300KLOC across 1,700 source files) into a
-unified, rich Abstract Syntax Tree (AST) serialised as JSON, then into a **DuckDB
-relational database** that enables SQL-based cross-file analysis.
-
-### The Core Problem
-
-Legacy PowerBuilder codebases (`.srd`, `.sru`, `.srw`, `.srm`, `.sjp`) are inherently
-hostile to modern static analysis tools and Large Language Models (LLMs). They are
-heavily polluted with visual layout metadata (coordinates, font metrics, colour bytes),
-rely on complex implicit object-oriented inheritance loops, and embed a unique mix of
-procedural PowerScript, proprietary `PBSELECT` metadata, and native PL/SQL blocks.
-Feeding raw source files into an LLM causes prompt context exhaustion, high token costs,
-and catastrophic model hallucinations due to the language training gap.
-
-### The Solution: Structural Separation + Relational Query
-
-We bypass text-based reading by transforming the codebase into a dense, normalised JSON
-AST using a **Megaparsec** compiler front-end, then extracting a **DuckDB** relational
-database of canonical fact tables. This enables:
-
-- **The LLM writes SQL, not code searches:** It converts natural language questions into
-  deterministic SQL queries against `pb.duckdb`, executed locally in milliseconds.
-- **The LLM reads pseudo-PBScript, not JSON:** The `pb-render` tool converts any
-  function or event body from the AST back to readable PowerScript, reducing context
-  token cost and hallucination risk.
-- **Diagrams communicate structure:** `pb-diagram` generates GraphViz SVGs for
-  inheritance hierarchies, call graphs, DW-table dependencies, and complexity heatmaps.
+pb is designed to solve this. It parses your entire PowerBuilder source tree into
+a typed, queryable model, then provides three ways to explore it: Browse,
+Understand, and Ask.
 
 ---
 
-## 2. LLM + DuckDB Integration Workflow (Agentic Tool-Use)
+## Design Principle
 
-To execute complex system-wide audits — discovering every form validation rule or tracing
-database lineage — the system runs a multi-stage agentic loop.
+pb is built around a single idea: **fluent, effortless traversal**. When you are
+trying to understand a large codebase, you are following a chain of questions —
+each answer raises the next. What does this function call? Who depends on it?
+What tables does that DataWindow read? What validates that input? The tool should
+make each step instantaneous and frictionless, so the work of understanding is
+thinking, not navigating software.
 
-```
-┌──────────────────┐   1. Natural Language Question    ┌───────────┐
-│                  ├─────────────────────────────────>│           │
-│                  │                                   │    LLM    │
-│                  │   2. Generates SQL Query          │           │
-│                  │<─────────────────────────────────┤           │
-│       User       │                                   └───────────┘
-│   (or Agentic    │
-│    Pipeline)     │   3. Executes SQL locally
-│                  ├──────────────────────┐
-│                  │                      ▼
-│                  │             ┌─────────────────┐
-│                  │             │   pb.duckdb     │
-│                  │             │  fact tables    │
-│                  │             └────────┬────────┘
-│                  │                      │ 4. Returns focused
-│                  │                      │    tabular result
-│                  │<─────────────────────┘
-└──────────────────┘   5. (Optional) LLM call:
-                           pb-render shows code body;
-                           LLM summarises into English
-```
+This shapes everything about the design. Browse and Understand are not two
+sections — they are two faces of every entity. Any object, function, or
+DataWindow can be viewed as source code or as structural analysis, and navigation
+moves freely between the two. Ask generates results that link into either face.
+The three pillars describe what you are doing, not where you are in the app.
 
-### Why DuckDB SQL (not jq or Datalog)
+Every entity is a node, and every node goes somewhere. A diagram node is a link.
+A table cell containing an object name is a link. A search result is a link.
+Nothing is a dead end.
 
-| Concern | jq | Datalog (Soufflé) | DuckDB SQL |
-|---|---|---|---|
-| LLM query accuracy | fragile on novel shapes | almost no training data | excellent |
-| Cross-file joins | impossible | natural | natural |
-| Recursive queries | impossible | native | recursive CTEs |
-| Graph metrics | impossible | native | via Python NetworkX |
-| Setup | zero | compile step | zero (embedded) |
-
-**Soufflé/Datalog** is the theoretically correct model for fixed-point program analysis
-(call-graph reachability, points-to analysis). It is noted here as a deferred second-tier
-tool: if DuckDB recursive CTEs prove insufficient for a specific analysis, pre-compute the
-result in Soufflé and load it back into DuckDB as an additional table. No evidence of
-this need exists yet for the stated use cases.
-
-### Complete Operational Pipeline
-
-1. **Question:** A developer asks: *"What field validations are enforced when updating
-   an invoice, and what database tables do they hit?"*
-2. **Query Generation:** The LLM receives the `pb.duckdb` schema (§5) and generates SQL.
-3. **Local Execution:** DuckDB runs the query against indexed fact tables — milliseconds,
-   not minutes.
-4. **Render (optional):** The LLM calls `pb-render --object X --proc itemchanged` to get
-   a readable pseudo-PBScript body for any procedure in the result set.
-5. **Synthesis:** The LLM translates the focused result into a markdown analysis.
-
-### Concrete Simulation: Analysis of Form Validations
-
-#### Input Scenario
-
-A DataWindow control inside `w_invoice_entry.srw` tracks `d_invoice_detail.srd`.
-Validations are split across DW field expressions, the `ItemChanged` event, and an
-inline validation function.
-
-#### Step 1: LLM-Generated SQL Query
-
-```sql
--- Find all validation-related procedures and DW expressions for invoice forms
-WITH invoice_objects AS (
-    SELECT name, ancestor FROM objects
-    WHERE name LIKE '%invoice%'
-),
-val_procs AS (
-    SELECT p.file, p.object, p.proc_type, p.name, p.start_line, p.end_line
-    FROM procedures p
-    JOIN invoice_objects o ON p.object = o.name
-    WHERE p.name IN ('itemchanged', 'pbm_dwnitemchange')
-       OR lower(p.name) LIKE '%validate%'
-       OR lower(p.name) LIKE '%check%'
-       OR lower(p.name) LIKE '%verify%'
-),
-val_dw AS (
-    SELECT dc.file, dc.dw_name, dc.control_name, dc.expression
-    FROM dw_controls dc
-    JOIN invoice_objects o ON dc.file LIKE '%' || lower(o.name) || '%'
-    WHERE dc.expression IS NOT NULL
-),
-referenced_tables AS (
-    SELECT dt.file, dt.table_name
-    FROM dw_retrieve_tables dt
-    WHERE dt.file LIKE '%invoice%'
-)
-SELECT
-    p.file AS source_file,
-    p.object AS context_object,
-    o.ancestor AS ancestor_class,
-    p.proc_type AS logic_type,
-    p.name AS identifier,
-    p.start_line,
-    p.end_line,
-    (SELECT json_group_array(rt.table_name)
-     FROM referenced_tables rt WHERE rt.file = p.file) AS referenced_tables
-FROM val_procs p
-JOIN invoice_objects o ON p.object = o.name
-
-UNION ALL
-
-SELECT
-    dc.file, dc.dw_name, 'w_invoice_entry', 'dw_expression',
-    dc.control_name, NULL, NULL,
-    '[]'
-FROM val_dw dc;
-```
-
-#### Step 2: Focused Result (fed back to LLM)
-
-```
-source_file                  | context_object    | logic_type    | identifier      | start_line | referenced_tables
-d_invoice_detail.srd         | d_invoice_detail  | dw_expression | invoice_amt     | -          | []
-w_invoice_entry.srw          | w_invoice_entry   | event         | itemchanged     | 147        | ["customer"]
-w_invoice_entry.srw          | w_invoice_entry   | function      | of_check_amount | 203        | []
-```
-
-#### Step 3: Optional — render the event body
-
-```bash
-pb-runner --render -i ./src --object w_invoice_entry --proc itemchanged
-```
-
-```powerscript
-// itemchanged  [event]
-// object: w_invoice_entry  •  ancestor: w_master_entry
-// file:   src/w_invoice_entry.srw  •  lines: 147–178
-
-if dwo.name = 'customer_id' then
-  if :customer.status from db where id = :data is 'SUSPENDED' then
-    reject
-  end if
-end if
-```
-
-#### Step 4: Final Semantic Output
-
-The LLM processes the SQL result and pseudo-PBScript body and outputs:
-
-> ### Invoice Form Validation Summary
->
-> - **DataWindow Bounds:** `d_invoice_detail.srd` enforces `invoice_amt > 0.00` at the
->   data layer via a column expression.
-> - **State-Based Lifecycle:** The `itemchanged` event in `w_invoice_entry.srw` (lines
->   147–178) checks `customer.status = 'SUSPENDED'` and rejects the update.
-> - **DB Tables Hit:** `customer` (via the `itemchanged` host variable query).
+pb is a readonly IDE — all the navigational power of a development environment,
+applied to understanding rather than editing.
 
 ---
 
-## 3. JSON Serialisation & Schema Guidance
+## Browse
 
-### Crucial Data Anchors (on every callable block node)
+pb organises your codebase as the IDE does — libraries, objects, functions,
+events, DataWindows. But every item in that tree is a live navigation target.
+From a function you can jump to its callers and callees. From an object you can
+follow its full ancestry chain. From a DataWindow you can navigate to the tables
+it reads and the expressions it evaluates.
 
-- **`.meta.file`**: Repository-relative path to the `.sr*` file.
-- **`.meta.object`**: Name of the owning `global type` declaration.
-- **`.meta.ancestor`**: Declared ancestor class from the file's own `TypeDecl`. Not
-  cross-file resolved — join across the `objects` manifest to walk the full chain.
-- **`.meta.startLine`** / **`.meta.endLine`**: Physical source line range of the block.
-  Populated from the logical-line preprocessor output (`llStartLine`). Enables
-  navigation to any procedure without grep.
-- **`.nodeType`** equivalent: the `"tag"` field on every AST node (already present).
+The source view and the structural views are connected at every step — there is
+no separate mode to enter for structural context. Rendered source, call links,
+and diagrams appear together wherever you are in the tree.
 
-### Source line conventions
-
-- Line numbers are **logical** (after `&` continuation joining), 1-indexed.
-- `startLine` = line of the `public function` / `on clicked` / etc. header statement.
-- `endLine` = line of the corresponding `end function` / `end on` terminator.
-- Column tracking is omitted: PowerScript is line-oriented; column positions inside a
-  joined logical line are meaningless for on-disk navigation.
-
-### DataWindow controls
-
-Every `DwControl` node carries:
-
-```json
-{
-  "meta": {
-    "file": "example/openpay/dw_misth_kratapod_list.srd",
-    "dw": "dw_misth_kratapod_list",
-    "sourceLine": 88
-  }
-}
-```
-
-### PBSELECT (DataWindow retrieval)
-
-Do not treat `PBSELECT` as a raw text string. Parse it into a typed node:
-
-```json
-{
-  "retrieve": {
-    "version": 400,
-    "tables": ["misth_kratapod"],
-    "columns": ["misth_kratapod.kodkratapod", "misth_kratapod.kodxrisi"],
-    "arguments": [{"name": "arg_kodxrisi", "type": "string"}],
-    "where": [
-      {"exp1": "misth_kratapod.kodxrisi", "op": "=", "exp2": ":arg_kodxrisi", "logic": null}
-    ]
-  }
-}
-```
-
-This enables the `dw_retrieve_tables` fact table in DuckDB, which is the core of the
-"what DB tables does this form read?" use case.
-
-### Inline PowerScript SQL & PL/SQL Blocks
-
-Host variables (`:ls_invoice_id`, `:dw_1.Object.Data`) are serialised as
-`{"tag":"host_var","lvalue":{...}}` — distinct from regular lvalues so SQL parsers
-do not choke on the colon syntax. Currently classified as `ExHostVar` in the AST.
-
-Preserve `//` and `/* */` comments under a `.comments` array attached to the nearest
-statement node (deferred to E8 — requires lexer changes).
+Navigation is keyboard-first. A global search bar, reachable with `/` from
+anywhere in the app, finds objects, functions, and DataWindows by name or
+keyword. `?` opens a help overlay listing available shortcuts.
 
 ---
 
-## 4. Scalable Compilation Pipeline
+## Understand
 
-```
-[ 1,700 Source Files ]
-         │
-         ▼  pb-runner (Haskell Megaparsec compiler)
-[ Individual .json AST Files ]     ← -i <srcdir> -o <outdir>
-[ manifest.json ]                  ← object/ancestor index
-         │
-         ▼  pb-runner --jsonl (streaming mode)
-[ JSONL stream ]                   ← one line per file to stdout
-         │
-         ▼  pb-index (Python, reads JSONL → DuckDB)
-[ pb.duckdb ]
-  ├── objects          (one row per source file / type declaration)
-  ├── procedures       (functions, subroutines, events, on-blocks)
-  ├── dw_controls      (DataWindow visual controls)
-  ├── dw_retrieve_*    (PBSELECT tables, columns, where clauses, args)
-  ├── inherits         (declared ancestry edges)
-  ├── calls            (call graph edges — populated by pb-analyze)
-  └── object_metrics   (PageRank, betweenness, cyclomatic — pb-analyze)
-         │
-         ├──▶  SQL queries (LLM-generated, answers any structural question)
-         ├──▶  pb-analyze  (NetworkX graph metrics → object_metrics)
-         ├──▶  pb-diagram  (GraphViz SVG: inheritance, calls, DW-tables, heatmap)
-         └──▶  pb-runner --render  (pseudo-PBScript body output for LLM injection)
-```
+pb exposes the structure that is hidden inside the code — the kind of information
+that would take weeks to assemble manually from a large codebase. The structural
+views are the foundation; the platform is built to go much deeper.
 
-### Serialisation rules
+**Call graphs.** Who calls what. Which objects are at the centre of the call
+network. Where the highest complexity is concentrated.
 
-1. **Do not generate one giant JSON file.** Use per-file `.json` output (`-o` mode) or
-   streaming JSONL (`--jsonl` mode). DuckDB `read_ndjson_auto` can query JSONL directly
-   without loading all files into memory.
-2. **JSONL for bulk processing:** `pb-runner --jsonl | uv run pb import`
-   populates `pb.duckdb` in a single streaming pass.
-3. **Tilde-escaping:** Normalise `~"` → `"` and `~~` → `~` in all string values before
-   serialisation. The `pbDwStringChunk` lexer function handles this.
+**Impact analysis.** Which objects depend on a given function or DataWindow. How
+far a change propagates. What breaks if a signature or retrieve definition is
+modified.
 
----
+**Inheritance.** The full ancestry chain for any object, rendered as a navigable
+diagram. Depth of inheritance. Where behaviour is overridden.
 
-## 5. Canonical DuckDB Schema
+**DataWindow dependencies.** Which tables a DataWindow reads, what its WHERE
+arguments are, what compute expressions reference. This is the primary tool for
+answering "what data does this form touch?"
 
-This is the authoritative query contract. LLMs and scripts should target these tables.
+**Complexity metrics.** Cyclomatic complexity, graph centrality, and influence
+scores, pre-computed across the whole codebase and surfaced as heatmaps and
+sortable tables.
 
-```sql
--- One row per source file (or per global type declaration in multi-type files)
-objects (file TEXT, name TEXT, kind TEXT, ancestor TEXT)
+**Control flow and data flow.** The control flow graph for any procedure —
+which paths exist, which branches are reachable, where execution can go.
+Data flow across procedure boundaries — where a value originates, what
+transforms it, where it ends up. Program slices: given any expression, what
+statements could have affected it, and where can it propagate?
 
--- Every callable unit: functions, subroutines, events, on-blocks
-procedures (
-    file TEXT, object TEXT, proc_type TEXT, name TEXT,
-    modifiers TEXT, params TEXT, return_type TEXT,
-    start_line INT, end_line INT,
-    cyclomatic INT,         -- McCabe complexity (branches + 1)
-    body_json JSON          -- full body for ad-hoc inspection / pb-render
-)
+**Taint analysis.** Which values in the system originate from user input or
+external sources, and where they travel. Which code paths reach sensitive
+operations — database writes, external calls — without passing through
+validation. Not a heuristic, but a structural analysis derived from the
+complete call graph and data flow model.
 
--- DataWindow visual controls
-dw_controls (
-    file TEXT, dw_name TEXT, control_name TEXT, control_type TEXT,
-    band TEXT, x INT, y INT, width INT, height INT,
-    expression TEXT, tab_seq INT, source_line INT
-)
+**Formal verification.** Data access constraints stated in plain English,
+answered with a proof or a counterexample. "Does user input ever reach this
+table without going through the validation function?" is a question pb can
+formally resolve — producing either a guarantee or a concrete execution path
+that demonstrates the gap.
 
--- PBSELECT retrieval decomposition
-dw_retrieve_tables  (file TEXT, dw_name TEXT, table_name TEXT)
-dw_retrieve_columns (file TEXT, dw_name TEXT, column_fqn TEXT, table_name TEXT, column_name TEXT)
-dw_retrieve_where   (file TEXT, dw_name TEXT, idx INT, exp1 TEXT, op TEXT, exp2 TEXT, logic TEXT)
-dw_arguments        (file TEXT, dw_name TEXT, arg_name TEXT, arg_type TEXT)
-
--- Graph edges
-inherits (from_object TEXT, to_object TEXT)
-calls    (file TEXT, object TEXT, from_proc TEXT, to_name TEXT, call_type TEXT)
-
--- Pre-computed graph metrics (populated by pb-analyze)
-object_metrics (
-    object TEXT, in_degree INT, out_degree INT,
-    betweenness DOUBLE, pagerank DOUBLE,
-    max_cyclomatic INT, avg_cyclomatic DOUBLE, dit INT
-)
-```
-
-### Example canonical queries
-
-```sql
--- What DB tables does w_invoice_entry read?
-SELECT DISTINCT dt.table_name
-FROM objects o
-JOIN dw_retrieve_tables dt ON o.file = dt.file
-WHERE o.name = 'w_invoice_entry';
-
--- Full inheritance chain for an object
-WITH RECURSIVE anc AS (
-  SELECT name, ancestor FROM objects WHERE name = 'w_invoice_entry'
-  UNION ALL
-  SELECT o.name, o.ancestor FROM objects o
-    JOIN anc a ON o.name = a.ancestor WHERE o.ancestor IS NOT NULL
-)
-SELECT * FROM anc;
-
--- Top 10 complexity hotspots
-SELECT o.name, m.max_cyclomatic, m.in_degree, m.pagerank
-FROM objects o JOIN object_metrics m ON o.name = m.object
-ORDER BY m.max_cyclomatic DESC LIMIT 10;
-
--- All compute expressions referencing a specific DB function
-SELECT file, dw_name, control_name, expression
-FROM dw_controls
-WHERE expression LIKE '%fn_misth%';
-```
+There is no standalone diagrams section. Every diagram lives with the entity it
+describes — a call graph appears on the object's own page, a dependency diagram
+on the DataWindow's page. From any diagram node, source is one click away.
+Structural context is always available; it is never a separate destination.
 
 ---
 
-## 6. Tool Reference
+## Ask
 
-| Tool | Language | Input | Output | Plan |
-|---|---|---|---|---|
-| `pb-runner -o` | Haskell | source dir | per-file JSON + manifest.json | plan/28 |
-| `pb-runner --jsonl` | Haskell | source dir | JSONL stream | plan/28 |
-| `pb-runner --render` | Haskell | source dir + object/proc | pseudo-PBScript | plan/32 |
-| `pb-index` | Python | JSONL | pb.duckdb | plan/29 |
-| `pb-analyze` | Python | pb.duckdb | object_metrics, calls tables | plan/30 |
-| `pb-diagram` | Python | pb.duckdb | GraphViz SVG | plan/31 |
+Not every question has a pre-built screen. pb exposes a query interface backed
+by a local database containing everything the parser knows: objects, procedures,
+calls, DataWindow controls, SQL retrieval definitions, complexity scores, and
+graph metrics.
+
+Two ways in: write a query directly — with syntax highlighting, schema browsing,
+table inspection, and the full expressive power of SQL, in an interface modelled
+on the DuckDB command-line client — or ask a question in plain English and let
+pb translate it into a query. Either way, results run locally in milliseconds.
+
+Results are object-aware. A cell containing a DataWindow name, function, or
+table name is a link — into its source view, its analysis view, or both. Queries
+can surface diagrams where the structure is derivable from the result.
+
+As the analysis infrastructure deepens, so does Ask. Not every question is a
+database query. "What is the backward slice of this variable?" is a data flow
+question. "Prove that user input cannot reach this table without validation" is
+a formal claim. pb translates natural language into whichever formal system can
+answer it — a SQL query, a data flow traversal, a taint analysis, or a
+constraint passed to a solver. The answer comes back in the same linked,
+navigable form: a result you can follow into source.
+
+Queries you find useful can be saved, named, and re-run. The most valuable ones
+become permanent features — the query interface is where new analysis ideas
+start; built-in views are where proven ones land.
+
+---
+
+## Who uses pb
+
+**PowerBuilder developers** need to understand systems they didn't build: where a
+bug might have entered, what a change will break, how a complex event handler
+actually works. The familiar source tree is the starting point; call graphs and
+blast-radius analysis close the gap that the IDE leaves open.
+
+**Modernization teams** need a structural inventory of what the system does: what
+each window reads, how deeply inheritance is used, where the complexity is
+concentrated. Pre-built analysis views give the broad picture; custom queries
+answer the specific questions that come up during a port or rewrite.
+
+**Auditors** need more than a list of which procedures touch sensitive tables —
+they need to formally verify that data access constraints actually hold. Which
+paths reach this database operation? Does any path bypass the validation
+function? pb answers these as structural questions over the codebase, not as
+grep results, producing either a guarantee or a concrete counterexample to
+investigate.
+
+Every user will use all three modes. Browse is for when you know where to start;
+Understand is for when you need the bigger picture; Ask is for when your question
+doesn't have a screen yet.
+
+---
+
+## What makes this possible
+
+pb is built on a complete, typed parser for PowerBuilder source files — not
+pattern matching or heuristics, but a grammar that fully understands PowerScript,
+DataWindow definitions, SQL retrieval blocks, and the object system. The result
+is a structured representation of the entire codebase that can be indexed into a
+relational database and queried with the full expressiveness of SQL.
+
+Because the underlying representation is immutable and complete, the entire
+arsenal of graph theory applies directly. Centrality, reachability, inheritance
+depth, and influence scores are all derivable from a single structural model of
+the codebase.
+
+When source files fail to parse, a diagnostic view surfaces the errors with file
+and line locations — keeping the index transparent and maintainable.
+
+---
+
+## What comes next
+
+**Type inference.** A typing pass over the full AST decorates every expression
+with its type. This unlocks type-aware search and queries, type safety
+diagnostics across the codebase, and serves as the foundation for all deeper
+analysis.
+
+**Data flow and program slicing.** With types in place, control flow graphs and
+intra- then inter-procedural data flow become computable. Program slices —
+the set of statements that affect a given variable — give modernization teams
+a precise behavioral specification for any output, and give developers an exact
+blast-radius view for any change.
+
+**Taint analysis.** Tracking values from their sources (user input, database
+reads) through transformations to their sinks (database writes, external calls).
+The result is a navigable map of data access paths across the entire codebase,
+with every path step linked into source.
+
+**Formal verification.** Constraint-based reasoning over code properties —
+whether a branch is reachable, whether a precondition holds at every call site,
+whether a data access constraint is provably satisfied. Where the analysis finds
+a violation, it produces a concrete counterexample.
+
+**Live schema integration.** Connecting to a live database or schema snapshot
+(Oracle-first) will let pb validate DataWindow SQL references, surface column
+types, and reason about schema drift.
+
+**Stored procedures.** Parsing Oracle stored procedures as a first-class source
+type would complete the structural picture for codebases where significant logic
+lives in the database.
+
+---
+
+## Design documentation
+
+The concrete translation of this vision into information architecture, user
+experience, and interface direction is maintained as a series in
+[`doc/design/`](design/): information architecture, user experience, and UI
+direction — each building on the last.
