@@ -3,16 +3,16 @@
 import { For, Show, createMemo, createResource, onMount } from "solid-js";
 import { Tabs } from "@kobalte/core/tabs";
 import type { Store } from "../../core/store.js";
-import type { AppState } from "../../app/state.js";
-import type { AppAction } from "../../app/actions.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
 import type { ErrorKindFilter } from "./types.js";
 import { PAGE_SIZE } from "./types.js";
 import type { ParseErrorRow } from "../../types/api.js";
-import { CodeBlock } from "../../components/CodeBlock.js";
-import { CopyButton } from "../../components/CopyButton.js";
-import { PhaseGateInline } from "../../components/PhaseGate.js";
+import { CodeBlock } from "../../components/detail/CodeBlock.js";
+import { CopyButton } from "../../components/ui/CopyButton.js";
+import { PhaseGateInline } from "../../components/ui/PhaseGate.js";
 import { anonymizeText } from "../../core/anonymize.js";
-import { highlightAsync } from "../../lib/highlight.js";
+import { highlightAsync } from "../../utils/highlight.js";
 
 const KIND_FILTERS: { value: ErrorKindFilter; label: string }[] = [
   { value: "all", label: "All" },

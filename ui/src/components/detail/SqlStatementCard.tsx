@@ -2,10 +2,10 @@
 
 import { Show, For } from "solid-js";
 import type { JSX } from "solid-js";
-import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
-import type { SqlStatementRow } from "../types/api.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
+import type { SqlStatementRow } from "../../types/api.js";
 import { SqlBlock } from "./CodeBlock.js";
 import { TableChip } from "./TableChip.js";
 

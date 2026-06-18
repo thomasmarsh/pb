@@ -2,7 +2,7 @@
 
 import { For } from "solid-js";
 import type { JSX } from "solid-js";
-import { highlightPowerScript, highlightSql } from "../lib/highlight.js";
+import { highlightPowerScript, highlightSql } from "../../utils/highlight.js";
 
 export function SqlBlock(props: { code: string; style?: JSX.CSSProperties }) {
   return <pre class="code-viewer sql-code" style={props.style} innerHTML={highlightSql(props.code)} />;

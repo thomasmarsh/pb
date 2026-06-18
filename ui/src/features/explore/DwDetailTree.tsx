@@ -3,8 +3,8 @@
 import { Show, For, createMemo, type JSX } from "solid-js";
 import { useExploreStore } from "./ExploreContext.js";
 import type { DwExploreDetail } from "../../types/api.js";
-import { SqlBlock } from "../../components/CodeBlock.js";
-import { TableChip } from "../../components/TableChip.js";
+import { SqlBlock } from "../../components/detail/CodeBlock.js";
+import { TableChip } from "../../components/detail/TableChip.js";
 import { chevron } from "../../utils/format.js";
 
 export function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {

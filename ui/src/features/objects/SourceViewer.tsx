@@ -1,11 +1,11 @@
 // SourceViewer.tsx — Source code viewer with cross-linked identifiers.
 
 import { For, Show, createSignal, createMemo } from "solid-js";
-import { highlightPowerScript, PB_KEYWORDS } from "../../lib/highlight.js";
+import { highlightPowerScript, PB_KEYWORDS } from "../../utils/highlight.js";
 import type { ProcedureInfo } from "../../types/api.js";
 import type { Store } from "../../core/store.js";
-import type { AppState } from "../../app/state.js";
-import type { AppAction } from "../../app/actions.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
 
 const PROC_COLORS: Record<string, string> = {
   function: "proc-function",

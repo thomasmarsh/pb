@@ -2,12 +2,12 @@
 
 import { Show, For, onMount } from "solid-js";
 import type { Store } from "../../core/store.js";
-import type { AppState } from "../../app/state.js";
-import type { AppAction } from "../../app/actions.js";
-import { EntityCard } from "../../components/EntityCard.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
+import { EntityCard } from "../../components/detail/EntityCard.js";
 import { shortFile } from "../../utils/format.js";
-import { Loading } from "../../components/Loading.js";
-import { useListKeyboard } from "../../utils/useListKeyboard.js";
+import { Loading } from "../../components/ui/Loading.js";
+import { useListKeyboard } from "../../utils/hooks/useListKeyboard.js";
 
 export function DWList(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;

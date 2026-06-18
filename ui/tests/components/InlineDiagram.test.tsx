@@ -12,7 +12,7 @@ import {
   releaseVelocity,
   ZOOM_MIN,
   ZOOM_MAX,
-} from "../../src/components/InlineDiagram.js";
+} from "../../src/components/diagram/InlineDiagram.js";
 import { createTestStore } from "../helpers.js";
 
 afterEach(() => {

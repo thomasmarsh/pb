@@ -1,10 +1,10 @@
 // components/InlineDiagram.tsx — Self-fetching inline SVG diagram with zoom/pan.
 
 import { Show, createResource, createSignal, onCleanup } from "solid-js";
-import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
-import { type DiagramKind, diagramUrl, parsePbUrl, getPbHref } from "../utils/diagram.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
+import { type DiagramKind, diagramUrl, parsePbUrl, getPbHref } from "../../utils/diagram.js";
 import { stripSvgTitles, computeTooltipPosition } from "./diagramMath.js";
 import { createPanZoom } from "./usePanZoom.js";
 import { DiagramTooltip } from "./DiagramTooltip.js";

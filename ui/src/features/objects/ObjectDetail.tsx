@@ -2,15 +2,15 @@
 
 import { Show, createEffect, createSignal } from "solid-js";
 import type { Store } from "../../core/store.js";
-import type { AppState } from "../../app/state.js";
-import type { AppAction } from "../../app/actions.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
 import type { ObjectDetailResponse } from "../../types/api.js";
 import type { ObjectsState } from "./types.js";
-import { Loading } from "../../components/Loading.js";
-import { PhaseGateInline } from "../../components/PhaseGate.js";
-import { DetailHeader } from "../../components/DetailHeader.js";
-import { BackButton } from "../../components/BackButton.js";
-import { EntityListCard } from "../../components/EntityListCard.js";
+import { Loading } from "../../components/ui/Loading.js";
+import { PhaseGateInline } from "../../components/ui/PhaseGate.js";
+import { DetailHeader } from "../../components/detail/DetailHeader.js";
+import { BackButton } from "../../components/ui/BackButton.js";
+import { EntityListCard } from "../../components/detail/EntityListCard.js";
 import { MetricsGrid } from "./detail/MetricsGrid.js";
 import { InheritanceCard } from "./detail/InheritanceCard.js";
 import { ProceduresCard } from "./detail/ProceduresCard.js";

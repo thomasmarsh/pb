@@ -2,7 +2,7 @@
 // URL pushes during navigation are handled by reducers via env.pushUrl().
 
 import type { Route } from "./types.js";
-import type { AppAction } from "../../app/actions.js";
+import type { AppAction } from "../../features/app/actions.js";
 import type { Dispatch } from "../../core/reducer.js";
 import { parse } from "./routes.js";
 

@@ -1,10 +1,10 @@
 import { Show, For, type JSX } from "solid-js";
-import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
-import type { Route } from "../features/navigation/types.js";
-import { chevron } from "../utils/format.js";
-import { LibraryNode } from "../features/explore/TreeNodes.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
+import type { Route } from "../../features/navigation/types.js";
+import { chevron } from "../../utils/format.js";
+import { LibraryNode } from "../../features/explore/TreeNodes.js";
 
 const ENTITY_NAV: { label: string; view: string; icon: string }[] = [
   { label: "Objects",     view: "objects",        icon: "○" },

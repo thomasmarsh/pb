@@ -2,12 +2,12 @@
 
 import { Show, For, createMemo, createSignal, createResource } from "solid-js";
 import { useExploreStore } from "./ExploreContext.js";
-import { highlightAsync } from "../../lib/highlight.js";
+import { highlightAsync } from "../../utils/highlight.js";
 import type { ExploreProcDetail, SqlStatementRow } from "../../types/api.js";
 import { AstNode } from "./AstNode.js";
-import { DetailShell } from "../../components/DetailShell.js";
-import { SqlStatementCard } from "../../components/SqlStatementCard.js";
-import { InlineDiagram } from "../../components/InlineDiagram.js";
+import { DetailShell } from "../../components/detail/DetailShell.js";
+import { SqlStatementCard } from "../../components/detail/SqlStatementCard.js";
+import { InlineDiagram } from "../../components/diagram/InlineDiagram.js";
 import { procBadge } from "../../utils/format.js";
 
 export function ProcDetailPanel(props: { nodeId: string }) {

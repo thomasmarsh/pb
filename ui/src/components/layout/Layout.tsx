@@ -2,13 +2,13 @@
 
 import { type ParentProps } from "solid-js";
 import type { JSX } from "solid-js";
-import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
-import { ExploreStoreContext } from "../features/explore/ExploreContext.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
+import { ExploreStoreContext } from "../../features/explore/ExploreContext.js";
 import { BreadcrumbBar } from "./BreadcrumbBar.js";
 import { Sidebar } from "./Sidebar.js";
-import { useKeyboardShortcuts } from "../utils/useKeyboardShortcuts.js";
+import { useKeyboardShortcuts } from "../../utils/hooks/useKeyboardShortcuts.js";
 
 interface LayoutProps {
   store: Store<AppState, AppAction>;

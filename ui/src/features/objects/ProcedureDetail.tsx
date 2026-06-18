@@ -3,17 +3,17 @@
 import { Show, For, createEffect } from "solid-js";
 import { Tabs } from "@kobalte/core/tabs";
 import type { Store } from "../../core/store.js";
-import type { AppState } from "../../app/state.js";
-import type { AppAction } from "../../app/actions.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
 import type { ProcedureDetailResponse } from "../../types/api.js";
-import { CodeBlock } from "../../components/CodeBlock.js";
-import { Loading } from "../../components/Loading.js";
-import { PhaseGateInline } from "../../components/PhaseGate.js";
-import { EntityCard } from "../../components/EntityCard.js";
-import { SqlStatementCard } from "../../components/SqlStatementCard.js";
-import { DetailHeader } from "../../components/DetailHeader.js";
-import { BackButton } from "../../components/BackButton.js";
-import { EntityListCard } from "../../components/EntityListCard.js";
+import { CodeBlock } from "../../components/detail/CodeBlock.js";
+import { Loading } from "../../components/ui/Loading.js";
+import { PhaseGateInline } from "../../components/ui/PhaseGate.js";
+import { EntityCard } from "../../components/detail/EntityCard.js";
+import { SqlStatementCard } from "../../components/detail/SqlStatementCard.js";
+import { DetailHeader } from "../../components/detail/DetailHeader.js";
+import { BackButton } from "../../components/ui/BackButton.js";
+import { EntityListCard } from "../../components/detail/EntityListCard.js";
 import { procBadge } from "../../utils/format.js";
 
 function ProcedureDetailContent(props: {

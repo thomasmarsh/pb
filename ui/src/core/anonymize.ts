@@ -5,7 +5,7 @@
 // replaces each remaining letter/digit with a random one of the same class.
 // The same exact token text always maps to the same replacement within one call.
 
-import { PB_KEYWORDS } from "../lib/highlight.js";
+import { PB_KEYWORDS } from "../utils/highlight.js";
 
 const UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const LOWER = "abcdefghijklmnopqrstuvwxyz";

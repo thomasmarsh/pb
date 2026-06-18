@@ -2,15 +2,15 @@
 
 import { For, Show, createEffect } from "solid-js";
 import type { Store } from "../../core/store.js";
-import type { AppState } from "../../app/state.js";
-import type { AppAction } from "../../app/actions.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
 import type { TableDetail as TableDetailData, TableProcedureRef, ImpactInheritedRef } from "../../types/api.js";
-import { Loading } from "../../components/Loading.js";
-import { ColumnRow } from "../../components/ColumnRow.js";
-import { EntityCard } from "../../components/EntityCard.js";
-import { DetailHeader } from "../../components/DetailHeader.js";
-import { BackButton } from "../../components/BackButton.js";
-import { PhaseGateInline } from "../../components/PhaseGate.js";
+import { Loading } from "../../components/ui/Loading.js";
+import { ColumnRow } from "../../components/detail/ColumnRow.js";
+import { EntityCard } from "../../components/detail/EntityCard.js";
+import { DetailHeader } from "../../components/detail/DetailHeader.js";
+import { BackButton } from "../../components/ui/BackButton.js";
+import { PhaseGateInline } from "../../components/ui/PhaseGate.js";
 
 const WRITE_OPS = new Set(["INSERT", "UPDATE", "DELETE"]);
 

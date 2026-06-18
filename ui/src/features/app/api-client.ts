@@ -17,11 +17,11 @@ import type {
   TableSummary,
   TableDetail,
   ErrorListResponse,
-} from "../types/api.js";
-import { Effect } from "../core/effect.js";
+} from "../../types/api.js";
+import { Effect } from "../../core/effect.js";
 import type { AppEnv as Env } from "./reducer.js";
 import type { Theme } from "./state.js";
-import type { NavigationAction } from "../features/navigation/types.js";
+import type { NavigationAction } from "../navigation/types.js";
 
 
 export interface ApiClient {

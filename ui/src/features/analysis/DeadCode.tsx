@@ -2,12 +2,12 @@
 
 import { Show, For, createResource } from "solid-js";
 import type { Store } from "../../core/store.js";
-import type { AppState } from "../../app/state.js";
-import type { AppAction } from "../../app/actions.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
 import type { DeadCodeResponse } from "../../types/api.js";
-import { EntityCard } from "../../components/EntityCard.js";
-import { PhaseGateInline } from "../../components/PhaseGate.js";
-import { Loading } from "../../components/Loading.js";
+import { EntityCard } from "../../components/detail/EntityCard.js";
+import { PhaseGateInline } from "../../components/ui/PhaseGate.js";
+import { Loading } from "../../components/ui/Loading.js";
 
 export function DeadCode(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;

@@ -1,7 +1,7 @@
 // features/objects/types.ts
 
 import type { ObjectRow, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ProcedureListItem } from "../../types/api.js";
-import type { Face } from "../../components/FaceToggle.js";
+import type { Face } from "../../components/ui/FaceToggle.js";
 
 export type { Face };
 

@@ -1,33 +1,33 @@
 // app/reducer.ts — App-level reducer: combines all feature reducers.
 // Owns initialState() factory, the top-level reducer, and all app↔feature lenses.
 
-import { pullback, pullbackWithNav, combine } from "../core/reducer.js";
-import { Effect } from "../core/effect.js";
+import { pullback, pullbackWithNav, combine } from "../../core/reducer.js";
+import { Effect } from "../../core/effect.js";
 import type { AppState } from "./state.js";
 import type { AppAction } from "./actions.js";
 
-import { navReducer, type NavEnv } from "../features/navigation/reducer.js";
-import { dashboardReducer, type DashboardEnv, initialDashboardState } from "../features/dashboard/reducer.js";
-import { exploreReducer, makeInitialExploreState, type ExploreEnv } from "../features/explore/reducer.js";
-import { objectsReducer, type ObjectsEnv, initialObjectsState } from "../features/objects/reducer.js";
-import { datawindowsReducer, type DatawindowsEnv, initialDatawindowsState } from "../features/datawindows/reducer.js";
-import { tablesReducer, type TablesEnv, initialTablesState } from "../features/tables/reducer.js";
-import { diagramsReducer, type DiagramsEnv, initialDiagramsState } from "../features/diagrams/reducer.js";
-import { queriesReducer, type QueriesEnv, initialQueriesState } from "../features/queries/reducer.js";
-import { searchReducer, type SearchEnv, initialSearchState } from "../features/search/reducer.js";
-import { errorsReducer, type ErrorsEnv, initialErrorsState } from "../features/errors/reducer.js";
+import { navReducer, type NavEnv } from "../navigation/reducer.js";
+import { dashboardReducer, type DashboardEnv, initialDashboardState } from "../dashboard/reducer.js";
+import { exploreReducer, makeInitialExploreState, type ExploreEnv } from "../explore/reducer.js";
+import { objectsReducer, type ObjectsEnv, initialObjectsState } from "../objects/reducer.js";
+import { datawindowsReducer, type DatawindowsEnv, initialDatawindowsState } from "../datawindows/reducer.js";
+import { tablesReducer, type TablesEnv, initialTablesState } from "../tables/reducer.js";
+import { diagramsReducer, type DiagramsEnv, initialDiagramsState } from "../diagrams/reducer.js";
+import { queriesReducer, type QueriesEnv, initialQueriesState } from "../queries/reducer.js";
+import { searchReducer, type SearchEnv, initialSearchState } from "../search/reducer.js";
+import { errorsReducer, type ErrorsEnv, initialErrorsState } from "../errors/reducer.js";
 
-import type { NavigationAction } from "../features/navigation/types.js";
-import { crumbsForRoute } from "../features/navigation/breadcrumb.js";
-import type { DashboardAction } from "../features/dashboard/actions.js";
-import type { ExploreAction } from "../features/explore/actions.js";
-import type { ObjectsAction } from "../features/objects/actions.js";
-import type { DatawindowsAction } from "../features/datawindows/actions.js";
-import type { TablesAction } from "../features/tables/actions.js";
-import type { DiagramsAction } from "../features/diagrams/actions.js";
-import type { QueriesAction } from "../features/queries/actions.js";
-import type { SearchAction } from "../features/search/actions.js";
-import type { ErrorsAction } from "../features/errors/actions.js";
+import type { NavigationAction } from "../navigation/types.js";
+import { crumbsForRoute } from "../navigation/breadcrumb.js";
+import type { DashboardAction } from "../dashboard/actions.js";
+import type { ExploreAction } from "../explore/actions.js";
+import type { ObjectsAction } from "../objects/actions.js";
+import type { DatawindowsAction } from "../datawindows/actions.js";
+import type { TablesAction } from "../tables/actions.js";
+import type { DiagramsAction } from "../diagrams/actions.js";
+import type { QueriesAction } from "../queries/actions.js";
+import type { SearchAction } from "../search/actions.js";
+import type { ErrorsAction } from "../errors/actions.js";
 
 import type { Theme } from "./state.js";
 

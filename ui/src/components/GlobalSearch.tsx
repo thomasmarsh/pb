@@ -3,12 +3,12 @@
 import { Show, For, createEffect } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
+import type { AppState } from "../features/app/state.js";
+import type { AppAction } from "../features/app/actions.js";
 import { procBadge, shortFile } from "../utils/format.js";
 import { entityIcon } from "../utils/entities.js";
 import { debounce } from "../utils/debounce.js";
-import { ModalShell } from "./ModalShell.js";
+import { ModalShell } from "./ui/ModalShell.js";
 
 export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.Element {
   const store = props.store;

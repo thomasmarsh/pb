@@ -2,13 +2,13 @@
 
 import { Show, For, onMount } from "solid-js";
 import type { Store } from "../../core/store.js";
-import type { AppState } from "../../app/state.js";
-import type { AppAction } from "../../app/actions.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
 import type { ProcedureListItem } from "../../types/api.js";
-import { EntityCard } from "../../components/EntityCard.js";
-import { Loading } from "../../components/Loading.js";
+import { EntityCard } from "../../components/detail/EntityCard.js";
+import { Loading } from "../../components/ui/Loading.js";
 import { procBadge } from "../../utils/format.js";
-import { useListKeyboard } from "../../utils/useListKeyboard.js";
+import { useListKeyboard } from "../../utils/hooks/useListKeyboard.js";
 
 const KIND_LABELS: Record<string, string> = {
   function: "function", subroutine: "subroutine", event: "event", on: "on",

@@ -2,14 +2,14 @@
 
 import { Show, For, createMemo, createResource } from "solid-js";
 import type { Store } from "../../core/store.js";
-import type { AppState } from "../../app/state.js";
-import type { AppAction } from "../../app/actions.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
 import type { ProcedureRow, TableSummary } from "../../types/api.js";
 import type { Route } from "../../features/navigation/types.js";
-import { TableChip } from "../../components/TableChip.js";
+import { TableChip } from "../../components/detail/TableChip.js";
 import { procBadge } from "../../utils/format.js";
-import { Loading } from "../../components/Loading.js";
-import { InlineDiagram } from "../../components/InlineDiagram.js";
+import { Loading } from "../../components/ui/Loading.js";
+import { InlineDiagram } from "../../components/diagram/InlineDiagram.js";
 
 function ProcedureTable(props: { title: string; procs: ProcedureRow[]; store: Store<AppState, AppAction> }) {
   return (

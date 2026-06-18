@@ -3,11 +3,11 @@
 import { Show, For, createSignal, onMount, onCleanup } from "solid-js";
 import { Tabs } from "@kobalte/core/tabs";
 import type { Store } from "../../core/store.js";
-import type { AppState } from "../../app/state.js";
-import type { AppAction } from "../../app/actions.js";
-import { ComboboxInput } from "../../components/ComboboxInput.js";
-import { SvgToolbar } from "../../components/SvgToolbar.js";
-import { DiagramTooltip } from "../../components/DiagramTooltip.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
+import { ComboboxInput } from "../../components/ui/ComboboxInput.js";
+import { SvgToolbar } from "./components/SvgToolbar.js";
+import { DiagramTooltip } from "../../components/diagram/DiagramTooltip.js";
 import { parsePbUrl, getPbHref, HAS_FOCUS, AUTO_GENERATE, type DiagramKind } from "../../utils/diagram.js";
 
 export function Diagrams(props: { store: Store<AppState, AppAction> }) {

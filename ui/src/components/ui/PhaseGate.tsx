@@ -2,9 +2,9 @@
 
 import { createSignal } from "solid-js";
 import type { JSX } from "solid-js";
-import type { Store } from "../core/store.js";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
 
 interface PhaseGateProps {
   phase: 2 | 3 | 4;

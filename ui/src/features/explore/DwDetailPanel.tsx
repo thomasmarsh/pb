@@ -2,7 +2,7 @@
 
 import { useExploreStore } from "./ExploreContext.js";
 import type { DwExploreDetail } from "../../types/api.js";
-import { DetailShell } from "../../components/DetailShell.js";
+import { DetailShell } from "../../components/detail/DetailShell.js";
 import { DwDetailTree } from "./DwDetailTree.js";
 
 export function DwDetailPanel(props: { nodeId: string }) {

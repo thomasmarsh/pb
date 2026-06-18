@@ -1,7 +1,7 @@
 // tests/components/BreadcrumbBar.test.ts — Tests for breadcrumb display logic.
 
 import { describe, it, expect } from "vitest";
-import { buildDisplay } from "../../src/components/BreadcrumbBar.js";
+import { buildDisplay } from "../../src/components/layout/BreadcrumbBar.js";
 import type { BreadcrumbSegment } from "../../src/features/navigation/types.js";
 
 function seg(label: string): BreadcrumbSegment {
