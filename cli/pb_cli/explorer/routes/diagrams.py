@@ -9,6 +9,8 @@ import graphviz
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
+from pb_cli.core.cfg_builder import build_cfg, compute_node_states
+from pb_cli.core.cfg_renderer import cfg_to_dot
 from pb_cli.explorer.routes.dependencies import get_db
 from pb_cli.shell.diagrams import render_svg
 
@@ -68,3 +70,35 @@ async def get_diagram(
         raise HTTPException(status_code=500, detail=f"Diagram rendering failed: {e}") from e
 
     return Response(content=svg, media_type="image/svg+xml")
+
+
+@router.get("/api/diagrams/cfg/{object_name}/{proc_name}")
+async def get_cfg_diagram(
+    object_name: str,
+    proc_name: str,
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    import json as _json
+
+    row = conn.execute(
+        "SELECT body_json FROM procedures WHERE object = ? AND name = ? LIMIT 1",
+        [object_name, proc_name],
+    ).fetchone()
+    if not row or not row[0]:
+        raise HTTPException(status_code=404, detail="Procedure not found or has no body")
+
+    body = _json.loads(row[0])
+    cfg = build_cfg(body)
+
+    node_states = compute_node_states(cfg)
+
+    dot = cfg_to_dot(cfg, node_states)
+    try:
+        svg = dot.pipe(format="svg").decode("utf-8")
+    except graphviz.backend.execute.ExecutableNotFound:
+        raise HTTPException(status_code=503, detail="graphviz 'dot' binary not found on PATH")
+
+    return {
+        "svg": svg,
+        "nodeStates": [{"blockId": bid, "state": s} for bid, s in node_states.items()],
+    }
