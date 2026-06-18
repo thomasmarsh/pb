@@ -1,6 +1,6 @@
 // ProceduresList.tsx — Browsable, sortable, filterable list of all procedures.
 
-import { Show, For, onMount, onCleanup } from "solid-js";
+import { Show, For, onMount } from "solid-js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
@@ -8,6 +8,7 @@ import type { ProcedureListItem } from "../../types/api.js";
 import { EntityCard } from "../../components/EntityCard.js";
 import { Loading } from "../../components/Loading.js";
 import { procBadge } from "../../utils/format.js";
+import { useListKeyboard } from "../../utils/useListKeyboard.js";
 
 const KIND_LABELS: Record<string, string> = {
   function: "function", subroutine: "subroutine", event: "event", on: "on",
@@ -37,43 +38,17 @@ export function ProceduresList(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
   const snap = store.getState();
   const ps = () => snap().objects;
-  let cursorIdx = -1;
 
   onMount(() => {
     store.dispatch({ tag: "objects", action: { type: "procs-list-load" } });
   });
 
-  onMount(() => {
-    function handleKey(e: KeyboardEvent): void {
-      const t = e.target as HTMLElement;
-      if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return;
-      const visible = filtered();
-      if (e.key === "j") {
-        e.preventDefault();
-        cursorIdx = Math.min(cursorIdx + 1, visible.length - 1);
-        highlightRow(cursorIdx);
-      } else if (e.key === "k") {
-        e.preventDefault();
-        cursorIdx = Math.max(cursorIdx - 1, 0);
-        highlightRow(cursorIdx);
-      } else if (e.key === "Enter" && cursorIdx >= 0) {
-        e.preventDefault();
-        const item = visible[cursorIdx];
-        if (item) store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: item.object, procName: item.name } });
-      }
-    }
-    document.addEventListener("keydown", handleKey);
-    onCleanup(() => document.removeEventListener("keydown", handleKey));
+  useListKeyboard({
+    items: () => filtered().map((item) => ({
+      select: () => store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: item.object, procName: item.name } }),
+    })),
+    tableSelector: ".procs-list-table",
   });
-
-  function highlightRow(idx: number): void {
-    const table = document.querySelector(".procs-list-table");
-    if (!table) return;
-    table.querySelectorAll("tr.list-cursor").forEach((r) => r.classList.remove("list-cursor"));
-    const rows = table.querySelectorAll("tbody tr");
-    rows[idx]?.classList.add("list-cursor");
-    (rows[idx] as HTMLElement)?.scrollIntoView?.({ block: "nearest" });
-  }
 
   const filtered = () => {
     const items = ps().proceduresList ?? [];
@@ -120,7 +95,6 @@ export function ProceduresList(props: { store: Store<AppState, AppAction> }) {
           placeholder="Search procedures or objects…"
           value={ps().proceduresListQ}
           onInput={(e) => {
-            cursorIdx = -1;
             store.dispatch({ tag: "objects", action: { type: "procs-list-filter", q: e.currentTarget.value } });
           }}
         />
@@ -132,7 +106,6 @@ export function ProceduresList(props: { store: Store<AppState, AppAction> }) {
             <button
               class={`filter-pill${ps().proceduresListKind === k ? " active" : ""}`}
               onClick={() => {
-                cursorIdx = -1;
                 store.dispatch({ tag: "objects", action: { type: "procs-list-filter-kind", kind: k } });
               }}
             >

@@ -7,6 +7,7 @@ import type { AppAction } from "../app/actions.js";
 import { type DiagramKind, diagramUrl, parsePbUrl, getPbHref } from "../utils/diagram.js";
 import { stripSvgTitles, computeTooltipPosition } from "./diagramMath.js";
 import { createPanZoom } from "./usePanZoom.js";
+import { DiagramTooltip } from "./DiagramTooltip.js";
 
 // Re-export pure functions for tests
 export { computeZoom, smoothVelocity, stripSvgTitles, computeTooltipPosition, releaseVelocity, runMomentum, ZOOM_MIN, ZOOM_MAX } from "./diagramMath.js";
@@ -165,34 +166,23 @@ export function InlineDiagram(props: InlineDiagramProps) {
         </div>
       </Show>
       <Show when={tooltip()}>
-        <div
-          class="diagram-tooltip diagram-tooltip-abs"
-          style={{
-            left: `${tooltip()!.x}px`,
-            top: `${tooltip()!.y}px`,
-          }}
-          onMouseOver={handleTooltipMouseOver}
-          onMouseOut={handleTooltipMouseOut}
-        >
-          <div class="diagram-tooltip-header">
-            <span class="diagram-tooltip-name">{tooltip()!.name}</span>
-            <Show when={tooltip()!.meta["kind"]}>
-              <span class="diagram-tooltip-badge">{tooltip()!.meta["kind"]}</span>
-            </Show>
-          </div>
-          <Show when={Object.keys(tooltip()!.meta).length > 0 && !tooltip()!.meta["kind"]}>
-            <div class="diagram-tooltip-meta">
-              {Object.entries(tooltip()!.meta).map(([k, v]) => `${k}=${v}`).join(" · ")}
-            </div>
-          </Show>
-          <div class="diagram-tooltip-actions">
-            <a class="diagram-tooltip-link" onClick={() => {
+        <DiagramTooltip
+          x={tooltip()!.x}
+          y={tooltip()!.y}
+          name={tooltip()!.name}
+          kind={tooltip()!.meta["kind"]}
+          meta={tooltip()!.meta}
+          actions={[{
+            label: "detail",
+            onClick: () => {
               const t = tooltip()!;
               setTooltip(null);
               navigateTo(t.kind, t.name);
-            }}>detail</a>
-          </div>
-        </div>
+            },
+          }]}
+          onMouseOver={handleTooltipMouseOver}
+          onMouseOut={handleTooltipMouseOut}
+        />
       </Show>
     </div>
   );

@@ -6,28 +6,9 @@ import type { Store } from "../core/store.js";
 import type { AppState } from "../app/state.js";
 import type { AppAction } from "../app/actions.js";
 import { procBadge, shortFile } from "../utils/format.js";
-
-// ── Icon map ─────────────────────────────────────────────────────────────────
-
-const ICONS: Record<string, string> = {
-  powerscript: "○",
-  datawindow:  "▦",
-  procedure:   "ƒ",
-  table:       "⊟",
-};
-
-function entityIcon(kind: string): string {
-  return ICONS[kind] ?? "○";
-}
-
-// ── Debounce ─────────────────────────────────────────────────────────────────
-
-function debounce<T extends (...args: never[]) => void>(fn: T, ms: number): T {
-  let timer: ReturnType<typeof setTimeout>;
-  return ((...args: never[]) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); }) as T;
-}
-
-// ── GlobalSearch ──────────────────────────────────────────────────────────────
+import { entityIcon } from "../utils/entities.js";
+import { debounce } from "../utils/debounce.js";
+import { ModalShell } from "./ModalShell.js";
 
 export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.Element {
   const store = props.store;
@@ -36,7 +17,6 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
 
   let inputRef: HTMLInputElement | undefined;
 
-  // Focus input when overlay opens.
   createEffect(() => {
     if (se().overlayOpen && inputRef) {
       inputRef.focus();
@@ -67,151 +47,119 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
   };
 
   return (
-    <Show when={se().overlayOpen}>
-      {/* Backdrop */}
-      <div class="gs-backdrop" onClick={close} />
-
-      {/* Panel */}
-      <div class="gs-panel" role="dialog" aria-label="Search" aria-modal="true">
-
-        {/* Search input */}
-        <div class="gs-input-row">
-          <span class="gs-input-icon" aria-hidden="true">🔍</span>
-          <input
-            ref={inputRef}
-            class="gs-input"
-            placeholder="Search objects, procedures, DataWindows, tables…"
-            value={term()}
-            onInput={(e) => doSearch(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") close();
-            }}
-          />
-          <button class="gs-close-btn" onClick={close} aria-label="Close search">×</button>
-        </div>
-
-        {/* Recent searches (shown when no term) */}
-        <Show when={term().length < 2 && recent().length > 0}>
-          <div class="gs-section">
-            <div class="gs-section-header">Recent</div>
-            <For each={recent()}>
-              {(q) => (
-                <button class="gs-recent-item" onClick={() => {
-                  store.dispatch({ tag: "search", action: { type: "overlay-term", term: q } });
-                }}>
-                  <span class="gs-recent-icon" aria-hidden="true">⏱</span>
-                  {q}
-                </button>
-              )}
-            </For>
-          </div>
-        </Show>
-
-        {/* Loading */}
-        <Show when={se().overlayLoading}>
-          <div class="gs-loading">Searching…</div>
-        </Show>
-
-        {/* No results */}
-        <Show when={term().length >= 2 && !se().overlayLoading && results() && !hasResults()}>
-          <div class="gs-empty">No results for <em>{term()}</em></div>
-        </Show>
-
-        {/* Results grouped by entity type */}
-        <Show when={hasResults()}>
-          <div class="gs-results">
-
-            {/* Objects */}
-            <Show when={(results()?.objects.length ?? 0) > 0}>
-              <div class="gs-section">
-                <div class="gs-section-header">Objects</div>
-                <For each={results()!.objects.slice(0, 8)}>
-                  {(o) => (
-                    <button
-                      class="gs-result-item"
-                      onClick={() => navigateAndClose(() =>
-                        store.dispatch({ tag: "objects", action: { type: "select", name: o.name } })
-                      )}
-                    >
-                      <span class="gs-result-icon" aria-hidden="true">{entityIcon(o.kind)}</span>
-                      <span class="gs-result-name">{o.name}</span>
-                      <span class="gs-result-meta">{shortFile(o.file)}</span>
-                    </button>
-                  )}
-                </For>
-              </div>
-            </Show>
-
-            {/* Procedures */}
-            <Show when={(results()?.procedures.length ?? 0) > 0}>
-              <div class="gs-section">
-                <div class="gs-section-header">Procedures</div>
-                <For each={results()!.procedures.slice(0, 8)}>
-                  {(p) => (
-                    <button
-                      class="gs-result-item"
-                      onClick={() => navigateAndClose(() =>
-                        store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: p.object, procName: p.name } })
-                      )}
-                    >
-                      <span class="gs-result-icon" aria-hidden="true">{ICONS.procedure}</span>
-                      <span class="gs-result-name">{p.name}</span>
-                      <span class="gs-result-meta">{p.object}</span>
-                      <span class={`badge ${procBadge(p.proc_type)}`}>{p.proc_type}</span>
-                    </button>
-                  )}
-                </For>
-              </div>
-            </Show>
-
-            {/* DataWindows */}
-            <Show when={(results()?.datawindows.length ?? 0) > 0}>
-              <div class="gs-section">
-                <div class="gs-section-header">DataWindows</div>
-                <For each={results()!.datawindows.slice(0, 8)}>
-                  {(d) => (
-                    <button
-                      class="gs-result-item"
-                      onClick={() => navigateAndClose(() =>
-                        store.dispatch({ tag: "datawindows", action: { type: "select", name: d.dw_name } })
-                      )}
-                    >
-                      <span class="gs-result-icon" aria-hidden="true">{ICONS.datawindow}</span>
-                      <span class="gs-result-name">{d.dw_name}</span>
-                      <span class="gs-result-meta">{d.control_type ?? ""}</span>
-                    </button>
-                  )}
-                </For>
-              </div>
-            </Show>
-
-            {/* Tables */}
-            <Show when={(results()?.tables?.length ?? 0) > 0}>
-              <div class="gs-section">
-                <div class="gs-section-header">Tables</div>
-                <For each={results()!.tables!.slice(0, 8)}>
-                  {(t) => (
-                    <button
-                      class="gs-result-item"
-                      onClick={() => navigateAndClose(() =>
-                        store.dispatch({ tag: "tables", action: { type: "select", name: t.table_name } })
-                      )}
-                    >
-                      <span class="gs-result-icon" aria-hidden="true">{ICONS.table}</span>
-                      <span class="gs-result-name">{t.table_name}</span>
-                    </button>
-                  )}
-                </For>
-              </div>
-            </Show>
-
-          </div>
-        </Show>
-
-        <div class="gs-hint">
-          <kbd>Esc</kbd> to close · <kbd>/</kbd> to open
-        </div>
+    <ModalShell open={se().overlayOpen} onClose={close} label="Search">
+      <div class="gs-input-row">
+        <span class="gs-input-icon" aria-hidden="true">🔍</span>
+        <input
+          ref={inputRef}
+          class="gs-input"
+          placeholder="Search objects, procedures, DataWindows, tables…"
+          value={term()}
+          onInput={(e) => doSearch(e.currentTarget.value)}
+          onKeyDown={(e) => { if (e.key === "Escape") close(); }}
+        />
+        <button class="gs-close-btn" onClick={close} aria-label="Close search">×</button>
       </div>
-    </Show>
+
+      <Show when={term().length < 2 && recent().length > 0}>
+        <div class="gs-section">
+          <div class="gs-section-header">Recent</div>
+          <For each={recent()}>
+            {(q) => (
+              <button class="gs-recent-item" onClick={() => {
+                store.dispatch({ tag: "search", action: { type: "overlay-term", term: q } });
+              }}>
+                <span class="gs-recent-icon" aria-hidden="true">⏱</span>
+                {q}
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+
+      <Show when={se().overlayLoading}>
+        <div class="gs-loading">Searching…</div>
+      </Show>
+
+      <Show when={term().length >= 2 && !se().overlayLoading && results() && !hasResults()}>
+        <div class="gs-empty">No results for <em>{term()}</em></div>
+      </Show>
+
+      <Show when={hasResults()}>
+        <div class="gs-results">
+          <Show when={(results()?.objects.length ?? 0) > 0}>
+            <div class="gs-section">
+              <div class="gs-section-header">Objects</div>
+              <For each={results()!.objects.slice(0, 8)}>
+                {(o) => (
+                  <button class="gs-result-item" onClick={() => navigateAndClose(() =>
+                    store.dispatch({ tag: "objects", action: { type: "select", name: o.name } })
+                  )}>
+                    <span class="gs-result-icon" aria-hidden="true">{entityIcon(o.kind)}</span>
+                    <span class="gs-result-name">{o.name}</span>
+                    <span class="gs-result-meta">{shortFile(o.file)}</span>
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
+
+          <Show when={(results()?.procedures.length ?? 0) > 0}>
+            <div class="gs-section">
+              <div class="gs-section-header">Procedures</div>
+              <For each={results()!.procedures.slice(0, 8)}>
+                {(p) => (
+                  <button class="gs-result-item" onClick={() => navigateAndClose(() =>
+                    store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: p.object, procName: p.name } })
+                  )}>
+                    <span class="gs-result-icon" aria-hidden="true">{entityIcon("procedure")}</span>
+                    <span class="gs-result-name">{p.name}</span>
+                    <span class="gs-result-meta">{p.object}</span>
+                    <span class={`badge ${procBadge(p.proc_type)}`}>{p.proc_type}</span>
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
+
+          <Show when={(results()?.datawindows.length ?? 0) > 0}>
+            <div class="gs-section">
+              <div class="gs-section-header">DataWindows</div>
+              <For each={results()!.datawindows.slice(0, 8)}>
+                {(d) => (
+                  <button class="gs-result-item" onClick={() => navigateAndClose(() =>
+                    store.dispatch({ tag: "datawindows", action: { type: "select", name: d.dw_name } })
+                  )}>
+                    <span class="gs-result-icon" aria-hidden="true">{entityIcon("datawindow")}</span>
+                    <span class="gs-result-name">{d.dw_name}</span>
+                    <span class="gs-result-meta">{d.control_type ?? ""}</span>
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
+
+          <Show when={(results()?.tables?.length ?? 0) > 0}>
+            <div class="gs-section">
+              <div class="gs-section-header">Tables</div>
+              <For each={results()!.tables!.slice(0, 8)}>
+                {(t) => (
+                  <button class="gs-result-item" onClick={() => navigateAndClose(() =>
+                    store.dispatch({ tag: "tables", action: { type: "select", name: t.table_name } })
+                  )}>
+                    <span class="gs-result-icon" aria-hidden="true">{entityIcon("table")}</span>
+                    <span class="gs-result-name">{t.table_name}</span>
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
+        </div>
+      </Show>
+
+      <div class="gs-hint">
+        <kbd>Esc</kbd> to close · <kbd>/</kbd> to open
+      </div>
+    </ModalShell>
   );
 }

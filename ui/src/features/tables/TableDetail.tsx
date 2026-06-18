@@ -7,9 +7,10 @@ import type { AppAction } from "../../app/actions.js";
 import type { TableDetail as TableDetailData, TableProcedureRef, ImpactInheritedRef } from "../../types/api.js";
 import { Loading } from "../../components/Loading.js";
 import { ColumnRow } from "../../components/ColumnRow.js";
-import { FaceToggle } from "../../components/FaceToggle.js";
-import { PhaseGateInline } from "../../components/PhaseGate.js";
 import { EntityCard } from "../../components/EntityCard.js";
+import { DetailHeader } from "../../components/DetailHeader.js";
+import { BackButton } from "../../components/BackButton.js";
+import { PhaseGateInline } from "../../components/PhaseGate.js";
 
 const WRITE_OPS = new Set(["INSERT", "UPDATE", "DELETE"]);
 
@@ -78,25 +79,23 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
 
   return (
     <>
-      <div class="detail-header">
-        <div>
-          <h2 style={{ "margin": "0 0 4px 0", "font-size": "20px" }}>
-            {d.table_name}{" "}
-            <span class="badge badge-dw">table</span>
-          </h2>
+      <DetailHeader
+        name={d.table_name}
+        badgeClass="badge-dw"
+        badgeLabel="table"
+        face={face()}
+        phaseLabel="P1"
+        store={store}
+        onToggle={(newFace, scrollTop) => {
+          store.dispatch({ tag: "tables", action: { type: "set-table-face", name: d.table_name, face: newFace, scrollTop } });
+        }}
+        scrollAreaRef={() => scrollEl}
+        subtitle={
           <p style={{ color: "var(--text-muted)", margin: "0", "font-size": "13px" }}>
             {d.dw_count} DW reader{d.dw_count !== 1 ? "s" : ""} · {readers.length} procedure reader{readers.length !== 1 ? "s" : ""} · {writers.length} writer{writers.length !== 1 ? "s" : ""}
           </p>
-        </div>
-        <FaceToggle
-          face={face()}
-          phaseLabel="P1"
-          onToggle={(newFace, scrollTop) => {
-            store.dispatch({ tag: "tables", action: { type: "set-table-face", name: d.table_name, face: newFace, scrollTop } });
-          }}
-          scrollAreaRef={() => scrollEl}
-        />
-      </div>
+        }
+      />
 
       <div class="detail-body" ref={scrollEl}>
         {/* ── Source face: column listing ───────────────────────────────── */}
@@ -242,10 +241,7 @@ export function TableDetail(props: { store: Store<AppState, AppAction> }) {
 
   return (
     <>
-      <button class="back-btn"
-              onClick={() => props.store.dispatch({ tag: "tables", action: { type: "back" } })}>
-        {"←"} Back to Tables
-      </button>
+      <BackButton label="Tables" onClick={() => props.store.dispatch({ tag: "tables", action: { type: "back" } })} />
       <Show when={ts().detail} fallback={
         <Show when={ts().error} fallback={<Loading />}>
           <div class="card">

@@ -7,11 +7,7 @@ import type { AppAction } from "../../app/actions.js";
 import type { SearchResponse } from "../../types/api.js";
 import { TableChip } from "../../components/TableChip.js";
 import { procBadge, shortFile } from "../../utils/format.js";
-
-function debounce<T extends (...args: never[]) => void>(fn: T, ms: number): T {
-  let timer: ReturnType<typeof setTimeout>;
-  return ((...args: never[]) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); }) as T;
-}
+import { debounce } from "../../utils/debounce.js";
 
 function SearchResults(props: { store: Store<AppState, AppAction>; data: SearchResponse }) {
   const store = props.store;

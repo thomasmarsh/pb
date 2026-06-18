@@ -6,6 +6,8 @@ import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import { ComboboxInput } from "../../components/ComboboxInput.js";
+import { SvgToolbar } from "../../components/SvgToolbar.js";
+import { DiagramTooltip } from "../../components/DiagramTooltip.js";
 import { parsePbUrl, getPbHref, HAS_FOCUS, AUTO_GENERATE, type DiagramKind } from "../../utils/diagram.js";
 
 export function Diagrams(props: { store: Store<AppState, AppAction> }) {
@@ -16,7 +18,6 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   const [focalInput, setFocalInput] = createSignal("");
   const [depthInput, setDepthInput] = createSignal("2");
   const [tableInput, setTableInput] = createSignal("");
-  const [copied, setCopied] = createSignal(false);
 
   // Hover tooltip state
   const [tooltip, setTooltip] = createSignal<{ x: number; y: number; kind: "object" | "table"; name: string; meta: Record<string, string> } | null>(null);
@@ -122,10 +123,7 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   function copySvg() {
     const svg = dg().svg;
     if (!svg) return;
-    navigator.clipboard.writeText(svg).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
+    navigator.clipboard.writeText(svg);
   }
 
   const needsGenerate = () => !AUTO_GENERATE.has(activeTab());
@@ -176,18 +174,7 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
           </div>
         </Show>
         <Show when={dg().svg}>
-          <div class="diagram-toolbar">
-            <button class="icon-btn" onClick={copySvg} title="Copy SVG">
-              {copied() ? (
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3 3 7-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M3 11V3.5A.5.5 0 013.5 3H11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-              )}
-            </button>
-            <button class="icon-btn" onClick={downloadSvg} title="Download SVG">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12.5h10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </button>
-          </div>
+          <SvgToolbar onCopy={copySvg} onDownload={downloadSvg} />
           <div
             class="diagram-container"
             innerHTML={dg().svg!}
@@ -208,36 +195,20 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
         </Show>
       </div>
 
-      {/* Hover tooltip */}
       <Show when={tooltip()}>
-        <div
-          class="diagram-tooltip"
-          style={{
-            left: `${tooltip()!.x}px`,
-            top: `${tooltip()!.y}px`,
-          }}
+        <DiagramTooltip
+          x={tooltip()!.x}
+          y={tooltip()!.y}
+          name={tooltip()!.name}
+          kind={tooltip()!.meta["kind"]}
+          meta={tooltip()!.meta}
+          actions={[
+            { label: "detail", onClick: () => navigateTo(tooltip()!.kind, tooltip()!.name, "detail") },
+            ...(HAS_FOCUS.has(activeTab()) ? [{ label: "focus", onClick: () => navigateTo(tooltip()!.kind, tooltip()!.name, "focus") }] : []),
+          ]}
           onMouseOver={handleTooltipMouseOver}
           onMouseOut={handleTooltipMouseOut}
-        >
-          <div class="diagram-tooltip-header">
-            <span class="diagram-tooltip-name">{tooltip()!.name}</span>
-            <Show when={tooltip()!.meta["kind"]}>
-              <span class="diagram-tooltip-badge">{tooltip()!.meta["kind"]}</span>
-            </Show>
-          </div>
-          <Show when={Object.keys(tooltip()!.meta).length > 0 && !tooltip()!.meta["kind"]}>
-            <div class="diagram-tooltip-meta">
-              {Object.entries(tooltip()!.meta).map(([k, v]) => `${k}=${v}`).join(" · ")}
-            </div>
-          </Show>
-          <div class="diagram-tooltip-actions">
-            <a class="diagram-tooltip-link" onClick={() => navigateTo(tooltip()!.kind, tooltip()!.name, "detail")}>detail</a>
-            <Show when={HAS_FOCUS.has(activeTab())}>
-              <span class="diagram-tooltip-sep">&middot;</span>
-              <a class="diagram-tooltip-link" onClick={() => navigateTo(tooltip()!.kind, tooltip()!.name, "focus")}>focus</a>
-            </Show>
-          </div>
-        </div>
+        />
       </Show>
     </>
   );

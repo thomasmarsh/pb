@@ -1,0 +1,36 @@
+import type { JSX } from "solid-js";
+import type { Store } from "../core/store.js";
+import type { AppState } from "../app/state.js";
+import type { AppAction } from "../app/actions.js";
+import { FaceToggle, type Face } from "./FaceToggle.js";
+
+interface DetailHeaderProps {
+  name: string;
+  badgeClass: string;
+  badgeLabel: string;
+  face: Face;
+  phaseLabel?: string;
+  store: Store<AppState, AppAction>;
+  onToggle: (face: Face, scrollTop: number) => void;
+  scrollAreaRef?: () => HTMLElement | undefined;
+  subtitle?: JSX.Element;
+}
+
+export function DetailHeader(props: DetailHeaderProps): JSX.Element {
+  return (
+    <div class="detail-header">
+      <div>
+        <h2 style={{ "margin": "0", "font-size": "20px" }}>
+          {props.name} <span class={`badge ${props.badgeClass}`}>{props.badgeLabel}</span>
+        </h2>
+        {props.subtitle}
+      </div>
+      <FaceToggle
+        face={props.face}
+        phaseLabel={props.phaseLabel ?? "P1"}
+        onToggle={props.onToggle}
+        scrollAreaRef={props.scrollAreaRef}
+      />
+    </div>
+  );
+}

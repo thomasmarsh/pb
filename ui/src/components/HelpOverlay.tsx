@@ -1,10 +1,10 @@
 // components/HelpOverlay.tsx — Keyboard shortcuts help overlay.
 
-import { Show, For } from "solid-js";
-import type { JSX } from "solid-js";
+import { For } from "solid-js";
 import type { Store } from "../core/store.js";
 import type { AppState } from "../app/state.js";
 import type { AppAction } from "../app/actions.js";
+import { ModalShell } from "./ModalShell.js";
 
 interface Shortcut {
   key: string;
@@ -27,7 +27,7 @@ const SHORTCUTS: Shortcut[] = [
   { key: "Esc",       scope: "Overlay",         action: "Close overlay" },
 ];
 
-export function HelpOverlay(props: { store: Store<AppState, AppAction> }): JSX.Element {
+export function HelpOverlay(props: { store: Store<AppState, AppAction> }) {
   const snap = props.store.getState();
   const isOpen = () => snap().explore.helpOverlayOpen;
 
@@ -36,33 +36,30 @@ export function HelpOverlay(props: { store: Store<AppState, AppAction> }): JSX.E
   }
 
   return (
-    <Show when={isOpen()}>
-      <div class="help-backdrop" onClick={close} />
-      <div class="help-panel" role="dialog" aria-label="Keyboard shortcuts" aria-modal="true">
-        <div class="help-panel-header">
-          <h2>Keyboard Shortcuts</h2>
-          <button class="help-close-btn" onClick={close} aria-label="Close">×</button>
-        </div>
-        <table class="data-table help-table">
-          <thead>
-            <tr><th>Key</th><th>Scope</th><th>Action</th></tr>
-          </thead>
-          <tbody>
-            <For each={SHORTCUTS}>
-              {(s) => (
-                <tr>
-                  <td><kbd class="kbd">{s.key}</kbd></td>
-                  <td style={{ color: "var(--text-muted)" }}>{s.scope}</td>
-                  <td>{s.action}</td>
-                </tr>
-              )}
-            </For>
-          </tbody>
-        </table>
-        <div class="help-panel-footer">
-          Shortcuts are inactive when an input field is focused.
-        </div>
+    <ModalShell open={isOpen()} onClose={close} label="Keyboard shortcuts" width="480px">
+      <div class="help-panel-header">
+        <h2>Keyboard Shortcuts</h2>
+        <button class="help-close-btn" onClick={close} aria-label="Close">×</button>
       </div>
-    </Show>
+      <table class="data-table help-table">
+        <thead>
+          <tr><th>Key</th><th>Scope</th><th>Action</th></tr>
+        </thead>
+        <tbody>
+          <For each={SHORTCUTS}>
+            {(s) => (
+              <tr>
+                <td><kbd class="kbd">{s.key}</kbd></td>
+                <td style={{ color: "var(--text-muted)" }}>{s.scope}</td>
+                <td>{s.action}</td>
+              </tr>
+            )}
+          </For>
+        </tbody>
+      </table>
+      <div class="help-panel-footer">
+        Shortcuts are inactive when an input field is focused.
+      </div>
+    </ModalShell>
   );
 }
