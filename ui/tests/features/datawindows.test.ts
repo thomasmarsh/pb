@@ -18,7 +18,7 @@ describe("datawindows reducer", () => {
       const navigateCalls: string[] = [];
       const env: DatawindowsEnv = {
         ...mockEnv,
-        navigate: (action) => { navigateCalls.push(action.route.view); return Effect.none(); },
+        navigate: (action) => { if (action.type === "navigate") navigateCalls.push(action.route.view); return Effect.none(); },
       };
       const ts = createTestStore(datawindowsReducer, env, initialDatawindowsState);
       ts.send({ type: "search", q: "test" }, (s) => {
@@ -70,7 +70,7 @@ describe("datawindows reducer", () => {
       const navigateRoutes: object[] = [];
       const env: DatawindowsEnv = {
         ...mockEnv,
-        navigate: (action) => { navigateRoutes.push(action.route); return Effect.none(); },
+        navigate: (action) => { if (action.type === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
       };
       const ts = createTestStore(datawindowsReducer, env, initialDatawindowsState);
       ts.send({ type: "select", name: "MyDW" }, (s) => {

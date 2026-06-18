@@ -20,6 +20,8 @@ export type ExploreAction =
   | { type: "sidebar-toggle-group"; group: "sourceTree" | "entityNav" | "analysisNav" }
   | { type: "sidebar-set-collapsed"; collapsed: boolean }
   | { type: "sidebar-reveal"; objectName: string; procName?: string }
+  | { type: "sidebar-focus-group"; group: "sourceTree" | "entityNav" | "analysisNav" }
+  | { type: "help-overlay-toggle" }
   | { type: "tables-load" }
   | { type: "tables-loaded"; items: TableSummary[] }
   | { type: "tables-filter"; q: string }

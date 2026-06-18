@@ -68,6 +68,7 @@ function makeExploreState(overrides?: Partial<Record<string, unknown>>) {
     highlightedLine: null,
     sidebarGroups: { sourceTree: true, entityNav: false, analysisNav: false },
     sidebarCollapsed: false,
+    helpOverlayOpen: false,
     tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
     ...overrides,
   };

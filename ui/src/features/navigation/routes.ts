@@ -20,6 +20,9 @@ export function print(route: Route): string {
     case "search":           return "/search";
     case "explore":          return "/explore";
     case "errors":           return "/errors";
+    case "deadCode":         return "/dead-code";
+    case "taintExplorer":    return "/taint";
+    case "formalReports":    return "/reports";
   }
 }
 
@@ -38,11 +41,14 @@ export function parse(path: string): Route {
     case "tables":
       if (segs[1]) return { view: "tableDetail", name: decodeURIComponent(segs[1]) };
       return { view: "tables" };
-    case "diagrams":  return { view: "diagrams" };
-    case "queries":   return { view: "queries" };
-    case "search":    return { view: "search" };
-    case "explore":   return { view: "explore" };
-    case "errors":    return { view: "errors" };
-    default:          return { view: "dashboard" };
+    case "diagrams":   return { view: "diagrams" };
+    case "queries":    return { view: "queries" };
+    case "search":     return { view: "search" };
+    case "explore":    return { view: "explore" };
+    case "errors":     return { view: "errors" };
+    case "dead-code":  return { view: "deadCode" };
+    case "taint":      return { view: "taintExplorer" };
+    case "reports":    return { view: "formalReports" };
+    default:           return { view: "dashboard" };
   }
 }

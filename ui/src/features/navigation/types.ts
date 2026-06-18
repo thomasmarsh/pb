@@ -13,13 +13,27 @@ export type Route =
   | { view: "queries" }
   | { view: "search" }
   | { view: "explore" }
-  | { view: "errors" };
+  | { view: "errors" }
+  | { view: "deadCode" }
+  | { view: "taintExplorer" }
+  | { view: "formalReports" };
 
 export type ViewName = Route["view"];
 
-export interface NavState {
+export interface BreadcrumbSegment {
+  icon: string;
+  label: string;
   route: Route;
 }
 
+export interface NavState {
+  route: Route;
+  crumbs: BreadcrumbSegment[];
+  history: Route[];
+  historyIdx: number;
+}
+
 export type NavigationAction =
-  | { type: "navigate"; route: Route };
+  | { type: "navigate"; route: Route }
+  | { type: "back" }
+  | { type: "forward" };

@@ -38,7 +38,7 @@ describe("tables reducer", () => {
       const navigateCalls: string[] = [];
       const env: TablesEnv = {
         ...mockEnv,
-        navigate: (action) => { navigateCalls.push(action.route.view); return Effect.none(); },
+        navigate: (action) => { if (action.type === "navigate") navigateCalls.push(action.route.view); return Effect.none(); },
       };
       const ts = createTestStore(tablesReducer, env, initialTablesState);
       ts.send({ type: "search", q: "ord" }, (s) => {
@@ -91,7 +91,7 @@ describe("tables reducer", () => {
       const navigateRoutes: object[] = [];
       const env: TablesEnv = {
         ...mockEnv,
-        navigate: (action) => { navigateRoutes.push(action.route); return Effect.none(); },
+        navigate: (action) => { if (action.type === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
       };
       const ts = createTestStore(tablesReducer, env, initialTablesState);
       ts.send({ type: "select", name: "orders" }, (s) => {
@@ -157,7 +157,7 @@ describe("tables reducer", () => {
       const navigateRoutes: object[] = [];
       const env: TablesEnv = {
         ...mockEnv,
-        navigate: (action) => { navigateRoutes.push(action.route); return Effect.none(); },
+        navigate: (action) => { if (action.type === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
       };
       const ts = createTestStore(tablesReducer, env, {
         ...initialTablesState,

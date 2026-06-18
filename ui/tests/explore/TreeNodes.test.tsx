@@ -18,7 +18,7 @@ function makeExploreBase() {
   return {
     libraries: [], expandedNodes: new Set<string>(), selectedProc: null, selectedDw: null,
     procCache: {}, dwCache: {}, loading: false, activeTab: "source" as const, treeFilter: "",
-    highlightedLine: null, tables: TABLES_STATE, ...DEFAULT_SIDEBAR,
+    highlightedLine: null, tables: TABLES_STATE, helpOverlayOpen: false, ...DEFAULT_SIDEBAR,
   };
 }
 

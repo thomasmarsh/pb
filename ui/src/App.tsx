@@ -9,6 +9,8 @@ import type { AppState } from "./app/state.js";
 import type { AppAction } from "./app/actions.js";
 import { createApiClient, createEnv } from "./app/api-client.js";
 import { Layout } from "./components/Layout.js";
+import { GlobalSearch } from "./components/GlobalSearch.js";
+import { HelpOverlay } from "./components/HelpOverlay.js";
 import { Dashboard } from "./features/dashboard/Dashboard.js";
 import { Objects } from "./features/objects/Objects.js";
 import { ObjectDetail } from "./features/objects/ObjectDetail.js";
@@ -20,6 +22,9 @@ import { Queries } from "./features/queries/Queries.js";
 import { Search } from "./features/search/Search.js";
 import { Explore } from "./features/explore/Explore.js";
 import { Errors } from "./features/errors/Errors.js";
+import { DeadCode } from "./features/analysis/DeadCode.js";
+import { TaintExplorer } from "./features/analysis/TaintExplorer.js";
+import { FormalReports } from "./features/analysis/FormalReports.js";
 import { initViewFromUrl, setupPopstateHandler } from "./features/navigation/url-sync.js";
 import { HealthCheck } from "./components/HealthCheck.js";
 
@@ -51,6 +56,9 @@ function ViewRouter(props: { store: Store<AppState, AppAction> }): JSX.Element {
       <Show when={snap().nav.route.view === "search"}><Search store={props.store} /></Show>
       <Show when={snap().nav.route.view === "explore"}><Explore store={props.store} /></Show>
       <Show when={snap().nav.route.view === "errors"}><Errors store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "deadCode"}><DeadCode store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "taintExplorer"}><TaintExplorer store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "formalReports"}><FormalReports store={props.store} /></Show>
     </Layout>
   );
 }
@@ -59,6 +67,8 @@ function App(): JSX.Element {
   return (
     <>
       <ViewRouter store={store} />
+      <GlobalSearch store={store} />
+      <HelpOverlay store={store} />
       <HealthCheck />
     </>
   );

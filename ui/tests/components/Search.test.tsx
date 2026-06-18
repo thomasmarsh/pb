@@ -56,7 +56,7 @@ describe("Search component", () => {
 
   it("shows 'No results found' when results are empty", () => {
     renderWithStore(Search, {
-      search: { term: "xyz", loading: false, results: { objects: [], procedures: [], datawindows: [], tables: [] } },
+      search: { term: "xyz", loading: false, results: { objects: [], procedures: [], datawindows: [], tables: [] }, recentSearches: [], overlayOpen: false, overlayTerm: "", overlayResults: null, overlayLoading: false },
     });
     expect(screen.getByText("No results found")).toBeDefined();
   });
@@ -71,6 +71,7 @@ describe("Search component", () => {
           datawindows: [],
           tables: [],
         },
+        recentSearches: [], overlayOpen: false, overlayTerm: "", overlayResults: null, overlayLoading: false,
       },
     });
     expect(screen.getByText("Objects (1)")).toBeDefined();
@@ -87,6 +88,7 @@ describe("Search component", () => {
           datawindows: [],
           tables: [],
         },
+        recentSearches: [], overlayOpen: false, overlayTerm: "", overlayResults: null, overlayLoading: false,
       },
     });
     expect(screen.getByText("Procedures (1)")).toBeDefined();
@@ -103,6 +105,7 @@ describe("Search component", () => {
           datawindows: [],
           tables: [],
         },
+        recentSearches: [], overlayOpen: false, overlayTerm: "", overlayResults: null, overlayLoading: false,
       },
     });
     fireEvent.click(screen.getByText("w_main"));

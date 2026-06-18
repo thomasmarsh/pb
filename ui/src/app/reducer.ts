@@ -18,6 +18,7 @@ import { searchReducer, type SearchEnv, initialSearchState } from "../features/s
 import { errorsReducer, type ErrorsEnv, initialErrorsState } from "../features/errors/reducer.js";
 
 import type { NavigationAction } from "../features/navigation/types.js";
+import { crumbsForRoute } from "../features/navigation/breadcrumb.js";
 import type { DashboardAction } from "../features/dashboard/actions.js";
 import type { ExploreAction } from "../features/explore/actions.js";
 import type { ObjectsAction } from "../features/objects/actions.js";
@@ -55,7 +56,12 @@ const matchErrors      = (a: AppAction): ErrorsAction      | null => a.tag === "
 export function initialState(): AppState {
   return {
     theme: "dark",
-    nav: { route: { view: "dashboard" } },
+    nav: {
+      route: { view: "dashboard" },
+      crumbs: crumbsForRoute({ view: "dashboard" }),
+      history: [{ view: "dashboard" }],
+      historyIdx: 0,
+    },
     dashboard: initialDashboardState,
     objects: initialObjectsState,
     datawindows: initialDatawindowsState,

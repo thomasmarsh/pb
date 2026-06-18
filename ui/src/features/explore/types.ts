@@ -31,4 +31,5 @@ export interface ExploreState {
   sidebarGroups: SidebarGroups;
   sidebarCollapsed: boolean;
   tables: TablesState;
+  helpOverlayOpen: boolean;
 }

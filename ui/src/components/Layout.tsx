@@ -1,6 +1,7 @@
-// Layout.tsx — App shell with 3-group accordion sidebar.
+// Layout.tsx — App shell with 3-group accordion sidebar, BreadcrumbBar top-bar, keyboard shortcuts.
 
-import { Show, For, type ParentProps } from "solid-js";
+import { Show, For, onMount, onCleanup, type ParentProps } from "solid-js";
+import type { JSX } from "solid-js";
 import type { Store } from "../core/store.js";
 import type { AppState, ViewName } from "../app/state.js";
 import type { Route } from "../features/navigation/types.js";
@@ -8,8 +9,9 @@ import type { AppAction } from "../app/actions.js";
 import { ExploreStoreContext } from "../features/explore/ExploreContext.js";
 import { LibraryNode } from "../features/explore/TreeNodes.js";
 import { chevron } from "../utils/format.js";
+import { BreadcrumbBar } from "./BreadcrumbBar.js";
 
-// ── Entity nav links (Object/DW/Tables) ──────────────────────────────────────
+// ── Entity nav links ──────────────────────────────────────────────────────────
 
 const ENTITY_NAV: { label: string; view: ViewName; icon: string }[] = [
   { label: "Objects",     view: "objects",     icon: "○" },
@@ -17,16 +19,32 @@ const ENTITY_NAV: { label: string; view: ViewName; icon: string }[] = [
   { label: "Tables",      view: "tables",      icon: "⊟" },
 ];
 
+// ── Analysis nav items (phase-badged) ─────────────────────────────────────────
+
+interface AnalysisItem {
+  label: string;
+  view: ViewName;
+  phase: 1 | 2 | 3 | 4;
+  gated: boolean;
+}
+
+const ANALYSIS_NAV: AnalysisItem[] = [
+  { label: "Schema / ERD",   view: "diagrams",      phase: 1, gated: false },
+  { label: "Dead Code",      view: "deadCode",      phase: 1, gated: false },
+  { label: "Taint Explorer", view: "taintExplorer", phase: 3, gated: true  },
+  { label: "Formal Reports", view: "formalReports", phase: 4, gated: true  },
+];
+
 // ── Utility nav (non-grouped) ─────────────────────────────────────────────────
 
 const UTIL_NAV: { label: string; view: ViewName; icon: string }[] = [
   { label: "Dashboard", view: "dashboard", icon: "◆" },
-  { label: "Queries",   view: "queries",   icon: "⌘" },
+  { label: "Ask",       view: "queries",   icon: "?" },
   { label: "Search",    view: "search",    icon: "🔍" },
   { label: "Errors",    view: "errors",    icon: "⚠" },
 ];
 
-// ── View group mapping (for active state) ─────────────────────────────────────
+// ── Active-state helper ───────────────────────────────────────────────────────
 
 const VIEW_GROUPS: Record<string, string[]> = {
   objects:     ["objects", "objectDetail", "procedureDetail"],
@@ -40,13 +58,53 @@ function isActive(itemView: string, currentView: string): boolean {
   return group ? group.includes(currentView) : false;
 }
 
-function navigate(store: Store<AppState, AppAction>, view: ViewName) {
+function navigate(store: Store<AppState, AppAction>, view: ViewName): void {
   store.dispatch({ tag: "nav", action: { type: "navigate", route: { view } as Route } });
 }
 
-// ── Sidebar accordion group ───────────────────────────────────────────────────
+// ── Phase badge ───────────────────────────────────────────────────────────────
 
-function AccordionGroup(props: ParentProps<{ label: string; expanded: boolean; onToggle: () => void; icon: string }>) {
+function PhaseBadge(props: { phase: number; gated: boolean }): JSX.Element {
+  const cls = () =>
+    props.gated ? "phase-badge phase-badge-gated" : "phase-badge phase-badge-active";
+  return <span class={cls()}>P{props.phase}</span>;
+}
+
+// ── AnalysisNavItem ───────────────────────────────────────────────────────────
+
+function AnalysisNavItem(props: {
+  item: AnalysisItem;
+  currentView: string;
+  store: Store<AppState, AppAction>;
+}): JSX.Element {
+  const active = () => isActive(props.item.view, props.currentView);
+  const cls = () => {
+    let base = "sidebar-entity-link analysis-nav-item";
+    if (active()) base += " active";
+    if (props.item.gated) base += " gated";
+    return base;
+  };
+  return (
+    <a
+      href="#"
+      class={cls()}
+      onClick={(e) => { e.preventDefault(); navigate(props.store, props.item.view); }}
+      aria-label={`${props.item.label} (P${props.item.phase}${props.item.gated ? ", phase-gated" : ""})`}
+    >
+      <span class="analysis-nav-label">{props.item.label}</span>
+      <PhaseBadge phase={props.item.phase} gated={props.item.gated} />
+    </a>
+  );
+}
+
+// ── AccordionGroup ────────────────────────────────────────────────────────────
+
+function AccordionGroup(props: ParentProps<{
+  label: string;
+  expanded: boolean;
+  onToggle: () => void;
+  icon: string;
+}>): JSX.Element {
   return (
     <div class="sidebar-group">
       <button class="sidebar-group-header" onClick={props.onToggle}>
@@ -67,7 +125,7 @@ interface LayoutProps {
   store: Store<AppState, AppAction>;
 }
 
-export function Layout(props: ParentProps<LayoutProps>) {
+export function Layout(props: ParentProps<LayoutProps>): JSX.Element {
   const snap = props.store.getState();
   const isDark = () => snap().theme === "dark";
   const currentView = () => snap().nav.route.view;
@@ -75,17 +133,97 @@ export function Layout(props: ParentProps<LayoutProps>) {
   const sidebarGroups = () => explore().sidebarGroups;
   const sidebarCollapsed = () => explore().sidebarCollapsed;
 
-  function toggleGroup(group: "sourceTree" | "entityNav" | "analysisNav") {
+  function toggleGroup(group: "sourceTree" | "entityNav" | "analysisNav"): void {
     props.store.dispatch({ tag: "explore", action: { type: "sidebar-toggle-group", group } });
   }
 
-  function setCollapsed(collapsed: boolean) {
+  function setCollapsed(collapsed: boolean): void {
     props.store.dispatch({ tag: "explore", action: { type: "sidebar-set-collapsed", collapsed } });
   }
+
+  // ── Global keyboard handler ─────────────────────────────────────────────────
+
+  onMount(() => {
+    let pendingChord: string | null = null;
+    let chordTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function clearChord(): void {
+      pendingChord = null;
+      if (chordTimer) { clearTimeout(chordTimer); chordTimer = null; }
+    }
+
+    function handleKey(e: KeyboardEvent): void {
+      const t = e.target as HTMLElement;
+      const inInput = t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable;
+      if (inInput) { clearChord(); return; }
+
+      // Resolve pending chord (G+x).
+      if (pendingChord === "g") {
+        clearChord();
+        switch (e.key.toLowerCase()) {
+          case "d":
+            props.store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "dashboard" } } });
+            return;
+          case "a":
+            props.store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "queries" } } });
+            return;
+          case "e":
+            props.store.dispatch({ tag: "nav", action: { type: "navigate", route: { view: "errors" } } });
+            return;
+        }
+        return;
+      }
+
+      switch (e.key) {
+        case "/":
+          e.preventDefault();
+          props.store.dispatch({ tag: "search", action: { type: "overlay-open" } });
+          break;
+        case "?":
+          props.store.dispatch({ tag: "explore", action: { type: "help-overlay-toggle" } });
+          break;
+        case "Escape":
+          if (snap().search.overlayOpen) {
+            props.store.dispatch({ tag: "search", action: { type: "overlay-close" } });
+          } else if (snap().explore.helpOverlayOpen) {
+            props.store.dispatch({ tag: "explore", action: { type: "help-overlay-toggle" } });
+          }
+          break;
+        case "[":
+          props.store.dispatch({ tag: "nav", action: { type: "back" } });
+          break;
+        case "]":
+          props.store.dispatch({ tag: "nav", action: { type: "forward" } });
+          break;
+        case "g":
+          pendingChord = "g";
+          chordTimer = setTimeout(clearChord, 1000);
+          break;
+        case "1":
+          props.store.dispatch({ tag: "explore", action: { type: "sidebar-focus-group", group: "sourceTree" } });
+          break;
+        case "2":
+          props.store.dispatch({ tag: "explore", action: { type: "sidebar-focus-group", group: "entityNav" } });
+          break;
+        case "3":
+          props.store.dispatch({ tag: "explore", action: { type: "sidebar-focus-group", group: "analysisNav" } });
+          break;
+      }
+    }
+
+    document.addEventListener("keydown", handleKey);
+    onCleanup(() => {
+      document.removeEventListener("keydown", handleKey);
+      clearChord();
+    });
+  });
+
+  // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
     <ExploreStoreContext.Provider value={props.store}>
       <div class={`app-layout${sidebarCollapsed() ? " sidebar-is-collapsed" : ""}`}>
+
         <aside class={`sidebar${sidebarCollapsed() ? " sidebar-collapsed" : ""}`}>
 
           {/* Header */}
@@ -229,14 +367,15 @@ export function Layout(props: ParentProps<LayoutProps>) {
                 icon="◎"
               >
                 <nav class="sidebar-entity-nav">
-                  <a
-                    href="#"
-                    class={`sidebar-entity-link${isActive("diagrams", currentView()) ? " active" : ""}`}
-                    onClick={(e) => { e.preventDefault(); navigate(props.store, "diagrams"); }}
-                  >
-                    <span class="icon">◉</span>
-                    <span>Diagrams</span>
-                  </a>
+                  <For each={ANALYSIS_NAV}>
+                    {(item) => (
+                      <AnalysisNavItem
+                        item={item}
+                        currentView={currentView()}
+                        store={props.store}
+                      />
+                    )}
+                  </For>
                 </nav>
               </AccordionGroup>
 
@@ -244,7 +383,27 @@ export function Layout(props: ParentProps<LayoutProps>) {
           </Show>
 
         </aside>
-        <main class="main-content">{props.children}</main>
+
+        {/* Main panel: top-bar + content */}
+        <div class="main-panel">
+          <div class="top-bar">
+            <BreadcrumbBar store={props.store} />
+            <div class="top-bar-actions">
+              <button
+                class="top-bar-btn"
+                title="Search (press /)"
+                onClick={() => props.store.dispatch({ tag: "search", action: { type: "overlay-open" } })}
+              >🔍</button>
+              <button
+                class="top-bar-btn"
+                title="Keyboard shortcuts (press ?)"
+                onClick={() => props.store.dispatch({ tag: "explore", action: { type: "help-overlay-toggle" } })}
+              >?</button>
+            </div>
+          </div>
+          <main class="main-content">{props.children}</main>
+        </div>
+
       </div>
     </ExploreStoreContext.Provider>
   );

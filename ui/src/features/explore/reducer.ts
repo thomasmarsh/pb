@@ -34,6 +34,7 @@ function makeInitialExploreState(): ExploreState {
     highlightedLine: null,
     sidebarGroups: { sourceTree: true, entityNav: false, analysisNav: false },
     sidebarCollapsed: false,
+    helpOverlayOpen: false,
     tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
   };
 }
@@ -176,6 +177,15 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
 
   case "sidebar-reveal":
     revealInTree(draft, action.objectName, action.procName);
+    return null;
+
+  case "sidebar-focus-group":
+    draft.sidebarGroups = { ...draft.sidebarGroups, [action.group]: true };
+    if (draft.sidebarCollapsed) draft.sidebarCollapsed = false;
+    return null;
+
+  case "help-overlay-toggle":
+    draft.helpOverlayOpen = !draft.helpOverlayOpen;
     return null;
 
   // Tables browser (state kept; UI now accessed via Entity Navigation → Tables route)
