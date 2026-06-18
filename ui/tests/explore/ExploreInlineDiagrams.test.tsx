@@ -2,7 +2,6 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, cleanup, fireEvent } from "@solidjs/testing-library";
-import { Show } from "solid-js";
 import { createTestStore } from "../helpers.js";
 import { TableDetailPanel } from "../../src/features/explore/Tables.js";
 import { ProcDetailPanel } from "../../src/features/explore/ProcDetailPanel.js";
@@ -20,10 +19,11 @@ const mockProcDetail: ExploreProcDetail = {
   return_type: "integer",
   cyclomatic: 3,
   start_line: 10,
+  end_line: 50,
+  modifiers: null,
   source_rendered: "SELECT 1 FROM dual",
-  body_json: { tag: "BsReturn", contents: null },
-  ast: { tag: "BsReturn", contents: null },
-  sql_statements: [{ id: 1, operation: "SELECT", tables: ["dual"], columns: [] }],
+  ast: null,
+  sql_statements: [{ line: 1, operation: "SELECT", raw_sql: "SELECT 1", formatted_sql: "SELECT 1", tables: ["dual"], columns: [], has_into: false, has_cursor: false, parse_ok: true }],
 };
 
 const mockProcDetailNoSql: ExploreProcDetail = {
@@ -32,9 +32,10 @@ const mockProcDetailNoSql: ExploreProcDetail = {
   return_type: "void",
   cyclomatic: 1,
   start_line: 5,
+  end_line: 10,
+  modifiers: null,
   source_rendered: "Return 0",
-  body_json: { tag: "BsReturn", contents: null },
-  ast: { tag: "BsReturn", contents: null },
+  ast: null,
   sql_statements: [],
 };
 
@@ -45,8 +46,8 @@ const sampleLibraries = [
       {
         name: "w_main", kind: "powerscript", file: "app.pbl",
         procedures: [
-          { name: "fn_query", proc_type: "function", params: "", return_type: "", cyclomatic: 5, start_line: 10 },
-          { name: "fn_nosql", proc_type: "function", params: "", return_type: "", cyclomatic: 1, start_line: 20 },
+          { name: "fn_query", proc_type: "function", params: "", return_type: "", cyclomatic: 5, start_line: 10, end_line: 50, object: "w_main", modifiers: null },
+          { name: "fn_nosql", proc_type: "function", params: "", return_type: "", cyclomatic: 1, start_line: 20, end_line: 30, object: "w_main", modifiers: null },
         ],
       },
     ],

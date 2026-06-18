@@ -29,7 +29,7 @@ const childLens = {
   match: (a: ParentAction) => a.tag === "child" ? a.action : null,
   widen: (a: ChildAction): ParentAction => ({ tag: "child", action: a }),
   widenNav: (nav: string): ParentAction => ({ tag: "nav", nav }),
-  getEnv: (env: ChildEnv): Omit<ChildEnv, "navigate"> => ({ doWork: env.doWork }),
+  getEnv: (env: ChildEnv): ChildEnv => ({ doWork: env.doWork, navigate: env.navigate }),
 };
 
 // A child reducer that tracks whether navigate was called

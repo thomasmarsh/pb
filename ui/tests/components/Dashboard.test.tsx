@@ -4,20 +4,25 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { screen, fireEvent } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
 import { Dashboard } from "../../src/features/dashboard/Dashboard.js";
+import type { StatsResponse } from "../../src/types/api.js";
 
-const sampleStats = {
+const sampleStats: StatsResponse = {
   objects: 150,
   procedures: 400,
   inherits: 120,
   calls: 800,
   dw_controls: 350,
+  dw_retrieve_tables: 50,
+  dw_retrieve_columns: 120,
+  object_metrics: 150,
+  tables: 45,
   by_kind: [
     { kind: "powerscript", count: 100 },
     { kind: "datawindow", count: 50 },
   ],
   top_complex: [
-    { object: "w_main", name: "of_init", proc_type: "function", cyclomatic: 25 },
-    { object: "w_main", name: "of_save", proc_type: "subroutine", cyclomatic: 18 },
+    { object: "w_main", name: "of_init", proc_type: "function", cyclomatic: 25, modifiers: null, params: null, return_type: null, start_line: null, end_line: null },
+    { object: "w_main", name: "of_save", proc_type: "subroutine", cyclomatic: 18, modifiers: null, params: null, return_type: null, start_line: null, end_line: null },
   ],
   top_pagerank: [
     { object: "w_base", pagerank: 0.05, in_degree: 30, out_degree: 10 },

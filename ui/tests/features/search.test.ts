@@ -7,6 +7,7 @@ import { searchReducer, initialSearchState, type SearchEnv } from "../../src/fea
 
 const mockEnv: SearchEnv = {
   search: () => Effect.none(),
+  navigate: () => Effect.none(),
 };
 
 describe("search reducer", () => {
@@ -35,7 +36,7 @@ describe("search reducer", () => {
 
   describe("search/loaded", () => {
     it("populates results and clears loading", () => {
-      const data = { objects: [], procedures: [], datawindows: [] };
+      const data = { objects: [], procedures: [], datawindows: [], tables: [] };
       const ts = createTestStore(searchReducer, mockEnv, initialSearchState);
       ts.send({ type: "loaded", data }, (s) => {
         s.results = data;

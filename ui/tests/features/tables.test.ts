@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import { Effect } from "../../src/core/effect.js";
 import { createTestStore } from "../test-store.js";
 import { tablesReducer, initialTablesState, type TablesEnv } from "../../src/features/tables/reducer.js";
+import type { TablesState } from "../../src/features/tables/types.js";
 import type { TableSummary, TableDetail } from "../../src/types/api.js";
 
 const mockEnv: TablesEnv = {
@@ -22,11 +23,13 @@ const detail: TableDetail = {
   ps_count: 2,
   datawindows: [{ dw_name: "dw_orders", file: "a.srd" }],
   columns: [{ dw_name: "dw_orders", column_fqn: "orders.id", column_name: "id" }],
+  columns_detail: [],
   where: [],
   procedures: [
     { object: "n_svc", proc_name: "get_orders", operation: "SELECT" },
     { object: "n_svc", proc_name: "add_order",  operation: "INSERT" },
   ],
+  impact: { direct: [], inherited: [] },
 };
 
 describe("tables reducer", () => {
@@ -160,7 +163,7 @@ describe("tables reducer", () => {
         ...initialTablesState,
         detail,
         error: null,
-      });
+      } as TablesState);
       ts.send({ type: "back" }, (s) => {
         s.detail = null;
         s.error  = null;
@@ -173,7 +176,7 @@ describe("tables reducer", () => {
         ...initialTablesState,
         detail: null,
         error: "previous error",
-      });
+      } as TablesState);
       ts.send({ type: "back" }, (s) => {
         s.detail = null;
         s.error  = null;

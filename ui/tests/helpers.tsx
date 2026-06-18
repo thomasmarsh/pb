@@ -1,6 +1,6 @@
 // tests/helpers.tsx — Shared test utilities for component tests.
 
-import { type ParentProps, type JSX } from "solid-js";
+import { type JSX } from "solid-js";
 import { render, cleanup } from "@solidjs/testing-library";
 import { afterEach } from "vitest";
 import { Effect } from "../src/core/effect.js";

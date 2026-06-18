@@ -7,31 +7,7 @@ import { ExploreStoreContext } from "../../src/features/explore/ExploreContext.j
 import { createTestStore } from "../helpers.js";
 import { ProcNode, ObjectNode, LibraryNode } from "../../src/features/explore/TreeNodes.js";
 
-function renderWithExplore(overrides?: Record<string, unknown>) {
-  const { store, captured } = createTestStore({
-    explore: {
-      libraries: [],
-      expandedNodes: new Set<string>(),
-      selectedProc: null,
-      selectedDw: null,
-      procCache: {},
-      dwCache: {},
-      loading: false,
-      activeTab: "source",
-      treeFilter: "",
-      highlightedLine: null,
-      leftTab: "objects",
-      tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
-      ...overrides,
-    },
-  });
-  const result = render(() => (
-    <ExploreStoreContext.Provider value={store}>
-      <div />
-    </ExploreStoreContext.Provider>
-  ));
-  return { ...result, captured, store };
-}
+// Removed unused renderWithExplore helper
 
 describe("ProcNode", () => {
   it("renders procedure name", () => {
@@ -45,7 +21,7 @@ describe("ProcNode", () => {
     });
     render(() => (
       <ExploreStoreContext.Provider value={store}>
-        <ProcNode objName="w_main" proc={{ name: "of_init", proc_type: "function", params: "(n)", return_type: "void", cyclomatic: 3, start_line: 10, end_line: 20 }} depth={1} />
+        <ProcNode objName="w_main" proc={{ name: "of_init", proc_type: "function", params: "(n)", return_type: "void", cyclomatic: 3, start_line: 10, end_line: 20, object: "w_main", modifiers: null }} depth={1} />
       </ExploreStoreContext.Provider>
     ));
     expect(screen.getByText("of_init")).toBeDefined();
@@ -62,7 +38,7 @@ describe("ProcNode", () => {
     });
     render(() => (
       <ExploreStoreContext.Provider value={store}>
-        <ProcNode objName="w_main" proc={{ name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null }} depth={1} />
+        <ProcNode objName="w_main" proc={{ name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null, object: "w_main", modifiers: null }} depth={1} />
       </ExploreStoreContext.Provider>
     ));
     expect(screen.getByText("function")).toBeDefined();
@@ -79,7 +55,7 @@ describe("ProcNode", () => {
     });
     render(() => (
       <ExploreStoreContext.Provider value={store}>
-        <ProcNode objName="w_main" proc={{ name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null }} depth={1} />
+        <ProcNode objName="w_main" proc={{ name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null, object: "w_main", modifiers: null }} depth={1} />
       </ExploreStoreContext.Provider>
     ));
     fireEvent.click(screen.getByText("of_init"));
@@ -142,8 +118,8 @@ describe("ObjectNode", () => {
     render(() => (
       <ExploreStoreContext.Provider value={store}>
         <ObjectNode lib="app.pbl" obj={{ name: "w_main", kind: "powerscript", file: "app.pbl", procedures: [
-          { name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null },
-          { name: "of_close", proc_type: "subroutine", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null },
+          { name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null, object: "w_main", modifiers: null },
+          { name: "of_close", proc_type: "subroutine", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null, object: "w_main", modifiers: null },
        ] }} depth={1} />
       </ExploreStoreContext.Provider>
     ));

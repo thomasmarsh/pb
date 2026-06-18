@@ -12,6 +12,7 @@ const mockEnv: ExploreEnv = {
   getExploreDatawindow: () => Effect.none(),
   getTables: () => Effect.none(),
   getTableDetail: () => Effect.none(),
+  navigate: () => Effect.none(),
 };
 
 describe("explore reducer", () => {

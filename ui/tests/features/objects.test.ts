@@ -8,6 +8,11 @@ import type { ListObjectsResponse } from "../../src/types/api.js";
 
 const mockEnv: ObjectsEnv = {
   getObjects: () => Effect.none(),
+  getAllObjects: () => Effect.none(),
+  getObject: () => Effect.none(),
+  getObjectSource: () => Effect.none(),
+  getProcedure: () => Effect.none(),
+  navigate: () => Effect.none(),
 };
 
 describe("objects reducer", () => {

@@ -1,7 +1,7 @@
 // tests/components/Search.test.tsx — Tests for Search component.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { screen, fireEvent, waitFor } from "@solidjs/testing-library";
+import { screen, fireEvent } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
 import { Search } from "../../src/features/search/Search.js";
 
@@ -56,7 +56,7 @@ describe("Search component", () => {
 
   it("shows 'No results found' when results are empty", () => {
     renderWithStore(Search, {
-      search: { term: "xyz", loading: false, results: { objects: [], procedures: [], datawindows: [] } },
+      search: { term: "xyz", loading: false, results: { objects: [], procedures: [], datawindows: [], tables: [] } },
     });
     expect(screen.getByText("No results found")).toBeDefined();
   });
@@ -66,9 +66,10 @@ describe("Search component", () => {
       search: {
         term: "test", loading: false,
         results: {
-          objects: [{ name: "w_main", kind: "powerscript", file: "f.pbl" }],
+          objects: [{ name: "w_main", kind: "powerscript", file: "f.pbl", ancestor: null }],
           procedures: [],
           datawindows: [],
+          tables: [],
         },
       },
     });
@@ -82,8 +83,9 @@ describe("Search component", () => {
         term: "test", loading: false,
         results: {
           objects: [],
-          procedures: [{ object: "w_main", name: "of_click", proc_type: "function", start_line: 10 }],
+          procedures: [{ object: "w_main", name: "of_click", proc_type: "function", modifiers: "public", start_line: 10 }],
           datawindows: [],
+          tables: [],
         },
       },
     });
@@ -96,9 +98,10 @@ describe("Search component", () => {
       search: {
         term: "test", loading: false,
         results: {
-          objects: [{ name: "w_main", kind: "powerscript", file: "f.pbl" }],
+          objects: [{ name: "w_main", kind: "powerscript", file: "f.pbl", ancestor: null }],
           procedures: [],
           datawindows: [],
+          tables: [],
         },
       },
     });

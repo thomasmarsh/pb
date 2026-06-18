@@ -1,6 +1,6 @@
 // tests/components/Objects.test.tsx — Tests for Objects list component.
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { screen, fireEvent } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
 import { Objects } from "../../src/features/objects/Objects.js";

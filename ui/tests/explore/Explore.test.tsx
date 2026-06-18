@@ -10,7 +10,7 @@ const sampleLibraries = [
     name: "app.pbl",
     objects: [
       { name: "w_main", kind: "powerscript", file: "app.pbl", procedures: [
-        { name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: 5, start_line: 10 },
+        { name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: 5, start_line: 10, object: "w_main", modifiers: null, end_line: 50 },
       ] },
       { name: "d_emp", kind: "datawindow", file: "app.pbl", procedures: [] },
     ],

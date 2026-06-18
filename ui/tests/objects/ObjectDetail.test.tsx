@@ -1,7 +1,7 @@
 // tests/objects/ObjectDetail.test.tsx — Tests for ObjectDetail tab structure.
 
 import { describe, it, expect, vi } from "vitest";
-import { screen, fireEvent, render } from "@solidjs/testing-library";
+import { fireEvent, render } from "@solidjs/testing-library";
 import { ObjectDetail } from "../../src/features/objects/ObjectDetail.js";
 import { createTestStore } from "../helpers.js";
 
@@ -9,6 +9,7 @@ const baseDetail = {
   name: "w_main",
   kind: "powerscript",
   file: "app.pbl",
+  ancestor: null,
   ancestors: ["w_base"],
   descendants: [],
   callers: ["w_login"],

@@ -4,15 +4,19 @@ import { describe, it } from "vitest";
 import { Effect } from "../../src/core/effect.js";
 import { createTestStore } from "../test-store.js";
 import { diagramsReducer, initialDiagramsState, type DiagramsEnv } from "../../src/features/diagrams/reducer.js";
+import type { DiagramsState } from "../../src/features/diagrams/types.js";
 
 const mockEnv: DiagramsEnv = {
   getDiagram: () => Effect.none(),
+  getTables: () => Effect.none(),
+  getAllObjects: () => Effect.none(),
+  navigate: () => Effect.none(),
 };
 
 describe("diagrams reducer", () => {
   describe("diagrams/select", () => {
     it("updates active kind and clears svg", () => {
-      const init = { ...{ ...initialDiagramsState }, svg: "<svg>old</svg>" };
+      const init: DiagramsState = { ...initialDiagramsState, svg: "<svg>old</svg>" };
       const ts = createTestStore(diagramsReducer, mockEnv, init);
       ts.send({ type: "select", kind: "calls" }, (s) => {
         s.active = "calls";
@@ -39,7 +43,7 @@ describe("diagrams reducer", () => {
     });
 
     it("populates svg via effect", () => {
-      const env: DiagramsEnv = { getDiagram: () => Effect.send("<svg>ok</svg>") };
+      const env: DiagramsEnv = { ...mockEnv, getDiagram: () => Effect.send("<svg>ok</svg>") };
       const ts = createTestStore(diagramsReducer, env, { ...initialDiagramsState });
       ts.send({ type: "generate" }, (s) => {
         s.loading = true;

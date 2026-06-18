@@ -1,7 +1,7 @@
 // tests/components/Diagrams.test.tsx — Tests for Diagrams component.
 
 import { describe, it, expect } from "vitest";
-import { screen, fireEvent } from "@solidjs/testing-library";
+import { screen } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
 import { Diagrams } from "../../src/features/diagrams/Diagrams.js";
 

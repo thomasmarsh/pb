@@ -1,7 +1,7 @@
 // tests/utils/diagram.test.ts — Unit tests for diagram utilities.
 
 import { describe, it, expect } from "vitest";
-import { parsePbUrl, getPbHref, diagramUrl } from "../../src/utils/diagram.js";
+import { parsePbUrl, diagramUrl } from "../../src/utils/diagram.js";
 
 describe("parsePbUrl", () => {
   it("parses object URL", () => {

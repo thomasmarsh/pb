@@ -8,6 +8,7 @@ import { queriesReducer, initialQueriesState, type QueriesEnv } from "../../src/
 const mockEnv: QueriesEnv = {
   getQueries: () => Effect.none(),
   runQuery: () => Effect.none(),
+  navigate: () => Effect.none(),
 };
 
 describe("queries reducer", () => {
@@ -24,7 +25,7 @@ describe("queries reducer", () => {
 
   describe("queries/run", () => {
     it("clears results and sets resultsName", () => {
-      const init = { ...initialQueriesState, results: { columns: [], rows: [{ x: 1 }] } };
+      const init: import("../../src/features/queries/types.js").QueriesState = { ...initialQueriesState, results: { columns: [], rows: [{ x: 1 }] } };
       const ts = createTestStore(queriesReducer, mockEnv, init);
       ts.send({ type: "run", name: "top", params: { n: "5" } }, (s) => {
         s.results = null;
