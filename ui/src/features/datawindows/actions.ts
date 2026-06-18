@@ -9,4 +9,5 @@ export type DatawindowsAction =
   | { type: "select"; name: string }
   | { type: "detail-loaded"; data: DwDetailResponse }
   | { type: "detail-error"; error: string }
+  | { type: "set-dw-face"; name: string; face: import("./types.js").Face; scrollTop: number }
   ;

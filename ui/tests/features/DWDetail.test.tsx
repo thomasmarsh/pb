@@ -4,6 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
 import { DWDetail } from "../../src/features/datawindows/DataWindows.js";
 import { createTestStore } from "../helpers.js";
+import { initialDatawindowsState } from "../../src/features/datawindows/reducer.js";
 import type { DwDetailResponse } from "../../src/types/api.js";
 
 function makeDw(overrides: Partial<DwDetailResponse> = {}): DwDetailResponse {
@@ -24,9 +25,7 @@ function makeDw(overrides: Partial<DwDetailResponse> = {}): DwDetailResponse {
 
 function renderDWDetail(dwDetail: DwDetailResponse | { error: string } | null) {
   const { store } = createTestStore({
-    datawindows: {
-      items: [], total: 0, q: "", loading: false, dwDetail,
-    },
+    datawindows: { ...initialDatawindowsState, dwDetail },
   });
   return render(() => <DWDetail store={store} />);
 }

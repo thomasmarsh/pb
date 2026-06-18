@@ -4,6 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
 import { ObjectDetail } from "../../src/features/objects/ObjectDetail.js";
 import { createTestStore } from "../helpers.js";
+import { initialObjectsState } from "../../src/features/objects/reducer.js";
 
 const baseDetail = {
   name: "w_main",
@@ -22,9 +23,7 @@ describe("ObjectDetail tab structure", () => {
   it("renders Overview tab by default", () => {
     const { store } = createTestStore({
       objects: {
-        items: [], total: 0, q: "", kind: "", sort: "name", order: "asc",
-        offset: 0, loading: false, detail: baseDetail, sourceDetail: null,
-        procedureDetail: null, allObjects: [],
+        ...initialObjectsState, detail: baseDetail,
       },
     });
     render(() => <ObjectDetail store={store} />);
@@ -35,9 +34,7 @@ describe("ObjectDetail tab structure", () => {
   it("shows Diagram tab button when object has callers", () => {
     const { store } = createTestStore({
       objects: {
-        items: [], total: 0, q: "", kind: "", sort: "name", order: "asc",
-        offset: 0, loading: false, detail: baseDetail, sourceDetail: null,
-        procedureDetail: null, allObjects: [],
+        ...initialObjectsState, detail: baseDetail,
       },
     });
     render(() => <ObjectDetail store={store} />);
@@ -48,10 +45,8 @@ describe("ObjectDetail tab structure", () => {
   it("does not show Diagram tab when no calls or ancestors", () => {
     const { store } = createTestStore({
       objects: {
-        items: [], total: 0, q: "", kind: "", sort: "name", order: "asc",
-        offset: 0, loading: false,
+        ...initialObjectsState,
         detail: { ...baseDetail, callers: [], callees: [], ancestors: [] },
-        sourceDetail: null, procedureDetail: null, allObjects: [],
       },
     });
     render(() => <ObjectDetail store={store} />);
@@ -63,9 +58,7 @@ describe("ObjectDetail tab structure", () => {
     vi.stubGlobal("fetch", () => new Promise(() => {}));
     const { store } = createTestStore({
       objects: {
-        items: [], total: 0, q: "", kind: "", sort: "name", order: "asc",
-        offset: 0, loading: false, detail: baseDetail, sourceDetail: null,
-        procedureDetail: null, allObjects: [],
+        ...initialObjectsState, detail: baseDetail,
       },
     });
     render(() => <ObjectDetail store={store} />);
@@ -79,9 +72,7 @@ describe("ObjectDetail tab structure", () => {
   it("shows Source tab only when object has a file", () => {
     const { store } = createTestStore({
       objects: {
-        items: [], total: 0, q: "", kind: "", sort: "name", order: "asc",
-        offset: 0, loading: false, detail: baseDetail, sourceDetail: null,
-        procedureDetail: null, allObjects: [],
+        ...initialObjectsState, detail: baseDetail,
       },
     });
     render(() => <ObjectDetail store={store} />);
@@ -92,10 +83,8 @@ describe("ObjectDetail tab structure", () => {
   it("hides Source tab when object has no file", () => {
     const { store } = createTestStore({
       objects: {
-        items: [], total: 0, q: "", kind: "", sort: "name", order: "asc",
-        offset: 0, loading: false,
+        ...initialObjectsState,
         detail: { ...baseDetail, file: "" },
-        sourceDetail: null, procedureDetail: null, allObjects: [],
       },
     });
     render(() => <ObjectDetail store={store} />);

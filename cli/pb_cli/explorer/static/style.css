@@ -1487,3 +1487,71 @@ kbd.kbd {
     transition: opacity 0.12s;
 }
 .link-btn:hover { opacity: 0.75; }
+
+/* ── EntityCard ──────────────────────────────────────────────────────────── */
+.entity-card {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: none; border: 1px solid transparent; border-radius: 6px;
+    padding: 4px 8px; cursor: pointer; text-align: left;
+    color: var(--text-primary); font-size: 13px;
+    transition: background 0.1s, border-color 0.1s;
+    width: 100%;
+}
+.entity-card:hover { background: var(--bg-secondary); border-color: var(--border); }
+.entity-card:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+}
+.entity-card-icon {
+    font-size: 12px; color: var(--text-muted); flex-shrink: 0;
+    width: 14px; text-align: center;
+}
+.entity-card-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.entity-card-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.entity-card-context { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── FaceToggle ──────────────────────────────────────────────────────────── */
+.face-toggle {
+    display: flex; align-items: center; gap: 4px;
+    margin-bottom: 8px;
+}
+.face-toggle-btn {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    padding: 4px 10px 3px; cursor: pointer;
+    font-size: 13px; font-weight: 500; color: var(--text-muted);
+    transition: color 0.1s, border-bottom-color 0.1s;
+}
+.face-toggle-btn:hover { color: var(--text-primary); }
+.face-toggle-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.face-toggle-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+/* Phase badge: border-only pill — informational, not interactive */
+.phase-badge {
+    margin-left: 8px;
+    padding: 1px 7px; border-radius: 10px;
+    border: 1px solid var(--text-muted); background: none;
+    font-size: 11px; font-weight: 500; letter-spacing: 0.3px;
+    color: var(--text-muted); pointer-events: none; user-select: none;
+}
+
+/* ── PhaseGateInline ─────────────────────────────────────────────────────── */
+.phase-gate-inline { width: 100%; }
+.phase-gate-inline-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 0; cursor: pointer; background: none; border: none;
+    width: 100%; text-align: left;
+    color: var(--text-muted); font-size: 13px;
+    transition: color 0.1s;
+}
+.phase-gate-inline-row:hover { color: var(--text-secondary); }
+.phase-gate-inline-triangle { font-size: 10px; transition: transform 0.15s; }
+.phase-gate-inline-triangle.open { transform: rotate(90deg); }
+.phase-gate-inline-section { flex: 1; }
+.phase-gate-inline-label {
+    font-size: 11px; font-weight: 500; letter-spacing: 0.3px;
+    color: var(--text-muted); padding: 1px 6px; border-radius: 4px;
+    border: 1px solid rgba(128,128,128,0.3);
+}
+.phase-gate-inline-body {
+    padding: 8px 12px 12px 18px;
+    font-size: 12px; color: var(--text-secondary); line-height: 1.6;
+}

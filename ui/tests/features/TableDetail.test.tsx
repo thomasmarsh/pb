@@ -4,6 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
 import { TableDetail } from "../../src/features/tables/TableDetail.js";
 import { createTestStore } from "../helpers.js";
+import { initialTablesState } from "../../src/features/tables/types.js";
 import type { TableDetail as TableDetailData } from "../../src/types/api.js";
 
 const baseDetail: TableDetailData = {
@@ -23,9 +24,7 @@ const baseDetail: TableDetailData = {
 
 function renderTableDetail(detail: TableDetailData = baseDetail) {
   const { store } = createTestStore({
-    tables: {
-      items: [], total: 0, q: "", loading: false, detail, error: null,
-    },
+    tables: { ...initialTablesState, detail },
   });
   return render(() => <TableDetail store={store} />);
 }

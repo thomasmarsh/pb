@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import { screen, fireEvent } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
 import { Objects } from "../../src/features/objects/Objects.js";
+import { initialObjectsState } from "../../src/features/objects/reducer.js";
 
 const sampleItems = [
   { name: "w_main", kind: "powerscript", file: "app.pbl", ancestor: "w_base" },
@@ -46,18 +47,7 @@ describe("Objects component", () => {
   it("renders object table when items exist", () => {
     renderWithStore(Objects, {
       objects: {
-        items: sampleItems,
-        total: 3,
-        q: "",
-        kind: "",
-        sort: "name",
-        order: "asc",
-        offset: 0,
-        loading: false,
-        detail: null,
-        sourceDetail: null,
-        procedureDetail: null,
-        allObjects: [],
+        ...initialObjectsState, items: sampleItems, total: 3,
       },
     });
     expect(screen.getByText("w_main")).toBeDefined();
@@ -68,18 +58,7 @@ describe("Objects component", () => {
   it("clicking object row dispatches select", () => {
     const { captured } = renderWithStore(Objects, {
       objects: {
-        items: sampleItems,
-        total: 3,
-        q: "",
-        kind: "",
-        sort: "name",
-        order: "asc",
-        offset: 0,
-        loading: false,
-        detail: null,
-        sourceDetail: null,
-        procedureDetail: null,
-        allObjects: [],
+        ...initialObjectsState, items: sampleItems, total: 3,
       },
     });
     fireEvent.click(screen.getByText("w_main"));
@@ -93,18 +72,7 @@ describe("Objects component", () => {
   it("clicking column header dispatches sort", () => {
     const { captured } = renderWithStore(Objects, {
       objects: {
-        items: sampleItems,
-        total: 3,
-        q: "",
-        kind: "",
-        sort: "name",
-        order: "asc",
-        offset: 0,
-        loading: false,
-        detail: null,
-        sourceDetail: null,
-        procedureDetail: null,
-        allObjects: [],
+        ...initialObjectsState, items: sampleItems, total: 3,
       },
     });
     fireEvent.click(screen.getByText(/^Kind/));
@@ -117,18 +85,7 @@ describe("Objects component", () => {
   it("shows loading when loading and no items", () => {
     renderWithStore(Objects, {
       objects: {
-        items: [],
-        total: 0,
-        q: "test",
-        kind: "",
-        sort: "name",
-        order: "asc",
-        offset: 0,
-        loading: true,
-        detail: null,
-        sourceDetail: null,
-        procedureDetail: null,
-        allObjects: [],
+        ...initialObjectsState, q: "test", loading: true,
       },
     });
     expect(screen.getByText("Loading...")).toBeDefined();

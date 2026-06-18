@@ -8,4 +8,6 @@ export type TablesAction =
   | { type: "select";        name: string }
   | { type: "detail-loaded"; detail: TableDetail }
   | { type: "detail-error";  error: string }
-  | { type: "back" };
+  | { type: "back" }
+  | { type: "set-table-face"; name: string; face: import("./types.js").Face; scrollTop: number }
+  ;

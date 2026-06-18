@@ -51,6 +51,15 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
     draft.error = null;
     env.navigate({ type: "navigate", route: { view: "tables" } });
     return null;
+  case "set-table-face": {
+    const prev = draft.tableScrollPos[action.name] ?? { source: 0, analysis: 0 };
+    draft.tableScrollPos[action.name] = {
+      ...prev,
+      [draft.tableFace]: action.scrollTop,
+    };
+    draft.tableFace = action.face;
+    return null;
+  }
   default:
     return null;
   }
