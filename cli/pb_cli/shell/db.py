@@ -149,6 +149,40 @@ CREATE TABLE IF NOT EXISTS user_types (
     within_type TEXT
 );
 
+CREATE TABLE IF NOT EXISTS global_vars (
+    file        TEXT NOT NULL,
+    object      TEXT NOT NULL,
+    var_name    TEXT NOT NULL,
+    var_type    TEXT NOT NULL,
+    modifiers   TEXT,
+    scope       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS resolved_types (
+    file            TEXT NOT NULL,
+    object          TEXT NOT NULL,
+    proc_name       TEXT NOT NULL,
+    var_name        TEXT NOT NULL,
+    raw_type        TEXT NOT NULL,
+    resolved_kind   TEXT NOT NULL,
+    resolved_target TEXT,
+    is_parameter    BOOLEAN NOT NULL DEFAULT FALSE,
+    scope_line      INT
+);
+
+CREATE TABLE IF NOT EXISTS resolved_calls (
+    file            TEXT NOT NULL,
+    object          TEXT NOT NULL,
+    from_proc       TEXT NOT NULL,
+    to_name         TEXT NOT NULL,
+    call_type       TEXT NOT NULL,
+    call_line       INT,
+    target_object   TEXT,
+    target_proc     TEXT,
+    resolution_kind TEXT NOT NULL,
+    confidence      TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS metadata (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -195,6 +229,9 @@ INSERT = {
     "parse_errors": "INSERT INTO parse_errors VALUES (?,?,?,?,?,?,?)",
     "local_variables": "INSERT INTO local_variables VALUES (?,?,?,?,?,?)",
     "user_types": "INSERT INTO user_types VALUES (?,?,?,?)",
+    "global_vars": "INSERT INTO global_vars VALUES (?,?,?,?,?,?)",
+    "resolved_types": "INSERT INTO resolved_types VALUES (?,?,?,?,?,?,?,?,?)",
+    "resolved_calls": "INSERT INTO resolved_calls VALUES (?,?,?,?,?,?,?,?,?,?)",
 }
 
 
@@ -236,7 +273,7 @@ def insert_parse_errors(conn: Conn, rows: list[ParseErrorRow]) -> None:
 def drop_tables(conn: Conn) -> None:
     """Drop all data tables and file_state (full reset)."""
     conn.execute("DROP VIEW IF EXISTS all_sql_tables")
-    for t in TABLES + ["file_state", "metadata"]:
+    for t in TABLES + ["file_state", "metadata", "resolved_types", "resolved_calls"]:
         conn.execute(f"DROP TABLE IF EXISTS {t}")
 
 

@@ -128,6 +128,40 @@ class UserTypeRow(NamedTuple):
     within_type: str | None
 
 
+class GlobalVarRow(NamedTuple):
+    file: str
+    object: str
+    var_name: str
+    var_type: str
+    modifiers: str | None
+    scope: str  # 'type' | 'global'
+
+
+class ResolvedTypeRow(NamedTuple):
+    file: str
+    object: str
+    proc_name: str
+    var_name: str
+    raw_type: str
+    resolved_kind: str  # primitive/object/user_type/any/unresolved
+    resolved_target: str | None
+    is_parameter: bool
+    scope_line: int | None
+
+
+class ResolvedCallRow(NamedTuple):
+    file: str
+    object: str
+    from_proc: str
+    to_name: str
+    call_type: str
+    call_line: int | None
+    target_object: str | None
+    target_proc: str | None
+    resolution_kind: str  # static/virtual/inherited/unresolved
+    confidence: str  # high/medium/low
+
+
 class RowBatch(TypedDict):
     objects: list[ObjectRow]
     procedures: list[ProcedureRow]
@@ -142,6 +176,7 @@ class RowBatch(TypedDict):
     parse_errors: list[ParseErrorRow]
     local_variables: list[LocalVarRow]
     user_types: list[UserTypeRow]
+    global_vars: list[GlobalVarRow]
 
 
 def new_row_batch() -> RowBatch:
@@ -159,6 +194,7 @@ def new_row_batch() -> RowBatch:
         parse_errors=[],
         local_variables=[],
         user_types=[],
+        global_vars=[],
     )
 
 
@@ -176,4 +212,5 @@ TABLES = [
     "parse_errors",
     "local_variables",
     "user_types",
+    "global_vars",
 ]

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import graphviz
 
-from pb_cli.core.cfg_builder import BasicBlock, CFG
+from pb_cli.core.cfg_builder import CFG, BasicBlock
 
 _STATE_ATTRS: dict[str, dict[str, str]] = {
     "default": {"fillcolor": "white", "style": "filled"},

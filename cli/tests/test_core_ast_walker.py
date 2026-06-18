@@ -1,4 +1,12 @@
-from pb_cli.core.ast_walker import count_branches, walk_bsraw, walk_bsraw_located, walk_calls, walk_exraw, walk_local_vars, walk_tagged
+from pb_cli.core.ast_walker import (
+    count_branches,
+    walk_bsraw,
+    walk_bsraw_located,
+    walk_calls,
+    walk_exraw,
+    walk_local_vars,
+    walk_tagged,
+)
 
 
 def test_walk_calls_excall():

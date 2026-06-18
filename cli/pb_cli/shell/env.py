@@ -59,6 +59,7 @@ from pb_cli.shell.state import (
     load_file_state,
     save_file_state,
 )
+from pb_cli.shell.type_resolution import build_type_tables
 
 if TYPE_CHECKING:
     from pb_cli.shell.reporter import AnalyzeProgress
@@ -143,6 +144,7 @@ class StorageEnv:
     count_sql_parse_failures: Callable[[Conn], int] = field(default=count_sql_parse_failures)
     insert_parse_errors: Callable[[Conn, list[ParseErrorRow]], None] = field(default=insert_parse_errors)
     compute_metrics: Callable[[Conn, AnalyzeProgress], None] = field(default=compute_metrics)
+    build_type_tables: Callable[[Conn], None] = field(default=build_type_tables)
     connect: Callable[[str], AbstractContextManager[Conn]] = field(default=connect)
 
 

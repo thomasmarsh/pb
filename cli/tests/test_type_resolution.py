@@ -1,0 +1,344 @@
+"""Tests for core.type_resolution and shell.type_resolution."""
+
+from __future__ import annotations
+
+import json
+
+from pb_cli.core.models import (
+    CallRow,
+    GlobalVarRow,
+    LocalVarRow,
+    ProcedureRow,
+)
+from pb_cli.core.type_resolution import (
+    classify_type,
+    extract_global_vars,
+    parse_params,
+    resolve_calls,
+    resolve_types,
+)
+from pb_cli.shell.db import create_schema, db_connection
+from pb_cli.shell.type_resolution import build_type_tables
+
+# ── parse_params ──────────────────────────────────────────────────────────────
+
+
+def test_parse_params_empty():
+    assert parse_params("") == []
+    assert parse_params("  ") == []
+
+
+def test_parse_params_single():
+    result = parse_params("long ai_id")
+    assert result == [("ai_id", "long")]
+
+
+def test_parse_params_multiple():
+    result = parse_params("ref datawindow adw , long row")
+    assert result == [("adw", "datawindow"), ("row", "long")]
+
+
+def test_parse_params_no_type():
+    result = parse_params("as_name")
+    assert result == []
+
+
+# ── classify_type ─────────────────────────────────────────────────────────────
+
+
+def test_classify_primitive():
+    objects = set()
+    user_types = set()
+    for t in ("string", "integer", "long", "boolean", "double", "date", "decimal"):
+        kind, target = classify_type(t, objects, user_types)
+        assert kind == "primitive", f"{t} should be primitive"
+        assert target is None
+
+
+def test_classify_any():
+    kind, target = classify_type("any", set(), set())
+    assert kind == "any"
+
+
+def test_classify_object():
+    objects = {"w_main", "nvo_utils"}
+    user_types = set()
+    kind, target = classify_type("w_main", objects, user_types)
+    assert kind == "object"
+    assert target == "w_main"
+
+
+def test_classify_user_type():
+    objects = set()
+    user_types = {"uo_grid", "sc_misth"}
+    kind, target = classify_type("uo_grid", objects, user_types)
+    assert kind == "user_type"
+    assert target == "uo_grid"
+
+
+def test_classify_unresolved():
+    kind, target = classify_type("zzz_nope", set(), set())
+    assert kind == "unresolved"
+    assert target is None
+
+
+def test_classify_datawindow_builtin():
+    kind, target = classify_type("datawindow", set(), set())
+    assert kind == "primitive"
+
+
+# ── resolve_types ─────────────────────────────────────────────────────────────
+
+
+def _make_proc(file, obj, name, params=None, return_type=None, body_json=None):
+    return ProcedureRow(
+        file=file, object=obj, proc_type="function", name=name,
+        modifiers=None, params=params, return_type=return_type,
+        start_line=1, end_line=10,
+        body_json=body_json or "[]",
+        source_rendered="", cyclomatic=1,
+    )
+
+
+def test_resolve_types_local_vars():
+    local_vars = [
+        LocalVarRow("f.srw", "w_test", "of_init", "ls_name", "string", 5),
+        LocalVarRow("f.srw", "w_test", "of_init", "ll_count", "long", 6),
+        LocalVarRow("f.srw", "w_test", "of_init", "lw_form", "w_main", 7),
+    ]
+    procedures = [_make_proc("f.srw", "w_test", "of_init")]
+    objects = {"w_main"}
+    user_types = set()
+
+    result = resolve_types(local_vars, procedures, objects, user_types)
+    by_name = {r.var_name: r for r in result}
+    assert by_name["ls_name"].resolved_kind == "primitive"
+    assert by_name["ll_count"].resolved_kind == "primitive"
+    assert by_name["lw_form"].resolved_kind == "object"
+    assert by_name["lw_form"].resolved_target == "w_main"
+
+
+def test_resolve_types_params():
+    local_vars = []
+    procedures = [
+        _make_proc("f.srw", "w_test", "of_retrieve", params="ref datawindow adw , long row"),
+    ]
+    objects = set()
+    user_types = set()
+
+    result = resolve_types(local_vars, procedures, objects, user_types)
+    params = [r for r in result if r.is_parameter]
+    assert len(params) == 2
+    by_name = {r.var_name: r for r in params}
+    assert by_name["adw"].raw_type == "datawindow"
+    assert by_name["row"].raw_type == "long"
+    assert by_name["row"].resolved_kind == "primitive"
+
+
+# ── resolve_calls ─────────────────────────────────────────────────────────────
+
+
+def test_resolve_calls_static_dotted():
+    calls = [CallRow("f.srw", "w_test", "of_init", "nvo_utils.of_parse", "ExCall")]
+    procedures = [
+        _make_proc("f.srw", "w_test", "of_init", body_json='[]'),
+        _make_proc("f.srw", "nvo_utils", "of_parse"),
+    ]
+    inherits = []
+
+    result = resolve_calls(calls, procedures, inherits)
+    assert len(result) == 1
+    r = result[0]
+    assert r.target_object == "nvo_utils"
+    assert r.target_proc == "of_parse"
+    assert r.resolution_kind == "static"
+    assert r.confidence == "high"
+
+
+def test_resolve_calls_virtual_inherited():
+    calls = [CallRow("f.srw", "w_child", "open", "of_init", "ExCall")]
+    procedures = [
+        _make_proc("f.srw", "w_child", "open", body_json='[]'),
+        _make_proc("f.srw", "w_parent", "of_init"),
+    ]
+    inherits = [("w_child", "w_parent")]
+
+    result = resolve_calls(calls, procedures, inherits)
+    r = result[0]
+    assert r.target_object == "w_parent"
+    assert r.target_proc == "of_init"
+    assert r.resolution_kind == "inherited"
+    assert r.confidence == "high"
+
+
+def test_resolve_calls_virtual_own():
+    calls = [CallRow("f.srw", "w_test", "open", "of_init", "ExCall")]
+    procedures = [
+        _make_proc("f.srw", "w_test", "open", body_json='[]'),
+        _make_proc("f.srw", "w_test", "of_init"),
+    ]
+    inherits = []
+
+    result = resolve_calls(calls, procedures, inherits)
+    r = result[0]
+    assert r.target_object == "w_test"
+    assert r.target_proc == "of_init"
+    assert r.resolution_kind == "virtual"
+
+
+def test_resolve_calls_global_function():
+    """Global functions (e.g. fn_sqlerror) are callable from any object.
+
+    They live on a standalone object (fn_sqlerror.fn_sqlerror) and are not
+    in the caller's ancestor chain. The resolver must find them via global
+    procedure lookup.
+    """
+    calls = [CallRow("f.srw", "w_filter", "open", "fn_sqlerror", "ExCall")]
+    procedures = [
+        _make_proc("f.srw", "w_filter", "open", body_json='[]'),
+        _make_proc("f.srw", "fn_sqlerror", "fn_sqlerror"),
+    ]
+    inherits = [("w_filter", "w_response")]
+
+    result = resolve_calls(calls, procedures, inherits)
+    r = result[0]
+    assert r.target_object == "fn_sqlerror"
+    assert r.target_proc == "fn_sqlerror"
+    assert r.resolution_kind == "virtual"
+    assert r.confidence == "high"
+
+
+def test_resolve_calls_unresolved():
+    calls = [CallRow("f.srw", "w_test", "open", "of_nope", "ExCall")]
+    procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
+    inherits = []
+
+    result = resolve_calls(calls, procedures, inherits)
+    r = result[0]
+    assert r.resolution_kind == "unresolved"
+    assert r.confidence == "low"
+
+
+def test_resolve_calls_dispatch_unresolved():
+    calls = [CallRow("f.srw", "w_test", "open", "ue_init", "ExDispatch")]
+    procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
+    inherits = []
+
+    result = resolve_calls(calls, procedures, inherits)
+    r = result[0]
+    assert r.resolution_kind == "unresolved"
+    assert r.call_type == "ExDispatch"
+
+
+def test_resolve_calls_method_unresolved():
+    calls = [CallRow("f.srw", "w_test", "open", "customMethod", "ExMethodCall")]
+    procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
+    inherits = []
+
+    result = resolve_calls(calls, procedures, inherits)
+    r = result[0]
+    assert r.resolution_kind == "unresolved"
+    assert r.call_type == "ExMethodCall"
+
+
+def test_resolve_calls_line_extraction():
+    body = json.dumps([
+        {"line": 15, "node": {"tag": "BsCall", "contents": {
+            "tag": "ExCall",
+            "callee": {"segments": [{"name": "nvo_utils"}, {"name": "of_parse"}]},
+            "args": [],
+        }}}
+    ])
+    calls = [CallRow("f.srw", "w_test", "of_init", "nvo_utils.of_parse", "ExCall")]
+    procedures = [
+        _make_proc("f.srw", "w_test", "of_init", body_json=body),
+        _make_proc("f.srw", "nvo_utils", "of_parse"),
+    ]
+    inherits = []
+
+    result = resolve_calls(calls, procedures, inherits)
+    assert result[0].call_line == 15
+
+
+# ── build_type_tables (integration) ───────────────────────────────────────────
+
+
+def test_build_type_tables_integration(tmp_path):
+    db = str(tmp_path / "test.duckdb")
+    with db_connection(db) as conn:
+        create_schema(conn)
+        conn.execute(
+            "INSERT INTO objects VALUES (?,?,?,?,?)",
+            ("f.srw", "w_test", "powerscript", None, None),
+        )
+        conn.execute(
+            "INSERT INTO objects VALUES (?,?,?,?,?)",
+            ("f.srw", "nvo_utils", "powerscript", None, None),
+        )
+        conn.execute(
+            "INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("f.srw", "w_test", "function", "of_init", None, None, None, 1, 10, "[]", "", 1),
+        )
+        conn.execute(
+            "INSERT INTO local_variables VALUES (?,?,?,?,?,?)",
+            ("f.srw", "w_test", "of_init", "ls_name", "string", 5),
+        )
+        conn.execute(
+            "INSERT INTO calls VALUES (?,?,?,?,?)",
+            ("f.srw", "w_test", "of_init", "nvo_utils.of_parse", "ExCall"),
+        )
+
+        build_type_tables(conn)
+
+        types = conn.execute("SELECT resolved_kind, COUNT(*) FROM resolved_types GROUP BY resolved_kind").fetchall()
+        assert dict(types) == {"primitive": 1}
+
+        calls = conn.execute("SELECT resolution_kind FROM resolved_calls").fetchall()
+        assert calls[0][0] == "static"
+
+
+# ── extract_global_vars ───────────────────────────────────────────────────────
+
+
+def test_extract_global_vars_passthrough():
+    rows = [
+        GlobalVarRow("f.sra", "openpay", "gs_lock", "string", None, "global"),
+    ]
+    result = extract_global_vars(rows, [])
+    assert len(result) == 1
+    assert result[0].var_name == "gs_lock"
+
+
+def test_resolve_calls_instance_var_type():
+    """Bare call resolves via instance variable type from global_vars.
+
+    A procedure with no local variables calls retrieve(). The object has
+    an instance variable dw_data typed as datawindow. The call should
+    resolve because retrieve is a DataWindow method.
+    """
+    calls = [CallRow("f.srw", "w_test", "open", "retrieve", "ExCall")]
+    procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
+    inherits = []
+    # Instance variable from type variables block
+    var_types = {("w_test", "", "dw_data"): "datawindow"}
+
+    result = resolve_calls(calls, procedures, inherits, var_types=var_types)
+    r = result[0]
+    assert r.resolution_kind == "builtin"
+    assert r.confidence == "medium"
+
+
+def test_resolve_calls_instance_var_inherited_type():
+    """Bare call resolves when instance var type inherits from PB class.
+
+    Instance variable typed as u_grid (inherits from datawindow).
+    retrieve should resolve by walking u_grid's ancestor chain.
+    """
+    calls = [CallRow("f.srw", "w_test", "open", "retrieve", "ExCall")]
+    procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
+    inherits = [("u_grid", "datawindow")]
+    var_types = {("w_test", "", "dw_data"): "u_grid"}
+
+    result = resolve_calls(calls, procedures, inherits, var_types=var_types)
+    r = result[0]
+    assert r.resolution_kind == "builtin"

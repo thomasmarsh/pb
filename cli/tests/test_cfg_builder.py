@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 from pb_cli.core.cfg_builder import (
-    BasicBlock,
-    CFG,
-    CFGEdge,
     _is_exbool_value,
     build_cfg,
     compute_node_states,
     mark_unreachable,
 )
 from pb_cli.core.cfg_renderer import cfg_to_dot
-
 
 # ---------------------------------------------------------------------------
 # Fixtures — inline body_json dicts matching the wire format

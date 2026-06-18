@@ -12,6 +12,7 @@ from pb_cli.core.models import (
     DwRetrieveColumnRow,
     DwRetrieveTableRow,
     DwRetrieveWhereRow,
+    GlobalVarRow,
     InheritsRow,
     LocalVarRow,
     ObjectRow,
@@ -58,6 +59,7 @@ def import_file(obj: dict, rows: RowBatch, dialect: str = "oracle") -> None:
     if kind == "powerscript":
         _import_ps(obj, file, rows, dialect)
         _import_user_types(obj, file, rows)
+        _import_variables(obj, file, rows)
     elif kind == "datawindow":
         _import_dw(obj, file, rows)
 
@@ -241,4 +243,32 @@ def _import_user_types(obj: dict, file: str, rows: RowBatch) -> None:
             type_name=td.get("name", ""),
             ancestor=td.get("ancestor"),
             within_type=None,
+        ))
+
+
+def _import_variables(obj: dict, file: str, rows: RowBatch) -> None:
+    """Extract instance and global variable declarations."""
+    obj_name = obj.get("meta", {}).get("object", "")
+
+    variables = obj.get("variables") or {}
+    scope = variables.get("scope", "")
+    for decl in variables.get("decls", []):
+        mods = decl.get("modifiers") or []
+        rows["global_vars"].append(GlobalVarRow(
+            file=file,
+            object=obj_name,
+            var_name=decl.get("name", ""),
+            var_type=decl.get("type", ""),
+            modifiers=" ".join(mods) if mods else None,
+            scope=scope,
+        ))
+
+    for inst in obj.get("globalInstances", []):
+        rows["global_vars"].append(GlobalVarRow(
+            file=file,
+            object=obj_name,
+            var_name=inst.get("name", ""),
+            var_type=inst.get("type", ""),
+            modifiers=None,
+            scope="instance",
         ))
