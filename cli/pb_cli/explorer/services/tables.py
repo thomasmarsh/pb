@@ -211,4 +211,22 @@ def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     except Exception:
         stats["tables"] = 0
 
+    try:
+        row = conn.execute("""
+            SELECT count(*) FROM (
+                SELECT DISTINCT file FROM objects
+                UNION
+                SELECT DISTINCT file FROM parse_errors
+            ) t
+        """).fetchone()
+        stats["files_indexed"] = row[0] if row else 0
+    except Exception:
+        stats["files_indexed"] = 0
+
+    try:
+        row = conn.execute("SELECT count(DISTINCT file) FROM parse_errors").fetchone()
+        stats["parse_error_count"] = row[0] if row else 0
+    except Exception:
+        stats["parse_error_count"] = 0
+
     return stats

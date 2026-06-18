@@ -151,6 +151,8 @@ export interface StatsResponse {
   by_kind: { kind: string; count: number }[];
   top_complex: ProcedureRow[];
   top_pagerank: { object: string; pagerank: number; in_degree: number; out_degree: number }[];
+  files_indexed?: number;
+  parse_error_count?: number;
 }
 
 export interface QueryParam {
