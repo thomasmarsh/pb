@@ -17,6 +17,7 @@ export interface PanZoomActions {
   zoomIn: () => void;
   zoomOut: () => void;
   resetView: () => void;
+  setView: (scale: number, offX: number, offY: number) => void;
 }
 
 export interface PanZoomHandlers {
@@ -147,6 +148,12 @@ export function createPanZoom(opts: {
     setOffset({ x: 0, y: 0 });
   }
 
+  function setView(scale: number, offX: number, offY: number) {
+    opts.dismissTooltip();
+    setScale(scale);
+    setOffset({ x: offX, y: offY });
+  }
+
   const handlers: PanZoomHandlers = {
     onWheel: handleWheel,
     onMouseDown: handleMouseDown,
@@ -157,7 +164,7 @@ export function createPanZoom(opts: {
 
   return {
     state: { scale, offset, dragging, momentum },
-    actions: { zoomIn, zoomOut, resetView, dismissTooltip: opts.dismissTooltip },
+    actions: { zoomIn, zoomOut, resetView, setView, dismissTooltip: opts.dismissTooltip },
     handlers,
     cleanup,
     setViewportRef,

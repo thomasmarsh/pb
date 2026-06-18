@@ -150,8 +150,25 @@ function ProcedureDetailContent(props: {
             </div>
           </Show>
 
-          <PhaseGateInline phase={2} section="Control Flow Graph" label="requires typing pass"
-            description="The CFG diagram for this procedure is available after a P2 typing pass." />
+          <div class="card">
+            <div class="card-header" style={{ display: "flex", "align-items": "center", gap: "10px" }}>
+              <h3 style={{ flex: 1 }}>Control Flow Graph</h3>
+              <button
+                class="filter-pill active"
+                style={{ "font-size": "12px", padding: "3px 10px" }}
+                onClick={() => store.dispatch({
+                  tag: "nav",
+                  action: { tag: "navigate", route: { view: "cfgDiagram", object: props.objectName, proc: p.name } },
+                })}
+              >
+                View CFG ↗
+              </button>
+            </div>
+            <div style={{ padding: "4px 0 8px" }}>
+              <PhaseGateInline phase={2} section="Node state annotations" label="requires typing pass"
+                description="Unreachable blocks, taint-entering markers, and proven-safe indicators appear after a P2 typing pass." />
+            </div>
+          </div>
           <PhaseGateInline phase={3} section="Taint Paths" label="requires taint analysis"
             description="Taint flow through this procedure's parameters is available after a P3 taint analysis run." />
           <PhaseGateInline phase={4} section="Formal Properties" label="requires formal verification"

@@ -83,5 +83,13 @@ export function crumbsForRoute(route: Route): BreadcrumbSegment[] {
 
     case "explore":
       return [{ icon: ICONS.analysis, label: "Explore", route }];
+
+    case "cfgDiagram":
+      return [
+        { icon: ICONS.list,      label: "Objects",          route: { view: "objects" } },
+        { icon: ICONS.object,    label: route.object,        route: { view: "objectDetail", name: route.object } },
+        { icon: ICONS.procedure, label: route.proc,          route: { view: "procedureDetail", name: route.object, proc: route.proc } },
+        { icon: ICONS.analysis,  label: "CFG",              route },
+      ];
   }
 }

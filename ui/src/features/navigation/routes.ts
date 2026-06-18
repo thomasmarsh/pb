@@ -35,6 +35,9 @@ export function print(route: Route): string {
     case "deadCode":         return "/dead-code";
     case "taintExplorer":    return "/taint";
     case "formalReports":    return "/reports";
+    case "cfgDiagram":
+      return "/analysis/cfg/" + encodeURIComponent(route.object)
+             + "/"            + encodeURIComponent(route.proc);
   }
 }
 
@@ -77,6 +80,15 @@ export function parse(path: string, search?: string): Route {
     case "taint":        return { view: "taintExplorer" };
     case "reports":      return { view: "formalReports" };
     case "procedures":   return { view: "proceduresList" };
+    case "analysis":
+      if (segs[1] === "cfg" && segs[2] && segs[3]) {
+        return {
+          view: "cfgDiagram",
+          object: decodeURIComponent(segs[2]),
+          proc:   decodeURIComponent(segs[3]),
+        };
+      }
+      return { view: "dashboard" };
     default:             return { view: "dashboard" };
   }
 }

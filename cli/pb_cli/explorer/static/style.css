@@ -15,6 +15,11 @@
     --red: #f87171;
     --orange: #fb923c;
     --purple: #a78bfa;
+    /* Phase annotation tokens (§3.2) — distinct from semantic palette */
+    --phase-p2: #2dd4bf;    /* teal ~175° — typing/CFG */
+    --phase-p3: #f59e0b;    /* amber-orange ~40° — taint/risk */
+    --phase-p4: #6366f1;    /* indigo ~245° — formal proof */
+    --phase-amber: #f59e0b; /* alias for PhaseGate ⚠ icon */
 }
 
 [data-theme="light"] {
@@ -33,6 +38,10 @@
     --red: #dc2626;
     --orange: #c2410c;
     --purple: #6d28d9;
+    --phase-p2: #0d9488;
+    --phase-p3: #d97706;
+    --phase-p4: #4f46e5;
+    --phase-amber: #d97706;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1623,3 +1632,74 @@ kbd.kbd {
 .entity-card-list { display: flex; flex-direction: column; gap: 4px; }
 .card-meta { font-size: 11px; color: var(--text-muted); }
 .muted-note { font-size: 13px; color: var(--text-muted); margin: 0; padding: 4px 0; }
+
+/* ── AnalysisView chrome ─────────────────────────────────────────────────── */
+.analysis-view { display: flex; flex-direction: column; height: 100%; gap: 12px; }
+.analysis-title-bar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 0 0 4px;
+}
+.analysis-title { font-size: 15px; font-weight: 600; }
+.analysis-context-label { font-size: 12px; color: var(--text-muted); flex: 1; }
+.analysis-save-btn {
+    background: none; border: 1px solid var(--border); border-radius: 5px;
+    padding: 3px 10px; font-size: 12px; color: var(--text-secondary);
+    cursor: pointer; transition: border-color 0.1s, color 0.1s;
+}
+.analysis-save-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+.analysis-phase-footer {
+    font-size: 11px; color: var(--text-muted);
+    padding: 8px 0 0; border-top: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.analysis-assumptions-toggle {
+    background: none; border: none; cursor: pointer;
+    font-size: 11px; color: var(--text-muted); padding: 0;
+    display: flex; align-items: center; gap: 4px;
+    transition: color 0.1s;
+}
+.analysis-assumptions-toggle:hover { color: var(--text-secondary); }
+.analysis-assumptions-body {
+    font-size: 12px; color: var(--text-secondary); line-height: 1.6;
+    padding: 6px 0 2px; width: 100%;
+}
+
+/* ── CFGDiagram split layout ─────────────────────────────────────────────── */
+.cfg-split {
+    display: flex; gap: 12px; flex: 1; min-height: 0;
+}
+.cfg-diagram-pane {
+    flex: 1; min-width: 0; position: relative;
+}
+.cfg-block-panel {
+    width: 260px; flex-shrink: 0;
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+    display: flex; flex-direction: column; overflow: hidden;
+}
+.cfg-block-panel-header {
+    padding: 10px 14px 8px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px; font-weight: 600;
+}
+.cfg-block-panel-body { flex: 1; overflow-y: auto; padding: 10px 14px; }
+.cfg-block-stmt {
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    font-size: 11px; color: var(--text-secondary);
+    padding: 2px 0; white-space: pre-wrap; word-break: break-all;
+}
+.cfg-block-meta { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; }
+.cfg-block-goto {
+    background: none; border: none; cursor: pointer;
+    font-size: 11px; color: var(--accent); padding: 6px 0 0;
+    text-align: left; display: block;
+    transition: opacity 0.1s;
+}
+.cfg-block-goto:hover { opacity: 0.75; }
+.cfg-block-empty {
+    font-size: 12px; color: var(--text-muted); padding: 8px 0;
+    font-style: italic;
+}
+
+/* CFG node state keyframes for click highlight */
+.cfg-node-selected polygon,
+.cfg-node-selected ellipse { stroke-width: 2.5 !important; }

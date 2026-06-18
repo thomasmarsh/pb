@@ -18,7 +18,8 @@ export type Route =
   | { view: "libraryDetail"; name: string }
   | { view: "deadCode" }
   | { view: "taintExplorer" }
-  | { view: "formalReports" };
+  | { view: "formalReports" }
+  | { view: "cfgDiagram"; object: string; proc: string };
 
 export type ViewName = Route["view"];
 

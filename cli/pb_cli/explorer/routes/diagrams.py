@@ -98,7 +98,23 @@ async def get_cfg_diagram(
     except graphviz.backend.execute.ExecutableNotFound:
         raise HTTPException(status_code=503, detail="graphviz 'dot' binary not found on PATH")
 
+    def _stmt_label(s: dict) -> str:
+        tag = s.get("node", {}).get("tag", "?")
+        line = s.get("line", "")
+        return f"L{line} {tag}" if line else tag
+
+    block_details = [
+        {
+            "blockId": bid,
+            "firstLine": block.first_line,
+            "lastLine": block.last_line,
+            "stmts": [_stmt_label(s) for s in block.stmts],
+        }
+        for bid, block in cfg.blocks.items()
+    ]
+
     return {
         "svg": svg,
         "nodeStates": [{"blockId": bid, "state": s} for bid, s in node_states.items()],
+        "blocks": block_details,
     }
