@@ -15,6 +15,7 @@ const objEnv: ObjectsEnv = {
   getObject: () => Effect.none(),
   getObjectSource: () => Effect.none(),
   getProcedure: () => Effect.none(),
+  getProcedures: () => Effect.none(),
   navigate: () => Effect.none(),
 };
 

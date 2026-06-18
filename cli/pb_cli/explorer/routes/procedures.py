@@ -6,9 +6,14 @@ import duckdb
 from fastapi import APIRouter, Depends, HTTPException
 
 from pb_cli.explorer.routes.dependencies import get_db
-from pb_cli.explorer.services.procedures import get_procedure_detail, get_procedure_explore
+from pb_cli.explorer.services.procedures import get_procedure_detail, get_procedure_explore, list_procedures
 
 router = APIRouter()
+
+
+@router.get("/api/procedures")
+async def list_procedures_route(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
+    return list_procedures(conn)
 
 
 @router.get("/api/procedures/{object_name}/{proc_name}")

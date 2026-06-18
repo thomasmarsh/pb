@@ -68,6 +68,19 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
     return proc
 
 
+def list_procedures(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
+    result = rows(conn.execute(
+        "SELECT p.object, p.proc_type, p.name, p.modifiers, p.params, p.return_type, "
+        "p.cyclomatic, "
+        "COUNT(DISTINCT c.object || '.' || c.from_proc) AS caller_count "
+        "FROM procedures p "
+        "LEFT JOIN calls c ON c.to_name = p.name "
+        "GROUP BY p.object, p.proc_type, p.name, p.modifiers, p.params, p.return_type, p.cyclomatic "
+        "ORDER BY p.object, p.name"
+    ))
+    return result
+
+
 def get_procedure_explore(conn: duckdb.DuckDBPyConnection, object_name: str, proc_name: str) -> dict[str, Any] | None:
     proc_rows = rows(
         conn.execute(

@@ -7,8 +7,9 @@ import { ProceduresCard } from "../../../src/features/objects/detail/ProceduresC
 import { createTestStore } from "../../helpers.js";
 
 const sampleProcs = [
-  { name: "of_init", proc_type: "function", params: "(n)", return_type: "void", modifiers: "public", cyclomatic: 3, start_line: 10, end_line: 20 },
-  { name: "of_close", proc_type: "subroutine", params: "", return_type: null, modifiers: null, cyclomatic: null, start_line: 25, end_line: 30 },
+  { name: "of_init",  proc_type: "function",   params: "(n)", return_type: "void", modifiers: "public", cyclomatic: 3,    start_line: 10, end_line: 20 },
+  { name: "of_close", proc_type: "subroutine",  params: "",   return_type: null,   modifiers: null,     cyclomatic: null, start_line: 25, end_line: 30 },
+  { name: "ue_click", proc_type: "event",        params: "",   return_type: null,   modifiers: null,     cyclomatic: 1,    start_line: 35, end_line: 40 },
 ];
 
 describe("ProceduresCard", () => {
@@ -19,23 +20,36 @@ describe("ProceduresCard", () => {
     ));
     expect(screen.getByText("of_init")).toBeDefined();
     expect(screen.getByText("of_close")).toBeDefined();
+    expect(screen.getByText("ue_click")).toBeDefined();
   });
 
-  it("shows procedure count in header", () => {
+  it("shows total procedure count in header", () => {
     const { store } = createTestStore();
     render(() => (
       <ProceduresCard store={store} objectName="w_main" procedures={sampleProcs} />
     ));
-    expect(screen.getByText("Procedures (2)")).toBeDefined();
+    expect(screen.getByText("Procedures (3)")).toBeDefined();
   });
 
-  it("renders proc_type badges", () => {
+  it("renders kind group headers with counts", () => {
     const { store } = createTestStore();
     render(() => (
       <ProceduresCard store={store} objectName="w_main" procedures={sampleProcs} />
     ));
-    expect(screen.getByText("function")).toBeDefined();
-    expect(screen.getByText("subroutine")).toBeDefined();
+    expect(screen.getByText("Functions (1)")).toBeDefined();
+    expect(screen.getByText("Events (1)")).toBeDefined();
+    expect(screen.getByText("Subroutines (1)")).toBeDefined();
+  });
+
+  it("hides empty groups", () => {
+    const { store } = createTestStore();
+    const onlyFunctions = [sampleProcs[0]!];
+    render(() => (
+      <ProceduresCard store={store} objectName="w_main" procedures={onlyFunctions} />
+    ));
+    expect(screen.getByText("Functions (1)")).toBeDefined();
+    expect(screen.queryByText(/Subroutines/)).toBeNull();
+    expect(screen.queryByText(/Events/)).toBeNull();
   });
 
   it("dispatches proc-select on row click", () => {

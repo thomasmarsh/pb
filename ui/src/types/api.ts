@@ -115,7 +115,20 @@ export interface DwDetailResponse {
   retrieve_where: { idx: number; exp1: string; op: string; exp2: string; logic: string }[];
   arguments: { arg_name: string; arg_type: string }[];
   source: string | null;
+  used_by_objects?: string[];
+  used_by_procs?: { object: string; proc: string }[];
   loading?: boolean;
+}
+
+export interface ProcedureListItem {
+  object: string;
+  proc_type: string;
+  name: string;
+  modifiers: string | null;
+  params: string | null;
+  return_type: string | null;
+  cyclomatic: number | null;
+  caller_count: number;
 }
 
 export interface SearchResponse {

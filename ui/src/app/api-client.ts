@@ -5,6 +5,7 @@ import type {
   ObjectDetailResponse,
   ObjectSourceResponse,
   ProcedureDetailResponse,
+  ProcedureListItem,
   DwDetailResponse,
   SearchResponse,
   StatsResponse,
@@ -30,6 +31,7 @@ export interface ApiClient {
   getObjectSource(name: string): Promise<ObjectSourceResponse>;
   getAllObjects(): Promise<ListObjectsResponse>;
   getProcedure(obj: string, proc: string): Promise<ProcedureDetailResponse>;
+  getProcedures(): Promise<ProcedureListItem[]>;
   search(q: string): Promise<SearchResponse>;
   getDW(name: string): Promise<DwDetailResponse>;
   getDiagram(kind: string, params: Record<string, string | number>): Promise<string>;
@@ -67,6 +69,7 @@ export function createEnv(api: ApiClient): Env {
     getObjectSource: (n) => lift(() => api.getObjectSource(n)),
     getAllObjects: () => lift(() => api.getAllObjects()),
     getProcedure: (o, p) => lift(() => api.getProcedure(o, p)),
+    getProcedures: () => lift(() => api.getProcedures()),
     search: (q) => lift(() => api.search(q)),
     getDW: (n) => lift(() => api.getDW(n)),
     getDiagram: (k, p) => lift(() => api.getDiagram(k, p)),
@@ -128,6 +131,10 @@ export function createApiClient(): ApiClient {
       return fetchJson(
         `/api/procedures/${encodeURIComponent(obj)}/${encodeURIComponent(proc)}`,
       );
+    },
+
+    async getProcedures(): Promise<ProcedureListItem[]> {
+      return fetchJson("/api/procedures");
     },
 
     async search(q: string): Promise<SearchResponse> {

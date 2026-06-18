@@ -34,10 +34,23 @@ def get_dw_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]:
     arguments = rows(
         conn.execute("SELECT arg_name, arg_type FROM dw_arguments WHERE dw_name = ? ORDER BY arg_name", [name])
     )
+    used_by_objects = rows(conn.execute(
+        "SELECT DISTINCT object FROM calls WHERE to_name = ? ORDER BY object",
+        [name],
+    ))
+    used_by_procs = rows(conn.execute(
+        "SELECT DISTINCT object, from_proc "
+        "FROM calls WHERE to_name = ? AND from_proc IS NOT NULL "
+        "ORDER BY object, from_proc",
+        [name],
+    ))
+
     return {
         "controls": controls,
         "retrieve_tables": [t["table_name"] for t in tables],
         "retrieve_columns": columns,
         "retrieve_where": where,
         "arguments": arguments,
+        "used_by_objects": [r["object"] for r in used_by_objects],
+        "used_by_procs": [{"object": r["object"], "proc": r["from_proc"]} for r in used_by_procs],
     }

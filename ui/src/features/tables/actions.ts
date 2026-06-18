@@ -4,6 +4,7 @@ import type { TableSummary, TableDetail } from "../../types/api.js";
 
 export type TablesAction =
   | { type: "search";        q: string }
+  | { type: "filter";        q: string }
   | { type: "loaded";        items: TableSummary[] }
   | { type: "select";        name: string }
   | { type: "detail-loaded"; detail: TableDetail }

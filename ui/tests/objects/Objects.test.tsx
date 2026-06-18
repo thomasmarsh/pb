@@ -15,12 +15,12 @@ const sampleItems = [
 describe("Objects component", () => {
   it("renders search input with placeholder", () => {
     renderWithStore(Objects);
-    expect(screen.getByPlaceholderText("Search objects...")).toBeDefined();
+    expect(screen.getByPlaceholderText("Search objects…")).toBeDefined();
   });
 
   it("dispatches objects/search on input", () => {
     const { captured } = renderWithStore(Objects);
-    const input = screen.getByPlaceholderText("Search objects...");
+    const input = screen.getByPlaceholderText("Search objects…");
     fireEvent.input(input, { target: { value: "w_" } });
     const searchActions = captured.filter(
       (a) => a.tag === "objects" && a.action.type === "search",

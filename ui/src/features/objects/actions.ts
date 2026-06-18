@@ -1,6 +1,6 @@
 // features/objects/actions.ts — Objects feature actions (self-contained).
 
-import type { ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ObjectRow } from "../../types/api.js";
+import type { ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ObjectRow, ProcedureListItem } from "../../types/api.js";
 
 export type ObjectsAction =
   | { type: "back-to-objects" }
@@ -21,4 +21,11 @@ export type ObjectsAction =
   | { type: "proc-tab"; tab: string }
   | { type: "set-object-face"; name: string; face: import("./types.js").Face; scrollTop: number }
   | { type: "set-proc-face"; key: string; face: import("./types.js").Face; scrollTop: number }
+  // Procedures list
+  | { type: "procs-list-load" }
+  | { type: "procs-list-loaded"; data: ProcedureListItem[] }
+  | { type: "procs-list-error"; error: string }
+  | { type: "procs-list-filter"; q: string }
+  | { type: "procs-list-filter-kind"; kind: string }
+  | { type: "procs-list-sort"; col: "name" | "object" | "cyclomatic" | "caller_count" }
   ;

@@ -23,6 +23,9 @@ export function crumbsForRoute(route: Route): BreadcrumbSegment[] {
     case "objects":
       return [{ icon: ICONS.list, label: "Objects", route }];
 
+    case "proceduresList":
+      return [{ icon: ICONS.list, label: "Procedures", route }];
+
     case "objectDetail":
       return [
         { icon: ICONS.list,   label: "Objects",   route: { view: "objects" } },

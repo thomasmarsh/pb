@@ -14,9 +14,10 @@ import { BreadcrumbBar } from "./BreadcrumbBar.js";
 // ── Entity nav links ──────────────────────────────────────────────────────────
 
 const ENTITY_NAV: { label: string; view: ViewName; icon: string }[] = [
-  { label: "Objects",     view: "objects",     icon: "○" },
-  { label: "DataWindows", view: "datawindows", icon: "▦" },
-  { label: "Tables",      view: "tables",      icon: "⊟" },
+  { label: "Objects",     view: "objects",        icon: "○" },
+  { label: "DataWindows", view: "datawindows",    icon: "▦" },
+  { label: "Tables",      view: "tables",         icon: "⊟" },
+  { label: "Procedures",  view: "proceduresList", icon: "ƒ" },
 ];
 
 // ── Analysis nav items (phase-badged) ─────────────────────────────────────────
@@ -47,9 +48,10 @@ const UTIL_NAV: { label: string; view: ViewName; icon: string }[] = [
 // ── Active-state helper ───────────────────────────────────────────────────────
 
 const VIEW_GROUPS: Record<string, string[]> = {
-  objects:     ["objects", "objectDetail", "procedureDetail"],
-  datawindows: ["datawindows", "dwDetail"],
-  tables:      ["tables", "tableDetail"],
+  objects:        ["objects", "objectDetail", "procedureDetail"],
+  proceduresList: ["proceduresList"],
+  datawindows:    ["datawindows", "dwDetail"],
+  tables:         ["tables", "tableDetail"],
 };
 
 function isActive(itemView: string, currentView: string): boolean {
@@ -59,7 +61,11 @@ function isActive(itemView: string, currentView: string): boolean {
 }
 
 function navigate(store: Store<AppState, AppAction>, view: ViewName): void {
-  store.dispatch({ tag: "nav", action: { type: "navigate", route: { view } as Route } });
+  if (view === "proceduresList") {
+    store.dispatch({ tag: "objects", action: { type: "procs-list-load" } });
+  } else {
+    store.dispatch({ tag: "nav", action: { type: "navigate", route: { view } as Route } });
+  }
 }
 
 // ── Phase badge ───────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
-// tests/features/TableDetail.test.tsx — Tests for TableDetail diagram tab.
+// tests/features/TableDetail.test.tsx — Tests for TableDetail FaceToggle structure.
 
-import { describe, it, expect, vi } from "vitest";
-import { fireEvent, render } from "@solidjs/testing-library";
+import { describe, it, expect } from "vitest";
+import { fireEvent, render, waitFor } from "@solidjs/testing-library";
 import { TableDetail } from "../../src/features/tables/TableDetail.js";
 import { createTestStore } from "../helpers.js";
 import { initialTablesState } from "../../src/features/tables/types.js";
@@ -22,60 +22,81 @@ const baseDetail: TableDetailData = {
   impact: { direct: [], inherited: [] },
 };
 
-function renderTableDetail(detail: TableDetailData = baseDetail) {
+function renderTableDetail(
+  detail: TableDetailData = baseDetail,
+  tableFace: "source" | "analysis" = "source",
+) {
   const { store } = createTestStore({
-    tables: { ...initialTablesState, detail },
+    tables: { ...initialTablesState, detail, tableFace },
   });
   return render(() => <TableDetail store={store} />);
 }
 
-describe("TableDetail diagram tab", () => {
-  it("renders five tab buttons", () => {
+function cardHeaders(): string[] {
+  return [...document.querySelectorAll(".card-header h3")].map((h) => h.textContent ?? "");
+}
+
+function toggleBtns(): Element[] {
+  return [...document.querySelectorAll(".face-toggle-btn")];
+}
+
+describe("TableDetail FaceToggle", () => {
+  it("renders Source and Analysis toggle buttons", () => {
     renderTableDetail();
-    const tabs = [...document.querySelectorAll(".tab-btn")].map((b) => b.textContent);
-    expect(tabs).toContain("Readers");
-    expect(tabs).toContain("Writers");
-    expect(tabs).toContain("Columns");
-    expect(tabs).toContain("Impact");
-    expect(tabs).toContain("Diagram");
-    expect(tabs).toHaveLength(5);
+    const labels = toggleBtns().map((b) => b.textContent);
+    expect(labels).toContain("Source");
+    expect(labels).toContain("Analysis");
   });
 
-  it("defaults to Readers tab", () => {
+  it("Source button is active by default", () => {
     renderTableDetail();
-    const activeTab = document.querySelector(".tab-btn.active");
-    expect(activeTab?.textContent).toBe("Readers");
+    const sourceBtn = toggleBtns().find((b) => b.textContent === "Source");
+    expect(sourceBtn?.classList.contains("active")).toBe(true);
   });
 
-  it("does not show 'Show proc-tables diagram' button in Impact tab", () => {
+  it("source face shows no-data message when columns_detail is empty", () => {
     renderTableDetail();
-    const impactBtn = [...document.querySelectorAll(".tab-btn")]
-      .find((b) => b.textContent === "Impact")!;
-    fireEvent.click(impactBtn);
-    expect(document.body.textContent).not.toContain("Show proc-tables diagram");
+    expect(document.body.textContent).toContain("No column-level data available");
   });
 
-  it("shows InlineDiagram containers in Diagram tab", async () => {
-    vi.stubGlobal("fetch", () => new Promise(() => {}));
-    renderTableDetail();
-    const diagramBtn = [...document.querySelectorAll(".tab-btn")]
-      .find((b) => b.textContent === "Diagram")!;
-    fireEvent.click(diagramBtn);
-    expect(diagramBtn.classList.contains("active")).toBe(true);
-    expect(document.querySelectorAll(".diagram-container").length).toBeGreaterThanOrEqual(1);
-    vi.restoreAllMocks();
+  it("source face shows Columns card when columns_detail is populated", () => {
+    const detail: TableDetailData = {
+      ...baseDetail,
+      columns_detail: [{ column: "orders.id", dw_readers: [], ps_readers: [], ps_writers: [], read_count: 1, write_count: 0 }],
+    };
+    renderTableDetail(detail);
+    expect(cardHeaders().some((h) => h.startsWith("Columns"))).toBe(true);
   });
 
-  it("switches between tabs correctly", async () => {
-    renderTableDetail();
-    const writersBtn = [...document.querySelectorAll(".tab-btn")]
-      .find((b) => b.textContent === "Writers")!;
-    fireEvent.click(writersBtn);
-    expect(writersBtn.classList.contains("active")).toBe(true);
+  it("analysis face shows DataWindow Readers card", () => {
+    renderTableDetail(baseDetail, "analysis");
+    expect(cardHeaders().some((h) => h.startsWith("DataWindow Readers"))).toBe(true);
+    const names = [...document.querySelectorAll(".entity-card-name")].map((e) => e.textContent);
+    expect(names).toContain("dw_orders");
+  });
 
-    const columnsBtn = [...document.querySelectorAll(".tab-btn")]
-      .find((b) => b.textContent === "Columns")!;
-    fireEvent.click(columnsBtn);
-    expect(columnsBtn.classList.contains("active")).toBe(true);
+  it("analysis face shows Procedure Readers card with SELECT procedures", () => {
+    renderTableDetail(baseDetail, "analysis");
+    expect(cardHeaders().some((h) => h.startsWith("Procedure Readers"))).toBe(true);
+    expect(document.body.textContent).toContain("get_orders");
+  });
+
+  it("analysis face shows Procedure Writers card with INSERT procedures", () => {
+    renderTableDetail(baseDetail, "analysis");
+    expect(cardHeaders().some((h) => h.startsWith("Procedure Writers"))).toBe(true);
+    expect(document.body.textContent).toContain("add_order");
+  });
+
+  it("analysis face renders PhaseGate inline sections", () => {
+    renderTableDetail(baseDetail, "analysis");
+    const gates = document.querySelectorAll(".phase-gate-inline");
+    expect(gates.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("clicking Analysis button activates analysis face", async () => {
+    renderTableDetail();
+    const analysisBtn = toggleBtns().find((b) => b.textContent === "Analysis")!;
+    fireEvent.click(analysisBtn);
+    await waitFor(() => expect(analysisBtn.classList.contains("active")).toBe(true));
   });
 });

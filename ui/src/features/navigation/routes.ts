@@ -11,6 +11,7 @@ export function print(route: Route): string {
     case "objectDetail":     return "/objects/"     + encodeURIComponent(route.name);
     case "procedureDetail":  return "/objects/"     + encodeURIComponent(route.name)
                                     + "/"           + encodeURIComponent(route.proc);
+    case "proceduresList":   return "/procedures";
     case "datawindows":      return "/datawindows";
     case "dwDetail":         return "/datawindows/" + encodeURIComponent(route.name);
     case "tables":           return "/tables";
@@ -46,9 +47,10 @@ export function parse(path: string): Route {
     case "search":     return { view: "search" };
     case "explore":    return { view: "explore" };
     case "errors":     return { view: "errors" };
-    case "dead-code":  return { view: "deadCode" };
-    case "taint":      return { view: "taintExplorer" };
-    case "reports":    return { view: "formalReports" };
-    default:           return { view: "dashboard" };
+    case "dead-code":    return { view: "deadCode" };
+    case "taint":        return { view: "taintExplorer" };
+    case "reports":      return { view: "formalReports" };
+    case "procedures":   return { view: "proceduresList" };
+    default:             return { view: "dashboard" };
   }
 }

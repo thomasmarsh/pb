@@ -1,9 +1,10 @@
 // ObjectList.tsx — Object listing with search, filters, and pagination.
 
-import { Show, For } from "solid-js";
+import { Show, For, onMount, onCleanup } from "solid-js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
+import { EntityCard } from "../../components/EntityCard.js";
 import { shortFile } from "../../utils/format.js";
 import { Loading } from "../../components/Loading.js";
 
@@ -11,6 +12,52 @@ export function ObjectList(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
   const snap = store.getState();
   const os = () => snap().objects;
+  let cursorIdx = -1;
+
+  // Preserve state: only load if list is empty.
+  onMount(() => {
+    if (os().items.length === 0) {
+      store.dispatch({ tag: "objects", action: { type: "search", q: os().q } });
+    }
+  });
+
+  onMount(() => {
+    function handleKey(e: KeyboardEvent): void {
+      const t = e.target as HTMLElement;
+      if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return;
+      const items = os().items;
+      if (e.key === "j") {
+        e.preventDefault();
+        cursorIdx = Math.min(cursorIdx + 1, items.length - 1);
+        highlightRow(cursorIdx);
+      } else if (e.key === "k") {
+        e.preventDefault();
+        cursorIdx = Math.max(cursorIdx - 1, 0);
+        highlightRow(cursorIdx);
+      } else if (e.key === "Enter" && cursorIdx >= 0) {
+        e.preventDefault();
+        const obj = items[cursorIdx];
+        if (obj) store.dispatch({ tag: "objects", action: { type: "select", name: obj.name } });
+      }
+    }
+    document.addEventListener("keydown", handleKey);
+    onCleanup(() => document.removeEventListener("keydown", handleKey));
+  });
+
+  function highlightRow(idx: number): void {
+    const table = document.querySelector(".object-list-table");
+    if (!table) return;
+    table.querySelectorAll("tr.list-cursor").forEach((r) => r.classList.remove("list-cursor"));
+    const rows = table.querySelectorAll("tbody tr");
+    rows[idx]?.classList.add("list-cursor");
+    (rows[idx] as HTMLElement)?.scrollIntoView?.({ block: "nearest" });
+  }
+
+  const headerLabel = () => {
+    const q = os().q;
+    const total = os().total;
+    return q ? `Objects — ${total} results` : `Objects (${total})`;
+  };
 
   return (
     <>
@@ -18,9 +65,12 @@ export function ObjectList(props: { store: Store<AppState, AppAction> }) {
         <input
           class="search-input"
           type="text"
-          placeholder="Search objects..."
+          placeholder="Search objects…"
           value={os().q}
-          onInput={(e) => store.dispatch({ tag: "objects", action: { type: "search", q: e.currentTarget.value } })}
+          onInput={(e) => {
+            cursorIdx = -1;
+            store.dispatch({ tag: "objects", action: { type: "search", q: e.currentTarget.value } });
+          }}
         />
       </div>
 
@@ -29,7 +79,10 @@ export function ObjectList(props: { store: Store<AppState, AppAction> }) {
           {(k) => (
             <button
               class={`filter-pill${os().kind === k ? " active" : ""}`}
-              onClick={() => store.dispatch({ tag: "objects", action: { type: "filter-kind", kind: k } })}
+              onClick={() => {
+                cursorIdx = -1;
+                store.dispatch({ tag: "objects", action: { type: "filter-kind", kind: k } });
+              }}
             >
               {k || "All"}
             </button>
@@ -39,8 +92,8 @@ export function ObjectList(props: { store: Store<AppState, AppAction> }) {
 
       <Show when={!os().loading || os().items.length > 0} fallback={<Loading />}>
         <div class="card">
-          <div class="card-header"><h2>Objects ({os().total})</h2></div>
-          <table class="data-table">
+          <div class="card-header"><h2>{headerLabel()}</h2></div>
+          <table class="data-table object-list-table">
             <thead>
               <tr>
                 <th class={os().sort === "name" ? "sorted" : ""}
@@ -57,12 +110,21 @@ export function ObjectList(props: { store: Store<AppState, AppAction> }) {
             <tbody>
               <For each={os().items}>
                 {(obj) => {
-                  const bc = obj.kind === "powerscript" ? "ps" : obj.kind === "datawindow" ? "dw" : "proj";
+                  const entityType = obj.kind === "datawindow" ? "datawindow" : "object";
                   return (
-                    <tr class="clickable"
-                        onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: obj.name } })}>
-                      <td class="name-cell">{obj.name}</td>
-                      <td><span class={`badge badge-${bc}`}>{obj.kind}</span></td>
+                    <tr>
+                      <td class="name-cell" style={{ padding: "4px 8px" }}>
+                        <EntityCard
+                          type={entityType}
+                          name={obj.name}
+                          onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: obj.name } })}
+                        />
+                      </td>
+                      <td>
+                        <span class={`badge badge-${obj.kind === "powerscript" ? "ps" : obj.kind === "datawindow" ? "dw" : "proj"}`}>
+                          {obj.kind}
+                        </span>
+                      </td>
                       <td style={{ "font-size": "11px", color: "var(--text-muted)", "max-width": "300px", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
                         {shortFile(obj.file)}
                       </td>

@@ -1,7 +1,7 @@
-// tests/features/DWDetail.test.tsx — Tests for DWDetail tab structure.
+// tests/features/DWDetail.test.tsx — Tests for DWDetail FaceToggle structure.
 
-import { describe, it, expect, vi } from "vitest";
-import { fireEvent, render } from "@solidjs/testing-library";
+import { describe, it, expect } from "vitest";
+import { fireEvent, render, waitFor } from "@solidjs/testing-library";
 import { DWDetail } from "../../src/features/datawindows/DataWindows.js";
 import { createTestStore } from "../helpers.js";
 import { initialDatawindowsState } from "../../src/features/datawindows/reducer.js";
@@ -23,77 +23,76 @@ function makeDw(overrides: Partial<DwDetailResponse> = {}): DwDetailResponse {
   };
 }
 
-function renderDWDetail(dwDetail: DwDetailResponse | { error: string } | null) {
+function renderDWDetail(
+  dwDetail: DwDetailResponse | { error: string } | null,
+  dwFace: "source" | "analysis" = "source",
+) {
   const { store } = createTestStore({
-    datawindows: { ...initialDatawindowsState, dwDetail },
+    datawindows: { ...initialDatawindowsState, dwDetail, dwFace },
   });
   return render(() => <DWDetail store={store} />);
 }
 
-describe("DWDetail tab structure", () => {
-  it("shows Overview tab by default", () => {
+function cardHeaders(): string[] {
+  return [...document.querySelectorAll(".card-header h3")].map((h) => h.textContent ?? "");
+}
+
+function toggleBtns(): Element[] {
+  return [...document.querySelectorAll(".face-toggle-btn")];
+}
+
+describe("DWDetail FaceToggle", () => {
+  it("renders Source and Analysis toggle buttons", () => {
     renderDWDetail(makeDw());
-    const activeTab = document.querySelector(".tab-btn.active");
-    expect(activeTab?.textContent).toBe("Overview");
+    const labels = toggleBtns().map((b) => b.textContent);
+    expect(labels).toContain("Source");
+    expect(labels).toContain("Analysis");
   });
 
-  it("shows Controls tab when DW has controls", () => {
+  it("Source button is active by default", () => {
     renderDWDetail(makeDw());
-    const tabs = [...document.querySelectorAll(".tab-btn")].map((b) => b.textContent ?? "");
-    expect(tabs.some((t) => t.startsWith("Controls"))).toBe(true);
+    const sourceBtn = toggleBtns().find((b) => b.textContent === "Source");
+    expect(sourceBtn?.classList.contains("active")).toBe(true);
   });
 
-  it("shows Diagram tab when DW has retrieve_tables", () => {
+  it("source face shows Controls card when controls are present", () => {
     renderDWDetail(makeDw());
-    const tabs = [...document.querySelectorAll(".tab-btn")].map((b) => b.textContent);
-    expect(tabs).toContain("Diagram");
+    expect(cardHeaders().some((h) => h.startsWith("Controls"))).toBe(true);
   });
 
-  it("shows Source tab when DW has source", () => {
-    renderDWDetail(makeDw());
-    const tabs = [...document.querySelectorAll(".tab-btn")].map((b) => b.textContent);
-    expect(tabs).toContain("Source");
-  });
-
-  it("hides Controls tab when DW has no controls", () => {
+  it("source face hides Controls card when no controls", () => {
     renderDWDetail(makeDw({ controls: [] }));
-    const tabs = [...document.querySelectorAll(".tab-btn")].map((b) => b.textContent ?? "");
-    expect(tabs.some((t) => t.startsWith("Controls"))).toBe(false);
+    expect(cardHeaders().some((h) => h.startsWith("Controls"))).toBe(false);
   });
 
-  it("hides Diagram tab when DW has no retrieve_tables", () => {
-    renderDWDetail(makeDw({ retrieve_tables: [] }));
-    const tabs = [...document.querySelectorAll(".tab-btn")].map((b) => b.textContent);
-    expect(tabs).not.toContain("Diagram");
-  });
-
-  it("hides Source tab when DW has no source", () => {
-    renderDWDetail(makeDw({ source: null }));
-    const tabs = [...document.querySelectorAll(".tab-btn")].map((b) => b.textContent);
-    expect(tabs).not.toContain("Source");
-  });
-
-  it("shows InlineDiagram container in Diagram tab", async () => {
-    vi.stubGlobal("fetch", () => new Promise(() => {}));
+  it("source face shows Source code card", () => {
     renderDWDetail(makeDw());
-    const diagramBtn = [...document.querySelectorAll(".tab-btn")]
-      .find((b) => b.textContent === "Diagram")!;
-    fireEvent.click(diagramBtn);
-    expect(diagramBtn.classList.contains("active")).toBe(true);
-    expect(document.querySelectorAll(".diagram-container").length).toBeGreaterThanOrEqual(1);
-    vi.restoreAllMocks();
+    expect(cardHeaders()).toContain("Source");
   });
 
-  it("switches between tabs correctly", () => {
-    renderDWDetail(makeDw());
-    const controlsBtn = [...document.querySelectorAll(".tab-btn")]
-      .find((b) => b.textContent?.startsWith("Controls"))!;
-    fireEvent.click(controlsBtn);
-    expect(controlsBtn.classList.contains("active")).toBe(true);
+  it("analysis face shows Tables Accessed card with table names", () => {
+    renderDWDetail(makeDw(), "analysis");
+    expect(cardHeaders()).toContain("Tables Accessed (2)");
+    const names = [...document.querySelectorAll(".entity-card-name")].map((e) => e.textContent);
+    expect(names).toContain("orders");
+    expect(names).toContain("customers");
+  });
 
-    const overviewBtn = [...document.querySelectorAll(".tab-btn")]
-      .find((b) => b.textContent === "Overview")!;
-    fireEvent.click(overviewBtn);
-    expect(overviewBtn.classList.contains("active")).toBe(true);
+  it("analysis face shows Retrieve Definition with args", () => {
+    renderDWDetail(makeDw(), "analysis");
+    expect(cardHeaders()).toContain("Retrieve Definition");
+    expect(document.body.textContent).toContain("arg_id");
+  });
+
+  it("analysis face renders PhaseGate inline section", () => {
+    renderDWDetail(makeDw(), "analysis");
+    expect(document.querySelector(".phase-gate-inline")).not.toBeNull();
+  });
+
+  it("clicking Analysis button activates analysis face", async () => {
+    renderDWDetail(makeDw());
+    const analysisBtn = toggleBtns().find((b) => b.textContent === "Analysis")!;
+    fireEvent.click(analysisBtn);
+    await waitFor(() => expect(analysisBtn.classList.contains("active")).toBe(true));
   });
 });

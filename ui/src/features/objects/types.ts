@@ -1,6 +1,6 @@
 // features/objects/types.ts
 
-import type { ObjectRow, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse } from "../../types/api.js";
+import type { ObjectRow, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ProcedureListItem } from "../../types/api.js";
 import type { Face } from "../../components/FaceToggle.js";
 
 export type { Face };
@@ -24,4 +24,11 @@ export interface ObjectsState {
   objectScrollPos: Record<string, ScrollPair>;
   procFace: Face;
   procScrollPos: Record<string, ScrollPair>;
+  // Procedures list screen
+  proceduresList: ProcedureListItem[] | null;
+  proceduresListLoading: boolean;
+  proceduresListQ: string;
+  proceduresListKind: string;
+  proceduresListSort: "name" | "object" | "cyclomatic" | "caller_count";
+  proceduresListOrder: "asc" | "desc";
 }

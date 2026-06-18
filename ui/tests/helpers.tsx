@@ -20,6 +20,7 @@ export const mockEnv: AppEnv = {
   getObjectSource: () => Effect.none(),
   getAllObjects: () => Effect.none(),
   getProcedure: () => Effect.none(),
+  getProcedures: () => Effect.none(),
   search: () => Effect.none(),
   getDW: () => Effect.none(),
   getDiagram: () => Effect.none(),

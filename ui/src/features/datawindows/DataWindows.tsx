@@ -1,13 +1,14 @@
 // DataWindows.tsx — DataWindows list and detail views.
 
-import { Show, For, onMount, createSignal } from "solid-js";
+import { Show, For, onMount, onCleanup, createEffect } from "solid-js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../app/state.js";
 import type { AppAction } from "../../app/actions.js";
 import type { DwDetailResponse, DwControlRow } from "../../types/api.js";
 import { CodeBlock } from "../../components/CodeBlock.js";
-import { TableChip } from "../../components/TableChip.js";
-import { DiagramCard } from "../../components/DiagramCard.js";
+import { FaceToggle } from "../../components/FaceToggle.js";
+import { PhaseGateInline } from "../../components/PhaseGate.js";
+import { EntityCard } from "../../components/EntityCard.js";
 import { shortFile } from "../../utils/format.js";
 import { Loading } from "../../components/Loading.js";
 
@@ -45,112 +46,159 @@ function DWControlsTable(props: { controls: DwControlRow[] }) {
 function DWDetailContent(props: { d: DwDetailResponse; store: Store<AppState, AppAction> }) {
   const d = props.d;
   const store = props.store;
-  const [tab, setTab] = createSignal<"overview" | "controls" | "diagram" | "source">("overview");
+  const snap = store.getState();
+  const face = () => snap().datawindows.dwFace;
+
+  let scrollEl: HTMLDivElement | undefined;
+
+  createEffect(() => {
+    const pos = snap().datawindows.dwScrollPos[d.name];
+    if (!pos || !scrollEl) return;
+    scrollEl.scrollTop = face() === "source" ? pos.source : pos.analysis;
+  });
+
+  const hasUsedByObjects = () => (d.used_by_objects?.length ?? 0) > 0;
+  const hasUsedByProcs   = () => (d.used_by_procs?.length ?? 0) > 0;
+  const hasWhere         = d.retrieve_where.length > 0;
+  const hasArgs          = d.arguments.length > 0;
 
   return (
     <>
-      <h2 style={{ "margin-bottom": "16px", "font-size": "20px" }}>
-        {d.name} <span class="badge badge-dw">datawindow</span>
-      </h2>
-
-      <div class="tab-bar" style={{ "margin-bottom": "16px" }}>
-        <button class={tab() === "overview" ? "tab-btn active" : "tab-btn"} onClick={() => setTab("overview")}>Overview</button>
-        <Show when={d.controls.length > 0}>
-          <button class={tab() === "controls" ? "tab-btn active" : "tab-btn"} onClick={() => setTab("controls")}>
-            Controls ({d.controls.length})
-          </button>
-        </Show>
-        <Show when={d.retrieve_tables.length > 0}>
-          <button class={tab() === "diagram" ? "tab-btn active" : "tab-btn"} onClick={() => setTab("diagram")}>Diagram</button>
-        </Show>
-        <Show when={d.source}>
-          <button class={tab() === "source" ? "tab-btn active" : "tab-btn"} onClick={() => setTab("source")}>Source</button>
-        </Show>
+      <div class="detail-header">
+        <h2 style={{ "margin": "0", "font-size": "20px" }}>
+          {d.name} <span class="badge badge-dw">datawindow</span>
+        </h2>
+        <FaceToggle
+          face={face()}
+          phaseLabel="P1"
+          onToggle={(newFace, scrollTop) => {
+            store.dispatch({ tag: "datawindows", action: { type: "set-dw-face", name: d.name, face: newFace, scrollTop } });
+          }}
+          scrollAreaRef={() => scrollEl}
+        />
       </div>
 
-      <Show when={tab() === "overview"}>
-        <div class="metric-grid">
-          <For each={[
-            ["Controls", d.controls.length],
-            ["DB Tables", d.retrieve_tables.length],
-            ["Columns", d.retrieve_columns.length],
-            ["Arguments", d.arguments.length],
-          ] as [string, number][]}>
-            {([l, v]) => (
-              <div class="metric-card">
-                <div class="label">{l}</div>
-                <div class="value">{String(v)}</div>
-              </div>
-            )}
-          </For>
-        </div>
-
-        <Show when={d.retrieve_tables.length > 0}>
-          <div class="card">
-            <div class="card-header"><h3>Retrieve Tables</h3></div>
-            <div style={{ display: "flex", "flex-wrap": "wrap", gap: "6px" }}>
-              <For each={d.retrieve_tables}>
-                {(t) => <TableChip name={t} store={store} />}
-              </For>
+      <div class="detail-body" ref={scrollEl}>
+        {/* ── Source face ───────────────────────────────────────────────── */}
+        <Show when={face() === "source"}>
+          <Show when={d.controls.length > 0}>
+            <DWControlsTable controls={d.controls} />
+          </Show>
+          <Show when={d.source}>
+            <div class="card">
+              <div class="card-header"><h3>Source</h3></div>
+              <CodeBlock code={d.source!} />
             </div>
-          </div>
+          </Show>
         </Show>
 
-        <Show when={d.arguments.length > 0}>
-          <div class="card">
-            <div class="card-header"><h3>Arguments</h3></div>
-            <table class="data-table">
-              <thead><tr><th>Name</th><th>Type</th></tr></thead>
-              <tbody>
-                <For each={d.arguments}>
-                  {(a) => <tr><td class="name-cell">{a.arg_name}</td><td>{a.arg_type ?? ""}</td></tr>}
-                </For>
-              </tbody>
-            </table>
-          </div>
-        </Show>
-
-        <Show when={d.retrieve_where.length > 0}>
-          <div class="card">
-            <div class="card-header"><h3>WHERE Clauses</h3></div>
-            <table class="data-table">
-              <thead><tr><th>#</th><th>Exp1</th><th>Op</th><th>Exp2</th><th>Logic</th></tr></thead>
-              <tbody>
-                <For each={d.retrieve_where}>
-                  {(w) => (
-                    <tr>
-                      <td>{String(w.idx)}</td>
-                      <td>{w.exp1 ?? ""}</td>
-                      <td><span class="badge badge-event">{w.op ?? ""}</span></td>
-                      <td>{w.exp2 ?? ""}</td>
-                      <td><span class="badge badge-func">{w.logic ?? ""}</span></td>
-                    </tr>
+        {/* ── Analysis face ─────────────────────────────────────────────── */}
+        <Show when={face() === "analysis"}>
+          {/* Tables Accessed */}
+          <Show when={d.retrieve_tables.length > 0}>
+            <div class="card">
+              <div class="card-header"><h3>Tables Accessed ({d.retrieve_tables.length})</h3></div>
+              <div class="entity-card-list">
+                <For each={d.retrieve_tables}>
+                  {(t) => (
+                    <EntityCard
+                      type="table"
+                      name={t}
+                      onClick={() => store.dispatch({ tag: "tables", action: { type: "select", name: t } })}
+                    />
                   )}
                 </For>
-              </tbody>
-            </table>
-          </div>
-        </Show>
-      </Show>
+              </div>
+            </div>
+          </Show>
 
-      <Show when={tab() === "controls"}>
-        <Show when={d.controls.length > 0}>
-          <DWControlsTable controls={d.controls} />
-        </Show>
-      </Show>
+          {/* Used By — Objects */}
+          <Show when={hasUsedByObjects()}>
+            <div class="card">
+              <div class="card-header"><h3>Used By — Objects ({d.used_by_objects!.length})</h3></div>
+              <div class="entity-card-list">
+                <For each={d.used_by_objects!}>
+                  {(obj) => (
+                    <EntityCard
+                      type="object"
+                      name={obj}
+                      onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: obj } })}
+                    />
+                  )}
+                </For>
+              </div>
+            </div>
+          </Show>
 
-      <Show when={tab() === "diagram"}>
-        <DiagramCard title="DW → Table Relationships" kind="dw-tables" params={{ dw: d.name }} store={store} />
-      </Show>
+          {/* Used By — Procedures */}
+          <Show when={hasUsedByProcs()}>
+            <div class="card">
+              <div class="card-header"><h3>Used By — Procedures ({d.used_by_procs!.length})</h3></div>
+              <div class="entity-card-list">
+                <For each={d.used_by_procs!}>
+                  {(ref) => (
+                    <EntityCard
+                      type="procedure"
+                      name={ref.proc}
+                      context={ref.object}
+                      tooltip={`${ref.object}.${ref.proc}`}
+                      onClick={() => store.dispatch({ tag: "objects", action: { type: "proc-select", objectName: ref.object, procName: ref.proc } })}
+                    />
+                  )}
+                </For>
+              </div>
+            </div>
+          </Show>
 
-      <Show when={tab() === "source"}>
-        <Show when={d.source}>
-          <div class="card">
-            <div class="card-header"><h3>Source</h3></div>
-            <CodeBlock code={d.source!} />
-          </div>
+          {/* Retrieve Definition */}
+          <Show when={hasWhere || hasArgs}>
+            <div class="card">
+              <div class="card-header"><h3>Retrieve Definition</h3></div>
+              <Show when={hasArgs}>
+                <div style={{ "padding": "8px 16px" }}>
+                  <div style={{ "font-size": "11px", color: "var(--text-muted)", "margin-bottom": "4px" }}>Arguments</div>
+                  <table class="data-table">
+                    <thead><tr><th>Name</th><th>Type</th></tr></thead>
+                    <tbody>
+                      <For each={d.arguments}>
+                        {(a) => <tr><td class="name-cell">{a.arg_name}</td><td>{a.arg_type ?? ""}</td></tr>}
+                      </For>
+                    </tbody>
+                  </table>
+                </div>
+              </Show>
+              <Show when={hasWhere}>
+                <div style={{ "padding": "8px 16px" }}>
+                  <div style={{ "font-size": "11px", color: "var(--text-muted)", "margin-bottom": "4px" }}>WHERE Clauses</div>
+                  <table class="data-table">
+                    <thead><tr><th>#</th><th>Exp1</th><th>Op</th><th>Exp2</th><th>Logic</th></tr></thead>
+                    <tbody>
+                      <For each={d.retrieve_where}>
+                        {(w) => (
+                          <tr>
+                            <td>{String(w.idx)}</td>
+                            <td>{w.exp1 ?? ""}</td>
+                            <td><span class="badge badge-event">{w.op ?? ""}</span></td>
+                            <td>{w.exp2 ?? ""}</td>
+                            <td><span class="badge badge-func">{w.logic ?? ""}</span></td>
+                          </tr>
+                        )}
+                      </For>
+                    </tbody>
+                  </table>
+                </div>
+              </Show>
+            </div>
+          </Show>
+
+          <PhaseGateInline
+            phase={3}
+            section="Taint on SQL Parameters"
+            label="requires taint analysis"
+            description="Taint flow through this DataWindow's SQL parameters is available after a P3 taint analysis run."
+          />
         </Show>
-      </Show>
+      </div>
     </>
   );
 }
@@ -159,9 +207,36 @@ export function DataWindows(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
   const snap = store.getState();
   const dw = () => snap().datawindows;
+  let cursorIdx = -1;
+
+  // Preserve state: only load if the list is empty.
+  onMount(() => {
+    if (dw().items.length === 0) {
+      store.dispatch({ tag: "datawindows", action: { type: "search", q: dw().q } });
+    }
+  });
 
   onMount(() => {
-    store.dispatch({ tag: "datawindows", action: { type: "search", q: dw().q } });
+    function handleKey(e: KeyboardEvent): void {
+      const t = e.target as HTMLElement;
+      if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return;
+      const items = dw().items;
+      if (e.key === "j") {
+        e.preventDefault();
+        cursorIdx = Math.min(cursorIdx + 1, items.length - 1);
+        highlightRow(cursorIdx, "dw-list-table");
+      } else if (e.key === "k") {
+        e.preventDefault();
+        cursorIdx = Math.max(cursorIdx - 1, 0);
+        highlightRow(cursorIdx, "dw-list-table");
+      } else if (e.key === "Enter" && cursorIdx >= 0) {
+        e.preventDefault();
+        const item = items[cursorIdx];
+        if (item) store.dispatch({ tag: "datawindows", action: { type: "select", name: item.name } });
+      }
+    }
+    document.addEventListener("keydown", handleKey);
+    onCleanup(() => document.removeEventListener("keydown", handleKey));
   });
 
   return (
@@ -170,23 +245,33 @@ export function DataWindows(props: { store: Store<AppState, AppAction> }) {
         <input
           class="search-input"
           type="text"
-          placeholder="Search DataWindows..."
+          placeholder="Search DataWindows…"
           value={dw().q}
-          onInput={(e) => store.dispatch({ tag: "datawindows", action: { type: "search", q: e.currentTarget.value } })}
+          onInput={(e) => {
+            cursorIdx = -1;
+            store.dispatch({ tag: "datawindows", action: { type: "search", q: e.currentTarget.value } });
+          }}
         />
       </div>
 
       <Show when={!dw().loading || dw().items.length > 0} fallback={<Loading />}>
         <div class="card">
-          <div class="card-header"><h2>DataWindows ({dw().total})</h2></div>
-          <table class="data-table">
+          <div class="card-header">
+            <h2>{dw().q ? `DataWindows — ${dw().total} results` : `DataWindows (${dw().total})`}</h2>
+          </div>
+          <table class="data-table dw-list-table">
             <thead><tr><th>Name</th><th>File</th></tr></thead>
             <tbody>
               <For each={dw().items}>
                 {(d) => (
-                  <tr class="clickable"
-                      onClick={() => store.dispatch({ tag: "datawindows", action: { type: "select", name: d.name } })}>
-                    <td class="name-cell">{d.name}</td>
+                  <tr>
+                    <td class="name-cell" style={{ padding: "4px 8px" }}>
+                      <EntityCard
+                        type="datawindow"
+                        name={d.name}
+                        onClick={() => store.dispatch({ tag: "datawindows", action: { type: "select", name: d.name } })}
+                      />
+                    </td>
                     <td style={{ "font-size": "11px", color: "var(--text-muted)" }}>{shortFile(d.file)}</td>
                   </tr>
                 )}
@@ -219,4 +304,13 @@ export function DWDetail(props: { store: Store<AppState, AppAction> }) {
       </Show>
     </>
   );
+}
+
+function highlightRow(idx: number, tableClass: string): void {
+  const table = document.querySelector(`.${tableClass}`);
+  if (!table) return;
+  table.querySelectorAll("tr.list-cursor").forEach((r) => r.classList.remove("list-cursor"));
+  const rows = table.querySelectorAll("tbody tr");
+  rows[idx]?.classList.add("list-cursor");
+  (rows[idx] as HTMLElement)?.scrollIntoView?.({ block: "nearest" });
 }

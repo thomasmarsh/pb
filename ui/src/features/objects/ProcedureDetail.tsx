@@ -66,6 +66,16 @@ function ProcedureDetailContent(props: {
 
       <div class="detail-body" ref={scrollEl}>
         <Show when={face() === "source"}>
+          {/* Containing object link */}
+          <div style={{ "margin-bottom": "12px" }}>
+            <EntityCard
+              type="object"
+              name={props.objectName}
+              context="containing object"
+              tooltip={`Navigate to ${props.objectName}`}
+              onClick={() => store.dispatch({ tag: "objects", action: { type: "select", name: props.objectName } })}
+            />
+          </div>
           <Show when={p.source_original || p.source_rendered}>
             <Tabs defaultValue={p.source_original ? "original" : "rendered"}>
               <Tabs.List class="tab-bar">

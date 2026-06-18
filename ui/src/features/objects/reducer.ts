@@ -6,7 +6,7 @@ import type { ObjectsState } from "./types.js";
 import type { ObjectsAction } from "./actions.js";
 import type {
   ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse,
-  ProcedureDetailResponse,
+  ProcedureDetailResponse, ProcedureListItem,
 } from "../../types/api.js";
 import type { NavigationAction } from "../navigation/types.js";
 
@@ -16,6 +16,7 @@ export interface ObjectsEnv {
   getObject(name: string): Effect<ObjectDetailResponse>;
   getObjectSource(name: string): Effect<ObjectSourceResponse>;
   getProcedure(obj: string, proc: string): Effect<ProcedureDetailResponse>;
+  getProcedures(): Effect<ProcedureListItem[]>;
   navigate(action: NavigationAction): Effect<never>;
 }
 
@@ -24,6 +25,9 @@ export const initialObjectsState: ObjectsState = {
   detail: null, sourceDetail: null, procedureDetail: null, allObjects: [],
   objectFace: "source", objectScrollPos: {},
   procFace: "source", procScrollPos: {},
+  proceduresList: null, proceduresListLoading: false,
+  proceduresListQ: "", proceduresListKind: "",
+  proceduresListSort: "name", proceduresListOrder: "asc",
 };
 
 function errMsg(e: unknown): string { return e instanceof Error ? e.message : String(e); }
@@ -131,6 +135,37 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
     draft.procFace = action.face;
     return null;
   }
+  case "procs-list-load":
+    if (draft.proceduresList !== null) {
+      env.navigate({ type: "navigate", route: { view: "proceduresList" } });
+      return null;
+    }
+    draft.proceduresListLoading = true;
+    env.navigate({ type: "navigate", route: { view: "proceduresList" } });
+    return env.getProcedures()
+      .map((data): ObjectsAction => ({ type: "procs-list-loaded", data }))
+      .catch((e): ObjectsAction => ({ type: "procs-list-error", error: errMsg(e) }));
+  case "procs-list-loaded":
+    draft.proceduresList = action.data;
+    draft.proceduresListLoading = false;
+    return null;
+  case "procs-list-error":
+    draft.proceduresListLoading = false;
+    return null;
+  case "procs-list-filter":
+    draft.proceduresListQ = action.q;
+    return null;
+  case "procs-list-filter-kind":
+    draft.proceduresListKind = action.kind;
+    return null;
+  case "procs-list-sort":
+    if (draft.proceduresListSort === action.col) {
+      draft.proceduresListOrder = draft.proceduresListOrder === "asc" ? "desc" : "asc";
+    } else {
+      draft.proceduresListSort = action.col;
+      draft.proceduresListOrder = "asc";
+    }
+    return null;
   default:
     return null;
   }

@@ -20,6 +20,9 @@ function errMsg(e: unknown): string { return e instanceof Error ? e.message : St
 
 function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effect<TablesAction> | null {
   switch (action.type) {
+  case "filter":
+    draft.q = action.q;
+    return null;
   case "search":
     draft.q = action.q;
     draft.loading = true;

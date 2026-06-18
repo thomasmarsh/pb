@@ -5,6 +5,7 @@ export type Route =
   | { view: "objects" }
   | { view: "objectDetail";    name: string }
   | { view: "procedureDetail"; name: string; proc: string }
+  | { view: "proceduresList" }
   | { view: "datawindows" }
   | { view: "dwDetail";        name: string }
   | { view: "tables" }

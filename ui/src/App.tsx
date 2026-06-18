@@ -15,6 +15,7 @@ import { Dashboard } from "./features/dashboard/Dashboard.js";
 import { Objects } from "./features/objects/Objects.js";
 import { ObjectDetail } from "./features/objects/ObjectDetail.js";
 import { ProcedureDetail } from "./features/objects/ProcedureDetail.js";
+import { ProceduresList } from "./features/objects/ProceduresList.js";
 import { DataWindows, DWDetail } from "./features/datawindows/DataWindows.js";
 import { Tables } from "./features/tables/Tables.js";
 import { Diagrams } from "./features/diagrams/Diagrams.js";
@@ -48,6 +49,7 @@ function ViewRouter(props: { store: Store<AppState, AppAction> }): JSX.Element {
       <Show when={snap().nav.route.view === "objects"}><Objects store={props.store} /></Show>
       <Show when={snap().nav.route.view === "objectDetail"}><ObjectDetail store={props.store} /></Show>
       <Show when={snap().nav.route.view === "procedureDetail"}><ProcedureDetail store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "proceduresList"}><ProceduresList store={props.store} /></Show>
       <Show when={snap().nav.route.view === "datawindows"}><DataWindows store={props.store} /></Show>
       <Show when={snap().nav.route.view === "dwDetail"}><DWDetail store={props.store} /></Show>
       <Show when={snap().nav.route.view === "tables" || snap().nav.route.view === "tableDetail"}><Tables store={props.store} /></Show>
