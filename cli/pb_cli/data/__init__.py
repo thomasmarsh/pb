@@ -19,6 +19,7 @@ _MANUAL_FREE_FUNCTIONS: list[str] = [
     "opensheetwithparmasdocument",
     "openuserobject", "openuserobjectwithparm",
     "print", "syntaxfromsql", "classname",
+    "trn",  # localization helper: string trn(long string_id)
 ]
 
 
