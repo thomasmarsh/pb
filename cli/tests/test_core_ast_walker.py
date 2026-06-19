@@ -3,6 +3,7 @@ from pb_cli.core.ast_walker import (
     walk_bsraw,
     walk_bsraw_located,
     walk_calls,
+    walk_excall_arg_calls,
     walk_exraw,
     walk_local_vars,
     walk_tagged,
@@ -210,3 +211,60 @@ def test_walk_local_vars_empty_body():
     node = {"tag": "BsIf", "contents": {"cond": {}, "then": [], "elseIfs": [], "else": None}}
     results = walk_local_vars(node)
     assert results == []
+
+
+# ── walk_excall_arg_calls ─────────────────────────────────────────────────────
+
+
+def _excall(callee_name: str, args: list[list[str]]) -> dict:
+    """Build a minimal ExCall node as produced by the Haskell serialiser."""
+    return {"tag": "ExCall", "callee": {"segments": [{"name": callee_name}]}, "args": args}
+
+
+def test_walk_excall_arg_calls_bare_nested_call():
+    # fn_seteditmask(dw, "f", fn_param_maskdate_e()) → yields fn_param_maskdate_e
+    node = _excall("fn_seteditmask", [["dw"], ['"f"'], ["fn_param_maskdate_e", "(", ")"]])
+    assert list(walk_excall_arg_calls(node)) == ["fn_param_maskdate_e"]
+
+
+def test_walk_excall_arg_calls_multiple_nested():
+    # fn_wrap(fn_a(), fn_b()) → yields fn_a, fn_b
+    node = _excall("fn_wrap", [["fn_a", "(", ")"], ["fn_b", "(", ")"]])
+    assert list(walk_excall_arg_calls(node)) == ["fn_a", "fn_b"]
+
+
+def test_walk_excall_arg_calls_skips_method_chain():
+    # fn_wrap(obj.method()) — method is preceded by "." so must not be yielded
+    node = _excall("fn_wrap", [["obj", ".", "method", "(", ")"]])
+    assert list(walk_excall_arg_calls(node)) == []
+
+
+def test_walk_excall_arg_calls_skips_outer_callee():
+    # The outer callee (fn_seteditmask itself) must NOT be yielded
+    node = _excall("fn_seteditmask", [["dw"]])
+    assert list(walk_excall_arg_calls(node)) == []
+
+
+def test_walk_excall_arg_calls_no_args():
+    node = _excall("fn_no_args", [])
+    assert list(walk_excall_arg_calls(node)) == []
+
+
+def test_walk_excall_arg_calls_literal_arg_not_yielded():
+    # String literal token — no following "("
+    node = _excall("fn_x", [['"hello"']])
+    assert list(walk_excall_arg_calls(node)) == []
+
+
+def test_walk_excall_arg_calls_nested_in_if_body():
+    # walk_excall_arg_calls must recurse through BsIf/BsFor etc.
+    body = [
+        {
+            "line": 1,
+            "node": {
+                "tag": "BsCall",
+                "contents": _excall("outer", [["fn_inner", "(", ")"]]),
+            },
+        }
+    ]
+    assert list(walk_excall_arg_calls(body)) == ["fn_inner"]

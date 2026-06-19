@@ -541,3 +541,39 @@ def test_resolve_calls_control_type_inference():
     result = resolve_calls(calls, procedures, inherits, var_types=var_types)
     r = result[0]
     assert r.resolution_kind == "builtin"
+
+
+# ── ExCallArg call type ────────────────────────────────────────────────────────
+
+
+def test_resolve_calls_excall_arg_global_function():
+    """ExCallArg rows (nested calls in ExCall args) resolve via global lookup.
+
+    Models fn_seteditmask(..., fn_param_round()) where fn_param_round is a
+    standalone global function living on the fn_param_round object.
+    """
+    calls = [CallRow("f.srw", "w_misth", "of_init", "fn_param_round", "ExCallArg")]
+    procedures = [
+        _make_proc("f.srw", "w_misth", "of_init", body_json='[]'),
+        _make_proc("fn_param_round.srf", "fn_param_round", "fn_param_round"),
+    ]
+    inherits = []
+
+    result = resolve_calls(calls, procedures, inherits)
+    r = result[0]
+    assert r.target_object == "fn_param_round"
+    assert r.target_proc == "fn_param_round"
+    assert r.resolution_kind == "virtual"
+    assert r.confidence == "high"
+
+
+def test_resolve_calls_excall_arg_unresolved():
+    """ExCallArg for a name not in any procedure resolves as unresolved."""
+    calls = [CallRow("f.srw", "w_misth", "of_init", "count", "ExCallArg")]
+    procedures = [_make_proc("f.srw", "w_misth", "of_init", body_json='[]')]
+    inherits = []
+
+    result = resolve_calls(calls, procedures, inherits)
+    r = result[0]
+    assert r.resolution_kind == "unresolved"
+    assert r.target_object is None

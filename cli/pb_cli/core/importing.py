@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from pb_cli.core.ast_walker import count_branches, walk_bsraw_located, walk_calls, walk_local_vars
+from pb_cli.core.ast_walker import count_branches, walk_bsraw_located, walk_calls, walk_excall_arg_calls, walk_local_vars
 from pb_cli.core.models import (
     CallRow,
     DwArgumentRow,
@@ -88,6 +88,9 @@ def _import_ps(obj: dict, file: str, rows: RowBatch, dialect: str = "oracle") ->
             for callee, call_type in walk_calls(body):
                 if callee:
                     rows["calls"].append(CallRow(file, obj_name, proc_name, callee, call_type))
+            for callee in walk_excall_arg_calls(body):
+                if callee:
+                    rows["calls"].append(CallRow(file, obj_name, proc_name, callee, "ExCallArg"))
             _extract_sql(file, obj_name, proc_name, row[9], dialect, rows)
             for var_name, var_type in walk_local_vars(body):
                 rows["local_variables"].append(LocalVarRow(

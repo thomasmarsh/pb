@@ -429,6 +429,14 @@ def resolve_calls(
                                     break
                             if resolution_kind != "unresolved":
                                 break
+        elif row.call_type == "ExCallArg":
+            if row.to_name.lower() in PB_BUILTIN_CALLS:
+                resolution_kind = "builtin"
+                confidence = "high"
+            else:
+                target_object, target_proc, resolution_kind, confidence = _resolve_virtual(
+                    row.to_name, row.object, proc_map, inherits, global_procs,
+                )
         elif row.call_type == "ExMethodCall":
             if row.to_name.lower() in PB_BUILTIN_CALLS:
                 resolution_kind = "builtin"

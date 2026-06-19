@@ -74,6 +74,30 @@ def walk_bsraw_located(node) -> Iterator[tuple[str, int | None]]:
                 yield text, line
 
 
+def walk_excall_arg_calls(node) -> Iterator[str]:
+    """Yield bare function names that appear as nested calls in ExCall arg token arrays.
+
+    ExCall args are serialised as [[String]] — lists of raw token strings.
+    Pattern: an identifier immediately followed by "(" that is NOT preceded
+    by "." (to skip method-chain segments like obj.method()).
+    Only bare names (no dot in the name itself) are yielded.
+    """
+    for tag, n, _line in walk_tagged(node):
+        if tag == "ExCall":
+            for arg_toks in (n.get("args") or []):
+                if not isinstance(arg_toks, list):
+                    continue
+                for i, tok in enumerate(arg_toks):
+                    if (
+                        isinstance(tok, str)
+                        and tok not in (".", "(", ")")
+                        and i + 1 < len(arg_toks)
+                        and arg_toks[i + 1] == "("
+                        and (i == 0 or arg_toks[i - 1] != ".")
+                    ):
+                        yield tok.lower()
+
+
 def walk_exraw(node) -> Iterator[tuple[str, list[str]]]:
     """Yield (leading_token, tokens) for every ExRaw expression anywhere under `node`."""
     for tag, n, _line in walk_tagged(node):
