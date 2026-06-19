@@ -93,6 +93,7 @@ def run(
     with env.storage.db_connection(db) as conn, reporter.analyze_progress() as progress:
         env.storage.compute_metrics(conn, progress)
         env.storage.build_type_tables(conn)
+        env.storage.build_dataflow_tables(conn)
         sql_parse_failures = env.storage.count_sql_parse_failures(conn)
 
     if to_parse:
