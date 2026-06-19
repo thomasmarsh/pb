@@ -273,14 +273,6 @@ def test_compute_metrics_from_data_empty_graph():
 def test_write_metrics_populates_table(tmp_path):
     conn = duckdb.connect(str(tmp_path / "test.duckdb"))
     create_schema(conn)
-    conn.execute("""
-        CREATE TABLE object_metrics (
-            object TEXT, in_degree INT, out_degree INT,
-            betweenness DOUBLE, pagerank DOUBLE,
-            max_cyclomatic INT, avg_cyclomatic DOUBLE,
-            dit INT, cbo INT
-        )
-    """)
     rows = [
         ("obj_a", 1, 2, 0.5, 0.3, 5, 5.0, 0, None),
         ("obj_b", 3, 0, 0.0, 0.7, None, None, 2, None),

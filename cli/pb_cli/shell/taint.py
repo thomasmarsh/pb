@@ -5,66 +5,16 @@ from __future__ import annotations
 import json
 
 from pb_cli.core.taint import build_taint_annotations, taint_analysis
+from pb_cli.shell.bulk import bulk_insert
 from pb_cli.shell.db import Conn
 
 
 def build_taint_tables(conn: Conn) -> None:
     """Run taint analysis and store results in four DuckDB tables."""
-    conn.execute("DROP TABLE IF EXISTS taint_sources")
-    conn.execute("DROP TABLE IF EXISTS taint_sinks")
-    conn.execute("DROP TABLE IF EXISTS taint_paths")
-    conn.execute("DROP TABLE IF EXISTS taint_annotations")
-
-    conn.execute("""
-        CREATE TABLE taint_sources (
-            file       TEXT NOT NULL,
-            object     TEXT NOT NULL,
-            proc_name  TEXT NOT NULL,
-            var_name   TEXT NOT NULL,
-            line       INT,
-            source_type TEXT NOT NULL
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE taint_sinks (
-            file       TEXT NOT NULL,
-            object     TEXT NOT NULL,
-            proc_name  TEXT NOT NULL,
-            var_name   TEXT NOT NULL,
-            line       INT,
-            sink_type  TEXT NOT NULL,
-            severity   TEXT NOT NULL
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE taint_paths (
-            id           INT NOT NULL,
-            source_object TEXT NOT NULL,
-            source_proc  TEXT NOT NULL,
-            source_var   TEXT NOT NULL,
-            source_line  INT,
-            source_type  TEXT NOT NULL,
-            sink_object  TEXT NOT NULL,
-            sink_proc    TEXT NOT NULL,
-            sink_var     TEXT NOT NULL,
-            sink_line    INT,
-            sink_type    TEXT NOT NULL,
-            severity     TEXT NOT NULL,
-            category     TEXT NOT NULL,
-            steps_json   TEXT NOT NULL
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE taint_annotations (
-            file           TEXT NOT NULL,
-            object         TEXT NOT NULL,
-            proc_name      TEXT NOT NULL,
-            block_id       TEXT NOT NULL,
-            is_taint_entry BOOLEAN NOT NULL,
-            is_taint_sink  BOOLEAN NOT NULL,
-            tainted_vars   TEXT
-        )
-    """)
+    conn.execute("TRUNCATE TABLE taint_sources")
+    conn.execute("TRUNCATE TABLE taint_sinks")
+    conn.execute("TRUNCATE TABLE taint_paths")
+    conn.execute("TRUNCATE TABLE taint_annotations")
 
     # Fetch sql_statements
     sql_rows = conn.execute("""
@@ -132,49 +82,47 @@ def build_taint_tables(conn: Conn) -> None:
 
     result = taint_analysis(interproc_edges, proc_defs, proc_uses, sql_stmts, procedures)
 
-    # Insert taint_sources
-    if result.sources:
-        conn.executemany(
-            "INSERT INTO taint_sources VALUES (?,?,?,?,?,?)",
-            [(s.file, s.object, s.proc_name, s.var_name, s.line, s.source_type)
-             for s in result.sources],
-        )
+    bulk_insert(conn, "taint_sources",
+        ["file", "object", "proc_name", "var_name", "line", "source_type"],
+        [(s.file, s.object, s.proc_name, s.var_name, s.line, s.source_type)
+         for s in result.sources],
+    )
 
-    # Insert taint_sinks
-    if result.sinks:
-        conn.executemany(
-            "INSERT INTO taint_sinks VALUES (?,?,?,?,?,?,?)",
-            [(sk.file, sk.object, sk.proc_name, sk.var_name, sk.line, sk.sink_type, sk.severity)
-             for sk in result.sinks],
-        )
+    bulk_insert(conn, "taint_sinks",
+        ["file", "object", "proc_name", "var_name", "line", "sink_type", "severity"],
+        [(sk.file, sk.object, sk.proc_name, sk.var_name, sk.line, sk.sink_type, sk.severity)
+         for sk in result.sinks],
+    )
 
-    # Insert taint_paths
-    if result.paths:
-        conn.executemany(
-            "INSERT INTO taint_paths VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            [
-                (
-                    i,
-                    p.source.object, p.source.proc_name, p.source.var_name, p.source.line,
-                    p.source.source_type,
-                    p.sink.object, p.sink.proc_name, p.sink.var_name, p.sink.line,
-                    p.sink.sink_type,
-                    p.severity, p.category,
-                    json.dumps([
-                        {
-                            "object": st.object,
-                            "proc_name": st.proc_name,
-                            "line": st.line,
-                            "var_name": st.var_name,
-                            "step_kind": st.step_kind,
-                            "description": st.description,
-                        }
-                        for st in p.steps
-                    ]),
-                )
-                for i, p in enumerate(result.paths)
-            ],
-        )
+    bulk_insert(conn, "taint_paths",
+        [
+            "id", "source_object", "source_proc", "source_var", "source_line", "source_type",
+            "sink_object", "sink_proc", "sink_var", "sink_line", "sink_type",
+            "severity", "category", "steps_json",
+        ],
+        [
+            (
+                i,
+                p.source.object, p.source.proc_name, p.source.var_name, p.source.line,
+                p.source.source_type,
+                p.sink.object, p.sink.proc_name, p.sink.var_name, p.sink.line,
+                p.sink.sink_type,
+                p.severity, p.category,
+                json.dumps([
+                    {
+                        "object": st.object,
+                        "proc_name": st.proc_name,
+                        "line": st.line,
+                        "var_name": st.var_name,
+                        "step_kind": st.step_kind,
+                        "description": st.description,
+                    }
+                    for st in p.steps
+                ]),
+            )
+            for i, p in enumerate(result.paths)
+        ],
+    )
 
     # Reconstruct full tainted triple set from tainted_vars summary
     tainted: set[tuple[str, str, str]] = {
@@ -184,15 +132,14 @@ def build_taint_tables(conn: Conn) -> None:
     }
     annotations = build_taint_annotations(tainted, result.sources, result.sinks, proc_defs, proc_uses)
 
-    if annotations:
-        conn.executemany(
-            "INSERT INTO taint_annotations VALUES (?,?,?,?,?,?,?)",
-            [
-                (
-                    a["file"], a["object"], a["proc_name"], a["block_id"],
-                    a["is_taint_entry"], a["is_taint_sink"],
-                    json.dumps(a["tainted_vars"]),
-                )
-                for a in annotations
-            ],
-        )
+    bulk_insert(conn, "taint_annotations",
+        ["file", "object", "proc_name", "block_id", "is_taint_entry", "is_taint_sink", "tainted_vars"],
+        [
+            (
+                a["file"], a["object"], a["proc_name"], a["block_id"],
+                a["is_taint_entry"], a["is_taint_sink"],
+                json.dumps(a["tainted_vars"]),
+            )
+            for a in annotations
+        ],
+    )

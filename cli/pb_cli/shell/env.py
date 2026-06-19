@@ -54,7 +54,6 @@ from pb_cli.shell.metrics import compute_dit, compute_metrics
 from pb_cli.shell.reporter import LiveReporter, Reporter
 from pb_cli.shell.runner import parse_stream, render_error
 from pb_cli.shell.state import (
-    create_state_table,
     delete_file_rows,
     load_file_state,
     save_file_state,
@@ -136,7 +135,6 @@ class StorageEnv:
     db_connection: DbConnection = field(default=db_connection)
     create_schema: ConnOp = field(default=create_schema)
     drop_tables: ConnOp = field(default=drop_tables)
-    create_state_table: ConnOp = field(default=create_state_table)
     load_file_state: Callable[[Conn], dict[str, str]] = field(default=load_file_state)
     delete_file_rows: Callable[[Conn, str], None] = field(default=delete_file_rows)
     save_file_state: Callable[[Conn, dict[str, str]], None] = field(default=save_file_state)

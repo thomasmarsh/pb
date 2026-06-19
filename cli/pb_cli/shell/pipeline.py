@@ -57,7 +57,6 @@ def run(
         if reset:
             env.storage.drop_tables(conn)
         env.storage.create_schema(conn)
-        env.storage.create_state_table(conn)
         conn.execute("INSERT OR REPLACE INTO metadata VALUES (?, ?)", ["ingestion_root", str(src_dir.resolve())])
 
         with reporter.status("Scanning source files..."):

@@ -4,7 +4,7 @@ from pb_cli.core.importing import import_file
 from pb_cli.core.models import ParseErrorRow, new_row_batch
 from pb_cli.shell.db import count_sql_parse_failures, create_schema, db_connection, insert_parse_errors, parse_sql_file
 from pb_cli.shell.importing import import_batch
-from pb_cli.shell.state import create_state_table, load_file_state, save_file_state
+from pb_cli.shell.state import load_file_state, save_file_state
 
 
 def test_create_drop_schema(tmp_path):
@@ -128,7 +128,7 @@ def test_insert_parse_errors_roundtrip(tmp_path):
 def test_file_state_roundtrip(tmp_path):
     db = str(tmp_path / "test.duckdb")
     with db_connection(db) as conn:
-        create_state_table(conn)
+        create_schema(conn)
         save_file_state(conn, {"a.srw": "abc123"})
         state = load_file_state(conn)
         assert state == {"a.srw": "abc123"}

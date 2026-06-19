@@ -43,7 +43,6 @@ def test_storage_env_defaults_are_real_functions():
     assert callable(s.db_connection)
     assert callable(s.create_schema)
     assert callable(s.drop_tables)
-    assert callable(s.create_state_table)
     assert callable(s.load_file_state)
     assert callable(s.delete_file_rows)
     assert callable(s.save_file_state)

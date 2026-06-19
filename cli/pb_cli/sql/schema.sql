@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS procedures (
     return_type      TEXT,
     start_line       INT,
     end_line         INT,
-    body_json        JSON,
+    body_json        TEXT,
     source_rendered  TEXT,
     cyclomatic       INT
 );
@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS sql_statements (
     line        INT  NOT NULL,
     operation   TEXT,
     raw_sql     TEXT,
-    parsed_json JSON,
+    parsed_json TEXT,
     tables      TEXT[],
     columns     TEXT[],
     has_into    BOOLEAN,
@@ -158,4 +158,112 @@ CREATE TABLE IF NOT EXISTS resolved_calls (
 CREATE TABLE IF NOT EXISTS metadata (
     key   TEXT PRIMARY KEY,
     value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS file_state (
+    file      TEXT PRIMARY KEY,
+    sha256    TEXT NOT NULL,
+    parsed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS object_metrics (
+    object         TEXT NOT NULL,
+    in_degree      INT,
+    out_degree     INT,
+    betweenness    DOUBLE,
+    pagerank       DOUBLE,
+    max_cyclomatic INT,
+    avg_cyclomatic DOUBLE,
+    dit            INT,
+    cbo            INT
+);
+
+CREATE TABLE IF NOT EXISTS proc_defs (
+    file       TEXT NOT NULL,
+    object     TEXT NOT NULL,
+    proc_name  TEXT NOT NULL,
+    var_name   TEXT NOT NULL,
+    block_id   TEXT NOT NULL,
+    stmt_index INT  NOT NULL,
+    line       INT,
+    kind       TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS proc_uses (
+    file       TEXT NOT NULL,
+    object     TEXT NOT NULL,
+    proc_name  TEXT NOT NULL,
+    var_name   TEXT NOT NULL,
+    block_id   TEXT NOT NULL,
+    stmt_index INT  NOT NULL,
+    line       INT,
+    kind       TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS interproc_edges (
+    caller_object  TEXT NOT NULL,
+    caller_proc    TEXT NOT NULL,
+    caller_line    INT,
+    callee_object  TEXT NOT NULL,
+    callee_proc    TEXT NOT NULL,
+    edge_kind      TEXT NOT NULL,
+    var_name       TEXT NOT NULL,
+    caller_context TEXT NOT NULL,
+    callee_context TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS procedure_summaries (
+    file            TEXT NOT NULL,
+    object          TEXT NOT NULL,
+    proc_name       TEXT NOT NULL,
+    params_in       TEXT,
+    globals_read    TEXT,
+    globals_written TEXT,
+    return_flows_to TEXT
+);
+
+CREATE TABLE IF NOT EXISTS taint_sources (
+    file        TEXT NOT NULL,
+    object      TEXT NOT NULL,
+    proc_name   TEXT NOT NULL,
+    var_name    TEXT NOT NULL,
+    line        INT,
+    source_type TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS taint_sinks (
+    file       TEXT NOT NULL,
+    object     TEXT NOT NULL,
+    proc_name  TEXT NOT NULL,
+    var_name   TEXT NOT NULL,
+    line       INT,
+    sink_type  TEXT NOT NULL,
+    severity   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS taint_paths (
+    id            INT  NOT NULL,
+    source_object TEXT NOT NULL,
+    source_proc   TEXT NOT NULL,
+    source_var    TEXT NOT NULL,
+    source_line   INT,
+    source_type   TEXT NOT NULL,
+    sink_object   TEXT NOT NULL,
+    sink_proc     TEXT NOT NULL,
+    sink_var      TEXT NOT NULL,
+    sink_line     INT,
+    sink_type     TEXT NOT NULL,
+    severity      TEXT NOT NULL,
+    category      TEXT NOT NULL,
+    steps_json    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS taint_annotations (
+    file           TEXT    NOT NULL,
+    object         TEXT    NOT NULL,
+    proc_name      TEXT    NOT NULL,
+    block_id       TEXT    NOT NULL,
+    is_taint_entry BOOLEAN NOT NULL,
+    is_taint_sink  BOOLEAN NOT NULL,
+    tainted_vars   TEXT
 );

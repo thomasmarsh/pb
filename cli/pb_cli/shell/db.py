@@ -12,6 +12,7 @@ from pathlib import Path
 import duckdb
 
 from pb_cli.core.models import TABLES, ParseErrorRow
+from pb_cli.shell.bulk import bulk_insert
 
 Conn = duckdb.DuckDBPyConnection
 
@@ -20,21 +21,6 @@ _SCHEMA_SQL = (_SQL_DIR / "schema.sql").read_text()
 _VIEWS_SQL = (_SQL_DIR / "views.sql").read_text()
 _COUNT_SQL_PARSE_FAILURES = (_SQL_DIR / "count_sql_parse_failures.sql").read_text()
 
-
-def _load_inserts() -> dict[str, str]:
-    text = (_SQL_DIR / "inserts.sql").read_text()
-    result: dict[str, str] = {}
-    for block in text.split(";"):
-        block = block.strip()
-        if not block:
-            continue
-        m = re.search(r"INSERT\s+INTO\s+(\w+)", block, re.IGNORECASE)
-        if m:
-            result[m.group(1)] = block
-    return result
-
-
-INSERT = _load_inserts()
 
 
 @contextmanager
@@ -68,14 +54,20 @@ def count_sql_parse_failures(conn: Conn) -> int:
 
 
 def insert_parse_errors(conn: Conn, rows: list[ParseErrorRow]) -> None:
-    if rows:
-        conn.executemany(INSERT["parse_errors"], [r._asdict() for r in rows])
+    bulk_insert(conn, "parse_errors", list(ParseErrorRow._fields), [tuple(r) for r in rows])
 
 
 def drop_tables(conn: Conn) -> None:
     """Drop all data tables and file_state (full reset)."""
     conn.execute("DROP VIEW IF EXISTS all_sql_tables")
-    for t in TABLES + ["file_state", "metadata", "resolved_types", "resolved_calls", "proc_defs", "proc_uses", "interproc_edges", "procedure_summaries", "taint_sources", "taint_sinks", "taint_paths", "taint_annotations"]:
+    for t in TABLES + [
+        "file_state", "metadata",
+        "resolved_types", "resolved_calls",
+        "object_metrics",
+        "proc_defs", "proc_uses",
+        "interproc_edges", "procedure_summaries",
+        "taint_sources", "taint_sinks", "taint_paths", "taint_annotations",
+    ]:
         conn.execute(f"DROP TABLE IF EXISTS {t}")
 
 

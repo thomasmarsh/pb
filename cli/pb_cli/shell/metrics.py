@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import networkx as nx
 
+from pb_cli.shell.bulk import bulk_insert
 from pb_cli.shell.db import Conn
 
 if TYPE_CHECKING:
@@ -87,28 +88,20 @@ def compute_metrics_from_data(
     ]
 
 
+_METRICS_COLS = [
+    "object", "in_degree", "out_degree", "betweenness", "pagerank",
+    "max_cyclomatic", "avg_cyclomatic", "dit", "cbo",
+]
+
+
 def write_metrics(conn: Conn, rows: list[tuple]) -> None:
     """Write computed metric rows into the object_metrics table."""
-    if rows:
-        conn.executemany("INSERT INTO object_metrics VALUES (?,?,?,?,?,?,?,?,?)", rows)
+    bulk_insert(conn, "object_metrics", _METRICS_COLS, rows)
 
 
 def compute_metrics(conn: Conn, progress: AnalyzeProgress) -> None:
     """Full pipeline: fetch → compute → write, with progress side channel."""
-    conn.execute("DROP TABLE IF EXISTS object_metrics")
-    conn.execute("""
-        CREATE TABLE object_metrics (
-            object         TEXT NOT NULL,
-            in_degree      INT,
-            out_degree     INT,
-            betweenness    DOUBLE,
-            pagerank       DOUBLE,
-            max_cyclomatic INT,
-            avg_cyclomatic DOUBLE,
-            dit            INT,
-            cbo            INT
-        )
-    """)
+    conn.execute("TRUNCATE TABLE object_metrics")
 
     edges, cyc_rows, inherit_edges = fetch_metrics_data(conn)
     progress.advance_metrics("betweenness centrality")

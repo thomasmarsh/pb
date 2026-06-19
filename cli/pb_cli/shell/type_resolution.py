@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from pb_cli.core.models import GlobalVarRow, ResolvedCallRow, ResolvedTypeRow
 from pb_cli.core.type_resolution import infer_control_type, resolve_calls, resolve_types
-from pb_cli.shell.db import INSERT, Conn
+from pb_cli.shell.bulk import bulk_insert
+from pb_cli.shell.db import Conn
 
 
 def _fetch_sets(conn: Conn) -> tuple[set[str], set[str]]:
@@ -60,20 +61,17 @@ def _fetch_calls(conn: Conn):
 
 def store_resolved_types(conn: Conn, rows: list[ResolvedTypeRow]) -> None:
     conn.execute("DELETE FROM resolved_types")
-    if rows:
-        conn.executemany(INSERT["resolved_types"], [r._asdict() for r in rows])
+    bulk_insert(conn, "resolved_types", list(ResolvedTypeRow._fields), [tuple(r) for r in rows])
 
 
 def store_resolved_calls(conn: Conn, rows: list[ResolvedCallRow]) -> None:
     conn.execute("DELETE FROM resolved_calls")
-    if rows:
-        conn.executemany(INSERT["resolved_calls"], [r._asdict() for r in rows])
+    bulk_insert(conn, "resolved_calls", list(ResolvedCallRow._fields), [tuple(r) for r in rows])
 
 
 def store_global_vars(conn: Conn, rows: list[GlobalVarRow]) -> None:
     conn.execute("DELETE FROM global_vars")
-    if rows:
-        conn.executemany(INSERT["global_vars"], [r._asdict() for r in rows])
+    bulk_insert(conn, "global_vars", list(GlobalVarRow._fields), [tuple(r) for r in rows])
 
 
 def build_type_tables(conn: Conn) -> None:

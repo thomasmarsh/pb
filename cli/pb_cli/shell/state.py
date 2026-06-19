@@ -5,19 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from pb_cli.core.models import TABLES
+from pb_cli.shell.bulk import bulk_insert
 from pb_cli.shell.db import Conn
-
-FILE_STATE_SQL = """
-CREATE TABLE IF NOT EXISTS file_state (
-    file      TEXT PRIMARY KEY,
-    sha256    TEXT NOT NULL,
-    parsed_at TEXT NOT NULL
-);
-"""
-
-
-def create_state_table(conn: Conn) -> None:
-    conn.execute(FILE_STATE_SQL)
 
 
 def load_file_state(conn: Conn) -> dict[str, str]:
@@ -52,5 +41,4 @@ def save_file_state(conn: Conn, file_states: dict[str, str]) -> None:
     for file_path, sha in file_states.items():
         conn.execute("DELETE FROM file_state WHERE file = ?", [file_path])
     rows = [(f, h, now) for f, h in file_states.items()]
-    if rows:
-        conn.executemany("INSERT INTO file_state VALUES (?, ?, ?)", rows)
+    bulk_insert(conn, "file_state", ["file", "sha256", "parsed_at"], rows)

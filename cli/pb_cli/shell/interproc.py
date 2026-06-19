@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from pb_cli.core.interproc import build_interproc_flow
+from pb_cli.shell.bulk import bulk_insert
 from pb_cli.shell.db import Conn
 
 
@@ -15,32 +16,8 @@ def build_interproc_tables(conn: Conn) -> None:
     and procedures from DuckDB. Calls the pure build_interproc_flow, then stores
     results. Does not re-run analyze_procedure.
     """
-    conn.execute("DROP TABLE IF EXISTS interproc_edges")
-    conn.execute("DROP TABLE IF EXISTS procedure_summaries")
-    conn.execute("""
-        CREATE TABLE interproc_edges (
-            caller_object  TEXT NOT NULL,
-            caller_proc    TEXT NOT NULL,
-            caller_line    INT,
-            callee_object  TEXT NOT NULL,
-            callee_proc    TEXT NOT NULL,
-            edge_kind      TEXT NOT NULL,
-            var_name       TEXT NOT NULL,
-            caller_context TEXT NOT NULL,
-            callee_context TEXT NOT NULL
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE procedure_summaries (
-            file             TEXT NOT NULL,
-            object           TEXT NOT NULL,
-            proc_name        TEXT NOT NULL,
-            params_in        TEXT,
-            globals_read     TEXT,
-            globals_written  TEXT,
-            return_flows_to  TEXT
-        )
-    """)
+    conn.execute("TRUNCATE TABLE interproc_edges")
+    conn.execute("TRUNCATE TABLE procedure_summaries")
 
     # Fetch resolved_calls (virtual+inherited inter-proc edges only)
     rc_rows = conn.execute("""
@@ -93,20 +70,25 @@ def build_interproc_tables(conn: Conn) -> None:
 
     gdf = build_interproc_flow(resolved_calls, proc_defs, proc_uses, global_var_names, proc_info)
 
-    # Store interproc_edges
-    edge_rows = [
+    _EDGE_COLS = [
+        "caller_object", "caller_proc", "caller_line",
+        "callee_object", "callee_proc", "edge_kind",
+        "var_name", "caller_context", "callee_context",
+    ]
+    bulk_insert(conn, "interproc_edges", _EDGE_COLS, [
         (
             e.caller_object, e.caller_proc, e.caller_line,
             e.callee_object, e.callee_proc, e.edge_kind,
             e.var_name, e.caller_context, e.callee_context,
         )
         for e in gdf.edges
-    ]
-    if edge_rows:
-        conn.executemany("INSERT INTO interproc_edges VALUES (?,?,?,?,?,?,?,?,?)", edge_rows)
+    ])
 
-    # Store procedure_summaries
-    summary_rows = [
+    _SUMMARY_COLS = [
+        "file", "object", "proc_name",
+        "params_in", "globals_read", "globals_written", "return_flows_to",
+    ]
+    bulk_insert(conn, "procedure_summaries", _SUMMARY_COLS, [
         (
             s.file, s.object, s.proc_name,
             json.dumps(s.params_in) if s.params_in else None,
@@ -115,6 +97,4 @@ def build_interproc_tables(conn: Conn) -> None:
             json.dumps(s.return_flows_to) if s.return_flows_to else None,
         )
         for s in gdf.summaries
-    ]
-    if summary_rows:
-        conn.executemany("INSERT INTO procedure_summaries VALUES (?,?,?,?,?,?,?)", summary_rows)
+    ])

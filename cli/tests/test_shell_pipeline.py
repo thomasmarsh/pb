@@ -51,7 +51,6 @@ def fake_env(tmp_path):
     e.storage.db_connection = db_connection  # type: ignore[assignment]
     e.storage.drop_tables = lambda conn: setattr(conn, "dropped", True)
     e.storage.create_schema = lambda conn: setattr(conn, "schema_created", True)
-    e.storage.create_state_table = lambda conn: setattr(conn, "state_table_created", True)
     e.storage.load_file_state = lambda conn: conn.file_state  # type: ignore[attr-defined]
     e.storage.delete_file_rows = lambda conn, file_path: conn.deleted.append(file_path)  # type: ignore[attr-defined]
     e.storage.save_file_state = lambda conn, states: conn.saved_state.update(states)  # type: ignore[attr-defined]

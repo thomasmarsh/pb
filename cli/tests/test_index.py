@@ -10,8 +10,7 @@ Run:
 """
 
 from pb_cli.core.importing import _import_dw, _proc_row, import_file
-from pb_cli.core.models import new_row_batch
-from pb_cli.shell.db import INSERT
+from pb_cli.core.models import ProcedureRow, new_row_batch
 
 
 def q(conn, sql: str):
@@ -83,11 +82,12 @@ def _rows():
 
 
 # ---------------------------------------------------------------------------
-# Schema/INSERT consistency guard
+# Schema consistency guard
 # ---------------------------------------------------------------------------
 
 
-def test_proc_row_length_matches_insert():
+def test_proc_row_length_matches_named_tuple():
+    """_proc_row must return a tuple whose length matches ProcedureRow._fields."""
     block = {
         "meta": {"object": "w_test", "startLine": 1, "endLine": 5},
         "sig": {"name": "f_test", "modifiers": [], "params": "", "returnType": "integer"},
@@ -95,10 +95,8 @@ def test_proc_row_length_matches_insert():
         "source_rendered": "",
     }
     row = _proc_row("test.sru", "function", block, [])
-    import re
-    n_params = len(re.findall(r'\$\w+', INSERT["procedures"]))
-    assert len(row) == n_params, (
-        f"_proc_row returns {len(row)} values but INSERT has {n_params} named params"
+    assert len(row) == len(ProcedureRow._fields), (
+        f"_proc_row returns {len(row)} values but ProcedureRow has {len(ProcedureRow._fields)} fields"
     )
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from pb_cli.core.dataflow import analyze_procedure
+from pb_cli.shell.bulk import bulk_insert
 from pb_cli.shell.db import Conn
 
 
@@ -13,32 +14,8 @@ def build_dataflow_tables(conn: Conn) -> None:
 
     Creates proc_defs and proc_uses tables.
     """
-    conn.execute("DROP TABLE IF EXISTS proc_defs")
-    conn.execute("DROP TABLE IF EXISTS proc_uses")
-    conn.execute("""
-        CREATE TABLE proc_defs (
-            file TEXT NOT NULL,
-            object TEXT NOT NULL,
-            proc_name TEXT NOT NULL,
-            var_name TEXT NOT NULL,
-            block_id TEXT NOT NULL,
-            stmt_index INT NOT NULL,
-            line INT,
-            kind TEXT NOT NULL
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE proc_uses (
-            file TEXT NOT NULL,
-            object TEXT NOT NULL,
-            proc_name TEXT NOT NULL,
-            var_name TEXT NOT NULL,
-            block_id TEXT NOT NULL,
-            stmt_index INT NOT NULL,
-            line INT,
-            kind TEXT NOT NULL
-        )
-    """)
+    conn.execute("TRUNCATE TABLE proc_defs")
+    conn.execute("TRUNCATE TABLE proc_uses")
 
     rows = conn.execute(
         "SELECT file, object, name, body_json FROM procedures WHERE body_json IS NOT NULL"
@@ -59,13 +36,6 @@ def build_dataflow_tables(conn: Conn) -> None:
             for u in uses:
                 all_uses.append((file_path, obj, name, var, u.block_id, u.stmt_index, u.line, u.kind))
 
-    if all_defs:
-        conn.executemany(
-            "INSERT INTO proc_defs VALUES (?,?,?,?,?,?,?,?)",
-            all_defs,
-        )
-    if all_uses:
-        conn.executemany(
-            "INSERT INTO proc_uses VALUES (?,?,?,?,?,?,?,?)",
-            all_uses,
-        )
+    _DEFS_COLS = ["file", "object", "proc_name", "var_name", "block_id", "stmt_index", "line", "kind"]
+    bulk_insert(conn, "proc_defs", _DEFS_COLS, all_defs)
+    bulk_insert(conn, "proc_uses", _DEFS_COLS, all_uses)
