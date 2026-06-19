@@ -1,13 +1,12 @@
 // ObjectDetail.tsx — Object detail view with FaceToggle Source/Analysis pattern.
 
-import { Show, createEffect, createSignal } from "solid-js";
+import { Show, createEffect, createSignal, createResource } from "solid-js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import type { ObjectDetailResponse } from "../../types/api.js";
+import type { ObjectDetailResponse, TaintPathsResponse } from "../../types/api.js";
 import type { ObjectsState } from "./types.js";
 import { Loading } from "../../components/ui/Loading.js";
-import { PhaseGateInline } from "../../components/ui/PhaseGate.js";
 import { DetailHeader } from "../../components/detail/DetailHeader.js";
 import { BackButton } from "../../components/ui/BackButton.js";
 import { EntityListCard } from "../../components/detail/EntityListCard.js";
@@ -15,6 +14,56 @@ import { MetricsGrid } from "./detail/MetricsGrid.js";
 import { InheritanceCard } from "./detail/InheritanceCard.js";
 import { ProceduresCard } from "./detail/ProceduresCard.js";
 import { SourceCard } from "./detail/SourceCard.js";
+
+function ObjectTaintCard(props: {
+  objectName: string;
+  store: Store<AppState, AppAction>;
+}): import("solid-js").JSX.Element {
+  const [data] = createResource(
+    () => props.objectName,
+    async (name): Promise<TaintPathsResponse> => {
+      const params = new URLSearchParams({ object_name: name, limit: "5" });
+      const res = await fetch("/api/analysis/taint-paths?" + params.toString());
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<TaintPathsResponse>;
+    },
+  );
+
+  return (
+    <div class="card">
+      <div class="card-header" style={{ display: "flex", "align-items": "center", gap: "8px" }}>
+        <h3 style={{ flex: 1 }}>Taint Paths</h3>
+      </div>
+      <Show when={data.loading}><Loading /></Show>
+      <Show when={data.error}>
+        <div class="error-banner">Failed to load taint paths: {String(data.error)}</div>
+      </Show>
+      <Show when={!data.loading && !data.error && data()}>
+        <Show
+          when={(data()?.total ?? 0) > 0}
+          fallback={
+            <div style={{ padding: "8px 0", color: "var(--text-muted)", "font-size": "13px" }}>
+              No taint paths found through this object.
+            </div>
+          }
+        >
+          <div style={{ padding: "4px 0 8px", color: "var(--text-muted)", "font-size": "13px" }}>
+            {data()!.total} taint path{data()!.total === 1 ? "" : "s"} through this object.
+          </div>
+          <button
+            class="filter-pill active"
+            style={{ "font-size": "12px", padding: "3px 10px" }}
+            onClick={() =>
+              props.store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "taintExplorer" } } })
+            }
+          >
+            View in Taint Explorer ↗
+          </button>
+        </Show>
+      </Show>
+    </div>
+  );
+}
 
 function ObjectDetailContent(props: {
   o: ObjectDetailResponse;
@@ -46,7 +95,6 @@ function ObjectDetailContent(props: {
         badgeClass={`badge-${bc()}`}
         badgeLabel={o.kind}
         face={face()}
-        phaseLabel="P1"
         store={store}
         onToggle={(newFace, scrollTop) => {
           store.dispatch({ tag: "objects", action: { tag: "set-object-face", name: o.name, face: newFace, scrollTop } });
@@ -108,12 +156,7 @@ function ObjectDetailContent(props: {
             />
           </Show>
 
-          <PhaseGateInline phase={2} section="Type Analysis" label="requires typing pass"
-            description="Type-level call graph and interface conformance checks require a P2 typing pass over the corpus." />
-          <PhaseGateInline phase={3} section="Taint Paths" label="requires taint analysis"
-            description="Taint flow from user inputs through this object's procedures is available after a P3 taint analysis run." />
-          <PhaseGateInline phase={4} section="Formal Properties" label="requires formal verification"
-            description="Invariant proofs and safety certificates for this object require P4 formal verification infrastructure." />
+          <ObjectTaintCard objectName={o.name} store={store} />
         </Show>
       </div>
     </>

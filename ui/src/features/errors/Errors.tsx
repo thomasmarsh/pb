@@ -10,7 +10,6 @@ import { PAGE_SIZE } from "./types.js";
 import type { ParseErrorRow } from "../../types/api.js";
 import { CodeBlock } from "../../components/detail/CodeBlock.js";
 import { CopyButton } from "../../components/ui/CopyButton.js";
-import { PhaseGateInline } from "../../components/ui/PhaseGate.js";
 import { anonymizeText } from "../../core/anonymize.js";
 import { highlightAsync } from "../../utils/highlight.js";
 
@@ -179,18 +178,6 @@ export function Errors(props: { store: Store<AppState, AppAction> }) {
         })()}
       </Show>
 
-      <PhaseGateInline
-        phase={2}
-        section="Type Errors"
-        label="requires typing pass"
-        description="Type checking errors are surfaced during the P2 typing pass."
-      />
-      <PhaseGateInline
-        phase={3}
-        section="Taint Warnings"
-        label="requires taint analysis"
-        description="Data-flow taint warnings are surfaced during the P3 taint analysis pass."
-      />
     </div>
   );
 }

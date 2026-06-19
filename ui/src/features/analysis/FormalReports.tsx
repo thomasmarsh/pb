@@ -1,19 +1,16 @@
-// features/analysis/FormalReports.tsx — Formal Reports (P4-gated).
-
 import type { JSX } from "solid-js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import { PhaseGate } from "../../components/ui/PhaseGate.js";
 
-export function FormalReports(props: { store: Store<AppState, AppAction> }): JSX.Element {
+export function FormalReports(_props: { store: Store<AppState, AppAction> }): JSX.Element {
   return (
-    <PhaseGate
-      phase={4}
-      feature="Formal Reports"
-      description="When P4 is built, this view will present Z3-backed formal verification results — proved
-        invariants, counterexamples, and proof certificates — filterable by claim type and verdict."
-      store={props.store}
-    />
+    <div class="card">
+      <div class="card-header"><h2>Formal Verification</h2></div>
+      <div style={{ padding: "16px", color: "var(--text-muted)", "font-size": "13px" }}>
+        Z3-backed formal verification is not yet available. When built, this view will present
+        proved invariants, counterexamples, and proof certificates filterable by claim type and verdict.
+      </div>
+    </div>
   );
 }

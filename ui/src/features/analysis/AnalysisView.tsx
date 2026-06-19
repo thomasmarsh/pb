@@ -6,7 +6,6 @@ import type { JSX } from "solid-js";
 interface AnalysisViewProps {
   title: string;
   contextLabel: string;
-  phase: string;
   assumptions?: string;
   children: JSX.Element;
 }
@@ -27,7 +26,6 @@ export function AnalysisView(props: AnalysisViewProps): JSX.Element {
       {props.children}
 
       <div class="analysis-phase-footer">
-        <span>{props.phase}</span>
         {props.assumptions && (
           <>
             <button

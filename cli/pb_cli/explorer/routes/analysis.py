@@ -38,6 +38,8 @@ async def get_taint_paths(
     severity: str | None = None,
     source_type: str | None = None,
     sink_type: str | None = None,
+    object_name: str | None = None,
+    proc_name: str | None = None,
     limit: int = Query(default=100, le=1000),
     conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
@@ -57,6 +59,12 @@ async def get_taint_paths(
     if sink_type is not None:
         where.append("sink_type = ?")
         params.append(sink_type)
+    if object_name is not None:
+        where.append("(source_object = ? OR sink_object = ?)")
+        params.extend([object_name, object_name])
+    if proc_name is not None:
+        where.append("(source_proc = ? OR sink_proc = ?)")
+        params.extend([proc_name, proc_name])
 
     where_clause = ("WHERE " + " AND ".join(where)) if where else ""
     query = (

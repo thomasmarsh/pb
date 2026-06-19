@@ -84,16 +84,15 @@ describe("ProcedureDetail face/toggle", () => {
     expect(names.some((n) => n.includes("n_cst_util.of_validate"))).toBe(true);
   });
 
-  it("Analysis face: shows PhaseGate rows for CFG, taint, formal", () => {
+  it("Analysis face: shows CFG and Taint Paths cards", () => {
     renderProcDetail(baseProc, "analysis");
-    const rows = document.querySelectorAll(".phase-gate-inline");
-    expect(rows.length).toBeGreaterThanOrEqual(3);
+    expect(document.body.textContent).toContain("Control Flow Graph");
+    expect(document.body.textContent).toContain("Taint Paths");
   });
 
-  it("Source face: does not show PhaseGate rows", () => {
+  it("Source face: does not show analysis cards", () => {
     renderProcDetail(baseProc, "source");
-    const rows = document.querySelectorAll(".phase-gate-inline");
-    expect(rows.length).toBe(0);
+    expect(document.querySelector(".phase-gate-inline")).toBeNull();
   });
 
   it("Source face: renders proc metadata (name, type, params)", () => {

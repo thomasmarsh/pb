@@ -7,7 +7,6 @@ import type { AppAction } from "../../features/app/actions.js";
 import type { LibraryDetailResponse } from "../../types/api.js";
 import { FaceToggle, type Face } from "../../components/ui/FaceToggle.js";
 import { EntityCard } from "../../components/detail/EntityCard.js";
-import { PhaseGateInline } from "../../components/ui/PhaseGate.js";
 import { Loading } from "../../components/ui/Loading.js";
 
 export function LibraryDetail(props: { store: Store<AppState, AppAction> }) {
@@ -43,7 +42,7 @@ export function LibraryDetail(props: { store: Store<AppState, AppAction> }) {
     <div class="card">
       <div class="card-header">
         <h2><span class="entity-icon">◆</span> {libName()}</h2>
-        <FaceToggle face={face()} phaseLabel="P1 only" onToggle={(f) => setFace(f)} />
+        <FaceToggle face={face()} onToggle={(f) => setFace(f)} />
       </div>
 
       <Show when={data.loading}>
@@ -98,12 +97,6 @@ export function LibraryDetail(props: { store: Store<AppState, AppAction> }) {
                   </tr>
                 </tbody>
               </table>
-              <PhaseGateInline
-                phase={3}
-                section="Inter-library dependencies"
-                label="requires context-sensitive call graph"
-                description="A full inter-library dependency graph requires the P3 context-sensitive analysis pass."
-              />
             </Show>
           </>
         )}

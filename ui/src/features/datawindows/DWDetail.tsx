@@ -7,7 +7,6 @@ import type { AppAction } from "../../features/app/actions.js";
 import type { DwDetailResponse, DwControlRow } from "../../types/api.js";
 import { CodeBlock } from "../../components/detail/CodeBlock.js";
 import { Loading } from "../../components/ui/Loading.js";
-import { PhaseGateInline } from "../../components/ui/PhaseGate.js";
 import { DetailHeader } from "../../components/detail/DetailHeader.js";
 import { BackButton } from "../../components/ui/BackButton.js";
 import { EntityListCard } from "../../components/detail/EntityListCard.js";
@@ -67,7 +66,6 @@ function DWDetailContent(props: { d: DwDetailResponse; store: Store<AppState, Ap
         badgeClass="badge-dw"
         badgeLabel="datawindow"
         face={face()}
-        phaseLabel="P1"
         store={store}
         onToggle={(newFace, scrollTop) => {
           store.dispatch({ tag: "datawindows", action: { tag: "set-dw-face", name: d.name, face: newFace, scrollTop } });
@@ -167,8 +165,6 @@ function DWDetailContent(props: { d: DwDetailResponse; store: Store<AppState, Ap
             </div>
           </Show>
 
-          <PhaseGateInline phase={3} section="Taint on SQL Parameters" label="requires taint analysis"
-            description="Taint flow through this DataWindow's SQL parameters is available after a P3 taint analysis run." />
         </Show>
       </div>
     </>

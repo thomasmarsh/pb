@@ -92,6 +92,19 @@ async def get_cfg_diagram(
 
     node_states = compute_node_states(cfg)
 
+    # Merge P3 taint annotations when available.
+    try:
+        ann_rows = conn.execute(
+            "SELECT block_id, is_taint_entry FROM taint_annotations "
+            "WHERE object = ? AND proc_name = ?",
+            [object_name, proc_name],
+        ).fetchall()
+        for block_id, is_taint_entry in ann_rows:
+            if is_taint_entry and node_states.get(block_id) != "unreachable":
+                node_states[block_id] = "taint-entering"
+    except Exception:
+        pass
+
     dot = cfg_to_dot(cfg, node_states)
     try:
         svg = dot.pipe(format="svg").decode("utf-8")

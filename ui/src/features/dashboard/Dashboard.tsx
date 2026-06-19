@@ -92,17 +92,14 @@ function TopTablesWidget(props: { store: Store<AppState, AppAction> }) {
   );
 }
 
-type PhaseStatus = "active" | "not-built";
-
-interface PhaseHealthRowProps {
-  phase:  "P1" | "P2" | "P3" | "P4";
-  status: PhaseStatus;
+interface CapabilityRowProps {
+  label: string;
   metric: string;
   route:  Route | null;
   store:  Store<AppState, AppAction>;
 }
 
-function PhaseHealthRow(props: PhaseHealthRowProps) {
+function CapabilityRow(props: CapabilityRowProps) {
   const navigate = () => {
     if (props.route) {
       props.store.dispatch({ tag: "nav", action: { tag: "navigate", route: props.route } });
@@ -111,12 +108,7 @@ function PhaseHealthRow(props: PhaseHealthRowProps) {
 
   return (
     <div class="phase-health-row">
-      <span class={`phase-badge ${props.status === "active" ? "phase-badge-active" : "phase-badge-gated"}`}>
-        {props.phase}
-      </span>
-      <span class={props.status === "active" ? "badge-status-active" : "badge-status-notbuilt"}>
-        {props.status === "active" ? "Active" : "Not built"}
-      </span>
+      <span class="phase-health-label">{props.label}</span>
       <span class="phase-health-metric">{props.metric}</span>
       {props.route
         ? <button class="phase-health-link" onClick={navigate}>View →</button>
@@ -199,32 +191,30 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
         </div>
       </Show>
 
-      {/* Phase health rows */}
+      {/* Analysis capability rows */}
       <div class="card" style={{ "margin-bottom": "16px" }}>
-        <div class="card-header"><h2>Analysis Phases</h2></div>
+        <div class="card-header"><h2>Analysis</h2></div>
         <div class="phase-health-rows">
-          <PhaseHealthRow
-            phase="P1" status="active"
+          <CapabilityRow
+            label="Structural"
             metric={p1Metric()}
             route={{ view: "deadCode" }}
             store={store}
           />
-          <PhaseHealthRow
-            phase="P2" status="not-built"
-            metric="Typing pass — infer types, compute CFG, detect unreachable branches"
+          <CapabilityRow
+            label="Type Resolution"
+            metric={(s()?.resolved_type_count ?? 0) > 0
+              ? `${fmt(s()!.resolved_type_count)} typed vars · ${fmt(s()!.resolved_call_count)} resolved calls`
+              : "—"}
             route={null}
             store={store}
           />
-          <PhaseHealthRow
-            phase="P3" status="not-built"
-            metric="Context-insensitive taint analysis"
+          <CapabilityRow
+            label="Taint"
+            metric={(s()?.taint_path_count ?? 0) > 0
+              ? `${fmt(s()!.taint_path_count)} taint path${s()!.taint_path_count === 1 ? "" : "s"}`
+              : "—"}
             route={{ view: "taintExplorer" }}
-            store={store}
-          />
-          <PhaseHealthRow
-            phase="P4" status="not-built"
-            metric="Formal verification and symbolic execution"
-            route={{ view: "formalReports" }}
             store={store}
           />
         </div>

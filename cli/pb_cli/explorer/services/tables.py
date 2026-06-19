@@ -229,4 +229,19 @@ def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     except Exception:
         stats["parse_error_count"] = 0
 
+    try:
+        row = conn.execute("SELECT count(*) FROM taint_paths").fetchone()
+        stats["taint_path_count"] = row[0] if row else 0
+    except Exception:
+        stats["taint_path_count"] = 0
+
+    try:
+        rt = conn.execute("SELECT count(*) FROM resolved_types").fetchone()
+        rc = conn.execute("SELECT count(*) FROM resolved_calls").fetchone()
+        stats["resolved_type_count"] = rt[0] if rt else 0
+        stats["resolved_call_count"] = rc[0] if rc else 0
+    except Exception:
+        stats["resolved_type_count"] = 0
+        stats["resolved_call_count"] = 0
+
     return stats

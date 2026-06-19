@@ -12,6 +12,7 @@ interface CodeBlockProps {
   code: string;
   baseLine?: number;
   highlightLine?: number;
+  onLineClick?: (line: number) => void;
 }
 
 export function CodeBlock(props: CodeBlockProps) {
@@ -26,7 +27,11 @@ export function CodeBlock(props: CodeBlockProps) {
           {(_line, i) => (
             <div
               class="source-gutter-line"
-              classList={{ "source-gutter-line--error": isErrorLine(i()) }}
+              classList={{
+                "source-gutter-line--error":     isErrorLine(i()),
+                "source-gutter-line--clickable":  props.onLineClick != null,
+              }}
+              onClick={() => props.onLineClick?.(base() + i())}
             >
               {String(base() + i())}
             </div>

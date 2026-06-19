@@ -10,7 +10,6 @@ import { ColumnRow } from "../../components/detail/ColumnRow.js";
 import { EntityCard } from "../../components/detail/EntityCard.js";
 import { DetailHeader } from "../../components/detail/DetailHeader.js";
 import { BackButton } from "../../components/ui/BackButton.js";
-import { PhaseGateInline } from "../../components/ui/PhaseGate.js";
 
 const WRITE_OPS = new Set(["INSERT", "UPDATE", "DELETE"]);
 
@@ -84,7 +83,6 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
         badgeClass="badge-dw"
         badgeLabel="table"
         face={face()}
-        phaseLabel="P1"
         store={store}
         onToggle={(newFace, scrollTop) => {
           store.dispatch({ tag: "tables", action: { tag: "set-table-face", name: d.table_name, face: newFace, scrollTop } });
@@ -216,19 +214,6 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
             </Show>
           </Show>
 
-          {/* Phase gates */}
-          <PhaseGateInline
-            phase={3}
-            section="Taint Paths"
-            label="requires taint analysis"
-            description="Taint flow through this table's columns is available after a P3 taint analysis run."
-          />
-          <PhaseGateInline
-            phase={4}
-            section="Formal Access Constraints"
-            label="requires formal verification"
-            description="Formally verified access constraints for this table require P4 formal verification infrastructure."
-          />
         </Show>
       </div>
     </>

@@ -87,10 +87,9 @@ describe("TableDetail FaceToggle", () => {
     expect(document.body.textContent).toContain("add_order");
   });
 
-  it("analysis face renders PhaseGate inline sections", () => {
+  it("analysis face renders table analysis content", () => {
     renderTableDetail(baseDetail, "analysis");
-    const gates = document.querySelectorAll(".phase-gate-inline");
-    expect(gates.length).toBeGreaterThanOrEqual(1);
+    expect(document.querySelector(".card")).not.toBeNull();
   });
 
   it("clicking Analysis button activates analysis face", async () => {

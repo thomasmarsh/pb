@@ -1,4 +1,4 @@
-// components/FaceToggle.tsx — Source/Analysis face toggle with phase indicator.
+// components/FaceToggle.tsx — Source/Analysis face toggle.
 
 import { onMount, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
@@ -7,7 +7,6 @@ export type Face = "source" | "analysis";
 
 interface FaceToggleProps {
   face: Face;
-  phaseLabel: string;
   onToggle: (newFace: Face, scrollTop: number) => void;
   scrollAreaRef?: () => HTMLElement | undefined;
 }
@@ -50,9 +49,6 @@ export function FaceToggle(props: FaceToggleProps): JSX.Element {
       >
         Analysis
       </button>
-      <span class="phase-badge" aria-label={`Analysis depth: ${props.phaseLabel}`}>
-        {props.phaseLabel}
-      </span>
     </div>
   );
 }

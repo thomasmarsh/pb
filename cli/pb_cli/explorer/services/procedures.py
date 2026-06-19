@@ -37,7 +37,7 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
             "SELECT source_text FROM objects WHERE name = ?", [object_name]
         ))
         if obj_rows and obj_rows[0].get("source_text"):
-            all_lines = obj_rows[0]["source_text"].splitlines()
+            all_lines = obj_rows[0]["source_text"].splitlines(keepends=True)
             source_original = "".join(all_lines[max(0, start - 1) : end])
 
     if not source_original and source_file and start and end:

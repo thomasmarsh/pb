@@ -9,7 +9,6 @@ interface DetailHeaderProps {
   badgeClass: string;
   badgeLabel: string;
   face: Face;
-  phaseLabel?: string;
   store: Store<AppState, AppAction>;
   onToggle: (face: Face, scrollTop: number) => void;
   scrollAreaRef?: () => HTMLElement | undefined;
@@ -27,7 +26,6 @@ export function DetailHeader(props: DetailHeaderProps): JSX.Element {
       </div>
       <FaceToggle
         face={props.face}
-        phaseLabel={props.phaseLabel ?? "P1"}
         onToggle={props.onToggle}
         scrollAreaRef={props.scrollAreaRef}
       />

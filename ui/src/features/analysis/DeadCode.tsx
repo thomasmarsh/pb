@@ -6,7 +6,6 @@ import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import type { DeadCodeResponse } from "../../types/api.js";
 import { EntityCard } from "../../components/detail/EntityCard.js";
-import { PhaseGateInline } from "../../components/ui/PhaseGate.js";
 import { Loading } from "../../components/ui/Loading.js";
 
 export function DeadCode(props: { store: Store<AppState, AppAction> }) {
@@ -87,18 +86,6 @@ export function DeadCode(props: { store: Store<AppState, AppAction> }) {
         </Show>
       </Show>
 
-      <PhaseGateInline
-        phase={2}
-        section="Unreachable Branches"
-        label="requires typing pass"
-        description="Unreachable branch detection uses the P2 control-flow graph and type information."
-      />
-      <PhaseGateInline
-        phase={4}
-        section="Proven Dead"
-        label="requires formal analysis"
-        description="Formally proven dead code requires the P4 Z3 solver integration."
-      />
     </div>
   );
 }

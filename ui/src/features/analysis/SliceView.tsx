@@ -73,7 +73,6 @@ export function SliceView(props: { store: Store<AppState, AppAction> }): JSX.Ele
     <AnalysisView
       title={title()}
       contextLabel={contextLabel()}
-      phase="P3 — context-insensitive taint analysis"
       assumptions="Slice is computed context-insensitively. The slice may include statements reachable through dynamic dispatch that cannot be statically resolved."
     >
       <Show when={data.loading}>

@@ -60,11 +60,10 @@ describe("ObjectDetail face/toggle", () => {
     expect((faceActions[0] as any).action.face).toBe("analysis");
   });
 
-  it("Analysis face shows PhaseGate inline rows for P2, P3, P4", () => {
+  it("Analysis face shows Taint Paths card", () => {
     const { store } = renderObjectDetail({}, "analysis");
     render(() => <ObjectDetail store={store} />);
-    const rows = document.querySelectorAll(".phase-gate-inline");
-    expect(rows.length).toBeGreaterThanOrEqual(3);
+    expect(document.body.textContent).toContain("Taint Paths");
   });
 
   it("Analysis face shows DWs Used section with EntityCards", () => {
@@ -99,11 +98,10 @@ describe("ObjectDetail face/toggle", () => {
     expect(names.some((n) => n.includes("w_login"))).toBe(true);
   });
 
-  it("Source face does not show PhaseGate rows", () => {
+  it("Source face does not show analysis cards", () => {
     const { store } = renderObjectDetail({}, "source");
     render(() => <ObjectDetail store={store} />);
-    const rows = document.querySelectorAll(".phase-gate-inline");
-    expect(rows.length).toBe(0);
+    expect(document.querySelector(".phase-gate-inline")).toBeNull();
   });
 
   it("Source face shows ProceduresCard when procedures exist", () => {

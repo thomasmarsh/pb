@@ -57,7 +57,6 @@ export function TaintPathView(props: { store: Store<AppState, AppAction> }): JSX
     <AnalysisView
       title={title()}
       contextLabel={contextLabel()}
-      phase="P3 — context-insensitive taint analysis"
       assumptions="Taint propagation is context-insensitive: the same procedure is not split by call site. Dynamic dispatch is not resolved. Analysis covers intra-procedural def-use chains and inter-procedural argument/return flow."
     >
       <Show when={data.loading}>

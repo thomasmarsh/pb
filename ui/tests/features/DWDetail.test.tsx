@@ -84,9 +84,10 @@ describe("DWDetail FaceToggle", () => {
     expect(document.body.textContent).toContain("arg_id");
   });
 
-  it("analysis face renders PhaseGate inline section", () => {
+  it("analysis face renders DW analysis content", () => {
     renderDWDetail(makeDw(), "analysis");
-    expect(document.querySelector(".phase-gate-inline")).not.toBeNull();
+    // Analysis face should render the card area (Impact Analysis section)
+    expect(document.querySelector(".card")).not.toBeNull();
   });
 
   it("clicking Analysis button activates analysis face", async () => {

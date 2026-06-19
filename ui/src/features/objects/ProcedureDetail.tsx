@@ -1,20 +1,109 @@
 // ProcedureDetail.tsx — Unified procedure detail: Source/Analysis faces.
 
-import { Show, For, createEffect } from "solid-js";
+import { Show, For, createEffect, createResource } from "solid-js";
 import { Tabs } from "@kobalte/core/tabs";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import type { ProcedureDetailResponse } from "../../types/api.js";
+import type { ProcedureDetailResponse, TaintPathsResponse, TaintPathSummary } from "../../types/api.js";
 import { CodeBlock } from "../../components/detail/CodeBlock.js";
 import { Loading } from "../../components/ui/Loading.js";
-import { PhaseGateInline } from "../../components/ui/PhaseGate.js";
 import { EntityCard } from "../../components/detail/EntityCard.js";
 import { SqlStatementCard } from "../../components/detail/SqlStatementCard.js";
 import { DetailHeader } from "../../components/detail/DetailHeader.js";
 import { BackButton } from "../../components/ui/BackButton.js";
 import { EntityListCard } from "../../components/detail/EntityListCard.js";
 import { procBadge } from "../../utils/format.js";
+
+const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
+function ProcTaintCard(props: {
+  objectName: string;
+  procName: string;
+  store: Store<AppState, AppAction>;
+}): import("solid-js").JSX.Element {
+  const key = () => `${props.objectName}::${props.procName}`;
+  const [data] = createResource(key, async (): Promise<TaintPathsResponse> => {
+    const params = new URLSearchParams({
+      object_name: props.objectName,
+      proc_name: props.procName,
+      limit: "10",
+    });
+    const res = await fetch("/api/analysis/taint-paths?" + params.toString());
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json() as Promise<TaintPathsResponse>;
+  });
+
+  const sorted = (): TaintPathSummary[] =>
+    [...(data()?.paths ?? [])].sort(
+      (a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9),
+    );
+
+  function openPath(id: number): void {
+    props.store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "taintPathView", pathId: id } } });
+  }
+
+  return (
+    <div class="card">
+      <div class="card-header" style={{ display: "flex", "align-items": "center", gap: "8px" }}>
+        <h3 style={{ flex: 1 }}>Taint Paths</h3>
+        <Show when={(data()?.total ?? 0) > 0}>
+          <button
+            class="filter-pill active"
+            style={{ "font-size": "12px", padding: "3px 10px" }}
+            onClick={() => props.store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "taintExplorer" } } })}
+          >
+            Taint Explorer ↗
+          </button>
+        </Show>
+      </div>
+      <Show when={data.loading}><Loading /></Show>
+      <Show when={data.error}>
+        <div class="error-banner">Failed to load taint paths: {String(data.error)}</div>
+      </Show>
+      <Show when={!data.loading && !data.error && data()}>
+        <Show
+          when={sorted().length > 0}
+          fallback={
+            <div style={{ padding: "8px 0", color: "var(--text-muted)", "font-size": "13px" }}>
+              No taint paths found through this procedure.
+            </div>
+          }
+        >
+          <table class="data-table" style={{ "font-size": "12px" }}>
+            <thead>
+              <tr>
+                <th>Severity</th>
+                <th>Category</th>
+                <th>Source</th>
+                <th>Sink</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <For each={sorted()}>
+                {(path) => (
+                  <tr class="clickable" onClick={() => openPath(path.id)}>
+                    <td><span class={`badge badge-severity-${path.severity}`}>{path.severity}</span></td>
+                    <td>{path.category}</td>
+                    <td style={{ "font-size": "11px" }}>{path.source.object}.{path.source.proc}</td>
+                    <td style={{ "font-size": "11px" }}>{path.sink.object}.{path.sink.proc}</td>
+                    <td><span class="trace-nav-link">View →</span></td>
+                  </tr>
+                )}
+              </For>
+            </tbody>
+          </table>
+          <Show when={(data()?.total ?? 0) > 10}>
+            <div style={{ "font-size": "12px", color: "var(--text-muted)", "margin-top": "6px" }}>
+              Showing 10 of {data()!.total} paths.
+            </div>
+          </Show>
+        </Show>
+      </Show>
+    </div>
+  );
+}
 
 function ProcedureDetailContent(props: {
   p: ProcedureDetailResponse;
@@ -53,7 +142,6 @@ function ProcedureDetailContent(props: {
         badgeClass={`badge-${bc}`}
         badgeLabel={p.proc_type}
         face={face()}
-        phaseLabel="P1"
         store={store}
         onToggle={(newFace, scrollTop) => {
           store.dispatch({ tag: "objects", action: { tag: "set-proc-face", key: procKey, face: newFace, scrollTop } });
@@ -90,7 +178,13 @@ function ProcedureDetailContent(props: {
               </Tabs.List>
               <Show when={p.source_original}>
                 <Tabs.Content value="original">
-                  <CodeBlock code={p.source_original!} baseLine={p.start_line ?? 1} />
+                  <CodeBlock
+                    code={p.source_original!}
+                    baseLine={p.start_line ?? 1}
+                    onLineClick={(line) =>
+                      store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "sliceView", object: props.objectName, proc: p.name, line, direction: "backward" } } })
+                    }
+                  />
                   <Show when={p.file}>
                     <div style={{ "font-size": "11px", color: "var(--text-muted)", "margin-top": "8px" }}>
                       {p.file}:{p.start_line ?? ""}–{p.end_line ?? ""}
@@ -164,15 +258,8 @@ function ProcedureDetailContent(props: {
                 View CFG ↗
               </button>
             </div>
-            <div style={{ padding: "4px 0 8px" }}>
-              <PhaseGateInline phase={2} section="Node state annotations" label="requires typing pass"
-                description="Unreachable blocks, taint-entering markers, and proven-safe indicators appear after a P2 typing pass." />
-            </div>
           </div>
-          <PhaseGateInline phase={3} section="Taint Paths" label="requires taint analysis"
-            description="Taint flow through this procedure's parameters is available after a P3 taint analysis run." />
-          <PhaseGateInline phase={4} section="Formal Properties" label="requires formal verification"
-            description="Pre/post-condition proofs and invariant certificates require P4 formal verification infrastructure." />
+          <ProcTaintCard objectName={props.objectName} procName={p.name} store={store} />
         </Show>
       </div>
     </>

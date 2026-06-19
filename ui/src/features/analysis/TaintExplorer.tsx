@@ -42,9 +42,6 @@ export function TaintExplorer(props: { store: Store<AppState, AppAction> }): JSX
     <div class="card">
       <div class="card-header">
         <h2>Taint Explorer</h2>
-        <span class="badge" style={{ "margin-left": "8px", color: "var(--phase-p3)", "border-color": "var(--phase-p3)" }}>
-          P3
-        </span>
       </div>
 
       {/* Filters */}

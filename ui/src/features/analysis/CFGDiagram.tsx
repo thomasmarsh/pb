@@ -6,7 +6,6 @@ import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import { createPanZoom } from "../../components/diagram/usePanZoom.js";
-import { PhaseGateInline } from "../../components/ui/PhaseGate.js";
 import { AnalysisView } from "./AnalysisView.js";
 
 interface NodeState {
@@ -182,7 +181,6 @@ export function CFGDiagram(props: { store: Store<AppState, AppAction> }): JSX.El
     <AnalysisView
       title={`${object()}.${proc()}`}
       contextLabel="Control Flow Graph"
-      phase="P1 — structural CFG"
       assumptions="CFG is constructed from the parsed AST body. Loop back-edges and exception paths are approximated. Dynamic dispatch is not resolved."
     >
       <Show when={data.loading}>
@@ -235,14 +233,6 @@ export function CFGDiagram(props: { store: Store<AppState, AppAction> }): JSX.El
                   innerHTML={d().svg}
                   onClick={handleSvgClick}
                   onDblClick={handleSvgDblClick}
-                />
-              </div>
-              <div style={{ "margin-top": "8px" }}>
-                <PhaseGateInline
-                  phase={2}
-                  section="Node state annotations"
-                  label="requires typing pass"
-                  description="Unreachable block highlighting, taint-entering markers, and proven-safe indicators become available after a P2 typing pass."
                 />
               </div>
             </div>

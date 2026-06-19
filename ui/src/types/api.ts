@@ -153,6 +153,9 @@ export interface StatsResponse {
   top_pagerank: { object: string; pagerank: number; in_degree: number; out_degree: number }[];
   files_indexed?: number;
   parse_error_count?: number;
+  taint_path_count?: number;
+  resolved_type_count?: number;
+  resolved_call_count?: number;
 }
 
 export interface QueryParam {
