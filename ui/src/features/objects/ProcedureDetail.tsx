@@ -8,7 +8,6 @@ import type { AppAction } from "../../features/app/actions.js";
 import type { ProcedureDetailResponse, TaintPathsResponse, TaintPathSummary } from "../../types/api.js";
 import { CodeBlock } from "../../components/detail/CodeBlock.js";
 import { Loading } from "../../components/ui/Loading.js";
-import { EntityCard } from "../../components/detail/EntityCard.js";
 import { SqlStatementCard } from "../../components/detail/SqlStatementCard.js";
 import { DetailHeader } from "../../components/detail/DetailHeader.js";
 import { BackButton } from "../../components/ui/BackButton.js";
@@ -157,15 +156,6 @@ function ProcedureDetailContent(props: {
 
       <div class="detail-body" ref={scrollEl}>
         <Show when={face() === "source"}>
-          <div style={{ "margin-bottom": "12px" }}>
-            <EntityCard
-              type="object"
-              name={props.objectName}
-              context="containing object"
-              tooltip={`Navigate to ${props.objectName}`}
-              onClick={() => store.dispatch({ tag: "objects", action: { tag: "select", name: props.objectName } })}
-            />
-          </div>
           <Show when={p.source_original || p.source_rendered}>
             <Tabs defaultValue={p.source_original ? "original" : "rendered"}>
               <Tabs.List class="tab-bar">
@@ -205,11 +195,11 @@ function ProcedureDetailContent(props: {
           <EntityListCard
             title="Callers"
             items={(p.callers ?? []).map((caller) => ({
-              type: "object" as const,
-              name: caller.object,
-              context: caller.proc,
+              type: "procedure" as const,
+              name: caller.proc,
+              context: caller.object,
               tooltip: `${caller.object}.${caller.proc}`,
-              onClick: () => store.dispatch({ tag: "objects", action: { tag: "select", name: caller.object } }),
+              onClick: () => store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: caller.object, procName: caller.proc } }),
             }))}
             emptyText="No callers found."
           />

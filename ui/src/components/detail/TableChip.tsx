@@ -13,10 +13,7 @@ interface TableChipProps {
 
 export function TableChip(props: TableChipProps): JSX.Element {
   function navigate() {
-    props.store.dispatch({
-      tag: "nav",
-      action: { tag: "navigate", route: { view: "tableDetail", name: props.name } },
-    });
+    props.store.dispatch({ tag: "tables", action: { tag: "select", name: props.name } });
   }
   return (
     <span

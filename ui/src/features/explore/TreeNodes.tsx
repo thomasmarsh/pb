@@ -13,10 +13,6 @@ export function kindGroupId(objName: string, kind: "functions" | "events" | "sub
   return `kg:${objName}:${kind}`;
 }
 
-function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max) + "…" : s;
-}
-
 const KIND_BADGES: Record<string, string> = {
   powerscript: "badge-ps", datawindow: "badge-dw", project: "badge-proj",
 };
@@ -37,14 +33,9 @@ export function ProcNode(props: { objName: string; proc: ExploreProcedure; depth
   const nodeId = () => procId(props.objName, props.proc.name);
   const isSelected = () => snap().explore.selectedProc === nodeId();
 
-  const summary = createMemo(() => {
-    const p = props.proc;
-    const parts: string[] = [];
-    if (p.params) parts.push(truncate(p.params, 50));
-    if (p.return_type) parts.push(`: ${p.return_type}`);
-    if (p.cyclomatic != null) parts.push(`cc=${p.cyclomatic}`);
-    return parts.join(" ");
-  });
+  const summary = createMemo(() =>
+    props.proc.cyclomatic != null ? `cc=${props.proc.cyclomatic}` : "",
+  );
 
   return (
     <TreeNode

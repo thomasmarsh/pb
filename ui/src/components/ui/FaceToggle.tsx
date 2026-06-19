@@ -1,6 +1,5 @@
 // components/FaceToggle.tsx — Source/Analysis face toggle.
 
-import { onMount, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 
 export type Face = "source" | "analysis";
@@ -11,27 +10,11 @@ interface FaceToggleProps {
   scrollAreaRef?: () => HTMLElement | undefined;
 }
 
-function isInputFocused(): boolean {
-  const el = document.activeElement;
-  return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
-}
-
 export function FaceToggle(props: FaceToggleProps): JSX.Element {
   function toggle(): void {
     const scrollTop = props.scrollAreaRef?.()?.scrollTop ?? 0;
     props.onToggle(props.face === "source" ? "analysis" : "source", scrollTop);
   }
-
-  onMount(() => {
-    function handleKey(e: KeyboardEvent): void {
-      if (e.key === "T" && !isInputFocused()) {
-        e.preventDefault();
-        toggle();
-      }
-    }
-    document.addEventListener("keydown", handleKey);
-    onCleanup(() => document.removeEventListener("keydown", handleKey));
-  });
 
   return (
     <div class="face-toggle" role="group" aria-label="Content face">
