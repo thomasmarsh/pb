@@ -328,6 +328,11 @@ def test_slice_invalid_direction(taint_client):
 #   ev_handler (event) ──calls──► proc_a ──calls──► proc_b   [all reachable]
 #   on_handler (on)                                            [entry, reachable]
 #   proc_c (function)  ──calls──► proc_d                      [both dead]
+#
+# Override propagation graph (same DB):
+#   base_event (event, obj_base) ──calls──► base_hook (obj_base)
+#   child_hook (function, obj_child, inherits obj_base, overrides base_hook)
+#   → child_hook must be reachable via override propagation
 
 
 @pytest.fixture(scope="module")
@@ -357,6 +362,9 @@ def dead_code_client(tmp_path_factory):
             resolution_kind TEXT, confidence TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE inherits (from_object TEXT NOT NULL, to_object TEXT NOT NULL)
+    """)
 
     # Entry points (called by runtime)
     conn.execute("INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -380,6 +388,17 @@ def dead_code_client(tmp_path_factory):
     conn.execute("INSERT INTO calls VALUES (?,?,?,?,?)", ["a.srf", "obj_a", "ev_handler", "proc_a", "direct"])
     conn.execute("INSERT INTO calls VALUES (?,?,?,?,?)", ["a.srf", "obj_a", "proc_a", "proc_b", "direct"])
     conn.execute("INSERT INTO calls VALUES (?,?,?,?,?)", ["a.srf", "obj_a", "proc_c", "proc_d", "direct"])
+
+    # Override propagation: obj_base.base_event (event) calls base_hook (same obj).
+    # obj_child inherits obj_base and overrides base_hook — must be reachable.
+    conn.execute("INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                 ["b.srf", "obj_base", "event", "base_event", None, None, None, 1, 10, None, None, 1])
+    conn.execute("INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                 ["b.srf", "obj_base", "function", "base_hook", None, None, None, 11, 20, None, None, 1])
+    conn.execute("INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                 ["b.srf", "obj_child", "function", "base_hook", None, None, None, 1, 10, None, None, 1])
+    conn.execute("INSERT INTO calls VALUES (?,?,?,?,?)", ["b.srf", "obj_base", "base_event", "base_hook", "direct"])
+    conn.execute("INSERT INTO inherits VALUES (?,?)", ["obj_child", "obj_base"])
 
     conn.close()
 
@@ -422,6 +441,23 @@ def test_dead_code_total_matches_items(dead_code_client):
     r = dead_code_client.get("/api/analysis/dead-code")
     body = r.json()
     assert body["total"] == len(body["items"])
+
+
+def test_dead_code_override_reachable_via_base(dead_code_client):
+    """A subclass override is reachable when the base method it overrides is reachable.
+
+    obj_base.base_event (event) calls base_hook in obj_base.
+    obj_child inherits obj_base and overrides base_hook.
+    Virtual dispatch means obj_child.base_hook is reachable at runtime,
+    so it must not appear in the dead-code list.
+    """
+    r = dead_code_client.get("/api/analysis/dead-code")
+    assert r.status_code == 200
+    dead_names = {(item["object"], item["name"]) for item in r.json()["items"]}
+    assert ("obj_child", "base_hook") not in dead_names, (
+        "obj_child.base_hook incorrectly marked dead — "
+        "override propagation from reachable base_hook not applied"
+    )
 
 
 # ---------------------------------------------------------------------------

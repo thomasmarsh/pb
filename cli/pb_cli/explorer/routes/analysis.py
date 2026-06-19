@@ -16,11 +16,12 @@ router = APIRouter()
 @router.get("/api/analysis/dead-code")
 async def dead_code(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
     # Reachability from runtime entry points (event/on handlers) via call graph.
-    # Two arms:
+    # Three arms in call_edges:
     #   same-object: calls.object + to_name matched against procedures in same object
     #   cross-object: resolved_calls rows that have target_object/target_proc filled
-    # Remaining false negatives: cross-object calls whose resolution_kind is not
-    # 'virtual'/'inherited' and therefore have no target_object in resolved_calls.
+    #   override: if B.m is reachable and C inherits B and defines m, C.m is reachable
+    # Remaining false negatives: cross-object calls with no target_object in resolved_calls
+    # (unresolved virtual dispatch where the receiver type is unknown).
     items = rows(
         conn.execute("""
             WITH RECURSIVE
@@ -36,6 +37,14 @@ async def dead_code(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
                 SELECT rc.object, rc.from_proc, rc.target_object, rc.target_proc
                 FROM resolved_calls rc
                 WHERE rc.target_object IS NOT NULL AND rc.target_proc IS NOT NULL
+                UNION ALL
+                -- Override edges: if B.m is a call edge target and C inherits from B
+                -- and overrides m, add B.m → C.m so virtual dispatch is modelled.
+                -- The recursive reachable CTE then propagates through these transitively.
+                SELECT p1.object, p1.name, p2.object, p2.name
+                FROM procedures p1
+                JOIN inherits inh ON inh.to_object = p1.object
+                JOIN procedures p2 ON p2.object = inh.from_object AND p2.name = p1.name
             ),
             reachable(obj, proc) AS (
                 SELECT object, name FROM procedures WHERE proc_type IN ('event', 'on')
