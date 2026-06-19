@@ -18,6 +18,7 @@ cli/pb_cli/core/ast_generated.py
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+doc/pb2025r2/
 *.duckdb.wal
 *.duckdb.dir
 *.duckdb.lck

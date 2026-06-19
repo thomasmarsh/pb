@@ -325,6 +325,7 @@ def test_resolve_calls_instance_var_type():
     result = resolve_calls(calls, procedures, inherits, var_types=var_types)
     r = result[0]
     assert r.resolution_kind == "builtin"
+    # retrieve is a DataWindow class method, resolves via var_types
     assert r.confidence == "medium"
 
 
@@ -338,6 +339,144 @@ def test_resolve_calls_instance_var_inherited_type():
     procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
     inherits = [("u_grid", "datawindow")]
     var_types = {("w_test", "", "dw_data"): "u_grid"}
+
+    result = resolve_calls(calls, procedures, inherits, var_types=var_types)
+    r = result[0]
+    assert r.resolution_kind == "builtin"
+
+
+# ── infer_control_type ────────────────────────────────────────────────────────
+
+
+def test_infer_control_type_dw():
+    from pb_cli.core.type_resolution import infer_control_type
+    assert infer_control_type("dw_main") == "datawindow"
+    assert infer_control_type("dw_detail") == "datawindow"
+
+
+def test_infer_control_type_cb():
+    from pb_cli.core.type_resolution import infer_control_type
+    assert infer_control_type("cb_ok") == "commandbutton"
+    assert infer_control_type("cb_cancel") == "commandbutton"
+
+
+def test_infer_control_type_dddw():
+    from pb_cli.core.type_resolution import infer_control_type
+    assert infer_control_type("dddw_category") == "datawindowchild"
+
+
+def test_infer_control_type_no_match():
+    from pb_cli.core.type_resolution import infer_control_type
+    assert infer_control_type("some_var") is None
+    assert infer_control_type("data") is None
+
+
+def test_infer_control_type_ddlb_before_lb():
+    from pb_cli.core.type_resolution import infer_control_type
+    # ddlb_ should match before lb_
+    assert infer_control_type("ddlb_status") == "dropdownlistbox"
+
+
+# ── _resolve_pb_class_from_ancestor ───────────────────────────────────────────
+
+
+def test_ancestor_chain_window():
+    from pb_cli.core.type_resolution import _resolve_pb_class_from_ancestor
+    objects_table = {
+        "w_misth_final_list": "w_list",
+        "w_list": "window",
+    }
+    assert _resolve_pb_class_from_ancestor("w_misth_final_list", objects_table) == "window"
+
+
+def test_ancestor_chain_userobject():
+    from pb_cli.core.type_resolution import _resolve_pb_class_from_ancestor
+    objects_table = {
+        "u_grid": "userobject",
+    }
+    assert _resolve_pb_class_from_ancestor("u_grid", objects_table) == "userobject"
+
+
+def test_ancestor_chain_direct_pb():
+    from pb_cli.core.type_resolution import _resolve_pb_class_from_ancestor
+    objects_table = {"w_test": "window"}
+    assert _resolve_pb_class_from_ancestor("w_test", objects_table) == "window"
+
+
+def test_ancestor_chain_no_pb():
+    from pb_cli.core.type_resolution import _resolve_pb_class_from_ancestor
+    objects_table = {"fn_test": "function_object"}
+    # function_object is not in PB_CLASS_METHODS
+    assert _resolve_pb_class_from_ancestor("fn_test", objects_table) is None
+
+
+def test_ancestor_chain_missing_object():
+    from pb_cli.core.type_resolution import _resolve_pb_class_from_ancestor
+    assert _resolve_pb_class_from_ancestor("nonexistent", {}) is None
+
+
+# ── resolve_calls with objects_table ──────────────────────────────────────────
+
+
+def test_resolve_calls_ancestor_chain_builtin():
+    """Bare call resolves via objects.ancestor chain to PB built-in class."""
+    calls = [CallRow("f.srw", "w_test", "open", "setfocus", "ExCall")]
+    procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
+    inherits = []
+    objects_table = {"w_test": "window"}
+
+    result = resolve_calls(calls, procedures, inherits, objects_table=objects_table)
+    r = result[0]
+    assert r.resolution_kind == "builtin"
+    assert r.confidence == "high"
+
+
+def test_resolve_calls_ancestor_chain_indirect():
+    """Bare call resolves via multi-step ancestor chain."""
+    calls = [CallRow("f.srw", "w_child", "open", "setredraw", "ExCall")]
+    procedures = [_make_proc("f.srw", "w_child", "open", body_json='[]')]
+    inherits = [("w_child", "w_parent")]
+    objects_table = {"w_child": "w_parent", "w_parent": "window"}
+
+    result = resolve_calls(calls, procedures, inherits, objects_table=objects_table)
+    r = result[0]
+    assert r.resolution_kind == "builtin"
+
+
+def test_resolve_calls_dotted_ancestor_builtin():
+    """Dotted call where first segment is not an object stays unresolved."""
+    calls = [CallRow("f.srw", "w_test", "open", "dw_main.setredraw", "ExCall")]
+    procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
+    inherits = []
+    objects_table = {}
+
+    # dw_main is not an object, no var_types → unresolved
+    result = resolve_calls(calls, procedures, inherits, objects_table=objects_table)
+    r = result[0]
+    assert r.resolution_kind == "unresolved"
+
+
+def test_resolve_calls_dotted_control_type_inference():
+    """Dotted call resolves when first segment is typed via var_types."""
+    calls = [CallRow("f.srw", "w_test", "open", "dw_main.setredraw", "ExCall")]
+    procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
+    inherits = []
+    objects_table = {}
+    var_types = {("w_test", "open", "dw_main"): "datawindow"}
+
+    result = resolve_calls(calls, procedures, inherits, var_types=var_types, objects_table=objects_table)
+    r = result[0]
+    assert r.resolution_kind == "builtin"
+    assert r.confidence == "medium"
+
+
+def test_resolve_calls_control_type_inference():
+    """Bare call resolves via control type inference from naming convention."""
+    calls = [CallRow("f.srw", "w_test", "open", "retrieve", "ExCall")]
+    procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
+    inherits = []
+    # No explicit type, but dw_main should be inferred as datawindow
+    var_types = {("w_test", "open", "dw_main"): "datawindow"}
 
     result = resolve_calls(calls, procedures, inherits, var_types=var_types)
     r = result[0]
