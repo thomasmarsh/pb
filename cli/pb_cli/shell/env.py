@@ -60,6 +60,7 @@ from pb_cli.shell.state import (
     save_file_state,
 )
 from pb_cli.shell.dataflow import build_dataflow_tables
+from pb_cli.shell.interproc import build_interproc_tables
 from pb_cli.shell.type_resolution import build_type_tables
 
 if TYPE_CHECKING:
@@ -147,6 +148,7 @@ class StorageEnv:
     compute_metrics: Callable[[Conn, AnalyzeProgress], None] = field(default=compute_metrics)
     build_type_tables: Callable[[Conn], None] = field(default=build_type_tables)
     build_dataflow_tables: Callable[[Conn], None] = field(default=build_dataflow_tables)
+    build_interproc_tables: Callable[[Conn], None] = field(default=build_interproc_tables)
     connect: Callable[[str], AbstractContextManager[Conn]] = field(default=connect)
 
 

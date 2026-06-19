@@ -94,6 +94,7 @@ def run(
         env.storage.compute_metrics(conn, progress)
         env.storage.build_type_tables(conn)
         env.storage.build_dataflow_tables(conn)
+        env.storage.build_interproc_tables(conn)
         sql_parse_failures = env.storage.count_sql_parse_failures(conn)
 
     if to_parse:
