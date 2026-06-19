@@ -42,7 +42,16 @@ reachable(obj, proc) AS (
     FROM call_edges e
     JOIN reachable r ON r.obj = e.caller_obj AND r.proc = e.caller_proc
 )
-SELECT p.name, p.object, p.proc_type, p.cyclomatic
+SELECT
+    p.name,
+    p.object,
+    p.proc_type,
+    p.cyclomatic,
+    (SELECT COUNT(DISTINCT c.object || '.' || c.from_proc)
+     FROM calls c WHERE c.to_name = p.name) AS caller_count_naive,
+    (SELECT COUNT(*)
+     FROM resolved_calls rc
+     WHERE rc.target_object = p.object AND rc.target_proc = p.name) AS caller_count_scoped
 FROM procedures p
 WHERE NOT EXISTS (
     SELECT 1 FROM reachable r WHERE r.obj = p.object AND r.proc = p.name

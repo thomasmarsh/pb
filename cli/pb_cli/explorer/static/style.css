@@ -168,7 +168,9 @@ body {
 .badge-sub { background: rgba(251, 146, 60, 0.15); color: #fb923c; }
 .badge-event { background: rgba(250, 204, 21, 0.15); color: #facc15; }
 .badge-on { background: rgba(74, 222, 128, 0.15); color: #4ade80; }
-.badge-cc { background: rgba(248, 113, 113, 0.15); color: #f87171; }
+.badge-cc     { background: rgba(248, 113, 113, 0.15); color: #f87171; }
+.badge-high   { background: rgba(248, 113, 113, 0.15); color: #f87171; }
+.badge-medium { background: rgba(251, 146, 60, 0.15);  color: #fb923c; }
 
 /* Search */
 .search-bar {
@@ -1319,7 +1321,9 @@ body {
 [data-theme="light"] .badge-sub { background: rgba(194, 65, 12, 0.12); color: #c2410c; }
 [data-theme="light"] .badge-event { background: rgba(161, 98, 7, 0.12); color: #a16207; }
 [data-theme="light"] .badge-on { background: rgba(22, 163, 74, 0.12); color: #15803d; }
-[data-theme="light"] .badge-cc { background: rgba(220, 38, 38, 0.12); color: #b91c1c; }
+[data-theme="light"] .badge-cc     { background: rgba(220, 38, 38, 0.12); color: #b91c1c; }
+[data-theme="light"] .badge-high   { background: rgba(220, 38, 38, 0.12); color: #b91c1c; }
+[data-theme="light"] .badge-medium { background: rgba(194, 65, 12, 0.12); color: #c2410c; }
 [data-theme="light"] .badge-sql { background: rgba(22, 163, 74, 0.1); color: #15803d; border-color: rgba(22, 163, 74, 0.25); }
 [data-theme="light"] .badge-warn { background: rgba(194, 65, 12, 0.1); color: #c2410c; border-color: rgba(194, 65, 12, 0.25); }
 [data-theme="light"] .table-chip {

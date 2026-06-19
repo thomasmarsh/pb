@@ -327,6 +327,8 @@ export interface DeadCodeItem {
   object: string;
   proc_type: string;
   cyclomatic: number | null;
+  caller_count_naive: number;
+  caller_count_scoped: number;
 }
 
 export interface DeadCodeResponse {
