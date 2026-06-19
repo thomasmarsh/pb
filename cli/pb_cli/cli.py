@@ -123,6 +123,42 @@ def extract(
     typer.echo(f"Extracted {total} source files from {len(pbls)} libraries to {out}")
 
 
+# ── pb dead-code ──────────────────────────────────────────────────────────────
+
+
+@app.command("dead-code")
+def dead_code(
+    db: str = typer.Option("pb.duckdb", "--db", help="DuckDB database path."),
+) -> None:
+    """List non-public procedures never transitively reached from any entry point."""
+    import duckdb as _duckdb
+
+    from pb_cli.explorer.services.analysis import get_dead_code
+
+    try:
+        conn = _duckdb.connect(db, read_only=True)
+    except Exception as e:
+        typer.echo(f"Cannot open {db}: {e}", err=True)
+        raise typer.Exit(1)
+    try:
+        dead = get_dead_code(conn)
+    finally:
+        conn.close()
+    if not dead:
+        typer.echo("(no dead code found)")
+        return
+    cols = list(dead[0].keys())
+    widths = [len(c) for c in cols]
+    str_rows = [[str(r[c]) if r[c] is not None else "" for c in cols] for r in dead]
+    for row in str_rows:
+        for i, val in enumerate(row):
+            widths[i] = max(widths[i], len(val))
+    typer.echo("  ".join(c.ljust(w) for c, w in zip(cols, widths)))
+    typer.echo("  ".join("-" * w for w in widths))
+    for row in str_rows:
+        typer.echo("  ".join(val.ljust(w) for val, w in zip(row, widths)))
+
+
 # ── pb debt ────────────────────────────────────────────────────────────────────
 
 

@@ -20,11 +20,11 @@ QUERIES_DIR = REPO_ROOT / "queries"
 
 
 def test_parse_no_params():
-    sql_file = QUERIES_DIR / "dead-code.sql"
+    sql_file = QUERIES_DIR / "db-coverage.sql"
     desc, params, sql, _ = parse_sql_file(sql_file)
     assert desc
     assert params == []
-    assert "FROM procedures" in sql
+    assert "table_name" in sql
 
 
 def test_parse_int_param_with_default():
@@ -82,25 +82,17 @@ def test_callers_returns_rows(db_path):
     assert len(rows) > 0
 
 
-def test_dead_code_no_false_negatives(db_path):
+def test_dead_code_returns_list(db_path):
+    from pb_cli.explorer.services.analysis import get_dead_code
+
     conn = duckdb.connect(db_path, read_only=True)
-    # Every row returned should genuinely have no entry in calls
-    rows = conn.execute("""
-        SELECT p.object, p.name FROM procedures p
-        LEFT JOIN calls c ON c.to_name = p.name
-        WHERE c.to_name IS NULL
-          AND p.proc_type IN ('function', 'subroutine')
-          AND (p.modifiers IS NULL OR p.modifiers NOT LIKE '%public%')
-    """).fetchall()
-    conn.close()
-    if rows:
-        # Spot-check: first result really has no callers
-        name = rows[0][1]
-        conn2 = duckdb.connect(db_path, read_only=True)
-        row = conn2.execute("SELECT count(*) FROM calls WHERE to_name = ?", [name]).fetchone()
-        callers = row[0] if row else 0
-        conn2.close()
-        assert callers == 0
+    try:
+        dead = get_dead_code(conn)
+    finally:
+        conn.close()
+    assert isinstance(dead, list)
+    if dead:
+        assert {"name", "object", "proc_type", "cyclomatic"} <= dead[0].keys()
 
 
 def test_ancestors_chain(db_path):
