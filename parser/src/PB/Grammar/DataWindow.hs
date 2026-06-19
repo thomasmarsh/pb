@@ -12,8 +12,12 @@ module PB.Grammar.DataWindow
 
 import PB.Prelude
 import PB.AST.DataWindow
+import PB.Grammar.Body       (parseExpr)
 import PB.Lexing.DataWindow  (DwBlock (..), DwAttr (..), scanBlocks, scanBlockAttrs, extractParenBlock)
 import PB.Lexing.Escape      (pbSelectTildeStr)
+import PB.Lexing.Lexer       (LexLine (..), tokenize)
+import qualified PB.Lexing.Token as Tok
+import PB.Pipeline.Preprocess (LogicalLine (..))
 
 import Data.List     (nubBy)
 import Text.Read     (readMaybe)
@@ -268,19 +272,26 @@ parseDwControl kw content =
         knownKeys = ["name","band","id","x","y","width","height",
                      "visible","expression","tabsequence"]
     in DwControl
-        { dwcType       = kw
-        , dwcName       = lookupUnquoted "name" attrs
-        , dwcBand       = parseBandKind =<< lookupUnquoted "band" attrs
-        , dwcId         = parseIntAttr  "id"          attrs
-        , dwcX          = parseIntAttr  "x"           attrs
-        , dwcY          = parseIntAttr  "y"           attrs
-        , dwcWidth      = parseIntAttr  "width"       attrs
-        , dwcHeight     = parseIntAttr  "height"      attrs
-        , dwcVisible    = parseBoolAttr "visible"     attrs
-        , dwcExpression = lookupQuoted  "expression"  attrs
-        , dwcTabSeq     = parseIntAttr  "tabsequence" attrs
-        , dwcAttrs      = collectResidualAttrs knownKeys attrs
+        { dwcType             = kw
+        , dwcName             = lookupUnquoted "name" attrs
+        , dwcBand             = parseBandKind =<< lookupUnquoted "band" attrs
+        , dwcId               = parseIntAttr  "id"          attrs
+        , dwcX                = parseIntAttr  "x"           attrs
+        , dwcY                = parseIntAttr  "y"           attrs
+        , dwcWidth            = parseIntAttr  "width"       attrs
+        , dwcHeight           = parseIntAttr  "height"      attrs
+        , dwcVisible          = parseBoolAttr "visible"     attrs
+        , dwcExpression       = lookupQuoted  "expression"  attrs
+        , dwcParsedExpression = fmap (parseExpr . tokenizeExpr) (lookupQuoted "expression" attrs)
+        , dwcTabSeq           = parseIntAttr  "tabsequence" attrs
+        , dwcAttrs            = collectResidualAttrs knownKeys attrs
         }
+
+tokenizeExpr :: Text -> [Tok.Token]
+tokenizeExpr txt =
+    case tokenize [LogicalLine { llText = txt, llStartLine = 0, llEndLine = 0 }] of
+        [ll] -> case lexResult ll of { Left _ -> []; Right ts -> ts }
+        _    -> []
 
 parseIntAttr :: Text -> [DwAttr] -> Maybe Int
 parseIntAttr key attrs =

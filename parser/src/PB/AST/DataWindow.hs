@@ -15,6 +15,7 @@ module PB.AST.DataWindow
   ) where
 
 import PB.Prelude
+import PB.AST.Expr     (Expr)
 import Data.Map.Strict (Map)
 import GHC.Generics    (Generic)
 
@@ -106,18 +107,19 @@ data DwGroup = DwGroup
   } deriving (Eq, Show, Generic)
 
 data DwControl = DwControl
-  { dwcType       :: Text
-  , dwcName       :: Maybe Text
-  , dwcBand       :: Maybe DwBandKind
-  , dwcId         :: Maybe Int
-  , dwcX          :: Maybe Int
-  , dwcY          :: Maybe Int
-  , dwcWidth      :: Maybe Int
-  , dwcHeight     :: Maybe Int
-  , dwcVisible    :: Maybe Bool
-  , dwcExpression :: Maybe Text
-  , dwcTabSeq     :: Maybe Int
-  , dwcAttrs      :: Map Text Text
+  { dwcType             :: Text
+  , dwcName             :: Maybe Text
+  , dwcBand             :: Maybe DwBandKind
+  , dwcId               :: Maybe Int
+  , dwcX                :: Maybe Int
+  , dwcY                :: Maybe Int
+  , dwcWidth            :: Maybe Int
+  , dwcHeight           :: Maybe Int
+  , dwcVisible          :: Maybe Bool
+  , dwcExpression       :: Maybe Text
+  , dwcParsedExpression :: Maybe Expr
+  , dwcTabSeq           :: Maybe Int
+  , dwcAttrs            :: Map Text Text
   } deriving (Eq, Show, Generic)
 
 data DwUnknownBlock = DwUnknownBlock

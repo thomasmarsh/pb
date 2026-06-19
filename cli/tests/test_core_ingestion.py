@@ -309,6 +309,83 @@ def test_import_dw_table_names_lowercased():
     assert [r.column_name for r in cols] == ["col1", "col2"]
 
 
+def test_import_dw_extracts_calls_from_parsed_expression():
+    obj = {
+        "file": "d_test.srd",
+        "kind": "datawindow",
+        "meta": {"object": "d_test"},
+        "controls": [
+            {
+                "name": "cmp1",
+                "type": "compute",
+                "band": "summary",
+                "parsedExpression": {
+                    "tag": "ExCall",
+                    "callee": {"segments": [{"name": "fn_foo", "subscript": None}]},
+                    "callArgs": [["bar"]],
+                },
+            }
+        ],
+    }
+    rows = new_row_batch()
+    import_file(obj, rows)
+    call_rows = rows["calls"]
+    assert len(call_rows) == 1
+    assert call_rows[0].to_name == "fn_foo"
+    assert call_rows[0].call_type == "ExCall"
+    assert call_rows[0].object == "d_test"
+    assert call_rows[0].from_proc == "cmp1"
+
+
+def test_import_dw_expression_multiple_fn_calls():
+    """Two ExCall nodes under an ExBinOp both get extracted."""
+    obj = {
+        "file": "d_test.srd",
+        "kind": "datawindow",
+        "meta": {"object": "d_test"},
+        "controls": [
+            {
+                "name": "cmp2",
+                "type": "compute",
+                "band": "summary",
+                "parsedExpression": {
+                    "tag": "ExBinOp",
+                    "lhs": {
+                        "tag": "ExCall",
+                        "callee": {"segments": [{"name": "fn_a", "subscript": None}]},
+                        "callArgs": [],
+                    },
+                    "op": {"tag": "BopAdd"},
+                    "rhs": {
+                        "tag": "ExCall",
+                        "callee": {"segments": [{"name": "fn_b", "subscript": None}]},
+                        "callArgs": [],
+                    },
+                },
+            }
+        ],
+    }
+    rows = new_row_batch()
+    import_file(obj, rows)
+    names = {r.to_name for r in rows["calls"]}
+    assert names == {"fn_a", "fn_b"}
+
+
+def test_import_dw_no_parsed_expression_no_calls():
+    """A control with no parsedExpression produces no calls rows."""
+    obj = {
+        "file": "d_test.srd",
+        "kind": "datawindow",
+        "meta": {"object": "d_test"},
+        "controls": [
+            {"name": "lbl1", "type": "text", "band": "header"}
+        ],
+    }
+    rows = new_row_batch()
+    import_file(obj, rows)
+    assert rows["calls"] == []
+
+
 def test_extract_sql_empty_body():
     rows = new_row_batch()
     _extract_sql("test.srw", "w_main", "uf_init", None, "oracle", rows)

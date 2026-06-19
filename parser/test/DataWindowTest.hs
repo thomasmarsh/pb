@@ -2,6 +2,7 @@ module DataWindowTest (tests) where
 
 import PB.Prelude
 import PB.AST.DataWindow
+import PB.AST.Expr           (Expr (..), Lvalue (..), LvSegment (..))
 import PB.Lexing.DataWindow  (DwAttr (..), extractParenBlock, scanBlockAttrs)
 import PB.Grammar.DataWindow (parseDataWindow, parseBandKind, parseDwTable, parsePbSelect,
                                parseColumn, parseDwBand, parseDwGroup, parseGroupBy,
@@ -450,6 +451,36 @@ tests = testGroup "DataWindow"
                 assertBool "tab_seq not in attrs" (notElem "tabsequence" ks)
                 assertBool "color in attrs" (elem "color" ks)
               cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "compute expression — user fn call parses to ExCall" $ do
+          let src = dwMin <> "\ncompute(band=summary name=cmp1 x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" expression=\"fn_foo( bar )\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> do
+                dwcExpression c @?= Just "fn_foo( bar )"
+                dwcParsedExpression c @?=
+                  Just ExCall { callee   = Lvalue [LvSegment "fn_foo" Nothing]
+                              , callArgs = [["bar"]] }
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "compute expression — multi-arg fn call preserves args" $ do
+          let src = dwMin <> "\ncompute(band=summary name=cmp2 x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" expression=\"fn_fullname( a , b )\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> dwcParsedExpression c @?=
+                       Just ExCall { callee   = Lvalue [LvSegment "fn_fullname" Nothing]
+                                   , callArgs = [["a"], ["b"]] }
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "control without expression — parsedExpression is Nothing" $ do
+          let src = dwMin <> "\ntext(band=header name=lbl x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> dwcParsedExpression c @?= Nothing
+              cs  -> assertFailure ("expected 1 control, got " <> show (length cs))
       ]
 
   , testGroup "DwTable"
