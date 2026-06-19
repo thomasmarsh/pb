@@ -91,10 +91,15 @@ def run(
                     env.storage.save_file_state(conn, pbl_hashes)
 
     with env.storage.db_connection(db) as conn, reporter.analyze_progress() as progress:
+        progress.start_step("compute metrics")
         env.storage.compute_metrics(conn, progress)
+        progress.start_step("build type tables")
         env.storage.build_type_tables(conn)
+        progress.start_step("build dataflow tables")
         env.storage.build_dataflow_tables(conn)
+        progress.start_step("build interproc tables")
         env.storage.build_interproc_tables(conn)
+        progress.start_step("build taint tables")
         env.storage.build_taint_tables(conn)
         sql_parse_failures = env.storage.count_sql_parse_failures(conn)
 

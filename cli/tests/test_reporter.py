@@ -106,16 +106,20 @@ def test_parse_error_count_accessible_after_context():
 def test_analyze_progress_records_all_stage_types():
     r = RecordingReporter()
     with r.analyze_progress() as prog:
+        prog.start_step("compute metrics")
         prog.advance_metrics("betweenness")
         prog.advance_metrics("pagerank")
-        prog.advance_metrics("inserting rows")
-        prog.advance_metrics("done")
+        prog.start_step("build type tables")
+        prog.start_step("build dataflow tables")
 
     assert r.events[0] == {"type": "analyze_start"}
     assert r.events[-1] == {"type": "analyze_end"}
 
+    step_labels = [e["label"] for e in r.events if e["type"] == "analyze_step"]
+    assert step_labels == ["compute metrics", "build type tables", "build dataflow tables"]
+
     metrics_labels = [e["label"] for e in r.events if e["type"] == "analyze_metrics"]
-    assert metrics_labels == ["betweenness", "pagerank", "inserting rows", "done"]
+    assert metrics_labels == ["betweenness", "pagerank"]
 
 
 # ── done ──────────────────────────────────────────────────────────────────────
@@ -171,6 +175,7 @@ def test_all_events_are_json_serialisable():
         advance(50)
         advance(49)
     with r.analyze_progress() as ap:
+        ap.start_step("compute metrics")
         ap.advance_metrics("done")
     r.done(parsed=2, errors=1, rows=99, diff=_diff(new=1, changed=1))
 

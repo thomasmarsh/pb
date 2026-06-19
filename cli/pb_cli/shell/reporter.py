@@ -82,6 +82,7 @@ class _RecordingParseProgress:
 
 
 class AnalyzeProgress(Protocol):
+    def start_step(self, label: str) -> None: ...
     def advance_metrics(self, label: str) -> None: ...
 
 
@@ -89,15 +90,36 @@ class _LiveAnalyzeProgress:
     def __init__(self, progress, task) -> None:
         self._progress = progress
         self._task = task
+        self._step_name: str = ""
+        self._step_start: float = 0.0
+        self.times: list[tuple[str, float]] = []
+
+    def start_step(self, label: str) -> None:
+        import time
+
+        now = time.monotonic()
+        if self._step_name:
+            self.times.append((self._step_name, now - self._step_start))
+        self._step_name = label
+        self._step_start = now
+        self._progress.update(self._task, description=f"[2/2] {label}")
 
     def advance_metrics(self, label: str) -> None:
-        self._progress.advance(self._task)
-        self._progress.update(self._task, description=f"[2/2] Graph metrics: {label:<22}")
+        self._progress.update(self._task, description=f"[2/2] {self._step_name} [{label}]")
+
+    def _finish(self) -> None:
+        import time
+
+        if self._step_name:
+            self.times.append((self._step_name, time.monotonic() - self._step_start))
 
 
 class _RecordingAnalyzeProgress:
     def __init__(self, events: list[dict]) -> None:
         self._events = events
+
+    def start_step(self, label: str) -> None:
+        self._events.append({"type": "analyze_step", "label": label})
 
     def advance_metrics(self, label: str) -> None:
         self._events.append({"type": "analyze_metrics", "label": label})
@@ -222,8 +244,13 @@ class LiveReporter:
             TimeElapsedColumn(),
             console=self._c,
         ) as progress:
-            task = progress.add_task("[2/2] Graph metrics: build graph  ", total=4)
-            yield _LiveAnalyzeProgress(progress, task)
+            task = progress.add_task("[2/2] analyzing", total=None)
+            prog = _LiveAnalyzeProgress(progress, task)
+            yield prog
+            prog._finish()
+            progress.update(task, total=1, completed=1)
+        for name, elapsed in prog.times:
+            self._c.print(f"  [dim]{name:<28} {elapsed:.1f}s[/dim]")
 
     def done(
         self,
