@@ -1,11 +1,41 @@
 // components/BreadcrumbBar.tsx — Typed-icon breadcrumb strip.
 
 import { For, Show, createSignal } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import type { JSX } from "solid-js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import type { BreadcrumbSegment, Route } from "../../features/navigation/types.js";
+import type { IconComp } from "../../utils/icons.js";
+import {
+  LayoutDashboard,
+  Box,
+  Code2,
+  Grid3X3,
+  Database,
+  MessageSquare,
+  BarChart2,
+  List,
+  Package,
+} from "../../utils/icons.js";
+
+// Icon key → Lucide component, resolved at render time (never stored in state).
+const ICON_MAP: Record<string, IconComp> = {
+  library:    LayoutDashboard,
+  object:     Box,
+  procedure:  Code2,
+  datawindow: Grid3X3,
+  table:      Database,
+  ask:        MessageSquare,
+  analysis:   BarChart2,
+  list:       List,
+  window:     Package,
+};
+
+function resolveIcon(key: string): IconComp {
+  return ICON_MAP[key] ?? Box;
+}
 
 // ── Display item model ────────────────────────────────────────────────────────
 
@@ -31,6 +61,10 @@ export function buildDisplay(crumbs: BreadcrumbSegment[]): DisplayItem[] {
 
 function Sep(): JSX.Element {
   return <span class="bc-sep" aria-hidden="true">›</span>;
+}
+
+function BcIcon(props: { key: string }): JSX.Element {
+  return <Dynamic component={resolveIcon(props.key)} size={13} />;
 }
 
 // ── BreadcrumbBar ─────────────────────────────────────────────────────────────
@@ -59,9 +93,9 @@ export function BreadcrumbBar(props: { store: Store<AppState, AppAction> }): JSX
             <span
               class="bc-segment bc-current"
               aria-current="page"
-              aria-label={`${item.crumb.icon} ${item.crumb.label}`}
+              aria-label={item.crumb.label}
             >
-              <span class="bc-icon" aria-hidden="true">{item.crumb.icon}</span>
+              <span class="bc-icon" aria-hidden="true"><BcIcon key={item.crumb.icon} /></span>
               <span class="bc-label">{item.crumb.label}</span>
             </span>
           }
@@ -71,7 +105,7 @@ export function BreadcrumbBar(props: { store: Store<AppState, AppAction> }): JSX
             onClick={() => navigateTo(item.crumb.route)}
             aria-label={`Navigate to ${item.crumb.label}`}
           >
-            <span class="bc-icon" aria-hidden="true">{item.crumb.icon}</span>
+            <span class="bc-icon" aria-hidden="true"><BcIcon key={item.crumb.icon} /></span>
             <span class="bc-label">{item.crumb.label}</span>
           </button>
         </Show>
@@ -126,7 +160,7 @@ function EllipsisSegment(props: {
                   onClick={() => { setOpen(false); props.navigate(seg.route); }}
                   aria-label={`Navigate to ${seg.label}`}
                 >
-                  <span class="bc-icon" aria-hidden="true">{seg.icon}</span>
+                  <span class="bc-icon" aria-hidden="true"><BcIcon key={seg.icon} /></span>
                   <span class="bc-label">{seg.label}</span>
                 </button>
               )}

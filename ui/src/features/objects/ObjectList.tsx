@@ -1,6 +1,7 @@
 // ObjectList.tsx — Object listing with search, filters, and pagination.
 
 import { Show, For, onMount } from "solid-js";
+import { ChevronUp, ChevronDown, ArrowUpDown } from "../../utils/icons.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
@@ -67,11 +68,13 @@ export function ObjectList(props: { store: Store<AppState, AppAction> }) {
               <tr>
                 <th class={os().sort === "name" ? "sorted" : ""}
                     onClick={() => store.dispatch({ tag: "objects", action: { tag: "sort", col: "name" } })}>
-                  Name{os().sort === "name" ? (os().order === "asc" ? " ▲" : " ▼") : ""}
+                  Name{" "}
+                  {os().sort === "name" ? (os().order === "asc" ? <ChevronUp size={11} style={{"vertical-align":"middle"}} /> : <ChevronDown size={11} style={{"vertical-align":"middle"}} />) : <ArrowUpDown size={11} style={{"vertical-align":"middle", opacity:"0.3"}} />}
                 </th>
                 <th class={os().sort === "kind" ? "sorted" : ""}
                     onClick={() => store.dispatch({ tag: "objects", action: { tag: "sort", col: "kind" } })}>
-                  Kind{os().sort === "kind" ? (os().order === "asc" ? " ▲" : " ▼") : ""}
+                  Kind{" "}
+                  {os().sort === "kind" ? (os().order === "asc" ? <ChevronUp size={11} style={{"vertical-align":"middle"}} /> : <ChevronDown size={11} style={{"vertical-align":"middle"}} />) : <ArrowUpDown size={11} style={{"vertical-align":"middle", opacity:"0.3"}} />}
                 </th>
                 <th>File</th><th>Ancestor</th>
               </tr>

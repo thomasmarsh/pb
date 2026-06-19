@@ -2,6 +2,7 @@
 
 import { createSignal } from "solid-js";
 import type { JSX } from "solid-js";
+import { ChevronDown, ChevronRight } from "../../utils/icons.js";
 
 interface AnalysisViewProps {
   title: string;
@@ -33,7 +34,7 @@ export function AnalysisView(props: AnalysisViewProps): JSX.Element {
               onClick={() => setShowAssumptions((v) => !v)}
               aria-expanded={showAssumptions()}
             >
-              <span>{showAssumptions() ? "▼" : "▸"}</span> Assumptions
+              <span>{showAssumptions() ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</span> Assumptions
             </button>
             {showAssumptions() && (
               <p class="analysis-assumptions-body">{props.assumptions}</p>

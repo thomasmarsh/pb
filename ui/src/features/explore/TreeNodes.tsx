@@ -4,6 +4,7 @@ import { Show, For, createMemo } from "solid-js";
 import { useExploreStore } from "./ExploreContext.js";
 import { TreeNode } from "./TreeNode.js";
 import { procBadge } from "../../utils/format.js";
+import { Package } from "../../utils/icons.js";
 import type { ExploreLibrary, ExploreObject, ExploreProcedure } from "../../types/api.js";
 
 export function libId(name: string): string { return `lib:${name}`; }
@@ -167,7 +168,7 @@ export function LibraryNode(props: { lib: ExploreLibrary; depth: number }) {
       <TreeNode
         nodeId={nodeId()}
         depth={props.depth}
-        icon={"▣"}
+        icon={Package}
         name={props.lib.name}
         summary={`${props.lib.objects.length} objects`}
         onClick={() => store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "libraryDetail", name: props.lib.name } } })}

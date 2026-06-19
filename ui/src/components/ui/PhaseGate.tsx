@@ -2,6 +2,7 @@
 
 import { createSignal } from "solid-js";
 import type { JSX } from "solid-js";
+import { AlertTriangle, ChevronRight, ChevronDown } from "../../utils/icons.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
@@ -16,7 +17,7 @@ interface PhaseGateProps {
 export function PhaseGate(props: PhaseGateProps): JSX.Element {
   return (
     <div class="phase-gate">
-      <div class="phase-gate-icon">⚠</div>
+      <div class="phase-gate-icon"><AlertTriangle size={32} /></div>
       <h2 class="phase-gate-heading">Requires P{props.phase} analysis infrastructure</h2>
       <p class="phase-gate-desc">{props.description}</p>
       <div class="phase-gate-footer">
@@ -52,7 +53,7 @@ export function PhaseGateInline(props: PhaseGateInlineProps): JSX.Element {
         aria-expanded={open()}
         aria-label={`${props.section} — ${props.label}`}
       >
-        <span class={`phase-gate-inline-triangle${open() ? " open" : ""}`} aria-hidden="true">▸</span>
+        <span class={`phase-gate-inline-triangle${open() ? " open" : ""}`} aria-hidden="true">{open() ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</span>
         <span class="phase-gate-inline-section">{props.section}</span>
         <span class="phase-gate-inline-label">P{props.phase} — {props.label}</span>
       </button>

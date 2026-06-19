@@ -2,6 +2,7 @@
 
 import { type ParentProps } from "solid-js";
 import type { JSX } from "solid-js";
+import { Search, HelpCircle } from "../../utils/icons.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
@@ -50,12 +51,12 @@ export function Layout(props: ParentProps<LayoutProps>): JSX.Element {
                 class="top-bar-btn"
                 title="Search (press /)"
                 onClick={() => props.store.dispatch({ tag: "search", action: { tag: "overlay-open" } })}
-              >🔍</button>
+              ><Search size={15} /></button>
               <button
                 class="top-bar-btn"
                 title="Keyboard shortcuts (press ?)"
                 onClick={() => props.store.dispatch({ tag: "explore", action: { tag: "help-overlay-toggle" } })}
-              >?</button>
+              ><HelpCircle size={15} /></button>
             </div>
           </div>
           <main class="main-content">{props.children}</main>

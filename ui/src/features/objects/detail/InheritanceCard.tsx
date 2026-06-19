@@ -1,6 +1,7 @@
 // InheritanceCard.tsx — Inheritance chain display.
 
 import { For } from "solid-js";
+import { ChevronRight } from "../../../utils/icons.js";
 import type { Store } from "../../../core/store.js";
 import type { AppState } from "../../../features/app/state.js";
 import type { AppAction } from "../../../features/app/actions.js";
@@ -17,7 +18,7 @@ export function InheritanceCard(props: { store: Store<AppState, AppAction>; name
         <For each={props.ancestors}>
           {(a) => (
             <>
-              <span style={{ color: "var(--text-muted)" }}>{"→"}</span>
+              <span style={{ color: "var(--text-muted)" }}><ChevronRight size={14} /></span>
               <span class="badge badge-ps" style={{ cursor: "pointer" }}
                     onClick={() => props.store.dispatch({ tag: "objects", action: { tag: "select", name: a } })}>
                 {a}

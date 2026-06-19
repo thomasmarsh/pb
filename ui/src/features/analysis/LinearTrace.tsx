@@ -2,6 +2,7 @@
 
 import { createSignal, Show, For, onMount, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
+import { ChevronLeft, ChevronRight, ArrowRight } from "../../utils/icons.js";
 import type { TaintStep } from "../../types/api.js";
 
 // Step type can be taint paths or forward/backward slices.
@@ -102,9 +103,9 @@ export function LinearTrace(props: LinearTraceProps): JSX.Element {
             class="icon-btn"
             onClick={() => props.onPrevPath?.()}
             disabled={(props.pathIndex ?? 0) === 0}
-            title="Previous path (←)"
+            title="Previous path"
           >
-            ←
+            <ChevronLeft size={14} />
           </button>
           <span class="trace-path-counter">
             Path {(props.pathIndex ?? 0) + 1} of {props.totalPaths}
@@ -113,9 +114,9 @@ export function LinearTrace(props: LinearTraceProps): JSX.Element {
             class="icon-btn"
             onClick={() => props.onNextPath?.()}
             disabled={(props.pathIndex ?? 0) >= (props.totalPaths ?? 1) - 1}
-            title="Next path (→)"
+            title="Next path"
           >
-            →
+            <ChevronRight size={14} />
           </button>
         </div>
       </Show>
@@ -142,7 +143,7 @@ export function LinearTrace(props: LinearTraceProps): JSX.Element {
               data-testid="trace-collapse-toggle"
               onClick={() => setExpanded(true)}
             >
-              ▸ {derived().hiddenCount} intermediate step{derived().hiddenCount === 1 ? "" : "s"} — click to expand (or press E)
+              <ChevronRight size={12} /> {derived().hiddenCount} intermediate step{derived().hiddenCount === 1 ? "" : "s"} — click to expand (or press E)
             </div>
           </Show>
 
@@ -221,7 +222,7 @@ function MiniCallGraph(props: {
           {(proc, i) => (
             <>
               <Show when={i() > 0}>
-                <span class="trace-callgraph-arrow">→</span>
+                <span class="trace-callgraph-arrow"><ArrowRight size={12} /></span>
               </Show>
               <ProcChip procKey={proc} onNavigate={props.onNavigate} />
             </>

@@ -1,6 +1,7 @@
 // ProcDetailPanel.tsx — Procedure detail with Source/AST/SQL tabs.
 
 import { Show, For, createMemo, createSignal, createResource } from "solid-js";
+import { ArrowRight } from "../../utils/icons.js";
 import { useExploreStore } from "./ExploreContext.js";
 import { highlightAsync } from "../../utils/highlight.js";
 import type { ExploreProcDetail, SqlStatementRow } from "../../types/api.js";
@@ -59,7 +60,7 @@ export function ProcDetailPanel(props: { nodeId: string }) {
                 <span class="proc-params">({d.params})</span>
               </Show>
               <Show when={d.return_type}>
-                <span class="proc-params">{"→"} {d.return_type}</span>
+                <span class="proc-params"><ArrowRight size={12} style={{ "vertical-align": "middle" }} /> {d.return_type}</span>
               </Show>
               <Show when={d.cyclomatic != null}>
                 <span class="badge badge-cc">CC: {d.cyclomatic}</span>

@@ -1,6 +1,7 @@
 // LibraryDetail.tsx — Library detail: object list (source) + metrics (analysis).
 
 import { Show, For, createResource, createSignal } from "solid-js";
+import { Package } from "../../utils/icons.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
@@ -41,7 +42,7 @@ export function LibraryDetail(props: { store: Store<AppState, AppAction> }) {
   return (
     <div class="card">
       <div class="card-header">
-        <h2><span class="entity-icon">◆</span> {libName()}</h2>
+        <h2><span class="entity-icon"><Package size={16} /></span> {libName()}</h2>
         <FaceToggle face={face()} onToggle={(f) => setFace(f)} />
       </div>
 

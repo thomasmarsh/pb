@@ -1,6 +1,7 @@
 // ProceduresList.tsx — Browsable, sortable, filterable list of all procedures.
 
 import { Show, For, onMount } from "solid-js";
+import { ChevronUp, ChevronDown, ArrowUpDown } from "../../utils/icons.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
@@ -64,14 +65,19 @@ export function ProceduresList(props: { store: Store<AppState, AppAction> }) {
 
   const sortHeader = (col: "name" | "object" | "cyclomatic" | "caller_count", label: string) => {
     const active = () => ps().proceduresListSort === col;
-    const arrow = () => active() ? (ps().proceduresListOrder === "asc" ? " ▲" : " ▼") : "";
+    const sortIcon = () => {
+      if (!active()) return <ArrowUpDown size={11} style={{ "vertical-align": "middle", opacity: "0.3" }} />;
+      return ps().proceduresListOrder === "asc"
+        ? <ChevronUp size={11} style={{ "vertical-align": "middle" }} />
+        : <ChevronDown size={11} style={{ "vertical-align": "middle" }} />;
+    };
     return (
       <th
         class={active() ? "sorted" : ""}
         style={{ cursor: "pointer" }}
         onClick={() => store.dispatch({ tag: "objects", action: { tag: "procs-list-sort", col } })}
       >
-        {label}{arrow()}
+        {label}{" "}{sortIcon()}
       </th>
     );
   };

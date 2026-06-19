@@ -5,7 +5,7 @@ import { useExploreStore } from "./ExploreContext.js";
 import type { DwExploreDetail } from "../../types/api.js";
 import { SqlBlock } from "../../components/detail/CodeBlock.js";
 import { TableChip } from "../../components/detail/TableChip.js";
-import { chevron } from "../../utils/format.js";
+import { ChevronDown, ChevronRight } from "../../utils/icons.js";
 
 export function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
   const store = useExploreStore();
@@ -55,7 +55,7 @@ export function DwDetailTree(props: { data: DwExploreDetail }): JSX.Element {
           {(band) => (
             <div class="dw-band">
               <div class="dw-band-header clickable" onClick={() => toggleBand(band)}>
-                <span class="ast-chevron">{chevron(isBandExpanded(band))}</span>
+                <span class="ast-chevron">{isBandExpanded(band) ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</span>
                 <span class="dw-band-name">{band}</span>
                 <span class="dw-section-count">{controlBands().get(band)!.length}</span>
               </div>

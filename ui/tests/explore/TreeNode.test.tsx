@@ -49,16 +49,16 @@ describe("TreeNode", () => {
   });
 
   it("shows chevron when has children", () => {
-    renderTreeNode(
+    const { container } = renderTreeNode(
       { nodeId: "lib:test", name: "test.pbl" },
       () => <div>child content</div>,
     );
-    expect(screen.getByText("▸")).toBeDefined();
+    expect(container.querySelector(".tree-chevron")).not.toBeNull();
   });
 
   it("no chevron for leaf nodes", () => {
-    renderTreeNode({ nodeId: "obj:lib:o1", name: "w_main" });
-    expect(screen.queryByText("▸")).toBeNull();
+    const { container } = renderTreeNode({ nodeId: "obj:lib:o1", name: "w_main" });
+    expect(container.querySelector(".tree-chevron")).toBeNull();
   });
 
   it("clicking node with children toggles expand", () => {

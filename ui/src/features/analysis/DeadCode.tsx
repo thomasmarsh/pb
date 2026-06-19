@@ -1,6 +1,7 @@
 // DeadCode.tsx — Dead Code report: uncalled procedures (P1).
 
 import { Show, For, createResource, createSignal } from "solid-js";
+import { Code2 } from "../../utils/icons.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
@@ -96,7 +97,7 @@ export function DeadCode(props: { store: Store<AppState, AppAction> }) {
                   >
                     <td style={{ color: "var(--text-muted)", "font-size": "12px" }}>{item.object}</td>
                     <td>
-                      <span class="entity-card-icon" style={{ "margin-right": "4px" }}>ƒ</span>
+                      <span class="entity-card-icon" style={{ "margin-right": "4px" }}><Code2 size={13} /></span>
                       {item.name}
                     </td>
                     <td>

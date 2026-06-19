@@ -1,6 +1,7 @@
 // HealthCheck.tsx — Polls backend, shows reconnect modal when disconnected.
 
 import { createSignal, onMount, onCleanup, Show } from "solid-js";
+import { AlertTriangle } from "../../utils/icons.js";
 
 const POLL_INTERVAL = 5000;
 const CHECK_URL = "/api/stats";
@@ -43,7 +44,7 @@ export function HealthCheck() {
     <Show when={!connected()}>
       <div class="health-overlay">
         <div class="health-modal">
-          <div class="health-icon">⚠</div>
+          <div class="health-icon"><AlertTriangle size={32} /></div>
           <h3>Connection lost</h3>
           <p>Unable to reach the backend server.</p>
           <button

@@ -1,4 +1,5 @@
 import type { JSX } from "solid-js";
+import { ArrowLeft } from "../../utils/icons.js";
 
 interface BackButtonProps {
   label: string;
@@ -8,7 +9,7 @@ interface BackButtonProps {
 export function BackButton(props: BackButtonProps): JSX.Element {
   return (
     <button class="back-btn" onClick={props.onClick}>
-      {"←"} Back to {props.label}
+      <ArrowLeft size={14} /> Back to {props.label}
     </button>
   );
 }

@@ -1,16 +1,35 @@
 import { Show, For, type JSX } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import type { Route } from "../../features/navigation/types.js";
-import { chevron } from "../../utils/format.js";
+import type { IconComp } from "../../utils/icons.js";
+import {
+  LayoutDashboard,
+  Box,
+  Grid3X3,
+  Database,
+  Code2,
+  MessageSquare,
+  Search,
+  AlertTriangle,
+  FolderTree,
+  LayoutList,
+  BarChart2,
+  Sun,
+  Moon,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+} from "../../utils/icons.js";
 import { LibraryNode } from "../../features/explore/TreeNodes.js";
 
-const ENTITY_NAV: { label: string; view: string; icon: string }[] = [
-  { label: "Objects",     view: "objects",        icon: "○" },
-  { label: "DataWindows", view: "datawindows",    icon: "▦" },
-  { label: "Tables",      view: "tables",         icon: "⊟" },
-  { label: "Procedures",  view: "proceduresList", icon: "ƒ" },
+const ENTITY_NAV: { label: string; view: string; icon: IconComp }[] = [
+  { label: "Objects",     view: "objects",        icon: Box },
+  { label: "DataWindows", view: "datawindows",    icon: Grid3X3 },
+  { label: "Tables",      view: "tables",         icon: Database },
+  { label: "Procedures",  view: "proceduresList", icon: Code2 },
 ];
 
 interface AnalysisItem {
@@ -27,11 +46,11 @@ const ANALYSIS_NAV: AnalysisItem[] = [
   { label: "Formal Reports", view: "formalReports", phase: 4, gated: true  },
 ];
 
-const UTIL_NAV: { label: string; view: string; icon: string }[] = [
-  { label: "Dashboard", view: "dashboard", icon: "◆" },
-  { label: "Ask",       view: "queries",   icon: "?" },
-  { label: "Search",    view: "search",    icon: "🔍" },
-  { label: "Diagnostics", view: "errors",  icon: "⚠" },
+const UTIL_NAV: { label: string; view: string; icon: IconComp }[] = [
+  { label: "Dashboard",    view: "dashboard", icon: LayoutDashboard },
+  { label: "Ask",          view: "queries",   icon: MessageSquare },
+  { label: "Search",       view: "search",    icon: Search },
+  { label: "Diagnostics",  view: "errors",    icon: AlertTriangle },
 ];
 
 const VIEW_GROUPS: Record<string, string[]> = {
@@ -90,15 +109,15 @@ function AccordionGroup(props: {
   label: string;
   expanded: boolean;
   onToggle: () => void;
-  icon: string;
+  icon: IconComp;
   children: JSX.Element;
 }): JSX.Element {
   return (
     <div class="sidebar-group">
       <button class="sidebar-group-header" onClick={props.onToggle}>
-        <span class="sidebar-group-icon">{props.icon}</span>
+        <span class="sidebar-group-icon"><Dynamic component={props.icon} size={15} /></span>
         <span class="sidebar-group-label">{props.label}</span>
-        <span class="sidebar-group-chevron">{chevron(props.expanded)}</span>
+        <span class="sidebar-group-chevron"><ChevronDown size={13} style={{ transform: props.expanded ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform 0.15s" }} /></span>
       </button>
       <Show when={props.expanded}>
         <div class="sidebar-group-body">{props.children}</div>
@@ -131,7 +150,7 @@ export function Sidebar(props: SidebarProps): JSX.Element {
             onClick={() => props.onSetCollapsed(!props.collapsed)}
             title={props.collapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            {props.collapsed ? "⟩" : "⟨"}
+            {props.collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
           </button>
         </div>
         <Show when={!props.collapsed}>
@@ -141,7 +160,7 @@ export function Sidebar(props: SidebarProps): JSX.Element {
             onClick={() => store.dispatch({ tag: "theme", action: { tag: "toggle" } })}
             title={snap().theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
           >
-            {snap().theme === "dark" ? "☀" : "☾"}
+            {snap().theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
           </button>
         </Show>
       </div>
@@ -155,7 +174,7 @@ export function Sidebar(props: SidebarProps): JSX.Element {
                 class={`sidebar-util-link${isActive(item.view, props.currentView) ? " active" : ""}`}
                 onClick={(e) => { e.preventDefault(); navigateTo(store, item.view); }}
               >
-                <span class="icon">{item.icon}</span>
+                <span class="icon"><Dynamic component={item.icon} size={15} /></span>
                 <span>{item.label}</span>
               </a>
             )}
@@ -169,24 +188,24 @@ export function Sidebar(props: SidebarProps): JSX.Element {
             class="sidebar-rail-icon"
             title="Source Tree"
             onClick={() => { props.onSetCollapsed(false); if (!props.sidebarGroups.sourceTree) props.onToggleGroup("sourceTree"); }}
-          >🌲</button>
+          ><FolderTree size={16} /></button>
           <button
             class="sidebar-rail-icon"
             title="Entity Navigation"
             onClick={() => { props.onSetCollapsed(false); if (!props.sidebarGroups.entityNav) props.onToggleGroup("entityNav"); }}
-          >☰</button>
+          ><LayoutList size={16} /></button>
           <button
             class="sidebar-rail-icon"
             title="Analysis Navigation"
             onClick={() => { props.onSetCollapsed(false); if (!props.sidebarGroups.analysisNav) props.onToggleGroup("analysisNav"); }}
-          >◎</button>
+          ><BarChart2 size={16} /></button>
           <For each={UTIL_NAV}>
             {(item) => (
               <button
                 class={`sidebar-rail-icon${isActive(item.view, props.currentView) ? " active" : ""}`}
                 title={item.label}
                 onClick={() => navigateTo(store, item.view)}
-              >{item.icon}</button>
+              ><Dynamic component={item.icon} size={16} /></button>
             )}
           </For>
         </nav>
@@ -198,7 +217,7 @@ export function Sidebar(props: SidebarProps): JSX.Element {
             label="Source Tree"
             expanded={props.sidebarGroups.sourceTree}
             onToggle={() => props.onToggleGroup("sourceTree")}
-            icon="🌲"
+            icon={FolderTree}
           >
             <div class="sidebar-tree-controls">
               <button class="filter-pill" onClick={() => store.dispatch({ tag: "explore", action: { tag: "expand-all" } })}>Expand All</button>
@@ -231,7 +250,7 @@ export function Sidebar(props: SidebarProps): JSX.Element {
             label="Entity Navigation"
             expanded={props.sidebarGroups.entityNav}
             onToggle={() => props.onToggleGroup("entityNav")}
-            icon="☰"
+            icon={LayoutList}
           >
             <nav class="sidebar-entity-nav">
               <For each={ENTITY_NAV}>
@@ -241,7 +260,7 @@ export function Sidebar(props: SidebarProps): JSX.Element {
                     class={`sidebar-entity-link${isActive(item.view, props.currentView) ? " active" : ""}`}
                     onClick={(e) => { e.preventDefault(); navigateTo(store, item.view); }}
                   >
-                    <span class="icon">{item.icon}</span>
+                    <span class="icon"><Dynamic component={item.icon} size={15} /></span>
                     <span>{item.label}</span>
                   </a>
                 )}
@@ -253,7 +272,7 @@ export function Sidebar(props: SidebarProps): JSX.Element {
             label="Analysis Navigation"
             expanded={props.sidebarGroups.analysisNav}
             onToggle={() => props.onToggleGroup("analysisNav")}
-            icon="◎"
+            icon={BarChart2}
           >
             <nav class="sidebar-entity-nav">
               <For each={ANALYSIS_NAV}>

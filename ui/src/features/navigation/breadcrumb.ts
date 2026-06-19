@@ -2,17 +2,17 @@
 
 import type { Route, BreadcrumbSegment } from "./types.js";
 
-// Segment icons per gap-analysis §1 Q1.
+// Semantic icon keys — resolved to Lucide components at render time in BreadcrumbBar.
 export const ICONS = {
-  library:    "◆",
-  window:     "⬜",
-  object:     "○",
-  procedure:  "ƒ",
-  datawindow: "▦",
-  table:      "⊟",
-  ask:        "?",
-  analysis:   "◎",
-  list:       "≡",
+  library:    "library",
+  window:     "window",
+  object:     "object",
+  procedure:  "procedure",
+  datawindow: "datawindow",
+  table:      "table",
+  ask:        "ask",
+  analysis:   "analysis",
+  list:       "list",
 } as const;
 
 export function crumbsForRoute(route: Route): BreadcrumbSegment[] {

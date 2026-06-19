@@ -1,6 +1,7 @@
 // ProcedureDetail.tsx — Unified procedure detail: Source/Analysis faces.
 
 import { Show, For, createEffect, createResource } from "solid-js";
+import { ArrowRight } from "../../utils/icons.js";
 import { Tabs } from "@kobalte/core/tabs";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
@@ -87,7 +88,7 @@ function ProcTaintCard(props: {
                     <td>{path.category}</td>
                     <td style={{ "font-size": "11px" }}>{path.source.object}.{path.source.proc}</td>
                     <td style={{ "font-size": "11px" }}>{path.sink.object}.{path.sink.proc}</td>
-                    <td><span class="trace-nav-link">View →</span></td>
+                    <td><span class="trace-nav-link">View <ArrowRight size={12} style={{ "vertical-align": "middle" }} /></span></td>
                   </tr>
                 )}
               </For>

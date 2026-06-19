@@ -18,7 +18,7 @@ function nodeTag(n: unknown): string | null {
   return null;
 }
 
-import { chevron } from "../../utils/format.js";
+import { ChevronDown, ChevronRight } from "../../utils/icons.js";
 
 function isLocated(v: unknown): v is { line: number; node: unknown } {
   return isNode(v) && typeof v.line === "number" && "node" in v;
@@ -121,7 +121,7 @@ export function AstNode(props: {
   return (
     <div class="ast-branch" style={{ "margin-left": `${props.depth * 18}px` }}>
       <div class="ast-branch-header clickable" onClick={toggle}>
-        <span class="ast-chevron">{chevron(isExpanded())}</span>
+        <span class="ast-chevron">{isExpanded() ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</span>
         <Show
           when={highlightedHtml()}
           fallback={<span class="ast-branch-text">{summaryText()}</span>}

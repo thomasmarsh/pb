@@ -5,7 +5,7 @@ import { buildDisplay } from "../../src/components/layout/BreadcrumbBar.js";
 import type { BreadcrumbSegment } from "../../src/features/navigation/types.js";
 
 function seg(label: string): BreadcrumbSegment {
-  return { icon: "○", label, route: { view: "dashboard" } };
+  return { icon: "object", label, route: { view: "dashboard" } };
 }
 
 function segs(n: number): BreadcrumbSegment[] {

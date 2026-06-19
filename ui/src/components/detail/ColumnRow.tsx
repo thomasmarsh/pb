@@ -1,6 +1,7 @@
 // ColumnRow.tsx — Expandable table row showing a column's read/write lineage.
 
 import { Show, For, createSignal } from "solid-js";
+import { ChevronDown, ChevronRight } from "../../utils/icons.js";
 import type { JSX } from "solid-js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
@@ -33,7 +34,7 @@ export function ColumnRow(props: ColumnRowProps): JSX.Element {
   return (
     <>
       <tr class="clickable" onClick={() => setExpanded(!expanded())}>
-        <td class="name-cell">{expanded() ? "▾" : "▸"} {col.column}</td>
+        <td class="name-cell">{expanded() ? <ChevronDown size={12} /> : <ChevronRight size={12} />} {col.column}</td>
         <td>{col.dw_readers.length} DW{col.dw_readers.length !== 1 ? "s" : ""}</td>
         <td>{col.ps_readers.length} PS read{col.ps_readers.length !== 1 ? "s" : ""}</td>
         <td>{col.ps_writers.length} PS write{col.ps_writers.length !== 1 ? "s" : ""}</td>

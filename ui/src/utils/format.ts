@@ -8,7 +8,3 @@ export function shortFile(f: string | null | undefined): string {
   if (!f) return "";
   return f.replace(/\\/g, "/").split("/").slice(-2).join("/");
 }
-
-export function chevron(expanded: boolean): string {
-  return expanded ? "▾" : "▸";
-}

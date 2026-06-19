@@ -1,6 +1,7 @@
 // Dashboard.tsx — Dashboard view.
 
 import { Show, For, createMemo, createResource } from "solid-js";
+import { AlertTriangle, ArrowRight } from "../../utils/icons.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
@@ -111,7 +112,7 @@ function CapabilityRow(props: CapabilityRowProps) {
       <span class="phase-health-label">{props.label}</span>
       <span class="phase-health-metric">{props.metric}</span>
       {props.route
-        ? <button class="phase-health-link" onClick={navigate}>View →</button>
+        ? <button class="phase-health-link" onClick={navigate}>View <ArrowRight size={13} style={{ "vertical-align": "middle" }} /></button>
         : <span class="phase-health-link muted">—</span>
       }
     </div>
@@ -183,10 +184,10 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
       {/* Parse error banner */}
       <Show when={(s()?.parse_error_count ?? 0) > 0}>
         <div class="parse-error-banner">
-          <span>⚠ {fmt(s()!.parse_error_count)} file{(s()!.parse_error_count ?? 1) === 1 ? "" : "s"} failed to parse</span>
+          <span><AlertTriangle size={13} style={{ "vertical-align": "middle" }} /> {fmt(s()!.parse_error_count)} file{(s()!.parse_error_count ?? 1) === 1 ? "" : "s"} failed to parse</span>
           <button class="parse-error-banner-link"
                   onClick={() => store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "errors" } } })}>
-            Diagnostics →
+            Diagnostics <ArrowRight size={13} style={{ "vertical-align": "middle" }} />
           </button>
         </div>
       </Show>

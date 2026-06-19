@@ -1,6 +1,7 @@
 // Queries.tsx — Ask surface: free-text NL/SQL input + predefined SQL query catalogue.
 
 import { Show, For, onMount, createSignal } from "solid-js";
+import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ArrowUpDown } from "../../utils/icons.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
@@ -179,7 +180,7 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
               style={{ "font-size": "11px" }}
               onClick={() => store.dispatch({ tag: "queries", action: { tag: "toggle-query-pane" } })}
             >
-              {q().queryPaneOpen ? `▲ Hide ${queryPaneLabel()}` : `▼ Show ${queryPaneLabel()}`}
+              {q().queryPaneOpen ? <><ChevronUp size={12} /> Hide {queryPaneLabel()}</> : <><ChevronDown size={12} /> Show {queryPaneLabel()}</>}
             </button>
           </div>
         </Show>
@@ -302,8 +303,11 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
                           onClick={() => store.dispatch({ tag: "queries", action: { tag: "sort", col: col.name } })}
                         >
                           {col.name}
-                          <Show when={q().sortCol === col.name}>
-                            {" "}{q().sortDir === "asc" ? "▲" : "▼"}
+                          {" "}
+                          <Show when={q().sortCol === col.name}
+                            fallback={<ArrowUpDown size={11} style={{ opacity: "0.3", "vertical-align": "middle" }} />}
+                          >
+                            {q().sortDir === "asc" ? <ChevronUp size={11} style={{ "vertical-align": "middle" }} /> : <ChevronDown size={11} style={{ "vertical-align": "middle" }} />}
                           </Show>
                         </th>
                       )}
@@ -327,13 +331,13 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
                   <button class="filter-pill"
                           disabled={q().page === 0}
                           onClick={() => store.dispatch({ tag: "queries", action: { tag: "set-page", page: q().page - 1 } })}>
-                    ← Prev
+                    <ChevronLeft size={13} /> Prev
                   </button>
                   <span>Page {q().page + 1} of {totalPages()}</span>
                   <button class="filter-pill"
                           disabled={q().page >= totalPages() - 1}
                           onClick={() => store.dispatch({ tag: "queries", action: { tag: "set-page", page: q().page + 1 } })}>
-                    Next →
+                    Next <ChevronRight size={13} />
                   </button>
                 </div>
               </Show>

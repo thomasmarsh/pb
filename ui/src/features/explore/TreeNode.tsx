@@ -1,14 +1,16 @@
 // TreeNode.tsx — Generic expandable tree node.
 
 import { Show, children, type ParentProps, type JSX } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import { useExploreStore } from "./ExploreContext.js";
-import { chevron } from "../../utils/format.js";
+import { ChevronRight, ChevronDown } from "../../utils/icons.js";
+import type { IconComp } from "../../utils/icons.js";
 
 export interface TreeNodeProps {
   nodeId: string;
   depth: number;
   badge?: { text: string; cls: string };
-  icon?: string;
+  icon?: IconComp;
   name: string;
   summary?: string;
   selected?: boolean;
@@ -35,8 +37,8 @@ export function TreeNode(props: ParentProps<TreeNodeProps>): JSX.Element {
          style={{ "padding-left": `${props.depth * 14}px` }}>
       <div class={`tree-node-row clickable${props.selected ? " selected" : ""}`}
            onClick={toggle}>
-        {hasChildren() && <span class="tree-chevron">{chevron(isExpanded())}</span>}
-        {props.icon && <span class="tree-icon">{props.icon}</span>}
+        {hasChildren() && <span class="tree-chevron">{isExpanded() ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</span>}
+        {props.icon && <span class="tree-icon"><Dynamic component={props.icon} size={14} /></span>}
         {props.badge && <span class={`badge ${props.badge.cls}`}>{props.badge.text}</span>}
         <span class="tree-name">{props.name}</span>
         {props.summary && <span class="tree-summary">{props.summary}</span>}

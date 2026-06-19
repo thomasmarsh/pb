@@ -2,6 +2,7 @@
 
 import { Show, For, createResource, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
+import { ArrowRight } from "../../utils/icons.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
@@ -142,7 +143,7 @@ export function TaintExplorer(props: { store: Store<AppState, AppAction> }): JSX
                       <span class="taint-type-label">{path.sink.type}</span>
                     </td>
                     <td>
-                      <span class="trace-nav-link">View →</span>
+                      <span class="trace-nav-link">View <ArrowRight size={12} style={{ "vertical-align": "middle" }} /></span>
                     </td>
                   </tr>
                 )}

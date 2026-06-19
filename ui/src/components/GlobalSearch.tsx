@@ -1,6 +1,8 @@
 // components/GlobalSearch.tsx — Keyboard-triggered search overlay.
 
 import { Show, For, createEffect } from "solid-js";
+import { Dynamic } from "solid-js/web";
+import { Search, Clock } from "../utils/icons.js";
 import type { JSX } from "solid-js";
 import type { Store } from "../core/store.js";
 import type { AppState } from "../features/app/state.js";
@@ -49,7 +51,7 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
   return (
     <ModalShell open={se().overlayOpen} onClose={close} label="Search">
       <div class="gs-input-row">
-        <span class="gs-input-icon" aria-hidden="true">🔍</span>
+        <span class="gs-input-icon" aria-hidden="true"><Search size={16} /></span>
         <input
           ref={inputRef}
           class="gs-input"
@@ -69,7 +71,7 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
               <button class="gs-recent-item" onClick={() => {
                 store.dispatch({ tag: "search", action: { tag: "overlay-term", term: q } });
               }}>
-                <span class="gs-recent-icon" aria-hidden="true">⏱</span>
+                <span class="gs-recent-icon" aria-hidden="true"><Clock size={14} /></span>
                 {q}
               </button>
             )}
@@ -95,7 +97,7 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
                   <button class="gs-result-item" onClick={() => navigateAndClose(() =>
                     store.dispatch({ tag: "objects", action: { tag: "select", name: o.name } })
                   )}>
-                    <span class="gs-result-icon" aria-hidden="true">{entityIcon(o.kind)}</span>
+                    <span class="gs-result-icon" aria-hidden="true"><Dynamic component={entityIcon(o.kind)} size={14} /></span>
                     <span class="gs-result-name">{o.name}</span>
                     <span class="gs-result-meta">{shortFile(o.file)}</span>
                   </button>
@@ -112,7 +114,7 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
                   <button class="gs-result-item" onClick={() => navigateAndClose(() =>
                     store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: p.object, procName: p.name } })
                   )}>
-                    <span class="gs-result-icon" aria-hidden="true">{entityIcon("procedure")}</span>
+                    <span class="gs-result-icon" aria-hidden="true"><Dynamic component={entityIcon("procedure")} size={14} /></span>
                     <span class="gs-result-name">{p.name}</span>
                     <span class="gs-result-meta">{p.object}</span>
                     <span class={`badge ${procBadge(p.proc_type)}`}>{p.proc_type}</span>
@@ -130,7 +132,7 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
                   <button class="gs-result-item" onClick={() => navigateAndClose(() =>
                     store.dispatch({ tag: "datawindows", action: { tag: "select", name: d.dw_name } })
                   )}>
-                    <span class="gs-result-icon" aria-hidden="true">{entityIcon("datawindow")}</span>
+                    <span class="gs-result-icon" aria-hidden="true"><Dynamic component={entityIcon("datawindow")} size={14} /></span>
                     <span class="gs-result-name">{d.dw_name}</span>
                     <span class="gs-result-meta">{d.control_type ?? ""}</span>
                   </button>
@@ -147,7 +149,7 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
                   <button class="gs-result-item" onClick={() => navigateAndClose(() =>
                     store.dispatch({ tag: "tables", action: { tag: "select", name: t.table_name } })
                   )}>
-                    <span class="gs-result-icon" aria-hidden="true">{entityIcon("table")}</span>
+                    <span class="gs-result-icon" aria-hidden="true"><Dynamic component={entityIcon("table")} size={14} /></span>
                     <span class="gs-result-name">{t.table_name}</span>
                   </button>
                 )}
