@@ -61,19 +61,19 @@ def _fetch_calls(conn: Conn):
 def store_resolved_types(conn: Conn, rows: list[ResolvedTypeRow]) -> None:
     conn.execute("DELETE FROM resolved_types")
     if rows:
-        conn.executemany(INSERT["resolved_types"], rows)
+        conn.executemany(INSERT["resolved_types"], [r._asdict() for r in rows])
 
 
 def store_resolved_calls(conn: Conn, rows: list[ResolvedCallRow]) -> None:
     conn.execute("DELETE FROM resolved_calls")
     if rows:
-        conn.executemany(INSERT["resolved_calls"], rows)
+        conn.executemany(INSERT["resolved_calls"], [r._asdict() for r in rows])
 
 
 def store_global_vars(conn: Conn, rows: list[GlobalVarRow]) -> None:
     conn.execute("DELETE FROM global_vars")
     if rows:
-        conn.executemany(INSERT["global_vars"], rows)
+        conn.executemany(INSERT["global_vars"], [r._asdict() for r in rows])
 
 
 def build_type_tables(conn: Conn) -> None:

@@ -95,9 +95,10 @@ def test_proc_row_length_matches_insert():
         "source_rendered": "",
     }
     row = _proc_row("test.sru", "function", block, [])
-    n_placeholders = INSERT["procedures"].count("?")
-    assert len(row) == n_placeholders, (
-        f"_proc_row returns {len(row)} values but INSERT has {n_placeholders} placeholders"
+    import re
+    n_params = len(re.findall(r'\$\w+', INSERT["procedures"]))
+    assert len(row) == n_params, (
+        f"_proc_row returns {len(row)} values but INSERT has {n_params} named params"
     )
 
 

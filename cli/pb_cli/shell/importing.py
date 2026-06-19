@@ -28,7 +28,7 @@ def run_from_jsonl_lines(lines: Iterable[str], db: str = "pb.duckdb", dialect: s
         for table in TABLES:
             data = rows[table]
             if data:
-                conn.executemany(INSERT[table], data)
+                conn.executemany(INSERT[table], [r._asdict() for r in data])
 
     total = sum(len(rows[t]) for t in TABLES)
     print(f"Indexed {total} rows into {db}", file=sys.stderr)
@@ -51,7 +51,7 @@ def import_batch(
             data = rows[table]
             for i in range(0, len(data), _CHUNK):
                 chunk = data[i : i + _CHUNK]
-                conn.executemany(INSERT[table], chunk)
+                conn.executemany(INSERT[table], [r._asdict() for r in chunk])
                 total += len(chunk)
                 if on_progress:
                     on_progress(len(chunk))
