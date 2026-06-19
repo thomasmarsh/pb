@@ -11,6 +11,7 @@ __pycache__
 *.pyc
 pb.duckdb
 .mimocode/
+mimocode.json
 node_modules
 cli/pb_cli/explorer/static/dist/
 ui/src/types/ast.generated.ts

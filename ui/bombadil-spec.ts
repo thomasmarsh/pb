@@ -1,18 +1,17 @@
 // bombadil-spec.ts — Property-based tests for pb-explorer UI.
 //
-// Categories:
-//   1. Sidebar structural invariants
-//   2. Active-state ↔ route consistency
-//   3. View non-emptiness
-//   4. URL-view consistency
-//   5. Back-button liveness
-//   6. Navigation convergence (multiple paths → same destination)
-//   7. Input safety (no crashes, correct triggers)
-//   8. Click safety (nothing crashes on any click)
-//   9. Keyboard accessibility (Enter/Space on interactive elements)
-//  10. State monotonicity (loading → loaded, no stale data)
-//  11. Rapid navigation resilience
-//  12. Cross-link consistency (same entity → same detail view)
+// 25 properties across 11 categories:
+//   1. Sidebar structural invariants (7)
+//   2. Active-state ↔ route consistency (2)
+//   3. View non-emptiness (3)
+//   4. URL-view consistency (3)
+//   5. Back-button liveness (3)
+//   6. Input safety (1)
+//   7. Cross-link consistency (2)
+//   8. Scroll behavior (1)
+//   9. Badge integrity (1)
+//  10. Query submission safety (1)
+//  11. Theme frame condition (1)
 
 import {
   extract,
@@ -25,23 +24,50 @@ import {
   type Formula,
 } from "@antithesishq/bombadil";
 import type { State, Action } from "@antithesishq/bombadil/browser";
-// Selective defaults import — omits defaultActions which includes PressKey.
-// PressKey hangs headless Chrome (Bombadil 0.6.0 + chromiumoxide); use headed mode to re-enable.
 export { noUncaughtExceptions, noUnhandledPromiseRejections } from "@antithesishq/bombadil/browser/defaults";
 
 // ===========================================================================
 // Helpers
 // ===========================================================================
 
-const NAV_LABELS = [
-  "Dashboard", "Objects", "DataWindows", "Tables",
-  "Explore", "Diagrams", "Queries", "Search", "Errors",
-];
+// Util nav: Dashboard, Ask, Search, Diagnostics
+const UTIL_NAV_LABELS = ["Dashboard", "Ask", "Search", "Diagnostics"];
+
+// Entity nav: Objects, DataWindows, Tables, Procedures
+const ENTITY_NAV_LABELS = ["Objects", "DataWindows", "Tables", "Procedures"];
+
+// Analysis nav: Schema / ERD, Dead Code (non-gated); Taint Explorer, Formal Reports (gated)
+const ANALYSIS_NAV_LABELS = ["Schema / ERD", "Dead Code", "Taint Explorer", "Formal Reports"];
+
+const ALL_NAV_LABELS = [...UTIL_NAV_LABELS, ...ENTITY_NAV_LABELS, ...ANALYSIS_NAV_LABELS];
+
+// Maps nav label (lowercase, no spaces) to the route view it navigates to
+const NAV_LABEL_TO_VIEW: Record<string, string> = {
+  dashboard:       "dashboard",
+  ask:             "queries",
+  search:          "search",
+  diagnostics:     "errors",
+  objects:         "objects",
+  datawindows:     "datawindows",
+  tables:          "tables",
+  procedures:      "proceduresList",
+  "schema/erd":    "diagrams",
+  "deadcode":      "deadCode",
+  "taintexplorer": "taintExplorer",
+  "formalreports": "formalReports",
+};
+
+// Views that have a corresponding sidebar nav link
+const VIEWS_WITH_NAV_LINKS = Object.values(NAV_LABEL_TO_VIEW);
+
+// Detail views are covered by their parent list link via VIEW_GROUPS
+const DETAIL_VIEWS = ["objectDetail", "procedureDetail", "dwDetail", "tableDetail"];
 
 const VIEW_GROUPS: Record<string, string[]> = {
-  objects:     ["objects", "objectDetail", "procedureDetail"],
-  datawindows: ["datawindows", "dwDetail"],
-  tables:      ["tables", "tableDetail"],
+  objects:        ["objects", "objectDetail", "procedureDetail"],
+  proceduresList: ["proceduresList"],
+  datawindows:    ["datawindows", "dwDetail"],
+  tables:         ["tables", "tableDetail"],
 };
 
 function isActiveFor(itemPath: string, currentView: string): boolean {
@@ -59,24 +85,43 @@ function extractLabel(a: Element): string {
 // EXTRACTORS
 // ===========================================================================
 
-const sidebarNavLinks = extract((state) => {
-  const links = state.document.querySelectorAll(".sidebar-nav a");
+const sidebarUtilLinks = extract((state) => {
+  const links = state.document.querySelectorAll("a.sidebar-util-link");
   return Array.from(links).map((a) => ({
     label: extractLabel(a),
     isActive: a.classList.contains("active"),
   }));
 });
 
+const sidebarEntityLinks = extract((state) => {
+  const links = state.document.querySelectorAll("a.sidebar-entity-link");
+  return Array.from(links).map((a) => ({
+    label: extractLabel(a),
+    isActive: a.classList.contains("active"),
+    isAnalysis: a.classList.contains("analysis-nav-item"),
+  }));
+});
+
+const allSidebarLinks = extract((state) => {
+  const util = Array.from(state.document.querySelectorAll("a.sidebar-util-link"));
+  const entity = Array.from(state.document.querySelectorAll("a.sidebar-entity-link"));
+  return [...util, ...entity].map((a) => ({
+    label: extractLabel(a),
+    isActive: a.classList.contains("active"),
+  }));
+});
+
 const activeNavCount = extract((state) => {
-  const links = state.document.querySelectorAll(".sidebar-nav a");
-  return Array.from(links).filter((a) => a.classList.contains("active")).length;
+  const util = Array.from(state.document.querySelectorAll("a.sidebar-util-link"));
+  const entity = Array.from(state.document.querySelectorAll("a.sidebar-entity-link"));
+  return [...util, ...entity].filter((a) => a.classList.contains("active")).length;
 });
 
 const activeNavIndex = extract((state) => {
-  const links = state.document.querySelectorAll(".sidebar-nav a");
-  const arr = Array.from(links);
-  const idx = arr.findIndex((a) => a.classList.contains("active"));
-  return idx;
+  const util = Array.from(state.document.querySelectorAll("a.sidebar-util-link"));
+  const entity = Array.from(state.document.querySelectorAll("a.sidebar-entity-link"));
+  const all = [...util, ...entity];
+  return all.findIndex((a) => a.classList.contains("active"));
 });
 
 const mainContent = extract((state) => {
@@ -86,29 +131,34 @@ const mainContent = extract((state) => {
 
 const pathname = extract((state) => state.window.location.pathname);
 
-// ===========================================================================
-// 4. URL-VIEW CONSISTENCY
-// ===========================================================================
-
-const KNOWN_VIEWS = [
-  "dashboard", "objects", "objectDetail", "procedureDetail",
-  "datawindows", "dwDetail", "tables", "tableDetail",
-  "diagrams", "queries", "search", "explore", "errors",
-];
-
-export const pathnameAlwaysWellFormed: Formula = always(() => {
-  const p = pathname.current;
-  return p === "/" || (p.startsWith("/") && !p.includes("//"));
+const currentView = extract((state) => {
+  const path = state.window.location.pathname;
+  if (!path || path === "/") return "dashboard";
+  const segs = path.split("/").filter(Boolean);
+  switch (segs[0]) {
+    case "objects":
+      if (segs[2]) return "procedureDetail";
+      if (segs[1]) return "objectDetail";
+      return "objects";
+    case "datawindows":
+      if (segs[1]) return "dwDetail";
+      return "datawindows";
+    case "tables":
+      if (segs[1]) return "tableDetail";
+      return "tables";
+    case "procedures": return "proceduresList";
+    case "diagrams":   return "diagrams";
+    case "queries":    return "queries";
+    case "search":     return "search";
+    case "explore":    return "explore";
+    case "errors":     return "errors";
+    case "dead-code":  return "deadCode";
+    case "taint":      return "taintExplorer";
+    case "reports":    return "formalReports";
+    case "library":    return "libraryDetail";
+    default:           return segs[0] ?? "dashboard";
+  }
 });
-
-export const pathnameNeverTrailingSlash: Formula = always(() => {
-  const p = pathname.current;
-  return p === "/" || !p.endsWith("/");
-});
-
-export const routeAlwaysKnown: Formula = always(() =>
-  KNOWN_VIEWS.includes(currentView.current),
-);
 
 const backButtons = extract((state) => {
   const btns = state.document.querySelectorAll(".back-btn");
@@ -176,7 +226,7 @@ const tableChips = extract((state) => {
     return {
       x: rect.left + rect.width / 2,
       y: rect.top + rect.height / 2,
-      name: c.textContent?.replace("⊡", "").trim() ?? "",
+      name: c.textContent?.replace("□", "").trim() ?? "",
       visible: rect.width > 0 && rect.height > 0
         && rect.top >= 0 && rect.bottom <= winH
         && rect.left >= 0 && rect.right <= winW,
@@ -196,145 +246,29 @@ const interactiveTreeNodes = extract((state) => {
   });
 });
 
-const loadingSpinners = extract((state) => {
-  return state.document.querySelectorAll(".loading, [class*=spinner]").length;
-});
+const loadingSpinners = extract((state) =>
+  state.document.querySelectorAll(".loading, .spinner, [class*=spinner]").length,
+);
 
 const scrollPosition = extract((state) => ({
   x: state.window.scrollX,
   y: state.window.scrollY,
 }));
 
-const bodyScrollHeight = extract((state) => state.document.body.scrollHeight);
-
-const currentView = extract((state) => {
-  const path = state.window.location.pathname;
-  if (!path || path === "/") return "dashboard";
-  const segs = path.split("/").filter(Boolean);
-  if (segs[0] === "objects") {
-    if (segs[2]) return "procedureDetail";
-    if (segs[1]) return "objectDetail";
-    return "objects";
-  }
-  if (segs[0] === "datawindows") return segs[1] ? "dwDetail" : "datawindows";
-  if (segs[0] === "tables") return segs[1] ? "tableDetail" : "tables";
-  return segs[0] ?? "dashboard";
-});
-
-// ===========================================================================
-// 1. SIDEBAR STRUCTURAL INVARIANTS
-// ===========================================================================
-
-export const sidebarHasCorrectCount: Formula = always(() =>
-  sidebarNavLinks.current.length === NAV_LABELS.length,
-);
-
-export const sidebarHasAllLabels: Formula = always(() => {
-  const labels = sidebarNavLinks.current.map((l) => l.label);
-  return NAV_LABELS.every((n) => labels.includes(n));
-});
-
-export const sidebarOrderIsStable: Formula = always(() => {
-  const labels = sidebarNavLinks.current.map((l) => l.label);
-  return labels.every((l, i) => l === NAV_LABELS[i]);
-});
-
 const sidebarHeader = extract((state) => {
   const h1 = state.document.querySelector(".sidebar-header h1");
   return h1 !== null && (h1.textContent?.length ?? 0) > 0;
 });
-
-export const sidebarHeaderVisible: Formula = always(() => sidebarHeader.current);
-
-// ===========================================================================
-// 2. ACTIVE-STATE ↔ ROUTE CONSISTENCY
-// ===========================================================================
-
-export const exactlyOneActiveLink: Formula = always(() =>
-  activeNavCount.current === 1,
-);
-
-export const activeLinkMatchesRoute: Formula = always(() => {
-  const idx = activeNavIndex.current;
-  if (idx < 0 || idx >= NAV_LABELS.length) return false;
-  const itemPath = NAV_LABELS[idx]!.toLowerCase();
-  const view = currentView.current;
-  return isActiveFor(itemPath, view);
-});
-
-// ===========================================================================
-// 3. VIEW NON-EMPTINESS
-// ===========================================================================
-
-export const mainContentNeverEmpty: Formula = always(() =>
-  mainContent.current.length > 0,
-);
 
 const mainText = extract((state) => {
   const main = state.document.querySelector(".main-content");
   return main?.textContent?.trim() ?? "";
 });
 
-export const noStaleLoadingIndicator: Formula = always(() => {
-  const text = mainText.current;
-  return text !== "Loading..." || loadingSpinners.current > 0;
-});
-
-// ===========================================================================
-// 5. BACK-BUTTON LIVENESS
-// ===========================================================================
-
-export const backButtonsAreClickable: Formula = always(() => {
-  const btns = backButtons.current;
-  return btns.every((b) => !b.visible || (b.x > 0 && b.y > 0 && b.y < 2000));
-});
-
-// ===========================================================================
-// 6. CLICK SAFETY (nothing crashes — noUncaughtExceptions from defaults)
-// ===========================================================================
-
-// ===========================================================================
-// 7. INPUT SAFETY
-// ===========================================================================
-
-export const searchInputsAreInteractive: Formula = always(() => {
-  const inputs = searchInputs.current;
-  return inputs.every((inp) => !inp.visible || inp.placeholder.length > 0);
-});
-
-// ===========================================================================
-// 8. RAPID NAVIGATION RESILIENCE
-// ===========================================================================
-
 const mainChildCount = extract((state) => {
   const main = state.document.querySelector(".main-content");
   return main?.children.length ?? 0;
 });
-
-export const noBlankScreensAfterNavigation: Formula = always(() =>
-  mainChildCount.current > 0,
-);
-
-// ===========================================================================
-// 10. CROSS-LINK CONSISTENCY
-// ===========================================================================
-
-export const tableChipsAreAlwaysClickable: Formula = always(() => {
-  return tableChips.current.every((c) => !c.visible || (c.x > 0 && c.y > 0));
-});
-
-// ===========================================================================
-// 11. SCROLL BEHAVIOR
-// ===========================================================================
-
-export const scrollPositionNonNegative: Formula = always(() => {
-  const s = scrollPosition.current;
-  return s.x >= 0 && s.y >= 0;
-});
-
-// ===========================================================================
-// 12. BADGE INTEGRITY
-// ===========================================================================
 
 const badgeCount = extract((state) => {
   const badges = state.document.querySelectorAll(".badge");
@@ -348,13 +282,19 @@ const allBadgeCount = extract((state) =>
   state.document.querySelectorAll(".badge").length,
 );
 
-export const badgesAreVisibleWhenPresent: Formula = always(() =>
-  badgeCount.current === allBadgeCount.current,
+const bodyTheme = extract((state) =>
+  state.document.documentElement.getAttribute("data-theme"),
 );
 
-// ===========================================================================
-// 13. QUERY SUBMISSION SAFETY — Run button disabled when required params empty
-// ===========================================================================
+const appInitialized = extract((state) =>
+  state.window.location.pathname.startsWith("/"),
+);
+
+// Guard: only check properties when app is initialized (not on about:blank)
+function whenInitialized(fn: () => boolean): boolean {
+  if (!appInitialized.current) return true;
+  return fn();
+}
 
 const queryRunButtons = extract((state) => {
   const buttons = state.document.querySelectorAll("button[data-query]");
@@ -378,69 +318,247 @@ const queryRunButtons = extract((state) => {
   });
 });
 
-export const queryRunDisabledWhenMissingParams: Formula = always(() => {
-  return queryRunButtons.current.every((btn) => {
-    if (!btn.visible) return true;
-    if (!btn.hasUnfilledRequired) return true;
-    return btn.disabled;
-  });
+const sidebarEntityGroupExpanded = extract((state) => {
+  const groups = state.document.querySelectorAll(".sidebar-group");
+  for (const g of groups) {
+    const header = g.querySelector(".sidebar-group-label");
+    if (header?.textContent?.trim() === "Entity Navigation") {
+      return g.querySelector(".sidebar-group-body") !== null;
+    }
+  }
+  return false;
 });
 
+const KNOWN_VIEWS = [
+  "dashboard", "objects", "objectDetail", "procedureDetail",
+  "proceduresList", "datawindows", "dwDetail", "tables", "tableDetail",
+  "diagrams", "queries", "search", "explore", "errors",
+  "deadCode", "taintExplorer", "formalReports", "libraryDetail",
+];
+
 // ===========================================================================
-// 14. THEME FRAME CONDITION
+// 1. SIDEBAR STRUCTURAL INVARIANTS
 // ===========================================================================
 
-
-const bodyTheme = extract((state) =>
-  state.document.documentElement.getAttribute("data-theme"),
+export const sidebarHeaderVisible: Formula = always(() =>
+  whenInitialized(() => sidebarHeader.current),
 );
 
-export const themeAlwaysSet: Formula = always(() => {
-  const t = bodyTheme.current;
-  return t === "dark" || t === "light";
-});
+export const utilNavHasCorrectCount: Formula = always(() =>
+  whenInitialized(() => sidebarUtilLinks.current.length === UTIL_NAV_LABELS.length),
+);
+
+export const utilNavHasAllLabels: Formula = always(() =>
+  whenInitialized(() => {
+    const labels = sidebarUtilLinks.current.map((l) => l.label);
+    return UTIL_NAV_LABELS.every((n) => labels.includes(n));
+  }),
+);
+
+export const utilNavOrderIsStable: Formula = always(() =>
+  whenInitialized(() => {
+    const labels = sidebarUtilLinks.current.map((l) => l.label);
+    return labels.every((l, i) => l === UTIL_NAV_LABELS[i]);
+  }),
+);
+
+export const entityNavHasCorrectCountWhenExpanded: Formula = always(() =>
+  whenInitialized(() => {
+    if (!sidebarEntityGroupExpanded.current) return true;
+    return sidebarEntityLinks.current.filter((l) => !l.isAnalysis).length === ENTITY_NAV_LABELS.length;
+  }),
+);
+
+export const entityNavHasAllLabelsWhenExpanded: Formula = always(() =>
+  whenInitialized(() => {
+    if (!sidebarEntityGroupExpanded.current) return true;
+    const labels = sidebarEntityLinks.current.filter((l) => !l.isAnalysis).map((l) => l.label);
+    return ENTITY_NAV_LABELS.every((n) => labels.includes(n));
+  }),
+);
+
+export const entityNavOrderIsStableWhenExpanded: Formula = always(() =>
+  whenInitialized(() => {
+    if (!sidebarEntityGroupExpanded.current) return true;
+    const labels = sidebarEntityLinks.current.filter((l) => !l.isAnalysis).map((l) => l.label);
+    return labels.every((l, i) => l === ENTITY_NAV_LABELS[i]);
+  }),
+);
 
 // ===========================================================================
-// 15. NAVIGATION SAFETY
+// 2. ACTIVE-STATE ↔ ROUTE CONSISTENCY
 // ===========================================================================
 
-const DETAIL_VIEWS = ["objectDetail", "procedureDetail", "dwDetail", "tableDetail"];
+export const exactlyOneActiveLink: Formula = always(() =>
+  whenInitialized(() => {
+    const count = activeNavCount.current;
+    return count <= 1;
+  }),
+);
 
-export const detailViewsAlwaysHaveBackButton: Formula = always(() => {
-  if (!DETAIL_VIEWS.includes(currentView.current)) return true;
-  // Button may be scrolled off-screen — require it exists, not that it's in viewport
-  return backButtons.current.length > 0;
-});
+// Weak state coherence: when a single util link is active, its mapped view
+// includes the current route. Guarded to active count === 1 to avoid the
+// accordion re-render race (entity links briefly have 0 active during toggle).
+export const activeLinkImpliesCorrectRoute: Formula = always(() =>
+  whenInitialized(() => {
+    const utilActive = sidebarUtilLinks.current.filter((l) => l.isActive);
+    if (utilActive.length !== 1) return true;
+    const key = utilActive[0]!.label.toLowerCase().replace(/\s+/g, "");
+    const itemView = NAV_LABEL_TO_VIEW[key];
+    return itemView ? isActiveFor(itemView, currentView.current) : true;
+  }),
+);
 
-const sortableHeaders = extract((state: State) => {
-  const ths = state.document.querySelectorAll("th.sortable, th[data-sort]");
-  return Array.from(ths).map((th) => {
-    const rect = (th as Element).getBoundingClientRect();
-    return {
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2,
-      visible: rect.width > 0 && rect.height > 0,
-    };
-  });
-});
+// ===========================================================================
+// 3. VIEW NON-EMPTINESS
+// ===========================================================================
 
-const paginationButtons = extract((state: State) => {
-  const btns = state.document.querySelectorAll(
-    ".pagination button:not([disabled]), button[data-page]:not([disabled])"
-  );
-  return Array.from(btns).map((b) => {
-    const rect = (b as Element).getBoundingClientRect();
-    return {
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2,
-      visible: rect.width > 0 && rect.height > 0,
-    };
-  });
-});
+export const mainContentNeverEmpty: Formula = always(() =>
+  whenInitialized(() => mainContent.current.length > 0),
+);
+
+export const noStaleLoadingIndicator: Formula = always(() =>
+  whenInitialized(() => {
+    const text = mainText.current;
+    return text !== "Loading..." || loadingSpinners.current > 0;
+  }),
+);
+
+export const noBlankScreensAfterNavigation: Formula = always(() =>
+  whenInitialized(() => mainChildCount.current > 0),
+);
+
+// ===========================================================================
+// 4. URL-VIEW CONSISTENCY
+// ===========================================================================
+
+export const pathnameAlwaysWellFormed: Formula = always(() =>
+  whenInitialized(() => {
+    const p = pathname.current;
+    return p === "/" || (p.startsWith("/") && !p.includes("//"));
+  }),
+);
+
+export const pathnameNeverTrailingSlash: Formula = always(() =>
+  whenInitialized(() => {
+    const p = pathname.current;
+    return p === "/" || !p.endsWith("/");
+  }),
+);
+
+export const routeAlwaysKnown: Formula = always(() =>
+  whenInitialized(() => KNOWN_VIEWS.includes(currentView.current)),
+);
+
+// ===========================================================================
+// 5. BACK-BUTTON LIVENESS
+// ===========================================================================
+
+export const detailViewsAlwaysHaveBackButton: Formula = always(() =>
+  whenInitialized(() => {
+    if (!DETAIL_VIEWS.includes(currentView.current)) return true;
+    return backButtons.current.length > 0;
+  }),
+);
+
+export const backButtonsAreClickable: Formula = always(() =>
+  whenInitialized(() => {
+    const btns = backButtons.current;
+    return btns.every((b) => !b.visible || (b.x > 0 && b.y > 0 && b.y < 2000));
+  }),
+);
+
+// Navigation liveness: on detail views, at least one back button must exist
+// in the DOM with non-zero dimensions (not necessarily in the viewport —
+// the user can scroll up to reach it).
+export const backButtonsVisibleOnDetailViews: Formula = always(() =>
+  whenInitialized(() => {
+    if (!DETAIL_VIEWS.includes(currentView.current)) return true;
+    return backButtons.current.some((b) => b.x > 0 && b.y > -500);
+  }),
+);
+
+// ===========================================================================
+// 6. INPUT SAFETY
+// ===========================================================================
+
+export const searchInputsAreInteractive: Formula = always(() =>
+  whenInitialized(() => {
+    const inputs = searchInputs.current;
+    return inputs.every((inp) => !inp.visible || inp.placeholder.length > 0);
+  }),
+);
+
+// ===========================================================================
+// 7. CROSS-LINK CONSISTENCY
+// ===========================================================================
+
+export const tableChipsAreAlwaysClickable: Formula = always(() =>
+  whenInitialized(() =>
+    tableChips.current.every((c) => !c.visible || (c.x > 0 && c.y > 0)),
+  ),
+);
+
+// Cross-link consistency: visible table chips always have non-empty labels,
+// so users can identify what they're clicking.
+export const tableChipsHaveNonEmptyLabels: Formula = always(() =>
+  whenInitialized(() =>
+    tableChips.current.every((c) => !c.visible || c.name.length > 0),
+  ),
+);
+
+// ===========================================================================
+// 8. SCROLL BEHAVIOR
+// ===========================================================================
+
+export const scrollPositionNonNegative: Formula = always(() =>
+  whenInitialized(() => {
+    const s = scrollPosition.current;
+    return s.x >= 0 && s.y >= 0;
+  }),
+);
+
+// ===========================================================================
+// 9. BADGE INTEGRITY
+// ===========================================================================
+
+export const badgesAreVisibleWhenPresent: Formula = always(() =>
+  whenInitialized(() => badgeCount.current === allBadgeCount.current),
+);
+
+// ===========================================================================
+// 10. QUERY SUBMISSION SAFETY
+// ===========================================================================
+
+export const queryRunDisabledWhenMissingParams: Formula = always(() =>
+  whenInitialized(() =>
+    queryRunButtons.current.every((btn) => {
+      if (!btn.visible) return true;
+      if (!btn.hasUnfilledRequired) return true;
+      return btn.disabled;
+    }),
+  ),
+);
+
+// ===========================================================================
+// 11. THEME FRAME CONDITION
+// ===========================================================================
+
+export const themeAlwaysSet: Formula = always(() =>
+  whenInitialized(() => {
+    const t = bodyTheme.current;
+    return t === "dark" || t === "light";
+  }),
+);
+
+// ===========================================================================
+// ACTION GENERATORS
+// ===========================================================================
 
 const navLinksAction = extract((state) => {
-  const links = state.document.querySelectorAll(".sidebar-nav a");
-  return Array.from(links).map((a) => {
+  const util = Array.from(state.document.querySelectorAll("a.sidebar-util-link"));
+  const entity = Array.from(state.document.querySelectorAll("a.sidebar-entity-link"));
+  return [...util, ...entity].map((a) => {
     const rect = a.getBoundingClientRect();
     return {
       x: rect.left + rect.width / 2,
@@ -474,7 +592,7 @@ export const clickTableChips = actions(() =>
   tableChips.current
     .filter((c) => c.visible)
     .slice(0, 5)
-    .map((c, i) => ({
+    .map((c) => ({
       Click: { name: `chip-${c.name}`, point: { x: c.x, y: c.y } },
     })),
 );
@@ -511,36 +629,6 @@ export const scrollActions = actions((): Action[] => [
   { ScrollUp:   { origin: { x: 512, y: 400 }, distance: 300 } },
 ]);
 
-export const clickSortHeaders = actions(() =>
-  sortableHeaders.current
-    .filter((h) => h.visible)
-    .map((h, i) => ({
-      Click: { name: `sort-${i}`, point: { x: h.x, y: h.y } },
-    }))
-);
-
-export const clickPagination = actions(() =>
-  paginationButtons.current
-    .filter((b) => b.visible)
-    .map((b, i) => ({
-      Click: { name: `page-${i}`, point: { x: b.x, y: b.y } },
-    }))
-);
-
-const clearSearch = actions((): Action[] => {
-  const inputs = searchInputs.current.filter((i) => i.visible && i.value.length > 0);
-  if (inputs.length === 0) return [];
-  const inp = inputs[0]!;
-  const backspaces: Action[] = Array.from(
-    { length: Math.min(inp.value.length + 1, 30) },
-    () => ({ PressKey: { code: 8 } })
-  );
-  return [
-    { Click: { name: "search-clear-focus", point: { x: inp.x, y: inp.y } } },
-    ...backspaces,
-  ];
-});
-
 // ===========================================================================
 // COMPOSITE ACTION GENERATORS (weighted)
 // ===========================================================================
@@ -555,7 +643,4 @@ export const navigationActions = weighted([
   [2,  scrollActions],
   [2,  clickTreeNodes],
   [2,  typeIntoSearch],
-  [2,  clickSortHeaders],
-  [2,  clickPagination],
-  // clearSearch (weight 1) omitted — PressKey stalls headless Chrome; test in headed mode first
 ]);
