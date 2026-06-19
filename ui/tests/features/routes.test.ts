@@ -174,4 +174,38 @@ describe("print", () => {
     const [pathname, search] = printed.split("?");
     expect(parse(pathname!, search ? `?${search}` : undefined)).toEqual(route);
   });
+
+  it('taintPathView maps to "/taint/{id}"', () => {
+    expect(print({ view: "taintPathView", pathId: 7 })).toBe("/taint/7");
+  });
+
+  it('round-trip: taintPathView preserves pathId', () => {
+    const route = { view: "taintPathView" as const, pathId: 13 };
+    expect(parse(print(route))).toEqual(route);
+  });
+
+  it('sliceView maps to "/slice/{object}/{proc}/{line}?dir=backward"', () => {
+    const route = { view: "sliceView" as const, object: "w_pay", proc: "f_proc", line: 42, direction: "backward" as const };
+    expect(print(route)).toBe("/slice/w_pay/f_proc/42?dir=backward");
+  });
+
+  it('round-trip: sliceView backward preserves all fields', () => {
+    const route = { view: "sliceView" as const, object: "w_pay", proc: "f_proc", line: 42, direction: "backward" as const };
+    const printed = print(route);
+    const [pathname, search] = printed.split("?");
+    expect(parse(pathname!, search ? `?${search}` : undefined)).toEqual(route);
+  });
+
+  it('round-trip: sliceView forward preserves direction', () => {
+    const route = { view: "sliceView" as const, object: "w_x", proc: "f_y", line: 10, direction: "forward" as const };
+    const printed = print(route);
+    const [pathname, search] = printed.split("?");
+    expect(parse(pathname!, search ? `?${search}` : undefined)).toEqual(route);
+  });
+
+  it('sliceView URL-encodes object and proc names', () => {
+    const route = { view: "sliceView" as const, object: "w my obj", proc: "f my proc", line: 1, direction: "backward" as const };
+    expect(print(route)).toContain("w%20my%20obj");
+    expect(print(route)).toContain("f%20my%20proc");
+  });
 });

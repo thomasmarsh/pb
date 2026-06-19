@@ -34,6 +34,12 @@ export function print(route: Route): string {
     case "errors":           return "/errors";
     case "deadCode":         return "/dead-code";
     case "taintExplorer":    return "/taint";
+    case "taintPathView":    return "/taint/" + route.pathId;
+    case "sliceView":
+      return "/slice/" + encodeURIComponent(route.object)
+             + "/" + encodeURIComponent(route.proc)
+             + "/" + route.line
+             + "?dir=" + route.direction;
     case "formalReports":    return "/reports";
     case "cfgDiagram":
       return "/analysis/cfg/" + encodeURIComponent(route.object)
@@ -77,7 +83,26 @@ export function parse(path: string, search?: string): Route {
     case "explore":    return { view: "explore" };
     case "errors":     return { view: "errors" };
     case "dead-code":    return { view: "deadCode" };
-    case "taint":        return { view: "taintExplorer" };
+    case "taint": {
+      if (segs[1] && /^\d+$/.test(segs[1])) {
+        return { view: "taintPathView", pathId: parseInt(segs[1], 10) };
+      }
+      return { view: "taintExplorer" };
+    }
+    case "slice":
+      if (segs[1] && segs[2] && segs[3]) {
+        const raw = search ? (search.startsWith("?") ? search.slice(1) : search) : "";
+        const sp = new URLSearchParams(raw);
+        const dir = sp.get("dir") === "forward" ? "forward" : "backward";
+        return {
+          view: "sliceView",
+          object: decodeURIComponent(segs[1]),
+          proc: decodeURIComponent(segs[2]),
+          line: parseInt(segs[3], 10),
+          direction: dir,
+        };
+      }
+      return { view: "dashboard" };
     case "reports":      return { view: "formalReports" };
     case "procedures":   return { view: "proceduresList" };
     case "analysis":

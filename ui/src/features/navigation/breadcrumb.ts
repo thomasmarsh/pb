@@ -72,6 +72,20 @@ export function crumbsForRoute(route: Route): BreadcrumbSegment[] {
     case "taintExplorer":
       return [{ icon: ICONS.analysis, label: "Taint Explorer", route }];
 
+    case "taintPathView":
+      return [
+        { icon: ICONS.analysis, label: "Taint Explorer", route: { view: "taintExplorer" } },
+        { icon: ICONS.analysis, label: `Path ${route.pathId}`, route },
+      ];
+
+    case "sliceView":
+      return [
+        { icon: ICONS.list,      label: "Objects",         route: { view: "objects" } },
+        { icon: ICONS.object,    label: route.object,      route: { view: "objectDetail", name: route.object } },
+        { icon: ICONS.procedure, label: route.proc,        route: { view: "procedureDetail", name: route.object, proc: route.proc } },
+        { icon: ICONS.analysis,  label: `${route.direction === "backward" ? "Backward" : "Forward"} Slice (line ${route.line})`, route },
+      ];
+
     case "formalReports":
       return [{ icon: ICONS.analysis, label: "Formal Reports", route }];
 

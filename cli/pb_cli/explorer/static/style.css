@@ -1703,3 +1703,187 @@ kbd.kbd {
 /* CFG node state keyframes for click highlight */
 .cfg-node-selected polygon,
 .cfg-node-selected ellipse { stroke-width: 2.5 !important; }
+
+/* ── LinearTrace ──────────────────────────────────────────────────────────── */
+
+.linear-trace { display: flex; flex-direction: column; gap: 0; }
+
+.linear-trace-layout {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+}
+
+.linear-trace-steps { flex: 1; min-width: 0; }
+
+/* Path navigation */
+.trace-path-nav {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 12px;
+    font-size: 13px; color: var(--text-muted);
+}
+.trace-path-counter { font-size: 12px; }
+
+/* Step row */
+.linear-trace-step {
+    display: flex;
+    gap: 0;
+    margin-bottom: 2px;
+}
+.trace-step-left-border {
+    width: 2px;
+    background: var(--border);
+    border-radius: 1px;
+    flex-shrink: 0;
+    margin-right: 10px;
+}
+.trace-step-body {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 0 8px 0;
+    border-bottom: 1px solid var(--border);
+}
+.linear-trace-step:last-child .trace-step-body { border-bottom: none; }
+
+.trace-step-header {
+    display: flex; align-items: center; gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+}
+
+/* Step number */
+.trace-step-num {
+    font-size: 11px; color: var(--text-muted);
+    min-width: 18px; text-align: right;
+    flex-shrink: 0;
+}
+
+/* Step type badges */
+.step-badge {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.4px;
+    padding: 1px 5px; border-radius: 3px;
+    border: 1px solid currentColor;
+    flex-shrink: 0;
+}
+.step-badge-source    { color: var(--accent); border-color: var(--accent); }
+.step-badge-transform { color: var(--text-muted); border-color: var(--border); }
+.step-badge-sink      { color: var(--red); border-color: var(--red); }
+.step-badge-affected  { color: var(--purple); border-color: var(--purple); }
+.step-badge-affecting { color: var(--orange); border-color: var(--orange); }
+
+/* Proc name link */
+.trace-step-proc { font-family: inherit; font-size: 13px; color: var(--accent); }
+.trace-step-proc:hover { text-decoration: underline; }
+
+.trace-step-line { font-size: 13px; color: var(--text-muted); }
+
+/* Statement text */
+.trace-step-stmt {
+    font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+    font-size: 12px; color: var(--text-secondary);
+    margin-bottom: 2px;
+    white-space: pre-wrap; word-break: break-all;
+}
+
+/* Annotation */
+.trace-step-annotation {
+    font-size: 12px; color: var(--text-muted); font-style: italic;
+}
+
+/* Collapse toggle */
+.trace-collapse-toggle {
+    padding: 6px 12px 6px 12px;
+    font-size: 12px; color: var(--text-muted);
+    cursor: pointer;
+    border-left: 2px solid var(--border);
+    margin: 2px 0;
+    transition: color 0.1s;
+}
+.trace-collapse-toggle:hover { color: var(--text-secondary); }
+
+/* Mini call graph panel */
+.trace-callgraph {
+    width: 200px; flex-shrink: 0;
+    padding: 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+}
+.trace-callgraph-label { margin-bottom: 8px; }
+.trace-callgraph-chain {
+    display: flex; flex-direction: column; gap: 4px;
+}
+.trace-callgraph-arrow {
+    color: var(--text-muted); font-size: 11px;
+    padding-left: 4px;
+}
+.trace-callgraph-proc {
+    font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+    font-size: 11px; color: var(--accent);
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; text-align: left;
+}
+.trace-callgraph-proc:hover { text-decoration: underline; }
+
+/* ── TaintExplorer ────────────────────────────────────────────────────────── */
+
+.taint-filters {
+    display: flex; gap: 16px; align-items: flex-end;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+.taint-filter-label {
+    display: flex; flex-direction: column; gap: 4px;
+    font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.5px;
+}
+.taint-filter-select {
+    font-size: 13px; color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+}
+.taint-filter-select:focus { outline: 1px solid var(--accent); }
+
+.taint-path-table { width: 100%; }
+.taint-endpoint { font-size: 12px; }
+.taint-proc {
+    font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+    color: var(--accent);
+}
+.taint-line { color: var(--text-muted); }
+.taint-type-label {
+    font-size: 10px; color: var(--text-muted);
+    margin-left: 4px;
+    font-style: italic;
+}
+
+.taint-empty {
+    padding: 16px 0;
+    font-size: 13px; color: var(--text-muted);
+    line-height: 1.6;
+}
+
+.trace-nav-link { color: var(--accent); font-size: 12px; }
+
+/* Taint path meta card in TaintPathView */
+.taint-path-meta { margin-bottom: 12px; }
+.taint-meta-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 4px 0;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+}
+.taint-meta-row:last-child { border-bottom: none; }
+.taint-meta-val { color: var(--text-secondary); }
+
+/* Severity badges */
+.badge-severity-critical { color: var(--red);    border-color: var(--red);    background: transparent; }
+.badge-severity-high     { color: var(--phase-p3); border-color: var(--phase-p3); background: transparent; }
+.badge-severity-medium   { color: var(--yellow); border-color: var(--yellow); background: transparent; }
+.badge-severity-low      { color: var(--text-muted); border-color: var(--border); background: transparent; }
+.badge-muted             { color: var(--text-muted); border-color: var(--border); background: transparent; }

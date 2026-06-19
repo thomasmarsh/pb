@@ -331,6 +331,60 @@ export interface DeadCodeResponse {
   total: number;
 }
 
+// ── Taint analysis ───────────────────────────────────────────────────────────
+
+export interface TaintEndpoint {
+  object: string;
+  proc: string;
+  var: string;
+  line: number | null;
+  type: string;
+}
+
+export interface TaintPathSummary {
+  id: number;
+  severity: string;
+  category: string;
+  source: TaintEndpoint;
+  sink: TaintEndpoint & { severity: string };
+}
+
+export interface TaintStep {
+  object: string;
+  proc_name: string;
+  line: number | null;
+  var_name: string;
+  step_kind: string; // 'source' | 'def' | 'arg' | 'return' | 'global' | 'sink'
+  description: string;
+}
+
+export interface TaintPathDetail extends TaintPathSummary {
+  steps: TaintStep[];
+}
+
+export interface TaintPathsResponse {
+  paths: TaintPathSummary[];
+  total: number;
+}
+
+// ── Program slicing ──────────────────────────────────────────────────────────
+
+export interface SliceStep {
+  object: string;
+  proc: string;
+  line: number;
+  var: string;
+  kind: string; // 'definition' | 'use' | 'arg_pass' | 'return' | 'global_read'
+  text: string;
+}
+
+export interface SliceResult {
+  origin: { object: string; proc: string; line: number; var: string | null };
+  direction: "backward" | "forward";
+  steps: SliceStep[];
+  procedures_traversed: string[];
+}
+
 export interface ExploreProcDetail {
   ast: Located<BodyStmt>[] | null;
   source_rendered: string;

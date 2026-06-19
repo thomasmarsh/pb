@@ -18,6 +18,8 @@ export type Route =
   | { view: "libraryDetail"; name: string }
   | { view: "deadCode" }
   | { view: "taintExplorer" }
+  | { view: "taintPathView"; pathId: number }
+  | { view: "sliceView"; object: string; proc: string; line: number; direction: "backward" | "forward" }
   | { view: "formalReports" }
   | { view: "cfgDiagram"; object: string; proc: string };
 

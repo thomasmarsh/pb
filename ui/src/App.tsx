@@ -26,6 +26,8 @@ import { Errors } from "./features/errors/Errors.js";
 import { LibraryDetail } from "./features/library/LibraryDetail.js";
 import { DeadCode } from "./features/analysis/DeadCode.js";
 import { TaintExplorer } from "./features/analysis/TaintExplorer.js";
+import { TaintPathView } from "./features/analysis/TaintPathView.js";
+import { SliceView } from "./features/analysis/SliceView.js";
 import { FormalReports } from "./features/analysis/FormalReports.js";
 import { CFGDiagram } from "./features/analysis/CFGDiagram.js";
 import { initViewFromUrl, setupPopstateHandler } from "./features/navigation/url-sync.js";
@@ -63,6 +65,8 @@ function ViewRouter(props: { store: Store<AppState, AppAction> }): JSX.Element {
       <Show when={snap().nav.route.view === "libraryDetail"}><LibraryDetail store={props.store} /></Show>
       <Show when={snap().nav.route.view === "deadCode"}><DeadCode store={props.store} /></Show>
       <Show when={snap().nav.route.view === "taintExplorer"}><TaintExplorer store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "taintPathView"}><TaintPathView store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "sliceView"}><SliceView store={props.store} /></Show>
       <Show when={snap().nav.route.view === "formalReports"}><FormalReports store={props.store} /></Show>
       <Show when={snap().nav.route.view === "cfgDiagram"}><CFGDiagram store={props.store} /></Show>
     </Layout>
