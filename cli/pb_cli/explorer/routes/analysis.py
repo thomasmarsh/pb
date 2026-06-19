@@ -9,58 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from pb_cli.core.slicing import backward_slice, build_proc_def_use, forward_slice
 from pb_cli.explorer.routes.dependencies import get_db, rows
+from pb_cli.explorer.services.analysis import get_dead_code
 
 router = APIRouter()
 
 
 @router.get("/api/analysis/dead-code")
 async def dead_code(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
-    # Reachability from runtime entry points (event/on handlers) via call graph.
-    # Three arms in call_edges:
-    #   same-object: calls.object + to_name matched against procedures in same object
-    #   cross-object: resolved_calls rows that have target_object/target_proc filled
-    #   override: if B.m is reachable and C inherits B and defines m, C.m is reachable
-    # Remaining false negatives: cross-object calls with no target_object in resolved_calls
-    # (unresolved virtual dispatch where the receiver type is unknown).
-    items = rows(
-        conn.execute("""
-            WITH RECURSIVE
-            -- Materialise all directed call edges before the recursion so that
-            -- the recursive CTE only needs a single self-reference.
-            call_edges(caller_obj, caller_proc, callee_obj, callee_proc) AS (
-                -- Same-object calls: callee lives in the same object as the caller
-                SELECT c.object, c.from_proc, p2.object, p2.name
-                FROM calls c
-                JOIN procedures p2 ON p2.object = c.object AND p2.name = c.to_name
-                UNION ALL
-                -- Cross-object calls: use target_object/target_proc from resolved_calls
-                SELECT rc.object, rc.from_proc, rc.target_object, rc.target_proc
-                FROM resolved_calls rc
-                WHERE rc.target_object IS NOT NULL AND rc.target_proc IS NOT NULL
-                UNION ALL
-                -- Override edges: if B.m is a call edge target and C inherits from B
-                -- and overrides m, add B.m → C.m so virtual dispatch is modelled.
-                -- The recursive reachable CTE then propagates through these transitively.
-                SELECT p1.object, p1.name, p2.object, p2.name
-                FROM procedures p1
-                JOIN inherits inh ON inh.to_object = p1.object
-                JOIN procedures p2 ON p2.object = inh.from_object AND p2.name = p1.name
-            ),
-            reachable(obj, proc) AS (
-                SELECT object, name FROM procedures WHERE proc_type IN ('event', 'on')
-                UNION
-                SELECT e.callee_obj, e.callee_proc
-                FROM call_edges e
-                JOIN reachable r ON r.obj = e.caller_obj AND r.proc = e.caller_proc
-            )
-            SELECT p.name, p.object, p.proc_type, p.cyclomatic
-            FROM procedures p
-            WHERE NOT EXISTS (
-                SELECT 1 FROM reachable r WHERE r.obj = p.object AND r.proc = p.name
-            )
-            ORDER BY p.object, p.name
-        """)
-    )
+    items = get_dead_code(conn)
     return {"items": items, "total": len(items)}
 
 

@@ -365,6 +365,13 @@ def dead_code_client(tmp_path_factory):
     conn.execute("""
         CREATE TABLE inherits (from_object TEXT NOT NULL, to_object TEXT NOT NULL)
     """)
+    conn.execute("""
+        CREATE TABLE dw_controls (
+            file TEXT, dw_name TEXT, control_name TEXT, control_type TEXT,
+            band TEXT, x INT, y INT, width INT, height INT,
+            expression TEXT, tab_seq INT, source_line INT
+        )
+    """)
 
     # Entry points (called by runtime)
     conn.execute("INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
