@@ -61,6 +61,7 @@ from pb_cli.shell.state import (
 )
 from pb_cli.shell.dataflow import build_dataflow_tables
 from pb_cli.shell.interproc import build_interproc_tables
+from pb_cli.shell.taint import build_taint_tables
 from pb_cli.shell.type_resolution import build_type_tables
 
 if TYPE_CHECKING:
@@ -149,6 +150,7 @@ class StorageEnv:
     build_type_tables: Callable[[Conn], None] = field(default=build_type_tables)
     build_dataflow_tables: Callable[[Conn], None] = field(default=build_dataflow_tables)
     build_interproc_tables: Callable[[Conn], None] = field(default=build_interproc_tables)
+    build_taint_tables: Callable[[Conn], None] = field(default=build_taint_tables)
     connect: Callable[[str], AbstractContextManager[Conn]] = field(default=connect)
 
 

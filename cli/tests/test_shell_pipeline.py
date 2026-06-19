@@ -59,6 +59,7 @@ def fake_env(tmp_path):
     e.storage.build_type_tables = lambda conn: None  # no-op for unit tests
     e.storage.build_dataflow_tables = lambda conn: None  # no-op for unit tests
     e.storage.build_interproc_tables = lambda conn: None  # no-op for unit tests
+    e.storage.build_taint_tables = lambda conn: None  # no-op for unit tests
     e.storage.count_sql_parse_failures = lambda conn: 0
     e.storage.build_subset_tmpdir = lambda src_dir, files: subset_dir
     e.storage.import_batch = lambda objects, conn, dialect="oracle", on_progress=None: len(objects)  # type: ignore[assignment]
