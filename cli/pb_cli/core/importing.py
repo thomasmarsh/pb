@@ -163,12 +163,13 @@ def _import_dw(obj: dict, file: str, rows: RowBatch) -> None:
 
     for ctrl in obj.get("controls", []):
         rows["dw_controls"].append(_ctrl_row(file, dw_name, ctrl))
-        expr_ast = ctrl.get("parsedExpression")
-        if isinstance(expr_ast, dict):
-            ctrl_name = ctrl.get("name") or ""
-            for callee, call_type in walk_calls(expr_ast):
-                if callee:
-                    rows["calls"].append(CallRow(file, dw_name, ctrl_name, callee, call_type))
+        ctrl_name = ctrl.get("name") or ""
+        for ast_key in ("parsedExpression", "parsedFormat"):
+            ast_node = ctrl.get(ast_key)
+            if isinstance(ast_node, dict):
+                for callee, call_type in walk_calls(ast_node):
+                    if callee:
+                        rows["calls"].append(CallRow(file, dw_name, ctrl_name, callee, call_type))
 
     retrieve = (obj.get("table") or {}).get("retrieve")
     if not isinstance(retrieve, dict) or retrieve.get("tag") != "DwRetrieveOk":

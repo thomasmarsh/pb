@@ -481,6 +481,59 @@ tests = testGroup "DataWindow"
             Right dw -> case dwControls dw of
               [c] -> dwcParsedExpression c @?= Nothing
               cs  -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "format= with ~t separator — expression after ~t parsed as ExCall" $ do
+          let src = dwMin <> "\ncolumn(band=detail name=mycol x=\"10\" y=\"10\" width=\"100\" height=\"50\" visible=\"1\" format=\"[GENERAL]~tfn_param_maskposo()\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> do
+                dwcFormat c @?= Just "[GENERAL]~tfn_param_maskposo()"
+                dwcParsedFormat c @?=
+                  Just ExCall { callee   = Lvalue [LvSegment "fn_param_maskposo" Nothing]
+                              , callArgs = [] }
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "format= without ~t — parsedFormat is Nothing" $ do
+          let src = dwMin <> "\ncolumn(band=detail name=c2 x=\"0\" y=\"0\" width=\"50\" height=\"50\" visible=\"1\" format=\"[GENERAL]\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> do
+                dwcFormat       c @?= Just "[GENERAL]"
+                dwcParsedFormat c @?= Nothing
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "format= with leading ~t (no display format) — expression parsed" $ do
+          let src = dwMin <> "\ncolumn(band=detail name=c3 x=\"0\" y=\"0\" width=\"50\" height=\"50\" visible=\"1\" format=\"~tfn_param_maskdate()\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> do
+                dwcFormat c @?= Just "~tfn_param_maskdate()"
+                dwcParsedFormat c @?=
+                  Just ExCall { callee   = Lvalue [LvSegment "fn_param_maskdate" Nothing]
+                              , callArgs = [] }
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "format= absent — dwcFormat and dwcParsedFormat both Nothing" $ do
+          let src = dwMin <> "\ncolumn(band=detail name=c4 x=\"0\" y=\"0\" width=\"50\" height=\"50\" visible=\"1\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> do
+                dwcFormat       c @?= Nothing
+                dwcParsedFormat c @?= Nothing
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
+
+      , testCase "format= not in dwcAttrs (it is a known key)" $ do
+          let src = dwMin <> "\ncolumn(band=detail name=c5 x=\"0\" y=\"0\" width=\"50\" height=\"50\" visible=\"1\" format=\"[GENERAL]~tfn_param_maskposo()\" )"
+          case parseDataWindow src of
+            Left err -> assertFailure ("parse error: " <> T.unpack err)
+            Right dw -> case dwControls dw of
+              [c] -> assertBool "format should not be in residual attrs"
+                       (Map.notMember "format" (dwcAttrs c))
+              cs -> assertFailure ("expected 1 control, got " <> show (length cs))
       ]
 
   , testGroup "DwTable"

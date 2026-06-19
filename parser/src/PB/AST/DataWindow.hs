@@ -118,6 +118,8 @@ data DwControl = DwControl
   , dwcVisible          :: Maybe Bool
   , dwcExpression       :: Maybe Text
   , dwcParsedExpression :: Maybe Expr
+  , dwcFormat           :: Maybe Text
+  , dwcParsedFormat     :: Maybe Expr
   , dwcTabSeq           :: Maybe Int
   , dwcAttrs            :: Map Text Text
   } deriving (Eq, Show, Generic)

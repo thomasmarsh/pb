@@ -8,6 +8,7 @@ module PB.Grammar.DataWindow
   , parseDwGroup
   , parseGroupBy
   , parseDwObjectAttrs
+  , extractFormatExpr
   ) where
 
 import PB.Prelude
@@ -266,11 +267,22 @@ dedupeArgs = nubBy (\a b -> T.toLower (daName a) == T.toLower (daName b)
 -- ---------------------------------------------------------------------------
 -- Control block parser
 
+-- | Extract the PB expression from a format string.
+-- DW format strings use "~t" as a tab separator: everything after the first
+-- "~t" is a PB expression (e.g. "[GENERAL]~tfn_param_maskposo()").
+-- Returns Nothing when no "~t" separator is present.
+extractFormatExpr :: Text -> Maybe Text
+extractFormatExpr fmt =
+    case T.breakOn "~t" fmt of
+        (_, rest) | T.null rest -> Nothing
+        (_, rest)               -> Just (T.drop 2 rest)
+
 parseDwControl :: Text -> Text -> DwControl
 parseDwControl kw content =
     let attrs     = scanBlockAttrs content
         knownKeys = ["name","band","id","x","y","width","height",
-                     "visible","expression","tabsequence"]
+                     "visible","expression","format","tabsequence"]
+        rawFmt    = lookupQuoted "format" attrs
     in DwControl
         { dwcType             = kw
         , dwcName             = lookupUnquoted "name" attrs
@@ -283,6 +295,8 @@ parseDwControl kw content =
         , dwcVisible          = parseBoolAttr "visible"     attrs
         , dwcExpression       = lookupQuoted  "expression"  attrs
         , dwcParsedExpression = fmap (parseExpr . tokenizeExpr) (lookupQuoted "expression" attrs)
+        , dwcFormat           = rawFmt
+        , dwcParsedFormat     = fmap (parseExpr . tokenizeExpr) (rawFmt >>= extractFormatExpr)
         , dwcTabSeq           = parseIntAttr  "tabsequence" attrs
         , dwcAttrs            = collectResidualAttrs knownKeys attrs
         }
