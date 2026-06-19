@@ -158,8 +158,9 @@ class ResolvedCallRow(NamedTuple):
     call_line: int | None
     target_object: str | None
     target_proc: str | None
-    resolution_kind: str  # static/virtual/inherited/unresolved
+    resolution_kind: str  # static/virtual/inherited/unresolved/builtin
     confidence: str  # high/medium/low
+    return_type: str | None  # PB API return type for builtin calls; None otherwise
 
 
 class RowBatch(TypedDict):

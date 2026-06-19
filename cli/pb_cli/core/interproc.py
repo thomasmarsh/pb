@@ -12,6 +12,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from pb_cli.core.type_resolution import parse_params
+from pb_cli.data import get_free_function_sigs
+
+# Param name lists for free functions, keyed by lowercase function name.
+_FREE_PARAMS: dict[str, list[str]] = {
+    fn: [p["name"] for p in sigs[0]["params"]]
+    for fn, sigs in get_free_function_sigs().items()
+    if sigs and sigs[0].get("params")
+}
 
 
 @dataclass
@@ -159,6 +167,67 @@ def build_interproc_flow(
                         caller_context=d["var_name"],
                         callee_context="return",
                     ))
+
+    # --- Synthetic return/arg edges for builtin calls ---
+    # Builtin calls with a non-void return type get a synthetic return edge when
+    # the call site has an assignment. Arg edges are built when the signature
+    # provides param names (free functions only; class method params not in API data).
+    for rc in resolved_calls:
+        if rc.get("resolution_kind") != "builtin":
+            continue
+        ret_type = (rc.get("return_type") or "").lower()
+        if not ret_type or ret_type in ("void", "none"):
+            continue
+
+        caller_obj = rc["object"]
+        caller_proc = rc["from_proc"]
+        call_line = rc.get("call_line")
+        to_name = rc.get("to_name", "")
+        builtin_name = to_name.rsplit(".", 1)[1].lower() if "." in to_name else to_name.lower()
+
+        caller_key = (caller_obj, caller_proc)
+
+        # Return edge: assignment at call_line receives the builtin's return value.
+        for d in defs_by_proc.get(caller_key, []):
+            if d.get("line") == call_line and d.get("kind") == "assign":
+                edges.append(InterProcEdge(
+                    caller_object=caller_obj,
+                    caller_proc=caller_proc,
+                    caller_line=call_line,
+                    callee_object="__builtin__",
+                    callee_proc=builtin_name,
+                    edge_kind="return",
+                    var_name=d["var_name"],
+                    caller_context=d["var_name"],
+                    callee_context="return",
+                ))
+
+        # Arg edges: uses at call_line matched to builtin param names (free functions only).
+        builtin_params = _FREE_PARAMS.get(builtin_name, [])
+        call_arg_vars: list[str] = []
+        seen_vars: set[str] = set()
+        for u in uses_by_proc.get(caller_key, []):
+            if u.get("line") != call_line:
+                continue
+            vname = u["var_name"]
+            if vname.lower() == builtin_name:
+                continue
+            if vname not in seen_vars:
+                seen_vars.add(vname)
+                call_arg_vars.append(vname)
+
+        for arg_var, param_name in match_args_to_params(call_arg_vars, builtin_params):
+            edges.append(InterProcEdge(
+                caller_object=caller_obj,
+                caller_proc=caller_proc,
+                caller_line=call_line,
+                callee_object="__builtin__",
+                callee_proc=builtin_name,
+                edge_kind="arg",
+                var_name=arg_var,
+                caller_context=arg_var,
+                callee_context=param_name,
+            ))
 
     # --- Global variable edges ---
     # Find which procedures write and read each global variable.

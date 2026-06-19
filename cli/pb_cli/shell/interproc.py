@@ -19,20 +19,24 @@ def build_interproc_tables(conn: Conn) -> None:
     conn.execute("TRUNCATE TABLE interproc_edges")
     conn.execute("TRUNCATE TABLE procedure_summaries")
 
-    # Fetch resolved_calls (virtual+inherited inter-proc edges only)
+    # Fetch resolved_calls: virtual/inherited for user-proc edges; builtin calls
+    # with a non-void return_type for synthetic return/arg edge generation.
     rc_rows = conn.execute("""
         SELECT object, from_proc, to_name, call_line, target_object, target_proc,
-               resolution_kind
+               resolution_kind, return_type
         FROM resolved_calls
-        WHERE resolution_kind IN ('virtual', 'inherited')
-          AND target_object IS NOT NULL
-          AND target_proc IS NOT NULL
+        WHERE (resolution_kind IN ('virtual', 'inherited')
+               AND target_object IS NOT NULL
+               AND target_proc IS NOT NULL)
+           OR (resolution_kind = 'builtin'
+               AND return_type IS NOT NULL
+               AND lower(return_type) NOT IN ('void', 'none'))
     """).fetchall()
     resolved_calls = [
         {
             "object": r[0], "from_proc": r[1], "to_name": r[2],
             "call_line": r[3], "target_object": r[4], "target_proc": r[5],
-            "resolution_kind": r[6],
+            "resolution_kind": r[6], "return_type": r[7],
         }
         for r in rc_rows
     ]

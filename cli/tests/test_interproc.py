@@ -312,3 +312,90 @@ class TestProcSummaries:
         s = next(s for s in gdf.summaries if s.proc_name == "procB")
         assert len(s.return_flows_to) == 1
         assert s.return_flows_to[0] == {"object": "oa", "proc": "procA", "lhs_var": "res"}
+
+
+# --- build_interproc_flow: synthetic builtin edges ----------------------------
+
+
+def _brc(
+    obj: str,
+    from_proc: str,
+    to_name: str,
+    call_line: int | None,
+    return_type: str | None,
+) -> dict:
+    """Resolved-call dict for a builtin call (no target_object/target_proc)."""
+    return {
+        "object": obj,
+        "from_proc": from_proc,
+        "to_name": to_name,
+        "call_line": call_line,
+        "target_object": None,
+        "target_proc": None,
+        "resolution_kind": "builtin",
+        "return_type": return_type,
+    }
+
+
+class TestBuiltinEdges:
+    def test_builtin_return_edge(self):
+        """ls_result = Mid(ls_src, 1, 5) — return edge from __builtin__.mid to ls_result."""
+        rc = [_brc("w_a", "procA", "mid", 10, "string")]
+        defs = [_def("w_a", "procA", "ls_result", 10, "assign")]
+        uses = [
+            _use("w_a", "procA", "ls_src", 10),
+            _use("w_a", "procA", "mid", 10),   # callee name — must be excluded from args
+        ]
+        procs = [_proc("w_a", "procA")]
+        gdf = build_interproc_flow(rc, defs, uses, set(), procs)
+        ret_edges = _edges_of_kind(gdf, "return")
+        assert len(ret_edges) == 1
+        e = ret_edges[0]
+        assert e.callee_object == "__builtin__"
+        assert e.callee_proc == "mid"
+        assert e.var_name == "ls_result"
+        assert e.callee_context == "return"
+
+    def test_builtin_no_edge_for_void(self):
+        """A void builtin (return_type None or 'none') produces no edges."""
+        rc = [_brc("w_a", "procA", "garbagecollect", 5, None)]
+        defs = [_def("w_a", "procA", "dummy", 5, "assign")]
+        procs = [_proc("w_a", "procA")]
+        gdf = build_interproc_flow(rc, defs, [], set(), procs)
+        assert _edges_of_kind(gdf, "return") == []
+        assert _edges_of_kind(gdf, "arg") == []
+
+    def test_builtin_no_edge_for_void_string(self):
+        """return_type='none' (string) also produces no edges."""
+        rc = [_brc("w_a", "procA", "close", 5, "none")]
+        defs = [_def("w_a", "procA", "dummy", 5, "assign")]
+        procs = [_proc("w_a", "procA")]
+        gdf = build_interproc_flow(rc, defs, [], set(), procs)
+        assert _edges_of_kind(gdf, "return") == []
+
+    def test_builtin_arg_edge(self):
+        """Builtin call with known param names creates arg edges."""
+        # left(string, integer) → first arg maps to param "s" (or whatever pb_api says)
+        rc = [_brc("w_a", "procA", "left", 7, "string")]
+        defs = []
+        uses = [
+            _use("w_a", "procA", "ls_input", 7),
+            _use("w_a", "procA", "li_count", 7),
+        ]
+        procs = [_proc("w_a", "procA")]
+        gdf = build_interproc_flow(rc, defs, uses, set(), procs)
+        arg_edges = _edges_of_kind(gdf, "arg")
+        assert len(arg_edges) >= 1
+        assert all(e.callee_object == "__builtin__" for e in arg_edges)
+        assert all(e.callee_proc == "left" for e in arg_edges)
+        arg_vars = {e.var_name for e in arg_edges}
+        assert "ls_input" in arg_vars
+
+    def test_builtin_no_return_edge_when_no_assignment(self):
+        """If there's no assignment at call_line, no return edge is created."""
+        rc = [_brc("w_a", "procA", "mid", 10, "string")]
+        defs = []   # no assignment
+        uses = [_use("w_a", "procA", "ls_src", 10)]
+        procs = [_proc("w_a", "procA")]
+        gdf = build_interproc_flow(rc, defs, uses, set(), procs)
+        assert _edges_of_kind(gdf, "return") == []

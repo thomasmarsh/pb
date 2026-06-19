@@ -152,7 +152,8 @@ CREATE TABLE IF NOT EXISTS resolved_calls (
     target_object   TEXT,
     target_proc     TEXT,
     resolution_kind TEXT NOT NULL,
-    confidence      TEXT NOT NULL
+    confidence      TEXT NOT NULL,
+    return_type     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS metadata (

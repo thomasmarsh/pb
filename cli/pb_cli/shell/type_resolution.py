@@ -65,6 +65,8 @@ def store_resolved_types(conn: Conn, rows: list[ResolvedTypeRow]) -> None:
 
 
 def store_resolved_calls(conn: Conn, rows: list[ResolvedCallRow]) -> None:
+    # Schema migration: add return_type column if absent (existing databases).
+    conn.execute("ALTER TABLE resolved_calls ADD COLUMN IF NOT EXISTS return_type TEXT")
     conn.execute("DELETE FROM resolved_calls")
     bulk_insert(conn, "resolved_calls", list(ResolvedCallRow._fields), [tuple(r) for r in rows])
 

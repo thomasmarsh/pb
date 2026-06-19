@@ -260,6 +260,66 @@ def test_resolve_calls_line_extraction():
     assert result[0].call_line == 15
 
 
+# ── return_type from PB API signatures ────────────────────────────────────────
+
+
+def _builtin_call(to_name: str, call_type: str = "ExCall") -> list:
+    return [CallRow("f.srw", "w_test", "open", to_name, call_type)]
+
+
+def _base_proc():
+    return [_make_proc("f.srw", "w_test", "open", body_json="[]")]
+
+
+def test_builtin_return_type_abs():
+    result = resolve_calls(_builtin_call("abs"), _base_proc(), [])
+    assert result[0].resolution_kind == "builtin"
+    assert result[0].return_type == "any"
+
+
+def test_builtin_return_type_left():
+    result = resolve_calls(_builtin_call("left"), _base_proc(), [])
+    assert result[0].resolution_kind == "builtin"
+    assert result[0].return_type == "string"
+
+
+def test_builtin_return_type_mid():
+    result = resolve_calls(_builtin_call("mid"), _base_proc(), [])
+    assert result[0].resolution_kind == "builtin"
+    assert result[0].return_type == "string"
+
+
+def test_builtin_return_type_retrieve_class_method():
+    # dw_1.retrieve — dot-delimited; "retrieve" is a datawindow method returning long.
+    result = resolve_calls(
+        _builtin_call("dw_1.retrieve"),
+        _base_proc(),
+        [],
+        var_types={("w_test", "open", "dw_1"): "datawindow"},
+    )
+    assert result[0].resolution_kind == "builtin"
+    assert result[0].return_type == "long"
+
+
+def test_builtin_return_type_void():
+    # garbagecollect() returns "none" — should be normalised to return_type=None.
+    result = resolve_calls(_builtin_call("garbagecollect"), _base_proc(), [])
+    assert result[0].resolution_kind == "builtin"
+    assert result[0].return_type is None
+
+
+def test_user_proc_return_type_none():
+    # User-defined calls always have return_type=None regardless of their signature.
+    calls = [CallRow("f.srw", "w_test", "open", "of_init", "ExCall")]
+    procs = [
+        _make_proc("f.srw", "w_test", "open", body_json="[]"),
+        _make_proc("f.srw", "w_test", "of_init", return_type="string"),
+    ]
+    result = resolve_calls(calls, procs, [])
+    assert result[0].resolution_kind in ("virtual", "static")
+    assert result[0].return_type is None
+
+
 # ── build_type_tables (integration) ───────────────────────────────────────────
 
 
