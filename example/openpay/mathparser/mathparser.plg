@@ -1,0 +1,38 @@
+<html>
+<body>
+<pre>
+<h1>Build Log</h1>
+<h3>
+--------------------Configuration: mathparser - Win32 Debug--------------------
+</h3>
+<h3>Command Lines</h3>
+Creating temporary file "C:\DOCUME~1\sotiris\LOCALS~1\Temp\RSPDD.tmp" with contents
+[
+/nologo /MTd /W3 /Gm /GX /ZI /Od /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /D "_WINDLL" /D "_MBCS" /D "_USRDLL" /Fp"Debug/mathparser.pch" /Yu"stdafx.h" /Fo"Debug/" /Fd"Debug/" /FD /GZ /c 
+"D:\projects\Visual C\DLL\MathParser\ExportsA.cpp"
+]
+Creating command line "cl.exe @C:\DOCUME~1\sotiris\LOCALS~1\Temp\RSPDD.tmp" 
+Creating temporary file "C:\DOCUME~1\sotiris\LOCALS~1\Temp\RSPDE.tmp" with contents
+[
+/nologo /subsystem:windows /dll /incremental:yes /pdb:"Debug/mathparser.pdb" /debug /machine:I386 /def:".\mathparser.def" /out:"Debug/mathparser.dll" /implib:"Debug/mathparser.lib" /pdbtype:sept 
+".\Debug\ExportsA.obj"
+".\Debug\FormelParser.obj"
+".\Debug\mathparser.obj"
+".\Debug\PhysConst.obj"
+".\Debug\StdAfx.obj"
+".\Debug\mathparser.res"
+]
+Creating command line "link.exe @C:\DOCUME~1\sotiris\LOCALS~1\Temp\RSPDE.tmp"
+<h3>Output Window</h3>
+Compiling...
+ExportsA.cpp
+Linking...
+   Creating library Debug/mathparser.lib and object Debug/mathparser.exp
+
+
+
+<h3>Results</h3>
+mathparser.dll - 0 error(s), 0 warning(s)
+</pre>
+</body>
+</html>

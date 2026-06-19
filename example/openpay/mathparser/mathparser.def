@@ -1,0 +1,7 @@
+; MathParser.def : Declares the module parameters for the DLL.
+
+LIBRARY      "mathparser.dll"
+DESCRIPTION  'mathparser Windows Dynamic Link Library'
+
+EXPORTS
+    cfn_mathparserA		@10
