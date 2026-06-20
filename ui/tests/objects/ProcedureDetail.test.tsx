@@ -1,6 +1,6 @@
 // tests/objects/ProcedureDetail.test.tsx — Tests for source-first ProcedureDetail.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
 import { ProcedureDetail } from "../../src/features/objects/ProcedureDetail.js";
 import { createTestStore } from "../helpers.js";
@@ -159,5 +159,41 @@ describe("ProcedureDetail source-first", () => {
   it("renders Loading when procedureDetail is null", () => {
     renderProcDetail(null);
     expect(document.body.textContent).toMatch(/loading/i);
+  });
+
+  describe("CFG panel", () => {
+    beforeEach(() => {
+      vi.stubGlobal("fetch", () => new Promise(() => {}));
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("shows CFG pill in summary bar", () => {
+      renderProcDetail();
+      const bar = document.querySelector(".analysis-summary-bar");
+      expect(bar?.textContent).toContain("CFG");
+    });
+
+    it("clicking CFG pill opens ContextualPanel with 'Control Flow Graph' title", () => {
+      renderProcDetail();
+      const pills = [...document.querySelectorAll(".analysis-summary-bar button")];
+      const cfgPill = pills.find((b) => b.textContent?.includes("CFG"))!;
+      expect(cfgPill).toBeDefined();
+      fireEvent.click(cfgPill);
+      expect(document.body.textContent).toContain("Control Flow Graph");
+    });
+
+    it("clicking CFG pill again closes the panel", () => {
+      renderProcDetail();
+      const pill = () =>
+        [...document.querySelectorAll(".analysis-summary-bar button")].find(
+          (b) => b.textContent?.includes("CFG"),
+        )!;
+      fireEvent.click(pill());
+      expect(document.body.textContent).toContain("Control Flow Graph");
+      fireEvent.click(pill());
+      expect(document.body.textContent).not.toContain("Control Flow Graph");
+    });
   });
 });

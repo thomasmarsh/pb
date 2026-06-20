@@ -16,6 +16,7 @@ import { AnalysisSummaryBar } from "../../components/detail/AnalysisSummaryBar.j
 import type { SummaryItem } from "../../components/detail/AnalysisSummaryBar.js";
 import { ContextualPanel } from "../../components/detail/ContextualPanel.js";
 import { procBadge } from "../../utils/format.js";
+import { CFGCore } from "../analysis/CFGCore.js";
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
@@ -116,6 +117,7 @@ function ProcedureDetailContent(props: {
   const [showCallees, setShowCallees] = createSignal(false);
   const [showSql, setShowSql] = createSignal(false);
   const [showTaint, setShowTaint] = createSignal(false);
+  const [showCfg, setShowCfg] = createSignal(false);
 
   const callerCount = () => p.callers?.length ?? 0;
   const calleeCount = () => p.callees?.length ?? 0;
@@ -127,6 +129,7 @@ function ProcedureDetailContent(props: {
     ...(sqlCount() > 0 ? [{ label: "SQL", count: sqlCount(), active: showSql(), onClick: () => setShowSql((v) => !v) } as SummaryItem] : []),
     ...(p.cyclomatic != null ? [{ label: `CC: ${p.cyclomatic}` } as SummaryItem] : []),
     { label: "Taint", active: showTaint(), onClick: () => setShowTaint((v) => !v) },
+    { label: "CFG", active: showCfg(), onClick: () => setShowCfg((v) => !v) },
   ];
 
   function handleKeyDown(e: KeyboardEvent): void {
@@ -135,6 +138,7 @@ function ProcedureDetailContent(props: {
       setShowCallees(false);
       setShowSql(false);
       setShowTaint(false);
+      setShowCfg(false);
     }
   }
 
@@ -228,6 +232,25 @@ function ProcedureDetailContent(props: {
         <Show when={showTaint()}>
           <ContextualPanel title="Taint Paths" onClose={() => setShowTaint(false)}>
             <ProcTaintCard objectName={props.objectName} procName={p.name} store={store} />
+          </ContextualPanel>
+        </Show>
+
+        <Show when={showCfg()}>
+          <ContextualPanel title="Control Flow Graph" onClose={() => setShowCfg(false)}>
+            <div style={{ height: "420px", display: "flex", "flex-direction": "column" }}>
+              <CFGCore
+                object={p.object}
+                proc={p.name}
+                store={store}
+                onGoto={() =>
+                  store.dispatch({
+                    tag: "nav",
+                    action: { tag: "navigate", route: { view: "cfgDiagram", object: p.object, proc: p.name } },
+                  })
+                }
+                gotoLabel="Full CFG"
+              />
+            </div>
           </ContextualPanel>
         </Show>
       </div>
