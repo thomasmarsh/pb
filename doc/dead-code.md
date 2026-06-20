@@ -65,22 +65,35 @@ The `calls` table stores raw call edges with these `call_type` values:
 | `ExDispatch`  | `walk_calls` → `ExDispatch` nodes       | `POST EVENT name` / `TRIGGER EVENT` |
 | `ExCallArg`   | `walk_excall_arg_calls`                 | Nested calls inside ExCall arg arrays |
 
-The `resolved_calls` table is built by `resolve_calls()` in `type_resolution.py`,
-which resolves cross-object targets using type information and the inheritance
-chain. Each row has `target_object` and `target_proc` populated when the target
-can be determined, or `NULL` when it cannot (e.g., builtin functions, unresolved
+### Call Resolution (`core/type_resolution.py`)
+
+The `resolved_calls` table is built by `resolve_calls()`, which resolves
+cross-object targets using type information and the inheritance chain. Each row
+has `target_object` and `target_proc` populated when the target can be
+determined, or `NULL` when it cannot (e.g., builtin functions, unresolved
 dynamic dispatch).
+
+Resolution follows this priority order:
+
+1. **Static dotted** — `object.method()` where `object` is a known procedure
+2. **PB builtin** — `len()`, `messagebox()`, etc. from the PB API reference
+3. **Inheritance chain** — bare calls walk the caller's ancestor chain via
+   `_resolve_virtual()`. PB uses single inheritance with deterministic MRO:
+   the nearest ancestor defining the method wins.
+4. **Instance variable type** — if the caller has a typed instance variable,
+   the method is looked up on that type's ancestor chain
+5. **Control type inference** — naming conventions (`dw_` → datawindow,
+   `cb_` → commandbutton) infer the PB class for method lookup
+6. **Unresolved** — none of the above matched
 
 ### Call Graph Construction (`shell/dead_code.py`)
 
 `build_dead_code_table()` constructs the call graph in Python and runs BFS from
-entry points. The graph has three edge types (same as the old CTE, but with
-case-insensitive matching):
+entry points. The graph has three edge types:
 
 1. **Same-object calls** — `calls` joined to `procedures` where callee lives
-   in the same object (matched by `lower(calls.to_name) = lower(procedures.name)`)
-   within the same `object`. The `lower()` fix resolves the case-sensitivity
-   bug that caused 19 false positives in the old CTE.
+   in the same object (matched by `lower(calls.to_name) = lower(procedures.name)`
+   within the same `object`).
 
 2. **Cross-object resolved calls** — `resolved_calls` table, which has
    `target_object` and `target_proc` from the type resolution system
@@ -106,10 +119,6 @@ Every `event … end event` block and every `on … end on` block is
 - **Custom user events:** `event ue_xxx` — triggered by `POST EVENT ue_xxx` or
   `TRIGGER EVENT ue_xxx`
 - **On-blocks:** `on open`, `on close`, etc. — override handlers
-
-This is the correct PB semantic: events are triggered by user actions or
-framework callbacks, and on-blocks are override handlers. The analysis must
-never mark an event handler as dead.
 
 ### Seed 2: DataWindow Compute Controls
 
@@ -138,28 +147,7 @@ that call this procedure by name (unscoped, cross-object name match).
 `caller_count_scoped` counts entries in `resolved_calls` that specifically
 target this `(object, name)` pair.
 
-**Important caveat for Medium confidence:** A medium-confidence entry does NOT
-mean "probably alive." It means the procedure shares its name with procedures in
-other objects, and the analysis cannot prove which implementation is actually
-called. The current analysis is conservative — it errs on the side of marking
-procedures dead rather than alive.
-
 ## Known Limitations
-
-### Case-Sensitivity in Same-Object Edges (Fixed)
-
-The BFS in `build_dead_code_table()` uses `lower()` on both sides of the
-same-object edge join, so PB's case-insensitive method calls are handled
-correctly. The old recursive CTE had a case-sensitive join that caused 19 false
-positives (e.g., `w_form.open` calling `of_SetMasks` didn't match `of_setmasks`).
-
-### Builtin Misclassification (Fixed)
-
-`trn` was manually added to `_MANUAL_FREE_FUNCTIONS` in `data/__init__.py` as
-a PB builtin, but it is actually a user-defined global function in
-`afxlib.pbl/trn.srf`. Removing it from the manual list fixes the
-misclassification — the resolver now finds it via `_resolve_virtual()` and
-resolves it to the user-defined function.
 
 ### Wizard Framework Dynamic Dispatch
 
@@ -171,11 +159,6 @@ dispatch is string-based and cannot be traced by static analysis.
 **Impact:** 19 step callback procedures (across `bcv_step`, `step1_seasons`,
 `step_kratapod_*`, and `wiz_misth_final_details_step{2,3,4}`) are falsely
 marked dead. All inherit from `bcv_step`.
-
-**Classification:** This is a known limitation, not a bug. The framework pattern
-would need a dedicated heuristic (e.g., "any object inheriting from a wizard
-step base class has its `of_next`/`of_stepadded`/`of_postactivate` methods
-marked reachable").
 
 ### `CALL Super :: event` (BsPbCall)
 
@@ -193,31 +176,6 @@ appear dead when they are actually reachable. The current openpay corpus does
 not use this pattern for user-defined methods (only boilerplate `on
 create`/`on destroy` calling external ancestors), so the dead count is
 accurate for openpay.
-
-**Fix:** Add a `BsPbCall` branch to `walk_calls` that resolves the ancestor
-name to the actual ancestor object via the inheritance chain and emits a call
-edge. This would require:
-1. Handling `BsPbCall` in `walk_calls` (ast_walker.py)
-2. Resolving the ancestor name to a target object using the type resolution
-   system (type_resolution.py)
-3. Adding tests with a corpus that uses `CALL Super::ue_xxx`
-
-### Symbol Scoping (Known, Not a Bug)
-
-The `call_edges` CTE uses `calls.to_name = procedures.name` for same-object
-edges. This is **unscoped** — a call to `of_setmasks` from `w_form` creates
-an edge to `w_form.of_setmasks`, but it does NOT create edges to
-`w_form_tab.of_setmasks` or any other object's implementation.
-
-However, for cross-object calls, the `resolved_calls` table provides scoped
-resolution. When `_resolve_virtual` sees a call to `of_setmasks` from
-`w_pbgrid.open`, it correctly assigns `target_object = w_pbgrid`. Other objects
-(`w_form`, `w_form_tab2`, etc.) that define `of_setmasks` without inheriting
-`w_pbgrid` are correctly left dead.
-
-Without type-annotated call sites, we cannot know which object's implementation
-is invoked in every case. The current analysis is correct to leave ambiguous
-cases dead.
 
 ### Dynamic Dispatch
 
@@ -241,7 +199,8 @@ resolvable statically.
 | `cli/pb_cli/core/importing.py` | `_import_ps()`, `_import_dw()` — AST walking, call edge extraction |
 | `cli/pb_cli/core/ast_walker.py` | `walk_calls()`, `walk_excall_arg_calls()` — AST traversal |
 | `cli/pb_cli/core/type_resolution.py` | `resolve_calls()` — cross-object call resolution |
-| `cli/pb_cli/shell/dead_code.py` | `build_dead_code_table()` — BFS reachability, populates `dead_procedures` |
+| `cli/pb_cli/core/dead_code.py` | `compute_dead_procedures()` — BFS reachability (pure, no I/O) |
+| `cli/pb_cli/shell/dead_code.py` | `build_dead_code_table()` — DuckDB I/O, populates `dead_procedures` |
 | `cli/pb_cli/explorer/services/analysis.py` | `get_dead_code()` — reads from `dead_procedures` table |
 | `cli/pb_cli/cli.py` | `pb dead-code` CLI command |
 
@@ -249,46 +208,41 @@ resolvable statically.
 
 ## Appendix A — Openpay Corpus Baseline
 
-The following stats are from the openpay-0.1.1b corpus (422 objects, 2649
-procedures, 5375 call edges, 287 inheritance edges, 1688 DW controls).
+Stats from the openpay-0.1.1b corpus (422 objects, 2649 procedures, 5375 call
+edges, 287 inheritance edges, 1688 DW controls).
 
 ### Dead Code Summary
 
 ```
-101 total dead procedures (down from 121 with case-insensitivity + trn fixes)
- ├─  46  high confidence (caller_count_naive = 0)
+101 total dead procedures
+ ├─  47  high confidence (caller_count_naive = 0)
  │        Zero callers anywhere in the corpus. All confirmed truly dead.
- │        Includes: fn_dateolografos (321 lines, 0 callers), all fn_param_*
- │        functions, fn_num2str, uc_lnklist methods, gsc_col_reset, etc.
  │
- ├─  39  medium confidence (caller_count_naive > 0, scoped = 0)
+ ├─  38  medium confidence (caller_count_naive > 0, scoped = 0)
  │        ├─  19  wizard framework dynamic dispatch (false positive)
- │        └─  20  confirmed dead (name-collision or transitive dead)
+ │        └─  19  confirmed dead (name-collision or transitive dead)
  │
  └─  16  low confidence (scoped > 0 but unreachable)
            Callers are themselves dead (transitive dead chain).
-           Includes: wprn_report/report3 internal chains, fn_loadcol,
-           fn_loadreport, fn_getfromfinal.
-```
-
-### False Positive Breakdown
-
-```
-19 false positives remaining
- └─  19  wizard framework dynamic dispatch
-
-Case-sensitivity false positives: FIXED (19 procs recovered)
-trn builtin misclassification: FIXED (removed from PB_BUILTIN_CALLS)
 ```
 
 ### Per-Confidence True Dead
 
 | Confidence | Total | False Positives | True Dead |
 |------------|-------|-----------------|-----------|
-| High       | 46    | 0               | 46        |
-| Medium     | 39    | 19              | 20        |
+| High       | 47    | 0               | 47        |
+| Medium     | 38    | 19              | 19        |
 | Low        | 16    | 0               | 16        |
 | **Total**  | **101** | **19**        | **82**    |
+
+### Resolution Quality
+
+| resolution_kind | Count | Meaning |
+|-----------------|-------|---------|
+| `builtin`       | 2526  | PB built-in function (len, string, messagebox, ...) |
+| `virtual`       | 2291  | Resolved to a specific object via type info / inheritance |
+| `unresolved`    | 523   | Could not determine target (dynamic dispatch, etc.) |
+| `inherited`     | 35    | Resolved via inheritance chain |
 
 ### Notable True Dead Procedures
 
@@ -307,56 +261,13 @@ trn builtin misclassification: FIXED (removed from PB_BUILTIN_CALLS)
 | Pattern | Count | Example | Notes |
 |---------|-------|---------|-------|
 | `fn_param_*` | 15 | `fn_param_afm` | Global parameter accessors — 0 callers each |
-| `of_setmasks` | 13 | `w_form.of_setmasks` | Input mask setup — name collision across 20+ objects |
-| `of_accepttext` | 10 | `w_form.of_accepttext` | Accept text validation — name collision |
+| `of_setmasks` | 5 | `w_krat_total_search.of_setmasks` | Name collision — callers resolve to other implementations |
 | `of_open` | 7 | `wprn_report.of_open` | Print window setup — internal chains dead |
 | `of_next`/`of_stepadded`/`of_postactivate` | 19 | `bcv_step.of_next` | Wizard callbacks — dynamic dispatch false positives |
 
 ---
 
-## Appendix B — Recommended Fixes
-
-### Fix 1: Wizard Step Dispatch Heuristic (Priority: Medium)
-
-**Pattern:** Objects inheriting from a wizard step base class have their
-`of_next`/`of_stepadded`/`of_postactivate` methods called dynamically by the
-framework.
-
-**Location:** `cli/pb_cli/shell/dead_code.py`, or a new heuristic in
-`type_resolution.py`
-
-**Change:** Add a heuristic: if an object inherits from a class that defines
-`of_next`, `of_stepadded`, or `of_postactivate` AND the object is registered via
-`addstep()` (detected by a call to `addstep` in the parent's `of_addsteps` or
-`open` event), mark those three methods as reachable.
-
-**Impact:** Removes 19 false positives across wizard step objects.
-
-**Risk:** Low. The heuristic is narrow (only affects objects registered via
-`addstep`) and the three method names are framework-conventional. False
-positives from this heuristic would be rare.
-
-### Fix 2: BsPbCall Edge Extraction (Priority: Low)
-
-**Gap:** `walk_calls` in `ast_walker.py` does not extract `BsPbCall` nodes
-(`CALL Super :: event`) as call edges.
-
-**Location:** `cli/pb_cli/core/ast_walker.py`, `walk_calls()`
-
-**Change:** Add a `BsPbCall` branch that:
-1. Resolves the ancestor name (e.g., `super`) to the actual ancestor object
-   using the inheritance chain
-2. Emits a call edge to the ancestor's implementation of the named event
-
-**Impact:** Would prevent ancestor methods invoked via `CALL Super::ue_xxx`
-from appearing dead. Not triggered in the current openpay corpus.
-
-**Risk:** Medium. Requires resolving `super` to the correct ancestor at
-analysis time, which depends on the object's position in the inheritance tree.
-
----
-
-## Appendix C — Query Patterns and DB Navigation
+## Appendix B — Query Patterns
 
 ### Schema Quick Reference
 
@@ -383,15 +294,6 @@ dw_controls         — DataWindow control definitions
   expression, tab_seq, source_line
 ```
 
-### Resolution Kind Values
-
-| resolution_kind | Count (openpay) | Meaning |
-|-----------------|-----------------|---------|
-| `builtin`       | 3332            | PB built-in function (len, string, messagebox, ...) |
-| `virtual`       | 1485            | Resolved to a specific object via type info |
-| `unresolved`    | 523             | Could not determine target (dynamic dispatch, etc.) |
-| `inherited`     | 35              | Resolved via inheritance chain |
-
 ### Investigating Why a Procedure Is Dead
 
 **Step 1: Look up the procedure in the dead_procedures table.**
@@ -400,8 +302,6 @@ dw_controls         — DataWindow control definitions
 SELECT * FROM dead_procedures
 WHERE name = '<proc_name>' AND object = '<object_name>';
 ```
-
-This shows the confidence level, naive caller count, and scoped caller count.
 
 **Step 2: Check for callers (naive — any call by name anywhere).**
 
@@ -412,8 +312,7 @@ WHERE to_name = '<proc_name>';
 ```
 
 If this returns rows, the procedure has naive callers. They may be calling a
-different object's implementation of the same method name (name collision), or
-the call may not resolve to this specific object.
+different object's implementation of the same method name (name collision).
 
 **Step 3: Check for scoped callers (resolved to this specific object).**
 
@@ -530,20 +429,6 @@ array. Each element is a `Located BodyStmt`:
 | `ExBinOp` | `{tag, contents: {lhs, op, rhs}}` | Binary operator |
 | `ExLvalue` | `{tag, contents: {segments: [{name, subscript?}]}}` | Variable reference |
 
-**Example: trace calls inside a procedure body.**
-
-```sql
--- Find all ExCall nodes in fn_buildwhere's body
-SELECT json_extract_string(node, '$.tag') AS stmt_tag,
-       json_extract_string(node, '$.node.tag') AS inner_tag
-FROM (
-    SELECT unnest(generate_series(1, json_array_length(body_json))) AS idx,
-           json_extract(body_json, '$[' || idx || '].node') AS node
-    FROM procedures
-    WHERE object = 'w_filter' AND name = 'fn_buildwhere'
-);
-```
-
 Or more practically, use `source_rendered` for human-readable debugging:
 
 ```sql
@@ -556,7 +441,6 @@ WHERE object = '<object_name>' AND name = '<proc_name>';
 **"Is this object ever opened/instantiated?"**
 
 ```sql
--- Check if any code calls Open() or CREATE for this object
 SELECT DISTINCT object, from_proc, to_name
 FROM calls
 WHERE lower(to_name) = lower('<object_name>');
@@ -565,7 +449,6 @@ WHERE lower(to_name) = lower('<object_name>');
 **"What does this object inherit and what does it override?"**
 
 ```sql
--- Parent's methods that this object also defines (potential overrides)
 SELECT p.name AS method_name
 FROM procedures p
 JOIN inherits i ON i.from_object = p.object

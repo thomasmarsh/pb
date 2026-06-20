@@ -216,11 +216,9 @@ def _resolve_virtual(
     for ancestor in chain:
         if to_name in proc_map.get(ancestor, set()):
             found_in.append(ancestor)
-    if len(found_in) == 1:
+    if found_in:
         kind = "inherited" if found_in[0] != obj_name else "virtual"
         return (found_in[0], to_name, kind, "high")
-    if len(found_in) > 1:
-        return (None, None, "virtual", "medium")
     if to_name in global_procs:
         for obj, procs in proc_map.items():
             if to_name in procs:

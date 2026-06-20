@@ -6,6 +6,7 @@ import { DWDetail } from "../../src/features/datawindows/DataWindows.js";
 import { createTestStore } from "../helpers.js";
 import { initialDatawindowsState } from "../../src/features/datawindows/reducer.js";
 import type { DwDetailResponse } from "../../src/types/api.js";
+import type { DataWindowFile } from "../../src/types/ast.generated.js";
 
 function makeDw(overrides: Partial<DwDetailResponse> = {}): DwDetailResponse {
   return {
@@ -45,6 +46,99 @@ function summaryPillBtn(label: string): Element | undefined {
 function cardHeaders(): string[] {
   return [...document.querySelectorAll(".card-header h3")].map((h) => h.textContent ?? "");
 }
+
+const MOCK_DW_FILE: DataWindowFile = {
+  release: 19,
+  object: { attrs: {} },
+  table: null,
+  bands: [
+    { kind: { tag: "BkHeader" }, height: 64, color: null, autoSize: false, attrs: {} },
+    { kind: { tag: "BkDetail" }, height: 80, color: null, autoSize: false, attrs: {} },
+  ],
+  groups: [],
+  controls: [
+    {
+      type: "text",
+      name: "t_label",
+      band: { tag: "BkHeader" },
+      id: 1,
+      x: 10,
+      y: 5,
+      width: 200,
+      height: 20,
+      visible: true,
+      expression: null,
+      parsedExpression: null,
+      format: null,
+      parsedFormat: null,
+      tabSeq: null,
+      attrs: { text: "Customer Name" },
+    },
+    {
+      type: "column",
+      name: "col_id",
+      band: { tag: "BkDetail" },
+      id: 2,
+      x: 10,
+      y: 5,
+      width: 100,
+      height: 20,
+      visible: true,
+      expression: null,
+      parsedExpression: null,
+      format: null,
+      parsedFormat: null,
+      tabSeq: 1,
+      attrs: {},
+    },
+  ],
+  unknowns: [],
+  meta: {},
+};
+
+describe("DWDetail preview", () => {
+  function renderWithLayout() {
+    const { store } = createTestStore({
+      datawindows: {
+        ...initialDatawindowsState,
+        dwDetail: makeDw(),
+        dwLayout: MOCK_DW_FILE,
+      },
+    });
+    render(() => <DWDetail store={store} />);
+    return document.querySelector(".dw-preview");
+  }
+
+  it("renders .dw-preview container", () => {
+    expect(renderWithLayout()).not.toBeNull();
+  });
+
+  it("renders band labels for header and detail", () => {
+    const preview = renderWithLayout();
+    expect(preview?.textContent).toContain("header");
+    expect(preview?.textContent).toContain("detail");
+  });
+
+  it("renders text control label", () => {
+    const preview = renderWithLayout();
+    expect(preview?.textContent).toContain("Customer Name");
+  });
+
+  it("renders column control with its name", () => {
+    const preview = renderWithLayout();
+    expect(preview?.textContent).toContain("col_id");
+  });
+
+  it("renders nothing when dwLayout is null", () => {
+    const { store } = createTestStore({
+      datawindows: { ...initialDatawindowsState, dwDetail: makeDw(), dwLayout: null },
+    });
+    render(() => <DWDetail store={store} />);
+    const preview = document.querySelector(".dw-preview");
+    expect(preview).not.toBeNull();
+    expect(preview?.children.length).toBe(0);
+  });
+});
 
 describe("DWDetail source-first", () => {
   it("does not render a FaceToggle", () => {

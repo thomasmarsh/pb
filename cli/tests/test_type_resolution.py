@@ -208,6 +208,65 @@ def test_resolve_calls_global_function():
     assert r.confidence == "high"
 
 
+def test_resolve_calls_override_nearest_ancestor():
+    """Method defined in both child and parent resolves to child (nearest)."""
+    calls = [CallRow("f.srw", "w_child", "open", "of_init", "ExCall")]
+    procedures = [
+        _make_proc("f.srw", "w_child", "open", body_json='[]'),
+        _make_proc("f.srw", "w_child", "of_init"),
+        _make_proc("f.srw", "w_parent", "of_init"),
+    ]
+    inherits: list[tuple[str, str]] = [("w_child", "w_parent")]
+
+    result = resolve_calls(calls, procedures, inherits)
+    r = result[0]
+    assert r.target_object == "w_child"
+    assert r.target_proc == "of_init"
+    assert r.resolution_kind == "virtual"
+    assert r.confidence == "high"
+
+
+def test_resolve_calls_override_three_levels():
+    """Method in grandparent, parent, and child — child (nearest) wins."""
+    calls = [CallRow("f.srw", "w_grandchild", "open", "of_init", "ExCall")]
+    procedures = [
+        _make_proc("f.srw", "w_grandchild", "open", body_json='[]'),
+        _make_proc("f.srw", "w_grandchild", "of_init"),
+        _make_proc("f.srw", "w_parent", "of_init"),
+        _make_proc("f.srw", "w_grandparent", "of_init"),
+    ]
+    inherits: list[tuple[str, str]] = [
+        ("w_grandchild", "w_parent"),
+        ("w_parent", "w_grandparent"),
+    ]
+
+    result = resolve_calls(calls, procedures, inherits)
+    r = result[0]
+    assert r.target_object == "w_grandchild"
+    assert r.resolution_kind == "virtual"
+    assert r.confidence == "high"
+
+
+def test_resolve_calls_override_middle_ancestor():
+    """Child does NOT override, parent does — parent is resolved (inherited)."""
+    calls = [CallRow("f.srw", "w_child", "open", "of_init", "ExCall")]
+    procedures = [
+        _make_proc("f.srw", "w_child", "open", body_json='[]'),
+        _make_proc("f.srw", "w_parent", "of_init"),
+        _make_proc("f.srw", "w_grandparent", "of_init"),
+    ]
+    inherits: list[tuple[str, str]] = [
+        ("w_child", "w_parent"),
+        ("w_parent", "w_grandparent"),
+    ]
+
+    result = resolve_calls(calls, procedures, inherits)
+    r = result[0]
+    assert r.target_object == "w_parent"
+    assert r.resolution_kind == "inherited"
+    assert r.confidence == "high"
+
+
 def test_resolve_calls_unresolved():
     calls = [CallRow("f.srw", "w_test", "open", "of_nope", "ExCall")]
     procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
