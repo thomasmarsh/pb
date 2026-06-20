@@ -34,14 +34,4 @@ def cfg_to_dot(cfg: CFG, node_states: dict[str, str]) -> graphviz.Digraph:
 
 
 def _block_label(bid: str, block: BasicBlock) -> str:
-    lines = [f"<{bid}>"]
-    stmts = block.stmts[:3]
-    for s in stmts:
-        node = s.get("node", {})
-        tag = node.get("tag", "?")
-        line = s.get("line", "")
-        text = f"L{line} {tag}"[:60]
-        lines.append(text)
-    if len(block.stmts) > 3:
-        lines.append(f"… +{len(block.stmts) - 3} more")
-    return "\n".join(lines)
+    return f"<{bid}>"

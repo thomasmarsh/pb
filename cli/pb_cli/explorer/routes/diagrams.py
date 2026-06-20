@@ -81,13 +81,25 @@ async def get_cfg_diagram(
     import json as _json
 
     row = conn.execute(
-        "SELECT body_json FROM procedures WHERE object = ? AND name = ? LIMIT 1",
+        "SELECT body_json, start_line, end_line FROM procedures WHERE object = ? AND name = ? LIMIT 1",
         [object_name, proc_name],
     ).fetchone()
     if not row or not row[0]:
         raise HTTPException(status_code=404, detail="Procedure not found or has no body")
 
     body = _json.loads(row[0])
+    proc_start_line: int | None = row[1]
+    proc_end_line: int | None = row[2]
+
+    source_original: str | None = None
+    if proc_start_line and proc_end_line:
+        src_row = conn.execute(
+            "SELECT source_text FROM objects WHERE name = ? LIMIT 1", [object_name]
+        ).fetchone()
+        if src_row and src_row[0]:
+            all_lines = src_row[0].splitlines(keepends=True)
+            source_original = "".join(all_lines[max(0, proc_start_line - 1) : proc_end_line])
+
     cfg = build_cfg(body)
 
     node_states = compute_node_states(cfg)
@@ -130,4 +142,6 @@ async def get_cfg_diagram(
         "svg": svg,
         "nodeStates": [{"blockId": bid, "state": s} for bid, s in node_states.items()],
         "blocks": block_details,
+        "sourceOriginal": source_original,
+        "procStartLine": proc_start_line,
     }

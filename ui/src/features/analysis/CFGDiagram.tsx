@@ -1,11 +1,12 @@
 // features/analysis/CFGDiagram.tsx — CFG Analysis View: pan/zoom SVG, node interaction, colour patching.
 
-import { Show, For, createResource, createSignal, onMount, onCleanup } from "solid-js";
+import { Show, For, createResource, createSignal, createMemo, onMount, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import { createPanZoom } from "../../components/diagram/usePanZoom.js";
+import { highlightPowerScript } from "../../utils/highlight.js";
 import { AnalysisView } from "./AnalysisView.js";
 
 interface NodeState {
@@ -24,19 +25,26 @@ interface CfgResponse {
   svg: string;
   nodeStates: NodeState[];
   blocks: BlockDetail[];
+  sourceOriginal: string | null;
+  procStartLine: number | null;
+}
+
+interface Tooltip {
+  html: string;
+  x: number;
+  y: number;
 }
 
 // Hex values matching CSS design tokens — SVG attributes cannot use CSS vars.
-// default: no patching needed (Graphviz fills already neutral).
 const CFG_STATE_FILL: Record<string, string | undefined> = {
-  "unreachable":    "#facc15",   // --yellow
+  "unreachable": "#facc15",
 };
 const CFG_STATE_FILL_OPACITY: Record<string, string | undefined> = {
   "unreachable": "0.4",
 };
 const CFG_STATE_STROKE: Record<string, string | undefined> = {
-  "taint-entering": "#f59e0b",   // --phase-p3
-  "proven-safe":    "#6366f1",   // --phase-p4
+  "taint-entering": "#f59e0b",
+  "proven-safe":    "#6366f1",
 };
 const CFG_STATE_STROKE_DASHARRAY: Record<string, string | undefined> = {
   "unreachable": "4 2",
@@ -63,21 +71,83 @@ function patchSvgNodeStates(container: Element, nodeStates: NodeState[]): void {
   }
 }
 
-// ── Selected-block detail panel ──────────────────────────────────────────────
+// ── Source excerpt ───────────────────────────────────────────────────────────
+
+const CONTEXT_LINES = 3;
+
+function CfgSourceExcerpt(props: {
+  block: BlockDetail | null;
+  sourceLines: string[];
+  procStartLine: number;
+}): JSX.Element {
+  const window = createMemo(() => {
+    const b = props.block;
+    const lines = props.sourceLines;
+    if (!b || !b.firstLine || !b.lastLine || lines.length === 0) return null;
+
+    const rel0 = b.firstLine - props.procStartLine;   // 0-indexed in sourceLines
+    const rel1 = b.lastLine  - props.procStartLine;
+    if (rel0 < 0 || rel0 >= lines.length) return null;
+
+    const winStart = Math.max(0, rel0 - CONTEXT_LINES);
+    const winEnd   = Math.min(lines.length - 1, rel1 + CONTEXT_LINES);
+    const slice    = lines.slice(winStart, winEnd + 1);
+    const highlighted = highlightPowerScript(slice.join("\n")).split("\n");
+
+    return { lines: highlighted, winStart, highlightRel0: rel0, highlightRel1: rel1 };
+  });
+
+  return (
+    <Show when={window()}>
+      {(w) => (
+        <div class="cfg-source-excerpt">
+          <div class="cfg-excerpt-gutter">
+            <For each={w().lines}>
+              {(_, i) => {
+                const absLine = props.procStartLine + w().winStart + i();
+                return <div class="cfg-excerpt-gutter-line">{absLine}</div>;
+              }}
+            </For>
+          </div>
+          <div class="cfg-excerpt-code">
+            <pre>
+              <For each={w().lines}>
+                {(html, i) => {
+                  const relIdx = w().winStart + i();
+                  const hi = relIdx >= w().highlightRel0 && relIdx <= w().highlightRel1;
+                  return (
+                    <div
+                      class={hi ? "cfg-excerpt-line cfg-excerpt-highlight" : "cfg-excerpt-line cfg-excerpt-context"}
+                      innerHTML={html}
+                    />
+                  );
+                }}
+              </For>
+            </pre>
+          </div>
+        </div>
+      )}
+    </Show>
+  );
+}
+
+// ── Block panel ──────────────────────────────────────────────────────────────
 
 function BlockPanel(props: {
   block: BlockDetail | null;
+  sourceLines: string[];
+  procStartLine: number;
   onGoto: () => void;
 }): JSX.Element {
   return (
     <div class="cfg-block-panel">
       <div class="cfg-block-panel-header">
-        {props.block ? `Block ${props.block.blockId}` : "Selected block"}
+        {props.block ? `Block ${props.block.blockId}` : "Hover a node"}
       </div>
       <div class="cfg-block-panel-body">
         <Show
           when={props.block}
-          fallback={<p class="cfg-block-empty">Click a node to inspect it.</p>}
+          fallback={<p class="cfg-block-empty">Hover or click a node to inspect it.</p>}
         >
           {(b) => (
             <>
@@ -87,8 +157,13 @@ function BlockPanel(props: {
               <For each={b().stmts}>
                 {(s) => <div class="cfg-block-stmt">{s}</div>}
               </For>
+              <CfgSourceExcerpt
+                block={b()}
+                sourceLines={props.sourceLines}
+                procStartLine={props.procStartLine}
+              />
               <button class="cfg-block-goto" onClick={props.onGoto}>
-                ↗ Open in source (line {b().firstLine ?? "?"})
+                ↗ View full procedure
               </button>
             </>
           )}
@@ -99,6 +174,10 @@ function BlockPanel(props: {
 }
 
 // ── Main component ───────────────────────────────────────────────────────────
+
+const PANEL_MIN = 180;
+const PANEL_MAX = 600;
+const PANEL_DEFAULT = 300;
 
 export function CFGDiagram(props: { store: Store<AppState, AppAction> }): JSX.Element {
   const snap = props.store.getState();
@@ -112,7 +191,13 @@ export function CFGDiagram(props: { store: Store<AppState, AppAction> }): JSX.El
     return r.view === "cfgDiagram" ? r.proc : "";
   };
 
-  const [selectedBlock, setSelectedBlock] = createSignal<BlockDetail | null>(null);
+  // focusedBlock persists across hover/mouse-leave; only clears on empty-click.
+  const [focusedBlock, setFocusedBlock] = createSignal<BlockDetail | null>(null);
+  // Tooltip is ephemeral — clears when mouse leaves the SVG area.
+  const [svgTooltip, setSvgTooltip] = createSignal<Tooltip | null>(null);
+  // Panel width for the resizable right column.
+  const [panelWidth, setPanelWidth] = createSignal(PANEL_DEFAULT);
+
   let viewportEl!: HTMLDivElement;
   let svgWrapEl!: HTMLDivElement;
 
@@ -125,11 +210,25 @@ export function CFGDiagram(props: { store: Store<AppState, AppAction> }): JSX.El
 
   const key = () => `${object()}::${proc()}`;
   const [data] = createResource(key, async (): Promise<CfgResponse> => {
+    // Reset focused block when navigating to a different procedure.
+    setFocusedBlock(null);
     const url = `/api/diagrams/cfg/${encodeURIComponent(object())}/${encodeURIComponent(proc())}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<CfgResponse>;
   });
+
+  const sourceLines = createMemo((): string[] => {
+    const d = data();
+    if (!d?.sourceOriginal) return [];
+    return d.sourceOriginal.split("\n");
+  });
+
+  const procStartLine = createMemo((): number => data()?.procStartLine ?? 1);
+
+  function blockById(id: string): BlockDetail | null {
+    return data()?.blocks.find((b) => b.blockId === id) ?? null;
+  }
 
   function gotoProc(): void {
     props.store.dispatch({
@@ -141,16 +240,48 @@ export function CFGDiagram(props: { store: Store<AppState, AppAction> }): JSX.El
   function handleSvgClick(e: MouseEvent): void {
     if (pan.state.dragging() || pan.state.momentum()) return;
     const g = (e.target as Element).closest("g[id]") as SVGGElement | null;
-    if (!g) { setSelectedBlock(null); return; }
-    const d = data();
-    if (!d) return;
-    setSelectedBlock(d.blocks.find((b) => b.blockId === g.id) ?? null);
+    if (!g) { setFocusedBlock(null); return; }
+    setFocusedBlock(blockById(g.id));
   }
 
   function handleSvgDblClick(e: MouseEvent): void {
     const g = (e.target as Element).closest("g[id]") as SVGGElement | null;
     if (!g) return;
     gotoProc();
+  }
+
+  function handleSvgMouseMove(e: MouseEvent): void {
+    if (pan.state.dragging() || pan.state.momentum()) {
+      setSvgTooltip(null);
+      return;
+    }
+    const g = (e.target as Element).closest("g[id]") as SVGGElement | null;
+    if (!g) {
+      setSvgTooltip(null);
+      return;
+    }
+    const block = blockById(g.id);
+    // Update focused block on hover so the source excerpt tracks mouse position.
+    if (block) setFocusedBlock(block);
+    if (block) {
+      const stmtHtml = block.stmts
+        .map((s) => `<div class="tt-meta">${s}</div>`)
+        .join("") || `<div class="tt-meta">(empty block)</div>`;
+      setSvgTooltip({
+        html: `<div class="tt-name">Block ${block.blockId}</div>` +
+              `<div class="tt-meta" style="margin-bottom:4px">L${block.firstLine ?? "?"}–L${block.lastLine ?? "?"}</div>` +
+              stmtHtml,
+        x: e.clientX + 14,
+        y: e.clientY + 14,
+      });
+    } else {
+      setSvgTooltip(null);
+    }
+  }
+
+  function handleSvgMouseLeave(): void {
+    // Tooltip disappears; focusedBlock stays so the source excerpt persists.
+    setSvgTooltip(null);
   }
 
   function fitView(): void {
@@ -164,7 +295,23 @@ export function CFGDiagram(props: { store: Store<AppState, AppAction> }): JSX.El
     pan.actions.setView(scale, (vw - cw * scale) / 2, (vh - ch * scale) / 2);
   }
 
-  // F/R keyboard — scoped to when this view is active.
+  function startResize(e: MouseEvent): void {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = panelWidth();
+    function onMove(ev: MouseEvent): void {
+      // Moving handle left → panel gets wider; right → narrower.
+      const w = Math.max(PANEL_MIN, Math.min(PANEL_MAX, startW - (ev.clientX - startX)));
+      setPanelWidth(w);
+    }
+    function onUp(): void {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
   onMount(() => {
     function handleKey(e: KeyboardEvent): void {
       const t = e.target as HTMLElement;
@@ -225,21 +372,41 @@ export function CFGDiagram(props: { store: Store<AppState, AppAction> }): JSX.El
                 <div
                   ref={(el) => {
                     svgWrapEl = el;
-                    // Patch SVG colours after innerHTML is set by SolidJS.
-                    requestAnimationFrame(() => patchSvgNodeStates(el, d().nodeStates));
+                    // Patch state colours then fit to viewport after SVG is in the DOM.
+                    requestAnimationFrame(() => {
+                      patchSvgNodeStates(el, d().nodeStates);
+                      fitView();
+                    });
                   }}
                   class="diagram-svg-wrap"
                   style={{ transform: `translate(${pan.state.offset().x}px, ${pan.state.offset().y}px) scale(${pan.state.scale()})` }}
                   innerHTML={d().svg}
                   onClick={handleSvgClick}
                   onDblClick={handleSvgDblClick}
+                  onMouseMove={handleSvgMouseMove}
+                  onMouseLeave={handleSvgMouseLeave}
                 />
               </div>
             </div>
-            <BlockPanel
-              block={selectedBlock()}
-              onGoto={gotoProc}
-            />
+            <div class="cfg-resize-handle" onMouseDown={startResize} />
+            <div style={{ width: `${panelWidth()}px`, "flex-shrink": "0", display: "flex", "flex-direction": "column", "min-height": "0" }}>
+              <BlockPanel
+                block={focusedBlock()}
+                sourceLines={sourceLines()}
+                procStartLine={procStartLine()}
+                onGoto={gotoProc}
+              />
+            </div>
+            <Show when={svgTooltip()}>
+              <div
+                class="source-proc-tooltip visible"
+                style={{
+                  left: `${Math.min(svgTooltip()!.x, window.innerWidth - 300)}px`,
+                  top:  `${Math.min(svgTooltip()!.y, window.innerHeight - 160)}px`,
+                }}
+                innerHTML={svgTooltip()!.html}
+              />
+            </Show>
           </div>
         )}
       </Show>
