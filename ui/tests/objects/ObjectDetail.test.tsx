@@ -1,4 +1,4 @@
-// tests/objects/ObjectDetail.test.tsx — Tests for ObjectDetail FaceToggle structure.
+// tests/objects/ObjectDetail.test.tsx — Tests for source-first ObjectDetail.
 
 import { describe, it, expect } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
@@ -22,98 +22,124 @@ const baseDetail: ObjectDetailResponse = {
   tables_accessed: ["orders", "customers"],
 };
 
-function renderObjectDetail(overrides: Partial<ObjectDetailResponse> = {}, objectFace: "source" | "analysis" = "source") {
-  return createTestStore({
+function renderObjectDetail(overrides: Partial<ObjectDetailResponse> = {}) {
+  const { store, captured } = createTestStore({
     objects: {
       ...initialObjectsState,
       detail: { ...baseDetail, ...overrides },
-      objectFace,
     },
   });
+  render(() => <ObjectDetail store={store} />);
+  return { store, captured };
 }
 
-describe("ObjectDetail face/toggle", () => {
-  it("renders Source face active by default", () => {
-    const { store } = renderObjectDetail();
-    render(() => <ObjectDetail store={store} />);
-    const active = document.querySelector(".face-toggle-btn.active");
-    expect(active?.textContent).toBe("Source");
+describe("ObjectDetail source-first", () => {
+  it("does not render a FaceToggle", () => {
+    renderObjectDetail();
+    expect(document.querySelector(".face-toggle")).toBeNull();
   });
 
-  it("renders Analysis face when objectFace is analysis", () => {
-    const { store } = renderObjectDetail({}, "analysis");
-    render(() => <ObjectDetail store={store} />);
-    const active = document.querySelector(".face-toggle-btn.active");
-    expect(active?.textContent).toBe("Analysis");
+  it("source shown without a tab bar", () => {
+    renderObjectDetail();
+    expect(document.querySelector(".tab-bar")).toBeNull();
   });
 
-  it("dispatches set-object-face when Analysis button is clicked", () => {
-    const { store, captured } = renderObjectDetail();
-    render(() => <ObjectDetail store={store} />);
-    const analysisBtn = [...document.querySelectorAll(".face-toggle-btn")]
-      .find((b) => b.textContent === "Analysis")!;
-    fireEvent.click(analysisBtn);
-    const faceActions = captured.filter(
-      (a) => a.tag === "objects" && a.action.tag === "set-object-face",
-    );
-    expect(faceActions.length).toBeGreaterThanOrEqual(1);
-    expect((faceActions[0] as any).action.face).toBe("analysis");
+  it("renders AnalysisSummaryBar", () => {
+    renderObjectDetail();
+    expect(document.querySelector(".analysis-summary-bar")).not.toBeNull();
   });
 
-  it("Analysis face shows Taint Paths card", () => {
-    const { store } = renderObjectDetail({}, "analysis");
-    render(() => <ObjectDetail store={store} />);
-    expect(document.body.textContent).toContain("Taint Paths");
+  it("Callers pill shows count from callers array", () => {
+    renderObjectDetail({ callers: ["w_login"] });
+    const bar = document.querySelector(".analysis-summary-bar");
+    expect(bar?.textContent).toContain("Callers (1)");
   });
 
-  it("Analysis face shows DWs Used section with EntityCards", () => {
-    const { store } = renderObjectDetail({ dws_used: ["dw_grid", "dw_report"] }, "analysis");
-    render(() => <ObjectDetail store={store} />);
+  it("Callers pill shows 0 when callers is empty", () => {
+    renderObjectDetail({ callers: [] });
+    const bar = document.querySelector(".analysis-summary-bar");
+    expect(bar?.textContent).toContain("Callers (0)");
+  });
+
+  it("clicking Callers pill opens callers panel", () => {
+    renderObjectDetail({ callers: ["w_login"] });
+    const bar = document.querySelector(".analysis-summary-bar")!;
+    const btn = [...bar.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Callers"),
+    )!;
+    fireEvent.click(btn);
+    expect(document.body.textContent).toContain("w_login");
+  });
+
+  it("clicking Callers pill again closes the panel", () => {
+    renderObjectDetail({ callers: ["w_login"] });
+    const getCallerBtn = () => {
+      const bar = document.querySelector(".analysis-summary-bar")!;
+      return [...bar.querySelectorAll("button")].find((b) =>
+        b.textContent?.includes("Callers"),
+      )!;
+    };
+    fireEvent.click(getCallerBtn());
+    fireEvent.click(getCallerBtn());
+    // Panel closed — entity card for w_login should not appear
     const cards = document.querySelectorAll(".entity-card");
     const names = [...cards].map((c) => c.textContent ?? "");
-    expect(names.some((n) => n.includes("dw_grid"))).toBe(true);
-    expect(names.some((n) => n.includes("dw_report"))).toBe(true);
+    expect(names.some((n) => n.includes("w_login"))).toBe(false);
   });
 
-  it("Analysis face shows Tables Accessed section with EntityCards", () => {
-    const { store } = renderObjectDetail({ tables_accessed: ["orders", "customers"] }, "analysis");
-    render(() => <ObjectDetail store={store} />);
-    const cards = document.querySelectorAll(".entity-card");
-    const names = [...cards].map((c) => c.textContent ?? "");
-    expect(names.some((n) => n.includes("orders"))).toBe(true);
-    expect(names.some((n) => n.includes("customers"))).toBe(true);
+  it("DWs pill shown when dws_used non-empty", () => {
+    renderObjectDetail({ dws_used: ["dw_grid"] });
+    const bar = document.querySelector(".analysis-summary-bar");
+    expect(bar?.textContent).toContain("DWs (1)");
   });
 
-  it("Analysis face shows 'No callers' note when callers is empty", () => {
-    const { store } = renderObjectDetail({ callers: [] }, "analysis");
-    render(() => <ObjectDetail store={store} />);
-    expect(document.body.textContent).toMatch(/no callers/i);
+  it("DWs pill hidden when dws_used empty", () => {
+    renderObjectDetail({ dws_used: [] });
+    const bar = document.querySelector(".analysis-summary-bar");
+    expect(bar?.textContent).not.toContain("DWs");
   });
 
-  it("Analysis face shows callers as EntityCards when callers is non-empty", () => {
-    const { store } = renderObjectDetail({ callers: ["w_login", "w_admin"] }, "analysis");
-    render(() => <ObjectDetail store={store} />);
+  it("Tables pill shown when tables_accessed non-empty", () => {
+    renderObjectDetail({ tables_accessed: ["orders", "customers"] });
+    const bar = document.querySelector(".analysis-summary-bar");
+    expect(bar?.textContent).toContain("Tables (2)");
+  });
+
+  it("Tables pill hidden when tables_accessed empty", () => {
+    renderObjectDetail({ tables_accessed: [] });
+    const bar = document.querySelector(".analysis-summary-bar");
+    expect(bar?.textContent).not.toContain("Tables");
+  });
+
+  it("Metrics pill shown when metrics present", () => {
+    renderObjectDetail({
+      metrics: {
+        object: "w_main", in_degree: 2, out_degree: 3,
+        betweenness: 0.1, pagerank: 0.05, max_cyclomatic: 5,
+        avg_cyclomatic: 2.5, dit: 1, cbo: 4,
+      },
+    });
+    const bar = document.querySelector(".analysis-summary-bar");
+    expect(bar?.textContent).toContain("Metrics");
+  });
+
+  it("Metrics pill hidden when metrics null", () => {
+    renderObjectDetail({ metrics: null });
+    const bar = document.querySelector(".analysis-summary-bar");
+    expect(bar?.textContent).not.toContain("Metrics");
+  });
+
+  it("callers panel lists caller entity cards after clicking pill", () => {
+    renderObjectDetail({ callers: ["w_login", "w_admin"] });
+    const bar = document.querySelector(".analysis-summary-bar")!;
+    const btn = [...bar.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Callers"),
+    )!;
+    fireEvent.click(btn);
     const cards = document.querySelectorAll(".entity-card");
     const names = [...cards].map((c) => c.textContent ?? "");
     expect(names.some((n) => n.includes("w_login"))).toBe(true);
-  });
-
-  it("Source face does not show analysis cards", () => {
-    const { store } = renderObjectDetail({}, "source");
-    render(() => <ObjectDetail store={store} />);
-    expect(document.querySelector(".phase-gate-inline")).toBeNull();
-  });
-
-  it("Source face shows ProceduresCard when procedures exist", () => {
-    const { store } = renderObjectDetail({
-      procedures: [{
-        object: "w_main", proc_type: "function" as "function", name: "f_open",
-        modifiers: null, params: null, return_type: null,
-        start_line: 1, end_line: 10, cyclomatic: 1,
-      }],
-    }, "source");
-    render(() => <ObjectDetail store={store} />);
-    expect(document.body.textContent).toContain("f_open");
+    expect(names.some((n) => n.includes("w_admin"))).toBe(true);
   });
 
   it("renders error state when detail has error", () => {

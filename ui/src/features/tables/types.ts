@@ -1,7 +1,7 @@
 // features/tables/types.ts
 
 import type { TableSummary, TableDetail } from "../../types/api.js";
-import type { Face } from "../../components/ui/FaceToggle.js";
+import type { Face } from "../../components/detail/DetailHeader.js";
 import type { ScrollPair } from "../objects/types.js";
 
 export type { Face };

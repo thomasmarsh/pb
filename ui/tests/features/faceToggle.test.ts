@@ -3,21 +3,9 @@
 import { describe, it } from "vitest";
 import { Effect } from "../../src/core/effect.js";
 import { createTestStore } from "../test-store.js";
-import { objectsReducer, initialObjectsState, type ObjectsEnv } from "../../src/features/objects/reducer.js";
 import { datawindowsReducer, initialDatawindowsState, type DatawindowsEnv } from "../../src/features/datawindows/reducer.js";
 import { tablesReducer, initialTablesState, type TablesEnv } from "../../src/features/tables/reducer.js";
-import type { ObjectsState } from "../../src/features/objects/types.js";
 import type { DatawindowsState } from "../../src/features/datawindows/types.js";
-
-const objEnv: ObjectsEnv = {
-  getObjects: () => Effect.none(),
-  getAllObjects: () => Effect.none(),
-  getObject: () => Effect.none(),
-  getObjectSource: () => Effect.none(),
-  getProcedure: () => Effect.none(),
-  getProcedures: () => Effect.none(),
-  navigate: () => Effect.none(),
-};
 
 const dwEnv: DatawindowsEnv = {
   getObjects: () => Effect.none(),
@@ -30,56 +18,6 @@ const tabEnv: TablesEnv = {
   getTableDetail: () => Effect.none(),
   navigate: () => Effect.none(),
 };
-
-// ── Object face/scroll ────────────────────────────────────────────────────────
-
-describe("objects face/scroll state", () => {
-  it("set-object-face source→analysis saves source scroll and switches face", () => {
-    const ts = createTestStore(objectsReducer, objEnv, initialObjectsState);
-    ts.send({ tag: "set-object-face", name: "w_payment", face: "analysis", scrollTop: 120 }, (s) => {
-      s.objectFace = "analysis";
-      s.objectScrollPos["w_payment"] = { source: 120, analysis: 0 };
-    });
-  });
-
-  it("set-object-face analysis→source saves analysis scroll and switches face", () => {
-    const initial: ObjectsState = { ...initialObjectsState, objectFace: "analysis" };
-    const ts = createTestStore(objectsReducer, objEnv, initial);
-    ts.send({ tag: "set-object-face", name: "w_payment", face: "source", scrollTop: 300 }, (s) => {
-      s.objectFace = "source";
-      s.objectScrollPos["w_payment"] = { source: 0, analysis: 300 };
-    });
-  });
-
-  it("set-object-face stores scroll per entity name (no cross-contamination)", () => {
-    const ts = createTestStore(objectsReducer, objEnv, initialObjectsState);
-    // Toggle w_payment source→analysis; saves source scroll under w_payment only.
-    ts.send({ tag: "set-object-face", name: "w_payment", face: "analysis", scrollTop: 50 }, (s) => {
-      s.objectFace = "analysis";
-      s.objectScrollPos["w_payment"] = { source: 50, analysis: 0 };
-      // w_admin not present in scrollPos → no contamination yet
-    });
-    // Now toggle analysis→source (face is "analysis" from above); saves analysis scroll for w_admin.
-    ts.send({ tag: "set-object-face", name: "w_admin", face: "source", scrollTop: 200 }, (s) => {
-      s.objectFace = "source";
-      s.objectScrollPos["w_admin"] = { source: 0, analysis: 200 };
-      // w_payment scroll entry unchanged: { source: 50, analysis: 0 }
-    });
-  });
-
-  it("set-object-face preserves existing analysis scroll on re-toggle to source", () => {
-    const initial: ObjectsState = {
-      ...initialObjectsState,
-      objectFace: "analysis",
-      objectScrollPos: { "w_payment": { source: 80, analysis: 0 } },
-    };
-    const ts = createTestStore(objectsReducer, objEnv, initial);
-    ts.send({ tag: "set-object-face", name: "w_payment", face: "source", scrollTop: 150 }, (s) => {
-      s.objectFace = "source";
-      s.objectScrollPos["w_payment"] = { source: 80, analysis: 150 };
-    });
-  });
-});
 
 // ── DataWindow face/scroll ────────────────────────────────────────────────────
 

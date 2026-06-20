@@ -144,11 +144,18 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
 
     procs = rows(
         conn.execute(
-            "SELECT name, proc_type, modifiers, params, return_type, "
-            "start_line, end_line, cyclomatic "
-            "FROM procedures WHERE object = ? "
-            "AND start_line IS NOT NULL AND end_line IS NOT NULL "
-            "ORDER BY start_line",
+            "SELECT p.name, p.proc_type, p.modifiers, p.params, p.return_type, "
+            "p.start_line, p.end_line, p.cyclomatic, "
+            "COUNT(DISTINCT c_in.object || '.' || c_in.from_proc) AS caller_count, "
+            "COUNT(DISTINCT c_out.to_name) AS callee_count "
+            "FROM procedures p "
+            "LEFT JOIN calls c_in ON c_in.to_name = p.name "
+            "LEFT JOIN calls c_out ON c_out.object = p.object AND c_out.from_proc = p.name "
+            "WHERE p.object = ? "
+            "AND p.start_line IS NOT NULL AND p.end_line IS NOT NULL "
+            "GROUP BY p.name, p.proc_type, p.modifiers, p.params, p.return_type, "
+            "         p.start_line, p.end_line, p.cyclomatic "
+            "ORDER BY p.start_line",
             [name],
         )
     )

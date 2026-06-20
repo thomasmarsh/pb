@@ -1,12 +1,11 @@
-// LibraryDetail.tsx — Library detail: object list (source) + metrics (analysis).
+// LibraryDetail.tsx — Library detail: object list always visible with summary section below.
 
-import { Show, For, createResource, createSignal } from "solid-js";
+import { Show, For, createResource } from "solid-js";
 import { Package } from "../../utils/icons.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import type { LibraryDetailResponse } from "../../types/api.js";
-import { FaceToggle, type Face } from "../../components/ui/FaceToggle.js";
 import { EntityCard } from "../../components/detail/EntityCard.js";
 import { Loading } from "../../components/ui/Loading.js";
 
@@ -29,8 +28,6 @@ export function LibraryDetail(props: { store: Store<AppState, AppAction> }) {
         }),
   );
 
-  const [face, setFace] = createSignal<Face>("source");
-
   function navigate(name: string, kind: string): void {
     if (kind === "datawindow") {
       store.dispatch({ tag: "datawindows", action: { tag: "select", name } });
@@ -47,7 +44,6 @@ export function LibraryDetail(props: { store: Store<AppState, AppAction> }) {
     <div class="card">
       <div class="card-header">
         <h2><span class="entity-icon"><Package size={16} /></span> {libName()}</h2>
-        <FaceToggle face={face()} onToggle={(f) => setFace(f)} />
       </div>
 
       <Show when={data.loading}>
@@ -61,54 +57,46 @@ export function LibraryDetail(props: { store: Store<AppState, AppAction> }) {
       <Show when={data()}>
         {(lib) => (
           <>
-            <Show when={face() === "source"}>
-              <div style={{ "margin-bottom": "8px", color: "var(--text-muted)", "font-size": "13px" }}>
-                {lib().object_count} objects
-              </div>
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Kind</th>
-                    <th>Procs</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={lib().objects}>
-                    {(obj) => (
-                      <tr>
-                        <td class="name-cell">
-                          <EntityCard
-                            type={obj.kind === "datawindow" ? "datawindow" : "object"}
-                            name={obj.name}
-                            onClick={() => navigate(obj.name, obj.kind)}
-                          />
-                        </td>
-                        <td>
-                          <span class={`badge ${obj.kind === "datawindow" ? "badge-dw" : obj.kind === "powerscript" ? "badge-ps" : "badge-proj"}`}>
-                            {obj.kind}
-                          </span>
-                        </td>
-                        <td>{obj.proc_count}</td>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
-            </Show>
+            <div style={{ "margin-bottom": "8px", color: "var(--text-muted)", "font-size": "13px" }}>
+              {lib().object_count} objects
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Kind</th>
+                  <th>Procs</th>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={lib().objects}>
+                  {(obj) => (
+                    <tr>
+                      <td class="name-cell">
+                        <EntityCard
+                          type={obj.kind === "datawindow" ? "datawindow" : "object"}
+                          name={obj.name}
+                          onClick={() => navigate(obj.name, obj.kind)}
+                        />
+                      </td>
+                      <td>
+                        <span class={`badge ${obj.kind === "datawindow" ? "badge-dw" : obj.kind === "powerscript" ? "badge-ps" : "badge-proj"}`}>
+                          {obj.kind}
+                        </span>
+                      </td>
+                      <td>{obj.proc_count}</td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
 
-            <Show when={face() === "analysis"}>
+            <div style={{ "margin-top": "16px", "border-top": "1px solid var(--border)", "padding-top": "12px" }}>
               <table class="data-table">
                 <tbody>
-                  <tr>
-                    <td>Objects</td>
-                    <td>{lib().object_count}</td>
-                  </tr>
                   <tr>
                     <td>Total procedures</td>
-                    <td>
-                      {lib().objects.reduce((s, o) => s + o.proc_count, 0)}
-                    </td>
+                    <td>{lib().objects.reduce((s, o) => s + o.proc_count, 0)}</td>
                   </tr>
                   <tr>
                     <td>Uncalled procedures</td>
@@ -120,7 +108,7 @@ export function LibraryDetail(props: { store: Store<AppState, AppAction> }) {
                   </tr>
                 </tbody>
               </table>
-            </Show>
+            </div>
           </>
         )}
       </Show>

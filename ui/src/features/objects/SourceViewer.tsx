@@ -107,6 +107,18 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
     return map;
   });
 
+  // Map of proc name (lower) → caller/callee counts, from this object's procedures only
+  const procCountMap = createMemo(() => {
+    const map = new Map<string, { caller_count: number; callee_count: number }>();
+    for (const p of props.procedures) {
+      map.set(p.name.toLowerCase(), {
+        caller_count: p.caller_count ?? 0,
+        callee_count: p.callee_count ?? 0,
+      });
+    }
+    return map;
+  });
+
   // Map of start_line → procedure
   const procFirstLine = createMemo(() => {
     const map = new Map<number, ProcedureInfo>();
@@ -172,6 +184,10 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
         html += `<div class="tt-meta">${proc.object}</div>`;
         if (proc.cyclomatic != null) {
           html += `<div class="tt-cc"><span class="badge badge-cc">CC: ${proc.cyclomatic}</span></div>`;
+        }
+        const counts = procCountMap().get(lower);
+        if (counts) {
+          html += `<div class="tt-meta">Callers: ${counts.caller_count} · Callees: ${counts.callee_count}</div>`;
         }
       }
       setTooltip({ html, x: e.clientX + 12, y: e.clientY + 12 });
@@ -288,12 +304,14 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
                 onMouseEnter={(e) => {
                   const cc = p.cyclomatic != null ? `CC: ${p.cyclomatic}` : "";
                   const ret = p.return_type ? ` → ${p.return_type}` : "";
+                  const counts = procCountMap().get(p.name.toLowerCase());
                   setTooltip({
                     html: `<div class="tt-name" style="color:${badgeColor}">${p.name}</div>` +
                       `<div class="tt-meta">${p.proc_type} ${p.modifiers ?? ""}${ret}</div>` +
                       (p.params ? `<div class="tt-meta">(${p.params})</div>` : "") +
                       `<div class="tt-meta">Lines ${p.start_line}–${p.end_line}</div>` +
-                      (cc ? `<div class="tt-cc"><span class="badge badge-cc">${cc}</span></div>` : ""),
+                      (cc ? `<div class="tt-cc"><span class="badge badge-cc">${cc}</span></div>` : "") +
+                      (counts ? `<div class="tt-meta">Callers: ${counts.caller_count} · Callees: ${counts.callee_count}</div>` : ""),
                     x: e.clientX + 12,
                     y: e.clientY + 12,
                   });

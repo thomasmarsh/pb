@@ -19,7 +19,6 @@ export type ObjectsAction =
   | { tag: "proc-loaded"; data: ProcedureDetailResponse }
   | { tag: "proc-error"; error: string }
   | { tag: "proc-tab"; tab: string }
-  | { tag: "set-object-face"; name: string; face: import("./types.js").Face; scrollTop: number }
   // Procedures list
   | { tag: "procs-list-load" }
   | { tag: "procs-list-loaded"; data: ProcedureListItem[] }

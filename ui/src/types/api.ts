@@ -79,6 +79,8 @@ export interface ProcedureInfo {
   start_line: number | null;
   end_line: number | null;
   cyclomatic: number | null;
+  caller_count?: number;
+  callee_count?: number;
 }
 
 export interface KnownProcInfo {
