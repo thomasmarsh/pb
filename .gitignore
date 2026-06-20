@@ -1,26 +1,46 @@
-dist-newstyle/
-doc/reference/code
-doc/reference/docs/
-doc/plan/
-output/
-example/PowerBuilder-Example/
-example/openpay-src/
+# Misc
 .DS_Store
+
+# Haskell
+dist-newstyle/
+
+# Python
 __pycache__
 .venv
 *.pyc
-pb.duckdb
-.mimocode/
-mimocode.json
-node_modules
-cli/pb_cli/explorer/static/dist/
-ui/src/types/ast.generated.ts
-cli/pb_cli/core/ast_generated.py
-example/openpay-0.1.1b-extract/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
-doc/pb2025r2/
+
+# TypeScript
+node_modules
+
+# Local work
+output/
 *.duckdb.wal
 *.duckdb.dir
 *.duckdb.lck
+pb.duckdb
+
+# Code samples and extracts
+example/PowerBuilder-Example/
+example/openpay-src/
+example/openpay-0.1.1b-extract/
+
+# Untracked docs
+doc/pb2025r2/
+doc/plan/
+doc/reference/code
+doc/reference/docs/
+
+# Code generated AST files
+ui/src/types/ast.generated.ts
+cli/pb_cli/core/ast_generated.py
+
+# cline
+memory_bank/
+.clinerules
+
+# mimo
+.mimocode/
+mimocode.json
