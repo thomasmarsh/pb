@@ -261,4 +261,225 @@ describe("PBInterpreter", () => {
       expect(state.controlValues).toEqual({});
     });
   });
+
+  describe("BsFor", () => {
+    it("executes body for each iteration", async () => {
+      const interp = new PBInterpreter();
+      interp.setAst({
+        typeBlocks: [],
+        events: [{
+          name: "open", owner: "w_test",
+          body: [
+            loc(1, makeIntAssign("sum", 0)),
+            loc(2, {
+              tag: "BsFor",
+              contents: {
+                var: { segments: [{ name: "i", subscript: null }] },
+                from: { tag: "ExInt", contents: "1" },
+                to: { tag: "ExInt", contents: "3" },
+                step: null,
+                body: [loc(3, {
+                  tag: "BsAssign",
+                  contents: [
+                    { segments: [{ name: "sum", subscript: null }] },
+                    { tag: "ExBinOp", lhs: { tag: "ExLvalue", contents: { segments: [{ name: "sum", subscript: null }] } }, op: "BopAdd", rhs: { tag: "ExInt", contents: "1" } },
+                  ],
+                })],
+              },
+            }),
+          ],
+        }],
+      });
+      await interp.executeEvent("w_test", "open");
+      expect(interp.getState().variables["sum"]).toBe(3);
+    });
+
+    it("handles step parameter", async () => {
+      const interp = new PBInterpreter();
+      interp.setAst({
+        typeBlocks: [],
+        events: [{
+          name: "open", owner: "w_test",
+          body: [
+            loc(1, makeIntAssign("count", 0)),
+            loc(2, {
+              tag: "BsFor",
+              contents: {
+                var: { segments: [{ name: "i", subscript: null }] },
+                from: { tag: "ExInt", contents: "0" },
+                to: { tag: "ExInt", contents: "10" },
+                step: { tag: "ExInt", contents: "2" },
+                body: [loc(3, {
+                  tag: "BsAssign",
+                  contents: [
+                    { segments: [{ name: "count", subscript: null }] },
+                    { tag: "ExBinOp", lhs: { tag: "ExLvalue", contents: { segments: [{ name: "count", subscript: null }] } }, op: "BopAdd", rhs: { tag: "ExInt", contents: "1" } },
+                  ],
+                })],
+              },
+            }),
+          ],
+        }],
+      });
+      await interp.executeEvent("w_test", "open");
+      expect(interp.getState().variables["count"]).toBe(6);
+    });
+  });
+
+  describe("BsDo", () => {
+    it("executes body with while condition", async () => {
+      const interp = new PBInterpreter();
+      interp.setAst({
+        typeBlocks: [],
+        events: [{
+          name: "open", owner: "w_test",
+          body: [
+            loc(1, makeIntAssign("x", 0)),
+            loc(2, {
+              tag: "BsDo",
+              contents: {
+                cond: { tag: "DoWhile", contents: { tag: "ExBinOp", lhs: { tag: "ExLvalue", contents: { segments: [{ name: "x", subscript: null }] } }, op: "BopLt", rhs: { tag: "ExInt", contents: "3" } } },
+                body: [loc(3, {
+                  tag: "BsAssign",
+                  contents: [
+                    { segments: [{ name: "x", subscript: null }] },
+                    { tag: "ExBinOp", lhs: { tag: "ExLvalue", contents: { segments: [{ name: "x", subscript: null }] } }, op: "BopAdd", rhs: { tag: "ExInt", contents: "1" } },
+                  ],
+                })],
+                loop: null,
+              },
+            }),
+          ],
+        }],
+      });
+      await interp.executeEvent("w_test", "open");
+      expect(interp.getState().variables["x"]).toBe(3);
+    });
+  });
+
+  describe("BsChoose", () => {
+    it("matches correct case clause", async () => {
+      const interp = new PBInterpreter();
+      interp.setAst({
+        typeBlocks: [],
+        events: [{
+          name: "open", owner: "w_test",
+          body: [
+            loc(1, makeAssign("mode", "B")),
+            loc(2, {
+              tag: "BsChoose",
+              contents: {
+                expr: { tag: "ExLvalue", contents: { segments: [{ name: "mode", subscript: null }] } },
+                clauses: [
+                  { expr: ['"A"'], body: [loc(3, makeAssign("result", "alpha"))] },
+                  { expr: ['"B"'], body: [loc(4, makeAssign("result", "beta"))] },
+                  { expr: null, body: [loc(5, makeAssign("result", "other"))] },
+                ],
+              },
+            }),
+          ],
+        }],
+      });
+      await interp.executeEvent("w_test", "open");
+      expect(interp.getState().variables["result"]).toBe("beta");
+    });
+
+    it("falls through to case else when no match", async () => {
+      const interp = new PBInterpreter();
+      interp.setAst({
+        typeBlocks: [],
+        events: [{
+          name: "open", owner: "w_test",
+          body: [
+            loc(1, makeAssign("mode", "Z")),
+            loc(2, {
+              tag: "BsChoose",
+              contents: {
+                expr: { tag: "ExLvalue", contents: { segments: [{ name: "mode", subscript: null }] } },
+                clauses: [
+                  { expr: ['"A"'], body: [loc(3, makeAssign("result", "alpha"))] },
+                  { expr: null, body: [loc(4, makeAssign("result", "default"))] },
+                ],
+              },
+            }),
+          ],
+        }],
+      });
+      await interp.executeEvent("w_test", "open");
+      expect(interp.getState().variables["result"]).toBe("default");
+    });
+  });
+
+  describe("BsLocalVar", () => {
+    it("initialises variable from init expression", async () => {
+      const interp = new PBInterpreter();
+      interp.setAst({
+        typeBlocks: [],
+        events: [{
+          name: "open", owner: "w_test",
+          body: [loc(1, {
+            tag: "BsLocalVar",
+            name: "greeting",
+            mods: [],
+            type: { tag: "PtPrimitive", contents: "string" },
+            init: { tag: "ExStr", contents: "hello" },
+          })],
+        }],
+      });
+      await interp.executeEvent("w_test", "open");
+      expect(interp.getState().variables["greeting"]).toBe("hello");
+    });
+  });
+
+  describe("ExCall dispatch", () => {
+    it("dispatches to PB_BUILTINS mid()", async () => {
+      const interp = new PBInterpreter();
+      interp.setAst({
+        typeBlocks: [],
+        events: [{
+          name: "open", owner: "w_test",
+          body: [loc(1, {
+            tag: "BsAssign",
+            contents: [
+              { segments: [{ name: "result", subscript: null }] },
+              {
+                tag: "ExCall",
+                callee: { segments: [{ name: "mid", subscript: null }] },
+                args: [
+                  ['"hello"'],
+                  ['"2"'],
+                  ['"3"'],
+                ],
+              },
+            ],
+          })],
+        }],
+      });
+      await interp.executeEvent("w_test", "open");
+      expect(interp.getState().variables["result"]).toBe("ell");
+    });
+
+    it("returns undefined for unknown function", async () => {
+      const interp = new PBInterpreter();
+      interp.setAst({
+        typeBlocks: [],
+        events: [{
+          name: "open", owner: "w_test",
+          body: [loc(1, {
+            tag: "BsAssign",
+            contents: [
+              { segments: [{ name: "result", subscript: null }] },
+              {
+                tag: "ExCall",
+                callee: { segments: [{ name: "UnknownFunc", subscript: null }] },
+                args: [],
+              },
+            ],
+          })],
+        }],
+      });
+      await interp.executeEvent("w_test", "open");
+      expect(interp.getState().variables["result"]).toBeUndefined();
+    });
+  });
 });

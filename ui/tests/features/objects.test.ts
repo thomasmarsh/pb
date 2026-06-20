@@ -11,6 +11,7 @@ const mockEnv: ObjectsEnv = {
   getAllObjects: () => Effect.none(),
   getObject: () => Effect.none(),
   getObjectSource: () => Effect.none(),
+  getObjectAst: () => Effect.none(),
   getProcedure: () => Effect.none(),
   getProcedures: () => Effect.none(),
   navigate: () => Effect.none(),

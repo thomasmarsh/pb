@@ -1,6 +1,7 @@
 // features/objects/actions.ts — Objects feature actions (self-contained).
 
 import type { ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ObjectRow, ProcedureListItem } from "../../types/api.js";
+import type { AstData } from "../../core/interpreter.js";
 
 export type ObjectsAction =
   | { tag: "back-to-objects" }
@@ -15,6 +16,8 @@ export type ObjectsAction =
   | { tag: "detail-error"; error: string }
   | { tag: "source-loaded"; data: ObjectSourceResponse }
   | { tag: "source-error"; error: string }
+  | { tag: "ast-loaded"; data: AstData }
+  | { tag: "ast-error"; error: string }
   | { tag: "all-objects-loaded"; data: ObjectRow[] }
   | { tag: "proc-select"; objectName: string; procName: string }
   | { tag: "proc-loaded"; data: ProcedureDetailResponse }

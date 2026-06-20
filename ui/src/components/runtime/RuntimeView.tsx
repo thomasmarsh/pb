@@ -1,17 +1,44 @@
-// RuntimeView.tsx — Wireframe layout renderer + minimal event interpreter (Plan 101a spike).
+// RuntimeView.tsx — Wireframe layout renderer + minimal event interpreter.
 
-import { createSignal, createResource, Show, For } from "solid-js";
+import { createSignal, Show, For } from "solid-js";
 import { extractLayout } from "../../core/layout.js";
 import { PBInterpreter, type AstData } from "../../core/interpreter.js";
 import type { WindowLayout, LayoutControl } from "../../core/layout.js";
+import { StaticText } from "../controls/StaticText.js";
+import { CommandButton } from "../controls/CommandButton.js";
+import { GroupBox } from "../controls/GroupBox.js";
+import { LineEdit } from "../controls/LineEdit.js";
 
 // PB units to CSS pixels. ~0.08 gives a reasonable preview size.
 const SCALE = 0.08;
 
-async function fetchAst(objectName: string) {
-  const r = await fetch(`/api/objects/${encodeURIComponent(objectName)}/ast`);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json() as Promise<AstData>;
+function renderControl(ctrl: LayoutControl, onClick: () => void): import("solid-js").JSX.Element {
+  const t = ctrl.type.toLowerCase();
+  if (t === "statictext") {
+    return <div class="runtime-ctrl" style={controlStyle(ctrl)}><StaticText ctrl={ctrl} /></div>;
+  }
+  if (t === "commandbutton") {
+    return <div class="runtime-ctrl" style={controlStyle(ctrl)}><CommandButton ctrl={ctrl} onClick={onClick} /></div>;
+  }
+  if (t === "groupbox") {
+    return <div class="runtime-ctrl" style={controlStyle(ctrl)}><GroupBox ctrl={ctrl} /></div>;
+  }
+  if (t === "singlelineedit" || t === "multilineedit") {
+    return <div class="runtime-ctrl" style={controlStyle(ctrl)}><LineEdit ctrl={ctrl} /></div>;
+  }
+  // Fallback: generic ControlBox
+  return <ControlBox ctrl={ctrl} onClick={onClick} />;
+}
+
+function controlStyle(ctrl: LayoutControl): Record<string, string> {
+  return {
+    position: "absolute",
+    left: `${ctrl.x * SCALE}px`,
+    top: `${ctrl.y * SCALE}px`,
+    width: `${ctrl.width * SCALE}px`,
+    height: `${ctrl.height * SCALE}px`,
+    overflow: "hidden",
+  };
 }
 
 function ControlBox(props: {
@@ -23,16 +50,11 @@ function ControlBox(props: {
     <div
       class="runtime-control"
       style={{
-        position: "absolute",
-        left: `${props.ctrl.x * SCALE}px`,
-        top: `${props.ctrl.y * SCALE}px`,
-        width: `${props.ctrl.width * SCALE}px`,
-        height: `${props.ctrl.height * SCALE}px`,
+        ...controlStyle(props.ctrl),
         border: "1px solid var(--border)",
         background: isDw() ? "var(--surface)" : "var(--surface-raised)",
         padding: "2px 4px",
         "font-size": "10px",
-        overflow: "hidden",
         cursor: "pointer",
         "box-sizing": "border-box",
         color: "var(--text-muted)",
@@ -78,14 +100,13 @@ function StateInspector(props: { state: { variables: Record<string, unknown>; co
   );
 }
 
-export function RuntimeView(props: { objectName: string }) {
-  const [astData] = createResource(() => props.objectName, fetchAst);
+export function RuntimeView(props: { objectName: string; astData: AstData | null }) {
   const [state, setState] = createSignal<{ variables: Record<string, unknown>; controlValues: Record<string, unknown> }>({ variables: {}, controlValues: {} });
   const [interp] = createSignal(new PBInterpreter());
   const [didOpen, setDidOpen] = createSignal(false);
 
   const layout = () => {
-    const data = astData();
+    const data = props.astData;
     if (!data) return null;
     const parsed = extractLayout(data.typeBlocks as unknown[]);
 
@@ -102,7 +123,7 @@ export function RuntimeView(props: { objectName: string }) {
   const handleControlClick = async (ctrl: LayoutControl) => {
     const i = interp();
     if (!i.ast) {
-      const data = astData();
+      const data = props.astData;
       if (data) i.setAst(data);
     }
     await i.executeEvent(ctrl.name, "clicked");
@@ -111,11 +132,8 @@ export function RuntimeView(props: { objectName: string }) {
 
   return (
     <div class="runtime-view">
-      <Show when={astData.loading}>
-        <div style={{ color: "var(--text-muted)", "font-size": "13px" }}>Loading layout…</div>
-      </Show>
-      <Show when={astData.error}>
-        <div class="error-banner">Failed to load AST: {String(astData.error)}</div>
+      <Show when={!props.astData}>
+        <div style={{ color: "var(--text-muted)", "font-size": "13px" }}>No AST data available.</div>
       </Show>
       <Show when={layout()}>
         {(wl: () => WindowLayout) => (
@@ -132,9 +150,7 @@ export function RuntimeView(props: { objectName: string }) {
               }}
             >
               <For each={wl().controls}>
-                {(ctrl) => (
-                  <ControlBox ctrl={ctrl} onClick={() => void handleControlClick(ctrl)} />
-                )}
+                {(ctrl) => renderControl(ctrl, () => void handleControlClick(ctrl))}
               </For>
             </div>
             <StateInspector state={state()} />

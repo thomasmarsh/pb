@@ -19,6 +19,7 @@ import type {
   ErrorListResponse,
 } from "../../types/api.js";
 import type { DataWindowFile } from "../../types/ast.generated.js";
+import type { AstData } from "../../core/interpreter.js";
 import { Effect } from "../../core/effect.js";
 import type { AppEnv as Env } from "./reducer.js";
 import type { Theme } from "./state.js";
@@ -36,6 +37,7 @@ export interface ApiClient {
   search(q: string): Promise<SearchResponse>;
   getDW(name: string): Promise<DwDetailResponse>;
   getDwLayout(name: string): Promise<DataWindowFile>;
+  getObjectAst(name: string): Promise<AstData>;
   getDiagram(kind: string, params: Record<string, string | number>): Promise<string>;
   getQueries(): Promise<{ queries: QueryDef[] }>;
   runQuery(name: string, params: Record<string, string>): Promise<QueryResult>;
@@ -76,6 +78,7 @@ export function createEnv(api: ApiClient): Env {
     search: (q) => lift(() => api.search(q)),
     getDW: (n) => lift(() => api.getDW(n)),
     getDwLayout: (n) => lift(() => api.getDwLayout(n)),
+    getObjectAst: (n) => lift(() => api.getObjectAst(n)),
     getDiagram: (k, p) => lift(() => api.getDiagram(k, p)),
     getQueries: () => lift(() => api.getQueries()),
     runQuery: (n, p) => lift(() => api.runQuery(n, p)),
@@ -152,6 +155,10 @@ export function createApiClient(): ApiClient {
 
     async getDwLayout(name: string): Promise<DataWindowFile> {
       return fetchJson("/api/objects/" + encodeURIComponent(name) + "/dw");
+    },
+
+    async getObjectAst(name: string): Promise<AstData> {
+      return fetchJson("/api/objects/" + encodeURIComponent(name) + "/ast");
     },
 
     async getDiagram(

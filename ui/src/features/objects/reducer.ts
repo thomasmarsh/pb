@@ -8,6 +8,7 @@ import type {
   ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse,
   ProcedureDetailResponse, ProcedureListItem,
 } from "../../types/api.js";
+import type { AstData } from "../../core/interpreter.js";
 import type { NavigationAction } from "../navigation/types.js";
 
 export interface ObjectsEnv {
@@ -15,6 +16,7 @@ export interface ObjectsEnv {
   getAllObjects(): Effect<ListObjectsResponse>;
   getObject(name: string): Effect<ObjectDetailResponse>;
   getObjectSource(name: string): Effect<ObjectSourceResponse>;
+  getObjectAst(name: string): Effect<AstData>;
   getProcedure(obj: string, proc: string): Effect<ProcedureDetailResponse>;
   getProcedures(): Effect<ProcedureListItem[]>;
   navigate(action: NavigationAction): Effect<never>;
@@ -22,7 +24,7 @@ export interface ObjectsEnv {
 
 export const initialObjectsState: ObjectsState = {
   items: [], total: 0, q: "", kind: "", sort: "name", order: "asc", offset: 0, loading: false,
-  detail: null, sourceDetail: null, selectedProcName: null, procedureDetail: null, allObjects: [],
+  detail: null, sourceDetail: null, astData: null, selectedProcName: null, procedureDetail: null, allObjects: [],
   proceduresList: null, proceduresListLoading: false,
   proceduresListQ: "", proceduresListKind: "",
   proceduresListSort: "name", proceduresListOrder: "asc",
@@ -35,6 +37,7 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
   case "back-to-objects":
     draft.detail = null;
     draft.sourceDetail = null;
+    draft.astData = null;
     draft.procedureDetail = null;
     return env.navigate({ tag: "navigate", route: { view: "objects" } });
   case "search": {
@@ -73,6 +76,7 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
   case "select":
     draft.detail = null;
     draft.sourceDetail = null;
+    draft.astData = null;
     draft.selectedProcName = null;
     env.navigate({ tag: "navigate", route: { view: "objectDetail", name: action.name } });
     return Effect.merge<ObjectsAction>(
@@ -82,6 +86,9 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
       env.getObjectSource(action.name)
         .map((data): ObjectsAction => ({ tag: "source-loaded", data }))
         .catch((e): ObjectsAction => ({ tag: "source-error", error: errMsg(e) })),
+      env.getObjectAst(action.name)
+        .map((data): ObjectsAction => ({ tag: "ast-loaded", data }))
+        .catch((e): ObjectsAction => ({ tag: "ast-error", error: errMsg(e) })),
     );
   case "select-proc": {
     draft.selectedProcName = action.procName;
@@ -89,6 +96,7 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
     if (!alreadyLoaded) {
       draft.detail = null;
       draft.sourceDetail = null;
+      draft.astData = null;
       env.navigate({ tag: "navigate", route: { view: "objectDetail", name: action.objectName } });
       return Effect.merge<ObjectsAction>(
         env.getObject(action.objectName)
@@ -97,6 +105,9 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
         env.getObjectSource(action.objectName)
           .map((data): ObjectsAction => ({ tag: "source-loaded", data }))
           .catch((e): ObjectsAction => ({ tag: "source-error", error: errMsg(e) })),
+        env.getObjectAst(action.objectName)
+          .map((data): ObjectsAction => ({ tag: "ast-loaded", data }))
+          .catch((e): ObjectsAction => ({ tag: "ast-error", error: errMsg(e) })),
       );
     }
     env.navigate({ tag: "navigate", route: { view: "objectDetail", name: action.objectName } });
@@ -113,6 +124,12 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
     return null;
   case "source-error":
     draft.sourceDetail = { error: action.error };
+    return null;
+  case "ast-loaded":
+    draft.astData = action.data;
+    return null;
+  case "ast-error":
+    draft.astData = { error: action.error };
     return null;
   case "all-objects-loaded":
     draft.allObjects = action.data;
