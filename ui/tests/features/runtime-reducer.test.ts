@@ -27,7 +27,8 @@ function makeAst(overrides?: Partial<AstData>): AstData {
   };
 }
 
-function makeRetrieveEvent(owner: string, dwName: string): AstData {
+// ExMethodCall variant: complex receiver expression (kept for completeness)
+function makeRetrieveEventMethodCall(owner: string, dwName: string): AstData {
   return makeAst({
     events: [
       {
@@ -51,6 +52,34 @@ function makeRetrieveEvent(owner: string, dwName: string): AstData {
     ],
   });
 }
+
+// ExCall variant: 2-segment callee — the actual corpus pattern produced by the PB parser
+function makeRetrieveEventExCall(owner: string, dwName: string): AstData {
+  return makeAst({
+    events: [
+      {
+        name: "open",
+        owner,
+        body: [
+          {
+            line: 1,
+            node: {
+              tag: "BsCall",
+              contents: {
+                tag: "ExCall",
+                callee: { segments: [{ name: dwName, subscript: null }, { name: "retrieve", subscript: null }] },
+                args: [["gs_kodxrisi"]],
+              },
+            },
+          },
+        ],
+      },
+    ],
+  });
+}
+
+// Keep old name as alias for the ExMethodCall variant (existing tests reference it)
+const makeRetrieveEvent = makeRetrieveEventMethodCall;
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -122,7 +151,35 @@ describe("runtimeReducer", () => {
   });
 
   describe("run-event / retrieve suspension", () => {
-    it("fires executeSql effect when retrieve() is encountered", () => {
+    it("fires executeSql effect for ExCall pattern (corpus pattern: dw_name.retrieve)", () => {
+      const MOCK_ROWS = [{ kodperiod: "01", descperiod: "January", orderno: 1 }];
+      const sqlResult: SQLResult = { rows: MOCK_ROWS, columns: ["kodperiod", "descperiod", "orderno"], rowcount: 1 };
+
+      const env: RuntimeEnv = {
+        executeSql: (_sql, _params) => Effect.send(sqlResult),
+      };
+
+      const ast = makeRetrieveEventExCall("w_krat_total_search", "dw_period");
+      const ts = createTestStore(runtimeReducer, env, { ...initialRuntimeState, ast });
+
+      ts.send({ tag: "run-event", owner: "w_krat_total_search", event: "open" }, (s) => {
+        s.status = "awaiting-sql";
+        s.continuation = [];
+      });
+
+      ts.receive(
+        { tag: "sql-result", dwName: "dw_period", rows: MOCK_ROWS },
+        (s: RuntimeState) => {
+          s.controlValues = { dw_period: MOCK_ROWS };
+          s.status = "done";
+          s.continuation = null;
+        },
+      );
+
+      ts.assertDrained();
+    });
+
+    it("fires executeSql effect when retrieve() is encountered (ExMethodCall variant)", () => {
       const MOCK_ROWS = [{ kodperiod: "01", descperiod: "January", orderno: 1 }];
       const sqlResult: SQLResult = { rows: MOCK_ROWS, columns: ["kodperiod", "descperiod", "orderno"], rowcount: 1 };
 

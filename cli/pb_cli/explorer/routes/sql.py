@@ -38,7 +38,11 @@ def execute_sql(body: SqlRequest) -> SqlResponse:
     try:
         conn = mysql.connector.connect(**_DB_CONFIG)
         cursor = conn.cursor(dictionary=True)
-        cursor.execute(body.sql, body.params or [])
+        # Trim params to the number of ? placeholders to avoid "Not all parameters
+        # were used" errors when the SQL was generated without a WHERE clause.
+        placeholder_count = body.sql.count("?")
+        used_params = (body.params or [])[:placeholder_count]
+        cursor.execute(body.sql, used_params)
         if cursor.description:
             raw = cast(list[dict[str, Any]], cursor.fetchall())
             rows: list[dict[str, Any]] = raw

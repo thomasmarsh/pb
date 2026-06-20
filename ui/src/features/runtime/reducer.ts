@@ -125,15 +125,36 @@ interface SuspendRetrieve {
 }
 
 function checkRetrieve(vars: Record<string, unknown>, expr: Expr): SuspendRetrieve | null {
-  if (expr.tag !== "ExMethodCall") return null;
-  if (expr.receiver.tag !== "ExLvalue") return null;
-  const dwName = expr.receiver.contents.segments[0]?.name ?? "";
-  if (!dwName.startsWith("dw_")) return null;
-  if (expr.method.toLowerCase() !== "retrieve") return null;
-  const sql = DW_QUERIES[dwName];
-  if (!sql) return null;
-  const params = expr.args.map((a) => evalTokenArg(vars, a));
-  return { dwName, sql, params };
+  // Corpus pattern: ExCall with 2-segment callee [dw_name, retrieve]
+  // PB parser emits this for `dw_foo.retrieve(args)` at statement level.
+  if (expr.tag === "ExCall") {
+    const segs = expr.callee.segments;
+    if (
+      segs.length === 2 &&
+      segs[0]!.name.startsWith("dw_") &&
+      segs[1]!.name.toLowerCase() === "retrieve"
+    ) {
+      const dwName = segs[0]!.name;
+      const sql = DW_QUERIES[dwName];
+      if (sql) {
+        const params = expr.args.map((a) => evalTokenArg(vars, a));
+        return { dwName, sql, params };
+      }
+    }
+    return null;
+  }
+  // ExMethodCall pattern: complex receiver expression (e.g. chained call).retrieve(args)
+  if (expr.tag === "ExMethodCall") {
+    if (expr.receiver.tag !== "ExLvalue") return null;
+    const dwName = expr.receiver.contents.segments[0]?.name ?? "";
+    if (!dwName.startsWith("dw_")) return null;
+    if (expr.method.toLowerCase() !== "retrieve") return null;
+    const sql = DW_QUERIES[dwName];
+    if (!sql) return null;
+    const params = expr.args.map((a) => evalTokenArg(vars, a));
+    return { dwName, sql, params };
+  }
+  return null;
 }
 
 // ── Synchronous body executor (for control-flow bodies that lack retrieve()) ──

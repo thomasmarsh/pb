@@ -12,9 +12,10 @@ import { CommandButton } from "../controls/CommandButton.js";
 import { GroupBox } from "../controls/GroupBox.js";
 import { LineEdit } from "../controls/LineEdit.js";
 import { DataWindowGrid } from "../DataWindowGrid.js";
+import { ResizableCanvas } from "../ResizableCanvas.js";
 
-// PB units to CSS pixels.
-const SCALE = 0.08;
+// PB units → CSS pixels before ResizableCanvas applies the fit-to-container scale.
+const BASE_SCALE = 0.08;
 
 function renderControl(ctrl: LayoutControl, onClick: () => void): import("solid-js").JSX.Element {
   const t = ctrl.type.toLowerCase();
@@ -36,10 +37,10 @@ function renderControl(ctrl: LayoutControl, onClick: () => void): import("solid-
 function controlStyle(ctrl: LayoutControl): Record<string, string> {
   return {
     position: "absolute",
-    left: `${ctrl.x * SCALE}px`,
-    top: `${ctrl.y * SCALE}px`,
-    width: `${ctrl.width * SCALE}px`,
-    height: `${ctrl.height * SCALE}px`,
+    left: `${ctrl.x * BASE_SCALE}px`,
+    top: `${ctrl.y * BASE_SCALE}px`,
+    width: `${ctrl.width * BASE_SCALE}px`,
+    height: `${ctrl.height * BASE_SCALE}px`,
     overflow: "hidden",
   };
 }
@@ -141,16 +142,10 @@ export function RuntimeView(props: {
       <Show when={layout()}>
         {(wl: () => WindowLayout) => (
           <>
-            <div
-              class="wireframe"
-              style={{
-                position: "relative",
-                width: `${wl().width * SCALE}px`,
-                height: `${wl().height * SCALE}px`,
-                border: "1px solid var(--border)",
-                background: "var(--bg)",
-                overflow: "hidden",
-              }}
+            <ResizableCanvas
+              naturalWidth={wl().width}
+              naturalHeight={wl().height}
+              baseScale={BASE_SCALE}
             >
               <For each={wl().controls}>
                 {(ctrl) => {
@@ -170,7 +165,7 @@ export function RuntimeView(props: {
                   return renderControl(ctrl, () => handleControlClick(ctrl));
                 }}
               </For>
-            </div>
+            </ResizableCanvas>
             <StateInspector variables={variables()} />
           </>
         )}
