@@ -20,6 +20,7 @@ import type {
 } from "../../types/api.js";
 import type { DataWindowFile } from "../../types/ast.generated.js";
 import type { AstData } from "../../core/interpreter.js";
+import type { SQLResult } from "../../core/dw-queries.js";
 import { Effect } from "../../core/effect.js";
 import type { AppEnv as Env } from "./reducer.js";
 import type { Theme } from "./state.js";
@@ -48,6 +49,7 @@ export interface ApiClient {
   getTables(): Promise<TableSummary[]>;
   getTableDetail(name: string): Promise<TableDetail>;
   getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse>;
+  executeSql(sql: string, params: unknown[]): Promise<SQLResult>;
 }
 
 function apiParams(obj: Record<string, string | number>): string {
@@ -60,6 +62,16 @@ function apiParams(obj: Record<string, string | number>): string {
 
 async function fetchJson<T>(url: string): Promise<T> {
   const r = await fetch(url);
+  if (!r.ok) throw new Error(`API ${r.status}`);
+  return r.json() as Promise<T>;
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!r.ok) throw new Error(`API ${r.status}`);
   return r.json() as Promise<T>;
 }
@@ -89,6 +101,7 @@ export function createEnv(api: ApiClient): Env {
     getTables: () => lift(() => api.getTables()),
     getTableDetail: (n) => lift(() => api.getTableDetail(n)),
     getErrors: (p) => lift(() => api.getErrors(p)),
+    executeSql: (sql, params) => lift(() => api.executeSql(sql, params)),
     loadTheme: (): Effect<Theme> => {
       const stored = localStorage.getItem("pb-theme");
       const theme: Theme = stored === "light" || stored === "dark" ? stored : "dark";
@@ -220,6 +233,10 @@ export function createApiClient(): ApiClient {
 
     async getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse> {
       return fetchJson("/api/errors?" + apiParams({ kind: params.kind ?? "", q: params.q ?? "", limit: params.limit ?? 200, offset: params.offset ?? 0 }));
+    },
+
+    async executeSql(sql: string, params: unknown[]): Promise<SQLResult> {
+      return postJson("/api/sql/execute", { sql, params });
     },
   };
 }

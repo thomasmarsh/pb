@@ -1,16 +1,19 @@
-// RuntimeView.tsx — Wireframe layout renderer + minimal event interpreter.
+// RuntimeView.tsx — Wireframe layout renderer driven by the runtime reducer.
 
-import { createSignal, Show, For } from "solid-js";
+import { createEffect, createSignal, Show, For } from "solid-js";
 import { extractLayout } from "../../core/layout.js";
-import { PBInterpreter, type AstData, type DWRow } from "../../core/interpreter.js";
+import type { AstData, DWRow } from "../../core/interpreter.js";
 import type { WindowLayout, LayoutControl } from "../../core/layout.js";
+import type { Store } from "../../core/store.js";
+import type { AppState } from "../../features/app/state.js";
+import type { AppAction } from "../../features/app/actions.js";
 import { StaticText } from "../controls/StaticText.js";
 import { CommandButton } from "../controls/CommandButton.js";
 import { GroupBox } from "../controls/GroupBox.js";
 import { LineEdit } from "../controls/LineEdit.js";
 import { DataWindowGrid } from "../DataWindowGrid.js";
 
-// PB units to CSS pixels. ~0.08 gives a reasonable preview size.
+// PB units to CSS pixels.
 const SCALE = 0.08;
 
 function renderControl(ctrl: LayoutControl, onClick: () => void): import("solid-js").JSX.Element {
@@ -27,7 +30,6 @@ function renderControl(ctrl: LayoutControl, onClick: () => void): import("solid-
   if (t === "singlelineedit" || t === "multilineedit") {
     return <div class="runtime-ctrl" style={controlStyle(ctrl)}><LineEdit ctrl={ctrl} /></div>;
   }
-  // Fallback: generic ControlBox
   return <ControlBox ctrl={ctrl} onClick={onClick} />;
 }
 
@@ -42,10 +44,7 @@ function controlStyle(ctrl: LayoutControl): Record<string, string> {
   };
 }
 
-function ControlBox(props: {
-  ctrl: LayoutControl;
-  onClick: () => void;
-}) {
+function ControlBox(props: { ctrl: LayoutControl; onClick: () => void }) {
   const isDw = () => props.ctrl.type.toLowerCase().includes("dw") || props.ctrl.name.startsWith("dw_");
   return (
     <div
@@ -76,8 +75,8 @@ function ControlBox(props: {
   );
 }
 
-function StateInspector(props: { state: { variables: Record<string, unknown>; controlValues: Record<string, unknown> } }) {
-  const vars = () => Object.entries(props.state.variables);
+function StateInspector(props: { variables: Record<string, unknown> }) {
+  const vars = () => Object.entries(props.variables);
   return (
     <Show when={vars().length > 0}>
       <div class="card" style={{ "margin-top": "8px", padding: "8px 12px" }}>
@@ -101,39 +100,42 @@ function StateInspector(props: { state: { variables: Record<string, unknown>; co
   );
 }
 
-export function RuntimeView(props: { objectName: string; astData: AstData | null }) {
-  const [state, setState] = createSignal<{ variables: Record<string, unknown>; controlValues: Record<string, unknown> }>({ variables: {}, controlValues: {} });
-  const [interp] = createSignal(new PBInterpreter());
-  const [didOpen, setDidOpen] = createSignal(false);
+export function RuntimeView(props: {
+  objectName: string;
+  store: Store<AppState, AppAction>;
+}) {
+  const snap = props.store.getState();
 
-  const layout = () => {
-    const data = props.astData;
-    if (!data) return null;
-    const parsed = extractLayout(data.typeBlocks as unknown[]);
+  // Fire set-ast + run-event once when AST becomes available for this object.
+  const [initialized, setInitialized] = createSignal<string | null>(null);
+  createEffect(() => {
+    if (initialized() === props.objectName) return;
+    const ad = snap().objects.astData;
+    if (!ad || "error" in ad) return;
+    setInitialized(props.objectName);
+    props.store.dispatch({ tag: "runtime", action: { tag: "set-ast", ast: ad as AstData } });
+    props.store.dispatch({ tag: "runtime", action: { tag: "run-event", owner: props.objectName, event: "open" } });
+  });
 
-    // Fire open event once after first layout is available
-    if (parsed && !didOpen()) {
-      setDidOpen(true);
-      const i = interp();
-      i.setAst(data);
-      i.executeEvent(props.objectName, "open").then(() => setState(i.getState()));
-    }
-    return parsed;
+  const layout = (): WindowLayout | null => {
+    const ad = snap().objects.astData;
+    if (!ad || "error" in ad) return null;
+    return extractLayout((ad as AstData).typeBlocks as unknown[]);
   };
 
-  const handleControlClick = async (ctrl: LayoutControl) => {
-    const i = interp();
-    if (!i.ast) {
-      const data = props.astData;
-      if (data) i.setAst(data);
-    }
-    await i.executeEvent(ctrl.name, "clicked");
-    setState(i.getState());
+  const controlValues = (): Record<string, DWRow[]> =>
+    snap().runtime.controlValues as Record<string, DWRow[]>;
+
+  const variables = (): Record<string, unknown> =>
+    snap().runtime.variables;
+
+  const handleControlClick = (ctrl: LayoutControl): void => {
+    props.store.dispatch({ tag: "runtime", action: { tag: "control-click", controlName: ctrl.name } });
   };
 
   return (
     <div class="runtime-view">
-      <Show when={!props.astData}>
+      <Show when={!snap().objects.astData}>
         <div style={{ color: "var(--text-muted)", "font-size": "13px" }}>No AST data available.</div>
       </Show>
       <Show when={layout()}>
@@ -157,19 +159,19 @@ export function RuntimeView(props: { objectName: string; astData: AstData | null
                     return (
                       <div class="runtime-ctrl" style={controlStyle(ctrl)}>
                         <Show
-                          when={state().controlValues[ctrl.name] as DWRow[] | undefined}
-                          fallback={<ControlBox ctrl={ctrl} onClick={() => void handleControlClick(ctrl)} />}
+                          when={controlValues()[ctrl.name]}
+                          fallback={<ControlBox ctrl={ctrl} onClick={() => handleControlClick(ctrl)} />}
                         >
-                          {(rows) => <DataWindowGrid data={rows()} />}
+                          {(rows) => <DataWindowGrid data={rows() as DWRow[]} />}
                         </Show>
                       </div>
                     );
                   }
-                  return renderControl(ctrl, () => void handleControlClick(ctrl));
+                  return renderControl(ctrl, () => handleControlClick(ctrl));
                 }}
               </For>
             </div>
-            <StateInspector state={state()} />
+            <StateInspector variables={variables()} />
           </>
         )}
       </Show>

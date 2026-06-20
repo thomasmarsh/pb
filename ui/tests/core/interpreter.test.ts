@@ -432,7 +432,7 @@ describe("PBInterpreter", () => {
   });
 
   describe("ExMethodCall retrieve()", () => {
-    it("stores mock data in controlValues when dw_*.retrieve() is called via BsCall", async () => {
+    it("retrieve() on dw_* is a no-op in PBInterpreter (handled by runtimeReducer)", async () => {
       const interp = new PBInterpreter();
       interp.setAst({
         typeBlocks: [],
@@ -450,33 +450,7 @@ describe("PBInterpreter", () => {
         }],
       });
       await interp.executeEvent("w_test", "open");
-      const state = interp.getState();
-      const rows = state.controlValues["dw_misth_zpperiod_list"];
-      expect(Array.isArray(rows)).toBe(true);
-      expect((rows as unknown[]).length).toBe(3);
-    });
-
-    it("stores mock data for dw_main.retrieve()", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
-        events: [{
-          name: "open", owner: "w_test",
-          body: [loc(1, {
-            tag: "BsCall",
-            contents: {
-              tag: "ExMethodCall",
-              receiver: { tag: "ExLvalue", contents: { segments: [{ name: "dw_main", subscript: null }] } },
-              method: "Retrieve",
-              args: [],
-            },
-          })],
-        }],
-      });
-      await interp.executeEvent("w_test", "open");
-      const rows = interp.getState().controlValues["dw_main"];
-      expect(Array.isArray(rows)).toBe(true);
-      expect((rows as unknown[]).length).toBe(2);
+      expect(interp.getState().controlValues).toEqual({});
     });
 
     it("does not set controlValues for non-dw method calls", async () => {

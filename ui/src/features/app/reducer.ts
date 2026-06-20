@@ -16,6 +16,7 @@ import { diagramsReducer, type DiagramsEnv, initialDiagramsState } from "../diag
 import { queriesReducer, type QueriesEnv, initialQueriesState } from "../queries/reducer.js";
 import { searchReducer, type SearchEnv, initialSearchState } from "../search/reducer.js";
 import { errorsReducer, type ErrorsEnv, initialErrorsState } from "../errors/reducer.js";
+import { runtimeReducer, type RuntimeEnv, initialRuntimeState, type RuntimeAction } from "../runtime/reducer.js";
 
 import type { NavigationAction } from "../navigation/types.js";
 import { crumbsForRoute } from "../navigation/breadcrumb.js";
@@ -28,10 +29,11 @@ import type { DiagramsAction } from "../diagrams/actions.js";
 import type { QueriesAction } from "../queries/actions.js";
 import type { SearchAction } from "../search/actions.js";
 import type { ErrorsAction } from "../errors/actions.js";
+export type { RuntimeAction };
 
 import type { Theme } from "./state.js";
 
-export type AppEnv = NavEnv & DashboardEnv & ExploreEnv & ObjectsEnv & DatawindowsEnv & TablesEnv & DiagramsEnv & QueriesEnv & SearchEnv & ErrorsEnv & ThemeEnv;
+export type AppEnv = NavEnv & DashboardEnv & ExploreEnv & ObjectsEnv & DatawindowsEnv & TablesEnv & DiagramsEnv & QueriesEnv & SearchEnv & ErrorsEnv & ThemeEnv & RuntimeEnv;
 
 export interface ThemeEnv {
   loadTheme(): Effect<Theme>;
@@ -50,6 +52,7 @@ const matchDiagrams    = (a: AppAction): DiagramsAction    | null => a.tag === "
 const matchQueries     = (a: AppAction): QueriesAction     | null => a.tag === "queries"      ? a.action : null;
 const matchSearch      = (a: AppAction): SearchAction      | null => a.tag === "search"       ? a.action : null;
 const matchErrors      = (a: AppAction): ErrorsAction      | null => a.tag === "errors"       ? a.action : null;
+const matchRuntime     = (a: AppAction): RuntimeAction     | null => a.tag === "runtime"      ? a.action : null;
 
 // ── Initial state ─────────────────────────────────────────────────────────────
 
@@ -73,6 +76,7 @@ export function initialState(): AppState {
     explore: makeInitialExploreState(),
     errors: initialErrorsState,
     inlineDiagrams: {},
+    runtime: initialRuntimeState,
   };
 }
 
@@ -91,6 +95,7 @@ const _combined = combine<AppState, AppAction, AppEnv>(
   pullbackWithNav(queriesReducer,     (s) => s.queries,     matchQueries,     (a): AppAction => ({ tag: "queries",     action: a }), (env) => env, toNav),
   pullbackWithNav(searchReducer,      (s) => s.search,      matchSearch,      (a): AppAction => ({ tag: "search",      action: a }), (env) => env, toNav),
   pullback(errorsReducer,             (s) => s.errors,      matchErrors,      (a): AppAction => ({ tag: "errors",      action: a }), (env) => env),
+  pullback(runtimeReducer,            (s) => s.runtime,     matchRuntime,     (a): AppAction => ({ tag: "runtime",     action: a }), (env) => env),
 );
 
 export function reducer(draft: AppState, action: AppAction, env: AppEnv): Effect<AppAction> | null {

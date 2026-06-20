@@ -10,6 +10,7 @@ import type { SearchState } from "../search/types.js";
 import type { ExploreState } from "../explore/types.js";
 import type { TablesState } from "../tables/types.js";
 import type { ErrorsState } from "../errors/types.js";
+import type { RuntimeState } from "../runtime/reducer.js";
 
 export type { ViewName } from "../navigation/types.js";
 
@@ -34,4 +35,5 @@ export interface AppState {
   explore: ExploreState;
   errors: ErrorsState;
   inlineDiagrams: Record<string, InlineDiagramState>;
+  runtime: RuntimeState;
 }

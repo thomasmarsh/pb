@@ -35,6 +35,7 @@ export const mockEnv: AppEnv = {
   getTables: () => Effect.none(),
   getTableDetail: () => Effect.none(),
   getErrors: () => Effect.none(),
+  executeSql: () => Effect.none(),
   navigate: () => Effect.none(),
   pushUrl: () => {},
   loadTheme: () => Effect.send("dark"),

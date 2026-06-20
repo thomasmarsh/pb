@@ -19,7 +19,6 @@ import { ArrowRight } from "../../utils/icons.js";
 import { CFGCore } from "../analysis/CFGCore.js";
 import type { ContextActions } from "../../components/source/index.js";
 import { RuntimeView } from "../../components/runtime/RuntimeView.js";
-import type { AstData } from "../../core/interpreter.js";
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
@@ -431,11 +430,7 @@ function ObjectDetailContent(props: {
 
         <Show when={showPreview()}>
           <ContextualPanel title={`Preview: ${o.name}`} onClose={() => setShowPreview(false)}>
-            {(() => {
-              const ad = snap().objects.astData;
-              const astData = ad && !("error" in ad) ? ad as AstData : null;
-              return <RuntimeView objectName={o.name} astData={astData} />;
-            })()}
+            <RuntimeView objectName={o.name} store={store} />
           </ContextualPanel>
         </Show>
 

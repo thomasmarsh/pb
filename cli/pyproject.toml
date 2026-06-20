@@ -12,6 +12,7 @@ dependencies = [
     "sqlglot>=30.11.0",
     "typer>=0.12",
     "uvicorn[standard]>=0.30",
+    "mysql-connector-python>=9.0",
 ]
 
 [project.scripts]

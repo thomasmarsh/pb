@@ -10,6 +10,7 @@ import type { QueriesAction } from "../queries/actions.js";
 import type { SearchAction } from "../search/actions.js";
 import type { ErrorsAction } from "../errors/actions.js";
 import type { NavigationAction } from "../navigation/types.js";
+import type { RuntimeAction } from "../runtime/reducer.js";
 import type { DiagramKind } from "../../utils/diagram.js";
 import type { Theme } from "./state.js";
 
@@ -32,4 +33,5 @@ export type AppAction =
   | { tag: "queries"; action: QueriesAction }
   | { tag: "search"; action: SearchAction }
   | { tag: "errors"; action: ErrorsAction }
-  | { tag: "inlineDiagram"; action: InlineDiagramAction };
+  | { tag: "inlineDiagram"; action: InlineDiagramAction }
+  | { tag: "runtime"; action: RuntimeAction };
