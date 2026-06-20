@@ -1,7 +1,9 @@
 // features/dashboard/types.ts
 
-import type { StatsResponse } from "../../types/api.js";
+import type { StatsResponse, TableSummary } from "../../types/api.js";
 
 export interface DashboardState {
   stats: StatsResponse | null;
+  topTables: TableSummary[];
+  topTablesLoaded: boolean;
 }

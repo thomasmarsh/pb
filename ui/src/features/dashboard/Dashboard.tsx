@@ -1,11 +1,11 @@
 // Dashboard.tsx — Dashboard view.
 
-import { Show, For, createMemo, createResource } from "solid-js";
+import { Show, For, createMemo, onMount } from "solid-js";
 import { AlertTriangle, ArrowRight } from "../../utils/icons.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import type { ProcedureRow, TableSummary } from "../../types/api.js";
+import type { ProcedureRow } from "../../types/api.js";
 import type { Route } from "../../features/navigation/types.js";
 import { TableChip } from "../../components/detail/TableChip.js";
 import { procBadge } from "../../utils/format.js";
@@ -65,10 +65,13 @@ function ObjectTable(props: { title: string; objs: { object: string; pagerank: n
 }
 
 function TopTablesWidget(props: { store: Store<AppState, AppAction> }) {
-  const [tables] = createResource<TableSummary[]>(() =>
-    fetch("/api/tables").then((r) => r.json() as Promise<TableSummary[]>),
-  );
-  const top = () => (tables() ?? []).slice(0, 10);
+  const snap = props.store.getState();
+  const topTables = () => snap().dashboard.topTables;
+  const top = () => topTables().slice(0, 10);
+
+  onMount(() => {
+    props.store.dispatch({ tag: "dashboard", action: { tag: "loadTopTables" } });
+  });
 
   return (
     <Show when={top().length > 0}>

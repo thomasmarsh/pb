@@ -47,7 +47,9 @@ export interface TestStoreResult {
   captured: AppAction[];
 }
 
-export function createTestStore(overrides?: Partial<AppState>): TestStoreResult {
+export function createTestStore(
+  overrides?: Partial<AppState>,
+): TestStoreResult {
   const captured: AppAction[] = [];
   const init = { ...initialState(), ...overrides };
   const store = createStore(init, reducer, mockEnv, (action) => {

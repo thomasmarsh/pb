@@ -13,7 +13,12 @@ import {
   ZOOM_MIN,
   ZOOM_MAX,
 } from "../../src/components/diagram/InlineDiagram.js";
-import { createTestStore } from "../helpers.js";
+import { createStore } from "../../src/core/store.js";
+import { reducer, initialState } from "../../src/features/app/reducer.js";
+import { Effect } from "../../src/core/effect.js";
+import type { AppEnv } from "../../src/features/app/reducer.js";
+import type { AppAction } from "../../src/features/app/actions.js";
+import { mockEnv } from "../helpers.js";
 
 afterEach(() => {
   cleanup();
@@ -23,20 +28,20 @@ afterEach(() => {
 // ── Component rendering ────────────────────────────────────────────────
 
 describe("InlineDiagram", () => {
-  it("shows loading spinner while fetching", () => {
-    vi.stubGlobal("fetch", () => new Promise(() => {}));
-    const { store } = createTestStore();
+  it("shows loading overlay before effect resolves", async () => {
+    const env = { ...mockEnv, getDiagram: () => Effect.none() } as AppEnv;
+    const store = createStore(initialState(), reducer, env);
     const { container } = render(() =>
       <InlineDiagram kind="heatmap" store={store} />,
     );
-    expect(container.querySelector(".spinner")).not.toBeNull();
+    await vi.waitFor(() => {
+      expect(container.querySelector(".loading-overlay")).not.toBeNull();
+    });
   });
 
-  it("renders SVG from fetch response", async () => {
-    vi.stubGlobal("fetch", () =>
-      Promise.resolve({ ok: true, text: () => Promise.resolve('<svg id="test"></svg>') }),
-    );
-    const { store } = createTestStore();
+  it("renders SVG from getDiagram response", async () => {
+    const env = { ...mockEnv, getDiagram: () => Effect.send('<svg id="test"></svg>') } as AppEnv;
+    const store = createStore(initialState(), reducer, env);
     const { container } = render(() =>
       <InlineDiagram kind="heatmap" store={store} />,
     );
@@ -46,10 +51,8 @@ describe("InlineDiagram", () => {
 
   it("strips <title> elements from SVG", async () => {
     const svg = '<svg><a href="pb://object/x"><title>tooltip</title><rect/></a></svg>';
-    vi.stubGlobal("fetch", () =>
-      Promise.resolve({ ok: true, text: () => Promise.resolve(svg) }),
-    );
-    const { store } = createTestStore();
+    const env = { ...mockEnv, getDiagram: () => Effect.send(svg) } as AppEnv;
+    const store = createStore(initialState(), reducer, env);
     const { container } = render(() =>
       <InlineDiagram kind="heatmap" store={store} />,
     );
@@ -57,11 +60,9 @@ describe("InlineDiagram", () => {
     expect(container.querySelector("title")).toBeNull();
   });
 
-  it("shows error message on failed fetch", async () => {
-    vi.stubGlobal("fetch", () =>
-      Promise.resolve({ ok: false, status: 503, text: () => Promise.resolve("") }),
-    );
-    const { store } = createTestStore();
+  it("shows error message on getDiagram failure", async () => {
+    const env = { ...mockEnv, getDiagram: () => Effect.fromPromise(() => Promise.reject(new Error("HTTP 503"))) } as AppEnv;
+    const store = createStore(initialState(), reducer, env);
     const { container } = render(() =>
       <InlineDiagram kind="heatmap" store={store} />,
     );
@@ -76,8 +77,8 @@ describe("InlineDiagram", () => {
   });
 
   it("applies compact class when compact prop set", () => {
-    vi.stubGlobal("fetch", () => new Promise(() => {}));
-    const { store } = createTestStore();
+    const env = { ...mockEnv, getDiagram: () => Effect.send("<svg></svg>") } as AppEnv;
+    const store = createStore(initialState(), reducer, env);
     const { container } = render(() =>
       <InlineDiagram kind="heatmap" store={store} compact />,
     );
@@ -86,10 +87,9 @@ describe("InlineDiagram", () => {
 
   it("navigates to objectDetail on pb://object click", async () => {
     const svgWithLink = `<svg><a href="pb://object/w_main"><rect/></a></svg>`;
-    vi.stubGlobal("fetch", () =>
-      Promise.resolve({ ok: true, text: () => Promise.resolve(svgWithLink) }),
-    );
-    const { store, captured } = createTestStore();
+    const env = { ...mockEnv, getDiagram: () => Effect.send(svgWithLink) } as AppEnv;
+    const captured: AppAction[] = [];
+    const store = createStore(initialState(), reducer, env, (a) => { captured.push(a); });
     const { container } = render(() =>
       <InlineDiagram kind="calls" params={{ focal: "w_main" }} store={store} />,
     );
@@ -103,10 +103,9 @@ describe("InlineDiagram", () => {
 
   it("navigates to tableDetail on pb://table click", async () => {
     const svgWithLink = `<svg><a href="pb://table/customer"><rect/></a></svg>`;
-    vi.stubGlobal("fetch", () =>
-      Promise.resolve({ ok: true, text: () => Promise.resolve(svgWithLink) }),
-    );
-    const { store, captured } = createTestStore();
+    const env = { ...mockEnv, getDiagram: () => Effect.send(svgWithLink) } as AppEnv;
+    const captured: AppAction[] = [];
+    const store = createStore(initialState(), reducer, env, (a) => { captured.push(a); });
     const { container } = render(() =>
       <InlineDiagram kind="dw-tables" store={store} />,
     );
@@ -404,7 +403,7 @@ describe("momentum simulation (PBT)", () => {
   it("longer initial velocity → more displacement", () => {
     fc.assert(
       fc.property(POSITIVE, POSITIVE, (a, b) => {
-        if (a >= b) return true; // only test a < b
+        if (a >= b) return true;
         const { x: dA } = simulateSteps(a, 0, 10000);
         const { x: dB } = simulateSteps(b, 0, 10000);
         return dA < dB;

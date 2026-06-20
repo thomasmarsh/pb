@@ -1,9 +1,15 @@
 // tests/components/Dashboard.test.tsx — Tests for Dashboard component.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { screen, fireEvent } from "@solidjs/testing-library";
+import { screen, fireEvent, render, cleanup } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
 import { Dashboard } from "../../src/features/dashboard/Dashboard.js";
+import { createStore } from "../../src/core/store.js";
+import { reducer, initialState } from "../../src/features/app/reducer.js";
+import { initialDashboardState } from "../../src/features/dashboard/reducer.js";
+import { Effect } from "../../src/core/effect.js";
+import { mockEnv } from "../helpers.js";
+import type { AppEnv } from "../../src/features/app/reducer.js";
 import type { StatsResponse } from "../../src/types/api.js";
 
 const sampleStats: StatsResponse = {
@@ -31,20 +37,21 @@ const sampleStats: StatsResponse = {
 };
 
 afterEach(() => {
+  cleanup();
   vi.restoreAllMocks();
 });
 
 describe("Dashboard component", () => {
   it("shows loading when stats is null", () => {
     renderWithStore(Dashboard, {
-      dashboard: { stats: null },
+      dashboard: { ...initialDashboardState, stats: null },
     });
     expect(screen.getByText("Loading...")).toBeDefined();
   });
 
   it("renders metrics grid when stats available", () => {
     renderWithStore(Dashboard, {
-      dashboard: { stats: sampleStats },
+      dashboard: { ...initialDashboardState, stats: sampleStats },
     });
     expect(screen.getByText("Objects")).toBeDefined();
     expect(screen.getByText("150")).toBeDefined();
@@ -54,7 +61,7 @@ describe("Dashboard component", () => {
 
   it("renders object types table", () => {
     renderWithStore(Dashboard, {
-      dashboard: { stats: sampleStats },
+      dashboard: { ...initialDashboardState, stats: sampleStats },
     });
     expect(screen.getByText("Object Types")).toBeDefined();
     expect(screen.getByText("powerscript")).toBeDefined();
@@ -63,7 +70,7 @@ describe("Dashboard component", () => {
 
   it("renders most complex procedures table", () => {
     renderWithStore(Dashboard, {
-      dashboard: { stats: sampleStats },
+      dashboard: { ...initialDashboardState, stats: sampleStats },
     });
     expect(screen.getByText("Most Complex Procedures")).toBeDefined();
     expect(screen.getByText("of_init")).toBeDefined();
@@ -72,7 +79,7 @@ describe("Dashboard component", () => {
 
   it("clicking procedure row dispatches proc-select", () => {
     const { captured } = renderWithStore(Dashboard, {
-      dashboard: { stats: sampleStats },
+      dashboard: { ...initialDashboardState, stats: sampleStats },
     });
     fireEvent.click(screen.getByText("of_init"));
     const procSelectActions = captured.filter(
@@ -82,21 +89,10 @@ describe("Dashboard component", () => {
   });
 
   it("renders complexity heatmap section", async () => {
-    vi.stubGlobal("fetch", (url: string) => {
-      if (url.includes("/api/diagram/heatmap")) {
-        return Promise.resolve({
-          ok: true,
-          text: () => Promise.resolve('<svg id="heatmap-svg"></svg>'),
-        });
-      }
-      if (url.includes("/api/tables")) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
-      }
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(sampleStats) });
-    });
-    const { container } = renderWithStore(Dashboard, {
-      dashboard: { stats: sampleStats },
-    });
+    const env = { ...mockEnv, getDiagram: () => Effect.send('<svg id="heatmap-svg"></svg>') } as AppEnv;
+    const state = { ...initialState(), dashboard: { ...initialDashboardState, stats: sampleStats } };
+    const store = createStore(state, reducer, env);
+    const { container } = render(() => <Dashboard store={store} />);
     await vi.waitUntil(() => container.querySelector("#heatmap-svg") != null);
     const headers = [...container.querySelectorAll(".card-header h2")];
     expect(headers.some((h) => h.textContent === "Complexity Heatmap")).toBe(true);
@@ -104,7 +100,7 @@ describe("Dashboard component", () => {
 
   it("renders most important objects table", () => {
     renderWithStore(Dashboard, {
-      dashboard: { stats: sampleStats },
+      dashboard: { ...initialDashboardState, stats: sampleStats },
     });
     expect(screen.getByText("Most Important Objects (PageRank)")).toBeDefined();
     expect(screen.getByText("w_base")).toBeDefined();
@@ -112,7 +108,7 @@ describe("Dashboard component", () => {
 
   it("clicking object row dispatches select", () => {
     const { captured } = renderWithStore(Dashboard, {
-      dashboard: { stats: sampleStats },
+      dashboard: { ...initialDashboardState, stats: sampleStats },
     });
     fireEvent.click(screen.getByText("w_base"));
     const selectActions = captured.filter(

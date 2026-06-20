@@ -10,9 +10,15 @@ import type { QueriesAction } from "../queries/actions.js";
 import type { SearchAction } from "../search/actions.js";
 import type { ErrorsAction } from "../errors/actions.js";
 import type { NavigationAction } from "../navigation/types.js";
+import type { DiagramKind } from "../../utils/diagram.js";
 import type { Theme } from "./state.js";
 
 export type ThemeAction = { tag: "load" } | { tag: "toggle" } | { tag: "loaded"; theme: Theme };
+
+export type InlineDiagramAction =
+  | { tag: "request"; key: string; kind: DiagramKind; params: Record<string, string | number> }
+  | { tag: "loaded"; key: string; svg: string }
+  | { tag: "error"; key: string; error: string };
 
 export type AppAction =
   | { tag: "theme"; action: ThemeAction }
@@ -25,4 +31,5 @@ export type AppAction =
   | { tag: "diagrams";    action: DiagramsAction }
   | { tag: "queries"; action: QueriesAction }
   | { tag: "search"; action: SearchAction }
-  | { tag: "errors"; action: ErrorsAction };
+  | { tag: "errors"; action: ErrorsAction }
+  | { tag: "inlineDiagram"; action: InlineDiagramAction };

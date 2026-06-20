@@ -72,6 +72,7 @@ export function initialState(): AppState {
     search: initialSearchState,
     explore: makeInitialExploreState(),
     errors: initialErrorsState,
+    inlineDiagrams: {},
   };
 }
 
@@ -103,6 +104,27 @@ export function reducer(draft: AppState, action: AppAction, env: AppEnv): Effect
     case "toggle": {
       draft.theme = draft.theme === "dark" ? "light" : "dark";
       return env.applyTheme(draft.theme);
+    }
+    }
+  }
+  if (action.tag === "inlineDiagram") {
+    const { action: ia } = action;
+    switch (ia.tag) {
+    case "request": {
+      const existing = draft.inlineDiagrams[ia.key];
+      if (existing?.loading) return null;
+      draft.inlineDiagrams[ia.key] = { svg: null, loading: true, error: null };
+      return env.getDiagram(ia.kind, ia.params)
+        .map((svg): AppAction => ({ tag: "inlineDiagram", action: { tag: "loaded", key: ia.key, svg } }))
+        .catch((e): AppAction => ({ tag: "inlineDiagram", action: { tag: "error", key: ia.key, error: String(e) } }));
+    }
+    case "loaded": {
+      draft.inlineDiagrams[ia.key] = { svg: ia.svg, loading: false, error: null };
+      return null;
+    }
+    case "error": {
+      draft.inlineDiagrams[ia.key] = { svg: null, loading: false, error: ia.error };
+      return null;
     }
     }
   }

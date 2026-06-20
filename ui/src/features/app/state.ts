@@ -15,6 +15,12 @@ export type { ViewName } from "../navigation/types.js";
 
 export type Theme = "dark" | "light";
 
+export interface InlineDiagramState {
+  svg: string | null;
+  loading: boolean;
+  error: string | null;
+}
+
 export interface AppState {
   theme: Theme;
   nav: NavState;
@@ -27,4 +33,5 @@ export interface AppState {
   search: SearchState;
   explore: ExploreState;
   errors: ErrorsState;
+  inlineDiagrams: Record<string, InlineDiagramState>;
 }

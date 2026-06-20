@@ -1,10 +1,10 @@
 // components/InlineDiagram.tsx — Self-fetching inline SVG diagram with zoom/pan.
 
-import { Show, createResource, createSignal, onCleanup } from "solid-js";
+import { Show, createEffect, createSignal, onCleanup } from "solid-js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import { type DiagramKind, diagramUrl, parsePbUrl, getPbHref } from "../../utils/diagram.js";
+import { type DiagramKind, parsePbUrl, getPbHref } from "../../utils/diagram.js";
 import { stripSvgTitles, computeTooltipPosition } from "./diagramMath.js";
 import { createPanZoom } from "./usePanZoom.js";
 import { DiagramTooltip } from "./DiagramTooltip.js";
@@ -17,6 +17,10 @@ interface InlineDiagramProps {
   params?: Record<string, string | number>;
   store: Store<AppState, AppAction>;
   compact?: boolean;
+}
+
+function inlineDiagramKey(kind: DiagramKind, params?: Record<string, string | number>): string {
+  return JSON.stringify({ kind, params });
 }
 
 export function InlineDiagram(props: InlineDiagramProps) {
@@ -39,13 +43,24 @@ export function InlineDiagram(props: InlineDiagramProps) {
     props.store.dispatch({ tag, action: { tag: "select", name } });
   }
 
-  const key = () => JSON.stringify({ kind: props.kind, params: props.params });
-  const [svg] = createResource(key, async () => {
-    const url = diagramUrl(props.kind, props.params);
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return stripSvgTitles(await res.text());
+  const key = () => inlineDiagramKey(props.kind, props.params);
+
+  createEffect(() => {
+    const k = key();
+    props.store.dispatch({
+      tag: "inlineDiagram",
+      action: { tag: "request", key: k, kind: props.kind, params: props.params ?? {} },
+    });
   });
+
+  const snap = props.store.getState();
+  const entry = () => snap().inlineDiagrams[key()];
+  const loading = () => entry()?.loading ?? false;
+  const error = () => entry()?.error ?? null;
+  const svg = () => {
+    const raw = entry()?.svg;
+    return raw ? stripSvgTitles(raw) : null;
+  };
 
   function copySvg() {
     const s = svg();
@@ -115,17 +130,17 @@ export function InlineDiagram(props: InlineDiagramProps) {
 
   return (
     <div class={props.compact ? "diagram-container compact" : "diagram-container"}>
-      <Show when={svg.loading}>
+      <Show when={loading()}>
         <div class="loading-overlay">
           <div class="spinner" /> Loading diagram…
         </div>
       </Show>
-      <Show when={svg.error}>
+      <Show when={error()}>
         <div class="loading-overlay" style={{ color: "var(--red)" }}>
           Diagram unavailable
         </div>
       </Show>
-      <Show when={!svg.loading && !svg.error && svg()}>
+      <Show when={!loading() && !error() && svg()}>
         <div
           ref={viewportCb}
           class={pan.state.dragging() ? "diagram-viewport grabbing" : "diagram-viewport"}
