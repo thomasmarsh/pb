@@ -65,18 +65,36 @@ export function LibraryDetail(props: { store: Store<AppState, AppAction> }) {
               <div style={{ "margin-bottom": "8px", color: "var(--text-muted)", "font-size": "13px" }}>
                 {lib().object_count} objects
               </div>
-              <div class="entity-card-list">
-                <For each={lib().objects}>
-                  {(obj) => (
-                    <EntityCard
-                      type={obj.kind === "datawindow" ? "datawindow" : "object"}
-                      name={obj.name}
-                      context={`${obj.kind} · ${obj.proc_count} procs`}
-                      onClick={() => navigate(obj.name, obj.kind)}
-                    />
-                  )}
-                </For>
-              </div>
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Kind</th>
+                    <th>Procs</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <For each={lib().objects}>
+                    {(obj) => (
+                      <tr>
+                        <td class="name-cell">
+                          <EntityCard
+                            type={obj.kind === "datawindow" ? "datawindow" : "object"}
+                            name={obj.name}
+                            onClick={() => navigate(obj.name, obj.kind)}
+                          />
+                        </td>
+                        <td>
+                          <span class={`badge ${obj.kind === "datawindow" ? "badge-dw" : obj.kind === "powerscript" ? "badge-ps" : "badge-proj"}`}>
+                            {obj.kind}
+                          </span>
+                        </td>
+                        <td>{obj.proc_count}</td>
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
             </Show>
 
             <Show when={face() === "analysis"}>
