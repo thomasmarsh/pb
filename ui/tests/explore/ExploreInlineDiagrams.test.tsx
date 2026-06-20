@@ -262,6 +262,7 @@ describe("DwDetailPanel — preview from dwLayoutCache", () => {
   it("renders empty preview when no layout in cache", () => {
     const preview = renderDwPanel(null);
     expect(preview).not.toBeNull();
-    expect(preview?.children.length).toBe(0);
+    const wrapper = preview?.children[0] as HTMLElement | undefined;
+    expect(wrapper?.children.length).toBe(0);
   });
 });

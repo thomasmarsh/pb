@@ -91,7 +91,7 @@ export function DwDetailCore(props: { d: DwDetailResponse; layout: DataWindowFil
       <div class="detail-body">
         <div class="card">
           <div class="card-header"><h3>Preview</h3></div>
-          <div style={{ padding: "12px" }}>
+          <div style={{ padding: "4px" }}>
             <DwPreview layout={props.layout} />
           </div>
         </div>

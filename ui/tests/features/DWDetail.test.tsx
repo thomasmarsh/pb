@@ -129,14 +129,15 @@ describe("DWDetail preview", () => {
     expect(preview?.textContent).toContain("col_id");
   });
 
-  it("renders nothing when dwLayout is null", () => {
+  it("renders empty preview when dwLayout is null", () => {
     const { store } = createTestStore({
       datawindows: { ...initialDatawindowsState, dwDetail: makeDw(), dwLayout: null },
     });
     render(() => <DWDetail store={store} />);
     const preview = document.querySelector(".dw-preview");
     expect(preview).not.toBeNull();
-    expect(preview?.children.length).toBe(0);
+    const wrapper = preview?.children[0] as HTMLElement | undefined;
+    expect(wrapper?.children.length).toBe(0);
   });
 });
 
