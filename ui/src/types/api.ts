@@ -271,16 +271,6 @@ export interface ExploreTreeResponse {
   libraries: ExploreLibrary[];
 }
 
-export interface DwExploreDetail {
-  name: string;
-  controls: DwControlRow[];
-  retrieve_tables: string[];
-  retrieve_columns: { column_fqn: string; table_name: string; column_name: string }[];
-  retrieve_where: { idx: number; exp1: string; op: string; exp2: string; logic: string }[];
-  arguments: { arg_name: string; arg_type: string }[];
-  error?: string;
-}
-
 export interface SqlStatementRow {
   line: number;
   operation: string;

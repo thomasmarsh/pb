@@ -14,7 +14,7 @@ from pb_cli.explorer.services.objects import _get_root
 router = APIRouter()
 
 
-@router.get("/api/dw/{name}")
+@router.get("/api/datawindow/{name}")
 async def get_datawindow(name: str, conn: duckdb.DuckDBPyConnection = Depends(get_db)):
     file_rows = rows(conn.execute("SELECT DISTINCT file FROM dw_controls WHERE dw_name = ?", [name]))
     if not file_rows:
@@ -44,8 +44,3 @@ async def get_datawindow(name: str, conn: duckdb.DuckDBPyConnection = Depends(ge
         "source": source_original,
         **get_dw_detail(conn, name),
     }
-
-
-@router.get("/api/explore/datawindow/{name}")
-async def explore_datawindow(name: str, conn: duckdb.DuckDBPyConnection = Depends(get_db)):
-    return {"name": name, **get_dw_detail(conn, name)}

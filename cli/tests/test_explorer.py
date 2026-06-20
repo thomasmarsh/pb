@@ -221,7 +221,7 @@ def test_dw_detail(client):
     if not data["items"]:
         pytest.skip("No DataWindows in database")
     dw_name = data["items"][0]["name"]
-    r2 = client.get(f"/api/dw/{dw_name}")
+    r2 = client.get(f"/api/datawindow/{dw_name}")
     assert r2.status_code == 200
     dw = r2.json()
     assert dw["name"] == dw_name
@@ -231,7 +231,7 @@ def test_dw_detail(client):
 
 
 def test_dw_not_found(client):
-    r = client.get("/api/dw/__nonexistent_dw__")
+    r = client.get("/api/datawindow/__nonexistent_dw__")
     assert r.status_code == 404
 
 

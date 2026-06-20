@@ -1,6 +1,6 @@
 // features/explore/types.ts — Explore feature state.
 
-import type { ExploreLibrary, DwExploreDetail, ExploreProcDetail, TableSummary, TableDetail } from "../../types/api.js";
+import type { ExploreLibrary, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail } from "../../types/api.js";
 
 export interface TablesState {
   items: TableSummary[];
@@ -23,7 +23,7 @@ export interface ExploreState {
   selectedProc: string | null;
   selectedDw: string | null;
   procCache: Record<string, ExploreProcDetail | { error: string }>;
-  dwCache: Record<string, DwExploreDetail | { error: string }>;
+  dwCache: Record<string, DwDetailResponse | { error: string }>;
   loading: boolean;
   activeTab: "source" | "ast" | "sql" | "diagram";
   treeFilter: string;

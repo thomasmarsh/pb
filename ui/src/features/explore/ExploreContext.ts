@@ -1,5 +1,5 @@
 // ExploreContext.ts — SolidJS context for the store within the Explore feature tree.
-// Provided by Explore, consumed by TreeNode, AstNode, DwDetailTree (exclusively used there).
+// Provided by Explore, consumed by TreeNode, AstNode, DwDetailPanel.
 
 import { createContext, useContext } from "solid-js";
 import type { Store } from "../../core/store.js";

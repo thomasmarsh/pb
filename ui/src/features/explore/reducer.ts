@@ -4,7 +4,7 @@ import { Effect } from "../../core/effect.js";
 import type { Reducer } from "../../core/reducer.js";
 import type { ExploreState } from "./types.js";
 import type { ExploreAction } from "./actions.js";
-import type { ExploreTreeResponse, DwExploreDetail, ExploreProcDetail, TableSummary, TableDetail } from "../../types/api.js";
+import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail } from "../../types/api.js";
 import type { NavigationAction } from "../navigation/types.js";
 
 // ── Narrow environment ────────────────────────────────────────────────────────
@@ -12,7 +12,7 @@ import type { NavigationAction } from "../navigation/types.js";
 export interface ExploreEnv {
   getExploreTree(): Effect<ExploreTreeResponse>;
   getExploreProcedure(objectName: string, procName: string): Effect<ExploreProcDetail>;
-  getExploreDatawindow(name: string): Effect<DwExploreDetail>;
+  getExploreDatawindow(name: string): Effect<DwDetailResponse>;
   getTables(): Effect<TableSummary[]>;
   getTableDetail(name: string): Effect<TableDetail>;
   navigate(action: NavigationAction): Effect<never>;

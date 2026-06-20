@@ -31,8 +31,12 @@ export function LibraryDetail(props: { store: Store<AppState, AppAction> }) {
 
   const [face, setFace] = createSignal<Face>("source");
 
-  function navigate(name: string): void {
-    store.dispatch({ tag: "objects", action: { tag: "select", name } });
+  function navigate(name: string, kind: string): void {
+    if (kind === "datawindow") {
+      store.dispatch({ tag: "datawindows", action: { tag: "select", name } });
+    } else {
+      store.dispatch({ tag: "objects", action: { tag: "select", name } });
+    }
   }
 
   function navigateToDead(): void {
@@ -68,7 +72,7 @@ export function LibraryDetail(props: { store: Store<AppState, AppAction> }) {
                       type={obj.kind === "datawindow" ? "datawindow" : "object"}
                       name={obj.name}
                       context={`${obj.kind} · ${obj.proc_count} procs`}
-                      onClick={() => navigate(obj.name)}
+                      onClick={() => navigate(obj.name, obj.kind)}
                     />
                   )}
                 </For>

@@ -1,6 +1,6 @@
 // features/explore/actions.ts — Explore feature actions (self-contained).
 
-import type { ExploreTreeResponse, DwExploreDetail, ExploreProcDetail, TableSummary, TableDetail } from "../../types/api.js";
+import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail } from "../../types/api.js";
 
 export type ExploreAction =
   | { tag: "load" }
@@ -12,7 +12,7 @@ export type ExploreAction =
   | { tag: "expand-all" }
   | { tag: "collapse-all" }
   | { tag: "dw-select"; dwName: string; nodeId: string }
-  | { tag: "dw-loaded"; nodeId: string; data: DwExploreDetail }
+  | { tag: "dw-loaded"; nodeId: string; data: DwDetailResponse }
   | { tag: "dw-error"; nodeId: string; error: string }
   | { tag: "tab"; tab: "source" | "ast" | "sql" | "diagram" }
   | { tag: "filter"; q: string }

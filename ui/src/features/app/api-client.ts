@@ -12,7 +12,7 @@ import type {
   QueryDef,
   QueryResult,
   ExploreTreeResponse,
-  DwExploreDetail,
+
   ExploreProcDetail,
   TableSummary,
   TableDetail,
@@ -40,7 +40,7 @@ export interface ApiClient {
   runSql(sql: string): Promise<QueryResult>;
   getExploreTree(): Promise<ExploreTreeResponse>;
   getExploreProcedure(objectName: string, procName: string): Promise<ExploreProcDetail>;
-  getExploreDatawindow(name: string): Promise<DwExploreDetail>;
+  getExploreDatawindow(name: string): Promise<DwDetailResponse>;
   getTables(): Promise<TableSummary[]>;
   getTableDetail(name: string): Promise<TableDetail>;
   getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse>;
@@ -144,7 +144,7 @@ export function createApiClient(): ApiClient {
     },
 
     async getDW(name: string): Promise<DwDetailResponse> {
-      return fetchJson("/api/dw/" + encodeURIComponent(name));
+      return fetchJson("/api/datawindow/" + encodeURIComponent(name));
     },
 
     async getDiagram(
@@ -192,8 +192,8 @@ export function createApiClient(): ApiClient {
       );
     },
 
-    async getExploreDatawindow(name: string): Promise<DwExploreDetail> {
-      return fetchJson(`/api/explore/datawindow/${encodeURIComponent(name)}`);
+    async getExploreDatawindow(name: string): Promise<DwDetailResponse> {
+      return fetchJson(`/api/datawindow/${encodeURIComponent(name)}`);
     },
 
     async getTables(): Promise<TableSummary[]> {

@@ -42,7 +42,7 @@ function DWControlsTable(props: { controls: DwControlRow[] }) {
   );
 }
 
-function DWDetailContent(props: { d: DwDetailResponse; store: Store<AppState, AppAction> }) {
+export function DwDetailCore(props: { d: DwDetailResponse; store: Store<AppState, AppAction> }) {
   const d = props.d;
   const store = props.store;
   const snap = store.getState();
@@ -184,7 +184,7 @@ export function DWDetail(props: { store: Store<AppState, AppAction> }) {
           if ("error" in entry()) {
             return <div class="card"><p style={{ color: "var(--red)" }}>Error: {(entry() as { error: string }).error}</p></div>;
           }
-          return <DWDetailContent d={entry() as DwDetailResponse} store={store} />;
+          return <DwDetailCore d={entry() as DwDetailResponse} store={store} />;
         }}
       </Show>
     </>
