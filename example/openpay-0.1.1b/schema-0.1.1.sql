@@ -14,7 +14,7 @@ CREATE DATABASE openpay;
 USE openpay;
 
 #
-# Structure for the `afxfilter` table : 
+# Structure for the `afxfilter` table :
 #
 
 DROP TABLE IF EXISTS afxfilter;
@@ -24,10 +24,10 @@ CREATE TABLE afxfilter (
   descfilter varchar(50) NOT NULL default '',
   tablename varchar(50) NOT NULL default '',
   UNIQUE KEY afxfilter_x (kodfilter)
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `afxfilterd` table : 
+# Structure for the `afxfilterd` table :
 #
 
 DROP TABLE IF EXISTS afxfilterd;
@@ -42,20 +42,20 @@ CREATE TABLE afxfilterd (
   PRIMARY KEY  (kodfilterd),
   KEY kodfilter (kodfilter),
   CONSTRAINT 0_15 FOREIGN KEY (kodfilter) REFERENCES afxfilter (kodfilter) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `afxinfo` table : 
+# Structure for the `afxinfo` table :
 #
 
 DROP TABLE IF EXISTS afxinfo;
 
 CREATE TABLE afxinfo (
   dbver varchar(10) default NULL
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `afxkeygen` table : 
+# Structure for the `afxkeygen` table :
 #
 
 DROP TABLE IF EXISTS afxkeygen;
@@ -65,10 +65,10 @@ CREATE TABLE afxkeygen (
   lastid bigint(20) default '0',
   PRIMARY KEY  (tblname),
   KEY lastid (lastid)
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `afxoperators` table : 
+# Structure for the `afxoperators` table :
 #
 
 DROP TABLE IF EXISTS afxoperators;
@@ -79,10 +79,10 @@ CREATE TABLE afxoperators (
   orderno tinyint(4) default NULL,
   PRIMARY KEY  (operatorname),
   UNIQUE KEY afxoperators_x (operatorname)
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `afxptoseis` table : 
+# Structure for the `afxptoseis` table :
 #
 
 DROP TABLE IF EXISTS afxptoseis;
@@ -92,10 +92,10 @@ CREATE TABLE afxptoseis (
   gen varchar(50) default NULL,
   ait varchar(50) default NULL,
   PRIMARY KEY  (onom)
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `afxtable` table : 
+# Structure for the `afxtable` table :
 #
 
 DROP TABLE IF EXISTS afxtable;
@@ -105,10 +105,10 @@ CREATE TABLE afxtable (
   tabledesc varchar(50) NOT NULL default '',
   PRIMARY KEY  (tablename),
   UNIQUE KEY afxtable_x (tablename)
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `afxtablefields` table : 
+# Structure for the `afxtablefields` table :
 #
 
 DROP TABLE IF EXISTS afxtablefields;
@@ -123,10 +123,10 @@ CREATE TABLE afxtablefields (
   PRIMARY KEY  (tablename,fieldname),
   KEY tablename (tablename),
   CONSTRAINT 0_22 FOREIGN KEY (tablename) REFERENCES afxtable (tablename) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `afxtranslate` table : 
+# Structure for the `afxtranslate` table :
 #
 
 DROP TABLE IF EXISTS afxtranslate;
@@ -136,10 +136,10 @@ CREATE TABLE afxtranslate (
   el varchar(255) default NULL,
   uk varchar(255) default NULL,
   PRIMARY KEY  (id)
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_zpxrisi` table : 
+# Structure for the `misth_zpxrisi` table :
 #
 
 DROP TABLE IF EXISTS misth_zpxrisi;
@@ -180,10 +180,10 @@ CREATE TABLE misth_zpxrisi (
   prn_notes2 longtext,
   prn_notes3 longtext,
   PRIMARY KEY  (kodxrisi)
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_zpperiod` table : 
+# Structure for the `misth_zpperiod` table :
 #
 
 DROP TABLE IF EXISTS misth_zpperiod;
@@ -196,10 +196,10 @@ CREATE TABLE misth_zpperiod (
   PRIMARY KEY  (kodperiod,kodxrisi),
   KEY kodxrisi (kodxrisi),
   CONSTRAINT 0_26 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_zpkat` table : 
+# Structure for the `misth_zpkat` table :
 #
 
 DROP TABLE IF EXISTS misth_zpkat;
@@ -211,10 +211,10 @@ CREATE TABLE misth_zpkat (
   PRIMARY KEY  (kodkat,kodxrisi),
   KEY kodxrisi (kodxrisi),
   CONSTRAINT 0_28 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_final` table : 
+# Structure for the `misth_final` table :
 #
 
 DROP TABLE IF EXISTS misth_final;
@@ -236,10 +236,10 @@ CREATE TABLE misth_final (
   CONSTRAINT 0_30 FOREIGN KEY (kodperiod, kodxrisi) REFERENCES misth_zpperiod (kodperiod, kodxrisi) ON UPDATE CASCADE,
   CONSTRAINT 0_31 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT 0_32 FOREIGN KEY (kodkat, kodxrisi) REFERENCES misth_zpkat (kodkat, kodxrisi) ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_zptmima` table : 
+# Structure for the `misth_zptmima` table :
 #
 
 DROP TABLE IF EXISTS misth_zptmima;
@@ -251,10 +251,10 @@ CREATE TABLE misth_zptmima (
   PRIMARY KEY  (kodtmima,kodxrisi),
   KEY kodxrisi (kodxrisi),
   CONSTRAINT 0_34 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_zpidikot` table : 
+# Structure for the `misth_zpidikot` table :
 #
 
 DROP TABLE IF EXISTS misth_zpidikot;
@@ -266,10 +266,10 @@ CREATE TABLE misth_zpidikot (
   PRIMARY KEY  (kodidikot,kodxrisi),
   KEY kodxrisi (kodxrisi),
   CONSTRAINT 0_36 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_zpthesi` table : 
+# Structure for the `misth_zpthesi` table :
 #
 
 DROP TABLE IF EXISTS misth_zpthesi;
@@ -281,10 +281,10 @@ CREATE TABLE misth_zpthesi (
   PRIMARY KEY  (kodthesi,kodxrisi),
   KEY kodxrisi (kodxrisi),
   CONSTRAINT 0_38 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_zptamio` table : 
+# Structure for the `misth_zptamio` table :
 #
 
 DROP TABLE IF EXISTS misth_zptamio;
@@ -297,10 +297,10 @@ CREATE TABLE misth_zptamio (
   KEY kodxrisi (kodxrisi),
   KEY kodxrisi_2 (kodxrisi,kodtamio),
   CONSTRAINT 0_40 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_zpoikog` table : 
+# Structure for the `misth_zpoikog` table :
 #
 
 DROP TABLE IF EXISTS misth_zpoikog;
@@ -312,10 +312,10 @@ CREATE TABLE misth_zpoikog (
   PRIMARY KEY  (kodoikog,kodxrisi),
   KEY kodxrisi (kodxrisi),
   CONSTRAINT 0_42 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_ypal` table : 
+# Structure for the `misth_ypal` table :
 #
 
 DROP TABLE IF EXISTS misth_ypal;
@@ -382,10 +382,10 @@ CREATE TABLE misth_ypal (
   CONSTRAINT 0_47 FOREIGN KEY (kodthesi, kodxrisi) REFERENCES misth_zpthesi (kodthesi, kodxrisi) ON UPDATE CASCADE,
   CONSTRAINT 0_48 FOREIGN KEY (kodtamio, kodxrisi) REFERENCES misth_zptamio (kodtamio, kodxrisi) ON UPDATE CASCADE,
   CONSTRAINT 0_49 FOREIGN KEY (kodoikog, kodxrisi) REFERENCES misth_zpoikog (kodoikog, kodxrisi) ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_final_ypal` table : 
+# Structure for the `misth_final_ypal` table :
 #
 
 DROP TABLE IF EXISTS misth_final_ypal;
@@ -400,10 +400,10 @@ CREATE TABLE misth_final_ypal (
   KEY kodypal (kodypal,kodxrisi),
   CONSTRAINT 0_51 FOREIGN KEY (kodfinal, kodxrisi) REFERENCES misth_final (kodfinal, kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT 0_52 FOREIGN KEY (kodypal, kodxrisi) REFERENCES misth_ypal (kodypal, kodxrisi) ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_zpepidom` table : 
+# Structure for the `misth_zpepidom` table :
 #
 
 DROP TABLE IF EXISTS misth_zpepidom;
@@ -424,10 +424,10 @@ CREATE TABLE misth_zpepidom (
   KEY isasf (isasf,kodxrisi),
   KEY autoforos (autoforos,kodxrisi),
   CONSTRAINT 0_54 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_final_ypal_epidom` table : 
+# Structure for the `misth_final_ypal_epidom` table :
 #
 
 DROP TABLE IF EXISTS misth_final_ypal_epidom;
@@ -445,10 +445,10 @@ CREATE TABLE misth_final_ypal_epidom (
   KEY kodepidom (kodepidom,kodxrisi),
   CONSTRAINT 0_56 FOREIGN KEY (kodfinal, kodypal, kodxrisi) REFERENCES misth_final_ypal (kodfinal, kodypal, kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT 0_57 FOREIGN KEY (kodepidom, kodxrisi) REFERENCES misth_zpepidom (kodepidom, kodxrisi) ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_zpkrat` table : 
+# Structure for the `misth_zpkrat` table :
 #
 
 DROP TABLE IF EXISTS misth_zpkrat;
@@ -466,10 +466,10 @@ CREATE TABLE misth_zpkrat (
   KEY isasf (isasf,kodxrisi),
   KEY isautoforos (isautoforos,kodxrisi),
   CONSTRAINT 0_59 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_kratapod` table : 
+# Structure for the `misth_kratapod` table :
 #
 
 DROP TABLE IF EXISTS misth_kratapod;
@@ -483,10 +483,10 @@ CREATE TABLE misth_kratapod (
   KEY kodxrisi (kodxrisi),
   KEY apoddate (apoddate,kodxrisi),
   CONSTRAINT 0_61 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_final_ypal_krat` table : 
+# Structure for the `misth_final_ypal_krat` table :
 #
 
 DROP TABLE IF EXISTS misth_final_ypal_krat;
@@ -507,10 +507,10 @@ CREATE TABLE misth_final_ypal_krat (
   CONSTRAINT 0_63 FOREIGN KEY (kodfinal, kodypal, kodxrisi) REFERENCES misth_final_ypal (kodfinal, kodypal, kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT 0_64 FOREIGN KEY (kodkrat, kodxrisi) REFERENCES misth_zpkrat (kodkrat, kodxrisi) ON UPDATE CASCADE,
   CONSTRAINT 0_65 FOREIGN KEY (kodkratapod) REFERENCES misth_kratapod (kodkratapod) ON DELETE SET NULL ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_fylo` table : 
+# Structure for the `misth_fylo` table :
 #
 
 DROP TABLE IF EXISTS misth_fylo;
@@ -522,10 +522,10 @@ CREATE TABLE misth_fylo (
   PRIMARY KEY  (kodfylo,kodxrisi),
   KEY kodxrisi (kodxrisi),
   CONSTRAINT 0_67 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_fylo_epidom` table : 
+# Structure for the `misth_fylo_epidom` table :
 #
 
 DROP TABLE IF EXISTS misth_fylo_epidom;
@@ -544,10 +544,10 @@ CREATE TABLE misth_fylo_epidom (
   KEY aa (aa),
   CONSTRAINT 0_69 FOREIGN KEY (kodfylo, kodxrisi) REFERENCES misth_fylo (kodfylo, kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT 0_70 FOREIGN KEY (kodepidom, kodxrisi) REFERENCES misth_zpepidom (kodepidom, kodxrisi) ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_fylo_krat` table : 
+# Structure for the `misth_fylo_krat` table :
 #
 
 DROP TABLE IF EXISTS misth_fylo_krat;
@@ -566,10 +566,10 @@ CREATE TABLE misth_fylo_krat (
   KEY aa (aa),
   CONSTRAINT 0_72 FOREIGN KEY (kodfylo, kodxrisi) REFERENCES misth_fylo (kodfylo, kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT 0_73 FOREIGN KEY (kodkrat, kodxrisi) REFERENCES misth_zpkrat (kodkrat, kodxrisi) ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_fylo_ypal` table : 
+# Structure for the `misth_fylo_ypal` table :
 #
 
 DROP TABLE IF EXISTS misth_fylo_ypal;
@@ -584,10 +584,10 @@ CREATE TABLE misth_fylo_ypal (
   KEY kodypal (kodypal,kodxrisi),
   CONSTRAINT 0_75 FOREIGN KEY (kodfylo, kodxrisi) REFERENCES misth_fylo (kodfylo, kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT 0_76 FOREIGN KEY (kodypal, kodxrisi) REFERENCES misth_ypal (kodypal, kodxrisi) ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_report` table : 
+# Structure for the `misth_report` table :
 #
 
 DROP TABLE IF EXISTS misth_report;
@@ -609,10 +609,10 @@ CREATE TABLE misth_report (
   PRIMARY KEY  (kodreport,kodxrisi),
   KEY kodxrisi (kodxrisi),
   CONSTRAINT 0_78 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_report_cols` table : 
+# Structure for the `misth_report_cols` table :
 #
 
 DROP TABLE IF EXISTS misth_report_cols;
@@ -628,10 +628,10 @@ CREATE TABLE misth_report_cols (
   PRIMARY KEY  (kodcol,kodreport,kodxrisi),
   KEY kodreport (kodreport,kodxrisi),
   CONSTRAINT 0_80 FOREIGN KEY (kodreport, kodxrisi) REFERENCES misth_report (kodreport, kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_report_ypal` table : 
+# Structure for the `misth_report_ypal` table :
 #
 
 DROP TABLE IF EXISTS misth_report_ypal;
@@ -645,10 +645,10 @@ CREATE TABLE misth_report_ypal (
   KEY kodypal (kodypal,kodxrisi),
   CONSTRAINT 0_82 FOREIGN KEY (kodreport, kodxrisi) REFERENCES misth_report (kodreport, kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT 0_83 FOREIGN KEY (kodypal, kodxrisi) REFERENCES misth_ypal (kodypal, kodxrisi) ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_zpyvar` table : 
+# Structure for the `misth_zpyvar` table :
 #
 
 DROP TABLE IF EXISTS misth_zpyvar;
@@ -661,10 +661,10 @@ CREATE TABLE misth_zpyvar (
   PRIMARY KEY  (kodyvar,kodxrisi),
   KEY kodxrisi (kodxrisi),
   CONSTRAINT 0_85 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_ypal_yvar` table : 
+# Structure for the `misth_ypal_yvar` table :
 #
 
 DROP TABLE IF EXISTS misth_ypal_yvar;
@@ -682,10 +682,10 @@ CREATE TABLE misth_ypal_yvar (
   KEY aa (aa),
   CONSTRAINT 0_87 FOREIGN KEY (kodypal, kodxrisi) REFERENCES misth_ypal (kodypal, kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT 0_88 FOREIGN KEY (kodyvar, kodxrisi) REFERENCES misth_zpyvar (kodyvar, kodxrisi) ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_zpstath` table : 
+# Structure for the `misth_zpstath` table :
 #
 
 DROP TABLE IF EXISTS misth_zpstath;
@@ -698,10 +698,10 @@ CREATE TABLE misth_zpstath (
   PRIMARY KEY  (kodstath,kodxrisi),
   KEY kodxrisi (kodxrisi),
   CONSTRAINT 0_90 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
-# Structure for the `misth_zptitlos` table : 
+# Structure for the `misth_zptitlos` table :
 #
 
 DROP TABLE IF EXISTS misth_zptitlos;
@@ -713,13 +713,13 @@ CREATE TABLE misth_zptitlos (
   PRIMARY KEY  (kodtitlos,kodxrisi),
   KEY kodxrisi (kodxrisi),
   CONSTRAINT 0_92 FOREIGN KEY (kodxrisi) REFERENCES misth_zpxrisi (kodxrisi) ON DELETE CASCADE ON UPDATE CASCADE
-) TYPE=InnoDB;
+) ENGINE=InnoDB;
 
 #
 # Data for the `afxinfo` table  (LIMIT 0,500)
 #
 
-INSERT INTO afxinfo (dbver) VALUES 
+INSERT INTO afxinfo (dbver) VALUES
   ('0.1.1');
 
 COMMIT;
@@ -728,7 +728,7 @@ COMMIT;
 # Data for the `afxoperators` table  (LIMIT 0,500)
 #
 
-INSERT INTO afxoperators (operatorname, operator, orderno) VALUES 
+INSERT INTO afxoperators (operatorname, operator, orderno) VALUES
   ('δεν είναι','is not',10),
   ('είναι','is',9),
   ('ίσο','=',1),
@@ -746,7 +746,7 @@ COMMIT;
 # Data for the `afxtranslate` table  (LIMIT 0,500)
 #
 
-INSERT INTO afxtranslate (id, el, uk) VALUES 
+INSERT INTO afxtranslate (id, el, uk) VALUES
   (1,'&Άκυρο','&Cancel'),
   (2,'&Ακύρωση','&Cancel'),
   (3,'&Αναζήτηση','&Find'),
@@ -1254,7 +1254,7 @@ COMMIT;
 # Data for the `afxtranslate` table  (LIMIT 500,500)
 #
 
-INSERT INTO afxtranslate (id, el, uk) VALUES 
+INSERT INTO afxtranslate (id, el, uk) VALUES
   (501,'Παρακράτηση φόρου','Rataining taxes'),
   (502,'Παράμετροι','Parameters'),
   (503,'Παράμετροι εφαρμογής','Application parameters'),
@@ -1471,7 +1471,7 @@ COMMIT;
 # Data for the `misth_zpxrisi` table  (LIMIT 0,500)
 #
 
-INSERT INTO misth_zpxrisi (kodxrisi, descxrisi, startdate, enddate, maskposo, maskposot, maskdate, eteria, eteriadesc, address, tk, city, phone, fax, maskdate_e, maskposo_e, maskposot_e, afm, doy, round, prn_logo1, prn_logo2, prn_logo3, prn_logo4, prn_logo5, prn_sign1_prosf, prn_sign1_name, prn_sign2_prosf, prn_sign2_name, prn_sign3_prosf, prn_sign3_name, prn_notes1, prn_notes2, prn_notes3) VALUES 
+INSERT INTO misth_zpxrisi (kodxrisi, descxrisi, startdate, enddate, maskposo, maskposot, maskdate, eteria, eteriadesc, address, tk, city, phone, fax, maskdate_e, maskposo_e, maskposot_e, afm, doy, round, prn_logo1, prn_logo2, prn_logo3, prn_logo4, prn_logo5, prn_sign1_prosf, prn_sign1_name, prn_sign2_prosf, prn_sign2_name, prn_sign3_prosf, prn_sign3_name, prn_notes1, prn_notes2, prn_notes3) VALUES
   ('0001','Default season','2005-01-01','2006-12-31','###,##0.00','###,##0.00','dd/mm/yyyy','COMPANY NAME','Company description','Company address','','City','0000000','0000001','dd/mm/yyyy','###,##0.00','###,##0.00','','',2,'Logo1','Logo2','Logo3','Logo4','Logo5','Sign1 - Title','Sign1 - Name','Sign2 - Title','Sign2 - Name','Sign3 - Title','Sign3 - Name','Footer1','Footer2','Footer3');
 
 COMMIT;
@@ -1480,7 +1480,7 @@ COMMIT;
 # Data for the `misth_zpperiod` table  (LIMIT 0,500)
 #
 
-INSERT INTO misth_zpperiod (kodperiod, kodxrisi, descperiod, orderno) VALUES 
+INSERT INTO misth_zpperiod (kodperiod, kodxrisi, descperiod, orderno) VALUES
   ('01','0001','Default period',1);
 
 COMMIT;
@@ -1489,7 +1489,7 @@ COMMIT;
 # Data for the `misth_zpkat` table  (LIMIT 0,500)
 #
 
-INSERT INTO misth_zpkat (kodkat, kodxrisi, desckat) VALUES 
+INSERT INTO misth_zpkat (kodkat, kodxrisi, desckat) VALUES
   ('01','0001','Default category');
 
 COMMIT;
@@ -1498,7 +1498,7 @@ COMMIT;
 # Data for the `misth_zptmima` table  (LIMIT 0,500)
 #
 
-INSERT INTO misth_zptmima (kodtmima, kodxrisi, desctmima) VALUES 
+INSERT INTO misth_zptmima (kodtmima, kodxrisi, desctmima) VALUES
   ('01','0001','Default department');
 
 COMMIT;
@@ -1507,7 +1507,7 @@ COMMIT;
 # Data for the `misth_zpoikog` table  (LIMIT 0,500)
 #
 
-INSERT INTO misth_zpoikog (kodoikog, kodxrisi, descoikog) VALUES 
+INSERT INTO misth_zpoikog (kodoikog, kodxrisi, descoikog) VALUES
   ('01','0001','Married'),
   ('02','0001','Single'),
   ('03','0001','Divorced');
@@ -1518,7 +1518,7 @@ COMMIT;
 # Data for the `misth_zpepidom` table  (LIMIT 0,500)
 #
 
-INSERT INTO misth_zpepidom (kodepidom, kodxrisi, descepidom, hasforo, expr, isasf, autoforos, hasasf) VALUES 
+INSERT INTO misth_zpepidom (kodepidom, kodxrisi, descepidom, hasforo, expr, isasf, autoforos, hasasf) VALUES
   ('SAL','0001','SALARY',1,NULL,0,0,0);
 
 COMMIT;
@@ -1527,7 +1527,7 @@ COMMIT;
 # Data for the `misth_zpkrat` table  (LIMIT 0,500)
 #
 
-INSERT INTO misth_zpkrat (kodkrat, kodxrisi, desckrat, isforos, isasf, isautoforos) VALUES 
+INSERT INTO misth_zpkrat (kodkrat, kodxrisi, desckrat, isforos, isasf, isautoforos) VALUES
   ('PEN','0001','PENALTY',0,0,0),
   ('TAX','0001','TAXES',1,0,0);
 
@@ -1537,7 +1537,7 @@ COMMIT;
 # Data for the `misth_zpyvar` table  (LIMIT 0,500)
 #
 
-INSERT INTO misth_zpyvar (kodyvar, kodxrisi, descyvar, expr) VALUES 
+INSERT INTO misth_zpyvar (kodyvar, kodxrisi, descyvar, expr) VALUES
   ('SAL','0001','SALARY',NULL);
 
 COMMIT;
