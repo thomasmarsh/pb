@@ -6,7 +6,13 @@ import duckdb
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from pb_cli.explorer.routes.dependencies import get_db
-from pb_cli.explorer.services.objects import get_explore_tree, get_object_detail, get_object_source, list_objects
+from pb_cli.explorer.services.objects import (
+    get_explore_tree,
+    get_object_ast,
+    get_object_detail,
+    get_object_source,
+    list_objects,
+)
 
 router = APIRouter()
 
@@ -30,6 +36,14 @@ async def get_object(name: str, conn: duckdb.DuckDBPyConnection = Depends(get_db
     if obj is None:
         raise HTTPException(status_code=404, detail=f"Object not found: {name}")
     return obj
+
+
+@router.get("/api/objects/{name}/ast")
+async def get_object_ast_route(name: str, conn: duckdb.DuckDBPyConnection = Depends(get_db)):
+    result = get_object_ast(conn, name)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Object not found: {name}")
+    return result
 
 
 @router.get("/api/objects/{name}/source")

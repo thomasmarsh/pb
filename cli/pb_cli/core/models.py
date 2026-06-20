@@ -11,6 +11,7 @@ class ObjectRow(NamedTuple):
     kind: str
     ancestor: str | None
     source_text: str | None
+    type_blocks_json: str | None
 
 
 class ProcedureRow(NamedTuple):

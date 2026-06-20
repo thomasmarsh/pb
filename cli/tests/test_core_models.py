@@ -7,7 +7,7 @@ from pb_cli.core.models import (
 
 
 def test_object_row_fields():
-    r = ObjectRow(file="a.srw", name="w_main", kind="powerscript", ancestor=None, source_text=None)
+    r = ObjectRow(file="a.srw", name="w_main", kind="powerscript", ancestor=None, source_text=None, type_blocks_json=None)
     assert r.file == "a.srw"
     assert r.name == "w_main"
 

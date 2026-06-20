@@ -201,6 +201,35 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
     }
 
 
+def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
+    """Return layout (typeBlocks) and event bodies for a window object."""
+    obj_rows = rows(conn.execute(
+        "SELECT type_blocks_json FROM objects WHERE name = ?", [name]
+    ))
+    if not obj_rows:
+        return None
+
+    raw = obj_rows[0].get("type_blocks_json")
+    import json
+    type_blocks = json.loads(raw) if raw else []
+
+    event_rows = rows(conn.execute(
+        "SELECT name, owner, body_json FROM procedures "
+        "WHERE object = ? AND proc_type = 'event'",
+        [name],
+    ))
+    events = [
+        {
+            "name": r["name"],
+            "owner": r["owner"],
+            "body": json.loads(r["body_json"]) if r.get("body_json") else [],
+        }
+        for r in event_rows
+    ]
+
+    return {"typeBlocks": type_blocks, "events": events}
+
+
 def get_explore_tree(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     obj_rows = rows(conn.execute("SELECT name, kind, file FROM objects ORDER BY kind, name"))
     proc_rows = rows(

@@ -12,8 +12,8 @@ def test_create_drop_schema(tmp_path):
     with db_connection(db) as conn:
         create_schema(conn)
         conn.execute(
-            "INSERT INTO objects VALUES (?, ?, ?, ?, ?)",
-            ("test.srw", "w_test", "powerscript", None, None),
+            "INSERT INTO objects VALUES (?, ?, ?, ?, ?, ?)",
+            ("test.srw", "w_test", "powerscript", None, None, None),
         )
         row = conn.execute("SELECT name FROM objects").fetchone()
         assert row is not None

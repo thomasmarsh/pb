@@ -18,6 +18,7 @@ import { ContextualPanel } from "../../components/detail/ContextualPanel.js";
 import { ArrowRight } from "../../utils/icons.js";
 import { CFGCore } from "../analysis/CFGCore.js";
 import type { ContextActions } from "../../components/source/index.js";
+import { RuntimeView } from "../../components/runtime/RuntimeView.js";
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
@@ -267,6 +268,7 @@ function ObjectDetailContent(props: {
   const [showTables, setShowTables] = createSignal(false);
   const [showMetrics, setShowMetrics] = createSignal(false);
   const [showTaint, setShowTaint] = createSignal(false);
+  const [showPreview, setShowPreview] = createSignal(false);
 
   // Proc-scoped panel signals (opened from SourceContextMenu right-click)
   type ProcTarget = { procName: string; procObject: string };
@@ -309,6 +311,11 @@ function ObjectDetailContent(props: {
       active: showTaint(),
       onClick: () => setShowTaint((v) => !v),
     },
+    ...(o.kind === "powerscript" ? [{
+      label: "Preview",
+      active: showPreview(),
+      onClick: () => setShowPreview((v) => !v),
+    }] : []),
   ];
 
   const subtitle = () => {
@@ -326,6 +333,7 @@ function ObjectDetailContent(props: {
     setShowTables(false);
     setShowMetrics(false);
     setShowTaint(false);
+    setShowPreview(false);
     setProcCallersTarget(null);
     setProcCalleesTarget(null);
     setProcCfgTarget(null);
@@ -416,6 +424,12 @@ function ObjectDetailContent(props: {
         <Show when={showTaint()}>
           <ContextualPanel title="Taint Paths" onClose={() => setShowTaint(false)}>
             <ObjectTaintPanel objectName={o.name} store={store} />
+          </ContextualPanel>
+        </Show>
+
+        <Show when={showPreview()}>
+          <ContextualPanel title={`Preview: ${o.name}`} onClose={() => setShowPreview(false)}>
+            <RuntimeView objectName={o.name} />
           </ContextualPanel>
         </Show>
 

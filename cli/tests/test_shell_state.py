@@ -30,8 +30,8 @@ def test_delete_file_rows_cleans_inherits(tmp_path):
     with db_connection(str(tmp_path / "test.duckdb")) as conn:
         create_schema(conn)
         conn.execute(
-            "INSERT INTO objects VALUES (?, ?, ?, ?, ?)",
-            ("child.srw", "w_child", "powerscript", None, None),
+            "INSERT INTO objects VALUES (?, ?, ?, ?, ?, ?)",
+            ("child.srw", "w_child", "powerscript", None, None, None),
         )
         conn.execute("INSERT INTO inherits VALUES (?, ?)", ("w_child", "w_base"))
         delete_file_rows(conn, "child.srw")

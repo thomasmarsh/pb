@@ -1,9 +1,10 @@
 CREATE TABLE IF NOT EXISTS objects (
-    file        TEXT NOT NULL,
-    name        TEXT NOT NULL,
-    kind        TEXT NOT NULL,
-    ancestor    TEXT,
-    source_text TEXT
+    file             TEXT NOT NULL,
+    name             TEXT NOT NULL,
+    kind             TEXT NOT NULL,
+    ancestor         TEXT,
+    source_text      TEXT,
+    type_blocks_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS procedures (
