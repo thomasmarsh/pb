@@ -68,7 +68,7 @@ jobs:
         run: pnpm install --frozen-lockfile && pnpm codegen
 
       - name: Extract openpay corpus
-        run: uv run --project cli pb_cli extract example/openpay -o example/openpay-src
+        run: uv run --project cli pb_cli extract example/openpay-0.1.1b -o example/openpay-0.1.1b-extract
 
       - name: Test (Haskell)
         working-directory: parser
