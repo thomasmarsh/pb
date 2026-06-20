@@ -10,21 +10,12 @@ import type { ExploreLibrary, ExploreObject, ExploreProcedure } from "../../type
 export function libId(name: string): string { return `lib:${name}`; }
 export function objId(lib: string, name: string): string { return `obj:${lib}:${name}`; }
 export function procId(obj: string, name: string): string { return `proc:${obj}:${name}`; }
-export function kindGroupId(objName: string, kind: "functions" | "events" | "subroutines"): string {
-  return `kg:${objName}:${kind}`;
-}
 
 const KIND_BADGES: Record<string, string> = {
   powerscript: "badge-ps", datawindow: "badge-dw", project: "badge-proj",
 };
 
 function kindBadge(kind: string): string { return KIND_BADGES[kind] ?? "badge-proj"; }
-
-function procKindGroup(procType: string): "functions" | "events" | "subroutines" {
-  if (procType === "function") return "functions";
-  if (procType === "subroutine") return "subroutines";
-  return "events";
-}
 
 // ── Procedure Tree Node ───────────────────────────────────────────────────────
 
@@ -48,29 +39,8 @@ export function ProcNode(props: { objName: string; proc: ExploreProcedure; depth
       selected={isSelected()}
       onClick={() => {
         store.dispatch({ tag: "explore", action: { tag: "proc-select", objectName: props.objName, procName: props.proc.name, nodeId: nodeId() } });
-        store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: props.objName, procName: props.proc.name } });
       }}
     />
-  );
-}
-
-// ── Proc Group Node (Functions / Events / Subroutines) ────────────────────────
-
-function ProcGroupNode(props: {
-  nodeId: string;
-  label: string;
-  procs: ExploreProcedure[];
-  objName: string;
-  depth: number;
-}) {
-  return (
-    <Show when={props.procs.length > 0}>
-      <TreeNode nodeId={props.nodeId} depth={props.depth} name={props.label}>
-        <For each={props.procs}>
-          {(proc) => <ProcNode objName={props.objName} proc={proc} depth={props.depth + 1} />}
-        </For>
-      </TreeNode>
-    </Show>
   );
 }
 
@@ -81,6 +51,7 @@ export function ObjectNode(props: { lib: string; obj: ExploreObject; depth: numb
   const snap = store.getState();
   const nodeId = () => objId(props.lib, props.obj.name);
   const isDw = () => props.obj.kind === "datawindow";
+  const isSelected = () => snap().explore.selectedObject === props.obj.name;
 
   const treeFilter = () => snap().explore.treeFilter.toLowerCase();
 
@@ -98,15 +69,6 @@ export function ObjectNode(props: { lib: string; obj: ExploreObject; depth: numb
     return visibleProcs().length > 0;
   });
 
-  const grouped = createMemo(() => {
-    const procs = visibleProcs();
-    return {
-      functions:   procs.filter(p => procKindGroup(p.proc_type) === "functions"),
-      events:      procs.filter(p => procKindGroup(p.proc_type) === "events"),
-      subroutines: procs.filter(p => procKindGroup(p.proc_type) === "subroutines"),
-    };
-  });
-
   return (
     <Show when={isVisible()}>
       <TreeNode
@@ -114,30 +76,16 @@ export function ObjectNode(props: { lib: string; obj: ExploreObject; depth: numb
         depth={props.depth}
         badge={{ text: props.obj.kind, cls: kindBadge(props.obj.kind) }}
         name={props.obj.name}
-        onClick={isDw() ? () => store.dispatch({ tag: "explore", action: { tag: "dw-select", dwName: props.obj.name, nodeId: nodeId() } }) : undefined}
+        selected={isSelected()}
+        onClick={isDw()
+          ? () => store.dispatch({ tag: "explore", action: { tag: "dw-select", dwName: props.obj.name, nodeId: nodeId() } })
+          : () => store.dispatch({ tag: "explore", action: { tag: "obj-select", objectName: props.obj.name, nodeId: nodeId() } })
+        }
       >
         <Show when={!isDw()}>
-          <ProcGroupNode
-            nodeId={kindGroupId(props.obj.name, "functions")}
-            label={`Functions (${grouped().functions.length})`}
-            procs={grouped().functions}
-            objName={props.obj.name}
-            depth={props.depth + 1}
-          />
-          <ProcGroupNode
-            nodeId={kindGroupId(props.obj.name, "events")}
-            label={`Events (${grouped().events.length})`}
-            procs={grouped().events}
-            objName={props.obj.name}
-            depth={props.depth + 1}
-          />
-          <ProcGroupNode
-            nodeId={kindGroupId(props.obj.name, "subroutines")}
-            label={`Subroutines (${grouped().subroutines.length})`}
-            procs={grouped().subroutines}
-            objName={props.obj.name}
-            depth={props.depth + 1}
-          />
+          <For each={visibleProcs()}>
+            {(proc) => <ProcNode objName={props.obj.name} proc={proc} depth={props.depth + 1} />}
+          </For>
         </Show>
       </TreeNode>
     </Show>

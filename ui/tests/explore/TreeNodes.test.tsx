@@ -5,7 +5,7 @@ import { screen, fireEvent } from "@solidjs/testing-library";
 import { render } from "@solidjs/testing-library";
 import { ExploreStoreContext } from "../../src/features/explore/ExploreContext.js";
 import { createTestStore } from "../helpers.js";
-import { ProcNode, ObjectNode, LibraryNode, kindGroupId } from "../../src/features/explore/TreeNodes.js";
+import { ProcNode, ObjectNode, LibraryNode } from "../../src/features/explore/TreeNodes.js";
 
 const DEFAULT_SIDEBAR = {
   sidebarGroups: { sourceTree: true, entityNav: false, analysisNav: false },
@@ -16,9 +16,10 @@ const TABLES_STATE = { items: [], filter: "", selected: null, detail: null, load
 
 function makeExploreBase() {
   return {
-    libraries: [], expandedNodes: new Set<string>(), selectedProc: null, selectedDw: null,
-    procCache: {}, dwCache: {}, loading: false, activeTab: "source" as const, treeFilter: "",
-    highlightedLine: null, tables: TABLES_STATE, helpOverlayOpen: false, ...DEFAULT_SIDEBAR,
+    libraries: [], expandedNodes: new Set<string>(), selectedProc: null, selectedObject: null,
+    highlightedProcName: null, selectedDw: null,
+    procCache: {}, dwCache: {}, objectSourceCache: {}, loading: false, activeTab: "source" as const,
+    treeFilter: "", highlightedLine: null, tables: TABLES_STATE, helpOverlayOpen: false, ...DEFAULT_SIDEBAR,
   };
 }
 
@@ -84,7 +85,19 @@ describe("ObjectNode", () => {
     expect(screen.getByText("powerscript")).toBeDefined();
   });
 
-  it("groups procs by kind — shows Functions and Subroutines groups", () => {
+  it("dispatches obj-select on click for non-DW objects", () => {
+    const { store, captured } = createTestStore({ explore: makeExploreBase() });
+    render(() => (
+      <ExploreStoreContext.Provider value={store}>
+        <ObjectNode lib="app.pbl" obj={{ name: "w_main", kind: "powerscript", file: "app.pbl", procedures: [] }} depth={1} />
+      </ExploreStoreContext.Provider>
+    ));
+    fireEvent.click(screen.getByText("w_main"));
+    const actions = captured.filter(a => a.tag === "explore" && a.action.tag === "obj-select");
+    expect(actions.length).toBe(1);
+  });
+
+  it("lists procs directly (no kind groups) when expanded", () => {
     const { store } = createTestStore({
       explore: {
         ...makeExploreBase(),
@@ -99,27 +112,11 @@ describe("ObjectNode", () => {
         ] }} depth={1} />
       </ExploreStoreContext.Provider>
     ));
-    expect(screen.getByText("Functions (1)")).toBeDefined();
-    expect(screen.getByText("Subroutines (1)")).toBeDefined();
-  });
-
-  it("hides empty kind groups", () => {
-    const { store } = createTestStore({
-      explore: {
-        ...makeExploreBase(),
-        expandedNodes: new Set(["obj:app.pbl:w_main"]),
-      },
-    });
-    render(() => (
-      <ExploreStoreContext.Provider value={store}>
-        <ObjectNode lib="app.pbl" obj={{ name: "w_main", kind: "powerscript", file: "app.pbl", procedures: [
-          { name: "of_init", proc_type: "function", params: "", return_type: "", cyclomatic: null, start_line: null, end_line: null, object: "w_main", modifiers: null },
-        ] }} depth={1} />
-      </ExploreStoreContext.Provider>
-    ));
-    expect(screen.getByText("Functions (1)")).toBeDefined();
-    expect(screen.queryByText(/Events/)).toBeNull();
+    expect(screen.getByText("of_init")).toBeDefined();
+    expect(screen.getByText("of_close")).toBeDefined();
+    expect(screen.queryByText(/Functions/)).toBeNull();
     expect(screen.queryByText(/Subroutines/)).toBeNull();
+    expect(screen.queryByText(/Events/)).toBeNull();
   });
 
   it("hides DW objects when filtered out", () => {
@@ -145,13 +142,5 @@ describe("LibraryNode", () => {
     ));
     expect(screen.getByText("app.pbl")).toBeDefined();
     expect(screen.getByText("0 objects")).toBeDefined();
-  });
-});
-
-describe("kindGroupId", () => {
-  it("returns correct node ids", () => {
-    expect(kindGroupId("w_main", "functions")).toBe("kg:w_main:functions");
-    expect(kindGroupId("w_main", "events")).toBe("kg:w_main:events");
-    expect(kindGroupId("w_main", "subroutines")).toBe("kg:w_main:subroutines");
   });
 });

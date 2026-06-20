@@ -2,7 +2,7 @@
 
 import { For, Show, createSignal, createMemo } from "solid-js";
 import { highlightPowerScript, PB_KEYWORDS } from "../../utils/highlight.js";
-import type { ProcedureInfo } from "../../types/api.js";
+import type { ProcedureInfo, KnownProcInfo, LocalSymbolInfo } from "../../types/api.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
@@ -21,30 +21,24 @@ const PROC_BADGE_COLORS: Record<string, string> = {
   on: "#4ade80",
 };
 
-type KnownProc = {
-  name: string;
-  object: string;
-  proc_type: string;
-  modifiers?: string | null;
-  params?: string | null;
-  return_type?: string | null;
-  start_line?: number | null;
-  end_line?: number | null;
-  cyclomatic?: number | null;
-};
+type KnownProc = KnownProcInfo;
 
 interface SourceViewerProps {
   lines: string[];
   procedures: ProcedureInfo[];
   knownObjects: { name: string; kind: string }[];
-  knownProcs: { name: string; object: string; proc_type: string }[];
+  knownProcs: KnownProcInfo[];
+  localSymbols?: LocalSymbolInfo[];
   objectName: string;
+  selectedProcName?: string;
+  onProcBarClick?: (proc: ProcedureInfo) => void;
 }
 
 function linkIdentifiers(
   html: string,
   objectMap: Map<string, { name: string; kind: string }>,
   procMap: Map<string, KnownProc>,
+  varMap: Map<string, LocalSymbolInfo>,
   selfName: string,
 ): string {
   return html.replace(/\b([A-Za-z_][\w$#%-]*)\b/g, (match, word) => {
@@ -58,6 +52,12 @@ function linkIdentifiers(
     // Link to known procedures
     if (procMap.has(lower)) {
       return `<span class="src-link src-link-proc" data-link-type="procedure" data-link-name="${word}">${match}</span>`;
+    }
+    // Link to local variables / parameters
+    if (varMap.has(lower)) {
+      const sym = varMap.get(lower)!;
+      const cls = sym.is_parameter ? "src-link-param" : "src-link-var";
+      return `<span class="src-link ${cls}" data-link-type="var" data-link-name="${word}">${match}</span>`;
     }
     // Link to known objects
     if (objectMap.has(lower)) {
@@ -97,6 +97,16 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
     return map;
   });
 
+  // var_name_lower → first symbol with that name (across all procs)
+  const varMap = createMemo(() => {
+    const map = new Map<string, LocalSymbolInfo>();
+    for (const s of props.localSymbols ?? []) {
+      const key = s.var_name.toLowerCase();
+      if (!map.has(key)) map.set(key, s);
+    }
+    return map;
+  });
+
   // Map of start_line → procedure
   const procFirstLine = createMemo(() => {
     const map = new Map<number, ProcedureInfo>();
@@ -106,26 +116,22 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
     return map;
   });
 
-  // Full HTML as a single block — no per-line elements, zero drift
+  // Full HTML as a single block — plain text only, no block elements inside <pre> (causes drift)
   const fullHtml = createMemo(() => {
     const code = props.lines.join("\n");
     const highlighted = highlightPowerScript(code);
-    const lines = highlighted.split("\n").map((line) =>
-      linkIdentifiers(line, objectMap(), procMap(), props.objectName)
-    );
-    const pfl = procFirstLine();
-    const parts: string[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      const lineNum = i + 1;
-      const proc = pfl.get(lineNum);
-      if (proc) {
-        parts.push(`<div class="source-line-highlight">${lines[i]!}</div>`);
-      } else {
-        parts.push(lines[i]!);
-        parts.push("\n");
-      }
-    }
-    return parts.join("");
+    return highlighted.split("\n").map((line) =>
+      linkIdentifiers(line, objectMap(), procMap(), varMap(), props.objectName)
+    ).join("\n");
+  });
+
+  // Selected proc range for the overlay highlight
+  const selectedRange = createMemo(() => {
+    const name = props.selectedProcName;
+    if (!name) return null;
+    const proc = props.procedures.find(p => p.name === name);
+    if (!proc || proc.start_line == null || proc.end_line == null) return null;
+    return { start: proc.start_line, end: proc.end_line };
   });
 
   // Handle mouse events for tooltips and clicks
@@ -169,6 +175,25 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
         }
       }
       setTooltip({ html, x: e.clientX + 12, y: e.clientY + 12 });
+    } else if (linkType === "var") {
+      const sym = varMap().get(lower);
+      const color = sym?.is_parameter ? "#4fc1ff" : "#9cdcfe";
+      link.style.color = color;
+      if (sym) {
+        const badge = sym.is_parameter
+          ? `<span class="badge badge-param">param</span>`
+          : `<span class="badge badge-var">local</span>`;
+        const kindColor = sym.resolved_kind === "object" ? "#5B8DD9"
+          : sym.resolved_kind === "primitive" ? "#4ec9b0"
+          : "#9cdcfe";
+        let html = `<div class="tt-name" style="color:${color}">${linkName}</div>`;
+        html += `<div class="tt-meta" style="color:${kindColor}">${sym.raw_type}</div>`;
+        html += `<div class="tt-cc">${badge}</div>`;
+        if (sym.resolved_target) {
+          html += `<div class="tt-meta" style="color:#5B8DD9">${sym.resolved_target}</div>`;
+        }
+        setTooltip({ html, x: e.clientX + 12, y: e.clientY + 12 });
+      }
     }
   }
 
@@ -234,6 +259,17 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
         onMouseOut={handleMouseOut}
         onClick={handleClick}
       >
+        {/* Selected proc range background — absolutely positioned, never inside <pre> */}
+        <Show when={selectedRange()}>
+          <div
+            class="source-proc-range-bg"
+            style={{
+              top: `${(selectedRange()!.start - 1) * 20.8}px`,
+              height: `${(selectedRange()!.end - selectedRange()!.start + 1) * 20.8}px`,
+            }}
+          />
+        </Show>
+
         <pre innerHTML={fullHtml()} />
 
         {/* Procedure overlay bars */}
@@ -247,7 +283,7 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
 
             return (
               <div
-                class={`source-proc-bar ${color}`}
+                class={`source-proc-bar ${color}${p.name === props.selectedProcName ? " selected" : ""}`}
                 style={{ top: `${barTop}px`, height: `${barHeight}px` }}
                 onMouseEnter={(e) => {
                   const cc = p.cyclomatic != null ? `CC: ${p.cyclomatic}` : "";
@@ -264,7 +300,11 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
                 }}
                 onMouseLeave={() => setTooltip(null)}
                 onClick={() => {
-                  store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: props.objectName, procName: p.name } });
+                  if (props.onProcBarClick) {
+                    props.onProcBarClick(p);
+                  } else {
+                    store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: props.objectName, procName: p.name } });
+                  }
                 }}
               />
             );

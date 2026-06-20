@@ -10,6 +10,7 @@ const mockEnv: ExploreEnv = {
   getExploreTree: () => Effect.none(),
   getExploreProcedure: () => Effect.none(),
   getExploreDatawindow: () => Effect.none(),
+  getObjectSource: () => Effect.none(),
   getTables: () => Effect.none(),
   getTableDetail: () => Effect.none(),
   navigate: () => Effect.none(),
@@ -81,14 +82,16 @@ describe("explore reducer", () => {
   });
 
   describe("explore/proc-select", () => {
-    it("sets selectedProc and clears selectedDw", () => {
+    it("sets selectedProc, selectedObject, highlightedProcName and clears selectedDw", () => {
       const ts = createTestStore(exploreReducer, mockEnv, makeInitialExploreState());
       ts.send({ tag: "proc-select", objectName: "o", procName: "p", nodeId: "proc:o:p" }, (s) => {
         s.selectedProc = "proc:o:p";
+        s.selectedObject = "o";
+        s.highlightedProcName = "p";
       });
     });
 
-    it("auto-reveals library and object when library data is loaded", () => {
+    it("auto-reveals library and object (no kind groups)", () => {
       const init = makeInitialExploreState();
       init.libraries = [
         { name: "app.pbl", objects: [
@@ -100,7 +103,9 @@ describe("explore reducer", () => {
       const ts = createTestStore(exploreReducer, mockEnv, init);
       ts.send({ tag: "proc-select", objectName: "w_main", procName: "of_init", nodeId: "proc:w_main:of_init" }, (s) => {
         s.selectedProc = "proc:w_main:of_init";
-        s.expandedNodes = new Set(["lib:app.pbl", "obj:app.pbl:w_main", "kg:w_main:functions"]);
+        s.selectedObject = "w_main";
+        s.highlightedProcName = "of_init";
+        s.expandedNodes = new Set(["lib:app.pbl", "obj:app.pbl:w_main"]);
         s.sidebarGroups = { sourceTree: true, entityNav: false, analysisNav: false };
       });
     });
@@ -171,7 +176,7 @@ describe("explore reducer", () => {
       });
     });
 
-    it("adds kind group node when procName matches", () => {
+    it("reveals library and object when procName given (no group nodes)", () => {
       const init = makeInitialExploreState();
       init.libraries = [
         { name: "app.pbl", objects: [
@@ -182,7 +187,7 @@ describe("explore reducer", () => {
       ];
       const ts = createTestStore(exploreReducer, mockEnv, init);
       ts.send({ tag: "sidebar-reveal", objectName: "w_main", procName: "ue_open" }, (s) => {
-        s.expandedNodes = new Set(["lib:app.pbl", "obj:app.pbl:w_main", "kg:w_main:events"]);
+        s.expandedNodes = new Set(["lib:app.pbl", "obj:app.pbl:w_main"]);
         s.sidebarGroups = { sourceTree: true, entityNav: false, analysisNav: false };
       });
     });

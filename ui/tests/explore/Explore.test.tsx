@@ -26,15 +26,16 @@ const sampleLibraries = [
 
 function makeExplore(overrides?: object) {
   return {
-    libraries: sampleLibraries, expandedNodes: new Set<string>(), selectedProc: null, selectedDw: null,
-    procCache: {}, dwCache: {}, loading: false, activeTab: "source" as const, treeFilter: "",
-    highlightedLine: null, tables: TABLES_STATE, helpOverlayOpen: false, ...DEFAULT_SIDEBAR, ...overrides,
+    libraries: sampleLibraries, expandedNodes: new Set<string>(), selectedProc: null,
+    selectedObject: null, highlightedProcName: null, selectedDw: null,
+    procCache: {}, dwCache: {}, objectSourceCache: {}, loading: false, activeTab: "source" as const,
+    treeFilter: "", highlightedLine: null, tables: TABLES_STATE, helpOverlayOpen: false, ...DEFAULT_SIDEBAR, ...overrides,
   };
 }
 
 describe("Explore detail panel", () => {
   it("shows empty state when nothing is selected", () => {
     renderWithStore(Explore, { explore: makeExplore() });
-    expect(screen.getByText("Select a procedure or DataWindow")).toBeDefined();
+    expect(screen.getByText("Select an object or DataWindow")).toBeDefined();
   });
 });

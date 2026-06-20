@@ -81,12 +81,34 @@ export interface ProcedureInfo {
   cyclomatic: number | null;
 }
 
+export interface KnownProcInfo {
+  name: string;
+  object: string;
+  proc_type: string;
+  params: string | null;
+  return_type: string | null;
+  modifiers: string | null;
+  start_line: number | null;
+  end_line: number | null;
+  cyclomatic: number | null;
+}
+
+export interface LocalSymbolInfo {
+  proc_name: string;
+  var_name: string;
+  raw_type: string;
+  resolved_kind: string;
+  resolved_target: string | null;
+  is_parameter: boolean;
+}
+
 export interface ObjectSourceResponse {
   file: string;
   lines: string[];
   procedures: ProcedureInfo[];
   knownObjects: { name: string; kind: string }[];
-  knownProcs: { name: string; object: string; proc_type: string }[];
+  knownProcs: KnownProcInfo[];
+  localSymbols?: LocalSymbolInfo[];
   loading?: boolean;
 }
 

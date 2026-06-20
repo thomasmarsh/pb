@@ -4,7 +4,7 @@ import { Effect } from "../../core/effect.js";
 import type { Reducer } from "../../core/reducer.js";
 import type { ExploreState } from "./types.js";
 import type { ExploreAction } from "./actions.js";
-import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail } from "../../types/api.js";
+import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse } from "../../types/api.js";
 import type { NavigationAction } from "../navigation/types.js";
 
 // ── Narrow environment ────────────────────────────────────────────────────────
@@ -13,6 +13,7 @@ export interface ExploreEnv {
   getExploreTree(): Effect<ExploreTreeResponse>;
   getExploreProcedure(objectName: string, procName: string): Effect<ExploreProcDetail>;
   getExploreDatawindow(name: string): Effect<DwDetailResponse>;
+  getObjectSource(name: string): Effect<ObjectSourceResponse>;
   getTables(): Effect<TableSummary[]>;
   getTableDetail(name: string): Effect<TableDetail>;
   navigate(action: NavigationAction): Effect<never>;
@@ -25,9 +26,12 @@ function makeInitialExploreState(): ExploreState {
     libraries: [],
     expandedNodes: new Set<string>(),
     selectedProc: null,
+    selectedObject: null,
+    highlightedProcName: null,
     selectedDw: null,
     procCache: {},
     dwCache: {},
+    objectSourceCache: {},
     loading: false,
     activeTab: "source",
     treeFilter: "",
@@ -41,27 +45,13 @@ function makeInitialExploreState(): ExploreState {
 
 // ── Auto-reveal helper ────────────────────────────────────────────────────────
 
-function procKindGroup(procType: string): "functions" | "events" | "subroutines" {
-  if (procType === "function") return "functions";
-  if (procType === "subroutine") return "subroutines";
-  return "events"; // "event" | "on"
-}
-
-function revealInTree(draft: ExploreState, objectName: string, procName?: string): void {
+function revealInTree(draft: ExploreState, objectName: string): void {
   const lib = draft.libraries.find(l => l.objects.some(o => o.name === objectName));
   if (!lib) return;
 
   const next = new Set(draft.expandedNodes);
   next.add(`lib:${lib.name}`);
   next.add(`obj:${lib.name}:${objectName}`);
-
-  if (procName) {
-    const obj = lib.objects.find(o => o.name === objectName);
-    const proc = obj?.procedures.find(p => p.name === procName);
-    if (proc) {
-      next.add(`kg:${objectName}:${procKindGroup(proc.proc_type)}`);
-    }
-  }
 
   draft.expandedNodes = next;
   draft.sidebarGroups = { ...draft.sidebarGroups, sourceTree: true };
@@ -95,17 +85,42 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
     return null;
   }
 
+  case "obj-select":
+    draft.selectedObject = action.objectName;
+    draft.highlightedProcName = null;
+    draft.selectedProc = null;
+    draft.selectedDw = null;
+    draft.highlightedLine = null;
+    draft.sidebarGroups = { ...draft.sidebarGroups, sourceTree: true };
+    env.navigate({ tag: "navigate", route: { view: "explore" } });
+    if (!(action.objectName in draft.objectSourceCache)) {
+      return env.getObjectSource(action.objectName)
+        .map((data): ExploreAction => ({ tag: "obj-loaded", objectName: action.objectName, data }))
+        .catch((e): ExploreAction => ({ tag: "obj-error", objectName: action.objectName, error: String(e) }));
+    }
+    return null;
+
+  case "obj-loaded":
+    draft.objectSourceCache[action.objectName] = action.data;
+    return null;
+
+  case "obj-error":
+    draft.objectSourceCache[action.objectName] = { error: action.error };
+    return null;
+
   case "proc-select":
     draft.selectedProc = action.nodeId;
+    draft.selectedObject = action.objectName;
+    draft.highlightedProcName = action.procName;
     draft.selectedDw = null;
     draft.activeTab = "source";
     draft.highlightedLine = null;
-    revealInTree(draft, action.objectName, action.procName);
+    revealInTree(draft, action.objectName);
     env.navigate({ tag: "navigate", route: { view: "explore" } });
-    if (!(action.nodeId in draft.procCache)) {
-      return env.getExploreProcedure(action.objectName, action.procName)
-        .map((data): ExploreAction => ({ tag: "proc-loaded", nodeId: action.nodeId, data }))
-        .catch((e): ExploreAction => ({ tag: "proc-error", nodeId: action.nodeId, error: String(e) }));
+    if (!(action.objectName in draft.objectSourceCache)) {
+      return env.getObjectSource(action.objectName)
+        .map((data): ExploreAction => ({ tag: "obj-loaded", objectName: action.objectName, data }))
+        .catch((e): ExploreAction => ({ tag: "obj-error", objectName: action.objectName, error: String(e) }));
     }
     return null;
 
@@ -134,6 +149,8 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
   case "dw-select":
     draft.selectedDw = action.nodeId;
     draft.selectedProc = null;
+    draft.selectedObject = null;
+    draft.highlightedProcName = null;
     draft.highlightedLine = null;
     revealInTree(draft, action.dwName);
     env.navigate({ tag: "navigate", route: { view: "explore" } });
@@ -176,7 +193,7 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
     return null;
 
   case "sidebar-reveal":
-    revealInTree(draft, action.objectName, action.procName);
+    revealInTree(draft, action.objectName);
     return null;
 
   case "sidebar-focus-group":

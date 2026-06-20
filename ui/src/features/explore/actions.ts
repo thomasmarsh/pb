@@ -1,11 +1,14 @@
 // features/explore/actions.ts — Explore feature actions (self-contained).
 
-import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail } from "../../types/api.js";
+import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse } from "../../types/api.js";
 
 export type ExploreAction =
   | { tag: "load" }
   | { tag: "loaded"; data: ExploreTreeResponse }
   | { tag: "toggle"; nodeId: string }
+  | { tag: "obj-select"; objectName: string; nodeId: string }
+  | { tag: "obj-loaded"; objectName: string; data: ObjectSourceResponse }
+  | { tag: "obj-error"; objectName: string; error: string }
   | { tag: "proc-select"; objectName: string; procName: string; nodeId: string }
   | { tag: "proc-loaded"; nodeId: string; data: ExploreProcDetail }
   | { tag: "proc-error"; nodeId: string; error: string }
