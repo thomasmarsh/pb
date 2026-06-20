@@ -77,4 +77,54 @@ describe("extractLayout", () => {
     expect(ctrl.x).toBe(0);
     expect(ctrl.y).toBe(0);
   });
+
+  // TD-3: indirect ancestor chains must still resolve as windows
+  const INDIRECT_CHAIN_BLOCKS = [
+    {
+      decl: { ancestor: "w_mybase", name: "w_child", within: null },
+      body: [
+        { line: 9, node: { tag: "BsLocalVar", name: "width",  mods: [], type: { tag: "PtPrimitive", contents: "integer" }, init: { tag: "ExInt", contents: "1000" } } },
+        { line: 10, node: { tag: "BsLocalVar", name: "height", mods: [], type: { tag: "PtPrimitive", contents: "integer" }, init: { tag: "ExInt", contents: "800" } } },
+      ],
+    },
+    {
+      decl: { ancestor: "w_pbgrid", name: "w_mybase", within: null },
+      body: [],
+    },
+  ];
+
+  it("finds window through indirect ancestor chain (w_child → w_mybase → w_pbgrid)", () => {
+    const layout = extractLayout(INDIRECT_CHAIN_BLOCKS);
+    expect(layout).not.toBeNull();
+    expect(layout!.name).toBe("w_child");
+    expect(layout!.type).toBe("w_mybase");
+  });
+
+  const DIRECT_WINDOW_BLOCKS = [
+    {
+      decl: { ancestor: "window", name: "w_simple", within: null },
+      body: [
+        { line: 1, node: { tag: "BsLocalVar", name: "width",  mods: [], type: { tag: "PtPrimitive", contents: "integer" }, init: { tag: "ExInt", contents: "500" } } },
+        { line: 2, node: { tag: "BsLocalVar", name: "height", mods: [], type: { tag: "PtPrimitive", contents: "integer" }, init: { tag: "ExInt", contents: "400" } } },
+      ],
+    },
+  ];
+
+  it("finds window with direct 'window' ancestor", () => {
+    const layout = extractLayout(DIRECT_WINDOW_BLOCKS);
+    expect(layout).not.toBeNull();
+    expect(layout!.name).toBe("w_simple");
+    expect(layout!.type).toBe("window");
+  });
+
+  const NON_WINDOW_BLOCKS = [
+    {
+      decl: { ancestor: "nonwindow_base", name: "some_func_obj", within: null },
+      body: [],
+    },
+  ];
+
+  it("returns null for non-window ancestor chains", () => {
+    expect(extractLayout(NON_WINDOW_BLOCKS)).toBeNull();
+  });
 });
