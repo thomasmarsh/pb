@@ -156,6 +156,7 @@ export interface StatsResponse {
   taint_path_count?: number;
   resolved_type_count?: number;
   resolved_call_count?: number;
+  dead_dw?: number;
 }
 
 export interface QueryParam {

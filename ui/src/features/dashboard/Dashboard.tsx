@@ -151,10 +151,11 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
   });
 
   const tiles = createMemo(() => [
-    { label: "Objects",     value: fmt(s()?.objects),    route: { view: "objects" }       as Route },
-    { label: "DataWindows", value: fmt(dwCount()),        route: { view: "datawindows" }   as Route },
-    { label: "DB Tables",   value: fmt(s()?.tables),     route: { view: "tables" }        as Route },
-    { label: "Procedures",  value: fmt(s()?.procedures), route: { view: "proceduresList" } as Route },
+    { label: "Objects",           value: fmt(s()?.objects),    route: { view: "objects" }       as Route },
+    { label: "DataWindows",       value: fmt(dwCount()),        route: { view: "datawindows" }   as Route },
+    { label: "DB Tables",         value: fmt(s()?.tables),     route: { view: "tables" }        as Route },
+    { label: "Procedures",        value: fmt(s()?.procedures), route: { view: "proceduresList" } as Route },
+    { label: "Unreferenced DWs",  value: fmt(s()?.dead_dw),   route: { view: "queries", queryName: "dead-dw" } as Route },
   ]);
 
   return (

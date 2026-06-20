@@ -21,6 +21,7 @@ from pb_cli.shell.env import env
 from pb_cli.shell.pbl import extract_to_dir, resolve_source_dir
 from pb_cli.shell.pipeline import db_is_current
 from pb_cli.shell.pipeline import run as run_pipeline
+from pb_cli.impact import run_impact
 from pb_cli.shell.queries import register_queries
 
 app = typer.Typer(
@@ -160,6 +161,19 @@ def dead_code(
     typer.echo("  ".join("-" * w for w in widths))
     for row in str_rows:
         typer.echo("  ".join(val.ljust(w) for val, w in zip(row, widths)))
+
+
+# ── pb impact ─────────────────────────────────────────────────────────────────
+
+
+@app.command()
+def impact(
+    table: str = typer.Argument(..., help="DB table name to analyse"),
+    column: str | None = typer.Option(None, "--column", "-c", help="Narrow to a specific column"),
+    db: str = typer.Option("pb.duckdb", "--db", help="DuckDB database path"),
+) -> None:
+    """Print all PB objects affected if a DB table (or column) changes."""
+    run_impact(table=table, column=column, db=db)
 
 
 # ── pb debt ────────────────────────────────────────────────────────────────────

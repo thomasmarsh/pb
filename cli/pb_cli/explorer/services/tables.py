@@ -244,4 +244,22 @@ def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         stats["resolved_type_count"] = 0
         stats["resolved_call_count"] = 0
 
+    try:
+        row = conn.execute("""
+            SELECT count(*) FROM objects o
+            WHERE o.kind = 'datawindow'
+              AND NOT EXISTS (
+                  SELECT 1 FROM calls c WHERE lower(c.to_name) = lower(o.name)
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM dw_retrieve_tables d WHERE lower(d.dw_name) = lower(o.name)
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM all_sql_tables a WHERE lower(a.table_name) = lower(o.name)
+              )
+        """).fetchone()
+        stats["dead_dw"] = row[0] if row else 0
+    except Exception:
+        stats["dead_dw"] = 0
+
     return stats
