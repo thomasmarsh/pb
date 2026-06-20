@@ -77,7 +77,7 @@ def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
 
     procs = rows(
         conn.execute(
-            "SELECT object, proc_type, name, modifiers, params, return_type, "
+            "SELECT object, owner, proc_type, name, modifiers, params, return_type, "
             "start_line, end_line, cyclomatic "
             "FROM procedures WHERE object = ? ORDER BY proc_type, name",
             [name],

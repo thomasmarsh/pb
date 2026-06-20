@@ -230,7 +230,9 @@ def test_fetch_metrics_data_returns_shapes(tmp_path):
     create_schema(conn)
     conn.execute("INSERT INTO calls VALUES ('f1', 'obj_a', 'proc1', 'obj_b', 'ExCall')")
     conn.execute(
-        "INSERT INTO procedures VALUES ('f1', 'obj_a', 'function', 'proc1', '', '', 'int', 1, 10, '{\"tag\":\"BsReturn\"}', 'return 1', 1)"
+        "INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type,"
+        " start_line, end_line, body_json, source_rendered, cyclomatic)"
+        " VALUES ('f1', 'obj_a', 'function', 'proc1', '', '', 'int', 1, 10, '{\"tag\":\"BsReturn\"}', 'return 1', 1)"
     )
     edges, cyc_rows, inherit_edges = fetch_metrics_data(conn)
     conn.close()

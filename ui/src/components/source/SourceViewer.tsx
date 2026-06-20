@@ -135,7 +135,7 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
           selectedProcName={props.selectedProcName}
           procCountMap={procCountMap()}
           onBarEnter={(p, e) => setTooltip({
-            html: buildProcBarTooltip(p, procCountMap().get(p.name.toLowerCase()), PROC_BADGE_COLORS[p.proc_type ?? ""] ?? "#fff"),
+            html: buildProcBarTooltip(p, procCountMap().get(p.name.toLowerCase()), PROC_BADGE_COLORS[p.proc_type ?? ""] ?? "#fff", props.objectName),
             x: e.clientX + 12, y: e.clientY + 12,
           })}
           onBarLeave={() => setTooltip(null)}

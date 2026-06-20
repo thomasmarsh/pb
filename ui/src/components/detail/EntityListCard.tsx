@@ -24,7 +24,7 @@ export function EntityListCard(props: EntityListCardProps): JSX.Element {
   return (
     <div class="card">
       <div class="card-header">
-        <h3>{title()}</h3>
+        {props.title && <h3>{title()}</h3>}
         {props.meta && <span class="card-meta">{props.meta}</span>}
       </div>
       <Show

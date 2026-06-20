@@ -1,7 +1,5 @@
 import type { JSX } from "solid-js";
 
-export type Face = "source" | "analysis";
-
 interface DetailHeaderProps {
   name: string;
   badgeClass: string;

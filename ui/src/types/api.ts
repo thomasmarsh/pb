@@ -73,6 +73,7 @@ export interface ObjectDetailResponse extends ObjectRow {
 export interface ProcedureInfo {
   name: string;
   proc_type: string;
+  owner?: string | null;
   modifiers: string | null;
   params: string | null;
   return_type: string | null;

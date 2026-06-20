@@ -593,7 +593,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end event")]
               ]
         runSection pEventBlock stmts @?=
-          Right (EventBlock (EventSig "ue_custom" "") [])
+          Right (EventBlock (EventSig "ue_custom" "") Nothing [])
 
     , testCase "positive: event with params" $ do
         let stmts =
@@ -603,13 +603,97 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end event")]
               ]
         runSection pEventBlock stmts @?=
-          Right (EventBlock (EventSig "ue_custom" "( integer al_value )") [])
+          Right (EventBlock (EventSig "ue_custom" "( integer al_value )") Nothing [])
 
     , testCase "negative: missing end event" $ do
         let stmts = [mkStmt [(TkDeclKw, "event"), (TkIdent, "ue_custom")]]
         case runSection pEventBlock stmts of
           Left _  -> pure ()
           Right _ -> assertFailure "expected parse failure when 'end event' is missing"
+    ]
+
+  , testGroup "Grammar.File.EventOwnership"
+    [ testCase "event after global type block gets window as owner" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "w_foo"), (TkDeclKw, "from"), (TkIdent, "window")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "event"), (TkIdent, "open")]
+              , mkStmt [(TkDeclKw, "end event")]
+              ]
+        case parseSrFile [] stmts of
+          Left err -> assertFailure (T.unpack err)
+          Right sf -> map evOwner (srEvents sf) @?= [Just "w_foo"]
+
+    , testCase "event after control type block gets control as owner" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "w_foo"), (TkDeclKw, "from"), (TkIdent, "window")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [ (TkDeclKw, "type"), (TkIdent, "cb_ok"), (TkDeclKw, "from")
+                       , (TkIdent, "commandbutton"), (TkDeclKw, "within"), (TkIdent, "w_foo") ]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "event"), (TkIdent, "clicked")]
+              , mkStmt [(TkDeclKw, "end event")]
+              ]
+        case parseSrFile [] stmts of
+          Left err -> assertFailure (T.unpack err)
+          Right sf -> map evOwner (srEvents sf) @?= [Just "cb_ok"]
+
+    , testCase "two consecutive controls each own their event" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "w_foo"), (TkDeclKw, "from"), (TkIdent, "window")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "event"), (TkIdent, "open")]
+              , mkStmt [(TkDeclKw, "end event")]
+              , mkStmt [ (TkDeclKw, "type"), (TkIdent, "cb_a"), (TkDeclKw, "from")
+                       , (TkIdent, "commandbutton"), (TkDeclKw, "within"), (TkIdent, "w_foo") ]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "event"), (TkIdent, "clicked")]
+              , mkStmt [(TkDeclKw, "end event")]
+              , mkStmt [ (TkDeclKw, "type"), (TkIdent, "cb_b"), (TkDeclKw, "from")
+                       , (TkIdent, "commandbutton"), (TkDeclKw, "within"), (TkIdent, "w_foo") ]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "event"), (TkIdent, "clicked")]
+              , mkStmt [(TkDeclKw, "end event")]
+              ]
+        case parseSrFile [] stmts of
+          Left err -> assertFailure (T.unpack err)
+          Right sf -> map evOwner (srEvents sf) @?= [Just "w_foo", Just "cb_a", Just "cb_b"]
+
+    , testCase "event before any type block gets Nothing" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "event"), (TkIdent, "open")]
+              , mkStmt [(TkDeclKw, "end event")]
+              ]
+        case parseSrFile [] stmts of
+          Left err -> assertFailure (T.unpack err)
+          Right sf -> map evOwner (srEvents sf) @?= [Nothing]
+
+    , testCase "on block does not update owner context" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "w_foo"), (TkDeclKw, "from"), (TkIdent, "window")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [(TkDeclKw, "on"), (TkIdent, "w_foo"), (TkDot, "."), (TkIdent, "open")]
+              , mkStmt [(TkDeclKw, "end on")]
+              , mkStmt [(TkDeclKw, "event"), (TkIdent, "open")]
+              , mkStmt [(TkDeclKw, "end event")]
+              ]
+        case parseSrFile [] stmts of
+          Left err -> assertFailure (T.unpack err)
+          Right sf -> map evOwner (srEvents sf) @?= [Just "w_foo"]
+
+    , testCase "function block does not update owner context" $ do
+        let stmts =
+              [ mkStmt [(TkDeclKw, "type"), (TkIdent, "w_foo"), (TkDeclKw, "from"), (TkIdent, "window")]
+              , mkStmt [(TkDeclKw, "end type")]
+              , mkStmt [ (TkDeclKw, "function"), (TkDatatype, "integer"), (TkIdent, "f_get")
+                       , (TkLParen, "("), (TkRParen, ")") ]
+              , mkStmt [(TkDeclKw, "end function")]
+              , mkStmt [(TkDeclKw, "event"), (TkIdent, "open")]
+              , mkStmt [(TkDeclKw, "end event")]
+              ]
+        case parseSrFile [] stmts of
+          Left err -> assertFailure (T.unpack err)
+          Right sf -> map evOwner (srEvents sf) @?= [Just "w_foo"]
     ]
 
   , testGroup "pFunctionBlock"

@@ -117,20 +117,41 @@ describe("buildProcBarTooltip", () => {
   };
 
   it("includes proc name and line range", () => {
-    const html = buildProcBarTooltip(p, undefined, "#a78bfa");
+    const html = buildProcBarTooltip(p, undefined, "#a78bfa", "w_main");
     expect(html).toContain("f_run");
     expect(html).toContain("Lines 10");
     expect(html).toContain("25");
   });
 
   it("includes CC badge when cyclomatic is set", () => {
-    const html = buildProcBarTooltip(p, undefined, "#fff");
+    const html = buildProcBarTooltip(p, undefined, "#fff", "w_main");
     expect(html).toContain("CC: 4");
   });
 
   it("includes caller/callee counts when provided", () => {
-    const html = buildProcBarTooltip(p, { caller_count: 6, callee_count: 3 }, "#fff");
+    const html = buildProcBarTooltip(p, { caller_count: 6, callee_count: 3 }, "#fff", "w_main");
     expect(html).toContain("Callers: 6");
     expect(html).toContain("Callees: 3");
+  });
+
+  it("shows owner prefix when owner differs from viewed object", () => {
+    const ev: ProcedureInfo = {
+      name: "clicked", proc_type: "event", owner: "cb_cancel",
+      modifiers: null, params: null, return_type: null,
+      start_line: 10, end_line: 15, cyclomatic: 1,
+    };
+    const html = buildProcBarTooltip(ev, undefined, "#fff", "w_foo");
+    expect(html).toContain("cb_cancel · clicked");
+  });
+
+  it("shows bare name when owner equals viewed object", () => {
+    const ev: ProcedureInfo = {
+      name: "open", proc_type: "event", owner: "w_foo",
+      modifiers: null, params: null, return_type: null,
+      start_line: 1, end_line: 5, cyclomatic: 1,
+    };
+    const html = buildProcBarTooltip(ev, undefined, "#fff", "w_foo");
+    expect(html).toContain(">open<");
+    expect(html).not.toContain("w_foo · open");
   });
 });

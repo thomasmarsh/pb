@@ -69,8 +69,8 @@ describe("linkIdentifiers", () => {
   });
 
   it("wraps a word that appears inside an HTML tag name when it is in the proc map", () => {
-    // The match.startsWith("<") guard is dead code — \b regex only captures word chars.
-    // Actual protection: highlighter output words (span, class, kw) are never in maps.
+    // \b regex only captures word-char sequences, so match never starts with "<" or "/".
+    // Real protection: highlighter output words (span, class, kw) are never in maps.
     const procs = new Map([["span", makeProc("span")]]);
     const html = '<span class="kw">code</span>';
     const result = linkIdentifiers(html, emptyObj, procs, emptyVar, "self");

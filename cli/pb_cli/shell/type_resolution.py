@@ -31,7 +31,7 @@ def _fetch_procedures(conn: Conn):
     return [
         ProcedureRow(*r)
         for r in conn.execute(
-            "SELECT file, object, proc_type, name, modifiers, params, return_type, "
+            "SELECT file, object, owner, proc_type, name, modifiers, params, return_type, "
             "start_line, end_line, body_json, source_rendered, cyclomatic "
             "FROM procedures"
         ).fetchall()

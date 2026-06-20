@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS objects (
 CREATE TABLE IF NOT EXISTS procedures (
     file             TEXT NOT NULL,
     object           TEXT NOT NULL,
+    owner            TEXT,
     proc_type        TEXT NOT NULL,
     name             TEXT NOT NULL,
     modifiers        TEXT,

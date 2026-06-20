@@ -10,7 +10,6 @@ export function linkIdentifiers(
 ): string {
   return html.replace(/\b([A-Za-z_][\w$#%-]*)\b/g, (match, word) => {
     const lower = word.toLowerCase();
-    if (match.startsWith("<") || match.startsWith("/")) return match;
     if (lower === selfName.toLowerCase()) return match;
     if (PB_KEYWORDS.has(lower)) return match;
     if (procMap.has(lower)) {

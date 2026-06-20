@@ -88,16 +88,17 @@ def _import_ps(obj: dict, file: str, rows: RowBatch, dialect: str = "oracle") ->
     ]:
         for block in obj.get(key, []):
             body = block.get("body") or []
-            row = _proc_row(file, proc_type, block, body)
+            ev_owner = block.get("owner") if proc_type == "event" else None
+            row = _proc_row(file, proc_type, block, body, ev_owner)
             rows["procedures"].append(row)
-            proc_name = row[3]
+            proc_name = row.name
             for callee, call_type in walk_calls(body):
                 if callee:
                     rows["calls"].append(CallRow(file, obj_name, proc_name, callee, call_type))
             for callee in walk_excall_arg_calls(body):
                 if callee:
                     rows["calls"].append(CallRow(file, obj_name, proc_name, callee, "ExCallArg"))
-            _extract_sql(file, obj_name, proc_name, row[9], dialect, rows)
+            _extract_sql(file, obj_name, proc_name, row.body_json, dialect, rows)
             for var_name, var_type in walk_local_vars(body):
                 rows["local_variables"].append(LocalVarRow(
                     file=file, object=obj_name, proc_name=proc_name,
@@ -140,7 +141,13 @@ def _extract_sql(
                 )
 
 
-def _proc_row(file: str, proc_type: str, block: dict, body: list) -> ProcedureRow:
+def _proc_row(
+    file: str,
+    proc_type: str,
+    block: dict,
+    body: list,
+    owner_override: str | None = None,
+) -> ProcedureRow:
     meta = block.get("meta") or {}
     if proc_type == "on":
         name, modifiers, params, return_type = block.get("event", ""), None, None, None
@@ -154,6 +161,7 @@ def _proc_row(file: str, proc_type: str, block: dict, body: list) -> ProcedureRo
     return ProcedureRow(
         file,
         meta.get("object", ""),
+        owner_override,
         proc_type,
         name,
         modifiers,

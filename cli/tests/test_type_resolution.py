@@ -92,7 +92,7 @@ def test_classify_datawindow_builtin():
 
 def _make_proc(file, obj, name, params=None, return_type=None, body_json=None):
     return ProcedureRow(
-        file=file, object=obj, proc_type="function", name=name,
+        file=file, object=obj, owner=None, proc_type="function", name=name,
         modifiers=None, params=params, return_type=return_type,
         start_line=1, end_line=10,
         body_json=body_json or "[]",
@@ -336,7 +336,7 @@ def test_build_type_tables_integration(tmp_path):
             ("f.srw", "nvo_utils", "powerscript", None, None),
         )
         conn.execute(
-            "INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             ("f.srw", "w_test", "function", "of_init", None, None, None, 1, 10, "[]", "", 1),
         )
         conn.execute(

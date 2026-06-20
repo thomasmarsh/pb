@@ -16,6 +16,7 @@ class ObjectRow(NamedTuple):
 class ProcedureRow(NamedTuple):
     file: str
     object: str
+    owner: str | None
     proc_type: str
     name: str
     modifiers: str | None

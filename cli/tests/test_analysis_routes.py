@@ -374,21 +374,21 @@ def dead_code_client(tmp_path_factory):
     """)
 
     # Entry points (called by runtime)
-    conn.execute("INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                  ["a.srf", "obj_a", "event", "ev_handler", None, None, None, 1, 10, None, None, 1])
-    conn.execute("INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                  ["a.srf", "obj_a", "on", "on_handler", None, None, None, 11, 20, None, None, 1])
 
     # Reachable via ev_handler → proc_a → proc_b
-    conn.execute("INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                  ["a.srf", "obj_a", "function", "proc_a", None, None, None, 21, 30, None, None, 3])
-    conn.execute("INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                  ["a.srf", "obj_a", "function", "proc_b", None, None, None, 31, 40, None, None, 1])
 
     # Dead: proc_c is never called; proc_d is only called from proc_c
-    conn.execute("INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                  ["a.srf", "obj_a", "function", "proc_c", None, None, None, 41, 50, None, None, 2])
-    conn.execute("INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                  ["a.srf", "obj_a", "function", "proc_d", None, None, None, 51, 60, None, None, 1])
 
     # Call edges
@@ -398,11 +398,11 @@ def dead_code_client(tmp_path_factory):
 
     # Override propagation: obj_base.base_event (event) calls base_hook (same obj).
     # obj_child inherits obj_base and overrides base_hook — must be reachable.
-    conn.execute("INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                  ["b.srf", "obj_base", "event", "base_event", None, None, None, 1, 10, None, None, 1])
-    conn.execute("INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                  ["b.srf", "obj_base", "function", "base_hook", None, None, None, 11, 20, None, None, 1])
-    conn.execute("INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                  ["b.srf", "obj_child", "function", "base_hook", None, None, None, 1, 10, None, None, 1])
     conn.execute("INSERT INTO calls VALUES (?,?,?,?,?)", ["b.srf", "obj_base", "base_event", "base_hook", "direct"])
     conn.execute("INSERT INTO inherits VALUES (?,?)", ["obj_child", "obj_base"])

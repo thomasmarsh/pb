@@ -112,8 +112,9 @@ data SubroutineBlock = SubroutineBlock
   } deriving (Eq, Show, Generic)
 
 data EventBlock = EventBlock
-  { evSig  :: EventSig
-  , evBody :: [Located BodyStmt]
+  { evSig   :: EventSig
+  , evOwner :: Maybe Text
+  , evBody  :: [Located BodyStmt]
   } deriving (Eq, Show, Generic)
 
 data OnBlock = OnBlock

@@ -75,10 +75,13 @@ export function buildProcBarTooltip(
   p: ProcedureInfo,
   counts: { caller_count: number; callee_count: number } | undefined,
   badgeColor: string,
+  viewedObjectName: string,
 ): string {
+  const displayName = p.owner && p.owner !== viewedObjectName
+    ? `${p.owner} · ${p.name}` : p.name;
   const cc = p.cyclomatic != null ? `CC: ${p.cyclomatic}` : "";
   const ret = p.return_type ? ` → ${p.return_type}` : "";
-  return `<div class="tt-name" style="color:${badgeColor}">${p.name}</div>` +
+  return `<div class="tt-name" style="color:${badgeColor}">${displayName}</div>` +
     `<div class="tt-meta">${p.proc_type} ${p.modifiers ?? ""}${ret}</div>` +
     (p.params ? `<div class="tt-meta">(${p.params})</div>` : "") +
     `<div class="tt-meta">Lines ${p.start_line}–${p.end_line}</div>` +

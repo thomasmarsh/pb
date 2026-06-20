@@ -62,6 +62,7 @@ def _make_local_var(file="f.srw", obj="w_test", proc="of_init"):
 def _make_proc(file="f.srw", obj="w_test"):
     return st.tuples(
         st.just(file), st.just(obj),
+        st.none(),                                         # owner
         st.sampled_from(["function", "subroutine", "event"]),
         _identifier,
         st.none() | st.just("public"),
@@ -265,7 +266,7 @@ def test_resolve_calls_deterministic(calls, procs):
 @settings(max_examples=100)
 def test_resolve_calls_global_fn_resolves(calls):
     """Global functions (fn_sqlerror) resolve even without ancestor chain."""
-    procs = [ProcedureRow("f.srw", "fn_sqlerror", "function", "fn_sqlerror",
+    procs = [ProcedureRow("f.srw", "fn_sqlerror", None, "function", "fn_sqlerror",
                           None, None, None, 1, 10, "[]", "", 1)]
     result = resolve_calls(calls, procs, [])
     for row in result:

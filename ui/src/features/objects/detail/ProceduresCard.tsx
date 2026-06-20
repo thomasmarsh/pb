@@ -33,7 +33,10 @@ function ProcGroup(props: {
               {(p) => (
                 <tr class="clickable"
                     onClick={() => props.store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: props.objectName, procName: p.name } })}>
-                  <td class="name-cell">{p.name}</td>
+                  <td class="name-cell">
+                    {p.owner && p.owner !== props.objectName
+                      ? `${p.owner} · ${p.name}` : p.name}
+                  </td>
                   <td style={{ "font-size": "12px" }}>{p.modifiers ?? ""}</td>
                   <td style={{ "font-size": "12px", "max-width": "200px", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{p.params ?? ""}</td>
                   <td>{p.cyclomatic != null ? <span class="badge badge-cc">{String(p.cyclomatic)}</span> : "–"}</td>

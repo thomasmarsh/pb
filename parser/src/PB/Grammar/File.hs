@@ -329,7 +329,8 @@ pOnBlock :: FileParser OnBlock
 pOnBlock = (\(_, _, b) -> b) <$> pOnBlockSpanned_
 
 pEventBlockSpanned_ :: FileParser (Int, Int, EventBlock)
-pEventBlockSpanned_ = pBlockSpanned isEvDecl extractEvSig EventBlock "event"
+pEventBlockSpanned_ = pBlockSpanned isEvDecl extractEvSig
+    (\sig body -> EventBlock sig Nothing body) "event"
 
 pEventBlock :: FileParser EventBlock
 pEventBlock = (\(_, _, b) -> b) <$> pEventBlockSpanned_
@@ -367,6 +368,16 @@ data TopLevelBlock
   | TLFn         Int Int FunctionBlock
   | TLSub        Int Int SubroutineBlock
 
+-- | Walk the ordered block list and annotate each TLEvent with the name of
+-- the most recently closed TypeBlock. Other block kinds do not update context.
+resolveEventOwners :: [TopLevelBlock] -> [TopLevelBlock]
+resolveEventOwners = go Nothing
+  where
+    go _   []                          = []
+    go _   (TLType tb      : rest)     = TLType tb : go (Just (tdName (tbDecl tb))) rest
+    go ctx (TLEvent s e ev : rest)     = TLEvent s e (ev { evOwner = ctx }) : go ctx rest
+    go ctx (other          : rest)     = other      : go ctx rest
+
 pAnyTopLevelBlock :: FileParser TopLevelBlock
 pAnyTopLevelBlock =
       TLFwd        <$> try pForwardBlock
@@ -389,7 +400,8 @@ parseSrFileWithSpans headers stmts = case parse pSrFile "" (StmtStream stmts) of
 
 pSrFile :: FileParser (SrFile, SrSpans)
 pSrFile = do
-  blocks <- many (try pAnyTopLevelBlock)
+  rawBlocks <- many (try pAnyTopLevelBlock)
+  let blocks = resolveEventOwners rawBlocks
   StmtStream remaining <- getInput
   case remaining of
     (s:_) -> fail $

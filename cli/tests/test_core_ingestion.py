@@ -394,3 +394,42 @@ def test_extract_sql_empty_body():
     rows = new_row_batch()
     _extract_sql("test.srw", "w_main", "uf_init", "[]", "oracle", rows)
     assert len(rows["sql_statements"]) == 0
+
+
+def test_import_event_owner():
+    """Control-level events carry owner = control name; window events carry owner = None."""
+    obj = {
+        "file": "w_foo.srw",
+        "kind": "powerscript",
+        "meta": {"object": "w_foo", "ancestor": "window"},
+        "events": [
+            {
+                "meta": {"object": "w_foo", "startLine": 1, "endLine": 5},
+                "owner": "w_foo",
+                "sig": {"name": "open", "rawSig": ""},
+                "body": [],
+                "source_rendered": "",
+            },
+            {
+                "meta": {"object": "w_foo", "startLine": 10, "endLine": 15},
+                "owner": "cb_cancel",
+                "sig": {"name": "clicked", "rawSig": ""},
+                "body": [],
+                "source_rendered": "",
+            },
+            {
+                "meta": {"object": "w_foo", "startLine": 20, "endLine": 25},
+                "owner": None,
+                "sig": {"name": "ue_orphan", "rawSig": ""},
+                "body": [],
+                "source_rendered": "",
+            },
+        ],
+    }
+    rows = new_row_batch()
+    import_file(obj, rows)
+
+    procs = {p.name: p for p in rows["procedures"]}
+    assert procs["open"].owner == "w_foo"
+    assert procs["clicked"].owner == "cb_cancel"
+    assert procs["ue_orphan"].owner is None
