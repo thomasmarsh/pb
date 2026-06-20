@@ -3,6 +3,23 @@
 import type { BodyStmt, Expr, Located } from "../types/ast.generated.js";
 import { PB_BUILTINS } from "./runtime.js";
 
+export interface DWRow {
+  [column: string]: unknown;
+}
+
+// Hardcoded mock rows keyed by DataWindow control name (lowercase). TD-15.
+const MOCK_DW_DATA: Record<string, DWRow[]> = {
+  dw_misth_zpperiod_list: [
+    { kodperiod: "01", descperiod: "January", orderno: 1 },
+    { kodperiod: "02", descperiod: "February", orderno: 2 },
+    { kodperiod: "03", descperiod: "March", orderno: 3 },
+  ],
+  dw_main: [
+    { id: 1, description: "Sample row 1", value: 100 },
+    { id: 2, description: "Sample row 2", value: 200 },
+  ],
+};
+
 export interface AstData {
   typeBlocks: { decl: { ancestor: string; name: string; within: string | null }; body: Located<BodyStmt>[] }[];
   events: { name: string; owner: string; body: Located<BodyStmt>[] }[];
@@ -75,9 +92,7 @@ export class PBInterpreter {
         return undefined;
       }
       case "BsCall": {
-        const callee = node.contents.tag === "ExCall" ? node.contents.callee : null;
-        const name = callee?.segments.map((s) => s.name).join(".") ?? "";
-        if (name === "MessageBox") return undefined;
+        this._evalExpr(node.contents);
         return undefined;
       }
       case "BsReturn":
@@ -194,7 +209,13 @@ export class PBInterpreter {
       case "ExNeg":
         return -(this._evalExpr(expr.contents) as number);
       case "ExMethodCall": {
-        // receiver.method(args) — stub for now
+        if (expr.receiver.tag !== "ExLvalue") return undefined;
+        const receiverName = expr.receiver.contents.segments[0]?.name ?? "";
+        if (receiverName.startsWith("dw_") && expr.method.toLowerCase() === "retrieve") {
+          const rows = MOCK_DW_DATA[receiverName] ?? [];
+          this._controlValues.set(receiverName, rows);
+          return rows.length;
+        }
         return undefined;
       }
       case "ExDispatch":

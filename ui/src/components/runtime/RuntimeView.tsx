@@ -2,12 +2,13 @@
 
 import { createSignal, Show, For } from "solid-js";
 import { extractLayout } from "../../core/layout.js";
-import { PBInterpreter, type AstData } from "../../core/interpreter.js";
+import { PBInterpreter, type AstData, type DWRow } from "../../core/interpreter.js";
 import type { WindowLayout, LayoutControl } from "../../core/layout.js";
 import { StaticText } from "../controls/StaticText.js";
 import { CommandButton } from "../controls/CommandButton.js";
 import { GroupBox } from "../controls/GroupBox.js";
 import { LineEdit } from "../controls/LineEdit.js";
+import { DataWindowGrid } from "../DataWindowGrid.js";
 
 // PB units to CSS pixels. ~0.08 gives a reasonable preview size.
 const SCALE = 0.08;
@@ -150,7 +151,22 @@ export function RuntimeView(props: { objectName: string; astData: AstData | null
               }}
             >
               <For each={wl().controls}>
-                {(ctrl) => renderControl(ctrl, () => void handleControlClick(ctrl))}
+                {(ctrl) => {
+                  const isDw = ctrl.type.toLowerCase().includes("datawindow") || ctrl.name.startsWith("dw_");
+                  if (isDw) {
+                    return (
+                      <div class="runtime-ctrl" style={controlStyle(ctrl)}>
+                        <Show
+                          when={state().controlValues[ctrl.name] as DWRow[] | undefined}
+                          fallback={<ControlBox ctrl={ctrl} onClick={() => void handleControlClick(ctrl)} />}
+                        >
+                          {(rows) => <DataWindowGrid data={rows()} />}
+                        </Show>
+                      </div>
+                    );
+                  }
+                  return renderControl(ctrl, () => void handleControlClick(ctrl));
+                }}
               </For>
             </div>
             <StateInspector state={state()} />
