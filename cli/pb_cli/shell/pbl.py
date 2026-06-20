@@ -106,24 +106,37 @@ def _parse_entry(chunk: bytes, unicode: bool) -> tuple[_Entry, int]:
     return _Entry(dat_offset, comment_len, name), p + object_len
 
 
-def _parse_nod(path: Path, address: int, unicode: bool) -> tuple[int, list[_Entry]]:
-    """Parse a NOD* block at the given address. Returns (next_offset, entries)."""
+def _parse_nod(path: Path, address: int, unicode: bool) -> tuple[int, int, list[_Entry]]:
+    """Parse a NOD* block. Returns (left_offset, next_offset, entries)."""
     raw = _read(path, address, _NODE_BLOCK)
     if raw[:4] != b"NOD*":
         raise ValueError(f"Expected NOD* at offset {address:#x}, got {raw[:4]!r}")
 
-    # NOD* header layout: 4(magic) 4(left) 4(parent) 4(right) 2(space) 2(post) 2(count) 2(last)
+    # NOD* header: magic(4) left(4) parent(4) next(4) right(4) space(2) post(2) count(2) last(2) gap(8)
+    left_offset = struct.unpack_from("<I", raw, 4)[0]
     next_offset = struct.unpack_from("<I", raw, 12)[0]
     count = struct.unpack_from("<H", raw, 20)[0]
 
     entries: list[_Entry] = []
-    pos = 32  # 24-byte fixed header + 8-byte gap before first entry
+    pos = 32
     for _ in range(count):
         entry, consumed = _parse_entry(raw[pos:], unicode)
         entries.append(entry)
         pos += consumed
 
-    return next_offset, entries
+    return left_offset, next_offset, entries
+
+
+def _collect_tree(
+    path: Path, address: int, unicode: bool, seen: set[int]
+) -> list[_Entry]:
+    """Recursively collect all entries from a NOD tree (left children + chain)."""
+    if address == 0 or address in seen:
+        return []
+    seen.add(address)
+
+    left, nxt, entries = _parse_nod(path, address, unicode)
+    return _collect_tree(path, left, unicode, seen) + entries + _collect_tree(path, nxt, unicode, seen)
 
 
 def _read_entry_text(path: Path, entry: _Entry, unicode: bool) -> str:
@@ -161,20 +174,20 @@ def extract(pbl_path: Path) -> list[PblEntry]:
     if raw_hdr[:4] != b"HDR*":
         raise ValueError(f"Not a valid PBL file: {pbl_path}")
 
-    # NOD* blocks start at 1536 (Unicode) or 1024 (ANSI)
     nod_start = 1536 if unicode else _BLOCK * 2
 
-    entries: list[PblEntry] = []
-    address = nod_start
-    while address > 0:
-        nod = _parse_nod(pbl_path, address, unicode)
-        for e in nod[1]:
-            if _is_source(e.name):
-                text = _read_entry_text(pbl_path, e, unicode)
-                entries.append(PblEntry(name=e.name, content=text))
-        address = nod[0]
+    seen: set[int] = set()
+    all_entries = _collect_tree(pbl_path, nod_start, unicode, seen)
 
-    return entries
+    result: list[PblEntry] = []
+    seen_names: set[str] = set()
+    for e in all_entries:
+        if _is_source(e.name) and e.name not in seen_names:
+            text = _read_entry_text(pbl_path, e, unicode)
+            result.append(PblEntry(name=e.name, content=text))
+            seen_names.add(e.name)
+
+    return result
 
 
 def extract_to_dir(pbl_path: Path, dest: Path) -> list[Path]:

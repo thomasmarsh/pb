@@ -217,6 +217,124 @@ def test_extract_rejects_invalid_file(tmp_path):
         extract(bad)
 
 
+# ── tree traversal (left child) ───────────────────────────────────────────────
+
+
+def _make_nod_block(
+    entries_bufs: list[bytes],
+    *,
+    left: int = 0,
+    nxt: int = 0,
+    count: int | None = None,
+) -> bytes:
+    """Build a NOD* block with given left/next pointers and entry count."""
+    if count is None:
+        count = len(entries_bufs)
+    nod = (
+        b"NOD*"
+        + struct.pack("<I", left)   # 4: left child
+        + struct.pack("<I", 0)      # 8: parent
+        + struct.pack("<I", nxt)    # 12: next sibling
+        + struct.pack("<I", 0)      # 16: right child
+        + struct.pack("<H", count)  # 20: count (parser reads here)
+        + struct.pack("<H", 0)      # 22: post
+        + struct.pack("<H", 0)      # 24: (unused/padding)
+        + struct.pack("<H", 0)      # 26: (unused/padding)
+        + b"\x00" * 4               # 28-31: gap
+        + b"".join(entries_bufs)
+    ).ljust(_NODE_BLOCK, b"\x00")
+    return nod
+
+
+def _make_entry_buf(name: str, dat_offset: int) -> bytes:
+    name_b = name.encode("cp1253") + b"\x00"
+    return (
+        b"ENT*"
+        + b"\x00" * 4
+        + struct.pack("<I", dat_offset)
+        + struct.pack("<I", 0)
+        + b"\x00" * 4
+        + struct.pack("<H", 0)
+        + struct.pack("<H", len(name_b))
+        + name_b
+    )
+
+
+def _make_dat_block(content: str) -> bytes:
+    chunk = content.encode("cp1253")[:502]
+    return (
+        b"DAT*"
+        + struct.pack("<I", 0)
+        + struct.pack("<H", len(chunk))
+        + chunk
+    ).ljust(_BLOCK, b"\x00")
+
+
+def _build_tree_pbl(
+    root_entries: list[tuple[str, str]],
+    left_entries: list[tuple[str, str]],
+) -> bytes:
+    """Build an ANSI .pbl with root NOD* whose left pointer points to another NOD*."""
+    # Layout: HDR(512) + FRE(512) + NOD_root(3072) + NOD_left(3072) + DAT* blocks
+    hdr = (
+        b"HDR*" + b"PowerBuilder  " + b"\x01\x00" + b"\x00\x00"
+        + b"\x00" * 4 + b"\x00" * 256 + b"\x00" * 8
+    ).ljust(_BLOCK, b"\x00")
+    fre = b"FRE*" + b"\x00" * (_BLOCK - 4)
+
+    nod_root_start = _BLOCK * 2  # 1024
+    nod_left_start = nod_root_start + _NODE_BLOCK  # 4096
+    dat_start = nod_left_start + _NODE_BLOCK  # 7168
+
+    # Build entry+dat blocks for left entries first (they appear at lower offsets)
+    left_ent_bufs: list[bytes] = []
+    left_dat: list[bytes] = []
+    dat_off = dat_start
+    for name, content in left_entries:
+        left_ent_bufs.append(_make_entry_buf(name, dat_off))
+        left_dat.append(_make_dat_block(content))
+        dat_off += _BLOCK
+
+    # Then root entries
+    root_ent_bufs: list[bytes] = []
+    root_dat: list[bytes] = []
+    for name, content in root_entries:
+        root_ent_bufs.append(_make_entry_buf(name, dat_off))
+        root_dat.append(_make_dat_block(content))
+        dat_off += _BLOCK
+
+    nod_root = _make_nod_block(root_ent_bufs, left=nod_left_start)
+    nod_left = _make_nod_block(left_ent_bufs)
+
+    return b"".join([hdr, fre, nod_root, nod_left] + left_dat + root_dat)
+
+
+def test_tree_traversal_extracts_left_child(tmp_path):
+    """Entries in a left-child NOD* are included in extraction."""
+    pbl = tmp_path / "tree.pbl"
+    pbl.write_bytes(_build_tree_pbl(
+        root_entries=[("w_main.srw", "root content")],
+        left_entries=[("u_svc.sru", "left content")],
+    ))
+    entries = extract(pbl)
+    names = {e.name for e in entries}
+    assert "w_main.srw" in names
+    assert "u_svc.sru" in names
+    assert len(entries) == 2
+
+
+def test_tree_traversal_no_duplicates(tmp_path):
+    """Tree traversal does not produce duplicate entries."""
+    pbl = tmp_path / "tree.pbl"
+    pbl.write_bytes(_build_tree_pbl(
+        root_entries=[("w_main.srw", "a")],
+        left_entries=[("u_svc.sru", "b")],
+    ))
+    entries = extract(pbl)
+    names = [e.name for e in entries]
+    assert len(names) == len(set(names))
+
+
 # ── extract_to_dir ────────────────────────────────────────────────────────────
 
 
@@ -345,5 +463,5 @@ def test_openpay_corpus_extracts_without_error(tmp_path):
             assert _is_source(e.name), f"{e.name!r} is not a source file (from {pbl.name})"
         total += len(entries)
 
-    # 396 .sr* files in the pre-extracted openpay corpus
-    assert total == 396, f"Expected 396 source files, got {total}"
+    # 422 .sr* files after tree-traversal fix (was 396 with chain-only)
+    assert total == 422, f"Expected 422 source files, got {total}"
