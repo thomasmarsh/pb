@@ -16,10 +16,10 @@ export interface ContextMenuTarget {
 }
 
 export interface ContextActions {
-  onFindCallers?: (name: string) => void;
-  onFindCallees?: (name: string) => void;
-  onViewCfg?: (name: string) => void;
-  onViewTaint?: (name: string) => void;
+  onFindCallers?: (procName: string, procObject: string) => void;
+  onFindCallees?: (procName: string, procObject: string) => void;
+  onViewCfg?: (procName: string, procObject: string) => void;
+  onViewTaint?: (procName: string, procObject: string) => void;
 }
 
 interface SourceContextMenuProps {
@@ -72,21 +72,21 @@ export function SourceContextMenu(props: SourceContextMenuProps): JSX.Element {
             <Show when={isProc()}>
               <button
                 disabled={!ca()?.onFindCallers}
-                onClick={() => { if (ca()?.onFindCallers) act(() => ca()!.onFindCallers!(name())); }}
+                onClick={() => { if (ca()?.onFindCallers) act(() => ca()!.onFindCallers!(name(), resolvedObject())); }}
               >
                 {"Find callers" + (t().callerCount != null ? ` (${t().callerCount})` : "")}
               </button>
 
               <button
                 disabled={!ca()?.onFindCallees}
-                onClick={() => { if (ca()?.onFindCallees) act(() => ca()!.onFindCallees!(name())); }}
+                onClick={() => { if (ca()?.onFindCallees) act(() => ca()!.onFindCallees!(name(), resolvedObject())); }}
               >
                 {"Find callees" + (t().calleeCount != null ? ` (${t().calleeCount})` : "")}
               </button>
 
               <button
                 disabled={!ca()?.onViewCfg}
-                onClick={() => { if (ca()?.onViewCfg) act(() => ca()!.onViewCfg!(name())); }}
+                onClick={() => { if (ca()?.onViewCfg) act(() => ca()!.onViewCfg!(name(), resolvedObject())); }}
               >
                 View CFG
               </button>
@@ -104,7 +104,7 @@ export function SourceContextMenu(props: SourceContextMenuProps): JSX.Element {
 
               <button
                 disabled={!ca()?.onViewTaint}
-                onClick={() => { if (ca()?.onViewTaint) act(() => ca()!.onViewTaint!(name())); }}
+                onClick={() => { if (ca()?.onViewTaint) act(() => ca()!.onViewTaint!(name(), resolvedObject())); }}
               >
                 View taint paths
               </button>

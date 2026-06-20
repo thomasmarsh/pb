@@ -103,14 +103,15 @@ describe("SourceContextMenu", () => {
     expect(btn.hasAttribute("disabled")).toBe(true);
   });
 
-  it("Find callers calls callback and closes menu", () => {
+  it("Find callers calls callback with procName and procObject, then closes menu", () => {
     const onFindCallers = vi.fn();
     const onClose = vi.fn();
     renderMenu(procTarget, { onFindCallers }, onClose);
     const btn = [...document.querySelectorAll(".context-menu button")]
       .find((b) => b.textContent?.includes("Find callers"))!;
     fireEvent.click(btn);
-    expect(onFindCallers).toHaveBeenCalledWith("f_validate");
+    // procTarget has no procObject → resolvedObject falls back to props.objectName ("w_payment")
+    expect(onFindCallers).toHaveBeenCalledWith("f_validate", "w_payment");
     expect(onClose).toHaveBeenCalled();
   });
 

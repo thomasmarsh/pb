@@ -1,11 +1,11 @@
 // tests/objects/ObjectDetail.test.tsx — Tests for source-first ObjectDetail.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
 import { ObjectDetail } from "../../src/features/objects/ObjectDetail.js";
 import { createTestStore } from "../helpers.js";
 import { initialObjectsState } from "../../src/features/objects/reducer.js";
-import type { ObjectDetailResponse } from "../../src/types/api.js";
+import type { ObjectDetailResponse, ObjectSourceResponse } from "../../src/types/api.js";
 
 const baseDetail: ObjectDetailResponse = {
   name: "w_main",
@@ -148,5 +148,107 @@ describe("ObjectDetail source-first", () => {
     });
     render(() => <ObjectDetail store={store} />);
     expect(document.body.textContent).toContain("Not found");
+  });
+});
+
+// ── Proc-scoped panels (right-click in SourceContextMenu) ────────────────────
+
+const sourceDetail: ObjectSourceResponse = {
+  file: "app.pbl",
+  lines: ["f_helper()"],
+  procedures: [],
+  knownObjects: [],
+  knownProcs: [{
+    name: "f_helper",
+    object: "w_test",
+    proc_type: "function",
+    params: null,
+    return_type: null,
+    modifiers: null,
+    start_line: 1,
+    end_line: 5,
+    cyclomatic: 2,
+  }],
+};
+
+function renderWithSource(overrides: Partial<ObjectDetailResponse> = {}) {
+  const { store, captured } = createTestStore({
+    objects: {
+      ...initialObjectsState,
+      detail: { ...baseDetail, ...overrides },
+      sourceDetail,
+    },
+  });
+  render(() => <ObjectDetail store={store} />);
+  return { store, captured };
+}
+
+function getProcSpan(): HTMLElement {
+  return document.querySelector('[data-link-type="procedure"]') as HTMLElement;
+}
+
+function openContextMenu(): void {
+  fireEvent.contextMenu(getProcSpan());
+}
+
+function getMenuItem(label: string): HTMLButtonElement {
+  return [...document.querySelectorAll(".context-menu button")]
+    .find((b) => b.textContent?.includes(label)) as HTMLButtonElement;
+}
+
+describe("ObjectDetail proc-scoped panels", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", () => new Promise(() => {}));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("right-click on proc identifier enables Find callers menu item", () => {
+    renderWithSource();
+    const span = getProcSpan();
+    expect(span).not.toBeNull();
+    openContextMenu();
+    const btn = getMenuItem("Find callers");
+    expect(btn).toBeDefined();
+    expect(btn.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("Find callers opens callers panel for the selected proc", () => {
+    renderWithSource();
+    openContextMenu();
+    fireEvent.click(getMenuItem("Find callers"));
+    expect(document.body.textContent).toContain("Callers of f_helper");
+  });
+
+  it("Find callees opens callees panel for the selected proc", () => {
+    renderWithSource();
+    openContextMenu();
+    fireEvent.click(getMenuItem("Find callees"));
+    expect(document.body.textContent).toContain("Callees of f_helper");
+  });
+
+  it("View CFG opens CFG panel for the selected proc", () => {
+    renderWithSource();
+    openContextMenu();
+    fireEvent.click(getMenuItem("View CFG"));
+    expect(document.body.textContent).toContain("CFG: f_helper");
+  });
+
+  it("View taint paths opens taint panel for the selected proc", () => {
+    renderWithSource();
+    openContextMenu();
+    fireEvent.click(getMenuItem("View taint paths"));
+    expect(document.body.textContent).toContain("Taint: f_helper");
+  });
+
+  it("Escape closes a proc-scoped panel", () => {
+    renderWithSource();
+    openContextMenu();
+    fireEvent.click(getMenuItem("Find callers"));
+    expect(document.body.textContent).toContain("Callers of f_helper");
+    const container = document.querySelector("[tabindex='-1']") as HTMLElement;
+    fireEvent.keyDown(container, { key: "Escape" });
+    expect(document.body.textContent).not.toContain("Callers of f_helper");
   });
 });

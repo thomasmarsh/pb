@@ -4,7 +4,7 @@ import { Show, createSignal, createResource, For } from "solid-js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import type { ObjectDetailResponse, TaintPathsResponse, TaintPathSummary } from "../../types/api.js";
+import type { ObjectDetailResponse, ProcedureDetailResponse, TaintPathsResponse, TaintPathSummary } from "../../types/api.js";
 import type { ObjectsState } from "./types.js";
 import { Loading } from "../../components/ui/Loading.js";
 import { DetailHeader } from "../../components/detail/DetailHeader.js";
@@ -16,8 +16,12 @@ import { SourceCard } from "./detail/SourceCard.js";
 import { AnalysisSummaryBar } from "../../components/detail/AnalysisSummaryBar.js";
 import { ContextualPanel } from "../../components/detail/ContextualPanel.js";
 import { ArrowRight } from "../../utils/icons.js";
+import { CFGCore } from "../analysis/CFGCore.js";
+import type { ContextActions } from "../../components/source/index.js";
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
+// ── Object-level taint panel ─────────────────────────────────────────────────
 
 function ObjectTaintPanel(props: {
   objectName: string;
@@ -101,6 +105,150 @@ function ObjectTaintPanel(props: {
   );
 }
 
+// ── Proc-scoped panels (opened from SourceContextMenu right-click) ────────────
+
+function ProcCallersPanel(props: {
+  procName: string;
+  procObject: string;
+  store: Store<AppState, AppAction>;
+}): import("solid-js").JSX.Element {
+  const key = () => `${props.procObject}::${props.procName}`;
+  const [data] = createResource(key, async (): Promise<ProcedureDetailResponse> => {
+    const res = await fetch(
+      `/api/procedures/${encodeURIComponent(props.procObject)}/${encodeURIComponent(props.procName)}`,
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json() as Promise<ProcedureDetailResponse>;
+  });
+  return (
+    <>
+      <Show when={data.loading}><Loading /></Show>
+      <Show when={data.error}>
+        <div class="error-banner">Failed to load callers: {String(data.error)}</div>
+      </Show>
+      <Show when={!data.loading && !data.error && data()}>
+        <EntityListCard
+          title=""
+          items={(data()?.callers ?? []).map((c) => ({
+            type: "procedure" as const,
+            name: c.proc,
+            context: c.object,
+            tooltip: `${c.object}.${c.proc}`,
+            onClick: () => props.store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: c.object, procName: c.proc } }),
+          }))}
+          emptyText="No callers found."
+        />
+      </Show>
+    </>
+  );
+}
+
+function ProcCalleesPanel(props: {
+  procName: string;
+  procObject: string;
+  store: Store<AppState, AppAction>;
+}): import("solid-js").JSX.Element {
+  const key = () => `${props.procObject}::${props.procName}`;
+  const [data] = createResource(key, async (): Promise<ProcedureDetailResponse> => {
+    const res = await fetch(
+      `/api/procedures/${encodeURIComponent(props.procObject)}/${encodeURIComponent(props.procName)}`,
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json() as Promise<ProcedureDetailResponse>;
+  });
+  return (
+    <>
+      <Show when={data.loading}><Loading /></Show>
+      <Show when={data.error}>
+        <div class="error-banner">Failed to load callees: {String(data.error)}</div>
+      </Show>
+      <Show when={!data.loading && !data.error && data()}>
+        <EntityListCard
+          title=""
+          items={(data()?.callees ?? []).map((callee) => {
+            const dot = callee.indexOf(".");
+            const obj = dot > 0 ? callee.slice(0, dot) : props.procObject;
+            const proc = dot > 0 ? callee.slice(dot + 1) : callee;
+            return {
+              type: "procedure" as const,
+              name: proc,
+              context: obj,
+              onClick: () => props.store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: obj, procName: proc } }),
+            };
+          })}
+          emptyText="No callees found."
+        />
+      </Show>
+    </>
+  );
+}
+
+function ProcTaintPanel(props: {
+  procName: string;
+  procObject: string;
+  store: Store<AppState, AppAction>;
+}): import("solid-js").JSX.Element {
+  const key = () => `${props.procObject}::${props.procName}`;
+  const [data] = createResource(key, async (): Promise<TaintPathsResponse> => {
+    const params = new URLSearchParams({
+      object_name: props.procObject,
+      proc_name: props.procName,
+      limit: "10",
+    });
+    const res = await fetch("/api/analysis/taint-paths?" + params.toString());
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json() as Promise<TaintPathsResponse>;
+  });
+
+  const sorted = (): TaintPathSummary[] =>
+    [...(data()?.paths ?? [])].sort(
+      (a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9),
+    );
+
+  return (
+    <>
+      <Show when={data.loading}><Loading /></Show>
+      <Show when={data.error}>
+        <div class="error-banner">Failed to load taint paths: {String(data.error)}</div>
+      </Show>
+      <Show when={!data.loading && !data.error && data()}>
+        <Show
+          when={sorted().length > 0}
+          fallback={
+            <div style={{ padding: "8px 0", color: "var(--text-muted)", "font-size": "13px" }}>
+              No taint paths found through this procedure.
+            </div>
+          }
+        >
+          <table class="data-table" style={{ "font-size": "12px" }}>
+            <thead>
+              <tr><th>Severity</th><th>Category</th><th>Source</th><th>Sink</th><th></th></tr>
+            </thead>
+            <tbody>
+              <For each={sorted()}>
+                {(path) => (
+                  <tr
+                    class="clickable"
+                    onClick={() => props.store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "taintPathView", pathId: path.id } } })}
+                  >
+                    <td><span class={`badge badge-severity-${path.severity}`}>{path.severity}</span></td>
+                    <td>{path.category}</td>
+                    <td style={{ "font-size": "11px" }}>{path.source.object}.{path.source.proc}</td>
+                    <td style={{ "font-size": "11px" }}>{path.sink.object}.{path.sink.proc}</td>
+                    <td><span class="trace-nav-link">View <ArrowRight size={12} style={{ "vertical-align": "middle" }} /></span></td>
+                  </tr>
+                )}
+              </For>
+            </tbody>
+          </table>
+        </Show>
+      </Show>
+    </>
+  );
+}
+
+// ── Main content ─────────────────────────────────────────────────────────────
+
 function ObjectDetailContent(props: {
   o: ObjectDetailResponse;
   obj: () => ObjectsState["detail"];
@@ -113,11 +261,19 @@ function ObjectDetailContent(props: {
 
   const badgeClass = o.kind === "powerscript" ? "badge-ps" : o.kind === "datawindow" ? "badge-dw" : "badge-proj";
 
+  // Object-level panel signals
   const [showCallers, setShowCallers] = createSignal(false);
   const [showDWs, setShowDWs] = createSignal(false);
   const [showTables, setShowTables] = createSignal(false);
   const [showMetrics, setShowMetrics] = createSignal(false);
   const [showTaint, setShowTaint] = createSignal(false);
+
+  // Proc-scoped panel signals (opened from SourceContextMenu right-click)
+  type ProcTarget = { procName: string; procObject: string };
+  const [procCallersTarget, setProcCallersTarget] = createSignal<ProcTarget | null>(null);
+  const [procCalleesTarget, setProcCalleesTarget] = createSignal<ProcTarget | null>(null);
+  const [procCfgTarget, setProcCfgTarget] = createSignal<ProcTarget | null>(null);
+  const [procTaintTarget, setProcTaintTarget] = createSignal<ProcTarget | null>(null);
 
   const callerCount = () => o.callers?.length ?? 0;
   const dwCount = () => o.dws_used?.length ?? 0;
@@ -170,7 +326,22 @@ function ObjectDetailContent(props: {
     setShowTables(false);
     setShowMetrics(false);
     setShowTaint(false);
+    setProcCallersTarget(null);
+    setProcCalleesTarget(null);
+    setProcCfgTarget(null);
+    setProcTaintTarget(null);
   }
+
+  const contextActions: ContextActions = {
+    onFindCallers: (procName, procObject) =>
+      setProcCallersTarget((v) => v?.procName === procName && v.procObject === procObject ? null : { procName, procObject }),
+    onFindCallees: (procName, procObject) =>
+      setProcCalleesTarget((v) => v?.procName === procName && v.procObject === procObject ? null : { procName, procObject }),
+    onViewCfg: (procName, procObject) =>
+      setProcCfgTarget((v) => v?.procName === procName && v.procObject === procObject ? null : { procName, procObject }),
+    onViewTaint: (procName, procObject) =>
+      setProcTaintTarget((v) => v?.procName === procName && v.procObject === procObject ? null : { procName, procObject }),
+  };
 
   return (
     <div
@@ -188,12 +359,13 @@ function ObjectDetailContent(props: {
 
       <div class="detail-body">
         <Show when={o.file} fallback={<p class="muted-note">No source file available.</p>}>
-          <SourceCard store={store} file={o.file} objectName={o.name} sourceDetail={src()} />
+          <SourceCard store={store} file={o.file} objectName={o.name} sourceDetail={src()} contextActions={contextActions} />
         </Show>
         <Show when={(o.procedures?.length ?? 0) > 0}>
           <ProceduresCard store={store} objectName={o.name} procedures={o.procedures!} />
         </Show>
 
+        {/* Object-level panels */}
         <Show when={showCallers()}>
           <ContextualPanel title={`Callers (${callerCount()})`} onClose={() => setShowCallers(false)}>
             <EntityListCard
@@ -245,6 +417,52 @@ function ObjectDetailContent(props: {
           <ContextualPanel title="Taint Paths" onClose={() => setShowTaint(false)}>
             <ObjectTaintPanel objectName={o.name} store={store} />
           </ContextualPanel>
+        </Show>
+
+        {/* Proc-scoped panels (opened from SourceContextMenu) */}
+        <Show when={procCallersTarget()}>
+          {(t) => (
+            <ContextualPanel title={`Callers of ${t().procName}`} onClose={() => setProcCallersTarget(null)}>
+              <ProcCallersPanel procName={t().procName} procObject={t().procObject} store={store} />
+            </ContextualPanel>
+          )}
+        </Show>
+
+        <Show when={procCalleesTarget()}>
+          {(t) => (
+            <ContextualPanel title={`Callees of ${t().procName}`} onClose={() => setProcCalleesTarget(null)}>
+              <ProcCalleesPanel procName={t().procName} procObject={t().procObject} store={store} />
+            </ContextualPanel>
+          )}
+        </Show>
+
+        <Show when={procCfgTarget()}>
+          {(t) => (
+            <ContextualPanel title={`CFG: ${t().procName}`} onClose={() => setProcCfgTarget(null)}>
+              <div style={{ height: "420px", display: "flex", "flex-direction": "column" }}>
+                <CFGCore
+                  object={t().procObject}
+                  proc={t().procName}
+                  store={store}
+                  onGoto={() =>
+                    store.dispatch({
+                      tag: "nav",
+                      action: { tag: "navigate", route: { view: "cfgDiagram", object: t().procObject, proc: t().procName } },
+                    })
+                  }
+                  gotoLabel="Full CFG"
+                />
+              </div>
+            </ContextualPanel>
+          )}
+        </Show>
+
+        <Show when={procTaintTarget()}>
+          {(t) => (
+            <ContextualPanel title={`Taint: ${t().procName}`} onClose={() => setProcTaintTarget(null)}>
+              <ProcTaintPanel procName={t().procName} procObject={t().procObject} store={store} />
+            </ContextualPanel>
+          )}
         </Show>
       </div>
     </div>
