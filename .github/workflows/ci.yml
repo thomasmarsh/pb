@@ -59,12 +59,16 @@ jobs:
         with:
           version: "11.3.0"
 
-      - name: Extract openpay corpus
-        run: uv run --project cli pb_cli extract example/openpay -o example/openpay-src
-
       - name: Build
         working-directory: parser
         run: cabal build --enable-tests
+
+      - name: Codegen
+        working-directory: ui
+        run: pnpm install --frozen-lockfile && pnpm codegen
+
+      - name: Extract openpay corpus
+        run: uv run --project cli pb_cli extract example/openpay -o example/openpay-src
 
       - name: Test (Haskell)
         working-directory: parser
@@ -76,7 +80,7 @@ jobs:
 
       - name: Test (TypeScript)
         working-directory: ui
-        run: pnpm install --frozen-lockfile && pnpm codegen && pnpm lint && pnpm typecheck && pnpm test
+        run: pnpm lint && pnpm typecheck && pnpm test
 
       - name: Build (TypeScript)
         working-directory: ui
