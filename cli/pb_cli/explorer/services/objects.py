@@ -27,6 +27,45 @@ def pbl_name(file_path: str) -> str:
     return "(unknown)"
 
 
+def list_objects(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    q: str = "",
+    kind: str = "",
+    sort: str = "name",
+    order: str = "asc",
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, Any]:
+    conditions: list[str] = []
+    params: list[Any] = []
+    if q:
+        conditions.append("(o.name ILIKE ? OR o.file ILIKE ?)")
+        params += [f"%{q}%", f"%{q}%"]
+    if kind:
+        conditions.append("o.kind = ?")
+        params.append(kind)
+    where = "WHERE " + " AND ".join(conditions) if conditions else ""
+
+    safe_sorts = {"name", "kind", "file"}
+    sort_col = sort if sort in safe_sorts else "name"
+    sort_dir = "DESC" if order.lower() == "desc" else "ASC"
+
+    count_row = conn.execute(f"SELECT count(*) FROM objects o {where}", params).fetchone()
+    total = count_row[0] if count_row else 0
+
+    items = rows(
+        conn.execute(
+            f"SELECT o.name, o.kind, o.file, o.ancestor "
+            f"FROM objects o {where} "
+            f"ORDER BY o.{sort_col} {sort_dir} "
+            f"LIMIT ? OFFSET ?",
+            params + [limit, offset],
+        )
+    )
+    return {"total": total, "offset": offset, "limit": limit, "items": items}
+
+
 def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
     obj_rows = rows(conn.execute("SELECT name, kind, file, ancestor FROM objects WHERE name = ?", [name]))
     if not obj_rows:
