@@ -18,8 +18,8 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 ROOT = Path(__file__).resolve().parent.parent.parent / "doc" / "pb2025r2"
-PS_REF = ROOT / "powerscript_reference" / "docs.appeon.com" / "pb2025r2" / "powerscript_reference"
-OC_REF = ROOT / "objects_and_controls" / "docs.appeon.com" / "pb2025r2" / "objects_and_controls"
+PS_REF = ROOT / "powerscript_reference"
+OC_REF = ROOT / "objects_and_controls"
 
 # Map HTML filename stem → PB class name (lowercase) for objects_and_controls.
 CLASS_MAP: dict[str, str] = {

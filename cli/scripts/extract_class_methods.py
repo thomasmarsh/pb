@@ -14,7 +14,7 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-DOCS = Path(__file__).resolve().parent.parent / "doc" / "pb2025r2" / "objects_and_controls" / "docs.appeon.com" / "pb2025r2" / "objects_and_controls"
+DOCS = Path(__file__).resolve().parent.parent.parent / "doc" / "pb2025r2" / "objects_and_controls"
 
 # Map HTML filename stem → PB class name (lowercase)
 CLASS_MAP: dict[str, str] = {
