@@ -1,6 +1,6 @@
 // SourceViewer.tsx — Source code viewer with cross-linked identifiers.
 
-import { Show, createSignal, createMemo } from "solid-js";
+import { Show, createSignal, createMemo, createEffect } from "solid-js";
 import { highlightPowerScript } from "../../utils/highlight.js";
 import type { ProcedureInfo, KnownProcInfo, LocalSymbolInfo } from "../../types/api.js";
 import type { Store } from "../../core/store.js";
@@ -32,6 +32,13 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
   const store = props.store;
   const [tooltip, setTooltip] = createSignal<{ html: string; x: number; y: number } | null>(null);
   const [menuTarget, setMenuTarget] = createSignal<ContextMenuTarget | null>(null);
+  let procRangeBg: HTMLDivElement | undefined;
+
+  createEffect(() => {
+    const range = selectedRange();
+    if (!range || !procRangeBg) return;
+    procRangeBg.scrollIntoView({ behavior: "instant" as ScrollBehavior, block: "start" });
+  });
 
   const objectMap = createMemo(() => buildObjectMap(props.knownObjects));
   const procMap = createMemo(() => buildProcMap(props.knownProcs, props.procedures, props.objectName));
@@ -122,6 +129,7 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
       >
         <Show when={selectedRange()}>
           <div
+            ref={procRangeBg}
             class="source-proc-range-bg"
             style={{
               top: `${overlayTop(selectedRange()!.start)}px`,

@@ -23,7 +23,11 @@ export function ProcNode(props: { objName: string; proc: ExploreProcedure; depth
   const store = useExploreStore();
   const snap = store.getState();
   const nodeId = () => procId(props.objName, props.proc.name);
-  const isSelected = () => snap().explore.selectedProc === nodeId();
+  const isSelected = () => {
+    const r = snap().nav.route;
+    return r.view === "objectDetail" && r.name === props.objName
+      && snap().objects.selectedProcName === props.proc.name;
+  };
 
   const summary = createMemo(() =>
     props.proc.cyclomatic != null ? `cc=${props.proc.cyclomatic}` : "",
@@ -38,7 +42,7 @@ export function ProcNode(props: { objName: string; proc: ExploreProcedure; depth
       summary={summary()}
       selected={isSelected()}
       onClick={() => {
-        store.dispatch({ tag: "explore", action: { tag: "proc-select", objectName: props.objName, procName: props.proc.name, nodeId: nodeId() } });
+        store.dispatch({ tag: "objects", action: { tag: "select-proc", objectName: props.objName, procName: props.proc.name } });
       }}
     />
   );
@@ -51,7 +55,10 @@ export function ObjectNode(props: { lib: string; obj: ExploreObject; depth: numb
   const snap = store.getState();
   const nodeId = () => objId(props.lib, props.obj.name);
   const isDw = () => props.obj.kind === "datawindow";
-  const isSelected = () => snap().explore.selectedObject === props.obj.name;
+  const isSelected = () => {
+    const r = snap().nav.route;
+    return r.view === "objectDetail" && r.name === props.obj.name;
+  };
 
   const treeFilter = () => snap().explore.treeFilter.toLowerCase();
 
@@ -79,7 +86,7 @@ export function ObjectNode(props: { lib: string; obj: ExploreObject; depth: numb
         selected={isSelected()}
         onClick={isDw()
           ? () => store.dispatch({ tag: "explore", action: { tag: "dw-select", dwName: props.obj.name, nodeId: nodeId() } })
-          : () => store.dispatch({ tag: "explore", action: { tag: "obj-select", objectName: props.obj.name, nodeId: nodeId() } })
+          : () => store.dispatch({ tag: "objects", action: { tag: "select", name: props.obj.name } })
         }
       >
         <Show when={!isDw()}>

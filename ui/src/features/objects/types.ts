@@ -13,6 +13,7 @@ export interface ObjectsState {
   loading: boolean;
   detail: ObjectDetailResponse | { error: string } | null;
   sourceDetail: ObjectSourceResponse | { error: string } | null;
+  selectedProcName: string | null;
   procedureDetail: ProcedureDetailResponse | { error: string } | null;
   allObjects: ObjectRow[];
   // Procedures list screen

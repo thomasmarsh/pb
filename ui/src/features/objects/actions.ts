@@ -10,6 +10,7 @@ export type ObjectsAction =
   | { tag: "page"; offset: number }
   | { tag: "loaded"; data: ListObjectsResponse }
   | { tag: "select"; name: string }
+  | { tag: "select-proc"; objectName: string; procName: string }
   | { tag: "detail-loaded"; data: ObjectDetailResponse }
   | { tag: "detail-error"; error: string }
   | { tag: "source-loaded"; data: ObjectSourceResponse }

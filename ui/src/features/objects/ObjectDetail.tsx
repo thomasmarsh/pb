@@ -259,6 +259,7 @@ function ObjectDetailContent(props: {
   const store = props.store;
   const snap = store.getState();
   const src = () => snap().objects.sourceDetail;
+  const selectedProcName = () => snap().objects.selectedProcName ?? undefined;
 
   const badgeClass = o.kind === "powerscript" ? "badge-ps" : o.kind === "datawindow" ? "badge-dw" : "badge-proj";
 
@@ -367,7 +368,7 @@ function ObjectDetailContent(props: {
 
       <div class="detail-body">
         <Show when={o.file} fallback={<p class="muted-note">No source file available.</p>}>
-          <SourceCard store={store} file={o.file} objectName={o.name} sourceDetail={src()} contextActions={contextActions} />
+          <SourceCard store={store} file={o.file} objectName={o.name} sourceDetail={src()} selectedProcName={selectedProcName()} contextActions={contextActions} />
         </Show>
         <Show when={(o.procedures?.length ?? 0) > 0}>
           <ProceduresCard store={store} objectName={o.name} procedures={o.procedures!} />

@@ -13,6 +13,7 @@ export function SourceCard(props: {
   file: string;
   objectName: string;
   sourceDetail: ObjectSourceResponse | { error: string } | null;
+  selectedProcName?: string;
   contextActions?: ContextActions;
 }) {
   const hasLines = () => {
@@ -45,6 +46,7 @@ export function SourceCard(props: {
           knownProcs={(props.sourceDetail as { knownProcs: KnownProcInfo[] }).knownProcs}
           localSymbols={(props.sourceDetail as { localSymbols?: LocalSymbolInfo[] }).localSymbols}
           objectName={props.objectName}
+          selectedProcName={props.selectedProcName}
           contextActions={props.contextActions}
         />
       </Show>
