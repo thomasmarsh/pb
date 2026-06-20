@@ -328,12 +328,12 @@ def test_build_type_tables_integration(tmp_path):
     with db_connection(db) as conn:
         create_schema(conn)
         conn.execute(
-            "INSERT INTO objects VALUES (?,?,?,?,?,?)",
-            ("f.srw", "w_test", "powerscript", None, None, None),
+            "INSERT INTO objects VALUES (?,?,?,?,?,?,?)",
+            ("f.srw", "w_test", "powerscript", None, None, None, None),
         )
         conn.execute(
-            "INSERT INTO objects VALUES (?,?,?,?,?,?)",
-            ("f.srw", "nvo_utils", "powerscript", None, None, None),
+            "INSERT INTO objects VALUES (?,?,?,?,?,?,?)",
+            ("f.srw", "nvo_utils", "powerscript", None, None, None, None),
         )
         conn.execute(
             "INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",

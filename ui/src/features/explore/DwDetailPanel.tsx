@@ -12,7 +12,7 @@ export function DwDetailPanel(props: { nodeId: string }) {
 
   return (
     <DetailShell<DwDetailResponse> entry={entry()} loadingMsg="Loading DataWindow...">
-      {(d) => <DwDetailCore d={d} store={store} />}
+      {(d) => <DwDetailCore d={d} layout={null} store={store} />}
     </DetailShell>
   );
 }

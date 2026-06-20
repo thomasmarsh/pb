@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from pb_cli.explorer.routes.dependencies import get_db
 from pb_cli.explorer.services.objects import (
+    get_dw_layout,
     get_explore_tree,
     get_object_ast,
     get_object_detail,
@@ -43,6 +44,14 @@ async def get_object_ast_route(name: str, conn: duckdb.DuckDBPyConnection = Depe
     result = get_object_ast(conn, name)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Object not found: {name}")
+    return result
+
+
+@router.get("/api/objects/{name}/dw")
+async def get_dw_layout_route(name: str, conn: duckdb.DuckDBPyConnection = Depends(get_db)):
+    result = get_dw_layout(conn, name)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"DataWindow not found: {name}")
     return result
 
 

@@ -58,10 +58,12 @@ def import_file(obj: dict, rows: RowBatch, dialect: str = "oracle") -> None:
     name = _object_name(obj)
     ancestor = obj.get("meta", {}).get("ancestor")
 
+    dw_json = json.dumps(obj) if kind == "datawindow" else None
     rows["objects"].append(ObjectRow(
         file, name, kind, ancestor,
         obj.get("source_text"),
         json.dumps(obj.get("typeBlocks", [])),
+        dw_json,
     ))
     if ancestor:
         rows["inherits"].append(InheritsRow(name, ancestor))

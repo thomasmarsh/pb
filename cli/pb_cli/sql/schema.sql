@@ -4,7 +4,8 @@ CREATE TABLE IF NOT EXISTS objects (
     kind             TEXT NOT NULL,
     ancestor         TEXT,
     source_text      TEXT,
-    type_blocks_json TEXT
+    type_blocks_json TEXT,
+    dw_json          TEXT
 );
 
 CREATE TABLE IF NOT EXISTS procedures (

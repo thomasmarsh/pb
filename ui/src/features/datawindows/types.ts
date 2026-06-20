@@ -1,6 +1,7 @@
 // features/datawindows/types.ts
 
 import type { ObjectRow, DwDetailResponse } from "../../types/api.js";
+import type { DataWindowFile } from "../../types/ast.generated.js";
 
 export interface DatawindowsState {
   items: ObjectRow[];
@@ -8,4 +9,5 @@ export interface DatawindowsState {
   q: string;
   loading: boolean;
   dwDetail: DwDetailResponse | { error: string } | null;
+  dwLayout: DataWindowFile | null;
 }

@@ -9,6 +9,7 @@ import type { ListObjectsResponse, DwDetailResponse } from "../../src/types/api.
 const mockEnv: DatawindowsEnv = {
   getObjects: () => Effect.none(),
   getDW: () => Effect.none(),
+  getDwLayout: () => Effect.none(),
   navigate: () => Effect.none(),
 };
 

@@ -230,6 +230,18 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
     return {"typeBlocks": type_blocks, "events": events}
 
 
+def get_dw_layout(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
+    """Return the full DataWindowFile JSON for a datawindow object."""
+    import json as _json
+    obj_rows = rows(conn.execute(
+        "SELECT dw_json FROM objects WHERE name = ? AND kind = 'datawindow'", [name]
+    ))
+    if not obj_rows:
+        return None
+    raw = obj_rows[0].get("dw_json")
+    return _json.loads(raw) if raw else None
+
+
 def get_explore_tree(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     obj_rows = rows(conn.execute("SELECT name, kind, file FROM objects ORDER BY kind, name"))
     proc_rows = rows(

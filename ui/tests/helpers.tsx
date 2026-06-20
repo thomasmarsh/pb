@@ -23,6 +23,7 @@ export const mockEnv: AppEnv = {
   getProcedures: () => Effect.none(),
   search: () => Effect.none(),
   getDW: () => Effect.none(),
+  getDwLayout: () => Effect.none(),
   getDiagram: () => Effect.none(),
   getQueries: () => Effect.none(),
   runQuery: () => Effect.none(),

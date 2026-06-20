@@ -175,7 +175,9 @@ def _find_dw_property_files() -> list[Path]:
             links = []
             seen = set()
             for a in content.find_all("a"):
-                href = a.get("href", "")
+                href = a.get("href", "") or ""
+                if not isinstance(href, str):
+                    continue
                 if (href.endswith(".html")
                         and href != "XREF_36021_Alphabetical_list.html"
                         and href not in seen):

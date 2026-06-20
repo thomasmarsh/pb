@@ -5,7 +5,9 @@ import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import type { DwDetailResponse, DwControlRow } from "../../types/api.js";
+import type { DataWindowFile } from "../../types/ast.generated.js";
 import { CodeBlock } from "../../components/detail/CodeBlock.js";
+import { DwPreview } from "../../components/DwPreview.js";
 import { Loading } from "../../components/ui/Loading.js";
 import { DetailHeader } from "../../components/detail/DetailHeader.js";
 import { BackButton } from "../../components/ui/BackButton.js";
@@ -45,7 +47,7 @@ function DWControlsTable(props: { controls: DwControlRow[] }) {
   );
 }
 
-export function DwDetailCore(props: { d: DwDetailResponse; store: Store<AppState, AppAction> }) {
+export function DwDetailCore(props: { d: DwDetailResponse; layout: DataWindowFile | null; store: Store<AppState, AppAction> }) {
   const d = props.d;
   const store = props.store;
 
@@ -87,6 +89,13 @@ export function DwDetailCore(props: { d: DwDetailResponse; store: Store<AppState
       <AnalysisSummaryBar items={summaryItems()} />
 
       <div class="detail-body">
+        <div class="card">
+          <div class="card-header"><h3>Preview</h3></div>
+          <div style={{ padding: "12px" }}>
+            <DwPreview layout={props.layout} />
+          </div>
+        </div>
+
         <Show when={d.controls.length > 0}>
           <DWControlsTable controls={d.controls} />
         </Show>
@@ -188,6 +197,7 @@ export function DWDetail(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;
   const snap = store.getState();
   const dw = () => snap().datawindows.dwDetail;
+  const layout = () => snap().datawindows.dwLayout;
 
   return (
     <>
@@ -197,7 +207,7 @@ export function DWDetail(props: { store: Store<AppState, AppAction> }) {
           if ("error" in entry()) {
             return <div class="card"><p style={{ color: "var(--red)" }}>Error: {(entry() as { error: string }).error}</p></div>;
           }
-          return <DwDetailCore d={entry() as DwDetailResponse} store={store} />;
+          return <DwDetailCore d={entry() as DwDetailResponse} layout={layout()} store={store} />;
         }}
       </Show>
     </>
