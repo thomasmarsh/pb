@@ -24,7 +24,6 @@ export const initialObjectsState: ObjectsState = {
   items: [], total: 0, q: "", kind: "", sort: "name", order: "asc", offset: 0, loading: false,
   detail: null, sourceDetail: null, procedureDetail: null, allObjects: [],
   objectFace: "source", objectScrollPos: {},
-  procFace: "source", procScrollPos: {},
   proceduresList: null, proceduresListLoading: false,
   proceduresListQ: "", proceduresListKind: "",
   proceduresListSort: "name", proceduresListOrder: "asc",
@@ -124,15 +123,6 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
       [draft.objectFace]: action.scrollTop,
     };
     draft.objectFace = action.face;
-    return null;
-  }
-  case "set-proc-face": {
-    const prev = draft.procScrollPos[action.key] ?? { source: 0, analysis: 0 };
-    draft.procScrollPos[action.key] = {
-      ...prev,
-      [draft.procFace]: action.scrollTop,
-    };
-    draft.procFace = action.face;
     return null;
   }
   case "procs-list-load":

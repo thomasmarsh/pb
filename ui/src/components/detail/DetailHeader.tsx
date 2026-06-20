@@ -1,3 +1,4 @@
+import { Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
@@ -8,9 +9,9 @@ interface DetailHeaderProps {
   name: string;
   badgeClass: string;
   badgeLabel: string;
-  face: Face;
-  store: Store<AppState, AppAction>;
-  onToggle: (face: Face, scrollTop: number) => void;
+  face?: Face;
+  store?: Store<AppState, AppAction>;
+  onToggle?: (face: Face, scrollTop: number) => void;
   scrollAreaRef?: () => HTMLElement | undefined;
   subtitle?: JSX.Element;
 }
@@ -24,11 +25,13 @@ export function DetailHeader(props: DetailHeaderProps): JSX.Element {
         </h2>
         {props.subtitle}
       </div>
-      <FaceToggle
-        face={props.face}
-        onToggle={props.onToggle}
-        scrollAreaRef={props.scrollAreaRef}
-      />
+      <Show when={props.onToggle}>
+        <FaceToggle
+          face={props.face ?? "source"}
+          onToggle={props.onToggle!}
+          scrollAreaRef={props.scrollAreaRef}
+        />
+      </Show>
     </div>
   );
 }

@@ -1,8 +1,7 @@
-// ProcedureDetail.tsx — Unified procedure detail: Source/Analysis faces.
+// ProcedureDetail.tsx — Source-first procedure detail with composable analysis panels.
 
-import { Show, For, createEffect, createResource } from "solid-js";
+import { Show, For, createResource, createSignal } from "solid-js";
 import { ArrowRight } from "../../utils/icons.js";
-import { Tabs } from "@kobalte/core/tabs";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
@@ -13,6 +12,9 @@ import { SqlStatementCard } from "../../components/detail/SqlStatementCard.js";
 import { DetailHeader } from "../../components/detail/DetailHeader.js";
 import { BackButton } from "../../components/ui/BackButton.js";
 import { EntityListCard } from "../../components/detail/EntityListCard.js";
+import { AnalysisSummaryBar } from "../../components/detail/AnalysisSummaryBar.js";
+import type { SummaryItem } from "../../components/detail/AnalysisSummaryBar.js";
+import { ContextualPanel } from "../../components/detail/ContextualPanel.js";
 import { procBadge } from "../../utils/format.js";
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -44,19 +46,16 @@ function ProcTaintCard(props: {
   }
 
   return (
-    <div class="card">
-      <div class="card-header" style={{ display: "flex", "align-items": "center", gap: "8px" }}>
-        <h3 style={{ flex: 1 }}>Taint Paths</h3>
-        <Show when={(data()?.total ?? 0) > 0}>
-          <button
-            class="filter-pill active"
-            style={{ "font-size": "12px", padding: "3px 10px" }}
-            onClick={() => props.store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "taintExplorer" } } })}
-          >
-            Taint Explorer ↗
-          </button>
-        </Show>
-      </div>
+    <>
+      <Show when={(data()?.total ?? 0) > 0}>
+        <button
+          class="filter-pill active"
+          style={{ "font-size": "12px", padding: "3px 10px", "margin-bottom": "8px" }}
+          onClick={() => props.store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "taintExplorer" } } })}
+        >
+          Taint Explorer ↗
+        </button>
+      </Show>
       <Show when={data.loading}><Loading /></Show>
       <Show when={data.error}>
         <div class="error-banner">Failed to load taint paths: {String(data.error)}</div>
@@ -101,7 +100,7 @@ function ProcTaintCard(props: {
           </Show>
         </Show>
       </Show>
-    </div>
+    </>
   );
 }
 
@@ -109,44 +108,50 @@ function ProcedureDetailContent(props: {
   p: ProcedureDetailResponse;
   store: Store<AppState, AppAction>;
   objectName: string;
-  procKey: string;
 }) {
-  const { p, store, procKey } = props;
-  const snap = store.getState();
-  const face = () => snap().objects.procFace;
+  const { p, store } = props;
   const bc = procBadge(p.proc_type);
 
-  let scrollEl: HTMLDivElement | undefined;
+  const [showCallers, setShowCallers] = createSignal(false);
+  const [showCallees, setShowCallees] = createSignal(false);
+  const [showSql, setShowSql] = createSignal(false);
+  const [showTaint, setShowTaint] = createSignal(false);
 
-  createEffect(() => {
-    const pos = snap().objects.procScrollPos[procKey];
-    if (!pos || !scrollEl) return;
-    scrollEl.scrollTop = face() === "source" ? pos.source : pos.analysis;
-  });
+  const callerCount = () => p.callers?.length ?? 0;
+  const calleeCount = () => p.callees?.length ?? 0;
+  const sqlCount = () => p.sql_statements?.length ?? 0;
+
+  const summaryItems = (): SummaryItem[] => [
+    { label: "Callers", count: callerCount(), active: showCallers(), onClick: () => setShowCallers((v) => !v) },
+    { label: "Callees", count: calleeCount(), active: showCallees(), onClick: () => setShowCallees((v) => !v) },
+    ...(sqlCount() > 0 ? [{ label: "SQL", count: sqlCount(), active: showSql(), onClick: () => setShowSql((v) => !v) } as SummaryItem] : []),
+    ...(p.cyclomatic != null ? [{ label: `CC: ${p.cyclomatic}` } as SummaryItem] : []),
+    { label: "Taint", active: showTaint(), onClick: () => setShowTaint((v) => !v) },
+  ];
+
+  function handleKeyDown(e: KeyboardEvent): void {
+    if (e.key === "Escape") {
+      setShowCallers(false);
+      setShowCallees(false);
+      setShowSql(false);
+      setShowTaint(false);
+    }
+  }
 
   const subtitle = (
     <div style={{ "font-size": "12px", color: "var(--text-muted)" }}>
       {p.modifiers && <span>{p.modifiers} </span>}
       {p.params && <span>({p.params}) </span>}
       {p.return_type && <span>returns {p.return_type} </span>}
-      {p.cyclomatic != null && (
-        <span class="badge badge-cc" style={{ "margin-left": "8px" }}>CC: {p.cyclomatic}</span>
-      )}
     </div>
   );
 
   return (
-    <>
+    <div onKeyDown={handleKeyDown}>
       <DetailHeader
         name={`${p.object}.`}
         badgeClass={`badge-${bc}`}
         badgeLabel={p.proc_type}
-        face={face()}
-        store={store}
-        onToggle={(newFace, scrollTop) => {
-          store.dispatch({ tag: "objects", action: { tag: "set-proc-face", key: procKey, face: newFace, scrollTop } });
-        }}
-        scrollAreaRef={() => scrollEl}
         subtitle={
           <>
             <span style={{ color: "var(--accent)" }}>{p.name}</span>{" "}
@@ -155,61 +160,45 @@ function ProcedureDetailContent(props: {
         }
       />
 
-      <div class="detail-body" ref={scrollEl}>
-        <Show when={face() === "source"}>
-          <Show when={p.source_original || p.source_rendered}>
-            <Tabs defaultValue={p.source_original ? "original" : "rendered"}>
-              <Tabs.List class="tab-bar">
-                <Show when={p.source_original}>
-                  <Tabs.Trigger value="original" class="tab-btn">Original Source</Tabs.Trigger>
-                </Show>
-                <Show when={p.source_rendered}>
-                  <Tabs.Trigger value="rendered" class="tab-btn">Rendered</Tabs.Trigger>
-                </Show>
-              </Tabs.List>
-              <Show when={p.source_original}>
-                <Tabs.Content value="original">
-                  <CodeBlock
-                    code={p.source_original!}
-                    baseLine={p.start_line ?? 1}
-                    onLineClick={(line) =>
-                      store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "sliceView", object: props.objectName, proc: p.name, line, direction: "backward" } } })
-                    }
-                  />
-                  <Show when={p.file}>
-                    <div style={{ "font-size": "11px", color: "var(--text-muted)", "margin-top": "8px" }}>
-                      {p.file}:{p.start_line ?? ""}–{p.end_line ?? ""}
-                    </div>
-                  </Show>
-                </Tabs.Content>
-              </Show>
-              <Show when={p.source_rendered}>
-                <Tabs.Content value="rendered">
-                  <CodeBlock code={p.source_rendered} baseLine={p.start_line ?? 1} />
-                </Tabs.Content>
-              </Show>
-            </Tabs>
+      <AnalysisSummaryBar items={summaryItems()} />
+
+      <div class="detail-body">
+        <Show when={p.source_original}>
+          <CodeBlock
+            code={p.source_original!}
+            baseLine={p.start_line ?? 1}
+            onLineClick={(line) =>
+              store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "sliceView", object: props.objectName, proc: p.name, line, direction: "backward" } } })
+            }
+          />
+          <Show when={p.file}>
+            <div style={{ "font-size": "11px", color: "var(--text-muted)", "margin-top": "8px" }}>
+              {p.file}:{p.start_line ?? ""}–{p.end_line ?? ""}
+            </div>
           </Show>
         </Show>
 
-        <Show when={face() === "analysis"}>
-          <EntityListCard
-            title="Callers"
-            items={(p.callers ?? []).map((caller) => ({
-              type: "procedure" as const,
-              name: caller.proc,
-              context: caller.object,
-              tooltip: `${caller.object}.${caller.proc}`,
-              onClick: () => store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: caller.object, procName: caller.proc } }),
-            }))}
-            emptyText="No callers found."
-          />
-
-          <Show when={(p.callees?.length ?? 0) > 0}>
+        <Show when={showCallers()}>
+          <ContextualPanel title={`Callers (${callerCount()})`} onClose={() => setShowCallers(false)}>
             <EntityListCard
-              title="Callees"
-              count={p.callees!.length}
-              items={p.callees!.map((callee) => ({
+              title=""
+              items={(p.callers ?? []).map((caller) => ({
+                type: "procedure" as const,
+                name: caller.proc,
+                context: caller.object,
+                tooltip: `${caller.object}.${caller.proc}`,
+                onClick: () => store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: caller.object, procName: caller.proc } }),
+              }))}
+              emptyText="No callers found."
+            />
+          </ContextualPanel>
+        </Show>
+
+        <Show when={showCallees()}>
+          <ContextualPanel title={`Callees (${calleeCount()})`} onClose={() => setShowCallees(false)}>
+            <EntityListCard
+              title=""
+              items={(p.callees ?? []).map((callee) => ({
                 type: "procedure" as const,
                 name: callee,
                 onClick: () => {
@@ -221,39 +210,28 @@ function ProcedureDetailContent(props: {
                   }
                 },
               }))}
+              emptyText="No callees found."
             />
-          </Show>
+          </ContextualPanel>
+        </Show>
 
-          <Show when={(p.sql_statements?.length ?? 0) > 0}>
-            <div class="card">
-              <div class="card-header"><h3>SQL Statements ({p.sql_statements!.length})</h3></div>
-              <div class="sql-tab-body">
-                <For each={p.sql_statements!}>
-                  {(stmt) => <SqlStatementCard stmt={stmt} store={store} />}
-                </For>
-              </div>
+        <Show when={showSql() && sqlCount() > 0}>
+          <ContextualPanel title={`SQL Statements (${sqlCount()})`} onClose={() => setShowSql(false)}>
+            <div class="sql-tab-body">
+              <For each={p.sql_statements!}>
+                {(stmt) => <SqlStatementCard stmt={stmt} store={store} />}
+              </For>
             </div>
-          </Show>
+          </ContextualPanel>
+        </Show>
 
-          <div class="card">
-            <div class="card-header" style={{ display: "flex", "align-items": "center", gap: "10px" }}>
-              <h3 style={{ flex: 1 }}>Control Flow Graph</h3>
-              <button
-                class="filter-pill active"
-                style={{ "font-size": "12px", padding: "3px 10px" }}
-                onClick={() => store.dispatch({
-                  tag: "nav",
-                  action: { tag: "navigate", route: { view: "cfgDiagram", object: props.objectName, proc: p.name } },
-                })}
-              >
-                View CFG ↗
-              </button>
-            </div>
-          </div>
-          <ProcTaintCard objectName={props.objectName} procName={p.name} store={store} />
+        <Show when={showTaint()}>
+          <ContextualPanel title="Taint Paths" onClose={() => setShowTaint(false)}>
+            <ProcTaintCard objectName={props.objectName} procName={p.name} store={store} />
+          </ContextualPanel>
         </Show>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -265,11 +243,6 @@ export function ProcedureDetail(props: { store: Store<AppState, AppAction> }) {
     const r = snap().nav.route;
     return r.view === "procedureDetail" ? r.name : "";
   };
-  const procName = () => {
-    const r = snap().nav.route;
-    return r.view === "procedureDetail" ? r.proc : "";
-  };
-  const procKey = () => `${objectName()}:${procName()}`;
 
   return (
     <>
@@ -292,7 +265,6 @@ export function ProcedureDetail(props: { store: Store<AppState, AppAction> }) {
               p={p}
               store={store}
               objectName={objectName()}
-              procKey={procKey()}
             />
           );
         }}

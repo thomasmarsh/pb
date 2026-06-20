@@ -74,11 +74,7 @@ export function useKeyboardShortcuts(store: Store<AppState, AppAction>): void {
           e.preventDefault();
           const s = snap();
           const route = s.nav.route;
-          if (route.view === "procedureDetail") {
-            const key = `${route.name}:${route.proc}`;
-            const face = s.objects.procFace;
-            store.dispatch({ tag: "objects", action: { tag: "set-proc-face", key, face: face === "source" ? "analysis" : "source", scrollTop: 0 } });
-          } else if (route.view === "objectDetail") {
+          if (route.view === "objectDetail") {
             const face = s.objects.objectFace;
             store.dispatch({ tag: "objects", action: { tag: "set-object-face", name: route.name, face: face === "source" ? "analysis" : "source", scrollTop: 0 } });
           } else if (route.view === "tableDetail") {

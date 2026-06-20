@@ -81,33 +81,6 @@ describe("objects face/scroll state", () => {
   });
 });
 
-// ── Proc face/scroll ──────────────────────────────────────────────────────────
-
-describe("proc face/scroll state", () => {
-  it("set-proc-face stores scroll keyed by object:proc", () => {
-    const ts = createTestStore(objectsReducer, objEnv, initialObjectsState);
-    ts.send({ tag: "set-proc-face", key: "w_payment:f_process", face: "analysis", scrollTop: 60 }, (s) => {
-      s.procFace = "analysis";
-      s.procScrollPos["w_payment:f_process"] = { source: 60, analysis: 0 };
-    });
-  });
-
-  it("set-proc-face second entity does not overwrite first", () => {
-    const ts = createTestStore(objectsReducer, objEnv, initialObjectsState);
-    // Toggle first proc source→analysis at scroll 60.
-    ts.send({ tag: "set-proc-face", key: "w_payment:f_process", face: "analysis", scrollTop: 60 }, (s) => {
-      s.procFace = "analysis";
-      s.procScrollPos["w_payment:f_process"] = { source: 60, analysis: 0 };
-    });
-    // Toggle second proc analysis→source (face is "analysis" from above); first entry unchanged.
-    ts.send({ tag: "set-proc-face", key: "w_admin:f_validate", face: "source", scrollTop: 90 }, (s) => {
-      s.procFace = "source";
-      s.procScrollPos["w_admin:f_validate"] = { source: 0, analysis: 90 };
-      // w_payment:f_process entry is still { source: 60, analysis: 0 }
-    });
-  });
-});
-
 // ── DataWindow face/scroll ────────────────────────────────────────────────────
 
 describe("datawindows face/scroll state", () => {

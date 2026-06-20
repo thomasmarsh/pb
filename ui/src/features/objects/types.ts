@@ -22,8 +22,6 @@ export interface ObjectsState {
   allObjects: ObjectRow[];
   objectFace: Face;
   objectScrollPos: Record<string, ScrollPair>;
-  procFace: Face;
-  procScrollPos: Record<string, ScrollPair>;
   // Procedures list screen
   proceduresList: ProcedureListItem[] | null;
   proceduresListLoading: boolean;

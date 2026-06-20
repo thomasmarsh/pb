@@ -1,4 +1,4 @@
-// tests/objects/ProcedureDetail.test.tsx — Tests for ProcedureDetail FaceToggle structure.
+// tests/objects/ProcedureDetail.test.tsx — Tests for source-first ProcedureDetail.
 
 import { describe, it, expect } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
@@ -27,78 +27,128 @@ const baseProc: ProcedureDetailResponse = {
   sql_statements: [],
 };
 
-function renderProcDetail(
-  proc: ProcedureDetailResponse | { error: string } | null = baseProc,
-  procFace: "source" | "analysis" = "source",
-) {
+function renderProcDetail(proc: ProcedureDetailResponse | { error: string } | null = baseProc) {
   const route = { view: "procedureDetail" as const, name: "w_main", proc: "f_process" };
   const { store, captured } = createTestStore({
-    objects: { ...initialObjectsState, procedureDetail: proc, procFace },
+    objects: { ...initialObjectsState, procedureDetail: proc },
     nav: { route } as any,
   });
   render(() => <ProcedureDetail store={store} />);
   return { store, captured };
 }
 
-describe("ProcedureDetail face/toggle", () => {
-  it("renders Source face active by default", () => {
+describe("ProcedureDetail source-first", () => {
+  it("does not render a FaceToggle", () => {
     renderProcDetail();
-    const active = document.querySelector(".face-toggle-btn.active");
-    expect(active?.textContent).toBe("Source");
+    expect(document.querySelector(".face-toggle")).toBeNull();
   });
 
-  it("renders Analysis face when procFace is analysis", () => {
-    renderProcDetail(baseProc, "analysis");
-    const active = document.querySelector(".face-toggle-btn.active");
-    expect(active?.textContent).toBe("Analysis");
+  it("shows source code directly without a tab bar", () => {
+    renderProcDetail();
+    expect(document.querySelector(".tab-bar")).toBeNull();
+    expect(document.body.textContent).toContain("f_process");
   });
 
-  it("dispatches set-proc-face when Analysis button is clicked", () => {
-    const { captured } = renderProcDetail();
-    const analysisBtn = [...document.querySelectorAll(".face-toggle-btn")]
-      .find((b) => b.textContent === "Analysis")!;
-    fireEvent.click(analysisBtn);
-    const faceActions = captured.filter(
-      (a) => a.tag === "objects" && a.action.tag === "set-proc-face",
-    );
-    expect(faceActions.length).toBeGreaterThanOrEqual(1);
-    expect((faceActions[0] as any).action.face).toBe("analysis");
+  it("renders AnalysisSummaryBar", () => {
+    renderProcDetail();
+    expect(document.querySelector(".analysis-summary-bar")).not.toBeNull();
   });
 
-  it("Analysis face: shows callers as EntityCards", () => {
-    renderProcDetail(baseProc, "analysis");
+  it("shows Callers pill with correct count", () => {
+    renderProcDetail();
+    const bar = document.querySelector(".analysis-summary-bar");
+    expect(bar?.textContent).toContain("Callers (2)");
+  });
+
+  it("shows Callees pill with correct count", () => {
+    renderProcDetail();
+    const bar = document.querySelector(".analysis-summary-bar");
+    expect(bar?.textContent).toContain("Callees (1)");
+  });
+
+  it("shows CC pill when cyclomatic is set", () => {
+    renderProcDetail();
+    const bar = document.querySelector(".analysis-summary-bar");
+    expect(bar?.textContent).toContain("CC: 3");
+  });
+
+  it("does not show SQL pill when sql_statements is empty", () => {
+    renderProcDetail();
+    const bar = document.querySelector(".analysis-summary-bar");
+    expect(bar?.textContent).not.toContain("SQL");
+  });
+
+  it("shows SQL pill when sql_statements is non-empty", () => {
+    renderProcDetail({
+      ...baseProc,
+      sql_statements: [{ line: 1, operation: "SELECT", raw_sql: "SELECT 1", formatted_sql: "SELECT 1", parse_ok: true, tables: [], columns: null, has_into: false, has_cursor: false }],
+    });
+    const bar = document.querySelector(".analysis-summary-bar");
+    expect(bar?.textContent).toContain("SQL (1)");
+  });
+
+  it("callers panel is hidden initially", () => {
+    renderProcDetail();
+    const cards = document.querySelectorAll(".entity-card");
+    expect(cards.length).toBe(0);
+  });
+
+  it("clicking Callers pill opens callers panel with entity cards", () => {
+    renderProcDetail();
+    const pills = [...document.querySelectorAll(".analysis-summary-bar button")];
+    const callersPill = pills.find((b) => b.textContent?.includes("Callers"))!;
+    fireEvent.click(callersPill);
     const cards = document.querySelectorAll(".entity-card");
     const names = [...cards].map((c) => c.textContent ?? "");
     expect(names.some((n) => n.includes("w_login"))).toBe(true);
+    expect(names.some((n) => n.includes("cb_ok_clicked"))).toBe(true);
   });
 
-  it("Analysis face: shows 'No callers' note when callers is empty", () => {
-    renderProcDetail({ ...baseProc, callers: [] }, "analysis");
+  it("clicking Callers pill again closes the panel", () => {
+    renderProcDetail();
+    const pills = () => [...document.querySelectorAll(".analysis-summary-bar button")];
+    const callersPill = () => pills().find((b) => b.textContent?.includes("Callers"))!;
+    fireEvent.click(callersPill());
+    expect(document.querySelectorAll(".entity-card").length).toBeGreaterThan(0);
+    fireEvent.click(callersPill());
+    expect(document.querySelectorAll(".entity-card").length).toBe(0);
+  });
+
+  it("multiple panels can be open simultaneously", () => {
+    renderProcDetail();
+    const pills = [...document.querySelectorAll(".analysis-summary-bar button")];
+    const callersPill = pills.find((b) => b.textContent?.includes("Callers"))!;
+    const calleesPill = pills.find((b) => b.textContent?.includes("Callees"))!;
+    fireEvent.click(callersPill);
+    fireEvent.click(calleesPill);
+    // Both panels should now show entity cards
+    const cards = document.querySelectorAll(".entity-card");
+    expect(cards.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("shows 'No callers' note when callers is empty and panel is open", () => {
+    renderProcDetail({ ...baseProc, callers: [] });
+    const pills = [...document.querySelectorAll(".analysis-summary-bar button")];
+    const callersPill = pills.find((b) => b.textContent?.includes("Callers"))!;
+    fireEvent.click(callersPill);
     expect(document.body.textContent).toMatch(/no callers/i);
   });
 
-  it("Analysis face: shows callees as EntityCards", () => {
-    renderProcDetail({ ...baseProc, callees: ["n_cst_util.of_validate"] }, "analysis");
+  it("callee panel shows callee entity cards when open", () => {
+    renderProcDetail({ ...baseProc, callees: ["n_cst_util.of_validate"] });
+    const pills = [...document.querySelectorAll(".analysis-summary-bar button")];
+    const calleesPill = pills.find((b) => b.textContent?.includes("Callees"))!;
+    fireEvent.click(calleesPill);
     const cards = document.querySelectorAll(".entity-card");
     const names = [...cards].map((c) => c.textContent ?? "");
     expect(names.some((n) => n.includes("n_cst_util.of_validate"))).toBe(true);
   });
 
-  it("Analysis face: shows CFG and Taint Paths cards", () => {
-    renderProcDetail(baseProc, "analysis");
-    expect(document.body.textContent).toContain("Control Flow Graph");
-    expect(document.body.textContent).toContain("Taint Paths");
-  });
-
-  it("Source face: does not show analysis cards", () => {
-    renderProcDetail(baseProc, "source");
-    expect(document.querySelector(".phase-gate-inline")).toBeNull();
-  });
-
-  it("Source face: renders proc metadata (name, type, params)", () => {
+  it("renders proc metadata in header (name, params, return type)", () => {
     renderProcDetail();
     expect(document.body.textContent).toContain("f_process");
     expect(document.body.textContent).toContain("long al_id");
+    expect(document.body.textContent).toContain("boolean");
   });
 
   it("renders error state when procedureDetail has error", () => {
