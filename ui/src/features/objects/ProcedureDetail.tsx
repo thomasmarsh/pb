@@ -172,7 +172,7 @@ function ProcedureDetailContent(props: {
             code={p.source_original!}
             baseLine={p.start_line ?? 1}
             onLineClick={(line) =>
-              store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "sliceView", object: props.objectName, proc: p.name, line, direction: "backward" } } })
+              store.dispatch({ tag: "objects", action: { tag: "go-slice", object: props.objectName, proc: p.name, line, direction: "backward" } })
             }
           />
           <Show when={p.file}>

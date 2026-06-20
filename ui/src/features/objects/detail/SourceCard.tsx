@@ -6,12 +6,14 @@ import type { AppState } from "../../../features/app/state.js";
 import type { AppAction } from "../../../features/app/actions.js";
 import type { ObjectSourceResponse, ProcedureInfo, KnownProcInfo, LocalSymbolInfo } from "../../../types/api.js";
 import { SourceViewer } from "../SourceViewer.js";
+import type { ContextActions } from "../../../components/detail/SourceContextMenu.js";
 
 export function SourceCard(props: {
   store: Store<AppState, AppAction>;
   file: string;
   objectName: string;
   sourceDetail: ObjectSourceResponse | { error: string } | null;
+  contextActions?: ContextActions;
 }) {
   const hasLines = () => {
     const s = props.sourceDetail;
@@ -43,6 +45,7 @@ export function SourceCard(props: {
           knownProcs={(props.sourceDetail as { knownProcs: KnownProcInfo[] }).knownProcs}
           localSymbols={(props.sourceDetail as { localSymbols?: LocalSymbolInfo[] }).localSymbols}
           objectName={props.objectName}
+          contextActions={props.contextActions}
         />
       </Show>
     </div>

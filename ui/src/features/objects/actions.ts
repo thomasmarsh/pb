@@ -26,4 +26,5 @@ export type ObjectsAction =
   | { tag: "procs-list-filter"; q: string }
   | { tag: "procs-list-filter-kind"; kind: string }
   | { tag: "procs-list-sort"; col: "name" | "object" | "cyclomatic" | "caller_count" }
+  | { tag: "go-slice"; object: string; proc: string; line: number; direction: "backward" | "forward" }
   ;

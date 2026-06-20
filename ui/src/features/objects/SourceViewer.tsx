@@ -6,6 +6,8 @@ import type { ProcedureInfo, KnownProcInfo, LocalSymbolInfo } from "../../types/
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
+import { SourceContextMenu } from "../../components/detail/SourceContextMenu.js";
+import type { ContextMenuTarget, ContextActions } from "../../components/detail/SourceContextMenu.js";
 
 const PROC_COLORS: Record<string, string> = {
   function: "proc-function",
@@ -32,6 +34,7 @@ interface SourceViewerProps {
   objectName: string;
   selectedProcName?: string;
   onProcBarClick?: (proc: ProcedureInfo) => void;
+  contextActions?: ContextActions;
 }
 
 function linkIdentifiers(
@@ -70,6 +73,7 @@ function linkIdentifiers(
 export function SourceViewer(props: { store: Store<AppState, AppAction> } & SourceViewerProps) {
   const store = props.store;
   const [tooltip, setTooltip] = createSignal<{ html: string; x: number; y: number } | null>(null);
+  const [menuTarget, setMenuTarget] = createSignal<ContextMenuTarget | null>(null);
 
   // Build lookup maps
   const objectMap = createMemo(() => {
@@ -247,6 +251,38 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
     }
   }
 
+  function handleContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    const target = e.target as HTMLElement;
+    const link = target.closest("[data-link-type]") as HTMLElement | null;
+    if (!link) {
+      setMenuTarget(null);
+      return;
+    }
+    const linkType = (link.dataset.linkType ?? "var") as ContextMenuTarget["linkType"];
+    const linkName = link.dataset.linkName;
+    if (!linkName) return;
+
+    const lower = linkName.toLowerCase();
+    const proc = linkType === "procedure" ? procMap().get(lower) : undefined;
+    const counts = linkType === "procedure" ? procCountMap().get(lower) : undefined;
+
+    const el = e.currentTarget as HTMLElement;
+    const rect = el.getBoundingClientRect();
+    const sourceLine = Math.max(1, 1 + Math.floor((e.clientY - rect.top + el.scrollTop) / 20.8));
+
+    setMenuTarget({
+      linkType,
+      linkName,
+      x: e.clientX,
+      y: e.clientY,
+      sourceLine,
+      callerCount: counts?.caller_count,
+      calleeCount: counts?.callee_count,
+      procObject: proc?.object,
+    });
+  }
+
   return (
     <div class="source-viewer">
       <div class="source-gutter">
@@ -274,6 +310,7 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
         onMouseOver={handleMouseOver}
         onMouseOut={handleMouseOut}
         onClick={handleClick}
+        onContextMenu={handleContextMenu}
       >
         {/* Selected proc range background — absolutely positioned, never inside <pre> */}
         <Show when={selectedRange()}>
@@ -341,6 +378,14 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
           innerHTML={tooltip()!.html}
         />
       </Show>
+
+      <SourceContextMenu
+        target={menuTarget()}
+        store={store}
+        objectName={props.objectName}
+        contextActions={props.contextActions}
+        onClose={() => setMenuTarget(null)}
+      />
     </div>
   );
 }

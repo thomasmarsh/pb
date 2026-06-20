@@ -146,6 +146,9 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
       draft.proceduresListOrder = "asc";
     }
     return null;
+  case "go-slice":
+    env.navigate({ tag: "navigate", route: { view: "sliceView", object: action.object, proc: action.proc, line: action.line, direction: action.direction } });
+    return null;
   default:
     return null;
   }
