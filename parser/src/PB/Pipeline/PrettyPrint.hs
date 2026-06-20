@@ -114,7 +114,7 @@ prettyExpr = \case
   ExBool b    -> if b then "true" else "false"
   ExInt  t    -> t
   ExReal t    -> t
-  ExStr  t    -> t
+  ExStr  t    -> "\"" <> t <> "\""
   ExDate t    -> t
   ExTime t    -> t
   ExNull      -> "null"

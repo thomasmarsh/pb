@@ -116,7 +116,7 @@ export class PBInterpreter {
           default:        return lit["contents"];
         }
       }
-      case "ExStr":   return String(e["contents"]).replace(/^"|"$/g, "");
+      case "ExStr":   return String(e["contents"]);
       case "ExInt":   return parseInt(e["contents"] as string, 10);
       case "ExLvalue": {
         const segs = e["segments"] as { name: string }[] | undefined;

@@ -348,8 +348,8 @@ parseSingleToken t = case tkKind t of
   TkNull        -> ExNull
   TkIntLiteral  -> ExInt  (tkText t)
   TkFloatLiteral-> ExReal (tkText t)
-  TkStringDouble-> ExStr  (tkText t)
-  TkStringSingle-> ExStr  (tkText t)
+  TkStringDouble-> ExStr  (T.dropEnd 1 (T.drop 1 (tkText t)))
+  TkStringSingle-> ExStr  (T.dropEnd 1 (T.drop 1 (tkText t)))
   TkDateLiteral -> ExDate (tkText t)
   TkTimeLiteral -> ExTime (tkText t)
   TkEnumLiteral -> ExEnum (T.dropEnd 1 (tkText t))

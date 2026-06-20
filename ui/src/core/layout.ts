@@ -1,5 +1,4 @@
 // layout.ts — Extract window/control geometry from parsed typeBlocks AST.
-// TD-2: ExStr contents include surrounding quotes; we strip them here.
 // TD-3: Window block is found by checking known base ancestors, not by full chain resolution.
 
 export interface LayoutControl {
@@ -74,13 +73,8 @@ function extractProperties(body: unknown[]): Record<string, string> {
   for (const entry of body as { node: { tag: string; name: string; init: { contents: string } | null } }[]) {
     const node = entry?.node;
     if (node?.tag !== "BsLocalVar" || !node.name || !node.init) continue;
-    props[node.name] = stripQuotes(node.init.contents);
+    props[node.name] = node.init.contents;
   }
   return props;
 }
 
-// TD-2: ExStr values include surrounding double-quotes in the AST; strip them.
-function stripQuotes(value: string): string {
-  if (value.startsWith('"') && value.endsWith('"')) return value.slice(1, -1);
-  return value;
-}

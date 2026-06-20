@@ -32,7 +32,7 @@ tests = testGroup "PrettyPrint"
       , testCase "bool false" $ prettyExpr (ExBool False)   @?= "false"
       , testCase "int"        $ prettyExpr (ExInt "42")     @?= "42"
       , testCase "real"       $ prettyExpr (ExReal "3.14")  @?= "3.14"
-      , testCase "str"        $ prettyExpr (ExStr "\"hi\"") @?= "\"hi\""
+      , testCase "str"        $ prettyExpr (ExStr "hi") @?= "\"hi\""
       , testCase "null"       $ prettyExpr ExNull            @?= "null"
       , testCase "enum"       $ prettyExpr (ExEnum "fileexists") @?= "fileexists!"
       ]
@@ -89,7 +89,7 @@ tests = testGroup "PrettyPrint"
     , testCase "pb call"        $ prettyStmt (BsPbCall (PbCall "w_main" "ue_postopen"))
                                   @?= "call w_main :: ue_postopen"
     , testCase "destroy"        $ prettyStmt (BsDestroy (lv "lo_obj"))             @?= "destroy lo_obj"
-    , testCase "assign expr"    $ prettyStmt (BsAssignExpr (ExLvalue (lvDot ["this","tag"])) (ExStr "\"foo\""))
+    , testCase "assign expr"    $ prettyStmt (BsAssignExpr (ExLvalue (lvDot ["this","tag"])) (ExStr "foo"))
                                   @?= "this.tag = \"foo\""
     , testCase "raw"            $ prettyStmt (BsRaw "SELECT 1")                    @?= "SELECT 1"
     , testCase "raw strips"     $ prettyStmt (BsRaw "  SELECT 1  ")                @?= "SELECT 1"

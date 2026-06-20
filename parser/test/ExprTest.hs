@@ -41,7 +41,7 @@ tests = testGroup "Expr"
           parseExpr [mkTok TkFloatLiteral "3.14"] @?= ExReal "3.14"
 
       , testCase "double-quoted string → ExStr" $
-          parseExpr [mkTok TkStringDouble "\"hello\""] @?= ExStr "\"hello\""
+          parseExpr [mkTok TkStringDouble "\"hello\""] @?= ExStr "hello"
 
       , testCase "date literal → ExDate" $
           parseExpr [mkTok TkDateLiteral "2024-01-01"] @?= ExDate "2024-01-01"

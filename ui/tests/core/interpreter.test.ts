@@ -10,7 +10,7 @@ function makeAssignNode(varName: string, value: string) {
     node: {
       tag: "BsAssign",
       lhs: { segments: [{ name: varName, subscript: null }] },
-      rhs: { tag: "ExStr", contents: `"${value}"` },
+      rhs: { tag: "ExStr", contents: value },
     },
   };
 }

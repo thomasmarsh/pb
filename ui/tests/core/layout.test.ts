@@ -10,9 +10,9 @@ const ZPPERIOD_TYPE_BLOCKS = [
     body: [
       { line: 9,  node: { tag: "BsLocalVar", name: "width",        mods: [], type: { tag: "PtPrimitive", contents: "integer" }, init: { tag: "ExInt", contents: "2245" } } },
       { line: 10, node: { tag: "BsLocalVar", name: "height",       mods: [], type: { tag: "PtPrimitive", contents: "integer" }, init: { tag: "ExInt", contents: "1868" } } },
-      { line: 11, node: { tag: "BsLocalVar", name: "title",        mods: [], type: { tag: "PtPrimitive", contents: "string"  }, init: { tag: "ExStr", contents: "\"title\"" } } },
-      { line: 12, node: { tag: "BsLocalVar", name: "icon",         mods: [], type: { tag: "PtPrimitive", contents: "string"  }, init: { tag: "ExStr", contents: "\"res\\pinakes.ico\"" } } },
-      { line: 13, node: { tag: "BsLocalVar", name: "is_tablename", mods: [], type: { tag: "PtPrimitive", contents: "string"  }, init: { tag: "ExStr", contents: "\"misth_zpperiod\"" } } },
+      { line: 11, node: { tag: "BsLocalVar", name: "title",        mods: [], type: { tag: "PtPrimitive", contents: "string"  }, init: { tag: "ExStr", contents: "title" } } },
+      { line: 12, node: { tag: "BsLocalVar", name: "icon",         mods: [], type: { tag: "PtPrimitive", contents: "string"  }, init: { tag: "ExStr", contents: "res\\pinakes.ico" } } },
+      { line: 13, node: { tag: "BsLocalVar", name: "is_tablename", mods: [], type: { tag: "PtPrimitive", contents: "string"  }, init: { tag: "ExStr", contents: "misth_zpperiod" } } },
     ],
   },
   {
@@ -20,7 +20,7 @@ const ZPPERIOD_TYPE_BLOCKS = [
     body: [
       { line: 102, node: { tag: "BsLocalVar", name: "width",      mods: [], type: { tag: "PtPrimitive", contents: "integer" }, init: { tag: "ExInt", contents: "2213" } } },
       { line: 103, node: { tag: "BsLocalVar", name: "height",     mods: [], type: { tag: "PtPrimitive", contents: "integer" }, init: { tag: "ExInt", contents: "1668" } } },
-      { line: 104, node: { tag: "BsLocalVar", name: "dataobject", mods: [], type: { tag: "PtPrimitive", contents: "string"  }, init: { tag: "ExStr", contents: "\"dw_misth_zpperiod_list\"" } } },
+      { line: 104, node: { tag: "BsLocalVar", name: "dataobject", mods: [], type: { tag: "PtPrimitive", contents: "string"  }, init: { tag: "ExStr", contents: "dw_misth_zpperiod_list" } } },
     ],
   },
 ];
