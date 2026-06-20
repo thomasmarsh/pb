@@ -16,6 +16,7 @@ node_modules
 cli/pb_cli/explorer/static/dist/
 ui/src/types/ast.generated.ts
 cli/pb_cli/core/ast_generated.py
+example/openpay-0.1.1b-extract/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
