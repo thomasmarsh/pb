@@ -52,7 +52,7 @@ describe("ProcNode", () => {
       </ExploreStoreContext.Provider>
     ));
     fireEvent.click(screen.getByText("of_init"));
-    const actions = captured.filter(a => a.tag === "explore" && a.action.tag === "proc-select");
+    const actions = captured.filter(a => a.tag === "objects" && a.action.tag === "select-proc");
     expect(actions.length).toBe(1);
   });
 });
@@ -93,7 +93,7 @@ describe("ObjectNode", () => {
       </ExploreStoreContext.Provider>
     ));
     fireEvent.click(screen.getByText("w_main"));
-    const actions = captured.filter(a => a.tag === "explore" && a.action.tag === "obj-select");
+    const actions = captured.filter(a => a.tag === "objects" && a.action.tag === "select");
     expect(actions.length).toBe(1);
   });
 
