@@ -19,8 +19,8 @@ def run(repo: Path | None = None, no_build: bool = False) -> None:
         binary = env.build.find_binary(repo_path)
 
     corpus_srcs = [
-        ("Appeon", repo_path / "example" / "PowerBuilder-Example" / "export"),
-        ("OpenPay", repo_path / "example" / "openpay-src"),
+        ("Appeon", repo_path / "example" / "PowerBuilder-Example-extract"),
+        ("OpenPay", repo_path / "example" / "openpay-0.1.1b-extract"),
     ]
 
     total = 0

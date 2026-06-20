@@ -25,7 +25,7 @@ pb.duckdb
 
 # Code samples and extracts
 example/PowerBuilder-Example/
-example/openpay-src/
+example/PowerBuilder-Example-extract/
 example/openpay-0.1.1b-extract/
 
 # Untracked docs

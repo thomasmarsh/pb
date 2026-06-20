@@ -137,8 +137,8 @@ def test_corpus_routes_to_build_runner(monkeypatch, tmp_path):
     monkeypatch.setattr("pb_cli.shell.commands.corpus.env.build.build_runner", fake_build_runner)
 
     # Create corpus source dirs so run() doesn't skip
-    (tmp_path / "example" / "PowerBuilder-Example" / "export").mkdir(parents=True)
-    (tmp_path / "example" / "openpay-src").mkdir(parents=True)
+    (tmp_path / "example" / "PowerBuilder-Example-extract").mkdir(parents=True)
+    (tmp_path / "example" / "openpay-0.1.1b-extract").mkdir(parents=True)
 
     with patch("pb_cli.shell.commands.corpus.subprocess.run") as mock_run:
         mock_run.return_value.returncode = 1
@@ -165,8 +165,8 @@ def test_corpus_routes_to_find_binary(monkeypatch, tmp_path):
     monkeypatch.setattr("pb_cli.shell.commands.corpus.env.build.find_repo", fake_find_repo)
     monkeypatch.setattr("pb_cli.shell.commands.corpus.env.build.find_binary", fake_find_binary)
 
-    (tmp_path / "example" / "PowerBuilder-Example" / "export").mkdir(parents=True)
-    (tmp_path / "example" / "openpay-src").mkdir(parents=True)
+    (tmp_path / "example" / "PowerBuilder-Example-extract").mkdir(parents=True)
+    (tmp_path / "example" / "openpay-0.1.1b-extract").mkdir(parents=True)
 
     with patch("pb_cli.shell.commands.corpus.subprocess.run") as mock_run:
         mock_run.return_value.returncode = 1
@@ -195,8 +195,8 @@ def test_debt_routes_to_build_runner(monkeypatch, tmp_path):
     monkeypatch.setattr("pb_cli.shell.commands.debt.env.build.find_repo", fake_find_repo)
     monkeypatch.setattr("pb_cli.shell.commands.debt.env.build.build_runner", fake_build_runner)
 
-    (tmp_path / "example" / "PowerBuilder-Example" / "export").mkdir(parents=True)
-    (tmp_path / "example" / "openpay-src").mkdir(parents=True)
+    (tmp_path / "example" / "PowerBuilder-Example-extract").mkdir(parents=True)
+    (tmp_path / "example" / "openpay-0.1.1b-extract").mkdir(parents=True)
 
     with patch("pb_cli.shell.commands.debt.subprocess.run") as mock_run:
         mock_run.return_value.returncode = 1
@@ -222,8 +222,8 @@ def test_debt_routes_to_find_binary(monkeypatch, tmp_path):
     monkeypatch.setattr("pb_cli.shell.commands.debt.env.build.find_repo", fake_find_repo)
     monkeypatch.setattr("pb_cli.shell.commands.debt.env.build.find_binary", fake_find_binary)
 
-    (tmp_path / "example" / "PowerBuilder-Example" / "export").mkdir(parents=True)
-    (tmp_path / "example" / "openpay-src").mkdir(parents=True)
+    (tmp_path / "example" / "PowerBuilder-Example-extract").mkdir(parents=True)
+    (tmp_path / "example" / "openpay-0.1.1b-extract").mkdir(parents=True)
 
     with patch("pb_cli.shell.commands.debt.subprocess.run") as mock_run:
         mock_run.return_value.returncode = 1

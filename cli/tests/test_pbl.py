@@ -1,7 +1,7 @@
 """Tests for pb_cli.pbl — .pbl binary extraction.
 
 Unit tests use synthetic in-memory fixtures; the integration test against the
-openpay corpus is skipped when example/openpay/ contains no .pbl files.
+openpay corpus is skipped when example/openpay-0.1.1b/ contains no .pbl files.
 """
 
 from __future__ import annotations
@@ -443,7 +443,7 @@ def test_resolve_extracting_progress_total(tmp_path):
 
 # ── openpay corpus integration test ──────────────────────────────────────────
 
-_OPENPAY_DIR = find_repo() / "example" / "openpay"
+_OPENPAY_DIR = find_repo() / "example" / "openpay-0.1.1b"
 _OPENPAY_PBLS = (
     sorted(p for p in _OPENPAY_DIR.iterdir() if p.is_file() and p.suffix.lower() == ".pbl")
     if _OPENPAY_DIR.is_dir()
@@ -451,7 +451,7 @@ _OPENPAY_PBLS = (
 )
 
 
-@pytest.mark.skipif(not _OPENPAY_PBLS, reason="no .pbl files in example/openpay/")
+@pytest.mark.skipif(not _OPENPAY_PBLS, reason="no .pbl files in example/openpay-0.1.1b/")
 def test_openpay_corpus_extracts_without_error(tmp_path):
     """All openpay .pbl files extract cleanly; total source files match corpus baseline."""
     total = 0

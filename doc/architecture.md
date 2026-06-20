@@ -71,7 +71,7 @@ pb/
 │   ├── spec.md               Parser specification
 │   └── pbl-spec.txt          PBL file format spec
 ├── queries/                  SQL files served as `pb query <name>` commands
-└── example/                  Corpus data (openpay, openpay-src)
+└── example/                  Corpus data (openpay-0.1.1b, PowerBuilder-Example)
 ```
 
 ---
@@ -397,7 +397,7 @@ cd parser && cabal build && cabal test
 cd cli && uv sync
 
 # 3. Run pb index to populate pb.duckdb
-./pb index example/openpay
+./pb index example/openpay-0.1.1b-extract
 
 # 4. Start the explorer (auto-builds TS on first run)
 ./pb explore

@@ -47,7 +47,7 @@ withCorpusFile path check = do
 tests :: TestTree
 tests = testGroup "Corpus.Golden"
   [ testCase "f_get_profile.srf" $
-      withCorpusFile "example/PowerBuilder-Example/export/pbexamfe.pbl/f_get_profile.srf" $ \v -> do
+      withCorpusFile "example/PowerBuilder-Example-extract/pbexamfe.pbl/f_get_profile.srf" $ \v -> do
         arrayLen (lookupObj "headers"    v)                              @?= 2
         lookupObj "forward"              v                               @?= Null
         arrayLen (lookupObj "decls" (lookupObj "prototypes" v))          @?= 1
@@ -62,7 +62,7 @@ tests = testGroup "Corpus.Golden"
         arrayLen (lookupObj "onBlocks"   v)                              @?= 0
 
   , testCase "u_st.sru" $
-      withCorpusFile "example/PowerBuilder-Example/export/pbexamuo.pbl/u_st.sru" $ \v -> do
+      withCorpusFile "example/PowerBuilder-Example-extract/pbexamuo.pbl/u_st.sru" $ \v -> do
         arrayLen (lookupObj "headers"    v)                              @?= 2
         let fwdTypes = lookupObj "types" (lookupObj "forward" v)
         arrayLen fwdTypes                                                @?= 1
@@ -78,7 +78,7 @@ tests = testGroup "Corpus.Golden"
         arrayLen (lookupObj "onBlocks"   v)                              @?= 0
 
   , testCase "w_nested_criteria.srw" $
-      withCorpusFile "example/PowerBuilder-Example/export/pbexamw2.pbl/w_nested_criteria.srw" $ \v -> do
+      withCorpusFile "example/PowerBuilder-Example-extract/pbexamw2.pbl/w_nested_criteria.srw" $ \v -> do
         arrayLen (lookupObj "headers"    v)                              @?= 2
         arrayLen (lookupObj "types" (lookupObj "forward" v))             @?= 1
         lookupObj "prototypes" v                                         @?= Null
@@ -88,7 +88,7 @@ tests = testGroup "Corpus.Golden"
         arrayLen (lookupObj "functions"       v)                         @?= 0
 
   , testCase "m_lv_rmb_prod.srm" $
-      withCorpusFile "example/PowerBuilder-Example/export/pbexammn.pbl/m_lv_rmb_prod.srm" $ \v -> do
+      withCorpusFile "example/PowerBuilder-Example-extract/pbexammn.pbl/m_lv_rmb_prod.srm" $ \v -> do
         arrayLen (lookupObj "headers"    v)                              @?= 2
         arrayLen (lookupObj "types" (lookupObj "forward" v))             @?= 1
         arrayLen (lookupObj "typeBlocks"      v)                         @?= 1

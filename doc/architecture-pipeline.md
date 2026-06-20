@@ -219,7 +219,7 @@ Every `DwControl` node carries:
 ```json
 {
   "meta": {
-    "file": "example/openpay/dw_misth_kratapod_list.srd",
+    "file": "example/openpay-0.1.1b-extract/dw_misth_kratapod_list.srd",
     "dw": "dw_misth_kratapod_list",
     "sourceLine": 88
   }

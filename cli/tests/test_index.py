@@ -443,13 +443,13 @@ def test_all_sql_tables_view(db_conn):
 
 
 def test_sql_statements_populated_from_real_corpus(db_conn):
-    """End-to-end regression test: openpay-src has real body-level SQL (selects,
+    """End-to-end regression test: openpay-0.1.1b-extract has real body-level SQL (selects,
     inserts, cursor ops) wrapped inside if/for/do blocks. This must come from the
     real pb-runner binary's output, not a hand-written fixture — a previous bug
     where ingestion code assumed the wrong JSON tag/wrapper shape passed every
     fixture-based unit test while silently extracting zero rows against real output."""
     count = db_conn.execute("SELECT count(*) FROM sql_statements").fetchone()[0]
-    assert count > 0, "openpay-src has real body-level SQL; sql_statements must not be empty"
+    assert count > 0, "openpay-0.1.1b-extract has real body-level SQL; sql_statements must not be empty"
 
     ps_tables = {
         r[0]

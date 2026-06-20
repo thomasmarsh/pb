@@ -73,7 +73,7 @@ No change is proposed without a prior read of all relevant modules. Locate calle
 
 # sample 5 error messages from a temporary run:
 OUT=$(mktemp -d)
-cabal run --project-dir parser pb-runner -v0 -- -i example/openpay -o "$OUT" 2>/dev/null
+cabal run --project-dir parser pb-runner -v0 -- -i example/openpay-0.1.1b-extract -o "$OUT" 2>/dev/null
 python3 -c "
 import json, os, glob
 for f in list(glob.glob('$OUT/**/*.json', recursive=True))[:5]:

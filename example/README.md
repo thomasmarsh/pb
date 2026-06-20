@@ -4,10 +4,10 @@ Two real PowerBuilder projects used for parser development and regression testin
 
 ## Corpora at a glance
 
-| Corpus  | Root                           | Files | Encoding     | Notes                       |
-| ------- | ------------------------------ | ----- | ------------ | --------------------------- |
-| OpenPay | `openpay/`                     | 396   | Windows-1253 | Real Greek payroll app — GPL v2.0, [sourceforge.net/projects/openpay](https://sourceforge.net/projects/openpay/) |
-| Appeon  | `PowerBuilder-Example/export/` | 381   | 7-bit ASCII  | Official Appeon example app |
+| Corpus  | Root                                | Files | Encoding     | Notes                       |
+| ------- | ----------------------------------- | ----- | ------------ | --------------------------- |
+| OpenPay | `openpay-0.1.1b-extract/`          | 396   | Windows-1253 | Real Greek payroll app — GPL v2.0, [sourceforge.net/projects/openpay](https://sourceforge.net/projects/openpay/) |
+| Appeon  | `PowerBuilder-Example-extract/`     | 381   | 7-bit ASCII  | Official Appeon example app |
 
 **Encoding:** All Appeon files are safe to read as UTF-8 or ASCII. OpenPay files are
 Windows-1253; bytes above `0x7F` appear in comments, string literals, and object
@@ -61,9 +61,9 @@ Non-DataWindow, non-skip total: **515** files to sweep with `pb-corpus`.
 
 ## Appeon library map
 
-The Appeon corpus is organised under `PowerBuilder-Example/export/` into one directory
-per compiled library (`.pbl`). Binary `.pbl` files in the root are not readable; always
-use the `.pbl/` subdirectory under `export/`.
+The Appeon corpus is organised under `PowerBuilder-Example-extract/` into one directory
+per compiled library (`.pbl`). Binary `.pbl` files are in the sibling
+`PowerBuilder-Example/` directory.
 
 | Directory       | Files | Types                   | Contents                                         |
 | --------------- | ----- | ----------------------- | ------------------------------------------------ |
@@ -84,7 +84,7 @@ use the `.pbl/` subdirectory under `export/`.
 
 ## OpenPay layout
 
-`openpay/` is a flat directory. Naming conventions:
+`openpay-0.1.1b-extract/` is a flat directory. Naming conventions:
 
 | Prefix                   | Meaning                     |
 | ------------------------ | --------------------------- |
@@ -108,44 +108,44 @@ preferred for parser work because they are ASCII and have no encoding ambiguity.
 
 | Construct                             | Good example file(s)                                                                           |
 | ------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Minimal global function (1 line body) | `PowerBuilder-Example/export/pbexamfe.pbl/f_get_profile.srf`                                   |
-| Global function, integer return       | `PowerBuilder-Example/export/pbexamfe.pbl/f_getversion.srf`                                    |
-| `forward prototypes` block            | `PowerBuilder-Example/export/pbexamfe.pbl/f_get_profile.srf`                                   |
-| `type variables` block                | `PowerBuilder-Example/export/pbexammn.pbl/m_menu_functions_main.srm`                           |
-| `global variables` block              | `openpay/openpay.sra`                                                                          |
-| Application object (`.sra`)           | `openpay/openpay.sra` — global transactions, global variables, app-level UOs                   |
-| Structure (`.srs`)                    | `PowerBuilder-Example/export/pbexamuo.pbl/s_string_withcount.srs` (5 lines, minimal)           |
-| External/distributed object (`.srx`)  | `PowerBuilder-Example/export/pbexamuo.pbl/uo_sales_order.srx`                                  |
-| `on` blocks only                      | `PowerBuilder-Example/export/pbexammn.pbl/m_menu_functions_main.srm`                           |
-| `on` + `event` blocks                 | `PowerBuilder-Example/export/pbexammn.pbl/m_rte.srm`                                           |
-| `on … end on` (named: `on w.create`)  | `PowerBuilder-Example/export/pbexamw1.pbl/w_dynsql_frame.srw`                                  |
-| External function declarations        | `PowerBuilder-Example/export/pbexamw1.pbl/w_dir_tree.srw` · `pbexamw3.pbl/w_sdk_functions.srw` |
-| Window with MDI frame                 | `PowerBuilder-Example/export/pbexamw1.pbl/w_dynsql_frame.srw`                                  |
+| Minimal global function (1 line body) | `PowerBuilder-Example-extract/pbexamfe.pbl/f_get_profile.srf`                                  |
+| Global function, integer return       | `PowerBuilder-Example-extract/pbexamfe.pbl/f_getversion.srf`                                   |
+| `forward prototypes` block            | `PowerBuilder-Example-extract/pbexamfe.pbl/f_get_profile.srf`                                  |
+| `type variables` block                | `PowerBuilder-Example-extract/pbexammn.pbl/m_menu_functions_main.srm`                          |
+| `global variables` block              | `openpay-0.1.1b-extract/openpay.pbl/openpay.sra`                                              |
+| Application object (`.sra`)           | `openpay-0.1.1b-extract/openpay.pbl/openpay.sra` — global transactions, global variables, app-level UOs |
+| Structure (`.srs`)                    | `PowerBuilder-Example-extract/pbexamuo.pbl/s_string_withcount.srs` (5 lines, minimal)          |
+| External/distributed object (`.srx`)  | `PowerBuilder-Example-extract/pbexamuo.pbl/uo_sales_order.srx`                                 |
+| `on` blocks only                      | `PowerBuilder-Example-extract/pbexammn.pbl/m_menu_functions_main.srm`                          |
+| `on` + `event` blocks                 | `PowerBuilder-Example-extract/pbexammn.pbl/m_rte.srm`                                          |
+| `on … end on` (named: `on w.create`)  | `PowerBuilder-Example-extract/pbexamw1.pbl/w_dynsql_frame.srw`                                 |
+| External function declarations        | `PowerBuilder-Example-extract/pbexamw1.pbl/w_dir_tree.srw` · `pbexamw3.pbl/w_sdk_functions.srw` |
+| Window with MDI frame                 | `PowerBuilder-Example-extract/pbexamw1.pbl/w_dynsql_frame.srw`                                 |
 
 ### Control-flow body constructs
 
 | Construct                                                  | Good example file(s)                                                                            |
 | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `if … end if`                                              | `PowerBuilder-Example/export/pbexamfn.pbl/f_boolean_to_char.srf`                                |
-| `choose case … end choose`                                 | `PowerBuilder-Example/export/pbexamw1.pbl/w_dw_rows.srw` · `openpay/w_form.srw`                 |
-| `for … next`                                               | `PowerBuilder-Example/export/pbexamw1.pbl/w_dde_client.srw` · `openpay/w_filter.srw`            |
-| `do … loop`                                                | `openpay/fn_parse_stath.srf` (line 25) · `PowerBuilder-Example/export/pbexamuo.pbl/u_tower.sru` |
-| Embedded dynamic SQL (`DECLARE`/`PREPARE`/`FETCH`/`CLOSE`) | `PowerBuilder-Example/export/pbexamfn.pbl/f_populate_ddlb_from_db.srf`                          |
-| Dynamic SQL format 1–4                                     | `PowerBuilder-Example/export/pbexamw1.pbl/w_dynsql_format{1,2,3,4}.srw`                         |
-| Embedded static SQL (`SELECT … INTO`)                      | `openpay/w_misth_zpkrat_form.srw` · `openpay/fn_param_address.srf`                              |
+| `if … end if`                                              | `PowerBuilder-Example-extract/pbexamfn.pbl/f_boolean_to_char.srf`                               |
+| `choose case … end choose`                                 | `PowerBuilder-Example-extract/pbexamw1.pbl/w_dw_rows.srw` · `openpay-0.1.1b-extract/afxlib.pbl/w_form.srw` |
+| `for … next`                                               | `PowerBuilder-Example-extract/pbexamw1.pbl/w_dde_client.srw` · `openpay-0.1.1b-extract/afxlib.pbl/w_filter.srw` |
+| `do … loop`                                                | `openpay-0.1.1b-extract/parse.pbl/fn_parse_stath.srf` (line 25) · `PowerBuilder-Example-extract/pbexamuo.pbl/u_tower.sru` |
+| Embedded dynamic SQL (`DECLARE`/`PREPARE`/`FETCH`/`CLOSE`) | `PowerBuilder-Example-extract/pbexamfn.pbl/f_populate_ddlb_from_db.srf`                         |
+| Dynamic SQL format 1–4                                     | `PowerBuilder-Example-extract/pbexamw1.pbl/w_dynsql_format{1,2,3,4}.srw`                        |
+| Embedded static SQL (`SELECT … INTO`)                      | `openpay-0.1.1b-extract/pinakes.pbl/w_misth_zpkrat_form.srw` · `openpay-0.1.1b-extract/xrisi.pbl/fn_param_address.srf` |
 
 ### DataWindow constructs
 
 | Pattern                             | Good example file(s)                                                         |
 | ----------------------------------- | ---------------------------------------------------------------------------- |
-| Minimal DataWindow (few controls)   | `openpay/dw_dates.srd`                                                       |
-| PBSELECT query DSL in `retrieve=`   | `openpay/dw_misth_ypal_list.srd`                                             |
-| Plain SQL `retrieve=`               | `PowerBuilder-Example/export/pbexamd1.pbl/d_dept.srd`                        |
-| Nested sub-report (`report(…)`)     | `PowerBuilder-Example/export/pbexamor.pbl/d_example_report_detail.srd`       |
-| `compute(…)` controls               | `openpay/prn_ypal_total_dates.srd`                                           |
-| Drop-down DataWindow (`dddw.name=`) | `PowerBuilder-Example/export/pbexamd1.pbl/d_dddw_cust.srd`                   |
-| `graph(…)` / graphing DataWindow    | `PowerBuilder-Example/export/pbexamd1.pbl/d_dept_data_for_graph.srd`         |
-| Pipeline object (`.srp` DSL)        | `PowerBuilder-Example/export/pbexamsa.pbl/p_create_full_sales_orders_sp.srp` |
+| Minimal DataWindow (few controls)   | `openpay-0.1.1b-extract/afxlib.pbl/dw_dates.srd`                            |
+| PBSELECT query DSL in `retrieve=`   | `openpay-0.1.1b-extract/ypal.pbl/dw_misth_ypal_list.srd`                    |
+| Plain SQL `retrieve=`               | `PowerBuilder-Example-extract/pbexamd1.pbl/d_dept.srd`                       |
+| Nested sub-report (`report(…)`)     | `PowerBuilder-Example-extract/pbexamor.pbl/d_example_report_detail.srd`      |
+| `compute(…)` controls               | `openpay-0.1.1b-extract/print.pbl/prn_ypal_total_dates.srd`                  |
+| Drop-down DataWindow (`dddw.name=`) | `PowerBuilder-Example-extract/pbexamd1.pbl/d_dddw_cust.srd`                  |
+| `graph(…)` / graphing DataWindow    | `PowerBuilder-Example-extract/pbexamd1.pbl/d_dept_data_for_graph.srd`        |
+| Pipeline object (`.srp` DSL)        | `PowerBuilder-Example-extract/pbexamsa.pbl/p_create_full_sales_orders_sp.srp` |
 
 ---
 
@@ -165,7 +165,7 @@ no encoding issues.
 | `pbexamuo.pbl/s_string_withcount.srs`    | 5     | Minimal structure                      |
 | `pbexammn.pbl/m_menu_functions_main.srm` | ~40   | `on` blocks, `type variables`          |
 
-All paths above are relative to `PowerBuilder-Example/export/`.
+All paths above are relative to `PowerBuilder-Example-extract/`.
 
 ---
 
@@ -174,7 +174,7 @@ All paths above are relative to `PowerBuilder-Example/export/`.
 When a component name is mentioned without a path:
 
 ```bash
-rg -rl "component_name" example/openpay/ example/PowerBuilder-Example/export/
+rg -rl "component_name" example/openpay-0.1.1b-extract/ example/PowerBuilder-Example-extract/
 ```
 
 For structural pattern searches (e.g., find all files with `choose case`):

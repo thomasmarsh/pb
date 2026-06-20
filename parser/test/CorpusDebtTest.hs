@@ -34,8 +34,8 @@ tagOf v = case lk "tag" v of { String t -> t; _ -> "" }
 loadCorpus :: IO [Value]
 loadCorpus = do
     paths <- fmap concat $ mapM walkPsFiles
-        [ "example/PowerBuilder-Example/export"
-        , "example/openpay-src"
+        [ "example/PowerBuilder-Example-extract"
+        , "example/openpay-0.1.1b-extract"
         ]
     results <- mapM (\p -> do
         src <- readFile p
@@ -105,8 +105,8 @@ tests = testGroup "Corpus.Debt"
         assertBool ("BsRaw 'other' total = " <> show total <> ", expected 0") (total == 0)
     , testCase "DW files not stub" $ do
         paths <- fmap concat $ mapM walkDwFiles
-            [ "example/PowerBuilder-Example/export"
-            , "example/openpay-src" ]
+            [ "example/PowerBuilder-Example-extract"
+            , "example/openpay-0.1.1b-extract" ]
         results <- mapM (\p -> do
             src <- readFile p
             pure $ runFile p src
@@ -118,8 +118,8 @@ tests = testGroup "Corpus.Debt"
                    (stubCount == 0)
     , testCase "PBSELECT: zero parse failures" $ do
         paths <- fmap concat $ mapM walkDwFiles
-            [ "example/PowerBuilder-Example/export"
-            , "example/openpay-src" ]
+            [ "example/PowerBuilder-Example-extract"
+            , "example/openpay-0.1.1b-extract" ]
         results <- mapM (\p -> do
             src <- readFile p
             pure $ runFile p src
@@ -133,8 +133,8 @@ tests = testGroup "Corpus.Debt"
                    (failCount == 0)
     , testCase "DW table-block parsed" $ do
         paths <- fmap concat $ mapM walkDwFiles
-            [ "example/PowerBuilder-Example/export"
-            , "example/openpay-src" ]
+            [ "example/PowerBuilder-Example-extract"
+            , "example/openpay-0.1.1b-extract" ]
         triples <- mapM (\p -> do
             src <- readFile p
             let hasTable = any (T.isPrefixOf "table(") (T.lines src)

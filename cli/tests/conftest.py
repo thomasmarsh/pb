@@ -15,7 +15,7 @@ from pb_cli.shell.reporter import LiveReporter
 from pb_cli.shell.type_resolution import build_type_tables
 
 REPO_ROOT = find_repo()
-OPENPAY_DIR = REPO_ROOT / "example" / "openpay-src"
+OPENPAY_DIR = REPO_ROOT / "example" / "openpay-0.1.1b-extract"
 
 
 @pytest.fixture(scope="session")
