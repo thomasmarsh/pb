@@ -1,4 +1,18 @@
+import inspect
+import typing
+
+from pb_cli.core import ast_generated
+from pb_cli.core.ast_generated import (
+    BodyStmt,
+    DoCondition,
+    DwBandKind,
+    DwRetrieveOrRaw,
+    Expr,
+    PbType,
+    ProtoDecl,
+)
 from pb_cli.core.ast_walker import (
+    TaggedNode,
     count_branches,
     walk_bsraw,
     walk_bsraw_located,
@@ -268,3 +282,51 @@ def test_walk_excall_arg_calls_nested_in_if_body():
         }
     ]
     assert list(walk_excall_arg_calls(body)) == ["fn_inner"]
+
+
+# ── TaggedNode completeness ────────────────────────────────────────────────
+
+
+def test_tagged_node_includes_all_sub_unions():
+    """TaggedNode must be the union of all tagged sub-unions."""
+    expected_sub_unions = {Expr, PbType, DoCondition, BodyStmt, ProtoDecl, DwBandKind, DwRetrieveOrRaw}
+    # Python's | flattens nested unions, so get_args returns leaf types.
+    # Verify each sub-union's leaves are all present.
+    all_leaves = set()
+    for sub in expected_sub_unions:
+        sub_leaves = typing.get_args(sub) or (sub,)
+        all_leaves.update(sub_leaves)
+    actual_leaves = set(typing.get_args(TaggedNode))
+    assert actual_leaves == all_leaves
+
+
+def test_tagged_node_covers_all_literal_tagged_classes():
+    """Every class with a tag: Literal[...] field must be reachable from TaggedNode."""
+    all_classes = {
+        name: obj
+        for name, obj in inspect.getmembers(ast_generated, inspect.isclass)
+        if obj.__module__ == ast_generated.__name__
+    }
+
+    tagged_classes: set[str] = set()
+    for name, cls in all_classes.items():
+        hints = typing.get_type_hints(cls)
+        if "tag" in hints:
+            tag_type = hints["tag"]
+            origin = getattr(tag_type, "__origin__", None)
+            if origin is typing.Literal:
+                tagged_classes.add(name)
+
+    def collect_type_names(tp: typing.Any) -> set[str]:
+        args = typing.get_args(tp)
+        if args:
+            result: set[str] = set()
+            for arg in args:
+                result.update(collect_type_names(arg))
+            return result
+        name = getattr(tp, "__name__", None)
+        return {name} if name else set()
+
+    union_names = collect_type_names(TaggedNode)
+    missing = tagged_classes - union_names
+    assert not missing, f"TaggedNode missing tagged classes: {missing}"

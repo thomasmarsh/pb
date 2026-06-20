@@ -16,11 +16,24 @@ which fields a future constructor nests its children under.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
+
+from pb_cli.core.ast_generated import (
+    BodyStmt,
+    DoCondition,
+    DwBandKind,
+    DwRetrieveOrRaw,
+    Expr,
+    PbType,
+    ProtoDecl,
+)
 
 BRANCH_TAGS = {"BsIf", "BsFor", "BsDo", "BsChoose"}
 
+TaggedNode = Expr | PbType | DoCondition | BodyStmt | ProtoDecl | DwBandKind | DwRetrieveOrRaw
 
-def walk_tagged(node, line: int | None = None) -> Iterator[tuple[str, dict, int | None]]:
+
+def walk_tagged(node: Any, line: int | None = None) -> Iterator[tuple[str, TaggedNode, int | None]]:
     """Yield (tag, node, line) for every tagged node anywhere under `node`.
 
     `line` tracks the nearest enclosing Located.line (propagated downward
@@ -39,7 +52,7 @@ def walk_tagged(node, line: int | None = None) -> Iterator[tuple[str, dict, int 
             yield from walk_tagged(item, line)
 
 
-def walk_calls(node) -> list[tuple[str, str]]:
+def walk_calls(node: Any) -> list[tuple[str, str]]:
     results = []
     for tag, n, _line in walk_tagged(node):
         if tag == "ExCall":
@@ -55,17 +68,17 @@ def walk_calls(node) -> list[tuple[str, str]]:
     return results
 
 
-def count_branches(node) -> int:
+def count_branches(node: Any) -> int:
     return sum(1 for tag, _n, _line in walk_tagged(node) if tag in BRANCH_TAGS)
 
 
-def walk_bsraw(node) -> Iterator[str]:
+def walk_bsraw(node: Any) -> Iterator[str]:
     """Yield the raw text of every BsRaw statement anywhere under `node`."""
     for text, _line in walk_bsraw_located(node):
         yield text
 
 
-def walk_bsraw_located(node) -> Iterator[tuple[str, int | None]]:
+def walk_bsraw_located(node: Any) -> Iterator[tuple[str, int | None]]:
     """Yield (text, line) for every BsRaw statement anywhere under `node`."""
     for tag, n, line in walk_tagged(node):
         if tag == "BsRaw":
@@ -74,7 +87,7 @@ def walk_bsraw_located(node) -> Iterator[tuple[str, int | None]]:
                 yield text, line
 
 
-def walk_excall_arg_calls(node) -> Iterator[str]:
+def walk_excall_arg_calls(node: Any) -> Iterator[str]:
     """Yield bare function names that appear as nested calls in ExCall arg token arrays.
 
     ExCall args are serialised as [[String]] — lists of raw token strings.
@@ -98,7 +111,7 @@ def walk_excall_arg_calls(node) -> Iterator[str]:
                         yield tok.lower()
 
 
-def walk_exraw(node) -> Iterator[tuple[str, list[str]]]:
+def walk_exraw(node: Any) -> Iterator[tuple[str, list[str]]]:
     """Yield (leading_token, tokens) for every ExRaw expression anywhere under `node`."""
     for tag, n, _line in walk_tagged(node):
         if tag == "ExRaw":
@@ -107,7 +120,7 @@ def walk_exraw(node) -> Iterator[tuple[str, list[str]]]:
                 yield toks[0], toks
 
 
-def walk_local_vars(node) -> list[tuple[str, str]]:
+def walk_local_vars(node: Any) -> list[tuple[str, str]]:
     """Yield (var_name, var_type) for every BsLocalVar anywhere under `node`."""
     results = []
     for tag, n, _line in walk_tagged(node):
