@@ -1,6 +1,7 @@
 // features/explore/actions.ts — Explore feature actions (self-contained).
 
 import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse } from "../../types/api.js";
+import type { DataWindowFile } from "../../types/ast.generated.js";
 
 export type ExploreAction =
   | { tag: "load" }
@@ -17,6 +18,8 @@ export type ExploreAction =
   | { tag: "dw-select"; dwName: string; nodeId: string }
   | { tag: "dw-loaded"; nodeId: string; data: DwDetailResponse }
   | { tag: "dw-error"; nodeId: string; error: string }
+  | { tag: "dw-layout-loaded"; nodeId: string; data: DataWindowFile }
+  | { tag: "dw-layout-error"; nodeId: string }
   | { tag: "tab"; tab: "source" | "ast" | "sql" | "diagram" }
   | { tag: "filter"; q: string }
   | { tag: "highlight-line"; line: number | null }

@@ -5,8 +5,10 @@ import { render, cleanup, fireEvent } from "@solidjs/testing-library";
 import { createTestStore } from "../helpers.js";
 import { TableDetailPanel } from "../../src/features/explore/Tables.js";
 import { ProcDetailPanel } from "../../src/features/explore/ProcDetailPanel.js";
+import { DwDetailPanel } from "../../src/features/explore/DwDetailPanel.js";
 import { ExploreStoreContext } from "../../src/features/explore/ExploreContext.js";
-import type { ExploreProcDetail } from "../../src/types/api.js";
+import type { ExploreProcDetail, DwDetailResponse } from "../../src/types/api.js";
+import type { DataWindowFile } from "../../src/types/ast.generated.js";
 
 afterEach(() => {
   cleanup();
@@ -64,6 +66,7 @@ function makeExploreState(overrides?: Partial<Record<string, unknown>>) {
     selectedDw: null,
     procCache: {} as Record<string, ExploreProcDetail | { error: string }>,
     dwCache: {},
+    dwLayoutCache: {},
     objectSourceCache: {},
     loading: false,
     activeTab: "source" as const,
@@ -184,5 +187,81 @@ describe("Explore ProcDetailPanel — Diagram tab", () => {
     });
     expect(container.querySelector(".diagram-container")).not.toBeNull();
     vi.restoreAllMocks();
+  });
+});
+
+const MOCK_DW_DETAIL: DwDetailResponse = {
+  name: "dw_orders",
+  file: "app.pbl",
+  controls: [],
+  retrieve_tables: [],
+  retrieve_columns: [],
+  retrieve_where: [],
+  arguments: [],
+  source: "select 1 from orders",
+  used_by_objects: [],
+  used_by_procs: [],
+};
+
+const MOCK_DW_LAYOUT: DataWindowFile = {
+  release: 19,
+  object: { attrs: {} },
+  table: null,
+  bands: [
+    { kind: { tag: "BkHeader" }, height: 48, color: null, autoSize: false, attrs: {} },
+    { kind: { tag: "BkDetail" }, height: 64, color: null, autoSize: false, attrs: {} },
+  ],
+  groups: [],
+  controls: [
+    {
+      type: "text", name: "lbl_id", band: { tag: "BkHeader" },
+      id: 1, x: 10, y: 4, width: 120, height: 18,
+      visible: true, expression: null, parsedExpression: null,
+      format: null, parsedFormat: null, tabSeq: null,
+      attrs: { text: "Order ID" },
+    },
+  ],
+  unknowns: [],
+  meta: {},
+};
+
+describe("DwDetailPanel — preview from dwLayoutCache", () => {
+  const NODE_ID = "dw::dw_orders";
+
+  function renderDwPanel(layout: DataWindowFile | null) {
+    const { store } = createTestStore({
+      explore: makeExploreState({
+        selectedDw: NODE_ID,
+        dwCache: { [NODE_ID]: MOCK_DW_DETAIL },
+        dwLayoutCache: layout ? { [NODE_ID]: layout } : {},
+      }),
+    });
+    render(() => (
+      <ExploreStoreContext.Provider value={store}>
+        <DwDetailPanel nodeId={NODE_ID} />
+      </ExploreStoreContext.Provider>
+    ));
+    return document.querySelector(".dw-preview");
+  }
+
+  it("renders .dw-preview when dwLayoutCache is populated", () => {
+    expect(renderDwPanel(MOCK_DW_LAYOUT)).not.toBeNull();
+  });
+
+  it("renders band labels from layout", () => {
+    const preview = renderDwPanel(MOCK_DW_LAYOUT);
+    expect(preview?.textContent).toContain("header");
+    expect(preview?.textContent).toContain("detail");
+  });
+
+  it("renders text control label from layout", () => {
+    const preview = renderDwPanel(MOCK_DW_LAYOUT);
+    expect(preview?.textContent).toContain("Order ID");
+  });
+
+  it("renders empty preview when no layout in cache", () => {
+    const preview = renderDwPanel(null);
+    expect(preview).not.toBeNull();
+    expect(preview?.children.length).toBe(0);
   });
 });

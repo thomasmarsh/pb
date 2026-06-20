@@ -10,6 +10,7 @@ const mockEnv: ExploreEnv = {
   getExploreTree: () => Effect.none(),
   getExploreProcedure: () => Effect.none(),
   getExploreDatawindow: () => Effect.none(),
+  getDwLayout: () => Effect.none(),
   getObjectSource: () => Effect.none(),
   getTables: () => Effect.none(),
   getTableDetail: () => Effect.none(),

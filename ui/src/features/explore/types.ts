@@ -1,6 +1,7 @@
 // features/explore/types.ts — Explore feature state.
 
 import type { ExploreLibrary, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse } from "../../types/api.js";
+import type { DataWindowFile } from "../../types/ast.generated.js";
 
 export interface TablesState {
   items: TableSummary[];
@@ -26,6 +27,7 @@ export interface ExploreState {
   selectedDw: string | null;
   procCache: Record<string, ExploreProcDetail | { error: string }>;
   dwCache: Record<string, DwDetailResponse | { error: string }>;
+  dwLayoutCache: Record<string, DataWindowFile>;
   objectSourceCache: Record<string, ObjectSourceResponse | { error: string }>;
   loading: boolean;
   activeTab: "source" | "ast" | "sql" | "diagram";

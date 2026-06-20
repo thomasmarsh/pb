@@ -21,6 +21,7 @@ function renderTreeNode(
       selectedDw: null,
       procCache: {},
       dwCache: {},
+      dwLayoutCache: {},
       objectSourceCache: {},
       loading: false,
       activeTab: "source",

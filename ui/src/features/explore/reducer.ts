@@ -5,6 +5,7 @@ import type { Reducer } from "../../core/reducer.js";
 import type { ExploreState } from "./types.js";
 import type { ExploreAction } from "./actions.js";
 import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse } from "../../types/api.js";
+import type { DataWindowFile } from "../../types/ast.generated.js";
 import type { NavigationAction } from "../navigation/types.js";
 
 // ── Narrow environment ────────────────────────────────────────────────────────
@@ -13,6 +14,7 @@ export interface ExploreEnv {
   getExploreTree(): Effect<ExploreTreeResponse>;
   getExploreProcedure(objectName: string, procName: string): Effect<ExploreProcDetail>;
   getExploreDatawindow(name: string): Effect<DwDetailResponse>;
+  getDwLayout(name: string): Effect<DataWindowFile>;
   getObjectSource(name: string): Effect<ObjectSourceResponse>;
   getTables(): Effect<TableSummary[]>;
   getTableDetail(name: string): Effect<TableDetail>;
@@ -31,6 +33,7 @@ function makeInitialExploreState(): ExploreState {
     selectedDw: null,
     procCache: {},
     dwCache: {},
+    dwLayoutCache: {},
     objectSourceCache: {},
     loading: false,
     activeTab: "source",
@@ -155,9 +158,14 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
     revealInTree(draft, action.dwName);
     env.navigate({ tag: "navigate", route: { view: "explore" } });
     if (!(action.nodeId in draft.dwCache)) {
-      return env.getExploreDatawindow(action.dwName)
-        .map((data): ExploreAction => ({ tag: "dw-loaded", nodeId: action.nodeId, data }))
-        .catch((e): ExploreAction => ({ tag: "dw-error", nodeId: action.nodeId, error: String(e) }));
+      return Effect.merge(
+        env.getExploreDatawindow(action.dwName)
+          .map((data): ExploreAction => ({ tag: "dw-loaded", nodeId: action.nodeId, data }))
+          .catch((e): ExploreAction => ({ tag: "dw-error", nodeId: action.nodeId, error: String(e) })),
+        env.getDwLayout(action.dwName)
+          .map((data): ExploreAction => ({ tag: "dw-layout-loaded", nodeId: action.nodeId, data }))
+          .catch((): ExploreAction => ({ tag: "dw-layout-error", nodeId: action.nodeId })),
+      );
     }
     return null;
 
@@ -167,6 +175,13 @@ function reduce(draft: ExploreState, action: ExploreAction, env: ExploreEnv): Ef
 
   case "dw-error":
     draft.dwCache[action.nodeId] = { error: action.error };
+    return null;
+
+  case "dw-layout-loaded":
+    draft.dwLayoutCache[action.nodeId] = action.data;
+    return null;
+
+  case "dw-layout-error":
     return null;
 
   case "tab":

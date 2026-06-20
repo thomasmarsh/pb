@@ -9,10 +9,11 @@ export function DwDetailPanel(props: { nodeId: string }) {
   const store = useExploreStore();
   const snap = store.getState();
   const entry = () => snap().explore.dwCache[props.nodeId];
+  const layout = () => snap().explore.dwLayoutCache[props.nodeId] ?? null;
 
   return (
     <DetailShell<DwDetailResponse> entry={entry()} loadingMsg="Loading DataWindow...">
-      {(d) => <DwDetailCore d={d} layout={null} store={store} />}
+      {(d) => <DwDetailCore d={d} layout={layout()} store={store} />}
     </DetailShell>
   );
 }

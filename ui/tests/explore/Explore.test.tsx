@@ -28,7 +28,7 @@ function makeExplore(overrides?: object) {
   return {
     libraries: sampleLibraries, expandedNodes: new Set<string>(), selectedProc: null,
     selectedObject: null, highlightedProcName: null, selectedDw: null,
-    procCache: {}, dwCache: {}, objectSourceCache: {}, loading: false, activeTab: "source" as const,
+    procCache: {}, dwCache: {}, dwLayoutCache: {}, objectSourceCache: {}, loading: false, activeTab: "source" as const,
     treeFilter: "", highlightedLine: null, tables: TABLES_STATE, helpOverlayOpen: false, ...DEFAULT_SIDEBAR, ...overrides,
   };
 }
