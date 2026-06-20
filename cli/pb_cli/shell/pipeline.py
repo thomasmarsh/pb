@@ -100,6 +100,8 @@ def run(
         env.storage.build_interproc_tables(conn)
         progress.start_step("build taint tables")
         env.storage.build_taint_tables(conn)
+        progress.start_step("build dead code table")
+        env.storage.build_dead_code_table(conn)
         sql_parse_failures = env.storage.count_sql_parse_failures(conn)
 
     if to_parse:

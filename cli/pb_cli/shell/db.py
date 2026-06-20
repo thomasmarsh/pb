@@ -67,6 +67,7 @@ def drop_tables(conn: Conn) -> None:
         "proc_defs", "proc_uses",
         "interproc_edges", "procedure_summaries",
         "taint_sources", "taint_sinks", "taint_paths", "taint_annotations",
+        "dead_procedures",
     ]:
         conn.execute(f"DROP TABLE IF EXISTS {t}")
 

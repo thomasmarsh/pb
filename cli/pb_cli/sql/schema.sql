@@ -261,6 +261,17 @@ CREATE TABLE IF NOT EXISTS taint_paths (
     steps_json    TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS dead_procedures (
+    object              TEXT NOT NULL,
+    name                TEXT NOT NULL,
+    proc_type           TEXT NOT NULL,
+    cyclomatic          INT,
+    confidence          TEXT NOT NULL,
+    caller_count_naive  INT NOT NULL,
+    caller_count_scoped INT NOT NULL,
+    PRIMARY KEY (object, name)
+);
+
 CREATE TABLE IF NOT EXISTS taint_annotations (
     file           TEXT    NOT NULL,
     object         TEXT    NOT NULL,

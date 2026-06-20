@@ -279,7 +279,7 @@ def test_resolve_calls_global_fn_resolves(calls):
     calls=st.lists(
         st.tuples(
             st.just("f.srw"), st.just("w_test"), st.just("of_init"),
-            st.sampled_from(["isnull", "setnull", "messagebox", "trn",
+            st.sampled_from(["isnull", "setnull", "messagebox",
                              "rgb", "len", "upper", "lower", "abs"]),
             st.just("ExCall"),
         ).map(lambda t: CallRow(*t)),

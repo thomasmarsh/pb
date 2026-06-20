@@ -50,6 +50,7 @@ from pb_cli.shell.db import (
     drop_tables,
     insert_parse_errors,
 )
+from pb_cli.shell.dead_code import build_dead_code_table
 from pb_cli.shell.importing import import_batch, run_from_jsonl_lines
 from pb_cli.shell.interproc import build_interproc_tables
 from pb_cli.shell.metrics import compute_dit, compute_metrics
@@ -149,6 +150,7 @@ class StorageEnv:
     build_dataflow_tables: Callable[[Conn], None] = field(default=build_dataflow_tables)
     build_interproc_tables: Callable[[Conn], None] = field(default=build_interproc_tables)
     build_taint_tables: Callable[[Conn], None] = field(default=build_taint_tables)
+    build_dead_code_table: Callable[[Conn], None] = field(default=build_dead_code_table)
     connect: Callable[[str], AbstractContextManager[Conn]] = field(default=connect)
 
 

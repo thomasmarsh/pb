@@ -372,6 +372,14 @@ def dead_code_client(tmp_path_factory):
             expression TEXT, tab_seq INT, source_line INT
         )
     """)
+    conn.execute("""
+        CREATE TABLE dead_procedures (
+            object TEXT NOT NULL, name TEXT NOT NULL, proc_type TEXT NOT NULL,
+            cyclomatic INT, confidence TEXT NOT NULL,
+            caller_count_naive INT NOT NULL, caller_count_scoped INT NOT NULL,
+            PRIMARY KEY (object, name)
+        )
+    """)
 
     # Entry points (called by runtime)
     conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -406,6 +414,9 @@ def dead_code_client(tmp_path_factory):
                  ["b.srf", "obj_child", "function", "base_hook", None, None, None, 1, 10, None, None, 1])
     conn.execute("INSERT INTO calls VALUES (?,?,?,?,?)", ["b.srf", "obj_base", "base_event", "base_hook", "direct"])
     conn.execute("INSERT INTO inherits VALUES (?,?)", ["obj_child", "obj_base"])
+
+    from pb_cli.shell.dead_code import build_dead_code_table
+    build_dead_code_table(conn)
 
     conn.close()
 
