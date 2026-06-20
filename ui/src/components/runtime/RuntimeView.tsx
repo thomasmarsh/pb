@@ -2,7 +2,7 @@
 
 import { createSignal, createResource, Show, For } from "solid-js";
 import { extractLayout } from "../../core/layout.js";
-import { PBInterpreter } from "../../core/interpreter.js";
+import { PBInterpreter, type AstData } from "../../core/interpreter.js";
 import type { WindowLayout, LayoutControl } from "../../core/layout.js";
 
 // PB units to CSS pixels. ~0.08 gives a reasonable preview size.
@@ -11,7 +11,7 @@ const SCALE = 0.08;
 async function fetchAst(objectName: string) {
   const r = await fetch(`/api/objects/${encodeURIComponent(objectName)}/ast`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json() as Promise<{ typeBlocks: unknown[]; events: { name: string; owner: string; body: unknown[] }[] }>;
+  return r.json() as Promise<AstData>;
 }
 
 function ControlBox(props: {
@@ -87,7 +87,7 @@ export function RuntimeView(props: { objectName: string }) {
   const layout = () => {
     const data = astData();
     if (!data) return null;
-    const parsed = extractLayout(data.typeBlocks);
+    const parsed = extractLayout(data.typeBlocks as unknown[]);
 
     // Fire open event once after first layout is available
     if (parsed && !didOpen()) {

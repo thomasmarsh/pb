@@ -1,11 +1,10 @@
 // interpreter.ts — Minimal PB AST interpreter (spike).
-// TD-4: walkNode uses untyped AST nodes; typed coverage expanded in 101b.
-// TD-5: trn()/tr() return ID string; real impl needs translation table lookup.
-// TD-7: executeEvent does O(n) scan over events; index in 101b.
+
+import type { BodyStmt, Expr, Located } from "../types/ast.generated.js";
 
 export interface AstData {
-  typeBlocks: unknown[];
-  events: { name: string; owner: string; body: unknown[] }[];
+  typeBlocks: { decl: { ancestor: string; name: string; within: string | null }; body: Located<BodyStmt>[] }[];
+  events: { name: string; owner: string; body: Located<BodyStmt>[] }[];
 }
 
 export interface InterpreterState {
@@ -22,12 +21,6 @@ export class PBInterpreter {
     this.ast = ast;
   }
 
-  async loadAst(objectName: string): Promise<void> {
-    const r = await fetch(`/api/objects/${encodeURIComponent(objectName)}/ast`);
-    if (!r.ok) throw new Error(`AST fetch failed: ${r.status}`);
-    this.ast = (await r.json()) as AstData;
-  }
-
   async executeEvent(owner: string, event: string): Promise<void> {
     const handler = this.ast?.events.find(
       (e) => e.name === event && e.owner === owner,
@@ -42,87 +35,142 @@ export class PBInterpreter {
     };
   }
 
-  private async _walkStatements(stmts: unknown[]): Promise<void> {
-    for (const stmt of stmts as { node: unknown }[]) {
-      await this._walkNode(stmt?.node);
+  private async _walkStatements(stmts: Located<BodyStmt>[]): Promise<void> {
+    for (const stmt of stmts) {
+      await this._walkNode(stmt.node);
     }
   }
 
-  private async _walkNode(node: unknown): Promise<unknown> {
-    if (!node || typeof node !== "object") return undefined;
-    const n = node as Record<string, unknown>;
-
-    switch (n["tag"]) {
-      case "BsAssign":  return this._execAssign(n);
-      case "BsIf":      return this._execIf(n);
-      case "BsCall":    return this._execCall(n);
-      case "BsReturn":  return this._evalExpr(n["expr"]);
-      case "BsRaw":     return undefined; // SQL / unclassified — skip
-      default:          return undefined;
-    }
-  }
-
-  private _execAssign(n: Record<string, unknown>): void {
-    const lhs = n["lhs"] as Record<string, unknown> | undefined;
-    const segments = lhs?.["segments"] as { name: string }[] | undefined;
-    const varName = segments?.[0]?.name;
-    if (varName) this._variables.set(varName, this._evalExpr(n["rhs"]));
-  }
-
-  private async _execIf(n: Record<string, unknown>): Promise<void> {
-    const cond = this._evalExpr(n["cond"]);
-    if (cond) {
-      await this._walkStatements((n["then"] as unknown[]) ?? []);
-      return;
-    }
-    const elseIfs = (n["elseIfs"] as [unknown, unknown[]][]) ?? [];
-    for (const [expr, body] of elseIfs) {
-      if (this._evalExpr(expr)) {
-        await this._walkStatements(body ?? []);
-        return;
+  private async _walkNode(node: BodyStmt): Promise<unknown> {
+    switch (node.tag) {
+      case "BsAssign": {
+        const [lhs, rhs] = node.contents;
+        const varName = lhs.segments[0]?.name;
+        if (varName) this._variables.set(varName, this._evalExpr(rhs));
+        return undefined;
       }
-    }
-    if (n["else"]) await this._walkStatements(n["else"] as unknown[]);
-  }
-
-  private async _execCall(n: Record<string, unknown>): Promise<unknown> {
-    const callee = n["callee"] as Record<string, unknown> | undefined;
-    const segments = callee?.["segments"] as { name: string }[] | undefined;
-    const name = segments?.map((s) => s.name).join(".") ?? "";
-
-    // TD-5: translation stub — returns ID string
-    if (name === "trn" || name === "tr") {
-      const args = n["args"] as unknown[][] | undefined;
-      return String(args?.[0]?.[0] ?? "");
-    }
-    if (name === "MessageBox") return undefined; // no-op in interpreter
-    return undefined;
-  }
-
-  private _evalExpr(expr: unknown): unknown {
-    if (!expr || typeof expr !== "object") return undefined;
-    const e = expr as Record<string, unknown>;
-
-    switch (e["tag"]) {
-      case "ExLit": {
-        const lit = e["contents"] as Record<string, unknown> | undefined;
-        if (!lit) return undefined;
-        switch (lit["tag"]) {
-          case "LitBool": return lit["contents"] === true || lit["contents"] === "true";
-          case "LitInt":  return parseInt(lit["contents"] as string, 10);
-          case "LitReal": return parseFloat(lit["contents"] as string);
-          case "LitStr":  return String(lit["contents"]).replace(/^"|"$/g, "");
-          case "LitNull": return null;
-          default:        return lit["contents"];
+      case "BsIf": {
+        const { cond, then, elseIfs, else: elseBody } = node.contents;
+        if (this._evalExpr(cond)) {
+          await this._walkStatements(then);
+          return undefined;
         }
+        for (const ei of elseIfs) {
+          if (this._evalExpr(ei.cond)) {
+            await this._walkStatements(ei.body);
+            return undefined;
+          }
+        }
+        if (elseBody) await this._walkStatements(elseBody);
+        return undefined;
       }
-      case "ExStr":   return String(e["contents"]);
-      case "ExInt":   return parseInt(e["contents"] as string, 10);
+      case "BsCall": {
+        const callee = node.contents.tag === "ExCall" ? node.contents.callee : null;
+        const name = callee?.segments.map((s) => s.name).join(".") ?? "";
+        if (name === "MessageBox") return undefined;
+        return undefined;
+      }
+      case "BsReturn":
+        return node.contents ? this._evalExpr(node.contents) : undefined;
+      case "BsRaw":
+        return undefined;
+      case "BsLocalVar":
+        return undefined;
+      case "BsFor":
+        return undefined;
+      case "BsDo":
+        return undefined;
+      case "BsChoose":
+        return undefined;
+      case "BsExit":
+        return undefined;
+      case "BsContinue":
+        return undefined;
+      case "BsDestroy":
+        return undefined;
+      case "BsPbCall":
+        return undefined;
+      case "BsAugAssign":
+        return undefined;
+      case "BsInc":
+        return undefined;
+      case "BsDec":
+        return undefined;
+      case "BsAssignExpr": {
+        const [, rhs] = node.contents;
+        return this._evalExpr(rhs);
+      }
+    }
+  }
+
+  private _evalExpr(expr: Expr): unknown {
+    switch (expr.tag) {
+      case "ExBool":
+        return expr.contents;
+      case "ExInt":
+        return parseInt(expr.contents, 10);
+      case "ExReal":
+        return parseFloat(expr.contents);
+      case "ExStr":
+        return expr.contents;
+      case "ExDate":
+        return expr.contents;
+      case "ExTime":
+        return expr.contents;
+      case "ExNull":
+        return null;
+      case "ExEnum":
+        return expr.contents;
       case "ExLvalue": {
-        const segs = e["segments"] as { name: string }[] | undefined;
-        const name = segs?.[0]?.name;
+        const name = expr.contents.segments[0]?.name;
         return name ? this._variables.get(name) : undefined;
       }
+      case "ExCall": {
+        const calleeName = expr.callee.segments.map((s) => s.name).join(".");
+        if (calleeName === "MessageBox") return undefined;
+        return undefined;
+      }
+      case "ExBinOp":
+        return this._evalBinOp(expr.lhs, expr.op, expr.rhs);
+      case "ExNot":
+        return !this._evalExpr(expr.contents);
+      case "ExNeg":
+        return -(this._evalExpr(expr.contents) as number);
+      case "ExMethodCall":
+        return undefined;
+      case "ExDispatch":
+        return undefined;
+      case "ExCreate":
+        return undefined;
+      case "ExCreateUsing":
+        return undefined;
+      case "ExArray":
+        return undefined;
+      case "ExHostVar":
+        return undefined;
+      case "ExRaw":
+        return undefined;
+    }
+  }
+
+  private _evalBinOp(lhs: Expr, op: string, rhs: Expr): unknown {
+    const l = this._evalExpr(lhs);
+    const r = this._evalExpr(rhs);
+    switch (op) {
+      case "BopAdd": return (l as number) + (r as number);
+      case "BopSub": return (l as number) - (r as number);
+      case "BopMul": return (l as number) * (r as number);
+      case "BopDiv": return (l as number) / (r as number);
+      case "BopPow": return Math.pow(l as number, r as number);
+      case "BopEq":  return l === r;
+      case "BopNe":  return l !== r;
+      case "BopLt":  return (l as number) < (r as number);
+      case "BopGt":  return (l as number) > (r as number);
+      case "BopLe":  return (l as number) <= (r as number);
+      case "BopGe":  return (l as number) >= (r as number);
+      case "BopAnd": return (l as boolean) && (r as boolean);
+      case "BopOr":  return (l as boolean) || (r as boolean);
+      case "BopXor": return !!(l as boolean) !== !!(r as boolean);
       default: return undefined;
     }
   }
