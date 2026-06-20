@@ -118,18 +118,31 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
 
     known_procs = rows(
         conn.execute(
-            "SELECT DISTINCT p.name, p.object, p.proc_type "
+            "SELECT DISTINCT p.name, p.object, p.proc_type, "
+            "p.params, p.return_type, p.modifiers, p.start_line, p.end_line, p.cyclomatic "
             "FROM procedures p "
             "JOIN calls c ON c.to_name = p.name "
             "WHERE c.object = ? "
             "UNION "
-            "SELECT DISTINCT p.name, p.object, p.proc_type "
+            "SELECT DISTINCT p.name, p.object, p.proc_type, "
+            "p.params, p.return_type, p.modifiers, p.start_line, p.end_line, p.cyclomatic "
             "FROM procedures p "
             "WHERE p.object = ? AND p.proc_type IN ('function', 'subroutine') "
             "ORDER BY p.name",
             [name, name],
         )
     )
+
+    try:
+        local_symbols = rows(
+            conn.execute(
+                "SELECT proc_name, var_name, raw_type, resolved_kind, resolved_target, is_parameter "
+                "FROM resolved_types WHERE object = ? ORDER BY proc_name, var_name",
+                [name],
+            )
+        )
+    except Exception:
+        local_symbols = []
 
     return {
         "file": file_path,
@@ -138,6 +151,7 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
         "procedures": procs,
         "knownObjects": known_objects,
         "knownProcs": known_procs,
+        "localSymbols": local_symbols,
     }
 
 

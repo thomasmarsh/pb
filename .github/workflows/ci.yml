@@ -72,7 +72,7 @@ jobs:
 
       - name: Test (Python)
         working-directory: cli
-        run: uv run pytest
+        run: uv run ruff check && uv run pyright && uv run pytest
 
       - name: Test (TypeScript)
         working-directory: ui

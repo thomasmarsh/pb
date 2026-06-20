@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import json
 
-from pb_cli.core.ast_walker import count_branches, walk_bsraw_located, walk_calls, walk_excall_arg_calls, walk_local_vars
+from pb_cli.core.ast_walker import (
+    count_branches,
+    walk_bsraw_located,
+    walk_calls,
+    walk_excall_arg_calls,
+    walk_local_vars,
+)
 from pb_cli.core.models import (
     CallRow,
     DwArgumentRow,

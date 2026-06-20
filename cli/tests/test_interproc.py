@@ -7,7 +7,6 @@ from pb_cli.core.interproc import (
     match_args_to_params,
 )
 
-
 # --- Helpers -----------------------------------------------------------------
 
 
@@ -15,8 +14,8 @@ def _rc(
     obj: str,
     from_proc: str,
     to_name: str,
-    target_obj: str,
-    target_proc: str,
+    target_obj: str | None,
+    target_proc: str | None,
     call_line: int | None = 10,
     kind: str = "virtual",
 ) -> dict:

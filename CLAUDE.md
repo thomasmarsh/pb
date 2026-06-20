@@ -11,6 +11,8 @@ cd parser && cabal test --test-show-details=direct # verbose output
 ./pb debt                        # BsRaw + ExRaw debt + DW control coverage (both corpora)
 ./pb debt --no-build             # same, skip build step
 cd cli && uv run pytest         # Python tool tests (cli/tests/ directory)
+cd cli && uv run ruff check     # Python lint
+cd cli && uv run pyright        # Python type check (0 errors baseline)
 cd ui && pnpm typecheck         # TypeScript type check (explorer)
 cd ui && pnpm lint              # ESLint (explorer)
 cd ui && pnpm test              # Explorer reducer tests (64 tests)
@@ -173,6 +175,8 @@ cabal build   # must be warning-free; -Wall is set; warnings are blockers
 
 ```text
 cabal test --test-show-details=direct
+cd cli && uv run ruff check && uv run pyright && uv run pytest
+cd ui && pnpm lint && pnpm typecheck && pnpm test
 ```
 
 All tests must pass. An unexpected failure is a regression — read it before changing anything.

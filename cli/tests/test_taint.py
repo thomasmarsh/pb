@@ -1,18 +1,12 @@
 """Tests for taint analysis (core/taint.py)."""
 
 from pb_cli.core.taint import (
-    TaintAnalysis,
-    TaintPath,
-    TaintSink,
     TaintSource,
-    TaintStep,
     classify_sinks,
     classify_sources,
     propagate_taint,
     taint_analysis,
-    trace_taint_path,
 )
-
 
 # --- Helpers -----------------------------------------------------------------
 

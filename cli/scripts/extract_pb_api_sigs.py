@@ -19,7 +19,7 @@ import re
 import sys
 from pathlib import Path
 
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup, Tag
 
 ROOT = Path(__file__).resolve().parent.parent.parent / "doc" / "pb2025r2"
 PS_REF = ROOT / "powerscript_reference"

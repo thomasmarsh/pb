@@ -219,7 +219,9 @@ def test_pbt_text_json_blob_roundtrip(payload):
     try:
         conn.execute("CREATE TABLE t (j TEXT)")
         bulk_insert(conn, "t", ["j"], [(payload,)])
-        val = conn.execute("SELECT j FROM t").fetchone()[0]
+        row = conn.execute("SELECT j FROM t").fetchone()
+        assert row is not None
+        val = row[0]
         assert val == payload
     finally:
         conn.close()
@@ -233,7 +235,9 @@ def test_pbt_row_count_preserved(rows):
     try:
         conn.execute("CREATE TABLE t (a TEXT, b INT)")
         bulk_insert(conn, "t", ["a", "b"], rows)
-        count = conn.execute("SELECT COUNT(*) FROM t").fetchone()[0]
+        row = conn.execute("SELECT COUNT(*) FROM t").fetchone()
+        assert row is not None
+        count = row[0]
         assert count == len(rows)
     finally:
         conn.close()

@@ -40,6 +40,7 @@ from pb_cli.shell.build import (
     hash_source_dir,
     walk_sr_files,
 )
+from pb_cli.shell.dataflow import build_dataflow_tables
 from pb_cli.shell.db import (
     Conn,
     connect,
@@ -50,6 +51,7 @@ from pb_cli.shell.db import (
     insert_parse_errors,
 )
 from pb_cli.shell.importing import import_batch, run_from_jsonl_lines
+from pb_cli.shell.interproc import build_interproc_tables
 from pb_cli.shell.metrics import compute_dit, compute_metrics
 from pb_cli.shell.reporter import LiveReporter, Reporter
 from pb_cli.shell.runner import parse_stream, render_error
@@ -58,8 +60,6 @@ from pb_cli.shell.state import (
     load_file_state,
     save_file_state,
 )
-from pb_cli.shell.dataflow import build_dataflow_tables
-from pb_cli.shell.interproc import build_interproc_tables
 from pb_cli.shell.taint import build_taint_tables
 from pb_cli.shell.type_resolution import build_type_tables
 

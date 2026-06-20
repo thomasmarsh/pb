@@ -68,7 +68,7 @@ async def get_taint_paths(
     path_rows = rows(conn.execute(query, params + [limit]))
 
     count_query = f"SELECT COUNT(*) FROM taint_paths {where_clause}"
-    total = conn.execute(count_query, params).fetchone()[0]
+    total = conn.execute(count_query, params).fetchone()[0]  # type: ignore[index]
 
     paths = [
         {
@@ -261,7 +261,7 @@ async def get_taint_sources(
     )
     total = conn.execute(
         f"SELECT COUNT(*) FROM taint_sources {where}", params
-    ).fetchone()[0]
+    ).fetchone()[0]  # type: ignore[index]
     return {"sources": src_rows, "total": total}
 
 
@@ -290,5 +290,5 @@ async def get_taint_sinks(
     )
     total = conn.execute(
         f"SELECT COUNT(*) FROM taint_sinks {where_clause}", params
-    ).fetchone()[0]
+    ).fetchone()[0]  # type: ignore[index]
     return {"sinks": sink_rows, "total": total}

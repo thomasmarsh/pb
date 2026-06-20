@@ -45,7 +45,7 @@ def _tail_log(log_path: Path, n: int = 30) -> list[str]:
     if not log_path.exists():
         return []
     lines = log_path.read_text().splitlines()
-    return [l for l in lines if l.strip()][-n:]
+    return [line for line in lines if line.strip()][-n:]
 
 
 @app.command()
@@ -107,7 +107,8 @@ def run(
 
     typer.echo(f"Launched {n} bombadil instance(s) [stall: {stall_timeout}s]")
     for inst in instances:
-        typer.echo(f"  [{inst.index}] PID {inst.proc.pid}  log: {inst.log_path}")
+        if inst.proc is not None:
+            typer.echo(f"  [{inst.index}] PID {inst.proc.pid}  log: {inst.log_path}")
 
     # Monitor loop
     try:

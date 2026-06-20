@@ -7,7 +7,6 @@ import json
 import duckdb
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Synthetic DB fixture
 # ---------------------------------------------------------------------------
@@ -115,6 +114,7 @@ def taint_client(tmp_path_factory):
     conn.close()
 
     from fastapi.testclient import TestClient
+
     from pb_cli.explorer import create_app
 
     app = create_app(db_path)
@@ -410,6 +410,7 @@ def dead_code_client(tmp_path_factory):
     conn.close()
 
     from fastapi.testclient import TestClient
+
     from pb_cli.explorer import create_app
 
     app = create_app(db_path)
@@ -499,6 +500,7 @@ def test_slice_cross_proc_works_with_scoped_fetch(taint_client):
 def test_dead_code_endpoint_still_works(db_path):
     """Ensure the dead-code endpoint works against the real openpay corpus."""
     from fastapi.testclient import TestClient
+
     from pb_cli.explorer import create_app
 
     app = create_app(db_path)

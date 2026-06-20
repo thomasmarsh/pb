@@ -9,7 +9,6 @@ pb_cli/core/type_resolution.py as PB_CLASS_METHODS.
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 from bs4 import BeautifulSoup

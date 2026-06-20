@@ -27,6 +27,7 @@ def _load() -> dict:
     global _data
     if _data is None:
         _data = json.loads(_DATA_PATH.read_text())
+    assert _data is not None
     return _data
 
 

@@ -1,15 +1,12 @@
 """Tests for core/slicing.py — backward and forward program slicing."""
 
 from pb_cli.core.slicing import (
-    SliceResult,
-    SliceStep,
     backward_slice,
     build_proc_def_use,
     find_def_at_or_before,
     find_uses_at_or_after,
     forward_slice,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers

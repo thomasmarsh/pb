@@ -161,7 +161,7 @@ def test_resolve_calls_virtual_inherited():
         _make_proc("f.srw", "w_child", "open", body_json='[]'),
         _make_proc("f.srw", "w_parent", "of_init"),
     ]
-    inherits = [("w_child", "w_parent")]
+    inherits: list[tuple[str, str]] = [("w_child", "w_parent")]
 
     result = resolve_calls(calls, procedures, inherits)
     r = result[0]
@@ -198,7 +198,7 @@ def test_resolve_calls_global_function():
         _make_proc("f.srw", "w_filter", "open", body_json='[]'),
         _make_proc("f.srw", "fn_sqlerror", "fn_sqlerror"),
     ]
-    inherits = [("w_filter", "w_response")]
+    inherits: list[tuple[str, str]] = [("w_filter", "w_response")]
 
     result = resolve_calls(calls, procedures, inherits)
     r = result[0]
@@ -378,9 +378,9 @@ def test_resolve_calls_instance_var_type():
     """
     calls = [CallRow("f.srw", "w_test", "open", "retrieve", "ExCall")]
     procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
-    inherits = []
+    inherits: list[tuple[str, str]] = []
     # Instance variable from type variables block
-    var_types = {("w_test", "", "dw_data"): "datawindow"}
+    var_types: dict[tuple[str, str, str], str] = {("w_test", "", "dw_data"): "datawindow"}
 
     result = resolve_calls(calls, procedures, inherits, var_types=var_types)
     r = result[0]
@@ -397,8 +397,8 @@ def test_resolve_calls_instance_var_inherited_type():
     """
     calls = [CallRow("f.srw", "w_test", "open", "retrieve", "ExCall")]
     procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
-    inherits = [("u_grid", "datawindow")]
-    var_types = {("w_test", "", "dw_data"): "u_grid"}
+    inherits: list[tuple[str, str]] = [("u_grid", "datawindow")]
+    var_types: dict[tuple[str, str, str], str] = {("w_test", "", "dw_data"): "u_grid"}
 
     result = resolve_calls(calls, procedures, inherits, var_types=var_types)
     r = result[0]
@@ -442,7 +442,7 @@ def test_infer_control_type_ddlb_before_lb():
 
 def test_ancestor_chain_window():
     from pb_cli.core.type_resolution import _resolve_pb_class_from_ancestor
-    objects_table = {
+    objects_table: dict[str, str | None] = {
         "w_misth_final_list": "w_list",
         "w_list": "window",
     }
@@ -451,7 +451,7 @@ def test_ancestor_chain_window():
 
 def test_ancestor_chain_userobject():
     from pb_cli.core.type_resolution import _resolve_pb_class_from_ancestor
-    objects_table = {
+    objects_table: dict[str, str | None] = {
         "u_grid": "userobject",
     }
     assert _resolve_pb_class_from_ancestor("u_grid", objects_table) == "userobject"
@@ -459,13 +459,13 @@ def test_ancestor_chain_userobject():
 
 def test_ancestor_chain_direct_pb():
     from pb_cli.core.type_resolution import _resolve_pb_class_from_ancestor
-    objects_table = {"w_test": "window"}
+    objects_table: dict[str, str | None] = {"w_test": "window"}
     assert _resolve_pb_class_from_ancestor("w_test", objects_table) == "window"
 
 
 def test_ancestor_chain_no_pb():
     from pb_cli.core.type_resolution import _resolve_pb_class_from_ancestor
-    objects_table = {"fn_test": "function_object"}
+    objects_table: dict[str, str | None] = {"fn_test": "function_object"}
     # function_object is not in PB_CLASS_METHODS
     assert _resolve_pb_class_from_ancestor("fn_test", objects_table) is None
 
@@ -482,8 +482,8 @@ def test_resolve_calls_ancestor_chain_builtin():
     """Bare call resolves via objects.ancestor chain to PB built-in class."""
     calls = [CallRow("f.srw", "w_test", "open", "setfocus", "ExCall")]
     procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
-    inherits = []
-    objects_table = {"w_test": "window"}
+    inherits: list[tuple[str, str]] = []
+    objects_table: dict[str, str | None] = {"w_test": "window"}
 
     result = resolve_calls(calls, procedures, inherits, objects_table=objects_table)
     r = result[0]
@@ -495,8 +495,8 @@ def test_resolve_calls_ancestor_chain_indirect():
     """Bare call resolves via multi-step ancestor chain."""
     calls = [CallRow("f.srw", "w_child", "open", "setredraw", "ExCall")]
     procedures = [_make_proc("f.srw", "w_child", "open", body_json='[]')]
-    inherits = [("w_child", "w_parent")]
-    objects_table = {"w_child": "w_parent", "w_parent": "window"}
+    inherits: list[tuple[str, str]] = [("w_child", "w_parent")]
+    objects_table: dict[str, str | None] = {"w_child": "w_parent", "w_parent": "window"}
 
     result = resolve_calls(calls, procedures, inherits, objects_table=objects_table)
     r = result[0]
@@ -507,8 +507,8 @@ def test_resolve_calls_dotted_ancestor_builtin():
     """Dotted call where first segment is not an object stays unresolved."""
     calls = [CallRow("f.srw", "w_test", "open", "dw_main.setredraw", "ExCall")]
     procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
-    inherits = []
-    objects_table = {}
+    inherits: list[tuple[str, str]] = []
+    objects_table: dict[str, str | None] = {}
 
     # dw_main is not an object, no var_types → unresolved
     result = resolve_calls(calls, procedures, inherits, objects_table=objects_table)
@@ -520,9 +520,9 @@ def test_resolve_calls_dotted_control_type_inference():
     """Dotted call resolves when first segment is typed via var_types."""
     calls = [CallRow("f.srw", "w_test", "open", "dw_main.setredraw", "ExCall")]
     procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
-    inherits = []
-    objects_table = {}
-    var_types = {("w_test", "open", "dw_main"): "datawindow"}
+    inherits: list[tuple[str, str]] = []
+    objects_table: dict[str, str | None] = {}
+    var_types: dict[tuple[str, str, str], str] = {("w_test", "open", "dw_main"): "datawindow"}
 
     result = resolve_calls(calls, procedures, inherits, var_types=var_types, objects_table=objects_table)
     r = result[0]
@@ -534,9 +534,9 @@ def test_resolve_calls_control_type_inference():
     """Bare call resolves via control type inference from naming convention."""
     calls = [CallRow("f.srw", "w_test", "open", "retrieve", "ExCall")]
     procedures = [_make_proc("f.srw", "w_test", "open", body_json='[]')]
-    inherits = []
+    inherits: list[tuple[str, str]] = []
     # No explicit type, but dw_main should be inferred as datawindow
-    var_types = {("w_test", "open", "dw_main"): "datawindow"}
+    var_types: dict[tuple[str, str, str], str] = {("w_test", "open", "dw_main"): "datawindow"}
 
     result = resolve_calls(calls, procedures, inherits, var_types=var_types)
     r = result[0]

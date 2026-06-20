@@ -1,5 +1,6 @@
 """Tests for pb impact command."""
 import pytest
+
 from pb_cli.impact import run_impact
 
 

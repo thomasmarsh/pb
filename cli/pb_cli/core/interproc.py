@@ -9,7 +9,7 @@ Public API:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from pb_cli.core.type_resolution import parse_params
 from pb_cli.data import get_free_function_sigs

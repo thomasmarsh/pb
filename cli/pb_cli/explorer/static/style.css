@@ -643,10 +643,14 @@ body {
     text-decoration-style: dotted;
     text-underline-offset: 2px;
 }
-.src-link-proc { color: #a78bfa; }
-.src-link-proc:hover { color: #c4b5fd; }
-.src-link-obj { color: #5B8DD9; }
-.src-link-obj:hover { color: #7ba8e8; }
+.src-link-proc  { color: #a78bfa; }
+.src-link-proc:hover  { color: #c4b5fd; }
+.src-link-obj   { color: #5B8DD9; }
+.src-link-obj:hover   { color: #7ba8e8; }
+.src-link-var   { color: #9cdcfe; }
+.src-link-var:hover   { color: #c2e8ff; }
+.src-link-param { color: #4fc1ff; }
+.src-link-param:hover { color: #7dd3fc; }
 .source-file-header {
     display: flex;
     align-items: center;

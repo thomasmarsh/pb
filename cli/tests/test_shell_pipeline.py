@@ -30,6 +30,7 @@ class FakeDb:
         self.saved_state: dict[str, str] = {}
         self.metrics_computed = False
         self.metadata: dict[str, str] = {}
+        self.inserted_parse_errors: list = []
 
     def execute(self, sql: str, params=None):
         if "INSERT OR REPLACE INTO metadata" in sql and params:
@@ -63,7 +64,6 @@ def fake_env(tmp_path):
     e.storage.build_subset_tmpdir = lambda src_dir, files: subset_dir
     e.storage.import_batch = lambda objects, conn, dialect="oracle", on_progress=None: len(objects)  # type: ignore[assignment]
     e.storage.insert_parse_errors = lambda conn, rows: conn.inserted_parse_errors.extend(rows)  # type: ignore[attr-defined]
-    db.inserted_parse_errors = []
 
     return e, db
 

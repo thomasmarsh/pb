@@ -11,7 +11,7 @@ Public API:
 
 from __future__ import annotations
 
-from collections import deque
+import re as _re
 from dataclasses import dataclass, field
 
 from pb_cli.core.cfg_builder import CFG, BasicBlock
@@ -64,8 +64,6 @@ def _lvar_root(node: dict) -> str | None:
                 return first.get("name") or first.get("lvsName")
     return None
 
-
-import re as _re
 
 _IDENT_RE = _re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
 

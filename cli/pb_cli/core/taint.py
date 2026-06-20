@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from pb_cli.core.type_resolution import parse_params
 
@@ -211,18 +211,6 @@ _Provenance = dict[tuple[str, str, str], tuple[str, str, str | None, str, str]]
 _Triple = tuple[str, str, str]
 
 
-def _index_by_proc(
-    rows: list[dict],
-    obj_key: str = "object",
-    proc_key: str = "proc_name",
-) -> dict[tuple[str, str], list[dict]]:
-    idx: dict[tuple[str, str], list[dict]] = {}
-    for r in rows:
-        k = (r[obj_key], r[proc_key])
-        idx.setdefault(k, []).append(r)
-    return idx
-
-
 def propagate_taint(
     sources: list[TaintSource],
     proc_defs: list[dict],
@@ -236,10 +224,6 @@ def propagate_taint(
         provenance: maps each tainted triple → (pred_obj, pred_proc, pred_var | None,
                     step_kind, description) for path reconstruction.
     """
-    # Index defs and uses by (object, proc_name)
-    uses_by_proc = _index_by_proc(proc_uses)
-    defs_by_proc = _index_by_proc(proc_defs)
-
     # Fast lookup: for each (obj, proc, var), which lines is it used on?
     uses_by_triple: dict[_Triple, list[dict]] = {}
     for u in proc_uses:
@@ -426,7 +410,6 @@ def build_taint_annotations(
 
     # Collect tainted vars per block
     block_tainted: dict[tuple[str, str, str, str], set[str]] = {}  # (file, obj, proc, block_id) → vars
-    block_file: dict[tuple[str, str, str, str], str] = {}
 
     for rows in (proc_defs, proc_uses):
         for r in rows:

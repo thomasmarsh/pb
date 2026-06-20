@@ -16,7 +16,7 @@ which fields a future constructor nests its children under.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 
 from pb_cli.core.ast_generated import (
     BodyStmt,
@@ -33,28 +33,39 @@ BRANCH_TAGS = {"BsIf", "BsFor", "BsDo", "BsChoose"}
 TaggedNode = Expr | PbType | DoCondition | BodyStmt | ProtoDecl | DwBandKind | DwRetrieveOrRaw
 
 
-def walk_tagged(node: Any, line: int | None = None) -> Iterator[tuple[str, TaggedNode, int | None]]:
-    """Yield (tag, node, line) for every tagged node anywhere under `node`.
-
-    `line` tracks the nearest enclosing Located.line (propagated downward
-    whenever a dict carries an integer "line" field) so callers can report
-    a real source location instead of a synthetic position.
-    """
+def _walk_tagged_raw(node: Any, line: int | None = None) -> Iterator[tuple[str, dict[str, Any], int | None]]:
+    """Internal walker yielding raw dicts. Callers narrow via tag string."""
     if isinstance(node, dict):
         cur_line = node["line"] if isinstance(node.get("line"), int) else line
         tag = node.get("tag")
         if tag is not None:
             yield tag, node, cur_line
         for v in node.values():
-            yield from walk_tagged(v, cur_line)
+            yield from _walk_tagged_raw(v, cur_line)
     elif isinstance(node, list):
         for item in node:
-            yield from walk_tagged(item, line)
+            yield from _walk_tagged_raw(item, line)
+
+
+def walk_tagged(node: Any, line: int | None = None) -> Iterator[tuple[str, TaggedNode, int | None]]:
+    """Yield (tag, node, line) for every tagged node anywhere under `node`.
+
+    `line` tracks the nearest enclosing Located.line (propagated downward
+    whenever a dict carries an integer "line" field) so callers can report
+    a real source location instead of a synthetic position.
+
+    Callers narrow on the tag string to access typed fields:
+        for tag, n, line in walk_tagged(node):
+            if tag == "ExCall":
+                callee = n.get("callee", {})
+    """
+    for tag, raw, line_ in _walk_tagged_raw(node, line):
+        yield tag, cast(TaggedNode, raw), line_
 
 
 def walk_calls(node: Any) -> list[tuple[str, str]]:
     results = []
-    for tag, n, _line in walk_tagged(node):
+    for tag, n, _line in _walk_tagged_raw(node):
         if tag == "ExCall":
             segs = n.get("callee", {}).get("segments", [])
             if segs:
@@ -69,7 +80,7 @@ def walk_calls(node: Any) -> list[tuple[str, str]]:
 
 
 def count_branches(node: Any) -> int:
-    return sum(1 for tag, _n, _line in walk_tagged(node) if tag in BRANCH_TAGS)
+    return sum(1 for tag, _n, _line in _walk_tagged_raw(node) if tag in BRANCH_TAGS)
 
 
 def walk_bsraw(node: Any) -> Iterator[str]:
@@ -80,7 +91,7 @@ def walk_bsraw(node: Any) -> Iterator[str]:
 
 def walk_bsraw_located(node: Any) -> Iterator[tuple[str, int | None]]:
     """Yield (text, line) for every BsRaw statement anywhere under `node`."""
-    for tag, n, line in walk_tagged(node):
+    for tag, n, line in _walk_tagged_raw(node):
         if tag == "BsRaw":
             text = n.get("contents", "")
             if isinstance(text, str) and text:
@@ -95,7 +106,7 @@ def walk_excall_arg_calls(node: Any) -> Iterator[str]:
     by "." (to skip method-chain segments like obj.method()).
     Only bare names (no dot in the name itself) are yielded.
     """
-    for tag, n, _line in walk_tagged(node):
+    for tag, n, _line in _walk_tagged_raw(node):
         if tag == "ExCall":
             for arg_toks in (n.get("args") or []):
                 if not isinstance(arg_toks, list):
@@ -113,7 +124,7 @@ def walk_excall_arg_calls(node: Any) -> Iterator[str]:
 
 def walk_exraw(node: Any) -> Iterator[tuple[str, list[str]]]:
     """Yield (leading_token, tokens) for every ExRaw expression anywhere under `node`."""
-    for tag, n, _line in walk_tagged(node):
+    for tag, n, _line in _walk_tagged_raw(node):
         if tag == "ExRaw":
             toks = n.get("contents", [])
             if isinstance(toks, list) and toks:
@@ -123,7 +134,7 @@ def walk_exraw(node: Any) -> Iterator[tuple[str, list[str]]]:
 def walk_local_vars(node: Any) -> list[tuple[str, str]]:
     """Yield (var_name, var_type) for every BsLocalVar anywhere under `node`."""
     results = []
-    for tag, n, _line in walk_tagged(node):
+    for tag, n, _line in _walk_tagged_raw(node):
         if tag == "BsLocalVar":
             name = n.get("name", "")
             ty = n.get("type", {})

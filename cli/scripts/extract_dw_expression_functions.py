@@ -74,7 +74,6 @@ def _extract_dw_function(html_path: Path) -> dict | None:
 
     # State machine through sections
     state = "start"
-    pre_texts: list[str] = []
 
     for tag in content.find_all(["p", "pre", "h3", "h4", "div"]):
         if not isinstance(tag, Tag):

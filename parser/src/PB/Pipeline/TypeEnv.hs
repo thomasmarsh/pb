@@ -56,7 +56,7 @@ extractBodyVars sf = Map.unions
   <> Map.unions
   [ walkBody (evBody ev) | ev <- srEvents sf ]
   <> Map.unions
-  [ walkBody (obBody on) | on <- srOnBlocks sf ]
+  [ walkBody (obBody ob) | ob <- srOnBlocks sf ]
 
 walkBody :: [Located BodyStmt] -> Map.Map Text PbType
 walkBody = Map.unions . map (walkStmt . locNode)

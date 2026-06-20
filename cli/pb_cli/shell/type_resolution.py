@@ -110,7 +110,7 @@ def build_type_tables(conn: Conn) -> None:
     # Infer control types from naming conventions and add to var_types.
     # This covers window controls (dw_main, cb_ok, etc.) that have no
     # explicit type declaration in source code.
-    seen_controls: set[tuple[str, str]] = set()
+    seen_controls: set[tuple[str, str, str]] = set()
     for proc_row in procedures:
         _infer_controls_from_body(proc_row, var_types, seen_controls)
 
@@ -124,10 +124,12 @@ def build_type_tables(conn: Conn) -> None:
 def _infer_controls_from_body(
     proc_row,
     var_types: dict[tuple[str, str, str], str],
-    seen: set[tuple[str, str]],
+    seen: set[tuple[str, str, str]],
 ) -> None:
     """Infer control types from variable names in procedure body."""
     import json as _json
+    from typing import Any, cast
+
     from pb_cli.core.ast_walker import walk_tagged
 
     if not proc_row.body_json:
@@ -139,21 +141,20 @@ def _infer_controls_from_body(
     # Walk for local variable declarations — extract names that match control patterns
     for tag, node, _line in walk_tagged(body):
         if tag == "BsLocalVar":
-            # Parse "type name" from the token list
-            tokens = node if isinstance(node, list) else []
-            if len(tokens) >= 2:
-                name = tokens[-1] if isinstance(tokens[-1], str) else ""
-                if isinstance(name, str) and name:
-                    key = (proc_row.object, proc_row.name, name)
-                    if key not in var_types:
-                        inferred = infer_control_type(name)
-                        if inferred:
-                            var_types[key] = inferred
+            n = cast(dict[str, Any], node)
+            name = n.get("name", "")
+            if isinstance(name, str) and name:
+                key = (proc_row.object, proc_row.name, name)
+                if key not in var_types:
+                    inferred = infer_control_type(name)
+                    if inferred:
+                        var_types[key] = inferred
 
     # Also scan for bare call targets that look like control names
     for tag, node, _line in walk_tagged(body):
         if tag == "ExCall":
-            callee = node.get("callee", {})
+            n = cast(dict[str, Any], node)
+            callee = n.get("callee", {})
             segments = callee.get("segments", [])
             if segments:
                 first_name = segments[0].get("name", "") if isinstance(segments[0], dict) else ""
