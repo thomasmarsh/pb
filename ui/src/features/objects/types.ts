@@ -2,8 +2,6 @@
 
 import type { ObjectRow, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ProcedureListItem } from "../../types/api.js";
 
-export interface ScrollPair { source: number; analysis: number; }
-
 export interface ObjectsState {
   items: ObjectRow[];
   total: number;

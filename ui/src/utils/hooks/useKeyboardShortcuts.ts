@@ -70,16 +70,6 @@ export function useKeyboardShortcuts(store: Store<AppState, AppAction>): void {
         case "3":
           store.dispatch({ tag: "explore", action: { tag: "sidebar-focus-group", group: "analysisNav" } });
           break;
-        case "T": {
-          e.preventDefault();
-          const s = snap();
-          const route = s.nav.route;
-          if (route.view === "tableDetail") {
-            const face = s.tables.tableFace;
-            store.dispatch({ tag: "tables", action: { tag: "set-table-face", name: route.name, face: face === "source" ? "analysis" : "source", scrollTop: 0 } });
-          }
-          break;
-        }
       }
     }
 

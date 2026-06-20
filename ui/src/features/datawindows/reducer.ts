@@ -15,7 +15,6 @@ export interface DatawindowsEnv {
 
 export const initialDatawindowsState: DatawindowsState = {
   items: [], total: 0, q: "", loading: false, dwDetail: null,
-  dwFace: "source", dwScrollPos: {},
 };
 
 function errMsg(e: unknown): string { return e instanceof Error ? e.message : String(e); }
@@ -48,15 +47,6 @@ function reduce(draft: DatawindowsState, action: DatawindowsAction, env: Datawin
   case "detail-error":
     draft.dwDetail = { error: action.error };
     return null;
-  case "set-dw-face": {
-    const prev = draft.dwScrollPos[action.name] ?? { source: 0, analysis: 0 };
-    draft.dwScrollPos[action.name] = {
-      ...prev,
-      [draft.dwFace]: action.scrollTop,
-    };
-    draft.dwFace = action.face;
-    return null;
-  }
   default:
     return null;
   }

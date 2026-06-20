@@ -10,5 +10,4 @@ export type TablesAction =
   | { tag: "detail-loaded"; detail: TableDetail }
   | { tag: "detail-error";  error: string }
   | { tag: "back" }
-  | { tag: "set-table-face"; name: string; face: import("./types.js").Face; scrollTop: number }
   ;

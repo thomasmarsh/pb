@@ -1,6 +1,6 @@
-// DWDetail.tsx — DataWindow detail view with FaceToggle Source/Analysis faces.
+// DWDetail.tsx — DataWindow detail view, source-first with contextual analysis panels.
 
-import { Show, For, createEffect } from "solid-js";
+import { Show, For, createSignal } from "solid-js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
@@ -10,6 +10,9 @@ import { Loading } from "../../components/ui/Loading.js";
 import { DetailHeader } from "../../components/detail/DetailHeader.js";
 import { BackButton } from "../../components/ui/BackButton.js";
 import { EntityListCard } from "../../components/detail/EntityListCard.js";
+import { AnalysisSummaryBar } from "../../components/detail/AnalysisSummaryBar.js";
+import type { SummaryItem } from "../../components/detail/AnalysisSummaryBar.js";
+import { ContextualPanel } from "../../components/detail/ContextualPanel.js";
 
 function DWControlsTable(props: { controls: DwControlRow[] }) {
   return (
@@ -45,77 +48,87 @@ function DWControlsTable(props: { controls: DwControlRow[] }) {
 export function DwDetailCore(props: { d: DwDetailResponse; store: Store<AppState, AppAction> }) {
   const d = props.d;
   const store = props.store;
-  const snap = store.getState();
-  const face = () => snap().datawindows.dwFace;
 
-  let scrollEl: HTMLDivElement | undefined;
-
-  createEffect(() => {
-    const pos = snap().datawindows.dwScrollPos[d.name];
-    if (!pos || !scrollEl) return;
-    scrollEl.scrollTop = face() === "source" ? pos.source : pos.analysis;
-  });
+  const [showTables, setShowTables] = createSignal(false);
+  const [showUsedByObjects, setShowUsedByObjects] = createSignal(false);
+  const [showUsedByProcs, setShowUsedByProcs] = createSignal(false);
+  const [showRetrieve, setShowRetrieve] = createSignal(false);
 
   const hasWhere = d.retrieve_where.length > 0;
   const hasArgs = d.arguments.length > 0;
+  const tableCount = d.retrieve_tables.length;
+  const usedByObjCount = d.used_by_objects?.length ?? 0;
+  const usedByProcCount = d.used_by_procs?.length ?? 0;
+
+  const summaryItems = (): SummaryItem[] => [
+    ...(tableCount > 0 ? [{ label: "Tables", count: tableCount, active: showTables(), onClick: () => setShowTables((v) => !v) } as SummaryItem] : []),
+    ...(usedByObjCount > 0 ? [{ label: "Used By Objects", count: usedByObjCount, active: showUsedByObjects(), onClick: () => setShowUsedByObjects((v) => !v) } as SummaryItem] : []),
+    ...(usedByProcCount > 0 ? [{ label: "Used By Procs", count: usedByProcCount, active: showUsedByProcs(), onClick: () => setShowUsedByProcs((v) => !v) } as SummaryItem] : []),
+    ...(hasWhere || hasArgs ? [{ label: "Retrieve", active: showRetrieve(), onClick: () => setShowRetrieve((v) => !v) } as SummaryItem] : []),
+  ];
+
+  function handleKeyDown(e: KeyboardEvent): void {
+    if (e.key === "Escape") {
+      setShowTables(false);
+      setShowUsedByObjects(false);
+      setShowUsedByProcs(false);
+      setShowRetrieve(false);
+    }
+  }
 
   return (
-    <>
+    <div onKeyDown={handleKeyDown}>
       <DetailHeader
         name={d.name}
         badgeClass="badge-dw"
         badgeLabel="datawindow"
-        face={face()}
-        store={store}
-        onToggle={(newFace, scrollTop) => {
-          store.dispatch({ tag: "datawindows", action: { tag: "set-dw-face", name: d.name, face: newFace, scrollTop } });
-        }}
-        scrollAreaRef={() => scrollEl}
       />
 
-      <div class="detail-body" ref={scrollEl}>
-        <Show when={face() === "source"}>
-          <Show when={d.controls.length > 0}>
-            <DWControlsTable controls={d.controls} />
-          </Show>
-          <Show when={d.source}>
-            <div class="card">
-              <div class="card-header"><h3>Source</h3></div>
-              <CodeBlock code={d.source!} />
-            </div>
-          </Show>
+      <AnalysisSummaryBar items={summaryItems()} />
+
+      <div class="detail-body">
+        <Show when={d.controls.length > 0}>
+          <DWControlsTable controls={d.controls} />
         </Show>
 
-        <Show when={face() === "analysis"}>
-          <Show when={d.retrieve_tables.length > 0}>
+        <Show when={d.source}>
+          <div class="card">
+            <div class="card-header"><h3>Source</h3></div>
+            <CodeBlock code={d.source!} />
+          </div>
+        </Show>
+
+        <Show when={showTables()}>
+          <ContextualPanel title={`Tables Accessed (${tableCount})`} onClose={() => setShowTables(false)}>
             <EntityListCard
-              title="Tables Accessed"
-              count={d.retrieve_tables.length}
+              title=""
               items={d.retrieve_tables.map((t) => ({
                 type: "table" as const,
                 name: t,
                 onClick: () => store.dispatch({ tag: "tables", action: { tag: "select", name: t } }),
               }))}
             />
-          </Show>
+          </ContextualPanel>
+        </Show>
 
-          <Show when={(d.used_by_objects?.length ?? 0) > 0}>
+        <Show when={showUsedByObjects()}>
+          <ContextualPanel title={`Used By — Objects (${usedByObjCount})`} onClose={() => setShowUsedByObjects(false)}>
             <EntityListCard
-              title="Used By — Objects"
-              count={d.used_by_objects!.length}
-              items={d.used_by_objects!.map((obj) => ({
+              title=""
+              items={(d.used_by_objects ?? []).map((obj) => ({
                 type: "object" as const,
                 name: obj,
                 onClick: () => store.dispatch({ tag: "objects", action: { tag: "select", name: obj } }),
               }))}
             />
-          </Show>
+          </ContextualPanel>
+        </Show>
 
-          <Show when={(d.used_by_procs?.length ?? 0) > 0}>
+        <Show when={showUsedByProcs()}>
+          <ContextualPanel title={`Used By — Procedures (${usedByProcCount})`} onClose={() => setShowUsedByProcs(false)}>
             <EntityListCard
-              title="Used By — Procedures"
-              count={d.used_by_procs!.length}
-              items={d.used_by_procs!.map((ref) => ({
+              title=""
+              items={(d.used_by_procs ?? []).map((ref) => ({
                 type: "procedure" as const,
                 name: ref.proc,
                 context: ref.object,
@@ -123,11 +136,12 @@ export function DwDetailCore(props: { d: DwDetailResponse; store: Store<AppState
                 onClick: () => store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: ref.object, procName: ref.proc } }),
               }))}
             />
-          </Show>
+          </ContextualPanel>
+        </Show>
 
-          <Show when={hasWhere || hasArgs}>
-            <div class="card">
-              <div class="card-header"><h3>Retrieve Definition</h3></div>
+        <Show when={showRetrieve()}>
+          <ContextualPanel title="Retrieve Definition" onClose={() => setShowRetrieve(false)}>
+            <>
               <Show when={hasArgs}>
                 <div style={{ "padding": "8px 16px" }}>
                   <div style={{ "font-size": "11px", color: "var(--text-muted)", "margin-bottom": "4px" }}>Arguments</div>
@@ -162,12 +176,11 @@ export function DwDetailCore(props: { d: DwDetailResponse; store: Store<AppState
                   </table>
                 </div>
               </Show>
-            </div>
-          </Show>
-
+            </>
+          </ContextualPanel>
         </Show>
       </div>
-    </>
+    </div>
   );
 }
 

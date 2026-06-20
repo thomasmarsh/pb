@@ -1,7 +1,7 @@
-// tests/features/DWDetail.test.tsx — Tests for DWDetail FaceToggle structure.
+// tests/features/DWDetail.test.tsx — Tests for source-first DWDetail.
 
 import { describe, it, expect } from "vitest";
-import { fireEvent, render, waitFor } from "@solidjs/testing-library";
+import { fireEvent, render } from "@solidjs/testing-library";
 import { DWDetail } from "../../src/features/datawindows/DataWindows.js";
 import { createTestStore } from "../helpers.js";
 import { initialDatawindowsState } from "../../src/features/datawindows/reducer.js";
@@ -19,81 +19,121 @@ function makeDw(overrides: Partial<DwDetailResponse> = {}): DwDetailResponse {
     retrieve_where: [{ idx: 1, exp1: "orders.id", op: "=", exp2: ":arg_id", logic: "" }],
     arguments: [{ arg_name: "arg_id", arg_type: "long" }],
     source: "select 1 from orders",
+    used_by_objects: ["w_main"],
+    used_by_procs: [{ object: "n_svc", proc: "of_load" }],
     ...overrides,
   };
 }
 
-function renderDWDetail(
-  dwDetail: DwDetailResponse | { error: string } | null,
-  dwFace: "source" | "analysis" = "source",
-) {
+function renderDWDetail(overrides: Partial<DwDetailResponse> = {}) {
   const { store } = createTestStore({
-    datawindows: { ...initialDatawindowsState, dwDetail, dwFace },
+    datawindows: { ...initialDatawindowsState, dwDetail: makeDw(overrides) },
   });
-  return render(() => <DWDetail store={store} />);
+  render(() => <DWDetail store={store} />);
+}
+
+function summaryBar(): Element | null {
+  return document.querySelector(".analysis-summary-bar");
+}
+
+function summaryPillBtn(label: string): Element | undefined {
+  return [...(summaryBar()?.querySelectorAll("button") ?? [])].find((b) =>
+    b.textContent?.includes(label),
+  );
 }
 
 function cardHeaders(): string[] {
   return [...document.querySelectorAll(".card-header h3")].map((h) => h.textContent ?? "");
 }
 
-function toggleBtns(): Element[] {
-  return [...document.querySelectorAll(".face-toggle-btn")];
-}
-
-describe("DWDetail FaceToggle", () => {
-  it("renders Source and Analysis toggle buttons", () => {
-    renderDWDetail(makeDw());
-    const labels = toggleBtns().map((b) => b.textContent);
-    expect(labels).toContain("Source");
-    expect(labels).toContain("Analysis");
+describe("DWDetail source-first", () => {
+  it("does not render a FaceToggle", () => {
+    renderDWDetail();
+    expect(document.querySelector(".face-toggle")).toBeNull();
   });
 
-  it("Source button is active by default", () => {
-    renderDWDetail(makeDw());
-    const sourceBtn = toggleBtns().find((b) => b.textContent === "Source");
-    expect(sourceBtn?.classList.contains("active")).toBe(true);
+  it("renders AnalysisSummaryBar", () => {
+    renderDWDetail();
+    expect(summaryBar()).not.toBeNull();
   });
 
-  it("source face shows Controls card when controls are present", () => {
-    renderDWDetail(makeDw());
+  it("controls table visible without toggling", () => {
+    renderDWDetail();
     expect(cardHeaders().some((h) => h.startsWith("Controls"))).toBe(true);
   });
 
-  it("source face hides Controls card when no controls", () => {
-    renderDWDetail(makeDw({ controls: [] }));
+  it("controls hidden when no controls", () => {
+    renderDWDetail({ controls: [] });
     expect(cardHeaders().some((h) => h.startsWith("Controls"))).toBe(false);
   });
 
-  it("source face shows Source code card", () => {
-    renderDWDetail(makeDw());
+  it("source code card visible without toggling", () => {
+    renderDWDetail();
     expect(cardHeaders()).toContain("Source");
   });
 
-  it("analysis face shows Tables Accessed card with table names", () => {
-    renderDWDetail(makeDw(), "analysis");
-    expect(cardHeaders()).toContain("Tables Accessed (2)");
-    const names = [...document.querySelectorAll(".entity-card-name")].map((e) => e.textContent);
-    expect(names).toContain("orders");
-    expect(names).toContain("customers");
+  it("Tables pill shows count from retrieve_tables", () => {
+    renderDWDetail({ retrieve_tables: ["orders", "customers"] });
+    expect(summaryBar()?.textContent).toContain("Tables (2)");
   });
 
-  it("analysis face shows Retrieve Definition with args", () => {
-    renderDWDetail(makeDw(), "analysis");
-    expect(cardHeaders()).toContain("Retrieve Definition");
+  it("Tables pill hidden when retrieve_tables empty", () => {
+    renderDWDetail({ retrieve_tables: [] });
+    expect(summaryBar()?.textContent).not.toContain("Tables");
+  });
+
+  it("clicking Tables pill opens panel with table names", () => {
+    renderDWDetail({ retrieve_tables: ["orders", "customers"] });
+    fireEvent.click(summaryPillBtn("Tables")!);
+    expect(document.body.textContent).toContain("orders");
+    expect(document.body.textContent).toContain("customers");
+  });
+
+  it("Used By Objects pill shown when used_by_objects non-empty", () => {
+    renderDWDetail({ used_by_objects: ["w_main"] });
+    expect(summaryBar()?.textContent).toContain("Used By Objects (1)");
+  });
+
+  it("Used By Objects pill hidden when empty", () => {
+    renderDWDetail({ used_by_objects: [] });
+    expect(summaryBar()?.textContent).not.toContain("Used By Objects");
+  });
+
+  it("clicking Used By Objects pill opens panel with object name", () => {
+    renderDWDetail({ used_by_objects: ["w_main"] });
+    fireEvent.click(summaryPillBtn("Used By Objects")!);
+    expect(document.body.textContent).toContain("w_main");
+  });
+
+  it("Used By Procs pill shown when used_by_procs non-empty", () => {
+    renderDWDetail({ used_by_procs: [{ object: "n_svc", proc: "of_load" }] });
+    expect(summaryBar()?.textContent).toContain("Used By Procs (1)");
+  });
+
+  it("Used By Procs pill hidden when empty", () => {
+    renderDWDetail({ used_by_procs: [] });
+    expect(summaryBar()?.textContent).not.toContain("Used By Procs");
+  });
+
+  it("Retrieve pill shown when args present", () => {
+    renderDWDetail({ arguments: [{ arg_name: "arg_id", arg_type: "long" }], retrieve_where: [] });
+    expect(summaryBar()?.textContent).toContain("Retrieve");
+  });
+
+  it("Retrieve pill shown when where clauses present", () => {
+    renderDWDetail({ arguments: [], retrieve_where: [{ idx: 1, exp1: "orders.id", op: "=", exp2: ":arg_id", logic: "" }] });
+    expect(summaryBar()?.textContent).toContain("Retrieve");
+  });
+
+  it("Retrieve pill hidden when no args and no where", () => {
+    renderDWDetail({ arguments: [], retrieve_where: [] });
+    expect(summaryBar()?.textContent).not.toContain("Retrieve");
+  });
+
+  it("clicking Retrieve pill opens Retrieve Definition panel", () => {
+    renderDWDetail({ arguments: [{ arg_name: "arg_id", arg_type: "long" }] });
+    fireEvent.click(summaryPillBtn("Retrieve")!);
+    expect(document.body.textContent).toContain("Retrieve Definition");
     expect(document.body.textContent).toContain("arg_id");
-  });
-
-  it("analysis face renders DW analysis content", () => {
-    renderDWDetail(makeDw(), "analysis");
-    // Analysis face should render the card area (Impact Analysis section)
-    expect(document.querySelector(".card")).not.toBeNull();
-  });
-
-  it("clicking Analysis button activates analysis face", async () => {
-    renderDWDetail(makeDw());
-    const analysisBtn = toggleBtns().find((b) => b.textContent === "Analysis")!;
-    fireEvent.click(analysisBtn);
-    await waitFor(() => expect(analysisBtn.classList.contains("active")).toBe(true));
   });
 });
