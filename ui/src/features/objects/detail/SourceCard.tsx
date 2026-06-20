@@ -5,8 +5,8 @@ import type { Store } from "../../../core/store.js";
 import type { AppState } from "../../../features/app/state.js";
 import type { AppAction } from "../../../features/app/actions.js";
 import type { ObjectSourceResponse, ProcedureInfo, KnownProcInfo, LocalSymbolInfo } from "../../../types/api.js";
-import { SourceViewer } from "../SourceViewer.js";
-import type { ContextActions } from "../../../components/detail/SourceContextMenu.js";
+import { SourceViewer } from "../../../components/source/index.js";
+import type { ContextActions } from "../../../components/source/index.js";
 
 export function SourceCard(props: {
   store: Store<AppState, AppAction>;

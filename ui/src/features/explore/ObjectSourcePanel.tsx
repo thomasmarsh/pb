@@ -2,7 +2,7 @@
 
 import { Show, createMemo, createEffect } from "solid-js";
 import { useExploreStore } from "./ExploreContext.js";
-import { SourceViewer } from "../objects/SourceViewer.js";
+import { SourceViewer } from "../../components/source/index.js";
 import { procId } from "./TreeNodes.js";
 import type { ObjectSourceResponse, ProcedureInfo } from "../../types/api.js";
 
