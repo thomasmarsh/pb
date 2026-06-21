@@ -44,6 +44,7 @@ library
     PB.Pipeline.CpsCompile
     PB.Pipeline.Dataflow
     PB.Pipeline.PbApi
+    PB.Pipeline.Taint
     PB.Pipeline.Preprocess
     PB.Pipeline.PrettyPrint
     PB.Pipeline.Runner
@@ -93,6 +94,7 @@ test-suite pb-ast-test
     , CorpusDebtTest
     , CpsCompileTest
     , DataflowTest
+    , TaintTest
     , DataWindowTest
     , CorpusInvariantTest
     , CorpusTest

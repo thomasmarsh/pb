@@ -72,8 +72,9 @@ def run(
             env.storage.delete_file_rows(conn, path)
 
         to_parse = diff.new + diff.changed
+        runner_out_dir: Path | None = None
         if to_parse:
-            objects, errors, parse_errors = _parse_subset(src_dir, binary, to_parse, reporter)
+            objects, errors, parse_errors, runner_out_dir = _parse_subset(src_dir, binary, to_parse, reporter)
 
             with reporter.indexing_step() as advance:
                 row_count = env.storage.import_batch(objects, conn, dialect, on_progress=advance)
@@ -99,7 +100,7 @@ def run(
         progress.start_step("build interproc tables")
         env.storage.build_interproc_tables(conn)
         progress.start_step("build taint tables")
-        env.storage.build_taint_tables(conn)
+        env.storage.build_taint_tables(conn, runner_out_dir)
         progress.start_step("build dead code table")
         env.storage.build_dead_code_table(conn)
         sql_parse_failures = env.storage.count_sql_parse_failures(conn)
@@ -117,13 +118,14 @@ def _parse_subset(
     binary: Path,
     to_parse: list[str],
     reporter: Reporter,
-) -> tuple[list[dict], int, list[ParseErrorRow]]:
+) -> tuple[list[dict], int, list[ParseErrorRow], Path]:
     tmpdir = env.storage.build_subset_tmpdir(src_dir, to_parse)
     try:
         objects: list[dict] = []
         parse_errors: list[ParseErrorRow] = []
+        stream, out_dir = env.runner.parse_files(tmpdir, binary, remap_from=tmpdir, remap_to=src_dir)
         with reporter.parse_progress(len(to_parse), "Parsing") as progress:
-            for is_err, obj in env.runner.parse_stream(tmpdir, binary, remap_from=tmpdir, remap_to=src_dir):
+            for is_err, obj in stream:
                 if is_err:
                     progress.on_error(obj)
                     message = obj.get("error", "")
@@ -145,6 +147,6 @@ def _parse_subset(
                         pass
                     objects.append(obj)
                 progress.advance()
-        return objects, progress.error_count, parse_errors
+        return objects, progress.error_count, parse_errors, out_dir
     finally:
         shutil.rmtree(tmpdir)

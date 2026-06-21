@@ -8,6 +8,7 @@ db_path fixture, which exercises run_from_jsonl_lines + compute_metrics directly
 
 from __future__ import annotations
 
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -44,6 +45,8 @@ def fake_env(tmp_path):
     e = ShellEnv()
     subset_dir = tmp_path / "subset"
     subset_dir.mkdir(exist_ok=True)
+    out_dir = tmp_path / "runner_out"
+    out_dir.mkdir(exist_ok=True)
 
     @contextmanager
     def db_connection(path, read_only=False):
@@ -59,7 +62,7 @@ def fake_env(tmp_path):
     e.storage.build_type_tables = lambda conn: None  # no-op for unit tests
     e.storage.build_dataflow_tables = lambda conn: None  # no-op for unit tests
     e.storage.build_interproc_tables = lambda conn: None  # no-op for unit tests
-    e.storage.build_taint_tables = lambda conn: None  # no-op for unit tests
+    e.storage.build_taint_tables = lambda conn, out_dir=None: None  # no-op for unit tests
     e.storage.build_dead_code_table = lambda conn: None  # no-op for unit tests
     e.storage.count_sql_parse_failures = lambda conn: 0
     e.storage.build_subset_tmpdir = lambda src_dir, files: subset_dir
@@ -71,6 +74,13 @@ def fake_env(tmp_path):
 
 def _patch_env(monkeypatch, env_obj):
     monkeypatch.setattr("pb_cli.shell.pipeline.env", env_obj)
+
+
+def _make_parse_files(iterable):
+    """Create a parse_files mock that returns (iterator, tmp_out_dir)."""
+    def fake_parse_files(src_dir, binary, *, remap_from=None, remap_to=None):
+        return iter(iterable), Path(tempfile.mkdtemp(prefix="pb-test-"))
+    return fake_parse_files
 
 
 def test_no_changes_short_circuits(monkeypatch, fake_env):
@@ -93,7 +103,7 @@ def test_no_changes_short_circuits(monkeypatch, fake_env):
 def test_new_files_parsed_and_imported(monkeypatch, fake_env):
     e, db = fake_env
     e.build.hash_source_dir = lambda src_dir: {"new.srw": "hash1"}
-    e.runner.parse_stream = lambda src_dir, binary, *, remap_from=None, remap_to=None: iter(
+    e.runner.parse_files = _make_parse_files(
         [(False, {"file": "new.srw", "tag": "file"})]
     )
     _patch_env(monkeypatch, e)
@@ -113,7 +123,7 @@ def test_changed_file_triggers_delete_then_reimport(monkeypatch, fake_env):
     e, db = fake_env
     db.file_state = {"old.srw": "old_hash"}
     e.build.hash_source_dir = lambda src_dir: {"old.srw": "new_hash"}
-    e.runner.parse_stream = lambda src_dir, binary, *, remap_from=None, remap_to=None: iter(
+    e.runner.parse_files = _make_parse_files(
         [(False, {"file": "old.srw", "tag": "file"})]
     )
     _patch_env(monkeypatch, e)
@@ -134,12 +144,12 @@ def test_deleted_file_only_deletes_no_reparse(monkeypatch, fake_env):
 
     parse_called = False
 
-    def fake_parse(src_dir, binary, *, remap_from=None, remap_to=None):
+    def fake_parse_files(src_dir, binary, *, remap_from=None, remap_to=None):
         nonlocal parse_called
         parse_called = True
-        return iter([])
+        return iter([]), Path(tempfile.mkdtemp(prefix="pb-test-"))
 
-    e.runner.parse_stream = fake_parse
+    e.runner.parse_files = fake_parse_files
     _patch_env(monkeypatch, e)
 
     reporter = RecordingReporter()
@@ -181,7 +191,7 @@ def test_reset_flag_drops_tables(monkeypatch, fake_env):
 def test_parse_error_propagates_to_done_event(monkeypatch, fake_env):
     e, db = fake_env
     e.build.hash_source_dir = lambda src_dir: {"bad.srw": "hash1"}
-    e.runner.parse_stream = lambda src_dir, binary, *, remap_from=None, remap_to=None: iter(
+    e.runner.parse_files = _make_parse_files(
         [(True, {"file": "bad.srw", "error": "lex failure"})]
     )
     _patch_env(monkeypatch, e)
@@ -198,7 +208,7 @@ def test_parse_error_propagates_to_done_event(monkeypatch, fake_env):
 def test_parse_error_is_persisted_with_extracted_line(monkeypatch, fake_env):
     e, db = fake_env
     e.build.hash_source_dir = lambda src_dir: {"bad.srw": "hash1"}
-    e.runner.parse_stream = lambda src_dir, binary, *, remap_from=None, remap_to=None: iter(
+    e.runner.parse_files = _make_parse_files(
         [(True, {"file": "bad.srw", "error": "lex error at line 42: unexpected character"})]
     )
     _patch_env(monkeypatch, e)

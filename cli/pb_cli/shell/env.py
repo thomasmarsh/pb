@@ -55,7 +55,7 @@ from pb_cli.shell.importing import import_batch, run_from_jsonl_lines
 from pb_cli.shell.interproc import build_interproc_tables
 from pb_cli.shell.metrics import compute_dit, compute_metrics
 from pb_cli.shell.reporter import LiveReporter, Reporter
-from pb_cli.shell.runner import parse_stream, render_error
+from pb_cli.shell.runner import parse_files, parse_stream, render_error
 from pb_cli.shell.state import (
     delete_file_rows,
     load_file_state,
@@ -94,6 +94,17 @@ class ParseStream(Protocol):
     ) -> Iterator[tuple[bool, dict]]: ...
 
 
+class ParseFiles(Protocol):
+    def __call__(
+        self,
+        src_dir: Path,
+        binary: Path,
+        *,
+        remap_from: Path | None = None,
+        remap_to: Path | None = None,
+    ) -> tuple[Iterator[tuple[bool, dict]], Path]: ...
+
+
 class DbConnection(Protocol):
     def __call__(self, path: str | Path, read_only: bool = False) -> AbstractContextManager[Conn]: ...
 
@@ -128,6 +139,7 @@ class BuildEnv:
 @dataclass
 class RunnerEnv:
     parse_stream: ParseStream = field(default=parse_stream)
+    parse_files: ParseFiles = field(default=parse_files)
     render_error: Callable[[dict], Panel] = field(default=render_error)
 
 
@@ -149,7 +161,7 @@ class StorageEnv:
     build_type_tables: Callable[[Conn], None] = field(default=build_type_tables)
     build_dataflow_tables: Callable[[Conn], None] = field(default=build_dataflow_tables)
     build_interproc_tables: Callable[[Conn], None] = field(default=build_interproc_tables)
-    build_taint_tables: Callable[[Conn], None] = field(default=build_taint_tables)
+    build_taint_tables: Callable[[Conn, Path | None], None] = field(default=build_taint_tables)
     build_dead_code_table: Callable[[Conn], None] = field(default=build_dead_code_table)
     connect: Callable[[str], AbstractContextManager[Conn]] = field(default=connect)
 

@@ -5,6 +5,7 @@ module PB.Pipeline.Runner
   , runModeFiles
   , runModeJsonl
   , writeDataflowAnalysis
+  , writeTaintAnalysis
   , ManifestEntry (..)
   , manifestEntry
   ) where
@@ -23,9 +24,11 @@ import PB.Pipeline.PrettyPrint (prettyBodyStmts)
 import PB.Pipeline.CfgBuild    (buildCfg)
 import PB.Pipeline.CpsCompile  (InheritGraph, TypeEnv, compileProcedure)
 import PB.Pipeline.Dataflow    qualified as Dataflow
+import PB.Pipeline.Taint       qualified as Taint
 import PB.Pipeline.Serialise   ()
 
-import Data.Aeson          (ToJSON (..), Value (..), encode, object, toJSON, (.=))
+import Data.Aeson          (FromJSON (..), ToJSON (..), Value (..), eitherDecodeFileStrict'
+                           , encode, object, toJSON, (.=))
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString      as BS
@@ -36,7 +39,7 @@ import Data.Either         (lefts)
 import Data.Word           (Word8)
 import qualified Data.Text          as T
 import qualified Data.Text.Encoding as TE
-import System.Directory    (createDirectoryIfMissing)
+import System.Directory    (createDirectoryIfMissing, doesFileExist)
 import System.FilePath     (makeRelative, takeBaseName, takeDirectory
                            , takeExtension, (</>))
 import PB.Pipeline.PbApi    (builtinFnNames, builtinMethodNames)
@@ -48,6 +51,7 @@ import PB.Pipeline.TypeResolve
   )
 import PB.AST.Type          (renderPbType)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set        as Set
 import PB.Pipeline.Walk    (walkAllSrFiles)
 
 -- ---------------------------------------------------------------------------
@@ -421,6 +425,46 @@ writeDataflowAnalysis outDir parsed = do
   BSL.writeFile (outDir </> "proc_uses.json") (encode allUses)
 
 -- ---------------------------------------------------------------------------
+-- Pass 7 (111d-2): taint analysis → taint_*.json
+--
+-- Reads proc_defs.json, proc_uses.json, resolved_calls.json, global_vars.json
+-- from Pass 5/6 output. For each file, classifies sources/sinks from the AST,
+-- computes inter-proc edges, propagates taint, traces paths, builds annotations.
+-- Writes taint_sources.json, taint_sinks.json, taint_paths.json, taint_annotations.json.
+
+-- | Load a JSON array file into a list of decoded values.
+loadJsonArray :: (FromJSON a) => FilePath -> IO [a]
+loadJsonArray path = do
+  exists <- doesFileExist path
+  if not exists then pure [] else do
+    result <- eitherDecodeFileStrict' path
+    case result of
+      Left _  -> pure []
+      Right v -> pure v
+
+writeTaintAnalysis :: FilePath -> [ParsedFile] -> IO ()
+writeTaintAnalysis outDir parsed = do
+  -- Load pre-computed rows from Pass 5/6 JSON
+  allDefs    <- loadJsonArray (outDir </> "proc_defs.json")    :: IO [Taint.DefRow]
+  allUses    <- loadJsonArray (outDir </> "proc_uses.json")    :: IO [Taint.UseRow]
+  allRC      <- loadJsonArray (outDir </> "resolved_calls.json") :: IO [Taint.ResolvedCallRow]
+  allGV      <- loadJsonArray (outDir </> "global_vars.json")  :: IO [Taint.GlobalVarRow]
+  let globalVarNames = Set.fromList (map Taint.gvrVarName allGV)
+      -- Run taint analysis per file
+      results = [ Taint.taintAnalysis allRC allDefs allUses globalVarNames
+                    (T.pack (pfPath pf)) (pfSrFile pf)
+                | pf <- parsed
+                ]
+      allSources     = concatMap Taint.trSources     results
+      allSinks       = concatMap Taint.trSinks       results
+      allPaths       = concatMap Taint.trPaths       results
+      allAnnotations = concatMap Taint.trAnnotations results
+  BSL.writeFile (outDir </> "taint_sources.json")     (encode allSources)
+  BSL.writeFile (outDir </> "taint_sinks.json")       (encode allSinks)
+  BSL.writeFile (outDir </> "taint_paths.json")       (encode allPaths)
+  BSL.writeFile (outDir </> "taint_annotations.json") (encode allAnnotations)
+
+-- ---------------------------------------------------------------------------
 -- Three-pass pipeline (runModeFiles)
 --
 -- Pass 1 (parseOutcome)  : parse all PowerScript files; classify others
@@ -512,6 +556,7 @@ runModeFiles srcDir outDir = do
   entries  <- mapM (emitOutcome allInh srcDir outDir) outcomes  -- Pass 3+4
   writeResolution outDir [(pfPath pf, pfSrFile pf) | pf <- parsed]  -- Pass 5
   writeDataflowAnalysis outDir parsed                               -- Pass 6 (111d-1)
+  writeTaintAnalysis outDir parsed                                     -- Pass 7 (111d-2)
   BSL.writeFile (outDir </> "manifest.json") (encode (catMaybes entries))
 
 runModeJsonl :: FilePath -> IO ()
