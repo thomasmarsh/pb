@@ -68,6 +68,12 @@ type TypeEnv = Map.Map Text Text
 -- analysis (Plan 110b).
 type InheritGraph = Map.Map Text Text
 
+-- | Loop context threaded through compileStmts so that BsExit/BsContinue can
+-- emit CpsGoto to the correct target PC.  Nothing = not inside a loop.
+-- Just (headerPc, exitPc): headerPc is where CONTINUE jumps (increment step
+-- for FOR, condition check for DO); exitPc is where EXIT jumps (past the loop).
+type LoopCtx = Maybe (Int, Int)
+
 -- ---------------------------------------------------------------------------
 -- Side-effect classification
 
@@ -180,9 +186,36 @@ parseArg t
       ExLvalue (Lvalue [LvSegment t Nothing])
   | otherwise = ExStr t
 
+-- | Convert one raw-arg token list (one argument's tokens) to a typed Expr.
+-- Fixes the bug where concat lost arg boundaries.
+parseArgList :: [Text] -> Expr
+parseArgList []  = ExRaw []
+parseArgList [t] = parseArg t
+parseArgList ts  = ExRaw ts
+
+-- | Single-text → ExLvalue; multiple texts → ExRaw (for BsAugAssign/BsInc/BsDec LHS).
+lhsToExpr :: [Text] -> Expr
+lhsToExpr [t] = ExLvalue (Lvalue [LvSegment t Nothing])
+lhsToExpr ts  = ExRaw ts
+
+-- | Extract a CpsAssign variable name from a complex LHS expression.
+assignTarget :: Expr -> Text
+assignTarget (ExLvalue lv)              = lvHead lv
+assignTarget (ExMethodCall recv meth _) = case recv of
+    ExLvalue lv -> lvHead lv <> "." <> meth
+    _            -> "?." <> meth
+assignTarget _ = "?"
+
+-- | Map BsAugAssign operators to binary operators.
+augOpToBinOp :: AugOp -> BinOp
+augOpToBinOp AugAdd = BopAdd
+augOpToBinOp AugSub = BopSub
+augOpToBinOp AugMul = BopMul
+augOpToBinOp AugDiv = BopDiv
+
 exprArgs :: Expr -> [Expr]
-exprArgs (ExCall _ rawArgLists)         = map parseArg (concat rawArgLists)
-exprArgs (ExMethodCall _ _ rawArgLists) = map parseArg (concat rawArgLists)
+exprArgs (ExCall _ rawArgLists)         = map parseArgList rawArgLists
+exprArgs (ExMethodCall _ _ rawArgLists) = map parseArgList rawArgLists
 exprArgs _                              = []
 
 -- ---------------------------------------------------------------------------
@@ -234,14 +267,14 @@ finalizeCps entry = do
 
 -- | Compile a sequence of statements in reverse order (last first), so that
 -- each statement can reference the next statement's PC as its fallthrough.
-compileStmts :: TypeEnv -> InheritGraph -> [Located BodyStmt] -> Int -> C Int
-compileStmts _   _   []     ft = pure ft
-compileStmts env inh (s:ss) ft = do
-  ssFt <- compileStmts env inh ss ft
-  compileSingleStmt env inh s ssFt
+compileStmts :: TypeEnv -> InheritGraph -> LoopCtx -> [Located BodyStmt] -> Int -> C Int
+compileStmts _   _   _    []     ft = pure ft
+compileStmts env inh lctx (s:ss) ft = do
+  ssFt <- compileStmts env inh lctx ss ft
+  compileSingleStmt env inh lctx s ssFt
 
-compileSingleStmt :: TypeEnv -> InheritGraph -> Located BodyStmt -> Int -> C Int
-compileSingleStmt env inh (Located line stmt) fallthrough = case stmt of
+compileSingleStmt :: TypeEnv -> InheritGraph -> LoopCtx -> Located BodyStmt -> Int -> C Int
+compileSingleStmt env inh lctx (Located line stmt) fallthrough = case stmt of
 
   BsLocalVar _ _ varName (Just initExpr) ->
     emit (CpsAssign { anVar = varName, anRhs = initExpr, anNext = fallthrough }) (Just line)
@@ -250,6 +283,33 @@ compileSingleStmt env inh (Located line stmt) fallthrough = case stmt of
 
   BsAssign lv rhs ->
     emit (CpsAssign { anVar = lvHead lv, anRhs = rhs, anNext = fallthrough }) (Just line)
+
+  BsAugAssign lhsToks augOp rhsToks ->
+    let varName = case lhsToks of { (t:_) -> t; [] -> "_" }
+    in emit (CpsAssign
+         { anVar = varName
+         , anRhs = ExBinOp { lhs = lhsToExpr lhsToks, op = augOpToBinOp augOp, rhs = parseArgList rhsToks }
+         , anNext = fallthrough
+         }) (Just line)
+
+  BsInc lhsToks ->
+    let varName = case lhsToks of { (t:_) -> t; [] -> "_" }
+    in emit (CpsAssign
+         { anVar = varName
+         , anRhs = ExBinOp { lhs = lhsToExpr lhsToks, op = BopAdd, rhs = ExInt "1" }
+         , anNext = fallthrough
+         }) (Just line)
+
+  BsDec lhsToks ->
+    let varName = case lhsToks of { (t:_) -> t; [] -> "_" }
+    in emit (CpsAssign
+         { anVar = varName
+         , anRhs = ExBinOp { lhs = lhsToExpr lhsToks, op = BopSub, rhs = ExInt "1" }
+         , anNext = fallthrough
+         }) (Just line)
+
+  BsAssignExpr lhsExpr rhsExpr ->
+    emit (CpsAssign { anVar = assignTarget lhsExpr, anRhs = rhsExpr, anNext = fallthrough }) (Just line)
 
   BsCall expr -> case classifyExpr env inh expr of
     Suspend ->
@@ -270,12 +330,20 @@ compileSingleStmt env inh (Located line stmt) fallthrough = case stmt of
   BsReturn mExpr ->
     emit (CpsReturn { reValue = mExpr }) (Just line)
 
+  BsExit -> case lctx of
+    Just (_, exitPc) -> emit (CpsGoto { goTarget = exitPc }) (Just line)
+    Nothing          -> pure fallthrough
+
+  BsContinue -> case lctx of
+    Just (headerPc, _) -> emit (CpsGoto { goTarget = headerPc }) (Just line)
+    Nothing            -> pure fallthrough
+
   BsIf (IfStmt cond thenStmts elseIfs elseStmts) -> do
     elseFt <- case elseStmts of
                 Nothing -> pure fallthrough
-                Just es -> compileStmts env inh es fallthrough
-    chainFt <- foldM (compileElseIf env inh fallthrough) elseFt (reverse elseIfs)
-    thenEntry <- compileStmts env inh thenStmts fallthrough
+                Just es -> compileStmts env inh lctx es fallthrough
+    chainFt <- foldM (compileElseIf env inh lctx fallthrough) elseFt (reverse elseIfs)
+    thenEntry <- compileStmts env inh lctx thenStmts fallthrough
     emit (CpsBranch { brCond = cond, brThenPc = thenEntry, brElsePc = chainFt }) (Just line)
 
   BsFor (ForStmt var from to mStep bodyStmts) -> do
@@ -284,7 +352,7 @@ compileSingleStmt env inh (Located line stmt) fallthrough = case stmt of
         varExpr  = ExLvalue var
     branchPc <- emit (CpsNop { npNext = 0 }) Nothing
     incrPc   <- emit (CpsNop { npNext = 0 }) Nothing
-    bodyEntry <- compileStmts env inh bodyStmts incrPc
+    bodyEntry <- compileStmts env inh (Just (incrPc, fallthrough)) bodyStmts incrPc
     patchNode incrPc (CpsAssign
       { anVar = varName
       , anRhs = ExBinOp { lhs = varExpr, op = BopAdd, rhs = stepExpr }
@@ -300,7 +368,7 @@ compileSingleStmt env inh (Located line stmt) fallthrough = case stmt of
   BsDo (DoStmt mCond bodyStmts mLoop) -> case mCond of
     Just cond -> do
       branchPc  <- emit (CpsNop { npNext = 0 }) Nothing
-      bodyEntry <- compileStmts env inh bodyStmts branchPc
+      bodyEntry <- compileStmts env inh (Just (branchPc, fallthrough)) bodyStmts branchPc
       patchNode branchPc (CpsBranch
         { brCond   = condExpr cond
         , brThenPc = bodyEntry
@@ -310,7 +378,7 @@ compileSingleStmt env inh (Located line stmt) fallthrough = case stmt of
     Nothing -> case mLoop of
       Just cond -> do
         branchPc  <- emit (CpsNop { npNext = 0 }) Nothing
-        bodyEntry <- compileStmts env inh bodyStmts branchPc
+        bodyEntry <- compileStmts env inh (Just (branchPc, fallthrough)) bodyStmts branchPc
         patchNode branchPc (CpsBranch
           { brCond   = condExpr cond
           , brThenPc = bodyEntry
@@ -319,38 +387,32 @@ compileSingleStmt env inh (Located line stmt) fallthrough = case stmt of
         pure bodyEntry
       Nothing -> do
         nopPc     <- emit (CpsNop { npNext = 0 }) Nothing
-        bodyEntry <- compileStmts env inh bodyStmts nopPc
+        bodyEntry <- compileStmts env inh (Just (nopPc, fallthrough)) bodyStmts nopPc
         patchNode nopPc (CpsNop { npNext = bodyEntry })
         pure bodyEntry
 
   BsChoose (ChooseStmt expr clauses) -> do
     let (elseCs, normalCs) = partition (\c -> isNothing (ccExpr c)) clauses
     elseFt <- case elseCs of
-                (c:_) -> compileStmts env inh (ccBody c) fallthrough
+                (c:_) -> compileStmts env inh lctx (ccBody c) fallthrough
                 []    -> pure fallthrough
-    foldM (compileClause env inh expr fallthrough) elseFt (reverse normalCs)
+    foldM (compileClause env inh expr lctx fallthrough) elseFt (reverse normalCs)
 
-  -- Statements with no CPS representation yet: fall through.
-  BsExit        -> pure fallthrough
-  BsContinue    -> pure fallthrough
-  BsRaw _       -> pure fallthrough
-  BsPbCall _    -> pure fallthrough
-  BsDestroy _   -> pure fallthrough
-  BsAugAssign _ _ _ -> pure fallthrough
-  BsInc _       -> pure fallthrough
-  BsDec _       -> pure fallthrough
-  BsAssignExpr _ _ -> pure fallthrough
+  -- Statements with no CPS representation: fall through.
+  BsRaw _    -> pure fallthrough
+  BsPbCall _ -> pure fallthrough
+  BsDestroy _ -> pure fallthrough
 
-compileElseIf :: TypeEnv -> InheritGraph -> Int -> Int -> ElseIf -> C Int
-compileElseIf env inh fallthrough nextFt ei = do
-  eiEntry <- compileStmts env inh (eifBody ei) fallthrough
+compileElseIf :: TypeEnv -> InheritGraph -> LoopCtx -> Int -> Int -> ElseIf -> C Int
+compileElseIf env inh lctx fallthrough nextFt ei = do
+  eiEntry <- compileStmts env inh lctx (eifBody ei) fallthrough
   emit (CpsBranch { brCond = eifCond ei, brThenPc = eiEntry, brElsePc = nextFt }) Nothing
 
-compileClause :: TypeEnv -> InheritGraph -> Expr -> Int -> Int -> CaseClause -> C Int
-compileClause env inh caseExpr fallthrough nextFt clause = case ccExpr clause of
-  Nothing   -> compileStmts env inh (ccBody clause) fallthrough
+compileClause :: TypeEnv -> InheritGraph -> Expr -> LoopCtx -> Int -> Int -> CaseClause -> C Int
+compileClause env inh caseExpr lctx fallthrough nextFt clause = case ccExpr clause of
+  Nothing   -> compileStmts env inh lctx (ccBody clause) fallthrough
   Just toks -> do
-    bodyEntry <- compileStmts env inh (ccBody clause) fallthrough
+    bodyEntry <- compileStmts env inh lctx (ccBody clause) fallthrough
     let clauseVal = case toks of { [t] -> parseArg t; ts -> ExStr (T.unwords ts) }
     let cond = ExBinOp { lhs = caseExpr, op = BopEq, rhs = clauseVal }
     emit (CpsBranch { brCond = cond, brThenPc = bodyEntry, brElsePc = nextFt }) Nothing
@@ -372,5 +434,5 @@ compileProcedure env inh body =
   where
     go = do
       returnPc <- emit (CpsReturn { reValue = Nothing }) Nothing
-      entryPc  <- compileStmts env inh body returnPc
+      entryPc  <- compileStmts env inh Nothing body returnPc
       finalizeCps entryPc

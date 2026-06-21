@@ -2,7 +2,7 @@ module CpsCompileTest (tests) where
 
 import PB.Prelude
 import PB.AST.BodyStmt
-import PB.AST.Expr         (Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Located      (Located (..))
 import PB.Pipeline.CpsCompile
 
@@ -315,5 +315,146 @@ tests = testGroup "CpsCompile"
         in classifyExpr env noInh
              (ExMethodCall (ExLvalue (lv1 "dw")) "describe" [])
              @?= Pure
+    ]
+
+  -- ------------------------------------------------------------------
+  -- Gap 1: BsAugAssign / BsInc / BsDec (Plan 112)
+
+  , testGroup "Gap 1 – augmented assignment"
+
+    [ testCase "BsAugAssign add emits CpsAssign with ExBinOp BopAdd" $ do
+        let stmt = at 5 (BsAugAssign ["x"] AugAdd ["y"])
+            g    = compileProcedure noEnv noInh [stmt]
+            assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
+        assertBool "expected CpsAssign for BsAugAssign" (not (null assignNodes))
+        case assignNodes of
+          (n:_) -> do
+            anVar n @?= "x"
+            case anRhs n of
+              ExBinOp { op = BopAdd } -> pure ()
+              e -> assertBool ("expected ExBinOp BopAdd, got: " <> show e) False
+          [] -> assertBool "no CpsAssign emitted" False
+
+    , testCase "BsAugAssign sub emits CpsAssign with ExBinOp BopSub" $ do
+        let stmt = at 5 (BsAugAssign ["x"] AugSub ["y"])
+            g    = compileProcedure noEnv noInh [stmt]
+            assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
+        assertBool "expected CpsAssign for BsAugAssign sub" (not (null assignNodes))
+        case assignNodes of
+          (n:_) -> case anRhs n of
+            ExBinOp { op = BopSub } -> pure ()
+            e -> assertBool ("expected ExBinOp BopSub, got: " <> show e) False
+          [] -> assertBool "no CpsAssign emitted" False
+
+    , testCase "BsInc emits CpsAssign with ExBinOp BopAdd ExInt 1" $ do
+        let stmt = at 3 (BsInc ["i"])
+            g    = compileProcedure noEnv noInh [stmt]
+            assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
+        assertBool "expected CpsAssign for BsInc" (not (null assignNodes))
+        case assignNodes of
+          (n:_) -> do
+            anVar n @?= "i"
+            anRhs n @?= ExBinOp { lhs = ExLvalue (lv1 "i"), op = BopAdd, rhs = ExInt "1" }
+          [] -> assertBool "no CpsAssign emitted" False
+
+    , testCase "BsDec emits CpsAssign with ExBinOp BopSub ExInt 1" $ do
+        let stmt = at 3 (BsDec ["i"])
+            g    = compileProcedure noEnv noInh [stmt]
+            assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
+        assertBool "expected CpsAssign for BsDec" (not (null assignNodes))
+        case assignNodes of
+          (n:_) -> do
+            anVar n @?= "i"
+            anRhs n @?= ExBinOp { lhs = ExLvalue (lv1 "i"), op = BopSub, rhs = ExInt "1" }
+          [] -> assertBool "no CpsAssign emitted" False
+    ]
+
+  -- ------------------------------------------------------------------
+  -- Gap 2: BsExit / BsContinue (Plan 112)
+
+  , testGroup "Gap 2 – exit and continue"
+
+    [ testCase "BsExit outside loop falls through (no CpsGoto)" $ do
+        let stmt = at 1 BsExit
+            g    = compileProcedure noEnv noInh [stmt]
+            gotos = [ n | n@CpsGoto {} <- cgNodes g ]
+        gotos @?= []
+
+    , testCase "BsExit inside for loop emits CpsGoto to exit PC" $ do
+        let exitStmt = at 2 BsExit
+            forStmt  = at 1 (BsFor (ForStmt (lv1 "i") (ExInt "1") (ExInt "10") Nothing [exitStmt]))
+            g        = compileProcedure noEnv noInh [forStmt]
+            nodes    = cgNodes g
+            gotos    = [ n | n@CpsGoto {} <- nodes ]
+        assertBool "expected CpsGoto for BsExit" (not (null gotos))
+        case gotos of
+          [CpsGoto { goTarget = tgt }] ->
+            assertBool ("expected CpsReturn at exit target PC " <> show tgt)
+                       (case drop tgt nodes of { (CpsReturn {} : _) -> True; _ -> False })
+          _ -> assertBool ("unexpected goto count " <> show (length gotos)) False
+
+    , testCase "BsContinue inside for loop emits CpsGoto to increment PC" $ do
+        let contStmt = at 2 BsContinue
+            forStmt  = at 1 (BsFor (ForStmt (lv1 "i") (ExInt "1") (ExInt "10") Nothing [contStmt]))
+            g        = compileProcedure noEnv noInh [forStmt]
+            nodes    = cgNodes g
+            gotos    = [ n | n@CpsGoto {} <- nodes ]
+        assertBool "expected CpsGoto for BsContinue" (not (null gotos))
+        case gotos of
+          [CpsGoto { goTarget = tgt }] ->
+            assertBool ("expected CpsAssign (increment) at header PC " <> show tgt)
+                       (case drop tgt nodes of { (CpsAssign {} : _) -> True; _ -> False })
+          _ -> assertBool ("unexpected goto count " <> show (length gotos)) False
+
+    , testCase "BsContinue inside do-while loop emits CpsGoto to branch PC" $ do
+        let contStmt = at 2 BsContinue
+            doStmt   = at 1 (BsDo (DoStmt (Just (DoWhile (ExBool True))) [contStmt] Nothing))
+            g        = compileProcedure noEnv noInh [doStmt]
+            nodes    = cgNodes g
+            gotos    = [ n | n@CpsGoto {} <- nodes ]
+        assertBool "expected CpsGoto for BsContinue in do loop" (not (null gotos))
+        case gotos of
+          [CpsGoto { goTarget = tgt }] ->
+            assertBool ("expected CpsBranch at header PC " <> show tgt)
+                       (case drop tgt nodes of { (CpsBranch {} : _) -> True; _ -> False })
+          _ -> assertBool ("unexpected goto count " <> show (length gotos)) False
+    ]
+
+  -- ------------------------------------------------------------------
+  -- Gap 3: exprArgs arg-boundary fix (Plan 112)
+
+  , testGroup "Gap 3 – exprArgs"
+
+    [ testCase "exprArgs: single-token arg becomes ExLvalue" $ do
+        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["w_test"]] }))
+            g    = compileProcedure noEnv noInh [stmt]
+            sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
+        case sus of
+          [s] -> suArgs s @?= [ExLvalue (lv1 "w_test")]
+          _   -> assertBool "expected one CpsSuspend" False
+
+    , testCase "exprArgs: multi-token arg becomes ExRaw not split into separate args" $ do
+        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["a", "+", "1"]] }))
+            g    = compileProcedure noEnv noInh [stmt]
+            sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
+        case sus of
+          [s] -> do
+            length (suArgs s) @?= 1
+            case suArgs s of
+              [ExRaw _] -> pure ()
+              args -> assertBool ("expected [ExRaw], got: " <> show args) False
+          _ -> assertBool "expected one CpsSuspend" False
+
+    , testCase "exprArgs: 2-arg call with multi-token first arg gives 2 not 4 results" $ do
+        -- callArgs = [["a", "+", "1"], ["b"]] — 2 args, first is multi-token
+        let stmt = at 1 (BsCall (ExCall
+              { callee   = lv1 "open"
+              , callArgs = [["a", "+", "1"], ["b"]]
+              }))
+            g   = compileProcedure noEnv noInh [stmt]
+            sus = [ n | n@CpsSuspend {} <- cgNodes g ]
+        case sus of
+          [s] -> length (suArgs s) @?= 2
+          _   -> assertBool "expected one CpsSuspend" False
     ]
   ]
