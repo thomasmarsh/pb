@@ -240,4 +240,36 @@ tests = testGroup "CpsCompile"
              (ExCall { callee = lv2 "myobj" "retrieve", callArgs = [] })
              @?= Pure
     ]
+
+  , testGroup "cross-file InheritGraph"
+    [ testCase "two-step chain: my_ds → n_cst_ds → datastore → Suspend" $
+        let env = Map.singleton "my_ds" "n_cst_ds"
+            inh = Map.fromList [("n_cst_ds", "datastore"), ("datastore", "datawindow")]
+        in classifyExpr env inh
+             (ExCall { callee = lv2 "my_ds" "retrieve", callArgs = [] })
+             @?= Suspend
+
+    , testCase "cycle guard: chain with loop does not hang" $
+        let env = Map.singleton "x" "a"
+            inh = Map.fromList [("a", "b"), ("b", "a")]
+        in classifyExpr env inh
+             (ExCall { callee = lv2 "x" "retrieve", callArgs = [] })
+             @?= Pure
+
+    , testCase "deep chain (5 levels): still resolves to datawindow → Suspend" $
+        let env = Map.singleton "deep" "l5"
+            inh = Map.fromList [ ("l5", "l4"), ("l4", "l3")
+                               , ("l3", "l2"), ("l2", "l1")
+                               , ("l1", "datawindow") ]
+        in classifyExpr env inh
+             (ExCall { callee = lv2 "deep" "retrieve", callArgs = [] })
+             @?= Suspend
+
+    , testCase "unknown type not in chain → Pure" $
+        let env = Map.singleton "mystery" "unknown_type"
+            inh = Map.fromList [("n_cst_ds", "datastore")]
+        in classifyExpr env inh
+             (ExCall { callee = lv2 "mystery" "retrieve", callArgs = [] })
+             @?= Pure
+    ]
   ]

@@ -29,6 +29,7 @@ import Data.Char            (isAlpha)
 import Data.List            (partition)
 import GHC.Generics         (Generic)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set        as Set
 import qualified Data.Text       as T
 
 -- ---------------------------------------------------------------------------
@@ -109,13 +110,19 @@ isDwType t = t `elem` ["datawindow", "datastore", "datawindowchild"]
 isTransType :: Text -> Bool
 isTransType t = t == "transaction"
 
--- | Look up a variable's type, then widen by one inheritance step if the raw
--- type is not itself a recognised PB type.
+-- | Look up a variable's type, then walk the inheritance chain until we hit
+-- a stable base type or detect a cycle.
 resolveType :: TypeEnv -> InheritGraph -> Text -> Maybe Text
-resolveType env inh name = do
-  raw <- Map.lookup name env
-  let raw' = T.toLower raw
-  return $ fromMaybe raw' (Map.lookup raw' inh)
+resolveType env inh name = fmap (walkChain inh) (Map.lookup name env)
+
+-- | Follow the inheritance chain until we hit a type with no parent or a cycle.
+walkChain :: InheritGraph -> Text -> Text
+walkChain inh = go Set.empty . T.toLower
+  where
+    go seen ty
+      | ty `Set.member` seen = ty
+      | Just parent <- Map.lookup ty inh = go (Set.insert ty seen) (T.toLower parent)
+      | otherwise = ty
 
 resolveReceiverType :: TypeEnv -> InheritGraph -> Expr -> Maybe Text
 resolveReceiverType env inh (ExLvalue lv) =
