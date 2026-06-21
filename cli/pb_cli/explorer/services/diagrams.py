@@ -8,7 +8,7 @@ from typing import Any
 import duckdb
 import graphviz
 
-from pb_cli.core.cfg_builder import build_cfg, cfg_from_json, compute_node_states
+from pb_cli.core.cfg_builder import cfg_from_json, compute_node_states
 from pb_cli.core.cfg_renderer import cfg_to_dot
 
 
@@ -24,7 +24,6 @@ def get_cfg_diagram(
     if not row or not row[0]:
         return None
 
-    body = json.loads(row[0])
     proc_start_line: int | None = row[1]
     proc_end_line: int | None = row[2]
     cfg_json_raw: str | None = row[3]
@@ -38,7 +37,9 @@ def get_cfg_diagram(
             all_lines = src_row[0].splitlines(keepends=True)
             source_original = "".join(all_lines[max(0, proc_start_line - 1) : proc_end_line])
 
-    cfg = cfg_from_json(json.loads(cfg_json_raw)) if cfg_json_raw else build_cfg(body)
+    if not cfg_json_raw:
+        return None
+    cfg = cfg_from_json(json.loads(cfg_json_raw))
 
     node_states = compute_node_states(cfg)
 
