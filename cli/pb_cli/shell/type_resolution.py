@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pb_cli.core.control_type import infer_control_type
 from pb_cli.shell.bulk import bulk_insert
 from pb_cli.shell.db import Conn
 
@@ -91,18 +90,3 @@ def _bulk_insert_global_vars(conn: Conn, out_dir: Path) -> None:
             for r in rows
         ],
     )
-
-
-def infer_control_type_from_body(proc_body: list[dict], var_types: dict[tuple[str, str, str], str], obj: str, proc: str) -> None:
-    """Scan procedure body for control-name patterns and infer types."""
-    for stmt in proc_body:
-        node = stmt.get("node", stmt)
-        tag = node.get("tag", "")
-        if tag == "BsLocalVar":
-            name = node.get("name", "")
-            if isinstance(name, str) and name:
-                key = (obj, proc, name)
-                if key not in var_types:
-                    inferred = infer_control_type(name)
-                    if inferred:
-                        var_types[key] = inferred
