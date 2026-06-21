@@ -1,0 +1,69 @@
+// core/cps/expr.ts — Expression evaluator for the CPS compiler and runner.
+
+import type { Expr } from "../../types/ast.generated.js";
+import { PB_BUILTINS } from "../runtime.js";
+
+export function evalExpr(vars: Record<string, unknown>, expr: Expr): unknown {
+  switch (expr.tag) {
+    case "ExBool":   return expr.contents;
+    case "ExInt":    return parseInt(expr.contents, 10);
+    case "ExReal":   return parseFloat(expr.contents);
+    case "ExStr":    return expr.contents;
+    case "ExDate":   return expr.contents;
+    case "ExTime":   return expr.contents;
+    case "ExNull":   return null;
+    case "ExEnum":   return expr.contents;
+    case "ExLvalue": {
+      const name = expr.contents.segments[0]?.name;
+      return name ? vars[name] : undefined;
+    }
+    case "ExCall": {
+      const callee = expr.callee.segments.map((s) => s.name).join(".");
+      const args = expr.args.map((a) => evalTokenArg(vars, a));
+      const fn = PB_BUILTINS[callee];
+      return fn ? fn(...args) : undefined;
+    }
+    case "ExBinOp":
+      return evalBinOp(evalExpr(vars, expr.lhs), expr.op, evalExpr(vars, expr.rhs));
+    case "ExNot":    return !evalExpr(vars, expr.contents);
+    case "ExNeg":    return -(evalExpr(vars, expr.contents) as number);
+    default:         return undefined;
+  }
+}
+
+function evalTokenArg(vars: Record<string, unknown>, tokens: string[]): unknown {
+  if (tokens.length === 0) return undefined;
+  const raw = tokens.join("").trim();
+  if (raw === "null") return null;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  if (raw.startsWith('"') && raw.endsWith('"')) return raw.slice(1, -1);
+  if (/^-?\d+$/.test(raw)) return parseInt(raw, 10);
+  if (/^-?\d+\.\d+$/.test(raw)) return parseFloat(raw);
+  if (/^[a-zA-Z_]/.test(raw)) {
+    const dotIdx = raw.indexOf(".");
+    const base = dotIdx >= 0 ? raw.slice(0, dotIdx) : raw;
+    return vars[base];
+  }
+  return raw;
+}
+
+function evalBinOp(l: unknown, op: string, r: unknown): unknown {
+  switch (op) {
+    case "BopAdd": return (l as number) + (r as number);
+    case "BopSub": return (l as number) - (r as number);
+    case "BopMul": return (l as number) * (r as number);
+    case "BopDiv": return (l as number) / (r as number);
+    case "BopPow": return Math.pow(l as number, r as number);
+    case "BopEq":  return l === r;
+    case "BopNe":  return l !== r;
+    case "BopLt":  return (l as number) < (r as number);
+    case "BopGt":  return (l as number) > (r as number);
+    case "BopLe":  return (l as number) <= (r as number);
+    case "BopGe":  return (l as number) >= (r as number);
+    case "BopAnd": return !!(l) && !!(r);
+    case "BopOr":  return !!(l) || !!(r);
+    case "BopXor": return !!(l) !== !!(r);
+    default: return undefined;
+  }
+}
