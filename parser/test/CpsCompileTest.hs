@@ -6,9 +6,11 @@ import PB.AST.Expr         (Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Located      (Located (..))
 import PB.Pipeline.CpsCompile
 
+import qualified Data.Map.Strict as Map
 import Test.Tasty           (TestTree, testGroup)
 import Test.Tasty.HUnit     (assertBool, testCase, (@?=))
 
+-- ---------------------------------------------------------------------------
 -- Helpers
 
 at :: Int -> a -> Located a
@@ -17,32 +19,49 @@ at n x = Located n x
 lv1 :: Text -> Lvalue
 lv1 n = Lvalue [LvSegment n Nothing]
 
--- Retrieve call: dw.retrieve()
+lv2 :: Text -> Text -> Lvalue
+lv2 a b = Lvalue [LvSegment a Nothing, LvSegment b Nothing]
+
+-- dw.retrieve()  (2-segment ExCall)
 retrieveCall :: Expr
 retrieveCall =
-  ExCall { callee = Lvalue [LvSegment "dw" Nothing, LvSegment "retrieve" Nothing]
-         , callArgs = []
-         }
+  ExCall { callee = lv2 "dw" "retrieve", callArgs = [] }
 
 -- open(w_test)
 openCall :: Expr
 openCall =
-  ExCall { callee = Lvalue [LvSegment "open" Nothing]
-         , callArgs = [["w_test"]]
-         }
+  ExCall { callee = lv1 "open", callArgs = [["w_test"]] }
 
--- Pure call: messagebox("hi")
+-- messagebox("hi")
 pureCall :: Expr
 pureCall =
-  ExCall { callee = Lvalue [LvSegment "messagebox" Nothing]
-         , callArgs = [["\"hi\""]]
-         }
+  ExCall { callee = lv1 "messagebox", callArgs = [["\"hi\""]] }
+
+-- ---------------------------------------------------------------------------
+-- Convenience env builders
+
+dwEnv :: TypeEnv
+dwEnv = Map.singleton "dw" "datawindow"
+
+transEnv :: TypeEnv
+transEnv = Map.singleton "sqlca" "transaction"
+
+noEnv :: TypeEnv
+noEnv = Map.empty
+
+noInh :: InheritGraph
+noInh = Map.empty
+
+-- ---------------------------------------------------------------------------
 
 tests :: TestTree
 tests = testGroup "CpsCompile"
 
+  -- ------------------------------------------------------------------
+  -- Existing structural tests (updated to new compileProcedure signature)
+
   [ testCase "empty body → single CpsReturn at entry 0" $ do
-      let g = compileProcedure []
+      let g = compileProcedure noEnv noInh []
       cgEntry g @?= 0
       length (cgNodes g) @?= 1
       case cgNodes g of
@@ -51,30 +70,30 @@ tests = testGroup "CpsCompile"
 
   , testCase "single BsAssign → assign node + return, entry ≠ 0" $ do
       let stmt = at 10 (BsAssign (lv1 "x") (ExInt "1"))
-          g    = compileProcedure [stmt]
+          g    = compileProcedure noEnv noInh [stmt]
       length (cgNodes g) @?= 2
       assertBool "entry should be > 0" (cgEntry g > 0)
       case cgNodes g of
         [CpsReturn {}, CpsAssign { anVar = "x" }] -> pure ()
         ns -> assertBool ("unexpected nodes: " <> show ns) False
 
-  , testCase "BsCall retrieve → CpsSuspend with effect executeSql" $ do
+  , testCase "BsCall retrieve with DataWindow type → CpsSuspend executeSql" $ do
       let stmt = at 5 (BsCall retrieveCall)
-          g    = compileProcedure [stmt]
+          g    = compileProcedure dwEnv noInh [stmt]
       let suNodes = [ n | n@CpsSuspend {} <- cgNodes g ]
       assertBool "expected at least one CpsSuspend" (not (null suNodes))
       case suNodes of
         (s:_) -> suEffect s @?= "executeSql"
         _     -> pure ()
 
-  , testCase "BsCall retrieve → listed in suspensionPoints" $ do
+  , testCase "BsCall retrieve with DataWindow type → listed in suspensionPoints" $ do
       let stmt = at 5 (BsCall retrieveCall)
-          g    = compileProcedure [stmt]
+          g    = compileProcedure dwEnv noInh [stmt]
       assertBool "suspensionPoints should be non-empty" (not (null (cgSuspensionPoints g)))
 
   , testCase "BsCall open → CpsSuspend with effect open" $ do
       let stmt = at 7 (BsCall openCall)
-          g    = compileProcedure [stmt]
+          g    = compileProcedure noEnv noInh [stmt]
       let suNodes = [ n | n@CpsSuspend {} <- cgNodes g ]
       assertBool "expected CpsSuspend" (not (null suNodes))
       case suNodes of
@@ -83,7 +102,7 @@ tests = testGroup "CpsCompile"
 
   , testCase "pure BsCall → CpsCall (not suspend)" $ do
       let stmt = at 3 (BsCall pureCall)
-          g    = compileProcedure [stmt]
+          g    = compileProcedure noEnv noInh [stmt]
       let suNodes = [ n | n@CpsSuspend {} <- cgNodes g ]
       let caNodes = [ n | n@CpsCall {} <- cgNodes g ]
       suNodes @?= []
@@ -92,13 +111,133 @@ tests = testGroup "CpsCompile"
   , testCase "BsIf → CpsBranch node" $ do
       let thenS = [at 2 (BsAssign (lv1 "x") (ExInt "1"))]
           stmt  = at 1 (BsIf (IfStmt (ExBool True) thenS [] Nothing))
-          g     = compileProcedure [stmt]
+          g     = compileProcedure noEnv noInh [stmt]
       let brNodes = [ n | n@CpsBranch {} <- cgNodes g ]
       assertBool "expected CpsBranch" (not (null brNodes))
 
   , testCase "BsAssign on line 42 → 42 appears in sourceMap" $ do
       let stmt = at 42 (BsAssign (lv1 "x") (ExInt "1"))
-          g    = compileProcedure [stmt]
-      let lines = map snd (cgSourceMap g)
-      assertBool "line 42 should be in sourceMap" (42 `elem` lines)
+          g    = compileProcedure noEnv noInh [stmt]
+      let lines_ = map snd (cgSourceMap g)
+      assertBool "line 42 should be in sourceMap" (42 `elem` lines_)
+
+  -- ------------------------------------------------------------------
+  -- Type-guided classification
+
+  , testGroup "type-guided classification"
+
+    [ testCase "dw.retrieve() with DataWindow type → Suspend" $
+        classifyExpr dwEnv noInh
+          (ExCall { callee = lv2 "dw" "retrieve", callArgs = [] })
+          @?= Suspend
+
+    , testCase "dw.retrieve() without type info → Pure (conservative)" $
+        classifyExpr noEnv noInh
+          (ExCall { callee = lv2 "dw" "retrieve", callArgs = [] })
+          @?= Pure
+
+    , testCase "unknown_var.retrieve() without type info → Pure" $
+        classifyExpr noEnv noInh
+          (ExCall { callee = lv2 "unknown_var" "retrieve", callArgs = [] })
+          @?= Pure
+
+    , testCase "dw.update() with DataWindow type → Suspend" $
+        classifyExpr dwEnv noInh
+          (ExCall { callee = lv2 "dw" "update", callArgs = [] })
+          @?= Suspend
+
+    , testCase "dw.delete() with DataWindow type → Suspend" $
+        classifyExpr dwEnv noInh
+          (ExCall { callee = lv2 "dw" "delete", callArgs = [] })
+          @?= Suspend
+
+    , testCase "dw.reset() with DataWindow type → Suspend" $
+        classifyExpr dwEnv noInh
+          (ExCall { callee = lv2 "dw" "reset", callArgs = [] })
+          @?= Suspend
+
+    , testCase "dw.settransobject() with DataWindow type → Pure (setup only)" $
+        classifyExpr dwEnv noInh
+          (ExCall { callee = lv2 "dw" "settransobject", callArgs = [] })
+          @?= Pure
+
+    , testCase "sqlca.commit() with Transaction type → Suspend" $
+        classifyExpr transEnv noInh
+          (ExCall { callee = lv2 "sqlca" "commit", callArgs = [] })
+          @?= Suspend
+
+    , testCase "sqlca.rollback() with Transaction type → Suspend" $
+        classifyExpr transEnv noInh
+          (ExCall { callee = lv2 "sqlca" "rollback", callArgs = [] })
+          @?= Suspend
+
+    , testCase "sqlca.connect() with Transaction type → Suspend" $
+        classifyExpr transEnv noInh
+          (ExCall { callee = lv2 "sqlca" "connect", callArgs = [] })
+          @?= Suspend
+
+    , testCase "sqlca.disconnect() with Transaction type → Suspend" $
+        classifyExpr transEnv noInh
+          (ExCall { callee = lv2 "sqlca" "disconnect", callArgs = [] })
+          @?= Suspend
+
+    , testCase "fn_retrievechild() always Suspend (builtin)" $
+        classifyExpr noEnv noInh
+          (ExCall { callee = lv1 "fn_retrievechild", callArgs = [] })
+          @?= Suspend
+
+    , testCase "open() always Suspend (builtin)" $
+        classifyExpr noEnv noInh
+          (ExCall { callee = lv1 "open", callArgs = [["w_test"]] })
+          @?= Suspend
+
+    , testCase "opensheet() always Suspend (builtin)" $
+        classifyExpr noEnv noInh
+          (ExCall { callee = lv1 "opensheet", callArgs = [] })
+          @?= Suspend
+
+    , testCase "close() always Suspend (builtin)" $
+        classifyExpr noEnv noInh
+          (ExCall { callee = lv1 "close", callArgs = [] })
+          @?= Suspend
+
+    , testCase "datastore receiver treated same as datawindow → Suspend" $
+        classifyExpr (Map.singleton "ds" "datastore") noInh
+          (ExCall { callee = lv2 "ds" "retrieve", callArgs = [] })
+          @?= Suspend
+
+    , testCase "effect name: open() → open" $
+        effectName (ExCall { callee = lv1 "open", callArgs = [] })
+          @?= "open"
+
+    , testCase "effect name: opensheet() → open" $
+        effectName (ExCall { callee = lv1 "opensheet", callArgs = [] })
+          @?= "open"
+
+    , testCase "effect name: close() → close" $
+        effectName (ExCall { callee = lv1 "close", callArgs = [] })
+          @?= "close"
+
+    , testCase "effect name: dw.retrieve() → executeSql" $
+        effectName (ExCall { callee = lv2 "dw" "retrieve", callArgs = [] })
+          @?= "executeSql"
+
+    , testCase "effect name: fn_retrievechild() → executeSql" $
+        effectName (ExCall { callee = lv1 "fn_retrievechild", callArgs = [] })
+          @?= "executeSql"
+
+    , testCase "InheritGraph: user type inheriting datawindow → Suspend" $
+        let env = Map.singleton "ids_data" "n_cst_ds"
+            inh = Map.singleton "n_cst_ds" "datastore"
+        in classifyExpr env inh
+             (ExCall { callee = lv2 "ids_data" "retrieve", callArgs = [] })
+             @?= Suspend
+
+    , testCase "InheritGraph: user type NOT inheriting DW → Pure" $
+        let env = Map.singleton "myobj" "n_some_struct"
+            inh = Map.singleton "n_some_struct" "structure"
+        in classifyExpr env inh
+             (ExCall { callee = lv2 "myobj" "retrieve", callArgs = [] })
+             @?= Pure
+    ]
   ]

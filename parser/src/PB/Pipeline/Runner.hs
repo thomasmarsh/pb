@@ -18,7 +18,7 @@ import PB.Lexing.Splitter   (Statement (..), splitStatements)
 import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
 import PB.Pipeline.PrettyPrint (prettyBodyStmts)
 import PB.Pipeline.CfgBuild    (buildCfg)
-import PB.Pipeline.CpsCompile  (compileProcedure)
+import PB.Pipeline.CpsCompile  (InheritGraph, TypeEnv, compileProcedure)
 import PB.Pipeline.Serialise   ()
 
 import Data.Aeson          (ToJSON (..), Value (..), encode, object, toJSON, (.=))
@@ -40,7 +40,10 @@ import PB.Pipeline.TypeResolve
   ( buildInheritsMap, buildObjectSet, buildProcMap, buildUserTypeSet
   , extractCallSites, extractGlobalVars, extractLocalVars
   , resolveTypes, resolveCalls
+  , parseParams
   )
+import PB.AST.Type          (renderPbType)
+import qualified Data.Map.Strict as Map
 import PB.Pipeline.Walk    (walkAllSrFiles)
 
 -- ---------------------------------------------------------------------------
@@ -116,6 +119,39 @@ wrapSrFile path sf spans =
     let (objName, ancestor) = case srTypeBlocks sf of
           (tb:_) -> (tdName (tbDecl tb), Just (tdAncestor (tbDecl tb)))
           []     -> (T.pack path, Nothing)
+
+        -- Type env built from instance variables and the variables block.
+        -- Covers the common case where DW/transaction vars are declared at
+        -- object scope rather than inside individual procedures.
+        globalEnv :: TypeEnv
+        globalEnv = Map.fromList $
+          [ (T.toLower (giName gi), T.toLower (giType gi))
+          | gi <- srGlobalInstances sf ]
+          <> case srVariables sf of
+               Nothing -> []
+               Just VariablesBlock { varDecls = ds } ->
+                 [ (T.toLower (vdName d), T.toLower (vdType d)) | d <- ds ]
+
+        -- Inheritance graph built from this file's type declarations.
+        -- Enables single-step widening (e.g. n_cst_ds → datastore).
+        -- Cross-file widening is Plan 110b.
+        fileInh :: InheritGraph
+        fileInh = Map.fromList $
+          [ (T.toLower (tdName (tbDecl tb)), T.toLower (tdAncestor (tbDecl tb)))
+          | tb <- srTypeBlocks sf ]
+          <> case srForward sf of
+               Nothing -> []
+               Just ForwardBlock { fwdTypes = tds } ->
+                 [ (T.toLower (tdName td), T.toLower (tdAncestor td)) | td <- tds ]
+
+        -- Per-procedure env from parameter declarations merged with global env.
+        procEnv :: Text -> TypeEnv
+        procEnv paramsText =
+          let paramVars = Map.fromList
+                [ (T.toLower n, T.toLower (renderPbType ty))
+                | (n, ty) <- parseParams paramsText ]
+          in Map.union paramVars globalEnv   -- proc-local shadows global
+
         injectMeta :: (Int, Int) -> Value -> Value
         injectMeta (start, end) (Object o) =
             Object (KM.fromList ["meta" .= metaVal] <> o)
@@ -127,17 +163,21 @@ wrapSrFile path sf spans =
                   , "endLine"   .= end
                   ]
         injectMeta _ v = v
+
         injectRendered body (Object o) =
             Object (KM.insert "source_rendered" (toJSON (prettyBodyStmts body)) o)
         injectRendered _ v = v
-        injectCompiled body (Object o) =
+
+        injectCompiled env body (Object o) =
             Object
               $ KM.insert "cfg"      (toJSON (buildCfg body))
-              $ KM.insert "cpsGraph" (toJSON (compileProcedure body))
+              $ KM.insert "cpsGraph" (toJSON (compileProcedure env fileInh body))
               $ o
-        injectCompiled _ v = v
-        injectAll body sp v =
-            injectCompiled body (injectRendered body (injectMeta sp v))
+        injectCompiled _ _ v = v
+
+        injectAll env body sp v =
+            injectCompiled env body (injectRendered body (injectMeta sp v))
+
     in object
         [ "file"            .= path
         , "kind"            .= ("powerscript" :: Text)
@@ -148,13 +188,13 @@ wrapSrFile path sf spans =
         , "variables"       .= srVariables sf
         , "globalInstances" .= srGlobalInstances sf
         , "typeBlocks"      .= srTypeBlocks sf
-        , "onBlocks"    .= [ injectAll (obBody ob) sp (toJSON ob)
+        , "onBlocks"    .= [ injectAll globalEnv        (obBody ob) sp (toJSON ob)
                            | (sp, ob) <- zip (spOnBlocks    spans) (srOnBlocks    sf) ]
-        , "events"      .= [ injectAll (evBody ev) sp (toJSON ev)
+        , "events"      .= [ injectAll globalEnv        (evBody ev) sp (toJSON ev)
                            | (sp, ev) <- zip (spEvents      spans) (srEvents      sf) ]
-        , "functions"   .= [ injectAll (fbBody fn) sp (toJSON fn)
+        , "functions"   .= [ injectAll (procEnv (fnsParams (fbSig fn))) (fbBody fn) sp (toJSON fn)
                            | (sp, fn) <- zip (spFunctions   spans) (srFunctions   sf) ]
-        , "subroutines" .= [ injectAll (sbBody sb) sp (toJSON sb)
+        , "subroutines" .= [ injectAll (procEnv (ssParams  (sbSig sb))) (sbBody sb) sp (toJSON sb)
                            | (sp, sb) <- zip (spSubroutines spans) (srSubroutines sf) ]
         ]
 
