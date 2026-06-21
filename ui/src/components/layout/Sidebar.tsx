@@ -22,6 +22,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
+  Play,
 } from "../../utils/icons.js";
 import { LibraryNode } from "../../features/explore/TreeNodes.js";
 
@@ -51,6 +52,10 @@ const UTIL_NAV: { label: string; view: string; icon: IconComp }[] = [
   { label: "Ask",          view: "queries",   icon: MessageSquare },
   { label: "Search",       view: "search",    icon: Search },
   { label: "Diagnostics",  view: "errors",    icon: AlertTriangle },
+];
+
+const RUNTIME_NAV: { label: string; view: string; icon: IconComp }[] = [
+  { label: "Launch", view: "launch", icon: Play },
 ];
 
 const VIEW_GROUPS: Record<string, string[]> = {
@@ -208,6 +213,15 @@ export function Sidebar(props: SidebarProps): JSX.Element {
               ><Dynamic component={item.icon} size={16} /></button>
             )}
           </For>
+          <For each={RUNTIME_NAV}>
+            {(item) => (
+              <button
+                class={`sidebar-rail-icon${isActive(item.view, props.currentView) ? " active" : ""}`}
+                title={item.label}
+                onClick={() => navigateTo(store, item.view)}
+              ><Dynamic component={item.icon} size={16} /></button>
+            )}
+          </For>
         </nav>
       </Show>
 
@@ -286,6 +300,22 @@ export function Sidebar(props: SidebarProps): JSX.Element {
               </For>
             </nav>
           </AccordionGroup>
+
+          <div class="sidebar-section-label">Runtime</div>
+          <nav class="sidebar-entity-nav">
+            <For each={RUNTIME_NAV}>
+              {(item) => (
+                <a
+                  href="#"
+                  class={`sidebar-entity-link${isActive(item.view, props.currentView) ? " active" : ""}`}
+                  onClick={(e) => { e.preventDefault(); navigateTo(store, item.view); }}
+                >
+                  <span class="icon"><Dynamic component={item.icon} size={15} /></span>
+                  <span>{item.label}</span>
+                </a>
+              )}
+            </For>
+          </nav>
         </div>
       </Show>
     </aside>

@@ -44,6 +44,7 @@ export function print(route: Route): string {
     case "cfgDiagram":
       return "/analysis/cfg/" + encodeURIComponent(route.object)
              + "/"            + encodeURIComponent(route.proc);
+    case "launch":           return "/launch";
   }
 }
 
@@ -104,6 +105,7 @@ export function parse(path: string, search?: string): Route {
       }
       return { view: "dashboard" };
     case "reports":      return { view: "formalReports" };
+    case "launch":       return { view: "launch" };
     case "procedures":   return { view: "proceduresList" };
     case "analysis":
       if (segs[1] === "cfg" && segs[2] && segs[3]) {

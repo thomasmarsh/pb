@@ -13,6 +13,7 @@ export const ICONS = {
   ask:        "ask",
   analysis:   "analysis",
   list:       "list",
+  launch:     "launch",
 } as const;
 
 export function crumbsForRoute(route: Route): BreadcrumbSegment[] {
@@ -105,5 +106,8 @@ export function crumbsForRoute(route: Route): BreadcrumbSegment[] {
         { icon: ICONS.procedure, label: route.proc,          route: { view: "procedureDetail", name: route.object, proc: route.proc } },
         { icon: ICONS.analysis,  label: "CFG",              route },
       ];
+
+    case "launch":
+      return [{ icon: ICONS.launch, label: "Launch", route }];
   }
 }

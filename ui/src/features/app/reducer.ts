@@ -17,6 +17,9 @@ import { queriesReducer, type QueriesEnv, initialQueriesState } from "../queries
 import { searchReducer, type SearchEnv, initialSearchState } from "../search/reducer.js";
 import { errorsReducer, type ErrorsEnv, initialErrorsState } from "../errors/reducer.js";
 import { runtimeReducer, type RuntimeEnv, initialRuntimeState, type RuntimeAction } from "../runtime/reducer.js";
+import { windowManagerReducer } from "../window-manager/reducer.js";
+import type { WindowManagerAction } from "../window-manager/types.js";
+import { initialWindowManagerState } from "../window-manager/initial.js";
 
 import type { NavigationAction } from "../navigation/types.js";
 import { crumbsForRoute } from "../navigation/breadcrumb.js";
@@ -53,6 +56,7 @@ const matchQueries     = (a: AppAction): QueriesAction     | null => a.tag === "
 const matchSearch      = (a: AppAction): SearchAction      | null => a.tag === "search"       ? a.action : null;
 const matchErrors      = (a: AppAction): ErrorsAction      | null => a.tag === "errors"       ? a.action : null;
 const matchRuntime     = (a: AppAction): RuntimeAction     | null => a.tag === "runtime"      ? a.action : null;
+const matchWindowManager = (a: AppAction): WindowManagerAction | null => a.tag === "windowManager" ? a.action : null;
 
 // ── Initial state ─────────────────────────────────────────────────────────────
 
@@ -77,6 +81,7 @@ export function initialState(): AppState {
     errors: initialErrorsState,
     inlineDiagrams: {},
     runtime: initialRuntimeState,
+    windowManager: initialWindowManagerState,
   };
 }
 
@@ -96,6 +101,7 @@ const _combined = combine<AppState, AppAction, AppEnv>(
   pullbackWithNav(searchReducer,      (s) => s.search,      matchSearch,      (a): AppAction => ({ tag: "search",      action: a }), (env) => env, toNav),
   pullback(errorsReducer,             (s) => s.errors,      matchErrors,      (a): AppAction => ({ tag: "errors",      action: a }), (env) => env),
   pullback(runtimeReducer,            (s) => s.runtime,     matchRuntime,     (a): AppAction => ({ tag: "runtime",     action: a }), (env) => env),
+  pullback(windowManagerReducer,      (s) => s.windowManager, matchWindowManager, (a): AppAction => ({ tag: "windowManager", action: a }), () => undefined as void),
 );
 
 export function reducer(draft: AppState, action: AppAction, env: AppEnv): Effect<AppAction> | null {

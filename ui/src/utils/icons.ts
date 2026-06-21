@@ -20,6 +20,13 @@ export {
   FolderTree,
   LayoutList,
   Layers,
+  Play,
+  X,
+  Minus,
+  Square,
+  Maximize2,
+  Minimize2,
+  Menu,
 
   // Actions / UI chrome
   Search,
@@ -38,9 +45,6 @@ export {
   Copy,
   Check,
   Download,
-  Minus,
-  Plus,
   ZoomIn,
   ZoomOut,
-  Maximize2,
 } from "lucide-solid";
