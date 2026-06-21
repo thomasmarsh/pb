@@ -20,6 +20,36 @@ cd ui && pnpm build             # Build explorer TS → static/dist/
 PB_SQL_MOCK=1 uv run pb explore  # Run explorer with mock SQL (no MySQL needed)
 ```
 
+## Session Start (read this every session)
+
+1. **Read `doc/plan/BACKLOG.md` first** — the authoritative work queue. The
+   user sets priority; confirm the charter matches the top unfinished item. Do
+   not start work from `git status` alone.
+2. **If the charter references a plan number** (e.g. "plan 111a"), read that
+   plan file in `doc/plan/` *before* touching `git`, glob, or any source. Plan
+   files are the source of truth for scope, prerequisites, and the exact
+   verify steps. They are gitignored (see below), so `git status` will never
+   tell you they were updated.
+3. **`doc/plan/` is gitignored.** Plan files, BACKLOG, and STRATEGY are *not*
+   committed — they live only on disk. Grooming edits to them are real work
+   but will never appear in a commit; the commit only carries code + tests.
+
+**Interrupted-session recovery.** When asked to "continue" a prior session,
+locate the plan file and read its "Status" / close-out section first — it
+records what landed and what remains. Then check `git status` to see the
+on-disk delta. Do not assume the on-disk state is correct: an interrupted
+session may have left code that doesn't compile or tests that fail for the
+wrong reason. Run `cabal build && cabal test` early to get ground truth before
+deciding whether to continue or revert. (The 111a session left a test file
+using `head`, which `PB.Prelude` hides — the plan file had the full picture,
+but reading `git status` first wasted a step.)
+
+**This file (`CLAUDE.md`) is the orientation layer.** Its Code Index mirrors
+the real module signatures so you don't re-derive them by grepping source. If
+you change a constructor or add a module and skip updating the index, the next
+session pays for it — so treat index updates as part of "post-task grooming,"
+not optional.
+
 ## Session Scoping
 
 **Charter first.** Before Stage 0, state a one-sentence charter:
@@ -526,10 +556,10 @@ Mark done/pending as body parsers land.
 
 | Module          | Purpose                                                 |
 | --------------- | ------------------------------------------------------- |
-| `PB.AST.*`      | Data types only — no parsing logic                      |
+| `PB.AST.*`      | Data types only — no parsing logic (Located, Expr, BodyStmt, Type, SourceFile, DataWindow) |
 | `PB.Lexing.*`   | Tokenization, layout, string mode                       |
-| `PB.Grammar.*`  | megaparsec parsers                                      |
-| `PB.Pipeline.*` | Multi-step transformations (preprocess, walk, sentinel) |
+| `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)     |
+| `PB.Pipeline.*` | Multi-step transformations: Preprocess, Walk, Runner, Serialise, CfgBuild, CpsCompile, Dataflow, TypeResolve, TypeEnv, PbApi |
 | `PB.Prelude`    | Custom Prelude — no parsing or transformation logic     |
 
 New modules go in the most specific matching directory. If a new layer is needed, propose it in Stage 1.
@@ -538,7 +568,13 @@ New modules go in the most specific matching directory. If a new layer is needed
 
 ## Code Index
 
-Maintained here to avoid re-scanning the tree. Update when new exports are added.
+Maintained here to avoid re-scanning the tree. **Update when exports change.**
+Verified against source on 2026-06-21 — if you edit a constructor and don't
+update the matching entry here, the next session re-derives it the hard way
+(this cost real time in the 111a session). Field names below are the raw
+Haskell record names; the Aeson wire shape renames them via `stripCamelCasePrefix`
+(see Stage 0 notes) — e.g. `callArgs` serialises as `args`, `lvSegments` as
+`segments`.
 
 ### `PB.AST.Located`
 
@@ -552,45 +588,40 @@ data Located a = Located
 ### `PB.AST.Expr`
 
 ```haskell
-data LvSegment = LvSegment { lvsName :: Text, lvsSubscript :: Maybe [Token] }
-data Lvalue    = Lvalue    { lvSegments :: [LvSegment] }   -- non-empty
+-- Field names are unprefixed (record-dot disambiguation under
+-- DuplicateRecordFields). Token lists are [Text], NOT [Token].
+data LvSegment = LvSegment { name :: Text, subscript :: Maybe [Text] }
+newtype Lvalue = Lvalue { segments :: [LvSegment] }   -- non-empty
 
-data Literal
-  = LitBool Bool | LitInt Text | LitReal Text | LitStr Text
-  | LitDate Text | LitTime Text | LitNull
-
-data CallExpr = CallExpr
-  { ceCallee :: Lvalue     -- dotted name chain before '('
-  , ceArgs   :: [[Token]]  -- each arg as raw tokens (split on ',' at depth 0)
-  }
-
--- Operator precedence (lowest → highest):
---   1  or   xor          TkOtherKw                left
---   2  and               TkOtherKw                left
---   3  not               TkOtherKw                prefix (parseAtom)
---   4  = <> < > <= >=    TkAssignOp / TkCompareOp left
---   5  + -               TkArithOp                left
---   6  * /               TkArithOp                left
---   7  ^                 TkArithOp                right
 data BinOp
-  = BopAdd | BopSub | BopMul | BopDiv | BopPow   -- +  -  *  /  ^
-  | BopEq  | BopNe  | BopLt  | BopGt  | BopLe | BopGe  -- =  <>  <  >  <=  >=
-  | BopAnd | BopOr  | BopXor                      -- and  or  xor
+  = BopAdd | BopSub | BopMul | BopDiv | BopPow
+  | BopEq  | BopNe  | BopLt  | BopGt  | BopLe | BopGe
+  | BopAnd | BopOr  | BopXor
+
+data DispatchMode = DmPost | DmTrigger | DmSync
+data DispatchExpr = DispatchExpr
+  { object :: Maybe Lvalue, mode :: DispatchMode, dynamic :: Bool
+  , event :: Bool, name :: Text, args :: [[Text]] }
 
 data Expr
-  = ExLit        Literal          -- bool / numeric / string / date-time / null
-  | ExEnum       Text             -- PowerBuilder enum name (without trailing '!')
+  = ExBool       Bool             | ExInt Text  | ExReal Text
+  | ExStr        Text             | ExDate Text | ExTime Text | ExNull
+  | ExEnum       Text             -- enum constant (without trailing '!')
   | ExLvalue     Lvalue           -- bare ident / member chain / subscript
-  | ExCall       CallExpr         -- function or method call
-  | ExCreate     CreateExpr       -- CREATE ClassName / CREATE USING expr
-  | ExArray      [Expr]           -- { e1, e2, ... } array literal
-  | ExNot        Expr             -- NOT expr (unary boolean negation)
-  | ExHostVar    Lvalue           -- SQL host variable (:varname or :struct.field)
-  | ExBinOp      Expr BinOp Expr  -- left op right (precedence-climbing parser)
-  | ExUnaryMinus Expr             -- unary - expr
+  | ExCall       { callee :: Lvalue, callArgs :: [[Text]] }
+  | ExMethodCall { receiver :: Expr, method :: Text, methodArgs :: [[Text]] }
   | ExDispatch   DispatchExpr     -- POST/TRIGGER/DYNAMIC/EVENT dispatch
-  | ExMethodCall Expr Text [[Token]] -- receiver.method(raw-arg-lists); chained call
-  | ExRaw        [Token]          -- SQL fragments or unrecognized
+  | ExCreate     Text             -- CREATE ClassName
+  | ExCreateUsing Expr            -- CREATE USING expr
+  | ExArray      [Expr]
+  | ExBinOp      { lhs :: Expr, op :: BinOp, rhs :: Expr }
+  | ExNot        Expr
+  | ExNeg        Expr             -- unary minus
+  | ExHostVar    Lvalue           -- SQL host variable :varname
+  | ExRaw        [Text]           -- SQL fragments / unrecognised
+  -- NOTE: there is no ExLit / Literal type — literals are split across
+  -- ExBool/ExInt/ExReal/ExStr/ExDate/ExTime/ExNull. Old index entries that
+  -- referenced Literal/CallExpr/CreateExpr/ExUnaryMinus were stale.
 ```
 
 ### `PB.AST.BodyStmt`
@@ -598,9 +629,15 @@ data Expr
 ```haskell
 data AugOp = AugAdd | AugSub | AugMul | AugDiv
 
+-- PB CALL statement: CALL ancestorobject [`controlname] :: event
+data PbCall = PbCall { pbcAncestor :: Text, pbcEvent :: Text }
+
+-- One elseif branch. ifElseIfs is [ElseIf], NOT [(Expr, [Located BodyStmt])].
+data ElseIf = ElseIf { eifCond :: Expr, eifBody :: [Located BodyStmt] }
+
 data IfStmt = IfStmt
   { ifCond :: Expr, ifThen :: [Located BodyStmt]
-  , ifElseIfs :: [(Expr, [Located BodyStmt])], ifElse :: Maybe [Located BodyStmt] }
+  , ifElseIfs :: [ElseIf], ifElse :: Maybe [Located BodyStmt] }
 
 data ForStmt = ForStmt
   { forVar :: Lvalue, forFrom :: Expr, forTo :: Expr
@@ -613,18 +650,18 @@ data DoStmt = DoStmt
   , doLoop :: Maybe DoCondition }
 
 data CaseClause = CaseClause
-  { ccExpr :: Maybe [Token]   -- Nothing = "case else"
+  { ccExpr :: Maybe [Text]   -- Nothing = "case else"
   , ccBody :: [Located BodyStmt] }
 
 data ChooseStmt = ChooseStmt
   { chooseExpr :: Expr, chooseClauses :: [CaseClause] }
 
 data BodyStmt
-  = BsLocalVar  [Token]               -- Type Name [= init …]
+  = BsLocalVar  { varMods :: [Text], varType :: PbType, varName :: Text, varInit :: Maybe Expr }
   | BsAssign    Lvalue Expr           -- lhs = rhs
-  | BsAugAssign [Token] AugOp [Token] -- lhs_tokens op= rhs_tokens
-  | BsInc       [Token]               -- lhs_tokens ++
-  | BsDec       [Token]               -- lhs_tokens --
+  | BsAugAssign [Text] AugOp [Text]   -- lhs_tokens op= rhs_tokens
+  | BsInc       [Text]                -- lhs_tokens ++
+  | BsDec       [Text]                -- lhs_tokens --
   | BsCall      Expr                  -- standalone call expression
   | BsPbCall    PbCall                -- CALL ancestor[`ctrl] :: event
   | BsReturn    (Maybe Expr)          -- return [expr]
@@ -635,7 +672,21 @@ data BodyStmt
   | BsExit
   | BsContinue
   | BsDestroy   Lvalue                -- DESTROY objectvariable
-  | BsRaw       Statement             -- SQL, event decls, unclassified
+  | BsAssignExpr Expr Expr            -- complex LHS = rhs (method-call chain . property)
+  | BsRaw       Text                  -- SQL, event decls, unclassified (source text)
+  -- PbType comes from PB.AST.Type: PtPrimitive Text | PtUserDefined Text
+  --   | PtAny | PtDecimalPrec Int. No IsString instance — always wrap as
+  --   PtPrimitive "integer" etc. (the 111a test was wrong about this.)
+```
+
+### `PB.AST.Type`
+
+```haskell
+data PbType
+  = PtPrimitive Text | PtUserDefined Text | PtAny | PtDecimalPrec Int
+renderPbType :: PbType -> Text
+parseTypeText :: Text -> PbType          -- inverse, used by TypeResolve/TypeEnv
+-- No IsString instance. primitiveNames list in-module.
 ```
 
 ### `PB.Grammar.Body`
@@ -645,8 +696,8 @@ classifyBodyStmt :: Statement -> BodyStmt          -- leaf classifier; exit/cont
 parseBodyStmts   :: [Statement] -> [Located BodyStmt]  -- flat map; uses llStartLine for locLine
 parseLvalue      :: [Token] -> Maybe Lvalue
 parseExpr        :: [Token] -> Expr   -- total; ExRaw fallback; TkColon guard for SQL host vars
--- Internal helpers (not exported): lookupBinOp, parseAtom, climbPrec, chainCalls
 pBodyStmt        :: FileParser (Located BodyStmt)  -- captures currentLine before dispatching
+-- Internal helpers (not exported): parseAtom, climbPrec, chainCalls, etc.
 ```
 
 ### `PB.Pipeline.Preprocess`
@@ -690,20 +741,22 @@ data TypeBlock = TypeBlock { tbDecl :: TypeDecl, tbBody :: [Located BodyStmt] }
 data VarDecl   = VarDecl  { vdModifiers :: [Text], vdType :: Text, vdName :: Text }
 data GlobalInstance = GlobalInstance { giType :: Text, giName :: Text }
 
-data FnSig  = FnSig  { fnsMods :: [Text], fnsRetType :: Text, fnsName :: Text, fnsParams :: Text, fnsThrows :: Maybe Text }
+data FnSig  = FnSig  { fnsMods :: [Text], fnsReturnType :: Text, fnsName :: Text, fnsParams :: Text, fnsThrows :: Maybe Text }
 data SubSig = SubSig { ssMods  :: [Text], ssName :: Text, ssParams :: Text, ssThrows :: Maybe Text }
 data EventSig = EventSig { esName :: Text, esRawSig :: Text }
 
 data FunctionBlock   = FunctionBlock   { fbSig :: FnSig,   fbBody :: [Located BodyStmt] }
 data SubroutineBlock = SubroutineBlock { sbSig :: SubSig,  sbBody :: [Located BodyStmt] }
-data EventBlock      = EventBlock      { evSig :: EventSig, evBody :: [Located BodyStmt] }
+data EventBlock      = EventBlock      { evSig :: EventSig, evOwner :: Maybe Text, evBody :: [Located BodyStmt] }
 data OnBlock         = OnBlock         { obQualName :: Text, obOwner :: Text, obEvent :: Text, obBody :: [Located BodyStmt] }
 ```
 
 ### `PB.Grammar.File`
 
 ```haskell
-parseSrFile      :: [Text] -> [Statement] -> Either Text SrFile
+parseSrFile         :: [Text] -> [Statement] -> Either Text SrFile   -- no spans
+parseSrFileWithSpans :: [Text] -> [Statement] -> Either Text (SrFile, SrSpans)  -- Runner uses this
+-- SrSpans carries (startLine, endLine) per block; consumed by wrapSrFile for "meta".
 pForwardBlock    :: FileParser ForwardBlock
 pPrototypesBlock :: FileParser PrototypesBlock
 pVariablesBlock  :: FileParser VariablesBlock
@@ -712,12 +765,12 @@ pTypeDecl        :: FileParser TypeDecl
 pVarDecl         :: FileParser VarDecl
 pProtoDecl       :: FileParser ProtoDecl
 pEndKw           :: Text -> FileParser ()
-pBodyUntil       :: Text -> FileParser ([Located BodyStmt], Int)
 pTypeBlock       :: FileParser TypeBlock
 pOnBlock         :: FileParser OnBlock
 pEventBlock      :: FileParser EventBlock
 pFunctionBlock   :: FileParser FunctionBlock
 pSubroutineBlock :: FileParser SubroutineBlock
+-- NOTE: the old pBodyUntil helper no longer exists (removed in the spans refactor).
 ```
 
 ### `PB.Grammar.Stream`
@@ -736,15 +789,23 @@ currentLine      :: FileParser Int  -- llStartLine of the next statement (withou
 ### `PB.Pipeline.Runner`
 
 ```haskell
-runFile           :: FilePath -> Text -> Either Text Value
+runFile           :: FilePath -> Text -> Either Text Value   -- dispatches on extension via fileKind
 collectStatements :: [LexLine] -> Either Text [Statement]
-wrapSrFile        :: FilePath -> SrFile -> Value
--- runFile calls fileKind to dispatch on extension: .srd → runDataWindow (stub), _ → runPowerScript
--- runPowerScript: normalizeText → stripHeaders → tokenize → collectStatements → parseSrFile → wrapSrFile
--- wrapSrFile: calls toJSON sf (via Serialise instances), merges "file" and "kind" metadata fields
+wrapSrFile        :: FilePath -> SrFile -> SrSpans -> InheritGraph -> Value
+runModeFiles      :: FilePath -> FilePath -> IO ()   -- batch: 3 passes + writeResolution
+runModeJsonl      :: FilePath -> IO ()               -- streaming, no cross-file inh
+-- fileKind: .srd → DataWindow, .srp → Pipeline, .srj → Project, _ → PowerScript
+-- runPowerScript: normalizeText → stripHeaders → tokenize → collectStatements
+--                 → parseSrFileWithSpans → wrapSrFile (buildFileInh per file)
+-- wrapSrFile injects per-procedure: meta (file/object/startLine), source_rendered,
+--   cfg (buildCfg), cpsGraph (compileProcedure). TypeEnv/InheritGraph come from
+--   instance vars + variables block + the file's own type decls.
 -- collectStatements filters empty-token statements and surfaces the first LexError as Left Text
 -- Note: leOffset in a LexError is always 0 (reports initial position state, not error position).
 --       Only llStartLine (leSource e) is meaningful for diagnosis.
+-- writeResolution writes resolved_types.json, resolved_calls.json, global_vars.json
+--   (Pass 5) — read by Python `pb index`. Dataflow (111d-1) and taint (111d-2)
+--   passes land after this in runModeFiles.
 ```
 
 ### `PB.Pipeline.Serialise`
@@ -753,11 +814,109 @@ wrapSrFile        :: FilePath -> SrFile -> Value
 -- Orphan ToJSON instances for all PB.AST.* types.
 -- Import as: import PB.Pipeline.Serialise ()
 -- Brings ToJSON instances into scope; exports nothing explicitly.
--- Sum-type discriminator: "tag" key (string).
--- DoCondition: was "kind" pre-plan-13; now "tag".
+-- Sum-type discriminator: "tag" key (string); single-field payload → "contents".
 ```
 
-All other modules are currently stubs (`PB.Pipeline.WalkTree`, `PB.AST.Library`, `PB.AST.Statement`, `PB.AST.Types`, `PB.AST.Workspace`).
+### `PB.Pipeline.CfgBuild`
+
+```haskell
+-- Pure. buildCfg :: [Located BodyStmt] -> Cfg. Mirrors cfg_builder.py.
+data CfgBlock = CfgBlock { cbId :: Text, cbStmts :: [Located BodyStmt], cbFirstLine :: Maybe Int, cbLastLine :: Maybe Int }
+data CfgEdge  = CfgEdge  { ceSrc :: Text, ceDst :: Text, ceLabel :: Text }
+data Cfg      = Cfg      { cfgEntry :: Text, cfgExits :: [Text], cfgBlocks :: [CfgBlock], cfgEdges :: [CfgEdge] }
+-- Edge labels: "T"/"F" (branches), "" (fallthrough), "loop" (back-edge), "case:N".
+```
+
+### `PB.Pipeline.CpsCompile`
+
+```haskell
+-- Pure. compileProcedure :: TypeEnv -> InheritGraph -> [Located BodyStmt] -> CpsGraph
+-- TypeEnv = Map Text Text (lowercased var → type); InheritGraph = Map Text Text (child → parent).
+type TypeEnv      = Map.Map Text Text
+type InheritGraph = Map.Map Text Text
+data CallKind = Pure | Suspend
+classifyExpr :: TypeEnv -> InheritGraph -> Expr -> CallKind
+compileProcedure :: TypeEnv -> InheritGraph -> [Located BodyStmt] -> CpsGraph
+data CpsNode
+  = CpsAssign  { anVar :: Text, anRhs :: Expr, anNext :: Int }
+  | CpsBranch  { brCond :: Expr, brThenPc :: Int, brElsePc :: Int }
+  | CpsGoto    { goTarget :: Int }
+  | CpsCall    { clCallee :: Text, clArgs :: [Expr], clResult :: Maybe Text, clNext :: Int }
+  | CpsSuspend { suEffect :: Text, suArgs :: [Expr], suVar :: Maybe Text, suContinuation :: Int }
+  | CpsReturn  { reValue :: Maybe Expr }
+  | CpsNop     { npNext :: Int }
+data CpsGraph = CpsGraph { cgNodes :: [CpsNode], cgEntry :: Int, cgSuspensionPoints :: [Int], cgSourceMap :: [(Int, Int)] }
+-- NOTE: CpsCompile re-declares its own TypeEnv/InheritGraph type aliases (Text→Text),
+--   distinct from PB.Pipeline.TypeEnv's richer TypeEnv record (PbType values).
+--   Plan 114 tracks unifying these three environments.
+```
+
+### `PB.Pipeline.Dataflow` (Plan 111a)
+
+```haskell
+-- Pure intra-procedural dataflow: def-use + reaching definitions.
+extractDefsUses      :: CfgBlock -> BlockFlow
+reachingDefinitions  :: Cfg -> Map Text BlockFlow -> (Map Text (Set Text), Map Text (Set Text))
+analyzeProcedure     :: Text -> Text -> Cfg -> ProcFlow   -- obj, proc, cfg
+-- analyzeWorkspace (Pass 6, writes proc_defs.json/proc_uses.json) is deferred to 111d-1.
+data DefSite = DefSite { dsVar :: Text, dsBlock :: Text, dsStmtIdx :: Int, dsLine :: Maybe Int, dsKind :: Text }
+data UseSite = UseSite { usVar :: Text, usBlock :: Text, usStmtIdx :: Int, usLine :: Maybe Int, usKind :: Text }
+data BlockFlow = BlockFlow { bfBlockId :: Text, bfGen :: Set Text, bfKill :: Set Text, bfDefs :: [DefSite], bfUses :: [UseSite] }
+data ProcFlow  = ProcFlow  { pfObject :: Text, pfProc :: Text, pfBlocks :: Map Text BlockFlow
+                           , pfReachingIn :: Map Text (Set Text), pfReachingOut :: Map Text (Set Text)
+                           , pfAllDefs :: Map Text [DefSite], pfAllUses :: Map Text [UseSite] }
+-- walkExprIdents counts the ExCall callee root as a use (matches Python core/dataflow.py).
+```
+
+### `PB.Pipeline.TypeEnv` (the rich one — PbType values)
+
+```haskell
+-- Cross-file type environment with PbType-typed values + user-type inheritance.
+data TypeEnv = TypeEnv { teVars :: Map Text PbType, teUserTypes :: Map Text Text }
+buildWorkspaceTypeEnv :: [SrFile] -> TypeEnv
+lookupVarType  :: Text -> TypeEnv -> Maybe PbType
+lookupUserType :: Text -> TypeEnv -> Maybe Text
+-- Distinct from CpsCompile's Text→Text TypeEnv alias. Plan 114 unifies them.
+```
+
+### `PB.Pipeline.TypeResolve` (Plan 109 — Pass 5)
+
+```haskell
+-- Pure. Produces resolved_types.json / resolved_calls.json / global_vars.json.
+extractLocalVars  :: Text -> Text -> SrFile -> [LocalVar]   -- file, object, sf
+extractCallSites  :: Text -> Text -> SrFile -> [CallSite]
+extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
+resolveTypes :: [LocalVar] -> Set Text -> Set Text -> [ResolvedType]   -- objs, userTypes
+resolveCalls :: [CallSite] -> Map Text (Set Text) -> Map Text Text -> Set Text -> Set Text -> [ResolvedCall]
+buildInheritsMap :: [SrFile] -> Map Text Text
+buildProcMap     :: [SrFile] -> Map Text (Set Text)
+buildObjectSet, buildUserTypeSet :: [SrFile] -> Set Text
+parseParams :: Text -> [(Text, PbType)]          -- "ref long al_row" → ("al_row", PtPrimitive "long")
+classifyPbType :: PbType -> Set Text -> Set Text -> (Text, Maybe Text)  -- (kind, target)
+-- Record types: LocalVar{lvFile,lvObject,lvProcName,lvVarName,lvRawType,lvIsParam,lvScopeLine}
+--   CallSite{csFile,csObject,csFromProc,csToName,csCallType,csLine}
+--   GlobalVar{gvFile,gvObject,gvName,gvType,gvMods}
+--   ResolvedType{rtFile,rtObject,rtProcName,rtVarName,rtRawType,rtKind,rtTarget,rtIsParam,rtScopeLine}
+--   ResolvedCall{rcFile,rcObject,rcFromProc,rcToName,rcCallType,rcLine,rcTargetObject,rcTargetProc,rcKind,rcConfidence}
+--   (lvPbType exists but is excluded from JSON.)
+```
+
+### `PB.Pipeline.PbApi`
+
+```haskell
+-- PB built-in function/method name sets for call classification (Plan 109b).
+builtinFnNames     :: Set Text     -- free functions (used by resolveCalls)
+builtinMethodNames :: Set Text     -- class methods
+```
+
+### `PB.Pipeline.Walk`
+
+```haskell
+walkFiles      :: (FilePath -> Bool) -> FilePath -> IO [FilePath]   -- [] if root missing
+walkPsFiles    :: FilePath -> IO [FilePath]   -- .srf .srw .sru .srm .sra .srx
+walkDwFiles    :: FilePath -> IO [FilePath]   -- .srd
+walkAllSrFiles :: FilePath -> IO [FilePath]   -- any .sr<single-char>
+```
 
 ---
 
