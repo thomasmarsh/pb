@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS procedures (
     end_line         INT,
     body_json        TEXT,
     source_rendered  TEXT,
-    cyclomatic       INT
+    cyclomatic       INT,
+    cfg_json         TEXT,
+    cps_graph_json   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS calls (

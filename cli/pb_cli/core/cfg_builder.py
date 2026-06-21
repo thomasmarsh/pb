@@ -287,6 +287,29 @@ def build_cfg(body: list) -> CFG:
     return cfg
 
 
+def cfg_from_json(d: dict) -> CFG:
+    """Deserialise a Haskell-generated cfg_json dict back to a Python CFG."""
+    blocks = {
+        b["id"]: BasicBlock(
+            id=b["id"],
+            stmts=b.get("stmts", []),
+            first_line=b.get("firstLine"),
+            last_line=b.get("lastLine"),
+        )
+        for b in d.get("blocks", [])
+    }
+    edges = [
+        CFGEdge(src=e["src"], dst=e["dst"], label=e.get("label", ""))
+        for e in d.get("edges", [])
+    ]
+    return CFG(
+        entry=d.get("entry", ""),
+        exits=d.get("exits", []),
+        blocks=blocks,
+        edges=edges,
+    )
+
+
 def mark_unreachable(cfg: CFG) -> set[str]:
     """Return set of block ids not reachable from the entry block (forward BFS)."""
     visited: set[str] = set()

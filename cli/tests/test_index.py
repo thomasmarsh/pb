@@ -113,7 +113,7 @@ def test_proc_row_cyclomatic_empty_body():
         "source_rendered": "",
     }
     row = _proc_row("test.sru", "function", block, [])
-    assert row[-1] == 1, f"empty body → cyclomatic=1, got {row[-1]}"
+    assert row.cyclomatic == 1, f"empty body → cyclomatic=1, got {row.cyclomatic}"
 
 
 def test_proc_row_cyclomatic_with_branches():
@@ -129,7 +129,7 @@ def test_proc_row_cyclomatic_with_branches():
         "source_rendered": "",
     }
     row = _proc_row("test.sru", "function", block, body)
-    assert row[-1] == 4, f"3 branches → cyclomatic=4, got {row[-1]}"
+    assert row.cyclomatic == 4, f"3 branches → cyclomatic=4, got {row.cyclomatic}"
 
 
 def test_proc_row_cyclomatic_nested():
@@ -143,7 +143,7 @@ def test_proc_row_cyclomatic_nested():
         "source_rendered": "",
     }
     row = _proc_row("test.sru", "function", block, body)
-    assert row[-1] == 3, f"nested BsFor(BsIf) → cyclomatic=3, got {row[-1]}"
+    assert row.cyclomatic == 3, f"nested BsFor(BsIf) → cyclomatic=3, got {row.cyclomatic}"
 
 
 # ---------------------------------------------------------------------------

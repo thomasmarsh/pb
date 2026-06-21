@@ -17,6 +17,8 @@ import PB.Lexing.Lexer      (LexError (..), LexLine (..), tokenize)
 import PB.Lexing.Splitter   (Statement (..), splitStatements)
 import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
 import PB.Pipeline.PrettyPrint (prettyBodyStmts)
+import PB.Pipeline.CfgBuild    (buildCfg)
+import PB.Pipeline.CpsCompile  (compileProcedure)
 import PB.Pipeline.Serialise   ()
 
 import Data.Aeson          (ToJSON (..), Value (..), encode, object, toJSON, (.=))
@@ -122,6 +124,14 @@ wrapSrFile path sf spans =
         injectRendered body (Object o) =
             Object (KM.insert "source_rendered" (toJSON (prettyBodyStmts body)) o)
         injectRendered _ v = v
+        injectCompiled body (Object o) =
+            Object
+              $ KM.insert "cfg"      (toJSON (buildCfg body))
+              $ KM.insert "cpsGraph" (toJSON (compileProcedure body))
+              $ o
+        injectCompiled _ v = v
+        injectAll body sp v =
+            injectCompiled body (injectRendered body (injectMeta sp v))
     in object
         [ "file"            .= path
         , "kind"            .= ("powerscript" :: Text)
@@ -132,13 +142,13 @@ wrapSrFile path sf spans =
         , "variables"       .= srVariables sf
         , "globalInstances" .= srGlobalInstances sf
         , "typeBlocks"      .= srTypeBlocks sf
-        , "onBlocks"    .= [ injectRendered (obBody ob) (injectMeta sp (toJSON ob))
+        , "onBlocks"    .= [ injectAll (obBody ob) sp (toJSON ob)
                            | (sp, ob) <- zip (spOnBlocks    spans) (srOnBlocks    sf) ]
-        , "events"      .= [ injectRendered (evBody ev) (injectMeta sp (toJSON ev))
+        , "events"      .= [ injectAll (evBody ev) sp (toJSON ev)
                            | (sp, ev) <- zip (spEvents      spans) (srEvents      sf) ]
-        , "functions"   .= [ injectRendered (fbBody fn) (injectMeta sp (toJSON fn))
+        , "functions"   .= [ injectAll (fbBody fn) sp (toJSON fn)
                            | (sp, fn) <- zip (spFunctions   spans) (srFunctions   sf) ]
-        , "subroutines" .= [ injectRendered (sbBody sb) (injectMeta sp (toJSON sb))
+        , "subroutines" .= [ injectAll (sbBody sb) sp (toJSON sb)
                            | (sp, sb) <- zip (spSubroutines spans) (srSubroutines sf) ]
         ]
 

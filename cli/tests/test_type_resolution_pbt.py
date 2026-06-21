@@ -70,6 +70,7 @@ def _make_proc(file="f.srw", obj="w_test"):
         st.none() | _pb_type,
         st.just(1), st.just(10),
         st.just("[]"), st.just(""), st.just(1),
+        st.none(), st.none(),
     ).map(lambda t: ProcedureRow(*t))
 
 
@@ -267,7 +268,7 @@ def test_resolve_calls_deterministic(calls, procs):
 def test_resolve_calls_global_fn_resolves(calls):
     """Global functions (fn_sqlerror) resolve even without ancestor chain."""
     procs = [ProcedureRow("f.srw", "fn_sqlerror", None, "function", "fn_sqlerror",
-                          None, None, None, 1, 10, "[]", "", 1)]
+                          None, None, None, 1, 10, "[]", "", 1, None, None)]
     result = resolve_calls(calls, procs, [])
     for row in result:
         assert row.resolution_kind == "virtual"

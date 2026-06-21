@@ -24,6 +24,8 @@ import PB.AST.Expr
 import PB.AST.Located     (Located)
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType)
+import PB.Pipeline.CfgBuild   (CfgBlock, CfgEdge, Cfg)
+import PB.Pipeline.CpsCompile (CpsNode, CpsGraph)
 
 -- | Strip a camelCase field-name prefix, e.g. "fnsMods" → "mods",
 --   "fnsReturnType" → "returnType", "srForward" → "forward".
@@ -97,6 +99,12 @@ instance ToJSON DwGroup         where toJSON = genericToJSON customOptions
 instance ToJSON DwControl       where toJSON = genericToJSON customOptions
 instance ToJSON DwUnknownBlock  where toJSON = genericToJSON customOptions
 instance ToJSON DataWindowFile  where toJSON = genericToJSON customOptions
+
+instance ToJSON CfgBlock  where toJSON = genericToJSON customOptions
+instance ToJSON CfgEdge   where toJSON = genericToJSON customOptions
+instance ToJSON Cfg       where toJSON = genericToJSON customOptions
+instance ToJSON CpsNode   where toJSON = genericToJSON customOptions
+instance ToJSON CpsGraph  where toJSON = genericToJSON customOptions
 
 -- ---------------------------------------------------------------------------
 -- TypeScript instances — one combined splice so mutually recursive types

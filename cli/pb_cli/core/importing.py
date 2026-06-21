@@ -178,6 +178,8 @@ def _proc_row(
         json.dumps(body),
         block.get("source_rendered", ""),
         count_branches(body) + 1,
+        json.dumps(block["cfg"]) if "cfg" in block else None,
+        json.dumps(block["cpsGraph"]) if "cpsGraph" in block else None,
     )
 
 

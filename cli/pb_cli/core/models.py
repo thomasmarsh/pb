@@ -29,6 +29,8 @@ class ProcedureRow(NamedTuple):
     body_json: str | None
     source_rendered: str | None
     cyclomatic: int
+    cfg_json: str | None
+    cps_graph_json: str | None
 
 
 class CallRow(NamedTuple):
