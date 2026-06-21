@@ -12,7 +12,6 @@ from pb_cli.core.cfg_builder import (
 )
 from pb_cli.core.cfg_renderer import cfg_to_dot
 
-
 # ---------------------------------------------------------------------------
 # Helpers — construct CFG objects directly
 # ---------------------------------------------------------------------------

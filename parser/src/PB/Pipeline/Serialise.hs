@@ -29,6 +29,7 @@ import PB.Lexing.Token    (Token (..))
 import PB.Pipeline.CfgBuild   (CfgBlock, CfgEdge, Cfg)
 import PB.Pipeline.CpsCompile (CpsNode, CpsGraph)
 import PB.Pipeline.Taint      (InterprocEdge (..), ProcedureSummary (..), ProcSummaryReturnFlow (..))
+import PB.Pipeline.DeadCode   (DeadProcedure (..))
 
 -- | Strip a camelCase field-name prefix, e.g. "fnsMods" → "mods",
 --   "fnsReturnType" → "returnType", "srForward" → "forward".
@@ -146,6 +147,18 @@ instance ToJSON ProcedureSummary where
     , "globals_read"    .= psGlobalsRead s
     , "globals_written" .= psGlobalsWritten s
     , "return_flows_to" .= psReturnFlowsTo s
+    ]
+
+-- DeadProcedure — manual instance to match Python snake_case keys
+instance ToJSON DeadProcedure where
+  toJSON d = J.object
+    [ "object"              .= dpObject d
+    , "name"                .= dpName d
+    , "proc_type"           .= dpProcType d
+    , "cyclomatic"          .= dpCyclomatic d
+    , "confidence"          .= dpConfidence d
+    , "caller_count_naive"  .= dpCallerCountNaive d
+    , "caller_count_scoped" .= dpCallerCountScoped d
     ]
 
 -- ---------------------------------------------------------------------------

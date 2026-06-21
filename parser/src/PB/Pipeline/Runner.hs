@@ -6,6 +6,7 @@ module PB.Pipeline.Runner
   , runModeJsonl
   , writeDataflowAnalysis
   , writeTaintAnalysis
+  , writeDeadCodeAnalysis
   , ManifestEntry (..)
   , manifestEntry
   ) where
@@ -23,6 +24,7 @@ import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
 import PB.Pipeline.PrettyPrint (prettyBodyStmts)
 import PB.Pipeline.CfgBuild    (buildCfg)
 import PB.Pipeline.CpsCompile  (compileProcedure)
+import PB.Pipeline.DeadCode    qualified as DeadCode
 import PB.Pipeline.TypeEnv     (TypeEnv, buildWorkspaceTypeEnv, withProcScope)
 import PB.Pipeline.Dataflow    qualified as Dataflow
 import PB.Pipeline.Taint       qualified as Taint
@@ -446,6 +448,63 @@ writeTaintAnalysis outDir parsed = do
   BSL.writeFile (outDir </> "procedure_summaries.json") (encode allSummaries)
 
 -- ---------------------------------------------------------------------------
+-- Pass 8: dead code analysis → dead_procedures.json
+--
+-- Reads resolved_calls.json from Pass 5. Computes BFS reachability from
+-- entry points (event/on handlers, DW procedures with calls) through
+-- same-object, cross-object, and override call edges.
+
+writeDeadCodeAnalysis :: FilePath -> [ParsedFile] -> IO ()
+writeDeadCodeAnalysis outDir parsed = do
+  allRC <- loadJsonArray (outDir </> "resolved_calls.json") :: IO [Taint.ResolvedCallRow]
+  let -- Extract procedures with types and cyclomatic complexity
+      procs = [ DeadCode.ProcInfo
+                  { DeadCode.piObject = obj
+                  , DeadCode.piName = name
+                  , DeadCode.piProcType = ptype
+                  , DeadCode.piCyclomatic = Just (DeadCode.cyclomaticComplexity (buildCfg body))
+                  }
+              | pf <- parsed
+              , let obj = toObj pf
+              , (name, ptype, body) <- procTypes (pfSrFile pf)
+              ]
+      -- Raw calls: (object, from_proc, to_name)
+      rawCalls = [ (Taint.rcrObject rc, Taint.rcrFromProc rc, Taint.rcrToName rc)
+                 | rc <- allRC
+                 ]
+      -- Resolved calls: (object, from_proc, target_object, target_proc)
+      resolvedCalls = [ (Taint.rcrObject rc, Taint.rcrFromProc rc, tgtObj, tgtProc)
+                      | rc <- allRC
+                      , Just tgtObj <- [Taint.rcrTargetObject rc]
+                      , Just tgtProc <- [Taint.rcrTargetProc rc]
+                      ]
+      -- Inheritance edges
+      allSfs = map pfSrFile parsed
+      inherits = Map.toList (buildInheritsMap allSfs)
+      -- DW object names (from type block names with .srd extension)
+      dwObjects = Set.fromList
+        [ T.pack (takeBaseName (pfPath pf))
+        | pf <- parsed
+        , takeExtension (pfPath pf) == ".srd"
+        ]
+      dead = DeadCode.computeDeadProcedures procs rawCalls resolvedCalls inherits dwObjects
+  BSL.writeFile (outDir </> "dead_procedures.json") (encode dead)
+
+-- | Extract (name, proc_type, body) triples for every procedure in a file.
+procTypes :: SrFile -> [(Text, Text, [Located BodyStmt])]
+procTypes sf =
+     [ (fnsName (fbSig fb), "function", fbBody fb) | fb <- srFunctions   sf ]
+  <> [ (ssName  (sbSig sb), "subroutine", sbBody sb) | sb <- srSubroutines sf ]
+  <> [ (esName  (evSig ev), "event", evBody ev) | ev <- srEvents      sf ]
+  <> [ (obEvent ob, "on", obBody ob) | ob <- srOnBlocks    sf ]
+
+-- | Get the object name from a ParsedFile.
+toObj :: ParsedFile -> Text
+toObj pf = case srTypeBlocks (pfSrFile pf) of
+  (tb:_) -> tdName (tbDecl tb)
+  []     -> T.pack (takeBaseName (pfPath pf))
+
+-- ---------------------------------------------------------------------------
 -- Three-pass pipeline (runModeFiles)
 --
 -- Pass 1 (parseOutcome)  : parse all PowerScript files; classify others
@@ -536,6 +595,7 @@ runModeFiles srcDir outDir = do
   writeResolution outDir [(pfPath pf, pfSrFile pf) | pf <- parsed]  -- Pass 5
   writeDataflowAnalysis outDir parsed                               -- Pass 6 (111d-1)
   writeTaintAnalysis outDir parsed                                     -- Pass 7 (111d-2)
+  writeDeadCodeAnalysis outDir parsed                                  -- Pass 8
   BSL.writeFile (outDir </> "manifest.json") (encode (catMaybes entries))
 
 runModeJsonl :: FilePath -> IO ()

@@ -1,42 +1,43 @@
-"""DuckDB I/O for dead_procedures table — called after build_taint_tables."""
+"""DuckDB I/O for dead_procedures table — bulk-inserts from Haskell-produced JSON.
+
+Pass 8 of the Haskell pipeline (writeDeadCodeAnalysis) produces:
+  dead_procedures.json
+
+This module reads that file and bulk-inserts into DuckDB.
+"""
 
 from __future__ import annotations
 
-from pb_cli.core.dead_code import compute_dead_procedures
+import json
+from pathlib import Path
+
 from pb_cli.shell.bulk import bulk_insert
 from pb_cli.shell.db import Conn
 
 
-def build_dead_code_table(conn: Conn) -> None:
-    """Compute reachability and store dead procedures."""
-    procedures = conn.execute(
-        "SELECT object, name, proc_type, cyclomatic FROM procedures"
-    ).fetchall()
-    calls = conn.execute(
-        "SELECT object, from_proc, to_name FROM calls"
-    ).fetchall()
-    resolved = conn.execute(
-        "SELECT object, from_proc, target_object, target_proc "
-        "FROM resolved_calls "
-        "WHERE target_object IS NOT NULL AND target_proc IS NOT NULL"
-    ).fetchall()
-    inherits = conn.execute(
-        "SELECT from_object, to_object FROM inherits"
-    ).fetchall()
-    dw_objects = {
-        r[0] for r in conn.execute(
-            "SELECT DISTINCT dw_name FROM dw_controls"
-        ).fetchall()
-    }
-
-    dead = compute_dead_procedures(procedures, calls, resolved, inherits, dw_objects)
-
+def build_dead_code_table(conn: Conn, out_dir: Path | None = None) -> None:
+    """Bulk-insert dead code analysis results from Haskell-produced JSON."""
     conn.execute("DELETE FROM dead_procedures")
-    if dead:
-        bulk_insert(
-            conn,
-            "dead_procedures",
-            ["object", "name", "proc_type", "cyclomatic", "confidence",
-             "caller_count_naive", "caller_count_scoped"],
-            [tuple(d) for d in dead],
-        )
+
+    if out_dir is None:
+        return
+
+    path = out_dir / "dead_procedures.json"
+    if not path.exists():
+        return
+
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    if not rows:
+        return
+
+    bulk_insert(
+        conn,
+        "dead_procedures",
+        ["object", "name", "proc_type", "cyclomatic", "confidence",
+         "caller_count_naive", "caller_count_scoped"],
+        [
+            (r["object"], r["name"], r["proc_type"], r.get("cyclomatic"),
+             r["confidence"], r["caller_count_naive"], r["caller_count_scoped"])
+            for r in rows
+        ],
+    )

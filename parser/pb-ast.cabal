@@ -42,6 +42,7 @@ library
     PB.Lexing.Token
     PB.Pipeline.CfgBuild
     PB.Pipeline.CpsCompile
+    PB.Pipeline.DeadCode
     PB.Pipeline.Dataflow
     PB.Pipeline.PbApi
     PB.Pipeline.Taint
@@ -94,6 +95,7 @@ test-suite pb-ast-test
     , CorpusDebtTest
     , CpsCompileTest
     , DataflowTest
+    , DeadCodeTest
     , TaintTest
     , DataWindowTest
     , CorpusInvariantTest

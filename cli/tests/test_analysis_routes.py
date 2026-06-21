@@ -337,41 +337,20 @@ def test_slice_invalid_direction(taint_client):
 
 @pytest.fixture(scope="module")
 def dead_code_client(tmp_path_factory):
-    """TestClient backed by a synthetic DB for dead-code correctness tests."""
+    """TestClient backed by a synthetic DB for dead-code API endpoint tests.
+
+    Dead-code correctness is tested in Haskell DeadCodeTest.hs.
+    This fixture writes a synthetic dead_procedures.json (as the Haskell
+    pipeline would produce) and tests the API endpoint reads it correctly.
+    """
+    import json
+
     tmp = tmp_path_factory.mktemp("dead_code_db")
     db_path = str(tmp / "dead.duckdb")
+    out_dir = tmp / "runner_out"
+    out_dir.mkdir()
     conn = duckdb.connect(db_path)
 
-    conn.execute("""
-        CREATE TABLE procedures (
-            file TEXT, object TEXT, proc_type TEXT, name TEXT,
-            modifiers TEXT, params TEXT, return_type TEXT,
-            start_line INT, end_line INT, body_json TEXT,
-            source_rendered TEXT, cyclomatic INT
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE calls (
-            file TEXT, object TEXT, from_proc TEXT, to_name TEXT, call_type TEXT
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE resolved_calls (
-            file TEXT, object TEXT, from_proc TEXT, to_name TEXT, call_type TEXT,
-            call_line INT, target_object TEXT, target_proc TEXT,
-            resolution_kind TEXT, confidence TEXT
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE inherits (from_object TEXT NOT NULL, to_object TEXT NOT NULL)
-    """)
-    conn.execute("""
-        CREATE TABLE dw_controls (
-            file TEXT, dw_name TEXT, control_name TEXT, control_type TEXT,
-            band TEXT, x INT, y INT, width INT, height INT,
-            expression TEXT, tab_seq INT, source_line INT
-        )
-    """)
     conn.execute("""
         CREATE TABLE dead_procedures (
             object TEXT NOT NULL, name TEXT NOT NULL, proc_type TEXT NOT NULL,
@@ -381,42 +360,26 @@ def dead_code_client(tmp_path_factory):
         )
     """)
 
-    # Entry points (called by runtime)
-    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                 ["a.srf", "obj_a", "event", "ev_handler", None, None, None, 1, 10, None, None, 1])
-    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                 ["a.srf", "obj_a", "on", "on_handler", None, None, None, 11, 20, None, None, 1])
-
-    # Reachable via ev_handler → proc_a → proc_b
-    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                 ["a.srf", "obj_a", "function", "proc_a", None, None, None, 21, 30, None, None, 3])
-    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                 ["a.srf", "obj_a", "function", "proc_b", None, None, None, 31, 40, None, None, 1])
-
-    # Dead: proc_c is never called; proc_d is only called from proc_c
-    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                 ["a.srf", "obj_a", "function", "proc_c", None, None, None, 41, 50, None, None, 2])
-    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                 ["a.srf", "obj_a", "function", "proc_d", None, None, None, 51, 60, None, None, 1])
-
-    # Call edges
-    conn.execute("INSERT INTO calls VALUES (?,?,?,?,?)", ["a.srf", "obj_a", "ev_handler", "proc_a", "direct"])
-    conn.execute("INSERT INTO calls VALUES (?,?,?,?,?)", ["a.srf", "obj_a", "proc_a", "proc_b", "direct"])
-    conn.execute("INSERT INTO calls VALUES (?,?,?,?,?)", ["a.srf", "obj_a", "proc_c", "proc_d", "direct"])
-
-    # Override propagation: obj_base.base_event (event) calls base_hook (same obj).
-    # obj_child inherits obj_base and overrides base_hook — must be reachable.
-    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                 ["b.srf", "obj_base", "event", "base_event", None, None, None, 1, 10, None, None, 1])
-    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                 ["b.srf", "obj_base", "function", "base_hook", None, None, None, 11, 20, None, None, 1])
-    conn.execute("INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                 ["b.srf", "obj_child", "function", "base_hook", None, None, None, 1, 10, None, None, 1])
-    conn.execute("INSERT INTO calls VALUES (?,?,?,?,?)", ["b.srf", "obj_base", "base_event", "base_hook", "direct"])
-    conn.execute("INSERT INTO inherits VALUES (?,?)", ["obj_child", "obj_base"])
+    # Graph:
+    #   ev_handler (event) ──► proc_a ──► proc_b   [reachable]
+    #   on_handler (on)                              [entry, reachable]
+    #   proc_c ──► proc_d                            [both dead, high confidence]
+    #   base_event (event) ──► base_hook (obj_base)  [reachable]
+    #   base_hook (obj_child, inherits obj_base)      [reachable via override]
+    #
+    # Dead procedures: proc_c, proc_d
+    dead_json = [
+        {"object": "obj_a", "name": "proc_c", "proc_type": "function",
+         "cyclomatic": 2, "confidence": "high",
+         "caller_count_naive": 0, "caller_count_scoped": 0},
+        {"object": "obj_a", "name": "proc_d", "proc_type": "function",
+         "cyclomatic": 1, "confidence": "high",
+         "caller_count_naive": 0, "caller_count_scoped": 0},
+    ]
+    (out_dir / "dead_procedures.json").write_text(json.dumps(dead_json), encoding="utf-8")
 
     from pb_cli.shell.dead_code import build_dead_code_table
-    build_dead_code_table(conn)
+    build_dead_code_table(conn, out_dir)
 
     conn.close()
 

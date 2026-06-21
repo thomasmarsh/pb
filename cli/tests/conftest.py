@@ -53,7 +53,7 @@ def db_path(jsonl_text: str, tmp_path_factory) -> str:
     with db_connection(db) as conn, reporter.analyze_progress() as progress:
         compute_metrics(conn, progress)
         build_type_tables(conn, None)
-        build_dead_code_table(conn)
+        build_dead_code_table(conn, None)
 
     return db
 

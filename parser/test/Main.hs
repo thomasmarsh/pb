@@ -6,6 +6,7 @@ import qualified BodyStmtTest
 import qualified CfgBuildTest
 import qualified CpsCompileTest
 import qualified DataflowTest
+import qualified DeadCodeTest
 import qualified TaintTest
 import qualified EscapeTest
 import qualified ExprTest
@@ -39,6 +40,7 @@ tests = testGroup "pb-ast"
   , CfgBuildTest.tests
   , CpsCompileTest.tests
   , DataflowTest.tests
+  , DeadCodeTest.tests
   , TaintTest.tests
   , EscapeTest.tests
   , ExprTest.tests
