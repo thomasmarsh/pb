@@ -272,4 +272,48 @@ tests = testGroup "CpsCompile"
              (ExCall { callee = lv2 "mystery" "retrieve", callArgs = [] })
              @?= Pure
     ]
+
+  , testGroup "ExMethodCall classification"
+    [ testCase "ExMethodCall with ExLvalue receiver (datawindow) → Suspend" $
+        let env = Map.singleton "dw" "datawindow"
+        in classifyExpr env noInh
+             (ExMethodCall (ExLvalue (lv1 "dw")) "retrieve" [])
+             @?= Suspend
+
+    , testCase "ExMethodCall with ExLvalue receiver (transaction) → Suspend" $
+        let env = Map.singleton "sqlca" "transaction"
+        in classifyExpr env noInh
+             (ExMethodCall (ExLvalue (lv1 "sqlca")) "commit" [])
+             @?= Suspend
+
+    , testCase "ExMethodCall with ExCall receiver (single-segment callee in env) → Suspend" $
+        let env = Map.singleton "get_dw" "datawindow"
+        in classifyExpr env noInh
+             (ExMethodCall (ExCall (lv1 "get_dw") []) "retrieve" [])
+             @?= Suspend
+
+    , testCase "ExMethodCall with ExCall receiver (multi-segment callee) → Pure" $
+        let env = Map.singleton "ns_func.get_dw" "datawindow"
+        in classifyExpr env noInh
+             (ExMethodCall (ExCall (lv2 "ns_func" "get_dw") []) "retrieve" [])
+             @?= Pure
+
+    , testCase "ExMethodCall settransobject on datastore → Pure (setup only)" $
+        let env = Map.singleton "ids" "datastore"
+        in classifyExpr env noInh
+             (ExMethodCall (ExLvalue (lv1 "ids")) "settransobject" [])
+             @?= Pure
+
+    , testCase "ExMethodCall rowscopy on datastore → Suspend" $
+        let env = Map.singleton "ids" "datastore"
+        in classifyExpr env noInh
+             (ExMethodCall (ExLvalue (lv1 "ids")) "rowscopy" [])
+             @?= Suspend
+
+    , testCase "ExMethodCall describe on datawindow → Pure (read-only)" $
+        let env = Map.singleton "dw" "datawindow"
+        in classifyExpr env noInh
+             (ExMethodCall (ExLvalue (lv1 "dw")) "describe" [])
+             @?= Pure
+    ]
   ]

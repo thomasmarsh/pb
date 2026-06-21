@@ -100,8 +100,13 @@ isBuiltinSuspendFn n = n `elem`
 -- | Return True when a method on a resolved type is a side-effecting call.
 isTypedSuspend :: Text -> Text -> Bool
 isTypedSuspend ty meth
-  | isDwType   ty = meth `elem` ["retrieve", "update", "delete", "reset"]
-  | isTransType ty = meth `elem` ["commit", "rollback", "connect", "disconnect"]
+  | isDwType   ty = meth `elem`
+      [ "retrieve", "update", "delete", "reset"
+      , "rowscopy", "rowsmove", "sharedata"
+      , "print", "modify"
+      ]
+  | isTransType ty = meth `elem`
+      [ "commit", "rollback", "connect", "disconnect", "autocommit" ]
   | otherwise      = False
 
 isDwType :: Text -> Bool
@@ -129,6 +134,10 @@ resolveReceiverType env inh (ExLvalue lv) =
   case segments lv of
     (s:_) -> resolveType env inh (T.toLower (segName s))
     []    -> Nothing
+resolveReceiverType env inh (ExCall lv _) =
+  case segments lv of
+    [single] -> resolveType env inh (T.toLower (segName single))
+    _        -> Nothing
 resolveReceiverType _ _ _ = Nothing
 
 -- ---------------------------------------------------------------------------
