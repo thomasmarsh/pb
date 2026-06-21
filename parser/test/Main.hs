@@ -7,12 +7,14 @@ import qualified CfgBuildTest
 import qualified CpsCompileTest
 import qualified DataflowTest
 import qualified TaintTest
+import qualified EscapeTest
 import qualified ExprTest
 import qualified CorpusDebtTest
 import qualified CorpusInvariantTest
 import qualified CorpusTest
 import qualified DataWindowTest
 import qualified FileTest
+import qualified PbApiTest
 import qualified PipelineTest
 import qualified RunnerTest
 import qualified SerialiseTest
@@ -38,12 +40,14 @@ tests = testGroup "pb-ast"
   , CpsCompileTest.tests
   , DataflowTest.tests
   , TaintTest.tests
+  , EscapeTest.tests
   , ExprTest.tests
   , CorpusDebtTest.tests
   , CorpusInvariantTest.tests
   , CorpusTest.tests
   , DataWindowTest.tests
   , FileTest.tests
+  , PbApiTest.tests
   , PipelineTest.tests
   , RunnerTest.tests
   , SerialiseTest.tests

@@ -253,7 +253,7 @@ def _ctrl_row(file: str, dw_name: str, ctrl: dict) -> DwControlRow:
         ctrl.get("width"),
         ctrl.get("height"),
         ctrl.get("expression"),
-        ctrl.get("tab_seq"),
+        ctrl.get("tabSeq"),
         meta.get("sourceLine"),
     )
 

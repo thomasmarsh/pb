@@ -7,8 +7,6 @@ module PB.Grammar.File
   , pVariablesBlock
   , pTypeDecl
   , pVarDecl
-  , pProtoDecl
-  , pEndKw
   , pGlobalInstance
   , pTypeBlock
   , pOnBlock

@@ -1,6 +1,5 @@
 module PB.Lexing.Escape
-  ( pbEscape
-  , pbStringChunk
+  ( pbStringChunk
   , pbDwStringChunk
   , pbSelectTildeStr
   ) where

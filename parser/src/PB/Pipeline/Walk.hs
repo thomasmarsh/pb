@@ -1,6 +1,5 @@
 module PB.Pipeline.Walk
-  ( walkFiles
-  , walkPsFiles
+  ( walkPsFiles
   , walkDwFiles
   , walkAllSrFiles
   ) where

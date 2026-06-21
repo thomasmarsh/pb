@@ -98,8 +98,10 @@ test-suite pb-ast-test
     , DataWindowTest
     , CorpusInvariantTest
     , CorpusTest
+    , EscapeTest
     , ExprTest
     , FileTest
+    , PbApiTest
     , PipelineTest
     , RunnerTest
     , SerialiseTest

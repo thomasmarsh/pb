@@ -61,7 +61,7 @@ DECL_KWS = {
 }
 HANDLED = {"return", "exit", "continue", "call", "destroy", "create", "halt"}
 
-DW_STRUCT_FIELDS = ["name", "band", "id", "x", "y", "width", "height", "visible", "expression", "tab_seq"]
+DW_STRUCT_FIELDS = ["name", "band", "id", "x", "y", "width", "height", "visible", "expression", "tabSeq"]
 
 
 def categorize(text: str) -> tuple[str, str]:
