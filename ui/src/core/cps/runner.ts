@@ -77,6 +77,12 @@ function dispatchSuspend(
   args: unknown[],
   env: CpsEnv,
 ): Effect<unknown> | null {
+  if (effect.startsWith("retrieve:")) {
+    const dwName = effect.slice("retrieve:".length);
+    const sql = env.dwNameToSql?.(dwName) ?? null;
+    if (!sql) return null;
+    return env.executeSql(sql, args).map((r) => ({ dwName, rows: r.rows }));
+  }
   switch (effect) {
     case "executeSql": {
       const sql = String(args[0] ?? "");

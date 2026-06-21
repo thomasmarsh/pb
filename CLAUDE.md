@@ -559,7 +559,7 @@ Mark done/pending as body parsers land.
 | `PB.AST.*`      | Data types only — no parsing logic (Located, Expr, BodyStmt, Type, SourceFile, DataWindow) |
 | `PB.Lexing.*`   | Tokenization, layout, string mode                       |
 | `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)     |
-| `PB.Pipeline.*` | Multi-step transformations: Preprocess, Walk, Runner, Serialise, CfgBuild, CpsCompile, Dataflow, TypeResolve, TypeEnv, PbApi |
+| `PB.Pipeline.*` | Multi-step transformations: Preprocess, Walk, Runner, Serialise, CfgBuild, CpsCompile, Dataflow, Taint, TypeResolve, TypeEnv, PbApi |
 | `PB.Prelude`    | Custom Prelude — no parsing or transformation logic     |
 
 New modules go in the most specific matching directory. If a new layer is needed, propose it in Stage 1.
@@ -792,8 +792,10 @@ currentLine      :: FileParser Int  -- llStartLine of the next statement (withou
 runFile           :: FilePath -> Text -> Either Text Value   -- dispatches on extension via fileKind
 collectStatements :: [LexLine] -> Either Text [Statement]
 wrapSrFile        :: FilePath -> SrFile -> SrSpans -> InheritGraph -> Value
-runModeFiles      :: FilePath -> FilePath -> IO ()   -- batch: 3 passes + writeResolution
+runModeFiles      :: FilePath -> FilePath -> IO ()   -- batch: 7 passes
 runModeJsonl      :: FilePath -> IO ()               -- streaming, no cross-file inh
+writeDataflowAnalysis :: FilePath -> [ParsedFile] -> IO ()  -- Pass 6 → proc_defs.json, proc_uses.json
+writeTaintAnalysis    :: FilePath -> [ParsedFile] -> IO ()  -- Pass 7 → taint_*.json
 -- fileKind: .srd → DataWindow, .srp → Pipeline, .srj → Project, _ → PowerScript
 -- runPowerScript: normalizeText → stripHeaders → tokenize → collectStatements
 --                 → parseSrFileWithSpans → wrapSrFile (buildFileInh per file)
@@ -803,9 +805,9 @@ runModeJsonl      :: FilePath -> IO ()               -- streaming, no cross-file
 -- collectStatements filters empty-token statements and surfaces the first LexError as Left Text
 -- Note: leOffset in a LexError is always 0 (reports initial position state, not error position).
 --       Only llStartLine (leSource e) is meaningful for diagnosis.
--- writeResolution writes resolved_types.json, resolved_calls.json, global_vars.json
---   (Pass 5) — read by Python `pb index`. Dataflow (111d-1) and taint (111d-2)
---   passes land after this in runModeFiles.
+-- writeResolution writes resolved_types.json, resolved_calls.json, global_vars.json (Pass 5)
+-- writeDataflowAnalysis reads resolved_types + CFG → proc_defs.json, proc_uses.json (Pass 6)
+-- writeTaintAnalysis reads proc_defs/uses + resolved_calls + global_vars → taint_*.json (Pass 7)
 ```
 
 ### `PB.Pipeline.Serialise`
@@ -866,6 +868,32 @@ data ProcFlow  = ProcFlow  { pfObject :: Text, pfProc :: Text, pfBlocks :: Map T
                            , pfReachingIn :: Map Text (Set Text), pfReachingOut :: Map Text (Set Text)
                            , pfAllDefs :: Map Text [DefSite], pfAllUses :: Map Text [UseSite] }
 -- walkExprIdents counts the ExCall callee root as a use (matches Python core/dataflow.py).
+```
+
+### `PB.Pipeline.Taint` (Plan 111 — 111b/c/d-2)
+
+```haskell
+-- Taint analysis: source/sink classification, BFS propagation, path tracing.
+-- Reads proc_defs/uses, resolved_calls, global_vars from JSON. Classifies
+-- sources (SELECT INTO, event params) and sinks (INSERT/UPDATE/DELETE/EXECUTE)
+-- from AST. Propagates through intra-proc def-use chains and inter-proc
+-- arg/return/global edges (computed internally from resolved_calls).
+data TaintSource = TaintSource { tsFile, tsObject, tsProcName, tsVarName, tsSourceType :: Text, tsLine :: Maybe Int }
+data TaintSink   = TaintSink   { tskFile, tskObject, tskProcName, tskVarName, tskSinkType, tskSeverity :: Text, tskLine :: Maybe Int }
+data TaintPath   = TaintPath   { tpSource :: TaintSource, tpSink :: TaintSink, tpSteps :: [TaintStep], tpSeverity, tpCategory :: Text }
+data TaintStep   = TaintStep   { tstObject, tstProcName, tstVarName :: Text, tstLine :: Maybe Int, tstStepKind, tstDescription :: Text }
+data TaintAnnotation = TaintAnnotation { taFile, taObject, taProcName, taBlockId :: Text, taIsTaintEntry, taIsTaintSink :: Bool, taTaintedVars :: [Text }
+data DefRow  -- FromJSON for proc_defs.json (file, object, proc_name, var_name, block_id, stmt_index, line, kind)
+data UseRow  -- FromJSON for proc_uses.json
+data ResolvedCallRow  -- FromJSON for resolved_calls.json
+data GlobalVarRow     -- FromJSON for global_vars.json (just var_name)
+classifySources    :: [SqlStmt] -> [ProcMeta] -> [TaintSource]
+classifySinks      :: [SqlStmt] -> [TaintSink]
+buildInterprocEdges :: [ResolvedCallRow] -> [DefRow] -> [UseRow] -> Set Text -> [ProcMeta] -> [InterprocEdge]
+propagateTaint     :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> (Set (Text,Text,Text), Provenance)
+traceTaintPath     :: TaintSource -> TaintSink -> Provenance -> [TaintStep]
+buildTaintAnnotations :: Set (Text,Text,Text) -> [TaintSource] -> [TaintSink] -> [DefRow] -> [UseRow] -> [TaintAnnotation]
+taintAnalysis      :: [ResolvedCallRow] -> [DefRow] -> [UseRow] -> Set Text -> Text -> SrFile -> TaintResult
 ```
 
 ### `PB.Pipeline.TypeEnv` (the rich one — PbType values)

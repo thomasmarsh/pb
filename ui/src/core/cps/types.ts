@@ -24,4 +24,6 @@ export interface CpsGraph {
 export interface CpsEnv {
   executeSql(sql: string, params: unknown[]): Effect<SQLResult>;
   open(windowName: string): Effect<unknown>;
+  /** Resolve a DataWindow control name to its SQL query. Optional — only provided in runtime context. */
+  dwNameToSql?: (dwName: string) => string | null;
 }

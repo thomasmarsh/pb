@@ -1,0 +1,210 @@
+// tests/core/cps/e2e.test.ts — End-to-end tests for the CPS compile→load→execute loop.
+//
+// These tests use Haskell-shaped cpsGraph JSON (as emitted by pb-runner) fed through
+// loadCpsGraph → step to prove the full pipeline is wired together.
+
+import { describe, it, expect } from "vitest";
+import { Effect } from "../../../src/core/effect.js";
+import { loadCpsGraph } from "../../../src/core/cps/load.js";
+import { step } from "../../../src/core/cps/runner.js";
+import type { CpsEnv } from "../../../src/core/cps/types.js";
+import { createTestStore } from "../../test-store.js";
+import {
+  runtimeReducer,
+  initialRuntimeState,
+  PB_GLOBALS,
+  type RuntimeState,
+} from "../../../src/features/runtime/reducer.js";
+import type { AstData } from "../../../src/core/interpreter.js";
+import type { SQLResult } from "../../../src/core/dw-queries.js";
+
+// ── Haskell-shaped graph fixtures ─────────────────────────────────────────────
+// These match the JSON format emitted by PB.Pipeline.CpsCompile / Serialise.
+
+// Simple assign chain: x = 1; y = 2
+const ASSIGN_CHAIN_RAW = {
+  nodes: [
+    { tag: "CpsReturn" },
+    { tag: "CpsAssign", var: "y", rhs: { tag: "ExInt", contents: "2" }, next: 0 },
+    { tag: "CpsAssign", var: "x", rhs: { tag: "ExInt", contents: "1" }, next: 1 },
+  ],
+  entry: 2,
+  suspensionPoints: [],
+  sourceMap: [[2, 10], [1, 11]] as [number, number][],
+};
+
+// If/else: if (true) { x = "then" } else { x = "else" }
+const IF_ELSE_RAW = {
+  nodes: [
+    { tag: "CpsReturn" },
+    { tag: "CpsAssign", var: "x", rhs: { tag: "ExStr", contents: "then" }, next: 0 },
+    { tag: "CpsAssign", var: "x", rhs: { tag: "ExStr", contents: "else" }, next: 0 },
+    { tag: "CpsBranch", cond: { tag: "ExBool", contents: true }, thenPc: 1, elsePc: 2 },
+  ],
+  entry: 3,
+  suspensionPoints: [],
+  sourceMap: [],
+};
+
+// Single retrieve: dw_period.retrieve(gs_kodxrisi)
+// effectName emits "retrieve:dw_period"; args = [ExLvalue gs_kodxrisi]
+const RETRIEVE_RAW = {
+  nodes: [
+    { tag: "CpsReturn" },
+    {
+      tag: "CpsSuspend",
+      effect: "retrieve:dw_period",
+      args: [{ tag: "ExLvalue", contents: { segments: [{ name: "gs_kodxrisi", subscript: null }] } }],
+      continuation: 0,
+    },
+  ],
+  entry: 1,
+  suspensionPoints: [1],
+  sourceMap: [],
+};
+
+// ── CpsEnv helpers ────────────────────────────────────────────────────────────
+
+const nullEnv: CpsEnv = {
+  executeSql: () => Effect.none(),
+  open: () => Effect.none(),
+};
+
+// ── Tests: direct loadCpsGraph → step ─────────────────────────────────────────
+
+describe("e2e: loadCpsGraph → step", () => {
+  it("assign chain executes via loaded cpsGraph", () => {
+    const graph = loadCpsGraph(ASSIGN_CHAIN_RAW);
+    const vars: Record<string, unknown> = {};
+    const result = step(graph, graph.entry, vars, nullEnv);
+    expect(result).toBeNull();
+    expect(vars).toEqual({ x: 1, y: 2 });
+  });
+
+  it("if/else branch selects correct path via cpsGraph", () => {
+    const graph = loadCpsGraph(IF_ELSE_RAW);
+    const vars: Record<string, unknown> = {};
+    step(graph, graph.entry, vars, nullEnv);
+    expect(vars.x).toBe("then");
+  });
+
+  it("retrieve() suspend returns non-null Effect via loaded cpsGraph", () => {
+    const MOCK_ROWS = [{ kodperiod: "01" }];
+    const sqlResult: SQLResult = { rows: MOCK_ROWS, rowcount: 1, columns: ["kodperiod"] };
+    const env: CpsEnv = {
+      executeSql: (_sql, _params) => Effect.send(sqlResult),
+      open: () => Effect.none(),
+      dwNameToSql: (name) => name === "dw_period" ? "SELECT * FROM misth_zpperiod" : null,
+    };
+    const graph = loadCpsGraph(RETRIEVE_RAW);
+    const result = step(graph, graph.entry, { gs_kodxrisi: "0001" }, env);
+    expect(result).not.toBeNull();
+  });
+});
+
+// ── Tests: reducer cps-resume path ────────────────────────────────────────────
+// The reducer activates CPS mode when a procEntry carries a cpsGraph.
+
+describe("e2e: reducer CPS path", () => {
+  it("assign chain executes via cpsGraph in reducer and transitions to done", () => {
+    const ast: AstData = {
+      typeBlocks: [],
+      events: [
+        {
+          name: "open",
+          owner: "w_test",
+          body: [],
+          cpsGraph: ASSIGN_CHAIN_RAW,
+        },
+      ],
+    };
+
+    const ts = createTestStore(runtimeReducer, { executeSql: () => Effect.none() }, {
+      ...initialRuntimeState,
+      ast,
+    });
+
+    ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
+      s.status = "done";
+      s.variables = { ...PB_GLOBALS, x: 1, y: 2 };
+      s.cpsGraph = null;
+    });
+    ts.assertDrained();
+  });
+
+  it("retrieve() suspend in cpsGraph fires cps-resume action", () => {
+    const MOCK_ROWS = [{ kodperiod: "01" }];
+    const sqlResult: SQLResult = { rows: MOCK_ROWS, rowcount: 1, columns: ["kodperiod"] };
+    const env = { executeSql: () => Effect.send(sqlResult) };
+
+    const ast: AstData = {
+      typeBlocks: [],
+      events: [
+        {
+          name: "open",
+          owner: "w_test",
+          body: [],
+          cpsGraph: RETRIEVE_RAW,
+        },
+      ],
+    };
+
+    const graph = loadCpsGraph(RETRIEVE_RAW);
+    const ts = createTestStore(runtimeReducer, env, { ...initialRuntimeState, ast });
+
+    ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
+      s.status = "awaiting-sql";
+      s.cpsGraph = graph;
+      s.variables = { ...PB_GLOBALS };
+    });
+
+    ts.receive(
+      { tag: "cps-resume", dwName: "dw_period", rows: MOCK_ROWS, pc: 0, varName: null },
+      (s: RuntimeState) => {
+        s.controlValues = { dw_period: MOCK_ROWS };
+        s.status = "done";
+        s.cpsGraph = null;
+      },
+    );
+
+    ts.assertDrained();
+  });
+
+  it("missing cpsGraph falls back to tree-walk", () => {
+    // Event with body but no cpsGraph → tree-walk path
+    const ast: AstData = {
+      typeBlocks: [],
+      events: [
+        {
+          name: "open",
+          owner: "w_test",
+          body: [
+            {
+              line: 1,
+              node: {
+                tag: "BsAssign",
+                contents: [
+                  { segments: [{ name: "x", subscript: null }] },
+                  { tag: "ExInt", contents: "99" },
+                ],
+              },
+            },
+          ],
+          // no cpsGraph — triggers tree-walk
+        },
+      ],
+    };
+
+    const ts = createTestStore(runtimeReducer, { executeSql: () => Effect.none() }, {
+      ...initialRuntimeState,
+      ast,
+    });
+
+    ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
+      s.status = "done";
+      s.variables = { ...PB_GLOBALS, x: 99 };
+      // continuation and cpsGraph stay null (tree-walk path)
+    });
+    ts.assertDrained();
+  });
+});

@@ -77,13 +77,13 @@ tests = testGroup "CpsCompile"
         [CpsReturn {}, CpsAssign { anVar = "x" }] -> pure ()
         ns -> assertBool ("unexpected nodes: " <> show ns) False
 
-  , testCase "BsCall retrieve with DataWindow type → CpsSuspend executeSql" $ do
+  , testCase "BsCall retrieve with DataWindow type → CpsSuspend retrieve:dw" $ do
       let stmt = at 5 (BsCall retrieveCall)
           g    = compileProcedure dwEnv noInh [stmt]
       let suNodes = [ n | n@CpsSuspend {} <- cgNodes g ]
       assertBool "expected at least one CpsSuspend" (not (null suNodes))
       case suNodes of
-        (s:_) -> suEffect s @?= "executeSql"
+        (s:_) -> suEffect s @?= "retrieve:dw"
         _     -> pure ()
 
   , testCase "BsCall retrieve with DataWindow type → listed in suspensionPoints" $ do
@@ -218,9 +218,9 @@ tests = testGroup "CpsCompile"
         effectName (ExCall { callee = lv1 "close", callArgs = [] })
           @?= "close"
 
-    , testCase "effect name: dw.retrieve() → executeSql" $
+    , testCase "effect name: dw.retrieve() → retrieve:dw" $
         effectName (ExCall { callee = lv2 "dw" "retrieve", callArgs = [] })
-          @?= "executeSql"
+          @?= "retrieve:dw"
 
     , testCase "effect name: fn_retrievechild() → executeSql" $
         effectName (ExCall { callee = lv1 "fn_retrievechild", callArgs = [] })

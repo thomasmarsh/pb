@@ -1,15 +1,19 @@
 // features/runtime/reducer.ts — CPS-encoded PB interpreter as a TCA reducer.
 //
 // Each retrieve() call is a labeled suspension point: the reducer returns an
-// Effect and resumes when sql-result arrives. Pure statements (assign, if, for,
-// etc.) execute synchronously without leaving the reducer.
+// Effect and resumes when sql-result (tree-walk) or cps-resume (CPS) arrives.
+// Pure statements execute synchronously without leaving the reducer.
 
 import { Effect } from "../../core/effect.js";
 import type { Reducer } from "../../core/reducer.js";
-import type { AstData, DWRow } from "../../core/interpreter.js";
+import type { AstData, DWRow, ProcEntry } from "../../core/interpreter.js";
 import type { BodyStmt, Expr, Located } from "../../types/ast.generated.js";
 import { DW_QUERIES, type SQLResult } from "../../core/dw-queries.js";
-import { PB_BUILTINS } from "../../core/runtime.js";
+import { loadCpsGraph } from "../../core/cps/load.js";
+import { step, type CpsResumeAction } from "../../core/cps/runner.js";
+import type { CpsGraph } from "../../core/cps/types.js";
+// evalExpr is the single evaluator — shared between CPS and tree-walk paths.
+import { evalExpr } from "../../core/cps/expr.js";
 
 // ── Global variables ──────────────────────────────────────────────────────────
 
@@ -32,8 +36,10 @@ export interface RuntimeState {
   ast: AstData | null;
   variables: Record<string, unknown>;
   controlValues: Record<string, DWRow[]>;
-  // Remaining top-level statements after a sql suspension point.
+  // Tree-walk continuation (remaining statements after a SQL suspension).
   continuation: Located<BodyStmt>[] | null;
+  // CPS-mode graph held for cps-resume; null when using tree-walk path.
+  cpsGraph: CpsGraph | null;
   status: "idle" | "running" | "awaiting-sql" | "done" | "error";
   error: string | null;
 }
@@ -43,6 +49,7 @@ export const initialRuntimeState: RuntimeState = {
   variables: {},
   controlValues: {},
   continuation: null,
+  cpsGraph: null,
   status: "idle",
   error: null,
 };
@@ -54,9 +61,10 @@ export type RuntimeAction =
   | { tag: "run-event"; owner: string; event: string }
   | { tag: "control-click"; controlName: string }
   | { tag: "sql-result"; dwName: string; rows: DWRow[] }
+  | { tag: "cps-resume"; dwName: string; rows: DWRow[]; pc: number; varName: string | null }
   | { tag: "error"; message: string };
 
-// ── Sync expression evaluator ─────────────────────────────────────────────────
+// ── Token arg evaluator (for tree-walk path only) ─────────────────────────────
 
 function evalTokenArg(vars: Record<string, unknown>, tokens: string[]): unknown {
   if (tokens.length === 0) return undefined;
@@ -73,56 +81,6 @@ function evalTokenArg(vars: Record<string, unknown>, tokens: string[]): unknown 
     return vars[base];
   }
   return raw;
-}
-
-function evalBinOp(l: unknown, op: string, r: unknown): unknown {
-  switch (op) {
-    case "BopAdd": return (l as number) + (r as number);
-    case "BopSub": return (l as number) - (r as number);
-    case "BopMul": return (l as number) * (r as number);
-    case "BopDiv": return (l as number) / (r as number);
-    case "BopPow": return Math.pow(l as number, r as number);
-    case "BopEq":  return l === r;
-    case "BopNe":  return l !== r;
-    case "BopLt":  return (l as number) < (r as number);
-    case "BopGt":  return (l as number) > (r as number);
-    case "BopLe":  return (l as number) <= (r as number);
-    case "BopGe":  return (l as number) >= (r as number);
-    case "BopAnd": return !!(l) && !!(r);
-    case "BopOr":  return !!(l) || !!(r);
-    case "BopXor": return !!(l) !== !!(r);
-    default: return undefined;
-  }
-}
-
-function evalExpr(vars: Record<string, unknown>, expr: Expr): unknown {
-  switch (expr.tag) {
-    case "ExBool":   return expr.contents;
-    case "ExInt":    return parseInt(expr.contents, 10);
-    case "ExReal":   return parseFloat(expr.contents);
-    case "ExStr":    return expr.contents;
-    case "ExDate":   return expr.contents;
-    case "ExTime":   return expr.contents;
-    case "ExNull":   return null;
-    case "ExEnum":   return expr.contents;
-    case "ExLvalue": {
-      const name = expr.contents.segments[0]?.name;
-      return name ? vars[name] : undefined;
-    }
-    case "ExCall": {
-      const callee = expr.callee.segments.map((s) => s.name).join(".");
-      const args = expr.args.map((a) => evalTokenArg(vars, a));
-      const fn = PB_BUILTINS[callee];
-      return fn ? fn(...args) : undefined;
-    }
-    case "ExBinOp":
-      return evalBinOp(evalExpr(vars, expr.lhs), expr.op, evalExpr(vars, expr.rhs));
-    case "ExNot":    return !evalExpr(vars, expr.contents);
-    case "ExNeg":    return -(evalExpr(vars, expr.contents) as number);
-    // ExMethodCall retrieve() is intercepted above in checkRetrieve before evalExpr is called.
-    // Other method calls and unrecognized expressions are no-ops.
-    default:         return undefined;
-  }
 }
 
 // ── Retrieve suspension detection ─────────────────────────────────────────────
@@ -276,9 +234,9 @@ function execStmtSync(vars: Record<string, unknown>, node: BodyStmt, ast?: AstDa
       if (!varName) return;
       const from = Number(evalExpr(vars, fv.from));
       const to   = Number(evalExpr(vars, fv.to));
-      const step = fv.step ? Number(evalExpr(vars, fv.step)) : 1;
-      if (step === 0) return;
-      for (let i = from; step > 0 ? i <= to : i >= to; i += step) {
+      const step_ = fv.step ? Number(evalExpr(vars, fv.step)) : 1;
+      if (step_ === 0) return;
+      for (let i = from; step_ > 0 ? i <= to : i >= to; i += step_) {
         vars[varName] = i;
         execBodySync(vars, fv.body, ast);
       }
@@ -354,7 +312,7 @@ function execStmt(
   }
 }
 
-// ── Trampoline driver ─────────────────────────────────────────────────────────
+// ── Trampoline driver (tree-walk path) ────────────────────────────────────────
 
 function driveStmts(
   draft: RuntimeState,
@@ -449,19 +407,55 @@ function driveStmts(
   return null;
 }
 
+// ── CPS execution path ────────────────────────────────────────────────────────
+
+// Returns true if any suspend node uses the raw "executeSql" effect, which
+// means the graph contains fn_retrievechild or other patterns that require
+// the tree-walk's checkRetrieve logic.
+function graphNeedsTreeWalk(graph: CpsGraph): boolean {
+  return graph.nodes.some(n => n.kind === "suspend" && n.effect === "executeSql");
+}
+
+// Drive a loaded CPS graph from pc, producing a RuntimeAction Effect on suspend.
+function stepWithDraft(
+  graph: CpsGraph,
+  pc: number,
+  draft: RuntimeState,
+  env: RuntimeEnv,
+): Effect<RuntimeAction> | null {
+  const cpsEnv = {
+    executeSql: env.executeSql,
+    open: (): Effect<unknown> => Effect.none(),
+    dwNameToSql: (dwName: string): string | null => DW_QUERIES[dwName] ?? null,
+  };
+  const effect = step(graph, pc, draft.variables, cpsEnv);
+  if (!effect) {
+    draft.cpsGraph = null;
+    draft.status = "done";
+    return null;
+  }
+  draft.status = "awaiting-sql";
+  return effect
+    .map((resume: CpsResumeAction): RuntimeAction => {
+      const { dwName, rows } = resume.value as { dwName: string; rows: DWRow[] };
+      return { tag: "cps-resume", dwName, rows, pc: resume.pc, varName: resume.var };
+    })
+    .catch((e): RuntimeAction => ({ tag: "error", message: String(e) }));
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function findBody(
   ast: AstData,
   owner: string,
   event: string,
-): Located<BodyStmt>[] | null {
+): ProcEntry | null {
   const key = `${owner}::${event}`.toLowerCase();
   for (const e of ast.events) {
-    if (`${e.owner}::${e.name}`.toLowerCase() === key) return e.body;
+    if (`${e.owner}::${e.name}`.toLowerCase() === key) return e;
   }
   for (const f of ast.functions ?? []) {
-    if (`${f.owner}::${f.name}`.toLowerCase() === key) return f.body;
+    if (`${f.owner}::${f.name}`.toLowerCase() === key) return f;
   }
   return null;
 }
@@ -496,6 +490,23 @@ function findBodyByName(
 
 // ── Reducer ───────────────────────────────────────────────────────────────────
 
+function runProcEntry(
+  draft: RuntimeState,
+  entry: ProcEntry,
+  env: RuntimeEnv,
+): Effect<RuntimeAction> | null {
+  // CPS path: use the graph if available and it doesn't require tree-walk patterns.
+  if (entry.cpsGraph != null) {
+    const graph = loadCpsGraph(entry.cpsGraph);
+    if (!graphNeedsTreeWalk(graph)) {
+      draft.cpsGraph = graph;
+      return stepWithDraft(graph, graph.entry, draft, env);
+    }
+  }
+  // Tree-walk fallback.
+  return driveStmts(draft, entry.body, env);
+}
+
 function reduce(
   draft: RuntimeState,
   action: RuntimeAction,
@@ -507,6 +518,7 @@ function reduce(
       draft.variables = {};
       draft.controlValues = {};
       draft.continuation = null;
+      draft.cpsGraph = null;
       draft.status = "idle";
       draft.error = null;
       return null;
@@ -528,17 +540,17 @@ function reduce(
         }
       }
       draft.status = "running";
-      const body = findBody(draft.ast, action.owner, action.event);
-      if (!body) { draft.status = "done"; return null; }
-      return driveStmts(draft, body, env);
+      const entry = findBody(draft.ast, action.owner, action.event);
+      if (!entry) { draft.status = "done"; return null; }
+      return runProcEntry(draft, entry, env);
     }
 
     case "control-click": {
       if (!draft.ast) return null;
       draft.status = "running";
-      const body = findBody(draft.ast, action.controlName, "clicked");
-      if (!body) { draft.status = "done"; return null; }
-      return driveStmts(draft, body, env);
+      const entry = findBody(draft.ast, action.controlName, "clicked");
+      if (!entry) { draft.status = "done"; return null; }
+      return runProcEntry(draft, entry, env);
     }
 
     case "sql-result":
@@ -551,6 +563,13 @@ function reduce(
       draft.continuation = null;
       draft.status = "done";
       return null;
+
+    case "cps-resume": {
+      draft.controlValues[action.dwName] = action.rows;
+      const graph = draft.cpsGraph;
+      if (!graph) { draft.status = "done"; return null; }
+      return stepWithDraft(graph, action.pc, draft, env);
+    }
 
     case "error":
       draft.status = "error";

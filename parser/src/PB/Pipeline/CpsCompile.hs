@@ -147,9 +147,11 @@ resolveReceiverType _ _ _ = Nothing
 -- expressions that classifyExpr already deemed Suspend.
 effectName :: Expr -> Text
 effectName expr =
-  let cn = T.toLower (calleeName expr)
+  let cn   = T.toLower (calleeName expr)
+      head_ = T.takeWhile (/= '.') cn
   in if cn `elem` ["open", "opensheet"] then "open"
-     else if "close" `T.isSuffixOf` cn  then "close"
+     else if "close" `T.isSuffixOf` cn        then "close"
+     else if ".retrieve" `T.isSuffixOf` cn    then "retrieve:" <> head_
      else "executeSql"
 
 calleeName :: Expr -> Text

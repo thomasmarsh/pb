@@ -7,7 +7,7 @@ export interface DWRow {
   [column: string]: unknown;
 }
 
-export type ProcEntry = { name: string; owner: string; body: Located<BodyStmt>[] };
+export type ProcEntry = { name: string; owner: string; body: Located<BodyStmt>[]; cpsGraph?: unknown };
 
 export interface AstData {
   typeBlocks: { decl: { ancestor: string; name: string; within: string | null }; body: Located<BodyStmt>[] }[];
