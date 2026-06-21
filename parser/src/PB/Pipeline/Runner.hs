@@ -35,6 +35,7 @@ import qualified Data.Text.Encoding as TE
 import System.Directory    (createDirectoryIfMissing)
 import System.FilePath     (makeRelative, takeBaseName, takeDirectory
                            , takeExtension, (</>))
+import PB.Pipeline.PbApi    (builtinFnNames, builtinMethodNames)
 import PB.Pipeline.TypeResolve
   ( buildInheritsMap, buildObjectSet, buildProcMap, buildUserTypeSet
   , extractCallSites, extractGlobalVars, extractLocalVars
@@ -313,7 +314,7 @@ writeResolution outDir pairs = do
       css      = concatMap (\(fp, obj, sf) -> extractCallSites  fp obj sf) triples
       gvs      = concatMap (\(fp, obj, sf) -> extractGlobalVars fp obj sf) triples
       rt       = resolveTypes lvs objSet usrTypes
-      rc       = resolveCalls css procMap inh
+      rc       = resolveCalls css procMap inh builtinFnNames builtinMethodNames
   BSL.writeFile (outDir </> "resolved_types.json") (encode rt)
   BSL.writeFile (outDir </> "resolved_calls.json") (encode rc)
   BSL.writeFile (outDir </> "global_vars.json")    (encode gvs)

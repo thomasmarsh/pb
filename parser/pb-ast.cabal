@@ -42,6 +42,7 @@ library
     PB.Lexing.Token
     PB.Pipeline.CfgBuild
     PB.Pipeline.CpsCompile
+    PB.Pipeline.PbApi
     PB.Pipeline.Preprocess
     PB.Pipeline.PrettyPrint
     PB.Pipeline.Runner
@@ -59,6 +60,7 @@ library
     , bytestring  ^>=0.12
     , containers >=0.6
     , directory  ^>=1.3
+    , file-embed ^>=0.0.16
     , filepath   >=1.4
     , mtl >=2.2
     , unordered-containers >=0.2

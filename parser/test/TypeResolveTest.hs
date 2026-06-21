@@ -299,7 +299,7 @@ tests = testGroup "TypeResolve"
                 , csLine     = Just 5
                 }
               pm = Map.singleton "w_t" (Set.singleton "f_helper")
-          case resolveCalls [site] pm Map.empty of
+          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
             [rc] -> do
               rcKind rc         @?= "virtual"
               rcConfidence rc   @?= "high"
@@ -321,7 +321,7 @@ tests = testGroup "TypeResolve"
                       , ("w_parent", Set.singleton "f_base")
                       ]
               inh = Map.singleton "w_child" "w_parent"
-          case resolveCalls [site] pm inh of
+          case resolveCalls [site] pm inh Set.empty Set.empty of
             [rc] -> do
               rcKind rc         @?= "inherited"
               rcTargetObject rc @?= Just "w_parent"
@@ -336,7 +336,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 }
-          case resolveCalls [site] Map.empty Map.empty of
+          case resolveCalls [site] Map.empty Map.empty Set.empty Set.empty of
             [rc] -> do
               rcKind rc       @?= "unresolved"
               rcConfidence rc @?= "low"
@@ -355,7 +355,7 @@ tests = testGroup "TypeResolve"
                      [ ("w_t",     Set.empty)
                      , ("w_other", Set.singleton "f_method")
                      ]
-          case resolveCalls [site] pm Map.empty of
+          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
             [rc] -> do
               rcKind rc         @?= "static"
               rcConfidence rc   @?= "high"
@@ -372,8 +372,58 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExMethodCall"
                 , csLine     = Nothing
                 }
-          case resolveCalls [site] Map.empty Map.empty of
+          case resolveCalls [site] Map.empty Map.empty Set.empty Set.empty of
             [rc] -> rcKind rc @?= "unresolved"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+      ]
+
+  , testGroup "resolveCalls/builtin"
+      [ testCase "bare ExCall matching free_function_names → builtin high" $ do
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "f_go"
+                , csToName   = "MessageBox"
+                , csCallType = "ExCall"
+                , csLine     = Nothing
+                }
+          case resolveCalls [site] Map.empty Map.empty (Set.singleton "messagebox") Set.empty of
+            [rc] -> do
+              rcKind rc         @?= "builtin"
+              rcConfidence rc   @?= "high"
+              rcTargetObject rc @?= Nothing
+              rcTargetProc   rc @?= Nothing
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "ExMethodCall matching class_methods → builtin high" $ do
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "f_go"
+                , csToName   = "Retrieve"
+                , csCallType = "ExMethodCall"
+                , csLine     = Nothing
+                }
+          case resolveCalls [site] Map.empty Map.empty Set.empty (Set.singleton "retrieve") of
+            [rc] -> do
+              rcKind rc         @?= "builtin"
+              rcConfidence rc   @?= "high"
+              rcTargetObject rc @?= Nothing
+              rcTargetProc   rc @?= Nothing
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "bare ExCall not in builtins falls through to virtual" $ do
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "f_go"
+                , csToName   = "f_helper"
+                , csCallType = "ExCall"
+                , csLine     = Nothing
+                }
+              pm = Map.singleton "w_t" (Set.singleton "f_helper")
+          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
+            [rc] -> rcKind rc @?= "virtual"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
       ]
   ]

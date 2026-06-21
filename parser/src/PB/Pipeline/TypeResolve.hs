@@ -6,7 +6,7 @@
 --   extractCallSites  :: Text -> Text -> SrFile -> [CallSite]
 --   extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
 --   resolveTypes      :: [LocalVar] -> Set Text -> Set Text -> [ResolvedType]
---   resolveCalls      :: [CallSite] -> Map Text (Set Text) -> Map Text Text -> [ResolvedCall]
+--   resolveCalls      :: [CallSite] -> Map Text (Set Text) -> Map Text Text -> Set Text -> Set Text -> [ResolvedCall]
 --   buildInheritsMap  :: [SrFile] -> Map Text Text
 --   buildProcMap      :: [SrFile] -> Map Text (Set Text)
 --   buildObjectSet    :: [SrFile] -> Set Text
@@ -491,15 +491,20 @@ resolveCalls
   :: [CallSite]
   -> Map.Map Text (Set.Set Text)   -- proc_map: object → proc names
   -> Map.Map Text Text              -- inherits: child → parent
+  -> Set.Set Text                   -- builtin free-function names (lowercase)
+  -> Set.Set Text                   -- builtin method names (lowercase)
   -> [ResolvedCall]
-resolveCalls sites procMap inherits = map (resolveOne procMap inherits) sites
+resolveCalls sites procMap inherits builtinFns builtinMethods =
+  map (resolveOne procMap inherits builtinFns builtinMethods) sites
 
 resolveOne
   :: Map.Map Text (Set.Set Text)
   -> Map.Map Text Text
+  -> Set.Set Text
+  -> Set.Set Text
   -> CallSite
   -> ResolvedCall
-resolveOne procMap inherits cs =
+resolveOne procMap inherits builtinFns builtinMethods cs =
   let (tObj, tProc, kind, conf) = dispatch cs
   in ResolvedCall
        { rcFile         = csFile cs
@@ -519,9 +524,14 @@ resolveOne procMap inherits cs =
         let toName = csToName site
         in if "." `T.isInfixOf` toName
              then resolveStaticCall toName
-             else resolveVirtual toName (csObject site) procMap inherits
+             else if T.toLower toName `Set.member` builtinFns
+                    then (Nothing, Nothing, "builtin", "high")
+                    else resolveVirtual toName (csObject site) procMap inherits
       "ExCallArg"    -> resolveVirtual (csToName cs) (csObject cs) procMap inherits
-      "ExMethodCall" -> (Nothing, Nothing, "unresolved", "low")
+      "ExMethodCall" ->
+        if T.toLower (csToName site) `Set.member` builtinMethods
+          then (Nothing, Nothing, "builtin", "high")
+          else (Nothing, Nothing, "unresolved", "low")
       "ExDispatch"   -> (Nothing, Nothing, "unresolved", "low")
       _              -> (Nothing, Nothing, "unresolved", "low")
 
