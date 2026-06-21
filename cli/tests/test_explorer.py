@@ -558,3 +558,51 @@ def test_list_errors_filter_kind(client_with_errors):
     data = r.json()
     assert data["total"] == 1
     assert data["items"][0]["file"] == "b.srw"
+
+
+# ── SQL execute endpoint ───────────────────────────────────────────────────────
+
+
+def test_sql_execute_translates_question_mark_to_percent_s(client, monkeypatch):
+    """? placeholders must become %s before reaching mysql-connector-python.
+
+    mysql-connector-python raises "Not all parameters were used" if it receives
+    ? markers — it only understands %s.  This test mocks the connector to
+    assert the translation happens server-side, independent of a live DB.
+    """
+    import unittest.mock as mock
+
+    captured: dict = {}
+
+    mock_cursor = mock.MagicMock()
+    mock_cursor.description = [("kodkrat",), ("desckrat",)]
+    mock_cursor.fetchall.return_value = [{"kodkrat": "PEN", "desckrat": "PENALTY"}]
+    mock_cursor.rowcount = 1
+
+    mock_conn = mock.MagicMock()
+    mock_conn.cursor.return_value.__enter__ = lambda s: mock_cursor
+    mock_conn.cursor.return_value.__exit__ = mock.MagicMock(return_value=False)
+    mock_conn.cursor.return_value = mock_cursor
+    mock_conn.is_connected.return_value = True
+
+    def fake_execute(sql, params):
+        captured["sql"] = sql
+        captured["params"] = params
+
+    mock_cursor.execute = fake_execute
+
+    with monkeypatch.context() as m:
+        import mysql.connector as _mc
+        m.setattr(_mc, "connect", lambda **_kw: mock_conn)
+        r = client.post(
+            "/api/sql/execute",
+            json={
+                "sql": "SELECT kodkrat FROM misth_zpkrat WHERE kodxrisi = ? LIMIT 1",
+                "params": ["0001"],
+            },
+        )
+
+    assert r.status_code == 200
+    assert "?" not in captured["sql"], "? should have been replaced with %s"
+    assert "%s" in captured["sql"]
+    assert captured["params"] == ["0001"]

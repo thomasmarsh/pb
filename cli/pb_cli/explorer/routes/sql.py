@@ -38,11 +38,11 @@ def execute_sql(body: SqlRequest) -> SqlResponse:
     try:
         conn = mysql.connector.connect(**_DB_CONFIG)
         cursor = conn.cursor(dictionary=True)
-        # Trim params to the number of ? placeholders to avoid "Not all parameters
-        # were used" errors when the SQL was generated without a WHERE clause.
-        placeholder_count = body.sql.count("?")
+        # mysql-connector-python uses %s placeholders; the frontend sends ?.
+        sql = body.sql.replace("?", "%s")
+        placeholder_count = sql.count("%s")
         used_params = (body.params or [])[:placeholder_count]
-        cursor.execute(body.sql, used_params)
+        cursor.execute(sql, used_params)
         if cursor.description:
             raw = cast(list[dict[str, Any]], cursor.fetchall())
             rows: list[dict[str, Any]] = raw

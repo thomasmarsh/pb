@@ -6,6 +6,7 @@ import { createTestStore } from "../test-store.js";
 import {
   runtimeReducer,
   initialRuntimeState,
+  PB_GLOBALS,
   type RuntimeEnv,
   type RuntimeState,
 } from "../../src/features/runtime/reducer.js";
@@ -129,7 +130,7 @@ describe("runtimeReducer", () => {
       const ts = createTestStore(runtimeReducer, nullEnv, { ...initialRuntimeState, ast });
       ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
         s.status = "done";
-        s.variables = { greeting: "hello" };
+        s.variables = { ...PB_GLOBALS, greeting: "hello" };
       });
       ts.assertDrained();
     });
@@ -139,6 +140,7 @@ describe("runtimeReducer", () => {
       const ts = createTestStore(runtimeReducer, nullEnv, { ...initialRuntimeState, ast });
       ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
         s.status = "done";
+        s.variables = { ...PB_GLOBALS };
       });
       ts.assertDrained();
     });
@@ -165,6 +167,7 @@ describe("runtimeReducer", () => {
       ts.send({ tag: "run-event", owner: "w_krat_total_search", event: "open" }, (s) => {
         s.status = "awaiting-sql";
         s.continuation = [];
+        s.variables = { ...PB_GLOBALS };
       });
 
       ts.receive(
@@ -193,6 +196,7 @@ describe("runtimeReducer", () => {
       ts.send({ tag: "run-event", owner: "w_misth_zpperiod_grid", event: "open" }, (s) => {
         s.status = "awaiting-sql";
         s.continuation = [];
+        s.variables = { ...PB_GLOBALS };
       });
 
       ts.receive(
@@ -254,13 +258,162 @@ describe("runtimeReducer", () => {
       ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
         s.status = "awaiting-sql";
         s.continuation = [ast.events[0]!.body[1]!]; // the x=42 stmt
+        s.variables = { ...PB_GLOBALS };
       });
 
       ts.receive(
         { tag: "sql-result", dwName: "dw_misth_zpperiod_list", rows: ROWS },
         (s: RuntimeState) => {
           s.controlValues = { dw_misth_zpperiod_list: ROWS };
-          s.variables = { x: 42 };
+          s.variables = { ...PB_GLOBALS, x: 42 };
+          s.status = "done";
+          s.continuation = null;
+        },
+      );
+
+      ts.assertDrained();
+    });
+  });
+
+  describe("run-event / globals seeding", () => {
+    it("seeds PB_GLOBALS into variables before executing body", () => {
+      const ast = makeAst({ events: [{ name: "open", owner: "w_test", body: [] }] });
+      const ts = createTestStore(runtimeReducer, nullEnv, { ...initialRuntimeState, ast });
+      ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
+        s.status = "done";
+        s.variables = { ...PB_GLOBALS };
+      });
+      ts.assertDrained();
+    });
+
+    it("does not overwrite variables already set before run-event", () => {
+      const ast = makeAst({ events: [{ name: "open", owner: "w_test", body: [] }] });
+      const ts = createTestStore(runtimeReducer, nullEnv, {
+        ...initialRuntimeState,
+        ast,
+        variables: { gs_kodxrisi: "9999" } as Record<string, unknown>,
+      });
+      ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
+        s.status = "done";
+        s.variables = { gs_kodxrisi: "9999", gs_app_name: "OpenPay", gs_username: "admin" };
+      });
+      ts.assertDrained();
+    });
+  });
+
+  describe("run-event / fn_retrievechild intercept", () => {
+    it("fires executeSql for fn_retrievechild(adw, 'kodperiod', arg)", () => {
+      const MOCK_ROWS = [{ kodperiod: "0001", descperiod: "Year 2001" }];
+      const sqlResult: SQLResult = { rows: MOCK_ROWS, columns: ["kodperiod", "descperiod"], rowcount: 1 };
+
+      const env: RuntimeEnv = {
+        executeSql: (_sql, _params) => Effect.send(sqlResult),
+      };
+
+      const ast = makeAst({
+        events: [
+          {
+            name: "open",
+            owner: "w_misth_final_search",
+            body: [
+              {
+                line: 1,
+                node: {
+                  tag: "BsCall",
+                  contents: {
+                    tag: "ExCall",
+                    callee: { segments: [{ name: "fn_retrievechild", subscript: null }] },
+                    args: [["dw"], ['"kodperiod"'], ["gs_kodxrisi"]],
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      });
+
+      const ts = createTestStore(runtimeReducer, env, { ...initialRuntimeState, ast });
+
+      ts.send({ tag: "run-event", owner: "w_misth_final_search", event: "open" }, (s) => {
+        s.status = "awaiting-sql";
+        s.continuation = [];
+        s.variables = { ...PB_GLOBALS };
+      });
+
+      ts.receive(
+        { tag: "sql-result", dwName: "child_kodperiod", rows: MOCK_ROWS },
+        (s: RuntimeState) => {
+          s.controlValues = { child_kodperiod: MOCK_ROWS };
+          s.status = "done";
+          s.continuation = null;
+        },
+      );
+
+      ts.assertDrained();
+    });
+  });
+
+  describe("run-event / user-defined function dispatch", () => {
+    it("inline-expands a function from ast.functions by name", () => {
+      const ROWS = [{ id: 1 }];
+      const sqlResult: SQLResult = { rows: ROWS, columns: ["id"], rowcount: 1 };
+      const env: RuntimeEnv = { executeSql: () => Effect.send(sqlResult) };
+
+      // fn_helper is defined in ast.functions; its body calls dw_misth_zpperiod_list.retrieve
+      const fnBody = [
+        {
+          line: 10,
+          node: {
+            tag: "BsCall" as const,
+            contents: {
+              tag: "ExCall" as const,
+              callee: {
+                segments: [
+                  { name: "dw_misth_zpperiod_list", subscript: null },
+                  { name: "retrieve", subscript: null },
+                ],
+              },
+              args: [["gs_kodxrisi"]],
+            },
+          },
+        },
+      ];
+
+      const ast = makeAst({
+        functions: [{ name: "fn_helper", owner: "w_test", body: fnBody }],
+        events: [
+          {
+            name: "open",
+            owner: "w_test",
+            body: [
+              {
+                line: 1,
+                node: {
+                  tag: "BsCall" as const,
+                  contents: {
+                    tag: "ExCall" as const,
+                    callee: { segments: [{ name: "fn_helper", subscript: null }] },
+                    args: [],
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      });
+
+      const ts = createTestStore(runtimeReducer, env, { ...initialRuntimeState, ast });
+
+      ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
+        s.status = "awaiting-sql";
+        s.continuation = [];
+        s.variables = { ...PB_GLOBALS };
+      });
+
+      ts.receive(
+        { tag: "sql-result", dwName: "dw_misth_zpperiod_list", rows: ROWS },
+        (s: RuntimeState) => {
+          s.controlValues = { dw_misth_zpperiod_list: ROWS };
           s.status = "done";
           s.continuation = null;
         },

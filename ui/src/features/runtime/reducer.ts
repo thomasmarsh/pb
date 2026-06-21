@@ -11,6 +11,15 @@ import type { BodyStmt, Expr, Located } from "../../types/ast.generated.js";
 import { DW_QUERIES, type SQLResult } from "../../core/dw-queries.js";
 import { PB_BUILTINS } from "../../core/runtime.js";
 
+// ── Global variables ──────────────────────────────────────────────────────────
+
+// Pre-populated before each run-event; seeded only if not already set.
+export const PB_GLOBALS: Record<string, unknown> = {
+  gs_kodxrisi: "0001",
+  gs_app_name: "OpenPay",
+  gs_username: "admin",
+};
+
 // ── Env ───────────────────────────────────────────────────────────────────────
 
 export interface RuntimeEnv {
@@ -129,6 +138,7 @@ function checkRetrieve(vars: Record<string, unknown>, expr: Expr): SuspendRetrie
   // PB parser emits this for `dw_foo.retrieve(args)` at statement level.
   if (expr.tag === "ExCall") {
     const segs = expr.callee.segments;
+    // Pattern 1: dw_foo.retrieve(args)
     if (
       segs.length === 2 &&
       segs[0]!.name.startsWith("dw_") &&
@@ -140,6 +150,25 @@ function checkRetrieve(vars: Record<string, unknown>, expr: Expr): SuspendRetrie
         const params = expr.args.map((a) => evalTokenArg(vars, a));
         return { dwName, sql, params };
       }
+      return null;
+    }
+    // Pattern 2: fn_retrievechild(adw, "col", arg) — global helper from afxlib.pbl.
+    // The function body calls ldwch.retrieve(arg) on a child DW for the named column.
+    // Since fn_retrievechild is cross-library and absent from window ASTs, we intercept
+    // it at the call site and map the column name to a known DW_QUERIES entry.
+    if (
+      segs.length === 1 &&
+      segs[0]!.name === "fn_retrievechild" &&
+      expr.args.length === 3
+    ) {
+      const colRaw = (expr.args[1] ?? []).join("").trim().replace(/^"|"$/g, "");
+      const dwName = `child_${colRaw}`;
+      const sql = DW_QUERIES[dwName];
+      if (sql) {
+        const param = evalTokenArg(vars, expr.args[2] ?? []);
+        return { dwName, sql, params: [param] };
+      }
+      return null;
     }
     return null;
   }
@@ -291,7 +320,20 @@ function driveStmts(
   env: RuntimeEnv,
 ): Effect<RuntimeAction> | null {
   for (let i = 0; i < stmts.length; i++) {
-    const suspend = execStmt(draft, stmts[i]!.node);
+    const node = stmts[i]!.node;
+    // User-defined function dispatch: if the statement is a single-segment ExCall
+    // whose name matches a function in ast.functions, inline-expand its body in place.
+    // Note: fn_retrievechild is caught by checkRetrieve before reaching here.
+    if (node.tag === "BsCall" && node.contents.tag === "ExCall" && draft.ast) {
+      const segs = node.contents.callee.segments;
+      if (segs.length === 1) {
+        const fnBody = findBodyByName(draft.ast, segs[0]!.name);
+        if (fnBody) {
+          return driveStmts(draft, [...fnBody, ...stmts.slice(i + 1)], env);
+        }
+      }
+    }
+    const suspend = execStmt(draft, node);
     if (suspend !== null) {
       draft.continuation = stmts.slice(i + 1);
       draft.status = "awaiting-sql";
@@ -322,6 +364,18 @@ function findBody(
   return null;
 }
 
+// Scan functions by name only (ignoring owner) for user-defined function dispatch.
+function findBodyByName(
+  ast: AstData,
+  fnName: string,
+): Located<BodyStmt>[] | null {
+  const name = fnName.toLowerCase();
+  for (const f of ast.functions ?? []) {
+    if (f.name.toLowerCase() === name) return f.body;
+  }
+  return null;
+}
+
 // ── Reducer ───────────────────────────────────────────────────────────────────
 
 function reduce(
@@ -341,6 +395,9 @@ function reduce(
 
     case "run-event": {
       if (!draft.ast) return null;
+      for (const [k, v] of Object.entries(PB_GLOBALS)) {
+        if (!(k in draft.variables)) draft.variables[k] = v;
+      }
       draft.status = "running";
       const body = findBody(draft.ast, action.owner, action.event);
       if (!body) { draft.status = "done"; return null; }
