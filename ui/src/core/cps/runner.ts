@@ -7,12 +7,13 @@ import { evalExpr } from "./expr.js";
 
 export type { CpsEnv } from "./types.js";
 
-export interface CpsResumeAction {
-  tag: "cps-resume";
-  pc: number;
-  var: string | null;
-  value: unknown;
-}
+export type CpsResumeAction =
+  | { tag: "cps-resume"; pc: number; var: string | null; value: unknown }
+  // Plan 115 item 2: a CpsCallProc node requests dispatch to a named callee
+  // body (CALL ancestor::event or TriggerEvent). The reducer pushes the
+  // current graph onto a call stack and resumes at resumePc when the callee
+  // completes. Unlike cps-resume, this carries no SQL value.
+  | { tag: "cps-dispatch"; callee: string; args: unknown[]; resumePc: number };
 
 /**
  * Execute a CPS graph from pc, returning an Effect if a suspension point is hit,
@@ -66,6 +67,19 @@ export function step(
 
     case "nop":
       return step(graph, node.next, vars, env);
+
+    case "callproc": {
+      // Plan 115 item 2: emit a cps-dispatch effect. The reducer resolves the
+      // callee body and either runs it (pushing the current graph to resume at
+      // node.next) or skips to node.next if no body is found.
+      const args = node.args.map((a) => evalExpr(vars, a));
+      return Effect.send<CpsResumeAction>({
+        tag: "cps-dispatch",
+        callee: node.callee,
+        args,
+        resumePc: node.next,
+      });
+    }
 
     default:
       return null;

@@ -12,7 +12,11 @@ export type CpsNode =
   | { kind: "call"; callee: string; args: Expr[]; result?: string; next: number }
   | { kind: "suspend"; effect: string; args: Expr[]; var?: string; continuation: number }
   | { kind: "return"; value?: Expr }
-  | { kind: "nop"; next: number };
+  | { kind: "nop"; next: number }
+  // Plan 115 item 2: dispatch a CALL ancestor::event / TriggerEvent to a body
+  // found via the AST. Execution suspends the current graph on a call stack and
+  // resumes at cpNext once the callee body completes (or is skipped if not found).
+  | { kind: "callproc"; callee: string; args: Expr[]; next: number };
 
 export interface CpsGraph {
   nodes: CpsNode[];

@@ -82,4 +82,55 @@ describe("loadCpsGraph", () => {
       expect(suspend.effect).toBe("executeSql");
     }
   });
+
+  // Plan 115 item 2: CpsCallProc deserialization.
+  it("maps CpsCallProc tag → kind callproc with callee/args/next", () => {
+    const raw = {
+      nodes: [
+        { tag: "CpsReturn" },
+        {
+          tag: "CpsCallProc",
+          callee: "super::open",
+          args: [],
+          next: 0,
+        },
+      ],
+      entry: 1,
+      suspensionPoints: [],
+      sourceMap: [],
+    };
+    const g = loadCpsGraph(raw);
+    const callproc = g.nodes[1]!;
+    expect(callproc.kind).toBe("callproc");
+    if (callproc.kind === "callproc") {
+      expect(callproc.callee).toBe("super::open");
+      expect(callproc.args).toEqual([]);
+      expect(callproc.next).toBe(0);
+    }
+  });
+
+  it("maps CpsCallProc triggerevent with string-literal arg", () => {
+    const raw = {
+      nodes: [
+        { tag: "CpsReturn" },
+        {
+          tag: "CpsCallProc",
+          callee: "triggerevent",
+          args: [{ tag: "ExStr", contents: "ie_retrieve" }],
+          next: 0,
+        },
+      ],
+      entry: 1,
+      suspensionPoints: [],
+      sourceMap: [],
+    };
+    const g = loadCpsGraph(raw);
+    const callproc = g.nodes[1]!;
+    expect(callproc.kind).toBe("callproc");
+    if (callproc.kind === "callproc") {
+      expect(callproc.callee).toBe("triggerevent");
+      expect(callproc.args).toHaveLength(1);
+      expect(callproc.next).toBe(0);
+    }
+  });
 });

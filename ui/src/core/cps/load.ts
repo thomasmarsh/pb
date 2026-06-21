@@ -60,6 +60,13 @@ function loadNode(raw: RawCpsNode): CpsNode | null {
       };
     case "CpsNop":
       return { kind: "nop", next: raw["next"] as number };
+    case "CpsCallProc":
+      return {
+        kind: "callproc",
+        callee: raw["callee"] as string,
+        args: (raw["args"] as Expr[]) ?? [],
+        next: raw["next"] as number,
+      };
     default:
       return null;
   }

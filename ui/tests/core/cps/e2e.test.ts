@@ -207,4 +207,138 @@ describe("e2e: reducer CPS path", () => {
     });
     ts.assertDrained();
   });
+
+  // Plan 115 item 2: CpsCallProc dispatches to an event body via the call stack.
+  it("callproc dispatches to event body and resumes via call stack", () => {
+    // Graph: [CpsReturn, CpsCallProc "triggerevent" [ExStr "ie_retrieve"] next=0]
+    // entry=1. The dispatch target ie_retrieve runs tree-walk and assigns x.
+    const CALLPROC_RAW = {
+      nodes: [
+        { tag: "CpsReturn" },
+        {
+          tag: "CpsCallProc",
+          callee: "triggerevent",
+          args: [{ tag: "ExStr", contents: "ie_retrieve" }],
+          next: 0,
+        },
+      ],
+      entry: 1,
+      suspensionPoints: [],
+      sourceMap: [],
+    };
+
+    const ast: AstData = {
+      typeBlocks: [],
+      events: [
+        {
+          name: "open",
+          owner: "w_test",
+          body: [],
+          cpsGraph: CALLPROC_RAW,
+        },
+        {
+          name: "ie_retrieve",
+          owner: "w_test",
+          body: [
+            {
+              line: 1,
+              node: {
+                tag: "BsAssign",
+                contents: [
+                  { segments: [{ name: "x", subscript: null }] },
+                  { tag: "ExStr", contents: "dispatched" },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const graph = loadCpsGraph(CALLPROC_RAW);
+    const ts = createTestStore(runtimeReducer, { executeSql: () => Effect.none() }, {
+      ...initialRuntimeState,
+      ast,
+    });
+
+    // 1. run-event steps to the callproc node and emits cps-dispatch.
+    //    At this point the effect is queued but the dispatch handler hasn't
+    //    run, so cpsGraph is still set and callStack is still empty.
+    ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
+      s.status = "awaiting-sql";
+      s.cpsGraph = graph;
+      s.callStack = [];
+      s.variables = { ...PB_GLOBALS };
+    });
+
+    // 2. cps-dispatch resolves ie_retrieve, runs it tree-walk (assigns x),
+    //    then popCallStack resumes the graph at pc=0 → CpsReturn → done.
+    ts.receive(
+      { tag: "cps-dispatch", callee: "triggerevent", args: ["ie_retrieve"], resumePc: 0 },
+      (s) => {
+        s.status = "done";
+        s.variables = { ...PB_GLOBALS, x: "dispatched" };
+        s.cpsGraph = null;
+        s.callStack = [];
+      },
+    );
+
+    ts.assertDrained();
+  });
+
+  // Plan 115 item 2: unknown callee → cps-dispatch skips and resumes.
+  it("callproc with unknown callee pops call stack and resumes", () => {
+    const CALLPROC_RAW = {
+      nodes: [
+        { tag: "CpsReturn" },
+        {
+          tag: "CpsCallProc",
+          callee: "triggerevent",
+          args: [{ tag: "ExStr", contents: "no_such_event" }],
+          next: 0,
+        },
+      ],
+      entry: 1,
+      suspensionPoints: [],
+      sourceMap: [],
+    };
+
+    const ast: AstData = {
+      typeBlocks: [],
+      events: [
+        {
+          name: "open",
+          owner: "w_test",
+          body: [],
+          cpsGraph: CALLPROC_RAW,
+        },
+        // no ie_retrieve event → resolveCalleeBody returns null
+      ],
+    };
+
+    const graph = loadCpsGraph(CALLPROC_RAW);
+    const ts = createTestStore(runtimeReducer, { executeSql: () => Effect.none() }, {
+      ...initialRuntimeState,
+      ast,
+    });
+
+    ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
+      s.status = "awaiting-sql";
+      s.cpsGraph = graph;
+      s.callStack = [];
+      s.variables = { ...PB_GLOBALS };
+    });
+
+    ts.receive(
+      { tag: "cps-dispatch", callee: "triggerevent", args: ["no_such_event"], resumePc: 0 },
+      (s) => {
+        s.status = "done";
+        s.cpsGraph = null;
+        s.callStack = [];
+        s.variables = { ...PB_GLOBALS };
+      },
+    );
+
+    ts.assertDrained();
+  });
 });

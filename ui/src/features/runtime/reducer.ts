@@ -40,6 +40,9 @@ export interface RuntimeState {
   continuation: Located<BodyStmt>[] | null;
   // CPS-mode graph held for cps-resume; null when using tree-walk path.
   cpsGraph: CpsGraph | null;
+  // Plan 115 item 2: CPS call stack for CpsCallProc dispatch. Each frame holds
+  // the suspended graph and the PC to resume at once the callee body finishes.
+  callStack: { graph: CpsGraph; resumePc: number }[];
   status: "idle" | "running" | "awaiting-sql" | "done" | "error";
   error: string | null;
 }
@@ -50,6 +53,7 @@ export const initialRuntimeState: RuntimeState = {
   controlValues: {},
   continuation: null,
   cpsGraph: null,
+  callStack: [],
   status: "idle",
   error: null,
 };
@@ -62,6 +66,9 @@ export type RuntimeAction =
   | { tag: "control-click"; controlName: string }
   | { tag: "sql-result"; dwName: string; rows: DWRow[] }
   | { tag: "cps-resume"; dwName: string; rows: DWRow[]; pc: number; varName: string | null }
+  // Plan 115 item 2: dispatch a CALL ancestor::event / TriggerEvent to a body
+  // found via the AST. Pushes the current graph and resumes at resumePc.
+  | { tag: "cps-dispatch"; callee: string; args: unknown[]; resumePc: number }
   | { tag: "error"; message: string };
 
 // ── Token arg evaluator (for tree-walk path only) ─────────────────────────────
@@ -437,6 +444,18 @@ function stepWithDraft(
   draft.status = "awaiting-sql";
   return effect
     .map((resume: CpsResumeAction): RuntimeAction => {
+      // Plan 115 item 2: a cps-dispatch carries no SQL value and must be
+      // forwarded as-is so the reducer's cps-dispatch handler resolves the
+      // callee body and manages the call stack. cps-resume carries the SQL
+      // result rows from a suspend point.
+      if (resume.tag === "cps-dispatch") {
+        return {
+          tag: "cps-dispatch",
+          callee: resume.callee,
+          args: resume.args,
+          resumePc: resume.resumePc,
+        };
+      }
       const { dwName, rows } = resume.value as { dwName: string; rows: DWRow[] };
       return { tag: "cps-resume", dwName, rows, pc: resume.pc, varName: resume.var };
     })
@@ -488,6 +507,42 @@ function findBodyByName(
   return null;
 }
 
+// Plan 115 item 2: resolve a CpsCallProc callee to a body, or null if not found.
+//   - "triggerevent" → findEventByName(args[0])
+//   - "ancestor::event" → findEventByName(event) ?? findBodyByName(event)
+// The body, when present, is run via the tree-walk path (callee bodies rarely
+// carry their own cpsGraph, so we pass a tree-walk ProcEntry).
+function resolveCalleeBody(
+  ast: AstData | null,
+  callee: string,
+  args: unknown[],
+): Located<BodyStmt>[] | null {
+  if (!ast) return null;
+  if (callee === "triggerevent") {
+    const name = String(args[0] ?? "");
+    return findEventByName(ast, name);
+  }
+  // "ancestor::event" — look up the event by name first, then a function body.
+  const eventPart = callee.includes("::") ? callee.split("::")[1] ?? "" : callee;
+  return findEventByName(ast, eventPart) ?? findBodyByName(ast, eventPart);
+}
+
+// Pop the CPS call stack: restore the suspended graph and resume at its PC.
+// If the stack is empty, the whole run is complete.
+function popCallStack(
+  draft: RuntimeState,
+  env: RuntimeEnv,
+): Effect<RuntimeAction> | null {
+  const frame = draft.callStack.pop();
+  if (!frame) {
+    draft.cpsGraph = null;
+    draft.status = "done";
+    return null;
+  }
+  draft.cpsGraph = frame.graph;
+  return stepWithDraft(frame.graph, frame.resumePc, draft, env);
+}
+
 // ── Reducer ───────────────────────────────────────────────────────────────────
 
 function runProcEntry(
@@ -519,6 +574,7 @@ function reduce(
       draft.controlValues = {};
       draft.continuation = null;
       draft.cpsGraph = null;
+      draft.callStack = [];
       draft.status = "idle";
       draft.error = null;
       return null;
@@ -558,8 +614,17 @@ function reduce(
       if (draft.continuation && draft.continuation.length > 0) {
         const cont = draft.continuation;
         draft.continuation = null;
-        return driveStmts(draft, cont, env);
+        const effect = driveStmts(draft, cont, env);
+        if (effect) return effect;
+        // Plan 115 item 2: driveStmts returned null — the callee body finished.
+        // If we were dispatched from a CpsCallProc, pop the call stack to resume
+        // the suspended graph; otherwise the whole run is done.
+        if (draft.callStack.length > 0) return popCallStack(draft, env);
+        draft.status = "done";
+        return null;
       }
+      // No continuation — check callStack for nested CPS dispatch.
+      if (draft.callStack.length > 0) return popCallStack(draft, env);
       draft.continuation = null;
       draft.status = "done";
       return null;
@@ -569,6 +634,25 @@ function reduce(
       const graph = draft.cpsGraph;
       if (!graph) { draft.status = "done"; return null; }
       return stepWithDraft(graph, action.pc, draft, env);
+    }
+
+    case "cps-dispatch": {
+      // Plan 115 item 2: push the current CPS graph and run the callee body
+      // via the tree-walk path. When the callee finishes synchronously
+      // (runProcEntry returns null) popCallStack resumes the suspended graph
+      // at action.resumePc. If the callee suspends on SQL, sql-result handles
+      // the pop once the callee's continuation is drained.
+      const graph = draft.cpsGraph;
+      if (!graph) return null;
+      draft.callStack.push({ graph, resumePc: action.resumePc });
+      draft.cpsGraph = null;
+      draft.status = "running";
+      const body = resolveCalleeBody(draft.ast, action.callee, action.args);
+      if (!body) return popCallStack(draft, env);  // callee not found → skip
+      const entry: ProcEntry = { name: action.callee, owner: "", body, cpsGraph: null };
+      const effect = runProcEntry(draft, entry, env);
+      if (!effect) return popCallStack(draft, env);  // callee done → resume caller
+      return effect;
     }
 
     case "error":

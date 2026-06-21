@@ -136,6 +136,51 @@ describe("step driver", () => {
     expect(vars.x).toBe(1);
   });
 
+  // Plan 115 item 2: CpsCallProc emits a cps-dispatch resume action.
+  it("execute callproc node returns cps-dispatch effect", () => {
+    const graph = makeGraph([
+      {
+        kind: "callproc",
+        callee: "super::open",
+        args: [],
+        next: 1,
+      },
+      { kind: "return" },
+    ]);
+    const result = step(graph, 0, {}, nullEnv);
+    expect(result).not.toBeNull();
+    let received: unknown = null;
+    result!.execute((a) => { received = a; });
+    expect(received).toEqual({
+      tag: "cps-dispatch",
+      callee: "super::open",
+      args: [],
+      resumePc: 1,
+    });
+  });
+
+  it("execute callproc triggerevent evaluates args", () => {
+    const graph = makeGraph([
+      {
+        kind: "callproc",
+        callee: "triggerevent",
+        args: [{ tag: "ExStr", contents: "ie_retrieve" } as any],
+        next: 1,
+      },
+      { kind: "return" },
+    ]);
+    const result = step(graph, 0, {}, nullEnv);
+    expect(result).not.toBeNull();
+    let received: unknown = null;
+    result!.execute((a) => { received = a; });
+    expect(received).toEqual({
+      tag: "cps-dispatch",
+      callee: "triggerevent",
+      args: ["ie_retrieve"],
+      resumePc: 1,
+    });
+  });
+
   it("chained assigns execute in order", () => {
     const graph = makeGraph([
       { kind: "assign", var: "a", rhs: { tag: "ExInt", contents: "1" } as any, next: 1 },

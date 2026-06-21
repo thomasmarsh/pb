@@ -427,9 +427,9 @@ tests = testGroup "CpsCompile"
     ]
 
   -- ------------------------------------------------------------------
-  -- Gap 3: exprArgs arg-boundary fix (Plan 112)
+  -- Gap 3: exprArgs arg-boundary fix (Plan 112 / 115 item 3B)
 
-  , testGroup "Gap 3 – exprArgs"
+  , testGroup "Gap 3 – exprArgs / retokenize upgrade"
 
     [ testCase "exprArgs: single-token arg becomes ExLvalue" $ do
         let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["w_test"]] }))
@@ -439,7 +439,7 @@ tests = testGroup "CpsCompile"
           [s] -> suArgs s @?= [ExLvalue (lv1 "w_test")]
           _   -> assertBool "expected one CpsSuspend" False
 
-    , testCase "exprArgs: multi-token arg becomes ExRaw not split into separate args" $ do
+    , testCase "exprArgs: multi-token binary a + 1 → ExBinOp BopAdd (Plan 115 item 3B)" $ do
         let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["a", "+", "1"]] }))
             g    = compileProcedure noEnv [stmt]
             sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
@@ -447,12 +447,11 @@ tests = testGroup "CpsCompile"
           [s] -> do
             length (suArgs s) @?= 1
             case suArgs s of
-              [ExRaw _] -> pure ()
-              args -> assertBool ("expected [ExRaw], got: " <> show args) False
+              [ExBinOp { op = BopAdd }] -> pure ()
+              args -> assertBool ("expected [ExBinOp BopAdd], got: " <> show args) False
           _ -> assertBool "expected one CpsSuspend" False
 
-    , testCase "exprArgs: 2-arg call with multi-token first arg gives 2 not 4 results" $ do
-        -- callArgs = [["a", "+", "1"], ["b"]] — 2 args, first is multi-token
+    , testCase "exprArgs: 2-arg call with multi-token first arg gives 2 results" $ do
         let stmt = at 1 (BsCall (ExCall
               { callee   = lv1 "open"
               , callArgs = [["a", "+", "1"], ["b"]]
@@ -462,5 +461,111 @@ tests = testGroup "CpsCompile"
         case sus of
           [s] -> length (suArgs s) @?= 2
           _   -> assertBool "expected one CpsSuspend" False
+
+    , testCase "parseArgList: quoted string → ExStr" $ do
+        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["\"hello\""]] }))
+            g    = compileProcedure noEnv [stmt]
+            sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
+        case sus of
+          [s] -> suArgs s @?= [ExStr "hello"]
+          _   -> assertBool "expected one CpsSuspend" False
+
+    , testCase "parseArgList: bool literal true → ExBool True" $ do
+        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["true"]] }))
+            g    = compileProcedure noEnv [stmt]
+            sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
+        case sus of
+          [s] -> suArgs s @?= [ExBool True]
+          _   -> assertBool "expected one CpsSuspend" False
+
+    , testCase "parseArgList: null → ExNull" $ do
+        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["null"]] }))
+            g    = compileProcedure noEnv [stmt]
+            sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
+        case sus of
+          [s] -> suArgs s @?= [ExNull]
+          _   -> assertBool "expected one CpsSuspend" False
+
+    , testCase "parseArgList: multi-token sub b - 2 → ExBinOp BopSub" $ do
+        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["b", "-", "2"]] }))
+            g    = compileProcedure noEnv [stmt]
+            sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
+        case sus of
+          [s] -> case suArgs s of
+            [ExBinOp { op = BopSub }] -> pure ()
+            args -> assertBool ("expected [ExBinOp BopSub], got: " <> show args) False
+          _ -> assertBool "expected one CpsSuspend" False
+    ]
+
+  -- ------------------------------------------------------------------
+  -- Item 2: CpsCallProc dispatch nodes (Plan 115)
+
+  , testGroup "Item 2 – CpsCallProc dispatch"
+
+    [ testCase "BsPbCall super::open → CpsCallProc super::open" $ do
+        let stmt = at 5 (BsPbCall (PbCall "super" "open"))
+            g    = compileProcedure noEnv [stmt]
+            cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
+        assertBool "expected CpsCallProc" (not (null cps))
+        case cps of
+          (n:_) -> cpCallee n @?= "super::open"
+          []    -> pure ()
+
+    , testCase "BsPbCall produces empty cpArgs" $ do
+        let stmt = at 5 (BsPbCall (PbCall "super" "open"))
+            g    = compileProcedure noEnv [stmt]
+            cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
+        case cps of
+          (n:_) -> cpArgs n @?= []
+          []    -> assertBool "expected CpsCallProc" False
+
+    , testCase "BsPbCall with arbitrary ancestor → CpsCallProc ancestor::event" $ do
+        let stmt = at 1 (BsPbCall (PbCall "w_master" "ue_preopen"))
+            g    = compileProcedure noEnv [stmt]
+            cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
+        case cps of
+          (n:_) -> cpCallee n @?= "w_master::ue_preopen"
+          []    -> assertBool "expected CpsCallProc" False
+
+    , testCase "TriggerEvent(\"ie_retrieve\") → CpsCallProc triggerevent [ExStr]" $ do
+        let stmt = at 10 (BsCall (ExCall
+              { callee   = lv1 "TriggerEvent"
+              , callArgs = [["\"ie_retrieve\""]]
+              }))
+            g    = compileProcedure noEnv [stmt]
+            cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
+        assertBool "expected CpsCallProc for TriggerEvent" (not (null cps))
+        case cps of
+          (n:_) -> do
+            cpCallee n @?= "triggerevent"
+            cpArgs  n @?= [ExStr "ie_retrieve"]
+          [] -> pure ()
+
+    , testCase "this.TriggerEvent(\"ev\") also → CpsCallProc triggerevent" $ do
+        let stmt = at 10 (BsCall (ExCall
+              { callee   = lv2 "this" "TriggerEvent"
+              , callArgs = [["\"ev\""]]
+              }))
+            g    = compileProcedure noEnv [stmt]
+            cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
+        assertBool "expected CpsCallProc for this.TriggerEvent" (not (null cps))
+        case cps of
+          (n:_) -> cpCallee n @?= "triggerevent"
+          []    -> pure ()
+
+    , testCase "TriggerEvent does not produce CpsSuspend or CpsCall" $ do
+        let stmt = at 10 (BsCall (ExCall
+              { callee   = lv1 "triggerevent"
+              , callArgs = [["\"ev\""]]
+              }))
+            g    = compileProcedure noEnv [stmt]
+        [ n | n@CpsSuspend {} <- cgNodes g ] @?= []
+        [ n | n@CpsCall    {} <- cgNodes g ] @?= []
+
+    , testCase "BsRaw still falls through to no-op (no CpsCallProc)" $ do
+        let stmt = at 1 (BsRaw "call super::open")
+            g    = compileProcedure noEnv [stmt]
+            cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
+        cps @?= []
     ]
   ]

@@ -21,10 +21,12 @@ import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
 import PB.AST.Located  (Located (..))
+import PB.Grammar.Body        (parseExpr)
+import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.TypeEnv (TypeEnv, lookupBaseType)
 import Control.Monad       (foldM)
 import Control.Monad.State.Strict
-import Data.Char            (isAlpha)
+import Data.Char            (isAlpha, isDigit)
 import Data.List            (partition)
 import GHC.Generics         (Generic)
 import qualified Data.Map.Strict as Map
@@ -46,6 +48,7 @@ data CpsNode
   | CpsSuspend { suEffect :: Text, suArgs :: [Expr], suVar :: Maybe Text, suContinuation :: Int }
   | CpsReturn  { reValue :: Maybe Expr }
   | CpsNop     { npNext :: Int }
+  | CpsCallProc { cpCallee :: Text, cpArgs :: [Expr], cpNext :: Int }
   deriving (Eq, Show, Generic)
 
 data CpsGraph = CpsGraph
@@ -151,23 +154,72 @@ segName (LvSegment n _) = n
 lvHead :: Lvalue -> Text
 lvHead lv = case segments lv of { (s:_) -> segName s; [] -> "_" }
 
--- ---------------------------------------------------------------------------
--- Argument conversion: raw token lists → simple Expr nodes
+-- | Detect `TriggerEvent(...)` or `this.TriggerEvent(...)` call sites that
+-- should be lowered to a `CpsCallProc "triggerevent"` dispatch node rather
+-- than a normal CpsCall/CpsSuspend (Plan 115 item 2).
+isTriggerEvent :: Lvalue -> Bool
+isTriggerEvent lv = case map (T.toLower . segName) (segments lv) of
+  [s]   -> s == "triggerevent"
+  [t,s] -> t == "this" && s == "triggerevent"
+  _     -> False
 
-parseArg :: Text -> Expr
-parseArg t
-  | T.length t >= 2, "\"" `T.isPrefixOf` t, "\"" `T.isSuffixOf` t =
-      ExStr (T.drop 1 (T.dropEnd 1 t))
-  | not (T.null t), isAlpha (T.head t) =
-      ExLvalue (Lvalue [LvSegment t Nothing])
-  | otherwise = ExStr t
+-- ---------------------------------------------------------------------------
+-- Argument conversion: raw token lists → typed Expr nodes
+--
+-- The AST stores call arguments as `[[Text]]` (raw token text per arg).
+-- `parseExpr :: [Token] -> Expr` (PB.Grammar.Body) recovers typed Expr nodes
+-- (ExBinOp, ExStr, ExBool, ...) but needs `Token` values with `TokenKind`.
+-- `retokenize` assigns canonical TokenKinds from text patterns so that
+-- `parseExpr` can be applied per-argument (Plan 115 item 3B).
+
+dummySpan :: SourceSpan
+dummySpan = SourceSpan { ssStartLine = 0, ssEndLine = 0, ssCol = 0 }
+
+-- | Assign a `TokenKind` to a raw text fragment by matching common patterns.
+-- Mirrors the lexer's classification closely enough for `parseExpr`.
+classifyText :: Text -> TokenKind
+classifyText t
+  | T.null t                        = TkIdent
+  | t == "true"                     = TkBoolTrue
+  | t == "false"                    = TkBoolFalse
+  | t == "null"                     = TkNull
+  | T.length t >= 2
+  , T.head t == '"' && T.last t == '"'  = TkStringDouble
+  | T.length t >= 2
+  , T.head t == '\'' && T.last t == '\'' = TkStringSingle
+  | not (T.null t)
+  , isDigit (T.head t)
+  , T.all (\c -> isDigit c || c == '.') t = TkIntLiteral
+  | not (T.null t) && T.head t == '!' = TkEnumLiteral
+  | t `elem` ["+", "-", "*", "/", "^"] = TkArithOp
+  | t `elem` ["<>", "<=", ">=", "<", ">"] = TkCompareOp
+  | t == "="                        = TkAssignOp
+  | T.toLower t `elem`
+      ["or", "and", "xor", "not", "create", "post", "trigger", "dynamic"] = TkOtherKw
+  | T.toLower t == "event"          = TkDeclKw
+  | t == "."                        = TkDot
+  | t == "::"                       = TkDoubleColon
+  | t == "("                        = TkLParen
+  | t == ")"                        = TkRParen
+  | t == "["                        = TkLBracket
+  | t == "]"                        = TkRBracket
+  | t == "{"                        = TkLBrace
+  | t == "}"                        = TkRBrace
+  | t == ","                        = TkComma
+  | t == ":"                        = TkColon
+  | not (T.null t) && isAlpha (T.head t) = TkIdent
+  | otherwise                       = TkIdent
+
+-- | Re-lex a list of raw text fragments into `Token`s with canonical kinds.
+retokenize :: [Text] -> [Token]
+retokenize = map (\t -> Token { tkText = t, tkKind = classifyText t, tkSpan = dummySpan })
 
 -- | Convert one raw-arg token list (one argument's tokens) to a typed Expr.
--- Fixes the bug where concat lost arg boundaries.
+-- Fixes the bug where concat lost arg boundaries (Plan 112) and recovers
+-- typed Expr nodes for multi-token arguments via re-lexing (Plan 115 3B).
 parseArgList :: [Text] -> Expr
-parseArgList []  = ExRaw []
-parseArgList [t] = parseArg t
-parseArgList ts  = ExRaw ts
+parseArgList [] = ExRaw []
+parseArgList ts = parseExpr (retokenize ts)
 
 -- | Single-text → ExLvalue; multiple texts → ExRaw (for BsAugAssign/BsInc/BsDec LHS).
 lhsToExpr :: [Text] -> Expr
@@ -287,21 +339,32 @@ compileSingleStmt env lctx (Located line stmt) fallthrough = case stmt of
   BsAssignExpr lhsExpr rhsExpr ->
     emit (CpsAssign { anVar = assignTarget lhsExpr, anRhs = rhsExpr, anNext = fallthrough }) (Just line)
 
-  BsCall expr -> case classifyExpr env expr of
-    Suspend ->
-      emit (CpsSuspend
-        { suEffect       = effectName expr
-        , suArgs         = exprArgs expr
-        , suVar          = Nothing
-        , suContinuation = fallthrough
-        }) (Just line)
-    Pure ->
-      emit (CpsCall
-        { clCallee = calleeName expr
-        , clArgs   = exprArgs expr
-        , clResult = Nothing
-        , clNext   = fallthrough
-        }) (Just line)
+  BsCall expr
+    | ExCall lv rawArgs <- expr
+    , isTriggerEvent lv ->
+        let evArg = case rawArgs of
+              (a:_) -> parseArgList a
+              []    -> ExRaw []
+        in emit (CpsCallProc
+             { cpCallee = "triggerevent"
+             , cpArgs   = [evArg]
+             , cpNext   = fallthrough
+             }) (Just line)
+    | otherwise -> case classifyExpr env expr of
+      Suspend ->
+        emit (CpsSuspend
+          { suEffect       = effectName expr
+          , suArgs         = exprArgs expr
+          , suVar          = Nothing
+          , suContinuation = fallthrough
+          }) (Just line)
+      Pure ->
+        emit (CpsCall
+          { clCallee = calleeName expr
+          , clArgs   = exprArgs expr
+          , clResult = Nothing
+          , clNext   = fallthrough
+          }) (Just line)
 
   BsReturn mExpr ->
     emit (CpsReturn { reValue = mExpr }) (Just line)
@@ -377,9 +440,16 @@ compileSingleStmt env lctx (Located line stmt) fallthrough = case stmt of
                 []    -> pure fallthrough
     foldM (compileClause env expr lctx fallthrough) elseFt (reverse normalCs)
 
+  -- BsPbCall: CALL ancestor::event  → dispatch node (Plan 115 item 2)
+  BsPbCall (PbCall ancestor event) ->
+    emit (CpsCallProc
+      { cpCallee = ancestor <> "::" <> event
+      , cpArgs   = []
+      , cpNext   = fallthrough
+      }) (Just line)
+
   -- Statements with no CPS representation: fall through.
-  BsRaw _    -> pure fallthrough
-  BsPbCall _ -> pure fallthrough
+  BsRaw _ -> pure fallthrough
 
 compileElseIf :: TypeEnv -> LoopCtx -> Int -> Int -> ElseIf -> C Int
 compileElseIf env lctx fallthrough nextFt ei = do
@@ -391,7 +461,7 @@ compileClause env caseExpr lctx fallthrough nextFt clause = case ccExpr clause o
   Nothing   -> compileStmts env lctx (ccBody clause) fallthrough
   Just toks -> do
     bodyEntry <- compileStmts env lctx (ccBody clause) fallthrough
-    let clauseVal = case toks of { [t] -> parseArg t; ts -> ExStr (T.unwords ts) }
+    let clauseVal = parseExpr (retokenize toks)
     let cond = ExBinOp { lhs = caseExpr, op = BopEq, rhs = clauseVal }
     emit (CpsBranch { brCond = cond, brThenPc = bodyEntry, brElsePc = nextFt }) Nothing
 
