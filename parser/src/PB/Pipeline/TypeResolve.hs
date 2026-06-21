@@ -28,6 +28,7 @@ module PB.Pipeline.TypeResolve
   , buildUserTypeSet
   -- exposed for testing
   , classifyPbType
+  , classifyControlType
   , parseParams
   ) where
 
@@ -55,6 +56,53 @@ pbBuiltins = Set.fromList
   , "error", "message", "powerobject", "structure"
   , "treeviewitem", "dwitemstatus", "menu"
   ]
+
+-- | Naming-convention map for window control type inference (Plan 90a).
+-- Prefix -> PB class name. Longer prefixes first to avoid false matches.
+controlPrefixMap :: [(Text, Text)]
+controlPrefixMap =
+  [ ("ddplb_", "dropdownpicturelistbox")
+  , ("ddlb_",  "dropdownlistbox")
+  , ("dddw_",  "datawindowchild")
+  , ("dw_",    "datawindow")
+  , ("cbx_",   "checkbox")
+  , ("hpb_",   "hprogressbar")
+  , ("htb_",   "htrackbar")
+  , ("hsb_",   "hscrollbar")
+  , ("vpb_",   "vprogressbar")
+  , ("vtb_",   "vtrackbar")
+  , ("vsb_",   "vscrollbar")
+  , ("plb_",   "picturelistbox")
+  , ("sh_",    "statichyperlink")
+  , ("ph_",    "picturehyperlink")
+  , ("rb_",    "radiobutton")
+  , ("cb_",    "commandbutton")
+  , ("st_",    "statictext")
+  , ("sle_",   "singlelineedit")
+  , ("mle_",   "multilineedit")
+  , ("em_",    "editmask")
+  , ("lb_",    "listbox")
+  , ("tv_",    "treeview")
+  , ("lv_",    "listview")
+  , ("rte_",   "richtextedit")
+  , ("tab_",   "tab")
+  , ("gr_",    "graph")
+  , ("ole_",   "olecontrol")
+  , ("uo_",    "userobject")
+  , ("gb_",    "groupbox")
+  , ("p_",     "picture")
+  , ("m_",     "menu")
+  ]
+
+-- | Infer PB control type from naming convention (e.g. dw_main -> datawindow).
+classifyControlType :: Text -> Maybe Text
+classifyControlType name = go controlPrefixMap
+  where
+    lower = T.toLower name
+    go [] = Nothing
+    go ((prefix, pbType) : rest)
+      | prefix `T.isPrefixOf` lower = Just pbType
+      | otherwise = go rest
 
 -- ---------------------------------------------------------------------------
 -- Data types
@@ -442,14 +490,20 @@ resolveTypes vars objs userTypes = map resolve vars
   where
     resolve lv =
       let (kind, target) = classifyPbType (lvPbType lv) objs userTypes
+          -- Fallback: infer control type from variable name when unresolved
+          (kind', target') = case kind of
+            "unresolved" -> case classifyControlType (lvVarName lv) of
+              Just ctrlType -> ("primitive", Just ctrlType)
+              Nothing       -> (kind, target)
+            _            -> (kind, target)
       in ResolvedType
            { rtFile      = lvFile lv
            , rtObject    = lvObject lv
            , rtProcName  = lvProcName lv
            , rtVarName   = lvVarName lv
            , rtRawType   = lvRawType lv
-           , rtKind      = kind
-           , rtTarget    = target
+           , rtKind      = kind'
+           , rtTarget    = target'
            , rtIsParam   = lvIsParam lv
            , rtScopeLine = lvScopeLine lv
            }

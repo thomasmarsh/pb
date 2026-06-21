@@ -160,7 +160,7 @@ class StorageEnv:
     compute_metrics: Callable[[Conn, AnalyzeProgress], None] = field(default=compute_metrics)
     build_type_tables: Callable[[Conn, Path | None], None] = field(default=build_type_tables)
     build_dataflow_tables: Callable[[Conn], None] = field(default=build_dataflow_tables)
-    build_interproc_tables: Callable[[Conn], None] = field(default=build_interproc_tables)
+    build_interproc_tables: Callable[[Conn, Path | None], None] = field(default=build_interproc_tables)
     build_taint_tables: Callable[[Conn, Path | None], None] = field(default=build_taint_tables)
     build_dead_code_table: Callable[[Conn], None] = field(default=build_dead_code_table)
     connect: Callable[[str], AbstractContextManager[Conn]] = field(default=connect)

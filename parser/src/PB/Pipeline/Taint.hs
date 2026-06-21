@@ -107,12 +107,12 @@ data ResolvedCallRow = ResolvedCallRow
 
 instance FromJSON ResolvedCallRow where
   parseJSON = withObject "ResolvedCallRow" $ \o ->
-    ResolvedCallRow <$> o .: "file" <*> o .: "object" <*> o .: "from_proc"
-                    <*> o .: "to_name" <*> o .: "call_type"
-                    <*> o .:? "call_line" .!= Nothing
-                    <*> o .:? "target_object" .!= Nothing
-                    <*> o .:? "target_proc" .!= Nothing
-                    <*> o .: "resolution_kind" <*> o .: "confidence"
+    ResolvedCallRow <$> o .: "file" <*> o .: "object" <*> o .: "fromProc"
+                    <*> o .: "toName" <*> o .: "callType"
+                    <*> o .:? "line" .!= Nothing
+                    <*> o .:? "targetObject" .!= Nothing
+                    <*> o .:? "targetProc" .!= Nothing
+                    <*> o .: "kind" <*> o .: "confidence"
                     <*> o .:? "return_type" .!= Nothing
 
 data GlobalVarRow = GlobalVarRow

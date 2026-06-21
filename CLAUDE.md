@@ -933,13 +933,14 @@ withProcScope    :: [(Text, PbType)] -> TypeEnv -> TypeEnv  -- overlay params (s
 extractLocalVars  :: Text -> Text -> SrFile -> [LocalVar]   -- file, object, sf
 extractCallSites  :: Text -> Text -> SrFile -> [CallSite]
 extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
-resolveTypes :: [LocalVar] -> Set Text -> Set Text -> [ResolvedType]   -- objs, userTypes
+resolveTypes :: [LocalVar] -> Set Text -> Set Text -> [ResolvedType]   -- objs, userTypes; falls back to control-name inference
 resolveCalls :: [CallSite] -> Map Text (Set Text) -> Map Text Text -> Set Text -> Set Text -> [ResolvedCall]
 buildInheritsMap :: [SrFile] -> Map Text Text
 buildProcMap     :: [SrFile] -> Map Text (Set Text)
 buildObjectSet, buildUserTypeSet :: [SrFile] -> Set Text
 parseParams :: Text -> [(Text, PbType)]          -- "ref long al_row" → ("al_row", PtPrimitive "long")
 classifyPbType :: PbType -> Set Text -> Set Text -> (Text, Maybe Text)  -- (kind, target)
+classifyControlType :: Text -> Maybe Text  -- dw_main → datawindow (naming convention)
 -- Record types: LocalVar{lvFile,lvObject,lvProcName,lvVarName,lvRawType,lvIsParam,lvScopeLine}
 --   CallSite{csFile,csObject,csFromProc,csToName,csCallType,csLine}
 --   GlobalVar{gvFile,gvObject,gvName,gvType,gvMods}

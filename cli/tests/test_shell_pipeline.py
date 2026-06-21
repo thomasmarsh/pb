@@ -61,7 +61,7 @@ def fake_env(tmp_path):
     e.storage.compute_metrics = lambda conn, progress: setattr(conn, "metrics_computed", True)
     e.storage.build_type_tables = lambda conn, out_dir=None: None  # no-op for unit tests
     e.storage.build_dataflow_tables = lambda conn: None  # no-op for unit tests
-    e.storage.build_interproc_tables = lambda conn: None  # no-op for unit tests
+    e.storage.build_interproc_tables = lambda conn, out_dir=None: None  # no-op for unit tests
     e.storage.build_taint_tables = lambda conn, out_dir=None: None  # no-op for unit tests
     e.storage.build_dead_code_table = lambda conn: None  # no-op for unit tests
     e.storage.count_sql_parse_failures = lambda conn: 0
