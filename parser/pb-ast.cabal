@@ -42,6 +42,7 @@ library
     PB.Lexing.Token
     PB.Pipeline.CfgBuild
     PB.Pipeline.CpsCompile
+    PB.Pipeline.Dataflow
     PB.Pipeline.PbApi
     PB.Pipeline.Preprocess
     PB.Pipeline.PrettyPrint
@@ -91,6 +92,7 @@ test-suite pb-ast-test
     , CfgBuildTest
     , CorpusDebtTest
     , CpsCompileTest
+    , DataflowTest
     , DataWindowTest
     , CorpusInvariantTest
     , CorpusTest

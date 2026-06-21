@@ -5,6 +5,7 @@ import qualified BodyParserTest
 import qualified BodyStmtTest
 import qualified CfgBuildTest
 import qualified CpsCompileTest
+import qualified DataflowTest
 import qualified ExprTest
 import qualified CorpusDebtTest
 import qualified CorpusInvariantTest
@@ -34,6 +35,7 @@ tests = testGroup "pb-ast"
   , BodyStmtTest.tests
   , CfgBuildTest.tests
   , CpsCompileTest.tests
+  , DataflowTest.tests
   , ExprTest.tests
   , CorpusDebtTest.tests
   , CorpusInvariantTest.tests
