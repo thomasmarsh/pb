@@ -22,11 +22,10 @@ import PB.AST.BodyStmt
 import PB.AST.Expr
 import PB.AST.Located  (Located (..))
 import PB.Grammar.Body        (parseExpr)
-import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
+import PB.Lexing.Token        (Token (..))
 import PB.Pipeline.TypeEnv (TypeEnv, lookupBaseType)
 import Control.Monad       (foldM)
 import Control.Monad.State.Strict
-import Data.Char            (isAlpha, isDigit)
 import Data.List            (partition)
 import GHC.Generics         (Generic)
 import qualified Data.Map.Strict as Map
@@ -164,67 +163,20 @@ isTriggerEvent lv = case map (T.toLower . segName) (segments lv) of
   _     -> False
 
 -- ---------------------------------------------------------------------------
--- Argument conversion: raw token lists → typed Expr nodes
+-- Argument conversion: token lists → typed Expr nodes
 --
--- The AST stores call arguments as `[[Text]]` (raw token text per arg).
--- `parseExpr :: [Token] -> Expr` (PB.Grammar.Body) recovers typed Expr nodes
--- (ExBinOp, ExStr, ExBool, ...) but needs `Token` values with `TokenKind`.
--- `retokenize` assigns canonical TokenKinds from text patterns so that
--- `parseExpr` can be applied per-argument (Plan 115 item 3B).
+-- The AST stores call arguments as `[[Token]]`. `parseExpr` from
+-- PB.Grammar.Body recovers typed Expr nodes (ExBinOp, ExStr, ExBool, ...).
 
-dummySpan :: SourceSpan
-dummySpan = SourceSpan { ssStartLine = 0, ssEndLine = 0, ssCol = 0 }
-
--- | Assign a `TokenKind` to a raw text fragment by matching common patterns.
--- Mirrors the lexer's classification closely enough for `parseExpr`.
-classifyText :: Text -> TokenKind
-classifyText t
-  | T.null t                        = TkIdent
-  | t == "true"                     = TkBoolTrue
-  | t == "false"                    = TkBoolFalse
-  | t == "null"                     = TkNull
-  | T.length t >= 2
-  , T.head t == '"' && T.last t == '"'  = TkStringDouble
-  | T.length t >= 2
-  , T.head t == '\'' && T.last t == '\'' = TkStringSingle
-  | not (T.null t)
-  , isDigit (T.head t)
-  , T.all (\c -> isDigit c || c == '.') t = TkIntLiteral
-  | not (T.null t) && T.head t == '!' = TkEnumLiteral
-  | t `elem` ["+", "-", "*", "/", "^"] = TkArithOp
-  | t `elem` ["<>", "<=", ">=", "<", ">"] = TkCompareOp
-  | t == "="                        = TkAssignOp
-  | T.toLower t `elem`
-      ["or", "and", "xor", "not", "create", "post", "trigger", "dynamic"] = TkOtherKw
-  | T.toLower t == "event"          = TkDeclKw
-  | t == "."                        = TkDot
-  | t == "::"                       = TkDoubleColon
-  | t == "("                        = TkLParen
-  | t == ")"                        = TkRParen
-  | t == "["                        = TkLBracket
-  | t == "]"                        = TkRBracket
-  | t == "{"                        = TkLBrace
-  | t == "}"                        = TkRBrace
-  | t == ","                        = TkComma
-  | t == ":"                        = TkColon
-  | not (T.null t) && isAlpha (T.head t) = TkIdent
-  | otherwise                       = TkIdent
-
--- | Re-lex a list of raw text fragments into `Token`s with canonical kinds.
-retokenize :: [Text] -> [Token]
-retokenize = map (\t -> Token { tkText = t, tkKind = classifyText t, tkSpan = dummySpan })
-
--- | Convert one raw-arg token list (one argument's tokens) to a typed Expr.
--- Fixes the bug where concat lost arg boundaries (Plan 112) and recovers
--- typed Expr nodes for multi-token arguments via re-lexing (Plan 115 3B).
-parseArgList :: [Text] -> Expr
+-- | Convert one arg's token list to a typed Expr.
+parseArgList :: [Token] -> Expr
 parseArgList [] = ExRaw []
-parseArgList ts = parseExpr (retokenize ts)
+parseArgList ts = parseExpr ts
 
--- | Single-text → ExLvalue; multiple texts → ExRaw (for BsAugAssign/BsInc/BsDec LHS).
-lhsToExpr :: [Text] -> Expr
-lhsToExpr [t] = ExLvalue (Lvalue [LvSegment t Nothing])
-lhsToExpr ts  = ExRaw ts
+-- | Single-token → ExLvalue; multiple tokens → ExRaw (for BsAugAssign/BsInc/BsDec LHS).
+lhsToExpr :: [Token] -> Expr
+lhsToExpr [t] = ExLvalue (Lvalue [LvSegment (tkText t) Nothing])
+lhsToExpr ts  = ExRaw (map tkText ts)
 
 -- | Extract a CpsAssign variable name from a complex LHS expression.
 assignTarget :: Expr -> Text
@@ -313,7 +265,7 @@ compileSingleStmt env lctx (Located line stmt) fallthrough = case stmt of
     emit (CpsAssign { anVar = lvHead lv, anRhs = rhs, anNext = fallthrough }) (Just line)
 
   BsAugAssign lhsToks augOp rhsToks ->
-    let varName = case lhsToks of { (t:_) -> t; [] -> "_" }
+    let varName = case lhsToks of { (t:_) -> tkText t; [] -> "_" }
     in emit (CpsAssign
          { anVar = varName
          , anRhs = ExBinOp { lhs = lhsToExpr lhsToks, op = augOpToBinOp augOp, rhs = parseArgList rhsToks }
@@ -321,7 +273,7 @@ compileSingleStmt env lctx (Located line stmt) fallthrough = case stmt of
          }) (Just line)
 
   BsInc lhsToks ->
-    let varName = case lhsToks of { (t:_) -> t; [] -> "_" }
+    let varName = case lhsToks of { (t:_) -> tkText t; [] -> "_" }
     in emit (CpsAssign
          { anVar = varName
          , anRhs = ExBinOp { lhs = lhsToExpr lhsToks, op = BopAdd, rhs = ExInt "1" }
@@ -329,7 +281,7 @@ compileSingleStmt env lctx (Located line stmt) fallthrough = case stmt of
          }) (Just line)
 
   BsDec lhsToks ->
-    let varName = case lhsToks of { (t:_) -> t; [] -> "_" }
+    let varName = case lhsToks of { (t:_) -> tkText t; [] -> "_" }
     in emit (CpsAssign
          { anVar = varName
          , anRhs = ExBinOp { lhs = lhsToExpr lhsToks, op = BopSub, rhs = ExInt "1" }
@@ -461,7 +413,7 @@ compileClause env caseExpr lctx fallthrough nextFt clause = case ccExpr clause o
   Nothing   -> compileStmts env lctx (ccBody clause) fallthrough
   Just toks -> do
     bodyEntry <- compileStmts env lctx (ccBody clause) fallthrough
-    let clauseVal = parseExpr (retokenize toks)
+    let clauseVal = parseExpr toks
     let cond = ExBinOp { lhs = caseExpr, op = BopEq, rhs = clauseVal }
     emit (CpsBranch { brCond = cond, brThenPc = bodyEntry, brElsePc = nextFt }) Nothing
 

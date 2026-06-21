@@ -8,6 +8,7 @@ module PB.AST.Expr
   ) where
 
 import PB.Prelude
+import PB.Lexing.Token (Token (..))
 import GHC.Generics (Generic)
 
 -- | One segment of a dotted name, e.g. the `arr[i]` in `obj.arr[i].field`.
@@ -36,7 +37,7 @@ data DispatchExpr = DispatchExpr
   , dynamic :: Bool
   , event   :: Bool
   , name    :: Text
-  , args    :: [[Text]]
+  , args    :: [[Token]]
   } deriving (Eq, Show, Generic)
 
 -- | Expression AST.
@@ -58,8 +59,8 @@ data Expr
   | ExEnum        Text              -- enum constant (without trailing '!')
   | ExLvalue      Lvalue            -- inlines Lvalue.segments into JSON
   -- Calls (record constructors with unique field names)
-  | ExCall        { callee :: Lvalue,  callArgs :: [[Text]] }
-  | ExMethodCall  { receiver :: Expr, method :: Text, methodArgs :: [[Text]] }
+  | ExCall        { callee :: Lvalue,  callArgs :: [[Token]] }
+  | ExMethodCall  { receiver :: Expr, method :: Text, methodArgs :: [[Token]] }
   | ExDispatch    DispatchExpr      -- inlines DispatchExpr fields into JSON
   -- Object creation
   | ExCreate      Text              -- CREATE ClassName

@@ -7,6 +7,7 @@ import PB.AST.Located         (Located (..))
 import PB.AST.Type            (PbType (..))
 import PB.Grammar.Body        (classifyBodyStmt, parseBodyStmts, parseLvalue)
 import PB.Lexing.Splitter     (Statement (..))
+import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
 
@@ -22,6 +23,12 @@ import Test.Tasty.Hedgehog     (testProperty)
 
 mkTok :: TokenKind -> Text -> Token
 mkTok k t = Token k t (SourceSpan 1 1 1)
+
+tok :: Text -> Token
+tok t = case lexResult (tokenizeLine ll) of
+  Right (tk:_) -> tk
+  _            -> Token TkIdent t (SourceSpan 1 1 1)
+  where ll = LogicalLine t 1 1
 
 mkStmt :: [(TokenKind, Text)] -> Statement
 mkStmt pairs = Statement
@@ -96,37 +103,37 @@ tests = testGroup "Body"
                   , (TkAssignOp, "="), (TkIntLiteral, "42") ])
           @?= BsAssignExpr
                 (ExMethodCall
-                  (ExCall (Lvalue [LvSegment "obj" Nothing, LvSegment "cells" Nothing]) [["1"]])
+                  (ExCall (Lvalue [LvSegment "obj" Nothing, LvSegment "cells" Nothing]) [[tok "1"]])
                   "value" [])
                 (ExInt "42")
 
     , testCase "aug_assign: +=" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "n"), (TkAugmentOp, "+="), (TkIntLiteral, "1")])
-          @?= BsAugAssign ["n"] AugAdd ["1"]
+          @?= BsAugAssign [tok "n"] AugAdd [tok "1"]
 
     , testCase "aug_assign: -=" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "n"), (TkAugmentOp, "-="), (TkIntLiteral, "1")])
-          @?= BsAugAssign ["n"] AugSub ["1"]
+          @?= BsAugAssign [tok "n"] AugSub [tok "1"]
 
     , testCase "aug_assign: *=" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "n"), (TkAugmentOp, "*="), (TkIntLiteral, "2")])
-          @?= BsAugAssign ["n"] AugMul ["2"]
+          @?= BsAugAssign [tok "n"] AugMul [tok "2"]
 
     , testCase "aug_assign: /=" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "n"), (TkAugmentOp, "/="), (TkIntLiteral, "2")])
-          @?= BsAugAssign ["n"] AugDiv ["2"]
+          @?= BsAugAssign [tok "n"] AugDiv [tok "2"]
 
     , testCase "inc: ++" $
         classifyBodyStmt (mkStmt [(TkIdent, "n"), (TkAugmentOp, "++")])
-          @?= BsInc ["n"]
+          @?= BsInc [tok "n"]
 
     , testCase "dec: --" $
         classifyBodyStmt (mkStmt [(TkIdent, "n"), (TkAugmentOp, "--")])
-          @?= BsDec ["n"]
+          @?= BsDec [tok "n"]
 
     , testCase "call: method call (obj.method())" $
         classifyBodyStmt
@@ -139,7 +146,7 @@ tests = testGroup "Body"
     , testCase "call: free function (f(arg))" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "messagebox"), (TkLParen, "("), (TkIdent, "msg"), (TkRParen, ")")])
-          @?= BsCall (ExCall (Lvalue [LvSegment "messagebox" Nothing]) [["msg"]])
+          @?= BsCall (ExCall (Lvalue [LvSegment "messagebox" Nothing]) [[tok "msg"]])
 
     , testCase "return: with value" $
         classifyBodyStmt (mkStmt [(TkControlKw, "return"), (TkBoolTrue, "true")])
@@ -173,25 +180,25 @@ tests = testGroup "Body"
 
     , testCase "call: close(parent) — sql-kw callee no space" $
         classifyBodyStmt
-          (mkStmt [(TkSqlKw, "close"), (TkLParen, "("), (TkIdent, "parent"), (TkRParen, ")")])
-          @?= BsCall (ExCall (Lvalue [LvSegment "close" Nothing]) [["parent"]])
+          (mkStmt [(TkSqlKw, "close"), (TkLParen, "("), (TkOtherKw, "parent"), (TkRParen, ")")])
+          @?= BsCall (ExCall (Lvalue [LvSegment "close" Nothing]) [[tok "parent"]])
 
     , testCase "call: Close (lw_sheet) — sql-kw callee with space before paren" $
         classifyBodyStmt
           (mkStmt [(TkSqlKw, "Close"), (TkLParen, "("), (TkIdent, "lw_sheet"), (TkRParen, ")")])
-          @?= BsCall (ExCall (Lvalue [LvSegment "Close" Nothing]) [["lw_sheet"]])
+          @?= BsCall (ExCall (Lvalue [LvSegment "Close" Nothing]) [[tok "lw_sheet"]])
 
     , testCase "call: open(w_main) — single-arg open" $
         classifyBodyStmt
           (mkStmt [(TkSqlKw, "open"), (TkLParen, "("), (TkIdent, "w_main"), (TkRParen, ")")])
-          @?= BsCall (ExCall (Lvalue [LvSegment "open" Nothing]) [["w_main"]])
+          @?= BsCall (ExCall (Lvalue [LvSegment "open" Nothing]) [[tok "w_main"]])
 
     , testCase "call: open(w_main, this) — two-arg open" $
         classifyBodyStmt
           (mkStmt [ (TkSqlKw, "open"), (TkLParen, "(")
                   , (TkIdent, "w_main"), (TkComma, ","), (TkOtherKw, "this")
                   , (TkRParen, ")")])
-          @?= BsCall (ExCall (Lvalue [LvSegment "open" Nothing]) [["w_main"], ["this"]])
+          @?= BsCall (ExCall (Lvalue [LvSegment "open" Nothing]) [[tok "w_main"], [tok "this"]])
 
     , testCase "raw: OPEN DYNAMIC — sql cursor op stays BsRaw" $
         case classifyBodyStmt
@@ -273,7 +280,7 @@ tests = testGroup "Body"
           (mkStmt [ (TkOtherKw, "destroy"), (TkLParen, "(")
                   , (TkOtherKw, "this"), (TkDot, "."), (TkIdent, "m_foo")
                   , (TkRParen, ")") ])
-          @?= BsCall (ExCall (Lvalue [LvSegment "destroy" Nothing]) [["this", ".", "m_foo"]])
+          @?= BsCall (ExCall (Lvalue [LvSegment "destroy" Nothing]) [[tok "this", tok ".", tok "m_foo"]])
     ]
 
   , testGroup "parseBodyStmts"

@@ -15,6 +15,7 @@ import PB.Prelude
 import PB.AST.Expr        (Expr, Lvalue)
 import PB.AST.Located     (Located)
 import PB.AST.Type        (PbType)
+import PB.Lexing.Token    (Token (..))
 import GHC.Generics       (Generic)
 
 data AugOp = AugAdd | AugSub | AugMul | AugDiv
@@ -63,7 +64,7 @@ data DoStmt = DoStmt
 -- | One branch inside a choose case block.
 -- ccExpr = Nothing means "case else".
 data CaseClause = CaseClause
-  { ccExpr :: Maybe [Text]
+  { ccExpr :: Maybe [Token]
   , ccBody :: [Located BodyStmt]
   } deriving (Eq, Show, Generic)
 
@@ -81,9 +82,9 @@ data BodyStmt
       , varInit  :: Maybe Expr    -- optional initializer
       }
   | BsAssign    Lvalue Expr           -- lhs = rhs
-  | BsAugAssign [Text] AugOp [Text]  -- lhs_tokens op= rhs_tokens
-  | BsInc       [Text]               -- lhs_tokens ++
-  | BsDec       [Text]               -- lhs_tokens --
+  | BsAugAssign [Token] AugOp [Token]  -- lhs_tokens op= rhs_tokens
+  | BsInc       [Token]               -- lhs_tokens ++
+  | BsDec       [Token]               -- lhs_tokens --
   | BsCall      Expr                  -- standalone call expression
   | BsPbCall    PbCall                -- CALL ancestor[`ctrl] :: event
   | BsReturn    (Maybe Expr)          -- return [expr]

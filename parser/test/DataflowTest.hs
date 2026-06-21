@@ -5,7 +5,10 @@ import PB.AST.BodyStmt
 import PB.AST.Expr         (Expr (..), LvSegment (..), Lvalue (..), BinOp (..))
 import PB.AST.Type         (PbType (..))
 import PB.AST.Located      (Located (..))
+import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
+import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.CfgBuild (Cfg (..), CfgBlock (..), CfgEdge (..), buildCfg)
+import PB.Pipeline.Preprocess (LogicalLine (..))
 import PB.Pipeline.Dataflow
 
 import Data.Aeson          (Value (..), (.=), object, toJSON)
@@ -27,6 +30,12 @@ lv1 n = Lvalue [LvSegment n Nothing]
 
 lv2 :: Text -> Text -> Lvalue
 lv2 a b = Lvalue [LvSegment a Nothing, LvSegment b Nothing]
+
+tok :: Text -> Token
+tok t = case lexResult (tokenizeLine ll) of
+  Right (tk:_) -> tk
+  _            -> Token TkIdent t (SourceSpan 1 1 1)
+  where ll = LogicalLine t 1 1
 
 -- | Make a simple CfgBlock for testing.
 mkBlock :: Text -> [Located BodyStmt] -> CfgBlock
@@ -129,7 +138,7 @@ tests = testGroup "Dataflow"
 
     , testCase "BsCall creates call_arg uses (callee + args)" $
         let blk = mkBlock "b0" [at 1 (BsCall (ExCall (lv1 "foo")
-                [ ["x", "y"] ]))]
+                [ [tok "x", tok "y"] ]))]
             bf  = extractDefsUses blk
         in do
           -- Matches Python dataflow.py: ExCall counts the callee root plus
@@ -250,7 +259,7 @@ tests = testGroup "Dataflow"
         -- Mirrors the 111a invariant: walkExprIdents counts the ExCall callee
         -- root as a use, so foo(x, y) → {foo, x, y} = 3 uses. This is the
         -- reason proc_uses = 1162 (not fewer) on the openpay corpus.
-        let blk = mkBlock "b0" [at 9 (BsCall (ExCall (lv1 "foo") [["x", "y"]]))]
+        let blk = mkBlock "b0" [at 9 (BsCall (ExCall (lv1 "foo") [[tok "x", tok "y"]]))]
             cfg  = mkCfg "b0" [blk] []
             pf   = analyzeProcedure "obj" "proc" cfg
             rows = dataflowUseRows pf

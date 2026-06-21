@@ -26,6 +26,7 @@ import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
 import PB.AST.Located  (Located (..))
+import PB.Lexing.Token (Token (..))
 import PB.Pipeline.CfgBuild (Cfg (..), CfgBlock (..), CfgEdge (..))
 import qualified Data.Aeson        as Aeson
 import Data.Char            (isAlpha)
@@ -99,10 +100,10 @@ walkExprIdents = go
       maybe Set.empty Set.singleton (lvRoot lv)
     go (ExCall lv args) =
       let root = maybe Set.empty Set.singleton (lvRoot lv)
-          argIdents = Set.fromList [t | argToks <- args, t <- argToks, isIdent t]
+          argIdents = Set.fromList [tkText t | argToks <- args, t <- argToks, isIdent (tkText t)]
       in root <> argIdents
     go (ExMethodCall recv _ args) =
-      go recv <> Set.fromList [t | argToks <- args, t <- argToks, isIdent t]
+      go recv <> Set.fromList [tkText t | argToks <- args, t <- argToks, isIdent (tkText t)]
     go (ExBinOp l _ r) = go l <> go r
     go (ExNot e) = go e
     go (ExNeg e) = go e
@@ -110,7 +111,7 @@ walkExprIdents = go
     go (ExCreateUsing e) = go e
     go (ExDispatch de) =
       let objIdents = maybe Set.empty go (fmap ExLvalue (object de))
-          argIdents = Set.fromList [t | argToks <- args de, t <- argToks, isIdent t]
+          argIdents = Set.fromList [tkText t | argToks <- args de, t <- argToks, isIdent (tkText t)]
       in objIdents <> argIdents
     go (ExRaw toks) = Set.fromList [t | t <- toks, isIdent t]
     go _ = Set.empty
@@ -137,9 +138,9 @@ extractDefVar :: BodyStmt -> Maybe Text
 extractDefVar (BsAssign lv _)    = lvRoot lv
 extractDefVar (BsLocalVar _ _ n _) = Just n
 extractDefVar (BsFor ft)       = lvRoot (forVar ft)
-extractDefVar (BsAugAssign toks _ _) = listToMaybe (filter isIdent toks)
-extractDefVar (BsInc toks)       = listToMaybe (filter isIdent toks)
-extractDefVar (BsDec toks)       = listToMaybe (filter isIdent toks)
+extractDefVar (BsAugAssign toks _ _) = listToMaybe [tkText t | t <- toks, isIdent (tkText t)]
+extractDefVar (BsInc toks)       = listToMaybe [tkText t | t <- toks, isIdent (tkText t)]
+extractDefVar (BsDec toks)       = listToMaybe [tkText t | t <- toks, isIdent (tkText t)]
 extractDefVar _                  = Nothing
 
 -- | Map BodyStmt tag to def kind text.
@@ -184,7 +185,7 @@ extractUseVars (BsChoose cs) =
 extractUseVars (BsReturn mExpr) = maybe Set.empty walkExprIdents mExpr
 extractUseVars (BsCall expr)    = walkExprIdents expr
 extractUseVars (BsDestroy lv)   = maybe Set.empty Set.singleton (lvRoot lv)
-extractUseVars (BsAugAssign _ _ toks) = Set.fromList [t | t <- toks, isIdent t]
+extractUseVars (BsAugAssign _ _ toks) = Set.fromList [tkText t | t <- toks, isIdent (tkText t)]
 extractUseVars _ = Set.empty
 
 -- | Determine use kind from statement tag.

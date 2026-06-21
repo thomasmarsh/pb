@@ -10,6 +10,7 @@ import PB.AST.BodyStmt
 import PB.AST.Expr
 import PB.AST.Located     (Located (..))
 import PB.AST.Type         (renderPbType)
+import PB.Lexing.Token     (Token (..))
 import qualified Data.Text as T
 
 -- | Render a list of body statements to indented PowerScript text.
@@ -33,9 +34,9 @@ prettyStmtAt n stmt =
       in pad <> prefix <> renderPbType ty <> " " <> name
          <> maybe "" (\e -> " = " <> prettyExpr e) initE
     BsAssign    lval e         -> pad <> prettyLvalue lval <> " = " <> prettyExpr e
-    BsAugAssign lhs op rhs     -> pad <> T.unwords lhs <> " " <> prettyAugOp op <> " " <> T.unwords rhs
-    BsInc       toks           -> pad <> T.unwords toks <> "++"
-    BsDec       toks           -> pad <> T.unwords toks <> "--"
+    BsAugAssign lhs op rhs     -> pad <> T.unwords (map tkText lhs) <> " " <> prettyAugOp op <> " " <> T.unwords (map tkText rhs)
+    BsInc       toks           -> pad <> T.unwords (map tkText toks) <> "++"
+    BsDec       toks           -> pad <> T.unwords (map tkText toks) <> "--"
     BsCall      e              -> pad <> prettyExpr e
     BsPbCall    pc             -> pad <> "call " <> pbcAncestor pc <> " :: " <> pbcEvent pc
     BsReturn    Nothing        -> pad <> "return"
@@ -106,7 +107,7 @@ prettyChoose n (ChooseStmt { chooseExpr = expr, chooseClauses = clauses }) =
     renderClause (CaseClause Nothing body) =
       [pad <> "case else", prettyBodyStmtsAt (n + 1) body]
     renderClause (CaseClause (Just toks) body) =
-      [pad <> "case " <> T.unwords toks, prettyBodyStmtsAt (n + 1) body]
+      [pad <> "case " <> T.unwords (map tkText toks), prettyBodyStmtsAt (n + 1) body]
 
 -- | Render an expression.
 prettyExpr :: Expr -> Text
@@ -142,8 +143,8 @@ prettyLvalue (Lvalue segs) = T.intercalate "." (map prettySeg segs)
     prettySeg (LvSegment { name = n, subscript = Nothing })    = n
     prettySeg (LvSegment { name = n, subscript = Just sub }) = n <> "[" <> T.intercalate ", " sub <> "]"
 
-prettyArgs :: [[Text]] -> Text
-prettyArgs = T.intercalate ", " . map T.unwords
+prettyArgs :: [[Token]] -> Text
+prettyArgs = T.intercalate ", " . map (T.unwords . map tkText)
 
 prettyDispatch :: DispatchExpr -> Text
 prettyDispatch (DispatchExpr { object = mObj, mode = m, dynamic = isDyn

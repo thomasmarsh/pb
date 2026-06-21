@@ -1,6 +1,7 @@
 {-# LANGUAGE TupleSections #-}
 module PB.Lexing.Lexer
   ( tokenize
+  , tokenizeLine
   , LexLine (..)
   , LexError (..)
   ) where

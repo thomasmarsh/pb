@@ -616,15 +616,15 @@ data BinOp
 data DispatchMode = DmPost | DmTrigger | DmSync
 data DispatchExpr = DispatchExpr
   { object :: Maybe Lvalue, mode :: DispatchMode, dynamic :: Bool
-  , event :: Bool, name :: Text, args :: [[Text]] }
+  , event :: Bool, name :: Text, args :: [[Token]] }
 
 data Expr
   = ExBool       Bool             | ExInt Text  | ExReal Text
   | ExStr        Text             | ExDate Text | ExTime Text | ExNull
   | ExEnum       Text             -- enum constant (without trailing '!')
   | ExLvalue     Lvalue           -- bare ident / member chain / subscript
-  | ExCall       { callee :: Lvalue, callArgs :: [[Text]] }
-  | ExMethodCall { receiver :: Expr, method :: Text, methodArgs :: [[Text]] }
+  | ExCall       { callee :: Lvalue, callArgs :: [[Token]] }
+  | ExMethodCall { receiver :: Expr, method :: Text, methodArgs :: [[Token]] }
   | ExDispatch   DispatchExpr     -- POST/TRIGGER/DYNAMIC/EVENT dispatch
   | ExCreate     Text             -- CREATE ClassName
   | ExCreateUsing Expr            -- CREATE USING expr
@@ -665,7 +665,7 @@ data DoStmt = DoStmt
   , doLoop :: Maybe DoCondition }
 
 data CaseClause = CaseClause
-  { ccExpr :: Maybe [Text]   -- Nothing = "case else"
+  { ccExpr :: Maybe [Token]   -- Nothing = "case else"
   , ccBody :: [Located BodyStmt] }
 
 data ChooseStmt = ChooseStmt
@@ -674,9 +674,9 @@ data ChooseStmt = ChooseStmt
 data BodyStmt
   = BsLocalVar  { varMods :: [Text], varType :: PbType, varName :: Text, varInit :: Maybe Expr }
   | BsAssign    Lvalue Expr           -- lhs = rhs
-  | BsAugAssign [Text] AugOp [Text]   -- lhs_tokens op= rhs_tokens
-  | BsInc       [Text]                -- lhs_tokens ++
-  | BsDec       [Text]                -- lhs_tokens --
+  | BsAugAssign [Token] AugOp [Token]   -- lhs_tokens op= rhs_tokens
+  | BsInc       [Token]                -- lhs_tokens ++
+  | BsDec       [Token]                -- lhs_tokens --
   | BsCall      Expr                  -- standalone call expression
   | BsPbCall    PbCall                -- CALL ancestor[`ctrl] :: event
   | BsReturn    (Maybe Expr)          -- return [expr]

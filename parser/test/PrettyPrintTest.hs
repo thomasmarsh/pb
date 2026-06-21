@@ -9,6 +9,9 @@ import PB.AST.BodyStmt
 import PB.AST.Expr
 import PB.AST.Located         (Located (..))
 import PB.AST.Type            (PbType (..))
+import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
+import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
+import PB.Pipeline.Preprocess (LogicalLine (..))
 import PB.Pipeline.PrettyPrint
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
@@ -21,6 +24,12 @@ lvDot ns = Lvalue [LvSegment n Nothing | n <- ns]
 
 loc1 :: a -> Located a
 loc1 = Located 1
+
+tok :: Text -> Token
+tok t = case lexResult (tokenizeLine ll) of
+  Right (tk:_) -> tk
+  _            -> Token TkIdent t (SourceSpan 1 1 1)
+  where ll = LogicalLine t 1 1
 
 -- ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -56,11 +65,11 @@ tests = testGroup "PrettyPrint"
       , testCase "not"        $ prettyExpr (ExNot (ExBool True))                              @?= "not true"
       , testCase "neg"        $ prettyExpr (ExNeg (ExInt "1"))                               @?= "-1"
       , testCase "call noargs" $ prettyExpr ExCall { callee = lv "f", callArgs = [] }        @?= "f()"
-      , testCase "call args"   $ prettyExpr ExCall { callee = lv "f", callArgs = [["x"], ["y", "+", "1"]] }
+      , testCase "call args"   $ prettyExpr ExCall { callee = lv "f", callArgs = [[tok "x"], [tok "y", tok "+", tok "1"]] }
                                  @?= "f(x, y + 1)"
       , testCase "method call" $ prettyExpr ExMethodCall { receiver = ExLvalue (lv "obj"), method = "DoStuff", methodArgs = [] }
                                  @?= "obj.DoStuff()"
-      , testCase "method call args" $ prettyExpr ExMethodCall { receiver = ExLvalue (lv "dw"), method = "Retrieve", methodArgs = [["n"]] }
+      , testCase "method call args" $ prettyExpr ExMethodCall { receiver = ExLvalue (lv "dw"), method = "Retrieve", methodArgs = [[tok "n"]] }
                                       @?= "dw.Retrieve(n)"
       , testCase "create"       $ prettyExpr (ExCreate "w_main")               @?= "create w_main"
       , testCase "create using" $ prettyExpr (ExCreateUsing (ExLvalue (lv "cls"))) @?= "create using cls"
@@ -78,13 +87,13 @@ tests = testGroup "PrettyPrint"
     , testCase "continue"       $ prettyStmt BsContinue                             @?= "continue"
     , testCase "local var"      $ prettyStmt (BsLocalVar [] (PtPrimitive "integer") "i" Nothing)  @?= "integer i"
     , testCase "assign"         $ prettyStmt (BsAssign (lv "x") (ExInt "1"))       @?= "x = 1"
-    , testCase "augassign +="   $ prettyStmt (BsAugAssign ["x"] AugAdd ["1"])      @?= "x += 1"
-    , testCase "augassign -="   $ prettyStmt (BsAugAssign ["x"] AugSub ["y"])      @?= "x -= y"
-    , testCase "augassign *="   $ prettyStmt (BsAugAssign ["x"] AugMul ["2"])      @?= "x *= 2"
-    , testCase "augassign /="   $ prettyStmt (BsAugAssign ["x"] AugDiv ["n"])      @?= "x /= n"
-    , testCase "inc"            $ prettyStmt (BsInc ["i"])                          @?= "i++"
-    , testCase "dec"            $ prettyStmt (BsDec ["i"])                          @?= "i--"
-    , testCase "call"           $ prettyStmt (BsCall ExCall { callee = lv "Open", callArgs = [["w_main"]] })
+    , testCase "augassign +="   $ prettyStmt (BsAugAssign [tok "x"] AugAdd [tok "1"])      @?= "x += 1"
+    , testCase "augassign -="   $ prettyStmt (BsAugAssign [tok "x"] AugSub [tok "y"])      @?= "x -= y"
+    , testCase "augassign *="   $ prettyStmt (BsAugAssign [tok "x"] AugMul [tok "2"])      @?= "x *= 2"
+    , testCase "augassign /="   $ prettyStmt (BsAugAssign [tok "x"] AugDiv [tok "n"])      @?= "x /= n"
+    , testCase "inc"            $ prettyStmt (BsInc [tok "i"])                          @?= "i++"
+    , testCase "dec"            $ prettyStmt (BsDec [tok "i"])                          @?= "i--"
+    , testCase "call"           $ prettyStmt (BsCall ExCall { callee = lv "Open", callArgs = [[tok "w_main"]] })
                                   @?= "Open(w_main)"
     , testCase "pb call"        $ prettyStmt (BsPbCall (PbCall "w_main" "ue_postopen"))
                                   @?= "call w_main :: ue_postopen"
@@ -136,7 +145,7 @@ tests = testGroup "PrettyPrint"
         prettyStmt (BsChoose ChooseStmt
           { chooseExpr = ExLvalue (lv "x")
           , chooseClauses =
-              [ CaseClause (Just ["1"]) [loc1 (BsReturn (Just (ExInt "1")))]
+              [ CaseClause (Just [tok "1"]) [loc1 (BsReturn (Just (ExInt "1")))]
               , CaseClause Nothing      [loc1 (BsReturn (Just (ExInt "0")))]
               ]
           })

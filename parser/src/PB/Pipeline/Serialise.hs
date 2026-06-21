@@ -24,6 +24,7 @@ import PB.AST.Expr
 import PB.AST.Located     (Located)
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType)
+import PB.Lexing.Token    (Token (..))
 import PB.Pipeline.CfgBuild   (CfgBlock, CfgEdge, Cfg)
 import PB.Pipeline.CpsCompile (CpsNode, CpsGraph)
 
@@ -43,6 +44,11 @@ customOptions = defaultOptions { fieldLabelModifier = stripCamelCasePrefix }
 -- ToJSON instances — all in one group (no TH splices between them) so that
 -- mutually recursive types like ElseIf ↔ BodyStmt resolve cleanly.
 -- ---------------------------------------------------------------------------
+
+-- Lexer layer — Token serialises as just its text to preserve wire format
+instance ToJSON Token where toJSON t = toJSON (tkText t)
+instance TypeScript Token where
+  getTypeScriptType _ = "string"
 
 -- Expr layer
 instance ToJSON LvSegment    where toJSON = genericToJSON customOptions

@@ -90,11 +90,11 @@ classifyByOp s ts =
                             in case lhsExpr of
                                  ExRaw _ -> BsRaw (llText (stmtSource s))
                                  _       -> BsAssignExpr lhsExpr (parseExpr rhs)
-                "++" -> BsInc       (map tkText lhs)
-                "--" -> BsDec       (map tkText lhs)
+                "++" -> BsInc       lhs
+                "--" -> BsDec       lhs
                 _    -> case augOp opText of
-                          Just aop -> BsAugAssign (map tkText lhs) aop (map tkText rhs)
-                          Nothing  -> BsRaw (llText (stmtSource s))
+                           Just aop -> BsAugAssign lhs aop rhs
+                           Nothing  -> BsRaw (llText (stmtSource s))
 
 -- ---------------------------------------------------------------------------
 -- Lvalue helpers
@@ -177,7 +177,7 @@ parseDispBodyTokens objLv = go DmSync False False
                     , dynamic = dyn
                     , event   = isEv
                     , name    = tkText t
-                    , args    = map (map tkText) (splitArgs inner)
+                    , args    = splitArgs inner
                     }, after)
             _ -> Nothing
       | otherwise = Nothing
@@ -248,7 +248,7 @@ chainCalls e (dot : nm : lp : rest)
         chainCalls ExMethodCall
           { receiver   = e
           , method     = tkText nm
-          , methodArgs = map (map tkText) (splitArgs inner)
+          , methodArgs = splitArgs inner
           } after
 chainCalls e (dot : nm : rest)
   | tkKind dot == TkDot
@@ -300,7 +300,7 @@ parseAtom (t:rest)
           (inner, after) <- findMatchingClose r
           let (e', r') = chainCalls ExCall
                 { callee   = Lvalue segs
-                , callArgs = map (map tkText) (splitArgs inner)
+                , callArgs = splitArgs inner
                 } after
           pure (e', r')
         _ -> pure (ExLvalue (Lvalue segs), remaining)
@@ -556,7 +556,7 @@ pCaseClause = do
   let patToks = drop 1 (stmtTokens s)
       pat = case patToks of
         (t:_) | isCtrl "else" t -> Nothing
-        _                       -> Just (map tkText patToks)
+        _                       -> Just patToks
   body <- manyTill pBodyStmt (lookAhead (satisfyStmt isCaseOrEndChoose))
   return (CaseClause pat body)
 

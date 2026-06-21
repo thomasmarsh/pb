@@ -5,7 +5,10 @@ import PB.AST.BodyStmt
 import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Located      (Located (..))
 import PB.AST.Type         (PbType (..))
+import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
+import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.CpsCompile
+import PB.Pipeline.Preprocess (LogicalLine (..))
 import PB.Pipeline.TypeEnv (TypeEnv (..))
 
 import qualified Data.Map.Strict as Map
@@ -24,6 +27,12 @@ lv1 n = Lvalue [LvSegment n Nothing]
 lv2 :: Text -> Text -> Lvalue
 lv2 a b = Lvalue [LvSegment a Nothing, LvSegment b Nothing]
 
+tok :: Text -> Token
+tok t = case lexResult (tokenizeLine ll) of
+  Right (tk:_) -> tk
+  _            -> Token TkIdent t (SourceSpan 1 1 1)
+  where ll = LogicalLine t 1 1
+
 -- dw.retrieve()  (2-segment ExCall)
 retrieveCall :: Expr
 retrieveCall =
@@ -32,12 +41,12 @@ retrieveCall =
 -- open(w_test)
 openCall :: Expr
 openCall =
-  ExCall { callee = lv1 "open", callArgs = [["w_test"]] }
+  ExCall { callee = lv1 "open", callArgs = [[tok "w_test"]] }
 
 -- messagebox("hi")
 pureCall :: Expr
 pureCall =
-  ExCall { callee = lv1 "messagebox", callArgs = [["\"hi\""]] }
+  ExCall { callee = lv1 "messagebox", callArgs = [[tok "\"hi\""]] }
 
 -- ---------------------------------------------------------------------------
 -- Convenience env builders
@@ -201,7 +210,7 @@ tests = testGroup "CpsCompile"
 
     , testCase "open() always Suspend (builtin)" $
         classifyExpr noEnv
-          (ExCall { callee = lv1 "open", callArgs = [["w_test"]] })
+          (ExCall { callee = lv1 "open", callArgs = [[tok "w_test"]] })
           @?= Suspend
 
     , testCase "opensheet() always Suspend (builtin)" $
@@ -318,7 +327,7 @@ tests = testGroup "CpsCompile"
   , testGroup "Gap 1 – augmented assignment"
 
     [ testCase "BsAugAssign add emits CpsAssign with ExBinOp BopAdd" $ do
-        let stmt = at 5 (BsAugAssign ["x"] AugAdd ["y"])
+        let stmt = at 5 (BsAugAssign [tok "x"] AugAdd [tok "y"])
             g    = compileProcedure noEnv [stmt]
             assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
         assertBool "expected CpsAssign for BsAugAssign" (not (null assignNodes))
@@ -331,7 +340,7 @@ tests = testGroup "CpsCompile"
           [] -> assertBool "no CpsAssign emitted" False
 
     , testCase "BsAugAssign sub emits CpsAssign with ExBinOp BopSub" $ do
-        let stmt = at 5 (BsAugAssign ["x"] AugSub ["y"])
+        let stmt = at 5 (BsAugAssign [tok "x"] AugSub [tok "y"])
             g    = compileProcedure noEnv [stmt]
             assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
         assertBool "expected CpsAssign for BsAugAssign sub" (not (null assignNodes))
@@ -342,7 +351,7 @@ tests = testGroup "CpsCompile"
           [] -> assertBool "no CpsAssign emitted" False
 
     , testCase "BsInc emits CpsAssign with ExBinOp BopAdd ExInt 1" $ do
-        let stmt = at 3 (BsInc ["i"])
+        let stmt = at 3 (BsInc [tok "i"])
             g    = compileProcedure noEnv [stmt]
             assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
         assertBool "expected CpsAssign for BsInc" (not (null assignNodes))
@@ -353,7 +362,7 @@ tests = testGroup "CpsCompile"
           [] -> assertBool "no CpsAssign emitted" False
 
     , testCase "BsDec emits CpsAssign with ExBinOp BopSub ExInt 1" $ do
-        let stmt = at 3 (BsDec ["i"])
+        let stmt = at 3 (BsDec [tok "i"])
             g    = compileProcedure noEnv [stmt]
             assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
         assertBool "expected CpsAssign for BsDec" (not (null assignNodes))
@@ -432,7 +441,7 @@ tests = testGroup "CpsCompile"
   , testGroup "Gap 3 – exprArgs / retokenize upgrade"
 
     [ testCase "exprArgs: single-token arg becomes ExLvalue" $ do
-        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["w_test"]] }))
+        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [[tok "w_test"]] }))
             g    = compileProcedure noEnv [stmt]
             sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
@@ -440,7 +449,7 @@ tests = testGroup "CpsCompile"
           _   -> assertBool "expected one CpsSuspend" False
 
     , testCase "exprArgs: multi-token binary a + 1 → ExBinOp BopAdd (Plan 115 item 3B)" $ do
-        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["a", "+", "1"]] }))
+        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [[tok "a", tok "+", tok "1"]] }))
             g    = compileProcedure noEnv [stmt]
             sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
@@ -454,7 +463,7 @@ tests = testGroup "CpsCompile"
     , testCase "exprArgs: 2-arg call with multi-token first arg gives 2 results" $ do
         let stmt = at 1 (BsCall (ExCall
               { callee   = lv1 "open"
-              , callArgs = [["a", "+", "1"], ["b"]]
+              , callArgs = [[tok "a", tok "+", tok "1"], [tok "b"]]
               }))
             g   = compileProcedure noEnv [stmt]
             sus = [ n | n@CpsSuspend {} <- cgNodes g ]
@@ -463,7 +472,7 @@ tests = testGroup "CpsCompile"
           _   -> assertBool "expected one CpsSuspend" False
 
     , testCase "parseArgList: quoted string → ExStr" $ do
-        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["\"hello\""]] }))
+        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [[tok "\"hello\""]] }))
             g    = compileProcedure noEnv [stmt]
             sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
@@ -471,7 +480,7 @@ tests = testGroup "CpsCompile"
           _   -> assertBool "expected one CpsSuspend" False
 
     , testCase "parseArgList: bool literal true → ExBool True" $ do
-        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["true"]] }))
+        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [[tok "true"]] }))
             g    = compileProcedure noEnv [stmt]
             sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
@@ -479,7 +488,7 @@ tests = testGroup "CpsCompile"
           _   -> assertBool "expected one CpsSuspend" False
 
     , testCase "parseArgList: null → ExNull" $ do
-        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["null"]] }))
+        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [[tok "null"]] }))
             g    = compileProcedure noEnv [stmt]
             sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
@@ -487,7 +496,7 @@ tests = testGroup "CpsCompile"
           _   -> assertBool "expected one CpsSuspend" False
 
     , testCase "parseArgList: multi-token sub b - 2 → ExBinOp BopSub" $ do
-        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["b", "-", "2"]] }))
+        let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [[tok "b", tok "-", tok "2"]] }))
             g    = compileProcedure noEnv [stmt]
             sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
@@ -530,7 +539,7 @@ tests = testGroup "CpsCompile"
     , testCase "TriggerEvent(\"ie_retrieve\") → CpsCallProc triggerevent [ExStr]" $ do
         let stmt = at 10 (BsCall (ExCall
               { callee   = lv1 "TriggerEvent"
-              , callArgs = [["\"ie_retrieve\""]]
+              , callArgs = [[tok "\"ie_retrieve\""]]
               }))
             g    = compileProcedure noEnv [stmt]
             cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
@@ -544,7 +553,7 @@ tests = testGroup "CpsCompile"
     , testCase "this.TriggerEvent(\"ev\") also → CpsCallProc triggerevent" $ do
         let stmt = at 10 (BsCall (ExCall
               { callee   = lv2 "this" "TriggerEvent"
-              , callArgs = [["\"ev\""]]
+              , callArgs = [[tok "\"ev\""]]
               }))
             g    = compileProcedure noEnv [stmt]
             cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
@@ -556,7 +565,7 @@ tests = testGroup "CpsCompile"
     , testCase "TriggerEvent does not produce CpsSuspend or CpsCall" $ do
         let stmt = at 10 (BsCall (ExCall
               { callee   = lv1 "triggerevent"
-              , callArgs = [["\"ev\""]]
+              , callArgs = [[tok "\"ev\""]]
               }))
             g    = compileProcedure noEnv [stmt]
         [ n | n@CpsSuspend {} <- cgNodes g ] @?= []

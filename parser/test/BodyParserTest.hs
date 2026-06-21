@@ -12,6 +12,7 @@ import PB.AST.Located         (Located (..))
 import PB.Grammar.Body        (pBodyStmt)
 import PB.Grammar.Stream      (StmtStream (..))
 import PB.Lexing.Splitter     (Statement (..))
+import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
 
@@ -49,6 +50,12 @@ mkStmtSrc term src pairs = Statement
   , stmtSource    = LogicalLine src 1 1
   , stmtTerminated = term
   }
+
+tok :: Text -> Token
+tok t = case lexResult (tokenizeLine ll) of
+  Right (tk:_) -> tk
+  _            -> Token TkIdent t (SourceSpan 1 1 1)
+  where ll = LogicalLine t 1 1
 
 -- | Wrap a BodyStmt with line 1 (matching mkStmt's LogicalLine).
 loc1 :: a -> Located a
@@ -292,7 +299,7 @@ tests = testGroup "Grammar.Body.Parser"
           @?= Right
             [ loc1 (BsChoose (ChooseStmt
                 { chooseExpr    = ExLvalue (Lvalue [LvSegment "x" Nothing])
-                , chooseClauses = [ CaseClause (Just ["1"]) [loc1 assignY1] ]
+                , chooseClauses = [ CaseClause (Just [tok "1"]) [loc1 assignY1] ]
                 })) ]
 
     , testCase "multiple clauses" $
@@ -307,8 +314,8 @@ tests = testGroup "Grammar.Body.Parser"
           @?= Right
             [ loc1 (BsChoose (ChooseStmt
                 { chooseExpr    = ExLvalue (Lvalue [LvSegment "x" Nothing])
-                , chooseClauses = [ CaseClause (Just ["1"]) [loc1 assignY1]
-                                  , CaseClause (Just ["2"]) [loc1 assignZ2]
+                , chooseClauses = [ CaseClause (Just [tok "1"]) [loc1 assignY1]
+                                  , CaseClause (Just [tok "2"]) [loc1 assignZ2]
                                   ]
                 })) ]
 
@@ -324,7 +331,7 @@ tests = testGroup "Grammar.Body.Parser"
           @?= Right
             [ loc1 (BsChoose (ChooseStmt
                 { chooseExpr    = ExLvalue (Lvalue [LvSegment "x" Nothing])
-                , chooseClauses = [ CaseClause (Just ["1"]) [loc1 assignY1]
+                , chooseClauses = [ CaseClause (Just [tok "1"]) [loc1 assignY1]
                                   , CaseClause Nothing       [loc1 assignZ2]
                                   ]
                 })) ]
