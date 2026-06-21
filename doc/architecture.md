@@ -110,7 +110,7 @@ JSON emitted by `pb-runner`.
 
 `pb index` drives a two-phase pipeline: **import** then **graph metrics**.
 Understanding where time goes matters because the pipeline takes several minutes
-on a mid-size codebase (~777 files, 50 000 DB rows).
+on a mid-size codebase (~1051 files, 50 000 DB rows).
 
 ### Phase breakdown
 

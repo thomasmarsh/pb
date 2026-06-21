@@ -10,7 +10,7 @@
 | Python tests   | `cd cli && uv run pytest`  | 349 tests across tooling            |
 | Explorer TS    | `pnpm build` (in `ui/`)    | Bundle TS → JS for the web UI       |
 | Explorer tests | `pnpm test` (in `ui/`)     | 253 reducer + state management tests |
-| Corpus check   | `./pb check-corpus`        | 0 errors / 777 files baseline       |
+| Corpus check   | `./pb check-corpus`        | 0 errors / 1051 files baseline      |
 
 CI runs all of these on every push to `main`.
 
@@ -19,7 +19,7 @@ CI runs all of these on every push to `main`.
 ## Parser coverage check
 
 ```bash
-./pb check-corpus   # 0 errors / 777 files = baseline
+./pb check-corpus   # 0 errors / 1051 files = baseline
 ```
 
 ---

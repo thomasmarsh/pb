@@ -18,6 +18,7 @@ import qualified SplitterTest
 import qualified StreamTest
 import qualified TokenTest
 import qualified TypeEnvTest
+import qualified TypeResolveTest
 
 
 import Prelude
@@ -46,4 +47,5 @@ tests = testGroup "pb-ast"
   , SplitterTest.tests
   , StreamTest.tests
   , TypeEnvTest.tests
+  , TypeResolveTest.tests
   ]

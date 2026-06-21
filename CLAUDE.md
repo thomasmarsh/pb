@@ -7,7 +7,7 @@ cd parser && cabal build                          # compile library + executable
 cd parser && cabal build --enable-tests           # compile tests too
 cd parser && cabal test                           # run test suite
 cd parser && cabal test --test-show-details=direct # verbose output
-./pb check-corpus                    # 0 errors / 777 files = baseline
+./pb check-corpus                    # 0 errors / 1051 files = baseline
 ./pb debt                        # BsRaw + ExRaw debt + DW control coverage (both corpora)
 ./pb debt --no-build             # same, skip build step
 cd cli && uv run pytest         # Python tool tests (cli/tests/ directory)
@@ -802,5 +802,5 @@ These are proposals only — the user decides when and whether to commit.
 - Do not commit with a warning-dirty `cabal build`
 - Failing test stubs (Stage 2) may be committed; mark them clearly with `assertFailure "unimplemented: ..."`
 - Before committing parser changes: `./pb check-corpus`
-  The error count must not increase. Baseline: 0 errors / 777 files.
+  The error count must not increase. Baseline: 0 errors / 1051 files.
 - Any new failure categories found during a session must be recorded in `doc/plan/BACKLOG.md` before committing.

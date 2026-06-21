@@ -1,0 +1,379 @@
+module TypeResolveTest (tests) where
+
+import Prelude
+import Test.Tasty         (TestTree, testGroup)
+import Test.Tasty.HUnit   ((@?=), assertFailure, testCase)
+
+import qualified Data.Map.Strict as Map
+import qualified Data.Set        as Set
+import qualified Data.Text       as T
+
+import PB.AST.BodyStmt
+import PB.AST.Expr
+import PB.AST.Located      (Located (..))
+import PB.AST.SourceFile
+import PB.AST.Type         (PbType (..))
+import PB.Pipeline.TypeResolve
+
+-- ---------------------------------------------------------------------------
+-- Helpers
+
+emptySrFile :: SrFile
+emptySrFile = SrFile
+  { srHeaders         = []
+  , srForward         = Nothing
+  , srPrototypes      = Nothing
+  , srVariables       = Nothing
+  , srGlobalInstances = []
+  , srTypeBlocks      = []
+  , srOnBlocks        = []
+  , srEvents          = []
+  , srFunctions       = []
+  , srSubroutines     = []
+  }
+
+mkTB :: T.Text -> T.Text -> TypeBlock
+mkTB nm anc = TypeBlock
+  { tbDecl = TypeDecl { tdName = nm, tdAncestor = anc, tdWithin = Nothing }
+  , tbBody = []
+  }
+
+mkFn :: T.Text -> T.Text -> [Located BodyStmt] -> FunctionBlock
+mkFn nm params body = FunctionBlock
+  { fbSig = FnSig
+      { fnsMods       = []
+      , fnsReturnType = "integer"
+      , fnsName       = nm
+      , fnsParams     = params
+      , fnsThrows     = Nothing
+      }
+  , fbBody = body
+  }
+
+localVarStmt :: T.Text -> PbType -> Int -> Located BodyStmt
+localVarStmt nm ty line = Located line BsLocalVar
+  { varMods = []
+  , varType = ty
+  , varName = nm
+  , varInit = Nothing
+  }
+
+callStmt :: T.Text -> Int -> Located BodyStmt
+callStmt callee_ line = Located line
+  (BsCall (ExCall
+    { callee   = Lvalue [LvSegment callee_ Nothing]
+    , callArgs = []
+    }))
+
+-- ---------------------------------------------------------------------------
+-- Tests
+
+tests :: TestTree
+tests = testGroup "TypeResolve"
+  [ testGroup "classifyPbType"
+      [ testCase "PtPrimitive string → primitive" $ do
+          let (k, t) = classifyPbType (PtPrimitive "string") Set.empty Set.empty
+          k @?= "primitive"
+          t @?= Nothing
+
+      , testCase "PtAny → any" $ do
+          let (k, t) = classifyPbType PtAny Set.empty Set.empty
+          k @?= "any"
+          t @?= Nothing
+
+      , testCase "PtDecimalPrec → primitive" $ do
+          let (k, t) = classifyPbType (PtDecimalPrec 10) Set.empty Set.empty
+          k @?= "primitive"
+          t @?= Nothing
+
+      , testCase "PtUserDefined in object set → object" $ do
+          let (k, t) = classifyPbType (PtUserDefined "w_main")
+                         (Set.singleton "w_main") Set.empty
+          k @?= "object"
+          t @?= Just "w_main"
+
+      , testCase "PtUserDefined in user type set → user_type" $ do
+          let (k, t) = classifyPbType (PtUserDefined "n_cst_service")
+                         Set.empty (Set.singleton "n_cst_service")
+          k @?= "user_type"
+          t @?= Just "n_cst_service"
+
+      , testCase "PtUserDefined datawindow → primitive" $ do
+          let (k, t) = classifyPbType (PtUserDefined "datawindow") Set.empty Set.empty
+          k @?= "primitive"
+          t @?= Nothing
+
+      , testCase "PtUserDefined Window mixed-case → primitive" $ do
+          let (k, t) = classifyPbType (PtUserDefined "Window") Set.empty Set.empty
+          k @?= "primitive"
+          t @?= Nothing
+
+      , testCase "PtUserDefined xyz_unknown → unresolved" $ do
+          let (k, t) = classifyPbType (PtUserDefined "xyz_unknown") Set.empty Set.empty
+          k @?= "unresolved"
+          t @?= Nothing
+      ]
+
+  , testGroup "parseParams"
+      [ testCase "empty string → []" $
+          parseParams "" @?= []
+
+      , testCase "whitespace only → []" $
+          parseParams "   " @?= []
+
+      , testCase "single param: long al_row" $
+          parseParams "long al_row"
+            @?= [("al_row", PtPrimitive "long")]
+
+      , testCase "ref param stripped: ref datawindow adw" $
+          parseParams "ref datawindow adw"
+            @?= [("adw", PtUserDefined "datawindow")]
+
+      , testCase "two params" $
+          parseParams "long al_row, string as_name"
+            @?= [("al_row", PtPrimitive "long"), ("as_name", PtPrimitive "string")]
+
+      , testCase "readonly modifier stripped" $
+          parseParams "readonly string as_x"
+            @?= [("as_x", PtPrimitive "string")]
+      ]
+
+  , testGroup "extractLocalVars"
+      [ testCase "empty SrFile → []" $
+          extractLocalVars "test.srw" "w_test" emptySrFile @?= []
+
+      , testCase "BsLocalVar from function body" $ do
+          let body = [ localVarStmt "ls_x" (PtPrimitive "string") 10 ]
+              sf   = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
+          case extractLocalVars "test.srw" "w_test" sf of
+            [v] -> do
+              lvVarName   v @?= "ls_x"
+              lvRawType   v @?= "string"
+              lvIsParam   v @?= False
+              lvScopeLine v @?= 10
+            other -> assertFailure ("expected 1 var, got " ++ show (length other))
+
+      , testCase "BsLocalVar nested inside if block" $ do
+          let inner = [ localVarStmt "li_x" (PtPrimitive "integer") 20 ]
+              stmt  = Located 15 (BsIf IfStmt
+                { ifCond    = ExBool True
+                , ifThen    = inner
+                , ifElseIfs = []
+                , ifElse    = Nothing
+                })
+              sf = emptySrFile { srFunctions = [ mkFn "f_go" "" [stmt] ] }
+          case extractLocalVars "test.srw" "w_test" sf of
+            [v] -> lvVarName v @?= "li_x"
+            other -> assertFailure ("expected 1 var, got " ++ show (length other))
+
+      , testCase "function params from FnSig text" $ do
+          let sf = emptySrFile { srFunctions = [ mkFn "f_go" "long al_row, string as_x" [] ] }
+          case extractLocalVars "test.srw" "w_test" sf of
+            [a, b] -> do
+              lvIsParam a @?= True
+              lvVarName a @?= "al_row"
+              lvIsParam b @?= True
+              lvVarName b @?= "as_x"
+            other -> assertFailure ("expected 2 vars, got " ++ show (length other))
+
+      , testCase "params before body vars" $ do
+          let body = [ localVarStmt "ls_x" (PtPrimitive "string") 5 ]
+              sf   = emptySrFile { srFunctions = [ mkFn "f_go" "long al_row" body ] }
+          case extractLocalVars "test.srw" "w_test" sf of
+            [a, b] -> do
+              lvIsParam a @?= True
+              lvIsParam b @?= False
+            other -> assertFailure ("expected 2 vars, got " ++ show (length other))
+      ]
+
+  , testGroup "extractCallSites"
+      [ testCase "empty SrFile → []" $
+          extractCallSites "test.srw" "w_test" emptySrFile @?= []
+
+      , testCase "ExCall from BsCall" $ do
+          let body  = [ callStmt "f_helper" 5 ]
+              sf    = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
+          case extractCallSites "test.srw" "w_test" sf of
+            [s] -> do
+              csToName   s @?= "f_helper"
+              csCallType s @?= "ExCall"
+              csLine     s @?= Just 5
+            other -> assertFailure ("expected 1 site, got " ++ show (length other))
+
+      , testCase "ExMethodCall from BsCall" $ do
+          let body = [ Located 7
+                  (BsCall (ExMethodCall
+                    { receiver   = ExLvalue (Lvalue [LvSegment "dw_1" Nothing])
+                    , method     = "retrieve"
+                    , methodArgs = []
+                    })) ]
+              sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
+          case extractCallSites "test.srw" "w_test" sf of
+            [s] -> do
+              csToName   s @?= "retrieve"
+              csCallType s @?= "ExMethodCall"
+            other -> assertFailure ("expected 1 site, got " ++ show (length other))
+
+      , testCase "calls extracted from nested if" $ do
+          let inner = [ callStmt "f_inner" 30 ]
+              body  = [ Located 25
+                  (BsIf IfStmt
+                    { ifCond    = ExBool True
+                    , ifThen    = inner
+                    , ifElseIfs = []
+                    , ifElse    = Nothing
+                    }) ]
+              sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
+          case extractCallSites "test.srw" "w_test" sf of
+            [s] -> csToName s @?= "f_inner"
+            other -> assertFailure ("expected 1 site, got " ++ show (length other))
+      ]
+
+  , testGroup "buildInheritsMap"
+      [ testCase "builds from srTypeBlocks" $ do
+          let sf = emptySrFile { srTypeBlocks = [ mkTB "w_child" "w_parent" ] }
+          Map.lookup "w_child" (buildInheritsMap [sf]) @?= Just "w_parent"
+
+      , testCase "multiple files merged" $ do
+          let sf1 = emptySrFile { srTypeBlocks = [ mkTB "w_a" "w_b" ] }
+              sf2 = emptySrFile { srTypeBlocks = [ mkTB "w_c" "w_d" ] }
+              m   = buildInheritsMap [sf1, sf2]
+          Map.lookup "w_a" m @?= Just "w_b"
+          Map.lookup "w_c" m @?= Just "w_d"
+      ]
+
+  , testGroup "buildProcMap"
+      [ testCase "includes function names" $ do
+          let sf = emptySrFile
+                { srTypeBlocks = [ mkTB "w_test" "window" ]
+                , srFunctions  = [ mkFn "f_go" "" [] ]
+                }
+              pm = buildProcMap [sf]
+          Set.member "f_go" (Map.findWithDefault Set.empty "w_test" pm) @?= True
+      ]
+
+  , testGroup "resolveTypes"
+      [ testCase "primitive local var → primitive kind" $ do
+          let lv = LocalVar
+                { lvFile      = "t.srw"
+                , lvObject    = "w_t"
+                , lvProcName  = "f"
+                , lvVarName   = "ls_x"
+                , lvRawType   = "string"
+                , lvIsParam   = False
+                , lvScopeLine = 1
+                , lvPbType    = PtPrimitive "string"
+                }
+          case resolveTypes [lv] Set.empty Set.empty of
+            [rt] -> do
+              rtKind rt   @?= "primitive"
+              rtTarget rt @?= Nothing
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "object local var → object kind with target" $ do
+          let lv = LocalVar
+                { lvFile      = "t.srw"
+                , lvObject    = "w_t"
+                , lvProcName  = "f"
+                , lvVarName   = "lw_win"
+                , lvRawType   = "w_main"
+                , lvIsParam   = False
+                , lvScopeLine = 2
+                , lvPbType    = PtUserDefined "w_main"
+                }
+          case resolveTypes [lv] (Set.singleton "w_main") Set.empty of
+            [rt] -> do
+              rtKind rt   @?= "object"
+              rtTarget rt @?= Just "w_main"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+      ]
+
+  , testGroup "resolveCalls"
+      [ testCase "bare call to own proc → virtual high" $ do
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "f_go"
+                , csToName   = "f_helper"
+                , csCallType = "ExCall"
+                , csLine     = Just 5
+                }
+              pm = Map.singleton "w_t" (Set.singleton "f_helper")
+          case resolveCalls [site] pm Map.empty of
+            [rc] -> do
+              rcKind rc         @?= "virtual"
+              rcConfidence rc   @?= "high"
+              rcTargetObject rc @?= Just "w_t"
+              rcTargetProc   rc @?= Just "f_helper"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "bare call to ancestor proc → inherited high" $ do
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_child"
+                , csFromProc = "f_go"
+                , csToName   = "f_base"
+                , csCallType = "ExCall"
+                , csLine     = Nothing
+                }
+              pm  = Map.fromList
+                      [ ("w_child",  Set.empty)
+                      , ("w_parent", Set.singleton "f_base")
+                      ]
+              inh = Map.singleton "w_child" "w_parent"
+          case resolveCalls [site] pm inh of
+            [rc] -> do
+              rcKind rc         @?= "inherited"
+              rcTargetObject rc @?= Just "w_parent"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "bare call not found → unresolved low" $ do
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "f_go"
+                , csToName   = "f_ghost"
+                , csCallType = "ExCall"
+                , csLine     = Nothing
+                }
+          case resolveCalls [site] Map.empty Map.empty of
+            [rc] -> do
+              rcKind rc       @?= "unresolved"
+              rcConfidence rc @?= "low"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "dotted ExCall to known object → static high" $ do
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "f_go"
+                , csToName   = "w_other.f_method"
+                , csCallType = "ExCall"
+                , csLine     = Nothing
+                }
+              pm = Map.fromList
+                     [ ("w_t",     Set.empty)
+                     , ("w_other", Set.singleton "f_method")
+                     ]
+          case resolveCalls [site] pm Map.empty of
+            [rc] -> do
+              rcKind rc         @?= "static"
+              rcConfidence rc   @?= "high"
+              rcTargetObject rc @?= Just "w_other"
+              rcTargetProc   rc @?= Just "f_method"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "ExMethodCall → unresolved" $ do
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "f_go"
+                , csToName   = "retrieve"
+                , csCallType = "ExMethodCall"
+                , csLine     = Nothing
+                }
+          case resolveCalls [site] Map.empty Map.empty of
+            [rc] -> rcKind rc @?= "unresolved"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+      ]
+  ]

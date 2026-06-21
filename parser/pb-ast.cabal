@@ -47,6 +47,7 @@ library
     PB.Pipeline.Runner
     PB.Pipeline.Serialise
     PB.Pipeline.TypeEnv
+    PB.Pipeline.TypeResolve
     PB.Pipeline.Walk
   build-depends:
     , base ^>=4.20.1.0
@@ -100,6 +101,7 @@ test-suite pb-ast-test
     , StreamTest
     , TokenTest
     , TypeEnvTest
+    , TypeResolveTest
   build-depends:
     , base ^>=4.20.1.0
     , pb-ast

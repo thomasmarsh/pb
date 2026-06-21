@@ -35,6 +35,11 @@ import qualified Data.Text.Encoding as TE
 import System.Directory    (createDirectoryIfMissing)
 import System.FilePath     (makeRelative, takeBaseName, takeDirectory
                            , takeExtension, (</>))
+import PB.Pipeline.TypeResolve
+  ( buildInheritsMap, buildObjectSet, buildProcMap, buildUserTypeSet
+  , extractCallSites, extractGlobalVars, extractLocalVars
+  , resolveTypes, resolveCalls
+  )
 import PB.Pipeline.Walk    (walkAllSrFiles)
 
 -- ---------------------------------------------------------------------------
@@ -269,11 +274,57 @@ manifestEntry path v = ManifestEntry
 -- ---------------------------------------------------------------------------
 -- Output modes
 
+-- | Parse a PowerScript file's source text to an SrFile without JSON wrapping.
+parseSrFileOnly :: Text -> Either Text SrFile
+parseSrFileOnly src = do
+  let logicalLines         = normalizeText src
+      (headers, bodyLines) = stripHeaders logicalLines
+      lexLines             = tokenize bodyLines
+  stmts        <- collectStatements lexLines
+  (srFile, _)  <- parseSrFileWithSpans headers stmts
+  pure srFile
+
+-- | Attempt to parse a PowerScript source file, returning Nothing for DW/error.
+tryParseSrFile :: FilePath -> IO (Maybe (FilePath, SrFile))
+tryParseSrFile src = case fileKind src of
+  PowerScript -> do
+    result <- try (readFile src) :: IO (Either SomeException Text)
+    pure $ case result of
+      Left  _        -> Nothing
+      Right contents ->
+        case parseSrFileOnly (stripBom contents) of
+          Left  _  -> Nothing
+          Right sf -> Just (src, sf)
+  _ -> pure Nothing
+
+-- | Build and write resolved_types.json, resolved_calls.json, global_vars.json.
+writeResolution :: FilePath -> [(FilePath, SrFile)] -> IO ()
+writeResolution outDir pairs = do
+  let allSfs   = map snd pairs
+      objSet   = buildObjectSet   allSfs
+      usrTypes = buildUserTypeSet allSfs
+      inh      = buildInheritsMap allSfs
+      procMap  = buildProcMap     allSfs
+      toObj sf = case srTypeBlocks sf of
+        (tb:_) -> tdName (tbDecl tb)
+        []     -> ""
+      triples  = [ (T.pack fp, toObj sf, sf) | (fp, sf) <- pairs ]
+      lvs      = concatMap (\(fp, obj, sf) -> extractLocalVars  fp obj sf) triples
+      css      = concatMap (\(fp, obj, sf) -> extractCallSites  fp obj sf) triples
+      gvs      = concatMap (\(fp, obj, sf) -> extractGlobalVars fp obj sf) triples
+      rt       = resolveTypes lvs objSet usrTypes
+      rc       = resolveCalls css procMap inh
+  BSL.writeFile (outDir </> "resolved_types.json") (encode rt)
+  BSL.writeFile (outDir </> "resolved_calls.json") (encode rc)
+  BSL.writeFile (outDir </> "global_vars.json")    (encode gvs)
+
 runModeFiles :: FilePath -> FilePath -> IO ()
 runModeFiles srcDir outDir = do
   files   <- walkAllSrFiles srcDir
   entries <- mapM (processOneFile srcDir outDir) files
   BSL.writeFile (outDir </> "manifest.json") (encode (catMaybes entries))
+  srPairs <- mapM tryParseSrFile files
+  writeResolution outDir (catMaybes srPairs)
 
 runModeJsonl :: FilePath -> IO ()
 runModeJsonl srcDir = do
