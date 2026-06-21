@@ -122,14 +122,17 @@ def parse_files(
                           "error": proc.stderr[:500] if proc.stderr else "pb-runner failed"})
         return _err_iter(), out_dir
 
-    # Read per-file JSON from outDir
+    # Read per-file JSON from outDir (skip root-level analysis arrays)
     def _iter() -> Iterator[tuple[bool, dict]]:
         for json_path in sorted(out_dir.rglob("*.json")):
-            if json_path.name == "manifest.json":
+            # Skip root-level analysis files (arrays) and manifest
+            if json_path.parent == out_dir or json_path.name == "manifest.json":
                 continue
             try:
                 obj = json.loads(json_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
+                continue
+            if not isinstance(obj, dict):
                 continue
             if remap_from and remap_to and "file" in obj:
                 try:
