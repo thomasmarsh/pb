@@ -11,8 +11,6 @@ module PB.Pipeline.CpsCompile
   ( CpsNode (..)
   , CpsGraph (..)
   , CallKind (..)
-  , TypeEnv
-  , InheritGraph
   , compileProcedure
   , classifyExpr
   , effectName
@@ -23,13 +21,13 @@ import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
 import PB.AST.Located  (Located (..))
+import PB.Pipeline.TypeEnv (TypeEnv, lookupBaseType)
 import Control.Monad       (foldM)
 import Control.Monad.State.Strict
 import Data.Char            (isAlpha)
 import Data.List            (partition)
 import GHC.Generics         (Generic)
 import qualified Data.Map.Strict as Map
-import qualified Data.Set        as Set
 import qualified Data.Text       as T
 
 -- ---------------------------------------------------------------------------
@@ -58,15 +56,7 @@ data CpsGraph = CpsGraph
   } deriving (Eq, Show, Generic)
 
 -- ---------------------------------------------------------------------------
--- Type environments
-
--- | Maps variable names (lowercase) to their declared type names (lowercase).
-type TypeEnv = Map.Map Text Text
-
--- | Child type → parent type (single-step inheritance links).
--- Build from a single file's srTypeBlocks/forward block, or from cross-file
--- analysis (Plan 110b).
-type InheritGraph = Map.Map Text Text
+-- Internal types
 
 -- | Loop context threaded through compileStmts so that BsExit/BsContinue can
 -- emit CpsGoto to the correct target PC.  Nothing = not inside a loop.
@@ -82,21 +72,21 @@ data CallKind = Pure | Suspend deriving (Eq, Show)
 -- | Classify an expression as Pure or Suspend using type information when
 -- available.  Without type info the fallback is conservative: Pure.
 -- Free functions in 'builtinSuspendFns' are always Suspend regardless of type.
-classifyExpr :: TypeEnv -> InheritGraph -> Expr -> CallKind
-classifyExpr env inh (ExCall lv _) =
+classifyExpr :: TypeEnv -> Expr -> CallKind
+classifyExpr env (ExCall lv _) =
   let lnames = map (T.toLower . segName) (segments lv)
   in case lnames of
        [name]
          | isBuiltinSuspendFn name -> Suspend
        [headN, meth]
-         | Just ty <- resolveType env inh headN
+         | Just ty <- lookupBaseType headN env
          , isTypedSuspend ty meth  -> Suspend
        _ -> Pure
-classifyExpr env inh (ExMethodCall recv meth _) =
-  case resolveReceiverType env inh recv of
+classifyExpr env (ExMethodCall recv meth _) =
+  case resolveReceiverType env recv of
     Just ty | isTypedSuspend ty (T.toLower meth) -> Suspend
     _       -> Pure
-classifyExpr _ _ _ = Pure
+classifyExpr _ _ = Pure
 
 -- | Free functions that are always suspending regardless of receiver type.
 isBuiltinSuspendFn :: Text -> Bool
@@ -121,30 +111,16 @@ isDwType t = t `elem` ["datawindow", "datastore", "datawindowchild"]
 isTransType :: Text -> Bool
 isTransType t = t == "transaction"
 
--- | Look up a variable's type, then walk the inheritance chain until we hit
--- a stable base type or detect a cycle.
-resolveType :: TypeEnv -> InheritGraph -> Text -> Maybe Text
-resolveType env inh name = fmap (walkChain inh) (Map.lookup name env)
-
--- | Follow the inheritance chain until we hit a type with no parent or a cycle.
-walkChain :: InheritGraph -> Text -> Text
-walkChain inh = go Set.empty . T.toLower
-  where
-    go seen ty
-      | ty `Set.member` seen = ty
-      | Just parent <- Map.lookup ty inh = go (Set.insert ty seen) (T.toLower parent)
-      | otherwise = ty
-
-resolveReceiverType :: TypeEnv -> InheritGraph -> Expr -> Maybe Text
-resolveReceiverType env inh (ExLvalue lv) =
+resolveReceiverType :: TypeEnv -> Expr -> Maybe Text
+resolveReceiverType env (ExLvalue lv) =
   case segments lv of
-    (s:_) -> resolveType env inh (T.toLower (segName s))
+    (s:_) -> lookupBaseType (segName s) env
     []    -> Nothing
-resolveReceiverType env inh (ExCall lv _) =
+resolveReceiverType env (ExCall lv _) =
   case segments lv of
-    [single] -> resolveType env inh (T.toLower (segName single))
+    [single] -> lookupBaseType (segName single) env
     _        -> Nothing
-resolveReceiverType _ _ _ = Nothing
+resolveReceiverType _ _ = Nothing
 
 -- ---------------------------------------------------------------------------
 -- Effect naming
@@ -267,14 +243,14 @@ finalizeCps entry = do
 
 -- | Compile a sequence of statements in reverse order (last first), so that
 -- each statement can reference the next statement's PC as its fallthrough.
-compileStmts :: TypeEnv -> InheritGraph -> LoopCtx -> [Located BodyStmt] -> Int -> C Int
-compileStmts _   _   _    []     ft = pure ft
-compileStmts env inh lctx (s:ss) ft = do
-  ssFt <- compileStmts env inh lctx ss ft
-  compileSingleStmt env inh lctx s ssFt
+compileStmts :: TypeEnv -> LoopCtx -> [Located BodyStmt] -> Int -> C Int
+compileStmts _   _    []     ft = pure ft
+compileStmts env lctx (s:ss) ft = do
+  ssFt <- compileStmts env lctx ss ft
+  compileSingleStmt env lctx s ssFt
 
-compileSingleStmt :: TypeEnv -> InheritGraph -> LoopCtx -> Located BodyStmt -> Int -> C Int
-compileSingleStmt env inh lctx (Located line stmt) fallthrough = case stmt of
+compileSingleStmt :: TypeEnv -> LoopCtx -> Located BodyStmt -> Int -> C Int
+compileSingleStmt env lctx (Located line stmt) fallthrough = case stmt of
 
   BsLocalVar _ _ varName (Just initExpr) ->
     emit (CpsAssign { anVar = varName, anRhs = initExpr, anNext = fallthrough }) (Just line)
@@ -311,7 +287,7 @@ compileSingleStmt env inh lctx (Located line stmt) fallthrough = case stmt of
   BsAssignExpr lhsExpr rhsExpr ->
     emit (CpsAssign { anVar = assignTarget lhsExpr, anRhs = rhsExpr, anNext = fallthrough }) (Just line)
 
-  BsCall expr -> case classifyExpr env inh expr of
+  BsCall expr -> case classifyExpr env expr of
     Suspend ->
       emit (CpsSuspend
         { suEffect       = effectName expr
@@ -338,12 +314,15 @@ compileSingleStmt env inh lctx (Located line stmt) fallthrough = case stmt of
     Just (headerPc, _) -> emit (CpsGoto { goTarget = headerPc }) (Just line)
     Nothing            -> pure fallthrough
 
+  BsDestroy lv ->
+    emit (CpsAssign { anVar = lvHead lv, anRhs = ExNull, anNext = fallthrough }) (Just line)
+
   BsIf (IfStmt cond thenStmts elseIfs elseStmts) -> do
     elseFt <- case elseStmts of
                 Nothing -> pure fallthrough
-                Just es -> compileStmts env inh lctx es fallthrough
-    chainFt <- foldM (compileElseIf env inh lctx fallthrough) elseFt (reverse elseIfs)
-    thenEntry <- compileStmts env inh lctx thenStmts fallthrough
+                Just es -> compileStmts env lctx es fallthrough
+    chainFt <- foldM (compileElseIf env lctx fallthrough) elseFt (reverse elseIfs)
+    thenEntry <- compileStmts env lctx thenStmts fallthrough
     emit (CpsBranch { brCond = cond, brThenPc = thenEntry, brElsePc = chainFt }) (Just line)
 
   BsFor (ForStmt var from to mStep bodyStmts) -> do
@@ -352,7 +331,7 @@ compileSingleStmt env inh lctx (Located line stmt) fallthrough = case stmt of
         varExpr  = ExLvalue var
     branchPc <- emit (CpsNop { npNext = 0 }) Nothing
     incrPc   <- emit (CpsNop { npNext = 0 }) Nothing
-    bodyEntry <- compileStmts env inh (Just (incrPc, fallthrough)) bodyStmts incrPc
+    bodyEntry <- compileStmts env (Just (incrPc, fallthrough)) bodyStmts incrPc
     patchNode incrPc (CpsAssign
       { anVar = varName
       , anRhs = ExBinOp { lhs = varExpr, op = BopAdd, rhs = stepExpr }
@@ -368,7 +347,7 @@ compileSingleStmt env inh lctx (Located line stmt) fallthrough = case stmt of
   BsDo (DoStmt mCond bodyStmts mLoop) -> case mCond of
     Just cond -> do
       branchPc  <- emit (CpsNop { npNext = 0 }) Nothing
-      bodyEntry <- compileStmts env inh (Just (branchPc, fallthrough)) bodyStmts branchPc
+      bodyEntry <- compileStmts env (Just (branchPc, fallthrough)) bodyStmts branchPc
       patchNode branchPc (CpsBranch
         { brCond   = condExpr cond
         , brThenPc = bodyEntry
@@ -378,7 +357,7 @@ compileSingleStmt env inh lctx (Located line stmt) fallthrough = case stmt of
     Nothing -> case mLoop of
       Just cond -> do
         branchPc  <- emit (CpsNop { npNext = 0 }) Nothing
-        bodyEntry <- compileStmts env inh (Just (branchPc, fallthrough)) bodyStmts branchPc
+        bodyEntry <- compileStmts env (Just (branchPc, fallthrough)) bodyStmts branchPc
         patchNode branchPc (CpsBranch
           { brCond   = condExpr cond
           , brThenPc = bodyEntry
@@ -387,32 +366,31 @@ compileSingleStmt env inh lctx (Located line stmt) fallthrough = case stmt of
         pure bodyEntry
       Nothing -> do
         nopPc     <- emit (CpsNop { npNext = 0 }) Nothing
-        bodyEntry <- compileStmts env inh (Just (nopPc, fallthrough)) bodyStmts nopPc
+        bodyEntry <- compileStmts env (Just (nopPc, fallthrough)) bodyStmts nopPc
         patchNode nopPc (CpsNop { npNext = bodyEntry })
         pure bodyEntry
 
   BsChoose (ChooseStmt expr clauses) -> do
     let (elseCs, normalCs) = partition (\c -> isNothing (ccExpr c)) clauses
     elseFt <- case elseCs of
-                (c:_) -> compileStmts env inh lctx (ccBody c) fallthrough
+                (c:_) -> compileStmts env lctx (ccBody c) fallthrough
                 []    -> pure fallthrough
-    foldM (compileClause env inh expr lctx fallthrough) elseFt (reverse normalCs)
+    foldM (compileClause env expr lctx fallthrough) elseFt (reverse normalCs)
 
   -- Statements with no CPS representation: fall through.
   BsRaw _    -> pure fallthrough
   BsPbCall _ -> pure fallthrough
-  BsDestroy _ -> pure fallthrough
 
-compileElseIf :: TypeEnv -> InheritGraph -> LoopCtx -> Int -> Int -> ElseIf -> C Int
-compileElseIf env inh lctx fallthrough nextFt ei = do
-  eiEntry <- compileStmts env inh lctx (eifBody ei) fallthrough
+compileElseIf :: TypeEnv -> LoopCtx -> Int -> Int -> ElseIf -> C Int
+compileElseIf env lctx fallthrough nextFt ei = do
+  eiEntry <- compileStmts env lctx (eifBody ei) fallthrough
   emit (CpsBranch { brCond = eifCond ei, brThenPc = eiEntry, brElsePc = nextFt }) Nothing
 
-compileClause :: TypeEnv -> InheritGraph -> Expr -> LoopCtx -> Int -> Int -> CaseClause -> C Int
-compileClause env inh caseExpr lctx fallthrough nextFt clause = case ccExpr clause of
-  Nothing   -> compileStmts env inh lctx (ccBody clause) fallthrough
+compileClause :: TypeEnv -> Expr -> LoopCtx -> Int -> Int -> CaseClause -> C Int
+compileClause env caseExpr lctx fallthrough nextFt clause = case ccExpr clause of
+  Nothing   -> compileStmts env lctx (ccBody clause) fallthrough
   Just toks -> do
-    bodyEntry <- compileStmts env inh lctx (ccBody clause) fallthrough
+    bodyEntry <- compileStmts env lctx (ccBody clause) fallthrough
     let clauseVal = case toks of { [t] -> parseArg t; ts -> ExStr (T.unwords ts) }
     let cond = ExBinOp { lhs = caseExpr, op = BopEq, rhs = clauseVal }
     emit (CpsBranch { brCond = cond, brThenPc = bodyEntry, brElsePc = nextFt }) Nothing
@@ -426,13 +404,13 @@ condExpr (DoUntil e) = ExNot e
 -- ---------------------------------------------------------------------------
 -- Public entry point
 
-compileProcedure :: TypeEnv -> InheritGraph -> [Located BodyStmt] -> CpsGraph
-compileProcedure env inh body =
+compileProcedure :: TypeEnv -> [Located BodyStmt] -> CpsGraph
+compileProcedure env body =
   let initSt = CompileSt { csCount = 0, csNodes = Map.empty, csSPs = [], csSM = [] }
       (graph, _) = runState go initSt
   in graph
   where
     go = do
       returnPc <- emit (CpsReturn { reValue = Nothing }) Nothing
-      entryPc  <- compileStmts env inh Nothing body returnPc
+      entryPc  <- compileStmts env Nothing body returnPc
       finalizeCps entryPc

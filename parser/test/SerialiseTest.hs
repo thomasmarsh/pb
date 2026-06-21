@@ -8,6 +8,7 @@ import PB.AST.Expr      (Expr (..), LvSegment (..))
 import PB.AST.SourceFile (SrFile (..))
 import PB.Grammar.File        (SrSpans (..))
 import PB.Pipeline.Runner     (wrapSrFile)
+import PB.Pipeline.TypeEnv    (buildWorkspaceTypeEnv)
 import PB.Pipeline.Serialise  ()
 import PB.Pipeline.Serialise  (emitPython, transformType, parseFieldLine,
                                extractClassName, emitTypeAlias, splitTupleParts)
@@ -48,7 +49,7 @@ emptySrSpans = SrSpans [] [] [] []
 tests :: TestTree
 tests = testGroup "Serialise"
   [ testCase "SrFile round-trip: file/kind fields present in wrapSrFile output" $ do
-      let v = wrapSrFile "test.srf" emptySrFile emptySrSpans Map.empty
+      let v = wrapSrFile "test.srf" emptySrFile emptySrSpans (buildWorkspaceTypeEnv [])
       field "file" v @?= String "test.srf"
       field "kind" v @?= String "powerscript"
 

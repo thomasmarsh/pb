@@ -4,7 +4,9 @@ import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Located      (Located (..))
+import PB.AST.Type         (PbType (..))
 import PB.Pipeline.CpsCompile
+import PB.Pipeline.TypeEnv (TypeEnv (..))
 
 import qualified Data.Map.Strict as Map
 import Test.Tasty           (TestTree, testGroup)
@@ -40,17 +42,28 @@ pureCall =
 -- ---------------------------------------------------------------------------
 -- Convenience env builders
 
+emptyEnv :: TypeEnv
+emptyEnv = TypeEnv { teVars = Map.empty, teUserTypes = Map.empty }
+
+-- | Single var → user-defined type, no inheritance.
+varEnv :: Text -> Text -> TypeEnv
+varEnv v t = TypeEnv { teVars = Map.singleton v (PtUserDefined t), teUserTypes = Map.empty }
+
+-- | Single var + inheritance chain.
+varEnvInh :: [(Text, Text)] -> [(Text, Text)] -> TypeEnv
+varEnvInh vars inh = TypeEnv
+  { teVars      = Map.fromList [(v, PtUserDefined t) | (v, t) <- vars]
+  , teUserTypes = Map.fromList inh
+  }
+
 dwEnv :: TypeEnv
-dwEnv = Map.singleton "dw" "datawindow"
+dwEnv = varEnv "dw" "datawindow"
 
 transEnv :: TypeEnv
-transEnv = Map.singleton "sqlca" "transaction"
+transEnv = varEnv "sqlca" "transaction"
 
 noEnv :: TypeEnv
-noEnv = Map.empty
-
-noInh :: InheritGraph
-noInh = Map.empty
+noEnv = emptyEnv
 
 -- ---------------------------------------------------------------------------
 
@@ -61,7 +74,7 @@ tests = testGroup "CpsCompile"
   -- Existing structural tests (updated to new compileProcedure signature)
 
   [ testCase "empty body → single CpsReturn at entry 0" $ do
-      let g = compileProcedure noEnv noInh []
+      let g = compileProcedure noEnv []
       cgEntry g @?= 0
       length (cgNodes g) @?= 1
       case cgNodes g of
@@ -70,7 +83,7 @@ tests = testGroup "CpsCompile"
 
   , testCase "single BsAssign → assign node + return, entry ≠ 0" $ do
       let stmt = at 10 (BsAssign (lv1 "x") (ExInt "1"))
-          g    = compileProcedure noEnv noInh [stmt]
+          g    = compileProcedure noEnv [stmt]
       length (cgNodes g) @?= 2
       assertBool "entry should be > 0" (cgEntry g > 0)
       case cgNodes g of
@@ -79,7 +92,7 @@ tests = testGroup "CpsCompile"
 
   , testCase "BsCall retrieve with DataWindow type → CpsSuspend retrieve:dw" $ do
       let stmt = at 5 (BsCall retrieveCall)
-          g    = compileProcedure dwEnv noInh [stmt]
+          g    = compileProcedure dwEnv [stmt]
       let suNodes = [ n | n@CpsSuspend {} <- cgNodes g ]
       assertBool "expected at least one CpsSuspend" (not (null suNodes))
       case suNodes of
@@ -88,12 +101,12 @@ tests = testGroup "CpsCompile"
 
   , testCase "BsCall retrieve with DataWindow type → listed in suspensionPoints" $ do
       let stmt = at 5 (BsCall retrieveCall)
-          g    = compileProcedure dwEnv noInh [stmt]
+          g    = compileProcedure dwEnv [stmt]
       assertBool "suspensionPoints should be non-empty" (not (null (cgSuspensionPoints g)))
 
   , testCase "BsCall open → CpsSuspend with effect open" $ do
       let stmt = at 7 (BsCall openCall)
-          g    = compileProcedure noEnv noInh [stmt]
+          g    = compileProcedure noEnv [stmt]
       let suNodes = [ n | n@CpsSuspend {} <- cgNodes g ]
       assertBool "expected CpsSuspend" (not (null suNodes))
       case suNodes of
@@ -102,7 +115,7 @@ tests = testGroup "CpsCompile"
 
   , testCase "pure BsCall → CpsCall (not suspend)" $ do
       let stmt = at 3 (BsCall pureCall)
-          g    = compileProcedure noEnv noInh [stmt]
+          g    = compileProcedure noEnv [stmt]
       let suNodes = [ n | n@CpsSuspend {} <- cgNodes g ]
       let caNodes = [ n | n@CpsCall {} <- cgNodes g ]
       suNodes @?= []
@@ -111,13 +124,13 @@ tests = testGroup "CpsCompile"
   , testCase "BsIf → CpsBranch node" $ do
       let thenS = [at 2 (BsAssign (lv1 "x") (ExInt "1"))]
           stmt  = at 1 (BsIf (IfStmt (ExBool True) thenS [] Nothing))
-          g     = compileProcedure noEnv noInh [stmt]
+          g     = compileProcedure noEnv [stmt]
       let brNodes = [ n | n@CpsBranch {} <- cgNodes g ]
       assertBool "expected CpsBranch" (not (null brNodes))
 
   , testCase "BsAssign on line 42 → 42 appears in sourceMap" $ do
       let stmt = at 42 (BsAssign (lv1 "x") (ExInt "1"))
-          g    = compileProcedure noEnv noInh [stmt]
+          g    = compileProcedure noEnv [stmt]
       let lines_ = map snd (cgSourceMap g)
       assertBool "line 42 should be in sourceMap" (42 `elem` lines_)
 
@@ -127,82 +140,82 @@ tests = testGroup "CpsCompile"
   , testGroup "type-guided classification"
 
     [ testCase "dw.retrieve() with DataWindow type → Suspend" $
-        classifyExpr dwEnv noInh
+        classifyExpr dwEnv
           (ExCall { callee = lv2 "dw" "retrieve", callArgs = [] })
           @?= Suspend
 
     , testCase "dw.retrieve() without type info → Pure (conservative)" $
-        classifyExpr noEnv noInh
+        classifyExpr noEnv
           (ExCall { callee = lv2 "dw" "retrieve", callArgs = [] })
           @?= Pure
 
     , testCase "unknown_var.retrieve() without type info → Pure" $
-        classifyExpr noEnv noInh
+        classifyExpr noEnv
           (ExCall { callee = lv2 "unknown_var" "retrieve", callArgs = [] })
           @?= Pure
 
     , testCase "dw.update() with DataWindow type → Suspend" $
-        classifyExpr dwEnv noInh
+        classifyExpr dwEnv
           (ExCall { callee = lv2 "dw" "update", callArgs = [] })
           @?= Suspend
 
     , testCase "dw.delete() with DataWindow type → Suspend" $
-        classifyExpr dwEnv noInh
+        classifyExpr dwEnv
           (ExCall { callee = lv2 "dw" "delete", callArgs = [] })
           @?= Suspend
 
     , testCase "dw.reset() with DataWindow type → Suspend" $
-        classifyExpr dwEnv noInh
+        classifyExpr dwEnv
           (ExCall { callee = lv2 "dw" "reset", callArgs = [] })
           @?= Suspend
 
     , testCase "dw.settransobject() with DataWindow type → Pure (setup only)" $
-        classifyExpr dwEnv noInh
+        classifyExpr dwEnv
           (ExCall { callee = lv2 "dw" "settransobject", callArgs = [] })
           @?= Pure
 
     , testCase "sqlca.commit() with Transaction type → Suspend" $
-        classifyExpr transEnv noInh
+        classifyExpr transEnv
           (ExCall { callee = lv2 "sqlca" "commit", callArgs = [] })
           @?= Suspend
 
     , testCase "sqlca.rollback() with Transaction type → Suspend" $
-        classifyExpr transEnv noInh
+        classifyExpr transEnv
           (ExCall { callee = lv2 "sqlca" "rollback", callArgs = [] })
           @?= Suspend
 
     , testCase "sqlca.connect() with Transaction type → Suspend" $
-        classifyExpr transEnv noInh
+        classifyExpr transEnv
           (ExCall { callee = lv2 "sqlca" "connect", callArgs = [] })
           @?= Suspend
 
     , testCase "sqlca.disconnect() with Transaction type → Suspend" $
-        classifyExpr transEnv noInh
+        classifyExpr transEnv
           (ExCall { callee = lv2 "sqlca" "disconnect", callArgs = [] })
           @?= Suspend
 
     , testCase "fn_retrievechild() always Suspend (builtin)" $
-        classifyExpr noEnv noInh
+        classifyExpr noEnv
           (ExCall { callee = lv1 "fn_retrievechild", callArgs = [] })
           @?= Suspend
 
     , testCase "open() always Suspend (builtin)" $
-        classifyExpr noEnv noInh
+        classifyExpr noEnv
           (ExCall { callee = lv1 "open", callArgs = [["w_test"]] })
           @?= Suspend
 
     , testCase "opensheet() always Suspend (builtin)" $
-        classifyExpr noEnv noInh
+        classifyExpr noEnv
           (ExCall { callee = lv1 "opensheet", callArgs = [] })
           @?= Suspend
 
     , testCase "close() always Suspend (builtin)" $
-        classifyExpr noEnv noInh
+        classifyExpr noEnv
           (ExCall { callee = lv1 "close", callArgs = [] })
           @?= Suspend
 
     , testCase "datastore receiver treated same as datawindow → Suspend" $
-        classifyExpr (Map.singleton "ds" "datastore") noInh
+        classifyExpr (varEnv "ds" "datastore")
           (ExCall { callee = lv2 "ds" "retrieve", callArgs = [] })
           @?= Suspend
 
@@ -227,94 +240,76 @@ tests = testGroup "CpsCompile"
           @?= "executeSql"
 
     , testCase "InheritGraph: user type inheriting datawindow → Suspend" $
-        let env = Map.singleton "ids_data" "n_cst_ds"
-            inh = Map.singleton "n_cst_ds" "datastore"
-        in classifyExpr env inh
-             (ExCall { callee = lv2 "ids_data" "retrieve", callArgs = [] })
-             @?= Suspend
+        classifyExpr (varEnvInh [("ids_data", "n_cst_ds")] [("n_cst_ds", "datastore")])
+          (ExCall { callee = lv2 "ids_data" "retrieve", callArgs = [] })
+          @?= Suspend
 
     , testCase "InheritGraph: user type NOT inheriting DW → Pure" $
-        let env = Map.singleton "myobj" "n_some_struct"
-            inh = Map.singleton "n_some_struct" "structure"
-        in classifyExpr env inh
-             (ExCall { callee = lv2 "myobj" "retrieve", callArgs = [] })
-             @?= Pure
+        classifyExpr (varEnvInh [("myobj", "n_some_struct")] [("n_some_struct", "structure")])
+          (ExCall { callee = lv2 "myobj" "retrieve", callArgs = [] })
+          @?= Pure
     ]
 
   , testGroup "cross-file InheritGraph"
     [ testCase "two-step chain: my_ds → n_cst_ds → datastore → Suspend" $
-        let env = Map.singleton "my_ds" "n_cst_ds"
-            inh = Map.fromList [("n_cst_ds", "datastore"), ("datastore", "datawindow")]
-        in classifyExpr env inh
-             (ExCall { callee = lv2 "my_ds" "retrieve", callArgs = [] })
-             @?= Suspend
+        classifyExpr (varEnvInh [("my_ds", "n_cst_ds")]
+                                [("n_cst_ds", "datastore"), ("datastore", "datawindow")])
+          (ExCall { callee = lv2 "my_ds" "retrieve", callArgs = [] })
+          @?= Suspend
 
     , testCase "cycle guard: chain with loop does not hang" $
-        let env = Map.singleton "x" "a"
-            inh = Map.fromList [("a", "b"), ("b", "a")]
-        in classifyExpr env inh
-             (ExCall { callee = lv2 "x" "retrieve", callArgs = [] })
-             @?= Pure
+        classifyExpr (varEnvInh [("x", "a")] [("a", "b"), ("b", "a")])
+          (ExCall { callee = lv2 "x" "retrieve", callArgs = [] })
+          @?= Pure
 
     , testCase "deep chain (5 levels): still resolves to datawindow → Suspend" $
-        let env = Map.singleton "deep" "l5"
-            inh = Map.fromList [ ("l5", "l4"), ("l4", "l3")
-                               , ("l3", "l2"), ("l2", "l1")
-                               , ("l1", "datawindow") ]
-        in classifyExpr env inh
-             (ExCall { callee = lv2 "deep" "retrieve", callArgs = [] })
-             @?= Suspend
+        classifyExpr (varEnvInh [("deep", "l5")]
+                                [ ("l5", "l4"), ("l4", "l3"), ("l3", "l2")
+                                , ("l2", "l1"), ("l1", "datawindow") ])
+          (ExCall { callee = lv2 "deep" "retrieve", callArgs = [] })
+          @?= Suspend
 
     , testCase "unknown type not in chain → Pure" $
-        let env = Map.singleton "mystery" "unknown_type"
-            inh = Map.fromList [("n_cst_ds", "datastore")]
-        in classifyExpr env inh
-             (ExCall { callee = lv2 "mystery" "retrieve", callArgs = [] })
-             @?= Pure
+        classifyExpr (varEnvInh [("mystery", "unknown_type")] [("n_cst_ds", "datastore")])
+          (ExCall { callee = lv2 "mystery" "retrieve", callArgs = [] })
+          @?= Pure
     ]
 
   , testGroup "ExMethodCall classification"
     [ testCase "ExMethodCall with ExLvalue receiver (datawindow) → Suspend" $
-        let env = Map.singleton "dw" "datawindow"
-        in classifyExpr env noInh
-             (ExMethodCall (ExLvalue (lv1 "dw")) "retrieve" [])
-             @?= Suspend
+        classifyExpr (varEnv "dw" "datawindow")
+          (ExMethodCall (ExLvalue (lv1 "dw")) "retrieve" [])
+          @?= Suspend
 
     , testCase "ExMethodCall with ExLvalue receiver (transaction) → Suspend" $
-        let env = Map.singleton "sqlca" "transaction"
-        in classifyExpr env noInh
-             (ExMethodCall (ExLvalue (lv1 "sqlca")) "commit" [])
-             @?= Suspend
+        classifyExpr (varEnv "sqlca" "transaction")
+          (ExMethodCall (ExLvalue (lv1 "sqlca")) "commit" [])
+          @?= Suspend
 
     , testCase "ExMethodCall with ExCall receiver (single-segment callee in env) → Suspend" $
-        let env = Map.singleton "get_dw" "datawindow"
-        in classifyExpr env noInh
-             (ExMethodCall (ExCall (lv1 "get_dw") []) "retrieve" [])
-             @?= Suspend
+        classifyExpr (varEnv "get_dw" "datawindow")
+          (ExMethodCall (ExCall (lv1 "get_dw") []) "retrieve" [])
+          @?= Suspend
 
     , testCase "ExMethodCall with ExCall receiver (multi-segment callee) → Pure" $
-        let env = Map.singleton "ns_func.get_dw" "datawindow"
-        in classifyExpr env noInh
-             (ExMethodCall (ExCall (lv2 "ns_func" "get_dw") []) "retrieve" [])
-             @?= Pure
+        classifyExpr (varEnv "ns_func.get_dw" "datawindow")
+          (ExMethodCall (ExCall (lv2 "ns_func" "get_dw") []) "retrieve" [])
+          @?= Pure
 
     , testCase "ExMethodCall settransobject on datastore → Pure (setup only)" $
-        let env = Map.singleton "ids" "datastore"
-        in classifyExpr env noInh
-             (ExMethodCall (ExLvalue (lv1 "ids")) "settransobject" [])
-             @?= Pure
+        classifyExpr (varEnv "ids" "datastore")
+          (ExMethodCall (ExLvalue (lv1 "ids")) "settransobject" [])
+          @?= Pure
 
     , testCase "ExMethodCall rowscopy on datastore → Suspend" $
-        let env = Map.singleton "ids" "datastore"
-        in classifyExpr env noInh
-             (ExMethodCall (ExLvalue (lv1 "ids")) "rowscopy" [])
-             @?= Suspend
+        classifyExpr (varEnv "ids" "datastore")
+          (ExMethodCall (ExLvalue (lv1 "ids")) "rowscopy" [])
+          @?= Suspend
 
     , testCase "ExMethodCall describe on datawindow → Pure (read-only)" $
-        let env = Map.singleton "dw" "datawindow"
-        in classifyExpr env noInh
-             (ExMethodCall (ExLvalue (lv1 "dw")) "describe" [])
-             @?= Pure
+        classifyExpr (varEnv "dw" "datawindow")
+          (ExMethodCall (ExLvalue (lv1 "dw")) "describe" [])
+          @?= Pure
     ]
 
   -- ------------------------------------------------------------------
@@ -324,7 +319,7 @@ tests = testGroup "CpsCompile"
 
     [ testCase "BsAugAssign add emits CpsAssign with ExBinOp BopAdd" $ do
         let stmt = at 5 (BsAugAssign ["x"] AugAdd ["y"])
-            g    = compileProcedure noEnv noInh [stmt]
+            g    = compileProcedure noEnv [stmt]
             assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
         assertBool "expected CpsAssign for BsAugAssign" (not (null assignNodes))
         case assignNodes of
@@ -337,7 +332,7 @@ tests = testGroup "CpsCompile"
 
     , testCase "BsAugAssign sub emits CpsAssign with ExBinOp BopSub" $ do
         let stmt = at 5 (BsAugAssign ["x"] AugSub ["y"])
-            g    = compileProcedure noEnv noInh [stmt]
+            g    = compileProcedure noEnv [stmt]
             assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
         assertBool "expected CpsAssign for BsAugAssign sub" (not (null assignNodes))
         case assignNodes of
@@ -348,7 +343,7 @@ tests = testGroup "CpsCompile"
 
     , testCase "BsInc emits CpsAssign with ExBinOp BopAdd ExInt 1" $ do
         let stmt = at 3 (BsInc ["i"])
-            g    = compileProcedure noEnv noInh [stmt]
+            g    = compileProcedure noEnv [stmt]
             assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
         assertBool "expected CpsAssign for BsInc" (not (null assignNodes))
         case assignNodes of
@@ -359,13 +354,24 @@ tests = testGroup "CpsCompile"
 
     , testCase "BsDec emits CpsAssign with ExBinOp BopSub ExInt 1" $ do
         let stmt = at 3 (BsDec ["i"])
-            g    = compileProcedure noEnv noInh [stmt]
+            g    = compileProcedure noEnv [stmt]
             assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
         assertBool "expected CpsAssign for BsDec" (not (null assignNodes))
         case assignNodes of
           (n:_) -> do
             anVar n @?= "i"
             anRhs n @?= ExBinOp { lhs = ExLvalue (lv1 "i"), op = BopSub, rhs = ExInt "1" }
+          [] -> assertBool "no CpsAssign emitted" False
+
+    , testCase "BsDestroy emits CpsAssign with ExNull (Plan 115 item 1)" $ do
+        let stmt = at 4 (BsDestroy (lv1 "obj"))
+            g    = compileProcedure noEnv [stmt]
+            assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
+        assertBool "expected CpsAssign for BsDestroy" (not (null assignNodes))
+        case assignNodes of
+          (n:_) -> do
+            anVar n @?= "obj"
+            anRhs n @?= ExNull
           [] -> assertBool "no CpsAssign emitted" False
     ]
 
@@ -376,14 +382,14 @@ tests = testGroup "CpsCompile"
 
     [ testCase "BsExit outside loop falls through (no CpsGoto)" $ do
         let stmt = at 1 BsExit
-            g    = compileProcedure noEnv noInh [stmt]
+            g    = compileProcedure noEnv [stmt]
             gotos = [ n | n@CpsGoto {} <- cgNodes g ]
         gotos @?= []
 
     , testCase "BsExit inside for loop emits CpsGoto to exit PC" $ do
         let exitStmt = at 2 BsExit
             forStmt  = at 1 (BsFor (ForStmt (lv1 "i") (ExInt "1") (ExInt "10") Nothing [exitStmt]))
-            g        = compileProcedure noEnv noInh [forStmt]
+            g        = compileProcedure noEnv [forStmt]
             nodes    = cgNodes g
             gotos    = [ n | n@CpsGoto {} <- nodes ]
         assertBool "expected CpsGoto for BsExit" (not (null gotos))
@@ -396,7 +402,7 @@ tests = testGroup "CpsCompile"
     , testCase "BsContinue inside for loop emits CpsGoto to increment PC" $ do
         let contStmt = at 2 BsContinue
             forStmt  = at 1 (BsFor (ForStmt (lv1 "i") (ExInt "1") (ExInt "10") Nothing [contStmt]))
-            g        = compileProcedure noEnv noInh [forStmt]
+            g        = compileProcedure noEnv [forStmt]
             nodes    = cgNodes g
             gotos    = [ n | n@CpsGoto {} <- nodes ]
         assertBool "expected CpsGoto for BsContinue" (not (null gotos))
@@ -409,7 +415,7 @@ tests = testGroup "CpsCompile"
     , testCase "BsContinue inside do-while loop emits CpsGoto to branch PC" $ do
         let contStmt = at 2 BsContinue
             doStmt   = at 1 (BsDo (DoStmt (Just (DoWhile (ExBool True))) [contStmt] Nothing))
-            g        = compileProcedure noEnv noInh [doStmt]
+            g        = compileProcedure noEnv [doStmt]
             nodes    = cgNodes g
             gotos    = [ n | n@CpsGoto {} <- nodes ]
         assertBool "expected CpsGoto for BsContinue in do loop" (not (null gotos))
@@ -427,7 +433,7 @@ tests = testGroup "CpsCompile"
 
     [ testCase "exprArgs: single-token arg becomes ExLvalue" $ do
         let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["w_test"]] }))
-            g    = compileProcedure noEnv noInh [stmt]
+            g    = compileProcedure noEnv [stmt]
             sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
           [s] -> suArgs s @?= [ExLvalue (lv1 "w_test")]
@@ -435,7 +441,7 @@ tests = testGroup "CpsCompile"
 
     , testCase "exprArgs: multi-token arg becomes ExRaw not split into separate args" $ do
         let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [["a", "+", "1"]] }))
-            g    = compileProcedure noEnv noInh [stmt]
+            g    = compileProcedure noEnv [stmt]
             sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
           [s] -> do
@@ -451,7 +457,7 @@ tests = testGroup "CpsCompile"
               { callee   = lv1 "open"
               , callArgs = [["a", "+", "1"], ["b"]]
               }))
-            g   = compileProcedure noEnv noInh [stmt]
+            g   = compileProcedure noEnv [stmt]
             sus = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
           [s] -> length (suArgs s) @?= 2

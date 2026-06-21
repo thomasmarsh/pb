@@ -22,7 +22,8 @@ import PB.Lexing.Splitter   (Statement (..), splitStatements)
 import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
 import PB.Pipeline.PrettyPrint (prettyBodyStmts)
 import PB.Pipeline.CfgBuild    (buildCfg)
-import PB.Pipeline.CpsCompile  (InheritGraph, TypeEnv, compileProcedure)
+import PB.Pipeline.CpsCompile  (compileProcedure)
+import PB.Pipeline.TypeEnv     (TypeEnv, buildWorkspaceTypeEnv, withProcScope)
 import PB.Pipeline.Dataflow    qualified as Dataflow
 import PB.Pipeline.Taint       qualified as Taint
 import PB.Pipeline.Serialise   ()
@@ -49,7 +50,6 @@ import PB.Pipeline.TypeResolve
   , resolveTypes, resolveCalls
   , parseParams
   )
-import PB.AST.Type          (renderPbType)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import PB.Pipeline.Walk    (walkAllSrFiles)
@@ -116,7 +116,8 @@ runProject path _src = Right $ object
 runPowerScript :: FilePath -> Text -> Either Text Value
 runPowerScript path src = do
   (srFile, spans) <- parsePowerScriptFile src
-  Right (wrapSrFile path srFile spans (buildFileInh srFile))
+  let wsEnv = buildWorkspaceTypeEnv [srFile]
+  Right (wrapSrFile path srFile spans wsEnv)
 
 -- | Parse PowerScript source text to (SrFile, SrSpans).
 parsePowerScriptFile :: Text -> Either Text (SrFile, SrSpans)
@@ -127,39 +128,15 @@ parsePowerScriptFile src = do
   stmts <- collectStatements lexLines
   parseSrFileWithSpans headers stmts
 
--- | Inheritance graph from a single file's type declarations.
-buildFileInh :: SrFile -> InheritGraph
-buildFileInh sf = Map.fromList $
-  [ (T.toLower (tdName (tbDecl tb)), T.toLower (tdAncestor (tbDecl tb)))
-  | tb <- srTypeBlocks sf ]
-  <> case srForward sf of
-       Nothing -> []
-       Just ForwardBlock { fwdTypes = tds } ->
-         [ (T.toLower (tdName td), T.toLower (tdAncestor td)) | td <- tds ]
-
-wrapSrFile :: FilePath -> SrFile -> SrSpans -> InheritGraph -> Value
-wrapSrFile path sf spans inh =
+wrapSrFile :: FilePath -> SrFile -> SrSpans -> TypeEnv -> Value
+wrapSrFile path sf spans wsEnv =
     let (objName, ancestor) = case srTypeBlocks sf of
           (tb:_) -> (tdName (tbDecl tb), Just (tdAncestor (tbDecl tb)))
           []     -> (T.pack path, Nothing)
 
-        -- Type env built from instance variables and the variables block.
-        globalEnv :: TypeEnv
-        globalEnv = Map.fromList $
-          [ (T.toLower (giName gi), T.toLower (giType gi))
-          | gi <- srGlobalInstances sf ]
-          <> case srVariables sf of
-               Nothing -> []
-               Just VariablesBlock { varDecls = ds } ->
-                 [ (T.toLower (vdName d), T.toLower (vdType d)) | d <- ds ]
-
-        -- Per-procedure env from parameter declarations merged with global env.
+        -- Per-procedure env: overlay parsed params on the workspace env.
         procEnv :: Text -> TypeEnv
-        procEnv paramsText =
-          let paramVars = Map.fromList
-                [ (T.toLower n, T.toLower (renderPbType ty))
-                | (n, ty) <- parseParams paramsText ]
-          in Map.union paramVars globalEnv   -- proc-local shadows global
+        procEnv paramsText = withProcScope (parseParams paramsText) wsEnv
 
         injectMeta :: (Int, Int) -> Value -> Value
         injectMeta (start, end) (Object o) =
@@ -181,7 +158,7 @@ wrapSrFile path sf spans inh =
             Object
               $ KM.insert "cfg"      (toJSON (buildCfg body))
               $ KM.insert "dataflow" (toJSON (dataflowProcFlow objName body))
-              $ KM.insert "cpsGraph" (toJSON (compileProcedure env inh body))
+              $ KM.insert "cpsGraph" (toJSON (compileProcedure env body))
               $ o
         injectCompiled _ _ v = v
 
@@ -206,9 +183,9 @@ wrapSrFile path sf spans inh =
         , "variables"       .= srVariables sf
         , "globalInstances" .= srGlobalInstances sf
         , "typeBlocks"      .= srTypeBlocks sf
-        , "onBlocks"    .= [ injectAll globalEnv        (obBody ob) sp (toJSON ob)
+        , "onBlocks"    .= [ injectAll wsEnv                             (obBody ob) sp (toJSON ob)
                            | (sp, ob) <- zip (spOnBlocks    spans) (srOnBlocks    sf) ]
-        , "events"      .= [ injectAll globalEnv        (evBody ev) sp (toJSON ev)
+        , "events"      .= [ injectAll wsEnv                             (evBody ev) sp (toJSON ev)
                            | (sp, ev) <- zip (spEvents      spans) (srEvents      sf) ]
         , "functions"   .= [ injectAll (procEnv (fnsParams (fbSig fn))) (fbBody fn) sp (toJSON fn)
                            | (sp, fn) <- zip (spFunctions   spans) (srFunctions   sf) ]
@@ -503,23 +480,21 @@ parseOutcome src = case fileKind src of
           Right (sf, sp) -> PsParsed (ParsedFile src sf sp)
   _ -> pure (OtherFile src)
 
--- | Pass 3 (pure): compile one parsed PowerScript file with the global
--- inheritance graph. File-local types fill any gaps not covered by globalInh.
-compileParsed :: InheritGraph -> ParsedFile -> Value
-compileParsed globalInh pf =
-  wrapSrFile (pfPath pf) (pfSrFile pf) (pfSpans pf)
-             (Map.union globalInh (buildFileInh (pfSrFile pf)))
+-- | Pass 3 (pure): compile one parsed PowerScript file with the workspace env.
+compileParsed :: TypeEnv -> ParsedFile -> Value
+compileParsed wsEnv pf =
+  wrapSrFile (pfPath pf) (pfSrFile pf) (pfSpans pf) wsEnv
 
 -- | Pass 4: write one file's JSON output and return its manifest entry.
-emitOutcome :: InheritGraph -> FilePath -> FilePath -> ParseOutcome -> IO (Maybe ManifestEntry)
-emitOutcome globalInh srcDir outDir outcome = do
+emitOutcome :: TypeEnv -> FilePath -> FilePath -> ParseOutcome -> IO (Maybe ManifestEntry)
+emitOutcome wsEnv srcDir outDir outcome = do
   let src     = outcomeFilePath outcome
       rel     = makeRelative srcDir src
       outPath = outDir </> rel <> ".json"
   createDirectoryIfMissing True (takeDirectory outPath)
   (bytes, mEntry) <- case outcome of
     PsParsed pf ->
-      let v = compileParsed globalInh pf
+      let v = compileParsed wsEnv pf
       in pure (encode v, Just (manifestEntry src v))
     PsFailed _ err ->
       pure ( encode $ object
@@ -552,8 +527,8 @@ runModeFiles srcDir outDir = do
   files    <- walkAllSrFiles srcDir
   outcomes <- mapM parseOutcome files                            -- Pass 1
   let parsed = [pf | PsParsed pf <- outcomes]
-      allInh = buildInheritsMap (map pfSrFile parsed)           -- Pass 2
-  entries  <- mapM (emitOutcome allInh srcDir outDir) outcomes  -- Pass 3+4
+      wsEnv  = buildWorkspaceTypeEnv (map pfSrFile parsed)      -- Pass 2
+  entries  <- mapM (emitOutcome wsEnv srcDir outDir) outcomes   -- Pass 3+4
   writeResolution outDir [(pfPath pf, pfSrFile pf) | pf <- parsed]  -- Pass 5
   writeDataflowAnalysis outDir parsed                               -- Pass 6 (111d-1)
   writeTaintAnalysis outDir parsed                                     -- Pass 7 (111d-2)
