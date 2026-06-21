@@ -11,8 +11,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pb_cli.core.type_resolution import parse_params
 from pb_cli.data import get_free_function_sigs
+
+
+def parse_params(params_text: str) -> list[tuple[str, str]]:
+    """Parse ``"ref datawindow adw , long row"`` into ``[("adw", "datawindow"), ...]``."""
+    if not params_text or not params_text.strip():
+        return []
+    result: list[tuple[str, str]] = []
+    for segment in params_text.split(","):
+        segment = segment.strip()
+        if not segment:
+            continue
+        parts = segment.rsplit(None, 1)
+        if len(parts) == 2:
+            _mods_type, name = parts
+            type_words = _mods_type.split()
+            if type_words:
+                ptype = type_words[-1]
+                result.append((name, ptype))
+    return result
 
 # Param name lists for free functions, keyed by lowercase function name.
 _FREE_PARAMS: dict[str, list[str]] = {

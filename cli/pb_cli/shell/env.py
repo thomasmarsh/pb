@@ -158,7 +158,7 @@ class StorageEnv:
     count_sql_parse_failures: Callable[[Conn], int] = field(default=count_sql_parse_failures)
     insert_parse_errors: Callable[[Conn, list[ParseErrorRow]], None] = field(default=insert_parse_errors)
     compute_metrics: Callable[[Conn, AnalyzeProgress], None] = field(default=compute_metrics)
-    build_type_tables: Callable[[Conn], None] = field(default=build_type_tables)
+    build_type_tables: Callable[[Conn, Path | None], None] = field(default=build_type_tables)
     build_dataflow_tables: Callable[[Conn], None] = field(default=build_dataflow_tables)
     build_interproc_tables: Callable[[Conn], None] = field(default=build_interproc_tables)
     build_taint_tables: Callable[[Conn, Path | None], None] = field(default=build_taint_tables)

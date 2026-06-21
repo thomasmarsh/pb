@@ -94,7 +94,7 @@ def run(
         progress.start_step("compute metrics")
         env.storage.compute_metrics(conn, progress)
         progress.start_step("build type tables")
-        env.storage.build_type_tables(conn)
+        env.storage.build_type_tables(conn, runner_out_dir)
         progress.start_step("build dataflow tables")
         env.storage.build_dataflow_tables(conn)
         progress.start_step("build interproc tables")

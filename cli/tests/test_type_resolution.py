@@ -384,37 +384,46 @@ def test_user_proc_return_type_none():
 
 
 def test_build_type_tables_integration(tmp_path):
+    """Import Haskell-produced JSON into DuckDB and verify contents."""
     db = str(tmp_path / "test.duckdb")
+    # Create Haskell-produced JSON fixtures
+    (tmp_path / "resolved_types.json").write_text(json.dumps([
+        {"file": "f.srw", "object": "w_test", "procName": "of_init",
+         "varName": "ls_name", "rawType": "string", "kind": "primitive",
+         "target": None, "isParam": False, "scopeLine": 5},
+    ]))
+    (tmp_path / "resolved_calls.json").write_text(json.dumps([
+        {"file": "f.srw", "object": "w_test", "fromProc": "of_init",
+         "toName": "nvo_utils.of_parse", "callType": "ExCall",
+         "line": 8, "targetObject": "nvo_utils", "targetProc": "of_parse",
+         "kind": "static", "confidence": "high"},
+    ]))
+    (tmp_path / "global_vars.json").write_text(json.dumps([]))
+
     with db_connection(db) as conn:
         create_schema(conn)
-        conn.execute(
-            "INSERT INTO objects VALUES (?,?,?,?,?,?,?)",
-            ("f.srw", "w_test", "powerscript", None, None, None, None),
-        )
-        conn.execute(
-            "INSERT INTO objects VALUES (?,?,?,?,?,?,?)",
-            ("f.srw", "nvo_utils", "powerscript", None, None, None, None),
-        )
-        conn.execute(
-            "INSERT INTO procedures (file, object, proc_type, name, modifiers, params, return_type, start_line, end_line, body_json, source_rendered, cyclomatic) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("f.srw", "w_test", "function", "of_init", None, None, None, 1, 10, "[]", "", 1),
-        )
-        conn.execute(
-            "INSERT INTO local_variables VALUES (?,?,?,?,?,?)",
-            ("f.srw", "w_test", "of_init", "ls_name", "string", 5),
-        )
-        conn.execute(
-            "INSERT INTO calls VALUES (?,?,?,?,?)",
-            ("f.srw", "w_test", "of_init", "nvo_utils.of_parse", "ExCall"),
-        )
-
-        build_type_tables(conn)
+        build_type_tables(conn, tmp_path)
 
         types = conn.execute("SELECT resolved_kind, COUNT(*) FROM resolved_types GROUP BY resolved_kind").fetchall()
         assert dict(types) == {"primitive": 1}
 
         calls = conn.execute("SELECT resolution_kind FROM resolved_calls").fetchall()
         assert calls[0][0] == "static"
+
+
+def test_build_type_tables_none_out_dir():
+    """build_type_tables with no out_dir clears tables."""
+    db = ":memory:"
+    with db_connection(db) as conn:
+        create_schema(conn)
+        conn.execute(
+            "INSERT INTO resolved_types VALUES (?,?,?,?,?,?,?,?,?)",
+            ("f.srw", "w_test", "of_init", "x", "string", "primitive", None, False, 1),
+        )
+        build_type_tables(conn, None)
+        row = conn.execute("SELECT COUNT(*) FROM resolved_types").fetchone()
+        assert row is not None
+        assert row[0] == 0
 
 
 # ── extract_global_vars ───────────────────────────────────────────────────────
