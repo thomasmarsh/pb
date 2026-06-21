@@ -26,11 +26,11 @@ PB_SQL_MOCK=1 uv run pb explore  # Run explorer with mock SQL (no MySQL needed)
    user sets priority; confirm the charter matches the top unfinished item. Do
    not start work from `git status` alone.
 2. **If the charter references a plan number** (e.g. "plan 111a"), read that
-   plan file in `doc/plan/` *before* touching `git`, glob, or any source. Plan
+   plan file in `doc/plan/` _before_ touching `git`, glob, or any source. Plan
    files are the source of truth for scope, prerequisites, and the exact
    verify steps. They are gitignored (see below), so `git status` will never
    tell you they were updated.
-3. **`doc/plan/` is gitignored.** Plan files, BACKLOG, and STRATEGY are *not*
+3. **`doc/plan/` is gitignored.** Plan files, BACKLOG, and STRATEGY are _not_
    committed — they live only on disk. Grooming edits to them are real work
    but will never appear in a commit; the commit only carries code + tests.
 
@@ -65,7 +65,7 @@ Infer the charter from the user's intent. If ambiguous, ask before reading any c
 - Same root cause as the current fix → fix it in this session (it is within charter)
 - Different root cause → one-line entry in `doc/plan/BACKLOG.md`; continue with the current charter
 
-**Primary failures hide secondary failures.** Corpus error counts are keyed on the *first* failing line per file. A dominant failure mode can mask other bugs in the same file. Fix the primary mode, rerun the corpus check, then re-categorize the remaining errors before drawing conclusions.
+**Primary failures hide secondary failures.** Corpus error counts are keyed on the _first_ failing line per file. A dominant failure mode can mask other bugs in the same file. Fix the primary mode, rerun the corpus check, then re-categorize the remaining errors before drawing conclusions.
 
 **Stop condition.** Charter goal met + `cabal test` passes → stop. Do not pick up the next visible problem.
 
@@ -132,7 +132,7 @@ the `"tag"` value on every node is the **literal Haskell constructor name** — 
   `stripCamelCasePrefix` (`callArgs` → `args`, `ifThen` → `then`, `forBody` → `body`, etc).
 - Every body statement is `Located BodyStmt`, serialized as **`{"line": Int, "node": {...}}`** —
   always unwrap `"node"` to reach the tagged value, at every nesting level (top-level statements
-  *and* everything inside `then`/`elseIfs`/`else`/`body`/`clauses`).
+  _and_ everything inside `then`/`elseIfs`/`else`/`body`/`clauses`).
 
 Do not hand-roll a walker that special-cases field names per constructor — it is fragile to
 exactly this kind of schema drift (this bit us once: see BACKLOG's `pb index` SQL-extraction
@@ -181,12 +181,14 @@ A proposal must name:
 
 ### Stage 2 — Failing Tests
 
-Write tests first with real assertions expressing the correct behaviour. The tests must fail because the production code is wrong or absent — not because the test itself is a placeholder. Verify:
+Write tests first with real assertions expressing the correct behaviour. The tests must fail because the production code is wrong — not because the test itself is a placeholder. An import error is not a valid red phase for a TDD test. Verify:
 
 ```text
 cabal build --enable-tests   # must compile cleanly
 cabal test                   # tests must appear and fail, not error/crash
 ```
+
+Similar for pnpm and pytest.
 
 Do not proceed until tests are failing for the right reason.
 
@@ -284,7 +286,11 @@ import { renderWindow } from "../../src/core/render-window.js";
 
 // 1. Create mock env with controlled data
 const mockEnv = createMockRuntimeEnv({
-  misth_zpkrat: { rows: [{ kodkrat: "01" }], rowcount: 1, columns: ["kodkrat"] },
+  misth_zpkrat: {
+    rows: [{ kodkrat: "01" }],
+    rowcount: 1,
+    columns: ["kodkrat"],
+  },
 });
 
 // 2. Set up store with mock env
@@ -299,7 +305,11 @@ ts.receive({ tag: "sql-result", dwName: "dw", rows: MOCK_ROWS });
 expect(ts.getState().controlValues["dw"]).toHaveLength(1);
 
 // 5. Render and assert on logical structure
-const rendered = renderWindow(ast, ts.getState().controlValues, ts.getState().variables);
+const rendered = renderWindow(
+  ast,
+  ts.getState().controlValues,
+  ts.getState().variables,
+);
 expect(rendered.dataWindows[0]!.rows).toHaveLength(1);
 ```
 
@@ -367,7 +377,7 @@ and fires an actual HTTP request against a non-running server in tests — causi
 function MyComponent() {
   const [data, setData] = createSignal(null);
   onMount(async () => {
-    const r = await fetch("/api/my-endpoint");  // ❌
+    const r = await fetch("/api/my-endpoint"); // ❌
     setData(await r.json());
   });
 }
@@ -475,8 +485,13 @@ const env: DatawindowsEnv = {
   getDwLayout: () => Effect.send(MOCK_DW_FILE),
 };
 const ts = createTestStore(datawindowsReducer, env, initialDatawindowsState);
-ts.send({ tag: "select", name: "my_dw" }, (s) => { s.dwDetail = null; s.dwLayout = null; });
-ts.receive({ tag: "layout-loaded", data: MOCK_DW_FILE }, (s) => { s.dwLayout = MOCK_DW_FILE; });
+ts.send({ tag: "select", name: "my_dw" }, (s) => {
+  s.dwDetail = null;
+  s.dwLayout = null;
+});
+ts.receive({ tag: "layout-loaded", data: MOCK_DW_FILE }, (s) => {
+  s.dwLayout = MOCK_DW_FILE;
+});
 ```
 
 **Component test (for rendering testing):** pre-populate state; no env override needed:
@@ -528,39 +543,39 @@ The parser specification is in `doc/spec.md` — consult it first for any questi
 Every distinct top-level construct found in the 515 non-DataWindow corpus files.
 Mark done/pending as body parsers land.
 
-| Construct                                   | File types          | Status  |
-|---------------------------------------------|---------------------|---------|
-| `forward … end forward`                     | .srw, .sru          | done    |
-| `forward prototypes … end prototypes`       | .srw, .sru          | done    |
-| `type prototypes … end prototypes`          | .srf, .sru          | done    |
-| `prototypes … end prototypes`               | .srf                | done    |
-| `global variables … end variables`          | .srw, .sru          | done    |
-| `type variables … end variables`            | .srw, .sru          | done    |
-| `global type … end type`                    | .srw, .sru          | done    |
-| `public function … end function`            | .srw, .sru          | done    |
-| `protected subroutine … end subroutine`     | .srw, .sru          | done    |
-| `on … end on`                               | .srw, .sru          | done    |
-| `event … end event`                         | .srw, .sru          | done    |
-| `type … end type` (TypeBlock)               | .srw, .sru          | done    |
-| Body: `if … end if`                         | all                 | done    |
-| Body: `choose case … end choose`            | all                 | done    |
-| Body: `for … next`                          | all                 | done    |
-| Body: `do … loop`                           | all                 | done    |
-| Body: `try … catch … end try`               | all                 | pending |
-| Body: embedded SQL                          | .srw, .sru          | pending |
-| Body: assignment / call statements          | all                 | done    |
+| Construct                               | File types | Status  |
+| --------------------------------------- | ---------- | ------- |
+| `forward … end forward`                 | .srw, .sru | done    |
+| `forward prototypes … end prototypes`   | .srw, .sru | done    |
+| `type prototypes … end prototypes`      | .srf, .sru | done    |
+| `prototypes … end prototypes`           | .srf       | done    |
+| `global variables … end variables`      | .srw, .sru | done    |
+| `type variables … end variables`        | .srw, .sru | done    |
+| `global type … end type`                | .srw, .sru | done    |
+| `public function … end function`        | .srw, .sru | done    |
+| `protected subroutine … end subroutine` | .srw, .sru | done    |
+| `on … end on`                           | .srw, .sru | done    |
+| `event … end event`                     | .srw, .sru | done    |
+| `type … end type` (TypeBlock)           | .srw, .sru | done    |
+| Body: `if … end if`                     | all        | done    |
+| Body: `choose case … end choose`        | all        | done    |
+| Body: `for … next`                      | all        | done    |
+| Body: `do … loop`                       | all        | done    |
+| Body: `try … catch … end try`           | all        | pending |
+| Body: embedded SQL                      | .srw, .sru | pending |
+| Body: assignment / call statements      | all        | done    |
 
 ---
 
 ## Module Placement
 
-| Module          | Purpose                                                 |
-| --------------- | ------------------------------------------------------- |
-| `PB.AST.*`      | Data types only — no parsing logic (Located, Expr, BodyStmt, Type, SourceFile, DataWindow) |
-| `PB.Lexing.*`   | Tokenization, layout, string mode                       |
-| `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)     |
+| Module          | Purpose                                                                                                                             |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `PB.AST.*`      | Data types only — no parsing logic (Located, Expr, BodyStmt, Type, SourceFile, DataWindow)                                          |
+| `PB.Lexing.*`   | Tokenization, layout, string mode                                                                                                   |
+| `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)                                                                                 |
 | `PB.Pipeline.*` | Multi-step transformations: Preprocess, Walk, Runner, Serialise, CfgBuild, CpsCompile, Dataflow, Taint, TypeResolve, TypeEnv, PbApi |
-| `PB.Prelude`    | Custom Prelude — no parsing or transformation logic     |
+| `PB.Prelude`    | Custom Prelude — no parsing or transformation logic                                                                                 |
 
 New modules go in the most specific matching directory. If a new layer is needed, propose it in Stage 1.
 
@@ -791,17 +806,17 @@ currentLine      :: FileParser Int  -- llStartLine of the next statement (withou
 ```haskell
 runFile           :: FilePath -> Text -> Either Text Value   -- dispatches on extension via fileKind
 collectStatements :: [LexLine] -> Either Text [Statement]
-wrapSrFile        :: FilePath -> SrFile -> SrSpans -> InheritGraph -> Value
+wrapSrFile        :: FilePath -> SrFile -> SrSpans -> TypeEnv -> Value
 runModeFiles      :: FilePath -> FilePath -> IO ()   -- batch: 7 passes
 runModeJsonl      :: FilePath -> IO ()               -- streaming, no cross-file inh
 writeDataflowAnalysis :: FilePath -> [ParsedFile] -> IO ()  -- Pass 6 → proc_defs.json, proc_uses.json
 writeTaintAnalysis    :: FilePath -> [ParsedFile] -> IO ()  -- Pass 7 → taint_*.json
 -- fileKind: .srd → DataWindow, .srp → Pipeline, .srj → Project, _ → PowerScript
 -- runPowerScript: normalizeText → stripHeaders → tokenize → collectStatements
---                 → parseSrFileWithSpans → wrapSrFile (buildFileInh per file)
+--                 → parseSrFileWithSpans → wrapSrFile; builds buildWorkspaceTypeEnv [srFile] per file
 -- wrapSrFile injects per-procedure: meta (file/object/startLine), source_rendered,
---   cfg (buildCfg), cpsGraph (compileProcedure). TypeEnv/InheritGraph come from
---   instance vars + variables block + the file's own type decls.
+--   cfg (buildCfg), cpsGraph (compileProcedure). Workspace TypeEnv built from all files in
+--   runModeFiles; per-procedure overlay applied via withProcScope (parseParams paramsText) wsEnv.
 -- collectStatements filters empty-token statements and surfaces the first LexError as Left Text
 -- Note: leOffset in a LexError is always 0 (reports initial position state, not error position).
 --       Only llStartLine (leSource e) is meaningful for diagnosis.
@@ -832,13 +847,11 @@ data Cfg      = Cfg      { cfgEntry :: Text, cfgExits :: [Text], cfgBlocks :: [C
 ### `PB.Pipeline.CpsCompile`
 
 ```haskell
--- Pure. compileProcedure :: TypeEnv -> InheritGraph -> [Located BodyStmt] -> CpsGraph
--- TypeEnv = Map Text Text (lowercased var → type); InheritGraph = Map Text Text (child → parent).
-type TypeEnv      = Map.Map Text Text
-type InheritGraph = Map.Map Text Text
+-- Pure. Uses PB.Pipeline.TypeEnv.TypeEnv (the rich record, not a Map Text Text alias).
+-- InheritGraph alias removed (Plan 114) — inheritance is in teUserTypes.
 data CallKind = Pure | Suspend
-classifyExpr :: TypeEnv -> InheritGraph -> Expr -> CallKind
-compileProcedure :: TypeEnv -> InheritGraph -> [Located BodyStmt] -> CpsGraph
+classifyExpr :: TypeEnv -> Expr -> CallKind
+compileProcedure :: TypeEnv -> [Located BodyStmt] -> CpsGraph
 data CpsNode
   = CpsAssign  { anVar :: Text, anRhs :: Expr, anNext :: Int }
   | CpsBranch  { brCond :: Expr, brThenPc :: Int, brElsePc :: Int }
@@ -848,9 +861,7 @@ data CpsNode
   | CpsReturn  { reValue :: Maybe Expr }
   | CpsNop     { npNext :: Int }
 data CpsGraph = CpsGraph { cgNodes :: [CpsNode], cgEntry :: Int, cgSuspensionPoints :: [Int], cgSourceMap :: [(Int, Int)] }
--- NOTE: CpsCompile re-declares its own TypeEnv/InheritGraph type aliases (Text→Text),
---   distinct from PB.Pipeline.TypeEnv's richer TypeEnv record (PbType values).
---   Plan 114 tracks unifying these three environments.
+-- BsDestroy lv emits CpsAssign { anVar = lvHead lv, anRhs = ExNull } (Plan 115 item 1, done in Plan 114 session).
 ```
 
 ### `PB.Pipeline.Dataflow` (Plan 111a)
@@ -896,15 +907,16 @@ buildTaintAnnotations :: Set (Text,Text,Text) -> [TaintSource] -> [TaintSink] ->
 taintAnalysis      :: [ResolvedCallRow] -> [DefRow] -> [UseRow] -> Set Text -> Text -> SrFile -> TaintResult
 ```
 
-### `PB.Pipeline.TypeEnv` (the rich one — PbType values)
+### `PB.Pipeline.TypeEnv`
 
 ```haskell
--- Cross-file type environment with PbType-typed values + user-type inheritance.
+-- Cross-file type environment. Used by CpsCompile + Runner (Plan 114 unified them).
 data TypeEnv = TypeEnv { teVars :: Map Text PbType, teUserTypes :: Map Text Text }
 buildWorkspaceTypeEnv :: [SrFile] -> TypeEnv
-lookupVarType  :: Text -> TypeEnv -> Maybe PbType
-lookupUserType :: Text -> TypeEnv -> Maybe Text
--- Distinct from CpsCompile's Text→Text TypeEnv alias. Plan 114 unifies them.
+lookupVarType    :: Text -> TypeEnv -> Maybe PbType      -- case-insensitive
+lookupUserType   :: Text -> TypeEnv -> Maybe Text        -- case-insensitive
+lookupBaseType   :: Text -> TypeEnv -> Maybe Text        -- resolves var → base type, walks inheritance chain with cycle guard
+withProcScope    :: [(Text, PbType)] -> TypeEnv -> TypeEnv  -- overlay params (shadow globals of same name)
 ```
 
 ### `PB.Pipeline.TypeResolve` (Plan 109 — Pass 5)
