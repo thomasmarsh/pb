@@ -107,22 +107,35 @@ runProject path _src = Right $ object
 
 runPowerScript :: FilePath -> Text -> Either Text Value
 runPowerScript path src = do
+  (srFile, spans) <- parsePowerScriptFile src
+  Right (wrapSrFile path srFile spans (buildFileInh srFile))
+
+-- | Parse PowerScript source text to (SrFile, SrSpans).
+parsePowerScriptFile :: Text -> Either Text (SrFile, SrSpans)
+parsePowerScriptFile src = do
   let logicalLines         = normalizeText src
       (headers, bodyLines) = stripHeaders logicalLines
       lexLines             = tokenize bodyLines
-  stmts          <- collectStatements lexLines
-  (srFile, spans) <- parseSrFileWithSpans headers stmts
-  Right (wrapSrFile path srFile spans)
+  stmts <- collectStatements lexLines
+  parseSrFileWithSpans headers stmts
 
-wrapSrFile :: FilePath -> SrFile -> SrSpans -> Value
-wrapSrFile path sf spans =
+-- | Inheritance graph from a single file's type declarations.
+buildFileInh :: SrFile -> InheritGraph
+buildFileInh sf = Map.fromList $
+  [ (T.toLower (tdName (tbDecl tb)), T.toLower (tdAncestor (tbDecl tb)))
+  | tb <- srTypeBlocks sf ]
+  <> case srForward sf of
+       Nothing -> []
+       Just ForwardBlock { fwdTypes = tds } ->
+         [ (T.toLower (tdName td), T.toLower (tdAncestor td)) | td <- tds ]
+
+wrapSrFile :: FilePath -> SrFile -> SrSpans -> InheritGraph -> Value
+wrapSrFile path sf spans inh =
     let (objName, ancestor) = case srTypeBlocks sf of
           (tb:_) -> (tdName (tbDecl tb), Just (tdAncestor (tbDecl tb)))
           []     -> (T.pack path, Nothing)
 
         -- Type env built from instance variables and the variables block.
-        -- Covers the common case where DW/transaction vars are declared at
-        -- object scope rather than inside individual procedures.
         globalEnv :: TypeEnv
         globalEnv = Map.fromList $
           [ (T.toLower (giName gi), T.toLower (giType gi))
@@ -131,18 +144,6 @@ wrapSrFile path sf spans =
                Nothing -> []
                Just VariablesBlock { varDecls = ds } ->
                  [ (T.toLower (vdName d), T.toLower (vdType d)) | d <- ds ]
-
-        -- Inheritance graph built from this file's type declarations.
-        -- Enables single-step widening (e.g. n_cst_ds → datastore).
-        -- Cross-file widening is Plan 110b.
-        fileInh :: InheritGraph
-        fileInh = Map.fromList $
-          [ (T.toLower (tdName (tbDecl tb)), T.toLower (tdAncestor (tbDecl tb)))
-          | tb <- srTypeBlocks sf ]
-          <> case srForward sf of
-               Nothing -> []
-               Just ForwardBlock { fwdTypes = tds } ->
-                 [ (T.toLower (tdName td), T.toLower (tdAncestor td)) | td <- tds ]
 
         -- Per-procedure env from parameter declarations merged with global env.
         procEnv :: Text -> TypeEnv
@@ -171,7 +172,7 @@ wrapSrFile path sf spans =
         injectCompiled env body (Object o) =
             Object
               $ KM.insert "cfg"      (toJSON (buildCfg body))
-              $ KM.insert "cpsGraph" (toJSON (compileProcedure env fileInh body))
+              $ KM.insert "cpsGraph" (toJSON (compileProcedure env inh body))
               $ o
         injectCompiled _ _ v = v
 
@@ -249,8 +250,6 @@ fmtHexAddr :: Int -> Text
 fmtHexAddr n =
   T.pack [intToDigit ((n `div` d) `mod` 16) | d <- [268435456, 16777216, 1048576, 65536, 4096, 256, 16, 1]]
 
--- Formats up to 16 bytes as xxd-style pairs, padded to 40 chars so the
--- ASCII column stays aligned on short final rows.
 fmtHexSection :: [Word8] -> Text
 fmtHexSection bs = t <> T.replicate (max 0 (40 - T.length t)) " "
   where
@@ -313,32 +312,8 @@ manifestEntry path v = ManifestEntry
   }
 
 -- ---------------------------------------------------------------------------
--- Output modes
+-- Build and write cross-file resolution outputs
 
--- | Parse a PowerScript file's source text to an SrFile without JSON wrapping.
-parseSrFileOnly :: Text -> Either Text SrFile
-parseSrFileOnly src = do
-  let logicalLines         = normalizeText src
-      (headers, bodyLines) = stripHeaders logicalLines
-      lexLines             = tokenize bodyLines
-  stmts        <- collectStatements lexLines
-  (srFile, _)  <- parseSrFileWithSpans headers stmts
-  pure srFile
-
--- | Attempt to parse a PowerScript source file, returning Nothing for DW/error.
-tryParseSrFile :: FilePath -> IO (Maybe (FilePath, SrFile))
-tryParseSrFile src = case fileKind src of
-  PowerScript -> do
-    result <- try (readFile src) :: IO (Either SomeException Text)
-    pure $ case result of
-      Left  _        -> Nothing
-      Right contents ->
-        case parseSrFileOnly (stripBom contents) of
-          Left  _  -> Nothing
-          Right sf -> Just (src, sf)
-  _ -> pure Nothing
-
--- | Build and write resolved_types.json, resolved_calls.json, global_vars.json.
 writeResolution :: FilePath -> [(FilePath, SrFile)] -> IO ()
 writeResolution outDir pairs = do
   let allSfs   = map snd pairs
@@ -359,13 +334,98 @@ writeResolution outDir pairs = do
   BSL.writeFile (outDir </> "resolved_calls.json") (encode rc)
   BSL.writeFile (outDir </> "global_vars.json")    (encode gvs)
 
+-- ---------------------------------------------------------------------------
+-- Three-pass pipeline (runModeFiles)
+--
+-- Pass 1 (parseOutcome)  : parse all PowerScript files; classify others
+-- Pass 2 (runModeFiles)  : build global InheritGraph from all parsed files
+-- Pass 3+4 (emitOutcome) : compile with global env + write JSON output
+--
+-- runModeJsonl is a streaming mode that processes one file at a time and
+-- cannot build a cross-file InheritGraph; it keeps per-file inh via runFile.
+
+data ParsedFile = ParsedFile
+  { pfPath  :: FilePath
+  , pfSrFile :: SrFile
+  , pfSpans :: SrSpans
+  }
+
+data ParseOutcome
+  = PsParsed  ParsedFile
+  | PsFailed  FilePath Text   -- IO or parse error
+  | OtherFile FilePath        -- DataWindow / pipeline / project
+
+outcomeFilePath :: ParseOutcome -> FilePath
+outcomeFilePath (PsParsed pf)   = pfPath pf
+outcomeFilePath (PsFailed fp _) = fp
+outcomeFilePath (OtherFile fp)  = fp
+
+-- | Pass 1: attempt to parse one file.
+parseOutcome :: FilePath -> IO ParseOutcome
+parseOutcome src = case fileKind src of
+  PowerScript -> do
+    readResult <- try (readFile src) :: IO (Either SomeException Text)
+    pure $ case readResult of
+      Left  ex -> PsFailed src (T.pack (show ex))
+      Right contents ->
+        case parsePowerScriptFile (stripBom contents) of
+          Left  err      -> PsFailed src err
+          Right (sf, sp) -> PsParsed (ParsedFile src sf sp)
+  _ -> pure (OtherFile src)
+
+-- | Pass 3 (pure): compile one parsed PowerScript file with the global
+-- inheritance graph. File-local types fill any gaps not covered by globalInh.
+compileParsed :: InheritGraph -> ParsedFile -> Value
+compileParsed globalInh pf =
+  wrapSrFile (pfPath pf) (pfSrFile pf) (pfSpans pf)
+             (Map.union globalInh (buildFileInh (pfSrFile pf)))
+
+-- | Pass 4: write one file's JSON output and return its manifest entry.
+emitOutcome :: InheritGraph -> FilePath -> FilePath -> ParseOutcome -> IO (Maybe ManifestEntry)
+emitOutcome globalInh srcDir outDir outcome = do
+  let src     = outcomeFilePath outcome
+      rel     = makeRelative srcDir src
+      outPath = outDir </> rel <> ".json"
+  createDirectoryIfMissing True (takeDirectory outPath)
+  (bytes, mEntry) <- case outcome of
+    PsParsed pf ->
+      let v = compileParsed globalInh pf
+      in pure (encode v, Just (manifestEntry src v))
+    PsFailed _ err ->
+      pure ( encode $ object
+               [ "file"  .= src
+               , "kind"  .= ("error" :: Text)
+               , "error" .= err ]
+           , Nothing )
+    OtherFile _ -> do
+      readResult <- try (readFile src) :: IO (Either SomeException Text)
+      pure $ case readResult of
+        Left ex ->
+          ( encode $ object
+              [ "file"  .= src
+              , "kind"  .= ("error" :: Text)
+              , "error" .= T.pack (show ex) ]
+          , Nothing )
+        Right contents -> case runFile src (stripBom contents) of
+          Left err ->
+            ( encode $ object
+                [ "file"  .= src
+                , "kind"  .= ("error" :: Text)
+                , "error" .= err ]
+            , Nothing )
+          Right v -> (encode v, Just (manifestEntry src v))
+  BSL.writeFile outPath bytes
+  pure mEntry
+
 runModeFiles :: FilePath -> FilePath -> IO ()
 runModeFiles srcDir outDir = do
-  files   <- walkAllSrFiles srcDir
-  entries <- mapM (processOneFile srcDir outDir) files
+  files    <- walkAllSrFiles srcDir
+  outcomes <- mapM parseOutcome files                            -- Pass 1
+  let parsed = [pf | PsParsed pf <- outcomes]
+      allInh = buildInheritsMap (map pfSrFile parsed)           -- Pass 2
+  entries  <- mapM (emitOutcome allInh srcDir outDir) outcomes  -- Pass 3+4
+  writeResolution outDir [(pfPath pf, pfSrFile pf) | pf <- parsed]
   BSL.writeFile (outDir </> "manifest.json") (encode (catMaybes entries))
-  srPairs <- mapM tryParseSrFile files
-  writeResolution outDir (catMaybes srPairs)
 
 runModeJsonl :: FilePath -> IO ()
 runModeJsonl srcDir = do
@@ -384,27 +444,3 @@ runModeJsonl srcDir = do
                 [ "file" .= src, "kind" .= ("error" :: Text), "error" .= err ]
               Right v   -> encode v
       BSL.putStr (line <> "\n")
-
--- | Parse one file, write its JSON to the mirrored output path, return a
---   manifest entry on success (Nothing on encoding or parse error).
-processOneFile :: FilePath -> FilePath -> FilePath -> IO (Maybe ManifestEntry)
-processOneFile srcDir outDir src = do
-  let rel     = makeRelative srcDir src
-      outPath = outDir </> rel <> ".json"
-  createDirectoryIfMissing True (takeDirectory outPath)
-  readResult <- try (readFile src) :: IO (Either SomeException Text)
-  let (bytes, mEntry) = case readResult of
-        Left ex ->
-          ( encode $ object
-              [ "file" .= src, "kind" .= ("error" :: Text)
-              , "error" .= T.pack (show ex) ]
-          , Nothing )
-        Right contents -> case runFile src contents of
-          Left err ->
-            ( encode $ object
-                [ "file" .= src, "kind" .= ("error" :: Text), "error" .= err ]
-            , Nothing )
-          Right v  -> (encode v, Just (manifestEntry src v))
-  BSL.writeFile outPath bytes
-  pure mEntry
-
