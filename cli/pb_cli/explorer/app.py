@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from scalar_fastapi import get_scalar_api_reference
 
 from pb_cli.explorer.routes import (
     analysis,
@@ -52,6 +53,10 @@ def create_app(db_path: str = "pb.duckdb") -> FastAPI:
     app.include_router(errors.router)
     app.include_router(static.router)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+    @app.get("/api/docs", include_in_schema=False)
+    async def scalar_docs():
+        return get_scalar_api_reference(openapi_url=app.openapi_url, title=app.title)
 
     # SPA catch-all: serve index.html for any non-API, non-static path
     # This must be registered AFTER the API router and static mount
