@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+
 import pytest
 
 
@@ -43,7 +44,7 @@ def test_mock_execute_returns_empty_for_unknown_table() -> None:
 
 
 def test_execute_sql_dispatches_to_mock_in_mock_mode() -> None:
-    from pb_cli.explorer.routes.sql import execute_sql, SqlRequest
+    from pb_cli.explorer.routes.sql import SqlRequest, execute_sql
     body = SqlRequest(sql="SELECT * FROM misth_zpkrat", params=None)
     resp = execute_sql(body)
     assert resp.error is None
