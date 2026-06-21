@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS procedures (
     source_rendered  TEXT,
     cyclomatic       INT,
     cfg_json         TEXT,
-    cps_graph_json   TEXT
+    cps_graph_json   TEXT,
+    dataflow_json    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS calls (

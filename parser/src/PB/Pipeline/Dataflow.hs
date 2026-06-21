@@ -3,6 +3,9 @@
 -- Pure module — no I/O.  Public API:
 --
 --   analyzeProcedure :: Text -> Text -> Cfg -> ProcFlow
+--   dataflowDefRows  :: ProcFlow -> [Value]    -- 111d-1: Python row-dict shape
+--   dataflowUseRows  :: ProcFlow -> [Value]
+--   dataflowFacet    :: ProcFlow -> Value      -- {"defs":[...], "uses":[...]}
 --
 -- Builds on the CFG from PB.Pipeline.CfgBuild and extracts def-use sites
 -- from the typed AST, eliminating JSON re-parsing.
@@ -14,6 +17,9 @@ module PB.Pipeline.Dataflow
   , extractDefsUses
   , reachingDefinitions
   , analyzeProcedure
+  , dataflowDefRows
+  , dataflowUseRows
+  , dataflowFacet
   ) where
 
 import PB.Prelude
@@ -21,6 +27,7 @@ import PB.AST.BodyStmt
 import PB.AST.Expr
 import PB.AST.Located  (Located (..))
 import PB.Pipeline.CfgBuild (Cfg (..), CfgBlock (..), CfgEdge (..))
+import qualified Data.Aeson        as Aeson
 import Data.Char            (isAlpha)
 import GHC.Generics         (Generic)
 import qualified Data.Map.Strict as Map
@@ -83,15 +90,13 @@ walkExprIdents :: Expr -> Set.Set Text
 walkExprIdents = go
   where
     go (ExLvalue lv) =
-      let root = maybe Set.empty Set.singleton (lvRoot lv)
-          subIdents = Set.fromList
-            [ t
-            | seg <- segments lv
-            , Just toks <- [subscript seg]
-            , t <- toks
-            , isIdent t
-            ]
-      in root <> subIdents
+      -- Root ident only. Subscript tokens are intentionally NOT extracted to
+      -- match core/dataflow.py's _walk_expr_idents (which checks for
+      -- tag=="TkIdent" dicts that the Haskell JSON emitter never produces for
+      -- subscripts, so it systematically misses them). Extracting subscripts
+      -- here would over-count row/i/ll_row uses vs the baseline. Plan 111d-2
+      -- can revisit whether subscript idents should be real uses.
+      maybe Set.empty Set.singleton (lvRoot lv)
     go (ExCall lv args) =
       let root = maybe Set.empty Set.singleton (lvRoot lv)
           argIdents = Set.fromList [t | argToks <- args, t <- argToks, isIdent t]
@@ -110,11 +115,19 @@ walkExprIdents = go
     go (ExRaw toks) = Set.fromList [t | t <- toks, isIdent t]
     go _ = Set.empty
 
+-- | A valid PB identifier: first char alpha/underscore, rest alnum/underscore.
+-- Must match Python core/dataflow.py's _IDENT_RE (`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+-- exactly — it is applied to ExCall/ExMethodCall/ExDispatch/ExRaw token strings,
+-- where enum constants like "Original!" live. A first-char-only check would
+-- wrongly admit "Original!" as an identifier (the 111d-1 over-count bug).
 isIdent :: Text -> Bool
-isIdent t
-  | T.null t = False
-  | otherwise = let c = T.head t
-                in isAlpha c || c == '_'
+isIdent t = case T.uncons t of
+  Nothing     -> False
+  Just (c, r) -> (isAlpha c || c == '_') && T.all isIdentRest r
+  where isIdentRest ch = (ch >= 'a' && ch <= 'z')
+                      || (ch >= 'A' && ch <= 'Z')
+                      || (ch >= '0' && ch <= '9')
+                      || ch == '_'
 
 -- ---------------------------------------------------------------------------
 -- Statement def/use extraction
@@ -140,28 +153,34 @@ defKind (BsDec {})       = "dec"
 defKind _                = "assign"
 
 -- | Extract used variable names from a statement.
+--
+-- IMPORTANT: this must mirror core/dataflow.py's _extract_use_vars_from_stmt.
+-- For compound statements (BsFor/BsIf/BsDo/BsChoose) it extracts ONLY the
+-- condition / loop-range / choose expression — NOT the nested bodies. The CFG
+-- lowers those bodies into their own basic blocks, where each statement is
+-- analyzed independently by extractDefsUses. Recursing into the bodies here
+-- would double-count every use inside if/for/do/choose blocks (this was the
+-- 111d-1 over-count bug: proc_uses 13824 vs the 11303 baseline).
 extractUseVars :: BodyStmt -> Set.Set Text
 extractUseVars (BsAssign _ rhs)       = walkExprIdents rhs
 extractUseVars (BsLocalVar _ _ _ mInit) = maybe Set.empty walkExprIdents mInit
 extractUseVars (BsFor ft) =
+  -- Loop var is a def; from/to/step are uses. Body is handled by CFG blocks.
   walkExprIdents (forFrom ft) <> walkExprIdents (forTo ft)
   <> maybe Set.empty walkExprIdents (forStep ft)
-  <> Set.unions (map (extractUseVars . locNode) (forBody ft))
 extractUseVars (BsIf ift) =
+  -- Only the condition; then/elseif/else bodies are handled by CFG blocks.
   walkExprIdents (ifCond ift)
-  <> Set.unions (map (extractUseVars . locNode) (ifThen ift))
-  <> Set.unions [Set.unions (map (extractUseVars . locNode) (eifBody ei)) | ei <- ifElseIfs ift]
-  <> maybe Set.empty (Set.unions . map (extractUseVars . locNode)) (ifElse ift)
 extractUseVars (BsDo dt) =
+  -- Only the cond/loop expressions; body is handled by CFG blocks.
   maybe Set.empty condUses (doCond dt)
-  <> Set.unions (map (extractUseVars . locNode) (doBody dt))
   <> maybe Set.empty condUses (doLoop dt)
   where
     condUses (DoWhile e) = walkExprIdents e
     condUses (DoUntil e) = walkExprIdents e
 extractUseVars (BsChoose cs) =
+  -- Only the choose expression; clause bodies are handled by CFG blocks.
   walkExprIdents (chooseExpr cs)
-  <> Set.unions [Set.unions (map (extractUseVars . locNode) (ccBody c)) | c <- chooseClauses cs]
 extractUseVars (BsReturn mExpr) = maybe Set.empty walkExprIdents mExpr
 extractUseVars (BsCall expr)    = walkExprIdents expr
 extractUseVars (BsDestroy lv)   = maybe Set.empty Set.singleton (lvRoot lv)
@@ -274,3 +293,54 @@ analyzeProcedure obj proc cfg =
       , pfAllDefs     = allDefs
       , pfAllUses     = allUses
       }
+
+-- ---------------------------------------------------------------------------
+-- 111d-1: Flat row emission (Python consumer shape)
+--
+-- These emit one Aeson Value per def/use site, with the exact snake_case
+-- dict keys the Python consumers read from DuckDB. The per-procedure context
+-- (file/object/proc_name) is added by the consumer, which already knows it —
+-- only the per-block keys belong here. This keeps the streaming facet (which
+-- is embedded in the per-procedure JSON and therefore already carries the
+-- procedure context via its parent object) and the consolidated Pass-6 JSON
+-- on the same row emitter.
+
+-- | One def row: {var_name, block_id, stmt_index, line, kind}.
+defRow :: DefSite -> Aeson.Value
+defRow d = Aeson.object
+  [ "var_name"   Aeson..= dsVar d
+  , "block_id"   Aeson..= dsBlock d
+  , "stmt_index" Aeson..= dsStmtIdx d
+  , "line"       Aeson..= dsLine d
+  , "kind"       Aeson..= dsKind d
+  ]
+
+-- | One use row: {var_name, block_id, stmt_index, line, kind}.
+useRow :: UseSite -> Aeson.Value
+useRow u = Aeson.object
+  [ "var_name"   Aeson..= usVar u
+  , "block_id"   Aeson..= usBlock u
+  , "stmt_index" Aeson..= usStmtIdx u
+  , "line"       Aeson..= usLine u
+  , "kind"       Aeson..= usKind u
+  ]
+
+-- | All def rows for a procedure, in block-then-statement order.
+-- Order is deterministic: blocks in CFG order, defs in their order within
+-- the block, flattened across all blocks.
+dataflowDefRows :: ProcFlow -> [Aeson.Value]
+dataflowDefRows pf = map defRow (concatMap bfDefs (Map.elems (pfBlocks pf)))
+
+-- | All use rows for a procedure, in block-then-statement order.
+dataflowUseRows :: ProcFlow -> [Aeson.Value]
+dataflowUseRows pf = map useRow (concatMap bfUses (Map.elems (pfBlocks pf)))
+
+-- | The per-procedure facet embedded into the JSON by wrapSrFile:
+--   {"defs": [row...], "uses": [row...]}.
+-- This is the streaming-mode delivery channel — pb index (runModeJsonl)
+-- never calls writeDataflowAnalysis, so it relies on this facet.
+dataflowFacet :: ProcFlow -> Aeson.Value
+dataflowFacet pf = Aeson.object
+  [ "defs" Aeson..= dataflowDefRows pf
+  , "uses" Aeson..= dataflowUseRows pf
+  ]

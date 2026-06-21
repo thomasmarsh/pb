@@ -1,174 +1,120 @@
-"""Tests for intra-procedural data flow analysis (core/dataflow.py)."""
+"""Tests for the dataflow facet → DuckDB unpacker (shell/dataflow.py).
 
-from pb_cli.core.cfg_builder import build_cfg
-from pb_cli.core.dataflow import analyze_procedure, build_gen_kill
+The analysis itself now lives in Haskell (PB.Pipeline.Dataflow); the Python
+side only unpacks the per-procedure `dataflow` facet that import_file stored
+on the procedures row into the proc_defs / proc_uses tables. These tests
+exercise that unpacking plus the schema migration for existing databases.
+"""
 
-# --- AST construction helpers ------------------------------------------------
+from __future__ import annotations
 
+import json
 
-def _lvalue(name: str) -> dict:
-    return {"segments": [{"name": name, "subscript": None}]}
+from pb_cli.shell.dataflow import build_dataflow_tables
+from pb_cli.shell.db import create_schema, db_connection
 
-
-def _exlvalue(name: str) -> dict:
-    return {"tag": "ExLvalue", "contents": _lvalue(name)}
-
-
-def _exint(val: str = "1") -> dict:
-    return {"tag": "ExInt", "contents": val}
+_COLS = ["file", "object", "proc_name", "var_name", "block_id", "stmt_index", "line", "kind"]
 
 
-def _located(node: dict, line: int) -> dict:
-    return {"line": line, "node": node}
+def _make_facet(defs: list[dict], uses: list[dict]) -> str:
+    return json.dumps({"defs": defs, "uses": uses})
 
 
-def _assign(lhs: str, rhs: dict) -> dict:
-    return {"tag": "BsAssign", "contents": [_lvalue(lhs), rhs]}
+def _insert_procedure(conn, file: str, obj: str, name: str, dataflow_json: str | None) -> None:
+    conn.execute(
+        "INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (file, obj, None, "function", name, None, None, None, None, None, None, "", 1, None, None, dataflow_json),
+    )
 
 
-def _local_var(name: str, type_name: str = "integer") -> dict:
-    return {
-        "tag": "BsLocalVar",
-        "mods": [],
-        "type": {"tag": "PtPrimitive", "contents": type_name},
-        "name": name,
-        "init": None,
-    }
-
-
-def _for_loop(var: str, body: list) -> dict:
-    return {
-        "tag": "BsFor",
-        "contents": {
-            "var": _lvalue(var),
-            "from": _exint("1"),
-            "to": _exlvalue("n"),
-            "step": None,
-            "body": body,
-        },
-    }
-
-
-def _if_stmt(cond: dict, then_body: list, else_body=None) -> dict:
-    return {
-        "tag": "BsIf",
-        "contents": {
-            "cond": cond,
-            "then": then_body,
-            "elseIfs": [],
-            "else": else_body,
-        },
-    }
-
-
-def _excall(fn: str, args: list) -> dict:
-    return {"tag": "ExCall", "callee": _lvalue(fn), "args": args}
-
-
-# --- Tests -------------------------------------------------------------------
-
-
-class TestExtractDefsUses:
-    def test_linear_defs_uses(self):
-        """Linear body: BsLocalVar + BsAssign both produce def sites."""
-        body = [
-            _located(_local_var("x"), 1),
-            _located(_assign("y", _exlvalue("x")), 2),
-        ]
-        cfg = build_cfg(body)
-        block_df = build_gen_kill(cfg, "obj", "proc", "f.srf")
-        all_def_vars = {d.var_name for bd in block_df.values() for d in bd.defs}
-        all_use_vars = {u.var_name for bd in block_df.values() for u in bd.uses}
-        assert "x" in all_def_vars
-        assert "y" in all_def_vars
-        assert "x" in all_use_vars
-
-    def test_bsassign_nested_lhs_root_extracted(self):
-        """Multi-segment lhs like obj.field: root var (obj) is the def."""
-        nested_lhs = {
-            "segments": [
-                {"name": "obj", "subscript": None},
-                {"name": "field", "subscript": None},
-            ]
-        }
-        node = {"tag": "BsAssign", "contents": [nested_lhs, _exint("42")]}
-        body = [_located(node, 1)]
-        cfg = build_cfg(body)
-        block_df = build_gen_kill(cfg, "obj", "proc", "f")
-        all_def_vars = {d.var_name for bd in block_df.values() for d in bd.defs}
-        assert "obj" in all_def_vars
-
-    def test_bslocalvar_in_gen_set(self):
-        """BsLocalVar puts the declared variable into the block's gen set."""
-        body = [_located(_local_var("counter"), 1)]
-        cfg = build_cfg(body)
-        block_df = build_gen_kill(cfg, "obj", "proc", "f")
-        entry_bd = block_df[cfg.entry]
-        assert "counter" in entry_bd.gen
-        assert any(d.kind == "local_var" for d in entry_bd.defs)
-
-    def test_bsfor_loop_var_is_def(self):
-        """BsFor loop variable is extracted as a definition site (kind='for_var')."""
-        for_node = _for_loop("i", [])
-        body = [_located(for_node, 1)]
-        cfg = build_cfg(body)
-        block_df = build_gen_kill(cfg, "obj", "proc", "f")
-        all_def_vars = {d.var_name for bd in block_df.values() for d in bd.defs}
-        assert "i" in all_def_vars, f"loop var 'i' not in defs; got {all_def_vars}"
-
-    def test_bsfor_range_vars_are_uses(self):
-        """BsFor from/to expressions produce use sites for the variables they reference."""
-        for_node = _for_loop("i", [])
-        body = [_located(for_node, 1)]
-        cfg = build_cfg(body)
-        block_df = build_gen_kill(cfg, "obj", "proc", "f")
-        all_use_vars = {u.var_name for bd in block_df.values() for u in bd.uses}
-        assert "n" in all_use_vars, f"'n' (used in 'to' expr) not in uses; got {all_use_vars}"
-
-    def test_bsif_condition_is_use(self):
-        """Variables in BsIf condition appear as use sites (kind='condition')."""
-        if_node = _if_stmt(_exlvalue("flag"), [])
-        body = [_located(if_node, 1)]
-        cfg = build_cfg(body)
-        block_df = build_gen_kill(cfg, "obj", "proc", "f")
-        all_use_vars = {u.var_name for bd in block_df.values() for u in bd.uses}
-        assert "flag" in all_use_vars
-
-    def test_excall_args_idents_extracted(self):
-        """Identifier strings in ExCall args are extracted as use sites."""
-        call_node = {"tag": "BsCall", "contents": _excall("setnull", [["bar"]])}
-        body = [_located(call_node, 1)]
-        cfg = build_cfg(body)
-        block_df = build_gen_kill(cfg, "obj", "proc", "f")
-        all_use_vars = {u.var_name for bd in block_df.values() for u in bd.uses}
-        assert "bar" in all_use_vars, f"arg ident 'bar' not in uses; got {all_use_vars}"
-
-
-class TestReachingDefinitions:
-    def test_def_propagates_through_branch(self):
-        """Definition before an if-branch is visible in both branches and the merge."""
-        body = [
-            _located(_assign("y", _exint("1")), 1),
-            _located(
-                _if_stmt(
-                    _exlvalue("flag"),
-                    [_located(_assign("x", _exint("10")), 3)],
-                ),
-                2,
+def test_build_dataflow_tables_unpacks_facet(tmp_path):
+    """Defs and uses from the facet land in proc_defs / proc_uses with the
+    full 8-key row shape that core/interproc.py and core/slicing.py read."""
+    db = str(tmp_path / "test.duckdb")
+    with db_connection(db) as conn:
+        create_schema(conn)
+        _insert_procedure(
+            conn, "f.srw", "w_obj", "uf_x",
+            _make_facet(
+                defs=[
+                    {"var_name": "li_y", "block_id": "b0", "stmt_index": 0, "line": 3, "kind": "assign"},
+                ],
+                uses=[
+                    {"var_name": "a", "block_id": "b0", "stmt_index": 0, "line": 3, "kind": "rhs"},
+                    {"var_name": "li_y", "block_id": "b0", "stmt_index": 1, "line": 4, "kind": "return"},
+                ],
             ),
-        ]
-        pf = analyze_procedure(body, "obj", "proc", "f")
-        all_reaching = set().union(*pf.reaching_out.values())
-        assert "y" in all_reaching
-        assert "x" in all_reaching
+        )
 
-    def test_multiple_defs_same_var_all_recorded(self):
-        """Two assignments to x in the same block both appear in all_defs."""
-        body = [
-            _located(_assign("x", _exint("1")), 1),
-            _located(_assign("x", _exint("2")), 2),
-        ]
-        pf = analyze_procedure(body, "obj", "proc", "f")
-        assert "x" in pf.all_defs
-        assert len(pf.all_defs["x"]) == 2
-        assert all(d.kind == "assign" for d in pf.all_defs["x"])
+        build_dataflow_tables(conn)
+
+        defs = conn.execute("SELECT * FROM proc_defs ORDER BY var_name").fetchall()
+        uses = conn.execute("SELECT * FROM proc_uses ORDER BY var_name, stmt_index").fetchall()
+
+        assert len(defs) == 1
+        assert defs[0] == ("f.srw", "w_obj", "uf_x", "li_y", "b0", 0, 3, "assign")
+
+        assert len(uses) == 2
+        assert uses[0][:4] == ("f.srw", "w_obj", "uf_x", "a")
+        assert uses[1][:4] == ("f.srw", "w_obj", "uf_x", "li_y")
+        assert uses[1][7] == "return"
+
+
+def test_build_dataflow_tables_skips_null_facet(tmp_path):
+    """Procedures without a dataflow facet (dataflow_json IS NULL) contribute
+    no rows — the WHERE clause filters them before unpacking."""
+    db = str(tmp_path / "test.duckdb")
+    with db_connection(db) as conn:
+        create_schema(conn)
+        _insert_procedure(conn, "f.srw", "w_obj", "uf_empty", None)
+
+        build_dataflow_tables(conn)
+
+        defs_count = conn.execute("SELECT COUNT(*) FROM proc_defs").fetchone()
+        uses_count = conn.execute("SELECT COUNT(*) FROM proc_uses").fetchone()
+        assert defs_count is not None and defs_count[0] == 0
+        assert uses_count is not None and uses_count[0] == 0
+
+
+def test_build_dataflow_tables_adds_column_to_legacy_schema(tmp_path):
+    """Existing databases created before 111d-1 have no dataflow_json column.
+    build_dataflow_tables must add it (ALTER ... ADD COLUMN IF NOT EXISTS)
+    before selecting, mirroring store_resolved_calls' migration pattern."""
+    db = str(tmp_path / "test.duckdb")
+    with db_connection(db) as conn:
+        create_schema(conn)
+        # Simulate a legacy database: drop the new column.
+        conn.execute("ALTER TABLE procedures DROP COLUMN dataflow_json")
+        cols = {r[1] for r in conn.execute("PRAGMA table_info('procedures')").fetchall()}
+        assert "dataflow_json" not in cols
+
+        # The migration must restore it without error.
+        build_dataflow_tables(conn)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info('procedures')").fetchall()}
+        assert "dataflow_json" in cols
+
+        count = conn.execute("SELECT COUNT(*) FROM proc_defs").fetchone()
+        assert count is not None
+        assert count[0] == 0
+
+
+def test_build_dataflow_tables_row_keys_match_consumer_shape(tmp_path):
+    """The 8 columns must exactly match what interproc.py:237 and
+    slicing.py:53 read by dict key — drift here breaks both consumers."""
+    db = str(tmp_path / "test.duckdb")
+    with db_connection(db) as conn:
+        create_schema(conn)
+        _insert_procedure(
+            conn, "f.srw", "w_obj", "uf_keys",
+            _make_facet(
+                defs=[{"var_name": "x", "block_id": "b0", "stmt_index": 0, "line": 1, "kind": "local_var"}],
+                uses=[{"var_name": "y", "block_id": "b0", "stmt_index": 0, "line": 1, "kind": "rhs"}],
+            ),
+        )
+
+        build_dataflow_tables(conn)
+
+        def_cols = [r[1] for r in conn.execute("PRAGMA table_info('proc_defs')").fetchall()]
+        use_cols = [r[1] for r in conn.execute("PRAGMA table_info('proc_uses')").fetchall()]
+        assert def_cols == _COLS
+        assert use_cols == _COLS

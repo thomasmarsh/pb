@@ -97,7 +97,7 @@ def _make_proc(file, obj, name, params=None, return_type=None, body_json=None):
         start_line=1, end_line=10,
         body_json=body_json or "[]",
         source_rendered="", cyclomatic=1,
-        cfg_json=None, cps_graph_json=None,
+        cfg_json=None, cps_graph_json=None, dataflow_json=None,
     )
 
 

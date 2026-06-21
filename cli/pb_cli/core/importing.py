@@ -180,6 +180,7 @@ def _proc_row(
         count_branches(body) + 1,
         json.dumps(block["cfg"]) if "cfg" in block else None,
         json.dumps(block["cpsGraph"]) if "cpsGraph" in block else None,
+        json.dumps(block["dataflow"]) if "dataflow" in block else None,
     )
 
 

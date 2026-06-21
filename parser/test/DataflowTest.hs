@@ -8,6 +8,9 @@ import PB.AST.Located      (Located (..))
 import PB.Pipeline.CfgBuild (Cfg (..), CfgBlock (..), CfgEdge (..), buildCfg)
 import PB.Pipeline.Dataflow
 
+import Data.Aeson          (Value (..), (.=), object, toJSON)
+import qualified Data.Aeson.Key    as Key
+import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import Test.Tasty           (TestTree, testGroup)
@@ -38,6 +41,20 @@ mkBlock bid stmts = CfgBlock
 one :: [a] -> a
 one [x] = x
 one _   = error "one: expected single-element list (prior length assertion failed)"
+
+-- | Aeson Value helpers for facet/row assertions (Python consumer shape).
+fieldStr :: Text -> Value -> Value
+fieldStr k (Object m) = fromMaybe Null (KM.lookup (Key.fromText k) m)
+fieldStr _ _          = Null
+
+hasKey :: Text -> Value -> Bool
+hasKey k (Object m) = KM.member (Key.fromText k) m
+hasKey _ _          = False
+
+arrayAt :: Text -> Value -> [Value]
+arrayAt k v = case fieldStr k v of
+  Array xs -> toList xs
+  _        -> []
 
 -- | Make a minimal Cfg with one block.
 mkCfg :: Text -> [CfgBlock] -> [CfgEdge] -> Cfg
@@ -209,5 +226,73 @@ tests = testGroup "Dataflow"
             cfg  = mkCfg "b0" [blk] []
             pf   = analyzeProcedure "obj" "proc" cfg
         in length (Map.findWithDefault [] "x" (pfAllUses pf)) @?= 2
+    ]
+
+  -- -----------------------------------------------------------------------
+  -- 111d-1: per-procedure facet + flat row emission (Python consumer shape)
+  --
+  , testGroup "dataflowRows (111d-1)"
+    [ testCase "dataflowDefRows emits one dict per def with Python keys" $
+        let blk = mkBlock "b0" [at 5 (BsAssign (lv1 "x") (ExInt "1"))]
+            cfg  = mkCfg "b0" [blk] []
+            pf   = analyzeProcedure "obj" "proc" cfg
+            rows = dataflowDefRows pf
+        in do
+          length rows @?= 1
+          let r = one rows
+          fieldStr "var_name"   r @?= String "x"
+          fieldStr "block_id"   r @?= String "b0"
+          fieldStr "stmt_index" r @?= toJSON (0 :: Int)
+          fieldStr "line"       r @?= toJSON (Just (5 :: Int))
+          fieldStr "kind"       r @?= String "assign"
+
+    , testCase "dataflowUseRows emits callee + args for ExCall (3 uses)" $
+        -- Mirrors the 111a invariant: walkExprIdents counts the ExCall callee
+        -- root as a use, so foo(x, y) → {foo, x, y} = 3 uses. This is the
+        -- reason proc_uses = 1162 (not fewer) on the openpay corpus.
+        let blk = mkBlock "b0" [at 9 (BsCall (ExCall (lv1 "foo") [["x", "y"]]))]
+            cfg  = mkCfg "b0" [blk] []
+            pf   = analyzeProcedure "obj" "proc" cfg
+            rows = dataflowUseRows pf
+        in do
+          length rows @?= 3
+          Set.fromList [fieldStr "var_name" r | r <- rows]
+            @?= Set.fromList [String "foo", String "x", String "y"]
+          all (\r -> fieldStr "kind" r == String "call_arg") rows @?= True
+
+    , testCase "dataflowFacet has defs + uses keys with Python row shape" $
+        let blk = mkBlock "b0"
+              [ at 1 (BsLocalVar [] (PtPrimitive "integer") "n" (Just (ExInt "0")))
+              , at 2 (BsAssign (lv1 "y") (ExLvalue (lv1 "n")))
+              ]
+            cfg = mkCfg "b0" [blk] []
+            pf  = analyzeProcedure "obj" "proc" cfg
+            v   = dataflowFacet pf
+        in do
+          assertBool "facet has 'defs' key" (hasKey "defs" v)
+          assertBool "facet has 'uses' key" (hasKey "uses" v)
+          let defs = arrayAt "defs" v
+          length defs @?= 2
+          -- first def is the local var declaration
+          let firstDef = case defs of { (d : _) -> d ; [] -> Null }
+          fieldStr "var_name" firstDef @?= String "n"
+          fieldStr "kind"     firstDef @?= String "local_var"
+
+    , testCase "facet row keys match consumer expectations (no file/object/proc)" $
+        -- The facet rows carry only the per-block keys; file/object/proc_name
+        -- are added by the consumer which already knows them. This matches
+        -- what interproc.py:237 and slicing.py:53 read from DuckDB.
+        let blk = mkBlock "b0" [at 1 (BsAssign (lv1 "x") (ExInt "1"))]
+            cfg = mkCfg "b0" [blk] []
+            pf  = analyzeProcedure "obj" "proc" cfg
+            r   = one (dataflowDefRows pf)
+        in do
+          assertBool "has var_name"   (hasKey "var_name" r)
+          assertBool "has block_id"   (hasKey "block_id" r)
+          assertBool "has stmt_index" (hasKey "stmt_index" r)
+          assertBool "has line"       (hasKey "line" r)
+          assertBool "has kind"       (hasKey "kind" r)
+          assertBool "no file key"    (not (hasKey "file" r))
+          assertBool "no object key"  (not (hasKey "object" r))
     ]
   ]

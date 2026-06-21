@@ -1,14 +1,17 @@
 module RunnerTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.Runner (ManifestEntry (..), manifestEntry, runFile, runModeFiles)
+import PB.Pipeline.Runner (ManifestEntry (..), manifestEntry, runFile, runModeFiles
+                          , writeDataflowAnalysis)
 
-import Data.Aeson (Value (..), eitherDecodeFileStrict', object, (.=))
+import Data.Aeson (Value (..), eitherDecodeFileStrict', eitherDecodeStrict', object, (.=))
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
+import qualified Data.ByteString.Lazy as BSL
+import qualified Data.Set         as Set
 import qualified Data.Text         as T
 
-import System.Directory (createDirectory, getTemporaryDirectory
+import System.Directory (createDirectory, doesFileExist, getTemporaryDirectory
                         , removePathForcibly)
 import System.FilePath  ((</>))
 
@@ -426,5 +429,105 @@ tests = testGroup "Pipeline.Runner"
     , testCase ".srp and .srj extension matching is case-insensitive" $ do
         assertBool ".SRP should stub" (isRight (runFile "X.SRP" ""))
         assertBool ".SRJ should stub" (isRight (runFile "X.SRJ" ""))
+    ]
+
+  -- -----------------------------------------------------------------------
+  -- 111d-1: Pass 6 (writeDataflowAnalysis) + per-procedure dataflow facet
+  --
+
+  , testGroup "dataflow facet (111d-1)"
+    [ testCase "wrapSrFile injects a 'dataflow' facet per procedure" $
+        -- The facet is the streaming-mode delivery channel: pb index runs
+        -- pb-runner --jsonl (runModeJsonl) which never calls writeDataflowAnalysis,
+        -- so the per-procedure JSON must already carry defs/uses via wrapSrFile.
+        let src = T.unlines
+              [ "global type w_df from window"
+              , "end type"
+              , "forward prototypes"
+              , "public function integer uf_add (integer a, integer b)"
+              , "end prototypes"
+              , "global type w_df from window"
+              , "end type"
+              , "type variables"
+              , "end variables"
+              ]
+            -- Body with a def + use so the facet is non-empty.
+            body = T.unlines
+              [ "public function integer uf_add (integer a, integer b)"
+              , "integer li_sum"
+              , "li_sum = a + b"
+              , "return li_sum"
+              , "end function"
+              ]
+        in case runFile "w_df.srw" (src <> body) of
+          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
+          Right v  -> do
+            let fns = lookupObj "functions" v
+            arrayLen fns @?= 1
+            let fn = firstOf fns
+            assertBool "function has dataflow facet"
+              (lookupObj "dataflow" fn /= Null)
+            assertBool "facet has defs list"
+              (arrayLen (lookupObj "defs" (lookupObj "dataflow" fn)) > 0)
+
+    , testCase "runModeFiles writes proc_defs.json + proc_uses.json" $ do
+        -- Pass 6 (batch mode): consolidated JSON for dump/check-corpus consumers.
+        tmpDir <- (\t -> t </> "pb-runner-dataflow-test") <$> getTemporaryDirectory
+        removePathForcibly tmpDir
+        createDirectory tmpDir
+        let fixture = T.unlines
+              [ "global type w_df2 from window"
+              , "end type"
+              , "forward prototypes"
+              , "public function integer uf_x (integer a)"
+              , "end prototypes"
+              , "global type w_df2 from window"
+              , "end type"
+              , "public function integer uf_x (integer a)"
+              , "integer li_y"
+              , "li_y = a"
+              , "return li_y"
+              , "end function"
+              ]
+        writeFile (tmpDir </> "w_df2.srw") fixture
+        runModeFiles tmpDir tmpDir
+        defsBytes <- BSL.readFile (tmpDir </> "proc_defs.json")
+        usesBytes <- BSL.readFile (tmpDir </> "proc_uses.json")
+        removePathForcibly tmpDir
+        case (eitherDecodeStrict' (BSL.toStrict defsBytes)
+              :: Either String [Value],
+              eitherDecodeStrict' (BSL.toStrict usesBytes)
+              :: Either String [Value]) of
+          (Left e, _) -> assertFailure ("proc_defs.json decode error: " <> e)
+          (_, Left e) -> assertFailure ("proc_uses.json decode error: " <> e)
+          (Right defRows, Right useRows) -> do
+            -- li_y assignment + the function is a def; a/li_y are uses.
+            assertBool "proc_defs non-empty" (not (null defRows))
+            assertBool "proc_uses non-empty" (not (null useRows))
+            let rowKeys r = case r of
+                  Object m -> Set.fromList (map Key.toText (KM.keys m))
+                  _        -> Set.empty
+                expectedKeys = Set.fromList
+                  [ "file","object","proc_name","var_name"
+                  , "block_id","stmt_index","line","kind" ]
+            -- Every row carries the exact 8-key consumer shape.
+            assertBool "proc_defs row keys match consumer shape"
+              (all (\r -> rowKeys r == expectedKeys) defRows)
+            assertBool "proc_uses row keys match consumer shape"
+              (all (\r -> rowKeys r == expectedKeys) useRows)
+
+    , testCase "writeDataflowAnalysis writes both files (unit)" $ do
+        -- Direct unit test of the Pass 6 entry point with an empty parsed list.
+        -- Confirms the I/O contract (writes the two files) without needing a
+        -- full corpus on disk.
+        tmpDir <- (\t -> t </> "pb-runner-dfa-unit") <$> getTemporaryDirectory
+        removePathForcibly tmpDir
+        createDirectory tmpDir
+        writeDataflowAnalysis tmpDir []
+        defsExists <- doesFileExist (tmpDir </> "proc_defs.json")
+        usesExists <- doesFileExist (tmpDir </> "proc_uses.json")
+        removePathForcibly tmpDir
+        assertBool "proc_defs.json written" defsExists
+        assertBool "proc_uses.json written" usesExists
     ]
   ]

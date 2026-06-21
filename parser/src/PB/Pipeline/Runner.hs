@@ -4,12 +4,15 @@ module PB.Pipeline.Runner
   , wrapSrFile
   , runModeFiles
   , runModeJsonl
+  , writeDataflowAnalysis
   , ManifestEntry (..)
   , manifestEntry
   ) where
 
 import PB.Prelude
+import PB.AST.BodyStmt   (BodyStmt)
 import PB.AST.DataWindow
+import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.Grammar.DataWindow (parseDataWindow)
 import PB.Grammar.File       (parseSrFileWithSpans, SrSpans (..))
@@ -19,6 +22,7 @@ import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
 import PB.Pipeline.PrettyPrint (prettyBodyStmts)
 import PB.Pipeline.CfgBuild    (buildCfg)
 import PB.Pipeline.CpsCompile  (InheritGraph, TypeEnv, compileProcedure)
+import PB.Pipeline.Dataflow    qualified as Dataflow
 import PB.Pipeline.Serialise   ()
 
 import Data.Aeson          (ToJSON (..), Value (..), encode, object, toJSON, (.=))
@@ -172,9 +176,18 @@ wrapSrFile path sf spans inh =
         injectCompiled env body (Object o) =
             Object
               $ KM.insert "cfg"      (toJSON (buildCfg body))
+              $ KM.insert "dataflow" (toJSON (dataflowProcFlow objName body))
               $ KM.insert "cpsGraph" (toJSON (compileProcedure env inh body))
               $ o
         injectCompiled _ _ v = v
+
+        -- 111d-1: per-procedure dataflow facet. objName comes from the
+        -- enclosing wrapSrFile scope; the proc name is omitted (the consumer
+        -- adds file/object/proc_name from the parent procedures row). This
+        -- facet is the streaming-mode delivery channel — pb index runs
+        -- pb-runner --jsonl (runModeJsonl) which never calls writeDataflowAnalysis.
+        dataflowProcFlow obj body =
+            Dataflow.dataflowFacet (Dataflow.analyzeProcedure obj "" (buildCfg body))
 
         injectAll env body sp v =
             injectCompiled env body (injectRendered body (injectMeta sp v))
@@ -335,6 +348,79 @@ writeResolution outDir pairs = do
   BSL.writeFile (outDir </> "global_vars.json")    (encode gvs)
 
 -- ---------------------------------------------------------------------------
+-- Pass 6 (111d-1): intra-procedural dataflow → proc_defs.json / proc_uses.json
+--
+-- Drives PB.Pipeline.Dataflow.analyzeProcedure over every procedure body in
+-- the workspace and emits consolidated JSON for batch consumers (dump,
+-- check-corpus). Rows carry the full 8-key consumer shape:
+--   [file, object, proc_name, var_name, block_id, stmt_index, line, kind]
+-- This is the same shape the Python side inserts into DuckDB and the shape
+-- core/interproc.py + core/slicing.py read by dict key.
+--
+-- The per-procedure JSON written by wrapSrFile already carries a "dataflow"
+-- facet (the streaming-mode delivery channel); this pass consolidates those
+-- per-procedure results into the two flat arrays the batch consumers expect.
+
+-- | (obj, procName, body) triples for every procedure in a file.
+procBodies :: Text -> SrFile -> [(Text, Text, [Located BodyStmt])]
+procBodies obj sf =
+     [ (obj, fnsName (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
+  <> [ (obj, ssName  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
+  <> [ (obj, esName  (evSig ev), evBody ev) | ev <- srEvents      sf ]
+  <> [ (obj, obEvent ob,         obBody ob) | ob <- srOnBlocks    sf ]
+
+-- | Emit one full-shape def row (8 keys).
+defRowFull :: Text -> Text -> Text -> Dataflow.DefSite -> Value
+defRowFull file obj proc d = object
+  [ "file"       .= file
+  , "object"     .= obj
+  , "proc_name"  .= proc
+  , "var_name"   .= Dataflow.dsVar d
+  , "block_id"   .= Dataflow.dsBlock d
+  , "stmt_index" .= Dataflow.dsStmtIdx d
+  , "line"       .= Dataflow.dsLine d
+  , "kind"       .= Dataflow.dsKind d
+  ]
+
+-- | Emit one full-shape use row (8 keys).
+useRowFull :: Text -> Text -> Text -> Dataflow.UseSite -> Value
+useRowFull file obj proc u = object
+  [ "file"       .= file
+  , "object"     .= obj
+  , "proc_name"  .= proc
+  , "var_name"   .= Dataflow.usVar u
+  , "block_id"   .= Dataflow.usBlock u
+  , "stmt_index" .= Dataflow.usStmtIdx u
+  , "line"       .= Dataflow.usLine u
+  , "kind"       .= Dataflow.usKind u
+  ]
+
+writeDataflowAnalysis :: FilePath -> [ParsedFile] -> IO ()
+writeDataflowAnalysis outDir parsed = do
+  let toObj pf = case srTypeBlocks (pfSrFile pf) of
+        (tb:_) -> tdName (tbDecl tb)
+        []     -> ""
+      -- Analyze every procedure once, yielding (file, obj, proc, ProcFlow).
+      flows = [ (T.pack (pfPath pf), obj, proc, pf')
+              | pf <- parsed
+              , let obj = toObj pf
+              , (_, proc, body) <- procBodies obj (pfSrFile pf)
+              , let pf' = Dataflow.analyzeProcedure obj proc (buildCfg body)
+              ]
+      allDefs = [ defRowFull file obj proc d
+                | (file, obj, proc, pf') <- flows
+                , Dataflow.BlockFlow _ _ _ defs _ <- Map.elems (Dataflow.pfBlocks pf')
+                , d <- defs
+                ]
+      allUses = [ useRowFull file obj proc u
+                | (file, obj, proc, pf') <- flows
+                , Dataflow.BlockFlow _ _ _ _ uses <- Map.elems (Dataflow.pfBlocks pf')
+                , u <- uses
+                ]
+  BSL.writeFile (outDir </> "proc_defs.json") (encode allDefs)
+  BSL.writeFile (outDir </> "proc_uses.json") (encode allUses)
+
+-- ---------------------------------------------------------------------------
 -- Three-pass pipeline (runModeFiles)
 --
 -- Pass 1 (parseOutcome)  : parse all PowerScript files; classify others
@@ -424,7 +510,8 @@ runModeFiles srcDir outDir = do
   let parsed = [pf | PsParsed pf <- outcomes]
       allInh = buildInheritsMap (map pfSrFile parsed)           -- Pass 2
   entries  <- mapM (emitOutcome allInh srcDir outDir) outcomes  -- Pass 3+4
-  writeResolution outDir [(pfPath pf, pfSrFile pf) | pf <- parsed]
+  writeResolution outDir [(pfPath pf, pfSrFile pf) | pf <- parsed]  -- Pass 5
+  writeDataflowAnalysis outDir parsed                               -- Pass 6 (111d-1)
   BSL.writeFile (outDir </> "manifest.json") (encode (catMaybes entries))
 
 runModeJsonl :: FilePath -> IO ()

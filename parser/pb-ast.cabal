@@ -116,6 +116,7 @@ test-suite pb-ast-test
     , hedgehog       >=1.4
     , megaparsec
     , aeson
+    , bytestring  ^>=0.12
     , containers   >=0.6
     , directory    ^>=1.3
     , filepath     >=1.4

@@ -33,7 +33,7 @@ def _fetch_procedures(conn: Conn):
         for r in conn.execute(
             "SELECT file, object, owner, proc_type, name, modifiers, params, return_type, "
             "start_line, end_line, body_json, source_rendered, cyclomatic, "
-            "cfg_json, cps_graph_json "
+            "cfg_json, cps_graph_json, dataflow_json "
             "FROM procedures"
         ).fetchall()
     ]
