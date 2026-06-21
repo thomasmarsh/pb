@@ -90,3 +90,41 @@ def _bulk_insert_global_vars(conn: Conn, out_dir: Path) -> None:
             for r in rows
         ],
     )
+
+
+def build_call_tables(conn: Conn, out_dir: Path | None = None) -> None:
+    """Populate calls and local_variables from Haskell-produced resolved JSON."""
+    conn.execute("DELETE FROM calls")
+    conn.execute("DELETE FROM local_variables")
+
+    if out_dir is None:
+        return
+
+    _bulk_insert_calls(conn, out_dir)
+    _bulk_insert_local_variables(conn, out_dir)
+
+
+def _bulk_insert_calls(conn: Conn, out_dir: Path) -> None:
+    rows = _load_json(out_dir / "resolved_calls.json")
+    if not rows:
+        return
+    bulk_insert(conn, "calls",
+        ["file", "object", "from_proc", "to_name", "call_type"],
+        [
+            (r["file"], r["object"], r["fromProc"], r["toName"], r["callType"])
+            for r in rows
+        ],
+    )
+
+
+def _bulk_insert_local_variables(conn: Conn, out_dir: Path) -> None:
+    rows = _load_json(out_dir / "resolved_types.json")
+    if not rows:
+        return
+    bulk_insert(conn, "local_variables",
+        ["file", "object", "proc_name", "var_name", "var_type"],
+        [
+            (r["file"], r["object"], r["procName"], r["varName"], r["rawType"])
+            for r in rows if not r.get("isParam")
+        ],
+    )

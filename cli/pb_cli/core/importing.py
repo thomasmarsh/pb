@@ -5,11 +5,9 @@ from __future__ import annotations
 import json
 
 from pb_cli.core.ast_walker import (
-    count_branches,
     walk_bsraw_located,
     walk_calls,
     walk_excall_arg_calls,
-    walk_local_vars,
 )
 from pb_cli.core.models import (
     CallRow,
@@ -20,7 +18,6 @@ from pb_cli.core.models import (
     DwRetrieveWhereRow,
     GlobalVarRow,
     InheritsRow,
-    LocalVarRow,
     ObjectRow,
     ParseErrorRow,
     ProcedureRow,
@@ -45,6 +42,37 @@ _SQL_KEYWORDS = {
     "CONNECT",
     "DISCONNECT",
 }
+
+
+def _cfg_cyclomatic(cfg: dict | None) -> int:
+    """Compute cyclomatic complexity from a CFG dict (E - N + 2*P, P = connected components)."""
+    if not cfg or not isinstance(cfg, dict):
+        return 1
+    edges = cfg.get("edges", [])
+    blocks = cfg.get("blocks", [])
+    if not blocks:
+        return 1
+    # Count connected components via BFS on the block graph
+    block_ids = {b.get("id", "") for b in blocks}
+    adj: dict[str, set[str]] = {bid: set() for bid in block_ids}
+    for e in edges:
+        src, dst = e.get("src", ""), e.get("dst", "")
+        if src in adj and dst in adj:
+            adj[src].add(dst)
+            adj[dst].add(src)
+    visited: set[str] = set()
+    components = 0
+    for bid in block_ids:
+        if bid not in visited:
+            components += 1
+            stack = [bid]
+            while stack:
+                node = stack.pop()
+                if node in visited:
+                    continue
+                visited.add(node)
+                stack.extend(adj.get(node, set()) - visited)
+    return len(edges) - len(blocks) + 2 * components
 
 
 def _is_sql(text: str) -> bool:
@@ -105,11 +133,6 @@ def _import_ps(obj: dict, file: str, rows: RowBatch, dialect: str = "oracle") ->
                 if callee:
                     rows["calls"].append(CallRow(file, obj_name, proc_name, callee, "ExCallArg"))
             _extract_sql(file, obj_name, proc_name, row.body_json, dialect, rows)
-            for var_name, var_type in walk_local_vars(body):
-                rows["local_variables"].append(LocalVarRow(
-                    file=file, object=obj_name, proc_name=proc_name,
-                    var_name=var_name, var_type=var_type, start_line=None
-                ))
 
 
 def _extract_sql(
@@ -177,7 +200,7 @@ def _proc_row(
         meta.get("endLine"),
         json.dumps(body),
         block.get("source_rendered", ""),
-        count_branches(body) + 1,
+        _cfg_cyclomatic(block.get("cfg")),
         json.dumps(block["cfg"]) if "cfg" in block else None,
         json.dumps(block["cpsGraph"]) if "cpsGraph" in block else None,
         json.dumps(block["dataflow"]) if "dataflow" in block else None,

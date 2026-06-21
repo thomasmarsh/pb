@@ -2,7 +2,7 @@
 
 import duckdb
 
-from pb_cli.core.ast_walker import count_branches, walk_calls
+from pb_cli.core.ast_walker import walk_calls
 from pb_cli.shell.db import create_schema
 from pb_cli.shell.metrics import (
     compute_dit_from_edges,
@@ -20,33 +20,6 @@ def q(conn, sql: str):
 
 
 # ── unit tests (no db needed) ─────────────────────────────────────────────────
-
-
-def test_count_branches_uses_bs_tags():
-    # Tags in body_json are BsIf/BsFor/BsDo/BsChoose (Haskell constructor names),
-    # not the old short forms 'if'/'for'/'do'/'choose'.
-    bs_if = {
-        "tag": "BsIf",
-        "contents": {
-            "cond": {"tag": "ExBool", "contents": True},
-            "then": [{"tag": "BsReturn", "contents": None}],
-            "elseIfs": [],
-            "else": None,
-        },
-    }
-    assert count_branches([bs_if]) == 1, "BsIf should count as one branch"
-
-    bs_for = {"tag": "BsFor", "contents": {"body": [bs_if]}}
-    assert count_branches([bs_for]) == 2, "BsFor + nested BsIf should count as 2"
-
-    assert count_branches([]) == 0
-
-
-def test_count_branches_old_tags_not_matched():
-    # Regression: old tag names ('if', 'for') must NOT match — they no longer
-    # appear in pb-runner output after the aeson-typescript rewrite.
-    old_if = {"tag": "if", "cond": {}, "then": [], "elseIfs": [], "else": None}
-    assert count_branches([old_if]) == 0, "old 'if' tag must not be counted"
 
 
 def test_walk_calls_ex_call():

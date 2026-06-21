@@ -28,8 +28,6 @@ from pb_cli.core.ast_generated import (
     ProtoDecl,
 )
 
-BRANCH_TAGS = {"BsIf", "BsFor", "BsDo", "BsChoose"}
-
 TaggedNode = Expr | PbType | DoCondition | BodyStmt | ProtoDecl | DwBandKind | DwRetrieveOrRaw
 
 
@@ -64,6 +62,7 @@ def walk_tagged(node: Any, line: int | None = None) -> Iterator[tuple[str, Tagge
 
 
 def walk_calls(node: Any) -> list[tuple[str, str]]:
+    """Extract call names from AST nodes. Used by streaming import path (no JSON files)."""
     results = []
     for tag, n, _line in _walk_tagged_raw(node):
         if tag == "ExCall":
@@ -77,10 +76,6 @@ def walk_calls(node: Any) -> list[tuple[str, str]]:
             name = contents.get("name", "") or n.get("name", "")
             results.append((name, "ExDispatch"))
     return results
-
-
-def count_branches(node: Any) -> int:
-    return sum(1 for tag, _n, _line in _walk_tagged_raw(node) if tag in BRANCH_TAGS)
 
 
 def walk_bsraw(node: Any) -> Iterator[str]:
@@ -129,26 +124,3 @@ def walk_exraw(node: Any) -> Iterator[tuple[str, list[str]]]:
             toks = n.get("contents", [])
             if isinstance(toks, list) and toks:
                 yield toks[0], toks
-
-
-def walk_local_vars(node: Any) -> list[tuple[str, str]]:
-    """Yield (var_name, var_type) for every BsLocalVar anywhere under `node`."""
-    results = []
-    for tag, n, _line in _walk_tagged_raw(node):
-        if tag == "BsLocalVar":
-            name = n.get("name", "")
-            ty = n.get("type", {})
-            if isinstance(ty, dict):
-                type_tag = ty.get("tag", "")
-                if type_tag == "PtAny":
-                    type_str = "any"
-                elif type_tag == "PtDecimalPrec":
-                    prec = ty.get("contents", 0)
-                    type_str = f"decimal{{{prec}}}"
-                else:
-                    type_str = ty.get("contents", "")
-            else:
-                type_str = str(ty)
-            if name and type_str:
-                results.append((name, type_str))
-    return results

@@ -111,6 +111,7 @@ def test_proc_row_cyclomatic_empty_body():
         "sig": {"name": "f_test", "modifiers": [], "params": "", "returnType": "integer"},
         "body": [],
         "source_rendered": "",
+        "cfg": {"blocks": [{"id": "b0"}], "edges": [], "entry": "b0", "exits": ["b0"]},
     }
     row = _proc_row("test.sru", "function", block, [])
     assert row.cyclomatic == 1, f"empty body → cyclomatic=1, got {row.cyclomatic}"
@@ -122,28 +123,49 @@ def test_proc_row_cyclomatic_with_branches():
         {"tag": "BsFor", "contents": {"body": []}},
         {"tag": "BsChoose", "contents": {"expr": {}, "clauses": []}},
     ]
+    # 3 blocks, 3 edges → cyclomatic = E - N + 2 = 3 - 3 + 2 = 2
     block = {
         "meta": {"object": "w_test", "startLine": 1, "endLine": 10},
         "sig": {"name": "f_test", "modifiers": [], "params": "", "returnType": "integer"},
         "body": body,
         "source_rendered": "",
+        "cfg": {
+            "blocks": [{"id": "b0"}, {"id": "b1"}, {"id": "b2"}],
+            "edges": [
+                {"src": "b0", "dst": "b1", "label": "T"},
+                {"src": "b0", "dst": "b2", "label": "F"},
+                {"src": "b1", "dst": "b2", "label": ""},
+            ],
+            "entry": "b0",
+            "exits": ["b2"],
+        },
     }
     row = _proc_row("test.sru", "function", block, body)
-    assert row.cyclomatic == 4, f"3 branches → cyclomatic=4, got {row.cyclomatic}"
+    assert row.cyclomatic == 2, f"E-N+2 = 3-3+2 = 2, got {row.cyclomatic}"
 
 
 def test_proc_row_cyclomatic_nested():
     inner = {"tag": "BsIf", "contents": {"cond": {}, "then": [], "elseIfs": [], "else": None}}
     outer = {"tag": "BsFor", "contents": {"body": [inner]}}
     body = [outer]
+    # 2 blocks, 2 edges → cyclomatic = E - N + 2 = 2 - 2 + 2 = 2
     block = {
         "meta": {"object": "w_test", "startLine": 1, "endLine": 10},
         "sig": {"name": "f_test", "modifiers": [], "params": "", "returnType": "integer"},
         "body": body,
         "source_rendered": "",
+        "cfg": {
+            "blocks": [{"id": "b0"}, {"id": "b1"}],
+            "edges": [
+                {"src": "b0", "dst": "b1", "label": "T"},
+                {"src": "b0", "dst": "b1", "label": "F"},
+            ],
+            "entry": "b0",
+            "exits": ["b1"],
+        },
     }
     row = _proc_row("test.sru", "function", block, body)
-    assert row.cyclomatic == 3, f"nested BsFor(BsIf) → cyclomatic=3, got {row.cyclomatic}"
+    assert row.cyclomatic == 2, f"E-N+2 = 2-2+2 = 2, got {row.cyclomatic}"
 
 
 # ---------------------------------------------------------------------------

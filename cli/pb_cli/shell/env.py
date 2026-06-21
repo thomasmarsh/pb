@@ -62,7 +62,7 @@ from pb_cli.shell.state import (
     save_file_state,
 )
 from pb_cli.shell.taint import build_taint_tables
-from pb_cli.shell.type_resolution import build_type_tables
+from pb_cli.shell.type_resolution import build_call_tables, build_type_tables
 
 if TYPE_CHECKING:
     from pb_cli.shell.reporter import AnalyzeProgress
@@ -159,6 +159,7 @@ class StorageEnv:
     insert_parse_errors: Callable[[Conn, list[ParseErrorRow]], None] = field(default=insert_parse_errors)
     compute_metrics: Callable[[Conn, AnalyzeProgress], None] = field(default=compute_metrics)
     build_type_tables: Callable[[Conn, Path | None], None] = field(default=build_type_tables)
+    build_call_tables: Callable[[Conn, Path | None], None] = field(default=build_call_tables)
     build_dataflow_tables: Callable[[Conn], None] = field(default=build_dataflow_tables)
     build_interproc_tables: Callable[[Conn, Path | None], None] = field(default=build_interproc_tables)
     build_taint_tables: Callable[[Conn, Path | None], None] = field(default=build_taint_tables)
