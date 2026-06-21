@@ -201,8 +201,11 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
     }
 
 
+_PB_BASE_CLASSES = {"window", "datawindow", "userobject", "dwuserobject", "nonvisualobject"}
+
+
 def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
-    """Return layout (typeBlocks) and event bodies for a window object."""
+    """Return layout (typeBlocks), event bodies, and ancestor events/functions."""
     obj_rows = rows(conn.execute(
         "SELECT type_blocks_json FROM objects WHERE name = ?", [name]
     ))
@@ -227,7 +230,42 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
         for r in event_rows
     ]
 
-    return {"typeBlocks": type_blocks, "events": events}
+    # Extract ancestor from the primary type decl (within = null).
+    ancestor_name: str | None = None
+    for tb in type_blocks:
+        decl = tb.get("decl", {})
+        if decl.get("within") is None:
+            ancestor_name = decl.get("ancestor")
+            break
+
+    ancestor_events: list[dict[str, Any]] = []
+    ancestor_functions: list[dict[str, Any]] = []
+
+    if ancestor_name and ancestor_name.lower() not in _PB_BASE_CLASSES:
+        anc_rows = rows(conn.execute(
+            "SELECT name, owner, proc_type, body_json FROM procedures "
+            "WHERE object = ? AND proc_type IN ('event', 'function', 'subroutine')",
+            [ancestor_name],
+        ))
+        for r in anc_rows:
+            body = json.loads(r["body_json"]) if r.get("body_json") else []
+            entry = {
+                "name": r["name"],
+                "owner": r["owner"] or ancestor_name,
+                "body": body,
+            }
+            if r["proc_type"] == "event":
+                ancestor_events.append(entry)
+            else:
+                ancestor_functions.append(entry)
+
+    return {
+        "typeBlocks": type_blocks,
+        "events": events,
+        "ancestorName": ancestor_name,
+        "ancestorEvents": ancestor_events,
+        "ancestorFunctions": ancestor_functions,
+    }
 
 
 def get_dw_layout(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:

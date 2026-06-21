@@ -149,10 +149,12 @@ export function RuntimeView(props: {
             >
               <For each={wl().controls}>
                 {(ctrl) => {
-                  const isDw = ctrl.type.toLowerCase().includes("datawindow") || ctrl.name.startsWith("dw_");
+                  const isDw = ctrl.type.toLowerCase().includes("datawindow") || ctrl.name === "dw" || ctrl.name.startsWith("dw_");
                   if (isDw) {
+                    const effectiveH = ctrl.height > 0 ? ctrl.height : wl().height - ctrl.y;
+                    const dwStyle = { ...controlStyle(ctrl), height: `${effectiveH * BASE_SCALE}px` };
                     return (
-                      <div class="runtime-ctrl" style={controlStyle(ctrl)}>
+                      <div class="runtime-ctrl" style={dwStyle}>
                         <Show
                           when={controlValues()[ctrl.name]}
                           fallback={<ControlBox ctrl={ctrl} onClick={() => handleControlClick(ctrl)} />}

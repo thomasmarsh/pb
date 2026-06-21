@@ -7,10 +7,15 @@ export interface DWRow {
   [column: string]: unknown;
 }
 
+export type ProcEntry = { name: string; owner: string; body: Located<BodyStmt>[] };
+
 export interface AstData {
   typeBlocks: { decl: { ancestor: string; name: string; within: string | null }; body: Located<BodyStmt>[] }[];
-  events: { name: string; owner: string; body: Located<BodyStmt>[] }[];
-  functions?: { name: string; owner: string; body: Located<BodyStmt>[] }[];
+  events: ProcEntry[];
+  functions?: ProcEntry[];
+  ancestorName?: string;
+  ancestorEvents?: ProcEntry[];
+  ancestorFunctions?: ProcEntry[];
 }
 
 export interface InterpreterState {

@@ -423,6 +423,287 @@ describe("runtimeReducer", () => {
     });
   });
 
+  describe("run-event / BsIf inline expansion", () => {
+    it("executes then-branch when condition is true", () => {
+      const ROWS = [{ id: 1 }];
+      const sqlResult: SQLResult = { rows: ROWS, columns: ["id"], rowcount: 1 };
+      const env: RuntimeEnv = { executeSql: () => Effect.send(sqlResult) };
+
+      // open event: if ib_retrieve then dw_misth_zpperiod_list.retrieve(gs_kodxrisi)
+      const ast = makeAst({
+        typeBlocks: [
+          {
+            decl: { ancestor: "window", name: "w_test", within: null },
+            body: [
+              {
+                line: 1,
+                node: {
+                  tag: "BsLocalVar" as const,
+                  name: "ib_retrieve",
+                  mods: [],
+                  type: { tag: "PtPrimitive" as const, contents: "boolean" },
+                  init: { tag: "ExBool" as const, contents: true },
+                },
+              },
+            ],
+          },
+        ],
+        events: [
+          {
+            name: "open",
+            owner: "w_test",
+            body: [
+              {
+                line: 2,
+                node: {
+                  tag: "BsIf" as const,
+                  contents: {
+                    cond: { tag: "ExLvalue" as const, contents: { segments: [{ name: "ib_retrieve", subscript: null }] } },
+                    then: [
+                      {
+                        line: 3,
+                        node: {
+                          tag: "BsCall" as const,
+                          contents: {
+                            tag: "ExCall" as const,
+                            callee: { segments: [{ name: "dw_misth_zpperiod_list", subscript: null }, { name: "retrieve", subscript: null }] },
+                            args: [["gs_kodxrisi"]],
+                          },
+                        },
+                      },
+                    ],
+                    elseIfs: [],
+                    else: null,
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      });
+
+      const ts = createTestStore(runtimeReducer, env, { ...initialRuntimeState, ast });
+      ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
+        s.status = "awaiting-sql";
+        s.continuation = [];
+        s.variables = { ...PB_GLOBALS, ib_retrieve: true };
+      });
+      ts.receive(
+        { tag: "sql-result", dwName: "dw_misth_zpperiod_list", rows: ROWS },
+        (s: RuntimeState) => {
+          s.controlValues = { dw_misth_zpperiod_list: ROWS };
+          s.status = "done";
+          s.continuation = null;
+        },
+      );
+      ts.assertDrained();
+    });
+
+    it("skips then-branch when condition is false", () => {
+      const ast = makeAst({
+        typeBlocks: [
+          {
+            decl: { ancestor: "window", name: "w_test", within: null },
+            body: [
+              {
+                line: 1,
+                node: {
+                  tag: "BsLocalVar" as const,
+                  name: "ib_retrieve",
+                  mods: [],
+                  type: { tag: "PtPrimitive" as const, contents: "boolean" },
+                  init: { tag: "ExBool" as const, contents: false },
+                },
+              },
+            ],
+          },
+        ],
+        events: [
+          {
+            name: "open",
+            owner: "w_test",
+            body: [
+              {
+                line: 2,
+                node: {
+                  tag: "BsIf" as const,
+                  contents: {
+                    cond: { tag: "ExLvalue" as const, contents: { segments: [{ name: "ib_retrieve", subscript: null }] } },
+                    then: [
+                      {
+                        line: 3,
+                        node: {
+                          tag: "BsCall" as const,
+                          contents: {
+                            tag: "ExCall" as const,
+                            callee: { segments: [{ name: "dw_misth_zpperiod_list", subscript: null }, { name: "retrieve", subscript: null }] },
+                            args: [["gs_kodxrisi"]],
+                          },
+                        },
+                      },
+                    ],
+                    elseIfs: [],
+                    else: null,
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      });
+
+      const ts = createTestStore(runtimeReducer, nullEnv, { ...initialRuntimeState, ast });
+      ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
+        s.status = "done";
+        s.variables = { ...PB_GLOBALS, ib_retrieve: false };
+      });
+      ts.assertDrained();
+    });
+  });
+
+  describe("run-event / w_list ancestor chain", () => {
+    it("fires dw.retrieve() through call super::open → BsIf(ib_retrieve) → TriggerEvent(ie_retrieve) → of_retrieve → dw.retrieve()", () => {
+      const ROWS = [{ kodkrat: "A01", desckrat: "Allowance" }];
+      const sqlResult: SQLResult = { rows: ROWS, columns: ["kodkrat", "desckrat"], rowcount: ROWS.length };
+      const env: RuntimeEnv = { executeSql: () => Effect.send(sqlResult) };
+
+      // Minimal w_list ancestor open event: BsIf(ib_retrieve) { TriggerEvent("ie_retrieve") }
+      const ancestorOpenBody = [
+        {
+          line: 10,
+          node: {
+            tag: "BsIf" as const,
+            contents: {
+              cond: { tag: "ExLvalue" as const, contents: { segments: [{ name: "ib_retrieve", subscript: null }] } },
+              then: [
+                {
+                  line: 11,
+                  node: {
+                    tag: "BsCall" as const,
+                    contents: {
+                      tag: "ExCall" as const,
+                      callee: { segments: [{ name: "TriggerEvent", subscript: null }] },
+                      args: [['"ie_retrieve"']],
+                    },
+                  },
+                },
+              ],
+              elseIfs: [],
+              else: null,
+            },
+          },
+        },
+      ];
+
+      // ie_retrieve body: of_retrieve(dw)
+      const ieRetrieveBody = [
+        {
+          line: 20,
+          node: {
+            tag: "BsCall" as const,
+            contents: {
+              tag: "ExCall" as const,
+              callee: { segments: [{ name: "of_retrieve", subscript: null }] },
+              args: [["dw"]],
+            },
+          },
+        },
+      ];
+
+      // of_retrieve body: dw.retrieve()
+      const ofRetrieveBody = [
+        {
+          line: 30,
+          node: {
+            tag: "BsCall" as const,
+            contents: {
+              tag: "ExCall" as const,
+              callee: { segments: [{ name: "dw", subscript: null }, { name: "retrieve", subscript: null }] },
+              args: [],
+            },
+          },
+        },
+      ];
+
+      const ast: AstData = {
+        typeBlocks: [
+          {
+            decl: { ancestor: "w_list", name: "w_misth_zpkrat_list", within: null },
+            body: [
+              {
+                line: 1,
+                node: {
+                  tag: "BsLocalVar" as const,
+                  name: "ib_retrieve",
+                  mods: [],
+                  type: { tag: "PtPrimitive" as const, contents: "boolean" },
+                  init: { tag: "ExBool" as const, contents: true },
+                },
+              },
+            ],
+          },
+          {
+            decl: { ancestor: "w_list`dw", name: "dw", within: "w_misth_zpkrat_list" },
+            body: [
+              {
+                line: 2,
+                node: {
+                  tag: "BsLocalVar" as const,
+                  name: "dataobject",
+                  mods: [],
+                  type: { tag: "PtPrimitive" as const, contents: "string" },
+                  init: { tag: "ExStr" as const, contents: "dw_misth_zpkrat_list" },
+                },
+              },
+            ],
+          },
+        ],
+        events: [
+          {
+            name: "open",
+            owner: "w_misth_zpkrat_list",
+            body: [
+              {
+                line: 5,
+                node: {
+                  tag: "BsRaw" as const,
+                  contents: "call super::open",
+                },
+              },
+            ],
+          },
+        ],
+        ancestorName: "w_list",
+        ancestorEvents: [
+          { name: "open", owner: "w_list", body: ancestorOpenBody },
+          { name: "ie_retrieve", owner: "w_list", body: ieRetrieveBody },
+        ],
+        ancestorFunctions: [
+          { name: "of_retrieve", owner: "w_list", body: ofRetrieveBody },
+        ],
+      };
+
+      const ts = createTestStore(runtimeReducer, env, { ...initialRuntimeState, ast });
+
+      ts.send({ tag: "run-event", owner: "w_misth_zpkrat_list", event: "open" }, (s) => {
+        s.status = "awaiting-sql";
+        s.continuation = [];
+        s.variables = { ...PB_GLOBALS, ib_retrieve: true };
+      });
+
+      ts.receive(
+        { tag: "sql-result", dwName: "dw", rows: ROWS },
+        (s: RuntimeState) => {
+          s.controlValues = { dw: ROWS };
+          s.status = "done";
+          s.continuation = null;
+        },
+      );
+
+      ts.assertDrained();
+    });
+  });
+
   describe("sql-result / no continuation", () => {
     it("stores rows and marks done", () => {
       const rows = [{ a: 1 }];

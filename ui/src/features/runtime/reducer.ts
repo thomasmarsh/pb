@@ -133,12 +133,35 @@ interface SuspendRetrieve {
   params: unknown[];
 }
 
-function checkRetrieve(vars: Record<string, unknown>, expr: Expr): SuspendRetrieve | null {
+// Scan typeBlocks for a control's dataobject value (e.g. "dw" → "dw_misth_zpkrat_list").
+function findDwDataobject(ast: AstData | null, controlName: string): string | null {
+  if (!ast) return null;
+  for (const tb of ast.typeBlocks) {
+    if (tb.decl.within !== null && tb.decl.name === controlName) {
+      for (const s of tb.body) {
+        if (
+          s.node.tag === "BsLocalVar" &&
+          s.node.name === "dataobject" &&
+          s.node.init?.tag === "ExStr"
+        ) {
+          return (s.node.init as { tag: "ExStr"; contents: string }).contents;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function checkRetrieve(
+  vars: Record<string, unknown>,
+  expr: Expr,
+  ast?: AstData | null,
+): SuspendRetrieve | null {
   // Corpus pattern: ExCall with 2-segment callee [dw_name, retrieve]
   // PB parser emits this for `dw_foo.retrieve(args)` at statement level.
   if (expr.tag === "ExCall") {
     const segs = expr.callee.segments;
-    // Pattern 1: dw_foo.retrieve(args)
+    // Pattern 1: dw_foo.retrieve(args) — explicit DW control name
     if (
       segs.length === 2 &&
       segs[0]!.name.startsWith("dw_") &&
@@ -170,6 +193,25 @@ function checkRetrieve(vars: Record<string, unknown>, expr: Expr): SuspendRetrie
       }
       return null;
     }
+    // Pattern 3: dw.retrieve() — control named "dw" (from ancestor subroutines like of_retrieve).
+    // Look up the dataobject from typeBlocks; pass gs_kodxrisi if the query is parameterised.
+    if (
+      segs.length === 2 &&
+      segs[0]!.name === "dw" &&
+      segs[1]!.name.toLowerCase() === "retrieve"
+    ) {
+      const dataobj = findDwDataobject(ast ?? null, "dw");
+      if (dataobj) {
+        const sql = DW_QUERIES[dataobj];
+        if (sql) {
+          const params = sql.includes("?") ? [vars["gs_kodxrisi"]] : [];
+          // Store under the control name "dw", not the dataobject name, so
+          // RuntimeView can look it up as controlValues[ctrl.name].
+          return { dwName: "dw", sql, params };
+        }
+      }
+      return null;
+    }
     return null;
   }
   // ExMethodCall pattern: complex receiver expression (e.g. chained call).retrieve(args)
@@ -189,27 +231,27 @@ function checkRetrieve(vars: Record<string, unknown>, expr: Expr): SuspendRetrie
 // ── Synchronous body executor (for control-flow bodies that lack retrieve()) ──
 // retrieve() inside BsIf/BsFor/BsDo bodies is out of scope for 101c (BACKLOG).
 
-function execBodySync(vars: Record<string, unknown>, stmts: Located<BodyStmt>[]): void {
+function execBodySync(vars: Record<string, unknown>, stmts: Located<BodyStmt>[], ast?: AstData | null): void {
   for (const s of stmts) {
-    execStmtSync(vars, s.node);
+    execStmtSync(vars, s.node, ast);
   }
 }
 
-function execStmtSync(vars: Record<string, unknown>, node: BodyStmt): void {
+function execStmtSync(vars: Record<string, unknown>, node: BodyStmt, ast?: AstData | null): void {
   switch (node.tag) {
     case "BsAssign": {
       const [lhs, rhs] = node.contents;
-      if (checkRetrieve(vars, rhs)) return; // skip — retrieve() in control flow is BACKLOG
+      if (checkRetrieve(vars, rhs, ast)) return; // skip — retrieve() in control flow is BACKLOG
       const name = lhs.segments[0]?.name;
       if (name) vars[name] = evalExpr(vars, rhs);
       return;
     }
     case "BsCall":
       // retrieve() inside control flow is a no-op for 101c
-      if (!checkRetrieve(vars, node.contents)) evalExpr(vars, node.contents);
+      if (!checkRetrieve(vars, node.contents, ast)) evalExpr(vars, node.contents);
       return;
     case "BsLocalVar":
-      if (node.init && !checkRetrieve(vars, node.init)) {
+      if (node.init && !checkRetrieve(vars, node.init, ast)) {
         vars[node.name] = evalExpr(vars, node.init);
       }
       return;
@@ -218,13 +260,13 @@ function execStmtSync(vars: Record<string, unknown>, node: BodyStmt): void {
     case "BsIf": {
       const { cond, then, elseIfs, else: elseBody } = node.contents;
       if (evalExpr(vars, cond)) {
-        execBodySync(vars, then);
+        execBodySync(vars, then, ast);
       } else {
         let taken = false;
         for (const ei of elseIfs) {
-          if (evalExpr(vars, ei.cond)) { execBodySync(vars, ei.body); taken = true; break; }
+          if (evalExpr(vars, ei.cond)) { execBodySync(vars, ei.body, ast); taken = true; break; }
         }
-        if (!taken && elseBody) execBodySync(vars, elseBody);
+        if (!taken && elseBody) execBodySync(vars, elseBody, ast);
       }
       return;
     }
@@ -238,20 +280,20 @@ function execStmtSync(vars: Record<string, unknown>, node: BodyStmt): void {
       if (step === 0) return;
       for (let i = from; step > 0 ? i <= to : i >= to; i += step) {
         vars[varName] = i;
-        execBodySync(vars, fv.body);
+        execBodySync(vars, fv.body, ast);
       }
       return;
     }
     case "BsDo": {
       const dv = node.contents;
-      if (!dv.cond && !dv.loop) { execBodySync(vars, dv.body); return; }
+      if (!dv.cond && !dv.loop) { execBodySync(vars, dv.body, ast); return; }
       const cond = dv.cond ?? dv.loop!;
       const isWhile = cond.tag === "DoWhile";
       const condExpr = cond.contents;
       // Guard against infinite loops in sync executor
       let guard = 10000;
       do {
-        execBodySync(vars, dv.body);
+        execBodySync(vars, dv.body, ast);
       } while (guard-- > 0 && (isWhile ? evalExpr(vars, condExpr) : !evalExpr(vars, condExpr)));
       return;
     }
@@ -259,9 +301,9 @@ function execStmtSync(vars: Record<string, unknown>, node: BodyStmt): void {
       const cv = node.contents;
       const value = evalExpr(vars, cv.expr);
       for (const clause of cv.clauses) {
-        if (clause.expr === null) { execBodySync(vars, clause.body); return; }
+        if (clause.expr === null) { execBodySync(vars, clause.body, ast); return; }
         const cv2 = evalTokenArg(vars, clause.expr);
-        if (value === cv2 || String(value) === String(cv2)) { execBodySync(vars, clause.body); return; }
+        if (value === cv2 || String(value) === String(cv2)) { execBodySync(vars, clause.body, ast); return; }
       }
       return;
     }
@@ -278,14 +320,14 @@ function execStmt(
 ): SuspendRetrieve | null {
   switch (node.tag) {
     case "BsCall": {
-      const suspend = checkRetrieve(draft.variables, node.contents);
+      const suspend = checkRetrieve(draft.variables, node.contents, draft.ast);
       if (suspend) return suspend;
       evalExpr(draft.variables, node.contents);
       return null;
     }
     case "BsAssign": {
       const [lhs, rhs] = node.contents;
-      const suspend = checkRetrieve(draft.variables, rhs);
+      const suspend = checkRetrieve(draft.variables, rhs, draft.ast);
       if (suspend) return suspend;
       const name = lhs.segments[0]?.name;
       if (name) draft.variables[name] = evalExpr(draft.variables, rhs);
@@ -293,7 +335,7 @@ function execStmt(
     }
     case "BsLocalVar":
       if (node.init) {
-        const suspend = checkRetrieve(draft.variables, node.init);
+        const suspend = checkRetrieve(draft.variables, node.init, draft.ast);
         if (suspend) return suspend;
         draft.variables[node.name] = evalExpr(draft.variables, node.init);
       }
@@ -305,7 +347,7 @@ function execStmt(
     case "BsFor":
     case "BsDo":
     case "BsChoose":
-      execStmtSync(draft.variables, node);
+      execStmtSync(draft.variables, node, draft.ast);
       return null;
     default:
       return null;
@@ -318,21 +360,81 @@ function driveStmts(
   draft: RuntimeState,
   stmts: Located<BodyStmt>[],
   env: RuntimeEnv,
+  superDispatched = false,
 ): Effect<RuntimeAction> | null {
   for (let i = 0; i < stmts.length; i++) {
     const node = stmts[i]!.node;
-    // User-defined function dispatch: if the statement is a single-segment ExCall
-    // whose name matches a function in ast.functions, inline-expand its body in place.
-    // Note: fn_retrievechild is caught by checkRetrieve before reaching here.
+
+    // BsRaw containing "call super::open" — inline-expand the ancestor's open event body.
+    // Only follow once (superDispatched guard) to avoid infinite recursion when the ancestor
+    // body itself also contains "call super::open" (calling window::open).
+    if (
+      !superDispatched &&
+      node.tag === "BsRaw" &&
+      typeof node.contents === "string" &&
+      node.contents.includes("call super::open") &&
+      draft.ast
+    ) {
+      const ancestorOpen = draft.ast.ancestorEvents?.find(
+        e => e.name.toLowerCase() === "open"
+      );
+      if (ancestorOpen) {
+        return driveStmts(draft, [...ancestorOpen.body, ...stmts.slice(i + 1)], env, true);
+      }
+    }
+
+    // TriggerEvent("eventName") / this.TriggerEvent("eventName") — inline-expand the named event.
     if (node.tag === "BsCall" && node.contents.tag === "ExCall" && draft.ast) {
       const segs = node.contents.callee.segments;
-      if (segs.length === 1) {
-        const fnBody = findBodyByName(draft.ast, segs[0]!.name);
-        if (fnBody) {
-          return driveStmts(draft, [...fnBody, ...stmts.slice(i + 1)], env);
+      const lastName = segs[segs.length - 1]?.name.toLowerCase();
+      const isTrigger =
+        (segs.length === 1 || (segs.length === 2 && segs[0]!.name.toLowerCase() === "this")) &&
+        lastName === "triggerevent";
+      if (isTrigger && node.contents.args.length > 0) {
+        const eventName = (node.contents.args[0] ?? [])
+          .join("")
+          .trim()
+          .replace(/^"|"$/g, "");
+        const eventBody = findEventByName(draft.ast, eventName);
+        if (eventBody) {
+          return driveStmts(draft, [...eventBody, ...stmts.slice(i + 1)], env, superDispatched);
         }
       }
     }
+
+    // User-defined function dispatch: if the statement is a single-segment ExCall
+    // whose name matches a function/subroutine, inline-expand its body in place.
+    // Note: fn_retrievechild is caught by checkRetrieve before reaching here.
+    // Functions that depend on external resources unavailable in the runtime
+    // (INI files, system calls) are skipped — they fall through to the no-op
+    // ExCall path in execStmt rather than being inline-expanded.
+    const SKIP_EXPAND = new Set(["if_readini", "if_readinistr", "if_setwhere"]);
+    if (node.tag === "BsCall" && node.contents.tag === "ExCall" && draft.ast) {
+      const segs = node.contents.callee.segments;
+      if (segs.length === 1 && !SKIP_EXPAND.has(segs[0]!.name.toLowerCase())) {
+        const fnBody = findBodyByName(draft.ast, segs[0]!.name);
+        if (fnBody) {
+          return driveStmts(draft, [...fnBody, ...stmts.slice(i + 1)], env, superDispatched);
+        }
+      }
+    }
+    // Inline-expand BsIf branches so that TriggerEvent and retrieve() inside
+    // conditions flow through the trampoline rather than the sync executor.
+    if (node.tag === "BsIf") {
+      const { cond, then: thenBody, elseIfs, else: elseBody } = node.contents;
+      let branchBody: Located<BodyStmt>[] = [];
+      if (evalExpr(draft.variables, cond)) {
+        branchBody = thenBody;
+      } else {
+        let taken = false;
+        for (const ei of elseIfs) {
+          if (evalExpr(draft.variables, ei.cond)) { branchBody = ei.body; taken = true; break; }
+        }
+        if (!taken && elseBody) branchBody = elseBody;
+      }
+      return driveStmts(draft, [...branchBody, ...stmts.slice(i + 1)], env, superDispatched);
+    }
+
     const suspend = execStmt(draft, node);
     if (suspend !== null) {
       draft.continuation = stmts.slice(i + 1);
@@ -364,13 +466,29 @@ function findBody(
   return null;
 }
 
+// Find an event by name: current window first, then ancestor events.
+function findEventByName(ast: AstData, eventName: string): Located<BodyStmt>[] | null {
+  const name = eventName.toLowerCase();
+  for (const e of ast.events) {
+    if (e.name.toLowerCase() === name) return e.body;
+  }
+  for (const e of ast.ancestorEvents ?? []) {
+    if (e.name.toLowerCase() === name) return e.body;
+  }
+  return null;
+}
+
 // Scan functions by name only (ignoring owner) for user-defined function dispatch.
+// Searches window functions first, then ancestor subroutines/functions.
 function findBodyByName(
   ast: AstData,
   fnName: string,
 ): Located<BodyStmt>[] | null {
   const name = fnName.toLowerCase();
   for (const f of ast.functions ?? []) {
+    if (f.name.toLowerCase() === name) return f.body;
+  }
+  for (const f of ast.ancestorFunctions ?? []) {
     if (f.name.toLowerCase() === name) return f.body;
   }
   return null;
@@ -397,6 +515,17 @@ function reduce(
       if (!draft.ast) return null;
       for (const [k, v] of Object.entries(PB_GLOBALS)) {
         if (!(k in draft.variables)) draft.variables[k] = v;
+      }
+      // Seed window instance variable declarations (e.g. ib_retrieve = true)
+      // from the window typeBlock body so BsIf conditions evaluate correctly.
+      const windowTb = draft.ast.typeBlocks.find(tb => tb.decl.within == null);
+      if (windowTb) {
+        for (const s of windowTb.body) {
+          const n = s.node;
+          if (n.tag === "BsLocalVar" && n.init && !(n.name in draft.variables)) {
+            draft.variables[n.name] = evalExpr(draft.variables, n.init);
+          }
+        }
       }
       draft.status = "running";
       const body = findBody(draft.ast, action.owner, action.event);

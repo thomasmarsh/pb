@@ -21,6 +21,7 @@ export interface WindowLayout {
   controls: LayoutControl[];
 }
 
+// Base window types. Any w_* ancestor is also treated as a window per PB naming convention.
 const WINDOW_BASES = new Set(["window", "w_pbgrid"]);
 
 function stripQualifier(ancestor: string): string {
@@ -34,6 +35,7 @@ function isWindowAncestor(
 ): boolean {
   const base = stripQualifier(ancestor);
   if (WINDOW_BASES.has(base)) return true;
+  if (/^w_/i.test(base)) return true; // PB naming convention: w_ prefix always denotes a window
   if (visited.has(base)) return false;
   visited.add(base);
   const parent = ancestorMap.get(base);
