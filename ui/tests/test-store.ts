@@ -74,6 +74,11 @@ export class TestStore<S, A, Env> {
       );
     }
   }
+
+  /** Read current state after send() without the assert callback. */
+  getState(): S {
+    return this.state;
+  }
 }
 
 export function createTestStore<S, A, Env>(

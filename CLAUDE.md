@@ -17,6 +17,7 @@ cd ui && pnpm typecheck         # TypeScript type check (explorer)
 cd ui && pnpm lint              # ESLint (explorer)
 cd ui && pnpm test              # Explorer reducer tests (64 tests)
 cd ui && pnpm build             # Build explorer TS → static/dist/
+PB_SQL_MOCK=1 uv run pb explore  # Run explorer with mock SQL (no MySQL needed)
 ```
 
 ## Session Scoping
@@ -242,6 +243,43 @@ Replace it with a real assertion before Stage 3 — a test that permanently says
 **Megaparsec exploration.** Use `parseTest` from `Text.Megaparsec` in the REPL to get human-readable failure output. In tests, use `parse` with `assertBool`/`assertEqual` and a descriptive message.
 
 **Structuring.** Keep test files short and have a master test runner in `test/Main.hs` that imports and aggregates them. Keep PBT and unit tests separate. Don't refer to "phase numbers" or anything like that which has temporal implications, just give everything logical names.
+
+**Runtime test pattern (Plan 107).** When testing the PB interpreter / runtime reducer, use
+`MockRuntimeEnv` for controlled SQL responses and `renderWindow()` for logical JSX output.
+Never start the server or hit a real database in unit tests.
+
+```ts
+import { createMockRuntimeEnv } from "../mock-runtime-env.js";
+import { renderWindow } from "../../src/core/render-window.js";
+
+// 1. Create mock env with controlled data
+const mockEnv = createMockRuntimeEnv({
+  misth_zpkrat: { rows: [{ kodkrat: "01" }], rowcount: 1, columns: ["kodkrat"] },
+});
+
+// 2. Set up store with mock env
+const ts = createTestStore(runtimeReducer, mockEnv, initialRuntimeState);
+
+// 3. Load AST and run event
+ts.send({ tag: "set-ast", ast });
+ts.send({ tag: "run-event", owner: "w_test", event: "open" });
+ts.receive({ tag: "sql-result", dwName: "dw", rows: MOCK_ROWS });
+
+// 4. Assert on state
+expect(ts.getState().controlValues["dw"]).toHaveLength(1);
+
+// 5. Render and assert on logical structure
+const rendered = renderWindow(ast, ts.getState().controlValues, ts.getState().variables);
+expect(rendered.dataWindows[0]!.rows).toHaveLength(1);
+```
+
+**Backend SQL mock mode.** Set `PB_SQL_MOCK=1` to return canned data instead of connecting
+to MySQL. Useful for development iteration without a running database:
+
+```bash
+PB_SQL_MOCK=1 cd cli && uv run pb explore   # mock mode
+uv run pb explore                            # live mode (default)
+```
 
 ---
 
