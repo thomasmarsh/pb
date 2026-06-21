@@ -436,10 +436,14 @@ writeTaintAnalysis outDir parsed = do
       allSinks       = concatMap Taint.trSinks       results
       allPaths       = concatMap Taint.trPaths       results
       allAnnotations = concatMap Taint.trAnnotations results
+      allEdges       = concatMap Taint.trEdges       results
+      allSummaries   = concatMap Taint.trProcedureSummaries results
   BSL.writeFile (outDir </> "taint_sources.json")     (encode allSources)
   BSL.writeFile (outDir </> "taint_sinks.json")       (encode allSinks)
   BSL.writeFile (outDir </> "taint_paths.json")       (encode allPaths)
   BSL.writeFile (outDir </> "taint_annotations.json") (encode allAnnotations)
+  BSL.writeFile (outDir </> "interproc_edges.json")   (encode allEdges)
+  BSL.writeFile (outDir </> "procedure_summaries.json") (encode allSummaries)
 
 -- ---------------------------------------------------------------------------
 -- Three-pass pipeline (runModeFiles)

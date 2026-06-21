@@ -810,7 +810,7 @@ wrapSrFile        :: FilePath -> SrFile -> SrSpans -> TypeEnv -> Value
 runModeFiles      :: FilePath -> FilePath -> IO ()   -- batch: 7 passes
 runModeJsonl      :: FilePath -> IO ()               -- streaming, no cross-file inh
 writeDataflowAnalysis :: FilePath -> [ParsedFile] -> IO ()  -- Pass 6 → proc_defs.json, proc_uses.json
-writeTaintAnalysis    :: FilePath -> [ParsedFile] -> IO ()  -- Pass 7 → taint_*.json
+writeTaintAnalysis    :: FilePath -> [ParsedFile] -> IO ()  -- Pass 7 → taint_*.json, interproc_edges.json, procedure_summaries.json
 -- fileKind: .srd → DataWindow, .srp → Pipeline, .srj → Project, _ → PowerScript
 -- runPowerScript: normalizeText → stripHeaders → tokenize → collectStatements
 --                 → parseSrFileWithSpans → wrapSrFile; builds buildWorkspaceTypeEnv [srFile] per file
@@ -822,16 +822,18 @@ writeTaintAnalysis    :: FilePath -> [ParsedFile] -> IO ()  -- Pass 7 → taint_
 --       Only llStartLine (leSource e) is meaningful for diagnosis.
 -- writeResolution writes resolved_types.json, resolved_calls.json, global_vars.json (Pass 5)
 -- writeDataflowAnalysis reads resolved_types + CFG → proc_defs.json, proc_uses.json (Pass 6)
--- writeTaintAnalysis reads proc_defs/uses + resolved_calls + global_vars → taint_*.json (Pass 7)
+-- writeTaintAnalysis reads proc_defs/uses + resolved_calls + global_vars → taint_*.json, interproc_edges.json, procedure_summaries.json (Pass 7)
 ```
 
 ### `PB.Pipeline.Serialise`
 
 ```haskell
--- Orphan ToJSON instances for all PB.AST.* types.
+-- Orphan ToJSON instances for all PB.AST.* types and PB.Pipeline.Taint types.
 -- Import as: import PB.Pipeline.Serialise ()
 -- Brings ToJSON instances into scope; exports nothing explicitly.
 -- Sum-type discriminator: "tag" key (string); single-field payload → "contents".
+-- InterprocEdge, ProcedureSummary, ProcSummaryReturnFlow use manual instances
+-- to match Python snake_case keys (caller_object, callee_proc, etc.).
 ```
 
 ### `PB.Pipeline.CfgBuild`
@@ -894,6 +896,10 @@ data TaintSink   = TaintSink   { tskFile, tskObject, tskProcName, tskVarName, ts
 data TaintPath   = TaintPath   { tpSource :: TaintSource, tpSink :: TaintSink, tpSteps :: [TaintStep], tpSeverity, tpCategory :: Text }
 data TaintStep   = TaintStep   { tstObject, tstProcName, tstVarName :: Text, tstLine :: Maybe Int, tstStepKind, tstDescription :: Text }
 data TaintAnnotation = TaintAnnotation { taFile, taObject, taProcName, taBlockId :: Text, taIsTaintEntry, taIsTaintSink :: Bool, taTaintedVars :: [Text }
+data InterprocEdge = InterprocEdge { ieCallerObject, ieCallerProc :: Text, ieCallerLine :: Maybe Int, ieCalleeObject, ieCalleeProc, ieEdgeKind, ieVarName, ieCallerContext, ieCalleeContext :: Text }
+data ProcSummaryReturnFlow = ProcSummaryReturnFlow { psrfObject, psrfProc, psrfLhsVar :: Text }
+data ProcedureSummary = ProcedureSummary { psFile, psObject, psProcName :: Text, psParamsIn, psGlobalsRead, psGlobalsWritten :: [Text], psReturnFlowsTo :: [ProcSummaryReturnFlow] }
+data TaintResult = TaintResult { trSources :: [TaintSource], trSinks :: [TaintSink], trPaths :: [TaintPath], trAnnotations :: [TaintAnnotation], trEdges :: [InterprocEdge], trProcedureSummaries :: [ProcedureSummary] }
 data DefRow  -- FromJSON for proc_defs.json (file, object, proc_name, var_name, block_id, stmt_index, line, kind)
 data UseRow  -- FromJSON for proc_uses.json
 data ResolvedCallRow  -- FromJSON for resolved_calls.json
@@ -901,6 +907,7 @@ data GlobalVarRow     -- FromJSON for global_vars.json (just var_name)
 classifySources    :: [SqlStmt] -> [ProcMeta] -> [TaintSource]
 classifySinks      :: [SqlStmt] -> [TaintSink]
 buildInterprocEdges :: [ResolvedCallRow] -> [DefRow] -> [UseRow] -> Set Text -> [ProcMeta] -> [InterprocEdge]
+buildProcedureSummaries :: [InterprocEdge] -> [DefRow] -> [UseRow] -> Set Text -> [ProcMeta] -> [ProcedureSummary]
 propagateTaint     :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> (Set (Text,Text,Text), Provenance)
 traceTaintPath     :: TaintSource -> TaintSink -> Provenance -> [TaintStep]
 buildTaintAnnotations :: Set (Text,Text,Text) -> [TaintSource] -> [TaintSink] -> [DefRow] -> [UseRow] -> [TaintAnnotation]

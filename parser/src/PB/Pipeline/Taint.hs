@@ -14,6 +14,8 @@ module PB.Pipeline.Taint
     SqlStmt (..)
   , ProcMeta (..)
   , InterprocEdge (..)
+  , ProcedureSummary (..)
+  , ProcSummaryReturnFlow (..)
   , TaintSource (..)
   , TaintSink (..)
   , TaintStep (..)
@@ -28,6 +30,7 @@ module PB.Pipeline.Taint
   , classifySources
   , classifySinks
   , buildInterprocEdges
+  , buildProcedureSummaries
   , propagateTaint
   , traceTaintPath
   , buildTaintAnnotations
@@ -250,6 +253,8 @@ data TaintResult = TaintResult
   , trSinks       :: [TaintSink]
   , trPaths       :: [TaintPath]
   , trAnnotations :: [TaintAnnotation]
+  , trEdges       :: [InterprocEdge]
+  , trProcedureSummaries :: [ProcedureSummary]
   } deriving (Eq, Show)
 
 -- ---------------------------------------------------------------------------
@@ -266,6 +271,22 @@ data InterprocEdge = InterprocEdge
   , ieVarName        :: Text
   , ieCallerContext  :: Text
   , ieCalleeContext  :: Text
+  } deriving (Eq, Show)
+
+data ProcSummaryReturnFlow = ProcSummaryReturnFlow
+  { psrfObject  :: Text
+  , psrfProc    :: Text
+  , psrfLhsVar  :: Text
+  } deriving (Eq, Show)
+
+data ProcedureSummary = ProcedureSummary
+  { psFile            :: Text
+  , psObject          :: Text
+  , psProcName        :: Text
+  , psParamsIn        :: [Text]
+  , psGlobalsRead     :: [Text]
+  , psGlobalsWritten  :: [Text]
+  , psReturnFlowsTo   :: [ProcSummaryReturnFlow]
   } deriving (Eq, Show)
 
 -- ---------------------------------------------------------------------------
@@ -549,9 +570,52 @@ buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
          , writerKey <- Set.toList (Map.findWithDefault Set.empty gvar writers)
          , readerKey <- Set.toList (Map.findWithDefault Set.empty gvar readers)
          , writerKey /= readerKey
-         , let (writerObj, writerProc) = writerKey
-               (readerObj, readerProc) = readerKey
+          , let (writerObj, writerProc) = writerKey
+                (readerObj, readerProc) = readerKey
          ]
+
+-- ---------------------------------------------------------------------------
+-- Procedure summaries
+-- ---------------------------------------------------------------------------
+
+-- | Build per-procedure summaries: params, globals read/written, return flows.
+buildProcedureSummaries
+  :: [InterprocEdge]
+  -> [DefRow] -> [UseRow]
+  -> Set.Set Text
+  -> [ProcMeta]
+  -> [ProcedureSummary]
+buildProcedureSummaries edges defs uses globalVarNames procMetas =
+  map mkSummary procMetas
+  where
+    defsByProc :: Map.Map (Text, Text) [DefRow]
+    defsByProc = Map.fromListWith (++)
+      [ ((drObject d, drProcName d), [d]) | d <- defs ]
+
+    usesByProc :: Map.Map (Text, Text) [UseRow]
+    usesByProc = Map.fromListWith (++)
+      [ ((urObject u, urProcName u), [u]) | u <- uses ]
+
+    returnFlowsByCallee :: Map.Map (Text, Text) [ProcSummaryReturnFlow]
+    returnFlowsByCallee = Map.fromListWith (++)
+      [ ((ieCalleeObject e, ieCalleeProc e),
+         [ProcSummaryReturnFlow (ieCallerObject e) (ieCallerProc e) (ieVarName e)])
+      | e <- edges, ieEdgeKind e == "return"
+      ]
+
+    mkSummary :: ProcMeta -> ProcedureSummary
+    mkSummary pm =
+      let key = (pmObject pm, pmName pm)
+          paramsIn = map fst (parseParams (pmParams pm))
+          gRead = Set.toAscList $ Set.fromList
+            [ urVarName u | u <- Map.findWithDefault [] key usesByProc
+            , urVarName u `Set.member` globalVarNames ]
+          gWritten = Set.toAscList $ Set.fromList
+            [ drVarName d | d <- Map.findWithDefault [] key defsByProc
+            , drVarName d `Set.member` globalVarNames ]
+          retFlows = Map.findWithDefault [] key returnFlowsByCallee
+      in ProcedureSummary (pmFile pm) (pmObject pm) (pmName pm)
+           paramsIn gRead gWritten retFlows
 
 -- ---------------------------------------------------------------------------
 -- BFS taint propagation
@@ -770,10 +834,11 @@ taintAnalysis resolvedCalls defs uses globalVarNames file sf =
       sources = classifySources sqlStmts procMetas
       sinks   = classifySinks sqlStmts
       edges   = buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas
+      summaries = buildProcedureSummaries edges defs uses globalVarNames procMetas
       (tainted, prov) = propagateTaint sources defs uses edges
       paths = buildPaths sources sinks prov
       annotations = buildTaintAnnotations tainted sources sinks defs uses
-  in TaintResult sources sinks paths annotations
+  in TaintResult sources sinks paths annotations edges summaries
   where
     objName = case srTypeBlocks sf of
       (tb:_) -> tdName (tbDecl tb)

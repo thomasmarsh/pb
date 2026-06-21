@@ -12,7 +12,8 @@ module PB.Pipeline.Serialise
   ) where
 
 import PB.Prelude
-import Data.Aeson              (Options (..), ToJSON (..), defaultOptions, genericToJSON)
+import Data.Aeson              (Options (..), ToJSON (..), defaultOptions, genericToJSON, (.=))
+import qualified Data.Aeson as J
 import Data.Aeson.TypeScript.TH (TSDeclaration, TypeScript (..), deriveTypeScript, formatTSDeclarations)
 import Data.Char               (isLower, toLower)
 import Data.Proxy              (Proxy (..))
@@ -27,6 +28,7 @@ import PB.AST.Type        (PbType)
 import PB.Lexing.Token    (Token (..))
 import PB.Pipeline.CfgBuild   (CfgBlock, CfgEdge, Cfg)
 import PB.Pipeline.CpsCompile (CpsNode, CpsGraph)
+import PB.Pipeline.Taint      (InterprocEdge (..), ProcedureSummary (..), ProcSummaryReturnFlow (..))
 
 -- | Strip a camelCase field-name prefix, e.g. "fnsMods" → "mods",
 --   "fnsReturnType" → "returnType", "srForward" → "forward".
@@ -111,6 +113,40 @@ instance ToJSON CfgEdge   where toJSON = genericToJSON customOptions
 instance ToJSON Cfg       where toJSON = genericToJSON customOptions
 instance ToJSON CpsNode   where toJSON = genericToJSON customOptions
 instance ToJSON CpsGraph  where toJSON = genericToJSON customOptions
+
+-- InterprocEdge — manual instance to match Python snake_case keys
+instance ToJSON InterprocEdge where
+  toJSON e = J.object
+    [ "caller_object"  .= ieCallerObject e
+    , "caller_proc"    .= ieCallerProc e
+    , "caller_line"    .= ieCallerLine e
+    , "callee_object"  .= ieCalleeObject e
+    , "callee_proc"    .= ieCalleeProc e
+    , "edge_kind"      .= ieEdgeKind e
+    , "var_name"       .= ieVarName e
+    , "caller_context" .= ieCallerContext e
+    , "callee_context" .= ieCalleeContext e
+    ]
+
+-- ProcSummaryReturnFlow — manual instance for nested objects
+instance ToJSON ProcSummaryReturnFlow where
+  toJSON f = J.object
+    [ "object"  .= psrfObject f
+    , "proc"    .= psrfProc f
+    , "lhs_var" .= psrfLhsVar f
+    ]
+
+-- ProcedureSummary — manual instance to match Python snake_case keys
+instance ToJSON ProcedureSummary where
+  toJSON s = J.object
+    [ "file"            .= psFile s
+    , "object"          .= psObject s
+    , "proc_name"       .= psProcName s
+    , "params_in"       .= psParamsIn s
+    , "globals_read"    .= psGlobalsRead s
+    , "globals_written" .= psGlobalsWritten s
+    , "return_flows_to" .= psReturnFlowsTo s
+    ]
 
 -- ---------------------------------------------------------------------------
 -- TypeScript instances — one combined splice so mutually recursive types
