@@ -2,8 +2,9 @@
 
 import type { Expr } from "../../types/ast.generated.js";
 import { PB_BUILTINS } from "../runtime.js";
+import { type VarEnv, readVar } from "./var-env.js";
 
-export function evalExpr(vars: Record<string, unknown>, expr: Expr): unknown {
+export function evalExpr(env: VarEnv, expr: Expr): unknown {
   switch (expr.tag) {
     case "ExBool":   return expr.contents;
     case "ExInt":    return parseInt(expr.contents, 10);
@@ -15,23 +16,23 @@ export function evalExpr(vars: Record<string, unknown>, expr: Expr): unknown {
     case "ExEnum":   return expr.contents;
     case "ExLvalue": {
       const name = expr.contents.segments[0]?.name;
-      return name ? vars[name] : undefined;
+      return name ? readVar(env, name) : undefined;
     }
     case "ExCall": {
       const callee = expr.callee.segments.map((s) => s.name).join(".");
-      const args = expr.args.map((a) => evalTokenArg(vars, a));
+      const args = expr.args.map((a) => evalTokenArg(env, a));
       const fn = PB_BUILTINS[callee];
       return fn ? fn(...args) : undefined;
     }
     case "ExBinOp":
-      return evalBinOp(evalExpr(vars, expr.lhs), expr.op, evalExpr(vars, expr.rhs));
-    case "ExNot":    return !evalExpr(vars, expr.contents);
-    case "ExNeg":    return -(evalExpr(vars, expr.contents) as number);
+      return evalBinOp(evalExpr(env, expr.lhs), expr.op, evalExpr(env, expr.rhs));
+    case "ExNot":    return !evalExpr(env, expr.contents);
+    case "ExNeg":    return -(evalExpr(env, expr.contents) as number);
     default:         return undefined;
   }
 }
 
-export function evalTokenArg(vars: Record<string, unknown>, tokens: string[]): unknown {
+export function evalTokenArg(env: VarEnv, tokens: string[]): unknown {
   if (tokens.length === 0) return undefined;
   const raw = tokens.join("").trim();
   if (raw === "null") return null;
@@ -43,7 +44,7 @@ export function evalTokenArg(vars: Record<string, unknown>, tokens: string[]): u
   if (/^[a-zA-Z_]/.test(raw)) {
     const dotIdx = raw.indexOf(".");
     const base = dotIdx >= 0 ? raw.slice(0, dotIdx) : raw;
-    return vars[base];
+    return readVar(env, base);
   }
   return raw;
 }

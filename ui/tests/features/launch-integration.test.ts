@@ -6,6 +6,7 @@ import { Effect } from "../../src/core/effect.js";
 import { createTestStore } from "../test-store.js";
 import { reducer, initialState, type AppEnv } from "../../src/features/app/reducer.js";
 import { PB_GLOBALS } from "../../src/features/runtime/reducer.js";
+import { makeVarEnv } from "../../src/core/cps/var-env.js";
 import type { AstData } from "../../src/core/interpreter.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -104,12 +105,12 @@ describe("launch integration", () => {
 
     ts.receive({ tag: "runtime", action: { tag: "set-ast", ast: wAppAst } }, (s) => {
       s.runtime.ast = wAppAst;
-      s.runtime.variables = {};
+      s.runtime.varEnv = makeVarEnv();
     });
 
     ts.receive({ tag: "runtime", action: { tag: "run-event", owner: "w_app", event: "open" } }, (s) => {
       s.runtime.status = "done";
-      s.runtime.variables = { ...PB_GLOBALS };
+      s.runtime.varEnv.globals = { ...PB_GLOBALS };
     });
 
     ts.assertDrained();

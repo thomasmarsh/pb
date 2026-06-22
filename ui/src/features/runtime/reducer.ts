@@ -14,6 +14,7 @@ import { step, type CpsResumeAction } from "../../core/cps/runner.js";
 import type { CpsGraph } from "../../core/cps/types.js";
 // evalExpr is the single evaluator — shared between CPS and tree-walk paths.
 import { evalExpr, evalTokenArg } from "../../core/cps/expr.js";
+import { type VarEnv, makeVarEnv, readVar, writeVar, declareLocal } from "../../core/cps/var-env.js";
 
 // ── Global variables ──────────────────────────────────────────────────────────
 
@@ -34,7 +35,7 @@ export interface RuntimeEnv {
 
 export interface RuntimeState {
   ast: AstData | null;
-  variables: Record<string, unknown>;
+  varEnv: VarEnv;
   controlValues: Record<string, DWRow[]>;
   // Tree-walk continuation (remaining statements after a SQL suspension).
   continuation: Located<BodyStmt>[] | null;
@@ -49,7 +50,7 @@ export interface RuntimeState {
 
 export const initialRuntimeState: RuntimeState = {
   ast: null,
-  variables: {},
+  varEnv: makeVarEnv(),
   controlValues: {},
   continuation: null,
   cpsGraph: null,
@@ -103,7 +104,7 @@ function findDwDataobject(ast: AstData | null, controlName: string): string | nu
 interface RetrieveTarget { dwName: string; params: unknown[]; sqlLookup?: string }
 
 function extractRetrieveTarget(
-  vars: Record<string, unknown>,
+  varEnv: VarEnv,
   expr: Expr,
   ast?: AstData | null,
 ): RetrieveTarget | null {
@@ -111,12 +112,12 @@ function extractRetrieveTarget(
     const segs = expr.callee.segments;
     // Pattern 1: dw_foo.retrieve(args)
     if (segs.length === 2 && segs[0]!.name.startsWith("dw_") && segs[1]!.name.toLowerCase() === "retrieve") {
-      return { dwName: segs[0]!.name, params: expr.args.map((a) => evalTokenArg(vars, a)) };
+      return { dwName: segs[0]!.name, params: expr.args.map((a) => evalTokenArg(varEnv, a)) };
     }
     // Pattern 2: fn_retrievechild(adw, "col", arg)
     if (segs.length === 1 && segs[0]!.name === "fn_retrievechild" && expr.args.length === 3) {
       const colRaw = (expr.args[1] ?? []).join("").trim().replace(/^"|"$/g, "");
-      return { dwName: `child_${colRaw}`, params: [evalTokenArg(vars, expr.args[2] ?? [])] };
+      return { dwName: `child_${colRaw}`, params: [evalTokenArg(varEnv, expr.args[2] ?? [])] };
     }
     // Pattern 3: dw.retrieve() — resolve via dataobject from typeBlocks
     if (segs.length === 2 && segs[0]!.name === "dw" && segs[1]!.name.toLowerCase() === "retrieve") {
@@ -131,61 +132,61 @@ function extractRetrieveTarget(
   if (expr.tag === "ExMethodCall" && expr.receiver.tag === "ExLvalue") {
     const dwName = expr.receiver.contents.segments[0]?.name ?? "";
     if (dwName.startsWith("dw_") && expr.method.toLowerCase() === "retrieve") {
-      return { dwName, params: expr.args.map((a) => evalTokenArg(vars, a)) };
+      return { dwName, params: expr.args.map((a) => evalTokenArg(varEnv, a)) };
     }
   }
   return null;
 }
 
 function checkRetrieve(
-  vars: Record<string, unknown>,
+  varEnv: VarEnv,
   expr: Expr,
   ast?: AstData | null,
 ): SuspendRetrieve | null {
-  const target = extractRetrieveTarget(vars, expr, ast);
+  const target = extractRetrieveTarget(varEnv, expr, ast);
   if (!target) return null;
   const sqlKey = target.sqlLookup ?? target.dwName;
   const sql = DW_QUERIES[sqlKey];
   if (!sql) return null;
   const params = sql.includes("?") && target.params.length === 0
-    ? [vars["gs_kodxrisi"]]
+    ? [readVar(varEnv, "gs_kodxrisi")]
     : target.params;
   return { dwName: target.dwName, sql, params };
 }
 
 // ── Synchronous loop/choose executor (control-flow that cannot suspend) ─────
 
-function runBodySync(vars: Record<string, unknown>, stmts: Located<BodyStmt>[], ast?: AstData | null): void {
+function runBodySync(varEnv: VarEnv, stmts: Located<BodyStmt>[], ast?: AstData | null): void {
   for (const s of stmts) {
     const node = s.node;
     if (node.tag === "BsFor") {
       const fv = node.contents;
       const varName = fv.var?.segments[0]?.name;
       if (!varName) continue;
-      const from = Number(evalExpr(vars, fv.from));
-      const to = Number(evalExpr(vars, fv.to));
-      const step_ = fv.step ? Number(evalExpr(vars, fv.step)) : 1;
+      const from = Number(evalExpr(varEnv, fv.from));
+      const to = Number(evalExpr(varEnv, fv.to));
+      const step_ = fv.step ? Number(evalExpr(varEnv, fv.step)) : 1;
       if (step_ === 0) continue;
       for (let i = from; step_ > 0 ? i <= to : i >= to; i += step_) {
-        vars[varName] = i;
-        runBodySync(vars, fv.body, ast);
+        writeVar(varEnv, varName, i);
+        runBodySync(varEnv, fv.body, ast);
       }
     } else if (node.tag === "BsDo") {
       const dv = node.contents;
-      if (!dv.cond && !dv.loop) { runBodySync(vars, dv.body, ast); continue; }
+      if (!dv.cond && !dv.loop) { runBodySync(varEnv, dv.body, ast); continue; }
       const cond = dv.cond ?? dv.loop!;
       const isWhile = cond.tag === "DoWhile";
       const condExpr = cond.contents;
       let guard = 10000;
-      do { runBodySync(vars, dv.body, ast); }
-      while (guard-- > 0 && (isWhile ? evalExpr(vars, condExpr) : !evalExpr(vars, condExpr)));
+      do { runBodySync(varEnv, dv.body, ast); }
+      while (guard-- > 0 && (isWhile ? evalExpr(varEnv, condExpr) : !evalExpr(varEnv, condExpr)));
     } else if (node.tag === "BsChoose") {
       const cv = node.contents;
-      const value = evalExpr(vars, cv.expr);
+      const value = evalExpr(varEnv, cv.expr);
       for (const clause of cv.clauses) {
-        if (clause.expr === null) { runBodySync(vars, clause.body, ast); break; }
-        const cv2 = evalTokenArg(vars, clause.expr);
-        if (value === cv2 || String(value) === String(cv2)) { runBodySync(vars, clause.body, ast); break; }
+        if (clause.expr === null) { runBodySync(varEnv, clause.body, ast); break; }
+        const cv2 = evalTokenArg(varEnv, clause.expr);
+        if (value === cv2 || String(value) === String(cv2)) { runBodySync(varEnv, clause.body, ast); break; }
       }
     }
     // All other statement types (BsAssign, BsCall, BsLocalVar, BsIf, etc.) are
@@ -262,12 +263,12 @@ function driveStmts(
     if (node.tag === "BsIf") {
       const { cond, then: thenBody, elseIfs, else: elseBody } = node.contents;
       let branchBody: Located<BodyStmt>[] = [];
-      if (evalExpr(draft.variables, cond)) {
+      if (evalExpr(draft.varEnv, cond)) {
         branchBody = thenBody;
       } else {
         let taken = false;
         for (const ei of elseIfs) {
-          if (evalExpr(draft.variables, ei.cond)) { branchBody = ei.body; taken = true; break; }
+          if (evalExpr(draft.varEnv, ei.cond)) { branchBody = ei.body; taken = true; break; }
         }
         if (!taken && elseBody) branchBody = elseBody;
       }
@@ -279,21 +280,21 @@ function driveStmts(
     let suspend: SuspendRetrieve | null = null;
 
     if (node.tag === "BsCall") {
-      suspend = checkRetrieve(draft.variables, node.contents, draft.ast);
-      if (!suspend) evalExpr(draft.variables, node.contents);
+      suspend = checkRetrieve(draft.varEnv, node.contents, draft.ast);
+      if (!suspend) evalExpr(draft.varEnv, node.contents);
     } else if (node.tag === "BsAssign") {
       const [lhs, rhs] = node.contents;
-      suspend = checkRetrieve(draft.variables, rhs, draft.ast);
+      suspend = checkRetrieve(draft.varEnv, rhs, draft.ast);
       if (!suspend) {
         const name = lhs.segments[0]?.name;
-        if (name) draft.variables[name] = evalExpr(draft.variables, rhs);
+        if (name) writeVar(draft.varEnv, name, evalExpr(draft.varEnv, rhs));
       }
     } else if (node.tag === "BsLocalVar" && node.init) {
-      suspend = checkRetrieve(draft.variables, node.init, draft.ast);
-      if (!suspend) draft.variables[node.name] = evalExpr(draft.variables, node.init);
+      suspend = checkRetrieve(draft.varEnv, node.init, draft.ast);
+      if (!suspend) declareLocal(draft.varEnv, node.name, evalExpr(draft.varEnv, node.init));
     } else if (node.tag === "BsFor" || node.tag === "BsDo" || node.tag === "BsChoose") {
       // Loops run synchronously; retrieve() inside them is BACKLOG.
-      runBodySync(draft.variables, [stmts[i]!, ...stmts.slice(i + 1)], draft.ast);
+      runBodySync(draft.varEnv, [stmts[i]!, ...stmts.slice(i + 1)], draft.ast);
       return null;
     }
     // BsReturn and all other tags → fall through, no suspend.
@@ -332,7 +333,7 @@ function stepWithDraft(
     open: (): Effect<unknown> => Effect.none(),
     dwNameToSql: (dwName: string): string | null => DW_QUERIES[dwName] ?? null,
   };
-  const effect = step(graph, pc, draft.variables, cpsEnv);
+  const effect = step(graph, pc, draft.varEnv, cpsEnv);
   if (!effect) {
     draft.cpsGraph = null;
     draft.status = "done";
@@ -467,7 +468,7 @@ function reduce(
   switch (action.tag) {
     case "set-ast":
       draft.ast = action.ast;
-      draft.variables = {};
+      draft.varEnv = makeVarEnv();
       draft.controlValues = {};
       draft.continuation = null;
       draft.cpsGraph = null;
@@ -479,7 +480,7 @@ function reduce(
     case "run-event": {
       if (!draft.ast) return null;
       for (const [k, v] of Object.entries(PB_GLOBALS)) {
-        if (!(k in draft.variables)) draft.variables[k] = v;
+        if (!(k in draft.varEnv.globals)) draft.varEnv.globals[k] = v;
       }
       // Seed window instance variable declarations (e.g. ib_retrieve = true)
       // from the window typeBlock body so BsIf conditions evaluate correctly.
@@ -487,8 +488,8 @@ function reduce(
       if (windowTb) {
         for (const s of windowTb.body) {
           const n = s.node;
-          if (n.tag === "BsLocalVar" && n.init && !(n.name in draft.variables)) {
-            draft.variables[n.name] = evalExpr(draft.variables, n.init);
+          if (n.tag === "BsLocalVar" && n.init && !(n.name in draft.varEnv.instance)) {
+            draft.varEnv.instance[n.name] = evalExpr(draft.varEnv, n.init);
           }
         }
       }

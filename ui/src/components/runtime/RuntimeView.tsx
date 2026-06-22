@@ -3,6 +3,7 @@
 import { createEffect, createSignal, Show, For } from "solid-js";
 import { extractLayout } from "../../core/layout.js";
 import type { AstData, DWRow } from "../../core/interpreter.js";
+import { flattenVarEnv } from "../../core/cps/var-env.js";
 import type { WindowLayout, LayoutControl } from "../../core/layout.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
@@ -128,7 +129,7 @@ export function RuntimeView(props: {
     snap().runtime.controlValues as Record<string, DWRow[]>;
 
   const variables = (): Record<string, unknown> =>
-    snap().runtime.variables;
+    flattenVarEnv(snap().runtime.varEnv);
 
   const handleControlClick = (ctrl: LayoutControl): void => {
     props.store.dispatch({ tag: "runtime", action: { tag: "control-click", controlName: ctrl.name } });

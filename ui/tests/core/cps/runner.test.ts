@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import { Effect } from "../../../src/core/effect.js";
 import { step, type CpsEnv } from "../../../src/core/cps/runner.js";
 import type { CpsGraph, CpsNode } from "../../../src/core/cps/types.js";
+import { makeVarEnv, flattenVarEnv } from "../../../src/core/cps/var-env.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -29,7 +30,7 @@ const nullEnv: CpsEnv = {
 describe("step driver", () => {
   it("execute return node exits", () => {
     const graph = makeGraph([{ kind: "return" }]);
-    const result = step(graph, 0, {}, nullEnv);
+    const result = step(graph, 0, makeVarEnv(), nullEnv);
     expect(result).toBeNull();
   });
 
@@ -38,9 +39,9 @@ describe("step driver", () => {
       { kind: "assign", var: "x", rhs: { tag: "ExInt", contents: "42" } as any, next: 1 },
       { kind: "return" },
     ]);
-    const vars: Record<string, unknown> = {};
-    step(graph, 0, vars, nullEnv);
-    expect(vars.x).toBe(42);
+    const varEnv = makeVarEnv();
+    step(graph, 0, varEnv, nullEnv);
+    expect(flattenVarEnv(varEnv).x).toBe(42);
   });
 
   it("execute branch node follows correct path", () => {
@@ -50,9 +51,9 @@ describe("step driver", () => {
       { kind: "assign", var: "path", rhs: { tag: "ExStr", contents: "else" } as any, next: 3 },
       { kind: "return" },
     ]);
-    const vars: Record<string, unknown> = {};
-    step(graph, 0, vars, nullEnv);
-    expect(vars.path).toBe("then");
+    const varEnv = makeVarEnv();
+    step(graph, 0, varEnv, nullEnv);
+    expect(flattenVarEnv(varEnv).path).toBe("then");
   });
 
   it("execute branch node follows else path when false", () => {
@@ -62,9 +63,9 @@ describe("step driver", () => {
       { kind: "assign", var: "path", rhs: { tag: "ExStr", contents: "else" } as any, next: 3 },
       { kind: "return" },
     ]);
-    const vars: Record<string, unknown> = {};
-    step(graph, 0, vars, nullEnv);
-    expect(vars.path).toBe("else");
+    const varEnv = makeVarEnv();
+    step(graph, 0, varEnv, nullEnv);
+    expect(flattenVarEnv(varEnv).path).toBe("else");
   });
 
   it("execute goto node jumps to target", () => {
@@ -74,9 +75,9 @@ describe("step driver", () => {
       { kind: "assign", var: "x", rhs: { tag: "ExInt", contents: "2" } as any, next: 3 },
       { kind: "return" },
     ]);
-    const vars: Record<string, unknown> = {};
-    step(graph, 0, vars, nullEnv);
-    expect(vars.x).toBe(2);
+    const varEnv = makeVarEnv();
+    step(graph, 0, varEnv, nullEnv);
+    expect(flattenVarEnv(varEnv).x).toBe(2);
   });
 
   it("execute call node invokes builtin", () => {
@@ -90,9 +91,9 @@ describe("step driver", () => {
       },
       { kind: "return" },
     ]);
-    const vars: Record<string, unknown> = {};
-    step(graph, 0, vars, nullEnv);
-    expect(vars.result).toBe(5);
+    const varEnv = makeVarEnv();
+    step(graph, 0, varEnv, nullEnv);
+    expect(flattenVarEnv(varEnv).result).toBe(5);
   });
 
   it("execute call node skips unknown function", () => {
@@ -106,9 +107,9 @@ describe("step driver", () => {
       },
       { kind: "return" },
     ]);
-    const vars: Record<string, unknown> = {};
-    step(graph, 0, vars, nullEnv);
-    expect(vars.result).toBeUndefined();
+    const varEnv = makeVarEnv();
+    step(graph, 0, varEnv, nullEnv);
+    expect(flattenVarEnv(varEnv).result).toBeUndefined();
   });
 
   it("execute suspend node returns Effect", () => {
@@ -121,7 +122,7 @@ describe("step driver", () => {
       },
       { kind: "return" },
     ]);
-    const result = step(graph, 0, {}, nullEnv);
+    const result = step(graph, 0, makeVarEnv(), nullEnv);
     expect(result).not.toBeNull();
   });
 
@@ -131,9 +132,9 @@ describe("step driver", () => {
       { kind: "assign", var: "x", rhs: { tag: "ExInt", contents: "1" } as any, next: 2 },
       { kind: "return" },
     ]);
-    const vars: Record<string, unknown> = {};
-    step(graph, 0, vars, nullEnv);
-    expect(vars.x).toBe(1);
+    const varEnv = makeVarEnv();
+    step(graph, 0, varEnv, nullEnv);
+    expect(flattenVarEnv(varEnv).x).toBe(1);
   });
 
   // Plan 115 item 2: CpsCallProc emits a cps-dispatch resume action.
@@ -147,7 +148,7 @@ describe("step driver", () => {
       },
       { kind: "return" },
     ]);
-    const result = step(graph, 0, {}, nullEnv);
+    const result = step(graph, 0, makeVarEnv(), nullEnv);
     expect(result).not.toBeNull();
     let received: unknown = null;
     result!.execute((a) => { received = a; });
@@ -169,7 +170,7 @@ describe("step driver", () => {
       },
       { kind: "return" },
     ]);
-    const result = step(graph, 0, {}, nullEnv);
+    const result = step(graph, 0, makeVarEnv(), nullEnv);
     expect(result).not.toBeNull();
     let received: unknown = null;
     result!.execute((a) => { received = a; });
@@ -188,8 +189,8 @@ describe("step driver", () => {
       { kind: "assign", var: "c", rhs: { tag: "ExInt", contents: "3" } as any, next: 3 },
       { kind: "return" },
     ]);
-    const vars: Record<string, unknown> = {};
-    step(graph, 0, vars, nullEnv);
-    expect(vars).toEqual({ a: 1, b: 2, c: 3 });
+    const varEnv = makeVarEnv();
+    step(graph, 0, varEnv, nullEnv);
+    expect(flattenVarEnv(varEnv)).toEqual({ a: 1, b: 2, c: 3 });
   });
 });

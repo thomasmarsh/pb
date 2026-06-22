@@ -10,6 +10,7 @@ import {
   type RuntimeEnv,
   type RuntimeState,
 } from "../../src/features/runtime/reducer.js";
+import { makeVarEnv } from "../../src/core/cps/var-env.js";
 import type { AstData } from "../../src/core/interpreter.js";
 import type { SQLResult } from "../../src/core/dw-queries.js";
 
@@ -90,12 +91,12 @@ describe("runtimeReducer", () => {
       const ast = makeAst();
       const ts = createTestStore(runtimeReducer, nullEnv, {
         ...initialRuntimeState,
-        variables: { x: 1 },
+        varEnv: { globals: { x: 1 }, instance: {}, locals: [{}] },
         status: "done",
       });
       ts.send({ tag: "set-ast", ast }, (s) => {
         s.ast = ast;
-        s.variables = {};
+        s.varEnv = makeVarEnv();
         s.controlValues = {};
         s.continuation = null;
         s.status = "idle";
@@ -130,7 +131,8 @@ describe("runtimeReducer", () => {
       const ts = createTestStore(runtimeReducer, nullEnv, { ...initialRuntimeState, ast });
       ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
         s.status = "done";
-        s.variables = { ...PB_GLOBALS, greeting: "hello" };
+        s.varEnv.globals = { ...PB_GLOBALS };
+        s.varEnv.locals[0]!.greeting = "hello";
       });
       ts.assertDrained();
     });
@@ -140,7 +142,7 @@ describe("runtimeReducer", () => {
       const ts = createTestStore(runtimeReducer, nullEnv, { ...initialRuntimeState, ast });
       ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
         s.status = "done";
-        s.variables = { ...PB_GLOBALS };
+        s.varEnv.globals = { ...PB_GLOBALS };
       });
       ts.assertDrained();
     });
@@ -167,7 +169,7 @@ describe("runtimeReducer", () => {
       ts.send({ tag: "run-event", owner: "w_krat_total_search", event: "open" }, (s) => {
         s.status = "awaiting-sql";
         s.continuation = [];
-        s.variables = { ...PB_GLOBALS };
+        s.varEnv.globals = { ...PB_GLOBALS };
       });
 
       ts.receive(
@@ -196,7 +198,7 @@ describe("runtimeReducer", () => {
       ts.send({ tag: "run-event", owner: "w_misth_zpperiod_grid", event: "open" }, (s) => {
         s.status = "awaiting-sql";
         s.continuation = [];
-        s.variables = { ...PB_GLOBALS };
+        s.varEnv.globals = { ...PB_GLOBALS };
       });
 
       ts.receive(
@@ -258,14 +260,15 @@ describe("runtimeReducer", () => {
       ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
         s.status = "awaiting-sql";
         s.continuation = [ast.events[0]!.body[1]!]; // the x=42 stmt
-        s.variables = { ...PB_GLOBALS };
+        s.varEnv.globals = { ...PB_GLOBALS };
       });
 
       ts.receive(
         { tag: "sql-result", dwName: "dw_misth_zpperiod_list", rows: ROWS },
         (s: RuntimeState) => {
           s.controlValues = { dw_misth_zpperiod_list: ROWS };
-          s.variables = { ...PB_GLOBALS, x: 42 };
+          s.varEnv.globals = { ...PB_GLOBALS };
+          s.varEnv.locals[0]!.x = 42;
           s.status = "done";
           s.continuation = null;
         },
@@ -281,7 +284,7 @@ describe("runtimeReducer", () => {
       const ts = createTestStore(runtimeReducer, nullEnv, { ...initialRuntimeState, ast });
       ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
         s.status = "done";
-        s.variables = { ...PB_GLOBALS };
+        s.varEnv.globals = { ...PB_GLOBALS };
       });
       ts.assertDrained();
     });
@@ -291,11 +294,11 @@ describe("runtimeReducer", () => {
       const ts = createTestStore(runtimeReducer, nullEnv, {
         ...initialRuntimeState,
         ast,
-        variables: { gs_kodxrisi: "9999" } as Record<string, unknown>,
+        varEnv: { globals: { gs_kodxrisi: "9999" } as Record<string, unknown>, instance: {}, locals: [{}] },
       });
       ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
         s.status = "done";
-        s.variables = { gs_kodxrisi: "9999", gs_app_name: "OpenPay", gs_username: "admin" };
+        s.varEnv.globals = { gs_kodxrisi: "9999", gs_app_name: "OpenPay", gs_username: "admin" };
       });
       ts.assertDrained();
     });
@@ -337,7 +340,7 @@ describe("runtimeReducer", () => {
       ts.send({ tag: "run-event", owner: "w_misth_final_search", event: "open" }, (s) => {
         s.status = "awaiting-sql";
         s.continuation = [];
-        s.variables = { ...PB_GLOBALS };
+        s.varEnv.globals = { ...PB_GLOBALS };
       });
 
       ts.receive(
@@ -407,7 +410,7 @@ describe("runtimeReducer", () => {
       ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
         s.status = "awaiting-sql";
         s.continuation = [];
-        s.variables = { ...PB_GLOBALS };
+        s.varEnv.globals = { ...PB_GLOBALS };
       });
 
       ts.receive(
@@ -486,7 +489,8 @@ describe("runtimeReducer", () => {
       ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
         s.status = "awaiting-sql";
         s.continuation = [];
-        s.variables = { ...PB_GLOBALS, ib_retrieve: true };
+        s.varEnv.globals = { ...PB_GLOBALS };
+        s.varEnv.instance = { ib_retrieve: true };
       });
       ts.receive(
         { tag: "sql-result", dwName: "dw_misth_zpperiod_list", rows: ROWS },
@@ -555,7 +559,8 @@ describe("runtimeReducer", () => {
       const ts = createTestStore(runtimeReducer, nullEnv, { ...initialRuntimeState, ast });
       ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
         s.status = "done";
-        s.variables = { ...PB_GLOBALS, ib_retrieve: false };
+        s.varEnv.globals = { ...PB_GLOBALS };
+        s.varEnv.instance = { ib_retrieve: false };
       });
       ts.assertDrained();
     });
@@ -688,7 +693,8 @@ describe("runtimeReducer", () => {
       ts.send({ tag: "run-event", owner: "w_misth_zpkrat_list", event: "open" }, (s) => {
         s.status = "awaiting-sql";
         s.continuation = [];
-        s.variables = { ...PB_GLOBALS, ib_retrieve: true };
+        s.varEnv.globals = { ...PB_GLOBALS };
+        s.varEnv.instance = { ib_retrieve: true };
       });
 
       ts.receive(

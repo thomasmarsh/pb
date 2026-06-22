@@ -8,6 +8,7 @@ import { Effect } from "../../../src/core/effect.js";
 import { loadCpsGraph } from "../../../src/core/cps/load.js";
 import { step } from "../../../src/core/cps/runner.js";
 import type { CpsEnv } from "../../../src/core/cps/types.js";
+import { makeVarEnv, flattenVarEnv } from "../../../src/core/cps/var-env.js";
 import { createTestStore } from "../../test-store.js";
 import {
   runtimeReducer,
@@ -75,17 +76,17 @@ const nullEnv: CpsEnv = {
 describe("e2e: loadCpsGraph → step", () => {
   it("assign chain executes via loaded cpsGraph", () => {
     const graph = loadCpsGraph(ASSIGN_CHAIN_RAW);
-    const vars: Record<string, unknown> = {};
-    const result = step(graph, graph.entry, vars, nullEnv);
+    const varEnv = makeVarEnv();
+    const result = step(graph, graph.entry, varEnv, nullEnv);
     expect(result).toBeNull();
-    expect(vars).toEqual({ x: 1, y: 2 });
+    expect(flattenVarEnv(varEnv)).toEqual({ x: 1, y: 2 });
   });
 
   it("if/else branch selects correct path via cpsGraph", () => {
     const graph = loadCpsGraph(IF_ELSE_RAW);
-    const vars: Record<string, unknown> = {};
-    step(graph, graph.entry, vars, nullEnv);
-    expect(vars.x).toBe("then");
+    const varEnv = makeVarEnv();
+    step(graph, graph.entry, varEnv, nullEnv);
+    expect(flattenVarEnv(varEnv).x).toBe("then");
   });
 
   it("retrieve() suspend returns non-null Effect via loaded cpsGraph", () => {
@@ -97,7 +98,9 @@ describe("e2e: loadCpsGraph → step", () => {
       dwNameToSql: (name) => name === "dw_period" ? "SELECT * FROM misth_zpperiod" : null,
     };
     const graph = loadCpsGraph(RETRIEVE_RAW);
-    const result = step(graph, graph.entry, { gs_kodxrisi: "0001" }, env);
+    const varEnv = makeVarEnv();
+    varEnv.globals["gs_kodxrisi"] = "0001";
+    const result = step(graph, graph.entry, varEnv, env);
     expect(result).not.toBeNull();
   });
 });
@@ -126,7 +129,9 @@ describe("e2e: reducer CPS path", () => {
 
     ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
       s.status = "done";
-      s.variables = { ...PB_GLOBALS, x: 1, y: 2 };
+      s.varEnv.globals = { ...PB_GLOBALS };
+      s.varEnv.locals[0]!.x = 1;
+      s.varEnv.locals[0]!.y = 2;
       s.cpsGraph = null;
     });
     ts.assertDrained();
@@ -155,7 +160,7 @@ describe("e2e: reducer CPS path", () => {
     ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
       s.status = "awaiting-sql";
       s.cpsGraph = graph;
-      s.variables = { ...PB_GLOBALS };
+      s.varEnv.globals = { ...PB_GLOBALS };
     });
 
     ts.receive(
@@ -202,7 +207,8 @@ describe("e2e: reducer CPS path", () => {
 
     ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
       s.status = "done";
-      s.variables = { ...PB_GLOBALS, x: 99 };
+      s.varEnv.globals = { ...PB_GLOBALS };
+      s.varEnv.locals[0]!.x = 99;
       // continuation and cpsGraph stay null (tree-walk path)
     });
     ts.assertDrained();
@@ -268,7 +274,7 @@ describe("e2e: reducer CPS path", () => {
       s.status = "awaiting-sql";
       s.cpsGraph = graph;
       s.callStack = [];
-      s.variables = { ...PB_GLOBALS };
+      s.varEnv.globals = { ...PB_GLOBALS };
     });
 
     // 2. cps-dispatch resolves ie_retrieve, runs it tree-walk (assigns x),
@@ -277,7 +283,8 @@ describe("e2e: reducer CPS path", () => {
       { tag: "cps-dispatch", callee: "triggerevent", args: ["ie_retrieve"], resumePc: 0 },
       (s) => {
         s.status = "done";
-        s.variables = { ...PB_GLOBALS, x: "dispatched" };
+        s.varEnv.globals = { ...PB_GLOBALS };
+        s.varEnv.locals[0]!.x = "dispatched";
         s.cpsGraph = null;
         s.callStack = [];
       },
@@ -326,7 +333,7 @@ describe("e2e: reducer CPS path", () => {
       s.status = "awaiting-sql";
       s.cpsGraph = graph;
       s.callStack = [];
-      s.variables = { ...PB_GLOBALS };
+      s.varEnv.globals = { ...PB_GLOBALS };
     });
 
     ts.receive(
@@ -335,7 +342,7 @@ describe("e2e: reducer CPS path", () => {
         s.status = "done";
         s.cpsGraph = null;
         s.callStack = [];
-        s.variables = { ...PB_GLOBALS };
+        s.varEnv.globals = { ...PB_GLOBALS };
       },
     );
 

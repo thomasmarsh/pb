@@ -8,6 +8,7 @@ import {
   runtimeReducer,
   initialRuntimeState,
 } from "../../src/features/runtime/reducer.js";
+import { flattenVarEnv } from "../../src/core/cps/var-env.js";
 import { createTestStore } from "../test-store.js";
 import type { AstData } from "../../src/core/interpreter.js";
 
@@ -229,7 +230,7 @@ describe("runtime integration", () => {
       expect(ts.getState().controlValues["dw"]).toHaveLength(2);
 
       // Render and verify
-      const rendered = renderWindow(ast, ts.getState().controlValues, ts.getState().variables);
+      const rendered = renderWindow(ast, ts.getState().controlValues, flattenVarEnv(ts.getState().varEnv));
       expect(rendered.dataWindows).toHaveLength(1);
       expect(rendered.dataWindows[0]!.rows).toHaveLength(2);
       expect(rendered.dataWindows[0]!.columns).toContain("kodkrat");

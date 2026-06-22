@@ -3,6 +3,7 @@
 import { Effect } from "../../core/effect.js";
 import { PB_BUILTINS } from "../runtime.js";
 import type { CpsEnv, CpsGraph } from "./types.js";
+import { type VarEnv, writeVar } from "./var-env.js";
 import { evalExpr } from "./expr.js";
 
 export type { CpsEnv } from "./types.js";
@@ -22,7 +23,7 @@ export type CpsResumeAction =
 export function step(
   graph: CpsGraph,
   pc: number,
-  vars: Record<string, unknown>,
+  varEnv: VarEnv,
   env: CpsEnv,
 ): Effect<CpsResumeAction> | null {
   if (pc < 0 || pc >= graph.nodes.length) return null;
@@ -33,30 +34,30 @@ export function step(
       return null;
 
     case "assign":
-      vars[node.var] = evalExpr(vars, node.rhs);
-      return step(graph, node.next, vars, env);
+      writeVar(varEnv, node.var, evalExpr(varEnv, node.rhs));
+      return step(graph, node.next, varEnv, env);
 
     case "branch":
-      return evalExpr(vars, node.cond)
-        ? step(graph, node.then_, vars, env)
-        : step(graph, node.else_, vars, env);
+      return evalExpr(varEnv, node.cond)
+        ? step(graph, node.then_, varEnv, env)
+        : step(graph, node.else_, varEnv, env);
 
     case "goto":
-      return step(graph, node.target, vars, env);
+      return step(graph, node.target, varEnv, env);
 
     case "call": {
       const fn = PB_BUILTINS[node.callee];
       if (fn) {
-        const args = node.args.map((a) => evalExpr(vars, a));
-        if (node.result) vars[node.result] = fn(...args);
+        const args = node.args.map((a) => evalExpr(varEnv, a));
+        if (node.result) writeVar(varEnv, node.result, fn(...args));
       }
-      return step(graph, node.next, vars, env);
+      return step(graph, node.next, varEnv, env);
     }
 
     case "suspend": {
-      const args = node.args.map((a) => evalExpr(vars, a));
+      const args = node.args.map((a) => evalExpr(varEnv, a));
       const effect = dispatchSuspend(node.effect, args, env);
-      if (!effect) return step(graph, node.continuation, vars, env);
+      if (!effect) return step(graph, node.continuation, varEnv, env);
       return effect.map((result): CpsResumeAction => ({
         tag: "cps-resume",
         pc: node.continuation,
@@ -66,13 +67,13 @@ export function step(
     }
 
     case "nop":
-      return step(graph, node.next, vars, env);
+      return step(graph, node.next, varEnv, env);
 
     case "callproc": {
       // Plan 115 item 2: emit a cps-dispatch effect. The reducer resolves the
       // callee body and either runs it (pushing the current graph to resume at
       // node.next) or skips to node.next if no body is found.
-      const args = node.args.map((a) => evalExpr(vars, a));
+      const args = node.args.map((a) => evalExpr(varEnv, a));
       return Effect.send<CpsResumeAction>({
         tag: "cps-dispatch",
         callee: node.callee,
