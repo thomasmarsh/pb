@@ -143,7 +143,7 @@ export class PBInterpreter {
             await this._walkStatements(clause.body);
             return undefined;
           }
-          const caseValue = this._evalTokenArg(clause.expr);
+            const caseValue = this._evalTokenArg(clause.expr);
           if (value === caseValue || String(value) === String(caseValue)) {
             await this._walkStatements(clause.body);
             return undefined;

@@ -31,7 +31,7 @@ export function evalExpr(vars: Record<string, unknown>, expr: Expr): unknown {
   }
 }
 
-function evalTokenArg(vars: Record<string, unknown>, tokens: string[]): unknown {
+export function evalTokenArg(vars: Record<string, unknown>, tokens: string[]): unknown {
   if (tokens.length === 0) return undefined;
   const raw = tokens.join("").trim();
   if (raw === "null") return null;

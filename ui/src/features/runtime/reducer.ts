@@ -13,7 +13,7 @@ import { loadCpsGraph } from "../../core/cps/load.js";
 import { step, type CpsResumeAction } from "../../core/cps/runner.js";
 import type { CpsGraph } from "../../core/cps/types.js";
 // evalExpr is the single evaluator — shared between CPS and tree-walk paths.
-import { evalExpr } from "../../core/cps/expr.js";
+import { evalExpr, evalTokenArg } from "../../core/cps/expr.js";
 
 // ── Global variables ──────────────────────────────────────────────────────────
 
@@ -71,25 +71,6 @@ export type RuntimeAction =
   | { tag: "cps-dispatch"; callee: string; args: unknown[]; resumePc: number }
   | { tag: "error"; message: string };
 
-// ── Token arg evaluator (for tree-walk path only) ─────────────────────────────
-
-function evalTokenArg(vars: Record<string, unknown>, tokens: string[]): unknown {
-  if (tokens.length === 0) return undefined;
-  const raw = tokens.join("").trim();
-  if (raw === "null") return null;
-  if (raw === "true") return true;
-  if (raw === "false") return false;
-  if (raw.startsWith('"') && raw.endsWith('"')) return raw.slice(1, -1);
-  if (/^-?\d+$/.test(raw)) return parseInt(raw, 10);
-  if (/^-?\d+\.\d+$/.test(raw)) return parseFloat(raw);
-  if (/^[a-zA-Z_]/.test(raw)) {
-    const dotIdx = raw.indexOf(".");
-    const base = dotIdx >= 0 ? raw.slice(0, dotIdx) : raw;
-    return vars[base];
-  }
-  return raw;
-}
-
 // ── Retrieve suspension detection ─────────────────────────────────────────────
 
 interface SuspendRetrieve {
@@ -117,205 +98,98 @@ function findDwDataobject(ast: AstData | null, controlName: string): string | nu
   return null;
 }
 
+// Extract the DW target name and evaluated params from a retrieve-pattern expression.
+// Returns null if the expression is not a retrieve call.
+interface RetrieveTarget { dwName: string; params: unknown[]; sqlLookup?: string }
+
+function extractRetrieveTarget(
+  vars: Record<string, unknown>,
+  expr: Expr,
+  ast?: AstData | null,
+): RetrieveTarget | null {
+  if (expr.tag === "ExCall") {
+    const segs = expr.callee.segments;
+    // Pattern 1: dw_foo.retrieve(args)
+    if (segs.length === 2 && segs[0]!.name.startsWith("dw_") && segs[1]!.name.toLowerCase() === "retrieve") {
+      return { dwName: segs[0]!.name, params: expr.args.map((a) => evalTokenArg(vars, a)) };
+    }
+    // Pattern 2: fn_retrievechild(adw, "col", arg)
+    if (segs.length === 1 && segs[0]!.name === "fn_retrievechild" && expr.args.length === 3) {
+      const colRaw = (expr.args[1] ?? []).join("").trim().replace(/^"|"$/g, "");
+      return { dwName: `child_${colRaw}`, params: [evalTokenArg(vars, expr.args[2] ?? [])] };
+    }
+    // Pattern 3: dw.retrieve() — resolve via dataobject from typeBlocks
+    if (segs.length === 2 && segs[0]!.name === "dw" && segs[1]!.name.toLowerCase() === "retrieve") {
+      const dataobj = findDwDataobject(ast ?? null, "dw");
+      if (!dataobj) return null;
+      // Control name is "dw" but SQL lookup uses the dataobject name.
+      return { dwName: "dw", params: [], sqlLookup: dataobj };
+    }
+    return null;
+  }
+  // Pattern 4: ExMethodCall — dw_foo.retrieve(args)
+  if (expr.tag === "ExMethodCall" && expr.receiver.tag === "ExLvalue") {
+    const dwName = expr.receiver.contents.segments[0]?.name ?? "";
+    if (dwName.startsWith("dw_") && expr.method.toLowerCase() === "retrieve") {
+      return { dwName, params: expr.args.map((a) => evalTokenArg(vars, a)) };
+    }
+  }
+  return null;
+}
+
 function checkRetrieve(
   vars: Record<string, unknown>,
   expr: Expr,
   ast?: AstData | null,
 ): SuspendRetrieve | null {
-  // Corpus pattern: ExCall with 2-segment callee [dw_name, retrieve]
-  // PB parser emits this for `dw_foo.retrieve(args)` at statement level.
-  if (expr.tag === "ExCall") {
-    const segs = expr.callee.segments;
-    // Pattern 1: dw_foo.retrieve(args) — explicit DW control name
-    if (
-      segs.length === 2 &&
-      segs[0]!.name.startsWith("dw_") &&
-      segs[1]!.name.toLowerCase() === "retrieve"
-    ) {
-      const dwName = segs[0]!.name;
-      const sql = DW_QUERIES[dwName];
-      if (sql) {
-        const params = expr.args.map((a) => evalTokenArg(vars, a));
-        return { dwName, sql, params };
-      }
-      return null;
-    }
-    // Pattern 2: fn_retrievechild(adw, "col", arg) — global helper from afxlib.pbl.
-    // The function body calls ldwch.retrieve(arg) on a child DW for the named column.
-    // Since fn_retrievechild is cross-library and absent from window ASTs, we intercept
-    // it at the call site and map the column name to a known DW_QUERIES entry.
-    if (
-      segs.length === 1 &&
-      segs[0]!.name === "fn_retrievechild" &&
-      expr.args.length === 3
-    ) {
-      const colRaw = (expr.args[1] ?? []).join("").trim().replace(/^"|"$/g, "");
-      const dwName = `child_${colRaw}`;
-      const sql = DW_QUERIES[dwName];
-      if (sql) {
-        const param = evalTokenArg(vars, expr.args[2] ?? []);
-        return { dwName, sql, params: [param] };
-      }
-      return null;
-    }
-    // Pattern 3: dw.retrieve() — control named "dw" (from ancestor subroutines like of_retrieve).
-    // Look up the dataobject from typeBlocks; pass gs_kodxrisi if the query is parameterised.
-    if (
-      segs.length === 2 &&
-      segs[0]!.name === "dw" &&
-      segs[1]!.name.toLowerCase() === "retrieve"
-    ) {
-      const dataobj = findDwDataobject(ast ?? null, "dw");
-      if (dataobj) {
-        const sql = DW_QUERIES[dataobj];
-        if (sql) {
-          const params = sql.includes("?") ? [vars["gs_kodxrisi"]] : [];
-          // Store under the control name "dw", not the dataobject name, so
-          // RuntimeView can look it up as controlValues[ctrl.name].
-          return { dwName: "dw", sql, params };
-        }
-      }
-      return null;
-    }
-    return null;
-  }
-  // ExMethodCall pattern: complex receiver expression (e.g. chained call).retrieve(args)
-  if (expr.tag === "ExMethodCall") {
-    if (expr.receiver.tag !== "ExLvalue") return null;
-    const dwName = expr.receiver.contents.segments[0]?.name ?? "";
-    if (!dwName.startsWith("dw_")) return null;
-    if (expr.method.toLowerCase() !== "retrieve") return null;
-    const sql = DW_QUERIES[dwName];
-    if (!sql) return null;
-    const params = expr.args.map((a) => evalTokenArg(vars, a));
-    return { dwName, sql, params };
-  }
-  return null;
+  const target = extractRetrieveTarget(vars, expr, ast);
+  if (!target) return null;
+  const sqlKey = target.sqlLookup ?? target.dwName;
+  const sql = DW_QUERIES[sqlKey];
+  if (!sql) return null;
+  const params = sql.includes("?") && target.params.length === 0
+    ? [vars["gs_kodxrisi"]]
+    : target.params;
+  return { dwName: target.dwName, sql, params };
 }
 
-// ── Synchronous body executor (for control-flow bodies that lack retrieve()) ──
-// retrieve() inside BsIf/BsFor/BsDo bodies is out of scope for 101c (BACKLOG).
+// ── Synchronous loop/choose executor (control-flow that cannot suspend) ─────
 
-function execBodySync(vars: Record<string, unknown>, stmts: Located<BodyStmt>[], ast?: AstData | null): void {
+function runBodySync(vars: Record<string, unknown>, stmts: Located<BodyStmt>[], ast?: AstData | null): void {
   for (const s of stmts) {
-    execStmtSync(vars, s.node, ast);
-  }
-}
-
-function execStmtSync(vars: Record<string, unknown>, node: BodyStmt, ast?: AstData | null): void {
-  switch (node.tag) {
-    case "BsAssign": {
-      const [lhs, rhs] = node.contents;
-      if (checkRetrieve(vars, rhs, ast)) return; // skip — retrieve() in control flow is BACKLOG
-      const name = lhs.segments[0]?.name;
-      if (name) vars[name] = evalExpr(vars, rhs);
-      return;
-    }
-    case "BsCall":
-      // retrieve() inside control flow is a no-op for 101c
-      if (!checkRetrieve(vars, node.contents, ast)) evalExpr(vars, node.contents);
-      return;
-    case "BsLocalVar":
-      if (node.init && !checkRetrieve(vars, node.init, ast)) {
-        vars[node.name] = evalExpr(vars, node.init);
-      }
-      return;
-    case "BsReturn":
-      return;
-    case "BsIf": {
-      const { cond, then, elseIfs, else: elseBody } = node.contents;
-      if (evalExpr(vars, cond)) {
-        execBodySync(vars, then, ast);
-      } else {
-        let taken = false;
-        for (const ei of elseIfs) {
-          if (evalExpr(vars, ei.cond)) { execBodySync(vars, ei.body, ast); taken = true; break; }
-        }
-        if (!taken && elseBody) execBodySync(vars, elseBody, ast);
-      }
-      return;
-    }
-    case "BsFor": {
+    const node = s.node;
+    if (node.tag === "BsFor") {
       const fv = node.contents;
       const varName = fv.var?.segments[0]?.name;
-      if (!varName) return;
+      if (!varName) continue;
       const from = Number(evalExpr(vars, fv.from));
-      const to   = Number(evalExpr(vars, fv.to));
+      const to = Number(evalExpr(vars, fv.to));
       const step_ = fv.step ? Number(evalExpr(vars, fv.step)) : 1;
-      if (step_ === 0) return;
+      if (step_ === 0) continue;
       for (let i = from; step_ > 0 ? i <= to : i >= to; i += step_) {
         vars[varName] = i;
-        execBodySync(vars, fv.body, ast);
+        runBodySync(vars, fv.body, ast);
       }
-      return;
-    }
-    case "BsDo": {
+    } else if (node.tag === "BsDo") {
       const dv = node.contents;
-      if (!dv.cond && !dv.loop) { execBodySync(vars, dv.body, ast); return; }
+      if (!dv.cond && !dv.loop) { runBodySync(vars, dv.body, ast); continue; }
       const cond = dv.cond ?? dv.loop!;
       const isWhile = cond.tag === "DoWhile";
       const condExpr = cond.contents;
-      // Guard against infinite loops in sync executor
       let guard = 10000;
-      do {
-        execBodySync(vars, dv.body, ast);
-      } while (guard-- > 0 && (isWhile ? evalExpr(vars, condExpr) : !evalExpr(vars, condExpr)));
-      return;
-    }
-    case "BsChoose": {
+      do { runBodySync(vars, dv.body, ast); }
+      while (guard-- > 0 && (isWhile ? evalExpr(vars, condExpr) : !evalExpr(vars, condExpr)));
+    } else if (node.tag === "BsChoose") {
       const cv = node.contents;
       const value = evalExpr(vars, cv.expr);
       for (const clause of cv.clauses) {
-        if (clause.expr === null) { execBodySync(vars, clause.body, ast); return; }
+        if (clause.expr === null) { runBodySync(vars, clause.body, ast); break; }
         const cv2 = evalTokenArg(vars, clause.expr);
-        if (value === cv2 || String(value) === String(cv2)) { execBodySync(vars, clause.body, ast); return; }
+        if (value === cv2 || String(value) === String(cv2)) { runBodySync(vars, clause.body, ast); break; }
       }
-      return;
     }
-    default:
-      return;
-  }
-}
-
-// ── Top-level statement executor (can suspend on retrieve()) ──────────────────
-
-function execStmt(
-  draft: RuntimeState,
-  node: BodyStmt,
-): SuspendRetrieve | null {
-  switch (node.tag) {
-    case "BsCall": {
-      const suspend = checkRetrieve(draft.variables, node.contents, draft.ast);
-      if (suspend) return suspend;
-      evalExpr(draft.variables, node.contents);
-      return null;
-    }
-    case "BsAssign": {
-      const [lhs, rhs] = node.contents;
-      const suspend = checkRetrieve(draft.variables, rhs, draft.ast);
-      if (suspend) return suspend;
-      const name = lhs.segments[0]?.name;
-      if (name) draft.variables[name] = evalExpr(draft.variables, rhs);
-      return null;
-    }
-    case "BsLocalVar":
-      if (node.init) {
-        const suspend = checkRetrieve(draft.variables, node.init, draft.ast);
-        if (suspend) return suspend;
-        draft.variables[node.name] = evalExpr(draft.variables, node.init);
-      }
-      return null;
-    case "BsReturn":
-      return null;
-    // Control flow runs synchronously; retrieve() inside them is BACKLOG.
-    case "BsIf":
-    case "BsFor":
-    case "BsDo":
-    case "BsChoose":
-      execStmtSync(draft.variables, node, draft.ast);
-      return null;
-    default:
-      return null;
+    // All other statement types (BsAssign, BsCall, BsLocalVar, BsIf, etc.) are
+    // handled inline by driveStmts. Retrieve() inside loops is BACKLOG.
   }
 }
 
@@ -400,7 +274,30 @@ function driveStmts(
       return driveStmts(draft, [...branchBody, ...stmts.slice(i + 1)], env, superDispatched);
     }
 
-    const suspend = execStmt(draft, node);
+    // ── Inline statement execution (was execStmt) ────────────────────────────
+
+    let suspend: SuspendRetrieve | null = null;
+
+    if (node.tag === "BsCall") {
+      suspend = checkRetrieve(draft.variables, node.contents, draft.ast);
+      if (!suspend) evalExpr(draft.variables, node.contents);
+    } else if (node.tag === "BsAssign") {
+      const [lhs, rhs] = node.contents;
+      suspend = checkRetrieve(draft.variables, rhs, draft.ast);
+      if (!suspend) {
+        const name = lhs.segments[0]?.name;
+        if (name) draft.variables[name] = evalExpr(draft.variables, rhs);
+      }
+    } else if (node.tag === "BsLocalVar" && node.init) {
+      suspend = checkRetrieve(draft.variables, node.init, draft.ast);
+      if (!suspend) draft.variables[node.name] = evalExpr(draft.variables, node.init);
+    } else if (node.tag === "BsFor" || node.tag === "BsDo" || node.tag === "BsChoose") {
+      // Loops run synchronously; retrieve() inside them is BACKLOG.
+      runBodySync(draft.variables, [stmts[i]!, ...stmts.slice(i + 1)], draft.ast);
+      return null;
+    }
+    // BsReturn and all other tags → fall through, no suspend.
+
     if (suspend !== null) {
       draft.continuation = stmts.slice(i + 1);
       draft.status = "awaiting-sql";
