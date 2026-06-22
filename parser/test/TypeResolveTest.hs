@@ -521,6 +521,65 @@ tests = testGroup "TypeResolve"
             let names = map csToName (extractDwCallSites "test.srd" "dw_test" dw)
             in  names @?= ["fn_val", "fn_mask"]
     ]
+
+  , testGroup "classifyControlType"
+    [ testCase "dw_ prefix → datawindow" $
+        classifyControlType "dw_orders" @?= Just "datawindow"
+
+    , testCase "cb_ prefix → commandbutton" $
+        classifyControlType "cb_ok" @?= Just "commandbutton"
+
+    , testCase "dddw_ matched before dw_" $
+        -- dddw_ appears before dw_ in prefix map; must yield datawindowchild not datawindow
+        classifyControlType "dddw_status" @?= Just "datawindowchild"
+
+    , testCase "ddlb_ matched before lb_" $
+        classifyControlType "ddlb_type" @?= Just "dropdownlistbox"
+
+    , testCase "no matching prefix → Nothing" $
+        classifyControlType "xyz_unknown" @?= Nothing
+
+    , testCase "case-insensitive match" $
+        classifyControlType "DW_Main" @?= Just "datawindow"
+    ]
+
+  , testGroup "extractGlobalVars"
+    [ testCase "global variable declaration extracted" $ do
+        let sf = SrFile
+              { srHeaders = [], srForward = Nothing, srPrototypes = Nothing
+              , srVariables = Just (VariablesBlock GlobalVars
+                  [VarDecl [] "long" "g_counter"])
+              , srGlobalInstances = [], srTypeBlocks = []
+              , srOnBlocks = [], srEvents = [], srFunctions = [], srSubroutines = []
+              }
+            gvs = extractGlobalVars "w.srf" "w_test" sf
+        case gvs of
+          [gv] -> do
+            gvName gv @?= "g_counter"
+            gvType gv @?= "long"
+          other -> assertFailure ("expected 1 global var, got " <> show (length other))
+
+    , testCase "empty file yields no global vars" $
+        let sf = SrFile
+              { srHeaders = [], srForward = Nothing, srPrototypes = Nothing
+              , srVariables = Nothing, srGlobalInstances = []
+              , srTypeBlocks = [], srOnBlocks = [], srEvents = []
+              , srFunctions = [], srSubroutines = []
+              }
+        in extractGlobalVars "w.srf" "w_test" sf @?= []
+    ]
+
+  , testGroup "resolveTypes/controlType"
+    [ testCase "unresolved var with dw_ prefix falls back to datawindow" $ do
+        let lv = LocalVar "w.srf" "w_test" "of_open" "dw_main"
+                   "n_vo" False 1 (PtUserDefined "n_vo")
+            result = resolveTypes [lv] Set.empty Set.empty
+        case result of
+          [rt] -> do
+            rtKind   rt @?= "primitive"
+            rtTarget rt @?= Just "datawindow"
+          other -> assertFailure ("expected 1 result, got " <> show (length other))
+    ]
   ]
 
 dwMin :: T.Text

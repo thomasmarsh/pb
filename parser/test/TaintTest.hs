@@ -2,7 +2,6 @@ module TaintTest (tests) where
 
 import PB.Prelude
 import PB.AST.BodyStmt     (BodyStmt (..))
-import PB.AST.Expr         (LvSegment (..), Lvalue (..))
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.Pipeline.Taint
@@ -18,9 +17,6 @@ import Test.Tasty.HUnit     (assertBool, testCase, (@?=))
 at :: Int -> a -> Located a
 at n x = Located n x
 
-lv1 :: Text -> Lvalue
-lv1 n = Lvalue [LvSegment n Nothing]
-
 mkSf :: [FunctionBlock] -> [SubroutineBlock] -> [EventBlock] -> [OnBlock] -> SrFile
 mkSf fns subs evs obs = SrFile
   { srHeaders = [], srForward = Nothing, srPrototypes = Nothing
@@ -34,26 +30,6 @@ mkFn name params ret body = FunctionBlock
   , fbBody = body
   }
 
-mkSub :: Text -> [Text] -> [Located BodyStmt] -> SubroutineBlock
-mkSub name params body = SubroutineBlock
-  { sbSig = SubSig [] name (T.intercalate ", " params) Nothing
-  , sbBody = body
-  }
-
-mkEv :: Text -> [Located BodyStmt] -> EventBlock
-mkEv name body = EventBlock
-  { evSig = EventSig name (name <> "()")
-  , evOwner = Nothing
-  , evBody = body
-  }
-
-mkOb :: Text -> Text -> [Located BodyStmt] -> OnBlock
-mkOb owner event body = OnBlock
-  { obQualName = owner <> "." <> event
-  , obOwner = owner
-  , obEvent = event
-  , obBody = body
-  }
 
 defRow :: Text -> Text -> Text -> Text -> Int -> Int -> DefRow
 defRow file obj proc var line stmtIdx = DefRow
@@ -220,6 +196,140 @@ tests = testGroup "Taint"
                ieEdgeKind e @?= "return"
                ieCalleeObject e @?= "__builtin__"
              _ -> error ("expected 1 edge, got " <> show (length edges))
+
+    , testCase "multiple args matched by position" $
+        let rc = [ResolvedCallRow "w.srf" "oa" "pA" "procB" "virtual"
+                    (Just 3) (Just "ob") (Just "procB") "virtual" "high" Nothing]
+            uses = [ useRow "w.srf" "oa" "pA" "v1" 3 "rhs"
+                   , useRow "w.srf" "oa" "pA" "v2" 3 "rhs" ]
+            metas = [ProcMeta "w.srf" "ob" "procB" "function" "integer a, string b" "" Nothing]
+            edges = buildInterprocEdges rc [] uses Set.empty metas
+            argEdges = filter (\e -> ieEdgeKind e == "arg") edges
+        in do
+          length argEdges @?= 2
+          map ieCallerContext argEdges @?= ["v1", "v2"]
+          map ieCalleeContext argEdges @?= ["a", "b"]
+
+    , testCase "extra args beyond params get *extra callee_context" $
+        let rc = [ResolvedCallRow "w.srf" "oa" "pA" "procB" "virtual"
+                    (Just 1) (Just "ob") (Just "procB") "virtual" "high" Nothing]
+            uses = [ useRow "w.srf" "oa" "pA" "a" 1 "rhs"
+                   , useRow "w.srf" "oa" "pA" "b" 1 "rhs"
+                   , useRow "w.srf" "oa" "pA" "c" 1 "rhs" ]
+            metas = [ProcMeta "w.srf" "ob" "procB" "function" "integer x" "" Nothing]
+            edges = buildInterprocEdges rc [] uses Set.empty metas
+            extras = filter (\e -> ieCalleeContext e == "*extra") edges
+        in length extras @?= 2
+
+    , testCase "void callee return type produces no return edge" $
+        let rc = [ResolvedCallRow "w.srf" "oa" "pA" "procB" "virtual"
+                    (Just 5) (Just "ob") (Just "procB") "virtual" "high" Nothing]
+            defs = [defRow "w.srf" "oa" "pA" "result" 5 0]
+            metas = [ProcMeta "w.srf" "ob" "procB" "subroutine" "" "none" Nothing]
+            edges = buildInterprocEdges rc defs [] Set.empty metas
+            retEdges = filter (\e -> ieEdgeKind e == "return") edges
+        in retEdges @?= []
+
+    , testCase "no assignment at call line produces no return edge" $
+        let rc = [ResolvedCallRow "w.srf" "oa" "pA" "procB" "virtual"
+                    (Just 5) (Just "ob") (Just "procB") "virtual" "high" Nothing]
+            -- def is on a different line than the call
+            defs = [defRow "w.srf" "oa" "pA" "result" 99 0]
+            metas = [ProcMeta "w.srf" "ob" "procB" "function" "" "integer" Nothing]
+            edges = buildInterprocEdges rc defs [] Set.empty metas
+            retEdges = filter (\e -> ieEdgeKind e == "return") edges
+        in retEdges @?= []
+
+    , testCase "callee name excluded from arg vars" $
+        let rc = [ResolvedCallRow "w.srf" "oa" "pA" "myfunc" "virtual"
+                    (Just 7) (Just "ob") (Just "myfunc") "virtual" "high" Nothing]
+            uses = [ useRow "w.srf" "oa" "pA" "myfunc" 7 "rhs"  -- callee name
+                   , useRow "w.srf" "oa" "pA" "argVar" 7 "rhs" ]
+            metas = [ProcMeta "w.srf" "ob" "myfunc" "function" "string s" "" Nothing]
+            edges = buildInterprocEdges rc [] uses Set.empty metas
+            argEdges = filter (\e -> ieEdgeKind e == "arg") edges
+        in case argEdges of
+             [e] -> ieCallerContext e @?= "argVar"
+             _   -> error ("expected 1 arg edge, got " <> show (length argEdges))
+
+    , testCase "global_write edge: writer in one proc, reader in another" $
+        let globalVars = Set.fromList ["g_counter"]
+            defs = [defRow "w.srf" "oa" "procA" "g_counter" 1 0]
+            uses = [useRow "w.srf" "ob" "procB" "g_counter" 2 "rhs"]
+            edges = buildInterprocEdges [] defs uses globalVars []
+        in case edges of
+             [e] -> do
+               ieEdgeKind e @?= "global_write"
+               ieCallerObject e @?= "oa"
+               ieCalleeObject e @?= "ob"
+               ieVarName e @?= "g_counter"
+             _ -> error ("expected 1 global edge, got " <> show (length edges))
+
+    , testCase "same-proc global write+read produces no self-edge" $
+        let globalVars = Set.fromList ["g_flag"]
+            defs = [defRow "w.srf" "oa" "procA" "g_flag" 1 0]
+            uses = [useRow "w.srf" "oa" "procA" "g_flag" 2 "rhs"]
+        in buildInterprocEdges [] defs uses globalVars [] @?= []
+
+    , testCase "local var not in global set produces no global edge" $
+        let defs = [defRow "w.srf" "oa" "procA" "local_x" 1 0]
+            uses = [useRow "w.srf" "ob" "procB" "local_x" 2 "rhs"]
+        in buildInterprocEdges [] defs uses Set.empty [] @?= []
+
+    , testCase "multiple readers of same global produce multiple edges" $
+        let globalVars = Set.fromList ["g_total"]
+            defs = [defRow "w.srf" "ow" "writer" "g_total" 1 0]
+            uses = [ useRow "w.srf" "or1" "reader1" "g_total" 2 "rhs"
+                   , useRow "w.srf" "or2" "reader2" "g_total" 3 "rhs" ]
+            edges = buildInterprocEdges [] defs uses globalVars []
+            callees = Set.fromList (map ieCalleeObject edges)
+        in do
+          length edges @?= 2
+          callees @?= Set.fromList ["or1", "or2"]
+
+    , testCase "mutual recursion A↔B produces two arg edges without looping" $
+        let rc = [ ResolvedCallRow "w.srf" "oa" "procA" "procB" "virtual"
+                     (Just 1) (Just "ob") (Just "procB") "virtual" "high" Nothing
+                 , ResolvedCallRow "w.srf" "ob" "procB" "procA" "virtual"
+                     (Just 2) (Just "oa") (Just "procA") "virtual" "high" Nothing ]
+            uses = [ useRow "w.srf" "oa" "procA" "x" 1 "rhs"
+                   , useRow "w.srf" "ob" "procB" "y" 2 "rhs" ]
+            metas = [ ProcMeta "w.srf" "oa" "procA" "function" "integer p" "" Nothing
+                    , ProcMeta "w.srf" "ob" "procB" "function" "integer q" "" Nothing ]
+            argEdges = filter (\e -> ieEdgeKind e == "arg")
+                         (buildInterprocEdges rc [] uses Set.empty metas)
+        in length argEdges @?= 2
+    ]
+
+  , testGroup "buildProcedureSummaries"
+    [ testCase "params_in extracted from ProcMeta params text" $
+        let metas = [ProcMeta "w.srf" "obj" "proc1" "function" "integer x, string y" "" Nothing]
+            summaries = buildProcedureSummaries [] [] [] Set.empty metas
+        in case summaries of
+             [s] -> psProcName s @?= "proc1"
+             _   -> error "expected 1 summary"
+
+    , testCase "globals_written and globals_read populated" $
+        let globalVars = Set.fromList ["g_a", "g_b"]
+            defs = [defRow "w.srf" "obj" "proc1" "g_a" 1 0]
+            uses = [useRow "w.srf" "obj" "proc1" "g_b" 2 "rhs"]
+            metas = [ProcMeta "w.srf" "obj" "proc1" "function" "" "" Nothing]
+            summaries = buildProcedureSummaries [] defs uses globalVars metas
+        in case summaries of
+             [s] -> do
+               psGlobalsWritten s @?= ["g_a"]
+               psGlobalsRead    s @?= ["g_b"]
+             _ -> error "expected 1 summary"
+
+    , testCase "return_flows_to populated from return edges" $
+        let metas = [ProcMeta "w.srf" "ob" "procB" "function" "" "integer" Nothing]
+            retEdge = edge "oa" "procA" (Just 5) "ob" "procB" "return" "res" "res" "return"
+            summaries = buildProcedureSummaries [retEdge] [] [] Set.empty metas
+        in case summaries of
+             [s] -> case psReturnFlowsTo s of
+                      [rf] -> do { psrfObject rf @?= "oa"; psrfLhsVar rf @?= "res" }
+                      rfs  -> error ("expected 1 return flow, got " <> show (length rfs))
+             _ -> error "expected 1 summary"
     ]
 
   , testGroup "taintAnalysis"
