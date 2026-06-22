@@ -5,6 +5,7 @@ import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import { WindowFrame } from "./WindowFrame.js";
+import { WindowRuntimeView } from "./WindowRuntimeView.js";
 
 interface DesktopProps {
   store: Store<AppState, AppAction>;
@@ -30,9 +31,7 @@ export function Desktop(props: DesktopProps): JSX.Element {
             isActive={activeId() === win.id}
             store={props.store}
           >
-            <div class="wm-window-placeholder">
-              {win.runtimeWindowName}
-            </div>
+            <WindowRuntimeView store={props.store} />
           </WindowFrame>
         )}
       </For>

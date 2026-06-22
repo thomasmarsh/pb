@@ -239,6 +239,38 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
             ancestor_name = decl.get("ancestor")
             break
 
+    # Object's own functions/subroutines (not events, not ancestor).
+    func_rows = rows(conn.execute(
+        "SELECT name, owner, body_json, cps_graph_json FROM procedures "
+        "WHERE object = ? AND proc_type IN ('function', 'subroutine')",
+        [name],
+    ))
+    functions = [
+        {
+            "name": r["name"],
+            "owner": r["owner"] or name,
+            "body": json.loads(r["body_json"]) if r.get("body_json") else [],
+            "cpsGraph": json.loads(r["cps_graph_json"]) if r.get("cps_graph_json") else None,
+        }
+        for r in func_rows
+    ]
+
+    # Variable declarations (instance, shared, global) from the global_vars table.
+    var_rows = rows(conn.execute(
+        "SELECT var_name, var_type, modifiers, scope FROM global_vars "
+        "WHERE object = ? ORDER BY scope, var_name",
+        [name],
+    ))
+    variables = [
+        {
+            "name": r["var_name"],
+            "type": r["var_type"],
+            "modifiers": r.get("modifiers"),
+            "scope": r.get("scope", "instance"),
+        }
+        for r in var_rows
+    ]
+
     ancestor_events: list[dict[str, Any]] = []
     ancestor_functions: list[dict[str, Any]] = []
 
@@ -264,6 +296,8 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
     return {
         "typeBlocks": type_blocks,
         "events": events,
+        "functions": functions,
+        "variables": variables,
         "ancestorName": ancestor_name,
         "ancestorEvents": ancestor_events,
         "ancestorFunctions": ancestor_functions,

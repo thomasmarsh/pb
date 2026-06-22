@@ -9,10 +9,18 @@ export interface DWRow {
 
 export type ProcEntry = { name: string; owner: string; body: Located<BodyStmt>[]; cpsGraph?: unknown };
 
+export interface GlobalVarDecl {
+  name: string;
+  type: string;
+  modifiers?: string;
+  scope: string;
+}
+
 export interface AstData {
   typeBlocks: { decl: { ancestor: string; name: string; within: string | null }; body: Located<BodyStmt>[] }[];
   events: ProcEntry[];
   functions?: ProcEntry[];
+  variables?: GlobalVarDecl[];
   ancestorName?: string;
   ancestorEvents?: ProcEntry[];
   ancestorFunctions?: ProcEntry[];

@@ -12,6 +12,7 @@ import type { TablesState } from "../tables/types.js";
 import type { ErrorsState } from "../errors/types.js";
 import type { RuntimeState } from "../runtime/reducer.js";
 import type { WindowManagerState } from "../window-manager/types.js";
+import type { LaunchState } from "../launch/reducer.js";
 
 export type { ViewName } from "../navigation/types.js";
 
@@ -38,4 +39,5 @@ export interface AppState {
   inlineDiagrams: Record<string, InlineDiagramState>;
   runtime: RuntimeState;
   windowManager: WindowManagerState;
+  launch: LaunchState;
 }

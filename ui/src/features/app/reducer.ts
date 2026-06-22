@@ -20,6 +20,7 @@ import { runtimeReducer, type RuntimeEnv, initialRuntimeState, type RuntimeActio
 import { windowManagerReducer } from "../window-manager/reducer.js";
 import type { WindowManagerAction } from "../window-manager/types.js";
 import { initialWindowManagerState } from "../window-manager/initial.js";
+import { launchReducer, initialLaunchState, type LaunchAction } from "../launch/reducer.js";
 
 import type { NavigationAction } from "../navigation/types.js";
 import { crumbsForRoute } from "../navigation/breadcrumb.js";
@@ -32,7 +33,7 @@ import type { DiagramsAction } from "../diagrams/actions.js";
 import type { QueriesAction } from "../queries/actions.js";
 import type { SearchAction } from "../search/actions.js";
 import type { ErrorsAction } from "../errors/actions.js";
-export type { RuntimeAction };
+export type { RuntimeAction, LaunchAction };
 
 import type { Theme } from "./state.js";
 
@@ -57,6 +58,7 @@ const matchSearch      = (a: AppAction): SearchAction      | null => a.tag === "
 const matchErrors      = (a: AppAction): ErrorsAction      | null => a.tag === "errors"       ? a.action : null;
 const matchRuntime     = (a: AppAction): RuntimeAction     | null => a.tag === "runtime"      ? a.action : null;
 const matchWindowManager = (a: AppAction): WindowManagerAction | null => a.tag === "windowManager" ? a.action : null;
+const matchLaunch = (a: AppAction): LaunchAction | null => a.tag === "launch" ? a.action : null;
 
 // ── Initial state ─────────────────────────────────────────────────────────────
 
@@ -82,6 +84,7 @@ export function initialState(): AppState {
     inlineDiagrams: {},
     runtime: initialRuntimeState,
     windowManager: initialWindowManagerState,
+    launch: initialLaunchState,
   };
 }
 
@@ -102,6 +105,7 @@ const _combined = combine<AppState, AppAction, AppEnv>(
   pullback(errorsReducer,             (s) => s.errors,      matchErrors,      (a): AppAction => ({ tag: "errors",      action: a }), (env) => env),
   pullback(runtimeReducer,            (s) => s.runtime,     matchRuntime,     (a): AppAction => ({ tag: "runtime",     action: a }), (env) => env),
   pullback(windowManagerReducer,      (s) => s.windowManager, matchWindowManager, (a): AppAction => ({ tag: "windowManager", action: a }), () => undefined as void),
+  pullback(launchReducer,             (s) => s.launch,      matchLaunch,       (a): AppAction => ({ tag: "launch",      action: a }), (env) => ({ getObjectAst: env.getObjectAst })),
 );
 
 export function reducer(draft: AppState, action: AppAction, env: AppEnv): Effect<AppAction> | null {
@@ -138,6 +142,21 @@ export function reducer(draft: AppState, action: AppAction, env: AppEnv): Effect
       return null;
     }
     }
+  }
+  // Launch cascade: when the launch reducer finishes loading a window AST,
+  // dispatch open-window (window-manager) + set-ast/run-event (runtime) as
+  // follow-up effects so the window appears and its open event executes.
+  // Also let _combined handle the action so the launch reducer updates its state.
+  if (action.tag === "launch" && action.action.tag === "window-ast-loaded") {
+    const { windowName, ast } = action.action;
+    const id = `${windowName}-${Date.now()}`;
+    const base = _combined(draft, action, env);
+    const cascade = Effect.merge<AppAction>(
+      Effect.send({ tag: "windowManager", action: { tag: "open-window", id, title: `${windowName}`, runtimeWindowName: windowName } }),
+      Effect.send({ tag: "runtime", action: { tag: "set-ast", ast } }),
+      Effect.send({ tag: "runtime", action: { tag: "run-event", owner: windowName, event: "open" } }),
+    );
+    return base ? Effect.merge(base, cascade) : cascade;
   }
   return _combined(draft, action, env);
 }

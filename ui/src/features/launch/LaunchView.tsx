@@ -19,18 +19,13 @@ export function LaunchView(props: LaunchViewProps): JSX.Element {
   const [selectedApp, setSelectedApp] = createSignal<string>("openpay");
 
   const hasWindows = () => snap().windowManager.windows.length > 0;
+  const launchStatus = () => snap().launch.status;
 
   function handleLaunch(): void {
     const appName = selectedApp();
-    const id = `${appName}-${Date.now()}`;
     props.store.dispatch({
-      tag: "windowManager",
-      action: {
-        tag: "open-window",
-        id,
-        title: `${appName} — MDI Frame`,
-        runtimeWindowName: appName,
-      },
+      tag: "launch",
+      action: { tag: "load-app", sraName: appName },
     });
   }
 
@@ -50,10 +45,15 @@ export function LaunchView(props: LaunchViewProps): JSX.Element {
                 <option value={app.name}>{app.label}</option>
               ))}
             </select>
-            <button class="launch-btn" onClick={handleLaunch}>
-              Launch
+            <button class="launch-btn" onClick={handleLaunch} disabled={launchStatus() === "loading"}>
+              {launchStatus() === "loading" ? "Loading…" : "Launch"}
             </button>
           </div>
+          <Show when={snap().launch.error}>
+            <div class="launch-error" style={{ color: "var(--error)", "margin-top": "8px", "font-size": "12px" }}>
+              {snap().launch.error}
+            </div>
+          </Show>
           <p class="launch-hint">
             Select a PowerBuilder application (.sra) and click Launch to open
             the MDI frame environment.

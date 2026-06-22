@@ -12,6 +12,7 @@ import type { ErrorsAction } from "../errors/actions.js";
 import type { NavigationAction } from "../navigation/types.js";
 import type { RuntimeAction } from "../runtime/reducer.js";
 import type { WindowManagerAction } from "../window-manager/types.js";
+import type { LaunchAction } from "../launch/reducer.js";
 import type { DiagramKind } from "../../utils/diagram.js";
 import type { Theme } from "./state.js";
 
@@ -36,4 +37,5 @@ export type AppAction =
   | { tag: "errors"; action: ErrorsAction }
   | { tag: "inlineDiagram"; action: InlineDiagramAction }
   | { tag: "runtime"; action: RuntimeAction }
-  | { tag: "windowManager"; action: WindowManagerAction };
+  | { tag: "windowManager"; action: WindowManagerAction }
+  | { tag: "launch"; action: LaunchAction };
