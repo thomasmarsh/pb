@@ -411,6 +411,8 @@ describe("runtimeReducer", () => {
         s.status = "awaiting-sql";
         s.continuation = [];
         s.varEnv.globals = { ...PB_GLOBALS };
+        s.varEnv.locals = [{}, {}];      // caller frame + fn_helper frame
+        s.treeWalkStack = [[]];          // caller's empty continuation saved
       });
 
       ts.receive(
@@ -419,6 +421,8 @@ describe("runtimeReducer", () => {
           s.controlValues = { dw_misth_zpperiod_list: ROWS };
           s.status = "done";
           s.continuation = null;
+          s.varEnv.locals = [{}];        // fn_helper frame popped on unwind
+          s.treeWalkStack = [];
         },
       );
 
@@ -695,6 +699,9 @@ describe("runtimeReducer", () => {
         s.continuation = [];
         s.varEnv.globals = { ...PB_GLOBALS };
         s.varEnv.instance = { ib_retrieve: true };
+        // call super::open + TriggerEvent + of_retrieve = 3 pushFrame calls
+        s.varEnv.locals = [{}, {}, {}, {}];
+        s.treeWalkStack = [[], [], []];
       });
 
       ts.receive(
@@ -703,9 +710,72 @@ describe("runtimeReducer", () => {
           s.controlValues = { dw: ROWS };
           s.status = "done";
           s.continuation = null;
+          s.varEnv.locals = [{}];        // all callee frames popped on unwind
+          s.treeWalkStack = [];
         },
       );
 
+      ts.assertDrained();
+    });
+  });
+
+  describe("run-event / frame isolation", () => {
+    it("callee locals do not clobber caller's variable of the same name", () => {
+      // Caller event 'open': sets i = 1, calls helper().
+      // helper declares local integer i = 99.
+      // Without frame isolation, i would be 99 after the call returns.
+      const lvalueI = { segments: [{ name: "i", subscript: null }] };
+
+      const helperBody = [
+        {
+          line: 1,
+          node: {
+            tag: "BsLocalVar" as const,
+            mods: [],
+            type: { tag: "PtPrimitive" as const, contents: "integer" },
+            name: "i",
+            init: { tag: "ExInt" as const, contents: "99" },
+          },
+        },
+      ];
+
+      const ast = makeAst({
+        functions: [{ name: "helper", owner: "w_test", body: helperBody }],
+        events: [
+          {
+            name: "open",
+            owner: "w_test",
+            body: [
+              {
+                line: 1,
+                node: {
+                  tag: "BsAssign" as const,
+                  contents: [lvalueI, { tag: "ExInt" as const, contents: "1" }],
+                },
+              },
+              {
+                line: 2,
+                node: {
+                  tag: "BsCall" as const,
+                  contents: {
+                    tag: "ExCall" as const,
+                    callee: { segments: [{ name: "helper", subscript: null }] },
+                    args: [],
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      });
+
+      const ts = createTestStore(runtimeReducer, nullEnv, initialRuntimeState);
+      ts.send({ tag: "set-ast", ast });
+      ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
+        s.status = "done";
+        s.varEnv.globals = { ...PB_GLOBALS };
+        s.varEnv.locals[0]!.i = 1;   // caller's i must be 1, not 99
+      });
       ts.assertDrained();
     });
   });

@@ -14,7 +14,7 @@ import { step, type CpsResumeAction } from "../../core/cps/runner.js";
 import type { CpsGraph } from "../../core/cps/types.js";
 // evalExpr is the single evaluator — shared between CPS and tree-walk paths.
 import { evalExpr, evalTokenArg } from "../../core/cps/expr.js";
-import { type VarEnv, makeVarEnv, readVar, writeVar, declareLocal } from "../../core/cps/var-env.js";
+import { type VarEnv, makeVarEnv, readVar, writeVar, declareLocal, pushFrame, popFrame } from "../../core/cps/var-env.js";
 
 // ── Global variables ──────────────────────────────────────────────────────────
 
@@ -39,6 +39,8 @@ export interface RuntimeState {
   controlValues: Record<string, DWRow[]>;
   // Tree-walk continuation (remaining statements after a SQL suspension).
   continuation: Located<BodyStmt>[] | null;
+  // Saved caller continuations for tree-walk procedure calls.
+  treeWalkStack: Located<BodyStmt>[][];
   // CPS-mode graph held for cps-resume; null when using tree-walk path.
   cpsGraph: CpsGraph | null;
   // Plan 115 item 2: CPS call stack for CpsCallProc dispatch. Each frame holds
@@ -53,6 +55,7 @@ export const initialRuntimeState: RuntimeState = {
   varEnv: makeVarEnv(),
   controlValues: {},
   continuation: null,
+  treeWalkStack: [],
   cpsGraph: null,
   callStack: [],
   status: "idle",
@@ -211,6 +214,26 @@ function runBodySync(varEnv: VarEnv, stmts: Located<BodyStmt>[], ast?: AstData |
   }
 }
 
+// ── Call-stack unwind (tree-walk path) ────────────────────────────────────────
+
+// Called at the end of every driveStmts invocation (normal completion or BsReturn).
+// Pops the caller's continuation off treeWalkStack and resumes it with popFrame;
+// if the stack is empty, checks the CPS callStack or marks the run as done.
+function unwindCallStack(
+  draft: RuntimeState,
+  env: RuntimeEnv,
+): Effect<RuntimeAction> | null {
+  const callerCont = draft.treeWalkStack.pop();
+  if (!callerCont) {
+    if (draft.callStack.length > 0) return popCallStack(draft, env);
+    draft.continuation = null;
+    draft.status = "done";
+    return null;
+  }
+  popFrame(draft.varEnv);
+  return driveStmts(draft, callerCont, env);
+}
+
 // ── Trampoline driver (tree-walk path) ────────────────────────────────────────
 
 function driveStmts(
@@ -222,9 +245,8 @@ function driveStmts(
   for (let i = 0; i < stmts.length; i++) {
     const node = stmts[i]!.node;
 
-    // BsRaw containing "call super::open" — inline-expand the ancestor's open event body.
-    // Only follow once (superDispatched guard) to avoid infinite recursion when the ancestor
-    // body itself also contains "call super::open" (calling window::open).
+    // BsRaw containing "call super::open" — push a frame, save caller continuation,
+    // then run the ancestor open body. Only follow once (superDispatched guard).
     if (
       !superDispatched &&
       node.tag === "BsRaw" &&
@@ -236,11 +258,14 @@ function driveStmts(
         e => e.name.toLowerCase() === "open"
       );
       if (ancestorOpen) {
-        return driveStmts(draft, [...ancestorOpen.body, ...stmts.slice(i + 1)], env, true);
+        pushFrame(draft.varEnv);
+        draft.treeWalkStack.push(stmts.slice(i + 1));
+        return driveStmts(draft, ancestorOpen.body, env, true);
       }
     }
 
-    // TriggerEvent("eventName") / this.TriggerEvent("eventName") — inline-expand the named event.
+    // TriggerEvent("eventName") / this.TriggerEvent("eventName") — push a frame,
+    // save caller continuation, then run the named event body.
     if (node.tag === "BsCall" && node.contents.tag === "ExCall" && draft.ast) {
       const segs = node.contents.callee.segments;
       const lastName = segs[segs.length - 1]?.name.toLowerCase();
@@ -254,29 +279,30 @@ function driveStmts(
           .replace(/^"|"$/g, "");
         const eventBody = findEventByName(draft.ast, eventName);
         if (eventBody) {
-          return driveStmts(draft, [...eventBody, ...stmts.slice(i + 1)], env, superDispatched);
+          pushFrame(draft.varEnv);
+          draft.treeWalkStack.push(stmts.slice(i + 1));
+          return driveStmts(draft, eventBody, env, superDispatched);
         }
       }
     }
 
-    // User-defined function dispatch: if the statement is a single-segment ExCall
-    // whose name matches a function/subroutine, inline-expand its body in place.
-    // Note: fn_retrievechild is caught by checkRetrieve before reaching here.
-    // Functions that depend on external resources unavailable in the runtime
-    // (INI files, system calls) are skipped — they fall through to the no-op
-    // ExCall path in execStmt rather than being inline-expanded.
+    // User-defined function dispatch: push a frame, save caller continuation,
+    // then run the callee body. fn_retrievechild is caught by checkRetrieve before
+    // reaching here. Functions depending on external resources are skipped.
     const SKIP_EXPAND = new Set(["if_readini", "if_readinistr", "if_setwhere"]);
     if (node.tag === "BsCall" && node.contents.tag === "ExCall" && draft.ast) {
       const segs = node.contents.callee.segments;
       if (segs.length === 1 && !SKIP_EXPAND.has(segs[0]!.name.toLowerCase())) {
         const fnBody = findBodyByName(draft.ast, segs[0]!.name);
         if (fnBody) {
-          return driveStmts(draft, [...fnBody, ...stmts.slice(i + 1)], env, superDispatched);
+          pushFrame(draft.varEnv);
+          draft.treeWalkStack.push(stmts.slice(i + 1));
+          return driveStmts(draft, fnBody, env, false);
         }
       }
     }
-    // Inline-expand BsIf branches so that TriggerEvent and retrieve() inside
-    // conditions flow through the trampoline rather than the sync executor.
+
+    // Inline-expand BsIf branches (no frame boundary — same procedure scope).
     if (node.tag === "BsIf") {
       const { cond, then: thenBody, elseIfs, else: elseBody } = node.contents;
       let branchBody: Located<BodyStmt>[] = [];
@@ -292,7 +318,10 @@ function driveStmts(
       return driveStmts(draft, [...branchBody, ...stmts.slice(i + 1)], env, superDispatched);
     }
 
-    // ── Inline statement execution (was execStmt) ────────────────────────────
+    // BsReturn — stop this body and let unwindCallStack resume the caller.
+    if (node.tag === "BsReturn") break;
+
+    // ── Inline statement execution ────────────────────────────────────────────
 
     let suspend: SuspendRetrieve | null = null;
 
@@ -311,10 +340,9 @@ function driveStmts(
       if (!suspend) declareLocal(draft.varEnv, node.name, evalExpr(draft.varEnv, node.init));
     } else if (node.tag === "BsFor" || node.tag === "BsDo" || node.tag === "BsChoose") {
       // Loops run synchronously; retrieve() inside them is BACKLOG.
-      runBodySync(draft.varEnv, [stmts[i]!, ...stmts.slice(i + 1)], draft.ast);
-      return null;
+      runBodySync(draft.varEnv, [stmts[i]!], draft.ast);
     }
-    // BsReturn and all other tags → fall through, no suspend.
+    // All other tags (BsExit, BsContinue, etc.) → fall through, no suspend.
 
     if (suspend !== null) {
       draft.continuation = stmts.slice(i + 1);
@@ -324,9 +352,7 @@ function driveStmts(
         .catch((e): RuntimeAction => ({ tag: "error", message: String(e) }));
     }
   }
-  draft.continuation = null;
-  draft.status = "done";
-  return null;
+  return unwindCallStack(draft, env);
 }
 
 // ── CPS execution path ────────────────────────────────────────────────────────
@@ -443,11 +469,13 @@ function resolveCalleeBody(
 }
 
 // Pop the CPS call stack: restore the suspended graph and resume at its PC.
+// Also pops the VarEnv frame pushed when the callee was entered.
 // If the stack is empty, the whole run is complete.
 function popCallStack(
   draft: RuntimeState,
   env: RuntimeEnv,
 ): Effect<RuntimeAction> | null {
+  popFrame(draft.varEnv);
   const frame = draft.callStack.pop();
   if (!frame) {
     draft.cpsGraph = null;
@@ -488,6 +516,7 @@ function reduce(
       draft.varEnv = makeVarEnv();
       draft.controlValues = {};
       draft.continuation = null;
+      draft.treeWalkStack = [];
       draft.cpsGraph = null;
       draft.callStack = [];
       draft.status = "idle";
@@ -496,6 +525,8 @@ function reduce(
 
     case "run-event": {
       if (!draft.ast) return null;
+      draft.varEnv.locals = [{}];
+      draft.treeWalkStack = [];
       for (const [k, v] of Object.entries(PB_GLOBALS)) {
         if (!(k in draft.varEnv.globals)) draft.varEnv.globals[k] = v;
       }
@@ -518,31 +549,21 @@ function reduce(
 
     case "control-click": {
       if (!draft.ast) return null;
+      draft.varEnv.locals = [{}];
+      draft.treeWalkStack = [];
       draft.status = "running";
       const entry = findBody(draft.ast, action.controlName, "clicked");
       if (!entry) { draft.status = "done"; return null; }
       return runProcEntry(draft, entry, env);
     }
 
-    case "sql-result":
+    case "sql-result": {
       draft.controlValues[action.dwName] = action.rows;
-      if (draft.continuation && draft.continuation.length > 0) {
-        const cont = draft.continuation;
-        draft.continuation = null;
-        const effect = driveStmts(draft, cont, env);
-        if (effect) return effect;
-        // Plan 115 item 2: driveStmts returned null — the callee body finished.
-        // If we were dispatched from a CpsCallProc, pop the call stack to resume
-        // the suspended graph; otherwise the whole run is done.
-        if (draft.callStack.length > 0) return popCallStack(draft, env);
-        draft.status = "done";
-        return null;
-      }
-      // No continuation — check callStack for nested CPS dispatch.
-      if (draft.callStack.length > 0) return popCallStack(draft, env);
+      const cont = draft.continuation;
       draft.continuation = null;
-      draft.status = "done";
-      return null;
+      if (cont?.length) return driveStmts(draft, cont, env);
+      return unwindCallStack(draft, env);
+    }
 
     case "cps-resume": {
       draft.controlValues[action.dwName] = action.rows;
@@ -552,22 +573,20 @@ function reduce(
     }
 
     case "cps-dispatch": {
-      // Plan 115 item 2: push the current CPS graph and run the callee body
-      // via the tree-walk path. When the callee finishes synchronously
-      // (runProcEntry returns null) popCallStack resumes the suspended graph
-      // at action.resumePc. If the callee suspends on SQL, sql-result handles
-      // the pop once the callee's continuation is drained.
+      // Push a VarEnv frame and save the suspended CPS graph; run the callee
+      // body via the tree-walk path. When the callee finishes, unwindCallStack
+      // finds callStack non-empty and calls popCallStack, which pops the frame
+      // and resumes the CPS graph at action.resumePc.
       const graph = draft.cpsGraph;
       if (!graph) return null;
+      pushFrame(draft.varEnv);
       draft.callStack.push({ graph, resumePc: action.resumePc });
       draft.cpsGraph = null;
       draft.status = "running";
       const body = resolveCalleeBody(draft.ast, action.callee, action.args);
-      if (!body) return popCallStack(draft, env);  // callee not found → skip
+      if (!body) return popCallStack(draft, env);  // callee not found → pop frame + resume
       const entry: ProcEntry = { name: action.callee, owner: "", body, cpsGraph: null };
-      const effect = runProcEntry(draft, entry, env);
-      if (!effect) return popCallStack(draft, env);  // callee done → resume caller
-      return effect;
+      return runProcEntry(draft, entry, env);
     }
 
     case "error":

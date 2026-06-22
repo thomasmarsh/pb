@@ -277,14 +277,14 @@ describe("e2e: reducer CPS path", () => {
       s.varEnv.globals = { ...PB_GLOBALS };
     });
 
-    // 2. cps-dispatch resolves ie_retrieve, runs it tree-walk (assigns x),
-    //    then popCallStack resumes the graph at pc=0 → CpsReturn → done.
+    // 2. cps-dispatch resolves ie_retrieve, runs it tree-walk (assigns x to
+    //    the callee's frame), then popCallStack pops that frame and resumes the
+    //    graph at pc=0 → CpsReturn → done. x is not visible in the caller's frame.
     ts.receive(
       { tag: "cps-dispatch", callee: "triggerevent", args: ["ie_retrieve"], resumePc: 0 },
       (s) => {
         s.status = "done";
         s.varEnv.globals = { ...PB_GLOBALS };
-        s.varEnv.locals[0]!.x = "dispatched";
         s.cpsGraph = null;
         s.callStack = [];
       },
