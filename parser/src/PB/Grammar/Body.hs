@@ -366,7 +366,6 @@ parsePbCall [callT, ancT, sepT, evT]
   | tkKind callT == TkOtherKw
   , tkKind ancT  `elem` [TkIdent, TkOtherKw]
   , tkKind sepT  == TkDoubleColon
-  , tkKind evT   `elem` [TkIdent, TkOtherKw]
   = Just (PbCall (tkText ancT) (tkText evT))
 parsePbCall _ = Nothing
 

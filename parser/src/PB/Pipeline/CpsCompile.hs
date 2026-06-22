@@ -29,6 +29,7 @@ import Control.Monad.State.Strict
 import Data.List            (partition)
 import GHC.Generics         (Generic)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set        as Set
 import qualified Data.Text       as T
 
 -- ---------------------------------------------------------------------------
@@ -131,11 +132,15 @@ resolveReceiverType _ _ = Nothing
 -- expressions that classifyExpr already deemed Suspend.
 effectName :: Expr -> Text
 effectName expr =
-  let cn   = T.toLower (calleeName expr)
+  let cn    = T.toLower (calleeName expr)
       head_ = T.takeWhile (/= '.') cn
-  in if cn `elem` ["open", "opensheet"] then "open"
-     else if "close" `T.isSuffixOf` cn        then "close"
-     else if ".retrieve" `T.isSuffixOf` cn    then "retrieve:" <> head_
+  in if cn == "fn_retrievechild"
+     then case exprArgs expr of
+            (_:ExStr col:_) -> "retrieve:child_" <> T.toLower col
+            _               -> "retrieve:child_?"
+     else if cn `elem` ["open", "opensheet"] then "open"
+     else if "close" `T.isSuffixOf` cn       then "close"
+     else if ".retrieve" `T.isSuffixOf` cn   then "retrieve:" <> head_
      else "executeSql"
 
 calleeName :: Expr -> Text
@@ -205,10 +210,11 @@ exprArgs _                              = []
 -- and patch it later (needed for forward references in for/do loops).
 
 data CompileSt = CompileSt
-  { csCount :: !Int
-  , csNodes :: !(Map.Map Int CpsNode)
-  , csSPs   :: ![Int]         -- suspension point PCs, in emission order
-  , csSM    :: ![(Int, Int)]  -- (pc, line) source map, in emission order
+  { csCount   :: !Int
+  , csNodes   :: !(Map.Map Int CpsNode)
+  , csSPs     :: ![Int]             -- suspension point PCs, in emission order
+  , csSM      :: ![(Int, Int)]      -- (pc, line) source map, in emission order
+  , csUserFns :: !(Set.Set Text)    -- user-defined function names (lower-cased)
   }
 
 type C = State CompileSt
@@ -302,21 +308,48 @@ compileSingleStmt env lctx (Located line stmt) fallthrough = case stmt of
              , cpArgs   = [evArg]
              , cpNext   = fallthrough
              }) (Just line)
-    | otherwise -> case classifyExpr env expr of
-      Suspend ->
-        emit (CpsSuspend
-          { suEffect       = effectName expr
-          , suArgs         = exprArgs expr
-          , suVar          = Nothing
-          , suContinuation = fallthrough
-          }) (Just line)
-      Pure ->
-        emit (CpsCall
-          { clCallee = calleeName expr
-          , clArgs   = exprArgs expr
-          , clResult = Nothing
-          , clNext   = fallthrough
-          }) (Just line)
+    -- fn_retrievechild(adw, "col", sqlParam): effect name encodes column;
+    -- only the 3rd arg (the SQL parameter) is needed at runtime.
+    | ExCall lv rawArgs <- expr
+    , [seg] <- segments lv
+    , T.toLower (segName seg) == "fn_retrievechild" ->
+        let colArg   = case rawArgs of { (_:c:_) -> parseArgList c; _ -> ExRaw [] }
+            paramArg = case rawArgs of { (_:_:p:_) -> [parseArgList p]; _ -> [] }
+            col      = case colArg of { ExStr c -> T.toLower c; _ -> "?" }
+        in emit (CpsSuspend
+             { suEffect       = "retrieve:child_" <> col
+             , suArgs         = paramArg
+             , suVar          = Nothing
+             , suContinuation = fallthrough
+             }) (Just line)
+    | otherwise -> do
+        fns <- gets csUserFns
+        let defaultEmit = case classifyExpr env expr of
+              Suspend ->
+                emit (CpsSuspend
+                  { suEffect       = effectName expr
+                  , suArgs         = exprArgs expr
+                  , suVar          = Nothing
+                  , suContinuation = fallthrough
+                  }) (Just line)
+              Pure ->
+                emit (CpsCall
+                  { clCallee = calleeName expr
+                  , clArgs   = exprArgs expr
+                  , clResult = Nothing
+                  , clNext   = fallthrough
+                  }) (Just line)
+        case expr of
+          ExCall lv _
+            | [seg] <- segments lv
+            , T.toLower (segName seg) `Set.member` fns ->
+                emit (CpsCallProc
+                  { cpCallee = segName seg
+                  , cpArgs   = exprArgs expr
+                  , cpNext   = fallthrough
+                  }) (Just line)
+            | otherwise -> defaultEmit
+          _ -> defaultEmit
 
   BsReturn mExpr ->
     emit (CpsReturn { reValue = mExpr }) (Just line)
@@ -426,9 +459,9 @@ condExpr (DoUntil e) = ExNot e
 -- ---------------------------------------------------------------------------
 -- Public entry point
 
-compileProcedure :: TypeEnv -> [Located BodyStmt] -> CpsGraph
-compileProcedure env body =
-  let initSt = CompileSt { csCount = 0, csNodes = Map.empty, csSPs = [], csSM = [] }
+compileProcedure :: TypeEnv -> Set.Set Text -> [Located BodyStmt] -> CpsGraph
+compileProcedure env userFns body =
+  let initSt = CompileSt { csCount = 0, csNodes = Map.empty, csSPs = [], csSM = [], csUserFns = userFns }
       (graph, _) = runState go initSt
   in graph
   where

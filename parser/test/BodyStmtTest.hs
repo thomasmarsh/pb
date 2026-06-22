@@ -246,6 +246,12 @@ tests = testGroup "Body"
                   , (TkDoubleColon, "::"), (TkOtherKw, "create") ])
           @?= BsPbCall (PbCall "super" "create")
 
+    , testCase "call super::open where 'open' is TkSqlKw → BsPbCall (not BsRaw)" $
+        classifyBodyStmt
+          (mkStmt [ (TkOtherKw, "call"), (TkOtherKw, "super")
+                  , (TkDoubleColon, "::"), (TkSqlKw, "open") ])
+          @?= BsPbCall (PbCall "super" "open")
+
     , testCase "call missing :: falls to BsRaw" $
         case classifyBodyStmt
                (mkStmt [(TkOtherKw, "call"), (TkOtherKw, "super"), (TkIdent, "open")]) of

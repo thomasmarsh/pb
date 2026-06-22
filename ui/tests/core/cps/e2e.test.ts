@@ -175,8 +175,8 @@ describe("e2e: reducer CPS path", () => {
     ts.assertDrained();
   });
 
-  it("missing cpsGraph falls back to tree-walk", () => {
-    // Event with body but no cpsGraph → tree-walk path
+  it("missing cpsGraph falls back to sync eval", () => {
+    // Event with body but no cpsGraph → runBodySync fallback
     const ast: AstData = {
       typeBlocks: [],
       events: [
@@ -209,7 +209,7 @@ describe("e2e: reducer CPS path", () => {
       s.status = "done";
       s.varEnv.globals = { ...PB_GLOBALS };
       s.varEnv.locals[0]!.x = 99;
-      // continuation and cpsGraph stay null (tree-walk path)
+      // cpsGraph stays null (sync fallback path)
     });
     ts.assertDrained();
   });
@@ -277,7 +277,7 @@ describe("e2e: reducer CPS path", () => {
       s.varEnv.globals = { ...PB_GLOBALS };
     });
 
-    // 2. cps-dispatch resolves ie_retrieve, runs it tree-walk (assigns x to
+    // 2. cps-dispatch resolves ie_retrieve, runs it via sync fallback (assigns x to
     //    the callee's frame), then popCallStack pops that frame and resumes the
     //    graph at pc=0 → CpsReturn → done. x is not visible in the caller's frame.
     ts.receive(

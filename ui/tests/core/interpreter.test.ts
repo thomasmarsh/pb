@@ -13,7 +13,6 @@ import {
 import { readVar, flattenVarEnv } from "../../src/core/cps/var-env.js";
 import type { AstData } from "../../src/core/interpreter.js";
 import type { BodyStmt, Expr, Located } from "../../src/types/ast.generated.js";
-import type { SQLResult } from "../../src/core/dw-queries.js";
 
 // ── Wire-format helpers ────────────────────────────────────────────────────────
 
@@ -397,51 +396,6 @@ describe("PB runtime (formerly PBInterpreter)", () => {
         }],
       });
       expect(readVar(runEvent(ast, "w_test", "open").varEnv, "greeting")).toBe("hello");
-    });
-  });
-
-  describe("ExMethodCall retrieve()", () => {
-    it("dw_*.retrieve() fires SQL when datawindow name is in DW_QUERIES", () => {
-      const MOCK_ROWS = [{ kodperiod: "01", descperiod: "January", orderno: 1 }];
-      const sqlResult: SQLResult = { rows: MOCK_ROWS, columns: ["kodperiod", "descperiod", "orderno"], rowcount: 1 };
-      const env: RuntimeEnv = { executeSql: () => Effect.send(sqlResult) };
-      const ast = makeAst({
-        events: [{
-          name: "open", owner: "w_test",
-          body: [loc(1, {
-            tag: "BsCall",
-            contents: {
-              tag: "ExMethodCall",
-              receiver: { tag: "ExLvalue", contents: { segments: [{ name: "dw_misth_zpperiod_list", subscript: null }] } },
-              method: "retrieve",
-              args: [],
-            },
-          })],
-        }],
-      });
-      const ts = createTestStore(runtimeReducer, env, { ...initialRuntimeState, ast });
-      ts.send({ tag: "run-event", owner: "w_test", event: "open" });
-      ts.receive({ tag: "sql-result", dwName: "dw_misth_zpperiod_list", rows: MOCK_ROWS });
-      ts.assertDrained();
-      expect(ts.getState().controlValues["dw_misth_zpperiod_list"]).toHaveLength(1);
-    });
-
-    it("does not set controlValues for non-dw method calls", () => {
-      const ast = makeAst({
-        events: [{
-          name: "open", owner: "w_test",
-          body: [loc(1, {
-            tag: "BsCall",
-            contents: {
-              tag: "ExMethodCall",
-              receiver: { tag: "ExLvalue", contents: { segments: [{ name: "some_obj", subscript: null }] } },
-              method: "retrieve",
-              args: [],
-            },
-          })],
-        }],
-      });
-      expect(runEvent(ast, "w_test", "open").controlValues).toEqual({});
     });
   });
 

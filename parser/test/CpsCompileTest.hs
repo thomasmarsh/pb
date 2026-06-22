@@ -12,6 +12,8 @@ import PB.Pipeline.Preprocess (LogicalLine (..))
 import PB.Pipeline.TypeEnv (TypeEnv (..))
 
 import qualified Data.Map.Strict as Map
+import qualified Data.Set        as Set
+import qualified Data.Text       as T
 import Test.Tasty           (TestTree, testGroup)
 import Test.Tasty.HUnit     (assertBool, testCase, (@?=))
 
@@ -74,6 +76,14 @@ transEnv = varEnv "sqlca" "transaction"
 noEnv :: TypeEnv
 noEnv = emptyEnv
 
+-- | Compile with no user-fn registry (the common case in these tests).
+compile :: TypeEnv -> [Located BodyStmt] -> CpsGraph
+compile env = compileProcedure env Set.empty
+
+-- | Compile with a user-fn registry (for Item 3 tests).
+compileWith :: TypeEnv -> [Text] -> [Located BodyStmt] -> CpsGraph
+compileWith env fns = compileProcedure env (Set.fromList (map T.toLower fns))
+
 -- ---------------------------------------------------------------------------
 
 tests :: TestTree
@@ -83,7 +93,7 @@ tests = testGroup "CpsCompile"
   -- Existing structural tests (updated to new compileProcedure signature)
 
   [ testCase "empty body → single CpsReturn at entry 0" $ do
-      let g = compileProcedure noEnv []
+      let g = compile noEnv []
       cgEntry g @?= 0
       length (cgNodes g) @?= 1
       case cgNodes g of
@@ -92,7 +102,7 @@ tests = testGroup "CpsCompile"
 
   , testCase "single BsAssign → assign node + return, entry ≠ 0" $ do
       let stmt = at 10 (BsAssign (lv1 "x") (ExInt "1"))
-          g    = compileProcedure noEnv [stmt]
+          g    = compile noEnv [stmt]
       length (cgNodes g) @?= 2
       assertBool "entry should be > 0" (cgEntry g > 0)
       case cgNodes g of
@@ -101,7 +111,7 @@ tests = testGroup "CpsCompile"
 
   , testCase "BsCall retrieve with DataWindow type → CpsSuspend retrieve:dw" $ do
       let stmt = at 5 (BsCall retrieveCall)
-          g    = compileProcedure dwEnv [stmt]
+          g    = compile dwEnv [stmt]
       let suNodes = [ n | n@CpsSuspend {} <- cgNodes g ]
       assertBool "expected at least one CpsSuspend" (not (null suNodes))
       case suNodes of
@@ -110,12 +120,12 @@ tests = testGroup "CpsCompile"
 
   , testCase "BsCall retrieve with DataWindow type → listed in suspensionPoints" $ do
       let stmt = at 5 (BsCall retrieveCall)
-          g    = compileProcedure dwEnv [stmt]
+          g    = compile dwEnv [stmt]
       assertBool "suspensionPoints should be non-empty" (not (null (cgSuspensionPoints g)))
 
   , testCase "BsCall open → CpsSuspend with effect open" $ do
       let stmt = at 7 (BsCall openCall)
-          g    = compileProcedure noEnv [stmt]
+          g    = compile noEnv [stmt]
       let suNodes = [ n | n@CpsSuspend {} <- cgNodes g ]
       assertBool "expected CpsSuspend" (not (null suNodes))
       case suNodes of
@@ -124,7 +134,7 @@ tests = testGroup "CpsCompile"
 
   , testCase "pure BsCall → CpsCall (not suspend)" $ do
       let stmt = at 3 (BsCall pureCall)
-          g    = compileProcedure noEnv [stmt]
+          g    = compile noEnv [stmt]
       let suNodes = [ n | n@CpsSuspend {} <- cgNodes g ]
       let caNodes = [ n | n@CpsCall {} <- cgNodes g ]
       suNodes @?= []
@@ -133,13 +143,13 @@ tests = testGroup "CpsCompile"
   , testCase "BsIf → CpsBranch node" $ do
       let thenS = [at 2 (BsAssign (lv1 "x") (ExInt "1"))]
           stmt  = at 1 (BsIf (IfStmt (ExBool True) thenS [] Nothing))
-          g     = compileProcedure noEnv [stmt]
+          g     = compile noEnv [stmt]
       let brNodes = [ n | n@CpsBranch {} <- cgNodes g ]
       assertBool "expected CpsBranch" (not (null brNodes))
 
   , testCase "BsAssign on line 42 → 42 appears in sourceMap" $ do
       let stmt = at 42 (BsAssign (lv1 "x") (ExInt "1"))
-          g    = compileProcedure noEnv [stmt]
+          g    = compile noEnv [stmt]
       let lines_ = map snd (cgSourceMap g)
       assertBool "line 42 should be in sourceMap" (42 `elem` lines_)
 
@@ -244,9 +254,10 @@ tests = testGroup "CpsCompile"
         effectName (ExCall { callee = lv2 "dw" "retrieve", callArgs = [] })
           @?= "retrieve:dw"
 
-    , testCase "effect name: fn_retrievechild() → executeSql" $
-        effectName (ExCall { callee = lv1 "fn_retrievechild", callArgs = [] })
-          @?= "executeSql"
+    , testCase "effect name: fn_retrievechild('kodperiod') → retrieve:child_kodperiod" $
+        effectName (ExCall { callee   = lv1 "fn_retrievechild"
+                           , callArgs = [[tok "adw"], [tok "\"kodperiod\""], [tok "gs_kodxrisi"]] })
+          @?= "retrieve:child_kodperiod"
 
     , testCase "InheritGraph: user type inheriting datawindow → Suspend" $
         classifyExpr (varEnvInh [("ids_data", "n_cst_ds")] [("n_cst_ds", "datastore")])
@@ -328,7 +339,7 @@ tests = testGroup "CpsCompile"
 
     [ testCase "BsAugAssign add emits CpsAssign with ExBinOp BopAdd" $ do
         let stmt = at 5 (BsAugAssign [tok "x"] AugAdd [tok "y"])
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
         assertBool "expected CpsAssign for BsAugAssign" (not (null assignNodes))
         case assignNodes of
@@ -341,7 +352,7 @@ tests = testGroup "CpsCompile"
 
     , testCase "BsAugAssign sub emits CpsAssign with ExBinOp BopSub" $ do
         let stmt = at 5 (BsAugAssign [tok "x"] AugSub [tok "y"])
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
         assertBool "expected CpsAssign for BsAugAssign sub" (not (null assignNodes))
         case assignNodes of
@@ -352,7 +363,7 @@ tests = testGroup "CpsCompile"
 
     , testCase "BsInc emits CpsAssign with ExBinOp BopAdd ExInt 1" $ do
         let stmt = at 3 (BsInc [tok "i"])
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
         assertBool "expected CpsAssign for BsInc" (not (null assignNodes))
         case assignNodes of
@@ -363,7 +374,7 @@ tests = testGroup "CpsCompile"
 
     , testCase "BsDec emits CpsAssign with ExBinOp BopSub ExInt 1" $ do
         let stmt = at 3 (BsDec [tok "i"])
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
         assertBool "expected CpsAssign for BsDec" (not (null assignNodes))
         case assignNodes of
@@ -374,7 +385,7 @@ tests = testGroup "CpsCompile"
 
     , testCase "BsDestroy emits CpsAssign with ExNull (Plan 115 item 1)" $ do
         let stmt = at 4 (BsDestroy (lv1 "obj"))
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             assignNodes = [ n | n@CpsAssign {} <- cgNodes g ]
         assertBool "expected CpsAssign for BsDestroy" (not (null assignNodes))
         case assignNodes of
@@ -391,14 +402,14 @@ tests = testGroup "CpsCompile"
 
     [ testCase "BsExit outside loop falls through (no CpsGoto)" $ do
         let stmt = at 1 BsExit
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             gotos = [ n | n@CpsGoto {} <- cgNodes g ]
         gotos @?= []
 
     , testCase "BsExit inside for loop emits CpsGoto to exit PC" $ do
         let exitStmt = at 2 BsExit
             forStmt  = at 1 (BsFor (ForStmt (lv1 "i") (ExInt "1") (ExInt "10") Nothing [exitStmt]))
-            g        = compileProcedure noEnv [forStmt]
+            g        = compile noEnv [forStmt]
             nodes    = cgNodes g
             gotos    = [ n | n@CpsGoto {} <- nodes ]
         assertBool "expected CpsGoto for BsExit" (not (null gotos))
@@ -411,7 +422,7 @@ tests = testGroup "CpsCompile"
     , testCase "BsContinue inside for loop emits CpsGoto to increment PC" $ do
         let contStmt = at 2 BsContinue
             forStmt  = at 1 (BsFor (ForStmt (lv1 "i") (ExInt "1") (ExInt "10") Nothing [contStmt]))
-            g        = compileProcedure noEnv [forStmt]
+            g        = compile noEnv [forStmt]
             nodes    = cgNodes g
             gotos    = [ n | n@CpsGoto {} <- nodes ]
         assertBool "expected CpsGoto for BsContinue" (not (null gotos))
@@ -424,7 +435,7 @@ tests = testGroup "CpsCompile"
     , testCase "BsContinue inside do-while loop emits CpsGoto to branch PC" $ do
         let contStmt = at 2 BsContinue
             doStmt   = at 1 (BsDo (DoStmt (Just (DoWhile (ExBool True))) [contStmt] Nothing))
-            g        = compileProcedure noEnv [doStmt]
+            g        = compile noEnv [doStmt]
             nodes    = cgNodes g
             gotos    = [ n | n@CpsGoto {} <- nodes ]
         assertBool "expected CpsGoto for BsContinue in do loop" (not (null gotos))
@@ -442,7 +453,7 @@ tests = testGroup "CpsCompile"
 
     [ testCase "exprArgs: single-token arg becomes ExLvalue" $ do
         let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [[tok "w_test"]] }))
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
           [s] -> suArgs s @?= [ExLvalue (lv1 "w_test")]
@@ -450,7 +461,7 @@ tests = testGroup "CpsCompile"
 
     , testCase "exprArgs: multi-token binary a + 1 → ExBinOp BopAdd (Plan 115 item 3B)" $ do
         let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [[tok "a", tok "+", tok "1"]] }))
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
           [s] -> do
@@ -465,7 +476,7 @@ tests = testGroup "CpsCompile"
               { callee   = lv1 "open"
               , callArgs = [[tok "a", tok "+", tok "1"], [tok "b"]]
               }))
-            g   = compileProcedure noEnv [stmt]
+            g   = compile noEnv [stmt]
             sus = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
           [s] -> length (suArgs s) @?= 2
@@ -473,7 +484,7 @@ tests = testGroup "CpsCompile"
 
     , testCase "parseArgList: quoted string → ExStr" $ do
         let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [[tok "\"hello\""]] }))
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
           [s] -> suArgs s @?= [ExStr "hello"]
@@ -481,7 +492,7 @@ tests = testGroup "CpsCompile"
 
     , testCase "parseArgList: bool literal true → ExBool True" $ do
         let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [[tok "true"]] }))
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
           [s] -> suArgs s @?= [ExBool True]
@@ -489,7 +500,7 @@ tests = testGroup "CpsCompile"
 
     , testCase "parseArgList: null → ExNull" $ do
         let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [[tok "null"]] }))
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
           [s] -> suArgs s @?= [ExNull]
@@ -497,7 +508,7 @@ tests = testGroup "CpsCompile"
 
     , testCase "parseArgList: multi-token sub b - 2 → ExBinOp BopSub" $ do
         let stmt = at 1 (BsCall (ExCall { callee = lv1 "open", callArgs = [[tok "b", tok "-", tok "2"]] }))
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             sus  = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
           [s] -> case suArgs s of
@@ -513,7 +524,7 @@ tests = testGroup "CpsCompile"
 
     [ testCase "BsPbCall super::open → CpsCallProc super::open" $ do
         let stmt = at 5 (BsPbCall (PbCall "super" "open"))
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
         assertBool "expected CpsCallProc" (not (null cps))
         case cps of
@@ -522,7 +533,7 @@ tests = testGroup "CpsCompile"
 
     , testCase "BsPbCall produces empty cpArgs" $ do
         let stmt = at 5 (BsPbCall (PbCall "super" "open"))
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
         case cps of
           (n:_) -> cpArgs n @?= []
@@ -530,7 +541,7 @@ tests = testGroup "CpsCompile"
 
     , testCase "BsPbCall with arbitrary ancestor → CpsCallProc ancestor::event" $ do
         let stmt = at 1 (BsPbCall (PbCall "w_master" "ue_preopen"))
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
         case cps of
           (n:_) -> cpCallee n @?= "w_master::ue_preopen"
@@ -541,7 +552,7 @@ tests = testGroup "CpsCompile"
               { callee   = lv1 "TriggerEvent"
               , callArgs = [[tok "\"ie_retrieve\""]]
               }))
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
         assertBool "expected CpsCallProc for TriggerEvent" (not (null cps))
         case cps of
@@ -555,7 +566,7 @@ tests = testGroup "CpsCompile"
               { callee   = lv2 "this" "TriggerEvent"
               , callArgs = [[tok "\"ev\""]]
               }))
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
         assertBool "expected CpsCallProc for this.TriggerEvent" (not (null cps))
         case cps of
@@ -567,14 +578,65 @@ tests = testGroup "CpsCompile"
               { callee   = lv1 "triggerevent"
               , callArgs = [[tok "\"ev\""]]
               }))
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
         [ n | n@CpsSuspend {} <- cgNodes g ] @?= []
         [ n | n@CpsCall    {} <- cgNodes g ] @?= []
 
     , testCase "BsRaw still falls through to no-op (no CpsCallProc)" $ do
         let stmt = at 1 (BsRaw "call super::open")
-            g    = compileProcedure noEnv [stmt]
+            g    = compile noEnv [stmt]
             cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
         cps @?= []
+    ]
+
+  -- ------------------------------------------------------------------
+  -- Item 1 – fn_retrievechild compile (Plan 117)
+
+  , testGroup "Item 1 – fn_retrievechild suspend"
+
+    [ testCase "fn_retrievechild compiles to CpsSuspend retrieve:child_kodperiod" $ do
+        let stmt = at 3 (BsCall (ExCall
+              { callee   = lv1 "fn_retrievechild"
+              , callArgs = [[tok "adw"], [tok "\"kodperiod\""], [tok "gs_kodxrisi"]]
+              }))
+            g   = compile noEnv [stmt]
+            sus = [ n | n@CpsSuspend {} <- cgNodes g ]
+        case sus of
+          [s] -> suEffect s @?= "retrieve:child_kodperiod"
+          _   -> assertBool "expected one CpsSuspend" False
+
+    , testCase "fn_retrievechild CpsSuspend carries only the 3rd arg (SQL param)" $ do
+        let stmt = at 3 (BsCall (ExCall
+              { callee   = lv1 "fn_retrievechild"
+              , callArgs = [[tok "adw"], [tok "\"kodperiod\""], [tok "gs_kodxrisi"]]
+              }))
+            g   = compile noEnv [stmt]
+            sus = [ n | n@CpsSuspend {} <- cgNodes g ]
+        case sus of
+          [s] -> length (suArgs s) @?= 1
+          _   -> assertBool "expected one CpsSuspend" False
+    ]
+
+  -- ------------------------------------------------------------------
+  -- Item 3 – user-fn dispatch (Plan 117)
+
+  , testGroup "Item 3 – user-fn dispatch"
+
+    [ testCase "single-segment user fn in registry → CpsCallProc" $ do
+        let stmt = at 1 (BsCall (ExCall { callee = lv1 "wf_init", callArgs = [] }))
+            g    = compileWith noEnv ["wf_init"] [stmt]
+            cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
+        assertBool "expected CpsCallProc for user fn" (not (null cps))
+        case cps of
+          (n:_) -> cpCallee n @?= "wf_init"
+          []    -> pure ()
+
+    , testCase "single-segment call NOT in registry → CpsCall (unchanged)" $ do
+        let stmt = at 1 (BsCall (ExCall { callee = lv1 "messagebox", callArgs = [] }))
+            g    = compileWith noEnv ["wf_init"] [stmt]   -- messagebox not in set
+            cps  = [ n | n@CpsCallProc {} <- cgNodes g ]
+            calls = [ n | n@CpsCall {} <- cgNodes g ]
+        cps   @?= []
+        assertBool "expected CpsCall for non-user-fn" (not (null calls))
     ]
   ]

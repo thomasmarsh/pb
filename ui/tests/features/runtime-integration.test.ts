@@ -2,7 +2,7 @@
 // Tests the full flow: AST → runtimeReducer → controlValues → renderWindow.
 
 import { describe, it, expect } from "vitest";
-import { createMockRuntimeEnv, createOpenpayMockEnv } from "../mock-runtime-env.js";
+import { createOpenpayMockEnv } from "../mock-runtime-env.js";
 import { renderWindow } from "../../src/core/render-window.js";
 import {
   runtimeReducer,
@@ -43,98 +43,28 @@ function makeAstWithDataobject(controlName: string, dataobject: string): AstData
   });
 }
 
+// Minimal CPS graph for a single retrieve() call: CpsSuspend at pc=1, CpsReturn at pc=0.
+function makeSingleRetrieveCpsGraph(effect: string) {
+  return {
+    nodes: [
+      { tag: "CpsReturn", value: null },
+      {
+        tag: "CpsSuspend",
+        effect,
+        args: [{ tag: "ExLvalue", contents: { segments: [{ name: "gs_kodxrisi", subscript: null }] } }],
+        var: null,
+        continuation: 0,
+      },
+    ],
+    entry: 1,
+    suspensionPoints: [1],
+    sourceMap: [],
+  };
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("runtime integration", () => {
-  describe("mock env captures SQL calls", () => {
-    it("records all executeSql calls", () => {
-      const MOCK_ROWS = [{ kodkrat: "01", desckrat: "Test" }];
-      const mockEnv = createMockRuntimeEnv({
-        misth_zpkrat: { rows: MOCK_ROWS, rowcount: 1, columns: ["kodkrat", "desckrat"] },
-      });
-      const ts = createTestStore(runtimeReducer, mockEnv, initialRuntimeState);
-
-      const ast = makeAst({
-        events: [{
-          name: "open",
-          owner: "w_test",
-          body: [{
-            line: 1,
-            node: {
-              tag: "BsCall",
-              contents: {
-                tag: "ExCall",
-                callee: { segments: [{ name: "dw", subscript: null }, { name: "retrieve", subscript: null }] },
-                args: [["gs_kodxrisi"]],
-              },
-            },
-          }],
-        }],
-        typeBlocks: [
-          { decl: { ancestor: "window", name: "w_test", within: null }, body: [] },
-          { decl: { ancestor: "datawindow", name: "dw", within: "w_test" }, body: [
-            { line: 1, node: { tag: "BsLocalVar", name: "dataobject", type: { tag: "PtPrimitive", contents: "string" }, mods: [], init: { tag: "ExStr", contents: "dw_misth_zpkrat_list" } } },
-          ]},
-        ],
-      });
-
-      ts.send({ tag: "set-ast", ast });
-      ts.send({ tag: "run-event", owner: "w_test", event: "open" });
-      ts.receive(
-        { tag: "sql-result", dwName: "dw", rows: MOCK_ROWS },
-        (s) => { s.controlValues["dw"] = MOCK_ROWS; s.status = "done"; s.continuation = null; },
-      );
-
-      expect(mockEnv.calls).toHaveLength(1);
-      expect(mockEnv.lastSql).toContain("misth_zpkrat");
-    });
-
-    it("returns controlled data for assertion", () => {
-      const mockEnv = createMockRuntimeEnv({
-        misth_zpkrat: {
-          rows: [
-            { kodkrat: "01", kodxrisi: "0001", desckrat: "Category 1", isforos: true, isasf: false, isautoforos: false },
-          ],
-          rowcount: 1,
-          columns: ["kodkrat", "kodxrisi", "desckrat", "isforos", "isasf", "isautoforos"],
-        },
-      });
-      const ts = createTestStore(runtimeReducer, mockEnv, initialRuntimeState);
-
-      const ast = makeAst({
-        events: [{
-          name: "open",
-          owner: "w_test",
-          body: [{
-            line: 1,
-            node: {
-              tag: "BsCall",
-              contents: {
-                tag: "ExCall",
-                callee: { segments: [{ name: "dw_krat", subscript: null }, { name: "retrieve", subscript: null }] },
-                args: [["gs_kodxrisi"]],
-              },
-            },
-          }],
-        }],
-      });
-
-      ts.send({ tag: "set-ast", ast });
-      ts.send({ tag: "run-event", owner: "w_test", event: "open" });
-      ts.receive(
-        { tag: "sql-result", dwName: "dw_krat", rows: mockEnv.responses.get("misth_zpkrat")!.rows },
-        (s) => {
-          s.controlValues["dw_krat"] = mockEnv.responses.get("misth_zpkrat")!.rows;
-          s.status = "done";
-          s.continuation = null;
-        },
-      );
-
-      expect(mockEnv.calls).toHaveLength(1);
-      expect(mockEnv.lastSql).toContain("misth_zpkrat");
-    });
-  });
-
   describe("renderWindow", () => {
     it("extracts layout from typeBlocks", () => {
       const ast = makeAstWithDataobject("dw", "dw_test_list");
@@ -183,7 +113,7 @@ describe("runtime integration", () => {
   });
 
   describe("full pipeline: runtime → renderWindow", () => {
-    it("w_misth_zpkrat_list: open event triggers SQL and renders DW", () => {
+    it("w_misth_zpkrat_list: open event triggers SQL via CPS and renders DW", () => {
       const MOCK_ROWS = [
         { kodkrat: "01", kodxrisi: "0001", desckrat: "Category 1", isforos: true, isasf: false, isautoforos: false },
         { kodkrat: "02", kodxrisi: "0001", desckrat: "Category 2", isforos: false, isasf: true, isautoforos: false },
@@ -215,14 +145,16 @@ describe("runtime integration", () => {
               },
             },
           }],
+          // CPS graph: retrieve:dw resolves via typeBlocks to dw_misth_zpkrat_list SQL.
+          cpsGraph: makeSingleRetrieveCpsGraph("retrieve:dw"),
         }],
       });
 
       ts.send({ tag: "set-ast", ast });
       ts.send({ tag: "run-event", owner: "w_misth_zpkrat_list", event: "open" });
       ts.receive(
-        { tag: "sql-result", dwName: "dw", rows: MOCK_ROWS },
-        (s) => { s.controlValues["dw"] = MOCK_ROWS; s.status = "done"; s.continuation = null; },
+        { tag: "cps-resume", dwName: "dw", rows: MOCK_ROWS, pc: 0, varName: null },
+        (s) => { s.controlValues["dw"] = MOCK_ROWS; s.status = "done"; s.cpsGraph = null; },
       );
 
       // Verify state

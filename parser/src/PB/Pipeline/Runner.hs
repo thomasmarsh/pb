@@ -40,6 +40,7 @@ import Control.Exception   (SomeException, try)
 import Data.Char           (intToDigit, toLower)
 import Data.Either         (lefts)
 import Data.Word           (Word8)
+import qualified Data.Set           as Set
 import qualified Data.Text          as T
 import qualified Data.Text.Encoding as TE
 import System.Directory    (createDirectoryIfMissing, doesFileExist)
@@ -144,6 +145,12 @@ wrapSrFile path sf spans wsEnv =
         procEnv :: Text -> TypeEnv
         procEnv paramsText = withProcScope (parseParams paramsText) wsEnv
 
+        -- User-defined function names (lower-cased) for CPS callproc dispatch.
+        userFns :: Set.Set Text
+        userFns = Set.fromList
+          $  map (T.toLower . fnsName . fbSig) (srFunctions  sf)
+          <> map (T.toLower . ssName  . sbSig) (srSubroutines sf)
+
         injectMeta :: (Int, Int) -> Value -> Value
         injectMeta (start, end) (Object o) =
             Object (KM.fromList ["meta" .= metaVal] <> o)
@@ -164,7 +171,7 @@ wrapSrFile path sf spans wsEnv =
             Object
               $ KM.insert "cfg"      (toJSON (buildCfg body))
               $ KM.insert "dataflow" (toJSON (dataflowProcFlow objName body))
-              $ KM.insert "cpsGraph" (toJSON (compileProcedure env body))
+              $ KM.insert "cpsGraph" (toJSON (compileProcedure env userFns body))
               $ o
         injectCompiled _ _ v = v
 
