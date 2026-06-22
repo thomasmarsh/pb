@@ -56,6 +56,10 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import PB.Pipeline.Walk    (walkAllSrFiles)
 
+-- | Last dot-separated segment of a dotted name, e.g. "dw.setfocus" → "setfocus".
+lastName :: Text -> Text
+lastName t = T.takeWhileEnd (/= '.') t
+
 -- ---------------------------------------------------------------------------
 -- Entry point
 
@@ -469,7 +473,9 @@ writeDeadCodeAnalysis outDir parsed = do
               , (name, ptype, body) <- procTypes (pfSrFile pf)
               ]
       -- Raw calls: (object, from_proc, to_name)
-      rawCalls = [ (Taint.rcrObject rc, Taint.rcrFromProc rc, Taint.rcrToName rc)
+      -- Use only the last segment of toName (e.g. "dw.setfocus" → "setfocus")
+      -- to match same-object procedure names, matching Python walk_calls behavior.
+      rawCalls = [ (Taint.rcrObject rc, Taint.rcrFromProc rc, lastName (Taint.rcrToName rc))
                  | rc <- allRC
                  ]
       -- Resolved calls: (object, from_proc, target_object, target_proc)

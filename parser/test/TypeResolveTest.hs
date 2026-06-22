@@ -214,7 +214,7 @@ tests = testGroup "TypeResolve"
               csCallType s @?= "ExMethodCall"
             other -> assertFailure ("expected 1 site, got " ++ show (length other))
 
-      , testCase "calls extracted from nested if" $ do
+      , testCase "calls extracted from nested if body" $ do
           let inner = [ callStmt "f_inner" 30 ]
               body  = [ Located 25
                   (BsIf IfStmt
@@ -226,6 +226,23 @@ tests = testGroup "TypeResolve"
               sf = emptySrFile { srFunctions = [ mkFn "f_go" "" body ] }
           case extractCallSites "test.srw" "w_test" sf of
             [s] -> csToName s @?= "f_inner"
+            other -> assertFailure ("expected 1 site, got " ++ show (length other))
+
+      , testCase "calls extracted from if condition" $ do
+          let cond = ExCall
+                { callee   = Lvalue [LvSegment "of_checkdelete" Nothing]
+                , callArgs = []
+                }
+              body = [ Located 10
+                  (BsIf IfStmt
+                    { ifCond    = ExNot cond
+                    , ifThen    = []
+                    , ifElseIfs = []
+                    , ifElse    = Nothing
+                    }) ]
+              sf = emptySrFile { srFunctions = [ mkFn "clicked" "" body ] }
+          case extractCallSites "test.srw" "w_test" sf of
+            [s] -> csToName s @?= "of_checkdelete"
             other -> assertFailure ("expected 1 site, got " ++ show (length other))
       ]
 
@@ -340,6 +357,48 @@ tests = testGroup "TypeResolve"
             [rc] -> do
               rcKind rc       @?= "unresolved"
               rcConfidence rc @?= "low"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "bare call to unique global proc → virtual high (global fallback)" $ do
+          -- trn() is a standalone function in a separate object; the caller's ancestor
+          -- chain doesn't include 'trn', but the global fallback resolves it uniquely.
+          let site = CallSite
+                { csFile     = "w_main.srw"
+                , csObject   = "w_main"
+                , csFromProc = "open"
+                , csToName   = "trn"
+                , csCallType = "ExCall"
+                , csLine     = Just 10
+                }
+              pm = Map.fromList
+                     [ ("w_main", Set.empty)
+                     , ("trn",    Set.singleton "trn")
+                     ]
+          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
+            [rc] -> do
+              rcKind rc         @?= "virtual"
+              rcConfidence rc   @?= "high"
+              rcTargetObject rc @?= Just "trn"
+              rcTargetProc   rc @?= Just "trn"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "bare call to ambiguous global name → unresolved" $ do
+          -- If multiple objects define f_helper, we can't resolve unambiguously.
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "f_go"
+                , csToName   = "f_helper"
+                , csCallType = "ExCall"
+                , csLine     = Nothing
+                }
+              pm = Map.fromList
+                     [ ("w_t",     Set.empty)
+                     , ("w_other", Set.singleton "f_helper")
+                     , ("w_third", Set.singleton "f_helper")
+                     ]
+          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
+            [rc] -> rcKind rc @?= "unresolved"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
 
       , testCase "dotted ExCall to known object → static high" $ do

@@ -323,16 +323,33 @@ walkStmtCallSites :: Text -> Text -> Text -> Located BodyStmt -> [CallSite]
 walkStmtCallSites file obj proc_ (Located line stmt) = case stmt of
   BsCall expr        -> callSitesExpr file obj proc_ (Just line) expr
   BsAssign _ rhs     -> callSitesExpr file obj proc_ (Just line) rhs
+  BsAssignExpr l rhs -> callSitesExpr file obj proc_ (Just line) l
+                     <> callSitesExpr file obj proc_ (Just line) rhs
   BsReturn (Just e)  -> callSitesExpr file obj proc_ (Just line) e
-  BsIf IfStmt { ifThen = t, ifElseIfs = eis, ifElse = e } ->
-    walkBodyCallSites file obj proc_ t
-    <> concatMap (\ei -> walkBodyCallSites file obj proc_ (eifBody ei)) eis
+  BsLocalVar { varInit = Just e } -> callSitesExpr file obj proc_ (Just line) e
+  BsIf IfStmt { ifCond = c, ifThen = t, ifElseIfs = eis, ifElse = e } ->
+    callSitesExpr file obj proc_ (Just line) c
+    <> walkBodyCallSites file obj proc_ t
+    <> concatMap (\ei -> callSitesExpr file obj proc_ (Just line) (eifCond ei)
+                      <> walkBodyCallSites file obj proc_ (eifBody ei)) eis
     <> maybe [] (walkBodyCallSites file obj proc_) e
-  BsFor ForStmt { forBody = b }   -> walkBodyCallSites file obj proc_ b
-  BsDo DoStmt { doBody = b }      -> walkBodyCallSites file obj proc_ b
-  BsChoose ChooseStmt { chooseClauses = cs } ->
-    concatMap (\c -> walkBodyCallSites file obj proc_ (ccBody c)) cs
+  BsFor ForStmt { forFrom = fr, forTo = to_, forStep = step, forBody = b } ->
+    callSitesExpr file obj proc_ (Just line) fr
+    <> callSitesExpr file obj proc_ (Just line) to_
+    <> maybe [] (callSitesExpr file obj proc_ (Just line)) step
+    <> walkBodyCallSites file obj proc_ b
+  BsDo DoStmt { doCond = pre, doBody = b, doLoop = post } ->
+    condCallSites pre
+    <> walkBodyCallSites file obj proc_ b
+    <> condCallSites post
+  BsChoose ChooseStmt { chooseExpr = x, chooseClauses = cs } ->
+    callSitesExpr file obj proc_ (Just line) x
+    <> concatMap (\c -> walkBodyCallSites file obj proc_ (ccBody c)) cs
   _ -> []
+  where
+    condCallSites Nothing                = []
+    condCallSites (Just (DoWhile e))     = callSitesExpr file obj proc_ (Just line) e
+    condCallSites (Just (DoUntil e))     = callSitesExpr file obj proc_ (Just line) e
 
 callSitesExpr :: Text -> Text -> Text -> Maybe Int -> Expr -> [CallSite]
 callSitesExpr file obj proc_ mLine expr = case expr of
@@ -535,10 +552,21 @@ resolveVirtual toName objN procMap inherits =
                , toName `Set.member` Map.findWithDefault Set.empty anc procMap
                ]
   in case found of
-       []      -> (Nothing, Nothing, "unresolved", "low")
        (anc:_) ->
          let kind = if anc == objN then "virtual" else "inherited"
          in (Just anc, Just toName, kind, "high")
+       [] ->
+         -- Global fallback: if this name exists in exactly one object outside the
+         -- caller's ancestor chain, resolve there (matches Python global_procs logic).
+         let chainSet    = Set.fromList chain
+             globalMatch = [ obj
+                           | (obj, procs) <- Map.toList procMap
+                           , toName `Set.member` procs
+                           , obj `Set.notMember` chainSet
+                           ]
+         in case globalMatch of
+              [obj] -> (Just obj, Just toName, "virtual", "high")
+              _     -> (Nothing, Nothing, "unresolved", "low")
 
 -- | Resolve all call sites to their targets using cross-file proc and inherits maps.
 resolveCalls
