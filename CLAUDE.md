@@ -972,7 +972,21 @@ walkAllSrFiles :: FilePath -> IO [FilePath]   -- any .sr<single-char>
 
 **Prefer SEARCH/REPLACE over full rewrites.** Use the Edit tool rather than rewriting whole files. Only rewrite when the diff would be larger than the file.
 
-**Use `rg` before reading.** Locate the relevant lines before opening a file. `rg -l` to find which file, `rg -n` to find the line.
+**Use `rg` before reading.** Locate the relevant lines before opening a file. `rg -l` to find which file, `rg -n` to find the line. NOTE: ripgrep does _not_ have a `--include` option.
+
+**Budget every tool call.** On GLM-5, each Read of a 300-line file costs as much as writing 50 lines of production code. Before any tool call, ask: "does this directly produce the deliverable?" If not, skip it.
+
+**Explore agents: max 1 per session.** Prefer reading 2–3 key files directly with `offset`+`limit` over launching broad exploration sweeps. Explore agents return ~4000 words each — that's ~15% of the session budget for a single agent. Three parallel agents is a non-starter.
+
+**Never re-read files agents have summarized.** Trust agent output for planning. Only read files directly when you need exact line numbers for edits, and even then use `offset`+`limit` to read only the relevant section.
+
+**Use `offset`+`limit` on every Read.** Read only the lines you need — typically the first 50–100 lines for type declarations, or a specific line range from `rg -n` output. Never read a full 300+ line file when you need one function.
+
+**When the user gives exact paths or instructions, execute immediately.** No verification, no Glob, no "let me check." Especially when the user explicitly says not to verify.
+
+**Parallel edits: verify paths first.** A single bad path in a batch of parallel edits causes the entire batch to fail. Verify all paths exist before launching the batch.
+
+**Stop condition for research:** If you've spent >10% of budget on research/exploration and haven't produced any deliverable output, STOP researching and start writing. You can always fill in gaps from the document itself.
 
 ---
 
