@@ -1,10 +1,21 @@
-// tests/core/interpreter.test.ts — Unit tests for PBInterpreter.
+// tests/core/interpreter.test.ts — Reducer-level equivalents of the former PBInterpreter unit tests.
+// PBInterpreter was deleted in Plan 101 Stage 5; these tests verify the same behaviour
+// via createTestStore + runtimeReducer.
 
 import { describe, it, expect } from "vitest";
-import { PBInterpreter } from "../../src/core/interpreter.js";
+import { Effect } from "../../src/core/effect.js";
+import { createTestStore } from "../test-store.js";
+import {
+  runtimeReducer,
+  initialRuntimeState,
+  type RuntimeEnv,
+} from "../../src/features/runtime/reducer.js";
+import { readVar, flattenVarEnv } from "../../src/core/cps/var-env.js";
+import type { AstData } from "../../src/core/interpreter.js";
 import type { BodyStmt, Expr, Located } from "../../src/types/ast.generated.js";
+import type { SQLResult } from "../../src/core/dw-queries.js";
 
-// Wire-format helpers matching the generated AST types.
+// ── Wire-format helpers ────────────────────────────────────────────────────────
 
 function loc(line: number, node: BodyStmt): Located<BodyStmt> {
   return { line, node };
@@ -34,11 +45,12 @@ function boolExpr(contents: boolean): Expr {
   return { tag: "ExBool", contents };
 }
 
-function makeIf(cond: Expr, thenStmts: Located<BodyStmt>[], elseStmts: Located<BodyStmt>[] | null = null): BodyStmt {
-  return {
-    tag: "BsIf",
-    contents: { cond, then: thenStmts, elseIfs: [], else: elseStmts },
-  };
+function makeIf(
+  cond: Expr,
+  thenStmts: Located<BodyStmt>[],
+  elseStmts: Located<BodyStmt>[] | null = null,
+): BodyStmt {
+  return { tag: "BsIf", contents: { cond, then: thenStmts, elseIfs: [], else: elseStmts } };
 }
 
 function makeIfWithElseIf(
@@ -47,10 +59,7 @@ function makeIfWithElseIf(
   elseIfs: { cond: Expr; body: Located<BodyStmt>[] }[],
   elseStmts: Located<BodyStmt>[] | null = null,
 ): BodyStmt {
-  return {
-    tag: "BsIf",
-    contents: { cond, then: thenStmts, elseIfs, else: elseStmts },
-  };
+  return { tag: "BsIf", contents: { cond, then: thenStmts, elseIfs, else: elseStmts } };
 }
 
 function makeCallStmt(calleeSegments: string[], args: string[][] = []): BodyStmt {
@@ -68,73 +77,69 @@ function makeReturnStmt(expr: Expr): BodyStmt {
   return { tag: "BsReturn", contents: expr };
 }
 
+// ── Test helpers ──────────────────────────────────────────────────────────────
+
+const nullEnv: RuntimeEnv = { executeSql: () => Effect.none() };
+
+function makeAst(overrides?: Partial<AstData>): AstData {
+  return { typeBlocks: [], events: [], functions: [], ...overrides };
+}
+
+function runEvent(ast: AstData, owner: string, event: string) {
+  const ts = createTestStore(runtimeReducer, nullEnv, { ...initialRuntimeState, ast });
+  ts.send({ tag: "run-event", owner, event });
+  ts.assertDrained();
+  return ts.getState();
+}
+
 const OPEN_EVENT_BODY = [loc(1, makeAssign("title", "hello"))];
+const MINIMAL_AST = makeAst({
+  events: [{ name: "open", owner: "w_misth_zpperiod_grid", body: OPEN_EVENT_BODY }],
+});
 
-const MINIMAL_AST = {
-  typeBlocks: [],
-  events: [
-    { name: "open", owner: "w_misth_zpperiod_grid", body: OPEN_EVENT_BODY },
-  ],
-};
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("PBInterpreter", () => {
+describe("PB runtime (formerly PBInterpreter)", () => {
   describe("executeEvent", () => {
-    it("executes BsAssign and sets variable in state", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst(MINIMAL_AST);
-      await interp.executeEvent("w_misth_zpperiod_grid", "open");
-      const state = interp.getState();
-      expect(state.variables["title"]).toBe("hello");
+    it("executes BsAssign and sets variable in state", () => {
+      const state = runEvent(MINIMAL_AST, "w_misth_zpperiod_grid", "open");
+      expect(readVar(state.varEnv, "title")).toBe("hello");
     });
 
-    it("does nothing for unknown event", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst(MINIMAL_AST);
-      await interp.executeEvent("w_misth_zpperiod_grid", "close");
-      const state = interp.getState();
-      expect(Object.keys(state.variables)).toHaveLength(0);
+    it("does nothing for unknown event", () => {
+      const state = runEvent(MINIMAL_AST, "w_misth_zpperiod_grid", "close");
+      expect(readVar(state.varEnv, "title")).toBeUndefined();
     });
 
-    it("does nothing for unknown owner", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst(MINIMAL_AST);
-      await interp.executeEvent("some_other_control", "open");
-      const state = interp.getState();
-      expect(Object.keys(state.variables)).toHaveLength(0);
+    it("does nothing for unknown owner", () => {
+      const state = runEvent(MINIMAL_AST, "some_other_control", "open");
+      expect(readVar(state.varEnv, "title")).toBeUndefined();
     });
   });
 
   describe("BsIf handling", () => {
-    it("executes then branch when condition is literal true", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("executes then branch when condition is literal true", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [loc(1, makeIf(boolExpr(true), [loc(2, makeAssign("x", "ran"))]))],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["x"]).toBe("ran");
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "x")).toBe("ran");
     });
 
-    it("skips then branch when condition is literal false", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("skips then branch when condition is literal false", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [loc(1, makeIf(boolExpr(false), [loc(2, makeAssign("x", "should_not_run"))]))],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["x"]).toBeUndefined();
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "x")).toBeUndefined();
     });
 
-    it("executes else branch when condition is false", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("executes else branch when condition is false", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [loc(1, makeIf(
@@ -144,14 +149,11 @@ describe("PBInterpreter", () => {
           ))],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["x"]).toBe("else");
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "x")).toBe("else");
     });
 
-    it("executes matching elseIf branch", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("executes matching elseIf branch", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [loc(1, makeIfWithElseIf(
@@ -161,31 +163,25 @@ describe("PBInterpreter", () => {
           ))],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["x"]).toBe("elseif");
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "x")).toBe("elseif");
     });
   });
 
   describe("ExInt evaluation", () => {
-    it("evaluates integer assignment", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("evaluates integer assignment", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [loc(1, makeIntAssign("count", 42))],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["count"]).toBe(42);
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "count")).toBe(42);
     });
   });
 
   describe("ExBool evaluation", () => {
-    it("evaluates boolean true assignment", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("evaluates boolean true assignment", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [loc(1, {
@@ -197,16 +193,13 @@ describe("PBInterpreter", () => {
           })],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["flag"]).toBe(true);
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "flag")).toBe(true);
     });
   });
 
   describe("BsReturn", () => {
-    it("evaluates return expression", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("does not store the return expression to any variable", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [
@@ -215,16 +208,13 @@ describe("PBInterpreter", () => {
           ],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["result"]).toBe(0);
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "result")).toBe(0);
     });
   });
 
   describe("BsRaw", () => {
-    it("skips raw/SQL statements without error", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("skips raw/SQL statements without error", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [
@@ -233,40 +223,35 @@ describe("PBInterpreter", () => {
           ],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["x"]).toBe("after_raw");
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "x")).toBe("after_raw");
     });
   });
 
   describe("BsCall", () => {
-    it("does not crash on unknown function call", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("does not crash on unknown function call", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [loc(1, makeCallStmt(["SomeFunc"], [["arg1"]]))],
         }],
       });
-      await interp.executeEvent("w_test", "open");
+      expect(runEvent(ast, "w_test", "open").status).toBe("done");
     });
   });
 
-  describe("getState", () => {
-    it("returns empty state before any event fires", () => {
-      const interp = new PBInterpreter();
-      interp.setAst(MINIMAL_AST);
-      const state = interp.getState();
-      expect(state.variables).toEqual({});
-      expect(state.controlValues).toEqual({});
+  describe("initial state", () => {
+    it("has empty variables and controlValues before any event fires", () => {
+      const ts = createTestStore(runtimeReducer, nullEnv, initialRuntimeState);
+      ts.send({ tag: "set-ast", ast: MINIMAL_AST });
+      ts.assertDrained();
+      expect(flattenVarEnv(ts.getState().varEnv)).toEqual({});
+      expect(ts.getState().controlValues).toEqual({});
     });
   });
 
   describe("BsFor", () => {
-    it("executes body for each iteration", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("executes body for each iteration", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [
@@ -290,14 +275,11 @@ describe("PBInterpreter", () => {
           ],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["sum"]).toBe(3);
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "sum")).toBe(3);
     });
 
-    it("handles step parameter", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("handles step parameter", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [
@@ -321,16 +303,13 @@ describe("PBInterpreter", () => {
           ],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["count"]).toBe(6);
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "count")).toBe(6);
     });
   });
 
   describe("BsDo", () => {
-    it("executes body with while condition", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("executes body with while condition", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [
@@ -352,16 +331,13 @@ describe("PBInterpreter", () => {
           ],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["x"]).toBe(3);
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "x")).toBe(3);
     });
   });
 
   describe("BsChoose", () => {
-    it("matches correct case clause", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("matches correct case clause", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [
@@ -380,14 +356,11 @@ describe("PBInterpreter", () => {
           ],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["result"]).toBe("beta");
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "result")).toBe("beta");
     });
 
-    it("falls through to case else when no match", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("falls through to case else when no match", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [
@@ -405,16 +378,13 @@ describe("PBInterpreter", () => {
           ],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["result"]).toBe("default");
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "result")).toBe("default");
     });
   });
 
   describe("BsLocalVar", () => {
-    it("initialises variable from init expression", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("initialises variable from init expression", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [loc(1, {
@@ -426,16 +396,16 @@ describe("PBInterpreter", () => {
           })],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["greeting"]).toBe("hello");
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "greeting")).toBe("hello");
     });
   });
 
   describe("ExMethodCall retrieve()", () => {
-    it("retrieve() on dw_* is a no-op in PBInterpreter (handled by runtimeReducer)", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("dw_*.retrieve() fires SQL when datawindow name is in DW_QUERIES", () => {
+      const MOCK_ROWS = [{ kodperiod: "01", descperiod: "January", orderno: 1 }];
+      const sqlResult: SQLResult = { rows: MOCK_ROWS, columns: ["kodperiod", "descperiod", "orderno"], rowcount: 1 };
+      const env: RuntimeEnv = { executeSql: () => Effect.send(sqlResult) };
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [loc(1, {
@@ -449,14 +419,15 @@ describe("PBInterpreter", () => {
           })],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().controlValues).toEqual({});
+      const ts = createTestStore(runtimeReducer, env, { ...initialRuntimeState, ast });
+      ts.send({ tag: "run-event", owner: "w_test", event: "open" });
+      ts.receive({ tag: "sql-result", dwName: "dw_misth_zpperiod_list", rows: MOCK_ROWS });
+      ts.assertDrained();
+      expect(ts.getState().controlValues["dw_misth_zpperiod_list"]).toHaveLength(1);
     });
 
-    it("does not set controlValues for non-dw method calls", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("does not set controlValues for non-dw method calls", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [loc(1, {
@@ -470,16 +441,13 @@ describe("PBInterpreter", () => {
           })],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().controlValues).toEqual({});
+      expect(runEvent(ast, "w_test", "open").controlValues).toEqual({});
     });
   });
 
   describe("ExCall dispatch", () => {
-    it("dispatches to PB_BUILTINS mid()", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("dispatches to PB_BUILTINS mid()", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [loc(1, {
@@ -489,24 +457,17 @@ describe("PBInterpreter", () => {
               {
                 tag: "ExCall",
                 callee: { segments: [{ name: "mid", subscript: null }] },
-                args: [
-                  ['"hello"'],
-                  ['"2"'],
-                  ['"3"'],
-                ],
+                args: [['"hello"'], ['"2"'], ['"3"']],
               },
             ],
           })],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["result"]).toBe("ell");
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "result")).toBe("ell");
     });
 
-    it("returns undefined for unknown function", async () => {
-      const interp = new PBInterpreter();
-      interp.setAst({
-        typeBlocks: [],
+    it("returns undefined for unknown function", () => {
+      const ast = makeAst({
         events: [{
           name: "open", owner: "w_test",
           body: [loc(1, {
@@ -522,8 +483,7 @@ describe("PBInterpreter", () => {
           })],
         }],
       });
-      await interp.executeEvent("w_test", "open");
-      expect(interp.getState().variables["result"]).toBeUndefined();
+      expect(readVar(runEvent(ast, "w_test", "open").varEnv, "result")).toBeUndefined();
     });
   });
 });

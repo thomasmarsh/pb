@@ -1,9 +1,10 @@
-// render-window.ts — Pure function: AST + controlValues + variables → logical structure.
+// render-window.ts — Pure function: AST + controlValues + varEnv → logical structure.
 // No DOM mounting, no server, no browser. Tests can assert on the output directly.
 
 import type { AstData, DWRow } from "./interpreter.js";
 import type { WindowLayout } from "./layout.js";
 import { extractLayout } from "./layout.js";
+import { type VarEnv, flattenVarEnv } from "./cps/var-env.js";
 
 export interface RenderedWindow {
   layout: WindowLayout | null;
@@ -38,8 +39,9 @@ export interface RenderedDW {
 export function renderWindow(
   ast: AstData,
   controlValues: Record<string, DWRow[]>,
-  variables: Record<string, unknown>,
+  varEnv: VarEnv,
 ): RenderedWindow {
+  const variables = flattenVarEnv(varEnv);
   const layout = extractLayout(ast.typeBlocks as unknown[]);
 
   const controls: RenderedControl[] = (layout?.controls ?? []).map((c) => ({

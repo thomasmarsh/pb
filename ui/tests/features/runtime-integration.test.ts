@@ -8,7 +8,7 @@ import {
   runtimeReducer,
   initialRuntimeState,
 } from "../../src/features/runtime/reducer.js";
-import { flattenVarEnv } from "../../src/core/cps/var-env.js";
+import { makeVarEnv } from "../../src/core/cps/var-env.js";
 import { createTestStore } from "../test-store.js";
 import type { AstData } from "../../src/core/interpreter.js";
 
@@ -138,7 +138,7 @@ describe("runtime integration", () => {
   describe("renderWindow", () => {
     it("extracts layout from typeBlocks", () => {
       const ast = makeAstWithDataobject("dw", "dw_test_list");
-      const rendered = renderWindow(ast, {}, {});
+      const rendered = renderWindow(ast, {}, makeVarEnv());
 
       expect(rendered.layout).not.toBeNull();
       expect(rendered.layout!.width).toBe(2000);
@@ -149,7 +149,7 @@ describe("runtime integration", () => {
 
     it("identifies datawindow controls", () => {
       const ast = makeAstWithDataobject("dw", "dw_test_list");
-      const rendered = renderWindow(ast, {}, {});
+      const rendered = renderWindow(ast, {}, makeVarEnv());
 
       expect(rendered.dataWindows).toHaveLength(1);
       expect(rendered.dataWindows[0]!.name).toBe("dw");
@@ -159,7 +159,7 @@ describe("runtime integration", () => {
     it("includes control values in datawindows", () => {
       const ast = makeAstWithDataobject("dw", "dw_test_list");
       const rows = [{ id: 1, name: "test" }, { id: 2, name: "test2" }];
-      const rendered = renderWindow(ast, { dw: rows }, {});
+      const rendered = renderWindow(ast, { dw: rows }, makeVarEnv());
 
       expect(rendered.dataWindows[0]!.rows).toHaveLength(2);
       expect(rendered.dataWindows[0]!.columns).toEqual(["id", "name"]);
@@ -167,7 +167,7 @@ describe("runtime integration", () => {
 
     it("returns empty rows when no control values", () => {
       const ast = makeAstWithDataobject("dw", "dw_test_list");
-      const rendered = renderWindow(ast, {}, {});
+      const rendered = renderWindow(ast, {}, makeVarEnv());
 
       expect(rendered.dataWindows[0]!.rows).toHaveLength(0);
       expect(rendered.dataWindows[0]!.columns).toHaveLength(0);
@@ -176,7 +176,7 @@ describe("runtime integration", () => {
     it("passes through variables", () => {
       const ast = makeAst();
       const vars = { gs_kodxrisi: "0001", gs_app_name: "Test" };
-      const rendered = renderWindow(ast, {}, vars);
+      const rendered = renderWindow(ast, {}, { globals: vars, instance: {}, locals: [{}] });
 
       expect(rendered.variables).toEqual(vars);
     });
@@ -230,7 +230,7 @@ describe("runtime integration", () => {
       expect(ts.getState().controlValues["dw"]).toHaveLength(2);
 
       // Render and verify
-      const rendered = renderWindow(ast, ts.getState().controlValues, flattenVarEnv(ts.getState().varEnv));
+      const rendered = renderWindow(ast, ts.getState().controlValues, ts.getState().varEnv);
       expect(rendered.dataWindows).toHaveLength(1);
       expect(rendered.dataWindows[0]!.rows).toHaveLength(2);
       expect(rendered.dataWindows[0]!.columns).toContain("kodkrat");

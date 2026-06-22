@@ -188,9 +188,26 @@ function runBodySync(varEnv: VarEnv, stmts: Located<BodyStmt>[], ast?: AstData |
         const cv2 = evalTokenArg(varEnv, clause.expr);
         if (value === cv2 || String(value) === String(cv2)) { runBodySync(varEnv, clause.body, ast); break; }
       }
+    } else if (node.tag === "BsAssign") {
+      const [lhs, rhs] = node.contents;
+      const name = lhs.segments[0]?.name;
+      if (name) writeVar(varEnv, name, evalExpr(varEnv, rhs));
+    } else if (node.tag === "BsLocalVar" && node.init) {
+      declareLocal(varEnv, node.name, evalExpr(varEnv, node.init));
+    } else if (node.tag === "BsIf") {
+      const { cond, then: thenBody, elseIfs, else: elseBody } = node.contents;
+      if (evalExpr(varEnv, cond)) {
+        runBodySync(varEnv, thenBody, ast);
+      } else {
+        const matched = elseIfs.find(ei => evalExpr(varEnv, ei.cond));
+        if (matched) runBodySync(varEnv, matched.body, ast);
+        else if (elseBody) runBodySync(varEnv, elseBody, ast);
+      }
+    } else if (node.tag === "BsCall") {
+      evalExpr(varEnv, node.contents);
     }
-    // All other statement types (BsAssign, BsCall, BsLocalVar, BsIf, etc.) are
-    // handled inline by driveStmts. Retrieve() inside loops is BACKLOG.
+    // BsReturn, BsPbCall, BsExit, BsContinue, BsAugAssign etc. are treated as no-ops inside loops.
+    // Retrieve() inside loop bodies is BACKLOG.
   }
 }
 
