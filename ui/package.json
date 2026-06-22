@@ -2,6 +2,9 @@
   "name": "pb-explorer",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=26.0.0"
+  },
   "scripts": {
     "prebuild": "cabal run --project-dir ../parser pb-runner -v0 -- --emit-ts > src/types/ast.generated.ts && cabal run --project-dir ../parser pb-runner -v0 -- --emit-py > ../cli/pb_cli/core/ast_generated.py",
     "build": "vite build",
@@ -36,5 +39,26 @@
     "vite": "^8.0.16",
     "vite-plugin-solid": "^2.10",
     "vitest": "^4.1.8"
+  },
+  "allowScripts": {
+    "file:../../babel-plugin-jsx-dom-expressions@0.40.7_@babel+core@7.29.7/node_modules/babel-plugin-jsx-dom-expressions": false,
+    "file:../../eslint-visitor-keys@5.0.1/node_modules/eslint-visitor-keys": false,
+    "file:../../minimatch@10.2.5/node_modules/minimatch": false,
+    "file:../../../@humanfs+node@0.16.8/node_modules/@humanfs/node": false,
+    "file:../../../@humanwhocodes+module-importer@1.0.1/node_modules/@humanwhocodes/module-importer": false,
+    "file:../../../@humanwhocodes+retry@0.4.3/node_modules/@humanwhocodes/retry": false,
+    "file:../../lightningcss@1.32.0/node_modules/lightningcss": false,
+    "file:../../tinyexec@1.2.4/node_modules/tinyexec": false,
+    "file:../acorn@8.17.0/node_modules/acorn": false,
+    "file:../eslint-visitor-keys@5.0.1/node_modules/eslint-visitor-keys": false,
+    "file:../../acorn@8.17.0/node_modules/acorn": false,
+    "file:../../brace-expansion@5.0.6/node_modules/brace-expansion": false,
+    "file:../../eslint-visitor-keys@3.4.3/node_modules/eslint-visitor-keys": false,
+    "file:../../../@humanfs+core@0.19.2/node_modules/@humanfs/core": false,
+    "file:../../../@humanfs+types@0.15.0/node_modules/@humanfs/types": false,
+    "file:../../ts-api-utils@2.5.0_typescript@6.0.3/node_modules/ts-api-utils": false,
+    "file:../minimatch@10.2.5/node_modules/minimatch": false,
+    "file:../../keyv@4.5.4/node_modules/keyv": false,
+    "file:../../balanced-match@4.0.4/node_modules/balanced-match": false
   }
 }
