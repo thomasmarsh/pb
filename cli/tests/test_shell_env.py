@@ -30,6 +30,7 @@ def test_build_env_defaults_are_real_functions():
     assert callable(b.count_sr_files)
     assert callable(b.hash_source_dir)
     assert callable(b.ensure_explorer_built)
+    assert callable(b.generate_ast_python)
 
 
 def test_runner_env_defaults_are_real_functions():

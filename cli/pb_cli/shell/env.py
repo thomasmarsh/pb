@@ -32,6 +32,7 @@ from pb_cli.shell.build import (
     build_runner,
     build_subset_tmpdir,
     count_sr_files,
+    generate_ast_python,
     ensure_explorer_built,
     find_binary,
     find_repo,
@@ -134,6 +135,7 @@ class BuildEnv:
     hash_source_dir: Callable[[Path], dict[str, str]] = field(default=hash_source_dir)
     hash_pbl_dir: Callable[[Path], dict[str, str]] = field(default=hash_pbl_dir)
     ensure_explorer_built: EnsureExplorerBuilt = field(default=ensure_explorer_built)
+    generate_ast_python: Callable[[Path, bool], None] = field(default=generate_ast_python)
 
 
 @dataclass

@@ -139,3 +139,31 @@ def build_subset_tmpdir(src_dir: Path, files: list[str]) -> Path:
         except OSError:
             shutil.copy2(src, dst)
     return tmpdir
+
+
+def generate_ast_python(repo: Path, verbose: bool = False) -> None:
+    """Generate pb_cli/core/ast_generated.py from Haskell code via pb-runner.
+
+    This is called implicitly on first use (e.g., `pb explore`) when the file
+    doesn't exist yet. The generation is a no-op if the file is already up-to-date.
+    """
+    ast_py = repo / "cli" / "pb_cli" / "core" / "ast_generated.py"
+    parser_dir = repo / "parser"
+
+    if ast_py.exists():
+        return
+
+    # Run cabal run pb-runner --emit-py to generate the Python AST types
+    cmd = ["cabal", "run", "--project-dir", str(parser_dir), "pb-runner", "-v0", "--emit-py"]
+    r = subprocess.run(
+        cmd,
+        cwd=str(parser_dir),
+        capture_output=not verbose,
+        text=True,
+    )
+    if r.returncode != 0:
+        if not verbose:
+            print(r.stderr, file=sys.stderr)
+        sys.exit(f"error: failed to generate ast_generated.py ({' '.join(cmd)})")
+    if not ast_py.exists():
+        sys.exit(f"error: ast_generated.py was not created by {cmd}")

@@ -294,6 +294,9 @@ def explore(
     repo = env.build.find_repo()
     env.build.ensure_explorer_built(repo)
 
+    # Generate ast_generated.py if it doesn't exist (implicit for fresh checkouts)
+    env.build.generate_ast_python(repo)
+
     from pb_cli.explorer import create_app
 
     app = create_app(db)
