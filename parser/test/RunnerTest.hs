@@ -530,4 +530,35 @@ tests = testGroup "Pipeline.Runner"
         assertBool "proc_defs.json written" defsExists
         assertBool "proc_uses.json written" usesExists
     ]
+
+  , testGroup "DW expression dead code rescue"
+    [ testCase "function called only from DW compute expression is not marked dead" $ do
+        -- fn_compute.srf defines a global function with no PS callers.
+        -- dw_report.srd has a compute control whose expression calls fn_compute().
+        -- After runModeFiles, dead_procedures.json must not contain fn_compute.
+        tmpDir <- (\t -> t </> "pb-runner-dw-deadcode") <$> getTemporaryDirectory
+        removePathForcibly tmpDir
+        createDirectory tmpDir
+        writeFile (tmpDir </> "fn_compute.srf") $ T.unlines
+          [ "global function integer fn_compute (integer a)"
+          , "return a + 1"
+          , "end function"
+          ]
+        writeFile (tmpDir </> "dw_report.srd") $ T.unlines
+          [ "HA$PBExportHeader$dw_report.srd"
+          , "$PBExportComments$"
+          , "release 9;"
+          , "datawindow(units=0 )"
+          , "compute(band=summary name=c1 x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" expression=\"fn_compute( 1 )\" )"
+          ]
+        runModeFiles tmpDir tmpDir
+        deadBytes <- BSL.readFile (tmpDir </> "dead_procedures.json")
+        removePathForcibly tmpDir
+        case eitherDecodeStrict' (BSL.toStrict deadBytes) :: Either String [Value] of
+          Left err  -> assertFailure ("dead_procedures.json decode error: " <> err)
+          Right dead ->
+            let deadNames = [ n | Object m <- dead
+                                , String n <- [fromMaybe Null (KM.lookup "name" m)] ]
+            in  assertBool "fn_compute should not be dead" ("fn_compute" `notElem` deadNames)
+    ]
   ]

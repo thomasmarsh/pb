@@ -13,6 +13,7 @@ import PB.AST.Expr
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type         (PbType (..))
+import PB.Grammar.DataWindow (parseDataWindow)
 import PB.Pipeline.TypeResolve
 
 -- ---------------------------------------------------------------------------
@@ -485,4 +486,47 @@ tests = testGroup "TypeResolve"
             [rc] -> rcKind rc @?= "virtual"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
       ]
+  , testGroup "extractDwCallSites"
+    [ testCase "empty DW yields no call sites" $ do
+        case parseDataWindow dwMin of
+          Left err -> assertFailure ("parse error: " <> T.unpack err)
+          Right dw -> extractDwCallSites "test.srd" "dw_test" dw @?= []
+
+    , testCase "compute expression ExCall becomes a call site" $ do
+        let src = dwMin <> "\ncompute(band=summary name=c1 x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" expression=\"fn_foo()\" )"
+        case parseDataWindow src of
+          Left err -> assertFailure ("parse error: " <> T.unpack err)
+          Right dw -> case extractDwCallSites "test.srd" "dw_test" dw of
+            [cs] -> do
+              csObject   cs @?= "dw_test"
+              csFromProc cs @?= ""
+              csToName   cs @?= "fn_foo"
+              csCallType cs @?= "ExCall"
+              csLine     cs @?= Nothing
+            other -> assertFailure ("expected 1 call site, got " <> show (length other))
+
+    , testCase "BinOp expression yields both callee names" $ do
+        let src = dwMin <> "\ncompute(band=summary name=c1 x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" expression=\"fn_a( x ) - fn_b( x )\" )"
+        case parseDataWindow src of
+          Left err -> assertFailure ("parse error: " <> T.unpack err)
+          Right dw ->
+            let names = map csToName (extractDwCallSites "test.srd" "dw_test" dw)
+            in  names @?= ["fn_a", "fn_b"]
+
+    , testCase "format ExCall after ~t separator becomes a call site" $ do
+        let src = dwMin <> "\ncompute(band=summary name=c1 x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" expression=\"fn_val()\" format=\"[GENERAL]~tfn_mask()\" )"
+        case parseDataWindow src of
+          Left err -> assertFailure ("parse error: " <> T.unpack err)
+          Right dw ->
+            let names = map csToName (extractDwCallSites "test.srd" "dw_test" dw)
+            in  names @?= ["fn_val", "fn_mask"]
+    ]
+  ]
+
+dwMin :: T.Text
+dwMin = T.intercalate "\n"
+  [ "HA$PBExportHeader$test.srd"
+  , "$PBExportComments$"
+  , "release 9;"
+  , "datawindow(units=0 )"
   ]

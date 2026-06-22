@@ -19,6 +19,7 @@ module PB.Pipeline.TypeResolve
   , ResolvedCall (..)
   , extractLocalVars
   , extractCallSites
+  , extractDwCallSites
   , extractGlobalVars
   , resolveTypes
   , resolveCalls
@@ -34,6 +35,7 @@ module PB.Pipeline.TypeResolve
 
 import PB.Prelude
 import PB.AST.BodyStmt
+import PB.AST.DataWindow  (DataWindowFile (..), DwControl (..))
 import PB.AST.Expr
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
@@ -422,6 +424,15 @@ extractCallSites file obj sf = concat
   , concatMap (\ob -> walkBodyCallSites file obj (obEvent ob) (obBody ob))
       (srOnBlocks sf)
   ]
+
+-- | Extract call sites from DataWindow control expressions and format strings.
+-- Uses fromProc = "" (no containing procedure) and no line information.
+extractDwCallSites :: Text -> Text -> DataWindowFile -> [CallSite]
+extractDwCallSites file obj dw = concatMap fromCtrl (dwControls dw)
+  where
+    fromCtrl ctrl =
+      foldMap (callSitesExpr file obj "" Nothing) (dwcParsedExpression ctrl)
+      <> foldMap (callSitesExpr file obj "" Nothing) (dwcParsedFormat ctrl)
 
 -- | Extract global variable declarations (variables block + global instances).
 extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]

@@ -48,7 +48,7 @@ import System.FilePath     (makeRelative, takeBaseName, takeDirectory
 import PB.Pipeline.PbApi    (builtinFnNames, builtinMethodNames)
 import PB.Pipeline.TypeResolve
   ( buildInheritsMap, buildObjectSet, buildProcMap, buildUserTypeSet
-  , extractCallSites, extractGlobalVars, extractLocalVars
+  , extractCallSites, extractDwCallSites, extractGlobalVars, extractLocalVars
   , resolveTypes, resolveCalls
   , parseParams
   )
@@ -314,19 +314,24 @@ manifestEntry path v = ManifestEntry
 -- ---------------------------------------------------------------------------
 -- Build and write cross-file resolution outputs
 
-writeResolution :: FilePath -> [(FilePath, SrFile)] -> IO ()
-writeResolution outDir pairs = do
+writeResolution :: FilePath -> [(FilePath, SrFile)] -> [(FilePath, DataWindowFile)] -> IO ()
+writeResolution outDir pairs dwPairs = do
   let allSfs   = map snd pairs
       objSet   = buildObjectSet   allSfs
       usrTypes = buildUserTypeSet allSfs
       inh      = buildInheritsMap allSfs
       procMap  = buildProcMap     allSfs
-      toObj sf = case srTypeBlocks sf of
-        (tb:_) -> tdName (tbDecl tb)
-        []     -> ""
-      triples  = [ (T.pack fp, toObj sf, sf) | (fp, sf) <- pairs ]
+      triples  = [ (T.pack fp, obj, sf)
+                 | (fp, sf) <- pairs
+                 , let obj = case srTypeBlocks sf of
+                               (tb:_) -> tdName (tbDecl tb)
+                               []     -> T.pack (takeBaseName fp) ]
       lvs      = concatMap (\(fp, obj, sf) -> extractLocalVars  fp obj sf) triples
-      css      = concatMap (\(fp, obj, sf) -> extractCallSites  fp obj sf) triples
+      psCss    = concatMap (\(fp, obj, sf) -> extractCallSites  fp obj sf) triples
+      dwCss    = [ cs | (fp, dw) <- dwPairs
+                      , let obj = T.pack (takeBaseName fp)
+                      , cs <- extractDwCallSites (T.pack fp) obj dw ]
+      css      = psCss <> dwCss
       gvs      = concatMap (\(fp, obj, sf) -> extractGlobalVars fp obj sf) triples
       rt       = resolveTypes lvs objSet usrTypes
       rc       = resolveCalls css procMap inh builtinFnNames builtinMethodNames
@@ -384,13 +389,13 @@ useRowFull file obj proc u = object
 
 writeDataflowAnalysis :: FilePath -> [ParsedFile] -> IO ()
 writeDataflowAnalysis outDir parsed = do
-  let toObj pf = case srTypeBlocks (pfSrFile pf) of
+  let pfObj pf = case srTypeBlocks (pfSrFile pf) of
         (tb:_) -> tdName (tbDecl tb)
         []     -> ""
       -- Analyze every procedure once, yielding (file, obj, proc, ProcFlow).
       flows = [ (T.pack (pfPath pf), obj, proc, pf')
               | pf <- parsed
-              , let obj = toObj pf
+              , let obj = pfObj pf
               , (_, proc, body) <- procBodies obj (pfSrFile pf)
               , let pf' = Dataflow.analyzeProcedure obj proc (buildCfg body)
               ]
@@ -458,8 +463,8 @@ writeTaintAnalysis outDir parsed = do
 -- entry points (event/on handlers, DW procedures with calls) through
 -- same-object, cross-object, and override call edges.
 
-writeDeadCodeAnalysis :: FilePath -> [ParsedFile] -> IO ()
-writeDeadCodeAnalysis outDir parsed = do
+writeDeadCodeAnalysis :: FilePath -> [ParsedFile] -> [(FilePath, DataWindowFile)] -> IO ()
+writeDeadCodeAnalysis outDir parsed dwParsed = do
   allRC <- loadJsonArray (outDir </> "resolved_calls.json") :: IO [Taint.ResolvedCallRow]
   let -- Extract procedures with types and cyclomatic complexity
       procs = [ DeadCode.ProcInfo
@@ -469,7 +474,9 @@ writeDeadCodeAnalysis outDir parsed = do
                   , DeadCode.piCyclomatic = Just (DeadCode.cyclomaticComplexity (buildCfg body))
                   }
               | pf <- parsed
-              , let obj = toObj pf
+              , let obj = case srTypeBlocks (pfSrFile pf) of
+                            (tb:_) -> tdName (tbDecl tb)
+                            []     -> ""
               , (name, ptype, body) <- procTypes (pfSrFile pf)
               ]
       -- Raw calls: (object, from_proc, to_name)
@@ -487,12 +494,8 @@ writeDeadCodeAnalysis outDir parsed = do
       -- Inheritance edges
       allSfs = map pfSrFile parsed
       inherits = Map.toList (buildInheritsMap allSfs)
-      -- DW object names (from type block names with .srd extension)
-      dwObjects = Set.fromList
-        [ T.pack (takeBaseName (pfPath pf))
-        | pf <- parsed
-        , takeExtension (pfPath pf) == ".srd"
-        ]
+      -- DW object names from the actually-parsed DW files
+      dwObjects = Set.fromList [ T.pack (takeBaseName fp) | (fp, _) <- dwParsed ]
       dead = DeadCode.computeDeadProcedures procs rawCalls resolvedCalls inherits dwObjects
   BSL.writeFile (outDir </> "dead_procedures.json") (encode dead)
 
@@ -528,11 +531,13 @@ data ParsedFile = ParsedFile
 
 data ParseOutcome
   = PsParsed  ParsedFile
-  | PsFailed  FilePath Text   -- IO or parse error
-  | OtherFile FilePath        -- DataWindow / pipeline / project
+  | PsDw      FilePath DataWindowFile  -- successfully parsed DataWindow
+  | PsFailed  FilePath Text            -- IO or parse error
+  | OtherFile FilePath                 -- pipeline / project
 
 outcomeFilePath :: ParseOutcome -> FilePath
 outcomeFilePath (PsParsed pf)   = pfPath pf
+outcomeFilePath (PsDw fp _)     = fp
 outcomeFilePath (PsFailed fp _) = fp
 outcomeFilePath (OtherFile fp)  = fp
 
@@ -547,6 +552,13 @@ parseOutcome src = case fileKind src of
         case parsePowerScriptFile (stripBom contents) of
           Left  err      -> PsFailed src err
           Right (sf, sp) -> PsParsed (ParsedFile src sf sp)
+  DataWindow -> do
+    readResult <- try (readFile src) :: IO (Either SomeException Text)
+    pure $ case readResult of
+      Left  ex       -> PsFailed src (T.pack (show ex))
+      Right contents -> case parseDataWindow (stripBom contents) of
+        Left  err -> PsFailed src err
+        Right dw  -> PsDw src dw
   _ -> pure (OtherFile src)
 
 -- | Pass 3 (pure): compile one parsed PowerScript file with the workspace env.
@@ -564,6 +576,9 @@ emitOutcome wsEnv srcDir outDir outcome = do
   (bytes, mEntry) <- case outcome of
     PsParsed pf ->
       let v = compileParsed wsEnv pf
+      in pure (encode v, Just (manifestEntry src v))
+    PsDw _ dw ->
+      let v = wrapDwFile src dw
       in pure (encode v, Just (manifestEntry src v))
     PsFailed _ err ->
       pure ( encode $ object
@@ -595,13 +610,14 @@ runModeFiles :: FilePath -> FilePath -> IO ()
 runModeFiles srcDir outDir = do
   files    <- walkAllSrFiles srcDir
   outcomes <- mapM parseOutcome files                            -- Pass 1
-  let parsed = [pf | PsParsed pf <- outcomes]
-      wsEnv  = buildWorkspaceTypeEnv (map pfSrFile parsed)      -- Pass 2
+  let parsed   = [pf       | PsParsed pf   <- outcomes]
+      dwParsed = [(fp, dw) | PsDw     fp dw <- outcomes]
+      wsEnv    = buildWorkspaceTypeEnv (map pfSrFile parsed)    -- Pass 2
   entries  <- mapM (emitOutcome wsEnv srcDir outDir) outcomes   -- Pass 3+4
-  writeResolution outDir [(pfPath pf, pfSrFile pf) | pf <- parsed]  -- Pass 5
+  writeResolution outDir [(pfPath pf, pfSrFile pf) | pf <- parsed] dwParsed  -- Pass 5
   writeDataflowAnalysis outDir parsed                               -- Pass 6 (111d-1)
-  writeTaintAnalysis outDir parsed                                     -- Pass 7 (111d-2)
-  writeDeadCodeAnalysis outDir parsed                                  -- Pass 8
+  writeTaintAnalysis outDir parsed                                   -- Pass 7 (111d-2)
+  writeDeadCodeAnalysis outDir parsed dwParsed                       -- Pass 8
   BSL.writeFile (outDir </> "manifest.json") (encode (catMaybes entries))
 
 runModeJsonl :: FilePath -> IO ()
