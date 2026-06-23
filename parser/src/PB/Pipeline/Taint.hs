@@ -53,10 +53,11 @@ import Data.Aeson
   , object, withObject, (.=)
   )
 import Data.Char            (isAlpha)
-import qualified Data.Map.Strict as Map
-import qualified Data.Sequence   as Seq
-import qualified Data.Set        as Set
-import qualified Data.Text       as T
+import qualified Data.HashMap.Strict as HM
+import qualified Data.Map.Strict     as Map
+import qualified Data.Sequence       as Seq
+import qualified Data.Set            as Set
+import qualified Data.Text           as T
 
 -- ---------------------------------------------------------------------------
 -- Input row types (from JSON files produced by Pass 5/6)
@@ -309,7 +310,7 @@ data ProcedureSummary = ProcedureSummary
 -- ---------------------------------------------------------------------------
 
 type Triple = (Text, Text, Text)
-type Provenance = Map.Map Triple (Text, Text, Maybe Text, Text, Text)
+type Provenance = HM.HashMap Triple (Text, Text, Maybe Text, Text, Text)
 
 _sqlKeywords :: Set.Set Text
 _sqlKeywords = Set.fromList
@@ -506,22 +507,22 @@ buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
   <> concatMap builtinArgEdges resolvedCalls
   <> globalEdges
   where
-    usesByProc :: Map.Map (Text, Text) [UseRow]
-    usesByProc = Map.fromListWith (++)
+    usesByProc :: HM.HashMap (Text, Text) [UseRow]
+    usesByProc = HM.fromListWith (++)
       [ ((urObject u, urProcName u), [u]) | u <- uses ]
 
-    defsByProc :: Map.Map (Text, Text) [DefRow]
-    defsByProc = Map.fromListWith (++)
+    defsByProc :: HM.HashMap (Text, Text) [DefRow]
+    defsByProc = HM.fromListWith (++)
       [ ((drObject d, drProcName d), [d]) | d <- defs ]
 
-    paramsByProc :: Map.Map (Text, Text) [Text]
-    paramsByProc = Map.fromList
+    paramsByProc :: HM.HashMap (Text, Text) [Text]
+    paramsByProc = HM.fromList
       [ ((pmObject p, pmName p), map fst (parseParams (pmParams p)))
       | p <- procMetas
       ]
 
-    returnTypeByProc :: Map.Map (Text, Text) Text
-    returnTypeByProc = Map.fromList
+    returnTypeByProc :: HM.HashMap (Text, Text) Text
+    returnTypeByProc = HM.fromList
       [ ((pmObject p, pmName p), T.toLower (pmReturnType p))
       | p <- procMetas
       , pmProcType p == "function"
@@ -536,11 +537,11 @@ buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
               calleeProc = fromMaybe "" (rcrTargetProc rc)
               calleeKey = (calleeObj, calleeProc)
               calleeNameLower = T.toLower (rcrToName rc)
-              calleeParams = Map.findWithDefault [] calleeKey paramsByProc
+              calleeParams = HM.findWithDefault [] calleeKey paramsByProc
               -- Collect arg vars: uses at call line, excluding callee name
               argVars = nubOrd
                 [ urVarName u
-                | u <- Map.findWithDefault [] callerKey usesByProc
+                | u <- HM.findWithDefault [] callerKey usesByProc
                 , urLine u == rcrCallLine rc
                 , T.toLower (urVarName u) /= calleeNameLower
                 ]
@@ -548,13 +549,13 @@ buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
                               calleeObj calleeProc "arg" argVar argVar param
                          | (argVar, param) <- matchArgsToParams argVars calleeParams
                          ]
-              retType = Map.findWithDefault "" calleeKey returnTypeByProc
+              retType = HM.findWithDefault "" calleeKey returnTypeByProc
               retEdges = if T.null retType || retType `Set.member` Set.fromList ["none", ""]
                          then []
                          else [ InterprocEdge (rcrObject rc) (rcrFromProc rc) (rcrCallLine rc)
                                    calleeObj calleeProc "return"
                                    (drVarName d) (drVarName d) "return"
-                               | d <- Map.findWithDefault [] callerKey defsByProc
+                               | d <- HM.findWithDefault [] callerKey defsByProc
                                , drLine d == rcrCallLine rc
                                , drKind d == "assign"
                                ]
@@ -573,7 +574,7 @@ buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
           in [ InterprocEdge (rcrObject rc) (rcrFromProc rc) (rcrCallLine rc)
                    "__builtin__" calleeName "return"
                    (drVarName d) (drVarName d) "return"
-              | d <- Map.findWithDefault [] callerKey defsByProc
+              | d <- HM.findWithDefault [] callerKey defsByProc
               , drLine d == rcrCallLine rc
               , drKind d == "assign"
               ]
@@ -586,20 +587,20 @@ buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
       | otherwise = []  -- No callee param info for builtins in this pass
 
     globalEdges =
-      let writers = Map.fromListWith Set.union
+      let writers = HM.fromListWith Set.union
             [ (drVarName d, Set.singleton (drObject d, drProcName d))
             | d <- defs, drVarName d `Set.member` globalVarNames
             ]
-          readers = Map.fromListWith Set.union
+          readers = HM.fromListWith Set.union
             [ (urVarName u, Set.singleton (urObject u, urProcName u))
             | u <- uses, urVarName u `Set.member` globalVarNames
             ]
-          allGlobals = Set.toList (Map.keysSet writers `Set.union` Map.keysSet readers)
+          allGlobals = nubOrd (HM.keys writers ++ HM.keys readers)
       in [ InterprocEdge writerObj writerProc Nothing
               readerObj readerProc "global_write" gvar gvar gvar
          | gvar <- allGlobals
-         , writerKey <- Set.toList (Map.findWithDefault Set.empty gvar writers)
-         , readerKey <- Set.toList (Map.findWithDefault Set.empty gvar readers)
+         , writerKey <- Set.toList (HM.findWithDefault Set.empty gvar writers)
+         , readerKey <- Set.toList (HM.findWithDefault Set.empty gvar readers)
          , writerKey /= readerKey
           , let (writerObj, writerProc) = writerKey
                 (readerObj, readerProc) = readerKey
@@ -619,16 +620,16 @@ buildProcedureSummaries
 buildProcedureSummaries edges defs uses globalVarNames procMetas =
   map mkSummary procMetas
   where
-    defsByProc :: Map.Map (Text, Text) [DefRow]
-    defsByProc = Map.fromListWith (++)
+    defsByProc :: HM.HashMap (Text, Text) [DefRow]
+    defsByProc = HM.fromListWith (++)
       [ ((drObject d, drProcName d), [d]) | d <- defs ]
 
-    usesByProc :: Map.Map (Text, Text) [UseRow]
-    usesByProc = Map.fromListWith (++)
+    usesByProc :: HM.HashMap (Text, Text) [UseRow]
+    usesByProc = HM.fromListWith (++)
       [ ((urObject u, urProcName u), [u]) | u <- uses ]
 
-    returnFlowsByCallee :: Map.Map (Text, Text) [ProcSummaryReturnFlow]
-    returnFlowsByCallee = Map.fromListWith (++)
+    returnFlowsByCallee :: HM.HashMap (Text, Text) [ProcSummaryReturnFlow]
+    returnFlowsByCallee = HM.fromListWith (++)
       [ ((ieCalleeObject e, ieCalleeProc e),
          [ProcSummaryReturnFlow (ieCallerObject e) (ieCallerProc e) (ieVarName e)])
       | e <- edges, ieEdgeKind e == "return"
@@ -639,12 +640,12 @@ buildProcedureSummaries edges defs uses globalVarNames procMetas =
       let key = (pmObject pm, pmName pm)
           paramsIn = map fst (parseParams (pmParams pm))
           gRead = Set.toAscList $ Set.fromList
-            [ urVarName u | u <- Map.findWithDefault [] key usesByProc
+            [ urVarName u | u <- HM.findWithDefault [] key usesByProc
             , urVarName u `Set.member` globalVarNames ]
           gWritten = Set.toAscList $ Set.fromList
-            [ drVarName d | d <- Map.findWithDefault [] key defsByProc
+            [ drVarName d | d <- HM.findWithDefault [] key defsByProc
             , drVarName d `Set.member` globalVarNames ]
-          retFlows = Map.findWithDefault [] key returnFlowsByCallee
+          retFlows = HM.findWithDefault [] key returnFlowsByCallee
       in ProcedureSummary (pmFile pm) (pmObject pm) (pmName pm)
            paramsIn gRead gWritten retFlows
 
@@ -660,36 +661,36 @@ propagateTaint
   -> [InterprocEdge]
   -> (Set.Set Triple, Provenance)
 propagateTaint sources defs uses edges =
-  fixpoint Set.empty Map.empty (Seq.fromList initialSeeds)
+  fixpoint Set.empty HM.empty (Seq.fromList initialSeeds)
   where
     -- Index uses by (object, proc, var)
-    usesByTriple :: Map.Map Triple [UseRow]
-    usesByTriple = Map.fromListWith (++)
+    usesByTriple :: HM.HashMap Triple [UseRow]
+    usesByTriple = HM.fromListWith (++)
       [ ((urObject u, urProcName u, urVarName u), [u]) | u <- uses ]
 
     -- Index defs by (object, proc, line)
-    defsByLine :: Map.Map (Text, Text, Int) [Text]
-    defsByLine = Map.fromListWith (++)
+    defsByLine :: HM.HashMap (Text, Text, Int) [Text]
+    defsByLine = HM.fromListWith (++)
       [ ((drObject d, drProcName d, line), [drVarName d])
       | d <- defs
       , Just line <- [drLine d]
       ]
 
     -- Index interproc edges
-    argEdgesByCaller :: Map.Map Triple [InterprocEdge]
-    argEdgesByCaller = Map.fromListWith (++)
+    argEdgesByCaller :: HM.HashMap Triple [InterprocEdge]
+    argEdgesByCaller = HM.fromListWith (++)
       [ ((ieCallerObject e, ieCallerProc e, ieCallerContext e), [e])
       | e <- edges, ieEdgeKind e == "arg"
       ]
 
-    returnEdgesByCallee :: Map.Map (Text, Text) [InterprocEdge]
-    returnEdgesByCallee = Map.fromListWith (++)
+    returnEdgesByCallee :: HM.HashMap (Text, Text) [InterprocEdge]
+    returnEdgesByCallee = HM.fromListWith (++)
       [ ((ieCalleeObject e, ieCalleeProc e), [e])
       | e <- edges, ieEdgeKind e == "return"
       ]
 
-    globalWriteEdges :: Map.Map Triple [InterprocEdge]
-    globalWriteEdges = Map.fromListWith (++)
+    globalWriteEdges :: HM.HashMap Triple [InterprocEdge]
+    globalWriteEdges = HM.fromListWith (++)
       [ ((ieCallerObject e, ieCallerProc e, ieVarName e), [e])
       | e <- edges, ieEdgeKind e == "global_write"
       ]
@@ -712,7 +713,7 @@ propagateTaint sources defs uses edges =
         | t `Set.member` tainted -> fixpoint tainted prov rest
         | otherwise ->
             let tainted' = Set.insert t tainted
-                prov'    = Map.insert t ("", "", Nothing, sk, desc) prov
+                prov'    = HM.insert t ("", "", Nothing, sk, desc) prov
                 newSeeds = propagateOne t tainted'
             in  fixpoint tainted' prov' (rest Seq.>< Seq.fromList newSeeds)
 
@@ -729,9 +730,9 @@ propagateTaint sources defs uses edges =
         intraProcSeeds =
           [ ((obj, proc, newVar), "def",
               var <> " used in expression that defines " <> newVar)
-          | u <- Map.findWithDefault [] (obj, proc, var) usesByTriple
+          | u <- HM.findWithDefault [] (obj, proc, var) usesByTriple
           , Just line <- [urLine u]
-          , newVar <- Map.findWithDefault [] (obj, proc, line) defsByLine
+          , newVar <- HM.findWithDefault [] (obj, proc, line) defsByLine
           , newVar /= var
           , (obj, proc, newVar) `Set.notMember` tainted
           ]
@@ -740,7 +741,7 @@ propagateTaint sources defs uses edges =
         argSeeds =
           [ ((ieCalleeObject e, ieCalleeProc e, ieCalleeContext e), "arg",
               "passed as argument from " <> obj <> "." <> proc)
-          | e <- Map.findWithDefault [] (obj, proc, var) argEdgesByCaller
+          | e <- HM.findWithDefault [] (obj, proc, var) argEdgesByCaller
           , (ieCalleeObject e, ieCalleeProc e, ieCalleeContext e) `Set.notMember` tainted
           ]
 
@@ -748,9 +749,9 @@ propagateTaint sources defs uses edges =
         returnSeeds =
           [ ((ieCallerObject e, ieCallerProc e, ieCallerContext e), "return",
               "return value of " <> obj <> "." <> proc <> " received by caller")
-          | u <- Map.findWithDefault [] (obj, proc, var) usesByTriple
+          | u <- HM.findWithDefault [] (obj, proc, var) usesByTriple
           , urKind u == "return"
-          , e <- Map.findWithDefault [] (obj, proc) returnEdgesByCallee
+          , e <- HM.findWithDefault [] (obj, proc) returnEdgesByCallee
           , (ieCallerObject e, ieCallerProc e, ieCallerContext e) `Set.notMember` tainted
           ]
 
@@ -758,7 +759,7 @@ propagateTaint sources defs uses edges =
         globalSeeds =
           [ ((ieCalleeObject e, ieCalleeProc e, ieCalleeContext e), "global",
               "global variable " <> var <> " written in " <> obj <> "." <> proc)
-          | e <- Map.findWithDefault [] (obj, proc, var) globalWriteEdges
+          | e <- HM.findWithDefault [] (obj, proc, var) globalWriteEdges
           , (ieCalleeObject e, ieCalleeProc e, ieCalleeContext e) `Set.notMember` tainted
           ]
 
@@ -785,7 +786,7 @@ traceTaintPath source sink prov =
     buildChain current target _ acc | current == target = current : acc
     buildChain _ _ _ acc | length acc > 50 = acc
     buildChain current target p acc =
-      case Map.lookup current p of
+      case HM.lookup current p of
         Nothing -> acc
         Just (_, _, Nothing, _, _) -> current : acc  -- source node
         Just (po, pp, Just pv, _, _) ->
@@ -800,12 +801,12 @@ traceTaintPath source sink prov =
                | otherwise = Nothing
           sk   | isSource  = "source"
                | isSink    = "sink"
-               | otherwise = maybe "def" (\(_, _, _, k, _) -> k) (Map.lookup (o, p, v) prov)
+               | otherwise = maybe "def" (\(_, _, _, k, _) -> k) (HM.lookup (o, p, v) prov)
           desc | isSource  = "taint source: " <> tsSourceType source
                | isSink    = "taint sink: " <> tskSinkType sink
                | otherwise = maybe ("tainted variable " <> v)
                                     (\(_, _, _, _, d) -> d)
-                                    (Map.lookup (o, p, v) prov)
+                                    (HM.lookup (o, p, v) prov)
       in TaintStep o p v line sk desc
 
 -- ---------------------------------------------------------------------------
@@ -819,7 +820,7 @@ buildTaintAnnotations
   -> [DefRow] -> [UseRow]
   -> [TaintAnnotation]
 buildTaintAnnotations tainted sources sinks defs uses =
-  Map.elems $ Map.fromListWith mergeAnnotations
+  HM.elems $ HM.fromListWith mergeAnnotations
     (concatMap defAnnotations defs ++ concatMap useAnnotations uses)
   where
     defAnnotations d =
@@ -877,7 +878,7 @@ taintAnalysis resolvedCalls defs uses globalVarNames tfi =
           (Map.findWithDefault "general" (tskSinkType sink) _category)
       | sink <- snks
       , let sinkTriple = (tskObject sink, tskProcName sink, tskVarName sink)
-      , sinkTriple `Set.member` Map.keysSet prov
+      , HM.member sinkTriple prov
       , src <- findSource sinkTriple prov srcs
       , let steps = traceTaintPath src sink prov
       , not (null steps)
@@ -889,7 +890,7 @@ taintAnalysis resolvedCalls defs uses globalVarNames tfi =
       in filter (\s -> (tsObject s, tsProcName s, tsVarName s) == rootTriple) srcs
 
     walkProvBack :: Triple -> Provenance -> Triple
-    walkProvBack t p = case Map.lookup t p of
+    walkProvBack t p = case HM.lookup t p of
       Nothing    -> t
       Just (_, _, Nothing, _, _) -> t  -- source node — this IS the root
       Just (po, pp, Just pv, _, _) -> walkProvBack (po, pp, pv) p
