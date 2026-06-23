@@ -32,7 +32,7 @@ import PB.Pipeline.Taint       qualified as Taint
 import PB.Pipeline.Serialise   ()
 
 import Data.Aeson          (FromJSON (..), ToJSON (..), Value (..), eitherDecodeFileStrict'
-                           , encode, object, toJSON, (.=))
+                           , encode, object, toJSON, withObject, (.=), (.:), (.:?))
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString      as BS
@@ -46,7 +46,7 @@ import Data.Word           (Word8)
 import qualified Data.Set           as Set
 import qualified Data.Text          as T
 import qualified Data.Text.Encoding as TE
-import System.Directory    (createDirectoryIfMissing, doesFileExist)
+import System.Directory    (createDirectoryIfMissing, doesFileExist, getModificationTime)
 import System.FilePath     (makeRelative, takeBaseName, takeDirectory
                            , takeExtension, (</>))
 import PB.Pipeline.PbApi    (builtinFnNames, builtinMethodNames)
@@ -292,6 +292,14 @@ instance ToJSON ManifestEntry where
     , "ancestor" .= meAncestor e
     ]
 
+instance FromJSON ManifestEntry where
+  parseJSON = withObject "ManifestEntry" $ \o ->
+    ManifestEntry
+      <$> o .:  "file"
+      <*> o .:  "kind"
+      <*> o .:  "object"
+      <*> o .:? "ancestor"
+
 -- | Extract a String value at val[k].
 topStr :: Text -> Value -> Maybe Text
 topStr k (Object o) = case KM.lookup (Key.fromText k) o of
@@ -494,14 +502,33 @@ data ParsedFile = ParsedFile
 data ParseOutcome
   = PsParsed  ParsedFile
   | PsDw      FilePath DataWindowFile  -- successfully parsed DataWindow
-  | PsFailed  FilePath Text            -- IO or parse error
-  | OtherFile FilePath                 -- pipeline / project
+  | PsFailed   FilePath Text            -- IO or parse error
+  | OtherFile  FilePath                 -- pipeline / project
+  | CachedFile FilePath                 -- output up-to-date; skip in --incremental mode
 
 outcomeFilePath :: ParseOutcome -> FilePath
-outcomeFilePath (PsParsed pf)   = pfPath pf
-outcomeFilePath (PsDw fp _)     = fp
-outcomeFilePath (PsFailed fp _) = fp
-outcomeFilePath (OtherFile fp)  = fp
+outcomeFilePath (PsParsed pf)    = pfPath pf
+outcomeFilePath (PsDw fp _)      = fp
+outcomeFilePath (PsFailed fp _)  = fp
+outcomeFilePath (OtherFile fp)   = fp
+outcomeFilePath (CachedFile fp)  = fp
+
+-- | True when the per-file JSON output is missing or older than the source.
+isStale :: FilePath -> FilePath -> IO Bool
+isStale srcPath outPath = do
+  srcMtime <- getModificationTime srcPath
+  result   <- try @SomeException (getModificationTime outPath)
+  pure $ case result of
+    Left  _        -> True
+    Right outMtime -> srcMtime > outMtime
+
+-- | Pass 1 variant for --incremental: returns 'CachedFile' when the output
+-- JSON is already up-to-date, so the file is skipped in analyseOutcome.
+parseOutcomeChecked :: FilePath -> FilePath -> FilePath -> IO ParseOutcome
+parseOutcomeChecked srcDir outDir src = do
+  let outPath = outDir </> makeRelative srcDir src <> ".json"
+  stale <- isStale src outPath
+  if stale then parseOutcome src else pure (CachedFile src)
 
 -- | Lightweight per-file result from the streaming analysis pass.
 -- All heavy SrFile data is consumed and released; only extracted summaries remain.
@@ -557,7 +584,9 @@ analyseOutcome wsEnv srcDir outDir outcome = do
                   (tb:_) -> tdName (tbDecl tb)
                   []     -> ""    -- matches srFileObject / buildProcMap keying
           v   = compileParsed wsEnv pf
+          me  = manifestEntry src v
       BSL.writeFile outPath (encode v)
+      BSL.writeFile (outPath <> ".meta") (encode me)
       let lvs    = extractLocalVars  fp obj sf
           css    = extractCallSites  fp obj sf
           gvs    = extractGlobalVars fp obj sf
@@ -587,9 +616,11 @@ analyseOutcome wsEnv srcDir outDir outcome = do
       let v   = wrapDwFile src dw
           obj = T.pack (takeBaseName src)
           css = extractDwCallSites (T.pack src) obj dw
+          me  = manifestEntry src v
       BSL.writeFile outPath (encode v)
+      BSL.writeFile (outPath <> ".meta") (encode me)
       pure FileAnalysis
-        { faManifest    = Just (manifestEntry src v)
+        { faManifest    = Just me
         , faLocalVars   = []
         , faCallSites   = css
         , faGlobalVars  = []
@@ -627,8 +658,27 @@ analyseOutcome wsEnv srcDir outDir outcome = do
                 , "kind"  .= ("error" :: Text)
                 , "error" .= err ]
             , Nothing )
-          Right v -> pure (encode v, Just (manifestEntry src v))
+          Right v ->
+            let me = manifestEntry src v
+            in pure (encode v, Just me)
       BSL.writeFile outPath bytes
+      mapM_ (\me -> BSL.writeFile (outPath <> ".meta") (encode me)) mEntry
+      pure FileAnalysis
+        { faManifest    = mEntry
+        , faLocalVars   = []
+        , faCallSites   = []
+        , faGlobalVars  = []
+        , faProcFlows   = []
+        , faTaintInputs = []
+        , faProcInfos   = []
+        }
+    CachedFile _ -> do
+      -- Output JSON is up-to-date; read the sidecar for the manifest entry.
+      -- Use try so that missing sidecars (error/pipeline files) are handled gracefully.
+      raw <- try @SomeException (eitherDecodeFileStrict' (outPath <> ".meta"))
+      let mEntry = case raw of
+            Right (Right me) -> Just me
+            _                -> Nothing
       pure FileAnalysis
         { faManifest    = mEntry
         , faLocalVars   = []
@@ -639,10 +689,13 @@ analyseOutcome wsEnv srcDir outDir outcome = do
         , faProcInfos   = []
         }
 
-runModeFiles :: FilePath -> FilePath -> IO ()
-runModeFiles srcDir outDir = do
+runModeFiles :: Bool -> FilePath -> FilePath -> IO ()
+runModeFiles incremental srcDir outDir = do
   files    <- walkAllSrFiles srcDir
-  outcomes <- mapConcurrently parseOutcome files               -- Pass 1
+  let parseStep = if incremental
+        then parseOutcomeChecked srcDir outDir
+        else parseOutcome
+  outcomes <- mapConcurrently parseStep files                  -- Pass 1
   -- Build workspace-wide context (forces all SrFiles into memory).
   let allParsed = [pf      | PsParsed pf  <- outcomes]
       dwParsed  = [(fp,dw) | PsDw    fp dw <- outcomes]

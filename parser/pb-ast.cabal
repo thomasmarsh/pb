@@ -71,6 +71,7 @@ library
     , unordered-containers >=0.2
     , async >= 2.2
     , ghc-compact
+    , time >= 1.9
 
 executable pb-runner
   import: common-settings

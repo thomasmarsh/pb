@@ -319,7 +319,7 @@ tests = testGroup "Pipeline.Runner"
         createDirectory tmpDir
         let fixture = "global type w_tmp from window\nend type\n"
         writeFile (tmpDir </> "w_tmp.srw") fixture
-        runModeFiles tmpDir tmpDir
+        runModeFiles False tmpDir tmpDir
         result <- eitherDecodeFileStrict' (tmpDir </> "manifest.json")
         removePathForcibly tmpDir
         case (result :: Either String [Value]) of
@@ -490,7 +490,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         writeFile (tmpDir </> "w_df2.srw") fixture
-        runModeFiles tmpDir tmpDir
+        runModeFiles False tmpDir tmpDir
         defsBytes <- BSL.readFile (tmpDir </> "proc_defs.json")
         usesBytes <- BSL.readFile (tmpDir </> "proc_uses.json")
         removePathForcibly tmpDir
@@ -551,7 +551,7 @@ tests = testGroup "Pipeline.Runner"
           , "datawindow(units=0 )"
           , "compute(band=summary name=c1 x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" expression=\"fn_compute( 1 )\" )"
           ]
-        runModeFiles tmpDir tmpDir
+        runModeFiles False tmpDir tmpDir
         deadBytes <- BSL.readFile (tmpDir </> "dead_procedures.json")
         removePathForcibly tmpDir
         case eitherDecodeStrict' (BSL.toStrict deadBytes) :: Either String [Value] of
