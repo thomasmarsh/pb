@@ -16,7 +16,7 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
     proc_rows = rows(
         conn.execute(
             "SELECT file, object, proc_type, name, modifiers, params, "
-            "return_type, start_line, end_line, body_json, cyclomatic, source_rendered "
+            "return_type, start_line, end_line, body_json, cyclomatic "
             "FROM procedures WHERE object = ? AND name = ?",
             [object_name, proc_name],
         )
@@ -24,8 +24,6 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
     if not proc_rows:
         return None
     proc = proc_rows[0]
-
-    proc["source_rendered"] = proc.get("source_rendered") or ""
 
     source_file = proc.get("file")
     start = proc.get("start_line")
@@ -97,7 +95,7 @@ def list_procedures(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
 def get_procedure_explore(conn: duckdb.DuckDBPyConnection, object_name: str, proc_name: str) -> dict[str, Any] | None:
     proc_rows = rows(
         conn.execute(
-            "SELECT body_json, source_rendered, proc_type, params, return_type, "
+            "SELECT body_json, proc_type, params, return_type, "
             "modifiers, start_line, end_line, cyclomatic "
             "FROM procedures WHERE object = ? AND name = ?",
             [object_name, proc_name],
@@ -113,6 +111,17 @@ def get_procedure_explore(conn: duckdb.DuckDBPyConnection, object_name: str, pro
         ast = json.loads(body_json)
     else:
         ast = body_json
+
+    start = row.get("start_line")
+    end = row.get("end_line")
+    source_original: str | None = None
+    if start and end:
+        obj_rows = rows(conn.execute(
+            "SELECT source_text FROM objects WHERE name = ?", [object_name]
+        ))
+        if obj_rows and obj_rows[0].get("source_text"):
+            all_lines = obj_rows[0]["source_text"].splitlines(keepends=True)
+            source_original = "".join(all_lines[max(0, start - 1) : end])
 
     sql_stmts = rows(
         conn.execute(
@@ -133,13 +142,13 @@ def get_procedure_explore(conn: duckdb.DuckDBPyConnection, object_name: str, pro
 
     return {
         "ast": ast,
-        "source_rendered": row.get("source_rendered") or "",
+        "source_original": source_original,
         "proc_type": row.get("proc_type"),
         "params": row.get("params"),
         "return_type": row.get("return_type"),
         "modifiers": row.get("modifiers"),
-        "start_line": row.get("start_line"),
-        "end_line": row.get("end_line"),
+        "start_line": start,
+        "end_line": end,
         "cyclomatic": row.get("cyclomatic"),
         "sql_statements": sql_stmts,
     }

@@ -49,7 +49,7 @@ emptySrSpans = SrSpans [] [] [] []
 tests :: TestTree
 tests = testGroup "Serialise"
   [ testCase "SrFile round-trip: file/kind fields present in wrapSrFile output" $ do
-      let v = wrapSrFile "test.srf" emptySrFile emptySrSpans (buildWorkspaceTypeEnv [])
+      let v = wrapSrFile False "test.srf" emptySrFile emptySrSpans (buildWorkspaceTypeEnv [])
       field "file" v @?= String "test.srf"
       field "kind" v @?= String "powerscript"
 

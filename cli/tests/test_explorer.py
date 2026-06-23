@@ -187,7 +187,7 @@ def test_get_procedure(client):
     data = r.json()
     assert data["object"] == "fn_sqlerror"
     assert data["name"] == "fn_sqlerror"
-    assert "source_rendered" in data
+    assert "source_original" in data
 
 
 def test_get_procedure_not_found(client):

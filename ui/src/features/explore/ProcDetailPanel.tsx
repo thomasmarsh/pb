@@ -23,10 +23,10 @@ export function ProcDetailPanel(props: { nodeId: string }) {
   return (
     <DetailShell<ExploreProcDetail> entry={entry()} loadingMsg="Loading...">
       {(d) => {
-        const lines = createMemo(() => d.source_rendered ? d.source_rendered.split("\n") : []);
+        const lines = createMemo(() => d.source_original ? d.source_original.split("\n") : []);
 
         const [highlighted] = createResource(
-          () => ({ src: d.source_rendered, tab: activeTab() }),
+          () => ({ src: d.source_original, tab: activeTab() }),
           ({ src, tab }) => {
             if (!src || tab !== "source") return Promise.resolve("");
             return highlightAsync(src);

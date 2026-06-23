@@ -27,11 +27,9 @@ class ProcedureRow(NamedTuple):
     start_line: int | None
     end_line: int | None
     body_json: str | None
-    source_rendered: str | None
     cyclomatic: int
     cfg_json: str | None
     cps_graph_json: str | None
-    dataflow_json: str | None
 
 
 class CallRow(NamedTuple):

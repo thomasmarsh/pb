@@ -22,7 +22,6 @@ import PB.Grammar.File       (parseSrFileWithSpans, SrSpans (..))
 import PB.Lexing.Lexer      (LexError (..), LexLine (..), tokenize)
 import PB.Lexing.Splitter   (Statement (..), splitStatements)
 import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
-import PB.Pipeline.PrettyPrint (prettyBodyStmts)
 import PB.Pipeline.CfgBuild    (buildCfg)
 import PB.Pipeline.CpsCompile  (compileProcedure)
 import PB.Pipeline.DeadCode    qualified as DeadCode
@@ -127,7 +126,7 @@ runPowerScript :: FilePath -> Text -> Either Text Value
 runPowerScript path src = do
   (srFile, spans) <- parsePowerScriptFile src
   let wsEnv = buildWorkspaceTypeEnv [srFile]
-  Right (wrapSrFile path srFile spans wsEnv)
+  Right (wrapSrFile False path srFile spans wsEnv)
 
 -- | Parse PowerScript source text to (SrFile, SrSpans).
 parsePowerScriptFile :: Text -> Either Text (SrFile, SrSpans)
@@ -138,8 +137,8 @@ parsePowerScriptFile src = do
   stmts <- collectStatements lexLines
   parseSrFileWithSpans headers stmts
 
-wrapSrFile :: FilePath -> SrFile -> SrSpans -> TypeEnv -> Value
-wrapSrFile path sf spans wsEnv =
+wrapSrFile :: Bool -> FilePath -> SrFile -> SrSpans -> TypeEnv -> Value
+wrapSrFile withCps path sf spans wsEnv =
     let (objName, ancestor) = case srTypeBlocks sf of
           (tb:_) -> (tdName (tbDecl tb), Just (tdAncestor (tbDecl tb)))
           []     -> (T.pack path, Nothing)
@@ -166,21 +165,16 @@ wrapSrFile path sf spans wsEnv =
                   ]
         injectMeta _ v = v
 
-        injectRendered body (Object o) =
-            Object (KM.insert "source_rendered" (toJSON (prettyBodyStmts body)) o)
-        injectRendered _ v = v
-
         injectCompiled env body (Object o) =
             let cfg = buildCfg body
-            in Object
-              $ KM.insert "cfg"      (toJSON cfg)
-              $ KM.insert "dataflow" (toJSON (Dataflow.dataflowFacet (Dataflow.analyzeProcedure objName "" cfg)))
-              $ KM.insert "cpsGraph" (toJSON (compileProcedure env userFns body))
-              $ o
+                base = KM.insert "cfg" (toJSON cfg) o
+            in Object $ if withCps
+                then KM.insert "cpsGraph" (toJSON (compileProcedure env userFns body)) base
+                else base
         injectCompiled _ _ v = v
 
         injectAll env body sp v =
-            injectCompiled env body (injectRendered body (injectMeta sp v))
+            injectCompiled env body (injectMeta sp v)
 
     in object
         [ "file"            .= path
@@ -563,15 +557,15 @@ parseOutcome src = case fileKind src of
   _ -> pure (OtherFile src)
 
 -- | Pass 3 (pure): compile one parsed PowerScript file with the workspace env.
-compileParsed :: TypeEnv -> ParsedFile -> Value
-compileParsed wsEnv pf =
-  wrapSrFile (pfPath pf) (pfSrFile pf) (pfSpans pf) wsEnv
+compileParsed :: Bool -> TypeEnv -> ParsedFile -> Value
+compileParsed withCps wsEnv pf =
+  wrapSrFile withCps (pfPath pf) (pfSrFile pf) (pfSpans pf) wsEnv
 
 -- | Write one file's JSON output and extract all per-file analysis data in one pass.
 -- Replaces the old emitOutcome + separate per-file extraction loops.
 -- After this returns, the SrFile inside PsParsed is no longer referenced.
-analyseOutcome :: TypeEnv -> FilePath -> FilePath -> ParseOutcome -> IO FileAnalysis
-analyseOutcome wsEnv srcDir outDir outcome = do
+analyseOutcome :: Bool -> TypeEnv -> FilePath -> FilePath -> ParseOutcome -> IO FileAnalysis
+analyseOutcome withCps wsEnv srcDir outDir outcome = do
   let src     = outcomeFilePath outcome
       rel     = makeRelative srcDir src
       outPath = outDir </> rel <> ".json"
@@ -583,7 +577,7 @@ analyseOutcome wsEnv srcDir outDir outcome = do
           obj = case srTypeBlocks sf of
                   (tb:_) -> tdName (tbDecl tb)
                   []     -> ""    -- matches srFileObject / buildProcMap keying
-          v   = compileParsed wsEnv pf
+          v   = compileParsed withCps wsEnv pf
           me  = manifestEntry src v
       BSL.writeFile outPath (encode v)
       BSL.writeFile (outPath <> ".meta") (encode me)
@@ -689,8 +683,8 @@ analyseOutcome wsEnv srcDir outDir outcome = do
         , faProcInfos   = []
         }
 
-runModeFiles :: Bool -> FilePath -> FilePath -> IO ()
-runModeFiles incremental srcDir outDir = do
+runModeFiles :: Bool -> Bool -> FilePath -> FilePath -> IO ()
+runModeFiles incremental withCps srcDir outDir = do
   files    <- walkAllSrFiles srcDir
   let parseStep = if incremental
         then parseOutcomeChecked srcDir outDir
@@ -709,7 +703,7 @@ runModeFiles incremental srcDir outDir = do
   -- After mapM completes, outcomes/allParsed/allSfs go out of scope
   -- once wsEnv/objSet/usrTypes/inh/procMap are fully evaluated by
   -- writeResolution below — SrFiles become GC-eligible before passes 7+8.
-  analyses <- mapConcurrently (analyseOutcome wsEnv srcDir outDir) outcomes
+  analyses <- mapConcurrently (analyseOutcome withCps wsEnv srcDir outDir) outcomes
   let entries     = catMaybes (map faManifest    analyses)
       lvs         = concatMap faLocalVars         analyses
       css         = concatMap faCallSites         analyses  -- includes DW call sites

@@ -319,7 +319,7 @@ tests = testGroup "Pipeline.Runner"
         createDirectory tmpDir
         let fixture = "global type w_tmp from window\nend type\n"
         writeFile (tmpDir </> "w_tmp.srw") fixture
-        runModeFiles False tmpDir tmpDir
+        runModeFiles False False tmpDir tmpDir
         result <- eitherDecodeFileStrict' (tmpDir </> "manifest.json")
         removePathForcibly tmpDir
         case (result :: Either String [Value]) of
@@ -432,45 +432,11 @@ tests = testGroup "Pipeline.Runner"
     ]
 
   -- -----------------------------------------------------------------------
-  -- 111d-1: Pass 6 (writeDataflowAnalysis) + per-procedure dataflow facet
+  -- 111d-1: Pass 6 (writeDataflowAnalysis)
   --
 
-  , testGroup "dataflow facet (111d-1)"
-    [ testCase "wrapSrFile injects a 'dataflow' facet per procedure" $
-        -- The facet is the streaming-mode delivery channel: pb index runs
-        -- pb-runner --jsonl (runModeJsonl) which never calls writeDataflowAnalysis,
-        -- so the per-procedure JSON must already carry defs/uses via wrapSrFile.
-        let src = T.unlines
-              [ "global type w_df from window"
-              , "end type"
-              , "forward prototypes"
-              , "public function integer uf_add (integer a, integer b)"
-              , "end prototypes"
-              , "global type w_df from window"
-              , "end type"
-              , "type variables"
-              , "end variables"
-              ]
-            -- Body with a def + use so the facet is non-empty.
-            body = T.unlines
-              [ "public function integer uf_add (integer a, integer b)"
-              , "integer li_sum"
-              , "li_sum = a + b"
-              , "return li_sum"
-              , "end function"
-              ]
-        in case runFile "w_df.srw" (src <> body) of
-          Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
-          Right v  -> do
-            let fns = lookupObj "functions" v
-            arrayLen fns @?= 1
-            let fn = firstOf fns
-            assertBool "function has dataflow facet"
-              (lookupObj "dataflow" fn /= Null)
-            assertBool "facet has defs list"
-              (arrayLen (lookupObj "defs" (lookupObj "dataflow" fn)) > 0)
-
-    , testCase "runModeFiles writes proc_defs.json + proc_uses.json" $ do
+  , testGroup "dataflow (111d-1)"
+    [ testCase "runModeFiles writes proc_defs.json + proc_uses.json" $ do
         -- Pass 6 (batch mode): consolidated JSON for dump/check-corpus consumers.
         tmpDir <- (\t -> t </> "pb-runner-dataflow-test") <$> getTemporaryDirectory
         removePathForcibly tmpDir
@@ -490,7 +456,7 @@ tests = testGroup "Pipeline.Runner"
               , "end function"
               ]
         writeFile (tmpDir </> "w_df2.srw") fixture
-        runModeFiles False tmpDir tmpDir
+        runModeFiles False False tmpDir tmpDir
         defsBytes <- BSL.readFile (tmpDir </> "proc_defs.json")
         usesBytes <- BSL.readFile (tmpDir </> "proc_uses.json")
         removePathForcibly tmpDir
@@ -551,7 +517,7 @@ tests = testGroup "Pipeline.Runner"
           , "datawindow(units=0 )"
           , "compute(band=summary name=c1 x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" expression=\"fn_compute( 1 )\" )"
           ]
-        runModeFiles False tmpDir tmpDir
+        runModeFiles False False tmpDir tmpDir
         deadBytes <- BSL.readFile (tmpDir </> "dead_procedures.json")
         removePathForcibly tmpDir
         case eitherDecodeStrict' (BSL.toStrict deadBytes) :: Either String [Value] of

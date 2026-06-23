@@ -806,16 +806,17 @@ currentLine      :: FileParser Int  -- llStartLine of the next statement (withou
 ```haskell
 runFile           :: FilePath -> Text -> Either Text Value   -- dispatches on extension via fileKind
 collectStatements :: [LexLine] -> Either Text [Statement]
-wrapSrFile        :: FilePath -> SrFile -> SrSpans -> TypeEnv -> Value
-runModeFiles      :: FilePath -> FilePath -> IO ()   -- batch: 7 passes
+wrapSrFile        :: Bool -> FilePath -> SrFile -> SrSpans -> TypeEnv -> Value   -- Bool = withCps
+runModeFiles      :: Bool -> Bool -> FilePath -> FilePath -> IO ()   -- incremental withCps srcDir outDir
 runModeJsonl      :: FilePath -> IO ()               -- streaming, no cross-file inh
 writeDataflowAnalysis :: FilePath -> [ParsedFile] -> IO ()  -- Pass 6 → proc_defs.json, proc_uses.json
 writeTaintAnalysis    :: FilePath -> [ParsedFile] -> IO ()  -- Pass 7 → taint_*.json, interproc_edges.json, procedure_summaries.json
 -- fileKind: .srd → DataWindow, .srp → Pipeline, .srj → Project, _ → PowerScript
 -- runPowerScript: normalizeText → stripHeaders → tokenize → collectStatements
 --                 → parseSrFileWithSpans → wrapSrFile; builds buildWorkspaceTypeEnv [srFile] per file
--- wrapSrFile injects per-procedure: meta (file/object/startLine), source_rendered,
---   cfg (buildCfg), cpsGraph (compileProcedure). Workspace TypeEnv built from all files in
+-- wrapSrFile injects per-procedure: meta (file/object/startLine), cfg (buildCfg).
+--   source_rendered REMOVED (banished). dataflow facet REMOVED (proc_defs.json on disk instead).
+--   cpsGraph only when withCps=True (--with-cps flag). Workspace TypeEnv built from all files in
 --   runModeFiles; per-procedure overlay applied via withProcScope (parseParams paramsText) wsEnv.
 -- collectStatements filters empty-token statements and surfaces the first LexError as Left Text
 -- Note: leOffset in a LexError is always 0 (reports initial position state, not error position).

@@ -199,11 +199,9 @@ def _proc_row(
         meta.get("startLine"),
         meta.get("endLine"),
         json.dumps(body),
-        block.get("source_rendered", ""),
         _cfg_cyclomatic(block.get("cfg")),
         json.dumps(block["cfg"]) if "cfg" in block else None,
         json.dumps(block["cpsGraph"]) if "cpsGraph" in block else None,
-        json.dumps(block["dataflow"]) if "dataflow" in block else None,
     )
 
 

@@ -15,6 +15,7 @@ data Options = Options
   , optEmitTs      :: Bool
   , optEmitPy      :: Bool
   , optIncremental :: Bool
+  , optWithCps     :: Bool
   }
 
 optParser :: Parser Options
@@ -25,6 +26,7 @@ optParser = Options
   <*> switch   (long "emit-ts"      <> help "Print TypeScript type declarations for the AST to stdout")
   <*> switch   (long "emit-py"      <> help "Print Python TypedDict declarations for the AST to stdout")
   <*> switch   (long "incremental"  <> help "Skip files whose JSON output is already newer than the source")
+  <*> switch   (long "with-cps"     <> help "Include cps_graph_json in output (slow; for CPS analysis views)")
 
 main :: IO ()
 main = do
@@ -34,7 +36,7 @@ main = do
     (True, _) -> putStr emitTypeScript
     (_, True) -> putStr emitPython
     _         -> case (optInput opts, optOutput opts, optJsonl opts) of
-      (Just inp, Just d,  False) -> runModeFiles (optIncremental opts) inp d
+      (Just inp, Just d,  False) -> runModeFiles (optIncremental opts) (optWithCps opts) inp d
       (Just inp, Nothing, True)  -> runModeJsonl inp
       (Just _,   Just _,  True)  -> die "cannot specify both -o and --jsonl"
       _ -> die "usage: pb-runner (-i <srcdir> (-o <outdir> | --jsonl)) | --emit-ts | --emit-py"

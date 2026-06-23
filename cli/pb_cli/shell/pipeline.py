@@ -98,7 +98,7 @@ def run(
         progress.start_step("build call tables")
         env.storage.build_call_tables(conn, runner_out_dir)
         progress.start_step("build dataflow tables")
-        env.storage.build_dataflow_tables(conn)
+        env.storage.build_dataflow_tables(conn, runner_out_dir)
         progress.start_step("build interproc tables")
         env.storage.build_interproc_tables(conn, runner_out_dir)
         progress.start_step("build taint tables")

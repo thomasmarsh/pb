@@ -48,7 +48,6 @@ library
     PB.Pipeline.PbApi
     PB.Pipeline.Taint
     PB.Pipeline.Preprocess
-    PB.Pipeline.PrettyPrint
     PB.Pipeline.Runner
     PB.Pipeline.Serialise
     PB.Pipeline.Church
@@ -95,7 +94,6 @@ test-suite pb-ast-test
   main-is: Main.hs
   other-modules:
       ChurchTest
-    , PrettyPrintTest
     , BodyParserTest
     , BodyStmtTest
     , CfgBuildTest

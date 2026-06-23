@@ -23,7 +23,7 @@ const mockProcDetail: ExploreProcDetail = {
   start_line: 10,
   end_line: 50,
   modifiers: null,
-  source_rendered: "SELECT 1 FROM dual",
+  source_original: "SELECT 1 FROM dual",
   ast: null,
   sql_statements: [{ line: 1, operation: "SELECT", raw_sql: "SELECT 1", formatted_sql: "SELECT 1", tables: ["dual"], columns: [], has_into: false, has_cursor: false, parse_ok: true }],
 };
@@ -36,7 +36,7 @@ const mockProcDetailNoSql: ExploreProcDetail = {
   start_line: 5,
   end_line: 10,
   modifiers: null,
-  source_rendered: "Return 0",
+  source_original: "Return 0",
   ast: null,
   sql_statements: [],
 };

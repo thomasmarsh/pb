@@ -18,7 +18,6 @@ const baseProc: ProcedureDetailResponse = {
   end_line: 30,
   cyclomatic: 3,
   source_original: "function boolean f_process(long al_id)\nreturn true\nend function",
-  source_rendered: "function boolean f_process(long al_id)\nreturn true\nend function",
   callers: [
     { object: "w_login", proc: "cb_ok_clicked" },
     { object: "w_admin", proc: "f_init" },

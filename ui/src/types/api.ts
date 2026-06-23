@@ -123,7 +123,6 @@ export interface ProcCallerInfo {
 export interface ProcedureDetailResponse extends ProcedureRow {
   file?: string;
   source_original: string | null;
-  source_rendered: string;
   callers?: ProcCallerInfo[];
   callees?: string[];
   sql_statements?: SqlStatementRow[];
@@ -408,7 +407,7 @@ export interface SliceResult {
 
 export interface ExploreProcDetail {
   ast: Located<BodyStmt>[] | null;
-  source_rendered: string;
+  source_original: string | null;
   proc_type: string;
   params: string | null;
   return_type: string | null;
