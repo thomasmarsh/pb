@@ -70,6 +70,7 @@ library
     , mtl >=2.2
     , unordered-containers >=0.2
     , async >= 2.2
+    , ghc-compact
 
 executable pb-runner
   import: common-settings

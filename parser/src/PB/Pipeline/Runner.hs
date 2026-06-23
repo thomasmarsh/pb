@@ -38,6 +38,7 @@ import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
 import Control.Concurrent.Async (mapConcurrently)
+import GHC.Compact (compact, getCompact)
 import Control.Exception   (SomeException, try)
 import Data.Char           (intToDigit, toLower)
 import Data.Either         (lefts)
@@ -665,8 +666,13 @@ runModeFiles srcDir outDir = do
       procInfos   = concatMap faProcInfos         analyses
   writeResolution outDir lvs css gvs objSet usrTypes inh procMap  -- Pass 5
   writeDataflowAnalysis outDir flows                               -- Pass 6
-  writeTaintAnalysis    outDir taintInputs                         -- Pass 7
-  writeDeadCodeAnalysis outDir procInfos dwParsed inh              -- Pass 8
+  -- Move long-lived data into compact regions so passes 7+8 GC cycles treat
+  -- each as a single root rather than scanning every interior pointer.
+  taintC  <- compact taintInputs
+  procC   <- compact procInfos
+  dwC     <- compact dwParsed
+  writeTaintAnalysis    outDir (getCompact taintC)                          -- Pass 7
+  writeDeadCodeAnalysis outDir (getCompact procC) (getCompact dwC) inh      -- Pass 8
   BSL.writeFile (outDir </> "manifest.json") (encode entries)
 
 runModeJsonl :: FilePath -> IO ()
