@@ -16,7 +16,6 @@ import PB.Pipeline.Serialise  (emitPython, transformType, parseFieldLine,
 import Data.Aeson          (Value (..), toJSON)
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
-import qualified Data.Map.Strict   as Map
 import qualified Data.Text as T
 
 import Test.Tasty       (TestTree, testGroup)

@@ -53,6 +53,7 @@ library
     PB.Pipeline.Church
     PB.Pipeline.TypeEnv
     PB.Pipeline.TypeResolve
+    PB.Pipeline.DuckDb
     PB.Pipeline.SqlParse
     PB.Pipeline.Walk
   build-depends:
@@ -74,6 +75,8 @@ library
     , time >= 1.9
     , process >= 1.6
     , vector >= 0.12
+    , duckdb-simple >= 0.1.5.1 && < 0.2
+    , duckdb-ffi    >= 1.5.0.0 && < 1.6
 
 executable pb-runner
   import: common-settings
@@ -96,7 +99,8 @@ test-suite pb-ast-test
   hs-source-dirs: test
   main-is: Main.hs
   other-modules:
-      ChurchTest
+      DuckDbTest
+    , ChurchTest
     , BodyParserTest
     , BodyStmtTest
     , CfgBuildTest

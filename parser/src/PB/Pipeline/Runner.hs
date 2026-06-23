@@ -5,6 +5,7 @@ module PB.Pipeline.Runner
   , wrapSrFile
   , runModeFiles
   , runModeJsonl
+  , runModeDb
   , writeDataflowAnalysis
   , writeTaintAnalysis
   , writeDeadCodeAnalysis
@@ -58,6 +59,15 @@ import PB.Pipeline.TypeResolve
   )
 import qualified Data.Map.Strict as Map
 import PB.Pipeline.Walk    (walkAllSrFiles)
+import PB.Pipeline.DuckDb
+  ( DuckConn, withWriteConn, initSchema
+  , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..), SqlStmtRow
+  , appendObjects, appendProcedures
+  , appendDwObjects, appendDwControls
+  , appendLocalVars, appendCallSites, appendGlobalVars
+  , appendProcDefs, appendProcUses, appendSqlStmts
+  , appendParseErrors
+  )
 
 -- | Last dot-separated segment of a dotted name, e.g. "dw.setfocus" → "setfocus".
 lastName :: Text -> Text
@@ -739,3 +749,143 @@ runModeJsonl srcDir = do
                 [ "file" .= src, "kind" .= ("error" :: Text), "error" .= err ]
               Right v   -> encode v
       BSL.putStr (line <> "\n")
+
+-- ---------------------------------------------------------------------------
+-- DuckDB streaming mode (Plan 127 — Phase A)
+--
+-- runModeDb srcDir dbPath:
+--   Phase A0 — parse all files concurrently → build workspace TypeEnv
+--   Phase A  — compile each file with TypeEnv → append rows to DuckDB
+--
+-- Existing JSON output (runModeFiles) is unchanged; runModeDb is additive.
+
+data CompiledPs = CompiledPs
+  { cpsObjectRow  :: ObjectRow
+  , cpsProcRows   :: [ProcRow]
+  , cpsLocalVars  :: [LocalVar]
+  , cpsCallSites  :: [CallSite]
+  , cpsGlobalVars :: [GlobalVar]
+  , cpsProcFlows  :: [(Text, Text, Text, Dataflow.ProcFlow)]
+  , cpsSqlStmts   :: [SqlStmtRow]
+  }
+
+data CompiledDw = CompiledDw
+  { cdDwObjectRow :: DwObjectRow
+  , cdDwControls  :: [DwControlRow]
+  , cdCallSites   :: [CallSite]
+  }
+
+data CompiledFile
+  = CFPs    CompiledPs
+  | CFDw    CompiledDw
+  | CFError FilePath Text
+  | CFSkip
+
+compileOne :: TypeEnv -> ParseOutcome -> IO CompiledFile
+compileOne wsEnv outcome = case outcome of
+
+  PsParsed pf -> do
+    let sf   = pfSrFile pf
+        sp   = pfSpans  pf
+        fp   = T.pack (pfPath pf)
+        obj  = case srTypeBlocks sf of
+                 (tb:_) -> tdName (tbDecl tb)
+                 []     -> ""
+        anc  = case srTypeBlocks sf of
+                 (tb:_) -> Just (tdAncestor (tbDecl tb))
+                 []     -> Nothing
+        userFns = Set.fromList
+          $  map (T.toLower . fnsName . fbSig) (srFunctions  sf)
+          <> map (T.toLower . ssName  . sbSig) (srSubroutines sf)
+        procEnv params = withProcScope (parseParams params) wsEnv
+        lvs  = extractLocalVars  fp obj sf
+        css  = extractCallSites  fp obj sf
+        gvs  = extractGlobalVars fp obj sf
+        procs =
+          [ let cfg      = buildCfg body
+                cfgJs    = jsonText (toJSON cfg)
+                cpsJs    = jsonText (toJSON (compileProcedure (procEnv params) userFns body))
+                flow     = (fp, obj, pName, Dataflow.analyzeProcedure obj pName cfg)
+            in ( ProcRow fp obj pName pType sLine eLine cfgJs cpsJs, flow )
+          | ((sLine, eLine), (pName, pType, params, body)) <-
+              zip (spFunctions   sp) [ (fnsName (fbSig fb), "function",   fnsParams (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
+              <>
+              zip (spSubroutines sp) [ (ssName  (sbSig sb), "subroutine", ssParams  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
+              <>
+              zip (spEvents      sp) [ (esName  (evSig ev), "event",      "",                   evBody ev) | ev <- srEvents      sf ]
+              <>
+              zip (spOnBlocks    sp) [ (obEvent ob,         "on",         "",                   obBody ob) | ob <- srOnBlocks    sf ]
+          ]
+    pure $ CFPs $ CompiledPs
+      { cpsObjectRow  = ObjectRow fp "powerscript" obj anc
+      , cpsProcRows   = map fst procs
+      , cpsLocalVars  = lvs
+      , cpsCallSites  = css
+      , cpsGlobalVars = gvs
+      , cpsProcFlows  = map snd procs
+      , cpsSqlStmts   = []
+      }
+
+  PsDw fp dw -> do
+    let obj   = T.pack (takeBaseName fp)
+        fpT   = T.pack fp
+        style = Map.findWithDefault "" "style" (doaAttrs (dwObject dw))
+        ctls  = [ DwControlRow fpT obj (renderBandKind (dwcBand c))
+                    (dwcType c)
+                    (fromMaybe "" (dwcName c))
+                    (dwcX c) (dwcY c) (dwcWidth c) (dwcHeight c)
+                    (dwcExpression c)
+                | c <- dwControls dw ]
+        css   = extractDwCallSites fpT obj dw
+    pure $ CFDw $ CompiledDw
+      { cdDwObjectRow = DwObjectRow fpT obj style
+      , cdDwControls  = ctls
+      , cdCallSites   = css
+      }
+
+  PsFailed fp err -> pure $ CFError fp err
+  OtherFile _     -> pure CFSkip
+  CachedFile _    -> pure CFSkip
+
+renderBandKind :: Maybe DwBandKind -> Text
+renderBandKind Nothing               = ""
+renderBandKind (Just BkHeader)       = "header"
+renderBandKind (Just BkDetail)       = "detail"
+renderBandKind (Just BkFooter)       = "footer"
+renderBandKind (Just BkSummary)      = "summary"
+renderBandKind (Just BkBackground)   = "background"
+renderBandKind (Just BkForeground)   = "foreground"
+renderBandKind (Just (BkGroupHeader n)) = "group_header_" <> T.pack (show n)
+renderBandKind (Just (BkGroupTrailer n)) = "group_trailer_" <> T.pack (show n)
+renderBandKind (Just (BkTreeLevel n))  = "tree_level_" <> T.pack (show n)
+
+jsonText :: Value -> Text
+jsonText = TE.decodeUtf8 . BSL.toStrict . encode
+
+appendToDb :: DuckConn -> CompiledFile -> IO ()
+appendToDb conn (CFPs r) = do
+  appendObjects    conn [cpsObjectRow r]
+  appendProcedures conn (cpsProcRows r)
+  appendLocalVars  conn (cpsLocalVars r)
+  appendCallSites  conn (cpsCallSites r)
+  appendGlobalVars conn (cpsGlobalVars r)
+  appendProcDefs   conn (cpsProcFlows r)
+  appendProcUses   conn (cpsProcFlows r)
+  appendSqlStmts   conn (cpsSqlStmts r)
+appendToDb conn (CFDw r) = do
+  appendDwObjects  conn [cdDwObjectRow r]
+  appendDwControls conn (cdDwControls r)
+  appendCallSites  conn (cdCallSites r)
+appendToDb conn (CFError fp err) =
+  appendParseErrors conn [(fp, err)]
+appendToDb _    CFSkip = pure ()
+
+runModeDb :: FilePath -> FilePath -> IO ()
+runModeDb srcDir dbPath = do
+  files    <- walkAllSrFiles srcDir
+  outcomes <- mapConcurrently parseOutcome files          -- Phase A0: parse
+  let allSfs = [pfSrFile pf | PsParsed pf <- outcomes]
+      wsEnv  = buildWorkspaceTypeEnv allSfs              -- Phase A0: TypeEnv
+  withWriteConn dbPath $ \conn -> do
+    initSchema conn
+    mapM_ (\o -> compileOne wsEnv o >>= appendToDb conn) outcomes  -- Phase A

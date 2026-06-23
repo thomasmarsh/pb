@@ -23,6 +23,10 @@ output/
 *.duckdb.lck
 pb.duckdb
 
+# cabal local overrides (machine-specific library paths)
+cabal.project.local
+parser/cabal.project.local
+
 # Code samples and extracts
 example/PowerBuilder-Example/
 example/PowerBuilder-Example-extract/

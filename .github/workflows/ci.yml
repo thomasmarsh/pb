@@ -32,14 +32,22 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cabal/store
-          key: cabal-${{ runner.os }}-ghc-9.10.2-${{ hashFiles('parser/pb-ast.cabal') }}
+          key: cabal-${{ runner.os }}-ghc-9.10.2-duckdb-1.5.4-${{ hashFiles('parser/pb-ast.cabal') }}
           restore-keys: |
-            cabal-${{ runner.os }}-ghc-9.10.2-
+            cabal-${{ runner.os }}-ghc-9.10.2-duckdb-1.5.4-
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install DuckDB library
+        run: |
+          wget -q https://github.com/duckdb/duckdb/releases/download/v1.5.4/libduckdb-linux-amd64.zip
+          unzip -q libduckdb-linux-amd64.zip -d /tmp/duckdb
+          sudo cp /tmp/duckdb/libduckdb.so /usr/local/lib/
+          sudo cp /tmp/duckdb/duckdb.h /usr/local/include/
+          sudo ldconfig
 
       - name: Install Graphviz
         run: |

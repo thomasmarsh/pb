@@ -1,5 +1,6 @@
 module Main (main) where
 
+import qualified DuckDbTest
 import qualified ChurchTest
 import qualified BodyParserTest
 import qualified BodyStmtTest
@@ -35,7 +36,8 @@ main = defaultMain tests
 
 tests :: TestTree
 tests = testGroup "pb-ast"
-  [ ChurchTest.tests
+  [ DuckDbTest.tests
+  , ChurchTest.tests
   , BodyParserTest.tests
   , BodyStmtTest.tests
   , CfgBuildTest.tests
