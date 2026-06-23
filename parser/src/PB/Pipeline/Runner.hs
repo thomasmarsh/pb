@@ -48,11 +48,13 @@ import System.Directory    (createDirectoryIfMissing, doesFileExist)
 import System.FilePath     (makeRelative, takeBaseName, takeDirectory
                            , takeExtension, (</>))
 import PB.Pipeline.PbApi    (builtinFnNames, builtinMethodNames)
+import PB.Pipeline.Church   (ProcCtx, fusedExtractList)
 import PB.Pipeline.TypeResolve
   ( buildInheritsMap, buildObjectSet, buildProcMap, buildUserTypeSet
-  , extractCallSites, extractDwCallSites, extractGlobalVars, extractLocalVars
+  , extractDwCallSites, extractGlobalVars
   , resolveTypes, resolveCalls
-  , parseParams
+  , parseParams, paramsToVars
+  , CallSite, LocalVar
   )
 import qualified Data.Map.Strict as Map
 import PB.Pipeline.Walk    (walkAllSrFiles)
@@ -314,6 +316,28 @@ manifestEntry path v = ManifestEntry
 -- ---------------------------------------------------------------------------
 -- Build and write cross-file resolution outputs
 
+-- | Fused single-pass extraction of local vars and call sites from one SrFile.
+-- Replaces separate extractLocalVars + extractCallSites walks (Plan 123 Part B).
+-- Parameters (from function/subroutine signatures) are prepended via paramsToVars
+-- since they come from the sig text, not from [Located BodyStmt].
+fusedSrFile :: Text -> Text -> SrFile -> ([LocalVar], [CallSite])
+fusedSrFile file obj sf = (concat lvss, concat css)
+  where
+    run :: ProcCtx -> [Located BodyStmt] -> ([LocalVar], [CallSite])
+    run = fusedExtractList
+
+    fnPairs = [ let (bLVs, cs) = run (file, obj, fnsName (fbSig fn)) (fbBody fn)
+                in (paramsToVars file obj (fnsName (fbSig fn)) (fnsParams (fbSig fn)) 0 <> bLVs, cs)
+              | fn <- srFunctions sf ]
+    sbPairs = [ let (bLVs, cs) = run (file, obj, ssName (sbSig sb)) (sbBody sb)
+                in (paramsToVars file obj (ssName (sbSig sb)) (ssParams (sbSig sb)) 0 <> bLVs, cs)
+              | sb <- srSubroutines sf ]
+    evPairs = [ run (file, obj, esName (evSig ev)) (evBody ev) | ev <- srEvents sf ]
+    obPairs = [ run (file, obj, obEvent ob) (obBody ob) | ob <- srOnBlocks sf ]
+    allPairs = fnPairs <> sbPairs <> evPairs <> obPairs
+    lvss = map fst allPairs
+    css  = map snd allPairs
+
 writeResolution :: FilePath -> [(FilePath, SrFile)] -> [(FilePath, DataWindowFile)] -> IO ()
 writeResolution outDir pairs dwPairs = do
   let allSfs   = map snd pairs
@@ -326,8 +350,9 @@ writeResolution outDir pairs dwPairs = do
                  , let obj = case srTypeBlocks sf of
                                (tb:_) -> tdName (tbDecl tb)
                                []     -> T.pack (takeBaseName fp) ]
-      lvs      = concatMap (\(fp, obj, sf) -> extractLocalVars  fp obj sf) triples
-      psCss    = concatMap (\(fp, obj, sf) -> extractCallSites  fp obj sf) triples
+      (lvsList, psCssList) = unzip (map (\(fp, obj, sf) -> fusedSrFile fp obj sf) triples)
+      lvs   = concat lvsList
+      psCss = concat psCssList
       dwCss    = [ cs | (fp, dw) <- dwPairs
                       , let obj = T.pack (takeBaseName fp)
                       , cs <- extractDwCallSites (T.pack fp) obj dw ]
