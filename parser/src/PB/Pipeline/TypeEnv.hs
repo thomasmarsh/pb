@@ -1,3 +1,4 @@
+{-# LANGUAGE StrictData #-}
 module PB.Pipeline.TypeEnv
   ( TypeEnv (..)
   , buildWorkspaceTypeEnv

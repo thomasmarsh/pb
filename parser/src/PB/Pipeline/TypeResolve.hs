@@ -1,3 +1,4 @@
+{-# LANGUAGE StrictData #-}
 -- | Type resolution and call resolution directly from the parsed AST.
 --
 -- Pure module — no I/O.  Public API:

@@ -19,6 +19,7 @@ common common-settings
     -Wall
     -Wcompat
     -Wincomplete-patterns
+    -O2
 
 library
   import: common-settings
@@ -72,6 +73,7 @@ executable pb-runner
   import: common-settings
   hs-source-dirs: app
   main-is: Main.hs
+  ghc-options: -rtsopts
   build-depends:
     , base ^>=4.20.1.0
     , pb-ast

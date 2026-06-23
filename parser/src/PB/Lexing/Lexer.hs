@@ -1,3 +1,4 @@
+{-# LANGUAGE StrictData #-}
 {-# LANGUAGE TupleSections #-}
 module PB.Lexing.Lexer
   ( tokenize

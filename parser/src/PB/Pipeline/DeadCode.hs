@@ -1,3 +1,4 @@
+{-# LANGUAGE StrictData #-}
 module PB.Pipeline.DeadCode
   ( DeadProcedure (..)
   , ProcInfo (..)
@@ -9,6 +10,7 @@ import PB.Prelude
 import PB.Pipeline.CfgBuild  (Cfg (..))
 import Data.List              (sortOn)
 import Data.Map.Strict qualified as Map
+import Data.Sequence qualified as Seq
 import Data.Set qualified as Set
 import Data.Text qualified as T
 
@@ -155,11 +157,12 @@ computeDeadProcedures procedures calls resolved inherits dwObjects =
 
 -- | BFS reachability from seed set through adjacency map.
 bfs :: Set.Set (Text, Text) -> Map.Map (Text, Text) [(Text, Text)] -> Set.Set (Text, Text)
-bfs seeds edges = go seeds (Set.toList seeds)
+bfs seeds edges = go seeds (Seq.fromList (Set.toList seeds))
   where
-    go visited [] = visited
-    go visited (current:rest) =
-      let neighbors = Map.findWithDefault [] current edges
-          newNeighbors = filter (`Set.notMember` visited) neighbors
-          visited' = foldl' (flip Set.insert) visited newNeighbors
-      in  go visited' (rest ++ newNeighbors)
+    go visited queue = case Seq.viewl queue of
+      Seq.EmptyL -> visited
+      current Seq.:< rest ->
+        let neighbors    = Map.findWithDefault [] current edges
+            newNeighbors = filter (`Set.notMember` visited) neighbors
+            visited'     = foldl' (flip Set.insert) visited newNeighbors
+        in  go visited' (rest Seq.>< Seq.fromList newNeighbors)

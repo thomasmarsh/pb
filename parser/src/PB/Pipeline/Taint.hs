@@ -1,3 +1,4 @@
+{-# LANGUAGE StrictData #-}
 -- | Taint analysis: source/sink classification, BFS propagation, path tracing.
 --
 -- Pure module — no I/O.  Public API:
@@ -50,6 +51,7 @@ import Data.Aeson
   )
 import Data.Char            (isAlpha)
 import qualified Data.Map.Strict as Map
+import qualified Data.Sequence   as Seq
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
 
@@ -629,7 +631,7 @@ propagateTaint
   -> [InterprocEdge]
   -> (Set.Set Triple, Provenance)
 propagateTaint sources defs uses edges =
-  fixpoint Set.empty Map.empty initialSeeds
+  fixpoint Set.empty Map.empty (Seq.fromList initialSeeds)
   where
     -- Index uses by (object, proc, var)
     usesByTriple :: Map.Map Triple [UseRow]
@@ -673,17 +675,17 @@ propagateTaint sources defs uses edges =
     fixpoint
       :: Set.Set Triple
       -> Provenance
-      -> [(Triple, Text, Text)]
+      -> Seq.Seq (Triple, Text, Text)
       -> (Set.Set Triple, Provenance)
-    fixpoint tainted prov [] = (tainted, prov)
-    fixpoint tainted prov ((t, sk, desc) : rest)
-      | t `Set.member` tainted = fixpoint tainted prov rest
-      | otherwise =
-          let tainted' = Set.insert t tainted
-              prov' = Map.insert t ("", "", Nothing, sk, desc) prov
-              newSeeds = propagateOne t tainted'
-              allSeeds = newSeeds ++ rest
-          in fixpoint tainted' prov' allSeeds
+    fixpoint tainted prov queue = case Seq.viewl queue of
+      Seq.EmptyL -> (tainted, prov)
+      (t, sk, desc) Seq.:< rest
+        | t `Set.member` tainted -> fixpoint tainted prov rest
+        | otherwise ->
+            let tainted' = Set.insert t tainted
+                prov'    = Map.insert t ("", "", Nothing, sk, desc) prov
+                newSeeds = propagateOne t tainted'
+            in  fixpoint tainted' prov' (rest Seq.>< Seq.fromList newSeeds)
 
     propagateOne :: Triple -> Set.Set Triple -> [(Triple, Text, Text)]
     propagateOne (obj, proc, var) tainted =

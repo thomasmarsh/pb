@@ -1,3 +1,4 @@
+{-# LANGUAGE StrictData #-}
 -- | Intra-procedural dataflow analysis — def-use chains and reaching definitions.
 --
 -- Pure module — no I/O.  Public API:

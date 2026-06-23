@@ -1,3 +1,4 @@
+{-# LANGUAGE StrictData #-}
 -- | Compile a procedure body into a flat CPS instruction graph.
 --
 -- Pure module — no I/O.  Public API:

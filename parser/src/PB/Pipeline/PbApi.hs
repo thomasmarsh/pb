@@ -1,3 +1,4 @@
+{-# LANGUAGE StrictData #-}
 {-# LANGUAGE TemplateHaskell #-}
 -- | Compile-time embedding of pb_api.json for builtin function/method detection.
 module PB.Pipeline.PbApi

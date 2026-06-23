@@ -1,3 +1,4 @@
+{-# LANGUAGE StrictData #-}
 module PB.Lexing.Token
   ( TokenKind (..)
   , Token (..)

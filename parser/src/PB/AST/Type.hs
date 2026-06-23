@@ -1,3 +1,4 @@
+{-# LANGUAGE StrictData #-}
 module PB.AST.Type
   ( PbType (..)
   , renderPbType

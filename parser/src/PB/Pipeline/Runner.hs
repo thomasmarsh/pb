@@ -1,3 +1,4 @@
+{-# LANGUAGE StrictData #-}
 module PB.Pipeline.Runner
   ( runFile
   , collectStatements
@@ -54,7 +55,6 @@ import PB.Pipeline.TypeResolve
   , parseParams
   )
 import qualified Data.Map.Strict as Map
-import qualified Data.Set        as Set
 import PB.Pipeline.Walk    (walkAllSrFiles)
 
 -- | Last dot-separated segment of a dotted name, e.g. "dw.setfocus" → "setfocus".
@@ -342,6 +342,9 @@ writeResolution outDir pairs dwPairs = do
       gvs      = concatMap (\(fp, obj, sf) -> extractGlobalVars fp obj sf) triples
       rt       = resolveTypes lvs objSet usrTypes
       rc       = resolveCalls css procMap inh builtinFnNames builtinMethodNames
+      !_rt  = length rt
+      !_rc  = length rc
+      !_gvs = length gvs
   BSL.writeFile (outDir </> "resolved_types.json") (encode rt)
   BSL.writeFile (outDir </> "resolved_calls.json") (encode rc)
   BSL.writeFile (outDir </> "global_vars.json")    (encode gvs)
@@ -416,6 +419,8 @@ writeDataflowAnalysis outDir parsed = do
                 , Dataflow.BlockFlow _ _ _ _ uses <- Map.elems (Dataflow.pfBlocks pf')
                 , u <- uses
                 ]
+      !_defs = length allDefs
+      !_uses = length allUses
   BSL.writeFile (outDir </> "proc_defs.json") (encode allDefs)
   BSL.writeFile (outDir </> "proc_uses.json") (encode allUses)
 
@@ -456,6 +461,12 @@ writeTaintAnalysis outDir parsed = do
       allAnnotations = concatMap Taint.trAnnotations results
       allEdges       = concatMap Taint.trEdges       results
       allSummaries   = concatMap Taint.trProcedureSummaries results
+      !_src  = length allSources
+      !_snk  = length allSinks
+      !_pth  = length allPaths
+      !_ann  = length allAnnotations
+      !_edg  = length allEdges
+      !_sum  = length allSummaries
   BSL.writeFile (outDir </> "taint_sources.json")     (encode allSources)
   BSL.writeFile (outDir </> "taint_sinks.json")       (encode allSinks)
   BSL.writeFile (outDir </> "taint_paths.json")       (encode allPaths)
@@ -503,7 +514,8 @@ writeDeadCodeAnalysis outDir parsed dwParsed = do
       inherits = Map.toList (buildInheritsMap allSfs)
       -- DW object names from the actually-parsed DW files
       dwObjects = Set.fromList [ T.pack (takeBaseName fp) | (fp, _) <- dwParsed ]
-      dead = DeadCode.computeDeadProcedures procs rawCalls resolvedCalls inherits dwObjects
+      dead  = DeadCode.computeDeadProcedures procs rawCalls resolvedCalls inherits dwObjects
+      !_dead = length dead
   BSL.writeFile (outDir </> "dead_procedures.json") (encode dead)
 
 -- | Extract (name, proc_type, body) triples for every procedure in a file.
@@ -513,12 +525,6 @@ procTypes sf =
   <> [ (ssName  (sbSig sb), "subroutine", sbBody sb) | sb <- srSubroutines sf ]
   <> [ (esName  (evSig ev), "event", evBody ev) | ev <- srEvents      sf ]
   <> [ (obEvent ob, "on", obBody ob) | ob <- srOnBlocks    sf ]
-
--- | Get the object name from a ParsedFile.
-toObj :: ParsedFile -> Text
-toObj pf = case srTypeBlocks (pfSrFile pf) of
-  (tb:_) -> tdName (tbDecl tb)
-  []     -> T.pack (takeBaseName (pfPath pf))
 
 -- ---------------------------------------------------------------------------
 -- Three-pass pipeline (runModeFiles)
@@ -615,16 +621,21 @@ emitOutcome wsEnv srcDir outDir outcome = do
 
 runModeFiles :: FilePath -> FilePath -> IO ()
 runModeFiles srcDir outDir = do
-  files    <- walkAllSrFiles srcDir
-  outcomes <- mapM parseOutcome files                            -- Pass 1
-  let parsed   = [pf       | PsParsed pf   <- outcomes]
-      dwParsed = [(fp, dw) | PsDw     fp dw <- outcomes]
-      wsEnv    = buildWorkspaceTypeEnv (map pfSrFile parsed)    -- Pass 2
-  entries  <- mapM (emitOutcome wsEnv srcDir outDir) outcomes   -- Pass 3+4
-  writeResolution outDir [(pfPath pf, pfSrFile pf) | pf <- parsed] dwParsed  -- Pass 5
-  writeDataflowAnalysis outDir parsed                               -- Pass 6 (111d-1)
-  writeTaintAnalysis outDir parsed                                   -- Pass 7 (111d-2)
-  writeDeadCodeAnalysis outDir parsed dwParsed                       -- Pass 8
+  -- Phase A: passes 1–6. outcomes and wsEnv go out of scope after this block,
+  -- making them eligible for GC before passes 7–8 allocate their own data.
+  (entries, parsed, dwParsed) <- do
+    files    <- walkAllSrFiles srcDir
+    outcomes <- mapM parseOutcome files                            -- Pass 1
+    let parsed'   = [pf       | PsParsed pf   <- outcomes]
+        dwParsed' = [(fp, dw) | PsDw     fp dw <- outcomes]
+        wsEnv     = buildWorkspaceTypeEnv (map pfSrFile parsed')  -- Pass 2
+    entries' <- mapM (emitOutcome wsEnv srcDir outDir) outcomes   -- Pass 3+4
+    writeResolution outDir [(pfPath pf, pfSrFile pf) | pf <- parsed'] dwParsed'  -- Pass 5
+    writeDataflowAnalysis outDir parsed'                           -- Pass 6
+    pure (entries', parsed', dwParsed')
+  -- Phase B: passes 7–8. outcomes and wsEnv are now out of scope.
+  writeTaintAnalysis outDir parsed                                  -- Pass 7
+  writeDeadCodeAnalysis outDir parsed dwParsed                      -- Pass 8
   BSL.writeFile (outDir </> "manifest.json") (encode (catMaybes entries))
 
 runModeJsonl :: FilePath -> IO ()

@@ -1,3 +1,4 @@
+{-# LANGUAGE StrictData #-}
 -- | Build a Control Flow Graph from a procedure body.
 --
 -- Pure module — no I/O.  Public API:
