@@ -135,7 +135,7 @@ class BuildEnv:
     hash_source_dir: Callable[[Path], dict[str, str]] = field(default=hash_source_dir)
     hash_pbl_dir: Callable[[Path], dict[str, str]] = field(default=hash_pbl_dir)
     ensure_explorer_built: EnsureExplorerBuilt = field(default=ensure_explorer_built)
-    generate_ast_python: Callable[[Path, bool], None] = field(default=generate_ast_python)
+    generate_ast_python: Callable[[Path], None] = field(default=generate_ast_python)
 
 
 @dataclass
