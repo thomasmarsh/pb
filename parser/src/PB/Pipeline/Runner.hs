@@ -348,13 +348,15 @@ writeResolution outDir lvs css gvs objSet usrTypes inh procMap = do
 -- facet (the streaming-mode delivery channel); this pass consolidates those
 -- per-procedure results into the two flat arrays the batch consumers expect.
 
--- | (obj, procName, body) triples for every procedure in a file.
-procBodies :: Text -> SrFile -> [(Text, Text, [Located BodyStmt])]
-procBodies obj sf =
-     [ (obj, fnsName (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
-  <> [ (obj, ssName  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
-  <> [ (obj, esName  (evSig ev), evBody ev) | ev <- srEvents      sf ]
-  <> [ (obj, obEvent ob,         obBody ob) | ob <- srOnBlocks    sf ]
+-- | (obj, procName, procType, body) quads for every procedure in a file.
+-- Single traversal of the four procedure collections; replaces the old
+-- separate procBodies + procTypes helpers.
+allProcedures :: Text -> SrFile -> [(Text, Text, Text, [Located BodyStmt])]
+allProcedures obj sf =
+     [ (obj, fnsName (fbSig fb), "function",   fbBody fb) | fb <- srFunctions   sf ]
+  <> [ (obj, ssName  (sbSig sb), "subroutine", sbBody sb) | sb <- srSubroutines sf ]
+  <> [ (obj, esName  (evSig ev), "event",      evBody ev) | ev <- srEvents      sf ]
+  <> [ (obj, obEvent ob,         "on",         obBody ob) | ob <- srOnBlocks    sf ]
 
 -- | Emit one full-shape def row (8 keys).
 defRowFull :: Text -> Text -> Text -> Dataflow.DefSite -> Value
@@ -471,13 +473,6 @@ writeDeadCodeAnalysis outDir procs dwParsed inh = do
       !_dead    = length dead
   BSL.writeFile (outDir </> "dead_procedures.json") (encode dead)
 
--- | Extract (name, proc_type, body) triples for every procedure in a file.
-procTypes :: SrFile -> [(Text, Text, [Located BodyStmt])]
-procTypes sf =
-     [ (fnsName (fbSig fb), "function", fbBody fb) | fb <- srFunctions   sf ]
-  <> [ (ssName  (sbSig sb), "subroutine", sbBody sb) | sb <- srSubroutines sf ]
-  <> [ (esName  (evSig ev), "event", evBody ev) | ev <- srEvents      sf ]
-  <> [ (obEvent ob, "on", obBody ob) | ob <- srOnBlocks    sf ]
 
 -- ---------------------------------------------------------------------------
 -- Three-pass pipeline (runModeFiles)
@@ -565,16 +560,19 @@ analyseOutcome wsEnv srcDir outDir outcome = do
       let lvs    = extractLocalVars  fp obj sf
           css    = extractCallSites  fp obj sf
           gvs    = extractGlobalVars fp obj sf
-          flows  = [ (fp, obj, proc, Dataflow.analyzeProcedure obj proc (buildCfg body))
-                   | (_, proc, body) <- procBodies obj sf ]
+          procPairs = [ let cfg   = buildCfg body
+                            flow  = (fp, obj, proc, Dataflow.analyzeProcedure obj proc cfg)
+                            pinfo = DeadCode.ProcInfo
+                                      { DeadCode.piObject     = obj
+                                      , DeadCode.piName       = proc
+                                      , DeadCode.piProcType   = ptype
+                                      , DeadCode.piCyclomatic = Just (DeadCode.cyclomaticComplexity cfg)
+                                      }
+                        in (flow, pinfo)
+                      | (_, proc, ptype, body) <- allProcedures obj sf ]
+          flows  = map fst procPairs
           tfi    = Taint.extractTaintInputs fp sf
-          pinfos = [ DeadCode.ProcInfo
-                       { DeadCode.piObject     = obj
-                       , DeadCode.piName       = name
-                       , DeadCode.piProcType   = ptype
-                       , DeadCode.piCyclomatic = Just (DeadCode.cyclomaticComplexity (buildCfg body))
-                       }
-                   | (name, ptype, body) <- procTypes sf ]
+          pinfos = map snd procPairs
       pure FileAnalysis
         { faManifest    = Just (manifestEntry src v)
         , faLocalVars   = lvs
