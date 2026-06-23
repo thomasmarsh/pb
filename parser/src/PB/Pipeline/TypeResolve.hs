@@ -32,7 +32,6 @@ module PB.Pipeline.TypeResolve
   , classifyPbType
   , classifyControlType
   , parseParams
-  , paramsToVars
   , callSitesExpr
   ) where
 
