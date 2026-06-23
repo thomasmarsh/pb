@@ -338,7 +338,7 @@ tests = testGroup "Taint"
                         [ at 5 (BsRaw "SELECT col INTO :ls_val FROM tbl")
                         , at 10 (BsRaw "INSERT INTO other (col) VALUES (:ls_val)")
                         ]] [] [] []
-            result = taintAnalysis [] [] [] Set.empty "w.srf" sf
+            result = taintAnalysis [] [] [] Set.empty (extractTaintInputs "w.srf" sf)
         in case trPaths result of
              [p] -> do
                tpSeverity p @?= "high"
@@ -347,7 +347,7 @@ tests = testGroup "Taint"
 
     , testCase "no sources or sinks → empty result" $
         let sf = mkSf [mkFn "of_clean" [] "" []] [] [] []
-            result = taintAnalysis [] [] [] Set.empty "w.srf" sf
+            result = taintAnalysis [] [] [] Set.empty (extractTaintInputs "w.srf" sf)
         in do
           trSources result @?= []
           trSinks result @?= []
@@ -358,7 +358,7 @@ tests = testGroup "Taint"
                         [ at 5 (BsRaw "SELECT col INTO :ls_val FROM tbl")
                         , at 10 (BsRaw "INSERT INTO other (col) VALUES (:ls_val)")
                         ]] [] [] []
-            result = taintAnalysis [] [] [] Set.empty "w.srf" sf
+            result = taintAnalysis [] [] [] Set.empty (extractTaintInputs "w.srf" sf)
             p = case trPaths result of { (x:_) -> x; [] -> error "no paths" }
         in do
           tsVarName (tpSource p) @?= "ls_val"

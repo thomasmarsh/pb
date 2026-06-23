@@ -14,6 +14,7 @@ module PB.Pipeline.Taint
   ( -- * Types
     SqlStmt (..)
   , ProcMeta (..)
+  , TaintFileInputs (..)
   , InterprocEdge (..)
   , ProcedureSummary (..)
   , ProcSummaryReturnFlow (..)
@@ -35,6 +36,8 @@ module PB.Pipeline.Taint
   , propagateTaint
   , traceTaintPath
   , buildTaintAnnotations
+    -- * Pre-extraction (for streaming pipelines)
+  , extractTaintInputs
     -- * Entry point
   , taintAnalysis
   ) where
@@ -147,6 +150,16 @@ data ProcMeta = ProcMeta
   , pmParams   :: Text
   , pmReturnType :: Text
   , pmStartLine :: Maybe Int
+  } deriving (Eq, Show)
+
+-- | Pre-extracted per-file inputs for taint analysis.
+-- Produced during the streaming per-file pass so that taintAnalysis can run
+-- in Phase B without needing the SrFile AST.
+data TaintFileInputs = TaintFileInputs
+  { tfiFile      :: Text
+  , tfiObjName   :: Text
+  , tfiSqlStmts  :: [SqlStmt]
+  , tfiProcMetas :: [ProcMeta]
   } deriving (Eq, Show)
 
 -- ---------------------------------------------------------------------------
@@ -405,6 +418,22 @@ extractProcMeta file sf =
       , pmParams = ""
       , pmReturnType = ""
       , pmStartLine = Nothing }
+
+-- | Extract all taint analysis inputs from one SrFile in a single pass.
+-- Call this during the streaming per-file loop; the returned TaintFileInputs
+-- can be held cheaply and passed to taintAnalysis after the SrFile is released.
+extractTaintInputs :: Text -> SrFile -> TaintFileInputs
+extractTaintInputs file sf =
+  let objName  = case srTypeBlocks sf of
+                   (tb:_) -> tdName (tbDecl tb)
+                   []     -> ""
+      bodies   = [ (objName, fnsName (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
+              <> [ (objName, ssName  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
+              <> [ (objName, esName  (evSig ev), evBody ev) | ev <- srEvents      sf ]
+              <> [ (objName, obEvent ob,          obBody ob) | ob <- srOnBlocks    sf ]
+      sqlStmts = concatMap (\(obj, proc, body) -> extractSqlStmts file obj proc body) bodies
+      procMetas = extractProcMeta file sf
+  in TaintFileInputs file objName sqlStmts procMetas
 
 -- ---------------------------------------------------------------------------
 -- Source classification
@@ -820,39 +849,28 @@ buildTaintAnnotations tainted sources sinks defs uses =
 -- Full pipeline
 -- ---------------------------------------------------------------------------
 
--- | Run the full taint analysis.
+-- | Run the full taint analysis from pre-extracted per-file inputs.
+-- Use extractTaintInputs to produce TaintFileInputs during the streaming
+-- per-file pass, then call this after all files are processed.
 taintAnalysis
   :: [ResolvedCallRow]    -- ^ resolved_calls.json
   -> [DefRow]             -- ^ proc_defs.json
   -> [UseRow]             -- ^ proc_uses.json
   -> Set.Set Text         -- ^ global variable names
-  -> Text                 -- ^ file path
-  -> SrFile               -- ^ parsed SR file
+  -> TaintFileInputs      -- ^ pre-extracted per-file data
   -> TaintResult
-taintAnalysis resolvedCalls defs uses globalVarNames file sf =
-  let sqlStmts = concatMap (\(obj, proc, body) ->
-        extractSqlStmts file obj proc body) procBodies
-      procMetas = extractProcMeta file sf
-      sources = classifySources sqlStmts procMetas
-      sinks   = classifySinks sqlStmts
-      edges   = buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas
+taintAnalysis resolvedCalls defs uses globalVarNames tfi =
+  let sqlStmts  = tfiSqlStmts  tfi
+      procMetas = tfiProcMetas tfi
+      sources   = classifySources sqlStmts procMetas
+      sinks     = classifySinks sqlStmts
+      edges     = buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas
       summaries = buildProcedureSummaries edges defs uses globalVarNames procMetas
       (tainted, prov) = propagateTaint sources defs uses edges
-      paths = buildPaths sources sinks prov
+      paths       = buildPaths sources sinks prov
       annotations = buildTaintAnnotations tainted sources sinks defs uses
   in TaintResult sources sinks paths annotations edges summaries
   where
-    objName = case srTypeBlocks sf of
-      (tb:_) -> tdName (tbDecl tb)
-      []     -> ""
-
-    procBodies :: [(Text, Text, [Located BodyStmt])]
-    procBodies =
-         [ (objName, fnsName (fbSig fb), fbBody fb) | fb <- srFunctions sf ]
-      <> [ (objName, ssName (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
-      <> [ (objName, esName (evSig ev), evBody ev) | ev <- srEvents sf ]
-      <> [ (objName, obEvent ob, obBody ob) | ob <- srOnBlocks sf ]
-
     buildPaths :: [TaintSource] -> [TaintSink] -> Provenance -> [TaintPath]
     buildPaths srcs snks prov =
       [ TaintPath src sink steps (tskSeverity sink)
