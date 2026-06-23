@@ -1,5 +1,6 @@
 module Main (main) where
 
+import qualified ChurchTest
 import qualified PrettyPrintTest
 import qualified BodyParserTest
 import qualified BodyStmtTest
@@ -34,7 +35,8 @@ main = defaultMain tests
 
 tests :: TestTree
 tests = testGroup "pb-ast"
-  [ PrettyPrintTest.tests
+  [ ChurchTest.tests
+  , PrettyPrintTest.tests
   , BodyParserTest.tests
   , BodyStmtTest.tests
   , CfgBuildTest.tests

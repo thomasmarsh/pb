@@ -28,10 +28,11 @@ module PB.Pipeline.TypeResolve
   , buildProcMap
   , buildObjectSet
   , buildUserTypeSet
-  -- exposed for testing
+  -- exposed for testing and Church spike
   , classifyPbType
   , classifyControlType
   , parseParams
+  , callSitesExpr
   ) where
 
 import PB.Prelude

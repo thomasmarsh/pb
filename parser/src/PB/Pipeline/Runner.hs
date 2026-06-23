@@ -168,20 +168,13 @@ wrapSrFile path sf spans wsEnv =
         injectRendered _ v = v
 
         injectCompiled env body (Object o) =
-            Object
-              $ KM.insert "cfg"      (toJSON (buildCfg body))
-              $ KM.insert "dataflow" (toJSON (dataflowProcFlow objName body))
+            let cfg = buildCfg body
+            in Object
+              $ KM.insert "cfg"      (toJSON cfg)
+              $ KM.insert "dataflow" (toJSON (Dataflow.dataflowFacet (Dataflow.analyzeProcedure objName "" cfg)))
               $ KM.insert "cpsGraph" (toJSON (compileProcedure env userFns body))
               $ o
         injectCompiled _ _ v = v
-
-        -- 111d-1: per-procedure dataflow facet. objName comes from the
-        -- enclosing wrapSrFile scope; the proc name is omitted (the consumer
-        -- adds file/object/proc_name from the parent procedures row). This
-        -- facet is the streaming-mode delivery channel — pb index runs
-        -- pb-runner --jsonl (runModeJsonl) which never calls writeDataflowAnalysis.
-        dataflowProcFlow obj body =
-            Dataflow.dataflowFacet (Dataflow.analyzeProcedure obj "" (buildCfg body))
 
         injectAll env body sp v =
             injectCompiled env body (injectRendered body (injectMeta sp v))
