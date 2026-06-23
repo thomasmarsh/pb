@@ -53,6 +53,7 @@ library
     PB.Pipeline.Church
     PB.Pipeline.TypeEnv
     PB.Pipeline.TypeResolve
+    PB.Pipeline.SqlParse
     PB.Pipeline.Walk
   build-depends:
     , base ^>=4.20.1.0
@@ -71,6 +72,8 @@ library
     , async >= 2.2
     , ghc-compact
     , time >= 1.9
+    , process >= 1.6
+    , vector >= 0.12
 
 executable pb-runner
   import: common-settings
@@ -113,6 +116,7 @@ test-suite pb-ast-test
     , RunnerTest
     , SerialiseTest
     , SplitterTest
+    , SqlParseTest
     , StreamTest
     , TokenTest
     , TypeEnvTest
@@ -132,3 +136,5 @@ test-suite pb-ast-test
     , directory    ^>=1.3
     , filepath     >=1.4
     , mtl >=2.2
+    , process >= 1.6
+    , vector >= 0.12

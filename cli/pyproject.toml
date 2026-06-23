@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 pb_cli = "pb_cli.cli:app"
+pb-sql-worker = "pb_cli.bridge.sql_worker:main"
 
 [build-system]
 requires = ["hatchling"]

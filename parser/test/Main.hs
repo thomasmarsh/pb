@@ -19,6 +19,7 @@ import qualified PbApiTest
 import qualified PipelineTest
 import qualified RunnerTest
 import qualified SerialiseTest
+import qualified SqlParseTest
 import qualified SplitterTest
 import qualified StreamTest
 import qualified TokenTest
@@ -55,6 +56,7 @@ tests = testGroup "pb-ast"
   , SerialiseTest.tests
   , TokenTest.tests
   , SplitterTest.tests
+  , SqlParseTest.tests
   , StreamTest.tests
   , TypeEnvTest.tests
   , TypeResolveTest.tests
