@@ -69,12 +69,13 @@ library
     , filepath   >=1.4
     , mtl >=2.2
     , unordered-containers >=0.2
+    , async >= 2.2
 
 executable pb-runner
   import: common-settings
   hs-source-dirs: app
   main-is: Main.hs
-  ghc-options: -rtsopts
+  ghc-options: -rtsopts -threaded
   build-depends:
     , base ^>=4.20.1.0
     , pb-ast

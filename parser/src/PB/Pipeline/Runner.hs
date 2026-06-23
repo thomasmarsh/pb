@@ -37,6 +37,7 @@ import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
+import Control.Concurrent.Async (mapConcurrently)
 import Control.Exception   (SomeException, try)
 import Data.Char           (intToDigit, toLower)
 import Data.Either         (lefts)
@@ -642,7 +643,7 @@ analyseOutcome wsEnv srcDir outDir outcome = do
 runModeFiles :: FilePath -> FilePath -> IO ()
 runModeFiles srcDir outDir = do
   files    <- walkAllSrFiles srcDir
-  outcomes <- mapM parseOutcome files                          -- Pass 1
+  outcomes <- mapConcurrently parseOutcome files               -- Pass 1
   -- Build workspace-wide context (forces all SrFiles into memory).
   let allParsed = [pf      | PsParsed pf  <- outcomes]
       dwParsed  = [(fp,dw) | PsDw    fp dw <- outcomes]
@@ -656,7 +657,7 @@ runModeFiles srcDir outDir = do
   -- After mapM completes, outcomes/allParsed/allSfs go out of scope
   -- once wsEnv/objSet/usrTypes/inh/procMap are fully evaluated by
   -- writeResolution below — SrFiles become GC-eligible before passes 7+8.
-  analyses <- mapM (analyseOutcome wsEnv srcDir outDir) outcomes
+  analyses <- mapConcurrently (analyseOutcome wsEnv srcDir outDir) outcomes
   let entries     = catMaybes (map faManifest    analyses)
       lvs         = concatMap faLocalVars         analyses
       css         = concatMap faCallSites         analyses  -- includes DW call sites

@@ -6,6 +6,7 @@ import PB.Pipeline.Serialise (emitPython, emitTypeScript)
 
 import Options.Applicative
 import System.Exit (die)
+import GHC.Conc   (getNumProcessors, setNumCapabilities)
 
 data Options = Options
   { optInput  :: Maybe FilePath
@@ -25,6 +26,7 @@ optParser = Options
 
 main :: IO ()
 main = do
+  getNumProcessors >>= setNumCapabilities
   opts <- execParser (info (optParser <**> helper) desc)
   case (optEmitTs opts, optEmitPy opts) of
     (True, _) -> putStr emitTypeScript
