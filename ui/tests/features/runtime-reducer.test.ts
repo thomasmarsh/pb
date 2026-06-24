@@ -48,17 +48,7 @@ describe("runtimeReducer", () => {
     });
   });
 
-  describe("run-event / no cpsGraph", () => {
-    it("transitions to done with no cpsGraph event", () => {
-      const ast = makeAst({ events: [{ name: "open", owner: "w_test" }] });
-      const ts = createTestStore(runtimeReducer, nullEnv, { ...initialRuntimeState, ast });
-      ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
-        s.status = "done";
-        s.varEnv.globals = { ...PB_GLOBALS };
-      });
-      ts.assertDrained();
-    });
-
+  describe("run-event / no-op cases", () => {
     it("is a no-op when ast is null", () => {
       const ts = createTestStore(runtimeReducer, nullEnv, initialRuntimeState);
       ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (_s) => {});
@@ -68,7 +58,8 @@ describe("runtimeReducer", () => {
 
   describe("run-event / globals seeding", () => {
     it("seeds PB_GLOBALS into variables before executing", () => {
-      const ast = makeAst({ events: [{ name: "open", owner: "w_test" }] });
+      // Use a non-existent event so findBody returns null → done without cpsGraph.
+      const ast = makeAst({ events: [] });
       const ts = createTestStore(runtimeReducer, nullEnv, { ...initialRuntimeState, ast });
       ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
         s.status = "done";
@@ -78,7 +69,7 @@ describe("runtimeReducer", () => {
     });
 
     it("does not overwrite variables already set before run-event", () => {
-      const ast = makeAst({ events: [{ name: "open", owner: "w_test" }] });
+      const ast = makeAst({ events: [] });
       const ts = createTestStore(runtimeReducer, nullEnv, {
         ...initialRuntimeState,
         ast,

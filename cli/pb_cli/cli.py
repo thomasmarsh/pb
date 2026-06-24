@@ -2,7 +2,6 @@
 
 import shutil
 import socket
-import sys
 import webbrowser
 from pathlib import Path
 from threading import Timer
@@ -16,8 +15,6 @@ from pb_cli.shell.commands.bombadil import app as bombadil_app
 from pb_cli.shell.commands.clean import ALL_TARGETS as CLEAN_TARGETS
 from pb_cli.shell.commands.clean import run as run_clean
 from pb_cli.shell.commands.corpus import run as run_corpus
-from pb_cli.shell.commands.debt import run as run_debt
-from pb_cli.shell.commands.dump import run as run_dump
 from pb_cli.shell.env import env
 from pb_cli.shell.pbl import extract_to_dir, resolve_source_dir
 from pb_cli.shell.pipeline import db_is_current
@@ -39,31 +36,6 @@ app.add_typer(query_app, name="query")
 register_queries(query_app)
 
 app.add_typer(bombadil_app, name="dev")
-
-
-# ── pb dump ────────────────────────────────────────────────────────────────────
-
-
-@app.command()
-def dump(
-    input_path: Path = typer.Argument(..., help="Source directory or .pbl file."),
-    output_dir: Path = typer.Option(..., "-o", "--output", help="Output JSON tree directory."),
-    no_build: bool = typer.Option(False, "--no-build", help="Skip cabal build step."),
-    force: bool = typer.Option(False, "--force", help="Wipe OUTDIR if it exists."),
-    repo: Optional[Path] = typer.Option(None, "--repo", help="Repo root (auto-detect if omitted)."),
-) -> None:
-    """Parse a PowerBuilder source tree to a mirrored JSON file tree.
-
-    INPUT may be a directory of .sr* source files, a single .pbl library file,
-    or a directory containing .pbl files (extracted transparently).
-    """
-    reporter = env.reporter
-    repo_path = env.build.find_repo(repo)
-
-    _prepare_output(Path(output_dir), force)
-    binary = env.build.find_binary(repo_path) if no_build else _build(repo_path, reporter)
-    with resolve_source_dir(Path(input_path), reporter) as src_dir:
-        run_dump(src_dir, Path(output_dir), binary, reporter)
 
 
 # ── pb index ───────────────────────────────────────────────────────────────────
@@ -102,7 +74,7 @@ def extract(
     """Extract .pbl library files to per-library source directories.
 
     Each foo.pbl produces an output/foo.pbl/ directory of .sr* source files.
-    Run once as a setup step before 'pb dump', 'pb index', or 'cabal test'.
+    Run once as a setup step before 'pb index' or 'cabal test'.
     """
     src = Path(input_dir).resolve()
     out = Path(output_dir)
@@ -176,18 +148,6 @@ def impact(
     run_impact(table=table, column=column, db=db)
 
 
-# ── pb debt ────────────────────────────────────────────────────────────────────
-
-
-@app.command()
-def debt(
-    no_build: bool = typer.Option(False, "--no-build", help="Skip cabal build step."),
-    repo: Optional[Path] = typer.Option(None, "--repo", help="Repo root (auto-detect if omitted)."),
-) -> None:
-    """Analyze BsRaw + ExRaw debt and DW control coverage across both corpora."""
-    run_debt(repo=repo, no_build=no_build)
-
-
 # ── pb clean ───────────────────────────────────────────────────────────────────
 
 
@@ -219,17 +179,6 @@ def check_corpus(
 ) -> None:
     """Run pb-runner on both corpora and fail if any files contain parse errors."""
     run_corpus(repo=repo, no_build=no_build)
-
-
-# ── pb import ─────────────────────────────────────────────────────────────────
-
-
-@app.command("import")
-def import_cmd(
-    db: str = typer.Argument("pb.duckdb", help="DuckDB database path."),
-) -> None:
-    """Populate pb.duckdb from pb-runner JSONL output (reads stdin). Use 'pb index' instead."""
-    env.storage.run_from_jsonl_lines(sys.stdin, db)
 
 
 # ── pb analyze ────────────────────────────────────────────────────────────────
@@ -293,9 +242,6 @@ def explore(
 
     repo = env.build.find_repo()
     env.build.ensure_explorer_built(repo)
-
-    # Generate ast_generated.py if it doesn't exist (implicit for fresh checkouts)
-    env.build.generate_ast_python(repo)
 
     from pb_cli.explorer import create_app
 

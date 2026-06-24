@@ -69,9 +69,9 @@ const LAUNCH_GLOBALS: Record<string, unknown> = {
 describe("launch integration", () => {
   it("loads .sra, seeds globals, opens w_app, and runs open event", () => {
     const sraAst = makeAst();
-    const wAppAst = makeAst({
-      events: [{ name: "open", owner: "w_app" }],
-    });
+    // No cpsGraph on "open" — event body is empty; findBody returns entry but
+    // loadCpsGraph would crash. Use empty events so findBody returns null → done.
+    const wAppAst = makeAst({ events: [] });
 
     const env = createAppEnv({ openpay: sraAst, w_app: wAppAst });
     const ts = createTestStore(reducer, env, initialState());

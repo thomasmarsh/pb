@@ -1,19 +1,12 @@
 module RunnerTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.Runner (ManifestEntry (..), manifestEntry, runFile, runModeFiles
-                          , writeDataflowAnalysis)
+import PB.Pipeline.Runner (runFile)
 
-import Data.Aeson (Value (..), eitherDecodeFileStrict', eitherDecodeStrict', object, (.=))
+import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
-import qualified Data.ByteString.Lazy as BSL
-import qualified Data.Set         as Set
 import qualified Data.Text         as T
-
-import System.Directory (createDirectory, doesFileExist, getTemporaryDirectory
-                        , removePathForcibly)
-import System.FilePath  ((</>))
 
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
@@ -276,60 +269,10 @@ tests = testGroup "Pipeline.Runner"
         -- minimal DW that parses; ancestor is always null for DW files
         let src = "datawindow(units=0 timer_interval=0)\nend datawindow\n"
         case runFile "dw_sales.srd" src of
-          Left _  -> pure ()  -- skip if DW fixture doesn't parse; manifestEntry unit tests cover this
+          Left _  -> pure ()  -- skip if DW fixture doesn't parse
           Right v -> lookupObj2 "meta" "object" v @?= String "dw_sales"
     ]
 
-  , testGroup "Runner.Manifest"
-    [ testCase "manifestEntry extracts kind, object, ancestor" $ do
-        let v = object
-              [ "kind" .= ("powerscript" :: Text)
-              , "meta" .= object
-                  [ "object"   .= ("w_foo" :: Text)
-                  , "ancestor" .= ("w_base" :: Text)
-                  ]
-              ]
-        let e = manifestEntry "w_foo.srw" v
-        meKind     e @?= "powerscript"
-        meObject   e @?= "w_foo"
-        meAncestor e @?= Just "w_base"
-
-    , testCase "manifestEntry falls back to path when meta absent" $ do
-        let v = object ["kind" .= ("powerscript" :: Text)]
-        let e = manifestEntry "path/to/w_foo.srw" v
-        meObject   e @?= "path/to/w_foo.srw"
-        meAncestor e @?= Nothing
-
-    , testCase "manifestEntry ancestor is Nothing when key absent from meta" $ do
-        let v = object
-              [ "kind" .= ("datawindow" :: Text)
-              , "meta" .= object ["object" .= ("dw_foo" :: Text)]
-              ]
-        let e = manifestEntry "dw_foo.srd" v
-        meObject   e @?= "dw_foo"
-        meAncestor e @?= Nothing
-
-    , testCase "manifestEntry unknown kind when kind absent" $ do
-        let e = manifestEntry "x.srw" (object [])
-        meKind e @?= "unknown"
-
-    , testCase "runModeFiles writes manifest.json with one entry per source file" $ do
-        tmpDir <- (\t -> t </> "pb-runner-manifest-test") <$> getTemporaryDirectory
-        removePathForcibly tmpDir
-        createDirectory tmpDir
-        let fixture = "global type w_tmp from window\nend type\n"
-        writeFile (tmpDir </> "w_tmp.srw") fixture
-        runModeFiles False False tmpDir tmpDir
-        result <- eitherDecodeFileStrict' (tmpDir </> "manifest.json")
-        removePathForcibly tmpDir
-        case (result :: Either String [Value]) of
-          Left err -> assertFailure ("manifest.json decode error: " <> err)
-          Right entries -> case entries of
-            [e] -> do
-              lookupObj "kind"   e @?= String "powerscript"
-              lookupObj "object" e @?= String "w_tmp"
-            _   -> assertFailure ("expected 1 manifest entry, got " <> show (length entries))
-    ]
 
   , testGroup "runFile regression: parse errors in corpus"
     -- Issue 1a: basic consecutive functions (sanity check — must pass)
@@ -431,100 +374,4 @@ tests = testGroup "Pipeline.Runner"
         assertBool ".SRJ should stub" (isRight (runFile "X.SRJ" ""))
     ]
 
-  -- -----------------------------------------------------------------------
-  -- 111d-1: Pass 6 (writeDataflowAnalysis)
-  --
-
-  , testGroup "dataflow (111d-1)"
-    [ testCase "runModeFiles writes proc_defs.json + proc_uses.json" $ do
-        -- Pass 6 (batch mode): consolidated JSON for dump/check-corpus consumers.
-        tmpDir <- (\t -> t </> "pb-runner-dataflow-test") <$> getTemporaryDirectory
-        removePathForcibly tmpDir
-        createDirectory tmpDir
-        let fixture = T.unlines
-              [ "global type w_df2 from window"
-              , "end type"
-              , "forward prototypes"
-              , "public function integer uf_x (integer a)"
-              , "end prototypes"
-              , "global type w_df2 from window"
-              , "end type"
-              , "public function integer uf_x (integer a)"
-              , "integer li_y"
-              , "li_y = a"
-              , "return li_y"
-              , "end function"
-              ]
-        writeFile (tmpDir </> "w_df2.srw") fixture
-        runModeFiles False False tmpDir tmpDir
-        defsBytes <- BSL.readFile (tmpDir </> "proc_defs.json")
-        usesBytes <- BSL.readFile (tmpDir </> "proc_uses.json")
-        removePathForcibly tmpDir
-        case (eitherDecodeStrict' (BSL.toStrict defsBytes)
-              :: Either String [Value],
-              eitherDecodeStrict' (BSL.toStrict usesBytes)
-              :: Either String [Value]) of
-          (Left e, _) -> assertFailure ("proc_defs.json decode error: " <> e)
-          (_, Left e) -> assertFailure ("proc_uses.json decode error: " <> e)
-          (Right defRows, Right useRows) -> do
-            -- li_y assignment + the function is a def; a/li_y are uses.
-            assertBool "proc_defs non-empty" (not (null defRows))
-            assertBool "proc_uses non-empty" (not (null useRows))
-            let rowKeys r = case r of
-                  Object m -> Set.fromList (map Key.toText (KM.keys m))
-                  _        -> Set.empty
-                expectedKeys = Set.fromList
-                  [ "file","object","proc_name","var_name"
-                  , "block_id","stmt_index","line","kind" ]
-            -- Every row carries the exact 8-key consumer shape.
-            assertBool "proc_defs row keys match consumer shape"
-              (all (\r -> rowKeys r == expectedKeys) defRows)
-            assertBool "proc_uses row keys match consumer shape"
-              (all (\r -> rowKeys r == expectedKeys) useRows)
-
-    , testCase "writeDataflowAnalysis writes both files (unit)" $ do
-        -- Direct unit test of the Pass 6 entry point with an empty parsed list.
-        -- Confirms the I/O contract (writes the two files) without needing a
-        -- full corpus on disk.
-        tmpDir <- (\t -> t </> "pb-runner-dfa-unit") <$> getTemporaryDirectory
-        removePathForcibly tmpDir
-        createDirectory tmpDir
-        writeDataflowAnalysis tmpDir []
-        defsExists <- doesFileExist (tmpDir </> "proc_defs.json")
-        usesExists <- doesFileExist (tmpDir </> "proc_uses.json")
-        removePathForcibly tmpDir
-        assertBool "proc_defs.json written" defsExists
-        assertBool "proc_uses.json written" usesExists
-    ]
-
-  , testGroup "DW expression dead code rescue"
-    [ testCase "function called only from DW compute expression is not marked dead" $ do
-        -- fn_compute.srf defines a global function with no PS callers.
-        -- dw_report.srd has a compute control whose expression calls fn_compute().
-        -- After runModeFiles, dead_procedures.json must not contain fn_compute.
-        tmpDir <- (\t -> t </> "pb-runner-dw-deadcode") <$> getTemporaryDirectory
-        removePathForcibly tmpDir
-        createDirectory tmpDir
-        writeFile (tmpDir </> "fn_compute.srf") $ T.unlines
-          [ "global function integer fn_compute (integer a)"
-          , "return a + 1"
-          , "end function"
-          ]
-        writeFile (tmpDir </> "dw_report.srd") $ T.unlines
-          [ "HA$PBExportHeader$dw_report.srd"
-          , "$PBExportComments$"
-          , "release 9;"
-          , "datawindow(units=0 )"
-          , "compute(band=summary name=c1 x=\"0\" y=\"0\" width=\"100\" height=\"40\" visible=\"1\" expression=\"fn_compute( 1 )\" )"
-          ]
-        runModeFiles False False tmpDir tmpDir
-        deadBytes <- BSL.readFile (tmpDir </> "dead_procedures.json")
-        removePathForcibly tmpDir
-        case eitherDecodeStrict' (BSL.toStrict deadBytes) :: Either String [Value] of
-          Left err  -> assertFailure ("dead_procedures.json decode error: " <> err)
-          Right dead ->
-            let deadNames = [ n | Object m <- dead
-                                , String n <- [fromMaybe Null (KM.lookup "name" m)] ]
-            in  assertBool "fn_compute should not be dead" ("fn_compute" `notElem` deadNames)
-    ]
   ]

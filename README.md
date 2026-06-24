@@ -94,7 +94,6 @@ The interactive explorer is a SolidJS SPA backed by a FastAPI server and DuckDB.
 pb explore [DIR] [--db DB]   Index DIR (if given), then start the web UI.
 pb index DIR [--db DB]       Parse → import → analyze (incremental).
 pb index DIR --reset         Full re-parse, drop and recreate all tables.
-pb dump DIR -o OUTDIR        Parse to a mirrored JSON file tree (one-shot).
 pb analyze [DB]              Re-run graph metrics on an existing database.
 pb extract DIR -o OUTDIR     Extract .pbl library files to per-library dirs.
 ```

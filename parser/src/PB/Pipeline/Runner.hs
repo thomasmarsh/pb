@@ -3,14 +3,7 @@ module PB.Pipeline.Runner
   ( runFile
   , collectStatements
   , wrapSrFile
-  , runModeFiles
-  , runModeJsonl
   , runModeDb
-  , writeDataflowAnalysis
-  , writeTaintAnalysis
-  , writeDeadCodeAnalysis
-  , ManifestEntry (..)
-  , manifestEntry
   ) where
 
 import PB.Prelude
@@ -31,9 +24,7 @@ import PB.Pipeline.Dataflow    qualified as Dataflow
 import PB.Pipeline.Taint       qualified as Taint
 import PB.Pipeline.Serialise   ()
 
-import Data.Aeson          (FromJSON (..), ToJSON (..), Value (..), eitherDecodeFileStrict'
-                           , encode, object, toJSON, withObject, (.=), (.:), (.:?))
-import qualified Data.Aeson.Key    as Key
+import Data.Aeson          (ToJSON (..), Value (..), encode, object, toJSON, (.=))
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
@@ -44,7 +35,6 @@ import Control.Concurrent.STM
   , newTQueueIO
   , writeTQueue, isEmptyTQueue, readTQueue
   )
-import GHC.Compact (compact, getCompact)
 import GHC.Conc   (getNumCapabilities)
 import Control.Exception   (SomeException, try, finally)
 import System.Environment  (lookupEnv)
@@ -54,16 +44,13 @@ import Data.Word           (Word8)
 import qualified Data.Set           as Set
 import qualified Data.Text          as T
 import qualified Data.Text.Encoding as TE
-import System.Directory    (createDirectoryIfMissing, doesFileExist, getModificationTime)
-import System.FilePath     (makeRelative, takeBaseName, takeDirectory
-                           , takeExtension, (</>))
+import System.FilePath     (takeBaseName, takeExtension)
 import PB.Pipeline.PbApi    (builtinFnNames, builtinMethodNames)
 import PB.Pipeline.TypeResolve
   ( LocalVar, CallSite, GlobalVar (..)
-  , buildInheritsMap, buildObjectSet, buildProcMap, buildUserTypeSet
   , extractCallSites, extractDwCallSites, extractGlobalVars, extractLocalVars
   , resolveTypes, resolveCalls
-  , parseParams, srFileObject
+  , parseParams
   )
 import qualified Data.Map.Strict as Map
 import PB.Pipeline.SqlParse
@@ -299,274 +286,21 @@ asciiOf b
   | otherwise               = '.'
 
 -- ---------------------------------------------------------------------------
--- Manifest
-
-data ManifestEntry = ManifestEntry
-  { meFile     :: Text
-  , meKind     :: Text
-  , meObject   :: Text
-  , meAncestor :: Maybe Text
-  }
-
-instance ToJSON ManifestEntry where
-  toJSON e = object
-    [ "file"     .= meFile     e
-    , "kind"     .= meKind     e
-    , "object"   .= meObject   e
-    , "ancestor" .= meAncestor e
-    ]
-
-instance FromJSON ManifestEntry where
-  parseJSON = withObject "ManifestEntry" $ \o ->
-    ManifestEntry
-      <$> o .:  "file"
-      <*> o .:  "kind"
-      <*> o .:  "object"
-      <*> o .:? "ancestor"
-
--- | Extract a String value at val[k].
-topStr :: Text -> Value -> Maybe Text
-topStr k (Object o) = case KM.lookup (Key.fromText k) o of
-  Just (String s) -> Just s
-  _               -> Nothing
-topStr _ _ = Nothing
-
--- | Extract a String value at val[k1][k2].
-nestedStr :: Text -> Text -> Value -> Maybe Text
-nestedStr k1 k2 (Object o) = case KM.lookup (Key.fromText k1) o of
-  Just inner -> topStr k2 inner
-  _          -> Nothing
-nestedStr _ _ _ = Nothing
-
-manifestEntry :: FilePath -> Value -> ManifestEntry
-manifestEntry path v = ManifestEntry
-  { meFile     = T.pack path
-  , meKind     = fromMaybe "unknown" (topStr "kind" v)
-  , meObject   = fromMaybe (T.pack path) (nestedStr "meta" "object" v)
-  , meAncestor = nestedStr "meta" "ancestor" v
-  }
-
--- ---------------------------------------------------------------------------
--- Build and write cross-file resolution outputs
-
--- | Write Pass 5 resolution outputs from pre-extracted per-file data.
--- lvs/css/gvs are accumulated across all files by the streaming pass.
--- css must already include DW call sites (extracted in analyseOutcome for PsDw).
-writeResolution
-  :: FilePath
-  -> [LocalVar] -> [CallSite] -> [GlobalVar]
-  -> Set.Set Text -> Set.Set Text -> Map.Map Text Text -> Map.Map Text (Set.Set Text)
-  -> IO ()
-writeResolution outDir lvs css gvs objSet usrTypes inh procMap = do
-  let rt  = resolveTypes lvs objSet usrTypes
-      rc  = resolveCalls css procMap inh builtinFnNames builtinMethodNames
-      !_rt  = length rt
-      !_rc  = length rc
-      !_gvs = length gvs
-  BSL.writeFile (outDir </> "resolved_types.json") (encode rt)
-  BSL.writeFile (outDir </> "resolved_calls.json") (encode rc)
-  BSL.writeFile (outDir </> "global_vars.json")    (encode gvs)
-
--- ---------------------------------------------------------------------------
--- Pass 6 (111d-1): intra-procedural dataflow → proc_defs.json / proc_uses.json
---
--- Drives PB.Pipeline.Dataflow.analyzeProcedure over every procedure body in
--- the workspace and emits consolidated JSON for batch consumers (dump,
--- check-corpus). Rows carry the full 8-key consumer shape:
---   [file, object, proc_name, var_name, block_id, stmt_index, line, kind]
--- This is the same shape the Python side inserts into DuckDB and the shape
--- core/interproc.py + core/slicing.py read by dict key.
---
--- The per-procedure JSON written by wrapSrFile already carries a "dataflow"
--- facet (the streaming-mode delivery channel); this pass consolidates those
--- per-procedure results into the two flat arrays the batch consumers expect.
-
--- | (obj, procName, procType, body) quads for every procedure in a file.
--- Single traversal of the four procedure collections; replaces the old
--- separate procBodies + procTypes helpers.
-allProcedures :: Text -> SrFile -> [(Text, Text, Text, [Located BodyStmt])]
-allProcedures obj sf =
-     [ (obj, fnsName (fbSig fb), "function",   fbBody fb) | fb <- srFunctions   sf ]
-  <> [ (obj, ssName  (sbSig sb), "subroutine", sbBody sb) | sb <- srSubroutines sf ]
-  <> [ (obj, esName  (evSig ev), "event",      evBody ev) | ev <- srEvents      sf ]
-  <> [ (obj, obEvent ob,         "on",         obBody ob) | ob <- srOnBlocks    sf ]
-
--- | Emit one full-shape def row (8 keys).
-defRowFull :: Text -> Text -> Text -> Dataflow.DefSite -> Value
-defRowFull file obj proc d = object
-  [ "file"       .= file
-  , "object"     .= obj
-  , "proc_name"  .= proc
-  , "var_name"   .= Dataflow.dsVar d
-  , "block_id"   .= Dataflow.dsBlock d
-  , "stmt_index" .= Dataflow.dsStmtIdx d
-  , "line"       .= Dataflow.dsLine d
-  , "kind"       .= Dataflow.dsKind d
-  ]
-
--- | Emit one full-shape use row (8 keys).
-useRowFull :: Text -> Text -> Text -> Dataflow.UseSite -> Value
-useRowFull file obj proc u = object
-  [ "file"       .= file
-  , "object"     .= obj
-  , "proc_name"  .= proc
-  , "var_name"   .= Dataflow.usVar u
-  , "block_id"   .= Dataflow.usBlock u
-  , "stmt_index" .= Dataflow.usStmtIdx u
-  , "line"       .= Dataflow.usLine u
-  , "kind"       .= Dataflow.usKind u
-  ]
-
-writeDataflowAnalysis :: FilePath -> [(Text, Text, Text, Dataflow.ProcFlow)] -> IO ()
-writeDataflowAnalysis outDir flows = do
-  let allDefs = [ defRowFull file obj proc d
-                | (file, obj, proc, pf') <- flows
-                , Dataflow.BlockFlow _ _ _ defs _ <- Map.elems (Dataflow.pfBlocks pf')
-                , d <- defs
-                ]
-      allUses = [ useRowFull file obj proc u
-                | (file, obj, proc, pf') <- flows
-                , Dataflow.BlockFlow _ _ _ _ uses <- Map.elems (Dataflow.pfBlocks pf')
-                , u <- uses
-                ]
-      !_defs = length allDefs
-      !_uses = length allUses
-  BSL.writeFile (outDir </> "proc_defs.json") (encode allDefs)
-  BSL.writeFile (outDir </> "proc_uses.json") (encode allUses)
-
--- ---------------------------------------------------------------------------
--- Pass 7 (111d-2): taint analysis → taint_*.json
---
--- Reads proc_defs.json, proc_uses.json, resolved_calls.json, global_vars.json
--- from Pass 5/6 output. For each file, classifies sources/sinks from the AST,
--- computes inter-proc edges, propagates taint, traces paths, builds annotations.
--- Writes taint_sources.json, taint_sinks.json, taint_paths.json, taint_annotations.json.
-
--- | Load a JSON array file into a list of decoded values.
-loadJsonArray :: (FromJSON a) => FilePath -> IO [a]
-loadJsonArray path = do
-  exists <- doesFileExist path
-  if not exists then pure [] else do
-    result <- eitherDecodeFileStrict' path
-    case result of
-      Left _  -> pure []
-      Right v -> pure v
-
-writeTaintAnalysis :: FilePath -> [Taint.TaintFileInputs] -> IO ()
-writeTaintAnalysis outDir taintInputs = do
-  allDefs <- loadJsonArray (outDir </> "proc_defs.json")      :: IO [Taint.DefRow]
-  allUses <- loadJsonArray (outDir </> "proc_uses.json")      :: IO [Taint.UseRow]
-  allRC   <- loadJsonArray (outDir </> "resolved_calls.json") :: IO [Taint.ResolvedCallRow]
-  allGV   <- loadJsonArray (outDir </> "global_vars.json")    :: IO [Taint.GlobalVarRow]
-  let globalVarNames = Set.fromList (map Taint.gvrVarName allGV)
-      results        = [ Taint.taintAnalysis allRC allDefs allUses globalVarNames tfi
-                       | tfi <- taintInputs ]
-      allSources     = concatMap Taint.trSources           results
-      allSinks       = concatMap Taint.trSinks             results
-      allPaths       = concatMap Taint.trPaths             results
-      allAnnotations = concatMap Taint.trAnnotations       results
-      allEdges       = concatMap Taint.trEdges             results
-      allSummaries   = concatMap Taint.trProcedureSummaries results
-      !_src  = length allSources
-      !_snk  = length allSinks
-      !_pth  = length allPaths
-      !_ann  = length allAnnotations
-      !_edg  = length allEdges
-      !_sum  = length allSummaries
-  BSL.writeFile (outDir </> "taint_sources.json")       (encode allSources)
-  BSL.writeFile (outDir </> "taint_sinks.json")         (encode allSinks)
-  BSL.writeFile (outDir </> "taint_paths.json")         (encode allPaths)
-  BSL.writeFile (outDir </> "taint_annotations.json")   (encode allAnnotations)
-  BSL.writeFile (outDir </> "interproc_edges.json")     (encode allEdges)
-  BSL.writeFile (outDir </> "procedure_summaries.json") (encode allSummaries)
-
--- ---------------------------------------------------------------------------
--- Pass 8: dead code analysis → dead_procedures.json
---
--- Reads resolved_calls.json from Pass 5. Computes BFS reachability from
--- entry points (event/on handlers, DW procedures with calls) through
--- same-object, cross-object, and override call edges.
-
-writeDeadCodeAnalysis
-  :: FilePath -> [DeadCode.ProcInfo] -> [(FilePath, DataWindowFile)]
-  -> Map.Map Text Text     -- ^ pre-built inheritance map from runModeFiles
-  -> IO ()
-writeDeadCodeAnalysis outDir procs dwParsed inh = do
-  allRC <- loadJsonArray (outDir </> "resolved_calls.json") :: IO [Taint.ResolvedCallRow]
-  let rawCalls = [ (Taint.rcrObject rc, Taint.rcrFromProc rc, lastName (Taint.rcrToName rc))
-                 | rc <- allRC ]
-      resolvedCalls = [ (Taint.rcrObject rc, Taint.rcrFromProc rc, tgtObj, tgtProc)
-                      | rc <- allRC
-                      , Just tgtObj <- [Taint.rcrTargetObject rc]
-                      , Just tgtProc <- [Taint.rcrTargetProc rc]
-                      ]
-      inherits  = Map.toList inh
-      dwObjects = Set.fromList [ T.pack (takeBaseName fp) | (fp, _) <- dwParsed ]
-      dead      = DeadCode.computeDeadProcedures procs rawCalls resolvedCalls inherits dwObjects
-      !_dead    = length dead
-  BSL.writeFile (outDir </> "dead_procedures.json") (encode dead)
-
-
--- ---------------------------------------------------------------------------
--- Three-pass pipeline (runModeFiles)
---
--- Pass 1 (parseOutcome)  : parse all PowerScript files; classify others
--- Pass 2 (runModeFiles)  : build global InheritGraph from all parsed files
--- Pass 3+4 (emitOutcome) : compile with global env + write JSON output
---
--- runModeJsonl is a streaming mode that processes one file at a time and
--- cannot build a cross-file InheritGraph; it keeps per-file inh via runFile.
+-- Per-file parse outcome
 
 data ParsedFile = ParsedFile
-  { pfPath  :: FilePath
+  { pfPath   :: FilePath
   , pfSrFile :: SrFile
-  , pfSpans :: SrSpans
+  , pfSpans  :: SrSpans
   }
 
 data ParseOutcome
-  = PsParsed  ParsedFile
-  | PsDw      FilePath DataWindowFile  -- successfully parsed DataWindow
-  | PsFailed   FilePath Text            -- IO or parse error
-  | OtherFile  FilePath                 -- pipeline / project
-  | CachedFile FilePath                 -- output up-to-date; skip in --incremental mode
+  = PsParsed ParsedFile
+  | PsDw     FilePath DataWindowFile
+  | PsFailed FilePath Text
+  | OtherFile FilePath
 
-outcomeFilePath :: ParseOutcome -> FilePath
-outcomeFilePath (PsParsed pf)    = pfPath pf
-outcomeFilePath (PsDw fp _)      = fp
-outcomeFilePath (PsFailed fp _)  = fp
-outcomeFilePath (OtherFile fp)   = fp
-outcomeFilePath (CachedFile fp)  = fp
-
--- | True when the per-file JSON output is missing or older than the source.
-isStale :: FilePath -> FilePath -> IO Bool
-isStale srcPath outPath = do
-  srcMtime <- getModificationTime srcPath
-  result   <- try @SomeException (getModificationTime outPath)
-  pure $ case result of
-    Left  _        -> True
-    Right outMtime -> srcMtime > outMtime
-
--- | Pass 1 variant for --incremental: returns 'CachedFile' when the output
--- JSON is already up-to-date, so the file is skipped in analyseOutcome.
-parseOutcomeChecked :: FilePath -> FilePath -> FilePath -> IO ParseOutcome
-parseOutcomeChecked srcDir outDir src = do
-  let outPath = outDir </> makeRelative srcDir src <> ".json"
-  stale <- isStale src outPath
-  if stale then parseOutcome src else pure (CachedFile src)
-
--- | Lightweight per-file result from the streaming analysis pass.
--- All heavy SrFile data is consumed and released; only extracted summaries remain.
-data FileAnalysis = FileAnalysis
-  { faManifest    :: Maybe ManifestEntry
-  , faLocalVars   :: [LocalVar]
-  , faCallSites   :: [CallSite]
-  , faGlobalVars  :: [GlobalVar]
-  , faProcFlows   :: [(Text, Text, Text, Dataflow.ProcFlow)]  -- (file, obj, proc, flow)
-  , faTaintInputs :: [Taint.TaintFileInputs]   -- empty for DW/error files
-  , faProcInfos   :: [DeadCode.ProcInfo]
-  }
-
--- | Pass 1: attempt to parse one file.
+-- | Attempt to parse one file.
 parseOutcome :: FilePath -> IO ParseOutcome
 parseOutcome src = case fileKind src of
   PowerScript -> do
@@ -586,198 +320,13 @@ parseOutcome src = case fileKind src of
         Right dw  -> PsDw src dw
   _ -> pure (OtherFile src)
 
--- | Pass 3 (pure): compile one parsed PowerScript file with the workspace env.
-compileParsed :: Bool -> TypeEnv -> ParsedFile -> Value
-compileParsed withCps wsEnv pf =
-  wrapSrFile withCps (pfPath pf) (pfSrFile pf) (pfSpans pf) wsEnv
-
--- | Write one file's JSON output and extract all per-file analysis data in one pass.
--- Replaces the old emitOutcome + separate per-file extraction loops.
--- After this returns, the SrFile inside PsParsed is no longer referenced.
-analyseOutcome :: Bool -> TypeEnv -> FilePath -> FilePath -> ParseOutcome -> IO FileAnalysis
-analyseOutcome withCps wsEnv srcDir outDir outcome = do
-  let src     = outcomeFilePath outcome
-      rel     = makeRelative srcDir src
-      outPath = outDir </> rel <> ".json"
-  createDirectoryIfMissing True (takeDirectory outPath)
-  case outcome of
-    PsParsed pf -> do
-      let sf  = pfSrFile pf
-          fp  = T.pack (pfPath pf)
-          obj = case srTypeBlocks sf of
-                  (tb:_) -> tdName (tbDecl tb)
-                  []     -> ""    -- matches srFileObject / buildProcMap keying
-          v   = compileParsed withCps wsEnv pf
-          me  = manifestEntry src v
-      BSL.writeFile outPath (encode v)
-      BSL.writeFile (outPath <> ".meta") (encode me)
-      let lvs    = extractLocalVars  fp obj sf
-          css    = extractCallSites  fp obj sf
-          gvs    = extractGlobalVars fp obj sf
-          procPairs = [ let cfg   = buildCfg body
-                            flow  = (fp, obj, proc, Dataflow.analyzeProcedure obj proc cfg)
-                            pinfo = DeadCode.ProcInfo
-                                      { DeadCode.piObject     = obj
-                                      , DeadCode.piName       = proc
-                                      , DeadCode.piProcType   = ptype
-                                      , DeadCode.piCyclomatic = Just (DeadCode.cyclomaticComplexity cfg)
-                                      }
-                        in (flow, pinfo)
-                      | (_, proc, ptype, body) <- allProcedures obj sf ]
-          flows  = map fst procPairs
-          tfi    = Taint.extractTaintInputs fp sf
-          pinfos = map snd procPairs
-      pure FileAnalysis
-        { faManifest    = Just (manifestEntry src v)
-        , faLocalVars   = lvs
-        , faCallSites   = css
-        , faGlobalVars  = gvs
-        , faProcFlows   = flows
-        , faTaintInputs = [tfi]
-        , faProcInfos   = pinfos
-        }
-    PsDw _ dw -> do
-      let v   = wrapDwFile src dw
-          obj = T.pack (takeBaseName src)
-          css = extractDwCallSites (T.pack src) obj dw
-          me  = manifestEntry src v
-      BSL.writeFile outPath (encode v)
-      BSL.writeFile (outPath <> ".meta") (encode me)
-      pure FileAnalysis
-        { faManifest    = Just me
-        , faLocalVars   = []
-        , faCallSites   = css
-        , faGlobalVars  = []
-        , faProcFlows   = []
-        , faTaintInputs = []
-        , faProcInfos   = []
-        }
-    PsFailed _ err -> do
-      BSL.writeFile outPath $ encode $ object
-        [ "file"  .= src
-        , "kind"  .= ("error" :: Text)
-        , "error" .= err ]
-      pure FileAnalysis
-        { faManifest    = Nothing
-        , faLocalVars   = []
-        , faCallSites   = []
-        , faGlobalVars  = []
-        , faProcFlows   = []
-        , faTaintInputs = []
-        , faProcInfos   = []
-        }
-    OtherFile _ -> do
-      readResult <- try (readFile src) :: IO (Either SomeException Text)
-      (bytes, mEntry) <- case readResult of
-        Left ex -> pure
-          ( encode $ object
-              [ "file"  .= src
-              , "kind"  .= ("error" :: Text)
-              , "error" .= T.pack (show ex) ]
-          , Nothing )
-        Right contents -> case runFile src (stripBom contents) of
-          Left err -> pure
-            ( encode $ object
-                [ "file"  .= src
-                , "kind"  .= ("error" :: Text)
-                , "error" .= err ]
-            , Nothing )
-          Right v ->
-            let me = manifestEntry src v
-            in pure (encode v, Just me)
-      BSL.writeFile outPath bytes
-      mapM_ (\me -> BSL.writeFile (outPath <> ".meta") (encode me)) mEntry
-      pure FileAnalysis
-        { faManifest    = mEntry
-        , faLocalVars   = []
-        , faCallSites   = []
-        , faGlobalVars  = []
-        , faProcFlows   = []
-        , faTaintInputs = []
-        , faProcInfos   = []
-        }
-    CachedFile _ -> do
-      -- Output JSON is up-to-date; read the sidecar for the manifest entry.
-      -- Use try so that missing sidecars (error/pipeline files) are handled gracefully.
-      raw <- try @SomeException (eitherDecodeFileStrict' (outPath <> ".meta"))
-      let mEntry = case raw of
-            Right (Right me) -> Just me
-            _                -> Nothing
-      pure FileAnalysis
-        { faManifest    = mEntry
-        , faLocalVars   = []
-        , faCallSites   = []
-        , faGlobalVars  = []
-        , faProcFlows   = []
-        , faTaintInputs = []
-        , faProcInfos   = []
-        }
-
-runModeFiles :: Bool -> Bool -> FilePath -> FilePath -> IO ()
-runModeFiles incremental withCps srcDir outDir = do
-  files    <- walkAllSrFiles srcDir
-  let parseStep = if incremental
-        then parseOutcomeChecked srcDir outDir
-        else parseOutcome
-  outcomes <- mapConcurrently parseStep files                  -- Pass 1
-  -- Build workspace-wide context (forces all SrFiles into memory).
-  let allParsed = [pf      | PsParsed pf  <- outcomes]
-      dwParsed  = [(fp,dw) | PsDw    fp dw <- outcomes]
-      allSfs    = map pfSrFile allParsed
-      wsEnv     = buildWorkspaceTypeEnv allSfs                 -- Pass 2
-      objSet    = buildObjectSet   allSfs
-      usrTypes  = buildUserTypeSet allSfs
-      inh       = buildInheritsMap allSfs
-      procMap   = buildProcMap     allSfs
-  -- Single streaming pass (passes 3+4 + per-file extraction for 5–8).
-  -- After mapM completes, outcomes/allParsed/allSfs go out of scope
-  -- once wsEnv/objSet/usrTypes/inh/procMap are fully evaluated by
-  -- writeResolution below — SrFiles become GC-eligible before passes 7+8.
-  analyses <- mapConcurrently (analyseOutcome withCps wsEnv srcDir outDir) outcomes
-  let entries     = catMaybes (map faManifest    analyses)
-      lvs         = concatMap faLocalVars         analyses
-      css         = concatMap faCallSites         analyses  -- includes DW call sites
-      gvs         = concatMap faGlobalVars        analyses
-      flows       = concatMap faProcFlows         analyses
-      taintInputs = concatMap faTaintInputs       analyses
-      procInfos   = concatMap faProcInfos         analyses
-  writeResolution outDir lvs css gvs objSet usrTypes inh procMap  -- Pass 5
-  writeDataflowAnalysis outDir flows                               -- Pass 6
-  -- Move long-lived data into compact regions so passes 7+8 GC cycles treat
-  -- each as a single root rather than scanning every interior pointer.
-  taintC  <- compact taintInputs
-  procC   <- compact procInfos
-  dwC     <- compact dwParsed
-  writeTaintAnalysis    outDir (getCompact taintC)                          -- Pass 7
-  writeDeadCodeAnalysis outDir (getCompact procC) (getCompact dwC) inh      -- Pass 8
-  BSL.writeFile (outDir </> "manifest.json") (encode entries)
-
-runModeJsonl :: FilePath -> IO ()
-runModeJsonl srcDir = do
-  files <- walkAllSrFiles srcDir
-  mapM_ emitLine files
-  where
-    emitLine src = do
-      readResult <- try (readFile src) :: IO (Either SomeException Text)
-      let line = case readResult of
-            Left ex ->
-              encode $ object
-                [ "file" .= src, "kind" .= ("error" :: Text)
-                , "error" .= T.pack (show ex) ]
-            Right contents -> case runFile src contents of
-              Left  err -> encode $ object
-                [ "file" .= src, "kind" .= ("error" :: Text), "error" .= err ]
-              Right v   -> encode v
-      BSL.putStr (line <> "\n")
-
 -- ---------------------------------------------------------------------------
--- DuckDB streaming mode (Plan 127 — Phase A)
+-- DuckDB streaming mode
 --
 -- runModeDb srcDir dbPath:
 --   Phase A0 — parse all files concurrently → build workspace TypeEnv
 --   Phase A  — compile each file with TypeEnv → append rows to DuckDB
---
--- Existing JSON output (runModeFiles) is unchanged; runModeDb is additive.
+--   Phase B  — link analysis (passes 5–8) entirely within DuckDB
 
 data CompiledPs = CompiledPs
   { cpsObjectRow  :: ObjectRow
@@ -879,7 +428,6 @@ compileOne wsEnv mBridge outcome = case outcome of
 
   PsFailed fp err -> pure $ CFError fp err
   OtherFile _     -> pure CFSkip
-  CachedFile _    -> pure CFSkip
 
 renderBandKind :: Maybe DwBandKind -> Text
 renderBandKind Nothing               = ""

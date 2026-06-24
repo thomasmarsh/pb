@@ -203,6 +203,7 @@ describe("e2e: reducer CPS path", () => {
         {
           name: "ie_retrieve",
           owner: "w_test",
+          cpsGraph: { nodes: [{ tag: "CpsReturn" }], entry: 0, suspensionPoints: [], sourceMap: [] },
         },
       ],
     };

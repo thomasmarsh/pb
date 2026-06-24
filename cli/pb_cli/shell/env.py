@@ -23,18 +23,16 @@ from __future__ import annotations
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Iterable, Iterator, Protocol
+from typing import TYPE_CHECKING, Callable, Protocol
 
 from rich.panel import Panel
 
 from pb_cli.shell.build import (
     build_runner,
-    build_subset_tmpdir,
     count_sr_files,
     ensure_explorer_built,
     find_binary,
     find_repo,
-    generate_ast_python,
     get_queries_dir,
     hash_pbl_dir,
     hash_source_dir,
@@ -46,15 +44,9 @@ from pb_cli.shell.db import (
     count_sql_parse_failures,
     db_connection,
 )
-from pb_cli.shell.importing import import_batch, run_from_jsonl_lines
 from pb_cli.shell.metrics import compute_dit, compute_metrics
 from pb_cli.shell.reporter import LiveReporter, Reporter
-from pb_cli.shell.runner import parse_files, parse_stream, render_error
-from pb_cli.shell.state import (
-    delete_file_rows,
-    load_file_state,
-    save_file_state,
-)
+from pb_cli.shell.runner import render_error
 
 if TYPE_CHECKING:
     from pb_cli.shell.reporter import AnalyzeProgress
@@ -72,44 +64,8 @@ class EnsureExplorerBuilt(Protocol):
     def __call__(self, repo: Path, verbose: bool = False) -> None: ...
 
 
-class ParseStream(Protocol):
-    def __call__(
-        self,
-        src_dir: Path,
-        binary: Path,
-        *,
-        remap_from: Path | None = None,
-        remap_to: Path | None = None,
-    ) -> Iterator[tuple[bool, dict]]: ...
-
-
-class ParseFiles(Protocol):
-    def __call__(
-        self,
-        src_dir: Path,
-        binary: Path,
-        *,
-        remap_from: Path | None = None,
-        remap_to: Path | None = None,
-    ) -> tuple[Iterator[tuple[bool, dict]], Path]: ...
-
-
 class DbConnection(Protocol):
     def __call__(self, path: str | Path, read_only: bool = False) -> AbstractContextManager[Conn]: ...
-
-
-class ImportBatch(Protocol):
-    def __call__(
-        self,
-        objects: Iterable[dict],
-        conn: Conn,
-        dialect: str = "oracle",
-        on_progress: Callable[[int], None] | None = None,
-    ) -> int: ...
-
-
-class RunFromJsonlLines(Protocol):
-    def __call__(self, lines: Iterable[str], db: str = "pb.duckdb", dialect: str = "oracle") -> None: ...
 
 
 @dataclass
@@ -123,25 +79,16 @@ class BuildEnv:
     hash_source_dir: Callable[[Path], dict[str, str]] = field(default=hash_source_dir)
     hash_pbl_dir: Callable[[Path], dict[str, str]] = field(default=hash_pbl_dir)
     ensure_explorer_built: EnsureExplorerBuilt = field(default=ensure_explorer_built)
-    generate_ast_python: Callable[[Path], None] = field(default=generate_ast_python)
 
 
 @dataclass
 class RunnerEnv:
-    parse_stream: ParseStream = field(default=parse_stream)
-    parse_files: ParseFiles = field(default=parse_files)
     render_error: Callable[[dict], Panel] = field(default=render_error)
 
 
 @dataclass
 class StorageEnv:
     db_connection: DbConnection = field(default=db_connection)
-    load_file_state: Callable[[Conn], dict[str, str]] = field(default=load_file_state)
-    delete_file_rows: Callable[[Conn, str], None] = field(default=delete_file_rows)
-    save_file_state: Callable[[Conn, dict[str, str]], None] = field(default=save_file_state)
-    build_subset_tmpdir: Callable[[Path, list[str]], Path] = field(default=build_subset_tmpdir)
-    import_batch: ImportBatch = field(default=import_batch)
-    run_from_jsonl_lines: RunFromJsonlLines = field(default=run_from_jsonl_lines)
     compute_dit: Callable[[Conn], dict[str, int]] = field(default=compute_dit)
     count_sql_parse_failures: Callable[[Conn], int] = field(default=count_sql_parse_failures)
     compute_metrics: Callable[[Conn, AnalyzeProgress], None] = field(default=compute_metrics)

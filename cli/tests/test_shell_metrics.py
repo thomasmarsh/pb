@@ -2,7 +2,6 @@
 
 import duckdb
 
-from pb_cli.core.ast_walker import walk_calls
 from pb_cli.shell.metrics import (
     compute_dit_from_edges,
     compute_metrics,
@@ -39,48 +38,6 @@ def _setup_metrics_tables(conn) -> None:
         "(object TEXT NOT NULL, in_degree INT, out_degree INT, "
         "betweenness DOUBLE, pagerank DOUBLE, max_cyclomatic INT, "
         "avg_cyclomatic DOUBLE, dit INT, cbo INT)"
-    )
-
-
-# ── unit tests (no db needed) ─────────────────────────────────────────────────
-
-
-def test_walk_calls_ex_call():
-    node = {
-        "tag": "ExCall",
-        "callee": {"segments": [{"name": "isnull", "subscript": None}]},
-        "args": [["x"]],
-    }
-    results = walk_calls(node)
-    assert any(name == "isnull" for name, _ in results), f"ExCall callee 'isnull' not extracted; got {results}"
-
-
-def test_walk_calls_ex_method_call():
-    node = {
-        "tag": "ExMethodCall",
-        "receiver": {"tag": "ExLvalue", "contents": {"segments": [{"name": "dw_1", "subscript": None}]}},
-        "method": "Reset",
-        "args": [],
-    }
-    results = walk_calls(node)
-    assert any(name == "Reset" for name, _ in results), f"ExMethodCall method 'Reset' not extracted; got {results}"
-
-
-def test_walk_calls_ex_dispatch():
-    node = {
-        "tag": "ExDispatch",
-        "contents": {
-            "name": "ie_checkmenu",
-            "mode": "DmTrigger",
-            "dynamic": True,
-            "event": True,
-            "object": None,
-            "args": [],
-        },
-    }
-    results = walk_calls(node)
-    assert any(name == "ie_checkmenu" for name, _ in results), (
-        f"ExDispatch name 'ie_checkmenu' not extracted; got {results}"
     )
 
 

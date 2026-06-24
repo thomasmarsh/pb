@@ -204,15 +204,9 @@ function runProcEntry(
   entry: ProcEntry,
   env: RuntimeEnv,
 ): Effect<RuntimeAction> | null {
-  if (entry.cpsGraph != null) {
-    const graph = loadCpsGraph(entry.cpsGraph);
-    draft.cpsGraph = graph;
-    return stepWithDraft(graph, graph.entry, draft, env);
-  }
-  // No CPS graph — procedure has no async effects; nothing to execute.
-  if (draft.callStack.length > 0) return popCallStack(draft, env);
-  draft.status = "done";
-  return null;
+  const graph = loadCpsGraph(entry.cpsGraph);
+  draft.cpsGraph = graph;
+  return stepWithDraft(graph, graph.entry, draft, env);
 }
 
 function reduce(
