@@ -1,25 +1,19 @@
-// ObjectsDetailPanel.tsx — Router between object source / DW detail panels.
+// ObjectsDetailPanel.tsx — Shows DW detail panel when a DW is selected in the tree.
 
 import { Show } from "solid-js";
 import { useExploreStore } from "./ExploreContext.js";
-import { ObjectSourcePanel } from "./ObjectSourcePanel.js";
 import { DwDetailPanel } from "./DwDetailPanel.js";
 
 export function ObjectsDetailPanel() {
   const store = useExploreStore();
   const snap = store.getState();
-  const selectedObject = () => snap().explore.selectedObject;
   const selectedDw = () => snap().explore.selectedDw;
 
   return (
-    <Show when={selectedObject()} fallback={
-      <Show when={selectedDw()} fallback={
-        <div class="explore-empty">Select an object or DataWindow</div>
-      }>
-        {(nodeId) => <DwDetailPanel nodeId={nodeId()} />}
-      </Show>
+    <Show when={selectedDw()} fallback={
+      <div class="explore-empty">Select an object or DataWindow</div>
     }>
-      {(objectName) => <ObjectSourcePanel objectName={objectName()} />}
+      {(nodeId) => <DwDetailPanel nodeId={nodeId()} />}
     </Show>
   );
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -81,7 +82,26 @@ def list_objects(
 def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
     obj_rows = rows(conn.execute("SELECT object AS name, kind, file, ancestor FROM objects WHERE object = ?", [name]))
     if not obj_rows:
-        return None
+        # Fall back to dw_objects for DataWindow objects
+        dw_rows = rows(conn.execute("SELECT object AS name, file FROM dw_objects WHERE object = ?", [name]))
+        if not dw_rows:
+            return None
+        dw = dw_rows[0]
+        callers = rows(conn.execute("SELECT DISTINCT object AS caller FROM call_sites WHERE to_name = ?", [name]))
+        return {
+            "name": dw["name"],
+            "kind": "datawindow",
+            "file": dw["file"],
+            "ancestor": None,
+            "metrics": None,
+            "procedures": [],
+            "ancestors": [],
+            "descendants": [],
+            "callers": [c["caller"] for c in callers],
+            "callees": [],
+            "dws_used": [],
+            "tables_accessed": [],
+        }
     obj = obj_rows[0]
 
     metrics = rows(conn.execute("SELECT * FROM object_metrics WHERE object = ?", [name]))
@@ -142,7 +162,10 @@ def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
 def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
     obj_rows = rows(conn.execute("SELECT object AS name, kind, file FROM objects WHERE object = ?", [name]))
     if not obj_rows:
-        return None
+        dw_rows = rows(conn.execute("SELECT object AS name, file FROM dw_objects WHERE object = ?", [name]))
+        if not dw_rows:
+            return None
+        obj_rows = [{"name": dw_rows[0]["name"], "kind": "datawindow", "file": dw_rows[0]["file"]}]
 
     file_path = obj_rows[0]["file"]
     lines = []
@@ -315,8 +338,16 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
 
 
 def get_dw_layout(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
-    """Return the full DataWindowFile JSON for a datawindow object (not stored in DB)."""
-    return None
+    """Return the parsed DataWindowFile JSON stored during ingestion."""
+    row = conn.execute(
+        "SELECT layout_json FROM dw_objects WHERE object = ?", [name]
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+    try:
+        return json.loads(row[0])
+    except Exception:
+        return None
 
 
 def get_explore_tree(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:

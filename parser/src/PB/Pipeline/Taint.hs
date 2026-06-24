@@ -712,9 +712,11 @@ propagateTaint sources defs uses edges =
       | e <- edges, ieEdgeKind e == "global_write"
       ]
 
-    initialSeeds :: [(Triple, Text, Text)]
+    -- Queue carries (newTriple, parentTriple, kind, desc).
+    -- parentTriple = Nothing for source seeds (no predecessor to record).
+    initialSeeds :: [(Triple, Maybe Triple, Text, Text)]
     initialSeeds =
-      [ ((tsObject s, tsProcName s, tsVarName s), "source",
+      [ ((tsObject s, tsProcName s, tsVarName s), Nothing, "source",
           "taint source: " <> tsSourceType s)
       | s <- sources
       ]
@@ -722,20 +724,23 @@ propagateTaint sources defs uses edges =
     fixpoint
       :: Set.Set Triple
       -> Provenance
-      -> Seq.Seq (Triple, Text, Text)
+      -> Seq.Seq (Triple, Maybe Triple, Text, Text)
       -> (Set.Set Triple, Provenance)
     fixpoint tainted prov queue = case Seq.viewl queue of
       Seq.EmptyL -> (tainted, prov)
-      (t, sk, desc) Seq.:< rest
+      (t, mParent, sk, desc) Seq.:< rest
         | t `Set.member` tainted -> fixpoint tainted prov rest
         | otherwise ->
             let tainted' = Set.insert t tainted
-                prov'    = HM.insert t ("", "", Nothing, sk, desc) prov
+                provEntry = case mParent of
+                  Nothing         -> ("", "", Nothing, sk, desc)
+                  Just (po,pp,pv) -> (po, pp, Just pv, sk, desc)
+                prov'    = HM.insert t provEntry prov
                 newSeeds = propagateOne t tainted'
             in  fixpoint tainted' prov' (rest Seq.>< Seq.fromList newSeeds)
 
-    propagateOne :: Triple -> Set.Set Triple -> [(Triple, Text, Text)]
-    propagateOne (obj, proc, var) tainted =
+    propagateOne :: Triple -> Set.Set Triple -> [(Triple, Maybe Triple, Text, Text)]
+    propagateOne cur@(obj, proc, var) tainted =
       concatMap snd
         [ (True, intraProcSeeds)
         , (True, argSeeds)
@@ -745,7 +750,7 @@ propagateTaint sources defs uses edges =
       where
         -- 1. Intra-proc: tainted var used on line with def → def is tainted
         intraProcSeeds =
-          [ ((obj, proc, newVar), "def",
+          [ ((obj, proc, newVar), Just cur, "def",
               var <> " used in expression that defines " <> newVar)
           | u <- HM.findWithDefault [] (obj, proc, var) usesByTriple
           , Just line <- [urLine u]
@@ -756,7 +761,7 @@ propagateTaint sources defs uses edges =
 
         -- 2. Arg edges: tainted caller_context → callee_context
         argSeeds =
-          [ ((ieCalleeObject e, ieCalleeProc e, ieCalleeContext e), "arg",
+          [ ((ieCalleeObject e, ieCalleeProc e, ieCalleeContext e), Just cur, "arg",
               "passed as argument from " <> obj <> "." <> proc)
           | e <- HM.findWithDefault [] (obj, proc, var) argEdgesByCaller
           , (ieCalleeObject e, ieCalleeProc e, ieCalleeContext e) `Set.notMember` tainted
@@ -764,7 +769,7 @@ propagateTaint sources defs uses edges =
 
         -- 3. Return edges: tainted var returned from callee → caller lhs tainted
         returnSeeds =
-          [ ((ieCallerObject e, ieCallerProc e, ieCallerContext e), "return",
+          [ ((ieCallerObject e, ieCallerProc e, ieCallerContext e), Just cur, "return",
               "return value of " <> obj <> "." <> proc <> " received by caller")
           | u <- HM.findWithDefault [] (obj, proc, var) usesByTriple
           , urKind u == "return"
@@ -774,7 +779,7 @@ propagateTaint sources defs uses edges =
 
         -- 4. Global write edges: tainted global propagates to readers
         globalSeeds =
-          [ ((ieCalleeObject e, ieCalleeProc e, ieCalleeContext e), "global",
+          [ ((ieCalleeObject e, ieCalleeProc e, ieCalleeContext e), Just cur, "global",
               "global variable " <> var <> " written in " <> obj <> "." <> proc)
           | e <- HM.findWithDefault [] (obj, proc, var) globalWriteEdges
           , (ieCalleeObject e, ieCalleeProc e, ieCalleeContext e) `Set.notMember` tainted

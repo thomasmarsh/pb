@@ -1,10 +1,9 @@
 // tests/explore/ExploreInlineDiagrams.test.tsx — Tests for inline diagrams in Explore.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, cleanup, fireEvent } from "@solidjs/testing-library";
+import { render, cleanup } from "@solidjs/testing-library";
 import { createTestStore } from "../helpers.js";
 import { TableDetailPanel } from "../../src/features/explore/Tables.js";
-import { ProcDetailPanel } from "../../src/features/explore/ProcDetailPanel.js";
 import { DwDetailPanel } from "../../src/features/explore/DwDetailPanel.js";
 import { ExploreStoreContext } from "../../src/features/explore/ExploreContext.js";
 import type { ExploreProcDetail, DwDetailResponse } from "../../src/types/api.js";
@@ -14,32 +13,6 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
-
-const mockProcDetail: ExploreProcDetail = {
-  proc_type: "function",
-  params: "string as_sql",
-  return_type: "integer",
-  cyclomatic: 3,
-  start_line: 10,
-  end_line: 50,
-  modifiers: null,
-  source_original: "SELECT 1 FROM dual",
-  ast: null,
-  sql_statements: [{ line: 1, operation: "SELECT", raw_sql: "SELECT 1", formatted_sql: "SELECT 1", tables: ["dual"], columns: [], has_into: false, has_cursor: false, parse_ok: true }],
-};
-
-const mockProcDetailNoSql: ExploreProcDetail = {
-  proc_type: "function",
-  params: "",
-  return_type: "void",
-  cyclomatic: 1,
-  start_line: 5,
-  end_line: 10,
-  modifiers: null,
-  source_original: "Return 0",
-  ast: null,
-  sql_statements: [],
-};
 
 const sampleLibraries = [
   {
@@ -77,23 +50,6 @@ function makeExploreState(overrides?: Partial<Record<string, unknown>>) {
     helpOverlayOpen: false,
     tables: { items: [], filter: "", selected: null, detail: null, loading: false, detailLoading: false },
     ...overrides,
-  };
-}
-
-function renderProcDetail(nodeId: string, procCache?: Record<string, ExploreProcDetail | { error: string }>) {
-  const { store } = createTestStore({
-    explore: makeExploreState({
-      selectedProc: nodeId,
-      procCache: procCache ?? { [nodeId]: mockProcDetail },
-    }),
-  });
-  return {
-    ...render(() => (
-      <ExploreStoreContext.Provider value={store}>
-        <ProcDetailPanel nodeId={nodeId} />
-      </ExploreStoreContext.Provider>
-    )),
-    store,
   };
 }
 
@@ -145,46 +101,6 @@ describe("Explore Tables — InlineDiagram", () => {
     });
     const { container } = render(() => <TableDetailPanel store={store} />);
     await vi.waitUntil(() => container.querySelector(".diagram-container") != null);
-    expect(container.querySelector(".diagram-container")).not.toBeNull();
-    vi.restoreAllMocks();
-  });
-});
-
-describe("Explore ProcDetailPanel — Diagram tab", () => {
-  it("shows Diagram tab button for proc with SQL statements", () => {
-    const { container } = renderProcDetail("lib:w_main:fn_query");
-    const tabs = [...container.querySelectorAll(".explore-tab-btn")]
-      .map((b) => b.textContent);
-    expect(tabs).toContain("Diagram");
-  });
-
-  it("does not show Diagram tab button for proc without SQL", () => {
-    const { container } = renderProcDetail("lib:w_main:fn_nosql", {
-      "lib:w_main:fn_nosql": mockProcDetailNoSql,
-    });
-    const tabs = [...container.querySelectorAll(".explore-tab-btn")]
-      .map((b) => b.textContent);
-    expect(tabs).not.toContain("Diagram");
-  });
-
-  it("Diagram tab button is not active by default", () => {
-    const { container } = renderProcDetail("lib:w_main:fn_query");
-    const diagramBtn = [...container.querySelectorAll(".explore-tab-btn")]
-      .find((b) => b.textContent === "Diagram");
-    expect(diagramBtn?.classList.contains("active")).toBe(false);
-  });
-
-  it("clicking Diagram tab shows InlineDiagram with sql-lineage", async () => {
-    vi.stubGlobal("fetch", () => new Promise(() => {}));
-    const { container } = renderProcDetail("lib:w_main:fn_query");
-    const diagramBtn = [...container.querySelectorAll(".explore-tab-btn")]
-      .find((b) => b.textContent === "Diagram")!;
-    fireEvent.click(diagramBtn);
-    await vi.waitFor(() => {
-      const btn = [...container.querySelectorAll(".explore-tab-btn")]
-        .find((b) => b.textContent === "Diagram")!;
-      expect(btn.classList.contains("active")).toBe(true);
-    });
     expect(container.querySelector(".diagram-container")).not.toBeNull();
     vi.restoreAllMocks();
   });

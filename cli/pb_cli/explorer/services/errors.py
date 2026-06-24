@@ -8,6 +8,33 @@ import duckdb
 
 from pb_cli.explorer.routes.dependencies import rows
 
+# Union CTE: PowerScript parse errors + SQL parse errors (parse_ok = false).
+# Columns: file, error_kind, message, object, proc_name, line, snippet.
+_ERRORS_CTE = """
+WITH all_errors AS (
+    SELECT
+        file,
+        'powerscript'    AS error_kind,
+        error            AS message,
+        NULL             AS object,
+        NULL             AS proc_name,
+        NULL             AS line,
+        NULL             AS snippet
+    FROM parse_errors
+    UNION ALL
+    SELECT
+        file,
+        'sql'            AS error_kind,
+        raw_sql          AS message,
+        object,
+        proc_name,
+        line,
+        raw_sql          AS snippet
+    FROM sql_statements
+    WHERE NOT parse_ok
+)
+"""
+
 
 def list_errors(
     conn: duckdb.DuckDBPyConnection,
@@ -17,30 +44,31 @@ def list_errors(
     offset: int = 0,
 ) -> dict[str, Any]:
     try:
-        table_check = conn.execute(
-            "SELECT 1 FROM information_schema.tables WHERE table_name = 'parse_errors'"
-        ).fetchone()
+        conn.execute("SELECT 1 FROM parse_errors LIMIT 0")
     except Exception:
-        table_check = None
-
-    if not table_check:
         return {"total": 0, "offset": offset, "limit": limit, "items": []}
 
     conditions: list[str] = []
     params: list[Any] = []
+    if kind and kind != "all":
+        conditions.append("error_kind = ?")
+        params.append(kind)
     if q:
-        conditions.append("(file ILIKE ? OR error ILIKE ?)")
-        params += [f"%{q}%", f"%{q}%"]
+        conditions.append("(file ILIKE ? OR message ILIKE ? OR object ILIKE ?)")
+        params += [f"%{q}%", f"%{q}%", f"%{q}%"]
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
-    count_row = conn.execute(f"SELECT count(*) FROM parse_errors {where}", params).fetchone()
+    count_row = conn.execute(
+        f"{_ERRORS_CTE} SELECT count(*) FROM all_errors {where}", params
+    ).fetchone()
     total = count_row[0] if count_row else 0
 
     items = rows(
         conn.execute(
-            f"SELECT file, error "
-            f"FROM parse_errors {where} "
-            f"ORDER BY file "
+            f"{_ERRORS_CTE}"
+            f"SELECT file, error_kind, message, object, proc_name, line, snippet "
+            f"FROM all_errors {where} "
+            f"ORDER BY error_kind, file, line "
             f"LIMIT ? OFFSET ?",
             params + [limit, offset],
         )

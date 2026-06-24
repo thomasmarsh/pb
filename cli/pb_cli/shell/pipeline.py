@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
+from pb_cli.shell.build import find_sql_worker
 from pb_cli.shell.db import setup_db_extras
 from pb_cli.shell.env import env
 from pb_cli.shell.reporter import Reporter
@@ -41,11 +43,17 @@ def run(
     if reset and Path(db).exists():
         Path(db).unlink()
 
+    run_env = os.environ.copy()
+    sql_worker = find_sql_worker()
+    if sql_worker:
+        run_env["PB_SQL_WORKER"] = str(sql_worker)
+
     with reporter.status("Running pb-runner..."):
         result = subprocess.run(
             [str(binary), "-i", str(src_dir), "--db", db_new],
             capture_output=True,
             text=True,
+            env=run_env,
         )
 
     if result.returncode != 0:

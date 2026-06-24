@@ -52,7 +52,7 @@ describe("ProcNode", () => {
       </ExploreStoreContext.Provider>
     ));
     fireEvent.click(screen.getByText("of_init"));
-    const actions = captured.filter(a => a.tag === "objects" && a.action.tag === "select-proc");
+    const actions = captured.filter(a => a.tag === "objects" && a.action.tag === "proc-select");
     expect(actions.length).toBe(1);
   });
 });

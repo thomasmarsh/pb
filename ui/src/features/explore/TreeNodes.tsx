@@ -25,8 +25,7 @@ export function ProcNode(props: { objName: string; proc: ExploreProcedure; depth
   const nodeId = () => procId(props.objName, props.proc.name);
   const isSelected = () => {
     const r = snap().nav.route;
-    return r.view === "objectDetail" && r.name === props.objName
-      && snap().objects.selectedProcName === props.proc.name;
+    return r.view === "procedureDetail" && r.proc === props.proc.name && r.name === props.objName;
   };
 
   const summary = createMemo(() =>
@@ -42,7 +41,7 @@ export function ProcNode(props: { objName: string; proc: ExploreProcedure; depth
       summary={summary()}
       selected={isSelected()}
       onClick={() => {
-        store.dispatch({ tag: "objects", action: { tag: "select-proc", objectName: props.objName, procName: props.proc.name } });
+        store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: props.objName, procName: props.proc.name } });
       }}
     />
   );

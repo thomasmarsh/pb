@@ -523,6 +523,8 @@ def client_with_errors(db_path, tmp_path_factory):
     shutil.copy(db_path, db_copy)
 
     conn = duckdb.connect(db_copy)
+    # Clear existing SQL parse errors so the fixture sees only the two synthetic rows
+    conn.execute("UPDATE sql_statements SET parse_ok = true WHERE NOT parse_ok")
     # parse_errors schema: file TEXT, error TEXT
     conn.execute(
         "INSERT INTO parse_errors VALUES (?,?)",

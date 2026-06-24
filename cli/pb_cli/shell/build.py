@@ -55,6 +55,17 @@ def build_runner(repo: Path, verbose: bool = False) -> Path:
     return find_binary(repo)
 
 
+def find_sql_worker() -> Path | None:
+    """Return the path to the pb-sql-worker script if it is installed, else None."""
+    venv_bin = Path(__file__).parent.parent.parent / ".venv" / "bin" / "pb-sql-worker"
+    if venv_bin.exists():
+        return venv_bin
+    # Fallback: check PATH
+    import shutil
+    found = shutil.which("pb-sql-worker")
+    return Path(found) if found else None
+
+
 _SR_EXT = re.compile(r"\.sr[a-z]$", re.IGNORECASE)
 
 

@@ -416,9 +416,10 @@ compileOne wsEnv mBridge outcome = case outcome of
       }
 
   PsDw fp contents dw -> do
-    let obj   = T.pack (takeBaseName fp)
-        fpT   = T.pack fp
-        style = Map.findWithDefault "" "style" (doaAttrs (dwObject dw))
+    let obj        = T.pack (takeBaseName fp)
+        fpT        = T.pack fp
+        style      = Map.findWithDefault "" "style" (doaAttrs (dwObject dw))
+        layoutJson = jsonText (toJSON dw)
         ctls  = [ DwControlRow fpT obj (renderBandKind (dwcBand c))
                     (dwcType c)
                     (fromMaybe "" (dwcName c))
@@ -427,7 +428,7 @@ compileOne wsEnv mBridge outcome = case outcome of
                 | c <- dwControls dw ]
         css   = extractDwCallSites fpT obj dw
     pure $ CFDw $ CompiledDw
-      { cdDwObjectRow   = DwObjectRow fpT obj style
+      { cdDwObjectRow   = DwObjectRow fpT obj style layoutJson
       , cdDwControls    = ctls
       , cdCallSites     = css
       , cdSourceContent = Just (SourceFileRow fpT contents)

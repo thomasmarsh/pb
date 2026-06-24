@@ -78,19 +78,19 @@ def taint_client(tmp_path_factory):
     conn.execute("INSERT INTO taint_sinks VALUES (?,?,?,?,?,?,?)",
                  ["w.srf", "w_obj", "proc_b", "ls_input", 20, "db_write", "high"])
 
-    # taint_paths — new Haskell schema (no id, no source_type/sink_type/steps_json)
     conn.execute("""
         CREATE TABLE taint_paths (
             source_file TEXT, source_object TEXT, source_proc TEXT, source_var TEXT,
             sink_file TEXT, sink_object TEXT, sink_proc TEXT, sink_var TEXT,
-            severity TEXT, category TEXT
+            severity TEXT, category TEXT, steps_json TEXT
         )
     """)
     conn.execute(
-        "INSERT INTO taint_paths VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO taint_paths VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         ["w.srf", "w_obj", "proc_a", "ls_y",
          "w.srf", "w_obj", "proc_b", "ls_input",
-         "high", "sql_injection"],
+         "high", "sql_injection",
+         '[{"object":"w_obj","proc_name":"proc_a","var_name":"ls_y","line":5,"step_kind":"source","description":"taint source"}]'],
     )
 
     # taint_annotations

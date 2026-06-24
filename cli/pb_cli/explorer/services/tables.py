@@ -206,7 +206,14 @@ def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         except Exception:
             stats[table] = 0
 
-    kind_counts = rows(conn.execute("SELECT kind, count(*) AS count FROM objects GROUP BY kind ORDER BY count DESC"))
+    kind_counts = rows(conn.execute("""
+        SELECT kind, count(*) AS count FROM (
+            SELECT kind FROM objects
+            UNION ALL
+            SELECT 'datawindow' AS kind FROM dw_objects
+        ) t
+        GROUP BY kind ORDER BY count DESC
+    """))
     stats["by_kind"] = kind_counts
 
     top_complex = rows(

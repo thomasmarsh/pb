@@ -91,7 +91,7 @@ def get_taint_path(
     path_rows = rows(
         conn.execute(
             "SELECT rowid AS id, source_object, source_proc, source_var, "
-            "sink_object, sink_proc, sink_var, severity, category "
+            "sink_object, sink_proc, sink_var, severity, category, steps_json "
             "FROM taint_paths WHERE rowid = ?",
             [path_id],
         )
@@ -99,6 +99,11 @@ def get_taint_path(
     if not path_rows:
         return None
     r = path_rows[0]
+    steps_raw = r.get("steps_json") or "[]"
+    try:
+        steps = json.loads(steps_raw)
+    except Exception:
+        steps = []
     return {
         "id": r["id"],
         "source": {
@@ -118,7 +123,7 @@ def get_taint_path(
         },
         "severity": r["severity"],
         "category": r["category"],
-        "steps": [],
+        "steps": steps,
     }
 
 

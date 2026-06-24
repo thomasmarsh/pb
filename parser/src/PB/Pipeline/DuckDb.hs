@@ -128,7 +128,7 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
         \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
         \operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN)"
       , "CREATE TABLE IF NOT EXISTS dw_objects \
-        \(file TEXT, object TEXT, style TEXT)"
+        \(file TEXT, object TEXT, style TEXT, layout_json TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_controls \
         \(file TEXT, object TEXT, band TEXT, control_type TEXT, name TEXT, \
         \x INTEGER, y INTEGER, width INTEGER, height INTEGER, expression TEXT)"
@@ -161,7 +161,7 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       , "CREATE TABLE IF NOT EXISTS taint_paths \
         \(source_file TEXT, source_object TEXT, source_proc TEXT, source_var TEXT, \
         \sink_file TEXT, sink_object TEXT, sink_proc TEXT, sink_var TEXT, \
-        \severity TEXT, category TEXT)"
+        \severity TEXT, category TEXT, steps_json TEXT)"
       , "CREATE TABLE IF NOT EXISTS taint_annotations \
         \(file TEXT, object TEXT, proc_name TEXT, block_id TEXT, \
         \is_taint_entry BOOLEAN, is_taint_sink BOOLEAN, tainted_vars TEXT)"
@@ -201,9 +201,10 @@ data ProcRow = ProcRow
   }
 
 data DwObjectRow = DwObjectRow
-  { dorFile   :: Text
-  , dorObject :: Text
-  , dorStyle  :: Text
+  { dorFile       :: Text
+  , dorObject     :: Text
+  , dorStyle      :: Text
+  , dorLayoutJson :: Text
   }
 
 data DwControlRow = DwControlRow
@@ -270,9 +271,10 @@ appendDwObjects :: DuckConn -> [DwObjectRow] -> IO ()
 appendDwObjects _    [] = pure ()
 appendDwObjects conn rows = withRaw conn "dw_objects" $ \app ->
   for_ rows $ \r -> do
-    aText app (dorFile r)
-    aText app (dorObject r)
-    aText app (dorStyle r)
+    aText app (dorFile       r)
+    aText app (dorObject     r)
+    aText app (dorStyle      r)
+    aText app (dorLayoutJson r)
     endRow app
 
 appendDwControls :: DuckConn -> [DwControlRow] -> IO ()
@@ -674,6 +676,7 @@ appendTaintPaths conn rows = withRaw conn "taint_paths" $ \app ->
   for_ rows $ \tp -> do
     let src = Taint.tpSource tp
         snk = Taint.tpSink   tp
+        stepsJson = TE.decodeUtf8 . BSL.toStrict . encode $ Taint.tpSteps tp
     aText app (Taint.tsFile      src)
     aText app (Taint.tsObject    src)
     aText app (Taint.tsProcName  src)
@@ -684,6 +687,7 @@ appendTaintPaths conn rows = withRaw conn "taint_paths" $ \app ->
     aText app (Taint.tskVarName  snk)
     aText app (Taint.tpSeverity  tp)
     aText app (Taint.tpCategory  tp)
+    aText app stepsJson
     endRow app
 
 appendTaintAnnotations :: DuckConn -> [Taint.TaintAnnotation] -> IO ()
