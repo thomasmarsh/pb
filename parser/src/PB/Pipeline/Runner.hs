@@ -37,9 +37,17 @@ import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
-import Control.Concurrent.Async (mapConcurrently)
+import Control.Concurrent.Async (mapConcurrently, mapConcurrently_, concurrently_)
+import Control.Concurrent.STM
+  ( TQueue, TBQueue, atomically
+  , newTBQueueIO, newTQueueIO
+  , writeTBQueue, readTBQueue
+  , writeTQueue, isEmptyTQueue, readTQueue
+  )
 import GHC.Compact (compact, getCompact)
-import Control.Exception   (SomeException, try)
+import GHC.Conc   (getNumCapabilities)
+import Control.Exception   (SomeException, try, finally)
+import System.Environment  (lookupEnv)
 import Data.Char           (intToDigit, toLower)
 import Data.Either         (lefts)
 import Data.Word           (Word8)
@@ -58,10 +66,15 @@ import PB.Pipeline.TypeResolve
   , parseParams
   )
 import qualified Data.Map.Strict as Map
+import PB.Pipeline.SqlParse
+  ( SqlResult (..), SqlBridgePool
+  , startSqlBridgePool, shutdownSqlBridgePool
+  , parseSql, extractBsRawNodes
+  )
 import PB.Pipeline.Walk    (walkAllSrFiles)
 import PB.Pipeline.DuckDb
   ( DuckConn, withWriteConn, initSchema
-  , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..), SqlStmtRow
+  , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..), SqlStmtRow (..)
   , appendObjects, appendProcedures
   , appendDwObjects, appendDwControls
   , appendLocalVars, appendCallSites, appendGlobalVars
@@ -781,8 +794,8 @@ data CompiledFile
   | CFError FilePath Text
   | CFSkip
 
-compileOne :: TypeEnv -> ParseOutcome -> IO CompiledFile
-compileOne wsEnv outcome = case outcome of
+compileOne :: TypeEnv -> Maybe (SqlBridgePool, Int) -> ParseOutcome -> IO CompiledFile
+compileOne wsEnv mBridge outcome = case outcome of
 
   PsParsed pf -> do
     let sf   = pfSrFile pf
@@ -816,6 +829,14 @@ compileOne wsEnv outcome = case outcome of
               <>
               zip (spOnBlocks    sp) [ (obEvent ob,         "on",         "",                   obBody ob) | ob <- srOnBlocks    sf ]
           ]
+        procBodies =
+             [ (fnsName (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
+          <> [ (ssName  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
+          <> [ (esName  (evSig ev), evBody ev) | ev <- srEvents      sf ]
+          <> [ (obEvent ob,         obBody ob) | ob <- srOnBlocks    sf ]
+    sqlRows <- case mBridge of
+      Nothing          -> pure []
+      Just (pool, k) -> fmap concat $ mapM (extractProcSql pool k fp obj) procBodies
     pure $ CFPs $ CompiledPs
       { cpsObjectRow  = ObjectRow fp "powerscript" obj anc
       , cpsProcRows   = map fst procs
@@ -823,7 +844,7 @@ compileOne wsEnv outcome = case outcome of
       , cpsCallSites  = css
       , cpsGlobalVars = gvs
       , cpsProcFlows  = map snd procs
-      , cpsSqlStmts   = []
+      , cpsSqlStmts   = sqlRows
       }
 
   PsDw fp dw -> do
@@ -862,6 +883,47 @@ renderBandKind (Just (BkTreeLevel n))  = "tree_level_" <> T.pack (show n)
 jsonText :: Value -> Text
 jsonText = TE.decodeUtf8 . BSL.toStrict . encode
 
+-- | Parse SQL from one procedure's BsRaw nodes via the bridge pool slot k.
+extractProcSql :: SqlBridgePool -> Int -> Text -> Text -> (Text, [Located BodyStmt]) -> IO [SqlStmtRow]
+extractProcSql pool k fp obj (pName, body) =
+  mapM parseNode (extractBsRawNodes body)
+  where
+    parseNode (ln, rawTxt) = do
+      res <- parseSql pool k rawTxt
+      pure $ SqlStmtRow fp obj pName ln
+               (srOperation res)
+               (T.intercalate "," (srTables res))
+               (T.intercalate "," (srColumns res))
+               rawTxt
+               (srParseOk res)
+
+-- | Worker thread k: drains ParseOutcomes from workQ, compiles with bridge slot k,
+--   pushes CompiledFile values to resultQ.
+workerLoop :: Int -> TQueue ParseOutcome -> SqlBridgePool -> TypeEnv
+           -> TBQueue (Maybe CompiledFile) -> IO ()
+workerLoop k workQ pool wsEnv resultQ = go
+  where
+    go = do
+      mItem <- atomically $ do
+        empty <- isEmptyTQueue workQ
+        if empty then pure Nothing else Just <$> readTQueue workQ
+      case mItem of
+        Nothing -> pure ()
+        Just o  -> do
+          cf <- compileOne wsEnv (Just (pool, k)) o
+          atomically (writeTBQueue resultQ (Just cf))
+          go
+
+-- | Single DuckDB consumer: reads from resultQ until it sees Nothing.
+drainResultQueue :: DuckConn -> TBQueue (Maybe CompiledFile) -> IO ()
+drainResultQueue conn queue = go
+  where
+    go = do
+      item <- atomically (readTBQueue queue)
+      case item of
+        Nothing -> pure ()
+        Just cf -> appendToDb conn cf >> go
+
 appendToDb :: DuckConn -> CompiledFile -> IO ()
 appendToDb conn (CFPs r) = do
   appendObjects    conn [cpsObjectRow r]
@@ -886,6 +948,29 @@ runModeDb srcDir dbPath = do
   outcomes <- mapConcurrently parseOutcome files          -- Phase A0: parse
   let allSfs = [pfSrFile pf | PsParsed pf <- outcomes]
       wsEnv  = buildWorkspaceTypeEnv allSfs              -- Phase A0: TypeEnv
+
+  mBridgeBin <- lookupEnv "PB_SQL_WORKER"
+  nWorkers   <- getNumCapabilities
+
   withWriteConn dbPath $ \conn -> do
     initSchema conn
-    mapM_ (\o -> compileOne wsEnv o >>= appendToDb conn) outcomes  -- Phase A
+    resultQ <- newTBQueueIO 32
+
+    let runProducers = case mBridgeBin of
+          Nothing  ->
+            -- No bridge: compile without SQL parsing, all files concurrently.
+            mapConcurrently_
+              (\o -> compileOne wsEnv Nothing o >>= atomically . writeTBQueue resultQ . Just)
+              outcomes
+          Just bin -> do
+            pool  <- startSqlBridgePool nWorkers bin
+            workQ <- newTQueueIO
+            atomically (mapM_ (writeTQueue workQ) outcomes)
+            mapConcurrently_
+              (\k -> workerLoop k workQ pool wsEnv resultQ)
+              [0 .. nWorkers - 1]
+              `finally` shutdownSqlBridgePool pool
+
+    concurrently_
+      (runProducers `finally` atomically (writeTBQueue resultQ Nothing))
+      (drainResultQueue conn resultQ)
