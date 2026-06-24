@@ -274,7 +274,7 @@ edges, 287 inheritance edges, 1688 DW controls).
 ```
 procedures          — one row per procedure (function/subroutine/event/on-block)
   file, object, owner, proc_type, name, modifiers, params, return_type,
-  start_line, end_line, body_json, source_rendered, cyclomatic
+  start_line, end_line, body_json, cyclomatic, cps_graph_json
 
 calls               — raw call edges extracted from AST walking
   file, object, from_proc, to_name, call_type

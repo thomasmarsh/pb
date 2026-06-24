@@ -8,8 +8,9 @@
 
 This document defines the architectural strategy, data design, and downstream workflow for
 compiling a legacy PowerBuilder codebase (~300KLOC across 1,700 source files) into a
-unified, rich Abstract Syntax Tree (AST) serialised as JSON, then into a **DuckDB
-relational database** that enables SQL-based cross-file analysis.
+unified, rich Abstract Syntax Tree (AST) compiled and analysed by a Haskell
+pipeline that writes results directly into a **DuckDB relational database**
+enabling SQL-based cross-file analysis.
 
 ### The Core Problem
 
@@ -23,9 +24,8 @@ and catastrophic model hallucinations due to the language training gap.
 
 ### The Solution: Structural Separation + Relational Query
 
-We bypass text-based reading by transforming the codebase into a dense, normalised JSON
-AST using a **Megaparsec** compiler front-end, then extracting a **DuckDB** relational
-database of canonical fact tables. This enables:
+We bypass text-based reading by compiling the codebase with a **Megaparsec**
+front-end and writing canonical fact tables directly into **DuckDB**. This enables:
 
 - **The LLM writes SQL, not code searches:** It converts natural language questions into
   deterministic SQL queries against `pb.duckdb`, executed locally in milliseconds.
@@ -263,27 +263,30 @@ statement node (deferred to E8 — requires lexer changes).
 ```
 [ 1,700 Source Files ]
          │
-         ▼  pb-runner (Haskell Megaparsec compiler)
-[ Individual .json AST Files ]     ← -i <srcdir> -o <outdir>
-[ manifest.json ]                  ← object/ancestor index
+         ▼  pb-runner --db FILE  (DuckDB-direct mode — all passes 1-8 in Haskell)
+[ pb.duckdb ]  ← written directly; no JSON intermediate
          │
-         ▼  pb-runner --jsonl (streaming mode)
-[ JSONL stream ]                   ← one line per file to stdout
+         │  (alternative: pb-runner --jsonl | pb index — JSONL streaming mode)
          │
-         ▼  pb-index (Python, reads JSONL → DuckDB)
 [ pb.duckdb ]
-  ├── objects          (one row per source file / type declaration)
-  ├── procedures       (functions, subroutines, events, on-blocks)
-  ├── dw_controls      (DataWindow visual controls)
-  ├── dw_retrieve_*    (PBSELECT tables, columns, where clauses, args)
-  ├── inherits         (declared ancestry edges)
-  ├── calls            (call graph edges — populated by pb-analyze)
-  └── object_metrics   (PageRank, betweenness, cyclomatic — pb-analyze)
+  ├── objects            (one row per source file / type declaration)
+  ├── procedures         (functions, subroutines, events, on-blocks; cps_graph_json)
+  ├── dw_objects / dw_controls / dw_retrieve_*
+  ├── sql_statements     (embedded SQL per procedure)
+  ├── local_vars / call_sites / global_vars
+  ├── proc_defs / proc_uses    (def-use chains)
+  ├── resolved_types / resolved_calls / global_vars
+  ├── interproc_edges / procedure_summaries
+  ├── taint_sources / taint_sinks / taint_paths / taint_annotations
+  ├── dead_code
+  ├── inherits           (declared ancestry edges)
+  ├── calls              (raw call graph edges)
+  └── object_metrics     (PageRank, betweenness, cyclomatic — pb analyze)
          │
          ├──▶  SQL queries (LLM-generated, answers any structural question)
-         ├──▶  pb-analyze  (NetworkX graph metrics → object_metrics)
-         ├──▶  pb-diagram  (GraphViz SVG: inheritance, calls, DW-tables, heatmap)
-         └──▶  pb-runner --render  (pseudo-PBScript body output for LLM injection)
+         ├──▶  pb analyze  (NetworkX graph metrics → object_metrics)
+         ├──▶  pb diagram  (GraphViz SVG: inheritance, calls, DW-tables, heatmap)
+         └──▶  pb explore  (FastAPI + SolidJS SPA — interactive analysis UI)
 ```
 
 ### Serialisation rules
@@ -373,11 +376,12 @@ WHERE expression LIKE '%fn_misth%';
 
 ## 6. Tool Reference
 
-| Tool | Language | Input | Output | Plan |
-|---|---|---|---|---|
-| `pb-runner -o` | Haskell | source dir | per-file JSON + manifest.json | plan/28 |
-| `pb-runner --jsonl` | Haskell | source dir | JSONL stream | plan/28 |
-| `pb-runner --render` | Haskell | source dir + object/proc | pseudo-PBScript | plan/32 |
-| `pb-index` | Python | JSONL | pb.duckdb | plan/29 |
-| `pb-analyze` | Python | pb.duckdb | object_metrics, calls tables | plan/30 |
-| `pb-diagram` | Python | pb.duckdb | GraphViz SVG | plan/31 |
+| Tool | Language | Input | Output |
+|---|---|---|---|
+| `pb-runner --db FILE` | Haskell | source dir | pb.duckdb (all passes 1–8) |
+| `pb-runner --jsonl` | Haskell | source dir | JSONL stream (legacy) |
+| `pb-runner -o DIR` | Haskell | source dir | per-file JSON + manifest.json (legacy) |
+| `pb index` | Python | JSONL | pb.duckdb (JSONL ingestion path) |
+| `pb analyze` | Python | pb.duckdb | object_metrics table |
+| `pb diagram` | Python | pb.duckdb | GraphViz SVG |
+| `pb explore` | Python + TS | pb.duckdb | FastAPI + SolidJS SPA |

@@ -1,8 +1,15 @@
 # Architecture
 
 This repository contains three independent runtimes that form a pipeline:
-**Haskell** parses PowerBuilder source files into JSON, **Python** ingests and
-analyses that JSON, and **TypeScript** presents it as an interactive web UI.
+**Haskell** parses PowerBuilder source files and runs all analysis passes,
+**Python** drives orchestration and presents data via FastAPI, and
+**TypeScript** renders the interactive web UI.
+
+In DuckDB-direct mode (`pb-runner --db FILE`), Haskell writes all analysis
+results (procedures, call resolution, taint, dead code) directly to DuckDB —
+Python reads but never writes the analysis tables.  The older JSONL mode
+(`pb-runner --jsonl | pb index`) still works for incremental re-runs via
+`pb index`.
 
 ---
 
@@ -101,8 +108,9 @@ flowchart TD
     API -->|"HTTP /api/*"| SPA
 ```
 
-The Python layer never reads source files directly — it always consumes the
-JSON emitted by `pb-runner`.
+The Python layer never reads source files directly.  In DuckDB-direct mode it
+does not read analysis JSON at all — Haskell writes to DuckDB and Python reads
+from there.  In JSONL mode Python consumes the JSON stream from `pb-runner`.
 
 ---
 
@@ -355,9 +363,10 @@ to produce the single top-level `AppState` / `AppAction` reducer.
 | Parsing PowerBuilder syntax | `parser/src/PB/Lexing/`, `parser/src/PB/Grammar/` |
 | AST data types | `parser/src/PB/AST/` |
 | JSON serialisation + TS codegen | `parser/src/PB/Pipeline/Serialise.hs` |
+| DuckDB-direct I/O (passes 1–8) | `parser/src/PB/Pipeline/DuckDb.hs` |
 | CLI entry point (Haskell) | `parser/app/Main.hs` |
-| DuckDB schema | `cli/pb_cli/common.py` |
-| JSON → DuckDB ingestion | `cli/pb_cli/index.py` |
+| DuckDB schema (Python side) | `cli/pb_cli/common.py` |
+| JSONL → DuckDB ingestion | `cli/pb_cli/index.py` |
 | Call graph + cyclomatic complexity | `cli/pb_cli/analyze.py` |
 | FastAPI endpoints | `cli/pb_cli/explorer/api.py` |
 | AST → PBScript rendering | `cli/pb_cli/explorer/render.py` |

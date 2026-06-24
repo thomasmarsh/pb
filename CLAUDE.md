@@ -104,7 +104,7 @@ No change is proposed without a prior read of all relevant modules. Locate calle
 
 # sample 5 error messages from a temporary run:
 OUT=$(mktemp -d)
-cabal run --project-dir parser pb-runner -v0 -- -i example/openpay-0.1.1b-extract -o "$OUT" 2>/dev/null
+(cd parser && cabal run pb-runner -v0 -- -i ../example/openpay-0.1.1b-extract -o "$OUT" 2>/dev/null)
 python3 -c "
 import json, os, glob
 for f in list(glob.glob('$OUT/**/*.json', recursive=True))[:5]:
@@ -144,10 +144,12 @@ If you need ground truth on the wire format, don't trust committed example JSON 
 gitignored scratch and may be stale) — rebuild and run the binary directly:
 
 ```bash
-cabal build --project-dir parser pb-runner
-BIN=$(cabal list-bin --project-dir parser pb-runner)
-$BIN -i <dir-with-one-srf> -o /tmp/pbout && python3 -m json.tool /tmp/pbout/*.json
+(cd parser && cabal build)
+BIN=$(cd parser && cabal list-bin pb-runner)
+"$BIN" -i <dir-with-one-srf> -o /tmp/pbout && python3 -m json.tool /tmp/pbout/*.json
 ```
+
+**Canonical cabal invocation:** always run cabal from the `parser/` directory (either `cd parser && cabal …` or `(cd parser && cabal …)` from the repo root). This picks up both `cabal.project` at the repo root and `parser/cabal.project.local` (which sets the duckdb-ffi library paths). Build output goes to `dist-newstyle/` at the repo root. Never use `--project-dir parser` from the repo root — that skips `cabal.project.local` and loses the duckdb library paths.
 
 **Diagnosing implementation debt.** When the charter targets BsRaw, ExRaw, or DW structural-field coverage, run the debt analyser first — do NOT re-derive the breakdown from scratch:
 
@@ -345,7 +347,7 @@ All new modules must start with `import PB.Prelude` under `NoImplicitPrelude` (s
 - **Megaparsec `try` invariant:** In a `choice`, every alternative that can consume input before failing must be wrapped in `try`. Without it, a partial match (e.g. consuming a sign character before failing on a non-digit) propagates the error and skips all remaining alternatives. Audit any `choice` whose alternatives share a leading character.
 - Always prefer short, flattened code - no huge monolithic functions
 - Always rename Aeson serialized fields ergonomic JSON (not just the raw Haskell names)
-- parser/app/Main.hs should have no functionality other than to call into parser/src/PB/Pipeline/Runner.hs with two arguments 1) input source dir path and 2) output JSON AST tree path
+- parser/app/Main.hs should have no functionality other than to call into parser/src/PB/Pipeline/Runner.hs. Three modes: (1) `-i SRC -o DIR` per-file JSON, (2) `-i SRC --jsonl` streaming JSONL, (3) `-i SRC --db FILE` DuckDB-direct (passes 1–8 all in Haskell). No logic other than flag parsing and dispatch.
 - Accept no hacky solutions or greedy operations that will cause pain down the line: if we can't reliable detect the beginning / end of a regions (e.g., FUNCTION / END FUNCTION), we can't start working on it yet.
 - Be creative and comprehensive in generating PBT and pathological unit test cases; PB has lots of issues like `foo()bar()` smashed together ` & // comment`
 - Ensure the preprocess step is principled and resilient
@@ -574,7 +576,7 @@ Mark done/pending as body parsers land.
 | `PB.AST.*`      | Data types only — no parsing logic (Located, Expr, BodyStmt, Type, SourceFile, DataWindow)                                          |
 | `PB.Lexing.*`   | Tokenization, layout, string mode                                                                                                   |
 | `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)                                                                                 |
-| `PB.Pipeline.*` | Multi-step transformations: Preprocess, Walk, Runner, Serialise, CfgBuild, CpsCompile, Dataflow, Taint, TypeResolve, TypeEnv, PbApi |
+| `PB.Pipeline.*` | Multi-step transformations: Preprocess, Walk, Runner, Serialise, CfgBuild, CpsCompile, Dataflow, Taint, TypeResolve, TypeEnv, PbApi, DuckDb |
 | `PB.Prelude`    | Custom Prelude — no parsing or transformation logic                                                                                 |
 
 New modules go in the most specific matching directory. If a new layer is needed, propose it in Stage 1.
@@ -809,21 +811,23 @@ collectStatements :: [LexLine] -> Either Text [Statement]
 wrapSrFile        :: Bool -> FilePath -> SrFile -> SrSpans -> TypeEnv -> Value   -- Bool = withCps
 runModeFiles      :: Bool -> Bool -> FilePath -> FilePath -> IO ()   -- incremental withCps srcDir outDir
 runModeJsonl      :: FilePath -> IO ()               -- streaming, no cross-file inh
-writeDataflowAnalysis :: FilePath -> [ParsedFile] -> IO ()  -- Pass 6 → proc_defs.json, proc_uses.json
-writeTaintAnalysis    :: FilePath -> [ParsedFile] -> IO ()  -- Pass 7 → taint_*.json, interproc_edges.json, procedure_summaries.json
+runModeDb         :: FilePath -> FilePath -> IO ()   -- DuckDB-direct: all passes 1-8 in Haskell; srcDir → dbPath
+writeDataflowAnalysis :: FilePath -> [ParsedFile] -> IO ()  -- JSON path Pass 6 → proc_defs.json, proc_uses.json
+writeTaintAnalysis    :: FilePath -> [ParsedFile] -> IO ()  -- JSON path Pass 7 → taint_*.json, interproc_edges.json, procedure_summaries.json
 -- fileKind: .srd → DataWindow, .srp → Pipeline, .srj → Project, _ → PowerScript
 -- runPowerScript: normalizeText → stripHeaders → tokenize → collectStatements
 --                 → parseSrFileWithSpans → wrapSrFile; builds buildWorkspaceTypeEnv [srFile] per file
 -- wrapSrFile injects per-procedure: meta (file/object/startLine), cfg (buildCfg).
 --   source_rendered REMOVED (banished). dataflow facet REMOVED (proc_defs.json on disk instead).
---   cpsGraph only when withCps=True (--with-cps flag). Workspace TypeEnv built from all files in
---   runModeFiles; per-procedure overlay applied via withProcScope (parseParams paramsText) wsEnv.
+--   cpsGraph always on (--with-cps flag removed Plan 126). Workspace TypeEnv built from all files in
+--   runModeFiles/runModeDb; per-procedure overlay applied via withProcScope (parseParams paramsText) wsEnv.
 -- collectStatements filters empty-token statements and surfaces the first LexError as Left Text
 -- Note: leOffset in a LexError is always 0 (reports initial position state, not error position).
 --       Only llStartLine (leSource e) is meaningful for diagnosis.
--- writeResolution writes resolved_types.json, resolved_calls.json, global_vars.json (Pass 5)
--- writeDataflowAnalysis reads resolved_types + CFG → proc_defs.json, proc_uses.json (Pass 6)
--- writeTaintAnalysis reads proc_defs/uses + resolved_calls + global_vars → taint_*.json, interproc_edges.json, procedure_summaries.json (Pass 7)
+-- JSON path: writeResolution writes resolved_types.json, resolved_calls.json, global_vars.json (Pass 5)
+--            writeDataflowAnalysis reads resolved_types + CFG → proc_defs.json, proc_uses.json (Pass 6)
+--            writeTaintAnalysis reads proc_defs/uses + resolved_calls + global_vars → taint_*.json, interproc_edges.json, procedure_summaries.json (Pass 7)
+-- DuckDB path: runModeDb runs all passes via PB.Pipeline.DuckDb; concurrent producer-consumer in Phase A (TBQueue 32 + MVar mutex); passes 5-8 read/write DB directly.
 ```
 
 ### `PB.Pipeline.Serialise`
@@ -888,9 +892,11 @@ data ProcFlow  = ProcFlow  { pfObject :: Text, pfProc :: Text, pfBlocks :: Map T
 
 ```haskell
 -- Taint analysis: source/sink classification, BFS propagation, path tracing.
--- Reads proc_defs/uses, resolved_calls, global_vars from JSON. Classifies
--- sources (SELECT INTO, event params) and sinks (INSERT/UPDATE/DELETE/EXECUTE)
--- from AST. Propagates through intra-proc def-use chains and inter-proc
+-- JSON path: reads proc_defs/uses, resolved_calls, global_vars from JSON files.
+-- DuckDB path: reads from DB via PB.Pipeline.DuckDb query helpers.
+-- Classifies sources (SELECT INTO, event params) and sinks (INSERT/UPDATE/DELETE/EXECUTE)
+-- from AST. extractSqlStmts recurses into BsIf/BsFor/BsDo/BsChoose, not just top-level BsRaw.
+-- Propagates through intra-proc def-use chains and inter-proc
 -- arg/return/global edges (computed internally from resolved_calls).
 data TaintSource = TaintSource { tsFile, tsObject, tsProcName, tsVarName, tsSourceType :: Text, tsLine :: Maybe Int }
 data TaintSink   = TaintSink   { tskFile, tskObject, tskProcName, tskVarName, tskSinkType, tskSeverity :: Text, tskLine :: Maybe Int }
@@ -904,7 +910,7 @@ data TaintResult = TaintResult { trSources :: [TaintSource], trSinks :: [TaintSi
 data DefRow  -- FromJSON for proc_defs.json (file, object, proc_name, var_name, block_id, stmt_index, line, kind)
 data UseRow  -- FromJSON for proc_uses.json
 data ResolvedCallRow  -- FromJSON for resolved_calls.json
-data GlobalVarRow     -- FromJSON for global_vars.json (just var_name)
+data GlobalVarRow     -- FromJSON for global_vars.json; field key is "name" (NOT "var_name" — bug fixed 2026-06-24)
 classifySources    :: [SqlStmt] -> [ProcMeta] -> [TaintSource]
 classifySinks      :: [SqlStmt] -> [TaintSink]
 buildInterprocEdges :: [ResolvedCallRow] -> [DefRow] -> [UseRow] -> Set Text -> [ProcMeta] -> [InterprocEdge]
@@ -965,6 +971,36 @@ walkFiles      :: (FilePath -> Bool) -> FilePath -> IO [FilePath]   -- [] if roo
 walkPsFiles    :: FilePath -> IO [FilePath]   -- .srf .srw .sru .srm .sra .srx
 walkDwFiles    :: FilePath -> IO [FilePath]   -- .srd
 walkAllSrFiles :: FilePath -> IO [FilePath]   -- any .sr<single-char>
+```
+
+### `PB.Pipeline.DuckDb`
+
+```haskell
+-- DuckDB-direct I/O for pb-runner --db mode. C FFI to libduckdb.dylib via duckdb-ffi.
+-- Single-writer constraint: DuckConn is NOT thread-safe for concurrent appenders;
+-- runModeDb uses MVar mutex (bridge path) or sequential mapM_ (no-bridge path).
+-- Phase A appenders (one per table, create + destroy per run):
+appendObjects, appendProcedures, appendDwObjects, appendDwControls :: DuckConn -> [row] -> IO ()
+appendLocalVars, appendCallSites, appendGlobalVars :: DuckConn -> [row] -> IO ()
+appendProcDefs, appendProcUses, appendSqlStmts :: DuckConn -> [row] -> IO ()
+appendParseErrors :: DuckConn -> [row] -> IO ()
+-- Phase B read helpers (SELECT → typed rows):
+queryLocalVars, queryCallSites, queryGlobalVars :: DuckConn -> IO [row]
+queryObjInfo     :: DuckConn -> IO [(Text, Text)]       -- (file, object) pairs per PS file
+queryProcDefs    :: DuckConn -> IO [Taint.DefRow]
+queryProcUses    :: DuckConn -> IO [Taint.UseRow]
+queryResolvedCalls :: DuckConn -> IO [Taint.ResolvedCallRow]
+queryTaintInputs :: DuckConn -> IO [Taint.TaintFileInputs]  -- includes procedure-less PS objects via objects table
+queryProcInfos   :: DuckConn -> IO [TypeResolve.LocalVar]   -- for Pass 5 resolveTypes
+queryDwObjectSet :: DuckConn -> IO (Set Text)
+-- Phase B write appenders:
+appendResolvedTypes, appendResolvedCalls :: DuckConn -> [row] -> IO ()
+appendInterprocEdges, appendProcSummaries :: DuckConn -> [row] -> IO ()
+appendTaintSources, appendTaintSinks, appendTaintPaths, appendTaintAnnotations :: DuckConn -> [row] -> IO ()
+appendDeadCode   :: DuckConn -> [DeadCode.DeadProcedure] -> IO ()
+-- Schema init:
+withWriteConn    :: FilePath -> (DuckConn -> IO a) -> IO a
+initSchema       :: DuckConn -> IO ()
 ```
 
 ---
