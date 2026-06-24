@@ -37,11 +37,11 @@ import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
-import Control.Concurrent.Async (mapConcurrently, mapConcurrently_, concurrently_)
+import Control.Concurrent.Async (mapConcurrently, mapConcurrently_)
+import Control.Concurrent.MVar  (MVar, newMVar, withMVar)
 import Control.Concurrent.STM
-  ( TQueue, TBQueue, atomically
-  , newTBQueueIO, newTQueueIO
-  , writeTBQueue, readTBQueue
+  ( TQueue, atomically
+  , newTQueueIO
   , writeTQueue, isEmptyTQueue, readTQueue
   )
 import GHC.Compact (compact, getCompact)
@@ -59,11 +59,11 @@ import System.FilePath     (makeRelative, takeBaseName, takeDirectory
                            , takeExtension, (</>))
 import PB.Pipeline.PbApi    (builtinFnNames, builtinMethodNames)
 import PB.Pipeline.TypeResolve
-  ( LocalVar, CallSite, GlobalVar
+  ( LocalVar, CallSite, GlobalVar (..)
   , buildInheritsMap, buildObjectSet, buildProcMap, buildUserTypeSet
   , extractCallSites, extractDwCallSites, extractGlobalVars, extractLocalVars
   , resolveTypes, resolveCalls
-  , parseParams
+  , parseParams, srFileObject
   )
 import qualified Data.Map.Strict as Map
 import PB.Pipeline.SqlParse
@@ -80,6 +80,13 @@ import PB.Pipeline.DuckDb
   , appendLocalVars, appendCallSites, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
   , appendParseErrors
+  , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
+  , queryProcDefs, queryProcUses, queryResolvedCalls
+  , queryTaintInputs, queryProcInfos, queryDwObjectSet
+  , appendResolvedTypes, appendResolvedCalls
+  , appendInterprocEdges, appendProcSummaries
+  , appendTaintSources, appendTaintSinks, appendTaintPaths
+  , appendTaintAnnotations, appendDeadCode
   )
 
 -- | Last dot-separated segment of a dotted name, e.g. "dw.setfocus" → "setfocus".
@@ -817,17 +824,20 @@ compileOne wsEnv mBridge outcome = case outcome of
         procs =
           [ let cfg      = buildCfg body
                 cfgJs    = jsonText (toJSON cfg)
-                cpsJs    = jsonText (toJSON (compileProcedure (procEnv params) userFns body))
+                cpsJs    = jsonText (toJSON (compileProcedure (procEnv cpsParams) userFns body))
                 flow     = (fp, obj, pName, Dataflow.analyzeProcedure obj pName cfg)
-            in ( ProcRow fp obj pName pType sLine eLine cfgJs cpsJs, flow )
-          | ((sLine, eLine), (pName, pType, params, body)) <-
-              zip (spFunctions   sp) [ (fnsName (fbSig fb), "function",   fnsParams (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
+                cyclo    = DeadCode.cyclomaticComplexity cfg
+            in ( ProcRow fp obj pName pType sLine eLine cfgJs cpsJs
+                   taintParams retType (Just cyclo)
+               , flow )
+          | ((sLine, eLine), (pName, pType, cpsParams, taintParams, retType, body)) <-
+              zip (spFunctions   sp) [ (fnsName (fbSig fb), "function",   fnsParams (fbSig fb), fnsParams    (fbSig fb), fnsReturnType (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
               <>
-              zip (spSubroutines sp) [ (ssName  (sbSig sb), "subroutine", ssParams  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
+              zip (spSubroutines sp) [ (ssName  (sbSig sb), "subroutine", ssParams  (sbSig sb), ssParams     (sbSig sb), "",                       sbBody sb) | sb <- srSubroutines sf ]
               <>
-              zip (spEvents      sp) [ (esName  (evSig ev), "event",      "",                   evBody ev) | ev <- srEvents      sf ]
+              zip (spEvents      sp) [ (esName  (evSig ev), "event",      "",                   esRawSig     (evSig ev), "",                       evBody ev) | ev <- srEvents      sf ]
               <>
-              zip (spOnBlocks    sp) [ (obEvent ob,         "on",         "",                   obBody ob) | ob <- srOnBlocks    sf ]
+              zip (spOnBlocks    sp) [ (obEvent ob,         "on",         "",                   "",                      "",                       obBody ob) | ob <- srOnBlocks    sf ]
           ]
         procBodies =
              [ (fnsName (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
@@ -835,8 +845,11 @@ compileOne wsEnv mBridge outcome = case outcome of
           <> [ (esName  (evSig ev), evBody ev) | ev <- srEvents      sf ]
           <> [ (obEvent ob,         obBody ob) | ob <- srOnBlocks    sf ]
     sqlRows <- case mBridge of
-      Nothing          -> pure []
-      Just (pool, k) -> fmap concat $ mapM (extractProcSql pool k fp obj) procBodies
+      Nothing       ->
+        -- No SQL bridge: extract raw SQL from BsRaw nodes (same as extractSqlStmts)
+        pure $ concatMap (rawSqlRow fp obj) procBodies
+      Just (pool,k) ->
+        fmap concat $ mapM (extractProcSql pool k fp obj) procBodies
     pure $ CFPs $ CompiledPs
       { cpsObjectRow  = ObjectRow fp "powerscript" obj anc
       , cpsProcRows   = map fst procs
@@ -884,6 +897,19 @@ jsonText :: Value -> Text
 jsonText = TE.decodeUtf8 . BSL.toStrict . encode
 
 -- | Parse SQL from one procedure's BsRaw nodes via the bridge pool slot k.
+-- | Build SqlStmtRows from BsRaw nodes without a SQL bridge (no tables/columns).
+rawSqlRow :: Text -> Text -> (Text, [Located BodyStmt]) -> [SqlStmtRow]
+rawSqlRow fpT obj (pName, body) =
+  [ SqlStmtRow fpT obj pName ln (Just op) "" "" rawTxt False
+  | (ln, rawTxt) <- extractBsRawNodes body
+  , let op = Taint.classifyOperation rawTxt
+  , not (T.null op)
+  , op `Set.notMember` _skipOps
+  ]
+  where
+    _skipOps = Set.fromList
+      ["DECLARE","OPEN","FETCH","CLOSE","COMMIT","ROLLBACK","CONNECT","DISCONNECT"]
+
 extractProcSql :: SqlBridgePool -> Int -> Text -> Text -> (Text, [Located BodyStmt]) -> IO [SqlStmtRow]
 extractProcSql pool k fp obj (pName, body) =
   mapM parseNode (extractBsRawNodes body)
@@ -898,10 +924,9 @@ extractProcSql pool k fp obj (pName, body) =
                (srParseOk res)
 
 -- | Worker thread k: drains ParseOutcomes from workQ, compiles with bridge slot k,
---   pushes CompiledFile values to resultQ.
-workerLoop :: Int -> TQueue ParseOutcome -> SqlBridgePool -> TypeEnv
-           -> TBQueue (Maybe CompiledFile) -> IO ()
-workerLoop k workQ pool wsEnv resultQ = go
+--   serialises DB writes through a shared mutex (DuckDB connections are not thread-safe).
+workerLoop :: Int -> TQueue ParseOutcome -> SqlBridgePool -> TypeEnv -> DuckConn -> MVar () -> IO ()
+workerLoop k workQ pool wsEnv conn mutex = go
   where
     go = do
       mItem <- atomically $ do
@@ -910,19 +935,9 @@ workerLoop k workQ pool wsEnv resultQ = go
       case mItem of
         Nothing -> pure ()
         Just o  -> do
-          cf <- compileOne wsEnv (Just (pool, k)) o
-          atomically (writeTBQueue resultQ (Just cf))
+          compiled <- compileOne wsEnv (Just (pool, k)) o
+          withMVar mutex $ \_ -> appendToDb conn compiled
           go
-
--- | Single DuckDB consumer: reads from resultQ until it sees Nothing.
-drainResultQueue :: DuckConn -> TBQueue (Maybe CompiledFile) -> IO ()
-drainResultQueue conn queue = go
-  where
-    go = do
-      item <- atomically (readTBQueue queue)
-      case item of
-        Nothing -> pure ()
-        Just cf -> appendToDb conn cf >> go
 
 appendToDb :: DuckConn -> CompiledFile -> IO ()
 appendToDb conn (CFPs r) = do
@@ -954,23 +969,65 @@ runModeDb srcDir dbPath = do
 
   withWriteConn dbPath $ \conn -> do
     initSchema conn
-    resultQ <- newTBQueueIO 32
+    case mBridgeBin of
+      Nothing  -> do
+        -- Compile in parallel; append sequentially (DuckDB connections are not thread-safe).
+        compileds <- mapConcurrently (compileOne wsEnv Nothing) outcomes
+        mapM_ (appendToDb conn) compileds
+      Just bin -> do
+        pool  <- startSqlBridgePool nWorkers bin
+        workQ <- newTQueueIO
+        atomically (mapM_ (writeTQueue workQ) outcomes)
+        mutex <- newMVar ()
+        mapConcurrently_
+          (\k -> workerLoop k workQ pool wsEnv conn mutex)
+          [0 .. nWorkers - 1]
+          `finally` shutdownSqlBridgePool pool
+    runPhaseB conn  -- Phase B: link analysis (passes 5–8)
 
-    let runProducers = case mBridgeBin of
-          Nothing  ->
-            -- No bridge: compile without SQL parsing, all files concurrently.
-            mapConcurrently_
-              (\o -> compileOne wsEnv Nothing o >>= atomically . writeTBQueue resultQ . Just)
-              outcomes
-          Just bin -> do
-            pool  <- startSqlBridgePool nWorkers bin
-            workQ <- newTQueueIO
-            atomically (mapM_ (writeTQueue workQ) outcomes)
-            mapConcurrently_
-              (\k -> workerLoop k workQ pool wsEnv resultQ)
-              [0 .. nWorkers - 1]
-              `finally` shutdownSqlBridgePool pool
-
-    concurrently_
-      (runProducers `finally` atomically (writeTBQueue resultQ Nothing))
-      (drainResultQueue conn resultQ)
+-- | Phase B: read Phase A tables from DuckDB, run link analysis, write results.
+-- Runs sequentially after Phase A is complete.
+runPhaseB :: DuckConn -> IO ()
+runPhaseB conn = do
+  -- Pass 5: type resolution
+  lvs                            <- queryLocalVars  conn
+  css                            <- queryCallSites  conn
+  gvs                            <- queryGlobalVars conn
+  (objSet, usrTypes, inh, procMap) <- queryObjInfo conn
+  let rt = resolveTypes lvs objSet usrTypes
+      rc = resolveCalls css procMap inh builtinFnNames builtinMethodNames
+  appendResolvedTypes conn rt
+  appendResolvedCalls conn rc
+  -- Pass 6+7: interproc edges + taint (combined, matching writeTaintAnalysis logic)
+  defs  <- queryProcDefs      conn
+  uses  <- queryProcUses      conn
+  allRC <- queryResolvedCalls conn
+  tfis  <- queryTaintInputs   conn
+  let globalVarNames = Set.fromList (map gvName gvs)
+      results        = map (Taint.taintAnalysis allRC defs uses globalVarNames) tfis
+      allSources     = concatMap Taint.trSources            results
+      allSinks       = concatMap Taint.trSinks              results
+      allPaths       = concatMap Taint.trPaths              results
+      allAnnotations = concatMap Taint.trAnnotations        results
+      allEdges       = concatMap Taint.trEdges              results
+      allSummaries   = concatMap Taint.trProcedureSummaries results
+  appendInterprocEdges   conn allEdges
+  appendProcSummaries    conn allSummaries
+  appendTaintSources     conn allSources
+  appendTaintSinks       conn allSinks
+  appendTaintPaths       conn allPaths
+  appendTaintAnnotations conn allAnnotations
+  -- Pass 8: dead code reachability
+  procs <- queryProcInfos   conn
+  dws   <- queryDwObjectSet conn
+  let rawCalls      = [ ( Taint.rcrObject r, Taint.rcrFromProc r
+                        , lastName (Taint.rcrToName r) )
+                      | r <- allRC ]
+      resolvedCalls = [ (Taint.rcrObject r, Taint.rcrFromProc r, o, p)
+                      | r <- allRC
+                      , Just o <- [Taint.rcrTargetObject r]
+                      , Just p <- [Taint.rcrTargetProc   r]
+                      ]
+      dead = DeadCode.computeDeadProcedures
+               procs rawCalls resolvedCalls (Map.toList inh) dws
+  appendDeadCode conn dead

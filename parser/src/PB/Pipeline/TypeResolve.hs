@@ -33,6 +33,7 @@ module PB.Pipeline.TypeResolve
   , classifyControlType
   , parseParams
   , callSitesExpr
+  , srFileObject
   ) where
 
 import PB.Prelude

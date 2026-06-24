@@ -1,15 +1,18 @@
 module TaintTest (tests) where
 
 import PB.Prelude
-import PB.AST.BodyStmt     (BodyStmt (..))
+import PB.AST.BodyStmt     (BodyStmt (..), IfStmt (..), ForStmt (..))
+import PB.AST.Expr         (Expr (..), Lvalue (..), LvSegment (..))
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.Pipeline.Taint
 
+import Data.Aeson           (eitherDecode)
+import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Test.Tasty           (TestTree, testGroup)
-import Test.Tasty.HUnit     (assertBool, testCase, (@?=))
+import Test.Tasty.HUnit     (assertBool, assertFailure, testCase, (@?=))
 
 -- ---------------------------------------------------------------------------
 -- Helpers
@@ -365,5 +368,37 @@ tests = testGroup "Taint"
           tskVarName (tpSink p) @?= "ls_val"
           tpSeverity p @?= "high"
           tpCategory p @?= "sql_injection"
+
+    , testCase "SQL nested inside if-block is found by extractTaintInputs" $
+        -- extractSqlStmts must recurse into control structures, not just scan top-level BsRaw
+        let sf = mkSf [mkFn "of_nested" [] ""
+                        [ at 1 (BsIf (IfStmt (ExBool True)
+                                  [ at 2 (BsRaw "SELECT col INTO :ls_val FROM tbl")
+                                  , at 3 (BsRaw "INSERT INTO other (col) VALUES (:ls_val)")
+                                  ]
+                                  [] Nothing))
+                        ]] [] [] []
+            tfi = extractTaintInputs "w.srf" sf
+        in length (tfiSqlStmts tfi) @?= 2
+
+    , testCase "SQL nested inside for-loop is found by extractTaintInputs" $
+        let body = [ at 2 (BsRaw "SELECT col INTO :ls_val FROM tbl") ]
+            sf = mkSf [mkFn "of_for" [] ""
+                        [ at 1 (BsFor (ForStmt (Lvalue [LvSegment "i" Nothing])
+                                       (ExInt "1") (ExInt "10") Nothing body))
+                        ]] [] [] []
+            tfi = extractTaintInputs "w.srf" sf
+        in length (tfiSqlStmts tfi) @?= 1
+    ]
+
+  , testGroup "GlobalVarRow"
+    [ testCase "FromJSON uses 'name' key matching global_vars.json output format" $
+        -- global_vars.json writes "name" (from TypeResolve.GlobalVar), but FromJSON
+        -- was reading "var_name" — causing globalVarNames = empty in the JSON pipeline
+        let json :: LBS.ByteString
+            json = "{\"file\":\"f.srf\",\"object\":\"oa\",\"name\":\"g_val\",\"type\":\"string\",\"mods\":[]}"
+        in case eitherDecode json :: Either String GlobalVarRow of
+             Left err -> assertFailure ("parse failed: " <> err)
+             Right row -> gvrVarName row @?= "g_val"
     ]
   ]

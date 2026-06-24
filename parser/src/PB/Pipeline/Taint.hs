@@ -40,10 +40,17 @@ module PB.Pipeline.Taint
   , extractTaintInputs
     -- * Entry point
   , taintAnalysis
+    -- * Helpers used by Phase B DuckDB reconstruction
+  , classifyOperation
+  , hasIntoClause
   ) where
 
 import PB.Prelude
-import PB.AST.BodyStmt     (BodyStmt (..))
+import PB.AST.BodyStmt
+  ( BodyStmt (..)
+  , IfStmt (..), ElseIf (..), ForStmt (..), DoStmt (..)
+  , ChooseStmt (..), CaseClause (..)
+  )
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.Pipeline.TypeResolve (parseParams)
@@ -127,7 +134,7 @@ data GlobalVarRow = GlobalVarRow
 
 instance FromJSON GlobalVarRow where
   parseJSON = withObject "GlobalVarRow" $ \o ->
-    GlobalVarRow <$> o .: "var_name"
+    GlobalVarRow <$> o .: "name"
 
 -- ---------------------------------------------------------------------------
 -- AST-derived types
@@ -382,6 +389,14 @@ extractSqlStmts file obj procName = concatMap go
             || op == "ROLLBACK" || op == "CONNECT" || op == "DISCONNECT"
          then []
          else [SqlStmt file obj procName (Just line) op txt (hasIntoClause txt)]
+    go (Located _ (BsIf (IfStmt _ then_ eis mel))) =
+      concatMap go then_
+      <> concatMap (concatMap go . eifBody) eis
+      <> maybe [] (concatMap go) mel
+    go (Located _ (BsFor (ForStmt _ _ _ _ body)))   = concatMap go body
+    go (Located _ (BsDo (DoStmt _ body _)))          = concatMap go body
+    go (Located _ (BsChoose (ChooseStmt _ clauses))) =
+      concatMap (concatMap go . ccBody) clauses
     go _ = []
 
 -- | Extract procedure metadata from AST blocks.
