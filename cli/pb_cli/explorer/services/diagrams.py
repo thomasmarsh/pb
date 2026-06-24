@@ -18,7 +18,7 @@ def get_cfg_diagram(
     proc_name: str,
 ) -> dict[str, Any] | None:
     row = conn.execute(
-        "SELECT body_json, start_line, end_line, cfg_json FROM procedures WHERE object = ? AND name = ? LIMIT 1",
+        "SELECT body_json, start_line, end_line, cfg_json FROM compat_procedures WHERE object = ? AND name = ? LIMIT 1",
         [object_name, proc_name],
     ).fetchone()
     if not row or not row[0]:
@@ -31,7 +31,7 @@ def get_cfg_diagram(
     source_original: str | None = None
     if proc_start_line and proc_end_line:
         src_row = conn.execute(
-            "SELECT source_text FROM objects WHERE name = ? LIMIT 1", [object_name]
+            "SELECT source_text FROM compat_objects WHERE name = ? LIMIT 1", [object_name]
         ).fetchone()
         if src_row and src_row[0]:
             all_lines = src_row[0].splitlines(keepends=True)

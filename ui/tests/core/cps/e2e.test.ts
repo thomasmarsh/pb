@@ -116,7 +116,6 @@ describe("e2e: reducer CPS path", () => {
         {
           name: "open",
           owner: "w_test",
-          body: [],
           cpsGraph: ASSIGN_CHAIN_RAW,
         },
       ],
@@ -148,7 +147,6 @@ describe("e2e: reducer CPS path", () => {
         {
           name: "open",
           owner: "w_test",
-          body: [],
           cpsGraph: RETRIEVE_RAW,
         },
       ],
@@ -175,49 +173,10 @@ describe("e2e: reducer CPS path", () => {
     ts.assertDrained();
   });
 
-  it("missing cpsGraph falls back to sync eval", () => {
-    // Event with body but no cpsGraph → runBodySync fallback
-    const ast: AstData = {
-      typeBlocks: [],
-      events: [
-        {
-          name: "open",
-          owner: "w_test",
-          body: [
-            {
-              line: 1,
-              node: {
-                tag: "BsAssign",
-                contents: [
-                  { segments: [{ name: "x", subscript: null }] },
-                  { tag: "ExInt", contents: "99" },
-                ],
-              },
-            },
-          ],
-          // no cpsGraph — triggers tree-walk
-        },
-      ],
-    };
-
-    const ts = createTestStore(runtimeReducer, { executeSql: () => Effect.none() }, {
-      ...initialRuntimeState,
-      ast,
-    });
-
-    ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
-      s.status = "done";
-      s.varEnv.globals = { ...PB_GLOBALS };
-      s.varEnv.locals[0]!.x = 99;
-      // cpsGraph stays null (sync fallback path)
-    });
-    ts.assertDrained();
-  });
-
   // Plan 115 item 2: CpsCallProc dispatches to an event body via the call stack.
   it("callproc dispatches to event body and resumes via call stack", () => {
     // Graph: [CpsReturn, CpsCallProc "triggerevent" [ExStr "ie_retrieve"] next=0]
-    // entry=1. The dispatch target ie_retrieve runs tree-walk and assigns x.
+    // entry=1. The dispatch target ie_retrieve runs and then popCallStack resumes.
     const CALLPROC_RAW = {
       nodes: [
         { tag: "CpsReturn" },
@@ -239,24 +198,11 @@ describe("e2e: reducer CPS path", () => {
         {
           name: "open",
           owner: "w_test",
-          body: [],
           cpsGraph: CALLPROC_RAW,
         },
         {
           name: "ie_retrieve",
           owner: "w_test",
-          body: [
-            {
-              line: 1,
-              node: {
-                tag: "BsAssign",
-                contents: [
-                  { segments: [{ name: "x", subscript: null }] },
-                  { tag: "ExStr", contents: "dispatched" },
-                ],
-              },
-            },
-          ],
         },
       ],
     };
@@ -316,7 +262,6 @@ describe("e2e: reducer CPS path", () => {
         {
           name: "open",
           owner: "w_test",
-          body: [],
           cpsGraph: CALLPROC_RAW,
         },
         // no ie_retrieve event → resolveCalleeBody returns null

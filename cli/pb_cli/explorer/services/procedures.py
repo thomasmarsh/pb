@@ -17,7 +17,7 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
         conn.execute(
             "SELECT file, object, proc_type, name, modifiers, params, "
             "return_type, start_line, end_line, body_json, cyclomatic "
-            "FROM procedures WHERE object = ? AND name = ?",
+            "FROM compat_procedures WHERE object = ? AND name = ?",
             [object_name, proc_name],
         )
     )
@@ -32,7 +32,7 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
     source_original = None
     if start and end:
         obj_rows = rows(conn.execute(
-            "SELECT source_text FROM objects WHERE name = ?", [object_name]
+            "SELECT source_text FROM compat_objects WHERE name = ?", [object_name]
         ))
         if obj_rows and obj_rows[0].get("source_text"):
             all_lines = obj_rows[0]["source_text"].splitlines(keepends=True)
@@ -53,7 +53,7 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
 
     callers = rows(conn.execute(
         "SELECT DISTINCT c.object AS caller_object, c.from_proc AS caller_proc "
-        "FROM calls c "
+        "FROM compat_calls c "
         "WHERE c.to_name = ? "
         "ORDER BY c.object, c.from_proc",
         [proc_name],
@@ -62,7 +62,7 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
 
     callees = rows(conn.execute(
         "SELECT DISTINCT c.to_name AS callee "
-        "FROM calls c "
+        "FROM compat_calls c "
         "WHERE c.object = ? AND c.from_proc = ? "
         "ORDER BY c.to_name",
         [object_name, proc_name],
@@ -84,7 +84,7 @@ def list_procedures(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
         "SELECT p.object, p.proc_type, p.name, p.modifiers, p.params, p.return_type, "
         "p.cyclomatic, "
         "COUNT(DISTINCT c.object || '.' || c.from_proc) AS caller_count "
-        "FROM procedures p "
+        "FROM compat_procedures p "
         "LEFT JOIN calls c ON c.to_name = p.name "
         "GROUP BY p.object, p.proc_type, p.name, p.modifiers, p.params, p.return_type, p.cyclomatic "
         "ORDER BY p.object, p.name"
@@ -97,7 +97,7 @@ def get_procedure_explore(conn: duckdb.DuckDBPyConnection, object_name: str, pro
         conn.execute(
             "SELECT body_json, proc_type, params, return_type, "
             "modifiers, start_line, end_line, cyclomatic "
-            "FROM procedures WHERE object = ? AND name = ?",
+            "FROM compat_procedures WHERE object = ? AND name = ?",
             [object_name, proc_name],
         )
     )
@@ -117,7 +117,7 @@ def get_procedure_explore(conn: duckdb.DuckDBPyConnection, object_name: str, pro
     source_original: str | None = None
     if start and end:
         obj_rows = rows(conn.execute(
-            "SELECT source_text FROM objects WHERE name = ?", [object_name]
+            "SELECT source_text FROM compat_objects WHERE name = ?", [object_name]
         ))
         if obj_rows and obj_rows[0].get("source_text"):
             all_lines = obj_rows[0]["source_text"].splitlines(keepends=True)

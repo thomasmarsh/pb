@@ -6,7 +6,7 @@ export interface DWRow {
   [column: string]: unknown;
 }
 
-export type ProcEntry = { name: string; owner: string; body: Located<BodyStmt>[]; cpsGraph?: unknown };
+export type ProcEntry = { name: string; owner: string; cpsGraph?: unknown };
 
 export interface GlobalVarDecl {
   name: string;

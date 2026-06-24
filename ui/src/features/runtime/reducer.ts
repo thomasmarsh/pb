@@ -2,18 +2,16 @@
 //
 // Each retrieve() call is a labeled suspension point: the reducer fires an
 // Effect and resumes when cps-resume arrives after SQL completes.
-// Pure statements execute synchronously via runBodySync when no cpsGraph is present.
 
 import { Effect } from "../../core/effect.js";
 import type { Reducer } from "../../core/reducer.js";
 import type { AstData, DWRow, ProcEntry } from "../../core/interpreter.js";
-import type { BodyStmt, Located } from "../../types/ast.generated.js";
 import { DW_QUERIES, type SQLResult } from "../../core/dw-queries.js";
 import { loadCpsGraph } from "../../core/cps/load.js";
 import { step, type CpsResumeAction } from "../../core/cps/runner.js";
 import type { CpsGraph } from "../../core/cps/types.js";
-import { evalExpr, evalTokenArg } from "../../core/cps/expr.js";
-import { type VarEnv, makeVarEnv, writeVar, declareLocal, pushFrame, popFrame } from "../../core/cps/var-env.js";
+import { evalExpr } from "../../core/cps/expr.js";
+import { type VarEnv, makeVarEnv, pushFrame, popFrame } from "../../core/cps/var-env.js";
 
 // ── Global variables ──────────────────────────────────────────────────────────
 
@@ -66,65 +64,6 @@ export type RuntimeAction =
   // found via the AST. Pushes the current graph and resumes at resumePc.
   | { tag: "cps-dispatch"; callee: string; args: unknown[]; resumePc: number }
   | { tag: "error"; message: string };
-
-// ── Synchronous fallback (no CPS graph) ──────────────────────────────────────
-
-// Minimal interpreter for events with no cpsGraph. Handles all pure control
-// flow (BsIf/BsFor/BsDo/BsChoose) and assignments. SQL calls are silently
-// ignored — only the CPS path (cpsGraph present) fires SQL effects.
-function runBodySync(varEnv: VarEnv, stmts: Located<BodyStmt>[], ast?: AstData | null): void {
-  for (const s of stmts) {
-    const node = s.node;
-    if (node.tag === "BsFor") {
-      const fv = node.contents;
-      const varName = fv.var?.segments[0]?.name;
-      if (!varName) continue;
-      const from = Number(evalExpr(varEnv, fv.from));
-      const to = Number(evalExpr(varEnv, fv.to));
-      const step_ = fv.step ? Number(evalExpr(varEnv, fv.step)) : 1;
-      if (step_ === 0) continue;
-      for (let i = from; step_ > 0 ? i <= to : i >= to; i += step_) {
-        writeVar(varEnv, varName, i);
-        runBodySync(varEnv, fv.body, ast);
-      }
-    } else if (node.tag === "BsDo") {
-      const dv = node.contents;
-      if (!dv.cond && !dv.loop) { runBodySync(varEnv, dv.body, ast); continue; }
-      const cond = dv.cond ?? dv.loop!;
-      const isWhile = cond.tag === "DoWhile";
-      const condExpr = cond.contents;
-      let guard = 10000;
-      do { runBodySync(varEnv, dv.body, ast); }
-      while (guard-- > 0 && (isWhile ? evalExpr(varEnv, condExpr) : !evalExpr(varEnv, condExpr)));
-    } else if (node.tag === "BsChoose") {
-      const cv = node.contents;
-      const value = evalExpr(varEnv, cv.expr);
-      for (const clause of cv.clauses) {
-        if (clause.expr === null) { runBodySync(varEnv, clause.body, ast); break; }
-        const cv2 = evalTokenArg(varEnv, clause.expr);
-        if (value === cv2 || String(value) === String(cv2)) { runBodySync(varEnv, clause.body, ast); break; }
-      }
-    } else if (node.tag === "BsAssign") {
-      const [lhs, rhs] = node.contents;
-      const name = lhs.segments[0]?.name;
-      if (name) writeVar(varEnv, name, evalExpr(varEnv, rhs));
-    } else if (node.tag === "BsLocalVar" && node.init) {
-      declareLocal(varEnv, node.name, evalExpr(varEnv, node.init));
-    } else if (node.tag === "BsIf") {
-      const { cond, then: thenBody, elseIfs, else: elseBody } = node.contents;
-      if (evalExpr(varEnv, cond)) {
-        runBodySync(varEnv, thenBody, ast);
-      } else {
-        const matched = elseIfs.find(ei => evalExpr(varEnv, ei.cond));
-        if (matched) runBodySync(varEnv, matched.body, ast);
-        else if (elseBody) runBodySync(varEnv, elseBody, ast);
-      }
-    } else if (node.tag === "BsCall") {
-      evalExpr(varEnv, node.contents);
-    }
-    // BsReturn, BsPbCall, BsExit, BsContinue, BsAugAssign, BsRaw → no-op in sync mode.
-  }
-}
 
 // ── CPS execution path ────────────────────────────────────────────────────────
 
@@ -270,8 +209,7 @@ function runProcEntry(
     draft.cpsGraph = graph;
     return stepWithDraft(graph, graph.entry, draft, env);
   }
-  // Sync fallback: handles pure statements; SQL calls are silent no-ops.
-  runBodySync(draft.varEnv, entry.body, draft.ast);
+  // No CPS graph — procedure has no async effects; nothing to execute.
   if (draft.callStack.length > 0) return popCallStack(draft, env);
   draft.status = "done";
   return null;

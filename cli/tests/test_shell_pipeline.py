@@ -1,225 +1,112 @@
-"""Unit tests for pb_cli.shell.pipeline.run — incremental diff control flow.
-
-Uses in-memory fakes for every env.storage/env.build field `run()` touches, so no
-cabal build and no real DuckDB connection are needed. Full corpus-backed integration
-coverage (real parse → real import → real metrics) stays in test_explorer.py's
-db_path fixture, which exercises run_from_jsonl_lines + compute_metrics directly.
-"""
+"""Unit tests for pb_cli.shell.pipeline.run — pb-runner --db flow."""
 
 from __future__ import annotations
 
-import tempfile
-from contextlib import contextmanager
+import subprocess
 from pathlib import Path
 
-import pytest
+import duckdb
 
-from pb_cli.shell.env import ShellEnv
 from pb_cli.shell.pipeline import run
 from pb_cli.shell.reporter import RecordingReporter
 
 
-class FakeDb:
-    """In-memory stand-in for the file-state + object tables pipeline.run touches."""
-
-    def __init__(self, file_state: dict[str, str] | None = None):
-        self.file_state = dict(file_state or {})
-        self.deleted: list[str] = []
-        self.dropped = False
-        self.schema_created = False
-        self.state_table_created = False
-        self.saved_state: dict[str, str] = {}
-        self.metrics_computed = False
-        self.metadata: dict[str, str] = {}
-        self.inserted_parse_errors: list = []
-
-    def execute(self, sql: str, params=None):
-        if "INSERT OR REPLACE INTO metadata" in sql and params:
-            self.metadata[params[0]] = params[1]
-        return self
-
-
-@pytest.fixture
-def fake_env(tmp_path):
-    db = FakeDb()
-    e = ShellEnv()
-    subset_dir = tmp_path / "subset"
-    subset_dir.mkdir(exist_ok=True)
-    out_dir = tmp_path / "runner_out"
-    out_dir.mkdir(exist_ok=True)
-
-    @contextmanager
-    def db_connection(path, read_only=False):
-        yield db
-
-    e.storage.db_connection = db_connection  # type: ignore[assignment]
-    e.storage.drop_tables = lambda conn: setattr(conn, "dropped", True)
-    e.storage.create_schema = lambda conn: setattr(conn, "schema_created", True)
-    e.storage.load_file_state = lambda conn: conn.file_state  # type: ignore[attr-defined]
-    e.storage.delete_file_rows = lambda conn, file_path: conn.deleted.append(file_path)  # type: ignore[attr-defined]
-    e.storage.save_file_state = lambda conn, states: conn.saved_state.update(states)  # type: ignore[attr-defined]
-    e.storage.compute_metrics = lambda conn, progress: setattr(conn, "metrics_computed", True)
-    e.storage.build_type_tables = lambda conn, out_dir=None: None  # no-op for unit tests
-    e.storage.build_call_tables = lambda conn, out_dir=None: None  # no-op for unit tests
-    e.storage.build_dataflow_tables = lambda conn, out_dir=None: None  # no-op for unit tests
-    e.storage.build_interproc_tables = lambda conn, out_dir=None: None  # no-op for unit tests
-    e.storage.build_taint_tables = lambda conn, out_dir=None: None  # no-op for unit tests
-    e.storage.build_dead_code_table = lambda conn, out_dir=None: None  # no-op for unit tests
-    e.storage.count_sql_parse_failures = lambda conn: 0
-    e.storage.build_subset_tmpdir = lambda src_dir, files: subset_dir
-    e.storage.import_batch = lambda objects, conn, dialect="oracle", on_progress=None: len(objects)  # type: ignore[assignment]
-    e.storage.insert_parse_errors = lambda conn, rows: conn.inserted_parse_errors.extend(rows)  # type: ignore[attr-defined]
-
-    return e, db
-
-
-def _patch_env(monkeypatch, env_obj):
-    monkeypatch.setattr("pb_cli.shell.pipeline.env", env_obj)
-
-
-def _make_parse_files(iterable):
-    """Create a parse_files mock that returns (iterator, tmp_out_dir)."""
-    def fake_parse_files(src_dir, binary, *, remap_from=None, remap_to=None):
-        return iter(iterable), Path(tempfile.mkdtemp(prefix="pb-test-"))
-    return fake_parse_files
-
-
-def test_no_changes_short_circuits(monkeypatch, fake_env):
-    e, db = fake_env
-    db.file_state = {"a.srw": "abc"}
-    e.build.hash_source_dir = lambda src_dir: {"a.srw": "abc"}
-    _patch_env(monkeypatch, e)
-
-    reporter = RecordingReporter()
-    run(Path("/fake"), "test.duckdb", Path("/fake/bin"), reporter)
-
-    done = [ev for ev in reporter.events if ev["type"] == "done"]
-    assert len(done) == 1
-    assert done[0]["parsed"] == 0
-    assert done[0]["errors"] == 0
-    assert done[0]["diff"] == {"new": 0, "changed": 0, "deleted": 0}
-    assert not db.metrics_computed
-
-
-def test_new_files_parsed_and_imported(monkeypatch, fake_env):
-    e, db = fake_env
-    e.build.hash_source_dir = lambda src_dir: {"new.srw": "hash1"}
-    e.runner.parse_files = _make_parse_files(
-        [(False, {"file": "new.srw", "tag": "file"})]
+def _make_minimal_db(path: str) -> None:
+    """Create a minimal DuckDB with the Haskell-native schema tables."""
+    conn = duckdb.connect(path)
+    conn.execute("CREATE TABLE objects (file TEXT, kind TEXT, object TEXT, ancestor TEXT)")
+    conn.execute(
+        "CREATE TABLE procedures (file TEXT, object TEXT, proc_name TEXT, proc_type TEXT, "
+        "start_line INT, end_line INT, cfg_json TEXT, cps_graph_json TEXT, "
+        "params TEXT, return_type TEXT, cyclomatic INT)"
     )
-    _patch_env(monkeypatch, e)
-
-    reporter = RecordingReporter()
-    run(Path("/fake"), "test.duckdb", Path("/fake/bin"), reporter)
-
-    done = [ev for ev in reporter.events if ev["type"] == "done"]
-    assert len(done) == 1
-    assert done[0]["parsed"] == 1
-    assert done[0]["errors"] == 0
-    assert done[0]["diff"] == {"new": 1, "changed": 0, "deleted": 0}
-    assert db.saved_state == {"new.srw": "hash1"}
-
-
-def test_changed_file_triggers_delete_then_reimport(monkeypatch, fake_env):
-    e, db = fake_env
-    db.file_state = {"old.srw": "old_hash"}
-    e.build.hash_source_dir = lambda src_dir: {"old.srw": "new_hash"}
-    e.runner.parse_files = _make_parse_files(
-        [(False, {"file": "old.srw", "tag": "file"})]
+    conn.execute(
+        "CREATE TABLE call_sites (file TEXT, object TEXT, from_proc TEXT, to_name TEXT, "
+        "call_type TEXT, line INT)"
     )
-    _patch_env(monkeypatch, e)
-
-    reporter = RecordingReporter()
-    run(Path("/fake"), "test.duckdb", Path("/fake/bin"), reporter)
-
-    assert "old.srw" in db.deleted
-    done = [ev for ev in reporter.events if ev["type"] == "done"]
-    assert done[0]["parsed"] == 1
-    assert done[0]["diff"] == {"new": 0, "changed": 1, "deleted": 0}
-
-
-def test_deleted_file_only_deletes_no_reparse(monkeypatch, fake_env):
-    e, db = fake_env
-    db.file_state = {"gone.srw": "hash1"}
-    e.build.hash_source_dir = lambda src_dir: {}
-
-    parse_called = False
-
-    def fake_parse_files(src_dir, binary, *, remap_from=None, remap_to=None):
-        nonlocal parse_called
-        parse_called = True
-        return iter([]), Path(tempfile.mkdtemp(prefix="pb-test-"))
-
-    e.runner.parse_files = fake_parse_files
-    _patch_env(monkeypatch, e)
-
-    reporter = RecordingReporter()
-    run(Path("/fake"), "test.duckdb", Path("/fake/bin"), reporter)
-
-    assert "gone.srw" in db.deleted
-    assert not parse_called
-    done = [ev for ev in reporter.events if ev["type"] == "done"]
-    assert done[0]["parsed"] == 0
-    assert done[0]["diff"] == {"new": 0, "changed": 0, "deleted": 1}
-
-
-def test_reset_flag_drops_tables(monkeypatch, fake_env):
-    e, db = fake_env
-    e.build.hash_source_dir = lambda src_dir: {}
-    _patch_env(monkeypatch, e)
-
-    reporter = RecordingReporter()
-    run(Path("/fake"), "test.duckdb", Path("/fake/bin"), reporter, reset=True)
-    assert db.dropped
-
-    db2 = FakeDb()
-    e2, db2_ref = fake_env
-    e2.build.hash_source_dir = lambda src_dir: {}
-
-    @contextmanager
-    def db_connection2(path, read_only=False):
-        yield db2
-
-    e2.storage.db_connection = db_connection2
-    e2.storage.drop_tables = lambda conn: setattr(conn, "dropped", True)
-    _patch_env(monkeypatch, e2)
-
-    reporter2 = RecordingReporter()
-    run(Path("/fake"), "test.duckdb", Path("/fake/bin"), reporter2, reset=False)
-    assert not db2.dropped
-
-
-def test_parse_error_propagates_to_done_event(monkeypatch, fake_env):
-    e, db = fake_env
-    e.build.hash_source_dir = lambda src_dir: {"bad.srw": "hash1"}
-    e.runner.parse_files = _make_parse_files(
-        [(True, {"file": "bad.srw", "error": "lex failure"})]
+    conn.execute(
+        "CREATE TABLE global_vars (file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT)"
     )
-    _patch_env(monkeypatch, e)
+    conn.execute(
+        "CREATE TABLE dw_controls (file TEXT, object TEXT, band TEXT, control_type TEXT, "
+        "name TEXT, x INT, y INT, width INT, height INT, expression TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE dead_code (object TEXT, proc_name TEXT, proc_type TEXT, cyclomatic INT, "
+        "confidence TEXT, caller_count_naive INT, caller_count_scoped INT)"
+    )
+    conn.execute(
+        "CREATE TABLE sql_statements (file TEXT, object TEXT, proc_name TEXT, line INT, "
+        "operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN)"
+    )
+    conn.close()
+
+
+def test_run_reports_error_on_binary_failure(monkeypatch, tmp_path):
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(args, returncode=1, stdout="", stderr="crash")
+
+    monkeypatch.setattr("pb_cli.shell.pipeline.subprocess.run", fake_run)
 
     reporter = RecordingReporter()
-    run(Path("/fake"), "test.duckdb", Path("/fake/bin"), reporter)
+    run(tmp_path, str(tmp_path / "out.duckdb"), Path("/fake/bin"), reporter)
 
     done = [ev for ev in reporter.events if ev["type"] == "done"]
     assert len(done) == 1
     assert done[0]["errors"] == 1
-    assert done[0]["parsed"] == 1
 
 
-def test_parse_error_is_persisted_with_extracted_line(monkeypatch, fake_env):
-    e, db = fake_env
-    e.build.hash_source_dir = lambda src_dir: {"bad.srw": "hash1"}
-    e.runner.parse_files = _make_parse_files(
-        [(True, {"file": "bad.srw", "error": "lex error at line 42: unexpected character"})]
-    )
-    _patch_env(monkeypatch, e)
+def test_run_calls_pb_runner_with_db_flag(monkeypatch, tmp_path):
+    called_args: list = []
+
+    def fake_run(args, **kwargs):
+        called_args.extend(args)
+        return subprocess.CompletedProcess(args, returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr("pb_cli.shell.pipeline.subprocess.run", fake_run)
 
     reporter = RecordingReporter()
-    run(Path("/fake"), "test.duckdb", Path("/fake/bin"), reporter)
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    run(src_dir, str(tmp_path / "out.duckdb"), Path("/fake/bin"), reporter)
 
-    assert len(db.inserted_parse_errors) == 1
-    err = db.inserted_parse_errors[0]
-    assert err.file == "bad.srw"
-    assert err.error_kind == "powerscript"
-    assert err.line == 42
-    assert "unexpected character" in err.message
+    assert "--db" in called_args
+    assert "-i" in called_args
+    assert str(src_dir.resolve()) in called_args
+
+
+def test_run_success_renames_db(monkeypatch, tmp_path):
+    db_path = str(tmp_path / "out.duckdb")
+
+    def fake_run(args, **kwargs):
+        # Simulate pb-runner creating the .new DB file
+        new_path = args[args.index("--db") + 1]
+        _make_minimal_db(new_path)
+        return subprocess.CompletedProcess(args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("pb_cli.shell.pipeline.subprocess.run", fake_run)
+
+    reporter = RecordingReporter()
+    run(tmp_path, db_path, Path("/fake/bin"), reporter)
+
+    assert Path(db_path).exists(), "final DB file should exist after rename"
+    assert not Path(db_path + ".new").exists(), ".new file should be removed after rename"
+
+    done = [ev for ev in reporter.events if ev["type"] == "done"]
+    assert len(done) == 1
+    assert done[0]["errors"] == 0
+
+
+def test_run_reset_deletes_existing_db(monkeypatch, tmp_path):
+    db_path = tmp_path / "out.duckdb"
+    db_path.write_text("placeholder")
+
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(args, returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr("pb_cli.shell.pipeline.subprocess.run", fake_run)
+
+    reporter = RecordingReporter()
+    run(tmp_path, str(db_path), Path("/fake/bin"), reporter, reset=True)
+
+    assert not db_path.exists()

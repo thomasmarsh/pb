@@ -134,17 +134,6 @@ describe("runtime integration", () => {
         events: [{
           name: "open",
           owner: "w_misth_zpkrat_list",
-          body: [{
-            line: 1,
-            node: {
-              tag: "BsCall",
-              contents: {
-                tag: "ExCall",
-                callee: { segments: [{ name: "dw", subscript: null }, { name: "retrieve", subscript: null }] },
-                args: [["gs_kodxrisi"]],
-              },
-            },
-          }],
           // CPS graph: retrieve:dw resolves via typeBlocks to dw_misth_zpkrat_list SQL.
           cpsGraph: makeSingleRetrieveCpsGraph("retrieve:dw"),
         }],

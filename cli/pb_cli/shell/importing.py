@@ -10,7 +10,7 @@ from typing import Callable
 from pb_cli.core.importing import import_file
 from pb_cli.core.models import TABLES, new_row_batch
 from pb_cli.shell.bulk import bulk_insert
-from pb_cli.shell.db import Conn, create_schema, db_connection
+from pb_cli.shell.db import Conn, db_connection
 
 
 def run_from_jsonl_lines(lines: Iterable[str], db: str = "pb.duckdb", dialect: str = "oracle") -> None:
@@ -23,7 +23,6 @@ def run_from_jsonl_lines(lines: Iterable[str], db: str = "pb.duckdb", dialect: s
         import_file(obj, rows, dialect)
 
     with db_connection(db) as conn:
-        create_schema(conn)
         for table in TABLES:
             data = rows[table]
             if data:

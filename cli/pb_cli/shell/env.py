@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Callable, Iterable, Iterator, Protocol
 
 from rich.panel import Panel
 
-from pb_cli.core.models import ParseErrorRow
 from pb_cli.shell.build import (
     build_runner,
     build_subset_tmpdir,
@@ -41,19 +40,13 @@ from pb_cli.shell.build import (
     hash_source_dir,
     walk_sr_files,
 )
-from pb_cli.shell.dataflow import build_dataflow_tables
 from pb_cli.shell.db import (
     Conn,
     connect,
     count_sql_parse_failures,
-    create_schema,
     db_connection,
-    drop_tables,
-    insert_parse_errors,
 )
-from pb_cli.shell.dead_code import build_dead_code_table
 from pb_cli.shell.importing import import_batch, run_from_jsonl_lines
-from pb_cli.shell.interproc import build_interproc_tables
 from pb_cli.shell.metrics import compute_dit, compute_metrics
 from pb_cli.shell.reporter import LiveReporter, Reporter
 from pb_cli.shell.runner import parse_files, parse_stream, render_error
@@ -62,14 +55,9 @@ from pb_cli.shell.state import (
     load_file_state,
     save_file_state,
 )
-from pb_cli.shell.taint import build_taint_tables
-from pb_cli.shell.type_resolution import build_call_tables, build_type_tables
 
 if TYPE_CHECKING:
     from pb_cli.shell.reporter import AnalyzeProgress
-
-
-ConnOp = Callable[[Conn], None]
 
 
 class FindRepo(Protocol):
@@ -148,8 +136,6 @@ class RunnerEnv:
 @dataclass
 class StorageEnv:
     db_connection: DbConnection = field(default=db_connection)
-    create_schema: ConnOp = field(default=create_schema)
-    drop_tables: ConnOp = field(default=drop_tables)
     load_file_state: Callable[[Conn], dict[str, str]] = field(default=load_file_state)
     delete_file_rows: Callable[[Conn, str], None] = field(default=delete_file_rows)
     save_file_state: Callable[[Conn, dict[str, str]], None] = field(default=save_file_state)
@@ -158,14 +144,7 @@ class StorageEnv:
     run_from_jsonl_lines: RunFromJsonlLines = field(default=run_from_jsonl_lines)
     compute_dit: Callable[[Conn], dict[str, int]] = field(default=compute_dit)
     count_sql_parse_failures: Callable[[Conn], int] = field(default=count_sql_parse_failures)
-    insert_parse_errors: Callable[[Conn, list[ParseErrorRow]], None] = field(default=insert_parse_errors)
     compute_metrics: Callable[[Conn, AnalyzeProgress], None] = field(default=compute_metrics)
-    build_type_tables: Callable[[Conn, Path | None], None] = field(default=build_type_tables)
-    build_call_tables: Callable[[Conn, Path | None], None] = field(default=build_call_tables)
-    build_dataflow_tables: Callable[[Conn, Path | None], None] = field(default=build_dataflow_tables)
-    build_interproc_tables: Callable[[Conn, Path | None], None] = field(default=build_interproc_tables)
-    build_taint_tables: Callable[[Conn, Path | None], None] = field(default=build_taint_tables)
-    build_dead_code_table: Callable[[Conn, Path | None], None] = field(default=build_dead_code_table)
     connect: Callable[[str], AbstractContextManager[Conn]] = field(default=connect)
 
 

@@ -16,33 +16,45 @@ def get_dw_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]:
         conn.execute(
             "SELECT control_name, control_type, band, x, y, width, height, "
             "expression, tab_seq, source_line "
-            "FROM dw_controls WHERE dw_name = ? ORDER BY band, y, x",
+            "FROM compat_dw_controls WHERE dw_name = ? ORDER BY band, y, x",
             [name],
         )
     )
-    tables = rows(
-        conn.execute("SELECT table_name FROM dw_retrieve_tables WHERE dw_name = ? ORDER BY table_name", [name])
-    )
-    columns = rows(
-        conn.execute(
-            "SELECT column_fqn, table_name, column_name "
-            "FROM dw_retrieve_columns WHERE dw_name = ? ORDER BY table_name, column_name",
-            [name],
+    try:
+        tables = rows(
+            conn.execute("SELECT table_name FROM dw_retrieve_tables WHERE dw_name = ? ORDER BY table_name", [name])
         )
-    )
-    where = rows(
-        conn.execute("SELECT idx, exp1, op, exp2, logic FROM dw_retrieve_where WHERE dw_name = ? ORDER BY idx", [name])
-    )
-    arguments = rows(
-        conn.execute("SELECT arg_name, arg_type FROM dw_arguments WHERE dw_name = ? ORDER BY arg_name", [name])
-    )
+    except Exception:
+        tables = []
+    try:
+        columns = rows(
+            conn.execute(
+                "SELECT column_fqn, table_name, column_name "
+                "FROM dw_retrieve_columns WHERE dw_name = ? ORDER BY table_name, column_name",
+                [name],
+            )
+        )
+    except Exception:
+        columns = []
+    try:
+        where = rows(
+            conn.execute("SELECT idx, exp1, op, exp2, logic FROM dw_retrieve_where WHERE dw_name = ? ORDER BY idx", [name])
+        )
+    except Exception:
+        where = []
+    try:
+        arguments = rows(
+            conn.execute("SELECT arg_name, arg_type FROM dw_arguments WHERE dw_name = ? ORDER BY arg_name", [name])
+        )
+    except Exception:
+        arguments = []
     used_by_objects = rows(conn.execute(
-        "SELECT DISTINCT object FROM calls WHERE to_name = ? ORDER BY object",
+        "SELECT DISTINCT object FROM compat_calls WHERE to_name = ? ORDER BY object",
         [name],
     ))
     used_by_procs = rows(conn.execute(
         "SELECT DISTINCT object, from_proc "
-        "FROM calls WHERE to_name = ? AND from_proc IS NOT NULL "
+        "FROM compat_calls WHERE to_name = ? AND from_proc IS NOT NULL "
         "ORDER BY object, from_proc",
         [name],
     ))
@@ -59,7 +71,7 @@ def get_dw_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]:
 
 
 def get_datawindow_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
-    file_rows = rows(conn.execute("SELECT DISTINCT file FROM dw_controls WHERE dw_name = ?", [name]))
+    file_rows = rows(conn.execute("SELECT DISTINCT file FROM compat_dw_controls WHERE dw_name = ?", [name]))
     if not file_rows:
         return None
 
@@ -67,7 +79,7 @@ def get_datawindow_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[st
 
     source_original = None
     source_rows = rows(conn.execute(
-        "SELECT source_text FROM objects WHERE name = ?", [name]
+        "SELECT source_text FROM compat_objects WHERE name = ?", [name]
     ))
     if source_rows and source_rows[0].get("source_text"):
         source_original = source_rows[0]["source_text"]

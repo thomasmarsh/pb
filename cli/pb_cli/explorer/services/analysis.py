@@ -15,7 +15,7 @@ def get_dead_code(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     return rows(conn.execute(
         "SELECT name, object, proc_type, cyclomatic, "
         "caller_count_naive, caller_count_scoped "
-        "FROM dead_procedures ORDER BY object, name"
+        "FROM compat_dead_procedures ORDER BY object, name"
     ))
 
 
@@ -39,12 +39,7 @@ def get_taint_paths(
     if severity is not None:
         where.append("severity = ?")
         params.append(severity)
-    if source_type is not None:
-        where.append("source_type = ?")
-        params.append(source_type)
-    if sink_type is not None:
-        where.append("sink_type = ?")
-        params.append(sink_type)
+    # source_type and sink_type no longer in taint_paths (new Haskell schema) — ignored
     if object_name is not None:
         where.append("(source_object = ? OR sink_object = ?)")
         params.extend([object_name, object_name])
@@ -54,9 +49,9 @@ def get_taint_paths(
 
     where_clause = ("WHERE " + " AND ".join(where)) if where else ""
     query = (
-        "SELECT id, source_object, source_proc, source_var, source_line, source_type, "
-        "sink_object, sink_proc, sink_var, sink_line, sink_type, severity, category "
-        f"FROM taint_paths {where_clause} ORDER BY id LIMIT ?"
+        "SELECT rowid AS id, source_object, source_proc, source_var, "
+        "sink_object, sink_proc, sink_var, severity, category "
+        f"FROM taint_paths {where_clause} ORDER BY rowid LIMIT ?"
     )
     path_rows = rows(conn.execute(query, params + [limit]))
 
@@ -70,15 +65,15 @@ def get_taint_paths(
                 "object": r["source_object"],
                 "proc": r["source_proc"],
                 "var": r["source_var"],
-                "line": r["source_line"],
-                "type": r["source_type"],
+                "line": None,
+                "type": None,
             },
             "sink": {
                 "object": r["sink_object"],
                 "proc": r["sink_proc"],
                 "var": r["sink_var"],
-                "line": r["sink_line"],
-                "type": r["sink_type"],
+                "line": None,
+                "type": None,
                 "severity": r["severity"],
             },
             "severity": r["severity"],
@@ -94,32 +89,36 @@ def get_taint_path(
     path_id: int,
 ) -> dict[str, Any] | None:
     path_rows = rows(
-        conn.execute("SELECT * FROM taint_paths WHERE id = ?", [path_id])
+        conn.execute(
+            "SELECT rowid AS id, source_object, source_proc, source_var, "
+            "sink_object, sink_proc, sink_var, severity, category "
+            "FROM taint_paths WHERE rowid = ?",
+            [path_id],
+        )
     )
     if not path_rows:
         return None
     r = path_rows[0]
-    steps = json.loads(r["steps_json"]) if r.get("steps_json") else []
     return {
         "id": r["id"],
         "source": {
             "object": r["source_object"],
             "proc_name": r["source_proc"],
             "var": r["source_var"],
-            "line": r["source_line"],
-            "type": r["source_type"],
+            "line": None,
+            "type": None,
         },
         "sink": {
             "object": r["sink_object"],
             "proc_name": r["sink_proc"],
             "var": r["sink_var"],
-            "line": r["sink_line"],
-            "type": r["sink_type"],
+            "line": None,
+            "type": None,
             "severity": r["severity"],
         },
         "severity": r["severity"],
         "category": r["category"],
-        "steps": steps,
+        "steps": [],
     }
 
 

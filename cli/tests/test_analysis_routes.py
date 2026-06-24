@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import duckdb
 import pytest
 
@@ -80,24 +78,20 @@ def taint_client(tmp_path_factory):
     conn.execute("INSERT INTO taint_sinks VALUES (?,?,?,?,?,?,?)",
                  ["w.srf", "w_obj", "proc_b", "ls_input", 20, "db_write", "high"])
 
-    # taint_paths
-    steps = json.dumps([
-        {"object": "w_obj", "proc_name": "proc_a", "line": 5,
-         "var_name": "ls_y", "step_kind": "source", "description": "taint source: db_read"},
-        {"object": "w_obj", "proc_name": "proc_b", "line": 20,
-         "var_name": "ls_input", "step_kind": "sink", "description": "taint sink: db_write"},
-    ])
+    # taint_paths — new Haskell schema (no id, no source_type/sink_type/steps_json)
     conn.execute("""
         CREATE TABLE taint_paths (
-            id INT, source_object TEXT, source_proc TEXT, source_var TEXT, source_line INT, source_type TEXT,
-            sink_object TEXT, sink_proc TEXT, sink_var TEXT, sink_line INT, sink_type TEXT,
-            severity TEXT, category TEXT, steps_json TEXT
+            source_file TEXT, source_object TEXT, source_proc TEXT, source_var TEXT,
+            sink_file TEXT, sink_object TEXT, sink_proc TEXT, sink_var TEXT,
+            severity TEXT, category TEXT
         )
     """)
-    conn.execute("INSERT INTO taint_paths VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                 [1, "w_obj", "proc_a", "ls_y", 5, "db_read",
-                  "w_obj", "proc_b", "ls_input", 20, "db_write",
-                  "high", "sql_injection", steps])
+    conn.execute(
+        "INSERT INTO taint_paths VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ["w.srf", "w_obj", "proc_a", "ls_y",
+         "w.srf", "w_obj", "proc_b", "ls_input",
+         "high", "sql_injection"],
+    )
 
     # taint_annotations
     conn.execute("""
@@ -133,11 +127,11 @@ def test_taint_paths_returns_all(taint_client):
     assert body["total"] == 1
     assert len(body["paths"]) == 1
     path = body["paths"][0]
-    assert path["id"] == 1
+    assert isinstance(path["id"], int)
     assert path["severity"] == "high"
     assert path["category"] == "sql_injection"
     assert path["source"]["object"] == "w_obj"
-    assert path["sink"]["type"] == "db_write"
+    assert path["sink"]["type"] is None  # not in new schema
 
 
 def test_taint_paths_filter_severity(taint_client):
@@ -156,12 +150,12 @@ def test_taint_paths_filter_category(taint_client):
     assert r.json()["total"] == 1
 
 
-def test_taint_paths_filter_source_type(taint_client):
-    r = taint_client.get("/api/analysis/taint-paths?source_type=db_read")
+def test_taint_paths_filter_object(taint_client):
+    r = taint_client.get("/api/analysis/taint-paths?object_name=w_obj")
     assert r.status_code == 200
     assert r.json()["total"] == 1
 
-    r2 = taint_client.get("/api/analysis/taint-paths?source_type=request_param")
+    r2 = taint_client.get("/api/analysis/taint-paths?object_name=nonexistent")
     assert r2.json()["total"] == 0
 
 
@@ -171,14 +165,17 @@ def test_taint_paths_filter_source_type(taint_client):
 
 
 def test_taint_path_detail_returns_steps(taint_client):
-    r = taint_client.get("/api/analysis/taint-paths/1")
+    # First get the id from the list endpoint
+    r_list = taint_client.get("/api/analysis/taint-paths")
+    path_id = r_list.json()["paths"][0]["id"]
+
+    r = taint_client.get(f"/api/analysis/taint-paths/{path_id}")
     assert r.status_code == 200
     body = r.json()
-    assert body["id"] == 1
+    assert body["id"] == path_id
     assert isinstance(body["steps"], list)
-    assert len(body["steps"]) == 2
-    assert body["steps"][0]["step_kind"] == "source"
-    assert body["steps"][-1]["step_kind"] == "sink"
+    assert body["source"]["var"] == "ls_y"
+    assert body["sink"]["var"] == "ls_input"
 
 
 def test_taint_path_detail_404(taint_client):
@@ -343,43 +340,32 @@ def dead_code_client(tmp_path_factory):
     This fixture writes a synthetic dead_procedures.json (as the Haskell
     pipeline would produce) and tests the API endpoint reads it correctly.
     """
-    import json
-
     tmp = tmp_path_factory.mktemp("dead_code_db")
     db_path = str(tmp / "dead.duckdb")
-    out_dir = tmp / "runner_out"
-    out_dir.mkdir()
     conn = duckdb.connect(db_path)
 
     conn.execute("""
-        CREATE TABLE dead_procedures (
-            object TEXT NOT NULL, name TEXT NOT NULL, proc_type TEXT NOT NULL,
+        CREATE TABLE dead_code (
+            object TEXT NOT NULL, proc_name TEXT NOT NULL, proc_type TEXT NOT NULL,
             cyclomatic INT, confidence TEXT NOT NULL,
-            caller_count_naive INT NOT NULL, caller_count_scoped INT NOT NULL,
-            PRIMARY KEY (object, name)
+            caller_count_naive INT NOT NULL, caller_count_scoped INT NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE VIEW compat_dead_procedures AS
+          SELECT object, proc_name AS name, proc_type, cyclomatic, confidence,
+                 caller_count_naive, caller_count_scoped
+          FROM dead_code
+    """)
 
-    # Graph:
-    #   ev_handler (event) ──► proc_a ──► proc_b   [reachable]
-    #   on_handler (on)                              [entry, reachable]
-    #   proc_c ──► proc_d                            [both dead, high confidence]
-    #   base_event (event) ──► base_hook (obj_base)  [reachable]
-    #   base_hook (obj_child, inherits obj_base)      [reachable via override]
-    #
     # Dead procedures: proc_c, proc_d
-    dead_json = [
-        {"object": "obj_a", "name": "proc_c", "proc_type": "function",
-         "cyclomatic": 2, "confidence": "high",
-         "caller_count_naive": 0, "caller_count_scoped": 0},
-        {"object": "obj_a", "name": "proc_d", "proc_type": "function",
-         "cyclomatic": 1, "confidence": "high",
-         "caller_count_naive": 0, "caller_count_scoped": 0},
-    ]
-    (out_dir / "dead_procedures.json").write_text(json.dumps(dead_json), encoding="utf-8")
-
-    from pb_cli.shell.dead_code import build_dead_code_table
-    build_dead_code_table(conn, out_dir)
+    for row in [
+        ("obj_a", "proc_c", "function", 2, "high", 0, 0),
+        ("obj_a", "proc_d", "function", 1, "high", 0, 0),
+    ]:
+        conn.execute(
+            "INSERT INTO dead_code VALUES (?, ?, ?, ?, ?, ?, ?)", row
+        )
 
     conn.close()
 

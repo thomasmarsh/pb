@@ -26,20 +26,27 @@ def list_tables(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
 
 
 def column_lineage(conn: duckdb.DuckDBPyConnection, table_name: str) -> list[dict]:
-    dw_cols = rows(
-        conn.execute(
-            "SELECT column_name, dw_name FROM dw_retrieve_columns WHERE table_name = ? ORDER BY column_name, dw_name",
-            [table_name],
+    try:
+        dw_cols = rows(
+            conn.execute(
+                "SELECT column_name, dw_name FROM dw_retrieve_columns WHERE table_name = ? ORDER BY column_name, dw_name",
+                [table_name],
+            )
         )
-    )
-    ps_cols = rows(
-        conn.execute(
-            "SELECT unnest(columns) AS col, object, proc_name, operation "
-            "FROM sql_statements "
-            "WHERE ? = ANY(tables) AND columns IS NOT NULL AND len(columns) > 0",
-            [table_name],
+    except Exception:
+        dw_cols = []
+    try:
+        ps_cols = rows(
+            conn.execute(
+                "SELECT unnest(string_split(columns, ',')) AS col, object, proc_name, operation "
+                "FROM sql_statements "
+                "WHERE list_contains(string_split(tables, ','), ?) "
+                "  AND columns IS NOT NULL AND columns != ''",
+                [table_name],
+            )
         )
-    )
+    except Exception:
+        ps_cols = []
 
     col_map: dict[str, dict] = defaultdict(
         lambda: {
@@ -92,11 +99,11 @@ def impact_lineage(conn: duckdb.DuckDBPyConnection, table_name: str) -> dict:
             f"""
         WITH RECURSIVE desc_cte AS (
             SELECT from_object AS descendant, to_object AS ancestor, 1 AS depth
-            FROM inherits
+            FROM compat_inherits
             WHERE to_object IN ({placeholders})
             UNION ALL
             SELECT i.from_object, dc.ancestor, dc.depth + 1
-            FROM inherits i
+            FROM compat_inherits i
             JOIN desc_cte dc ON i.to_object = dc.descendant
             WHERE dc.depth < 15
         )
@@ -126,26 +133,35 @@ def get_table_detail(conn: duckdb.DuckDBPyConnection, table_name: str) -> dict[s
     if not all_refs:
         return None
 
-    dws = rows(
-        conn.execute(
-            "SELECT DISTINCT dw_name, file FROM dw_retrieve_tables WHERE table_name = ? ORDER BY dw_name",
-            [table_name],
+    try:
+        dws = rows(
+            conn.execute(
+                "SELECT DISTINCT dw_name, file FROM dw_retrieve_tables WHERE table_name = ? ORDER BY dw_name",
+                [table_name],
+            )
         )
-    )
-    columns = rows(
-        conn.execute(
-            "SELECT dw_name, column_fqn, column_name "
-            "FROM dw_retrieve_columns WHERE table_name = ? ORDER BY dw_name, column_name",
-            [table_name],
+    except Exception:
+        dws = []
+    try:
+        columns = rows(
+            conn.execute(
+                "SELECT dw_name, column_fqn, column_name "
+                "FROM dw_retrieve_columns WHERE table_name = ? ORDER BY dw_name, column_name",
+                [table_name],
+            )
         )
-    )
-    where = rows(
-        conn.execute(
-            "SELECT dw_name, idx, exp1, op, exp2, logic "
-            "FROM dw_retrieve_where WHERE exp1 LIKE ? OR exp2 LIKE ? ORDER BY dw_name, idx",
-            [f"%{table_name}%", f"%{table_name}%"],
+    except Exception:
+        columns = []
+    try:
+        where = rows(
+            conn.execute(
+                "SELECT dw_name, idx, exp1, op, exp2, logic "
+                "FROM dw_retrieve_where WHERE exp1 LIKE ? OR exp2 LIKE ? ORDER BY dw_name, idx",
+                [f"%{table_name}%", f"%{table_name}%"],
+            )
         )
-    )
+    except Exception:
+        where = []
     procedures = rows(
         conn.execute(
             "SELECT DISTINCT object, proc_name, operation "
@@ -185,13 +201,13 @@ def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         except Exception:
             stats[table] = 0
 
-    kind_counts = rows(conn.execute("SELECT kind, count(*) AS count FROM objects GROUP BY kind ORDER BY count DESC"))
+    kind_counts = rows(conn.execute("SELECT kind, count(*) AS count FROM compat_objects GROUP BY kind ORDER BY count DESC"))
     stats["by_kind"] = kind_counts
 
     top_complex = rows(
         conn.execute(
             "SELECT object, name, proc_type, cyclomatic "
-            "FROM procedures WHERE cyclomatic IS NOT NULL "
+            "FROM compat_procedures WHERE cyclomatic IS NOT NULL "
             "ORDER BY cyclomatic DESC LIMIT 10"
         )
     )
@@ -214,7 +230,7 @@ def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     try:
         row = conn.execute("""
             SELECT count(*) FROM (
-                SELECT DISTINCT file FROM objects
+                SELECT DISTINCT file FROM compat_objects
                 UNION
                 SELECT DISTINCT file FROM parse_errors
             ) t
@@ -246,10 +262,10 @@ def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
 
     try:
         row = conn.execute("""
-            SELECT count(*) FROM objects o
+            SELECT count(*) FROM compat_objects o
             WHERE o.kind = 'datawindow'
               AND NOT EXISTS (
-                  SELECT 1 FROM calls c WHERE lower(c.to_name) = lower(o.name)
+                  SELECT 1 FROM compat_calls c WHERE lower(c.to_name) = lower(o.name)
               )
               AND NOT EXISTS (
                   SELECT 1 FROM dw_retrieve_tables d WHERE lower(d.dw_name) = lower(o.name)

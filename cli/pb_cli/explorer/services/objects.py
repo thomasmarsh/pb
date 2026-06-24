@@ -12,7 +12,7 @@ from pb_cli.explorer.routes.dependencies import rows
 
 def _get_root(conn: duckdb.DuckDBPyConnection) -> Path | None:
     """Return the ingestion root directory from metadata, or None."""
-    row = conn.execute("SELECT value FROM metadata WHERE key = 'ingestion_root'").fetchone()
+    row = conn.execute("SELECT value FROM compat_metadata WHERE key = 'ingestion_root'").fetchone()
     return Path(row[0]) if row else None
 
 
@@ -51,13 +51,13 @@ def list_objects(
     sort_col = sort if sort in safe_sorts else "name"
     sort_dir = "DESC" if order.lower() == "desc" else "ASC"
 
-    count_row = conn.execute(f"SELECT count(*) FROM objects o {where}", params).fetchone()
+    count_row = conn.execute(f"SELECT count(*) FROM compat_objects o {where}", params).fetchone()
     total = count_row[0] if count_row else 0
 
     items = rows(
         conn.execute(
             f"SELECT o.name, o.kind, o.file, o.ancestor "
-            f"FROM objects o {where} "
+            f"FROM compat_objects o {where} "
             f"ORDER BY o.{sort_col} {sort_dir} "
             f"LIMIT ? OFFSET ?",
             params + [limit, offset],
@@ -67,7 +67,7 @@ def list_objects(
 
 
 def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
-    obj_rows = rows(conn.execute("SELECT name, kind, file, ancestor FROM objects WHERE name = ?", [name]))
+    obj_rows = rows(conn.execute("SELECT name, kind, file, ancestor FROM compat_objects WHERE name = ?", [name]))
     if not obj_rows:
         return None
     obj = obj_rows[0]
@@ -79,28 +79,28 @@ def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
         conn.execute(
             "SELECT object, owner, proc_type, name, modifiers, params, return_type, "
             "start_line, end_line, cyclomatic "
-            "FROM procedures WHERE object = ? ORDER BY proc_type, name",
+            "FROM compat_procedures WHERE object = ? ORDER BY proc_type, name",
             [name],
         )
     )
     obj["procedures"] = procs
 
-    ancestors = rows(conn.execute("SELECT to_object AS parent FROM inherits WHERE from_object = ?", [name]))
+    ancestors = rows(conn.execute("SELECT to_object AS parent FROM compat_inherits WHERE from_object = ?", [name]))
     obj["ancestors"] = [a["parent"] for a in ancestors]
 
-    descendants = rows(conn.execute("SELECT from_object AS child FROM inherits WHERE to_object = ?", [name]))
+    descendants = rows(conn.execute("SELECT from_object AS child FROM compat_inherits WHERE to_object = ?", [name]))
     obj["descendants"] = [d["child"] for d in descendants]
 
-    callers = rows(conn.execute("SELECT DISTINCT object AS caller FROM calls WHERE to_name = ?", [name]))
+    callers = rows(conn.execute("SELECT DISTINCT object AS caller FROM compat_calls WHERE to_name = ?", [name]))
     obj["callers"] = [c["caller"] for c in callers]
 
-    callees = rows(conn.execute("SELECT DISTINCT to_name AS callee FROM calls WHERE object = ?", [name]))
+    callees = rows(conn.execute("SELECT DISTINCT to_name AS callee FROM compat_calls WHERE object = ?", [name]))
     obj["callees"] = [c["callee"] for c in callees]
 
     dws = rows(conn.execute(
         "SELECT DISTINCT c.to_name AS dw_name "
-        "FROM calls c "
-        "JOIN objects o ON o.name = c.to_name AND o.kind = 'datawindow' "
+        "FROM compat_calls c "
+        "JOIN compat_objects o ON o.name = c.to_name AND o.kind = 'datawindow' "
         "WHERE c.object = ? "
         "ORDER BY c.to_name",
         [name],
@@ -112,8 +112,8 @@ def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
         "FROM all_sql_tables t "
         "WHERE (t.object = ? AND t.source = 'powerscript') "
         "   OR (t.source = 'datawindow' AND t.object IN ("
-        "       SELECT DISTINCT c.to_name FROM calls c "
-        "       JOIN objects o ON o.name = c.to_name AND o.kind = 'datawindow' "
+        "       SELECT DISTINCT c.to_name FROM compat_calls c "
+        "       JOIN compat_objects o ON o.name = c.to_name AND o.kind = 'datawindow' "
         "       WHERE c.object = ?)) "
         "ORDER BY t.table_name",
         [name, name],
@@ -124,7 +124,7 @@ def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
 
 
 def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
-    obj_rows = rows(conn.execute("SELECT name, kind, file, source_text FROM objects WHERE name = ?", [name]))
+    obj_rows = rows(conn.execute("SELECT name, kind, file, source_text FROM compat_objects WHERE name = ?", [name]))
     if not obj_rows:
         return None
 
@@ -148,9 +148,9 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
             "p.start_line, p.end_line, p.cyclomatic, "
             "COUNT(DISTINCT c_in.object || '.' || c_in.from_proc) AS caller_count, "
             "COUNT(DISTINCT c_out.to_name) AS callee_count "
-            "FROM procedures p "
-            "LEFT JOIN calls c_in ON c_in.to_name = p.name "
-            "LEFT JOIN calls c_out ON c_out.object = p.object AND c_out.from_proc = p.name "
+            "FROM compat_procedures p "
+            "LEFT JOIN compat_calls c_in ON c_in.to_name = p.name "
+            "LEFT JOIN compat_calls c_out ON c_out.object = p.object AND c_out.from_proc = p.name "
             "WHERE p.object = ? "
             "AND p.start_line IS NOT NULL AND p.end_line IS NOT NULL "
             "GROUP BY p.name, p.proc_type, p.modifiers, p.params, p.return_type, "
@@ -160,19 +160,19 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
         )
     )
 
-    known_objects = rows(conn.execute("SELECT name, kind FROM objects WHERE name != ? ORDER BY name", [name]))
+    known_objects = rows(conn.execute("SELECT name, kind FROM compat_objects WHERE name != ? ORDER BY name", [name]))
 
     known_procs = rows(
         conn.execute(
             "SELECT DISTINCT p.name, p.object, p.proc_type, "
             "p.params, p.return_type, p.modifiers, p.start_line, p.end_line, p.cyclomatic "
-            "FROM procedures p "
-            "JOIN calls c ON c.to_name = p.name "
+            "FROM compat_procedures p "
+            "JOIN compat_calls c ON c.to_name = p.name "
             "WHERE c.object = ? "
             "UNION "
             "SELECT DISTINCT p.name, p.object, p.proc_type, "
             "p.params, p.return_type, p.modifiers, p.start_line, p.end_line, p.cyclomatic "
-            "FROM procedures p "
+            "FROM compat_procedures p "
             "WHERE p.object = ? AND p.proc_type IN ('function', 'subroutine') "
             "ORDER BY p.name",
             [name, name],
@@ -207,7 +207,7 @@ _PB_BASE_CLASSES = {"window", "datawindow", "userobject", "dwuserobject", "nonvi
 def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
     """Return layout (typeBlocks), event bodies, and ancestor events/functions."""
     obj_rows = rows(conn.execute(
-        "SELECT type_blocks_json FROM objects WHERE name = ?", [name]
+        "SELECT type_blocks_json FROM compat_objects WHERE name = ?", [name]
     ))
     if not obj_rows:
         return None
@@ -217,7 +217,7 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
     type_blocks = json.loads(raw) if raw else []
 
     event_rows = rows(conn.execute(
-        "SELECT name, owner, body_json, cps_graph_json FROM procedures "
+        "SELECT name, owner, body_json, cps_graph_json FROM compat_procedures "
         "WHERE object = ? AND proc_type = 'event'",
         [name],
     ))
@@ -241,7 +241,7 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
 
     # Object's own functions/subroutines (not events, not ancestor).
     func_rows = rows(conn.execute(
-        "SELECT name, owner, body_json, cps_graph_json FROM procedures "
+        "SELECT name, owner, body_json, cps_graph_json FROM compat_procedures "
         "WHERE object = ? AND proc_type IN ('function', 'subroutine')",
         [name],
     ))
@@ -257,7 +257,7 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
 
     # Variable declarations (instance, shared, global) from the global_vars table.
     var_rows = rows(conn.execute(
-        "SELECT var_name, var_type, modifiers, scope FROM global_vars "
+        "SELECT var_name, var_type, modifiers, scope FROM compat_global_vars "
         "WHERE object = ? ORDER BY scope, var_name",
         [name],
     ))
@@ -276,7 +276,7 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
 
     if ancestor_name and ancestor_name.lower() not in _PB_BASE_CLASSES:
         anc_rows = rows(conn.execute(
-            "SELECT name, owner, proc_type, body_json, cps_graph_json FROM procedures "
+            "SELECT name, owner, proc_type, body_json, cps_graph_json FROM compat_procedures "
             "WHERE object = ? AND proc_type IN ('event', 'function', 'subroutine')",
             [ancestor_name],
         ))
@@ -308,7 +308,7 @@ def get_dw_layout(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] 
     """Return the full DataWindowFile JSON for a datawindow object."""
     import json as _json
     obj_rows = rows(conn.execute(
-        "SELECT dw_json FROM objects WHERE name = ? AND kind = 'datawindow'", [name]
+        "SELECT dw_json FROM compat_objects WHERE name = ? AND kind = 'datawindow'", [name]
     ))
     if not obj_rows:
         return None
@@ -317,12 +317,12 @@ def get_dw_layout(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] 
 
 
 def get_explore_tree(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
-    obj_rows = rows(conn.execute("SELECT name, kind, file FROM objects ORDER BY kind, name"))
+    obj_rows = rows(conn.execute("SELECT name, kind, file FROM compat_objects ORDER BY kind, name"))
     proc_rows = rows(
         conn.execute(
             "SELECT object, proc_type, name, modifiers, params, return_type, "
             "start_line, end_line, cyclomatic "
-            "FROM procedures ORDER BY object, proc_type, name"
+            "FROM compat_procedures ORDER BY object, proc_type, name"
         )
     )
     procs_by_obj: dict[str, list[dict[str, Any]]] = {}

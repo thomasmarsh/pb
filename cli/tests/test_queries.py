@@ -66,7 +66,7 @@ def test_all_sql_files_register(db_path):
 def test_top_returns_rows(db_path):
     conn = duckdb.connect(db_path, read_only=True)
     rows = conn.execute(
-        "SELECT object, name, proc_type, cyclomatic FROM procedures ORDER BY cyclomatic DESC LIMIT $n", {"n": 5}
+        "SELECT object, name, proc_type, cyclomatic FROM compat_procedures ORDER BY cyclomatic DESC LIMIT $n", {"n": 5}
     ).fetchall()
     conn.close()
     assert len(rows) == 5
@@ -76,7 +76,7 @@ def test_top_returns_rows(db_path):
 def test_callers_returns_rows(db_path):
     conn = duckdb.connect(db_path, read_only=True)
     rows = conn.execute(
-        "SELECT DISTINCT object FROM calls WHERE to_name = $name ORDER BY object", {"name": "fn_sqlerror"}
+        "SELECT DISTINCT object FROM compat_calls WHERE to_name = $name ORDER BY object", {"name": "fn_sqlerror"}
     ).fetchall()
     conn.close()
     assert len(rows) > 0
@@ -100,11 +100,11 @@ def test_ancestors_chain(db_path):
     rows = conn.execute(
         """
         WITH RECURSIVE chain AS (
-            SELECT from_object, to_object, 1 AS depth FROM inherits
+            SELECT from_object, to_object, 1 AS depth FROM compat_inherits
             WHERE from_object = $name
           UNION ALL
             SELECT chain.from_object, i.to_object, chain.depth + 1
-            FROM inherits i JOIN chain ON chain.to_object = i.from_object
+            FROM compat_inherits i JOIN chain ON chain.to_object = i.from_object
         )
         SELECT depth, to_object AS parent FROM chain ORDER BY depth
     """,

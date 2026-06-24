@@ -14,8 +14,8 @@ if TYPE_CHECKING:
 
 
 def fetch_inheritance_edges(conn: Conn) -> list[tuple[str, str]]:
-    """Fetch parent→child edges from the inherits table."""
-    return conn.execute("SELECT from_object, to_object FROM inherits").fetchall()
+    """Fetch parent→child edges from the compat_inherits view."""
+    return conn.execute("SELECT from_object, to_object FROM compat_inherits").fetchall()
 
 
 def compute_dit_from_edges(edges: list[tuple[str, str]]) -> dict[str, int]:
@@ -42,12 +42,12 @@ def fetch_metrics_data(
     Returns (call_edges, cyc_rows, inherit_edges).
     """
     edges = conn.execute("""
-        SELECT object AS src, to_name AS dst FROM calls
+        SELECT object AS src, to_name AS dst FROM compat_calls
         WHERE to_name != '' AND object != to_name
     """).fetchall()
     cyc = conn.execute("""
         SELECT object, max(cyclomatic), avg(cyclomatic)
-        FROM procedures
+        FROM compat_procedures
         WHERE cyclomatic IS NOT NULL AND cyclomatic > 0
         GROUP BY object
     """).fetchall()

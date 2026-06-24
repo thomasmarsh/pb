@@ -156,7 +156,7 @@ describe("launchReducer", () => {
   describe("run-app-open", () => {
     it("returns effect to fetch window AST", () => {
       const windowAst = makeAst({
-        events: [{ name: "open", owner: "w_app", body: [] }],
+        events: [{ name: "open", owner: "w_app" }],
       });
       const env = createMockEnv(windowAst);
       const ts = createTestStore(launchReducer, env, {

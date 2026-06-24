@@ -21,7 +21,6 @@ export interface ProcedureRow {
   start_line: number | null;
   end_line: number | null;
   cyclomatic: number | null;
-  body_json?: string;
 }
 
 export interface ObjectMetrics {

@@ -4,15 +4,11 @@ SELECT
     o.name AS datawindow,
     o.file,
     o.ancestor
-FROM objects o
+FROM compat_objects o
 WHERE o.kind = 'datawindow'
   AND NOT EXISTS (
-      SELECT 1 FROM calls c
+      SELECT 1 FROM compat_calls c
       WHERE lower(c.to_name) = lower(o.name)
-  )
-  AND NOT EXISTS (
-      SELECT 1 FROM dw_retrieve_tables d
-      WHERE lower(d.dw_name) = lower(o.name)
   )
   AND NOT EXISTS (
       SELECT 1 FROM all_sql_tables a

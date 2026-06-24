@@ -70,7 +70,7 @@ describe("launch integration", () => {
   it("loads .sra, seeds globals, opens w_app, and runs open event", () => {
     const sraAst = makeAst();
     const wAppAst = makeAst({
-      events: [{ name: "open", owner: "w_app", body: [] }],
+      events: [{ name: "open", owner: "w_app" }],
     });
 
     const env = createAppEnv({ openpay: sraAst, w_app: wAppAst });

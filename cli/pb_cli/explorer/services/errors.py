@@ -1,4 +1,4 @@
-"""Parse-error (PowerScript/lex/SQL) listing — extracted from route handler."""
+"""Parse-error listing — extracted from route handler."""
 
 from __future__ import annotations
 
@@ -28,12 +28,9 @@ def list_errors(
 
     conditions: list[str] = []
     params: list[Any] = []
-    if kind:
-        conditions.append("error_kind = ?")
-        params.append(kind)
     if q:
-        conditions.append("(message ILIKE ? OR file ILIKE ? OR snippet ILIKE ?)")
-        params += [f"%{q}%", f"%{q}%", f"%{q}%"]
+        conditions.append("(file ILIKE ? OR error ILIKE ?)")
+        params += [f"%{q}%", f"%{q}%"]
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
     count_row = conn.execute(f"SELECT count(*) FROM parse_errors {where}", params).fetchone()
@@ -41,9 +38,9 @@ def list_errors(
 
     items = rows(
         conn.execute(
-            f"SELECT file, error_kind, message, object, proc_name, line, snippet "
+            f"SELECT file, error "
             f"FROM parse_errors {where} "
-            f"ORDER BY file, line "
+            f"ORDER BY file "
             f"LIMIT ? OFFSET ?",
             params + [limit, offset],
         )
@@ -58,7 +55,7 @@ def get_error_source(
     """Return the full source text for a file, used to show SQL error context."""
     try:
         row = conn.execute(
-            "SELECT source_text FROM objects WHERE file = ? LIMIT 1",
+            "SELECT source_text FROM compat_objects WHERE file = ? LIMIT 1",
             [file],
         ).fetchone()
     except Exception:
