@@ -553,42 +553,56 @@ runModeDb srcDir dbPath = do
     runPhaseB conn  -- Phase B: link analysis (passes 5–8)
 
 -- | Phase B: read Phase A tables from DuckDB, run link analysis, write results.
--- Runs sequentially after Phase A is complete.
+-- Runs sequentially after Phase A is complete. Split into three functions so
+-- each pass's bindings go out of scope (and are GC-eligible) before the next.
 runPhaseB :: DuckConn -> IO ()
 runPhaseB conn = do
-  -- Pass 5: type resolution
-  lvs                            <- queryLocalVars  conn
-  css                            <- queryCallSites  conn
-  gvs                            <- queryGlobalVars conn
-  (objSet, usrTypes, inh, procMap) <- queryObjInfo conn
+  inh   <- runPass5  conn
+  allRC <- runPass67 conn
+  runPass8 conn inh allRC
+
+runPass5 :: DuckConn -> IO (Map.Map Text Text)
+runPass5 conn = do
+  lvs                              <- queryLocalVars  conn
+  css                              <- queryCallSites  conn
+  (objSet, usrTypes, inh, procMap) <- queryObjInfo   conn
   let rt = resolveTypes lvs objSet usrTypes
       rc = resolveCalls css procMap inh builtinFnNames builtinMethodNames
   appendResolvedTypes conn rt
   appendResolvedCalls conn rc
-  -- Pass 6+7: interproc edges + taint (combined, matching writeTaintAnalysis logic)
-  defs  <- queryProcDefs      conn
-  uses  <- queryProcUses      conn
+  pure inh
+
+-- | Pass 6+7: compute interproc edges and taint ONCE corpus-wide (not once per file).
+runPass67 :: DuckConn -> IO [Taint.ResolvedCallRow]
+runPass67 conn = do
+  gvs  <- queryGlobalVars     conn
+  defs <- queryProcDefs       conn
+  uses <- queryProcUses       conn
   allRC <- queryResolvedCalls conn
   tfis  <- queryTaintInputs   conn
   let globalVarNames = Set.fromList (map gvName gvs)
-      results        = map (Taint.taintAnalysis allRC defs uses globalVarNames) tfis
-      allSources     = concatMap Taint.trSources            results
-      allSinks       = concatMap Taint.trSinks              results
-      allPaths       = concatMap Taint.trPaths              results
-      allAnnotations = concatMap Taint.trAnnotations        results
-      allEdges       = concatMap Taint.trEdges              results
-      allSummaries   = concatMap Taint.trProcedureSummaries results
-  appendInterprocEdges   conn allEdges
-  appendProcSummaries    conn allSummaries
+      allProcMetas   = concatMap Taint.tfiProcMetas tfis
+      allSqlStmts    = concatMap Taint.tfiSqlStmts  tfis
+      edges          = Taint.buildInterprocEdges allRC defs uses globalVarNames allProcMetas
+      summaries      = Taint.buildProcedureSummaries edges defs uses globalVarNames allProcMetas
+      allSources     = Taint.classifySources allSqlStmts allProcMetas
+      allSinks       = Taint.classifySinks   allSqlStmts
+      (tainted, prov) = Taint.propagateTaint allSources defs uses edges
+      allPaths       = Taint.buildTaintPaths allSources allSinks prov
+      allAnnotations = Taint.buildTaintAnnotations tainted allSources allSinks defs uses
+  appendInterprocEdges   conn edges
+  appendProcSummaries    conn summaries
   appendTaintSources     conn allSources
   appendTaintSinks       conn allSinks
   appendTaintPaths       conn allPaths
   appendTaintAnnotations conn allAnnotations
-  -- Pass 8: dead code reachability
+  pure allRC
+
+runPass8 :: DuckConn -> Map.Map Text Text -> [Taint.ResolvedCallRow] -> IO ()
+runPass8 conn inh allRC = do
   procs <- queryProcInfos   conn
   dws   <- queryDwObjectSet conn
-  let rawCalls      = [ ( Taint.rcrObject r, Taint.rcrFromProc r
-                        , lastName (Taint.rcrToName r) )
+  let rawCalls      = [ (Taint.rcrObject r, Taint.rcrFromProc r, lastName (Taint.rcrToName r))
                       | r <- allRC ]
       resolvedCalls = [ (Taint.rcrObject r, Taint.rcrFromProc r, o, p)
                       | r <- allRC

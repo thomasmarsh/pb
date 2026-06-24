@@ -38,6 +38,8 @@ module PB.Pipeline.Taint
   , buildTaintAnnotations
     -- * Pre-extraction (for streaming pipelines)
   , extractTaintInputs
+    -- * Corpus-wide path building (used by runPhaseB)
+  , buildTaintPaths
     -- * Entry point
   , taintAnalysis
     -- * Helpers used by Phase B DuckDB reconstruction
@@ -883,32 +885,32 @@ taintAnalysis resolvedCalls defs uses globalVarNames tfi =
       edges     = buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas
       summaries = buildProcedureSummaries edges defs uses globalVarNames procMetas
       (tainted, prov) = propagateTaint sources defs uses edges
-      paths       = buildPaths sources sinks prov
+      paths       = buildTaintPaths sources sinks prov
       annotations = buildTaintAnnotations tainted sources sinks defs uses
   in TaintResult sources sinks paths annotations edges summaries
-  where
-    buildPaths :: [TaintSource] -> [TaintSink] -> Provenance -> [TaintPath]
-    buildPaths srcs snks prov =
-      [ TaintPath src sink steps (tskSeverity sink)
-          (Map.findWithDefault "general" (tskSinkType sink) _category)
-      | sink <- snks
-      , let sinkTriple = (tskObject sink, tskProcName sink, tskVarName sink)
-      , HM.member sinkTriple prov
-      , src <- findSource sinkTriple prov srcs
-      , let steps = traceTaintPath src sink prov
-      , not (null steps)
-      ]
 
-    findSource :: Triple -> Provenance -> [TaintSource] -> [TaintSource]
-    findSource triple prov srcs =
-      let rootTriple = walkProvBack triple prov
-      in filter (\s -> (tsObject s, tsProcName s, tsVarName s) == rootTriple) srcs
+buildTaintPaths :: [TaintSource] -> [TaintSink] -> Provenance -> [TaintPath]
+buildTaintPaths srcs snks prov =
+  [ TaintPath src sink steps (tskSeverity sink)
+      (Map.findWithDefault "general" (tskSinkType sink) _category)
+  | sink <- snks
+  , let sinkTriple = (tskObject sink, tskProcName sink, tskVarName sink)
+  , HM.member sinkTriple prov
+  , src <- findSourceRoot sinkTriple prov srcs
+  , let steps = traceTaintPath src sink prov
+  , not (null steps)
+  ]
 
-    walkProvBack :: Triple -> Provenance -> Triple
-    walkProvBack t p = case HM.lookup t p of
-      Nothing    -> t
-      Just (_, _, Nothing, _, _) -> t  -- source node — this IS the root
-      Just (po, pp, Just pv, _, _) -> walkProvBack (po, pp, pv) p
+findSourceRoot :: Triple -> Provenance -> [TaintSource] -> [TaintSource]
+findSourceRoot triple prov srcs =
+  let rootTriple = walkProvBack triple prov
+  in filter (\s -> (tsObject s, tsProcName s, tsVarName s) == rootTriple) srcs
+
+walkProvBack :: Triple -> Provenance -> Triple
+walkProvBack t p = case HM.lookup t p of
+  Nothing    -> t
+  Just (_, _, Nothing, _, _) -> t
+  Just (po, pp, Just pv, _, _) -> walkProvBack (po, pp, pv) p
 
 -- ---------------------------------------------------------------------------
 -- Utilities
