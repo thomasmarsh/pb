@@ -30,15 +30,24 @@ def get_procedure_detail(conn: duckdb.DuckDBPyConnection, object_name: str, proc
 
     source_original = None
     if source_file and start and end:
-        root = _get_root(conn)
-        disk_path = (root / source_file) if root else Path(source_file)
-        if disk_path.exists():
-            try:
-                with open(disk_path, "r", errors="replace") as f:
-                    all_lines = f.readlines()
-                source_original = "".join(all_lines[max(0, start - 1) : end])
-            except (OSError, IndexError):
-                pass
+        # Try the source_files table first (self-contained DB source).
+        src_row = conn.execute(
+            "SELECT lines FROM source_files WHERE file = ?", [source_file]
+        ).fetchone()
+        if src_row and src_row[0]:
+            all_lines = src_row[0].splitlines()
+            source_original = "\n".join(all_lines[max(0, start - 1) : end])
+        else:
+            # Fallback: read from disk.
+            root = _get_root(conn)
+            disk_path = (root / source_file) if root else Path(source_file)
+            if disk_path.exists():
+                try:
+                    with open(disk_path, "r", errors="replace") as f:
+                        all_lines = f.readlines()
+                    source_original = "".join(all_lines[max(0, start - 1) : end])
+                except (OSError, IndexError):
+                    pass
 
     proc["source_original"] = source_original
 

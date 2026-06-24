@@ -63,11 +63,12 @@ import PB.Pipeline.Walk    (walkAllSrFiles)
 import PB.Pipeline.DuckDb
   ( DuckConn, withWriteConn, initSchema
   , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..), SqlStmtRow (..)
+  , SourceFileRow (..)
   , appendObjects, appendProcedures
   , appendDwObjects, appendDwControls
   , appendLocalVars, appendCallSites, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
-  , appendParseErrors
+  , appendParseErrors, appendSourceFiles
   , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
   , queryProcDefs, queryProcUses, queryResolvedCalls
   , queryTaintInputs, queryProcInfos, queryDwObjectSet
@@ -290,14 +291,15 @@ asciiOf b
 -- Per-file parse outcome
 
 data ParsedFile = ParsedFile
-  { pfPath   :: FilePath
-  , pfSrFile :: SrFile
-  , pfSpans  :: SrSpans
+  { pfPath     :: FilePath
+  , pfSrFile   :: SrFile
+  , pfSpans    :: SrSpans
+  , pfContents :: Text
   }
 
 data ParseOutcome
   = PsParsed ParsedFile
-  | PsDw     FilePath DataWindowFile
+  | PsDw     FilePath Text DataWindowFile
   | PsFailed FilePath Text
   | OtherFile FilePath
 
@@ -311,14 +313,14 @@ parseOutcome src = case fileKind src of
       Right contents ->
         case parsePowerScriptFile (stripBom contents) of
           Left  err      -> PsFailed src err
-          Right (sf, sp) -> PsParsed (ParsedFile src sf sp)
+          Right (sf, sp) -> PsParsed (ParsedFile src sf sp contents)
   DataWindow -> do
     readResult <- try (readFile src) :: IO (Either SomeException Text)
     pure $ case readResult of
       Left  ex       -> PsFailed src (T.pack (show ex))
       Right contents -> case parseDataWindow (stripBom contents) of
         Left  err -> PsFailed src err
-        Right dw  -> PsDw src dw
+        Right dw  -> PsDw src contents dw
   _ -> pure (OtherFile src)
 
 -- ---------------------------------------------------------------------------
@@ -330,19 +332,21 @@ parseOutcome src = case fileKind src of
 --   Phase B  — link analysis (passes 5–8) entirely within DuckDB
 
 data CompiledPs = CompiledPs
-  { cpsObjectRow  :: ObjectRow
-  , cpsProcRows   :: [ProcRow]
-  , cpsLocalVars  :: [LocalVar]
-  , cpsCallSites  :: [CallSite]
-  , cpsGlobalVars :: [GlobalVar]
-  , cpsProcFlows  :: [(Text, Text, Text, Dataflow.ProcFlow)]
-  , cpsSqlStmts   :: [SqlStmtRow]
+  { cpsObjectRow     :: ObjectRow
+  , cpsProcRows      :: [ProcRow]
+  , cpsLocalVars     :: [LocalVar]
+  , cpsCallSites     :: [CallSite]
+  , cpsGlobalVars    :: [GlobalVar]
+  , cpsProcFlows     :: [(Text, Text, Text, Dataflow.ProcFlow)]
+  , cpsSqlStmts      :: [SqlStmtRow]
+  , cpsSourceContent :: Maybe SourceFileRow
   }
 
 data CompiledDw = CompiledDw
-  { cdDwObjectRow :: DwObjectRow
-  , cdDwControls  :: [DwControlRow]
-  , cdCallSites   :: [CallSite]
+  { cdDwObjectRow    :: DwObjectRow
+  , cdDwControls     :: [DwControlRow]
+  , cdCallSites      :: [CallSite]
+  , cdSourceContent  :: Maybe SourceFileRow
   }
 
 data CompiledFile
@@ -401,16 +405,17 @@ compileOne wsEnv mBridge outcome = case outcome of
       Just (pool,k) ->
         fmap concat $ mapM (extractProcSql pool k fp obj) procBodies
     pure $ CFPs $ CompiledPs
-      { cpsObjectRow  = ObjectRow fp "powerscript" obj anc
-      , cpsProcRows   = map fst procs
-      , cpsLocalVars  = lvs
-      , cpsCallSites  = css
-      , cpsGlobalVars = gvs
-      , cpsProcFlows  = map snd procs
-      , cpsSqlStmts   = sqlRows
+      { cpsObjectRow     = ObjectRow fp "powerscript" obj anc
+      , cpsProcRows      = map fst procs
+      , cpsLocalVars     = lvs
+      , cpsCallSites     = css
+      , cpsGlobalVars    = gvs
+      , cpsProcFlows     = map snd procs
+      , cpsSqlStmts      = sqlRows
+      , cpsSourceContent = Just (SourceFileRow fp (pfContents pf))
       }
 
-  PsDw fp dw -> do
+  PsDw fp contents dw -> do
     let obj   = T.pack (takeBaseName fp)
         fpT   = T.pack fp
         style = Map.findWithDefault "" "style" (doaAttrs (dwObject dw))
@@ -422,9 +427,10 @@ compileOne wsEnv mBridge outcome = case outcome of
                 | c <- dwControls dw ]
         css   = extractDwCallSites fpT obj dw
     pure $ CFDw $ CompiledDw
-      { cdDwObjectRow = DwObjectRow fpT obj style
-      , cdDwControls  = ctls
-      , cdCallSites   = css
+      { cdDwObjectRow   = DwObjectRow fpT obj style
+      , cdDwControls    = ctls
+      , cdCallSites     = css
+      , cdSourceContent = Just (SourceFileRow fpT contents)
       }
 
   PsFailed fp err -> pure $ CFError fp err
@@ -499,10 +505,12 @@ appendToDb conn (CFPs r) = do
   appendProcDefs   conn (cpsProcFlows r)
   appendProcUses   conn (cpsProcFlows r)
   appendSqlStmts   conn (cpsSqlStmts r)
+  appendSourceFiles conn (catMaybes [cpsSourceContent r])
 appendToDb conn (CFDw r) = do
-  appendDwObjects  conn [cdDwObjectRow r]
+  appendDwObjects   conn [cdDwObjectRow r]
   appendDwControls conn (cdDwControls r)
-  appendCallSites  conn (cdCallSites r)
+  appendCallSites   conn (cdCallSites r)
+  appendSourceFiles conn (catMaybes [cdSourceContent r])
 appendToDb conn (CFError fp err) =
   appendParseErrors conn [(fp, err)]
 appendToDb _    CFSkip = pure ()

@@ -9,6 +9,7 @@ module PB.Pipeline.DuckDb
   , DwObjectRow (..)
   , DwControlRow (..)
   , SqlStmtRow (..)
+  , SourceFileRow (..)
   -- Phase A appenders
   , appendObjects
   , appendProcedures
@@ -21,6 +22,7 @@ module PB.Pipeline.DuckDb
   , appendProcUses
   , appendSqlStmts
   , appendParseErrors
+  , appendSourceFiles
   -- Phase B queries
   , queryLocalVars
   , queryCallSites
@@ -132,6 +134,8 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
         \x INTEGER, y INTEGER, width INTEGER, height INTEGER, expression TEXT)"
       , "CREATE TABLE IF NOT EXISTS parse_errors \
         \(file TEXT, error TEXT)"
+      , "CREATE TABLE IF NOT EXISTS source_files \
+        \(file TEXT PRIMARY KEY, lines TEXT)"
       -- Phase B tables
       , "CREATE TABLE IF NOT EXISTS resolved_types \
         \(file TEXT, object TEXT, proc_name TEXT, var_name TEXT, \
@@ -225,6 +229,11 @@ data SqlStmtRow = SqlStmtRow
   , ssrColumns   :: Text
   , ssrRawSql    :: Text
   , ssrParseOk   :: Bool
+  }
+
+data SourceFileRow = SourceFileRow
+  { sfrFile :: Text
+  , sfrLines :: Text
   }
 
 -- ---------------------------------------------------------------------------
@@ -369,6 +378,14 @@ appendParseErrors conn errs = withRaw conn "parse_errors" $ \app ->
   for_ errs $ \(path, msg) -> do
     aText app (T.pack path)
     aText app msg
+    endRow app
+
+appendSourceFiles :: DuckConn -> [SourceFileRow] -> IO ()
+appendSourceFiles _    [] = pure ()
+appendSourceFiles conn rows = withRaw conn "source_files" $ \app ->
+  for_ rows $ \r -> do
+    aText app (sfrFile r)
+    aText app (sfrLines r)
     endRow app
 
 -- ---------------------------------------------------------------------------

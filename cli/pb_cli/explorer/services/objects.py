@@ -147,14 +147,22 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
     file_path = obj_rows[0]["file"]
     lines = []
     if file_path:
-        root = _get_root(conn)
-        disk_path = (root / file_path) if root else Path(file_path)
-        if disk_path.exists():
-            try:
-                with open(disk_path, "r", errors="replace") as f:
-                    lines = f.read().splitlines()
-            except OSError:
-                pass
+        # Try the source_files table first (self-contained DB source).
+        src_row = conn.execute(
+            "SELECT lines FROM source_files WHERE file = ?", [file_path]
+        ).fetchone()
+        if src_row and src_row[0]:
+            lines = src_row[0].splitlines()
+        else:
+            # Fallback: read from disk (preserves behaviour for non-PBL sources).
+            root = _get_root(conn)
+            disk_path = (root / file_path) if root else Path(file_path)
+            if disk_path.exists():
+                try:
+                    with open(disk_path, "r", errors="replace") as f:
+                        lines = f.read().splitlines()
+                except OSError:
+                    pass
 
     procs = rows(
         conn.execute(
