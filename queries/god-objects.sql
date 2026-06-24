@@ -4,9 +4,9 @@
 -- :min_degree INT 5
 -- :min_cyclomatic INT 3
 SELECT m.object, m.in_degree, m.max_cyclomatic, m.avg_cyclomatic,
-       count(p.name) AS proc_count
+       count(p.proc_name) AS proc_count
 FROM object_metrics m
-JOIN compat_procedures p ON p.object = m.object
+JOIN procedures p ON p.object = m.object
 GROUP BY m.object, m.in_degree, m.max_cyclomatic, m.avg_cyclomatic
 HAVING m.in_degree >= $min_degree AND m.max_cyclomatic >= $min_cyclomatic
 ORDER BY m.in_degree * m.max_cyclomatic DESC;

@@ -13,9 +13,9 @@ from pb_cli.explorer.routes.dependencies import rows
 
 def get_dead_code(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     return rows(conn.execute(
-        "SELECT name, object, proc_type, cyclomatic, "
+        "SELECT proc_name AS name, object, proc_type, cyclomatic, "
         "caller_count_naive, caller_count_scoped "
-        "FROM compat_dead_procedures ORDER BY object, name"
+        "FROM dead_code ORDER BY object, proc_name"
     ))
 
 

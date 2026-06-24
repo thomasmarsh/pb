@@ -14,9 +14,8 @@ from pb_cli.explorer.services.objects import _get_root
 def get_dw_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]:
     controls = rows(
         conn.execute(
-            "SELECT control_name, control_type, band, x, y, width, height, "
-            "expression, tab_seq, source_line "
-            "FROM compat_dw_controls WHERE dw_name = ? ORDER BY band, y, x",
+            "SELECT name AS control_name, control_type, band, x, y, width, height, expression "
+            "FROM dw_controls WHERE object = ? ORDER BY band, y, x",
             [name],
         )
     )
@@ -49,12 +48,12 @@ def get_dw_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]:
     except Exception:
         arguments = []
     used_by_objects = rows(conn.execute(
-        "SELECT DISTINCT object FROM compat_calls WHERE to_name = ? ORDER BY object",
+        "SELECT DISTINCT object FROM call_sites WHERE to_name = ? ORDER BY object",
         [name],
     ))
     used_by_procs = rows(conn.execute(
         "SELECT DISTINCT object, from_proc "
-        "FROM compat_calls WHERE to_name = ? AND from_proc IS NOT NULL "
+        "FROM call_sites WHERE to_name = ? AND from_proc IS NOT NULL "
         "ORDER BY object, from_proc",
         [name],
     ))
@@ -71,27 +70,20 @@ def get_dw_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]:
 
 
 def get_datawindow_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
-    file_rows = rows(conn.execute("SELECT DISTINCT file FROM compat_dw_controls WHERE dw_name = ?", [name]))
+    file_rows = rows(conn.execute("SELECT DISTINCT file FROM dw_controls WHERE object = ?", [name]))
     if not file_rows:
         return None
 
     source_file = file_rows[0]["file"]
 
     source_original = None
-    source_rows = rows(conn.execute(
-        "SELECT source_text FROM compat_objects WHERE name = ?", [name]
-    ))
-    if source_rows and source_rows[0].get("source_text"):
-        source_original = source_rows[0]["source_text"]
-
-    if not source_original:
-        root = _get_root(conn)
-        disk_path = (root / source_file) if root else Path(source_file)
-        if disk_path.exists():
-            try:
-                source_original = disk_path.read_text(errors="replace")
-            except OSError:
-                pass
+    root = _get_root(conn)
+    disk_path = (root / source_file) if root else Path(source_file)
+    if disk_path.exists():
+        try:
+            source_original = disk_path.read_text(errors="replace")
+        except OSError:
+            pass
 
     return {
         "name": name,

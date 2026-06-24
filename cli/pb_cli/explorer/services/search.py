@@ -13,24 +13,24 @@ def global_search(conn: duckdb.DuckDBPyConnection, q: str) -> dict[str, Any]:
     like = f"%{q}%"
     objects = rows(
         conn.execute(
-            "SELECT name, kind, file FROM compat_objects WHERE name ILIKE ? OR file ILIKE ? ORDER BY name LIMIT 50",
+            "SELECT object AS name, kind, file FROM objects WHERE object ILIKE ? OR file ILIKE ? ORDER BY object LIMIT 50",
             [like, like],
         )
     )
     procs = rows(
         conn.execute(
-            "SELECT object, proc_type, name, modifiers, start_line "
-            "FROM compat_procedures "
-            "WHERE name ILIKE ? OR object ILIKE ? "
-            "ORDER BY name LIMIT 50",
+            "SELECT object, proc_type, proc_name AS name, start_line "
+            "FROM procedures "
+            "WHERE proc_name ILIKE ? OR object ILIKE ? "
+            "ORDER BY proc_name LIMIT 50",
             [like, like],
         )
     )
     dw = rows(
         conn.execute(
-            "SELECT DISTINCT dw_name, control_name, control_type "
-            "FROM compat_dw_controls "
-            "WHERE dw_name ILIKE ? OR control_name ILIKE ? "
+            "SELECT DISTINCT object AS dw_name, name AS control_name, control_type "
+            "FROM dw_controls "
+            "WHERE object ILIKE ? OR name ILIKE ? "
             "LIMIT 50",
             [like, like],
         )

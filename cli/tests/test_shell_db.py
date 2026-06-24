@@ -59,23 +59,14 @@ def test_count_sql_parse_failures_counts_real_failures(tmp_path):
         assert count_sql_parse_failures(conn) == 1
 
 
-def test_setup_compat_layer_creates_views(tmp_path):
-    """setup_compat_layer should create compat_* views on a Haskell-schema DB."""
-    from pb_cli.shell.db import setup_compat_layer
+def test_setup_db_extras_creates_tables(tmp_path):
+    """setup_db_extras should create the metadata and object_metrics tables."""
+    from pb_cli.shell.db import setup_db_extras
     db = str(tmp_path / "test.duckdb")
     with db_connection(db) as conn:
-        conn.execute("CREATE TABLE objects (file TEXT, kind TEXT, object TEXT, ancestor TEXT)")
-        conn.execute("CREATE TABLE procedures (file TEXT, object TEXT, proc_name TEXT, proc_type TEXT, start_line INT, end_line INT, cfg_json TEXT, cps_graph_json TEXT, params TEXT, return_type TEXT, cyclomatic INT)")
-        conn.execute("CREATE TABLE call_sites (file TEXT, object TEXT, from_proc TEXT, to_name TEXT, call_type TEXT, line INT)")
-        conn.execute("CREATE TABLE global_vars (file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT)")
-        conn.execute("CREATE TABLE dw_controls (file TEXT, object TEXT, band TEXT, control_type TEXT, name TEXT, x INT, y INT, width INT, height INT, expression TEXT)")
-        conn.execute("CREATE TABLE dead_code (object TEXT, proc_name TEXT, proc_type TEXT, cyclomatic INT, confidence TEXT, caller_count_naive INT, caller_count_scoped INT)")
-        conn.execute(_CREATE_SQL_STATEMENTS)
-        setup_compat_layer(conn)
-        # compat views should be queryable
-        conn.execute("SELECT name FROM compat_objects LIMIT 1")
-        conn.execute("SELECT name FROM compat_procedures LIMIT 1")
-        conn.execute("SELECT count(*) FROM compat_calls")
+        setup_db_extras(conn)
+        conn.execute("SELECT key, value FROM metadata LIMIT 1")
+        conn.execute("INSERT INTO metadata VALUES ('k', 'v')")
         conn.execute("SELECT count(*) FROM object_metrics")
 
 

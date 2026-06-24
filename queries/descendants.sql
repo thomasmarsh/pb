@@ -2,10 +2,12 @@
 -- :name TEXT
 -- @entity descendant object
 WITH RECURSIVE sub AS (
-    SELECT from_object, to_object FROM compat_inherits WHERE to_object = $name
+    SELECT object AS from_object, ancestor AS to_object
+    FROM objects WHERE ancestor = $name
   UNION ALL
-    SELECT i.from_object, i.to_object
-    FROM compat_inherits i JOIN sub ON i.to_object = sub.from_object
+    SELECT o.object AS from_object, o.ancestor AS to_object
+    FROM objects o JOIN sub ON o.ancestor = sub.from_object
+    WHERE o.ancestor IS NOT NULL
 )
 SELECT DISTINCT from_object AS descendant
 FROM sub

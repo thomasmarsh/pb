@@ -97,16 +97,21 @@ def impact_lineage(conn: duckdb.DuckDBPyConnection, table_name: str) -> dict:
     inherited_rows = rows(
         conn.execute(
             f"""
-        WITH RECURSIVE desc_cte AS (
+        WITH RECURSIVE
+          inherits AS (
+            SELECT object AS from_object, ancestor AS to_object
+            FROM objects WHERE ancestor IS NOT NULL
+          ),
+          desc_cte AS (
             SELECT from_object AS descendant, to_object AS ancestor, 1 AS depth
-            FROM compat_inherits
+            FROM inherits
             WHERE to_object IN ({placeholders})
             UNION ALL
             SELECT i.from_object, dc.ancestor, dc.depth + 1
-            FROM compat_inherits i
+            FROM inherits i
             JOIN desc_cte dc ON i.to_object = dc.descendant
             WHERE dc.depth < 15
-        )
+          )
         SELECT descendant, ancestor, min(depth) AS depth
         FROM desc_cte
         GROUP BY descendant, ancestor
@@ -201,13 +206,13 @@ def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         except Exception:
             stats[table] = 0
 
-    kind_counts = rows(conn.execute("SELECT kind, count(*) AS count FROM compat_objects GROUP BY kind ORDER BY count DESC"))
+    kind_counts = rows(conn.execute("SELECT kind, count(*) AS count FROM objects GROUP BY kind ORDER BY count DESC"))
     stats["by_kind"] = kind_counts
 
     top_complex = rows(
         conn.execute(
-            "SELECT object, name, proc_type, cyclomatic "
-            "FROM compat_procedures WHERE cyclomatic IS NOT NULL "
+            "SELECT object, proc_name AS name, proc_type, cyclomatic "
+            "FROM procedures WHERE cyclomatic IS NOT NULL "
             "ORDER BY cyclomatic DESC LIMIT 10"
         )
     )
@@ -230,7 +235,7 @@ def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     try:
         row = conn.execute("""
             SELECT count(*) FROM (
-                SELECT DISTINCT file FROM compat_objects
+                SELECT DISTINCT file FROM objects
                 UNION
                 SELECT DISTINCT file FROM parse_errors
             ) t
@@ -262,16 +267,16 @@ def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
 
     try:
         row = conn.execute("""
-            SELECT count(*) FROM compat_objects o
+            SELECT count(*) FROM objects o
             WHERE o.kind = 'datawindow'
               AND NOT EXISTS (
-                  SELECT 1 FROM compat_calls c WHERE lower(c.to_name) = lower(o.name)
+                  SELECT 1 FROM call_sites c WHERE lower(c.to_name) = lower(o.object)
               )
               AND NOT EXISTS (
-                  SELECT 1 FROM dw_retrieve_tables d WHERE lower(d.dw_name) = lower(o.name)
+                  SELECT 1 FROM dw_retrieve_tables d WHERE lower(d.dw_name) = lower(o.object)
               )
               AND NOT EXISTS (
-                  SELECT 1 FROM all_sql_tables a WHERE lower(a.table_name) = lower(o.name)
+                  SELECT 1 FROM all_sql_tables a WHERE lower(a.table_name) = lower(o.object)
               )
         """).fetchone()
         stats["dead_dw"] = row[0] if row else 0

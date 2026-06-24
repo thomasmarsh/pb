@@ -30,30 +30,27 @@ def client_with_sql(db_path, tmp_path_factory):
     shutil.copy(db_path, db_copy)
 
     conn = duckdb.connect(db_copy)
+    # sql_statements schema: file, object, proc_name, line, operation, tables, columns, raw_sql, parse_ok
     conn.execute(
-        "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-        [
-            "",
-            "fn_sqlerror",
-            "fn_sqlerror",
-            0,
-            "SELECT",
-            "SELECT id FROM synthetic_test_table WHERE id = 1",
-            None,
-            ["synthetic_test_table"],
-            ["id"],
-            False,
-            False,
-            True,
-        ],
+        "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?)",
+        ["", "fn_sqlerror", "fn_sqlerror", 0, "SELECT",
+         "synthetic_test_table", "id",
+         "SELECT id FROM synthetic_test_table WHERE id = 1", True],
     )
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS dw_retrieve_columns (
+            file TEXT, dw_name TEXT, column_fqn TEXT, column_name TEXT, table_name TEXT
+        )
+    """)
     conn.execute(
         "INSERT INTO dw_retrieve_columns VALUES (?,?,?,?,?)",
-        ["", "dw_synth", "synthetic_test_table.id", "synthetic_test_table", "id"],
+        ["", "dw_synth", "synthetic_test_table.id", "id", "synthetic_test_table"],
     )
+    # objects schema: file, kind, object, ancestor
+    # Add a child object that inherits from fn_sqlerror for impact-lineage tests.
     conn.execute(
-        "INSERT INTO inherits VALUES (?,?)",
-        ["synthetic_child_obj", "fn_sqlerror"],
+        "INSERT INTO objects VALUES (?,?,?,?)",
+        ["", "powerscript", "synthetic_child_obj", "fn_sqlerror"],
     )
     conn.close()
 
@@ -354,8 +351,8 @@ def test_explore_procedure_not_found(client):
 # ── Tables ────────────────────────────────────────────────────────────────────
 
 
-def test_list_tables_returns_ranked_list(client):
-    r = client.get("/api/tables")
+def test_list_tables_returns_ranked_list(client_with_sql):
+    r = client_with_sql.get("/api/tables")
     assert r.status_code == 200
     data = r.json()
     assert isinstance(data, list)
@@ -364,15 +361,15 @@ def test_list_tables_returns_ranked_list(client):
     assert counts == sorted(counts, reverse=True)
 
 
-def test_list_tables_has_required_fields(client):
-    r = client.get("/api/tables")
+def test_list_tables_has_required_fields(client_with_sql):
+    r = client_with_sql.get("/api/tables")
     assert r.status_code == 200
     row = r.json()[0]
     assert "table_name" in row
     assert "dw_count" in row
     assert "ps_count" in row
     assert "file_count" in row
-    assert row["dw_count"] >= 1
+    assert row["ps_count"] >= 1
 
 
 def test_get_table_detail_returns_lineage(client):
@@ -526,13 +523,14 @@ def client_with_errors(db_path, tmp_path_factory):
     shutil.copy(db_path, db_copy)
 
     conn = duckdb.connect(db_copy)
+    # parse_errors schema: file TEXT, error TEXT
     conn.execute(
-        "INSERT INTO parse_errors VALUES (?,?,?,?,?,?,?)",
-        ["a.srw", "powerscript", "lex error at line 3", None, None, 3, "garbled source"],
+        "INSERT INTO parse_errors VALUES (?,?)",
+        ["a.srw", "lex error at line 3"],
     )
     conn.execute(
-        "INSERT INTO parse_errors VALUES (?,?,?,?,?,?,?)",
-        ["b.srw", "sql", "Invalid expression", "obj", "proc", 7, "SELECT * FROM ("],
+        "INSERT INTO parse_errors VALUES (?,?)",
+        ["b.srw", "Invalid expression: SELECT * FROM ("],
     )
     conn.close()
 
@@ -550,10 +548,12 @@ def test_list_errors(client_with_errors):
     data = r.json()
     assert data["total"] == 2
     assert len(data["items"]) == 2
+    files = {item["file"] for item in data["items"]}
+    assert files == {"a.srw", "b.srw"}
 
 
-def test_list_errors_filter_kind(client_with_errors):
-    r = client_with_errors.get("/api/errors", params={"kind": "sql"})
+def test_list_errors_filter_by_message(client_with_errors):
+    r = client_with_errors.get("/api/errors", params={"q": "Invalid"})
     assert r.status_code == 200
     data = r.json()
     assert data["total"] == 1

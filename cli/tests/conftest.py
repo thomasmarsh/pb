@@ -6,7 +6,7 @@ import duckdb
 import pytest
 
 from pb_cli.shell.build import find_binary, find_repo
-from pb_cli.shell.db import db_connection, setup_compat_layer
+from pb_cli.shell.db import db_connection, setup_db_extras
 from pb_cli.shell.metrics import compute_metrics
 from pb_cli.shell.reporter import LiveReporter
 
@@ -30,7 +30,7 @@ def db_path(tmp_path_factory) -> str:
 
     reporter = LiveReporter()
     with db_connection(db) as conn:
-        setup_compat_layer(conn)
+        setup_db_extras(conn)
         with reporter.analyze_progress() as progress:
             compute_metrics(conn, progress)
 

@@ -164,6 +164,12 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       , "CREATE TABLE IF NOT EXISTS dead_code \
         \(object TEXT, proc_name TEXT, proc_type TEXT, cyclomatic INTEGER, \
         \confidence TEXT, caller_count_naive INTEGER, caller_count_scoped INTEGER)"
+      , "CREATE OR REPLACE VIEW all_sql_tables AS \
+        \SELECT s.file, s.object, 'powerscript' AS source, s.operation, \
+        \TRIM(t) AS table_name, s.proc_name, s.line \
+        \FROM sql_statements s, \
+        \unnest(string_split(s.tables, ',')) t(t) \
+        \WHERE s.tables IS NOT NULL AND s.tables != ''"
       ]
 
 -- ---------------------------------------------------------------------------

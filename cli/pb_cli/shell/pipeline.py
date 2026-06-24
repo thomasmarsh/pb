@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from pb_cli.shell.db import setup_compat_layer
+from pb_cli.shell.db import setup_db_extras
 from pb_cli.shell.env import env
 from pb_cli.shell.reporter import Reporter
 
@@ -53,9 +53,9 @@ def run(
         return
 
     with env.storage.db_connection(db_new) as conn:
-        setup_compat_layer(conn)
+        setup_db_extras(conn)
         conn.execute(
-            "INSERT OR REPLACE INTO compat_metadata VALUES (?, ?)",
+            "INSERT OR REPLACE INTO metadata VALUES (?, ?)",
             ["ingestion_root", str(src_dir)],
         )
 

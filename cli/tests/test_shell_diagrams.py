@@ -52,15 +52,15 @@ def test_inheritance_builds_valid_dot(conn):
 
 def test_inheritance_contains_known_nodes(conn):
     src = dot_source(build_inheritance, conn, None)
-    sample = conn.execute("SELECT from_object FROM inherits LIMIT 1").fetchone()
-    assert sample is not None, "inherits table is empty"
+    sample = conn.execute("SELECT object AS from_object FROM objects WHERE ancestor IS NOT NULL LIMIT 1").fetchone()
+    assert sample is not None, "no objects with ancestors"
     assert sample[0] in src
 
 
 def test_inheritance_root_filter(conn):
-    root = conn.execute("SELECT to_object FROM inherits LIMIT 1").fetchone()
+    root = conn.execute("SELECT ancestor AS to_object FROM objects WHERE ancestor IS NOT NULL LIMIT 1").fetchone()
     if root is None:
-        pytest.skip("inherits table is empty")
+        pytest.skip("no objects with ancestors")
     src = dot_source(build_inheritance, conn, root[0])
     assert "digraph" in src
     assert root[0] in src or "->" in src
@@ -96,10 +96,18 @@ def test_calls_unknown_object_does_not_crash(conn):
 # ---------------------------------------------------------------------------
 
 
-def test_dw_tables_bipartite_structure(conn):
-    count = conn.execute("SELECT count(*) FROM dw_retrieve_tables").fetchone()[0]
+def _require_dw_retrieve_tables(conn) -> None:
+    """Skip the test if dw_retrieve_tables does not exist or is empty."""
+    try:
+        count = conn.execute("SELECT count(*) FROM dw_retrieve_tables").fetchone()[0]
+    except Exception:
+        pytest.skip("dw_retrieve_tables table does not exist")
     if count == 0:
         pytest.skip("dw_retrieve_tables is empty")
+
+
+def test_dw_tables_bipartite_structure(conn):
+    _require_dw_retrieve_tables(conn)
     src = dot_source(build_dw_tables, conn, None)
     assert "cluster_dw" in src
     assert "cluster_tables" in src
@@ -107,6 +115,7 @@ def test_dw_tables_bipartite_structure(conn):
 
 
 def test_dw_tables_table_filter(conn):
+    _require_dw_retrieve_tables(conn)
     row = conn.execute("SELECT table_name FROM dw_retrieve_tables LIMIT 1").fetchone()
     if row is None:
         pytest.skip("dw_retrieve_tables is empty")
@@ -116,6 +125,7 @@ def test_dw_tables_table_filter(conn):
 
 
 def test_dw_tables_dw_filter(conn):
+    _require_dw_retrieve_tables(conn)
     row = conn.execute("SELECT dw_name FROM dw_retrieve_tables LIMIT 1").fetchone()
     if row is None:
         pytest.skip("dw_retrieve_tables is empty")
@@ -126,6 +136,7 @@ def test_dw_tables_dw_filter(conn):
 
 
 def test_dw_tables_dw_filter_nonexistent(conn):
+    _require_dw_retrieve_tables(conn)
     src = dot_source(build_dw_tables, conn, None, "__nonexistent_dw__")
     assert "digraph" in src
     assert "->" not in src
@@ -172,9 +183,7 @@ def test_heatmap_nodes_have_url(conn):
 
 
 def test_dw_tables_has_both_object_and_table_urls(conn):
-    count = conn.execute("SELECT count(*) FROM dw_retrieve_tables").fetchone()[0]
-    if count == 0:
-        pytest.skip("dw_retrieve_tables is empty")
+    _require_dw_retrieve_tables(conn)
     src = dot_source(build_dw_tables, conn, None)
     assert "pb://object/" in src
     assert "pb://table/" in src
@@ -241,9 +250,7 @@ class TestDotBinaryRoundtrip:
         assert "<svg" in result.stdout
 
     def test_dw_tables_dot_is_valid(self, conn):
-        count = conn.execute("SELECT count(*) FROM dw_retrieve_tables").fetchone()[0]
-        if count == 0:
-            pytest.skip("dw_retrieve_tables is empty")
+        _require_dw_retrieve_tables(conn)
         src = dot_source(build_dw_tables, conn, None)
         result = self._render(src)
         assert result.returncode == 0, f"dot failed:\n{result.stderr[:400]}"

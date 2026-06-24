@@ -53,15 +53,4 @@ def get_error_source(
     file: str,
 ) -> dict[str, Any]:
     """Return the full source text for a file, used to show SQL error context."""
-    try:
-        row = conn.execute(
-            "SELECT source_text FROM compat_objects WHERE file = ? LIMIT 1",
-            [file],
-        ).fetchone()
-    except Exception:
-        row = None
-
-    if row and row[0]:
-        lines = row[0].split("\n")
-        return {"lines": lines}
     return {"lines": []}

@@ -19,20 +19,20 @@ def q(conn, sql: str):
 
 
 def _setup_metrics_tables(conn) -> None:
-    """Create the minimal compat tables that metrics.py queries."""
+    """Create the minimal native tables that metrics.py queries."""
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS compat_calls "
-        "(file TEXT, object TEXT, from_proc TEXT, to_name TEXT, call_type TEXT)"
+        "CREATE TABLE IF NOT EXISTS call_sites "
+        "(file TEXT, object TEXT, from_proc TEXT, to_name TEXT, call_type TEXT, line INT)"
     )
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS compat_procedures "
-        "(file TEXT, object TEXT, name TEXT, owner TEXT, proc_type TEXT, "
-        "start_line INT, end_line INT, body_json TEXT, modifiers TEXT, "
-        "params TEXT, return_type TEXT, cyclomatic INT, cfg_json TEXT, cps_graph_json TEXT)"
+        "CREATE TABLE IF NOT EXISTS procedures "
+        "(file TEXT, object TEXT, proc_name TEXT, proc_type TEXT, "
+        "start_line INT, end_line INT, params TEXT, return_type TEXT, "
+        "cyclomatic INT, cfg_json TEXT, cps_graph_json TEXT)"
     )
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS compat_inherits "
-        "(from_object TEXT, to_object TEXT)"
+        "CREATE TABLE IF NOT EXISTS objects "
+        "(file TEXT, kind TEXT, object TEXT, ancestor TEXT)"
     )
     conn.execute(
         "CREATE TABLE IF NOT EXISTS object_metrics "
@@ -112,10 +112,10 @@ def test_analyze_run_emits_reporter_events(tmp_path):
 
 
 def test_calls_table_populated_after_index(db_conn):
-    count = q(db_conn, "SELECT count(*) FROM compat_calls")
-    assert count > 0, "compat_calls is empty after indexing"
+    count = q(db_conn, "SELECT count(*) FROM call_sites")
+    assert count > 0, "call_sites is empty after indexing"
 
-    call_types = {r[0] for r in db_conn.execute("SELECT DISTINCT call_type FROM compat_calls").fetchall()}
+    call_types = {r[0] for r in db_conn.execute("SELECT DISTINCT call_type FROM call_sites").fetchall()}
     assert "ExCall" in call_types, f"no ExCall rows; found types: {call_types}"
 
 
@@ -125,12 +125,12 @@ def test_object_metrics_has_all_objects(db_conn):
     missing = q(
         db_conn,
         """
-        SELECT count(DISTINCT c.object) FROM compat_calls c
+        SELECT count(DISTINCT c.object) FROM call_sites c
         LEFT JOIN object_metrics m ON c.object = m.object
         WHERE m.object IS NULL
     """,
     )
-    assert missing == 0, f"{missing} objects appear in compat_calls but not in object_metrics"
+    assert missing == 0, f"{missing} objects appear in call_sites but not in object_metrics"
 
 
 def test_pagerank_sums_to_one(db_conn):
@@ -165,16 +165,16 @@ def test_cyclomatic_populated_by_indexing(db_conn):
 
 def test_fetch_inheritance_edges_returns_tuples(tmp_path):
     conn = duckdb.connect(str(tmp_path / "test.duckdb"))
-    conn.execute("CREATE TABLE compat_inherits (from_object TEXT, to_object TEXT)")
-    conn.execute("INSERT INTO compat_inherits VALUES ('parent', 'child')")
+    conn.execute("CREATE TABLE objects (file TEXT, kind TEXT, object TEXT, ancestor TEXT)")
+    conn.execute("INSERT INTO objects VALUES (NULL, NULL, 'child', 'parent')")
     edges = fetch_inheritance_edges(conn)
     conn.close()
-    assert edges == [("parent", "child")]
+    assert edges == [("child", "parent")]
 
 
 def test_fetch_inheritance_edges_empty(tmp_path):
     conn = duckdb.connect(str(tmp_path / "test.duckdb"))
-    conn.execute("CREATE TABLE compat_inherits (from_object TEXT, to_object TEXT)")
+    conn.execute("CREATE TABLE objects (file TEXT, kind TEXT, object TEXT, ancestor TEXT)")
     edges = fetch_inheritance_edges(conn)
     conn.close()
     assert edges == []
@@ -216,9 +216,9 @@ def test_compute_dit_matches_old_behavior():
 def test_fetch_metrics_data_returns_shapes(tmp_path):
     conn = duckdb.connect(str(tmp_path / "test.duckdb"))
     _setup_metrics_tables(conn)
-    conn.execute("INSERT INTO compat_calls VALUES ('f1', 'obj_a', 'proc1', 'obj_b', 'ExCall')")
+    conn.execute("INSERT INTO call_sites VALUES ('f1', 'obj_a', 'proc1', 'obj_b', 'ExCall', NULL)")
     conn.execute(
-        "INSERT INTO compat_procedures (file, object, name, proc_type, cyclomatic) "
+        "INSERT INTO procedures (file, object, proc_name, proc_type, cyclomatic) "
         "VALUES ('f1', 'obj_a', 'proc1', 'function', 1)"
     )
     edges, cyc_rows, inherit_edges = fetch_metrics_data(conn)

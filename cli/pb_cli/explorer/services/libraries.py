@@ -20,12 +20,12 @@ def get_library_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, 
 
     obj_rows = rows(
         conn.execute(
-            f"SELECT o.name, o.kind, count(p.name) AS proc_count "
-            f"FROM compat_objects o "
-            f"LEFT JOIN procedures p ON p.object = o.name "
+            f"SELECT o.object AS name, o.kind, count(p.proc_name) AS proc_count "
+            f"FROM objects o "
+            f"LEFT JOIN procedures p ON p.object = o.object "
             f"WHERE {like_clause} "
-            f"GROUP BY o.name, o.kind "
-            f"ORDER BY o.kind, o.name",
+            f"GROUP BY o.object, o.kind "
+            f"ORDER BY o.kind, o.object",
             params,
         )
     )
@@ -35,9 +35,9 @@ def get_library_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, 
 
     uncalled_row = conn.execute(
         f"SELECT count(*) "
-        f"FROM compat_procedures p "
-        f"JOIN objects o ON o.name = p.object "
-        f"LEFT JOIN calls c ON c.to_name = p.name "
+        f"FROM procedures p "
+        f"JOIN objects o ON o.object = p.object "
+        f"LEFT JOIN call_sites c ON c.to_name = p.proc_name "
         f"WHERE {like_clause} AND c.to_name IS NULL",
         params,
     ).fetchone()

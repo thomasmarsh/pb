@@ -2,6 +2,6 @@
 -- :name TEXT
 -- @entity caller object
 SELECT DISTINCT object AS caller, from_proc, call_type
-FROM compat_calls
+FROM call_sites
 WHERE to_name = $name
 ORDER BY caller;

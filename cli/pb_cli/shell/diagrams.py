@@ -51,20 +51,27 @@ def build_inheritance(
     if root:
         edges = conn.execute(
             """
-            WITH RECURSIVE sub AS (
+            WITH RECURSIVE
+              inherits AS (
+                SELECT object AS from_object, ancestor AS to_object
+                FROM objects WHERE ancestor IS NOT NULL
+              ),
+              sub AS (
                 SELECT from_object, to_object FROM inherits WHERE to_object = ?
                 UNION ALL
                 SELECT i.from_object, i.to_object
                 FROM inherits i JOIN sub s ON i.to_object = s.from_object
-            )
+              )
             SELECT DISTINCT from_object, to_object FROM sub
         """,
             [root],
         ).fetchall()
     else:
-        edges = conn.execute("SELECT from_object, to_object FROM inherits").fetchall()
+        edges = conn.execute(
+            "SELECT object AS from_object, ancestor AS to_object FROM objects WHERE ancestor IS NOT NULL"
+        ).fetchall()
 
-    kind_map = dict(conn.execute("SELECT name, kind FROM objects").fetchall())
+    kind_map = dict(conn.execute("SELECT object AS name, kind FROM objects").fetchall())
 
     return render_inheritance(edges, kind_map, root)
 
@@ -74,7 +81,7 @@ def build_calls(
     focal: str = "",
     depth: int = 2,
 ) -> graphviz.Digraph:
-    raw_edges = conn.execute("SELECT object, to_name FROM calls").fetchall()
+    raw_edges = conn.execute("SELECT object, to_name FROM call_sites").fetchall()
     G: nx.DiGraph = nx.DiGraph(raw_edges)
 
     if focal in G:
@@ -85,7 +92,9 @@ def build_calls(
         sub_nodes = {focal}
         sub_edges = []
 
-    cc_map: dict[str, int] = dict(conn.execute("SELECT name, max(cyclomatic) FROM procedures GROUP BY name").fetchall())
+    cc_map: dict[str, int] = dict(
+        conn.execute("SELECT proc_name AS name, max(cyclomatic) FROM procedures GROUP BY proc_name").fetchall()
+    )
 
     return render_calls(sub_nodes, sub_edges, cc_map, focal)
 
@@ -95,37 +104,42 @@ def build_dw_tables(
     filter_table: str | None = None,
     filter_dw: str | None = None,
 ) -> graphviz.Digraph:
-    rows = conn.execute(
-        """
-        SELECT dw_name, table_name FROM dw_retrieve_tables
-        WHERE (? IS NULL OR table_name = ?)
-          AND (? IS NULL OR dw_name = ?)
-        ORDER BY dw_name, table_name
-    """,
-        [filter_table, filter_table, filter_dw, filter_dw],
-    ).fetchall()
+    try:
+        dw_rows = conn.execute(
+            """
+            SELECT dw_name, table_name FROM dw_retrieve_tables
+            WHERE (? IS NULL OR table_name = ?)
+              AND (? IS NULL OR dw_name = ?)
+            ORDER BY dw_name, table_name
+        """,
+            [filter_table, filter_table, filter_dw, filter_dw],
+        ).fetchall()
+        count_map: dict[str, int] = dict(
+            conn.execute("SELECT dw_name, count(*) FROM dw_retrieve_tables GROUP BY dw_name").fetchall()
+        )
+    except Exception:
+        dw_rows = []
+        count_map = {}
 
-    count_map: dict[str, int] = dict(
-        conn.execute("SELECT dw_name, count(*) FROM dw_retrieve_tables GROUP BY dw_name").fetchall()
-    )
-
-    return render_dw_tables(rows, count_map)
+    return render_dw_tables(dw_rows, count_map)
 
 
 def build_heatmap(
     conn: Conn,
 ) -> graphviz.Graph:
     rows = conn.execute("""
-        SELECT o.name, o.kind,
+        SELECT o.object AS name, o.kind,
                COALESCE(m.max_cyclomatic, 0),
                COALESCE(m.in_degree,      0)
         FROM objects o
-        LEFT JOIN object_metrics m ON o.name = m.object
+        LEFT JOIN object_metrics m ON o.object = m.object
         WHERE o.kind = 'powerscript'
         ORDER BY COALESCE(m.max_cyclomatic, 0) DESC
     """).fetchall()
 
-    inherit_edges = conn.execute("SELECT from_object, to_object FROM inherits").fetchall()
+    inherit_edges = conn.execute(
+        "SELECT object AS from_object, ancestor AS to_object FROM objects WHERE ancestor IS NOT NULL"
+    ).fetchall()
 
     return render_heatmap(rows, inherit_edges)
 

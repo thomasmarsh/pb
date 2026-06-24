@@ -1,16 +1,4 @@
-"""Database connection management and compat-layer setup for the new DuckDB schema.
-
-After pb-runner --db creates a fresh DuckDB with the Haskell-native schema,
-setup_compat_layer() adds:
-  - compat_objects / compat_procedures / compat_calls / compat_inherits views
-    that expose the old column names (name instead of object/proc_name, plus
-    NULL stubs for dropped columns like body_json / type_blocks_json).
-  - compat_metadata table (key-value store for ingestion_root, etc.)
-  - object_metrics table (written by compute_metrics after indexing)
-
-These compat_* views are explicitly named as legacy so they can be removed once
-the explorer services are migrated to the new column names.
-"""
+"""Database connection management for the DuckDB schema."""
 
 from __future__ import annotations
 
@@ -28,59 +16,8 @@ Conn = duckdb.DuckDBPyConnection
 _SQL_DIR = Path(__file__).parent.parent / "sql"
 _COUNT_SQL_PARSE_FAILURES = (_SQL_DIR / "count_sql_parse_failures.sql").read_text()
 
-_COMPAT_DDL = """
-CREATE OR REPLACE VIEW compat_objects AS
-  SELECT file, object AS name, kind, ancestor,
-         NULL::TEXT AS source_text,
-         NULL::TEXT AS type_blocks_json,
-         NULL::TEXT AS dw_json
-  FROM objects;
-
-CREATE OR REPLACE VIEW compat_procedures AS
-  SELECT file, object, proc_name AS name, object AS owner, proc_type,
-         start_line, end_line,
-         NULL::TEXT AS body_json,
-         NULL::TEXT AS modifiers,
-         params, return_type, cyclomatic, cfg_json, cps_graph_json
-  FROM procedures;
-
-CREATE OR REPLACE VIEW compat_calls AS
-  SELECT file, object, from_proc, to_name, call_type
-  FROM call_sites;
-
-CREATE OR REPLACE VIEW compat_inherits AS
-  SELECT object AS from_object, ancestor AS to_object
-  FROM objects WHERE ancestor IS NOT NULL;
-
-CREATE OR REPLACE VIEW compat_dw_controls AS
-  SELECT file, object AS dw_name, band, control_type, name AS control_name,
-         x, y, width, height, expression,
-         NULL::INTEGER AS tab_seq, NULL::INTEGER AS source_line
-  FROM dw_controls;
-
-CREATE OR REPLACE VIEW compat_dead_procedures AS
-  SELECT object, proc_name AS name, proc_type, cyclomatic, confidence,
-         caller_count_naive, caller_count_scoped
-  FROM dead_code;
-
-CREATE OR REPLACE VIEW compat_global_vars AS
-  SELECT file, object, var_name, var_type, mods AS modifiers, NULL::TEXT AS scope
-  FROM global_vars;
-
-CREATE OR REPLACE VIEW all_sql_tables AS
-  SELECT
-    s.file,
-    s.object,
-    'powerscript' AS source,
-    s.operation,
-    TRIM(t) AS table_name,
-    s.proc_name,
-    s.line
-  FROM sql_statements s,
-       unnest(string_split(s.tables, ',')) t(t)
-  WHERE s.tables IS NOT NULL AND s.tables != '';
-
-CREATE TABLE IF NOT EXISTS compat_metadata (
+_EXTRAS_DDL = """
+CREATE TABLE IF NOT EXISTS metadata (
   key TEXT PRIMARY KEY,
   value TEXT
 );
@@ -108,9 +45,9 @@ def db_connection(path: str | Path, read_only: bool = False) -> Generator[Conn, 
         conn.close()
 
 
-def setup_compat_layer(conn: Conn) -> None:
-    """Create compat_* views and helper tables on a freshly-written Haskell DuckDB."""
-    for stmt in _COMPAT_DDL.split(";"):
+def setup_db_extras(conn: Conn) -> None:
+    """Create helper tables (metadata, object_metrics) on a freshly-written Haskell DuckDB."""
+    for stmt in _EXTRAS_DDL.split(";"):
         stmt = stmt.strip()
         if stmt:
             conn.execute(stmt)

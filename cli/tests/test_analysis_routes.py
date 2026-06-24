@@ -351,13 +351,6 @@ def dead_code_client(tmp_path_factory):
             caller_count_naive INT NOT NULL, caller_count_scoped INT NOT NULL
         )
     """)
-    conn.execute("""
-        CREATE VIEW compat_dead_procedures AS
-          SELECT object, proc_name AS name, proc_type, cyclomatic, confidence,
-                 caller_count_naive, caller_count_scoped
-          FROM dead_code
-    """)
-
     # Dead procedures: proc_c, proc_d
     for row in [
         ("obj_a", "proc_c", "function", 2, "high", 0, 0),
