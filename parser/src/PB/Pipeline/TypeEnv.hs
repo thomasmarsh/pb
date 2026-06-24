@@ -10,9 +10,7 @@ module PB.Pipeline.TypeEnv
 
 import PB.Prelude
 import PB.AST.SourceFile
-import PB.AST.BodyStmt
 import PB.AST.Type
-import PB.AST.Located (Located (..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
@@ -32,7 +30,7 @@ buildWorkspaceTypeEnv :: [SrFile] -> TypeEnv
 buildWorkspaceTypeEnv = foldl' mergeFile emptyTypeEnv
   where
     mergeFile env sf = env
-      { teVars = teVars env <> extractGlobalVars sf <> extractBodyVars sf
+      { teVars = teVars env <> extractGlobalVars sf
       , teUserTypes = teUserTypes env <> extractTypeDecls sf
       }
 
@@ -55,31 +53,6 @@ extractTypeDecls sf =
        Nothing -> Map.empty
        Just (ForwardBlock { fwdTypes = tds }) ->
          Map.fromList [ (T.toLower (tdName td), T.toLower (tdAncestor td)) | td <- tds ]
-
--- | Walk all procedure bodies and collect local variable declarations.
-extractBodyVars :: SrFile -> Map.Map Text PbType
-extractBodyVars sf = Map.unions
-  [ walkBody (fbBody fn)  | fn  <- srFunctions   sf ]
-  <> Map.unions
-  [ walkBody (sbBody sub) | sub <- srSubroutines sf ]
-  <> Map.unions
-  [ walkBody (evBody ev)  | ev  <- srEvents      sf ]
-  <> Map.unions
-  [ walkBody (obBody ob)  | ob  <- srOnBlocks    sf ]
-
-walkBody :: [Located BodyStmt] -> Map.Map Text PbType
-walkBody = Map.unions . map (walkStmt . locNode)
-
-walkStmt :: BodyStmt -> Map.Map Text PbType
-walkStmt (BsLocalVar { varName = name, varType = ty }) =
-  Map.singleton (T.toLower name) ty
-walkStmt (BsIf IfStmt { ifThen = t, ifElseIfs = eis, ifElse = e }) =
-  walkBody t <> Map.unions (map (walkBody . eifBody) eis) <> maybe Map.empty walkBody e
-walkStmt (BsFor ForStmt { forBody = b }) = walkBody b
-walkStmt (BsDo DoStmt { doBody = b }) = walkBody b
-walkStmt (BsChoose ChooseStmt { chooseClauses = cs }) =
-  Map.unions [ walkBody (ccBody c) | c <- cs ]
-walkStmt _ = Map.empty
 
 -- | Look up a variable's type (case-insensitive).
 lookupVarType :: Text -> TypeEnv -> Maybe PbType

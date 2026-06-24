@@ -6,9 +6,9 @@
     "node": ">=26.0.0"
   },
   "scripts": {
-    "prebuild": "cabal run --project-dir ../parser pb-runner -v0 -- --emit-ts > src/types/ast.generated.ts && cabal run --project-dir ../parser pb-runner -v0 -- --emit-py > ../cli/pb_cli/core/ast_generated.py",
+    "prebuild": "cabal run --project-dir ../parser pb-runner -v0 -- --emit-ts > src/types/ast.generated.ts",
     "build": "vite build",
-    "codegen": "cabal run --project-dir ../parser pb-runner -v0 -- --emit-ts > src/types/ast.generated.ts && cabal run --project-dir ../parser pb-runner -v0 -- --emit-py > ../cli/pb_cli/core/ast_generated.py",
+    "codegen": "cabal run --project-dir ../parser pb-runner -v0 -- --emit-ts > src/types/ast.generated.ts",
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",

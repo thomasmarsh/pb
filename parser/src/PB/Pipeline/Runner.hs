@@ -19,7 +19,7 @@ import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
 import PB.Pipeline.CfgBuild    (buildCfg)
 import PB.Pipeline.CpsCompile  (compileProcedure)
 import PB.Pipeline.DeadCode    qualified as DeadCode
-import PB.Pipeline.TypeEnv     (TypeEnv, buildWorkspaceTypeEnv, withProcScope)
+import PB.Pipeline.TypeEnv     (TypeEnv (..), buildWorkspaceTypeEnv, withProcScope)
 import PB.Pipeline.Dataflow    qualified as Dataflow
 import PB.Pipeline.Taint       qualified as Taint
 import PB.Pipeline.Serialise   ()
@@ -30,13 +30,14 @@ import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
 import Control.Concurrent.Async (mapConcurrently, mapConcurrently_)
 import Control.Concurrent.MVar  (MVar, newMVar, withMVar)
+import Control.Concurrent.QSem  (newQSem, waitQSem, signalQSem)
 import Control.Concurrent.STM
   ( TQueue, atomically
   , newTQueueIO
   , writeTQueue, isEmptyTQueue, readTQueue
   )
 import GHC.Conc   (getNumCapabilities)
-import Control.Exception   (SomeException, try, finally)
+import Control.Exception   (SomeException, try, finally, bracket_, evaluate)
 import System.Environment  (lookupEnv)
 import Data.Char           (intToDigit, toLower)
 import Data.Either         (lefts)
@@ -471,19 +472,20 @@ extractProcSql pool k fp obj (pName, body) =
                rawTxt
                (srParseOk res)
 
--- | Worker thread k: drains ParseOutcomes from workQ, compiles with bridge slot k,
+-- | Worker thread k: drains FilePaths from workQ, parses and compiles each with bridge slot k,
 --   serialises DB writes through a shared mutex (DuckDB connections are not thread-safe).
-workerLoop :: Int -> TQueue ParseOutcome -> SqlBridgePool -> TypeEnv -> DuckConn -> MVar () -> IO ()
-workerLoop k workQ pool wsEnv conn mutex = go
+workerLoopFiles :: Int -> TQueue FilePath -> SqlBridgePool -> TypeEnv -> DuckConn -> MVar () -> IO ()
+workerLoopFiles k workQ pool wsEnv conn mutex = go
   where
     go = do
-      mItem <- atomically $ do
+      mFile <- atomically $ do
         empty <- isEmptyTQueue workQ
         if empty then pure Nothing else Just <$> readTQueue workQ
-      case mItem of
-        Nothing -> pure ()
-        Just o  -> do
-          compiled <- compileOne wsEnv (Just (pool, k)) o
+      case mFile of
+        Nothing   -> pure ()
+        Just file -> do
+          outcome  <- parseOutcome file
+          compiled <- compileOne wsEnv (Just (pool, k)) outcome
           withMVar mutex $ \_ -> appendToDb conn compiled
           go
 
@@ -507,10 +509,13 @@ appendToDb _    CFSkip = pure ()
 
 runModeDb :: FilePath -> FilePath -> IO ()
 runModeDb srcDir dbPath = do
-  files    <- walkAllSrFiles srcDir
-  outcomes <- mapConcurrently parseOutcome files          -- Phase A0: parse
-  let allSfs = [pfSrFile pf | PsParsed pf <- outcomes]
-      wsEnv  = buildWorkspaceTypeEnv allSfs              -- Phase A0: TypeEnv
+  files <- walkAllSrFiles srcDir
+
+  -- Phase A0: parse all files to build workspace TypeEnv, then discard SrFiles.
+  outcomes0 <- mapConcurrently parseOutcome files
+  let wsEnv = buildWorkspaceTypeEnv [pfSrFile pf | PsParsed pf <- outcomes0]
+  _ <- evaluate (Map.size (teVars wsEnv) + Map.size (teUserTypes wsEnv))
+  -- outcomes0 and all SrFiles are now GC-eligible.
 
   mBridgeBin <- lookupEnv "PB_SQL_WORKER"
   nWorkers   <- getNumCapabilities
@@ -518,17 +523,23 @@ runModeDb srcDir dbPath = do
   withWriteConn dbPath $ \conn -> do
     initSchema conn
     case mBridgeBin of
-      Nothing  -> do
-        -- Compile in parallel; append sequentially (DuckDB connections are not thread-safe).
-        compileds <- mapConcurrently (compileOne wsEnv Nothing) outcomes
-        mapM_ (appendToDb conn) compileds
+      Nothing -> do
+        -- Re-parse each file with bounded concurrency (32 in-flight); serialize DB writes.
+        sem   <- newQSem 32
+        mutex <- newMVar ()
+        mapConcurrently_ (\file ->
+          bracket_ (waitQSem sem) (signalQSem sem) $ do
+            outcome  <- parseOutcome file
+            compiled <- compileOne wsEnv Nothing outcome
+            withMVar mutex $ \_ -> appendToDb conn compiled
+          ) files
       Just bin -> do
         pool  <- startSqlBridgePool nWorkers bin
         workQ <- newTQueueIO
-        atomically (mapM_ (writeTQueue workQ) outcomes)
+        atomically (mapM_ (writeTQueue workQ) files)
         mutex <- newMVar ()
         mapConcurrently_
-          (\k -> workerLoop k workQ pool wsEnv conn mutex)
+          (\k -> workerLoopFiles k workQ pool wsEnv conn mutex)
           [0 .. nWorkers - 1]
           `finally` shutdownSqlBridgePool pool
     runPhaseB conn  -- Phase B: link analysis (passes 5–8)
