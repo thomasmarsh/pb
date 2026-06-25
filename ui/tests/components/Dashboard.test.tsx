@@ -5,10 +5,10 @@ import { screen, fireEvent, render, cleanup } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
 import { Dashboard } from "../../src/features/dashboard/Dashboard.js";
 import { createStore, Effect } from "@pb/core";
-import { reducer, initialState } from "../../src/features/app/reducer.js";
+import { reducer, initialState } from "../../app/src/reducer.js";
 import { initialDashboardState } from "@pb/platform";
 import { mockEnv } from "../helpers.js";
-import type { AppEnv } from "../../src/features/app/reducer.js";
+import type { AppEnv } from "../../app/src/reducer.js";
 import type { StatsResponse } from "@pb/platform";
 
 const sampleStats: StatsResponse = {

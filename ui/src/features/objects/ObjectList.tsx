@@ -3,8 +3,8 @@
 import { Show, For, onMount } from "solid-js";
 import { ChevronUp, ChevronDown, ArrowUpDown, shortFile } from "@pb/platform";
 import type { Store } from "@pb/core";
-import type { AppState } from "../../features/app/state.js";
-import type { AppAction } from "../../features/app/actions.js";
+import type { AppState } from "../../../app/src/state.js";
+import type { AppAction } from "../../../app/src/actions.js";
 import { EntityCard } from "../../components/detail/EntityCard.js";
 import { Loading } from "../../components/ui/Loading.js";
 import { Pagination } from "../../components/ui/Pagination.js";

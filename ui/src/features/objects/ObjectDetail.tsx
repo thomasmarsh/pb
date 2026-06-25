@@ -2,8 +2,8 @@
 
 import { Show, createSignal, createResource, For } from "solid-js";
 import type { Store } from "@pb/core";
-import type { AppState } from "../../features/app/state.js";
-import type { AppAction } from "../../features/app/actions.js";
+import type { AppState } from "../../../app/src/state.js";
+import type { AppAction } from "../../../app/src/actions.js";
 import { ArrowRight, type ObjectDetailResponse, type ProcedureDetailResponse, type TaintPathsResponse, type TaintPathSummary } from "@pb/platform";
 import type { ObjectsState } from "@pb/platform";
 import { Loading } from "../../components/ui/Loading.js";

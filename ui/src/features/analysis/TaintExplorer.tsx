@@ -4,8 +4,8 @@ import { Show, For, createResource, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import { ArrowRight, type TaintPathsResponse, type TaintPathSummary } from "@pb/platform";
 import type { Store } from "@pb/core";
-import type { AppState } from "../../features/app/state.js";
-import type { AppAction } from "../../features/app/actions.js";
+import type { AppState } from "../../../app/src/state.js";
+import type { AppAction } from "../../../app/src/actions.js";
 import { Loading } from "../../components/ui/Loading.js";
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };

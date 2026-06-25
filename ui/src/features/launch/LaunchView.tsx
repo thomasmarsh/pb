@@ -2,8 +2,8 @@
 
 import { createSignal, Show, type JSX } from "solid-js";
 import type { Store } from "@pb/core";
-import type { AppState } from "../app/state.js";
-import type { AppAction } from "../app/actions.js";
+import type { AppState } from "../../../app/src/state.js";
+import type { AppAction } from "../../../app/src/actions.js";
 import { Desktop } from "../../components/windows/Desktop.js";
 
 interface LaunchViewProps {

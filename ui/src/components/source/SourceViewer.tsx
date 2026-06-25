@@ -3,8 +3,8 @@
 import { Show, createSignal, createMemo, createEffect } from "solid-js";
 import { highlightPowerScript, type ProcedureInfo, type KnownProcInfo, type LocalSymbolInfo } from "@pb/platform";
 import type { Store } from "@pb/core";
-import type { AppState } from "../../features/app/state.js";
-import type { AppAction } from "../../features/app/actions.js";
+import type { AppState } from "../../../app/src/state.js";
+import type { AppAction } from "../../../app/src/actions.js";
 import { SourceContextMenu } from "./SourceContextMenu.js";
 import type { ContextMenuTarget, ContextActions } from "./SourceContextMenu.js";
 import { SourceGutter } from "./SourceGutter.js";

@@ -2,8 +2,8 @@
 
 import { Show, onMount } from "solid-js";
 import type { Store } from "@pb/core";
-import type { AppState } from "../../features/app/state.js";
-import type { AppAction } from "../../features/app/actions.js";
+import type { AppState } from "../../../app/src/state.js";
+import type { AppAction } from "../../../app/src/actions.js";
 import { ObjectList } from "./ObjectList.js";
 import { ObjectDetail } from "./ObjectDetail.js";
 

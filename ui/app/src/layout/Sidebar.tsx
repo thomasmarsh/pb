@@ -1,8 +1,8 @@
 import { Show, For, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import type { Store } from "@pb/core";
-import type { AppState } from "../../features/app/state.js";
-import type { AppAction } from "../../features/app/actions.js";
+import type { AppState } from "../state.js";
+import type { AppAction } from "../actions.js";
 import { type Route, type IconComp } from "@pb/platform";
 import {
   LayoutDashboard,
@@ -23,7 +23,7 @@ import {
   ChevronDown,
   Play,
 } from "@pb/platform";
-import { LibraryNode } from "../../features/explore/TreeNodes.js";
+import { LibraryNode } from "../../../src/features/explore/TreeNodes.js";
 
 const ENTITY_NAV: { label: string; view: string; icon: IconComp }[] = [
   { label: "Objects",     view: "objects",        icon: Box },

@@ -1,0 +1,15 @@
+{
+  "name": "pb-app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@pb/core": "workspace:*",
+    "@pb/interpreter": "workspace:*",
+    "@pb/platform": "workspace:*",
+    "@pb/windowing": "workspace:*"
+  },
+  "devDependencies": {
+    "solid-js": "^1.9.0"
+  }
+}

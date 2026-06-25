@@ -14,9 +14,9 @@ import {
   ZOOM_MAX,
 } from "../../src/components/diagram/InlineDiagram.js";
 import { createStore, Effect } from "@pb/core";
-import { reducer, initialState } from "../../src/features/app/reducer.js";
-import type { AppEnv } from "../../src/features/app/reducer.js";
-import type { AppAction } from "../../src/features/app/actions.js";
+import { reducer, initialState } from "../../app/src/reducer.js";
+import type { AppEnv } from "../../app/src/reducer.js";
+import type { AppAction } from "../../app/src/actions.js";
 import { mockEnv } from "../helpers.js";
 
 afterEach(() => {

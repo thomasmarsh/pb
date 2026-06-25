@@ -4,8 +4,8 @@ import { createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import { AlertTriangle, ChevronRight, ChevronDown } from "@pb/platform";
 import type { Store } from "@pb/core";
-import type { AppState } from "../../features/app/state.js";
-import type { AppAction } from "../../features/app/actions.js";
+import type { AppState } from "../../../app/src/state.js";
+import type { AppAction } from "../../../app/src/actions.js";
 
 interface PhaseGateProps {
   phase: 2 | 3 | 4;

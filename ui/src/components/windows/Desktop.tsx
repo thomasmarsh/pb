@@ -2,8 +2,8 @@
 
 import { For, Show, type JSX } from "solid-js";
 import type { Store } from "@pb/core";
-import type { AppState } from "../../features/app/state.js";
-import type { AppAction } from "../../features/app/actions.js";
+import type { AppState } from "../../../app/src/state.js";
+import type { AppAction } from "../../../app/src/actions.js";
 import { WindowFrame } from "./WindowFrame.js";
 import { WindowRuntimeView } from "./WindowRuntimeView.js";
 

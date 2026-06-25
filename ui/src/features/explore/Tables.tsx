@@ -2,8 +2,8 @@
 
 import { Show, For, createMemo } from "solid-js";
 import type { Store } from "@pb/core";
-import type { AppState } from "../../features/app/state.js";
-import type { AppAction } from "../../features/app/actions.js";
+import type { AppState } from "../../../app/src/state.js";
+import type { AppAction } from "../../../app/src/actions.js";
 import type { TableDetail } from "@pb/platform";
 import { ComboboxInput } from "../../components/ui/ComboboxInput.js";
 import { InlineDiagram } from "../../components/diagram/InlineDiagram.js";

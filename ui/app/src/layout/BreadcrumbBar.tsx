@@ -4,8 +4,8 @@ import { For, Show, createSignal } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import type { JSX } from "solid-js";
 import type { Store } from "@pb/core";
-import type { AppState } from "../../features/app/state.js";
-import type { AppAction } from "../../features/app/actions.js";
+import type { AppState } from "../state.js";
+import type { AppAction } from "../actions.js";
 import { type BreadcrumbSegment, type Route, type IconComp } from "@pb/platform";
 import {
   LayoutDashboard,

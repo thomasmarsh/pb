@@ -8,7 +8,7 @@ export default defineConfig({
     outDir: "../cli/api/src/pb/api/static/dist",
     emptyOutDir: true,
     lib: {
-      entry: resolve(__dirname, "src/App.tsx"),
+      entry: resolve(__dirname, "app/src/App.tsx"),
       formats: ["es"],
     },
     rollupOptions: {

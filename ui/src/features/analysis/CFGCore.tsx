@@ -3,8 +3,8 @@
 import { Show, For, createResource, createSignal, createMemo, onMount, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Store } from "@pb/core";
-import type { AppState } from "../../features/app/state.js";
-import type { AppAction } from "../../features/app/actions.js";
+import type { AppState } from "../../../app/src/state.js";
+import type { AppAction } from "../../../app/src/actions.js";
 import { createPanZoom } from "../../components/diagram/usePanZoom.js";
 import { highlightPowerScript } from "@pb/platform";
 

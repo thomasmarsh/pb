@@ -3,8 +3,8 @@
 import { Show, For, createMemo, onMount } from "solid-js";
 import { AlertTriangle, ArrowRight, procBadge, type ProcedureRow, type Route } from "@pb/platform";
 import type { Store } from "@pb/core";
-import type { AppState } from "../../features/app/state.js";
-import type { AppAction } from "../../features/app/actions.js";
+import type { AppState } from "../../../app/src/state.js";
+import type { AppAction } from "../../../app/src/actions.js";
 import { TableChip } from "../../components/detail/TableChip.js";
 import { Loading } from "../../components/ui/Loading.js";
 import { InlineDiagram } from "../../components/diagram/InlineDiagram.js";

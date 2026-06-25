@@ -3,8 +3,8 @@
 import { Show, For, createResource, createSignal } from "solid-js";
 import { Code2, procBadge, type DeadCodeResponse } from "@pb/platform";
 import type { Store } from "@pb/core";
-import type { AppState } from "../../features/app/state.js";
-import type { AppAction } from "../../features/app/actions.js";
+import type { AppState } from "../../../app/src/state.js";
+import type { AppAction } from "../../../app/src/actions.js";
 import { Loading } from "../../components/ui/Loading.js";
 
 type SortKey = "confidence" | "cc" | "object" | "name" | "type";

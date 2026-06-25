@@ -3,8 +3,8 @@
 import { Show, For, createSignal, onMount, onCleanup } from "solid-js";
 import { Tabs } from "@kobalte/core/tabs";
 import type { Store } from "@pb/core";
-import type { AppState } from "../../features/app/state.js";
-import type { AppAction } from "../../features/app/actions.js";
+import type { AppState } from "../../../app/src/state.js";
+import type { AppAction } from "../../../app/src/actions.js";
 import { ComboboxInput } from "../../components/ui/ComboboxInput.js";
 import { SvgToolbar } from "./components/SvgToolbar.js";
 import { DiagramTooltip } from "../../components/diagram/DiagramTooltip.js";
