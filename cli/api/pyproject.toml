@@ -1,0 +1,20 @@
+[project]
+name = "pb-api"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "pb-lib",
+    "pb-pipeline",
+    "fastapi>=0.111",
+]
+
+[tool.uv.sources]
+pb-lib = { workspace = true }
+pb-pipeline = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pb"]

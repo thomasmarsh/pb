@@ -1,31 +1,5 @@
-[project]
-name = "pb-tools"
-version = "0.1.0"
-requires-python = ">=3.10"
-dependencies = [
-    "duckdb>=0.10",
-    "fastapi>=0.111",
-    "graphviz>=0.21",
-    "networkx>=3.3",
-    "rich>=13.0",
-    "scipy>=1.11",
-    "sqlglot>=30.11.0",
-    "typer>=0.12",
-    "uvicorn[standard]>=0.30",
-    "mysql-connector-python>=9.0",
-    "scalar-fastapi>=1.8.2",
-]
-
-[project.scripts]
-pb_cli = "pb_cli.cli:app"
-pb-sql-worker = "pb_cli.bridge.sql_worker:main"
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["pb_cli"]
+[tool.uv.workspace]
+members = ["lib", "pipeline", "api"]
 
 [dependency-groups]
 dev = [
@@ -47,4 +21,4 @@ select = ["E", "F", "W", "I"]
 ignore = ["E501"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["lib/tests", "pipeline/tests", "api/tests"]
