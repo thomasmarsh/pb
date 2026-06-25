@@ -1,8 +1,7 @@
 // features/objects/types.ts
 
 import type { ObjectRow, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ProcedureListItem } from "../../types/api.js";
-import type { AstData } from "../../core/interpreter.js";
-import type { WindowLayout } from "../../core/layout.js";
+import { type AstData, type WindowLayout } from "@pb/interpreter";
 
 export interface ObjectsState {
   items: ObjectRow[];

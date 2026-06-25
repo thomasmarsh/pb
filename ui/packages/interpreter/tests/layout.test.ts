@@ -1,7 +1,7 @@
 // tests/core/layout.test.ts — Unit tests for extractLayout().
 
 import { describe, it, expect } from "vitest";
-import { extractLayout } from "../../src/core/layout.js";
+import { extractLayout } from "../src/layout.js";
 
 // Real typeBlocks fixture from parser output for w_misth_zpperiod_grid.srw.
 const ZPPERIOD_TYPE_BLOCKS = [

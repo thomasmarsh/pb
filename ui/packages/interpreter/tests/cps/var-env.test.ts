@@ -9,7 +9,7 @@ import {
   pushFrame,
   popFrame,
   flattenVarEnv,
-} from "../../../src/core/cps/var-env.js";
+} from "../../src/cps/var-env.js";
 
 describe("VarEnv", () => {
   it("readVar resolves local before instance before global for same name", () => {

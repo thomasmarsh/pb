@@ -5,7 +5,7 @@
 // via returned effects (no interpreter duplication).
 
 import { Effect, type Reducer } from "@pb/core";
-import type { AstData } from "../../core/interpreter.js";
+import type { AstData } from "@pb/interpreter";
 
 // ── Hardcoded bootstrap globals (simplified: skip INI / CONNECT / w_getxrisi) ──
 

@@ -1,8 +1,8 @@
 // tests/core/dwLayout.test.ts — unit tests for extractDwLayout().
 
 import { describe, it, expect } from "vitest";
-import { extractDwLayout } from "../../src/core/dwLayout.js";
-import type { DataWindowFile } from "../../src/types/ast.js";
+import { extractDwLayout } from "../src/dwLayout.js";
+import type { DataWindowFile } from "../src/types/ast.js";
 
 // Minimal fixture matching real parser output for dw_misth_zpperiod_list.
 const ZPPERIOD_DW: DataWindowFile = {

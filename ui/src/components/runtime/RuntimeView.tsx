@@ -1,10 +1,8 @@
 // RuntimeView.tsx — Wireframe layout renderer driven by the runtime reducer.
 
 import { createEffect, createSignal, Show, For } from "solid-js";
-import type { AstData, DWRow } from "../../core/interpreter.js";
-import { flattenVarEnv } from "../../core/cps/var-env.js";
+import { flattenVarEnv, type AstData, type DWRow, type WindowLayout, type LayoutControl } from "@pb/interpreter";
 import { initialRuntimeState } from "../../features/runtime/reducer.js";
-import type { WindowLayout, LayoutControl } from "../../core/layout.js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";

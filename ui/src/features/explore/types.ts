@@ -1,7 +1,7 @@
 // features/explore/types.ts — Explore feature state.
 
 import type { ExploreLibrary, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse } from "../../types/api.js";
-import type { DataWindowFile } from "../../types/ast.js";
+import type { DataWindowFile } from "@pb/interpreter";
 
 export interface TablesState {
   items: TableSummary[];

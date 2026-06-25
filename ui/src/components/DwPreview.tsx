@@ -1,6 +1,5 @@
 import { Show, For } from "solid-js";
-import type { DataWindowFile } from "../types/ast.js";
-import { extractDwLayout, type DwBandLayout, type DwControlLayout } from "../core/dwLayout.js";
+import { extractDwLayout, type DwBandLayout, type DwControlLayout, type DataWindowFile } from "@pb/interpreter";
 import { ResizableCanvas } from "./ResizableCanvas.js";
 
 export const BASE_SCALE = 0.2;

@@ -1,7 +1,7 @@
 // tests/core/runtime.test.ts — Unit tests for PB_BUILTINS.
 
 import { describe, it, expect } from "vitest";
-import { PB_BUILTINS } from "../../src/core/runtime.js";
+import { PB_BUILTINS } from "../src/runtime.js";
 
 // Helper: call a builtin and assert it exists first
 function callBuiltin(name: string, ...args: unknown[]): unknown {

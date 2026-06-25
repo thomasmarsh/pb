@@ -1,6 +1,6 @@
 // LineEdit.tsx — PB singlelineedit / multilineedit control renderer.
 
-import type { LayoutControl } from "../../core/layout.js";
+import type { LayoutControl } from "@pb/interpreter";
 
 export function LineEdit(props: { ctrl: LayoutControl }) {
   const isMulti = props.ctrl.type.toLowerCase().includes("multi");

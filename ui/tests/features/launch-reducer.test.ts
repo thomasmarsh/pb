@@ -8,7 +8,7 @@ import {
   initialLaunchState,
   type LaunchEnv,
 } from "../../src/features/launch/reducer.js";
-import type { AstData } from "../../src/core/interpreter.js";
+import type { AstData } from "@pb/interpreter";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

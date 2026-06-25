@@ -4,13 +4,7 @@
 // Effect and resumes when cps-resume arrives after SQL completes.
 
 import { Effect, type Reducer, type SQLResult } from "@pb/core";
-import type { AstData, DWRow, ProcEntry } from "../../core/interpreter.js";
-import type { WindowLayout } from "../../core/layout.js";
-import { loadCpsGraph } from "../../core/cps/load.js";
-import { step, type CpsResumeAction } from "../../core/cps/runner.js";
-import type { CpsGraph } from "../../core/cps/types.js";
-import { evalExpr } from "../../core/cps/expr.js";
-import { type VarEnv, makeVarEnv, pushFrame, popFrame } from "../../core/cps/var-env.js";
+import { loadCpsGraph, step, type CpsResumeAction, evalExpr, type VarEnv, makeVarEnv, pushFrame, popFrame, type AstData, type DWRow, type ProcEntry, type WindowLayout, type CpsGraph } from "@pb/interpreter";
 
 // ── Global variables ──────────────────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 // features/explore/actions.ts — Explore feature actions (self-contained).
 
 import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse } from "../../types/api.js";
-import type { DataWindowFile } from "../../types/ast.js";
+import type { DataWindowFile } from "@pb/interpreter";
 
 export type ExploreAction =
   | { tag: "load" }

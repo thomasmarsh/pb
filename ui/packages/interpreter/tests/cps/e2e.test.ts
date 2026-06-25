@@ -5,18 +5,18 @@
 
 import { describe, it, expect } from "vitest";
 import { Effect, type SQLResult } from "@pb/core";
-import { loadCpsGraph } from "../../../src/core/cps/load.js";
-import { step } from "../../../src/core/cps/runner.js";
-import type { CpsEnv } from "../../../src/core/cps/types.js";
-import { makeVarEnv, flattenVarEnv } from "../../../src/core/cps/var-env.js";
-import { createTestStore } from "../../test-store.js";
+import { loadCpsGraph } from "../../src/cps/load.js";
+import { step } from "../../src/cps/runner.js";
+import type { CpsEnv } from "../../src/cps/types.js";
+import { makeVarEnv, flattenVarEnv } from "../../src/cps/var-env.js";
+import { createTestStore } from "../../../../tests/test-store.js";
 import {
   runtimeReducer,
   initialRuntimeState,
   PB_GLOBALS,
   type RuntimeState,
-} from "../../../src/features/runtime/reducer.js";
-import type { AstData } from "../../../src/core/interpreter.js";
+} from "../../../../src/features/runtime/reducer.js";
+import type { AstData } from "../../src/interpreter.js";
 
 // ── Haskell-shaped graph fixtures ─────────────────────────────────────────────
 // These match the JSON format emitted by PB.Pipeline.CpsCompile / Serialise.

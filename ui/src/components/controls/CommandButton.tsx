@@ -1,6 +1,6 @@
 // CommandButton.tsx — PB commandbutton control renderer.
 
-import type { LayoutControl } from "../../core/layout.js";
+import type { LayoutControl } from "@pb/interpreter";
 
 export function CommandButton(props: { ctrl: LayoutControl; onClick: () => void }) {
   return (

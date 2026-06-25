@@ -1,7 +1,7 @@
 // tests/core/cps/load.test.ts — Tests for loadCpsGraph().
 
 import { describe, it, expect } from "vitest";
-import { loadCpsGraph } from "../../../src/core/cps/load.js";
+import { loadCpsGraph } from "../../src/cps/load.js";
 
 describe("loadCpsGraph", () => {
   it("maps CpsAssign tag → kind assign with renamed fields", () => {

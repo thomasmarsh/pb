@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { reducer, initialState, type AppEnv } from "../../src/features/app/reducer.js";
-import type { AstData } from "../../src/core/interpreter.js";
+import type { AstData } from "@pb/interpreter";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

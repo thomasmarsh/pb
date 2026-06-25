@@ -8,8 +8,7 @@ import { render, cleanup } from "@solidjs/testing-library";
 import { WindowRuntimeView } from "../../../src/components/windows/WindowRuntimeView.js";
 import { createTestStore } from "../../helpers.js";
 import { initialRuntimeState } from "../../../src/features/runtime/reducer.js";
-import type { WindowLayout } from "../../../src/core/layout.js";
-import type { DWRow } from "../../../src/core/interpreter.js";
+import { type WindowLayout, type DWRow } from "@pb/interpreter";
 
 const BASE_SCALE = 0.08; // matches the constant in WindowRuntimeView.tsx
 

@@ -7,7 +7,7 @@ import { TableDetailPanel } from "../../src/features/explore/Tables.js";
 import { DwDetailPanel } from "../../src/features/explore/DwDetailPanel.js";
 import { ExploreStoreContext } from "../../src/features/explore/ExploreContext.js";
 import type { ExploreProcDetail, DwDetailResponse } from "../../src/types/api.js";
-import type { DataWindowFile } from "../../src/types/ast.js";
+import type { DataWindowFile } from "@pb/interpreter";
 
 afterEach(() => {
   cleanup();

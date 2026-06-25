@@ -1,7 +1,7 @@
 // core/cps/types.ts — CPS graph data types for the composable step machine.
 
 import { type Effect, type SQLResult } from "@pb/core";
-import type { Expr } from "../../types/ast.js";
+import type { Expr } from "../types/ast.js";
 
 /** A flat instruction in the CPS graph. No nested control flow. */
 export type CpsNode =

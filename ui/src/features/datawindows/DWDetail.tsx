@@ -5,7 +5,7 @@ import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import type { DwDetailResponse, DwControlRow } from "../../types/api.js";
-import type { DataWindowFile } from "../../types/ast.js";
+import type { DataWindowFile } from "@pb/interpreter";
 import { CodeBlock } from "../../components/detail/CodeBlock.js";
 import { DwPreview } from "../../components/DwPreview.js";
 import { Loading } from "../../components/ui/Loading.js";

@@ -9,7 +9,7 @@ import {
   PB_GLOBALS,
   type RuntimeEnv,
 } from "../../src/features/runtime/reducer.js";
-import type { AstData } from "../../src/core/interpreter.js";
+import type { AstData } from "@pb/interpreter";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

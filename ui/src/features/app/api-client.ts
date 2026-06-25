@@ -18,9 +18,7 @@ import type {
   TableDetail,
   ErrorListResponse,
 } from "../../types/api.js";
-import type { DataWindowFile } from "../../types/ast.js";
-import type { AstData } from "../../core/interpreter.js";
-import type { WindowLayout } from "../../core/layout.js";
+import { type DataWindowFile, type AstData, type WindowLayout } from "@pb/interpreter";
 import { Effect, type SQLResult } from "@pb/core";
 import type { AppEnv as Env } from "./reducer.js";
 import type { Theme } from "./state.js";

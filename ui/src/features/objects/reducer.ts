@@ -7,8 +7,7 @@ import type {
   ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse,
   ProcedureDetailResponse, ProcedureListItem,
 } from "../../types/api.js";
-import type { AstData } from "../../core/interpreter.js";
-import type { WindowLayout } from "../../core/layout.js";
+import { type AstData, type WindowLayout } from "@pb/interpreter";
 import type { NavigationAction } from "../navigation/types.js";
 
 export interface ObjectsEnv {

@@ -1,8 +1,7 @@
 // features/objects/actions.ts — Objects feature actions (self-contained).
 
 import type { ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ObjectRow, ProcedureListItem } from "../../types/api.js";
-import type { AstData } from "../../core/interpreter.js";
-import type { WindowLayout } from "../../core/layout.js";
+import { type AstData, type WindowLayout } from "@pb/interpreter";
 
 export type ObjectsAction =
   | { tag: "back-to-objects" }

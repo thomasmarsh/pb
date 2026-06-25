@@ -1,7 +1,7 @@
 // features/datawindows/actions.ts
 
 import type { ListObjectsResponse, DwDetailResponse } from "../../types/api.js";
-import type { DataWindowFile } from "../../types/ast.js";
+import type { DataWindowFile } from "@pb/interpreter";
 
 export type DatawindowsAction =
   | { tag: "back-to-datawindows" }

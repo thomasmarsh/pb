@@ -2,9 +2,9 @@
 
 import { describe, it, expect } from "vitest";
 import { Effect } from "@pb/core";
-import { step, type CpsEnv } from "../../../src/core/cps/runner.js";
-import type { CpsGraph, CpsNode } from "../../../src/core/cps/types.js";
-import { makeVarEnv, flattenVarEnv } from "../../../src/core/cps/var-env.js";
+import { step, type CpsEnv } from "../../src/cps/runner.js";
+import type { CpsGraph, CpsNode } from "../../src/cps/types.js";
+import { makeVarEnv, flattenVarEnv } from "../../src/cps/var-env.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

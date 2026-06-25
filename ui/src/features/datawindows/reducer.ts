@@ -4,7 +4,7 @@ import { Effect, type Reducer } from "@pb/core";
 import type { DatawindowsState } from "./types.js";
 import type { DatawindowsAction } from "./actions.js";
 import type { ListObjectsResponse, DwDetailResponse } from "../../types/api.js";
-import type { DataWindowFile } from "../../types/ast.js";
+import type { DataWindowFile } from "@pb/interpreter";
 import type { NavigationAction } from "../navigation/types.js";
 
 export interface DatawindowsEnv {

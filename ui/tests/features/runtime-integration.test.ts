@@ -3,14 +3,12 @@
 
 import { describe, it, expect } from "vitest";
 import { createOpenpayMockEnv } from "../mock-runtime-env.js";
-import { renderWindow } from "../../src/core/render-window.js";
+import { renderWindow, makeVarEnv, type AstData } from "@pb/interpreter";
 import {
   runtimeReducer,
   initialRuntimeState,
 } from "../../src/features/runtime/reducer.js";
-import { makeVarEnv } from "../../src/core/cps/var-env.js";
 import { createTestStore } from "../test-store.js";
-import type { AstData } from "../../src/core/interpreter.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

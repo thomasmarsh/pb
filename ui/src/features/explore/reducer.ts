@@ -4,7 +4,7 @@ import { Effect, type Reducer } from "@pb/core";
 import type { ExploreState } from "./types.js";
 import type { ExploreAction } from "./actions.js";
 import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse } from "../../types/api.js";
-import type { DataWindowFile } from "../../types/ast.js";
+import type { DataWindowFile } from "@pb/interpreter";
 import type { NavigationAction } from "../navigation/types.js";
 
 // ── Narrow environment ────────────────────────────────────────────────────────

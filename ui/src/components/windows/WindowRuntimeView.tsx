@@ -5,10 +5,8 @@
 // content inside managed windows opened via the launch flow.
 
 import { Show, For, type JSX } from "solid-js";
-import type { DWRow } from "../../core/interpreter.js";
-import { flattenVarEnv } from "../../core/cps/var-env.js";
+import { flattenVarEnv, type DWRow, type WindowLayout, type LayoutControl } from "@pb/interpreter";
 import { initialRuntimeState } from "../../features/runtime/reducer.js";
-import type { WindowLayout, LayoutControl } from "../../core/layout.js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";

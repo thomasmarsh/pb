@@ -14,7 +14,7 @@ __pycache__
 
 # TypeScript
 node_modules
-cli/pb_cli/explorer/static/dist/
+cli/api/src/pb/api/static/dist/
 
 # Local work
 output/
