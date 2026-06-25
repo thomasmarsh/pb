@@ -7,9 +7,8 @@ from typing import Any
 
 import duckdb
 import graphviz
-
-from pb_cli.core.cfg_builder import cfg_from_json, compute_node_states
-from pb_cli.core.cfg_renderer import cfg_to_dot
+from pb.lib.cfg_builder import cfg_from_json, compute_node_states
+from pb.lib.cfg_renderer import cfg_to_dot
 
 
 def get_cfg_diagram(

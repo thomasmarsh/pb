@@ -8,8 +8,7 @@ from typing import Any
 
 import graphviz
 import networkx as nx
-
-from pb_cli.core.diagram_builder import (
+from pb.lib.diagram_builder import (
     render_calls,
     render_dw_tables,
     render_heatmap,
@@ -18,6 +17,7 @@ from pb_cli.core.diagram_builder import (
     render_sql_lineage,
     render_table_lineage,
 )
+
 from pb_cli.shell.db import Conn
 
 log = logging.getLogger(__name__)

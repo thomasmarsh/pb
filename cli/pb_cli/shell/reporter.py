@@ -15,7 +15,7 @@ from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from pb_cli.core.state import FileDiff
+from pb.lib.state import FileDiff
 
 # ── ExtractProgress ────────────────────────────────────────────────────────────
 

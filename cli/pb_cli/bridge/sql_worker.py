@@ -15,7 +15,7 @@ import json
 import struct
 import sys
 
-from pb_cli.core.sql import parse_pb_sql
+from pb.lib.sql import parse_pb_sql
 
 _HEADER = struct.Struct(">I")
 

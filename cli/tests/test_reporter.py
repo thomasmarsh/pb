@@ -5,7 +5,8 @@ These tests require no cabal build and no duckdb — pure Python.
 
 import json
 
-from pb_cli.core.state import FileDiff
+from pb.lib.state import FileDiff
+
 from pb_cli.shell.reporter import RecordingReporter
 
 

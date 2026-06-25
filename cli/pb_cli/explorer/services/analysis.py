@@ -6,8 +6,8 @@ import json
 from typing import Any
 
 import duckdb
+from pb.lib.slicing import backward_slice, build_proc_def_use, forward_slice
 
-from pb_cli.core.slicing import backward_slice, build_proc_def_use, forward_slice
 from pb_cli.explorer.routes.dependencies import rows
 
 
