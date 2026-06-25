@@ -34,6 +34,7 @@ import PB.Pipeline.Emit
   , wrapSrFile
   )
 import PB.Pipeline.Passes    (runPhaseB)
+import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse
   ( SqlResult (..), SqlBridgePool
   , startSqlBridgePool, shutdownSqlBridgePool
@@ -164,6 +165,7 @@ compileOne wsEnv mBridge outcome = case outcome of
     pure $ CFPs $ CompiledPs
       { cpsObjectRow     = ObjectRow fp "powerscript" obj anc
                              (fmap jsonText (extractWindowLayout (srTypeBlocks sf)))
+                             (Just (jsonText (toJSON (srTypeBlocks sf))))
       , cpsProcRows      = map fst procs
       , cpsLocalVars     = lvs
       , cpsCallSites     = css

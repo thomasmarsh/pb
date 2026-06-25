@@ -45,11 +45,11 @@ def client_with_sql(db_path, tmp_path_factory):
         "INSERT INTO dw_retrieve_columns VALUES (?,?,?,?,?)",
         ["", "dw_synth", "synthetic_test_table.id", "id", "synthetic_test_table"],
     )
-    # objects schema: file, kind, object, ancestor, layout_json
+    # objects schema: file, kind, object, ancestor, layout_json, type_blocks_json
     # Add a child object that inherits from fn_sqlerror for impact-lineage tests.
     conn.execute(
-        "INSERT INTO objects VALUES (?,?,?,?,?)",
-        ["", "powerscript", "synthetic_child_obj", "fn_sqlerror", None],
+        "INSERT INTO objects VALUES (?,?,?,?,?,?)",
+        ["", "powerscript", "synthetic_child_obj", "fn_sqlerror", None, None],
     )
     conn.close()
 

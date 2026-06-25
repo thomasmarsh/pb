@@ -106,7 +106,7 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
     allTables :: [Query]
     allTables =
       [ "CREATE TABLE IF NOT EXISTS objects \
-        \(file TEXT, kind TEXT, object TEXT, ancestor TEXT, layout_json TEXT)"
+        \(file TEXT, kind TEXT, object TEXT, ancestor TEXT, layout_json TEXT, type_blocks_json TEXT)"
       , "CREATE TABLE IF NOT EXISTS procedures \
         \(file TEXT, object TEXT, proc_name TEXT, proc_type TEXT, \
         \start_line INTEGER, end_line INTEGER, \
@@ -188,11 +188,12 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
 -- Row types
 
 data ObjectRow = ObjectRow
-  { orFile       :: Text
-  , orKind       :: Text
-  , orObject     :: Text
-  , orAncestor   :: Maybe Text
-  , orLayoutJson :: Maybe Text
+  { orFile           :: Text
+  , orKind           :: Text
+  , orObject         :: Text
+  , orAncestor       :: Maybe Text
+  , orLayoutJson     :: Maybe Text
+  , orTypeBlocksJson :: Maybe Text
   }
 
 data ProcRow = ProcRow
@@ -260,11 +261,12 @@ appendObjects :: DuckConn -> [ObjectRow] -> IO ()
 appendObjects _    [] = pure ()
 appendObjects conn rows = withRaw conn "objects" $ \app ->
   for_ rows $ \r -> do
-    aText     app (orFile       r)
-    aText     app (orKind       r)
-    aText     app (orObject     r)
-    aMaybeText app (orAncestor   r)
-    aMaybeText app (orLayoutJson r)
+    aText      app (orFile           r)
+    aText      app (orKind           r)
+    aText      app (orObject         r)
+    aMaybeText app (orAncestor       r)
+    aMaybeText app (orLayoutJson     r)
+    aMaybeText app (orTypeBlocksJson r)
     endRow app
 
 appendProcedures :: DuckConn -> [ProcRow] -> IO ()

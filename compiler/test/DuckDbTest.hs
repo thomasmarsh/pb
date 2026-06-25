@@ -23,8 +23,8 @@ testAppendObjects :: IO ()
 testAppendObjects = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
   appendObjects conn
-    [ ObjectRow "test.srf" "powerscript" "w_test" (Just "w_ancestor") Nothing
-    , ObjectRow "other.sru" "powerscript" "u_util" Nothing            Nothing
+    [ ObjectRow "test.srf" "powerscript" "w_test" (Just "w_ancestor") Nothing Nothing
+    , ObjectRow "other.sru" "powerscript" "u_util" Nothing            Nothing Nothing
     ]
   -- Appending an empty list after a real batch must not throw
   appendObjects conn []

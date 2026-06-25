@@ -261,12 +261,13 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
     """Return event/function CPS graphs and variables for an object."""
     import json
     obj_rows = rows(conn.execute(
-        "SELECT object AS name, ancestor FROM objects WHERE object = ?", [name]
+        "SELECT object AS name, ancestor, type_blocks_json FROM objects WHERE object = ?", [name]
     ))
     if not obj_rows:
         return None
 
     ancestor_name: str | None = obj_rows[0].get("ancestor")
+    type_blocks_json: str | None = obj_rows[0].get("type_blocks_json")
 
     event_rows = rows(conn.execute(
         "SELECT proc_name AS name, object AS owner, cps_graph_json FROM procedures "
@@ -335,7 +336,7 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
                 ancestor_functions.append(entry)
 
     return {
-        "typeBlocks": [],
+        "typeBlocks": json.loads(type_blocks_json) if type_blocks_json else [],
         "events": events,
         "functions": functions,
         "variables": variables,
