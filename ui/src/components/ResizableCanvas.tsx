@@ -15,8 +15,9 @@ export function ResizableCanvas(props: {
   children: JSX.Element;
 }) {
   let wrapperRef: HTMLDivElement | undefined;
-  const [containerW, setContainerW] = createSignal(0);
-  const [containerH, setContainerH] = createSignal(0);
+  // Initialise to natural pixel dimensions so content is visible before ResizeObserver fires.
+  const [containerW, setContainerW] = createSignal(props.naturalWidth * props.baseScale);
+  const [containerH, setContainerH] = createSignal(props.naturalHeight * props.baseScale);
 
   const naturalWidthPx = () => props.naturalWidth * props.baseScale;
   const naturalHeightPx = () => props.naturalHeight * props.baseScale;
@@ -77,7 +78,9 @@ export function ResizableCanvas(props: {
   }
 
   return (
-    <div ref={wrapperRef} style={{ position: "relative" }}>
+    // --canvas-scale lets child controls counter-scale their font sizes to stay
+    // visually constant regardless of how far the canvas is zoomed in or out.
+    <div ref={wrapperRef} style={{ position: "relative", "--canvas-scale": `${scale()}` } as Record<string, string>}>
       <div style={{
         width: `${containerW()}px`,
         height: `${containerH()}px`,

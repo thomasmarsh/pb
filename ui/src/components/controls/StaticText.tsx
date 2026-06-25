@@ -7,7 +7,7 @@ export function StaticText(props: { ctrl: LayoutControl }) {
     <div
       class="control-statictext"
       style={{
-        "font-size": "11px",
+        "font-size": "calc(11px / var(--canvas-scale, 1))",
         color: "var(--text)",
         padding: "2px 4px",
         "white-space": "nowrap",

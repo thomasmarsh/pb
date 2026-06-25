@@ -9,13 +9,13 @@ export function GroupBox(props: { ctrl: LayoutControl }) {
       style={{
         width: "100%",
         height: "100%",
-        "font-size": "11px",
+        "font-size": "calc(11px / var(--canvas-scale, 1))",
         border: "1px solid var(--border)",
         padding: "4px",
         "box-sizing": "border-box",
       }}
     >
-      <legend style={{ "font-size": "11px", color: "var(--text-muted)", padding: "0 4px" }}>
+      <legend style={{ "font-size": "calc(11px / var(--canvas-scale, 1))", color: "var(--text-muted)", padding: "0 4px" }}>
         {props.ctrl.text ?? ""}
       </legend>
     </fieldset>

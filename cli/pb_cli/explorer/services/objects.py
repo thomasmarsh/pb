@@ -346,17 +346,65 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
     }
 
 
-def get_object_layout(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
-    """Return the parsed window layout JSON stored during ingestion."""
+def _load_layout_raw(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
     row = conn.execute(
-        "SELECT layout_json FROM objects WHERE object = ?", [name]
+        "SELECT layout_json, ancestor FROM objects WHERE object = ?", [name]
     ).fetchone()
     if not row or not row[0]:
         return None
     try:
-        return json.loads(row[0])
+        layout = json.loads(row[0])
+        layout["_ancestor"] = row[1]  # carry ancestor for merging
+        return layout
     except Exception:
         return None
+
+
+def get_object_layout(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
+    """Return the parsed window layout JSON, enriched with inherited control dimensions.
+
+    Inherited controls that only override x/y in the child window have no width/height
+    in the child's layout_json.  Walk the ancestor chain (up to 8 levels) and fill
+    in any missing numeric fields (width, height, text) from the matching parent control.
+    """
+    layout = _load_layout_raw(conn, name)
+    if layout is None:
+        return None
+
+    # Build an index of controls by name for fast lookup
+    child_by_name: dict[str, dict[str, Any]] = {
+        c["name"]: c for c in layout.get("controls", [])
+    }
+
+    # Fields that may be inherited from parent controls
+    INHERIT_FIELDS = ("width", "height", "text")
+
+    visited: set[str] = {name}
+    ancestor = layout.pop("_ancestor", None)
+
+    while ancestor and ancestor not in visited:
+        parent = _load_layout_raw(conn, ancestor)
+        if parent is None:
+            break
+        visited.add(ancestor)
+        ancestor = parent.pop("_ancestor", None)
+
+        parent_by_name: dict[str, dict[str, Any]] = {
+            c["name"]: c for c in parent.get("controls", [])
+        }
+        for ctrl_name, ctrl in child_by_name.items():
+            parent_ctrl = parent_by_name.get(ctrl_name)
+            if parent_ctrl is None:
+                continue
+            for field in INHERIT_FIELDS:
+                if field not in ctrl and field in parent_ctrl:
+                    ctrl[field] = parent_ctrl[field]
+
+        # Stop once all controls have width and height
+        if all("width" in c and "height" in c for c in child_by_name.values()):
+            break
+
+    return layout
 
 
 def get_dw_layout(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:

@@ -46,7 +46,11 @@ function renderControl(ctrl: LayoutControl, onClick: () => void): import("solid-
   if (t === "singlelineedit" || t === "multilineedit") {
     return <div class="runtime-ctrl" style={controlStyle(ctrl)}><LineEdit ctrl={ctrl} /></div>;
   }
-  return <ControlBox ctrl={ctrl} onClick={onClick} />;
+  return (
+    <div class="runtime-ctrl" style={controlStyle(ctrl)}>
+      <ControlBox ctrl={ctrl} onClick={onClick} />
+    </div>
+  );
 }
 
 function ControlBox(props: { ctrl: LayoutControl; onClick: () => void }) {
@@ -55,7 +59,11 @@ function ControlBox(props: { ctrl: LayoutControl; onClick: () => void }) {
     <div
       class="runtime-control"
       style={{
-        ...controlStyle(props.ctrl),
+        position: "absolute",
+        left: "0",
+        top: "0",
+        width: "100%",
+        height: "100%",
         border: "1px solid var(--border)",
         background: isDw() ? "var(--surface)" : "var(--surface-raised)",
         padding: "2px 4px",
