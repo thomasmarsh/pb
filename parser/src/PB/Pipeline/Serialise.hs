@@ -13,10 +13,10 @@ import PB.AST.Located     (Located)
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType)
 import PB.Lexing.Token    (Token (..))
-import PB.Pipeline.CfgBuild   (CfgBlock, CfgEdge, Cfg)
-import PB.Pipeline.CpsCompile (CpsNode, CpsGraph)
-import PB.Pipeline.Taint      (InterprocEdge (..), ProcedureSummary (..), ProcSummaryReturnFlow (..))
-import PB.Pipeline.DeadCode   (DeadProcedure (..))
+import PB.Analysis.CfgBuild   (CfgBlock, CfgEdge, Cfg)
+import PB.Analysis.CpsCompile (CpsNode, CpsGraph)
+import PB.Analysis.Taint      (InterprocEdge (..), ProcedureSummary (..), ProcSummaryReturnFlow (..))
+import PB.Analysis.DeadCode   (DeadProcedure (..))
 
 -- | Strip a camelCase field-name prefix, e.g. "fnsMods" → "mods",
 --   "fnsReturnType" → "returnType", "srForward" → "forward".

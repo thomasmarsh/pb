@@ -14,7 +14,7 @@ import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type         (PbType (..))
 import PB.Grammar.DataWindow (parseDataWindow)
-import PB.Pipeline.TypeResolve
+import PB.Analysis.TypeResolve
 
 -- ---------------------------------------------------------------------------
 -- Helpers

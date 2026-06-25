@@ -1,8 +1,8 @@
 module DeadCodeTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.DeadCode
-import PB.Pipeline.CfgBuild  (Cfg (..), CfgBlock (..), CfgEdge (..))
+import PB.Analysis.DeadCode
+import PB.Analysis.CfgBuild  (Cfg (..), CfgBlock (..), CfgEdge (..))
 import Data.Set qualified as Set
 import Test.Tasty
 import Test.Tasty.HUnit

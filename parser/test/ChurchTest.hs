@@ -11,7 +11,7 @@ import PB.AST.Expr     (Expr (..), Lvalue (..), LvSegment (..))
 import PB.AST.Located  (Located (..))
 import PB.AST.Type     (PbType (..))
 import PB.Pipeline.Church
-import PB.Pipeline.TypeResolve (CallSite (..), LocalVar (..))
+import PB.Analysis.TypeResolve (CallSite (..), LocalVar (..))
 
 -- ---------------------------------------------------------------------------
 -- Helpers

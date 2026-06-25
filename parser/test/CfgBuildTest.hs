@@ -4,7 +4,7 @@ import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr         (Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Located      (Located (..))
-import PB.Pipeline.CfgBuild
+import PB.Analysis.CfgBuild
 
 import Test.Tasty           (TestTree, testGroup)
 import Test.Tasty.HUnit     (assertBool, testCase, (@?=))

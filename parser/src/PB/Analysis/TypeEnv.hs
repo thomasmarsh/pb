@@ -1,5 +1,5 @@
 {-# LANGUAGE StrictData #-}
-module PB.Pipeline.TypeEnv
+module PB.Analysis.TypeEnv
   ( TypeEnv (..)
   , buildWorkspaceTypeEnv
   , lookupVarType

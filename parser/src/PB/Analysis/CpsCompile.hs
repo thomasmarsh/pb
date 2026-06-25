@@ -8,7 +8,7 @@
 -- The resulting graph has no nested control flow; all branching is via
 -- explicit node indices.  The TypeScript step() driver executes the graph.
 -- Python stores the result as cps_graph_json on the procedures table.
-module PB.Pipeline.CpsCompile
+module PB.Analysis.CpsCompile
   ( CpsNode (..)
   , CpsGraph (..)
   , CallKind (..)
@@ -24,7 +24,7 @@ import PB.AST.Expr
 import PB.AST.Located  (Located (..))
 import PB.Grammar.Body        (parseExpr)
 import PB.Lexing.Token        (Token (..))
-import PB.Pipeline.TypeEnv (TypeEnv, lookupBaseType)
+import PB.Analysis.TypeEnv (TypeEnv, lookupBaseType)
 import Control.Monad       (foldM)
 import Control.Monad.State.Strict
 import Data.List            (partition)

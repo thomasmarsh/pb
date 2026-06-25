@@ -12,7 +12,7 @@
 --   buildProcMap      :: [SrFile] -> Map Text (Set Text)
 --   buildObjectSet    :: [SrFile] -> Set Text
 --   buildUserTypeSet  :: [SrFile] -> Set Text
-module PB.Pipeline.TypeResolve
+module PB.Analysis.TypeResolve
   ( LocalVar (..)
   , CallSite (..)
   , GlobalVar (..)

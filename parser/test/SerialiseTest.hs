@@ -8,7 +8,7 @@ import PB.AST.Expr      (Expr (..), LvSegment (..))
 import PB.AST.SourceFile (SrFile (..))
 import PB.Grammar.File        (SrSpans (..))
 import PB.Pipeline.Runner     (wrapSrFile)
-import PB.Pipeline.TypeEnv    (buildWorkspaceTypeEnv)
+import PB.Analysis.TypeEnv    (buildWorkspaceTypeEnv)
 import PB.Pipeline.Serialise  ()
 
 import Data.Aeson          (Value (..), toJSON)

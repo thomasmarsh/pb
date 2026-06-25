@@ -7,9 +7,9 @@ import PB.AST.Type         (PbType (..))
 import PB.AST.Located      (Located (..))
 import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
-import PB.Pipeline.CfgBuild (Cfg (..), CfgBlock (..), CfgEdge (..), buildCfg)
+import PB.Analysis.CfgBuild (Cfg (..), CfgBlock (..), CfgEdge (..), buildCfg)
 import PB.Pipeline.Preprocess (LogicalLine (..))
-import PB.Pipeline.Dataflow
+import PB.Analysis.Dataflow
 
 import Data.Aeson          (Value (..), (.=), object, toJSON)
 import qualified Data.Aeson.Key    as Key

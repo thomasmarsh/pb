@@ -41,21 +41,21 @@ library
     PB.Lexing.Lexer
     PB.Lexing.Splitter
     PB.Lexing.Token
-    PB.Pipeline.CfgBuild
-    PB.Pipeline.CpsCompile
-    PB.Pipeline.DeadCode
-    PB.Pipeline.Dataflow
-    PB.Pipeline.PbApi
-    PB.Pipeline.Taint
+    PB.Analysis.Builtins
+    PB.Analysis.CfgBuild
+    PB.Analysis.CpsCompile
+    PB.Analysis.Dataflow
+    PB.Analysis.DeadCode
+    PB.Analysis.Taint
+    PB.Analysis.TypeEnv
+    PB.Analysis.TypeResolve
     PB.Pipeline.Preprocess
     PB.Pipeline.Runner
     PB.Pipeline.Serialise
     PB.Pipeline.Church
-    PB.Pipeline.TypeEnv
-    PB.Pipeline.TypeResolve
     PB.Pipeline.DuckDb
     PB.Pipeline.SqlParse
-    PB.Pipeline.Walk
+    PB.Pipeline.FileWalk
   build-depends:
     , base ^>=4.20.1.0
     , text

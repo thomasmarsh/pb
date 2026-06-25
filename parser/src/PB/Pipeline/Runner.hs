@@ -19,12 +19,12 @@ import PB.Grammar.File       (parseSrFileWithSpans, SrSpans (..))
 import PB.Lexing.Lexer      (LexError (..), LexLine (..), tokenize)
 import PB.Lexing.Splitter   (Statement (..), splitStatements)
 import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
-import PB.Pipeline.CfgBuild    (buildCfg)
-import PB.Pipeline.CpsCompile  (compileProcedure)
-import PB.Pipeline.DeadCode    qualified as DeadCode
-import PB.Pipeline.TypeEnv     (TypeEnv (..), buildWorkspaceTypeEnv, withProcScope)
-import PB.Pipeline.Dataflow    qualified as Dataflow
-import PB.Pipeline.Taint       qualified as Taint
+import PB.Analysis.CfgBuild    (buildCfg)
+import PB.Analysis.CpsCompile  (compileProcedure)
+import PB.Analysis.DeadCode    qualified as DeadCode
+import PB.Analysis.TypeEnv     (TypeEnv (..), buildWorkspaceTypeEnv, withProcScope)
+import PB.Analysis.Dataflow    qualified as Dataflow
+import PB.Analysis.Taint       qualified as Taint
 import PB.Pipeline.Serialise   ()
 
 import Data.Aeson          (ToJSON (..), Value (..), encode, object, toJSON, (.=))
@@ -52,8 +52,8 @@ import qualified Data.Set           as Set
 import qualified Data.Text          as T
 import qualified Data.Text.Encoding as TE
 import System.FilePath     (takeBaseName, takeExtension)
-import PB.Pipeline.PbApi    (builtinFnNames, builtinMethodNames)
-import PB.Pipeline.TypeResolve
+import PB.Analysis.Builtins    (builtinFnNames, builtinMethodNames)
+import PB.Analysis.TypeResolve
   ( LocalVar, CallSite, GlobalVar (..)
   , extractCallSites, extractDwCallSites, extractGlobalVars, extractLocalVars
   , resolveTypes, resolveCalls
@@ -65,7 +65,7 @@ import PB.Pipeline.SqlParse
   , startSqlBridgePool, shutdownSqlBridgePool
   , parseSql, extractBsRawNodes
   )
-import PB.Pipeline.Walk    (walkAllSrFiles)
+import PB.Pipeline.FileWalk    (walkAllSrFiles)
 import PB.Pipeline.DuckDb
   ( DuckConn, withWriteConn, initSchema
   , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)

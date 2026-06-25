@@ -8,7 +8,7 @@
 -- The CFG mirrors cfg_builder.py output but is computed directly from the
 -- typed AST, eliminating JSON re-parsing.  Python reads the stored cfg_json
 -- field and deserialises it back to Python CFG objects for rendering/analysis.
-module PB.Pipeline.CfgBuild
+module PB.Analysis.CfgBuild
   ( CfgBlock (..)
   , CfgEdge (..)
   , Cfg (..)

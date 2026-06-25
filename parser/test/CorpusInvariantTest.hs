@@ -2,7 +2,7 @@ module CorpusInvariantTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.Runner (runFile)
-import PB.Pipeline.Walk   (walkDwFiles, walkPsFiles)
+import PB.Pipeline.FileWalk   (walkDwFiles, walkPsFiles)
 
 import Data.Aeson (Value (..))
 import qualified Data.Aeson.Key    as Key

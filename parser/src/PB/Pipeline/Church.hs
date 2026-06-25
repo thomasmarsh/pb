@@ -44,7 +44,7 @@ import PB.AST.Expr     (Expr (..), Lvalue)
 import PB.AST.Located  (Located (..))
 import PB.AST.Type     (PbType, renderPbType)
 import PB.Lexing.Token (Token)
-import PB.Pipeline.TypeResolve (CallSite (..), LocalVar (..), callSitesExpr)
+import PB.Analysis.TypeResolve (CallSite (..), LocalVar (..), callSitesExpr)
 
 -- ---------------------------------------------------------------------------
 -- Base functor
@@ -178,7 +178,7 @@ fToStmt (BsChooseF expr clauses) =
 type ProcCtx = (Text, Text, Text)
 
 -- | Algebra that extracts local variable declarations.
--- Mirrors walkStmtLocalVars in PB.Pipeline.TypeResolve.
+-- Mirrors walkStmtLocalVars in PB.Analysis.TypeResolve.
 -- In recursive positions, r = [LocalVar] holds already-folded child results —
 -- compound constructors only need to concat, never recurse explicitly.
 extractLocalVarsAlg :: ProcCtx -> Int -> BodyStmtF [LocalVar] -> [LocalVar]
@@ -197,7 +197,7 @@ extractLocalVarsAlg (file, obj, proc_) line node = case node of
   _                   -> []
 
 -- | Algebra that extracts call sites from expressions within statements.
--- Mirrors walkStmtCallSites in PB.Pipeline.TypeResolve.
+-- Mirrors walkStmtCallSites in PB.Analysis.TypeResolve.
 extractCallSitesAlg :: ProcCtx -> Int -> BodyStmtF [CallSite] -> [CallSite]
 extractCallSitesAlg (file, obj, proc_) line node = case node of
   BsCallF e              -> cs e

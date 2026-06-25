@@ -7,9 +7,9 @@ import PB.AST.Located      (Located (..))
 import PB.AST.Type         (PbType (..))
 import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
-import PB.Pipeline.CpsCompile
+import PB.Analysis.CpsCompile
 import PB.Pipeline.Preprocess (LogicalLine (..))
-import PB.Pipeline.TypeEnv (TypeEnv (..))
+import PB.Analysis.TypeEnv (TypeEnv (..))
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set

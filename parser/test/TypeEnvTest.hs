@@ -3,7 +3,7 @@ module TypeEnvTest (tests) where
 import PB.Prelude
 import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeDecl (..), TypeBlock (..))
 import PB.AST.Type           (PbType (..), parseTypeText)
-import PB.Pipeline.TypeEnv   (TypeEnv (..), buildWorkspaceTypeEnv, lookupVarType, lookupUserType,
+import PB.Analysis.TypeEnv   (TypeEnv (..), buildWorkspaceTypeEnv, lookupVarType, lookupUserType,
                               lookupBaseType, withProcScope)
 
 import qualified Data.Map.Strict as Map

@@ -1,5 +1,5 @@
 {-# LANGUAGE StrictData #-}
-module PB.Pipeline.DeadCode
+module PB.Analysis.DeadCode
   ( DeadProcedure (..)
   , ProcInfo (..)
   , computeDeadProcedures
@@ -7,7 +7,7 @@ module PB.Pipeline.DeadCode
   ) where
 
 import PB.Prelude
-import PB.Pipeline.CfgBuild  (Cfg (..))
+import PB.Analysis.CfgBuild  (Cfg (..))
 import Data.List              (sortOn)
 import Data.Map.Strict qualified as Map
 import Data.Sequence qualified as Seq

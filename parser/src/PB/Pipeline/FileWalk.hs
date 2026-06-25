@@ -1,4 +1,4 @@
-module PB.Pipeline.Walk
+module PB.Pipeline.FileWalk
   ( walkPsFiles
   , walkDwFiles
   , walkAllSrFiles

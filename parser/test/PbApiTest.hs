@@ -1,7 +1,7 @@
 module PbApiTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.PbApi (builtinFnNames, builtinMethodNames)
+import PB.Analysis.Builtins (builtinFnNames, builtinMethodNames)
 
 import qualified Data.Set as Set
 

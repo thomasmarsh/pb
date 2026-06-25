@@ -10,7 +10,7 @@
 -- the AST.  Propagates taint forward through intra-procedural def-use chains
 -- and inter-procedural arg/return/global edges.  Reconstructs paths via
 -- provenance back-trace.
-module PB.Pipeline.Taint
+module PB.Analysis.Taint
   ( -- * Types
     SqlStmt (..)
   , ProcMeta (..)
@@ -55,7 +55,7 @@ import PB.AST.BodyStmt
   )
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
-import PB.Pipeline.TypeResolve (parseParams)
+import PB.Analysis.TypeResolve (parseParams)
 
 import Data.Aeson
   ( FromJSON (..), ToJSON (..), (.:), (.:?), (.!=)

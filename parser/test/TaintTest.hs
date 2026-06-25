@@ -5,7 +5,7 @@ import PB.AST.BodyStmt     (BodyStmt (..), IfStmt (..), ForStmt (..))
 import PB.AST.Expr         (Expr (..), Lvalue (..), LvSegment (..))
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
-import PB.Pipeline.Taint
+import PB.Analysis.Taint
 
 import Data.Aeson           (eitherDecode)
 import qualified Data.ByteString.Lazy as LBS

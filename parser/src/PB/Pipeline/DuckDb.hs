@@ -50,13 +50,13 @@ module PB.Pipeline.DuckDb
 
 import PB.Prelude
 import PB.AST.Type             (parseTypeText)
-import PB.Pipeline.TypeResolve
+import PB.Analysis.TypeResolve
   ( LocalVar (..), CallSite (..), GlobalVar (..)
   , ResolvedType (..), ResolvedCall (..)
   )
-import PB.Pipeline.Dataflow    qualified as Dataflow
-import PB.Pipeline.Taint       qualified as Taint
-import PB.Pipeline.DeadCode    qualified as DeadCode
+import PB.Analysis.Dataflow    qualified as Dataflow
+import PB.Analysis.Taint       qualified as Taint
+import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Pipeline.Serialise   ()
 
 import Database.DuckDB.Simple
