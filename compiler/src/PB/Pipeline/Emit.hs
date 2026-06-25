@@ -121,9 +121,8 @@ parsePowerScriptFile src = do
 
 wrapSrFile :: Bool -> FilePath -> SrFile -> SrSpans -> TypeEnv -> Value
 wrapSrFile withCps path sf spans wsEnv =
-    let (objName, ancestor) = case srTypeBlocks sf of
-          (tb:_) -> (tdName (tbDecl tb), Just (tdAncestor (tbDecl tb)))
-          []     -> (T.pack path, Nothing)
+    let (objName, ancestor) = srPrimaryObject sf
+        objName' = if T.null objName then T.pack path else objName
 
         -- Per-procedure env: overlay parsed params on the workspace env.
         procEnv :: Text -> TypeEnv
@@ -161,7 +160,7 @@ wrapSrFile withCps path sf spans wsEnv =
     in object
         [ "file"            .= path
         , "kind"            .= ("powerscript" :: Text)
-        , "meta"            .= object ["object" .= objName, "ancestor" .= ancestor]
+        , "meta"            .= object ["object" .= objName', "ancestor" .= ancestor]
         , "headers"         .= srHeaders sf
         , "forward"         .= srForward sf
         , "prototypes"      .= srPrototypes sf

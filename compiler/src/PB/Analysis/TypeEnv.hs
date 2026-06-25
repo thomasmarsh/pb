@@ -39,6 +39,11 @@ extractGlobalVars :: SrFile -> Map.Map Text PbType
 extractGlobalVars sf =
   Map.fromList [ (T.toLower (giName gi), parseTypeText (giType gi))
                | gi <- srGlobalInstances sf ]
+  <> case srForward sf of
+       Nothing -> Map.empty
+       Just (ForwardBlock { fwdInstances = gis }) ->
+         Map.fromList [ (T.toLower (giName gi), parseTypeText (giType gi))
+                      | gi <- gis ]
   <> case srVariables sf of
        Nothing -> Map.empty
        Just (VariablesBlock { varDecls = decls }) ->
@@ -47,12 +52,8 @@ extractGlobalVars sf =
 -- | Extract type declarations for inheritance resolution.
 extractTypeDecls :: SrFile -> Map.Map Text Text
 extractTypeDecls sf =
-  Map.fromList [ (T.toLower (tdName (tbDecl tb)), T.toLower (tdAncestor (tbDecl tb)))
-               | tb <- srTypeBlocks sf ]
-  <> case srForward sf of
-       Nothing -> Map.empty
-       Just (ForwardBlock { fwdTypes = tds }) ->
-         Map.fromList [ (T.toLower (tdName td), T.toLower (tdAncestor td)) | td <- tds ]
+  Map.fromList [ (T.toLower (tdName td), T.toLower (tdAncestor td))
+               | td <- srAllTypeDecls sf ]
 
 -- | Look up a variable's type (case-insensitive).
 lookupVarType :: Text -> TypeEnv -> Maybe PbType

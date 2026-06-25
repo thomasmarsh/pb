@@ -409,9 +409,7 @@ extractProcMeta file sf =
   <> map evMeta (srEvents sf)
   <> map obMeta (srOnBlocks sf)
   where
-    objName = case srTypeBlocks sf of
-      (tb:_) -> tdName (tbDecl tb)
-      []     -> ""
+    objName = fst (srPrimaryObject sf)
     fnMeta fb = ProcMeta
       { pmFile = file, pmObject = objName
       , pmName = fnsName (fbSig fb), pmProcType = "function"
@@ -442,9 +440,7 @@ extractProcMeta file sf =
 -- can be held cheaply and passed to taintAnalysis after the SrFile is released.
 extractTaintInputs :: Text -> SrFile -> TaintFileInputs
 extractTaintInputs file sf =
-  let objName  = case srTypeBlocks sf of
-                   (tb:_) -> tdName (tbDecl tb)
-                   []     -> ""
+  let objName  = fst (srPrimaryObject sf)
       bodies   = [ (objName, fnsName (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
               <> [ (objName, ssName  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
               <> [ (objName, esName  (evSig ev), evBody ev) | ev <- srEvents      sf ]

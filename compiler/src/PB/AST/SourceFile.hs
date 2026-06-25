@@ -17,6 +17,8 @@ module PB.AST.SourceFile
   , SubroutineBlock (..)
   , EventBlock (..)
   , OnBlock (..)
+  , srAllTypeDecls
+  , srPrimaryObject
   ) where
 
 import PB.Prelude
@@ -124,3 +126,22 @@ data OnBlock = OnBlock
   , obEvent    :: Text
   , obBody     :: [Located BodyStmt]
   } deriving (Eq, Show, Generic)
+
+-- | All type declarations: type-blocks first (authoritative), then forward.
+-- Type-block entries win when both declare the same name (left-bias in fromList).
+srAllTypeDecls :: SrFile -> [TypeDecl]
+srAllTypeDecls sf =
+  [ tbDecl tb | tb <- srTypeBlocks sf ]
+  <> case srForward sf of
+       Nothing -> []
+       Just ForwardBlock { fwdTypes = tds } -> tds
+
+-- | Primary object name and ancestor. Tries srTypeBlocks first (authoritative),
+-- falls back to forward block, then returns ("", Nothing).
+srPrimaryObject :: SrFile -> (Text, Maybe Text)
+srPrimaryObject sf = case srTypeBlocks sf of
+  (tb:_) -> (tdName (tbDecl tb), Just (tdAncestor (tbDecl tb)))
+  []     -> case srForward sf of
+              Just (ForwardBlock { fwdTypes = (td:_) }) ->
+                (tdName td, Just (tdAncestor td))
+              _ -> ("", Nothing)

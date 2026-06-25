@@ -270,9 +270,7 @@ lvalueName :: Lvalue -> Text
 lvalueName lv = T.intercalate "." (map segName (segments lv))
 
 srFileObject :: SrFile -> Text
-srFileObject sf = case srTypeBlocks sf of
-  (tb:_) -> tdName (tbDecl tb)
-  []     -> ""
+srFileObject = fst . srPrimaryObject
 
 -- ---------------------------------------------------------------------------
 -- Local variable extraction
@@ -473,11 +471,7 @@ buildInheritsMap :: [SrFile] -> Map.Map Text Text
 buildInheritsMap = Map.fromList . concatMap fileInherits
   where
     fileInherits sf =
-      [ (tdName (tbDecl tb), tdAncestor (tbDecl tb)) | tb <- srTypeBlocks sf ]
-      <> case srForward sf of
-           Nothing -> []
-           Just ForwardBlock { fwdTypes = tds } ->
-             [ (tdName td, tdAncestor td) | td <- tds ]
+      [ (tdName td, tdAncestor td) | td <- srAllTypeDecls sf ]
 
 -- | Build a proc map (object → set of proc names) from all procedures.
 buildProcMap :: [SrFile] -> Map.Map Text (Set.Set Text)
@@ -497,9 +491,9 @@ buildObjectSet :: [SrFile] -> Set.Set Text
 buildObjectSet = Set.fromList . concatMap fileObjs
   where
     fileObjs sf =
-      [ tdName (tbDecl tb)
-      | tb <- srTypeBlocks sf
-      , T.toLower (tdAncestor (tbDecl tb)) /= "structure"
+      [ tdName td
+      | td <- srAllTypeDecls sf
+      , T.toLower (tdAncestor td) /= "structure"
       ]
 
 -- | All structure-derived type names (user-defined value types).
@@ -507,9 +501,9 @@ buildUserTypeSet :: [SrFile] -> Set.Set Text
 buildUserTypeSet = Set.fromList . concatMap fileUserTypes
   where
     fileUserTypes sf =
-      [ tdName (tbDecl tb)
-      | tb <- srTypeBlocks sf
-      , T.toLower (tdAncestor (tbDecl tb)) == "structure"
+      [ tdName td
+      | td <- srAllTypeDecls sf
+      , T.toLower (tdAncestor td) == "structure"
       ]
 
 -- ---------------------------------------------------------------------------

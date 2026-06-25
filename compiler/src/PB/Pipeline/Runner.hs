@@ -120,12 +120,7 @@ compileOne wsEnv mBridge outcome = case outcome of
     let sf   = pfSrFile pf
         sp   = pfSpans  pf
         fp   = T.pack (pfPath pf)
-        obj  = case srTypeBlocks sf of
-                 (tb:_) -> tdName (tbDecl tb)
-                 []     -> ""
-        anc  = case srTypeBlocks sf of
-                 (tb:_) -> Just (tdAncestor (tbDecl tb))
-                 []     -> Nothing
+        (obj, anc) = srPrimaryObject sf
         userFns = Set.fromList
           $  map (T.toLower . fnsName . fbSig) (srFunctions  sf)
           <> map (T.toLower . ssName  . sbSig) (srSubroutines sf)

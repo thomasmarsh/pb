@@ -1,14 +1,17 @@
 module TypeEnvTest (tests) where
 
 import PB.Prelude
-import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeDecl (..), TypeBlock (..))
+import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeDecl (..), TypeBlock (..),
+                              GlobalInstance (..), srAllTypeDecls, srPrimaryObject)
 import PB.AST.Type           (PbType (..), parseTypeText)
 import PB.Analysis.TypeEnv   (TypeEnv (..), buildWorkspaceTypeEnv, lookupVarType, lookupUserType,
                               lookupBaseType, withProcScope)
+import PB.Analysis.TypeResolve (buildObjectSet, buildUserTypeSet)
 
 import qualified Data.Map.Strict as Map
+import qualified Data.Set        as Set
 import Test.Tasty            (TestTree, testGroup)
-import Test.Tasty.HUnit      (testCase, (@?=))
+import Test.Tasty.HUnit      (testCase, (@?=), assertBool)
 
 emptyFile :: SrFile
 emptyFile = SrFile [] Nothing Nothing Nothing [] [] [] [] [] []
@@ -121,5 +124,97 @@ tests = testGroup "TypeEnv"
 
     , testCase "case insensitive" $
         parseTypeText "INTEGER" @?= PtPrimitive "integer"
+    ]
+
+  , testGroup "srPrimaryObject"
+    [ testCase "forward fallback when type blocks empty" $
+        let sf = emptyFile
+                  { srForward = Just (ForwardBlock
+                      { fwdTypes = [TypeDecl "u_st" "pfc_u_st" Nothing]
+                      , fwdInstances = [] })}
+        in srPrimaryObject sf @?= ("u_st", Just "pfc_u_st")
+
+    , testCase "type block wins over forward block" $
+        let sf = emptyFile
+                  { srForward = Just (ForwardBlock
+                      { fwdTypes = [TypeDecl "u_st" "pfc_u_st" Nothing]
+                      , fwdInstances = [] })
+                  , srTypeBlocks = [TypeBlock (TypeDecl "u_st" "window" Nothing) []] }
+        in srPrimaryObject sf @?= ("u_st", Just "window")
+
+    , testCase "empty file returns empty" $
+        srPrimaryObject emptyFile @?= ("", Nothing)
+
+    , testCase "forward block with no types returns empty" $
+        let sf = emptyFile
+                  { srForward = Just (ForwardBlock
+                      { fwdTypes = []
+                      , fwdInstances = [GlobalInstance "menu" "m_item"] }) }
+        in srPrimaryObject sf @?= ("", Nothing)
+    ]
+
+  , testGroup "srAllTypeDecls"
+    [ testCase "merges type blocks and forward block" $
+        let sf = emptyFile
+                  { srTypeBlocks = [TypeBlock (TypeDecl "w_main" "window" Nothing) []]
+                  , srForward = Just (ForwardBlock
+                      { fwdTypes = [TypeDecl "u_st" "pfc_u_st" Nothing]
+                      , fwdInstances = [] }) }
+            decls = srAllTypeDecls sf
+        in length decls @?= 2
+
+    , testCase "forward block only" $
+        let sf = emptyFile
+                  { srForward = Just (ForwardBlock
+                      { fwdTypes = [TypeDecl "u_st" "pfc_u_st" Nothing]
+                      , fwdInstances = [] }) }
+        in length (srAllTypeDecls sf) @?= 1
+
+    , testCase "type blocks only" $
+        let sf = emptyFile
+                  { srTypeBlocks = [TypeBlock (TypeDecl "w_main" "window" Nothing) []] }
+        in length (srAllTypeDecls sf) @?= 1
+    ]
+
+  , testGroup "buildObjectSet"
+    [ testCase "forward-only non-structure type is included" $
+        let sf = emptyFile
+                  { srForward = Just (ForwardBlock
+                      { fwdTypes = [TypeDecl "u_st" "pfc_u_st" Nothing]
+                      , fwdInstances = [] }) }
+        in Set.member "u_st" (buildObjectSet [sf]) @?= True
+
+    , testCase "forward-only structure type is excluded" $
+        let sf = emptyFile
+                  { srForward = Just (ForwardBlock
+                      { fwdTypes = [TypeDecl "s_data" "structure" Nothing]
+                      , fwdInstances = [] }) }
+        in Set.member "s_data" (buildObjectSet [sf]) @?= False
+    ]
+
+  , testGroup "buildUserTypeSet"
+    [ testCase "forward-only structure type is included" $
+        let sf = emptyFile
+                  { srForward = Just (ForwardBlock
+                      { fwdTypes = [TypeDecl "s_data" "structure" Nothing]
+                      , fwdInstances = [] }) }
+        in Set.member "s_data" (buildUserTypeSet [sf]) @?= True
+
+    , testCase "forward-only non-structure type is excluded" $
+        let sf = emptyFile
+                  { srForward = Just (ForwardBlock
+                      { fwdTypes = [TypeDecl "u_st" "pfc_u_st" Nothing]
+                      , fwdInstances = [] }) }
+        in Set.member "u_st" (buildUserTypeSet [sf]) @?= False
+    ]
+
+  , testGroup "extractGlobalVars forward instances"
+    [ testCase "forward global instances are included" $
+        let sf = emptyFile
+                  { srForward = Just (ForwardBlock
+                      { fwdTypes = []
+                      , fwdInstances = [GlobalInstance "integer" "m_main"] }) }
+            env = buildWorkspaceTypeEnv [sf]
+        in lookupVarType "m_main" env @?= Just (PtPrimitive "integer")
     ]
   ]
