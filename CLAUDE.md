@@ -576,7 +576,8 @@ Mark done/pending as body parsers land.
 | `PB.AST.*`      | Data types only — no parsing logic (Located, Expr, BodyStmt, Type, SourceFile, DataWindow)                                          |
 | `PB.Lexing.*`   | Tokenization, layout, string mode                                                                                                   |
 | `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)                                                                                 |
-| `PB.Pipeline.*` | Multi-step transformations: Preprocess, Walk, Runner, Serialise, CfgBuild, CpsCompile, Dataflow, Taint, TypeResolve, TypeEnv, PbApi, DuckDb |
+| `PB.Pipeline.*` | Multi-step transformations: Preprocess, Emit, Passes, Runner, Serialise, FileWalk, DuckDb, SqlParse, Church                        |
+| `PB.Analysis.*` | Pure analysis passes: CfgBuild, CpsCompile, Dataflow, DeadCode, Taint, TypeEnv, TypeResolve, Builtins                               |
 | `PB.Prelude`    | Custom Prelude — no parsing or transformation logic                                                                                 |
 
 New modules go in the most specific matching directory. If a new layer is needed, propose it in Stage 1.
@@ -811,37 +812,49 @@ isModifierToken  :: Token -> Bool   -- TkAccessModifier | TkStorageModifier
 currentLine      :: FileParser Int  -- llStartLine of the next statement (without consuming)
 ```
 
+### `PB.Pipeline.Emit`
+
+```haskell
+-- Single-file parsing, JSON wrapping, layout extraction.
+runFile           :: FilePath -> Text -> Either Text Value
+collectStatements :: [LexLine] -> Either Text [Statement]
+wrapSrFile        :: Bool -> FilePath -> SrFile -> SrSpans -> TypeEnv -> Value
+extractWindowLayout :: [TypeBlock] -> Maybe Value
+reconstructRetrieveSql :: DwRetrieveOrRaw -> Text
+fileKind          :: FilePath -> FileKind
+data FileKind     = DataWindow | Pipeline | Project | PowerScript
+data ParsedFile   = ParsedFile { pfPath :: FilePath, pfSrFile :: SrFile, pfSpans :: SrSpans, pfContents :: Text }
+data ParseOutcome = PsParsed ParsedFile | PsDw FilePath Text DataWindowFile | PsFailed FilePath Text | OtherFile FilePath
+parseOutcome      :: FilePath -> IO ParseOutcome
+stripBom          :: Text -> Text
+```
+
+### `PB.Pipeline.Passes`
+
+```haskell
+-- Phase B orchestration: link analysis (passes 5-8) in DuckDB mode.
+runPhaseB :: DuckConn -> IO ()
+-- Internally: runPass5 (resolveTypes + resolveCalls → resolved_types/calls),
+--             runPass67 (buildInterprocEdges + taint → interproc_edges/taint_*),
+--             runPass8 (computeDeadProcedures → dead_code)
+```
+
 ### `PB.Pipeline.Runner`
 
 ```haskell
-runFile           :: FilePath -> Text -> Either Text Value   -- dispatches on extension via fileKind
-collectStatements :: [LexLine] -> Either Text [Statement]
-wrapSrFile        :: Bool -> FilePath -> SrFile -> SrSpans -> TypeEnv -> Value   -- Bool = withCps
-runModeFiles      :: Bool -> Bool -> FilePath -> FilePath -> IO ()   -- incremental withCps srcDir outDir
-runModeJsonl      :: FilePath -> IO ()               -- streaming, no cross-file inh
-runModeDb         :: FilePath -> FilePath -> IO ()   -- DuckDB-direct: all passes 1-8 in Haskell; srcDir → dbPath
-writeDataflowAnalysis :: FilePath -> [ParsedFile] -> IO ()  -- JSON path Pass 6 → proc_defs.json, proc_uses.json
-writeTaintAnalysis    :: FilePath -> [ParsedFile] -> IO ()  -- JSON path Pass 7 → taint_*.json, interproc_edges.json, procedure_summaries.json
--- fileKind: .srd → DataWindow, .srp → Pipeline, .srj → Project, _ → PowerScript
--- runPowerScript: normalizeText → stripHeaders → tokenize → collectStatements
---                 → parseSrFileWithSpans → wrapSrFile; builds buildWorkspaceTypeEnv [srFile] per file
--- wrapSrFile injects per-procedure: meta (file/object/startLine), cfg (buildCfg).
---   source_rendered REMOVED (banished). dataflow facet REMOVED (proc_defs.json on disk instead).
---   cpsGraph always on (--with-cps flag removed Plan 126). Workspace TypeEnv built from all files in
---   runModeFiles/runModeDb; per-procedure overlay applied via withProcScope (parseParams paramsText) wsEnv.
--- collectStatements filters empty-token statements and surfaces the first LexError as Left Text
--- Note: leOffset in a LexError is always 0 (reports initial position state, not error position).
---       Only llStartLine (leSource e) is meaningful for diagnosis.
--- JSON path: writeResolution writes resolved_types.json, resolved_calls.json, global_vars.json (Pass 5)
---            writeDataflowAnalysis reads resolved_types + CFG → proc_defs.json, proc_uses.json (Pass 6)
---            writeTaintAnalysis reads proc_defs/uses + resolved_calls + global_vars → taint_*.json, interproc_edges.json, procedure_summaries.json (Pass 7)
--- DuckDB path: runModeDb runs all passes via PB.Pipeline.DuckDb; concurrent producer-consumer in Phase A (TBQueue 32 + MVar mutex); passes 5-8 read/write DB directly.
+-- Batch orchestration: DuckDB streaming, worker loops.
+-- Re-exports from Emit: runFile, collectStatements, wrapSrFile, extractWindowLayout, reconstructRetrieveSql
+runModeDb :: FilePath -> FilePath -> IO ()
+-- Internal: CompiledPs, CompiledDw, CompiledFile, compileOne, appendToDb,
+--           workerLoopFiles, workerLoopFilesNoBridge, emitProgress, jsonText
+-- Phase A: parse → compile → append to DuckDB (concurrent producer-consumer)
+-- Phase B: delegates to PB.Pipeline.Passes.runPhaseB
 ```
 
 ### `PB.Pipeline.Serialise`
 
 ```haskell
--- Orphan ToJSON instances for all PB.AST.* types and PB.Pipeline.Taint types.
+-- Orphan ToJSON instances for all PB.AST.* types and PB.Analysis.Taint types.
 -- Import as: import PB.Pipeline.Serialise ()
 -- Brings ToJSON instances into scope; exports nothing explicitly.
 -- Sum-type discriminator: "tag" key (string); single-field payload → "contents".
@@ -853,16 +866,24 @@ writeTaintAnalysis    :: FilePath -> [ParsedFile] -> IO ()  -- JSON path Pass 7 
 
 ```haskell
 -- Pure. buildCfg :: [Located BodyStmt] -> Cfg. Mirrors cfg_builder.py.
+```
+
+Moved to `PB.Analysis.CfgBuild` (Plan 118 H1).
+
+### `PB.Analysis.CfgBuild`
+
+```haskell
+-- Pure. buildCfg :: [Located BodyStmt] -> Cfg. Mirrors cfg_builder.py.
 data CfgBlock = CfgBlock { cbId :: Text, cbStmts :: [Located BodyStmt], cbFirstLine :: Maybe Int, cbLastLine :: Maybe Int }
 data CfgEdge  = CfgEdge  { ceSrc :: Text, ceDst :: Text, ceLabel :: Text }
 data Cfg      = Cfg      { cfgEntry :: Text, cfgExits :: [Text], cfgBlocks :: [CfgBlock], cfgEdges :: [CfgEdge] }
 -- Edge labels: "T"/"F" (branches), "" (fallthrough), "loop" (back-edge), "case:N".
 ```
 
-### `PB.Pipeline.CpsCompile`
+### `PB.Analysis.CpsCompile`
 
 ```haskell
--- Pure. Uses PB.Pipeline.TypeEnv.TypeEnv (the rich record, not a Map Text Text alias).
+-- Pure. Uses PB.Analysis.TypeEnv.TypeEnv (the rich record, not a Map Text Text alias).
 -- InheritGraph alias removed (Plan 114) — inheritance is in teUserTypes.
 data CallKind = Pure | Suspend
 classifyExpr :: TypeEnv -> Expr -> CallKind
@@ -879,7 +900,7 @@ data CpsGraph = CpsGraph { cgNodes :: [CpsNode], cgEntry :: Int, cgSuspensionPoi
 -- BsDestroy lv emits CpsAssign { anVar = lvHead lv, anRhs = ExNull } (Plan 115 item 1, done in Plan 114 session).
 ```
 
-### `PB.Pipeline.Dataflow` (Plan 111a)
+### `PB.Analysis.Dataflow` (Plan 111a)
 
 ```haskell
 -- Pure intra-procedural dataflow: def-use + reaching definitions.
@@ -896,7 +917,7 @@ data ProcFlow  = ProcFlow  { pfObject :: Text, pfProc :: Text, pfBlocks :: Map T
 -- walkExprIdents counts the ExCall callee root as a use (matches Python core/dataflow.py).
 ```
 
-### `PB.Pipeline.Taint` (Plan 111 — 111b/c/d-2)
+### `PB.Analysis.Taint` (Plan 111 — 111b/c/d-2)
 
 ```haskell
 -- Taint analysis: source/sink classification, BFS propagation, path tracing.
@@ -929,7 +950,7 @@ buildTaintAnnotations :: Set (Text,Text,Text) -> [TaintSource] -> [TaintSink] ->
 taintAnalysis      :: [ResolvedCallRow] -> [DefRow] -> [UseRow] -> Set Text -> Text -> SrFile -> TaintResult
 ```
 
-### `PB.Pipeline.TypeEnv`
+### `PB.Analysis.TypeEnv`
 
 ```haskell
 -- Cross-file type environment. Used by CpsCompile + Runner (Plan 114 unified them).
@@ -941,7 +962,7 @@ lookupBaseType   :: Text -> TypeEnv -> Maybe Text        -- resolves var → bas
 withProcScope    :: [(Text, PbType)] -> TypeEnv -> TypeEnv  -- overlay params (shadow globals of same name)
 ```
 
-### `PB.Pipeline.TypeResolve` (Plan 109 — Pass 5)
+### `PB.Analysis.TypeResolve` (Plan 109 — Pass 5)
 
 ```haskell
 -- Pure. Produces resolved_types.json / resolved_calls.json / global_vars.json.
@@ -964,7 +985,7 @@ classifyControlType :: Text -> Maybe Text  -- dw_main → datawindow (naming con
 --   (lvPbType exists but is excluded from JSON.)
 ```
 
-### `PB.Pipeline.PbApi`
+### `PB.Analysis.Builtins`
 
 ```haskell
 -- PB built-in function/method name sets for call classification (Plan 109b).
@@ -972,7 +993,7 @@ builtinFnNames     :: Set Text     -- free functions (used by resolveCalls)
 builtinMethodNames :: Set Text     -- class methods
 ```
 
-### `PB.Pipeline.Walk`
+### `PB.Pipeline.FileWalk`
 
 ```haskell
 walkFiles      :: (FilePath -> Bool) -> FilePath -> IO [FilePath]   -- [] if root missing
