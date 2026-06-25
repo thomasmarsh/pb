@@ -63,10 +63,11 @@ import PB.Pipeline.SqlParse
 import PB.Pipeline.Walk    (walkAllSrFiles)
 import PB.Pipeline.DuckDb
   ( DuckConn, withWriteConn, initSchema
-  , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..), SqlStmtRow (..)
+  , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
+  , DwRetrieveTableRow (..), SqlStmtRow (..)
   , SourceFileRow (..)
   , appendObjects, appendProcedures
-  , appendDwObjects, appendDwControls
+  , appendDwObjects, appendDwControls, appendDwRetrieveTables
   , appendLocalVars, appendCallSites, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
   , appendParseErrors, appendSourceFiles
@@ -350,10 +351,11 @@ data CompiledPs = CompiledPs
   }
 
 data CompiledDw = CompiledDw
-  { cdDwObjectRow    :: DwObjectRow
-  , cdDwControls     :: [DwControlRow]
-  , cdCallSites      :: [CallSite]
-  , cdSourceContent  :: Maybe SourceFileRow
+  { cdDwObjectRow      :: DwObjectRow
+  , cdDwControls       :: [DwControlRow]
+  , cdDwRetrieveTables :: [DwRetrieveTableRow]
+  , cdCallSites        :: [CallSite]
+  , cdSourceContent    :: Maybe SourceFileRow
   }
 
 data CompiledFile
@@ -434,11 +436,15 @@ compileOne wsEnv mBridge outcome = case outcome of
                     (dwcExpression c)
                 | c <- dwControls dw ]
         css   = extractDwCallSites fpT obj dw
+        rtbls = case dwTable dw >>= dtRetrieve of
+          Just (DwRetrieveOk r) -> [ DwRetrieveTableRow fpT obj t | t <- drTables r ]
+          _                     -> []
     pure $ CFDw $ CompiledDw
-      { cdDwObjectRow   = DwObjectRow fpT obj style layoutJson
-      , cdDwControls    = ctls
-      , cdCallSites     = css
-      , cdSourceContent = Just (SourceFileRow fpT contents)
+      { cdDwObjectRow      = DwObjectRow fpT obj style layoutJson
+      , cdDwControls       = ctls
+      , cdDwRetrieveTables = rtbls
+      , cdCallSites        = css
+      , cdSourceContent    = Just (SourceFileRow fpT contents)
       }
 
   PsFailed fp err -> pure $ CFError fp err
@@ -541,10 +547,11 @@ appendToDb conn (CFPs r) = do
   appendSqlStmts   conn (cpsSqlStmts r)
   appendSourceFiles conn (catMaybes [cpsSourceContent r])
 appendToDb conn (CFDw r) = do
-  appendDwObjects   conn [cdDwObjectRow r]
-  appendDwControls conn (cdDwControls r)
-  appendCallSites   conn (cdCallSites r)
-  appendSourceFiles conn (catMaybes [cdSourceContent r])
+  appendDwObjects        conn [cdDwObjectRow r]
+  appendDwControls       conn (cdDwControls r)
+  appendDwRetrieveTables conn (cdDwRetrieveTables r)
+  appendCallSites        conn (cdCallSites r)
+  appendSourceFiles      conn (catMaybes [cdSourceContent r])
 appendToDb conn (CFError fp err) =
   appendParseErrors conn [(fp, err)]
 appendToDb _    CFSkip = pure ()
@@ -557,7 +564,10 @@ runModeDb srcDir dbPath = do
 
   -- Phase A0: parse all files to build workspace TypeEnv, then discard SrFiles.
   emitProgress (object ["tag" .= ("phase" :: Text), "name" .= ("A0" :: Text), "total" .= total])
-  outcomes0 <- mapConcurrently parseOutcome files
+  outcomes0 <- mapConcurrently (\file -> do
+    outcome <- parseOutcome file
+    emitProgress (object ["tag" .= ("file_done" :: Text), "phase" .= ("A0" :: Text)])
+    pure outcome) files
   let wsEnv = buildWorkspaceTypeEnv [pfSrFile pf | PsParsed pf <- outcomes0]
   _ <- evaluate (Map.size (teVars wsEnv) + Map.size (teUserTypes wsEnv))
 

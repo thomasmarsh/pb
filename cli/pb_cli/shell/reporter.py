@@ -170,6 +170,7 @@ class _LiveRunnerProgress:
             elif tag == "phase":
                 name = event["name"]
                 self._phase_name = name
+                self._done = 0  # reset counter for each phase
                 if name == "A0":
                     self._phase_label = "Building type env"
                     self._total = event.get("total", self._total)
@@ -185,6 +186,8 @@ class _LiveRunnerProgress:
                     self._phase_label = "Link analysis"
                     self._workers = {}
                     self._step = ""
+            elif tag == "file_done":
+                self._done += 1
             elif tag == "worker_start":
                 self._workers[event["worker"]] = os.path.basename(event["file"])
             elif tag == "worker_done":
@@ -393,6 +396,14 @@ class LiveReporter:
         from rich.text import Text
 
         prog = _LiveRunnerProgress(self._c)
+        stop_ticker = threading.Event()
+
+        def _ticker() -> None:
+            while not stop_ticker.wait(0.1):
+                prog._refresh()
+
+        ticker = threading.Thread(target=_ticker, daemon=True)
+
         # Initial placeholder shown before the first event arrives
         with Live(
             Text.from_markup("[dim]Starting pb-runner…[/dim]"),
@@ -401,7 +412,12 @@ class LiveReporter:
             transient=False,
         ) as live:
             prog._live = live
-            yield prog
+            ticker.start()
+            try:
+                yield prog
+            finally:
+                stop_ticker.set()
+                ticker.join(timeout=0.5)
         # Print a compact summary line once Live exits
         elapsed = time.monotonic() - prog._start
         if prog._errors:

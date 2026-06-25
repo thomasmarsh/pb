@@ -8,6 +8,7 @@ module PB.Pipeline.DuckDb
   , ProcRow (..)
   , DwObjectRow (..)
   , DwControlRow (..)
+  , DwRetrieveTableRow (..)
   , SqlStmtRow (..)
   , SourceFileRow (..)
   -- Phase A appenders
@@ -15,6 +16,7 @@ module PB.Pipeline.DuckDb
   , appendProcedures
   , appendDwObjects
   , appendDwControls
+  , appendDwRetrieveTables
   , appendLocalVars
   , appendCallSites
   , appendGlobalVars
@@ -129,6 +131,8 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
         \operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN)"
       , "CREATE TABLE IF NOT EXISTS dw_objects \
         \(file TEXT, object TEXT, style TEXT, layout_json TEXT)"
+      , "CREATE TABLE IF NOT EXISTS dw_retrieve_tables \
+        \(file TEXT, dw_name TEXT, table_name TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_controls \
         \(file TEXT, object TEXT, band TEXT, control_type TEXT, name TEXT, \
         \x INTEGER, y INTEGER, width INTEGER, height INTEGER, expression TEXT)"
@@ -169,6 +173,10 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
         \(object TEXT, proc_name TEXT, proc_type TEXT, cyclomatic INTEGER, \
         \confidence TEXT, caller_count_naive INTEGER, caller_count_scoped INTEGER)"
       , "CREATE OR REPLACE VIEW all_sql_tables AS \
+        \SELECT file, dw_name AS object, 'datawindow' AS source, \
+        \'retrieve' AS operation, table_name, NULL AS proc_name, NULL::INT AS line \
+        \FROM dw_retrieve_tables \
+        \UNION ALL \
         \SELECT s.file, s.object, 'powerscript' AS source, s.operation, \
         \TRIM(t) AS table_name, s.proc_name, s.line \
         \FROM sql_statements s, \
@@ -218,6 +226,12 @@ data DwControlRow = DwControlRow
   , dcrWidth       :: Maybe Int
   , dcrHeight      :: Maybe Int
   , dcrExpression  :: Maybe Text
+  }
+
+data DwRetrieveTableRow = DwRetrieveTableRow
+  { drtrFile      :: Text
+  , drtrDwName    :: Text
+  , drtrTableName :: Text
   }
 
 data SqlStmtRow = SqlStmtRow
@@ -291,6 +305,15 @@ appendDwControls conn rows = withRaw conn "dw_controls" $ \app ->
     aMaybeInt  app (dcrWidth r)
     aMaybeInt  app (dcrHeight r)
     aMaybeText app (dcrExpression r)
+    endRow app
+
+appendDwRetrieveTables :: DuckConn -> [DwRetrieveTableRow] -> IO ()
+appendDwRetrieveTables _    [] = pure ()
+appendDwRetrieveTables conn rows = withRaw conn "dw_retrieve_tables" $ \app ->
+  for_ rows $ \r -> do
+    aText app (drtrFile r)
+    aText app (drtrDwName r)
+    aText app (drtrTableName r)
     endRow app
 
 appendLocalVars :: DuckConn -> [LocalVar] -> IO ()
