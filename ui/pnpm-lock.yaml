@@ -76,6 +76,25 @@ importers:
         specifier: ^4.1.8
         version: 4.1.8(@types/node@20.19.43)(happy-dom@20.10.3)(vite@8.0.16(@types/node@20.19.43))
 
+  app:
+    dependencies:
+      '@pb/core':
+        specifier: workspace:*
+        version: link:../packages/core
+      '@pb/interpreter':
+        specifier: workspace:*
+        version: link:../packages/interpreter
+      '@pb/platform':
+        specifier: workspace:*
+        version: link:../packages/platform
+      '@pb/windowing':
+        specifier: workspace:*
+        version: link:../packages/windowing
+    devDependencies:
+      solid-js:
+        specifier: ^1.9.0
+        version: 1.9.13
+
   packages/core:
     dependencies:
       solid-js:
@@ -97,9 +116,15 @@ importers:
 
   packages/platform:
     dependencies:
+      '@kobalte/core':
+        specifier: ^0.13.0
+        version: 0.13.11(solid-js@1.9.13)
       '@pb/core':
         specifier: workspace:*
         version: link:../core
+      solid-js:
+        specifier: ^1.9.0
+        version: 1.9.13
 
   packages/windowing:
     dependencies:

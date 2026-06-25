@@ -3,11 +3,11 @@
 import { createSignal, onCleanup, type ParentProps } from "solid-js";
 import type { JSX } from "solid-js";
 import { Search, HelpCircle } from "@pb/platform";
-import { useKeyboardShortcuts } from "../../../src/utils/hooks/useKeyboardShortcuts.js";
+import { useKeyboardShortcuts } from "../views/utils/hooks/useKeyboardShortcuts.js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../state.js";
 import type { AppAction } from "../actions.js";
-import { ExploreStoreContext } from "../../../src/features/explore/ExploreContext.js";
+import { ExploreStoreContext } from "../views/features/explore/ExploreContext.js";
 import { BreadcrumbBar } from "./BreadcrumbBar.js";
 import { Sidebar } from "./Sidebar.js";
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PIXELS_PER_LINE, lineFromY, overlayTop, overlayHeight, procSelectedRange } from "../../src/components/source/pure/line.js";
+import { PIXELS_PER_LINE, lineFromY, overlayTop, overlayHeight, procSelectedRange } from "@pb/platform";
 import type { ProcedureInfo } from "@pb/platform";
 
 function makeProc(name: string, start: number | null, end: number | null): ProcedureInfo {

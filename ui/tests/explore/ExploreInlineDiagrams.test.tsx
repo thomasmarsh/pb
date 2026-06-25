@@ -3,9 +3,9 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, cleanup } from "@solidjs/testing-library";
 import { createTestStore } from "../helpers.js";
-import { TableDetailPanel } from "../../src/features/explore/Tables.js";
-import { DwDetailPanel } from "../../src/features/explore/DwDetailPanel.js";
-import { ExploreStoreContext } from "../../src/features/explore/ExploreContext.js";
+import { TableDetailPanel } from "../../app/src/views/features/explore/Tables.js";
+import { DwDetailPanel } from "../../app/src/views/features/explore/DwDetailPanel.js";
+import { ExploreStoreContext } from "../../app/src/views/features/explore/ExploreContext.js";
 import type { ExploreProcDetail, DwDetailResponse } from "@pb/platform";
 import type { DataWindowFile } from "@pb/interpreter";
 

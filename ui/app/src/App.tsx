@@ -8,30 +8,29 @@ import type { AppState } from "./state.js";
 import type { AppAction } from "./actions.js";
 import { createApiClient, createEnv } from "./api-client.js";
 import { Layout } from "./layout/Layout.js";
-import { GlobalSearch } from "../../src/components/GlobalSearch.js";
+import { GlobalSearch } from "./views/components/GlobalSearch.js";
 import { HelpOverlay } from "./layout/HelpOverlay.js";
-import { Dashboard } from "../../src/features/dashboard/Dashboard.js";
-import { Objects } from "../../src/features/objects/Objects.js";
-import { ObjectDetail } from "../../src/features/objects/ObjectDetail.js";
-import { ProcedureDetail } from "../../src/features/objects/ProcedureDetail.js";
-import { ProceduresList } from "../../src/features/objects/ProceduresList.js";
-import { DataWindows, DWDetail } from "../../src/features/datawindows/DataWindows.js";
-import { Tables } from "../../src/features/tables/Tables.js";
-import { Diagrams } from "../../src/features/diagrams/Diagrams.js";
-import { Queries } from "../../src/features/queries/Queries.js";
-import { Search } from "../../src/features/search/Search.js";
-import { Explore } from "../../src/features/explore/Explore.js";
-import { Errors } from "../../src/features/errors/Errors.js";
-import { LibraryDetail } from "../../src/features/library/LibraryDetail.js";
-import { DeadCode } from "../../src/features/analysis/DeadCode.js";
-import { TaintExplorer } from "../../src/features/analysis/TaintExplorer.js";
-import { TaintPathView } from "../../src/features/analysis/TaintPathView.js";
-import { SliceView } from "../../src/features/analysis/SliceView.js";
-import { FormalReports } from "../../src/features/analysis/FormalReports.js";
-import { CFGDiagram } from "../../src/features/analysis/CFGDiagram.js";
-import { LaunchView } from "../../src/features/launch/LaunchView.js";
-import { initViewFromUrl, setupPopstateHandler } from "../../src/features/navigation/url-sync.js";
-import { HealthCheck } from "../../src/components/ui/HealthCheck.js";
+import { Dashboard } from "./views/features/dashboard/Dashboard.js";
+import { Objects } from "./views/features/objects/Objects.js";
+import { ObjectDetail } from "./views/features/objects/ObjectDetail.js";
+import { ProcedureDetail } from "./views/features/objects/ProcedureDetail.js";
+import { ProceduresList } from "./views/features/objects/ProceduresList.js";
+import { DataWindows, DWDetail } from "./views/features/datawindows/DataWindows.js";
+import { Tables } from "./views/features/tables/Tables.js";
+import { Diagrams } from "./views/features/diagrams/Diagrams.js";
+import { Queries } from "./views/features/queries/Queries.js";
+import { Search } from "./views/features/search/Search.js";
+import { Explore } from "./views/features/explore/Explore.js";
+import { Errors } from "./views/features/errors/Errors.js";
+import { LibraryDetail } from "./views/features/library/LibraryDetail.js";
+import { DeadCode } from "./views/features/analysis/DeadCode.js";
+import { TaintExplorer } from "./views/features/analysis/TaintExplorer.js";
+import { TaintPathView } from "./views/features/analysis/TaintPathView.js";
+import { SliceView } from "./views/features/analysis/SliceView.js";
+import { FormalReports, HealthCheck } from "@pb/platform";
+import { CFGDiagram } from "./views/features/analysis/CFGDiagram.js";
+import { LaunchView } from "./views/features/launch/LaunchView.js";
+import { initViewFromUrl, setupPopstateHandler } from "./views/features/navigation/url-sync.js";
 
 const env = createEnv(createApiClient());
 const store = createStore(initialState(), reducer, env);
@@ -67,7 +66,7 @@ function ViewRouter(props: { store: Store<AppState, AppAction> }): JSX.Element {
       <Show when={snap().nav.route.view === "taintExplorer"}><TaintExplorer store={props.store} /></Show>
       <Show when={snap().nav.route.view === "taintPathView"}><TaintPathView store={props.store} /></Show>
       <Show when={snap().nav.route.view === "sliceView"}><SliceView store={props.store} /></Show>
-      <Show when={snap().nav.route.view === "formalReports"}><FormalReports store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "formalReports"}><FormalReports /></Show>
       <Show when={snap().nav.route.view === "cfgDiagram"}><CFGDiagram store={props.store} /></Show>
       <Show when={snap().nav.route.view === "launch"}><LaunchView store={props.store} /></Show>
     </Layout>

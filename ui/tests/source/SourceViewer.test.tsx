@@ -2,7 +2,7 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import { fireEvent, render, cleanup } from "@solidjs/testing-library";
-import { SourceViewer } from "../../src/components/source/SourceViewer.js";
+import { SourceViewer } from "../../app/src/views/components/source/SourceViewer.js";
 import { createTestStore } from "../helpers.js";
 import type { KnownProcInfo } from "@pb/platform";
 

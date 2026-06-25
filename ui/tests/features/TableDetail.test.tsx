@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
-import { TableDetail } from "../../src/features/tables/TableDetail.js";
+import { TableDetail } from "../../app/src/views/features/tables/TableDetail.js";
 import { createTestStore } from "../helpers.js";
 import { initialTablesState } from "@pb/platform";
 import type { TableDetail as TableDetailData } from "@pb/platform";

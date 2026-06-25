@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { render } from "@solidjs/testing-library";
-import { DataWindowGrid } from "../../src/components/DataWindowGrid.js";
+import { DataWindowGrid } from "@pb/platform";
 
 describe("DataWindowGrid", () => {
   it("renders column headers from data keys", () => {

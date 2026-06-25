@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 import { render } from "@solidjs/testing-library";
-import { DetailShell } from "../../src/components/detail/DetailShell.js";
+import { DetailShell } from "@pb/platform";
 
 describe("DetailShell", () => {
   it("shows loading when entry is undefined", () => {

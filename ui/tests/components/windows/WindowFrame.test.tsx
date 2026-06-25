@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { render, cleanup } from "@solidjs/testing-library";
 import { afterEach } from "vitest";
-import { WindowFrame } from "../../../src/components/windows/WindowFrame.js";
+import { WindowFrame } from "../../../app/src/views/components/windows/WindowFrame.js";
 import { createTestStore } from "../../helpers.js";
 import type { ManagedWindow } from "@pb/windowing";
 

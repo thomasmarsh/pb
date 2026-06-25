@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 import { render } from "@solidjs/testing-library";
-import { CodeBlock, SqlBlock } from "../../src/components/detail/CodeBlock.js";
+import { CodeBlock, SqlBlock } from "@pb/platform";
 
 describe("CodeBlock", () => {
   it("renders line numbers in gutter", () => {

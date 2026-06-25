@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { screen, fireEvent, render, cleanup } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
-import { Dashboard } from "../../src/features/dashboard/Dashboard.js";
+import { Dashboard } from "../../app/src/views/features/dashboard/Dashboard.js";
 import { createStore, Effect } from "@pb/core";
 import { reducer, initialState } from "../../app/src/reducer.js";
 import { initialDashboardState } from "@pb/platform";

@@ -2,9 +2,9 @@
 
 import { describe, it, expect } from "vitest";
 import { screen, fireEvent, render } from "@solidjs/testing-library";
-import { ExploreStoreContext } from "../../src/features/explore/ExploreContext.js";
+import { ExploreStoreContext } from "../../app/src/views/features/explore/ExploreContext.js";
 import { createTestStore } from "../helpers.js";
-import { TreeNode } from "../../src/features/explore/TreeNode.js";
+import { TreeNode } from "../../app/src/views/features/explore/TreeNode.js";
 import type { JSX } from "solid-js";
 
 function renderTreeNode(

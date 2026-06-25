@@ -2,8 +2,8 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { fireEvent, render, cleanup } from "@solidjs/testing-library";
-import { SourceContextMenu } from "../../src/components/source/SourceContextMenu.js";
-import type { ContextMenuTarget, ContextActions } from "../../src/components/source/SourceContextMenu.js";
+import { SourceContextMenu } from "../../app/src/views/components/source/SourceContextMenu.js";
+import type { ContextMenuTarget, ContextActions } from "../../app/src/views/components/source/SourceContextMenu.js";
 import { createTestStore } from "../helpers.js";
 
 afterEach(() => {

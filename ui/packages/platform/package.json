@@ -6,6 +6,8 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
-    "@pb/core": "workspace:*"
+    "@kobalte/core": "^0.13.0",
+    "@pb/core": "workspace:*",
+    "solid-js": "^1.9.0"
   }
 }

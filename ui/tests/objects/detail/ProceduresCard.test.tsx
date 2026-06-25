@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { screen, fireEvent } from "@solidjs/testing-library";
 import { render } from "@solidjs/testing-library";
-import { ProceduresCard } from "../../../src/features/objects/detail/ProceduresCard.js";
+import { ProceduresCard } from "../../../app/src/views/features/objects/detail/ProceduresCard.js";
 import { createTestStore } from "../../helpers.js";
 
 const sampleProcs = [

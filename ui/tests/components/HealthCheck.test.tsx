@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@solidjs/testing-library";
-import { HealthCheck } from "../../src/components/ui/HealthCheck.js";
+import { HealthCheck } from "@pb/platform";
 
 describe("HealthCheck", () => {
   beforeEach(() => {

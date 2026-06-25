@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildObjectTooltip, buildProcTooltip, buildVarTooltip, buildProcBarTooltip,
   PROC_COLORS, PROC_BADGE_COLORS,
-} from "../../src/components/source/pure/tooltip.js";
+} from "@pb/platform";
 import type { KnownProcInfo, LocalSymbolInfo, ProcedureInfo } from "@pb/platform";
 
 function makeKnownProc(overrides: Partial<KnownProcInfo> = {}): KnownProcInfo {

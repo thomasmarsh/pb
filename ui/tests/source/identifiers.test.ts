@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { linkIdentifiers } from "../../src/components/source/pure/identifiers.js";
+import { linkIdentifiers } from "@pb/platform";
 import type { KnownProcInfo, LocalSymbolInfo } from "@pb/platform";
 
 function makeProc(name: string): KnownProcInfo {

@@ -3,9 +3,9 @@
 import { describe, it, expect } from "vitest";
 import { screen, fireEvent } from "@solidjs/testing-library";
 import { render } from "@solidjs/testing-library";
-import { ExploreStoreContext } from "../../src/features/explore/ExploreContext.js";
+import { ExploreStoreContext } from "../../app/src/views/features/explore/ExploreContext.js";
 import { createTestStore } from "../helpers.js";
-import { ProcNode, ObjectNode, LibraryNode } from "../../src/features/explore/TreeNodes.js";
+import { ProcNode, ObjectNode, LibraryNode } from "../../app/src/views/features/explore/TreeNodes.js";
 
 const DEFAULT_SIDEBAR = {
   sidebarGroups: { sourceTree: true, entityNav: false, analysisNav: false },

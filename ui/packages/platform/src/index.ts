@@ -87,3 +87,83 @@ export {
 // ── API types ────────────────────────────────────────────────────────────────
 
 export type * from "./types/api.js";
+
+// ── Components ───────────────────────────────────────────────────────────────
+
+// Top-level
+export { DataWindowGrid } from "./components/DataWindowGrid.js";
+export { DwPreview } from "./components/DwPreview.js";
+export { ResizableCanvas } from "./components/ResizableCanvas.js";
+
+// Analysis
+export { AnalysisView } from "./components/analysis/AnalysisView.js";
+export { FormalReports } from "./components/analysis/FormalReports.js";
+export { LinearTrace } from "./components/analysis/LinearTrace.js";
+export type { TraceType, LinearTraceProps } from "./components/analysis/LinearTrace.js";
+
+// Controls (PB window runtime controls)
+export { CommandButton } from "./components/controls/CommandButton.js";
+export { GroupBox } from "./components/controls/GroupBox.js";
+export { LineEdit } from "./components/controls/LineEdit.js";
+export { StaticText } from "./components/controls/StaticText.js";
+
+// Detail
+export { AnalysisSummaryBar } from "./components/detail/AnalysisSummaryBar.js";
+export type { SummaryItem } from "./components/detail/AnalysisSummaryBar.js";
+export { CodeBlock, SqlBlock } from "./components/detail/CodeBlock.js";
+export { ColumnRow } from "./components/detail/ColumnRow.js";
+export { ContextualPanel } from "./components/detail/ContextualPanel.js";
+export { DetailHeader } from "./components/detail/DetailHeader.js";
+export { DetailShell } from "./components/detail/DetailShell.js";
+export { EntityCard } from "./components/detail/EntityCard.js";
+export type { EntityType } from "./components/detail/EntityCard.js";
+export { EntityListCard } from "./components/detail/EntityListCard.js";
+
+// Diagram
+export { DiagramTooltip } from "./components/diagram/DiagramTooltip.js";
+export {
+  computeZoom, smoothVelocity, stripSvgTitles, computeTooltipPosition,
+  releaseVelocity, runMomentum, ZOOM_MIN, ZOOM_MAX,
+} from "./components/diagram/diagramMath.js";
+export { createPanZoom } from "./components/diagram/usePanZoom.js";
+export type { PanZoom, PanZoomState, PanZoomActions, PanZoomHandlers } from "./components/diagram/usePanZoom.js";
+
+// Diagrams feature components
+export { SvgToolbar } from "./components/diagrams/SvgToolbar.js";
+
+// Objects
+export { MetricsGrid } from "./components/objects/MetricsGrid.js";
+
+// Source
+export { ProcOverlayBars } from "./components/source/ProcOverlayBars.js";
+export { SourceGutter } from "./components/source/SourceGutter.js";
+export { SourceTooltip } from "./components/source/SourceTooltip.js";
+export { linkIdentifiers } from "./components/source/pure/identifiers.js";
+export {
+  lineFromY, overlayTop, overlayHeight, procSelectedRange, PIXELS_PER_LINE,
+} from "./components/source/pure/line.js";
+export {
+  buildObjectMap, buildProcMap, buildVarMap, buildProcCountMap, buildProcFirstLine,
+} from "./components/source/pure/lookup.js";
+export {
+  PROC_COLORS, PROC_BADGE_COLORS,
+  buildObjectTooltip, buildProcTooltip, buildVarTooltip, buildProcBarTooltip,
+} from "./components/source/pure/tooltip.js";
+export type { TooltipContent } from "./components/source/pure/tooltip.js";
+
+// UI
+export { BackButton } from "./components/ui/BackButton.js";
+export { ComboboxInput } from "./components/ui/ComboboxInput.js";
+export { CopyButton } from "./components/ui/CopyButton.js";
+export { HealthCheck } from "./components/ui/HealthCheck.js";
+export { Loading } from "./components/ui/Loading.js";
+export { ModalShell } from "./components/ui/ModalShell.js";
+export { Pagination } from "./components/ui/Pagination.js";
+
+// Windows
+export { MenuBar } from "./components/windows/MenuBar.js";
+export { WindowControls } from "./components/windows/WindowControls.js";
+
+// ── Hooks ─────────────────────────────────────────────────────────────────────
+
+export { useListKeyboard } from "./utils/hooks/useListKeyboard.js";

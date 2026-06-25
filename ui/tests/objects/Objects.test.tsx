@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { screen, fireEvent } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
-import { Objects } from "../../src/features/objects/Objects.js";
+import { Objects } from "../../app/src/views/features/objects/Objects.js";
 import { initialObjectsState } from "@pb/platform";
 
 const sampleItems = [

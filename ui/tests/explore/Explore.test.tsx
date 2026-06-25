@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { screen } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
-import { Explore } from "../../src/features/explore/Explore.js";
+import { Explore } from "../../app/src/views/features/explore/Explore.js";
 
 const DEFAULT_SIDEBAR = {
   sidebarGroups: { sourceTree: true, entityNav: false, analysisNav: false },

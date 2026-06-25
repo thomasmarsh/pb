@@ -12,7 +12,7 @@ import {
   releaseVelocity,
   ZOOM_MIN,
   ZOOM_MAX,
-} from "../../src/components/diagram/InlineDiagram.js";
+} from "../../app/src/views/components/diagram/InlineDiagram.js";
 import { createStore, Effect } from "@pb/core";
 import { reducer, initialState } from "../../app/src/reducer.js";
 import type { AppEnv } from "../../app/src/reducer.js";

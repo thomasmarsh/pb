@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { screen, fireEvent } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
-import { Search } from "../../src/features/search/Search.js";
+import { Search } from "../../app/src/views/features/search/Search.js";
 
 describe("Search component", () => {
   beforeEach(() => {

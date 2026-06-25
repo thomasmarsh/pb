@@ -23,7 +23,7 @@ import {
   ChevronDown,
   Play,
 } from "@pb/platform";
-import { LibraryNode } from "../../../src/features/explore/TreeNodes.js";
+import { LibraryNode } from "../views/features/explore/TreeNodes.js";
 
 const ENTITY_NAV: { label: string; view: string; icon: IconComp }[] = [
   { label: "Objects",     view: "objects",        icon: Box },

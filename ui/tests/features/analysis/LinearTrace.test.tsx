@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { render, cleanup } from "@solidjs/testing-library";
 import { afterEach } from "vitest";
-import { LinearTrace } from "../../../src/features/analysis/LinearTrace.js";
+import { LinearTrace } from "@pb/platform";
 import type { TaintStep } from "@pb/platform";
 
 afterEach(cleanup);

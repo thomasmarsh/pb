@@ -12,5 +12,5 @@
     "exactOptionalPropertyTypes": false,
     "skipLibCheck": true
   },
-  "include": ["src", "tests", "app/src"]
+  "include": ["tests", "app/src"]
 }

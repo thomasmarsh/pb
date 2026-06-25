@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { screen } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
-import { Diagrams } from "../../src/features/diagrams/Diagrams.js";
+import { Diagrams } from "../../app/src/views/features/diagrams/Diagrams.js";
 
 const callsDiagrams = {
   active: "calls" as const,

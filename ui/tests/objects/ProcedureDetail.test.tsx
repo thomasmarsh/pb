@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
-import { ProcedureDetail } from "../../src/features/objects/ProcedureDetail.js";
+import { ProcedureDetail } from "../../app/src/views/features/objects/ProcedureDetail.js";
 import { createTestStore } from "../helpers.js";
 import { initialObjectsState } from "@pb/platform";
 import type { ProcedureDetailResponse } from "@pb/platform";

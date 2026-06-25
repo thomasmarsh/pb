@@ -9,7 +9,7 @@
     "build": "vite build",
     "dev": "vite",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src/",
+    "lint": "eslint app/src/",
     "test": "vitest run",
     "test:watch": "vitest",
     "bombadil": "bombadil browser test http://localhost:8000 bombadil-spec.ts --headless --exit-on-violation --time-limit 5m --output-path /tmp/bombadil-pb",

@@ -4,7 +4,7 @@ import { For } from "solid-js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../state.js";
 import type { AppAction } from "../actions.js";
-import { ModalShell } from "../../../src/components/ui/ModalShell.js";
+import { ModalShell } from "@pb/platform";
 
 interface Shortcut {
   key: string;

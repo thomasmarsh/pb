@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { screen } from "@solidjs/testing-library";
 import { render } from "@solidjs/testing-library";
-import { MetricsGrid } from "../../../src/features/objects/detail/MetricsGrid.js";
+import { MetricsGrid } from "@pb/platform";
 
 describe("MetricsGrid", () => {
   it("renders metric labels and values", () => {
