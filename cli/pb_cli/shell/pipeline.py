@@ -51,6 +51,7 @@ def run(
         run_env["PB_SQL_WORKER"] = str(sql_worker)
 
     errors = 0
+    raw_stderr_lines: list[str] = []
     with reporter.runner_progress() as prog:
         proc = subprocess.Popen(
             [str(binary), "-i", str(src_dir), "--db", db_new],
@@ -67,7 +68,7 @@ def run(
                 try:
                     prog.on_event(json.loads(line))
                 except json.JSONDecodeError:
-                    pass  # non-JSON lines (e.g. GHC RTS messages) are silently ignored
+                    raw_stderr_lines.append(line)
 
         reader = threading.Thread(target=_read_stderr, daemon=True)
         reader.start()
@@ -75,6 +76,10 @@ def run(
         reader.join()
 
     if proc.returncode != 0:
+        import typer
+        typer.echo(f"pb-runner failed (exit {proc.returncode}):", err=True)
+        for line in raw_stderr_lines:
+            typer.echo(f"  {line}", err=True)
         reporter.done(parsed=0, errors=1, sql_parse_failures=0)
         return
 
