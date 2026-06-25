@@ -14,6 +14,7 @@ import type { AstData } from "../../src/core/interpreter.js";
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const nullEnv: RuntimeEnv = {
+  getDwQueries: () => Effect.none(),
   executeSql: () => Effect.none(),
 };
 

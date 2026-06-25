@@ -1,8 +1,9 @@
 module RunnerTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.Runner  (runFile, extractWindowLayout)
+import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql)
 import PB.AST.BodyStmt     (BodyStmt (..))
+import PB.AST.DataWindow   (DwRetrieve (..), DwRetrieveOrRaw (..), DwWhereClause (..))
 import PB.AST.Expr         (Expr (..))
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile   (TypeBlock (..), TypeDecl (..))
@@ -440,6 +441,56 @@ tests = testGroup "Pipeline.Runner"
     , testCase ".srp and .srj extension matching is case-insensitive" $ do
         assertBool ".SRP should stub" (isRight (runFile "X.SRP" ""))
         assertBool ".SRJ should stub" (isRight (runFile "X.SRJ" ""))
+    ]
+
+  , testGroup "reconstructRetrieveSql"
+    [ testCase "native SQL passthrough (DwRetrieveRaw)" $
+        reconstructRetrieveSql (DwRetrieveRaw "SELECT x FROM t") @?= "SELECT x FROM t"
+
+    , testCase "PBSELECT no WHERE — SELECT cols FROM table" $
+        let r = DwRetrieve { drVersion = 400
+                           , drTables    = ["misth_zpkrat"]
+                           , drColumns   = ["misth_zpkrat.kodkrat", "misth_zpkrat.desckrat"]
+                           , drArguments = []
+                           , drWhere     = []
+                           }
+        in reconstructRetrieveSql (DwRetrieveOk r)
+               @?= "SELECT kodkrat, desckrat FROM misth_zpkrat"
+
+    , testCase "PBSELECT with one WHERE arg reference becomes ?" $
+        let r = DwRetrieve { drVersion = 400
+                           , drTables    = ["misth_zpkrat"]
+                           , drColumns   = ["misth_zpkrat.kodkrat"]
+                           , drArguments = []
+                           , drWhere     = [ DwWhereClause { dwcExp1  = "misth_zpkrat.kodxrisi"
+                                                           , dwcOp    = "="
+                                                           , dwcExp2  = ":arg_kodxrisi"
+                                                           , dwcLogic = Nothing } ]
+                           }
+        in reconstructRetrieveSql (DwRetrieveOk r)
+               @?= "SELECT kodkrat FROM misth_zpkrat WHERE kodxrisi = ?"
+
+    , testCase "PBSELECT two WHERE clauses joined by LOGIC=and" $
+        let r = DwRetrieve { drVersion = 400
+                           , drTables    = ["tbl"]
+                           , drColumns   = ["tbl.a"]
+                           , drArguments = []
+                           , drWhere     = [ DwWhereClause "tbl.kodfinal" "=" ":arg1" (Just "and")
+                                           , DwWhereClause "tbl.kodxrisi" "=" ":arg2" Nothing
+                                           ]
+                           }
+        in reconstructRetrieveSql (DwRetrieveOk r)
+               @?= "SELECT a FROM tbl WHERE kodfinal = ? AND kodxrisi = ?"
+
+    , testCase "strips table qualifier from column and WHERE exp1" $
+        let r = DwRetrieve { drVersion = 400
+                           , drTables    = ["t"]
+                           , drColumns   = ["t.myCol"]
+                           , drArguments = []
+                           , drWhere     = [ DwWhereClause "t.myCol" ">" "100" Nothing ]
+                           }
+        in reconstructRetrieveSql (DwRetrieveOk r)
+               @?= "SELECT myCol FROM t WHERE myCol > 100"
     ]
 
   ]

@@ -50,6 +50,7 @@ function createAppEnv(astResponses: Record<string, AstData>): AppEnv {
     getTables: () => Effect.none(),
     getTableDetail: () => Effect.none(),
     getErrors: () => Effect.none(),
+    getDwQueries: () => Effect.none<Record<string, string>>(),
     executeSql: () => Effect.none(),
     navigate: () => Effect.none(),
     pushUrl: () => {},

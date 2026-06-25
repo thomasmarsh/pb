@@ -363,6 +363,14 @@ def get_dw_layout(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] 
         return None
 
 
+def get_dw_queries(conn: duckdb.DuckDBPyConnection) -> dict[str, str]:
+    """Return {dwObjectName: retrieveSql} for all DW objects with a retrieve clause."""
+    result = conn.execute(
+        "SELECT object, retrieve_sql FROM dw_objects WHERE retrieve_sql IS NOT NULL"
+    ).fetchall()
+    return {row[0]: row[1] for row in result}
+
+
 def get_explore_tree(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     obj_rows = rows(conn.execute("SELECT object AS name, kind, file FROM objects ORDER BY kind, object"))
     proc_rows = rows(

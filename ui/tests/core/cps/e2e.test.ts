@@ -17,7 +17,7 @@ import {
   type RuntimeState,
 } from "../../../src/features/runtime/reducer.js";
 import type { AstData } from "../../../src/core/interpreter.js";
-import type { SQLResult } from "../../../src/core/dw-queries.js";
+import type { SQLResult } from "../../../src/core/sql.js";
 
 // ── Haskell-shaped graph fixtures ─────────────────────────────────────────────
 // These match the JSON format emitted by PB.Pipeline.CpsCompile / Serialise.
@@ -121,7 +121,7 @@ describe("e2e: reducer CPS path", () => {
       ],
     };
 
-    const ts = createTestStore(runtimeReducer, { executeSql: () => Effect.none() }, {
+    const ts = createTestStore(runtimeReducer, { getDwQueries: () => Effect.none<Record<string, string>>(), executeSql: () => Effect.none() }, {
       ...initialRuntimeState,
       ast,
     });
@@ -139,7 +139,7 @@ describe("e2e: reducer CPS path", () => {
   it("retrieve() suspend in cpsGraph fires cps-resume action", () => {
     const MOCK_ROWS = [{ kodperiod: "01" }];
     const sqlResult: SQLResult = { rows: MOCK_ROWS, rowcount: 1, columns: ["kodperiod"] };
-    const env = { executeSql: () => Effect.send(sqlResult) };
+    const env = { getDwQueries: () => Effect.none<Record<string, string>>(), executeSql: () => Effect.send(sqlResult) };
 
     const ast: AstData = {
       typeBlocks: [],
@@ -153,7 +153,11 @@ describe("e2e: reducer CPS path", () => {
     };
 
     const graph = loadCpsGraph(RETRIEVE_RAW);
-    const ts = createTestStore(runtimeReducer, env, { ...initialRuntimeState, ast });
+    const ts = createTestStore(runtimeReducer, env, {
+      ...initialRuntimeState,
+      ast,
+      dwQueries: { dw_period: "SELECT kodperiod FROM misth_zpperiod WHERE kodxrisi = ?" },
+    });
 
     ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
       s.status = "awaiting-sql";
@@ -209,7 +213,7 @@ describe("e2e: reducer CPS path", () => {
     };
 
     const graph = loadCpsGraph(CALLPROC_RAW);
-    const ts = createTestStore(runtimeReducer, { executeSql: () => Effect.none() }, {
+    const ts = createTestStore(runtimeReducer, { getDwQueries: () => Effect.none<Record<string, string>>(), executeSql: () => Effect.none() }, {
       ...initialRuntimeState,
       ast,
     });
@@ -270,7 +274,7 @@ describe("e2e: reducer CPS path", () => {
     };
 
     const graph = loadCpsGraph(CALLPROC_RAW);
-    const ts = createTestStore(runtimeReducer, { executeSql: () => Effect.none() }, {
+    const ts = createTestStore(runtimeReducer, { getDwQueries: () => Effect.none<Record<string, string>>(), executeSql: () => Effect.none() }, {
       ...initialRuntimeState,
       ast,
     });

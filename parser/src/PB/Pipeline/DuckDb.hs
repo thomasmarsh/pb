@@ -130,7 +130,7 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
         \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
         \operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN)"
       , "CREATE TABLE IF NOT EXISTS dw_objects \
-        \(file TEXT, object TEXT, style TEXT, layout_json TEXT)"
+        \(file TEXT, object TEXT, style TEXT, layout_json TEXT, retrieve_sql TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_retrieve_tables \
         \(file TEXT, dw_name TEXT, table_name TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_controls \
@@ -210,10 +210,11 @@ data ProcRow = ProcRow
   }
 
 data DwObjectRow = DwObjectRow
-  { dorFile       :: Text
-  , dorObject     :: Text
-  , dorStyle      :: Text
-  , dorLayoutJson :: Text
+  { dorFile        :: Text
+  , dorObject      :: Text
+  , dorStyle       :: Text
+  , dorLayoutJson  :: Text
+  , dorRetrieveSql :: Maybe Text
   }
 
 data DwControlRow = DwControlRow
@@ -287,10 +288,11 @@ appendDwObjects :: DuckConn -> [DwObjectRow] -> IO ()
 appendDwObjects _    [] = pure ()
 appendDwObjects conn rows = withRaw conn "dw_objects" $ \app ->
   for_ rows $ \r -> do
-    aText app (dorFile       r)
-    aText app (dorObject     r)
-    aText app (dorStyle      r)
-    aText app (dorLayoutJson r)
+    aText     app (dorFile        r)
+    aText     app (dorObject      r)
+    aText     app (dorStyle       r)
+    aText     app (dorLayoutJson  r)
+    aMaybeText app (dorRetrieveSql r)
     endRow app
 
 appendDwControls :: DuckConn -> [DwControlRow] -> IO ()

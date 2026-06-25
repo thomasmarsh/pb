@@ -6,7 +6,7 @@
 import { Effect } from "../../core/effect.js";
 import type { Reducer } from "../../core/reducer.js";
 import type { AstData, DWRow, ProcEntry } from "../../core/interpreter.js";
-import { DW_QUERIES, type SQLResult } from "../../core/dw-queries.js";
+import type { SQLResult } from "../../core/sql.js";
 import { loadCpsGraph } from "../../core/cps/load.js";
 import { step, type CpsResumeAction } from "../../core/cps/runner.js";
 import type { CpsGraph } from "../../core/cps/types.js";
@@ -26,6 +26,7 @@ export const PB_GLOBALS: Record<string, unknown> = {
 
 export interface RuntimeEnv {
   executeSql(sql: string, params: unknown[]): Effect<SQLResult>;
+  getDwQueries(): Effect<Record<string, string>>;
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -34,6 +35,7 @@ export interface RuntimeState {
   ast: AstData | null;
   varEnv: VarEnv;
   controlValues: Record<string, DWRow[]>;
+  dwQueries: Record<string, string>;
   // CPS-mode graph held for cps-resume; null when idle or after completion.
   cpsGraph: CpsGraph | null;
   // Plan 115 item 2: CPS call stack for CpsCallProc dispatch. Each frame holds
@@ -47,6 +49,7 @@ export const initialRuntimeState: RuntimeState = {
   ast: null,
   varEnv: makeVarEnv(),
   controlValues: {},
+  dwQueries: {},
   cpsGraph: null,
   callStack: [],
   status: "idle",
@@ -57,6 +60,7 @@ export const initialRuntimeState: RuntimeState = {
 
 export type RuntimeAction =
   | { tag: "set-ast"; ast: AstData }
+  | { tag: "dw-queries-loaded"; queries: Record<string, string> }
   | { tag: "run-event"; owner: string; event: string }
   | { tag: "control-click"; controlName: string }
   | { tag: "cps-resume"; dwName: string; rows: DWRow[]; pc: number; varName: string | null }
@@ -97,11 +101,12 @@ function stepWithDraft(
   const cpsEnv = {
     executeSql: env.executeSql,
     open: (): Effect<unknown> => Effect.none(),
-    // Resolve DW name to SQL: first try direct lookup, then resolve via typeBlocks.
+    // Resolve DW name to SQL: check dwQueries (loaded from DB), then resolve
+    // via typeBlocks dataobject property and check again.
     dwNameToSql: (dwName: string): string | null => {
-      if (DW_QUERIES[dwName]) return DW_QUERIES[dwName] ?? null;
+      if (draft.dwQueries[dwName]) return draft.dwQueries[dwName] ?? null;
       const dataobj = findDwDataobject(draft.ast, dwName);
-      return dataobj ? (DW_QUERIES[dataobj] ?? null) : null;
+      return dataobj ? (draft.dwQueries[dataobj] ?? null) : null;
     },
   };
   const effect = step(graph, pc, draft.varEnv, cpsEnv);
@@ -223,6 +228,12 @@ function reduce(
       draft.callStack = [];
       draft.status = "idle";
       draft.error = null;
+      return env.getDwQueries()
+        .map((queries): RuntimeAction => ({ tag: "dw-queries-loaded", queries }))
+        .catch((): RuntimeAction => ({ tag: "dw-queries-loaded", queries: {} }));
+
+    case "dw-queries-loaded":
+      draft.dwQueries = action.queries;
       return null;
 
     case "run-event": {

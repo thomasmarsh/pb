@@ -2,7 +2,7 @@
 
 import { Effect } from "../src/core/effect.js";
 import type { RuntimeEnv } from "../src/features/runtime/reducer.js";
-import type { SQLResult } from "../src/core/dw-queries.js";
+import type { SQLResult } from "../src/core/sql.js";
 
 export interface MockRuntimeEnv extends RuntimeEnv {
   /** Last SQL executed. */
@@ -22,6 +22,8 @@ export function createMockRuntimeEnv(
     lastParams: null,
     responses: new Map(Object.entries(defaults ?? {}) as [string, SQLResult][]),
     calls: [],
+
+    getDwQueries: () => Effect.none(),
 
     executeSql: (sql: string, params: unknown[]) => {
       env.lastSql = sql;

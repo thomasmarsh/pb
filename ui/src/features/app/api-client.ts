@@ -21,7 +21,7 @@ import type {
 import type { DataWindowFile } from "../../types/ast.js";
 import type { AstData } from "../../core/interpreter.js";
 import type { WindowLayout } from "../../core/layout.js";
-import type { SQLResult } from "../../core/dw-queries.js";
+import type { SQLResult } from "../../core/sql.js";
 import { Effect } from "../../core/effect.js";
 import type { AppEnv as Env } from "./reducer.js";
 import type { Theme } from "./state.js";
@@ -51,6 +51,7 @@ export interface ApiClient {
   getTables(): Promise<TableSummary[]>;
   getTableDetail(name: string): Promise<TableDetail>;
   getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse>;
+  getDwQueries(): Promise<Record<string, string>>;
   executeSql(sql: string, params: unknown[]): Promise<SQLResult>;
 }
 
@@ -104,6 +105,7 @@ export function createEnv(api: ApiClient): Env {
     getTables: () => lift(() => api.getTables()),
     getTableDetail: (n) => lift(() => api.getTableDetail(n)),
     getErrors: (p) => lift(() => api.getErrors(p)),
+    getDwQueries: () => lift(() => api.getDwQueries()),
     executeSql: (sql, params) => lift(() => api.executeSql(sql, params)),
     loadTheme: (): Effect<Theme> => {
       const stored = localStorage.getItem("pb-theme");
@@ -240,6 +242,10 @@ export function createApiClient(): ApiClient {
 
     async getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse> {
       return fetchJson("/api/errors?" + apiParams({ kind: params.kind ?? "", q: params.q ?? "", limit: params.limit ?? 200, offset: params.offset ?? 0 }));
+    },
+
+    async getDwQueries(): Promise<Record<string, string>> {
+      return fetchJson("/api/runtime/dw-queries");
     },
 
     async executeSql(sql: string, params: unknown[]): Promise<SQLResult> {

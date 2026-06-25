@@ -119,7 +119,10 @@ describe("runtime integration", () => {
         { kodkrat: "02", kodxrisi: "0001", desckrat: "Category 2", isforos: false, isasf: true, isautoforos: false },
       ];
       const mockEnv = createOpenpayMockEnv();
-      const ts = createTestStore(runtimeReducer, mockEnv, initialRuntimeState);
+      const ts = createTestStore(runtimeReducer, mockEnv, {
+        ...initialRuntimeState,
+        dwQueries: { dw_misth_zpkrat_list: "SELECT kodkrat FROM misth_zpkrat WHERE kodxrisi = ?" },
+      });
 
       const ast = makeAst({
         typeBlocks: [

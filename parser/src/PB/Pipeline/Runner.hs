@@ -5,6 +5,7 @@ module PB.Pipeline.Runner
   , wrapSrFile
   , runModeDb
   , extractWindowLayout
+  , reconstructRetrieveSql
   ) where
 
 import PB.Prelude
@@ -441,11 +442,12 @@ compileOne wsEnv mBridge outcome = case outcome of
                     (dwcExpression c)
                 | c <- dwControls dw ]
         css   = extractDwCallSites fpT obj dw
+        retrieveSql = fmap reconstructRetrieveSql (dwTable dw >>= dtRetrieve)
         rtbls = case dwTable dw >>= dtRetrieve of
           Just (DwRetrieveOk r) -> [ DwRetrieveTableRow fpT obj t | t <- drTables r ]
           _                     -> []
     pure $ CFDw $ CompiledDw
-      { cdDwObjectRow      = DwObjectRow fpT obj style layoutJson
+      { cdDwObjectRow      = DwObjectRow fpT obj style layoutJson retrieveSql
       , cdDwControls       = ctls
       , cdDwRetrieveTables = rtbls
       , cdCallSites        = css
@@ -735,3 +737,39 @@ runPass8 conn inh allRC = do
       dead = DeadCode.computeDeadProcedures
                procs rawCalls resolvedCalls (Map.toList inh) dws
   appendDeadCode conn dead
+
+-- ---------------------------------------------------------------------------
+-- DW retrieve SQL reconstruction
+
+-- | Reconstruct a runnable SQL string from a parsed DW retrieve clause.
+-- For native SQL (DwRetrieveRaw), the text is returned verbatim.
+-- For PBSELECT (DwRetrieveOk), SELECT/FROM/WHERE is reconstructed:
+--   - Table-qualified column names ("tbl.col") are stripped to bare "col".
+--   - Argument references (":argname") in WHERE exp2 become "?".
+--   - WHERE clauses are joined with the LOGIC connector from each clause
+--     (default AND when connector is absent mid-chain).
+reconstructRetrieveSql :: DwRetrieveOrRaw -> Text
+reconstructRetrieveSql (DwRetrieveRaw t) = t
+reconstructRetrieveSql (DwRetrieveOk r)  =
+    let cols   = T.intercalate ", " (map stripQual (drColumns r))
+        tables = T.intercalate ", " (drTables r)
+        select = "SELECT " <> cols <> " FROM " <> tables
+    in case drWhere r of
+        []  -> select
+        ws  -> select <> " WHERE " <> buildWhere ws
+  where
+    stripQual t = case T.breakOnEnd "." t of
+        ("", col) -> col
+        (_,  col) -> col
+
+    argToParam t
+        | ":" `T.isPrefixOf` t = "?"
+        | otherwise            = t
+
+    buildWhere []     = ""
+    buildWhere (w:ws) =
+        let clause = stripQual (dwcExp1 w)
+                  <> " " <> dwcOp w
+                  <> " " <> argToParam (dwcExp2 w)
+            logic  = maybe " AND " (\l -> " " <> T.toUpper l <> " ") (dwcLogic w)
+        in clause <> (if null ws then "" else logic <> buildWhere ws)
