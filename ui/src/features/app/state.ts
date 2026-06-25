@@ -37,7 +37,7 @@ export interface AppState {
   explore: ExploreState;
   errors: ErrorsState;
   inlineDiagrams: Record<string, InlineDiagramState>;
-  runtime: RuntimeState;
+  runtimes: Record<string, RuntimeState>;
   windowManager: WindowManagerState;
   launch: LaunchState;
 }

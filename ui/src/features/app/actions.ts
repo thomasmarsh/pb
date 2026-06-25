@@ -36,6 +36,6 @@ export type AppAction =
   | { tag: "search"; action: SearchAction }
   | { tag: "errors"; action: ErrorsAction }
   | { tag: "inlineDiagram"; action: InlineDiagramAction }
-  | { tag: "runtime"; action: RuntimeAction }
+  | { tag: "runtime"; windowId: string; action: RuntimeAction }
   | { tag: "windowManager"; action: WindowManagerAction }
   | { tag: "launch"; action: LaunchAction };

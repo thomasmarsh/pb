@@ -5,8 +5,6 @@ import { describe, it, expect } from "vitest";
 import { Effect } from "../../src/core/effect.js";
 import { createTestStore } from "../test-store.js";
 import { reducer, initialState, type AppEnv } from "../../src/features/app/reducer.js";
-import { PB_GLOBALS } from "../../src/features/runtime/reducer.js";
-import { makeVarEnv } from "../../src/core/cps/var-env.js";
 import type { AstData } from "../../src/core/interpreter.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -105,17 +103,15 @@ describe("launch integration", () => {
     );
     expect(ts.getState().windowManager.windows).toHaveLength(1);
 
-    ts.receive({ tag: "runtime", action: { tag: "set-ast", ast: wAppAst } }, (s) => {
-      s.runtime.ast = wAppAst;
-      s.runtime.varEnv = makeVarEnv();
-    });
-
-    ts.receive({ tag: "runtime", action: { tag: "run-event", owner: "w_app", event: "open" } }, (s) => {
-      s.runtime.status = "done";
-      s.runtime.varEnv.globals = { ...PB_GLOBALS };
-    });
+    // windowId is "${windowName}-${Date.now()}" — non-deterministic; skip state callbacks.
+    ts.receive({ tag: "runtime", windowId: expect.any(String), action: { tag: "set-ast", ast: wAppAst } });
+    ts.receive({ tag: "runtime", windowId: expect.any(String), action: { tag: "run-event", owner: "w_app", event: "open", globals: expect.any(Object) } });
 
     ts.assertDrained();
+
+    const rt = Object.values(ts.getState().runtimes)[0];
+    expect(rt?.ast).toEqual(wAppAst);
+    expect(rt?.status).toBe("done");
   });
 
   it("handles error when .sra is not found", async () => {

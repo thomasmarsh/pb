@@ -16,7 +16,7 @@ import { diagramsReducer, type DiagramsEnv, initialDiagramsState } from "../diag
 import { queriesReducer, type QueriesEnv, initialQueriesState } from "../queries/reducer.js";
 import { searchReducer, type SearchEnv, initialSearchState } from "../search/reducer.js";
 import { errorsReducer, type ErrorsEnv, initialErrorsState } from "../errors/reducer.js";
-import { runtimeReducer, type RuntimeEnv, initialRuntimeState, type RuntimeAction } from "../runtime/reducer.js";
+import { runtimeReducer, type RuntimeEnv, initialRuntimeState } from "../runtime/reducer.js";
 import { windowManagerReducer } from "../window-manager/reducer.js";
 import type { WindowManagerAction } from "../window-manager/types.js";
 import { initialWindowManagerState } from "../window-manager/initial.js";
@@ -33,7 +33,8 @@ import type { DiagramsAction } from "../diagrams/actions.js";
 import type { QueriesAction } from "../queries/actions.js";
 import type { SearchAction } from "../search/actions.js";
 import type { ErrorsAction } from "../errors/actions.js";
-export type { RuntimeAction, LaunchAction };
+export type { LaunchAction };
+export type { RuntimeAction } from "../runtime/reducer.js";
 
 import type { Theme } from "./state.js";
 
@@ -56,7 +57,6 @@ const matchDiagrams    = (a: AppAction): DiagramsAction    | null => a.tag === "
 const matchQueries     = (a: AppAction): QueriesAction     | null => a.tag === "queries"      ? a.action : null;
 const matchSearch      = (a: AppAction): SearchAction      | null => a.tag === "search"       ? a.action : null;
 const matchErrors      = (a: AppAction): ErrorsAction      | null => a.tag === "errors"       ? a.action : null;
-const matchRuntime     = (a: AppAction): RuntimeAction     | null => a.tag === "runtime"      ? a.action : null;
 const matchWindowManager = (a: AppAction): WindowManagerAction | null => a.tag === "windowManager" ? a.action : null;
 const matchLaunch = (a: AppAction): LaunchAction | null => a.tag === "launch" ? a.action : null;
 
@@ -82,7 +82,7 @@ export function initialState(): AppState {
     explore: makeInitialExploreState(),
     errors: initialErrorsState,
     inlineDiagrams: {},
-    runtime: initialRuntimeState,
+    runtimes: {},
     windowManager: initialWindowManagerState,
     launch: initialLaunchState,
   };
@@ -103,12 +103,17 @@ const _combined = combine<AppState, AppAction, AppEnv>(
   pullbackWithNav(queriesReducer,     (s) => s.queries,     matchQueries,     (a): AppAction => ({ tag: "queries",     action: a }), (env) => env, toNav),
   pullbackWithNav(searchReducer,      (s) => s.search,      matchSearch,      (a): AppAction => ({ tag: "search",      action: a }), (env) => env, toNav),
   pullback(errorsReducer,             (s) => s.errors,      matchErrors,      (a): AppAction => ({ tag: "errors",      action: a }), (env) => env),
-  pullback(runtimeReducer,            (s) => s.runtime,     matchRuntime,     (a): AppAction => ({ tag: "runtime",     action: a }), (env) => env),
   pullback(windowManagerReducer,      (s) => s.windowManager, matchWindowManager, (a): AppAction => ({ tag: "windowManager", action: a }), () => undefined as void),
   pullback(launchReducer,             (s) => s.launch,      matchLaunch,       (a): AppAction => ({ tag: "launch",      action: a }), (env) => ({ getObjectAst: env.getObjectAst })),
 );
 
 export function reducer(draft: AppState, action: AppAction, env: AppEnv): Effect<AppAction> | null {
+  if (action.tag === "runtime") {
+    const { windowId, action: ra } = action;
+    if (!draft.runtimes[windowId]) draft.runtimes[windowId] = { ...initialRuntimeState };
+    const eff = runtimeReducer(draft.runtimes[windowId]!, ra, env);
+    return eff ? eff.map((a): AppAction => ({ tag: "runtime", windowId, action: a })) : null;
+  }
   if (action.tag === "theme") {
     switch (action.action.tag) {
     case "load":
@@ -151,10 +156,11 @@ export function reducer(draft: AppState, action: AppAction, env: AppEnv): Effect
     const { windowName, ast } = action.action;
     const id = `${windowName}-${Date.now()}`;
     const base = _combined(draft, action, env);
+    const globals = { ...draft.launch.globals };
     const cascade = Effect.merge<AppAction>(
       Effect.send({ tag: "windowManager", action: { tag: "open-window", id, title: `${windowName}`, runtimeWindowName: windowName } }),
-      Effect.send({ tag: "runtime", action: { tag: "set-ast", ast } }),
-      Effect.send({ tag: "runtime", action: { tag: "run-event", owner: windowName, event: "open" } }),
+      Effect.send({ tag: "runtime", windowId: id, action: { tag: "set-ast", ast } }),
+      Effect.send({ tag: "runtime", windowId: id, action: { tag: "run-event", owner: windowName, event: "open", globals } }),
     );
     return base ? Effect.merge(base, cascade) : cascade;
   }

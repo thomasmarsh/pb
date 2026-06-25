@@ -61,7 +61,7 @@ export const initialRuntimeState: RuntimeState = {
 export type RuntimeAction =
   | { tag: "set-ast"; ast: AstData }
   | { tag: "dw-queries-loaded"; queries: Record<string, string> }
-  | { tag: "run-event"; owner: string; event: string }
+  | { tag: "run-event"; owner: string; event: string; globals?: Record<string, unknown> }
   | { tag: "control-click"; controlName: string }
   | { tag: "cps-resume"; dwName: string; rows: DWRow[]; pc: number; varName: string | null }
   // Plan 115 item 2: dispatch a CALL ancestor::event / TriggerEvent to a body
@@ -239,7 +239,7 @@ function reduce(
     case "run-event": {
       if (!draft.ast) return null;
       draft.varEnv.locals = [{}];
-      for (const [k, v] of Object.entries(PB_GLOBALS)) {
+      for (const [k, v] of Object.entries(action.globals ?? PB_GLOBALS)) {
         if (!(k in draft.varEnv.globals)) draft.varEnv.globals[k] = v;
       }
       // Seed window instance variable declarations from the window typeBlock.

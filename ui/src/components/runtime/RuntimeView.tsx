@@ -3,6 +3,7 @@
 import { createEffect, createSignal, Show, For } from "solid-js";
 import type { AstData, DWRow } from "../../core/interpreter.js";
 import { flattenVarEnv } from "../../core/cps/var-env.js";
+import { initialRuntimeState } from "../../features/runtime/reducer.js";
 import type { WindowLayout, LayoutControl } from "../../core/layout.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
@@ -103,6 +104,7 @@ function StateInspector(props: { variables: Record<string, unknown> }) {
 
 export function RuntimeView(props: {
   objectName: string;
+  windowId: string;
   store: Store<AppState, AppAction>;
 }) {
   const snap = props.store.getState();
@@ -114,20 +116,22 @@ export function RuntimeView(props: {
     const ad = snap().objects.astData;
     if (!ad || "error" in ad) return;
     setInitialized(props.objectName);
-    props.store.dispatch({ tag: "runtime", action: { tag: "set-ast", ast: ad as AstData } });
-    props.store.dispatch({ tag: "runtime", action: { tag: "run-event", owner: props.objectName, event: "open" } });
+    props.store.dispatch({ tag: "runtime", windowId: props.windowId, action: { tag: "set-ast", ast: ad as AstData } });
+    props.store.dispatch({ tag: "runtime", windowId: props.windowId, action: { tag: "run-event", owner: props.objectName, event: "open" } });
   });
 
   const layout = (): WindowLayout | null => snap().objects.layout;
 
+  const runtime = () => snap().runtimes[props.windowId] ?? initialRuntimeState;
+
   const controlValues = (): Record<string, DWRow[]> =>
-    snap().runtime.controlValues as Record<string, DWRow[]>;
+    runtime().controlValues as Record<string, DWRow[]>;
 
   const variables = (): Record<string, unknown> =>
-    flattenVarEnv(snap().runtime.varEnv);
+    flattenVarEnv(runtime().varEnv);
 
   const handleControlClick = (ctrl: LayoutControl): void => {
-    props.store.dispatch({ tag: "runtime", action: { tag: "control-click", controlName: ctrl.name } });
+    props.store.dispatch({ tag: "runtime", windowId: props.windowId, action: { tag: "control-click", controlName: ctrl.name } });
   };
 
   return (

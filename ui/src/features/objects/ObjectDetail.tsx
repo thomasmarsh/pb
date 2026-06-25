@@ -430,7 +430,7 @@ function ObjectDetailContent(props: {
 
         <Show when={showPreview()}>
           <ContextualPanel title={`Preview: ${o.name}`} onClose={() => setShowPreview(false)}>
-            <RuntimeView objectName={o.name} store={store} />
+            <RuntimeView objectName={o.name} windowId={`preview-${o.name}`} store={store} />
           </ContextualPanel>
         </Show>
 

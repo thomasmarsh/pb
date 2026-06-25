@@ -31,7 +31,7 @@ export function Desktop(props: DesktopProps): JSX.Element {
             isActive={activeId() === win.id}
             store={props.store}
           >
-            <WindowRuntimeView store={props.store} />
+            <WindowRuntimeView windowId={win.id} store={props.store} />
           </WindowFrame>
         )}
       </For>

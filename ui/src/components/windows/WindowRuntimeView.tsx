@@ -8,6 +8,7 @@ import { Show, For, type JSX } from "solid-js";
 import { extractLayout } from "../../core/layout.js";
 import type { DWRow } from "../../core/interpreter.js";
 import { flattenVarEnv } from "../../core/cps/var-env.js";
+import { initialRuntimeState } from "../../features/runtime/reducer.js";
 import type { WindowLayout, LayoutControl } from "../../core/layout.js";
 import type { Store } from "../../core/store.js";
 import type { AppState } from "../../features/app/state.js";
@@ -106,11 +107,12 @@ function StateInspector(props: { variables: Record<string, unknown> }) {
 }
 
 export function WindowRuntimeView(props: {
+  windowId: string;
   store: Store<AppState, AppAction>;
 }): JSX.Element {
   const snap = props.store.getState();
 
-  const runtime = () => snap().runtime;
+  const runtime = () => snap().runtimes[props.windowId] ?? initialRuntimeState;
 
   const layout = (): WindowLayout | null => {
     const ast = runtime().ast;
@@ -125,7 +127,7 @@ export function WindowRuntimeView(props: {
     flattenVarEnv(runtime().varEnv);
 
   const handleControlClick = (ctrl: LayoutControl): void => {
-    props.store.dispatch({ tag: "runtime", action: { tag: "control-click", controlName: ctrl.name } });
+    props.store.dispatch({ tag: "runtime", windowId: props.windowId, action: { tag: "control-click", controlName: ctrl.name } });
   };
 
   return (
