@@ -246,7 +246,16 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
     }
 
 
-_PB_BASE_CLASSES = {"window", "datawindow", "userobject", "dwuserobject", "nonvisualobject"}
+_PB_BASE_CLASSES = {
+    # PB primitive base types
+    "window", "datawindow", "userobject", "dwuserobject",
+    # Undocumented abstract base classes — no usable event/function bodies
+    "classdefinitionobject", "connectobject", "cplusplus", "dragobject",
+    "drawobject", "dwobject", "extobject", "function_object", "graphicobject",
+    "nonvisualobject", "omcontrol", "omcustomcontrol", "omembeddedcontrol",
+    "omobject", "omstorage", "omstream", "orb", "pbtocppobject", "pdfobject",
+    "powerobject", "remoteobject", "service", "structure", "windowobject",
+}
 
 
 def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:

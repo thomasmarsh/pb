@@ -171,7 +171,8 @@ function findEntryByName(ast: AstData, name: string): ProcEntry | null {
 
 // Resolve a CpsCallProc callee to a full ProcEntry (including cpsGraph if present).
 //   - "triggerevent" → find event by args[0] name
-//   - "ancestor::event" → find procedure by event name part
+//   - "super::event"  → look ONLY in ancestorEvents/ancestorFunctions (never recurse into self)
+//   - "ancestor::event" → find procedure by event name part in all collections
 function resolveCalleeEntry(
   ast: AstData | null,
   callee: string,
@@ -180,6 +181,17 @@ function resolveCalleeEntry(
   if (!ast) return null;
   if (callee === "triggerevent") {
     return findEntryByName(ast, String(args[0] ?? ""));
+  }
+  if (callee.toLowerCase().startsWith("super::")) {
+    const eventPart = callee.split("::")[1] ?? "";
+    const n = eventPart.toLowerCase();
+    for (const e of ast.ancestorEvents ?? []) {
+      if (e.name.toLowerCase() === n) return e;
+    }
+    for (const f of ast.ancestorFunctions ?? []) {
+      if (f.name.toLowerCase() === n) return f;
+    }
+    return null;
   }
   const eventPart = callee.includes("::") ? callee.split("::")[1] ?? "" : callee;
   return findEntryByName(ast, eventPart);
