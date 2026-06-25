@@ -107,8 +107,7 @@ def dead_code(
 ) -> None:
     """List non-public procedures never transitively reached from any entry point."""
     import duckdb as _duckdb
-
-    from pb_cli.explorer.services.analysis import get_dead_code
+    from pb.api.services.analysis import get_dead_code
 
     try:
         conn = _duckdb.connect(db, read_only=True)
@@ -242,7 +241,7 @@ def explore(
     repo = env.build.find_repo()
     env.build.ensure_explorer_built(repo)
 
-    from pb_cli.explorer import create_app
+    from pb.api import create_app
 
     app = create_app(db)
 

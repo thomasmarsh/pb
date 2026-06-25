@@ -3,7 +3,7 @@
 Each class (Window, DataWindow, etc.) has properties with datatypes and
 descriptions. This data is not currently in pb_api.json.
 
-Outputs JSON to pb_cli/data/class_properties.json containing:
+Outputs JSON to lib/src/pb/lib/data/class_properties.json containing:
   {
     "classes": {
       "window": {
@@ -140,7 +140,7 @@ def main() -> None:
     print(f"Extracted {len(classes)} classes, {total_props} properties",
           file=sys.stderr)
 
-    out_dir = Path(__file__).resolve().parent.parent / "pb_cli" / "data"
+    out_dir = Path(__file__).resolve().parent.parent / "lib" / "src" / "pb" / "lib" / "data"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "class_properties.json"
     out_path.write_text(json.dumps(classes, indent=2) + "\n")

@@ -3,7 +3,7 @@
 Events have Event IDs (like pbm_activate), arguments, and return values.
 This data is not currently in pb_api.json.
 
-Outputs JSON to pb_cli/data/ps_events.json containing:
+Outputs JSON to lib/src/pb/lib/data/ps_events.json containing:
   {
     "events": {
       "activate": {
@@ -164,7 +164,7 @@ def main() -> None:
 
     print(f"Extracted {len(events)} events ({errors} skipped)", file=sys.stderr)
 
-    out_dir = Path(__file__).resolve().parent.parent / "pb_cli" / "data"
+    out_dir = Path(__file__).resolve().parent.parent / "lib" / "src" / "pb" / "lib" / "data"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "ps_events.json"
     out_path.write_text(json.dumps({"events": events}, indent=2) + "\n")

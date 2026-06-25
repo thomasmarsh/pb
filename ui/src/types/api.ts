@@ -1,4 +1,4 @@
-// API types derived from DuckDB schema (cli/pb_cli/common.py) and api.py routes.
+// API types derived from DuckDB schema and api.py routes.
 
 // ── DuckDB table rows ───────────────────────────────────────────────────────
 

@@ -4,7 +4,7 @@ DW expression functions (Abs, Avg, Count, If, etc.) are used in computed fields,
 validation rules, and filter expressions within DataWindow objects. They are
 distinct from PowerScript free functions.
 
-Outputs JSON to pb_cli/data/dw_expression_functions.json containing:
+Outputs JSON to lib/src/pb/lib/data/dw_expression_functions.json containing:
   {
     "functions": {
       "abs": {
@@ -233,7 +233,7 @@ def main() -> None:
     print(f"Extracted {len(functions)} DW expression functions ({errors} skipped)",
           file=sys.stderr)
 
-    out_dir = Path(__file__).resolve().parent.parent / "pb_cli" / "data"
+    out_dir = Path(__file__).resolve().parent.parent / "lib" / "src" / "pb" / "lib" / "data"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "dw_expression_functions.json"
     out_path.write_text(json.dumps({"functions": functions}, indent=2) + "\n")

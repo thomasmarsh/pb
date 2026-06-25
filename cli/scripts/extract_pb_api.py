@@ -1,6 +1,6 @@
 """Extract all PB functions and class methods from doc/pb2025r2 HTML docs.
 
-Outputs a JSON file to pb_cli/data/pb_api.json containing:
+Outputs a JSON file to lib/src/pb/lib/data/pb_api.json containing:
   - free_functions: sorted list of all free function names (lowercase)
   - class_methods: {class_name: [method_names]} (lowercase)
 
@@ -142,7 +142,7 @@ def main() -> None:
         "class_methods": class_methods_sorted,
     }
 
-    out_dir = Path(__file__).resolve().parent.parent / "pb_cli" / "data"
+    out_dir = Path(__file__).resolve().parent.parent / "lib" / "src" / "pb" / "lib" / "data"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "pb_api.json"
     out_path.write_text(json.dumps(data, indent=2) + "\n")

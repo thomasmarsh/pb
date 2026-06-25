@@ -8,12 +8,12 @@ from pb.pipeline.commands import clean
 
 def test_clean_ui_removes_known_dirs(tmp_path):
     (tmp_path / "ui" / "node_modules" / "x").mkdir(parents=True)
-    (tmp_path / "cli" / "pb_cli" / "explorer" / "static" / "dist").mkdir(parents=True)
+    (tmp_path / "cli" / "api" / "src" / "pb" / "api" / "static" / "dist").mkdir(parents=True)
 
     removed = clean._clean_ui(tmp_path)
 
     assert not (tmp_path / "ui" / "node_modules").exists()
-    assert not (tmp_path / "cli" / "pb_cli" / "explorer" / "static" / "dist").exists()
+    assert not (tmp_path / "cli" / "api" / "src" / "pb" / "api" / "static" / "dist").exists()
     assert len(removed) == 2
 
 
@@ -24,7 +24,7 @@ def test_clean_ui_noop_when_absent(tmp_path):
 def test_clean_python_caches_removes_known_dirs(tmp_path):
     (tmp_path / ".pytest_cache").mkdir()
     (tmp_path / "cli" / ".ruff_cache").mkdir(parents=True)
-    pycache = tmp_path / "pb_cli" / "core" / "__pycache__"
+    pycache = tmp_path / "cli" / "lib" / "src" / "pb" / "__pycache__"
     pycache.mkdir(parents=True)
 
     removed = clean._clean_python_caches(tmp_path)

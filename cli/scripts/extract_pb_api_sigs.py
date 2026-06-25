@@ -1,6 +1,6 @@
 """Extract full PB API signatures from doc/pb2025r2 HTML docs.
 
-Outputs JSON to pb_cli/data/pb_api.json containing:
+Outputs JSON to lib/src/pb/lib/data/pb_api.json containing:
   - free_functions: {name: {signatures: [...]}}
   - free_function_names: sorted list of names (backward compat)
   - classes: {class_name: {methods: {name: {signatures: [...]}}, events: {...}}}
@@ -663,7 +663,7 @@ def main() -> None:
         "class_methods": class_methods_compat,
     }
 
-    out_dir = Path(__file__).resolve().parent.parent / "pb_cli" / "data"
+    out_dir = Path(__file__).resolve().parent.parent / "lib" / "src" / "pb" / "lib" / "data"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "pb_api.json"
     out_path.write_text(json.dumps(data, indent=2) + "\n")

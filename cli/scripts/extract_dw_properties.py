@@ -4,7 +4,7 @@ DW object properties (BackColor, Alignment, Band, Border, etc.) describe the
 attributes of controls within a DataWindow object. Each property has a name,
 data type, valid values, and which controls it applies to.
 
-Outputs JSON to pb_cli/data/dw_properties.json containing:
+Outputs JSON to lib/src/pb/lib/data/dw_properties.json containing:
   {
     "properties": {
       "alignment": {
@@ -210,7 +210,7 @@ def main() -> None:
     print(f"Extracted {len(properties)} DW properties ({errors} skipped)",
           file=sys.stderr)
 
-    out_dir = Path(__file__).resolve().parent.parent / "pb_cli" / "data"
+    out_dir = Path(__file__).resolve().parent.parent / "lib" / "src" / "pb" / "lib" / "data"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "dw_properties.json"
     out_path.write_text(json.dumps({"properties": properties}, indent=2) + "\n")

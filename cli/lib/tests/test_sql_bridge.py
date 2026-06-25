@@ -1,4 +1,4 @@
-"""Tests for the SQL bridge worker (pb_cli/bridge/sql_worker.py).
+"""Tests for the SQL bridge worker (pb/pipeline/bridge/sql_worker.py).
 
 The worker communicates via length-prefixed JSON over stdin/stdout. Each test
 spawns a real subprocess so the framing and lifecycle are verified end-to-end.

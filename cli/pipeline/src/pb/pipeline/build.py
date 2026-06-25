@@ -103,7 +103,7 @@ def ensure_explorer_built(repo: Path, verbose: bool = False) -> None:
     cabal run pbc --emit-ts automatically when pnpm build is invoked.
     """
     ui_dir = repo / "ui"
-    dist_js = repo / "cli" / "pb_cli" / "explorer" / "static" / "dist" / "App.js"
+    dist_js = repo / "cli" / "api" / "src" / "pb" / "api" / "static" / "dist" / "App.js"
 
     if _bundle_stale(ui_dir, dist_js):
         print("Building explorer frontend...", file=sys.stderr)

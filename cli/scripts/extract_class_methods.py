@@ -3,7 +3,7 @@
 Usage: python3 scripts/extract_class_methods.py
 
 Outputs a Python dict literal to stdout. Paste into
-pb_cli/core/type_resolution.py as PB_CLASS_METHODS.
+lib/src/pb/lib/type_resolution.py as PB_CLASS_METHODS.
 """
 
 from __future__ import annotations

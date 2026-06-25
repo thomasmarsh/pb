@@ -1,5 +1,5 @@
 {
-  "include": ["cli/pb_cli", "cli/tests"],
+  "include": ["cli/lib/src", "cli/pipeline/src", "cli/api/src"],
   "exclude": ["**/node_modules", "**/__pycache__", "**/.venv"],
   "reportMissingImports": false,
   "reportMissingTypeStubs": false,

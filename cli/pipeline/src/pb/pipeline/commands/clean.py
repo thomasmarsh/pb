@@ -37,7 +37,7 @@ def _clean_cabal(repo: Path) -> list[str]:
 
 def _clean_ui(repo: Path) -> list[str]:
     removed: list[str] = []
-    for rel in ("ui/node_modules", "cli/pb_cli/explorer/static/dist"):
+    for rel in ("ui/node_modules", "cli/api/src/pb/api/static/dist"):
         if _rmtree(repo / rel):
             removed.append(str(repo / rel))
     return removed
@@ -59,7 +59,7 @@ def _clean_python_caches(repo: Path) -> list[str]:
 
 def _clean_venv(repo: Path) -> list[str]:
     """Remove the Python virtualenv(s) — including, possibly, the one this very
-    process is running from: `./pb` shells out via `uv run --project cli pb_cli`,
+    process is running from: `./pb` shells out via `uv run --project cli pb`,
     so `cli/.venv` holds the interpreter and modules currently executing this
     command. On POSIX, unlinking files a process still has open is safe (the
     inode stays alive until the process exits) — this is run last, and nothing
