@@ -177,7 +177,7 @@ def check_corpus(
     no_build: bool = typer.Option(False, "--no-build", help="Skip cabal build step."),
     repo: Optional[Path] = typer.Option(None, "--repo", help="Repo root (auto-detect if omitted)."),
 ) -> None:
-    """Run pb-runner on both corpora and fail if any files contain parse errors."""
+    """Run pbc on both corpora and fail if any files contain parse errors."""
     run_corpus(repo=repo, no_build=no_build)
 
 

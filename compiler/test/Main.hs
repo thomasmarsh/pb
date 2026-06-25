@@ -35,7 +35,7 @@ main :: IO ()
 main = defaultMain tests
 
 tests :: TestTree
-tests = testGroup "pb-ast"
+tests = testGroup "pb-compiler"
   [ DuckDbTest.tests
   , ChurchTest.tests
   , BodyParserTest.tests

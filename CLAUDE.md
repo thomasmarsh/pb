@@ -1,12 +1,12 @@
-# pb-ast — Working Protocol
+# pb-compiler — Working Protocol
 
 ## Quick Reference
 
 ```text
-cd parser && cabal build                          # compile library + executables
-cd parser && cabal build --enable-tests           # compile tests too
-cd parser && cabal test                           # run test suite
-cd parser && cabal test --test-show-details=direct # verbose output
+cd compiler && cabal build                          # compile library + executables
+cd compiler && cabal build --enable-tests           # compile tests too
+cd compiler && cabal test                           # run test suite
+cd compiler && cabal test --test-show-details=direct # verbose output
 ./pb check-corpus                    # 0 errors / 1051 files = baseline
 ./pb debt                        # BsRaw + ExRaw debt + DW control coverage (both corpora)
 ./pb debt --no-build             # same, skip build step
@@ -91,8 +91,8 @@ Scale gates to the size of the change. Trivial changes (typo, rename, single-lin
 Before proposing any change, read every file that will be touched. Use `rg` to locate the relevant section before reading the full file:
 
 ```text
-rg -n "functionName" parser/src/
-rg -l "LogicalLine" parser/src/
+rg -n "functionName" compiler/src/
+rg -l "LogicalLine" compiler/src/
 ```
 
 No change is proposed without a prior read of all relevant modules. Locate callers before modifying a function.
@@ -104,7 +104,7 @@ No change is proposed without a prior read of all relevant modules. Locate calle
 
 # sample 5 error messages from a temporary run:
 OUT=$(mktemp -d)
-(cd parser && cabal run pb-runner -v0 -- -i ../example/openpay-0.1.1b-extract -o "$OUT" 2>/dev/null)
+(cd compiler && cabal run pbc -v0 -- -i ../example/openpay-0.1.1b-extract -o "$OUT" 2>/dev/null)
 python3 -c "
 import json, os, glob
 for f in list(glob.glob('$OUT/**/*.json', recursive=True))[:5]:
@@ -144,12 +144,12 @@ If you need ground truth on the wire format, don't trust committed example JSON 
 gitignored scratch and may be stale) — rebuild and run the binary directly:
 
 ```bash
-(cd parser && cabal build)
-BIN=$(cd parser && cabal list-bin pb-runner)
+(cd compiler && cabal build)
+BIN=$(cd compiler && cabal list-bin pbc)
 "$BIN" -i <dir-with-one-srf> -o /tmp/pbout && python3 -m json.tool /tmp/pbout/*.json
 ```
 
-**Canonical cabal invocation:** always run cabal from the `parser/` directory (either `cd parser && cabal …` or `(cd parser && cabal …)` from the repo root). This picks up both `cabal.project` at the repo root and `parser/cabal.project.local` (which sets the duckdb-ffi library paths). Build output goes to `dist-newstyle/` at the repo root. Never use `--project-dir parser` from the repo root — that skips `cabal.project.local` and loses the duckdb library paths.
+**Canonical cabal invocation:** always run cabal from the `compiler/` directory (either `cd compiler && cabal …` or `(cd compiler && cabal …)` from the repo root). This picks up both `cabal.project` at the repo root and `compiler/cabal.project.local` (which sets the duckdb-ffi library paths). Build output goes to `dist-newstyle/` at the repo root. Never use `--project-dir compiler` from the repo root — that skips `cabal.project.local` and loses the duckdb library paths.
 
 **Diagnosing implementation debt.** When the charter targets BsRaw, ExRaw, or DW structural-field coverage, run the debt analyser first — do NOT re-derive the breakdown from scratch:
 
@@ -327,7 +327,7 @@ uv run pb explore                            # live mode (default)
 
 ## Prelude and Safety Rules
 
-The custom Prelude is in `parser/src/PB/Prelude.hs`. These rules are non-negotiable.
+The custom Prelude is in `compiler/src/PB/Prelude.hs`. These rules are non-negotiable.
 
 | Rule                 | Detail                                                                                      |
 | -------------------- | ------------------------------------------------------------------------------------------- |
@@ -347,7 +347,7 @@ All new modules must start with `import PB.Prelude` under `NoImplicitPrelude` (s
 - **Megaparsec `try` invariant:** In a `choice`, every alternative that can consume input before failing must be wrapped in `try`. Without it, a partial match (e.g. consuming a sign character before failing on a non-digit) propagates the error and skips all remaining alternatives. Audit any `choice` whose alternatives share a leading character.
 - Always prefer short, flattened code - no huge monolithic functions
 - Always rename Aeson serialized fields ergonomic JSON (not just the raw Haskell names)
-- parser/app/Main.hs should have no functionality other than to call into parser/src/PB/Pipeline/Runner.hs. Three modes: (1) `-i SRC -o DIR` per-file JSON, (2) `-i SRC --jsonl` streaming JSONL, (3) `-i SRC --db FILE` DuckDB-direct (passes 1–8 all in Haskell). No logic other than flag parsing and dispatch.
+- compiler/app/Main.hs should have no functionality other than to call into compiler/src/PB/Pipeline/Runner.hs. Three modes: (1) `-i SRC -o DIR` per-file JSON, (2) `-i SRC --jsonl` streaming JSONL, (3) `-i SRC --db FILE` DuckDB-direct (passes 1–8 all in Haskell). No logic other than flag parsing and dispatch.
 - Accept no hacky solutions or greedy operations that will cause pain down the line: if we can't reliable detect the beginning / end of a regions (e.g., FUNCTION / END FUNCTION), we can't start working on it yet.
 - Be creative and comprehensive in generating PBT and pathological unit test cases; PB has lots of issues like `foo()bar()` smashed together ` & // comment`
 - Ensure the preprocess step is principled and resilient
@@ -984,7 +984,7 @@ walkAllSrFiles :: FilePath -> IO [FilePath]   -- any .sr<single-char>
 ### `PB.Pipeline.DuckDb`
 
 ```haskell
--- DuckDB-direct I/O for pb-runner --db mode. C FFI to libduckdb.dylib via duckdb-ffi.
+-- DuckDB-direct I/O for pbc --db mode. C FFI to libduckdb.dylib via duckdb-ffi.
 -- Single-writer constraint: DuckConn is NOT thread-safe for concurrent appenders;
 -- runModeDb uses MVar mutex (bridge path) or sequential mapM_ (no-bridge path).
 -- Phase A appenders (one per table, create + destroy per run):

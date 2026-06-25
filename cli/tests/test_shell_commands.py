@@ -20,7 +20,7 @@ def test_corpus_routes_to_build_runner(monkeypatch, tmp_path):
 
     def fake_build_runner(repo, verbose=False):
         built.append(repo)
-        return tmp_path / "pb-runner"
+        return tmp_path / "pbc"
 
     monkeypatch.setattr("pb_cli.shell.commands.corpus.env.build.find_repo", fake_find_repo)
     monkeypatch.setattr("pb_cli.shell.commands.corpus.env.build.build_runner", fake_build_runner)
@@ -49,7 +49,7 @@ def test_corpus_routes_to_find_binary(monkeypatch, tmp_path):
 
     def fake_find_binary(repo):
         found.append(repo)
-        return tmp_path / "pb-runner"
+        return tmp_path / "pbc"
 
     monkeypatch.setattr("pb_cli.shell.commands.corpus.env.build.find_repo", fake_find_repo)
     monkeypatch.setattr("pb_cli.shell.commands.corpus.env.build.find_binary", fake_find_binary)

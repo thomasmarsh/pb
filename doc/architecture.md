@@ -5,10 +5,10 @@ This repository contains three independent runtimes that form a pipeline:
 **Python** drives orchestration and presents data via FastAPI, and
 **TypeScript** renders the interactive web UI.
 
-In DuckDB-direct mode (`pb-runner --db FILE`), Haskell writes all analysis
+In DuckDB-direct mode (`pbc --db FILE`), Haskell writes all analysis
 results (procedures, call resolution, taint, dead code) directly to DuckDB —
 Python reads but never writes the analysis tables.  The older JSONL mode
-(`pb-runner --jsonl | pb index`) still works for incremental re-runs via
+(`pbc --jsonl | pb index`) still works for incremental re-runs via
 `pb index`.
 
 ---
@@ -17,11 +17,11 @@ Python reads but never writes the analysis tables.  The older JSONL mode
 
 ```
 pb/
-├── parser/                   Haskell parser (pb-ast)
+├── compiler/                   Haskell parser (pb-compiler)
 │   ├── src/                  Library (PB.* modules)
-│   ├── app/                  pb-runner executable
+│   ├── app/                  pbc executable
 │   ├── test/                 Test suite
-│   └── pb-ast.cabal          Cabal project configuration
+│   └── pb-compiler.cabal          Cabal project configuration
 ├── cli/                      Python CLI tools
 │   ├── pb_cli/               Python package (./pb or uv run --project cli pb_cli)
 │   │   ├── cli.py            Entry point — all CLI sub-commands
@@ -88,7 +88,7 @@ pb/
 ```mermaid
 flowchart TD
     SRC["PowerBuilder source files\n.srw .sru .srd …"]
-    RUNNER["pb-runner\n(Haskell binary)"]
+    RUNNER["pbc\n(Haskell binary)"]
     JSONL["JSONL stream\none JSON object per file"]
     INDEX["pb index\n(cli/pb_cli/index.py)"]
     DB[("pb.duckdb")]
@@ -97,7 +97,7 @@ flowchart TD
     API["FastAPI\n(cli/pb_cli/explorer/api.py)"]
     SPA["SolidJS SPA\n(ui/src/)"]
 
-    SRC -->|"cabal run pb-runner\n-i SRC --jsonl"| RUNNER
+    SRC -->|"cabal run pbc\n-i SRC --jsonl"| RUNNER
     RUNNER --> JSONL
     JSONL --> INDEX
     INDEX --> DB
@@ -110,7 +110,7 @@ flowchart TD
 
 The Python layer never reads source files directly.  In DuckDB-direct mode it
 does not read analysis JSON at all — Haskell writes to DuckDB and Python reads
-from there.  In JSONL mode Python consumes the JSON stream from `pb-runner`.
+from there.  In JSONL mode Python consumes the JSON stream from `pbc`.
 
 ---
 
@@ -179,7 +179,7 @@ four NetworkX operations over the call graph:
 ```mermaid
 flowchart TD
     SRC["Source files\n.srw .sru .srd …"]
-    RUNNER["pb-runner\n(Haskell, subprocess)"]
+    RUNNER["pbc\n(Haskell, subprocess)"]
     JSONL["JSONL stream"]
     PARSE["parse_stream()\ncli/pb_cli/parse.py"]
     IMPORT["import_batch()\ncli/pb_cli/importing.py"]
@@ -223,7 +223,7 @@ any indexing activity.
 
 ```mermaid
 flowchart LR
-    subgraph Haskell["Haskell (pb-runner)"]
+    subgraph Haskell["Haskell (pbc)"]
         HS_SER["Serialise.hs\naeson + aeson-typescript"]
     end
     subgraph Python["Python (cli/pb_cli/)"]
@@ -246,13 +246,13 @@ flowchart LR
 
 ### Haskell → TypeScript: `--emit-ts`
 
-`pb-runner --emit-ts` uses `aeson-typescript` to derive TypeScript type
+`pbc --emit-ts` uses `aeson-typescript` to derive TypeScript type
 definitions directly from the Haskell AST types and prints them to stdout.
 The `prebuild` npm script writes this output to
 `src/types/ast.generated.ts` each time `pnpm build` is invoked:
 
 ```json
-"prebuild": "cabal run --project-dir ../parser pb-runner -v0 -- --emit-ts > src/types/ast.generated.ts"
+"prebuild": "cabal run --project-dir ../parser pbc -v0 -- --emit-ts > src/types/ast.generated.ts"
 ```
 
 `ast.generated.ts` is a build artifact (not committed to git) that emits
@@ -263,7 +263,7 @@ through the explore API.
 
 ### Haskell → Python: JSONL
 
-`pb-runner -i SRC_DIR --jsonl` prints one JSON object per file to stdout.
+`pbc -i SRC_DIR --jsonl` prints one JSON object per file to stdout.
 `cli/pb_cli/index.py:run_from_jsonl_lines` reads this stream and populates
 DuckDB.  The JSON encoding follows `genericToJSON` conventions:
 
@@ -360,11 +360,11 @@ to produce the single top-level `AppState` / `AppAction` reducer.
 
 | Concern | File(s) |
 |---------|---------|
-| Parsing PowerBuilder syntax | `parser/src/PB/Lexing/`, `parser/src/PB/Grammar/` |
-| AST data types | `parser/src/PB/AST/` |
-| JSON serialisation + TS codegen | `parser/src/PB/Pipeline/Serialise.hs` |
-| DuckDB-direct I/O (passes 1–8) | `parser/src/PB/Pipeline/DuckDb.hs` |
-| CLI entry point (Haskell) | `parser/app/Main.hs` |
+| Parsing PowerBuilder syntax | `compiler/src/PB/Lexing/`, `compiler/src/PB/Grammar/` |
+| AST data types | `compiler/src/PB/AST/` |
+| JSON serialisation + TS codegen | `compiler/src/PB/Pipeline/Serialise.hs` |
+| DuckDB-direct I/O (passes 1–8) | `compiler/src/PB/Pipeline/DuckDb.hs` |
+| CLI entry point (Haskell) | `compiler/app/Main.hs` |
 | DuckDB schema (Python side) | `cli/pb_cli/common.py` |
 | JSONL → DuckDB ingestion | `cli/pb_cli/index.py` |
 | Call graph + cyclomatic complexity | `cli/pb_cli/analyze.py` |
@@ -385,7 +385,7 @@ to produce the single top-level `AppState` / `AppAction` reducer.
 
 | Layer | Command | Location |
 |-------|---------|----------|
-| Haskell | `cabal test` (in `parser/`) | `parser/test/` |
+| Haskell | `cabal test` (in `compiler/`) | `compiler/test/` |
 | Python | `uv run pytest` (in `cli/`) | `cli/tests/` |
 | TypeScript | `pnpm test` (in `ui/`) | `ui/tests/` |
 | Debt gate | `uv run --project cli pb_cli debt` | checks ExRaw, BsRaw, DW coverage |
@@ -425,7 +425,7 @@ must use the full name.
 **`contents` wrapping.**  Single-value constructors always put their payload
 under `"contents"`.  Record constructors put fields at the same level as
 `"tag"`.  There is no way to tell from the tag name alone — consult
-`parser/src/PB/Pipeline/Serialise.hs` or `ui/src/types/ast.generated.ts`.
+`compiler/src/PB/Pipeline/Serialise.hs` or `ui/src/types/ast.generated.ts`.
 
 **`ast.generated.ts` is not in git.**  It is regenerated by `pnpm prebuild`
 on every `pnpm build`.  If TypeScript compilation fails on a clean checkout,

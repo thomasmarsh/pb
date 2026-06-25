@@ -1,4 +1,4 @@
-"""Unit tests for pb_cli.shell.pipeline.run — pb-runner --db flow."""
+"""Unit tests for pb_cli.shell.pipeline.run — pbc --db flow."""
 
 from __future__ import annotations
 
@@ -91,7 +91,7 @@ def test_run_success_renames_db(monkeypatch, tmp_path):
     db_path = str(tmp_path / "out.duckdb")
 
     def fake_popen(args, **kwargs):
-        # Simulate pb-runner creating the .new DB file
+        # Simulate pbc creating the .new DB file
         new_path = args[args.index("--db") + 1]
         _make_minimal_db(new_path)
         # Emit a minimal done event so runner_progress gets a clean signal

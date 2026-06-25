@@ -162,7 +162,7 @@ w_invoice_entry.srw          | w_invoice_entry   | function      | of_check_amou
 #### Step 3: Optional — render the event body
 
 ```bash
-pb-runner --render -i ./src --object w_invoice_entry --proc itemchanged
+pbc --render -i ./src --object w_invoice_entry --proc itemchanged
 ```
 
 ```powerscript
@@ -263,10 +263,10 @@ statement node (deferred to E8 — requires lexer changes).
 ```
 [ 1,700 Source Files ]
          │
-         ▼  pb-runner --db FILE  (DuckDB-direct mode — all passes 1-8 in Haskell)
+         ▼  pbc --db FILE  (DuckDB-direct mode — all passes 1-8 in Haskell)
 [ pb.duckdb ]  ← written directly; no JSON intermediate
          │
-         │  (alternative: pb-runner --jsonl | pb index — JSONL streaming mode)
+         │  (alternative: pbc --jsonl | pb index — JSONL streaming mode)
          │
 [ pb.duckdb ]
   ├── objects            (one row per source file / type declaration)
@@ -294,7 +294,7 @@ statement node (deferred to E8 — requires lexer changes).
 1. **Do not generate one giant JSON file.** Use per-file `.json` output (`-o` mode) or
    streaming JSONL (`--jsonl` mode). DuckDB `read_ndjson_auto` can query JSONL directly
    without loading all files into memory.
-2. **JSONL for bulk processing:** `pb-runner --jsonl | uv run pb import`
+2. **JSONL for bulk processing:** `pbc --jsonl | uv run pb import`
    populates `pb.duckdb` in a single streaming pass.
 3. **Tilde-escaping:** Normalise `~"` → `"` and `~~` → `~` in all string values before
    serialisation. The `pbDwStringChunk` lexer function handles this.
@@ -378,9 +378,9 @@ WHERE expression LIKE '%fn_misth%';
 
 | Tool | Language | Input | Output |
 |---|---|---|---|
-| `pb-runner --db FILE` | Haskell | source dir | pb.duckdb (all passes 1–8) |
-| `pb-runner --jsonl` | Haskell | source dir | JSONL stream (legacy) |
-| `pb-runner -o DIR` | Haskell | source dir | per-file JSON + manifest.json (legacy) |
+| `pbc --db FILE` | Haskell | source dir | pb.duckdb (all passes 1–8) |
+| `pbc --jsonl` | Haskell | source dir | JSONL stream (legacy) |
+| `pbc -o DIR` | Haskell | source dir | per-file JSON + manifest.json (legacy) |
 | `pb index` | Python | JSONL | pb.duckdb (JSONL ingestion path) |
 | `pb analyze` | Python | pb.duckdb | object_metrics table |
 | `pb diagram` | Python | pb.duckdb | GraphViz SVG |

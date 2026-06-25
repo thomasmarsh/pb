@@ -1,4 +1,4 @@
-"""Implementation of `pb index` — invoke pb-runner --db, then post-process."""
+"""Implementation of `pb index` — invoke pbc --db, then post-process."""
 
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ def run(
 
     if proc.returncode != 0:
         import typer
-        typer.echo(f"pb-runner failed (exit {proc.returncode}):", err=True)
+        typer.echo(f"pbc failed (exit {proc.returncode}):", err=True)
         for line in raw_stderr_lines:
             typer.echo(f"  {line}", err=True)
         reporter.done(parsed=0, errors=1, sql_parse_failures=0)

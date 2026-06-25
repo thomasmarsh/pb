@@ -1,4 +1,4 @@
-"""Run pb-runner on both corpora and fail if any files contain parse errors."""
+"""Run pbc on both corpora and fail if any files contain parse errors."""
 
 import subprocess
 import sys
@@ -11,10 +11,10 @@ from pb_cli.shell.env import env
 
 
 def run(repo: Path | None = None, no_build: bool = False) -> None:
-    """Run pb-runner on both corpora and fail if any files contain errors."""
+    """Run pbc on both corpora and fail if any files contain errors."""
     repo_path = env.build.find_repo(repo)
     if not no_build:
-        print("Building pb-runner...", flush=True)
+        print("Building pbc...", flush=True)
         binary = env.build.build_runner(repo_path)
     else:
         binary = env.build.find_binary(repo_path)
@@ -41,7 +41,7 @@ def run(repo: Path | None = None, no_build: bool = False) -> None:
                 text=True,
             )
             if r.returncode != 0:
-                print(f"[ERROR] pb-runner failed on {name}:\n{r.stderr[:400]}", file=sys.stderr)
+                print(f"[ERROR] pbc failed on {name}:\n{r.stderr[:400]}", file=sys.stderr)
                 sys.exit(1)
             con = duckdb.connect(str(db_path), read_only=True)
             n_ps  = con.execute("SELECT count(*) FROM objects").fetchone()[0]       # type: ignore[index]

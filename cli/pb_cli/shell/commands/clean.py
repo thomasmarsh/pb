@@ -20,7 +20,7 @@ def _rmtree(path: Path) -> bool:
 
 
 def _clean_cabal(repo: Path) -> list[str]:
-    """cabal.project lives at the repo root (packages: parser), so dist-newstyle
+    """cabal.project lives at the repo root (packages: compiler), so dist-newstyle
     is created there regardless of which subdirectory `cabal` is invoked from."""
     removed: list[str] = []
     r = subprocess.run(["cabal", "clean"], cwd=str(repo), capture_output=True, text=True)
@@ -28,10 +28,10 @@ def _clean_cabal(repo: Path) -> list[str]:
         removed.append(f"{repo / 'dist-newstyle'} (via cabal clean)")
     else:
         print(f"[warn] cabal clean failed: {r.stderr.strip()[:300]}", file=sys.stderr)
-    # Stray leftover from an older invocation pattern that ran cabal from parser/
+    # Stray leftover from an older invocation pattern that ran cabal from compiler/
     # directly — harmless to remove if present.
-    if _rmtree(repo / "parser" / "dist-newstyle"):
-        removed.append(str(repo / "parser" / "dist-newstyle"))
+    if _rmtree(repo / "compiler" / "dist-newstyle"):
+        removed.append(str(repo / "compiler" / "dist-newstyle"))
     return removed
 
 

@@ -30,7 +30,7 @@ Measure how much of the AST is still in raw fallback form (unclassified
 statements and expressions). Useful for tracking parser coverage.
 
 ```bash
-./pb debt --no-build   # skips cabal build if pb-runner is already fresh
+./pb debt --no-build   # skips cabal build if pbc is already fresh
 ```
 
 ---

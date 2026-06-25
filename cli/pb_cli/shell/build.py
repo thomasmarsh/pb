@@ -1,4 +1,4 @@
-"""Build management: find repo root, build pb-runner, enumerate source files."""
+"""Build management: find repo root, build pbc, enumerate source files."""
 
 import hashlib
 import re
@@ -11,10 +11,10 @@ def find_repo(repo: Path | None = None) -> Path:
     if repo:
         return repo
     for p in [Path.cwd(), *Path.cwd().parents]:
-        if (p / "parser" / "pb-ast.cabal").exists():
+        if (p / "compiler" / "pb-compiler.cabal").exists():
             return p
     sys.exit(
-        "error: cannot locate repo root (no parser/pb-ast.cabal found). Run from within the pb repo, or pass --repo."
+        "error: cannot locate repo root (no compiler/pb-compiler.cabal found). Run from within the pb repo, or pass --repo."
     )
 
 
@@ -24,15 +24,15 @@ def get_queries_dir() -> Path:
 
 
 def find_binary(repo: Path) -> Path:
-    """Return the compiled pb-runner binary path without triggering a build."""
+    """Return the compiled pbc binary path without triggering a build."""
     r = subprocess.run(
-        ["cabal", "list-bin", "pb-runner"],
-        cwd=str(repo / "parser"),
+        ["cabal", "list-bin", "pbc"],
+        cwd=str(repo / "compiler"),
         capture_output=True,
         text=True,
     )
     if r.returncode != 0:
-        sys.exit("error: cabal list-bin pb-runner failed — try without --no-build")
+        sys.exit("error: cabal list-bin pbc failed — try without --no-build")
     binary = Path(r.stdout.strip())
     if not binary.exists():
         sys.exit(f"error: binary not found at {binary} — try without --no-build")
@@ -40,11 +40,11 @@ def find_binary(repo: Path) -> Path:
 
 
 def build_runner(repo: Path, verbose: bool = False) -> Path:
-    """Build pb-runner via cabal and return the compiled binary path."""
+    """Build pbc via cabal and return the compiled binary path."""
     verbosity = [] if verbose else ["-v0"]
     r = subprocess.run(
-        ["cabal", "build", "pb-runner"] + verbosity,
-        cwd=str(repo / "parser"),
+        ["cabal", "build", "pbc"] + verbosity,
+        cwd=str(repo / "compiler"),
         capture_output=not verbose,
         text=True,
     )
@@ -100,7 +100,7 @@ def ensure_explorer_built(repo: Path, verbose: bool = False) -> None:
 
     Rebuilds the TypeScript bundle if any source file is newer than the bundle
     output. The prebuild step (pnpm prebuild) regenerates ast.generated.ts via
-    cabal run pb-runner --emit-ts automatically when pnpm build is invoked.
+    cabal run pbc --emit-ts automatically when pnpm build is invoked.
     """
     ui_dir = repo / "ui"
     dist_js = repo / "cli" / "pb_cli" / "explorer" / "static" / "dist" / "App.js"

@@ -1,8 +1,8 @@
 cradle:
   cabal:
-    - path: "parser/src"
-      component: "lib:pb-ast"
-    - path: "parser/test"
-      component: "pb-ast-test"
-    - path: "parser/app"
-      component: "pb-runner"
+    - path: "compiler/src"
+      component: "lib:pb-compiler"
+    - path: "compiler/test"
+      component: "pb-compiler-test"
+    - path: "compiler/app"
+      component: "pbc"

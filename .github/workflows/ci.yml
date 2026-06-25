@@ -32,7 +32,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cabal/store
-          key: cabal-${{ runner.os }}-ghc-9.10.2-duckdb-1.5.4-${{ hashFiles('parser/pb-ast.cabal') }}
+          key: cabal-${{ runner.os }}-ghc-9.10.2-duckdb-1.5.4-${{ hashFiles('compiler/pb-ast.cabal') }}
           restore-keys: |
             cabal-${{ runner.os }}-ghc-9.10.2-duckdb-1.5.4-
 
@@ -68,14 +68,14 @@ jobs:
           version: "11.3.0"
 
       - name: Build
-        working-directory: parser
+        working-directory: compiler
         run: cabal build --enable-tests
 
       - name: Extract openpay corpus
         run: uv run --project cli pb_cli extract example/openpay-0.1.1b -o example/openpay-0.1.1b-extract
 
       - name: Test (Haskell)
-        working-directory: parser
+        working-directory: compiler
         run: cabal test --test-show-details=direct
 
       - name: Test (Python)

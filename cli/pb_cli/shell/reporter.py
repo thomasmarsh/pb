@@ -136,7 +136,7 @@ class RunnerProgress(Protocol):
 
 
 class _LiveRunnerProgress:
-    """Drives a Rich Live display from pb-runner JSONL progress events.
+    """Drives a Rich Live display from pbc JSONL progress events.
 
     Layout during Phase A (parsing):
         ⠸ Parsing & indexing  [████░░░░░░]  423/1051  12.3s  ⚠ 3 errors
@@ -294,7 +294,7 @@ class LiveReporter:
         self._c = console or Console(stderr=True)
 
     def building(self) -> None:
-        self._c.print("[bold]Building pb-runner...[/bold]", highlight=False)
+        self._c.print("[bold]Building pbc...[/bold]", highlight=False)
 
     @contextmanager
     def status(self, msg: str) -> Iterator[None]:
@@ -406,7 +406,7 @@ class LiveReporter:
 
         # Initial placeholder shown before the first event arrives
         with Live(
-            Text.from_markup("[dim]Starting pb-runner…[/dim]"),
+            Text.from_markup("[dim]Starting pbc…[/dim]"),
             console=self._c,
             refresh_per_second=12,
             transient=False,

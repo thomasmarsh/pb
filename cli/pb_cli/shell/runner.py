@@ -1,4 +1,4 @@
-"""Error rendering helpers for pb-runner output."""
+"""Error rendering helpers for pbc output."""
 
 import re
 from pathlib import Path

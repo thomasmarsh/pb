@@ -1,4 +1,4 @@
-"""Shared fixtures — session-scoped to avoid rebuilding pb-runner output 4x."""
+"""Shared fixtures — session-scoped to avoid rebuilding pbc output 4x."""
 
 import subprocess
 
@@ -16,7 +16,7 @@ OPENPAY_DIR = REPO_ROOT / "example" / "openpay-0.1.1b-extract"
 
 @pytest.fixture(scope="session")
 def db_path(tmp_path_factory) -> str:
-    """Create an analyzed DuckDB once for the entire session via pb-runner --db."""
+    """Create an analyzed DuckDB once for the entire session via pbc --db."""
     tmp = tmp_path_factory.mktemp("db")
     db = str(tmp / "test.duckdb")
 

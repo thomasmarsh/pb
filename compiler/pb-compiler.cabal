@@ -1,5 +1,5 @@
 cabal-version:      3.4
-name:               pb-ast
+name:               pb-compiler
 version:            0.1.0.0
 license:            BSD-3-Clause
 license-file:       LICENSE
@@ -79,14 +79,14 @@ library
     , duckdb-ffi    >= 1.5.0.0 && < 1.6
     , stm           >= 2.5
 
-executable pb-runner
+executable pbc
   import: common-settings
   hs-source-dirs: app
   main-is: Main.hs
   ghc-options: -rtsopts -threaded
   build-depends:
     , base ^>=4.20.1.0
-    , pb-ast
+    , pb-compiler
     , text
     , aeson
     , bytestring   ^>=0.12
@@ -94,7 +94,7 @@ executable pb-runner
     , filepath     >=1.4
     , optparse-applicative ^>=0.18
 
-test-suite pb-ast-test
+test-suite pb-compiler-test
   import: common-settings
   type: exitcode-stdio-1.0
   hs-source-dirs: test
@@ -128,7 +128,7 @@ test-suite pb-ast-test
     , TypeResolveTest
   build-depends:
     , base ^>=4.20.1.0
-    , pb-ast
+    , pb-compiler
     , text
     , tasty
     , tasty-hunit

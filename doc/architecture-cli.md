@@ -28,7 +28,7 @@ values — no I/O, no network, no subprocess calls, no framework imports.
 This is the functional core.
 
 **`shell/`** is the imperative boundary. It owns all side-effecting
-operations: filesystem reads, `pb-runner` subprocess invocation, DuckDB
+operations: filesystem reads, `pbc` subprocess invocation, DuckDB
 connections, and rich console output. Every side effect flows through
 `ShellEnv` closures, making them swappable in tests.
 
@@ -88,7 +88,7 @@ explorer build management. Fields: `find_repo`, `get_queries_dir`,
 `hash_source_dir`, `ensure_explorer_built`.
 
 ### `RunnerEnv` (2 fields)
-Parsing via the `pb-runner` Haskell binary and rich error rendering.
+Parsing via the `pbc` Haskell binary and rich error rendering.
 Fields: `parse_stream`, `render_error`.
 
 ### `StorageEnv` (15 fields)
@@ -152,8 +152,8 @@ needed where the real signature adds nothing a `Callable` cannot express.
 | Module | Purpose | Key exports |
 |---|---|---|
 | `env.py` | `ShellEnv` composition pattern (BuildEnv / RunnerEnv / StorageEnv) | `ShellEnv`, `env`, `BuildEnv`, `RunnerEnv`, `StorageEnv` |
-| `build.py` | Repo discovery, `pb-runner` binary build, file enumeration | `find_repo`, `build_runner`, `find_binary`, `walk_sr_files`, `count_sr_files`, `hash_source_dir`, `ensure_explorer_built`, `build_subset_tmpdir`, `get_queries_dir` |
-| `runner.py` | Stream parse results from `pb-runner --jsonl` | `parse_stream`, `render_error` |
+| `build.py` | Repo discovery, `pbc` binary build, file enumeration | `find_repo`, `build_runner`, `find_binary`, `walk_sr_files`, `count_sr_files`, `hash_source_dir`, `ensure_explorer_built`, `build_subset_tmpdir`, `get_queries_dir` |
+| `runner.py` | Stream parse results from `pbc --jsonl` | `parse_stream`, `render_error` |
 | `db.py` | DuckDB schema DDL, connection management, query parsing | `db_connection`, `connect`, `create_schema`, `drop_tables`, `Conn`, `INSERT`, `parse_sql_file` |
 | `importing.py` | Batch import of parsed file dicts into DuckDB | `import_batch`, `run_from_jsonl_lines` |
 | `state.py` | Incremental file-state persistence (DB-backed) | `create_state_table`, `load_file_state`, `save_file_state`, `delete_file_rows` |
