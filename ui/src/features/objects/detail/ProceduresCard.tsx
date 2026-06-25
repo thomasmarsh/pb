@@ -4,7 +4,7 @@ import { For, Show } from "solid-js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../../features/app/state.js";
 import type { AppAction } from "../../../features/app/actions.js";
-import type { ProcedureInfo } from "../../../types/api.js";
+import type { ProcedureInfo } from "@pb/platform";
 
 const KIND_GROUPS: { label: string; match: (t: string) => boolean }[] = [
   { label: "Functions",   match: (t) => t === "function" },

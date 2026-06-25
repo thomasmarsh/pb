@@ -2,9 +2,9 @@
 
 import { describe, it, expect } from "vitest";
 import { createTestStore } from "../test-store.js";
-import { navReducer, type NavEnv } from "../../src/features/navigation/reducer.js";
-import type { NavState, Route } from "../../src/features/navigation/types.js";
-import { crumbsForRoute, ICONS } from "../../src/features/navigation/breadcrumb.js";
+import { navReducer, type NavEnv } from "@pb/platform";
+import type { NavState, Route } from "@pb/platform";
+import { crumbsForRoute, ICONS } from "@pb/platform";
 
 function makeNavEnv(): NavEnv & { lastPush: string | null } {
   const env: NavEnv & { lastPush: string | null } = {

@@ -1,7 +1,7 @@
 // tests/features/breadcrumb.test.ts — Tests for breadcrumb derivation.
 
 import { describe, it, expect } from "vitest";
-import { crumbsForRoute, ICONS } from "../../src/features/navigation/breadcrumb.js";
+import { crumbsForRoute, ICONS } from "@pb/platform";
 
 describe("crumbsForRoute", () => {
   it("dashboard → 1 crumb with library icon", () => {

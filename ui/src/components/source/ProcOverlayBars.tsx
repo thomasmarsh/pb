@@ -1,5 +1,5 @@
 import { For } from "solid-js";
-import type { ProcedureInfo } from "../../types/api.js";
+import type { ProcedureInfo } from "@pb/platform";
 import { PROC_COLORS } from "./pure/tooltip.js";
 import { overlayTop, overlayHeight } from "./pure/line.js";
 

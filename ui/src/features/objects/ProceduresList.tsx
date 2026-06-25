@@ -1,14 +1,12 @@
 // ProceduresList.tsx — Browsable, sortable, filterable list of all procedures.
 
 import { Show, For, onMount } from "solid-js";
-import { ChevronUp, ChevronDown, ArrowUpDown } from "../../utils/icons.js";
+import { ChevronUp, ChevronDown, ArrowUpDown, procBadge, type ProcedureListItem } from "@pb/platform";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import type { ProcedureListItem } from "../../types/api.js";
 import { EntityCard } from "../../components/detail/EntityCard.js";
 import { Loading } from "../../components/ui/Loading.js";
-import { procBadge } from "../../utils/format.js";
 import { useListKeyboard } from "../../utils/hooks/useListKeyboard.js";
 
 const KIND_LABELS: Record<string, string> = {

@@ -17,12 +17,12 @@ import type {
   TableSummary,
   TableDetail,
   ErrorListResponse,
-} from "../../types/api.js";
+} from "@pb/platform";
 import { type DataWindowFile, type AstData, type WindowLayout } from "@pb/interpreter";
 import { Effect, type SQLResult } from "@pb/core";
 import type { AppEnv as Env } from "./reducer.js";
 import type { Theme } from "./state.js";
-import type { NavigationAction } from "../navigation/types.js";
+import type { NavigationAction } from "@pb/platform";
 
 
 export interface ApiClient {

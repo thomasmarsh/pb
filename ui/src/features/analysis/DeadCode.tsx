@@ -1,13 +1,11 @@
 // DeadCode.tsx — Dead Code report: uncalled procedures (P1).
 
 import { Show, For, createResource, createSignal } from "solid-js";
-import { Code2 } from "../../utils/icons.js";
+import { Code2, procBadge, type DeadCodeResponse } from "@pb/platform";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import type { DeadCodeResponse } from "../../types/api.js";
 import { Loading } from "../../components/ui/Loading.js";
-import { procBadge } from "../../utils/format.js";
 
 type SortKey = "confidence" | "cc" | "object" | "name" | "type";
 

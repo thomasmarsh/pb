@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 import { buildDisplay } from "../../src/components/layout/BreadcrumbBar.js";
-import type { BreadcrumbSegment } from "../../src/features/navigation/types.js";
+import type { BreadcrumbSegment } from "@pb/platform";
 
 function seg(label: string): BreadcrumbSegment {
   return { icon: "object", label, route: { view: "dashboard" } };

@@ -1,7 +1,7 @@
 // HealthCheck.tsx — Polls backend, shows reconnect modal when disconnected.
 
 import { createSignal, onMount, onCleanup, Show } from "solid-js";
-import { AlertTriangle } from "../../utils/icons.js";
+import { AlertTriangle } from "@pb/platform";
 
 const POLL_INTERVAL = 5000;
 const CHECK_URL = "/api/stats";

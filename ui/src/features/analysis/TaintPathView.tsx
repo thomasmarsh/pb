@@ -5,7 +5,7 @@ import type { JSX } from "solid-js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import type { TaintPathDetail } from "../../types/api.js";
+import type { TaintPathDetail } from "@pb/platform";
 import { AnalysisView } from "./AnalysisView.js";
 import { LinearTrace } from "./LinearTrace.js";
 import { Loading } from "../../components/ui/Loading.js";

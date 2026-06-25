@@ -3,9 +3,7 @@
 import { Show, For, createMemo } from "solid-js";
 import { useExploreStore } from "./ExploreContext.js";
 import { TreeNode } from "./TreeNode.js";
-import { procBadge } from "../../utils/format.js";
-import { Package } from "../../utils/icons.js";
-import type { ExploreLibrary, ExploreObject, ExploreProcedure } from "../../types/api.js";
+import { procBadge, Package, type ExploreLibrary, type ExploreObject, type ExploreProcedure } from "@pb/platform";
 
 export function libId(name: string): string { return `lib:${name}`; }
 export function objId(lib: string, name: string): string { return `obj:${lib}:${name}`; }

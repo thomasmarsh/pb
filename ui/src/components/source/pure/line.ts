@@ -1,4 +1,4 @@
-import type { ProcedureInfo } from "../../../types/api.js";
+import type { ProcedureInfo } from "@pb/platform";
 
 export const PIXELS_PER_LINE = 20.8;
 

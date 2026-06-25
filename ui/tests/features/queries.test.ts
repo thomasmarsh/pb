@@ -3,9 +3,9 @@
 import { describe, it, expect } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
-import { queriesReducer, initialQueriesState, type QueriesEnv } from "../../src/features/queries/reducer.js";
-import type { QueriesState } from "../../src/features/queries/types.js";
-import type { NavigationAction } from "../../src/features/navigation/types.js";
+import { queriesReducer, initialQueriesState, type QueriesEnv } from "@pb/platform";
+import type { QueriesState } from "@pb/platform";
+import type { NavigationAction } from "@pb/platform";
 
 function makeMockEnv(): QueriesEnv & { lastNavigate: NavigationAction | null; lastSql: string | null } {
   const env: QueriesEnv & { lastNavigate: NavigationAction | null; lastSql: string | null } = {

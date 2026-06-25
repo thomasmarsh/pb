@@ -4,8 +4,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
 import { ProcedureDetail } from "../../src/features/objects/ProcedureDetail.js";
 import { createTestStore } from "../helpers.js";
-import { initialObjectsState } from "../../src/features/objects/reducer.js";
-import type { ProcedureDetailResponse } from "../../src/types/api.js";
+import { initialObjectsState } from "@pb/platform";
+import type { ProcedureDetailResponse } from "@pb/platform";
 
 const baseProc: ProcedureDetailResponse = {
   object: "w_main",

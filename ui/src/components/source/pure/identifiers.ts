@@ -1,5 +1,5 @@
-import { PB_KEYWORDS } from "../../../utils/highlight.js";
-import type { KnownProcInfo, LocalSymbolInfo } from "../../../types/api.js";
+import { PB_KEYWORDS } from "@pb/platform";
+import type { KnownProcInfo, LocalSymbolInfo } from "@pb/platform";
 
 export function linkIdentifiers(
   html: string,

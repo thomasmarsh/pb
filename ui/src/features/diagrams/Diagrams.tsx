@@ -8,7 +8,7 @@ import type { AppAction } from "../../features/app/actions.js";
 import { ComboboxInput } from "../../components/ui/ComboboxInput.js";
 import { SvgToolbar } from "./components/SvgToolbar.js";
 import { DiagramTooltip } from "../../components/diagram/DiagramTooltip.js";
-import { parsePbUrl, getPbHref, HAS_FOCUS, AUTO_GENERATE, type DiagramKind } from "../../utils/diagram.js";
+import { parsePbUrl, getPbHref, HAS_FOCUS, AUTO_GENERATE, type DiagramKind } from "@pb/platform";
 
 export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   const store = props.store;

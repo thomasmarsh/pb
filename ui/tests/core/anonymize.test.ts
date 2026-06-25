@@ -1,7 +1,7 @@
 // tests/core/anonymize.test.ts — Tests for the source-text anonymization utility.
 
 import { describe, it, expect } from "vitest";
-import { anonymizeText } from "../../src/core/anonymize.js";
+import { anonymizeText } from "@pb/platform";
 
 describe("anonymizeText", () => {
   it("preserves identifier length and underscore position", () => {

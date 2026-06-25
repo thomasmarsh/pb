@@ -4,7 +4,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { fireEvent, render, cleanup } from "@solidjs/testing-library";
 import { SourceViewer } from "../../src/components/source/SourceViewer.js";
 import { createTestStore } from "../helpers.js";
-import type { KnownProcInfo } from "../../src/types/api.js";
+import type { KnownProcInfo } from "@pb/platform";
 
 afterEach(() => {
   cleanup();

@@ -1,18 +1,9 @@
 // app/state.ts — App state: the single state tree shape.
 
-import type { NavState } from "../navigation/types.js";
-import type { DashboardState } from "../dashboard/types.js";
-import type { ObjectsState } from "../objects/types.js";
-import type { DatawindowsState } from "../datawindows/types.js";
-import type { DiagramsState } from "../diagrams/types.js";
-import type { QueriesState } from "../queries/types.js";
-import type { SearchState } from "../search/types.js";
-import type { ExploreState } from "../explore/types.js";
-import type { TablesState } from "../tables/types.js";
-import type { ErrorsState } from "../errors/types.js";
+import { type NavState, type DashboardState, type ObjectsState, type DatawindowsState, type DiagramsState, type QueriesState, type SearchState, type ExploreState, type TablesState, type ErrorsState } from "@pb/platform";
 import { type RuntimeState, type WindowManagerState, type LaunchState } from "@pb/windowing";
 
-export type { ViewName } from "../navigation/types.js";
+export type { ViewName } from "@pb/platform";
 
 export type Theme = "dark" | "light";
 

@@ -6,7 +6,7 @@ import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import { createPanZoom } from "../../components/diagram/usePanZoom.js";
-import { highlightPowerScript } from "../../utils/highlight.js";
+import { highlightPowerScript } from "@pb/platform";
 
 interface NodeState {
   blockId: string;

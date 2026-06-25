@@ -1,7 +1,7 @@
 // DwDetailPanel.tsx — DataWindow detail panel (explore sidebar).
 
 import { useExploreStore } from "./ExploreContext.js";
-import type { DwDetailResponse } from "../../types/api.js";
+import type { DwDetailResponse } from "@pb/platform";
 import { DetailShell } from "../../components/detail/DetailShell.js";
 import { DwDetailCore } from "../datawindows/DWDetail.js";
 

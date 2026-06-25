@@ -2,8 +2,7 @@
 
 import { createSignal, Show, For, onMount, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
-import { ChevronLeft, ChevronRight, ArrowRight } from "../../utils/icons.js";
-import type { TaintStep } from "../../types/api.js";
+import { ChevronLeft, ChevronRight, ArrowRight, type TaintStep } from "@pb/platform";
 
 // Step type can be taint paths or forward/backward slices.
 export type TraceType = "taint" | "slice-backward" | "slice-forward";

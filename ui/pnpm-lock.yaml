@@ -17,6 +17,9 @@ importers:
       '@pb/interpreter':
         specifier: workspace:*
         version: link:packages/interpreter
+      '@pb/platform':
+        specifier: workspace:*
+        version: link:packages/platform
       '@pb/windowing':
         specifier: workspace:*
         version: link:packages/windowing
@@ -91,6 +94,12 @@ importers:
       '@pb/windowing':
         specifier: workspace:*
         version: link:../windowing
+
+  packages/platform:
+    dependencies:
+      '@pb/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/windowing:
     dependencies:

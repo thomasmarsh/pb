@@ -4,7 +4,7 @@ import { describe, it, expect } from "vitest";
 import { screen, fireEvent } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
 import { Queries } from "../../src/features/queries/Queries.js";
-import { initialQueriesState } from "../../src/features/queries/reducer.js";
+import { initialQueriesState } from "@pb/platform";
 
 const sampleQueries = [
   {

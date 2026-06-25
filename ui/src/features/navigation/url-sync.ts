@@ -1,10 +1,10 @@
 // features/navigation/url-sync.ts — URL synchronization (bootstrap only).
 // URL pushes during navigation are handled by reducers via env.pushUrl().
 
-import type { Route } from "./types.js";
+import type { Route } from "@pb/platform";
 import type { AppAction } from "../../features/app/actions.js";
 import type { Dispatch } from "@pb/core";
-import { parse } from "./routes.js";
+import { parse } from "@pb/platform";
 
 // ── Initialize from URL ─────────────────────────────────────────────────────
 

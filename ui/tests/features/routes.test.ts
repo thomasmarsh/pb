@@ -1,7 +1,7 @@
 // tests/features/routes.test.ts — Tests for route codec (parse, print).
 
 import { describe, it, expect } from "vitest";
-import { parse, print } from "../../src/features/navigation/routes.js";
+import { parse, print } from "@pb/platform";
 
 describe("parse", () => {
   it('"/" resolves to dashboard', () => {

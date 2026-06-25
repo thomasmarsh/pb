@@ -3,8 +3,8 @@
 import { describe, it } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
-import { diagramsReducer, initialDiagramsState, type DiagramsEnv } from "../../src/features/diagrams/reducer.js";
-import type { DiagramsState } from "../../src/features/diagrams/types.js";
+import { diagramsReducer, initialDiagramsState, type DiagramsEnv } from "@pb/platform";
+import type { DiagramsState } from "@pb/platform";
 
 const mockEnv: DiagramsEnv = {
   getDiagram: () => Effect.none(),

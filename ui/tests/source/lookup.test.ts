@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildObjectMap, buildProcMap, buildVarMap, buildProcCountMap, buildProcFirstLine,
 } from "../../src/components/source/pure/lookup.js";
-import type { KnownProcInfo, ProcedureInfo, LocalSymbolInfo } from "../../src/types/api.js";
+import type { KnownProcInfo, ProcedureInfo, LocalSymbolInfo } from "@pb/platform";
 
 function makeProc(name: string, start = 1, end = 5): ProcedureInfo {
   return { name, proc_type: "function", modifiers: null, params: null, return_type: null, start_line: start, end_line: end, cyclomatic: null };

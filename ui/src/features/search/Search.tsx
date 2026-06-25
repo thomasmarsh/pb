@@ -4,10 +4,8 @@ import { Show, For, createSignal, onMount } from "solid-js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import type { SearchResponse } from "../../types/api.js";
+import { procBadge, shortFile, debounce, type SearchResponse } from "@pb/platform";
 import { TableChip } from "../../components/detail/TableChip.js";
-import { procBadge, shortFile } from "../../utils/format.js";
-import { debounce } from "../../utils/debounce.js";
 
 function SearchResults(props: { store: Store<AppState, AppAction>; data: SearchResponse }) {
   const store = props.store;

@@ -3,8 +3,7 @@
 import { Show, children, type ParentProps, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { useExploreStore } from "./ExploreContext.js";
-import { ChevronRight, ChevronDown } from "../../utils/icons.js";
-import type { IconComp } from "../../utils/icons.js";
+import { ChevronRight, ChevronDown, type IconComp } from "@pb/platform";
 
 export interface TreeNodeProps {
   nodeId: string;

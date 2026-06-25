@@ -1,7 +1,7 @@
 // components/windows/WindowControls.tsx — Close/min/max/restore buttons for window title bar.
 
 import type { JSX } from "solid-js";
-import { X, Minus, Maximize2, Minimize2 } from "../../utils/icons.js";
+import { X, Minus, Maximize2, Minimize2 } from "@pb/platform";
 
 interface WindowControlsProps {
   minimized: boolean;

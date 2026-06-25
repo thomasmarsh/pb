@@ -4,7 +4,7 @@ import { Show } from "solid-js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../../features/app/state.js";
 import type { AppAction } from "../../../features/app/actions.js";
-import type { ObjectSourceResponse, ProcedureInfo, KnownProcInfo, LocalSymbolInfo } from "../../../types/api.js";
+import type { ObjectSourceResponse, ProcedureInfo, KnownProcInfo, LocalSymbolInfo } from "@pb/platform";
 import { SourceViewer } from "../../../components/source/index.js";
 import type { ContextActions } from "../../../components/source/index.js";
 

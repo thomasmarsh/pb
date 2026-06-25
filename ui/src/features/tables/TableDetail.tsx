@@ -4,7 +4,7 @@ import { For, Show, createSignal } from "solid-js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import type { TableDetail as TableDetailData, TableProcedureRef, ImpactInheritedRef, ImpactDirectRef } from "../../types/api.js";
+import type { TableDetail as TableDetailData, TableProcedureRef, ImpactInheritedRef, ImpactDirectRef } from "@pb/platform";
 import { Loading } from "../../components/ui/Loading.js";
 import { ColumnRow } from "../../components/detail/ColumnRow.js";
 import { EntityCard } from "../../components/detail/EntityCard.js";

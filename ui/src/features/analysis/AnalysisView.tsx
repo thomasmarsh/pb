@@ -2,7 +2,7 @@
 
 import { createSignal } from "solid-js";
 import type { JSX } from "solid-js";
-import { ChevronDown, ChevronRight } from "../../utils/icons.js";
+import { ChevronDown, ChevronRight } from "@pb/platform";
 
 interface AnalysisViewProps {
   title: string;

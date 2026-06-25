@@ -3,8 +3,8 @@
 import { describe, it } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
-import { objectsReducer, initialObjectsState, type ObjectsEnv } from "../../src/features/objects/reducer.js";
-import type { ListObjectsResponse } from "../../src/types/api.js";
+import { objectsReducer, initialObjectsState, type ObjectsEnv } from "@pb/platform";
+import type { ListObjectsResponse } from "@pb/platform";
 
 const mockEnv: ObjectsEnv = {
   getObjects: () => Effect.none(),

@@ -1,5 +1,5 @@
 import type { JSX } from "solid-js";
-import { ArrowLeft } from "../../utils/icons.js";
+import { ArrowLeft } from "@pb/platform";
 
 interface BackButtonProps {
   label: string;

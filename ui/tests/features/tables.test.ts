@@ -3,9 +3,9 @@
 import { describe, it, expect } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
-import { tablesReducer, initialTablesState, type TablesEnv } from "../../src/features/tables/reducer.js";
-import type { TablesState } from "../../src/features/tables/types.js";
-import type { TableSummary, TableDetail } from "../../src/types/api.js";
+import { tablesReducer, initialTablesState, type TablesEnv } from "@pb/platform";
+import type { TablesState } from "@pb/platform";
+import type { TableSummary, TableDetail } from "@pb/platform";
 
 const mockEnv: TablesEnv = {
   getTables:       () => Effect.none(),

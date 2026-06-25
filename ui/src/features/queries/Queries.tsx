@@ -1,14 +1,13 @@
 // Queries.tsx — Ask surface: free-text NL/SQL input + predefined SQL query catalogue.
 
 import { Show, For, onMount, createSignal } from "solid-js";
-import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ArrowUpDown } from "../../utils/icons.js";
+import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ArrowUpDown, type QueryColumn } from "@pb/platform";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import { SqlBlock } from "../../components/detail/CodeBlock.js";
 import { EntityCard } from "../../components/detail/EntityCard.js";
 import type { EntityType } from "../../components/detail/EntityCard.js";
-import type { QueryColumn } from "../../types/api.js";
 
 const PAGE_SIZE = 50;
 

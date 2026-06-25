@@ -4,8 +4,8 @@ import { describe, it, expect } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
 import { TableDetail } from "../../src/features/tables/TableDetail.js";
 import { createTestStore } from "../helpers.js";
-import { initialTablesState } from "../../src/features/tables/types.js";
-import type { TableDetail as TableDetailData } from "../../src/types/api.js";
+import { initialTablesState } from "@pb/platform";
+import type { TableDetail as TableDetailData } from "@pb/platform";
 
 const baseDetail: TableDetailData = {
   table_name: "orders",

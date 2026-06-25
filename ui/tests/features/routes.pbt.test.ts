@@ -2,8 +2,8 @@
 
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import { parse, print } from "../../src/features/navigation/routes.js";
-import type { Route, ViewName } from "../../src/features/navigation/types.js";
+import { parse, print } from "@pb/platform";
+import type { Route, ViewName } from "@pb/platform";
 
 const viewNames: ViewName[] = [
   "dashboard", "objects", "objectDetail", "procedureDetail",

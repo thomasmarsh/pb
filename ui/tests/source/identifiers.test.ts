@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { linkIdentifiers } from "../../src/components/source/pure/identifiers.js";
-import type { KnownProcInfo, LocalSymbolInfo } from "../../src/types/api.js";
+import type { KnownProcInfo, LocalSymbolInfo } from "@pb/platform";
 
 function makeProc(name: string): KnownProcInfo {
   return { name, object: "w_test", proc_type: "function", params: null, return_type: null, modifiers: null, start_line: 1, end_line: 10, cyclomatic: null };

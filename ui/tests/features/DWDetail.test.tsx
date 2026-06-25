@@ -4,8 +4,8 @@ import { describe, it, expect } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
 import { DWDetail } from "../../src/features/datawindows/DataWindows.js";
 import { createTestStore } from "../helpers.js";
-import { initialDatawindowsState } from "../../src/features/datawindows/reducer.js";
-import type { DwDetailResponse } from "../../src/types/api.js";
+import { initialDatawindowsState } from "@pb/platform";
+import type { DwDetailResponse } from "@pb/platform";
 import type { DataWindowFile } from "@pb/interpreter";
 
 function makeDw(overrides: Partial<DwDetailResponse> = {}): DwDetailResponse {

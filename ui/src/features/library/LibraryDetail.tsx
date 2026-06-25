@@ -1,11 +1,10 @@
 // LibraryDetail.tsx — Library detail: object list always visible with summary section below.
 
 import { Show, For, createResource } from "solid-js";
-import { Package } from "../../utils/icons.js";
+import { Package, type LibraryDetailResponse } from "@pb/platform";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import type { LibraryDetailResponse } from "../../types/api.js";
 import { EntityCard } from "../../components/detail/EntityCard.js";
 import { Loading } from "../../components/ui/Loading.js";
 

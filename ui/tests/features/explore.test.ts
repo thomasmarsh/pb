@@ -3,8 +3,8 @@
 import { describe, it } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
-import { exploreReducer, makeInitialExploreState, type ExploreEnv } from "../../src/features/explore/reducer.js";
-import type { ExploreTreeResponse } from "../../src/types/api.js";
+import { exploreReducer, makeInitialExploreState, type ExploreEnv } from "@pb/platform";
+import type { ExploreTreeResponse } from "@pb/platform";
 
 const mockEnv: ExploreEnv = {
   getExploreTree: () => Effect.none(),

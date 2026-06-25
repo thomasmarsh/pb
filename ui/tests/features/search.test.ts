@@ -3,8 +3,8 @@
 import { describe, it, expect } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
-import { searchReducer, initialSearchState, type SearchEnv } from "../../src/features/search/reducer.js";
-import type { SearchState } from "../../src/features/search/types.js";
+import { searchReducer, initialSearchState, type SearchEnv } from "@pb/platform";
+import type { SearchState } from "@pb/platform";
 
 const mockEnv: SearchEnv = {
   search: () => Effect.none(),

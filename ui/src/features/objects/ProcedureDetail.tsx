@@ -1,11 +1,10 @@
 // ProcedureDetail.tsx — Source-first procedure detail with composable analysis panels.
 
 import { Show, For, createResource, createSignal } from "solid-js";
-import { ArrowRight } from "../../utils/icons.js";
+import { ArrowRight, procBadge, type ProcedureDetailResponse, type TaintPathsResponse, type TaintPathSummary } from "@pb/platform";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import type { ProcedureDetailResponse, TaintPathsResponse, TaintPathSummary } from "../../types/api.js";
 import { CodeBlock } from "../../components/detail/CodeBlock.js";
 import { Loading } from "../../components/ui/Loading.js";
 import { SqlStatementCard } from "../../components/detail/SqlStatementCard.js";
@@ -15,7 +14,6 @@ import { EntityListCard } from "../../components/detail/EntityListCard.js";
 import { AnalysisSummaryBar } from "../../components/detail/AnalysisSummaryBar.js";
 import type { SummaryItem } from "../../components/detail/AnalysisSummaryBar.js";
 import { ContextualPanel } from "../../components/detail/ContextualPanel.js";
-import { procBadge } from "../../utils/format.js";
 import { CFGCore } from "../analysis/CFGCore.js";
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };

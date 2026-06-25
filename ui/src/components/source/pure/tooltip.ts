@@ -1,4 +1,4 @@
-import type { KnownProcInfo, LocalSymbolInfo, ProcedureInfo } from "../../../types/api.js";
+import type { KnownProcInfo, LocalSymbolInfo, ProcedureInfo } from "@pb/platform";
 
 export const PROC_COLORS: Record<string, string> = {
   function: "proc-function",

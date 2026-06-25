@@ -1,12 +1,11 @@
 // ColumnRow.tsx — Expandable table row showing a column's read/write lineage.
 
 import { Show, For, createSignal } from "solid-js";
-import { ChevronDown, ChevronRight } from "../../utils/icons.js";
+import { ChevronDown, ChevronRight, type ColumnDetail, type ColumnPsRef } from "@pb/platform";
 import type { JSX } from "solid-js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import type { ColumnDetail, ColumnPsRef } from "../../types/api.js";
 
 interface ColumnRowProps {
   col:   ColumnDetail;

@@ -3,7 +3,7 @@
 import { describe, it } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
-import { errorsReducer, initialErrorsState, type ErrorsEnv } from "../../src/features/errors/reducer.js";
+import { errorsReducer, initialErrorsState, type ErrorsEnv } from "@pb/platform";
 
 const mockEnv: ErrorsEnv = {
   getErrors: () => Effect.none(),

@@ -3,8 +3,8 @@
 import { describe, it, expect } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
-import { datawindowsReducer, initialDatawindowsState, type DatawindowsEnv } from "../../src/features/datawindows/reducer.js";
-import type { ListObjectsResponse, DwDetailResponse } from "../../src/types/api.js";
+import { datawindowsReducer, initialDatawindowsState, type DatawindowsEnv } from "@pb/platform";
+import type { ListObjectsResponse, DwDetailResponse } from "@pb/platform";
 
 const mockEnv: DatawindowsEnv = {
   getObjects: () => Effect.none(),

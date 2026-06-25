@@ -1,17 +1,8 @@
 // app/actions.ts — AppAction: tagged sum type routing to each feature reducer.
 
-import type { DashboardAction } from "../dashboard/actions.js";
-import type { ExploreAction } from "../explore/actions.js";
-import type { ObjectsAction } from "../objects/actions.js";
-import type { DatawindowsAction } from "../datawindows/actions.js";
-import type { TablesAction } from "../tables/actions.js";
-import type { DiagramsAction } from "../diagrams/actions.js";
-import type { QueriesAction } from "../queries/actions.js";
-import type { SearchAction } from "../search/actions.js";
-import type { ErrorsAction } from "../errors/actions.js";
-import type { NavigationAction } from "../navigation/types.js";
+import type { DashboardAction } from "@pb/platform";
+import { type ExploreAction, type ObjectsAction, type DatawindowsAction, type TablesAction, type DiagramsAction, type QueriesAction, type SearchAction, type ErrorsAction, type NavigationAction, type DiagramKind } from "@pb/platform";
 import { type RuntimeAction, type WindowManagerAction, type LaunchAction } from "@pb/windowing";
-import type { DiagramKind } from "../../utils/diagram.js";
 import type { Theme } from "./state.js";
 
 export type ThemeAction = { tag: "load" } | { tag: "toggle" } | { tag: "loaded"; theme: Theme };

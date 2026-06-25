@@ -6,8 +6,7 @@ import type { JSX } from "solid-js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import type { BreadcrumbSegment, Route } from "../../features/navigation/types.js";
-import type { IconComp } from "../../utils/icons.js";
+import { type BreadcrumbSegment, type Route, type IconComp } from "@pb/platform";
 import {
   LayoutDashboard,
   Box,
@@ -18,7 +17,7 @@ import {
   BarChart2,
   List,
   Package,
-} from "../../utils/icons.js";
+} from "@pb/platform";
 
 // Icon key → Lucide component, resolved at render time (never stored in state).
 const ICON_MAP: Record<string, IconComp> = {

@@ -3,8 +3,7 @@
 import type { JSX } from "solid-js";
 import { Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import type { IconComp } from "../../utils/icons.js";
-import { LayoutDashboard, Box, Code2, Grid3X3, Database } from "../../utils/icons.js";
+import { LayoutDashboard, Box, Code2, Grid3X3, Database, type IconComp } from "@pb/platform";
 
 export type EntityType = "library" | "object" | "procedure" | "datawindow" | "table";
 

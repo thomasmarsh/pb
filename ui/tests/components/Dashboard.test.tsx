@@ -6,10 +6,10 @@ import { renderWithStore } from "../helpers.js";
 import { Dashboard } from "../../src/features/dashboard/Dashboard.js";
 import { createStore, Effect } from "@pb/core";
 import { reducer, initialState } from "../../src/features/app/reducer.js";
-import { initialDashboardState } from "../../src/features/dashboard/reducer.js";
+import { initialDashboardState } from "@pb/platform";
 import { mockEnv } from "../helpers.js";
 import type { AppEnv } from "../../src/features/app/reducer.js";
-import type { StatsResponse } from "../../src/types/api.js";
+import type { StatsResponse } from "@pb/platform";
 
 const sampleStats: StatsResponse = {
   objects: 150,

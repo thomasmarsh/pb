@@ -4,8 +4,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
 import { ObjectDetail } from "../../src/features/objects/ObjectDetail.js";
 import { createTestStore } from "../helpers.js";
-import { initialObjectsState } from "../../src/features/objects/reducer.js";
-import type { ObjectDetailResponse, ObjectSourceResponse } from "../../src/types/api.js";
+import { initialObjectsState } from "@pb/platform";
+import type { ObjectDetailResponse, ObjectSourceResponse } from "@pb/platform";
 
 const baseDetail: ObjectDetailResponse = {
   name: "w_main",

@@ -4,7 +4,7 @@ import { Show, For, createSignal } from "solid-js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
-import type { DwDetailResponse, DwControlRow } from "../../types/api.js";
+import type { DwDetailResponse, DwControlRow } from "@pb/platform";
 import type { DataWindowFile } from "@pb/interpreter";
 import { CodeBlock } from "../../components/detail/CodeBlock.js";
 import { DwPreview } from "../../components/DwPreview.js";

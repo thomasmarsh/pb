@@ -5,29 +5,11 @@ import { pullback, pullbackWithNav, combine, Effect } from "@pb/core";
 import type { AppState } from "./state.js";
 import type { AppAction } from "./actions.js";
 
-import { navReducer, type NavEnv } from "../navigation/reducer.js";
-import { dashboardReducer, type DashboardEnv, initialDashboardState } from "../dashboard/reducer.js";
-import { exploreReducer, makeInitialExploreState, type ExploreEnv } from "../explore/reducer.js";
-import { objectsReducer, type ObjectsEnv, initialObjectsState } from "../objects/reducer.js";
-import { datawindowsReducer, type DatawindowsEnv, initialDatawindowsState } from "../datawindows/reducer.js";
-import { tablesReducer, type TablesEnv, initialTablesState } from "../tables/reducer.js";
-import { diagramsReducer, type DiagramsEnv, initialDiagramsState } from "../diagrams/reducer.js";
-import { queriesReducer, type QueriesEnv, initialQueriesState } from "../queries/reducer.js";
-import { searchReducer, type SearchEnv, initialSearchState } from "../search/reducer.js";
-import { errorsReducer, type ErrorsEnv, initialErrorsState } from "../errors/reducer.js";
+import { navReducer, type NavEnv, dashboardReducer, type DashboardEnv, initialDashboardState, exploreReducer, makeInitialExploreState, type ExploreEnv, objectsReducer, type ObjectsEnv, initialObjectsState, datawindowsReducer, type DatawindowsEnv, initialDatawindowsState, tablesReducer, type TablesEnv, initialTablesState, diagramsReducer, type DiagramsEnv, initialDiagramsState, queriesReducer, type QueriesEnv, initialQueriesState, searchReducer, type SearchEnv, initialSearchState, errorsReducer, type ErrorsEnv, initialErrorsState, type NavigationAction, type ExploreAction, type ObjectsAction, type DatawindowsAction, type TablesAction, type DiagramsAction, type QueriesAction, type SearchAction, type ErrorsAction } from "@pb/platform";
 import { runtimeReducer, type RuntimeEnv, initialRuntimeState, windowManagerReducer, initialWindowManagerState, launchReducer, initialLaunchState, type LaunchAction, type WindowManagerAction } from "@pb/windowing";
 
-import type { NavigationAction } from "../navigation/types.js";
-import { crumbsForRoute } from "../navigation/breadcrumb.js";
-import type { DashboardAction } from "../dashboard/actions.js";
-import type { ExploreAction } from "../explore/actions.js";
-import type { ObjectsAction } from "../objects/actions.js";
-import type { DatawindowsAction } from "../datawindows/actions.js";
-import type { TablesAction } from "../tables/actions.js";
-import type { DiagramsAction } from "../diagrams/actions.js";
-import type { QueriesAction } from "../queries/actions.js";
-import type { SearchAction } from "../search/actions.js";
-import type { ErrorsAction } from "../errors/actions.js";
+import { crumbsForRoute } from "@pb/platform";
+import type { DashboardAction } from "@pb/platform";
 export type { LaunchAction };
 export type { RuntimeAction } from "@pb/windowing";
 

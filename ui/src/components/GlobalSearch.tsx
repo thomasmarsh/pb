@@ -2,14 +2,11 @@
 
 import { Show, For, createEffect } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { Search, Clock } from "../utils/icons.js";
+import { Search, Clock, procBadge, shortFile, entityIcon, debounce } from "@pb/platform";
 import type { JSX } from "solid-js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../features/app/state.js";
 import type { AppAction } from "../features/app/actions.js";
-import { procBadge, shortFile } from "../utils/format.js";
-import { entityIcon } from "../utils/entities.js";
-import { debounce } from "../utils/debounce.js";
 import { ModalShell } from "./ui/ModalShell.js";
 
 export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.Element {

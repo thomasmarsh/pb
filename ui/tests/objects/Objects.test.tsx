@@ -4,7 +4,7 @@ import { describe, it, expect } from "vitest";
 import { screen, fireEvent } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
 import { Objects } from "../../src/features/objects/Objects.js";
-import { initialObjectsState } from "../../src/features/objects/reducer.js";
+import { initialObjectsState } from "@pb/platform";
 
 const sampleItems = [
   { name: "w_main", kind: "powerscript", file: "app.pbl", ancestor: "w_base" },
