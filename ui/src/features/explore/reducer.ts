@@ -5,7 +5,7 @@ import type { Reducer } from "../../core/reducer.js";
 import type { ExploreState } from "./types.js";
 import type { ExploreAction } from "./actions.js";
 import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse } from "../../types/api.js";
-import type { DataWindowFile } from "../../types/ast.generated.js";
+import type { DataWindowFile } from "../../types/ast.js";
 import type { NavigationAction } from "../navigation/types.js";
 
 // ── Narrow environment ────────────────────────────────────────────────────────

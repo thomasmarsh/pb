@@ -1,6 +1,6 @@
 // core/cps/expr.ts — Expression evaluator for the CPS compiler and runner.
 
-import type { Expr } from "../../types/ast.generated.js";
+import type { Expr } from "../../types/ast.js";
 import { PB_BUILTINS } from "../runtime.js";
 import { type VarEnv, readVar } from "./var-env.js";
 

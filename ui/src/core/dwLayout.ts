@@ -1,4 +1,4 @@
-import type { DataWindowFile, DwBandKind } from "../types/ast.generated.js";
+import type { DataWindowFile, DwBandKind } from "../types/ast.js";
 
 export interface DwBandLayout {
   tag: string;

@@ -103,9 +103,6 @@ def get_procedure_explore(conn: duckdb.DuckDBPyConnection, object_name: str, pro
     if not proc_rows:
         return None
     row = proc_rows[0]
-    ast = None
-    source_original: str | None = None
-
     sql_stmts = rows(
         conn.execute(
             "SELECT line, operation, raw_sql, tables, columns, parse_ok "
@@ -123,8 +120,7 @@ def get_procedure_explore(conn: duckdb.DuckDBPyConnection, object_name: str, pro
             stmt["formatted_sql"] = raw
 
     return {
-        "ast": ast,
-        "source_original": source_original,
+        "source_original": None,
         "proc_type": row.get("proc_type"),
         "params": row.get("params"),
         "return_type": row.get("return_type"),

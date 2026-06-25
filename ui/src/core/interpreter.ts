@@ -1,6 +1,6 @@
 // interpreter.ts — PB AST type exports shared across the runtime and UI.
 
-import type { BodyStmt, Located } from "../types/ast.generated.js";
+import type { BodyStmt, Located } from "../types/ast.js";
 
 export interface DWRow {
   [column: string]: unknown;

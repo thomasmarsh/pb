@@ -6,7 +6,7 @@
 //   - sourceMap as [[pc, line], ...] → Map<number, number>
 
 import type { CpsGraph, CpsNode } from "./types.js";
-import type { Expr } from "../../types/ast.generated.js";
+import type { Expr } from "../../types/ast.js";
 
 // Raw JSON shape from Haskell serialisation.
 type RawCpsNode = Record<string, unknown>;

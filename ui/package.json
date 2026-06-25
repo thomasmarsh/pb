@@ -6,9 +6,7 @@
     "node": ">=26.0.0"
   },
   "scripts": {
-    "prebuild": "cabal run --project-dir ../parser pb-runner -v0 -- --emit-ts > src/types/ast.generated.ts",
     "build": "vite build",
-    "codegen": "cabal run --project-dir ../parser pb-runner -v0 -- --emit-ts > src/types/ast.generated.ts",
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",

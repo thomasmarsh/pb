@@ -1,5 +1,5 @@
 import { Show, For } from "solid-js";
-import type { DataWindowFile } from "../types/ast.generated.js";
+import type { DataWindowFile } from "../types/ast.js";
 import { extractDwLayout, type DwBandLayout, type DwControlLayout } from "../core/dwLayout.js";
 import { ResizableCanvas } from "./ResizableCanvas.js";
 

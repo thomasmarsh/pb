@@ -1,7 +1,5 @@
 // API types derived from DuckDB schema (cli/pb_cli/common.py) and api.py routes.
 
-import type { BodyStmt, Located } from "./ast.generated.js";
-
 // ── DuckDB table rows ───────────────────────────────────────────────────────
 
 export interface ObjectRow {
@@ -405,7 +403,6 @@ export interface SliceResult {
 }
 
 export interface ExploreProcDetail {
-  ast: Located<BodyStmt>[] | null;
   source_original: string | null;
   proc_type: string;
   params: string | null;

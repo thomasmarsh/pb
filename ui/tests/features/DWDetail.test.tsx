@@ -6,7 +6,7 @@ import { DWDetail } from "../../src/features/datawindows/DataWindows.js";
 import { createTestStore } from "../helpers.js";
 import { initialDatawindowsState } from "../../src/features/datawindows/reducer.js";
 import type { DwDetailResponse } from "../../src/types/api.js";
-import type { DataWindowFile } from "../../src/types/ast.generated.js";
+import type { DataWindowFile } from "../../src/types/ast.js";
 
 function makeDw(overrides: Partial<DwDetailResponse> = {}): DwDetailResponse {
   return {

@@ -5,6 +5,7 @@ from __future__ import annotations
 import duckdb
 
 from pb_cli.explorer.services.objects import (
+    get_dw_layout,
     get_explore_tree,
     get_object_detail,
     get_object_source,
@@ -68,3 +69,68 @@ def test_get_explore_tree(db_conn: duckdb.DuckDBPyConnection):
         obj = lib["objects"][0]
         assert "procedures" in obj
         assert isinstance(obj["procedures"], list)
+
+
+# ── DataWindowFile wire-format integration tests ─────────────────────────────
+# These tests catch drift between PB.Pipeline.Serialise (Haskell) and the
+# manually maintained ui/src/types/ast.ts TypeScript types.
+
+_DW_TOP_LEVEL_KEYS = {"release", "object", "table", "bands", "groups", "controls", "unknowns", "meta"}
+_CONTROL_KEYS = {"type", "band", "name", "id", "x", "y", "width", "height",
+                 "visible", "expression", "parsedExpression", "format", "parsedFormat",
+                 "tabSeq", "attrs"}
+
+
+def test_dw_layout_top_level_keys(db_conn: duckdb.DuckDBPyConnection):
+    """DataWindowFile JSON has all expected top-level keys."""
+    row = db_conn.execute("SELECT object FROM dw_objects LIMIT 1").fetchone()
+    assert row is not None, "no DW objects in fixture corpus"
+    layout = get_dw_layout(db_conn, row[0])
+    assert layout is not None
+    missing = _DW_TOP_LEVEL_KEYS - layout.keys()
+    assert not missing, f"DataWindowFile missing keys: {missing}"
+
+
+def test_dw_layout_controls_have_expected_keys(db_conn: duckdb.DuckDBPyConnection):
+    """Each DwControl in the layout has all expected field keys."""
+    rows = db_conn.execute("SELECT object FROM dw_objects LIMIT 10").fetchall()
+    for (name,) in rows:
+        layout = get_dw_layout(db_conn, name)
+        if not layout:
+            continue
+        for ctrl in layout["controls"]:
+            missing = _CONTROL_KEYS - ctrl.keys()
+            assert not missing, f"DwControl in {name} missing keys: {missing}"
+
+
+def test_dw_layout_parsed_expression_has_tag(db_conn: duckdb.DuckDBPyConnection):
+    """parsedExpression nodes carry a 'tag' discriminant matching the Expr union."""
+    rows = db_conn.execute("SELECT object FROM dw_objects LIMIT 30").fetchall()
+    checked = 0
+    for (name,) in rows:
+        layout = get_dw_layout(db_conn, name)
+        if not layout:
+            continue
+        for ctrl in layout["controls"]:
+            for field in ("parsedExpression", "parsedFormat"):
+                pe = ctrl.get(field)
+                if pe is not None:
+                    assert isinstance(pe, dict), f"{field} must be a dict, got {type(pe)}"
+                    assert "tag" in pe, f"{field} missing 'tag' key: {pe}"
+                    checked += 1
+    # non-zero check: the openpay corpus has expressions; if this fires the fixture changed
+    assert checked > 0, "no parsedExpression/parsedFormat found in 30 DW objects — fixture may be empty"
+
+
+def test_dw_layout_band_kind_has_tag(db_conn: duckdb.DuckDBPyConnection):
+    """DwBandKind nodes carry a 'tag' discriminant matching the DwBandKind union."""
+    row = db_conn.execute("SELECT object FROM dw_objects LIMIT 1").fetchone()
+    assert row is not None
+    layout = get_dw_layout(db_conn, row[0])
+    assert layout is not None
+    for band in layout["bands"]:
+        assert "kind" in band
+        assert "tag" in band["kind"], f"DwBand.kind missing 'tag': {band['kind']}"
+    for ctrl in layout["controls"]:
+        if ctrl.get("band") is not None:
+            assert "tag" in ctrl["band"], f"DwControl.band missing 'tag': {ctrl['band']}"

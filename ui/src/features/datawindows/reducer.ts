@@ -5,7 +5,7 @@ import type { Reducer } from "../../core/reducer.js";
 import type { DatawindowsState } from "./types.js";
 import type { DatawindowsAction } from "./actions.js";
 import type { ListObjectsResponse, DwDetailResponse } from "../../types/api.js";
-import type { DataWindowFile } from "../../types/ast.generated.js";
+import type { DataWindowFile } from "../../types/ast.js";
 import type { NavigationAction } from "../navigation/types.js";
 
 export interface DatawindowsEnv {

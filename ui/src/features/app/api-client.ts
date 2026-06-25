@@ -18,7 +18,7 @@ import type {
   TableDetail,
   ErrorListResponse,
 } from "../../types/api.js";
-import type { DataWindowFile } from "../../types/ast.generated.js";
+import type { DataWindowFile } from "../../types/ast.js";
 import type { AstData } from "../../core/interpreter.js";
 import type { SQLResult } from "../../core/dw-queries.js";
 import { Effect } from "../../core/effect.js";

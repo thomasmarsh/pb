@@ -2,7 +2,7 @@
 
 import type { Effect } from "../../core/effect.js";
 import type { SQLResult } from "../../core/dw-queries.js";
-import type { Expr } from "../../types/ast.generated.js";
+import type { Expr } from "../../types/ast.js";
 
 /** A flat instruction in the CPS graph. No nested control flow. */
 export type CpsNode =

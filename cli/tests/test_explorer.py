@@ -340,7 +340,8 @@ def test_explore_procedure(client):
     r3 = client.get(f"/api/explore/procedure/{obj_name}/{proc_name}")
     assert r3.status_code == 200
     data = r3.json()
-    assert "ast" in data
+    assert "source_original" in data
+    assert "sql_statements" in data
 
 
 def test_explore_procedure_not_found(client):
