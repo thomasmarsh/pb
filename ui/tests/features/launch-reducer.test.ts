@@ -69,14 +69,14 @@ describe("launchReducer", () => {
       });
 
       // app-loaded sends run-app-open
-      ts.receive({ tag: "run-app-open", windowName: "w_app" });
+      ts.receive({ tag: "run-app-open", windowName: "w_misth_final_form_create" });
 
       // run-app-open fetches window AST (mock returns the same ast)
       ts.receive(
-        { tag: "window-ast-loaded", windowName: "w_app", ast },
+        { tag: "window-ast-loaded", windowName: "w_misth_final_form_create", ast },
         (s) => {
           s.status = "done";
-          s.windowStack = ["w_app"];
+          s.windowStack = ["w_misth_final_form_create"];
         },
       );
 
@@ -115,7 +115,7 @@ describe("launchReducer", () => {
       });
 
       // app-loaded auto-dispatches run-app-open
-      ts.receive({ tag: "run-app-open", windowName: "w_app" });
+      ts.receive({ tag: "run-app-open", windowName: "w_misth_final_form_create" });
       ts.assertDrained();
 
       // Verify the actual state has the correct globals
@@ -142,7 +142,7 @@ describe("launchReducer", () => {
         s.globals = { ...HARDCODED_GLOBALS, gs_host: undefined, gs_database: undefined };
       });
 
-      ts.receive({ tag: "run-app-open", windowName: "w_app" });
+      ts.receive({ tag: "run-app-open", windowName: "w_misth_final_form_create" });
       ts.assertDrained();
 
       // Verify: variables from .sra are declared but not overwritten
@@ -156,7 +156,7 @@ describe("launchReducer", () => {
   describe("run-app-open", () => {
     it("returns effect to fetch window AST", () => {
       const windowAst = makeAst({
-        events: [{ name: "open", owner: "w_app" }],
+        events: [{ name: "open", owner: "w_misth_final_form_create" }],
       });
       const env = createMockEnv(windowAst);
       const ts = createTestStore(launchReducer, env, {
@@ -165,13 +165,13 @@ describe("launchReducer", () => {
         appName: "openpay",
       });
 
-      ts.send({ tag: "run-app-open", windowName: "w_app" });
+      ts.send({ tag: "run-app-open", windowName: "w_misth_final_form_create" });
 
       ts.receive(
-        { tag: "window-ast-loaded", windowName: "w_app", ast: windowAst },
+        { tag: "window-ast-loaded", windowName: "w_misth_final_form_create", ast: windowAst },
         (s) => {
           s.status = "done";
-          s.windowStack = ["w_app"];
+          s.windowStack = ["w_misth_final_form_create"];
         },
       );
 
@@ -207,9 +207,9 @@ describe("launchReducer", () => {
         status: "running",
       });
 
-      ts.send({ tag: "window-ast-loaded", windowName: "w_app", ast }, (s) => {
+      ts.send({ tag: "window-ast-loaded", windowName: "w_misth_final_form_create", ast }, (s) => {
         s.status = "done";
-        s.windowStack = ["w_app"];
+        s.windowStack = ["w_misth_final_form_create"];
       });
 
       ts.assertDrained();
@@ -222,11 +222,11 @@ describe("launchReducer", () => {
       const ts = createTestStore(launchReducer, env, {
         ...initialLaunchState,
         status: "done",
-        windowStack: ["w_app", "w_child"],
+        windowStack: ["w_misth_final_form_create", "w_child"],
       });
 
       ts.send({ tag: "close-window", windowName: "w_child" }, (s) => {
-        s.windowStack = ["w_app"];
+        s.windowStack = ["w_misth_final_form_create"];
       });
 
       ts.assertDrained();

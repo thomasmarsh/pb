@@ -5,7 +5,6 @@
 // content inside managed windows opened via the launch flow.
 
 import { Show, For, type JSX } from "solid-js";
-import { extractLayout } from "../../core/layout.js";
 import type { DWRow } from "../../core/interpreter.js";
 import { flattenVarEnv } from "../../core/cps/var-env.js";
 import { initialRuntimeState } from "../../features/runtime/reducer.js";
@@ -114,11 +113,7 @@ export function WindowRuntimeView(props: {
 
   const runtime = () => snap().runtimes[props.windowId] ?? initialRuntimeState;
 
-  const layout = (): WindowLayout | null => {
-    const ast = runtime().ast;
-    if (!ast) return null;
-    return extractLayout(ast.typeBlocks as unknown[]);
-  };
+  const layout = (): WindowLayout | null => runtime().layout;
 
   const controlValues = (): Record<string, DWRow[]> =>
     runtime().controlValues as Record<string, DWRow[]>;

@@ -90,7 +90,8 @@ function reduce(
         }
       }
       // Proceed to open the main window (skip .sra open event body).
-      return Effect.send({ tag: "run-app-open", windowName: "w_app" });
+      // 132e target: non-MDI window; w_app (MDI frame) is out of scope until 133+.
+      return Effect.send({ tag: "run-app-open", windowName: "w_misth_final_form_create" });
 
     case "run-app-open":
       return env

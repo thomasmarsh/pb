@@ -66,14 +66,15 @@ const LAUNCH_GLOBALS: Record<string, unknown> = {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("launch integration", () => {
-  it("loads .sra, seeds globals, opens w_app, and runs open event", () => {
-    const sraAst = makeAst();
-    // No cpsGraph on "open" — event body is empty; findBody returns entry but
-    // loadCpsGraph would crash. Use empty events so findBody returns null → done.
-    const wAppAst = makeAst({ events: [] });
+const TARGET_WINDOW = "w_misth_final_form_create";
 
-    const env = createAppEnv({ openpay: sraAst, w_app: wAppAst });
+describe("launch integration", () => {
+  it("loads .sra, seeds globals, opens target window, and runs open event", () => {
+    const sraAst = makeAst();
+    // Empty events → findBody returns null → runtime status "done" immediately.
+    const windowAst = makeAst({ events: [] });
+
+    const env = createAppEnv({ openpay: sraAst, [TARGET_WINDOW]: windowAst });
     const ts = createTestStore(reducer, env, initialState());
 
     // 1. Dispatch load-app → effect fires getObjectAst("openpay")
@@ -89,28 +90,28 @@ describe("launch integration", () => {
     });
 
     // 3. Receive run-app-open (auto-dispatched by app-loaded → Effect.send)
-    ts.receive({ tag: "launch", action: { tag: "run-app-open", windowName: "w_app" } });
+    ts.receive({ tag: "launch", action: { tag: "run-app-open", windowName: TARGET_WINDOW } });
 
-    // 4. Receive window-ast-loaded (from run-app-open → getObjectAst("w_app") effect)
-    ts.receive({ tag: "launch", action: { tag: "window-ast-loaded", windowName: "w_app", ast: wAppAst } }, (s) => {
+    // 4. Receive window-ast-loaded (from run-app-open → getObjectAst effect)
+    ts.receive({ tag: "launch", action: { tag: "window-ast-loaded", windowName: TARGET_WINDOW, ast: windowAst } }, (s) => {
       s.launch.status = "done";
-      s.launch.windowStack = ["w_app"];
+      s.launch.windowStack = [TARGET_WINDOW];
     });
 
-    // 5. App reducer cascade dispatches: open-window, set-ast, run-event
+    // 5. App reducer cascade: open-window + set-ast + run-event + layout-loaded (Effect.none → no layout)
     ts.receive(
-      { tag: "windowManager", action: { tag: "open-window", id: expect.any(String), title: "w_app", runtimeWindowName: "w_app" } },
+      { tag: "windowManager", action: { tag: "open-window", id: expect.any(String), title: TARGET_WINDOW, runtimeWindowName: TARGET_WINDOW } },
     );
     expect(ts.getState().windowManager.windows).toHaveLength(1);
 
     // windowId is "${windowName}-${Date.now()}" — non-deterministic; skip state callbacks.
-    ts.receive({ tag: "runtime", windowId: expect.any(String), action: { tag: "set-ast", ast: wAppAst } });
-    ts.receive({ tag: "runtime", windowId: expect.any(String), action: { tag: "run-event", owner: "w_app", event: "open", globals: expect.any(Object) } });
+    ts.receive({ tag: "runtime", windowId: expect.any(String), action: { tag: "set-ast", ast: windowAst } });
+    ts.receive({ tag: "runtime", windowId: expect.any(String), action: { tag: "run-event", owner: TARGET_WINDOW, event: "open", globals: expect.any(Object) } });
 
     ts.assertDrained();
 
     const rt = Object.values(ts.getState().runtimes)[0];
-    expect(rt?.ast).toEqual(wAppAst);
+    expect(rt?.ast).toEqual(windowAst);
     expect(rt?.status).toBe("done");
   });
 

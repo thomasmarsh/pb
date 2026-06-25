@@ -7,6 +7,7 @@ import { Effect } from "../../core/effect.js";
 import type { Reducer } from "../../core/reducer.js";
 import type { AstData, DWRow, ProcEntry } from "../../core/interpreter.js";
 import type { SQLResult } from "../../core/sql.js";
+import type { WindowLayout } from "../../core/layout.js";
 import { loadCpsGraph } from "../../core/cps/load.js";
 import { step, type CpsResumeAction } from "../../core/cps/runner.js";
 import type { CpsGraph } from "../../core/cps/types.js";
@@ -33,6 +34,7 @@ export interface RuntimeEnv {
 
 export interface RuntimeState {
   ast: AstData | null;
+  layout: WindowLayout | null;
   varEnv: VarEnv;
   controlValues: Record<string, DWRow[]>;
   dwQueries: Record<string, string>;
@@ -47,6 +49,7 @@ export interface RuntimeState {
 
 export const initialRuntimeState: RuntimeState = {
   ast: null,
+  layout: null,
   varEnv: makeVarEnv(),
   controlValues: {},
   dwQueries: {},
@@ -60,6 +63,7 @@ export const initialRuntimeState: RuntimeState = {
 
 export type RuntimeAction =
   | { tag: "set-ast"; ast: AstData }
+  | { tag: "layout-loaded"; layout: WindowLayout | null }
   | { tag: "dw-queries-loaded"; queries: Record<string, string> }
   | { tag: "run-event"; owner: string; event: string; globals?: Record<string, unknown> }
   | { tag: "control-click"; controlName: string }
@@ -243,6 +247,10 @@ function reduce(
       return env.getDwQueries()
         .map((queries): RuntimeAction => ({ tag: "dw-queries-loaded", queries }))
         .catch((): RuntimeAction => ({ tag: "dw-queries-loaded", queries: {} }));
+
+    case "layout-loaded":
+      draft.layout = action.layout;
+      return null;
 
     case "dw-queries-loaded":
       draft.dwQueries = action.queries;

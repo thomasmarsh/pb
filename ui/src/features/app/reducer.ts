@@ -157,10 +157,14 @@ export function reducer(draft: AppState, action: AppAction, env: AppEnv): Effect
     const id = `${windowName}-${Date.now()}`;
     const base = _combined(draft, action, env);
     const globals = { ...draft.launch.globals };
+    const layoutEffect = env.getObjectLayout(windowName)
+      .map((layout): AppAction => ({ tag: "runtime", windowId: id, action: { tag: "layout-loaded", layout } }))
+      .catch((): AppAction => ({ tag: "runtime", windowId: id, action: { tag: "layout-loaded", layout: null } }));
     const cascade = Effect.merge<AppAction>(
       Effect.send({ tag: "windowManager", action: { tag: "open-window", id, title: `${windowName}`, runtimeWindowName: windowName } }),
       Effect.send({ tag: "runtime", windowId: id, action: { tag: "set-ast", ast } }),
       Effect.send({ tag: "runtime", windowId: id, action: { tag: "run-event", owner: windowName, event: "open", globals } }),
+      layoutEffect,
     );
     return base ? Effect.merge(base, cascade) : cascade;
   }
