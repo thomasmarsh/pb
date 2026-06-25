@@ -1,7 +1,7 @@
 // tests/features/runtime-reducer.test.ts — Tests for the runtime reducer.
 
 import { describe, it } from "vitest";
-import { Effect } from "../../src/core/effect.js";
+import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import {
   runtimeReducer,

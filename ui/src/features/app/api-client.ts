@@ -21,8 +21,7 @@ import type {
 import type { DataWindowFile } from "../../types/ast.js";
 import type { AstData } from "../../core/interpreter.js";
 import type { WindowLayout } from "../../core/layout.js";
-import type { SQLResult } from "../../core/sql.js";
-import { Effect } from "../../core/effect.js";
+import { Effect, type SQLResult } from "@pb/core";
 import type { AppEnv as Env } from "./reducer.js";
 import type { Theme } from "./state.js";
 import type { NavigationAction } from "../navigation/types.js";

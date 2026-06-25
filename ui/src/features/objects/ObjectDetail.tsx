@@ -1,7 +1,7 @@
 // ObjectDetail.tsx — Source-first object detail with composable analysis panels.
 
 import { Show, createSignal, createResource, For } from "solid-js";
-import type { Store } from "../../core/store.js";
+import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import type { ObjectDetailResponse, ProcedureDetailResponse, TaintPathsResponse, TaintPathSummary } from "../../types/api.js";

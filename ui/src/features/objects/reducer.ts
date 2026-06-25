@@ -1,7 +1,6 @@
 // features/objects/reducer.ts — Objects feature reducer (valtio draft style).
 
-import { Effect } from "../../core/effect.js";
-import type { Reducer } from "../../core/reducer.js";
+import { Effect, type Reducer } from "@pb/core";
 import type { ObjectsState } from "./types.js";
 import type { ObjectsAction } from "./actions.js";
 import type {

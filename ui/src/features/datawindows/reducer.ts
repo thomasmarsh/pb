@@ -1,7 +1,6 @@
 // features/datawindows/reducer.ts
 
-import { Effect } from "../../core/effect.js";
-import type { Reducer } from "../../core/reducer.js";
+import { Effect, type Reducer } from "@pb/core";
 import type { DatawindowsState } from "./types.js";
 import type { DatawindowsAction } from "./actions.js";
 import type { ListObjectsResponse, DwDetailResponse } from "../../types/api.js";

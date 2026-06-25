@@ -1,8 +1,7 @@
 // tests/mock-runtime-env.ts — Mock RuntimeEnv that captures SQL calls and returns controlled data.
 
-import { Effect } from "../src/core/effect.js";
+import { Effect, type SQLResult } from "@pb/core";
 import type { RuntimeEnv } from "../src/features/runtime/reducer.js";
-import type { SQLResult } from "../src/core/sql.js";
 
 export interface MockRuntimeEnv extends RuntimeEnv {
   /** Last SQL executed. */

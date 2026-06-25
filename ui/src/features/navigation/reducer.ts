@@ -1,10 +1,9 @@
 // features/navigation/reducer.ts — Navigation feature reducer.
 
-import type { Reducer } from "../../core/reducer.js";
+import { Effect, type Reducer } from "@pb/core";
 import type { NavState, NavigationAction, BreadcrumbSegment } from "./types.js";
 import { print } from "./routes.js";
 import { crumbsForRoute, ICONS } from "./breadcrumb.js";
-import { Effect } from "../../core/effect.js";
 
 export interface NavEnv {
   pushUrl(path: string): void;

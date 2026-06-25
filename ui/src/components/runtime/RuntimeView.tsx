@@ -5,7 +5,7 @@ import type { AstData, DWRow } from "../../core/interpreter.js";
 import { flattenVarEnv } from "../../core/cps/var-env.js";
 import { initialRuntimeState } from "../../features/runtime/reducer.js";
 import type { WindowLayout, LayoutControl } from "../../core/layout.js";
-import type { Store } from "../../core/store.js";
+import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import { StaticText } from "../controls/StaticText.js";

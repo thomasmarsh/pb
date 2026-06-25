@@ -1,10 +1,10 @@
 // tests/core/pullback-with-nav.test.ts — Tests for pullbackWithNav composition.
 
 import { describe, it, expect } from "vitest";
-import { Effect } from "../../src/core/effect.js";
-import { pullback, pullbackWithNav, combine } from "../../src/core/reducer.js";
-import type { Reducer } from "../../src/core/reducer.js";
-import { createTestStore } from "../test-store.js";
+import { Effect } from "../src/effect.js";
+import { pullback, pullbackWithNav, combine } from "../src/reducer.js";
+import type { Reducer } from "../src/reducer.js";
+import { createTestStore } from "../../../tests/test-store.js";
 
 // ── Test types ────────────────────────────────────────────────────────────────
 

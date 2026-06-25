@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from "vitest";
 import { createRoot } from "solid-js";
-import { createStore } from "../src/core/store.js";
+import { createStore } from "../src/store.js";
 
 function makeStore<T extends object>(init: T) {
   return createStore(init, () => null, undefined);

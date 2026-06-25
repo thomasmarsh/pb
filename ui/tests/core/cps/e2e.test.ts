@@ -4,7 +4,7 @@
 // loadCpsGraph → step to prove the full pipeline is wired together.
 
 import { describe, it, expect } from "vitest";
-import { Effect } from "../../../src/core/effect.js";
+import { Effect, type SQLResult } from "@pb/core";
 import { loadCpsGraph } from "../../../src/core/cps/load.js";
 import { step } from "../../../src/core/cps/runner.js";
 import type { CpsEnv } from "../../../src/core/cps/types.js";
@@ -17,7 +17,6 @@ import {
   type RuntimeState,
 } from "../../../src/features/runtime/reducer.js";
 import type { AstData } from "../../../src/core/interpreter.js";
-import type { SQLResult } from "../../../src/core/sql.js";
 
 // ── Haskell-shaped graph fixtures ─────────────────────────────────────────────
 // These match the JSON format emitted by PB.Pipeline.CpsCompile / Serialise.

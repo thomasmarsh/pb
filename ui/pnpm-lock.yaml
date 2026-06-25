@@ -11,6 +11,9 @@ importers:
       '@kobalte/core':
         specifier: ^0.13.0
         version: 0.13.11(solid-js@1.9.13)
+      '@pb/core':
+        specifier: workspace:*
+        version: link:packages/core
       highlight.js:
         specifier: ^11.11.1
         version: 11.11.1
@@ -63,6 +66,15 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@types/node@20.19.43)(happy-dom@20.10.3)(vite@8.0.16(@types/node@20.19.43))
+
+  packages/core:
+    dependencies:
+      solid-js:
+        specifier: ^1.9.0
+        version: 1.9.13
+      valtio:
+        specifier: ^2.3.2
+        version: 2.3.2
 
 packages:
 

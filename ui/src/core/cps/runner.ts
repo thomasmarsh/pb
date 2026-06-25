@@ -1,6 +1,6 @@
 // core/cps/runner.ts — Step driver for CPS graphs.
 
-import { Effect } from "../../core/effect.js";
+import { Effect } from "@pb/core";
 import { PB_BUILTINS } from "../runtime.js";
 import type { CpsEnv, CpsGraph } from "./types.js";
 import { type VarEnv, writeVar } from "./var-env.js";

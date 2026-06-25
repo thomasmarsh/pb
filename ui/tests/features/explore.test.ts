@@ -1,7 +1,7 @@
 // tests/features/explore.test.ts — Tests for explore feature reducer.
 
 import { describe, it } from "vitest";
-import { Effect } from "../../src/core/effect.js";
+import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { exploreReducer, makeInitialExploreState, type ExploreEnv } from "../../src/features/explore/reducer.js";
 import type { ExploreTreeResponse } from "../../src/types/api.js";

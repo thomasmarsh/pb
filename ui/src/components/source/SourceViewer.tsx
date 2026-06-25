@@ -3,7 +3,7 @@
 import { Show, createSignal, createMemo, createEffect } from "solid-js";
 import { highlightPowerScript } from "../../utils/highlight.js";
 import type { ProcedureInfo, KnownProcInfo, LocalSymbolInfo } from "../../types/api.js";
-import type { Store } from "../../core/store.js";
+import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import { SourceContextMenu } from "./SourceContextMenu.js";

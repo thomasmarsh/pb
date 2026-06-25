@@ -4,8 +4,7 @@
 // Delegates actual execution to the runtime reducer and window-manager reducer
 // via returned effects (no interpreter duplication).
 
-import { Effect } from "../../core/effect.js";
-import type { Reducer } from "../../core/reducer.js";
+import { Effect, type Reducer } from "@pb/core";
 import type { AstData } from "../../core/interpreter.js";
 
 // ── Hardcoded bootstrap globals (simplified: skip INI / CONNECT / w_getxrisi) ──

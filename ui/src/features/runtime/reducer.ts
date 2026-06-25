@@ -3,10 +3,8 @@
 // Each retrieve() call is a labeled suspension point: the reducer fires an
 // Effect and resumes when cps-resume arrives after SQL completes.
 
-import { Effect } from "../../core/effect.js";
-import type { Reducer } from "../../core/reducer.js";
+import { Effect, type Reducer, type SQLResult } from "@pb/core";
 import type { AstData, DWRow, ProcEntry } from "../../core/interpreter.js";
-import type { SQLResult } from "../../core/sql.js";
 import type { WindowLayout } from "../../core/layout.js";
 import { loadCpsGraph } from "../../core/cps/load.js";
 import { step, type CpsResumeAction } from "../../core/cps/runner.js";

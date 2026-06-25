@@ -1,7 +1,7 @@
 // tests/features/tables.test.ts — Tests for tables feature reducer.
 
 import { describe, it, expect } from "vitest";
-import { Effect } from "../../src/core/effect.js";
+import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { tablesReducer, initialTablesState, type TablesEnv } from "../../src/features/tables/reducer.js";
 import type { TablesState } from "../../src/features/tables/types.js";

@@ -1,7 +1,7 @@
 // tests/features/datawindows.test.ts — Tests for datawindows feature reducer.
 
 import { describe, it, expect } from "vitest";
-import { Effect } from "../../src/core/effect.js";
+import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { datawindowsReducer, initialDatawindowsState, type DatawindowsEnv } from "../../src/features/datawindows/reducer.js";
 import type { ListObjectsResponse, DwDetailResponse } from "../../src/types/api.js";

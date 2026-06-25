@@ -2,8 +2,7 @@
 // No env dependencies — all state mutations are synchronous.
 
 import type { WindowManagerState, WindowManagerAction, ManagedWindow } from "./types.js";
-import type { Reducer } from "../../core/reducer.js";
-import { Effect } from "../../core/effect.js";
+import { Effect, type Reducer } from "@pb/core";
 
 const DEFAULT_WIDTH = 800;
 const DEFAULT_HEIGHT = 600;

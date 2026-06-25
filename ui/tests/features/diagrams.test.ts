@@ -1,7 +1,7 @@
 // tests/features/diagrams.test.ts — Tests for diagrams feature reducer.
 
 import { describe, it } from "vitest";
-import { Effect } from "../../src/core/effect.js";
+import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { diagramsReducer, initialDiagramsState, type DiagramsEnv } from "../../src/features/diagrams/reducer.js";
 import type { DiagramsState } from "../../src/features/diagrams/types.js";

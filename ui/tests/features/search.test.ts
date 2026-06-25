@@ -1,7 +1,7 @@
 // tests/features/search.test.ts — Tests for search feature reducer.
 
 import { describe, it, expect } from "vitest";
-import { Effect } from "../../src/core/effect.js";
+import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { searchReducer, initialSearchState, type SearchEnv } from "../../src/features/search/reducer.js";
 import type { SearchState } from "../../src/features/search/types.js";

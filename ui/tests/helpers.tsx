@@ -3,12 +3,10 @@
 import { type JSX } from "solid-js";
 import { render, cleanup } from "@solidjs/testing-library";
 import { afterEach } from "vitest";
-import { Effect } from "../src/core/effect.js";
-import { createStore } from "../src/core/store.js";
+import { Effect, createStore, type Store } from "@pb/core";
 import { initialState, reducer } from "../src/features/app/reducer.js";
 import type { AppState } from "../src/features/app/state.js";
 import type { AppAction } from "../src/features/app/actions.js";
-import type { Store } from "../src/core/store.js";
 import type { AppEnv } from "../src/features/app/reducer.js";
 
 // ── Mock environment ──────────────────────────────────────────────────────────

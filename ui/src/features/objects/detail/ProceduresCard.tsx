@@ -1,7 +1,7 @@
 // ProceduresCard.tsx — Procedures grouped by kind (functions / events / subroutines).
 
 import { For, Show } from "solid-js";
-import type { Store } from "../../../core/store.js";
+import type { Store } from "@pb/core";
 import type { AppState } from "../../../features/app/state.js";
 import type { AppAction } from "../../../features/app/actions.js";
 import type { ProcedureInfo } from "../../../types/api.js";

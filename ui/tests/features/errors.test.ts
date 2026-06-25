@@ -1,7 +1,7 @@
 // tests/features/errors.test.ts — Tests for errors feature reducer.
 
 import { describe, it } from "vitest";
-import { Effect } from "../../src/core/effect.js";
+import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { errorsReducer, initialErrorsState, type ErrorsEnv } from "../../src/features/errors/reducer.js";
 

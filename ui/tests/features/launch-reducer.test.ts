@@ -1,7 +1,7 @@
 // tests/features/launch-reducer.test.ts — Tests for the launch reducer.
 
 import { describe, it, expect } from "vitest";
-import { Effect } from "../../src/core/effect.js";
+import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import {
   launchReducer,

@@ -1,7 +1,6 @@
 // features/explore/reducer.ts — Explore feature reducer (valtio draft style).
 
-import { Effect } from "../../core/effect.js";
-import type { Reducer } from "../../core/reducer.js";
+import { Effect, type Reducer } from "@pb/core";
 import type { ExploreState } from "./types.js";
 import type { ExploreAction } from "./actions.js";
 import type { ExploreTreeResponse, DwDetailResponse, ExploreProcDetail, TableSummary, TableDetail, ObjectSourceResponse } from "../../types/api.js";

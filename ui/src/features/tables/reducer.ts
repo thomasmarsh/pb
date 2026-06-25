@@ -1,7 +1,6 @@
 // features/tables/reducer.ts
 
-import { Effect } from "../../core/effect.js";
-import type { Reducer } from "../../core/reducer.js";
+import { Effect, type Reducer } from "@pb/core";
 import type { TablesState } from "./types.js";
 import type { TablesAction } from "./actions.js";
 import type { TableSummary, TableDetail } from "../../types/api.js";

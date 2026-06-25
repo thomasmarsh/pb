@@ -1,7 +1,7 @@
 // tests/features/queries.test.ts — Tests for queries feature reducer.
 
 import { describe, it, expect } from "vitest";
-import { Effect } from "../../src/core/effect.js";
+import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { queriesReducer, initialQueriesState, type QueriesEnv } from "../../src/features/queries/reducer.js";
 import type { QueriesState } from "../../src/features/queries/types.js";

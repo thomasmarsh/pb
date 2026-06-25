@@ -1,7 +1,7 @@
 // tests/core/cps/runner.test.ts — Tests for the CPS step driver.
 
 import { describe, it, expect } from "vitest";
-import { Effect } from "../../../src/core/effect.js";
+import { Effect } from "@pb/core";
 import { step, type CpsEnv } from "../../../src/core/cps/runner.js";
 import type { CpsGraph, CpsNode } from "../../../src/core/cps/types.js";
 import { makeVarEnv, flattenVarEnv } from "../../../src/core/cps/var-env.js";

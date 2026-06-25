@@ -3,7 +3,7 @@
 
 import type { Route } from "./types.js";
 import type { AppAction } from "../../features/app/actions.js";
-import type { Dispatch } from "../../core/reducer.js";
+import type { Dispatch } from "@pb/core";
 import { parse } from "./routes.js";
 
 // ── Initialize from URL ─────────────────────────────────────────────────────

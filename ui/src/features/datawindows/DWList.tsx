@@ -1,7 +1,7 @@
 // DWList.tsx — DataWindows list with search and keyboard navigation.
 
 import { Show, For, onMount } from "solid-js";
-import type { Store } from "../../core/store.js";
+import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import { EntityCard } from "../../components/detail/EntityCard.js";

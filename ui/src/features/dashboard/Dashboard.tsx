@@ -2,7 +2,7 @@
 
 import { Show, For, createMemo, onMount } from "solid-js";
 import { AlertTriangle, ArrowRight } from "../../utils/icons.js";
-import type { Store } from "../../core/store.js";
+import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import type { ProcedureRow } from "../../types/api.js";

@@ -1,7 +1,6 @@
 // features/diagrams/reducer.ts — Diagrams feature reducer (valtio draft style).
 
-import { Effect } from "../../core/effect.js";
-import type { Reducer } from "../../core/reducer.js";
+import { Effect, type Reducer } from "@pb/core";
 import type { DiagramsState } from "./types.js";
 import type { DiagramsAction } from "./actions.js";
 import type { TableSummary, ListObjectsResponse } from "../../types/api.js";

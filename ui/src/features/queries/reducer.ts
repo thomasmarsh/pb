@@ -1,7 +1,6 @@
 // features/queries/reducer.ts — Queries feature reducer (valtio draft style).
 
-import { Effect } from "../../core/effect.js";
-import type { Reducer } from "../../core/reducer.js";
+import { Effect, type Reducer } from "@pb/core";
 import type { QueriesState } from "./types.js";
 import type { QueriesAction } from "./actions.js";
 import type { QueryDef, QueryResult } from "../../types/api.js";

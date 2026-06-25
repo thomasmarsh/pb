@@ -2,7 +2,7 @@
 
 import { For, Show, createMemo, createResource, onMount } from "solid-js";
 import { Tabs } from "@kobalte/core/tabs";
-import type { Store } from "../../core/store.js";
+import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";
 import type { ErrorKindFilter } from "./types.js";

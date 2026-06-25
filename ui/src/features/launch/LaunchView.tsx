@@ -1,7 +1,7 @@
 // features/launch/LaunchView.tsx — Launch view: app selector + MDI desktop.
 
 import { createSignal, Show, type JSX } from "solid-js";
-import type { Store } from "../../core/store.js";
+import type { Store } from "@pb/core";
 import type { AppState } from "../app/state.js";
 import type { AppAction } from "../app/actions.js";
 import { Desktop } from "../../components/windows/Desktop.js";

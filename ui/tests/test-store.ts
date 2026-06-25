@@ -11,7 +11,7 @@
 //     — fail if any effect-dispatched actions were not consumed via .receive().
 
 import { afterEach, expect } from "vitest";
-import type { Reducer } from "../src/core/reducer.js";
+import type { Reducer } from "@pb/core";
 
 export class TestStore<S, A, Env> {
   private state: S;

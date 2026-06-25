@@ -1,7 +1,6 @@
 // features/errors/reducer.ts — Errors feature reducer (valtio draft style).
 
-import { Effect } from "../../core/effect.js";
-import type { Reducer } from "../../core/reducer.js";
+import { Effect, type Reducer } from "@pb/core";
 import type { ErrorsState } from "./types.js";
 import { PAGE_SIZE } from "./types.js";
 import type { ErrorsAction } from "./actions.js";

@@ -1,8 +1,7 @@
 // app/reducer.ts — App-level reducer: combines all feature reducers.
 // Owns initialState() factory, the top-level reducer, and all app↔feature lenses.
 
-import { pullback, pullbackWithNav, combine } from "../../core/reducer.js";
-import { Effect } from "../../core/effect.js";
+import { pullback, pullbackWithNav, combine, Effect } from "@pb/core";
 import type { AppState } from "./state.js";
 import type { AppAction } from "./actions.js";
 

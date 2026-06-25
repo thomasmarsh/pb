@@ -1192,122 +1192,8 @@ function Dt(e) {
 	return Et(() => e.component, t);
 }
 //#endregion
-//#region node_modules/.pnpm/proxy-compare@3.0.1/node_modules/proxy-compare/dist/index.js
-var Ot = Symbol(), kt = Object.getPrototypeOf, At = /* @__PURE__ */ new WeakMap(), jt = (e) => e && (At.has(e) ? At.get(e) : kt(e) === Object.prototype || kt(e) === Array.prototype), Mt = (e) => jt(e) && e[Ot] || null, Nt = (e, t = !0) => {
-	At.set(e, t);
-}, Pt = (e) => typeof e == "object" && !!e, Ft = (e) => Pt(e) && !zt.has(e) && (Array.isArray(e) || !(Symbol.iterator in e)) && !(e instanceof WeakMap) && !(e instanceof WeakSet) && !(e instanceof Error) && !(e instanceof Number) && !(e instanceof Date) && !(e instanceof String) && !(e instanceof RegExp) && !(e instanceof ArrayBuffer) && !(e instanceof Promise), It = (e, t) => {
-	let n = Bt.get(e);
-	if (n?.[0] === t) return n[1];
-	let r = Array.isArray(e) ? [] : Object.create(Object.getPrototypeOf(e));
-	return Nt(r, !0), Bt.set(e, [t, r]), Reflect.ownKeys(e).forEach((t) => {
-		if (Object.getOwnPropertyDescriptor(r, t)) return;
-		let n = Reflect.get(e, t), { enumerable: i } = Reflect.getOwnPropertyDescriptor(e, t), a = {
-			value: n,
-			enumerable: i,
-			configurable: !0
-		};
-		if (zt.has(n)) Nt(n, !1);
-		else if (Rt.has(n)) {
-			let [e, t] = Rt.get(n);
-			a.value = It(e, t());
-		}
-		Object.defineProperty(r, t, a);
-	}), r;
-}, Lt = (e, t, n, r) => ({
-	deleteProperty(e, t) {
-		let i = Reflect.get(e, t);
-		n(t);
-		let a = Reflect.deleteProperty(e, t);
-		return a && r(Jt?.("delete", t, i)), a;
-	},
-	set(i, a, o, s) {
-		let c = !e() && Reflect.has(i, a), l = Reflect.get(i, a, s);
-		if (c && (Ut(l, o) || Ht.has(o) && Ut(l, Ht.get(o)))) return !0;
-		n(a), Pt(o) && (o = Mt(o) || o);
-		let u = !Rt.has(o) && Gt(o) ? Yt(o) : o;
-		return t(a, u), Reflect.set(i, a, u, s), r(Jt?.("set", a, o, l)), !0;
-	}
-}), Rt = /* @__PURE__ */ new WeakMap(), zt = /* @__PURE__ */ new WeakSet(), Bt = /* @__PURE__ */ new WeakMap(), Vt = [1], Ht = /* @__PURE__ */ new WeakMap(), Ut = Object.is, Wt = (e, t) => new Proxy(e, t), Gt = Ft, Kt = It, qt = Lt, Jt;
-function Yt(e = {}) {
-	if (!Pt(e)) throw Error("object required");
-	let t = Ht.get(e);
-	if (t) return t;
-	let n = Vt[0], r = /* @__PURE__ */ new Set(), i = (e, t = ++Vt[0]) => {
-		n !== t && (a = n = t, r.forEach((n) => n(e, t)));
-	}, a = n, o = (e = Vt[0]) => (a !== e && (a = e, c.forEach(([t]) => {
-		let r = t[1](e);
-		r > n && (n = r);
-	})), n), s = (e) => (t, n) => {
-		let r;
-		t && (r = [...t], r[1] = [e, ...r[1]]), i(r, n);
-	}, c = /* @__PURE__ */ new Map(), l = (e, t) => {
-		let n = !zt.has(t) && Rt.get(t);
-		if (n) if (r.size) {
-			let t = n[2](s(e));
-			c.set(e, [n, t]);
-		} else c.set(e, [n]);
-	}, u = (e) => {
-		var t;
-		let n = c.get(e);
-		n && (c.delete(e), (t = n[1]) == null || t.call(n));
-	}, d = (e) => (r.add(e), r.size === 1 && c.forEach(([e, t], n) => {
-		let r = e[2](s(n));
-		c.set(n, [e, r]);
-	}), () => {
-		r.delete(e), r.size === 0 && c.forEach(([e, t], n) => {
-			t && (t(), c.set(n, [e]));
-		});
-	}), f = !0, p = Wt(e, qt(() => f, l, u, i));
-	Ht.set(e, p);
-	let m = [
-		e,
-		o,
-		d
-	];
-	return Rt.set(p, m), Reflect.ownKeys(e).forEach((t) => {
-		let n = Object.getOwnPropertyDescriptor(e, t);
-		"value" in n && n.writable && (p[t] = e[t]);
-	}), f = !1, p;
-}
-function Xt(e, t, n) {
-	let r = Rt.get(e), i, a = [], o = r[2], s = !1, c = o((e) => {
-		if (e && a.push(e), n) {
-			t(a.splice(0));
-			return;
-		}
-		i ||= Promise.resolve().then(() => {
-			i = void 0, s && t(a.splice(0));
-		});
-	});
-	return s = !0, () => {
-		s = !1, c();
-	};
-}
-function Zt(e) {
-	let [t, n] = Rt.get(e);
-	return Kt(t, n());
-}
-//#endregion
-//#region src/core/store.ts
-function Qt(e) {
-	let [t, n] = j(Zt(e));
-	return L(Xt(e, () => n(Zt(e)))), t;
-}
-function $t(e, t, n, r) {
-	let i = Yt(e);
-	function a(e) {
-		let o = t(i, e, n);
-		r?.(e, i), o && o.execute(a).catch((e) => console.error("unhandled effect error:", e));
-	}
-	return {
-		state: i,
-		dispatch: a,
-		getState: () => Qt(i)
-	};
-}
-//#endregion
-//#region src/core/effect.ts
-var en = class e {
+//#region packages/core/src/effect.ts
+var Ot = class e {
 	runner;
 	constructor(e) {
 		this.runner = e;
@@ -1339,8 +1225,8 @@ var en = class e {
 	}
 };
 //#endregion
-//#region src/core/reducer.ts
-function tn(e, t, n, r, i) {
+//#region packages/core/src/reducer.ts
+function kt(e, t, n, r, i) {
 	return (a, o, s) => {
 		let c = n(o);
 		if (!c) return null;
@@ -1348,25 +1234,139 @@ function tn(e, t, n, r, i) {
 		return l ? l.map(r) : null;
 	};
 }
-function nn(e, t, n, r, i, a) {
+function At(e, t, n, r, i, a) {
 	return (o, s, c) => {
 		let l = n(s);
 		if (!l) return null;
 		let u = [], d = {
 			...i(c),
-			navigate: (e) => (u.push(a(e)), en.none())
-		}, f = e(t(o), l, d), p = u.length > 0 ? en.merge(...u.map((e) => en.send(e))) : null;
-		return !f && !p ? null : f ? p ? en.merge(f.map(r), p) : f.map(r) : p;
+			navigate: (e) => (u.push(a(e)), Ot.none())
+		}, f = e(t(o), l, d), p = u.length > 0 ? Ot.merge(...u.map((e) => Ot.send(e))) : null;
+		return !f && !p ? null : f ? p ? Ot.merge(f.map(r), p) : f.map(r) : p;
 	};
 }
-function rn(...e) {
+function jt(...e) {
 	return (t, n, r) => {
 		let i = [];
 		for (let a of e) {
 			let e = a(t, n, r);
 			e && i.push(e);
 		}
-		return i.length > 0 ? en.merge(...i) : null;
+		return i.length > 0 ? Ot.merge(...i) : null;
+	};
+}
+//#endregion
+//#region node_modules/.pnpm/proxy-compare@3.0.1/node_modules/proxy-compare/dist/index.js
+var Mt = Symbol(), Nt = Object.getPrototypeOf, Pt = /* @__PURE__ */ new WeakMap(), Ft = (e) => e && (Pt.has(e) ? Pt.get(e) : Nt(e) === Object.prototype || Nt(e) === Array.prototype), It = (e) => Ft(e) && e[Mt] || null, Lt = (e, t = !0) => {
+	Pt.set(e, t);
+}, Rt = (e) => typeof e == "object" && !!e, zt = (e) => Rt(e) && !Ut.has(e) && (Array.isArray(e) || !(Symbol.iterator in e)) && !(e instanceof WeakMap) && !(e instanceof WeakSet) && !(e instanceof Error) && !(e instanceof Number) && !(e instanceof Date) && !(e instanceof String) && !(e instanceof RegExp) && !(e instanceof ArrayBuffer) && !(e instanceof Promise), Bt = (e, t) => {
+	let n = Wt.get(e);
+	if (n?.[0] === t) return n[1];
+	let r = Array.isArray(e) ? [] : Object.create(Object.getPrototypeOf(e));
+	return Lt(r, !0), Wt.set(e, [t, r]), Reflect.ownKeys(e).forEach((t) => {
+		if (Object.getOwnPropertyDescriptor(r, t)) return;
+		let n = Reflect.get(e, t), { enumerable: i } = Reflect.getOwnPropertyDescriptor(e, t), a = {
+			value: n,
+			enumerable: i,
+			configurable: !0
+		};
+		if (Ut.has(n)) Lt(n, !1);
+		else if (Ht.has(n)) {
+			let [e, t] = Ht.get(n);
+			a.value = Bt(e, t());
+		}
+		Object.defineProperty(r, t, a);
+	}), r;
+}, Vt = (e, t, n, r) => ({
+	deleteProperty(e, t) {
+		let i = Reflect.get(e, t);
+		n(t);
+		let a = Reflect.deleteProperty(e, t);
+		return a && r(Qt?.("delete", t, i)), a;
+	},
+	set(i, a, o, s) {
+		let c = !e() && Reflect.has(i, a), l = Reflect.get(i, a, s);
+		if (c && (qt(l, o) || Kt.has(o) && qt(l, Kt.get(o)))) return !0;
+		n(a), Rt(o) && (o = It(o) || o);
+		let u = !Ht.has(o) && Yt(o) ? $t(o) : o;
+		return t(a, u), Reflect.set(i, a, u, s), r(Qt?.("set", a, o, l)), !0;
+	}
+}), Ht = /* @__PURE__ */ new WeakMap(), Ut = /* @__PURE__ */ new WeakSet(), Wt = /* @__PURE__ */ new WeakMap(), Gt = [1], Kt = /* @__PURE__ */ new WeakMap(), qt = Object.is, Jt = (e, t) => new Proxy(e, t), Yt = zt, Xt = Bt, Zt = Vt, Qt;
+function $t(e = {}) {
+	if (!Rt(e)) throw Error("object required");
+	let t = Kt.get(e);
+	if (t) return t;
+	let n = Gt[0], r = /* @__PURE__ */ new Set(), i = (e, t = ++Gt[0]) => {
+		n !== t && (a = n = t, r.forEach((n) => n(e, t)));
+	}, a = n, o = (e = Gt[0]) => (a !== e && (a = e, c.forEach(([t]) => {
+		let r = t[1](e);
+		r > n && (n = r);
+	})), n), s = (e) => (t, n) => {
+		let r;
+		t && (r = [...t], r[1] = [e, ...r[1]]), i(r, n);
+	}, c = /* @__PURE__ */ new Map(), l = (e, t) => {
+		let n = !Ut.has(t) && Ht.get(t);
+		if (n) if (r.size) {
+			let t = n[2](s(e));
+			c.set(e, [n, t]);
+		} else c.set(e, [n]);
+	}, u = (e) => {
+		var t;
+		let n = c.get(e);
+		n && (c.delete(e), (t = n[1]) == null || t.call(n));
+	}, d = (e) => (r.add(e), r.size === 1 && c.forEach(([e, t], n) => {
+		let r = e[2](s(n));
+		c.set(n, [e, r]);
+	}), () => {
+		r.delete(e), r.size === 0 && c.forEach(([e, t], n) => {
+			t && (t(), c.set(n, [e]));
+		});
+	}), f = !0, p = Jt(e, Zt(() => f, l, u, i));
+	Kt.set(e, p);
+	let m = [
+		e,
+		o,
+		d
+	];
+	return Ht.set(p, m), Reflect.ownKeys(e).forEach((t) => {
+		let n = Object.getOwnPropertyDescriptor(e, t);
+		"value" in n && n.writable && (p[t] = e[t]);
+	}), f = !1, p;
+}
+function en(e, t, n) {
+	let r = Ht.get(e), i, a = [], o = r[2], s = !1, c = o((e) => {
+		if (e && a.push(e), n) {
+			t(a.splice(0));
+			return;
+		}
+		i ||= Promise.resolve().then(() => {
+			i = void 0, s && t(a.splice(0));
+		});
+	});
+	return s = !0, () => {
+		s = !1, c();
+	};
+}
+function tn(e) {
+	let [t, n] = Ht.get(e);
+	return Xt(t, n());
+}
+//#endregion
+//#region packages/core/src/store.ts
+function nn(e) {
+	let [t, n] = j(tn(e));
+	return L(en(e, () => n(tn(e)))), t;
+}
+function rn(e, t, n, r) {
+	let i = $t(e);
+	function a(e) {
+		let o = t(i, e, n);
+		r?.(e, i), o && o.execute(a).catch((e) => console.error("unhandled effect error:", e));
+	}
+	return {
+		state: i,
+		dispatch: a,
+		getState: () => nn(i)
 	};
 }
 //#endregion
@@ -1841,7 +1841,7 @@ function hn(e, t, n) {
 		case "dw-select": return e.selectedDw = t.nodeId, e.selectedProc = null, e.selectedObject = null, e.highlightedProcName = null, e.highlightedLine = null, mn(e, t.dwName), n.navigate({
 			tag: "navigate",
 			route: { view: "explore" }
-		}), t.nodeId in e.dwCache ? null : en.merge(n.getExploreDatawindow(t.dwName).map((e) => ({
+		}), t.nodeId in e.dwCache ? null : Ot.merge(n.getExploreDatawindow(t.dwName).map((e) => ({
 			tag: "dw-loaded",
 			nodeId: t.nodeId,
 			data: e
@@ -1997,7 +1997,7 @@ function yn(e, t, n) {
 				view: "objectDetail",
 				name: t.name
 			}
-		}), en.merge(n.getObject(t.name).map((e) => ({
+		}), Ot.merge(n.getObject(t.name).map((e) => ({
 			tag: "detail-loaded",
 			data: e
 		})).catch((e) => ({
@@ -2034,7 +2034,7 @@ function yn(e, t, n) {
 				view: "objectDetail",
 				name: t.objectName
 			}
-		}), en.merge(n.getObject(t.objectName).map((e) => ({
+		}), Ot.merge(n.getObject(t.objectName).map((e) => ({
 			tag: "detail-loaded",
 			data: e
 		})).catch((e) => ({
@@ -2161,7 +2161,7 @@ function Cn(e, t, n) {
 				view: "dwDetail",
 				name: t.name
 			}
-		}), en.merge(n.getDW(t.name).map((e) => ({
+		}), Ot.merge(n.getDW(t.name).map((e) => ({
 			tag: "detail-loaded",
 			data: e
 		})).catch((e) => ({
@@ -2249,7 +2249,7 @@ function An(e, t, n) {
 		}));
 		case "loaded": return e.svg = t.svg, e.loading = !1, null;
 		case "error": return e.svg = null, e.loading = !1, e.error = t.error, null;
-		case "loadItems": return e.itemsLoaded ? null : en.merge(n.getTables().map((t) => ({
+		case "loadItems": return e.itemsLoaded ? null : Ot.merge(n.getTables().map((t) => ({
 			tag: "itemsLoaded",
 			tableNames: t.map((e) => e.table_name),
 			objectNames: e.objectNames
@@ -2692,7 +2692,7 @@ function or(e, t, n, r) {
 		case "nop": return or(e, i.next, n, r);
 		case "callproc": {
 			let e = i.args.map((e) => rr(n, e));
-			return en.send({
+			return Ot.send({
 				tag: "cps-dispatch",
 				callee: i.callee,
 				args: e,
@@ -2750,7 +2750,7 @@ function ur(e, t) {
 function dr(e, t, n, r) {
 	let i = {
 		executeSql: r.executeSql,
-		open: () => en.none(),
+		open: () => Ot.none(),
 		dwNameToSql: (e) => {
 			if (n.dwQueries[e]) return n.dwQueries[e] ?? null;
 			let t = ur(n.ast, e);
@@ -2958,7 +2958,7 @@ function Mr(e, t, n) {
 		}));
 		case "app-loaded":
 			if (e.globals = { ...Ar }, e.status = "running", t.ast.variables) for (let n of t.ast.variables) !(n.name in e.globals) && n.scope === "global" && (e.globals[n.name] = void 0);
-			return en.send({
+			return Ot.send({
 				tag: "run-app-open",
 				windowName: "w_misth_final_form_create"
 			});
@@ -3004,40 +3004,40 @@ function Kr() {
 var qr = (e) => ({
 	tag: "nav",
 	action: e
-}), Jr = rn(tn(ln, (e) => e.nav, Pr, (e) => ({
+}), Jr = jt(kt(ln, (e) => e.nav, Pr, (e) => ({
 	tag: "nav",
 	action: e
-}), (e) => e), tn(fn, (e) => e.dashboard, Fr, (e) => ({
+}), (e) => e), kt(fn, (e) => e.dashboard, Fr, (e) => ({
 	tag: "dashboard",
 	action: e
-}), (e) => e), nn(gn, (e) => e.explore, Ir, (e) => ({
+}), (e) => e), At(gn, (e) => e.explore, Ir, (e) => ({
 	tag: "explore",
 	action: e
-}), (e) => e, qr), nn(bn, (e) => e.objects, Lr, (e) => ({
+}), (e) => e, qr), At(bn, (e) => e.objects, Lr, (e) => ({
 	tag: "objects",
 	action: e
-}), (e) => e, qr), nn(wn, (e) => e.datawindows, Rr, (e) => ({
+}), (e) => e, qr), At(wn, (e) => e.datawindows, Rr, (e) => ({
 	tag: "datawindows",
 	action: e
-}), (e) => e, qr), nn(On, (e) => e.tables, zr, (e) => ({
+}), (e) => e, qr), At(On, (e) => e.tables, zr, (e) => ({
 	tag: "tables",
 	action: e
-}), (e) => e, qr), nn(jn, (e) => e.diagrams, Br, (e) => ({
+}), (e) => e, qr), At(jn, (e) => e.diagrams, Br, (e) => ({
 	tag: "diagrams",
 	action: e
-}), (e) => e, qr), nn(Rn, (e) => e.queries, Vr, (e) => ({
+}), (e) => e, qr), At(Rn, (e) => e.queries, Vr, (e) => ({
 	tag: "queries",
 	action: e
-}), (e) => e, qr), nn(Un, (e) => e.search, Hr, (e) => ({
+}), (e) => e, qr), At(Un, (e) => e.search, Hr, (e) => ({
 	tag: "search",
 	action: e
-}), (e) => e, qr), tn(qn, (e) => e.errors, Ur, (e) => ({
+}), (e) => e, qr), kt(qn, (e) => e.errors, Ur, (e) => ({
 	tag: "errors",
 	action: e
-}), (e) => e), tn(Or, (e) => e.windowManager, Wr, (e) => ({
+}), (e) => e), kt(Or, (e) => e.windowManager, Wr, (e) => ({
 	tag: "windowManager",
 	action: e
-}), () => void 0), tn(Nr, (e) => e.launch, Gr, (e) => ({
+}), () => void 0), kt(Nr, (e) => e.launch, Gr, (e) => ({
 	tag: "launch",
 	action: e
 }), (e) => ({ getObjectAst: e.getObjectAst })));
@@ -3112,7 +3112,7 @@ function Yr(e, t, n) {
 				tag: "layout-loaded",
 				layout: null
 			}
-		})), l = en.merge(en.send({
+		})), l = Ot.merge(Ot.send({
 			tag: "windowManager",
 			action: {
 				tag: "open-window",
@@ -3120,14 +3120,14 @@ function Yr(e, t, n) {
 				title: `${r}`,
 				runtimeWindowName: r
 			}
-		}), en.send({
+		}), Ot.send({
 			tag: "runtime",
 			windowId: a,
 			action: {
 				tag: "set-ast",
 				ast: i
 			}
-		}), en.send({
+		}), Ot.send({
 			tag: "runtime",
 			windowId: a,
 			action: {
@@ -3137,7 +3137,7 @@ function Yr(e, t, n) {
 				globals: s
 			}
 		}), c);
-		return o ? en.merge(o, l) : l;
+		return o ? Ot.merge(o, l) : l;
 	}
 	return Jr(e, t, n);
 }
@@ -3163,7 +3163,7 @@ async function Qr(e, t) {
 	return n.json();
 }
 function $r(e) {
-	let t = (e) => en.fromPromise(e);
+	let t = (e) => Ot.fromPromise(e);
 	return {
 		getStats: () => t(() => e.getStats()),
 		getObjects: (n) => t(() => e.getObjects(n)),
@@ -3191,10 +3191,10 @@ function $r(e) {
 		executeSql: (n, r) => t(() => e.executeSql(n, r)),
 		loadTheme: () => {
 			let e = localStorage.getItem("pb-theme"), t = e === "light" || e === "dark" ? e : "dark";
-			return en.send(t);
+			return Ot.send(t);
 		},
-		applyTheme: (e) => (localStorage.setItem("pb-theme", e), document.documentElement.setAttribute("data-theme", e), en.none()),
-		navigate: (e) => en.none(),
+		applyTheme: (e) => (localStorage.setItem("pb-theme", e), document.documentElement.setAttribute("data-theme", e), Ot.none()),
+		navigate: (e) => Ot.none(),
 		pushUrl: (e) => {
 			e !== window.location.pathname + window.location.search && history.pushState({}, "", e);
 		}
@@ -18205,7 +18205,7 @@ function pC() {
 G(["click"]);
 //#endregion
 //#region src/App.tsx
-var mC = $r(ei()), hC = $t(Kr(), Yr, mC);
+var mC = $r(ei()), hC = rn(Kr(), Yr, mC);
 cC((e) => hC.dispatch(e)), lC((e) => hC.dispatch(e)), hC.dispatch({
 	tag: "theme",
 	action: { tag: "load" }

@@ -1,7 +1,6 @@
 // features/dashboard/reducer.ts
 
-import { Effect } from "../../core/effect.js";
-import type { Reducer } from "../../core/reducer.js";
+import { Effect, type Reducer } from "@pb/core";
 import type { DashboardState } from "./types.js";
 import type { DashboardAction } from "./actions.js";
 import type { StatsResponse, TableSummary } from "../../types/api.js";

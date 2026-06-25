@@ -1,7 +1,6 @@
 // features/search/reducer.ts — Search feature reducer (valtio draft style).
 
-import { Effect } from "../../core/effect.js";
-import type { Reducer } from "../../core/reducer.js";
+import { Effect, type Reducer } from "@pb/core";
 import type { SearchState } from "./types.js";
 import type { SearchAction } from "./actions.js";
 import type { SearchResponse } from "../../types/api.js";
