@@ -15,6 +15,7 @@ from pb.pipeline.commands.clean import run as run_clean
 from pb.pipeline.commands.corpus import run as run_corpus
 from pb.pipeline.env import env
 from pb.pipeline.impact import run_impact
+from pb.pipeline.metrics import compute_metrics
 from pb.pipeline.pbl import extract_to_dir, resolve_source_dir
 from pb.pipeline.pipeline import db_is_current
 from pb.pipeline.pipeline import run as run_pipeline
@@ -189,7 +190,7 @@ def analyze(
     """Compute call graph metrics and populate object_metrics in pb.duckdb."""
     reporter = env.reporter
     with env.storage.db_connection(db) as conn, reporter.analyze_progress() as progress:
-        env.storage.compute_metrics(conn, progress)
+        compute_metrics(conn, progress)
 
 
 # ── pb explore ─────────────────────────────────────────────────────────────────

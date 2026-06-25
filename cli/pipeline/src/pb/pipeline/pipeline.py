@@ -11,6 +11,7 @@ from pathlib import Path
 from pb.pipeline.build import find_sql_worker
 from pb.pipeline.db import setup_db_extras
 from pb.pipeline.env import env
+from pb.pipeline.metrics import compute_metrics
 from pb.pipeline.reporter import Reporter
 
 
@@ -94,7 +95,7 @@ def run(
 
     with env.storage.db_connection(db) as conn, reporter.analyze_progress() as progress:
         progress.start_step("compute metrics")
-        env.storage.compute_metrics(conn, progress)
+        compute_metrics(conn, progress)
         sql_parse_failures = env.storage.count_sql_parse_failures(conn)
 
     reporter.done(parsed=0, errors=errors, sql_parse_failures=sql_parse_failures)

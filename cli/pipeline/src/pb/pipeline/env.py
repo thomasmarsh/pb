@@ -23,7 +23,7 @@ from __future__ import annotations
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Protocol
+from typing import Callable, Protocol
 
 from pb.pipeline.build import (
     build_runner,
@@ -38,17 +38,12 @@ from pb.pipeline.build import (
 )
 from pb.pipeline.db import (
     Conn,
-    connect,
     count_sql_parse_failures,
     db_connection,
 )
-from pb.pipeline.metrics import compute_dit, compute_metrics
 from pb.pipeline.reporter import LiveReporter, Reporter
 from pb.pipeline.runner import render_error
 from rich.panel import Panel
-
-if TYPE_CHECKING:
-    from pb.pipeline.reporter import AnalyzeProgress
 
 
 class FindRepo(Protocol):
@@ -88,10 +83,7 @@ class RunnerEnv:
 @dataclass
 class StorageEnv:
     db_connection: DbConnection = field(default=db_connection)
-    compute_dit: Callable[[Conn], dict[str, int]] = field(default=compute_dit)
     count_sql_parse_failures: Callable[[Conn], int] = field(default=count_sql_parse_failures)
-    compute_metrics: Callable[[Conn, AnalyzeProgress], None] = field(default=compute_metrics)
-    connect: Callable[[str], AbstractContextManager[Conn]] = field(default=connect)
 
 
 @dataclass

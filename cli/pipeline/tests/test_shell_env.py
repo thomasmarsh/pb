@@ -40,9 +40,7 @@ def test_runner_env_defaults_are_real_functions():
 def test_storage_env_defaults_are_real_functions():
     s = StorageEnv()
     assert callable(s.db_connection)
-    assert callable(s.compute_dit)
-    assert callable(s.compute_metrics)
-    assert callable(s.connect)
+    assert callable(s.count_sql_parse_failures)
 
 
 def test_shell_env_has_all_sub_envs():
