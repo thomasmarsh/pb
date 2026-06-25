@@ -8,7 +8,7 @@ import {
   initialRuntimeState,
   PB_GLOBALS,
   type RuntimeEnv,
-} from "../../src/features/runtime/reducer.js";
+} from "@pb/windowing";
 import type { AstData } from "@pb/interpreter";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

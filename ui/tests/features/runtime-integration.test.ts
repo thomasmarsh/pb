@@ -7,7 +7,7 @@ import { renderWindow, makeVarEnv, type AstData } from "@pb/interpreter";
 import {
   runtimeReducer,
   initialRuntimeState,
-} from "../../src/features/runtime/reducer.js";
+} from "@pb/windowing";
 import { createTestStore } from "../test-store.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

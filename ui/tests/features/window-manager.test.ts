@@ -1,9 +1,7 @@
 // tests/features/window-manager.test.ts — Window manager reducer tests.
 
 import { describe, it, expect } from "vitest";
-import { windowManagerReducer } from "../../src/features/window-manager/reducer.js";
-import { initialWindowManagerState } from "../../src/features/window-manager/initial.js";
-import type { WindowManagerState, WindowManagerAction } from "../../src/features/window-manager/types.js";
+import { windowManagerReducer, initialWindowManagerState, type WindowManagerState, type WindowManagerAction } from "@pb/windowing";
 
 function reduce(state: WindowManagerState, action: WindowManagerAction): WindowManagerState {
   const draft = structuredClone(state);

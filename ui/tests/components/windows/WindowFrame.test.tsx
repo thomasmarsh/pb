@@ -5,7 +5,7 @@ import { render, cleanup } from "@solidjs/testing-library";
 import { afterEach } from "vitest";
 import { WindowFrame } from "../../../src/components/windows/WindowFrame.js";
 import { createTestStore } from "../../helpers.js";
-import type { ManagedWindow } from "../../../src/features/window-manager/types.js";
+import type { ManagedWindow } from "@pb/windowing";
 
 afterEach(() => cleanup());
 

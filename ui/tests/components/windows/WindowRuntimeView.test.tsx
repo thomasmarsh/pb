@@ -7,7 +7,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { render, cleanup } from "@solidjs/testing-library";
 import { WindowRuntimeView } from "../../../src/components/windows/WindowRuntimeView.js";
 import { createTestStore } from "../../helpers.js";
-import { initialRuntimeState } from "../../../src/features/runtime/reducer.js";
+import { initialRuntimeState } from "@pb/windowing";
 import { type WindowLayout, type DWRow } from "@pb/interpreter";
 
 const BASE_SCALE = 0.08; // matches the constant in WindowRuntimeView.tsx

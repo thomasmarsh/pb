@@ -15,11 +15,7 @@ import { diagramsReducer, type DiagramsEnv, initialDiagramsState } from "../diag
 import { queriesReducer, type QueriesEnv, initialQueriesState } from "../queries/reducer.js";
 import { searchReducer, type SearchEnv, initialSearchState } from "../search/reducer.js";
 import { errorsReducer, type ErrorsEnv, initialErrorsState } from "../errors/reducer.js";
-import { runtimeReducer, type RuntimeEnv, initialRuntimeState } from "../runtime/reducer.js";
-import { windowManagerReducer } from "../window-manager/reducer.js";
-import type { WindowManagerAction } from "../window-manager/types.js";
-import { initialWindowManagerState } from "../window-manager/initial.js";
-import { launchReducer, initialLaunchState, type LaunchAction } from "../launch/reducer.js";
+import { runtimeReducer, type RuntimeEnv, initialRuntimeState, windowManagerReducer, initialWindowManagerState, launchReducer, initialLaunchState, type LaunchAction, type WindowManagerAction } from "@pb/windowing";
 
 import type { NavigationAction } from "../navigation/types.js";
 import { crumbsForRoute } from "../navigation/breadcrumb.js";
@@ -33,7 +29,7 @@ import type { QueriesAction } from "../queries/actions.js";
 import type { SearchAction } from "../search/actions.js";
 import type { ErrorsAction } from "../errors/actions.js";
 export type { LaunchAction };
-export type { RuntimeAction } from "../runtime/reducer.js";
+export type { RuntimeAction } from "@pb/windowing";
 
 import type { Theme } from "./state.js";
 

@@ -15,7 +15,7 @@ import {
   initialRuntimeState,
   PB_GLOBALS,
   type RuntimeState,
-} from "../../../../src/features/runtime/reducer.js";
+} from "@pb/windowing";
 import type { AstData } from "../../src/interpreter.js";
 
 // ── Haskell-shaped graph fixtures ─────────────────────────────────────────────

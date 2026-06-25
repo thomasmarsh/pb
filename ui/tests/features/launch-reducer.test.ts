@@ -7,7 +7,7 @@ import {
   launchReducer,
   initialLaunchState,
   type LaunchEnv,
-} from "../../src/features/launch/reducer.js";
+} from "@pb/windowing";
 import type { AstData } from "@pb/interpreter";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

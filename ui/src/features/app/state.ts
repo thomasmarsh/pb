@@ -10,9 +10,7 @@ import type { SearchState } from "../search/types.js";
 import type { ExploreState } from "../explore/types.js";
 import type { TablesState } from "../tables/types.js";
 import type { ErrorsState } from "../errors/types.js";
-import type { RuntimeState } from "../runtime/reducer.js";
-import type { WindowManagerState } from "../window-manager/types.js";
-import type { LaunchState } from "../launch/reducer.js";
+import { type RuntimeState, type WindowManagerState, type LaunchState } from "@pb/windowing";
 
 export type { ViewName } from "../navigation/types.js";
 

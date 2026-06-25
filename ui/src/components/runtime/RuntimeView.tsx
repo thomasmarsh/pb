@@ -2,7 +2,7 @@
 
 import { createEffect, createSignal, Show, For } from "solid-js";
 import { flattenVarEnv, type AstData, type DWRow, type WindowLayout, type LayoutControl } from "@pb/interpreter";
-import { initialRuntimeState } from "../../features/runtime/reducer.js";
+import { initialRuntimeState } from "@pb/windowing";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../features/app/state.js";
 import type { AppAction } from "../../features/app/actions.js";

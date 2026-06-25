@@ -17,6 +17,9 @@ importers:
       '@pb/interpreter':
         specifier: workspace:*
         version: link:packages/interpreter
+      '@pb/windowing':
+        specifier: workspace:*
+        version: link:packages/windowing
       highlight.js:
         specifier: ^11.11.1
         version: 11.11.1
@@ -84,6 +87,19 @@ importers:
       '@pb/core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
+      '@pb/windowing':
+        specifier: workspace:*
+        version: link:../windowing
+
+  packages/windowing:
+    dependencies:
+      '@pb/core':
+        specifier: workspace:*
+        version: link:../core
+      '@pb/interpreter':
+        specifier: workspace:*
+        version: link:../interpreter
 
 packages:
 
