@@ -23,6 +23,6 @@ main = do
   opts <- execParser (info (optParser <**> helper) desc)
   case (optInput opts, optDb opts) of
     (Just inp, Just db) -> runModeDb inp db
-    _ -> die "usage: pb-runner -i <srcdir> --db <file>"
+    _ -> die "usage: pbc -i <srcdir> --db <file>"
   where
     desc = fullDesc <> progDesc "Parse a PowerBuilder source tree into a DuckDB AST database"
