@@ -10,6 +10,8 @@ module PB.AST.BodyStmt
   , DoStmt (..)
   , CaseClause (..)
   , ChooseStmt (..)
+  , CatchClause (..)
+  , TryStmt (..)
   ) where
 
 import PB.Prelude
@@ -75,6 +77,19 @@ data ChooseStmt = ChooseStmt
   , chooseClauses :: [CaseClause]
   } deriving (Eq, Show, Generic)
 
+-- | One catch clause: catch (ExceptionType varName)
+data CatchClause = CatchClause
+  { catchExnType :: Text
+  , catchExnVar  :: Text
+  , catchBody    :: [Located BodyStmt]
+  } deriving (Eq, Show, Generic)
+
+-- | try … catch … end try
+data TryStmt = TryStmt
+  { tryBody    :: [Located BodyStmt]
+  , tryCatches :: [CatchClause]
+  } deriving (Eq, Show, Generic)
+
 data BodyStmt
   = BsLocalVar
       { varMods  :: [Text]        -- ["constant", "public", etc.]
@@ -97,5 +112,7 @@ data BodyStmt
   | BsContinue
   | BsDestroy   Lvalue
   | BsAssignExpr Expr Expr            -- complex LHS = rhs (method-call chain . property)
+  | BsTry        TryStmt
+  | BsThrow      Expr
   | BsRaw       Text                  -- SQL, event decls, unclassified (source text)
   deriving (Eq, Show, Generic)

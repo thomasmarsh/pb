@@ -12,6 +12,7 @@ import PB.AST.BodyStmt
   , ElseIf (..)
   , IfStmt (..), ForStmt (..), DoCondition (..), DoStmt (..)
   , CaseClause (..), ChooseStmt (..)
+  , CatchClause (..), TryStmt (..)
   )
 import PB.AST.Expr        ( BinOp (..), Expr (..)
                           , DispatchExpr (..), DispatchMode (..)
@@ -383,6 +384,7 @@ classifyBodyStmt s = case stmtTokens s of
           "return"   -> BsReturn (if null rest then Nothing else Just (parseExpr rest))
           "exit"     -> BsExit
           "continue" -> BsContinue
+          "throw"    -> BsThrow (parseExpr rest)
           _          -> BsRaw (llText (stmtSource s))
     | tkKind t `elem` [TkSqlKw, TkDeclKw] ->
         case rest of
@@ -559,6 +561,38 @@ pCaseClause = do
   body <- manyTill pBodyStmt (lookAhead (satisfyStmt isCaseOrEndChoose))
   return (CaseClause pat body)
 
+pTryStmt :: FileParser BodyStmt
+pTryStmt = do
+  _ <- satisfyStmt (leadingCtrl "try")
+  body <- manyTill pBodyStmt (lookAhead (satisfyStmt isCatchOrEndTry))
+  catches <- many (try pCatchClause)
+  _ <- satisfyStmt (leadingCtrl "end try")
+  return (BsTry (TryStmt body catches))
+
+pCatchClause :: FileParser CatchClause
+pCatchClause = do
+  s <- satisfyStmt (leadingCtrl "catch")
+  let (exnType, exnVar) = parseCatchSig (stmtTokens s)
+  body <- manyTill pBodyStmt (lookAhead (satisfyStmt isCatchOrEndTry))
+  return (CatchClause exnType exnVar body)
+
+-- | Parse the exception type and variable name from a catch statement's tokens.
+-- Expected shape: catch ( TypeName varName ) or catch TypeName varName
+parseCatchSig :: [Token] -> (Text, Text)
+parseCatchSig ts =
+  let inner = dropWhile (isCtrl "catch") ts
+      stripped = filter (\t -> tkKind t `notElem` [TkLParen, TkRParen]) inner
+  in case stripped of
+       (typT : varT : _) -> (tkText typT, tkText varT)
+       (typT : _)        -> (tkText typT, "")
+       []                -> ("", "")
+
+isCatchOrEndTry :: Statement -> Bool
+isCatchOrEndTry s = case stmtTokens s of
+  (t:_) -> tkKind t == TkControlKw
+        && T.toLower (tkText t) `elem` ["catch", "end try"]
+  _ -> False
+
 -- ---------------------------------------------------------------------------
 -- SQL body statement
 
@@ -592,9 +626,10 @@ pSqlBodyStmt = do
 
 isBlockTerminator :: Statement -> Bool
 isBlockTerminator s = case stmtTokens s of
-  (t:_) -> tkKind t == TkDeclKw
-        && T.toLower (tkText t) `elem`
-             ["end function", "end subroutine", "end event", "end on"]
+  (t:_) -> (tkKind t == TkDeclKw
+              && T.toLower (tkText t) `elem`
+                   ["end function", "end subroutine", "end event", "end on"])
+        || (tkKind t == TkControlKw && T.toLower (tkText t) == "end try")
   _     -> False
 
 pBodyStmt :: FileParser (Located BodyStmt)
@@ -605,5 +640,6 @@ pBodyStmt = do
         <|> try pForStmt
         <|> try pDoStmt
         <|> try pChooseStmt
+        <|> try pTryStmt
         <|> (classifyBodyStmt <$> satisfyStmt (not . isBlockTerminator))
   pure (Located ln stmt)

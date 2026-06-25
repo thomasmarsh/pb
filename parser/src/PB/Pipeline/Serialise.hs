@@ -58,6 +58,8 @@ instance ToJSON DoCondition  where toJSON = genericToJSON customOptions
 instance ToJSON DoStmt       where toJSON = genericToJSON customOptions
 instance ToJSON CaseClause   where toJSON = genericToJSON customOptions
 instance ToJSON ChooseStmt   where toJSON = genericToJSON customOptions
+instance ToJSON CatchClause  where toJSON = genericToJSON customOptions
+instance ToJSON TryStmt      where toJSON = genericToJSON customOptions
 instance ToJSON BodyStmt     where toJSON = genericToJSON customOptions
 
 -- SourceFile layer

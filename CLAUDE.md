@@ -563,7 +563,7 @@ Mark done/pending as body parsers land.
 | Body: `choose case … end choose`        | all        | done    |
 | Body: `for … next`                      | all        | done    |
 | Body: `do … loop`                       | all        | done    |
-| Body: `try … catch … end try`           | all        | pending |
+| Body: `try … catch … end try`           | all        | done    |
 | Body: embedded SQL                      | .srw, .sru | pending |
 | Body: assignment / call statements      | all        | done    |
 
@@ -690,7 +690,15 @@ data BodyStmt
   | BsContinue
   | BsDestroy   Lvalue                -- DESTROY objectvariable
   | BsAssignExpr Expr Expr            -- complex LHS = rhs (method-call chain . property)
+  | BsTry       TryStmt
+  | BsThrow     Expr
   | BsRaw       Text                  -- SQL, event decls, unclassified (source text)
+
+-- | catch (ExceptionType varName) clause
+data CatchClause = CatchClause { catchExnType :: Text, catchExnVar :: Text, catchBody :: [Located BodyStmt] }
+-- | try … catch … end try
+data TryStmt = TryStmt { tryBody :: [Located BodyStmt], tryCatches :: [CatchClause] }
+
   -- PbType comes from PB.AST.Type: PtPrimitive Text | PtUserDefined Text
   --   | PtAny | PtDecimalPrec Int. No IsString instance — always wrap as
   --   PtPrimitive "integer" etc. (the 111a test was wrong about this.)

@@ -6,6 +6,7 @@ import PB.AST.BodyStmt
   , ElseIf (..)
   , IfStmt (..), ForStmt (..), DoCondition (..), DoStmt (..)
   , CaseClause (..), ChooseStmt (..)
+  , CatchClause (..), TryStmt (..)
   )
 import PB.AST.Expr            (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Located         (Located (..))
@@ -335,6 +336,58 @@ tests = testGroup "Grammar.Body.Parser"
                                   , CaseClause Nothing       [loc1 assignZ2]
                                   ]
                 })) ]
+    ]
+
+  , testGroup "try"
+    [ testCase "basic try/catch" $
+        -- try / y = 1 / catch (RuntimeError e) / z = 2 / end try
+        runBodyStmts
+          [ mkStmt [(TkControlKw,"try")]
+          , stmtY1
+          , mkStmt [(TkControlKw,"catch"),(TkLParen,"("),(TkIdent,"RuntimeError"),(TkIdent,"e"),(TkRParen,")")]
+          , stmtZ2
+          , mkStmt [(TkControlKw,"end try")] ]
+          @?= Right
+            [ loc1 (BsTry (TryStmt
+                { tryBody    = [loc1 assignY1]
+                , tryCatches = [ CatchClause "RuntimeError" "e" [loc1 assignZ2] ]
+                })) ]
+
+    , testCase "multiple catch clauses" $
+        -- try / y = 1 / catch (TypeA ea) / z = 2 / catch (TypeB eb) / y = 1 / end try
+        runBodyStmts
+          [ mkStmt [(TkControlKw,"try")]
+          , stmtY1
+          , mkStmt [(TkControlKw,"catch"),(TkLParen,"("),(TkIdent,"TypeA"),(TkIdent,"ea"),(TkRParen,")")]
+          , stmtZ2
+          , mkStmt [(TkControlKw,"catch"),(TkLParen,"("),(TkIdent,"TypeB"),(TkIdent,"eb"),(TkRParen,")")]
+          , stmtY1
+          , mkStmt [(TkControlKw,"end try")] ]
+          @?= Right
+            [ loc1 (BsTry (TryStmt
+                { tryBody    = [loc1 assignY1]
+                , tryCatches = [ CatchClause "TypeA" "ea" [loc1 assignZ2]
+                               , CatchClause "TypeB" "eb" [loc1 assignY1]
+                               ]
+                })) ]
+
+    , testCase "try with no catch clauses" $
+        -- try / y = 1 / end try
+        runBodyStmts
+          [ mkStmt [(TkControlKw,"try")]
+          , stmtY1
+          , mkStmt [(TkControlKw,"end try")] ]
+          @?= Right
+            [ loc1 (BsTry (TryStmt
+                { tryBody    = [loc1 assignY1]
+                , tryCatches = []
+                })) ]
+
+    , testCase "throw statement" $
+        runBodyStmts
+          [ mkStmt [(TkControlKw,"throw"),(TkIdent,"myError")] ]
+          @?= Right
+            [ loc1 (BsThrow (ExLvalue (Lvalue [LvSegment "myError" Nothing]))) ]
     ]
 
   , testGroup "leaf"

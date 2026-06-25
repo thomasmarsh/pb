@@ -434,6 +434,15 @@ compileSingleStmt env lctx (Located line stmt) fallthrough = case stmt of
       , cpNext   = fallthrough
       }) (Just line)
 
+  -- try/catch: compile try body sequentially; compile each catch body as
+  -- independently-reachable code (exception dispatch is runtime-only, no
+  -- static edge). throw has no CPS representation.
+  BsTry (TryStmt body catches) -> do
+    _ <- mapM (\c -> compileStmts env lctx (catchBody c) fallthrough) catches
+    compileStmts env lctx body fallthrough
+
+  BsThrow _ -> pure fallthrough
+
   -- Statements with no CPS representation: fall through.
   BsRaw _ -> pure fallthrough
 

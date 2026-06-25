@@ -460,6 +460,8 @@ tag BsExit              = "exit"
 tag BsContinue          = "continue"
 tag (BsDestroy    _)    = "destroy"
 tag (BsAssignExpr _ _)  = "assign_expr"
+tag (BsTry        _)    = "try"
+tag (BsThrow      _)    = "throw"
 tag (BsRaw        _)    = "raw"
 
 propClassifyTotal :: Property
@@ -500,4 +502,6 @@ propClassifyTotal = property $ do
     BsContinue        -> True
     BsDestroy    _    -> True
     BsAssignExpr _ _  -> True
+    BsTry        _    -> True
+    BsThrow      _    -> True
     BsRaw        _    -> True
