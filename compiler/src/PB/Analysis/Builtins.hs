@@ -16,7 +16,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 
 pbApiBytes :: BS.ByteString
-pbApiBytes = $(embedFile "../cli/pb_cli/data/pb_api.json")
+pbApiBytes = $(embedFile "../cli/lib/src/pb/lib/data/pb_api.json")
 
 data PbApiJson = PbApiJson
   { pbjFreeFunctions :: [Text]

@@ -73,6 +73,8 @@ data BodyStmtF r
   | BsForF    Lvalue Expr Expr (Maybe Expr) [r]            -- var from to step body
   | BsDoF     (Maybe DoCondition) [r] (Maybe DoCondition)  -- precond body postcond
   | BsChooseF Expr [(Maybe [Token], [r])]                  -- expr clauses
+  | BsTryF    [r] [(Text, Text, [r])]                      -- body catches(exnType,exnVar,catchBody)
+  | BsThrowF  Expr
   deriving (Eq, Show, Functor)
 
 -- ---------------------------------------------------------------------------
@@ -143,6 +145,9 @@ stmtToF (BsDo (DoStmt pre body post)) =
   BsDoF pre (map toFix body) post
 stmtToF (BsChoose (ChooseStmt expr clauses)) =
   BsChooseF expr (map (\(CaseClause ce cb) -> (ce, map toFix cb)) clauses)
+stmtToF (BsTry (TryStmt body catches)) =
+  BsTryF (map toFix body) (map (\(CatchClause et ev cb) -> (et, ev, map toFix cb)) catches)
+stmtToF (BsThrow e) = BsThrowF e
 
 fToStmt :: BodyStmtF BodyStmtTree -> BodyStmt
 fToStmt (BsLocalVarF ms ty nm ini) =
@@ -170,6 +175,9 @@ fToStmt (BsDoF pre body post) =
   BsDo $ DoStmt pre (map fromFix body) post
 fToStmt (BsChooseF expr clauses) =
   BsChoose $ ChooseStmt expr (map (\(ce, cb) -> CaseClause ce (map fromFix cb)) clauses)
+fToStmt (BsTryF body catches) =
+  BsTry $ TryStmt (map fromFix body) (map (\(et, ev, cb) -> CatchClause et ev (map fromFix cb)) catches)
+fToStmt (BsThrowF e) = BsThrow e
 
 -- ---------------------------------------------------------------------------
 -- Algebras: pass-5 TypeResolve extractions as cataL algebras
