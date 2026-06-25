@@ -337,6 +337,19 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
     }
 
 
+def get_object_layout(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
+    """Return the parsed window layout JSON stored during ingestion."""
+    row = conn.execute(
+        "SELECT layout_json FROM objects WHERE object = ?", [name]
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+    try:
+        return json.loads(row[0])
+    except Exception:
+        return None
+
+
 def get_dw_layout(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
     """Return the parsed DataWindowFile JSON stored during ingestion."""
     row = conn.execute(

@@ -32,6 +32,7 @@ function createAppEnv(astResponses: Record<string, AstData>): AppEnv {
     search: () => Effect.none(),
     getDW: () => Effect.none(),
     getDwLayout: () => Effect.none(),
+    getObjectLayout: () => Effect.none(),
     getObjectAst: (name: string) => {
       const ast = astResponses[name];
       if (ast) return Effect.send(ast);

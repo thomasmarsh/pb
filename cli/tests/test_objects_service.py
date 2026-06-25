@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import duckdb
+import pytest
 
 from pb_cli.explorer.services.objects import (
     get_dw_layout,
     get_explore_tree,
     get_object_detail,
+    get_object_layout,
     get_object_source,
     pbl_name,
 )
@@ -120,6 +122,30 @@ def test_dw_layout_parsed_expression_has_tag(db_conn: duckdb.DuckDBPyConnection)
                     checked += 1
     # non-zero check: the openpay corpus has expressions; if this fires the fixture changed
     assert checked > 0, "no parsedExpression/parsedFormat found in 30 DW objects — fixture may be empty"
+
+
+def test_get_object_layout_returns_window_shape(db_conn: duckdb.DuckDBPyConnection):
+    """get_object_layout returns {name, type, width, height, controls} for a .srw object."""
+    row = db_conn.execute(
+        "SELECT object FROM objects WHERE kind = 'powerscript' AND layout_json IS NOT NULL LIMIT 1"
+    ).fetchone()
+    if row is None:
+        pytest.skip("no objects with layout_json in fixture corpus")
+    layout = get_object_layout(db_conn, row[0])
+    assert layout is not None
+    assert "name" in layout
+    assert "type" in layout
+    assert "width" in layout
+    assert "height" in layout
+    assert "controls" in layout
+    assert isinstance(layout["controls"], list)
+    # Numeric dimensions (not strings)
+    assert isinstance(layout["width"], int), f"width should be int, got {type(layout['width'])}"
+    assert isinstance(layout["height"], int), f"height should be int, got {type(layout['height'])}"
+
+
+def test_get_object_layout_not_found(db_conn: duckdb.DuckDBPyConnection):
+    assert get_object_layout(db_conn, "__nonexistent__") is None
 
 
 def test_dw_layout_band_kind_has_tag(db_conn: duckdb.DuckDBPyConnection):

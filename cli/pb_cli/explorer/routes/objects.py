@@ -11,6 +11,7 @@ from pb_cli.explorer.services.objects import (
     get_explore_tree,
     get_object_ast,
     get_object_detail,
+    get_object_layout,
     get_object_source,
     list_objects,
 )
@@ -44,6 +45,14 @@ async def get_object_ast_route(name: str, conn: duckdb.DuckDBPyConnection = Depe
     result = get_object_ast(conn, name)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Object not found: {name}")
+    return result
+
+
+@router.get("/api/objects/{name}/layout")
+async def get_object_layout_route(name: str, conn: duckdb.DuckDBPyConnection = Depends(get_db)):
+    result = get_object_layout(conn, name)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Layout not found: {name}")
     return result
 
 

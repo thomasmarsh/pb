@@ -2,6 +2,7 @@
 
 import type { ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ObjectRow, ProcedureListItem } from "../../types/api.js";
 import type { AstData } from "../../core/interpreter.js";
+import type { WindowLayout } from "../../core/layout.js";
 
 export type ObjectsAction =
   | { tag: "back-to-objects" }
@@ -18,6 +19,8 @@ export type ObjectsAction =
   | { tag: "source-error"; error: string }
   | { tag: "ast-loaded"; data: AstData }
   | { tag: "ast-error"; error: string }
+  | { tag: "layout-loaded"; data: WindowLayout }
+  | { tag: "layout-error"; error: string }
   | { tag: "all-objects-loaded"; data: ObjectRow[] }
   | { tag: "proc-select"; objectName: string; procName: string }
   | { tag: "proc-loaded"; data: ProcedureDetailResponse }

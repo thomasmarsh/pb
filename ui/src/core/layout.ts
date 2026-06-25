@@ -9,7 +9,8 @@ export interface LayoutControl {
   width: number;
   height: number;
   text?: string;
-  properties: Record<string, string>;
+  dataobject?: string;
+  properties?: Record<string, string>;
 }
 
 export interface WindowLayout {
@@ -88,6 +89,7 @@ function extractControl(block: {
     width: parseInt(props["width"] ?? "0", 10),
     height: parseInt(props["height"] ?? "0", 10),
     text: props["text"],
+    dataobject: props["dataobject"],
     properties: props,
   };
 }

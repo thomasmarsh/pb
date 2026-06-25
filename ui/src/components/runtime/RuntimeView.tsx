@@ -1,7 +1,6 @@
 // RuntimeView.tsx — Wireframe layout renderer driven by the runtime reducer.
 
 import { createEffect, createSignal, Show, For } from "solid-js";
-import { extractLayout } from "../../core/layout.js";
 import type { AstData, DWRow } from "../../core/interpreter.js";
 import { flattenVarEnv } from "../../core/cps/var-env.js";
 import type { WindowLayout, LayoutControl } from "../../core/layout.js";
@@ -67,7 +66,7 @@ function ControlBox(props: { ctrl: LayoutControl; onClick: () => void }) {
       <span style={{ "font-weight": "600", color: "var(--text)" }}>{props.ctrl.name}</span>
       <Show when={isDw()}>
         <div style={{ "font-size": "9px", color: "var(--text-muted)", "margin-top": "2px" }}>
-          [{props.ctrl.properties["dataobject"] ?? "DataWindow"}]
+          [{props.ctrl.dataobject ?? props.ctrl.properties?.["dataobject"] ?? "DataWindow"}]
         </div>
       </Show>
       <Show when={props.ctrl.text && !isDw()}>
@@ -119,11 +118,7 @@ export function RuntimeView(props: {
     props.store.dispatch({ tag: "runtime", action: { tag: "run-event", owner: props.objectName, event: "open" } });
   });
 
-  const layout = (): WindowLayout | null => {
-    const ad = snap().objects.astData;
-    if (!ad || "error" in ad) return null;
-    return extractLayout((ad as AstData).typeBlocks as unknown[]);
-  };
+  const layout = (): WindowLayout | null => snap().objects.layout;
 
   const controlValues = (): Record<string, DWRow[]> =>
     snap().runtime.controlValues as Record<string, DWRow[]>;

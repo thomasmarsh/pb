@@ -69,7 +69,7 @@ describe("extractLayout", () => {
 
   it("extracts control string property with quotes stripped", () => {
     const ctrl = extractLayout(ZPPERIOD_TYPE_BLOCKS)!.controls[0]!;
-    expect(ctrl.properties["dataobject"]).toBe("dw_misth_zpperiod_list");
+    expect(ctrl.dataobject ?? ctrl.properties?.["dataobject"]).toBe("dw_misth_zpperiod_list");
   });
 
   it("defaults x and y to 0 when absent", () => {

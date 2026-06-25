@@ -25,6 +25,7 @@ export const mockEnv: AppEnv = {
   getDW: () => Effect.none(),
   getDwLayout: () => Effect.none(),
   getObjectAst: () => Effect.none(),
+  getObjectLayout: () => Effect.none(),
   getDiagram: () => Effect.none(),
   getQueries: () => Effect.none(),
   runQuery: () => Effect.none(),

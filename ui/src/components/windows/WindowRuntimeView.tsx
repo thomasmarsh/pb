@@ -70,7 +70,7 @@ function ControlBox(props: { ctrl: LayoutControl; onClick: () => void }) {
       <span style={{ "font-weight": "600", color: "var(--text)" }}>{props.ctrl.name}</span>
       <Show when={isDw()}>
         <div style={{ "font-size": "9px", color: "var(--text-muted)", "margin-top": "2px" }}>
-          [{props.ctrl.properties["dataobject"] ?? "DataWindow"}]
+          [{props.ctrl.dataobject ?? props.ctrl.properties?.["dataobject"] ?? "DataWindow"}]
         </div>
       </Show>
       <Show when={props.ctrl.text && !isDw()}>

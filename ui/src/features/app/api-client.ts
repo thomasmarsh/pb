@@ -20,6 +20,7 @@ import type {
 } from "../../types/api.js";
 import type { DataWindowFile } from "../../types/ast.js";
 import type { AstData } from "../../core/interpreter.js";
+import type { WindowLayout } from "../../core/layout.js";
 import type { SQLResult } from "../../core/dw-queries.js";
 import { Effect } from "../../core/effect.js";
 import type { AppEnv as Env } from "./reducer.js";
@@ -39,6 +40,7 @@ export interface ApiClient {
   getDW(name: string): Promise<DwDetailResponse>;
   getDwLayout(name: string): Promise<DataWindowFile>;
   getObjectAst(name: string): Promise<AstData>;
+  getObjectLayout(name: string): Promise<WindowLayout>;
   getDiagram(kind: string, params: Record<string, string | number>): Promise<string>;
   getQueries(): Promise<{ queries: QueryDef[] }>;
   runQuery(name: string, params: Record<string, string>): Promise<QueryResult>;
@@ -91,6 +93,7 @@ export function createEnv(api: ApiClient): Env {
     getDW: (n) => lift(() => api.getDW(n)),
     getDwLayout: (n) => lift(() => api.getDwLayout(n)),
     getObjectAst: (n) => lift(() => api.getObjectAst(n)),
+    getObjectLayout: (n) => lift(() => api.getObjectLayout(n)),
     getDiagram: (k, p) => lift(() => api.getDiagram(k, p)),
     getQueries: () => lift(() => api.getQueries()),
     runQuery: (n, p) => lift(() => api.runQuery(n, p)),
@@ -172,6 +175,10 @@ export function createApiClient(): ApiClient {
 
     async getObjectAst(name: string): Promise<AstData> {
       return fetchJson("/api/objects/" + encodeURIComponent(name) + "/ast");
+    },
+
+    async getObjectLayout(name: string): Promise<WindowLayout> {
+      return fetchJson("/api/objects/" + encodeURIComponent(name) + "/layout");
     },
 
     async getDiagram(
