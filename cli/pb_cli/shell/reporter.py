@@ -7,10 +7,13 @@ Two implementations:
 
 from __future__ import annotations
 
+import os
+import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 from pb_cli.core.state import FileDiff
 
@@ -125,6 +128,137 @@ class _RecordingAnalyzeProgress:
         self._events.append({"type": "analyze_metrics", "label": label})
 
 
+# ── RunnerProgress ─────────────────────────────────────────────────────────────
+
+
+class RunnerProgress(Protocol):
+    def on_event(self, event: dict) -> None: ...
+
+
+class _LiveRunnerProgress:
+    """Drives a Rich Live display from pb-runner JSONL progress events.
+
+    Layout during Phase A (parsing):
+        ⠸ Parsing & indexing  [████░░░░░░]  423/1051  12.3s  ⚠ 3 errors
+          ├ Worker 0  w_order.srw
+          ├ Worker 1  w_customer.srw
+          └ Worker 2  (idle)
+
+    Layout during Phase B (link analysis):
+        ⠸ Link analysis — Resolving types  8.2s
+    """
+
+    def __init__(self, console) -> None:
+        self._console = console
+        self._lock = threading.Lock()
+        self._live: Any = None
+
+        self._total = 0
+        self._done = 0
+        self._errors = 0
+        self._phase_label = "Starting"
+        self._workers: dict[int, str | None] = {}
+        self._step = ""
+        self._phase_name = ""
+        self._start = time.monotonic()
+
+    def on_event(self, event: dict) -> None:
+        tag = event.get("tag", "")
+        with self._lock:
+            if tag == "total":
+                self._total = event["n"]
+            elif tag == "phase":
+                name = event["name"]
+                self._phase_name = name
+                if name == "A0":
+                    self._phase_label = "Building type env"
+                    self._total = event.get("total", self._total)
+                    self._workers = {}
+                    self._step = ""
+                elif name == "A":
+                    self._phase_label = "Parsing & indexing"
+                    self._total = event.get("total", self._total)
+                    nw = event.get("workers", 1)
+                    self._workers = {k: None for k in range(nw)}
+                    self._step = ""
+                elif name == "B":
+                    self._phase_label = "Link analysis"
+                    self._workers = {}
+                    self._step = ""
+            elif tag == "worker_start":
+                self._workers[event["worker"]] = os.path.basename(event["file"])
+            elif tag == "worker_done":
+                self._workers[event["worker"]] = None
+                self._done += 1
+                if not event.get("ok", True):
+                    self._errors += 1
+            elif tag == "step":
+                self._step = event["label"]
+        self._refresh()
+
+    def _refresh(self) -> None:
+        if self._live is not None:
+            self._live.update(self._render())
+
+    def _render(self):
+        from rich.console import Group
+        from rich.text import Text
+
+        elapsed = time.monotonic() - self._start
+        elapsed_str = f"{elapsed:.1f}s"
+
+        # ── main progress line ──────────────────────────────────────────────
+        if self._phase_name in ("A", "A0") and self._total > 0:
+            pct = self._done / self._total
+            bar_w = 24
+            filled = round(bar_w * pct)
+            bar = "█" * filled + "░" * (bar_w - filled)
+            line = Text()
+            line.append(f"{self._phase_label}", style="bold")
+            line.append(f"  [{bar}]  {self._done}/{self._total}  {elapsed_str}")
+            if self._errors:
+                line.append(f"  ⚠ {self._errors} error(s)", style="red")
+        else:
+            label = f"{self._phase_label}"
+            if self._step:
+                label += f" — {self._step}"
+            line = Text()
+            line.append(label, style="bold")
+            line.append(f"  {elapsed_str}")
+
+        rows: list = [line]
+
+        # ── per-worker rows ─────────────────────────────────────────────────
+        if self._workers:
+            items = sorted(self._workers.items())
+            for i, (wid, fname) in enumerate(items):
+                is_last = i == len(items) - 1
+                connector = "└" if is_last else "├"
+                if fname:
+                    rows.append(
+                        Text.from_markup(
+                            f"  [dim]{connector} Worker {wid}[/dim]  [cyan]{fname}[/cyan]"
+                        )
+                    )
+                else:
+                    rows.append(
+                        Text.from_markup(f"  [dim]{connector} Worker {wid}  idle[/dim]")
+                    )
+
+        return Group(*rows)
+
+
+class _RecordingRunnerProgress:
+    def __init__(self, events: list[dict]) -> None:
+        self._events = events
+        self.error_count = 0
+
+    def on_event(self, event: dict) -> None:
+        self._events.append({"type": "runner_event", **event})
+        if event.get("tag") == "done":
+            self.error_count = event.get("errors", 0)
+
+
 # ── Reporter protocol ──────────────────────────────────────────────────────────
 
 
@@ -135,6 +269,7 @@ class Reporter(Protocol):
     def parse_progress(self, total: int, label: str) -> AbstractContextManager[ParseProgress]: ...
     def indexing_step(self) -> AbstractContextManager[Callable[[int], None]]: ...
     def analyze_progress(self) -> AbstractContextManager[AnalyzeProgress]: ...
+    def runner_progress(self) -> AbstractContextManager[RunnerProgress]: ...
     def done(
         self,
         *,
@@ -252,6 +387,33 @@ class LiveReporter:
         for name, elapsed in prog.times:
             self._c.print(f"  [dim]{name:<28} {elapsed:.1f}s[/dim]")
 
+    @contextmanager
+    def runner_progress(self) -> Iterator[_LiveRunnerProgress]:
+        from rich.live import Live
+        from rich.text import Text
+
+        prog = _LiveRunnerProgress(self._c)
+        # Initial placeholder shown before the first event arrives
+        with Live(
+            Text.from_markup("[dim]Starting pb-runner…[/dim]"),
+            console=self._c,
+            refresh_per_second=12,
+            transient=False,
+        ) as live:
+            prog._live = live
+            yield prog
+        # Print a compact summary line once Live exits
+        elapsed = time.monotonic() - prog._start
+        if prog._errors:
+            self._c.print(
+                f"[green]✓[/green] Indexed {prog._done}/{prog._total} files"
+                f"  [red]⚠ {prog._errors} error(s)[/red]  {elapsed:.1f}s"
+            )
+        else:
+            self._c.print(
+                f"[green]✓[/green] Indexed {prog._done}/{prog._total} files  {elapsed:.1f}s"
+            )
+
     def done(
         self,
         *,
@@ -340,6 +502,13 @@ class RecordingReporter:
         prog = _RecordingAnalyzeProgress(self.events)
         yield prog
         self.events.append({"type": "analyze_end"})
+
+    @contextmanager
+    def runner_progress(self) -> Iterator[_RecordingRunnerProgress]:
+        self.events.append({"type": "runner_start"})
+        prog = _RecordingRunnerProgress(self.events)
+        yield prog
+        self.events.append({"type": "runner_end", "errors": prog.error_count})
 
     def done(
         self,

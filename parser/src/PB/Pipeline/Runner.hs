@@ -30,15 +30,16 @@ import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
 import Control.Concurrent.Async (mapConcurrently, mapConcurrently_)
 import Control.Concurrent.MVar  (MVar, newMVar, withMVar)
-import Control.Concurrent.QSem  (newQSem, waitQSem, signalQSem)
 import Control.Concurrent.STM
   ( TQueue, atomically
   , newTQueueIO
   , writeTQueue, isEmptyTQueue, readTQueue
   )
 import GHC.Conc   (getNumCapabilities)
-import Control.Exception   (SomeException, try, finally, bracket_, evaluate)
+import Control.Exception   (SomeException, try, finally, evaluate)
 import System.Environment  (lookupEnv)
+import System.IO           (hFlush, stderr)
+import Data.IORef          (IORef, newIORef, readIORef, atomicModifyIORef')
 import Data.Char           (intToDigit, toLower)
 import Data.Either         (lefts)
 import Data.Word           (Word8)
@@ -77,6 +78,12 @@ import PB.Pipeline.DuckDb
   , appendTaintSources, appendTaintSinks, appendTaintPaths
   , appendTaintAnnotations, appendDeadCode
   )
+
+-- | Emit a single JSON progress event to stderr for the Python reporter.
+emitProgress :: Value -> IO ()
+emitProgress v = do
+  BS.hPut stderr (BSL.toStrict (encode v) <> "\n")
+  hFlush stderr
 
 -- | Last dot-separated segment of a dotted name, e.g. "dw.setfocus" → "setfocus".
 lastName :: Text -> Text
@@ -479,10 +486,9 @@ extractProcSql pool k fp obj (pName, body) =
                rawTxt
                (srParseOk res)
 
--- | Worker thread k: drains FilePaths from workQ, parses and compiles each with bridge slot k,
---   serialises DB writes through a shared mutex (DuckDB connections are not thread-safe).
-workerLoopFiles :: Int -> TQueue FilePath -> SqlBridgePool -> TypeEnv -> DuckConn -> MVar () -> IO ()
-workerLoopFiles k workQ pool wsEnv conn mutex = go
+-- | Worker thread k: drains FilePaths from workQ, parses and compiles each without a SQL bridge.
+workerLoopFilesNoBridge :: Int -> TQueue FilePath -> TypeEnv -> DuckConn -> MVar () -> IORef Int -> IO ()
+workerLoopFilesNoBridge k workQ wsEnv conn mutex errCount = go
   where
     go = do
       mFile <- atomically $ do
@@ -491,9 +497,36 @@ workerLoopFiles k workQ pool wsEnv conn mutex = go
       case mFile of
         Nothing   -> pure ()
         Just file -> do
+          let fp = T.pack file
+          emitProgress (object ["tag" .= ("worker_start" :: Text), "worker" .= k, "file" .= fp])
+          outcome  <- parseOutcome file
+          compiled <- compileOne wsEnv Nothing outcome
+          let ok = case compiled of { CFError {} -> False; _ -> True }
+          when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
+          withMVar mutex $ \_ -> appendToDb conn compiled
+          emitProgress (object ["tag" .= ("worker_done" :: Text), "worker" .= k, "file" .= fp, "ok" .= ok])
+          go
+
+-- | Worker thread k: drains FilePaths from workQ, parses and compiles each with bridge slot k,
+--   serialises DB writes through a shared mutex (DuckDB connections are not thread-safe).
+workerLoopFiles :: Int -> TQueue FilePath -> SqlBridgePool -> TypeEnv -> DuckConn -> MVar () -> IORef Int -> IO ()
+workerLoopFiles k workQ pool wsEnv conn mutex errCount = go
+  where
+    go = do
+      mFile <- atomically $ do
+        empty <- isEmptyTQueue workQ
+        if empty then pure Nothing else Just <$> readTQueue workQ
+      case mFile of
+        Nothing   -> pure ()
+        Just file -> do
+          let fp = T.pack file
+          emitProgress (object ["tag" .= ("worker_start" :: Text), "worker" .= k, "file" .= fp])
           outcome  <- parseOutcome file
           compiled <- compileOne wsEnv (Just (pool, k)) outcome
+          let ok = case compiled of { CFError {} -> False; _ -> True }
+          when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
           withMVar mutex $ \_ -> appendToDb conn compiled
+          emitProgress (object ["tag" .= ("worker_done" :: Text), "worker" .= k, "file" .= fp, "ok" .= ok])
           go
 
 appendToDb :: DuckConn -> CompiledFile -> IO ()
@@ -519,51 +552,59 @@ appendToDb _    CFSkip = pure ()
 runModeDb :: FilePath -> FilePath -> IO ()
 runModeDb srcDir dbPath = do
   files <- walkAllSrFiles srcDir
+  let total = length files
+  emitProgress (object ["tag" .= ("total" :: Text), "n" .= total])
 
   -- Phase A0: parse all files to build workspace TypeEnv, then discard SrFiles.
+  emitProgress (object ["tag" .= ("phase" :: Text), "name" .= ("A0" :: Text), "total" .= total])
   outcomes0 <- mapConcurrently parseOutcome files
   let wsEnv = buildWorkspaceTypeEnv [pfSrFile pf | PsParsed pf <- outcomes0]
   _ <- evaluate (Map.size (teVars wsEnv) + Map.size (teUserTypes wsEnv))
-  -- outcomes0 and all SrFiles are now GC-eligible.
 
   mBridgeBin <- lookupEnv "PB_SQL_WORKER"
   nWorkers   <- getNumCapabilities
+  errCount   <- newIORef (0 :: Int)
+
+  emitProgress (object ["tag" .= ("phase" :: Text), "name" .= ("A" :: Text), "workers" .= nWorkers, "total" .= total])
 
   withWriteConn dbPath $ \conn -> do
     initSchema conn
     case mBridgeBin of
       Nothing -> do
-        -- Re-parse each file with bounded concurrency (32 in-flight); serialize DB writes.
-        sem   <- newQSem 32
+        -- N worker threads drain a shared queue; serialize DB writes through mutex.
+        workQ <- newTQueueIO
+        atomically (mapM_ (writeTQueue workQ) files)
         mutex <- newMVar ()
-        mapConcurrently_ (\file ->
-          bracket_ (waitQSem sem) (signalQSem sem) $ do
-            outcome  <- parseOutcome file
-            compiled <- compileOne wsEnv Nothing outcome
-            withMVar mutex $ \_ -> appendToDb conn compiled
-          ) files
+        mapConcurrently_
+          (\k -> workerLoopFilesNoBridge k workQ wsEnv conn mutex errCount)
+          [0 .. nWorkers - 1]
       Just bin -> do
         pool  <- startSqlBridgePool nWorkers bin
         workQ <- newTQueueIO
         atomically (mapM_ (writeTQueue workQ) files)
         mutex <- newMVar ()
         mapConcurrently_
-          (\k -> workerLoopFiles k workQ pool wsEnv conn mutex)
+          (\k -> workerLoopFiles k workQ pool wsEnv conn mutex errCount)
           [0 .. nWorkers - 1]
           `finally` shutdownSqlBridgePool pool
     runPhaseB conn  -- Phase B: link analysis (passes 5–8)
+
+  errors <- readIORef errCount
+  emitProgress (object ["tag" .= ("done" :: Text), "parsed" .= (total - errors), "errors" .= errors])
 
 -- | Phase B: read Phase A tables from DuckDB, run link analysis, write results.
 -- Runs sequentially after Phase A is complete. Split into three functions so
 -- each pass's bindings go out of scope (and are GC-eligible) before the next.
 runPhaseB :: DuckConn -> IO ()
 runPhaseB conn = do
+  emitProgress (object ["tag" .= ("phase" :: Text), "name" .= ("B" :: Text)])
   inh   <- runPass5  conn
   allRC <- runPass67 conn
   runPass8 conn inh allRC
 
 runPass5 :: DuckConn -> IO (Map.Map Text Text)
 runPass5 conn = do
+  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Resolving types" :: Text)])
   lvs                              <- queryLocalVars  conn
   css                              <- queryCallSites  conn
   (objSet, usrTypes, inh, procMap) <- queryObjInfo   conn
@@ -576,6 +617,7 @@ runPass5 conn = do
 -- | Pass 6+7: compute interproc edges and taint ONCE corpus-wide (not once per file).
 runPass67 :: DuckConn -> IO [Taint.ResolvedCallRow]
 runPass67 conn = do
+  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Building call graph" :: Text)])
   gvs  <- queryGlobalVars     conn
   defs <- queryProcDefs       conn
   uses <- queryProcUses       conn
@@ -593,6 +635,7 @@ runPass67 conn = do
       allAnnotations = Taint.buildTaintAnnotations tainted allSources allSinks defs uses
   appendInterprocEdges   conn edges
   appendProcSummaries    conn summaries
+  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Taint analysis" :: Text)])
   appendTaintSources     conn allSources
   appendTaintSinks       conn allSinks
   appendTaintPaths       conn allPaths
@@ -601,6 +644,7 @@ runPass67 conn = do
 
 runPass8 :: DuckConn -> Map.Map Text Text -> [Taint.ResolvedCallRow] -> IO ()
 runPass8 conn inh allRC = do
+  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Dead code detection" :: Text)])
   procs <- queryProcInfos   conn
   dws   <- queryDwObjectSet conn
   let rawCalls      = [ (Taint.rcrObject r, Taint.rcrFromProc r, lastName (Taint.rcrToName r))

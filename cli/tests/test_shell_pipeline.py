@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import subprocess
+import io
 from pathlib import Path
 
 import duckdb
@@ -42,11 +42,23 @@ def _make_minimal_db(path: str) -> None:
     conn.close()
 
 
-def test_run_reports_error_on_binary_failure(monkeypatch, tmp_path):
-    def fake_run(args, **kwargs):
-        return subprocess.CompletedProcess(args, returncode=1, stdout="", stderr="crash")
+class _FakePopen:
+    """Minimal Popen stand-in for pipeline tests."""
 
-    monkeypatch.setattr("pb_cli.shell.pipeline.subprocess.run", fake_run)
+    def __init__(self, returncode: int, stderr_lines: list[bytes] = []) -> None:
+        self._returncode = returncode
+        self.stderr = io.BytesIO(b"".join(line + b"\n" for line in stderr_lines))
+        self.returncode: int | None = None
+
+    def wait(self) -> None:
+        self.returncode = self._returncode
+
+
+def test_run_reports_error_on_binary_failure(monkeypatch, tmp_path):
+    def fake_popen(args, **kwargs):
+        return _FakePopen(returncode=1, stderr_lines=[b"crash"])
+
+    monkeypatch.setattr("pb_cli.shell.pipeline.subprocess.Popen", fake_popen)
 
     reporter = RecordingReporter()
     run(tmp_path, str(tmp_path / "out.duckdb"), Path("/fake/bin"), reporter)
@@ -59,11 +71,11 @@ def test_run_reports_error_on_binary_failure(monkeypatch, tmp_path):
 def test_run_calls_pb_runner_with_db_flag(monkeypatch, tmp_path):
     called_args: list = []
 
-    def fake_run(args, **kwargs):
+    def fake_popen(args, **kwargs):
         called_args.extend(args)
-        return subprocess.CompletedProcess(args, returncode=1, stdout="", stderr="")
+        return _FakePopen(returncode=1)
 
-    monkeypatch.setattr("pb_cli.shell.pipeline.subprocess.run", fake_run)
+    monkeypatch.setattr("pb_cli.shell.pipeline.subprocess.Popen", fake_popen)
 
     reporter = RecordingReporter()
     src_dir = tmp_path / "src"
@@ -78,13 +90,15 @@ def test_run_calls_pb_runner_with_db_flag(monkeypatch, tmp_path):
 def test_run_success_renames_db(monkeypatch, tmp_path):
     db_path = str(tmp_path / "out.duckdb")
 
-    def fake_run(args, **kwargs):
+    def fake_popen(args, **kwargs):
         # Simulate pb-runner creating the .new DB file
         new_path = args[args.index("--db") + 1]
         _make_minimal_db(new_path)
-        return subprocess.CompletedProcess(args, returncode=0, stdout="", stderr="")
+        # Emit a minimal done event so runner_progress gets a clean signal
+        done_line = b'{"tag":"done","parsed":5,"errors":0}'
+        return _FakePopen(returncode=0, stderr_lines=[done_line])
 
-    monkeypatch.setattr("pb_cli.shell.pipeline.subprocess.run", fake_run)
+    monkeypatch.setattr("pb_cli.shell.pipeline.subprocess.Popen", fake_popen)
 
     reporter = RecordingReporter()
     run(tmp_path, db_path, Path("/fake/bin"), reporter)
@@ -101,10 +115,10 @@ def test_run_reset_deletes_existing_db(monkeypatch, tmp_path):
     db_path = tmp_path / "out.duckdb"
     db_path.write_text("placeholder")
 
-    def fake_run(args, **kwargs):
-        return subprocess.CompletedProcess(args, returncode=1, stdout="", stderr="")
+    def fake_popen(args, **kwargs):
+        return _FakePopen(returncode=1)
 
-    monkeypatch.setattr("pb_cli.shell.pipeline.subprocess.run", fake_run)
+    monkeypatch.setattr("pb_cli.shell.pipeline.subprocess.Popen", fake_popen)
 
     reporter = RecordingReporter()
     run(tmp_path, str(db_path), Path("/fake/bin"), reporter, reset=True)

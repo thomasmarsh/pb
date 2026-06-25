@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
+import threading
 from pathlib import Path
 
 from pb_cli.shell.build import find_sql_worker
@@ -48,15 +50,31 @@ def run(
     if sql_worker:
         run_env["PB_SQL_WORKER"] = str(sql_worker)
 
-    with reporter.status("Running pb-runner..."):
-        result = subprocess.run(
+    errors = 0
+    with reporter.runner_progress() as prog:
+        proc = subprocess.Popen(
             [str(binary), "-i", str(src_dir), "--db", db_new],
-            capture_output=True,
-            text=True,
+            stderr=subprocess.PIPE,
             env=run_env,
         )
 
-    if result.returncode != 0:
+        def _read_stderr() -> None:
+            assert proc.stderr is not None
+            for raw in proc.stderr:
+                line = raw.decode(errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    prog.on_event(json.loads(line))
+                except json.JSONDecodeError:
+                    pass  # non-JSON lines (e.g. GHC RTS messages) are silently ignored
+
+        reader = threading.Thread(target=_read_stderr, daemon=True)
+        reader.start()
+        proc.wait()
+        reader.join()
+
+    if proc.returncode != 0:
         reporter.done(parsed=0, errors=1, sql_parse_failures=0)
         return
 
@@ -74,4 +92,4 @@ def run(
         env.storage.compute_metrics(conn, progress)
         sql_parse_failures = env.storage.count_sql_parse_failures(conn)
 
-    reporter.done(parsed=0, errors=0, sql_parse_failures=sql_parse_failures)
+    reporter.done(parsed=0, errors=errors, sql_parse_failures=sql_parse_failures)
