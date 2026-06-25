@@ -8,10 +8,10 @@ import duckdb
 import graphviz
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from pb.pipeline.diagrams import render_svg
 
 from pb_cli.explorer.routes.dependencies import get_db
 from pb_cli.explorer.services.diagrams import get_cfg_diagram
-from pb_cli.shell.diagrams import render_svg
 
 router = APIRouter()
 

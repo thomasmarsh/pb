@@ -39,7 +39,7 @@ def _recv(proc: subprocess.Popen) -> dict:
 
 def _worker() -> subprocess.Popen:
     return subprocess.Popen(
-        [sys.executable, "-m", "pb_cli.bridge.sql_worker"],
+        [sys.executable, "-m", "pb.pipeline.bridge.sql_worker"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

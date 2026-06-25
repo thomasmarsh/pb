@@ -1,14 +1,13 @@
-"""Tests for pb_cli.queries auto-registration."""
+"""Tests for pb.pipeline.queries auto-registration."""
 
 import inspect
 
 import duckdb
 import typer
-
-from pb_cli.shell.build import find_repo
-from pb_cli.shell.db import parse_sql_file
-from pb_cli.shell.env import env
-from pb_cli.shell.queries import _make_command, _print_result, register_queries
+from pb.pipeline.build import find_repo
+from pb.pipeline.db import parse_sql_file
+from pb.pipeline.env import env
+from pb.pipeline.queries import _make_command, _print_result, register_queries
 
 REPO_ROOT = find_repo()
 QUERIES_DIR = REPO_ROOT / "queries"

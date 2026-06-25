@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 import duckdb
+from pb.pipeline.db import parse_sql_file
+from pb.pipeline.env import env
 
 from pb_cli.explorer.routes.dependencies import rows
-from pb_cli.shell.db import parse_sql_file
-from pb_cli.shell.env import env
 
 _INT_TYPES = {"INT", "INTEGER", "BIGINT"}
 
