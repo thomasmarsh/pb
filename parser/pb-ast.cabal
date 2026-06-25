@@ -50,6 +50,8 @@ library
     PB.Analysis.TypeEnv
     PB.Analysis.TypeResolve
     PB.Pipeline.Preprocess
+    PB.Pipeline.Emit
+    PB.Pipeline.Passes
     PB.Pipeline.Runner
     PB.Pipeline.Serialise
     PB.Pipeline.Church

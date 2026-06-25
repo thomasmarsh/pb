@@ -1,65 +1,39 @@
 {-# LANGUAGE StrictData #-}
 module PB.Pipeline.Runner
-  ( runFile
+  ( -- re-exports from Emit
+    runFile
   , collectStatements
   , wrapSrFile
-  , runModeDb
   , extractWindowLayout
   , reconstructRetrieveSql
+    -- own
+  , runModeDb
   ) where
 
 import PB.Prelude
 import PB.AST.BodyStmt   (BodyStmt (..))
 import PB.AST.DataWindow
-import PB.AST.Expr       (Expr (..))
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
-import PB.Grammar.DataWindow (parseDataWindow)
-import PB.Grammar.File       (parseSrFileWithSpans, SrSpans (..))
-import PB.Lexing.Lexer      (LexError (..), LexLine (..), tokenize)
-import PB.Lexing.Splitter   (Statement (..), splitStatements)
-import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
+import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.CfgBuild    (buildCfg)
 import PB.Analysis.CpsCompile  (compileProcedure)
 import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.TypeEnv     (TypeEnv (..), buildWorkspaceTypeEnv, withProcScope)
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
-import PB.Pipeline.Serialise   ()
-
-import Data.Aeson          (ToJSON (..), Value (..), encode, object, toJSON, (.=))
-import qualified Data.Aeson.Key    as Key
-import qualified Data.Aeson.KeyMap as KM
-import qualified Data.ByteString      as BS
-import qualified Data.ByteString.Lazy as BSL
-import Control.Concurrent.Async (mapConcurrently, mapConcurrently_)
-import Control.Concurrent.MVar  (MVar, newMVar, withMVar)
-import Control.Concurrent.STM
-  ( TQueue, atomically
-  , newTQueueIO
-  , writeTQueue, isEmptyTQueue, readTQueue
-  )
-import GHC.Conc   (getNumCapabilities)
-import Control.Exception   (SomeException, try, finally, evaluate)
-import System.Environment  (lookupEnv)
-import System.IO           (hFlush, stderr)
-import Data.IORef          (IORef, newIORef, readIORef, atomicModifyIORef')
-import Data.Char           (intToDigit, toLower)
-import Text.Read           (readMaybe)
-import Data.Either         (lefts)
-import Data.Word           (Word8)
-import qualified Data.Set           as Set
-import qualified Data.Text          as T
-import qualified Data.Text.Encoding as TE
-import System.FilePath     (takeBaseName, takeExtension)
-import PB.Analysis.Builtins    (builtinFnNames, builtinMethodNames)
 import PB.Analysis.TypeResolve
   ( LocalVar, CallSite, GlobalVar (..)
   , extractCallSites, extractDwCallSites, extractGlobalVars, extractLocalVars
-  , resolveTypes, resolveCalls
   , parseParams
   )
-import qualified Data.Map.Strict as Map
+import PB.Pipeline.Emit
+  ( runFile, ParsedFile (..), ParseOutcome (..)
+  , parseOutcome
+  , extractWindowLayout, reconstructRetrieveSql, collectStatements
+  , wrapSrFile
+  )
+import PB.Pipeline.Passes    (runPhaseB)
 import PB.Pipeline.SqlParse
   ( SqlResult (..), SqlBridgePool
   , startSqlBridgePool, shutdownSqlBridgePool
@@ -76,265 +50,34 @@ import PB.Pipeline.DuckDb
   , appendLocalVars, appendCallSites, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
   , appendParseErrors, appendSourceFiles
-  , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
-  , queryProcDefs, queryProcUses, queryResolvedCalls
-  , queryTaintInputs, queryProcInfos, queryDwObjectSet
-  , appendResolvedTypes, appendResolvedCalls
-  , appendInterprocEdges, appendProcSummaries
-  , appendTaintSources, appendTaintSinks, appendTaintPaths
-  , appendTaintAnnotations, appendDeadCode
   )
+
+import Data.Aeson          (ToJSON (..), Value (..), encode, object, toJSON, (.=))
+import qualified Data.ByteString      as BS
+import qualified Data.ByteString.Lazy as BSL
+import Control.Concurrent.Async (mapConcurrently, mapConcurrently_)
+import Control.Concurrent.MVar  (MVar, newMVar, withMVar)
+import Control.Concurrent.STM
+  ( TQueue, atomically
+  , newTQueueIO
+  , writeTQueue, isEmptyTQueue, readTQueue
+  )
+import GHC.Conc   (getNumCapabilities)
+import Control.Exception   (finally, evaluate)
+import System.Environment  (lookupEnv)
+import System.IO           (hFlush, stderr)
+import Data.IORef          (IORef, newIORef, readIORef, atomicModifyIORef')
+import qualified Data.Set           as Set
+import qualified Data.Text          as T
+import qualified Data.Text.Encoding as TE
+import System.FilePath     (takeBaseName)
+import qualified Data.Map.Strict as Map
 
 -- | Emit a single JSON progress event to stderr for the Python reporter.
 emitProgress :: Value -> IO ()
 emitProgress v = do
   BS.hPut stderr (BSL.toStrict (encode v) <> "\n")
   hFlush stderr
-
--- | Last dot-separated segment of a dotted name, e.g. "dw.setfocus" → "setfocus".
-lastName :: Text -> Text
-lastName t = T.takeWhileEnd (/= '.') t
-
--- ---------------------------------------------------------------------------
--- Entry point
-
-runFile :: FilePath -> Text -> Either Text Value
-runFile path src0 =
-  let src = stripBom src0
-  in case fileKind path of
-    DataWindow  -> runDataWindow  path src
-    Pipeline    -> runPipeline    path src
-    Project     -> runProject     path src
-    PowerScript -> runPowerScript path src
-
-stripBom :: Text -> Text
-stripBom t = fromMaybe t (T.stripPrefix "\xFEFF" t)
-
-data FileKind = DataWindow | Pipeline | Project | PowerScript
-
-fileKind :: FilePath -> FileKind
-fileKind fp = case map toLower (takeExtension fp) of
-  ".srd" -> DataWindow
-  ".srp" -> Pipeline
-  ".srj" -> Project
-  _      -> PowerScript
-
--- ---------------------------------------------------------------------------
--- DataWindow
-
-runDataWindow :: FilePath -> Text -> Either Text Value
-runDataWindow path src = fmap (wrapDwFile path) (parseDataWindow src)
-
-wrapDwFile :: FilePath -> DataWindowFile -> Value
-wrapDwFile path dw = case toJSON dw of
-  Object o -> Object (KM.fromList
-    [ "file" .= path
-    , "kind" .= ("datawindow" :: Text)
-    , "meta" .= object
-        [ "object"   .= T.pack (takeBaseName path)
-        , "ancestor" .= (Nothing :: Maybe Text)
-        ]
-    ] <> o)
-  v        -> v
-
-runPipeline :: FilePath -> Text -> Either Text Value
-runPipeline path _src = Right $ object
-  [ "file"   .= path
-  , "kind"   .= ("pipeline" :: Text)
-  , "status" .= ("unimplemented" :: Text)
-  ]
-
-runProject :: FilePath -> Text -> Either Text Value
-runProject path _src = Right $ object
-  [ "file"   .= path
-  , "kind"   .= ("project" :: Text)
-  , "status" .= ("unimplemented" :: Text)
-  ]
-
--- ---------------------------------------------------------------------------
--- PowerScript pipeline
-
-runPowerScript :: FilePath -> Text -> Either Text Value
-runPowerScript path src = do
-  (srFile, spans) <- parsePowerScriptFile src
-  let wsEnv = buildWorkspaceTypeEnv [srFile]
-  Right (wrapSrFile False path srFile spans wsEnv)
-
--- | Parse PowerScript source text to (SrFile, SrSpans).
-parsePowerScriptFile :: Text -> Either Text (SrFile, SrSpans)
-parsePowerScriptFile src = do
-  let logicalLines         = normalizeText src
-      (headers, bodyLines) = stripHeaders logicalLines
-      lexLines             = tokenize bodyLines
-  stmts <- collectStatements lexLines
-  parseSrFileWithSpans headers stmts
-
-wrapSrFile :: Bool -> FilePath -> SrFile -> SrSpans -> TypeEnv -> Value
-wrapSrFile withCps path sf spans wsEnv =
-    let (objName, ancestor) = case srTypeBlocks sf of
-          (tb:_) -> (tdName (tbDecl tb), Just (tdAncestor (tbDecl tb)))
-          []     -> (T.pack path, Nothing)
-
-        -- Per-procedure env: overlay parsed params on the workspace env.
-        procEnv :: Text -> TypeEnv
-        procEnv paramsText = withProcScope (parseParams paramsText) wsEnv
-
-        -- User-defined function names (lower-cased) for CPS callproc dispatch.
-        userFns :: Set.Set Text
-        userFns = Set.fromList
-          $  map (T.toLower . fnsName . fbSig) (srFunctions  sf)
-          <> map (T.toLower . ssName  . sbSig) (srSubroutines sf)
-
-        injectMeta :: (Int, Int) -> Value -> Value
-        injectMeta (start, end) (Object o) =
-            Object (KM.fromList ["meta" .= metaVal] <> o)
-          where metaVal = object
-                  [ "file"      .= T.pack path
-                  , "object"    .= objName
-                  , "ancestor"  .= ancestor
-                  , "startLine" .= start
-                  , "endLine"   .= end
-                  ]
-        injectMeta _ v = v
-
-        injectCompiled env body (Object o) =
-            let cfg = buildCfg body
-                base = KM.insert "cfg" (toJSON cfg) o
-            in Object $ if withCps
-                then KM.insert "cpsGraph" (toJSON (compileProcedure env userFns body)) base
-                else base
-        injectCompiled _ _ v = v
-
-        injectAll env body sp v =
-            injectCompiled env body (injectMeta sp v)
-
-    in object
-        [ "file"            .= path
-        , "kind"            .= ("powerscript" :: Text)
-        , "meta"            .= object ["object" .= objName, "ancestor" .= ancestor]
-        , "headers"         .= srHeaders sf
-        , "forward"         .= srForward sf
-        , "prototypes"      .= srPrototypes sf
-        , "variables"       .= srVariables sf
-        , "globalInstances" .= srGlobalInstances sf
-        , "typeBlocks"      .= srTypeBlocks sf
-        , "onBlocks"    .= [ injectAll wsEnv                             (obBody ob) sp (toJSON ob)
-                           | (sp, ob) <- zip (spOnBlocks    spans) (srOnBlocks    sf) ]
-        , "events"      .= [ injectAll wsEnv                             (evBody ev) sp (toJSON ev)
-                           | (sp, ev) <- zip (spEvents      spans) (srEvents      sf) ]
-        , "functions"   .= [ injectAll (procEnv (fnsParams (fbSig fn))) (fbBody fn) sp (toJSON fn)
-                           | (sp, fn) <- zip (spFunctions   spans) (srFunctions   sf) ]
-        , "subroutines" .= [ injectAll (procEnv (ssParams  (sbSig sb))) (sbBody sb) sp (toJSON sb)
-                           | (sp, sb) <- zip (spSubroutines spans) (srSubroutines sf) ]
-        ]
-
--- | Convert lex results to statements, failing on the first lex error.
---   Empty-token statements (blank lines) are filtered out so the grammar
---   parser's eof succeeds on trailing whitespace.
-collectStatements :: [LexLine] -> Either Text [Statement]
-collectStatements lexLines =
-  let results = splitStatements lexLines
-  in case lefts results of
-    (e : _) -> Left (formatLexErr e)
-    []      -> Right [s | Right s <- results, not (null (stmtTokens s))]
-
--- | Human-readable lex error: line span, unexpected char, content, xxd hex dump.
-formatLexErr :: LexError -> Text
-formatLexErr e =
-  let ll    = leSource e
-      off   = leOffset e
-      raw   = llText ll
-      bytes = BS.unpack (TE.encodeUtf8 raw)
-      lineSpan
-        | llStartLine ll == llEndLine ll =
-            "line "  <> T.pack (show (llStartLine ll))
-        | otherwise =
-            "lines " <> T.pack (show (llStartLine ll))
-                     <> "-" <> T.pack (show (llEndLine ll))
-      badChar
-        | off < T.length raw =
-            let c  = T.index raw off
-                cp = fromEnum c
-                repr = if c >= ' ' && c <= '~' then " '" <> T.singleton c <> "'" else ""
-            in "\n  unexpected char at offset " <> T.pack (show off)
-               <> ": 0x" <> T.pack (map intToDigit [cp `div` 16, cp `mod` 16])
-               <> repr
-        | otherwise = ""
-  in "lex error at " <> lineSpan <> ":"
-  <> "\n  content: " <> T.take 120 raw
-  <> badChar
-  <> "\n" <> T.intercalate "\n" (xxdDump bytes)
-
-xxdDump :: [Word8] -> [Text]
-xxdDump = go 0
-  where
-    go _    [] = []
-    go addr bs = fmtXxdRow addr (take 16 bs) : go (addr + 16) (drop 16 bs)
-
-fmtXxdRow :: Int -> [Word8] -> Text
-fmtXxdRow addr bs =
-  "  " <> fmtHexAddr addr <> ": " <> fmtHexSection bs <> "  " <> T.pack (map asciiOf bs)
-
-fmtHexAddr :: Int -> Text
-fmtHexAddr n =
-  T.pack [intToDigit ((n `div` d) `mod` 16) | d <- [268435456, 16777216, 1048576, 65536, 4096, 256, 16, 1]]
-
-fmtHexSection :: [Word8] -> Text
-fmtHexSection bs = t <> T.replicate (max 0 (40 - T.length t)) " "
-  where
-    pairs  = toPairs bs
-    nPairs = length pairs
-    t      = T.concat (zipWith mkPair [0 ..] pairs)
-    mkPair i pair =
-      let hex = T.concat [T.pack [intToDigit (fromIntegral b `div` 16), intToDigit (fromIntegral b `mod` 16)] | b <- pair]
-          sep | i == nPairs - 1 = ""
-              | i == 3          = "  "
-              | otherwise       = " "
-      in hex <> sep
-    toPairs []       = []
-    toPairs [x]      = [[x]]
-    toPairs (x:y:zs) = [x, y] : toPairs zs
-
-asciiOf :: Word8 -> Char
-asciiOf b
-  | b >= 0x20 && b <= 0x7e = toEnum (fromIntegral b)
-  | otherwise               = '.'
-
--- ---------------------------------------------------------------------------
--- Per-file parse outcome
-
-data ParsedFile = ParsedFile
-  { pfPath     :: FilePath
-  , pfSrFile   :: SrFile
-  , pfSpans    :: SrSpans
-  , pfContents :: Text
-  }
-
-data ParseOutcome
-  = PsParsed ParsedFile
-  | PsDw     FilePath Text DataWindowFile
-  | PsFailed FilePath Text
-  | OtherFile FilePath
-
--- | Attempt to parse one file.
-parseOutcome :: FilePath -> IO ParseOutcome
-parseOutcome src = case fileKind src of
-  PowerScript -> do
-    readResult <- try (readFile src) :: IO (Either SomeException Text)
-    pure $ case readResult of
-      Left  ex -> PsFailed src (T.pack (show ex))
-      Right contents ->
-        case parsePowerScriptFile (stripBom contents) of
-          Left  err      -> PsFailed src err
-          Right (sf, sp) -> PsParsed (ParsedFile src sf sp contents)
-  DataWindow -> do
-    readResult <- try (readFile src) :: IO (Either SomeException Text)
-    pure $ case readResult of
-      Left  ex       -> PsFailed src (T.pack (show ex))
-      Right contents -> case parseDataWindow (stripBom contents) of
-        Left  err -> PsFailed src err
-        Right dw  -> PsDw src contents dw
-  _ -> pure (OtherFile src)
 
 -- ---------------------------------------------------------------------------
 -- DuckDB streaming mode
@@ -472,70 +215,6 @@ renderBandKind (Just (BkTreeLevel n))  = "tree_level_" <> T.pack (show n)
 jsonText :: Value -> Text
 jsonText = TE.decodeUtf8 . BSL.toStrict . encode
 
--- ---------------------------------------------------------------------------
--- Window layout extraction
-
-exprScalar :: Expr -> Maybe Value
-exprScalar (ExStr t) = Just (String t)
-exprScalar (ExInt t) = Just (maybe (String t) toJSON (readMaybe (T.unpack t) :: Maybe Int))
-exprScalar (ExReal t) = Just (String t)
-exprScalar _          = Nothing
-
-typeBlockProps :: TypeBlock -> Map.Map Text Value
-typeBlockProps tb = Map.fromList
-  [ (T.toLower nm, v)
-  | Located _ BsLocalVar { varName = nm, varInit = Just expr } <- tbBody tb
-  , Just v <- [exprScalar expr]
-  ]
-
-isWindowAncestor :: Map.Map Text Text -> Set.Set Text -> Text -> Bool
-isWindowAncestor amap visited t
-  | Set.member t visited = False
-  | t `elem` (["window", "w_pbgrid"] :: [Text]) = True
-  | "w_" `T.isPrefixOf` t = True
-  | otherwise = case Map.lookup t amap of
-      Just p  -> isWindowAncestor amap (Set.insert t visited) p
-      Nothing -> False
-
--- | Extract a JSON layout descriptor for window objects (.srw/.sru/.srf).
--- Returns Nothing for non-window objects (services, user-objects, structures).
-extractWindowLayout :: [TypeBlock] -> Maybe Value
-extractWindowLayout tbs =
-  let amap = Map.fromList
-        [ (T.toLower (tdName (tbDecl tb)), T.toLower (tdAncestor (tbDecl tb)))
-        | tb <- tbs ]
-      roots = [ tb | tb <- tbs
-                   , isNothing (tdWithin (tbDecl tb))
-                   , isWindowAncestor amap Set.empty
-                       (T.toLower (tdAncestor (tbDecl tb))) ]
-  in case roots of
-    []      -> Nothing
-    (win:_) ->
-      let winName  = T.toLower (tdName (tbDecl win))
-          props    = typeBlockProps win
-          children = [ tb | tb <- tbs
-                          , fmap T.toLower (tdWithin (tbDecl tb)) == Just winName ]
-          mkControl tb =
-            let cp      = typeBlockProps tb
-                nm      = tdName (tbDecl tb)
-                rawAnc  = tdAncestor (tbDecl tb)
-                typ     = T.toLower (T.takeWhile (/= '`') rawAnc)
-                base    = ["name" .= nm, "type" .= typ]
-                nums    = [ Key.fromText k .= v | k <- ["x","y","width","height"]
-                                               , Just v <- [Map.lookup k cp] ]
-                strs    = [ Key.fromText k .= v | k <- ["text","dataobject"]
-                                               , Just v <- [Map.lookup k cp] ]
-            in object (base <> nums <> strs)
-          dims  = [ Key.fromText k .= v | k <- ["width","height"], Just v <- [Map.lookup k props] ]
-          title = [ "title" .= v | Just v <- [Map.lookup "title" props] ]
-      in Just $ object $
-           [ "name"     .= tdName (tbDecl win)
-           , "type"     .= ("window" :: Text)
-           , "controls" .= map mkControl children
-           ]
-           <> dims <> title
-
--- | Parse SQL from one procedure's BsRaw nodes via the bridge pool slot k.
 -- | Build SqlStmtRows from BsRaw nodes without a SQL bridge (no tables/columns).
 rawSqlRow :: Text -> Text -> (Text, [Located BodyStmt]) -> [SqlStmtRow]
 rawSqlRow fpT obj (pName, body) =
@@ -671,105 +350,3 @@ runModeDb srcDir dbPath = do
 
   errors <- readIORef errCount
   emitProgress (object ["tag" .= ("done" :: Text), "parsed" .= (total - errors), "errors" .= errors])
-
--- | Phase B: read Phase A tables from DuckDB, run link analysis, write results.
--- Runs sequentially after Phase A is complete. Split into three functions so
--- each pass's bindings go out of scope (and are GC-eligible) before the next.
-runPhaseB :: DuckConn -> IO ()
-runPhaseB conn = do
-  emitProgress (object ["tag" .= ("phase" :: Text), "name" .= ("B" :: Text)])
-  inh   <- runPass5  conn
-  allRC <- runPass67 conn
-  runPass8 conn inh allRC
-
-runPass5 :: DuckConn -> IO (Map.Map Text Text)
-runPass5 conn = do
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Resolving types" :: Text)])
-  lvs                              <- queryLocalVars  conn
-  css                              <- queryCallSites  conn
-  (objSet, usrTypes, inh, procMap) <- queryObjInfo   conn
-  let rt = resolveTypes lvs objSet usrTypes
-      rc = resolveCalls css procMap inh builtinFnNames builtinMethodNames
-  appendResolvedTypes conn rt
-  appendResolvedCalls conn rc
-  pure inh
-
--- | Pass 6+7: compute interproc edges and taint ONCE corpus-wide (not once per file).
-runPass67 :: DuckConn -> IO [Taint.ResolvedCallRow]
-runPass67 conn = do
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Building call graph" :: Text)])
-  gvs  <- queryGlobalVars     conn
-  defs <- queryProcDefs       conn
-  uses <- queryProcUses       conn
-  allRC <- queryResolvedCalls conn
-  tfis  <- queryTaintInputs   conn
-  let globalVarNames = Set.fromList (map gvName gvs)
-      allProcMetas   = concatMap Taint.tfiProcMetas tfis
-      allSqlStmts    = concatMap Taint.tfiSqlStmts  tfis
-      edges          = Taint.buildInterprocEdges allRC defs uses globalVarNames allProcMetas
-      summaries      = Taint.buildProcedureSummaries edges defs uses globalVarNames allProcMetas
-      allSources     = Taint.classifySources allSqlStmts allProcMetas
-      allSinks       = Taint.classifySinks   allSqlStmts
-      (tainted, prov) = Taint.propagateTaint allSources defs uses edges
-      allPaths       = Taint.buildTaintPaths allSources allSinks prov
-      allAnnotations = Taint.buildTaintAnnotations tainted allSources allSinks defs uses
-  appendInterprocEdges   conn edges
-  appendProcSummaries    conn summaries
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Taint analysis" :: Text)])
-  appendTaintSources     conn allSources
-  appendTaintSinks       conn allSinks
-  appendTaintPaths       conn allPaths
-  appendTaintAnnotations conn allAnnotations
-  pure allRC
-
-runPass8 :: DuckConn -> Map.Map Text Text -> [Taint.ResolvedCallRow] -> IO ()
-runPass8 conn inh allRC = do
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Dead code detection" :: Text)])
-  procs <- queryProcInfos   conn
-  dws   <- queryDwObjectSet conn
-  let rawCalls      = [ (Taint.rcrObject r, Taint.rcrFromProc r, lastName (Taint.rcrToName r))
-                      | r <- allRC ]
-      resolvedCalls = [ (Taint.rcrObject r, Taint.rcrFromProc r, o, p)
-                      | r <- allRC
-                      , Just o <- [Taint.rcrTargetObject r]
-                      , Just p <- [Taint.rcrTargetProc   r]
-                      ]
-      dead = DeadCode.computeDeadProcedures
-               procs rawCalls resolvedCalls (Map.toList inh) dws
-  appendDeadCode conn dead
-
--- ---------------------------------------------------------------------------
--- DW retrieve SQL reconstruction
-
--- | Reconstruct a runnable SQL string from a parsed DW retrieve clause.
--- For native SQL (DwRetrieveRaw), the text is returned verbatim.
--- For PBSELECT (DwRetrieveOk), SELECT/FROM/WHERE is reconstructed:
---   - Table-qualified column names ("tbl.col") are stripped to bare "col".
---   - Argument references (":argname") in WHERE exp2 become "?".
---   - WHERE clauses are joined with the LOGIC connector from each clause
---     (default AND when connector is absent mid-chain).
-reconstructRetrieveSql :: DwRetrieveOrRaw -> Text
-reconstructRetrieveSql (DwRetrieveRaw t) = t
-reconstructRetrieveSql (DwRetrieveOk r)  =
-    let cols   = T.intercalate ", " (map stripQual (drColumns r))
-        tables = T.intercalate ", " (drTables r)
-        select = "SELECT " <> cols <> " FROM " <> tables
-    in case drWhere r of
-        []  -> select
-        ws  -> select <> " WHERE " <> buildWhere ws
-  where
-    stripQual t = case T.breakOnEnd "." t of
-        ("", col) -> col
-        (_,  col) -> col
-
-    argToParam t
-        | ":" `T.isPrefixOf` t = "?"
-        | otherwise            = t
-
-    buildWhere []     = ""
-    buildWhere (w:ws) =
-        let clause = stripQual (dwcExp1 w)
-                  <> " " <> dwcOp w
-                  <> " " <> argToParam (dwcExp2 w)
-            logic  = maybe " AND " (\l -> " " <> T.toUpper l <> " ") (dwcLogic w)
-        in clause <> (if null ws then "" else logic <> buildWhere ws)
