@@ -4,11 +4,13 @@ module PB.Pipeline.Runner
   , collectStatements
   , wrapSrFile
   , runModeDb
+  , extractWindowLayout
   ) where
 
 import PB.Prelude
-import PB.AST.BodyStmt   (BodyStmt)
+import PB.AST.BodyStmt   (BodyStmt (..))
 import PB.AST.DataWindow
+import PB.AST.Expr       (Expr (..))
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.Grammar.DataWindow (parseDataWindow)
@@ -25,6 +27,7 @@ import PB.Pipeline.Taint       qualified as Taint
 import PB.Pipeline.Serialise   ()
 
 import Data.Aeson          (ToJSON (..), Value (..), encode, object, toJSON, (.=))
+import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
@@ -41,6 +44,7 @@ import System.Environment  (lookupEnv)
 import System.IO           (hFlush, stderr)
 import Data.IORef          (IORef, newIORef, readIORef, atomicModifyIORef')
 import Data.Char           (intToDigit, toLower)
+import Text.Read           (readMaybe)
 import Data.Either         (lefts)
 import Data.Word           (Word8)
 import qualified Data.Set           as Set
@@ -415,6 +419,7 @@ compileOne wsEnv mBridge outcome = case outcome of
         fmap concat $ mapM (extractProcSql pool k fp obj) procBodies
     pure $ CFPs $ CompiledPs
       { cpsObjectRow     = ObjectRow fp "powerscript" obj anc
+                             (fmap jsonText (extractWindowLayout (srTypeBlocks sf)))
       , cpsProcRows      = map fst procs
       , cpsLocalVars     = lvs
       , cpsCallSites     = css
@@ -464,6 +469,69 @@ renderBandKind (Just (BkTreeLevel n))  = "tree_level_" <> T.pack (show n)
 
 jsonText :: Value -> Text
 jsonText = TE.decodeUtf8 . BSL.toStrict . encode
+
+-- ---------------------------------------------------------------------------
+-- Window layout extraction
+
+exprScalar :: Expr -> Maybe Value
+exprScalar (ExStr t) = Just (String t)
+exprScalar (ExInt t) = Just (maybe (String t) toJSON (readMaybe (T.unpack t) :: Maybe Int))
+exprScalar (ExReal t) = Just (String t)
+exprScalar _          = Nothing
+
+typeBlockProps :: TypeBlock -> Map.Map Text Value
+typeBlockProps tb = Map.fromList
+  [ (T.toLower nm, v)
+  | Located _ BsLocalVar { varName = nm, varInit = Just expr } <- tbBody tb
+  , Just v <- [exprScalar expr]
+  ]
+
+isWindowAncestor :: Map.Map Text Text -> Set.Set Text -> Text -> Bool
+isWindowAncestor amap visited t
+  | Set.member t visited = False
+  | t `elem` (["window", "w_pbgrid"] :: [Text]) = True
+  | "w_" `T.isPrefixOf` t = True
+  | otherwise = case Map.lookup t amap of
+      Just p  -> isWindowAncestor amap (Set.insert t visited) p
+      Nothing -> False
+
+-- | Extract a JSON layout descriptor for window objects (.srw/.sru/.srf).
+-- Returns Nothing for non-window objects (services, user-objects, structures).
+extractWindowLayout :: [TypeBlock] -> Maybe Value
+extractWindowLayout tbs =
+  let amap = Map.fromList
+        [ (T.toLower (tdName (tbDecl tb)), T.toLower (tdAncestor (tbDecl tb)))
+        | tb <- tbs ]
+      roots = [ tb | tb <- tbs
+                   , isNothing (tdWithin (tbDecl tb))
+                   , isWindowAncestor amap Set.empty
+                       (T.toLower (tdAncestor (tbDecl tb))) ]
+  in case roots of
+    []      -> Nothing
+    (win:_) ->
+      let winName  = T.toLower (tdName (tbDecl win))
+          props    = typeBlockProps win
+          children = [ tb | tb <- tbs
+                          , fmap T.toLower (tdWithin (tbDecl tb)) == Just winName ]
+          mkControl tb =
+            let cp      = typeBlockProps tb
+                nm      = tdName (tbDecl tb)
+                rawAnc  = tdAncestor (tbDecl tb)
+                typ     = T.toLower (T.takeWhile (/= '`') rawAnc)
+                base    = ["name" .= nm, "type" .= typ]
+                nums    = [ Key.fromText k .= v | k <- ["x","y","width","height"]
+                                               , Just v <- [Map.lookup k cp] ]
+                strs    = [ Key.fromText k .= v | k <- ["text","dataobject"]
+                                               , Just v <- [Map.lookup k cp] ]
+            in object (base <> nums <> strs)
+          dims  = [ Key.fromText k .= v | k <- ["width","height"], Just v <- [Map.lookup k props] ]
+          title = [ "title" .= v | Just v <- [Map.lookup "title" props] ]
+      in Just $ object $
+           [ "name"     .= tdName (tbDecl win)
+           , "type"     .= ("window" :: Text)
+           , "controls" .= map mkControl children
+           ]
+           <> dims <> title
 
 -- | Parse SQL from one procedure's BsRaw nodes via the bridge pool slot k.
 -- | Build SqlStmtRows from BsRaw nodes without a SQL bridge (no tables/columns).

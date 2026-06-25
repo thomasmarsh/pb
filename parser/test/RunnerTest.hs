@@ -1,7 +1,12 @@
 module RunnerTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.Runner (runFile)
+import PB.Pipeline.Runner  (runFile, extractWindowLayout)
+import PB.AST.BodyStmt     (BodyStmt (..))
+import PB.AST.Expr         (Expr (..))
+import PB.AST.Located      (Located (..))
+import PB.AST.SourceFile   (TypeBlock (..), TypeDecl (..))
+import PB.AST.Type         (PbType (..))
 
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key    as Key
@@ -352,6 +357,69 @@ tests = testGroup "Pipeline.Runner"
         case runFile "test.sru" src of
           Left err -> assertFailure ("expected Right, got: " <> T.unpack err)
           Right _  -> pure ()
+    ]
+
+  , testGroup "extractWindowLayout"
+    [ testCase "returns Nothing for empty typeBlocks" $
+        extractWindowLayout [] @?= Nothing
+
+    , testCase "extracts window dimensions and two controls" $
+        let winDecl = TypeDecl { tdName = "w_form", tdAncestor = "window", tdWithin = Nothing }
+            winBody =
+              [ Located 1 BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "width",  varInit = Just (ExInt "3200") }
+              , Located 2 BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "height", varInit = Just (ExInt "2400") }
+              , Located 3 BsLocalVar { varMods = [], varType = PtPrimitive "string",  varName = "title",  varInit = Just (ExStr "My Form") }
+              ]
+            cbDecl  = TypeDecl { tdName = "cb_ok",   tdAncestor = "commandbutton", tdWithin = Just "w_form" }
+            cbBody  =
+              [ Located 4 BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "x",      varInit = Just (ExInt "100") }
+              , Located 5 BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "y",      varInit = Just (ExInt "200") }
+              , Located 6 BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "width",  varInit = Just (ExInt "300") }
+              , Located 7 BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "height", varInit = Just (ExInt "80") }
+              , Located 8 BsLocalVar { varMods = [], varType = PtPrimitive "string",  varName = "text",   varInit = Just (ExStr "OK") }
+              ]
+            dwDecl  = TypeDecl { tdName = "dw_list", tdAncestor = "datawindow", tdWithin = Just "w_form" }
+            dwBody  =
+              [ Located 9  BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "x",          varInit = Just (ExInt "0") }
+              , Located 10 BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "y",          varInit = Just (ExInt "400") }
+              , Located 11 BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "width",      varInit = Just (ExInt "3200") }
+              , Located 12 BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "height",     varInit = Just (ExInt "1800") }
+              , Located 13 BsLocalVar { varMods = [], varType = PtPrimitive "string",  varName = "dataobject", varInit = Just (ExStr "dw_something") }
+              ]
+            tbs = [ TypeBlock winDecl winBody, TypeBlock cbDecl cbBody, TypeBlock dwDecl dwBody ]
+            expected = Just $ object
+              [ "name"     .= ("w_form" :: T.Text)
+              , "type"     .= ("window" :: T.Text)
+              , "controls" .=
+                  [ object [ "name" .= ("cb_ok" :: T.Text), "type" .= ("commandbutton" :: T.Text)
+                            , "x" .= (100 :: Int), "y" .= (200 :: Int)
+                            , "width" .= (300 :: Int), "height" .= (80 :: Int)
+                            , "text" .= ("OK" :: T.Text) ]
+                  , object [ "name" .= ("dw_list" :: T.Text), "type" .= ("datawindow" :: T.Text)
+                            , "x" .= (0 :: Int), "y" .= (400 :: Int)
+                            , "width" .= (3200 :: Int), "height" .= (1800 :: Int)
+                            , "dataobject" .= ("dw_something" :: T.Text) ]
+                  ]
+              , "width"    .= (3200 :: Int)
+              , "height"   .= (2400 :: Int)
+              , "title"    .= ("My Form" :: T.Text)
+              ]
+        in extractWindowLayout tbs @?= expected
+
+    , testCase "returns Nothing for non-window ancestor (nonvisualobject)" $
+        let decl = TypeDecl { tdName = "uo_service", tdAncestor = "nonvisualobject", tdWithin = Nothing }
+        in extractWindowLayout [TypeBlock decl []] @?= Nothing
+
+    , testCase "strips backtick qualifier from ancestor type in control" $
+        let winDecl  = TypeDecl { tdName = "w_parent", tdAncestor = "window", tdWithin = Nothing }
+            ctrlDecl = TypeDecl { tdName = "dw_1", tdAncestor = "datawindow`dw_1", tdWithin = Just "w_parent" }
+            tbs = [TypeBlock winDecl [], TypeBlock ctrlDecl []]
+        in case extractWindowLayout tbs of
+             Nothing -> assertFailure "expected Just, got Nothing"
+             Just v  ->
+               let controls = lookupObj "controls" v
+                   firstCtl = firstOf controls
+               in lookupObj "type" firstCtl @?= String "datawindow"
     ]
 
   , testGroup "runFile stub extensions"
