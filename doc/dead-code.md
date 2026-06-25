@@ -1,6 +1,6 @@
 # Dead Code Analysis
 
-Developer reference for the dead code detection system in `cli/pb_cli/`.
+Developer reference for the dead code detection system (Haskell `Analysis.DeadCode`).
 
 ## Overview
 
@@ -196,13 +196,11 @@ resolvable statically.
 
 | File | Purpose |
 |------|---------|
-| `cli/pb_cli/core/importing.py` | `_import_ps()`, `_import_dw()` — AST walking, call edge extraction |
-| `cli/pb_cli/core/ast_walker.py` | `walk_calls()`, `walk_excall_arg_calls()` — AST traversal |
-| `cli/pb_cli/core/type_resolution.py` | `resolve_calls()` — cross-object call resolution |
-| `cli/pb_cli/core/dead_code.py` | `compute_dead_procedures()` — BFS reachability (pure, no I/O) |
-| `cli/pb_cli/shell/dead_code.py` | `build_dead_code_table()` — DuckDB I/O, populates `dead_procedures` |
-| `cli/pb_cli/explorer/services/analysis.py` | `get_dead_code()` — reads from `dead_procedures` table |
-| `cli/pb_cli/cli.py` | `pb dead-code` CLI command |
+| `compiler/src/PB/Analysis/DeadCode.hs` | `computeDeadProcedures` — BFS reachability (pure, Haskell) |
+| `compiler/src/PB/Pipeline/Passes.hs` | `runPass8` — orchestrates dead code analysis in Phase B |
+| `compiler/src/PB/Pipeline/DuckDb.hs` | `appendDeadCode` — writes results to DuckDB |
+| `cli/api/src/pb/api/services/analysis.py` | `get_dead_code()` — reads from `dead_procedures` table |
+| `cli/pipeline/src/pb/pipeline/cli.py` | `pb dead-code` CLI command |
 
 ---
 

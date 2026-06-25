@@ -139,7 +139,7 @@ The client patches SVG element `fill` and `stroke` attributes by element ID afte
 
 **Resolution: Server-side column tagging.**
 
-`cli/pb_cli/explorer/routes/queries.py` already has schema knowledge at query time and can annotate result columns. Client-side heuristic resolution requires loading a name index and produces false positives on short common strings. Server-side tagging is reliable and keeps the client simple.
+`cli/api/src/pb/api/routes/queries.py` already has schema knowledge at query time and can annotate result columns. Client-side heuristic resolution requires loading a name index and produces false positives on short common strings. Server-side tagging is reliable and keeps the client simple.
 
 **Column metadata format added to query response:**
 
@@ -305,7 +305,7 @@ Six tracks: four P1-buildable, two phase-gated.
 **Tasks:**
 
 1. URL-encode Ask query and result state — URL hash or query param + reducer sync; navigating back via browser back button or `[` keyboard shortcut restores the Ask surface with query and results intact
-2. `cli/pb_cli/explorer/routes/queries.py`: add `entity_type` metadata to result column schema in the query response (format specified in §1 Q6)
+2. `cli/api/src/pb/api/routes/queries.py`: add `entity_type` metadata to result column schema in the query response (format specified in §1 Q6)
 3. ResultTable: render `entity_type`-tagged columns as EntityCard links; untagged columns as plain text; sortable by any column header; paginated at 50 rows with page controls; "Save query" and "Export CSV" actions
 4. AskInput: expandable "▼ Show generated query" pane below input; collapsed by default; label adapts to query type (SQL, taint query, Z3 proposition); pane is editable — user can modify and re-run
 5. AskInput: SQL detection — input starting with `SELECT` or `WITH` routes directly to DuckDB without LLM translation; shown in placeholder text: "Ask a question, or start with SELECT to write SQL directly"

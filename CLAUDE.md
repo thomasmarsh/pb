@@ -7,17 +7,15 @@ cd compiler && cabal build                          # compile library + executab
 cd compiler && cabal build --enable-tests           # compile tests too
 cd compiler && cabal test                           # run test suite
 cd compiler && cabal test --test-show-details=direct # verbose output
-./pb check-corpus                    # 0 errors / 1051 files = baseline
-./pb debt                        # BsRaw + ExRaw debt + DW control coverage (both corpora)
-./pb debt --no-build             # same, skip build step
-cd cli && uv run pytest         # Python tool tests (cli/tests/ directory)
+./pb check-corpus                    # 0 errors / 1031 files = baseline
+cd cli && uv run pytest lib/tests/ pipeline/tests/ api/tests/  # Python tests
 cd cli && uv run ruff check     # Python lint
 cd cli && uv run pyright        # Python type check (0 errors baseline)
 cd ui && pnpm typecheck         # TypeScript type check (explorer)
 cd ui && pnpm lint              # ESLint (explorer)
 cd ui && pnpm test              # Explorer reducer tests (64 tests)
 cd ui && pnpm build             # Build explorer TS → static/dist/
-PB_SQL_MOCK=1 uv run pb explore  # Run explorer with mock SQL (no MySQL needed)
+PB_SQL_MOCK=1 uv run --project cli pb explore  # Run explorer with mock SQL (no MySQL needed)
 ```
 
 ## Session Start (read this every session)
@@ -136,9 +134,9 @@ the `"tag"` value on every node is the **literal Haskell constructor name** — 
 
 Do not hand-roll a walker that special-cases field names per constructor — it is fragile to
 exactly this kind of schema drift (this bit us once: see BACKLOG's `pb index` SQL-extraction
-entry). Use `pb_cli.core.ast_walker.walk_tagged`, which recurses into every dict value and list
+entry). Use the AST walker pattern which recurses into every dict value and list
 item unconditionally and can't miss a tag regardless of which field a constructor nests its
-children under. `walk_calls`/`count_branches`/`walk_bsraw`/`walk_exraw` are all built on it.
+children under.
 
 If you need ground truth on the wire format, don't trust committed example JSON (`output/` is
 gitignored scratch and may be stale) — rebuild and run the binary directly:
@@ -150,22 +148,6 @@ BIN=$(cd compiler && cabal list-bin pbc)
 ```
 
 **Canonical cabal invocation:** always run cabal from the `compiler/` directory (either `cd compiler && cabal …` or `(cd compiler && cabal …)` from the repo root). This picks up both `cabal.project` at the repo root and `compiler/cabal.project.local` (which sets the duckdb-ffi library paths). Build output goes to `dist-newstyle/` at the repo root. Never use `--project-dir compiler` from the repo root — that skips `cabal.project.local` and loses the duckdb library paths.
-
-**Diagnosing implementation debt.** When the charter targets BsRaw, ExRaw, or DW structural-field coverage, run the debt analyser first — do NOT re-derive the breakdown from scratch:
-
-```bash
-./pb debt --no-build
-```
-
-This prints:
-
-- Per-corpus BsRaw category counts (`sql`, `decl`, `ctrl`, `handled`, `other`) — `other` is the actionable BsRaw target; the rest are correct or already handled.
-- A ranked ExRaw breakdown by leading token with examples — these are expression-level `ExRaw` fallbacks still to be promoted to typed `Expr` constructors. Use this to pick the highest-value next ExRaw charter.
-- **DW control coverage** — per-field percentage of `DwControl` structural fields (`name`, `band`, `id`, `x`, `y`, `width`, `height`, `visible`, `expression`, `tab_seq`) that are non-null across both corpora; top 15 control types by frequency. Use this to baseline before any DW-track session and confirm improvement after. Expected coverage for "real" display controls (text/column/compute/line/report/groupbox/rectangle/graph): ~78% on positional fields; `htmltable`/`htmlgen`/etc. export-generator controls will always be ~0% on these fields.
-
-**Keep `cli/pb_cli/debt.py` in sync with any new `Expr` constructors.** When a new `ExXxx` constructor is added, confirm the ExRaw count drops correspondingly in the script output — it requires no code changes because it walks the live JSON, but the BACKLOG entry should quote the before/after counts.
-
-**The DW coverage section is always-on** (not gated on a flag). Quote the before/after coverage percentages in BACKLOG entries for DW-track sessions.
 
 **BACKLOG entries for BsRaw work are pre-loaded with Stage 0 analysis.** Each open BsRaw item records: current count, root cause (token kind + guard line), which shapes must stay BsRaw, and the Stage 1 fix sketch. Confirm the counts still match the script output, then proceed directly to Stage 1 — no re-sampling required.
 
@@ -210,7 +192,7 @@ cabal build   # must be warning-free; -Wall is set; warnings are blockers
 
 ```text
 cabal test --test-show-details=direct
-cd cli && uv run ruff check && uv run pyright && uv run pytest
+cd cli && uv run ruff check && uv run pyright && uv run pytest lib/tests/ pipeline/tests/ api/tests/
 cd ui && pnpm lint && pnpm typecheck && pnpm test
 ```
 

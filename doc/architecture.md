@@ -1,5 +1,10 @@
 # Architecture
 
+> **⚠ STALE:** This document references the old `pb_cli/` layout. The Python
+> layer has been restructured into a uv workspace with three packages
+> (`pb.lib`, `pb.pipeline`, `pb.api`). See `doc/architecture-cli.md` for the
+> updated CLI architecture. A full rewrite of this document is planned.
+
 This repository contains three independent runtimes that form a pipeline:
 **Haskell** parses PowerBuilder source files and runs all analysis passes,
 **Python** drives orchestration and presents data via FastAPI, and

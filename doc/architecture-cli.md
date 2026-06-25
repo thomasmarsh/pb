@@ -1,45 +1,44 @@
 # CLI Architecture
 
-This document describes the three-layer architecture of `pb_cli/`, the
-dependency rules that keep it testable, and how to add new modules without
+This document describes the three-package architecture of the Python workspace,
+the dependency rules that keep it testable, and how to add new modules without
 violating the invariants.
 
 ---
 
 ## Overview
 
-The CLI is organised into three layers, each with a single responsibility:
+The Python layer is organised into three packages in a uv workspace, each with
+a single responsibility:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  explorer/  — FastAPI web layer                      │
+│  pb.api       — FastAPI web layer                    │
 │  routes thin → services contain logic                │
 ├─────────────────────────────────────────────────────┤
-│  shell/     — Imperative boundary                    │
-│  filesystem, subprocess, DB, display                 │
+│  pb.pipeline  — CLI tool + orchestration             │
+│  compiler invocation, DB, display, subprocess        │
 ├─────────────────────────────────────────────────────┤
-│  core/      — Pure data transforms                   │
+│  pb.lib       — Pure data transforms                 │
 │  parsers, walkers, models, SQL pre-processing        │
 └─────────────────────────────────────────────────────┘
 ```
 
-**`core/`** holds everything that can be unit-tested with literal Python
+**`pb.lib`** holds everything that can be unit-tested with literal Python
 values — no I/O, no network, no subprocess calls, no framework imports.
 This is the functional core.
 
-**`shell/`** is the imperative boundary. It owns all side-effecting
+**`pb.pipeline`** is the imperative boundary. It owns all side-effecting
 operations: filesystem reads, `pbc` subprocess invocation, DuckDB
 connections, and rich console output. Every side effect flows through
 `ShellEnv` closures, making them swappable in tests.
 
-**`explorer/`** is a thin FastAPI web layer. Routes extract parameters and
+**`pb.api`** is a thin FastAPI web layer. Routes extract parameters and
 delegate to services. Services contain the business logic. Both import
-from `core/` for pure data and from `shell/` (or `shell/db.py` directly)
-for database access.
+from `pb.lib` for pure data and from `pb.pipeline` for database access.
 
-**`cli.py`** is a thin Typer dispatch that wires commands to
-`shell/commands/` implementations. It imports nothing from `core/` or
-`explorer/` directly (except the `pbl` extraction helper).
+**`pb.pipeline.cli`** is a thin Typer dispatch that wires commands to
+`pb.pipeline.commands/` implementations.
 
 ---
 
@@ -49,13 +48,13 @@ The import graph is strictly layered:
 
 | Import direction | Allowed? | Example |
 |---|---|---|
-| `core/` → `shell/` | **No** | Never |
-| `core/` → `explorer/` | **No** | Never |
-| `shell/` → `core/` | **Yes** | `shell/importing.py` imports `core/importing.py` |
-| `explorer/` → `core/` | **Yes** | `explorer/services/` imports `core/models.py` |
-| `explorer/` → `shell/` | **Yes** | `explorer/routes/dependencies.py` connects to DuckDB |
-| `cli.py` → `shell/` | **Yes** | `cli.py` imports `shell/env.py`, `shell/commands/` |
-| `cli.py` → `explorer/` | **Yes** | Only `from pb_cli.explorer import create_app` |
+| `pb.lib` → `pb.pipeline` | **No** | Never |
+| `pb.lib` → `pb.api` | **No** | Never |
+| `pb.pipeline` → `pb.lib` | **Yes** | `pb.pipeline.env` imports `pb.lib.models` |
+| `pb.api` → `pb.lib` | **Yes** | `pb.api.services` imports `pb.lib.slicing` |
+| `pb.api` → `pb.pipeline` | **Yes** | `pb.api.routes.diagrams` imports `pb.pipeline.diagrams` |
+| `pb.pipeline.cli` → `pb.pipeline` | **Yes** | `pb.pipeline.cli` imports `pb.pipeline.env`, `pb.pipeline.commands/` |
+| `pb.pipeline.cli` → `pb.api` | **Yes** | Only `from pb.api import create_app` |
 
 Violating these rules creates import cycles or makes pure-core modules
 untestable without mocking I/O frameworks.
@@ -113,8 +112,7 @@ fields on a copy:
 
 ```python
 from dataclasses import replace
-from pb_cli.shell.env import ShellEnv
-from pb_cli.shell.runner import parse_stream  # real implementation
+from pb.pipeline.env import ShellEnv
 
 test_env = ShellEnv(
     runner=replace(env.runner, parse_stream=my_mock_stream),
@@ -135,55 +133,53 @@ needed where the real signature adds nothing a `Callable` cannot express.
 
 ## Module reference
 
-### `core/` — Pure transforms (zero I/O)
+### `pb.lib` — Pure transforms (zero I/O)
 
 | Module | Purpose | Key exports |
 |---|---|---|
 | `models.py` | Row types (`NamedTuple`) and `RowBatch` container | `ObjectRow`, `ProcedureRow`, `CallRow`, `DwControlRow`, `SqlStatementRow`, `InheritsRow`, `RowBatch`, `new_row_batch`, `TABLES` |
-| `ast_walker.py` | Recursive walkers over parsed AST JSON | `walk_calls`, `walk_exraw`, `walk_bsraw`, `count_branches`, `walk_dw_controls` |
-| `importing.py` | JSON → `RowBatch` transforms | `import_file` |
 | `sql.py` | PowerBuilder SQL parser (wraps sqlglot with PB-specific rewrites) | `parse_pb_sql` |
 | `state.py` | Pure file-state diffing | `FileDiff`, `diff_state` |
+| `cfg_builder.py` | CFG reconstruction from JSON | `cfg_from_json`, `compute_node_states` |
+| `cfg_renderer.py` | CFG → GraphViz DOT | `cfg_to_dot` |
 | `diagram_builder.py` | Pure diagram styling and GraphViz render functions | `render_calls`, `render_dw_tables`, `render_heatmap`, `render_inheritance`, `render_proc_tables`, `render_sql_lineage`, `render_table_lineage`, `KIND_COLORS`, `GRAPH_ATTRS` |
-| `ast_generated.py` | Auto-generated TypedDict declarations for AST JSON wire format (regenerated by `pnpm run codegen`) | All AST type definitions: `Expr`, `BodyStmt`, `LocatedBodyStmt`, etc.
+| `slicing.py` | Backward/forward program slicing | `backward_slice`, `forward_slice`, `build_proc_def_use` |
 
-### `shell/` — Imperative boundary (I/O-bound)
+### `pb.pipeline` — Imperative boundary (I/O-bound)
 
 | Module | Purpose | Key exports |
 |---|---|---|
 | `env.py` | `ShellEnv` composition pattern (BuildEnv / RunnerEnv / StorageEnv) | `ShellEnv`, `env`, `BuildEnv`, `RunnerEnv`, `StorageEnv` |
 | `build.py` | Repo discovery, `pbc` binary build, file enumeration | `find_repo`, `build_runner`, `find_binary`, `walk_sr_files`, `count_sr_files`, `hash_source_dir`, `ensure_explorer_built`, `build_subset_tmpdir`, `get_queries_dir` |
-| `runner.py` | Stream parse results from `pbc --jsonl` | `parse_stream`, `render_error` |
-| `db.py` | DuckDB schema DDL, connection management, query parsing | `db_connection`, `connect`, `create_schema`, `drop_tables`, `Conn`, `INSERT`, `parse_sql_file` |
-| `importing.py` | Batch import of parsed file dicts into DuckDB | `import_batch`, `run_from_jsonl_lines` |
-| `state.py` | Incremental file-state persistence (DB-backed) | `create_state_table`, `load_file_state`, `save_file_state`, `delete_file_rows` |
+| `runner.py` | Error rendering helpers | `render_error` |
+| `db.py` | DuckDB connection management, query parsing | `db_connection`, `setup_db_extras`, `Conn`, `parse_sql_file` |
+| `db_batch.py` | Bulk insert helper | `bulk_insert` |
 | `metrics.py` | Graph metric computation (PageRank, betweenness, DIT) | `compute_metrics`, `compute_dit` |
-| `diagrams.py` | DOT/SVG diagram building, LRU-cached rendering with Bezier fallback | `render_svg`, `build_inheritance`, `build_calls`, `build_dw_tables`, `build_heatmap`, `build_sql_lineage`, `build_table_lineage`, `build_proc_tables` |
-| `pipeline.py` | Incremental `pb index` orchestration | `run`, `db_is_current` |
-| `pbl.py` | PBL binary library extraction (filesystem, temp dirs, file writes) | `extract`, `extract_to_dir`, `resolve_source_dir`, `PblEntry` |
+| `diagrams.py` | DOT/SVG diagram building, LRU-cached rendering | `render_svg` |
+| `pipeline.py` | `pb index` orchestration | `run`, `db_is_current` |
+| `pbl.py` | PBL binary library extraction | `extract`, `extract_to_dir`, `resolve_source_dir` |
 | `reporter.py` | Unified output protocol for pipeline operations | `Reporter`, `LiveReporter`, `RecordingReporter` |
 | `queries.py` | Auto-register `queries/*.sql` files as `pb query <name>` commands | `register_queries` |
+| `impact.py` | Impact analysis command | `run_impact` |
 | `commands/corpus.py` | `pb check-corpus` implementation | `run` |
-| `commands/debt.py` | `pb debt` implementation | `run`, `BsRawStats`, `DwStats` |
-| `commands/dump.py` | `pb dump` implementation | `run` |
+| `commands/clean.py` | `pb clean` implementation | `run` |
+| `commands/bombadil.py` | Dev subcommands | `app` |
+| `bridge/sql_worker.py` | SQL bridge subprocess worker (stdin/stdout jsonl) | `main` |
 
-### `explorer/` — FastAPI web layer
+### `pb.api` — FastAPI web layer
 
 | Module | Purpose | Key exports |
 |---|---|---|
 | `app.py` | FastAPI application factory, router registration, SPA fallback | `create_app` |
 | `routes/dependencies.py` | Shared DB connection dependency and `rows()` helper | `get_db`, `get_conn`, `rows` |
-| `routes/objects.py` | Object listing, detail, source, explore tree endpoints | Router: `/api/objects`, `/api/objects/{name}`, `/api/source`, `/api/tree` |
+| `routes/objects.py` | Object listing, detail, source, explore tree endpoints | Router: `/api/objects` |
 | `routes/procedures.py` | Procedure listing and detail endpoints | Router: `/api/procedures` |
 | `routes/search.py` | Full-text search endpoint | Router: `/api/search` |
-| `routes/datawindows.py` | DataWindow listing, control detail, lineage endpoints | Router: `/api/datawindows`, `/api/dw-controls` |
-| `routes/tables.py` | Table inventory, lineage detail, DB stats | Router: `/api/tables`, `/api/stats` |
+| `routes/datawindows.py` | DataWindow listing, control detail, lineage endpoints | Router: `/api/datawindows` |
+| `routes/tables.py` | Table inventory, lineage detail, DB stats | Router: `/api/tables` |
 | `routes/queries.py` | Canned SQL query execution endpoints | Router: `/api/query` |
 | `routes/diagrams.py` | SVG diagram generation endpoints | Router: `/api/diagrams` |
 | `routes/static.py` | SPA index.html serving | Router: serves `index.html` for non-API paths |
-| `services/objects.py` | Object business logic (detail, explore tree, source) | `get_object_detail`, `get_explore_tree`, `get_object_source`, `pbl_name` |
-| `services/procedures.py` | Procedure business logic | `list_procedures`, `get_procedure_detail` |
-| `services/search.py` | Search business logic | `search_objects`, `search_procedures` |
 | `services/datawindows.py` | DataWindow business logic | `list_datawindows`, `get_dw_detail`, `get_dw_controls` |
 | `services/tables.py` | Table business logic | `list_tables`, `get_table_detail`, `get_table_stats` |
 
@@ -191,7 +187,7 @@ needed where the real signature adds nothing a `Callable` cannot express.
 
 | Module | Purpose | Key exports |
 |---|---|---|
-| `cli.py` | Thin Typer dispatch — wires commands to `shell/commands/` | `app`, `query_app` |
+| `cli.py` | Thin Typer dispatch — wires commands to `commands/` | `app`, `query_app` |
 
 ---
 
@@ -199,48 +195,48 @@ needed where the real signature adds nothing a `Callable` cannot express.
 
 Follow this decision tree:
 
-1. **Does it touch I/O?** → `shell/`
-2. **Is it pure data/parsing?** → `core/`
-3. **Is it a web endpoint?** → `explorer/routes/`
-4. **Does it contain query business logic?** → `explorer/services/`
-5. **Is it a CLI command implementation?** → `shell/commands/`
+1. **Does it touch I/O?** → `pb.pipeline`
+2. **Is it pure data/parsing?** → `pb.lib`
+3. **Is it a web endpoint?** → `pb.api.routes/`
+4. **Does it contain query business logic?** → `pb.api.services/`
+5. **Is it a CLI command implementation?** → `pb.pipeline.commands/`
 
-### Adding a new core module
+### Adding a new lib module
 
-1. Create `pb_cli/core/new_module.py`.
+1. Create `cli/lib/src/pb/lib/new_module.py`.
 2. Start with `from __future__ import annotations` — never import `duckdb`,
    `subprocess`, `os`, `sys`, `pathlib.Path`, `graphviz`, or any framework.
 3. Accept data via function arguments (dicts, NamedTuples, Text).
 4. Return data via function arguments.
-5. Write unit tests in `tests/test_new_module.py` with literal values — no
+5. Write unit tests in `cli/lib/tests/test_new_module.py` with literal values — no
    fixtures, no DB, no subprocess.
 
-### Adding a new shell module
+### Adding a new pipeline module
 
-1. Create `pb_cli/shell/new_module.py`.
+1. Create `cli/pipeline/src/pb/pipeline/new_module.py`.
 2. Accept a `Conn` (DuckDB connection) for DB operations, or `Path` for
    filesystem operations — never open connections internally unless
    required by the function contract.
 3. If orchestration code needs to call this module through `ShellEnv`,
-   add a field to the appropriate sub-environment in `shell/env.py` and
+   add a field to the appropriate sub-environment in `pipeline/env.py` and
    a corresponding `Protocol` (if keyword args/defaults matter) or
    `Callable` annotation.
 4. Write tests using `RecordingReporter` and in-memory `ShellEnv` overrides.
 
-### Adding a new explorer route
+### Adding a new API route
 
-1. Create `pb_cli/explorer/routes/new_route.py` with an `APIRouter`.
+1. Create `cli/api/src/pb/api/routes/new_route.py` with an `APIRouter`.
 2. Routes are thin: extract parameters, call a service function, return
    the result.
-3. Business logic goes in `pb_cli/explorer/services/new_service.py`.
-4. Register the router in `explorer/app.py` via `app.include_router(...)`.
+3. Business logic goes in `cli/api/src/pb/api/services/new_service.py`.
+4. Register the router in `api/app.py` via `app.include_router(...)`.
 5. Use `Depends(get_db)` for database access — the connection lifecycle is
    managed by the dependency.
 
 ### Adding a new CLI command
 
-1. Create `pb_cli/shell/commands/new_cmd.py` with a `run(...)` function.
-2. Add a `@app.command()` in `cli.py` that delegates to `shell.commands.new_cmd.run()`.
+1. Create `cli/pipeline/src/pb/pipeline/commands/new_cmd.py` with a `run(...)` function.
+2. Add a `@app.command()` in `pipeline/cli.py` that delegates to `pipeline.commands.new_cmd.run()`.
 3. Use `env` for all side effects — never call `subprocess.run` or
    `duckdb.connect` directly from `cli.py`.
 
@@ -248,15 +244,16 @@ Follow this decision tree:
 
 ## What was gained
 
-The refactoring (Plans 59–68) restructured `pb_cli/` from a flat module
-layout into the layered architecture described above:
+The refactoring (Plans 59–68) structured the Python layer into three packages:
 
-- **78 files changed**, +4,919 / −3,049 lines across the Python codebase.
-- **290 pytest** (up from 174), ruff clean, pyright 0 errors.
+- **pb.lib** — pure transforms, zero I/O, independently testable
+- **pb.pipeline** — CLI tool + orchestration, mockable via `ShellEnv`
+- **pb.api** — FastAPI web layer, thin routes + service business logic
+- **339 tests**, ruff clean, pyright 0 errors.
 - **Mockable boundaries** — every side effect flows through `ShellEnv`,
   enabling unit tests that don't touch the filesystem, database, or
   subprocesses.
 - **Independently testable services** — business logic in
-  `explorer/services/` is decoupled from FastAPI route wiring.
-- **Clean layering** — `core/` is import-safe from any consumer; the
+  `pb.api.services/` is decoupled from FastAPI route wiring.
+- **Clean layering** — `pb.lib` is import-safe from any consumer; the
   dependency graph is strictly unidirectional.

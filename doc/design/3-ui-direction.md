@@ -35,7 +35,7 @@ or identifiers use the monospace stack; everything else uses Inter.
 
 ### Colour Palette
 
-The CSS custom property palette in `cli/pb_cli/explorer/static/style.css`
+The CSS custom property palette in `cli/api/src/pb/api/static/style.css`
 is the complete colour contract. Existing tokens and their assigned domains:
 
 | Token | Domain |
@@ -428,7 +428,7 @@ entity-name columns in the DuckDB query result schema (e.g.
 heuristically resolves cell values against the in-memory corpus index.
 Server-side tagging is more reliable and avoids a false-positive problem.
 Plan 85 should check whether the existing query infrastructure in
-`cli/pb_cli/explorer/routes/queries.py` can emit column-type metadata before
+`cli/api/src/pb/api/routes/queries.py` can emit column-type metadata before
 designing the client-side ResultTable component API.
 
 ---

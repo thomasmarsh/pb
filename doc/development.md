@@ -4,13 +4,13 @@
 
 | Component      | Command                    | What it does                        |
 | -------------- | -------------------------- | ----------------------------------- |
-| Haskell parser | `cd parser && cabal build` | Compile library + executables       |
-| Haskell tests  | `cd parser && cabal test`  | Run 818 property + unit tests       |
+| Haskell compiler | `cd compiler && cabal build` | Compile library + executables       |
+| Haskell tests  | `cd compiler && cabal test`  | Run 1073 property + unit tests      |
 | Python tools   | `./pb index`               | Parse → import → analyze pipeline   |
-| Python tests   | `cd cli && uv run pytest`  | 349 tests across tooling            |
+| Python tests   | `cd cli && uv run pytest lib/tests/ pipeline/tests/ api/tests/` | 339 tests across workspace |
 | Explorer TS    | `pnpm build` (in `ui/`)    | Bundle TS → JS for the web UI       |
-| Explorer tests | `pnpm test` (in `ui/`)     | 253 reducer + state management tests |
-| Corpus check   | `./pb check-corpus`        | 0 errors / 1051 files baseline      |
+| Explorer tests | `pnpm test` (in `ui/`)     | 64 reducer + state management tests |
+| Corpus check   | `./pb check-corpus`        | 0 errors / 1031 files baseline      |
 
 CI runs all of these on every push to `main`.
 

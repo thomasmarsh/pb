@@ -72,7 +72,7 @@ jobs:
         run: cabal build --enable-tests
 
       - name: Extract openpay corpus
-        run: uv run --project cli pb_cli extract example/openpay-0.1.1b -o example/openpay-0.1.1b-extract
+        run: uv run --project cli pb extract example/openpay-0.1.1b -o example/openpay-0.1.1b-extract
 
       - name: Test (Haskell)
         working-directory: compiler
