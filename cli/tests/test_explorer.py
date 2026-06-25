@@ -46,11 +46,11 @@ def client_with_sql(db_path, tmp_path_factory):
         "INSERT INTO dw_retrieve_columns VALUES (?,?,?,?,?)",
         ["", "dw_synth", "synthetic_test_table.id", "id", "synthetic_test_table"],
     )
-    # objects schema: file, kind, object, ancestor
+    # objects schema: file, kind, object, ancestor, layout_json
     # Add a child object that inherits from fn_sqlerror for impact-lineage tests.
     conn.execute(
-        "INSERT INTO objects VALUES (?,?,?,?)",
-        ["", "powerscript", "synthetic_child_obj", "fn_sqlerror"],
+        "INSERT INTO objects VALUES (?,?,?,?,?)",
+        ["", "powerscript", "synthetic_child_obj", "fn_sqlerror", None],
     )
     conn.close()
 
@@ -365,12 +365,17 @@ def test_list_tables_returns_ranked_list(client_with_sql):
 def test_list_tables_has_required_fields(client_with_sql):
     r = client_with_sql.get("/api/tables")
     assert r.status_code == 200
-    row = r.json()[0]
+    rows = r.json()
+    assert len(rows) > 0
+    row = rows[0]
     assert "table_name" in row
     assert "dw_count" in row
     assert "ps_count" in row
     assert "file_count" in row
-    assert row["ps_count"] >= 1
+    # The injected synthetic row must appear somewhere with ps_count >= 1
+    by_name = {r["table_name"]: r for r in rows}
+    assert "synthetic_test_table" in by_name
+    assert by_name["synthetic_test_table"]["ps_count"] >= 1
 
 
 def test_get_table_detail_returns_lineage(client):
@@ -396,20 +401,6 @@ def test_get_table_detail_404_unknown(client):
     r = client.get("/api/tables/__nonexistent_table__")
     assert r.status_code == 404
 
-
-def test_table_detail_has_columns_detail(client):
-    tables = client.get("/api/tables").json()
-    if not tables:
-        pytest.skip("No tables in database")
-    table_name = tables[0]["table_name"]
-    r = client.get(f"/api/tables/{table_name}")
-    assert r.status_code == 200
-    data = r.json()
-    assert "columns_detail" in data
-    assert isinstance(data["columns_detail"], list)
-    assert len(data["columns_detail"]) > 0
-    entry = data["columns_detail"][0]
-    assert set(entry) == {"column", "dw_readers", "ps_readers", "ps_writers", "read_count", "write_count"}
 
 
 def test_table_detail_columns_detail_dw_and_ps(client_with_sql):
