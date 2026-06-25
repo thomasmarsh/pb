@@ -442,6 +442,23 @@ tests = testGroup "Grammar.Body.Parser"
                      [(TkSqlKw,"select"),(TkIdent,"x"),(TkDeclKw,"from"),(TkIdent,"t")]
         in runBodyStmts [sqlS, stmtY1] @?= Right [loc1 (BsRaw "SELECT x FROM t;"), loc1 assignY1]
 
+    , testCase "correlated subquery: inner SELECT not split from outer" $
+        -- SELECT col FROM t WHERE t.id = ( SELECT MAX(x) FROM s WHERE s.id = :v )
+        -- Split across lines as: SELECT col FROM t WHERE t.id =
+        --                         (
+        --                           SELECT MAX(x) FROM s WHERE s.id = :v
+        --                         )
+        let outer = mkStmtSrc False "SELECT col FROM t WHERE t.id ="
+                      [(TkSqlKw,"select"),(TkIdent,"col"),(TkDeclKw,"from"),(TkIdent,"t"),(TkIdent,"where"),(TkIdent,"t"),(TkDot,"."),(TkIdent,"id"),(TkAssignOp,"=")]
+            lp    = mkStmtSrc False "  ("
+                      [(TkLParen,"(")]
+            inner = mkStmtSrc False "    SELECT MAX(x) FROM s WHERE s.id = :v"
+                      [(TkSqlKw,"select"),(TkIdent,"max"),(TkLParen,"("),(TkIdent,"x"),(TkRParen,")"),(TkDeclKw,"from"),(TkIdent,"s"),(TkIdent,"where"),(TkIdent,"s"),(TkDot,"."),(TkIdent,"id"),(TkAssignOp,"="),(TkColon,":"),(TkIdent,"v")]
+            rp    = mkStmtSrc True "  );"
+                      [(TkRParen,")")]
+        in runBodyStmts [outer, lp, inner, rp]
+             @?= Right [loc1 (BsRaw "SELECT col FROM t WHERE t.id =\n  (\n    SELECT MAX(x) FROM s WHERE s.id = :v\n  );")]
+
     , testCase "trailing line comment after ';' does not swallow following statements" $
         -- SELECT x FROM t;  // note  <- TkSemi seen before comment: stmtTerminated = True
         -- y = 1

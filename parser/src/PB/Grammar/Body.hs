@@ -602,7 +602,7 @@ pSqlBodyStmt = do
   if stmtTerminated first
     then return (BsRaw (llText (stmtSource first)))
     else do
-      conts <- moreConts
+      conts <- moreConts (parenDelta (stmtTokens first))
       let texts = map (llText . stmtSource) (first : conts)
       return (BsRaw (T.intercalate "\n" texts))
   where
@@ -610,19 +610,25 @@ pSqlBodyStmt = do
       (t:lp:_) -> tkKind t == TkSqlKw && tkKind lp /= TkLParen
       (t:_)    -> tkKind t == TkSqlKw
       []       -> False
-    -- Stop at block terminators, control-flow headers, and new SQL starts
-    -- so that SQL without a closing ';' cannot swallow subsequent PowerScript.
-    -- TkDeclKw is NOT in the stop set because PB's lexer classifies SQL
-    -- keywords like FROM as TkDeclKw; use isBlockTerminator for the specific
-    -- "end function/subroutine/event/on" multi-word tokens instead.
-    isContinuable s = not (isBlockTerminator s) && case stmtTokens s of
-      (t:_) -> tkKind t `notElem` [TkControlKw, TkSqlKw]
+    parenDelta toks =
+      length (filter ((== TkLParen) . tkKind) toks) -
+      length (filter ((== TkRParen) . tkKind) toks)
+    -- Stop at block terminators and control-flow headers. Stop at new SQL
+    -- starts only when paren depth is 0 — inside an open paren, a SELECT
+    -- is a subquery continuation, not a new top-level statement.
+    -- TkDeclKw is NOT in the stop set: PB's lexer classifies SQL keywords
+    -- like FROM as TkDeclKw; use isBlockTerminator for "end function" etc.
+    isContinuable depth s = not (isBlockTerminator s) && case stmtTokens s of
+      (t:_) -> tkKind t /= TkControlKw
+            && (depth > 0 || tkKind t /= TkSqlKw)
       []    -> False
-    moreConts = do
-      ms <- optional (satisfyStmt isContinuable)
+    moreConts depth = do
+      ms <- optional (satisfyStmt (isContinuable depth))
       case ms of
         Nothing -> return []
-        Just s  -> if stmtTerminated s then return [s] else (s:) <$> moreConts
+        Just s  ->
+          let newDepth = depth + parenDelta (stmtTokens s)
+          in if stmtTerminated s then return [s] else (s:) <$> moreConts newDepth
 
 isBlockTerminator :: Statement -> Bool
 isBlockTerminator s = case stmtTokens s of
