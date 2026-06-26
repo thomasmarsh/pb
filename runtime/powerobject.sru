@@ -17,3 +17,12 @@ end function
 
 public subroutine SetAutomationPointer (any a_pointer)
 end subroutine
+
+on powerobject.create
+end on
+
+on powerobject.destroy
+end on
+
+on powerobject.constructor
+end on

@@ -17,3 +17,12 @@ end subroutine
 
 public function integer Arrange (integer arrangeType)
 end function
+
+on window.open
+end on
+
+on window.close
+end on
+
+on window.resize
+end on

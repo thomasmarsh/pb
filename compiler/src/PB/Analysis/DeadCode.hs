@@ -82,9 +82,21 @@ computeDeadProcedures procedures calls resolved inherits dwObjects =
         | (obj, fromProc, tgtObj, tgtProc) <- resolved
         ]
 
-      -- Build override edges: if parent.m is reachable, child.m is too
+      -- Build override edges: if parent.m is reachable, child.m is too.
+      -- Uses the full transitive descendant closure so grandchild overrides are
+      -- included even when the intermediate parent does not define the method.
       childrenOf = Map.fromListWith (++)
         [ (parent, [child]) | (child, parent) <- inherits ]
+
+      -- BFS over childrenOf to collect all transitive descendants of a node.
+      allDescOf :: Text -> [Text]
+      allDescOf root = go Set.empty (Map.findWithDefault [] root childrenOf)
+        where
+          go visited [] = Set.toList visited
+          go visited (x:xs)
+            | Set.member x visited = go visited xs
+            | otherwise = go (Set.insert x visited)
+                             (xs ++ Map.findWithDefault [] x childrenOf)
 
       methodsByObj = Map.fromListWith Set.union
         [ (piObject p, Set.singleton (piName p)) | p <- procedures ]
@@ -92,7 +104,7 @@ computeDeadProcedures procedures calls resolved inherits dwObjects =
       overrideEdges = Map.fromListWith (++)
         [ ((parentObj, method), [(childObj, method)])
         | (parentObj, methods) <- Map.toList methodsByObj
-        , childObj <- Map.findWithDefault [] parentObj childrenOf
+        , childObj <- allDescOf parentObj
         , method <- Set.toList methods
         , (childObj, method) `Map.member` procIndex
         ]

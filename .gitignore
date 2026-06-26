@@ -49,3 +49,6 @@ memory_bank/
 # mimo
 .mimocode/
 mimocode.json
+
+# claude
+.claude

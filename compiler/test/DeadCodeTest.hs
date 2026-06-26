@@ -99,6 +99,19 @@ tests = testGroup "DeadCode"
               , ProcInfo "obj_a" "fn_a" "function" Nothing
               ] [] [] [] Set.empty
         in  map dpObject dead @?= ["obj_a", "obj_z"]
+    , testCase "grandchild override reachable when intermediate lacks the method" $
+        -- gp.hook is a reachable event seed; child overrides hook but is separated from
+        -- gp by an intermediate class p that does NOT define hook.
+        -- With direct-children-only override edges, child.hook would be wrongly dead.
+        let dead = computeDeadProcedures
+              [ ProcInfo "gp"    "hook" "event"    Nothing
+              , ProcInfo "child" "hook" "function" Nothing
+              ]
+              []
+              []
+              [("p", "gp"), ("child", "p")]   -- gp → p → child, p has no hook
+              Set.empty
+        in  length dead @?= 0
     ]
   ]
 
