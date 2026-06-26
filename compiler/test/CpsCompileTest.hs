@@ -9,7 +9,7 @@ import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Analysis.CpsCompile
 import PB.Pipeline.Preprocess (LogicalLine (..))
-import PB.Analysis.TypeEnv (TypeEnv (..))
+import PB.Analysis.TypeEnv (TypeEnv (..), ScopedTypeEnv, flatToScoped)
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
@@ -53,35 +53,36 @@ pureCall =
 -- ---------------------------------------------------------------------------
 -- Convenience env builders
 
-emptyEnv :: TypeEnv
-emptyEnv = TypeEnv { teVars = Map.empty, teUserTypes = Map.empty }
+emptyEnv :: ScopedTypeEnv
+emptyEnv = flatToScoped (TypeEnv { teVars = Map.empty, teUserTypes = Map.empty })
 
 -- | Single var → user-defined type, no inheritance.
-varEnv :: Text -> Text -> TypeEnv
-varEnv v t = TypeEnv { teVars = Map.singleton v (PtUserDefined t), teUserTypes = Map.empty }
+varEnv :: Text -> Text -> ScopedTypeEnv
+varEnv v t = flatToScoped (TypeEnv { teVars = Map.singleton v (PtUserDefined t)
+                                   , teUserTypes = Map.empty })
 
 -- | Single var + inheritance chain.
-varEnvInh :: [(Text, Text)] -> [(Text, Text)] -> TypeEnv
-varEnvInh vars inh = TypeEnv
+varEnvInh :: [(Text, Text)] -> [(Text, Text)] -> ScopedTypeEnv
+varEnvInh vars inh = flatToScoped (TypeEnv
   { teVars      = Map.fromList [(v, PtUserDefined t) | (v, t) <- vars]
   , teUserTypes = Map.fromList inh
-  }
+  })
 
-dwEnv :: TypeEnv
+dwEnv :: ScopedTypeEnv
 dwEnv = varEnv "dw" "datawindow"
 
-transEnv :: TypeEnv
+transEnv :: ScopedTypeEnv
 transEnv = varEnv "sqlca" "transaction"
 
-noEnv :: TypeEnv
+noEnv :: ScopedTypeEnv
 noEnv = emptyEnv
 
 -- | Compile with no user-fn registry (the common case in these tests).
-compile :: TypeEnv -> [Located BodyStmt] -> CpsGraph
+compile :: ScopedTypeEnv -> [Located BodyStmt] -> CpsGraph
 compile env = compileProcedure env Set.empty
 
 -- | Compile with a user-fn registry (for Item 3 tests).
-compileWith :: TypeEnv -> [Text] -> [Located BodyStmt] -> CpsGraph
+compileWith :: ScopedTypeEnv -> [Text] -> [Located BodyStmt] -> CpsGraph
 compileWith env fns = compileProcedure env (Set.fromList (map T.toLower fns))
 
 -- ---------------------------------------------------------------------------
@@ -310,22 +311,22 @@ tests = testGroup "CpsCompile"
     , testCase "direct PtPrimitive datawindow with stdlib parents: retrieve → Suspend" $
         -- PtPrimitive "datawindow" declared var; stdlib adds datawindow → nonvisualobject
         -- Old code: lookupBaseType walks to "powerobject" → Pure (bug)
-        let env = TypeEnv
+        let env = flatToScoped (TypeEnv
               { teVars      = Map.singleton "dw1" (PtPrimitive "datawindow")
               , teUserTypes = Map.fromList
                   [ ("datawindow", "nonvisualobject")
                   , ("nonvisualobject", "powerobject")
                   ]
-              }
+              })
         in classifyExpr env
              (ExCall { callee = lv2 "dw1" "retrieve", callArgs = [] })
              @?= Suspend
 
     , testCase "powerobject var: retrieve → Pure (not a DW descendant)" $
-        let env = TypeEnv
+        let env = flatToScoped (TypeEnv
               { teVars      = Map.singleton "obj" (PtPrimitive "powerobject")
               , teUserTypes = Map.empty
-              }
+              })
         in classifyExpr env
              (ExCall { callee = lv2 "obj" "retrieve", callArgs = [] })
              @?= Pure
@@ -333,13 +334,13 @@ tests = testGroup "CpsCompile"
     , testCase "transaction with stdlib chain: commit → Suspend" $
         -- Old code: lookupBaseType walks transaction → nonvisualobject → powerobject
         -- → isTransType "powerobject" = False → Pure (bug)
-        let env = TypeEnv
+        let env = flatToScoped (TypeEnv
               { teVars      = Map.singleton "trans" (PtPrimitive "transaction")
               , teUserTypes = Map.fromList
                   [ ("transaction", "nonvisualobject")
                   , ("nonvisualobject", "powerobject")
                   ]
-              }
+              })
         in classifyExpr env
              (ExCall { callee = lv2 "trans" "commit", callArgs = [] })
              @?= Suspend

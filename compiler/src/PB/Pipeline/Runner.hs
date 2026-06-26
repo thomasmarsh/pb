@@ -22,7 +22,8 @@ import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.CfgBuild    (buildCfg)
 import PB.Analysis.CpsCompile  (compileProcedure)
 import PB.Analysis.DeadCode    qualified as DeadCode
-import PB.Analysis.TypeEnv     (TypeEnv (..), buildWorkspaceTypeEnv, withProcScope)
+import PB.Analysis.TypeEnv     (TypeEnv (..), buildWorkspaceTypeEnv, withProcScope,
+                                flatToScoped)
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TypeResolve
@@ -128,7 +129,7 @@ compileOne wsEnv mBridge confidence outcome = case outcome of
         userFns = Set.fromList
           $  map (T.toLower . fnsName . fbSig) (srFunctions  sf)
           <> map (T.toLower . ssName  . sbSig) (srSubroutines sf)
-        procEnv params = withProcScope (parseParams params) wsEnv
+        procEnv params = flatToScoped (withProcScope (parseParams params) wsEnv)
         lvs  = extractLocalVars  fp obj sf
         css  = extractCallSites  fp obj sf
         gvs  = extractGlobalVars fp obj sf

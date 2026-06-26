@@ -25,7 +25,7 @@ import PB.AST.Located  (Located (..))
 import PB.AST.Type     (renderPbType)
 import PB.Grammar.Body        (parseExpr)
 import PB.Lexing.Token        (Token (..))
-import PB.Analysis.TypeEnv (TypeEnv (..), lookupVarType, isDescendantOf)
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVar, isDescendantOf)
 import Control.Monad       (foldM)
 import Control.Monad.State.Strict
 import Data.List            (partition)
@@ -77,20 +77,20 @@ data CallKind = Pure | Suspend deriving (Eq, Show)
 -- | Classify an expression as Pure or Suspend using type information when
 -- available.  Without type info the fallback is conservative: Pure.
 -- Free functions in 'builtinSuspendFns' are always Suspend regardless of type.
-classifyExpr :: TypeEnv -> Expr -> CallKind
+classifyExpr :: ScopedTypeEnv -> Expr -> CallKind
 classifyExpr env (ExCall lv _) =
   let lnames = map (T.toLower . segName) (segments lv)
   in case lnames of
        [name]
          | isBuiltinSuspendFn name -> Suspend
        [headN, meth]
-         | Just pty <- lookupVarType headN env
+         | Just pty <- lookupScopedVar headN env
          , let ty = T.toLower (renderPbType pty)
-         , isTypedSuspend (teUserTypes env) ty meth -> Suspend
+         , isTypedSuspend (steHierarchy env) ty meth -> Suspend
        _ -> Pure
 classifyExpr env (ExMethodCall recv meth _) =
   case resolveReceiverType env recv of
-    Just ty | isTypedSuspend (teUserTypes env) ty (T.toLower meth) -> Suspend
+    Just ty | isTypedSuspend (steHierarchy env) ty (T.toLower meth) -> Suspend
     _       -> Pure
 classifyExpr _ _ = Pure
 
@@ -115,14 +115,14 @@ isTypedSuspend inh ty meth
     transMethods = ["commit", "rollback", "connect", "disconnect", "autocommit"]
 
 -- | Resolve the declared type name of a receiver expression (not walked to root).
-resolveReceiverType :: TypeEnv -> Expr -> Maybe Text
+resolveReceiverType :: ScopedTypeEnv -> Expr -> Maybe Text
 resolveReceiverType env (ExLvalue lv) =
   case segments lv of
-    (s:_) -> fmap (T.toLower . renderPbType) (lookupVarType (segName s) env)
+    (s:_) -> fmap (T.toLower . renderPbType) (lookupScopedVar (segName s) env)
     []    -> Nothing
 resolveReceiverType env (ExCall lv _) =
   case segments lv of
-    [single] -> fmap (T.toLower . renderPbType) (lookupVarType (segName single) env)
+    [single] -> fmap (T.toLower . renderPbType) (lookupScopedVar (segName single) env)
     _        -> Nothing
 resolveReceiverType _ _ = Nothing
 
@@ -257,13 +257,13 @@ finalizeCps entry = do
 
 -- | Compile a sequence of statements in reverse order (last first), so that
 -- each statement can reference the next statement's PC as its fallthrough.
-compileStmts :: TypeEnv -> LoopCtx -> [Located BodyStmt] -> Int -> C Int
+compileStmts :: ScopedTypeEnv -> LoopCtx -> [Located BodyStmt] -> Int -> C Int
 compileStmts _   _    []     ft = pure ft
 compileStmts env lctx (s:ss) ft = do
   ssFt <- compileStmts env lctx ss ft
   compileSingleStmt env lctx s ssFt
 
-compileSingleStmt :: TypeEnv -> LoopCtx -> Located BodyStmt -> Int -> C Int
+compileSingleStmt :: ScopedTypeEnv -> LoopCtx -> Located BodyStmt -> Int -> C Int
 compileSingleStmt env lctx (Located line stmt) fallthrough = case stmt of
 
   BsLocalVar _ _ varName (Just initExpr) ->
@@ -456,12 +456,12 @@ compileSingleStmt env lctx (Located line stmt) fallthrough = case stmt of
   -- Statements with no CPS representation: fall through.
   BsRaw _ -> pure fallthrough
 
-compileElseIf :: TypeEnv -> LoopCtx -> Int -> Int -> ElseIf -> C Int
+compileElseIf :: ScopedTypeEnv -> LoopCtx -> Int -> Int -> ElseIf -> C Int
 compileElseIf env lctx fallthrough nextFt ei = do
   eiEntry <- compileStmts env lctx (eifBody ei) fallthrough
   emit (CpsBranch { brCond = eifCond ei, brThenPc = eiEntry, brElsePc = nextFt }) Nothing
 
-compileClause :: TypeEnv -> Expr -> LoopCtx -> Int -> Int -> CaseClause -> C Int
+compileClause :: ScopedTypeEnv -> Expr -> LoopCtx -> Int -> Int -> CaseClause -> C Int
 compileClause env caseExpr lctx fallthrough nextFt clause = case ccExpr clause of
   Nothing   -> compileStmts env lctx (ccBody clause) fallthrough
   Just toks -> do
@@ -479,7 +479,7 @@ condExpr (DoUntil e) = ExNot e
 -- ---------------------------------------------------------------------------
 -- Public entry point
 
-compileProcedure :: TypeEnv -> Set.Set Text -> [Located BodyStmt] -> CpsGraph
+compileProcedure :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CpsGraph
 compileProcedure env userFns body =
   let initSt = CompileSt { csCount = 0, csNodes = Map.empty, csSPs = [], csSM = [], csUserFns = userFns }
       (graph, _) = runState go initSt

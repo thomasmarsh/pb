@@ -7,6 +7,13 @@ module PB.Analysis.TypeEnv
   , lookupBaseType
   , isDescendantOf
   , withProcScope
+  -- Scoped env (P2a)
+  , WorkspaceEnv (..)
+  , ScopedTypeEnv (..)
+  , buildWorkspaceEnv
+  , procEnv
+  , lookupScopedVar
+  , flatToScoped
   ) where
 
 import PB.Prelude
@@ -109,3 +116,85 @@ withProcScope :: [(Text, PbType)] -> TypeEnv -> TypeEnv
 withProcScope params env = env
   { teVars = Map.fromList [(T.toLower n, ty) | (n, ty) <- params]
              `Map.union` teVars env }
+
+-- ---------------------------------------------------------------------------
+-- Scoped type environment (P2a)
+
+-- | Workspace-level snapshot built once from all parsed files.
+data WorkspaceEnv = WorkspaceEnv
+  { weGlobals      :: Map.Map Text PbType                       -- srVariables + forward instances
+  , weInstanceVars :: Map.Map Text (Map.Map Text PbType)        -- object name → instance vars
+  , weHierarchy    :: Map.Map Text Text                         -- full inheritance map
+  } deriving (Eq, Show)
+
+-- | Procedure-scoped env built per (object, procedure) call site.
+-- Lookup order: steLocal > steInstance > steGlobal.
+data ScopedTypeEnv = ScopedTypeEnv
+  { steGlobal    :: Map.Map Text PbType
+  , steInstance  :: Map.Map Text PbType
+  , steLocal     :: Map.Map Text PbType   -- params only in P2a; body locals added in P2b
+  , steHierarchy :: Map.Map Text Text
+  } deriving (Eq, Show)
+
+buildWorkspaceEnv :: [SrFile] -> WorkspaceEnv
+buildWorkspaceEnv sfs = WorkspaceEnv
+  { weGlobals      = foldl' (\m sf -> m <> extractWsGlobals sf)     Map.empty sfs
+  , weInstanceVars = foldl' (\m sf -> Map.unionWith (<>) m (extractInstanceVars sf)) Map.empty sfs
+  , weHierarchy    = foldl' (\m sf -> m <> extractTypeDecls sf)      Map.empty sfs
+  }
+
+-- Globals: srGlobalInstances + forward instances + srVariables (NOT TypeBlock body vars).
+extractWsGlobals :: SrFile -> Map.Map Text PbType
+extractWsGlobals sf =
+  Map.fromList [ (T.toLower (giName gi), parseTypeText (giType gi))
+               | gi <- srGlobalInstances sf ]
+  <> case srForward sf of
+       Nothing -> Map.empty
+       Just (ForwardBlock { fwdInstances = gis }) ->
+         Map.fromList [ (T.toLower (giName gi), parseTypeText (giType gi))
+                      | gi <- gis ]
+  <> case srVariables sf of
+       Nothing -> Map.empty
+       Just (VariablesBlock { varDecls = decls }) ->
+         Map.fromList [ (T.toLower (vdName d), parseTypeText (vdType d)) | d <- decls ]
+
+-- Instance vars: BsLocalVar nodes in non-within TypeBlock bodies, keyed by object name.
+extractInstanceVars :: SrFile -> Map.Map Text (Map.Map Text PbType)
+extractInstanceVars sf = Map.fromList
+  [ ( T.toLower (tdName (tbDecl tb))
+    , Map.fromList
+        [ (T.toLower vn, vt)
+        | Located _ (BsLocalVar { varType = vt, varName = vn }) <- tbBody tb
+        ]
+    )
+  | tb <- srTypeBlocks sf
+  , tdWithin (tbDecl tb) == Nothing
+  ]
+
+-- | Build a ScopedTypeEnv for one (object, params) pair from a WorkspaceEnv.
+procEnv :: WorkspaceEnv -> Text -> [(Text, PbType)] -> ScopedTypeEnv
+procEnv ws objName params = ScopedTypeEnv
+  { steGlobal    = weGlobals ws
+  , steInstance  = fromMaybe Map.empty
+                     (Map.lookup (T.toLower objName) (weInstanceVars ws))
+  , steLocal     = Map.fromList [(T.toLower n, ty) | (n, ty) <- params]
+  , steHierarchy = weHierarchy ws
+  }
+
+-- | Case-insensitive lookup: steLocal > steInstance > steGlobal.
+lookupScopedVar :: Text -> ScopedTypeEnv -> Maybe PbType
+lookupScopedVar name env =
+  let k = T.toLower name
+  in Map.lookup k (steLocal env)
+     <|> Map.lookup k (steInstance env)
+     <|> Map.lookup k (steGlobal env)
+
+-- | Lift a flat TypeEnv into a ScopedTypeEnv (everything in steGlobal).
+-- Used as a bridge in P2a so Emit.hs and Runner.hs compile without deep changes.
+flatToScoped :: TypeEnv -> ScopedTypeEnv
+flatToScoped env = ScopedTypeEnv
+  { steGlobal    = teVars env
+  , steInstance  = Map.empty
+  , steLocal     = Map.empty
+  , steHierarchy = teUserTypes env
+  }

@@ -25,7 +25,8 @@ import PB.Grammar.File       (parseSrFileWithSpans, SrSpans (..))
 import PB.Lexing.Lexer      (LexError (..), LexLine (..), tokenize)
 import PB.Lexing.Splitter   (Statement (..), splitStatements)
 import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
-import PB.Analysis.TypeEnv     (TypeEnv (..), buildWorkspaceTypeEnv, withProcScope)
+import PB.Analysis.TypeEnv     (TypeEnv (..), buildWorkspaceTypeEnv, withProcScope,
+                                ScopedTypeEnv, flatToScoped)
 import PB.Analysis.CfgBuild    (buildCfg)
 import PB.Analysis.CpsCompile  (compileProcedure)
 import PB.Analysis.TypeResolve (parseParams)
@@ -125,9 +126,9 @@ wrapSrFile withCps path sf spans wsEnv =
     let (objName, ancestor) = srPrimaryObject sf
         objName' = if T.null objName then T.pack path else objName
 
-        -- Per-procedure env: overlay parsed params on the workspace env.
-        procEnv :: Text -> TypeEnv
-        procEnv paramsText = withProcScope (parseParams paramsText) wsEnv
+        -- Per-procedure env: overlay parsed params on the workspace env (P2a bridge).
+        procEnv :: Text -> ScopedTypeEnv
+        procEnv paramsText = flatToScoped (withProcScope (parseParams paramsText) wsEnv)
 
         -- User-defined function names (lower-cased) for CPS callproc dispatch.
         userFns :: Set.Set Text
@@ -168,9 +169,9 @@ wrapSrFile withCps path sf spans wsEnv =
         , "variables"       .= srVariables sf
         , "globalInstances" .= srGlobalInstances sf
         , "typeBlocks"      .= srTypeBlocks sf
-        , "onBlocks"    .= [ injectAll wsEnv                             (obBody ob) sp (toJSON ob)
+        , "onBlocks"    .= [ injectAll (flatToScoped wsEnv)               (obBody ob) sp (toJSON ob)
                            | (sp, ob) <- zip (spOnBlocks    spans) (srOnBlocks    sf) ]
-        , "events"      .= [ injectAll wsEnv                             (evBody ev) sp (toJSON ev)
+        , "events"      .= [ injectAll (flatToScoped wsEnv)               (evBody ev) sp (toJSON ev)
                            | (sp, ev) <- zip (spEvents      spans) (srEvents      sf) ]
         , "functions"   .= [ injectAll (procEnv (fnsParams (fbSig fn))) (fbBody fn) sp (toJSON fn)
                            | (sp, fn) <- zip (spFunctions   spans) (srFunctions   sf) ]
