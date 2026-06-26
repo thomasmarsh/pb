@@ -46,9 +46,17 @@ export function step(
       return step(graph, node.target, varEnv, env);
 
     case "call": {
+      const args = node.args.map((a) => evalExpr(varEnv, a));
+      // DW methods that don't suspend: no-op and continue.
+      const dotIdx = node.callee.lastIndexOf(".");
+      if (dotIdx >= 0) {
+        const methodName = node.callee.slice(dotIdx + 1).toLowerCase();
+        if (["settransobject", "getchild", "setfilter", "filter", "sort", "setsort"].includes(methodName)) {
+          return step(graph, node.next, varEnv, env);
+        }
+      }
       const fn = PB_BUILTINS[node.callee];
       if (fn) {
-        const args = node.args.map((a) => evalExpr(varEnv, a));
         if (node.result) writeVar(varEnv, node.result, fn(...args));
       }
       return step(graph, node.next, varEnv, env);
@@ -93,10 +101,21 @@ function dispatchSuspend(
   env: CpsEnv,
 ): Effect<unknown> | null {
   if (effect.startsWith("retrieve:")) {
-    const dwName = effect.slice("retrieve:".length);
-    const sql = env.dwNameToSql?.(dwName) ?? null;
+    const effectBody = effect.slice("retrieve:".length);
+    if (effectBody.startsWith("child_")) {
+      // Format: "retrieve:child_<col>:<dwCtrl>" — compiler encodes parent DW control.
+      const sep = effectBody.indexOf(":", "child_".length);
+      const dwCtrl = sep >= 0 ? effectBody.slice(sep + 1) : null;
+      if (!dwCtrl) return null;
+      const sql = env.dwNameToSql?.(dwCtrl) ?? null;
+      if (!sql) return null;
+      return env.executeSql(sql, args).map((r) => ({ dwName: dwCtrl, rows: r.rows }));
+    }
+    // Regular DW retrieve: "retrieve:<dwCtrl>"
+    const dwCtrl = effectBody;
+    const sql = env.dwNameToSql?.(dwCtrl) ?? null;
     if (!sql) return null;
-    return env.executeSql(sql, args).map((r) => ({ dwName, rows: r.rows }));
+    return env.executeSql(sql, args).map((r) => ({ dwName: dwCtrl, rows: r.rows }));
   }
   switch (effect) {
     case "executeSql": {

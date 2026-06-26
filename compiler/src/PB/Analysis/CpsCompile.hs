@@ -137,8 +137,11 @@ effectName expr =
       head_ = T.takeWhile (/= '.') cn
   in if cn == "fn_retrievechild"
      then case exprArgs expr of
-            (_:ExStr col:_) -> "retrieve:child_" <> T.toLower col
-            _               -> "retrieve:child_?"
+            (ExLvalue dv:ExStr col:_) ->
+              let dwCtrl = case segments dv of { (s:_) -> T.toLower (segName s); [] -> "?" }
+              in "retrieve:child_" <> T.toLower col <> ":" <> dwCtrl
+            (_:ExStr col:_) -> "retrieve:child_" <> T.toLower col <> ":?"
+            _               -> "retrieve:child_?:?"
      else if cn `elem` ["open", "opensheet"] then "open"
      else if "close" `T.isSuffixOf` cn       then "close"
      else if ".retrieve" `T.isSuffixOf` cn   then "retrieve:" <> head_
@@ -309,16 +312,23 @@ compileSingleStmt env lctx (Located line stmt) fallthrough = case stmt of
              , cpArgs   = [evArg]
              , cpNext   = fallthrough
              }) (Just line)
-    -- fn_retrievechild(adw, "col", sqlParam): effect name encodes column;
-    -- only the 3rd arg (the SQL parameter) is needed at runtime.
+    -- fn_retrievechild(adw, "col", sqlParam): encode both the column name and
+    -- the parent DW control in the effect so the runtime can resolve SQL
+    -- without searching. Effect: "retrieve:child_<col>:<dwCtrl>".
     | ExCall lv rawArgs <- expr
     , [seg] <- segments lv
     , T.toLower (segName seg) == "fn_retrievechild" ->
-        let colArg   = case rawArgs of { (_:c:_) -> parseArgList c; _ -> ExRaw [] }
+        let dwArg    = case rawArgs of { (d:_)     -> parseArgList d; _ -> ExRaw [] }
+            colArg   = case rawArgs of { (_:c:_)   -> parseArgList c; _ -> ExRaw [] }
             paramArg = case rawArgs of { (_:_:p:_) -> [parseArgList p]; _ -> [] }
             col      = case colArg of { ExStr c -> T.toLower c; _ -> "?" }
+            dwCtrl   = case dwArg of
+                         ExLvalue dv -> case segments dv of
+                           (dvSeg:_) -> T.toLower (segName dvSeg)
+                           []        -> "?"
+                         _ -> "?"
         in emit (CpsSuspend
-             { suEffect       = "retrieve:child_" <> col
+             { suEffect       = "retrieve:child_" <> col <> ":" <> dwCtrl
              , suArgs         = paramArg
              , suVar          = Nothing
              , suContinuation = fallthrough

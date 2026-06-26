@@ -72,6 +72,19 @@ def test_get_explore_tree(db_conn: duckdb.DuckDBPyConnection):
         assert isinstance(obj["procedures"], list)
 
 
+def test_get_explore_tree_includes_datawindows(db_conn: duckdb.DuckDBPyConnection):
+    result = get_explore_tree(db_conn)
+    all_objects = [obj for lib in result["libraries"] for obj in lib["objects"]]
+    kinds = {obj["kind"] for obj in all_objects}
+    assert "datawindow" in kinds, "explore tree must include DataWindow objects"
+    dw_objs = [obj for obj in all_objects if obj["kind"] == "datawindow"]
+    assert len(dw_objs) > 0
+    for obj in dw_objs:
+        assert "name" in obj
+        assert "file" in obj
+        assert obj["procedures"] == []
+
+
 # ── DataWindowFile wire-format integration tests ─────────────────────────────
 # These tests catch drift between PB.Pipeline.Serialise (Haskell) and the
 # manually maintained ui/src/types/ast.ts TypeScript types.

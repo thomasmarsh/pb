@@ -430,6 +430,7 @@ def get_dw_queries(conn: duckdb.DuckDBPyConnection) -> dict[str, str]:
 
 def get_explore_tree(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     obj_rows = rows(conn.execute("SELECT object AS name, kind, file FROM objects ORDER BY kind, object"))
+    dw_rows = rows(conn.execute("SELECT object AS name, 'datawindow' AS kind, file FROM dw_objects ORDER BY object"))
     proc_rows = rows(
         conn.execute(
             "SELECT object, proc_type, proc_name AS name, params, return_type, "
@@ -442,7 +443,7 @@ def get_explore_tree(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         procs_by_obj.setdefault(p["object"], []).append(p)
 
     libraries: dict[str, list[dict[str, Any]]] = {}
-    for obj in obj_rows:
+    for obj in obj_rows + dw_rows:
         fpath = obj.get("file", "")
         lib = pbl_name(fpath)
         obj_entry = {

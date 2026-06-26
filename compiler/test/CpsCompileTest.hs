@@ -254,10 +254,10 @@ tests = testGroup "CpsCompile"
         effectName (ExCall { callee = lv2 "dw" "retrieve", callArgs = [] })
           @?= "retrieve:dw"
 
-    , testCase "effect name: fn_retrievechild('kodperiod') → retrieve:child_kodperiod" $
+    , testCase "effect name: fn_retrievechild('kodperiod') → retrieve:child_kodperiod:adw" $
         effectName (ExCall { callee   = lv1 "fn_retrievechild"
                            , callArgs = [[tok "adw"], [tok "\"kodperiod\""], [tok "gs_kodxrisi"]] })
-          @?= "retrieve:child_kodperiod"
+          @?= "retrieve:child_kodperiod:adw"
 
     , testCase "InheritGraph: user type inheriting datawindow → Suspend" $
         classifyExpr (varEnvInh [("ids_data", "n_cst_ds")] [("n_cst_ds", "datastore")])
@@ -594,7 +594,7 @@ tests = testGroup "CpsCompile"
 
   , testGroup "Item 1 – fn_retrievechild suspend"
 
-    [ testCase "fn_retrievechild compiles to CpsSuspend retrieve:child_kodperiod" $ do
+    [ testCase "fn_retrievechild compiles to CpsSuspend retrieve:child_kodperiod:adw" $ do
         let stmt = at 3 (BsCall (ExCall
               { callee   = lv1 "fn_retrievechild"
               , callArgs = [[tok "adw"], [tok "\"kodperiod\""], [tok "gs_kodxrisi"]]
@@ -602,7 +602,7 @@ tests = testGroup "CpsCompile"
             g   = compile noEnv [stmt]
             sus = [ n | n@CpsSuspend {} <- cgNodes g ]
         case sus of
-          [s] -> suEffect s @?= "retrieve:child_kodperiod"
+          [s] -> suEffect s @?= "retrieve:child_kodperiod:adw"
           _   -> assertBool "expected one CpsSuspend" False
 
     , testCase "fn_retrievechild CpsSuspend carries only the 3rd arg (SQL param)" $ do

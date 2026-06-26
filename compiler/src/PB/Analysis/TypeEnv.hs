@@ -9,6 +9,8 @@ module PB.Analysis.TypeEnv
   ) where
 
 import PB.Prelude
+import PB.AST.BodyStmt (BodyStmt (..))
+import PB.AST.Located  (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type
 import qualified Data.Map.Strict as Map
@@ -35,6 +37,9 @@ buildWorkspaceTypeEnv = foldl' mergeFile emptyTypeEnv
       }
 
 -- | Extract global variable declarations (instance vars + variables block).
+-- Also picks up instance variable declarations from the global type body
+-- (the typeBlock where within == Nothing), which the parser emits as BsLocalVar
+-- nodes rather than GlobalInstance entries.
 extractGlobalVars :: SrFile -> Map.Map Text PbType
 extractGlobalVars sf =
   Map.fromList [ (T.toLower (giName gi), parseTypeText (giType gi))
@@ -48,6 +53,14 @@ extractGlobalVars sf =
        Nothing -> Map.empty
        Just (VariablesBlock { varDecls = decls }) ->
          Map.fromList [ (T.toLower (vdName d), parseTypeText (vdType d)) | d <- decls ]
+  <> mconcat
+       [ Map.fromList
+           [ (T.toLower vn, vt)
+           | Located _ (BsLocalVar { varType = vt, varName = vn }) <- tbBody tb
+           ]
+       | tb <- srTypeBlocks sf
+       , tdWithin (tbDecl tb) == Nothing
+       ]
 
 -- | Extract type declarations for inheritance resolution.
 extractTypeDecls :: SrFile -> Map.Map Text Text

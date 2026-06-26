@@ -25,23 +25,29 @@ function controlStyle(ctrl: LayoutControl): Record<string, string> {
   };
 }
 
-function renderControl(ctrl: LayoutControl, onClick: () => void): import("solid-js").JSX.Element {
+function resolveControlText(ctrl: LayoutControl, vars: Record<string, unknown>): string | undefined {
+  const val = vars[ctrl.name];
+  return typeof val === "string" ? val : ctrl.text;
+}
+
+function renderControl(ctrl: LayoutControl, onClick: () => void, vars: Record<string, unknown>): import("solid-js").JSX.Element {
+  const resolved = { ...ctrl, text: resolveControlText(ctrl, vars) };
   const t = ctrl.type.toLowerCase();
   if (t === "statictext") {
-    return <div class="runtime-ctrl" style={controlStyle(ctrl)}><StaticText ctrl={ctrl} /></div>;
+    return <div class="runtime-ctrl" style={controlStyle(ctrl)}><StaticText ctrl={resolved} /></div>;
   }
   if (t === "commandbutton") {
-    return <div class="runtime-ctrl" style={controlStyle(ctrl)}><CommandButton ctrl={ctrl} onClick={onClick} /></div>;
+    return <div class="runtime-ctrl" style={controlStyle(ctrl)}><CommandButton ctrl={resolved} onClick={onClick} /></div>;
   }
   if (t === "groupbox") {
-    return <div class="runtime-ctrl" style={controlStyle(ctrl)}><GroupBox ctrl={ctrl} /></div>;
+    return <div class="runtime-ctrl" style={controlStyle(ctrl)}><GroupBox ctrl={resolved} /></div>;
   }
   if (t === "singlelineedit" || t === "multilineedit") {
-    return <div class="runtime-ctrl" style={controlStyle(ctrl)}><LineEdit ctrl={ctrl} /></div>;
+    return <div class="runtime-ctrl" style={controlStyle(ctrl)}><LineEdit ctrl={resolved} /></div>;
   }
   return (
     <div class="runtime-ctrl" style={controlStyle(ctrl)}>
-      <ControlBox ctrl={ctrl} onClick={onClick} />
+      <ControlBox ctrl={resolved} onClick={onClick} />
     </div>
   );
 }
@@ -147,6 +153,7 @@ export function WindowRuntimeView(props: {
               <For each={wl().controls}>
                 {(ctrl) => {
                   const isDw = ctrl.type.toLowerCase().includes("datawindow") || ctrl.name === "dw" || ctrl.name.startsWith("dw_");
+                  const resolved = { ...ctrl, text: resolveControlText(ctrl, variables()) };
                   if (isDw) {
                     const effectiveH = ctrl.height > 0 ? ctrl.height : wl().height - ctrl.y;
                     const dwStyle = { ...controlStyle(ctrl), height: `${effectiveH * BASE_SCALE}px` };
@@ -154,14 +161,14 @@ export function WindowRuntimeView(props: {
                       <div class="runtime-ctrl" style={dwStyle}>
                         <Show
                           when={controlValues()[ctrl.name]}
-                          fallback={<ControlBox ctrl={ctrl} onClick={() => handleControlClick(ctrl)} />}
+                          fallback={<ControlBox ctrl={resolved} onClick={() => handleControlClick(ctrl)} />}
                         >
                           {(rows) => <DataWindowGrid data={rows() as DWRow[]} />}
                         </Show>
                       </div>
                     );
                   }
-                  return renderControl(ctrl, () => handleControlClick(ctrl));
+                  return renderControl(resolved, () => handleControlClick(ctrl), variables());
                 }}
               </For>
             </ResizableCanvas>

@@ -98,11 +98,13 @@ function stepWithDraft(
     executeSql: env.executeSql,
     open: (): Effect<unknown> => Effect.none(),
     // Resolve DW name to SQL: check dwQueries (loaded from DB), then resolve
-    // via typeBlocks dataobject property and check again.
+    // via typeBlocks dataobject property and check again. For child DW effects
+    // (e.g. "child_kodkat" from fn_retrievechild), search AST for parent DW.
     dwNameToSql: (dwName: string): string | null => {
       if (draft.dwQueries[dwName]) return draft.dwQueries[dwName] ?? null;
       const dataobj = findDwDataobject(draft.ast, dwName);
-      return dataobj ? (draft.dwQueries[dataobj] ?? null) : null;
+      if (dataobj && draft.dwQueries[dataobj]) return draft.dwQueries[dataobj] ?? null;
+      return null;
     },
   };
   const effect = step(graph, pc, draft.varEnv, cpsEnv);
