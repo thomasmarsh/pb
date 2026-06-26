@@ -56,7 +56,6 @@ library
     PB.Pipeline.Passes
     PB.Pipeline.Runner
     PB.Pipeline.Serialise
-    PB.Pipeline.Church
     PB.Pipeline.DuckDb
     PB.Pipeline.SqlParse
     PB.Pipeline.FileWalk
@@ -105,7 +104,6 @@ test-suite pb-compiler-test
   main-is: Main.hs
   other-modules:
       DuckDbTest
-    , ChurchTest
     , StdLibTest
     , BodyParserTest
     , BodyStmtTest
