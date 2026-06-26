@@ -65,6 +65,8 @@ pbBuiltins = Set.fromList
 
 -- | Naming-convention map for window control type inference (Plan 90a).
 -- Prefix -> PB class name. Longer prefixes first to avoid false matches.
+-- TODO: this is wrong since these prefixes are just convention and culture,
+-- not a hard rule. The only correct mapping is .sr* -> type.
 controlPrefixMap :: [(Text, Text)]
 controlPrefixMap =
   [ ("ddplb_", "dropdownpicturelistbox")
