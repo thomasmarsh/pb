@@ -10,6 +10,7 @@ module PB.Pipeline.Emit
   , ParsedFile (..)
   , ParseOutcome (..)
   , parseOutcome
+  , parsePowerScriptFile
   , stripBom
   ) where
 

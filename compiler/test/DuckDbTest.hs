@@ -23,8 +23,8 @@ testAppendObjects :: IO ()
 testAppendObjects = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
   appendObjects conn
-    [ ObjectRow "test.srf" "powerscript" "w_test" (Just "w_ancestor") Nothing Nothing
-    , ObjectRow "other.sru" "powerscript" "u_util" Nothing            Nothing Nothing
+    [ ObjectRow "test.srf" "powerscript" "w_test" (Just "w_ancestor") Nothing Nothing "confirmed"
+    , ObjectRow "other.sru" "powerscript" "u_util" Nothing            Nothing Nothing "confirmed"
     ]
   -- Appending an empty list after a real batch must not throw
   appendObjects conn []
@@ -36,8 +36,8 @@ testAppendProcedures = withWriteConn ":memory:" $ \conn -> do
   let cfgJs  = "{\"entry\":\"b0\",\"exits\":[\"b0\"],\"blocks\":[],\"edges\":[]}"
       cpsJs  = "{\"nodes\":[],\"entry\":0,\"suspensionPoints\":[],\"sourceMap\":[]}"
   appendProcedures conn
-    [ ProcRow "test.srf" "w_test" "open"  "event"  1  10 cfgJs cpsJs "" "" (Just 1)
-    , ProcRow "test.srf" "w_test" "close" "event" 11  20 cfgJs cpsJs "" "" (Just 1)
+    [ ProcRow "test.srf" "w_test" "open"  "event"  1  10 cfgJs cpsJs "" "" (Just 1) "confirmed"
+    , ProcRow "test.srf" "w_test" "close" "event" 11  20 cfgJs cpsJs "" "" (Just 1) "confirmed"
     ]
   -- appendLocalVars sharing the same connection must not conflict
   appendLocalVars conn []

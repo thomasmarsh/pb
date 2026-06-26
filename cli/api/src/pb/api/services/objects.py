@@ -30,6 +30,7 @@ def pbl_name(file_path: str) -> str:
 _ALL_OBJECTS_CTE = """
 WITH all_objects AS (
     SELECT object, kind, file, ancestor FROM objects
+    WHERE file NOT LIKE '__stdlib__%'
     UNION ALL
     SELECT object, 'datawindow' AS kind, file, NULL AS ancestor FROM dw_objects
 )
@@ -79,7 +80,7 @@ def list_objects(
 
 
 def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
-    obj_rows = rows(conn.execute("SELECT object AS name, kind, file, ancestor FROM objects WHERE object = ?", [name]))
+    obj_rows = rows(conn.execute("SELECT object AS name, kind, file, ancestor FROM objects WHERE object = ? AND file NOT LIKE '__stdlib__%'", [name]))
     if not obj_rows:
         # Fall back to dw_objects for DataWindow objects
         dw_rows = rows(conn.execute("SELECT object AS name, file FROM dw_objects WHERE object = ?", [name]))
@@ -429,13 +430,13 @@ def get_dw_queries(conn: duckdb.DuckDBPyConnection) -> dict[str, str]:
 
 
 def get_explore_tree(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
-    obj_rows = rows(conn.execute("SELECT object AS name, kind, file FROM objects ORDER BY kind, object"))
+    obj_rows = rows(conn.execute("SELECT object AS name, kind, file FROM objects WHERE file NOT LIKE '__stdlib__%' ORDER BY kind, object"))
     dw_rows = rows(conn.execute("SELECT object AS name, 'datawindow' AS kind, file FROM dw_objects ORDER BY object"))
     proc_rows = rows(
         conn.execute(
             "SELECT object, proc_type, proc_name AS name, params, return_type, "
             "start_line, end_line, cyclomatic "
-            "FROM procedures ORDER BY object, proc_type, proc_name"
+            "FROM procedures WHERE file NOT LIKE '__stdlib__%' ORDER BY object, proc_type, proc_name"
         )
     )
     procs_by_obj: dict[str, list[dict[str, Any]]] = {}

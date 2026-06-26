@@ -71,22 +71,28 @@ tests = testGroup "DeadCode"
               [("obj_dw", "fn_a", "fn_b")]
               [] [] (Set.singleton "obj_dw")
         in  length dead @?= 0
-    , testCase "confidence high when no callers" $
-        let [dead] = computeDeadProcedures [procFn] [] [] [] Set.empty
-        in  dpConfidence dead @?= "high"
-    , testCase "confidence medium when naive callers but no scoped" $
-        let [dead] = computeDeadProcedures
+    , testCase "confidence high when no callers" $ do
+        let dead = computeDeadProcedures [procFn] [] [] [] Set.empty
+        case dead of
+          [d] -> dpConfidence d @?= "high"
+          _   -> assertFailure ("expected 1 dead proc, got " <> show (length dead))
+    , testCase "confidence medium when naive callers but no scoped" $ do
+        let dead = computeDeadProcedures
               [procFn]
               [("other_obj", "other", "fn")]
               [] [] Set.empty
-        in  dpConfidence dead @?= "medium"
-    , testCase "confidence low when scoped callers" $
-        let [dead] = computeDeadProcedures
+        case dead of
+          [d] -> dpConfidence d @?= "medium"
+          _   -> assertFailure ("expected 1 dead proc, got " <> show (length dead))
+    , testCase "confidence low when scoped callers" $ do
+        let dead = computeDeadProcedures
               [procFn]
               [("other_obj", "other", "fn")]
               [("other_obj", "other", "obj", "fn")]
               [] Set.empty
-        in  dpConfidence dead @?= "low"
+        case dead of
+          [d] -> dpConfidence d @?= "low"
+          _   -> assertFailure ("expected 1 dead proc, got " <> show (length dead))
     , testCase "sorted by object then name" $
         let dead = computeDeadProcedures
               [ ProcInfo "obj_z" "fn_b" "function" Nothing

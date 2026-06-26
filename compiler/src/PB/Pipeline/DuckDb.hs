@@ -106,12 +106,14 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
     allTables :: [Query]
     allTables =
       [ "CREATE TABLE IF NOT EXISTS objects \
-        \(file TEXT, kind TEXT, object TEXT, ancestor TEXT, layout_json TEXT, type_blocks_json TEXT)"
+        \(file TEXT, kind TEXT, object TEXT, ancestor TEXT, layout_json TEXT, \
+        \type_blocks_json TEXT, confidence TEXT NOT NULL DEFAULT 'confirmed')"
       , "CREATE TABLE IF NOT EXISTS procedures \
         \(file TEXT, object TEXT, proc_name TEXT, proc_type TEXT, \
         \start_line INTEGER, end_line INTEGER, \
         \cfg_json TEXT, cps_graph_json TEXT, \
-        \params TEXT, return_type TEXT, cyclomatic INTEGER)"
+        \params TEXT, return_type TEXT, cyclomatic INTEGER, \
+        \confidence TEXT NOT NULL DEFAULT 'confirmed')"
       , "CREATE TABLE IF NOT EXISTS local_vars \
         \(file TEXT, object TEXT, proc_name TEXT, \
         \var_name TEXT, raw_type TEXT, is_param BOOLEAN, scope_line INTEGER)"
@@ -194,6 +196,7 @@ data ObjectRow = ObjectRow
   , orAncestor       :: Maybe Text
   , orLayoutJson     :: Maybe Text
   , orTypeBlocksJson :: Maybe Text
+  , orConfidence     :: Text
   }
 
 data ProcRow = ProcRow
@@ -208,6 +211,7 @@ data ProcRow = ProcRow
   , prParams     :: Text
   , prReturnType :: Text
   , prCyclomatic :: Maybe Int
+  , prConfidence :: Text
   }
 
 data DwObjectRow = DwObjectRow
@@ -267,6 +271,7 @@ appendObjects conn rows = withRaw conn "objects" $ \app ->
     aMaybeText app (orAncestor       r)
     aMaybeText app (orLayoutJson     r)
     aMaybeText app (orTypeBlocksJson r)
+    aText      app (orConfidence     r)
     endRow app
 
 appendProcedures :: DuckConn -> [ProcRow] -> IO ()
@@ -284,6 +289,7 @@ appendProcedures conn rows = withRaw conn "procedures" $ \app ->
     aText     app (prParams     r)
     aText     app (prReturnType r)
     aMaybeInt app (prCyclomatic r)
+    aText     app (prConfidence r)
     endRow app
 
 appendDwObjects :: DuckConn -> [DwObjectRow] -> IO ()

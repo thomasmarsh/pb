@@ -11,7 +11,7 @@ import PB.Analysis.TypeResolve (buildObjectSet, buildUserTypeSet)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import Test.Tasty            (TestTree, testGroup)
-import Test.Tasty.HUnit      (testCase, (@?=), assertBool)
+import Test.Tasty.HUnit      (testCase, (@?=))
 
 emptyFile :: SrFile
 emptyFile = SrFile [] Nothing Nothing Nothing [] [] [] [] [] []

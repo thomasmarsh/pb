@@ -8,6 +8,9 @@ module PB.Pipeline.Runner
   , reconstructRetrieveSql
     -- own
   , runModeDb
+  , compileOne
+  , appendToDb
+  , CompiledFile (..)
   ) where
 
 import PB.Prelude
@@ -33,6 +36,7 @@ import PB.Pipeline.Emit
   , extractWindowLayout, reconstructRetrieveSql, collectStatements
   , wrapSrFile
   )
+import PB.Runtime.StdLib (parseStdlibFiles)
 import PB.Pipeline.Passes    (runPhaseB)
 import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse
@@ -113,8 +117,8 @@ data CompiledFile
   | CFError FilePath Text
   | CFSkip
 
-compileOne :: TypeEnv -> Maybe (SqlBridgePool, Int) -> ParseOutcome -> IO CompiledFile
-compileOne wsEnv mBridge outcome = case outcome of
+compileOne :: TypeEnv -> Maybe (SqlBridgePool, Int) -> Text -> ParseOutcome -> IO CompiledFile
+compileOne wsEnv mBridge confidence outcome = case outcome of
 
   PsParsed pf -> do
     let sf   = pfSrFile pf
@@ -135,7 +139,7 @@ compileOne wsEnv mBridge outcome = case outcome of
                 flow     = (fp, obj, pName, Dataflow.analyzeProcedure obj pName cfg)
                 cyclo    = DeadCode.cyclomaticComplexity cfg
             in ( ProcRow fp obj pName pType sLine eLine cfgJs cpsJs
-                   taintParams retType (Just cyclo)
+                   taintParams retType (Just cyclo) confidence
                , flow )
           | ((sLine, eLine), (pName, pType, cpsParams, taintParams, retType, body)) <-
               zip (spFunctions   sp) [ (fnsName (fbSig fb), "function",   fnsParams (fbSig fb), fnsParams    (fbSig fb), fnsReturnType (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
@@ -161,6 +165,7 @@ compileOne wsEnv mBridge outcome = case outcome of
       { cpsObjectRow     = ObjectRow fp "powerscript" obj anc
                              (fmap jsonText (extractWindowLayout (srTypeBlocks sf)))
                              (Just (jsonText (toJSON (srTypeBlocks sf))))
+                             confidence
       , cpsProcRows      = map fst procs
       , cpsLocalVars     = lvs
       , cpsCallSites     = css
@@ -252,7 +257,7 @@ workerLoopFilesNoBridge k workQ wsEnv conn mutex errCount = go
           let fp = T.pack file
           emitProgress (object ["tag" .= ("worker_start" :: Text), "worker" .= k, "file" .= fp])
           outcome  <- parseOutcome file
-          compiled <- compileOne wsEnv Nothing outcome
+          compiled <- compileOne wsEnv Nothing "confirmed" outcome
           let ok = case compiled of { CFError {} -> False; _ -> True }
           when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
           withMVar mutex $ \_ -> appendToDb conn compiled
@@ -274,7 +279,7 @@ workerLoopFiles k workQ pool wsEnv conn mutex errCount = go
           let fp = T.pack file
           emitProgress (object ["tag" .= ("worker_start" :: Text), "worker" .= k, "file" .= fp])
           outcome  <- parseOutcome file
-          compiled <- compileOne wsEnv (Just (pool, k)) outcome
+          compiled <- compileOne wsEnv (Just (pool, k)) "confirmed" outcome
           let ok = case compiled of { CFError {} -> False; _ -> True }
           when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
           withMVar mutex $ \_ -> appendToDb conn compiled
@@ -308,13 +313,15 @@ runModeDb srcDir dbPath = do
   let total = length files
   emitProgress (object ["tag" .= ("total" :: Text), "n" .= total])
 
-  -- Phase A0: parse all files to build workspace TypeEnv, then discard SrFiles.
+  -- Phase A0: parse stdlib + all user files to build workspace TypeEnv.
+  stdlibParsed <- parseStdlibFiles
   emitProgress (object ["tag" .= ("phase" :: Text), "name" .= ("A0" :: Text), "total" .= total])
   outcomes0 <- mapConcurrently (\file -> do
     outcome <- parseOutcome file
     emitProgress (object ["tag" .= ("file_done" :: Text), "phase" .= ("A0" :: Text)])
     pure outcome) files
-  let wsEnv = buildWorkspaceTypeEnv [pfSrFile pf | PsParsed pf <- outcomes0]
+  let wsEnv = buildWorkspaceTypeEnv
+                (map pfSrFile stdlibParsed ++ [pfSrFile pf | PsParsed pf <- outcomes0])
   _ <- evaluate (Map.size (teVars wsEnv) + Map.size (teUserTypes wsEnv))
 
   mBridgeBin <- lookupEnv "PB_SQL_WORKER"
@@ -325,6 +332,10 @@ runModeDb srcDir dbPath = do
 
   withWriteConn dbPath $ \conn -> do
     initSchema conn
+    -- Load stdlib first so type lookups in user-code Phase B see the base classes.
+    mapM_ (\pf -> do
+      cf <- compileOne wsEnv Nothing "speculative" (PsParsed pf)
+      appendToDb conn cf) stdlibParsed
     case mBridgeBin of
       Nothing -> do
         -- N worker threads drain a shared queue; serialize DB writes through mutex.

@@ -2,16 +2,16 @@ module DataflowTest (tests) where
 
 import PB.Prelude
 import PB.AST.BodyStmt
-import PB.AST.Expr         (Expr (..), LvSegment (..), Lvalue (..), BinOp (..))
+import PB.AST.Expr         (Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Type         (PbType (..))
 import PB.AST.Located      (Located (..))
 import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
-import PB.Analysis.CfgBuild (Cfg (..), CfgBlock (..), CfgEdge (..), buildCfg)
+import PB.Analysis.CfgBuild (Cfg (..), CfgBlock (..), CfgEdge (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
 import PB.Analysis.Dataflow
 
-import Data.Aeson          (Value (..), (.=), object, toJSON)
+import Data.Aeson          (Value (..), toJSON)
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Map.Strict as Map
@@ -27,9 +27,6 @@ at n x = Located n x
 
 lv1 :: Text -> Lvalue
 lv1 n = Lvalue [LvSegment n Nothing]
-
-lv2 :: Text -> Text -> Lvalue
-lv2 a b = Lvalue [LvSegment a Nothing, LvSegment b Nothing]
 
 tok :: Text -> Token
 tok t = case lexResult (tokenizeLine ll) of
