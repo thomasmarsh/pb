@@ -170,7 +170,8 @@ class _LiveRunnerProgress:
             elif tag == "phase":
                 name = event["name"]
                 self._phase_name = name
-                self._done = 0  # reset counter for each phase
+                if name in ("A", "A0"):
+                    self._done = 0  # reset counter for each parsing phase
                 if name == "A0":
                     self._phase_label = "Building type env"
                     self._total = event.get("total", self._total)

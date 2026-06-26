@@ -76,6 +76,8 @@ def run(
         proc.wait()
         reader.join()
 
+    parsed = prog._done
+
     if proc.returncode != 0:
         import typer
         typer.echo(f"pbc failed (exit {proc.returncode}):", err=True)
@@ -98,4 +100,4 @@ def run(
         compute_metrics(conn, progress)
         sql_parse_failures = env.storage.count_sql_parse_failures(conn)
 
-    reporter.done(parsed=0, errors=errors, sql_parse_failures=sql_parse_failures)
+    reporter.done(parsed=parsed, errors=errors, sql_parse_failures=sql_parse_failures)
