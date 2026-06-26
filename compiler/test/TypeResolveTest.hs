@@ -113,6 +113,16 @@ tests = testGroup "TypeResolve"
           let (k, t) = classifyPbType (PtUserDefined "xyz_unknown") Set.empty Set.empty
           k @?= "unresolved"
           t @?= Nothing
+
+      , testCase "PtPrimitive datawindow → object (built-in class, not value primitive)" $ do
+          let (k, t) = classifyPbType (PtPrimitive "datawindow") Set.empty Set.empty
+          k @?= "object"
+          t @?= Just "datawindow"
+
+      , testCase "PtPrimitive transaction → object (built-in class)" $ do
+          let (k, t) = classifyPbType (PtPrimitive "transaction") Set.empty Set.empty
+          k @?= "object"
+          t @?= Just "transaction"
       ]
 
   , testGroup "parseParams"

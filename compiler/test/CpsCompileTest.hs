@@ -295,6 +295,56 @@ tests = testGroup "CpsCompile"
           @?= Pure
     ]
 
+  , testGroup "classifyExpr stdlib hierarchy"
+    [ testCase "user DW subtype over full stdlib chain: retrieve → Suspend" $
+        -- Simulates stdlib: my_report_dw → datawindow → nonvisualobject → powerobject
+        -- Old code returned "powerobject" from lookupBaseType → Pure (bug)
+        classifyExpr (varEnvInh [("rpt", "my_report_dw")]
+                                [ ("my_report_dw", "datawindow")
+                                , ("datawindow", "nonvisualobject")
+                                , ("nonvisualobject", "powerobject")
+                                ])
+          (ExCall { callee = lv2 "rpt" "retrieve", callArgs = [] })
+          @?= Suspend
+
+    , testCase "direct PtPrimitive datawindow with stdlib parents: retrieve → Suspend" $
+        -- PtPrimitive "datawindow" declared var; stdlib adds datawindow → nonvisualobject
+        -- Old code: lookupBaseType walks to "powerobject" → Pure (bug)
+        let env = TypeEnv
+              { teVars      = Map.singleton "dw1" (PtPrimitive "datawindow")
+              , teUserTypes = Map.fromList
+                  [ ("datawindow", "nonvisualobject")
+                  , ("nonvisualobject", "powerobject")
+                  ]
+              }
+        in classifyExpr env
+             (ExCall { callee = lv2 "dw1" "retrieve", callArgs = [] })
+             @?= Suspend
+
+    , testCase "powerobject var: retrieve → Pure (not a DW descendant)" $
+        let env = TypeEnv
+              { teVars      = Map.singleton "obj" (PtPrimitive "powerobject")
+              , teUserTypes = Map.empty
+              }
+        in classifyExpr env
+             (ExCall { callee = lv2 "obj" "retrieve", callArgs = [] })
+             @?= Pure
+
+    , testCase "transaction with stdlib chain: commit → Suspend" $
+        -- Old code: lookupBaseType walks transaction → nonvisualobject → powerobject
+        -- → isTransType "powerobject" = False → Pure (bug)
+        let env = TypeEnv
+              { teVars      = Map.singleton "trans" (PtPrimitive "transaction")
+              , teUserTypes = Map.fromList
+                  [ ("transaction", "nonvisualobject")
+                  , ("nonvisualobject", "powerobject")
+                  ]
+              }
+        in classifyExpr env
+             (ExCall { callee = lv2 "trans" "commit", callArgs = [] })
+             @?= Suspend
+    ]
+
   , testGroup "ExMethodCall classification"
     [ testCase "ExMethodCall with ExLvalue receiver (datawindow) → Suspend" $
         classifyExpr (varEnv "dw" "datawindow")

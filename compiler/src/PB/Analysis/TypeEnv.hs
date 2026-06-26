@@ -5,6 +5,7 @@ module PB.Analysis.TypeEnv
   , lookupVarType
   , lookupUserType
   , lookupBaseType
+  , isDescendantOf
   , withProcScope
   ) where
 
@@ -90,6 +91,17 @@ walkInheritChain inh = go Set.empty
       | Set.member ty seen             = ty
       | Just p <- Map.lookup ty inh   = go (Set.insert ty seen) (T.toLower p)
       | otherwise                      = ty
+
+-- | True when @ty@ (lowercased) is in @targets@ or has an ancestor in @targets@.
+-- Cycle-safe via a visited set.
+isDescendantOf :: Map.Map Text Text -> Text -> Set.Set Text -> Bool
+isDescendantOf inh ty0 targets = go Set.empty (T.toLower ty0)
+  where
+    go seen ty
+      | ty `Set.member` targets = True
+      | ty `Set.member` seen    = False
+      | Just p <- Map.lookup ty inh = go (Set.insert ty seen) (T.toLower p)
+      | otherwise                    = False
 
 -- | Overlay procedure parameters on top of a workspace type env.
 -- Parameter names shadow any globals with the same name.

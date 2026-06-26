@@ -29,6 +29,7 @@ module PB.Analysis.TypeResolve
   , buildObjectSet
   , buildUserTypeSet
   -- exposed for testing and Church spike
+  , builtinClassNames
   , classifyPbType
   , classifyControlType
   , parseParams
@@ -226,10 +227,25 @@ instance ToJSON ResolvedCall where
 -- ---------------------------------------------------------------------------
 -- Type classification
 
+-- | PB built-in reference types that are semantically objects, not value
+-- primitives. parseTypeText puts them in PtPrimitive because they appear in
+-- primitiveNames, but classifyPbType should emit "object" kind for them.
+builtinClassNames :: Set.Set Text
+builtinClassNames = Set.fromList
+  [ "datawindow", "datastore", "datawindowchild"
+  , "transaction", "nonvisualobject", "visualobject"
+  , "powerobject", "userobject", "oleobject"
+  , "singlelineedit", "multilineedit", "listbox", "dropdownlistbox"
+  , "commandbutton", "checkbox", "radiobutton", "statictext"
+  , "window", "childwindow", "sheet", "tab"
+  ]
+
 -- | Classify a PbType into a resolution kind and optional target name.
 -- Mirrors Python classify_type() in type_resolution.py.
 classifyPbType :: PbType -> Set.Set Text -> Set.Set Text -> (Text, Maybe Text)
-classifyPbType (PtPrimitive _)   _    _         = ("primitive", Nothing)
+classifyPbType (PtPrimitive t)   _    _
+  | T.toLower t `Set.member` builtinClassNames = ("object",    Just (T.toLower t))
+  | otherwise                                  = ("primitive", Nothing)
 classifyPbType (PtDecimalPrec _) _    _         = ("primitive", Nothing)
 classifyPbType PtAny             _    _         = ("any", Nothing)
 classifyPbType (PtUserDefined n) objs userTypes

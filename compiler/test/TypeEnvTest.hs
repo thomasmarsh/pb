@@ -5,7 +5,7 @@ import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeDecl (..), Typ
                               GlobalInstance (..), srAllTypeDecls, srPrimaryObject)
 import PB.AST.Type           (PbType (..), parseTypeText)
 import PB.Analysis.TypeEnv   (TypeEnv (..), buildWorkspaceTypeEnv, lookupVarType, lookupUserType,
-                              lookupBaseType, withProcScope)
+                              lookupBaseType, isDescendantOf, withProcScope)
 import PB.Analysis.TypeResolve (buildObjectSet, buildUserTypeSet)
 
 import qualified Data.Map.Strict as Map
@@ -216,5 +216,36 @@ tests = testGroup "TypeEnv"
                       , fwdInstances = [GlobalInstance "integer" "m_main"] }) }
             env = buildWorkspaceTypeEnv [sf]
         in lookupVarType "m_main" env @?= Just (PtPrimitive "integer")
+    ]
+
+  , testGroup "isDescendantOf"
+    [ testCase "direct match — type is in targets" $
+        isDescendantOf Map.empty "datawindow" (Set.singleton "datawindow") @?= True
+
+    , testCase "no parents, not in targets" $
+        isDescendantOf Map.empty "integer" (Set.singleton "datawindow") @?= False
+
+    , testCase "one-hop ancestry" $
+        let inh = Map.singleton "my_dw" "datawindow"
+        in isDescendantOf inh "my_dw" (Set.singleton "datawindow") @?= True
+
+    , testCase "two-hop ancestry (stdlib scenario)" $
+        let inh = Map.fromList
+              [ ("my_dw", "datawindow")
+              , ("datawindow", "nonvisualobject")
+              , ("nonvisualobject", "powerobject")
+              ]
+        in isDescendantOf inh "my_dw" (Set.singleton "datawindow") @?= True
+
+    , testCase "root does not match when not in targets" $
+        let inh = Map.fromList
+              [ ("datawindow", "nonvisualobject")
+              , ("nonvisualobject", "powerobject")
+              ]
+        in isDescendantOf inh "powerobject" (Set.singleton "datawindow") @?= False
+
+    , testCase "cycle guard — does not loop forever" $
+        let inh = Map.fromList [("a", "b"), ("b", "a")]
+        in isDescendantOf inh "a" (Set.singleton "c") @?= False
     ]
   ]

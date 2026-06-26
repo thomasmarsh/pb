@@ -22,9 +22,10 @@ import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
 import PB.AST.Located  (Located (..))
+import PB.AST.Type     (renderPbType)
 import PB.Grammar.Body        (parseExpr)
 import PB.Lexing.Token        (Token (..))
-import PB.Analysis.TypeEnv (TypeEnv, lookupBaseType)
+import PB.Analysis.TypeEnv (TypeEnv (..), lookupVarType, isDescendantOf)
 import Control.Monad       (foldM)
 import Control.Monad.State.Strict
 import Data.List            (partition)
@@ -83,12 +84,13 @@ classifyExpr env (ExCall lv _) =
        [name]
          | isBuiltinSuspendFn name -> Suspend
        [headN, meth]
-         | Just ty <- lookupBaseType headN env
-         , isTypedSuspend ty meth  -> Suspend
+         | Just pty <- lookupVarType headN env
+         , let ty = T.toLower (renderPbType pty)
+         , isTypedSuspend (teUserTypes env) ty meth -> Suspend
        _ -> Pure
 classifyExpr env (ExMethodCall recv meth _) =
   case resolveReceiverType env recv of
-    Just ty | isTypedSuspend ty (T.toLower meth) -> Suspend
+    Just ty | isTypedSuspend (teUserTypes env) ty (T.toLower meth) -> Suspend
     _       -> Pure
 classifyExpr _ _ = Pure
 
@@ -97,32 +99,30 @@ isBuiltinSuspendFn :: Text -> Bool
 isBuiltinSuspendFn n = n `elem`
   ["open", "opensheet", "close", "execute", "run", "fn_retrievechild"]
 
--- | Return True when a method on a resolved type is a side-effecting call.
-isTypedSuspend :: Text -> Text -> Bool
-isTypedSuspend ty meth
-  | isDwType   ty = meth `elem`
-      [ "retrieve", "update", "delete", "reset"
-      , "rowscopy", "rowsmove", "sharedata"
-      , "print", "modify"
-      ]
-  | isTransType ty = meth `elem`
-      [ "commit", "rollback", "connect", "disconnect", "autocommit" ]
-  | otherwise      = False
+-- | Return True when a method on a type (given by declared name) is side-effecting.
+-- Uses isDescendantOf so user-defined DW/Transaction subclasses are handled
+-- correctly even when the full stdlib inheritance chain is loaded.
+isTypedSuspend :: Map.Map Text Text -> Text -> Text -> Bool
+isTypedSuspend inh ty meth
+  | isDescendantOf inh ty dwTypes    = meth `elem` dwMethods
+  | isDescendantOf inh ty transTypes = meth `elem` transMethods
+  | otherwise                        = False
+  where
+    dwTypes    = Set.fromList ["datawindow", "datastore", "datawindowchild"]
+    transTypes = Set.singleton "transaction"
+    dwMethods  = ["retrieve", "update", "delete", "reset",
+                  "rowscopy", "rowsmove", "sharedata", "print", "modify"]
+    transMethods = ["commit", "rollback", "connect", "disconnect", "autocommit"]
 
-isDwType :: Text -> Bool
-isDwType t = t `elem` ["datawindow", "datastore", "datawindowchild"]
-
-isTransType :: Text -> Bool
-isTransType t = t == "transaction"
-
+-- | Resolve the declared type name of a receiver expression (not walked to root).
 resolveReceiverType :: TypeEnv -> Expr -> Maybe Text
 resolveReceiverType env (ExLvalue lv) =
   case segments lv of
-    (s:_) -> lookupBaseType (segName s) env
+    (s:_) -> fmap (T.toLower . renderPbType) (lookupVarType (segName s) env)
     []    -> Nothing
 resolveReceiverType env (ExCall lv _) =
   case segments lv of
-    [single] -> lookupBaseType (segName single) env
+    [single] -> fmap (T.toLower . renderPbType) (lookupVarType (segName single) env)
     _        -> Nothing
 resolveReceiverType _ _ = Nothing
 
