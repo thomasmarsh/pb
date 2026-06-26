@@ -132,6 +132,8 @@ class _RecordingAnalyzeProgress:
 
 
 class RunnerProgress(Protocol):
+    @property
+    def parsed_count(self) -> int: ...
     def on_event(self, event: dict) -> None: ...
 
 
@@ -161,6 +163,10 @@ class _LiveRunnerProgress:
         self._step = ""
         self._phase_name = ""
         self._start = time.monotonic()
+
+    @property
+    def parsed_count(self) -> int:
+        return self._done
 
     def on_event(self, event: dict) -> None:
         tag = event.get("tag", "")
@@ -256,10 +262,18 @@ class _RecordingRunnerProgress:
     def __init__(self, events: list[dict]) -> None:
         self._events = events
         self.error_count = 0
+        self._parsed_count = 0
+
+    @property
+    def parsed_count(self) -> int:
+        return self._parsed_count
 
     def on_event(self, event: dict) -> None:
         self._events.append({"type": "runner_event", **event})
-        if event.get("tag") == "done":
+        tag = event.get("tag")
+        if tag in ("file_done", "worker_done"):
+            self._parsed_count += 1
+        if tag == "done":
             self.error_count = event.get("errors", 0)
 
 

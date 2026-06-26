@@ -76,7 +76,7 @@ def run(
         proc.wait()
         reader.join()
 
-    parsed = prog._done
+    parsed = prog.parsed_count
 
     if proc.returncode != 0:
         import typer
