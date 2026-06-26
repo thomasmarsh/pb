@@ -611,7 +611,7 @@ queryTaintInputs conn = do
 
 queryProcInfos :: DuckConn -> IO [DeadCode.ProcInfo]
 queryProcInfos conn = query_ conn
-  "SELECT object, proc_name, proc_type, cyclomatic FROM procedures"
+  "SELECT object, proc_name, proc_type, cyclomatic FROM procedures WHERE confidence != 'speculative'"
 
 queryDwObjectSet :: DuckConn -> IO (Set.Set Text)
 queryDwObjectSet conn = do
