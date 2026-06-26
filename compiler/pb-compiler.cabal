@@ -45,9 +45,11 @@ library
     PB.Lexing.Token
     PB.Analysis.Builtins
     PB.Analysis.CfgBuild
+    PB.Analysis.CatOp
     PB.Analysis.CpsCompile
     PB.Analysis.Dataflow
     PB.Analysis.DeadCode
+    PB.Analysis.SSA
     PB.Analysis.Taint
     PB.Analysis.TypeEnv
     PB.Analysis.TypeResolve
@@ -110,6 +112,8 @@ test-suite pb-compiler-test
     , CfgBuildTest
     , CorpusDebtTest
     , CpsCompileTest
+    , CatOpTest
+    , SSATest
     , DataflowTest
     , DeadCodeTest
     , TaintTest

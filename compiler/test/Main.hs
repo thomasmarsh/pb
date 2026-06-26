@@ -5,6 +5,8 @@ import qualified StdLibTest
 import qualified BodyParserTest
 import qualified BodyStmtTest
 import qualified CfgBuildTest
+import qualified CatOpTest
+import qualified SSATest
 import qualified CpsCompileTest
 import qualified DataflowTest
 import qualified DeadCodeTest
@@ -41,6 +43,8 @@ tests = testGroup "pb-compiler"
   , BodyParserTest.tests
   , BodyStmtTest.tests
   , CfgBuildTest.tests
+  , CatOpTest.tests
+  , SSATest.tests
   , CpsCompileTest.tests
   , DataflowTest.tests
   , DeadCodeTest.tests
