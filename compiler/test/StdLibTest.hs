@@ -4,7 +4,7 @@ import PB.Prelude
 import PB.Pipeline.DuckDb
 import PB.Pipeline.Emit    (ParsedFile (..), ParseOutcome (..), parsePowerScriptFile, stripBom)
 import PB.Pipeline.Runner  (compileOne, appendToDb)
-import PB.Analysis.TypeEnv (TypeEnv (..), buildWorkspaceTypeEnv)
+import PB.Analysis.TypeEnv (WorkspaceEnv (..), buildWorkspaceEnv)
 import PB.Runtime.StdLib   (parseStdlibFiles)
 
 import Database.DuckDB.Simple          (Query, query_)
@@ -40,7 +40,7 @@ withStdlibDb :: (DuckConn -> IO a) -> IO a
 withStdlibDb act = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
   pfs <- parseStdlibFiles
-  let wsEnv = buildWorkspaceTypeEnv (map pfSrFile pfs)
+  let wsEnv = buildWorkspaceEnv (map pfSrFile pfs)
   mapM_ (\pf -> do
     cf <- compileOne wsEnv Nothing "speculative" (PsParsed pf)
     appendToDb conn cf) pfs
@@ -98,7 +98,7 @@ testUserConfirmed = withWriteConn ":memory:" $ \conn -> do
   case parsePowerScriptFile (stripBom src) of
     Left  err      -> error ("parse: " <> T.unpack err)
     Right (sf, sp) -> do
-      let wsEnv = buildWorkspaceTypeEnv [sf]
+      let wsEnv = buildWorkspaceEnv [sf]
           pf    = ParsedFile "w_test.srw" sf sp src
       cf <- compileOne wsEnv Nothing "confirmed" (PsParsed pf)
       appendToDb conn cf
@@ -108,7 +108,7 @@ testUserConfirmed = withWriteConn ":memory:" $ \conn -> do
 testInheritance :: IO ()
 testInheritance = do
   pfs    <- parseStdlibFiles
-  let ut = teUserTypes (buildWorkspaceTypeEnv (map pfSrFile pfs))
+  let ut = weHierarchy (buildWorkspaceEnv (map pfSrFile pfs))
   assertEqual "powerobject → object"
     (Just "object")      (Map.lookup "powerobject"     ut)
   assertEqual "nonvisualobject → powerobject"

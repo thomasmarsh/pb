@@ -22,8 +22,7 @@ import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.CfgBuild    (buildCfg)
 import PB.Analysis.CpsCompile  (compileProcedure)
 import PB.Analysis.DeadCode    qualified as DeadCode
-import PB.Analysis.TypeEnv     (TypeEnv (..), buildWorkspaceTypeEnv, withProcScope,
-                                flatToScoped)
+import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, procEnv)
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TypeResolve
@@ -118,7 +117,7 @@ data CompiledFile
   | CFError FilePath Text
   | CFSkip
 
-compileOne :: TypeEnv -> Maybe (SqlBridgePool, Int) -> Text -> ParseOutcome -> IO CompiledFile
+compileOne :: WorkspaceEnv -> Maybe (SqlBridgePool, Int) -> Text -> ParseOutcome -> IO CompiledFile
 compileOne wsEnv mBridge confidence outcome = case outcome of
 
   PsParsed pf -> do
@@ -129,14 +128,14 @@ compileOne wsEnv mBridge confidence outcome = case outcome of
         userFns = Set.fromList
           $  map (T.toLower . fnsName . fbSig) (srFunctions  sf)
           <> map (T.toLower . ssName  . sbSig) (srSubroutines sf)
-        procEnv params = flatToScoped (withProcScope (parseParams params) wsEnv)
+        mkProcEnv params = procEnv wsEnv obj (parseParams params)
         lvs  = extractLocalVars  fp obj sf
         css  = extractCallSites  fp obj sf
         gvs  = extractGlobalVars fp obj sf
         procs =
           [ let cfg      = buildCfg body
                 cfgJs    = jsonText (toJSON cfg)
-                cpsJs    = jsonText (toJSON (compileProcedure (procEnv cpsParams) userFns body))
+                cpsJs    = jsonText (toJSON (compileProcedure (mkProcEnv cpsParams) userFns body))
                 flow     = (fp, obj, pName, Dataflow.analyzeProcedure obj pName cfg)
                 cyclo    = DeadCode.cyclomaticComplexity cfg
             in ( ProcRow fp obj pName pType sLine eLine cfgJs cpsJs
@@ -245,7 +244,7 @@ extractProcSql pool k fp obj (pName, body) =
                (srParseOk res)
 
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each without a SQL bridge.
-workerLoopFilesNoBridge :: Int -> TQueue FilePath -> TypeEnv -> DuckConn -> MVar () -> IORef Int -> IO ()
+workerLoopFilesNoBridge :: Int -> TQueue FilePath -> WorkspaceEnv -> DuckConn -> MVar () -> IORef Int -> IO ()
 workerLoopFilesNoBridge k workQ wsEnv conn mutex errCount = go
   where
     go = do
@@ -267,7 +266,7 @@ workerLoopFilesNoBridge k workQ wsEnv conn mutex errCount = go
 
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each with bridge slot k,
 --   serialises DB writes through a shared mutex (DuckDB connections are not thread-safe).
-workerLoopFiles :: Int -> TQueue FilePath -> SqlBridgePool -> TypeEnv -> DuckConn -> MVar () -> IORef Int -> IO ()
+workerLoopFiles :: Int -> TQueue FilePath -> SqlBridgePool -> WorkspaceEnv -> DuckConn -> MVar () -> IORef Int -> IO ()
 workerLoopFiles k workQ pool wsEnv conn mutex errCount = go
   where
     go = do
@@ -321,9 +320,9 @@ runModeDb srcDir dbPath = do
     outcome <- parseOutcome file
     emitProgress (object ["tag" .= ("file_done" :: Text), "phase" .= ("A0" :: Text)])
     pure outcome) files
-  let wsEnv = buildWorkspaceTypeEnv
+  let wsEnv = buildWorkspaceEnv
                 (map pfSrFile stdlibParsed ++ [pfSrFile pf | PsParsed pf <- outcomes0])
-  _ <- evaluate (Map.size (teVars wsEnv) + Map.size (teUserTypes wsEnv))
+  _ <- evaluate (Map.size (weGlobals wsEnv) + Map.size (weHierarchy wsEnv))
 
   mBridgeBin <- lookupEnv "PB_SQL_WORKER"
   nWorkers   <- getNumCapabilities

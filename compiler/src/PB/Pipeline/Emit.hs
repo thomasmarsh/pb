@@ -25,8 +25,8 @@ import PB.Grammar.File       (parseSrFileWithSpans, SrSpans (..))
 import PB.Lexing.Lexer      (LexError (..), LexLine (..), tokenize)
 import PB.Lexing.Splitter   (Statement (..), splitStatements)
 import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
-import PB.Analysis.TypeEnv     (TypeEnv (..), buildWorkspaceTypeEnv, withProcScope,
-                                ScopedTypeEnv, flatToScoped)
+import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv,
+                                procEnv, ScopedTypeEnv)
 import PB.Analysis.CfgBuild    (buildCfg)
 import PB.Analysis.CpsCompile  (compileProcedure)
 import PB.Analysis.TypeResolve (parseParams)
@@ -109,8 +109,8 @@ runProject path _src = Right $ object
 runPowerScript :: FilePath -> Text -> Either Text Value
 runPowerScript path src = do
   (srFile, spans) <- parsePowerScriptFile src
-  let wsEnv = buildWorkspaceTypeEnv [srFile]
-  Right (wrapSrFile False path srFile spans wsEnv)
+  let ws = buildWorkspaceEnv [srFile]
+  Right (wrapSrFile False path srFile spans ws)
 
 -- | Parse PowerScript source text to (SrFile, SrSpans).
 parsePowerScriptFile :: Text -> Either Text (SrFile, SrSpans)
@@ -121,14 +121,17 @@ parsePowerScriptFile src = do
   stmts <- collectStatements lexLines
   parseSrFileWithSpans headers stmts
 
-wrapSrFile :: Bool -> FilePath -> SrFile -> SrSpans -> TypeEnv -> Value
-wrapSrFile withCps path sf spans wsEnv =
+wrapSrFile :: Bool -> FilePath -> SrFile -> SrSpans -> WorkspaceEnv -> Value
+wrapSrFile withCps path sf spans ws =
     let (objName, ancestor) = srPrimaryObject sf
         objName' = if T.null objName then T.pack path else objName
 
-        -- Per-procedure env: overlay parsed params on the workspace env (P2a bridge).
-        procEnv :: Text -> ScopedTypeEnv
-        procEnv paramsText = flatToScoped (withProcScope (parseParams paramsText) wsEnv)
+        -- Per-procedure env: params + object instance vars from workspace.
+        procEnvFor :: Text -> ScopedTypeEnv
+        procEnvFor paramsText = procEnv ws objName (parseParams paramsText)
+
+        emptyProcEnv :: ScopedTypeEnv
+        emptyProcEnv = procEnv ws objName []
 
         -- User-defined function names (lower-cased) for CPS callproc dispatch.
         userFns :: Set.Set Text
@@ -169,13 +172,13 @@ wrapSrFile withCps path sf spans wsEnv =
         , "variables"       .= srVariables sf
         , "globalInstances" .= srGlobalInstances sf
         , "typeBlocks"      .= srTypeBlocks sf
-        , "onBlocks"    .= [ injectAll (flatToScoped wsEnv)               (obBody ob) sp (toJSON ob)
+        , "onBlocks"    .= [ injectAll emptyProcEnv                           (obBody ob) sp (toJSON ob)
                            | (sp, ob) <- zip (spOnBlocks    spans) (srOnBlocks    sf) ]
-        , "events"      .= [ injectAll (flatToScoped wsEnv)               (evBody ev) sp (toJSON ev)
+        , "events"      .= [ injectAll emptyProcEnv                           (evBody ev) sp (toJSON ev)
                            | (sp, ev) <- zip (spEvents      spans) (srEvents      sf) ]
-        , "functions"   .= [ injectAll (procEnv (fnsParams (fbSig fn))) (fbBody fn) sp (toJSON fn)
+        , "functions"   .= [ injectAll (procEnvFor (fnsParams (fbSig fn))) (fbBody fn) sp (toJSON fn)
                            | (sp, fn) <- zip (spFunctions   spans) (srFunctions   sf) ]
-        , "subroutines" .= [ injectAll (procEnv (ssParams  (sbSig sb))) (sbBody sb) sp (toJSON sb)
+        , "subroutines" .= [ injectAll (procEnvFor (ssParams  (sbSig sb))) (sbBody sb) sp (toJSON sb)
                            | (sp, sb) <- zip (spSubroutines spans) (srSubroutines sf) ]
         ]
 

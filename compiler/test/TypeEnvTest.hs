@@ -7,9 +7,9 @@ import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeDecl (..), Typ
                               GlobalInstance (..), srAllTypeDecls, srPrimaryObject)
 import PB.AST.Type           (PbType (..), parseTypeText)
 import PB.Analysis.TypeEnv   (TypeEnv (..), buildWorkspaceTypeEnv, lookupVarType, lookupUserType,
-                              lookupBaseType, isDescendantOf, withProcScope,
+                              lookupBaseType, isDescendantOf,
                               ScopedTypeEnv (..), buildWorkspaceEnv,
-                              procEnv, lookupScopedVar, flatToScoped)
+                              procEnv, lookupScopedVar)
 import PB.Analysis.TypeResolve (buildObjectSet, buildUserTypeSet)
 
 import qualified Data.Map.Strict as Map
@@ -93,24 +93,6 @@ tests = testGroup "TypeEnv"
               , teUserTypes = Map.empty
               }
         in lookupBaseType "DW_Main" env @?= Just "datawindow"
-    ]
-
-  , testGroup "withProcScope"
-    [ testCase "param shadows global of same name" $
-        let global = TypeEnv
-              { teVars      = Map.fromList [("x", PtPrimitive "integer")]
-              , teUserTypes = Map.empty
-              }
-            scoped = withProcScope [("x", PtPrimitive "string")] global
-        in lookupVarType "x" scoped @?= Just (PtPrimitive "string")
-
-    , testCase "global not present in params is retained" $
-        let global = TypeEnv
-              { teVars      = Map.fromList [("y", PtPrimitive "long")]
-              , teUserTypes = Map.empty
-              }
-            scoped = withProcScope [("x", PtPrimitive "string")] global
-        in lookupVarType "y" scoped @?= Just (PtPrimitive "long")
     ]
 
   , testGroup "parseTypeText"
@@ -279,16 +261,6 @@ tests = testGroup "TypeEnv"
             ws  = buildWorkspaceEnv [sfA, sfB]
         in lookupScopedVar "foo" (procEnv ws "obj_b" []) @?= Just (PtPrimitive "string")
 
-    , testCase "flatToScoped puts vars in global layer" $
-        let env = TypeEnv { teVars = Map.singleton "x" (PtPrimitive "integer")
-                          , teUserTypes = Map.empty }
-        in lookupScopedVar "x" (flatToScoped env) @?= Just (PtPrimitive "integer")
-
-    , testCase "flatToScoped hierarchy is accessible via steHierarchy" $
-        let env = TypeEnv { teVars = Map.empty
-                          , teUserTypes = Map.singleton "my_dw" "datawindow" }
-            scoped = flatToScoped env
-        in steHierarchy scoped @?= Map.singleton "my_dw" "datawindow"
     ]
 
   , testGroup "isDescendantOf"

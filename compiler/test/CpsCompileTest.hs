@@ -9,7 +9,7 @@ import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Analysis.CpsCompile
 import PB.Pipeline.Preprocess (LogicalLine (..))
-import PB.Analysis.TypeEnv (TypeEnv (..), ScopedTypeEnv, flatToScoped)
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
@@ -54,19 +54,30 @@ pureCall =
 -- Convenience env builders
 
 emptyEnv :: ScopedTypeEnv
-emptyEnv = flatToScoped (TypeEnv { teVars = Map.empty, teUserTypes = Map.empty })
+emptyEnv = ScopedTypeEnv
+  { steGlobal    = Map.empty
+  , steInstance  = Map.empty
+  , steLocal     = Map.empty
+  , steHierarchy = Map.empty
+  }
 
 -- | Single var → user-defined type, no inheritance.
 varEnv :: Text -> Text -> ScopedTypeEnv
-varEnv v t = flatToScoped (TypeEnv { teVars = Map.singleton v (PtUserDefined t)
-                                   , teUserTypes = Map.empty })
+varEnv v t = ScopedTypeEnv
+  { steGlobal    = Map.singleton (T.toLower v) (PtUserDefined t)
+  , steInstance  = Map.empty
+  , steLocal     = Map.empty
+  , steHierarchy = Map.empty
+  }
 
 -- | Single var + inheritance chain.
 varEnvInh :: [(Text, Text)] -> [(Text, Text)] -> ScopedTypeEnv
-varEnvInh vars inh = flatToScoped (TypeEnv
-  { teVars      = Map.fromList [(v, PtUserDefined t) | (v, t) <- vars]
-  , teUserTypes = Map.fromList inh
-  })
+varEnvInh vars inh = ScopedTypeEnv
+  { steGlobal    = Map.fromList [(T.toLower v, PtUserDefined t) | (v, t) <- vars]
+  , steInstance  = Map.empty
+  , steLocal     = Map.empty
+  , steHierarchy = Map.fromList inh
+  }
 
 dwEnv :: ScopedTypeEnv
 dwEnv = varEnv "dw" "datawindow"
@@ -311,22 +322,26 @@ tests = testGroup "CpsCompile"
     , testCase "direct PtPrimitive datawindow with stdlib parents: retrieve → Suspend" $
         -- PtPrimitive "datawindow" declared var; stdlib adds datawindow → nonvisualobject
         -- Old code: lookupBaseType walks to "powerobject" → Pure (bug)
-        let env = flatToScoped (TypeEnv
-              { teVars      = Map.singleton "dw1" (PtPrimitive "datawindow")
-              , teUserTypes = Map.fromList
+        let env = ScopedTypeEnv
+              { steGlobal    = Map.singleton "dw1" (PtPrimitive "datawindow")
+              , steInstance  = Map.empty
+              , steLocal     = Map.empty
+              , steHierarchy = Map.fromList
                   [ ("datawindow", "nonvisualobject")
                   , ("nonvisualobject", "powerobject")
                   ]
-              })
+              }
         in classifyExpr env
              (ExCall { callee = lv2 "dw1" "retrieve", callArgs = [] })
              @?= Suspend
 
     , testCase "powerobject var: retrieve → Pure (not a DW descendant)" $
-        let env = flatToScoped (TypeEnv
-              { teVars      = Map.singleton "obj" (PtPrimitive "powerobject")
-              , teUserTypes = Map.empty
-              })
+        let env = ScopedTypeEnv
+              { steGlobal    = Map.singleton "obj" (PtPrimitive "powerobject")
+              , steInstance  = Map.empty
+              , steLocal     = Map.empty
+              , steHierarchy = Map.empty
+              }
         in classifyExpr env
              (ExCall { callee = lv2 "obj" "retrieve", callArgs = [] })
              @?= Pure
@@ -334,13 +349,15 @@ tests = testGroup "CpsCompile"
     , testCase "transaction with stdlib chain: commit → Suspend" $
         -- Old code: lookupBaseType walks transaction → nonvisualobject → powerobject
         -- → isTransType "powerobject" = False → Pure (bug)
-        let env = flatToScoped (TypeEnv
-              { teVars      = Map.singleton "trans" (PtPrimitive "transaction")
-              , teUserTypes = Map.fromList
+        let env = ScopedTypeEnv
+              { steGlobal    = Map.singleton "trans" (PtPrimitive "transaction")
+              , steInstance  = Map.empty
+              , steLocal     = Map.empty
+              , steHierarchy = Map.fromList
                   [ ("transaction", "nonvisualobject")
                   , ("nonvisualobject", "powerobject")
                   ]
-              })
+              }
         in classifyExpr env
              (ExCall { callee = lv2 "trans" "commit", callArgs = [] })
              @?= Suspend
@@ -689,5 +706,25 @@ tests = testGroup "CpsCompile"
             calls = [ n | n@CpsCall {} <- cgNodes g ]
         cps   @?= []
         assertBool "expected CpsCall for non-user-fn" (not (null calls))
+    ]
+
+  , testGroup "body locals"
+    [ testCase "body-declared BsLocalVar shadows instance type for classify" $ do
+        -- steInstance has dw : integer (not a DW type).
+        -- Body declares `datawindow dw` then calls `dw.retrieve()`.
+        -- Without collectBodyLocals, dw.retrieve() would be Pure.
+        -- With it, the body-local dw : datawindow shadows → Suspend.
+        let env = ScopedTypeEnv
+              { steGlobal    = Map.empty
+              , steInstance  = Map.singleton "dw" (PtPrimitive "integer")
+              , steLocal     = Map.empty
+              , steHierarchy = Map.empty
+              }
+            body =
+              [ at 1 (BsLocalVar [] (PtPrimitive "datawindow") "dw" Nothing)
+              , at 2 (BsCall (ExCall { callee = lv2 "dw" "retrieve", callArgs = [] }))
+              ]
+            g = compile env body
+        assertBool "dw.retrieve() should be a suspension point" (not (null (cgSuspensionPoints g)))
     ]
   ]

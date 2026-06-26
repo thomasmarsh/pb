@@ -6,14 +6,12 @@ module PB.Analysis.TypeEnv
   , lookupUserType
   , lookupBaseType
   , isDescendantOf
-  , withProcScope
-  -- Scoped env (P2a)
+  -- Scoped env
   , WorkspaceEnv (..)
   , ScopedTypeEnv (..)
   , buildWorkspaceEnv
   , procEnv
   , lookupScopedVar
-  , flatToScoped
   ) where
 
 import PB.Prelude
@@ -110,15 +108,8 @@ isDescendantOf inh ty0 targets = go Set.empty (T.toLower ty0)
       | Just p <- Map.lookup ty inh = go (Set.insert ty seen) (T.toLower p)
       | otherwise                    = False
 
--- | Overlay procedure parameters on top of a workspace type env.
--- Parameter names shadow any globals with the same name.
-withProcScope :: [(Text, PbType)] -> TypeEnv -> TypeEnv
-withProcScope params env = env
-  { teVars = Map.fromList [(T.toLower n, ty) | (n, ty) <- params]
-             `Map.union` teVars env }
-
 -- ---------------------------------------------------------------------------
--- Scoped type environment (P2a)
+-- Scoped type environment
 
 -- | Workspace-level snapshot built once from all parsed files.
 data WorkspaceEnv = WorkspaceEnv
@@ -189,12 +180,3 @@ lookupScopedVar name env =
      <|> Map.lookup k (steInstance env)
      <|> Map.lookup k (steGlobal env)
 
--- | Lift a flat TypeEnv into a ScopedTypeEnv (everything in steGlobal).
--- Used as a bridge in P2a so Emit.hs and Runner.hs compile without deep changes.
-flatToScoped :: TypeEnv -> ScopedTypeEnv
-flatToScoped env = ScopedTypeEnv
-  { steGlobal    = teVars env
-  , steInstance  = Map.empty
-  , steLocal     = Map.empty
-  , steHierarchy = teUserTypes env
-  }

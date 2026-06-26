@@ -22,7 +22,7 @@ import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
 import PB.AST.Located  (Located (..))
-import PB.AST.Type     (renderPbType)
+import PB.AST.Type     (PbType, renderPbType)
 import PB.Grammar.Body        (parseExpr)
 import PB.Lexing.Token        (Token (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVar, isDescendantOf)
@@ -479,13 +479,21 @@ condExpr (DoUntil e) = ExNot e
 -- ---------------------------------------------------------------------------
 -- Public entry point
 
+collectBodyLocals :: [Located BodyStmt] -> Map.Map Text PbType
+collectBodyLocals stmts =
+  Map.fromList
+    [ (T.toLower varName, varType)
+    | Located _ (BsLocalVar _ varType varName _) <- stmts
+    ]
+
 compileProcedure :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CpsGraph
 compileProcedure env userFns body =
-  let initSt = CompileSt { csCount = 0, csNodes = Map.empty, csSPs = [], csSM = [], csUserFns = userFns }
+  let locals = collectBodyLocals body
+      env'   = env { steLocal = locals `Map.union` steLocal env }
+      initSt = CompileSt { csCount = 0, csNodes = Map.empty, csSPs = [], csSM = [], csUserFns = userFns }
+      go     = do
+                 returnPc <- emit (CpsReturn { reValue = Nothing }) Nothing
+                 entryPc  <- compileStmts env' Nothing body returnPc
+                 finalizeCps entryPc
       (graph, _) = runState go initSt
   in graph
-  where
-    go = do
-      returnPc <- emit (CpsReturn { reValue = Nothing }) Nothing
-      entryPc  <- compileStmts env Nothing body returnPc
-      finalizeCps entryPc
