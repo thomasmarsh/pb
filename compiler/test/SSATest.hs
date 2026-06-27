@@ -8,6 +8,7 @@ import PB.AST.Located      (Located (..))
 import PB.AST.Type          (PbType (..))
 import PB.Analysis.SSA
 import PB.Analysis.TypeEnv  (ScopedTypeEnv (..))
+import PB.Analysis.CallClassify (CallKind (..), classifyExpr)
 
 import qualified Data.Map.Strict as Map
 import Test.Tasty            (TestTree, testGroup)
@@ -222,5 +223,30 @@ tests = testGroup "SSA"
                       (Just [at 4 (BsAssign (lv1 "y") (ExInt "3"))])))
                   ]
         assertBool "all versions > 0" (all ((> 0) . svVersion) (spVars sa))
+    ]
+
+  , testGroup "classifyExpr effect names"
+    [ testCase "dw_foo.retrieve() → SuspendCall \"retrieve:dw_foo\"" $
+        classifyExpr
+          ScopedTypeEnv { steGlobal = Map.singleton "dw_foo" (PtPrimitive "datawindow")
+                        , steInstance = Map.empty, steLocal = Map.empty, steHierarchy = Map.empty }
+          (ExCall { callee = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing], callArgs = [] })
+          @?= SuspendCall "retrieve:dw_foo"
+
+    , testCase "commit() with Transaction type → SuspendCall \"executeSql\"" $
+        classifyExpr
+          ScopedTypeEnv { steGlobal = Map.singleton "sqlca" (PtPrimitive "transaction")
+                        , steInstance = Map.empty, steLocal = Map.empty, steHierarchy = Map.empty }
+          (ExCall { callee = Lvalue [LvSegment "sqlca" Nothing, LvSegment "commit" Nothing], callArgs = [] })
+          @?= SuspendCall "executeSql"
+
+    , testCase "free function my_func() → PureCall" $
+        classifyExpr emptyEnv
+          (ExCall { callee = lv1 "my_func", callArgs = [] })
+          @?= PureCall
+
+    , testCase "non-call expression → PureCall" $
+        classifyExpr emptyEnv (ExInt "1")
+          @?= PureCall
     ]
   ]

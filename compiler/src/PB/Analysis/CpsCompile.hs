@@ -23,7 +23,7 @@ import PB.Grammar.Body        (parseExpr)
 import PB.Lexing.Token        (Token (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Analysis.CallClassify
-  ( CallKind (..), classifyExpr, effectName, calleeName
+  ( CallKind (..), classifyExpr, calleeName
   , segName, lvHead, isTriggerEvent
   )
 import Control.Monad       (foldM)
@@ -241,14 +241,14 @@ compileSingleStmt env lctx (Located line stmt) fallthrough = case stmt of
         fns <- gets csUserFns
         let parsedArgs = exprArgs expr
             defaultEmit = case classifyExpr env expr of
-              Suspend ->
+              SuspendCall eff ->
                 emit (CpsSuspend
-                  { suEffect       = effectName expr parsedArgs
+                  { suEffect       = eff
                   , suArgs         = parsedArgs
                   , suVar          = Nothing
                   , suContinuation = fallthrough
                   }) (Just line)
-              Pure ->
+              PureCall ->
                 emit (CpsCall
                   { clCallee = calleeName expr
                   , clArgs   = exprArgs expr

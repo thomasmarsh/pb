@@ -862,14 +862,30 @@ data Cfg      = Cfg      { cfgEntry :: Text, cfgExits :: [Text], cfgBlocks :: [C
 -- Edge labels: "T"/"F" (branches), "" (fallthrough), "loop" (back-edge), "case:N".
 ```
 
+### `PB.Analysis.CallClassify`
+
+```haskell
+-- Pure call classification. Shared by old CpsCompile and new SSA→CatOp pipeline.
+data CallKind = PureCall | SuspendCall Text  -- effect name baked in
+classifyExpr :: ScopedTypeEnv -> Expr -> CallKind
+-- classifyExpr returns SuspendCall with effect name computed inline
+-- (no separate effectName function needed).
+isBuiltinSuspendFn :: Text -> Bool
+isTypedSuspend :: Map.Map Text Text -> Text -> Text -> Bool
+resolveReceiverType :: ScopedTypeEnv -> Expr -> Maybe Text
+calleeName :: Expr -> Text
+segName :: LvSegment -> Text
+lvHead :: Lvalue -> Text
+isTriggerEvent :: Lvalue -> Bool
+```
+
 ### `PB.Analysis.CpsCompile`
 
 ```haskell
 -- Pure. Uses PB.Analysis.TypeEnv.TypeEnv (the rich record, not a Map Text Text alias).
 -- InheritGraph alias removed (Plan 114) — inheritance is in teUserTypes.
-data CallKind = Pure | Suspend
-classifyExpr :: TypeEnv -> Expr -> CallKind
-compileProcedure :: TypeEnv -> [Located BodyStmt] -> CpsGraph
+-- CallKind imported from CallClassify (PureCall | SuspendCall Text).
+compileProcedure :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CpsGraph
 data CpsNode
   = CpsAssign  { anVar :: Text, anRhs :: Expr, anNext :: Int }
   | CpsBranch  { brCond :: Expr, brThenPc :: Int, brElsePc :: Int }

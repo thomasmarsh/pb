@@ -6,10 +6,19 @@ import PB.AST.Expr         (BinOp (..), Expr (..))
 import PB.Analysis.CatOp
 import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                             SsaTerm (..), SsaProc (..), renderSsaVar, buildSsa)
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 
 import qualified Data.Map.Strict as Map
+import qualified Data.Set        as Set
 import Test.Tasty           (TestTree, testGroup)
 import Test.Tasty.HUnit     (assertBool, assertEqual, testCase, (@?=))
+
+-- | Default compileSsa with empty type env and no user functions.
+compileSsaDefault :: SsaProc -> CatOp () ()
+compileSsaDefault = compileSsa emptyEnv Set.empty
+
+emptyEnv :: ScopedTypeEnv
+emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty
 
 -- | Build a minimal SsaProc with a single entry block.
 mkSsa :: [SsaAssign] -> SsaTerm -> SsaProc
@@ -128,21 +137,21 @@ tests = testGroup "CatOp"
   , testGroup "compileSsa"
     [ testCase "empty body compiles to CatId" $
         let sa = mkSsa [] (SsaReturn Nothing)
-            result = compileSsa sa
+            result = compileSsaDefault sa
         in result @?= (CatId :: CatOp () ())
 
     , testCase "single assign with SsaReturn" $
         let sa = mkSsa
               [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))]
               (SsaReturn Nothing)
-            result = compileSsa sa
+            result = compileSsaDefault sa
         in assertBool "contains x_1 assign" (hasAssign "x_1" result)
 
     , testCase "single assign structure: CatAssignWithRhs with embedded RHS" $
         let sa = mkSsa
               [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))]
               (SsaReturn Nothing)
-            result = compileSsa sa
+            result = compileSsaDefault sa
         in case result of
              CatAssignWithRhs v (ExInt "1") ->
                assertEqual "assigns to x_1" "x_1" v
@@ -154,18 +163,18 @@ tests = testGroup "CatOp"
               , SsaAssign (SsaVar "y" 1) (SsaConst (ExInt "2"))
               ]
               (SsaReturn Nothing)
-            result = compileSsa sa
+            result = compileSsaDefault sa
         in assertBool "contains x_1 assign" (hasAssign "x_1" result)
            P.>> assertBool "contains y_1 assign" (hasAssign "y_1" result)
 
     , testCase "SsaReturn compiles to CatId" $
         let sa = mkSsa [] (SsaReturn Nothing)
-            result = compileSsa sa
+            result = compileSsaDefault sa
         in result @?= (CatId :: CatOp () ())
 
     , testCase "SsaReturn with value compiles to CatId" $
         let sa = mkSsa [] (SsaReturn (Just (SsaConst (ExInt "42"))))
-            result = compileSsa sa
+            result = compileSsaDefault sa
         in result @?= (CatId :: CatOp () ())
 
     , testCase "assign with SsaVarRef embeds ExLvalue in RHS" $
@@ -174,7 +183,7 @@ tests = testGroup "CatOp"
               , SsaAssign (SsaVar "y" 1) (SsaVarRef (SsaVar "x" 1))
               ]
               (SsaReturn Nothing)
-            result = compileSsa sa
+            result = compileSsaDefault sa
         in assertBool "contains y_1 assign with ExLvalue RHS" (hasAssignWithRhs "y_1" result)
 
     , testCase "SsaGoto compiles to CatCompose of block assigns" $
@@ -192,7 +201,7 @@ tests = testGroup "CatOp"
               , spEntry  = "entry"
               , spVars   = []
               }
-            result = compileSsa sa
+            result = compileSsaDefault sa
         in assertBool "contains x_1 assign" (hasAssign "x_1" result)
            P.>> assertBool "contains y_1 assign" (hasAssign "y_1" result)
 
@@ -214,7 +223,7 @@ tests = testGroup "CatOp"
               , spEntry  = "entry"
               , spVars   = []
               }
-            result = compileSsa sa
+            result = compileSsaDefault sa
         in assertBool "contains x_1 in then branch" (hasAssign "x_1" result)
            P.>> assertBool "contains y_1 in else branch" (hasAssign "y_1" result)
            P.>> assertBool "contains splitValue for branch" (hasSplitValue result)
@@ -240,7 +249,7 @@ tests = testGroup "CatOp"
               , spEntry  = "entry"
               , spVars   = []
               }
-            result = compileSsa sa
+            result = compileSsaDefault sa
         in assertBool "contains CatLoop" (hasCatLoop result)
 
     , testCase "nested loops produce nested CatLoop" $
@@ -273,7 +282,7 @@ tests = testGroup "CatOp"
               , spEntry  = "entry"
               , spVars   = []
               }
-            result = compileSsa sa
+            result = compileSsaDefault sa
         in assertBool "contains at least 2 CatLoop nodes" (countCatLoop result P.>= 2)
 
     , testCase "loop with multiple exits finds correct exit target" $ do
@@ -299,7 +308,7 @@ tests = testGroup "CatOp"
               , spEntry  = "entry"
               , spVars   = []
               }
-            result = compileSsa sa
+            result = compileSsaDefault sa
         assertBool "contains CatLoop" (hasCatLoop result)
            P.>> assertBool "contains x_1 assign" (hasAssign "x_1" result)
     ]
@@ -408,7 +417,7 @@ tests = testGroup "CatOp"
               , spEntry  = "entry"
               , spVars   = []
               }
-            catTree  = compileSsa sa
+            catTree  = compileSsaDefault sa
             graph    = buildCpsGraph catTree
             nodes    = cgNodes graph
             hasCpsAssign v = any (\n -> case n of CpsAssign { anVar = v' } -> v' == v; _ -> False) nodes
@@ -445,7 +454,7 @@ tests = testGroup "CatOp"
               , spEntry  = "entry"
               , spVars   = []
               }
-            catTree  = compileSsa sa
+            catTree  = compileSsaDefault sa
             graph    = buildCpsGraph catTree
             nodes    = cgNodes graph
         in do

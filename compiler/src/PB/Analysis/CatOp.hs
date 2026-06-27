@@ -35,6 +35,7 @@ module PB.Analysis.CatOp
   , branch
     -- * SSA → CatOp compilation
   , compileSsa
+  , CompileCtx (..)
     -- * LowCat intermediary
   , LowCat (..)
   , toLowCat
@@ -65,12 +66,16 @@ import qualified Prelude as P
 import Unsafe.Coerce (unsafeCoerce)
 import PB.AST.Expr (Expr (..), LvSegment (..), Lvalue (..))
 import PB.Analysis.CpsCompile (CpsNode (..), CpsGraph (..))
+import PB.Analysis.CallClassify (CallKind (..), classifyExpr, calleeName, isTriggerEvent, lvHead, segName)
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
+import PB.Lexing.Token (Token (..))
 import Control.Monad.State.Strict (State, modify, gets, runState)
-import PB.Analysis.SSA (SsaVal (..), SsaAssign (..), SsaBlock (..),
+import PB.Analysis.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                          SsaTerm (..), SsaPhi (..), SsaProc (..), renderSsaVar)
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Data.Text as T
 -- ============================================================================
 -- Placeholder types
 -- ============================================================================
@@ -107,8 +112,8 @@ data LowCat
   | LSplitValue
   | LEval Expr
   | LFork LowCat LowCat
-  | LCall Text
-  | LSuspend Text
+  | LCall Text [Expr]
+  | LSuspend Text [Expr]
   | LErasable
   deriving (Eq, Show, Generic)
 
@@ -125,8 +130,8 @@ toLowCat CatInr             = LInr
 toLowCat CatSplitValue      = LSplitValue
 toLowCat (CatEval e)        = LEval e
 toLowCat (CatFork l r)      = LFork (toLowCat l) (toLowCat r)
-toLowCat (CatCall n)        = LCall n
-toLowCat (CatSuspend e)     = LSuspend e
+toLowCat (CatCall n args)   = LCall n args
+toLowCat (CatSuspend e args) = LSuspend e args
 toLowCat _                  = LErasable  -- CatExl, CatExr, CatConst, CatLookup, CatAssign, CatTry
 
 -- ============================================================================
@@ -157,8 +162,8 @@ class Category k => Effectful k where
   eval       :: Expr -> k env Value
   assign     :: Text -> k (env, Value) env
   lookup     :: Text -> k env Value
-  suspend    :: Text -> k args Continuation
-  callProc   :: Text -> k args ()
+  suspend    :: Text -> [Expr] -> k args Continuation
+  callProc   :: Text -> [Expr] -> k args ()
   splitValue :: k (env, Value) (Either env env)
 
 -- ============================================================================
@@ -213,8 +218,8 @@ data CatOp a b where
 
   -- Effects
   CatEval       :: Expr -> CatOp env Value
-  CatCall       :: Text -> CatOp args ()
-  CatSuspend    :: Text -> CatOp args Continuation
+  CatCall       :: Text -> [Expr] -> CatOp args ()
+  CatSuspend    :: Text -> [Expr] -> CatOp args Continuation
   CatSplitValue :: CatOp (env, Value) (Either env env)
 
   -- Error handling
@@ -236,8 +241,8 @@ instance Show (CatOp a b) where
   show (CatLookup t) = "CatLookup " <> show t
   show (CatLoop _) = "CatLoop .."
   show (CatEval _) = "CatEval .."
-  show (CatCall t) = "CatCall " <> show t
-  show (CatSuspend t) = "CatSuspend " <> show t
+  show (CatCall t _) = "CatCall " <> show t
+  show (CatSuspend t _) = "CatSuspend " <> show t
   show CatSplitValue = "CatSplitValue"
   show (CatTry _ _) = "CatTry .."
 
@@ -270,8 +275,8 @@ feq x y = go (unsafeCoerce x) (unsafeCoerce y)
     go (CatLookup t) (CatLookup t') = t == t'
     go (CatLoop f) (CatLoop f') = feq f f'
     go (CatEval e) (CatEval e') = e == e'
-    go (CatCall t) (CatCall t') = t == t'
-    go (CatSuspend t) (CatSuspend t') = t == t'
+    go (CatCall t es) (CatCall t' es') = t == t' && es == es'
+    go (CatSuspend t es) (CatSuspend t' es') = t == t' && es == es'
     go CatSplitValue CatSplitValue = True
     go (CatTry f g) (CatTry f' g') = feq f f' P.&& feq g g'
     go _ _ = False
@@ -306,6 +311,12 @@ instance Effectful CatOp where
 -- 5. SSA → CatOp Compilation
 -- ============================================================================
 
+-- | Compilation context threaded through all SSA→CatOp helpers.
+data CompileCtx = CompileCtx
+  { ccEnv     :: ScopedTypeEnv    -- ^ Type environment for call classification
+  , ccUserFns :: Set.Set Text     -- ^ User-defined function names (lower-cased)
+  }
+
 -- | Compile an SSA procedure into a categorical combinator.
 --
 -- The SSA form ensures every variable is assigned exactly once, so the
@@ -319,13 +330,15 @@ instance Effectful CatOp where
 --   * Phi nodes: CatFanIn at join points (pushed into predecessor branches)
 --   * Loops: CatLoop wrapping the loop body (detected via back-edge analysis)
 --   * Back-edges: CatInl (continue loop) / CatInr (break loop)
+--   * Calls: classified via 'classifyExpr'; pure → 'CatCall', suspend → 'CatSuspend'
 --
 -- The visited set is threaded globally through all branches to prevent
 -- double-compilation of shared successor blocks (O(V+E) instead of exponential).
-compileSsa :: SsaProc -> CatOp () ()
-compileSsa proc =
-  let headers = computeLoopHeaders proc
-      (result, _finalVisited) = compileBlock proc (spEntry proc) Set.empty headers Nothing
+compileSsa :: ScopedTypeEnv -> Set.Set Text -> SsaProc -> CatOp () ()
+compileSsa env userFns proc =
+  let ctx     = CompileCtx env userFns
+      headers = computeLoopHeaders proc
+      (result, _finalVisited) = compileBlock ctx proc (spEntry proc) Set.empty headers Nothing
   in result
 
 -- | Extract all destination blocks from an SSA terminator.
@@ -414,26 +427,26 @@ determineLoopExitTarget proc headerId =
 
 -- | Main compiler orchestrator. Returns @(CatOp, updatedVisited)@ to
 -- thread the global visited set across all branches.
-compileBlock :: SsaProc
+compileBlock :: CompileCtx -> SsaProc
              -> Text              -- ^ Current block ID
              -> Set.Set Text      -- ^ Global visited registry
              -> Set.Set Text      -- ^ Pre-computed loop headers
              -> Maybe Text        -- ^ Active loop header context
              -> (CatOp () (), Set.Set Text)
-compileBlock proc blockId visited headers activeLoop
+compileBlock ctx proc blockId visited headers activeLoop
   | Just blockId == activeLoop = (CatId, visited)
   | Set.member blockId visited = (CatId, visited)
   | Set.member blockId headers =
-      let (loopBodyOp, visitedFromLoop) = compileLoopBody proc blockId visited headers (Just blockId)
+      let (loopBodyOp, visitedFromLoop) = compileLoopBody ctx proc blockId visited headers (Just blockId)
           exitBlockId = determineLoopExitTarget proc blockId
-          (postLoopOp, finalVisited) = compileBlock proc exitBlockId visitedFromLoop headers activeLoop
+          (postLoopOp, finalVisited) = compileBlock ctx proc exitBlockId visitedFromLoop headers activeLoop
       in (postLoopOp . CatLoop loopBodyOp, finalVisited)
   | otherwise = case Map.lookup blockId (spBlocks proc) of
       Nothing    -> (CatId, visited)
       Just block ->
         let visited'   = Set.insert blockId visited
-            assignsOp  = compileAssigns (sbAssigns block)
-            (termOp, finalVisited) = compileTerm proc blockId visited' headers activeLoop (sbTerm block)
+            assignsOp  = compileAssigns ctx (sbAssigns block)
+            (termOp, finalVisited) = compileTerm ctx proc blockId visited' headers activeLoop (sbTerm block)
             result = case (assignsOp, termOp) of
                        (CatId, _) -> termOp
                        (_, CatId) -> assignsOp
@@ -443,22 +456,22 @@ compileBlock proc blockId visited headers activeLoop
 -- | Compile the body of a loop. Returns @(CatOp () (Either () ()), visited)@:
 --   * @Left ()@ — continue the loop (back-edge or continue)
 --   * @Right ()@ — break out of loop (return / break / exit)
-compileLoopBody :: SsaProc -> Text -> Set.Set Text -> Set.Set Text
+compileLoopBody :: CompileCtx -> SsaProc -> Text -> Set.Set Text -> Set.Set Text
                 -> Maybe Text -> (CatOp () (Either () ()), Set.Set Text)
-compileLoopBody proc blockId visited headers activeLoop
+compileLoopBody ctx proc blockId visited headers activeLoop
   | Set.member blockId visited = (CatInl, visited)
   | Set.member blockId headers && Just blockId /= activeLoop =
       -- Nested loop header: compile as CatLoop, lift into Either frame.
       -- Do NOT pre-insert blockId into visited — let compileLoopBody add it
       -- so the initial guard doesn't short-circuit.
-      let (innerBody, v1) = compileLoopBody proc blockId visited headers (Just blockId)
+      let (innerBody, v1) = compileLoopBody ctx proc blockId visited headers (Just blockId)
       in (CatInl . CatLoop innerBody, v1)
   | otherwise = case Map.lookup blockId (spBlocks proc) of
       Nothing    -> (CatInr, visited)
       Just block ->
         let visited'   = Set.insert blockId visited
-            assignsOp  = compileAssigns (sbAssigns block)
-            (termOp, finalVisited) = compileLoopTerm proc blockId visited' headers activeLoop (sbTerm block)
+            assignsOp  = compileAssigns ctx (sbAssigns block)
+            (termOp, finalVisited) = compileLoopTerm ctx proc blockId visited' headers activeLoop (sbTerm block)
             result = case assignsOp of
                        CatId -> termOp
                        _     -> termOp . assignsOp
@@ -474,11 +487,11 @@ ssaValToExpr SsaNull            = ExNull
 
 -- | Emit named assignments for any Phi nodes requiring resolution
 -- when transitioning from @prevBlock@ into @currentBlock@.
-compilePhiAssignments :: SsaProc -> Text -> Text -> CatOp () ()
-compilePhiAssignments proc prevBlock currentBlock =
+compilePhiAssignments :: CompileCtx -> SsaProc -> Text -> Text -> CatOp () ()
+compilePhiAssignments ctx proc prevBlock currentBlock =
   case Map.lookup currentBlock (spPhis proc) of
     Nothing   -> CatId
-    Just phis -> compileAssigns (mapMaybe findMatchingSource phis)
+    Just phis -> compileAssigns ctx (mapMaybe findMatchingSource phis)
   where
     findMatchingSource phi =
       case [ sv | (src, sv) <- spSources phi, src == prevBlock ] of
@@ -487,49 +500,49 @@ compilePhiAssignments proc prevBlock currentBlock =
 
 -- | Standard terminators (outside loops). Injects phi resolution before target blocks.
 -- Returns @(CatOp, updatedVisited)@ to thread the global registry.
-compileTerm :: SsaProc -> Text -> Set.Set Text -> Set.Set Text
+compileTerm :: CompileCtx -> SsaProc -> Text -> Set.Set Text -> Set.Set Text
             -> Maybe Text -> SsaTerm -> (CatOp () (), Set.Set Text)
-compileTerm _proc _blockId visited _headers _activeLoop (SsaReturn _) = (CatId, visited)
-compileTerm proc blockId visited headers activeLoop (SsaGoto target) =
-  let (targetOp, v1) = compileBlock proc target visited headers activeLoop
-  in (targetOp . compilePhiAssignments proc blockId target, v1)
-compileTerm proc blockId visited headers activeLoop (SsaBranch cond t f) =
-  let (tOp, v1) = compileBlock proc t visited headers activeLoop
-      (fOp, v2) = compileBlock proc f v1 headers activeLoop
+compileTerm _ctx _proc _blockId visited _headers _activeLoop (SsaReturn _) = (CatId, visited)
+compileTerm ctx proc blockId visited headers activeLoop (SsaGoto target) =
+  let (targetOp, v1) = compileBlock ctx proc target visited headers activeLoop
+  in (targetOp . compilePhiAssignments ctx proc blockId target, v1)
+compileTerm ctx proc blockId visited headers activeLoop (SsaBranch cond t f) =
+  let (tOp, v1) = compileBlock ctx proc t visited headers activeLoop
+      (fOp, v2) = compileBlock ctx proc f v1 headers activeLoop
       combined  = branch (ssaValToExpr cond)
-                    (tOp . compilePhiAssignments proc blockId t)
-                    (fOp . compilePhiAssignments proc blockId f)
+                    (tOp . compilePhiAssignments ctx proc blockId t)
+                    (fOp . compilePhiAssignments ctx proc blockId f)
   in (combined, v2)
-compileTerm _ _ visited _ _ SsaBreak    = (CatId, visited)
-compileTerm _ _ visited _ _ SsaContinue = (CatId, visited)
+compileTerm _ctx _proc _ visited _ _ SsaBreak    = (CatId, visited)
+compileTerm _ctx _proc _ visited _ _ SsaContinue = (CatId, visited)
 
 -- | Loop terminators. Returns @(CatOp () (Either () ()), visited)@.
-compileLoopTerm :: SsaProc -> Text -> Set.Set Text -> Set.Set Text
+compileLoopTerm :: CompileCtx -> SsaProc -> Text -> Set.Set Text -> Set.Set Text
                 -> Maybe Text -> SsaTerm -> (CatOp () (Either () ()), Set.Set Text)
-compileLoopTerm proc blockId visited headers activeLoop (SsaGoto target)
+compileLoopTerm ctx proc blockId visited headers activeLoop (SsaGoto target)
   | Just target == activeLoop = (CatInl, visited)
   | isLoopExit proc activeLoop target = (CatInr, visited)
   | otherwise =
-      let (targetOp, v1) = compileLoopBody proc target visited headers activeLoop
-      in (targetOp . compilePhiAssignments proc blockId target, v1)
-compileLoopTerm proc blockId visited headers activeLoop (SsaBranch cond t f) =
-  let (tOp, v1) = compileLoopBranchPath proc blockId t visited headers activeLoop
-      (fOp, v2) = compileLoopBranchPath proc blockId f v1 headers activeLoop
+      let (targetOp, v1) = compileLoopBody ctx proc target visited headers activeLoop
+      in (targetOp . compilePhiAssignments ctx proc blockId target, v1)
+compileLoopTerm ctx proc blockId visited headers activeLoop (SsaBranch cond t f) =
+  let (tOp, v1) = compileLoopBranchPath ctx proc blockId t visited headers activeLoop
+      (fOp, v2) = compileLoopBranchPath ctx proc blockId f v1 headers activeLoop
       combined  = branch (ssaValToExpr cond) tOp fOp
   in (combined, v2)
-compileLoopTerm _ _ visited _ _ (SsaReturn _) = (CatInr, visited)
-compileLoopTerm _ _ visited _ _ SsaBreak      = (CatInr, visited)
-compileLoopTerm _ _ visited _ _ SsaContinue   = (CatInl, visited)
+compileLoopTerm _ctx _proc _ visited _ _ (SsaReturn _) = (CatInr, visited)
+compileLoopTerm _ctx _proc _ visited _ _ SsaBreak      = (CatInr, visited)
+compileLoopTerm _ctx _proc _ visited _ _ SsaContinue   = (CatInl, visited)
 
 -- | Compile a branch target inside a loop, wrapping in the appropriate Either.
-compileLoopBranchPath :: SsaProc -> Text -> Text -> Set.Set Text -> Set.Set Text
+compileLoopBranchPath :: CompileCtx -> SsaProc -> Text -> Text -> Set.Set Text -> Set.Set Text
                       -> Maybe Text -> (CatOp () (Either () ()), Set.Set Text)
-compileLoopBranchPath proc prevBlock target visited headers activeLoop
+compileLoopBranchPath ctx proc prevBlock target visited headers activeLoop
   | Just target == activeLoop = (CatInl, visited)
   | isLoopExit proc activeLoop target = (CatInr, visited)
   | otherwise =
-      let (targetOp, v1) = compileLoopBody proc target visited headers activeLoop
-      in (targetOp . compilePhiAssignments proc prevBlock target, v1)
+      let (targetOp, v1) = compileLoopBody ctx proc target visited headers activeLoop
+      in (targetOp . compilePhiAssignments ctx proc prevBlock target, v1)
 
 -- | Check if a target block is outside the current loop cycle.
 -- A block is a loop exit if it is not part of the loop body.
@@ -541,15 +554,54 @@ isLoopExit proc (Just headerId) targetId =
 
 -- | Compile a list of SSA assignments by folding with CatCompose.
 -- Composes right-to-left so the first assign executes first.
-compileAssigns :: [SsaAssign] -> CatOp () ()
-compileAssigns [] = CatId
-compileAssigns [a] = compileAssign a
-compileAssigns (a:as) = compileAssigns as . compileAssign a
+compileAssigns :: CompileCtx -> [SsaAssign] -> CatOp () ()
+compileAssigns _ctx [] = CatId
+compileAssigns ctx [a] = compileAssign ctx a
+compileAssigns ctx (a:as) = compileAssigns ctx as . compileAssign ctx a
 
 -- | Compile a single SSA assignment.
--- @x_1 = expr@ becomes @CatAssignWithRhs \"x_1\" expr@ — RHS embedded directly.
-compileAssign :: SsaAssign -> CatOp () ()
-compileAssign (SsaAssign sv rhs) = CatAssignWithRhs (renderSsaVar sv) (ssaValToExpr rhs)
+-- For call expressions: classifies via 'classifyExpr' and emits 'CatCall'.
+-- Standalone suspend calls (no variable binding) use 'CatCall' with the
+-- effect name — the GraphBuilder emits CpsCallProc.  True CpsSuspend
+-- emission for suspend-as-statement is deferred to Step 3.
+-- For other expressions: @x_1 = expr@ becomes @CatAssignWithRhs \"x_1\" expr@.
+compileAssign :: CompileCtx -> SsaAssign -> CatOp () ()
+compileAssign ctx (SsaAssign sv rhs) = case rhs of
+  SsaConst expr@(ExCall lv rawArgs) ->
+    let parsedArgs = map parseArgList rawArgs
+    in compileCallExpr ctx sv expr lv parsedArgs
+  SsaConst expr@(ExMethodCall recv meth rawArgs) ->
+    let parsedArgs = map parseArgList rawArgs
+        cn = T.toLower (calleeName expr)
+        effCn = case recv of
+          ExLvalue rlv -> T.toLower (lvHead rlv) <> "." <> T.toLower meth
+          ExCall rlv _ -> T.toLower (lvHead rlv) <> "." <> T.toLower meth
+          _            -> cn
+    in case classifyExpr (ccEnv ctx) expr of
+         SuspendCall eff -> CatCall eff parsedArgs
+         PureCall        -> CatCall effCn parsedArgs
+  _ -> CatAssignWithRhs (renderSsaVar sv) (ssaValToExpr rhs)
+
+-- | Shared logic for compiling an ExCall expression: classify and emit CatCall.
+compileCallExpr :: CompileCtx -> SsaVar -> Expr -> Lvalue -> [Expr] -> CatOp () ()
+compileCallExpr ctx _sv expr lv parsedArgs
+  | isTriggerEvent lv =
+      CatCall "triggerevent" [evArg]
+  | [seg] <- segments lv
+  , T.toLower (segName seg) `Set.member` ccUserFns ctx =
+      CatCall (segName seg) parsedArgs
+  | otherwise = case classifyExpr (ccEnv ctx) expr of
+      SuspendCall eff -> CatCall eff parsedArgs
+      PureCall ->
+        let name = T.toLower (calleeName expr)
+        in CatCall name parsedArgs
+  where
+    evArg = case parsedArgs of { (a:_) -> a; [] -> ExRaw [] }
+
+-- | Parse a raw token list into an Expr (simplified — wraps as ExRaw).
+parseArgList :: [Token] -> Expr
+parseArgList [] = ExRaw []
+parseArgList ts = ExRaw (map tkText ts)
 
 -- ============================================================================
 -- 6. GraphBuilder: CpsGraph Target (Phase 4 — backward chaining)
@@ -632,10 +684,10 @@ compileLowCatToCps (LCompose g f) nextPc = case inspectBranchLowCat g of
 compileLowCatToCps (LFanIn tOp fOp) nextPc =
   compileBranchDiamondLowCat ExNull tOp fOp nextPc
 compileLowCatToCps (LLoop body) nextPc = compileLoopLowCat body nextPc
-compileLowCatToCps (LCall name) nextPc =
-  allocateNode (CpsCallProc { cpCallee = name, cpArgs = [], cpNext = nextPc })
-compileLowCatToCps (LSuspend eff) nextPc =
-  allocateNode (CpsSuspend { suEffect = eff, suArgs = [], suVar = Nothing, suContinuation = nextPc })
+compileLowCatToCps (LCall name args) nextPc =
+  allocateNode (CpsCallProc { cpCallee = name, cpArgs = args, cpNext = nextPc })
+compileLowCatToCps (LSuspend eff args) nextPc =
+  allocateNode (CpsSuspend { suEffect = eff, suArgs = args, suVar = Nothing, suContinuation = nextPc })
 -- Structural / erased constructors
 compileLowCatToCps _ nextPc = return nextPc
 
@@ -730,8 +782,8 @@ instance Effectful Interp where
   eval _expr  = Interp (\_env -> P.pure (VInt 0))  -- TODO: real eval
   assign _var = Interp (\(env, _val) -> P.pure env)  -- TODO: real assign
   lookup _var = Interp (\_env -> P.pure VNull)  -- TODO: real lookup
-  suspend _e  = Interp (\_args -> P.pure (Continuation 0))  -- TODO
-  callProc _n = Interp (\_args -> P.pure ())  -- TODO
+  suspend _e _args = Interp (\_env -> P.pure (Continuation 0))  -- TODO
+  callProc _n _args = Interp (\_env -> P.pure ())  -- TODO
   splitValue = Interp (\(env, val) -> P.pure (case val of
     VBool True  -> Left env
     VBool False -> Right env
