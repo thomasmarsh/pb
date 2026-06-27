@@ -35,6 +35,10 @@ module PB.Analysis.CatOp
   , branch
     -- * SSA → CatOp compilation
   , compileSsa
+    -- * LowCat intermediary
+  , LowCat (..)
+  , toLowCat
+  , extractCondLowCat
     -- * GraphBuilder (Phase 4)
   , GraphBuilder (..)
   , BuilderState (..)
@@ -86,12 +90,53 @@ data Continuation = Continuation Int  -- PC to resume at
   deriving (Eq, Show, Generic)
 
 -- ============================================================================
--- 1. Core Typeclasses
+-- 1b. LowCat: Monomorphic Categorical Intermediate Representation
+-- ============================================================================
+
+-- | A type-safe, untyped bridge between the GADT-indexed 'CatOp' and the
+-- flat 'CpsGraph'.  Strips all existential type parameters so that pattern
+-- matching is deterministic — no 'unsafeCoerce' needed.
+data LowCat
+  = LId
+  | LCompose LowCat LowCat
+  | LAssignWithRhs Text Expr
+  | LFanIn LowCat LowCat
+  | LLoop LowCat
+  | LInl
+  | LInr
+  | LSplitValue
+  | LEval Expr
+  | LFork LowCat LowCat
+  | LCall Text
+  | LSuspend Text
+  | LErasable
+  deriving (Eq, Show, Generic)
+
+-- | Lower a typed 'CatOp' to an untyped 'LowCat'.  Pure structural
+-- traversal — no 'unsafeCoerce', no runtime type inspection.
+toLowCat :: CatOp a b -> LowCat
+toLowCat CatId              = LId
+toLowCat (CatAssignWithRhs v e) = LAssignWithRhs v e
+toLowCat (CatCompose g f)   = LCompose (toLowCat g) (toLowCat f)
+toLowCat (CatFanIn t f)     = LFanIn (toLowCat t) (toLowCat f)
+toLowCat (CatLoop body)     = LLoop (toLowCat body)
+toLowCat CatInl             = LInl
+toLowCat CatInr             = LInr
+toLowCat CatSplitValue      = LSplitValue
+toLowCat (CatEval e)        = LEval e
+toLowCat (CatFork l r)      = LFork (toLowCat l) (toLowCat r)
+toLowCat (CatCall n)        = LCall n
+toLowCat (CatSuspend e)     = LSuspend e
+toLowCat _                  = LErasable  -- CatExl, CatExr, CatConst, CatLookup, CatAssign, CatTry
+
+-- ============================================================================
+-- 2. Core Typeclasses
 -- ============================================================================
 
 -- | The base category: sequential composition.
 class Category k where
   id  :: k a a
+  infixr 9 .
   (.) :: k b c -> k a b -> k a c
 
 -- | Cartesian category: products for variable bindings and tuples.
@@ -559,109 +604,94 @@ finalizeGraph entryPc s = CpsGraph
 initState :: BuilderState
 initState = BuilderState { bsNodes = Map.empty, bsNextPc = 0, bsSourceLines = [] }
 
--- | Compile a CatOp into CPS nodes using backward chaining.
--- Takes the continuation PC (where to jump after) and returns the entry PC.
+-- | Compile a CatOp into CPS nodes.
+-- Lowers to 'LowCat' first (stripping GADT types), then compiles.
 compileCatToCps :: CatOp a b -> Int -> GraphBuilder Int
-compileCatToCps CatId nextPc = return nextPc
-compileCatToCps (CatAssignWithRhs var expr) nextPc =
-  allocateNode (CpsAssign { anVar = var, anRhs = expr, anNext = nextPc })
--- Branch pattern: (thenK ||| elseK) . splitValue . (id &&& eval cond)
--- Detect CatFanIn on the left of CatCompose; extract condition from the right.
-compileCatToCps (CatCompose g f) nextPc = case inspectBranch g of
-  Just (tOp, fOp) ->
-    compileBranchDiamond (extractCondFrom f) tOp fOp nextPc
-  Nothing -> do
-    gEntryPc <- compileCatToCps g nextPc
-    fEntryPc <- compileCatToCps f gEntryPc
-    return fEntryPc
-compileCatToCps (CatFanIn tOp fOp) nextPc =
-  compileBranchDiamond ExNull tOp fOp nextPc
-compileCatToCps (CatLoop body) nextPc = compileLoopCps body nextPc
-compileCatToCps (CatCall name) nextPc =
-  allocateNode (CpsCallProc { cpCallee = name, cpArgs = [], cpNext = nextPc })
-compileCatToCps (CatSuspend eff) nextPc =
-  allocateNode (CpsSuspend { suEffect = eff, suArgs = [], suVar = Nothing, suContinuation = nextPc })
--- Structural / erased constructors (SSA flattening)
-compileCatToCps CatExl nextPc = return nextPc
-compileCatToCps CatExr nextPc = return nextPc
-compileCatToCps CatInl nextPc = return nextPc
-compileCatToCps CatInr nextPc = return nextPc
-compileCatToCps CatSplitValue nextPc = return nextPc
-compileCatToCps (CatEval _) nextPc = return nextPc
-compileCatToCps (CatConst _) nextPc = return nextPc
-compileCatToCps (CatLookup _) nextPc = return nextPc
-compileCatToCps (CatAssign _) nextPc = return nextPc
-compileCatToCps (CatFork _ _) nextPc = return nextPc
-compileCatToCps (CatTry body _) nextPc = compileCatToCps body nextPc
+compileCatToCps catOp nextPc = compileLowCatToCps (toLowCat catOp) nextPc
 
--- | Runtime check: is this CatOp a CatFanIn? Uses unsafeCoerce to bypass
--- GADT existential type parameters — safe because we only inspect the
--- constructor tag and coerce the children back to () ().
-inspectBranch :: CatOp a b -> Maybe (CatOp () (), CatOp () ())
-inspectBranch catOp = case unsafeCoerce catOp of
-  CatFanIn tOp fOp -> Just (unsafeCoerce tOp, unsafeCoerce fOp)
-  _                -> Nothing
+-- | Compile a 'LowCat' into CPS nodes using backward chaining.
+-- Takes the continuation PC (where to jump after) and returns the entry PC.
+-- All pattern matching is on plain constructors — no unsafeCoerce.
+compileLowCatToCps :: LowCat -> Int -> GraphBuilder Int
+compileLowCatToCps LId nextPc = return nextPc
+compileLowCatToCps (LAssignWithRhs var expr) nextPc =
+  allocateNode (CpsAssign { anVar = var, anRhs = expr, anNext = nextPc })
+-- Branch pattern: intercept CatFanIn + condition before CatCompose tears them apart.
+compileLowCatToCps (LCompose g f) nextPc = case inspectBranchLowCat g of
+  Just (tOp, fOp) -> do
+    let branchCond = extractCondLowCat f
+    joinPc <- allocateNode (CpsNop { npNext = nextPc })
+    elseEntryPc <- compileLowCatToCps fOp joinPc
+    thenEntryPc <- compileLowCatToCps tOp joinPc
+    branchEntryPc <- allocateNode (CpsBranch { brCond = branchCond, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
+    compileLowCatToCps f branchEntryPc
+  Nothing -> do
+    gEntryPc <- compileLowCatToCps g nextPc
+    fEntryPc <- compileLowCatToCps f gEntryPc
+    return fEntryPc
+compileLowCatToCps (LFanIn tOp fOp) nextPc =
+  compileBranchDiamondLowCat ExNull tOp fOp nextPc
+compileLowCatToCps (LLoop body) nextPc = compileLoopLowCat body nextPc
+compileLowCatToCps (LCall name) nextPc =
+  allocateNode (CpsCallProc { cpCallee = name, cpArgs = [], cpNext = nextPc })
+compileLowCatToCps (LSuspend eff) nextPc =
+  allocateNode (CpsSuspend { suEffect = eff, suArgs = [], suVar = Nothing, suContinuation = nextPc })
+-- Structural / erased constructors
+compileLowCatToCps _ nextPc = return nextPc
+
+-- | Detect a branch: is this LowCat a LFanIn?
+inspectBranchLowCat :: LowCat -> Maybe (LowCat, LowCat)
+inspectBranchLowCat (LFanIn t f) = Just (t, f)
+inspectBranchLowCat _            = Nothing
 
 -- | Extract the condition expression from a branch's inner routing chain.
--- Walks splitValue . (id &&& eval cond) via unsafeCoerce.
-extractCondFrom :: CatOp a b -> Expr
-extractCondFrom catOp = go (unsafeCoerce catOp)
-  where
-    go :: CatOp () () -> Expr
-    go (CatEval e)          = e
-    go (CatCompose _ inner) = go (unsafeCoerce inner)
-    go (CatFork lhs rhs)    =
-      case (inspectEval (unsafeCoerce lhs), inspectEval (unsafeCoerce rhs)) of
-        (Just e, _) -> e
-        (_, Just e) -> e
-        _           -> ExNull
-    go _                    = ExNull
-
-    inspectEval :: CatOp () () -> Maybe Expr
-    inspectEval (CatEval e) = Just e
-    inspectEval _           = Nothing
+-- Pure pattern matching on LowCat — no unsafeCoerce.
+extractCondLowCat :: LowCat -> Expr
+extractCondLowCat (LEval e)          = e
+extractCondLowCat (LCompose _ inner) = extractCondLowCat inner
+extractCondLowCat (LFork _ rhs)      = extractCondLowCat rhs
+extractCondLowCat _                  = ExNull
 
 -- | Emit a branch diamond: CpsBranch + then-path + else-path, converging at a join nop.
-compileBranchDiamond :: Expr -> CatOp a c -> CatOp b c -> Int -> GraphBuilder Int
-compileBranchDiamond cond tOp fOp nextPc = do
+compileBranchDiamondLowCat :: Expr -> LowCat -> LowCat -> Int -> GraphBuilder Int
+compileBranchDiamondLowCat cond tOp fOp nextPc = do
   joinPc <- allocateNode (CpsNop { npNext = nextPc })
-  elseEntryPc <- compileCatToCps fOp joinPc
-  thenEntryPc <- compileCatToCps tOp joinPc
+  elseEntryPc <- compileLowCatToCps fOp joinPc
+  thenEntryPc <- compileLowCatToCps tOp joinPc
   allocateNode (CpsBranch { brCond = cond, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
 
 -- | Compile a loop: allocate header nop, compile body with back-edge, patch header.
-compileLoopCps :: CatOp a (Either a b) -> Int -> GraphBuilder Int
-compileLoopCps body nextPc = do
+compileLoopLowCat :: LowCat -> Int -> GraphBuilder Int
+compileLoopLowCat body nextPc = do
   loopHeaderPc <- allocateNode (CpsNop { npNext = -1 })
-  bodyEntryPc <- compileLoopBodyCps body loopHeaderPc nextPc
+  bodyEntryPc <- compileLoopBodyLowCat body loopHeaderPc nextPc
   registerNodeAt loopHeaderPc (CpsNop { npNext = bodyEntryPc })
   return loopHeaderPc
 
--- | Compile a loop body, translating CatInl → back-edge goto, CatInr → break goto.
--- Uses unsafeCoerce to bypass GADT constraints on sub-expressions (the type
--- parameters are irrelevant at the CPS PC level).
-compileLoopBodyCps :: CatOp a (Either a b) -> Int -> Int -> GraphBuilder Int
-compileLoopBodyCps CatInl loopHeaderPc _nextPc =
+-- | Compile a loop body, translating LInl → back-edge goto, LInr → break goto.
+compileLoopBodyLowCat :: LowCat -> Int -> Int -> GraphBuilder Int
+compileLoopBodyLowCat LInl loopHeaderPc _nextPc =
   allocateNode (CpsGoto { goTarget = loopHeaderPc })
-compileLoopBodyCps CatInr _loopHeaderPc nextPc =
+compileLoopBodyLowCat LInr _loopHeaderPc nextPc =
   allocateNode (CpsGoto { goTarget = nextPc })
--- Branch pattern inside loops: intercept CatFanIn + condition before
--- CatCompose tears them apart and loses the condition.
-compileLoopBodyCps (CatCompose g f) loopHeaderPc nextPc
-  | Just (tOp, fOp) <- inspectBranch g = do
+-- Branch pattern inside loops: intercept LFanIn + condition before LCompose tears them apart.
+compileLoopBodyLowCat (LCompose g f) loopHeaderPc nextPc
+  | Just (tOp, fOp) <- inspectBranchLowCat g = do
+      let branchCond = extractCondLowCat f
       joinPc <- allocateNode (CpsNop { npNext = nextPc })
-      elseEntryPc <- compileLoopBodyCps (unsafeCoerce fOp) loopHeaderPc joinPc
-      thenEntryPc <- compileLoopBodyCps (unsafeCoerce tOp) loopHeaderPc joinPc
-      allocateNode (CpsBranch { brCond = extractCondFrom f, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
-compileLoopBodyCps (CatCompose g f) loopHeaderPc nextPc = do
-  gEntryPc <- compileLoopBodyCps (unsafeCoerce g) loopHeaderPc nextPc
-  compileLoopBodyCps (unsafeCoerce f) loopHeaderPc gEntryPc
-compileLoopBodyCps (CatFanIn tOp fOp) loopHeaderPc nextPc = do
-  thenEntryPc <- compileLoopBodyCps (unsafeCoerce tOp) loopHeaderPc nextPc
-  elseEntryPc <- compileLoopBodyCps (unsafeCoerce fOp) loopHeaderPc nextPc
+      elseEntryPc <- compileLoopBodyLowCat fOp loopHeaderPc joinPc
+      thenEntryPc <- compileLoopBodyLowCat tOp loopHeaderPc joinPc
+      branchEntryPc <- allocateNode (CpsBranch { brCond = branchCond, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
+      compileLoopBodyLowCat f loopHeaderPc branchEntryPc
+compileLoopBodyLowCat (LCompose g f) loopHeaderPc nextPc = do
+  gEntryPc <- compileLoopBodyLowCat g loopHeaderPc nextPc
+  compileLoopBodyLowCat f loopHeaderPc gEntryPc
+compileLoopBodyLowCat (LFanIn tOp fOp) loopHeaderPc nextPc = do
+  thenEntryPc <- compileLoopBodyLowCat tOp loopHeaderPc nextPc
+  elseEntryPc <- compileLoopBodyLowCat fOp loopHeaderPc nextPc
   allocateNode (CpsBranch { brCond = ExNull, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
-compileLoopBodyCps linearOp _loopHeaderPc nextPc =
-  compileCatToCps (unsafeCoerce linearOp) nextPc
+compileLoopBodyLowCat linearOp _loopHeaderPc nextPc =
+  compileLowCatToCps linearOp nextPc
 
 -- | Build a flat CpsGraph from a structured CatOp.
 buildCpsGraph :: CatOp () () -> CpsGraph

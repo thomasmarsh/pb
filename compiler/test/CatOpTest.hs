@@ -375,6 +375,16 @@ tests = testGroup "CatOp"
               : [] ) -> return ()
             nodes -> assertBool ("expected 5 nodes [exit, join-nop, else, then, branch], got " <> show (P.length nodes) <> ": " <> show nodes) False
 
+    , testCase "branch condition preserved through LowCat (not ExNull)" $
+        let thenK = CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
+            elseK = CatAssignWithRhs "y_1" (ExInt "2")
+            op = branch (ExBool True) thenK elseK :: CatOp () ()
+            graph = buildCpsGraph op
+            branches = filter (\n -> case n of CpsBranch {} -> True; _ -> False) (cgNodes graph)
+        in case branches of
+             [CpsBranch { brCond = ExBool True }] -> return ()
+             other -> assertBool ("expected branch with ExBool True, got " <> show other) False
+
     , testCase "structural erasure preserves assignments" $
         let op = (CatExl :: CatOp (Int, Int) Int) `seq`
                  CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
@@ -384,5 +394,66 @@ tests = testGroup "CatOp"
           case cgNodes graph of
             (CpsReturn Nothing : CpsAssign { anVar = "x_1" } : []) -> return ()
             _ -> assertBool "expected [exit, assign]" False
+
+    , testCase "end-to-end: SSA loop → CpsGraph preserves assignments and back-edge" $
+        let sa = SsaProc
+              { spName   = "test"
+              , spBlocks = Map.fromList
+                  [ ("entry", SsaBlock [] (SsaGoto "header"))
+                  , ("header", SsaBlock [] (SsaBranch (SsaConst (ExBool True)) "body" "exit"))
+                  , ("body", SsaBlock [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "42"))] (SsaGoto "header"))
+                  , ("exit", SsaBlock [] (SsaReturn Nothing))
+                  ]
+              , spPhis   = Map.empty
+              , spEntry  = "entry"
+              , spVars   = []
+              }
+            catTree  = compileSsa sa
+            graph    = buildCpsGraph catTree
+            nodes    = cgNodes graph
+            hasCpsAssign v = any (\n -> case n of CpsAssign { anVar = v' } -> v' == v; _ -> False) nodes
+            hasGoto        = any (\n -> case n of CpsGoto _ -> True; _ -> False) nodes
+            hasBranch      = any (\n -> case n of CpsBranch {} -> True; _ -> False) nodes
+        in do
+          assertBool "should contain x_1 assign" (hasCpsAssign "x_1")
+          assertBool "should contain backward CpsGoto" hasGoto
+          assertBool "should contain CpsBranch" hasBranch
+
+    , testCase "unit: CatLoop lowers to correct header patch and backward CpsGoto" $
+        let loopBody = CatCompose CatInl (CatAssignWithRhs "counter" (ExInt "42")) :: CatOp () (Either () ())
+            catTree  = CatLoop loopBody :: CatOp () ()
+            graph    = buildCpsGraph catTree
+            nodes    = cgNodes graph
+            gotos        = [ target | CpsGoto target <- nodes ]
+            assignNexts  = [ next   | CpsAssign { anNext = next } <- nodes ]
+            headerTarget = [ next   | CpsNop next <- nodes, next /= -1 ]
+        in do
+          assertBool ("Should allocate a backward jump; nodes: " <> show nodes) (not (null gotos))
+          assertBool ("Should allocate an assignment sequence; nodes: " <> show nodes) (not (null assignNexts))
+          assertBool ("Loop layout must form a synchronized cycle; nodes: " <> show nodes) (not (null headerTarget))
+
+    , testCase "end-to-end: simple linear SSA → CpsGraph" $
+        let sa = SsaProc
+              { spName   = "test"
+              , spBlocks = Map.fromList
+                  [ ("entry", SsaBlock
+                      { sbAssigns = [ SsaAssign (SsaVar "a" 1) (SsaConst (ExInt "1"))
+                                     , SsaAssign (SsaVar "b" 1) (SsaConst (ExInt "2")) ]
+                      , sbTerm = SsaReturn Nothing })
+                  ]
+              , spPhis   = Map.empty
+              , spEntry  = "entry"
+              , spVars   = []
+              }
+            catTree  = compileSsa sa
+            graph    = buildCpsGraph catTree
+            nodes    = cgNodes graph
+        in do
+          assertBool ("should have 3 nodes (exit + 2 assigns), got " <> show (P.length nodes))
+            (P.length nodes == 3)
+          assertBool "should contain a_1"
+            (any (\n -> case n of CpsAssign { anVar = "a_1" } -> True; _ -> False) nodes)
+          assertBool "should contain b_1"
+            (any (\n -> case n of CpsAssign { anVar = "b_1" } -> True; _ -> False) nodes)
     ]
   ]
