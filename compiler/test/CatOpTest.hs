@@ -22,10 +22,11 @@ mkSsa assigns term = SsaProc
   , spVars   = [saVar a | a <- assigns]
   }
 
--- | Check if a CatOp tree contains a CatAssign for a given variable name.
+-- | Check if a CatOp tree contains a CatAssign or CatAssignWithRhs for a given variable name.
 hasAssign :: Text -> CatOp a b -> Bool
 hasAssign _ CatId = False
 hasAssign n (CatAssign t) = n == t
+hasAssign n (CatAssignWithRhs t _) = n == t
 hasAssign n (CatCompose f g) = hasAssign n f P.|| hasAssign n g
 hasAssign n (CatFork f g) = hasAssign n f P.|| hasAssign n g
 hasAssign n (CatFanIn f g) = hasAssign n f P.|| hasAssign n g
@@ -33,16 +34,16 @@ hasAssign n (CatLoop f) = hasAssign n f
 hasAssign n (CatTry f g) = hasAssign n f P.|| hasAssign n g
 hasAssign _ _ = False
 
--- | Check if a CatOp tree contains a CatLookup for a given variable name.
-hasLookup :: Text -> CatOp a b -> Bool
-hasLookup _ CatId = False
-hasLookup n (CatLookup t) = n == t
-hasLookup n (CatCompose f g) = hasLookup n f P.|| hasLookup n g
-hasLookup n (CatFork f g) = hasLookup n f P.|| hasLookup n g
-hasLookup n (CatFanIn f g) = hasLookup n f P.|| hasLookup n g
-hasLookup n (CatLoop f) = hasLookup n f
-hasLookup n (CatTry f g) = hasLookup n f P.|| hasLookup n g
-hasLookup _ _ = False
+-- | Check if a CatOp tree contains a CatAssignWithRhs for a given variable name.
+hasAssignWithRhs :: Text -> CatOp a b -> Bool
+hasAssignWithRhs _ CatId = False
+hasAssignWithRhs n (CatAssignWithRhs t _) = n == t
+hasAssignWithRhs n (CatCompose f g) = hasAssignWithRhs n f P.|| hasAssignWithRhs n g
+hasAssignWithRhs n (CatFork f g) = hasAssignWithRhs n f P.|| hasAssignWithRhs n g
+hasAssignWithRhs n (CatFanIn f g) = hasAssignWithRhs n f P.|| hasAssignWithRhs n g
+hasAssignWithRhs n (CatLoop f) = hasAssignWithRhs n f
+hasAssignWithRhs n (CatTry f g) = hasAssignWithRhs n f P.|| hasAssignWithRhs n g
+hasAssignWithRhs _ _ = False
 
 -- | Check if a CatOp tree contains a CatSplitValue (branch discriminator).
 hasSplitValue :: CatOp a b -> Bool
@@ -124,26 +125,6 @@ tests = testGroup "CatOp"
         in spName sa @?= "test_proc"
     ]
 
-  , testGroup "GraphBuilder"
-    [ testCase "id emits no nodes" $
-        runGraphBuilder (id :: GraphBuilder () ()) @?= ([] :: [CpsNode])
-
-    , testCase "composition concatenates in order" $
-        let gb = mkAssign "x" . mkAssign "y" :: GraphBuilder () ()
-        in case runGraphBuilder gb of
-             [CpsAssign { anVar = "y" }, CpsAssign { anVar = "x" }] -> return ()
-             other -> assertBool "expected 2 assign nodes in order" (P.length other == 2)
-
-    , testCase "||| emits branch + then + goto + else" $
-        let f = mkAssign "a" :: GraphBuilder () ()
-            g = mkAssign "b"
-            gb = f ||| g
-        in case runGraphBuilder gb of
-             [CpsBranch {}, CpsAssign { anVar = "a" }, CpsGoto {}, CpsAssign { anVar = "b" }] ->
-               return ()
-             other -> assertBool ("expected 4 nodes, got " <> show (P.length other)) (P.length other == 4)
-    ]
-
   , testGroup "compileSsa"
     [ testCase "empty body compiles to CatId" $
         let sa = mkSsa [] (SsaReturn Nothing)
@@ -157,13 +138,13 @@ tests = testGroup "CatOp"
             result = compileSsa sa
         in assertBool "contains x_1 assign" (hasAssign "x_1" result)
 
-    , testCase "single assign structure: CatCompose of assign + fork" $
+    , testCase "single assign structure: CatAssignWithRhs with embedded RHS" $
         let sa = mkSsa
               [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))]
               (SsaReturn Nothing)
             result = compileSsa sa
         in case result of
-             CatCompose (CatAssign v) (CatFork CatId (CatEval _)) ->
+             CatAssignWithRhs v (ExInt "1") ->
                assertEqual "assigns to x_1" "x_1" v
              other -> assertBool ("unexpected structure: " <> show other) False
 
@@ -187,14 +168,14 @@ tests = testGroup "CatOp"
             result = compileSsa sa
         in result @?= (CatId :: CatOp () ())
 
-    , testCase "assign with SsaVarRef produces CatLookup in RHS" $
+    , testCase "assign with SsaVarRef embeds ExLvalue in RHS" $
         let sa = mkSsa
               [ SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))
               , SsaAssign (SsaVar "y" 1) (SsaVarRef (SsaVar "x" 1))
               ]
               (SsaReturn Nothing)
             result = compileSsa sa
-        in assertBool "contains lookup x_1" (hasLookup "x_1" result)
+        in assertBool "contains y_1 assign with ExLvalue RHS" (hasAssignWithRhs "y_1" result)
 
     , testCase "SsaGoto compiles to CatCompose of block assigns" $
         let sa = SsaProc
@@ -349,9 +330,59 @@ tests = testGroup "CatOp"
     , testCase "splitValue routes False to Right" $
         runInterp (splitValue :: Interp ((), Value) (Either () ())) ((), VBool False) P.>>= \v -> v @?= Right ()
     ]
-  ]
 
--- Helper: build a GraphBuilder that emits a CpsAssign
-mkAssign :: Text -> GraphBuilder () ()
-mkAssign var = GraphBuilder (\currentPc ->
-  ([CpsAssign { anVar = var, anRhs = ExNull, anNext = currentPc + 1 }], currentPc + 1))
+  , testGroup "Phase 4: buildCpsGraph"
+    [ testCase "CatId compiles to just exit node" $
+        let graph = buildCpsGraph (CatId :: CatOp () ())
+        in do
+          cgEntry graph @?= 0
+          case cgNodes graph of
+            [CpsReturn Nothing] -> return ()
+            other -> assertBool ("expected 1 exit node, got " <> show (P.length other)) False
+
+    , testCase "CatAssignWithRhs compiles to CpsAssign + exit" $
+        let graph = buildCpsGraph (CatAssignWithRhs "x_1" (ExInt "42") :: CatOp () ())
+        in do
+          cgEntry graph @?= 1
+          case cgNodes graph of
+            [CpsReturn Nothing, CpsAssign { anVar = "x_1", anRhs = ExInt "42", anNext = 0 }] ->
+              return ()
+            other -> assertBool ("expected exit + assign, got " <> show (P.length other)) False
+
+    , testCase "two assigns chain entry→x_1→y_1→exit" $
+        let op = CatAssignWithRhs "y_1" (ExInt "2") . CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
+            graph = buildCpsGraph op
+        in do
+          cgEntry graph @?= 2
+          P.length (cgNodes graph) @?= 3
+          case cgNodes graph of
+            (CpsReturn Nothing : CpsAssign { anVar = "y_1" } : CpsAssign { anVar = "x_1" } : []) -> return ()
+            _ -> assertBool "expected [exit, y_1, x_1]" False
+
+    , testCase "branch compiles to CpsBranch diamond with join nop" $
+        let thenK = CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
+            elseK = CatAssignWithRhs "y_1" (ExInt "2")
+            op = branch (ExBool True) thenK elseK :: CatOp () ()
+            graph = buildCpsGraph op
+        in do
+          P.length (cgNodes graph) @?= 5
+          case cgNodes graph of
+            ( CpsReturn Nothing
+              : CpsNop { npNext = 0 }
+              : CpsAssign { anVar = "y_1", anNext = 1 }
+              : CpsAssign { anVar = "x_1", anNext = 1 }
+              : CpsBranch { brThenPc = 3, brElsePc = 2 }
+              : [] ) -> return ()
+            nodes -> assertBool ("expected 5 nodes [exit, join-nop, else, then, branch], got " <> show (P.length nodes) <> ": " <> show nodes) False
+
+    , testCase "structural erasure preserves assignments" $
+        let op = (CatExl :: CatOp (Int, Int) Int) `seq`
+                 CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
+            graph = buildCpsGraph op
+        in do
+          P.length (cgNodes graph) @?= 2
+          case cgNodes graph of
+            (CpsReturn Nothing : CpsAssign { anVar = "x_1" } : []) -> return ()
+            _ -> assertBool "expected [exit, assign]" False
+    ]
+  ]

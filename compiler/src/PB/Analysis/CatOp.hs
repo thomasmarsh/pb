@@ -35,10 +35,18 @@ module PB.Analysis.CatOp
   , branch
     -- * SSA → CatOp compilation
   , compileSsa
-    -- * GraphBuilder
+    -- * GraphBuilder (Phase 4)
   , GraphBuilder (..)
+  , BuilderState (..)
+  , initState
+  , allocateNode
+  , peekNextPc
+  , registerNodeAt
+  , finalizeGraph
+  , compileCatToCps
+  , buildCpsGraph
   , CpsNode (..)
-  , runGraphBuilder
+  , CpsGraph (..)
     -- * Interpreter
   , Interp (..)
     -- * Interpreter loop
@@ -52,13 +60,13 @@ import PB.Prelude hiding (id, (.))
 import qualified Prelude as P
 import Unsafe.Coerce (unsafeCoerce)
 import PB.AST.Expr (Expr (..), LvSegment (..), Lvalue (..))
-import PB.Analysis.CpsCompile (CpsNode (..))
+import PB.Analysis.CpsCompile (CpsNode (..), CpsGraph (..))
+import Control.Monad.State.Strict (State, modify, gets, runState)
 import PB.Analysis.SSA (SsaVal (..), SsaAssign (..), SsaBlock (..),
                          SsaTerm (..), SsaPhi (..), SsaProc (..), renderSsaVar)
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-
 -- ============================================================================
 -- Placeholder types
 -- ============================================================================
@@ -151,8 +159,9 @@ data CatOp a b where
   CatFanIn   :: CatOp a c -> CatOp b c -> CatOp (Either a b) c
 
   -- State Mutation (principled imperative variables)
-  CatAssign  :: Text -> CatOp (env, Value) env
-  CatLookup  :: Text -> CatOp env Value
+  CatAssign       :: Text -> CatOp (env, Value) env
+  CatAssignWithRhs :: Text -> Expr -> CatOp env env
+  CatLookup       :: Text -> CatOp env Value
 
   -- Loops (via coproduct: Left = continue, Right = break)
   CatLoop    :: CatOp a (Either a b) -> CatOp a b
@@ -178,6 +187,7 @@ instance Show (CatOp a b) where
   show CatInr = "CatInr"
   show (CatFanIn _ _) = "CatFanIn .."
   show (CatAssign t) = "CatAssign " <> show t
+  show (CatAssignWithRhs t e) = "CatAssignWithRhs " <> show t <> " " <> show e
   show (CatLookup t) = "CatLookup " <> show t
   show (CatLoop _) = "CatLoop .."
   show (CatEval _) = "CatEval .."
@@ -211,6 +221,7 @@ feq x y = go (unsafeCoerce x) (unsafeCoerce y)
     go CatInr CatInr = True
     go (CatFanIn f g) (CatFanIn f' g') = feq f f' P.&& feq g g'
     go (CatAssign t) (CatAssign t') = t == t'
+    go (CatAssignWithRhs t e) (CatAssignWithRhs t' e') = t == t' P.&& e == e'
     go (CatLookup t) (CatLookup t') = t == t'
     go (CatLoop f) (CatLoop f') = feq f f'
     go (CatEval e) (CatEval e') = e == e'
@@ -408,11 +419,6 @@ compileLoopBody proc blockId visited headers activeLoop
                        _     -> termOp . assignsOp
         in (result, finalVisited)
 
--- | Compile an SSA value to a CatOp that produces a Value.
-compileSsaVal :: SsaVal -> CatOp env Value
-compileSsaVal (SsaVarRef sv) = CatLookup (renderSsaVar sv)
-compileSsaVal ssaVal         = eval (ssaValToExpr ssaVal)
-
 -- | Convert an SSA value back to an Expr so it can be passed to @eval@.
 ssaValToExpr :: SsaVal -> Expr
 ssaValToExpr (SsaConst e)       = e
@@ -496,64 +502,175 @@ compileAssigns [a] = compileAssign a
 compileAssigns (a:as) = compileAssigns as . compileAssign a
 
 -- | Compile a single SSA assignment.
--- @x_1 = expr@ becomes @assign \"x_1\" . (id &&& eval (ssaValToExpr expr))@
+-- @x_1 = expr@ becomes @CatAssignWithRhs \"x_1\" expr@ — RHS embedded directly.
 compileAssign :: SsaAssign -> CatOp () ()
-compileAssign (SsaAssign sv rhs) =
-  assign (renderSsaVar sv) . (id &&& compileSsaVal rhs)
+compileAssign (SsaAssign sv rhs) = CatAssignWithRhs (renderSsaVar sv) (ssaValToExpr rhs)
 
 -- ============================================================================
--- 6. GraphBuilder: CpsGraph Target Category
+-- 6. GraphBuilder: CpsGraph Target (Phase 4 — backward chaining)
 -- ============================================================================
 
--- | The target category for CpsGraph emission.
--- Wraps a function that allocates PC labels linearly.
--- Reuses 'CpsNode' from 'PB.Analysis.CpsCompile'.
-newtype GraphBuilder a b = GraphBuilder
-  { buildNodes :: Int -> ([CpsNode], Int) }
+-- | State for the graph builder.  Nodes are keyed by PC; allocation is sequential.
+data BuilderState = BuilderState
+  { bsNodes       :: Map.Map Int CpsNode
+  , bsNextPc      :: Int
+  , bsSourceLines :: [(Int, Int)]
+  }
 
-instance Category GraphBuilder where
-  id = GraphBuilder (\currentPc -> ([], currentPc))
-  (GraphBuilder f) . (GraphBuilder g) = GraphBuilder (\currentPc ->
-    let (ng, pc')  = g currentPc
-        (nf, pc'') = f pc'
-    in (ng P.++ nf, pc''))
+-- | The graph builder monad.
+newtype GraphBuilder a = GraphBuilder { runBuilder :: State BuilderState a }
 
-instance Cartesian GraphBuilder where
-  exl = GraphBuilder (\currentPc -> ([CpsNop { npNext = currentPc + 1 }], currentPc + 1))
-  exr = GraphBuilder (\currentPc -> ([CpsNop { npNext = currentPc + 1 }], currentPc + 1))
-  (GraphBuilder f) &&& (GraphBuilder g) = GraphBuilder (\currentPc ->
-    let (nf, pc')  = f currentPc
-        (ng, pc'') = g pc'
-    in (nf P.++ ng, pc''))
+instance Functor GraphBuilder where
+  fmap f (GraphBuilder m) = GraphBuilder (fmap f m)
 
-instance Cocartesian GraphBuilder where
-  inl = GraphBuilder (\currentPc -> ([CpsNop { npNext = currentPc + 1 }], currentPc + 1))
-  inr = GraphBuilder (\currentPc -> ([CpsNop { npNext = currentPc + 1 }], currentPc + 1))
-  -- ||| emits a conditional dispatcher: branch node at pc, then-branch at pc+1,
-  -- goto at end of then-branch to skip else, else-branch after goto, exit after else.
-  -- The goto occupies a PC slot so it doesn't break the then-branch's next pointers.
-  (|||) (GraphBuilder f) (GraphBuilder g) = GraphBuilder (\currentPc ->
-    let thenEntry  = currentPc P.+ 1
-        (nf, pcAfterThen) = f thenEntry
-        gotoPc            = pcAfterThen
-        elseEntry         = gotoPc P.+ 1
-        (ng, pcAfterElse) = g elseEntry
-        exitPc            = pcAfterElse
-        branchNode = CpsBranch { brCond = ExNull, brThenPc = thenEntry, brElsePc = elseEntry }
-        thenGoto   = CpsGoto { goTarget = exitPc }
-    in ([branchNode] P.++ nf P.++ [thenGoto] P.++ ng, exitPc))
+instance Applicative GraphBuilder where
+  pure a = GraphBuilder (pure a)
+  GraphBuilder f <*> GraphBuilder a = GraphBuilder (f <*> a)
 
-instance Effectful GraphBuilder where
-  eval _expr  = GraphBuilder (\currentPc -> ([CpsNop { npNext = currentPc + 1 }], currentPc + 1))
-  assign var  = GraphBuilder (\currentPc -> ([CpsAssign { anVar = var, anRhs = ExNull, anNext = currentPc + 1 }], currentPc + 1))
-  lookup _var = GraphBuilder (\currentPc -> ([CpsNop { npNext = currentPc + 1 }], currentPc + 1))  -- TODO: emit real load node
-  suspend eff = GraphBuilder (\currentPc -> ([CpsSuspend { suEffect = eff, suArgs = [], suVar = Nothing, suContinuation = currentPc + 1 }], currentPc + 1))
-  callProc n  = GraphBuilder (\currentPc -> ([CpsCallProc { cpCallee = n, cpArgs = [], cpNext = currentPc + 1 }], currentPc + 1))
-  splitValue  = GraphBuilder (\currentPc -> ([CpsNop { npNext = currentPc + 1 }], currentPc + 1))
+instance Monad GraphBuilder where
+  GraphBuilder m >>= f = GraphBuilder (m >>= (runBuilder P.. f))
 
--- | Run a GraphBuilder from PC 0, returning the emitted nodes.
-runGraphBuilder :: GraphBuilder a b -> [CpsNode]
-runGraphBuilder (GraphBuilder f) = P.fst (f 0)
+-- | Get the next available PC without allocating.
+peekNextPc :: GraphBuilder Int
+peekNextPc = GraphBuilder (gets bsNextPc)
+
+-- | Allocate a node at the next available PC and return its PC.
+allocateNode :: CpsNode -> GraphBuilder Int
+allocateNode node = do
+  pc <- peekNextPc
+  GraphBuilder $ modify $ \s -> s { bsNextPc = bsNextPc s P.+ 1, bsNodes = Map.insert pc node (bsNodes s) }
+  return pc
+
+-- | Register a node at a specific PC (for patching, e.g. loop headers).
+registerNodeAt :: Int -> CpsNode -> GraphBuilder ()
+registerNodeAt pc node = GraphBuilder $ modify $ \s ->
+  s { bsNodes = Map.insert pc node (bsNodes s) }
+
+-- | Finalize: convert the node map to a sorted list for CpsGraph.
+finalizeGraph :: Int -> BuilderState -> CpsGraph
+finalizeGraph entryPc s = CpsGraph
+  { cgNodes            = map P.snd (Map.toAscList (bsNodes s))
+  , cgEntry            = entryPc
+  , cgSuspensionPoints = []
+  , cgSourceMap        = bsSourceLines s
+  }
+
+-- | Initial builder state.
+initState :: BuilderState
+initState = BuilderState { bsNodes = Map.empty, bsNextPc = 0, bsSourceLines = [] }
+
+-- | Compile a CatOp into CPS nodes using backward chaining.
+-- Takes the continuation PC (where to jump after) and returns the entry PC.
+compileCatToCps :: CatOp a b -> Int -> GraphBuilder Int
+compileCatToCps CatId nextPc = return nextPc
+compileCatToCps (CatAssignWithRhs var expr) nextPc =
+  allocateNode (CpsAssign { anVar = var, anRhs = expr, anNext = nextPc })
+-- Branch pattern: (thenK ||| elseK) . splitValue . (id &&& eval cond)
+-- Detect CatFanIn on the left of CatCompose; extract condition from the right.
+compileCatToCps (CatCompose g f) nextPc = case inspectBranch g of
+  Just (tOp, fOp) ->
+    compileBranchDiamond (extractCondFrom f) tOp fOp nextPc
+  Nothing -> do
+    gEntryPc <- compileCatToCps g nextPc
+    fEntryPc <- compileCatToCps f gEntryPc
+    return fEntryPc
+compileCatToCps (CatFanIn tOp fOp) nextPc =
+  compileBranchDiamond ExNull tOp fOp nextPc
+compileCatToCps (CatLoop body) nextPc = compileLoopCps body nextPc
+compileCatToCps (CatCall name) nextPc =
+  allocateNode (CpsCallProc { cpCallee = name, cpArgs = [], cpNext = nextPc })
+compileCatToCps (CatSuspend eff) nextPc =
+  allocateNode (CpsSuspend { suEffect = eff, suArgs = [], suVar = Nothing, suContinuation = nextPc })
+-- Structural / erased constructors (SSA flattening)
+compileCatToCps CatExl nextPc = return nextPc
+compileCatToCps CatExr nextPc = return nextPc
+compileCatToCps CatInl nextPc = return nextPc
+compileCatToCps CatInr nextPc = return nextPc
+compileCatToCps CatSplitValue nextPc = return nextPc
+compileCatToCps (CatEval _) nextPc = return nextPc
+compileCatToCps (CatConst _) nextPc = return nextPc
+compileCatToCps (CatLookup _) nextPc = return nextPc
+compileCatToCps (CatAssign _) nextPc = return nextPc
+compileCatToCps (CatFork _ _) nextPc = return nextPc
+compileCatToCps (CatTry body _) nextPc = compileCatToCps body nextPc
+
+-- | Runtime check: is this CatOp a CatFanIn? Uses unsafeCoerce to bypass
+-- GADT existential type parameters — safe because we only inspect the
+-- constructor tag and coerce the children back to () ().
+inspectBranch :: CatOp a b -> Maybe (CatOp () (), CatOp () ())
+inspectBranch catOp = case unsafeCoerce catOp of
+  CatFanIn tOp fOp -> Just (unsafeCoerce tOp, unsafeCoerce fOp)
+  _                -> Nothing
+
+-- | Extract the condition expression from a branch's inner routing chain.
+-- Walks splitValue . (id &&& eval cond) via unsafeCoerce.
+extractCondFrom :: CatOp a b -> Expr
+extractCondFrom catOp = go (unsafeCoerce catOp)
+  where
+    go :: CatOp () () -> Expr
+    go (CatEval e)          = e
+    go (CatCompose _ inner) = go (unsafeCoerce inner)
+    go (CatFork lhs rhs)    =
+      case (inspectEval (unsafeCoerce lhs), inspectEval (unsafeCoerce rhs)) of
+        (Just e, _) -> e
+        (_, Just e) -> e
+        _           -> ExNull
+    go _                    = ExNull
+
+    inspectEval :: CatOp () () -> Maybe Expr
+    inspectEval (CatEval e) = Just e
+    inspectEval _           = Nothing
+
+-- | Emit a branch diamond: CpsBranch + then-path + else-path, converging at a join nop.
+compileBranchDiamond :: Expr -> CatOp a c -> CatOp b c -> Int -> GraphBuilder Int
+compileBranchDiamond cond tOp fOp nextPc = do
+  joinPc <- allocateNode (CpsNop { npNext = nextPc })
+  elseEntryPc <- compileCatToCps fOp joinPc
+  thenEntryPc <- compileCatToCps tOp joinPc
+  allocateNode (CpsBranch { brCond = cond, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
+
+-- | Compile a loop: allocate header nop, compile body with back-edge, patch header.
+compileLoopCps :: CatOp a (Either a b) -> Int -> GraphBuilder Int
+compileLoopCps body nextPc = do
+  loopHeaderPc <- allocateNode (CpsNop { npNext = -1 })
+  bodyEntryPc <- compileLoopBodyCps body loopHeaderPc nextPc
+  registerNodeAt loopHeaderPc (CpsNop { npNext = bodyEntryPc })
+  return loopHeaderPc
+
+-- | Compile a loop body, translating CatInl → back-edge goto, CatInr → break goto.
+-- Uses unsafeCoerce to bypass GADT constraints on sub-expressions (the type
+-- parameters are irrelevant at the CPS PC level).
+compileLoopBodyCps :: CatOp a (Either a b) -> Int -> Int -> GraphBuilder Int
+compileLoopBodyCps CatInl loopHeaderPc _nextPc =
+  allocateNode (CpsGoto { goTarget = loopHeaderPc })
+compileLoopBodyCps CatInr _loopHeaderPc nextPc =
+  allocateNode (CpsGoto { goTarget = nextPc })
+-- Branch pattern inside loops: intercept CatFanIn + condition before
+-- CatCompose tears them apart and loses the condition.
+compileLoopBodyCps (CatCompose g f) loopHeaderPc nextPc
+  | Just (tOp, fOp) <- inspectBranch g = do
+      joinPc <- allocateNode (CpsNop { npNext = nextPc })
+      elseEntryPc <- compileLoopBodyCps (unsafeCoerce fOp) loopHeaderPc joinPc
+      thenEntryPc <- compileLoopBodyCps (unsafeCoerce tOp) loopHeaderPc joinPc
+      allocateNode (CpsBranch { brCond = extractCondFrom f, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
+compileLoopBodyCps (CatCompose g f) loopHeaderPc nextPc = do
+  gEntryPc <- compileLoopBodyCps (unsafeCoerce g) loopHeaderPc nextPc
+  compileLoopBodyCps (unsafeCoerce f) loopHeaderPc gEntryPc
+compileLoopBodyCps (CatFanIn tOp fOp) loopHeaderPc nextPc = do
+  thenEntryPc <- compileLoopBodyCps (unsafeCoerce tOp) loopHeaderPc nextPc
+  elseEntryPc <- compileLoopBodyCps (unsafeCoerce fOp) loopHeaderPc nextPc
+  allocateNode (CpsBranch { brCond = ExNull, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
+compileLoopBodyCps linearOp _loopHeaderPc nextPc =
+  compileCatToCps (unsafeCoerce linearOp) nextPc
+
+-- | Build a flat CpsGraph from a structured CatOp.
+buildCpsGraph :: CatOp () () -> CpsGraph
+buildCpsGraph catOp =
+  let (entryPc, finalState) = runState (runBuilder $ do
+        exitPc <- allocateNode (CpsReturn Nothing)
+        compileCatToCps catOp exitPc
+        ) initState
+  in finalizeGraph entryPc finalState
 
 -- ============================================================================
 -- 6. Interpreter: Direct Haskell Execution
