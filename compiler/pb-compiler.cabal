@@ -44,6 +44,7 @@ library
     PB.Lexing.Splitter
     PB.Lexing.Token
     PB.Analysis.Builtins
+    PB.Analysis.CallClassify
     PB.Analysis.CfgBuild
     PB.Analysis.CatOp
     PB.Analysis.CpsCompile

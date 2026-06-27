@@ -8,6 +8,7 @@ import PB.AST.Type         (PbType (..))
 import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Analysis.CpsCompile
+import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName)
 import PB.Pipeline.Preprocess (LogicalLine (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 
@@ -251,24 +252,25 @@ tests = testGroup "CpsCompile"
           @?= Suspend
 
     , testCase "effect name: open() → open" $
-        effectName (ExCall { callee = lv1 "open", callArgs = [] })
+        effectName (ExCall { callee = lv1 "open", callArgs = [] }) []
           @?= "open"
 
     , testCase "effect name: opensheet() → open" $
-        effectName (ExCall { callee = lv1 "opensheet", callArgs = [] })
+        effectName (ExCall { callee = lv1 "opensheet", callArgs = [] }) []
           @?= "open"
 
     , testCase "effect name: close() → close" $
-        effectName (ExCall { callee = lv1 "close", callArgs = [] })
+        effectName (ExCall { callee = lv1 "close", callArgs = [] }) []
           @?= "close"
 
     , testCase "effect name: dw.retrieve() → retrieve:dw" $
-        effectName (ExCall { callee = lv2 "dw" "retrieve", callArgs = [] })
+        effectName (ExCall { callee = lv2 "dw" "retrieve", callArgs = [] }) []
           @?= "retrieve:dw"
 
     , testCase "effect name: fn_retrievechild('kodperiod') → retrieve:child_kodperiod:adw" $
         effectName (ExCall { callee   = lv1 "fn_retrievechild"
                            , callArgs = [[tok "adw"], [tok "\"kodperiod\""], [tok "gs_kodxrisi"]] })
+                   [ExLvalue (lv1 "adw"), ExStr "kodperiod"]
           @?= "retrieve:child_kodperiod:adw"
 
     , testCase "InheritGraph: user type inheriting datawindow → Suspend" $

@@ -33,6 +33,7 @@ import PB.AST.Expr
 import PB.AST.Located  (Located (..))
 import PB.Analysis.CfgBuild (Cfg (..), CfgBlock (..), CfgEdge (..), buildCfg)
 import PB.Analysis.TypeEnv (ScopedTypeEnv)
+import PB.Analysis.CallClassify (lvHead)
 import PB.Lexing.Token     (Token (..))
 import Control.Monad.State.Strict
 import GHC.Generics         (Generic)
@@ -150,8 +151,7 @@ buildSsa _env procName stmts =
 -- Helpers
 -- ============================================================================
 
-lvHead :: Lvalue -> Text
-lvHead lv = case segments lv of { (LvSegment n _ : _) -> n; [] -> "_" }
+
 
 assignTarget :: Expr -> Text
 assignTarget (ExLvalue lv) = lvHead lv
