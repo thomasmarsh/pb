@@ -2,12 +2,75 @@ module CatOpTest (tests) where
 
 import PB.Prelude hiding (id, (.))
 import qualified Prelude as P
-import PB.AST.Expr         (Expr (..))
+import PB.AST.Expr         (BinOp (..), Expr (..))
 import PB.Analysis.CatOp
-import PB.Analysis.SSA     (SsaVar (..), renderSsaVar, SsaProc (..), buildSsa)
+import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
+                            SsaTerm (..), SsaProc (..), renderSsaVar, buildSsa)
 
+import qualified Data.Map.Strict as Map
 import Test.Tasty           (TestTree, testGroup)
-import Test.Tasty.HUnit     (assertBool, testCase, (@?=))
+import Test.Tasty.HUnit     (assertBool, assertEqual, testCase, (@?=))
+
+-- | Build a minimal SsaProc with a single entry block.
+mkSsa :: [SsaAssign] -> SsaTerm -> SsaProc
+mkSsa assigns term = SsaProc
+  { spName   = "test"
+  , spBlocks = Map.fromList
+      [ ("entry", SsaBlock { sbAssigns = assigns, sbTerm = term }) ]
+  , spPhis   = Map.empty
+  , spEntry  = "entry"
+  , spVars   = [saVar a | a <- assigns]
+  }
+
+-- | Check if a CatOp tree contains a CatAssign for a given variable name.
+hasAssign :: Text -> CatOp a b -> Bool
+hasAssign _ CatId = False
+hasAssign n (CatAssign t) = n == t
+hasAssign n (CatCompose f g) = hasAssign n f P.|| hasAssign n g
+hasAssign n (CatFork f g) = hasAssign n f P.|| hasAssign n g
+hasAssign n (CatFanIn f g) = hasAssign n f P.|| hasAssign n g
+hasAssign n (CatLoop f) = hasAssign n f
+hasAssign n (CatTry f g) = hasAssign n f P.|| hasAssign n g
+hasAssign _ _ = False
+
+-- | Check if a CatOp tree contains a CatLookup for a given variable name.
+hasLookup :: Text -> CatOp a b -> Bool
+hasLookup _ CatId = False
+hasLookup n (CatLookup t) = n == t
+hasLookup n (CatCompose f g) = hasLookup n f P.|| hasLookup n g
+hasLookup n (CatFork f g) = hasLookup n f P.|| hasLookup n g
+hasLookup n (CatFanIn f g) = hasLookup n f P.|| hasLookup n g
+hasLookup n (CatLoop f) = hasLookup n f
+hasLookup n (CatTry f g) = hasLookup n f P.|| hasLookup n g
+hasLookup _ _ = False
+
+-- | Check if a CatOp tree contains a CatSplitValue (branch discriminator).
+hasSplitValue :: CatOp a b -> Bool
+hasSplitValue CatSplitValue = True
+hasSplitValue (CatCompose f g) = hasSplitValue f P.|| hasSplitValue g
+hasSplitValue (CatFork f g) = hasSplitValue f P.|| hasSplitValue g
+hasSplitValue (CatFanIn f g) = hasSplitValue f P.|| hasSplitValue g
+hasSplitValue (CatLoop f) = hasSplitValue f
+hasSplitValue (CatTry f g) = hasSplitValue f P.|| hasSplitValue g
+hasSplitValue _ = False
+
+-- | Check if a CatOp tree contains a CatLoop.
+hasCatLoop :: CatOp a b -> Bool
+hasCatLoop (CatLoop _) = True
+hasCatLoop (CatCompose f g) = hasCatLoop f P.|| hasCatLoop g
+hasCatLoop (CatFork f g) = hasCatLoop f P.|| hasCatLoop g
+hasCatLoop (CatFanIn f g) = hasCatLoop f P.|| hasCatLoop g
+hasCatLoop (CatTry f g) = hasCatLoop f P.|| hasCatLoop g
+hasCatLoop _ = False
+
+-- | Count CatLoop nodes in a CatOp tree.
+countCatLoop :: CatOp a b -> Int
+countCatLoop (CatLoop _) = 1
+countCatLoop (CatCompose f g) = countCatLoop f P.+ countCatLoop g
+countCatLoop (CatFork f g) = countCatLoop f P.+ countCatLoop g
+countCatLoop (CatFanIn f g) = countCatLoop f P.+ countCatLoop g
+countCatLoop (CatTry f g) = countCatLoop f P.+ countCatLoop g
+countCatLoop _ = 0
 
 -- ---------------------------------------------------------------------------
 -- Tests
@@ -79,6 +142,185 @@ tests = testGroup "CatOp"
              [CpsBranch {}, CpsAssign { anVar = "a" }, CpsGoto {}, CpsAssign { anVar = "b" }] ->
                return ()
              other -> assertBool ("expected 4 nodes, got " <> show (P.length other)) (P.length other == 4)
+    ]
+
+  , testGroup "compileSsa"
+    [ testCase "empty body compiles to CatId" $
+        let sa = mkSsa [] (SsaReturn Nothing)
+            result = compileSsa sa
+        in result @?= (CatId :: CatOp () ())
+
+    , testCase "single assign with SsaReturn" $
+        let sa = mkSsa
+              [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))]
+              (SsaReturn Nothing)
+            result = compileSsa sa
+        in assertBool "contains x_1 assign" (hasAssign "x_1" result)
+
+    , testCase "single assign structure: CatCompose of assign + fork" $
+        let sa = mkSsa
+              [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))]
+              (SsaReturn Nothing)
+            result = compileSsa sa
+        in case result of
+             CatCompose (CatAssign v) (CatFork CatId (CatEval _)) ->
+               assertEqual "assigns to x_1" "x_1" v
+             other -> assertBool ("unexpected structure: " <> show other) False
+
+    , testCase "two linear assigns fold via CatCompose" $
+        let sa = mkSsa
+              [ SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))
+              , SsaAssign (SsaVar "y" 1) (SsaConst (ExInt "2"))
+              ]
+              (SsaReturn Nothing)
+            result = compileSsa sa
+        in assertBool "contains x_1 assign" (hasAssign "x_1" result)
+           P.>> assertBool "contains y_1 assign" (hasAssign "y_1" result)
+
+    , testCase "SsaReturn compiles to CatId" $
+        let sa = mkSsa [] (SsaReturn Nothing)
+            result = compileSsa sa
+        in result @?= (CatId :: CatOp () ())
+
+    , testCase "SsaReturn with value compiles to CatId" $
+        let sa = mkSsa [] (SsaReturn (Just (SsaConst (ExInt "42"))))
+            result = compileSsa sa
+        in result @?= (CatId :: CatOp () ())
+
+    , testCase "assign with SsaVarRef produces CatLookup in RHS" $
+        let sa = mkSsa
+              [ SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))
+              , SsaAssign (SsaVar "y" 1) (SsaVarRef (SsaVar "x" 1))
+              ]
+              (SsaReturn Nothing)
+            result = compileSsa sa
+        in assertBool "contains lookup x_1" (hasLookup "x_1" result)
+
+    , testCase "SsaGoto compiles to CatCompose of block assigns" $
+        let sa = SsaProc
+              { spName   = "test"
+              , spBlocks = Map.fromList
+                  [ ("entry", SsaBlock
+                      { sbAssigns = [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))]
+                      , sbTerm = SsaGoto "target" })
+                  , ("target", SsaBlock
+                      { sbAssigns = [SsaAssign (SsaVar "y" 1) (SsaConst (ExInt "2"))]
+                      , sbTerm = SsaReturn Nothing })
+                  ]
+              , spPhis   = Map.empty
+              , spEntry  = "entry"
+              , spVars   = []
+              }
+            result = compileSsa sa
+        in assertBool "contains x_1 assign" (hasAssign "x_1" result)
+           P.>> assertBool "contains y_1 assign" (hasAssign "y_1" result)
+
+    , testCase "SsaBranch compiles to branch combinator" $
+        let sa = SsaProc
+              { spName   = "test"
+              , spBlocks = Map.fromList
+                  [ ("entry", SsaBlock
+                      { sbAssigns = []
+                      , sbTerm = SsaBranch (SsaConst (ExBool True)) "then" "else" })
+                  , ("then", SsaBlock
+                      { sbAssigns = [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))]
+                      , sbTerm = SsaReturn Nothing })
+                  , ("else", SsaBlock
+                      { sbAssigns = [SsaAssign (SsaVar "y" 1) (SsaConst (ExInt "2"))]
+                      , sbTerm = SsaReturn Nothing })
+                  ]
+              , spPhis   = Map.empty
+              , spEntry  = "entry"
+              , spVars   = []
+              }
+            result = compileSsa sa
+        in assertBool "contains x_1 in then branch" (hasAssign "x_1" result)
+           P.>> assertBool "contains y_1 in else branch" (hasAssign "y_1" result)
+           P.>> assertBool "contains splitValue for branch" (hasSplitValue result)
+
+    , testCase "loop compiles to CatLoop with back-edge" $
+        let sa = SsaProc
+              { spName   = "test"
+              , spBlocks = Map.fromList
+                  [ ("entry", SsaBlock
+                      { sbAssigns = [SsaAssign (SsaVar "i" 1) (SsaConst (ExInt "1"))]
+                      , sbTerm = SsaGoto "header" })
+                  , ("header", SsaBlock
+                      { sbAssigns = [SsaAssign (SsaVar "i" 2) (SsaVarRef (SsaVar "i" 1))]
+                      , sbTerm = SsaBranch (SsaConst (ExBool True)) "body" "exit" })
+                  , ("body", SsaBlock
+                      { sbAssigns = [SsaAssign (SsaVar "i" 3) (SsaBinOp BopAdd (SsaVarRef (SsaVar "i" 2)) (SsaConst (ExInt "1")))]
+                      , sbTerm = SsaGoto "header" })
+                  , ("exit", SsaBlock
+                      { sbAssigns = []
+                      , sbTerm = SsaReturn Nothing })
+                  ]
+              , spPhis   = Map.empty
+              , spEntry  = "entry"
+              , spVars   = []
+              }
+            result = compileSsa sa
+        in assertBool "contains CatLoop" (hasCatLoop result)
+
+    , testCase "nested loops produce nested CatLoop" $
+        -- entry → outer_header → inner_header → inner_body → inner_header
+        --                                       inner_exit → outer_header
+        --                          outer_exit → return
+        let sa = SsaProc
+              { spName   = "test"
+              , spBlocks = Map.fromList
+                  [ ("entry", SsaBlock
+                      { sbAssigns = [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))]
+                      , sbTerm = SsaGoto "outer" })
+                  , ("outer", SsaBlock
+                      { sbAssigns = []
+                      , sbTerm = SsaBranch (SsaConst (ExBool True)) "inner" "outer_exit" })
+                  , ("inner", SsaBlock
+                      { sbAssigns = [SsaAssign (SsaVar "x" 2) (SsaBinOp BopAdd (SsaVarRef (SsaVar "x" 1)) (SsaConst (ExInt "1")))]
+                      , sbTerm = SsaBranch (SsaConst (ExBool True)) "inner_body" "inner_exit" })
+                  , ("inner_body", SsaBlock
+                      { sbAssigns = []
+                      , sbTerm = SsaGoto "inner" })
+                  , ("inner_exit", SsaBlock
+                      { sbAssigns = []
+                      , sbTerm = SsaGoto "outer" })
+                  , ("outer_exit", SsaBlock
+                      { sbAssigns = []
+                      , sbTerm = SsaReturn Nothing })
+                  ]
+              , spPhis   = Map.empty
+              , spEntry  = "entry"
+              , spVars   = []
+              }
+            result = compileSsa sa
+        in assertBool "contains at least 2 CatLoop nodes" (countCatLoop result P.>= 2)
+
+    , testCase "loop with multiple exits finds correct exit target" $ do
+        -- entry → header → body → header  (back-edge)
+        --                → exit → return
+        let sa = SsaProc
+              { spName   = "test"
+              , spBlocks = Map.fromList
+                  [ ("entry", SsaBlock
+                      { sbAssigns = []
+                      , sbTerm = SsaGoto "header" })
+                  , ("header", SsaBlock
+                      { sbAssigns = []
+                      , sbTerm = SsaBranch (SsaConst (ExBool True)) "body" "exit" })
+                  , ("body", SsaBlock
+                      { sbAssigns = [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "42"))]
+                      , sbTerm = SsaGoto "header" })
+                  , ("exit", SsaBlock
+                      { sbAssigns = []
+                      , sbTerm = SsaReturn Nothing })
+                  ]
+              , spPhis   = Map.empty
+              , spEntry  = "entry"
+              , spVars   = []
+              }
+            result = compileSsa sa
+        assertBool "contains CatLoop" (hasCatLoop result)
+           P.>> assertBool "contains x_1 assign" (hasAssign "x_1" result)
     ]
 
   , testGroup "Interp"

@@ -53,6 +53,10 @@ data CpsNode
   | CpsCallProc { cpCallee :: Text, cpArgs :: [Expr], cpNext :: Int }
   deriving (Eq, Show, Generic)
 
+-- This is more appropriately a basic block / program counter (PC) driven structure rather
+-- than a traditional functional CPS graph (which uses nested closures). The nodes reference
+-- the next instructions by integer indices (Int), effectively serving as awwarray-backed
+-- control-flow graph (CFG).
 data CpsGraph = CpsGraph
   { cgNodes            :: [CpsNode]
   , cgEntry            :: Int
