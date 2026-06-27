@@ -8,7 +8,7 @@ import PB.AST.Type         (PbType (..))
 import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Analysis.CpsCompile
-import PB.Analysis.CallClassify (CallKind (..), classifyExpr)
+import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName)
 import PB.Pipeline.Preprocess (LogicalLine (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 
@@ -174,7 +174,7 @@ tests = testGroup "CpsCompile"
     [ testCase "dw.retrieve() with DataWindow type → SuspendCall retrieve:dw" $
         classifyExpr dwEnv
           (ExCall { callee = lv2 "dw" "retrieve", callArgs = [] })
-          @?= SuspendCall "retrieve:dw"
+          @?= SuspendCall
 
     , testCase "dw.retrieve() without type info → PureCall (conservative)" $
         classifyExpr noEnv
@@ -189,17 +189,17 @@ tests = testGroup "CpsCompile"
     , testCase "dw.update() with DataWindow type → SuspendCall executeSql" $
         classifyExpr dwEnv
           (ExCall { callee = lv2 "dw" "update", callArgs = [] })
-          @?= SuspendCall "executeSql"
+          @?= SuspendCall
 
     , testCase "dw.delete() with DataWindow type → SuspendCall executeSql" $
         classifyExpr dwEnv
           (ExCall { callee = lv2 "dw" "delete", callArgs = [] })
-          @?= SuspendCall "executeSql"
+          @?= SuspendCall
 
     , testCase "dw.reset() with DataWindow type → SuspendCall executeSql" $
         classifyExpr dwEnv
           (ExCall { callee = lv2 "dw" "reset", callArgs = [] })
-          @?= SuspendCall "executeSql"
+          @?= SuspendCall
 
     , testCase "dw.settransobject() with DataWindow type → PureCall (setup only)" $
         classifyExpr dwEnv
@@ -209,68 +209,66 @@ tests = testGroup "CpsCompile"
     , testCase "sqlca.commit() with Transaction type → SuspendCall executeSql" $
         classifyExpr transEnv
           (ExCall { callee = lv2 "sqlca" "commit", callArgs = [] })
-          @?= SuspendCall "executeSql"
+          @?= SuspendCall
 
     , testCase "sqlca.rollback() with Transaction type → SuspendCall executeSql" $
         classifyExpr transEnv
           (ExCall { callee = lv2 "sqlca" "rollback", callArgs = [] })
-          @?= SuspendCall "executeSql"
+          @?= SuspendCall
 
     , testCase "sqlca.connect() with Transaction type → SuspendCall executeSql" $
         classifyExpr transEnv
           (ExCall { callee = lv2 "sqlca" "connect", callArgs = [] })
-          @?= SuspendCall "executeSql"
+          @?= SuspendCall
 
     , testCase "sqlca.disconnect() with Transaction type → SuspendCall executeSql" $
         classifyExpr transEnv
           (ExCall { callee = lv2 "sqlca" "disconnect", callArgs = [] })
-          @?= SuspendCall "executeSql"
+          @?= SuspendCall
 
     , testCase "fn_retrievechild() always SuspendCall (builtin)" $
         classifyExpr noEnv
           (ExCall { callee = lv1 "fn_retrievechild", callArgs = [] })
-          @?= SuspendCall "retrieve:child_?:?"
+          @?= SuspendCall
 
     , testCase "open() always SuspendCall open (builtin)" $
         classifyExpr noEnv
           (ExCall { callee = lv1 "open", callArgs = [[tok "w_test"]] })
-          @?= SuspendCall "open"
+          @?= SuspendCall
 
     , testCase "opensheet() always SuspendCall open (builtin)" $
         classifyExpr noEnv
           (ExCall { callee = lv1 "opensheet", callArgs = [] })
-          @?= SuspendCall "open"
+          @?= SuspendCall
 
     , testCase "close() always SuspendCall close (builtin)" $
         classifyExpr noEnv
           (ExCall { callee = lv1 "close", callArgs = [] })
-          @?= SuspendCall "close"
+          @?= SuspendCall
 
     , testCase "datastore receiver treated same as datawindow → SuspendCall retrieve:ds" $
         classifyExpr (varEnv "ds" "datastore")
           (ExCall { callee = lv2 "ds" "retrieve", callArgs = [] })
-          @?= SuspendCall "retrieve:ds"
+          @?= SuspendCall
 
-    , testCase "effect name via classifyExpr: open() → SuspendCall open" $
-        classifyExpr noEnv
-          (ExCall { callee = lv1 "open", callArgs = [[tok "w_test"]] })
-          @?= SuspendCall "open"
+    , testCase "effect name: open() → open" $
+        effectName (ExCall { callee = lv1 "open", callArgs = [[tok "w_test"]] }) []
+          @?= "open"
 
-    , testCase "effect name via classifyExpr: dw.retrieve() → SuspendCall retrieve:dw" $
-        classifyExpr dwEnv
-          (ExCall { callee = lv2 "dw" "retrieve", callArgs = [] })
-          @?= SuspendCall "retrieve:dw"
+    , testCase "effect name: dw.retrieve() → retrieve:dw" $
+        effectName (ExCall { callee = lv2 "dw" "retrieve", callArgs = [] }) []
+          @?= "retrieve:dw"
 
-    , testCase "effect name via classifyExpr: fn_retrievechild → SuspendCall with args" $
-        classifyExpr noEnv
-          (ExCall { callee   = lv1 "fn_retrievechild"
-                   , callArgs = [[tok "adw"], [tok "\"kodperiod\""], [tok "gs_kodxrisi"]] })
-          @?= SuspendCall "retrieve:child_kodperiod:adw"
+    , testCase "effect name: fn_retrievechild('kodperiod') → retrieve:child_kodperiod:adw" $
+        effectName (ExCall { callee   = lv1 "fn_retrievechild"
+                           , callArgs = [[tok "adw"], [tok "\"kodperiod\""], [tok "gs_kodxrisi"]] })
+                   [ExLvalue (lv1 "adw"), ExStr "kodperiod"]
+          @?= "retrieve:child_kodperiod:adw"
 
     , testCase "InheritGraph: user type inheriting datawindow → SuspendCall retrieve:ids_data" $
         classifyExpr (varEnvInh [("ids_data", "n_cst_ds")] [("n_cst_ds", "datastore")])
           (ExCall { callee = lv2 "ids_data" "retrieve", callArgs = [] })
-          @?= SuspendCall "retrieve:ids_data"
+          @?= SuspendCall
 
     , testCase "InheritGraph: user type NOT inheriting DW → PureCall" $
         classifyExpr (varEnvInh [("myobj", "n_some_struct")] [("n_some_struct", "structure")])
@@ -283,7 +281,7 @@ tests = testGroup "CpsCompile"
         classifyExpr (varEnvInh [("my_ds", "n_cst_ds")]
                                 [("n_cst_ds", "datastore"), ("datastore", "datawindow")])
           (ExCall { callee = lv2 "my_ds" "retrieve", callArgs = [] })
-          @?= SuspendCall "retrieve:my_ds"
+          @?= SuspendCall
 
     , testCase "cycle guard: chain with loop does not hang" $
         classifyExpr (varEnvInh [("x", "a")] [("a", "b"), ("b", "a")])
@@ -295,7 +293,7 @@ tests = testGroup "CpsCompile"
                                 [ ("l5", "l4"), ("l4", "l3"), ("l3", "l2")
                                 , ("l2", "l1"), ("l1", "datawindow") ])
           (ExCall { callee = lv2 "deep" "retrieve", callArgs = [] })
-          @?= SuspendCall "retrieve:deep"
+          @?= SuspendCall
 
     , testCase "unknown type not in chain → PureCall" $
         classifyExpr (varEnvInh [("mystery", "unknown_type")] [("n_cst_ds", "datastore")])
@@ -313,7 +311,7 @@ tests = testGroup "CpsCompile"
                                 , ("nonvisualobject", "powerobject")
                                 ])
           (ExCall { callee = lv2 "rpt" "retrieve", callArgs = [] })
-          @?= SuspendCall "retrieve:rpt"
+          @?= SuspendCall
 
     , testCase "direct PtPrimitive datawindow with stdlib parents: retrieve → SuspendCall retrieve:dw1" $
         -- PtPrimitive "datawindow" declared var; stdlib adds datawindow → nonvisualobject
@@ -329,7 +327,7 @@ tests = testGroup "CpsCompile"
               }
         in classifyExpr env
              (ExCall { callee = lv2 "dw1" "retrieve", callArgs = [] })
-             @?= SuspendCall "retrieve:dw1"
+             @?= SuspendCall
 
     , testCase "powerobject var: retrieve → PureCall (not a DW descendant)" $
         let env = ScopedTypeEnv
@@ -356,24 +354,24 @@ tests = testGroup "CpsCompile"
               }
         in classifyExpr env
              (ExCall { callee = lv2 "trans" "commit", callArgs = [] })
-             @?= SuspendCall "executeSql"
+             @?= SuspendCall
     ]
 
   , testGroup "ExMethodCall classification"
     [ testCase "ExMethodCall with ExLvalue receiver (datawindow) → SuspendCall retrieve:dw" $
         classifyExpr (varEnv "dw" "datawindow")
           (ExMethodCall (ExLvalue (lv1 "dw")) "retrieve" [])
-          @?= SuspendCall "retrieve:dw"
+          @?= SuspendCall
 
     , testCase "ExMethodCall with ExLvalue receiver (transaction) → SuspendCall executeSql" $
         classifyExpr (varEnv "sqlca" "transaction")
           (ExMethodCall (ExLvalue (lv1 "sqlca")) "commit" [])
-          @?= SuspendCall "executeSql"
+          @?= SuspendCall
 
     , testCase "ExMethodCall with ExCall receiver (single-segment callee in env) → SuspendCall retrieve:get_dw" $
         classifyExpr (varEnv "get_dw" "datawindow")
           (ExMethodCall (ExCall (lv1 "get_dw") []) "retrieve" [])
-          @?= SuspendCall "retrieve:get_dw"
+          @?= SuspendCall
 
     , testCase "ExMethodCall with ExCall receiver (multi-segment callee) → PureCall" $
         classifyExpr (varEnv "ns_func.get_dw" "datawindow")
@@ -388,7 +386,7 @@ tests = testGroup "CpsCompile"
     , testCase "ExMethodCall rowscopy on datastore → SuspendCall executeSql" $
         classifyExpr (varEnv "ids" "datastore")
           (ExMethodCall (ExLvalue (lv1 "ids")) "rowscopy" [])
-          @?= SuspendCall "executeSql"
+          @?= SuspendCall
 
     , testCase "ExMethodCall describe on datawindow → PureCall (read-only)" $
         classifyExpr (varEnv "dw" "datawindow")

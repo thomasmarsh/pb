@@ -866,10 +866,11 @@ data Cfg      = Cfg      { cfgEntry :: Text, cfgExits :: [Text], cfgBlocks :: [C
 
 ```haskell
 -- Pure call classification. Shared by old CpsCompile and new SSA→CatOp pipeline.
-data CallKind = PureCall | SuspendCall Text  -- effect name baked in
+data CallKind = PureCall | SuspendCall
 classifyExpr :: ScopedTypeEnv -> Expr -> CallKind
--- classifyExpr returns SuspendCall with effect name computed inline
--- (no separate effectName function needed).
+-- classifyExpr returns SuspendCall (no effect name baked in).
+-- effectName is a separate function (takes pre-parsed [Expr] args).
+effectName :: Expr -> [Expr] -> Text
 isBuiltinSuspendFn :: Text -> Bool
 isTypedSuspend :: Map.Map Text Text -> Text -> Text -> Bool
 resolveReceiverType :: ScopedTypeEnv -> Expr -> Maybe Text
@@ -884,18 +885,9 @@ isTriggerEvent :: Lvalue -> Bool
 ```haskell
 -- Pure. Uses PB.Analysis.TypeEnv.TypeEnv (the rich record, not a Map Text Text alias).
 -- InheritGraph alias removed (Plan 114) — inheritance is in teUserTypes.
--- CallKind imported from CallClassify (PureCall | SuspendCall Text).
+-- CallKind imported from CallClassify (PureCall | SuspendCall).
 compileProcedure :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CpsGraph
-data CpsNode
-  = CpsAssign  { anVar :: Text, anRhs :: Expr, anNext :: Int }
-  | CpsBranch  { brCond :: Expr, brThenPc :: Int, brElsePc :: Int }
-  | CpsGoto    { goTarget :: Int }
-  | CpsCall    { clCallee :: Text, clArgs :: [Expr], clResult :: Maybe Text, clNext :: Int }
-  | CpsSuspend { suEffect :: Text, suArgs :: [Expr], suVar :: Maybe Text, suContinuation :: Int }
-  | CpsReturn  { reValue :: Maybe Expr }
-  | CpsNop     { npNext :: Int }
-data CpsGraph = CpsGraph { cgNodes :: [CpsNode], cgEntry :: Int, cgSuspensionPoints :: [Int], cgSourceMap :: [(Int, Int)] }
--- BsDestroy lv emits CpsAssign { anVar = lvHead lv, anRhs = ExNull } (Plan 115 item 1, done in Plan 114 session).
+parseArgList :: [Token] -> Expr  -- exported for CatOp to use
 ```
 
 ### `PB.Analysis.Dataflow` (Plan 111a)

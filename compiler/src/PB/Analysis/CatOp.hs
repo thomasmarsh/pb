@@ -65,10 +65,9 @@ import PB.Prelude hiding (id, (.))
 import qualified Prelude as P
 import Unsafe.Coerce (unsafeCoerce)
 import PB.AST.Expr (Expr (..), LvSegment (..), Lvalue (..))
-import PB.Analysis.CpsCompile (CpsNode (..), CpsGraph (..))
-import PB.Analysis.CallClassify (CallKind (..), classifyExpr, calleeName, isTriggerEvent, lvHead, segName)
+import PB.Analysis.CpsCompile (CpsNode (..), CpsGraph (..), parseArgList)
+import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName, calleeName, isTriggerEvent, lvHead, segName)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
-import PB.Lexing.Token (Token (..))
 import Control.Monad.State.Strict (State, modify, gets, runState)
 import PB.Analysis.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                          SsaTerm (..), SsaPhi (..), SsaProc (..), renderSsaVar)
@@ -560,10 +559,8 @@ compileAssigns ctx [a] = compileAssign ctx a
 compileAssigns ctx (a:as) = compileAssigns ctx as . compileAssign ctx a
 
 -- | Compile a single SSA assignment.
--- For call expressions: classifies via 'classifyExpr' and emits 'CatCall'.
--- Standalone suspend calls (no variable binding) use 'CatCall' with the
--- effect name — the GraphBuilder emits CpsCallProc.  True CpsSuspend
--- emission for suspend-as-statement is deferred to Step 3.
+-- For call expressions: classifies via 'classifyExpr' and emits 'CatCall'
+-- with the effect name from 'effectName'.
 -- For other expressions: @x_1 = expr@ becomes @CatAssignWithRhs \"x_1\" expr@.
 compileAssign :: CompileCtx -> SsaAssign -> CatOp () ()
 compileAssign ctx (SsaAssign sv rhs) = case rhs of
@@ -578,8 +575,8 @@ compileAssign ctx (SsaAssign sv rhs) = case rhs of
           ExCall rlv _ -> T.toLower (lvHead rlv) <> "." <> T.toLower meth
           _            -> cn
     in case classifyExpr (ccEnv ctx) expr of
-         SuspendCall eff -> CatCall eff parsedArgs
-         PureCall        -> CatCall effCn parsedArgs
+         SuspendCall -> CatCall (effectName expr parsedArgs) parsedArgs
+         PureCall    -> CatCall effCn parsedArgs
   _ -> CatAssignWithRhs (renderSsaVar sv) (ssaValToExpr rhs)
 
 -- | Shared logic for compiling an ExCall expression: classify and emit CatCall.
@@ -591,17 +588,12 @@ compileCallExpr ctx _sv expr lv parsedArgs
   , T.toLower (segName seg) `Set.member` ccUserFns ctx =
       CatCall (segName seg) parsedArgs
   | otherwise = case classifyExpr (ccEnv ctx) expr of
-      SuspendCall eff -> CatCall eff parsedArgs
+      SuspendCall -> CatCall (effectName expr parsedArgs) parsedArgs
       PureCall ->
         let name = T.toLower (calleeName expr)
         in CatCall name parsedArgs
   where
     evArg = case parsedArgs of { (a:_) -> a; [] -> ExRaw [] }
-
--- | Parse a raw token list into an Expr (simplified — wraps as ExRaw).
-parseArgList :: [Token] -> Expr
-parseArgList [] = ExRaw []
-parseArgList ts = ExRaw (map tkText ts)
 
 -- ============================================================================
 -- 6. GraphBuilder: CpsGraph Target (Phase 4 — backward chaining)

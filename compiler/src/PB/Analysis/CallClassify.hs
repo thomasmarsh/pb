@@ -10,6 +10,7 @@
 module PB.Analysis.CallClassify
   ( CallKind (..)
   , classifyExpr
+  , effectName
   , calleeName
   , isTriggerEvent
   , isBuiltinSuspendFn
@@ -23,7 +24,6 @@ import PB.Prelude
 import PB.AST.Expr
 import PB.AST.Type       (renderPbType)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVar, isDescendantOf)
-import PB.Lexing.Token   (Token (..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
@@ -31,10 +31,10 @@ import qualified Data.Text       as T
 -- ---------------------------------------------------------------------------
 -- Call kind
 
--- | Classification of an expression: pure call or suspending call with
--- the effect name already computed.  Eliminates the separate @effectName@
--- function and its @[Expr]@ parameter.
-data CallKind = PureCall | SuspendCall Text deriving (Eq, Show)
+-- | Classification of an expression: pure call or suspending call.
+-- The effect name is computed separately by 'effectName' (takes pre-parsed
+-- '[Expr]' args to avoid importing Grammar.Body).
+data CallKind = PureCall | SuspendCall deriving (Eq, Show)
 
 -- ---------------------------------------------------------------------------
 -- Side-effect classification
@@ -42,60 +42,46 @@ data CallKind = PureCall | SuspendCall Text deriving (Eq, Show)
 -- | Classify an expression as Pure or Suspend using type information when
 -- available.  Without type info the fallback is conservative: PureCall.
 -- Free functions in 'isBuiltinSuspendFn' are always Suspend regardless of type.
--- The effect name is computed inline — no separate @effectName@ call needed.
+-- The effect name is computed separately by 'effectName'.
 classifyExpr :: ScopedTypeEnv -> Expr -> CallKind
-classifyExpr env expr@(ExCall lv rawArgs) =
+classifyExpr env (ExCall lv _) =
   let lnames = map (T.toLower . segName) (segments lv)
-      cn     = T.toLower (calleeName expr)
   in case lnames of
        [name]
-         | isBuiltinSuspendFn name -> SuspendCall (computeEffectName cn rawArgs)
+         | isBuiltinSuspendFn name -> SuspendCall
        [headN, meth]
          | Just pty <- lookupScopedVar headN env
          , let ty = T.toLower (renderPbType pty)
-         , isTypedSuspend (steHierarchy env) ty meth ->
-             SuspendCall (computeEffectName cn rawArgs)
+         , isTypedSuspend (steHierarchy env) ty meth -> SuspendCall
        _ -> PureCall
-classifyExpr env expr@(ExMethodCall recv meth rawArgs) =
-  let cn = T.toLower (calleeName expr)
-  in case resolveReceiverType env recv of
-       Just ty | isTypedSuspend (steHierarchy env) ty (T.toLower meth) ->
-         -- For ExMethodCall, reconstruct callee name from receiver for effect naming
-         let effCn = case recv of
-               ExLvalue lv -> T.toLower (lvHead lv) <> "." <> T.toLower meth
-               ExCall lv _ -> T.toLower (lvHead lv) <> "." <> T.toLower meth
-               _           -> cn
-         in SuspendCall (computeEffectName effCn rawArgs)
-       _ -> PureCall
+classifyExpr env (ExMethodCall recv meth _) =
+  case resolveReceiverType env recv of
+    Just ty | isTypedSuspend (steHierarchy env) ty (T.toLower meth) -> SuspendCall
+    _       -> PureCall
 classifyExpr _ _ = PureCall
 
 -- ---------------------------------------------------------------------------
--- Effect naming (internal)
+-- Effect naming
 
--- | Compute the effect tag from the callee name and raw token arguments.
--- Only called for expressions that 'classifyExpr' deemed Suspend.
-computeEffectName :: Text -> [[Token]] -> Text
-computeEffectName cn rawArgs
-  | cn == "fn_retrievechild" =
-      let dwCtrl = case rawArgs of
-            (dArg:_) -> case dArg of { [t] -> T.toLower (tkText t); _ -> "?" }
-            [] -> "?"
-          col = case rawArgs of
-            (_:cArg:_) -> case cArg of { [t] -> T.toLower (stripQuotes (tkText t)); _ -> "?" }
-            _ -> "?"
-      in "retrieve:child_" <> col <> ":" <> dwCtrl
-  | cn `elem` ["open", "opensheet"] = "open"
-  | "close" `T.isSuffixOf` cn = "close"
-  | ".retrieve" `T.isSuffixOf` cn = "retrieve:" <> T.takeWhile (/= '.') cn
-  | otherwise = "executeSql"
-
--- | Strip surrounding quotes from a token text (for string literals).
-stripQuotes :: Text -> Text
-stripQuotes t
-  | T.length t >= 2
-  , (T.head t == '"' && T.last t == '"') || (T.head t == '\'' && T.last t == '\'')
-  = T.init (T.drop 1 t)
-  | otherwise = t
+-- | Return the effect tag for a Suspend expression.  Only called for
+-- expressions that 'classifyExpr' already deemed Suspend.
+-- Takes pre-parsed '[Expr]' args (the caller's responsibility) to avoid
+-- importing 'PB.Grammar.Body.parseExpr' here.
+effectName :: Expr -> [Expr] -> Text
+effectName expr args =
+  let cn    = T.toLower (calleeName expr)
+      head_ = T.takeWhile (/= '.') cn
+  in if cn == "fn_retrievechild"
+     then case args of
+            (ExLvalue dv:ExStr col:_) ->
+              let dwCtrl = case segments dv of { (s:_) -> T.toLower (segName s); [] -> "?" }
+              in "retrieve:child_" <> T.toLower col <> ":" <> dwCtrl
+            (_:ExStr col:_) -> "retrieve:child_" <> T.toLower col <> ":?"
+            _               -> "retrieve:child_?:?"
+     else if cn `elem` ["open", "opensheet"] then "open"
+     else if "close" `T.isSuffixOf` cn       then "close"
+     else if ".retrieve" `T.isSuffixOf` cn   then "retrieve:" <> head_
+     else "executeSql"
 
 -- | Free functions that are always suspending regardless of receiver type.
 isBuiltinSuspendFn :: Text -> Bool

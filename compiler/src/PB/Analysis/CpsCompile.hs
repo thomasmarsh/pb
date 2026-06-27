@@ -12,6 +12,7 @@ module PB.Analysis.CpsCompile
   ( CpsNode (..)
   , CpsGraph (..)
   , compileProcedure
+  , parseArgList
   ) where
 
 import PB.Prelude
@@ -23,7 +24,7 @@ import PB.Grammar.Body        (parseExpr)
 import PB.Lexing.Token        (Token (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Analysis.CallClassify
-  ( CallKind (..), classifyExpr, calleeName
+  ( CallKind (..), classifyExpr, effectName, calleeName
   , segName, lvHead, isTriggerEvent
   )
 import Control.Monad       (foldM)
@@ -241,9 +242,9 @@ compileSingleStmt env lctx (Located line stmt) fallthrough = case stmt of
         fns <- gets csUserFns
         let parsedArgs = exprArgs expr
             defaultEmit = case classifyExpr env expr of
-              SuspendCall eff ->
+              SuspendCall ->
                 emit (CpsSuspend
-                  { suEffect       = eff
+                  { suEffect       = effectName expr parsedArgs
                   , suArgs         = parsedArgs
                   , suVar          = Nothing
                   , suContinuation = fallthrough

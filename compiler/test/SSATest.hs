@@ -226,19 +226,19 @@ tests = testGroup "SSA"
     ]
 
   , testGroup "classifyExpr effect names"
-    [ testCase "dw_foo.retrieve() → SuspendCall \"retrieve:dw_foo\"" $
+    [ testCase "dw_foo.retrieve() → SuspendCall" $
         classifyExpr
           ScopedTypeEnv { steGlobal = Map.singleton "dw_foo" (PtPrimitive "datawindow")
                         , steInstance = Map.empty, steLocal = Map.empty, steHierarchy = Map.empty }
           (ExCall { callee = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing], callArgs = [] })
-          @?= SuspendCall "retrieve:dw_foo"
+          @?= SuspendCall
 
-    , testCase "commit() with Transaction type → SuspendCall \"executeSql\"" $
+    , testCase "commit() with Transaction type → SuspendCall" $
         classifyExpr
           ScopedTypeEnv { steGlobal = Map.singleton "sqlca" (PtPrimitive "transaction")
                         , steInstance = Map.empty, steLocal = Map.empty, steHierarchy = Map.empty }
           (ExCall { callee = Lvalue [LvSegment "sqlca" Nothing, LvSegment "commit" Nothing], callArgs = [] })
-          @?= SuspendCall "executeSql"
+          @?= SuspendCall
 
     , testCase "free function my_func() → PureCall" $
         classifyExpr emptyEnv
