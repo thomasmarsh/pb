@@ -2,7 +2,10 @@ module CatOpTest (tests) where
 
 import PB.Prelude hiding (id, (.))
 import qualified Prelude as P
-import PB.AST.Expr         (BinOp (..), Expr (..))
+import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Type         (PbType (..))
+import PB.AST.BodyStmt     (BodyStmt (..))
+import PB.AST.Located      (Located (..))
 import PB.Analysis.CatOp
 import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                             SsaTerm (..), SsaProc (..), renderSsaVar, buildSsa)
@@ -81,6 +84,35 @@ countCatLoop (CatFork f g) = countCatLoop f P.+ countCatLoop g
 countCatLoop (CatFanIn f g) = countCatLoop f P.+ countCatLoop g
 countCatLoop (CatTry f g) = countCatLoop f P.+ countCatLoop g
 countCatLoop _ = 0
+
+-- | Check if a CatOp tree contains any CatSuspend node.
+hasAnyCatSuspend :: CatOp a b -> Bool
+hasAnyCatSuspend (CatSuspend _ _) = True
+hasAnyCatSuspend (CatCompose f g) = hasAnyCatSuspend f P.|| hasAnyCatSuspend g
+hasAnyCatSuspend (CatFork f g)    = hasAnyCatSuspend f P.|| hasAnyCatSuspend g
+hasAnyCatSuspend (CatFanIn f g)   = hasAnyCatSuspend f P.|| hasAnyCatSuspend g
+hasAnyCatSuspend (CatLoop f)      = hasAnyCatSuspend f
+hasAnyCatSuspend (CatTry f g)     = hasAnyCatSuspend f P.|| hasAnyCatSuspend g
+hasAnyCatSuspend _                = False
+
+-- | Check if a CatOp tree contains a CatSuspend with a specific effect name.
+hasCatSuspendEffect :: Text -> CatOp a b -> Bool
+hasCatSuspendEffect eff (CatSuspend e _) = eff == e
+hasCatSuspendEffect eff (CatCompose f g) = hasCatSuspendEffect eff f P.|| hasCatSuspendEffect eff g
+hasCatSuspendEffect eff (CatFork f g)    = hasCatSuspendEffect eff f P.|| hasCatSuspendEffect eff g
+hasCatSuspendEffect eff (CatFanIn f g)   = hasCatSuspendEffect eff f P.|| hasCatSuspendEffect eff g
+hasCatSuspendEffect eff (CatLoop f)      = hasCatSuspendEffect eff f
+hasCatSuspendEffect eff (CatTry f g)     = hasCatSuspendEffect eff f P.|| hasCatSuspendEffect eff g
+hasCatSuspendEffect _   _                = False
+
+-- | Environment with datawindow and transaction typed variables.
+dwEnv :: ScopedTypeEnv
+dwEnv = ScopedTypeEnv
+  { steGlobal    = Map.fromList [("dw_foo", PtPrimitive "datawindow"), ("sqlca", PtPrimitive "transaction")]
+  , steInstance  = Map.empty
+  , steLocal     = Map.empty
+  , steHierarchy = Map.empty
+  }
 
 -- ---------------------------------------------------------------------------
 -- Tests
@@ -311,6 +343,47 @@ tests = testGroup "CatOp"
             result = compileSsaDefault sa
         assertBool "contains CatLoop" (hasCatLoop result)
            P.>> assertBool "contains x_1 assign" (hasAssign "x_1" result)
+    ]
+
+  , testGroup "call classification"
+    [ testCase "ExCall with DW receiver emits CatSuspend not CatCall" $
+        -- dw_foo.retrieve() — multi-segment ExCall classified as SuspendCall
+        let callExpr = ExCall
+              { callee   = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]
+              , callArgs = [] }
+            sa = mkSsa [SsaAssign (SsaVar "_" 1) (SsaConst callExpr)] (SsaReturn Nothing)
+            result = compileSsa dwEnv Set.empty sa
+        in assertBool "should contain CatSuspend with effect retrieve:dw_foo"
+             (hasCatSuspendEffect "retrieve:dw_foo" result)
+
+    , testCase "ExMethodCall on Transaction emits CatSuspend not CatCall" $
+        -- sqlca.commit() — ExMethodCall on a transaction-typed receiver
+        let callExpr = ExMethodCall
+              { receiver   = ExLvalue (Lvalue [LvSegment "sqlca" Nothing])
+              , method     = "commit"
+              , methodArgs = [] }
+            sa = mkSsa [SsaAssign (SsaVar "_" 1) (SsaConst callExpr)] (SsaReturn Nothing)
+            result = compileSsa dwEnv Set.empty sa
+        in assertBool "should contain CatSuspend with effect executeSql"
+             (hasCatSuspendEffect "executeSql" result)
+
+    , testCase "ExCall pure user function does not emit CatSuspend" $
+        let callExpr = ExCall { callee = Lvalue [LvSegment "my_func" Nothing], callArgs = [] }
+            sa = mkSsa [SsaAssign (SsaVar "_" 1) (SsaConst callExpr)] (SsaReturn Nothing)
+            result = compileSsa emptyEnv Set.empty sa
+        in assertBool "pure call should produce no CatSuspend" (not (hasAnyCatSuspend result))
+
+    , testCase "end-to-end: BsCall dw_foo.retrieve() → CpsSuspend node in CpsGraph" $
+        -- buildSsa from a standalone BsCall; CpsSuspend must appear in the graph
+        let callExpr = ExCall
+              { callee   = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]
+              , callArgs = [] }
+            body     = [Located 1 (BsCall callExpr)]
+            ssaProc  = buildSsa dwEnv "proc" body
+            catTree  = compileSsa dwEnv Set.empty ssaProc
+            graph    = buildCpsGraph catTree
+            hasCpsSuspend = any (\n -> case n of { CpsSuspend {} -> True; _ -> False }) (cgNodes graph)
+        in assertBool "CpsGraph should contain a CpsSuspend node" hasCpsSuspend
     ]
 
   , testGroup "Interp"

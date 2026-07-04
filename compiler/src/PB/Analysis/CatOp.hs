@@ -58,7 +58,6 @@ module PB.Analysis.CatOp
   , interpretLoop
     -- * Placeholder types
   , Value (..)
-  , Continuation (..)
   ) where
 
 import PB.Prelude hiding (id, (.))
@@ -87,10 +86,6 @@ data Value
   | VStr Text
   | VBool Bool
   | VNull
-  deriving (Eq, Show, Generic)
-
--- | Continuation handle for a suspended computation.
-data Continuation = Continuation Int  -- PC to resume at
   deriving (Eq, Show, Generic)
 
 -- ============================================================================
@@ -161,7 +156,7 @@ class Category k => Effectful k where
   eval       :: Expr -> k env Value
   assign     :: Text -> k (env, Value) env
   lookup     :: Text -> k env Value
-  suspend    :: Text -> [Expr] -> k args Continuation
+  suspend    :: Text -> [Expr] -> k args ()
   callProc   :: Text -> [Expr] -> k args ()
   splitValue :: k (env, Value) (Either env env)
 
@@ -218,7 +213,7 @@ data CatOp a b where
   -- Effects
   CatEval       :: Expr -> CatOp env Value
   CatCall       :: Text -> [Expr] -> CatOp args ()
-  CatSuspend    :: Text -> [Expr] -> CatOp args Continuation
+  CatSuspend    :: Text -> [Expr] -> CatOp args ()
   CatSplitValue :: CatOp (env, Value) (Either env env)
 
   -- Error handling
@@ -575,7 +570,7 @@ compileAssign ctx (SsaAssign sv rhs) = case rhs of
           ExCall rlv _ -> T.toLower (lvHead rlv) <> "." <> T.toLower meth
           _            -> cn
     in case classifyExpr (ccEnv ctx) expr of
-         SuspendCall -> CatCall (effectName expr parsedArgs) parsedArgs
+         SuspendCall -> CatSuspend (effectName expr parsedArgs) parsedArgs
          PureCall    -> CatCall effCn parsedArgs
   _ -> CatAssignWithRhs (renderSsaVar sv) (ssaValToExpr rhs)
 
@@ -588,7 +583,7 @@ compileCallExpr ctx _sv expr lv parsedArgs
   , T.toLower (segName seg) `Set.member` ccUserFns ctx =
       CatCall (segName seg) parsedArgs
   | otherwise = case classifyExpr (ccEnv ctx) expr of
-      SuspendCall -> CatCall (effectName expr parsedArgs) parsedArgs
+      SuspendCall -> CatSuspend (effectName expr parsedArgs) parsedArgs
       PureCall ->
         let name = T.toLower (calleeName expr)
         in CatCall name parsedArgs
@@ -774,7 +769,7 @@ instance Effectful Interp where
   eval _expr  = Interp (\_env -> P.pure (VInt 0))  -- TODO: real eval
   assign _var = Interp (\(env, _val) -> P.pure env)  -- TODO: real assign
   lookup _var = Interp (\_env -> P.pure VNull)  -- TODO: real lookup
-  suspend _e _args = Interp (\_env -> P.pure (Continuation 0))  -- TODO
+  suspend _e _args = Interp (\_env -> P.pure ())  -- TODO: real suspend
   callProc _n _args = Interp (\_env -> P.pure ())  -- TODO
   splitValue = Interp (\(env, val) -> P.pure (case val of
     VBool True  -> Left env

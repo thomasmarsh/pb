@@ -327,6 +327,8 @@ stmtToAssigns (BsAssignExpr lhsExpr rhsExpr) =
   [SsaAssign (SsaVar (assignTarget lhsExpr) 0) (exprToSsaVal rhsExpr)]
 stmtToAssigns (BsDestroy lv) =
   [SsaAssign (SsaVar (lvHead lv) 0) SsaNull]
+stmtToAssigns (BsCall expr) =
+  [SsaAssign (SsaVar "_" 0) (SsaConst expr)]
 stmtToAssigns _ = []
 
 exprToSsaVal :: Expr -> SsaVal
