@@ -35,6 +35,7 @@ module PB.Analysis.CatOp
   , branch
     -- * SSA → CatOp compilation
   , compileSsa
+  , compileProcedureViaCatOp
   , CompileCtx (..)
     -- * LowCat intermediary
   , LowCat (..)
@@ -68,8 +69,10 @@ import PB.Analysis.CpsCompile (CpsNode (..), CpsGraph (..), parseArgList)
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName, calleeName, isTriggerEvent, lvHead, segName)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import Control.Monad.State.Strict (State, modify, gets, runState)
+import PB.AST.BodyStmt     (BodyStmt)
+import PB.AST.Located      (Located (..))
 import PB.Analysis.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
-                         SsaTerm (..), SsaPhi (..), SsaProc (..), renderSsaVar)
+                         SsaTerm (..), SsaPhi (..), SsaProc (..), renderSsaVar, buildSsa)
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -740,6 +743,11 @@ buildCpsGraph catOp =
         compileCatToCps catOp exitPc
         ) initState
   in finalizeGraph entryPc finalState
+
+-- | Unified entry point: compile a procedure body via the SSA → CatOp pipeline.
+compileProcedureViaCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CpsGraph
+compileProcedureViaCatOp env userFns body =
+  buildCpsGraph (compileSsa env userFns (buildSsa env "proc" body))
 
 -- ============================================================================
 -- 6. Interpreter: Direct Haskell Execution

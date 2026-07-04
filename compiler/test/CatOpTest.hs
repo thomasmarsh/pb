@@ -538,4 +538,25 @@ tests = testGroup "CatOp"
           assertBool "should contain b_1"
             (any (\n -> case n of CpsAssign { anVar = "b_1" } -> True; _ -> False) nodes)
     ]
+
+  , testGroup "compileProcedureViaCatOp"
+    [ testCase "empty body produces non-empty graph" $
+        let graph = compileProcedureViaCatOp emptyEnv Set.empty []
+        in assertBool "should have at least one node (exit)" (not (null (cgNodes graph)))
+
+    , testCase "single BsCall produces non-empty graph" $
+        let callExpr = ExCall { callee = Lvalue [LvSegment "foo" Nothing], callArgs = [] }
+            body     = [Located 1 (BsCall callExpr)]
+            graph    = compileProcedureViaCatOp emptyEnv Set.empty body
+        in assertBool "should have more than one node" (P.length (cgNodes graph) P.> 1)
+
+    , testCase "DW suspend call produces CpsSuspend in graph" $
+        let callExpr = ExCall
+              { callee   = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]
+              , callArgs = [] }
+            body  = [Located 1 (BsCall callExpr)]
+            graph = compileProcedureViaCatOp dwEnv Set.empty body
+        in assertBool "should contain CpsSuspend"
+             (any (\n -> case n of CpsSuspend {} -> True; _ -> False) (cgNodes graph))
+    ]
   ]

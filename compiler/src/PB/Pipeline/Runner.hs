@@ -8,6 +8,7 @@ module PB.Pipeline.Runner
   , reconstructRetrieveSql
     -- own
   , runModeDb
+  , runModeDualCps
   , compileOne
   , appendToDb
   , CompiledFile (..)
@@ -21,6 +22,7 @@ import PB.AST.SourceFile
 import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.CfgBuild    (buildCfg)
 import PB.Analysis.CpsCompile  (compileProcedure)
+import PB.Analysis.CatOp       (compileProcedureViaCatOp)
 import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, procEnv)
 import PB.Analysis.Dataflow    qualified as Dataflow
@@ -358,3 +360,41 @@ runModeDb srcDir dbPath = do
 
   errors <- readIORef errCount
   emitProgress (object ["tag" .= ("done" :: Text), "parsed" .= (total - errors), "errors" .= errors])
+
+-- | Run both CPS compilers on every procedure and report differences.
+--
+-- Parses all files in srcDir, builds a workspace TypeEnv, then for each
+-- procedure runs 'compileProcedure' (old) and 'compileProcedureViaCatOp'
+-- (new), compares their JSON-encoded outputs, and prints a summary.
+runModeDualCps :: FilePath -> IO ()
+runModeDualCps srcDir = do
+  files <- walkAllSrFiles srcDir
+  stdlibParsed <- parseStdlibFiles
+  outcomes <- mapConcurrently parseOutcome files
+  let wsEnv = buildWorkspaceEnv
+                (map pfSrFile stdlibParsed ++ [pfSrFile pf | PsParsed pf <- outcomes])
+  let allProcs = do
+        PsParsed pf <- outcomes
+        let sf = pfSrFile pf
+            (obj, _) = srPrimaryObject sf
+            userFns = Set.fromList
+              $  map (T.toLower . fnsName . fbSig) (srFunctions sf)
+              <> map (T.toLower . ssName  . sbSig) (srSubroutines sf)
+            mkProcEnv params = procEnv wsEnv obj (parseParams params)
+        (pName, cpsParams, body) <-
+             [ (fnsName (fbSig fb), fnsParams (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
+          <> [ (ssName  (sbSig sb), ssParams  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
+          <> [ (esName  (evSig ev), "",                   evBody ev) | ev <- srEvents       sf ]
+          <> [ (obEvent ob,         "",                   obBody ob) | ob <- srOnBlocks     sf ]
+        pure (obj, pName, mkProcEnv cpsParams, userFns, body)
+  let results =
+        [ (obj, pName, encode (toJSON (compileProcedure env userFns body))
+                    == encode (toJSON (compileProcedureViaCatOp env userFns body)))
+        | (obj, pName, env, userFns, body) <- allProcs ]
+  let diffs = [(obj, pName) | (obj, pName, False) <- results]
+  mapM_ (\(obj, pName) -> putStrLn ("DIFF " <> obj <> "::" <> pName)) diffs
+  let total = length results
+      nDiff  = length diffs
+  putStrLn ("Total: " <> T.pack (show total) <> " procedures, "
+            <> T.pack (show nDiff) <> " differ, "
+            <> T.pack (show (total - nDiff)) <> " identical")
