@@ -46,6 +46,7 @@ library
     PB.Analysis.Builtins
     PB.Analysis.CallClassify
     PB.Analysis.CfgBuild
+    PB.Analysis.CatEval
     PB.Analysis.CatOp
     PB.Analysis.CpsCompile
     PB.Analysis.Dataflow
@@ -113,6 +114,7 @@ test-suite pb-compiler-test
     , CfgBuildTest
     , CorpusDebtTest
     , CpsCompileTest
+    , CatEvalTest
     , CatOpTest
     , SSATest
     , DataflowTest

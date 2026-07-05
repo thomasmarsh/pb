@@ -55,20 +55,25 @@ module PB.Analysis.CatOp
   , CpsGraph (..)
     -- * Interpreter
   , Interp (..)
+  , InterpState (..)
+  , runInterpIO
+  , runCat
     -- * Interpreter loop
   , interpretLoop
     -- * Placeholder types
   , Value (..)
+  , TraceEvent (..)
   ) where
 
-import PB.Prelude hiding (id, (.))
+import PB.Prelude hiding (id, (.), lookup)
 import qualified Prelude as P
 import Unsafe.Coerce (unsafeCoerce)
 import PB.AST.Expr (Expr (..), LvSegment (..), Lvalue (..))
+import PB.Analysis.CatEval (Value (..), TraceEvent (..), evalExpr)
 import PB.Analysis.CpsCompile (CpsNode (..), CpsGraph (..), parseArgList)
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName, calleeName, isTriggerEvent, lvHead, segName)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
-import Control.Monad.State.Strict (State, modify, gets, runState)
+import Control.Monad.State.Strict (State, StateT, modify, modify', gets, runState, evalStateT)
 import PB.AST.BodyStmt     (BodyStmt)
 import PB.AST.Located      (Located (..))
 import PB.Analysis.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
@@ -77,19 +82,6 @@ import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
--- ============================================================================
--- Placeholder types
--- ============================================================================
-
--- | Runtime value.  In production this would be a sum type covering
--- PB's primitive types (int, real, string, boolean, date, time, blob).
-data Value
-  = VInt Int
-  | VReal Double
-  | VStr Text
-  | VBool Bool
-  | VNull
-  deriving (Eq, Show, Generic)
 
 -- ============================================================================
 -- 1b. LowCat: Monomorphic Categorical Intermediate Representation
@@ -825,9 +817,21 @@ compileProcedureViaCatOp env userFns body =
 -- 6. Interpreter: Direct Haskell Execution
 -- ============================================================================
 
--- | An execution interpreter category that maps 'CatOp a b' to
--- direct Haskell functions @a -> IO b@.
-newtype Interp a b = Interp { runInterp :: a -> IO b }
+-- | Persistent state threaded through an 'Interp' run: the named-variable
+-- environment ('CatOp'\'s @env@ type parameter is structural wiring only —
+-- 'compileSsa' always produces @CatOp () ()@ — so real variable storage
+-- lives here instead) plus the accumulating observable trace.
+--
+-- 'isTrace' accumulates newest-first (prepend is O(1)); reverse once when
+-- reading it back out.
+data InterpState = InterpState
+  { isEnv   :: Map.Map Text Value
+  , isTrace :: [TraceEvent]
+  }
+
+-- | An execution interpreter category that maps 'CatOp a b' to direct
+-- Haskell functions @a -> StateT InterpState IO b@.
+newtype Interp a b = Interp { runInterp :: a -> StateT InterpState IO b }
 
 instance Category Interp where
   id  = Interp P.pure
@@ -846,16 +850,29 @@ instance Cocartesian Interp where
     Right b -> g b)
 
 instance Effectful Interp where
-  eval _expr  = Interp (\_env -> P.pure (VInt 0))  -- TODO: real eval
-  assign _var = Interp (\(env, _val) -> P.pure env)  -- TODO: real assign
-  lookup _var = Interp (\_env -> P.pure VNull)  -- TODO: real lookup
-  suspend _e _args = Interp (\_env -> P.pure ())  -- TODO: real suspend
-  callProc _n _args = Interp (\_env -> P.pure ())  -- TODO
-  splitValue = Interp (\(env, val) -> P.pure (case val of
-    VBool True  -> Left env
-    VBool False -> Right env
-    _           -> Right env
-    ))
+  eval expr = Interp (\_env -> gets (\st -> evalExpr (isEnv st) expr))
+
+  assign var = Interp (\(env, val) -> do
+    modify' (\st -> st { isEnv   = Map.insert var val (isEnv st)
+                        , isTrace = TeAssign var val : isTrace st })
+    P.pure env)
+
+  lookup var = Interp (\_env -> gets (Map.findWithDefault VNull var P.. isEnv))
+
+  suspend effect args = Interp (\_env -> do
+    vals <- gets (\st -> map (evalExpr (isEnv st)) args)
+    modify' (\st -> st { isTrace = TeSuspend effect vals : isTrace st }))
+
+  callProc name args = Interp (\_env -> do
+    vals <- gets (\st -> map (evalExpr (isEnv st)) args)
+    modify' (\st -> st { isTrace = TeCall name vals : isTrace st }))
+
+  splitValue = Interp (\(env, val) -> do
+    let taken = case val of
+          VBool b -> b
+          _       -> False
+    modify' (\st -> st { isTrace = TeBranch taken : isTrace st })
+    P.pure (if taken then Left env else Right env))
 
 -- | Execute a loop via recursion.  The body returns 'Left' to continue
 -- with updated state, or 'Right' to break with a final value.
@@ -865,3 +882,48 @@ interpretLoop (Interp body) = Interp go
     go x = body x P.>>= \case
       Left  continueState -> go continueState
       Right breakState    -> P.pure breakState
+
+-- | Run an 'Interp' morphism against a fresh, empty environment/trace,
+-- discarding the final 'InterpState' — a compatibility shim for tests that
+-- only care about the plain @IO b@ result (predates trace/env threading).
+runInterpIO :: Interp a b -> a -> IO b
+runInterpIO (Interp f) x = evalStateT (f x) (InterpState Map.empty [])
+
+-- | Interpret a compiled 'CatOp' term directly via 'Interp' — the fold
+-- 'CatOp' is initial for. Every constructor dispatches to the corresponding
+-- 'Category'\/'Cartesian'\/'Cocartesian'\/'Effectful' method on 'Interp';
+-- there is no other sensible definition per constructor, so this is
+-- forced by the types rather than independent logic to get wrong.
+--
+-- 'CatAssign'\/'CatLookup'\/'CatExl'\/'CatExr'\/'CatConst' are declared by
+-- the GADT/typeclasses but never emitted by 'compileSsa' (which always
+-- emits 'CatAssignWithRhs' directly) — they're handled here for
+-- completeness, not because real compiled terms use them.
+--
+-- 'CatTry' has no real interpretation yet: 'PB.Analysis.CfgBuild' doesn't
+-- model try/catch, so 'compileSsa' never emits it either. Running the body
+-- and ignoring the handler is a placeholder to keep this fold total; revisit
+-- once try/catch compilation lands.
+runCat :: CatOp a b -> Interp a b
+runCat CatId                  = id
+runCat (CatCompose g f)       = runCat g . runCat f
+runCat (CatFork l r)          = runCat l &&& runCat r
+runCat CatExl                 = exl
+runCat CatExr                 = exr
+runCat (CatConst e)           = eval e
+runCat CatInl                  = inl
+runCat CatInr                  = inr
+runCat (CatFanIn t f)          = runCat t ||| runCat f
+runCat (CatAssign var)         = assign var
+runCat (CatAssignWithRhs var e) = Interp (\env -> do
+  val <- gets (\st -> evalExpr (isEnv st) e)
+  modify' (\st -> st { isEnv   = Map.insert var val (isEnv st)
+                      , isTrace = TeAssign var val : isTrace st })
+  P.pure env)
+runCat (CatLookup var)         = lookup var
+runCat (CatLoop body)          = interpretLoop (runCat body)
+runCat (CatEval e)             = eval e
+runCat (CatCall name args)     = callProc name args
+runCat (CatSuspend eff args)   = suspend eff args
+runCat CatSplitValue           = splitValue
+runCat (CatTry body _handler)  = runCat body

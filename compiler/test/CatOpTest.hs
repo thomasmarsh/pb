@@ -12,6 +12,7 @@ import PB.Analysis.CpsCompile (ShapeNode (..), canonicalize, compileProcedure, n
 import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                             SsaTerm (..), SsaProc (..), renderSsaVar, buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
+import Control.Monad.State.Strict (runStateT)
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
@@ -479,29 +480,71 @@ tests = testGroup "CatOp"
 
   , testGroup "Interp"
     [ testCase "id returns input" $
-        runInterp (id :: Interp Int Int) 42 P.>>= \v -> v @?= 42
+        runInterpIO (id :: Interp Int Int) 42 P.>>= \v -> v @?= 42
 
     , testCase "composition chains effects" $
         let f = Interp (\x -> P.pure (x P.+ 1)) :: Interp Int Int
             g = Interp (\x -> P.pure (x P.* 2))
-        in runInterp (f . g) 3 P.>>= \v -> v @?= 7
+        in runInterpIO (f . g) 3 P.>>= \v -> v @?= 7
 
     , testCase "inl injects left" $
-        runInterp (inl :: Interp Int (Either Int Text)) 42 P.>>= \v -> v @?= Left 42
+        runInterpIO (inl :: Interp Int (Either Int Text)) 42 P.>>= \v -> v @?= Left 42
 
     , testCase "inr injects right" $
-        runInterp (inr :: Interp Text (Either Int Text)) "hi" P.>>= \v -> v @?= Right "hi"
+        runInterpIO (inr :: Interp Text (Either Int Text)) "hi" P.>>= \v -> v @?= Right "hi"
 
     , testCase "fanin dispatches" $
         let f = Interp (\_ -> P.pure "left") :: Interp Int P.String
             g = Interp (\_ -> P.pure "right")
-        in runInterp (f ||| g) (Right "x" :: Either Int Text) P.>>= \v -> v @?= "right"
+        in runInterpIO (f ||| g) (Right "x" :: Either Int Text) P.>>= \v -> v @?= "right"
 
     , testCase "splitValue routes True to Left" $
-        runInterp (splitValue :: Interp ((), Value) (Either () ())) ((), VBool True) P.>>= \v -> v @?= Left ()
+        runInterpIO (splitValue :: Interp ((), Value) (Either () ())) ((), VBool True) P.>>= \v -> v @?= Left ()
 
     , testCase "splitValue routes False to Right" $
-        runInterp (splitValue :: Interp ((), Value) (Either () ())) ((), VBool False) P.>>= \v -> v @?= Right ()
+        runInterpIO (splitValue :: Interp ((), Value) (Either () ())) ((), VBool False) P.>>= \v -> v @?= Right ()
+    ]
+
+  , testGroup "Interp / runCat"
+    [ testCase "runCat CatId is identity, no trace" $ do
+        (result, st) <- runStateT (runInterp (runCat (CatId :: CatOp () ())) ()) (InterpState Map.empty [])
+        result @?= ()
+        isTrace st @?= []
+
+    , testCase "runCat CatAssignWithRhs updates env and emits TeAssign" $ do
+        let term = CatAssignWithRhs "x_1" (ExInt "42") :: CatOp () ()
+        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [])
+        Map.lookup "x_1" (isEnv st) @?= Just (VInt 42)
+        P.reverse (isTrace st) @?= [TeAssign "x_1" (VInt 42)]
+
+    , testCase "runCat CatCompose threads env through both assigns in order" $ do
+        let term = CatAssignWithRhs "y_1" (ExInt "2") . CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
+        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [])
+        P.reverse (isTrace st) @?= [TeAssign "x_1" (VInt 1), TeAssign "y_1" (VInt 2)]
+
+    , testCase "runCat branch emits TeBranch True and takes the then-arm" $ do
+        let term = branch (ExBool True)
+                     (CatAssignWithRhs "then_taken" (ExInt "1"))
+                     (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
+        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [])
+        P.reverse (isTrace st) @?= [TeBranch True, TeAssign "then_taken" (VInt 1)]
+
+    , testCase "runCat branch emits TeBranch False and takes the else-arm" $ do
+        let term = branch (ExBool False)
+                     (CatAssignWithRhs "then_taken" (ExInt "1"))
+                     (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
+        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [])
+        P.reverse (isTrace st) @?= [TeBranch False, TeAssign "else_taken" (VInt 2)]
+
+    , testCase "runCat CatSuspend records TeSuspend with evaluated args" $ do
+        let term = CatSuspend "retrieve:dw_foo" [ExInt "1", ExStr "bar"] :: CatOp () ()
+        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [])
+        P.reverse (isTrace st) @?= [TeSuspend "retrieve:dw_foo" [VInt 1, VStr "bar"]]
+
+    , testCase "runCat CatCall records TeCall with evaluated args" $ do
+        let term = CatCall "my_func" [ExInt "5"] :: CatOp () ()
+        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [])
+        P.reverse (isTrace st) @?= [TeCall "my_func" [VInt 5]]
     ]
 
   , testGroup "Phase 4: buildCpsGraph"
