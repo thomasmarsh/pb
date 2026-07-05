@@ -743,12 +743,16 @@ patchLoopHeaderLowCat body loopHeaderPc nextPc = do
   bodyEntryPc <- compileLoopBodyLowCat body loopHeaderPc nextPc
   registerNodeAt loopHeaderPc (CpsNop { npNext = bodyEntryPc })
 
--- | Compile a loop body, translating LInl → back-edge goto, LInr → break goto.
+-- | Compile a loop body. 'LInl'/'LInr' are pure value-routing markers (which
+-- of the two known pcs execution resumes at) — structural/erased, like
+-- 'LEval'\/'LFork'\/'LSplitValue' in 'compileLowCatToCps'. They resolve
+-- directly to 'loopHeaderPc'\/'nextPc' as entry pcs; no node is allocated.
+-- The old compiler ('PB.Analysis.CpsCompile') never allocates a node for
+-- the implicit loop continue\/break either — it threads @(incrPc,
+-- fallthrough)@ straight through as raw pcs (Plan 145).
 compileLoopBodyLowCat :: LowCat -> Int -> Int -> GraphBuilder Int
-compileLoopBodyLowCat LInl loopHeaderPc _nextPc =
-  allocateNode (CpsGoto { goTarget = loopHeaderPc })
-compileLoopBodyLowCat LInr _loopHeaderPc nextPc =
-  allocateNode (CpsGoto { goTarget = nextPc })
+compileLoopBodyLowCat LInl loopHeaderPc _nextPc = return loopHeaderPc
+compileLoopBodyLowCat LInr _loopHeaderPc nextPc  = return nextPc
 -- Branch pattern inside loops: intercept LFanIn + condition before LCompose tears them apart.
 compileLoopBodyLowCat (LCompose g f) loopHeaderPc nextPc
   | Just (tOp, fOp) <- inspectBranchLowCat g = do

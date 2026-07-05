@@ -7,7 +7,7 @@ import PB.AST.Type         (PbType (..))
 import PB.AST.BodyStmt     (BodyStmt (..), PbCall (..), IfStmt (..), ForStmt (..), DoStmt (..), DoCondition (..))
 import PB.AST.Located      (Located (..))
 import PB.Analysis.CatOp
-import PB.Analysis.CpsCompile (ShapeNode (..), canonicalize)
+import PB.Analysis.CpsCompile (ShapeNode (..), canonicalize, compileProcedure)
 import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                             SsaTerm (..), SsaProc (..), renderSsaVar, buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
@@ -23,6 +23,15 @@ compileSsaDefault = compileSsa emptyEnv Set.empty
 
 emptyEnv :: ScopedTypeEnv
 emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty
+
+-- | Collapse the SCall/SCProc tag-naming divergence (Phase 1B: the new
+-- pipeline always lowers calls to CpsCallProc while the old compiler emits
+-- plain CpsCall for non-user-function callees — a pure node-tag difference,
+-- not a shape/control-flow difference) so exact-match comparisons against
+-- the old compiler aren't tripped up by it.
+normalizeCallTag :: ShapeNode -> ShapeNode
+normalizeCallTag (SCProc n) = SCall n
+normalizeCallTag other      = other
 
 -- | Build a minimal SsaProc with a single entry block.
 mkSsa :: [SsaAssign] -> SsaTerm -> SsaProc
@@ -561,21 +570,21 @@ tests = testGroup "CatOp"
             hasBranch      = any (\n -> case n of CpsBranch {} -> True; _ -> False) nodes
         in do
           assertBool "should contain x_1 assign" (hasCpsAssign "x_1")
-          assertBool "should contain backward CpsGoto" hasGoto
+          -- No CpsGoto: the back-edge is the body assign's own anNext pointing
+          -- straight at the header pc, matching the old compiler (Plan 145
+          -- LInl/LInr fix — see "no wrapper CpsGoto" group below).
+          assertBool "should contain no wrapper CpsGoto for the back-edge" (not hasGoto)
           assertBool "should contain CpsBranch" hasBranch
 
-    , testCase "unit: CatLoop lowers to correct header patch and backward CpsGoto" $
+    , testCase "unit: CatLoop lowers to correct header patch, no wrapper CpsGoto" $
+        -- Headerless loop body (no CatFanIn branch to patch in place — falls
+        -- back to the forwarding CpsNop path). Even here, LInl resolves
+        -- directly to the header pc (Plan 145 LInl/LInr fix): the assign's
+        -- own anNext closes the cycle, no CpsGoto is ever allocated.
         let loopBody = CatCompose CatInl (CatAssignWithRhs "counter" (ExInt "42")) :: CatOp () (Either () ())
             catTree  = CatLoop loopBody :: CatOp () ()
             graph    = buildCpsGraph catTree
-            nodes    = cgNodes graph
-            gotos        = [ target | CpsGoto target <- nodes ]
-            assignNexts  = [ next   | CpsAssign { anNext = next } <- nodes ]
-            headerTarget = [ next   | CpsNop next <- nodes, next /= -1 ]
-        in do
-          assertBool ("Should allocate a backward jump; nodes: " <> show nodes) (not (null gotos))
-          assertBool ("Should allocate an assignment sequence; nodes: " <> show nodes) (not (null assignNexts))
-          assertBool ("Loop layout must form a synchronized cycle; nodes: " <> show nodes) (not (null headerTarget))
+        in canonicalize graph @?= [SNop 1, SAsgn 0]
 
     , testCase "end-to-end: simple linear SSA → CpsGraph" $
         let sa = SsaProc
@@ -666,12 +675,51 @@ tests = testGroup "CatOp"
         -- resolving the placeholder to the branch node in place. Since this
         -- loop's body is itself exactly a branch, the header IS that branch —
         -- no SNop should appear at all.
+        --
+        -- Also verifies the LInl/LInr fix (Plan 145): neither the continue
+        -- (LInl, then-arm) nor the break (LInr, else-arm) allocates a wrapper
+        -- CpsGoto — the assign's anNext closes the back-edge directly onto
+        -- the branch, and the break routes straight to the exit/return, so
+        -- the whole loop is exactly 3 nodes (branch, assign, return).
         let innerBranch = branch (ExBool True)
               (CatCompose CatInl (CatAssignWithRhs "x_1" (ExInt "1")) :: CatOp () (Either () ()))
               (CatInr :: CatOp () (Either () ()))
             catTree = CatLoop innerBranch :: CatOp () ()
             graph   = buildCpsGraph catTree
-        in canonicalize graph @?= [SBrnch 1 2, SAsgn 3, SGoto 4, SGoto 0, SRet]
+        in canonicalize graph @?= [SBrnch 1 2, SAsgn 0, SRet]
+    ]
+
+  , testGroup "no wrapper CpsGoto for loop continue/break (Plan 145 LInl/LInr fix)"
+    -- compileLoopBodyLowCat's LInl/LInr cases used to each allocate a genuine
+    -- CpsGoto node for the loop's implicit continue/break, where the old
+    -- compiler (PB.Analysis.CpsCompile's BsFor/BsDo) threads the raw target
+    -- pcs straight through with zero wrapper nodes. This was the last
+    -- blocker for --dual-cps exact-match parity on loop-containing
+    -- procedures (the header-CpsNop fix above didn't move the diff count
+    -- because of this sibling bug). Fixed by resolving LInl/LInr directly to
+    -- loopHeaderPc/nextPc as entry pcs (structural/erased, like
+    -- LEval/LFork/LSplitValue) instead of allocateNode-ing a CpsGoto.
+    --
+    -- These are end-to-end bit-for-bit equality checks against the old
+    -- compiler for the exact minimal for/do-loop shapes traced in the plan
+    -- (doc/plan/145-dual-cps-debug.md, "New finding: LInl/LInr residual
+    -- CpsGoto hops"). Only SCall vs SCProc differs — the pre-existing,
+    -- documented cosmetic call-tag divergence (Phase 1B), not a real
+    -- difference — so both sides are normalized before comparing.
+    [ testCase "for loop containing one call matches old compiler exactly (mod SCall/SCProc tag)" $
+        let body = [Located 1 (BsFor (ForStmt (Lvalue [LvSegment "li_count" Nothing])
+                      (ExInt "1") (ExInt "10") Nothing
+                      [Located 2 (BsCall (ExCall (Lvalue [LvSegment "foo" Nothing]) []))]))]
+            oldShape = normalizeCallTag <$> canonicalize (compileProcedure emptyEnv Set.empty body)
+            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in newShape @?= oldShape
+
+    , testCase "do-while loop containing one call matches old compiler exactly (mod SCall/SCProc tag)" $
+        let body = [Located 1 (BsDo (DoStmt (Just (DoWhile (ExBool True)))
+                      [Located 2 (BsCall (ExCall (Lvalue [LvSegment "foo" Nothing]) []))] Nothing))]
+            oldShape = normalizeCallTag <$> canonicalize (compileProcedure emptyEnv Set.empty body)
+            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in newShape @?= oldShape
     ]
 
   , testGroup "for/do-loop header collapse (Plan 145 post-Finding-A block-collapse bug)"
