@@ -9,6 +9,7 @@ import PB.AST.BodyStmt     (BodyStmt (..), PbCall (..), IfStmt (..), ForStmt (..
 import PB.AST.Located      (Located (..))
 import PB.Analysis.CatOp
 import PB.Analysis.CpsCompile (ShapeNode (..), canonicalize, compileProcedure, normalizeCallTag)
+import PB.Analysis.CpsInterp (runCpsGraphTrace)
 import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                             SsaTerm (..), SsaProc (..), renderSsaVar, buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
@@ -168,6 +169,14 @@ dwEnv = ScopedTypeEnv
   , steLocal     = Map.empty
   , steHierarchy = Map.empty
   }
+
+-- | Run a compiled 'CatOp' term through 'runCat'\/'Interp', returning the
+-- final environment and the trace in chronological order — the Interp-side
+-- counterpart to 'runCpsGraphTrace' (Plan 146 Phase 1D).
+runInterpTrace :: CatOp () () -> Map.Map Text Value -> IO (Map.Map Text Value, [TraceEvent])
+runInterpTrace term initEnv = do
+  (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState initEnv [])
+  return (isEnv st, P.reverse (isTrace st))
 
 -- ---------------------------------------------------------------------------
 -- Tests
@@ -944,5 +953,88 @@ tests = testGroup "CatOp"
             oldShape = canonicalize (compileProcedure emptyEnv Set.empty body)
             newShape = canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
         in pathCallCounts newShape @?= pathCallCounts oldShape
+    ]
+
+  , testGroup "Phase 1D: Interp vs GraphBuilder trace equivalence (Plan 146)"
+    -- Same CatOp term, run through both of CatOp's execution backends:
+    -- Interp (direct Haskell execution) and GraphBuilder (flat CpsGraph, the
+    -- shape the TS runtime consumes). A divergence here is a real backend
+    -- bug, independent of anything upstream in the AST/SSA/CatOp compilation
+    -- stages. Reuses the exact terms hand-built in the "Interp / runCat"
+    -- group above (narrow, fixture-driven pass per Plan 146 Phase 1 Step 1D
+    -- — a generator is deferred until this passes).
+    [ testCase "CatId: no trace, no env change" $ do
+        let term = CatId :: CatOp () ()
+        (ienv, itrace) <- runInterpTrace term Map.empty
+        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) Map.empty
+        itrace @?= []
+        itrace @?= gtrace
+        ienv @?= genv
+
+    , testCase "CatAssignWithRhs: same assign trace, same env" $ do
+        let term = CatAssignWithRhs "x_1" (ExInt "42") :: CatOp () ()
+        (ienv, itrace) <- runInterpTrace term Map.empty
+        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) Map.empty
+        itrace @?= [TeAssign "x_1" (VInt 42)]
+        itrace @?= gtrace
+        ienv @?= genv
+
+    , testCase "CatCompose: two assigns execute in the same order" $ do
+        let term = CatAssignWithRhs "y_1" (ExInt "2") . CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
+        (ienv, itrace) <- runInterpTrace term Map.empty
+        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) Map.empty
+        itrace @?= gtrace
+        ienv @?= genv
+
+    , testCase "branch True: then-arm taken on both backends" $ do
+        let term = branch (ExBool True)
+                     (CatAssignWithRhs "then_taken" (ExInt "1"))
+                     (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
+        (ienv, itrace) <- runInterpTrace term Map.empty
+        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) Map.empty
+        itrace @?= gtrace
+        ienv @?= genv
+
+    , testCase "branch False: else-arm taken on both backends" $ do
+        let term = branch (ExBool False)
+                     (CatAssignWithRhs "then_taken" (ExInt "1"))
+                     (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
+        (ienv, itrace) <- runInterpTrace term Map.empty
+        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) Map.empty
+        itrace @?= gtrace
+        ienv @?= genv
+
+    , testCase "CatSuspend: same effect name and evaluated args" $ do
+        let term = CatSuspend "retrieve:dw_foo" [ExInt "1", ExStr "bar"] :: CatOp () ()
+        (ienv, itrace) <- runInterpTrace term Map.empty
+        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) Map.empty
+        itrace @?= gtrace
+        ienv @?= genv
+
+    , testCase "CatCall: same callee and evaluated args" $ do
+        let term = CatCall "my_func" [ExInt "5"] :: CatOp () ()
+        (ienv, itrace) <- runInterpTrace term Map.empty
+        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) Map.empty
+        itrace @?= gtrace
+        ienv @?= genv
+
+    , testCase "CatLoop: counts to 3 identically on both backends" $ do
+        -- A hand-built loop with a real terminating condition — unlike the
+        -- shape-only SSA loop fixtures elsewhere in this file, which all use
+        -- a constant `ExBool True` condition and would loop forever if
+        -- actually executed rather than just inspected for shape.
+        let iVar = ExLvalue (Lvalue [LvSegment "i" Nothing])
+            cond = ExBinOp iVar BopLt (ExInt "3")
+            incr = ExBinOp iVar BopAdd (ExInt "1")
+            loopBody = branch cond
+                         (CatInl . CatAssignWithRhs "i" incr)
+                         CatInr :: CatOp () (Either () ())
+            term = CatLoop loopBody :: CatOp () ()
+            initEnv = Map.fromList [("i", VInt 0)]
+        (ienv, itrace) <- runInterpTrace term initEnv
+        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) initEnv
+        itrace @?= gtrace
+        ienv @?= genv
+        Map.lookup "i" ienv @?= Just (VInt 3)
     ]
   ]
