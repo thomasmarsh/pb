@@ -241,7 +241,7 @@ tests = testGroup "CatOp"
               [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))]
               (SsaReturn Nothing)
             result = compileSsaDefault sa
-        in assertBool "contains x_1 assign" (hasAssign "x_1" result)
+        in assertBool "contains x assign" (hasAssign "x" result)
 
     , testCase "single assign structure: CatAssignWithRhs with embedded RHS" $
         let sa = mkSsa
@@ -250,7 +250,7 @@ tests = testGroup "CatOp"
             result = compileSsaDefault sa
         in case result of
              CatAssignWithRhs v (ExInt "1") ->
-               assertEqual "assigns to x_1" "x_1" v
+               assertEqual "assigns to x (SSA version erased, not x_1)" "x" v
              other -> assertBool ("unexpected structure: " <> show other) False
 
     , testCase "two linear assigns fold via CatCompose" $
@@ -260,8 +260,8 @@ tests = testGroup "CatOp"
               ]
               (SsaReturn Nothing)
             result = compileSsaDefault sa
-        in assertBool "contains x_1 assign" (hasAssign "x_1" result)
-           P.>> assertBool "contains y_1 assign" (hasAssign "y_1" result)
+        in assertBool "contains x assign" (hasAssign "x" result)
+           P.>> assertBool "contains y assign" (hasAssign "y" result)
 
     , testCase "SsaReturn compiles to CatId" $
         let sa = mkSsa [] (SsaReturn Nothing)
@@ -280,7 +280,7 @@ tests = testGroup "CatOp"
               ]
               (SsaReturn Nothing)
             result = compileSsaDefault sa
-        in assertBool "contains y_1 assign with ExLvalue RHS" (hasAssignWithRhs "y_1" result)
+        in assertBool "contains y assign with ExLvalue RHS" (hasAssignWithRhs "y" result)
 
     , testCase "SsaGoto compiles to CatCompose of block assigns" $
         let sa = SsaProc
@@ -298,8 +298,8 @@ tests = testGroup "CatOp"
               , spVars   = []
               }
             result = compileSsaDefault sa
-        in assertBool "contains x_1 assign" (hasAssign "x_1" result)
-           P.>> assertBool "contains y_1 assign" (hasAssign "y_1" result)
+        in assertBool "contains x assign" (hasAssign "x" result)
+           P.>> assertBool "contains y assign" (hasAssign "y" result)
 
     , testCase "SsaBranch compiles to branch combinator" $
         let sa = SsaProc
@@ -320,8 +320,8 @@ tests = testGroup "CatOp"
               , spVars   = []
               }
             result = compileSsaDefault sa
-        in assertBool "contains x_1 in then branch" (hasAssign "x_1" result)
-           P.>> assertBool "contains y_1 in else branch" (hasAssign "y_1" result)
+        in assertBool "contains x in then branch" (hasAssign "x" result)
+           P.>> assertBool "contains y in else branch" (hasAssign "y" result)
            P.>> assertBool "contains splitValue for branch" (hasSplitValue result)
 
     , testCase "SsaSwitch compiles to N-way branch chain, dispatches on scrutinee (Plan 146 Bug B)" $ do
@@ -344,12 +344,12 @@ tests = testGroup "CatOp"
               , spVars   = []
               }
             result = compileSsaDefault sa
-        (env1, _)   <- runInterpTrace result (Map.fromList [("y_0", VInt 1)])
-        (env2, _)   <- runInterpTrace result (Map.fromList [("y_0", VInt 2)])
-        (envDef, _) <- runInterpTrace result (Map.fromList [("y_0", VInt 99)])
-        Map.lookup "x_1" env1   @?= Just (VInt 10)
-        Map.lookup "x_1" env2   @?= Just (VInt 20)
-        Map.lookup "x_1" envDef @?= Just (VInt 99)
+        (env1, _)   <- runInterpTrace result (Map.fromList [("y", VInt 1)])
+        (env2, _)   <- runInterpTrace result (Map.fromList [("y", VInt 2)])
+        (envDef, _) <- runInterpTrace result (Map.fromList [("y", VInt 99)])
+        Map.lookup "x" env1   @?= Just (VInt 10)
+        Map.lookup "x" env2   @?= Just (VInt 20)
+        Map.lookup "x" envDef @?= Just (VInt 99)
 
     , testCase "loop compiles to CatLoop with back-edge" $
         let sa = SsaProc
@@ -444,10 +444,10 @@ tests = testGroup "CatOp"
               , spVars   = []
               }
             result = compileSsaDefault sa
-            initEnv = Map.fromList [("iter_0", VInt 0), ("y_0", VInt 0)]
+            initEnv = Map.fromList [("iter", VInt 0), ("y", VInt 0)]
         (finalEnv, _) <- runInterpTrace result initEnv
-        Map.lookup "iter_0" finalEnv @?= Just (VInt 3)
-        Map.lookup "y_0" finalEnv @?= Just (VInt 2)
+        Map.lookup "iter" finalEnv @?= Just (VInt 3)
+        Map.lookup "y" finalEnv @?= Just (VInt 2)
 
     , testCase "loop with multiple exits finds correct exit target" $ do
         -- entry → header → body → header  (back-edge)
@@ -474,7 +474,7 @@ tests = testGroup "CatOp"
               }
             result = compileSsaDefault sa
         assertBool "contains CatLoop" (hasCatLoop result)
-           P.>> assertBool "contains x_1 assign" (hasAssign "x_1" result)
+           P.>> assertBool "contains x assign" (hasAssign "x" result)
     ]
 
   , testGroup "call classification"
@@ -527,8 +527,8 @@ tests = testGroup "CatOp"
         let callExpr = ExCall { callee = Lvalue [LvSegment "my_func" Nothing], callArgs = [] }
             sa = mkSsa [SsaAssign (SsaVar "x" 1) (SsaConst callExpr)] (SsaReturn Nothing)
             result = compileSsa emptyEnv Set.empty sa
-        in assertBool "x_1 assign present, no bare CatCall"
-             (hasAssign "x_1" result P.&& not (hasAnyCatCall result))
+        in assertBool "x assign present, no bare CatCall"
+             (hasAssign "x" result P.&& not (hasAnyCatCall result))
 
     , testCase "x = dw_foo.retrieve() (suspend) assigns, does not emit CatSuspend" $
         let callExpr = ExCall
@@ -536,8 +536,8 @@ tests = testGroup "CatOp"
               , callArgs = [] }
             sa = mkSsa [SsaAssign (SsaVar "x" 1) (SsaConst callExpr)] (SsaReturn Nothing)
             result = compileSsa dwEnv Set.empty sa
-        in assertBool "x_1 assign present, no CatSuspend"
-             (hasAssign "x_1" result P.&& not (hasAnyCatSuspend result))
+        in assertBool "x assign present, no CatSuspend"
+             (hasAssign "x" result P.&& not (hasAnyCatSuspend result))
 
     , testCase "standalone (discard) suspend call is unaffected" $
         -- Sanity: the "_" discard target must still classify and emit CatSuspend.
@@ -707,7 +707,7 @@ tests = testGroup "CatOp"
             hasGoto        = any (\n -> case n of CpsGoto _ -> True; _ -> False) nodes
             hasBranch      = any (\n -> case n of CpsBranch {} -> True; _ -> False) nodes
         in do
-          assertBool "should contain x_1 assign" (hasCpsAssign "x_1")
+          assertBool "should contain x assign" (hasCpsAssign "x")
           -- No CpsGoto: the back-edge is the body assign's own anNext pointing
           -- straight at the header pc, matching the old compiler (Plan 145
           -- LInl/LInr fix — see "no wrapper CpsGoto" group below).
@@ -743,10 +743,10 @@ tests = testGroup "CatOp"
         in do
           assertBool ("should have 3 nodes (exit + 2 assigns), got " <> show (P.length nodes))
             (P.length nodes == 3)
-          assertBool "should contain a_1"
-            (any (\n -> case n of CpsAssign { anVar = "a_1" } -> True; _ -> False) nodes)
-          assertBool "should contain b_1"
-            (any (\n -> case n of CpsAssign { anVar = "b_1" } -> True; _ -> False) nodes)
+          assertBool "should contain a"
+            (any (\n -> case n of CpsAssign { anVar = "a" } -> True; _ -> False) nodes)
+          assertBool "should contain b"
+            (any (\n -> case n of CpsAssign { anVar = "b" } -> True; _ -> False) nodes)
     ]
 
   , testGroup "compileProcedureViaCatOp"

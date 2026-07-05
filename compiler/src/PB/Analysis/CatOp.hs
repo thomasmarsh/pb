@@ -78,7 +78,7 @@ import Control.Monad.State.Strict (State, StateT, modify, modify', gets, runStat
 import PB.AST.BodyStmt     (BodyStmt)
 import PB.AST.Located      (Located (..))
 import PB.Analysis.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
-                         SsaTerm (..), SsaPhi (..), SsaProc (..), renderSsaVar, buildSsa)
+                         SsaTerm (..), SsaPhi (..), SsaProc (..), buildSsa)
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -524,7 +524,7 @@ compileLoopBody ctx proc blockId visited headers activeLoop
 -- | Convert an SSA value back to an Expr so it can be passed to @eval@.
 ssaValToExpr :: SsaVal -> Expr
 ssaValToExpr (SsaConst e)       = e
-ssaValToExpr (SsaVarRef sv)     = ExLvalue (Lvalue [LvSegment (renderSsaVar sv) Nothing])
+ssaValToExpr (SsaVarRef sv)     = ExLvalue (Lvalue [LvSegment (svName sv) Nothing])
 ssaValToExpr (SsaBinOp op l r)  = ExBinOp (ssaValToExpr l) op (ssaValToExpr r)
 ssaValToExpr (SsaNot v)         = ExNot (ssaValToExpr v)
 ssaValToExpr SsaNull            = ExNull
@@ -624,13 +624,26 @@ compileAssigns ctx (a:as) = compileAssigns ctx as . compileAssign ctx a
 -- uses for statement-position calls with no captured result (@BsCall@/@BsPbCall@) —
 -- only those go through call classification and emit a bare 'CatCall'/'CatSuspend'.
 -- Any real variable target (@x = f()@ / @x = obj.method()@) always becomes
--- @CatAssignWithRhs "x_1" expr@ instead, matching 'PB.Analysis.CpsCompile'\'s old
+-- @CatAssignWithRhs "x" expr@ instead, matching 'PB.Analysis.CpsCompile'\'s old
 -- compiler: it never special-cases a call RHS on 'BsAssign' (its 'CpsCall'
 -- 'clResult' field, seemingly meant for this, is declared but never set to
 -- anything but 'Nothing' anywhere) — it always emits one plain 'CpsAssign'
 -- embedding the whole call expression in 'anRhs', suspend or not. Special-casing
 -- the "_" target too used to silently drop the assignment target entirely for
 -- @x = f()@ (Plan 145 Phase 1B re-sample Finding B).
+--
+-- Both this and 'ssaValToExpr'\'s 'SsaVarRef' case use 'svName' (the plain PB
+-- variable name), never 'renderSsaVar' (which appends the SSA version number,
+-- e.g. \"x_1\"): the version number is an internal device for phi-node
+-- placement during SSA construction, not part of the variable's real runtime
+-- identity — the old compiler never renames at all, and an imperative
+-- execution model only ever has one mutable slot per real variable regardless
+-- of how many SSA versions it was split into. Using 'renderSsaVar' here leaked
+-- the version suffix into the observable trace/final-env, a divergence the
+-- Plan 145 shape oracle couldn't see (it never compares variable names) but
+-- Plan 146's trace oracle does — confirmed the dominant remaining bug class
+-- (~70% of the OpenPay --dual-trace corpus diffs) via direct hand-trace of
+-- @m_misth_final_details_list::create@ (Plan 146 Phase 2c).
 compileAssign :: CompileCtx -> SsaAssign -> CatOp () ()
 compileAssign ctx (SsaAssign sv rhs)
   | svName sv == "_" = case rhs of
@@ -661,8 +674,8 @@ compileAssign ctx (SsaAssign sv rhs)
         case classifyExpr (ccEnv ctx) expr of
           SuspendCall -> CatSuspend (effectName expr []) []
           PureCall    -> CatCall (T.toLower (calleeName expr)) []
-      _ -> CatAssignWithRhs (renderSsaVar sv) (ssaValToExpr rhs)
-  | otherwise = CatAssignWithRhs (renderSsaVar sv) (ssaValToExpr rhs)
+      _ -> CatAssignWithRhs (svName sv) (ssaValToExpr rhs)
+  | otherwise = CatAssignWithRhs (svName sv) (ssaValToExpr rhs)
 
 -- | Shared logic for compiling an ExCall expression: classify and emit CatCall.
 compileCallExpr :: CompileCtx -> SsaVar -> Expr -> Lvalue -> [Expr] -> CatOp () ()
