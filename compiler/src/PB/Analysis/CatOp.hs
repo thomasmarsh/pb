@@ -652,11 +652,10 @@ compileAssign ctx (SsaAssign sv rhs)
         in compileCallExpr ctx sv expr lv parsedArgs
       SsaConst expr@(ExMethodCall recv meth rawArgs) ->
         let parsedArgs = map parseArgList rawArgs
-            cn = T.toLower (calleeName expr)
             effCn = case recv of
-              ExLvalue rlv -> T.toLower (lvHead rlv) <> "." <> T.toLower meth
-              ExCall rlv _ -> T.toLower (lvHead rlv) <> "." <> T.toLower meth
-              _            -> cn
+              ExLvalue rlv -> lvHead rlv <> "." <> meth
+              ExCall rlv _ -> lvHead rlv <> "." <> meth
+              _            -> calleeName expr
         in case classifyExpr (ccEnv ctx) expr of
              SuspendCall -> CatSuspend (effectName expr parsedArgs) parsedArgs
              PureCall    -> CatCall effCn parsedArgs
@@ -673,7 +672,7 @@ compileAssign ctx (SsaAssign sv rhs)
       SsaConst expr ->
         case classifyExpr (ccEnv ctx) expr of
           SuspendCall -> CatSuspend (effectName expr []) []
-          PureCall    -> CatCall (T.toLower (calleeName expr)) []
+          PureCall    -> CatCall (calleeName expr) []
       _ -> CatAssignWithRhs (svName sv) (ssaValToExpr rhs)
   | otherwise = CatAssignWithRhs (svName sv) (ssaValToExpr rhs)
 
@@ -687,9 +686,7 @@ compileCallExpr ctx _sv expr lv parsedArgs
       CatCall (segName seg) parsedArgs
   | otherwise = case classifyExpr (ccEnv ctx) expr of
       SuspendCall -> CatSuspend (effectName expr parsedArgs) parsedArgs
-      PureCall ->
-        let name = T.toLower (calleeName expr)
-        in CatCall name parsedArgs
+      PureCall -> CatCall (calleeName expr) parsedArgs
   where
     evArg = case parsedArgs of { (a:_) -> a; [] -> ExRaw [] }
 

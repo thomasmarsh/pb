@@ -1105,4 +1105,30 @@ tests = testGroup "CatOp"
         ienv @?= genv
         Map.lookup "i" ienv @?= Just (VInt 3)
     ]
+
+  , testGroup "PureCall callee name preserves source case (Plan 146 Phase 2d)"
+    -- compileCallExpr's `otherwise` branch (PB.Analysis.CatOp) and
+    -- compileAssign's ExMethodCall PureCall case both wrap the callee name in
+    -- T.toLower before building CatCall, but PB.Analysis.CpsCompile's mirror
+    -- (the confirmed-correct old compiler) uses calleeName's result verbatim
+    -- via `clCallee = calleeName expr`. calleeName never itself lowercases —
+    -- the divergence is CatOp.hs-only. Found via a read-only GHCi hand-trace
+    -- of a real --dual-trace corpus diff (m_main_print_args_withform::clicked,
+    -- "parentwindow.TriggerEvent(...)" trace as "parentwindow.triggerevent"
+    -- in the new compiler) and confirmed to explain 1075/1198 (90%) of the
+    -- Phase 2c-era --dual-trace baseline via a throwaway case-insensitive
+    -- TeCall normalization over both corpora.
+    [ testCase "bare ExCall with mixed-case callee: TeCall preserves case" $
+        let body = [Located 1 (BsCall (ExCall (Lvalue [LvSegment "GlobalMemoryStatus" Nothing]) []))]
+            oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+            newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+        in newTrace @?= oldTrace
+
+    , testCase "ExMethodCall with mixed-case receiver/method: TeCall preserves case" $
+        let recv = ExLvalue (Lvalue [LvSegment "parentwindow" Nothing])
+            body = [Located 1 (BsCall (ExMethodCall recv "TriggerEvent" [[]]))]
+            oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+            newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+        in newTrace @?= oldTrace
+    ]
   ]
