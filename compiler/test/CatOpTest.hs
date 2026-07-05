@@ -2,12 +2,13 @@ module CatOpTest (tests) where
 
 import PB.Prelude hiding (id, (.))
 import qualified Prelude as P
-import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..),
+                            DispatchExpr (..), DispatchMode (..))
 import PB.AST.Type         (PbType (..))
 import PB.AST.BodyStmt     (BodyStmt (..), PbCall (..), IfStmt (..), ForStmt (..), DoStmt (..), DoCondition (..))
 import PB.AST.Located      (Located (..))
 import PB.Analysis.CatOp
-import PB.Analysis.CpsCompile (ShapeNode (..), canonicalize, compileProcedure)
+import PB.Analysis.CpsCompile (ShapeNode (..), canonicalize, compileProcedure, normalizeCallTag)
 import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                             SsaTerm (..), SsaProc (..), renderSsaVar, buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
@@ -23,15 +24,6 @@ compileSsaDefault = compileSsa emptyEnv Set.empty
 
 emptyEnv :: ScopedTypeEnv
 emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty
-
--- | Collapse the SCall/SCProc tag-naming divergence (Phase 1B: the new
--- pipeline always lowers calls to CpsCallProc while the old compiler emits
--- plain CpsCall for non-user-function callees — a pure node-tag difference,
--- not a shape/control-flow difference) so exact-match comparisons against
--- the old compiler aren't tripped up by it.
-normalizeCallTag :: ShapeNode -> ShapeNode
-normalizeCallTag (SCProc n) = SCall n
-normalizeCallTag other      = other
 
 -- | Build a minimal SsaProc with a single entry block.
 mkSsa :: [SsaAssign] -> SsaTerm -> SsaProc
@@ -774,5 +766,48 @@ tests = testGroup "CatOp"
             1 (length (filter isBrnchNode shape))
           assertEqual "exactly one call node (the loop body)"
             1 (length (filter isCallishNode shape))
+    ]
+
+  , testGroup "no CatAssignWithRhs for standalone dispatch statements (Plan 145 ExDispatch fix)"
+    -- compileAssign's "_"-discard case only pattern-matched SsaConst
+    -- (ExCall ...)/(ExMethodCall ...), so a standalone dispatch statement
+    -- (`.Post`/`.Trigger`/`Dynamic ... Event(...)` — PB's inter-object
+    -- messaging idiom, e.g. `ParentWindow.Dynamic Post of_run_report()` or
+    -- `Post Event ue_GetValues()`) fell through to CatAssignWithRhs, producing
+    -- a real CpsAssign{anVar="_"} node instead of a bare call node. The old
+    -- compiler (PB.Analysis.CpsCompile's BsCall `otherwise` branch) never has
+    -- this gap: it calls classifyExpr/calleeName generically regardless of
+    -- expr shape, both defaulting to PureCall/"?" for anything that isn't
+    -- ExCall/ExMethodCall — confirmed as the exact ground-truth reference
+    -- shape via a read-only cabal repl session parsing the real source text
+    -- through PB.Grammar.Body.parseExpr (not hand-built), matching the
+    -- m_main::clicked / w_registry_functions::open ("Post Event
+    -- ue_GetValues()") diffs found in a fresh Plan 145 corpus re-sample.
+    [ testCase "ExDispatch (Dynamic Post) matches old compiler exactly (mod SCall/SCProc tag)" $
+        let dispatchExpr = ExDispatch (DispatchExpr
+              { object = Just (Lvalue [LvSegment "ParentWindow" Nothing]), mode = DmPost
+              , dynamic = True, event = False, name = "of_run_report", args = [] })
+            body = [Located 1 (BsCall dispatchExpr)]
+            oldShape = normalizeCallTag <$> canonicalize (compileProcedure emptyEnv Set.empty body)
+            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in newShape @?= oldShape
+
+    , testCase "ExDispatch (bare Post Event) matches old compiler exactly (mod SCall/SCProc tag)" $
+        let dispatchExpr = ExDispatch (DispatchExpr
+              { object = Nothing, mode = DmPost, dynamic = False
+              , event = True, name = "ue_getvalues", args = [] })
+            body = [Located 1 (BsCall dispatchExpr)]
+            oldShape = normalizeCallTag <$> canonicalize (compileProcedure emptyEnv Set.empty body)
+            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in newShape @?= oldShape
+
+    , testCase "no CatAssignWithRhs is emitted for a standalone dispatch statement" $
+        let dispatchExpr = ExDispatch (DispatchExpr
+              { object = Just (Lvalue [LvSegment "ParentWindow" Nothing]), mode = DmPost
+              , dynamic = True, event = False, name = "of_run_report", args = [] })
+            body  = [Located 1 (BsCall dispatchExpr)]
+            graph = compileProcedureViaCatOp emptyEnv Set.empty body
+            hasAssignNode = any (\n -> case n of CpsAssign {} -> True; _ -> False) (cgNodes graph)
+        in assertBool "should contain no CpsAssign node" (not hasAssignNode)
     ]
   ]

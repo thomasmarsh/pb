@@ -15,6 +15,7 @@ module PB.Analysis.CpsCompile
   , parseArgList
   , ShapeNode (..)
   , canonicalize
+  , normalizeCallTag
   ) where
 
 import PB.Prelude
@@ -124,6 +125,18 @@ shapeOf look node = case node of
   CpsReturn  {}                           -> SRet
   CpsNop     { npNext }                   -> SNop   (if npNext < 0 then -1 else look npNext)
   CpsCallProc { cpNext }                  -> SCProc (look cpNext)
+
+-- | Collapse the SCall\/SCProc tag-naming divergence: the new SSA\/CatOp
+-- pipeline always lowers calls to 'CpsCallProc' ('SCProc'), while the old
+-- compiler ('compileProcedure') emits plain 'CpsCall' ('SCall') for
+-- non-user-function callees and 'CpsCallProc' only for user-defined
+-- functions\/subroutines. This is a pure node-tag difference with no effect
+-- on control flow or shape (Plan 145 Phase 1B) — comparisons that care about
+-- genuine structural\/semantic parity (e.g. @--dual-cps@) should normalize
+-- it first so this accepted, harmless divergence doesn't mask real diffs.
+normalizeCallTag :: ShapeNode -> ShapeNode
+normalizeCallTag (SCProc n) = SCall n
+normalizeCallTag other      = other
 
 -- ---------------------------------------------------------------------------
 -- Internal types

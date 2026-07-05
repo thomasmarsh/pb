@@ -21,7 +21,7 @@ import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.CfgBuild    (buildCfg)
-import PB.Analysis.CpsCompile  (compileProcedure, canonicalize)
+import PB.Analysis.CpsCompile  (compileProcedure, canonicalize, normalizeCallTag)
 import PB.Analysis.CatOp       (compileProcedureViaCatOp)
 import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), ScopedTypeEnv, buildWorkspaceEnv, procEnv)
@@ -397,8 +397,13 @@ runModeDualCps srcDir minspect = do
             [ (obj, pName, canonicalize (compileProcedure env userFns body)
                         ,  canonicalize (compileProcedureViaCatOp env userFns body))
             | (obj, pName, env, userFns, body) <- allProcs ]
+      -- Compare with the SCall/SCProc tag divergence normalized away (Plan
+      -- 145 Phase 1B: a pure node-tag difference with no effect on shape or
+      -- control flow) so this accepted, harmless cosmetic doesn't mask
+      -- genuine remaining structural/semantic differences in the count.
       let diffs = [ (obj, pName, oldShape, newShape)
-                  | (obj, pName, oldShape, newShape) <- results, oldShape /= newShape ]
+                  | (obj, pName, oldShape, newShape) <- results
+                  , map normalizeCallTag oldShape /= map normalizeCallTag newShape ]
       mapM_ (\(obj, pName, oldShape, newShape) ->
                 putStrLn ("DIFF " <> obj <> "::" <> pName
                           <> "  old=" <> T.pack (show (length oldShape))
@@ -433,7 +438,13 @@ runInspect target allProcs =
           shapesOf (_, _, env, userFns, body) =
             ( canonicalize (compileProcedure env userFns body)
             , canonicalize (compileProcedureViaCatOp env userFns body) )
-          differing = [ c | c <- candidates, uncurry (/=) (shapesOf c) ]
+          -- Normalized the same way as runModeDualCps's diff count (Plan 145
+          -- Phase 1B SCall/SCProc tag divergence) so ambiguous-name
+          -- resolution prefers a genuinely-differing candidate over one
+          -- that's only cosmetically different.
+          differsNormalized c =
+            let (o, n) = shapesOf c in map normalizeCallTag o /= map normalizeCallTag n
+          differing = [ c | c <- candidates, differsNormalized c ]
       in case candidates of
            [] -> die ("no such procedure: " <> T.unpack target)
            firstCandidate : _ -> do

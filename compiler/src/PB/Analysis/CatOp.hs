@@ -584,6 +584,20 @@ compileAssign ctx (SsaAssign sv rhs)
         in case classifyExpr (ccEnv ctx) expr of
              SuspendCall -> CatSuspend (effectName expr parsedArgs) parsedArgs
              PureCall    -> CatCall effCn parsedArgs
+      -- Any other call-shaped statement (e.g. ExDispatch: standalone
+      -- `.Post`/`.Trigger`/`Dynamic ... Event(...)`, PB's inter-object
+      -- messaging idiom) must still classify as a bare call rather than
+      -- falling through to CatAssignWithRhs below — that produced a real
+      -- CpsAssign{anVar="_"} node instead of a call/dispatch node (Plan 145).
+      -- Mirrors PB.Analysis.CpsCompile's BsCall `otherwise` branch, which
+      -- calls classifyExpr/calleeName generically regardless of expr shape
+      -- (both default to PureCall/"?" for anything that isn't ExCall/
+      -- ExMethodCall — matching the old compiler exactly, not improving on
+      -- it, since that's this fix's confirmed reference behaviour).
+      SsaConst expr ->
+        case classifyExpr (ccEnv ctx) expr of
+          SuspendCall -> CatSuspend (effectName expr []) []
+          PureCall    -> CatCall (T.toLower (calleeName expr)) []
       _ -> CatAssignWithRhs (renderSsaVar sv) (ssaValToExpr rhs)
   | otherwise = CatAssignWithRhs (renderSsaVar sv) (ssaValToExpr rhs)
 

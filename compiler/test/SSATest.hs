@@ -3,7 +3,8 @@ module SSATest (tests) where
 
 import PB.Prelude
 import PB.AST.BodyStmt
-import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..),
+                            DispatchExpr (..), DispatchMode (..))
 import PB.AST.Located      (Located (..))
 import PB.AST.Type          (PbType (..))
 import PB.Analysis.SSA
@@ -304,6 +305,23 @@ tests = testGroup "SSA"
             svName sv @?= "_"
             map (\(LvSegment n _) -> n) (segments lv) @?= ["m_ole_frame::destroy"]
           other -> assertBool ("expected one SsaConst ExCall assign, got: " <> show other) False
+
+    -- BsCall (ExDispatch) — standalone `.Post`/`.Trigger`/`Dynamic ... Event(...)`
+    -- (PB's inter-object messaging idiom). stmtToAssigns's BsCall case is
+    -- expr-agnostic (SsaAssign (SsaVar "_" 0) (SsaConst expr) regardless of
+    -- expr's constructor), so this already worked before Plan 145's ExDispatch
+    -- fix — the confirmed bug was one layer down, in CatOp.compileAssign. Kept
+    -- here as an explicit regression guard for the SSA layer's expr-agnosticism.
+    , testCase "BsCall (ExDispatch) → assign with SsaConst (ExDispatch ...)" $ do
+        let dispatchExpr = ExDispatch (DispatchExpr
+              { object = Just (lv1 "ParentWindow"), mode = DmPost, dynamic = True
+              , event = False, name = "of_run_report", args = [] })
+            sa = buildSsa emptyEnv "proc" [at 1 (BsCall dispatchExpr)]
+        case sbAssigns (entryBlock sa) of
+          [SsaAssign sv (SsaConst e)] -> do
+            svName sv @?= "_"
+            e @?= dispatchExpr
+          other -> assertBool ("expected one SsaConst ExDispatch assign, got: " <> show other) False
     ]
 
   , testGroup "classifyExpr effect names"
