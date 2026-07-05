@@ -15,6 +15,7 @@ import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
+import qualified Data.List       as L
 import Test.Tasty           (TestTree, testGroup)
 import Test.Tasty.HUnit     (assertBool, assertEqual, testCase, (@?=))
 
@@ -132,6 +133,31 @@ isCallishNode _          = False
 isAsgnNode :: ShapeNode -> Bool
 isAsgnNode (SAsgn _) = True
 isAsgnNode _         = False
+
+-- | Enumerate every root-to-@SRet@ path through a canonicalized shape list, as the
+-- sorted list of "how many callish nodes (SCall\/SCProc\/SSusp) are traversed before
+-- reaching a return" on each path. Deliberately architecture-agnostic: it doesn't care
+-- whether a compiler shares one physical node across two predecessors or duplicates it
+-- (both give the same per-path counts), only whether every path's *required* content is
+-- actually reachable. Used by the Plan 145 Bug A regression tests below instead of exact
+-- shape equality, since fixing 'PB.Analysis.CatOp.compileBlock' to stop dropping content
+-- also stopped it from matching the old compiler's specific physical node-sharing
+-- pattern — a separate, not-yet-implemented architectural gap (see
+-- doc/plan/145-dual-cps-debug.md), not a correctness regression. Assumes a DAG (no
+-- SNop/SGoto back-edges) — fine for the non-loop shapes these tests construct.
+pathCallCounts :: [ShapeNode] -> [Int]
+pathCallCounts nodes = L.sort (go 0 0)
+  where
+    at i = nodes P.!! i
+    go i acc = case at i of
+      SRet         -> [acc]
+      SAsgn n      -> go n acc
+      SGoto n      -> go n acc
+      SNop n       -> if n P.< 0 then [acc] else go n acc
+      SCall n      -> go n (acc P.+ 1)
+      SCProc n     -> go n (acc P.+ 1)
+      SSusp _ n    -> go n (acc P.+ 1)
+      SBrnch t f   -> go t acc P.++ go f acc
 
 -- | Environment with datawindow and transaction typed variables.
 dwEnv :: ScopedTypeEnv
@@ -809,5 +835,71 @@ tests = testGroup "CatOp"
             graph = compileProcedureViaCatOp emptyEnv Set.empty body
             hasAssignNode = any (\n -> case n of CpsAssign {} -> True; _ -> False) (cgNodes graph)
         in assertBool "should contain no CpsAssign node" (not hasAssignNode)
+    ]
+
+  , testGroup "compileBlock memoization: shared-tail content survives on every predecessor (Plan 145 Bug A)"
+    -- PB.Analysis.CatOp.compileBlock's `Set.member blockId visited = (CatId, visited)`
+    -- (a global registry to avoid re-descending into an already-compiled block) returns
+    -- a no-op identity morphism on any revisit instead of the block's actual compiled
+    -- content. This is only safe when the shared block is a bare empty return; for any
+    -- block with real assigns/calls, the second (and later) predecessor to reach it
+    -- silently drops that content. Confirmed via direct buildCfg/buildSsa hand-tracing
+    -- (the SSA/CFG layer is correct; the bug is introduced here) against real corpus
+    -- procedures (w_dw_functions::clicked, w_frame_menu_functions::destroy — see
+    -- doc/plan/145-dual-cps-debug.md §Findings — Root cause found).
+    -- Assertions compare 'pathCallCounts' (root-to-return call counts per path), not
+    -- raw shape equality, against the old compiler: the fix stops content from being
+    -- silently dropped, but it does not (and isn't trying to) replicate the old
+    -- compiler's specific physical node-sharing — GraphBuilder's CatOp/LowCat lowering
+    -- has no node-level memoization of its own, so a merge block reached by more than
+    -- one predecessor gets emitted once per predecessor (duplicated) rather than shared
+    -- as a single physical node. Both are semantically correct; only exact
+    -- `--dual-cps` node-count parity is affected (tracked separately, not this fix's
+    -- goal — see doc/plan/145-dual-cps-debug.md §Findings — Root cause found).
+    [ testCase "if without else: trailing calls after merge execute regardless of branch" $
+        -- Mirrors w_frame_menu_functions::destroy: the implicit "condition false"
+        -- edge and the then-arm's fallthrough both converge on the same merge block,
+        -- which holds the real trailing calls. Pre-fix, the else-path reached SRet
+        -- directly (0 calls) instead of the required callB+callC (2 calls).
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            body = [ Located 1 (BsIf (IfStmt (ExBool True) [Located 2 (BsCall (call "callA"))] [] Nothing))
+                   , Located 3 (BsCall (call "callB"))
+                   , Located 4 (BsCall (call "callC"))
+                   ]
+            oldShape = canonicalize (compileProcedure emptyEnv Set.empty body)
+            newShape = canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in pathCallCounts newShape @?= pathCallCounts oldShape
+
+    , testCase "if/else, both arms: shared trailing calls survive on both paths" $
+        -- Mirrors the mechanism behind w_dw_functions::clicked: both the then-arm and
+        -- the else-arm converge on the same merge block holding real trailing calls.
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            body = [ Located 1 (BsIf (IfStmt (ExBool True)
+                       [Located 2 (BsCall (call "callA"))] []
+                       (Just [Located 3 (BsCall (call "callB"))])))
+                   , Located 4 (BsCall (call "callC"))
+                   , Located 5 (BsCall (call "callD"))
+                   ]
+            oldShape = canonicalize (compileProcedure emptyEnv Set.empty body)
+            newShape = canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in pathCallCounts newShape @?= pathCallCounts oldShape
+
+    , testCase "nested if inside if/else with shared trailing calls (real corpus shape: w_dw_functions::clicked)" $
+        -- Mirrors the exact real-world procedure this bug was root-caused from:
+        -- an outer if containing an inner if/else, followed by two more calls that
+        -- both inner arms must reach.
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            innerIf = BsIf (IfStmt (ExBool True)
+                        [Located 3 (BsCall (call "callA"))] []
+                        (Just [Located 4 (BsCall (call "callB"))]))
+            body = [ Located 1 (BsIf (IfStmt (ExBool True)
+                       [ Located 2 innerIf
+                       , Located 5 (BsCall (call "callC"))
+                       , Located 6 (BsCall (call "callD"))
+                       ] [] Nothing))
+                   ]
+            oldShape = canonicalize (compileProcedure emptyEnv Set.empty body)
+            newShape = canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in pathCallCounts newShape @?= pathCallCounts oldShape
     ]
   ]

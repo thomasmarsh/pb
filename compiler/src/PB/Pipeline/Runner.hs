@@ -436,10 +436,12 @@ runInspect target allProcs =
   -- Optional ":N" suffix selects the Nth (0-based) candidate by source
   -- position instead of the auto-picked "first that differs" one — needed
   -- when a name is ambiguous across several candidates that all differ
-  -- (Plan 145: w_dw_functions::clicked has 9 "clicked" handlers).
-  case T.splitOn ":" target of
-    [objProc, idxTxt] | Just idx <- readMaybe (T.unpack idxTxt) ->
-      runInspectOn objProc (Just idx) allProcs
+  -- (Plan 145: w_dw_functions::clicked has 9 "clicked" handlers). Split on the
+  -- *last* ":" only (not every ":" — "obj::proc" already contains two).
+  let (beforeLastColon, idxTxt) = T.breakOnEnd ":" target
+      objProc = T.dropEnd 1 beforeLastColon
+  in case readMaybe (T.unpack idxTxt) of
+    Just idx | not (T.null beforeLastColon) -> runInspectOn objProc (Just idx) allProcs
     _ -> runInspectOn target Nothing allProcs
 
 runInspectOn

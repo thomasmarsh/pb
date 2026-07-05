@@ -329,13 +329,17 @@ data CompileCtx = CompileCtx
 --   * Back-edges: CatInl (continue loop) / CatInr (break loop)
 --   * Calls: classified via 'classifyExpr'; pure → 'CatCall', suspend → 'CatSuspend'
 --
--- The visited set is threaded globally through all branches to prevent
--- double-compilation of shared successor blocks (O(V+E) instead of exponential).
+-- A memo cache (blockId -> its already-compiled CatOp value) is threaded globally
+-- through all branches to prevent double-compilation of shared successor blocks
+-- (O(V+E) instead of exponential) while still returning the block's real content —
+-- not a no-op — to every predecessor that reaches it (Plan 145 Bug A: a bare
+-- Set-of-visited-ids design returned CatId on a revisit, silently dropping any real
+-- assigns/calls/branches in a block reached by more than one forward predecessor).
 compileSsa :: ScopedTypeEnv -> Set.Set Text -> SsaProc -> CatOp () ()
 compileSsa env userFns proc =
   let ctx     = CompileCtx env userFns
       headers = computeLoopHeaders proc
-      (result, _finalVisited) = compileBlock ctx proc (spEntry proc) Set.empty headers Nothing
+      (result, _finalMemo) = compileBlock ctx proc (spEntry proc) Map.empty headers Nothing
   in result
 
 -- | Extract all destination blocks from an SSA terminator.
@@ -422,33 +426,49 @@ determineLoopExitTarget proc headerId =
        (exitTarget : _) -> exitTarget
        []               -> ""
 
--- | Main compiler orchestrator. Returns @(CatOp, updatedVisited)@ to
--- thread the global visited set across all branches.
+-- | Main compiler orchestrator. Returns @(CatOp, updatedMemo)@ to thread the global
+-- memo across all branches.
+--
+-- The memo caches each block's actual compiled 'CatOp' value, keyed by block id — not
+-- merely whether it has been visited (Plan 145 Bug A). A bare visited-only 'Set.Set'
+-- forces a revisit to resolve to a no-op 'CatId', which silently drops any real
+-- assigns/calls/branches for every predecessor after the first to reach an ordinary
+-- (non-loop) merge block. Caching the real value instead preserves both correctness
+-- (every predecessor gets the actual content) and the O(V+E) compile-time bound the
+-- registry exists for (each block's value is still computed at most once) — safe
+-- because 'computeLoopHeaders' already routes every genuine back-edge to the
+-- 'compileLoopBody' path below, so a block reached via this "otherwise" case can never
+-- legitimately cycle back to its own not-yet-cached entry.
 compileBlock :: CompileCtx -> SsaProc
-             -> Text              -- ^ Current block ID
-             -> Set.Set Text      -- ^ Global visited registry
-             -> Set.Set Text      -- ^ Pre-computed loop headers
-             -> Maybe Text        -- ^ Active loop header context
-             -> (CatOp () (), Set.Set Text)
-compileBlock ctx proc blockId visited headers activeLoop
-  | Just blockId == activeLoop = (CatId, visited)
-  | Set.member blockId visited = (CatId, visited)
+             -> Text                          -- ^ Current block ID
+             -> Map.Map Text (CatOp () ())    -- ^ Global memo: blockId -> its compiled value
+             -> Set.Set Text                  -- ^ Pre-computed loop headers
+             -> Maybe Text                    -- ^ Active loop header context
+             -> (CatOp () (), Map.Map Text (CatOp () ()))
+compileBlock ctx proc blockId memo headers activeLoop
+  | Just blockId == activeLoop = (CatId, memo)
+  | Just cached <- Map.lookup blockId memo = (cached, memo)
   | Set.member blockId headers =
-      let (loopBodyOp, visitedFromLoop) = compileLoopBody ctx proc blockId visited headers (Just blockId)
+      let (loopBodyOp, visitedFromLoop) = compileLoopBody ctx proc blockId (Map.keysSet memo) headers (Just blockId)
+          -- compileLoopBody is not part of this fix (Plan 145 Bug A tracks only the
+          -- non-loop "otherwise" case below); preserve its prior behaviour exactly by
+          -- marking every block it touched as CatId for any later revisit from the
+          -- post-loop continuation, matching what the old Set-based registry did here.
+          memoFromLoop = Map.union memo (Map.fromSet (const CatId) visitedFromLoop)
           exitBlockId = determineLoopExitTarget proc blockId
-          (postLoopOp, finalVisited) = compileBlock ctx proc exitBlockId visitedFromLoop headers activeLoop
-      in (postLoopOp . CatLoop loopBodyOp, finalVisited)
+          (postLoopOp, finalMemo) = compileBlock ctx proc exitBlockId memoFromLoop headers activeLoop
+      in (postLoopOp . CatLoop loopBodyOp, finalMemo)
   | otherwise = case Map.lookup blockId (spBlocks proc) of
-      Nothing    -> (CatId, visited)
+      Nothing    -> (CatId, memo)
       Just block ->
-        let visited'   = Set.insert blockId visited
-            assignsOp  = compileAssigns ctx (sbAssigns block)
-            (termOp, finalVisited) = compileTerm ctx proc blockId visited' headers activeLoop (sbTerm block)
+        let assignsOp  = compileAssigns ctx (sbAssigns block)
+            (termOp, memo1) = compileTerm ctx proc blockId memo headers activeLoop (sbTerm block)
             result = case (assignsOp, termOp) of
                        (CatId, _) -> termOp
                        (_, CatId) -> assignsOp
                        _          -> termOp . assignsOp
-        in (result, finalVisited)
+            memo2 = Map.insert blockId result memo1
+        in (result, memo2)
 
 -- | Compile the body of a loop. Returns @(CatOp () (Either () ()), visited)@:
 --   * @Left ()@ — continue the loop (back-edge or continue)
@@ -496,22 +516,22 @@ compilePhiAssignments ctx proc prevBlock currentBlock =
         []              -> Nothing
 
 -- | Standard terminators (outside loops). Injects phi resolution before target blocks.
--- Returns @(CatOp, updatedVisited)@ to thread the global registry.
-compileTerm :: CompileCtx -> SsaProc -> Text -> Set.Set Text -> Set.Set Text
-            -> Maybe Text -> SsaTerm -> (CatOp () (), Set.Set Text)
-compileTerm _ctx _proc _blockId visited _headers _activeLoop (SsaReturn _) = (CatId, visited)
-compileTerm ctx proc blockId visited headers activeLoop (SsaGoto target) =
-  let (targetOp, v1) = compileBlock ctx proc target visited headers activeLoop
-  in (targetOp . compilePhiAssignments ctx proc blockId target, v1)
-compileTerm ctx proc blockId visited headers activeLoop (SsaBranch cond t f) =
-  let (tOp, v1) = compileBlock ctx proc t visited headers activeLoop
-      (fOp, v2) = compileBlock ctx proc f v1 headers activeLoop
+-- Returns @(CatOp, updatedMemo)@ to thread the global memo (see 'compileBlock').
+compileTerm :: CompileCtx -> SsaProc -> Text -> Map.Map Text (CatOp () ()) -> Set.Set Text
+            -> Maybe Text -> SsaTerm -> (CatOp () (), Map.Map Text (CatOp () ()))
+compileTerm _ctx _proc _blockId memo _headers _activeLoop (SsaReturn _) = (CatId, memo)
+compileTerm ctx proc blockId memo headers activeLoop (SsaGoto target) =
+  let (targetOp, m1) = compileBlock ctx proc target memo headers activeLoop
+  in (targetOp . compilePhiAssignments ctx proc blockId target, m1)
+compileTerm ctx proc blockId memo headers activeLoop (SsaBranch cond t f) =
+  let (tOp, m1) = compileBlock ctx proc t memo headers activeLoop
+      (fOp, m2) = compileBlock ctx proc f m1 headers activeLoop
       combined  = branch (ssaValToExpr cond)
                     (tOp . compilePhiAssignments ctx proc blockId t)
                     (fOp . compilePhiAssignments ctx proc blockId f)
-  in (combined, v2)
-compileTerm _ctx _proc _ visited _ _ SsaBreak    = (CatId, visited)
-compileTerm _ctx _proc _ visited _ _ SsaContinue = (CatId, visited)
+  in (combined, m2)
+compileTerm _ctx _proc _ memo _ _ SsaBreak    = (CatId, memo)
+compileTerm _ctx _proc _ memo _ _ SsaContinue = (CatId, memo)
 
 -- | Loop terminators. Returns @(CatOp () (Either () ()), visited)@.
 compileLoopTerm :: CompileCtx -> SsaProc -> Text -> Set.Set Text -> Set.Set Text
