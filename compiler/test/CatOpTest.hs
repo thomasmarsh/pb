@@ -4,7 +4,7 @@ import PB.Prelude hiding (id, (.))
 import qualified Prelude as P
 import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Type         (PbType (..))
-import PB.AST.BodyStmt     (BodyStmt (..), PbCall (..), IfStmt (..))
+import PB.AST.BodyStmt     (BodyStmt (..), PbCall (..), IfStmt (..), ForStmt (..), DoStmt (..), DoCondition (..))
 import PB.AST.Located      (Located (..))
 import PB.Analysis.CatOp
 import PB.Analysis.CpsCompile (ShapeNode (..), canonicalize)
@@ -115,6 +115,22 @@ hasAnyCatCall (CatFanIn f g)   = hasAnyCatCall f P.|| hasAnyCatCall g
 hasAnyCatCall (CatLoop f)      = hasAnyCatCall f
 hasAnyCatCall (CatTry f g)     = hasAnyCatCall f P.|| hasAnyCatCall g
 hasAnyCatCall _                = False
+
+-- | ShapeNode predicates for the (Plan 145 SSA fix) for/do-loop tests.
+-- SCall/SCProc are treated as equivalent (pure tag-naming divergence — see
+-- Phase 1B's category breakdown in doc/plan/145-dual-cps-debug.md).
+isBrnchNode :: ShapeNode -> Bool
+isBrnchNode (SBrnch {}) = True
+isBrnchNode _           = False
+
+isCallishNode :: ShapeNode -> Bool
+isCallishNode (SCall _)  = True
+isCallishNode (SCProc _) = True
+isCallishNode _          = False
+
+isAsgnNode :: ShapeNode -> Bool
+isAsgnNode (SAsgn _) = True
+isAsgnNode _         = False
 
 -- | Environment with datawindow and transaction typed variables.
 dwEnv :: ScopedTypeEnv
@@ -648,5 +664,52 @@ tests = testGroup "CatOp"
             catTree = CatLoop innerBranch :: CatOp () ()
             graph   = buildCpsGraph catTree
         in canonicalize graph @?= [SNop 1, SBrnch 2 3, SAsgn 4, SGoto 5, SGoto 0, SRet]
+    ]
+
+  , testGroup "for/do-loop header collapse (Plan 145 post-Finding-A block-collapse bug)"
+    -- Root cause: PB.Analysis.CfgBuild.lowerFor/lowerDo (top-condition) flush the
+    -- raw BsFor/BsDo node onto the *predecessor* block and give the actual
+    -- condition/header block zero statements of its own. SSA.cfgTermToSsa used to
+    -- look for a control statement only in the header block's own stmts, find
+    -- none, and fall back to `SsaReturn Nothing` (the header has two edges, not
+    -- one) — silently truncating the whole procedure at the first loop. Confirmed
+    -- via a read-only GHCi hand-trace of u_ddcal::enter_day_numbers (old=17
+    -- nodes, new=1 — collapsed to bare [SRet]) before writing these tests.
+    -- Exact bit-for-bit parity with the old compiler is still blocked by a
+    -- separate, distinct root cause found while writing these tests:
+    -- PB.Analysis.CatOp.compileLoopLowCat unconditionally allocates a
+    -- persistent loop-header CpsNop as a forward-reference placeholder, then
+    -- re-patches it with *another* forwarding CpsNop instead of collapsing it
+    -- away once the real target is known (the old compiler's equivalent
+    -- forward-reference trick, in CpsCompile.hs's BsFor case, patches the
+    -- placeholder directly with the real CpsBranch node, leaving no residual
+    -- hop). That is a CatLoop-lowering issue, not an SSA-construction one —
+    -- out of scope here, logged to BACKLOG as a follow-up (same family as
+    -- Finding A, but for loop entries instead of branch joins). These tests
+    -- assert the properties the SSA fix actually guarantees: the loop's
+    -- condition, body call, init, and increment are all real, present nodes
+    -- (nothing vanishes), independent of the extra cosmetic Nop/Goto hops.
+    [ testCase "for loop containing one call: condition, body, init, and increment are all preserved" $
+        let body = [Located 1 (BsFor (ForStmt (Lvalue [LvSegment "li_count" Nothing])
+                      (ExInt "1") (ExInt "10") Nothing
+                      [Located 2 (BsCall (ExCall (Lvalue [LvSegment "foo" Nothing]) []))]))]
+            shape = canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in do
+          assertEqual "exactly one branch (the loop condition check)"
+            1 (length (filter isBrnchNode shape))
+          assertEqual "exactly one call node (the loop body)"
+            1 (length (filter isCallishNode shape))
+          assertEqual "exactly two assigns (init + increment)"
+            2 (length (filter isAsgnNode shape))
+
+    , testCase "do-while loop containing one call: condition and body are preserved" $
+        let body = [Located 1 (BsDo (DoStmt (Just (DoWhile (ExBool True)))
+                      [Located 2 (BsCall (ExCall (Lvalue [LvSegment "foo" Nothing]) []))] Nothing))]
+            shape = canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in do
+          assertEqual "exactly one branch (the loop condition check)"
+            1 (length (filter isBrnchNode shape))
+          assertEqual "exactly one call node (the loop body)"
+            1 (length (filter isCallishNode shape))
     ]
   ]

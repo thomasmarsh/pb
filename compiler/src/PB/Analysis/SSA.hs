@@ -124,11 +124,13 @@ buildSsa _env procName stmts =
       blockMap  = Map.fromList [ (cbId b, b) | b <- cfgBlocks cfg ]
       predMap   = buildPredMap (cfgEdges cfg)
       edgeMap   = buildEdgeMap (cfgEdges cfg)
+      headerStmts   = findLoopHeaderStmts edgeMap blockMap
+      backEdgeStmts = findLoopBackEdgeStmts (cfgEdges cfg) headerStmts
       idom      = computeIdom entry blockIds predMap
       dfMap     = computeDF blockIds predMap idom
       varDefs   = findVarDefs blockMap
       phis0     = placePhis dfMap varDefs
-      rawBlocks = Map.mapWithKey (cfgBlockToSsa edgeMap) blockMap
+      rawBlocks = Map.mapWithKey (cfgBlockToSsa edgeMap headerStmts backEdgeStmts) blockMap
       domTree   = buildDomTree idom entry
       succMap   = buildSuccMap (cfgEdges cfg)
       initRename = RenameState
@@ -297,16 +299,67 @@ placePhis dfMap varDefs =
 -- Step 6: Convert CFG blocks to SSA blocks (pre-rename)
 -- ============================================================================
 
-cfgBlockToSsa :: Map.Map Text [CfgEdge] -> Text -> CfgBlock -> SsaBlock
-cfgBlockToSsa edgeMap label blk =
-  let assigns = concatMap (stmtToAssigns . locNode) (cbStmts blk)
+cfgBlockToSsa :: Map.Map Text [CfgEdge] -> Map.Map Text BodyStmt -> Map.Map Text BodyStmt
+              -> Text -> CfgBlock -> SsaBlock
+cfgBlockToSsa edgeMap headerStmts backEdgeStmts label blk =
+  let ownAssigns  = concatMap (stmtToAssigns . locNode) (cbStmts blk)
+      incrAssigns = case Map.lookup label backEdgeStmts of
+        Just (BsFor (ForStmt var _ _ mStep _)) ->
+          [ SsaAssign (SsaVar (lvHead var) 0)
+              (SsaBinOp BopAdd (SsaVarRef (SsaVar (lvHead var) 0))
+                                (exprToSsaVal (fromMaybe (ExInt "1") mStep))) ]
+        _ -> []
+      assigns  = ownAssigns ++ incrAssigns
       outEdges = Map.findWithDefault [] label edgeMap
-      term = cfgTermToSsa outEdges (cbStmts blk)
+      term     = cfgTermToSsa (Map.lookup label headerStmts) outEdges (cbStmts blk)
   in SsaBlock assigns term
+
+-- | The counterpart to 'findLoopHeaderStmts': @lowerFor@ never synthesizes an
+-- increment statement anywhere in the CFG (the old compiler builds it
+-- procedurally, by hand, in 'PB.Analysis.CpsCompile'). This maps each loop
+-- body's back-edge-source block id to the originating @BsFor@ node, so
+-- 'cfgBlockToSsa' can append the missing @i = i + step@ assign to that
+-- block — the same synthesis the old compiler performs explicitly.
+-- @BsDo@ has no implicit increment, so it never matches in 'cfgBlockToSsa'.
+findLoopBackEdgeStmts :: [CfgEdge] -> Map.Map Text BodyStmt -> Map.Map Text BodyStmt
+findLoopBackEdgeStmts edges headerStmts = Map.fromList
+  [ (ceSrc e, stmt)
+  | e <- edges
+  , ceLabel e == "loop"
+  , Just stmt <- [Map.lookup (ceDst e) headerStmts]
+  ]
+
+-- | 'PB.Analysis.CfgBuild.lowerFor'/'lowerDo' (top-condition variant) flush the
+-- raw @BsFor@/@BsDo@ AST node onto the block /preceding/ the loop, then
+-- allocate a fresh, empty header block that carries the real T/F branch
+-- edges. A block's own statements are therefore not enough to tell
+-- 'cfgTermToSsa' that a given block is a loop header — this precomputes,
+-- for each such header block id, the originating loop statement so the
+-- condition can be reconstructed for it specifically (see the header-only
+-- fallback in 'cfgTermToSsa').
+findLoopHeaderStmts :: Map.Map Text [CfgEdge] -> Map.Map Text CfgBlock -> Map.Map Text BodyStmt
+findLoopHeaderStmts edgeMap blockMap = Map.fromList
+  [ (headerId, loopStmt)
+  | blk <- Map.elems blockMap
+  , Just loopStmt <- [trailingLoopStmt (cbStmts blk)]
+  , [e] <- [Map.findWithDefault [] (cbId blk) edgeMap]
+  , let headerId = ceDst e
+  ]
+  where
+    trailingLoopStmt stmts = case map locNode (reverse stmts) of
+      (s@(BsFor {}) : _)                            -> Just s
+      (s@(BsDo (DoStmt (Just _) _ _)) : _)          -> Just s
+      _                                              -> Nothing
 
 stmtToAssigns :: BodyStmt -> [SsaAssign]
 stmtToAssigns (BsAssign lv expr) =
   [SsaAssign (SsaVar (lvHead lv) 0) (exprToSsaVal expr)]
+-- The old compiler synthesizes the loop variable's init assign by hand
+-- (CpsCompile.hs's BsFor case); the new pipeline needs the same thing here,
+-- since this is the one block that legitimately owns the raw BsFor node in
+-- its own cbStmts (CfgBuild.lowerFor flushes it onto the pre-loop block).
+stmtToAssigns (BsFor (ForStmt var from _ _ _)) =
+  [SsaAssign (SsaVar (lvHead var) 0) (exprToSsaVal from)]
 stmtToAssigns (BsLocalVar _ _ varName (Just expr)) =
   [SsaAssign (SsaVar (T.toLower varName) 0) (exprToSsaVal expr)]
 stmtToAssigns (BsLocalVar {}) = []
@@ -348,8 +401,8 @@ exprToSsaVal (ExNot e)         = SsaNot (exprToSsaVal e)
 exprToSsaVal (ExLvalue lv)     = SsaVarRef (SsaVar (lvHead lv) 0)
 exprToSsaVal e                 = SsaConst e
 
-cfgTermToSsa :: [CfgEdge] -> [Located BodyStmt] -> SsaTerm
-cfgTermToSsa edges stmts = case findControlStmt stmts of
+cfgTermToSsa :: Maybe BodyStmt -> [CfgEdge] -> [Located BodyStmt] -> SsaTerm
+cfgTermToSsa mHeaderStmt edges stmts = case findControlStmt stmts of
     Just (BsIf (IfStmt cond _ _ _)) ->
       SsaBranch (exprToSsaVal cond) (findEdgeLabel "T" edges) (findEdgeLabel "F" edges)
     Just (BsFor _) ->
@@ -363,9 +416,27 @@ cfgTermToSsa edges stmts = case findControlStmt stmts of
       SsaReturn (fmap exprToSsaVal mExpr)
     Just BsExit     -> SsaBreak
     Just BsContinue -> SsaContinue
-    _ -> case edges of
-      [e] -> SsaGoto (ceDst e)
-      _   -> SsaReturn Nothing
+    -- This block has no control statement of its own, but it may still be a
+    -- loop *header* whose condition-check lives one block back (see
+    -- 'findLoopHeaderStmts') — reconstruct the branch from there rather than
+    -- falling through to the generic (and here, wrong) `SsaReturn Nothing`.
+    _ -> case mHeaderStmt of
+      Just (BsFor (ForStmt var _ to _ _)) ->
+        SsaBranch (exprToSsaVal (ExBinOp (ExLvalue var) BopLe to))
+                  (findEdgeLabel "T" edges) (findEdgeLabel "F" edges)
+      Just (BsDo (DoStmt (Just cond) _ _)) ->
+        SsaBranch (exprToSsaVal (doCondExpr cond))
+                  (findEdgeLabel "T" edges) (findEdgeLabel "F" edges)
+      _ -> case edges of
+        [e] -> SsaGoto (ceDst e)
+        _   -> SsaReturn Nothing
+
+-- | @DoWhile@'s condition is used as-is (loop while true); @DoUntil@'s is
+-- negated (loop while /not/ true) so both compile through the same "T = keep
+-- looping" branch shape.
+doCondExpr :: DoCondition -> Expr
+doCondExpr (DoWhile e) = e
+doCondExpr (DoUntil e) = ExNot e
 
 findControlStmt :: [Located BodyStmt] -> Maybe BodyStmt
 findControlStmt [] = Nothing

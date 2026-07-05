@@ -12,7 +12,7 @@ import PB.Analysis.CallClassify (CallKind (..), classifyExpr)
 
 import qualified Data.Map.Strict as Map
 import Test.Tasty            (TestTree, testGroup)
-import Test.Tasty.HUnit      (assertBool, testCase, (@?=))
+import Test.Tasty.HUnit      (assertBool, assertEqual, testCase, (@?=))
 
 -- ---------------------------------------------------------------------------
 -- Helpers
@@ -49,6 +49,14 @@ termSuccessors (SsaBranch _ t f)   = [t, f]
 termSuccessors (SsaReturn _)       = []
 termSuccessors SsaBreak            = []
 termSuccessors SsaContinue         = []
+
+isBranchTerm :: SsaTerm -> Bool
+isBranchTerm (SsaBranch {}) = True
+isBranchTerm _              = False
+
+isBareReturnTerm :: SsaTerm -> Bool
+isBareReturnTerm (SsaReturn Nothing) = True
+isBareReturnTerm _                   = False
 
 totalAssigns :: SsaProc -> Int
 totalAssigns sa = sum [ length (sbAssigns b) | b <- Map.elems (spBlocks sa) ]
@@ -177,6 +185,38 @@ tests = testGroup "SSA"
                       [at 3 (BsAssign (lv1 "x") (ExBinOp (ExLvalue (lv1 "x")) BopAdd (ExInt "1")))]))
                   ]
         assertBool "x has phi" (elem "x" (phiVarNames sa))
+
+    , testCase "for loop header block gets SsaBranch, not a bare SsaReturn (Plan 145 block-collapse)" $ do
+        -- CfgBuild.lowerFor flushes the raw BsFor node onto the *predecessor*
+        -- block and gives the actual condition/header block zero statements
+        -- of its own. cfgTermToSsa used to look for a control statement only
+        -- in the header block's own stmts, find none, and fall back to
+        -- `SsaReturn Nothing` (since the header has two edges, not one) —
+        -- silently terminating the whole procedure at the first loop.
+        let sa = buildSsa emptyEnv "proc"
+                  [ at 1 (BsFor (ForStmt (lv1 "i") (ExInt "1") (ExInt "10") Nothing
+                      [at 2 (BsAssign (lv1 "x") (ExInt "0"))]))]
+            terms = map sbTerm (Map.elems (spBlocks sa))
+        assertBool "some block has a branch (the loop condition check)"
+          (any isBranchTerm terms)
+        -- Exactly one block may legitimately be a bare `return nothing` — the
+        -- true end-of-procedure exit after the loop. The bug produced a
+        -- *second* one at the loop header, silently truncating everything
+        -- downstream of it.
+        assertEqual "only the true end-of-procedure exit is a bare return"
+          1 (length (filter isBareReturnTerm terms))
+
+    , testCase "do-while loop header block gets SsaBranch, not a bare SsaReturn (Plan 145 block-collapse)" $ do
+        -- Same root cause as the BsFor case above: lowerDo's top-condition
+        -- variant creates an empty header block with two edges.
+        let sa = buildSsa emptyEnv "proc"
+                  [ at 1 (BsDo (DoStmt (Just (DoWhile (ExBool True)))
+                      [at 2 (BsAssign (lv1 "x") (ExInt "0"))] Nothing))]
+            terms = map sbTerm (Map.elems (spBlocks sa))
+        assertBool "some block has a branch (the loop condition check)"
+          (any isBranchTerm terms)
+        assertEqual "only the true end-of-procedure exit is a bare return"
+          1 (length (filter isBareReturnTerm terms))
     ]
 
   , testGroup "structural invariants"
