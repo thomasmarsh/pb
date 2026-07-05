@@ -714,13 +714,34 @@ compileBranchDiamondLowCat cond tOp fOp nextPc = do
   thenEntryPc <- compileLowCatToCps tOp joinPc
   allocateNode (CpsBranch { brCond = cond, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
 
--- | Compile a loop: allocate header nop, compile body with back-edge, patch header.
+-- | Compile a loop: reserve a header pc, compile the body with a back-edge
+-- to it, then patch the reserved pc directly with the header's real content
+-- (typically a 'CpsBranch') instead of forwarding to a separately-allocated
+-- node. Mirrors 'PB.Analysis.CpsCompile'\'s @BsFor@\/@BsDo@ pattern: emit a
+-- placeholder pc, then @patchNode@ it in place once the real content is
+-- known — no residual hop (Plan 145).
 compileLoopLowCat :: LowCat -> Int -> GraphBuilder Int
 compileLoopLowCat body nextPc = do
   loopHeaderPc <- allocateNode (CpsNop { npNext = -1 })
+  patchLoopHeaderLowCat body loopHeaderPc nextPc
+  return loopHeaderPc
+
+-- | Compile the loop's header\/body content, patching the reserved
+-- 'loopHeaderPc' directly with the node the header produces (a 'CpsBranch'
+-- for for\/while loops — the common case) rather than allocating a fresh pc
+-- and leaving 'loopHeaderPc' as a forwarding 'CpsNop'. Falls back to the old
+-- forwarding-'CpsNop' behaviour for any other shape (e.g. a headerless
+-- infinite @do...loop@), which is unchanged from before this fix.
+patchLoopHeaderLowCat :: LowCat -> Int -> Int -> GraphBuilder ()
+patchLoopHeaderLowCat (LCompose g f) loopHeaderPc nextPc
+  | Just (tOp, fOp) <- inspectBranchLowCat g = do
+      let branchCond = extractCondLowCat f
+      elseEntryPc <- compileLoopBodyLowCat fOp loopHeaderPc nextPc
+      thenEntryPc <- compileLoopBodyLowCat tOp loopHeaderPc nextPc
+      registerNodeAt loopHeaderPc (CpsBranch { brCond = branchCond, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
+patchLoopHeaderLowCat body loopHeaderPc nextPc = do
   bodyEntryPc <- compileLoopBodyLowCat body loopHeaderPc nextPc
   registerNodeAt loopHeaderPc (CpsNop { npNext = bodyEntryPc })
-  return loopHeaderPc
 
 -- | Compile a loop body, translating LInl → back-edge goto, LInr → break goto.
 compileLoopBodyLowCat :: LowCat -> Int -> Int -> GraphBuilder Int

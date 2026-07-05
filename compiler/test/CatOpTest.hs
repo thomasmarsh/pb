@@ -658,12 +658,20 @@ tests = testGroup "CatOp"
         -- Direct CatOp construction (bypassing SSA/BsFor) isolates
         -- compileLoopBodyLowCat's branch case from an unrelated, separate bug
         -- where a for-loop containing an if collapses entirely (logged to BACKLOG).
+        --
+        -- Also verifies the compileLoopLowCat header-patch fix (Plan 145,
+        -- "u_ddcal root cause and fix" follow-up): the loop header used to
+        -- allocate a persistent CpsNop placeholder and re-patch it with a
+        -- *forwarding* CpsNop to a separately-allocated CpsBranch, instead of
+        -- resolving the placeholder to the branch node in place. Since this
+        -- loop's body is itself exactly a branch, the header IS that branch —
+        -- no SNop should appear at all.
         let innerBranch = branch (ExBool True)
               (CatCompose CatInl (CatAssignWithRhs "x_1" (ExInt "1")) :: CatOp () (Either () ()))
               (CatInr :: CatOp () (Either () ()))
             catTree = CatLoop innerBranch :: CatOp () ()
             graph   = buildCpsGraph catTree
-        in canonicalize graph @?= [SNop 1, SBrnch 2 3, SAsgn 4, SGoto 5, SGoto 0, SRet]
+        in canonicalize graph @?= [SBrnch 1 2, SAsgn 3, SGoto 4, SGoto 0, SRet]
     ]
 
   , testGroup "for/do-loop header collapse (Plan 145 post-Finding-A block-collapse bug)"
@@ -675,20 +683,27 @@ tests = testGroup "CatOp"
     -- one) — silently truncating the whole procedure at the first loop. Confirmed
     -- via a read-only GHCi hand-trace of u_ddcal::enter_day_numbers (old=17
     -- nodes, new=1 — collapsed to bare [SRet]) before writing these tests.
-    -- Exact bit-for-bit parity with the old compiler is still blocked by a
-    -- separate, distinct root cause found while writing these tests:
-    -- PB.Analysis.CatOp.compileLoopLowCat unconditionally allocates a
-    -- persistent loop-header CpsNop as a forward-reference placeholder, then
-    -- re-patches it with *another* forwarding CpsNop instead of collapsing it
-    -- away once the real target is known (the old compiler's equivalent
-    -- forward-reference trick, in CpsCompile.hs's BsFor case, patches the
-    -- placeholder directly with the real CpsBranch node, leaving no residual
-    -- hop). That is a CatLoop-lowering issue, not an SSA-construction one —
-    -- out of scope here, logged to BACKLOG as a follow-up (same family as
-    -- Finding A, but for loop entries instead of branch joins). These tests
-    -- assert the properties the SSA fix actually guarantees: the loop's
+    --
+    -- A second, distinct root cause was found while writing these tests and is
+    -- now fixed: PB.Analysis.CatOp.compileLoopLowCat used to unconditionally
+    -- allocate a persistent loop-header CpsNop as a forward-reference
+    -- placeholder, then re-patch it with *another* forwarding CpsNop instead of
+    -- resolving it to the real CpsBranch in place. Fixed by patching the
+    -- reserved header pc directly with the branch node (mirroring
+    -- CpsCompile.hs's BsFor patchNode pattern) via the new
+    -- patchLoopHeaderLowCat helper — see "no unconditional join CpsNop (Plan
+    -- 145 Finding A)" → "branch inside a loop body has no join CpsNop" above
+    -- for the isolated regression test.
+    --
+    -- Still open, out of scope here (logged to BACKLOG): compileLoopBodyLowCat's
+    -- LInl/LInr cases still allocate a genuine CpsGoto node for the implicit
+    -- loop back-edge/break, where the old compiler routes continue/break
+    -- directly to the real target pc with no wrapper node at all. This is a
+    -- separate, smaller residual cosmetic gap (same family, different call
+    -- site) blocking full bit-for-bit --dual-cps parity on loop bodies. These
+    -- tests assert the properties the SSA fix guarantees: the loop's
     -- condition, body call, init, and increment are all real, present nodes
-    -- (nothing vanishes), independent of the extra cosmetic Nop/Goto hops.
+    -- (nothing vanishes), independent of the remaining cosmetic Goto hops.
     [ testCase "for loop containing one call: condition, body, init, and increment are all preserved" $
         let body = [Located 1 (BsFor (ForStmt (Lvalue [LvSegment "li_count" Nothing])
                       (ExInt "1") (ExInt "10") Nothing
