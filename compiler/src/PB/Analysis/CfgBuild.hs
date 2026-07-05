@@ -217,7 +217,9 @@ lowerChoose (BsChoose (ChooseStmt _ clauses)) currentId loopHead = do
   mergeId <- newBlock
   if null clauses
     then addEdge currentId mergeId ""
-    else mapM_ (oneClause mergeId) (zip [(0::Int)..] clauses)
+    else do
+      mapM_ (oneClause mergeId) (zip [(0::Int)..] clauses)
+      when (not (any (isNothing . ccExpr) clauses)) (addEdge currentId mergeId "default")
   pure mergeId
   where
     oneClause mergeId (i, clause) = do

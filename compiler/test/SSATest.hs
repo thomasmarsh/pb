@@ -10,6 +10,7 @@ import PB.AST.Type          (PbType (..))
 import PB.Analysis.SSA
 import PB.Analysis.TypeEnv  (ScopedTypeEnv (..))
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr)
+import PB.Lexing.Token      (Token (..), TokenKind (..), SourceSpan (..))
 
 import qualified Data.Map.Strict as Map
 import Test.Tasty            (TestTree, testGroup)
@@ -23,6 +24,12 @@ at n = Located n
 
 lv1 :: Text -> Lvalue
 lv1 n = Lvalue [LvSegment n Nothing]
+
+intTok :: Text -> Token
+intTok t = Token TkIntLiteral t (SourceSpan 1 1 1)
+
+strTok :: Text -> Token
+strTok t = Token TkStringDouble t (SourceSpan 1 1 1)
 
 emptyEnv :: ScopedTypeEnv
 emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty
@@ -45,11 +52,12 @@ entryBlock :: SsaProc -> SsaBlock
 entryBlock sa = getBlock sa (spEntry sa)
 
 termSuccessors :: SsaTerm -> [Text]
-termSuccessors (SsaGoto dst)       = [dst]
-termSuccessors (SsaBranch _ t f)   = [t, f]
-termSuccessors (SsaReturn _)       = []
-termSuccessors SsaBreak            = []
-termSuccessors SsaContinue         = []
+termSuccessors (SsaGoto dst)          = [dst]
+termSuccessors (SsaBranch _ t f)      = [t, f]
+termSuccessors (SsaSwitch _ pairs d)  = d : map snd pairs
+termSuccessors (SsaReturn _)          = []
+termSuccessors SsaBreak               = []
+termSuccessors SsaContinue            = []
 
 isBranchTerm :: SsaTerm -> Bool
 isBranchTerm (SsaBranch {}) = True
@@ -297,6 +305,45 @@ tests = testGroup "SSA"
                       ]
             sa = buildSsa emptyEnv "proc" [at 1 (BsChoose (ChooseStmt (ExInt "1") clauses))]
         assertBool "has at least entry + 2 clause blocks + exit" (blockCount sa >= 4)
+
+    , testCase "BsChoose 3 clauses, no else (Plan 146 Bug B) → SsaSwitch with 3 pairs, distinct default" $ do
+        let clauses = [ CaseClause (Just [intTok "1"]) [at 2 (BsAssign (lv1 "x") (ExInt "10"))]
+                      , CaseClause (Just [intTok "2"]) [at 3 (BsAssign (lv1 "x") (ExInt "20"))]
+                      , CaseClause (Just [intTok "3"]) [at 4 (BsAssign (lv1 "x") (ExInt "30"))]
+                      ]
+            sa = buildSsa emptyEnv "proc" [at 1 (BsChoose (ChooseStmt (ExLvalue (lv1 "y")) clauses))]
+        case sbTerm (entryBlock sa) of
+          SsaSwitch scrutinee pairs def -> do
+            scrutinee @?= SsaVarRef (SsaVar "y" 0)
+            map fst pairs @?= [SsaConst (ExInt "1"), SsaConst (ExInt "2"), SsaConst (ExInt "3")]
+            assertBool "default target is not one of the clause targets"
+              (def `notElem` map snd pairs)
+            assertBool "default target is a real block" (Map.member def (spBlocks sa))
+          other -> assertBool ("expected SsaSwitch, got: " <> show other) False
+
+    , testCase "BsChoose with case-else → SsaSwitch default targets the else clause's block" $ do
+        let clauses = [ CaseClause (Just [intTok "1"]) [at 2 (BsAssign (lv1 "x") (ExInt "10"))]
+                      , CaseClause Nothing              [at 3 (BsAssign (lv1 "x") (ExInt "99"))]
+                      ]
+            sa = buildSsa emptyEnv "proc" [at 1 (BsChoose (ChooseStmt (ExLvalue (lv1 "y")) clauses))]
+        case sbTerm (entryBlock sa) of
+          SsaSwitch _ pairs def -> do
+            length pairs @?= 1
+            case Map.lookup def (spBlocks sa) of
+              Just defBlock -> case sbAssigns defBlock of
+                [SsaAssign sv (SsaConst (ExInt "99"))] -> svName sv @?= "x"
+                other -> assertBool ("expected one assign of 99 to x, got: " <> show other) False
+              Nothing -> assertBool "default block must exist" False
+          other -> assertBool ("expected SsaSwitch, got: " <> show other) False
+
+    , testCase "BsChoose clause value parsed via real parseExpr, not raw ExRaw (string literal clause)" $ do
+        let clauses = [ CaseClause (Just [strTok "\"a\""]) [at 2 (BsAssign (lv1 "x") (ExInt "1"))]
+                      , CaseClause Nothing                  [at 3 (BsAssign (lv1 "x") (ExInt "2"))]
+                      ]
+            sa = buildSsa emptyEnv "proc" [at 1 (BsChoose (ChooseStmt (ExLvalue (lv1 "y")) clauses))]
+        case sbTerm (entryBlock sa) of
+          SsaSwitch _ [(val, _)] _ -> val @?= SsaConst (ExStr "a")
+          other -> assertBool ("expected SsaSwitch with one pair, got: " <> show other) False
 
     , testCase "BsPbCall (call ancestor::event) → assign with synthetic ExCall (Plan 145 Phase 1C fix)" $ do
         let sa = buildSsa emptyEnv "proc" [at 1 (BsPbCall (PbCall "m_ole_frame" "destroy"))]

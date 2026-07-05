@@ -69,7 +69,7 @@ module PB.Analysis.CatOp
 import PB.Prelude hiding (id, (.), lookup)
 import qualified Prelude as P
 import Unsafe.Coerce (unsafeCoerce)
-import PB.AST.Expr (Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Expr (Expr (..), LvSegment (..), Lvalue (..), BinOp (BopEq))
 import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExprMocked)
 import PB.Analysis.CpsCompile (CpsNode (..), CpsGraph (..), parseArgList)
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName, calleeName, isTriggerEvent, lvHead, segName)
@@ -337,77 +337,96 @@ compileSsa env userFns proc =
 
 -- | Extract all destination blocks from an SSA terminator.
 termSuccessors :: SsaTerm -> [Text]
-termSuccessors (SsaGoto t)       = [t]
-termSuccessors (SsaBranch _ t f) = [t, f]
-termSuccessors _                 = []
+termSuccessors (SsaGoto t)              = [t]
+termSuccessors (SsaBranch _ t f)        = [t, f]
+termSuccessors (SsaSwitch _ pairs def)  = def : map snd pairs
+termSuccessors _                        = []
 
 -- | Detect loop headers by DFS with onStack tracking.
 -- A loop header is any block that is the target of a back-edge
 -- (an edge to a block already on the current DFS path).
+--
+-- The 'visited' set is threaded across sibling successors (via 'foldl''), not
+-- reset per-sibling — each block is fully explored at most once across the whole
+-- walk, giving O(V+E). A per-sibling reset was fine when every block had at most
+-- one real successor (a 'choose case' always collapsed to a single 'SsaGoto' —
+-- Plan 145 Bug B), but 'SsaSwitch' genuinely fans out to N clause targets that
+-- reconverge at one merge block; without this threading, that shared downstream
+-- region gets re-explored from scratch once per sibling, compounding
+-- multiplicatively across every subsequent branch/switch in the same procedure
+-- (Plan 146 Phase 2b: this hung real corpus procedures once Bug B started
+-- reporting real N-way fan-out instead of always exactly one edge).
 computeLoopHeaders :: SsaProc -> Set.Set Text
-computeLoopHeaders proc = go (spEntry proc) Set.empty Set.empty
+computeLoopHeaders proc = fst (go (spEntry proc) Set.empty Set.empty)
   where
+    go :: Text -> Set.Set Text -> Set.Set Text -> (Set.Set Text, Set.Set Text)
     go blockId onStack visited
-      | Set.member blockId onStack = Set.singleton blockId
-      | Set.member blockId visited = Set.empty
+      | Set.member blockId onStack = (Set.singleton blockId, visited)
+      | Set.member blockId visited = (Set.empty, visited)
       | otherwise = case Map.lookup blockId (spBlocks proc) of
-          Nothing    -> Set.empty
+          Nothing    -> (Set.empty, visited)
           Just block ->
             let onStack' = Set.insert blockId onStack
+                visited' = Set.insert blockId visited
                 succs    = termSuccessors (sbTerm block)
-                childHeaders = Set.unions
-                  [ go s onStack' (Set.insert blockId visited) | s <- succs ]
-            in childHeaders
+                step (hs, vis) s = let (h, vis') = go s onStack' vis in (Set.union hs h, vis')
+            in foldl' step (Set.empty, visited') succs
 
 -- | Find all blocks that form the loop body via cycle-aware reachability.
 -- A block is in the body only if it is reachable from the header AND
 -- can transitively reach back to the header (strong connectivity).
 -- The forward walk stops at other loop headers to avoid escaping into nested loops.
-computeLoopBodyBlocks :: SsaProc -> Text -> Set.Set Text
-computeLoopBodyBlocks proc headerId =
+-- Takes the already-computed loop-header set (see 'computeLoopHeaders') rather than
+-- recomputing it — 'discoverReachable' below queries it once per visited block, and
+-- recomputing an O(V+E) function that often would multiply the cost right back up.
+computeLoopBodyBlocks :: Set.Set Text -> SsaProc -> Text -> Set.Set Text
+computeLoopBodyBlocks headers proc headerId =
   let headerSuccs = case Map.lookup headerId (spBlocks proc) of
         Nothing -> []
         Just block -> termSuccessors (sbTerm block)
-      allReachable = foldl' (\bs s -> discoverReachable proc headerId s bs) (Set.singleton headerId) headerSuccs
+      allReachable = foldl' (\bs s -> discoverReachable headers proc headerId s bs) (Set.singleton headerId) headerSuccs
       loopBody     = Set.filter (\bId -> canReach proc bId headerId Set.empty) allReachable
   in Set.insert headerId loopBody
 
 -- | Forward-reachability walk bounded by loop headers.
 -- Stops at other loop headers to prevent escaping into nested/outer loops.
-discoverReachable :: SsaProc -> Text -> Text -> Set.Set Text -> Set.Set Text
-discoverReachable proc headerId currentBlock visited
+discoverReachable :: Set.Set Text -> SsaProc -> Text -> Text -> Set.Set Text -> Set.Set Text
+discoverReachable headers proc headerId currentBlock visited
   | Set.member currentBlock visited = visited
-  | currentBlock /= headerId && isLoopHeader proc currentBlock = visited
+  | currentBlock /= headerId && Set.member currentBlock headers = visited
   | otherwise = case Map.lookup currentBlock (spBlocks proc) of
       Nothing -> visited
       Just block ->
         let visited' = Set.insert currentBlock visited
             succs    = termSuccessors (sbTerm block)
-        in foldl' (\v s -> discoverReachable proc headerId s v) visited' succs
-
--- | Check if a block is a loop header (has a back-edge targeting it).
-isLoopHeader :: SsaProc -> Text -> Bool
-isLoopHeader proc blockId =
-  let headers = computeLoopHeaders proc
-  in Set.member blockId headers
+        in foldl' (\v s -> discoverReachable headers proc headerId s v) visited' succs
 
 -- | Returns True if startBlock can transitively reach targetBlock.
+-- Threads the discovered 'visited' set across sibling successors (via the
+-- explicit fold in 'goSuccs', short-circuiting on the first True) for the same
+-- reason 'computeLoopHeaders' does — see its comment.
 canReach :: SsaProc -> Text -> Text -> Set.Set Text -> Bool
-canReach proc startBlock targetBlock visited
-  | startBlock == targetBlock = True
-  | Set.member startBlock visited = False
-  | otherwise = case Map.lookup startBlock (spBlocks proc) of
-      Nothing -> False
-      Just block ->
-        let visited' = Set.insert startBlock visited
-            succs    = termSuccessors (sbTerm block)
-        in any (\s -> canReach proc s targetBlock visited') succs
+canReach proc startBlock0 targetBlock visited0 = fst (go startBlock0 visited0)
+  where
+    go current visited
+      | current == targetBlock = (True, visited)
+      | Set.member current visited = (False, visited)
+      | otherwise = case Map.lookup current (spBlocks proc) of
+          Nothing -> (False, visited)
+          Just block ->
+            let visited' = Set.insert current visited
+                succs    = termSuccessors (sbTerm block)
+            in goSuccs visited' succs
+    goSuccs visited [] = (False, visited)
+    goSuccs visited (s:ss) = case go s visited of
+      (True, visited')  -> (True, visited')
+      (False, visited') -> goSuccs visited' ss
 
 -- | Robust exit target extraction: collect every successor of every block
 -- in the loop body; the exit is any successor NOT in the body itself.
-determineLoopExitTarget :: SsaProc -> Text -> Text
-determineLoopExitTarget proc headerId =
-  let bodyBlocks  = computeLoopBodyBlocks proc headerId
+determineLoopExitTarget :: Set.Set Text -> SsaProc -> Text -> Text
+determineLoopExitTarget headers proc headerId =
+  let bodyBlocks  = computeLoopBodyBlocks headers proc headerId
       allSuccs    = Set.fromList
         [ suc
         | bId <- Set.toList bodyBlocks
@@ -442,13 +461,19 @@ compileBlock ctx proc blockId memo headers activeLoop
   | Just blockId == activeLoop = (CatId, memo)
   | Just cached <- Map.lookup blockId memo = (cached, memo)
   | Set.member blockId headers =
-      let (loopBodyOp, visitedFromLoop) = compileLoopBody ctx proc blockId (Map.keysSet memo) headers (Just blockId)
-          -- compileLoopBody is not part of this fix (Plan 145 Bug A tracks only the
-          -- non-loop "otherwise" case below); preserve its prior behaviour exactly by
-          -- marking every block it touched as CatId for any later revisit from the
-          -- post-loop continuation, matching what the old Set-based registry did here.
-          memoFromLoop = Map.union memo (Map.fromSet (const CatId) visitedFromLoop)
-          exitBlockId = determineLoopExitTarget proc blockId
+      let -- Seed with CatInl placeholders for every block already compiled outside this
+          -- loop, preserving the exact old Set-based behaviour for that (never expected
+          -- to trigger — see compileLoopBody's own docs) edge; genuine forward-merge
+          -- revisits *within* this loop body's own traversal get the real fix below.
+          seedVisited = Map.fromList [ (bid, CatInl) | bid <- Map.keys memo ]
+          (loopBodyOp, visitedFromLoop) = compileLoopBody ctx proc blockId seedVisited headers (Just blockId)
+          -- Preserve prior behaviour exactly: mark every block compileLoopBody touched
+          -- as CatId for any later revisit from the post-loop continuation, matching
+          -- what the old Set-based registry did here (Plan 145 Bug A's fix deliberately
+          -- left this outer-memo interaction untouched; only compileLoopBody's own
+          -- internal revisit handling changed in Plan 146 item 7).
+          memoFromLoop = Map.union memo (Map.fromSet (const CatId) (Map.keysSet visitedFromLoop))
+          exitBlockId = determineLoopExitTarget headers proc blockId
           (postLoopOp, finalMemo) = compileBlock ctx proc exitBlockId memoFromLoop headers activeLoop
       in (postLoopOp . CatLoop loopBodyOp, finalMemo)
   | otherwise = case Map.lookup blockId (spBlocks proc) of
@@ -466,10 +491,20 @@ compileBlock ctx proc blockId memo headers activeLoop
 -- | Compile the body of a loop. Returns @(CatOp () (Either () ()), visited)@:
 --   * @Left ()@ — continue the loop (back-edge or continue)
 --   * @Right ()@ — break out of loop (return / break / exit)
-compileLoopBody :: CompileCtx -> SsaProc -> Text -> Set.Set Text -> Set.Set Text
-                -> Maybe Text -> (CatOp () (Either () ()), Set.Set Text)
+--
+-- The registry caches each visited block's actual compiled value, keyed by block id —
+-- not merely whether it has been visited (Plan 146 item 7, the parallel to Plan 145 Bug
+-- A one level down). Genuine back-edges to the active loop header are caught earlier, in
+-- 'compileLoopTerm'/'compileLoopBranchPath's @Just target == activeLoop@ checks — so
+-- every revisit that reaches this function's own @Map.lookup blockId visited@ hit is
+-- necessarily an ordinary forward merge (e.g. an if/else's shared tail inside a loop
+-- body), never a real back-edge. A bare visited-only 'Set.Set' forced such a revisit to
+-- resolve to 'CatInl', silently dropping that block's real assigns/branches for every
+-- predecessor after the first to reach it.
+compileLoopBody :: CompileCtx -> SsaProc -> Text -> Map.Map Text (CatOp () (Either () ()))
+                -> Set.Set Text -> Maybe Text -> (CatOp () (Either () ()), Map.Map Text (CatOp () (Either () ())))
 compileLoopBody ctx proc blockId visited headers activeLoop
-  | Set.member blockId visited = (CatInl, visited)
+  | Just cached <- Map.lookup blockId visited = (cached, visited)
   | Set.member blockId headers && Just blockId /= activeLoop =
       -- Nested loop header: compile as CatLoop, lift into Either frame.
       -- Do NOT pre-insert blockId into visited — let compileLoopBody add it
@@ -479,13 +514,12 @@ compileLoopBody ctx proc blockId visited headers activeLoop
   | otherwise = case Map.lookup blockId (spBlocks proc) of
       Nothing    -> (CatInr, visited)
       Just block ->
-        let visited'   = Set.insert blockId visited
-            assignsOp  = compileAssigns ctx (sbAssigns block)
-            (termOp, finalVisited) = compileLoopTerm ctx proc blockId visited' headers activeLoop (sbTerm block)
+        let assignsOp  = compileAssigns ctx (sbAssigns block)
+            (termOp, v1) = compileLoopTerm ctx proc blockId visited headers activeLoop (sbTerm block)
             result = case assignsOp of
                        CatId -> termOp
                        _     -> termOp . assignsOp
-        in (result, finalVisited)
+        in (result, Map.insert blockId result v1)
 
 -- | Convert an SSA value back to an Expr so it can be passed to @eval@.
 ssaValToExpr :: SsaVal -> Expr
@@ -525,13 +559,22 @@ compileTerm ctx proc blockId memo headers activeLoop (SsaBranch cond t f) =
   in (combined, m2)
 compileTerm _ctx _proc _ memo _ _ SsaBreak    = (CatId, memo)
 compileTerm _ctx _proc _ memo _ _ SsaContinue = (CatId, memo)
+compileTerm ctx proc blockId memo headers activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
+  let (defaultOp, m0) = compileBlock ctx proc defaultTarget memo headers activeLoop
+      seed = (defaultOp . compilePhiAssignments ctx proc blockId defaultTarget, m0)
+      step (val, target) (accOp, m) =
+        let (targetOp, m') = compileBlock ctx proc target m headers activeLoop
+            combined = targetOp . compilePhiAssignments ctx proc blockId target
+            cond = ExBinOp (ssaValToExpr scrutinee) BopEq (ssaValToExpr val)
+        in (branch cond combined accOp, m')
+  in foldr step seed pairs
 
 -- | Loop terminators. Returns @(CatOp () (Either () ()), visited)@.
-compileLoopTerm :: CompileCtx -> SsaProc -> Text -> Set.Set Text -> Set.Set Text
-                -> Maybe Text -> SsaTerm -> (CatOp () (Either () ()), Set.Set Text)
+compileLoopTerm :: CompileCtx -> SsaProc -> Text -> Map.Map Text (CatOp () (Either () ())) -> Set.Set Text
+                -> Maybe Text -> SsaTerm -> (CatOp () (Either () ()), Map.Map Text (CatOp () (Either () ())))
 compileLoopTerm ctx proc blockId visited headers activeLoop (SsaGoto target)
   | Just target == activeLoop = (CatInl, visited)
-  | isLoopExit proc activeLoop target = (CatInr, visited)
+  | isLoopExit headers proc activeLoop target = (CatInr, visited)
   | otherwise =
       let (targetOp, v1) = compileLoopBody ctx proc target visited headers activeLoop
       in (targetOp . compilePhiAssignments ctx proc blockId target, v1)
@@ -543,23 +586,30 @@ compileLoopTerm ctx proc blockId visited headers activeLoop (SsaBranch cond t f)
 compileLoopTerm _ctx _proc _ visited _ _ (SsaReturn _) = (CatInr, visited)
 compileLoopTerm _ctx _proc _ visited _ _ SsaBreak      = (CatInr, visited)
 compileLoopTerm _ctx _proc _ visited _ _ SsaContinue   = (CatInl, visited)
+compileLoopTerm ctx proc blockId visited headers activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
+  let (defaultOp, v0) = compileLoopBranchPath ctx proc blockId defaultTarget visited headers activeLoop
+      step (val, target) (accOp, v) =
+        let (targetOp, v') = compileLoopBranchPath ctx proc blockId target v headers activeLoop
+            cond = ExBinOp (ssaValToExpr scrutinee) BopEq (ssaValToExpr val)
+        in (branch cond targetOp accOp, v')
+  in foldr step (defaultOp, v0) pairs
 
 -- | Compile a branch target inside a loop, wrapping in the appropriate Either.
-compileLoopBranchPath :: CompileCtx -> SsaProc -> Text -> Text -> Set.Set Text -> Set.Set Text
-                      -> Maybe Text -> (CatOp () (Either () ()), Set.Set Text)
+compileLoopBranchPath :: CompileCtx -> SsaProc -> Text -> Text -> Map.Map Text (CatOp () (Either () ())) -> Set.Set Text
+                      -> Maybe Text -> (CatOp () (Either () ()), Map.Map Text (CatOp () (Either () ())))
 compileLoopBranchPath ctx proc prevBlock target visited headers activeLoop
   | Just target == activeLoop = (CatInl, visited)
-  | isLoopExit proc activeLoop target = (CatInr, visited)
+  | isLoopExit headers proc activeLoop target = (CatInr, visited)
   | otherwise =
       let (targetOp, v1) = compileLoopBody ctx proc target visited headers activeLoop
       in (targetOp . compilePhiAssignments ctx proc prevBlock target, v1)
 
 -- | Check if a target block is outside the current loop cycle.
 -- A block is a loop exit if it is not part of the loop body.
-isLoopExit :: SsaProc -> Maybe Text -> Text -> Bool
-isLoopExit _ Nothing _ = False
-isLoopExit proc (Just headerId) targetId =
-  let bodyBlocks = computeLoopBodyBlocks proc headerId
+isLoopExit :: Set.Set Text -> SsaProc -> Maybe Text -> Text -> Bool
+isLoopExit _ _ Nothing _ = False
+isLoopExit headers proc (Just headerId) targetId =
+  let bodyBlocks = computeLoopBodyBlocks headers proc headerId
   in not (Set.member targetId bodyBlocks)
 
 -- | Compile a list of SSA assignments by folding with CatCompose.

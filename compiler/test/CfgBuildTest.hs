@@ -5,6 +5,7 @@ import PB.AST.BodyStmt
 import PB.AST.Expr         (Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Located      (Located (..))
 import PB.Analysis.CfgBuild
+import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
 
 import Test.Tasty           (TestTree, testGroup)
 import Test.Tasty.HUnit     (assertBool, testCase, (@?=))
@@ -16,6 +17,10 @@ at n x = Located n x
 -- A minimal lvalue with one segment.
 lv1 :: Text -> Lvalue
 lv1 n = Lvalue [LvSegment n Nothing]
+
+-- A minimal int-literal token for case-clause values.
+tok :: Text -> Token
+tok t = Token TkIntLiteral t (SourceSpan 1 1 1)
 
 tests :: TestTree
 tests = testGroup "CfgBuild"
@@ -58,4 +63,26 @@ tests = testGroup "CfgBuild"
       let stmt = at 1 (BsReturn Nothing)
           g    = buildCfg [stmt]
       length (cfgExits g) @?= 1
+
+  , testGroup "BsChoose (Plan 146 Bug B: default-edge gap)"
+    [ testCase "no case-else clause → explicit \"default\" edge from header to merge block" $ do
+        let clauses = [ CaseClause (Just [tok "1"]) [at 2 (BsAssign (lv1 "x") (ExInt "1"))]
+                      , CaseClause (Just [tok "2"]) [at 3 (BsAssign (lv1 "x") (ExInt "2"))]
+                      ]
+            stmt = at 1 (BsChoose (ChooseStmt (ExLvalue (lv1 "y")) clauses))
+            g    = buildCfg [stmt]
+            edgeLabels = map ceLabel (cfgEdges g)
+        assertBool ("expected a \"default\" edge, got labels: " <> show edgeLabels)
+          (elem "default" edgeLabels)
+
+    , testCase "case-else clause present → no synthetic \"default\" edge" $ do
+        let clauses = [ CaseClause (Just [tok "1"]) [at 2 (BsAssign (lv1 "x") (ExInt "1"))]
+                      , CaseClause Nothing          [at 3 (BsAssign (lv1 "x") (ExInt "2"))]
+                      ]
+            stmt = at 1 (BsChoose (ChooseStmt (ExLvalue (lv1 "y")) clauses))
+            g    = buildCfg [stmt]
+            edgeLabels = map ceLabel (cfgEdges g)
+        assertBool ("expected no \"default\" edge, got labels: " <> show edgeLabels)
+          (notElem "default" edgeLabels)
+    ]
   ]

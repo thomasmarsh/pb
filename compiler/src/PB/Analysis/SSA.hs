@@ -34,6 +34,7 @@ import PB.AST.Located  (Located (..))
 import PB.Analysis.CfgBuild (Cfg (..), CfgBlock (..), CfgEdge (..), buildCfg)
 import PB.Analysis.TypeEnv (ScopedTypeEnv)
 import PB.Analysis.CallClassify (lvHead)
+import PB.Grammar.Body     (parseExpr)
 import PB.Lexing.Token     (Token (..))
 import Control.Monad.State.Strict
 import GHC.Generics         (Generic)
@@ -86,6 +87,7 @@ data SsaBlock = SsaBlock
 data SsaTerm
   = SsaGoto Text
   | SsaBranch SsaVal Text Text
+  | SsaSwitch SsaVal [(SsaVal, Text)] Text  -- ^ scrutinee, ordered (clauseValue, target) pairs, default target
   | SsaReturn (Maybe SsaVal)
   | SsaBreak
   | SsaContinue
@@ -410,8 +412,17 @@ cfgTermToSsa mHeaderStmt edges stmts = case findControlStmt stmts of
     Just (BsDo _) ->
       let loopLbl = findEdgeLabel "loop" edges
       in if T.null loopLbl then SsaGoto (headDef "" (map ceDst edges)) else SsaGoto loopLbl
-    Just (BsChoose _) ->
-      SsaGoto (headDef "" (map ceDst edges))
+    Just (BsChoose (ChooseStmt scrutinee clauses)) -> case clauses of
+      [] -> SsaGoto (headDef "" (map ceDst edges))
+      _  ->
+        let indexed  = zip [(0::Int)..] clauses
+            edgeFor i = findEdgeLabel ("case:" <> T.pack (show i)) edges
+            normalPairs = [ (exprToSsaVal (parseExpr toks), edgeFor i)
+                          | (i, c) <- indexed, Just toks <- [ccExpr c] ]
+            defaultTarget = case [ edgeFor i | (i, c) <- indexed, isNothing (ccExpr c) ] of
+              (t:_) -> t
+              []    -> findEdgeLabel "default" edges
+        in SsaSwitch (exprToSsaVal scrutinee) normalPairs defaultTarget
     Just (BsReturn mExpr) ->
       SsaReturn (fmap exprToSsaVal mExpr)
     Just BsExit     -> SsaBreak

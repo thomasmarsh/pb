@@ -324,6 +324,33 @@ tests = testGroup "CatOp"
            P.>> assertBool "contains y_1 in else branch" (hasAssign "y_1" result)
            P.>> assertBool "contains splitValue for branch" (hasSplitValue result)
 
+    , testCase "SsaSwitch compiles to N-way branch chain, dispatches on scrutinee (Plan 146 Bug B)" $ do
+        let sa = SsaProc
+              { spName   = "test"
+              , spBlocks = Map.fromList
+                  [ ("entry", SsaBlock
+                      { sbAssigns = []
+                      , sbTerm = SsaSwitch (SsaVarRef (SsaVar "y" 0))
+                          [ (SsaConst (ExInt "1"), "c1")
+                          , (SsaConst (ExInt "2"), "c2")
+                          ]
+                          "cdef" })
+                  , ("c1",   SsaBlock { sbAssigns = [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "10"))], sbTerm = SsaReturn Nothing })
+                  , ("c2",   SsaBlock { sbAssigns = [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "20"))], sbTerm = SsaReturn Nothing })
+                  , ("cdef", SsaBlock { sbAssigns = [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "99"))], sbTerm = SsaReturn Nothing })
+                  ]
+              , spPhis   = Map.empty
+              , spEntry  = "entry"
+              , spVars   = []
+              }
+            result = compileSsaDefault sa
+        (env1, _)   <- runInterpTrace result (Map.fromList [("y_0", VInt 1)])
+        (env2, _)   <- runInterpTrace result (Map.fromList [("y_0", VInt 2)])
+        (envDef, _) <- runInterpTrace result (Map.fromList [("y_0", VInt 99)])
+        Map.lookup "x_1" env1   @?= Just (VInt 10)
+        Map.lookup "x_1" env2   @?= Just (VInt 20)
+        Map.lookup "x_1" envDef @?= Just (VInt 99)
+
     , testCase "loop compiles to CatLoop with back-edge" $
         let sa = SsaProc
               { spName   = "test"
@@ -380,6 +407,47 @@ tests = testGroup "CatOp"
               }
             result = compileSsaDefault sa
         in assertBool "contains at least 2 CatLoop nodes" (countCatLoop result P.>= 2)
+
+    , testCase "compileLoopBody: loop containing if/else with shared tail preserves tail assign on every path (Plan 146 item 7)" $ do
+        -- entry -> header (iter += 1; loop while iter <= 2) -> body_cond (iter == 1)
+        --   -> then_arm -> shared_tail (y += 1) -> header   [pass 1: iter 0->1, takes then_arm]
+        --   -> else_arm -> shared_tail (y += 1) -> header   [pass 2: iter 1->2, takes else_arm]
+        -- compileLoopTerm visits then_arm before else_arm (t before f), so shared_tail is compiled
+        -- for real on the then_arm path and only *revisited* via else_arm. The pre-fix
+        -- Set-based registry returned a bare CatInl on that revisit, silently dropping
+        -- shared_tail's "y += 1" for every path after the first — exactly Bug A's shape,
+        -- one level down. Loop termination here is controlled entirely by "iter" (mutated
+        -- only in the header, which is never subject to this revisit path), so this fixture
+        -- terminates deterministically whether or not the bug is present — unlike routing
+        -- the loop bound through the shared tail itself, which would hang forever pre-fix.
+        let iterV = SsaVarRef (SsaVar "iter" 0)
+            yV    = SsaVarRef (SsaVar "y" 0)
+            sa = SsaProc
+              { spName   = "test"
+              , spBlocks = Map.fromList
+                  [ ("entry", SsaBlock { sbAssigns = [], sbTerm = SsaGoto "header" })
+                  , ("header", SsaBlock
+                      { sbAssigns = [SsaAssign (SsaVar "iter" 0) (SsaBinOp BopAdd iterV (SsaConst (ExInt "1")))]
+                      , sbTerm = SsaBranch (SsaBinOp BopLe iterV (SsaConst (ExInt "2"))) "body_cond" "exit" })
+                  , ("body_cond", SsaBlock
+                      { sbAssigns = []
+                      , sbTerm = SsaBranch (SsaBinOp BopEq iterV (SsaConst (ExInt "1"))) "then_arm" "else_arm" })
+                  , ("then_arm", SsaBlock { sbAssigns = [], sbTerm = SsaGoto "shared_tail" })
+                  , ("else_arm", SsaBlock { sbAssigns = [], sbTerm = SsaGoto "shared_tail" })
+                  , ("shared_tail", SsaBlock
+                      { sbAssigns = [SsaAssign (SsaVar "y" 0) (SsaBinOp BopAdd yV (SsaConst (ExInt "1")))]
+                      , sbTerm = SsaGoto "header" })
+                  , ("exit", SsaBlock { sbAssigns = [], sbTerm = SsaReturn Nothing })
+                  ]
+              , spPhis   = Map.empty
+              , spEntry  = "entry"
+              , spVars   = []
+              }
+            result = compileSsaDefault sa
+            initEnv = Map.fromList [("iter_0", VInt 0), ("y_0", VInt 0)]
+        (finalEnv, _) <- runInterpTrace result initEnv
+        Map.lookup "iter_0" finalEnv @?= Just (VInt 3)
+        Map.lookup "y_0" finalEnv @?= Just (VInt 2)
 
     , testCase "loop with multiple exits finds correct exit target" $ do
         -- entry → header → body → header  (back-edge)
