@@ -226,6 +226,24 @@ tests = testGroup "SSA"
           (any isBranchTerm terms)
         assertEqual "only the true end-of-procedure exit is a bare return"
           1 (length (filter isBareReturnTerm terms))
+
+    , testCase "do-loop-until (bottom-tested) header block gets SsaBranch, not just an unconditional goto (Plan 146 Phase 2e)" $ do
+        -- CfgBuild.lowerDo's bottom-condition variant used to emit a single
+        -- unconditional edge straight from the body's exit to the merge
+        -- block (mislabeled "loop"), with no condition-test block at all —
+        -- the loop body always ran exactly once regardless of the actual
+        -- condition. The fix mirrors the top-tested case: a real condId
+        -- block (reached after the body) with its own SsaBranch, back to
+        -- the body on "keep looping" and out to the merge block otherwise.
+        let sa = buildSsa emptyEnv "proc"
+                  [ at 1 (BsDo (DoStmt Nothing
+                      [at 2 (BsAssign (lv1 "x") (ExInt "0"))]
+                      (Just (DoUntil (ExBool True)))))]
+            terms = map sbTerm (Map.elems (spBlocks sa))
+        assertBool "some block has a branch (the loop condition check)"
+          (any isBranchTerm terms)
+        assertEqual "only the true end-of-procedure exit is a bare return"
+          1 (length (filter isBareReturnTerm terms))
     ]
 
   , testGroup "structural invariants"

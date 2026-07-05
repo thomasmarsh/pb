@@ -1131,4 +1131,35 @@ tests = testGroup "CatOp"
             newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
         in newTrace @?= oldTrace
     ]
+
+  , testGroup "local DataStore/Transaction variable suspend-classification (Plan 146 Phase 2e)"
+    -- ScopedTypeEnv.steLocal's own doc comment says "body locals added in
+    -- P2b" but compileProcedureViaCatOp/compileSsa never actually do this —
+    -- env flows in unchanged from the caller, so a *locally-declared*
+    -- datastore/transaction variable's type can never be resolved by
+    -- classifyExpr's lookupScopedVar, and a suspend method call on it falls
+    -- through to the conservative PureCall default. PB.Analysis.CpsCompile's
+    -- compileProcedure (the confirmed-correct old compiler) seeds steLocal
+    -- from the body's own BsLocalVar decls via collectBodyLocals before
+    -- compiling. Found via a read-only GHCi hand-trace of a real
+    -- --dual-trace corpus diff (fn_transfer_param::fn_transfer_param, two
+    -- local `datastore` vars calling `.retrieve()`) and confirmed (via a
+    -- temporary, reverted local patch) to explain 9/123 of the Phase 2d-era
+    -- --dual-trace baseline.
+    [ testCase "local datastore var .retrieve() classifies as SuspendCall" $
+        let body = [ Located 1 (BsLocalVar [] (PtPrimitive "datastore") "lds_x" Nothing)
+                   , Located 2 (BsCall (ExMethodCall (ExLvalue (Lvalue [LvSegment "lds_x" Nothing])) "retrieve" [[]]))
+                   ]
+            oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+            newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+        in newTrace @?= oldTrace
+
+    , testCase "local transaction var .commit() classifies as SuspendCall" $
+        let body = [ Located 1 (BsLocalVar [] (PtPrimitive "transaction") "ltrans_x" Nothing)
+                   , Located 2 (BsCall (ExMethodCall (ExLvalue (Lvalue [LvSegment "ltrans_x" Nothing])) "commit" [[]]))
+                   ]
+            oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+            newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+        in newTrace @?= oldTrace
+    ]
   ]

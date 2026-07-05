@@ -183,7 +183,7 @@ lowerFor _ currentId _ = pure currentId
 
 
 lowerDo :: BodyStmt -> Text -> Maybe Text -> B Text
-lowerDo (BsDo (DoStmt mCond bodyStmts mLoop)) currentId _loopHead = do
+lowerDo stmt@(BsDo (DoStmt mCond bodyStmts mLoop)) currentId _loopHead = do
   mergeId <- newBlock
   case mCond of
     Just _ -> do
@@ -197,11 +197,28 @@ lowerDo (BsDo (DoStmt mCond bodyStmts mLoop)) currentId _loopHead = do
       addEdge condId mergeId "F"
     Nothing -> case mLoop of
       Just _ -> do
-        -- DO ... LOOP WHILE/UNTIL condition at bottom
+        -- DO ... LOOP WHILE/UNTIL condition at bottom: the condition is
+        -- tested *after* the body, so — mirroring the top-tested case above
+        -- but with condId placed after the body instead of before — condId
+        -- gets its own real "T"/"F" branch (back to bodyEntryId / out to
+        -- mergeId), and the raw BsDo node is re-attached onto bodyExitId
+        -- (in addition to currentId, which already carries it from 'lower'\'s
+        -- initial flush) so 'findLoopHeaderStmts' can find condId as the
+        -- header needing condition-reconstruction, the same mechanism the
+        -- top-tested case relies on for its own empty condId block. CONTINUE
+        -- inside the body re-tests the condition (loopHead = condId), not a
+        -- bare jump back to the top (Plan 146 Phase 2e: the previous version
+        -- of this branch had no condId at all — one unconditional edge
+        -- straight from bodyExitId to mergeId, so the loop body always ran
+        -- exactly once regardless of the actual condition).
+        condId      <- newBlock
         bodyEntryId <- newBlock
         addEdge currentId bodyEntryId ""
-        bodyExitId  <- lower bodyStmts bodyEntryId (Just bodyEntryId)
-        addEdge bodyExitId mergeId "loop"
+        bodyExitId  <- lower bodyStmts bodyEntryId (Just condId)
+        addStmts bodyExitId [Located 0 stmt]
+        addEdge bodyExitId condId ""
+        addEdge condId bodyEntryId "T"
+        addEdge condId mergeId "F"
       Nothing -> do
         -- DO ... LOOP (infinite)
         bodyEntryId <- newBlock

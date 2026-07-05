@@ -71,7 +71,7 @@ import qualified Prelude as P
 import Unsafe.Coerce (unsafeCoerce)
 import PB.AST.Expr (Expr (..), LvSegment (..), Lvalue (..), BinOp (BopEq))
 import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExprMocked)
-import PB.Analysis.CpsCompile (CpsNode (..), CpsGraph (..), parseArgList)
+import PB.Analysis.CpsCompile (CpsNode (..), CpsGraph (..), parseArgList, collectBodyLocals)
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName, calleeName, isTriggerEvent, lvHead, segName)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import Control.Monad.State.Strict (State, StateT, modify, modify', gets, runState, evalStateT)
@@ -870,9 +870,17 @@ buildCpsGraph catOp =
   in finalizeGraph entryPc finalState
 
 -- | Unified entry point: compile a procedure body via the SSA → CatOp pipeline.
+--
+-- Seeds 'steLocal' with the body's own local variable declarations before
+-- compiling, mirroring 'PB.Analysis.CpsCompile.compileProcedure' exactly —
+-- without this, 'classifyExpr' can never resolve a *locally-declared*
+-- datastore/datawindow/transaction variable's type, so a suspend method call
+-- on it (retrieve/update/commit/…) always falls through to the conservative
+-- 'PureCall' default (Plan 146 Phase 2e).
 compileProcedureViaCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CpsGraph
 compileProcedureViaCatOp env userFns body =
-  buildCpsGraph (compileSsa env userFns (buildSsa env "proc" body))
+  let env' = env { steLocal = collectBodyLocals body `Map.union` steLocal env }
+  in buildCpsGraph (compileSsa env' userFns (buildSsa env' "proc" body))
 
 -- ============================================================================
 -- 6. Interpreter: Direct Haskell Execution

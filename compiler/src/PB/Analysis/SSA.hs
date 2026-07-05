@@ -351,6 +351,7 @@ findLoopHeaderStmts edgeMap blockMap = Map.fromList
     trailingLoopStmt stmts = case map locNode (reverse stmts) of
       (s@(BsFor {}) : _)                            -> Just s
       (s@(BsDo (DoStmt (Just _) _ _)) : _)          -> Just s
+      (s@(BsDo (DoStmt Nothing _ (Just _))) : _)    -> Just s
       _                                              -> Nothing
 
 stmtToAssigns :: BodyStmt -> [SsaAssign]
@@ -436,6 +437,9 @@ cfgTermToSsa mHeaderStmt edges stmts = case findControlStmt stmts of
         SsaBranch (exprToSsaVal (ExBinOp (ExLvalue var) BopLe to))
                   (findEdgeLabel "T" edges) (findEdgeLabel "F" edges)
       Just (BsDo (DoStmt (Just cond) _ _)) ->
+        SsaBranch (exprToSsaVal (doCondExpr cond))
+                  (findEdgeLabel "T" edges) (findEdgeLabel "F" edges)
+      Just (BsDo (DoStmt Nothing _ (Just cond))) ->
         SsaBranch (exprToSsaVal (doCondExpr cond))
                   (findEdgeLabel "T" edges) (findEdgeLabel "F" edges)
       _ -> case edges of

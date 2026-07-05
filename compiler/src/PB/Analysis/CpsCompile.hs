@@ -12,6 +12,7 @@ module PB.Analysis.CpsCompile
   ( CpsNode (..)
   , CpsGraph (..)
   , compileProcedure
+  , collectBodyLocals
   , parseArgList
   , ShapeNode (..)
   , canonicalize

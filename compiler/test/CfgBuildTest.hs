@@ -59,6 +59,30 @@ tests = testGroup "CfgBuild"
       elem "F" edgeLabels   @?= True
       elem "loop" edgeLabels @?= True
 
+  , testGroup "BsDo bottom-tested (Plan 146 Phase 2e: missing back-edge)"
+    -- lowerDo's bottom-condition branch used to emit a single unconditional
+    -- edge straight from the body's exit to the merge block (mislabeled
+    -- "loop"), with no condition-test block and no back-edge at all — the
+    -- loop body ran exactly once, no matter what the condition evaluated to.
+    [ testCase "DO ... LOOP UNTIL → real T/F branch edges (not just an unconditional exit)" $ do
+        let bodyS = [at 2 (BsAssign (lv1 "x") (ExInt "0"))]
+            stmt  = at 1 (BsDo (DoStmt Nothing bodyS (Just (DoUntil (ExBool True)))))
+            g     = buildCfg [stmt]
+            edgeLabels = map ceLabel (cfgEdges g)
+        assertBool ("expected a \"T\" edge (back to the loop body), got labels: " <> show edgeLabels)
+          (elem "T" edgeLabels)
+        assertBool ("expected an \"F\" edge (exit to merge), got labels: " <> show edgeLabels)
+          (elem "F" edgeLabels)
+
+    , testCase "DO ... LOOP WHILE → same T/F branch shape as UNTIL" $ do
+        let bodyS = [at 2 (BsAssign (lv1 "x") (ExInt "0"))]
+            stmt  = at 1 (BsDo (DoStmt Nothing bodyS (Just (DoWhile (ExBool True)))))
+            g     = buildCfg [stmt]
+            edgeLabels = map ceLabel (cfgEdges g)
+        elem "T" edgeLabels @?= True
+        elem "F" edgeLabels @?= True
+    ]
+
   , testCase "BsReturn → block added to cfgExits" $ do
       let stmt = at 1 (BsReturn Nothing)
           g    = buildCfg [stmt]
