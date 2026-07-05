@@ -80,6 +80,8 @@ import qualified Data.Text          as T
 import qualified Data.Text.Encoding as TE
 import System.FilePath     (takeBaseName)
 import qualified Data.Map.Strict as Map
+import Control.Monad       (forM_)
+import Text.Read           (readMaybe)
 
 -- | Emit a single JSON progress event to stderr for the Python reporter.
 emitProgress :: Value -> IO ()
@@ -376,6 +378,7 @@ runModeDualCps srcDir minspect = do
   outcomes <- mapConcurrently parseOutcome files
   let wsEnv = buildWorkspaceEnv
                 (map pfSrFile stdlibParsed ++ [pfSrFile pf | PsParsed pf <- outcomes])
+  let headLine body = case body of { (Located l _ : _) -> Just l; [] -> Nothing }
   let allProcs = do
         PsParsed pf <- outcomes
         let sf = pfSrFile pf
@@ -389,14 +392,14 @@ runModeDualCps srcDir minspect = do
           <> [ (ssName  (sbSig sb), ssParams  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
           <> [ (esName  (evSig ev), "",                   evBody ev) | ev <- srEvents       sf ]
           <> [ (obEvent ob,         "",                   obBody ob) | ob <- srOnBlocks     sf ]
-        pure (obj, pName, mkProcEnv cpsParams, userFns, body)
+        pure (obj, pName, mkProcEnv cpsParams, userFns, body, headLine body)
   case minspect of
     Just target -> runInspect target allProcs
     Nothing -> do
       let results =
             [ (obj, pName, canonicalize (compileProcedure env userFns body)
                         ,  canonicalize (compileProcedureViaCatOp env userFns body))
-            | (obj, pName, env, userFns, body) <- allProcs ]
+            | (obj, pName, env, userFns, body, _line) <- allProcs ]
       -- Compare with the SCall/SCProc tag divergence normalized away (Plan
       -- 145 Phase 1B: a pure node-tag difference with no effect on shape or
       -- control flow) so this accepted, harmless cosmetic doesn't mask
@@ -427,15 +430,30 @@ runModeDualCps srcDir minspect = do
 -- when there is more than one match.
 runInspect
   :: Text
-  -> [(Text, Text, ScopedTypeEnv, Set.Set Text, [Located BodyStmt])]
+  -> [(Text, Text, ScopedTypeEnv, Set.Set Text, [Located BodyStmt], Maybe Int)]
   -> IO ()
 runInspect target allProcs =
+  -- Optional ":N" suffix selects the Nth (0-based) candidate by source
+  -- position instead of the auto-picked "first that differs" one — needed
+  -- when a name is ambiguous across several candidates that all differ
+  -- (Plan 145: w_dw_functions::clicked has 9 "clicked" handlers).
+  case T.splitOn ":" target of
+    [objProc, idxTxt] | Just idx <- readMaybe (T.unpack idxTxt) ->
+      runInspectOn objProc (Just idx) allProcs
+    _ -> runInspectOn target Nothing allProcs
+
+runInspectOn
+  :: Text
+  -> Maybe Int
+  -> [(Text, Text, ScopedTypeEnv, Set.Set Text, [Located BodyStmt], Maybe Int)]
+  -> IO ()
+runInspectOn target mWantIdx allProcs =
   case T.splitOn "::" target of
     [wantObj, wantProc] ->
-      let isMatch (obj, pName, _, _, _) =
+      let isMatch (obj, pName, _, _, _, _) =
             T.toLower obj == T.toLower wantObj && T.toLower pName == T.toLower wantProc
           candidates = filter isMatch allProcs
-          shapesOf (_, _, env, userFns, body) =
+          shapesOf (_, _, env, userFns, body, _line) =
             ( canonicalize (compileProcedure env userFns body)
             , canonicalize (compileProcedureViaCatOp env userFns body) )
           -- Normalized the same way as runModeDualCps's diff count (Plan 145
@@ -448,11 +466,25 @@ runInspect target allProcs =
       in case candidates of
            [] -> die ("no such procedure: " <> T.unpack target)
            firstCandidate : _ -> do
-             when (length candidates > 1) $ putStrLn
-               (T.pack (show (length candidates)) <> " procedures match " <> target
-                <> "; showing " <> (if null differing then "the first" else "the first that differs"))
-             let chosen = fromMaybe firstCandidate (listToMaybe differing)
-                 (oldShape, newShape) = shapesOf chosen
+             when (length candidates > 1) $ do
+               putStrLn (T.pack (show (length candidates)) <> " procedures match "
+                         <> wantObj <> "::" <> wantProc <> ":")
+               forM_ (zip [(0::Int)..] candidates) $ \(i, c@(_, _, _, _, _, mLine)) -> do
+                 let (o, n) = shapesOf c
+                 putStrLn ("  [" <> T.pack (show i) <> "] line="
+                           <> maybe "?" (T.pack . show) mLine
+                           <> " old=" <> T.pack (show (length o))
+                           <> " new=" <> T.pack (show (length n))
+                           <> (if differsNormalized c then " DIFFERS" else " same"))
+               putStrLn ("selecting: " <> case mWantIdx of
+                 Just _  -> "explicit index"
+                 Nothing -> if null differing then "the first (none differ)" else "the first that differs")
+             chosen <- case mWantIdx of
+                   Just i  -> case listToMaybe (drop i candidates) of
+                     Just c  -> pure c
+                     Nothing -> die ("index " <> show i <> " out of range (" <> show (length candidates) <> " candidates)")
+                   Nothing -> pure (fromMaybe firstCandidate (listToMaybe differing))
+             let (oldShape, newShape) = shapesOf chosen
              mapM_ (\n -> putStrLn ("OLD  " <> T.pack (show n))) oldShape
              mapM_ (\n -> putStrLn ("NEW  " <> T.pack (show n))) newShape
-    _ -> die ("invalid --inspect argument, expected \"obj::proc\", got: " <> T.unpack target)
+    _ -> die ("invalid --inspect argument, expected \"obj::proc\" or \"obj::proc:N\", got: " <> T.unpack target)
