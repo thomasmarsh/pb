@@ -9,11 +9,16 @@
 module PB.Analysis.CatEval
   ( Value (..)
   , TraceEvent (..)
+  , MockResponses
   , evalExpr
+  , evalExprMocked
   ) where
 
 import PB.Prelude
 import PB.AST.Expr (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
+import PB.Analysis.CallClassify (calleeName)
+import PB.Analysis.CpsCompile (parseArgList)
+import PB.Lexing.Token (Token)
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -27,7 +32,7 @@ data Value
   | VStr Text
   | VBool Bool
   | VNull
-  deriving (Eq, Show, Generic)
+  deriving (Eq, Ord, Show, Generic)
 
 -- | An observable effect produced while interpreting a 'CatOp' (or,
 -- eventually, a 'CpsGraph') term: a variable assignment, an effect
@@ -42,31 +47,60 @@ data TraceEvent
   | TeReturn  (Maybe Value)
   deriving (Eq, Show, Generic)
 
--- | Evaluate an 'Expr' against a variable environment.
+-- | A recorded call/suspend response: @(calleeName, evaluated-args) -> result@,
+-- shared by both interpreters so the same @(effect, args)@ pair always
+-- resolves to the same mocked value in a given comparison (Plan 146 Phase 2).
+type MockResponses = Map.Map (Text, [Value]) Value
+
+-- | Evaluate an 'Expr' against a variable environment, with no mock
+-- responses available — the back-compat entry point every pre-Phase-2 call
+-- site and test still uses. Call-shaped expressions fall back to 'VNull'
+-- here purely because an empty 'MockResponses' table can never produce a
+-- hit, not because of any special-casing of their own.
+evalExpr :: Map.Map Text Value -> Expr -> Value
+evalExpr = evalExprMocked Map.empty
+
+-- | Evaluate an 'Expr' against a variable environment and a table of mocked
+-- call\/suspend responses.
 --
 -- Covers the subset 'PB.Analysis.CatOp.ssaValToExpr' and hand-built 'CatOp'
 -- fixtures actually produce: literals, a single-segment 'ExLvalue' (SSA
 -- variable references are always this shape — see 'renderSsaVar' call
--- sites), binops, 'ExNot', 'ExNeg', 'ExNull'. Everything else (multi-segment
--- or subscripted lvalues, calls, dispatch, object creation, arrays, host
--- vars, raw SQL fragments) falls back to 'VNull' — total, not a crash, since
--- none of these are expected to reach 'evalExpr' in Phase 1's scope (a
--- flat @Map Text Value@ has no field/subscript model, and call-shaped
--- expressions are Phase 2's concern once real mock responses exist).
-evalExpr :: Map.Map Text Value -> Expr -> Value
-evalExpr _   (ExBool b) = VBool b
-evalExpr _   (ExInt t)  = VInt (fromMaybe 0 (readMaybe (T.unpack t)))
-evalExpr _   (ExReal t) = VReal (fromMaybe 0.0 (readMaybe (T.unpack t)))
-evalExpr _   (ExStr t)  = VStr t
-evalExpr _   ExNull     = VNull
-evalExpr env (ExLvalue (Lvalue [LvSegment n Nothing])) = Map.findWithDefault VNull n env
-evalExpr env (ExBinOp l op r) = evalBinOp op (evalExpr env l) (evalExpr env r)
-evalExpr env (ExNot e) = VBool (not (toBool (evalExpr env e)))
-evalExpr env (ExNeg e) = case evalExpr env e of
+-- sites), binops, 'ExNot', 'ExNeg', 'ExNull'. 'ExCall'\/'ExMethodCall' —
+-- the shape 'PB.Analysis.CatOp.compileAssign' embeds directly for @x = f()@,
+-- never as a 'CatSuspend'\/'CatCall' node with a result slot — resolve via
+-- 'MockResponses', keyed on 'calleeName' and the evaluated argument list
+-- (raw argument token lists are parsed with the same
+-- 'PB.Analysis.CpsCompile.parseArgList' the compiled pipeline itself uses,
+-- so the key matches what a real call site would look like). A miss, and
+-- everything else (multi-segment or subscripted lvalues, dispatch, object
+-- creation, arrays, host vars, raw SQL fragments), falls back to 'VNull' —
+-- total, not a crash.
+evalExprMocked :: MockResponses -> Map.Map Text Value -> Expr -> Value
+evalExprMocked _     _   (ExBool b) = VBool b
+evalExprMocked _     _   (ExInt t)  = VInt (fromMaybe 0 (readMaybe (T.unpack t)))
+evalExprMocked _     _   (ExReal t) = VReal (fromMaybe 0.0 (readMaybe (T.unpack t)))
+evalExprMocked _     _   (ExStr t)  = VStr t
+evalExprMocked _     _   ExNull     = VNull
+evalExprMocked _     env (ExLvalue (Lvalue [LvSegment n Nothing])) = Map.findWithDefault VNull n env
+evalExprMocked mocks env (ExBinOp l op r) = evalBinOp op (evalExprMocked mocks env l) (evalExprMocked mocks env r)
+evalExprMocked mocks env (ExNot e) = VBool (not (toBool (evalExprMocked mocks env e)))
+evalExprMocked mocks env (ExNeg e) = case evalExprMocked mocks env e of
   VInt i  -> VInt (negate i)
   VReal r -> VReal (negate r)
   v       -> v
-evalExpr _   _ = VNull
+evalExprMocked mocks env e@(ExCall _ rawArgs) = lookupMock mocks env e rawArgs
+evalExprMocked mocks env e@(ExMethodCall _ _ rawArgs) = lookupMock mocks env e rawArgs
+evalExprMocked _     _   _ = VNull
+
+-- | Shared call-resolution step for 'ExCall'\/'ExMethodCall': parse each raw
+-- argument's token list into an 'Expr' (via 'parseArgList', the same parser
+-- the compiled pipeline uses for call arguments), evaluate it, and look up
+-- @(calleeName, evaluatedArgs)@ in the mock table.
+lookupMock :: MockResponses -> Map.Map Text Value -> Expr -> [[Token]] -> Value
+lookupMock mocks env e rawArgs =
+  let argVals = map (evalExprMocked mocks env . parseArgList) rawArgs
+  in Map.findWithDefault VNull (calleeName e, argVals) mocks
 
 evalBinOp :: BinOp -> Value -> Value -> Value
 evalBinOp BopAdd = numericOp (+) (+)

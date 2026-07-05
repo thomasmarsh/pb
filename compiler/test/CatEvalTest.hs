@@ -2,7 +2,8 @@ module CatEvalTest (tests) where
 
 import PB.Prelude
 import PB.AST.Expr (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
-import PB.Analysis.CatEval (Value (..), evalExpr)
+import PB.Analysis.CatEval (Value (..), MockResponses, evalExpr, evalExprMocked)
+import PB.Lexing.Token (Token (..), TokenKind (..), SourceSpan (..))
 
 import qualified Data.Map.Strict as Map
 import Test.Tasty       (TestTree, testGroup)
@@ -10,6 +11,9 @@ import Test.Tasty.HUnit (testCase, (@?=))
 
 emptyEnv :: Map.Map Text Value
 emptyEnv = Map.empty
+
+mkTok :: TokenKind -> Text -> Token
+mkTok k t = Token k t (SourceSpan 1 1 1)
 
 tests :: TestTree
 tests = testGroup "CatEval"
@@ -85,6 +89,42 @@ tests = testGroup "CatEval"
 
   , testGroup "evalExpr / non-pure shapes (documented fallback)"
     [ testCase "bare ExCall yields VNull placeholder" $
+        evalExpr emptyEnv (ExCall (Lvalue [LvSegment "f" Nothing]) []) @?= VNull
+    ]
+
+  , testGroup "evalExprMocked / call-shaped Expr resolves via mock table (Plan 146 Phase 2a)"
+    [ testCase "ExCall with no args hits the mock table" $
+        let callExpr = ExCall (Lvalue [LvSegment "f" Nothing]) []
+            mocks     = Map.fromList [(("f", []), VInt 99)] :: MockResponses
+        in evalExprMocked mocks emptyEnv callExpr @?= VInt 99
+
+    , testCase "ExMethodCall with no args hits the mock table, keyed by receiver.method" $
+        let callExpr = ExMethodCall (ExLvalue (Lvalue [LvSegment "dw_1" Nothing])) "RowCount" []
+            mocks     = Map.fromList [(("dw_1.RowCount", []), VInt 5)] :: MockResponses
+        in evalExprMocked mocks emptyEnv callExpr @?= VInt 5
+
+    , testCase "ExCall with evaluated args matches on the parsed argument values" $
+        let callExpr = ExCall (Lvalue [LvSegment "f" Nothing]) [[mkTok TkIntLiteral "5"]]
+            mocks     = Map.fromList [(("f", [VInt 5]), VStr "matched")] :: MockResponses
+        in evalExprMocked mocks emptyEnv callExpr @?= VStr "matched"
+
+    , testCase "ExCall args are evaluated against env before the mock lookup" $
+        let callExpr = ExCall (Lvalue [LvSegment "f" Nothing]) [[mkTok TkIdent "x_1"]]
+            env       = Map.fromList [("x_1", VInt 7)]
+            mocks     = Map.fromList [(("f", [VInt 7]), VStr "matched")] :: MockResponses
+        in evalExprMocked mocks env callExpr @?= VStr "matched"
+
+    , testCase "a mock miss still falls back to VNull, not a crash" $
+        let callExpr = ExCall (Lvalue [LvSegment "f" Nothing]) []
+            mocks     = Map.fromList [(("g", []), VInt 1)] :: MockResponses
+        in evalExprMocked mocks emptyEnv callExpr @?= VNull
+
+    , testCase "a call nested inside a binop resolves via mocks, not just top-level calls" $
+        let callExpr = ExBinOp (ExCall (Lvalue [LvSegment "f" Nothing]) []) BopAdd (ExInt "1")
+            mocks     = Map.fromList [(("f", []), VInt 10)] :: MockResponses
+        in evalExprMocked mocks emptyEnv callExpr @?= VInt 11
+
+    , testCase "evalExpr (no-mocks entry point) still falls back to VNull even when a table would have matched elsewhere" $
         evalExpr emptyEnv (ExCall (Lvalue [LvSegment "f" Nothing]) []) @?= VNull
     ]
   ]

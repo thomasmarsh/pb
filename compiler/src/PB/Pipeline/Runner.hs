@@ -9,6 +9,7 @@ module PB.Pipeline.Runner
     -- own
   , runModeDb
   , runModeDualCps
+  , runModeDualTrace
   , compileOne
   , appendToDb
   , CompiledFile (..)
@@ -23,6 +24,7 @@ import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.CfgBuild    (buildCfg)
 import PB.Analysis.CpsCompile  (compileProcedure, canonicalize, normalizeCallTag)
 import PB.Analysis.CatOp       (compileProcedureViaCatOp)
+import PB.Analysis.CpsInterp   (runCpsGraphTrace)
 import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), ScopedTypeEnv, buildWorkspaceEnv, procEnv)
 import PB.Analysis.Dataflow    qualified as Dataflow
@@ -366,6 +368,36 @@ runModeDb srcDir dbPath = do
 
 -- ---------------------------------------------------------------------------
 
+-- | Collect every procedure body in a source tree alongside its per-procedure
+-- compile inputs (object name, procedure name, scoped type env, user-defined
+-- function names, body, and the body's first source line if any). Shared by
+-- 'runModeDualCps' and 'runModeDualTrace' — both need the identical set of
+-- procedures and compile inputs, only the comparison step differs.
+collectAllProcs
+  :: FilePath
+  -> IO [(Text, Text, ScopedTypeEnv, Set.Set Text, [Located BodyStmt], Maybe Int)]
+collectAllProcs srcDir = do
+  files <- walkAllSrFiles srcDir
+  stdlibParsed <- parseStdlibFiles
+  outcomes <- mapConcurrently parseOutcome files
+  let wsEnv = buildWorkspaceEnv
+                (map pfSrFile stdlibParsed ++ [pfSrFile pf | PsParsed pf <- outcomes])
+  let headLine body = case body of { (Located l _ : _) -> Just l; [] -> Nothing }
+  pure $ do
+    PsParsed pf <- outcomes
+    let sf = pfSrFile pf
+        (obj, _) = srPrimaryObject sf
+        userFns = Set.fromList
+          $  map (T.toLower . fnsName . fbSig) (srFunctions sf)
+          <> map (T.toLower . ssName  . sbSig) (srSubroutines sf)
+        mkProcEnv params = procEnv wsEnv obj (parseParams params)
+    (pName, cpsParams, body) <-
+         [ (fnsName (fbSig fb), fnsParams (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
+      <> [ (ssName  (sbSig sb), ssParams  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
+      <> [ (esName  (evSig ev), "",                   evBody ev) | ev <- srEvents       sf ]
+      <> [ (obEvent ob,         "",                   obBody ob) | ob <- srOnBlocks     sf ]
+    pure (obj, pName, mkProcEnv cpsParams, userFns, body, headLine body)
+
 -- | Run both CPS compilers on every procedure and report differences.
 --
 -- Parses all files in srcDir, builds a workspace TypeEnv, then for each
@@ -373,26 +405,7 @@ runModeDb srcDir dbPath = do
 -- (new), compares their canonical shapes, and prints a summary.
 runModeDualCps :: FilePath -> Maybe Text -> IO ()
 runModeDualCps srcDir minspect = do
-  files <- walkAllSrFiles srcDir
-  stdlibParsed <- parseStdlibFiles
-  outcomes <- mapConcurrently parseOutcome files
-  let wsEnv = buildWorkspaceEnv
-                (map pfSrFile stdlibParsed ++ [pfSrFile pf | PsParsed pf <- outcomes])
-  let headLine body = case body of { (Located l _ : _) -> Just l; [] -> Nothing }
-  let allProcs = do
-        PsParsed pf <- outcomes
-        let sf = pfSrFile pf
-            (obj, _) = srPrimaryObject sf
-            userFns = Set.fromList
-              $  map (T.toLower . fnsName . fbSig) (srFunctions sf)
-              <> map (T.toLower . ssName  . sbSig) (srSubroutines sf)
-            mkProcEnv params = procEnv wsEnv obj (parseParams params)
-        (pName, cpsParams, body) <-
-             [ (fnsName (fbSig fb), fnsParams (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
-          <> [ (ssName  (sbSig sb), ssParams  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
-          <> [ (esName  (evSig ev), "",                   evBody ev) | ev <- srEvents       sf ]
-          <> [ (obEvent ob,         "",                   obBody ob) | ob <- srOnBlocks     sf ]
-        pure (obj, pName, mkProcEnv cpsParams, userFns, body, headLine body)
+  allProcs <- collectAllProcs srcDir
   case minspect of
     Just target -> runInspect target allProcs
     Nothing -> do
@@ -417,6 +430,37 @@ runModeDualCps srcDir minspect = do
       putStrLn ("Total: " <> T.pack (show total) <> " procedures, "
                 <> T.pack (show nDiff) <> " differ, "
                 <> T.pack (show (total - nDiff)) <> " identical")
+
+-- | Run both CPS compilers on every procedure and report differences in
+-- observable *behavior* (a trace of assignments/branches/calls, plus the
+-- final environment) instead of graph *shape* — the Plan 146 Phase 2a
+-- replacement for 'runModeDualCps'\'s @canonicalize@-based comparison, which
+-- cannot distinguish "wrong" from "differently-but-correctly-shaped" (see
+-- @doc/plan/146-semantic-equivalence-oracle.md@). Both compilers' 'CpsGraph's
+-- run through the same 'PB.Analysis.CpsInterp.runCpsGraphTrace', from an
+-- empty starting environment with an empty mock-response table (no
+-- per-procedure invocation data is available corpus-wide).
+--
+-- Bounded by 'traceMaxSteps': a real PB loop's exit condition often depends
+-- on an unmocked call result, which can never resolve and would otherwise
+-- hang the whole corpus run on a single procedure.
+traceMaxSteps :: Int
+traceMaxSteps = 5000
+
+runModeDualTrace :: FilePath -> IO ()
+runModeDualTrace srcDir = do
+  allProcs <- collectAllProcs srcDir
+  let results =
+        [ (obj, pName, runCpsGraphTrace traceMaxSteps Map.empty (compileProcedure env userFns body) Map.empty
+                    ,  runCpsGraphTrace traceMaxSteps Map.empty (compileProcedureViaCatOp env userFns body) Map.empty)
+        | (obj, pName, env, userFns, body, _line) <- allProcs ]
+      diffs = [ (obj, pName) | (obj, pName, oldTrace, newTrace) <- results, oldTrace /= newTrace ]
+  mapM_ (\(obj, pName) -> putStrLn ("DIFF " <> obj <> "::" <> pName)) diffs
+  let total = length results
+      nDiff  = length diffs
+  putStrLn ("Total: " <> T.pack (show total) <> " procedures, "
+            <> T.pack (show nDiff) <> " differ, "
+            <> T.pack (show (total - nDiff)) <> " identical")
 
 -- | Dump canonical OLD/NEW shape-node lists for a single "obj::proc" target,
 -- then exit. Used to hand-diff one procedure instead of scanning the whole

@@ -63,13 +63,14 @@ module PB.Analysis.CatOp
     -- * Placeholder types
   , Value (..)
   , TraceEvent (..)
+  , MockResponses
   ) where
 
 import PB.Prelude hiding (id, (.), lookup)
 import qualified Prelude as P
 import Unsafe.Coerce (unsafeCoerce)
 import PB.AST.Expr (Expr (..), LvSegment (..), Lvalue (..))
-import PB.Analysis.CatEval (Value (..), TraceEvent (..), evalExpr)
+import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExprMocked)
 import PB.Analysis.CpsCompile (CpsNode (..), CpsGraph (..), parseArgList)
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName, calleeName, isTriggerEvent, lvHead, segName)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
@@ -820,13 +821,17 @@ compileProcedureViaCatOp env userFns body =
 -- | Persistent state threaded through an 'Interp' run: the named-variable
 -- environment ('CatOp'\'s @env@ type parameter is structural wiring only —
 -- 'compileSsa' always produces @CatOp () ()@ — so real variable storage
--- lives here instead) plus the accumulating observable trace.
+-- lives here instead), the accumulating observable trace, and the mocked
+-- call\/suspend responses available for this run (Plan 146 Phase 2a) —
+-- read-only from 'Interp'\'s own perspective, but threaded through the same
+-- state for simplicity rather than adding a separate 'ReaderT' layer.
 --
 -- 'isTrace' accumulates newest-first (prepend is O(1)); reverse once when
 -- reading it back out.
 data InterpState = InterpState
   { isEnv   :: Map.Map Text Value
   , isTrace :: [TraceEvent]
+  , isMocks :: MockResponses
   }
 
 -- | An execution interpreter category that maps 'CatOp a b' to direct
@@ -850,7 +855,7 @@ instance Cocartesian Interp where
     Right b -> g b)
 
 instance Effectful Interp where
-  eval expr = Interp (\_env -> gets (\st -> evalExpr (isEnv st) expr))
+  eval expr = Interp (\_env -> gets (\st -> evalExprMocked (isMocks st) (isEnv st) expr))
 
   assign var = Interp (\(env, val) -> do
     modify' (\st -> st { isEnv   = Map.insert var val (isEnv st)
@@ -860,11 +865,11 @@ instance Effectful Interp where
   lookup var = Interp (\_env -> gets (Map.findWithDefault VNull var P.. isEnv))
 
   suspend effect args = Interp (\_env -> do
-    vals <- gets (\st -> map (evalExpr (isEnv st)) args)
+    vals <- gets (\st -> map (evalExprMocked (isMocks st) (isEnv st)) args)
     modify' (\st -> st { isTrace = TeSuspend effect vals : isTrace st }))
 
   callProc name args = Interp (\_env -> do
-    vals <- gets (\st -> map (evalExpr (isEnv st)) args)
+    vals <- gets (\st -> map (evalExprMocked (isMocks st) (isEnv st)) args)
     modify' (\st -> st { isTrace = TeCall name vals : isTrace st }))
 
   splitValue = Interp (\(env, val) -> do
@@ -883,11 +888,12 @@ interpretLoop (Interp body) = Interp go
       Left  continueState -> go continueState
       Right breakState    -> P.pure breakState
 
--- | Run an 'Interp' morphism against a fresh, empty environment/trace,
--- discarding the final 'InterpState' — a compatibility shim for tests that
--- only care about the plain @IO b@ result (predates trace/env threading).
+-- | Run an 'Interp' morphism against a fresh, empty environment/trace/mock
+-- table, discarding the final 'InterpState' — a compatibility shim for tests
+-- that only care about the plain @IO b@ result (predates trace/env
+-- threading).
 runInterpIO :: Interp a b -> a -> IO b
-runInterpIO (Interp f) x = evalStateT (f x) (InterpState Map.empty [])
+runInterpIO (Interp f) x = evalStateT (f x) (InterpState Map.empty [] Map.empty)
 
 -- | Interpret a compiled 'CatOp' term directly via 'Interp' — the fold
 -- 'CatOp' is initial for. Every constructor dispatches to the corresponding
@@ -916,7 +922,7 @@ runCat CatInr                  = inr
 runCat (CatFanIn t f)          = runCat t ||| runCat f
 runCat (CatAssign var)         = assign var
 runCat (CatAssignWithRhs var e) = Interp (\env -> do
-  val <- gets (\st -> evalExpr (isEnv st) e)
+  val <- gets (\st -> evalExprMocked (isMocks st) (isEnv st) e)
   modify' (\st -> st { isEnv   = Map.insert var val (isEnv st)
                       , isTrace = TeAssign var val : isTrace st })
   P.pure env)

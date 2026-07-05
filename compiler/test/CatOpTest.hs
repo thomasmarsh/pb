@@ -175,7 +175,7 @@ dwEnv = ScopedTypeEnv
 -- counterpart to 'runCpsGraphTrace' (Plan 146 Phase 1D).
 runInterpTrace :: CatOp () () -> Map.Map Text Value -> IO (Map.Map Text Value, [TraceEvent])
 runInterpTrace term initEnv = do
-  (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState initEnv [])
+  (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState initEnv [] Map.empty)
   return (isEnv st, P.reverse (isTrace st))
 
 -- ---------------------------------------------------------------------------
@@ -516,43 +516,43 @@ tests = testGroup "CatOp"
 
   , testGroup "Interp / runCat"
     [ testCase "runCat CatId is identity, no trace" $ do
-        (result, st) <- runStateT (runInterp (runCat (CatId :: CatOp () ())) ()) (InterpState Map.empty [])
+        (result, st) <- runStateT (runInterp (runCat (CatId :: CatOp () ())) ()) (InterpState Map.empty [] Map.empty)
         result @?= ()
         isTrace st @?= []
 
     , testCase "runCat CatAssignWithRhs updates env and emits TeAssign" $ do
         let term = CatAssignWithRhs "x_1" (ExInt "42") :: CatOp () ()
-        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [])
+        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [] Map.empty)
         Map.lookup "x_1" (isEnv st) @?= Just (VInt 42)
         P.reverse (isTrace st) @?= [TeAssign "x_1" (VInt 42)]
 
     , testCase "runCat CatCompose threads env through both assigns in order" $ do
         let term = CatAssignWithRhs "y_1" (ExInt "2") . CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
-        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [])
+        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [] Map.empty)
         P.reverse (isTrace st) @?= [TeAssign "x_1" (VInt 1), TeAssign "y_1" (VInt 2)]
 
     , testCase "runCat branch emits TeBranch True and takes the then-arm" $ do
         let term = branch (ExBool True)
                      (CatAssignWithRhs "then_taken" (ExInt "1"))
                      (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
-        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [])
+        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [] Map.empty)
         P.reverse (isTrace st) @?= [TeBranch True, TeAssign "then_taken" (VInt 1)]
 
     , testCase "runCat branch emits TeBranch False and takes the else-arm" $ do
         let term = branch (ExBool False)
                      (CatAssignWithRhs "then_taken" (ExInt "1"))
                      (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
-        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [])
+        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [] Map.empty)
         P.reverse (isTrace st) @?= [TeBranch False, TeAssign "else_taken" (VInt 2)]
 
     , testCase "runCat CatSuspend records TeSuspend with evaluated args" $ do
         let term = CatSuspend "retrieve:dw_foo" [ExInt "1", ExStr "bar"] :: CatOp () ()
-        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [])
+        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [] Map.empty)
         P.reverse (isTrace st) @?= [TeSuspend "retrieve:dw_foo" [VInt 1, VStr "bar"]]
 
     , testCase "runCat CatCall records TeCall with evaluated args" $ do
         let term = CatCall "my_func" [ExInt "5"] :: CatOp () ()
-        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [])
+        (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState Map.empty [] Map.empty)
         P.reverse (isTrace st) @?= [TeCall "my_func" [VInt 5]]
     ]
 
@@ -966,7 +966,7 @@ tests = testGroup "CatOp"
     [ testCase "CatId: no trace, no env change" $ do
         let term = CatId :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) Map.empty
+        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
         itrace @?= []
         itrace @?= gtrace
         ienv @?= genv
@@ -974,7 +974,7 @@ tests = testGroup "CatOp"
     , testCase "CatAssignWithRhs: same assign trace, same env" $ do
         let term = CatAssignWithRhs "x_1" (ExInt "42") :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) Map.empty
+        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
         itrace @?= [TeAssign "x_1" (VInt 42)]
         itrace @?= gtrace
         ienv @?= genv
@@ -982,7 +982,7 @@ tests = testGroup "CatOp"
     , testCase "CatCompose: two assigns execute in the same order" $ do
         let term = CatAssignWithRhs "y_1" (ExInt "2") . CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) Map.empty
+        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
@@ -991,7 +991,7 @@ tests = testGroup "CatOp"
                      (CatAssignWithRhs "then_taken" (ExInt "1"))
                      (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) Map.empty
+        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
@@ -1000,21 +1000,21 @@ tests = testGroup "CatOp"
                      (CatAssignWithRhs "then_taken" (ExInt "1"))
                      (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) Map.empty
+        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
     , testCase "CatSuspend: same effect name and evaluated args" $ do
         let term = CatSuspend "retrieve:dw_foo" [ExInt "1", ExStr "bar"] :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) Map.empty
+        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
     , testCase "CatCall: same callee and evaluated args" $ do
         let term = CatCall "my_func" [ExInt "5"] :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) Map.empty
+        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
@@ -1032,7 +1032,7 @@ tests = testGroup "CatOp"
             term = CatLoop loopBody :: CatOp () ()
             initEnv = Map.fromList [("i", VInt 0)]
         (ienv, itrace) <- runInterpTrace term initEnv
-        let (genv, gtrace) = runCpsGraphTrace (buildCpsGraph term) initEnv
+        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) initEnv
         itrace @?= gtrace
         ienv @?= genv
         Map.lookup "i" ienv @?= Just (VInt 3)
