@@ -721,4 +721,57 @@ tests = testGroup "CpsCompile"
             g = compile env body
         assertBool "dw.retrieve() should be a suspension point" (not (null (cgSuspensionPoints g)))
     ]
+
+  -- ------------------------------------------------------------------
+  -- Plan 145 Phase 2 Step 2A/2B: old compiler hand-trace
+  --
+  -- Each expected canonical shape was derived by hand-tracing compileProcedure's
+  -- algorithm (compileStmts processes statements in reverse so later statements
+  -- get lower PCs, then canonicalize renumbers via BFS from cgEntry) and cross
+  -- checked against actual output. Two of these correct an inaccurate guess in
+  -- doc/plan/145-dual-cps-debug.md's Step 2A table: pattern 2 has no join CpsNop
+  -- (nothing follows the if, so the then-arm falls through directly to the
+  -- shared return), and pattern 3's back-edge is the increment CpsAssign's
+  -- anNext pointing back to the loop-condition CpsBranch, not a CpsGoto.
+
+  , testGroup "old compiler hand-trace"
+
+    [ testCase "1: x = 1 (single assign)" $ do
+        let stmt = at 10 (BsAssign (lv1 "x") (ExInt "1"))
+            g    = compile noEnv [stmt]
+        canonicalize g @?= [SAsgn 1, SRet]
+
+    , testCase "2: if cond then x = 1 end if (no else, nothing follows)" $ do
+        let thenS = [at 2 (BsAssign (lv1 "x") (ExInt "1"))]
+            stmt  = at 1 (BsIf (IfStmt (ExBool True) thenS [] Nothing))
+            g     = compile noEnv [stmt]
+        canonicalize g @?= [SBrnch 1 2, SAsgn 2, SRet]
+
+    , testCase "3: for i = 1 to 10; x = i; next" $ do
+        let bodyS = [at 2 (BsAssign (lv1 "x") (ExLvalue (lv1 "i")))]
+            stmt  = at 1 (BsFor (ForStmt (lv1 "i") (ExInt "1") (ExInt "10") Nothing bodyS))
+            g     = compile noEnv [stmt]
+        canonicalize g @?= [SAsgn 1, SBrnch 2 3, SAsgn 4, SRet, SAsgn 1]
+
+    , testCase "4: dw_foo.retrieve() standalone call" $ do
+        let stmt = at 1 (BsCall (ExCall { callee = lv2 "dw_foo" "retrieve", callArgs = [] }))
+            g    = compile (varEnv "dw_foo" "datawindow") [stmt]
+        canonicalize g @?= [SSusp "retrieve:dw_foo" 1, SRet]
+
+    , testCase "5: if cond; dw.retrieve(); else; x = 1; end if" $ do
+        let thenS = [at 2 (BsCall (ExCall { callee = lv2 "dw" "retrieve", callArgs = [] }))]
+            elseS = [at 3 (BsAssign (lv1 "x") (ExInt "1"))]
+            stmt  = at 1 (BsIf (IfStmt (ExBool True) thenS [] (Just elseS)))
+            g     = compile dwEnv [stmt]
+        canonicalize g @?= [SBrnch 1 2, SSusp "retrieve:dw" 3, SAsgn 3, SRet]
+
+    -- Step 2B: the exact pattern from Plan 145 Phase 1C (m_ole_example::destroy,
+    -- `call m_ole_frame::destroy` as the sole statement). Confirms the old
+    -- compiler is correct here — the new SSA/CatOp pipeline drops this
+    -- statement entirely (PB.Analysis.SSA.stmtToAssigns has no BsPbCall case).
+    , testCase "2B: call ancestor::event alone (Phase 1C regression case)" $ do
+        let stmt = at 1 (BsPbCall (PbCall "m_ole_frame" "destroy"))
+            g    = compile noEnv [stmt]
+        canonicalize g @?= [SCProc 1, SRet]
+    ]
   ]

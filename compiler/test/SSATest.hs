@@ -225,6 +225,47 @@ tests = testGroup "SSA"
         assertBool "all versions > 0" (all ((> 0) . svVersion) (spVars sa))
     ]
 
+  , testGroup "buildSsa per-variant (Plan 145 Phase 3)"
+    -- Fills in the Step 3A table rows not already covered above (BsAssign,
+    -- BsIf both variants, BsFor are covered by "linear code"/"if/else"/"loops").
+    -- BsTry is deliberately absent: PB.Analysis.CfgBuild has no lowerTry (unlike
+    -- lowerIf/lowerFor/lowerDo/lowerChoose), so a BsTry statement's tryBody is
+    -- never split into blocks and stmtToAssigns's catch-all silently drops the
+    -- whole try/catch — a CfgBuild-level gap, not an SSA-layer one. Logged to
+    -- BACKLOG.md and doc/plan/145-dual-cps-debug.md rather than fixed here.
+    [ testCase "BsReturn (Just expr) → SsaReturn (Just ...) terminator" $ do
+        let sa = buildSsa emptyEnv "proc" [at 1 (BsReturn (Just (ExInt "1")))]
+        sbTerm (entryBlock sa) @?= SsaReturn (Just (SsaConst (ExInt "1")))
+
+    , testCase "BsCall (ExCall) → assign with SsaConst (ExCall ...)" $ do
+        let callExpr = ExCall { callee = lv1 "messagebox", callArgs = [] }
+            sa       = buildSsa emptyEnv "proc" [at 1 (BsCall callExpr)]
+        case sbAssigns (entryBlock sa) of
+          [SsaAssign _ (SsaConst e)] -> e @?= callExpr
+          other -> assertBool ("expected one SsaConst assign, got: " <> show other) False
+
+    , testCase "BsDo (while) creates multiple blocks (entry/header/body/exit)" $ do
+        let sa = buildSsa emptyEnv "proc"
+                  [at 1 (BsDo (DoStmt (Just (DoWhile (ExBool True)))
+                      [at 2 (BsAssign (lv1 "x") (ExInt "1"))] Nothing))]
+        assertBool "has multiple blocks" (blockCount sa >= 3)
+
+    , testCase "BsChoose creates entry + clause blocks + exit" $ do
+        let clauses = [ CaseClause (Just []) [at 2 (BsAssign (lv1 "x") (ExInt "1"))]
+                      , CaseClause Nothing    [at 3 (BsAssign (lv1 "x") (ExInt "2"))]
+                      ]
+            sa = buildSsa emptyEnv "proc" [at 1 (BsChoose (ChooseStmt (ExInt "1") clauses))]
+        assertBool "has at least entry + 2 clause blocks + exit" (blockCount sa >= 4)
+
+    , testCase "BsPbCall (call ancestor::event) → assign with synthetic ExCall (Plan 145 Phase 1C fix)" $ do
+        let sa = buildSsa emptyEnv "proc" [at 1 (BsPbCall (PbCall "m_ole_frame" "destroy"))]
+        case sbAssigns (entryBlock sa) of
+          [SsaAssign sv (SsaConst (ExCall lv []))] -> do
+            svName sv @?= "_"
+            map (\(LvSegment n _) -> n) (segments lv) @?= ["m_ole_frame::destroy"]
+          other -> assertBool ("expected one SsaConst ExCall assign, got: " <> show other) False
+    ]
+
   , testGroup "classifyExpr effect names"
     [ testCase "dw_foo.retrieve() → SuspendCall" $
         classifyExpr

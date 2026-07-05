@@ -557,25 +557,35 @@ compileAssigns ctx [a] = compileAssign ctx a
 compileAssigns ctx (a:as) = compileAssigns ctx as . compileAssign ctx a
 
 -- | Compile a single SSA assignment.
--- For call expressions: classifies via 'classifyExpr' and emits 'CatCall'
--- with the effect name from 'effectName'.
--- For other expressions: @x_1 = expr@ becomes @CatAssignWithRhs \"x_1\" expr@.
+-- The "_" target is the synthetic discard variable 'PB.Analysis.SSA.stmtToAssigns'
+-- uses for statement-position calls with no captured result (@BsCall@/@BsPbCall@) —
+-- only those go through call classification and emit a bare 'CatCall'/'CatSuspend'.
+-- Any real variable target (@x = f()@ / @x = obj.method()@) always becomes
+-- @CatAssignWithRhs "x_1" expr@ instead, matching 'PB.Analysis.CpsCompile'\'s old
+-- compiler: it never special-cases a call RHS on 'BsAssign' (its 'CpsCall'
+-- 'clResult' field, seemingly meant for this, is declared but never set to
+-- anything but 'Nothing' anywhere) — it always emits one plain 'CpsAssign'
+-- embedding the whole call expression in 'anRhs', suspend or not. Special-casing
+-- the "_" target too used to silently drop the assignment target entirely for
+-- @x = f()@ (Plan 145 Phase 1B re-sample Finding B).
 compileAssign :: CompileCtx -> SsaAssign -> CatOp () ()
-compileAssign ctx (SsaAssign sv rhs) = case rhs of
-  SsaConst expr@(ExCall lv rawArgs) ->
-    let parsedArgs = map parseArgList rawArgs
-    in compileCallExpr ctx sv expr lv parsedArgs
-  SsaConst expr@(ExMethodCall recv meth rawArgs) ->
-    let parsedArgs = map parseArgList rawArgs
-        cn = T.toLower (calleeName expr)
-        effCn = case recv of
-          ExLvalue rlv -> T.toLower (lvHead rlv) <> "." <> T.toLower meth
-          ExCall rlv _ -> T.toLower (lvHead rlv) <> "." <> T.toLower meth
-          _            -> cn
-    in case classifyExpr (ccEnv ctx) expr of
-         SuspendCall -> CatSuspend (effectName expr parsedArgs) parsedArgs
-         PureCall    -> CatCall effCn parsedArgs
-  _ -> CatAssignWithRhs (renderSsaVar sv) (ssaValToExpr rhs)
+compileAssign ctx (SsaAssign sv rhs)
+  | svName sv == "_" = case rhs of
+      SsaConst expr@(ExCall lv rawArgs) ->
+        let parsedArgs = map parseArgList rawArgs
+        in compileCallExpr ctx sv expr lv parsedArgs
+      SsaConst expr@(ExMethodCall recv meth rawArgs) ->
+        let parsedArgs = map parseArgList rawArgs
+            cn = T.toLower (calleeName expr)
+            effCn = case recv of
+              ExLvalue rlv -> T.toLower (lvHead rlv) <> "." <> T.toLower meth
+              ExCall rlv _ -> T.toLower (lvHead rlv) <> "." <> T.toLower meth
+              _            -> cn
+        in case classifyExpr (ccEnv ctx) expr of
+             SuspendCall -> CatSuspend (effectName expr parsedArgs) parsedArgs
+             PureCall    -> CatCall effCn parsedArgs
+      _ -> CatAssignWithRhs (renderSsaVar sv) (ssaValToExpr rhs)
+  | otherwise = CatAssignWithRhs (renderSsaVar sv) (ssaValToExpr rhs)
 
 -- | Shared logic for compiling an ExCall expression: classify and emit CatCall.
 compileCallExpr :: CompileCtx -> SsaVar -> Expr -> Lvalue -> [Expr] -> CatOp () ()
@@ -661,10 +671,12 @@ compileLowCatToCps (LAssignWithRhs var expr) nextPc =
 -- Branch pattern: intercept CatFanIn + condition before CatCompose tears them apart.
 compileLowCatToCps (LCompose g f) nextPc = case inspectBranchLowCat g of
   Just (tOp, fOp) -> do
+    -- No join CpsNop: both arms fall through directly to nextPc, matching the
+    -- old compiler (PB.Analysis.CpsCompile never allocates a node purely to
+    -- serve as a join point). See Plan 145 Finding A.
     let branchCond = extractCondLowCat f
-    joinPc <- allocateNode (CpsNop { npNext = nextPc })
-    elseEntryPc <- compileLowCatToCps fOp joinPc
-    thenEntryPc <- compileLowCatToCps tOp joinPc
+    elseEntryPc <- compileLowCatToCps fOp nextPc
+    thenEntryPc <- compileLowCatToCps tOp nextPc
     branchEntryPc <- allocateNode (CpsBranch { brCond = branchCond, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
     compileLowCatToCps f branchEntryPc
   Nothing -> do
@@ -719,10 +731,11 @@ compileLoopBodyLowCat LInr _loopHeaderPc nextPc =
 -- Branch pattern inside loops: intercept LFanIn + condition before LCompose tears them apart.
 compileLoopBodyLowCat (LCompose g f) loopHeaderPc nextPc
   | Just (tOp, fOp) <- inspectBranchLowCat g = do
+      -- No join CpsNop here either — same fix as the top-level branch case
+      -- above (Plan 145 Finding A).
       let branchCond = extractCondLowCat f
-      joinPc <- allocateNode (CpsNop { npNext = nextPc })
-      elseEntryPc <- compileLoopBodyLowCat fOp loopHeaderPc joinPc
-      thenEntryPc <- compileLoopBodyLowCat tOp loopHeaderPc joinPc
+      elseEntryPc <- compileLoopBodyLowCat fOp loopHeaderPc nextPc
+      thenEntryPc <- compileLoopBodyLowCat tOp loopHeaderPc nextPc
       branchEntryPc <- allocateNode (CpsBranch { brCond = branchCond, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
       compileLoopBodyLowCat f loopHeaderPc branchEntryPc
 compileLoopBodyLowCat (LCompose g f) loopHeaderPc nextPc = do

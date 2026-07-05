@@ -13,6 +13,8 @@ module PB.Analysis.CpsCompile
   , CpsGraph (..)
   , compileProcedure
   , parseArgList
+  , ShapeNode (..)
+  , canonicalize
   ) where
 
 import PB.Prelude
@@ -64,6 +66,64 @@ data CpsGraph = CpsGraph
   , cgSuspensionPoints :: [Int]
   , cgSourceMap        :: [(Int, Int)]   -- list of [pc, line] pairs
   } deriving (Eq, Show, Generic)
+
+-- ---------------------------------------------------------------------------
+-- Canonical graph shape (for dual-CPS comparison and hand-trace tests)
+
+-- | Structural shape of a CpsNode with all variable names and expression
+-- values erased.  PC targets are replaced by canonical indices (BFS order
+-- from entry).  Effect names on CpsSuspend are retained — they are the
+-- correctness-critical signal.
+data ShapeNode
+  = SAsgn  Int        -- CpsAssign:   canonical anNext
+  | SBrnch Int Int    -- CpsBranch:   canonical then, canonical else
+  | SGoto  Int        -- CpsGoto:     canonical target
+  | SCall  Int        -- CpsCall:     canonical clNext
+  | SSusp  Text Int   -- CpsSuspend:  effect name, canonical continuation
+  | SRet              -- CpsReturn
+  | SNop   Int        -- CpsNop:      canonical npNext (-1 preserved)
+  | SCProc Int        -- CpsCallProc: canonical cpNext
+  deriving (Eq, Show)
+
+-- | BFS traversal from entry, returning PCs in visitation order.
+bfsOrder :: Int -> Map.Map Int CpsNode -> [Int]
+bfsOrder entry nodeMap = go [entry] Set.empty []
+  where
+    succs node = case node of
+      CpsAssign  { anNext }              -> [anNext             | anNext >= 0]
+      CpsBranch  { brThenPc, brElsePc } -> [brThenPc, brElsePc]
+      CpsGoto    { goTarget }            -> [goTarget            | goTarget >= 0]
+      CpsCall    { clNext }              -> [clNext              | clNext >= 0]
+      CpsSuspend { suContinuation }      -> [suContinuation      | suContinuation >= 0]
+      CpsReturn  {}                      -> []
+      CpsNop     { npNext }              -> [npNext              | npNext >= 0]
+      CpsCallProc { cpNext }             -> [cpNext              | cpNext >= 0]
+    go []        _       acc = reverse acc
+    go (pc:rest) visited acc
+      | Set.member pc visited = go rest visited acc
+      | otherwise = case Map.lookup pc nodeMap of
+          Nothing   -> go rest (Set.insert pc visited) acc
+          Just node -> go (rest ++ succs node) (Set.insert pc visited) (pc : acc)
+
+-- | Convert a CpsGraph to a canonical shape list.
+canonicalize :: CpsGraph -> [ShapeNode]
+canonicalize graph =
+  let nodeMap = Map.fromList (zip [0 ..] (cgNodes graph))
+      order   = bfsOrder (cgEntry graph) nodeMap
+      canon   = Map.fromList (zip order [0 ..])
+      look n  = Map.findWithDefault (-1) n canon
+  in [ shapeOf look node | pc <- order, Just node <- [Map.lookup pc nodeMap] ]
+
+shapeOf :: (Int -> Int) -> CpsNode -> ShapeNode
+shapeOf look node = case node of
+  CpsAssign  { anNext }                   -> SAsgn  (look anNext)
+  CpsBranch  { brThenPc, brElsePc }       -> SBrnch (look brThenPc) (look brElsePc)
+  CpsGoto    { goTarget }                 -> SGoto  (look goTarget)
+  CpsCall    { clNext }                   -> SCall  (look clNext)
+  CpsSuspend { suEffect, suContinuation } -> SSusp  suEffect (look suContinuation)
+  CpsReturn  {}                           -> SRet
+  CpsNop     { npNext }                   -> SNop   (if npNext < 0 then -1 else look npNext)
+  CpsCallProc { cpNext }                  -> SCProc (look cpNext)
 
 -- ---------------------------------------------------------------------------
 -- Internal types

@@ -4,9 +4,10 @@ import PB.Prelude hiding (id, (.))
 import qualified Prelude as P
 import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Type         (PbType (..))
-import PB.AST.BodyStmt     (BodyStmt (..))
+import PB.AST.BodyStmt     (BodyStmt (..), PbCall (..), IfStmt (..))
 import PB.AST.Located      (Located (..))
 import PB.Analysis.CatOp
+import PB.Analysis.CpsCompile (ShapeNode (..), canonicalize)
 import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                             SsaTerm (..), SsaProc (..), renderSsaVar, buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
@@ -104,6 +105,16 @@ hasCatSuspendEffect eff (CatFanIn f g)   = hasCatSuspendEffect eff f P.|| hasCat
 hasCatSuspendEffect eff (CatLoop f)      = hasCatSuspendEffect eff f
 hasCatSuspendEffect eff (CatTry f g)     = hasCatSuspendEffect eff f P.|| hasCatSuspendEffect eff g
 hasCatSuspendEffect _   _                = False
+
+-- | Check if a CatOp tree contains any CatCall node.
+hasAnyCatCall :: CatOp a b -> Bool
+hasAnyCatCall (CatCall _ _)    = True
+hasAnyCatCall (CatCompose f g) = hasAnyCatCall f P.|| hasAnyCatCall g
+hasAnyCatCall (CatFork f g)    = hasAnyCatCall f P.|| hasAnyCatCall g
+hasAnyCatCall (CatFanIn f g)   = hasAnyCatCall f P.|| hasAnyCatCall g
+hasAnyCatCall (CatLoop f)      = hasAnyCatCall f
+hasAnyCatCall (CatTry f g)     = hasAnyCatCall f P.|| hasAnyCatCall g
+hasAnyCatCall _                = False
 
 -- | Environment with datawindow and transaction typed variables.
 dwEnv :: ScopedTypeEnv
@@ -386,6 +397,43 @@ tests = testGroup "CatOp"
         in assertBool "CpsGraph should contain a CpsSuspend node" hasCpsSuspend
     ]
 
+  , testGroup "assign-with-call-RHS (Plan 145 Phase 1B re-sample Finding B)"
+    -- x = f() / x = obj.method() used to silently drop the assignment target and
+    -- compile to a bare CatCall/CatSuspend — the call ran but its result was
+    -- never stored. PB.Analysis.CpsCompile (the old, confirmed-correct compiler)
+    -- never special-cases a call RHS on BsAssign; it always emits one CpsAssign.
+    [ testCase "x = my_func() (pure) assigns, does not emit a bare CatCall" $
+        let callExpr = ExCall { callee = Lvalue [LvSegment "my_func" Nothing], callArgs = [] }
+            sa = mkSsa [SsaAssign (SsaVar "x" 1) (SsaConst callExpr)] (SsaReturn Nothing)
+            result = compileSsa emptyEnv Set.empty sa
+        in assertBool "x_1 assign present, no bare CatCall"
+             (hasAssign "x_1" result P.&& not (hasAnyCatCall result))
+
+    , testCase "x = dw_foo.retrieve() (suspend) assigns, does not emit CatSuspend" $
+        let callExpr = ExCall
+              { callee   = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]
+              , callArgs = [] }
+            sa = mkSsa [SsaAssign (SsaVar "x" 1) (SsaConst callExpr)] (SsaReturn Nothing)
+            result = compileSsa dwEnv Set.empty sa
+        in assertBool "x_1 assign present, no CatSuspend"
+             (hasAssign "x_1" result P.&& not (hasAnyCatSuspend result))
+
+    , testCase "standalone (discard) suspend call is unaffected" $
+        -- Sanity: the "_" discard target must still classify and emit CatSuspend.
+        let callExpr = ExCall
+              { callee   = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]
+              , callArgs = [] }
+            sa = mkSsa [SsaAssign (SsaVar "_" 1) (SsaConst callExpr)] (SsaReturn Nothing)
+            result = compileSsa dwEnv Set.empty sa
+        in assertBool "should still contain CatSuspend" (hasAnyCatSuspend result)
+
+    , testCase "end-to-end: x = messagebox() matches old compiler's [SAsgn, SRet]" $
+        let callExpr = ExCall { callee = Lvalue [LvSegment "messagebox" Nothing], callArgs = [] }
+            body     = [Located 1 (BsAssign (Lvalue [LvSegment "x" Nothing]) callExpr)]
+            graph    = compileProcedureViaCatOp emptyEnv Set.empty body
+        in canonicalize graph @?= [SAsgn 1, SRet]
+    ]
+
   , testGroup "Interp"
     [ testCase "id returns input" $
         runInterp (id :: Interp Int Int) 42 P.>>= \v -> v @?= 42
@@ -441,21 +489,20 @@ tests = testGroup "CatOp"
             (CpsReturn Nothing : CpsAssign { anVar = "y_1" } : CpsAssign { anVar = "x_1" } : []) -> return ()
             _ -> assertBool "expected [exit, y_1, x_1]" False
 
-    , testCase "branch compiles to CpsBranch diamond with join nop" $
+    , testCase "branch compiles to CpsBranch diamond with no unconditional join nop (Plan 145 Finding A)" $
         let thenK = CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
             elseK = CatAssignWithRhs "y_1" (ExInt "2")
             op = branch (ExBool True) thenK elseK :: CatOp () ()
             graph = buildCpsGraph op
         in do
-          P.length (cgNodes graph) @?= 5
+          P.length (cgNodes graph) @?= 4
           case cgNodes graph of
             ( CpsReturn Nothing
-              : CpsNop { npNext = 0 }
-              : CpsAssign { anVar = "y_1", anNext = 1 }
-              : CpsAssign { anVar = "x_1", anNext = 1 }
-              : CpsBranch { brThenPc = 3, brElsePc = 2 }
+              : CpsAssign { anVar = "y_1", anNext = 0 }
+              : CpsAssign { anVar = "x_1", anNext = 0 }
+              : CpsBranch { brThenPc = 2, brElsePc = 1 }
               : [] ) -> return ()
-            nodes -> assertBool ("expected 5 nodes [exit, join-nop, else, then, branch], got " <> show (P.length nodes) <> ": " <> show nodes) False
+            nodes -> assertBool ("expected 4 nodes [exit, else, then, branch], got " <> show (P.length nodes) <> ": " <> show nodes) False
 
     , testCase "branch condition preserved through LowCat (not ExNull)" $
         let thenK = CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
@@ -558,5 +605,48 @@ tests = testGroup "CatOp"
             graph = compileProcedureViaCatOp dwEnv Set.empty body
         in assertBool "should contain CpsSuspend"
              (any (\n -> case n of CpsSuspend {} -> True; _ -> False) (cgNodes graph))
+
+    -- Plan 145 Phase 1C/3: BsPbCall (`call ancestor::event`) used to be dropped
+    -- entirely by PB.Analysis.SSA.stmtToAssigns's catch-all. Confirms the fix
+    -- makes the new pipeline match PB.Analysis.CpsCompile's old-compiler output
+    -- for the exact m_ole_example::destroy regression case (CpsCompileTest.hs's
+    -- "2B" hand-trace test) bit-for-bit, not just structurally equivalent.
+    , testCase "BsPbCall (call ancestor::event) matches old compiler's [SCProc, SRet]" $
+        let body  = [Located 1 (BsPbCall (PbCall "m_ole_frame" "destroy"))]
+            graph = compileProcedureViaCatOp emptyEnv Set.empty body
+        in canonicalize graph @?= [SCProc 1, SRet]
+    ]
+
+  , testGroup "no unconditional join CpsNop (Plan 145 Finding A)"
+    -- PB.Analysis.CatOp.compileLowCatToCps's LCompose/LFanIn branch case (and the
+    -- analogous case in compileLoopBodyLowCat) used to unconditionally allocate a
+    -- join CpsNop before both arms, even when nothing structurally requires one.
+    -- The old compiler (PB.Analysis.CpsCompile, confirmed-correct reference) never
+    -- allocates this node — both arms just point their fallthrough straight at the
+    -- shared continuation. Cosmetic (no data loss), but common (every if/if-else).
+    [ testCase "if without else, nothing follows — matches old compiler exactly" $
+        -- w_notepad::ue_key_up pattern: if cond then <call> end if.
+        let body  = [Located 1 (BsIf (IfStmt (ExBool True)
+                       [Located 2 (BsPbCall (PbCall "m_ole_frame" "destroy"))] [] Nothing))]
+            graph = compileProcedureViaCatOp emptyEnv Set.empty body
+        in canonicalize graph @?= [SBrnch 1 2, SCProc 2, SRet]
+
+    , testCase "if/else, both arms, nothing follows — matches old compiler exactly" $
+        let body  = [Located 1 (BsIf (IfStmt (ExBool True)
+                       [Located 2 (BsPbCall (PbCall "m_ole_frame" "destroy"))] []
+                       (Just [Located 3 (BsPbCall (PbCall "m_ole_frame" "create"))])))]
+            graph = compileProcedureViaCatOp emptyEnv Set.empty body
+        in canonicalize graph @?= [SBrnch 1 2, SCProc 3, SCProc 3, SRet]
+
+    , testCase "branch inside a loop body has no join CpsNop" $
+        -- Direct CatOp construction (bypassing SSA/BsFor) isolates
+        -- compileLoopBodyLowCat's branch case from an unrelated, separate bug
+        -- where a for-loop containing an if collapses entirely (logged to BACKLOG).
+        let innerBranch = branch (ExBool True)
+              (CatCompose CatInl (CatAssignWithRhs "x_1" (ExInt "1")) :: CatOp () (Either () ()))
+              (CatInr :: CatOp () (Either () ()))
+            catTree = CatLoop innerBranch :: CatOp () ()
+            graph   = buildCpsGraph catTree
+        in canonicalize graph @?= [SNop 1, SBrnch 2 3, SAsgn 4, SGoto 5, SGoto 0, SRet]
     ]
   ]

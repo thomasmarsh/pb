@@ -329,6 +329,16 @@ stmtToAssigns (BsDestroy lv) =
   [SsaAssign (SsaVar (lvHead lv) 0) SsaNull]
 stmtToAssigns (BsCall expr) =
   [SsaAssign (SsaVar "_" 0) (SsaConst expr)]
+-- BsPbCall: CALL ancestor::event super-dispatch (Plan 145 Phase 3). Encoded as a
+-- single-segment synthetic ExCall so it flows through the existing
+-- classifyExpr/compileCallExpr machinery in PB.Analysis.CatOp and lowers to a
+-- CpsCallProc, matching PB.Analysis.CpsCompile's explicit BsPbCall case. The
+-- "ancestor::event" text can never collide with isTriggerEvent, a user-fn name
+-- (PB identifiers can't contain "::"), or isBuiltinSuspendFn's fixed list, so
+-- it always classifies PureCall.
+stmtToAssigns (BsPbCall (PbCall ancestor event)) =
+  [SsaAssign (SsaVar "_" 0)
+             (SsaConst (ExCall (Lvalue [LvSegment (ancestor <> "::" <> event) Nothing]) []))]
 stmtToAssigns _ = []
 
 exprToSsaVal :: Expr -> SsaVal

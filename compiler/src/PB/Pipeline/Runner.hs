@@ -21,10 +21,10 @@ import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.CfgBuild    (buildCfg)
-import PB.Analysis.CpsCompile  (compileProcedure)
+import PB.Analysis.CpsCompile  (compileProcedure, canonicalize)
 import PB.Analysis.CatOp       (compileProcedureViaCatOp)
 import PB.Analysis.DeadCode    qualified as DeadCode
-import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, procEnv)
+import PB.Analysis.TypeEnv     (WorkspaceEnv (..), ScopedTypeEnv, buildWorkspaceEnv, procEnv)
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TypeResolve
@@ -72,6 +72,7 @@ import Control.Concurrent.STM
 import GHC.Conc   (getNumCapabilities)
 import Control.Exception   (finally, evaluate)
 import System.Environment  (lookupEnv)
+import System.Exit         (die)
 import System.IO           (hFlush, stderr)
 import Data.IORef          (IORef, newIORef, readIORef, atomicModifyIORef')
 import qualified Data.Set           as Set
@@ -361,13 +362,15 @@ runModeDb srcDir dbPath = do
   errors <- readIORef errCount
   emitProgress (object ["tag" .= ("done" :: Text), "parsed" .= (total - errors), "errors" .= errors])
 
+-- ---------------------------------------------------------------------------
+
 -- | Run both CPS compilers on every procedure and report differences.
 --
 -- Parses all files in srcDir, builds a workspace TypeEnv, then for each
 -- procedure runs 'compileProcedure' (old) and 'compileProcedureViaCatOp'
--- (new), compares their JSON-encoded outputs, and prints a summary.
-runModeDualCps :: FilePath -> IO ()
-runModeDualCps srcDir = do
+-- (new), compares their canonical shapes, and prints a summary.
+runModeDualCps :: FilePath -> Maybe Text -> IO ()
+runModeDualCps srcDir minspect = do
   files <- walkAllSrFiles srcDir
   stdlibParsed <- parseStdlibFiles
   outcomes <- mapConcurrently parseOutcome files
@@ -387,14 +390,58 @@ runModeDualCps srcDir = do
           <> [ (esName  (evSig ev), "",                   evBody ev) | ev <- srEvents       sf ]
           <> [ (obEvent ob,         "",                   obBody ob) | ob <- srOnBlocks     sf ]
         pure (obj, pName, mkProcEnv cpsParams, userFns, body)
-  let results =
-        [ (obj, pName, encode (toJSON (compileProcedure env userFns body))
-                    == encode (toJSON (compileProcedureViaCatOp env userFns body)))
-        | (obj, pName, env, userFns, body) <- allProcs ]
-  let diffs = [(obj, pName) | (obj, pName, False) <- results]
-  mapM_ (\(obj, pName) -> putStrLn ("DIFF " <> obj <> "::" <> pName)) diffs
-  let total = length results
-      nDiff  = length diffs
-  putStrLn ("Total: " <> T.pack (show total) <> " procedures, "
-            <> T.pack (show nDiff) <> " differ, "
-            <> T.pack (show (total - nDiff)) <> " identical")
+  case minspect of
+    Just target -> runInspect target allProcs
+    Nothing -> do
+      let results =
+            [ (obj, pName, canonicalize (compileProcedure env userFns body)
+                        ,  canonicalize (compileProcedureViaCatOp env userFns body))
+            | (obj, pName, env, userFns, body) <- allProcs ]
+      let diffs = [ (obj, pName, oldShape, newShape)
+                  | (obj, pName, oldShape, newShape) <- results, oldShape /= newShape ]
+      mapM_ (\(obj, pName, oldShape, newShape) ->
+                putStrLn ("DIFF " <> obj <> "::" <> pName
+                          <> "  old=" <> T.pack (show (length oldShape))
+                          <> " new=" <> T.pack (show (length newShape))))
+            diffs
+      let total = length results
+          nDiff  = length diffs
+      putStrLn ("Total: " <> T.pack (show total) <> " procedures, "
+                <> T.pack (show nDiff) <> " differ, "
+                <> T.pack (show (total - nDiff)) <> " identical")
+
+-- | Dump canonical OLD/NEW shape-node lists for a single "obj::proc" target,
+-- then exit. Used to hand-diff one procedure instead of scanning the whole
+-- corpus summary (Plan 145 Phase 1A).
+--
+-- A name can be ambiguous: the same object can contribute two 'allProcs'
+-- entries under the same event name (e.g. an @event@ block and an @on@
+-- block both named "clicked"), and only one of them may actually differ.
+-- Picking the first match blindly can silently show an identical pair when
+-- a diffing one exists under the same name, so prefer a differing candidate
+-- when there is more than one match.
+runInspect
+  :: Text
+  -> [(Text, Text, ScopedTypeEnv, Set.Set Text, [Located BodyStmt])]
+  -> IO ()
+runInspect target allProcs =
+  case T.splitOn "::" target of
+    [wantObj, wantProc] ->
+      let isMatch (obj, pName, _, _, _) =
+            T.toLower obj == T.toLower wantObj && T.toLower pName == T.toLower wantProc
+          candidates = filter isMatch allProcs
+          shapesOf (_, _, env, userFns, body) =
+            ( canonicalize (compileProcedure env userFns body)
+            , canonicalize (compileProcedureViaCatOp env userFns body) )
+          differing = [ c | c <- candidates, uncurry (/=) (shapesOf c) ]
+      in case candidates of
+           [] -> die ("no such procedure: " <> T.unpack target)
+           firstCandidate : _ -> do
+             when (length candidates > 1) $ putStrLn
+               (T.pack (show (length candidates)) <> " procedures match " <> target
+                <> "; showing " <> (if null differing then "the first" else "the first that differs"))
+             let chosen = fromMaybe firstCandidate (listToMaybe differing)
+                 (oldShape, newShape) = shapesOf chosen
+             mapM_ (\n -> putStrLn ("OLD  " <> T.pack (show n))) oldShape
+             mapM_ (\n -> putStrLn ("NEW  " <> T.pack (show n))) newShape
+    _ -> die ("invalid --inspect argument, expected \"obj::proc\", got: " <> T.unpack target)
