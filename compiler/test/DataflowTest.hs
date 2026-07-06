@@ -7,7 +7,7 @@ import PB.AST.Type         (PbType (..))
 import PB.AST.Located      (Located (..))
 import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
-import PB.Analysis.CfgBuild (Cfg (..), CfgBlock (..), CfgEdge (..))
+import PB.Analysis.Cfg (Cfg (..), CfgBlock (..), CfgEdge (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
 import PB.Analysis.Dataflow
 

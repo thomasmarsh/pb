@@ -31,8 +31,7 @@ import qualified Prelude as P
 import Data.List (sortOn)
 import PB.AST.Expr (Expr (..), LvSegment (..), Lvalue (..), BinOp (BopEq))
 import PB.Analysis.CatOp (Category (..), CatOp (..), branch)
-import PB.Analysis.CpsCompile (parseArgList)
-import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName, calleeName, isTriggerEvent, segName)
+import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName, calleeName, isTriggerEvent, segName, parseArgList)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Analysis.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                          SsaTerm (..), SsaPhi (..), SsaProc (..))
@@ -577,7 +576,7 @@ compileAssigns ctx (a:as) = compileAssigns ctx as . compileAssign ctx a
 -- uses for statement-position calls with no captured result (@BsCall@/@BsPbCall@) —
 -- only those go through call classification and emit a bare 'CatCall'/'CatSuspend'.
 -- Any real variable target (@x = f()@ / @x = obj.method()@) always becomes
--- @CatAssignWithRhs "x" expr@ instead, matching 'PB.Analysis.CpsCompile'\'s old
+-- @CatAssignWithRhs "x" expr@ instead, matching 'PB.Analysis.CpsGraph'\'s old
 -- compiler: it never special-cases a call RHS on 'BsAssign' (its 'CpsCall'
 -- 'clResult' field, seemingly meant for this, is declared but never set to
 -- anything but 'Nothing' anywhere) — it always emits one plain 'CpsAssign'
@@ -622,7 +621,7 @@ compileAssign ctx (SsaAssign sv rhs)
       -- messaging idiom) must still classify as a bare call rather than
       -- falling through to CatAssignWithRhs below — that produced a real
       -- CpsAssign{anVar="_"} node instead of a call/dispatch node (Plan 145).
-      -- Mirrors PB.Analysis.CpsCompile's BsCall `otherwise` branch, which
+      -- Mirrors PB.Analysis.CpsGraph's BsCall `otherwise` branch, which
       -- calls classifyExpr/calleeName generically regardless of expr shape
       -- (both default to PureCall/"?" for anything that isn't ExCall/
       -- ExMethodCall — matching the old compiler exactly, not improving on
@@ -658,7 +657,7 @@ compileCallExpr ctx _sv expr lv parsedArgs
   -- column name are already encoded in the effect name itself
   -- ("retrieve:child_<col>:<dwCtrl>", via 'effectName'), so only the third
   -- argument (the bound variable) belongs in the suspend's traced args —
-  -- mirrors 'PB.Analysis.CpsCompile's identical special case exactly
+  -- mirrors 'PB.Analysis.CpsGraph's identical special case exactly
   -- (Plan 146 Phase 2i: this arm didn't exist here at all, so the generic
   -- 'otherwise' branch below passed all 3 parsed args through instead of
   -- just the third; confirmed via hand-trace of a real corpus diff,

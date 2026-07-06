@@ -14,7 +14,7 @@ module PB.Analysis.CpsInterp
 
 import PB.Prelude
 import qualified Data.Map.Strict as Map
-import PB.Analysis.CpsCompile (CpsNode (..), CpsGraph (..))
+import PB.Analysis.CpsGraph (CpsNode (..), CpsGraph (..))
 import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExprMocked)
 
 -- | Execute a 'CpsGraph' from its entry pc against a starting environment and

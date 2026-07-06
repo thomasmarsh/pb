@@ -13,7 +13,8 @@ import PB.Analysis.CatLower (compileSsa)
 import PB.Analysis.GraphBuilder
 import PB.Analysis.CatInterp
 import PB.Analysis.CatEval (Value (..), TraceEvent (..))
-import PB.Analysis.CpsCompile (ShapeNode (..), canonicalize, normalizeCallTag, parseArgList, collectBodyLocals)
+import PB.Analysis.CpsGraph (ShapeNode (..), canonicalize, normalizeCallTag)
+import PB.Analysis.CallClassify (parseArgList, collectBodyLocals)
 import PB.Analysis.CpsInterp (runCpsGraphTrace, TraceOutcome (..))
 import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                             SsaTerm (..), SsaProc (..), renderSsaVar, buildSsa)
@@ -570,7 +571,7 @@ tests = testGroup "CatOp"
   , testGroup "assign-with-call-RHS (Plan 145 Phase 1B re-sample Finding B)"
     -- x = f() / x = obj.method() used to silently drop the assignment target and
     -- compile to a bare CatCall/CatSuspend — the call ran but its result was
-    -- never stored. PB.Analysis.CpsCompile (the old, confirmed-correct compiler)
+    -- never stored. PB.Analysis.CpsGraph (the old, confirmed-correct compiler)
     -- never special-cases a call RHS on BsAssign; it always emits one CpsAssign.
     [ testCase "x = my_func() (pure) assigns, does not emit a bare CatCall" $
         let callExpr = ExCall { callee = Lvalue [LvSegment "my_func" Nothing], callArgs = [] }
@@ -820,7 +821,7 @@ tests = testGroup "CatOp"
 
     -- Plan 145 Phase 1C/3: BsPbCall (`call ancestor::event`) used to be dropped
     -- entirely by PB.Analysis.SSA.stmtToAssigns's catch-all. Confirms the fix
-    -- makes the new pipeline match PB.Analysis.CpsCompile's old-compiler output
+    -- makes the new pipeline match PB.Analysis.CpsGraph's old-compiler output
     -- for the exact m_ole_example::destroy regression case (CpsCompileTest.hs's
     -- "2B" hand-trace test) bit-for-bit, not just structurally equivalent.
     , testCase "BsPbCall (call ancestor::event) matches old compiler's [SCProc, SRet]" $
@@ -833,7 +834,7 @@ tests = testGroup "CatOp"
     -- PB.Analysis.CatOp.compileLowCatToCps's LCompose/LFanIn branch case (and the
     -- analogous case in compileLoopBodyLowCat) used to unconditionally allocate a
     -- join CpsNop before both arms, even when nothing structurally requires one.
-    -- The old compiler (PB.Analysis.CpsCompile, confirmed-correct reference) never
+    -- The old compiler (PB.Analysis.CpsGraph, confirmed-correct reference) never
     -- allocates this node — both arms just point their fallthrough straight at the
     -- shared continuation. Cosmetic (no data loss), but common (every if/if-else).
     [ testCase "if without else, nothing follows — matches old compiler exactly" $
@@ -879,7 +880,7 @@ tests = testGroup "CatOp"
   , testGroup "no wrapper CpsGoto for loop continue/break (Plan 145 LInl/LInr fix)"
     -- compileLoopBodyLowCat's LInl/LInr cases used to each allocate a genuine
     -- CpsGoto node for the loop's implicit continue/break, where the old
-    -- compiler (PB.Analysis.CpsCompile's BsFor/BsDo) threads the raw target
+    -- compiler (PB.Analysis.CpsGraph's BsFor/BsDo) threads the raw target
     -- pcs straight through with zero wrapper nodes. This was the last
     -- blocker for --dual-cps exact-match parity on loop-containing
     -- procedures (the header-CpsNop fix above didn't move the diff count
@@ -912,7 +913,7 @@ tests = testGroup "CatOp"
     ]
 
   , testGroup "for/do-loop header collapse (Plan 145 post-Finding-A block-collapse bug)"
-    -- Root cause: PB.Analysis.CfgBuild.lowerFor/lowerDo (top-condition) flush the
+    -- Root cause: PB.Analysis.Cfg.lowerFor/lowerDo (top-condition) flush the
     -- raw BsFor/BsDo node onto the *predecessor* block and give the actual
     -- condition/header block zero statements of its own. SSA.cfgTermToSsa used to
     -- look for a control statement only in the header block's own stmts, find
@@ -972,7 +973,7 @@ tests = testGroup "CatOp"
     -- messaging idiom, e.g. `ParentWindow.Dynamic Post of_run_report()` or
     -- `Post Event ue_GetValues()`) fell through to CatAssignWithRhs, producing
     -- a real CpsAssign{anVar="_"} node instead of a bare call node. The old
-    -- compiler (PB.Analysis.CpsCompile's BsCall `otherwise` branch) never has
+    -- compiler (PB.Analysis.CpsGraph's BsCall `otherwise` branch) never has
     -- this gap: it calls classifyExpr/calleeName generically regardless of
     -- expr shape, both defaulting to PureCall/"?" for anything that isn't
     -- ExCall/ExMethodCall — confirmed as the exact ground-truth reference
@@ -1218,7 +1219,7 @@ tests = testGroup "CatOp"
   , testGroup "PureCall callee name preserves source case (Plan 146 Phase 2d)"
     -- compileCallExpr's `otherwise` branch (PB.Analysis.CatOp) and
     -- compileAssign's ExMethodCall PureCall case both wrap the callee name in
-    -- T.toLower before building CatCall, but PB.Analysis.CpsCompile's mirror
+    -- T.toLower before building CatCall, but PB.Analysis.CpsGraph's mirror
     -- (the confirmed-correct old compiler) uses calleeName's result verbatim
     -- via `clCallee = calleeName expr`. calleeName never itself lowercases —
     -- the divergence is CatOp.hs-only. Found via a read-only GHCi hand-trace
@@ -1263,7 +1264,7 @@ tests = testGroup "CatOp"
   , testGroup "fn_retrievechild suspend args match old compiler (Plan 146 Phase 2i)"
     -- Real corpus idiom (openpay's wiz_misth_final_details_step1::of_stepadded
     -- and 3 sibling wizard-step handlers): `fn_retrievechild(adw, "col", var)`.
-    -- 'PB.Analysis.CpsCompile' special-cases this exact callee (before its
+    -- 'PB.Analysis.CpsGraph' special-cases this exact callee (before its
     -- generic call-compilation path) to trace only the third argument (the
     -- bound variable) as the suspend's args, since the datawindow control and
     -- column name are already encoded directly in the effect name string
@@ -1290,7 +1291,7 @@ tests = testGroup "CatOp"
     -- env flows in unchanged from the caller, so a *locally-declared*
     -- datastore/transaction variable's type can never be resolved by
     -- classifyExpr's lookupScopedVar, and a suspend method call on it falls
-    -- through to the conservative PureCall default. PB.Analysis.CpsCompile's
+    -- through to the conservative PureCall default. PB.Analysis.CpsGraph's
     -- compileProcedure (the confirmed-correct old compiler) seeds steLocal
     -- from the body's own BsLocalVar decls via collectBodyLocals before
     -- compiling. Found via a read-only GHCi hand-trace of a real
@@ -1675,7 +1676,7 @@ tests = testGroup "CatOp"
 
   , testGroup "parseArgList / collectBodyLocals (retained helpers, Plan 144 Phase 5 Step 7)"
     -- Ported from the now-deleted CpsCompileTest.hs's "Gap 3" and "body locals"
-    -- groups: these exercised the two PB.Analysis.CpsCompile helpers that
+    -- groups: these exercised the two PB.Analysis.CpsGraph helpers that
     -- survive the old compiler's deletion (both are still imported directly by
     -- PB.Analysis.CatOp) indirectly, through compileProcedure. Direct unit
     -- tests on the pure functions themselves, rather than losing the coverage.

@@ -13,8 +13,8 @@ import PB.AST.Located     (Located)
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType)
 import PB.Lexing.Token    (Token (..))
-import PB.Analysis.CfgBuild   (CfgBlock, CfgEdge, Cfg)
-import PB.Analysis.CpsCompile (CpsNode, CpsGraph)
+import PB.Analysis.Cfg   (CfgBlock, CfgEdge, Cfg)
+import PB.Analysis.CpsGraph   (CpsNode, CpsGraph)
 import PB.Analysis.Taint      (InterprocEdge (..), ProcedureSummary (..), ProcSummaryReturnFlow (..))
 import PB.Analysis.DeadCode   (DeadProcedure (..))
 

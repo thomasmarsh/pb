@@ -9,7 +9,7 @@
 -- @doc/spec.md@ and each fixture's own comment) — independent of what the
 -- compiler happens to produce — and then asserts that
 -- 'PB.Analysis.CatOp.compileProcedureViaCatOp' matches it exactly. (The old
--- compiler, 'PB.Analysis.CpsCompile.compileProcedure', was deleted in Plan
+-- compiler, 'PB.Analysis.CpsGraph.compileProcedure', was deleted in Plan
 -- 144 Phase 5 Step 7 once this and the dual-trace corpus run confirmed
 -- equivalence; these fixtures no longer compare against it.)
 --

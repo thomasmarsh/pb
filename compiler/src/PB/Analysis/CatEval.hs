@@ -16,8 +16,7 @@ module PB.Analysis.CatEval
 
 import PB.Prelude
 import PB.AST.Expr (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
-import PB.Analysis.CallClassify (calleeName)
-import PB.Analysis.CpsCompile (parseArgList)
+import PB.Analysis.CallClassify (calleeName, parseArgList)
 import PB.Lexing.Token (Token)
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
@@ -85,7 +84,7 @@ evalExpr = evalExprMocked Map.empty
 -- never as a 'CatSuspend'\/'CatCall' node with a result slot — resolve via
 -- 'MockResponses', keyed on 'calleeName' and the evaluated argument list
 -- (raw argument token lists are parsed with the same
--- 'PB.Analysis.CpsCompile.parseArgList' the compiled pipeline itself uses,
+-- 'PB.Analysis.CallClassify.parseArgList' the compiled pipeline itself uses,
 -- so the key matches what a real call site would look like). A miss, and
 -- everything else (multi-segment or subscripted lvalues, dispatch, object
 -- creation, arrays, host vars, raw SQL fragments), falls back to 'VNull' —

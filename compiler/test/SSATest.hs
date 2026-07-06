@@ -340,7 +340,7 @@ tests = testGroup "SSA"
   , testGroup "buildSsa per-variant (Plan 145 Phase 3)"
     -- Fills in the Step 3A table rows not already covered above (BsAssign,
     -- BsIf both variants, BsFor are covered by "linear code"/"if/else"/"loops").
-    -- BsTry is deliberately absent: PB.Analysis.CfgBuild has no lowerTry (unlike
+    -- BsTry is deliberately absent: PB.Analysis.Cfg has no lowerTry (unlike
     -- lowerIf/lowerFor/lowerDo/lowerChoose), so a BsTry statement's tryBody is
     -- never split into blocks and stmtToAssigns's catch-all silently drops the
     -- whole try/catch — a CfgBuild-level gap, not an SSA-layer one. Logged to

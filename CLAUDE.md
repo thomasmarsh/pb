@@ -559,7 +559,7 @@ Mark done/pending as body parsers land.
 | `PB.Lexing.*`   | Tokenization, layout, string mode                                                                                                   |
 | `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)                                                                                 |
 | `PB.Pipeline.*` | Multi-step transformations: Preprocess, Emit, Passes, Runner, Serialise, FileWalk, DuckDb, SqlParse, Church                        |
-| `PB.Analysis.*` | Pure analysis passes: CfgBuild, CpsCompile, Dataflow, DeadCode, Taint, TypeEnv, TypeResolve, Builtins                               |
+| `PB.Analysis.*` | Pure analysis passes: Cfg, CpsGraph, Dataflow, DeadCode, Taint, TypeEnv, TypeResolve, Builtins                                      |
 | `PB.Prelude`    | Custom Prelude — no parsing or transformation logic                                                                                 |
 
 New modules go in the most specific matching directory. If a new layer is needed, propose it in Stage 1.
@@ -859,9 +859,11 @@ runModeDb :: FilePath -> FilePath -> IO ()
 -- Pure. buildCfg :: [Located BodyStmt] -> Cfg. Mirrors cfg_builder.py.
 ```
 
-Moved to `PB.Analysis.CfgBuild` (Plan 118 H1).
+Moved to `PB.Analysis.Cfg` (Plan 118 H1; renamed from `PB.Analysis.CfgBuild`
+in Plan 151 Phase 2a, 2026-07-06 — noun module name matching `SSA.hs`'s own
+precedent, no content change).
 
-### `PB.Analysis.CfgBuild`
+### `PB.Analysis.Cfg`
 
 ```haskell
 -- Pure. buildCfg :: [Located BodyStmt] -> Cfg. Mirrors cfg_builder.py.
@@ -874,7 +876,11 @@ data Cfg      = Cfg      { cfgEntry :: Text, cfgExits :: [Text], cfgBlocks :: [C
 ### `PB.Analysis.CallClassify`
 
 ```haskell
--- Pure call classification. Shared by old CpsCompile and new SSA→CatOp pipeline.
+-- Pure call classification, plus two small pure AST helpers (parseArgList,
+-- collectBodyLocals) moved in from the old PB.Analysis.CpsCompile in Plan
+-- 151 Phase 2b (2026-07-06) -- they have nothing to do with CpsGraph's own
+-- type and were already imported alongside it by every consumer.
+-- Shared by the old (deleted) compiler and the current SSA→CatOp pipeline.
 data CallKind = PureCall | SuspendCall
 classifyExpr :: ScopedTypeEnv -> Expr -> CallKind
 -- classifyExpr returns SuspendCall (no effect name baked in).
@@ -887,6 +893,8 @@ calleeName :: Expr -> Text
 segName :: LvSegment -> Text
 lvHead :: Lvalue -> Text
 isTriggerEvent :: Lvalue -> Bool
+parseArgList      :: [Token] -> Expr                            -- imported by CatLower, CatEval
+collectBodyLocals :: [Located BodyStmt] -> Map.Map Text PbType  -- imported by GraphBuilder
 ```
 
 ### `PB.Analysis.CatOp`
@@ -973,19 +981,20 @@ runInterpIO :: Interp a b -> a -> IO b  -- fresh empty env/trace/mocks, discards
 runCat :: CatOp a b -> Interp a b       -- the fold CatOp is initial for
 ```
 
-### `PB.Analysis.CpsCompile`
+### `PB.Analysis.CpsGraph`
 
 ```haskell
--- Pure. Shared CpsNode/CpsGraph types + a few standalone helpers reused by
--- PB.Analysis.CatLower (parseArgList) and PB.Analysis.GraphBuilder
--- (collectBodyLocals). The monadic compileProcedure compiler this module used
--- to house was deleted in Plan 144 Phase 5 Step 7 (2026-07-06) — the sole
--- compiler is now PB.Analysis.GraphBuilder.compileProcedureViaCatOp.
+-- Pure. Shared CpsNode/CpsGraph types + canonical-shape helpers for
+-- hand-trace/golden-fixture tests. Renamed from PB.Analysis.CpsCompile in
+-- Plan 151 Phase 2b (2026-07-06) — the monadic compileProcedure compiler
+-- this module used to house was deleted in Plan 144 Phase 5 Step 7; the
+-- sole compiler is now PB.Analysis.GraphBuilder.compileProcedureViaCatOp.
+-- parseArgList/collectBodyLocals moved out to PB.Analysis.CallClassify in
+-- the same Phase 2b — they're generic AST/type helpers with nothing to do
+-- with this module's own CpsNode/CpsGraph types.
 data CpsNode = CpsAssign {..} | CpsBranch {..} | CpsGoto {..} | CpsCall {..}
              | CpsSuspend {..} | CpsReturn {..} | CpsNop {..} | CpsCallProc {..}
 data CpsGraph = CpsGraph { cgNodes, cgEntry, cgSuspensionPoints, cgSourceMap }
-parseArgList      :: [Token] -> Expr                        -- imported by CatLower
-collectBodyLocals :: [Located BodyStmt] -> Map.Map Text PbType -- imported by GraphBuilder
 -- ShapeNode/canonicalize/normalizeCallTag: canonical BFS-numbered shape of a
 -- CpsGraph with names/values erased, for hand-trace/golden-fixture tests.
 data ShapeNode = SAsgn Int | SBrnch Int Int | SGoto Int | SCall Int
@@ -1047,7 +1056,7 @@ taintAnalysis      :: [ResolvedCallRow] -> [DefRow] -> [UseRow] -> Set Text -> T
 ### `PB.Analysis.TypeEnv`
 
 ```haskell
--- Cross-file type environment. Used by CpsCompile + Runner (Plan 114 unified them).
+-- Cross-file type environment. Used by CpsGraph consumers + Runner (Plan 114 unified them).
 data TypeEnv = TypeEnv { teVars :: Map Text PbType, teUserTypes :: Map Text Text }
 buildWorkspaceTypeEnv :: [SrFile] -> TypeEnv
 lookupVarType    :: Text -> TypeEnv -> Maybe PbType      -- case-insensitive

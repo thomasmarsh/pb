@@ -4,7 +4,7 @@ import qualified DuckDbTest
 import qualified StdLibTest
 import qualified BodyParserTest
 import qualified BodyStmtTest
-import qualified CfgBuildTest
+import qualified CfgTest
 import qualified CatEvalTest
 import qualified CatOpTest
 import qualified GoldenFixtureTest
@@ -43,7 +43,7 @@ tests = testGroup "pb-compiler"
   , StdLibTest.tests
   , BodyParserTest.tests
   , BodyStmtTest.tests
-  , CfgBuildTest.tests
+  , CfgTest.tests
   , CatEvalTest.tests
   , CatOpTest.tests
   , GoldenFixtureTest.tests

@@ -45,13 +45,13 @@ library
     PB.Lexing.Token
     PB.Analysis.Builtins
     PB.Analysis.CallClassify
-    PB.Analysis.CfgBuild
+    PB.Analysis.Cfg
     PB.Analysis.CatEval
     PB.Analysis.CatOp
     PB.Analysis.CatLower
     PB.Analysis.GraphBuilder
     PB.Analysis.CatInterp
-    PB.Analysis.CpsCompile
+    PB.Analysis.CpsGraph
     PB.Analysis.CpsInterp
     PB.Analysis.Dataflow
     PB.Analysis.DeadCode
@@ -115,7 +115,7 @@ test-suite pb-compiler-test
     , StdLibTest
     , BodyParserTest
     , BodyStmtTest
-    , CfgBuildTest
+    , CfgTest
     , CorpusDebtTest
     , CatEvalTest
     , CatOpTest

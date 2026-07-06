@@ -289,7 +289,7 @@ tests = testGroup "Pipeline.Runner"
   , testGroup "production wiring uses compileProcedureViaCatOp (Plan 144 Phase 5 Step 6)"
     -- Runner.hs:148 (compileOne, the real production path behind runModeDb)
     -- and Emit.hs:158 (wrapSrFile's withCps branch) both used to call the
-    -- old PB.Analysis.CpsCompile.compileProcedure (deleted in Plan 144 Phase
+    -- old PB.Analysis.CpsGraph.compileProcedure (deleted in Plan 144 Phase
     -- 5 Step 7). Both now call PB.Analysis.CatOp.compileProcedureViaCatOp.
     [ let src = T.unlines
             [ "public function integer uf_test ()"

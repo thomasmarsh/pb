@@ -1,9 +1,8 @@
 {-# LANGUAGE StrictData #-}
--- | Pure call classification helpers.
---
--- Shared by 'PB.Analysis.CpsCompile' (old compiler) and the new
--- SSA→CatOp pipeline.  No monadic state, no CpsNode emission — just
--- classification logic and name utilities.
+-- | Pure call classification helpers, plus a couple of small pure AST
+-- utilities ('parseArgList', 'collectBodyLocals') used by the SSA→CatOp
+-- pipeline.  No monadic state, no CpsNode emission — just classification
+-- logic and name utilities.
 --
 -- 'classifyExpr' returns 'PureCall' or 'SuspendCall' with the effect
 -- name baked in — callers never need a separate effect-name computation.
@@ -18,12 +17,18 @@ module PB.Analysis.CallClassify
   , resolveReceiverType
   , segName
   , lvHead
+  , parseArgList
+  , collectBodyLocals
   ) where
 
 import PB.Prelude
+import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Type       (renderPbType)
+import PB.AST.Located    (Located (..))
+import PB.AST.Type       (PbType, renderPbType)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVar, isDescendantOf)
+import PB.Grammar.Body   (parseExpr)
+import PB.Lexing.Token   (Token (..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
@@ -141,3 +146,28 @@ isTriggerEvent lv = case map (T.toLower . segName) (segments lv) of
   [s]   -> s == "triggerevent"
   [t,s] -> t == "this" && s == "triggerevent"
   _     -> False
+
+-- ---------------------------------------------------------------------------
+-- Argument conversion: token lists → typed Expr nodes
+--
+-- The AST stores call arguments as `[[Token]]`. `parseExpr` from
+-- PB.Grammar.Body recovers typed Expr nodes (ExBinOp, ExStr, ExBool, ...).
+
+-- | Convert one arg's token list to a typed Expr.
+parseArgList :: [Token] -> Expr
+parseArgList [] = ExRaw []
+parseArgList ts = parseExpr ts
+
+-- ---------------------------------------------------------------------------
+-- Local variable collection
+
+-- | Seed a procedure's local-variable type map from its own body's
+-- 'BsLocalVar' declarations, so a locally-declared datastore/datawindow/
+-- transaction variable's type can be resolved by classification (e.g.
+-- 'classifyExpr') before that variable's first use.
+collectBodyLocals :: [Located BodyStmt] -> Map.Map Text PbType
+collectBodyLocals stmts =
+  Map.fromList
+    [ (T.toLower varName, varType)
+    | Located _ (BsLocalVar _ varType varName _) <- stmts
+    ]

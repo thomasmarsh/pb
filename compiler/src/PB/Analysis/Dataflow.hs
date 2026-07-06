@@ -8,7 +8,7 @@
 --   dataflowUseRows  :: ProcFlow -> [Value]
 --   dataflowFacet    :: ProcFlow -> Value      -- {"defs":[...], "uses":[...]}
 --
--- Builds on the CFG from PB.Analysis.CfgBuild and extracts def-use sites
+-- Builds on the CFG from PB.Analysis.Cfg and extracts def-use sites
 -- from the typed AST, eliminating JSON re-parsing.
 module PB.Analysis.Dataflow
   ( DefSite (..)
@@ -28,7 +28,7 @@ import PB.AST.BodyStmt
 import PB.AST.Expr
 import PB.AST.Located  (Located (..))
 import PB.Lexing.Token (Token (..))
-import PB.Analysis.CfgBuild (Cfg (..), CfgBlock (..), CfgEdge (..))
+import PB.Analysis.Cfg (Cfg (..), CfgBlock (..), CfgEdge (..))
 import qualified Data.Aeson        as Aeson
 import Data.Char            (isAlpha)
 import GHC.Generics         (Generic)

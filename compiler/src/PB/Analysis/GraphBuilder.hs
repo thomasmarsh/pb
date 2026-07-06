@@ -41,7 +41,8 @@ import PB.AST.BodyStmt (BodyStmt)
 import PB.AST.Located  (Located (..))
 import PB.Analysis.CatOp (CatOp (..))
 import PB.Analysis.CatLower (compileSsa)
-import PB.Analysis.CpsCompile (CpsNode (..), CpsGraph (..), collectBodyLocals)
+import PB.Analysis.CpsGraph (CpsNode (..), CpsGraph (..))
+import PB.Analysis.CallClassify (collectBodyLocals)
 import PB.Analysis.SSA (buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import Control.Monad.State.Strict (State, gets, modify, runState)
@@ -189,7 +190,7 @@ compileLowCatToCps (LAssignWithRhs var expr) nextPc =
 compileLowCatToCps (LCompose g f) nextPc = case inspectBranchLowCat g of
   Just (tOp, fOp) -> do
     -- No join CpsNop: both arms fall through directly to nextPc, matching the
-    -- old compiler (PB.Analysis.CpsCompile never allocates a node purely to
+    -- old compiler (PB.Analysis.CpsGraph never allocates a node purely to
     -- serve as a join point). See Plan 145 Finding A.
     let branchCond = extractCondLowCat f
     elseEntryPc <- compileLowCatToCps fOp nextPc
@@ -253,7 +254,7 @@ compileBranchDiamondLowCat cond tOp fOp nextPc = do
 -- | Compile a loop: reserve a header pc, compile the body with a back-edge
 -- to it, then patch the reserved pc directly with the header's real content
 -- (typically a 'CpsBranch') instead of forwarding to a separately-allocated
--- node. Mirrors 'PB.Analysis.CpsCompile'\'s @BsFor@\/@BsDo@ pattern: emit a
+-- node. Mirrors 'PB.Analysis.CpsGraph'\'s @BsFor@\/@BsDo@ pattern: emit a
 -- placeholder pc, then @patchNode@ it in place once the real content is
 -- known — no residual hop (Plan 145).
 compileLoopLowCat :: LowCat -> Int -> GraphBuilder Int
@@ -283,7 +284,7 @@ patchLoopHeaderLowCat body loopHeaderPc nextPc = do
 -- of the two known pcs execution resumes at) — structural/erased, like
 -- 'LEval'\/'LFork'\/'LSplitValue' in 'compileLowCatToCps'. They resolve
 -- directly to 'loopHeaderPc'\/'nextPc' as entry pcs; no node is allocated.
--- The old compiler ('PB.Analysis.CpsCompile') never allocates a node for
+-- The old compiler ('PB.Analysis.CpsGraph') never allocates a node for
 -- the implicit loop continue\/break either — it threads @(incrPc,
 -- fallthrough)@ straight through as raw pcs (Plan 145).
 compileLoopBodyLowCat :: LowCat -> Int -> Int -> GraphBuilder Int
@@ -337,7 +338,7 @@ buildCpsGraph catOp =
 -- | Unified entry point: compile a procedure body via the SSA → CatOp pipeline.
 --
 -- Seeds 'steLocal' with the body's own local variable declarations before
--- compiling, mirroring 'PB.Analysis.CpsCompile.compileProcedure' exactly —
+-- compiling, mirroring 'PB.Analysis.CpsGraph.compileProcedure' exactly —
 -- without this, 'classifyExpr' can never resolve a *locally-declared*
 -- datastore/datawindow/transaction variable's type, so a suspend method call
 -- on it (retrieve/update/commit/…) always falls through to the conservative

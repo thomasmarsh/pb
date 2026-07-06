@@ -142,7 +142,7 @@ runInterpIO (Interp f) x = evalStateT (f x) (InterpState Map.empty [] Map.empty)
 -- (which always emits 'CatAssignWithRhs' directly) — they're handled here for
 -- completeness, not because real compiled terms use them.
 --
--- 'CatTry' has no real interpretation yet: 'PB.Analysis.CfgBuild' doesn't
+-- 'CatTry' has no real interpretation yet: 'PB.Analysis.Cfg' doesn't
 -- model try/catch, so 'compileSsa' never emits it either. Running the body
 -- and ignoring the handler is a placeholder to keep this fold total; revisit
 -- once try/catch compilation lands.

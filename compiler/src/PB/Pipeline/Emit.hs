@@ -27,7 +27,7 @@ import PB.Lexing.Splitter   (Statement (..), splitStatements)
 import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv,
                                 procEnv, ScopedTypeEnv)
-import PB.Analysis.CfgBuild    (buildCfg)
+import PB.Analysis.Cfg    (buildCfg)
 import PB.Analysis.GraphBuilder (compileProcedureViaCatOp)
 import PB.Analysis.TypeResolve (parseParams)
 import PB.Pipeline.Serialise   ()

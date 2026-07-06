@@ -8,7 +8,7 @@
 -- The CFG mirrors cfg_builder.py output but is computed directly from the
 -- typed AST, eliminating JSON re-parsing.  Python reads the stored cfg_json
 -- field and deserialises it back to Python CFG objects for rendering/analysis.
-module PB.Analysis.CfgBuild
+module PB.Analysis.Cfg
   ( CfgBlock (..)
   , CfgEdge (..)
   , Cfg (..)
@@ -257,7 +257,7 @@ lowerDo _ currentId _ = pure currentId
 
 -- | try/catch: the try body has no branching semantics of its own, so it
 -- lowers as ordinary sequential code continuing the current block chain
--- (matching 'PB.Analysis.CpsCompile.compileStmts's 'BsTry' case: "compile
+-- (matching 'PB.Analysis.CpsGraph.compileStmts's 'BsTry' case: "compile
 -- try body sequentially"). Each catch body is lowered starting from a fresh,
 -- disconnected block — no edge is ever added from the main flow into it —
 -- so it exists in the CFG (its own statements are real 'CfgBlock' content,

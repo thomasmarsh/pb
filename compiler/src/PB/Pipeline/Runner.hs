@@ -21,7 +21,7 @@ import PB.AST.DataWindow
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.Grammar.File       (SrSpans (..))
-import PB.Analysis.CfgBuild    (buildCfg)
+import PB.Analysis.Cfg    (buildCfg)
 import PB.Analysis.GraphBuilder (compileProcedureViaCatOp)
 import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, procEnv)

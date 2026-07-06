@@ -31,7 +31,7 @@ import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
 import PB.AST.Located  (Located (..))
-import PB.Analysis.CfgBuild (Cfg (..), CfgBlock (..), CfgEdge (..), buildCfg)
+import PB.Analysis.Cfg (Cfg (..), CfgBlock (..), CfgEdge (..), buildCfg)
 import PB.Analysis.TypeEnv (ScopedTypeEnv)
 import PB.Analysis.CallClassify (lvHead)
 import PB.Grammar.Body     (parseExpr)
@@ -165,9 +165,13 @@ lhsToExpr :: [Token] -> Expr
 lhsToExpr [t] = ExLvalue (Lvalue [LvSegment (tkText t) Nothing])
 lhsToExpr ts  = ExRaw (map tkText ts)
 
-parseArgList :: [Token] -> Expr
-parseArgList [] = ExRaw []
-parseArgList ts = ExRaw (map tkText ts)
+-- | Wrap a raw token list as an unparsed 'ExRaw' expression. Not a real
+-- parse (unlike 'PB.Analysis.CallClassify.parseArgList', which calls
+-- 'PB.Grammar.Body.parseExpr') — used only where SSA lowering doesn't need
+-- a typed result, e.g. 'BsAugAssign' RHS.
+rawArgsToExpr :: [Token] -> Expr
+rawArgsToExpr [] = ExRaw []
+rawArgsToExpr ts = ExRaw (map tkText ts)
 
 headDef :: a -> [a] -> a
 headDef d []    = d
@@ -318,7 +322,7 @@ cfgBlockToSsa edgeMap headerStmts backEdgeStmts label blk =
 
 -- | The counterpart to 'findLoopHeaderStmts': @lowerFor@ never synthesizes an
 -- increment statement anywhere in the CFG (the old compiler builds it
--- procedurally, by hand, in 'PB.Analysis.CpsCompile'). This maps each loop
+-- procedurally, by hand, in 'PB.Analysis.CpsGraph'). This maps each loop
 -- body's back-edge-source block id to the originating @BsFor@ node, so
 -- 'cfgBlockToSsa' can append the missing @i = i + step@ assign to that
 -- block — the same synthesis the old compiler performs explicitly.
@@ -331,7 +335,7 @@ findLoopBackEdgeStmts edges headerStmts = Map.fromList
   , Just stmt <- [Map.lookup (ceDst e) headerStmts]
   ]
 
--- | 'PB.Analysis.CfgBuild.lowerFor'/'lowerDo' (top-condition variant) flush the
+-- | 'PB.Analysis.Cfg.lowerFor'/'lowerDo' (top-condition variant) flush the
 -- raw @BsFor@/@BsDo@ AST node onto the block /preceding/ the loop, then
 -- allocate a fresh, empty header block that carries the real T/F branch
 -- edges. A block's own statements are therefore not enough to tell
@@ -372,7 +376,7 @@ stmtToAssigns (BsAugAssign toks op rhsToks) =
       augOpToBinOp AugSub = BopSub
       augOpToBinOp AugMul = BopMul
       augOpToBinOp AugDiv = BopDiv
-  in [SsaAssign (SsaVar varName 0) (SsaBinOp (augOpToBinOp op) (SsaConst (lhsToExpr toks)) (exprToSsaVal (parseArgList rhsToks)))]
+  in [SsaAssign (SsaVar varName 0) (SsaBinOp (augOpToBinOp op) (SsaConst (lhsToExpr toks)) (exprToSsaVal (rawArgsToExpr rhsToks)))]
 stmtToAssigns (BsInc toks) =
   let varName = case toks of { (t:_) -> tkText t; [] -> "_" }
   in [SsaAssign (SsaVar varName 0) (SsaBinOp BopAdd (SsaConst (lhsToExpr toks)) (SsaConst (ExInt "1")))]
@@ -388,7 +392,7 @@ stmtToAssigns (BsCall expr) =
 -- BsPbCall: CALL ancestor::event super-dispatch (Plan 145 Phase 3). Encoded as a
 -- single-segment synthetic ExCall so it flows through the existing
 -- classifyExpr/compileCallExpr machinery in PB.Analysis.CatOp and lowers to a
--- CpsCallProc, matching PB.Analysis.CpsCompile's explicit BsPbCall case. The
+-- CpsCallProc, matching PB.Analysis.CpsGraph's explicit BsPbCall case. The
 -- "ancestor::event" text can never collide with isTriggerEvent, a user-fn name
 -- (PB identifiers can't contain "::"), or isBuiltinSuspendFn's fixed list, so
 -- it always classifies PureCall.

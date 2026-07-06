@@ -7,7 +7,7 @@ module PB.Analysis.DeadCode
   ) where
 
 import PB.Prelude
-import PB.Analysis.CfgBuild  (Cfg (..))
+import PB.Analysis.Cfg  (Cfg (..))
 import Data.List              (sortOn)
 import Data.Map.Strict qualified as Map
 import Data.Sequence qualified as Seq

@@ -1,7 +1,7 @@
 {-# LANGUAGE StrictData #-}
--- | Shared CPS instruction-graph types, plus a handful of pure helpers
--- ('collectBodyLocals', 'parseArgList') reused by the SSA/CatOp compiler
--- ('PB.Analysis.CatOp').
+-- | Shared CPS instruction-graph types: 'CpsNode'\/'CpsGraph' plus the
+-- canonical-shape helpers ('ShapeNode', 'canonicalize', 'normalizeCallTag')
+-- used by hand-trace\/golden-fixture tests.
 --
 -- The original monadic forward-chaining compiler
 -- ('compileProcedure' :: 'PB.Analysis.TypeEnv.ScopedTypeEnv' -> ... ->
@@ -14,27 +14,19 @@
 -- The resulting graph has no nested control flow; all branching is via
 -- explicit node indices. The TypeScript step() driver executes the graph.
 -- Python stores the result as cps_graph_json on the procedures table.
-module PB.Analysis.CpsCompile
+module PB.Analysis.CpsGraph
   ( CpsNode (..)
   , CpsGraph (..)
-  , collectBodyLocals
-  , parseArgList
   , ShapeNode (..)
   , canonicalize
   , normalizeCallTag
   ) where
 
 import PB.Prelude
-import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Located  (Located (..))
-import PB.AST.Type     (PbType)
-import PB.Grammar.Body        (parseExpr)
-import PB.Lexing.Token        (Token (..))
 import GHC.Generics         (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
-import qualified Data.Text       as T
 
 -- ---------------------------------------------------------------------------
 -- Output types
@@ -135,28 +127,3 @@ shapeOf look node = case node of
 normalizeCallTag :: ShapeNode -> ShapeNode
 normalizeCallTag (SCProc n) = SCall n
 normalizeCallTag other      = other
-
--- ---------------------------------------------------------------------------
--- Argument conversion: token lists → typed Expr nodes
---
--- The AST stores call arguments as `[[Token]]`. `parseExpr` from
--- PB.Grammar.Body recovers typed Expr nodes (ExBinOp, ExStr, ExBool, ...).
-
--- | Convert one arg's token list to a typed Expr.
-parseArgList :: [Token] -> Expr
-parseArgList [] = ExRaw []
-parseArgList ts = parseExpr ts
-
--- ---------------------------------------------------------------------------
--- Local variable collection
-
--- | Seed a procedure's local-variable type map from its own body's
--- 'BsLocalVar' declarations, so a locally-declared datastore/datawindow/
--- transaction variable's type can be resolved by classification (e.g.
--- 'PB.Analysis.CallClassify.classifyExpr') before that variable's first use.
-collectBodyLocals :: [Located BodyStmt] -> Map.Map Text PbType
-collectBodyLocals stmts =
-  Map.fromList
-    [ (T.toLower varName, varType)
-    | Located _ (BsLocalVar _ varType varName _) <- stmts
-    ]
