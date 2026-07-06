@@ -7,8 +7,23 @@ import PB.AST.Located      (Located (..))
 import PB.Analysis.CfgBuild
 import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
 
+import qualified Data.Map.Strict as Map
+import qualified Data.Set        as Set
 import Test.Tasty           (TestTree, testGroup)
 import Test.Tasty.HUnit     (assertBool, testCase, (@?=))
+
+-- | Block ids reachable from 'cfgEntry' by following 'cfgEdges' — used to
+-- confirm a block genuinely participates in the compiled control flow (vs.
+-- existing only as an allocated-but-orphaned 'CfgBlock', the shape a catch
+-- body deliberately produces).
+reachableFrom :: Cfg -> Set.Set Text
+reachableFrom g = go (Set.singleton (cfgEntry g)) [cfgEntry g]
+  where
+    adj = Map.fromListWith (++) [(ceSrc e, [ceDst e]) | e <- cfgEdges g]
+    go seen []     = seen
+    go seen (b:bs) =
+      let next = filter (`Set.notMember` seen) (Map.findWithDefault [] b adj)
+      in go (Set.union seen (Set.fromList next)) (next ++ bs)
 
 -- Helper to build a Located with a dummy line number.
 at :: Int -> a -> Located a
@@ -179,5 +194,47 @@ tests = testGroup "CfgBuild"
             edgeLabels = map ceLabel (cfgEdges g)
         assertBool ("expected no \"default\" edge, got labels: " <> show edgeLabels)
           (notElem "default" edgeLabels)
+    ]
+
+  , testGroup "BsTry (Plan 146 Phase 3 follow-on: try-body statements reach the CFG)"
+    -- The generic statement dispatcher used to treat a whole
+    -- `try...catch...end try` block as one opaque pending statement (the
+    -- same fallback every non-control BodyStmt hits) — the try-body's own
+    -- assigns/calls never became real CfgBlock content, so
+    -- 'PB.Analysis.SSA.stmtToAssigns's `BsTry {} -> []` silently dropped
+    -- them from SSA entirely. The old compiler (PB.Analysis.CpsCompile)
+    -- compiles the try-body sequentially and each catch body as
+    -- independently-reachable dead code (no static exception edge) — this
+    -- fix gives CfgBuild the same shape: the try-body continues the current
+    -- block chain like ordinary statements, and each catch body lowers into
+    -- its own fresh, disconnected block never reached from cfgEntry.
+    [ testCase "try-body assign is real CFG content, reachable from cfgEntry" $ do
+        let stmt = at 1 (BsTry (TryStmt [at 2 (BsAssign (lv1 "x") (ExInt "1"))] []))
+            g    = buildCfg [stmt]
+            reachable = reachableFrom g
+            isTryAssign blk = cbId blk `Set.member` reachable
+                            && any (\l -> locNode l == BsAssign (lv1 "x") (ExInt "1")) (cbStmts blk)
+        assertBool "expected the try-body's own assign in a block reachable from cfgEntry"
+          (any isTryAssign (cfgBlocks g))
+
+    , testCase "catch-body assign exists in the CFG but is unreachable from cfgEntry" $ do
+        let catches = [CatchClause "Exception" "e" [at 3 (BsAssign (lv1 "y") (ExInt "2"))]]
+            stmt    = at 1 (BsTry (TryStmt [at 2 (BsAssign (lv1 "x") (ExInt "1"))] catches))
+            g       = buildCfg [stmt]
+            reachable = reachableFrom g
+            hasCatchAssign blk = any (\l -> locNode l == BsAssign (lv1 "y") (ExInt "2")) (cbStmts blk)
+        case filter hasCatchAssign (cfgBlocks g) of
+          [blk] -> assertBool "expected the catch-body's block to be unreachable from cfgEntry"
+                     (cbId blk `Set.notMember` reachable)
+          found -> assertBool ("expected exactly one block holding the catch body's assign, found "
+                                 <> show (length found)) False
+
+    , testCase "nested if inside a try-body still lowers with real branch edges" $ do
+        let thenS = [at 3 (BsAssign (lv1 "x") (ExInt "1"))]
+            stmt  = at 1 (BsTry (TryStmt [at 2 (BsIf (IfStmt (ExBool True) thenS [] Nothing))] []))
+            g     = buildCfg [stmt]
+            edgeLabels = map ceLabel (cfgEdges g)
+        elem "T" edgeLabels @?= True
+        elem "F" edgeLabels @?= True
     ]
   ]

@@ -5,7 +5,8 @@ import qualified Prelude as P
 import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..),
                             DispatchExpr (..), DispatchMode (..))
 import PB.AST.Type         (PbType (..))
-import PB.AST.BodyStmt     (BodyStmt (..), PbCall (..), IfStmt (..), ElseIf (..), ForStmt (..), DoStmt (..), DoCondition (..))
+import PB.AST.BodyStmt     (BodyStmt (..), PbCall (..), IfStmt (..), ElseIf (..), ForStmt (..), DoStmt (..), DoCondition (..),
+                            TryStmt (..), CatchClause (..))
 import PB.AST.Located      (Located (..))
 import PB.Analysis.CatOp
 import PB.Analysis.CpsCompile (ShapeNode (..), canonicalize, compileProcedure, normalizeCallTag)
@@ -1569,4 +1570,31 @@ tests = testGroup "CatOp"
      , testCase "else-branch (for-loop) matches old compiler" $
          newTrace @?= oldTrace
      ])
+
+  , testGroup "BsTry (Plan 146 Phase 3 follow-on: CfgBuild now lowers try-body statements)"
+    -- Before this fix, CfgBuild's generic dispatcher treated a whole
+    -- try/catch block as one opaque pending statement, and
+    -- SSA.stmtToAssigns (BsTry {}) = [] meant the try-body's own assigns
+    -- never reached SSA at all — silently dropped by the new compiler while
+    -- the old compiler (CpsCompile.hs's explicit BsTry case) executed them
+    -- sequentially. This end-to-end fixture is deliberately compared against
+    -- the old compiler (unlike GoldenFixtureTest.hs's independently
+    -- hand-derived fixtures) because that's exactly what's being repaired:
+    -- new should now match old, not diverge from it.
+    [ testCase "try-body assign now reaches the new compiler's trace, matching old" $
+        let body = [ Located 1 (BsAssign (Lvalue [LvSegment "x" Nothing]) (ExInt "0"))
+                   , Located 2 (BsTry (TryStmt
+                       [Located 3 (BsAssign (Lvalue [LvSegment "x" Nothing]) (ExInt "1"))]
+                       [CatchClause "Exception" "e" [Located 4 (BsAssign (Lvalue [LvSegment "y" Nothing]) (ExInt "99"))]]))
+                   , Located 5 (BsAssign (Lvalue [LvSegment "z" Nothing]) (ExInt "2"))
+                   ]
+            oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+            newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+            (newEnv, _, _) = newTrace
+        in do
+             newTrace @?= oldTrace
+             Map.lookup "x" newEnv @?= Just (VInt 1)
+             Map.lookup "y" newEnv @?= Nothing
+             Map.lookup "z" newEnv @?= Just (VInt 2)
+    ]
   ]

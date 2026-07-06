@@ -120,6 +120,11 @@ lower stmts currentId loopHead = go stmts currentId []
         bid' <- lowerChoose (locNode s) bid loopHead
         go rest bid' []
 
+      BsTry {} -> do
+        flush bid (pending ++ [s])
+        bid' <- lowerTry (locNode s) bid loopHead
+        go rest bid' []
+
       BsReturn _ -> do
         flush bid (pending ++ [s])
         addExit bid
@@ -249,6 +254,22 @@ lowerDo stmt@(BsDo (DoStmt mCond bodyStmts mLoop)) currentId _loopHead = do
   pure mergeId
 lowerDo _ currentId _ = pure currentId
 
+
+-- | try/catch: the try body has no branching semantics of its own, so it
+-- lowers as ordinary sequential code continuing the current block chain
+-- (matching 'PB.Analysis.CpsCompile.compileStmts's 'BsTry' case: "compile
+-- try body sequentially"). Each catch body is lowered starting from a fresh,
+-- disconnected block — no edge is ever added from the main flow into it —
+-- so it exists in the CFG (its own statements are real 'CfgBlock' content,
+-- reachable by 'buildSsa' if anything ever points to it) but is genuinely
+-- unreachable from 'cfgEntry', mirroring the old compiler's own "compile
+-- each catch body, discard its entry pc" behavior exactly: exception
+-- dispatch is runtime-only, with no static edge in either compiler.
+lowerTry :: BodyStmt -> Text -> Maybe Text -> B Text
+lowerTry (BsTry (TryStmt body catches)) currentId loopHead = do
+  mapM_ (\c -> newBlock >>= \catchId -> lower (catchBody c) catchId loopHead) catches
+  lower body currentId loopHead
+lowerTry _ currentId _ = pure currentId
 
 lowerChoose :: BodyStmt -> Text -> Maybe Text -> B Text
 lowerChoose (BsChoose (ChooseStmt _ clauses)) currentId loopHead = do
