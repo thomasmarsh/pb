@@ -29,7 +29,7 @@ import PB.AST.Type         ()
 import PB.AST.BodyStmt     (BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..), DoCondition (..),
                             ChooseStmt (..), CaseClause (..))
 import PB.AST.Located      (Located (..))
-import PB.Analysis.CatOp   (compileProcedureViaCatOp)
+import PB.Analysis.GraphBuilder (compileProcedureViaCatOp)
 import PB.Analysis.CatEval (Value (..), TraceEvent (..))
 import PB.Analysis.CpsInterp  (runCpsGraphTrace)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))

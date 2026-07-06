@@ -11,7 +11,7 @@ import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile   (TypeBlock (..), TypeDecl (..), srPrimaryObject, srFunctions, FunctionBlock (..), FnSig (..))
 import PB.AST.Type         (PbType (..))
 import PB.Analysis.TypeEnv    (buildWorkspaceEnv, procEnv)
-import PB.Analysis.CatOp      (compileProcedureViaCatOp)
+import PB.Analysis.GraphBuilder (compileProcedureViaCatOp)
 import PB.Pipeline.Serialise ()
 
 import Data.Aeson (Value (..), object, decodeStrict, toJSON, (.=))

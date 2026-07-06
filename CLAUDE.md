@@ -838,7 +838,8 @@ runModeDb :: FilePath -> FilePath -> IO ()
 -- verified equivalent — collectAllProcs, runModeDualCps ("--dual-cps"),
 -- runModeDualTrace ("--dual-trace"), runInspect/runInspectOn ("--inspect"),
 -- isRealDiff, traceMaxSteps, and the corresponding Main.hs flags no longer
--- exist. compileProcedureViaCatOp (PB.Analysis.CatOp) is the sole compiler.
+-- exist. compileProcedureViaCatOp (now PB.Analysis.GraphBuilder, moved from
+-- CatOp in the Plan 151 module split, 2026-07-06) is the sole compiler.
 ```
 
 ### `PB.Pipeline.Serialise`
@@ -888,18 +889,103 @@ lvHead :: Lvalue -> Text
 isTriggerEvent :: Lvalue -> Bool
 ```
 
+### `PB.Analysis.CatOp`
+
+```haskell
+-- Pure. The categorical IR only — typeclasses, GADT, instances. Plan 151
+-- (2026-07-06) split the old 1367-line CatOp.hs (which had mixed 4 stages)
+-- into this core module plus 3 siblings, each a single pipeline stage:
+--   PB.Analysis.CatLower     -- SSA -> CatOp compilation (compileSsa)
+--   PB.Analysis.GraphBuilder -- CatOp -> flat CpsGraph flattening,
+--                            -- plus compileProcedureViaCatOp (the public
+--                            -- one-call entry point Emit.hs/Runner.hs use)
+--   PB.Analysis.CatInterp    -- direct Haskell execution (Interp/runCat)
+class Category k where { id :: k a a; (.) :: k b c -> k a b -> k a c }
+class Category k => Cartesian k where { exl, exr, (&&&) }
+class Category k => Cocartesian k where { inl, inr, (|||) }
+class Category k => Effectful k where { eval, assign, lookup, suspend, callProc, splitValue }
+branch :: (Effectful k, Cartesian k, Cocartesian k) => Expr -> k env b -> k env b -> k env b
+data CatOp a b where  -- initial algebra; 18 constructors incl. CatLoop/CatReturn/CatTagged
+  CatId, CatCompose, CatFork, CatExl, CatExr, CatConst, CatInl, CatInr, CatFanIn,
+  CatAssign, CatAssignWithRhs, CatLookup, CatLoop, CatReturn, CatEval, CatCall,
+  CatSuspend, CatSplitValue, CatTry, CatTagged :: ...
+-- Manual Show/Eq (GADTs can't derive); Eq via feq, which unsafeCoerce's to
+-- CatOp () () and structurally matches -Wno-inaccessible-code/-overlapping-patterns.
+```
+
+### `PB.Analysis.CatLower`
+
+```haskell
+-- Pure. SSA -> CatOp lowering (the categorical pipeline's largest, most
+-- intricate stage — ~640 lines; all of Plan 144's loop-nesting machinery
+-- and most of Plan 146's correctness fixes live here). Split from CatOp.hs
+-- Plan 151.
+data CompileCtx = CompileCtx { ccEnv :: ScopedTypeEnv, ccUserFns :: Set Text, ccMergePoints :: Set Text }
+compileSsa :: ScopedTypeEnv -> Set.Set Text -> SsaProc -> CatOp () ()
+-- Internal (not exported): computeMergePoints, termSuccessors, computeLoopHeaders,
+-- computeLoopNestParents, computeAllLoopExits, computeLoopBodyBlocks,
+-- discoverReachable, canReach, determineLoopExitTarget, compileBlock,
+-- compileLoopBody, ssaValToExpr, compilePhiAssignments, compileTerm,
+-- compileLoopTerm, compileLoopBranchPath, isLoopExit, compileAssigns,
+-- compileAssign, compileCallExpr.
+```
+
+### `PB.Analysis.GraphBuilder`
+
+```haskell
+-- Pure (GraphBuilder monad is a bare State, never IO). CatOp -> flat CpsGraph
+-- flattening (the "GraphBuilder" target from Plan 144 Phase 4), plus LowCat
+-- (the monomorphic CatOp bridge -- no unsafeCoerce, deterministic pattern
+-- matching) and the public one-call pipeline entry point. Split from
+-- CatOp.hs Plan 151.
+data LowCat = LId | LCompose .. | LAssignWithRhs .. | LFanIn .. | LLoop ..
+            | LInl | LInr | LSplitValue | LEval .. | LFork .. | LCall ..
+            | LSuspend .. | LReturn | LTagged .. | LErasable
+toLowCat :: CatOp a b -> LowCat
+extractCondLowCat :: LowCat -> Expr
+newtype GraphBuilder a = GraphBuilder { runBuilder :: State BuilderState a }
+data BuilderState = BuilderState { bsNodes, bsNextPc, bsSourceLines, bsExitPc, bsBlockPcMemo }
+initState :: BuilderState
+allocateNode :: CpsNode -> GraphBuilder Int
+registerNodeAt :: Int -> CpsNode -> GraphBuilder ()
+finalizeGraph :: Int -> BuilderState -> CpsGraph
+compileCatToCps :: CatOp a b -> Int -> GraphBuilder Int
+buildCpsGraph :: CatOp () () -> CpsGraph
+-- Unified entry point: the sole compiler. Seeds steLocal from body's own
+-- BsLocalVar decls (collectBodyLocals) before compiling, so classifyExpr can
+-- resolve locally-declared datastore/datawindow/transaction variable types.
+compileProcedureViaCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CpsGraph
+```
+
+### `PB.Analysis.CatInterp`
+
+```haskell
+-- Direct Haskell execution of a compiled CatOp term (the "Interp" target) --
+-- used for testing, without going through GraphBuilder/CpsGraph or the TS
+-- runtime. Parallels PB.Analysis.CpsInterp (interprets the flat CpsGraph
+-- GraphBuilder produces instead) -- Plan 146's semantic-equivalence oracle
+-- cross-checks the two. Split from CatOp.hs Plan 151.
+data InterpState = InterpState { isEnv :: Map.Map Text Value, isTrace :: [TraceEvent], isMocks :: MockResponses }
+newtype ReturnUnwind = ReturnUnwind InterpState  -- thrown by CatReturn to unwind past all enclosing loops
+newtype Interp a b = Interp { runInterp :: a -> StateT InterpState IO b }
+interpretLoop :: Interp a (Either a b) -> Interp a b
+runInterpIO :: Interp a b -> a -> IO b  -- fresh empty env/trace/mocks, discards final InterpState
+runCat :: CatOp a b -> Interp a b       -- the fold CatOp is initial for
+```
+
 ### `PB.Analysis.CpsCompile`
 
 ```haskell
 -- Pure. Shared CpsNode/CpsGraph types + a few standalone helpers reused by
--- PB.Analysis.CatOp. The monadic compileProcedure compiler this module used
+-- PB.Analysis.CatLower (parseArgList) and PB.Analysis.GraphBuilder
+-- (collectBodyLocals). The monadic compileProcedure compiler this module used
 -- to house was deleted in Plan 144 Phase 5 Step 7 (2026-07-06) — the sole
--- compiler is now PB.Analysis.CatOp.compileProcedureViaCatOp.
+-- compiler is now PB.Analysis.GraphBuilder.compileProcedureViaCatOp.
 data CpsNode = CpsAssign {..} | CpsBranch {..} | CpsGoto {..} | CpsCall {..}
              | CpsSuspend {..} | CpsReturn {..} | CpsNop {..} | CpsCallProc {..}
 data CpsGraph = CpsGraph { cgNodes, cgEntry, cgSuspensionPoints, cgSourceMap }
-parseArgList      :: [Token] -> Expr                        -- imported by CatOp
-collectBodyLocals :: [Located BodyStmt] -> Map.Map Text PbType -- imported by CatOp
+parseArgList      :: [Token] -> Expr                        -- imported by CatLower
+collectBodyLocals :: [Located BodyStmt] -> Map.Map Text PbType -- imported by GraphBuilder
 -- ShapeNode/canonicalize/normalizeCallTag: canonical BFS-numbered shape of a
 -- CpsGraph with names/values erased, for hand-trace/golden-fixture tests.
 data ShapeNode = SAsgn Int | SBrnch Int Int | SGoto Int | SCall Int

@@ -22,7 +22,7 @@ import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.CfgBuild    (buildCfg)
-import PB.Analysis.CatOp       (compileProcedureViaCatOp)
+import PB.Analysis.GraphBuilder (compileProcedureViaCatOp)
 import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, procEnv)
 import PB.Analysis.Dataflow    qualified as Dataflow

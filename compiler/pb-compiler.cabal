@@ -48,6 +48,9 @@ library
     PB.Analysis.CfgBuild
     PB.Analysis.CatEval
     PB.Analysis.CatOp
+    PB.Analysis.CatLower
+    PB.Analysis.GraphBuilder
+    PB.Analysis.CatInterp
     PB.Analysis.CpsCompile
     PB.Analysis.CpsInterp
     PB.Analysis.Dataflow
