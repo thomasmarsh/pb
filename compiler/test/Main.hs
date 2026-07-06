@@ -7,6 +7,7 @@ import qualified BodyStmtTest
 import qualified CfgBuildTest
 import qualified CatEvalTest
 import qualified CatOpTest
+import qualified GoldenFixtureTest
 import qualified SSATest
 import qualified CpsCompileTest
 import qualified DataflowTest
@@ -46,6 +47,7 @@ tests = testGroup "pb-compiler"
   , CfgBuildTest.tests
   , CatEvalTest.tests
   , CatOpTest.tests
+  , GoldenFixtureTest.tests
   , SSATest.tests
   , CpsCompileTest.tests
   , DataflowTest.tests
