@@ -10,7 +10,7 @@ export type {
   Expr, ForStmt, ForwardBlock, FunctionBlock, GlobalInstance, IfStmt,
   Located, Lvalue, LvSegment, OnBlock, PbCall, PbType,
   ProtoDecl, PrototypesBlock, SrFile, SubSig, SubroutineBlock, TypeBlock,
-  TypeDecl, VarDecl, VarScope, VariablesBlock,
+  TypeDecl, VarDecl, VarScope, VariablesBlock, WireTerm, WiringPayload,
 } from "./types/ast.js";
 
 // Interpreter types

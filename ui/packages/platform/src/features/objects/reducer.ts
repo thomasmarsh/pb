@@ -5,7 +5,7 @@ import type { ObjectsState } from "./types.js";
 import type { ObjectsAction } from "./actions.js";
 import type {
   ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse,
-  ProcedureDetailResponse, ProcedureListItem,
+  ProcedureDetailResponse, ProcedureListItem, WiringDiagramResponse,
 } from "../../types/api.js";
 import { type AstData, type WindowLayout } from "@pb/interpreter";
 import type { NavigationAction } from "../navigation/types.js";
@@ -19,6 +19,7 @@ export interface ObjectsEnv {
   getObjectLayout(name: string): Effect<WindowLayout>;
   getProcedure(obj: string, proc: string): Effect<ProcedureDetailResponse>;
   getProcedures(): Effect<ProcedureListItem[]>;
+  getWiringDiagram(obj: string, proc: string): Effect<WiringDiagramResponse>;
   navigate(action: NavigationAction): Effect<never>;
 }
 
@@ -28,6 +29,7 @@ export const initialObjectsState: ObjectsState = {
   proceduresList: null, proceduresListLoading: false,
   proceduresListQ: "", proceduresListKind: "",
   proceduresListSort: "name", proceduresListOrder: "asc",
+  wiringDiagram: null, wiringDiagramLoading: false,
 };
 
 function errMsg(e: unknown): string { return e instanceof Error ? e.message : String(e); }
@@ -150,6 +152,8 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
     return null;
   case "proc-select":
     draft.procedureDetail = null;
+    draft.wiringDiagram = null;
+    draft.wiringDiagramLoading = false;
     env.navigate({ tag: "navigate", route: { view: "procedureDetail", name: action.objectName, proc: action.procName } });
     return env.getProcedure(action.objectName, action.procName)
       .map((data): ObjectsAction => ({ tag: "proc-loaded", data }))
@@ -199,6 +203,25 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
     return null;
   case "go-slice":
     env.navigate({ tag: "navigate", route: { view: "sliceView", object: action.object, proc: action.proc, line: action.line, direction: action.direction } });
+    return null;
+  case "wiring-load": {
+    const already = draft.wiringDiagram
+      && "term" in draft.wiringDiagram
+      && draft.wiringDiagram.object === action.objectName
+      && draft.wiringDiagram.proc === action.procName;
+    if (already || draft.wiringDiagramLoading) return null;
+    draft.wiringDiagramLoading = true;
+    return env.getWiringDiagram(action.objectName, action.procName)
+      .map((data): ObjectsAction => ({ tag: "wiring-loaded", objectName: action.objectName, procName: action.procName, data }))
+      .catch((e): ObjectsAction => ({ tag: "wiring-error", error: errMsg(e) }));
+  }
+  case "wiring-loaded":
+    draft.wiringDiagram = { ...action.data, object: action.objectName, proc: action.procName };
+    draft.wiringDiagramLoading = false;
+    return null;
+  case "wiring-error":
+    draft.wiringDiagram = { error: action.error };
+    draft.wiringDiagramLoading = false;
     return null;
   default:
     return null;

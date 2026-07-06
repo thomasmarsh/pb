@@ -12,6 +12,7 @@ import {
 import type { SummaryItem } from "@pb/platform";
 import { SqlStatementCard } from "../../components/detail/SqlStatementCard.js";
 import { CFGCore } from "../analysis/CFGCore.js";
+import { WiringCore } from "../analysis/WiringCore.js";
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
@@ -113,6 +114,7 @@ function ProcedureDetailContent(props: {
   const [showSql, setShowSql] = createSignal(false);
   const [showTaint, setShowTaint] = createSignal(false);
   const [showCfg, setShowCfg] = createSignal(false);
+  const [diagramView, setDiagramView] = createSignal<"cfg" | "wiring">("cfg");
 
   const callerCount = () => p.callers?.length ?? 0;
   const calleeCount = () => p.callees?.length ?? 0;
@@ -231,19 +233,38 @@ function ProcedureDetailContent(props: {
         </Show>
 
         <Show when={showCfg()}>
-          <ContextualPanel title="Control Flow Graph" onClose={() => setShowCfg(false)}>
+          <ContextualPanel title={diagramView() === "cfg" ? "Control Flow Graph" : "Wiring Diagram"} onClose={() => setShowCfg(false)}>
+            <div class="diagram-view-toggle" style={{ display: "flex", gap: "6px", "margin-bottom": "8px" }}>
+              <button
+                class={diagramView() === "cfg" ? "filter-pill active" : "filter-pill"}
+                onClick={() => setDiagramView("cfg")}
+              >
+                CFG
+              </button>
+              <button
+                class={diagramView() === "wiring" ? "filter-pill active" : "filter-pill"}
+                onClick={() => setDiagramView("wiring")}
+              >
+                Wiring
+              </button>
+            </div>
             <div style={{ height: "420px", display: "flex", "flex-direction": "column" }}>
-              <CFGCore
-                object={p.object}
-                proc={p.name}
-                onGoto={() =>
-                  store.dispatch({
-                    tag: "nav",
-                    action: { tag: "navigate", route: { view: "cfgDiagram", object: p.object, proc: p.name } },
-                  })
-                }
-                gotoLabel="Full CFG"
-              />
+              <Show when={diagramView() === "cfg"}>
+                <CFGCore
+                  object={p.object}
+                  proc={p.name}
+                  onGoto={() =>
+                    store.dispatch({
+                      tag: "nav",
+                      action: { tag: "navigate", route: { view: "cfgDiagram", object: p.object, proc: p.name } },
+                    })
+                  }
+                  gotoLabel="Full CFG"
+                />
+              </Show>
+              <Show when={diagramView() === "wiring"}>
+                <WiringCore store={store} object={p.object} proc={p.name} />
+              </Show>
             </div>
           </ContextualPanel>
         </Show>

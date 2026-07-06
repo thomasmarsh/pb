@@ -2257,3 +2257,56 @@ kbd.kbd {
     font-size: 12px;
     color: var(--text-muted);
 }
+
+/* Wiring diagram (Plan 149 Phase 3) — theme-aware CSS, no baked SVG colors
+   unlike the graphviz-rendered CFG above (see architecture-pipeline.md). */
+.wiring-badge {
+    font-size: 11px;
+    color: var(--phase-p3);
+    border: 1px solid var(--phase-p3);
+    border-radius: 4px;
+    padding: 2px 8px;
+    display: inline-block;
+    margin-bottom: 6px;
+}
+.wiring-svg-wrap {
+    transform-origin: 0 0;
+    display: inline-block;
+}
+.wiring-svg-wrap text {
+    font-size: 11px;
+    fill: var(--text-primary);
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    pointer-events: none;
+}
+.wiring-wire {
+    fill: none;
+    stroke: var(--text-muted);
+    stroke-width: 1.5;
+}
+.wiring-region rect {
+    fill: none;
+    stroke-dasharray: 4 3;
+}
+.wiring-region text { font-size: 10px; }
+.wiring-region-if rect { stroke: var(--phase-p4); }
+.wiring-region-if text { fill: var(--phase-p4); }
+.wiring-region-loop rect { stroke: var(--phase-p2); }
+.wiring-region-loop text { fill: var(--phase-p2); }
+.wiring-region-fanin rect, .wiring-region-fork rect { stroke: var(--text-muted); }
+.wiring-region-fanin text, .wiring-region-fork text { fill: var(--text-muted); }
+
+.wiring-box { cursor: pointer; }
+.wiring-box rect { stroke-width: 1.5; fill: var(--bg-card); }
+.wiring-box-focused rect { stroke-width: 2.5; }
+.wiring-box-eval rect { stroke: var(--accent); }
+.wiring-box-assign rect { stroke: var(--green); }
+.wiring-box-call rect { stroke: var(--purple); }
+.wiring-box-suspend rect { stroke: var(--phase-p3); stroke-width: 2.5; }
+.wiring-box-return rect { stroke: var(--text-muted); }
+.wiring-box-cond rect { stroke: var(--phase-p4); }
+.wiring-box-continue-cap rect { stroke: var(--phase-p2); stroke-dasharray: 3 2; }
+.wiring-box-exit-cap rect { stroke: var(--orange); stroke-dasharray: 3 2; }
+.wiring-box-jump rect { stroke: var(--text-muted); stroke-dasharray: 2 2; fill: none; }
+.wiring-box-split rect { stroke: var(--text-secondary); }
+.wiring-box-opaque rect { stroke: var(--text-muted); }

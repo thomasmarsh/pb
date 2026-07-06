@@ -17,6 +17,7 @@ import type {
   TableSummary,
   TableDetail,
   ErrorListResponse,
+  WiringDiagramResponse,
 } from "@pb/platform";
 import { type DataWindowFile, type AstData, type WindowLayout } from "@pb/interpreter";
 import { Effect, type SQLResult } from "@pb/core";
@@ -33,6 +34,7 @@ export interface ApiClient {
   getAllObjects(): Promise<ListObjectsResponse>;
   getProcedure(obj: string, proc: string): Promise<ProcedureDetailResponse>;
   getProcedures(): Promise<ProcedureListItem[]>;
+  getWiringDiagram(obj: string, proc: string): Promise<WiringDiagramResponse>;
   search(q: string): Promise<SearchResponse>;
   getDW(name: string): Promise<DwDetailResponse>;
   getDwLayout(name: string): Promise<DataWindowFile>;
@@ -87,6 +89,7 @@ export function createEnv(api: ApiClient): Env {
     getAllObjects: () => lift(() => api.getAllObjects()),
     getProcedure: (o, p) => lift(() => api.getProcedure(o, p)),
     getProcedures: () => lift(() => api.getProcedures()),
+    getWiringDiagram: (o, p) => lift(() => api.getWiringDiagram(o, p)),
     search: (q) => lift(() => api.search(q)),
     getDW: (n) => lift(() => api.getDW(n)),
     getDwLayout: (n) => lift(() => api.getDwLayout(n)),
@@ -158,6 +161,12 @@ export function createApiClient(): ApiClient {
 
     async getProcedures(): Promise<ProcedureListItem[]> {
       return fetchJson("/api/procedures");
+    },
+
+    async getWiringDiagram(obj: string, proc: string): Promise<WiringDiagramResponse> {
+      return fetchJson(
+        `/api/diagrams/wiring/${encodeURIComponent(obj)}/${encodeURIComponent(proc)}`,
+      );
     },
 
     async search(q: string): Promise<SearchResponse> {
