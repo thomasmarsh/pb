@@ -496,26 +496,43 @@ discoverReachable headers resolvedExits proc headerId currentBlock visited
 -- via escaping through an *enclosing* loop's back-edge — Plan 146 Phase 2f);
 -- an unresolved (enclosing/unrelated) header still stops the walk.
 --
--- A block terminating in 'SsaContinue'/'SsaBreak'/'SsaReturn' is always
--- treated as reaching (Plan 146 Phase 2g; extended to 'SsaReturn' in Phase
--- 2i). 'termSuccessors' deliberately returns @[]@ for all three — they're
--- handled as special-cased control transfers elsewhere
+-- A block terminating in 'SsaContinue'/'SsaBreak' is always treated as
+-- reaching (Plan 146 Phase 2g). 'termSuccessors' deliberately returns @[]@
+-- for both — they're handled as special-cased control transfers elsewhere
 -- (@compileLoopTerm@/@compileLoopBranchPath@), not real graph edges — so a
 -- pure forward walk can never step off of one. Left unhandled, that made
 -- 'canReach' wrongly exclude such a block from the loop's own body: it then
 -- surfaced as a spurious "successor not in the body" candidate in
 -- 'determineLoopExitTarget', tying the resolved exit target to an arbitrary
 -- alphabetically-first candidate instead of the loop's real exit whenever a
--- continue/break/return block's id happened to sort first — and
--- independently made 'isLoopExit' misclassify a genuine continue target as
--- "outside the loop", silently turning that 'continue' into a 'break' (or,
--- for 'SsaReturn', wiring the loop's real post-loop continuation to the
--- return block's own dead-end content instead — Phase 2i, found via
--- w_customer_report::open et al.). All three are safe here because this
--- function's only caller ('computeLoopBodyBlocks') always asks "is this
--- block part of the loop currently being resolved" — continue/break/return
+-- continue/break block's id happened to sort first — and independently made
+-- 'isLoopExit' misclassify a genuine continue target as "outside the loop",
+-- silently turning that 'continue' into a 'break'. Both are safe here
+-- because this function's only caller ('computeLoopBodyBlocks') always asks
+-- "is this block part of the loop currently being resolved" — continue/break
 -- are that loop's own body by construction, regardless of where their
 -- (elsewhere-handled) control transfer actually lands.
+--
+-- 'SsaReturn' deliberately does NOT get the same treatment (Plan 146 Phase
+-- 2i tried this, and it was wrong — reverted). Unlike continue/break,
+-- a return statement is not lexically restricted to loop bodies: a
+-- return-terminated block reached by forwarding through a loop's own real
+-- exit edge (e.g. an if/else merge block with nothing left in the
+-- procedure, reached both from an unrelated earlier branch AND from this
+-- loop's exit) is not a loop-body member at all, and treating it as one
+-- here made it eligible for 'computeLoopBodyBlocks' — which then let
+-- 'compileLoopBody' try to recompile a block that an *outer*, non-loop
+-- branch had already compiled and memoized moments earlier as plain
+-- 'CatId', via the 'seedVisited' \"already compiled outside this loop\"
+-- placeholder in 'compileBlock'. That stale 'CatInl' placeholder silently
+-- replaced the loop's real exit content, producing a branch node whose own
+-- false edge pointed back at itself — an infinite loop (confirmed via
+-- direct 'CpsGraph' inspection of the real corpus regression,
+-- @w_regedit::itempopulate@). The genuine early-return-inside-a-loop case
+-- (@w_customer_report::open@ et al.) is instead handled directly in
+-- 'isLoopExit' below, which only special-cases a block whose *own*
+-- terminator is 'SsaReturn' — never a block that merely forwards to one —
+-- so it can't be confused with a loop's ordinary (non-return) exit chain.
 canReach :: Set.Set Text -> Map.Map Text Text -> SsaProc -> Text -> Text -> Set.Set Text -> Bool
 canReach headers resolvedExits proc startBlock0 targetBlock visited0 = fst (go startBlock0 visited0)
   where
@@ -531,7 +548,6 @@ canReach headers resolvedExits proc startBlock0 targetBlock visited0 = fst (go s
           Just block
             | SsaContinue <- sbTerm block -> (True, Set.insert current visited)
             | SsaBreak    <- sbTerm block -> (True, Set.insert current visited)
-            | SsaReturn _ <- sbTerm block -> (True, Set.insert current visited)
             | otherwise ->
                 let visited' = Set.insert current visited
                     succs    = termSuccessors (sbTerm block)
@@ -548,6 +564,17 @@ canReach headers resolvedExits proc startBlock0 targetBlock visited0 = fst (go s
 -- (purely internal to that nested loop) successors — otherwise a nested
 -- loop's own body block leaks through as a spurious "exit" of the
 -- enclosing loop (Plan 146 Phase 2f).
+--
+-- Prefers a non-return-terminated candidate when 'exits' has more than
+-- one (Plan 146 Phase 2i): a body-internal early return (e.g. an elseif
+-- branch's own @return@, handled directly by 'isLoopExit' below so it
+-- never needs to appear here at all — see @w_customer_report::open@) can
+-- still show up as a second, spurious "successor not in body" candidate
+-- for the same reasons continue/break used to (Phase 2f/2g's alphabetical
+-- tiebreak fragility) whenever the return-terminated block happens to be
+-- reachable from some other body block's branch. Falling back to a
+-- return-terminated candidate when it's the *only* one preserves the
+-- legitimate "loop; return" shape (nothing else left in the procedure).
 determineLoopExitTarget :: Set.Set Text -> Map.Map Text Text -> SsaProc -> Text -> Text
 determineLoopExitTarget headers resolvedExits proc headerId =
   let bodyBlocks  = computeLoopBodyBlocks headers resolvedExits proc headerId
@@ -558,9 +585,15 @@ determineLoopExitTarget headers resolvedExits proc headerId =
             Just block -> termSuccessors (sbTerm block)
       allSuccs = Set.fromList [ suc | bId <- Set.toList bodyBlocks, suc <- succsOf bId ]
       exits = Set.filter (/= headerId) (Set.difference allSuccs bodyBlocks)
-  in case Set.toList exits of
+      isReturnTerminated bId = case Map.lookup bId (spBlocks proc) of
+        Just block | SsaReturn _ <- sbTerm block -> True
+        _                                        -> False
+      (nonReturnExits, returnExits) = Set.partition (not P.. isReturnTerminated) exits
+  in case Set.toList nonReturnExits of
        (exitTarget : _) -> exitTarget
-       []               -> ""
+       [] -> case Set.toList returnExits of
+               (exitTarget : _) -> exitTarget
+               []               -> ""
 
 -- | Main compiler orchestrator. Returns @(CatOp, updatedMemo)@ to thread the global
 -- memo across all branches.
@@ -746,8 +779,26 @@ compileLoopBranchPath ctx proc prevBlock target visited headers exits activeLoop
 
 -- | Check if a target block is outside the current loop cycle.
 -- A block is a loop exit if it is not part of the loop body.
+--
+-- A target whose own terminator is 'SsaReturn' is never treated as a loop
+-- exit (Plan 146 Phase 2i), regardless of 'computeLoopBodyBlocks' membership
+-- — it always recurses into 'compileLoopBody' so its own 'SsaReturn'
+-- reaches 'compileLoopTerm's 'CatReturn' case (a true procedure-terminal
+-- escape) instead of being treated as 'CatInr' (break). This only applies
+-- when the target *itself* terminates in 'SsaReturn' — a block that merely
+-- forwards to one (e.g. a loop's own ordinary exit edge, which may lead,
+-- after further gotos, to the procedure's final implicit return) is
+-- deliberately left to the normal body-membership check below, since
+-- folding it in here caused a real regression (@w_regedit::itempopulate@):
+-- treating such a forwarding block as "not an exit" made 'compileLoopBody'
+-- try to recompile a block an *outer*, non-loop branch had already compiled
+-- and memoized, landing on a stale placeholder that turned the loop's real
+-- exit into a self-referencing infinite loop. See 'canReach's own comment
+-- for the full history (Phase 2g → 2i → this fix).
 isLoopExit :: Set.Set Text -> Map.Map Text Text -> SsaProc -> Maybe Text -> Text -> Bool
 isLoopExit _ _ _ Nothing _ = False
+isLoopExit _headers _exits proc (Just _headerId) targetId
+  | Just block <- Map.lookup targetId (spBlocks proc), SsaReturn _ <- sbTerm block = False
 isLoopExit headers exits proc (Just headerId) targetId =
   let bodyBlocks = computeLoopBodyBlocks headers exits proc headerId
   in not (Set.member targetId bodyBlocks)

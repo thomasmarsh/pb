@@ -1361,21 +1361,26 @@ tests = testGroup "CatOp"
     ]
 
   , testGroup "loop-exit-target skips return blocks (Plan 146 Phase 2i)"
-    -- 'canReach' already special-cases 'SsaContinue'/'SsaBreak' as "always
-    -- reaches back" (Plan 146 Phase 2g) because their 'termSuccessors' is
-    -- '[]' by design (their control transfer is handled specially, not as a
-    -- real graph edge) -- but had no matching case for 'SsaReturn', which
-    -- also gets 'termSuccessors = []'. A return-terminated block therefore
-    -- failed the backward-reachability check, got excluded from the loop's
-    -- body set, and surfaced instead as a spurious 'determineLoopExitTarget'
-    -- exit candidate competing against the loop's real post-loop successor
-    -- via the same alphabetical tiebreak Phase 2g fixed for continue.
+    -- Two independent bugs, both needed fixing (see 'PB.Analysis.CatOp':
+    -- 'isLoopExit', 'determineLoopExitTarget', 'canReach', 'compileLoopTerm'
+    -- for the full history — an earlier version of this fix put the special
+    -- case in 'canReach' itself, which regressed a real corpus procedure;
+    -- see 'canReach's own comment):
     --
-    -- A second, independent bug compounds this: 'compileLoopTerm's own
-    -- 'SsaReturn' case compiled to 'CatInr' -- identical to 'SsaBreak' --
-    -- so even once the exit-target is resolved correctly, hitting a return
-    -- mid-loop would still fall through to the loop's post-loop
-    -- continuation instead of truly ending the procedure.
+    -- (1) 'compileLoopTerm's own 'SsaReturn' case compiled to 'CatInr' --
+    -- identical to 'SsaBreak' -- so hitting a return mid-loop would fall
+    -- through to the loop's post-loop continuation instead of truly ending
+    -- the procedure. Fixed via a new 'CatReturn' terminal (Phase 2i) plus
+    -- 'isLoopExit' now refusing to treat a block whose own terminator is
+    -- 'SsaReturn' as a loop exit, so it always reaches 'compileLoopTerm'
+    -- rather than short-circuiting to 'CatInr' first.
+    --
+    -- (2) 'determineLoopExitTarget' can see a body-internal early-return
+    -- block as a second, spurious "successor not in body" candidate
+    -- alongside the loop's real post-loop successor, and used to pick
+    -- between them via the same alphabetical tiebreak Phase 2f/2g had to
+    -- work around elsewhere. Fixed by preferring a non-return-terminated
+    -- candidate whenever one exists.
     --
     -- Fixture: a 3-iteration counted loop whose body branches to a `return`
     -- on a separate `trigger` flag (independent of the loop counter), run
@@ -1467,4 +1472,47 @@ tests = testGroup "CatOp"
       in testCase "do-while with if/elseif-return, followed by trailing code, matches old compiler" $
            newTrace @?= oldTrace
     ]
+
+  , testGroup "if/else where one branch reaches the implicit end before a later loop is compiled (Plan 146 Phase 2i correction)"
+    -- Regression test for a real corpus bug an earlier version of the Phase
+    -- 2i fix introduced: @w_regedit::itempopulate@, a plain @if/else@ with a
+    -- @for...next@ loop in the else branch and nothing after the whole
+    -- if/else. 'compileTerm's 'SsaBranch' case compiles the if-branch
+    -- first, so the shared implicit-end block (reached both from the
+    -- if-branch directly and from the for-loop's own exit edge) gets
+    -- compiled and memoized as plain 'CatId' *before* the for-loop is ever
+    -- touched. The since-reverted 'canReach' special case made the loop's
+    -- exit-chain block eligible for 'computeLoopBodyBlocks', which made
+    -- 'compileLoopBody' try to recompile the already-memoized end block —
+    -- landing on a stale 'CatInl' seed placeholder instead of its real
+    -- content, and turning the loop's real exit into a self-referencing
+    -- infinite loop (confirmed via direct 'CpsGraph' inspection of the real
+    -- procedure: a 'CpsBranch' whose own false edge pointed back at itself).
+    -- Bounded via a small 'maxSteps' so a regression here fails loudly
+    -- (hits the bound) rather than hanging the test suite.
+    (let flagLv = Lvalue [LvSegment "flag" Nothing]
+         flagE  = ExLvalue flagLv
+         zLv    = Lvalue [LvSegment "z" Nothing]
+         iLv    = Lvalue [LvSegment "i" Nothing]
+         wLv    = Lvalue [LvSegment "w" Nothing]
+         wE     = ExLvalue wLv
+         body =
+           [ Located 1 (BsIf (IfStmt (ExBinOp flagE BopEq (ExInt "1"))
+               [Located 2 (BsAssign zLv (ExInt "99"))]
+               []
+               (Just [Located 3 (BsFor (ForStmt iLv (ExInt "1") (ExInt "3") Nothing
+                   [Located 4 (BsAssign wLv (ExBinOp wE BopAdd (ExInt "1")))]))])))
+           ]
+         maxSteps = 50 :: Int
+         oldTrace = runCpsGraphTrace maxSteps Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+         newTrace = runCpsGraphTrace maxSteps Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+         (_, elseTrc) = newTrace
+     in
+     [ testCase "else-branch for-loop terminates well under the step bound, not a runaway trace" $
+         assertBool ("expected well under " <> show maxSteps <> " steps, got " <> show (length elseTrc))
+                    (length elseTrc P.< maxSteps)
+
+     , testCase "else-branch (for-loop) matches old compiler" $
+         newTrace @?= oldTrace
+     ])
   ]
