@@ -72,3 +72,30 @@ def get_cfg_diagram(
         "sourceOriginal": None,
         "procStartLine": proc_start_line,
     }
+
+
+def get_wiring_diagram(
+    conn: duckdb.DuckDBPyConnection,
+    object_name: str,
+    proc_name: str,
+) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT start_line, wiring_json FROM procedures WHERE object = ? AND proc_name = ? LIMIT 1",
+        [object_name, proc_name],
+    ).fetchone()
+    if not row:
+        return None
+
+    proc_start_line: int | None = row[0]
+    wiring_json_raw: str | None = row[1]
+
+    if not wiring_json_raw:
+        return None
+    payload = json.loads(wiring_json_raw)
+
+    return {
+        "term": payload["term"],
+        "sharedBlocks": payload.get("sharedBlocks", {}),
+        "sourceOriginal": None,
+        "procStartLine": proc_start_line,
+    }

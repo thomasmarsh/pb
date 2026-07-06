@@ -8,8 +8,9 @@ import duckdb
 import graphviz
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from pb.api.models import WiringDiagramResponse
 from pb.api.routes.dependencies import get_db
-from pb.api.services.diagrams import get_cfg_diagram
+from pb.api.services.diagrams import get_cfg_diagram, get_wiring_diagram
 from pb.pipeline.diagrams import render_svg
 
 router = APIRouter()
@@ -82,4 +83,16 @@ async def get_cfg_diagram_endpoint(
         raise HTTPException(status_code=503, detail="graphviz 'dot' binary not found on PATH")
     if result is None:
         raise HTTPException(status_code=404, detail="Procedure not found or has no body")
+    return result
+
+
+@router.get("/api/diagrams/wiring/{object_name}/{proc_name}", response_model=WiringDiagramResponse)
+async def get_wiring_diagram_endpoint(
+    object_name: str,
+    proc_name: str,
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    result = get_wiring_diagram(conn, object_name, proc_name)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Procedure not found or has no wiring diagram")
     return result
