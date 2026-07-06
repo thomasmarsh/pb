@@ -114,7 +114,6 @@ test-suite pb-compiler-test
     , BodyStmtTest
     , CfgBuildTest
     , CorpusDebtTest
-    , CpsCompileTest
     , CatEvalTest
     , CatOpTest
     , GoldenFixtureTest

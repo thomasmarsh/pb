@@ -9,8 +9,8 @@ import PB.AST.BodyStmt     (BodyStmt (..), PbCall (..), IfStmt (..), ElseIf (..)
                             TryStmt (..), CatchClause (..))
 import PB.AST.Located      (Located (..))
 import PB.Analysis.CatOp
-import PB.Analysis.CpsCompile (ShapeNode (..), canonicalize, compileProcedure, normalizeCallTag)
-import PB.Analysis.CpsInterp (runCpsGraphTrace)
+import PB.Analysis.CpsCompile (ShapeNode (..), canonicalize, normalizeCallTag, parseArgList, collectBodyLocals)
+import PB.Analysis.CpsInterp (runCpsGraphTrace, TraceOutcome (..))
 import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                             SsaTerm (..), SsaProc (..), renderSsaVar, buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
@@ -893,16 +893,18 @@ tests = testGroup "CatOp"
         let body = [Located 1 (BsFor (ForStmt (Lvalue [LvSegment "li_count" Nothing])
                       (ExInt "1") (ExInt "10") Nothing
                       [Located 2 (BsCall (ExCall (Lvalue [LvSegment "foo" Nothing]) []))]))]
-            oldShape = normalizeCallTag <$> canonicalize (compileProcedure emptyEnv Set.empty body)
+            -- Frozen expected shape (Plan 144 Phase 5 Step 7): captured from the old
+            -- compiler before its deletion, when this test last passed bit-for-bit.
+            expectedShape = [SAsgn 1, SBrnch 2 3, SCall 4, SRet, SAsgn 1]
             newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
-        in newShape @?= oldShape
+        in newShape @?= expectedShape
 
     , testCase "do-while loop containing one call matches old compiler exactly (mod SCall/SCProc tag)" $
         let body = [Located 1 (BsDo (DoStmt (Just (DoWhile (ExBool True)))
                       [Located 2 (BsCall (ExCall (Lvalue [LvSegment "foo" Nothing]) []))] Nothing))]
-            oldShape = normalizeCallTag <$> canonicalize (compileProcedure emptyEnv Set.empty body)
+            expectedShape = [SBrnch 1 2, SCall 0, SRet]
             newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
-        in newShape @?= oldShape
+        in newShape @?= expectedShape
     ]
 
   , testGroup "for/do-loop header collapse (Plan 145 post-Finding-A block-collapse bug)"
@@ -979,18 +981,20 @@ tests = testGroup "CatOp"
               { object = Just (Lvalue [LvSegment "ParentWindow" Nothing]), mode = DmPost
               , dynamic = True, event = False, name = "of_run_report", args = [] })
             body = [Located 1 (BsCall dispatchExpr)]
-            oldShape = normalizeCallTag <$> canonicalize (compileProcedure emptyEnv Set.empty body)
+            -- Frozen expected shape (Plan 144 Phase 5 Step 7): captured from the old
+            -- compiler before its deletion, when this test last passed bit-for-bit.
+            expectedShape = [SCall 1, SRet]
             newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
-        in newShape @?= oldShape
+        in newShape @?= expectedShape
 
     , testCase "ExDispatch (bare Post Event) matches old compiler exactly (mod SCall/SCProc tag)" $
         let dispatchExpr = ExDispatch (DispatchExpr
               { object = Nothing, mode = DmPost, dynamic = False
               , event = True, name = "ue_getvalues", args = [] })
             body = [Located 1 (BsCall dispatchExpr)]
-            oldShape = normalizeCallTag <$> canonicalize (compileProcedure emptyEnv Set.empty body)
+            expectedShape = [SCall 1, SRet]
             newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
-        in newShape @?= oldShape
+        in newShape @?= expectedShape
 
     , testCase "no CatAssignWithRhs is emitted for a standalone dispatch statement" $
         let dispatchExpr = ExDispatch (DispatchExpr
@@ -1033,9 +1037,11 @@ tests = testGroup "CatOp"
                    , Located 3 (BsCall (call "callB"))
                    , Located 4 (BsCall (call "callC"))
                    ]
-            oldShape = canonicalize (compileProcedure emptyEnv Set.empty body)
+            -- Frozen expected path-call-counts (Plan 144 Phase 5 Step 7): captured
+            -- from the old compiler before its deletion, when this test last passed.
+            expectedCounts = [2, 3]
             newShape = canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
-        in pathCallCounts newShape @?= pathCallCounts oldShape
+        in pathCallCounts newShape @?= expectedCounts
 
     , testCase "if/else, both arms: shared trailing calls survive on both paths" $
         -- Mirrors the mechanism behind w_dw_functions::clicked: both the then-arm and
@@ -1047,9 +1053,9 @@ tests = testGroup "CatOp"
                    , Located 4 (BsCall (call "callC"))
                    , Located 5 (BsCall (call "callD"))
                    ]
-            oldShape = canonicalize (compileProcedure emptyEnv Set.empty body)
+            expectedCounts = [3, 3]
             newShape = canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
-        in pathCallCounts newShape @?= pathCallCounts oldShape
+        in pathCallCounts newShape @?= expectedCounts
 
     , testCase "nested if inside if/else with shared trailing calls (real corpus shape: w_dw_functions::clicked)" $
         -- Mirrors the exact real-world procedure this bug was root-caused from:
@@ -1065,9 +1071,9 @@ tests = testGroup "CatOp"
                        , Located 6 (BsCall (call "callD"))
                        ] [] Nothing))
                    ]
-            oldShape = canonicalize (compileProcedure emptyEnv Set.empty body)
+            expectedCounts = [0, 3, 3]
             newShape = canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
-        in pathCallCounts newShape @?= pathCallCounts oldShape
+        in pathCallCounts newShape @?= expectedCounts
     ]
 
   , testGroup "GraphBuilder node-sharing: sequential merge points stay linear, not exponential (Plan 150)"
@@ -1117,9 +1123,9 @@ tests = testGroup "CatOp"
               [ ("callA1", "callB1", "ctail1", 0), ("callA2", "callB2", "ctail2", 4)
               , ("callA3", "callB3", "ctail3", 8), ("callA4", "callB4", "ctail4", 12)
               ]
-            oldShape = canonicalize (compileProcedure emptyEnv Set.empty body)
+            expectedCounts = [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]
             newShape = canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
-        in pathCallCounts newShape @?= pathCallCounts oldShape
+        in pathCallCounts newShape @?= expectedCounts
     ]
 
   , testGroup "Phase 1D: Interp vs GraphBuilder trace equivalence (Plan 146)"
@@ -1219,16 +1225,18 @@ tests = testGroup "CatOp"
     -- TeCall normalization over both corpora.
     [ testCase "bare ExCall with mixed-case callee: TeCall preserves case" $
         let body = [Located 1 (BsCall (ExCall (Lvalue [LvSegment "GlobalMemoryStatus" Nothing]) []))]
-            oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+            -- Frozen expected trace (Plan 144 Phase 5 Step 7): captured from the old
+            -- compiler before its deletion, when this test last passed bit-for-bit.
+            expectedTrace = (Map.empty, [TeCall "GlobalMemoryStatus" []], NaturalHalt)
             newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
-        in newTrace @?= oldTrace
+        in newTrace @?= expectedTrace
 
     , testCase "ExMethodCall with mixed-case receiver/method: TeCall preserves case" $
         let recv = ExLvalue (Lvalue [LvSegment "parentwindow" Nothing])
             body = [Located 1 (BsCall (ExMethodCall recv "TriggerEvent" [[]]))]
-            oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+            expectedTrace = (Map.empty, [TeCall "parentwindow.TriggerEvent" [VNull]], NaturalHalt)
             newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
-        in newTrace @?= oldTrace
+        in newTrace @?= expectedTrace
 
     , testCase "ExMethodCall whose receiver is itself a call (chained method call) matches old compiler" $
         -- Real corpus idiom (m_graph::clicked and 4 other on-clicked handlers
@@ -1243,9 +1251,9 @@ tests = testGroup "CatOp"
         -- "ParentWindow.TriggerEvent" ...` new).
         let recv = ExCall (Lvalue [LvSegment "ParentWindow" Nothing, LvSegment "GetActiveSheet" Nothing]) []
             body = [Located 1 (BsCall (ExMethodCall recv "TriggerEvent" [[]]))]
-            oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+            expectedTrace = (Map.empty, [TeCall "?.TriggerEvent" [VNull]], NaturalHalt)
             newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
-        in newTrace @?= oldTrace
+        in newTrace @?= expectedTrace
     ]
 
   , testGroup "fn_retrievechild suspend args match old compiler (Plan 146 Phase 2i)"
@@ -1267,9 +1275,9 @@ tests = testGroup "CatOp"
               { callee   = Lvalue [LvSegment "fn_retrievechild" Nothing]
               , callArgs = [[tok "dw_misth_final"], [tok "\"kodkat\""], [tok "gs_kodxrisi"]]
               }))]
-            oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+            expectedTrace = (Map.empty, [TeSuspend "retrieve:child_kodkat:dw_misth_final" [VNull]], NaturalHalt)
             newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
-        in newTrace @?= oldTrace
+        in newTrace @?= expectedTrace
     ]
 
   , testGroup "local DataStore/Transaction variable suspend-classification (Plan 146 Phase 2e)"
@@ -1290,17 +1298,17 @@ tests = testGroup "CatOp"
         let body = [ Located 1 (BsLocalVar [] (PtPrimitive "datastore") "lds_x" Nothing)
                    , Located 2 (BsCall (ExMethodCall (ExLvalue (Lvalue [LvSegment "lds_x" Nothing])) "retrieve" [[]]))
                    ]
-            oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+            expectedTrace = (Map.empty, [TeSuspend "retrieve:lds_x" [VNull]], NaturalHalt)
             newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
-        in newTrace @?= oldTrace
+        in newTrace @?= expectedTrace
 
     , testCase "local transaction var .commit() classifies as SuspendCall" $
         let body = [ Located 1 (BsLocalVar [] (PtPrimitive "transaction") "ltrans_x" Nothing)
                    , Located 2 (BsCall (ExMethodCall (ExLvalue (Lvalue [LvSegment "ltrans_x" Nothing])) "commit" [[]]))
                    ]
-            oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+            expectedTrace = (Map.empty, [TeSuspend "executeSql" [VNull]], NaturalHalt)
             newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
-        in newTrace @?= oldTrace
+        in newTrace @?= expectedTrace
     ]
 
   , testGroup "nested loop exit-target resolution (Plan 146 Phase 2f)"
@@ -1463,10 +1471,10 @@ tests = testGroup "CatOp"
                 Nothing))
             , Located 5 (BsAssign doneLv (ExInt "1"))
             ]
-          oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+          expectedTrace = (Map.fromList [("done", VInt 1)], [TeBranch False, TeBranch False, TeBranch False, TeAssign "done" (VInt 1)], NaturalHalt)
           newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
       in testCase "no elseif clause matches (x unset) -> falls through to the trailing assign, matching the old compiler" $
-           newTrace @?= oldTrace
+           newTrace @?= expectedTrace
     ]
 
   , testGroup "loop-exit-target skips return blocks (Plan 146 Phase 2i)"
@@ -1576,10 +1584,10 @@ tests = testGroup "CatOp"
                 Nothing))
             , Located 7 (BsCall (call "trailing"))
             ]
-          oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+          expectedTrace = (Map.empty, [TeBranch False, TeCall "trailing" []], NaturalHalt)
           newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
       in testCase "do-while with if/elseif-return, followed by trailing code, matches old compiler" $
-           newTrace @?= oldTrace
+           newTrace @?= expectedTrace
     ]
 
   , testGroup "if/else where one branch reaches the implicit end before a later loop is compiled (Plan 146 Phase 2i correction)"
@@ -1613,7 +1621,14 @@ tests = testGroup "CatOp"
                    [Located 4 (BsAssign wLv (ExBinOp wE BopAdd (ExInt "1")))]))])))
            ]
          maxSteps = 50 :: Int
-         oldTrace = runCpsGraphTrace maxSteps Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+         expectedTrace = ( Map.fromList [("i", VInt 4), ("w", VReal 3.0)]
+                          , [ TeBranch False
+                            , TeAssign "i" (VInt 1), TeBranch True, TeAssign "w" (VReal 1.0)
+                            , TeAssign "i" (VInt 2), TeBranch True, TeAssign "w" (VReal 2.0)
+                            , TeAssign "i" (VInt 3), TeBranch True, TeAssign "w" (VReal 3.0)
+                            , TeAssign "i" (VInt 4), TeBranch False
+                            ]
+                          , NaturalHalt )
          newTrace = runCpsGraphTrace maxSteps Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
          (_, elseTrc, _) = newTrace
      in
@@ -1622,7 +1637,7 @@ tests = testGroup "CatOp"
                     (length elseTrc P.< maxSteps)
 
      , testCase "else-branch (for-loop) matches old compiler" $
-         newTrace @?= oldTrace
+         newTrace @?= expectedTrace
      ])
 
   , testGroup "BsTry (Plan 146 Phase 3 follow-on: CfgBuild now lowers try-body statements)"
@@ -1642,13 +1657,55 @@ tests = testGroup "CatOp"
                        [CatchClause "Exception" "e" [Located 4 (BsAssign (Lvalue [LvSegment "y" Nothing]) (ExInt "99"))]]))
                    , Located 5 (BsAssign (Lvalue [LvSegment "z" Nothing]) (ExInt "2"))
                    ]
-            oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+            expectedTrace = ( Map.fromList [("x", VInt 1), ("z", VInt 2)]
+                            , [TeAssign "x" (VInt 0), TeAssign "x" (VInt 1), TeAssign "z" (VInt 2)]
+                            , NaturalHalt )
             newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
             (newEnv, _, _) = newTrace
         in do
-             newTrace @?= oldTrace
+             newTrace @?= expectedTrace
              Map.lookup "x" newEnv @?= Just (VInt 1)
              Map.lookup "y" newEnv @?= Nothing
              Map.lookup "z" newEnv @?= Just (VInt 2)
+    ]
+
+  , testGroup "parseArgList / collectBodyLocals (retained helpers, Plan 144 Phase 5 Step 7)"
+    -- Ported from the now-deleted CpsCompileTest.hs's "Gap 3" and "body locals"
+    -- groups: these exercised the two PB.Analysis.CpsCompile helpers that
+    -- survive the old compiler's deletion (both are still imported directly by
+    -- PB.Analysis.CatOp) indirectly, through compileProcedure. Direct unit
+    -- tests on the pure functions themselves, rather than losing the coverage.
+    [ testGroup "parseArgList"
+      [ testCase "single-token ident becomes ExLvalue" $
+          parseArgList [tok "w_test"] @?= ExLvalue (Lvalue [LvSegment "w_test" Nothing])
+
+      , testCase "multi-token binary a + 1 -> ExBinOp BopAdd" $
+          case parseArgList [tok "a", tok "+", tok "1"] of
+            ExBinOp { op = BopAdd } -> pure ()
+            e -> assertBool ("expected ExBinOp BopAdd, got: " <> show e) False
+
+      , testCase "quoted string -> ExStr" $
+          parseArgList [tok "\"hello\""] @?= ExStr "hello"
+
+      , testCase "bool literal true -> ExBool True" $
+          parseArgList [tok "true"] @?= ExBool True
+
+      , testCase "null -> ExNull" $
+          parseArgList [tok "null"] @?= ExNull
+
+      , testCase "multi-token sub b - 2 -> ExBinOp BopSub" $
+          case parseArgList [tok "b", tok "-", tok "2"] of
+            ExBinOp { op = BopSub } -> pure ()
+            e -> assertBool ("expected ExBinOp BopSub, got: " <> show e) False
+      ]
+
+    , testGroup "collectBodyLocals"
+      [ testCase "collects BsLocalVar declarations, lower-casing the variable name" $
+          let body = [ Located 1 (BsLocalVar [] (PtPrimitive "datawindow") "dw" Nothing)
+                     , Located 2 (BsLocalVar [] (PtPrimitive "integer") "Li_Count" Nothing)
+                     ]
+          in collectBodyLocals body @?= Map.fromList
+               [ ("dw", PtPrimitive "datawindow"), ("li_count", PtPrimitive "integer") ]
+      ]
     ]
   ]

@@ -9,7 +9,6 @@ import qualified CatEvalTest
 import qualified CatOpTest
 import qualified GoldenFixtureTest
 import qualified SSATest
-import qualified CpsCompileTest
 import qualified DataflowTest
 import qualified DeadCodeTest
 import qualified TaintTest
@@ -49,7 +48,6 @@ tests = testGroup "pb-compiler"
   , CatOpTest.tests
   , GoldenFixtureTest.tests
   , SSATest.tests
-  , CpsCompileTest.tests
   , DataflowTest.tests
   , DeadCodeTest.tests
   , TaintTest.tests

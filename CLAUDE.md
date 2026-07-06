@@ -831,21 +831,14 @@ runModeDb :: FilePath -> FilePath -> IO ()
 --           workerLoopFiles, workerLoopFilesNoBridge, emitProgress, jsonText
 -- Phase A: parse → compile → append to DuckDB (concurrent producer-consumer)
 -- Phase B: delegates to PB.Pipeline.Passes.runPhaseB
-
--- Plan 146: old-vs-new CPS compiler equivalence checking (both share
--- collectAllProcs :: FilePath -> IO [(Text, Text, ScopedTypeEnv, Set.Set Text, [Located BodyStmt], Maybe Int)]
--- for the (obj, proc, env, userFns, body, line) tuples).
-runModeDualCps   :: FilePath -> Maybe Text -> IO ()  -- --dual-cps: canonical-shape diff, optional --inspect
-runModeDualTrace :: FilePath -> IO ()                -- --dual-trace: behavioral trace diff (the oracle; 0/7547 as of Plan 146 Phase 2k)
-isRealDiff :: (Map.Map Text CatEval.Value, [TraceEvent], TraceOutcome)
-           -> (Map.Map Text CatEval.Value, [TraceEvent], TraceOutcome) -> Bool
--- ^ runModeDualTrace's diff predicate. Full equality, EXCEPT: if both sides'
--- TraceOutcome is FuelExhausted (CpsInterp.runCpsGraphTrace hit maxSteps
--- without reaching a terminal node), falls back to comparing only the
--- common-length prefix — two genuinely non-terminating loops compile to a
--- different CpsNode count per iteration old vs new, so raw fuel-truncated
--- traces differ in length with no real divergence. Either side reaching
--- NaturalHalt always requires full equality (never prefix-forgiven).
+--
+-- Plan 144 Phase 5 Step 7 (2026-07-06): the old CpsCompile.compileProcedure
+-- compiler and every diagnostic that compared it against
+-- CatOp.compileProcedureViaCatOp were deleted once the swap (Step 6) was
+-- verified equivalent — collectAllProcs, runModeDualCps ("--dual-cps"),
+-- runModeDualTrace ("--dual-trace"), runInspect/runInspectOn ("--inspect"),
+-- isRealDiff, traceMaxSteps, and the corresponding Main.hs flags no longer
+-- exist. compileProcedureViaCatOp (PB.Analysis.CatOp) is the sole compiler.
 ```
 
 ### `PB.Pipeline.Serialise`
@@ -898,11 +891,21 @@ isTriggerEvent :: Lvalue -> Bool
 ### `PB.Analysis.CpsCompile`
 
 ```haskell
--- Pure. Uses PB.Analysis.TypeEnv.TypeEnv (the rich record, not a Map Text Text alias).
--- InheritGraph alias removed (Plan 114) — inheritance is in teUserTypes.
--- CallKind imported from CallClassify (PureCall | SuspendCall).
-compileProcedure :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CpsGraph
-parseArgList :: [Token] -> Expr  -- exported for CatOp to use
+-- Pure. Shared CpsNode/CpsGraph types + a few standalone helpers reused by
+-- PB.Analysis.CatOp. The monadic compileProcedure compiler this module used
+-- to house was deleted in Plan 144 Phase 5 Step 7 (2026-07-06) — the sole
+-- compiler is now PB.Analysis.CatOp.compileProcedureViaCatOp.
+data CpsNode = CpsAssign {..} | CpsBranch {..} | CpsGoto {..} | CpsCall {..}
+             | CpsSuspend {..} | CpsReturn {..} | CpsNop {..} | CpsCallProc {..}
+data CpsGraph = CpsGraph { cgNodes, cgEntry, cgSuspensionPoints, cgSourceMap }
+parseArgList      :: [Token] -> Expr                        -- imported by CatOp
+collectBodyLocals :: [Located BodyStmt] -> Map.Map Text PbType -- imported by CatOp
+-- ShapeNode/canonicalize/normalizeCallTag: canonical BFS-numbered shape of a
+-- CpsGraph with names/values erased, for hand-trace/golden-fixture tests.
+data ShapeNode = SAsgn Int | SBrnch Int Int | SGoto Int | SCall Int
+               | SSusp Text Int | SRet | SNop Int | SCProc Int
+canonicalize     :: CpsGraph -> [ShapeNode]
+normalizeCallTag :: ShapeNode -> ShapeNode  -- SCProc n -> SCall n (cosmetic tag-only divergence)
 ```
 
 ### `PB.Analysis.Dataflow` (Plan 111a)

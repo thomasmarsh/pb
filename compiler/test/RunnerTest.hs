@@ -1,7 +1,7 @@
 module RunnerTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, isRealDiff, wrapSrFile, compileOne, CompiledFile (..), CompiledPs (..))
+import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, CompiledFile (..), CompiledPs (..))
 import PB.Pipeline.Emit    (parsePowerScriptFile, ParsedFile (..), ParseOutcome (..))
 import PB.Pipeline.DuckDb  (ProcRow (..))
 import PB.AST.BodyStmt     (BodyStmt (..))
@@ -10,18 +10,13 @@ import PB.AST.Expr         (Expr (..))
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile   (TypeBlock (..), TypeDecl (..), srPrimaryObject, srFunctions, FunctionBlock (..), FnSig (..))
 import PB.AST.Type         (PbType (..))
-import PB.Analysis.CatEval   (TraceEvent (..))
-import PB.Analysis.CatEval   qualified as CatEval
-import PB.Analysis.CpsInterp (TraceOutcome (..))
 import PB.Analysis.TypeEnv    (buildWorkspaceEnv, procEnv)
 import PB.Analysis.CatOp      (compileProcedureViaCatOp)
-import PB.Analysis.CpsCompile (compileProcedure)
 import PB.Pipeline.Serialise ()
 
 import Data.Aeson (Value (..), object, decodeStrict, toJSON, (.=))
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
-import qualified Data.Map.Strict   as Map
 import qualified Data.Set          as Set
 import qualified Data.Text         as T
 import qualified Data.Text.Encoding as TE
@@ -294,15 +289,8 @@ tests = testGroup "Pipeline.Runner"
   , testGroup "production wiring uses compileProcedureViaCatOp (Plan 144 Phase 5 Step 6)"
     -- Runner.hs:148 (compileOne, the real production path behind runModeDb)
     -- and Emit.hs:158 (wrapSrFile's withCps branch) both used to call the
-    -- old PB.Analysis.CpsCompile.compileProcedure. Both now call
-    -- PB.Analysis.CatOp.compileProcedureViaCatOp. An if/else with a shared
-    -- trailing call is used as the fixture body specifically because it's
-    -- the one shape Plan 145 confirmed structurally differs between the two
-    -- compilers (GraphBuilder has no node-level sharing, so the trailing
-    -- call is emitted once per predecessor instead of once, shared) even
-    -- though both are behaviorally equivalent per Plan 146 — so this is a
-    -- body where "the JSON now matches new and differs from old" is a
-    -- meaningful signal, not a coincidence of a trivial fixture.
+    -- old PB.Analysis.CpsCompile.compileProcedure (deleted in Plan 144 Phase
+    -- 5 Step 7). Both now call PB.Analysis.CatOp.compileProcedureViaCatOp.
     [ let src = T.unlines
             [ "public function integer uf_test ()"
             , "integer li_a"
@@ -325,30 +313,20 @@ tests = testGroup "Pipeline.Runner"
               userFns       = Set.fromList [T.toLower (fnsName (fbSig fb))]
               env           = procEnv ws objName []
               newJson       = toJSON (compileProcedureViaCatOp env userFns body)
-              oldJson       = toJSON (compileProcedure env userFns body)
-          in testGroup "if/else with shared trailing call (structurally distinguishes old vs new)"
-            [ testCase "wrapSrFile's cpsGraph now matches compileProcedureViaCatOp" $
+          in testGroup "if/else with shared trailing call"
+            [ testCase "wrapSrFile's cpsGraph matches compileProcedureViaCatOp" $
                 let v      = wrapSrFile True "uf_test.srf" sf spans ws
                     cpsVal = lookupObj "cpsGraph" (firstOf (lookupObj "functions" v))
                 in cpsVal @?= newJson
 
-            , testCase "wrapSrFile's cpsGraph no longer matches the old compileProcedure" $
-                let v      = wrapSrFile True "uf_test.srf" sf spans ws
-                    cpsVal = lookupObj "cpsGraph" (firstOf (lookupObj "functions" v))
-                in assertBool "expected wrapSrFile's cpsGraph to differ from the old compiler's output"
-                     (cpsVal /= oldJson)
-
-            , testCase "compileOne's ProcRow.prCpsJson now matches compileProcedureViaCatOp" $ do
+            , testCase "compileOne's ProcRow.prCpsJson matches compileProcedureViaCatOp" $ do
                 let pf = ParsedFile { pfPath = "uf_test.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
                 cf <- compileOne ws Nothing "confirmed" (PsParsed pf)
                 case cf of
                   CFPs cps -> case cpsProcRows cps of
                     (row:_) -> case decodeStrict (TE.encodeUtf8 (prCpsJson row)) :: Maybe Value of
                       Nothing      -> assertFailure "prCpsJson did not decode as JSON"
-                      Just decoded -> do
-                        decoded @?= newJson
-                        assertBool "expected prCpsJson to differ from the old compiler's output"
-                          (decoded /= oldJson)
+                      Just decoded -> decoded @?= newJson
                     [] -> assertFailure "expected at least one ProcRow"
                   _ -> assertFailure "expected CFPs"
             ]
@@ -567,37 +545,4 @@ tests = testGroup "Pipeline.Runner"
         in reconstructRetrieveSql (DwRetrieveOk r)
                @?= "SELECT myCol FROM t WHERE myCol > 100"
     ]
-
-  -- Plan 146 Phase 2k: two genuinely non-terminating loops (e.g. a PB
-  -- do...loop until whose exit condition depends on an unmocked call result)
-  -- compile to a different number of CpsNodes per iteration in the old vs new
-  -- pipelines, so raw fuel-truncated traces differ in length with no real
-  -- behavioral divergence. isRealDiff only forgives that when BOTH sides
-  -- exhausted the fuel bound and the shared prefix matches exactly.
-  , testGroup "isRealDiff (Plan 146 Phase 2k: fuel-truncation artifact)"
-    [ testCase "identical results are never a diff" $
-        let r = (Map.fromList [("x", CatEval.VInt 1)], [TeAssign "x" (CatEval.VInt 1)], NaturalHalt)
-        in isRealDiff r r @?= False
-
-    , testCase "both fuel-exhausted with identical common prefix is not a diff, even if lengths differ" $
-        let old = (Map.empty, [TeBranch True, TeBranch True, TeBranch True], FuelExhausted)
-            new = (Map.empty, [TeBranch True, TeBranch True], FuelExhausted)
-        in isRealDiff old new @?= False
-
-    , testCase "both fuel-exhausted but the common prefix actually differs IS a diff" $
-        let old = (Map.empty, [TeBranch True, TeBranch False, TeBranch True], FuelExhausted)
-            new = (Map.empty, [TeBranch True, TeBranch True], FuelExhausted)
-        in isRealDiff old new @?= True
-
-    , testCase "one side reaching a natural halt early is still a real diff, not forgiven by prefix" $
-        let old = (Map.fromList [("x", CatEval.VInt 1)], [TeAssign "x" (CatEval.VInt 1)], NaturalHalt)
-            new = (Map.empty, [], FuelExhausted)
-        in isRealDiff old new @?= True
-
-    , testCase "both NaturalHalt still requires full equality, not just a matching prefix" $
-        let old = (Map.fromList [("x", CatEval.VInt 1)], [TeAssign "x" (CatEval.VInt 1)], NaturalHalt)
-            new = (Map.fromList [("x", CatEval.VInt 1)], [TeAssign "x" (CatEval.VInt 1), TeBranch True], NaturalHalt)
-        in isRealDiff old new @?= True
-    ]
-
   ]
