@@ -22,7 +22,8 @@ import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.Cfg    (buildCfg)
-import PB.Analysis.GraphBuilder (compileProcedureViaCatOp)
+import PB.Analysis.GraphBuilder
+  ( compileProcedureViaCatOp, compileProcedureToLowCat, collectWiring, WiringPayload (..) )
 import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, procEnv)
 import PB.Analysis.Dataflow    qualified as Dataflow
@@ -138,9 +139,11 @@ compileOne wsEnv mBridge confidence outcome = case outcome of
           [ let cfg      = buildCfg body
                 cfgJs    = jsonText (toJSON cfg)
                 instrJs    = jsonText (toJSON (compileProcedureViaCatOp (mkProcEnv instrParams) userFns body))
+                (wiringTerm, wiringShared) = collectWiring (compileProcedureToLowCat (mkProcEnv instrParams) userFns body)
+                wiringJs = jsonText (toJSON (WiringPayload wiringTerm wiringShared))
                 flow     = (fp, obj, pName, Dataflow.analyzeProcedure obj pName cfg)
                 cyclo    = DeadCode.cyclomaticComplexity cfg
-            in ( ProcRow fp obj pName pType sLine eLine cfgJs instrJs
+            in ( ProcRow fp obj pName pType sLine eLine cfgJs instrJs wiringJs
                    taintParams retType (Just cyclo) confidence
                , flow )
           | ((sLine, eLine), (pName, pType, instrParams, taintParams, retType, body)) <-

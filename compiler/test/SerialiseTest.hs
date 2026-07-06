@@ -9,11 +9,13 @@ import PB.AST.SourceFile (SrFile (..))
 import PB.Grammar.File        (SrSpans (..))
 import PB.Pipeline.Runner     (wrapSrFile)
 import PB.Analysis.TypeEnv    (buildWorkspaceEnv)
+import PB.Analysis.GraphBuilder (LowCat (..), WiringPayload (..))
 import PB.Pipeline.Serialise  ()
 
 import Data.Aeson          (Value (..), toJSON)
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
+import qualified Data.Map.Strict   as Map
 
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase, (@?=))
@@ -120,6 +122,31 @@ tests = testGroup "Serialise"
               v   = toJSON (DwRetrieveOk dr)
           field "tag" v @?= String "DwRetrieveOk"
           field "arguments" (field "contents" v) @?= toJSON [arg]
+      ]
+
+  , testGroup "LowCat / WiringPayload (Plan 149 Phase 1)"
+      [ testCase "LTagged serialises as a bare reference: tag + blockId, no contents" $ do
+          let v = toJSON (LTagged "b3" (LAssignWithRhs "x" (ExInt "1")))
+          field "tag"     v @?= String "LTagged"
+          field "blockId" v @?= String "b3"
+          assertBool "LTagged must not inline its payload under 'contents'"
+            (not (hasField "contents" v))
+
+      , testCase "every other LowCat constructor keeps the generic tag/contents convention" $ do
+          let v = toJSON LId
+          field "tag" v @?= String "LId"
+          assertBool "LId (nullary) has no contents field" (not (hasField "contents" v))
+
+      , testCase "WiringPayload has term + sharedBlocks, sharedBlocks keyed by blockId" $ do
+          let inner = LAssignWithRhs "x" (ExInt "1")
+              w = WiringPayload
+                    { wpTerm = LTagged "b1" inner
+                    , wpShared = Map.fromList [("b1", inner)]
+                    }
+              v = toJSON w
+          field "tag"     (field "term" v) @?= String "LTagged"
+          field "blockId" (field "term" v) @?= String "b1"
+          field "tag" (field "b1" (field "sharedBlocks" v)) @?= String "LAssignWithRhs"
       ]
 
   ]

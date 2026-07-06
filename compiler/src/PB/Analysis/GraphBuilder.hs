@@ -18,6 +18,9 @@ module PB.Analysis.GraphBuilder
     LowCat (..)
   , toLowCat
   , extractCondLowCat
+    -- * Wiring diagrams (Plan 149 Phase 1)
+  , WiringPayload (..)
+  , collectWiring
     -- * GraphBuilder
   , GraphBuilder (..)
   , BuilderState (..)
@@ -32,6 +35,7 @@ module PB.Analysis.GraphBuilder
   , InstrGraph (..)
     -- * Pipeline entry point
   , compileProcedureViaCatOp
+  , compileProcedureToLowCat
   ) where
 
 import PB.Prelude hiding (id, (.), lookup)
@@ -93,6 +97,49 @@ toLowCat (CatSuspend e args) = LSuspend e args
 toLowCat CatReturn          = LReturn
 toLowCat (CatTagged bid f)  = LTagged bid (toLowCat f)
 toLowCat _                  = LErasable  -- CatExl, CatExr, CatConst, CatLookup, CatAssign, CatTry
+
+-- ============================================================================
+-- 1b. Wiring diagrams (Plan 149 Phase 1): shared-block extraction
+-- ============================================================================
+
+-- | The wire payload for a procedure's wiring diagram: the term as compiled
+-- (still containing 'LTagged' markers), plus every tagged merge block's real
+-- content, keyed by its blockId, collected exactly once each.
+--
+-- 'ToJSON' (in "PB.Pipeline.Serialise") serialises 'LTagged' as a bare
+-- reference (blockId only, no inlined payload) — the real content only ever
+-- appears once, as a 'wpShared' entry. Without this split, a naive JSON
+-- encoding of 'wpTerm' alone would inline a shared merge block's full
+-- subtree once per predecessor, reproducing Plan 150's exact
+-- multiplicative node-blowup bug at the serialization layer (found
+-- empirically during Plan 149 Phase 0: a naive fold over 'LowCat' hung for
+-- 15+ minutes on a real corpus procedure before this dedup was added).
+data WiringPayload = WiringPayload
+  { wpTerm   :: LowCat
+  , wpShared :: Map.Map Text LowCat
+  } deriving (Eq, Show, Generic)
+
+-- | Split a compiled 'LowCat' term into itself (unchanged — 'LTagged'
+-- markers stay in place) plus a side table of every distinct tagged merge
+-- block's content, collected once per blockId. Mirrors
+-- 'BuilderState.bsBlockPcMemo'\'s contract: the first encounter of a given
+-- blockId records its content and recurses into it (to find any further
+-- tags nested inside); a repeat encounter is skipped outright, since its
+-- content — and everything nested inside it — was already collected the
+-- first time.
+collectWiring :: LowCat -> (LowCat, Map.Map Text LowCat)
+collectWiring t = (t, walkShared Map.empty t)
+
+walkShared :: Map.Map Text LowCat -> LowCat -> Map.Map Text LowCat
+walkShared acc node = case node of
+  LTagged bid inner
+    | Map.member bid acc -> acc
+    | otherwise          -> walkShared (Map.insert bid inner acc) inner
+  LCompose a b -> walkShared (walkShared acc a) b
+  LFanIn a b   -> walkShared (walkShared acc a) b
+  LFork a b    -> walkShared (walkShared acc a) b
+  LLoop a      -> walkShared acc a
+  _            -> acc
 
 -- ============================================================================
 -- 2. GraphBuilder: InstrGraph Target (Phase 4 — backward chaining)
@@ -347,3 +394,15 @@ compileProcedureViaCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] 
 compileProcedureViaCatOp env userFns body =
   let env' = env { steLocal = collectBodyLocals body `Map.union` steLocal env }
   in buildInstrGraph (compileSsa env' userFns (buildSsa env' "proc" body))
+
+-- | Same SSA → CatOp pipeline as 'compileProcedureViaCatOp', stopping at the
+-- 'LowCat' term instead of flattening to 'InstrGraph' (Plan 149 Phase 1 —
+-- wiring diagrams need the term itself). Deliberately NOT factored to share
+-- code with 'compileProcedureViaCatOp' — that function is the verified
+-- production hot path (Plan 146's oracle gated every change to it on a
+-- byte-identical `--dual-trace` diff list), and duplicating this one small
+-- env-seeding expression is a smaller risk than refactoring it.
+compileProcedureToLowCat :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> LowCat
+compileProcedureToLowCat env userFns body =
+  let env' = env { steLocal = collectBodyLocals body `Map.union` steLocal env }
+  in toLowCat (compileSsa env' userFns (buildSsa env' "proc" body))

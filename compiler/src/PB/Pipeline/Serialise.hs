@@ -15,6 +15,7 @@ import PB.AST.Type        (PbType)
 import PB.Lexing.Token    (Token (..))
 import PB.Analysis.Cfg   (CfgBlock, CfgEdge, Cfg)
 import PB.Analysis.InstrGraph   (InstrNode, InstrGraph)
+import PB.Analysis.GraphBuilder (LowCat (..), WiringPayload (..))
 import PB.Analysis.Taint      (InterprocEdge (..), ProcedureSummary (..), ProcSummaryReturnFlow (..))
 import PB.Analysis.DeadCode   (DeadProcedure (..))
 
@@ -101,6 +102,21 @@ instance ToJSON CfgEdge   where toJSON = genericToJSON customOptions
 instance ToJSON Cfg       where toJSON = genericToJSON customOptions
 instance ToJSON InstrNode   where toJSON = genericToJSON customOptions
 instance ToJSON InstrGraph  where toJSON = genericToJSON customOptions
+
+-- LowCat (Plan 149 wiring diagrams) — genericToJSON for every constructor
+-- except LTagged, whose payload must NOT be inlined: the real content lives
+-- exactly once in a WiringPayload's "sharedBlocks" table (see
+-- PB.Analysis.GraphBuilder.collectWiring), and every occurrence of the tag
+-- — including nested inside another shared block — is a bare reference.
+instance ToJSON LowCat where
+  toJSON (LTagged bid _inner) = J.object ["tag" .= ("LTagged" :: Text), "blockId" .= bid]
+  toJSON other                = genericToJSON customOptions other
+
+instance ToJSON WiringPayload where
+  toJSON w = J.object
+    [ "term"         .= wpTerm w
+    , "sharedBlocks" .= wpShared w
+    ]
 
 -- InterprocEdge — manual instance to match Python snake_case keys
 instance ToJSON InterprocEdge where

@@ -851,6 +851,10 @@ runModeDb :: FilePath -> FilePath -> IO ()
 -- Sum-type discriminator: "tag" key (string); single-field payload → "contents".
 -- InterprocEdge, ProcedureSummary, ProcSummaryReturnFlow use manual instances
 -- to match Python snake_case keys (caller_object, callee_proc, etc.).
+-- LowCat (Plan 149 Phase 1): manual instance -- every constructor delegates
+-- to genericToJSON EXCEPT LTagged, which is hand-written to emit only
+-- {"tag":"LTagged","blockId":..} with NO "contents" (the real payload lives
+-- once in WiringPayload's "sharedBlocks", not inlined at every reference).
 ```
 
 ### `PB.Pipeline.CfgBuild`
@@ -955,6 +959,19 @@ data LowCat = LId | LCompose .. | LAssignWithRhs .. | LFanIn .. | LLoop ..
             | LSuspend .. | LReturn | LTagged .. | LErasable
 toLowCat :: CatOp a b -> LowCat
 extractCondLowCat :: LowCat -> Expr
+-- Plan 149 Phase 1 (wiring diagrams): WiringPayload/collectWiring/
+-- compileProcedureToLowCat. LErasable/CatTry are empirically dead for real
+-- procedures (0/7667 across both corpora, Plan 149 Phase 0) -- LowCat is
+-- reused as-is for the wire term, no new type. collectWiring extracts every
+-- distinct LTagged blockId's content exactly once into a side map; the
+-- ToJSON LowCat instance (PB.Pipeline.Serialise) serialises LTagged as a
+-- bare {tag,blockId} reference with NO inlined payload -- a naive fold that
+-- walks LTagged's inner content directly reproduces Plan 150's exact
+-- multiplicative node-blowup one layer up (found empirically: the Phase 0
+-- survey script hung for 15+ minutes until this dedup was added).
+data WiringPayload = WiringPayload { wpTerm :: LowCat, wpShared :: Map.Map Text LowCat }
+collectWiring :: LowCat -> (LowCat, Map.Map Text LowCat)
+compileProcedureToLowCat :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> LowCat
 newtype GraphBuilder a = GraphBuilder { runBuilder :: State BuilderState a }
 data BuilderState = BuilderState { bsNodes, bsNextPc, bsSourceLines, bsExitPc, bsBlockPcMemo }
 initState :: BuilderState
@@ -1126,6 +1143,12 @@ walkAllSrFiles :: FilePath -> IO [FilePath]   -- any .sr<single-char>
 -- Single-writer constraint: DuckConn is NOT thread-safe for concurrent appenders;
 -- runModeDb uses MVar mutex (bridge path) or sequential mapM_ (no-bridge path).
 -- Phase A appenders (one per table, create + destroy per run):
+-- procedures.wiring_json (Plan 149 Phase 1): ProcRow gained prWiringJson,
+-- positioned right after prInstrJson/instr_graph_json in both the DDL and
+-- appendProcedures' column order (raw positional Appender -- order must
+-- match). Populated from PB.Analysis.GraphBuilder's WiringPayload
+-- (compileProcedureToLowCat + collectWiring), by both Runner.hs (--db mode)
+-- and Emit.hs's injectCompiled ("wiring" key, JSON -o mode, withInstr only).
 appendObjects, appendProcedures, appendDwObjects, appendDwControls :: DuckConn -> [row] -> IO ()
 appendLocalVars, appendCallSites, appendGlobalVars :: DuckConn -> [row] -> IO ()
 appendProcDefs, appendProcUses, appendSqlStmts :: DuckConn -> [row] -> IO ()

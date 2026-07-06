@@ -111,7 +111,7 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       , "CREATE TABLE IF NOT EXISTS procedures \
         \(file TEXT, object TEXT, proc_name TEXT, proc_type TEXT, \
         \start_line INTEGER, end_line INTEGER, \
-        \cfg_json TEXT, instr_graph_json TEXT, \
+        \cfg_json TEXT, instr_graph_json TEXT, wiring_json TEXT, \
         \params TEXT, return_type TEXT, cyclomatic INTEGER, \
         \confidence TEXT NOT NULL DEFAULT 'confirmed')"
       , "CREATE TABLE IF NOT EXISTS local_vars \
@@ -208,6 +208,7 @@ data ProcRow = ProcRow
   , prEndLine    :: Int
   , prCfgJson    :: Text
   , prInstrJson    :: Text
+  , prWiringJson :: Text
   , prParams     :: Text
   , prReturnType :: Text
   , prCyclomatic :: Maybe Int
@@ -286,6 +287,7 @@ appendProcedures conn rows = withRaw conn "procedures" $ \app ->
     aInt      app (prEndLine    r)
     aText     app (prCfgJson    r)
     aText     app (prInstrJson    r)
+    aText     app (prWiringJson r)
     aText     app (prParams     r)
     aText     app (prReturnType r)
     aMaybeInt app (prCyclomatic r)

@@ -35,9 +35,10 @@ testAppendProcedures = withWriteConn ":memory:" $ \conn -> do
   -- Two procedures with non-empty JSON blobs
   let cfgJs  = "{\"entry\":\"b0\",\"exits\":[\"b0\"],\"blocks\":[],\"edges\":[]}"
       instrJs  = "{\"nodes\":[],\"entry\":0,\"suspensionPoints\":[],\"sourceMap\":[]}"
+      wiringJs = "{\"term\":{\"tag\":\"LId\"},\"sharedBlocks\":{}}"
   appendProcedures conn
-    [ ProcRow "test.srf" "w_test" "open"  "event"  1  10 cfgJs instrJs "" "" (Just 1) "confirmed"
-    , ProcRow "test.srf" "w_test" "close" "event" 11  20 cfgJs instrJs "" "" (Just 1) "confirmed"
+    [ ProcRow "test.srf" "w_test" "open"  "event"  1  10 cfgJs instrJs wiringJs "" "" (Just 1) "confirmed"
+    , ProcRow "test.srf" "w_test" "close" "event" 11  20 cfgJs instrJs wiringJs "" "" (Just 1) "confirmed"
     ]
   -- appendLocalVars sharing the same connection must not conflict
   appendLocalVars conn []

@@ -218,6 +218,37 @@ runInterpTrace term initEnv = do
           `CE.catch` (\(ReturnUnwind capturedSt) -> return capturedSt)
   return (isEnv st, P.reverse (isTrace st))
 
+-- | Every distinct 'LTagged' blockId appearing anywhere in a 'LowCat' term
+-- (Plan 149 Phase 1's 'collectWiring' tests) — deduplicated, since a shared
+-- blockId's own nested tags are only reachable through one occurrence.
+collectTagIds :: LowCat -> [Text]
+collectTagIds = Set.toList P.. go Set.empty
+  where
+    go seen node = case node of
+      LTagged bid inner
+        | Set.member bid seen -> seen
+        | otherwise           -> go (Set.insert bid seen) inner
+      LCompose a b -> go (go seen a) b
+      LFanIn a b   -> go (go seen a) b
+      LFork a b    -> go (go seen a) b
+      LLoop a      -> go seen a
+      _            -> seen
+
+-- | How many times a given blockId's 'LTagged' tag is referenced anywhere in
+-- a raw (not yet 'collectWiring'-processed) 'LowCat' term — used to confirm
+-- a test fixture exhibits real sharing (referenced 2+ times), not just an
+-- incidental single tag.
+countTagOccurrences :: Text -> LowCat -> Int
+countTagOccurrences target = go
+  where
+    go node = case node of
+      LTagged bid inner -> (if bid P.== target then 1 else 0) P.+ go inner
+      LCompose a b -> go a P.+ go b
+      LFanIn a b   -> go a P.+ go b
+      LFork a b    -> go a P.+ go b
+      LLoop a      -> go a
+      _            -> 0
+
 -- ---------------------------------------------------------------------------
 -- Tests
 
@@ -1131,6 +1162,57 @@ tests = testGroup "CatOp"
             expectedCounts = [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]
             newShape = canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
         in pathCallCounts newShape @?= expectedCounts
+    ]
+
+  , testGroup "collectWiring (Plan 149 Phase 1)"
+    -- Plan 149 Phase 0's survey found that a naive fold over 'LowCat' (e.g.
+    -- a JSON serializer that just recurses into every constructor) re-walks
+    -- a shared 'LTagged' block once per predecessor, reproducing Plan 150's
+    -- exact multiplicative-blowup bug one layer up — the first survey
+    -- attempt hung for 15+ minutes on a real corpus procedure before this
+    -- was diagnosed. 'collectWiring' must extract each distinct blockId's
+    -- content exactly once, regardless of how many times its tag is
+    -- referenced in the term (mirroring 'bsBlockPcMemo'\'s contract).
+    [ testCase "shared tail (if/else, both arms) is collected exactly once, referenced twice" $
+        -- Same fixture as "compileBlock memoization ... both arms" above:
+        -- the trailing callC/callD block is reached from both the then-arm
+        -- and the else-arm, so it is tagged and its tag is referenced twice.
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            body = [ Located 1 (BsIf (IfStmt (ExBool True)
+                       [Located 2 (BsCall (call "callA"))] []
+                       (Just [Located 3 (BsCall (call "callB"))])))
+                   , Located 4 (BsCall (call "callC"))
+                   , Located 5 (BsCall (call "callD"))
+                   ]
+            low = compileProcedureToLowCat emptyEnv Set.empty body
+            (term, shared) = collectWiring low
+            taggedIds = collectTagIds term
+        in do
+          assertEqual "exactly one distinct shared blockId" 1 (L.length taggedIds)
+          assertEqual "sharedBlocks has exactly one entry" 1 (Map.size shared)
+          assertBool "the shared blockId is referenced at least twice in the raw term (real sharing)"
+            (case taggedIds of { [bid] -> countTagOccurrences bid term P.>= 2; _ -> False })
+          assertBool "the shared blockId's content actually holds real assigns/calls, not an empty placeholder"
+            (case taggedIds of { [bid] -> Map.member bid shared; _ -> False })
+
+    , testCase "no merge points: term unchanged, sharedBlocks empty" $
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            body = [ Located 1 (BsCall (call "callA")) ]
+            low = compileProcedureToLowCat emptyEnv Set.empty body
+            (term, shared) = collectWiring low
+        in do
+          term @?= low
+          assertBool "sharedBlocks empty" (Map.null shared)
+
+    , testCase "hand-built repeat-tag shape: dedup keeps a single entry, terminates" $
+        -- A minimal, hand-built two-occurrence tag (not derived from a real
+        -- compile) — the defensive-only unit-level counterpart to the
+        -- corpus-derived test above; guards against a regression to
+        -- re-walking (and, for a self-referential shape, never terminating).
+        let inner1 = LAssignWithRhs "x" (ExInt "1")
+            shape  = LCompose (LTagged "m1" inner1) (LTagged "m1" inner1)
+            (_, shared) = collectWiring shape
+        in shared @?= Map.fromList [("m1", inner1)]
     ]
 
   , testGroup "Phase 1D: Interp vs GraphBuilder trace equivalence (Plan 146)"
