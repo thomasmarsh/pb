@@ -474,6 +474,23 @@ discoverReachable headers resolvedExits proc headerId currentBlock visited
 -- internals (which used to let a nested loop's own exit block "reach back"
 -- via escaping through an *enclosing* loop's back-edge — Plan 146 Phase 2f);
 -- an unresolved (enclosing/unrelated) header still stops the walk.
+--
+-- A block terminating in 'SsaContinue'/'SsaBreak' is always treated as
+-- reaching (Plan 146 Phase 2g). 'termSuccessors' deliberately returns @[]@
+-- for both — they're handled as special-cased control transfers elsewhere
+-- (@compileLoopTerm@/@compileLoopBranchPath@), not real graph edges — so a
+-- pure forward walk can never step off of one. Left unhandled, that made
+-- 'canReach' wrongly exclude such a block from the loop's own body: it then
+-- surfaced as a spurious "successor not in the body" candidate in
+-- 'determineLoopExitTarget', tying the resolved exit target to an arbitrary
+-- alphabetically-first candidate instead of the loop's real exit whenever a
+-- continue/break block's id happened to sort first — and independently made
+-- 'isLoopExit' misclassify a genuine continue target as "outside the loop",
+-- silently turning that 'continue' into a 'break'. Both are safe here
+-- because this function's only caller ('computeLoopBodyBlocks') always asks
+-- "is this block part of the loop currently being resolved" — continue/break
+-- are that loop's own body by construction, regardless of where their
+-- (elsewhere-handled) control transfer actually lands.
 canReach :: Set.Set Text -> Map.Map Text Text -> SsaProc -> Text -> Text -> Set.Set Text -> Bool
 canReach headers resolvedExits proc startBlock0 targetBlock visited0 = fst (go startBlock0 visited0)
   where
@@ -486,10 +503,13 @@ canReach headers resolvedExits proc startBlock0 targetBlock visited0 = fst (go s
             Nothing         -> (False, Set.insert current visited)
       | otherwise = case Map.lookup current (spBlocks proc) of
           Nothing -> (False, visited)
-          Just block ->
-            let visited' = Set.insert current visited
-                succs    = termSuccessors (sbTerm block)
-            in goSuccs visited' succs
+          Just block
+            | SsaContinue <- sbTerm block -> (True, Set.insert current visited)
+            | SsaBreak    <- sbTerm block -> (True, Set.insert current visited)
+            | otherwise ->
+                let visited' = Set.insert current visited
+                    succs    = termSuccessors (sbTerm block)
+                in goSuccs visited' succs
     goSuccs visited [] = (False, visited)
     goSuccs visited (s:ss) = case go s visited of
       (True, visited')  -> (True, visited')

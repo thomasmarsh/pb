@@ -1243,4 +1243,73 @@ tests = testGroup "CatOp"
            Map.lookup "y"  finalEnv @?= Just (VInt 6)
            Map.lookup "ii" finalEnv @?= Just (VInt 3)
     ]
+
+  , testGroup "loop-exit-target skips continue blocks (Plan 146 Phase 2g)"
+    -- 'canReach' (via 'computeLoopBodyBlocks') walks a block's
+    -- 'termSuccessors', which is '[]' for 'SsaContinue'/'SsaBreak' by design
+    -- (they're handled as special-cased control transfers elsewhere, not
+    -- graph edges) — so a block ending in 'SsaContinue' can never "reach
+    -- back" to its own loop header via this walk, and gets wrongly excluded
+    -- from the loop's body set. That exclusion has two knock-on effects: (1)
+    -- 'determineLoopExitTarget' sees the continue-block as a spurious
+    -- "successor not in the body" alongside the loop's real exit, and
+    -- 'Set.toList exits'' head picks whichever sorts alphabetically first —
+    -- for the real corpus case (`eon_appeon_resize::of_init`, the `window`
+    -- overload, not the `userobject` one the original BACKLOG entry named)
+    -- this wired the loop's post-loop continuation to the continue-block's
+    -- own trailing assigns instead of the real code after the loop; (2)
+    -- 'isLoopExit' (reusing the same broken body set) can independently
+    -- misclassify a genuine continue-target as "outside the loop", silently
+    -- turning that 'continue' into a 'break' — dropping every later
+    -- iteration entirely. Confirmed via direct hand-trace in 'cabal repl'
+    -- (both real-corpus and this fixture) before writing this assertion.
+    -- Fixture: a 3-iteration counted loop whose body takes a `continue` on
+    -- exactly one iteration (via an `if`-guarded branch, matching the real
+    -- "if of_registered(...) then continue" shape) before reaching a real
+    -- post-loop block with its own distinguishing assign. Block names are
+    -- chosen so "c_continue" sorts before "z_exit" — reproducing the exact
+    -- alphabetical-tiebreak failure mode, not a coincidence-proof shape.
+    [ let xV  = SsaVarRef (SsaVar "x" 0)
+          yV  = SsaVarRef (SsaVar "y" 0)
+          scV = SsaVarRef (SsaVar "skip_count" 0)
+          continueSsa = SsaProc
+            { spName   = "test"
+            , spEntry  = "entry"
+            , spVars   = []
+            , spPhis   = Map.empty
+            , spBlocks = Map.fromList
+                [ ("entry", SsaBlock
+                    { sbAssigns = [ SsaAssign (SsaVar "x" 0) (SsaConst (ExInt "0"))
+                                  , SsaAssign (SsaVar "y" 0) (SsaConst (ExInt "0"))
+                                  , SsaAssign (SsaVar "skip_count" 0) (SsaConst (ExInt "0"))
+                                  , SsaAssign (SsaVar "done" 0) (SsaConst (ExInt "0")) ]
+                    , sbTerm = SsaGoto "header" })
+                , ("header", SsaBlock
+                    { sbAssigns = []
+                    , sbTerm = SsaBranch (SsaBinOp BopLt xV (SsaConst (ExInt "3"))) "body_entry" "z_exit" })
+                , ("body_entry", SsaBlock
+                    { sbAssigns = []
+                    , sbTerm = SsaBranch (SsaBinOp BopEq xV (SsaConst (ExInt "1"))) "c_continue" "normal_body" })
+                , ("c_continue", SsaBlock
+                    { sbAssigns = [ SsaAssign (SsaVar "x" 0) (SsaBinOp BopAdd xV (SsaConst (ExInt "1")))
+                                  , SsaAssign (SsaVar "skip_count" 0) (SsaBinOp BopAdd scV (SsaConst (ExInt "1"))) ]
+                    , sbTerm = SsaContinue })
+                , ("normal_body", SsaBlock
+                    { sbAssigns = [ SsaAssign (SsaVar "y" 0) (SsaBinOp BopAdd yV (SsaConst (ExInt "1")))
+                                  , SsaAssign (SsaVar "x" 0) (SsaBinOp BopAdd xV (SsaConst (ExInt "1"))) ]
+                    , sbTerm = SsaGoto "header" })
+                , ("z_exit", SsaBlock
+                    { sbAssigns = [SsaAssign (SsaVar "done" 0) (SsaConst (ExInt "1"))]
+                    , sbTerm = SsaReturn Nothing })
+                ]
+            }
+          initEnv = Map.fromList [("x", VInt 0), ("y", VInt 0), ("skip_count", VInt 0), ("done", VInt 0)]
+          (finalEnv, _trc) = runCpsGraphTrace 100 Map.empty
+                                (buildCpsGraph (compileSsaDefault continueSsa)) initEnv
+      in testCase "continue mid-loop still reaches the real post-loop block, not the continue block's own content" $ do
+           Map.lookup "x" finalEnv @?= Just (VInt 3)
+           Map.lookup "y" finalEnv @?= Just (VInt 2)
+           Map.lookup "skip_count" finalEnv @?= Just (VInt 1)
+           Map.lookup "done" finalEnv @?= Just (VInt 1)
+    ]
   ]
