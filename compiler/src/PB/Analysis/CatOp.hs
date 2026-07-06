@@ -74,7 +74,7 @@ import Unsafe.Coerce (unsafeCoerce)
 import PB.AST.Expr (Expr (..), LvSegment (..), Lvalue (..), BinOp (BopEq))
 import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExprMocked)
 import PB.Analysis.CpsCompile (CpsNode (..), CpsGraph (..), parseArgList, collectBodyLocals)
-import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName, calleeName, isTriggerEvent, lvHead, segName)
+import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName, calleeName, isTriggerEvent, segName)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import Control.Monad.State.Strict (State, StateT, get, modify, modify', gets, runState, evalStateT)
 import Control.Monad.IO.Class (liftIO)
@@ -841,15 +841,20 @@ compileAssign ctx (SsaAssign sv rhs)
       SsaConst expr@(ExCall lv rawArgs) ->
         let parsedArgs = map parseArgList rawArgs
         in compileCallExpr ctx sv expr lv parsedArgs
-      SsaConst expr@(ExMethodCall recv meth rawArgs) ->
+      -- Delegates the callee name entirely to 'calleeName' (Plan 146 Phase
+      -- 2i): this arm used to special-case an 'ExCall' receiver as
+      -- @lvHead rlv <> "." <> meth@ (e.g. "ParentWindow" for a chained
+      -- @ParentWindow.GetActiveSheet().TriggerEvent(...)@ call), which
+      -- diverged from 'calleeName's reference behaviour of falling back to
+      -- @"?." <> meth@ for any receiver that isn't a plain 'ExLvalue' —
+      -- confirmed via direct hand-trace of a real corpus diff
+      -- (@m_graph::clicked@ and 4 sibling on-clicked handlers in the same
+      -- file, all sharing this exact chained-call idiom).
+      SsaConst expr@(ExMethodCall _recv _meth rawArgs) ->
         let parsedArgs = map parseArgList rawArgs
-            effCn = case recv of
-              ExLvalue rlv -> lvHead rlv <> "." <> meth
-              ExCall rlv _ -> lvHead rlv <> "." <> meth
-              _            -> calleeName expr
         in case classifyExpr (ccEnv ctx) expr of
              SuspendCall -> CatSuspend (effectName expr parsedArgs) parsedArgs
-             PureCall    -> CatCall effCn parsedArgs
+             PureCall    -> CatCall (calleeName expr) parsedArgs
       -- Any other call-shaped statement (e.g. ExDispatch: standalone
       -- `.Post`/`.Trigger`/`Dynamic ... Event(...)`, PB's inter-object
       -- messaging idiom) must still classify as a bare call rather than
@@ -887,6 +892,19 @@ compileCallExpr :: CompileCtx -> SsaVar -> Expr -> Lvalue -> [Expr] -> CatOp () 
 compileCallExpr ctx _sv expr lv parsedArgs
   | isTriggerEvent lv =
       CatCall "triggerevent" [evArg]
+  -- fn_retrievechild(adw, "col", sqlParam): the datawindow control and
+  -- column name are already encoded in the effect name itself
+  -- ("retrieve:child_<col>:<dwCtrl>", via 'effectName'), so only the third
+  -- argument (the bound variable) belongs in the suspend's traced args —
+  -- mirrors 'PB.Analysis.CpsCompile's identical special case exactly
+  -- (Plan 146 Phase 2i: this arm didn't exist here at all, so the generic
+  -- 'otherwise' branch below passed all 3 parsed args through instead of
+  -- just the third; confirmed via hand-trace of a real corpus diff,
+  -- @wiz_misth_final_details_step1::of_stepadded@ and 3 sibling wizard-step
+  -- handlers).
+  | [seg] <- segments lv
+  , T.toLower (segName seg) == "fn_retrievechild" =
+      CatSuspend (effectName expr parsedArgs) paramArg
   | [seg] <- segments lv
   , T.toLower (segName seg) `Set.member` ccUserFns ctx =
       CatCall (segName seg) parsedArgs
@@ -895,6 +913,7 @@ compileCallExpr ctx _sv expr lv parsedArgs
       PureCall -> CatCall (calleeName expr) parsedArgs
   where
     evArg = case parsedArgs of { (a:_) -> a; [] -> ExRaw [] }
+    paramArg = case parsedArgs of { (_:_:p:_) -> [p]; _ -> [] }
 
 -- ============================================================================
 -- 6. GraphBuilder: CpsGraph Target (Phase 4 — backward chaining)

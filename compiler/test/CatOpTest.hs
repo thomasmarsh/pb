@@ -13,6 +13,9 @@ import PB.Analysis.CpsInterp (runCpsGraphTrace)
 import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                             SsaTerm (..), SsaProc (..), renderSsaVar, buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
+import PB.Lexing.Lexer     (tokenizeLine, LexLine (..))
+import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
+import PB.Pipeline.Preprocess (LogicalLine (..))
 import Control.Monad.State.Strict (runStateT)
 import qualified Control.Exception as CE
 
@@ -28,6 +31,16 @@ compileSsaDefault = compileSsa emptyEnv Set.empty
 
 emptyEnv :: ScopedTypeEnv
 emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty
+
+-- | Tokenize a single source snippet into one 'Token' via the real lexer
+-- (mirrors 'CpsCompileTest.hs's identical helper) — used to build genuine
+-- 'ExCall' @callArgs@ ([[Token]]) for tests that need real argument shapes
+-- (e.g. a string literal arg) rather than empty argument lists.
+tok :: Text -> Token
+tok t = case lexResult (tokenizeLine ll) of
+  Right (tk:_) -> tk
+  _            -> Token TkIdent t (SourceSpan 1 1 1)
+  where ll = LogicalLine t 1 1
 
 -- | Build a minimal SsaProc with a single entry block.
 mkSsa :: [SsaAssign] -> SsaTerm -> SsaProc
@@ -1158,6 +1171,47 @@ tests = testGroup "CatOp"
     , testCase "ExMethodCall with mixed-case receiver/method: TeCall preserves case" $
         let recv = ExLvalue (Lvalue [LvSegment "parentwindow" Nothing])
             body = [Located 1 (BsCall (ExMethodCall recv "TriggerEvent" [[]]))]
+            oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+            newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+        in newTrace @?= oldTrace
+
+    , testCase "ExMethodCall whose receiver is itself a call (chained method call) matches old compiler" $
+        -- Real corpus idiom (m_graph::clicked and 4 other on-clicked handlers
+        -- in the same file): `ParentWindow.GetActiveSheet().TriggerEvent(...)`.
+        -- compileAssign's ExMethodCall branch special-cased an `ExCall`
+        -- receiver as `lvHead rlv <> "." <> meth` (grabbing just the callee's
+        -- own head segment, "ParentWindow"), diverging from `calleeName`'s
+        -- reference behaviour of falling back to `"?." <> meth` for any
+        -- receiver that isn't a plain `ExLvalue` — confirmed via direct
+        -- `cabal repl` hand-trace of `m_graph::clicked`'s compiled traces
+        -- (`TeCall "?.TriggerEvent" ...` old vs `TeCall
+        -- "ParentWindow.TriggerEvent" ...` new).
+        let recv = ExCall (Lvalue [LvSegment "ParentWindow" Nothing, LvSegment "GetActiveSheet" Nothing]) []
+            body = [Located 1 (BsCall (ExMethodCall recv "TriggerEvent" [[]]))]
+            oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+            newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+        in newTrace @?= oldTrace
+    ]
+
+  , testGroup "fn_retrievechild suspend args match old compiler (Plan 146 Phase 2i)"
+    -- Real corpus idiom (openpay's wiz_misth_final_details_step1::of_stepadded
+    -- and 3 sibling wizard-step handlers): `fn_retrievechild(adw, "col", var)`.
+    -- 'PB.Analysis.CpsCompile' special-cases this exact callee (before its
+    -- generic call-compilation path) to trace only the third argument (the
+    -- bound variable) as the suspend's args, since the datawindow control and
+    -- column name are already encoded directly in the effect name string
+    -- itself (`"retrieve:child_<col>:<dwCtrl>"`, via 'effectName'). CatOp.hs
+    -- has no equivalent special case, so 'compileCallExpr's generic
+    -- `SuspendCall -> CatSuspend (effectName expr parsedArgs) parsedArgs`
+    -- branch passed all 3 parsed args through instead of just the third —
+    -- confirmed via direct hand-trace of the real corpus diff (old:
+    -- `TeSuspend "retrieve:child_kodkat:dw_misth_final" [VNull]`, new: same
+    -- effect name but `[VNull, VStr "kodkat", VNull]`).
+    [ testCase "fn_retrievechild(adw, \"col\", var): suspend args are just [var], matching old compiler" $
+        let body = [Located 1 (BsCall (ExCall
+              { callee   = Lvalue [LvSegment "fn_retrievechild" Nothing]
+              , callArgs = [[tok "dw_misth_final"], [tok "\"kodkat\""], [tok "gs_kodxrisi"]]
+              }))]
             oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
             newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
         in newTrace @?= oldTrace
