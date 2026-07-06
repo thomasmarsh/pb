@@ -81,9 +81,13 @@ hasCatLoop (CatFanIn f g) = hasCatLoop f P.|| hasCatLoop g
 hasCatLoop (CatTry f g) = hasCatLoop f P.|| hasCatLoop g
 hasCatLoop _ = False
 
--- | Count CatLoop nodes in a CatOp tree.
+-- | Count CatLoop nodes in a CatOp tree, including ones nested inside
+-- another CatLoop's own body (Plan 146 Phase 2f: a correctly-nested loop
+-- compiles to a CatLoop *inside* the enclosing loop's body, not a sibling
+-- one — the pre-fix shape had them side by side, purely a symptom of the
+-- exit-target bug, not a structure worth preserving).
 countCatLoop :: CatOp a b -> Int
-countCatLoop (CatLoop _) = 1
+countCatLoop (CatLoop f) = 1 P.+ countCatLoop f
 countCatLoop (CatCompose f g) = countCatLoop f P.+ countCatLoop g
 countCatLoop (CatFork f g) = countCatLoop f P.+ countCatLoop g
 countCatLoop (CatFanIn f g) = countCatLoop f P.+ countCatLoop g
@@ -379,6 +383,16 @@ tests = testGroup "CatOp"
         -- entry → outer_header → inner_header → inner_body → inner_header
         --                                       inner_exit → outer_header
         --                          outer_exit → return
+        --
+        -- Correctly compiles to one CatLoop (outer) whose own body contains
+        -- a second, nested CatLoop (inner) — not two side-by-side CatLoop
+        -- nodes at the same level. Before Plan 146 Phase 2f's exit-target
+        -- fix, 'outer' and 'inner' resolved as *each other's* exit target,
+        -- so the inner loop was wrongly recompiled a second time as if it
+        -- were ordinary code following the outer loop — producing 2
+        -- sibling CatLoops that 'countCatLoop's old (shallow, non-recursing)
+        -- definition could see, which is why this test used to pass despite
+        -- the underlying compile being wrong.
         let sa = SsaProc
               { spName   = "test"
               , spBlocks = Map.fromList
@@ -406,7 +420,7 @@ tests = testGroup "CatOp"
               , spVars   = []
               }
             result = compileSsaDefault sa
-        in assertBool "contains at least 2 CatLoop nodes" (countCatLoop result P.>= 2)
+        in assertEqual "exactly 2 CatLoop nodes, one nested inside the other" 2 (countCatLoop result)
 
     , testCase "compileLoopBody: loop containing if/else with shared tail preserves tail assign on every path (Plan 146 item 7)" $ do
         -- entry -> header (iter += 1; loop while iter <= 2) -> body_cond (iter == 1)
@@ -1161,5 +1175,72 @@ tests = testGroup "CatOp"
             oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
             newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
         in newTrace @?= oldTrace
+    ]
+
+  , testGroup "nested loop exit-target resolution (Plan 146 Phase 2f)"
+    -- 'computeLoopBodyBlocks' (via 'discoverReachable'/'canReach') has no
+    -- boundary for the case where one loop is nested inside another:
+    -- 'discoverReachable's forward walk stops at a foreign loop header
+    -- without recording it as part of the enclosing loop's body, while
+    -- 'canReach's backward walk has no boundary at all, so a nested loop's
+    -- own exit block can be judged to "reach back" to that loop's header via
+    -- a path that actually escapes through the *enclosing* loop's back-edge.
+    -- Net effect, confirmed via direct GHCi hand-trace of
+    -- w_dynsql_format4::ue_execute (a real corpus --dual-trace diff): the
+    -- outer and inner loop headers get resolved as *each other's* exit
+    -- target. Fixture below mirrors that shape: an outer counted loop whose
+    -- body always enters an inner counted loop (with a structural bypass
+    -- edge, matching the real "if without else" shape) before looping back.
+    [ let oiV = SsaVarRef (SsaVar "oi" 0)
+          iiV = SsaVarRef (SsaVar "ii" 0)
+          yV  = SsaVarRef (SsaVar "y" 0)
+          nestedLoopsSsa = SsaProc
+            { spName   = "test"
+            , spEntry  = "entry"
+            , spVars   = []
+            , spPhis   = Map.empty
+            , spBlocks = Map.fromList
+                [ ("entry", SsaBlock
+                    { sbAssigns = [ SsaAssign (SsaVar "oi" 0) (SsaConst (ExInt "0"))
+                                  , SsaAssign (SsaVar "y" 0) (SsaConst (ExInt "0")) ]
+                    , sbTerm = SsaGoto "outer_header" })
+                , ("outer_header", SsaBlock
+                    { sbAssigns = []
+                    , sbTerm = SsaBranch (SsaBinOp BopLt oiV (SsaConst (ExInt "2"))) "outer_if" "outer_exit" })
+                , ("outer_if", SsaBlock
+                    { sbAssigns = []
+                    , sbTerm = SsaBranch (SsaConst (ExBool True)) "outer_enter_inner" "outer_merge" })
+                , ("outer_enter_inner", SsaBlock
+                    { sbAssigns = [SsaAssign (SsaVar "ii" 0) (SsaConst (ExInt "0"))]
+                    , sbTerm = SsaGoto "inner_header" })
+                , ("inner_header", SsaBlock
+                    { sbAssigns = []
+                    , sbTerm = SsaBranch (SsaBinOp BopLt iiV (SsaConst (ExInt "3"))) "inner_body" "inner_exit" })
+                , ("inner_body", SsaBlock
+                    { sbAssigns = [ SsaAssign (SsaVar "ii" 0) (SsaBinOp BopAdd iiV (SsaConst (ExInt "1")))
+                                  , SsaAssign (SsaVar "y" 0) (SsaBinOp BopAdd yV (SsaConst (ExInt "1"))) ]
+                    , sbTerm = SsaGoto "inner_header" })
+                , ("inner_exit", SsaBlock { sbAssigns = [], sbTerm = SsaGoto "outer_merge" })
+                , ("outer_merge", SsaBlock
+                    { sbAssigns = [SsaAssign (SsaVar "oi" 0) (SsaBinOp BopAdd oiV (SsaConst (ExInt "1")))]
+                    , sbTerm = SsaGoto "outer_header" })
+                , ("outer_exit", SsaBlock { sbAssigns = [], sbTerm = SsaReturn Nothing })
+                ]
+            }
+          initEnv = Map.fromList [("oi", VInt 0), ("y", VInt 0), ("ii", VInt 0)]
+          -- Bounded via 'runCpsGraphTrace' (never raw, unbounded 'runInterpTrace')
+          -- because the pre-fix bug reproduces a genuine runtime infinite loop for
+          -- this shape (confirmed empirically before writing this assertion), not
+          -- just a wrong-but-terminating result.
+          maxSteps = 500 :: Int
+          (finalEnv, trc) = runCpsGraphTrace maxSteps Map.empty
+                              (buildCpsGraph (compileSsaDefault nestedLoopsSsa)) initEnv
+      in testCase "outer loop containing an inner loop terminates with the correct final environment, not a runaway trace" $ do
+           assertBool ("trace should terminate well under the " <> show maxSteps <> "-step fuel bound, got "
+                         <> show (length trc) <> " steps (indicates the outer/inner loop headers were resolved as each other's exit target)")
+                      (length trc P.< maxSteps)
+           Map.lookup "oi" finalEnv @?= Just (VInt 2)
+           Map.lookup "y"  finalEnv @?= Just (VInt 6)
+           Map.lookup "ii" finalEnv @?= Just (VInt 3)
     ]
   ]

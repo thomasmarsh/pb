@@ -68,6 +68,7 @@ module PB.Analysis.CatOp
 
 import PB.Prelude hiding (id, (.), lookup)
 import qualified Prelude as P
+import Data.List (sortOn)
 import Unsafe.Coerce (unsafeCoerce)
 import PB.AST.Expr (Expr (..), LvSegment (..), Lvalue (..), BinOp (BopEq))
 import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExprMocked)
@@ -332,7 +333,8 @@ compileSsa :: ScopedTypeEnv -> Set.Set Text -> SsaProc -> CatOp () ()
 compileSsa env userFns proc =
   let ctx     = CompileCtx env userFns
       headers = computeLoopHeaders proc
-      (result, _finalMemo) = compileBlock ctx proc (spEntry proc) Map.empty headers Nothing
+      exits   = computeAllLoopExits headers proc
+      (result, _finalMemo) = compileBlock ctx proc (spEntry proc) Map.empty headers exits Nothing
   in result
 
 -- | Extract all destination blocks from an SSA terminator.
@@ -372,6 +374,56 @@ computeLoopHeaders proc = fst (go (spEntry proc) Set.empty Set.empty)
                 step (hs, vis) s = let (h, vis') = go s onStack' vis in (Set.union hs h, vis')
             in foldl' step (Set.empty, visited') succs
 
+-- | For each loop header, its immediate enclosing loop header (if nested),
+-- found by walking the CFG from the entry and threading "the innermost loop
+-- header currently active" down the recursion — a header is labeled with
+-- whichever header was active the first time it's visited. Needed so
+-- 'computeAllLoopExits' can resolve nested (child) loops strictly before the
+-- loops that contain them (Plan 146 Phase 2f — see its comment for why
+-- resolution order matters).
+computeLoopNestParents :: Set.Set Text -> SsaProc -> Map.Map Text (Maybe Text)
+computeLoopNestParents headers proc = snd (go (spEntry proc) Nothing Set.empty Map.empty)
+  where
+    go :: Text -> Maybe Text -> Set.Set Text -> Map.Map Text (Maybe Text)
+       -> (Set.Set Text, Map.Map Text (Maybe Text))
+    go blockId innermost visited parents
+      | Set.member blockId visited = (visited, parents)
+      | otherwise = case Map.lookup blockId (spBlocks proc) of
+          Nothing -> (Set.insert blockId visited, parents)
+          Just block ->
+            let visited' = Set.insert blockId visited
+                parents' = if Set.member blockId headers
+                             then Map.insert blockId innermost parents
+                             else parents
+                innermost' = if Set.member blockId headers then Just blockId else innermost
+                succs = termSuccessors (sbTerm block)
+            in foldl' (\(v, p) s -> go s innermost' v p) (visited', parents') succs
+
+-- | Resolve every loop header's exit target in one pass, processing nested
+-- (child) loops strictly before their enclosing (parent) loops — so an
+-- outer loop's own reachability walk can treat an already-resolved nested
+-- loop as an opaque single-exit region, instead of either stopping dead at
+-- it (which used to drop real body blocks only reachable through the nested
+-- loop) or walking through it unbounded (which can escape through an
+-- *enclosing* loop's own back-edge and produce a bogus "exit" — the bug this
+-- fixes). Confirmed via direct hand-trace of a real corpus --dual-trace diff
+-- (w_dynsql_format4::ue_execute, whose do-while loop contains a for-loop):
+-- the outer and inner loop headers were resolved as *each other's* exit
+-- target, causing the new compiler's execution to run away past the
+-- --dual-trace fuel bound where the old compiler terminated in a handful of
+-- steps (Plan 146 Phase 2f).
+computeAllLoopExits :: Set.Set Text -> SsaProc -> Map.Map Text Text
+computeAllLoopExits headers proc =
+  let parents = computeLoopNestParents headers proc
+      depthOf h = case Map.lookup h parents of
+        Just (Just p) -> 1 + depthOf p
+        _             -> (0 :: Int)
+      -- deepest (most nested) first, so each header's own resolution can
+      -- look up any more-deeply-nested header it encounters
+      order = sortOn (negate P.. depthOf) (Set.toList headers)
+  in foldl' (\resolved h -> Map.insert h (determineLoopExitTarget headers resolved proc h) resolved)
+            Map.empty order
+
 -- | Find all blocks that form the loop body via cycle-aware reachability.
 -- A block is in the body only if it is reachable from the header AND
 -- can transitively reach back to the header (strong connectivity).
@@ -379,38 +431,59 @@ computeLoopHeaders proc = fst (go (spEntry proc) Set.empty Set.empty)
 -- Takes the already-computed loop-header set (see 'computeLoopHeaders') rather than
 -- recomputing it — 'discoverReachable' below queries it once per visited block, and
 -- recomputing an O(V+E) function that often would multiply the cost right back up.
-computeLoopBodyBlocks :: Set.Set Text -> SsaProc -> Text -> Set.Set Text
-computeLoopBodyBlocks headers proc headerId =
+-- 'resolvedExits' holds exit targets for headers already resolved by
+-- 'computeAllLoopExits' at a strictly deeper nesting level than 'headerId' —
+-- used to treat those nested loops as opaque single-exit regions (Plan 146
+-- Phase 2f); a foreign header absent from it is an enclosing/unrelated loop,
+-- handled exactly as before (a hard stop).
+computeLoopBodyBlocks :: Set.Set Text -> Map.Map Text Text -> SsaProc -> Text -> Set.Set Text
+computeLoopBodyBlocks headers resolvedExits proc headerId =
   let headerSuccs = case Map.lookup headerId (spBlocks proc) of
         Nothing -> []
         Just block -> termSuccessors (sbTerm block)
-      allReachable = foldl' (\bs s -> discoverReachable headers proc headerId s bs) (Set.singleton headerId) headerSuccs
-      loopBody     = Set.filter (\bId -> canReach proc bId headerId Set.empty) allReachable
+      allReachable = foldl' (\bs s -> discoverReachable headers resolvedExits proc headerId s bs) (Set.singleton headerId) headerSuccs
+      loopBody     = Set.filter (\bId -> canReach headers resolvedExits proc bId headerId Set.empty) allReachable
   in Set.insert headerId loopBody
 
--- | Forward-reachability walk bounded by loop headers.
--- Stops at other loop headers to prevent escaping into nested/outer loops.
-discoverReachable :: Set.Set Text -> SsaProc -> Text -> Text -> Set.Set Text -> Set.Set Text
-discoverReachable headers proc headerId currentBlock visited
+-- | Forward-reachability walk bounded by loop headers. A foreign header
+-- already present in 'resolvedExits' (a more-deeply-nested loop) is treated
+-- as an opaque pass-through: recorded as reachable, then the walk continues
+-- from its own resolved exit target rather than its raw successors or a
+-- dead stop (Plan 146 Phase 2f). A foreign header absent from 'resolvedExits'
+-- (an enclosing or unrelated loop) still stops the walk, exactly as before.
+discoverReachable :: Set.Set Text -> Map.Map Text Text -> SsaProc -> Text -> Text -> Set.Set Text -> Set.Set Text
+discoverReachable headers resolvedExits proc headerId currentBlock visited
   | Set.member currentBlock visited = visited
-  | currentBlock /= headerId && Set.member currentBlock headers = visited
+  | currentBlock /= headerId && Set.member currentBlock headers =
+      case Map.lookup currentBlock resolvedExits of
+        Just exitTarget -> discoverReachable headers resolvedExits proc headerId exitTarget (Set.insert currentBlock visited)
+        Nothing         -> visited
   | otherwise = case Map.lookup currentBlock (spBlocks proc) of
       Nothing -> visited
       Just block ->
         let visited' = Set.insert currentBlock visited
             succs    = termSuccessors (sbTerm block)
-        in foldl' (\v s -> discoverReachable headers proc headerId s v) visited' succs
+        in foldl' (\v s -> discoverReachable headers resolvedExits proc headerId s v) visited' succs
 
 -- | Returns True if startBlock can transitively reach targetBlock.
 -- Threads the discovered 'visited' set across sibling successors (via the
 -- explicit fold in 'goSuccs', short-circuiting on the first True) for the same
--- reason 'computeLoopHeaders' does — see its comment.
-canReach :: SsaProc -> Text -> Text -> Set.Set Text -> Bool
-canReach proc startBlock0 targetBlock visited0 = fst (go startBlock0 visited0)
+-- reason 'computeLoopHeaders' does — see its comment. Mirrors
+-- 'discoverReachable's foreign-header handling: a resolved (nested) header
+-- redirects through its own exit target instead of freely walking its
+-- internals (which used to let a nested loop's own exit block "reach back"
+-- via escaping through an *enclosing* loop's back-edge — Plan 146 Phase 2f);
+-- an unresolved (enclosing/unrelated) header still stops the walk.
+canReach :: Set.Set Text -> Map.Map Text Text -> SsaProc -> Text -> Text -> Set.Set Text -> Bool
+canReach headers resolvedExits proc startBlock0 targetBlock visited0 = fst (go startBlock0 visited0)
   where
     go current visited
       | current == targetBlock = (True, visited)
       | Set.member current visited = (False, visited)
+      | Set.member current headers =
+          case Map.lookup current resolvedExits of
+            Just exitTarget -> go exitTarget (Set.insert current visited)
+            Nothing         -> (False, Set.insert current visited)
       | otherwise = case Map.lookup current (spBlocks proc) of
           Nothing -> (False, visited)
           Just block ->
@@ -424,15 +497,20 @@ canReach proc startBlock0 targetBlock visited0 = fst (go startBlock0 visited0)
 
 -- | Robust exit target extraction: collect every successor of every block
 -- in the loop body; the exit is any successor NOT in the body itself.
-determineLoopExitTarget :: Set.Set Text -> SsaProc -> Text -> Text
-determineLoopExitTarget headers proc headerId =
-  let bodyBlocks  = computeLoopBodyBlocks headers proc headerId
-      allSuccs    = Set.fromList
-        [ suc
-        | bId <- Set.toList bodyBlocks
-        , Just block <- [Map.lookup bId (spBlocks proc)]
-        , suc <- termSuccessors (sbTerm block)
-        ]
+-- A body block that is itself a strictly-more-nested, already-resolved
+-- header contributes only its own resolved exit target here, not its raw
+-- (purely internal to that nested loop) successors — otherwise a nested
+-- loop's own body block leaks through as a spurious "exit" of the
+-- enclosing loop (Plan 146 Phase 2f).
+determineLoopExitTarget :: Set.Set Text -> Map.Map Text Text -> SsaProc -> Text -> Text
+determineLoopExitTarget headers resolvedExits proc headerId =
+  let bodyBlocks  = computeLoopBodyBlocks headers resolvedExits proc headerId
+      succsOf bId
+        | bId /= headerId, Just exitTarget <- Map.lookup bId resolvedExits = [exitTarget]
+        | otherwise = case Map.lookup bId (spBlocks proc) of
+            Nothing    -> []
+            Just block -> termSuccessors (sbTerm block)
+      allSuccs = Set.fromList [ suc | bId <- Set.toList bodyBlocks, suc <- succsOf bId ]
       exits = Set.filter (/= headerId) (Set.difference allSuccs bodyBlocks)
   in case Set.toList exits of
        (exitTarget : _) -> exitTarget
@@ -455,9 +533,10 @@ compileBlock :: CompileCtx -> SsaProc
              -> Text                          -- ^ Current block ID
              -> Map.Map Text (CatOp () ())    -- ^ Global memo: blockId -> its compiled value
              -> Set.Set Text                  -- ^ Pre-computed loop headers
+             -> Map.Map Text Text             -- ^ Pre-resolved loop exit targets (see 'computeAllLoopExits')
              -> Maybe Text                    -- ^ Active loop header context
              -> (CatOp () (), Map.Map Text (CatOp () ()))
-compileBlock ctx proc blockId memo headers activeLoop
+compileBlock ctx proc blockId memo headers exits activeLoop
   | Just blockId == activeLoop = (CatId, memo)
   | Just cached <- Map.lookup blockId memo = (cached, memo)
   | Set.member blockId headers =
@@ -466,21 +545,23 @@ compileBlock ctx proc blockId memo headers activeLoop
           -- to trigger — see compileLoopBody's own docs) edge; genuine forward-merge
           -- revisits *within* this loop body's own traversal get the real fix below.
           seedVisited = Map.fromList [ (bid, CatInl) | bid <- Map.keys memo ]
-          (loopBodyOp, visitedFromLoop) = compileLoopBody ctx proc blockId seedVisited headers (Just blockId)
+          (loopBodyOp, visitedFromLoop) = compileLoopBody ctx proc blockId seedVisited headers exits (Just blockId)
           -- Preserve prior behaviour exactly: mark every block compileLoopBody touched
           -- as CatId for any later revisit from the post-loop continuation, matching
           -- what the old Set-based registry did here (Plan 145 Bug A's fix deliberately
           -- left this outer-memo interaction untouched; only compileLoopBody's own
           -- internal revisit handling changed in Plan 146 item 7).
           memoFromLoop = Map.union memo (Map.fromSet (const CatId) (Map.keysSet visitedFromLoop))
-          exitBlockId = determineLoopExitTarget headers proc blockId
-          (postLoopOp, finalMemo) = compileBlock ctx proc exitBlockId memoFromLoop headers activeLoop
+          exitBlockId = Map.findWithDefault
+            (error "impossible: every element of 'headers' is resolved by computeAllLoopExits before compileBlock runs")
+            blockId exits
+          (postLoopOp, finalMemo) = compileBlock ctx proc exitBlockId memoFromLoop headers exits activeLoop
       in (postLoopOp . CatLoop loopBodyOp, finalMemo)
   | otherwise = case Map.lookup blockId (spBlocks proc) of
       Nothing    -> (CatId, memo)
       Just block ->
         let assignsOp  = compileAssigns ctx (sbAssigns block)
-            (termOp, memo1) = compileTerm ctx proc blockId memo headers activeLoop (sbTerm block)
+            (termOp, memo1) = compileTerm ctx proc blockId memo headers exits activeLoop (sbTerm block)
             result = case (assignsOp, termOp) of
                        (CatId, _) -> termOp
                        (_, CatId) -> assignsOp
@@ -502,20 +583,33 @@ compileBlock ctx proc blockId memo headers activeLoop
 -- resolve to 'CatInl', silently dropping that block's real assigns/branches for every
 -- predecessor after the first to reach it.
 compileLoopBody :: CompileCtx -> SsaProc -> Text -> Map.Map Text (CatOp () (Either () ()))
-                -> Set.Set Text -> Maybe Text -> (CatOp () (Either () ()), Map.Map Text (CatOp () (Either () ())))
-compileLoopBody ctx proc blockId visited headers activeLoop
+                -> Set.Set Text -> Map.Map Text Text -> Maybe Text -> (CatOp () (Either () ()), Map.Map Text (CatOp () (Either () ())))
+compileLoopBody ctx proc blockId visited headers exits activeLoop
   | Just cached <- Map.lookup blockId visited = (cached, visited)
   | Set.member blockId headers && Just blockId /= activeLoop =
-      -- Nested loop header: compile as CatLoop, lift into Either frame.
-      -- Do NOT pre-insert blockId into visited — let compileLoopBody add it
-      -- so the initial guard doesn't short-circuit.
-      let (innerBody, v1) = compileLoopBody ctx proc blockId visited headers (Just blockId)
-      in (CatInl . CatLoop innerBody, v1)
+      -- Nested loop header: compile as CatLoop, then CONTINUE from its own
+      -- resolved exit target (in the *enclosing* loop's own activeLoop
+      -- context) instead of assuming the nested loop's completion always
+      -- means "continue the enclosing loop" outright. A nested loop's exit
+      -- can flow through real content (assigns, more branches) before
+      -- rejoining the enclosing loop — mirroring 'compileBlock's own
+      -- top-level loop-header handling, which already continues from
+      -- 'exitBlockId' rather than hardcoding a bare no-op there (Plan 146
+      -- Phase 2f: the previous bare 'CatInl' here silently dropped any such
+      -- content, e.g. an outer loop's own per-iteration counter increment
+      -- living in the block between the nested loop's exit and the
+      -- enclosing loop's back-edge).
+      let nestedExit = Map.findWithDefault
+            (error "impossible: every element of 'headers' is resolved by computeAllLoopExits")
+            blockId exits
+          (innerBody, v1) = compileLoopBody ctx proc blockId visited headers exits (Just blockId)
+          (afterOp, v2) = compileLoopBody ctx proc nestedExit v1 headers exits activeLoop
+      in (afterOp . CatLoop innerBody, v2)
   | otherwise = case Map.lookup blockId (spBlocks proc) of
       Nothing    -> (CatInr, visited)
       Just block ->
         let assignsOp  = compileAssigns ctx (sbAssigns block)
-            (termOp, v1) = compileLoopTerm ctx proc blockId visited headers activeLoop (sbTerm block)
+            (termOp, v1) = compileLoopTerm ctx proc blockId visited headers exits activeLoop (sbTerm block)
             result = case assignsOp of
                        CatId -> termOp
                        _     -> termOp . assignsOp
@@ -544,72 +638,72 @@ compilePhiAssignments ctx proc prevBlock currentBlock =
 
 -- | Standard terminators (outside loops). Injects phi resolution before target blocks.
 -- Returns @(CatOp, updatedMemo)@ to thread the global memo (see 'compileBlock').
-compileTerm :: CompileCtx -> SsaProc -> Text -> Map.Map Text (CatOp () ()) -> Set.Set Text
+compileTerm :: CompileCtx -> SsaProc -> Text -> Map.Map Text (CatOp () ()) -> Set.Set Text -> Map.Map Text Text
             -> Maybe Text -> SsaTerm -> (CatOp () (), Map.Map Text (CatOp () ()))
-compileTerm _ctx _proc _blockId memo _headers _activeLoop (SsaReturn _) = (CatId, memo)
-compileTerm ctx proc blockId memo headers activeLoop (SsaGoto target) =
-  let (targetOp, m1) = compileBlock ctx proc target memo headers activeLoop
+compileTerm _ctx _proc _blockId memo _headers _exits _activeLoop (SsaReturn _) = (CatId, memo)
+compileTerm ctx proc blockId memo headers exits activeLoop (SsaGoto target) =
+  let (targetOp, m1) = compileBlock ctx proc target memo headers exits activeLoop
   in (targetOp . compilePhiAssignments ctx proc blockId target, m1)
-compileTerm ctx proc blockId memo headers activeLoop (SsaBranch cond t f) =
-  let (tOp, m1) = compileBlock ctx proc t memo headers activeLoop
-      (fOp, m2) = compileBlock ctx proc f m1 headers activeLoop
+compileTerm ctx proc blockId memo headers exits activeLoop (SsaBranch cond t f) =
+  let (tOp, m1) = compileBlock ctx proc t memo headers exits activeLoop
+      (fOp, m2) = compileBlock ctx proc f m1 headers exits activeLoop
       combined  = branch (ssaValToExpr cond)
                     (tOp . compilePhiAssignments ctx proc blockId t)
                     (fOp . compilePhiAssignments ctx proc blockId f)
   in (combined, m2)
-compileTerm _ctx _proc _ memo _ _ SsaBreak    = (CatId, memo)
-compileTerm _ctx _proc _ memo _ _ SsaContinue = (CatId, memo)
-compileTerm ctx proc blockId memo headers activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
-  let (defaultOp, m0) = compileBlock ctx proc defaultTarget memo headers activeLoop
+compileTerm _ctx _proc _ memo _ _ _ SsaBreak    = (CatId, memo)
+compileTerm _ctx _proc _ memo _ _ _ SsaContinue = (CatId, memo)
+compileTerm ctx proc blockId memo headers exits activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
+  let (defaultOp, m0) = compileBlock ctx proc defaultTarget memo headers exits activeLoop
       seed = (defaultOp . compilePhiAssignments ctx proc blockId defaultTarget, m0)
       step (val, target) (accOp, m) =
-        let (targetOp, m') = compileBlock ctx proc target m headers activeLoop
+        let (targetOp, m') = compileBlock ctx proc target m headers exits activeLoop
             combined = targetOp . compilePhiAssignments ctx proc blockId target
             cond = ExBinOp (ssaValToExpr scrutinee) BopEq (ssaValToExpr val)
         in (branch cond combined accOp, m')
   in foldr step seed pairs
 
 -- | Loop terminators. Returns @(CatOp () (Either () ()), visited)@.
-compileLoopTerm :: CompileCtx -> SsaProc -> Text -> Map.Map Text (CatOp () (Either () ())) -> Set.Set Text
+compileLoopTerm :: CompileCtx -> SsaProc -> Text -> Map.Map Text (CatOp () (Either () ())) -> Set.Set Text -> Map.Map Text Text
                 -> Maybe Text -> SsaTerm -> (CatOp () (Either () ()), Map.Map Text (CatOp () (Either () ())))
-compileLoopTerm ctx proc blockId visited headers activeLoop (SsaGoto target)
+compileLoopTerm ctx proc blockId visited headers exits activeLoop (SsaGoto target)
   | Just target == activeLoop = (CatInl, visited)
-  | isLoopExit headers proc activeLoop target = (CatInr, visited)
+  | isLoopExit headers exits proc activeLoop target = (CatInr, visited)
   | otherwise =
-      let (targetOp, v1) = compileLoopBody ctx proc target visited headers activeLoop
+      let (targetOp, v1) = compileLoopBody ctx proc target visited headers exits activeLoop
       in (targetOp . compilePhiAssignments ctx proc blockId target, v1)
-compileLoopTerm ctx proc blockId visited headers activeLoop (SsaBranch cond t f) =
-  let (tOp, v1) = compileLoopBranchPath ctx proc blockId t visited headers activeLoop
-      (fOp, v2) = compileLoopBranchPath ctx proc blockId f v1 headers activeLoop
+compileLoopTerm ctx proc blockId visited headers exits activeLoop (SsaBranch cond t f) =
+  let (tOp, v1) = compileLoopBranchPath ctx proc blockId t visited headers exits activeLoop
+      (fOp, v2) = compileLoopBranchPath ctx proc blockId f v1 headers exits activeLoop
       combined  = branch (ssaValToExpr cond) tOp fOp
   in (combined, v2)
-compileLoopTerm _ctx _proc _ visited _ _ (SsaReturn _) = (CatInr, visited)
-compileLoopTerm _ctx _proc _ visited _ _ SsaBreak      = (CatInr, visited)
-compileLoopTerm _ctx _proc _ visited _ _ SsaContinue   = (CatInl, visited)
-compileLoopTerm ctx proc blockId visited headers activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
-  let (defaultOp, v0) = compileLoopBranchPath ctx proc blockId defaultTarget visited headers activeLoop
+compileLoopTerm _ctx _proc _ visited _ _ _ (SsaReturn _) = (CatInr, visited)
+compileLoopTerm _ctx _proc _ visited _ _ _ SsaBreak      = (CatInr, visited)
+compileLoopTerm _ctx _proc _ visited _ _ _ SsaContinue   = (CatInl, visited)
+compileLoopTerm ctx proc blockId visited headers exits activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
+  let (defaultOp, v0) = compileLoopBranchPath ctx proc blockId defaultTarget visited headers exits activeLoop
       step (val, target) (accOp, v) =
-        let (targetOp, v') = compileLoopBranchPath ctx proc blockId target v headers activeLoop
+        let (targetOp, v') = compileLoopBranchPath ctx proc blockId target v headers exits activeLoop
             cond = ExBinOp (ssaValToExpr scrutinee) BopEq (ssaValToExpr val)
         in (branch cond targetOp accOp, v')
   in foldr step (defaultOp, v0) pairs
 
 -- | Compile a branch target inside a loop, wrapping in the appropriate Either.
-compileLoopBranchPath :: CompileCtx -> SsaProc -> Text -> Text -> Map.Map Text (CatOp () (Either () ())) -> Set.Set Text
+compileLoopBranchPath :: CompileCtx -> SsaProc -> Text -> Text -> Map.Map Text (CatOp () (Either () ())) -> Set.Set Text -> Map.Map Text Text
                       -> Maybe Text -> (CatOp () (Either () ()), Map.Map Text (CatOp () (Either () ())))
-compileLoopBranchPath ctx proc prevBlock target visited headers activeLoop
+compileLoopBranchPath ctx proc prevBlock target visited headers exits activeLoop
   | Just target == activeLoop = (CatInl, visited)
-  | isLoopExit headers proc activeLoop target = (CatInr, visited)
+  | isLoopExit headers exits proc activeLoop target = (CatInr, visited)
   | otherwise =
-      let (targetOp, v1) = compileLoopBody ctx proc target visited headers activeLoop
+      let (targetOp, v1) = compileLoopBody ctx proc target visited headers exits activeLoop
       in (targetOp . compilePhiAssignments ctx proc prevBlock target, v1)
 
 -- | Check if a target block is outside the current loop cycle.
 -- A block is a loop exit if it is not part of the loop body.
-isLoopExit :: Set.Set Text -> SsaProc -> Maybe Text -> Text -> Bool
-isLoopExit _ _ Nothing _ = False
-isLoopExit headers proc (Just headerId) targetId =
-  let bodyBlocks = computeLoopBodyBlocks headers proc headerId
+isLoopExit :: Set.Set Text -> Map.Map Text Text -> SsaProc -> Maybe Text -> Text -> Bool
+isLoopExit _ _ _ Nothing _ = False
+isLoopExit headers exits proc (Just headerId) targetId =
+  let bodyBlocks = computeLoopBodyBlocks headers exits proc headerId
   in not (Set.member targetId bodyBlocks)
 
 -- | Compile a list of SSA assignments by folding with CatCompose.
