@@ -28,7 +28,7 @@ import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv,
                                 procEnv, ScopedTypeEnv)
 import PB.Analysis.CfgBuild    (buildCfg)
-import PB.Analysis.CpsCompile  (compileProcedure)
+import PB.Analysis.CatOp       (compileProcedureViaCatOp)
 import PB.Analysis.TypeResolve (parseParams)
 import PB.Pipeline.Serialise   ()
 
@@ -155,7 +155,7 @@ wrapSrFile withCps path sf spans ws =
             let cfg = buildCfg body
                 base = KM.insert "cfg" (toJSON cfg) o
             in Object $ if withCps
-                then KM.insert "cpsGraph" (toJSON (compileProcedure env userFns body)) base
+                then KM.insert "cpsGraph" (toJSON (compileProcedureViaCatOp env userFns body)) base
                 else base
         injectCompiled _ _ v = v
 

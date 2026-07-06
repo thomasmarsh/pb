@@ -1014,13 +1014,15 @@ tests = testGroup "CatOp"
     -- doc/plan/145-dual-cps-debug.md §Findings — Root cause found).
     -- Assertions compare 'pathCallCounts' (root-to-return call counts per path), not
     -- raw shape equality, against the old compiler: the fix stops content from being
-    -- silently dropped, but it does not (and isn't trying to) replicate the old
-    -- compiler's specific physical node-sharing — GraphBuilder's CatOp/LowCat lowering
-    -- has no node-level memoization of its own, so a merge block reached by more than
-    -- one predecessor gets emitted once per predecessor (duplicated) rather than shared
-    -- as a single physical node. Both are semantically correct; only exact
-    -- `--dual-cps` node-count parity is affected (tracked separately, not this fix's
-    -- goal — see doc/plan/145-dual-cps-debug.md §Findings — Root cause found).
+    -- silently dropped. At the time this comment was first written, GraphBuilder's
+    -- CatOp/LowCat lowering had no node-level memoization of its own, so a merge
+    -- block reached by more than one predecessor was emitted once per predecessor
+    -- (duplicated) rather than shared as a single physical node — still semantically
+    -- correct, but exponential in the number of sequential merge points for
+    -- pathological real procedures (see doc/plan/150-graphbuilder-node-blowup.md).
+    -- 'CatTagged'/'LTagged' (Plan 150) now gives 'GraphBuilder' its own node-level
+    -- sharing, so the physical duplication described above no longer happens — see
+    -- the "GraphBuilder node-sharing" test group below for the node-count assertion.
     [ testCase "if without else: trailing calls after merge execute regardless of branch" $
         -- Mirrors w_frame_menu_functions::destroy: the implicit "condition false"
         -- edge and the then-arm's fallthrough both converge on the same merge block,
@@ -1063,6 +1065,58 @@ tests = testGroup "CatOp"
                        , Located 6 (BsCall (call "callD"))
                        ] [] Nothing))
                    ]
+            oldShape = canonicalize (compileProcedure emptyEnv Set.empty body)
+            newShape = canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in pathCallCounts newShape @?= pathCallCounts oldShape
+    ]
+
+  , testGroup "GraphBuilder node-sharing: sequential merge points stay linear, not exponential (Plan 150)"
+    -- GraphBuilder previously had no node-level sharing (see the previous
+    -- test group's docstring): a merge block reached by 2+ predecessors was
+    -- re-lowered, and re-allocated, once per predecessor. For a single
+    -- if/else that's just a 2x cost; but for a CHAIN of N sequential
+    -- if/else-with-shared-tail groups, each duplication compounds into the
+    -- next merge's own duplication, giving O(2^N) node count for O(N)
+    -- source statements. This is exactly the shape that made a real corpus
+    -- procedure (fn_dateolografos: 6 sequential choose/case blocks) take
+    -- 'GraphBuilder' from instant to a multi-minute, unbounded-memory hang
+    -- (doc/plan/150-graphbuilder-node-blowup.md) — confirmed via a
+    -- 41,603-node/2s-timeout hand-trace at the 16th of that procedure's 20
+    -- statements, vs. 174 nodes/6ms for the old compiler on the whole body.
+    -- The fix: 'CatTagged'/'LTagged' mark a merge block's compiled value
+    -- with its originating blockId, and 'GraphBuilder' caches the pc it
+    -- allocates for a given (blockId, continuation) pair, reusing it
+    -- instead of re-lowering on a repeat encounter.
+    [ testCase "4 sequential if/else groups: node count stays linear, not 2^4 = 16x" $
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            group (thenN, elseN, tailN, base) =
+              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
+                  [Located (base P.+ 2) (BsCall (call thenN))] []
+                  (Just [Located (base P.+ 3) (BsCall (call elseN))])))
+              , Located (base P.+ 4) (BsCall (call tailN))
+              ]
+            body = concatMap group
+              [ ("callA1", "callB1", "ctail1", 0), ("callA2", "callB2", "ctail2", 4)
+              , ("callA3", "callB3", "ctail3", 8), ("callA4", "callB4", "ctail4", 12)
+              ]
+            graph = compileProcedureViaCatOp emptyEnv Set.empty body
+            nodeCount = length (cgNodes graph)
+        in assertBool
+             ("node count should stay roughly linear in 4 groups (~5-6 nodes/group); got " <> show nodeCount)
+             (nodeCount P.< 40)
+
+    , testCase "4 sequential if/else groups: old and new compilers agree on call counts per path" $
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            group (thenN, elseN, tailN, base) =
+              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
+                  [Located (base P.+ 2) (BsCall (call thenN))] []
+                  (Just [Located (base P.+ 3) (BsCall (call elseN))])))
+              , Located (base P.+ 4) (BsCall (call tailN))
+              ]
+            body = concatMap group
+              [ ("callA1", "callB1", "ctail1", 0), ("callA2", "callB2", "ctail2", 4)
+              , ("callA3", "callB3", "ctail3", 8), ("callA4", "callB4", "ctail4", 12)
+              ]
             oldShape = canonicalize (compileProcedure emptyEnv Set.empty body)
             newShape = canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
         in pathCallCounts newShape @?= pathCallCounts oldShape

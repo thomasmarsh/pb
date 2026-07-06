@@ -1,22 +1,30 @@
 module RunnerTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, isRealDiff)
+import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, isRealDiff, wrapSrFile, compileOne, CompiledFile (..), CompiledPs (..))
+import PB.Pipeline.Emit    (parsePowerScriptFile, ParsedFile (..), ParseOutcome (..))
+import PB.Pipeline.DuckDb  (ProcRow (..))
 import PB.AST.BodyStmt     (BodyStmt (..))
 import PB.AST.DataWindow   (DwRetrieve (..), DwRetrieveOrRaw (..), DwWhereClause (..))
 import PB.AST.Expr         (Expr (..))
 import PB.AST.Located      (Located (..))
-import PB.AST.SourceFile   (TypeBlock (..), TypeDecl (..))
+import PB.AST.SourceFile   (TypeBlock (..), TypeDecl (..), srPrimaryObject, srFunctions, FunctionBlock (..), FnSig (..))
 import PB.AST.Type         (PbType (..))
 import PB.Analysis.CatEval   (TraceEvent (..))
 import PB.Analysis.CatEval   qualified as CatEval
 import PB.Analysis.CpsInterp (TraceOutcome (..))
+import PB.Analysis.TypeEnv    (buildWorkspaceEnv, procEnv)
+import PB.Analysis.CatOp      (compileProcedureViaCatOp)
+import PB.Analysis.CpsCompile (compileProcedure)
+import PB.Pipeline.Serialise ()
 
-import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson (Value (..), object, decodeStrict, toJSON, (.=))
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Map.Strict   as Map
+import qualified Data.Set          as Set
 import qualified Data.Text         as T
+import qualified Data.Text.Encoding as TE
 
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
@@ -281,6 +289,69 @@ tests = testGroup "Pipeline.Runner"
         case runFile "dw_sales.srd" src of
           Left _  -> pure ()  -- skip if DW fixture doesn't parse
           Right v -> lookupObj2 "meta" "object" v @?= String "dw_sales"
+    ]
+
+  , testGroup "production wiring uses compileProcedureViaCatOp (Plan 144 Phase 5 Step 6)"
+    -- Runner.hs:148 (compileOne, the real production path behind runModeDb)
+    -- and Emit.hs:158 (wrapSrFile's withCps branch) both used to call the
+    -- old PB.Analysis.CpsCompile.compileProcedure. Both now call
+    -- PB.Analysis.CatOp.compileProcedureViaCatOp. An if/else with a shared
+    -- trailing call is used as the fixture body specifically because it's
+    -- the one shape Plan 145 confirmed structurally differs between the two
+    -- compilers (GraphBuilder has no node-level sharing, so the trailing
+    -- call is emitted once per predecessor instead of once, shared) even
+    -- though both are behaviorally equivalent per Plan 146 — so this is a
+    -- body where "the JSON now matches new and differs from old" is a
+    -- meaningful signal, not a coincidence of a trivial fixture.
+    [ let src = T.unlines
+            [ "public function integer uf_test ()"
+            , "integer li_a"
+            , "li_a = 1"
+            , "if li_a = 1 then"
+            , "callone()"
+            , "else"
+            , "calltwo()"
+            , "end if"
+            , "callthree()"
+            , "end function"
+            ]
+      in case parsePowerScriptFile src of
+        Left err -> testCase "fixture parses" (assertFailure ("fixture failed to parse: " <> T.unpack err))
+        Right (sf, spans) ->
+          let ws           = buildWorkspaceEnv [sf]
+              (objName, _) = srPrimaryObject sf
+              fb            = case srFunctions sf of { (f:_) -> f; [] -> error "impossible: fixture has one function" }
+              body          = fbBody fb
+              userFns       = Set.fromList [T.toLower (fnsName (fbSig fb))]
+              env           = procEnv ws objName []
+              newJson       = toJSON (compileProcedureViaCatOp env userFns body)
+              oldJson       = toJSON (compileProcedure env userFns body)
+          in testGroup "if/else with shared trailing call (structurally distinguishes old vs new)"
+            [ testCase "wrapSrFile's cpsGraph now matches compileProcedureViaCatOp" $
+                let v      = wrapSrFile True "uf_test.srf" sf spans ws
+                    cpsVal = lookupObj "cpsGraph" (firstOf (lookupObj "functions" v))
+                in cpsVal @?= newJson
+
+            , testCase "wrapSrFile's cpsGraph no longer matches the old compileProcedure" $
+                let v      = wrapSrFile True "uf_test.srf" sf spans ws
+                    cpsVal = lookupObj "cpsGraph" (firstOf (lookupObj "functions" v))
+                in assertBool "expected wrapSrFile's cpsGraph to differ from the old compiler's output"
+                     (cpsVal /= oldJson)
+
+            , testCase "compileOne's ProcRow.prCpsJson now matches compileProcedureViaCatOp" $ do
+                let pf = ParsedFile { pfPath = "uf_test.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                cf <- compileOne ws Nothing "confirmed" (PsParsed pf)
+                case cf of
+                  CFPs cps -> case cpsProcRows cps of
+                    (row:_) -> case decodeStrict (TE.encodeUtf8 (prCpsJson row)) :: Maybe Value of
+                      Nothing      -> assertFailure "prCpsJson did not decode as JSON"
+                      Just decoded -> do
+                        decoded @?= newJson
+                        assertBool "expected prCpsJson to differ from the old compiler's output"
+                          (decoded /= oldJson)
+                    [] -> assertFailure "expected at least one ProcRow"
+                  _ -> assertFailure "expected CFPs"
+            ]
     ]
 
 

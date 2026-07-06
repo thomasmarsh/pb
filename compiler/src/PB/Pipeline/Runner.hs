@@ -14,6 +14,8 @@ module PB.Pipeline.Runner
   , compileOne
   , appendToDb
   , CompiledFile (..)
+  , CompiledPs (..)
+  , CompiledDw (..)
   ) where
 
 import PB.Prelude
@@ -145,7 +147,7 @@ compileOne wsEnv mBridge confidence outcome = case outcome of
         procs =
           [ let cfg      = buildCfg body
                 cfgJs    = jsonText (toJSON cfg)
-                cpsJs    = jsonText (toJSON (compileProcedure (mkProcEnv cpsParams) userFns body))
+                cpsJs    = jsonText (toJSON (compileProcedureViaCatOp (mkProcEnv cpsParams) userFns body))
                 flow     = (fp, obj, pName, Dataflow.analyzeProcedure obj pName cfg)
                 cyclo    = DeadCode.cyclomaticComplexity cfg
             in ( ProcRow fp obj pName pType sLine eLine cfgJs cpsJs

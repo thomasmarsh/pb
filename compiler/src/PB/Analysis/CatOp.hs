@@ -109,6 +109,7 @@ data LowCat
   | LCall Text [Expr]
   | LSuspend Text [Expr]
   | LReturn
+  | LTagged Text LowCat
   | LErasable
   deriving (Eq, Show, Generic)
 
@@ -128,6 +129,7 @@ toLowCat (CatFork l r)      = LFork (toLowCat l) (toLowCat r)
 toLowCat (CatCall n args)   = LCall n args
 toLowCat (CatSuspend e args) = LSuspend e args
 toLowCat CatReturn          = LReturn
+toLowCat (CatTagged bid f)  = LTagged bid (toLowCat f)
 toLowCat _                  = LErasable  -- CatExl, CatExr, CatConst, CatLookup, CatAssign, CatTry
 
 -- ============================================================================
@@ -233,6 +235,15 @@ data CatOp a b where
   -- Error handling
   CatTry     :: CatOp a b -> CatOp (a, Value) b -> CatOp a b
 
+  -- | Marks a subterm as the memoized compiled value of a specific SSA
+  -- blockId (Plan 150). Identity in both types and execution (see 'runCat'
+  -- and 'toLowCat') — its only purpose is to survive being embedded at
+  -- multiple positions in the tree (once per predecessor of a merge block)
+  -- so 'GraphBuilder' can recognize a repeat encounter of the same blockId
+  -- and reuse the already-allocated pc instead of re-lowering (and
+  -- re-allocating a full duplicate subgraph for) the same content again.
+  CatTagged  :: Text -> CatOp a b -> CatOp a b
+
 -- Manual Show instance (GADTs can't derive)
 instance Show (CatOp a b) where
   show CatId = "CatId"
@@ -254,6 +265,7 @@ instance Show (CatOp a b) where
   show (CatSuspend t _) = "CatSuspend " <> show t
   show CatSplitValue = "CatSplitValue"
   show (CatTry _ _) = "CatTry .."
+  show (CatTagged t _) = "CatTagged " <> show t <> " .."
 
 -- Manual Eq instance (GADTs can't derive).
 -- Delegates to feq which does the coercion + structural matching.
@@ -289,6 +301,7 @@ feq x y = go (unsafeCoerce x) (unsafeCoerce y)
     go (CatSuspend t es) (CatSuspend t' es') = t == t' && es == es'
     go CatSplitValue CatSplitValue = True
     go (CatTry f g) (CatTry f' g') = feq f f' P.&& feq g g'
+    go (CatTagged t f) (CatTagged t' f') = t == t' P.&& feq f f'
     go _ _ = False
 
 -- ============================================================================
@@ -323,9 +336,40 @@ instance Effectful CatOp where
 
 -- | Compilation context threaded through all SSA→CatOp helpers.
 data CompileCtx = CompileCtx
-  { ccEnv     :: ScopedTypeEnv    -- ^ Type environment for call classification
-  , ccUserFns :: Set.Set Text     -- ^ User-defined function names (lower-cased)
+  { ccEnv         :: ScopedTypeEnv    -- ^ Type environment for call classification
+  , ccUserFns     :: Set.Set Text     -- ^ User-defined function names (lower-cased)
+  , ccMergePoints :: Set.Set Text
+    -- ^ BlockIds reached by 2+ predecessor edges anywhere in the procedure
+    -- (Plan 150). The only blocks 'compileBlock'/'compileLoopBody' can ever
+    -- return via their memo's cache-hit branch — i.e. the only ones a
+    -- second predecessor can reach the very same compiled 'CatOp' value
+    -- for — so the only ones that need a 'CatTagged' identity for
+    -- 'GraphBuilder' to physically share downstream instead of re-lowering
+    -- (and re-allocating a full duplicate subgraph) on every encounter.
   }
+
+-- | BlockIds reached by 2 or more predecessor edges in a procedure's CFG,
+-- counting every terminator's successors (top-level and loop-body blocks
+-- alike — a merge inside a loop body needs the same treatment as one at
+-- the top level) — EXCLUDING loop headers. See 'ccMergePoints'.
+--
+-- A loop header always has 2+ predecessors (the initial forward entry, plus
+-- at least one back-edge), so a naive predecessor count always flags it —
+-- but a header is never actually at risk of the physical-duplication bug
+-- this tagging exists to fix: 'compileLoopLowCat' lowers a loop's header
+-- content exactly once, as the sole argument to 'CatLoop', never embedded
+-- at a second tree position. Tagging it anyway broke
+-- 'patchLoopHeaderLowCat'\'s @LCompose (LFanIn ..) ..@ structural detection
+-- (it doesn't unwrap 'LTagged'), which silently fell back to its
+-- unpatched-forwarding-'CpsNop' path — and, worse, mis-threaded the loop's
+-- own back-edge, causing loops to stop after one iteration. Confirmed via
+-- the regression this caused in the loop test suite (Plan 150 Phase 3).
+computeMergePoints :: SsaProc -> Set.Set Text
+computeMergePoints proc =
+  Map.keysSet (Map.filter (P.> 1) predCounts) `Set.difference` computeLoopHeaders proc
+  where
+    allSuccessors = concatMap (termSuccessors P.. sbTerm) (Map.elems (spBlocks proc))
+    predCounts    = Map.fromListWith (P.+) [ (bid, 1 :: Int) | bid <- allSuccessors ]
 
 -- | Compile an SSA procedure into a categorical combinator.
 --
@@ -352,7 +396,7 @@ data CompileCtx = CompileCtx
 -- assigns/calls/branches in a block reached by more than one forward predecessor).
 compileSsa :: ScopedTypeEnv -> Set.Set Text -> SsaProc -> CatOp () ()
 compileSsa env userFns proc =
-  let ctx     = CompileCtx env userFns
+  let ctx     = CompileCtx env userFns (computeMergePoints proc)
       headers = computeLoopHeaders proc
       exits   = computeAllLoopExits headers proc
       (result, _finalMemo) = compileBlock ctx proc (spEntry proc) Map.empty headers exits Nothing
@@ -641,10 +685,17 @@ compileBlock ctx proc blockId memo headers exits activeLoop
       Just block ->
         let assignsOp  = compileAssigns ctx (sbAssigns block)
             (termOp, memo1) = compileTerm ctx proc blockId memo headers exits activeLoop (sbTerm block)
-            result = case (assignsOp, termOp) of
+            rawResult = case (assignsOp, termOp) of
                        (CatId, _) -> termOp
                        (_, CatId) -> assignsOp
                        _          -> termOp . assignsOp
+            -- Plan 150: tag merge-point results so a repeat encounter
+            -- (this exact value, embedded at a second tree position by a
+            -- second predecessor) can be recognized and shared by
+            -- 'GraphBuilder' instead of re-lowered as a physical duplicate.
+            result = if Set.member blockId (ccMergePoints ctx)
+                       then CatTagged blockId rawResult
+                       else rawResult
             memo2 = Map.insert blockId result memo1
         in (result, memo2)
 
@@ -689,9 +740,14 @@ compileLoopBody ctx proc blockId visited headers exits activeLoop
       Just block ->
         let assignsOp  = compileAssigns ctx (sbAssigns block)
             (termOp, v1) = compileLoopTerm ctx proc blockId visited headers exits activeLoop (sbTerm block)
-            result = case assignsOp of
+            rawResult = case assignsOp of
                        CatId -> termOp
                        _     -> termOp . assignsOp
+            -- Plan 150: same tagging as compileBlock's "otherwise" arm, for
+            -- merge points reached by 2+ predecessors inside a loop body.
+            result = if Set.member blockId (ccMergePoints ctx)
+                       then CatTagged blockId rawResult
+                       else rawResult
         in (result, Map.insert blockId result v1)
 
 -- | Convert an SSA value back to an Expr so it can be passed to @eval@.
@@ -930,6 +986,16 @@ data BuilderState = BuilderState
     -- regardless of loop nesting — 'LReturn' (Plan 146 Phase 2i) resolves
     -- here directly instead of whatever local @nextPc@ a loop's own
     -- break/post-loop threading passed in.
+  , bsBlockPcMemo :: Map.Map (Text, Int) Int
+    -- ^ Plan 150: (blockId, continuation pc) -> the pc already allocated
+    -- the first time 'compileLowCatToCps' lowered a 'LTagged' node for this
+    -- blockId with this continuation. A merge block is only ever tagged
+    -- with the SAME blockId across every predecessor that reaches it, and
+    -- (since all predecessors of a genuine merge converge on the same
+    -- subsequent code) every encounter passes the same continuation pc —
+    -- so keying on both together is safe and lets a repeat encounter reuse
+    -- the existing pc instead of re-lowering (and re-allocating a full
+    -- duplicate subgraph for) the same content again.
   }
 
 -- | The graph builder monad.
@@ -948,6 +1014,17 @@ instance Monad GraphBuilder where
 -- | Get the next available PC without allocating.
 peekNextPc :: GraphBuilder Int
 peekNextPc = GraphBuilder (gets bsNextPc)
+
+-- | Plan 150: look up a previously-lowered merge block's entry pc for this
+-- exact (blockId, continuation) pair, if this is a repeat encounter.
+lookupBlockPcMemo :: Text -> Int -> GraphBuilder (Maybe Int)
+lookupBlockPcMemo bid nextPc = GraphBuilder (gets (Map.lookup (bid, nextPc) P.. bsBlockPcMemo))
+
+-- | Plan 150: record a merge block's freshly-allocated entry pc so the next
+-- encounter of the same (blockId, continuation) pair can reuse it.
+registerBlockPcMemo :: Text -> Int -> Int -> GraphBuilder ()
+registerBlockPcMemo bid nextPc pc = GraphBuilder $ modify $ \s ->
+  s { bsBlockPcMemo = Map.insert (bid, nextPc) pc (bsBlockPcMemo s) }
 
 -- | Allocate a node at the next available PC and return its PC.
 allocateNode :: CpsNode -> GraphBuilder Int
@@ -972,7 +1049,7 @@ finalizeGraph entryPc s = CpsGraph
 
 -- | Initial builder state.
 initState :: BuilderState
-initState = BuilderState { bsNodes = Map.empty, bsNextPc = 0, bsSourceLines = [], bsExitPc = 0 }
+initState = BuilderState { bsNodes = Map.empty, bsNextPc = 0, bsSourceLines = [], bsExitPc = 0, bsBlockPcMemo = Map.empty }
 
 -- | Compile a CatOp into CPS nodes.
 -- Lowers to 'LowCat' first (stripping GADT types), then compiles.
@@ -1013,6 +1090,20 @@ compileLowCatToCps (LSuspend eff args) nextPc =
 -- however deeply nested) and resolve straight to the one true exit recorded
 -- in 'BuilderState' by 'buildCpsGraph'.
 compileLowCatToCps LReturn _nextPc = GraphBuilder (gets bsExitPc)
+-- | Plan 150: a merge block's tagged content. On the first encounter (for
+-- this blockId + continuation), lower it for real and remember the pc; on
+-- every later encounter, reuse that pc instead of re-lowering (and
+-- re-allocating a full duplicate subgraph for) the same content again —
+-- this is what stops sequential merge points (if/elseif chains,
+-- choose/case) from compounding multiplicatively.
+compileLowCatToCps (LTagged bid inner) nextPc = do
+  cached <- lookupBlockPcMemo bid nextPc
+  case cached of
+    Just pc -> return pc
+    Nothing -> do
+      pc <- compileLowCatToCps inner nextPc
+      registerBlockPcMemo bid nextPc pc
+      return pc
 -- Structural / erased constructors
 compileLowCatToCps _ nextPc = return nextPc
 
@@ -1093,6 +1184,21 @@ compileLoopBodyLowCat (LFanIn tOp fOp) loopHeaderPc nextPc = do
   thenEntryPc <- compileLoopBodyLowCat tOp loopHeaderPc nextPc
   elseEntryPc <- compileLoopBodyLowCat fOp loopHeaderPc nextPc
   allocateNode (CpsBranch { brCond = ExNull, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
+-- | Plan 150: a merge block inside a loop body (e.g. an if/else's shared
+-- tail before the back-edge). Must recurse via 'compileLoopBodyLowCat'
+-- (not delegate to the loop-unaware 'compileLowCatToCps', which would
+-- resolve a nested 'LInl'\/'LInr' against the wrong continuation and lose
+-- the back-edge to 'loopHeaderPc' — confirmed by the regression this exact
+-- gap caused in "loop containing if/else with a shared tail", Phase 3)
+-- so the tag's own back-edge/break markers still resolve correctly.
+compileLoopBodyLowCat (LTagged bid inner) loopHeaderPc nextPc = do
+  cached <- lookupBlockPcMemo bid nextPc
+  case cached of
+    Just pc -> return pc
+    Nothing -> do
+      pc <- compileLoopBodyLowCat inner loopHeaderPc nextPc
+      registerBlockPcMemo bid nextPc pc
+      return pc
 compileLoopBodyLowCat linearOp _loopHeaderPc nextPc =
   compileLowCatToCps linearOp nextPc
 
@@ -1258,3 +1364,4 @@ runCat (CatCall name args)     = callProc name args
 runCat (CatSuspend eff args)   = suspend eff args
 runCat CatSplitValue           = splitValue
 runCat (CatTry body _handler)  = runCat body
+runCat (CatTagged _ f)         = runCat f
