@@ -783,11 +783,26 @@ compileAssign ctx (SsaAssign sv rhs)
       -- (both default to PureCall/"?" for anything that isn't ExCall/
       -- ExMethodCall — matching the old compiler exactly, not improving on
       -- it, since that's this fix's confirmed reference behaviour).
+      --
+      -- Audited under Plan 146 Phase 4: this `SsaConst expr` arm is a
+      -- deliberate wildcard over every remaining Expr constructor (ExBool,
+      -- ExLvalue, ExBinOp, ExRaw, ...), not an oversight — a discard-target
+      -- assign's classification doesn't depend on which of those shapes the
+      -- RHS is, so there is no per-constructor behavior to enumerate here.
       SsaConst expr ->
         case classifyExpr (ccEnv ctx) expr of
           SuspendCall -> CatSuspend (effectName expr []) []
           PureCall    -> CatCall (calleeName expr) []
-      _ -> CatAssignWithRhs (svName sv) (ssaValToExpr rhs)
+      -- Non-SsaConst RHS values can't arise from a "_"-targeted assign in
+      -- practice — 'stmtToAssigns' only ever builds one for BsCall/BsPbCall,
+      -- both always 'SsaConst' — but SsaVal has just 5 constructors, so
+      -- listed explicitly (Plan 146 Phase 4) rather than behind a wildcard:
+      -- a future SsaVal addition now trips -Wincomplete-patterns here
+      -- instead of silently falling through to CatAssignWithRhs.
+      SsaVarRef _ -> CatAssignWithRhs (svName sv) (ssaValToExpr rhs)
+      SsaBinOp {} -> CatAssignWithRhs (svName sv) (ssaValToExpr rhs)
+      SsaNot _    -> CatAssignWithRhs (svName sv) (ssaValToExpr rhs)
+      SsaNull     -> CatAssignWithRhs (svName sv) (ssaValToExpr rhs)
   | otherwise = CatAssignWithRhs (svName sv) (ssaValToExpr rhs)
 
 -- | Shared logic for compiling an ExCall expression: classify and emit CatCall.

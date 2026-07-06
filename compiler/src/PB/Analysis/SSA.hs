@@ -395,7 +395,27 @@ stmtToAssigns (BsCall expr) =
 stmtToAssigns (BsPbCall (PbCall ancestor event)) =
   [SsaAssign (SsaVar "_" 0)
              (SsaConst (ExCall (Lvalue [LvSegment (ancestor <> "::" <> event) Nothing]) []))]
-stmtToAssigns _ = []
+-- Control-flow statements produce no SSA assign of their own. CfgBuild.lower
+-- keeps the trailing control stmt as the last element of a block's cbStmts
+-- (so cfgTermToSsa's findControlStmt can find it), but its "value" is the
+-- block terminator, not an assignment — cfgTermToSsa handles all of these
+-- (Plan 146 Phase 4 audit: was reached via the old catch-all, now explicit).
+stmtToAssigns (BsIf {})     = []
+stmtToAssigns (BsDo {})     = []
+stmtToAssigns (BsChoose {}) = []
+stmtToAssigns (BsReturn _)  = []
+stmtToAssigns BsExit        = []
+stmtToAssigns BsContinue    = []
+-- BsTry/BsThrow: try/catch is not yet lowered into the CFG (CfgBuild treats
+-- it as one opaque leaf statement — see BACKLOG's try/catch CFG-modeling
+-- note), so any assigns nested inside tryBody/catchBody are invisible here
+-- by design, not a gap in this function specifically. BsThrow has no
+-- assignable value of its own.
+stmtToAssigns (BsTry {})   = []
+stmtToAssigns (BsThrow _)  = []
+-- BsRaw: unparsed source text (embedded SQL, unclassified statements) — no
+-- structured assignment to extract.
+stmtToAssigns (BsRaw _)    = []
 
 exprToSsaVal :: Expr -> SsaVal
 exprToSsaVal ExNull            = SsaNull
@@ -432,6 +452,16 @@ cfgTermToSsa mHeaderStmt edges stmts = case findControlStmt stmts of
     -- loop *header* whose condition-check lives one block back (see
     -- 'findLoopHeaderStmts') — reconstruct the branch from there rather than
     -- falling through to the generic (and here, wrong) `SsaReturn Nothing`.
+    --
+    -- Plan 146 Phase 4 audit: this outer `_` is typed as `Maybe BodyStmt`, so
+    -- GHC sees it as covering `Nothing` *and* `Just` of any of the 12
+    -- non-control BodyStmt constructors — but `isCtrl` (above) guarantees
+    -- `findControlStmt` only ever returns `Just` for the 7 constructors
+    -- already matched, so the `Just`-of-a-non-control-stmt half of this
+    -- wildcard is unreachable by construction, not an audit gap. Left as a
+    -- wildcard rather than enumerated with dead `error "impossible"` arms,
+    -- which would add real risk (a typo there is worse than the status quo)
+    -- for no practical safety gain.
     _ -> case mHeaderStmt of
       Just (BsFor (ForStmt var _ to _ _)) ->
         SsaBranch (exprToSsaVal (ExBinOp (ExLvalue var) BopLe to))
@@ -442,6 +472,13 @@ cfgTermToSsa mHeaderStmt edges stmts = case findControlStmt stmts of
       Just (BsDo (DoStmt Nothing _ (Just cond))) ->
         SsaBranch (exprToSsaVal (doCondExpr cond))
                   (findEdgeLabel "T" edges) (findEdgeLabel "F" edges)
+      -- Plan 146 Phase 4 audit: covers `Nothing` (block is not a recognized
+      -- loop header — the common case) plus, type-wise, `Just` of any
+      -- BodyStmt/DoCondition combination other than the three shapes
+      -- `findLoopHeaderStmts`'s `trailingLoopStmt` ever produces (e.g. a
+      -- `DoStmt` with both a leading and trailing condition, which the
+      -- parser never builds) — type-possible but unreachable by
+      -- construction, not an audit gap.
       _ -> case edges of
         [e] -> SsaGoto (ceDst e)
         _   -> SsaReturn Nothing
@@ -466,7 +503,21 @@ findControlStmt (Located _ s : rest)
     isCtrl (BsReturn _) = True
     isCtrl BsExit      = True
     isCtrl BsContinue  = True
-    isCtrl _           = False
+    -- Plan 146 Phase 4 audit: the remaining 12 constructors were previously
+    -- caught by a single `isCtrl _ = False` wildcard; enumerated explicitly
+    -- so a future BodyStmt constructor trips -Wincomplete-patterns here.
+    isCtrl (BsLocalVar {})   = False
+    isCtrl (BsAssign {})     = False
+    isCtrl (BsAugAssign {})  = False
+    isCtrl (BsInc {})        = False
+    isCtrl (BsDec {})        = False
+    isCtrl (BsCall {})       = False
+    isCtrl (BsPbCall {})     = False
+    isCtrl (BsDestroy {})    = False
+    isCtrl (BsAssignExpr {}) = False
+    isCtrl (BsTry {})        = False
+    isCtrl (BsThrow {})      = False
+    isCtrl (BsRaw {})        = False
 
 findEdgeLabel :: Text -> [CfgEdge] -> Text
 findEdgeLabel lbl edges = case [ ceDst e | e <- edges, ceLabel e == lbl ] of
