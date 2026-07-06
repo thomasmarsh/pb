@@ -9,6 +9,7 @@
 -- (Plan 146 Phase 1D / 2a).
 module PB.Analysis.CpsInterp
   ( runCpsGraphTrace
+  , TraceOutcome (..)
   ) where
 
 import PB.Prelude
@@ -37,10 +38,23 @@ import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExpr
 -- 'TeReturn' (no 'CatOp' constructor 'runCat' interprets ever emits one
 -- either — 'SsaReturn' always compiles to a structural 'CatId'\/exit-goto,
 -- never a distinct return opcode), so the two traces stay comparable.
-runCpsGraphTrace :: Int -> MockResponses -> CpsGraph -> Map.Map Text Value -> (Map.Map Text Value, [TraceEvent])
+--
+-- Also returns a 'TraceOutcome' disclosing *why* the walk stopped: reaching a
+-- true terminal node ('NaturalHalt') versus exhausting @maxSteps@
+-- ('FuelExhausted'). Two genuinely non-terminating loops (e.g. a PB
+-- @do...loop until@ whose exit condition depends on an unmocked call result
+-- that can never resolve) compile to different node counts per iteration in
+-- the old vs new pipelines, so their fuel-truncated traces differ in length
+-- even though neither compiler actually misbehaves — callers that only care
+-- about genuine divergence should compare the common prefix instead of the
+-- raw traces whenever both sides report 'FuelExhausted'.
+data TraceOutcome = NaturalHalt | FuelExhausted
+  deriving (Eq, Show)
+
+runCpsGraphTrace :: Int -> MockResponses -> CpsGraph -> Map.Map Text Value -> (Map.Map Text Value, [TraceEvent], TraceOutcome)
 runCpsGraphTrace maxSteps mocks graph initEnv =
-  let (finalEnv, revTrace) = go maxSteps (cgEntry graph) initEnv []
-  in (finalEnv, reverse revTrace)
+  let (finalEnv, revTrace, outcome) = go maxSteps (cgEntry graph) initEnv []
+  in (finalEnv, reverse revTrace, outcome)
   where
     nodeMap :: Map.Map Int CpsNode
     nodeMap = Map.fromList (zip [0 ..] (cgNodes graph))
@@ -48,9 +62,9 @@ runCpsGraphTrace maxSteps mocks graph initEnv =
     nodeAt :: Int -> CpsNode
     nodeAt pc = fromMaybe (error "impossible: CpsGraph pc out of range") (Map.lookup pc nodeMap)
 
-    go :: Int -> Int -> Map.Map Text Value -> [TraceEvent] -> (Map.Map Text Value, [TraceEvent])
+    go :: Int -> Int -> Map.Map Text Value -> [TraceEvent] -> (Map.Map Text Value, [TraceEvent], TraceOutcome)
     go stepsLeft pc env trace
-      | stepsLeft <= 0 = (env, trace)
+      | stepsLeft <= 0 = (env, trace, FuelExhausted)
       | otherwise = case nodeAt pc of
           CpsAssign { anVar, anRhs, anNext } ->
             let v = evalExprMocked mocks env anRhs
@@ -68,5 +82,5 @@ runCpsGraphTrace maxSteps mocks graph initEnv =
           CpsCallProc { cpCallee, cpArgs, cpNext } ->
             let vals = map (evalExprMocked mocks env) cpArgs
             in go (stepsLeft - 1) cpNext env (TeCall cpCallee vals : trace)
-          CpsNop { npNext } -> if npNext < 0 then (env, trace) else go (stepsLeft - 1) npNext env trace
-          CpsReturn {} -> (env, trace)
+          CpsNop { npNext } -> if npNext < 0 then (env, trace, NaturalHalt) else go (stepsLeft - 1) npNext env trace
+          CpsReturn {} -> (env, trace, NaturalHalt)

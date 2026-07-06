@@ -1078,7 +1078,7 @@ tests = testGroup "CatOp"
     [ testCase "CatId: no trace, no env change" $ do
         let term = CatId :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
+        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
         itrace @?= []
         itrace @?= gtrace
         ienv @?= genv
@@ -1086,7 +1086,7 @@ tests = testGroup "CatOp"
     , testCase "CatAssignWithRhs: same assign trace, same env" $ do
         let term = CatAssignWithRhs "x_1" (ExInt "42") :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
+        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
         itrace @?= [TeAssign "x_1" (VInt 42)]
         itrace @?= gtrace
         ienv @?= genv
@@ -1094,7 +1094,7 @@ tests = testGroup "CatOp"
     , testCase "CatCompose: two assigns execute in the same order" $ do
         let term = CatAssignWithRhs "y_1" (ExInt "2") . CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
+        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
@@ -1103,7 +1103,7 @@ tests = testGroup "CatOp"
                      (CatAssignWithRhs "then_taken" (ExInt "1"))
                      (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
+        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
@@ -1112,21 +1112,21 @@ tests = testGroup "CatOp"
                      (CatAssignWithRhs "then_taken" (ExInt "1"))
                      (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
+        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
     , testCase "CatSuspend: same effect name and evaluated args" $ do
         let term = CatSuspend "retrieve:dw_foo" [ExInt "1", ExStr "bar"] :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
+        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
     , testCase "CatCall: same callee and evaluated args" $ do
         let term = CatCall "my_func" [ExInt "5"] :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
+        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
@@ -1144,7 +1144,7 @@ tests = testGroup "CatOp"
             term = CatLoop loopBody :: CatOp () ()
             initEnv = Map.fromList [("i", VInt 0)]
         (ienv, itrace) <- runInterpTrace term initEnv
-        let (genv, gtrace) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) initEnv
+        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) initEnv
         itrace @?= gtrace
         ienv @?= genv
         Map.lookup "i" ienv @?= Just (VInt 3)
@@ -1304,7 +1304,7 @@ tests = testGroup "CatOp"
           -- this shape (confirmed empirically before writing this assertion), not
           -- just a wrong-but-terminating result.
           maxSteps = 500 :: Int
-          (finalEnv, trc) = runCpsGraphTrace maxSteps Map.empty
+          (finalEnv, trc, _) = runCpsGraphTrace maxSteps Map.empty
                               (buildCpsGraph (compileSsaDefault nestedLoopsSsa)) initEnv
       in testCase "outer loop containing an inner loop terminates with the correct final environment, not a runaway trace" $ do
            assertBool ("trace should terminate well under the " <> show maxSteps <> "-step fuel bound, got "
@@ -1375,7 +1375,7 @@ tests = testGroup "CatOp"
                 ]
             }
           initEnv = Map.fromList [("x", VInt 0), ("y", VInt 0), ("skip_count", VInt 0), ("done", VInt 0)]
-          (finalEnv, _trc) = runCpsGraphTrace 100 Map.empty
+          (finalEnv, _trc, _) = runCpsGraphTrace 100 Map.empty
                                 (buildCpsGraph (compileSsaDefault continueSsa)) initEnv
       in testCase "continue mid-loop still reaches the real post-loop block, not the continue block's own content" $ do
            Map.lookup "x" finalEnv @?= Just (VInt 3)
@@ -1480,14 +1480,14 @@ tests = testGroup "CatOp"
          assertBool "expected a CatReturn node in the compiled tree" (hasCatReturn compiled)
 
      , testCase "loop completes normally (trigger never fires) and reaches real post-loop trailing code" $
-         let (finalEnv, _) = runIt 0
+         let (finalEnv, _, _) = runIt 0
          in do
            Map.lookup "x" finalEnv @?= Just (VInt 3)
            Map.lookup "y" finalEnv @?= Just (VInt 3)
            Map.lookup "done" finalEnv @?= Just (VInt 1)
 
      , testCase "return mid-loop terminates immediately, skipping the rest of the loop and all post-loop code" $
-         let (finalEnv, _) = runIt 1
+         let (finalEnv, _, _) = runIt 1
          in do
            Map.lookup "x" finalEnv @?= Just (VInt 0)
            Map.lookup "y" finalEnv @?= Just (VInt 999)
@@ -1560,7 +1560,7 @@ tests = testGroup "CatOp"
          maxSteps = 50 :: Int
          oldTrace = runCpsGraphTrace maxSteps Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
          newTrace = runCpsGraphTrace maxSteps Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
-         (_, elseTrc) = newTrace
+         (_, elseTrc, _) = newTrace
      in
      [ testCase "else-branch for-loop terminates well under the step bound, not a runaway trace" $
          assertBool ("expected well under " <> show maxSteps <> " steps, got " <> show (length elseTrc))

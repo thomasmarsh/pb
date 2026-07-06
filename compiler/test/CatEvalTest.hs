@@ -7,7 +7,7 @@ import PB.Lexing.Token (Token (..), TokenKind (..), SourceSpan (..))
 
 import qualified Data.Map.Strict as Map
 import Test.Tasty       (TestTree, testGroup)
-import Test.Tasty.HUnit (testCase, (@?=))
+import Test.Tasty.HUnit (assertBool, testCase, (@?=))
 
 emptyEnv :: Map.Map Text Value
 emptyEnv = Map.empty
@@ -90,6 +90,20 @@ tests = testGroup "CatEval"
   , testGroup "evalExpr / non-pure shapes (documented fallback)"
     [ testCase "bare ExCall yields VNull placeholder" $
         evalExpr emptyEnv (ExCall (Lvalue [LvSegment "f" Nothing]) []) @?= VNull
+    ]
+
+  -- Plan 146 Phase 2k: 'Value's derived 'Eq' used IEEE754 'Double' equality,
+  -- under which NaN /= NaN — so two independently compiled traces that both
+  -- legitimately compute the same NaN (e.g. a 0.0/0.0 ratio) looked like a
+  -- --dual-trace divergence when there was none. 'Value' now has a hand-written
+  -- 'Eq' that treats NaN as equal to itself for this reason.
+  , testGroup "Value Eq (Plan 146 Phase 2k: NaN compares equal to itself)"
+    [ testCase "VReal NaN == VReal NaN" $
+        VReal (0/0) @?= VReal (0/0)
+    , testCase "VReal NaN /= VReal 1.0" $
+        assertBool "NaN should not equal a real number" (VReal (0/0) /= VReal 1.0)
+    , testCase "VReal 1.0 == VReal 1.0 still uses ordinary equality" $
+        VReal 1.0 @?= VReal 1.0
     ]
 
   , testGroup "evalExprMocked / call-shaped Expr resolves via mock table (Plan 146 Phase 2a)"

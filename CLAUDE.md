@@ -831,6 +831,21 @@ runModeDb :: FilePath -> FilePath -> IO ()
 --           workerLoopFiles, workerLoopFilesNoBridge, emitProgress, jsonText
 -- Phase A: parse → compile → append to DuckDB (concurrent producer-consumer)
 -- Phase B: delegates to PB.Pipeline.Passes.runPhaseB
+
+-- Plan 146: old-vs-new CPS compiler equivalence checking (both share
+-- collectAllProcs :: FilePath -> IO [(Text, Text, ScopedTypeEnv, Set.Set Text, [Located BodyStmt], Maybe Int)]
+-- for the (obj, proc, env, userFns, body, line) tuples).
+runModeDualCps   :: FilePath -> Maybe Text -> IO ()  -- --dual-cps: canonical-shape diff, optional --inspect
+runModeDualTrace :: FilePath -> IO ()                -- --dual-trace: behavioral trace diff (the oracle; 0/7547 as of Plan 146 Phase 2k)
+isRealDiff :: (Map.Map Text CatEval.Value, [TraceEvent], TraceOutcome)
+           -> (Map.Map Text CatEval.Value, [TraceEvent], TraceOutcome) -> Bool
+-- ^ runModeDualTrace's diff predicate. Full equality, EXCEPT: if both sides'
+-- TraceOutcome is FuelExhausted (CpsInterp.runCpsGraphTrace hit maxSteps
+-- without reaching a terminal node), falls back to comparing only the
+-- common-length prefix — two genuinely non-terminating loops compile to a
+-- different CpsNode count per iteration old vs new, so raw fuel-truncated
+-- traces differ in length with no real divergence. Either side reaching
+-- NaturalHalt always requires full equality (never prefix-forgiven).
 ```
 
 ### `PB.Pipeline.Serialise`

@@ -32,7 +32,21 @@ data Value
   | VStr Text
   | VBool Bool
   | VNull
-  deriving (Eq, Ord, Show, Generic)
+  deriving (Ord, Show, Generic)
+
+-- | Structural equality treating NaN as equal to itself, unlike 'Double's own
+-- 'Eq' instance. This type's equality is used to diff two independently
+-- compiled traces for behavioral equivalence (Plan 146's @--dual-trace@);
+-- under IEEE754 semantics @NaN /= NaN@ would make two runs that both
+-- legitimately produce the same NaN (e.g. a @0.0/0.0@ ratio) look like a
+-- divergence when there is none.
+instance Eq Value where
+  VInt a  == VInt b  = a == b
+  VReal a == VReal b = a == b || (isNaN a && isNaN b)
+  VStr a  == VStr b  = a == b
+  VBool a == VBool b = a == b
+  VNull   == VNull   = True
+  _       == _       = False
 
 -- | An observable effect produced while interpreting a 'CatOp' (or,
 -- eventually, a 'CpsGraph') term: a variable assignment, an effect

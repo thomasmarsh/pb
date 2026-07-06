@@ -10,6 +10,7 @@ module PB.Pipeline.Runner
   , runModeDb
   , runModeDualCps
   , runModeDualTrace
+  , isRealDiff
   , compileOne
   , appendToDb
   , CompiledFile (..)
@@ -24,7 +25,9 @@ import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.CfgBuild    (buildCfg)
 import PB.Analysis.CpsCompile  (compileProcedure, canonicalize, normalizeCallTag)
 import PB.Analysis.CatOp       (compileProcedureViaCatOp)
-import PB.Analysis.CpsInterp   (runCpsGraphTrace)
+import PB.Analysis.CpsInterp   (runCpsGraphTrace, TraceOutcome (..))
+import PB.Analysis.CatEval     (TraceEvent)
+import qualified PB.Analysis.CatEval as CatEval
 import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), ScopedTypeEnv, buildWorkspaceEnv, procEnv)
 import PB.Analysis.Dataflow    qualified as Dataflow
@@ -454,13 +457,34 @@ runModeDualTrace srcDir = do
         [ (obj, pName, runCpsGraphTrace traceMaxSteps Map.empty (compileProcedure env userFns body) Map.empty
                     ,  runCpsGraphTrace traceMaxSteps Map.empty (compileProcedureViaCatOp env userFns body) Map.empty)
         | (obj, pName, env, userFns, body, _line) <- allProcs ]
-      diffs = [ (obj, pName) | (obj, pName, oldTrace, newTrace) <- results, oldTrace /= newTrace ]
+      diffs = [ (obj, pName) | (obj, pName, old, new) <- results, isRealDiff old new ]
   mapM_ (\(obj, pName) -> putStrLn ("DIFF " <> obj <> "::" <> pName)) diffs
   let total = length results
       nDiff  = length diffs
   putStrLn ("Total: " <> T.pack (show total) <> " procedures, "
             <> T.pack (show nDiff) <> " differ, "
             <> T.pack (show (total - nDiff)) <> " identical")
+
+-- | Two 'runCpsGraphTrace' results denote the same observable behavior if
+-- they're equal outright, or — when *both* exhausted the fuel bound — if
+-- their traces agree up to the shorter one's length. Two genuinely
+-- non-terminating loops (e.g. a PB @do...loop until@ whose exit condition
+-- depends on an unmocked call result that can never resolve) compile to a
+-- different number of 'PB.Analysis.CpsCompile.CpsNode's per iteration in the
+-- old vs new pipelines, so their raw fuel-truncated traces differ in length
+-- with no real divergence; only a content difference within the shared
+-- prefix is a genuine one. If either side reached a true terminal node
+-- ('NaturalHalt'), fall back to plain equality — a real miscompile can look
+-- exactly like an early, incorrect 'NaturalHalt', so that case must never be
+-- silently forgiven by a prefix check (Plan 146 Phase 2k).
+isRealDiff :: (Map.Map Text CatEval.Value, [TraceEvent], TraceOutcome)
+           -> (Map.Map Text CatEval.Value, [TraceEvent], TraceOutcome)
+           -> Bool
+isRealDiff (oldEnv, oldTrace, oldOutcome) (newEnv, newTrace, newOutcome)
+  | FuelExhausted <- oldOutcome, FuelExhausted <- newOutcome =
+      let shorterLen = min (length oldTrace) (length newTrace)
+      in take shorterLen oldTrace /= take shorterLen newTrace
+  | otherwise = (oldEnv, oldTrace) /= (newEnv, newTrace)
 
 -- | Dump canonical OLD/NEW shape-node lists for a single "obj::proc" target,
 -- then exit. Used to hand-diff one procedure instead of scanning the whole

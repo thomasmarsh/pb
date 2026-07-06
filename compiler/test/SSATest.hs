@@ -133,6 +133,51 @@ tests = testGroup "SSA"
                   [at 1 (BsLocalVar [] (PtPrimitive "integer") "x" Nothing)]
         allVarNames sa @?= []
         totalAssigns sa @?= 0
+
+    -- Plan 146 Phase 2k: 'stmtToAssigns'/'stmtVarName' used to lowercase a
+    -- BsLocalVar's declared name (e.g. "lb_First" -> "lb_first") while every
+    -- other assignment-producing BodyStmt preserved case verbatim — the same
+    -- class of bug as Phase 2c/2d's stray case-folding, breaking
+    -- --dual-trace equivalence against the old compiler's never-lowercasing
+    -- CpsCompile.
+    , testCase "local var with init preserves declared case" $ do
+        let sa = buildSsa emptyEnv "proc"
+                  [at 1 (BsLocalVar [] (PtPrimitive "boolean") "lb_First" (Just (ExBool True)))]
+        allVarNames sa @?= ["lb_First"]
+
+    -- Plan 146 Phase 2k: 'exprToSsaVal's 'ExLvalue' case used to collapse ANY
+    -- lvalue RHS (including multi-segment/subscripted member access like
+    -- "adw_dw.object.level[al_row]") down to a bare 'SsaVarRef' on just its
+    -- head segment — silently reading whatever the head variable's own
+    -- current value happens to be instead of the real property/array
+    -- element. Only a plain, single-segment, no-subscript reference is a
+    -- genuine SSA-tracked variable read; anything else must stay an opaque
+    -- 'SsaConst' expression, matching the old compiler (which never
+    -- simplifies a RHS at all).
+    , testCase "multi-segment lvalue RHS is not collapsed to its head variable" $ do
+        let rhsLv = Lvalue [LvSegment "adw_dw" Nothing, LvSegment "object" Nothing, LvSegment "level" (Just ["al_row"])]
+            sa = buildSsa emptyEnv "proc"
+                  [at 1 (BsAssign (lv1 "li_level") (ExLvalue rhsLv))]
+        case sbAssigns (entryBlock sa) of
+          [SsaAssign _ (SsaConst (ExLvalue lv))] -> lv @?= rhsLv
+          other -> assertBool ("expected one SsaConst-wrapped assign, got " <> show other) False
+
+    , testCase "subscripted single-segment lvalue RHS is not collapsed either" $ do
+        let rhsLv = Lvalue [LvSegment "la_items" (Just ["1"])]
+            sa = buildSsa emptyEnv "proc"
+                  [at 1 (BsAssign (lv1 "x") (ExLvalue rhsLv))]
+        case sbAssigns (entryBlock sa) of
+          [SsaAssign _ (SsaConst (ExLvalue lv))] -> lv @?= rhsLv
+          other -> assertBool ("expected one SsaConst-wrapped assign, got " <> show other) False
+
+    , testCase "plain single-segment lvalue RHS still becomes SsaVarRef" $ do
+        let sa = buildSsa emptyEnv "proc"
+                  [ at 1 (BsAssign (lv1 "x") (ExInt "1"))
+                  , at 2 (BsAssign (lv1 "y") (ExLvalue (lv1 "x")))
+                  ]
+        case sbAssigns (entryBlock sa) of
+          [_, SsaAssign _ (SsaVarRef sv)] -> svName sv @?= "x"
+          other -> assertBool ("expected SsaVarRef, got " <> show other) False
     ]
 
   , testGroup "if/else"

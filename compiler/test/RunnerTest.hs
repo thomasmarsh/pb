@@ -1,17 +1,21 @@
 module RunnerTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql)
+import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, isRealDiff)
 import PB.AST.BodyStmt     (BodyStmt (..))
 import PB.AST.DataWindow   (DwRetrieve (..), DwRetrieveOrRaw (..), DwWhereClause (..))
 import PB.AST.Expr         (Expr (..))
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile   (TypeBlock (..), TypeDecl (..))
 import PB.AST.Type         (PbType (..))
+import PB.Analysis.CatEval   (TraceEvent (..))
+import PB.Analysis.CatEval   qualified as CatEval
+import PB.Analysis.CpsInterp (TraceOutcome (..))
 
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
+import qualified Data.Map.Strict   as Map
 import qualified Data.Text         as T
 
 import Test.Tasty       (TestTree, testGroup)
@@ -491,6 +495,38 @@ tests = testGroup "Pipeline.Runner"
                            }
         in reconstructRetrieveSql (DwRetrieveOk r)
                @?= "SELECT myCol FROM t WHERE myCol > 100"
+    ]
+
+  -- Plan 146 Phase 2k: two genuinely non-terminating loops (e.g. a PB
+  -- do...loop until whose exit condition depends on an unmocked call result)
+  -- compile to a different number of CpsNodes per iteration in the old vs new
+  -- pipelines, so raw fuel-truncated traces differ in length with no real
+  -- behavioral divergence. isRealDiff only forgives that when BOTH sides
+  -- exhausted the fuel bound and the shared prefix matches exactly.
+  , testGroup "isRealDiff (Plan 146 Phase 2k: fuel-truncation artifact)"
+    [ testCase "identical results are never a diff" $
+        let r = (Map.fromList [("x", CatEval.VInt 1)], [TeAssign "x" (CatEval.VInt 1)], NaturalHalt)
+        in isRealDiff r r @?= False
+
+    , testCase "both fuel-exhausted with identical common prefix is not a diff, even if lengths differ" $
+        let old = (Map.empty, [TeBranch True, TeBranch True, TeBranch True], FuelExhausted)
+            new = (Map.empty, [TeBranch True, TeBranch True], FuelExhausted)
+        in isRealDiff old new @?= False
+
+    , testCase "both fuel-exhausted but the common prefix actually differs IS a diff" $
+        let old = (Map.empty, [TeBranch True, TeBranch False, TeBranch True], FuelExhausted)
+            new = (Map.empty, [TeBranch True, TeBranch True], FuelExhausted)
+        in isRealDiff old new @?= True
+
+    , testCase "one side reaching a natural halt early is still a real diff, not forgiven by prefix" $
+        let old = (Map.fromList [("x", CatEval.VInt 1)], [TeAssign "x" (CatEval.VInt 1)], NaturalHalt)
+            new = (Map.empty, [], FuelExhausted)
+        in isRealDiff old new @?= True
+
+    , testCase "both NaturalHalt still requires full equality, not just a matching prefix" $
+        let old = (Map.fromList [("x", CatEval.VInt 1)], [TeAssign "x" (CatEval.VInt 1)], NaturalHalt)
+            new = (Map.fromList [("x", CatEval.VInt 1)], [TeAssign "x" (CatEval.VInt 1), TeBranch True], NaturalHalt)
+        in isRealDiff old new @?= True
     ]
 
   ]

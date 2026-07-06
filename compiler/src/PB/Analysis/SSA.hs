@@ -261,7 +261,7 @@ computeDF blockIds predMap idom = fixedPoint initDF
 
 stmtVarName :: BodyStmt -> Maybe Text
 stmtVarName (BsAssign lv _)             = Just (lvHead lv)
-stmtVarName (BsLocalVar _ _ vn _)       = Just (T.toLower vn)
+stmtVarName (BsLocalVar _ _ vn _)       = Just vn
 stmtVarName (BsAugAssign (t:_) _ _)     = Just (tkText t)
 stmtVarName (BsInc (t:_))               = Just (tkText t)
 stmtVarName (BsDec (t:_))               = Just (tkText t)
@@ -364,7 +364,7 @@ stmtToAssigns (BsAssign lv expr) =
 stmtToAssigns (BsFor (ForStmt var from _ _ _)) =
   [SsaAssign (SsaVar (lvHead var) 0) (exprToSsaVal from)]
 stmtToAssigns (BsLocalVar _ _ varName (Just expr)) =
-  [SsaAssign (SsaVar (T.toLower varName) 0) (exprToSsaVal expr)]
+  [SsaAssign (SsaVar varName 0) (exprToSsaVal expr)]
 stmtToAssigns (BsLocalVar {}) = []
 stmtToAssigns (BsAugAssign toks op rhsToks) =
   let varName = case toks of { (t:_) -> tkText t; [] -> "_" }
@@ -421,7 +421,7 @@ exprToSsaVal :: Expr -> SsaVal
 exprToSsaVal ExNull            = SsaNull
 exprToSsaVal (ExBinOp l op r)  = SsaBinOp op (exprToSsaVal l) (exprToSsaVal r)
 exprToSsaVal (ExNot e)         = SsaNot (exprToSsaVal e)
-exprToSsaVal (ExLvalue lv)     = SsaVarRef (SsaVar (lvHead lv) 0)
+exprToSsaVal (ExLvalue lv@(Lvalue [LvSegment _ Nothing])) = SsaVarRef (SsaVar (lvHead lv) 0)
 exprToSsaVal e                 = SsaConst e
 
 cfgTermToSsa :: Maybe BodyStmt -> [CfgEdge] -> [Located BodyStmt] -> SsaTerm
