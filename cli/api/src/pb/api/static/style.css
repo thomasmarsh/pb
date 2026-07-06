@@ -2260,15 +2260,6 @@ kbd.kbd {
 
 /* Wiring diagram (Plan 149 Phase 3) — theme-aware CSS, no baked SVG colors
    unlike the graphviz-rendered CFG above (see architecture-pipeline.md). */
-.wiring-badge {
-    font-size: 11px;
-    color: var(--phase-p3);
-    border: 1px solid var(--phase-p3);
-    border-radius: 4px;
-    padding: 2px 8px;
-    display: inline-block;
-    margin-bottom: 6px;
-}
 .wiring-svg-wrap {
     transform-origin: 0 0;
     display: inline-block;

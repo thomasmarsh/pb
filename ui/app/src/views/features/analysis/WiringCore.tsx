@@ -1,9 +1,10 @@
 // features/analysis/WiringCore.tsx — Embeddable wiring-diagram rendering core (Plan 149 Phase 3).
 //
-// Experimental: renders the term the categorical (CatOp/LowCat) compiler
-// produces, which Plan 146 is still verifying against the old compiler via
-// --dual-trace. A mislowered term shows up here as a wrong-looking diagram —
-// that is signal for 146, not a bug in this renderer.
+// Renders the term the categorical (CatOp/LowCat) compiler produces — the
+// sole compiler as of Plan 144 Phase 5 Step 7, which deleted the old
+// compiler once Plan 146 confirmed byte-identical behavior against it
+// (0/7547 corpus procedures). No "under verification" badge: Plan 146 has
+// closed.
 //
 // Data flows through the objects feature's env/reducer (CLAUDE.md Rule 1/2)
 // — no fetch here, unlike CFGCore.tsx, which predates the AppEnv
@@ -117,7 +118,6 @@ export function WiringCore(props: WiringCoreProps): JSX.Element {
         {(l) => (
           <div class="cfg-split">
             <div class="cfg-diagram-pane">
-              <div class="wiring-badge">Experimental — CatOp lowering under verification (Plan 146)</div>
               <div
                 ref={observeViewport}
                 class={pan.state.dragging() ? "diagram-viewport grabbing" : "diagram-viewport"}

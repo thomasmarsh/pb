@@ -2,7 +2,10 @@
 
 import { describe, it, expect } from "vitest";
 import type { WireTerm, WiringPayload, Expr } from "@pb/interpreter";
-import { layoutWiring, recognizeBranch, prettyExpr, type LayoutBox, type LayoutWire } from "../../../app/src/views/features/analysis/wiring-layout.js";
+import {
+  layoutWiring, recognizeBranch, prettyExpr, collectBranchChain,
+  type LayoutBox, type LayoutWire, type FoldCtx,
+} from "../../../app/src/views/features/analysis/wiring-layout.js";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -314,5 +317,118 @@ describe("layoutWiring — invariants", () => {
     const l1 = layoutWiring(NESTED_FIXTURE);
     const l2 = layoutWiring(NESTED_FIXTURE);
     expect(l1.boxes.map((b) => b.id)).toEqual(l2.boxes.map((b) => b.id));
+  });
+});
+
+// ── Box sizing: width must scale with label length ──────────────────────────
+// A fixed box width overflowed badly for anything longer than a short
+// identifier (reported live against fn_getgeniki::fn_getgeniki — text spilled
+// out past the rectangle for any non-trivial label).
+
+describe("layoutWiring — box width scales with label length", () => {
+  it("a long call-expression label produces a visibly wider box than a short one", () => {
+    const shortLabel = layoutWiring(payload({ tag: "LEval", contents: EX_LVALUE("x") }));
+    const longLabel = layoutWiring(payload({
+      tag: "LEval",
+      contents: {
+        tag: "ExCall",
+        callee: { segments: [{ name: "tv_1", subscript: null }, { name: "FindItem", subscript: null }] },
+        args: [["ParentTreeItem!"], ["al_Item"]],
+      },
+    }));
+    expect(longLabel.boxes[0]!.width).toBeGreaterThan(shortLabel.boxes[0]!.width);
+  });
+
+  it("a box is always at least as wide as needed to avoid the label overflowing it", () => {
+    const label = "of_createwhere(al_startrow, al_endrow, ls_where_datefinal)";
+    const l = layoutWiring(payload({ tag: "LCall", contents: [label, []] }));
+    // Rough monospace character-width lower bound — the box must not be
+    // narrower than the label itself would render at the box's own font-size.
+    expect(l.boxes[0]!.width).toBeGreaterThan(label.length * 5);
+  });
+});
+
+// ── Elseif/choose-case chain flattening ──────────────────────────────────────
+// A naive fold re-nests layoutIfRegion once per elseif clause (each elseif's
+// body is the previous branch's else arm), ballooning canvas width roughly
+// linearly per clause — confirmed live against a real 12-clause corpus
+// procedure (w_krat_total_search::of_createwhere) whose canvas hit ~19600
+// units wide before this fix. collectBranchChain flattens the whole chain
+// into one ladder instead.
+
+function makeCtx(sharedBlocks: Record<string, WireTerm> = {}): FoldCtx {
+  return { sharedBlocks, seen: new Set(), insideLoop: false };
+}
+
+function branchOf(cond: Expr, thenBranch: WireTerm, elseBranch: WireTerm): WireTerm {
+  return {
+    tag: "LCompose",
+    contents: [
+      { tag: "LFanIn", contents: [thenBranch, elseBranch] },
+      { tag: "LCompose", contents: [{ tag: "LSplitValue" }, { tag: "LFork", contents: [{ tag: "LId" }, { tag: "LEval", contents: cond }] }] },
+    ],
+  };
+}
+
+describe("collectBranchChain", () => {
+  it("flattens a bare 3-clause elseif chain (no tagging) into 3 clauses + a final else", () => {
+    const chain3 = branchOf(EX_INT("3"), { tag: "LReturn" }, { tag: "LId" });
+    const chain2 = branchOf(EX_INT("2"), { tag: "LReturn" }, chain3);
+    const chain1 = branchOf(EX_INT("1"), { tag: "LReturn" }, chain2);
+    const result = collectBranchChain(chain1, makeCtx());
+    expect(result.clauses).toHaveLength(3);
+    expect(result.finalElse).toEqual({ tag: "LId" });
+  });
+
+  it("sees through a trivial LCompose(x, LId) identity wrapper around the next clause", () => {
+    // Mirrors real corpus shape: LCompose[LTagged(bid), LId] wrapping a
+    // continuation, but here with a bare next-branch instead of a tag.
+    const chain2 = branchOf(EX_INT("2"), { tag: "LReturn" }, { tag: "LId" });
+    const wrapped: WireTerm = { tag: "LCompose", contents: [chain2, { tag: "LId" }] };
+    const chain1 = branchOf(EX_INT("1"), { tag: "LReturn" }, wrapped);
+    const result = collectBranchChain(chain1, makeCtx());
+    expect(result.clauses).toHaveLength(2);
+  });
+
+  it("sees through an LTagged shared-block reference wrapping the next clause (real corpus shape)", () => {
+    const chain2 = branchOf(EX_INT("2"), { tag: "LReturn" }, { tag: "LId" });
+    const tagged: WireTerm = { tag: "LCompose", contents: [{ tag: "LTagged", blockId: "b1" }, { tag: "LId" }] };
+    const chain1 = branchOf(EX_INT("1"), { tag: "LReturn" }, tagged);
+    const ctx = makeCtx({ b1: chain2 });
+    const result = collectBranchChain(chain1, ctx);
+    expect(result.clauses).toHaveLength(2);
+    expect(ctx.seen.has("b1")).toBe(true);
+  });
+
+  it("does not dereference a bare LTagged as the very first term (must stay untouched for layoutTerm's own first-expansion/jump-box handling)", () => {
+    const ctx = makeCtx({ b1: { tag: "LReturn" } });
+    const result = collectBranchChain({ tag: "LTagged", blockId: "b1" }, ctx);
+    expect(result.clauses).toHaveLength(0);
+    expect(ctx.seen.has("b1")).toBe(false);
+  });
+
+  it("stops the chain at a real intervening statement (not an elseif — a genuinely separate sequential if)", () => {
+    // Mirrors the real corpus finding: consecutive if-statements each
+    // followed by their own assignment are NOT one elseif chain, even
+    // though the next branch sits inside an LCompose the same way a true
+    // elseif continuation would.
+    const chain2 = branchOf(EX_INT("2"), { tag: "LReturn" }, { tag: "LId" });
+    const withAssign: WireTerm = { tag: "LCompose", contents: [chain2, { tag: "LAssignWithRhs", contents: ["ldate", EX_INT("1")] }] };
+    const chain1 = branchOf(EX_INT("1"), { tag: "LReturn" }, withAssign);
+    const result = collectBranchChain(chain1, makeCtx());
+    expect(result.clauses).toHaveLength(1);
+    expect(result.finalElse).toEqual(withAssign);
+  });
+});
+
+describe("layoutWiring — elseif-chain rendering", () => {
+  it("renders a 3-clause elseif chain as a single flat ladder region, not 3 nested if-regions", () => {
+    const chain3 = branchOf(EX_INT("3"), { tag: "LReturn" }, { tag: "LId" });
+    const chain2 = branchOf(EX_INT("2"), { tag: "LReturn" }, chain3);
+    const chain1 = branchOf(EX_INT("1"), { tag: "LReturn" }, chain2);
+    const l = layoutWiring(payload(chain1));
+    const ifRegions = l.regions.filter((r) => r.kind === "if");
+    expect(ifRegions).toHaveLength(1);
+    expect(l.boxes.filter((b) => b.kind === "cond")).toHaveLength(3);
   });
 });

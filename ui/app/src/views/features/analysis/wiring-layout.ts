@@ -123,8 +123,10 @@ export function prettyExpr(e: Expr): string {
 
 // ── Geometry constants ───────────────────────────────────────────────────────
 
-const BOX_W = 160;
 const BOX_H = 40;
+const BOX_MIN_W = 90;
+const BOX_LABEL_PAD = 20; // horizontal padding inside the box, 10px each side
+const CHAR_W = 6.6; // approx glyph width at the box label's 11px monospace font-size
 const SEG_W = 28;
 const LANE_GAP = 16;
 const REGION_PAD = 14;
@@ -155,10 +157,15 @@ function translate(d: Diagram, dx: number, dy: number): Diagram {
   };
 }
 
+// Box width is sized to the label — a fixed width overflowed badly for
+// anything longer than a short identifier (e.g. a chained method call or a
+// multi-arg SQL suspend effect), since real corpus labels vary from a bare
+// variable name to a full call expression with several arguments.
 function leafBox(id: string, kind: BoxKind, label: string): Diagram {
+  const width = Math.max(BOX_MIN_W, Math.ceil(label.length * CHAR_W) + BOX_LABEL_PAD);
   return {
-    width: BOX_W, height: BOX_H, entryY: BOX_H / 2, exitY: BOX_H / 2,
-    boxes: [{ id, kind, label, x: 0, y: 0, width: BOX_W, height: BOX_H }],
+    width, height: BOX_H, entryY: BOX_H / 2, exitY: BOX_H / 2,
+    boxes: [{ id, kind, label, x: 0, y: 0, width, height: BOX_H }],
     wires: [], regions: [],
   };
 }
@@ -197,34 +204,43 @@ function composeH(idPrefix: string, f: Diagram, g: Diagram): Diagram {
   };
 }
 
-// Stacks two diagrams vertically (top above bottom, both starting at x=SEG_W)
-// behind one shared entry fork-point and one shared exit join-point — the
-// "two stacked branch regions merging into one output wire" shape used by
-// both the if-region (with a cond box prefix) and the raw LFanIn/LFork
-// fallback (never hit on real corpus data, per Phase 0 finding 4).
-function layoutForkJoin(path: string, kind: RegionKind, label: string, top: Diagram, bottom: Diagram, addRegion = true): Diagram {
+// Stacks N diagrams vertically (each starting at x=SEG_W) behind one shared
+// entry fork-point and one shared exit join-point — the "stacked branch
+// regions merging into one output wire" shape used by the if-region (N=2,
+// with a cond box prefix), the raw LFanIn/LFork fallback (N=2, never hit on
+// real corpus data per Phase 0 finding 4), and an elseif/choose-case chain
+// (N>2 — see layoutElseifChain: without this, each elseif nests another full
+// if-region inside the previous one's else lane, ballooning canvas width
+// roughly linearly per clause on real corpus procedures with long chains).
+function layoutLadder(path: string, kind: RegionKind, label: string, lanes: Diagram[], addRegion = true): Diagram {
   const lanesX = SEG_W;
-  const topT = translate(top, lanesX, 0);
-  const bottomT = translate(bottom, lanesX, top.height + LANE_GAP);
-  const lanesWidth = Math.max(top.width, bottom.width);
-  const forkY = (topT.entryY + bottomT.entryY) / 2;
+  let y = 0;
+  const translated: Diagram[] = [];
+  for (const lane of lanes) {
+    translated.push(translate(lane, lanesX, y));
+    y += lane.height + LANE_GAP;
+  }
+  const height = y - LANE_GAP;
+  const lanesWidth = Math.max(...lanes.map((l) => l.width));
+  const forkY = translated.reduce((sum, l) => sum + l.entryY, 0) / translated.length;
   const joinX = lanesX + lanesWidth + SEG_W;
-  const joinY = (topT.exitY + bottomT.exitY) / 2;
-  const forkTop: LayoutWire = { id: `${path}.forkT`, points: [{ x: 0, y: forkY }, { x: lanesX, y: topT.entryY }] };
-  const forkBottom: LayoutWire = { id: `${path}.forkB`, points: [{ x: 0, y: forkY }, { x: lanesX, y: bottomT.entryY }] };
-  const joinTop: LayoutWire = { id: `${path}.joinT`, points: [{ x: lanesX + lanesWidth, y: topT.exitY }, { x: joinX, y: joinY }] };
-  const joinBottom: LayoutWire = { id: `${path}.joinB`, points: [{ x: lanesX + lanesWidth, y: bottomT.exitY }, { x: joinX, y: joinY }] };
-  const height = top.height + LANE_GAP + bottom.height;
+  const joinY = translated.reduce((sum, l) => sum + l.exitY, 0) / translated.length;
+  const forkWires = translated.map((l, i): LayoutWire => ({ id: `${path}.fork${i}`, points: [{ x: 0, y: forkY }, { x: lanesX, y: l.entryY }] }));
+  const joinWires = translated.map((l, i): LayoutWire => ({ id: `${path}.join${i}`, points: [{ x: lanesX + lanesWidth, y: l.exitY }, { x: joinX, y: joinY }] }));
   const region: LayoutRegion = { id: `${path}.region`, kind, label, x: 0, y: 0, width: joinX, height };
   return {
     width: joinX,
     height,
     entryY: forkY,
     exitY: joinY,
-    boxes: [...topT.boxes, ...bottomT.boxes],
-    wires: [forkTop, forkBottom, ...topT.wires, ...bottomT.wires, joinTop, joinBottom],
-    regions: addRegion ? [...topT.regions, ...bottomT.regions, region] : [...topT.regions, ...bottomT.regions],
+    boxes: translated.flatMap((l) => l.boxes),
+    wires: [...forkWires, ...translated.flatMap((l) => l.wires), ...joinWires],
+    regions: addRegion ? [...translated.flatMap((l) => l.regions), region] : translated.flatMap((l) => l.regions),
   };
+}
+
+function layoutForkJoin(path: string, kind: RegionKind, label: string, top: Diagram, bottom: Diagram, addRegion = true): Diagram {
+  return layoutLadder(path, kind, label, [top, bottom], addRegion);
 }
 
 function layoutIfRegion(branch: BranchIdiom, path: string, ctx: FoldCtx): Diagram {
@@ -238,6 +254,70 @@ function layoutIfRegion(branch: BranchIdiom, path: string, ctx: FoldCtx): Diagra
   const combined = composeH(path, condD, forkJoin);
   const region: LayoutRegion = { id: `${path}.if-region`, kind: "if", label: "if", x: 0, y: 0, width: combined.width, height: combined.height };
   return { ...combined, regions: [...combined.regions, region] };
+}
+
+// Follows a chain of recognized branches through their "else" arm — an
+// elseif/choose-case ladder compiles to nested branches (each elseif's body
+// is the previous branch's else arm), so a naive fold re-triggers
+// layoutIfRegion at every level, nesting a full-width region inside the
+// previous one's else lane. Real corpus procedures with long elseif chains
+// (e.g. w_krat_total_search::of_createwhere, 12+ clauses) balloon to a
+// canvas tens of thousands of units wide this way — unreadable at any
+// scale that fits a panel. Collecting the whole chain up front lets
+// layoutElseifChain render it as one flat ladder instead.
+// A subsequent elseif clause is frequently compiled behind an LTagged
+// shared-block reference (any CFG merge point gets tagged, not just ones
+// with 2+ real references — see PB.Analysis.GraphBuilder.collectWiring's
+// own doc comment). Dereference through it here so the chain keeps
+// following into the real branch, consuming (ctx.seen) the tag exactly
+// once, same as layoutTerm's own LTagged case — never for the *starting*
+// term itself (clauses.length === 0), since a bare, not-yet-processed
+// LTagged there might not be a branch at all, and must be left untouched
+// for the normal first-expansion-vs-jump-box handling in layoutTerm.
+// LCompose(x, LId) / LCompose(LId, x) are no-op identity wrappers the
+// compiler leaves in place rather than simplifying away (seen throughout
+// real corpus terms — e.g. plain LId residues are common). A tagged
+// continuation is frequently wrapped this way (LCompose[LTagged(bid), LId]
+// in the real w_krat_total_search::of_createwhere term, not a bare
+// LTagged), so the chain-follower must see through these before it can
+// even find the tag to dereference.
+function skipIdentity(term: WireTerm): WireTerm {
+  if (term.tag === "LCompose") {
+    const [g, f] = term.contents;
+    if (f.tag === "LId") return skipIdentity(g);
+    if (g.tag === "LId") return skipIdentity(f);
+  }
+  return term;
+}
+
+export function collectBranchChain(term: WireTerm, ctx: FoldCtx): { clauses: { cond: Expr; body: WireTerm }[]; finalElse: WireTerm } {
+  const clauses: { cond: Expr; body: WireTerm }[] = [];
+  let current = term;
+  for (;;) {
+    let probe = skipIdentity(current);
+    if (clauses.length > 0 && probe.tag === "LTagged" && !ctx.seen.has(probe.blockId)) {
+      const inner = ctx.sharedBlocks[probe.blockId];
+      if (inner) {
+        ctx.seen.add(probe.blockId);
+        probe = skipIdentity(inner);
+      }
+    }
+    const m = recognizeBranch(probe);
+    if (!m) { current = probe; break; }
+    clauses.push({ cond: m.cond, body: m.thenBranch });
+    current = m.elseBranch;
+  }
+  return { clauses, finalElse: current };
+}
+
+function layoutElseifChain(chain: { clauses: { cond: Expr; body: WireTerm }[]; finalElse: WireTerm }, path: string, ctx: FoldCtx): Diagram {
+  const rows = chain.clauses.map((clause, i) => {
+    const condD = leafBox(`${path}.clause${i}.cond`, "cond", prettyExpr(clause.cond));
+    const bodyD = layoutTerm(clause.body, `${path}.clause${i}.body`, ctx);
+    return composeH(`${path}.clause${i}`, condD, bodyD);
+  });
+  const elseD = layoutTerm(chain.finalElse, `${path}.else`, ctx);
+  return layoutLadder(path, "if", "if/elseif", [...rows, elseD]);
 }
 
 // Wraps a loop body in a rounded region. LInl-tagged ("continue") boxes
@@ -270,15 +350,19 @@ function layoutLoopRegion(path: string, body: Diagram): Diagram {
   };
 }
 
-interface FoldCtx {
+export interface FoldCtx {
   sharedBlocks: Record<string, WireTerm>;
   seen: Set<string>;
   insideLoop: boolean;
 }
 
 function layoutTerm(term: WireTerm, path: string, ctx: FoldCtx): Diagram {
-  const branch = recognizeBranch(term);
-  if (branch) return layoutIfRegion(branch, path, ctx);
+  const chain = collectBranchChain(term, ctx);
+  if (chain.clauses.length === 1) {
+    const c = chain.clauses[0]!;
+    return layoutIfRegion({ cond: c.cond, thenBranch: c.body, elseBranch: chain.finalElse }, path, ctx);
+  }
+  if (chain.clauses.length >= 2) return layoutElseifChain(chain, path, ctx);
 
   switch (term.tag) {
   case "LId":          return wireOnly(path);
