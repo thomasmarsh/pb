@@ -14,6 +14,7 @@ import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (
                             SsaTerm (..), SsaProc (..), renderSsaVar, buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import Control.Monad.State.Strict (runStateT)
+import qualified Control.Exception as CE
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
@@ -80,6 +81,17 @@ hasCatLoop (CatFork f g) = hasCatLoop f P.|| hasCatLoop g
 hasCatLoop (CatFanIn f g) = hasCatLoop f P.|| hasCatLoop g
 hasCatLoop (CatTry f g) = hasCatLoop f P.|| hasCatLoop g
 hasCatLoop _ = False
+
+-- | Check if a CatOp tree contains a CatReturn (Plan 146 Phase 2i: the
+-- true procedure-terminal escape, distinct from CatInr/break).
+hasCatReturn :: CatOp a b -> Bool
+hasCatReturn CatReturn = True
+hasCatReturn (CatCompose f g) = hasCatReturn f P.|| hasCatReturn g
+hasCatReturn (CatFork f g) = hasCatReturn f P.|| hasCatReturn g
+hasCatReturn (CatFanIn f g) = hasCatReturn f P.|| hasCatReturn g
+hasCatReturn (CatLoop f) = hasCatReturn f
+hasCatReturn (CatTry f g) = hasCatReturn f P.|| hasCatReturn g
+hasCatReturn _ = False
 
 -- | Count CatLoop nodes in a CatOp tree, including ones nested inside
 -- another CatLoop's own body (Plan 146 Phase 2f: a correctly-nested loop
@@ -176,10 +188,15 @@ dwEnv = ScopedTypeEnv
 
 -- | Run a compiled 'CatOp' term through 'runCat'\/'Interp', returning the
 -- final environment and the trace in chronological order — the Interp-side
--- counterpart to 'runCpsGraphTrace' (Plan 146 Phase 1D).
+-- counterpart to 'runCpsGraphTrace' (Plan 146 Phase 1D). Catches
+-- 'ReturnUnwind' (Plan 146 Phase 2i): a 'CatReturn' inside the term throws
+-- rather than returning normally, since 'Interp's plain function composition
+-- has no other way to skip past an enclosing loop's continuation — the
+-- carried 'InterpState' is exactly the state at the point of the throw.
 runInterpTrace :: CatOp () () -> Map.Map Text Value -> IO (Map.Map Text Value, [TraceEvent])
 runInterpTrace term initEnv = do
-  (_, st) <- runStateT (runInterp (runCat term) ()) (InterpState initEnv [] Map.empty)
+  st <- (P.snd P.<$> runStateT (runInterp (runCat term) ()) (InterpState initEnv [] Map.empty))
+          `CE.catch` (\(ReturnUnwind capturedSt) -> return capturedSt)
   return (isEnv st, P.reverse (isTrace st))
 
 -- ---------------------------------------------------------------------------
@@ -1340,6 +1357,114 @@ tests = testGroup "CatOp"
           oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
           newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
       in testCase "no elseif clause matches (x unset) -> falls through to the trailing assign, matching the old compiler" $
+           newTrace @?= oldTrace
+    ]
+
+  , testGroup "loop-exit-target skips return blocks (Plan 146 Phase 2i)"
+    -- 'canReach' already special-cases 'SsaContinue'/'SsaBreak' as "always
+    -- reaches back" (Plan 146 Phase 2g) because their 'termSuccessors' is
+    -- '[]' by design (their control transfer is handled specially, not as a
+    -- real graph edge) -- but had no matching case for 'SsaReturn', which
+    -- also gets 'termSuccessors = []'. A return-terminated block therefore
+    -- failed the backward-reachability check, got excluded from the loop's
+    -- body set, and surfaced instead as a spurious 'determineLoopExitTarget'
+    -- exit candidate competing against the loop's real post-loop successor
+    -- via the same alphabetical tiebreak Phase 2g fixed for continue.
+    --
+    -- A second, independent bug compounds this: 'compileLoopTerm's own
+    -- 'SsaReturn' case compiled to 'CatInr' -- identical to 'SsaBreak' --
+    -- so even once the exit-target is resolved correctly, hitting a return
+    -- mid-loop would still fall through to the loop's post-loop
+    -- continuation instead of truly ending the procedure.
+    --
+    -- Fixture: a 3-iteration counted loop whose body branches to a `return`
+    -- on a separate `trigger` flag (independent of the loop counter), run
+    -- twice with different initial envs to isolate the two defects:
+    -- (1) does the loop's real post-loop trailing code still run when the
+    -- loop completes normally without ever hitting return; (2) does hitting
+    -- return mid-loop actually terminate the procedure instead of falling
+    -- through to that trailing code.
+    (let xV  = SsaVarRef (SsaVar "x" 0)
+         yV  = SsaVarRef (SsaVar "y" 0)
+         trV = SsaVarRef (SsaVar "trigger" 0)
+         returnSsa = SsaProc
+           { spName   = "test"
+           , spEntry  = "entry"
+           , spVars   = []
+           , spPhis   = Map.empty
+           , spBlocks = Map.fromList
+               [ ("entry", SsaBlock { sbAssigns = [], sbTerm = SsaGoto "header" })
+               , ("header", SsaBlock
+                   { sbAssigns = []
+                   , sbTerm = SsaBranch (SsaBinOp BopLt xV (SsaConst (ExInt "3"))) "body_entry" "z_exit" })
+               , ("body_entry", SsaBlock
+                   { sbAssigns = []
+                   , sbTerm = SsaBranch (SsaBinOp BopEq trV (SsaConst (ExInt "1"))) "return_block" "normal_body" })
+               , ("return_block", SsaBlock
+                   { sbAssigns = [SsaAssign (SsaVar "y" 0) (SsaConst (ExInt "999"))]
+                   , sbTerm = SsaReturn Nothing })
+               , ("normal_body", SsaBlock
+                   { sbAssigns = [ SsaAssign (SsaVar "x" 0) (SsaBinOp BopAdd xV (SsaConst (ExInt "1")))
+                                 , SsaAssign (SsaVar "y" 0) (SsaBinOp BopAdd yV (SsaConst (ExInt "1"))) ]
+                   , sbTerm = SsaGoto "header" })
+               , ("z_exit", SsaBlock
+                   { sbAssigns = [SsaAssign (SsaVar "done" 0) (SsaConst (ExInt "1"))]
+                   , sbTerm = SsaReturn Nothing })
+               ]
+           }
+         compiled = compileSsaDefault returnSsa
+         runIt trigger = runCpsGraphTrace 100 Map.empty
+                           (buildCpsGraph compiled)
+                           (Map.fromList [("x", VInt 0), ("y", VInt 0), ("done", VInt 0), ("trigger", VInt trigger)])
+     in
+     [ testCase "compiles to a CatReturn (not CatInr) for the return block" $
+         assertBool "expected a CatReturn node in the compiled tree" (hasCatReturn compiled)
+
+     , testCase "loop completes normally (trigger never fires) and reaches real post-loop trailing code" $
+         let (finalEnv, _) = runIt 0
+         in do
+           Map.lookup "x" finalEnv @?= Just (VInt 3)
+           Map.lookup "y" finalEnv @?= Just (VInt 3)
+           Map.lookup "done" finalEnv @?= Just (VInt 1)
+
+     , testCase "return mid-loop terminates immediately, skipping the rest of the loop and all post-loop code" $
+         let (finalEnv, _) = runIt 1
+         in do
+           Map.lookup "x" finalEnv @?= Just (VInt 0)
+           Map.lookup "y" finalEnv @?= Just (VInt 999)
+           Map.lookup "done" finalEnv @?= Just (VInt 0)
+     ])
+
+  , testGroup "if/elseif-with-return inside a do-while loop matches old compiler (Plan 146 Phase 2i)"
+    -- Direct regression test for the w_customer_report::open-class corpus
+    -- idiom found while diagnosing Phase 2h's 3 newly-surfaced diffs: a SQL
+    -- cursor-fetch loop whose elseif branch returns on error, followed by
+    -- real trailing code after the loop. Confirms compileProcedureViaCatOp
+    -- now matches the old, reference-correct compiler's trace end-to-end
+    -- (AST -> CFG -> SSA -> CatOp), not just the isolated SSA-level fixture
+    -- above.
+    [ let sqlcodeLv = Lvalue [LvSegment "sqlcode" Nothing]
+          sqlcodeE  = ExLvalue sqlcodeLv
+          call n    = ExCall (Lvalue [LvSegment n Nothing]) []
+          ifStmt = IfStmt
+            (ExBinOp sqlcodeE BopEq (ExInt "0"))
+            [Located 3 (BsCall (call "AddItem"))]
+            [ ElseIf (ExBinOp sqlcodeE BopLt (ExInt "0"))
+                [ Located 4 (BsCall (call "MessageBox"))
+                , Located 5 (BsReturn Nothing)
+                ]
+            ]
+            (Just [Located 6 BsExit])
+          body =
+            [ Located 1 (BsDo (DoStmt
+                (Just (DoWhile (ExBinOp sqlcodeE BopEq (ExInt "0"))))
+                [Located 2 (BsIf ifStmt)]
+                Nothing))
+            , Located 7 (BsCall (call "trailing"))
+            ]
+          oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+          newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+      in testCase "do-while with if/elseif-return, followed by trailing code, matches old compiler" $
            newTrace @?= oldTrace
     ]
   ]

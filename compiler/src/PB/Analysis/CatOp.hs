@@ -56,6 +56,7 @@ module PB.Analysis.CatOp
     -- * Interpreter
   , Interp (..)
   , InterpState (..)
+  , ReturnUnwind (..)
   , runInterpIO
   , runCat
     -- * Interpreter loop
@@ -75,7 +76,9 @@ import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExpr
 import PB.Analysis.CpsCompile (CpsNode (..), CpsGraph (..), parseArgList, collectBodyLocals)
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName, calleeName, isTriggerEvent, lvHead, segName)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
-import Control.Monad.State.Strict (State, StateT, modify, modify', gets, runState, evalStateT)
+import Control.Monad.State.Strict (State, StateT, get, modify, modify', gets, runState, evalStateT)
+import Control.Monad.IO.Class (liftIO)
+import Control.Exception (Exception, throwIO)
 import PB.AST.BodyStmt     (BodyStmt)
 import PB.AST.Located      (Located (..))
 import PB.Analysis.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
@@ -105,6 +108,7 @@ data LowCat
   | LFork LowCat LowCat
   | LCall Text [Expr]
   | LSuspend Text [Expr]
+  | LReturn
   | LErasable
   deriving (Eq, Show, Generic)
 
@@ -123,6 +127,7 @@ toLowCat (CatEval e)        = LEval e
 toLowCat (CatFork l r)      = LFork (toLowCat l) (toLowCat r)
 toLowCat (CatCall n args)   = LCall n args
 toLowCat (CatSuspend e args) = LSuspend e args
+toLowCat CatReturn          = LReturn
 toLowCat _                  = LErasable  -- CatExl, CatExr, CatConst, CatLookup, CatAssign, CatTry
 
 -- ============================================================================
@@ -207,6 +212,18 @@ data CatOp a b where
   -- Loops (via coproduct: Left = continue, Right = break)
   CatLoop    :: CatOp a (Either a b) -> CatOp a b
 
+  -- | True procedure-terminal return (Plan 146 Phase 2i). Polymorphic in
+  -- both type parameters, like 'error' — it never actually produces a
+  -- value for its composition context. Unlike 'CatInr' (break), which
+  -- resumes at whatever follows the *enclosing* 'CatLoop', 'CatReturn'
+  -- unconditionally jumps to the true end of the whole procedure,
+  -- bypassing every enclosing loop's break/post-loop continuation. Needed
+  -- because 'CatLoop's own type (@CatOp a (Either a b) -> CatOp a b@) has
+  -- no third state to distinguish "break" from "return" once a loop body
+  -- is compiled — both used to collapse to the same 'CatInr', silently
+  -- turning a 'return' inside a loop into a 'break'.
+  CatReturn  :: CatOp a b
+
   -- Effects
   CatEval       :: Expr -> CatOp env Value
   CatCall       :: Text -> [Expr] -> CatOp args ()
@@ -226,6 +243,7 @@ instance Show (CatOp a b) where
   show (CatConst _) = "CatConst .."
   show CatInl = "CatInl"
   show CatInr = "CatInr"
+  show CatReturn = "CatReturn"
   show (CatFanIn _ _) = "CatFanIn .."
   show (CatAssign t) = "CatAssign " <> show t
   show (CatAssignWithRhs t e) = "CatAssignWithRhs " <> show t <> " " <> show e
@@ -260,6 +278,7 @@ feq x y = go (unsafeCoerce x) (unsafeCoerce y)
     go (CatConst e) (CatConst e') = e == e'
     go CatInl CatInl = True
     go CatInr CatInr = True
+    go CatReturn CatReturn = True
     go (CatFanIn f g) (CatFanIn f' g') = feq f f' P.&& feq g g'
     go (CatAssign t) (CatAssign t') = t == t'
     go (CatAssignWithRhs t e) (CatAssignWithRhs t' e') = t == t' P.&& e == e'
@@ -317,7 +336,9 @@ data CompileCtx = CompileCtx
 --   * Linear assigns: fold with CatCompose via @(assign . (id &&& eval))@
 --   * @SsaGoto target@: CatId (structural connection, not a jump)
 --   * @SsaBranch cond t f@: @branch@ combinator (splitValue + |||)
---   * @SsaReturn@: CatId (terminal)
+--   * @SsaReturn@: CatId (terminal) outside a loop; CatReturn (Plan 146
+--     Phase 2i) inside a loop — distinct from CatInr/break, since it must
+--     bypass the loop's own post-loop continuation entirely
 --   * Phi nodes: CatFanIn at join points (pushed into predecessor branches)
 --   * Loops: CatLoop wrapping the loop body (detected via back-edge analysis)
 --   * Back-edges: CatInl (continue loop) / CatInr (break loop)
@@ -475,20 +496,24 @@ discoverReachable headers resolvedExits proc headerId currentBlock visited
 -- via escaping through an *enclosing* loop's back-edge — Plan 146 Phase 2f);
 -- an unresolved (enclosing/unrelated) header still stops the walk.
 --
--- A block terminating in 'SsaContinue'/'SsaBreak' is always treated as
--- reaching (Plan 146 Phase 2g). 'termSuccessors' deliberately returns @[]@
--- for both — they're handled as special-cased control transfers elsewhere
+-- A block terminating in 'SsaContinue'/'SsaBreak'/'SsaReturn' is always
+-- treated as reaching (Plan 146 Phase 2g; extended to 'SsaReturn' in Phase
+-- 2i). 'termSuccessors' deliberately returns @[]@ for all three — they're
+-- handled as special-cased control transfers elsewhere
 -- (@compileLoopTerm@/@compileLoopBranchPath@), not real graph edges — so a
 -- pure forward walk can never step off of one. Left unhandled, that made
 -- 'canReach' wrongly exclude such a block from the loop's own body: it then
 -- surfaced as a spurious "successor not in the body" candidate in
 -- 'determineLoopExitTarget', tying the resolved exit target to an arbitrary
 -- alphabetically-first candidate instead of the loop's real exit whenever a
--- continue/break block's id happened to sort first — and independently made
--- 'isLoopExit' misclassify a genuine continue target as "outside the loop",
--- silently turning that 'continue' into a 'break'. Both are safe here
--- because this function's only caller ('computeLoopBodyBlocks') always asks
--- "is this block part of the loop currently being resolved" — continue/break
+-- continue/break/return block's id happened to sort first — and
+-- independently made 'isLoopExit' misclassify a genuine continue target as
+-- "outside the loop", silently turning that 'continue' into a 'break' (or,
+-- for 'SsaReturn', wiring the loop's real post-loop continuation to the
+-- return block's own dead-end content instead — Phase 2i, found via
+-- w_customer_report::open et al.). All three are safe here because this
+-- function's only caller ('computeLoopBodyBlocks') always asks "is this
+-- block part of the loop currently being resolved" — continue/break/return
 -- are that loop's own body by construction, regardless of where their
 -- (elsewhere-handled) control transfer actually lands.
 canReach :: Set.Set Text -> Map.Map Text Text -> SsaProc -> Text -> Text -> Set.Set Text -> Bool
@@ -506,6 +531,7 @@ canReach headers resolvedExits proc startBlock0 targetBlock visited0 = fst (go s
           Just block
             | SsaContinue <- sbTerm block -> (True, Set.insert current visited)
             | SsaBreak    <- sbTerm block -> (True, Set.insert current visited)
+            | SsaReturn _ <- sbTerm block -> (True, Set.insert current visited)
             | otherwise ->
                 let visited' = Set.insert current visited
                     succs    = termSuccessors (sbTerm block)
@@ -697,7 +723,7 @@ compileLoopTerm ctx proc blockId visited headers exits activeLoop (SsaBranch con
       (fOp, v2) = compileLoopBranchPath ctx proc blockId f v1 headers exits activeLoop
       combined  = branch (ssaValToExpr cond) tOp fOp
   in (combined, v2)
-compileLoopTerm _ctx _proc _ visited _ _ _ (SsaReturn _) = (CatInr, visited)
+compileLoopTerm _ctx _proc _ visited _ _ _ (SsaReturn _) = (CatReturn, visited)
 compileLoopTerm _ctx _proc _ visited _ _ _ SsaBreak      = (CatInr, visited)
 compileLoopTerm _ctx _proc _ visited _ _ _ SsaContinue   = (CatInl, visited)
 compileLoopTerm ctx proc blockId visited headers exits activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
@@ -828,6 +854,12 @@ data BuilderState = BuilderState
   { bsNodes       :: Map.Map Int CpsNode
   , bsNextPc      :: Int
   , bsSourceLines :: [(Int, Int)]
+  , bsExitPc      :: Int
+    -- ^ The pc of the procedure's one true exit (the 'CpsReturn' node
+    -- allocated first, in 'buildCpsGraph'). Fixed for the whole build
+    -- regardless of loop nesting — 'LReturn' (Plan 146 Phase 2i) resolves
+    -- here directly instead of whatever local @nextPc@ a loop's own
+    -- break/post-loop threading passed in.
   }
 
 -- | The graph builder monad.
@@ -870,7 +902,7 @@ finalizeGraph entryPc s = CpsGraph
 
 -- | Initial builder state.
 initState :: BuilderState
-initState = BuilderState { bsNodes = Map.empty, bsNextPc = 0, bsSourceLines = [] }
+initState = BuilderState { bsNodes = Map.empty, bsNextPc = 0, bsSourceLines = [], bsExitPc = 0 }
 
 -- | Compile a CatOp into CPS nodes.
 -- Lowers to 'LowCat' first (stripping GADT types), then compiles.
@@ -906,6 +938,11 @@ compileLowCatToCps (LCall name args) nextPc =
   allocateNode (CpsCallProc { cpCallee = name, cpArgs = args, cpNext = nextPc })
 compileLowCatToCps (LSuspend eff args) nextPc =
   allocateNode (CpsSuspend { suEffect = eff, suArgs = args, suVar = Nothing, suContinuation = nextPc })
+-- | True procedure return (Plan 146 Phase 2i): ignore whatever local
+-- continuation this call site threaded in (a loop's own break/post-loop pc,
+-- however deeply nested) and resolve straight to the one true exit recorded
+-- in 'BuilderState' by 'buildCpsGraph'.
+compileLowCatToCps LReturn _nextPc = GraphBuilder (gets bsExitPc)
 -- Structural / erased constructors
 compileLowCatToCps _ nextPc = return nextPc
 
@@ -994,6 +1031,7 @@ buildCpsGraph :: CatOp () () -> CpsGraph
 buildCpsGraph catOp =
   let (entryPc, finalState) = runState (runBuilder $ do
         exitPc <- allocateNode (CpsReturn Nothing)
+        GraphBuilder $ modify $ \s -> s { bsExitPc = exitPc }
         compileCatToCps catOp exitPc
         ) initState
   in finalizeGraph entryPc finalState
@@ -1030,6 +1068,23 @@ data InterpState = InterpState
   , isTrace :: [TraceEvent]
   , isMocks :: MockResponses
   }
+
+-- | Thrown by 'CatReturn' (Plan 146 Phase 2i) to unwind the 'Interp'
+-- backend's plain function composition straight past every enclosing loop
+-- (however deeply nested) and any post-loop continuation, landing exactly
+-- where the currently-running procedure was invoked from. Carries the
+-- 'InterpState' snapshot taken at the point of the throw — 'StateT's own
+-- state isn't otherwise recoverable across an IO exception, since the whole
+-- @(a, s)@ pair is discarded the instant the underlying 'IO' action throws.
+-- A caller that wants the final env/trace after a return (e.g. a test
+-- harness running one whole compiled procedure via 'runCat') catches this
+-- and uses the carried state directly.
+newtype ReturnUnwind = ReturnUnwind InterpState
+
+instance Show ReturnUnwind where
+  show _ = "ReturnUnwind"
+
+instance Exception ReturnUnwind
 
 -- | An execution interpreter category that maps 'CatOp a b' to direct
 -- Haskell functions @a -> StateT InterpState IO b@.
@@ -1116,6 +1171,9 @@ runCat CatExr                 = exr
 runCat (CatConst e)           = eval e
 runCat CatInl                  = inl
 runCat CatInr                  = inr
+runCat CatReturn               = Interp (\_ -> do
+  st <- get
+  liftIO (throwIO (ReturnUnwind st)))
 runCat (CatFanIn t f)          = runCat t ||| runCat f
 runCat (CatAssign var)         = assign var
 runCat (CatAssignWithRhs var e) = Interp (\env -> do
