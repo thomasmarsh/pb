@@ -5,7 +5,7 @@ import qualified Prelude as P
 import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..),
                             DispatchExpr (..), DispatchMode (..))
 import PB.AST.Type         (PbType (..))
-import PB.AST.BodyStmt     (BodyStmt (..), PbCall (..), IfStmt (..), ForStmt (..), DoStmt (..), DoCondition (..))
+import PB.AST.BodyStmt     (BodyStmt (..), PbCall (..), IfStmt (..), ElseIf (..), ForStmt (..), DoStmt (..), DoCondition (..))
 import PB.AST.Located      (Located (..))
 import PB.Analysis.CatOp
 import PB.Analysis.CpsCompile (ShapeNode (..), canonicalize, compileProcedure, normalizeCallTag)
@@ -1311,5 +1311,35 @@ tests = testGroup "CatOp"
            Map.lookup "y" finalEnv @?= Just (VInt 2)
            Map.lookup "skip_count" finalEnv @?= Just (VInt 1)
            Map.lookup "done" finalEnv @?= Just (VInt 1)
+    ]
+
+  , testGroup "if/elseif chain: each elseif tests its own condition (Plan 146 next bug)"
+    -- CfgBuild.lowerIf never referenced 'eifCond' at all — every elseif body
+    -- was unconditionally reachable once the prior test failed. Hand-traced
+    -- via a real corpus --dual-trace diff (w_dwtostr::of_create_structure_export,
+    -- old=18/new=16 steps): a block whose own body assign doubled as the
+    -- chain link to the next elseif ended up with two outgoing edges, which
+    -- makes cfgTermToSsa's single-edge fallback default to
+    -- 'SsaReturn Nothing' — silently truncating the procedure at the first
+    -- elseif clause that matches. This fixture reproduces the same shape
+    -- end-to-end (AST -> CFG -> SSA -> CatOp), comparing the new pipeline's
+    -- trace against the old, reference-correct compiler's.
+    [ let xLv    = Lvalue [LvSegment "x" Nothing]
+          yLv    = Lvalue [LvSegment "y" Nothing]
+          doneLv = Lvalue [LvSegment "done" Nothing]
+          eqX n  = ExBinOp (ExLvalue xLv) BopEq (ExInt n)
+          body =
+            [ Located 1 (BsIf (IfStmt (eqX "1")
+                [Located 2 (BsAssign yLv (ExInt "10"))]
+                [ ElseIf (eqX "2") [Located 3 (BsAssign yLv (ExInt "20"))]
+                , ElseIf (eqX "3") [Located 4 (BsAssign yLv (ExInt "30"))]
+                ]
+                Nothing))
+            , Located 5 (BsAssign doneLv (ExInt "1"))
+            ]
+          oldTrace = runCpsGraphTrace 100 Map.empty (compileProcedure emptyEnv Set.empty body) Map.empty
+          newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+      in testCase "no elseif clause matches (x unset) -> falls through to the trailing assign, matching the old compiler" $
+           newTrace @?= oldTrace
     ]
   ]

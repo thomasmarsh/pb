@@ -148,22 +148,43 @@ lowerIf (BsIf (IfStmt _ thenStmts elseIfs elseStmts)) currentId loopHead = do
   addEdge currentId thenEntryId "T"
   thenExitId  <- lower thenStmts thenEntryId loopHead
   addEdge thenExitId mergeId ""
-  -- elseif chain: F edge from currentId → first elseif, then chained
-  prevFt <- foldM (\pft ei -> do
-      eiEntryId <- newBlock
-      addEdge pft eiEntryId "F"
-      eiExitId  <- lower (eifBody ei) eiEntryId loopHead
-      addEdge eiExitId mergeId ""
-      pure eiEntryId
-    ) currentId elseIfs
-  -- else branch or final F → merge
-  case elseStmts of
-    Nothing -> addEdge prevFt mergeId "F"
+  -- Else branch (or straight to merge if there is none) is the base case the
+  -- elseif chain folds onto below.
+  elseFt <- case elseStmts of
+    Nothing -> pure mergeId
     Just es -> do
       elseEntryId <- newBlock
-      addEdge prevFt elseEntryId "F"
       elseExitId  <- lower es elseEntryId loopHead
       addEdge elseExitId mergeId ""
+      pure elseEntryId
+  -- Elseif chain, folded in reverse (mirrors CpsCompile.compileElseIf's
+  -- (reversed elseIfs, nextFt) shape exactly): each elseif gets its own
+  -- dedicated test block whose "T" edge enters a fresh body-entry block and
+  -- whose "F" edge chains to the next test (or to elseFt for the last one).
+  -- Plan 146: the previous version never referenced 'eifCond' at all — every
+  -- elseif body was wired as unconditionally reachable via one plain "F"
+  -- edge once the prior test failed, and that body block doubled as the
+  -- chain link to the next elseif, giving it two outgoing edges (its own
+  -- exit to merge, plus the bogus chain edge) — which makes
+  -- cfgTermToSsa's single-edge fallback default to 'SsaReturn Nothing',
+  -- silently truncating the procedure the moment a non-final elseif clause
+  -- matched.
+  chainFt <- foldM (\nextFt ei -> do
+      testId    <- newBlock
+      eiEntryId <- newBlock
+      -- A minimal synthetic BsIf marker (empty then/elseifs/else) carries
+      -- eifCond into the CFG so cfgTermToSsa's existing BsIf case
+      -- reconstructs a real SsaBranch for this block — no new SSA.hs
+      -- plumbing needed (stmtToAssigns (BsIf {}) = [] already guarantees
+      -- this marker contributes no spurious assign).
+      addStmts testId [Located 0 (BsIf (IfStmt (eifCond ei) [] [] Nothing))]
+      addEdge testId eiEntryId "T"
+      eiExitId  <- lower (eifBody ei) eiEntryId loopHead
+      addEdge eiExitId mergeId ""
+      addEdge testId nextFt "F"
+      pure testId
+    ) elseFt (reverse elseIfs)
+  addEdge currentId chainFt "F"
   pure mergeId
 lowerIf _ currentId _ = pure currentId
 

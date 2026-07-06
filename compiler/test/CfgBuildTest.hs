@@ -88,6 +88,77 @@ tests = testGroup "CfgBuild"
           g    = buildCfg [stmt]
       length (cfgExits g) @?= 1
 
+  , testGroup "BsIf elseif chain (Plan 146: each elseif must test its own condition)"
+    -- 'lowerIf' never referenced 'eifCond' at all — every elseif body was
+    -- wired as unconditionally reachable once the prior test failed (an
+    -- unconditional "F" edge straight into the elseif's body block, with no
+    -- test of the elseif's own condition anywhere). Confirmed via hand-trace
+    -- of a real corpus --dual-trace diff (w_dwtostr::of_create_structure_export).
+    [ testCase "single elseif -> two independent T/F pairs (outer if + elseif), not one" $ do
+        let thenS = [at 2 (BsAssign (lv1 "x") (ExInt "1"))]
+            eiS   = [at 3 (BsAssign (lv1 "y") (ExInt "2"))]
+            stmt  = at 1 (BsIf (IfStmt (ExBool True) thenS [ElseIf (ExBool False) eiS] Nothing))
+            g     = buildCfg [stmt]
+            edgeLabels = map ceLabel (cfgEdges g)
+        length (filter (== "T") edgeLabels) @?= 2
+        length (filter (== "F") edgeLabels) @?= 2
+
+    , testCase "elseif's own condition survives into the CFG as a real test block" $ do
+        let thenS  = [at 2 (BsAssign (lv1 "x") (ExInt "1"))]
+            eiCond = ExLvalue (lv1 "flag")
+            eiS    = [at 3 (BsAssign (lv1 "y") (ExInt "2"))]
+            stmt   = at 1 (BsIf (IfStmt (ExBool True) thenS [ElseIf eiCond eiS] Nothing))
+            g      = buildCfg [stmt]
+            isMarker blk = case cbStmts blk of
+              [Located _ (BsIf (IfStmt c [] [] Nothing))] -> c == eiCond
+              _ -> False
+        assertBool "expected exactly one block carrying the elseif's own condition as a marker"
+          (length (filter isMarker (cfgBlocks g)) == 1)
+
+    , testCase "two chained elseifs -> three independent T/F pairs (outer if + 2 elseifs)" $ do
+        let thenS = [at 2 (BsAssign (lv1 "x") (ExInt "1"))]
+            ei1S  = [at 3 (BsAssign (lv1 "y") (ExInt "2"))]
+            ei2S  = [at 4 (BsAssign (lv1 "z") (ExInt "3"))]
+            stmt  = at 1 (BsIf (IfStmt (ExBool True) thenS
+                          [ ElseIf (ExBool False) ei1S, ElseIf (ExBool False) ei2S ] Nothing))
+            g     = buildCfg [stmt]
+            edgeLabels = map ceLabel (cfgEdges g)
+        length (filter (== "T") edgeLabels) @?= 3
+        length (filter (== "F") edgeLabels) @?= 3
+
+    , testCase "elseif chain with no final else -> exactly one test block per elseif" $ do
+        let thenS = [at 2 (BsAssign (lv1 "x") (ExInt "1"))]
+            ei1S  = [at 3 (BsAssign (lv1 "y") (ExInt "2"))]
+            ei2S  = [at 4 (BsAssign (lv1 "z") (ExInt "3"))]
+            stmt  = at 1 (BsIf (IfStmt (ExBool True) thenS
+                          [ ElseIf (ExBool False) ei1S, ElseIf (ExBool False) ei2S ] Nothing))
+            g     = buildCfg [stmt]
+            isMarker blk = case cbStmts blk of
+              [Located _ (BsIf (IfStmt _ [] [] Nothing))] -> True
+              _ -> False
+        length (filter isMarker (cfgBlocks g)) @?= 2
+
+    , testCase "each elseif body block has exactly one outgoing edge (to merge), not a second chain edge" $ do
+        -- Before the fix, an elseif's own body block doubled as the chain
+        -- link to the *next* elseif, giving it two outgoing edges — which
+        -- makes cfgTermToSsa's single-edge fallback default to
+        -- 'SsaReturn Nothing', silently truncating the procedure the moment
+        -- a non-final elseif clause matches.
+        let thenS = [at 2 (BsAssign (lv1 "x") (ExInt "1"))]
+            ei1S  = [at 3 (BsAssign (lv1 "y") (ExInt "2"))]
+            ei2S  = [at 4 (BsAssign (lv1 "z") (ExInt "3"))]
+            stmt  = at 1 (BsIf (IfStmt (ExBool True) thenS
+                          [ ElseIf (ExBool False) ei1S, ElseIf (ExBool False) ei2S ] Nothing))
+            g     = buildCfg [stmt]
+            isEi1Body blk = case cbStmts blk of
+              [Located 3 (BsAssign _ (ExInt "2"))] -> True
+              _ -> False
+            outgoing bid = [ e | e <- cfgEdges g, ceSrc e == bid ]
+        case filter isEi1Body (cfgBlocks g) of
+          [blk] -> length (outgoing (cbId blk)) @?= 1
+          _     -> assertBool "expected exactly one block holding the first elseif's body" False
+    ]
+
   , testGroup "BsChoose (Plan 146 Bug B: default-edge gap)"
     [ testCase "no case-else clause → explicit \"default\" edge from header to merge block" $ do
         let clauses = [ CaseClause (Just [tok "1"]) [at 2 (BsAssign (lv1 "x") (ExInt "1"))]
