@@ -288,8 +288,8 @@ tests = testGroup "Pipeline.Runner"
 
   , testGroup "production wiring uses compileProcedureViaCatOp (Plan 144 Phase 5 Step 6)"
     -- Runner.hs:148 (compileOne, the real production path behind runModeDb)
-    -- and Emit.hs:158 (wrapSrFile's withCps branch) both used to call the
-    -- old PB.Analysis.CpsGraph.compileProcedure (deleted in Plan 144 Phase
+    -- and Emit.hs:158 (wrapSrFile's withInstr branch) both used to call the
+    -- old PB.Analysis.InstrGraph.compileProcedure (deleted in Plan 144 Phase
     -- 5 Step 7). Both now call PB.Analysis.CatOp.compileProcedureViaCatOp.
     [ let src = T.unlines
             [ "public function integer uf_test ()"
@@ -314,18 +314,18 @@ tests = testGroup "Pipeline.Runner"
               env           = procEnv ws objName []
               newJson       = toJSON (compileProcedureViaCatOp env userFns body)
           in testGroup "if/else with shared trailing call"
-            [ testCase "wrapSrFile's cpsGraph matches compileProcedureViaCatOp" $
+            [ testCase "wrapSrFile's instrGraph matches compileProcedureViaCatOp" $
                 let v      = wrapSrFile True "uf_test.srf" sf spans ws
-                    cpsVal = lookupObj "cpsGraph" (firstOf (lookupObj "functions" v))
-                in cpsVal @?= newJson
+                    instrVal = lookupObj "instrGraph" (firstOf (lookupObj "functions" v))
+                in instrVal @?= newJson
 
-            , testCase "compileOne's ProcRow.prCpsJson matches compileProcedureViaCatOp" $ do
+            , testCase "compileOne's ProcRow.prInstrJson matches compileProcedureViaCatOp" $ do
                 let pf = ParsedFile { pfPath = "uf_test.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
                 cf <- compileOne ws Nothing "confirmed" (PsParsed pf)
                 case cf of
                   CFPs cps -> case cpsProcRows cps of
-                    (row:_) -> case decodeStrict (TE.encodeUtf8 (prCpsJson row)) :: Maybe Value of
-                      Nothing      -> assertFailure "prCpsJson did not decode as JSON"
+                    (row:_) -> case decodeStrict (TE.encodeUtf8 (prInstrJson row)) :: Maybe Value of
+                      Nothing      -> assertFailure "prInstrJson did not decode as JSON"
                       Just decoded -> decoded @?= newJson
                     [] -> assertFailure "expected at least one ProcRow"
                   _ -> assertFailure "expected CFPs"

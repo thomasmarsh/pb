@@ -1,4 +1,4 @@
-// core/cps/expr.ts — Expression evaluator for the CPS compiler and runner.
+// interpreter/instr/expr.ts — Expression evaluator for the InstrGraph compiler and runner.
 
 import type { Expr } from "../types/ast.js";
 import { PB_BUILTINS } from "../runtime.js";

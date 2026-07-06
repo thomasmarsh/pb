@@ -2,7 +2,7 @@
 -- type for Plan 146's semantic-equivalence oracle.
 --
 -- Pure module — no I/O. 'evalExpr' is written once here so both the
--- 'PB.Analysis.CatOp' 'Interp' backend (Phase 1) and the future 'CpsGraph'
+-- 'PB.Analysis.CatOp' 'Interp' backend (Phase 1) and the future 'InstrGraph'
 -- trace-interpreter (Phase 2) evaluate conditions/RHS values identically —
 -- two independently hand-rolled evaluators that happen to disagree would be
 -- a testing bug indistinguishable from a compiler bug.
@@ -48,7 +48,7 @@ instance Eq Value where
   _       == _       = False
 
 -- | An observable effect produced while interpreting a 'CatOp' (or,
--- eventually, a 'CpsGraph') term: a variable assignment, an effect
+-- eventually, a 'InstrGraph') term: a variable assignment, an effect
 -- invocation with its evaluated arguments, a branch decision, or a return.
 -- Two executions are "equivalent" iff their traces are equal for the same
 -- starting environment and the same mock suspend/call responses.

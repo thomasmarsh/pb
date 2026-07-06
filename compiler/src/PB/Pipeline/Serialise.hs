@@ -14,7 +14,7 @@ import PB.AST.SourceFile
 import PB.AST.Type        (PbType)
 import PB.Lexing.Token    (Token (..))
 import PB.Analysis.Cfg   (CfgBlock, CfgEdge, Cfg)
-import PB.Analysis.CpsGraph   (CpsNode, CpsGraph)
+import PB.Analysis.InstrGraph   (InstrNode, InstrGraph)
 import PB.Analysis.Taint      (InterprocEdge (..), ProcedureSummary (..), ProcSummaryReturnFlow (..))
 import PB.Analysis.DeadCode   (DeadProcedure (..))
 
@@ -99,8 +99,8 @@ instance ToJSON DataWindowFile  where toJSON = genericToJSON customOptions
 instance ToJSON CfgBlock  where toJSON = genericToJSON customOptions
 instance ToJSON CfgEdge   where toJSON = genericToJSON customOptions
 instance ToJSON Cfg       where toJSON = genericToJSON customOptions
-instance ToJSON CpsNode   where toJSON = genericToJSON customOptions
-instance ToJSON CpsGraph  where toJSON = genericToJSON customOptions
+instance ToJSON InstrNode   where toJSON = genericToJSON customOptions
+instance ToJSON InstrGraph  where toJSON = genericToJSON customOptions
 
 -- InterprocEdge — manual instance to match Python snake_case keys
 instance ToJSON InterprocEdge where

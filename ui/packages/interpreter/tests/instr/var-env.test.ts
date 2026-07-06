@@ -1,4 +1,4 @@
-// tests/core/cps/var-env.test.ts — Unit tests for the three-tier variable environment.
+// tests/interpreter/instr/var-env.test.ts — Unit tests for the three-tier variable environment.
 
 import { describe, it, expect } from "vitest";
 import {
@@ -9,7 +9,7 @@ import {
   pushFrame,
   popFrame,
   flattenVarEnv,
-} from "../../src/cps/var-env.js";
+} from "../../src/instr/var-env.js";
 
 describe("VarEnv", () => {
   it("readVar resolves local before instance before global for same name", () => {

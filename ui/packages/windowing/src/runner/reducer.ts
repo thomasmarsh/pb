@@ -1,10 +1,10 @@
-// features/runtime/reducer.ts — CPS-encoded PB interpreter as a TCA reducer.
+// features/runtime/reducer.ts — InstrGraph-encoded PB interpreter as a TCA reducer.
 //
 // Each retrieve() call is a labeled suspension point: the reducer fires an
-// Effect and resumes when cps-resume arrives after SQL completes.
+// Effect and resumes when instr-resume arrives after SQL completes.
 
 import { Effect, type Reducer, type SQLResult } from "@pb/core";
-import { loadCpsGraph, step, type CpsResumeAction, evalExpr, type VarEnv, makeVarEnv, pushFrame, popFrame, type AstData, type DWRow, type ProcEntry, type WindowLayout, type CpsGraph } from "@pb/interpreter";
+import { loadInstrGraph, step, type InstrResumeAction, evalExpr, type VarEnv, makeVarEnv, pushFrame, popFrame, type AstData, type DWRow, type ProcEntry, type WindowLayout, type InstrGraph } from "@pb/interpreter";
 
 // ── Global variables ──────────────────────────────────────────────────────────
 
@@ -30,11 +30,11 @@ export interface RuntimeState {
   varEnv: VarEnv;
   controlValues: Record<string, DWRow[]>;
   dwQueries: Record<string, string>;
-  // CPS-mode graph held for cps-resume; null when idle or after completion.
-  cpsGraph: CpsGraph | null;
-  // Plan 115 item 2: CPS call stack for CpsCallProc dispatch. Each frame holds
+  // InstrGraph-mode graph held for instr-resume; null when idle or after completion.
+  instrGraph: InstrGraph | null;
+  // Plan 115 item 2: InstrGraph call stack for InstrCallProc dispatch. Each frame holds
   // the suspended graph and the PC to resume at once the callee body finishes.
-  callStack: { graph: CpsGraph; resumePc: number }[];
+  callStack: { graph: InstrGraph; resumePc: number }[];
   status: "idle" | "running" | "awaiting-sql" | "done" | "error";
   error: string | null;
 }
@@ -45,7 +45,7 @@ export const initialRuntimeState: RuntimeState = {
   varEnv: makeVarEnv(),
   controlValues: {},
   dwQueries: {},
-  cpsGraph: null,
+  instrGraph: null,
   callStack: [],
   status: "idle",
   error: null,
@@ -59,13 +59,13 @@ export type RuntimeAction =
   | { tag: "dw-queries-loaded"; queries: Record<string, string> }
   | { tag: "run-event"; owner: string; event: string; globals?: Record<string, unknown> }
   | { tag: "control-click"; controlName: string }
-  | { tag: "cps-resume"; dwName: string; rows: DWRow[]; pc: number; varName: string | null }
+  | { tag: "instr-resume"; dwName: string; rows: DWRow[]; pc: number; varName: string | null }
   // Plan 115 item 2: dispatch a CALL ancestor::event / TriggerEvent to a body
   // found via the AST. Pushes the current graph and resumes at resumePc.
-  | { tag: "cps-dispatch"; callee: string; args: unknown[]; resumePc: number }
+  | { tag: "instr-dispatch"; callee: string; args: unknown[]; resumePc: number }
   | { tag: "error"; message: string };
 
-// ── CPS execution path ────────────────────────────────────────────────────────
+// ── InstrGraph execution path ────────────────────────────────────────────────────────
 
 // Scan typeBlocks for a control's dataobject value (e.g. "dw" → "dw_misth_zpkrat_list").
 function findDwDataobject(ast: AstData | null, controlName: string): string | null {
@@ -86,15 +86,15 @@ function findDwDataobject(ast: AstData | null, controlName: string): string | nu
   return null;
 }
 
-// Drive a loaded CPS graph from pc, producing a RuntimeAction Effect on suspend.
-// When the graph reaches CpsReturn, checks the call stack for a suspended caller.
+// Drive a loaded InstrGraph from pc, producing a RuntimeAction Effect on suspend.
+// When the graph reaches InstrReturn, checks the call stack for a suspended caller.
 function stepWithDraft(
-  graph: CpsGraph,
+  graph: InstrGraph,
   pc: number,
   draft: RuntimeState,
   env: RuntimeEnv,
 ): Effect<RuntimeAction> | null {
-  const cpsEnv = {
+  const instrEnv = {
     executeSql: env.executeSql,
     open: (): Effect<unknown> => Effect.none(),
     // Resolve DW name to SQL: check dwQueries (loaded from DB), then resolve
@@ -107,9 +107,9 @@ function stepWithDraft(
       return null;
     },
   };
-  const effect = step(graph, pc, draft.varEnv, cpsEnv);
+  const effect = step(graph, pc, draft.varEnv, instrEnv);
   if (!effect) {
-    draft.cpsGraph = null;
+    draft.instrGraph = null;
     // Resume suspended caller if present; otherwise the run is complete.
     if (draft.callStack.length > 0) return popCallStack(draft, env);
     draft.status = "done";
@@ -117,17 +117,17 @@ function stepWithDraft(
   }
   draft.status = "awaiting-sql";
   return effect
-    .map((resume: CpsResumeAction): RuntimeAction => {
-      if (resume.tag === "cps-dispatch") {
+    .map((resume: InstrResumeAction): RuntimeAction => {
+      if (resume.tag === "instr-dispatch") {
         return {
-          tag: "cps-dispatch",
+          tag: "instr-dispatch",
           callee: resume.callee,
           args: resume.args,
           resumePc: resume.resumePc,
         };
       }
       const { dwName, rows } = resume.value as { dwName: string; rows: DWRow[] };
-      return { tag: "cps-resume", dwName, rows, pc: resume.pc, varName: resume.var };
+      return { tag: "instr-resume", dwName, rows, pc: resume.pc, varName: resume.var };
     })
     .catch((e): RuntimeAction => ({ tag: "error", message: String(e) }));
 }
@@ -167,7 +167,7 @@ function findEntryByName(ast: AstData, name: string): ProcEntry | null {
   return null;
 }
 
-// Resolve a CpsCallProc callee to a full ProcEntry (including cpsGraph if present).
+// Resolve a InstrCallProc callee to a full ProcEntry (including instrGraph if present).
 //   - "triggerevent" → find event by args[0] name
 //   - "super::event"  → look ONLY in ancestorEvents/ancestorFunctions (never recurse into self)
 //   - "ancestor::event" → find procedure by event name part in all collections
@@ -195,7 +195,7 @@ function resolveCalleeEntry(
   return findEntryByName(ast, eventPart);
 }
 
-// Pop the CPS call stack: restore the suspended graph and resume at its PC.
+// Pop the InstrGraph call stack: restore the suspended graph and resume at its PC.
 // Also pops the VarEnv frame pushed when the callee was entered.
 function popCallStack(
   draft: RuntimeState,
@@ -204,11 +204,11 @@ function popCallStack(
   popFrame(draft.varEnv);
   const frame = draft.callStack.pop();
   if (!frame) {
-    draft.cpsGraph = null;
+    draft.instrGraph = null;
     draft.status = "done";
     return null;
   }
-  draft.cpsGraph = frame.graph;
+  draft.instrGraph = frame.graph;
   return stepWithDraft(frame.graph, frame.resumePc, draft, env);
 }
 
@@ -219,8 +219,8 @@ function runProcEntry(
   entry: ProcEntry,
   env: RuntimeEnv,
 ): Effect<RuntimeAction> | null {
-  const graph = loadCpsGraph(entry.cpsGraph);
-  draft.cpsGraph = graph;
+  const graph = loadInstrGraph(entry.instrGraph);
+  draft.instrGraph = graph;
   return stepWithDraft(graph, graph.entry, draft, env);
 }
 
@@ -234,7 +234,7 @@ function reduce(
       draft.ast = action.ast;
       draft.varEnv = makeVarEnv();
       draft.controlValues = {};
-      draft.cpsGraph = null;
+      draft.instrGraph = null;
       draft.callStack = [];
       draft.status = "idle";
       draft.error = null;
@@ -281,22 +281,22 @@ function reduce(
       return runProcEntry(draft, entry, env);
     }
 
-    case "cps-resume": {
+    case "instr-resume": {
       draft.controlValues[action.dwName] = action.rows;
-      const graph = draft.cpsGraph;
+      const graph = draft.instrGraph;
       if (!graph) { draft.status = "done"; return null; }
       return stepWithDraft(graph, action.pc, draft, env);
     }
 
-    case "cps-dispatch": {
-      // Push a VarEnv frame and save the suspended CPS graph; run the callee.
+    case "instr-dispatch": {
+      // Push a VarEnv frame and save the suspended InstrGraph; run the callee.
       // When the callee finishes, popCallStack pops the frame and resumes the
-      // CPS graph at action.resumePc.
-      const graph = draft.cpsGraph;
+      // InstrGraph at action.resumePc.
+      const graph = draft.instrGraph;
       if (!graph) return null;
       pushFrame(draft.varEnv);
       draft.callStack.push({ graph, resumePc: action.resumePc });
-      draft.cpsGraph = null;
+      draft.instrGraph = null;
       draft.status = "running";
       const entry = resolveCalleeEntry(draft.ast, action.callee, action.args);
       if (!entry) return popCallStack(draft, env);

@@ -9,8 +9,8 @@
 -- through the 'PB.Analysis.GraphBuilder' flattening step or the TS runtime.
 --
 -- Split out of 'PB.Analysis.CatOp' in Plan 151. Parallels
--- 'PB.Analysis.CpsInterp' (the flat @CpsGraph@-level trace interpreter) —
--- 'CatInterp' interprets 'CatOp' terms directly, 'CpsInterp' interprets the
+-- 'PB.Analysis.InstrInterp' (the flat @InstrGraph@-level trace interpreter) —
+-- 'CatInterp' interprets 'CatOp' terms directly, 'InstrInterp' interprets the
 -- flattened output of 'PB.Analysis.GraphBuilder'; the two backends are
 -- cross-checked against each other by Plan 146's semantic-equivalence
 -- oracle tests.

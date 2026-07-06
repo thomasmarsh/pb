@@ -1,7 +1,7 @@
 {-# LANGUAGE StrictData #-}
 -- | Pure call classification helpers, plus a couple of small pure AST
 -- utilities ('parseArgList', 'collectBodyLocals') used by the SSA→CatOp
--- pipeline.  No monadic state, no CpsNode emission — just classification
+-- pipeline.  No monadic state, no InstrNode emission — just classification
 -- logic and name utilities.
 --
 -- 'classifyExpr' returns 'PureCall' or 'SuspendCall' with the effect
@@ -139,8 +139,8 @@ lvHead :: Lvalue -> Text
 lvHead lv = case segments lv of { (s:_) -> segName s; [] -> "_" }
 
 -- | Detect `TriggerEvent(...)` or `this.TriggerEvent(...)` call sites that
--- should be lowered to a `CpsCallProc "triggerevent"` dispatch node rather
--- than a normal CpsCall/CpsSuspend (Plan 115 item 2).
+-- should be lowered to a `InstrCallProc "triggerevent"` dispatch node rather
+-- than a normal InstrCall/InstrSuspend (Plan 115 item 2).
 isTriggerEvent :: Lvalue -> Bool
 isTriggerEvent lv = case map (T.toLower . segName) (segments lv) of
   [s]   -> s == "triggerevent"

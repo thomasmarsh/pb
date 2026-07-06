@@ -322,7 +322,7 @@ cfgBlockToSsa edgeMap headerStmts backEdgeStmts label blk =
 
 -- | The counterpart to 'findLoopHeaderStmts': @lowerFor@ never synthesizes an
 -- increment statement anywhere in the CFG (the old compiler builds it
--- procedurally, by hand, in 'PB.Analysis.CpsGraph'). This maps each loop
+-- procedurally, by hand, in 'PB.Analysis.InstrGraph'). This maps each loop
 -- body's back-edge-source block id to the originating @BsFor@ node, so
 -- 'cfgBlockToSsa' can append the missing @i = i + step@ assign to that
 -- block — the same synthesis the old compiler performs explicitly.
@@ -362,7 +362,7 @@ stmtToAssigns :: BodyStmt -> [SsaAssign]
 stmtToAssigns (BsAssign lv expr) =
   [SsaAssign (SsaVar (lvHead lv) 0) (exprToSsaVal expr)]
 -- The old compiler synthesizes the loop variable's init assign by hand
--- (CpsCompile.hs's BsFor case); the new pipeline needs the same thing here,
+-- (InstrGraph.hs's BsFor case); the new pipeline needs the same thing here,
 -- since this is the one block that legitimately owns the raw BsFor node in
 -- its own cbStmts (CfgBuild.lowerFor flushes it onto the pre-loop block).
 stmtToAssigns (BsFor (ForStmt var from _ _ _)) =
@@ -392,7 +392,7 @@ stmtToAssigns (BsCall expr) =
 -- BsPbCall: CALL ancestor::event super-dispatch (Plan 145 Phase 3). Encoded as a
 -- single-segment synthetic ExCall so it flows through the existing
 -- classifyExpr/compileCallExpr machinery in PB.Analysis.CatOp and lowers to a
--- CpsCallProc, matching PB.Analysis.CpsGraph's explicit BsPbCall case. The
+-- InstrCallProc, matching PB.Analysis.InstrGraph's explicit BsPbCall case. The
 -- "ancestor::event" text can never collide with isTriggerEvent, a user-fn name
 -- (PB identifiers can't contain "::"), or isBuiltinSuspendFn's fixed list, so
 -- it always classifies PureCall.

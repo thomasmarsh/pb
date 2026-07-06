@@ -41,13 +41,13 @@ function makeAstWithDataobject(controlName: string, dataobject: string): AstData
   });
 }
 
-// Minimal CPS graph for a single retrieve() call: CpsSuspend at pc=1, CpsReturn at pc=0.
-function makeSingleRetrieveCpsGraph(effect: string) {
+// Minimal InstrGraph for a single retrieve() call: InstrSuspend at pc=1, InstrReturn at pc=0.
+function makeSingleRetrieveInstrGraph(effect: string) {
   return {
     nodes: [
-      { tag: "CpsReturn", value: null },
+      { tag: "InstrReturn", value: null },
       {
-        tag: "CpsSuspend",
+        tag: "InstrSuspend",
         effect,
         args: [{ tag: "ExLvalue", contents: { segments: [{ name: "gs_kodxrisi", subscript: null }] } }],
         var: null,
@@ -111,7 +111,7 @@ describe("runtime integration", () => {
   });
 
   describe("full pipeline: runtime → renderWindow", () => {
-    it("w_misth_zpkrat_list: open event triggers SQL via CPS and renders DW", () => {
+    it("w_misth_zpkrat_list: open event triggers SQL via InstrGraph and renders DW", () => {
       const MOCK_ROWS = [
         { kodkrat: "01", kodxrisi: "0001", desckrat: "Category 1", isforos: true, isasf: false, isautoforos: false },
         { kodkrat: "02", kodxrisi: "0001", desckrat: "Category 2", isforos: false, isasf: true, isautoforos: false },
@@ -135,16 +135,16 @@ describe("runtime integration", () => {
         events: [{
           name: "open",
           owner: "w_misth_zpkrat_list",
-          // CPS graph: retrieve:dw resolves via typeBlocks to dw_misth_zpkrat_list SQL.
-          cpsGraph: makeSingleRetrieveCpsGraph("retrieve:dw"),
+          // InstrGraph: retrieve:dw resolves via typeBlocks to dw_misth_zpkrat_list SQL.
+          instrGraph: makeSingleRetrieveInstrGraph("retrieve:dw"),
         }],
       });
 
       ts.send({ tag: "set-ast", ast });
       ts.send({ tag: "run-event", owner: "w_misth_zpkrat_list", event: "open" });
       ts.receive(
-        { tag: "cps-resume", dwName: "dw", rows: MOCK_ROWS, pc: 0, varName: null },
-        (s) => { s.controlValues["dw"] = MOCK_ROWS; s.status = "done"; s.cpsGraph = null; },
+        { tag: "instr-resume", dwName: "dw", rows: MOCK_ROWS, pc: 0, varName: null },
+        (s) => { s.controlValues["dw"] = MOCK_ROWS; s.status = "done"; s.instrGraph = null; },
       );
 
       // Verify state

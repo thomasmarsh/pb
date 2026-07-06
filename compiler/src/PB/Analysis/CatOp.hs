@@ -14,7 +14,7 @@
 -- lines mixing four separable stages):
 --
 --   * 'PB.Analysis.CatLower'     — SSA → 'CatOp' compilation (@compileSsa@)
---   * 'PB.Analysis.GraphBuilder' — 'CatOp' → flat @CpsGraph@ flattening
+--   * 'PB.Analysis.GraphBuilder' — 'CatOp' → flat @InstrGraph@ flattening
 --     (the @GraphBuilder@ target), plus the public one-call entry point
 --     @compileProcedureViaCatOp@
 --   * 'PB.Analysis.CatInterp'    — direct Haskell execution (@Interp@ target,

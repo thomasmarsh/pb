@@ -559,7 +559,7 @@ Mark done/pending as body parsers land.
 | `PB.Lexing.*`   | Tokenization, layout, string mode                                                                                                   |
 | `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)                                                                                 |
 | `PB.Pipeline.*` | Multi-step transformations: Preprocess, Emit, Passes, Runner, Serialise, FileWalk, DuckDb, SqlParse, Church                        |
-| `PB.Analysis.*` | Pure analysis passes: Cfg, CpsGraph, Dataflow, DeadCode, Taint, TypeEnv, TypeResolve, Builtins                                      |
+| `PB.Analysis.*` | Pure analysis passes: Cfg, InstrGraph, Dataflow, DeadCode, Taint, TypeEnv, TypeResolve, Builtins                                      |
 | `PB.Prelude`    | Custom Prelude — no parsing or transformation logic                                                                                 |
 
 New modules go in the most specific matching directory. If a new layer is needed, propose it in Stage 1.
@@ -878,8 +878,9 @@ data Cfg      = Cfg      { cfgEntry :: Text, cfgExits :: [Text], cfgBlocks :: [C
 ```haskell
 -- Pure call classification, plus two small pure AST helpers (parseArgList,
 -- collectBodyLocals) moved in from the old PB.Analysis.CpsCompile in Plan
--- 151 Phase 2b (2026-07-06) -- they have nothing to do with CpsGraph's own
--- type and were already imported alongside it by every consumer.
+-- 151 Phase 2b (2026-07-06) -- they have nothing to do with InstrGraph's own
+-- type (renamed from CpsGraph in Plan 152) and were already imported
+-- alongside it by every consumer.
 -- Shared by the old (deleted) compiler and the current SSA→CatOp pipeline.
 data CallKind = PureCall | SuspendCall
 classifyExpr :: ScopedTypeEnv -> Expr -> CallKind
@@ -904,7 +905,7 @@ collectBodyLocals :: [Located BodyStmt] -> Map.Map Text PbType  -- imported by G
 -- (2026-07-06) split the old 1367-line CatOp.hs (which had mixed 4 stages)
 -- into this core module plus 3 siblings, each a single pipeline stage:
 --   PB.Analysis.CatLower     -- SSA -> CatOp compilation (compileSsa)
---   PB.Analysis.GraphBuilder -- CatOp -> flat CpsGraph flattening,
+--   PB.Analysis.GraphBuilder -- CatOp -> flat InstrGraph flattening,
 --                            -- plus compileProcedureViaCatOp (the public
 --                            -- one-call entry point Emit.hs/Runner.hs use)
 --   PB.Analysis.CatInterp    -- direct Haskell execution (Interp/runCat)
@@ -941,11 +942,14 @@ compileSsa :: ScopedTypeEnv -> Set.Set Text -> SsaProc -> CatOp () ()
 ### `PB.Analysis.GraphBuilder`
 
 ```haskell
--- Pure (GraphBuilder monad is a bare State, never IO). CatOp -> flat CpsGraph
+-- Pure (GraphBuilder monad is a bare State, never IO). CatOp -> flat InstrGraph
 -- flattening (the "GraphBuilder" target from Plan 144 Phase 4), plus LowCat
 -- (the monomorphic CatOp bridge -- no unsafeCoerce, deterministic pattern
 -- matching) and the public one-call pipeline entry point. Split from
--- CatOp.hs Plan 151.
+-- CatOp.hs Plan 151. CpsNode/CpsGraph/buildCpsGraph/compileCatToCps renamed
+-- to InstrNode/InstrGraph/buildInstrGraph/compileCatToInstr in Plan 152
+-- (the "CPS" name was inaccurate -- this is a flat, PC-indexed instruction
+-- array, not continuation-passing style).
 data LowCat = LId | LCompose .. | LAssignWithRhs .. | LFanIn .. | LLoop ..
             | LInl | LInr | LSplitValue | LEval .. | LFork .. | LCall ..
             | LSuspend .. | LReturn | LTagged .. | LErasable
@@ -954,23 +958,23 @@ extractCondLowCat :: LowCat -> Expr
 newtype GraphBuilder a = GraphBuilder { runBuilder :: State BuilderState a }
 data BuilderState = BuilderState { bsNodes, bsNextPc, bsSourceLines, bsExitPc, bsBlockPcMemo }
 initState :: BuilderState
-allocateNode :: CpsNode -> GraphBuilder Int
-registerNodeAt :: Int -> CpsNode -> GraphBuilder ()
-finalizeGraph :: Int -> BuilderState -> CpsGraph
-compileCatToCps :: CatOp a b -> Int -> GraphBuilder Int
-buildCpsGraph :: CatOp () () -> CpsGraph
+allocateNode :: InstrNode -> GraphBuilder Int
+registerNodeAt :: Int -> InstrNode -> GraphBuilder ()
+finalizeGraph :: Int -> BuilderState -> InstrGraph
+compileCatToInstr :: CatOp a b -> Int -> GraphBuilder Int
+buildInstrGraph :: CatOp () () -> InstrGraph
 -- Unified entry point: the sole compiler. Seeds steLocal from body's own
 -- BsLocalVar decls (collectBodyLocals) before compiling, so classifyExpr can
 -- resolve locally-declared datastore/datawindow/transaction variable types.
-compileProcedureViaCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CpsGraph
+compileProcedureViaCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> InstrGraph
 ```
 
 ### `PB.Analysis.CatInterp`
 
 ```haskell
 -- Direct Haskell execution of a compiled CatOp term (the "Interp" target) --
--- used for testing, without going through GraphBuilder/CpsGraph or the TS
--- runtime. Parallels PB.Analysis.CpsInterp (interprets the flat CpsGraph
+-- used for testing, without going through GraphBuilder/InstrGraph or the TS
+-- runtime. Parallels PB.Analysis.InstrInterp (interprets the flat InstrGraph
 -- GraphBuilder produces instead) -- Plan 146's semantic-equivalence oracle
 -- cross-checks the two. Split from CatOp.hs Plan 151.
 data InterpState = InterpState { isEnv :: Map.Map Text Value, isTrace :: [TraceEvent], isMocks :: MockResponses }
@@ -981,25 +985,35 @@ runInterpIO :: Interp a b -> a -> IO b  -- fresh empty env/trace/mocks, discards
 runCat :: CatOp a b -> Interp a b       -- the fold CatOp is initial for
 ```
 
-### `PB.Analysis.CpsGraph`
+### `PB.Analysis.InstrGraph`
 
 ```haskell
--- Pure. Shared CpsNode/CpsGraph types + canonical-shape helpers for
+-- Pure. Shared InstrNode/InstrGraph types + canonical-shape helpers for
 -- hand-trace/golden-fixture tests. Renamed from PB.Analysis.CpsCompile in
 -- Plan 151 Phase 2b (2026-07-06) — the monadic compileProcedure compiler
 -- this module used to house was deleted in Plan 144 Phase 5 Step 7; the
 -- sole compiler is now PB.Analysis.GraphBuilder.compileProcedureViaCatOp.
 -- parseArgList/collectBodyLocals moved out to PB.Analysis.CallClassify in
 -- the same Phase 2b — they're generic AST/type helpers with nothing to do
--- with this module's own CpsNode/CpsGraph types.
-data CpsNode = CpsAssign {..} | CpsBranch {..} | CpsGoto {..} | CpsCall {..}
-             | CpsSuspend {..} | CpsReturn {..} | CpsNop {..} | CpsCallProc {..}
-data CpsGraph = CpsGraph { cgNodes, cgEntry, cgSuspensionPoints, cgSourceMap }
--- ShapeNode/canonicalize/normalizeCallTag: canonical BFS-numbered shape of a
--- CpsGraph with names/values erased, for hand-trace/golden-fixture tests.
+-- with this module's own InstrNode/InstrGraph types.
+--
+-- Renamed again from PB.Analysis.CpsGraph in Plan 152 (2026-07-06), along
+-- with every CpsNode constructor and the JSON wire tags, the DuckDB
+-- procedures.cps_graph_json column (-> instr_graph_json), the Python
+-- "cpsGraph" dict key (-> "instrGraph"), and the TS
+-- ui/packages/interpreter/src/cps/ directory (-> src/instr/). "CPS" was an
+-- inaccurate name for this flat, PC-indexed instruction array (it has no
+-- nested closures, so it isn't continuation-passing style) — see Plan 151's
+-- "Explicitly NOT part of this plan" section for the Stage 0 rationale and
+-- Plan 152 for the full cross-language rename record.
+data InstrNode = InstrAssign {..} | InstrBranch {..} | InstrGoto {..} | InstrCall {..}
+               | InstrSuspend {..} | InstrReturn {..} | InstrNop {..} | InstrCallProc {..}
+data InstrGraph = InstrGraph { igNodes, igEntry, igSuspensionPoints, igSourceMap }
+-- ShapeNode/canonicalize/normalizeCallTag: canonical BFS-numbered shape of an
+-- InstrGraph with names/values erased, for hand-trace/golden-fixture tests.
 data ShapeNode = SAsgn Int | SBrnch Int Int | SGoto Int | SCall Int
                | SSusp Text Int | SRet | SNop Int | SCProc Int
-canonicalize     :: CpsGraph -> [ShapeNode]
+canonicalize     :: InstrGraph -> [ShapeNode]
 normalizeCallTag :: ShapeNode -> ShapeNode  -- SCProc n -> SCall n (cosmetic tag-only divergence)
 ```
 
@@ -1056,7 +1070,7 @@ taintAnalysis      :: [ResolvedCallRow] -> [DefRow] -> [UseRow] -> Set Text -> T
 ### `PB.Analysis.TypeEnv`
 
 ```haskell
--- Cross-file type environment. Used by CpsGraph consumers + Runner (Plan 114 unified them).
+-- Cross-file type environment. Used by InstrGraph consumers + Runner (Plan 114 unified them).
 data TypeEnv = TypeEnv { teVars :: Map Text PbType, teUserTypes :: Map Text Text }
 buildWorkspaceTypeEnv :: [SrFile] -> TypeEnv
 lookupVarType    :: Text -> TypeEnv -> Maybe PbType      -- case-insensitive

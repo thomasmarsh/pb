@@ -139,7 +139,7 @@ tests = testGroup "SSA"
     -- other assignment-producing BodyStmt preserved case verbatim — the same
     -- class of bug as Phase 2c/2d's stray case-folding, breaking
     -- --dual-trace equivalence against the old compiler's never-lowercasing
-    -- CpsCompile.
+    -- InstrGraph.
     , testCase "local var with init preserves declared case" $ do
         let sa = buildSsa emptyEnv "proc"
                   [at 1 (BsLocalVar [] (PtPrimitive "boolean") "lb_First" (Just (ExBool True)))]

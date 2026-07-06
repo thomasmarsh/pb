@@ -137,13 +137,13 @@ compileOne wsEnv mBridge confidence outcome = case outcome of
         procs =
           [ let cfg      = buildCfg body
                 cfgJs    = jsonText (toJSON cfg)
-                cpsJs    = jsonText (toJSON (compileProcedureViaCatOp (mkProcEnv cpsParams) userFns body))
+                instrJs    = jsonText (toJSON (compileProcedureViaCatOp (mkProcEnv instrParams) userFns body))
                 flow     = (fp, obj, pName, Dataflow.analyzeProcedure obj pName cfg)
                 cyclo    = DeadCode.cyclomaticComplexity cfg
-            in ( ProcRow fp obj pName pType sLine eLine cfgJs cpsJs
+            in ( ProcRow fp obj pName pType sLine eLine cfgJs instrJs
                    taintParams retType (Just cyclo) confidence
                , flow )
-          | ((sLine, eLine), (pName, pType, cpsParams, taintParams, retType, body)) <-
+          | ((sLine, eLine), (pName, pType, instrParams, taintParams, retType, body)) <-
               zip (spFunctions   sp) [ (fnsName (fbSig fb), "function",   fnsParams (fbSig fb), fnsParams    (fbSig fb), fnsReturnType (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
               <>
               zip (spSubroutines sp) [ (ssName  (sbSig sb), "subroutine", ssParams  (sbSig sb), ssParams     (sbSig sb), "",                       sbBody sb) | sb <- srSubroutines sf ]

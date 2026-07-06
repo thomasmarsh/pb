@@ -122,7 +122,7 @@ parsePowerScriptFile src = do
   parseSrFileWithSpans headers stmts
 
 wrapSrFile :: Bool -> FilePath -> SrFile -> SrSpans -> WorkspaceEnv -> Value
-wrapSrFile withCps path sf spans ws =
+wrapSrFile withInstr path sf spans ws =
     let (objName, ancestor) = srPrimaryObject sf
         objName' = if T.null objName then T.pack path else objName
 
@@ -133,7 +133,7 @@ wrapSrFile withCps path sf spans ws =
         emptyProcEnv :: ScopedTypeEnv
         emptyProcEnv = procEnv ws objName []
 
-        -- User-defined function names (lower-cased) for CPS callproc dispatch.
+        -- User-defined function names (lower-cased) for InstrGraph callproc dispatch.
         userFns :: Set.Set Text
         userFns = Set.fromList
           $  map (T.toLower . fnsName . fbSig) (srFunctions  sf)
@@ -154,8 +154,8 @@ wrapSrFile withCps path sf spans ws =
         injectCompiled env body (Object o) =
             let cfg = buildCfg body
                 base = KM.insert "cfg" (toJSON cfg) o
-            in Object $ if withCps
-                then KM.insert "cpsGraph" (toJSON (compileProcedureViaCatOp env userFns body)) base
+            in Object $ if withInstr
+                then KM.insert "instrGraph" (toJSON (compileProcedureViaCatOp env userFns body)) base
                 else base
         injectCompiled _ _ v = v
 

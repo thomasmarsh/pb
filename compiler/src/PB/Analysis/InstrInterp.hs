@@ -1,23 +1,23 @@
--- | Trace-interpreter for the flat 'CpsGraph' target — the 'GraphBuilder'
+-- | Trace-interpreter for the flat 'InstrGraph' target — the 'GraphBuilder'
 -- counterpart to 'PB.Analysis.CatOp'\'s 'Interp'\/'runCat'.
 --
--- Pure module — no I/O. Walks a compiled 'CpsGraph' from its entry pc,
+-- Pure module — no I/O. Walks a compiled 'InstrGraph' from its entry pc,
 -- threading a variable environment and accumulating the same 'TraceEvent'
 -- shape 'PB.Analysis.CatOp.runCat' produces, using the one shared
 -- 'PB.Analysis.CatEval.evalExprMocked' so both backends evaluate
 -- conditions/RHS values (including mocked call responses) identically
 -- (Plan 146 Phase 1D / 2a).
-module PB.Analysis.CpsInterp
-  ( runCpsGraphTrace
+module PB.Analysis.InstrInterp
+  ( runInstrGraphTrace
   , TraceOutcome (..)
   ) where
 
 import PB.Prelude
 import qualified Data.Map.Strict as Map
-import PB.Analysis.CpsGraph (CpsNode (..), CpsGraph (..))
+import PB.Analysis.InstrGraph (InstrNode (..), InstrGraph (..))
 import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExprMocked)
 
--- | Execute a 'CpsGraph' from its entry pc against a starting environment and
+-- | Execute a 'InstrGraph' from its entry pc against a starting environment and
 -- a table of mocked call\/suspend responses, returning the final environment
 -- and the accumulated trace in chronological (oldest first) order — ready to
 -- compare directly against @P.reverse . isTrace@ from an
@@ -34,7 +34,7 @@ import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExpr
 -- equivalence past it.
 --
 -- Mirrors 'PB.Analysis.CatOp.runCat'\'s behavior exactly, including what it
--- does *not* do: reaching 'CpsReturn' ends the walk without emitting a
+-- does *not* do: reaching 'InstrReturn' ends the walk without emitting a
 -- 'TeReturn' (no 'CatOp' constructor 'runCat' interprets ever emits one
 -- either — 'SsaReturn' always compiles to a structural 'CatId'\/exit-goto,
 -- never a distinct return opcode), so the two traces stay comparable.
@@ -51,36 +51,36 @@ import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExpr
 data TraceOutcome = NaturalHalt | FuelExhausted
   deriving (Eq, Show)
 
-runCpsGraphTrace :: Int -> MockResponses -> CpsGraph -> Map.Map Text Value -> (Map.Map Text Value, [TraceEvent], TraceOutcome)
-runCpsGraphTrace maxSteps mocks graph initEnv =
-  let (finalEnv, revTrace, outcome) = go maxSteps (cgEntry graph) initEnv []
+runInstrGraphTrace :: Int -> MockResponses -> InstrGraph -> Map.Map Text Value -> (Map.Map Text Value, [TraceEvent], TraceOutcome)
+runInstrGraphTrace maxSteps mocks graph initEnv =
+  let (finalEnv, revTrace, outcome) = go maxSteps (igEntry graph) initEnv []
   in (finalEnv, reverse revTrace, outcome)
   where
-    nodeMap :: Map.Map Int CpsNode
-    nodeMap = Map.fromList (zip [0 ..] (cgNodes graph))
+    nodeMap :: Map.Map Int InstrNode
+    nodeMap = Map.fromList (zip [0 ..] (igNodes graph))
 
-    nodeAt :: Int -> CpsNode
-    nodeAt pc = fromMaybe (error "impossible: CpsGraph pc out of range") (Map.lookup pc nodeMap)
+    nodeAt :: Int -> InstrNode
+    nodeAt pc = fromMaybe (error "impossible: InstrGraph pc out of range") (Map.lookup pc nodeMap)
 
     go :: Int -> Int -> Map.Map Text Value -> [TraceEvent] -> (Map.Map Text Value, [TraceEvent], TraceOutcome)
     go stepsLeft pc env trace
       | stepsLeft <= 0 = (env, trace, FuelExhausted)
       | otherwise = case nodeAt pc of
-          CpsAssign { anVar, anRhs, anNext } ->
+          InstrAssign { anVar, anRhs, anNext } ->
             let v = evalExprMocked mocks env anRhs
             in go (stepsLeft - 1) anNext (Map.insert anVar v env) (TeAssign anVar v : trace)
-          CpsBranch { brCond, brThenPc, brElsePc } ->
+          InstrBranch { brCond, brThenPc, brElsePc } ->
             let taken = case evalExprMocked mocks env brCond of { VBool b -> b; _ -> False }
             in go (stepsLeft - 1) (if taken then brThenPc else brElsePc) env (TeBranch taken : trace)
-          CpsGoto { goTarget } -> go (stepsLeft - 1) goTarget env trace
-          CpsCall { clCallee, clArgs, clNext } ->
+          InstrGoto { goTarget } -> go (stepsLeft - 1) goTarget env trace
+          InstrCall { clCallee, clArgs, clNext } ->
             let vals = map (evalExprMocked mocks env) clArgs
             in go (stepsLeft - 1) clNext env (TeCall clCallee vals : trace)
-          CpsSuspend { suEffect, suArgs, suContinuation } ->
+          InstrSuspend { suEffect, suArgs, suContinuation } ->
             let vals = map (evalExprMocked mocks env) suArgs
             in go (stepsLeft - 1) suContinuation env (TeSuspend suEffect vals : trace)
-          CpsCallProc { cpCallee, cpArgs, cpNext } ->
+          InstrCallProc { cpCallee, cpArgs, cpNext } ->
             let vals = map (evalExprMocked mocks env) cpArgs
             in go (stepsLeft - 1) cpNext env (TeCall cpCallee vals : trace)
-          CpsNop { npNext } -> if npNext < 0 then (env, trace, NaturalHalt) else go (stepsLeft - 1) npNext env trace
-          CpsReturn {} -> (env, trace, NaturalHalt)
+          InstrNop { npNext } -> if npNext < 0 then (env, trace, NaturalHalt) else go (stepsLeft - 1) npNext env trace
+          InstrReturn {} -> (env, trace, NaturalHalt)

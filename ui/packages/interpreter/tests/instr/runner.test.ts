@@ -1,14 +1,14 @@
-// tests/core/cps/runner.test.ts — Tests for the CPS step driver.
+// tests/interpreter/instr/runner.test.ts — Tests for the InstrGraph step driver.
 
 import { describe, it, expect } from "vitest";
 import { Effect } from "@pb/core";
-import { step, type CpsEnv } from "../../src/cps/runner.js";
-import type { CpsGraph, CpsNode } from "../../src/cps/types.js";
-import { makeVarEnv, flattenVarEnv } from "../../src/cps/var-env.js";
+import { step, type InstrEnv } from "../../src/instr/runner.js";
+import type { InstrGraph, InstrNode } from "../../src/instr/types.js";
+import { makeVarEnv, flattenVarEnv } from "../../src/instr/var-env.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makeGraph(nodes: CpsNode[], entry = 0): CpsGraph {
+function makeGraph(nodes: InstrNode[], entry = 0): InstrGraph {
   return {
     nodes,
     entry,
@@ -20,7 +20,7 @@ function makeGraph(nodes: CpsNode[], entry = 0): CpsGraph {
   };
 }
 
-const nullEnv: CpsEnv = {
+const nullEnv: InstrEnv = {
   executeSql: () => Effect.none(),
   open: () => Effect.none(),
 };
@@ -137,8 +137,8 @@ describe("step driver", () => {
     expect(flattenVarEnv(varEnv).x).toBe(1);
   });
 
-  // Plan 115 item 2: CpsCallProc emits a cps-dispatch resume action.
-  it("execute callproc node returns cps-dispatch effect", () => {
+  // Plan 115 item 2: InstrCallProc emits a instr-dispatch resume action.
+  it("execute callproc node returns instr-dispatch effect", () => {
     const graph = makeGraph([
       {
         kind: "callproc",
@@ -153,7 +153,7 @@ describe("step driver", () => {
     let received: unknown = null;
     result!.execute((a) => { received = a; });
     expect(received).toEqual({
-      tag: "cps-dispatch",
+      tag: "instr-dispatch",
       callee: "super::open",
       args: [],
       resumePc: 1,
@@ -175,7 +175,7 @@ describe("step driver", () => {
     let received: unknown = null;
     result!.execute((a) => { received = a; });
     expect(received).toEqual({
-      tag: "cps-dispatch",
+      tag: "instr-dispatch",
       callee: "triggerevent",
       args: ["ie_retrieve"],
       resumePc: 1,

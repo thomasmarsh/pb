@@ -4,7 +4,7 @@
 import type { AstData, DWRow } from "./interpreter.js";
 import type { WindowLayout } from "./layout.js";
 import { extractLayout } from "./layout.js";
-import { type VarEnv, flattenVarEnv } from "./cps/var-env.js";
+import { type VarEnv, flattenVarEnv } from "./instr/var-env.js";
 
 export interface RenderedWindow {
   layout: WindowLayout | null;

@@ -16,7 +16,7 @@ def _make_minimal_db(path: str) -> None:
     conn.execute("CREATE TABLE objects (file TEXT, kind TEXT, object TEXT, ancestor TEXT)")
     conn.execute(
         "CREATE TABLE procedures (file TEXT, object TEXT, proc_name TEXT, proc_type TEXT, "
-        "start_line INT, end_line INT, cfg_json TEXT, cps_graph_json TEXT, "
+        "start_line INT, end_line INT, cfg_json TEXT, instr_graph_json TEXT, "
         "params TEXT, return_type TEXT, cyclomatic INT)"
     )
     conn.execute(

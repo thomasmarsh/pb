@@ -1,4 +1,4 @@
-// @pb/interpreter — PB language runtime: CPS engine, evaluator, renderer.
+// @pb/interpreter — PB language runtime: InstrGraph engine, evaluator, renderer.
 // Zero SolidJS dependency. Pure TypeScript.
 
 // AST wire types
@@ -16,14 +16,14 @@ export type {
 // Interpreter types
 export type { AstData, DWRow, GlobalVarDecl, ProcEntry } from "./interpreter.js";
 
-// CPS engine
-export type { CpsEnv, CpsGraph, CpsNode } from "./cps/types.js";
-export type { CpsResumeAction } from "./cps/runner.js";
-export { step } from "./cps/runner.js";
-export { loadCpsGraph } from "./cps/load.js";
-export { evalExpr, evalTokenArg } from "./cps/expr.js";
-export type { VarEnv } from "./cps/var-env.js";
-export { makeVarEnv, readVar, writeVar, declareLocal, pushFrame, popFrame, flattenVarEnv } from "./cps/var-env.js";
+// InstrGraph engine
+export type { InstrEnv, InstrGraph, InstrNode } from "./instr/types.js";
+export type { InstrResumeAction } from "./instr/runner.js";
+export { step } from "./instr/runner.js";
+export { loadInstrGraph } from "./instr/load.js";
+export { evalExpr, evalTokenArg } from "./instr/expr.js";
+export type { VarEnv } from "./instr/var-env.js";
+export { makeVarEnv, readVar, writeVar, declareLocal, pushFrame, popFrame, flattenVarEnv } from "./instr/var-env.js";
 
 // Runtime built-ins
 export type { PBFunction } from "./runtime.js";

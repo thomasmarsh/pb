@@ -270,7 +270,7 @@ statement node (deferred to E8 — requires lexer changes).
          │
 [ pb.duckdb ]
   ├── objects            (one row per source file / type declaration)
-  ├── procedures         (functions, subroutines, events, on-blocks; cps_graph_json)
+  ├── procedures         (functions, subroutines, events, on-blocks; instr_graph_json)
   ├── dw_objects / dw_controls / dw_retrieve_*
   ├── sql_statements     (embedded SQL per procedure)
   ├── local_vars / call_sites / global_vars

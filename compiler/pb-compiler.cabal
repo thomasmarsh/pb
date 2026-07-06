@@ -51,8 +51,8 @@ library
     PB.Analysis.CatLower
     PB.Analysis.GraphBuilder
     PB.Analysis.CatInterp
-    PB.Analysis.CpsGraph
-    PB.Analysis.CpsInterp
+    PB.Analysis.InstrGraph
+    PB.Analysis.InstrInterp
     PB.Analysis.Dataflow
     PB.Analysis.DeadCode
     PB.Analysis.SSA

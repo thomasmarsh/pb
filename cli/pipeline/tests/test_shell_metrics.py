@@ -26,7 +26,7 @@ def _setup_metrics_tables(conn) -> None:
         "CREATE TABLE IF NOT EXISTS procedures "
         "(file TEXT, object TEXT, proc_name TEXT, proc_type TEXT, "
         "start_line INT, end_line INT, params TEXT, return_type TEXT, "
-        "cyclomatic INT, cfg_json TEXT, cps_graph_json TEXT)"
+        "cyclomatic INT, cfg_json TEXT, instr_graph_json TEXT)"
     )
     conn.execute(
         "CREATE TABLE IF NOT EXISTS objects "

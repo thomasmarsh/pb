@@ -5,7 +5,7 @@ export type { WindowManagerState, WindowManagerAction, ManagedWindow } from "./m
 export { initialWindowManagerState } from "./manager/initial.js";
 export { windowManagerReducer } from "./manager/reducer.js";
 
-// Runtime (CPS execution loop)
+// Runtime (InstrGraph execution loop)
 export { runtimeReducer, initialRuntimeState, PB_GLOBALS } from "./runner/reducer.js";
 export type { RuntimeState, RuntimeAction, RuntimeEnv } from "./runner/reducer.js";
 

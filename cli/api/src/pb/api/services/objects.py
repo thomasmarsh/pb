@@ -259,7 +259,7 @@ _PB_BASE_CLASSES = {
 
 
 def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
-    """Return event/function CPS graphs and variables for an object."""
+    """Return event/function instruction graphs and variables for an object."""
     import json
     obj_rows = rows(conn.execute(
         "SELECT object AS name, ancestor, type_blocks_json FROM objects WHERE object = ?", [name]
@@ -271,7 +271,7 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
     type_blocks_json: str | None = obj_rows[0].get("type_blocks_json")
 
     event_rows = rows(conn.execute(
-        "SELECT proc_name AS name, object AS owner, cps_graph_json FROM procedures "
+        "SELECT proc_name AS name, object AS owner, instr_graph_json FROM procedures "
         "WHERE object = ? AND proc_type = 'event'",
         [name],
     ))
@@ -280,13 +280,13 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
             "name": r["name"],
             "owner": r["owner"],
             "body": [],
-            "cpsGraph": json.loads(r["cps_graph_json"]) if r.get("cps_graph_json") else None,
+            "instrGraph": json.loads(r["instr_graph_json"]) if r.get("instr_graph_json") else None,
         }
         for r in event_rows
     ]
 
     func_rows = rows(conn.execute(
-        "SELECT proc_name AS name, object AS owner, cps_graph_json FROM procedures "
+        "SELECT proc_name AS name, object AS owner, instr_graph_json FROM procedures "
         "WHERE object = ? AND proc_type IN ('function', 'subroutine')",
         [name],
     ))
@@ -295,7 +295,7 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
             "name": r["name"],
             "owner": r["owner"] or name,
             "body": [],
-            "cpsGraph": json.loads(r["cps_graph_json"]) if r.get("cps_graph_json") else None,
+            "instrGraph": json.loads(r["instr_graph_json"]) if r.get("instr_graph_json") else None,
         }
         for r in func_rows
     ]
@@ -320,7 +320,7 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
 
     if ancestor_name and ancestor_name.lower() not in _PB_BASE_CLASSES:
         anc_rows = rows(conn.execute(
-            "SELECT proc_name AS name, object AS owner, proc_type, cps_graph_json FROM procedures "
+            "SELECT proc_name AS name, object AS owner, proc_type, instr_graph_json FROM procedures "
             "WHERE object = ? AND proc_type IN ('event', 'function', 'subroutine')",
             [ancestor_name],
         ))
@@ -329,7 +329,7 @@ def get_object_ast(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]
                 "name": r["name"],
                 "owner": r["owner"] or ancestor_name,
                 "body": [],
-                "cpsGraph": json.loads(r["cps_graph_json"]) if r.get("cps_graph_json") else None,
+                "instrGraph": json.loads(r["instr_graph_json"]) if r.get("instr_graph_json") else None,
             }
             if r["proc_type"] == "event":
                 ancestor_events.append(entry)

@@ -9,7 +9,7 @@
 -- @doc/spec.md@ and each fixture's own comment) — independent of what the
 -- compiler happens to produce — and then asserts that
 -- 'PB.Analysis.CatOp.compileProcedureViaCatOp' matches it exactly. (The old
--- compiler, 'PB.Analysis.CpsGraph.compileProcedure', was deleted in Plan
+-- compiler, 'PB.Analysis.InstrGraph.compileProcedure', was deleted in Plan
 -- 144 Phase 5 Step 7 once this and the dual-trace corpus run confirmed
 -- equivalence; these fixtures no longer compare against it.)
 --
@@ -31,7 +31,7 @@ import PB.AST.BodyStmt     (BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..
 import PB.AST.Located      (Located (..))
 import PB.Analysis.GraphBuilder (compileProcedureViaCatOp)
 import PB.Analysis.CatEval (Value (..), TraceEvent (..))
-import PB.Analysis.CpsInterp  (runCpsGraphTrace)
+import PB.Analysis.InstrInterp  (runInstrGraphTrace)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.AST.Type         (PbType (..))
 import PB.Lexing.Lexer     (tokenizeLine, LexLine (..))
@@ -64,7 +64,7 @@ ex :: Text -> Expr
 ex n = ExLvalue (lv n)
 
 -- | Tokenize a source snippet into one real 'Token' (mirrors the identical
--- helper in 'CatOpTest.hs'/'CpsCompileTest.hs') — used to build genuine
+-- helper in 'CatOpTest.hs'/'InstrGraphTest.hs') — used to build genuine
 -- @callArgs@ token lists (e.g. a bare identifier reference) rather than
 -- hand-rolled fakes.
 tok :: Text -> Token
@@ -86,7 +86,7 @@ runNew :: ScopedTypeEnv -> [Located BodyStmt] -> Map.Map Text Value
        -> (Map.Map Text Value, [TraceEvent])
 runNew env body initEnv =
   let maxSteps = 500 :: Int
-      (ne, nt, _) = runCpsGraphTrace maxSteps Map.empty (compileProcedureViaCatOp env Set.empty body) initEnv
+      (ne, nt, _) = runInstrGraphTrace maxSteps Map.empty (compileProcedureViaCatOp env Set.empty body) initEnv
   in (ne, nt)
 
 tests :: TestTree

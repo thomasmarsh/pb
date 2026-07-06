@@ -59,7 +59,7 @@ describe("runtimeReducer", () => {
 
   describe("run-event / globals seeding", () => {
     it("seeds PB_GLOBALS into variables before executing", () => {
-      // Use a non-existent event so findBody returns null → done without cpsGraph.
+      // Use a non-existent event so findBody returns null → done without instrGraph.
       const ast = makeAst({ events: [] });
       const ts = createTestStore(runtimeReducer, nullEnv, { ...initialRuntimeState, ast });
       ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {

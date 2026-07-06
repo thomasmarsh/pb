@@ -66,7 +66,7 @@ data CompileCtx = CompileCtx
 -- at a second tree position. Tagging it anyway broke
 -- 'patchLoopHeaderLowCat'\'s @LCompose (LFanIn ..) ..@ structural detection
 -- (it doesn't unwrap 'LTagged'), which silently fell back to its
--- unpatched-forwarding-'CpsNop' path — and, worse, mis-threaded the loop's
+-- unpatched-forwarding-'InstrNop' path — and, worse, mis-threaded the loop's
 -- own back-edge, causing loops to stop after one iteration. Confirmed via
 -- the regression this caused in the loop test suite (Plan 150 Phase 3).
 computeMergePoints :: SsaProc -> Set.Set Text
@@ -276,7 +276,7 @@ discoverReachable headers resolvedExits proc headerId currentBlock visited
 -- placeholder in 'compileBlock'. That stale 'CatInl' placeholder silently
 -- replaced the loop's real exit content, producing a branch node whose own
 -- false edge pointed back at itself — an infinite loop (confirmed via
--- direct 'CpsGraph' inspection of the real corpus regression,
+-- direct 'InstrGraph' inspection of the real corpus regression,
 -- @w_regedit::itempopulate@). The genuine early-return-inside-a-loop case
 -- (@w_customer_report::open@ et al.) is instead handled directly in
 -- 'isLoopExit' below, which only special-cases a block whose *own*
@@ -576,10 +576,10 @@ compileAssigns ctx (a:as) = compileAssigns ctx as . compileAssign ctx a
 -- uses for statement-position calls with no captured result (@BsCall@/@BsPbCall@) —
 -- only those go through call classification and emit a bare 'CatCall'/'CatSuspend'.
 -- Any real variable target (@x = f()@ / @x = obj.method()@) always becomes
--- @CatAssignWithRhs "x" expr@ instead, matching 'PB.Analysis.CpsGraph'\'s old
--- compiler: it never special-cases a call RHS on 'BsAssign' (its 'CpsCall'
+-- @CatAssignWithRhs "x" expr@ instead, matching 'PB.Analysis.InstrGraph'\'s old
+-- compiler: it never special-cases a call RHS on 'BsAssign' (its 'InstrCall'
 -- 'clResult' field, seemingly meant for this, is declared but never set to
--- anything but 'Nothing' anywhere) — it always emits one plain 'CpsAssign'
+-- anything but 'Nothing' anywhere) — it always emits one plain 'InstrAssign'
 -- embedding the whole call expression in 'anRhs', suspend or not. Special-casing
 -- the "_" target too used to silently drop the assignment target entirely for
 -- @x = f()@ (Plan 145 Phase 1B re-sample Finding B).
@@ -620,8 +620,8 @@ compileAssign ctx (SsaAssign sv rhs)
       -- `.Post`/`.Trigger`/`Dynamic ... Event(...)`, PB's inter-object
       -- messaging idiom) must still classify as a bare call rather than
       -- falling through to CatAssignWithRhs below — that produced a real
-      -- CpsAssign{anVar="_"} node instead of a call/dispatch node (Plan 145).
-      -- Mirrors PB.Analysis.CpsGraph's BsCall `otherwise` branch, which
+      -- InstrAssign{anVar="_"} node instead of a call/dispatch node (Plan 145).
+      -- Mirrors PB.Analysis.InstrGraph's BsCall `otherwise` branch, which
       -- calls classifyExpr/calleeName generically regardless of expr shape
       -- (both default to PureCall/"?" for anything that isn't ExCall/
       -- ExMethodCall — matching the old compiler exactly, not improving on
@@ -657,7 +657,7 @@ compileCallExpr ctx _sv expr lv parsedArgs
   -- column name are already encoded in the effect name itself
   -- ("retrieve:child_<col>:<dwCtrl>", via 'effectName'), so only the third
   -- argument (the bound variable) belongs in the suspend's traced args —
-  -- mirrors 'PB.Analysis.CpsGraph's identical special case exactly
+  -- mirrors 'PB.Analysis.InstrGraph's identical special case exactly
   -- (Plan 146 Phase 2i: this arm didn't exist here at all, so the generic
   -- 'otherwise' branch below passed all 3 parsed args through instead of
   -- just the third; confirmed via hand-trace of a real corpus diff,

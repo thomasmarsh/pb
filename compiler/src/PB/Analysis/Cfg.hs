@@ -162,7 +162,7 @@ lowerIf (BsIf (IfStmt _ thenStmts elseIfs elseStmts)) currentId loopHead = do
       elseExitId  <- lower es elseEntryId loopHead
       addEdge elseExitId mergeId ""
       pure elseEntryId
-  -- Elseif chain, folded in reverse (mirrors CpsCompile.compileElseIf's
+  -- Elseif chain, folded in reverse (mirrors InstrGraph.compileElseIf's
   -- (reversed elseIfs, nextFt) shape exactly): each elseif gets its own
   -- dedicated test block whose "T" edge enters a fresh body-entry block and
   -- whose "F" edge chains to the next test (or to elseFt for the last one).
@@ -257,7 +257,7 @@ lowerDo _ currentId _ = pure currentId
 
 -- | try/catch: the try body has no branching semantics of its own, so it
 -- lowers as ordinary sequential code continuing the current block chain
--- (matching 'PB.Analysis.CpsGraph.compileStmts's 'BsTry' case: "compile
+-- (matching 'PB.Analysis.InstrGraph.compileStmts's 'BsTry' case: "compile
 -- try body sequentially"). Each catch body is lowered starting from a fresh,
 -- disconnected block — no edge is ever added from the main flow into it —
 -- so it exists in the CFG (its own statements are real 'CfgBlock' content,

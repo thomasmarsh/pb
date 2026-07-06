@@ -13,9 +13,9 @@ import PB.Analysis.CatLower (compileSsa)
 import PB.Analysis.GraphBuilder
 import PB.Analysis.CatInterp
 import PB.Analysis.CatEval (Value (..), TraceEvent (..))
-import PB.Analysis.CpsGraph (ShapeNode (..), canonicalize, normalizeCallTag)
+import PB.Analysis.InstrGraph (ShapeNode (..), canonicalize, normalizeCallTag)
 import PB.Analysis.CallClassify (parseArgList, collectBodyLocals)
-import PB.Analysis.CpsInterp (runCpsGraphTrace, TraceOutcome (..))
+import PB.Analysis.InstrInterp (runInstrGraphTrace, TraceOutcome (..))
 import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                             SsaTerm (..), SsaProc (..), renderSsaVar, buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
@@ -39,7 +39,7 @@ emptyEnv :: ScopedTypeEnv
 emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty
 
 -- | Tokenize a single source snippet into one 'Token' via the real lexer
--- (mirrors 'CpsCompileTest.hs's identical helper) — used to build genuine
+-- (mirrors 'InstrGraphTest.hs's identical helper) — used to build genuine
 -- 'ExCall' @callArgs@ ([[Token]]) for tests that need real argument shapes
 -- (e.g. a string literal arg) rather than empty argument lists.
 tok :: Text -> Token
@@ -207,7 +207,7 @@ dwEnv = ScopedTypeEnv
 
 -- | Run a compiled 'CatOp' term through 'runCat'\/'Interp', returning the
 -- final environment and the trace in chronological order — the Interp-side
--- counterpart to 'runCpsGraphTrace' (Plan 146 Phase 1D). Catches
+-- counterpart to 'runInstrGraphTrace' (Plan 146 Phase 1D). Catches
 -- 'ReturnUnwind' (Plan 146 Phase 2i): a 'CatReturn' inside the term throws
 -- rather than returning normally, since 'Interp's plain function composition
 -- has no other way to skip past an enclosing loop's continuation — the
@@ -555,24 +555,24 @@ tests = testGroup "CatOp"
             result = compileSsa emptyEnv Set.empty sa
         in assertBool "pure call should produce no CatSuspend" (not (hasAnyCatSuspend result))
 
-    , testCase "end-to-end: BsCall dw_foo.retrieve() → CpsSuspend node in CpsGraph" $
-        -- buildSsa from a standalone BsCall; CpsSuspend must appear in the graph
+    , testCase "end-to-end: BsCall dw_foo.retrieve() → InstrSuspend node in InstrGraph" $
+        -- buildSsa from a standalone BsCall; InstrSuspend must appear in the graph
         let callExpr = ExCall
               { callee   = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]
               , callArgs = [] }
             body     = [Located 1 (BsCall callExpr)]
             ssaProc  = buildSsa dwEnv "proc" body
             catTree  = compileSsa dwEnv Set.empty ssaProc
-            graph    = buildCpsGraph catTree
-            hasCpsSuspend = any (\n -> case n of { CpsSuspend {} -> True; _ -> False }) (cgNodes graph)
-        in assertBool "CpsGraph should contain a CpsSuspend node" hasCpsSuspend
+            graph    = buildInstrGraph catTree
+            hasInstrSuspend = any (\n -> case n of { InstrSuspend {} -> True; _ -> False }) (igNodes graph)
+        in assertBool "InstrGraph should contain a InstrSuspend node" hasInstrSuspend
     ]
 
   , testGroup "assign-with-call-RHS (Plan 145 Phase 1B re-sample Finding B)"
     -- x = f() / x = obj.method() used to silently drop the assignment target and
     -- compile to a bare CatCall/CatSuspend — the call ran but its result was
-    -- never stored. PB.Analysis.CpsGraph (the old, confirmed-correct compiler)
-    -- never special-cases a call RHS on BsAssign; it always emits one CpsAssign.
+    -- never stored. PB.Analysis.InstrGraph (the old, confirmed-correct compiler)
+    -- never special-cases a call RHS on BsAssign; it always emits one InstrAssign.
     [ testCase "x = my_func() (pure) assigns, does not emit a bare CatCall" $
         let callExpr = ExCall { callee = Lvalue [LvSegment "my_func" Nothing], callArgs = [] }
             sa = mkSsa [SsaAssign (SsaVar "x" 1) (SsaConst callExpr)] (SsaReturn Nothing)
@@ -674,46 +674,46 @@ tests = testGroup "CatOp"
         P.reverse (isTrace st) @?= [TeCall "my_func" [VInt 5]]
     ]
 
-  , testGroup "Phase 4: buildCpsGraph"
+  , testGroup "Phase 4: buildInstrGraph"
     [ testCase "CatId compiles to just exit node" $
-        let graph = buildCpsGraph (CatId :: CatOp () ())
+        let graph = buildInstrGraph (CatId :: CatOp () ())
         in do
-          cgEntry graph @?= 0
-          case cgNodes graph of
-            [CpsReturn Nothing] -> return ()
+          igEntry graph @?= 0
+          case igNodes graph of
+            [InstrReturn Nothing] -> return ()
             other -> assertBool ("expected 1 exit node, got " <> show (P.length other)) False
 
-    , testCase "CatAssignWithRhs compiles to CpsAssign + exit" $
-        let graph = buildCpsGraph (CatAssignWithRhs "x_1" (ExInt "42") :: CatOp () ())
+    , testCase "CatAssignWithRhs compiles to InstrAssign + exit" $
+        let graph = buildInstrGraph (CatAssignWithRhs "x_1" (ExInt "42") :: CatOp () ())
         in do
-          cgEntry graph @?= 1
-          case cgNodes graph of
-            [CpsReturn Nothing, CpsAssign { anVar = "x_1", anRhs = ExInt "42", anNext = 0 }] ->
+          igEntry graph @?= 1
+          case igNodes graph of
+            [InstrReturn Nothing, InstrAssign { anVar = "x_1", anRhs = ExInt "42", anNext = 0 }] ->
               return ()
             other -> assertBool ("expected exit + assign, got " <> show (P.length other)) False
 
     , testCase "two assigns chain entry→x_1→y_1→exit" $
         let op = CatAssignWithRhs "y_1" (ExInt "2") . CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
-            graph = buildCpsGraph op
+            graph = buildInstrGraph op
         in do
-          cgEntry graph @?= 2
-          P.length (cgNodes graph) @?= 3
-          case cgNodes graph of
-            (CpsReturn Nothing : CpsAssign { anVar = "y_1" } : CpsAssign { anVar = "x_1" } : []) -> return ()
+          igEntry graph @?= 2
+          P.length (igNodes graph) @?= 3
+          case igNodes graph of
+            (InstrReturn Nothing : InstrAssign { anVar = "y_1" } : InstrAssign { anVar = "x_1" } : []) -> return ()
             _ -> assertBool "expected [exit, y_1, x_1]" False
 
-    , testCase "branch compiles to CpsBranch diamond with no unconditional join nop (Plan 145 Finding A)" $
+    , testCase "branch compiles to InstrBranch diamond with no unconditional join nop (Plan 145 Finding A)" $
         let thenK = CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
             elseK = CatAssignWithRhs "y_1" (ExInt "2")
             op = branch (ExBool True) thenK elseK :: CatOp () ()
-            graph = buildCpsGraph op
+            graph = buildInstrGraph op
         in do
-          P.length (cgNodes graph) @?= 4
-          case cgNodes graph of
-            ( CpsReturn Nothing
-              : CpsAssign { anVar = "y_1", anNext = 0 }
-              : CpsAssign { anVar = "x_1", anNext = 0 }
-              : CpsBranch { brThenPc = 2, brElsePc = 1 }
+          P.length (igNodes graph) @?= 4
+          case igNodes graph of
+            ( InstrReturn Nothing
+              : InstrAssign { anVar = "y_1", anNext = 0 }
+              : InstrAssign { anVar = "x_1", anNext = 0 }
+              : InstrBranch { brThenPc = 2, brElsePc = 1 }
               : [] ) -> return ()
             nodes -> assertBool ("expected 4 nodes [exit, else, then, branch], got " <> show (P.length nodes) <> ": " <> show nodes) False
 
@@ -721,23 +721,23 @@ tests = testGroup "CatOp"
         let thenK = CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
             elseK = CatAssignWithRhs "y_1" (ExInt "2")
             op = branch (ExBool True) thenK elseK :: CatOp () ()
-            graph = buildCpsGraph op
-            branches = filter (\n -> case n of CpsBranch {} -> True; _ -> False) (cgNodes graph)
+            graph = buildInstrGraph op
+            branches = filter (\n -> case n of InstrBranch {} -> True; _ -> False) (igNodes graph)
         in case branches of
-             [CpsBranch { brCond = ExBool True }] -> return ()
+             [InstrBranch { brCond = ExBool True }] -> return ()
              other -> assertBool ("expected branch with ExBool True, got " <> show other) False
 
     , testCase "structural erasure preserves assignments" $
         let op = (CatExl :: CatOp (Int, Int) Int) `seq`
                  CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
-            graph = buildCpsGraph op
+            graph = buildInstrGraph op
         in do
-          P.length (cgNodes graph) @?= 2
-          case cgNodes graph of
-            (CpsReturn Nothing : CpsAssign { anVar = "x_1" } : []) -> return ()
+          P.length (igNodes graph) @?= 2
+          case igNodes graph of
+            (InstrReturn Nothing : InstrAssign { anVar = "x_1" } : []) -> return ()
             _ -> assertBool "expected [exit, assign]" False
 
-    , testCase "end-to-end: SSA loop → CpsGraph preserves assignments and back-edge" $
+    , testCase "end-to-end: SSA loop → InstrGraph preserves assignments and back-edge" $
         let sa = SsaProc
               { spName   = "test"
               , spBlocks = Map.fromList
@@ -751,30 +751,30 @@ tests = testGroup "CatOp"
               , spVars   = []
               }
             catTree  = compileSsaDefault sa
-            graph    = buildCpsGraph catTree
-            nodes    = cgNodes graph
-            hasCpsAssign v = any (\n -> case n of CpsAssign { anVar = v' } -> v' == v; _ -> False) nodes
-            hasGoto        = any (\n -> case n of CpsGoto _ -> True; _ -> False) nodes
-            hasBranch      = any (\n -> case n of CpsBranch {} -> True; _ -> False) nodes
+            graph    = buildInstrGraph catTree
+            nodes    = igNodes graph
+            hasInstrAssign v = any (\n -> case n of InstrAssign { anVar = v' } -> v' == v; _ -> False) nodes
+            hasGoto        = any (\n -> case n of InstrGoto _ -> True; _ -> False) nodes
+            hasBranch      = any (\n -> case n of InstrBranch {} -> True; _ -> False) nodes
         in do
-          assertBool "should contain x assign" (hasCpsAssign "x")
-          -- No CpsGoto: the back-edge is the body assign's own anNext pointing
+          assertBool "should contain x assign" (hasInstrAssign "x")
+          -- No InstrGoto: the back-edge is the body assign's own anNext pointing
           -- straight at the header pc, matching the old compiler (Plan 145
-          -- LInl/LInr fix — see "no wrapper CpsGoto" group below).
-          assertBool "should contain no wrapper CpsGoto for the back-edge" (not hasGoto)
-          assertBool "should contain CpsBranch" hasBranch
+          -- LInl/LInr fix — see "no wrapper InstrGoto" group below).
+          assertBool "should contain no wrapper InstrGoto for the back-edge" (not hasGoto)
+          assertBool "should contain InstrBranch" hasBranch
 
-    , testCase "unit: CatLoop lowers to correct header patch, no wrapper CpsGoto" $
+    , testCase "unit: CatLoop lowers to correct header patch, no wrapper InstrGoto" $
         -- Headerless loop body (no CatFanIn branch to patch in place — falls
-        -- back to the forwarding CpsNop path). Even here, LInl resolves
+        -- back to the forwarding InstrNop path). Even here, LInl resolves
         -- directly to the header pc (Plan 145 LInl/LInr fix): the assign's
-        -- own anNext closes the cycle, no CpsGoto is ever allocated.
+        -- own anNext closes the cycle, no InstrGoto is ever allocated.
         let loopBody = CatCompose CatInl (CatAssignWithRhs "counter" (ExInt "42")) :: CatOp () (Either () ())
             catTree  = CatLoop loopBody :: CatOp () ()
-            graph    = buildCpsGraph catTree
+            graph    = buildInstrGraph catTree
         in canonicalize graph @?= [SNop 1, SAsgn 0]
 
-    , testCase "end-to-end: simple linear SSA → CpsGraph" $
+    , testCase "end-to-end: simple linear SSA → InstrGraph" $
         let sa = SsaProc
               { spName   = "test"
               , spBlocks = Map.fromList
@@ -788,41 +788,41 @@ tests = testGroup "CatOp"
               , spVars   = []
               }
             catTree  = compileSsaDefault sa
-            graph    = buildCpsGraph catTree
-            nodes    = cgNodes graph
+            graph    = buildInstrGraph catTree
+            nodes    = igNodes graph
         in do
           assertBool ("should have 3 nodes (exit + 2 assigns), got " <> show (P.length nodes))
             (P.length nodes == 3)
           assertBool "should contain a"
-            (any (\n -> case n of CpsAssign { anVar = "a" } -> True; _ -> False) nodes)
+            (any (\n -> case n of InstrAssign { anVar = "a" } -> True; _ -> False) nodes)
           assertBool "should contain b"
-            (any (\n -> case n of CpsAssign { anVar = "b" } -> True; _ -> False) nodes)
+            (any (\n -> case n of InstrAssign { anVar = "b" } -> True; _ -> False) nodes)
     ]
 
   , testGroup "compileProcedureViaCatOp"
     [ testCase "empty body produces non-empty graph" $
         let graph = compileProcedureViaCatOp emptyEnv Set.empty []
-        in assertBool "should have at least one node (exit)" (not (null (cgNodes graph)))
+        in assertBool "should have at least one node (exit)" (not (null (igNodes graph)))
 
     , testCase "single BsCall produces non-empty graph" $
         let callExpr = ExCall { callee = Lvalue [LvSegment "foo" Nothing], callArgs = [] }
             body     = [Located 1 (BsCall callExpr)]
             graph    = compileProcedureViaCatOp emptyEnv Set.empty body
-        in assertBool "should have more than one node" (P.length (cgNodes graph) P.> 1)
+        in assertBool "should have more than one node" (P.length (igNodes graph) P.> 1)
 
-    , testCase "DW suspend call produces CpsSuspend in graph" $
+    , testCase "DW suspend call produces InstrSuspend in graph" $
         let callExpr = ExCall
               { callee   = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]
               , callArgs = [] }
             body  = [Located 1 (BsCall callExpr)]
             graph = compileProcedureViaCatOp dwEnv Set.empty body
-        in assertBool "should contain CpsSuspend"
-             (any (\n -> case n of CpsSuspend {} -> True; _ -> False) (cgNodes graph))
+        in assertBool "should contain InstrSuspend"
+             (any (\n -> case n of InstrSuspend {} -> True; _ -> False) (igNodes graph))
 
     -- Plan 145 Phase 1C/3: BsPbCall (`call ancestor::event`) used to be dropped
     -- entirely by PB.Analysis.SSA.stmtToAssigns's catch-all. Confirms the fix
-    -- makes the new pipeline match PB.Analysis.CpsGraph's old-compiler output
-    -- for the exact m_ole_example::destroy regression case (CpsCompileTest.hs's
+    -- makes the new pipeline match PB.Analysis.InstrGraph's old-compiler output
+    -- for the exact m_ole_example::destroy regression case (InstrGraphTest.hs's
     -- "2B" hand-trace test) bit-for-bit, not just structurally equivalent.
     , testCase "BsPbCall (call ancestor::event) matches old compiler's [SCProc, SRet]" $
         let body  = [Located 1 (BsPbCall (PbCall "m_ole_frame" "destroy"))]
@@ -830,11 +830,11 @@ tests = testGroup "CatOp"
         in canonicalize graph @?= [SCProc 1, SRet]
     ]
 
-  , testGroup "no unconditional join CpsNop (Plan 145 Finding A)"
-    -- PB.Analysis.CatOp.compileLowCatToCps's LCompose/LFanIn branch case (and the
+  , testGroup "no unconditional join InstrNop (Plan 145 Finding A)"
+    -- PB.Analysis.CatOp.compileLowCatToInstr's LCompose/LFanIn branch case (and the
     -- analogous case in compileLoopBodyLowCat) used to unconditionally allocate a
-    -- join CpsNop before both arms, even when nothing structurally requires one.
-    -- The old compiler (PB.Analysis.CpsGraph, confirmed-correct reference) never
+    -- join InstrNop before both arms, even when nothing structurally requires one.
+    -- The old compiler (PB.Analysis.InstrGraph, confirmed-correct reference) never
     -- allocates this node — both arms just point their fallthrough straight at the
     -- shared continuation. Cosmetic (no data loss), but common (every if/if-else).
     [ testCase "if without else, nothing follows — matches old compiler exactly" $
@@ -851,47 +851,47 @@ tests = testGroup "CatOp"
             graph = compileProcedureViaCatOp emptyEnv Set.empty body
         in canonicalize graph @?= [SBrnch 1 2, SCProc 3, SCProc 3, SRet]
 
-    , testCase "branch inside a loop body has no join CpsNop" $
+    , testCase "branch inside a loop body has no join InstrNop" $
         -- Direct CatOp construction (bypassing SSA/BsFor) isolates
         -- compileLoopBodyLowCat's branch case from an unrelated, separate bug
         -- where a for-loop containing an if collapses entirely (logged to BACKLOG).
         --
         -- Also verifies the compileLoopLowCat header-patch fix (Plan 145,
         -- "u_ddcal root cause and fix" follow-up): the loop header used to
-        -- allocate a persistent CpsNop placeholder and re-patch it with a
-        -- *forwarding* CpsNop to a separately-allocated CpsBranch, instead of
+        -- allocate a persistent InstrNop placeholder and re-patch it with a
+        -- *forwarding* InstrNop to a separately-allocated InstrBranch, instead of
         -- resolving the placeholder to the branch node in place. Since this
         -- loop's body is itself exactly a branch, the header IS that branch —
         -- no SNop should appear at all.
         --
         -- Also verifies the LInl/LInr fix (Plan 145): neither the continue
         -- (LInl, then-arm) nor the break (LInr, else-arm) allocates a wrapper
-        -- CpsGoto — the assign's anNext closes the back-edge directly onto
+        -- InstrGoto — the assign's anNext closes the back-edge directly onto
         -- the branch, and the break routes straight to the exit/return, so
         -- the whole loop is exactly 3 nodes (branch, assign, return).
         let innerBranch = branch (ExBool True)
               (CatCompose CatInl (CatAssignWithRhs "x_1" (ExInt "1")) :: CatOp () (Either () ()))
               (CatInr :: CatOp () (Either () ()))
             catTree = CatLoop innerBranch :: CatOp () ()
-            graph   = buildCpsGraph catTree
+            graph   = buildInstrGraph catTree
         in canonicalize graph @?= [SBrnch 1 2, SAsgn 0, SRet]
     ]
 
-  , testGroup "no wrapper CpsGoto for loop continue/break (Plan 145 LInl/LInr fix)"
+  , testGroup "no wrapper InstrGoto for loop continue/break (Plan 145 LInl/LInr fix)"
     -- compileLoopBodyLowCat's LInl/LInr cases used to each allocate a genuine
-    -- CpsGoto node for the loop's implicit continue/break, where the old
-    -- compiler (PB.Analysis.CpsGraph's BsFor/BsDo) threads the raw target
+    -- InstrGoto node for the loop's implicit continue/break, where the old
+    -- compiler (PB.Analysis.InstrGraph's BsFor/BsDo) threads the raw target
     -- pcs straight through with zero wrapper nodes. This was the last
     -- blocker for --dual-cps exact-match parity on loop-containing
-    -- procedures (the header-CpsNop fix above didn't move the diff count
+    -- procedures (the header-InstrNop fix above didn't move the diff count
     -- because of this sibling bug). Fixed by resolving LInl/LInr directly to
     -- loopHeaderPc/nextPc as entry pcs (structural/erased, like
-    -- LEval/LFork/LSplitValue) instead of allocateNode-ing a CpsGoto.
+    -- LEval/LFork/LSplitValue) instead of allocateNode-ing a InstrGoto.
     --
     -- These are end-to-end bit-for-bit equality checks against the old
     -- compiler for the exact minimal for/do-loop shapes traced in the plan
     -- (doc/plan/145-dual-cps-debug.md, "New finding: LInl/LInr residual
-    -- CpsGoto hops"). Only SCall vs SCProc differs — the pre-existing,
+    -- InstrGoto hops"). Only SCall vs SCProc differs — the pre-existing,
     -- documented cosmetic call-tag divergence (Phase 1B), not a real
     -- difference — so both sides are normalized before comparing.
     [ testCase "for loop containing one call matches old compiler exactly (mod SCall/SCProc tag)" $
@@ -924,17 +924,17 @@ tests = testGroup "CatOp"
     --
     -- A second, distinct root cause was found while writing these tests and is
     -- now fixed: PB.Analysis.CatOp.compileLoopLowCat used to unconditionally
-    -- allocate a persistent loop-header CpsNop as a forward-reference
-    -- placeholder, then re-patch it with *another* forwarding CpsNop instead of
-    -- resolving it to the real CpsBranch in place. Fixed by patching the
+    -- allocate a persistent loop-header InstrNop as a forward-reference
+    -- placeholder, then re-patch it with *another* forwarding InstrNop instead of
+    -- resolving it to the real InstrBranch in place. Fixed by patching the
     -- reserved header pc directly with the branch node (mirroring
-    -- CpsCompile.hs's BsFor patchNode pattern) via the new
-    -- patchLoopHeaderLowCat helper — see "no unconditional join CpsNop (Plan
-    -- 145 Finding A)" → "branch inside a loop body has no join CpsNop" above
+    -- InstrGraph.hs's BsFor patchNode pattern) via the new
+    -- patchLoopHeaderLowCat helper — see "no unconditional join InstrNop (Plan
+    -- 145 Finding A)" → "branch inside a loop body has no join InstrNop" above
     -- for the isolated regression test.
     --
     -- Still open, out of scope here (logged to BACKLOG): compileLoopBodyLowCat's
-    -- LInl/LInr cases still allocate a genuine CpsGoto node for the implicit
+    -- LInl/LInr cases still allocate a genuine InstrGoto node for the implicit
     -- loop back-edge/break, where the old compiler routes continue/break
     -- directly to the real target pc with no wrapper node at all. This is a
     -- separate, smaller residual cosmetic gap (same family, different call
@@ -972,8 +972,8 @@ tests = testGroup "CatOp"
     -- (`.Post`/`.Trigger`/`Dynamic ... Event(...)` — PB's inter-object
     -- messaging idiom, e.g. `ParentWindow.Dynamic Post of_run_report()` or
     -- `Post Event ue_GetValues()`) fell through to CatAssignWithRhs, producing
-    -- a real CpsAssign{anVar="_"} node instead of a bare call node. The old
-    -- compiler (PB.Analysis.CpsGraph's BsCall `otherwise` branch) never has
+    -- a real InstrAssign{anVar="_"} node instead of a bare call node. The old
+    -- compiler (PB.Analysis.InstrGraph's BsCall `otherwise` branch) never has
     -- this gap: it calls classifyExpr/calleeName generically regardless of
     -- expr shape, both defaulting to PureCall/"?" for anything that isn't
     -- ExCall/ExMethodCall — confirmed as the exact ground-truth reference
@@ -1007,8 +1007,8 @@ tests = testGroup "CatOp"
               , dynamic = True, event = False, name = "of_run_report", args = [] })
             body  = [Located 1 (BsCall dispatchExpr)]
             graph = compileProcedureViaCatOp emptyEnv Set.empty body
-            hasAssignNode = any (\n -> case n of CpsAssign {} -> True; _ -> False) (cgNodes graph)
-        in assertBool "should contain no CpsAssign node" (not hasAssignNode)
+            hasAssignNode = any (\n -> case n of InstrAssign {} -> True; _ -> False) (igNodes graph)
+        in assertBool "should contain no InstrAssign node" (not hasAssignNode)
     ]
 
   , testGroup "compileBlock memoization: shared-tail content survives on every predecessor (Plan 145 Bug A)"
@@ -1111,7 +1111,7 @@ tests = testGroup "CatOp"
               , ("callA3", "callB3", "ctail3", 8), ("callA4", "callB4", "ctail4", 12)
               ]
             graph = compileProcedureViaCatOp emptyEnv Set.empty body
-            nodeCount = length (cgNodes graph)
+            nodeCount = length (igNodes graph)
         in assertBool
              ("node count should stay roughly linear in 4 groups (~5-6 nodes/group); got " <> show nodeCount)
              (nodeCount P.< 40)
@@ -1135,7 +1135,7 @@ tests = testGroup "CatOp"
 
   , testGroup "Phase 1D: Interp vs GraphBuilder trace equivalence (Plan 146)"
     -- Same CatOp term, run through both of CatOp's execution backends:
-    -- Interp (direct Haskell execution) and GraphBuilder (flat CpsGraph, the
+    -- Interp (direct Haskell execution) and GraphBuilder (flat InstrGraph, the
     -- shape the TS runtime consumes). A divergence here is a real backend
     -- bug, independent of anything upstream in the AST/SSA/CatOp compilation
     -- stages. Reuses the exact terms hand-built in the "Interp / runCat"
@@ -1144,7 +1144,7 @@ tests = testGroup "CatOp"
     [ testCase "CatId: no trace, no env change" $ do
         let term = CatId :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) Map.empty
         itrace @?= []
         itrace @?= gtrace
         ienv @?= genv
@@ -1152,7 +1152,7 @@ tests = testGroup "CatOp"
     , testCase "CatAssignWithRhs: same assign trace, same env" $ do
         let term = CatAssignWithRhs "x_1" (ExInt "42") :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) Map.empty
         itrace @?= [TeAssign "x_1" (VInt 42)]
         itrace @?= gtrace
         ienv @?= genv
@@ -1160,7 +1160,7 @@ tests = testGroup "CatOp"
     , testCase "CatCompose: two assigns execute in the same order" $ do
         let term = CatAssignWithRhs "y_1" (ExInt "2") . CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
@@ -1169,7 +1169,7 @@ tests = testGroup "CatOp"
                      (CatAssignWithRhs "then_taken" (ExInt "1"))
                      (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
@@ -1178,21 +1178,21 @@ tests = testGroup "CatOp"
                      (CatAssignWithRhs "then_taken" (ExInt "1"))
                      (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
     , testCase "CatSuspend: same effect name and evaluated args" $ do
         let term = CatSuspend "retrieve:dw_foo" [ExInt "1", ExStr "bar"] :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
     , testCase "CatCall: same callee and evaluated args" $ do
         let term = CatCall "my_func" [ExInt "5"] :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) Map.empty
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
@@ -1210,7 +1210,7 @@ tests = testGroup "CatOp"
             term = CatLoop loopBody :: CatOp () ()
             initEnv = Map.fromList [("i", VInt 0)]
         (ienv, itrace) <- runInterpTrace term initEnv
-        let (genv, gtrace, _) = runCpsGraphTrace 10000 Map.empty (buildCpsGraph term) initEnv
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) initEnv
         itrace @?= gtrace
         ienv @?= genv
         Map.lookup "i" ienv @?= Just (VInt 3)
@@ -1219,7 +1219,7 @@ tests = testGroup "CatOp"
   , testGroup "PureCall callee name preserves source case (Plan 146 Phase 2d)"
     -- compileCallExpr's `otherwise` branch (PB.Analysis.CatOp) and
     -- compileAssign's ExMethodCall PureCall case both wrap the callee name in
-    -- T.toLower before building CatCall, but PB.Analysis.CpsGraph's mirror
+    -- T.toLower before building CatCall, but PB.Analysis.InstrGraph's mirror
     -- (the confirmed-correct old compiler) uses calleeName's result verbatim
     -- via `clCallee = calleeName expr`. calleeName never itself lowercases —
     -- the divergence is CatOp.hs-only. Found via a read-only GHCi hand-trace
@@ -1233,14 +1233,14 @@ tests = testGroup "CatOp"
             -- Frozen expected trace (Plan 144 Phase 5 Step 7): captured from the old
             -- compiler before its deletion, when this test last passed bit-for-bit.
             expectedTrace = (Map.empty, [TeCall "GlobalMemoryStatus" []], NaturalHalt)
-            newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+            newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
         in newTrace @?= expectedTrace
 
     , testCase "ExMethodCall with mixed-case receiver/method: TeCall preserves case" $
         let recv = ExLvalue (Lvalue [LvSegment "parentwindow" Nothing])
             body = [Located 1 (BsCall (ExMethodCall recv "TriggerEvent" [[]]))]
             expectedTrace = (Map.empty, [TeCall "parentwindow.TriggerEvent" [VNull]], NaturalHalt)
-            newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+            newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
         in newTrace @?= expectedTrace
 
     , testCase "ExMethodCall whose receiver is itself a call (chained method call) matches old compiler" $
@@ -1257,14 +1257,14 @@ tests = testGroup "CatOp"
         let recv = ExCall (Lvalue [LvSegment "ParentWindow" Nothing, LvSegment "GetActiveSheet" Nothing]) []
             body = [Located 1 (BsCall (ExMethodCall recv "TriggerEvent" [[]]))]
             expectedTrace = (Map.empty, [TeCall "?.TriggerEvent" [VNull]], NaturalHalt)
-            newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+            newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
         in newTrace @?= expectedTrace
     ]
 
   , testGroup "fn_retrievechild suspend args match old compiler (Plan 146 Phase 2i)"
     -- Real corpus idiom (openpay's wiz_misth_final_details_step1::of_stepadded
     -- and 3 sibling wizard-step handlers): `fn_retrievechild(adw, "col", var)`.
-    -- 'PB.Analysis.CpsGraph' special-cases this exact callee (before its
+    -- 'PB.Analysis.InstrGraph' special-cases this exact callee (before its
     -- generic call-compilation path) to trace only the third argument (the
     -- bound variable) as the suspend's args, since the datawindow control and
     -- column name are already encoded directly in the effect name string
@@ -1281,7 +1281,7 @@ tests = testGroup "CatOp"
               , callArgs = [[tok "dw_misth_final"], [tok "\"kodkat\""], [tok "gs_kodxrisi"]]
               }))]
             expectedTrace = (Map.empty, [TeSuspend "retrieve:child_kodkat:dw_misth_final" [VNull]], NaturalHalt)
-            newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+            newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
         in newTrace @?= expectedTrace
     ]
 
@@ -1291,7 +1291,7 @@ tests = testGroup "CatOp"
     -- env flows in unchanged from the caller, so a *locally-declared*
     -- datastore/transaction variable's type can never be resolved by
     -- classifyExpr's lookupScopedVar, and a suspend method call on it falls
-    -- through to the conservative PureCall default. PB.Analysis.CpsGraph's
+    -- through to the conservative PureCall default. PB.Analysis.InstrGraph's
     -- compileProcedure (the confirmed-correct old compiler) seeds steLocal
     -- from the body's own BsLocalVar decls via collectBodyLocals before
     -- compiling. Found via a read-only GHCi hand-trace of a real
@@ -1304,7 +1304,7 @@ tests = testGroup "CatOp"
                    , Located 2 (BsCall (ExMethodCall (ExLvalue (Lvalue [LvSegment "lds_x" Nothing])) "retrieve" [[]]))
                    ]
             expectedTrace = (Map.empty, [TeSuspend "retrieve:lds_x" [VNull]], NaturalHalt)
-            newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+            newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
         in newTrace @?= expectedTrace
 
     , testCase "local transaction var .commit() classifies as SuspendCall" $
@@ -1312,7 +1312,7 @@ tests = testGroup "CatOp"
                    , Located 2 (BsCall (ExMethodCall (ExLvalue (Lvalue [LvSegment "ltrans_x" Nothing])) "commit" [[]]))
                    ]
             expectedTrace = (Map.empty, [TeSuspend "executeSql" [VNull]], NaturalHalt)
-            newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+            newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
         in newTrace @?= expectedTrace
     ]
 
@@ -1367,13 +1367,13 @@ tests = testGroup "CatOp"
                 ]
             }
           initEnv = Map.fromList [("oi", VInt 0), ("y", VInt 0), ("ii", VInt 0)]
-          -- Bounded via 'runCpsGraphTrace' (never raw, unbounded 'runInterpTrace')
+          -- Bounded via 'runInstrGraphTrace' (never raw, unbounded 'runInterpTrace')
           -- because the pre-fix bug reproduces a genuine runtime infinite loop for
           -- this shape (confirmed empirically before writing this assertion), not
           -- just a wrong-but-terminating result.
           maxSteps = 500 :: Int
-          (finalEnv, trc, _) = runCpsGraphTrace maxSteps Map.empty
-                              (buildCpsGraph (compileSsaDefault nestedLoopsSsa)) initEnv
+          (finalEnv, trc, _) = runInstrGraphTrace maxSteps Map.empty
+                              (buildInstrGraph (compileSsaDefault nestedLoopsSsa)) initEnv
       in testCase "outer loop containing an inner loop terminates with the correct final environment, not a runaway trace" $ do
            assertBool ("trace should terminate well under the " <> show maxSteps <> "-step fuel bound, got "
                          <> show (length trc) <> " steps (indicates the outer/inner loop headers were resolved as each other's exit target)")
@@ -1443,8 +1443,8 @@ tests = testGroup "CatOp"
                 ]
             }
           initEnv = Map.fromList [("x", VInt 0), ("y", VInt 0), ("skip_count", VInt 0), ("done", VInt 0)]
-          (finalEnv, _trc, _) = runCpsGraphTrace 100 Map.empty
-                                (buildCpsGraph (compileSsaDefault continueSsa)) initEnv
+          (finalEnv, _trc, _) = runInstrGraphTrace 100 Map.empty
+                                (buildInstrGraph (compileSsaDefault continueSsa)) initEnv
       in testCase "continue mid-loop still reaches the real post-loop block, not the continue block's own content" $ do
            Map.lookup "x" finalEnv @?= Just (VInt 3)
            Map.lookup "y" finalEnv @?= Just (VInt 2)
@@ -1477,7 +1477,7 @@ tests = testGroup "CatOp"
             , Located 5 (BsAssign doneLv (ExInt "1"))
             ]
           expectedTrace = (Map.fromList [("done", VInt 1)], [TeBranch False, TeBranch False, TeBranch False, TeAssign "done" (VInt 1)], NaturalHalt)
-          newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+          newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
       in testCase "no elseif clause matches (x unset) -> falls through to the trailing assign, matching the old compiler" $
            newTrace @?= expectedTrace
     ]
@@ -1540,8 +1540,8 @@ tests = testGroup "CatOp"
                ]
            }
          compiled = compileSsaDefault returnSsa
-         runIt trigger = runCpsGraphTrace 100 Map.empty
-                           (buildCpsGraph compiled)
+         runIt trigger = runInstrGraphTrace 100 Map.empty
+                           (buildInstrGraph compiled)
                            (Map.fromList [("x", VInt 0), ("y", VInt 0), ("done", VInt 0), ("trigger", VInt trigger)])
      in
      [ testCase "compiles to a CatReturn (not CatInr) for the return block" $
@@ -1590,7 +1590,7 @@ tests = testGroup "CatOp"
             , Located 7 (BsCall (call "trailing"))
             ]
           expectedTrace = (Map.empty, [TeBranch False, TeCall "trailing" []], NaturalHalt)
-          newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+          newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
       in testCase "do-while with if/elseif-return, followed by trailing code, matches old compiler" $
            newTrace @?= expectedTrace
     ]
@@ -1608,8 +1608,8 @@ tests = testGroup "CatOp"
     -- 'compileLoopBody' try to recompile the already-memoized end block —
     -- landing on a stale 'CatInl' seed placeholder instead of its real
     -- content, and turning the loop's real exit into a self-referencing
-    -- infinite loop (confirmed via direct 'CpsGraph' inspection of the real
-    -- procedure: a 'CpsBranch' whose own false edge pointed back at itself).
+    -- infinite loop (confirmed via direct 'InstrGraph' inspection of the real
+    -- procedure: a 'InstrBranch' whose own false edge pointed back at itself).
     -- Bounded via a small 'maxSteps' so a regression here fails loudly
     -- (hits the bound) rather than hanging the test suite.
     (let flagLv = Lvalue [LvSegment "flag" Nothing]
@@ -1634,7 +1634,7 @@ tests = testGroup "CatOp"
                             , TeAssign "i" (VInt 4), TeBranch False
                             ]
                           , NaturalHalt )
-         newTrace = runCpsGraphTrace maxSteps Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+         newTrace = runInstrGraphTrace maxSteps Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
          (_, elseTrc, _) = newTrace
      in
      [ testCase "else-branch for-loop terminates well under the step bound, not a runaway trace" $
@@ -1650,7 +1650,7 @@ tests = testGroup "CatOp"
     -- try/catch block as one opaque pending statement, and
     -- SSA.stmtToAssigns (BsTry {}) = [] meant the try-body's own assigns
     -- never reached SSA at all — silently dropped by the new compiler while
-    -- the old compiler (CpsCompile.hs's explicit BsTry case) executed them
+    -- the old compiler (InstrGraph.hs's explicit BsTry case) executed them
     -- sequentially. This end-to-end fixture is deliberately compared against
     -- the old compiler (unlike GoldenFixtureTest.hs's independently
     -- hand-derived fixtures) because that's exactly what's being repaired:
@@ -1665,7 +1665,7 @@ tests = testGroup "CatOp"
             expectedTrace = ( Map.fromList [("x", VInt 1), ("z", VInt 2)]
                             , [TeAssign "x" (VInt 0), TeAssign "x" (VInt 1), TeAssign "z" (VInt 2)]
                             , NaturalHalt )
-            newTrace = runCpsGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
+            newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaCatOp emptyEnv Set.empty body) Map.empty
             (newEnv, _, _) = newTrace
         in do
              newTrace @?= expectedTrace
@@ -1675,8 +1675,8 @@ tests = testGroup "CatOp"
     ]
 
   , testGroup "parseArgList / collectBodyLocals (retained helpers, Plan 144 Phase 5 Step 7)"
-    -- Ported from the now-deleted CpsCompileTest.hs's "Gap 3" and "body locals"
-    -- groups: these exercised the two PB.Analysis.CpsGraph helpers that
+    -- Ported from the now-deleted InstrGraphTest.hs's "Gap 3" and "body locals"
+    -- groups: these exercised the two PB.Analysis.InstrGraph helpers that
     -- survive the old compiler's deletion (both are still imported directly by
     -- PB.Analysis.CatOp) indirectly, through compileProcedure. Direct unit
     -- tests on the pure functions themselves, rather than losing the coverage.

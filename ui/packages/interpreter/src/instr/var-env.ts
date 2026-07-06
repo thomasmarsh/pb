@@ -1,4 +1,4 @@
-// core/cps/var-env.ts — Three-tier variable environment for the PB runtime.
+// interpreter/instr/var-env.ts — Three-tier variable environment for the PB runtime.
 
 export interface VarEnv {
   globals:  Record<string, unknown>;

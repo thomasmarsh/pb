@@ -1,4 +1,4 @@
-"""Runtime support endpoints — DW query map for the CPS interpreter."""
+"""Runtime support endpoints — DW query map for the instruction-graph interpreter."""
 
 from __future__ import annotations
 

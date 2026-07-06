@@ -1,10 +1,10 @@
-// core/cps/types.ts — CPS graph data types for the composable step machine.
+// interpreter/instr/types.ts — InstrGraph data types for the composable step machine.
 
 import { type Effect, type SQLResult } from "@pb/core";
 import type { Expr } from "../types/ast.js";
 
-/** A flat instruction in the CPS graph. No nested control flow. */
-export type CpsNode =
+/** A flat instruction in the InstrGraph. No nested control flow. */
+export type InstrNode =
   | { kind: "assign"; var: string; rhs: Expr; next: number }
   | { kind: "branch"; cond: Expr; then_: number; else_: number }
   | { kind: "goto"; target: number }
@@ -17,14 +17,14 @@ export type CpsNode =
   // resumes at cpNext once the callee body completes (or is skipped if not found).
   | { kind: "callproc"; callee: string; args: Expr[]; next: number };
 
-export interface CpsGraph {
-  nodes: CpsNode[];
+export interface InstrGraph {
+  nodes: InstrNode[];
   entry: number;
   suspensionPoints: number[];
   sourceMap: Map<number, number>;
 }
 
-export interface CpsEnv {
+export interface InstrEnv {
   executeSql(sql: string, params: unknown[]): Effect<SQLResult>;
   open(windowName: string): Effect<unknown>;
   /** Resolve a DataWindow control name to its SQL query. Optional — only provided in runtime context. */

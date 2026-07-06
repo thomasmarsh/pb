@@ -1,20 +1,20 @@
-// tests/core/cps/load.test.ts — Tests for loadCpsGraph().
+// tests/interpreter/instr/load.test.ts — Tests for loadInstrGraph().
 
 import { describe, it, expect } from "vitest";
-import { loadCpsGraph } from "../../src/cps/load.js";
+import { loadInstrGraph } from "../../src/instr/load.js";
 
-describe("loadCpsGraph", () => {
-  it("maps CpsAssign tag → kind assign with renamed fields", () => {
+describe("loadInstrGraph", () => {
+  it("maps InstrAssign tag → kind assign with renamed fields", () => {
     const raw = {
       nodes: [
-        { tag: "CpsReturn" },
-        { tag: "CpsAssign", var: "x", rhs: { tag: "ExInt", contents: "1" }, next: 0 },
+        { tag: "InstrReturn" },
+        { tag: "InstrAssign", var: "x", rhs: { tag: "ExInt", contents: "1" }, next: 0 },
       ],
       entry: 1,
       suspensionPoints: [],
       sourceMap: [],
     };
-    const g = loadCpsGraph(raw);
+    const g = loadInstrGraph(raw);
     expect(g.nodes).toHaveLength(2);
     const assign = g.nodes[1]!;
     expect(assign.kind).toBe("assign");
@@ -24,18 +24,18 @@ describe("loadCpsGraph", () => {
     }
   });
 
-  it("maps CpsBranch thenPc/elsePc → then_/else_", () => {
+  it("maps InstrBranch thenPc/elsePc → then_/else_", () => {
     const raw = {
       nodes: [
-        { tag: "CpsReturn" },
-        { tag: "CpsBranch", cond: { tag: "ExBool", contents: true }, thenPc: 2, elsePc: 0 },
-        { tag: "CpsAssign", var: "x", rhs: { tag: "ExInt", contents: "1" }, next: 0 },
+        { tag: "InstrReturn" },
+        { tag: "InstrBranch", cond: { tag: "ExBool", contents: true }, thenPc: 2, elsePc: 0 },
+        { tag: "InstrAssign", var: "x", rhs: { tag: "ExInt", contents: "1" }, next: 0 },
       ],
       entry: 1,
       suspensionPoints: [],
       sourceMap: [],
     };
-    const g = loadCpsGraph(raw);
+    const g = loadInstrGraph(raw);
     const branch = g.nodes[1]!;
     expect(branch.kind).toBe("branch");
     if (branch.kind === "branch") {
@@ -47,14 +47,14 @@ describe("loadCpsGraph", () => {
   it("converts sourceMap array-of-pairs into a Map", () => {
     const raw = {
       nodes: [
-        { tag: "CpsReturn" },
-        { tag: "CpsAssign", var: "x", rhs: { tag: "ExInt", contents: "1" }, next: 0 },
+        { tag: "InstrReturn" },
+        { tag: "InstrAssign", var: "x", rhs: { tag: "ExInt", contents: "1" }, next: 0 },
       ],
       entry: 1,
       suspensionPoints: [],
       sourceMap: [[1, 42]],
     };
-    const g = loadCpsGraph(raw);
+    const g = loadInstrGraph(raw);
     expect(g.sourceMap).toBeInstanceOf(Map);
     expect(g.sourceMap.get(1)).toBe(42);
   });
@@ -62,9 +62,9 @@ describe("loadCpsGraph", () => {
   it("preserves suspensionPoints array", () => {
     const raw = {
       nodes: [
-        { tag: "CpsReturn" },
+        { tag: "InstrReturn" },
         {
-          tag: "CpsSuspend",
+          tag: "InstrSuspend",
           effect: "executeSql",
           args: [],
           continuation: 0,
@@ -74,7 +74,7 @@ describe("loadCpsGraph", () => {
       suspensionPoints: [1],
       sourceMap: [],
     };
-    const g = loadCpsGraph(raw);
+    const g = loadInstrGraph(raw);
     expect(g.suspensionPoints).toEqual([1]);
     const suspend = g.nodes[1]!;
     expect(suspend.kind).toBe("suspend");
@@ -83,13 +83,13 @@ describe("loadCpsGraph", () => {
     }
   });
 
-  // Plan 115 item 2: CpsCallProc deserialization.
-  it("maps CpsCallProc tag → kind callproc with callee/args/next", () => {
+  // Plan 115 item 2: InstrCallProc deserialization.
+  it("maps InstrCallProc tag → kind callproc with callee/args/next", () => {
     const raw = {
       nodes: [
-        { tag: "CpsReturn" },
+        { tag: "InstrReturn" },
         {
-          tag: "CpsCallProc",
+          tag: "InstrCallProc",
           callee: "super::open",
           args: [],
           next: 0,
@@ -99,7 +99,7 @@ describe("loadCpsGraph", () => {
       suspensionPoints: [],
       sourceMap: [],
     };
-    const g = loadCpsGraph(raw);
+    const g = loadInstrGraph(raw);
     const callproc = g.nodes[1]!;
     expect(callproc.kind).toBe("callproc");
     if (callproc.kind === "callproc") {
@@ -109,12 +109,12 @@ describe("loadCpsGraph", () => {
     }
   });
 
-  it("maps CpsCallProc triggerevent with string-literal arg", () => {
+  it("maps InstrCallProc triggerevent with string-literal arg", () => {
     const raw = {
       nodes: [
-        { tag: "CpsReturn" },
+        { tag: "InstrReturn" },
         {
-          tag: "CpsCallProc",
+          tag: "InstrCallProc",
           callee: "triggerevent",
           args: [{ tag: "ExStr", contents: "ie_retrieve" }],
           next: 0,
@@ -124,7 +124,7 @@ describe("loadCpsGraph", () => {
       suspensionPoints: [],
       sourceMap: [],
     };
-    const g = loadCpsGraph(raw);
+    const g = loadInstrGraph(raw);
     const callproc = g.nodes[1]!;
     expect(callproc.kind).toBe("callproc");
     if (callproc.kind === "callproc") {

@@ -1,43 +1,43 @@
-// core/cps/load.ts — Deserialise Haskell-generated CPS graph JSON.
+// interpreter/instr/load.ts — Deserialise Haskell-generated InstrGraph JSON.
 //
-// The Haskell CpsCompile module produces JSON with:
-//   - "tag" discriminator (e.g. "CpsAssign") mapped to TypeScript kind
+// The Haskell InstrGraph module produces JSON with:
+//   - "tag" discriminator (e.g. "InstrAssign") mapped to TypeScript kind
 //   - brThenPc/brElsePc → then_/else_ (avoid TS keyword collision)
 //   - sourceMap as [[pc, line], ...] → Map<number, number>
 
-import type { CpsGraph, CpsNode } from "./types.js";
+import type { InstrGraph, InstrNode } from "./types.js";
 import type { Expr } from "../types/ast.js";
 
 // Raw JSON shape from Haskell serialisation.
-type RawCpsNode = Record<string, unknown>;
+type RawInstrNode = Record<string, unknown>;
 
-interface RawCpsGraph {
-  nodes: RawCpsNode[];
+interface RawInstrGraph {
+  nodes: RawInstrNode[];
   entry: number;
   suspensionPoints: number[];
   sourceMap: [number, number][];
 }
 
-function loadNode(raw: RawCpsNode): CpsNode | null {
+function loadNode(raw: RawInstrNode): InstrNode | null {
   const tag = raw["tag"] as string | undefined;
   switch (tag) {
-    case "CpsAssign":
+    case "InstrAssign":
       return {
         kind: "assign",
         var: raw["var"] as string,
         rhs: raw["rhs"] as Expr,
         next: raw["next"] as number,
       };
-    case "CpsBranch":
+    case "InstrBranch":
       return {
         kind: "branch",
         cond: raw["cond"] as Expr,
         then_: raw["thenPc"] as number,
         else_: raw["elsePc"] as number,
       };
-    case "CpsGoto":
+    case "InstrGoto":
       return { kind: "goto", target: raw["target"] as number };
-    case "CpsCall":
+    case "InstrCall":
       return {
         kind: "call",
         callee: raw["callee"] as string,
@@ -45,7 +45,7 @@ function loadNode(raw: RawCpsNode): CpsNode | null {
         result: raw["result"] as string | undefined,
         next: raw["next"] as number,
       };
-    case "CpsSuspend":
+    case "InstrSuspend":
       return {
         kind: "suspend",
         effect: raw["effect"] as string,
@@ -53,14 +53,14 @@ function loadNode(raw: RawCpsNode): CpsNode | null {
         var: raw["var"] as string | undefined,
         continuation: raw["continuation"] as number,
       };
-    case "CpsReturn":
+    case "InstrReturn":
       return {
         kind: "return",
         value: raw["value"] as Expr | undefined,
       };
-    case "CpsNop":
+    case "InstrNop":
       return { kind: "nop", next: raw["next"] as number };
-    case "CpsCallProc":
+    case "InstrCallProc":
       return {
         kind: "callproc",
         callee: raw["callee"] as string,
@@ -72,11 +72,11 @@ function loadNode(raw: RawCpsNode): CpsNode | null {
   }
 }
 
-export function loadCpsGraph(json: unknown): CpsGraph {
-  const raw = json as RawCpsGraph;
-  const nodes: CpsNode[] = (raw.nodes ?? [])
+export function loadInstrGraph(json: unknown): InstrGraph {
+  const raw = json as RawInstrGraph;
+  const nodes: InstrNode[] = (raw.nodes ?? [])
     .map(loadNode)
-    .filter((n): n is CpsNode => n !== null);
+    .filter((n): n is InstrNode => n !== null);
   return {
     nodes,
     entry: raw.entry ?? 0,

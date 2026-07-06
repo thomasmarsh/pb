@@ -1,14 +1,14 @@
-// tests/core/cps/e2e.test.ts — End-to-end tests for the CPS compile→load→execute loop.
+// tests/interpreter/instr/e2e.test.ts — End-to-end tests for the InstrGraph compile→load→execute loop.
 //
-// These tests use Haskell-shaped cpsGraph JSON (as emitted by pb-runner) fed through
-// loadCpsGraph → step to prove the full pipeline is wired together.
+// These tests use Haskell-shaped instrGraph JSON (as emitted by pb-runner) fed through
+// loadInstrGraph → step to prove the full pipeline is wired together.
 
 import { describe, it, expect } from "vitest";
 import { Effect, type SQLResult } from "@pb/core";
-import { loadCpsGraph } from "../../src/cps/load.js";
-import { step } from "../../src/cps/runner.js";
-import type { CpsEnv } from "../../src/cps/types.js";
-import { makeVarEnv, flattenVarEnv } from "../../src/cps/var-env.js";
+import { loadInstrGraph } from "../../src/instr/load.js";
+import { step } from "../../src/instr/runner.js";
+import type { InstrEnv } from "../../src/instr/types.js";
+import { makeVarEnv, flattenVarEnv } from "../../src/instr/var-env.js";
 import { createTestStore } from "../../../../tests/test-store.js";
 import {
   runtimeReducer,
@@ -19,14 +19,14 @@ import {
 import type { AstData } from "../../src/interpreter.js";
 
 // ── Haskell-shaped graph fixtures ─────────────────────────────────────────────
-// These match the JSON format emitted by PB.Pipeline.CpsCompile / Serialise.
+// These match the JSON format emitted by PB.Pipeline.InstrGraph / Serialise.
 
 // Simple assign chain: x = 1; y = 2
 const ASSIGN_CHAIN_RAW = {
   nodes: [
-    { tag: "CpsReturn" },
-    { tag: "CpsAssign", var: "y", rhs: { tag: "ExInt", contents: "2" }, next: 0 },
-    { tag: "CpsAssign", var: "x", rhs: { tag: "ExInt", contents: "1" }, next: 1 },
+    { tag: "InstrReturn" },
+    { tag: "InstrAssign", var: "y", rhs: { tag: "ExInt", contents: "2" }, next: 0 },
+    { tag: "InstrAssign", var: "x", rhs: { tag: "ExInt", contents: "1" }, next: 1 },
   ],
   entry: 2,
   suspensionPoints: [],
@@ -36,10 +36,10 @@ const ASSIGN_CHAIN_RAW = {
 // If/else: if (true) { x = "then" } else { x = "else" }
 const IF_ELSE_RAW = {
   nodes: [
-    { tag: "CpsReturn" },
-    { tag: "CpsAssign", var: "x", rhs: { tag: "ExStr", contents: "then" }, next: 0 },
-    { tag: "CpsAssign", var: "x", rhs: { tag: "ExStr", contents: "else" }, next: 0 },
-    { tag: "CpsBranch", cond: { tag: "ExBool", contents: true }, thenPc: 1, elsePc: 2 },
+    { tag: "InstrReturn" },
+    { tag: "InstrAssign", var: "x", rhs: { tag: "ExStr", contents: "then" }, next: 0 },
+    { tag: "InstrAssign", var: "x", rhs: { tag: "ExStr", contents: "else" }, next: 0 },
+    { tag: "InstrBranch", cond: { tag: "ExBool", contents: true }, thenPc: 1, elsePc: 2 },
   ],
   entry: 3,
   suspensionPoints: [],
@@ -50,9 +50,9 @@ const IF_ELSE_RAW = {
 // effectName emits "retrieve:dw_period"; args = [ExLvalue gs_kodxrisi]
 const RETRIEVE_RAW = {
   nodes: [
-    { tag: "CpsReturn" },
+    { tag: "InstrReturn" },
     {
-      tag: "CpsSuspend",
+      tag: "InstrSuspend",
       effect: "retrieve:dw_period",
       args: [{ tag: "ExLvalue", contents: { segments: [{ name: "gs_kodxrisi", subscript: null }] } }],
       continuation: 0,
@@ -63,40 +63,40 @@ const RETRIEVE_RAW = {
   sourceMap: [],
 };
 
-// ── CpsEnv helpers ────────────────────────────────────────────────────────────
+// ── InstrEnv helpers ────────────────────────────────────────────────────────────
 
-const nullEnv: CpsEnv = {
+const nullEnv: InstrEnv = {
   executeSql: () => Effect.none(),
   open: () => Effect.none(),
 };
 
-// ── Tests: direct loadCpsGraph → step ─────────────────────────────────────────
+// ── Tests: direct loadInstrGraph → step ─────────────────────────────────────────
 
-describe("e2e: loadCpsGraph → step", () => {
-  it("assign chain executes via loaded cpsGraph", () => {
-    const graph = loadCpsGraph(ASSIGN_CHAIN_RAW);
+describe("e2e: loadInstrGraph → step", () => {
+  it("assign chain executes via loaded instrGraph", () => {
+    const graph = loadInstrGraph(ASSIGN_CHAIN_RAW);
     const varEnv = makeVarEnv();
     const result = step(graph, graph.entry, varEnv, nullEnv);
     expect(result).toBeNull();
     expect(flattenVarEnv(varEnv)).toEqual({ x: 1, y: 2 });
   });
 
-  it("if/else branch selects correct path via cpsGraph", () => {
-    const graph = loadCpsGraph(IF_ELSE_RAW);
+  it("if/else branch selects correct path via instrGraph", () => {
+    const graph = loadInstrGraph(IF_ELSE_RAW);
     const varEnv = makeVarEnv();
     step(graph, graph.entry, varEnv, nullEnv);
     expect(flattenVarEnv(varEnv).x).toBe("then");
   });
 
-  it("retrieve() suspend returns non-null Effect via loaded cpsGraph", () => {
+  it("retrieve() suspend returns non-null Effect via loaded instrGraph", () => {
     const MOCK_ROWS = [{ kodperiod: "01" }];
     const sqlResult: SQLResult = { rows: MOCK_ROWS, rowcount: 1, columns: ["kodperiod"] };
-    const env: CpsEnv = {
+    const env: InstrEnv = {
       executeSql: (_sql, _params) => Effect.send(sqlResult),
       open: () => Effect.none(),
       dwNameToSql: (name) => name === "dw_period" ? "SELECT * FROM misth_zpperiod" : null,
     };
-    const graph = loadCpsGraph(RETRIEVE_RAW);
+    const graph = loadInstrGraph(RETRIEVE_RAW);
     const varEnv = makeVarEnv();
     varEnv.globals["gs_kodxrisi"] = "0001";
     const result = step(graph, graph.entry, varEnv, env);
@@ -104,18 +104,18 @@ describe("e2e: loadCpsGraph → step", () => {
   });
 });
 
-// ── Tests: reducer cps-resume path ────────────────────────────────────────────
-// The reducer activates CPS mode when a procEntry carries a cpsGraph.
+// ── Tests: reducer instr-resume path ────────────────────────────────────────────
+// The reducer activates InstrGraph mode when a procEntry carries a instrGraph.
 
-describe("e2e: reducer CPS path", () => {
-  it("assign chain executes via cpsGraph in reducer and transitions to done", () => {
+describe("e2e: reducer InstrGraph path", () => {
+  it("assign chain executes via instrGraph in reducer and transitions to done", () => {
     const ast: AstData = {
       typeBlocks: [],
       events: [
         {
           name: "open",
           owner: "w_test",
-          cpsGraph: ASSIGN_CHAIN_RAW,
+          instrGraph: ASSIGN_CHAIN_RAW,
         },
       ],
     };
@@ -130,12 +130,12 @@ describe("e2e: reducer CPS path", () => {
       s.varEnv.globals = { ...PB_GLOBALS };
       s.varEnv.locals[0]!.x = 1;
       s.varEnv.locals[0]!.y = 2;
-      s.cpsGraph = null;
+      s.instrGraph = null;
     });
     ts.assertDrained();
   });
 
-  it("retrieve() suspend in cpsGraph fires cps-resume action", () => {
+  it("retrieve() suspend in instrGraph fires instr-resume action", () => {
     const MOCK_ROWS = [{ kodperiod: "01" }];
     const sqlResult: SQLResult = { rows: MOCK_ROWS, rowcount: 1, columns: ["kodperiod"] };
     const env = { getDwQueries: () => Effect.none<Record<string, string>>(), executeSql: () => Effect.send(sqlResult) };
@@ -146,12 +146,12 @@ describe("e2e: reducer CPS path", () => {
         {
           name: "open",
           owner: "w_test",
-          cpsGraph: RETRIEVE_RAW,
+          instrGraph: RETRIEVE_RAW,
         },
       ],
     };
 
-    const graph = loadCpsGraph(RETRIEVE_RAW);
+    const graph = loadInstrGraph(RETRIEVE_RAW);
     const ts = createTestStore(runtimeReducer, env, {
       ...initialRuntimeState,
       ast,
@@ -160,31 +160,31 @@ describe("e2e: reducer CPS path", () => {
 
     ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
       s.status = "awaiting-sql";
-      s.cpsGraph = graph;
+      s.instrGraph = graph;
       s.varEnv.globals = { ...PB_GLOBALS };
     });
 
     ts.receive(
-      { tag: "cps-resume", dwName: "dw_period", rows: MOCK_ROWS, pc: 0, varName: null },
+      { tag: "instr-resume", dwName: "dw_period", rows: MOCK_ROWS, pc: 0, varName: null },
       (s: RuntimeState) => {
         s.controlValues = { dw_period: MOCK_ROWS };
         s.status = "done";
-        s.cpsGraph = null;
+        s.instrGraph = null;
       },
     );
 
     ts.assertDrained();
   });
 
-  // Plan 115 item 2: CpsCallProc dispatches to an event body via the call stack.
+  // Plan 115 item 2: InstrCallProc dispatches to an event body via the call stack.
   it("callproc dispatches to event body and resumes via call stack", () => {
-    // Graph: [CpsReturn, CpsCallProc "triggerevent" [ExStr "ie_retrieve"] next=0]
+    // Graph: [InstrReturn, InstrCallProc "triggerevent" [ExStr "ie_retrieve"] next=0]
     // entry=1. The dispatch target ie_retrieve runs and then popCallStack resumes.
     const CALLPROC_RAW = {
       nodes: [
-        { tag: "CpsReturn" },
+        { tag: "InstrReturn" },
         {
-          tag: "CpsCallProc",
+          tag: "InstrCallProc",
           callee: "triggerevent",
           args: [{ tag: "ExStr", contents: "ie_retrieve" }],
           next: 0,
@@ -201,41 +201,41 @@ describe("e2e: reducer CPS path", () => {
         {
           name: "open",
           owner: "w_test",
-          cpsGraph: CALLPROC_RAW,
+          instrGraph: CALLPROC_RAW,
         },
         {
           name: "ie_retrieve",
           owner: "w_test",
-          cpsGraph: { nodes: [{ tag: "CpsReturn" }], entry: 0, suspensionPoints: [], sourceMap: [] },
+          instrGraph: { nodes: [{ tag: "InstrReturn" }], entry: 0, suspensionPoints: [], sourceMap: [] },
         },
       ],
     };
 
-    const graph = loadCpsGraph(CALLPROC_RAW);
+    const graph = loadInstrGraph(CALLPROC_RAW);
     const ts = createTestStore(runtimeReducer, { getDwQueries: () => Effect.none<Record<string, string>>(), executeSql: () => Effect.none() }, {
       ...initialRuntimeState,
       ast,
     });
 
-    // 1. run-event steps to the callproc node and emits cps-dispatch.
+    // 1. run-event steps to the callproc node and emits instr-dispatch.
     //    At this point the effect is queued but the dispatch handler hasn't
-    //    run, so cpsGraph is still set and callStack is still empty.
+    //    run, so instrGraph is still set and callStack is still empty.
     ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
       s.status = "awaiting-sql";
-      s.cpsGraph = graph;
+      s.instrGraph = graph;
       s.callStack = [];
       s.varEnv.globals = { ...PB_GLOBALS };
     });
 
-    // 2. cps-dispatch resolves ie_retrieve, runs it via sync fallback (assigns x to
+    // 2. instr-dispatch resolves ie_retrieve, runs it via sync fallback (assigns x to
     //    the callee's frame), then popCallStack pops that frame and resumes the
-    //    graph at pc=0 → CpsReturn → done. x is not visible in the caller's frame.
+    //    graph at pc=0 → InstrReturn → done. x is not visible in the caller's frame.
     ts.receive(
-      { tag: "cps-dispatch", callee: "triggerevent", args: ["ie_retrieve"], resumePc: 0 },
+      { tag: "instr-dispatch", callee: "triggerevent", args: ["ie_retrieve"], resumePc: 0 },
       (s) => {
         s.status = "done";
         s.varEnv.globals = { ...PB_GLOBALS };
-        s.cpsGraph = null;
+        s.instrGraph = null;
         s.callStack = [];
       },
     );
@@ -243,13 +243,13 @@ describe("e2e: reducer CPS path", () => {
     ts.assertDrained();
   });
 
-  // Plan 115 item 2: unknown callee → cps-dispatch skips and resumes.
+  // Plan 115 item 2: unknown callee → instr-dispatch skips and resumes.
   it("callproc with unknown callee pops call stack and resumes", () => {
     const CALLPROC_RAW = {
       nodes: [
-        { tag: "CpsReturn" },
+        { tag: "InstrReturn" },
         {
-          tag: "CpsCallProc",
+          tag: "InstrCallProc",
           callee: "triggerevent",
           args: [{ tag: "ExStr", contents: "no_such_event" }],
           next: 0,
@@ -266,13 +266,13 @@ describe("e2e: reducer CPS path", () => {
         {
           name: "open",
           owner: "w_test",
-          cpsGraph: CALLPROC_RAW,
+          instrGraph: CALLPROC_RAW,
         },
         // no ie_retrieve event → resolveCalleeBody returns null
       ],
     };
 
-    const graph = loadCpsGraph(CALLPROC_RAW);
+    const graph = loadInstrGraph(CALLPROC_RAW);
     const ts = createTestStore(runtimeReducer, { getDwQueries: () => Effect.none<Record<string, string>>(), executeSql: () => Effect.none() }, {
       ...initialRuntimeState,
       ast,
@@ -280,16 +280,16 @@ describe("e2e: reducer CPS path", () => {
 
     ts.send({ tag: "run-event", owner: "w_test", event: "open" }, (s) => {
       s.status = "awaiting-sql";
-      s.cpsGraph = graph;
+      s.instrGraph = graph;
       s.callStack = [];
       s.varEnv.globals = { ...PB_GLOBALS };
     });
 
     ts.receive(
-      { tag: "cps-dispatch", callee: "triggerevent", args: ["no_such_event"], resumePc: 0 },
+      { tag: "instr-dispatch", callee: "triggerevent", args: ["no_such_event"], resumePc: 0 },
       (s) => {
         s.status = "done";
-        s.cpsGraph = null;
+        s.instrGraph = null;
         s.callStack = [];
         s.varEnv.globals = { ...PB_GLOBALS };
       },

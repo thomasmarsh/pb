@@ -1,31 +1,31 @@
-// core/cps/runner.ts — Step driver for CPS graphs.
+// interpreter/instr/runner.ts — Step driver for InstrGraphs.
 
 import { Effect } from "@pb/core";
 import { PB_BUILTINS } from "../runtime.js";
-import type { CpsEnv, CpsGraph } from "./types.js";
+import type { InstrEnv, InstrGraph } from "./types.js";
 import { type VarEnv, writeVar } from "./var-env.js";
 import { evalExpr } from "./expr.js";
 
-export type { CpsEnv } from "./types.js";
+export type { InstrEnv } from "./types.js";
 
-export type CpsResumeAction =
-  | { tag: "cps-resume"; pc: number; var: string | null; value: unknown }
-  // Plan 115 item 2: a CpsCallProc node requests dispatch to a named callee
+export type InstrResumeAction =
+  | { tag: "instr-resume"; pc: number; var: string | null; value: unknown }
+  // Plan 115 item 2: a InstrCallProc node requests dispatch to a named callee
   // body (CALL ancestor::event or TriggerEvent). The reducer pushes the
   // current graph onto a call stack and resumes at resumePc when the callee
-  // completes. Unlike cps-resume, this carries no SQL value.
-  | { tag: "cps-dispatch"; callee: string; args: unknown[]; resumePc: number };
+  // completes. Unlike instr-resume, this carries no SQL value.
+  | { tag: "instr-dispatch"; callee: string; args: unknown[]; resumePc: number };
 
 /**
- * Execute a CPS graph from pc, returning an Effect if a suspension point is hit,
+ * Execute a InstrGraph from pc, returning an Effect if a suspension point is hit,
  * or null if execution completed.
  */
 export function step(
-  graph: CpsGraph,
+  graph: InstrGraph,
   pc: number,
   varEnv: VarEnv,
-  env: CpsEnv,
-): Effect<CpsResumeAction> | null {
+  env: InstrEnv,
+): Effect<InstrResumeAction> | null {
   if (pc < 0 || pc >= graph.nodes.length) return null;
 
   const node = graph.nodes[pc]!;
@@ -66,8 +66,8 @@ export function step(
       const args = node.args.map((a) => evalExpr(varEnv, a));
       const effect = dispatchSuspend(node.effect, args, env);
       if (!effect) return step(graph, node.continuation, varEnv, env);
-      return effect.map((result): CpsResumeAction => ({
-        tag: "cps-resume",
+      return effect.map((result): InstrResumeAction => ({
+        tag: "instr-resume",
         pc: node.continuation,
         var: node.var ?? null,
         value: result,
@@ -78,12 +78,12 @@ export function step(
       return step(graph, node.next, varEnv, env);
 
     case "callproc": {
-      // Plan 115 item 2: emit a cps-dispatch effect. The reducer resolves the
+      // Plan 115 item 2: emit a instr-dispatch effect. The reducer resolves the
       // callee body and either runs it (pushing the current graph to resume at
       // node.next) or skips to node.next if no body is found.
       const args = node.args.map((a) => evalExpr(varEnv, a));
-      return Effect.send<CpsResumeAction>({
-        tag: "cps-dispatch",
+      return Effect.send<InstrResumeAction>({
+        tag: "instr-dispatch",
         callee: node.callee,
         args,
         resumePc: node.next,
@@ -98,7 +98,7 @@ export function step(
 function dispatchSuspend(
   effect: string,
   args: unknown[],
-  env: CpsEnv,
+  env: InstrEnv,
 ): Effect<unknown> | null {
   if (effect.startsWith("retrieve:")) {
     const effectBody = effect.slice("retrieve:".length);
