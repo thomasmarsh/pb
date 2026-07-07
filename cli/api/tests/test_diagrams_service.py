@@ -38,3 +38,20 @@ def test_get_wiring_diagram_null_wiring(tmp_path):
     )
 
     assert get_wiring_diagram(conn, "w_obj", "of_no_wiring") is None
+
+
+def test_get_diagram_route_window_table_lattice(schema_db_path: str):
+    """Regression: `/api/diagram/{kind}` has its own `_KINDS` allowlist,
+    separate from `pb.pipeline.diagrams.render_svg`'s `builders` dict --
+    adding a new diagram kind to one without the other 400s at the route
+    layer even though `render_svg` itself supports it (caught manually
+    while browser-testing Plan 153 D7)."""
+    from fastapi.testclient import TestClient
+    from pb.api import create_app
+
+    app = create_app(schema_db_path)
+    client = TestClient(app)
+
+    r = client.get("/api/diagram/window-table-lattice")
+    assert r.status_code == 200
+    assert "<svg" in r.text or "<?xml" in r.text

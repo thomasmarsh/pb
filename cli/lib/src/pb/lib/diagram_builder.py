@@ -432,3 +432,53 @@ def render_fk_graph(
         dot.node("empty", label="No FK relationships found", shape="plaintext", fontcolor="#5c5f72")
 
     return dot
+
+
+def render_lattice(
+    concepts: list[dict[str, list[str]]],
+    covers: list[dict[str, int]],
+) -> graphviz.Digraph:
+    """Plan 153 D7: window x table concept lattice, Hasse diagram.
+
+    `concepts[i]` is `{"extent": [...windows], "intent": [...tables]}` and
+    `covers` is `{"upper": i, "lower": j}` pairs -- the exact shapes
+    `pb.pipeline.lattice.compute_window_table_lattice` returns (upper covers
+    lower: lower's extent is a proper subset of upper's, with no concept
+    strictly between). `rankdir="BT"` plus a lower->upper edge direction puts
+    the top concept (largest extent, e.g. all windows) above the bottom
+    (smallest extent), the conventional Hasse orientation.
+
+    The visible label is deliberately just counts + a short table preview --
+    a concept can have dozens of windows, so spelling them all out on the
+    node would be unreadable at this scale. The full extent/intent go on the
+    node's `tooltip` attribute instead: graphviz emits that as the node's
+    SVG `<title>`, which the browser shows as a native hover tooltip with no
+    frontend JS needed (found missing during Plan 153 D7's own manual
+    browser verification -- a bare "5 windows" label with no way to see
+    which 5 isn't informative enough to act on).
+    """
+    dot = graphviz.Digraph(engine="dot", name="lattice")
+    apply_defaults(dot)
+    dot.attr(rankdir="BT", nodesep="0.25", ranksep="0.6")
+    dot.attr("node", shape="box", style="filled,rounded", fillcolor="#1F2A3F", fontcolor="#D6E4FF")
+
+    _INTENT_PREVIEW = 3
+    for i, concept in enumerate(concepts):
+        extent, intent = concept["extent"], concept["intent"]
+        preview = ", ".join(intent[:_INTENT_PREVIEW])
+        if len(intent) > _INTENT_PREVIEW:
+            preview += f", +{len(intent) - _INTENT_PREVIEW} more"
+        label = f"{len(extent)} window{'s' if len(extent) != 1 else ''}\n{preview or '(no tables)'}"
+        tooltip = (
+            f"Windows ({len(extent)}): {', '.join(extent) or '(none)'}\n"
+            f"Tables ({len(intent)}): {', '.join(intent) or '(none)'}"
+        )
+        dot.node(str(i), label=label, fontsize="8", tooltip=tooltip)
+
+    for cov in covers:
+        dot.edge(str(cov["lower"]), str(cov["upper"]))
+
+    if not concepts:
+        dot.node("empty", label="No window/table incidence found", shape="plaintext", fontcolor="#5c5f72")
+
+    return dot

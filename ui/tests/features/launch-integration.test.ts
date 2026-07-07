@@ -52,6 +52,7 @@ function createAppEnv(astResponses: Record<string, AstData>): AppEnv {
     getColumnUsage: () => Effect.none(),
     getCoUpdateRituals: () => Effect.none(),
     getDecompositionCandidates: () => Effect.none(),
+    getColumnAffinity: () => Effect.none(),
     getErrors: () => Effect.none(),
     getDwQueries: () => Effect.none<Record<string, string>>(),
     executeSql: () => Effect.none(),

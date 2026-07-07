@@ -11,6 +11,7 @@ import {
 } from "@pb/platform";
 import type { SummaryItem } from "@pb/platform";
 import { DecompositionCandidatesCore } from "../analysis/DecompositionCandidatesCore.js";
+import { ColumnAffinityCore } from "../analysis/ColumnAffinityCore.js";
 
 const WRITE_OPS = new Set(["INSERT", "UPDATE", "DELETE"]);
 
@@ -190,6 +191,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
   const [showColumnUsage, setShowColumnUsage] = createSignal(false);
   const [showCoUpdateRituals, setShowCoUpdateRituals] = createSignal(false);
   const [showDecomposition, setShowDecomposition] = createSignal(false);
+  const [showColumnAffinity, setShowColumnAffinity] = createSignal(false);
 
   const readers = d.procedures.filter((p) => !WRITE_OPS.has(p.operation));
   const writers = d.procedures.filter((p) => WRITE_OPS.has(p.operation));
@@ -228,6 +230,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
     ...(hasColumnUsage() ? [{ label: "Column Usage", count: columnUsageCount(), active: showColumnUsage(), onClick: () => setShowColumnUsage((v) => !v) } as SummaryItem] : []),
     ...(hasCoUpdateRituals() ? [{ label: "Co-update Rituals", count: tableRituals().length, active: showCoUpdateRituals(), onClick: () => setShowCoUpdateRituals((v) => !v) } as SummaryItem] : []),
     { label: "Decomposition", active: showDecomposition(), onClick: () => setShowDecomposition((v) => !v) },
+    { label: "Column Affinity", active: showColumnAffinity(), onClick: () => setShowColumnAffinity((v) => !v) },
   ];
 
   function handleKeyDown(e: KeyboardEvent): void {
@@ -239,6 +242,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
       setShowColumnUsage(false);
       setShowCoUpdateRituals(false);
       setShowDecomposition(false);
+      setShowColumnAffinity(false);
     }
   }
 
@@ -335,6 +339,12 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
         <Show when={showDecomposition()}>
           <ContextualPanel title="Decomposition Candidates" onClose={() => setShowDecomposition(false)}>
             <DecompositionCandidatesCore store={store} table={d.table_name} />
+          </ContextualPanel>
+        </Show>
+
+        <Show when={showColumnAffinity()}>
+          <ContextualPanel title="Column Affinity Heat Matrix" onClose={() => setShowColumnAffinity(false)}>
+            <ColumnAffinityCore store={store} table={d.table_name} />
           </ContextualPanel>
         </Show>
       </div>

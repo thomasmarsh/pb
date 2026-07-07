@@ -8,7 +8,8 @@ export type DiagramKind =
   | "sql-lineage"
   | "table-lineage"
   | "proc-tables"
-  | "fk-graph";
+  | "fk-graph"
+  | "window-table-lattice";
 
 export const HAS_FOCUS: ReadonlySet<DiagramKind> = new Set([
   "calls",
@@ -25,6 +26,7 @@ export const AUTO_GENERATE: ReadonlySet<DiagramKind> = new Set([
   "sql-lineage",
   "proc-tables",
   "fk-graph",
+  "window-table-lattice",
 ]);
 
 export function parsePbUrl(href: string | null): { kind: "object" | "table"; name: string; meta: Record<string, string> } | null {

@@ -24,6 +24,7 @@ _KINDS = (
     "table-lineage",
     "proc-tables",
     "fk-graph",
+    "window-table-lattice",
 )
 
 

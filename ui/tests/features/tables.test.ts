@@ -5,7 +5,7 @@ import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { tablesReducer, initialTablesState, type TablesEnv } from "@pb/platform";
 import type { TablesState } from "@pb/platform";
-import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse } from "@pb/platform";
+import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse } from "@pb/platform";
 
 const mockEnv: TablesEnv = {
   getTables:           () => Effect.none(),
@@ -13,6 +13,7 @@ const mockEnv: TablesEnv = {
   getColumnUsage:      () => Effect.none(),
   getCoUpdateRituals:  () => Effect.none(),
   getDecompositionCandidates: () => Effect.none(),
+  getColumnAffinity:   () => Effect.none(),
   navigate:            () => Effect.none(),
 };
 
@@ -432,6 +433,96 @@ describe("tables reducer", () => {
       ts.send({ tag: "decomposition-candidates-error", error: "boom" }, (s) => {
         s.decompositionCandidates = { error: "boom" };
         s.decompositionCandidatesLoading = false;
+      });
+    });
+  });
+
+  describe("tables/column-affinity-load", () => {
+    const affinity: ColumnAffinityResponse = {
+      table: "misth_ypal",
+      namespace: null,
+      columns: ["name", "surname", "fathername"],
+      co_access_matrix: [[27, 27, 26], [27, 27, 26], [26, 26, 26]],
+      dendrogram: [
+        { similarity: 1.0, members: ["name", "surname"] },
+        { similarity: 0.963, members: ["fathername", "name", "surname"] },
+      ],
+    };
+
+    it("sets columnAffinityLoading and fires getColumnAffinity", () => {
+      const env: TablesEnv = { ...mockEnv, getColumnAffinity: () => Effect.send(affinity) };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "column-affinity-load", tableName: "misth_ypal" }, (s) => {
+        s.columnAffinityLoading = true;
+      });
+      ts.receive({ tag: "column-affinity-loaded", data: affinity }, (s) => {
+        s.columnAffinity = affinity;
+        s.columnAffinityLoading = false;
+      });
+    });
+
+    it("does nothing if already loaded for this table", () => {
+      const state: TablesState = { ...initialTablesState, columnAffinity: affinity };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "column-affinity-load", tableName: "misth_ypal" }, () => {});
+    });
+
+    it("does nothing if a load is already in flight", () => {
+      const state: TablesState = { ...initialTablesState, columnAffinityLoading: true };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "column-affinity-load", tableName: "misth_ypal" }, () => {});
+    });
+
+    it("re-fires when the table name differs from what's loaded", () => {
+      const state: TablesState = { ...initialTablesState, columnAffinity: affinity };
+      const other: ColumnAffinityResponse = { table: "orders", namespace: null, columns: [], co_access_matrix: [], dendrogram: [] };
+      const env: TablesEnv = { ...mockEnv, getColumnAffinity: () => Effect.send(other) };
+      const ts = createTestStore(tablesReducer, env, state);
+      ts.send({ tag: "column-affinity-load", tableName: "orders" }, (s) => {
+        s.columnAffinityLoading = true;
+      });
+      ts.receive({ tag: "column-affinity-loaded", data: other }, (s) => {
+        s.columnAffinity = other;
+        s.columnAffinityLoading = false;
+      });
+    });
+
+    it("fires getColumnAffinity; rejection maps to column-affinity-error", async () => {
+      const env: TablesEnv = {
+        ...mockEnv,
+        getColumnAffinity: () => Effect.fromPromise(() => Promise.reject(new Error("timeout"))),
+      };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "column-affinity-load", tableName: "misth_ypal" }, (s) => {
+        s.columnAffinityLoading = true;
+      });
+      await ts.drain();
+      ts.receive({ tag: "column-affinity-error", error: "timeout" }, (s) => {
+        s.columnAffinity = { error: "timeout" };
+        s.columnAffinityLoading = false;
+      });
+    });
+  });
+
+  describe("tables/column-affinity-loaded", () => {
+    it("stores the affinity data and clears loading", () => {
+      const data: ColumnAffinityResponse = { table: "orders", namespace: null, columns: [], co_access_matrix: [], dendrogram: [] };
+      const state: TablesState = { ...initialTablesState, columnAffinityLoading: true };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "column-affinity-loaded", data }, (s) => {
+        s.columnAffinity = data;
+        s.columnAffinityLoading = false;
+      });
+    });
+  });
+
+  describe("tables/column-affinity-error", () => {
+    it("stores the error and clears loading", () => {
+      const state: TablesState = { ...initialTablesState, columnAffinityLoading: true };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "column-affinity-error", error: "boom" }, (s) => {
+        s.columnAffinity = { error: "boom" };
+        s.columnAffinityLoading = false;
       });
     });
   });

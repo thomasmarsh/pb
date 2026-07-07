@@ -3,7 +3,7 @@
 import { Effect, type Reducer } from "@pb/core";
 import type { TablesState } from "./types.js";
 import type { TablesAction } from "./actions.js";
-import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse } from "../../types/api.js";
+import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse } from "../../types/api.js";
 import type { NavigationAction } from "../navigation/types.js";
 
 export type { TablesState };
@@ -15,6 +15,7 @@ export interface TablesEnv {
   getColumnUsage(): Effect<ColumnUsageResponse>;
   getCoUpdateRituals(): Effect<CoUpdateRitualsResponse>;
   getDecompositionCandidates(table: string): Effect<DecompositionCandidatesResponse>;
+  getColumnAffinity(table: string): Effect<ColumnAffinityResponse>;
   navigate(action: NavigationAction): Effect<never>;
 }
 
@@ -41,6 +42,8 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
     draft.error = null;
     draft.decompositionCandidates = null;
     draft.decompositionCandidatesLoading = false;
+    draft.columnAffinity = null;
+    draft.columnAffinityLoading = false;
     env.navigate({ tag: "navigate", route: { view: "tableDetail", name: action.name } });
     return env.getTableDetail(action.name)
       .map((detail): TablesAction => ({ tag: "detail-loaded", detail }))
@@ -105,6 +108,24 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
   case "decomposition-candidates-error":
     draft.decompositionCandidates = { error: action.error };
     draft.decompositionCandidatesLoading = false;
+    return null;
+  case "column-affinity-load": {
+    const already = draft.columnAffinity
+      && "table" in draft.columnAffinity
+      && draft.columnAffinity.table === action.tableName;
+    if (already || draft.columnAffinityLoading) return null;
+    draft.columnAffinityLoading = true;
+    return env.getColumnAffinity(action.tableName)
+      .map((data): TablesAction => ({ tag: "column-affinity-loaded", data }))
+      .catch((e): TablesAction => ({ tag: "column-affinity-error", error: errMsg(e) }));
+  }
+  case "column-affinity-loaded":
+    draft.columnAffinity = action.data;
+    draft.columnAffinityLoading = false;
+    return null;
+  case "column-affinity-error":
+    draft.columnAffinity = { error: action.error };
+    draft.columnAffinityLoading = false;
     return null;
   default:
     return null;

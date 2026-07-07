@@ -504,6 +504,19 @@ export interface DecompositionCandidatesResponse {
   candidates: DecompositionCandidate[];
 }
 
+export interface DendrogramMerge {
+  similarity: number;
+  members: string[];
+}
+
+export interface ColumnAffinityResponse {
+  table: string;
+  namespace: string | null;
+  columns: string[];
+  co_access_matrix: number[][];
+  dendrogram: DendrogramMerge[];
+}
+
 // ── Program slicing ──────────────────────────────────────────────────────────
 
 export interface SliceStep {

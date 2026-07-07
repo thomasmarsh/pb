@@ -134,7 +134,7 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
         if (AUTO_GENERATE.has(v as DiagramKind)) store.dispatch({ tag: "diagrams", action: { tag: "generate" } });
       }}>
         <Tabs.List class="tab-bar">
-          <For each={["inheritance", "calls", "dw-tables", "heatmap", "sql-lineage", "table-lineage", "proc-tables", "fk-graph"] as DiagramKind[]}>
+          <For each={["inheritance", "calls", "dw-tables", "heatmap", "sql-lineage", "table-lineage", "proc-tables", "fk-graph", "window-table-lattice"] as DiagramKind[]}>
             {(kind) => <Tabs.Trigger value={kind} class="tab-btn">{kind}</Tabs.Trigger>}
           </For>
         </Tabs.List>
@@ -172,14 +172,16 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
           </div>
         </Show>
         <Show when={dg().svg}>
-          <SvgToolbar onCopy={copySvg} onDownload={downloadSvg} />
-          <div
-            class="diagram-container"
-            innerHTML={dg().svg!}
-            onClick={handleSvgClick}
-            onMouseOver={handleSvgMouseOver}
-            onMouseOut={handleSvgMouseOut}
-          />
+          <div style={{ position: "relative" }}>
+            <SvgToolbar onCopy={copySvg} onDownload={downloadSvg} />
+            <div
+              class="diagram-container"
+              innerHTML={dg().svg!}
+              onClick={handleSvgClick}
+              onMouseOver={handleSvgMouseOver}
+              onMouseOut={handleSvgMouseOut}
+            />
+          </div>
         </Show>
         <Show when={dg().error}>
           <div class="diagram-container">

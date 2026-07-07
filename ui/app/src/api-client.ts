@@ -22,6 +22,7 @@ import type {
   ColumnUsageResponse,
   CoUpdateRitualsResponse,
   DecompositionCandidatesResponse,
+  ColumnAffinityResponse,
 } from "@pb/platform";
 import { type DataWindowFile, type AstData, type WindowLayout } from "@pb/interpreter";
 import { Effect, type SQLResult } from "@pb/core";
@@ -57,6 +58,7 @@ export interface ApiClient {
   getColumnUsage(): Promise<ColumnUsageResponse>;
   getCoUpdateRituals(): Promise<CoUpdateRitualsResponse>;
   getDecompositionCandidates(table: string): Promise<DecompositionCandidatesResponse>;
+  getColumnAffinity(table: string): Promise<ColumnAffinityResponse>;
   getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse>;
   getDwQueries(): Promise<Record<string, string>>;
   executeSql(sql: string, params: unknown[]): Promise<SQLResult>;
@@ -116,6 +118,7 @@ export function createEnv(api: ApiClient): Env {
     getColumnUsage: () => lift(() => api.getColumnUsage()),
     getCoUpdateRituals: () => lift(() => api.getCoUpdateRituals()),
     getDecompositionCandidates: (t) => lift(() => api.getDecompositionCandidates(t)),
+    getColumnAffinity: (t) => lift(() => api.getColumnAffinity(t)),
     getErrors: (p) => lift(() => api.getErrors(p)),
     getDwQueries: () => lift(() => api.getDwQueries()),
     executeSql: (sql, params) => lift(() => api.executeSql(sql, params)),
@@ -274,6 +277,10 @@ export function createApiClient(): ApiClient {
 
     async getDecompositionCandidates(table: string): Promise<DecompositionCandidatesResponse> {
       return fetchJson(`/api/schema/decomposition-candidates/${encodeURIComponent(table)}`);
+    },
+
+    async getColumnAffinity(table: string): Promise<ColumnAffinityResponse> {
+      return fetchJson(`/api/schema/column-affinity/${encodeURIComponent(table)}`);
     },
 
     async getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse> {

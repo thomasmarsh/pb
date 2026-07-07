@@ -1,6 +1,6 @@
 // features/tables/actions.ts
 
-import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse } from "../../types/api.js";
+import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse } from "../../types/api.js";
 
 export type TablesAction =
   | { tag: "search";        q: string }
@@ -22,4 +22,8 @@ export type TablesAction =
   | { tag: "decomposition-candidates-load"; tableName: string }
   | { tag: "decomposition-candidates-loaded"; data: DecompositionCandidatesResponse }
   | { tag: "decomposition-candidates-error";  error: string }
+  // Column affinity (Plan 153 D3)
+  | { tag: "column-affinity-load"; tableName: string }
+  | { tag: "column-affinity-loaded"; data: ColumnAffinityResponse }
+  | { tag: "column-affinity-error";  error: string }
   ;

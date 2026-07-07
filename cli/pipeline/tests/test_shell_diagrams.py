@@ -13,6 +13,7 @@ from pb.pipeline.diagrams import (
     build_fk_graph,
     build_heatmap,
     build_inheritance,
+    build_window_table_lattice,
     render_svg,
 )
 
@@ -282,3 +283,26 @@ class TestDotBinaryRoundtrip:
         result = self._render(src)
         assert result.returncode == 0, f"dot failed:\n{result.stderr[:400]}"
         assert "<svg" in result.stdout
+
+    def test_window_table_lattice_dot_is_valid(self, schema_db_conn):
+        src = dot_source(build_window_table_lattice, schema_db_conn)
+        result = self._render(src)
+        assert result.returncode == 0, f"dot failed:\n{result.stderr[:400]}"
+        assert "<svg" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# I. Window x table concept lattice (Plan 153 D7) — also uses schema_db_conn.
+# ---------------------------------------------------------------------------
+
+
+def test_window_table_lattice_counts_match_pinned_schema_service_numbers(schema_db_conn):
+    src = dot_source(build_window_table_lattice, schema_db_conn)
+    assert "digraph" in src
+    # pinned in api/tests/test_schema_service.py::test_get_window_table_lattice_counts
+    assert src.count('label="') == 49  # one node label per concept
+
+
+def test_window_table_lattice_has_edges(schema_db_conn):
+    src = dot_source(build_window_table_lattice, schema_db_conn)
+    assert "->" in src

@@ -1,7 +1,9 @@
 // features/diagrams/types.ts
 
+import type { DiagramKind } from "../../utils/diagram.js";
+
 export interface DiagramsState {
-  active: "inheritance" | "calls" | "dw-tables" | "heatmap" | "sql-lineage" | "table-lineage" | "proc-tables" | "fk-graph";
+  active: DiagramKind;
   svg: string | null;
   loading: boolean;
   params: Record<string, string | number>;

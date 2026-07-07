@@ -14,11 +14,13 @@ from pb.lib.diagram_builder import (
     render_fk_graph,
     render_heatmap,
     render_inheritance,
+    render_lattice,
     render_proc_tables,
     render_sql_lineage,
     render_table_lineage,
 )
 from pb.pipeline.db import Conn
+from pb.pipeline.lattice import compute_window_table_lattice
 
 log = logging.getLogger(__name__)
 
@@ -236,6 +238,17 @@ def build_fk_graph(conn: Conn) -> graphviz.Digraph:
     return render_fk_graph(edges)
 
 
+def build_window_table_lattice(conn: Conn) -> graphviz.Digraph:
+    """Plan 153 D7: window x table concept lattice, Hasse diagram.
+
+    Shares its concepts/covers computation with `pb.api.services.schema.
+    get_window_table_lattice` via `pb.pipeline.lattice` -- see that module's
+    docstring for why the computation lives here rather than in `pb-api`.
+    """
+    lattice = compute_window_table_lattice(conn)
+    return render_lattice(lattice["concepts"], lattice["covers"])
+
+
 def render_svg(kind: str, conn: Conn, **params: Any) -> str:
     """Build and render a diagram to SVG with LRU caching.
 
@@ -263,6 +276,7 @@ def render_svg(kind: str, conn: Conn, **params: Any) -> str:
             conn, table_name=params.get("table_name", ""), focal=params.get("focal", ""),
         ),
         "fk-graph": lambda: build_fk_graph(conn),
+        "window-table-lattice": lambda: build_window_table_lattice(conn),
     }
     builder = builders.get(kind)
     if builder is None:

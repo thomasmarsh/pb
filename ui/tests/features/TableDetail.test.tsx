@@ -5,7 +5,7 @@ import { fireEvent, render } from "@solidjs/testing-library";
 import { TableDetail } from "../../app/src/views/features/tables/TableDetail.js";
 import { createTestStore } from "../helpers.js";
 import { initialTablesState } from "@pb/platform";
-import type { TableDetail as TableDetailData, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse } from "@pb/platform";
+import type { TableDetail as TableDetailData, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse } from "@pb/platform";
 
 const baseDetail: TableDetailData = {
   table_name: "orders",
@@ -27,9 +27,10 @@ function renderTableDetail(
   columnUsage: ColumnUsageResponse | null = null,
   coUpdateRituals: CoUpdateRitualsResponse | null = null,
   decompositionCandidates: DecompositionCandidatesResponse | null = null,
+  columnAffinity: ColumnAffinityResponse | null = null,
 ) {
   const { store } = createTestStore({
-    tables: { ...initialTablesState, detail, columnUsage, coUpdateRituals, decompositionCandidates },
+    tables: { ...initialTablesState, detail, columnUsage, coUpdateRituals, decompositionCandidates, columnAffinity },
   });
   render(() => <TableDetail store={store} />);
 }
@@ -312,6 +313,50 @@ describe("TableDetail source-first", () => {
       expect(document.body.textContent).toContain("proc_5");
       expect(document.body.textContent).toContain("proc_6");
       expect(document.body.textContent).toContain("Show less");
+    });
+  });
+
+  describe("Column Affinity pill (Plan 153 D3)", () => {
+    it("always shown, no count", () => {
+      renderTableDetail();
+      expect(summaryBar()?.textContent).toContain("Column Affinity");
+    });
+
+    it("clicking the pill opens a panel titled 'Column Affinity Heat Matrix'", () => {
+      renderTableDetail();
+      fireEvent.click(summaryPillBtn("Column Affinity")!);
+      expect(document.body.textContent).toContain("Column Affinity Heat Matrix");
+    });
+
+    it("clicking the pill again closes the panel", () => {
+      renderTableDetail();
+      fireEvent.click(summaryPillBtn("Column Affinity")!);
+      expect(document.body.textContent).toContain("Column Affinity Heat Matrix");
+      fireEvent.click(summaryPillBtn("Column Affinity")!);
+      expect(document.body.textContent).not.toContain("Column Affinity Heat Matrix");
+    });
+
+    it("renders the heat matrix cells and dendrogram merges", () => {
+      const data: ColumnAffinityResponse = {
+        table: "orders",
+        namespace: null,
+        columns: ["name", "surname"],
+        co_access_matrix: [[27, 27], [27, 27]],
+        dendrogram: [{ similarity: 1.0, members: ["name", "surname"] }],
+      };
+      renderTableDetail(baseDetail, null, null, null, data);
+      fireEvent.click(summaryPillBtn("Column Affinity")!);
+      expect(document.body.textContent).toContain("name");
+      expect(document.body.textContent).toContain("surname");
+      expect(document.body.textContent).toContain("27");
+      expect(document.body.textContent).toContain("similarity 1.000");
+    });
+
+    it("shows a fallback message when the table has no touched columns", () => {
+      const data: ColumnAffinityResponse = { table: "orders", namespace: null, columns: [], co_access_matrix: [], dendrogram: [] };
+      renderTableDetail(baseDetail, null, null, null, data);
+      fireEvent.click(summaryPillBtn("Column Affinity")!);
+      expect(document.body.textContent).toContain("No column affinity data for this table.");
     });
   });
 });
