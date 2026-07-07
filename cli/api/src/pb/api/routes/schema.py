@@ -5,6 +5,7 @@ from __future__ import annotations
 import duckdb
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pb.api.models import (
+    ColumnAffinityResponse,
     ColumnUsageResponse,
     CoUpdateRitualsResponse,
     FkGraphResponse,
@@ -13,6 +14,7 @@ from pb.api.models import (
 from pb.api.routes.dependencies import get_db
 from pb.api.services.schema import (
     get_co_update_rituals,
+    get_column_affinity,
     get_column_managers,
     get_column_usage,
     get_fk_graph,
@@ -55,6 +57,18 @@ async def get_procedure_footprint_route(
             status_code=404,
             detail=f"Procedure not found: {object_name}.{proc_name}",
         )
+    return result
+
+
+@router.get("/api/schema/column-affinity/{table_name}", response_model=ColumnAffinityResponse)
+async def get_column_affinity_route(
+    table_name: str,
+    namespace: str = Query("", description="Table namespace/schema, if any"),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    result = get_column_affinity(conn, namespace or None, table_name)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Table not found: {table_name}")
     return result
 
 

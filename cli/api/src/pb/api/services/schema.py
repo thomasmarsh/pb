@@ -9,6 +9,7 @@ sql_statement_columns tables. No traversal, no new DuckDB tables.
 from __future__ import annotations
 
 from collections import defaultdict
+from itertools import combinations
 from typing import Any
 
 import duckdb
@@ -290,6 +291,94 @@ def get_procedure_footprint(
         "proc_name": proc_name,
         "statements": [by_line[line] for line in sorted(by_line)],
         "unresolved": unresolved,
+    }
+
+
+_COLUMN_AFFINITY_LEGS_SQL = """
+    WITH legs AS (
+        SELECT o1.column_name AS col, m.to_key AS stmt_key
+        FROM schema_morphisms m JOIN schema_objects o1 ON o1.object_key = m.from_key
+        WHERE m.leg_kind = 'reads' AND o1.table_name = ? AND o1.namespace IS NOT DISTINCT FROM ?
+        UNION ALL
+        SELECT o2.column_name AS col, m.from_key AS stmt_key
+        FROM schema_morphisms m JOIN schema_objects o2 ON o2.object_key = m.to_key
+        WHERE m.leg_kind IN ('writes', 'retrieve') AND o2.table_name = ? AND o2.namespace IS NOT DISTINCT FROM ?
+    )
+    SELECT col, stmt_key FROM legs
+"""
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    union = len(a | b)
+    return len(a & b) / union if union else 0.0
+
+
+def _cluster_columns(stmts_by_col: dict[str, set[str]]) -> tuple[list[str], list[dict[str, Any]]]:
+    """Average-linkage agglomerative clustering over per-column Jaccard co-access.
+
+    Pure Python, no scipy/numpy — real tables in this corpus top out at ~42
+    touched columns, so an O(n^3) merge loop is negligible (D3 spike,
+    doc/plan/153-schema-normalization-consumers.md, Open Question 2). Each
+    cluster's member list is built by concatenating the two merged clusters'
+    member lists at every step, so the final (single) cluster's member order
+    is a valid dendrogram leaf order, not just an alphabetical one.
+    """
+    active = sorted(stmts_by_col)
+    members: dict[str, list[str]] = {c: [c] for c in active}
+    dendrogram: list[dict[str, Any]] = []
+    next_id = 0
+
+    def avg_linkage(c1: str, c2: str) -> float:
+        leaf_pairs = [(a, b) for a in members[c1] for b in members[c2]]
+        return sum(_jaccard(stmts_by_col[a], stmts_by_col[b]) for a, b in leaf_pairs) / len(leaf_pairs)
+
+    while len(active) > 1:
+        best_sim, best_a, best_b = max((avg_linkage(a, b), a, b) for a, b in combinations(active, 2))
+        new_id = f"__cluster{next_id}__"
+        next_id += 1
+        merged_members = members[best_a] + members[best_b]
+        members[new_id] = merged_members
+        active.remove(best_a)
+        active.remove(best_b)
+        active.append(new_id)
+        dendrogram.append({"similarity": best_sim, "members": sorted(merged_members)})
+
+    (root,) = active
+    return members[root], dendrogram
+
+
+def get_column_affinity(
+    conn: duckdb.DuckDBPyConnection, namespace: str | None, table_name: str
+) -> dict[str, Any] | None:
+    """D3: latent-entity discovery via biclustering the column x statement
+    incidence matrix for one table. Matrix extraction is a parameterized
+    version of D3's own spike SQL; clustering is plain Jaccard + average-
+    linkage (Open Question 2 resolved — Navathe bond energy is unwarranted
+    at this corpus's scale).
+    """
+    exists = conn.execute(
+        "SELECT 1 FROM catalog_columns WHERE table_name = ? AND namespace IS NOT DISTINCT FROM ? LIMIT 1",
+        [table_name, namespace],
+    ).fetchone()
+    if not exists:
+        return None
+
+    leg_rows = rows(conn.execute(_COLUMN_AFFINITY_LEGS_SQL, [table_name, namespace, table_name, namespace]))
+    stmts_by_col: dict[str, set[str]] = defaultdict(set)
+    for r in leg_rows:
+        stmts_by_col[r["col"]].add(r["stmt_key"])
+
+    if not stmts_by_col:
+        return {"table": table_name, "namespace": namespace, "columns": [], "co_access_matrix": [], "dendrogram": []}
+
+    columns, dendrogram = _cluster_columns(stmts_by_col)
+    co_access_matrix = [[len(stmts_by_col[a] & stmts_by_col[b]) for b in columns] for a in columns]
+    return {
+        "table": table_name,
+        "namespace": namespace,
+        "columns": columns,
+        "co_access_matrix": co_access_matrix,
+        "dendrogram": dendrogram,
     }
 
 

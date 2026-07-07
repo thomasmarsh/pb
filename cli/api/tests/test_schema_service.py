@@ -9,6 +9,7 @@ from __future__ import annotations
 import duckdb
 from pb.api.services.schema import (
     get_co_update_rituals,
+    get_column_affinity,
     get_column_managers,
     get_column_usage,
     get_fk_graph,
@@ -166,3 +167,80 @@ def test_get_column_managers_includes_fn_perm(schema_db_conn: duckdb.DuckDBPyCon
 
 def test_get_column_managers_unknown_column_is_empty(schema_db_conn: duckdb.DuckDBPyConnection):
     assert get_column_managers(schema_db_conn, None, "__nonexistent_table__", "__nonexistent_col__") == []
+
+
+def test_get_column_affinity_unknown_table_is_none(schema_db_conn: duckdb.DuckDBPyConnection):
+    assert get_column_affinity(schema_db_conn, None, "__nonexistent_table__") is None
+
+
+def test_get_column_affinity_misth_ypal_counts(schema_db_conn: duckdb.DuckDBPyConnection):
+    result = get_column_affinity(schema_db_conn, None, "misth_ypal")
+    assert result is not None
+    # Re-verified 2026-07-07 against a freshly-rebuilt schema DB before
+    # implementing: misth_ypal (the widest real table) has 41 distinct
+    # touched columns across 28 distinct statements/retrieves.
+    assert len(result["columns"]) == 41
+    assert len(result["co_access_matrix"]) == 41
+    assert all(len(row) == 41 for row in result["co_access_matrix"])
+
+
+def test_get_column_affinity_co_access_counts(schema_db_conn: duckdb.DuckDBPyConnection):
+    result = get_column_affinity(schema_db_conn, None, "misth_ypal")
+    cols = result["columns"]
+    matrix = result["co_access_matrix"]
+
+    def count(a: str, b: str) -> int:
+        return matrix[cols.index(a)][cols.index(b)]
+
+    # Real intersection counts (co-touching statements), verified against the
+    # fresh rebuild -- not just Jaccard ratios.
+    assert count("name", "surname") == 27
+    assert count("fathername", "name") == 26
+    assert count("kodypal", "kodxrisi") == 11
+    assert count("bathmos", "klados") == 8
+    # diagonal = the column's own support (n statements touching it)
+    assert count("name", "name") == 27
+    assert count("kodypal", "kodypal") == 12
+
+
+def test_get_column_affinity_dendrogram_finds_named_blocks(schema_db_conn: duckdb.DuckDBPyConnection):
+    # These are the three latent-entity blocks the plan's own spike predicted
+    # "by eye" (Open Question 2) -- confirmed here as genuine high-similarity
+    # merges in a real average-linkage dendrogram, distinguishable from a much
+    # larger, lower-similarity blob of columns that merely share one broad
+    # SELECT (real signal, but not a semantic normalization candidate).
+    result = get_column_affinity(schema_db_conn, None, "misth_ypal")
+    merges = {frozenset(m["members"]): m["similarity"] for m in result["dendrogram"]}
+
+    assert frozenset({"name", "surname"}) in merges
+    assert merges[frozenset({"name", "surname"})] == 1.0
+
+    assert frozenset({"fathername", "name", "surname"}) in merges
+    assert abs(merges[frozenset({"fathername", "name", "surname"})] - 0.963) < 0.001
+
+    assert frozenset({"kodypal", "kodxrisi"}) in merges
+    assert abs(merges[frozenset({"kodypal", "kodxrisi"})] - 0.9167) < 0.001
+
+    assert frozenset({"bathmos", "klados"}) in merges
+    assert merges[frozenset({"bathmos", "klados"})] == 1.0
+
+    assert frozenset({"bathmos", "klados", "klimakio"}) in merges
+    assert abs(merges[frozenset({"bathmos", "klados", "klimakio"})] - 0.8889) < 0.001
+
+    assert frozenset({"bathmos", "klados", "klimakio", "mitroo"}) in merges
+    assert abs(merges[frozenset({"bathmos", "klados", "klimakio", "mitroo"})] - 0.7758) < 0.001
+
+
+def test_get_column_affinity_leaf_order_groups_named_blocks(schema_db_conn: duckdb.DuckDBPyConnection):
+    # The dendrogram's leaf order should place each named block's columns
+    # contiguously, since that's what makes the "reordered heat matrix"
+    # surface useful.
+    result = get_column_affinity(schema_db_conn, None, "misth_ypal")
+    cols = result["columns"]
+
+    def indices(names: set[str]) -> list[int]:
+        return sorted(cols.index(n) for n in names)
+
+    for block in ({"name", "surname", "fathername"}, {"kodypal", "kodxrisi"}):
+        idxs = indices(block)
+        assert idxs == list(range(idxs[0], idxs[0] + len(idxs)))

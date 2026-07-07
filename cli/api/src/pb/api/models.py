@@ -104,3 +104,16 @@ class ColumnManagerRef(BaseModel):
     dw_name: str | None = None
     line: int | None = None
     is_write: bool | None = None
+
+
+class DendrogramMerge(BaseModel):
+    similarity: float
+    members: list[str]
+
+
+class ColumnAffinityResponse(BaseModel):
+    table: str
+    namespace: str | None
+    columns: list[str]
+    co_access_matrix: list[list[int]]
+    dendrogram: list[DendrogramMerge]
