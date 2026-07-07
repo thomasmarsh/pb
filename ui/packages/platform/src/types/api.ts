@@ -393,6 +393,42 @@ export interface TaintPathsResponse {
   total: number;
 }
 
+// ── Schema category (Plan 148/153) ───────────────────────────────────────────
+
+export interface ColumnTouch {
+  namespace: string | null;
+  table: string;
+  column: string;
+  is_write: boolean;
+}
+
+export interface FilterTouch {
+  namespace: string | null;
+  table: string;
+  column: string;
+  op: string;
+  values_json: string | null;
+}
+
+export interface UnresolvedRef {
+  line: number;
+  raw_name: string;
+}
+
+export interface StatementFootprint {
+  line: number;
+  file: string;
+  columns: ColumnTouch[];
+  filters: FilterTouch[];
+}
+
+export interface ProcedureFootprintResponse {
+  object: string;
+  proc_name: string;
+  statements: StatementFootprint[];
+  unresolved: UnresolvedRef[];
+}
+
 // ── Program slicing ──────────────────────────────────────────────────────────
 
 export interface SliceStep {

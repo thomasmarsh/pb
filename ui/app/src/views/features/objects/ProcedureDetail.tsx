@@ -13,6 +13,7 @@ import type { SummaryItem } from "@pb/platform";
 import { SqlStatementCard } from "../../components/detail/SqlStatementCard.js";
 import { CFGCore } from "../analysis/CFGCore.js";
 import { WiringCore } from "../analysis/WiringCore.js";
+import { ProcedureFootprintCore } from "../analysis/ProcedureFootprintCore.js";
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
@@ -114,6 +115,7 @@ function ProcedureDetailContent(props: {
   const [showSql, setShowSql] = createSignal(false);
   const [showTaint, setShowTaint] = createSignal(false);
   const [showCfg, setShowCfg] = createSignal(false);
+  const [showFootprint, setShowFootprint] = createSignal(false);
   const [diagramView, setDiagramView] = createSignal<"cfg" | "wiring">("cfg");
 
   const callerCount = () => p.callers?.length ?? 0;
@@ -127,6 +129,7 @@ function ProcedureDetailContent(props: {
     ...(p.cyclomatic != null ? [{ label: `CC: ${p.cyclomatic}` } as SummaryItem] : []),
     { label: "Taint", active: showTaint(), onClick: () => setShowTaint((v) => !v) },
     { label: "CFG", active: showCfg(), onClick: () => setShowCfg((v) => !v) },
+    { label: "Footprint", active: showFootprint(), onClick: () => setShowFootprint((v) => !v) },
   ];
 
   function handleKeyDown(e: KeyboardEvent): void {
@@ -136,6 +139,7 @@ function ProcedureDetailContent(props: {
       setShowSql(false);
       setShowTaint(false);
       setShowCfg(false);
+      setShowFootprint(false);
     }
   }
 
@@ -266,6 +270,12 @@ function ProcedureDetailContent(props: {
                 <WiringCore store={store} object={p.object} proc={p.name} />
               </Show>
             </div>
+          </ContextualPanel>
+        </Show>
+
+        <Show when={showFootprint()}>
+          <ContextualPanel title="Procedure Footprint" onClose={() => setShowFootprint(false)}>
+            <ProcedureFootprintCore store={store} object={p.object} proc={p.name} />
           </ContextualPanel>
         </Show>
       </div>

@@ -195,4 +195,33 @@ describe("ProcedureDetail source-first", () => {
       expect(document.body.textContent).not.toContain("Control Flow Graph");
     });
   });
+
+  describe("Footprint panel", () => {
+    it("shows Footprint pill in summary bar", () => {
+      renderProcDetail();
+      const bar = document.querySelector(".analysis-summary-bar");
+      expect(bar?.textContent).toContain("Footprint");
+    });
+
+    it("clicking Footprint pill opens ContextualPanel with 'Procedure Footprint' title", () => {
+      renderProcDetail();
+      const pills = [...document.querySelectorAll(".analysis-summary-bar button")];
+      const footprintPill = pills.find((b) => b.textContent?.includes("Footprint"))!;
+      expect(footprintPill).toBeDefined();
+      fireEvent.click(footprintPill);
+      expect(document.body.textContent).toContain("Procedure Footprint");
+    });
+
+    it("clicking Footprint pill again closes the panel", () => {
+      renderProcDetail();
+      const pill = () =>
+        [...document.querySelectorAll(".analysis-summary-bar button")].find(
+          (b) => b.textContent?.includes("Footprint"),
+        )!;
+      fireEvent.click(pill());
+      expect(document.body.textContent).toContain("Procedure Footprint");
+      fireEvent.click(pill());
+      expect(document.body.textContent).not.toContain("Procedure Footprint");
+    });
+  });
 });

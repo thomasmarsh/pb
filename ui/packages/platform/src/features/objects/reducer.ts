@@ -6,6 +6,7 @@ import type { ObjectsAction } from "./actions.js";
 import type {
   ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse,
   ProcedureDetailResponse, ProcedureListItem, WiringDiagramResponse,
+  ProcedureFootprintResponse,
 } from "../../types/api.js";
 import { type AstData, type WindowLayout } from "@pb/interpreter";
 import type { NavigationAction } from "../navigation/types.js";
@@ -20,6 +21,7 @@ export interface ObjectsEnv {
   getProcedure(obj: string, proc: string): Effect<ProcedureDetailResponse>;
   getProcedures(): Effect<ProcedureListItem[]>;
   getWiringDiagram(obj: string, proc: string): Effect<WiringDiagramResponse>;
+  getProcedureFootprint(obj: string, proc: string): Effect<ProcedureFootprintResponse>;
   navigate(action: NavigationAction): Effect<never>;
 }
 
@@ -30,6 +32,7 @@ export const initialObjectsState: ObjectsState = {
   proceduresListQ: "", proceduresListKind: "",
   proceduresListSort: "name", proceduresListOrder: "asc",
   wiringDiagram: null, wiringDiagramLoading: false,
+  procedureFootprint: null, procedureFootprintLoading: false,
 };
 
 function errMsg(e: unknown): string { return e instanceof Error ? e.message : String(e); }
@@ -154,6 +157,8 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
     draft.procedureDetail = null;
     draft.wiringDiagram = null;
     draft.wiringDiagramLoading = false;
+    draft.procedureFootprint = null;
+    draft.procedureFootprintLoading = false;
     env.navigate({ tag: "navigate", route: { view: "procedureDetail", name: action.objectName, proc: action.procName } });
     return env.getProcedure(action.objectName, action.procName)
       .map((data): ObjectsAction => ({ tag: "proc-loaded", data }))
@@ -222,6 +227,25 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
   case "wiring-error":
     draft.wiringDiagram = { error: action.error };
     draft.wiringDiagramLoading = false;
+    return null;
+  case "footprint-load": {
+    const already = draft.procedureFootprint
+      && "object" in draft.procedureFootprint
+      && draft.procedureFootprint.object === action.objectName
+      && draft.procedureFootprint.proc_name === action.procName;
+    if (already || draft.procedureFootprintLoading) return null;
+    draft.procedureFootprintLoading = true;
+    return env.getProcedureFootprint(action.objectName, action.procName)
+      .map((data): ObjectsAction => ({ tag: "footprint-loaded", data }))
+      .catch((e): ObjectsAction => ({ tag: "footprint-error", error: errMsg(e) }));
+  }
+  case "footprint-loaded":
+    draft.procedureFootprint = action.data;
+    draft.procedureFootprintLoading = false;
+    return null;
+  case "footprint-error":
+    draft.procedureFootprint = { error: action.error };
+    draft.procedureFootprintLoading = false;
     return null;
   default:
     return null;

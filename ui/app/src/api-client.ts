@@ -18,6 +18,7 @@ import type {
   TableDetail,
   ErrorListResponse,
   WiringDiagramResponse,
+  ProcedureFootprintResponse,
 } from "@pb/platform";
 import { type DataWindowFile, type AstData, type WindowLayout } from "@pb/interpreter";
 import { Effect, type SQLResult } from "@pb/core";
@@ -35,6 +36,7 @@ export interface ApiClient {
   getProcedure(obj: string, proc: string): Promise<ProcedureDetailResponse>;
   getProcedures(): Promise<ProcedureListItem[]>;
   getWiringDiagram(obj: string, proc: string): Promise<WiringDiagramResponse>;
+  getProcedureFootprint(obj: string, proc: string): Promise<ProcedureFootprintResponse>;
   search(q: string): Promise<SearchResponse>;
   getDW(name: string): Promise<DwDetailResponse>;
   getDwLayout(name: string): Promise<DataWindowFile>;
@@ -90,6 +92,7 @@ export function createEnv(api: ApiClient): Env {
     getProcedure: (o, p) => lift(() => api.getProcedure(o, p)),
     getProcedures: () => lift(() => api.getProcedures()),
     getWiringDiagram: (o, p) => lift(() => api.getWiringDiagram(o, p)),
+    getProcedureFootprint: (o, p) => lift(() => api.getProcedureFootprint(o, p)),
     search: (q) => lift(() => api.search(q)),
     getDW: (n) => lift(() => api.getDW(n)),
     getDwLayout: (n) => lift(() => api.getDwLayout(n)),
@@ -166,6 +169,12 @@ export function createApiClient(): ApiClient {
     async getWiringDiagram(obj: string, proc: string): Promise<WiringDiagramResponse> {
       return fetchJson(
         `/api/diagrams/wiring/${encodeURIComponent(obj)}/${encodeURIComponent(proc)}`,
+      );
+    },
+
+    async getProcedureFootprint(obj: string, proc: string): Promise<ProcedureFootprintResponse> {
+      return fetchJson(
+        `/api/schema/footprint/${encodeURIComponent(obj)}/${encodeURIComponent(proc)}`,
       );
     },
 
