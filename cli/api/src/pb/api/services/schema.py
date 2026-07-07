@@ -1,18 +1,21 @@
-"""`Sch` consumers (Plan 153 D1 + D2 + D3 + D4 + D5 + D6) — co-update
+"""`Sch` consumers (Plan 153 D1 + D2 + D3 + D4 + D5 + D6 + D7) — co-update
 rituals, implied-FK graph, column-affinity clustering, decomposition-
-candidate ranking, column-usage classification, and statement-management
-views.
+candidate ranking, column-usage classification, statement-management views,
+and the window x table concept lattice.
 
 Pure presentation over Plan 148's schema_objects/schema_morphisms/catalog_*/
 sql_statement_columns tables, plus (D5 only) Plan 153 D5's
 decomposition_coslice table — the one traversal-derived table in this file,
 materialized by the Haskell pass `PB.Pipeline.Passes.runPass10` via
 `PB.Analysis.SchemaCategory.columnCoslice`. D5 never recomputes reachability
-in Python or SQL; it only reads the pre-computed rows.
+in Python or SQL; it only reads the pre-computed rows. D7 reads
+`objects`/`all_sql_tables`/`dw_retrieve_tables` directly — it predates `Sch`
+and doesn't need it (table-granularity, not column-granularity).
 """
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from itertools import combinations
 from typing import Any
@@ -525,3 +528,142 @@ def get_decomposition_candidates(
 
     candidates.sort(key=lambda c: (c["score"] is None, -(c["score"] or 0)))
     return {"table": table_name, "namespace": namespace, "candidates": candidates}
+
+
+_WINDOW_DIRECT_SQL_TABLES_SQL = """
+    SELECT DISTINCT o.object AS window, a.table_name
+    FROM all_sql_tables a JOIN objects o ON o.object = a.object
+    WHERE a.source = 'powerscript' AND o.layout_json IS NOT NULL
+"""
+
+
+def _window_table_pairs(conn: duckdb.DuckDBPyConnection) -> set[tuple[str, str]]:
+    """D7: 'window touches table', direct + DW-control-mediated.
+
+    Direct: a window's own embedded SQL (`all_sql_tables`, restricted to PS
+    objects with `layout_json IS NOT NULL` -- the existing window classifier,
+    see `extractWindowLayout`). Indirect: a window's DataWindow control (its
+    `layout_json.controls[].dataobject`, already captured at parse time) that
+    retrieves from a table (`dw_retrieve_tables`). Parsed in Python, not SQL
+    -- `json_each` over `objects.layout_json` chokes on the heterogeneous
+    control shapes across windows (DuckDB tries to unify a struct type across
+    all rows and fails on mismatched fields).
+    """
+    pairs = {(r["window"], r["table_name"]) for r in rows(conn.execute(_WINDOW_DIRECT_SQL_TABLES_SQL))}
+
+    dw_to_tables: dict[str, set[str]] = defaultdict(set)
+    for r in rows(conn.execute("SELECT lower(dw_name) AS dw_name, table_name FROM dw_retrieve_tables")):
+        dw_to_tables[r["dw_name"]].add(r["table_name"])
+
+    for r in rows(conn.execute("SELECT object, layout_json FROM objects WHERE layout_json IS NOT NULL")):
+        layout = json.loads(r["layout_json"])
+        for control in layout.get("controls", []):
+            dataobject = control.get("dataobject")
+            if dataobject:
+                for table in dw_to_tables.get(dataobject.lower(), ()):
+                    pairs.add((r["object"], table))
+
+    return pairs
+
+
+def _fca_concepts(
+    incidence: dict[str, frozenset[str]], attributes: list[str]
+) -> list[tuple[frozenset[str], frozenset[str]]]:
+    """Ganter's Next Closure algorithm: every formal concept (extent, intent)
+    of the context (incidence, attributes), in lectic order of intent.
+
+    Pure Python, bitmask-encoded (attributes are few enough -- real tables in
+    this corpus top out at ~34 -- that this is a same-order-of-magnitude
+    rewrite of the D3 "no scipy" precedent, not a new dependency). Verified
+    against real openpay data three independent ways before landing: every
+    returned intent is idempotent under the closure operator, extents are
+    pairwise distinct, and unioning every concept's extent x intent
+    reconstructs the exact original incidence relation (see
+    `test_get_window_table_lattice_concepts_reconstruct_all_pairs`).
+    """
+    objects = sorted(incidence)
+    attr_index = {a: i for i, a in enumerate(attributes)}
+    obj_masks = [sum(1 << attr_index[a] for a in incidence[g]) for g in objects]
+    full_mask = (1 << len(attributes)) - 1
+
+    def derive_objects(attr_mask: int) -> int:
+        return sum(1 << gi for gi, m in enumerate(obj_masks) if (m & attr_mask) == attr_mask)
+
+    def derive_attrs(obj_mask: int) -> int:
+        if obj_mask == 0:
+            return full_mask
+        result = full_mask
+        for gi, m in enumerate(obj_masks):
+            if obj_mask & (1 << gi):
+                result &= m
+        return result
+
+    def closure(attr_mask: int) -> int:
+        return derive_attrs(derive_objects(attr_mask))
+
+    def next_closure(b: int) -> int | None:
+        for i in range(len(attributes) - 1, -1, -1):
+            bit = 1 << i
+            if b & bit:
+                continue
+            prefix_mask = bit - 1
+            candidate = closure((b & prefix_mask) | bit)
+            if (candidate & prefix_mask) == (b & prefix_mask):
+                return candidate
+        return None
+
+    def mask_to_names(mask: int, names: list[str]) -> frozenset[str]:
+        return frozenset(names[i] for i in range(len(names)) if mask & (1 << i))
+
+    intents = [closure(0)]
+    while (nxt := next_closure(intents[-1])) is not None:
+        intents.append(nxt)
+
+    return [(mask_to_names(derive_objects(b), objects), mask_to_names(b, attributes)) for b in intents]
+
+
+def _fca_covers(concepts: list[tuple[frozenset[str], frozenset[str]]]) -> list[dict[str, int]]:
+    """Hasse diagram: `upper` covers `lower` iff lower's extent is a proper
+    subset of upper's extent and no third concept's extent sits strictly
+    between them. O(n^3) on the concept count, negligible at real corpus
+    scale (49 concepts on openpay).
+    """
+    extents = [ext for ext, _ in concepts]
+    n = len(concepts)
+    covers: list[dict[str, int]] = []
+    for lower in range(n):
+        for upper in range(n):
+            if lower == upper or not (extents[lower] < extents[upper]):
+                continue
+            if any(
+                extents[lower] < extents[mid] < extents[upper]
+                for mid in range(n)
+                if mid != lower and mid != upper
+            ):
+                continue
+            covers.append({"upper": upper, "lower": lower})
+    return covers
+
+
+def get_window_table_lattice(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+    """D7: concept lattice over the 'window W touches table T' incidence
+    (147 idea 8) -- an architecture-recovery grouping of windows by shared
+    table footprint, i.e. a migration-module map candidate. Report data
+    only; no diagram rendering (deferred, same as every other D deliverable's
+    UI surface).
+    """
+    pairs = _window_table_pairs(conn)
+    windows = sorted({w for w, _ in pairs})
+    tables = sorted({t for _, t in pairs})
+    incidence = {w: frozenset(t for ww, t in pairs if ww == w) for w in windows}
+
+    concepts = _fca_concepts(incidence, tables)
+    covers = _fca_covers(concepts)
+
+    return {
+        "windows": windows,
+        "tables": tables,
+        "pairs": len(pairs),
+        "concepts": [{"extent": sorted(ext), "intent": sorted(intent)} for ext, intent in concepts],
+        "covers": covers,
+    }

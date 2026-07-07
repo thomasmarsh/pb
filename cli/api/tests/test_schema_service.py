@@ -15,6 +15,7 @@ from pb.api.services.schema import (
     get_decomposition_candidates,
     get_fk_graph,
     get_procedure_footprint,
+    get_window_table_lattice,
 )
 
 
@@ -317,3 +318,52 @@ def test_get_decomposition_candidates_min_similarity_filters_low_blocks(
     strict = get_decomposition_candidates(schema_db_conn, None, "misth_ypal", min_similarity=0.95)
     assert len(strict["candidates"]) < len(loose["candidates"])
     assert all(c["similarity"] >= 0.95 for c in strict["candidates"])
+
+
+def test_get_window_table_lattice_counts(schema_db_conn: duckdb.DuckDBPyConnection):
+    result = get_window_table_lattice(schema_db_conn)
+    assert len(result["windows"]) == 64
+    assert len(result["tables"]) == 34
+    assert result["pairs"] == 134
+    assert len(result["concepts"]) == 49
+
+
+def test_get_window_table_lattice_top_and_bottom_concepts(schema_db_conn: duckdb.DuckDBPyConnection):
+    result = get_window_table_lattice(schema_db_conn)
+    top = max(result["concepts"], key=lambda c: len(c["extent"]))
+    assert len(top["extent"]) == 64
+    assert top["intent"] == []
+
+    bottom = max(result["concepts"], key=lambda c: len(c["intent"]))
+    assert len(bottom["intent"]) == 34
+    assert bottom["extent"] == []
+
+
+def test_get_window_table_lattice_finds_usrmembers_concept(schema_db_conn: duckdb.DuckDBPyConnection):
+    result = get_window_table_lattice(schema_db_conn)
+    matches = [c for c in result["concepts"] if set(c["extent"]) == {"w_usrgroups_list", "w_usrusers_list"}]
+    assert len(matches) == 1
+    assert matches[0]["intent"] == ["usrmembers"]
+
+
+def test_get_window_table_lattice_concepts_reconstruct_all_pairs(schema_db_conn: duckdb.DuckDBPyConnection):
+    # A formal concept lattice is faithful: unioning every concept's
+    # extent x intent must reproduce the exact original incidence relation,
+    # with no spurious or missing pairs.
+    result = get_window_table_lattice(schema_db_conn)
+    reconstructed = {
+        (window, table) for c in result["concepts"] for window in c["extent"] for table in c["intent"]
+    }
+    assert len(reconstructed) == result["pairs"]
+
+
+def test_get_window_table_lattice_covers_reference_valid_concepts(schema_db_conn: duckdb.DuckDBPyConnection):
+    result = get_window_table_lattice(schema_db_conn)
+    n = len(result["concepts"])
+    assert len(result["covers"]) > 0
+    for cover in result["covers"]:
+        assert 0 <= cover["upper"] < n
+        assert 0 <= cover["lower"] < n
+        upper_extent = set(result["concepts"][cover["upper"]]["extent"])
+        lower_extent = set(result["concepts"][cover["lower"]]["extent"])
+        assert lower_extent < upper_extent  # strict subset: lower is more specific

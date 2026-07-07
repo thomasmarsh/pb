@@ -1,4 +1,4 @@
-"""`Sch` views (Plan 153 D1 + D2 + D3 + D4 + D5 + D6) — thin route layer, delegates to services.schema."""
+"""`Sch` views (Plan 153 D1 + D2 + D3 + D4 + D5 + D6 + D7) — thin route layer, delegates to services.schema."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pb.api.models import (
     DecompositionCandidatesResponse,
     FkGraphResponse,
     ProcedureFootprintResponse,
+    WindowTableLatticeResponse,
 )
 from pb.api.routes.dependencies import get_db
 from pb.api.services.schema import (
@@ -21,6 +22,7 @@ from pb.api.services.schema import (
     get_decomposition_candidates,
     get_fk_graph,
     get_procedure_footprint,
+    get_window_table_lattice,
 )
 
 router = APIRouter()
@@ -98,3 +100,8 @@ async def get_decomposition_candidates_route(
     if result is None:
         raise HTTPException(status_code=404, detail=f"Table not found: {table_name}")
     return result
+
+
+@router.get("/api/schema/window-table-lattice", response_model=WindowTableLatticeResponse)
+async def get_window_table_lattice_route(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
+    return get_window_table_lattice(conn)

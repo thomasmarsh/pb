@@ -139,3 +139,21 @@ class DecompositionCandidatesResponse(BaseModel):
     table: str
     namespace: str | None
     candidates: list[DecompositionCandidate]
+
+
+class LatticeConcept(BaseModel):
+    extent: list[str]
+    intent: list[str]
+
+
+class LatticeCover(BaseModel):
+    upper: int
+    lower: int
+
+
+class WindowTableLatticeResponse(BaseModel):
+    windows: list[str]
+    tables: list[str]
+    pairs: int
+    concepts: list[LatticeConcept]
+    covers: list[LatticeCover]
