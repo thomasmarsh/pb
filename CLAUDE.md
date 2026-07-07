@@ -1173,11 +1173,22 @@ buildObjectSet, buildUserTypeSet :: [SrFile] -> Set Text
 parseParams :: Text -> [(Text, PbType)]          -- "ref long al_row" → ("al_row", PtPrimitive "long")
 classifyPbType :: PbType -> Set Text -> Set Text -> (Text, Maybe Text)  -- (kind, target)
 classifyControlType :: Text -> Maybe Text  -- dw_main → datawindow (naming convention)
+-- extractDwControlBindings (Plan 148 Phase 3, 2026-07-07): the DW-control ->
+-- DW-object binding extraction the Phase 3 infra-slice session found
+-- missing. Walks srTypeBlocks; a block's tbBody containing a "dataobject"-
+-- named (case-insensitive) BsLocalVar with an ExStr literal init binds
+-- (owner, control) -> dwName, where (owner, control) = (tdWithin, tdName)
+-- when tdWithin is Just, else (tdName, "this") for the object's own outer
+-- TypeBlock. Static-only by design: does not follow runtime aliasing
+-- (ctrl = other.uo.dw, real corpus pattern in w_misth_fylo_form.srw) — no
+-- binding produced rather than guessing.
+extractDwControlBindings :: Text -> SrFile -> [DwControlBinding]
 -- Record types: LocalVar{lvFile,lvObject,lvProcName,lvVarName,lvRawType,lvIsParam,lvScopeLine}
 --   CallSite{csFile,csObject,csFromProc,csToName,csCallType,csLine}
 --   GlobalVar{gvFile,gvObject,gvName,gvType,gvMods}
 --   ResolvedType{rtFile,rtObject,rtProcName,rtVarName,rtRawType,rtKind,rtTarget,rtIsParam,rtScopeLine}
 --   ResolvedCall{rcFile,rcObject,rcFromProc,rcToName,rcCallType,rcLine,rcTargetObject,rcTargetProc,rcKind,rcConfidence}
+--   DwControlBinding{dcbFile,dcbObject,dcbControlName,dcbDwName}
 --   (lvPbType exists but is excluded from JSON.)
 ```
 
@@ -1257,28 +1268,47 @@ constraintWriters :: SchGraph -> ValidationConstraint -> [StmtId]
 -- DwRetrieveId retrieves), direct or via an FK chain.
 ```
 
-### `PB.Analysis.SchFootprint` (Plan 148 Phase 3 infra slice, 2026-07-07)
+### `PB.Analysis.SchFootprint` (Plan 148 Phase 3, done 2026-07-07)
 
 ```haskell
 -- Pure. The functor F : CatOp -> Sch_|_ (design doc's "(a) Categorical
 -- structure" amendment), implemented as a second instance of CatOp.hs's
 -- Category/Cartesian/Cocartesian/Effectful classes rather than a
 -- hand-written match -- foldCat folds any compiled CatOp term into it.
--- Infra-slice only: every Effectful method is a constant empty footprint
--- this session (real SetItem/ExHostVar detection is gated on a DW-control
--- -> DW-object binding extraction that does not exist yet -- see BACKLOG's
--- Plan 148 entry).
 data FunctorCtx = FunctorCtx
-  { fcStmtObj   :: StmtId                              -- CatOp carries no line info; any edge is procedure-granularity
-  , fcTypeEnv   :: ScopedTypeEnv
-  , fcDwColumns :: Map.Map Text [(TableRef, Text)]       -- DW object name -> (table,col) targets; empty until the binding gap closes
+  { fcStmtObj         :: StmtId                              -- CatOp carries no line info; any edge is procedure-granularity
+  , fcTypeEnv         :: ScopedTypeEnv
+  , fcDwColumns       :: Map.Map Text [(TableRef, Text)]      -- DW object name -> (table,col) targets, lowercased key
+  , fcControlBindings :: Map.Map (Text, Text) Text            -- (object, control) -> dw name, all lowercased
   }
+controlBindingsMap :: [DwControlBinding] -> Map.Map (Text, Text) Text  -- from TypeResolve.extractDwControlBindings
+dwColumnsFromRows  :: [DwRetrieveColRow] -> Map.Map Text [(TableRef, Text)]  -- from dw_retrieve_columns rows
 newtype SchFootprint a b = SchFootprint { runSchFootprint :: FunctorCtx -> Set.Set SchMorphism }
 -- Elliott's "compiling to categories" constant-annotation category: erases
 -- a/b entirely. id/exl/exr/inl/inr = const Set.empty; (.)/(&&&)/(|||) = 
 -- pointwise union. loopK propagates the loop body's own footprint (not a
 -- constant empty one) -- a static, iteration-count-oblivious analysis must
 -- still count whatever the body touches.
+--
+-- callProc recognizes a "<ctrl>.SetItem(row, <literal col>, value)" call
+-- (name ending ".setitem", case-insensitive) and resolves it via
+-- fcControlBindings then fcDwColumns to a real LegWrites SchMorphism; any
+-- lookup miss (unbound control, dynamic column arg, unknown column) is
+-- Set.empty, no guessing. Deliberately hooks callProc, not suspend:
+-- SetItem is not (and should not become) a suspending call -- unlike
+-- Retrieve/Open/Close it's a synchronous in-process buffer write, and
+-- 'suspend'/CatSuspend is the mechanism the interpreter/UI runtime use to
+-- mean "must await an external response". SetItem already compiles to
+-- CatCall (PB.Analysis.CallClassify.dwMethods omits "setitem"), so this
+-- needed zero changes to CallClassify. suspend and the ExHostVar case
+-- remain unimplemented -- not needed; callProc alone reaches Phase 3's
+-- done-condition against a real corpus example (verified: w_dw_copy.srw's
+-- `dw_dest.SetItem(ll_Cnt, "id", li_Data)`, value flowing through
+-- li_Data <- dw_source.GetItemNumber(...), resolves to a LegWrites edge on
+-- sales_order_items.id via dw_dest's static `DataObject="d_items"` binding
+-- and d_items.srd's real retrieve columns -- an edge Phase 1's BsRaw/SQL-
+-- text extraction cannot see since there is no SQL statement in this
+-- procedure at all).
 foldSchFootprint :: FunctorCtx -> CatOp a b -> Set.Set SchMorphism
 ```
 

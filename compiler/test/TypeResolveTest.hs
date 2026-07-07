@@ -579,6 +579,55 @@ tests = testGroup "TypeResolve"
         in extractGlobalVars "w.srf" "w_test" sf @?= []
     ]
 
+  , testGroup "extractDwControlBindings"
+    [ testCase "dataobject on a within-block binds control -> dw name (w_dw_copy shape)" $
+        let dataObjectVar = Located 1 BsLocalVar
+              { varMods = [], varType = PtPrimitive "string"
+              , varName = "DataObject", varInit = Just (ExStr "d_items") }
+            tb = TypeBlock
+              { tbDecl = TypeDecl { tdName = "dw_dest", tdAncestor = "datawindow", tdWithin = Just "w_dw_copy" }
+              , tbBody = [dataObjectVar]
+              }
+            sf = emptySrFile { srTypeBlocks = [tb] }
+        in extractDwControlBindings "w_dw_copy.srw" sf
+             @?= [DwControlBinding "w_dw_copy.srw" "w_dw_copy" "dw_dest" "d_items"]
+
+    , testCase "DataObject case-insensitive property name matched" $
+        let dataObjectVar = Located 1 BsLocalVar
+              { varMods = [], varType = PtPrimitive "string"
+              , varName = "dataobject", varInit = Just (ExStr "dw_misth_final_details_list") }
+            tb = TypeBlock
+              { tbDecl = TypeDecl { tdName = "dw", tdAncestor = "w_list`dw", tdWithin = Just "w_misth_final_details_list" }
+              , tbBody = [dataObjectVar]
+              }
+            sf = emptySrFile { srTypeBlocks = [tb] }
+        in extractDwControlBindings "w.srw" sf
+             @?= [DwControlBinding "w.srw" "w_misth_final_details_list" "dw" "dw_misth_final_details_list"]
+
+    , testCase "no dataobject in block yields no binding" $
+        let widthVar = Located 1 BsLocalVar
+              { varMods = [], varType = PtPrimitive "integer"
+              , varName = "width", varInit = Just (ExInt "3081") }
+            tb = TypeBlock
+              { tbDecl = TypeDecl { tdName = "dw", tdAncestor = "datawindow", tdWithin = Just "w_test" }
+              , tbBody = [widthVar]
+              }
+            sf = emptySrFile { srTypeBlocks = [tb] }
+        in extractDwControlBindings "w.srw" sf @?= []
+
+    , testCase "outer type block (no within) binds as control name this" $
+        let dataObjectVar = Located 1 BsLocalVar
+              { varMods = [], varType = PtPrimitive "string"
+              , varName = "dataobject", varInit = Just (ExStr "d_self") }
+            tb = TypeBlock
+              { tbDecl = TypeDecl { tdName = "w_selfdw", tdAncestor = "window", tdWithin = Nothing }
+              , tbBody = [dataObjectVar]
+              }
+            sf = emptySrFile { srTypeBlocks = [tb] }
+        in extractDwControlBindings "w.srw" sf
+             @?= [DwControlBinding "w.srw" "w_selfdw" "this" "d_self"]
+    ]
+
   , testGroup "resolveTypes/controlType"
     [ testCase "unresolved var with dw_ prefix falls back to datawindow" $ do
         let lv = LocalVar "w.srf" "w_test" "of_open" "dw_main"

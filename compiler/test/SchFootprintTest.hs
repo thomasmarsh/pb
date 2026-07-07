@@ -1,23 +1,35 @@
 module SchFootprintTest (tests) where
 
 import PB.Prelude hiding (id, (.))
-import PB.AST.Expr           (Expr (..))
-import PB.Analysis.CatOp     (Category (..), Cartesian (..), Cocartesian (..),
-                               CatOp (..), branch)
-import PB.Analysis.CatEval   (Value)
+import PB.AST.DataWindow      (DataWindowFile (..), DwTable (..), DwRetrieve (..), DwRetrieveOrRaw (..))
+import PB.AST.Expr            (Expr (..), Lvalue (..), LvSegment (..))
+import PB.AST.SourceFile      (SrFile (..), EventBlock (..), EventSig (..))
+import PB.Analysis.CatOp      (Category (..), Cartesian (..), Cocartesian (..),
+                                CatOp (..), branch)
+import PB.Analysis.CatEval    (Value)
+import PB.Analysis.CatLower   (compileSsa)
 import PB.Analysis.SchFootprint
-import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), FkSource (..))
-import PB.Analysis.TypeEnv   (ScopedTypeEnv (..))
-import PB.Pipeline.SqlParse  (TableRef (..))
+import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), FkSource (..),
+                                    DwRetrieveColRow (..), splitColumnRef)
+import PB.Analysis.SSA        (buildSsa)
+import PB.Analysis.TypeEnv    (ScopedTypeEnv (..), buildWorkspaceEnv, procEnv)
+import PB.Analysis.TypeResolve (extractDwControlBindings)
+import PB.Grammar.DataWindow  (parseDataWindow)
+import PB.Pipeline.Emit       (parsePowerScriptFile)
+import PB.Pipeline.SqlParse   (TableRef (..))
 
+import qualified Data.List       as L
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
+import qualified Data.Text       as T
+
+import System.Directory      (doesFileExist)
 
 import Hedgehog             (forAll, property, (===), Gen)
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import Test.Tasty           (TestTree, testGroup)
-import Test.Tasty.HUnit     (testCase, (@?=))
+import Test.Tasty.HUnit     (assertFailure, testCase, (@?=))
 import Test.Tasty.Hedgehog  (testProperty)
 
 -- ---------------------------------------------------------------------------
@@ -28,10 +40,26 @@ emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty
 
 ctx0 :: FunctorCtx
 ctx0 = FunctorCtx
-  { fcStmtObj   = SqlStmtId "f.srf" "obj" "proc" 1
-  , fcTypeEnv   = emptyEnv
-  , fcDwColumns = Map.empty
+  { fcStmtObj         = SqlStmtId "f.srf" "obj" "proc" 1
+  , fcTypeEnv         = emptyEnv
+  , fcDwColumns       = Map.empty
+  , fcControlBindings = Map.empty
   }
+
+-- | Mirrors the real w_dw_copy.srw shape (dw_dest control statically bound
+-- to d_items, whose retrieve exposes sales_order_items.{id,line_id}).
+ctx1 :: FunctorCtx
+ctx1 = FunctorCtx
+  { fcStmtObj = SqlStmtId "w_dw_copy.srw" "w_dw_copy" "clicked" 553
+  , fcTypeEnv = emptyEnv
+  , fcDwColumns = Map.fromList
+      [ ("d_items", [ (TableRef Nothing "sales_order_items", "id")
+                    , (TableRef Nothing "sales_order_items", "line_id") ]) ]
+  , fcControlBindings = Map.fromList [ (("w_dw_copy", "dw_dest"), "d_items") ]
+  }
+
+lvExpr :: Text -> Expr
+lvExpr n = ExLvalue (Lvalue [LvSegment n Nothing])
 
 -- Content is arbitrary: only used to exercise Set union as a monoid.
 morphismA, morphismB, morphismC, morphismD, morphismE :: SchMorphism
@@ -120,5 +148,79 @@ tests = testGroup "SchFootprint"
 
     , testCase "CatConst" $
         foldSchFootprint ctx0 (CatConst (ExInt "1") :: CatOp () Value) @?= Set.empty
+    ]
+
+  , testGroup "callProc SetItem detection"
+    [ testCase "SetItem with literal column resolves to LegWrites when control/dw/column all bound" $
+        foldSchFootprint ctx1
+          (CatCall "dw_dest.SetItem" [lvExpr "ll_Cnt", ExStr "id", lvExpr "li_Data"] :: CatOp () ())
+          @?= Set.singleton
+                (SchMorphism (StmtObj (fcStmtObj ctx1))
+                             (ColumnObj (TableRef Nothing "sales_order_items") "id")
+                             LegWrites)
+
+    , testCase "unbound control yields empty footprint" $
+        foldSchFootprint ctx1
+          (CatCall "dw_other.SetItem" [lvExpr "ll_Cnt", ExStr "id", lvExpr "li_Data"] :: CatOp () ())
+          @?= Set.empty
+
+    , testCase "dynamic (non-literal) column argument yields empty footprint" $
+        foldSchFootprint ctx1
+          (CatCall "dw_dest.SetItem" [lvExpr "ll_Cnt", lvExpr "ls_col", lvExpr "li_Data"] :: CatOp () ())
+          @?= Set.empty
+
+    , testCase "unknown column name in the bound dw yields empty footprint" $
+        foldSchFootprint ctx1
+          (CatCall "dw_dest.SetItem" [lvExpr "ll_Cnt", ExStr "nonexistent_col", lvExpr "li_Data"] :: CatOp () ())
+          @?= Set.empty
+
+    , testCase "non-SetItem calls remain empty" $
+        foldSchFootprint ctx1 (CatCall "dw_dest.Retrieve" [] :: CatOp () ()) @?= Set.empty
+    ]
+
+  , testGroup "Phase 3 done-condition: real corpus example (w_dw_copy.srw / d_items.srd)"
+    [ testCase "SetItem write with value flowing through a local var resolves to sales_order_items.id" $ do
+        let srwPath  = "example/PowerBuilder-Example-extract/pbexamw1.pbl/w_dw_copy.srw" :: FilePath
+            srdPath  = "example/PowerBuilder-Example-extract/pbexamd2.pbl/d_items.srd" :: FilePath
+            srwPathT = T.pack srwPath
+            srdPathT = T.pack srdPath
+        srwExists <- doesFileExist srwPath
+        srdExists <- doesFileExist srdPath
+        if not (srwExists && srdExists)
+          then pure ()  -- corpus not present in this environment; vacuous pass (mirrors CorpusTest's withCorpusFile)
+          else do
+            srwSrc <- readFile srwPath
+            srdSrc <- readFile srdPath
+            case (parsePowerScriptFile srwSrc, parseDataWindow srdSrc) of
+              (Left e, _) -> assertFailure ("failed to parse w_dw_copy.srw: " <> T.unpack e)
+              (_, Left e) -> assertFailure ("failed to parse d_items.srd: " <> T.unpack e)
+              (Right (sf, _spans), Right dwFile) ->
+                case [ ev | ev <- srEvents sf, esName (evSig ev) == "clicked", evOwner ev == Just "cb_getitem" ] of
+                  [ev] -> do
+                    let ws       = buildWorkspaceEnv [sf]
+                        env      = procEnv ws "w_dw_copy" []
+                        ssaProc  = buildSsa env "clicked" (evBody ev)
+                        term     = compileSsa env Set.empty ssaProc
+                        bindings = extractDwControlBindings srwPathT sf
+                        dwCols = case dwTable dwFile >>= dtRetrieve of
+                          Just (DwRetrieveOk retrieve) ->
+                            [ DwRetrieveColRow srdPathT "d_items" ns tbl col
+                            | ref <- drColumns retrieve
+                            , Just (TableRef ns tbl, col) <- [splitColumnRef ref]
+                            ]
+                          _ -> []
+                        ctx = FunctorCtx
+                          { fcStmtObj         = SqlStmtId srwPathT "w_dw_copy" "clicked" 0
+                          , fcTypeEnv         = env
+                          , fcDwColumns       = dwColumnsFromRows dwCols
+                          , fcControlBindings = controlBindingsMap bindings
+                          }
+                        footprint = foldSchFootprint ctx term
+                        expected = SchMorphism (StmtObj (fcStmtObj ctx))
+                                               (ColumnObj (TableRef Nothing "sales_order_items") "id")
+                                               LegWrites
+                    L.length dwCols @?= 5
+                    Set.member expected footprint @?= True
+                  other -> assertFailure ("expected exactly 1 clicked/cb_getitem event, got " <> show (length other))
     ]
   ]

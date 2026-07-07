@@ -18,10 +18,12 @@ module PB.Analysis.TypeResolve
   , GlobalVar (..)
   , ResolvedType (..)
   , ResolvedCall (..)
+  , DwControlBinding (..)
   , extractLocalVars
   , extractCallSites
   , extractDwCallSites
   , extractGlobalVars
+  , extractDwControlBindings
   , resolveTypes
   , resolveCalls
   , buildInheritsMap
@@ -480,6 +482,43 @@ extractGlobalVars file obj sf =
           }
       | gi <- srGlobalInstances sf
       ]
+
+-- | A control (or an object's own outer 'TypeBlock') whose 'dataobject'
+-- property is a literal string. Static-only: this does not follow runtime
+-- aliasing (e.g. @idw_epidom = tab1.page1.uo_epidom.dw@, seen in
+-- @w_misth_fylo_form.srw@) — a control with no literal 'dataobject' in its
+-- own 'TypeBlock' body simply produces no binding, matching the project's
+-- existing "skip rather than guess" precedent for ambiguous SQL columns.
+data DwControlBinding = DwControlBinding
+  { dcbFile        :: Text
+  , dcbObject      :: Text  -- ^ owning window/userobject
+  , dcbControlName :: Text  -- ^ child control name, or "this" for the object's own outer TypeBlock
+  , dcbDwName      :: Text  -- ^ literal dataobject/DataObject string value
+  } deriving (Eq, Show)
+
+-- | Extract every static control -> DataWindow-object binding from a file's
+-- 'TypeBlock's. A block with 'tdWithin = Just parent' describes a child
+-- control named 'tdName' placed inside 'parent'; a block with
+-- 'tdWithin = Nothing' describes the object's own outer type, so a literal
+-- 'dataobject' set there binds "this".
+extractDwControlBindings :: Text -> SrFile -> [DwControlBinding]
+extractDwControlBindings file sf =
+  [ DwControlBinding file owner ctrlName dwName
+  | tb <- srTypeBlocks sf
+  , let decl = tbDecl tb
+        (owner, ctrlName) = case tdWithin decl of
+          Just parent -> (parent, tdName decl)
+          Nothing     -> (tdName decl, "this")
+  , Just dwName <- [findDataObject (tbBody tb)]
+  ]
+  where
+    findDataObject stmts = case
+      [ s
+      | Located _ BsLocalVar { varName = n, varInit = Just (ExStr s) } <- stmts
+      , T.toLower n == "dataobject"
+      ] of
+        (s:_) -> Just s
+        []    -> Nothing
 
 -- ---------------------------------------------------------------------------
 -- Workspace-level graph builders
