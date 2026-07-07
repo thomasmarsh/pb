@@ -20,7 +20,6 @@ _ANSI_HIGHLIGHT_RE = re.compile(r"\x1b\[4m(.*?)\x1b\[0m")
 _SKIP_RE = re.compile(
     r"^\s*(CONNECT|DISCONNECT|OPEN|CLOSE|FETCH|EXECUTE\s+(?:IMMEDIATE|PROCEDURE)"
     r"|DECLARE\s+\w+\s+DYNAMIC\s+CURSOR\s+FOR\s+\w+\s*;?\s*$"
-    u4
     r"|DECLARE\s+\w+\s+PROCEDURE\s+FOR\s+\w+)",
     re.I,
 )

@@ -1,9 +1,12 @@
 module RunnerTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, CompiledFile (..), CompiledPs (..))
+import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, catalogToRows, CompiledFile (..), CompiledPs (..))
 import PB.Pipeline.Emit    (parsePowerScriptFile, ParsedFile (..), ParseOutcome (..))
-import PB.Pipeline.DuckDb  (ProcRow (..), SqlStmtColumnRow (..), SqlStmtFilterRow (..))
+import PB.Pipeline.DuckDb
+  ( ProcRow (..), SqlStmtColumnRow (..), SqlStmtFilterRow (..)
+  , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..)
+  )
 import PB.AST.BodyStmt     (BodyStmt (..))
 import PB.AST.DataWindow   (DwRetrieve (..), DwRetrieveOrRaw (..), DwWhereClause (..))
 import PB.AST.Expr         (Expr (..))
@@ -14,7 +17,9 @@ import PB.Analysis.TypeEnv    (buildWorkspaceEnv, procEnv)
 import PB.Analysis.GraphBuilder (compileProcedureViaCatOp)
 import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse
-  (startSqlBridgePool, shutdownSqlBridgePool)
+  ( startSqlBridgePool, shutdownSqlBridgePool
+  , TableRef (..), CatalogTable (..), CatalogPrimaryKey (..), CatalogForeignKey (..), SchemaCatalog (..)
+  )
 
 import Data.Aeson (Value (..), object, decodeStrict, toJSON, (.=))
 import qualified Data.Aeson.Key    as Key
@@ -576,6 +581,43 @@ tests = testGroup "Pipeline.Runner"
                 map sscrTableName  (cpsSqlStmtColumns cps) @?= [Just "usrgroupperm", Nothing]
                 map ssfrColumnName (cpsSqlStmtFilters cps) @?= ["status"]
               _ -> assertFailure "expected CFPs"
+    ]
+
+  , testGroup "catalogToRows (Plan 148 Phase 1a-3)"
+    [ testCase "flattens tables/pks/fks with positional ordinals" $ do
+        let cat = SchemaCatalog
+              { scTables =
+                  [ CatalogTable (TableRef Nothing "afxfilterd") ["kodfilterd", "kodfilter"] ]
+              , scPrimaryKeys =
+                  [ CatalogPrimaryKey (TableRef Nothing "afxfilterd") ["kodfilterd"] ]
+              , scForeignKeys =
+                  [ CatalogForeignKey (Just "0_15")
+                      (TableRef Nothing "afxfilterd") ["kodfilter"]
+                      (TableRef Nothing "afxfilter")  ["kodfilter"]
+                  ]
+              }
+            (colRows, pkRows, fkRows) = catalogToRows cat
+        map cclrColumnName colRows @?= ["kodfilterd", "kodfilter"]
+        map cclrOrdinal    colRows @?= [0, 1]
+        map cpkrColumnName pkRows  @?= ["kodfilterd"]
+        map cfkrFromColumn fkRows  @?= ["kodfilter"]
+        map cfkrToColumn   fkRows  @?= ["kodfilter"]
+        map cfkrConstraintName fkRows @?= [Just "0_15"]
+
+    , testCase "composite FK pairs from/to columns positionally" $ do
+        let cat = SchemaCatalog
+              { scTables = []
+              , scPrimaryKeys = []
+              , scForeignKeys =
+                  [ CatalogForeignKey Nothing
+                      (TableRef Nothing "line_item") ["order_id", "line_no"]
+                      (TableRef Nothing "orders")     ["id", "seq"]
+                  ]
+              }
+            (_, _, fkRows) = catalogToRows cat
+        map cfkrFromColumn fkRows @?= ["order_id", "line_no"]
+        map cfkrToColumn   fkRows @?= ["id", "seq"]
+        map cfkrOrdinal    fkRows @?= [0, 1]
     ]
   ]
 

@@ -9,6 +9,12 @@ Request:  {"sql": "SELECT ...", "dialect": "oracle"}
 Response: {"tables": [...], "columns": [...], "operation": "SELECT", "parse_ok": true,
            "column_refs": [{"namespace": null, "table": ..., "column": ..., "is_write": ...}, ...],
            "row_filters": [{"namespace": null, "table": ..., "column": ..., "op": ..., "values": [...]}, ...]}
+
+A request with "kind": "ddl" is dispatched to parse_ddl instead:
+
+Request:  {"kind": "ddl", "ddl": "CREATE TABLE ...", "dialect": "mysql"}
+Response: {"kind": "ddl", "parse_ok": true,
+           "catalog": {"tables": [...], "primary_keys": [...], "foreign_keys": [...]}}
 """
 
 from __future__ import annotations
@@ -16,7 +22,9 @@ from __future__ import annotations
 import json
 import struct
 import sys
+from dataclasses import asdict
 
+from pb.lib.ddl import Catalog, parse_ddl
 from pb.lib.sql import parse_pb_sql
 
 _HEADER = struct.Struct(">I")
@@ -40,6 +48,19 @@ def _write_msg(stream, obj: dict) -> None:
     stream.flush()
 
 
+_EMPTY_CATALOG = asdict(Catalog(tables=[], primary_keys=[], foreign_keys=[]))
+
+
+def _handle_ddl(msg: dict) -> dict:
+    ddl = msg.get("ddl", "")
+    dialect = msg.get("dialect", "mysql")
+    try:
+        catalog = parse_ddl(ddl, dialect)
+        return {"kind": "ddl", "parse_ok": True, "catalog": asdict(catalog)}
+    except Exception:
+        return {"kind": "ddl", "parse_ok": False, "catalog": _EMPTY_CATALOG}
+
+
 def main() -> None:
     stdin = sys.stdin.buffer
     stdout = sys.stdout.buffer
@@ -48,6 +69,10 @@ def main() -> None:
         msg = _read_msg(stdin)
         if msg is None:
             break
+
+        if msg.get("kind") == "ddl":
+            _write_msg(stdout, _handle_ddl(msg))
+            continue
 
         sql = msg.get("sql", "")
         dialect = msg.get("dialect", "oracle")

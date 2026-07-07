@@ -11,6 +11,7 @@ tests = testGroup "DuckDb"
   , testCase "appendObjects accepts a row"           testAppendObjects
   , testCase "appendProcedures stores cfg_json"      testAppendProcedures
   , testCase "appendSqlStmtColumns/Filters accept rows" testAppendSqlStmtColumnsFilters
+  , testCase "appendCatalogColumns/Pks/Fks accept rows" testAppendCatalogRows
   ]
 
 testInitSchema :: IO ()
@@ -58,3 +59,21 @@ testAppendSqlStmtColumnsFilters = withWriteConn ":memory:" $ \conn -> do
   -- Appending an empty list after a real batch must not throw
   appendSqlStmtColumns conn []
   appendSqlStmtFilters conn []
+
+testAppendCatalogRows :: IO ()
+testAppendCatalogRows = withWriteConn ":memory:" $ \conn -> do
+  initSchema conn
+  appendCatalogColumns conn
+    [ CatalogColumnRow Nothing "afxfilterd" "kodfilterd" 0
+    , CatalogColumnRow Nothing "afxfilterd" "kodfilter"  1
+    ]
+  appendCatalogPks conn
+    [ CatalogPkRow Nothing "afxfilterd" "kodfilterd" 0
+    ]
+  appendCatalogFks conn
+    [ CatalogFkRow (Just "0_15") Nothing "afxfilterd" "kodfilter" Nothing "afxfilter" "kodfilter" 0
+    ]
+  -- Appending an empty list after a real batch must not throw
+  appendCatalogColumns conn []
+  appendCatalogPks conn []
+  appendCatalogFks conn []

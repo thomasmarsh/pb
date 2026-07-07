@@ -13,6 +13,9 @@ module PB.Pipeline.DuckDb
   , SqlStmtRow (..)
   , SqlStmtColumnRow (..)
   , SqlStmtFilterRow (..)
+  , CatalogColumnRow (..)
+  , CatalogPkRow (..)
+  , CatalogFkRow (..)
   , SourceFileRow (..)
   -- Phase A appenders
   , appendObjects
@@ -29,6 +32,9 @@ module PB.Pipeline.DuckDb
   , appendSqlStmts
   , appendSqlStmtColumns
   , appendSqlStmtFilters
+  , appendCatalogColumns
+  , appendCatalogPks
+  , appendCatalogFks
   , appendParseErrors
   , appendSourceFiles
   -- Phase B queries
@@ -150,6 +156,13 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       , "CREATE TABLE IF NOT EXISTS dw_joins \
         \(file TEXT, dw_name TEXT, left_ref TEXT, op TEXT, right_ref TEXT, \
         \outer1 TEXT, outer2 TEXT)"
+      , "CREATE TABLE IF NOT EXISTS catalog_columns \
+        \(namespace TEXT, table_name TEXT, column_name TEXT, ordinal INTEGER)"
+      , "CREATE TABLE IF NOT EXISTS catalog_pks \
+        \(namespace TEXT, table_name TEXT, column_name TEXT, ordinal INTEGER)"
+      , "CREATE TABLE IF NOT EXISTS catalog_fks \
+        \(constraint_name TEXT, from_namespace TEXT, from_table TEXT, from_column TEXT, \
+        \to_namespace TEXT, to_table TEXT, to_column TEXT, ordinal INTEGER)"
       , "CREATE TABLE IF NOT EXISTS dw_controls \
         \(file TEXT, object TEXT, band TEXT, control_type TEXT, name TEXT, \
         \x INTEGER, y INTEGER, width INTEGER, height INTEGER, expression TEXT)"
@@ -300,6 +313,31 @@ data SqlStmtFilterRow = SqlStmtFilterRow
   , ssfrColumnName :: Text
   , ssfrOp         :: Text
   , ssfrValuesJson :: Text
+  }
+
+data CatalogColumnRow = CatalogColumnRow
+  { cclrNamespace  :: Maybe Text
+  , cclrTableName  :: Text
+  , cclrColumnName :: Text
+  , cclrOrdinal    :: Int
+  }
+
+data CatalogPkRow = CatalogPkRow
+  { cpkrNamespace  :: Maybe Text
+  , cpkrTableName  :: Text
+  , cpkrColumnName :: Text
+  , cpkrOrdinal    :: Int
+  }
+
+data CatalogFkRow = CatalogFkRow
+  { cfkrConstraintName :: Maybe Text
+  , cfkrFromNamespace  :: Maybe Text
+  , cfkrFromTable      :: Text
+  , cfkrFromColumn     :: Text
+  , cfkrToNamespace    :: Maybe Text
+  , cfkrToTable        :: Text
+  , cfkrToColumn       :: Text
+  , cfkrOrdinal        :: Int
   }
 
 data SourceFileRow = SourceFileRow
@@ -499,6 +537,40 @@ appendSqlStmtFilters conn rows = withRaw conn "sql_statement_filters" $ \app ->
     aText      app (ssfrColumnName r)
     aText      app (ssfrOp r)
     aText      app (ssfrValuesJson r)
+    endRow app
+
+appendCatalogColumns :: DuckConn -> [CatalogColumnRow] -> IO ()
+appendCatalogColumns _    [] = pure ()
+appendCatalogColumns conn rows = withRaw conn "catalog_columns" $ \app ->
+  for_ rows $ \r -> do
+    aMaybeText app (cclrNamespace  r)
+    aText      app (cclrTableName  r)
+    aText      app (cclrColumnName r)
+    aInt       app (cclrOrdinal    r)
+    endRow app
+
+appendCatalogPks :: DuckConn -> [CatalogPkRow] -> IO ()
+appendCatalogPks _    [] = pure ()
+appendCatalogPks conn rows = withRaw conn "catalog_pks" $ \app ->
+  for_ rows $ \r -> do
+    aMaybeText app (cpkrNamespace  r)
+    aText      app (cpkrTableName  r)
+    aText      app (cpkrColumnName r)
+    aInt       app (cpkrOrdinal    r)
+    endRow app
+
+appendCatalogFks :: DuckConn -> [CatalogFkRow] -> IO ()
+appendCatalogFks _    [] = pure ()
+appendCatalogFks conn rows = withRaw conn "catalog_fks" $ \app ->
+  for_ rows $ \r -> do
+    aMaybeText app (cfkrConstraintName r)
+    aMaybeText app (cfkrFromNamespace  r)
+    aText      app (cfkrFromTable      r)
+    aText      app (cfkrFromColumn     r)
+    aMaybeText app (cfkrToNamespace    r)
+    aText      app (cfkrToTable        r)
+    aText      app (cfkrToColumn       r)
+    aInt       app (cfkrOrdinal        r)
     endRow app
 
 appendParseErrors :: DuckConn -> [(FilePath, Text)] -> IO ()

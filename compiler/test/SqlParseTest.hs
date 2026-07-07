@@ -43,6 +43,36 @@ mockWorkerLines =
   , "    write({'tables':['t'],'columns':['c'],'operation':'SELECT','parse_ok':True})"
   ]
 
+-- | DDL worker: answers a {"kind":"ddl",...} request with a canned catalog;
+-- answers any other request like mockWorkerLines.
+ddlWorkerLines :: [Text]
+ddlWorkerLines =
+  [ "#!/usr/bin/env python3"
+  , "import sys, json, struct"
+  , "H = struct.Struct('>I')"
+  , "def read():"
+  , "    h = sys.stdin.buffer.read(4)"
+  , "    if len(h) < 4: return None"
+  , "    (n,) = H.unpack(h)"
+  , "    return json.loads(sys.stdin.buffer.read(n))"
+  , "def write(obj):"
+  , "    b = json.dumps(obj).encode()"
+  , "    sys.stdout.buffer.write(H.pack(len(b)) + b)"
+  , "    sys.stdout.buffer.flush()"
+  , "while True:"
+  , "    m = read()"
+  , "    if m is None: sys.exit(0)"
+  , "    if m.get('kind') == 'ddl':"
+  , "        write({'kind': 'ddl', 'parse_ok': True, 'catalog': {"
+  , "            'tables': [{'namespace': None, 'table': 'afxfilterd', 'columns': ['kodfilterd', 'kodfilter']}],"
+  , "            'primary_keys': [{'namespace': None, 'table': 'afxfilterd', 'columns': ['kodfilterd']}],"
+  , "            'foreign_keys': [{'constraint_name': '0_15', 'from_namespace': None, 'from_table': 'afxfilterd',"
+  , "                'from_columns': ['kodfilter'], 'to_namespace': None, 'to_table': 'afxfilter', 'to_columns': ['kodfilter']}]"
+  , "        }})"
+  , "    else:"
+  , "        write({'tables':['t'],'columns':['c'],'operation':'SELECT','parse_ok':True})"
+  ]
+
 -- | Crash worker: handles exactly one request then exits with code 1.
 crashWorkerLines :: [Text]
 crashWorkerLines =
@@ -186,6 +216,31 @@ tests = testGroup "SqlParse"
             assertEqual "row_filters default" [] (srRowFilters res)
     ]
 
+  , testGroup "SchemaCatalog decode"
+    [ testCase "decodes tables/primary_keys/foreign_keys" $ do
+        let json = "{\"tables\":[{\"namespace\":null,\"table\":\"afxfilterd\",\
+                    \\"columns\":[\"kodfilterd\",\"kodfilter\"]}],\
+                    \\"primary_keys\":[{\"namespace\":null,\"table\":\"afxfilterd\",\
+                    \\"columns\":[\"kodfilterd\"]}],\
+                    \\"foreign_keys\":[{\"constraint_name\":\"0_15\",\
+                    \\"from_namespace\":null,\"from_table\":\"afxfilterd\",\"from_columns\":[\"kodfilter\"],\
+                    \\"to_namespace\":null,\"to_table\":\"afxfilter\",\"to_columns\":[\"kodfilter\"]}]}"
+            mres = decode json :: Maybe SchemaCatalog
+        case mres of
+          Nothing -> assertFailure "SchemaCatalog failed to decode"
+          Just cat -> do
+            assertEqual "tables count" 1 (length (scTables cat))
+            assertEqual "table ref" (TableRef Nothing "afxfilterd") (ctRef (scTables cat !! 0))
+            assertEqual "table columns" ["kodfilterd", "kodfilter"] (ctColumns (scTables cat !! 0))
+            assertEqual "pk count" 1 (length (scPrimaryKeys cat))
+            assertEqual "pk columns" ["kodfilterd"] (cpkColumns (scPrimaryKeys cat !! 0))
+            assertEqual "fk count" 1 (length (scForeignKeys cat))
+            let fk = scForeignKeys cat !! 0
+            assertEqual "fk constraint name" (Just "0_15") (cfkConstraintName fk)
+            assertEqual "fk from table" (TableRef Nothing "afxfilterd") (cfkFromTable fk)
+            assertEqual "fk to table" (TableRef Nothing "afxfilter") (cfkToTable fk)
+    ]
+
   , testGroup "SqlBridgePool"
     [ testCase "missing binary raises exception" $ do
         result <- try @SomeException (startSqlBridgePool 1 "/nonexistent/pb-sql-worker")
@@ -221,6 +276,15 @@ tests = testGroup "SqlParse"
         -- Worker crashed after responding. Next call triggers restart.
         r2 <- parseSql pool 0 "SELECT 2"
         assertEqual "second call (after restart)" True (srParseOk r2)
+        shutdownSqlBridgePool pool
+
+    , testCase "parseDdl decodes catalog from ddl worker" $ do
+        script <- installScript "pb_ddl_worker.py" ddlWorkerLines
+        pool   <- startSqlBridgePool 1 script
+        cat    <- parseDdl pool "mysql" "CREATE TABLE afxfilterd (...)"
+        assertEqual "tables count" 1 (length (scTables cat))
+        assertEqual "fk from/to" (TableRef Nothing "afxfilterd", TableRef Nothing "afxfilter")
+          (cfkFromTable (scForeignKeys cat !! 0), cfkToTable (scForeignKeys cat !! 0))
         shutdownSqlBridgePool pool
     ]
   ]

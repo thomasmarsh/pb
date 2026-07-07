@@ -821,12 +821,55 @@ runPhaseB :: DuckConn -> IO ()
 --             runPass8 (computeDeadProcedures → dead_code)
 ```
 
+### `PB.Pipeline.SqlParse`
+
+```haskell
+-- Python sqlglot bridge: per-worker subprocess pool over a length-prefixed
+-- JSON stdin/stdout protocol (sql_worker.py). ColumnRef/RowFilter (Plan 148
+-- Phase 1a-2) are SqlResult's per-statement, scope-qualified column
+-- attribution. TableRef/CatalogTable/CatalogPrimaryKey/CatalogForeignKey/
+-- SchemaCatalog (Plan 148 Phase 1a-3, 2026-07-07) are the static DDL
+-- catalog shape -- row-oriented (list, not Map TableRef [Text]) to match
+-- the JSON wire format and DuckDb's row-oriented appenders directly; a
+-- future PB.Analysis.SchemaCategory (Phase 1b) builds a Map view with one
+-- Map.fromList over scTables/scPrimaryKeys if needed.
+data ColumnRef = ColumnRef { crNamespace, crTable :: Maybe Text, crColumn :: Text, crIsWrite :: Bool }
+data RowFilter = RowFilter { rfNamespace, rfTable :: Maybe Text, rfColumn, rfOp :: Text, rfValues :: [Text] }
+data SqlResult = SqlResult { srTables, srColumns :: [Text], srOperation :: Maybe Text
+                            , srParseOk :: Bool, srColumnRefs :: [ColumnRef], srRowFilters :: [RowFilter] }
+data TableRef = TableRef { trNamespace :: Maybe Text, trTable :: Text }   -- Ord; lowercased upstream
+data CatalogTable      = CatalogTable      { ctRef  :: TableRef, ctColumns  :: [Text] }
+data CatalogPrimaryKey = CatalogPrimaryKey { cpkRef :: TableRef, cpkColumns :: [Text] }
+data CatalogForeignKey = CatalogForeignKey
+  { cfkConstraintName :: Maybe Text
+  , cfkFromTable :: TableRef, cfkFromColumns :: [Text]
+  , cfkToTable   :: TableRef, cfkToColumns   :: [Text] }   -- from/to columns paired by position
+data SchemaCatalog = SchemaCatalog
+  { scTables :: [CatalogTable], scPrimaryKeys :: [CatalogPrimaryKey], scForeignKeys :: [CatalogForeignKey] }
+data SqlBridgePool = SqlBridgePool { sbpSlots :: Vector (IORef WorkerConn), sbpBinary :: FilePath }
+startSqlBridgePool  :: Int -> FilePath -> IO SqlBridgePool
+shutdownSqlBridgePool :: SqlBridgePool -> IO ()
+parseSql :: SqlBridgePool -> Int -> Text -> IO SqlResult          -- per-statement, any slot; retries once on worker crash
+parseDdl :: SqlBridgePool -> Text -> Text -> IO SchemaCatalog     -- dialect, ddlText; always slot 0 (one-shot per run)
+extractBsRawNodes :: [Located BodyStmt] -> [(Int, Text)]          -- recurses into if/for/do/choose bodies
+-- Internal: requestResponse (shared framing, both parseSql/parseDdl go through it), encodeLen/decodeLen (4-byte BE length prefix)
+```
+
 ### `PB.Pipeline.Runner`
 
 ```haskell
 -- Batch orchestration: DuckDB streaming, worker loops.
 -- Re-exports from Emit: runFile, collectStatements, wrapSrFile, extractWindowLayout, reconstructRetrieveSql
-runModeDb :: FilePath -> FilePath -> IO ()
+runModeDb :: FilePath -> FilePath -> Maybe FilePath -> IO ()
+-- srcDir, dbPath, optional DDL catalog file (Plan 148 Phase 1a-3, added
+-- 2026-07-07). When Just and PB_SQL_WORKER is set, reads the file once,
+-- calls parseDdl, and appends via catalogToRows before the per-file worker
+-- loop. When Just but no bridge, emits a "warning" progress event and skips
+-- (no hard error). Main.hs's --ddl flag threads through here.
+catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogFkRow])
+-- Pure. Flattens SqlParse's row-oriented SchemaCatalog into DuckDb's row
+-- types, assigning positional ordinals; composite FKs pair
+-- fromColumns[i]/toColumns[i] by position.
 -- Internal: CompiledPs, CompiledDw, CompiledFile, compileOne, appendToDb,
 --           workerLoopFiles, workerLoopFilesNoBridge, emitProgress, jsonText
 -- Phase A: parse → compile → append to DuckDB (concurrent producer-consumer)
@@ -1152,6 +1195,14 @@ walkAllSrFiles :: FilePath -> IO [FilePath]   -- any .sr<single-char>
 appendObjects, appendProcedures, appendDwObjects, appendDwControls :: DuckConn -> [row] -> IO ()
 appendLocalVars, appendCallSites, appendGlobalVars :: DuckConn -> [row] -> IO ()
 appendProcDefs, appendProcUses, appendSqlStmts :: DuckConn -> [row] -> IO ()
+appendSqlStmtColumns, appendSqlStmtFilters :: DuckConn -> [row] -> IO ()
+-- catalog_columns/catalog_pks/catalog_fks (Plan 148 Phase 1a-3, 2026-07-07):
+-- static DDL catalog, row-oriented (namespace/table_name/column_name/ordinal
+-- for columns+pks; +constraint_name/from_*/to_* for fks, one row per
+-- from/to column pair for composite FKs). Populated once per run (not per
+-- file) from PB.Pipeline.Runner.catalogToRows, itself fed by
+-- PB.Pipeline.SqlParse.parseDdl.
+appendCatalogColumns, appendCatalogPks, appendCatalogFks :: DuckConn -> [row] -> IO ()
 appendParseErrors :: DuckConn -> [row] -> IO ()
 -- Phase B read helpers (SELECT → typed rows):
 queryLocalVars, queryCallSites, queryGlobalVars :: DuckConn -> IO [row]

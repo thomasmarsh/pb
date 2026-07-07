@@ -2,10 +2,16 @@ module PB.Pipeline.SqlParse
   ( SqlResult (..)
   , ColumnRef (..)
   , RowFilter (..)
+  , TableRef (..)
+  , CatalogTable (..)
+  , CatalogPrimaryKey (..)
+  , CatalogForeignKey (..)
+  , SchemaCatalog (..)
   , WorkerConn (..)
   , SqlBridgePool (..)
   , startSqlBridgePool
   , parseSql
+  , parseDdl
   , shutdownSqlBridgePool
   , extractBsRawNodes
   ) where
@@ -15,7 +21,7 @@ import PB.AST.BodyStmt
 import PB.AST.Located  (Located (..))
 
 import Control.Exception          (SomeException, try)
-import Data.Aeson                 (FromJSON (..), decode, encode, object, withObject, (.=), (.:), (.:?), (.!=))
+import Data.Aeson                 (FromJSON (..), Value, decode, encode, object, withObject, (.=), (.:), (.:?), (.!=))
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.Bits                  (shiftL, shiftR, (.&.))
@@ -83,6 +89,72 @@ instance FromJSON SqlResult where
     <*> o .:? "column_refs" .!= []
     <*> o .:? "row_filters" .!= []
 
+-- | A table identifier, optionally schema/namespace-qualified. Lowercased by
+-- the Python-side extractor.
+data TableRef = TableRef
+  { trNamespace :: Maybe Text
+  , trTable     :: Text
+  } deriving (Show, Eq, Ord)
+
+instance FromJSON TableRef where
+  parseJSON = withObject "TableRef" $ \o -> TableRef
+    <$> o .:? "namespace"
+    <*> o .:  "table"
+
+-- | A table's ordered column list, as declared in DDL (Plan 148 Phase 1a-3).
+data CatalogTable = CatalogTable
+  { ctRef     :: TableRef
+  , ctColumns :: [Text]
+  } deriving (Show, Eq)
+
+instance FromJSON CatalogTable where
+  parseJSON v = CatalogTable <$> parseJSON v <*> withObject "CatalogTable" (.: "columns") v
+
+-- | A table's primary-key column list (composite keys supported).
+data CatalogPrimaryKey = CatalogPrimaryKey
+  { cpkRef     :: TableRef
+  , cpkColumns :: [Text]
+  } deriving (Show, Eq)
+
+instance FromJSON CatalogPrimaryKey where
+  parseJSON v = CatalogPrimaryKey <$> parseJSON v <*> withObject "CatalogPrimaryKey" (.: "columns") v
+
+-- | A DDL foreign-key constraint: from_columns[i] -> to_columns[i], paired
+-- by position (supports composite FKs sharing one constraint name).
+data CatalogForeignKey = CatalogForeignKey
+  { cfkConstraintName :: Maybe Text
+  , cfkFromTable      :: TableRef
+  , cfkFromColumns    :: [Text]
+  , cfkToTable        :: TableRef
+  , cfkToColumns      :: [Text]
+  } deriving (Show, Eq)
+
+instance FromJSON CatalogForeignKey where
+  parseJSON = withObject "CatalogForeignKey" $ \o -> CatalogForeignKey
+    <$> o .:? "constraint_name"
+    <*> (TableRef <$> o .:? "from_namespace" <*> o .: "from_table")
+    <*> o .: "from_columns"
+    <*> (TableRef <$> o .:? "to_namespace" <*> o .: "to_table")
+    <*> o .: "to_columns"
+
+-- | A static schema catalog parsed from a DDL dump (Plan 148 Phase 1a-3).
+-- Flat/row-oriented (not @Map TableRef [Text]@) to match the JSON wire
+-- shape and DuckDB's row-oriented appenders directly.
+data SchemaCatalog = SchemaCatalog
+  { scTables      :: [CatalogTable]
+  , scPrimaryKeys :: [CatalogPrimaryKey]
+  , scForeignKeys :: [CatalogForeignKey]
+  } deriving (Show, Eq)
+
+instance FromJSON SchemaCatalog where
+  parseJSON = withObject "SchemaCatalog" $ \o -> SchemaCatalog
+    <$> o .: "tables"
+    <*> o .: "primary_keys"
+    <*> o .: "foreign_keys"
+
+emptySchemaCatalog :: SchemaCatalog
+emptySchemaCatalog = SchemaCatalog [] [] []
+
 data WorkerConn = WorkerConn
   { wcStdin   :: Handle
   , wcStdout  :: Handle
@@ -136,6 +208,29 @@ parseSql pool idx sqlText = do
         Right (Just (Just res)) -> Just res
         _                       -> Nothing
 
+-- | Parse a DDL dump into a 'SchemaCatalog' via the bridge's "ddl" request
+-- kind. Always uses slot 0 -- this is a one-shot, once-per-run call (unlike
+-- 'parseSql', which is called once per SQL statement across all worker
+-- slots), so there is no need to thread a slot index through the caller.
+parseDdl :: SqlBridgePool -> Text -> Text -> IO SchemaCatalog
+parseDdl pool dialect ddlText = do
+  let ref = sbpSlots pool V.! 0
+  conn <- readIORef ref
+  mres <- safeRequest conn
+  case mres of
+    Just cat -> pure cat
+    Nothing -> do
+      restartWorker pool ref conn
+      conn' <- readIORef ref
+      mres2 <- safeRequest conn'
+      pure $ fromMaybe emptySchemaCatalog mres2
+  where
+    safeRequest conn = do
+      r <- try @SomeException (timeout 30_000_000 (ddlSendReceive conn dialect ddlText))
+      pure $ case r of
+        Right (Just (Just res)) -> Just res
+        _                       -> Nothing
+
 
 -- ---------------------------------------------------------------------------
 -- Wire protocol helpers
@@ -157,8 +252,24 @@ restartWorker pool ref old = do
   writeIORef ref conn'
 
 sendReceive :: WorkerConn -> Text -> IO (Maybe SqlResult)
-sendReceive conn sqlText = do
-  let body = encode (object ["sql" .= sqlText, "dialect" .= ("oracle" :: Text)])
+sendReceive conn sqlText =
+  requestResponse conn (object ["sql" .= sqlText, "dialect" .= ("oracle" :: Text)])
+
+-- | Response envelope for a "ddl"-kind request; only the "catalog" key is
+-- of interest here ("kind"/"parse_ok" are for the Python-side worker log).
+newtype DdlResponse = DdlResponse { unDdlResponse :: SchemaCatalog }
+
+instance FromJSON DdlResponse where
+  parseJSON = withObject "DdlResponse" $ \o -> DdlResponse <$> o .: "catalog"
+
+ddlSendReceive :: WorkerConn -> Text -> Text -> IO (Maybe SchemaCatalog)
+ddlSendReceive conn dialect ddlText =
+  fmap unDdlResponse <$>
+    requestResponse conn (object ["kind" .= ("ddl" :: Text), "ddl" .= ddlText, "dialect" .= dialect])
+
+requestResponse :: FromJSON a => WorkerConn -> Value -> IO (Maybe a)
+requestResponse conn payload = do
+  let body = encode payload
       len  = fromIntegral (BL.length body) :: Int
   BS.hPut (wcStdin conn) (encodeLen len)
   BL.hPut (wcStdin conn) body

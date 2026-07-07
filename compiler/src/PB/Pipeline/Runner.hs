@@ -10,6 +10,7 @@ module PB.Pipeline.Runner
   , runModeDb
   , compileOne
   , appendToDb
+  , catalogToRows
   , CompiledFile (..)
   , CompiledPs (..)
   , CompiledDw (..)
@@ -44,8 +45,9 @@ import PB.Pipeline.Passes    (runPhaseB)
 import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse
   ( SqlResult (..), ColumnRef (..), RowFilter (..), SqlBridgePool
+  , TableRef (..), CatalogTable (..), CatalogPrimaryKey (..), CatalogForeignKey (..), SchemaCatalog (..)
   , startSqlBridgePool, shutdownSqlBridgePool
-  , parseSql, extractBsRawNodes
+  , parseSql, parseDdl, extractBsRawNodes
   )
 import PB.Pipeline.FileWalk    (walkAllSrFiles)
 import PB.Pipeline.DuckDb
@@ -53,12 +55,14 @@ import PB.Pipeline.DuckDb
   , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
   , DwRetrieveTableRow (..), DwJoinRow (..), SqlStmtRow (..)
   , SqlStmtColumnRow (..), SqlStmtFilterRow (..)
+  , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..)
   , SourceFileRow (..)
   , appendObjects, appendProcedures
   , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwJoins
   , appendLocalVars, appendCallSites, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
   , appendSqlStmtColumns, appendSqlStmtFilters
+  , appendCatalogColumns, appendCatalogPks, appendCatalogFks
   , appendParseErrors, appendSourceFiles
   )
 
@@ -346,8 +350,28 @@ appendToDb conn (CFError fp err) =
   appendParseErrors conn [(fp, err)]
 appendToDb _    CFSkip = pure ()
 
-runModeDb :: FilePath -> FilePath -> IO ()
-runModeDb srcDir dbPath = do
+-- | Flatten a 'SchemaCatalog' into DuckDB's row-oriented catalog tables,
+-- assigning positional ordinals (0-based) within each table/PK/FK group.
+-- Composite FKs pair @fromColumns[i]@ with @toColumns[i]@ by position.
+catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogFkRow])
+catalogToRows cat =
+  ( concatMap toColumnRows (scTables cat)
+  , concatMap toPkRows (scPrimaryKeys cat)
+  , concatMap toFkRows (scForeignKeys cat)
+  )
+  where
+    toColumnRows (CatalogTable ref cols) =
+      [ CatalogColumnRow (trNamespace ref) (trTable ref) c i | (i, c) <- zip [0 ..] cols ]
+    toPkRows (CatalogPrimaryKey ref cols) =
+      [ CatalogPkRow (trNamespace ref) (trTable ref) c i | (i, c) <- zip [0 ..] cols ]
+    toFkRows (CatalogForeignKey mName fromRef fromCols toRef toCols) =
+      [ CatalogFkRow mName (trNamespace fromRef) (trTable fromRef) fc
+                     (trNamespace toRef) (trTable toRef) tc i
+      | (i, fc, tc) <- zip3 [0 :: Int ..] fromCols toCols
+      ]
+
+runModeDb :: FilePath -> FilePath -> Maybe FilePath -> IO ()
+runModeDb srcDir dbPath mDdlPath = do
   files <- walkAllSrFiles srcDir
   let total = length files
   emitProgress (object ["tag" .= ("total" :: Text), "n" .= total])
@@ -377,6 +401,10 @@ runModeDb srcDir dbPath = do
       appendToDb conn cf) stdlibParsed
     case mBridgeBin of
       Nothing -> do
+        for_ mDdlPath $ \_ -> emitProgress (object
+          [ "tag" .= ("warning" :: Text)
+          , "message" .= ("--ddl given but PB_SQL_WORKER not set; skipping DDL ingestion" :: Text)
+          ])
         -- N worker threads drain a shared queue; serialize DB writes through mutex.
         workQ <- newTQueueIO
         atomically (mapM_ (writeTQueue workQ) files)
@@ -386,6 +414,13 @@ runModeDb srcDir dbPath = do
           [0 .. nWorkers - 1]
       Just bin -> do
         pool  <- startSqlBridgePool nWorkers bin
+        for_ mDdlPath $ \ddlPath -> do
+          ddlText <- readFile ddlPath
+          catalog <- parseDdl pool "mysql" ddlText
+          let (colRows, pkRows, fkRows) = catalogToRows catalog
+          appendCatalogColumns conn colRows
+          appendCatalogPks     conn pkRows
+          appendCatalogFks     conn fkRows
         workQ <- newTQueueIO
         atomically (mapM_ (writeTQueue workQ) files)
         mutex <- newMVar ()
