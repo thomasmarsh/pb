@@ -6,7 +6,9 @@ sqlglot, and writes length-prefixed JSON responses to stdout.
 Wire format: 4-byte big-endian uint32 length header, then UTF-8 JSON body.
 
 Request:  {"sql": "SELECT ...", "dialect": "oracle"}
-Response: {"tables": [...], "columns": [...], "operation": "SELECT", "parse_ok": true}
+Response: {"tables": [...], "columns": [...], "operation": "SELECT", "parse_ok": true,
+           "column_refs": [{"namespace": null, "table": ..., "column": ..., "is_write": ...}, ...],
+           "row_filters": [{"namespace": null, "table": ..., "column": ..., "op": ..., "values": [...]}, ...]}
 """
 
 from __future__ import annotations
@@ -57,6 +59,8 @@ def main() -> None:
                 "columns": columns,
                 "operation": meta.get("operation", "UNKNOWN"),
                 "parse_ok": parsed is not None,
+                "column_refs": meta.get("column_refs", []),
+                "row_filters": meta.get("row_filters", []),
             }
         except Exception:
             response = {
@@ -64,6 +68,8 @@ def main() -> None:
                 "columns": [],
                 "operation": "UNKNOWN",
                 "parse_ok": False,
+                "column_refs": [],
+                "row_filters": [],
             }
 
         _write_msg(stdout, response)

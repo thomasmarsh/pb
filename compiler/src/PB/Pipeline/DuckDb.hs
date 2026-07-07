@@ -11,6 +11,8 @@ module PB.Pipeline.DuckDb
   , DwRetrieveTableRow (..)
   , DwJoinRow (..)
   , SqlStmtRow (..)
+  , SqlStmtColumnRow (..)
+  , SqlStmtFilterRow (..)
   , SourceFileRow (..)
   -- Phase A appenders
   , appendObjects
@@ -25,6 +27,8 @@ module PB.Pipeline.DuckDb
   , appendProcDefs
   , appendProcUses
   , appendSqlStmts
+  , appendSqlStmtColumns
+  , appendSqlStmtFilters
   , appendParseErrors
   , appendSourceFiles
   -- Phase B queries
@@ -133,6 +137,12 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       , "CREATE TABLE IF NOT EXISTS sql_statements \
         \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
         \operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN)"
+      , "CREATE TABLE IF NOT EXISTS sql_statement_columns \
+        \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
+        \namespace TEXT, table_name TEXT, column_name TEXT, is_write BOOLEAN)"
+      , "CREATE TABLE IF NOT EXISTS sql_statement_filters \
+        \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
+        \namespace TEXT, table_name TEXT, column_name TEXT, op TEXT, values_json TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_objects \
         \(file TEXT, object TEXT, style TEXT, layout_json TEXT, retrieve_sql TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_retrieve_tables \
@@ -267,6 +277,29 @@ data SqlStmtRow = SqlStmtRow
   , ssrColumns   :: Text
   , ssrRawSql    :: Text
   , ssrParseOk   :: Bool
+  }
+
+data SqlStmtColumnRow = SqlStmtColumnRow
+  { sscrFile       :: Text
+  , sscrObject     :: Text
+  , sscrProcName   :: Text
+  , sscrLine       :: Int
+  , sscrNamespace  :: Maybe Text
+  , sscrTableName  :: Maybe Text
+  , sscrColumnName :: Text
+  , sscrIsWrite    :: Bool
+  }
+
+data SqlStmtFilterRow = SqlStmtFilterRow
+  { ssfrFile       :: Text
+  , ssfrObject     :: Text
+  , ssfrProcName   :: Text
+  , ssfrLine       :: Int
+  , ssfrNamespace  :: Maybe Text
+  , ssfrTableName  :: Maybe Text
+  , ssfrColumnName :: Text
+  , ssfrOp         :: Text
+  , ssfrValuesJson :: Text
   }
 
 data SourceFileRow = SourceFileRow
@@ -437,6 +470,35 @@ appendSqlStmts conn rows = withRaw conn "sql_statements" $ \app ->
     aText      app (ssrColumns r)
     aText      app (ssrRawSql r)
     aBool      app (ssrParseOk r)
+    endRow app
+
+appendSqlStmtColumns :: DuckConn -> [SqlStmtColumnRow] -> IO ()
+appendSqlStmtColumns _    [] = pure ()
+appendSqlStmtColumns conn rows = withRaw conn "sql_statement_columns" $ \app ->
+  for_ rows $ \r -> do
+    aText      app (sscrFile r)
+    aText      app (sscrObject r)
+    aText      app (sscrProcName r)
+    aInt       app (sscrLine r)
+    aMaybeText app (sscrNamespace r)
+    aMaybeText app (sscrTableName r)
+    aText      app (sscrColumnName r)
+    aBool      app (sscrIsWrite r)
+    endRow app
+
+appendSqlStmtFilters :: DuckConn -> [SqlStmtFilterRow] -> IO ()
+appendSqlStmtFilters _    [] = pure ()
+appendSqlStmtFilters conn rows = withRaw conn "sql_statement_filters" $ \app ->
+  for_ rows $ \r -> do
+    aText      app (ssfrFile r)
+    aText      app (ssfrObject r)
+    aText      app (ssfrProcName r)
+    aInt       app (ssfrLine r)
+    aMaybeText app (ssfrNamespace r)
+    aMaybeText app (ssfrTableName r)
+    aText      app (ssfrColumnName r)
+    aText      app (ssfrOp r)
+    aText      app (ssfrValuesJson r)
     endRow app
 
 appendParseErrors :: DuckConn -> [(FilePath, Text)] -> IO ()

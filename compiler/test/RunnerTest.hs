@@ -3,7 +3,7 @@ module RunnerTest (tests) where
 import PB.Prelude
 import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, CompiledFile (..), CompiledPs (..))
 import PB.Pipeline.Emit    (parsePowerScriptFile, ParsedFile (..), ParseOutcome (..))
-import PB.Pipeline.DuckDb  (ProcRow (..))
+import PB.Pipeline.DuckDb  (ProcRow (..), SqlStmtColumnRow (..), SqlStmtFilterRow (..))
 import PB.AST.BodyStmt     (BodyStmt (..))
 import PB.AST.DataWindow   (DwRetrieve (..), DwRetrieveOrRaw (..), DwWhereClause (..))
 import PB.AST.Expr         (Expr (..))
@@ -13,6 +13,8 @@ import PB.AST.Type         (PbType (..))
 import PB.Analysis.TypeEnv    (buildWorkspaceEnv, procEnv)
 import PB.Analysis.GraphBuilder (compileProcedureViaCatOp)
 import PB.Pipeline.Serialise ()
+import PB.Pipeline.SqlParse
+  (startSqlBridgePool, shutdownSqlBridgePool)
 
 import Data.Aeson (Value (..), object, decodeStrict, toJSON, (.=))
 import qualified Data.Aeson.Key    as Key
@@ -20,6 +22,8 @@ import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Set          as Set
 import qualified Data.Text         as T
 import qualified Data.Text.Encoding as TE
+import System.Directory  (getTemporaryDirectory)
+import System.Process    (callProcess)
 
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
@@ -549,4 +553,69 @@ tests = testGroup "Pipeline.Runner"
         in reconstructRetrieveSql (DwRetrieveOk r)
                @?= "SELECT myCol FROM t WHERE myCol > 100"
     ]
+
+  , testGroup "compileOne with SQL bridge wires column_refs/row_filters (Plan 148 Phase 1a-2)"
+    [ testCase "cpsSqlStmtColumns/cpsSqlStmtFilters populated from bridge response" $ do
+        let src = T.unlines
+              [ "public function boolean uf_retrieve ()"
+              , "select a from b;"
+              , "end function"
+              ]
+        case parsePowerScriptFile src of
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Right (sf, spans) -> do
+            script <- installMockSqlWorkerWithRefs
+            pool   <- startSqlBridgePool 1 script
+            let ws = buildWorkspaceEnv [sf]
+                pf = ParsedFile { pfPath = "uf_retrieve.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
+            cf <- compileOne ws (Just (pool, 0)) "confirmed" (PsParsed pf)
+            shutdownSqlBridgePool pool
+            case cf of
+              CFPs cps -> do
+                map sscrColumnName (cpsSqlStmtColumns cps) @?= ["kodgroup", "addrec"]
+                map sscrTableName  (cpsSqlStmtColumns cps) @?= [Just "usrgroupperm", Nothing]
+                map ssfrColumnName (cpsSqlStmtFilters cps) @?= ["status"]
+              _ -> assertFailure "expected CFPs"
+    ]
   ]
+
+-- | Mock SQL bridge worker: answers every request with a canned response
+-- carrying column_refs/row_filters, to test the Runner.hs wiring (Plan 148
+-- Phase 1a-2) without depending on the real Python sqlglot bridge.
+installMockSqlWorkerWithRefs :: IO FilePath
+installMockSqlWorkerWithRefs = do
+  tmp <- getTemporaryDirectory
+  let path = tmp <> "/pb_mock_worker_refs.py"
+      ls =
+        [ "#!/usr/bin/env python3"
+        , "import sys, json, struct"
+        , "H = struct.Struct('>I')"
+        , "def read():"
+        , "    h = sys.stdin.buffer.read(4)"
+        , "    if len(h) < 4: return None"
+        , "    (n,) = H.unpack(h)"
+        , "    return json.loads(sys.stdin.buffer.read(n))"
+        , "def write(obj):"
+        , "    b = json.dumps(obj).encode()"
+        , "    sys.stdout.buffer.write(H.pack(len(b)) + b)"
+        , "    sys.stdout.buffer.flush()"
+        , "while True:"
+        , "    m = read()"
+        , "    if m is None: sys.exit(0)"
+        , "    write({"
+        , "        'tables': ['usrgroupperm', 'usrmembers'],"
+        , "        'columns': ['kodgroup', 'addrec'],"
+        , "        'operation': 'SELECT',"
+        , "        'parse_ok': True,"
+        , "        'column_refs': ["
+        , "            {'namespace': None, 'table': 'usrgroupperm', 'column': 'kodgroup', 'is_write': False},"
+        , "            {'namespace': None, 'table': None, 'column': 'addrec', 'is_write': False},"
+        , "        ],"
+        , "        'row_filters': ["
+        , "            {'namespace': None, 'table': 'account', 'column': 'status', 'op': '=', 'values': ['Active']},"
+        , "        ],"
+        , "    })"
+        ]
+  writeFile path (T.unlines ls)
+  callProcess "chmod" ["+x", path]
+  pure path

@@ -1,5 +1,7 @@
 module PB.Pipeline.SqlParse
   ( SqlResult (..)
+  , ColumnRef (..)
+  , RowFilter (..)
   , WorkerConn (..)
   , SqlBridgePool (..)
   , startSqlBridgePool
@@ -13,7 +15,7 @@ import PB.AST.BodyStmt
 import PB.AST.Located  (Located (..))
 
 import Control.Exception          (SomeException, try)
-import Data.Aeson                 (FromJSON (..), decode, encode, object, withObject, (.=), (.:), (.:?))
+import Data.Aeson                 (FromJSON (..), decode, encode, object, withObject, (.=), (.:), (.:?), (.!=))
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.Bits                  (shiftL, shiftR, (.&.))
@@ -29,11 +31,47 @@ import System.Timeout             (timeout)
 -- Public types
 -- ---------------------------------------------------------------------------
 
+-- | A single column reference, scoped to the table it was actually read
+-- from or written to (unlike the flat, table-less 'srColumns' list).
+data ColumnRef = ColumnRef
+  { crNamespace :: Maybe Text
+  , crTable     :: Maybe Text
+  , crColumn    :: Text
+  , crIsWrite   :: Bool
+  } deriving (Show, Eq)
+
+instance FromJSON ColumnRef where
+  parseJSON = withObject "ColumnRef" $ \o -> ColumnRef
+    <$> o .:? "namespace"
+    <*> o .:? "table"
+    <*> o .:  "column"
+    <*> o .:  "is_write"
+
+-- | A shallow WHERE-clause predicate: @col = <literal>@ or @col IN (...)@
+-- only (Plan 148 Phase 1a-2's rider).
+data RowFilter = RowFilter
+  { rfNamespace :: Maybe Text
+  , rfTable     :: Maybe Text
+  , rfColumn    :: Text
+  , rfOp        :: Text
+  , rfValues    :: [Text]
+  } deriving (Show, Eq)
+
+instance FromJSON RowFilter where
+  parseJSON = withObject "RowFilter" $ \o -> RowFilter
+    <$> o .:? "namespace"
+    <*> o .:? "table"
+    <*> o .:  "column"
+    <*> o .:  "op"
+    <*> o .:  "values"
+
 data SqlResult = SqlResult
-  { srTables    :: [Text]
-  , srColumns   :: [Text]
-  , srOperation :: Maybe Text
-  , srParseOk   :: Bool
+  { srTables     :: [Text]
+  , srColumns    :: [Text]
+  , srOperation  :: Maybe Text
+  , srParseOk    :: Bool
+  , srColumnRefs :: [ColumnRef]
+  , srRowFilters :: [RowFilter]
   } deriving (Show, Eq)
 
 instance FromJSON SqlResult where
@@ -42,6 +80,8 @@ instance FromJSON SqlResult where
     <*> o .:  "columns"
     <*> o .:? "operation"
     <*> o .:  "parse_ok"
+    <*> o .:? "column_refs" .!= []
+    <*> o .:? "row_filters" .!= []
 
 data WorkerConn = WorkerConn
   { wcStdin   :: Handle
@@ -88,7 +128,7 @@ parseSql pool idx sqlText = do
       restartWorker pool ref conn
       conn' <- readIORef ref
       mres2 <- safeRequest conn'
-      pure $ fromMaybe (SqlResult [] [] Nothing False) mres2
+      pure $ fromMaybe (SqlResult [] [] Nothing False [] []) mres2
   where
     safeRequest conn = do
       r <- try @SomeException (timeout 30_000_000 (sendReceive conn sqlText))

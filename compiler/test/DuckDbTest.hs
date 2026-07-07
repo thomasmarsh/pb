@@ -10,6 +10,7 @@ tests = testGroup "DuckDb"
   [ testCase "initSchema creates all Phase A tables" testInitSchema
   , testCase "appendObjects accepts a row"           testAppendObjects
   , testCase "appendProcedures stores cfg_json"      testAppendProcedures
+  , testCase "appendSqlStmtColumns/Filters accept rows" testAppendSqlStmtColumnsFilters
   ]
 
 testInitSchema :: IO ()
@@ -43,3 +44,17 @@ testAppendProcedures = withWriteConn ":memory:" $ \conn -> do
   -- appendLocalVars sharing the same connection must not conflict
   appendLocalVars conn []
   assertEqual "procedures appended" () ()
+
+testAppendSqlStmtColumnsFilters :: IO ()
+testAppendSqlStmtColumnsFilters = withWriteConn ":memory:" $ \conn -> do
+  initSchema conn
+  appendSqlStmtColumns conn
+    [ SqlStmtColumnRow "test.srf" "fn_perm" "fn_perm" 30 Nothing (Just "usrgroupperm") "kodgroup" False
+    , SqlStmtColumnRow "test.srf" "fn_perm" "fn_perm" 30 Nothing Nothing              "addrec"   False
+    ]
+  appendSqlStmtFilters conn
+    [ SqlStmtFilterRow "test.srf" "w_test" "of_test" 5 Nothing (Just "account") "status" "=" "[\"Active\"]"
+    ]
+  -- Appending an empty list after a real batch must not throw
+  appendSqlStmtColumns conn []
+  appendSqlStmtFilters conn []

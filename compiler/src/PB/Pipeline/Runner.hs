@@ -43,7 +43,7 @@ import PB.Runtime.StdLib (parseStdlibFiles)
 import PB.Pipeline.Passes    (runPhaseB)
 import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse
-  ( SqlResult (..), SqlBridgePool
+  ( SqlResult (..), ColumnRef (..), RowFilter (..), SqlBridgePool
   , startSqlBridgePool, shutdownSqlBridgePool
   , parseSql, extractBsRawNodes
   )
@@ -52,11 +52,13 @@ import PB.Pipeline.DuckDb
   ( DuckConn, withWriteConn, initSchema
   , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
   , DwRetrieveTableRow (..), DwJoinRow (..), SqlStmtRow (..)
+  , SqlStmtColumnRow (..), SqlStmtFilterRow (..)
   , SourceFileRow (..)
   , appendObjects, appendProcedures
   , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwJoins
   , appendLocalVars, appendCallSites, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
+  , appendSqlStmtColumns, appendSqlStmtFilters
   , appendParseErrors, appendSourceFiles
   )
 
@@ -103,6 +105,8 @@ data CompiledPs = CompiledPs
   , cpsGlobalVars    :: [GlobalVar]
   , cpsProcFlows     :: [(Text, Text, Text, Dataflow.ProcFlow)]
   , cpsSqlStmts      :: [SqlStmtRow]
+  , cpsSqlStmtColumns :: [SqlStmtColumnRow]
+  , cpsSqlStmtFilters :: [SqlStmtFilterRow]
   , cpsSourceContent :: Maybe SourceFileRow
   }
 
@@ -161,12 +165,16 @@ compileOne wsEnv mBridge confidence outcome = case outcome of
           <> [ (ssName  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
           <> [ (esName  (evSig ev), evBody ev) | ev <- srEvents      sf ]
           <> [ (obEvent ob,         obBody ob) | ob <- srOnBlocks    sf ]
-    sqlRows <- case mBridge of
+    (sqlRows, sqlColRows, sqlFilterRows) <- case mBridge of
       Nothing       ->
         -- No SQL bridge: extract raw SQL from BsRaw nodes (same as extractSqlStmts)
-        pure $ concatMap (rawSqlRow fp obj) procBodies
-      Just (pool,k) ->
-        fmap concat $ mapM (extractProcSql pool k fp obj) procBodies
+        pure (concatMap (rawSqlRow fp obj) procBodies, [], [])
+      Just (pool,k) -> do
+        triples <- mapM (extractProcSql pool k fp obj) procBodies
+        pure ( concatMap (\(a,_,_) -> a) triples
+             , concatMap (\(_,b,_) -> b) triples
+             , concatMap (\(_,_,c) -> c) triples
+             )
     pure $ CFPs $ CompiledPs
       { cpsObjectRow     = ObjectRow fp "powerscript" obj anc
                              (fmap jsonText (extractWindowLayout (srTypeBlocks sf)))
@@ -178,6 +186,8 @@ compileOne wsEnv mBridge confidence outcome = case outcome of
       , cpsGlobalVars    = gvs
       , cpsProcFlows     = map snd procs
       , cpsSqlStmts      = sqlRows
+      , cpsSqlStmtColumns = sqlColRows
+      , cpsSqlStmtFilters = sqlFilterRows
       , cpsSourceContent = Just (SourceFileRow fp (pfContents pf))
       }
 
@@ -242,18 +252,32 @@ rawSqlRow fpT obj (pName, body) =
     _skipOps = Set.fromList
       ["DECLARE","OPEN","FETCH","CLOSE","COMMIT","ROLLBACK","CONNECT","DISCONNECT"]
 
-extractProcSql :: SqlBridgePool -> Int -> Text -> Text -> (Text, [Located BodyStmt]) -> IO [SqlStmtRow]
-extractProcSql pool k fp obj (pName, body) =
-  mapM parseNode (extractBsRawNodes body)
+extractProcSql
+  :: SqlBridgePool -> Int -> Text -> Text -> (Text, [Located BodyStmt])
+  -> IO ([SqlStmtRow], [SqlStmtColumnRow], [SqlStmtFilterRow])
+extractProcSql pool k fp obj (pName, body) = do
+  triples <- mapM parseNode (extractBsRawNodes body)
+  pure ( map (\(row,_,_) -> row) triples
+       , concatMap (\(_,cols,_) -> cols) triples
+       , concatMap (\(_,_,filts) -> filts) triples
+       )
   where
     parseNode (ln, rawTxt) = do
       res <- parseSql pool k rawTxt
-      pure $ SqlStmtRow fp obj pName ln
-               (srOperation res)
-               (T.intercalate "," (srTables res))
-               (T.intercalate "," (srColumns res))
-               rawTxt
-               (srParseOk res)
+      let row = SqlStmtRow fp obj pName ln
+                  (srOperation res)
+                  (T.intercalate "," (srTables res))
+                  (T.intercalate "," (srColumns res))
+                  rawTxt
+                  (srParseOk res)
+          colRows =
+            [ SqlStmtColumnRow fp obj pName ln (crNamespace c) (crTable c) (crColumn c) (crIsWrite c)
+            | c <- srColumnRefs res ]
+          filterRows =
+            [ SqlStmtFilterRow fp obj pName ln (rfNamespace f) (rfTable f) (rfColumn f) (rfOp f)
+                (jsonText (toJSON (rfValues f)))
+            | f <- srRowFilters res ]
+      pure (row, colRows, filterRows)
 
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each without a SQL bridge.
 workerLoopFilesNoBridge :: Int -> TQueue FilePath -> WorkspaceEnv -> DuckConn -> MVar () -> IORef Int -> IO ()
@@ -308,6 +332,8 @@ appendToDb conn (CFPs r) = do
   appendProcDefs   conn (cpsProcFlows r)
   appendProcUses   conn (cpsProcFlows r)
   appendSqlStmts   conn (cpsSqlStmts r)
+  appendSqlStmtColumns conn (cpsSqlStmtColumns r)
+  appendSqlStmtFilters conn (cpsSqlStmtFilters r)
   appendSourceFiles conn (catMaybes [cpsSourceContent r])
 appendToDb conn (CFDw r) = do
   appendDwObjects        conn [cdDwObjectRow r]

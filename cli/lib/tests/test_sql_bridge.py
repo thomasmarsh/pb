@@ -91,6 +91,27 @@ def test_ten_valid_requests(worker):
         assert resp["operation"] == meta["operation"]
         assert sorted(resp["tables"]) == sorted(tables)
         assert sorted(resp["columns"]) == sorted(columns)
+        # Round-trip through JSON: tuples (e.g. RowFilter.values) become
+        # lists on the wire, same as the worker's own json.dumps/loads.
+        assert resp["column_refs"] == json.loads(json.dumps(meta.get("column_refs", [])))
+        assert resp["row_filters"] == json.loads(json.dumps(meta.get("row_filters", [])))
+
+
+# ---------------------------------------------------------------------------
+# Test: column_refs attribute per-table for a real JOIN, not a flat list
+# ---------------------------------------------------------------------------
+
+
+def test_join_request_returns_scoped_column_refs(worker):
+    sql = "SELECT o.order_id, c.cust_name FROM orders o JOIN customer c ON o.cust_id = c.cust_id"
+    _send(worker, {"sql": sql, "dialect": "oracle"})
+    resp = _recv(worker)
+    assert resp["parse_ok"] is True
+    got = {(r["table"], r["column"], r["is_write"]) for r in resp["column_refs"]}
+    assert ("orders", "order_id", False) in got
+    assert ("customer", "cust_name", False) in got
+    assert ("orders", "cust_id", False) in got
+    assert ("customer", "cust_id", False) in got
 
 
 # ---------------------------------------------------------------------------

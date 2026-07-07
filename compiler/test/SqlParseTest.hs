@@ -7,12 +7,13 @@ import PB.AST.Located  (Located (..))
 import PB.Pipeline.SqlParse
 
 import Control.Exception (SomeException, try)
+import Data.Aeson        (decode)
 import qualified Data.Text as T
 import System.Directory  (getTemporaryDirectory)
 import System.Process    (callProcess)
 
 import Test.Tasty       (TestTree, testGroup)
-import Test.Tasty.HUnit (assertEqual, assertBool, testCase)
+import Test.Tasty.HUnit (assertEqual, assertBool, assertFailure, testCase)
 
 import Prelude ((!!))
 
@@ -146,6 +147,43 @@ tests = testGroup "SqlParse"
               , chooseClauses = [c1, c2]
               })
         assertEqual "BsChoose" 2 (length (extractBsRawNodes [stmt]))
+    ]
+
+  , testGroup "SqlResult decode"
+    [ testCase "decodes column_refs/row_filters" $ do
+        let json = "{\"tables\":[\"usrgroupperm\",\"usrmembers\"],\
+                    \\"columns\":[\"kodgroup\",\"koduser\"],\
+                    \\"operation\":\"SELECT\",\"parse_ok\":true,\
+                    \\"column_refs\":[\
+                      \{\"namespace\":null,\"table\":\"usrgroupperm\",\"column\":\"kodgroup\",\"is_write\":false},\
+                      \{\"namespace\":null,\"table\":null,\"column\":\"addrec\",\"is_write\":false}],\
+                    \\"row_filters\":[\
+                      \{\"namespace\":null,\"table\":\"account\",\"column\":\"status\",\"op\":\"=\",\"values\":[\"Active\"]}]}"
+            mres = decode json :: Maybe SqlResult
+        case mres of
+          Nothing -> assertFailure "SqlResult failed to decode"
+          Just res -> do
+            assertEqual "column_refs count" 2 (length (srColumnRefs res))
+            assertEqual "first column_ref"
+              (ColumnRef Nothing (Just "usrgroupperm") "kodgroup" False)
+              (srColumnRefs res !! 0)
+            assertEqual "ambiguous column_ref has no table"
+              Nothing
+              (crTable (srColumnRefs res !! 1))
+            assertEqual "row_filters count" 1 (length (srRowFilters res))
+            assertEqual "row_filter values"
+              ["Active"]
+              (rfValues (srRowFilters res !! 0))
+
+    , testCase "missing column_refs/row_filters default to empty" $ do
+        let json = "{\"tables\":[\"t\"],\"columns\":[\"c\"],\
+                    \\"operation\":\"SELECT\",\"parse_ok\":true}"
+            mres = decode json :: Maybe SqlResult
+        case mres of
+          Nothing -> assertFailure "SqlResult failed to decode"
+          Just res -> do
+            assertEqual "column_refs default" [] (srColumnRefs res)
+            assertEqual "row_filters default" [] (srRowFilters res)
     ]
 
   , testGroup "SqlBridgePool"
