@@ -705,6 +705,45 @@ tests = testGroup "CatOp"
         P.reverse (isTrace st) @?= [TeCall "my_func" [VInt 5]]
     ]
 
+  , testGroup "foldCat generalizes runCat (Plan 148 Phase 3)"
+    -- runCat is now `foldCat` specialized to Interp — these pin that
+    -- `foldCat` (called directly, not via the `runCat` alias) reproduces the
+    -- "Interp / runCat" group's behavior exactly, and cover `ret`/`loopK`,
+    -- the two new Effectful methods CatReturn/CatLoop needed to make the
+    -- fold fully generic (previously bespoke cases inside runCat's own
+    -- per-constructor match).
+    [ testCase "foldCat CatAssignWithRhs updates env and emits TeAssign" $ do
+        let term = CatAssignWithRhs "x_1" (ExInt "42") :: CatOp () ()
+        (_, st) <- runStateT (runInterp (foldCat term) ()) (InterpState Map.empty [] Map.empty)
+        Map.lookup "x_1" (isEnv st) @?= Just (VInt 42)
+        P.reverse (isTrace st) @?= [TeAssign "x_1" (VInt 42)]
+
+    , testCase "foldCat branch emits TeBranch and takes the matching arm" $ do
+        let term = branch (ExBool True)
+                     (CatAssignWithRhs "then_taken" (ExInt "1"))
+                     (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
+        (_, st) <- runStateT (runInterp (foldCat term) ()) (InterpState Map.empty [] Map.empty)
+        P.reverse (isTrace st) @?= [TeBranch True, TeAssign "then_taken" (VInt 1)]
+
+    , testCase "ret aborts via ReturnUnwind, matching CatReturn's prior direct-coded behavior" $ do
+        let term = CatReturn :: CatOp () ()
+        st <- (P.snd P.<$> runStateT (runInterp (foldCat term) ())
+                 (InterpState (Map.fromList [("x", VInt 1)]) [] Map.empty))
+                `CE.catch` (\(ReturnUnwind capturedSt) -> return capturedSt)
+        isEnv st @?= Map.fromList [("x", VInt 1)]
+
+    , testCase "loopK matches interpretLoop's prior direct-coded behavior for a terminating loop" $ do
+        let iVar = ExLvalue (Lvalue [LvSegment "i" Nothing])
+            cond = ExBinOp iVar BopLt (ExInt "3")
+            incr = ExBinOp iVar BopAdd (ExInt "1")
+            loopBody = branch cond
+                         (CatInl . CatAssignWithRhs "i" incr)
+                         CatInr :: CatOp () (Either () ())
+            term = CatLoop loopBody :: CatOp () ()
+        (_, st) <- runStateT (runInterp (foldCat term) ()) (InterpState (Map.fromList [("i", VInt 0)]) [] Map.empty)
+        Map.lookup "i" (isEnv st) @?= Just (VInt 3)
+    ]
+
   , testGroup "Phase 4: buildInstrGraph"
     [ testCase "CatId compiles to just exit node" $
         let graph = buildInstrGraph (CatId :: CatOp () ())

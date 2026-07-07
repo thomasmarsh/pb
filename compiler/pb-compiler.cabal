@@ -57,6 +57,7 @@ library
     PB.Analysis.DeadCode
     PB.Analysis.SSA
     PB.Analysis.SchemaCategory
+    PB.Analysis.SchFootprint
     PB.Analysis.Taint
     PB.Analysis.TypeEnv
     PB.Analysis.TypeResolve
@@ -135,6 +136,7 @@ test-suite pb-compiler-test
     , PipelineTest
     , RunnerTest
     , SchemaCategoryTest
+    , SchFootprintTest
     , SerialiseTest
     , SplitterTest
     , SqlParseTest

@@ -28,7 +28,7 @@ import qualified Prelude as P
 import Control.Monad.State.Strict (StateT, get, modify', gets, evalStateT)
 import Control.Monad.IO.Class (liftIO)
 import Control.Exception (Exception, throwIO)
-import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), CatOp (..))
+import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), CatOp (..), foldCat)
 import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExprMocked)
 import qualified Data.Map.Strict as Map
 
@@ -115,6 +115,12 @@ instance Effectful Interp where
     modify' (\st -> st { isTrace = TeBranch taken : isTrace st })
     P.pure (if taken then Left env else Right env))
 
+  ret = Interp (\_ -> do
+    st <- get
+    liftIO (throwIO (ReturnUnwind st)))
+
+  loopK = interpretLoop
+
 -- | Execute a loop via recursion.  The body returns 'Left' to continue
 -- with updated state, or 'Right' to break with a final value.
 interpretLoop :: Interp a (Either a b) -> Interp a b
@@ -131,45 +137,12 @@ interpretLoop (Interp body) = Interp go
 runInterpIO :: Interp a b -> a -> IO b
 runInterpIO (Interp f) x = evalStateT (f x) (InterpState Map.empty [] Map.empty)
 
--- | Interpret a compiled 'CatOp' term directly via 'Interp' — the fold
--- 'CatOp' is initial for. Every constructor dispatches to the corresponding
--- 'Category'\/'Cartesian'\/'Cocartesian'\/'Effectful' method on 'Interp';
--- there is no other sensible definition per constructor, so this is
--- forced by the types rather than independent logic to get wrong.
---
--- 'CatAssign'\/'CatLookup'\/'CatExl'\/'CatExr'\/'CatConst' are declared by
--- the GADT/typeclasses but never emitted by 'PB.Analysis.CatLower.compileSsa'
--- (which always emits 'CatAssignWithRhs' directly) — they're handled here for
--- completeness, not because real compiled terms use them.
---
--- 'CatTry' has no real interpretation yet: 'PB.Analysis.Cfg' doesn't
--- model try/catch, so 'compileSsa' never emits it either. Running the body
--- and ignoring the handler is a placeholder to keep this fold total; revisit
--- once try/catch compilation lands.
+-- | Interpret a compiled 'CatOp' term directly via 'Interp'. Plan 148 Phase
+-- 3: this used to be its own per-constructor match; it is now 'foldCat'
+-- specialized to @k = Interp@, since every case reduces to a
+-- 'Category'\/'Cartesian'\/'Cocartesian'\/'Effectful' method call with no
+-- Interp-specific logic left outside the instance definitions above
+-- ('ret'\/'loopK' carry what used to be 'CatReturn'\/'CatLoop's bespoke
+-- cases).
 runCat :: CatOp a b -> Interp a b
-runCat CatId                  = id
-runCat (CatCompose g f)       = runCat g . runCat f
-runCat (CatFork l r)          = runCat l &&& runCat r
-runCat CatExl                 = exl
-runCat CatExr                 = exr
-runCat (CatConst e)           = eval e
-runCat CatInl                  = inl
-runCat CatInr                  = inr
-runCat CatReturn               = Interp (\_ -> do
-  st <- get
-  liftIO (throwIO (ReturnUnwind st)))
-runCat (CatFanIn t f)          = runCat t ||| runCat f
-runCat (CatAssign var)         = assign var
-runCat (CatAssignWithRhs var e) = Interp (\env -> do
-  val <- gets (\st -> evalExprMocked (isMocks st) (isEnv st) e)
-  modify' (\st -> st { isEnv   = Map.insert var val (isEnv st)
-                      , isTrace = TeAssign var val : isTrace st })
-  P.pure env)
-runCat (CatLookup var)         = lookup var
-runCat (CatLoop body)          = interpretLoop (runCat body)
-runCat (CatEval e)             = eval e
-runCat (CatCall name args)     = callProc name args
-runCat (CatSuspend eff args)   = suspend eff args
-runCat CatSplitValue           = splitValue
-runCat (CatTry body _handler)  = runCat body
-runCat (CatTagged _ f)         = runCat f
+runCat = foldCat

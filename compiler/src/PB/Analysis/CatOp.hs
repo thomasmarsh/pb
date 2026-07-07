@@ -38,6 +38,7 @@ module PB.Analysis.CatOp
   , CatOp (..)
     -- * Derived combinators
   , branch
+  , foldCat
   ) where
 
 import PB.Prelude hiding (id, (.), lookup)
@@ -77,6 +78,16 @@ class Category k => Effectful k where
   suspend    :: Text -> [Expr] -> k args ()
   callProc   :: Text -> [Expr] -> k args ()
   splitValue :: k (env, Value) (Either env env)
+  -- | Procedure-terminal escape ('CatReturn'). Every target category must
+  -- say what "abort past every enclosing construct" means for it — 'Interp'
+  -- throws, a static-analysis target like 'PB.Analysis.SchFootprint' can
+  -- just treat it as a no-op (Plan 148 Phase 3).
+  ret        :: k a b
+  -- | Loop combinator ('CatLoop'): run the body repeatedly while it returns
+  -- 'Left', stopping at the first 'Right'. Added alongside 'ret' so
+  -- 'foldCat' can be generic over any 'Effectful' instance instead of
+  -- special-casing these two constructors per-interpreter.
+  loopK      :: k a (Either a b) -> k a b
 
 -- ============================================================================
 -- 2. Derived Combinators
@@ -88,6 +99,44 @@ class Category k => Effectful k where
 -- @branch cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)@
 branch :: (Effectful k, Cartesian k, Cocartesian k) => Expr -> k env b -> k env b -> k env b
 branch cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)
+
+-- | The fold 'CatOp' is initial for: interpret a compiled term into any
+-- target category that implements 'Effectful'\/'Cartesian'\/'Cocartesian'
+-- (Plan 148 Phase 3 — generalizes 'PB.Analysis.CatInterp.runCat', which is
+-- this fold specialized to @k = Interp@). Every constructor dispatches to
+-- the corresponding typeclass method; there is no other sensible definition
+-- per constructor, so this is forced by the types rather than independent
+-- logic to get wrong. 'CatAssignWithRhs' is not a primitive of any class —
+-- it is @assign var . (id &&& eval e)@, i.e. "fork the env with the
+-- evaluated rhs, then assign" (verified to reproduce 'Interp'\'s prior
+-- bespoke 'CatAssignWithRhs' case exactly). 'CatTry'\'s handler is dropped
+-- (matches every existing backend's placeholder — 'PB.Analysis.Cfg' does
+-- not model try/catch, so 'PB.Analysis.CatLower.compileSsa' never emits
+-- 'CatTry' at all: 0/7667 corpus procedures per Plan 149 Phase 0).
+-- 'CatTagged' is transparent — it exists only so 'PB.Analysis.GraphBuilder'
+-- can recognize repeat encounters of the same SSA block, which has no
+-- meaning for any other fold target.
+foldCat :: (Effectful k, Cartesian k, Cocartesian k) => CatOp a b -> k a b
+foldCat CatId                   = id
+foldCat (CatCompose g f)        = foldCat g . foldCat f
+foldCat (CatFork l r)           = foldCat l &&& foldCat r
+foldCat CatExl                  = exl
+foldCat CatExr                  = exr
+foldCat (CatConst e)            = eval e
+foldCat CatInl                  = inl
+foldCat CatInr                  = inr
+foldCat CatReturn                = ret
+foldCat (CatFanIn t f)           = foldCat t ||| foldCat f
+foldCat (CatAssign var)          = assign var
+foldCat (CatAssignWithRhs var e) = assign var . (id &&& eval e)
+foldCat (CatLookup var)          = lookup var
+foldCat (CatLoop body)           = loopK (foldCat body)
+foldCat (CatEval e)              = eval e
+foldCat (CatCall name args)      = callProc name args
+foldCat (CatSuspend eff args)    = suspend eff args
+foldCat CatSplitValue            = splitValue
+foldCat (CatTry body _handler)   = foldCat body
+foldCat (CatTagged _ f)          = foldCat f
 
 -- ============================================================================
 -- 3. The GADT: Initial Algebra
@@ -243,3 +292,5 @@ instance Effectful CatOp where
   suspend    = CatSuspend
   callProc   = CatCall
   splitValue = CatSplitValue
+  ret        = CatReturn
+  loopK      = CatLoop

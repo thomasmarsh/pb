@@ -967,9 +967,20 @@ collectBodyLocals :: [Located BodyStmt] -> Map.Map Text PbType  -- imported by G
 class Category k where { id :: k a a; (.) :: k b c -> k a b -> k a c }
 class Category k => Cartesian k where { exl, exr, (&&&) }
 class Category k => Cocartesian k where { inl, inr, (|||) }
-class Category k => Effectful k where { eval, assign, lookup, suspend, callProc, splitValue }
-branch :: (Effectful k, Cartesian k, Cocartesian k) => Expr -> k env b -> k env b -> k env b
-data CatOp a b where  -- initial algebra; 18 constructors incl. CatLoop/CatReturn/CatTagged
+class Category k => Effectful k where { eval, assign, lookup, suspend, callProc, splitValue, ret, loopK }
+-- ret/loopK added Plan 148 Phase 3 (2026-07-07): CatReturn/CatLoop were the
+-- only 2 of CatOp's 20 constructors with no existing class primitive to
+-- dispatch to (everything else, incl. CatAssignWithRhs = assign var . (id
+-- &&& eval e), already reduced). CatOp's own instance: ret = CatReturn,
+-- loopK = CatLoop. Interp's instance (PB.Analysis.CatInterp) absorbs the
+-- old bespoke CatReturn/CatLoop cases (throwIO ReturnUnwind / interpretLoop).
+branch  :: (Effectful k, Cartesian k, Cocartesian k) => Expr -> k env b -> k env b -> k env b
+foldCat :: (Effectful k, Cartesian k, Cocartesian k) => CatOp a b -> k a b
+-- foldCat (Plan 148 Phase 3): the fold CatOp is initial for, generalized to
+-- any Effectful/Cartesian/Cocartesian instance -- not just Interp.
+-- PB.Analysis.CatInterp.runCat is now `runCat = foldCat`. Second instance:
+-- PB.Analysis.SchFootprint (see its own Code Index entry).
+data CatOp a b where  -- initial algebra; 20 constructors incl. CatLoop/CatReturn/CatTagged
   CatId, CatCompose, CatFork, CatExl, CatExr, CatConst, CatInl, CatInr, CatFanIn,
   CatAssign, CatAssignWithRhs, CatLookup, CatLoop, CatReturn, CatEval, CatCall,
   CatSuspend, CatSplitValue, CatTry, CatTagged :: ...
@@ -1050,7 +1061,7 @@ newtype ReturnUnwind = ReturnUnwind InterpState  -- thrown by CatReturn to unwin
 newtype Interp a b = Interp { runInterp :: a -> StateT InterpState IO b }
 interpretLoop :: Interp a (Either a b) -> Interp a b
 runInterpIO :: Interp a b -> a -> IO b  -- fresh empty env/trace/mocks, discards final InterpState
-runCat :: CatOp a b -> Interp a b       -- the fold CatOp is initial for
+runCat :: CatOp a b -> Interp a b       -- Plan 148 Phase 3: now `runCat = foldCat` (Interp specialization)
 ```
 
 ### `PB.Analysis.InstrGraph`
@@ -1244,6 +1255,31 @@ data ValidationConstraint = ValidationConstraint { vcColumn :: SchObject, vcDesc
 constraintWriters :: SchGraph -> ValidationConstraint -> [StmtId]
 -- Dedup'd StmtIds reachable backward from vcColumn (SqlStmtId writers +
 -- DwRetrieveId retrieves), direct or via an FK chain.
+```
+
+### `PB.Analysis.SchFootprint` (Plan 148 Phase 3 infra slice, 2026-07-07)
+
+```haskell
+-- Pure. The functor F : CatOp -> Sch_|_ (design doc's "(a) Categorical
+-- structure" amendment), implemented as a second instance of CatOp.hs's
+-- Category/Cartesian/Cocartesian/Effectful classes rather than a
+-- hand-written match -- foldCat folds any compiled CatOp term into it.
+-- Infra-slice only: every Effectful method is a constant empty footprint
+-- this session (real SetItem/ExHostVar detection is gated on a DW-control
+-- -> DW-object binding extraction that does not exist yet -- see BACKLOG's
+-- Plan 148 entry).
+data FunctorCtx = FunctorCtx
+  { fcStmtObj   :: StmtId                              -- CatOp carries no line info; any edge is procedure-granularity
+  , fcTypeEnv   :: ScopedTypeEnv
+  , fcDwColumns :: Map.Map Text [(TableRef, Text)]       -- DW object name -> (table,col) targets; empty until the binding gap closes
+  }
+newtype SchFootprint a b = SchFootprint { runSchFootprint :: FunctorCtx -> Set.Set SchMorphism }
+-- Elliott's "compiling to categories" constant-annotation category: erases
+-- a/b entirely. id/exl/exr/inl/inr = const Set.empty; (.)/(&&&)/(|||) = 
+-- pointwise union. loopK propagates the loop body's own footprint (not a
+-- constant empty one) -- a static, iteration-count-oblivious analysis must
+-- still count whatever the body touches.
+foldSchFootprint :: FunctorCtx -> CatOp a b -> Set.Set SchMorphism
 ```
 
 ### `PB.Pipeline.FileWalk`
