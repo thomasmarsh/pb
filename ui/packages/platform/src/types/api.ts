@@ -429,6 +429,19 @@ export interface ProcedureFootprintResponse {
   unresolved: UnresolvedRef[];
 }
 
+export interface FkColumnRef {
+  namespace: string | null;
+  table: string;
+  column: string;
+}
+
+export interface ColumnUsageResponse {
+  dead: FkColumnRef[];
+  write_only: FkColumnRef[];
+  read_only: FkColumnRef[];
+  read_write: FkColumnRef[];
+}
+
 // ── Program slicing ──────────────────────────────────────────────────────────
 
 export interface SliceStep {

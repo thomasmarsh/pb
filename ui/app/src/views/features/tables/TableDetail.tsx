@@ -1,10 +1,10 @@
 // features/tables/TableDetail.tsx — Source-first table detail with contextual analysis panels.
 
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createMemo, createSignal, onMount } from "solid-js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../../state.js";
 import type { AppAction } from "../../../actions.js";
-import type { TableDetail as TableDetailData, TableProcedureRef, ImpactInheritedRef, ImpactDirectRef } from "@pb/platform";
+import type { TableDetail as TableDetailData, TableProcedureRef, ImpactInheritedRef, ImpactDirectRef, FkColumnRef } from "@pb/platform";
 import {
   Loading, ColumnRow, EntityCard, DetailHeader, BackButton,
   AnalysisSummaryBar, ContextualPanel,
@@ -43,6 +43,24 @@ function ProcTable(props: { rows: TableProcedureRef[]; store: Store<AppState, Ap
         </For>
       </tbody>
     </table>
+  );
+}
+
+function ColumnUsageList(props: { title: string; cols: FkColumnRef[] }) {
+  return (
+    <div>
+      <div class="card-header" style={{ padding: "8px 16px" }}><h3>{props.title} ({props.cols.length})</h3></div>
+      <table class="data-table">
+        <thead><tr><th>Column</th></tr></thead>
+        <tbody>
+          <For each={props.cols} fallback={
+            <tr><td style={{ color: "var(--text-muted)", padding: "12px" }}>None.</td></tr>
+          }>
+            {(col) => <tr><td style={{ padding: "4px 8px" }}>{col.namespace ? `${col.namespace}.` : ""}{col.table}.{col.column}</td></tr>}
+          </For>
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -128,6 +146,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
   const [showReaders, setShowReaders] = createSignal(false);
   const [showWriters, setShowWriters] = createSignal(false);
   const [showImpact, setShowImpact] = createSignal(false);
+  const [showColumnUsage, setShowColumnUsage] = createSignal(false);
 
   const readers = d.procedures.filter((p) => !WRITE_OPS.has(p.operation));
   const writers = d.procedures.filter((p) => WRITE_OPS.has(p.operation));
@@ -135,11 +154,25 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
   const impactCount = impact.direct.length + impact.inherited.length;
   const hasImpact = impactCount > 0;
 
+  // Corpus-wide column usage (Plan 153 D4) — filtered down to this table's columns.
+  const columnUsageState = createMemo(() => store.getState()().tables.columnUsage);
+  const deadColumns = createMemo(() => {
+    const cu = columnUsageState();
+    return cu && !("error" in cu) ? cu.dead.filter((c) => c.table === d.table_name) : [];
+  });
+  const writeOnlyColumns = createMemo(() => {
+    const cu = columnUsageState();
+    return cu && !("error" in cu) ? cu.write_only.filter((c) => c.table === d.table_name) : [];
+  });
+  const columnUsageCount = () => deadColumns().length + writeOnlyColumns().length;
+  const hasColumnUsage = () => columnUsageCount() > 0;
+
   const summaryItems = (): SummaryItem[] => [
     { label: "DW Readers", count: d.datawindows.length, active: showDwReaders(), onClick: () => setShowDwReaders((v) => !v) },
     { label: "Readers", count: readers.length, active: showReaders(), onClick: () => setShowReaders((v) => !v) },
     { label: "Writers", count: writers.length, active: showWriters(), onClick: () => setShowWriters((v) => !v) },
     ...(hasImpact ? [{ label: "Impact", count: impactCount, active: showImpact(), onClick: () => setShowImpact((v) => !v) } as SummaryItem] : []),
+    ...(hasColumnUsage() ? [{ label: "Column Usage", count: columnUsageCount(), active: showColumnUsage(), onClick: () => setShowColumnUsage((v) => !v) } as SummaryItem] : []),
   ];
 
   function handleKeyDown(e: KeyboardEvent): void {
@@ -148,6 +181,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
       setShowReaders(false);
       setShowWriters(false);
       setShowImpact(false);
+      setShowColumnUsage(false);
     }
   }
 
@@ -227,6 +261,13 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
             <ImpactPanel direct={impact.direct} inherited={impact.inherited} store={store} />
           </ContextualPanel>
         </Show>
+
+        <Show when={showColumnUsage()}>
+          <ContextualPanel title={`Column Usage (${columnUsageCount()})`} onClose={() => setShowColumnUsage(false)}>
+            <ColumnUsageList title="Dead" cols={deadColumns()} />
+            <ColumnUsageList title="Write-only" cols={writeOnlyColumns()} />
+          </ContextualPanel>
+        </Show>
       </div>
     </div>
   );
@@ -235,6 +276,10 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
 export function TableDetail(props: { store: Store<AppState, AppAction> }) {
   const snap = props.store.getState();
   const ts = () => snap().tables;
+
+  onMount(() => {
+    props.store.dispatch({ tag: "tables", action: { tag: "column-usage-load" } });
+  });
 
   return (
     <>

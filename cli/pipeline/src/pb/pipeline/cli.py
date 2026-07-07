@@ -49,6 +49,7 @@ def index(
     reset: bool = typer.Option(False, "--reset", help="Drop all tables and do a full re-parse."),
     sql_dialect: str = typer.Option("oracle", "--sql-dialect", help="SQL dialect for sqlglot (oracle/tsql/sybase)."),
     repo: Optional[Path] = typer.Option(None, "--repo", help="Repo root (auto-detect if omitted)."),
+    ddl: Optional[Path] = typer.Option(None, "--ddl", help="DDL schema file — populates catalog_columns/catalog_fks so Sch-based analyses (column usage, FK graph, etc.) have real data."),
 ) -> None:
     """Parse → import → analyze, incremental by default (only changed files).
 
@@ -59,7 +60,7 @@ def index(
     repo_path = env.build.find_repo(repo)
     binary = env.build.find_binary(repo_path) if no_build else _build(repo_path, reporter)
     with resolve_source_dir(Path(input_path), reporter) as src_dir:
-        run_pipeline(src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect, input_path=input_path)
+        run_pipeline(src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect, input_path=input_path, ddl=ddl)
 
 
 # ── pb extract ────────────────────────────────────────────────────────────────
@@ -213,6 +214,7 @@ def explore(
     reset: bool = typer.Option(False, "--reset", help="Drop all tables and do a full re-parse."),
     sql_dialect: str = typer.Option("oracle", "--sql-dialect", help="SQL dialect for sqlglot (oracle/tsql/sybase)."),
     repo: Optional[Path] = typer.Option(None, "--repo", help="Repo root (auto-detect if omitted)."),
+    ddl: Optional[Path] = typer.Option(None, "--ddl", help="DDL schema file — populates catalog_columns/catalog_fks so Sch-based analyses (column usage, FK graph, etc.) have real data."),
 ) -> None:
     """Start the interactive DuckDB explorer web UI.
 
@@ -225,7 +227,7 @@ def explore(
             repo_path = env.build.find_repo(repo)
             binary = env.build.find_binary(repo_path) if no_build else _build(repo_path, reporter)
             with resolve_source_dir(Path(input_path), reporter) as src_dir:
-                run_pipeline(src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect, input_path=input_path)
+                run_pipeline(src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect, input_path=input_path, ddl=ddl)
         else:
             typer.echo("Database is up-to-date, skipping index.")
 

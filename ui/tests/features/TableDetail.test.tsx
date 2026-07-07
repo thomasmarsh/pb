@@ -5,7 +5,7 @@ import { fireEvent, render } from "@solidjs/testing-library";
 import { TableDetail } from "../../app/src/views/features/tables/TableDetail.js";
 import { createTestStore } from "../helpers.js";
 import { initialTablesState } from "@pb/platform";
-import type { TableDetail as TableDetailData } from "@pb/platform";
+import type { TableDetail as TableDetailData, ColumnUsageResponse } from "@pb/platform";
 
 const baseDetail: TableDetailData = {
   table_name: "orders",
@@ -22,9 +22,9 @@ const baseDetail: TableDetailData = {
   impact: { direct: [], inherited: [] },
 };
 
-function renderTableDetail(detail: TableDetailData = baseDetail) {
+function renderTableDetail(detail: TableDetailData = baseDetail, columnUsage: ColumnUsageResponse | null = null) {
   const { store } = createTestStore({
-    tables: { ...initialTablesState, detail },
+    tables: { ...initialTablesState, detail, columnUsage },
   });
   render(() => <TableDetail store={store} />);
 }
@@ -116,5 +116,47 @@ describe("TableDetail source-first", () => {
     };
     renderTableDetail(detail);
     expect(summaryBar()?.textContent).toContain("Impact (1)");
+  });
+
+  describe("Column Usage pill (Plan 153 D4)", () => {
+    it("hidden when columnUsage is not loaded", () => {
+      renderTableDetail(baseDetail, null);
+      expect(summaryBar()?.textContent).not.toContain("Column Usage");
+    });
+
+    it("hidden when this table has no dead/write-only columns", () => {
+      const usage: ColumnUsageResponse = {
+        dead: [{ namespace: null, table: "other_table", column: "x" }],
+        write_only: [],
+        read_only: [],
+        read_write: [],
+      };
+      renderTableDetail(baseDetail, usage);
+      expect(summaryBar()?.textContent).not.toContain("Column Usage");
+    });
+
+    it("shows count of this table's dead + write-only columns", () => {
+      const usage: ColumnUsageResponse = {
+        dead: [{ namespace: null, table: "orders", column: "legacy_flag" }],
+        write_only: [{ namespace: null, table: "orders", column: "audit_stamp" }],
+        read_only: [],
+        read_write: [],
+      };
+      renderTableDetail(baseDetail, usage);
+      expect(summaryBar()?.textContent).toContain("Column Usage (2)");
+    });
+
+    it("clicking the pill opens a panel listing dead and write-only columns", () => {
+      const usage: ColumnUsageResponse = {
+        dead: [{ namespace: null, table: "orders", column: "legacy_flag" }],
+        write_only: [{ namespace: null, table: "orders", column: "audit_stamp" }],
+        read_only: [],
+        read_write: [],
+      };
+      renderTableDetail(baseDetail, usage);
+      fireEvent.click(summaryPillBtn("Column Usage")!);
+      expect(document.body.textContent).toContain("legacy_flag");
+      expect(document.body.textContent).toContain("audit_stamp");
+    });
   });
 });

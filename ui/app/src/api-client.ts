@@ -19,6 +19,7 @@ import type {
   ErrorListResponse,
   WiringDiagramResponse,
   ProcedureFootprintResponse,
+  ColumnUsageResponse,
 } from "@pb/platform";
 import { type DataWindowFile, type AstData, type WindowLayout } from "@pb/interpreter";
 import { Effect, type SQLResult } from "@pb/core";
@@ -51,6 +52,7 @@ export interface ApiClient {
   getExploreDatawindow(name: string): Promise<DwDetailResponse>;
   getTables(): Promise<TableSummary[]>;
   getTableDetail(name: string): Promise<TableDetail>;
+  getColumnUsage(): Promise<ColumnUsageResponse>;
   getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse>;
   getDwQueries(): Promise<Record<string, string>>;
   executeSql(sql: string, params: unknown[]): Promise<SQLResult>;
@@ -107,6 +109,7 @@ export function createEnv(api: ApiClient): Env {
     getExploreDatawindow: (n) => lift(() => api.getExploreDatawindow(n)),
     getTables: () => lift(() => api.getTables()),
     getTableDetail: (n) => lift(() => api.getTableDetail(n)),
+    getColumnUsage: () => lift(() => api.getColumnUsage()),
     getErrors: (p) => lift(() => api.getErrors(p)),
     getDwQueries: () => lift(() => api.getDwQueries()),
     executeSql: (sql, params) => lift(() => api.executeSql(sql, params)),
@@ -253,6 +256,10 @@ export function createApiClient(): ApiClient {
 
     async getTableDetail(name: string): Promise<TableDetail> {
       return fetchJson(`/api/tables/${encodeURIComponent(name)}`);
+    },
+
+    async getColumnUsage(): Promise<ColumnUsageResponse> {
+      return fetchJson("/api/schema/column-usage");
     },
 
     async getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse> {

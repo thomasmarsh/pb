@@ -86,6 +86,42 @@ def test_run_calls_pb_runner_with_db_flag(monkeypatch, tmp_path):
     assert str(src_dir.resolve()) in called_args
 
 
+def test_run_omits_ddl_flag_when_not_given(monkeypatch, tmp_path):
+    called_args: list = []
+
+    def fake_popen(args, **kwargs):
+        called_args.extend(args)
+        return _FakePopen(returncode=1)
+
+    monkeypatch.setattr("pb.pipeline.pipeline.subprocess.Popen", fake_popen)
+
+    reporter = RecordingReporter()
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    run(src_dir, str(tmp_path / "out.duckdb"), Path("/fake/bin"), reporter)
+
+    assert "--ddl" not in called_args
+
+
+def test_run_passes_ddl_flag_when_given(monkeypatch, tmp_path):
+    called_args: list = []
+
+    def fake_popen(args, **kwargs):
+        called_args.extend(args)
+        return _FakePopen(returncode=1)
+
+    monkeypatch.setattr("pb.pipeline.pipeline.subprocess.Popen", fake_popen)
+
+    reporter = RecordingReporter()
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    ddl_path = tmp_path / "schema.sql"
+    run(src_dir, str(tmp_path / "out.duckdb"), Path("/fake/bin"), reporter, ddl=ddl_path)
+
+    assert "--ddl" in called_args
+    assert called_args[called_args.index("--ddl") + 1] == str(ddl_path)
+
+
 def test_run_success_renames_db(monkeypatch, tmp_path):
     db_path = str(tmp_path / "out.duckdb")
 

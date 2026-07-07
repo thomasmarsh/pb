@@ -49,6 +49,7 @@ function createAppEnv(astResponses: Record<string, AstData>): AppEnv {
     getExploreDatawindow: () => Effect.none(),
     getTables: () => Effect.none(),
     getTableDetail: () => Effect.none(),
+    getColumnUsage: () => Effect.none(),
     getErrors: () => Effect.none(),
     getDwQueries: () => Effect.none<Record<string, string>>(),
     executeSql: () => Effect.none(),

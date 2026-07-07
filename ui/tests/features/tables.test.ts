@@ -5,11 +5,12 @@ import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { tablesReducer, initialTablesState, type TablesEnv } from "@pb/platform";
 import type { TablesState } from "@pb/platform";
-import type { TableSummary, TableDetail } from "@pb/platform";
+import type { TableSummary, TableDetail, ColumnUsageResponse } from "@pb/platform";
 
 const mockEnv: TablesEnv = {
   getTables:       () => Effect.none(),
   getTableDetail:  () => Effect.none(),
+  getColumnUsage:  () => Effect.none(),
   navigate:        () => Effect.none(),
 };
 
@@ -180,6 +181,78 @@ describe("tables reducer", () => {
       ts.send({ tag: "back" }, (s) => {
         s.detail = null;
         s.error  = null;
+      });
+    });
+  });
+
+  describe("tables/column-usage-load", () => {
+    const usage: ColumnUsageResponse = {
+      dead: [{ namespace: null, table: "afxtable", column: "tablename" }],
+      write_only: [],
+      read_only: [],
+      read_write: [],
+    };
+
+    it("sets columnUsageLoading and fires getColumnUsage", () => {
+      const env: TablesEnv = { ...mockEnv, getColumnUsage: () => Effect.send(usage) };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "column-usage-load" }, (s) => {
+        s.columnUsageLoading = true;
+      });
+      ts.receive({ tag: "column-usage-loaded", data: usage }, (s) => {
+        s.columnUsage = usage;
+        s.columnUsageLoading = false;
+      });
+    });
+
+    it("does nothing if already loaded", () => {
+      const state: TablesState = { ...initialTablesState, columnUsage: usage };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "column-usage-load" }, () => {});
+    });
+
+    it("does nothing if a load is already in flight", () => {
+      const state: TablesState = { ...initialTablesState, columnUsageLoading: true };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "column-usage-load" }, () => {});
+    });
+
+    it("fires getColumnUsage; rejection maps to column-usage-error", async () => {
+      const env: TablesEnv = {
+        ...mockEnv,
+        getColumnUsage: () => Effect.fromPromise(() => Promise.reject(new Error("timeout"))),
+      };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "column-usage-load" }, (s) => {
+        s.columnUsageLoading = true;
+      });
+      await ts.drain();
+      ts.receive({ tag: "column-usage-error", error: "timeout" }, (s) => {
+        s.columnUsage = { error: "timeout" };
+        s.columnUsageLoading = false;
+      });
+    });
+  });
+
+  describe("tables/column-usage-loaded", () => {
+    it("stores the usage and clears loading", () => {
+      const usage: ColumnUsageResponse = { dead: [], write_only: [], read_only: [], read_write: [] };
+      const state: TablesState = { ...initialTablesState, columnUsageLoading: true };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "column-usage-loaded", data: usage }, (s) => {
+        s.columnUsage = usage;
+        s.columnUsageLoading = false;
+      });
+    });
+  });
+
+  describe("tables/column-usage-error", () => {
+    it("stores the error and clears loading", () => {
+      const state: TablesState = { ...initialTablesState, columnUsageLoading: true };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "column-usage-error", error: "boom" }, (s) => {
+        s.columnUsage = { error: "boom" };
+        s.columnUsageLoading = false;
       });
     });
   });

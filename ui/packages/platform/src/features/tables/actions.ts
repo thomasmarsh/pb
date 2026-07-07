@@ -1,6 +1,6 @@
 // features/tables/actions.ts
 
-import type { TableSummary, TableDetail } from "../../types/api.js";
+import type { TableSummary, TableDetail, ColumnUsageResponse } from "../../types/api.js";
 
 export type TablesAction =
   | { tag: "search";        q: string }
@@ -10,4 +10,8 @@ export type TablesAction =
   | { tag: "detail-loaded"; detail: TableDetail }
   | { tag: "detail-error";  error: string }
   | { tag: "back" }
+  // Corpus-wide column usage (Plan 153 D4)
+  | { tag: "column-usage-load" }
+  | { tag: "column-usage-loaded"; data: ColumnUsageResponse }
+  | { tag: "column-usage-error";  error: string }
   ;

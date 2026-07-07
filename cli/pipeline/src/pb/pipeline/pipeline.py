@@ -39,6 +39,7 @@ def run(
     reset: bool = False,
     dialect: str = "oracle",
     input_path: Path | None = None,
+    ddl: Path | None = None,
 ) -> None:
     src_dir = src_dir.resolve()
     db_new = db + ".new"
@@ -51,11 +52,15 @@ def run(
     if sql_worker:
         run_env["PB_SQL_WORKER"] = str(sql_worker)
 
+    argv = [str(binary), "-i", str(src_dir), "--db", db_new]
+    if ddl is not None:
+        argv += ["--ddl", str(ddl)]
+
     errors = 0
     raw_stderr_lines: list[str] = []
     with reporter.runner_progress() as prog:
         proc = subprocess.Popen(
-            [str(binary), "-i", str(src_dir), "--db", db_new],
+            argv,
             stderr=subprocess.PIPE,
             env=run_env,
         )

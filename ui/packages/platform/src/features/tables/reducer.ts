@@ -3,7 +3,7 @@
 import { Effect, type Reducer } from "@pb/core";
 import type { TablesState } from "./types.js";
 import type { TablesAction } from "./actions.js";
-import type { TableSummary, TableDetail } from "../../types/api.js";
+import type { TableSummary, TableDetail, ColumnUsageResponse } from "../../types/api.js";
 import type { NavigationAction } from "../navigation/types.js";
 
 export type { TablesState };
@@ -12,6 +12,7 @@ export { initialTablesState } from "./types.js";
 export interface TablesEnv {
   getTables(): Effect<TableSummary[]>;
   getTableDetail(name: string): Effect<TableDetail>;
+  getColumnUsage(): Effect<ColumnUsageResponse>;
   navigate(action: NavigationAction): Effect<never>;
 }
 
@@ -52,6 +53,21 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
     draft.detail = null;
     draft.error = null;
     env.navigate({ tag: "navigate", route: { view: "tables" } });
+    return null;
+  case "column-usage-load": {
+    if (draft.columnUsage || draft.columnUsageLoading) return null;
+    draft.columnUsageLoading = true;
+    return env.getColumnUsage()
+      .map((data): TablesAction => ({ tag: "column-usage-loaded", data }))
+      .catch((e): TablesAction => ({ tag: "column-usage-error", error: errMsg(e) }));
+  }
+  case "column-usage-loaded":
+    draft.columnUsage = action.data;
+    draft.columnUsageLoading = false;
+    return null;
+  case "column-usage-error":
+    draft.columnUsage = { error: action.error };
+    draft.columnUsageLoading = false;
     return null;
   default:
     return null;
