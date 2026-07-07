@@ -51,10 +51,10 @@ import PB.Pipeline.FileWalk    (walkAllSrFiles)
 import PB.Pipeline.DuckDb
   ( DuckConn, withWriteConn, initSchema
   , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
-  , DwRetrieveTableRow (..), SqlStmtRow (..)
+  , DwRetrieveTableRow (..), DwJoinRow (..), SqlStmtRow (..)
   , SourceFileRow (..)
   , appendObjects, appendProcedures
-  , appendDwObjects, appendDwControls, appendDwRetrieveTables
+  , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwJoins
   , appendLocalVars, appendCallSites, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
   , appendParseErrors, appendSourceFiles
@@ -110,6 +110,7 @@ data CompiledDw = CompiledDw
   { cdDwObjectRow      :: DwObjectRow
   , cdDwControls       :: [DwControlRow]
   , cdDwRetrieveTables :: [DwRetrieveTableRow]
+  , cdDwJoins          :: [DwJoinRow]
   , cdCallSites        :: [CallSite]
   , cdSourceContent    :: Maybe SourceFileRow
   }
@@ -196,10 +197,16 @@ compileOne wsEnv mBridge confidence outcome = case outcome of
         rtbls = case dwTable dw >>= dtRetrieve of
           Just (DwRetrieveOk r) -> [ DwRetrieveTableRow fpT obj t | t <- drTables r ]
           _                     -> []
+        jrows = case dwTable dw >>= dtRetrieve of
+          Just (DwRetrieveOk r) ->
+            [ DwJoinRow fpT obj (djLeft j) (djOp j) (djRight j) (djOuter1 j) (djOuter2 j)
+            | j <- drJoins r ]
+          _                     -> []
     pure $ CFDw $ CompiledDw
       { cdDwObjectRow      = DwObjectRow fpT obj style layoutJson retrieveSql
       , cdDwControls       = ctls
       , cdDwRetrieveTables = rtbls
+      , cdDwJoins          = jrows
       , cdCallSites        = css
       , cdSourceContent    = Just (SourceFileRow fpT contents)
       }
@@ -306,6 +313,7 @@ appendToDb conn (CFDw r) = do
   appendDwObjects        conn [cdDwObjectRow r]
   appendDwControls       conn (cdDwControls r)
   appendDwRetrieveTables conn (cdDwRetrieveTables r)
+  appendDwJoins          conn (cdDwJoins r)
   appendCallSites        conn (cdCallSites r)
   appendSourceFiles      conn (catMaybes [cdSourceContent r])
 appendToDb conn (CFError fp err) =

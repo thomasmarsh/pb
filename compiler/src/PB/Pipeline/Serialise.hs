@@ -86,6 +86,7 @@ instance ToJSON SrFile           where toJSON = genericToJSON customOptions
 instance ToJSON DwBandKind      where toJSON = genericToJSON customOptions
 instance ToJSON DwWhereClause   where toJSON = genericToJSON customOptions
 instance ToJSON DwArgument      where toJSON = genericToJSON customOptions
+instance ToJSON DwJoin          where toJSON = genericToJSON customOptions
 instance ToJSON DwRetrieve      where toJSON = genericToJSON customOptions
 instance ToJSON DwRetrieveOrRaw where toJSON = genericToJSON customOptions
 instance ToJSON DwColumn        where toJSON = genericToJSON customOptions

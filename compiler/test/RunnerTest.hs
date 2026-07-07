@@ -506,6 +506,7 @@ tests = testGroup "Pipeline.Runner"
                            , drColumns   = ["misth_zpkrat.kodkrat", "misth_zpkrat.desckrat"]
                            , drArguments = []
                            , drWhere     = []
+                           , drJoins     = []
                            }
         in reconstructRetrieveSql (DwRetrieveOk r)
                @?= "SELECT kodkrat, desckrat FROM misth_zpkrat"
@@ -519,6 +520,7 @@ tests = testGroup "Pipeline.Runner"
                                                            , dwcOp    = "="
                                                            , dwcExp2  = ":arg_kodxrisi"
                                                            , dwcLogic = Nothing } ]
+                           , drJoins     = []
                            }
         in reconstructRetrieveSql (DwRetrieveOk r)
                @?= "SELECT kodkrat FROM misth_zpkrat WHERE kodxrisi = ?"
@@ -531,6 +533,7 @@ tests = testGroup "Pipeline.Runner"
                            , drWhere     = [ DwWhereClause "tbl.kodfinal" "=" ":arg1" (Just "and")
                                            , DwWhereClause "tbl.kodxrisi" "=" ":arg2" Nothing
                                            ]
+                           , drJoins     = []
                            }
         in reconstructRetrieveSql (DwRetrieveOk r)
                @?= "SELECT a FROM tbl WHERE kodfinal = ? AND kodxrisi = ?"
@@ -541,6 +544,7 @@ tests = testGroup "Pipeline.Runner"
                            , drColumns   = ["t.myCol"]
                            , drArguments = []
                            , drWhere     = [ DwWhereClause "t.myCol" ">" "100" Nothing ]
+                           , drJoins     = []
                            }
         in reconstructRetrieveSql (DwRetrieveOk r)
                @?= "SELECT myCol FROM t WHERE myCol > 100"

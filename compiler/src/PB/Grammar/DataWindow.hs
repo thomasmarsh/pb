@@ -444,6 +444,16 @@ pWhereBlock = pPbsBlock "WHERE" $ do
     pPbsWs
     pure (DwWhereClause exp1 op exp2 logic)
 
+pJoinBlock :: PbsP DwJoin
+pJoinBlock = pPbsBlock "JOIN" $ do
+    left   <- pKvStr "LEFT"
+    op     <- pKvStr "OP"
+    right  <- pKvStr "RIGHT"
+    outer1 <- optional (try (pKvStr "OUTER1"))
+    outer2 <- optional (try (pKvStr "OUTER2"))
+    pPbsWs
+    pure (DwJoin left op right outer1 outer2)
+
 pArgBlock :: PbsP DwArgument
 pArgBlock = pPbsBlock "ARG" $ do
     name <- pKvStr "NAME"
@@ -488,7 +498,7 @@ pSkipAnyNamedBlock = do
     _ <- char ')'
     pure ()
 
-data PbsInner  = PbsTable Text | PbsColumn Text | PbsWhere DwWhereClause | PbsInnerSkip
+data PbsInner  = PbsTable Text | PbsColumn Text | PbsWhere DwWhereClause | PbsJoin DwJoin | PbsInnerSkip
 data PbsOuter  = PbsArg DwArgument | PbsOuterSkip
 
 pInnerBlock :: PbsP PbsInner
@@ -496,6 +506,7 @@ pInnerBlock =
     PbsTable      <$> try pTableBlock  <|>
     PbsColumn     <$> try pColumnBlock <|>
     PbsWhere      <$> try pWhereBlock  <|>
+    PbsJoin       <$> try pJoinBlock   <|>
     PbsInnerSkip  <$  try pSkipAnyNamedBlock
 
 pOuterBlock :: PbsP PbsOuter
@@ -521,5 +532,6 @@ pPbSelect = do
     let tables  = [t | PbsTable  t <- inner]
         columns = [c | PbsColumn c <- inner]
         wheres  = [w | PbsWhere  w <- inner]
+        joins   = [j | PbsJoin   j <- inner]
         args    = [a | PbsArg    a <- outer]
-    pure (DwRetrieve version tables columns args wheres)
+    pure (DwRetrieve version tables columns args wheres joins)

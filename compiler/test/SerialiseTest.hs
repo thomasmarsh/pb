@@ -82,7 +82,7 @@ tests = testGroup "Serialise"
   , testGroup "DwRetrieveOrRaw"
       [ testCase "DwRetrieveOk emits tag=DwRetrieveOk with retrieve nested in contents" $ do
           let dr = DwRetrieve { drVersion = 400, drTables = ["emp"], drColumns = ["emp.id"]
-                              , drArguments = [], drWhere = [] }
+                              , drArguments = [], drWhere = [], drJoins = [] }
               v  = toJSON (DwRetrieveOk dr)
           field "tag"                        v @?= String "DwRetrieveOk"
           field "version" (field "contents" v) @?= toJSON (400 :: Int)
@@ -96,7 +96,7 @@ tests = testGroup "Serialise"
 
       , testCase "DwRetrieveOk has no text field" $ do
           let dr = DwRetrieve { drVersion = 1, drTables = [], drColumns = []
-                              , drArguments = [], drWhere = [] }
+                              , drArguments = [], drWhere = [], drJoins = [] }
               v  = toJSON (DwRetrieveOk dr)
           assertBool "DwRetrieveOk must not have 'text' field" (not (hasField "text" v))
           assertBool "DwRetrieveOk contents must not have 'text' field"
@@ -110,7 +110,7 @@ tests = testGroup "Serialise"
           let wc = DwWhereClause { dwcExp1 = "t.id", dwcOp = "=", dwcExp2 = ":arg"
                                  , dwcLogic = Nothing }
               dr = DwRetrieve { drVersion = 400, drTables = ["t"], drColumns = []
-                              , drArguments = [], drWhere = [wc] }
+                              , drArguments = [], drWhere = [wc], drJoins = [] }
               v  = toJSON (DwRetrieveOk dr)
           field "tag" v @?= String "DwRetrieveOk"
           assertBool "DwRetrieveOk must not have top-level 'text' field" (not (hasField "text" v))
@@ -118,7 +118,7 @@ tests = testGroup "Serialise"
       , testCase "DwRetrieveOk with argument serialises argument fields" $ do
           let arg = DwArgument { daName = "p_id", daType = "long" }
               dr  = DwRetrieve { drVersion = 400, drTables = ["t"], drColumns = []
-                               , drArguments = [arg], drWhere = [] }
+                               , drArguments = [arg], drWhere = [], drJoins = [] }
               v   = toJSON (DwRetrieveOk dr)
           field "tag" v @?= String "DwRetrieveOk"
           field "arguments" (field "contents" v) @?= toJSON [arg]

@@ -9,6 +9,7 @@ module PB.Pipeline.DuckDb
   , DwObjectRow (..)
   , DwControlRow (..)
   , DwRetrieveTableRow (..)
+  , DwJoinRow (..)
   , SqlStmtRow (..)
   , SourceFileRow (..)
   -- Phase A appenders
@@ -17,6 +18,7 @@ module PB.Pipeline.DuckDb
   , appendDwObjects
   , appendDwControls
   , appendDwRetrieveTables
+  , appendDwJoins
   , appendLocalVars
   , appendCallSites
   , appendGlobalVars
@@ -135,6 +137,9 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
         \(file TEXT, object TEXT, style TEXT, layout_json TEXT, retrieve_sql TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_retrieve_tables \
         \(file TEXT, dw_name TEXT, table_name TEXT)"
+      , "CREATE TABLE IF NOT EXISTS dw_joins \
+        \(file TEXT, dw_name TEXT, left_ref TEXT, op TEXT, right_ref TEXT, \
+        \outer1 TEXT, outer2 TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_controls \
         \(file TEXT, object TEXT, band TEXT, control_type TEXT, name TEXT, \
         \x INTEGER, y INTEGER, width INTEGER, height INTEGER, expression TEXT)"
@@ -242,6 +247,16 @@ data DwRetrieveTableRow = DwRetrieveTableRow
   , drtrTableName :: Text
   }
 
+data DwJoinRow = DwJoinRow
+  { djrFile     :: Text
+  , djrDwName   :: Text
+  , djrLeftRef  :: Text
+  , djrOp       :: Text
+  , djrRightRef :: Text
+  , djrOuter1   :: Maybe Text
+  , djrOuter2   :: Maybe Text
+  }
+
 data SqlStmtRow = SqlStmtRow
   { ssrFile      :: Text
   , ssrObject    :: Text
@@ -328,6 +343,19 @@ appendDwRetrieveTables conn rows = withRaw conn "dw_retrieve_tables" $ \app ->
     aText app (drtrFile r)
     aText app (drtrDwName r)
     aText app (drtrTableName r)
+    endRow app
+
+appendDwJoins :: DuckConn -> [DwJoinRow] -> IO ()
+appendDwJoins _    [] = pure ()
+appendDwJoins conn rows = withRaw conn "dw_joins" $ \app ->
+  for_ rows $ \r -> do
+    aText      app (djrFile r)
+    aText      app (djrDwName r)
+    aText      app (djrLeftRef r)
+    aText      app (djrOp r)
+    aText      app (djrRightRef r)
+    aMaybeText app (djrOuter1 r)
+    aMaybeText app (djrOuter2 r)
     endRow app
 
 appendLocalVars :: DuckConn -> [LocalVar] -> IO ()

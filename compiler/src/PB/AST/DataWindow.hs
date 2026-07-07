@@ -6,6 +6,7 @@ module PB.AST.DataWindow
   , DwColumn (..)
   , DwArgument (..)
   , DwWhereClause (..)
+  , DwJoin (..)
   , DwRetrieve (..)
   , DwRetrieveOrRaw (..)
   , DwBand (..)
@@ -49,12 +50,21 @@ data DwWhereClause = DwWhereClause
   , dwcLogic :: Maybe Text
   } deriving (Eq, Show, Generic)
 
+data DwJoin = DwJoin
+  { djLeft   :: Text
+  , djOp     :: Text
+  , djRight  :: Text
+  , djOuter1 :: Maybe Text
+  , djOuter2 :: Maybe Text
+  } deriving (Eq, Show, Generic)
+
 data DwRetrieve = DwRetrieve
   { drVersion   :: Int
   , drTables    :: [Text]
   , drColumns   :: [Text]
   , drArguments :: [DwArgument]
   , drWhere     :: [DwWhereClause]
+  , drJoins     :: [DwJoin]
   } deriving (Eq, Show, Generic)
 
 data DwRetrieveOrRaw

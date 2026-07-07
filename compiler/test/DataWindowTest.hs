@@ -14,8 +14,12 @@ import PB.Grammar.DataWindow (parseDataWindow, parseBandKind, parseDwTable, pars
 import qualified Data.Map.Strict as Map
 import qualified Data.Text       as T
 
+import Hedgehog (assert, forAll, property, (===))
+import qualified Hedgehog.Gen   as Gen
+import qualified Hedgehog.Range as Range
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
+import Test.Tasty.Hedgehog (testProperty)
 
 -- ---------------------------------------------------------------------------
 -- Helpers
@@ -574,7 +578,7 @@ tests = testGroup "DataWindow"
       , testCase "PBSELECT retrieve parsed into DwRetrieveOk" $ do
           let attrs = scanBlockAttrs "retrieve=\"PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") )\" "
           dtRetrieve (parseDwTable attrs) @?=
-              Just (DwRetrieveOk (DwRetrieve 400 ["t"] [] [] []))
+              Just (DwRetrieveOk (DwRetrieve 400 ["t"] [] [] [] []))
 
       , testCase "update table name extracted" $ do
           let attrs = scanBlockAttrs "update=\"misth_ypal\" updatewhere=0 "
@@ -617,19 +621,19 @@ tests = testGroup "DataWindow"
   , testGroup "PBSELECT"
       [ testCase "single table, no where" $
           parsePbSelect "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") )"
-          @?= DwRetrieveOk (DwRetrieve 400 ["t"] [] [] [])
+          @?= DwRetrieveOk (DwRetrieve 400 ["t"] [] [] [] [])
 
       , testCase "single table with column" $
           parsePbSelect
             "PBSELECT( VERSION(400) TABLE(NAME=~\"emp~\") COLUMN(NAME=~\"emp.id~\") )"
-          @?= DwRetrieveOk (DwRetrieve 400 ["emp"] ["emp.id"] [] [])
+          @?= DwRetrieveOk (DwRetrieve 400 ["emp"] ["emp.id"] [] [] [])
 
       , testCase "single table, one where clause" $
           parsePbSelect
             ( "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") COLUMN(NAME=~\"t.x~\")"
            <> "WHERE( EXP1 =~\"t.x~\" OP =~\"=~\" EXP2 =~\":arg_x~\" ) )" )
           @?= DwRetrieveOk (DwRetrieve 400 ["t"] ["t.x"] []
-                [DwWhereClause "t.x" "=" ":arg_x" Nothing])
+                [DwWhereClause "t.x" "=" ":arg_x" Nothing] [])
 
       , testCase "multi-table, multiple where clauses with LOGIC" $
           parsePbSelect
@@ -639,7 +643,7 @@ tests = testGroup "DataWindow"
            <> " WHERE( EXP1 =~\"b.y~\" OP =~\"=~\" EXP2 =~\":q~\" ) )" )
           @?= DwRetrieveOk (DwRetrieve 400 ["a","b"] ["a.x"] []
                 [ DwWhereClause "a.x" "=" ":p" (Just "and")
-                , DwWhereClause "b.y" "=" ":q" Nothing ])
+                , DwWhereClause "b.y" "=" ":q" Nothing ] [])
 
       , testCase "host var in EXP2 retains colon prefix" $ do
           let result = parsePbSelect
@@ -654,7 +658,7 @@ tests = testGroup "DataWindow"
             "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") \
             \WHERE( EXP1 =~\"t.x~\" OP =~\"is not~\" EXP2 =~\"null~\" ) )"
           @?= DwRetrieveOk (DwRetrieve 400 ["t"] [] []
-                [DwWhereClause "t.x" "is not" "null" Nothing])
+                [DwWhereClause "t.x" "is not" "null" Nothing] [])
 
       , testCase "ARG outside outer paren parsed" $
           parsePbSelect
@@ -663,16 +667,68 @@ tests = testGroup "DataWindow"
            <> " ARG(NAME = ~\"aid~\" TYPE = string)" )
           @?= DwRetrieveOk (DwRetrieve 400 ["t"] []
                 [DwArgument "aid" "string"]
-                [DwWhereClause "t.id" "=" ":aid" Nothing])
+                [DwWhereClause "t.id" "=" ":aid" Nothing] [])
 
       , testCase "ARG date type" $
           parsePbSelect
             "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") ) ARG(NAME = ~\"dt~\" TYPE = date)"
-          @?= DwRetrieveOk (DwRetrieve 400 ["t"] [] [DwArgument "dt" "date"] [])
+          @?= DwRetrieveOk (DwRetrieve 400 ["t"] [] [DwArgument "dt" "date"] [] [])
 
       , testCase "fallback raw on non-PBSELECT input" $
           parsePbSelect "SELECT x FROM t"
           @?= DwRetrieveRaw "SELECT x FROM t"
+
+      , testGroup "PBSELECT JOIN"
+          [ testCase "single join parsed into drJoins" $
+              parsePbSelect
+                ( "PBSELECT( VERSION(400) TABLE(NAME=~\"usruserperm~\") \
+                  \TABLE(NAME=~\"usrapps~\") \
+                  \JOIN (LEFT=~\"usruserperm.kodapp~\" OP =~\"=~\" \
+                  \RIGHT=~\"usrapps.kodapp~\") )" )
+              @?= DwRetrieveOk (DwRetrieve 400 ["usruserperm", "usrapps"] [] [] []
+                    [DwJoin "usruserperm.kodapp" "=" "usrapps.kodapp" Nothing Nothing])
+
+          , testCase "chained joins preserved in order" $
+              case parsePbSelect
+                     ( "PBSELECT( VERSION(400) TABLE(NAME=~\"a~\") \
+                       \JOIN (LEFT=~\"a.x~\" OP =~\"=~\" RIGHT=~\"b.x~\") \
+                       \JOIN (LEFT=~\"b.y~\" OP =~\"=~\" RIGHT=~\"c.y~\") \
+                       \JOIN (LEFT=~\"c.z~\" OP =~\"=~\" RIGHT=~\"d.z~\") )" ) of
+                DwRetrieveRaw _ -> assertFailure "expected DwRetrieveOk"
+                DwRetrieveOk dr -> map djLeft (drJoins dr) @?= ["a.x", "b.y", "c.z"]
+
+          , testCase "join with OUTER1 attribute" $
+              parsePbSelect
+                ( "PBSELECT( VERSION(400) TABLE(NAME=~\"a~\") \
+                  \JOIN (LEFT=~\"a.x~\" OP =~\"=~\" RIGHT=~\"b.x~\" \
+                  \OUTER1 =~\"a.x~\") )" )
+              @?= DwRetrieveOk (DwRetrieve 400 ["a"] [] [] []
+                    [DwJoin "a.x" "=" "b.x" (Just "a.x") Nothing])
+
+          , testCase "join with OUTER2 attribute" $
+              parsePbSelect
+                ( "PBSELECT( VERSION(400) TABLE(NAME=~\"a~\") \
+                  \JOIN (LEFT=~\"a.x~\" OP =~\"=~\" RIGHT=~\"b.x~\" \
+                  \OUTER2 =~\"b.x~\") )" )
+              @?= DwRetrieveOk (DwRetrieve 400 ["a"] [] [] []
+                    [DwJoin "a.x" "=" "b.x" Nothing (Just "b.x")])
+
+          , testCase "malformed join block degrades to skip, whole PBSELECT still parses" $
+              parsePbSelect
+                "PBSELECT( VERSION(400) TABLE(NAME=~\"a~\") JOIN(GARBAGE) )"
+              @?= DwRetrieveOk (DwRetrieve 400 ["a"] [] [] [] [])
+
+          , testProperty "n JOIN blocks parsed into drJoins of length n" $ property $ do
+              n <- forAll $ Gen.int (Range.linear 0 5)
+              let joinText i = "JOIN (LEFT=~\"t.a" <> T.pack (show i) <> "~\" OP =~\"=~\" \
+                               \RIGHT=~\"t.b" <> T.pack (show i) <> "~\") "
+                  src = "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") "
+                     <> T.concat [joinText i | i <- [1 .. n]]
+                     <> ")"
+              case parsePbSelect src of
+                DwRetrieveRaw _ -> assert False
+                DwRetrieveOk dr -> length (drJoins dr) === n
+          ]
       ]
 
   , testGroup "DwBand"
