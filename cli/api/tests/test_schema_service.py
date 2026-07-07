@@ -295,33 +295,58 @@ def test_get_decomposition_candidates_misth_final_ypal_real_scores(schema_db_con
 def test_get_decomposition_candidates_paths_explain_fk_chained_reach(schema_db_conn: duckdb.DuckDBPyConnection):
     # Cross-check anchor: paths are first-class, not just a count -- a
     # 2-hop FK-chained target must show both legs, in order. Targets/legs are
-    # formatted via `_format_object_key`, which drops the file path baked
-    # into every `stmt:` schObjectKey (an absolute pb-extract temp path,
-    # unreadable and environment-dependent -- found unreadable in the UI
-    # during D5's manual verification), so these are exact matches now
-    # rather than `.endswith(...)` workarounds for the unpredictable prefix.
+    # structured `SchemaObjectRef` dicts (built by `_parse_object_key`), not
+    # formatted strings -- every field needed to navigate to the real
+    # table/procedure/DataWindow (namespace/table/column, or
+    # object/proc_name/line, or dw_name) is recovered from the raw
+    # `schObjectKey`, dropping only the absolute pb-extract file path from
+    # display concerns (it's still present under "file" for completeness).
     result = get_decomposition_candidates(schema_db_conn, None, "misth_final_ypal", min_similarity=0.7)
     triple = next(c for c in result["candidates"] if set(c["columns"]) == {"kodfinal", "kodxrisi", "kodypal"})
 
-    fk_chained = next(p for p in triple["paths"] if p["target"] == "dw_misth_final_form (DW retrieve)")
+    fk_chained = next(p for p in triple["paths"] if p["target"].get("dw_name") == "dw_misth_final_form")
+    assert fk_chained["target"]["kind"] == "dw_retrieve"
     assert fk_chained["direction"] == "backward"
     assert len(fk_chained["legs"]) == 2
-    assert fk_chained["legs"][0] == "dw_misth_final_form (DW retrieve) --retrieve--> col:misth_final.kodfinal"
-    assert fk_chained["legs"][1] == "col:misth_final.kodfinal --fk--> col:misth_final_ypal.kodfinal"
+
+    leg0 = fk_chained["legs"][0]
+    assert leg0["from_object"] == {"kind": "dw_retrieve", "file": leg0["from_object"]["file"], "dw_name": "dw_misth_final_form"}
+    assert leg0["to_object"] == {"kind": "column", "namespace": None, "table": "misth_final", "column": "kodfinal"}
+    assert leg0["leg_kind"] == "retrieve"
+
+    leg1 = fk_chained["legs"][1]
+    assert leg1["from_object"] == {"kind": "column", "namespace": None, "table": "misth_final", "column": "kodfinal"}
+    assert leg1["to_object"] == {"kind": "column", "namespace": None, "table": "misth_final_ypal", "column": "kodfinal"}
+    assert leg1["leg_kind"] == "fk"
 
 
-def test_format_object_key_strips_file_path_from_stmt_keys():
-    from pb.api.services.schema import _format_object_key
+def test_parse_object_key_recovers_structured_fields():
+    from pb.api.services.schema import _parse_object_key
 
-    assert (
-        _format_object_key("stmt:dw:/tmp/pb-extract-abc123/final.pbl/dw_x.srd:dw_x")
-        == "dw_x (DW retrieve)"
-    )
-    assert (
-        _format_object_key("stmt:sql:/tmp/pb-extract-abc123/final.pbl/n_svc.srw:n_svc:of_process:42")
-        == "n_svc.of_process (line 42)"
-    )
-    assert _format_object_key("col:misth_final.kodfinal") == "col:misth_final.kodfinal"
+    assert _parse_object_key("stmt:dw:/tmp/pb-extract-abc123/final.pbl/dw_x.srd:dw_x") == {
+        "kind": "dw_retrieve",
+        "file": "/tmp/pb-extract-abc123/final.pbl/dw_x.srd",
+        "dw_name": "dw_x",
+    }
+    assert _parse_object_key("stmt:sql:/tmp/pb-extract-abc123/final.pbl/n_svc.srw:n_svc:of_process:42") == {
+        "kind": "sql",
+        "file": "/tmp/pb-extract-abc123/final.pbl/n_svc.srw",
+        "object": "n_svc",
+        "proc_name": "of_process",
+        "line": 42,
+    }
+    assert _parse_object_key("col:misth_final.kodfinal") == {
+        "kind": "column",
+        "namespace": None,
+        "table": "misth_final",
+        "column": "kodfinal",
+    }
+    assert _parse_object_key("col:myns.misth_final.kodfinal") == {
+        "kind": "column",
+        "namespace": "myns",
+        "table": "misth_final",
+        "column": "kodfinal",
+    }
 
 
 def test_get_decomposition_candidates_min_similarity_filters_low_blocks(

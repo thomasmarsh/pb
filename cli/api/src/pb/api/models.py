@@ -119,10 +119,28 @@ class ColumnAffinityResponse(BaseModel):
     dendrogram: list[DendrogramMerge]
 
 
+class SchemaObjectRef(BaseModel):
+    kind: str
+    file: str | None = None
+    object: str | None = None
+    proc_name: str | None = None
+    line: int | None = None
+    dw_name: str | None = None
+    namespace: str | None = None
+    table: str | None = None
+    column: str | None = None
+
+
+class DecompositionEvidenceLeg(BaseModel):
+    from_object: SchemaObjectRef
+    to_object: SchemaObjectRef
+    leg_kind: str
+
+
 class DecompositionEvidencePath(BaseModel):
-    target: str
+    target: SchemaObjectRef
     direction: str
-    legs: list[str]
+    legs: list[DecompositionEvidenceLeg]
 
 
 class DecompositionCandidate(BaseModel):

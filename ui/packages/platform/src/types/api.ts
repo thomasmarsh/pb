@@ -464,10 +464,28 @@ export interface CoUpdateRitualsResponse {
   rituals: CoUpdateRitual[];
 }
 
+export interface SchemaObjectRef {
+  kind: "column" | "sql" | "dw_retrieve" | "unknown";
+  file?: string | null;
+  object?: string | null;
+  proc_name?: string | null;
+  line?: number | null;
+  dw_name?: string | null;
+  namespace?: string | null;
+  table?: string | null;
+  column?: string | null;
+}
+
+export interface DecompositionEvidenceLeg {
+  from_object: SchemaObjectRef;
+  to_object: SchemaObjectRef;
+  leg_kind: string;
+}
+
 export interface DecompositionEvidencePath {
-  target: string;
+  target: SchemaObjectRef;
   direction: string;
-  legs: string[];
+  legs: DecompositionEvidenceLeg[];
 }
 
 export interface DecompositionCandidate {

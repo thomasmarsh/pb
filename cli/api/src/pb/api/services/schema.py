@@ -430,21 +430,26 @@ def _column_key(namespace: str | None, table: str, column: str) -> str:
     return f"col:{prefix}{table}.{column}"
 
 
-def _format_object_key(key: str) -> str:
-    """Human-readable label for a `schObjectKey` string, dropping the file
-    path that `PB.Analysis.SchemaCategory.schObjectKey` bakes into every
-    `StmtObj` key -- an absolute path (often a `pb explore` PBL-extraction
-    temp dir, e.g. `/private/var/folders/.../pb-extract-.../final.pbl/...`),
-    which is meaningless to a UI reader and was never meant to be displayed
-    verbatim. `col:` keys carry no file path and are returned as-is.
+def _parse_object_key(key: str) -> dict[str, Any]:
+    """Structured `SchemaObjectRef` dict for a `schObjectKey` string,
+    recovering every field `PB.Analysis.SchemaCategory.schObjectKey` bakes
+    into the key -- file/object/proc_name/line for a `stmt:sql:` key,
+    file/dw_name for a `stmt:dw:` key, namespace/table/column for a `col:`
+    key -- so callers (the UI) can navigate to the real entity instead of
+    only displaying a formatted label.
     """
     if key.startswith("stmt:dw:"):
-        _file, dw_name = key[len("stmt:dw:"):].rsplit(":", 1)
-        return f"{dw_name} (DW retrieve)"
+        file, dw_name = key[len("stmt:dw:"):].rsplit(":", 1)
+        return {"kind": "dw_retrieve", "file": file, "dw_name": dw_name}
     if key.startswith("stmt:sql:"):
-        _file, obj, proc, line = key[len("stmt:sql:"):].rsplit(":", 3)
-        return f"{obj}.{proc} (line {line})"
-    return key
+        file, obj, proc, line = key[len("stmt:sql:"):].rsplit(":", 3)
+        return {"kind": "sql", "file": file, "object": obj, "proc_name": proc, "line": int(line)}
+    if key.startswith("col:"):
+        body = key[len("col:"):]
+        rest, column = body.rsplit(".", 1)
+        namespace, table = rest.rsplit(".", 1) if "." in rest else (None, rest)
+        return {"kind": "column", "namespace": namespace, "table": table, "column": column}
+    return {"kind": "unknown", "file": key}
 
 
 def _coslice_paths(conn: duckdb.DuckDBPyConnection, seed_keys: list[str]) -> dict[str, list[dict[str, Any]]]:
@@ -534,10 +539,14 @@ def get_decomposition_candidates(
                 "score": score,
                 "paths": [
                     {
-                        "target": _format_object_key(target),
+                        "target": _parse_object_key(target),
                         "direction": legs[0]["direction"],
                         "legs": [
-                            f"{_format_object_key(leg['leg_from'])} --{leg['leg_kind']}--> {_format_object_key(leg['leg_to'])}"
+                            {
+                                "from_object": _parse_object_key(leg["leg_from"]),
+                                "to_object": _parse_object_key(leg["leg_to"]),
+                                "leg_kind": leg["leg_kind"],
+                            }
                             for leg in legs
                         ],
                     }

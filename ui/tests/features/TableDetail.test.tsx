@@ -236,7 +236,7 @@ describe("TableDetail source-first", () => {
       expect(document.body.textContent).not.toContain("Decomposition Candidates");
     });
 
-    it("renders a row per candidate with formatted (file-path-free) evidence path labels", () => {
+    it("renders a row per candidate with structured, clickable evidence path entities", () => {
       const data: DecompositionCandidatesResponse = {
         table: "orders",
         namespace: null,
@@ -248,24 +248,45 @@ describe("TableDetail source-first", () => {
           coslice_size: 2,
           score: 1.5,
           paths: [
-            { target: "n_svc.set_status (line 42)", direction: "backward", legs: ["col:orders.status --writes--> n_svc.set_status (line 42)"] },
-            { target: "dw_orders (DW retrieve)", direction: "backward", legs: ["col:orders.status --retrieve--> dw_orders (DW retrieve)"] },
+            {
+              target: { kind: "sql", file: "/tmp/pb-extract-abc/n_svc.srw", object: "n_svc", proc_name: "set_status", line: 42 },
+              direction: "backward",
+              legs: [{
+                from_object: { kind: "column", namespace: null, table: "orders", column: "status" },
+                to_object: { kind: "sql", file: "/tmp/pb-extract-abc/n_svc.srw", object: "n_svc", proc_name: "set_status", line: 42 },
+                leg_kind: "writes",
+              }],
+            },
+            {
+              target: { kind: "dw_retrieve", file: "/tmp/pb-extract-abc/dw_orders.srd", dw_name: "dw_orders" },
+              direction: "backward",
+              legs: [{
+                from_object: { kind: "column", namespace: null, table: "orders", column: "status" },
+                to_object: { kind: "dw_retrieve", file: "/tmp/pb-extract-abc/dw_orders.srd", dw_name: "dw_orders" },
+                leg_kind: "retrieve",
+              }],
+            },
           ],
         }],
       };
       renderTableDetail(baseDetail, null, null, data);
       fireEvent.click(summaryPillBtn("Decomposition")!);
       expect(document.body.textContent).toContain("status, status_reason");
-      expect(document.body.textContent).toContain("n_svc.set_status (line 42)");
-      expect(document.body.textContent).toContain("dw_orders (DW retrieve)");
+      expect(document.body.textContent).toContain("n_svc.set_status");
+      expect(document.body.textContent).toContain("line 42");
+      expect(document.body.textContent).toContain("dw_orders");
       expect(document.body.textContent).not.toContain("/pb-extract-");
     });
 
     it("truncates evidence paths beyond the preview count with a 'Show N more' toggle", () => {
       const paths = Array.from({ length: 7 }, (_, i) => ({
-        target: `n_svc.proc_${i} (line ${i})`,
+        target: { kind: "sql" as const, file: "/tmp/x.srw", object: "n_svc", proc_name: `proc_${i}`, line: i },
         direction: "backward",
-        legs: [`col:orders.status --writes--> n_svc.proc_${i} (line ${i})`],
+        legs: [{
+          from_object: { kind: "column" as const, namespace: null, table: "orders", column: "status" },
+          to_object: { kind: "sql" as const, file: "/tmp/x.srw", object: "n_svc", proc_name: `proc_${i}`, line: i },
+          leg_kind: "writes",
+        }],
       }));
       const data: DecompositionCandidatesResponse = {
         table: "orders",
