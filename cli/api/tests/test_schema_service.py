@@ -294,21 +294,34 @@ def test_get_decomposition_candidates_misth_final_ypal_real_scores(schema_db_con
 
 def test_get_decomposition_candidates_paths_explain_fk_chained_reach(schema_db_conn: duckdb.DuckDBPyConnection):
     # Cross-check anchor: paths are first-class, not just a count -- a
-    # 2-hop FK-chained target must show both legs, in order.
+    # 2-hop FK-chained target must show both legs, in order. Targets/legs are
+    # formatted via `_format_object_key`, which drops the file path baked
+    # into every `stmt:` schObjectKey (an absolute pb-extract temp path,
+    # unreadable and environment-dependent -- found unreadable in the UI
+    # during D5's manual verification), so these are exact matches now
+    # rather than `.endswith(...)` workarounds for the unpredictable prefix.
     result = get_decomposition_candidates(schema_db_conn, None, "misth_final_ypal", min_similarity=0.7)
     triple = next(c for c in result["candidates"] if set(c["columns"]) == {"kodfinal", "kodxrisi", "kodypal"})
 
-    fk_chained = next(
-        p
-        for p in triple["paths"]
-        if p["target"].endswith("dw_misth_final_form.srd:dw_misth_final_form")
-    )
+    fk_chained = next(p for p in triple["paths"] if p["target"] == "dw_misth_final_form (DW retrieve)")
     assert fk_chained["direction"] == "backward"
     assert len(fk_chained["legs"]) == 2
-    assert fk_chained["legs"][0].endswith(
-        "dw_misth_final_form.srd:dw_misth_final_form --retrieve--> col:misth_final.kodfinal"
-    )
+    assert fk_chained["legs"][0] == "dw_misth_final_form (DW retrieve) --retrieve--> col:misth_final.kodfinal"
     assert fk_chained["legs"][1] == "col:misth_final.kodfinal --fk--> col:misth_final_ypal.kodfinal"
+
+
+def test_format_object_key_strips_file_path_from_stmt_keys():
+    from pb.api.services.schema import _format_object_key
+
+    assert (
+        _format_object_key("stmt:dw:/tmp/pb-extract-abc123/final.pbl/dw_x.srd:dw_x")
+        == "dw_x (DW retrieve)"
+    )
+    assert (
+        _format_object_key("stmt:sql:/tmp/pb-extract-abc123/final.pbl/n_svc.srw:n_svc:of_process:42")
+        == "n_svc.of_process (line 42)"
+    )
+    assert _format_object_key("col:misth_final.kodfinal") == "col:misth_final.kodfinal"
 
 
 def test_get_decomposition_candidates_min_similarity_filters_low_blocks(

@@ -5,13 +5,14 @@ import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { tablesReducer, initialTablesState, type TablesEnv } from "@pb/platform";
 import type { TablesState } from "@pb/platform";
-import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse } from "@pb/platform";
+import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse } from "@pb/platform";
 
 const mockEnv: TablesEnv = {
   getTables:           () => Effect.none(),
   getTableDetail:      () => Effect.none(),
   getColumnUsage:      () => Effect.none(),
   getCoUpdateRituals:  () => Effect.none(),
+  getDecompositionCandidates: () => Effect.none(),
   navigate:            () => Effect.none(),
 };
 
@@ -99,6 +100,8 @@ describe("tables reducer", () => {
       ts.send({ tag: "select", name: "orders" }, (s) => {
         s.detail = null;
         s.error  = null;
+        s.decompositionCandidates = null;
+        s.decompositionCandidatesLoading = false;
       });
       expect(navigateRoutes).toEqual([{ view: "tableDetail", name: "orders" }]);
     });
@@ -109,6 +112,8 @@ describe("tables reducer", () => {
       ts.send({ tag: "select", name: "orders" }, (s) => {
         s.detail = null;
         s.error  = null;
+        s.decompositionCandidates = null;
+        s.decompositionCandidatesLoading = false;
       });
       ts.receive({ tag: "detail-loaded", detail }, (s) => {
         s.detail = detail;
@@ -125,6 +130,8 @@ describe("tables reducer", () => {
       ts.send({ tag: "select", name: "orders" }, (s) => {
         s.detail = null;
         s.error  = null;
+        s.decompositionCandidates = null;
+        s.decompositionCandidatesLoading = false;
       });
       await ts.drain();
       ts.receive({ tag: "detail-error", error: "timeout" }, (s) => {
@@ -330,6 +337,101 @@ describe("tables reducer", () => {
       ts.send({ tag: "co-update-rituals-error", error: "boom" }, (s) => {
         s.coUpdateRituals = { error: "boom" };
         s.coUpdateRitualsLoading = false;
+      });
+    });
+  });
+
+  describe("tables/decomposition-candidates-load", () => {
+    const candidates: DecompositionCandidatesResponse = {
+      table: "misth_final_ypal",
+      namespace: null,
+      candidates: [
+        {
+          columns: ["kodfinal", "kodxrisi", "kodypal"],
+          similarity: 0.9,
+          ritual_support: 3,
+          unenforced_fk_count: 0,
+          coslice_size: 120,
+          score: 0.025,
+          paths: [],
+        },
+      ],
+    };
+
+    it("sets decompositionCandidatesLoading and fires getDecompositionCandidates", () => {
+      const env: TablesEnv = { ...mockEnv, getDecompositionCandidates: () => Effect.send(candidates) };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "decomposition-candidates-load", tableName: "misth_final_ypal" }, (s) => {
+        s.decompositionCandidatesLoading = true;
+      });
+      ts.receive({ tag: "decomposition-candidates-loaded", data: candidates }, (s) => {
+        s.decompositionCandidates = candidates;
+        s.decompositionCandidatesLoading = false;
+      });
+    });
+
+    it("does nothing if already loaded for this table", () => {
+      const state: TablesState = { ...initialTablesState, decompositionCandidates: candidates };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "decomposition-candidates-load", tableName: "misth_final_ypal" }, () => {});
+    });
+
+    it("does nothing if a load is already in flight", () => {
+      const state: TablesState = { ...initialTablesState, decompositionCandidatesLoading: true };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "decomposition-candidates-load", tableName: "misth_final_ypal" }, () => {});
+    });
+
+    it("re-fires when the table name differs from what's loaded", () => {
+      const state: TablesState = { ...initialTablesState, decompositionCandidates: candidates };
+      const other: DecompositionCandidatesResponse = { table: "orders", namespace: null, candidates: [] };
+      const env: TablesEnv = { ...mockEnv, getDecompositionCandidates: () => Effect.send(other) };
+      const ts = createTestStore(tablesReducer, env, state);
+      ts.send({ tag: "decomposition-candidates-load", tableName: "orders" }, (s) => {
+        s.decompositionCandidatesLoading = true;
+      });
+      ts.receive({ tag: "decomposition-candidates-loaded", data: other }, (s) => {
+        s.decompositionCandidates = other;
+        s.decompositionCandidatesLoading = false;
+      });
+    });
+
+    it("fires getDecompositionCandidates; rejection maps to decomposition-candidates-error", async () => {
+      const env: TablesEnv = {
+        ...mockEnv,
+        getDecompositionCandidates: () => Effect.fromPromise(() => Promise.reject(new Error("timeout"))),
+      };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "decomposition-candidates-load", tableName: "misth_final_ypal" }, (s) => {
+        s.decompositionCandidatesLoading = true;
+      });
+      await ts.drain();
+      ts.receive({ tag: "decomposition-candidates-error", error: "timeout" }, (s) => {
+        s.decompositionCandidates = { error: "timeout" };
+        s.decompositionCandidatesLoading = false;
+      });
+    });
+  });
+
+  describe("tables/decomposition-candidates-loaded", () => {
+    it("stores the candidates and clears loading", () => {
+      const data: DecompositionCandidatesResponse = { table: "orders", namespace: null, candidates: [] };
+      const state: TablesState = { ...initialTablesState, decompositionCandidatesLoading: true };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "decomposition-candidates-loaded", data }, (s) => {
+        s.decompositionCandidates = data;
+        s.decompositionCandidatesLoading = false;
+      });
+    });
+  });
+
+  describe("tables/decomposition-candidates-error", () => {
+    it("stores the error and clears loading", () => {
+      const state: TablesState = { ...initialTablesState, decompositionCandidatesLoading: true };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "decomposition-candidates-error", error: "boom" }, (s) => {
+        s.decompositionCandidates = { error: "boom" };
+        s.decompositionCandidatesLoading = false;
       });
     });
   });

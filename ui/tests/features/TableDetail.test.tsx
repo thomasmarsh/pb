@@ -5,7 +5,7 @@ import { fireEvent, render } from "@solidjs/testing-library";
 import { TableDetail } from "../../app/src/views/features/tables/TableDetail.js";
 import { createTestStore } from "../helpers.js";
 import { initialTablesState } from "@pb/platform";
-import type { TableDetail as TableDetailData, ColumnUsageResponse, CoUpdateRitualsResponse } from "@pb/platform";
+import type { TableDetail as TableDetailData, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse } from "@pb/platform";
 
 const baseDetail: TableDetailData = {
   table_name: "orders",
@@ -26,9 +26,10 @@ function renderTableDetail(
   detail: TableDetailData = baseDetail,
   columnUsage: ColumnUsageResponse | null = null,
   coUpdateRituals: CoUpdateRitualsResponse | null = null,
+  decompositionCandidates: DecompositionCandidatesResponse | null = null,
 ) {
   const { store } = createTestStore({
-    tables: { ...initialTablesState, detail, columnUsage, coUpdateRituals },
+    tables: { ...initialTablesState, detail, columnUsage, coUpdateRituals, decompositionCandidates },
   });
   render(() => <TableDetail store={store} />);
 }
@@ -212,6 +213,84 @@ describe("TableDetail source-first", () => {
       expect(document.body.textContent).toContain("orders.status");
       expect(document.body.textContent).toContain("orders.status_reason");
       expect(document.body.textContent).toContain("set_status");
+    });
+  });
+
+  describe("Decomposition Candidates pill (Plan 153 D5)", () => {
+    it("always shown, no count", () => {
+      renderTableDetail();
+      expect(summaryBar()?.textContent).toContain("Decomposition");
+    });
+
+    it("clicking the pill opens a panel titled 'Decomposition Candidates'", () => {
+      renderTableDetail();
+      fireEvent.click(summaryPillBtn("Decomposition")!);
+      expect(document.body.textContent).toContain("Decomposition Candidates");
+    });
+
+    it("clicking the pill again closes the panel", () => {
+      renderTableDetail();
+      fireEvent.click(summaryPillBtn("Decomposition")!);
+      expect(document.body.textContent).toContain("Decomposition Candidates");
+      fireEvent.click(summaryPillBtn("Decomposition")!);
+      expect(document.body.textContent).not.toContain("Decomposition Candidates");
+    });
+
+    it("renders a row per candidate with formatted (file-path-free) evidence path labels", () => {
+      const data: DecompositionCandidatesResponse = {
+        table: "orders",
+        namespace: null,
+        candidates: [{
+          columns: ["status", "status_reason"],
+          similarity: 1.0,
+          ritual_support: 3,
+          unenforced_fk_count: 0,
+          coslice_size: 2,
+          score: 1.5,
+          paths: [
+            { target: "n_svc.set_status (line 42)", direction: "backward", legs: ["col:orders.status --writes--> n_svc.set_status (line 42)"] },
+            { target: "dw_orders (DW retrieve)", direction: "backward", legs: ["col:orders.status --retrieve--> dw_orders (DW retrieve)"] },
+          ],
+        }],
+      };
+      renderTableDetail(baseDetail, null, null, data);
+      fireEvent.click(summaryPillBtn("Decomposition")!);
+      expect(document.body.textContent).toContain("status, status_reason");
+      expect(document.body.textContent).toContain("n_svc.set_status (line 42)");
+      expect(document.body.textContent).toContain("dw_orders (DW retrieve)");
+      expect(document.body.textContent).not.toContain("/pb-extract-");
+    });
+
+    it("truncates evidence paths beyond the preview count with a 'Show N more' toggle", () => {
+      const paths = Array.from({ length: 7 }, (_, i) => ({
+        target: `n_svc.proc_${i} (line ${i})`,
+        direction: "backward",
+        legs: [`col:orders.status --writes--> n_svc.proc_${i} (line ${i})`],
+      }));
+      const data: DecompositionCandidatesResponse = {
+        table: "orders",
+        namespace: null,
+        candidates: [{
+          columns: ["status"],
+          similarity: 1.0,
+          ritual_support: 0,
+          unenforced_fk_count: 0,
+          coslice_size: 7,
+          score: 0,
+          paths,
+        }],
+      };
+      renderTableDetail(baseDetail, null, null, data);
+      fireEvent.click(summaryPillBtn("Decomposition")!);
+      expect(document.body.textContent).toContain("proc_0");
+      expect(document.body.textContent).toContain("proc_4");
+      expect(document.body.textContent).not.toContain("proc_5");
+      expect(document.body.textContent).toContain("Show 2 more");
+
+      fireEvent.click([...document.querySelectorAll("button")].find((b) => b.textContent === "Show 2 more")!);
+      expect(document.body.textContent).toContain("proc_5");
+      expect(document.body.textContent).toContain("proc_6");
+      expect(document.body.textContent).toContain("Show less");
     });
   });
 });

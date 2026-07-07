@@ -10,6 +10,7 @@ import {
   AnalysisSummaryBar, ContextualPanel,
 } from "@pb/platform";
 import type { SummaryItem } from "@pb/platform";
+import { DecompositionCandidatesCore } from "../analysis/DecompositionCandidatesCore.js";
 
 const WRITE_OPS = new Set(["INSERT", "UPDATE", "DELETE"]);
 
@@ -188,6 +189,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
   const [showImpact, setShowImpact] = createSignal(false);
   const [showColumnUsage, setShowColumnUsage] = createSignal(false);
   const [showCoUpdateRituals, setShowCoUpdateRituals] = createSignal(false);
+  const [showDecomposition, setShowDecomposition] = createSignal(false);
 
   const readers = d.procedures.filter((p) => !WRITE_OPS.has(p.operation));
   const writers = d.procedures.filter((p) => WRITE_OPS.has(p.operation));
@@ -225,6 +227,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
     ...(hasImpact ? [{ label: "Impact", count: impactCount, active: showImpact(), onClick: () => setShowImpact((v) => !v) } as SummaryItem] : []),
     ...(hasColumnUsage() ? [{ label: "Column Usage", count: columnUsageCount(), active: showColumnUsage(), onClick: () => setShowColumnUsage((v) => !v) } as SummaryItem] : []),
     ...(hasCoUpdateRituals() ? [{ label: "Co-update Rituals", count: tableRituals().length, active: showCoUpdateRituals(), onClick: () => setShowCoUpdateRituals((v) => !v) } as SummaryItem] : []),
+    { label: "Decomposition", active: showDecomposition(), onClick: () => setShowDecomposition((v) => !v) },
   ];
 
   function handleKeyDown(e: KeyboardEvent): void {
@@ -235,6 +238,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
       setShowImpact(false);
       setShowColumnUsage(false);
       setShowCoUpdateRituals(false);
+      setShowDecomposition(false);
     }
   }
 
@@ -325,6 +329,12 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
         <Show when={showCoUpdateRituals()}>
           <ContextualPanel title={`Co-update Rituals (${tableRituals().length})`} onClose={() => setShowCoUpdateRituals(false)}>
             <RitualList rituals={tableRituals()} />
+          </ContextualPanel>
+        </Show>
+
+        <Show when={showDecomposition()}>
+          <ContextualPanel title="Decomposition Candidates" onClose={() => setShowDecomposition(false)}>
+            <DecompositionCandidatesCore store={store} table={d.table_name} />
           </ContextualPanel>
         </Show>
       </div>

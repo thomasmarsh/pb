@@ -1,6 +1,6 @@
 // features/tables/types.ts
 
-import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse } from "../../types/api.js";
+import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse } from "../../types/api.js";
 
 export interface TablesState {
   items:   TableSummary[];
@@ -15,10 +15,14 @@ export interface TablesState {
   // Corpus-wide co-update rituals (Plan 153 D1) — lazily loaded once, reused across every table
   coUpdateRituals: CoUpdateRitualsResponse | { error: string } | null;
   coUpdateRitualsLoading: boolean;
+  // Decomposition candidates (Plan 153 D5) — per-table, lazily loaded when the panel toggles on
+  decompositionCandidates: DecompositionCandidatesResponse | { error: string } | null;
+  decompositionCandidatesLoading: boolean;
 }
 
 export const initialTablesState: TablesState = {
   items: [], total: 0, q: "", loading: false, detail: null, error: null,
   columnUsage: null, columnUsageLoading: false,
   coUpdateRituals: null, coUpdateRitualsLoading: false,
+  decompositionCandidates: null, decompositionCandidatesLoading: false,
 };

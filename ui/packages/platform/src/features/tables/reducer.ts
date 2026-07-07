@@ -3,7 +3,7 @@
 import { Effect, type Reducer } from "@pb/core";
 import type { TablesState } from "./types.js";
 import type { TablesAction } from "./actions.js";
-import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse } from "../../types/api.js";
+import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse } from "../../types/api.js";
 import type { NavigationAction } from "../navigation/types.js";
 
 export type { TablesState };
@@ -14,6 +14,7 @@ export interface TablesEnv {
   getTableDetail(name: string): Effect<TableDetail>;
   getColumnUsage(): Effect<ColumnUsageResponse>;
   getCoUpdateRituals(): Effect<CoUpdateRitualsResponse>;
+  getDecompositionCandidates(table: string): Effect<DecompositionCandidatesResponse>;
   navigate(action: NavigationAction): Effect<never>;
 }
 
@@ -38,6 +39,8 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
   case "select":
     draft.detail = null;
     draft.error = null;
+    draft.decompositionCandidates = null;
+    draft.decompositionCandidatesLoading = false;
     env.navigate({ tag: "navigate", route: { view: "tableDetail", name: action.name } });
     return env.getTableDetail(action.name)
       .map((detail): TablesAction => ({ tag: "detail-loaded", detail }))
@@ -84,6 +87,24 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
   case "co-update-rituals-error":
     draft.coUpdateRituals = { error: action.error };
     draft.coUpdateRitualsLoading = false;
+    return null;
+  case "decomposition-candidates-load": {
+    const already = draft.decompositionCandidates
+      && "table" in draft.decompositionCandidates
+      && draft.decompositionCandidates.table === action.tableName;
+    if (already || draft.decompositionCandidatesLoading) return null;
+    draft.decompositionCandidatesLoading = true;
+    return env.getDecompositionCandidates(action.tableName)
+      .map((data): TablesAction => ({ tag: "decomposition-candidates-loaded", data }))
+      .catch((e): TablesAction => ({ tag: "decomposition-candidates-error", error: errMsg(e) }));
+  }
+  case "decomposition-candidates-loaded":
+    draft.decompositionCandidates = action.data;
+    draft.decompositionCandidatesLoading = false;
+    return null;
+  case "decomposition-candidates-error":
+    draft.decompositionCandidates = { error: action.error };
+    draft.decompositionCandidatesLoading = false;
     return null;
   default:
     return null;

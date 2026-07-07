@@ -37,6 +37,7 @@ export const mockEnv: AppEnv = {
   getTableDetail: () => Effect.none(),
   getColumnUsage: () => Effect.none(),
   getCoUpdateRituals: () => Effect.none(),
+  getDecompositionCandidates: () => Effect.none(),
   getErrors: () => Effect.none(),
   getDwQueries: () => Effect.none(),
   executeSql: () => Effect.none(),

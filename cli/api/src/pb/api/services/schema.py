@@ -430,6 +430,23 @@ def _column_key(namespace: str | None, table: str, column: str) -> str:
     return f"col:{prefix}{table}.{column}"
 
 
+def _format_object_key(key: str) -> str:
+    """Human-readable label for a `schObjectKey` string, dropping the file
+    path that `PB.Analysis.SchemaCategory.schObjectKey` bakes into every
+    `StmtObj` key -- an absolute path (often a `pb explore` PBL-extraction
+    temp dir, e.g. `/private/var/folders/.../pb-extract-.../final.pbl/...`),
+    which is meaningless to a UI reader and was never meant to be displayed
+    verbatim. `col:` keys carry no file path and are returned as-is.
+    """
+    if key.startswith("stmt:dw:"):
+        _file, dw_name = key[len("stmt:dw:"):].rsplit(":", 1)
+        return f"{dw_name} (DW retrieve)"
+    if key.startswith("stmt:sql:"):
+        _file, obj, proc, line = key[len("stmt:sql:"):].rsplit(":", 3)
+        return f"{obj}.{proc} (line {line})"
+    return key
+
+
 def _coslice_paths(conn: duckdb.DuckDBPyConnection, seed_keys: list[str]) -> dict[str, list[dict[str, Any]]]:
     """Every distinct target statement reachable from any seed column,
     keeping the shortest leg chain when more than one seed column in the
@@ -517,9 +534,12 @@ def get_decomposition_candidates(
                 "score": score,
                 "paths": [
                     {
-                        "target": target,
+                        "target": _format_object_key(target),
                         "direction": legs[0]["direction"],
-                        "legs": [f"{leg['leg_from']} --{leg['leg_kind']}--> {leg['leg_to']}" for leg in legs],
+                        "legs": [
+                            f"{_format_object_key(leg['leg_from'])} --{leg['leg_kind']}--> {_format_object_key(leg['leg_to'])}"
+                            for leg in legs
+                        ],
                     }
                     for target, legs in sorted(paths_by_target.items())
                 ],

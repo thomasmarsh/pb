@@ -1,6 +1,6 @@
 // features/tables/actions.ts
 
-import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse } from "../../types/api.js";
+import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse } from "../../types/api.js";
 
 export type TablesAction =
   | { tag: "search";        q: string }
@@ -18,4 +18,8 @@ export type TablesAction =
   | { tag: "co-update-rituals-load" }
   | { tag: "co-update-rituals-loaded"; data: CoUpdateRitualsResponse }
   | { tag: "co-update-rituals-error";  error: string }
+  // Decomposition candidates (Plan 153 D5)
+  | { tag: "decomposition-candidates-load"; tableName: string }
+  | { tag: "decomposition-candidates-loaded"; data: DecompositionCandidatesResponse }
+  | { tag: "decomposition-candidates-error";  error: string }
   ;

@@ -464,6 +464,28 @@ export interface CoUpdateRitualsResponse {
   rituals: CoUpdateRitual[];
 }
 
+export interface DecompositionEvidencePath {
+  target: string;
+  direction: string;
+  legs: string[];
+}
+
+export interface DecompositionCandidate {
+  columns: string[];
+  similarity: number;
+  ritual_support: number;
+  unenforced_fk_count: number;
+  coslice_size: number;
+  score: number | null;
+  paths: DecompositionEvidencePath[];
+}
+
+export interface DecompositionCandidatesResponse {
+  table: string;
+  namespace: string | null;
+  candidates: DecompositionCandidate[];
+}
+
 // ── Program slicing ──────────────────────────────────────────────────────────
 
 export interface SliceStep {
