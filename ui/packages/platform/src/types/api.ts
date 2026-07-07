@@ -442,6 +442,28 @@ export interface ColumnUsageResponse {
   read_write: FkColumnRef[];
 }
 
+export interface StatementRef {
+  file: string;
+  object: string;
+  proc_name: string;
+  line: number;
+}
+
+export interface RitualViolation extends StatementRef {
+  written_column: FkColumnRef;
+}
+
+export interface CoUpdateRitual {
+  column_a: FkColumnRef;
+  column_b: FkColumnRef;
+  co_write_support: number;
+  violations: RitualViolation[];
+}
+
+export interface CoUpdateRitualsResponse {
+  rituals: CoUpdateRitual[];
+}
+
 // ── Program slicing ──────────────────────────────────────────────────────────
 
 export interface SliceStep {

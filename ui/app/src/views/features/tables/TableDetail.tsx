@@ -4,7 +4,7 @@ import { For, Show, createMemo, createSignal, onMount } from "solid-js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../../state.js";
 import type { AppAction } from "../../../actions.js";
-import type { TableDetail as TableDetailData, TableProcedureRef, ImpactInheritedRef, ImpactDirectRef, FkColumnRef } from "@pb/platform";
+import type { TableDetail as TableDetailData, TableProcedureRef, ImpactInheritedRef, ImpactDirectRef, FkColumnRef, CoUpdateRitual } from "@pb/platform";
 import {
   Loading, ColumnRow, EntityCard, DetailHeader, BackButton,
   AnalysisSummaryBar, ContextualPanel,
@@ -61,6 +61,46 @@ function ColumnUsageList(props: { title: string; cols: FkColumnRef[] }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function refLabel(col: FkColumnRef): string {
+  return `${col.namespace ? `${col.namespace}.` : ""}${col.table}.${col.column}`;
+}
+
+function RitualList(props: { rituals: CoUpdateRitual[] }) {
+  return (
+    <table class="data-table">
+      <thead><tr><th>Column A</th><th>Column B</th><th>Co-write support</th><th>Violations</th></tr></thead>
+      <tbody>
+        <For each={props.rituals} fallback={
+          <tr><td colspan="4" style={{ color: "var(--text-muted)", padding: "12px" }}>None.</td></tr>
+        }>
+          {(ritual) => (
+            <tr>
+              <td style={{ padding: "4px 8px" }}>{refLabel(ritual.column_a)}</td>
+              <td style={{ padding: "4px 8px" }}>{refLabel(ritual.column_b)}</td>
+              <td>{ritual.co_write_support}</td>
+              <td>
+                <Show when={ritual.violations.length > 0} fallback={
+                  <span style={{ color: "var(--text-muted)" }}>None</span>
+                }>
+                  <ul style={{ margin: "0", "padding-left": "16px" }}>
+                    <For each={ritual.violations}>
+                      {(v) => (
+                        <li>
+                          {v.object}.{v.proc_name} (line {v.line}) wrote only {refLabel(v.written_column)}
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </Show>
+              </td>
+            </tr>
+          )}
+        </For>
+      </tbody>
+    </table>
   );
 }
 
@@ -147,6 +187,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
   const [showWriters, setShowWriters] = createSignal(false);
   const [showImpact, setShowImpact] = createSignal(false);
   const [showColumnUsage, setShowColumnUsage] = createSignal(false);
+  const [showCoUpdateRituals, setShowCoUpdateRituals] = createSignal(false);
 
   const readers = d.procedures.filter((p) => !WRITE_OPS.has(p.operation));
   const writers = d.procedures.filter((p) => WRITE_OPS.has(p.operation));
@@ -167,12 +208,23 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
   const columnUsageCount = () => deadColumns().length + writeOnlyColumns().length;
   const hasColumnUsage = () => columnUsageCount() > 0;
 
+  // Corpus-wide co-update rituals (Plan 153 D1) — filtered down to rituals touching this table.
+  const coUpdateRitualsState = createMemo(() => store.getState()().tables.coUpdateRituals);
+  const tableRituals = createMemo(() => {
+    const cr = coUpdateRitualsState();
+    return cr && !("error" in cr)
+      ? cr.rituals.filter((r) => r.column_a.table === d.table_name || r.column_b.table === d.table_name)
+      : [];
+  });
+  const hasCoUpdateRituals = () => tableRituals().length > 0;
+
   const summaryItems = (): SummaryItem[] => [
     { label: "DW Readers", count: d.datawindows.length, active: showDwReaders(), onClick: () => setShowDwReaders((v) => !v) },
     { label: "Readers", count: readers.length, active: showReaders(), onClick: () => setShowReaders((v) => !v) },
     { label: "Writers", count: writers.length, active: showWriters(), onClick: () => setShowWriters((v) => !v) },
     ...(hasImpact ? [{ label: "Impact", count: impactCount, active: showImpact(), onClick: () => setShowImpact((v) => !v) } as SummaryItem] : []),
     ...(hasColumnUsage() ? [{ label: "Column Usage", count: columnUsageCount(), active: showColumnUsage(), onClick: () => setShowColumnUsage((v) => !v) } as SummaryItem] : []),
+    ...(hasCoUpdateRituals() ? [{ label: "Co-update Rituals", count: tableRituals().length, active: showCoUpdateRituals(), onClick: () => setShowCoUpdateRituals((v) => !v) } as SummaryItem] : []),
   ];
 
   function handleKeyDown(e: KeyboardEvent): void {
@@ -182,6 +234,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
       setShowWriters(false);
       setShowImpact(false);
       setShowColumnUsage(false);
+      setShowCoUpdateRituals(false);
     }
   }
 
@@ -268,6 +321,12 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
             <ColumnUsageList title="Write-only" cols={writeOnlyColumns()} />
           </ContextualPanel>
         </Show>
+
+        <Show when={showCoUpdateRituals()}>
+          <ContextualPanel title={`Co-update Rituals (${tableRituals().length})`} onClose={() => setShowCoUpdateRituals(false)}>
+            <RitualList rituals={tableRituals()} />
+          </ContextualPanel>
+        </Show>
       </div>
     </div>
   );
@@ -279,6 +338,7 @@ export function TableDetail(props: { store: Store<AppState, AppAction> }) {
 
   onMount(() => {
     props.store.dispatch({ tag: "tables", action: { tag: "column-usage-load" } });
+    props.store.dispatch({ tag: "tables", action: { tag: "co-update-rituals-load" } });
   });
 
   return (

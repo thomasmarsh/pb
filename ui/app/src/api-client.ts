@@ -20,6 +20,7 @@ import type {
   WiringDiagramResponse,
   ProcedureFootprintResponse,
   ColumnUsageResponse,
+  CoUpdateRitualsResponse,
 } from "@pb/platform";
 import { type DataWindowFile, type AstData, type WindowLayout } from "@pb/interpreter";
 import { Effect, type SQLResult } from "@pb/core";
@@ -53,6 +54,7 @@ export interface ApiClient {
   getTables(): Promise<TableSummary[]>;
   getTableDetail(name: string): Promise<TableDetail>;
   getColumnUsage(): Promise<ColumnUsageResponse>;
+  getCoUpdateRituals(): Promise<CoUpdateRitualsResponse>;
   getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse>;
   getDwQueries(): Promise<Record<string, string>>;
   executeSql(sql: string, params: unknown[]): Promise<SQLResult>;
@@ -110,6 +112,7 @@ export function createEnv(api: ApiClient): Env {
     getTables: () => lift(() => api.getTables()),
     getTableDetail: (n) => lift(() => api.getTableDetail(n)),
     getColumnUsage: () => lift(() => api.getColumnUsage()),
+    getCoUpdateRituals: () => lift(() => api.getCoUpdateRituals()),
     getErrors: (p) => lift(() => api.getErrors(p)),
     getDwQueries: () => lift(() => api.getDwQueries()),
     executeSql: (sql, params) => lift(() => api.executeSql(sql, params)),
@@ -260,6 +263,10 @@ export function createApiClient(): ApiClient {
 
     async getColumnUsage(): Promise<ColumnUsageResponse> {
       return fetchJson("/api/schema/column-usage");
+    },
+
+    async getCoUpdateRituals(): Promise<CoUpdateRitualsResponse> {
+      return fetchJson("/api/schema/co-update-rituals");
     },
 
     async getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse> {

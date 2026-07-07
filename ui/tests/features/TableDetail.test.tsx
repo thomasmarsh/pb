@@ -5,7 +5,7 @@ import { fireEvent, render } from "@solidjs/testing-library";
 import { TableDetail } from "../../app/src/views/features/tables/TableDetail.js";
 import { createTestStore } from "../helpers.js";
 import { initialTablesState } from "@pb/platform";
-import type { TableDetail as TableDetailData, ColumnUsageResponse } from "@pb/platform";
+import type { TableDetail as TableDetailData, ColumnUsageResponse, CoUpdateRitualsResponse } from "@pb/platform";
 
 const baseDetail: TableDetailData = {
   table_name: "orders",
@@ -22,9 +22,13 @@ const baseDetail: TableDetailData = {
   impact: { direct: [], inherited: [] },
 };
 
-function renderTableDetail(detail: TableDetailData = baseDetail, columnUsage: ColumnUsageResponse | null = null) {
+function renderTableDetail(
+  detail: TableDetailData = baseDetail,
+  columnUsage: ColumnUsageResponse | null = null,
+  coUpdateRituals: CoUpdateRitualsResponse | null = null,
+) {
   const { store } = createTestStore({
-    tables: { ...initialTablesState, detail, columnUsage },
+    tables: { ...initialTablesState, detail, columnUsage, coUpdateRituals },
   });
   render(() => <TableDetail store={store} />);
 }
@@ -157,6 +161,57 @@ describe("TableDetail source-first", () => {
       fireEvent.click(summaryPillBtn("Column Usage")!);
       expect(document.body.textContent).toContain("legacy_flag");
       expect(document.body.textContent).toContain("audit_stamp");
+    });
+  });
+
+  describe("Co-update Rituals pill (Plan 153 D1)", () => {
+    it("hidden when coUpdateRituals is not loaded", () => {
+      renderTableDetail(baseDetail, null, null);
+      expect(summaryBar()?.textContent).not.toContain("Co-update Rituals");
+    });
+
+    it("hidden when this table has no rituals", () => {
+      const rituals: CoUpdateRitualsResponse = {
+        rituals: [{
+          column_a: { namespace: null, table: "other_table", column: "x" },
+          column_b: { namespace: null, table: "other_table", column: "y" },
+          co_write_support: 3,
+          violations: [],
+        }],
+      };
+      renderTableDetail(baseDetail, null, rituals);
+      expect(summaryBar()?.textContent).not.toContain("Co-update Rituals");
+    });
+
+    it("shows count of this table's rituals", () => {
+      const rituals: CoUpdateRitualsResponse = {
+        rituals: [{
+          column_a: { namespace: null, table: "orders", column: "status" },
+          column_b: { namespace: null, table: "orders", column: "status_reason" },
+          co_write_support: 3,
+          violations: [],
+        }],
+      };
+      renderTableDetail(baseDetail, null, rituals);
+      expect(summaryBar()?.textContent).toContain("Co-update Rituals (1)");
+    });
+
+    it("clicking the pill opens a panel listing the ritual columns and violations", () => {
+      const rituals: CoUpdateRitualsResponse = {
+        rituals: [{
+          column_a: { namespace: null, table: "orders", column: "status" },
+          column_b: { namespace: null, table: "orders", column: "status_reason" },
+          co_write_support: 3,
+          violations: [
+            { file: "n_svc.srw", object: "n_svc", proc_name: "set_status", line: 42, written_column: { namespace: null, table: "orders", column: "status" } },
+          ],
+        }],
+      };
+      renderTableDetail(baseDetail, null, rituals);
+      fireEvent.click(summaryPillBtn("Co-update Rituals")!);
+      expect(document.body.textContent).toContain("orders.status");
+      expect(document.body.textContent).toContain("orders.status_reason");
+      expect(document.body.textContent).toContain("set_status");
     });
   });
 });

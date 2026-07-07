@@ -5,13 +5,14 @@ import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { tablesReducer, initialTablesState, type TablesEnv } from "@pb/platform";
 import type { TablesState } from "@pb/platform";
-import type { TableSummary, TableDetail, ColumnUsageResponse } from "@pb/platform";
+import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse } from "@pb/platform";
 
 const mockEnv: TablesEnv = {
-  getTables:       () => Effect.none(),
-  getTableDetail:  () => Effect.none(),
-  getColumnUsage:  () => Effect.none(),
-  navigate:        () => Effect.none(),
+  getTables:           () => Effect.none(),
+  getTableDetail:      () => Effect.none(),
+  getColumnUsage:      () => Effect.none(),
+  getCoUpdateRituals:  () => Effect.none(),
+  navigate:            () => Effect.none(),
 };
 
 const row = (name: string): TableSummary => ({
@@ -253,6 +254,82 @@ describe("tables reducer", () => {
       ts.send({ tag: "column-usage-error", error: "boom" }, (s) => {
         s.columnUsage = { error: "boom" };
         s.columnUsageLoading = false;
+      });
+    });
+  });
+
+  describe("tables/co-update-rituals-load", () => {
+    const rituals: CoUpdateRitualsResponse = {
+      rituals: [
+        {
+          column_a: { namespace: null, table: "misth_final_ypal", column: "kodfinal" },
+          column_b: { namespace: null, table: "misth_final_ypal", column: "kodypal" },
+          co_write_support: 3,
+          violations: [],
+        },
+      ],
+    };
+
+    it("sets coUpdateRitualsLoading and fires getCoUpdateRituals", () => {
+      const env: TablesEnv = { ...mockEnv, getCoUpdateRituals: () => Effect.send(rituals) };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "co-update-rituals-load" }, (s) => {
+        s.coUpdateRitualsLoading = true;
+      });
+      ts.receive({ tag: "co-update-rituals-loaded", data: rituals }, (s) => {
+        s.coUpdateRituals = rituals;
+        s.coUpdateRitualsLoading = false;
+      });
+    });
+
+    it("does nothing if already loaded", () => {
+      const state: TablesState = { ...initialTablesState, coUpdateRituals: rituals };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "co-update-rituals-load" }, () => {});
+    });
+
+    it("does nothing if a load is already in flight", () => {
+      const state: TablesState = { ...initialTablesState, coUpdateRitualsLoading: true };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "co-update-rituals-load" }, () => {});
+    });
+
+    it("fires getCoUpdateRituals; rejection maps to co-update-rituals-error", async () => {
+      const env: TablesEnv = {
+        ...mockEnv,
+        getCoUpdateRituals: () => Effect.fromPromise(() => Promise.reject(new Error("timeout"))),
+      };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "co-update-rituals-load" }, (s) => {
+        s.coUpdateRitualsLoading = true;
+      });
+      await ts.drain();
+      ts.receive({ tag: "co-update-rituals-error", error: "timeout" }, (s) => {
+        s.coUpdateRituals = { error: "timeout" };
+        s.coUpdateRitualsLoading = false;
+      });
+    });
+  });
+
+  describe("tables/co-update-rituals-loaded", () => {
+    it("stores the rituals and clears loading", () => {
+      const rituals: CoUpdateRitualsResponse = { rituals: [] };
+      const state: TablesState = { ...initialTablesState, coUpdateRitualsLoading: true };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "co-update-rituals-loaded", data: rituals }, (s) => {
+        s.coUpdateRituals = rituals;
+        s.coUpdateRitualsLoading = false;
+      });
+    });
+  });
+
+  describe("tables/co-update-rituals-error", () => {
+    it("stores the error and clears loading", () => {
+      const state: TablesState = { ...initialTablesState, coUpdateRitualsLoading: true };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "co-update-rituals-error", error: "boom" }, (s) => {
+        s.coUpdateRituals = { error: "boom" };
+        s.coUpdateRitualsLoading = false;
       });
     });
   });

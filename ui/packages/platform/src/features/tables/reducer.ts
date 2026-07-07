@@ -3,7 +3,7 @@
 import { Effect, type Reducer } from "@pb/core";
 import type { TablesState } from "./types.js";
 import type { TablesAction } from "./actions.js";
-import type { TableSummary, TableDetail, ColumnUsageResponse } from "../../types/api.js";
+import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse } from "../../types/api.js";
 import type { NavigationAction } from "../navigation/types.js";
 
 export type { TablesState };
@@ -13,6 +13,7 @@ export interface TablesEnv {
   getTables(): Effect<TableSummary[]>;
   getTableDetail(name: string): Effect<TableDetail>;
   getColumnUsage(): Effect<ColumnUsageResponse>;
+  getCoUpdateRituals(): Effect<CoUpdateRitualsResponse>;
   navigate(action: NavigationAction): Effect<never>;
 }
 
@@ -68,6 +69,21 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
   case "column-usage-error":
     draft.columnUsage = { error: action.error };
     draft.columnUsageLoading = false;
+    return null;
+  case "co-update-rituals-load": {
+    if (draft.coUpdateRituals || draft.coUpdateRitualsLoading) return null;
+    draft.coUpdateRitualsLoading = true;
+    return env.getCoUpdateRituals()
+      .map((data): TablesAction => ({ tag: "co-update-rituals-loaded", data }))
+      .catch((e): TablesAction => ({ tag: "co-update-rituals-error", error: errMsg(e) }));
+  }
+  case "co-update-rituals-loaded":
+    draft.coUpdateRituals = action.data;
+    draft.coUpdateRitualsLoading = false;
+    return null;
+  case "co-update-rituals-error":
+    draft.coUpdateRituals = { error: action.error };
+    draft.coUpdateRitualsLoading = false;
     return null;
   default:
     return null;
