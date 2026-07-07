@@ -9,7 +9,7 @@ import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TypeResolve
 import PB.Analysis.SchemaCategory
-  ( SchemaInputs (..), SchGraph (..), buildSchema )
+  ( SchemaInputs (..), SchGraph (..), SchObject (..), buildSchema, columnCoslice )
 import PB.Pipeline.DuckDb
   ( DuckConn
   , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
@@ -22,6 +22,7 @@ import PB.Pipeline.DuckDb
   , appendTaintSources, appendTaintSinks, appendTaintPaths
   , appendTaintAnnotations, appendDeadCode
   , appendSchemaObjects, appendSchemaMorphisms
+  , appendDecompositionCoslice
   )
 
 import Data.Aeson          (Value (..), encode, object, (.=))
@@ -51,7 +52,8 @@ runPhaseB conn = do
   inh   <- runPass5  conn
   allRC <- runPass67 conn
   runPass8 conn inh allRC
-  runPass9 conn
+  sch   <- runPass9 conn
+  runPass10 conn sch
 
 runPass5 :: DuckConn -> IO (Map.Map Text Text)
 runPass5 conn = do
@@ -110,8 +112,9 @@ runPass8 conn inh allRC = do
   appendDeadCode conn dead
 
 -- | Pass 9 (Plan 148 Phase 1b): materialize the schema category @Sch@ from
--- Phase A's DW-retrieve/DW-join/SQL-column/DDL-catalog tables.
-runPass9 :: DuckConn -> IO ()
+-- Phase A's DW-retrieve/DW-join/SQL-column/DDL-catalog tables. Returns the
+-- graph so Pass 10 can traverse it without rebuilding from DB rows.
+runPass9 :: DuckConn -> IO SchGraph
 runPass9 conn = do
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Building schema category" :: Text)])
   drCols  <- queryDwRetrieveColumns conn
@@ -128,3 +131,14 @@ runPass9 conn = do
         }
   appendSchemaObjects   conn (Set.toList (sgObjects sch))
   appendSchemaMorphisms conn (sgLegs sch)
+  pure sch
+
+-- | Pass 10 (Plan 153 D5): for every column object, materialize its
+-- 'columnCoslice' (rewrite-cost lineage) so Python's decomposition-ranking
+-- service reads pre-computed reachability rather than re-deriving it.
+runPass10 :: DuckConn -> SchGraph -> IO ()
+runPass10 conn sch = do
+  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Computing decomposition coslices" :: Text)])
+  let columnObjs = [ o | o@(ColumnObj _ _) <- Set.toList (sgObjects sch) ]
+      coslices   = [ (o, columnCoslice sch o) | o <- columnObjs ]
+  appendDecompositionCoslice conn coslices

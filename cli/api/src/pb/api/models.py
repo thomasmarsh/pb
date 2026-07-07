@@ -117,3 +117,25 @@ class ColumnAffinityResponse(BaseModel):
     columns: list[str]
     co_access_matrix: list[list[int]]
     dendrogram: list[DendrogramMerge]
+
+
+class DecompositionEvidencePath(BaseModel):
+    target: str
+    direction: str
+    legs: list[str]
+
+
+class DecompositionCandidate(BaseModel):
+    columns: list[str]
+    similarity: float
+    ritual_support: int
+    unenforced_fk_count: int
+    coslice_size: int
+    score: float | None
+    paths: list[DecompositionEvidencePath]
+
+
+class DecompositionCandidatesResponse(BaseModel):
+    table: str
+    namespace: str | None
+    candidates: list[DecompositionCandidate]

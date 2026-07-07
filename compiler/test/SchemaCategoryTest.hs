@@ -271,6 +271,83 @@ tests = testGroup "SchemaCategory"
         assert (all (\o -> all (\p -> spTo p == o) (validationWalkBack sch o)) (Set.toList (sgObjects sch)))
         assert (all (\o -> all (\p -> spFrom p == o) (blastRadius sch o)) (Set.toList (sgObjects sch)))
     ]
+
+  , testGroup "columnCoslice"
+    [ testCase "forward-only reachable statement appears via its reads leg" $
+        let colA = ColumnObj (TableRef Nothing "a") "x"
+            sid  = SqlStmtId "f.srf" "obj" "proc" 5
+            inp  = emptyInputs
+              { inSqlColumns = [ SqlColRow sid Nothing (Just "a") "x" False ] }  -- LegReads: colA -> stmt
+            sch = buildSchema inp
+            expected = SchPath colA (StmtObj sid) [ SchMorphism colA (StmtObj sid) LegReads ]
+        in assertBool "reads-leg path present" (expected `elem` columnCoslice sch colA)
+
+    , testCase "backward-only reachable statement appears via its writes leg" $
+        let colA = ColumnObj (TableRef Nothing "account") "balance"
+            sid  = SqlStmtId "f.srf" "obj" "proc" 5
+            inp  = emptyInputs
+              { inSqlColumns = [ SqlColRow sid Nothing (Just "account") "balance" True ] }  -- LegWrites: stmt -> colA
+            sch = buildSchema inp
+            expected = SchPath (StmtObj sid) colA [ SchMorphism (StmtObj sid) colA LegWrites ]
+        in assertBool "writes-leg path present" (expected `elem` columnCoslice sch colA)
+
+    , testCase "statement reachable via both forward and backward directions is deduped to one entry, the shorter path" $
+        let colA = ColumnObj (TableRef Nothing "a") "x"
+            sid  = SqlStmtId "f.srf" "obj" "proc" 5
+            inp  = emptyInputs
+              { inSqlColumns =
+                  [ SqlColRow sid Nothing (Just "a") "x" False  -- LegReads: colA -> stmt (forward, 1 hop)
+                  , SqlColRow sid Nothing (Just "b") "y" True   -- LegWrites: stmt -> colB (backward via FK, 2 hops)
+                  ]
+              , inCatalogFks =
+                  [ CatFkRow Nothing "b" "y" Nothing "a" "x" ]  -- LegFk: colB -> colA
+              }
+            sch = buildSchema inp
+            paths = columnCoslice sch colA
+            matchesStmt p = case p of
+              SchPath from to _ | from == colA && to == StmtObj sid -> True
+              SchPath from to _ | from == StmtObj sid && to == colA -> True
+              _ -> False
+            shortPath = SchPath colA (StmtObj sid) [ SchMorphism colA (StmtObj sid) LegReads ]
+        in do
+          assertBool "exactly one entry reaches the statement" (length (filter matchesStmt paths) == 1)
+          assertBool "the kept entry is the shorter (1-hop) forward path" (shortPath `elem` paths)
+
+    , testCase "FK-chained writer two hops away (backward) is included" $
+        let colGroupPerm = ColumnObj (TableRef Nothing "usrgroupperm") "kodaction"
+            colActions    = ColumnObj (TableRef Nothing "usractions") "kodaction"
+            sid = SqlStmtId "f.srf" "obj" "proc" 1
+            inp = emptyInputs
+              { inCatalogFks =
+                  [ CatFkRow Nothing "usrgroupperm" "kodaction" Nothing "usractions" "kodaction" ]
+              , inSqlColumns =
+                  [ SqlColRow sid Nothing (Just "usrgroupperm") "kodaction" True ]
+              }
+            sch = buildSchema inp
+            expected = SchPath (StmtObj sid) colActions
+              [ SchMorphism (StmtObj sid) colGroupPerm LegWrites
+              , SchMorphism colGroupPerm colActions (LegFk FkDdl)
+              ]
+        in assertBool "two-hop FK writer path present" (expected `elem` columnCoslice sch colActions)
+
+    , testCase "column with no legs has an empty coslice" $
+        let colA = ColumnObj (TableRef Nothing "a") "x"
+            inp  = emptyInputs { inCatalogColumns = [ CatColumnRow Nothing "a" "x" ] }
+            sch  = buildSchema inp
+        in columnCoslice sch colA @?= []
+
+    , testProperty "every columnCoslice entry's endpoint is a StmtObj other than the seed" $ property $ do
+        inp <- forAll genSchemaInputs
+        let sch = buildSchema inp
+            isStmtObj (StmtObj _) = True
+            isStmtObj _            = False
+            endpointOf seed p
+              | spFrom p == seed = spTo p
+              | otherwise         = spFrom p
+        assert (all
+          (\seed -> all (isStmtObj . endpointOf seed) (columnCoslice sch seed))
+          (Set.toList (sgObjects sch)))
+    ]
   ]
 
 -- | Total indexing for the fixed-length generated chain (avoids the banned

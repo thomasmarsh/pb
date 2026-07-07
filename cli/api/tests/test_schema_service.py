@@ -12,6 +12,7 @@ from pb.api.services.schema import (
     get_column_affinity,
     get_column_managers,
     get_column_usage,
+    get_decomposition_candidates,
     get_fk_graph,
     get_procedure_footprint,
 )
@@ -244,3 +245,75 @@ def test_get_column_affinity_leaf_order_groups_named_blocks(schema_db_conn: duck
     for block in ({"name", "surname", "fathername"}, {"kodypal", "kodxrisi"}):
         idxs = indices(block)
         assert idxs == list(range(idxs[0], idxs[0] + len(idxs)))
+
+
+def test_get_decomposition_candidates_unknown_table_is_none(schema_db_conn: duckdb.DuckDBPyConnection):
+    assert get_decomposition_candidates(schema_db_conn, None, "__nonexistent_table__") is None
+
+
+def test_get_decomposition_candidates_zero_evidence_still_reports_real_coslice(
+    schema_db_conn: duckdb.DuckDBPyConnection,
+):
+    # misth_ypal has real D3 blocks (see test_get_column_affinity_dendrogram_
+    # finds_named_blocks) but D1's rituals and D2's unenforced FKs never touch
+    # this table in this corpus -- every candidate scores 0.0, not because the
+    # coslice is empty (it isn't) but because there's no ritual/FK evidence
+    # here. A real, honest finding, not a bug -- pinned as such rather than
+    # skipped.
+    result = get_decomposition_candidates(schema_db_conn, None, "misth_ypal", min_similarity=0.9)
+    assert result is not None
+    by_cols = {frozenset(c["columns"]): c for c in result["candidates"]}
+
+    name_surname = by_cols[frozenset({"name", "surname"})]
+    assert name_surname["ritual_support"] == 0
+    assert name_surname["unenforced_fk_count"] == 0
+    assert name_surname["coslice_size"] == 27
+    assert name_surname["score"] == 0.0
+    assert len(name_surname["paths"]) == 27
+
+
+def test_get_decomposition_candidates_misth_final_ypal_real_scores(schema_db_conn: duckdb.DuckDBPyConnection):
+    # misth_final_ypal is the corpus's one table with real D1 (co-write
+    # ritual) evidence -- confirmed here as a nonzero-score candidate, not
+    # just a nonzero coslice.
+    result = get_decomposition_candidates(schema_db_conn, None, "misth_final_ypal", min_similarity=0.7)
+    by_cols = {frozenset(c["columns"]): c for c in result["candidates"]}
+
+    triple = by_cols[frozenset({"kodfinal", "kodxrisi", "kodypal"})]
+    assert triple["ritual_support"] == 9
+    assert triple["unenforced_fk_count"] == 0
+    assert triple["coslice_size"] == 120
+    assert triple["score"] == 9 / 120
+
+    pair = by_cols[frozenset({"kodfinal", "kodxrisi"})]
+    assert pair["ritual_support"] == 3
+    assert pair["coslice_size"] == 119
+    assert pair["score"] == 3 / 119
+
+
+def test_get_decomposition_candidates_paths_explain_fk_chained_reach(schema_db_conn: duckdb.DuckDBPyConnection):
+    # Cross-check anchor: paths are first-class, not just a count -- a
+    # 2-hop FK-chained target must show both legs, in order.
+    result = get_decomposition_candidates(schema_db_conn, None, "misth_final_ypal", min_similarity=0.7)
+    triple = next(c for c in result["candidates"] if set(c["columns"]) == {"kodfinal", "kodxrisi", "kodypal"})
+
+    fk_chained = next(
+        p
+        for p in triple["paths"]
+        if p["target"].endswith("dw_misth_final_form.srd:dw_misth_final_form")
+    )
+    assert fk_chained["direction"] == "backward"
+    assert len(fk_chained["legs"]) == 2
+    assert fk_chained["legs"][0].endswith(
+        "dw_misth_final_form.srd:dw_misth_final_form --retrieve--> col:misth_final.kodfinal"
+    )
+    assert fk_chained["legs"][1] == "col:misth_final.kodfinal --fk--> col:misth_final_ypal.kodfinal"
+
+
+def test_get_decomposition_candidates_min_similarity_filters_low_blocks(
+    schema_db_conn: duckdb.DuckDBPyConnection,
+):
+    loose = get_decomposition_candidates(schema_db_conn, None, "misth_ypal", min_similarity=0.0)
+    strict = get_decomposition_candidates(schema_db_conn, None, "misth_ypal", min_similarity=0.95)
+    assert len(strict["candidates"]) < len(loose["candidates"])
+    assert all(c["similarity"] >= 0.95 for c in strict["candidates"])

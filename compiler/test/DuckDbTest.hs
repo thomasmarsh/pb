@@ -4,6 +4,7 @@ import PB.Prelude
 import PB.Pipeline.DuckDb
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), FkSource (..), SchMorphism (..)
+  , SchPath (..)
   , DwRetrieveColRow (..), DwJoinLegRow (..), SqlColRow (..)
   , CatColumnRow (..), CatFkRow (..)
   )
@@ -22,6 +23,7 @@ tests = testGroup "DuckDb"
   , testCase "SchemaCategory Phase B queries round-trip Phase A appends"
       testSchemaCategoryQueryRoundTrip
   , testCase "appendSchemaObjects/Morphisms accept rows" testAppendSchemaObjectsMorphisms
+  , testCase "appendDecompositionCoslice accepts rows" testAppendDecompositionCoslice
   ]
 
 testInitSchema :: IO ()
@@ -148,3 +150,13 @@ testAppendSchemaObjectsMorphisms = withWriteConn ":memory:" $ \conn -> do
   -- Appending empty lists after a real batch must not throw
   appendSchemaObjects   conn []
   appendSchemaMorphisms conn []
+
+testAppendDecompositionCoslice :: IO ()
+testAppendDecompositionCoslice = withWriteConn ":memory:" $ \conn -> do
+  initSchema conn
+  let colA = ColumnObj (TableRef Nothing "a") "x"
+      stmt = SqlStmtId "f.srf" "obj" "proc" 1
+      path = SchPath colA (StmtObj stmt) [ SchMorphism colA (StmtObj stmt) LegReads ]
+  appendDecompositionCoslice conn [ (colA, [path]) ]
+  -- Appending an empty list after a real batch must not throw
+  appendDecompositionCoslice conn []

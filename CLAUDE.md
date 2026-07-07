@@ -814,14 +814,20 @@ stripBom          :: Text -> Text
 ### `PB.Pipeline.Passes`
 
 ```haskell
--- Phase B orchestration: link analysis (passes 5-9) in DuckDB mode.
+-- Phase B orchestration: link analysis (passes 5-10) in DuckDB mode.
 runPhaseB :: DuckConn -> IO ()
 -- Internally: runPass5 (resolveTypes + resolveCalls → resolved_types/calls),
 --             runPass67 (buildInterprocEdges + taint → interproc_edges/taint_*),
 --             runPass8 (computeDeadProcedures → dead_code)
 --             runPass9 (Plan 148 Phase 1b, 2026-07-07: queryDwRetrieveColumns/
 --               queryDwJoinLegs/querySqlCols/queryCatColumns/queryCatFks →
---               SchemaCategory.buildSchema → schema_objects/schema_morphisms)
+--               SchemaCategory.buildSchema → schema_objects/schema_morphisms;
+--               now returns SchGraph, not (), so Pass 10 can traverse it
+--               without rebuilding from DB rows)
+--             runPass10 (Plan 153 D5, 2026-07-07: columnCoslice over every
+--               ColumnObj in the graph → decomposition_coslice)
+runPass9  :: DuckConn -> IO SchGraph
+runPass10 :: DuckConn -> SchGraph -> IO ()
 ```
 
 ### `PB.Pipeline.SqlParse`
@@ -1266,6 +1272,16 @@ data ValidationConstraint = ValidationConstraint { vcColumn :: SchObject, vcDesc
 constraintWriters :: SchGraph -> ValidationConstraint -> [StmtId]
 -- Dedup'd StmtIds reachable backward from vcColumn (SqlStmtId writers +
 -- DwRetrieveId retrieves), direct or via an FK chain.
+
+-- Plan 153 D5 (2026-07-07): the "rewrite cost" of moving a column --
+-- union of blastRadius + validationWalkBack, collapsed to the shortest
+-- path per distinct reachable StmtObj (ColumnObj-only endpoints, e.g. an
+-- FK hop with no statement at the far end, are dropped). Consumed by
+-- PB.Pipeline.Passes.runPass10, which materializes one row per (seed
+-- column, target statement, leg) to decomposition_coslice for every
+-- ColumnObj in the corpus -- Python's get_decomposition_candidates never
+-- recomputes reachability, only reads this table.
+columnCoslice :: SchGraph -> SchObject -> [SchPath]
 ```
 
 ### `PB.Analysis.SchFootprint` (Plan 148 Phase 3, done 2026-07-07)
@@ -1379,6 +1395,14 @@ appendDeadCode   :: DuckConn -> [DeadCode.DeadProcedure] -> IO ()
 -- string form.
 appendSchemaObjects   :: DuckConn -> [SchemaCategory.SchObject]   -> IO ()
 appendSchemaMorphisms :: DuckConn -> [SchemaCategory.SchMorphism] -> IO ()
+-- decomposition_coslice (Plan 153 D5, 2026-07-07): written by runPass10,
+-- one row per leg of each column's columnCoslice path. seed_key/target_key
+-- are schObjectKey strings; direction is "forward" (blastRadius) or
+-- "backward" (validationWalkBack), derived by comparing the path's spFrom
+-- to the seed at flatten time (SchPath itself carries no direction tag).
+-- leg_ordinal orders a target's legs within its (seed_key, target_key)
+-- path. Python's get_decomposition_candidates (cli/api) is the sole reader.
+appendDecompositionCoslice :: DuckConn -> [(SchemaCategory.SchObject, [SchemaCategory.SchPath])] -> IO ()
 -- Schema init:
 withWriteConn    :: FilePath -> (DuckConn -> IO a) -> IO a
 initSchema       :: DuckConn -> IO ()

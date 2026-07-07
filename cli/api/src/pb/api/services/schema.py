@@ -1,9 +1,14 @@
-"""`Sch` consumers (Plan 153 D1 + D2 + D4 + D6) — co-update rituals,
-implied-FK graph, column-usage classification, and statement-management
+"""`Sch` consumers (Plan 153 D1 + D2 + D3 + D4 + D5 + D6) — co-update
+rituals, implied-FK graph, column-affinity clustering, decomposition-
+candidate ranking, column-usage classification, and statement-management
 views.
 
 Pure presentation over Plan 148's schema_objects/schema_morphisms/catalog_*/
-sql_statement_columns tables. No traversal, no new DuckDB tables.
+sql_statement_columns tables, plus (D5 only) Plan 153 D5's
+decomposition_coslice table — the one traversal-derived table in this file,
+materialized by the Haskell pass `PB.Pipeline.Passes.runPass10` via
+`PB.Analysis.SchemaCategory.columnCoslice`. D5 never recomputes reachability
+in Python or SQL; it only reads the pre-computed rows.
 """
 
 from __future__ import annotations
@@ -415,3 +420,108 @@ def get_column_managers(
     ]
     managers += [{"kind": "dw_retrieve", "file": r["file"], "dw_name": r["dw_name"]} for r in dw_rows]
     return managers
+
+
+def _column_key(namespace: str | None, table: str, column: str) -> str:
+    prefix = f"{namespace}." if namespace else ""
+    return f"col:{prefix}{table}.{column}"
+
+
+def _coslice_paths(conn: duckdb.DuckDBPyConnection, seed_keys: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """Every distinct target statement reachable from any seed column,
+    keeping the shortest leg chain when more than one seed column in the
+    block reaches the same statement. Reads decomposition_coslice as-is —
+    no traversal happens here.
+    """
+    if not seed_keys:
+        return {}
+    placeholders = ",".join("?" for _ in seed_keys)
+    leg_rows = rows(
+        conn.execute(
+            f"SELECT seed_key, target_key, direction, leg_ordinal, leg_from, leg_to, leg_kind "
+            f"FROM decomposition_coslice WHERE seed_key IN ({placeholders}) "
+            f"ORDER BY target_key, seed_key, leg_ordinal",
+            seed_keys,
+        )
+    )
+    by_path: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for r in leg_rows:
+        by_path[(r["seed_key"], r["target_key"])].append(r)
+
+    best: dict[str, list[dict[str, Any]]] = {}
+    for (_seed, target), legs in by_path.items():
+        if target not in best or len(legs) < len(best[target]):
+            best[target] = legs
+    return best
+
+
+def _in_block(col_ref: dict[str, Any], namespace: str | None, table: str, members: set[str]) -> bool:
+    return col_ref["table"] == table and col_ref["namespace"] == namespace and col_ref["column"] in members
+
+
+def get_decomposition_candidates(
+    conn: duckdb.DuckDBPyConnection,
+    namespace: str | None,
+    table_name: str,
+    min_similarity: float = 0.7,
+) -> dict[str, Any] | None:
+    """D5: rank D3's dendrogram merges (candidate column-block splits) by
+    `score = (ritual_support + unenforced_fk_count) / coslice_size` — the
+    v0 formula from doc/plan/153-schema-normalization-consumers.md, a
+    placeholder by design, to be groomed once real output exists across
+    more than one table. `coslice_size` (the rewrite cost) is read
+    directly from `decomposition_coslice`; ritual/FK evidence reuses D1's
+    and D2's own services rather than re-querying schema_morphisms.
+    """
+    affinity = get_column_affinity(conn, namespace, table_name)
+    if affinity is None:
+        return None
+
+    rituals = get_co_update_rituals(conn, min_support=1)["rituals"]
+    fk_graph = get_fk_graph(conn)
+
+    candidates: list[dict[str, Any]] = []
+    for merge in affinity["dendrogram"]:
+        if merge["similarity"] < min_similarity or len(merge["members"]) < 2:
+            continue
+        members = set(merge["members"])
+
+        ritual_support = sum(
+            r["co_write_support"]
+            for r in rituals
+            if _in_block(r["column_a"], namespace, table_name, members)
+            and _in_block(r["column_b"], namespace, table_name, members)
+        )
+        unenforced_fk_count = sum(
+            1
+            for e in fk_graph["unenforced"]
+            if _in_block(e["from_column"], namespace, table_name, members)
+            or _in_block(e["to_column"], namespace, table_name, members)
+        )
+
+        seed_keys = [_column_key(namespace, table_name, c) for c in sorted(members)]
+        paths_by_target = _coslice_paths(conn, seed_keys)
+        coslice_size = len(paths_by_target)
+        score = (ritual_support + unenforced_fk_count) / coslice_size if coslice_size else None
+
+        candidates.append(
+            {
+                "columns": sorted(members),
+                "similarity": merge["similarity"],
+                "ritual_support": ritual_support,
+                "unenforced_fk_count": unenforced_fk_count,
+                "coslice_size": coslice_size,
+                "score": score,
+                "paths": [
+                    {
+                        "target": target,
+                        "direction": legs[0]["direction"],
+                        "legs": [f"{leg['leg_from']} --{leg['leg_kind']}--> {leg['leg_to']}" for leg in legs],
+                    }
+                    for target, legs in sorted(paths_by_target.items())
+                ],
+            }
+        )
+
+    candidates.sort(key=lambda c: (c["score"] is None, -(c["score"] or 0)))
+    return {"table": table_name, "namespace": namespace, "candidates": candidates}

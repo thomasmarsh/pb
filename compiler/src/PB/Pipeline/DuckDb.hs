@@ -67,6 +67,7 @@ module PB.Pipeline.DuckDb
   , appendDeadCode
   , appendSchemaObjects
   , appendSchemaMorphisms
+  , appendDecompositionCoslice
   ) where
 
 import PB.Prelude
@@ -80,6 +81,7 @@ import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), FkSource (..), SchMorphism (..)
+  , SchPath (..)
   , schObjectKey
   , DwRetrieveColRow (..), DwJoinLegRow (..), SqlColRow (..)
   , CatColumnRow (..), CatFkRow (..)
@@ -225,6 +227,9 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
         \stmt_file TEXT, stmt_object TEXT, stmt_proc TEXT, stmt_line INTEGER)"
       , "CREATE TABLE IF NOT EXISTS schema_morphisms \
         \(from_key TEXT, to_key TEXT, leg_kind TEXT, fk_source TEXT)"
+      , "CREATE TABLE IF NOT EXISTS decomposition_coslice \
+        \(seed_key TEXT, target_key TEXT, direction TEXT, leg_ordinal INTEGER, \
+        \leg_from TEXT, leg_to TEXT, leg_kind TEXT, fk_source TEXT)"
       , "CREATE OR REPLACE VIEW all_sql_tables AS \
         \SELECT file, dw_name AS object, 'datawindow' AS source, \
         \'retrieve' AS operation, table_name, NULL AS proc_name, NULL::INT AS line \
@@ -1063,6 +1068,29 @@ appendSchemaMorphisms conn ms = withRaw conn "schema_morphisms" $ \app ->
     aText      app kindText
     aMaybeText app fkSrc
     endRow app
+
+-- | Plan 153 D5: one row per leg of each column's materialized coslice path
+-- ('PB.Analysis.SchemaCategory.columnCoslice'), so Python can read the
+-- rewrite-cost lineage directly rather than re-deriving it.
+appendDecompositionCoslice :: DuckConn -> [(SchObject, [SchPath])] -> IO ()
+appendDecompositionCoslice _    [] = pure ()
+appendDecompositionCoslice conn rows = withRaw conn "decomposition_coslice" $ \app ->
+  for_ rows $ \(seed, paths) ->
+    for_ paths $ \p -> do
+      let direction :: Text
+          direction = if spFrom p == seed then "forward" else "backward"
+          target    = if spFrom p == seed then spTo p else spFrom p
+      for_ (zip [0 :: Int ..] (spLegs p)) $ \(ordinal, leg) -> do
+        aText      app (schObjectKey seed)
+        aText      app (schObjectKey target)
+        aText      app direction
+        aInt       app ordinal
+        aText      app (schObjectKey (legFrom leg))
+        aText      app (schObjectKey (legTo leg))
+        let (kindText, fkSrc) = renderLegKind (legKind leg)
+        aText      app kindText
+        aMaybeText app fkSrc
+        endRow app
 
 -- ---------------------------------------------------------------------------
 -- Internal helpers

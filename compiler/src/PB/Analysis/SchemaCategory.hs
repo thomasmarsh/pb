@@ -33,6 +33,7 @@ module PB.Analysis.SchemaCategory
   , validationWalkBack
   , ValidationConstraint (..)
   , constraintWriters
+  , columnCoslice
   ) where
 
 import PB.Prelude
@@ -311,3 +312,24 @@ constraintWriters :: SchGraph -> ValidationConstraint -> [StmtId]
 constraintWriters g c =
   Set.toList (Set.fromList
     [ sid | p <- validationWalkBack g (vcColumn c), StmtObj sid <- [spFrom p] ])
+
+-- | The "rewrite cost" of moving a column (Plan 153 D5): every distinct
+-- statement reachable either forward (this column is read, possibly via an
+-- FK chain, by something downstream) or backward (this column is written or
+-- retrieved into, possibly via an FK chain) — one path per distinct
+-- statement, since a bare count would discard the explanation of *why* a
+-- site is affected.
+columnCoslice :: SchGraph -> SchObject -> [SchPath]
+columnCoslice g seed =
+  Map.elems (Map.fromListWith shorter
+    [ (endpoint p, p)
+    | p <- blastRadius g seed <> validationWalkBack g seed
+    , StmtObj _ <- [endpoint p]
+    ])
+  where
+    endpoint p
+      | spFrom p == seed = spTo p
+      | otherwise         = spFrom p
+    shorter a b
+      | length (spLegs a) <= length (spLegs b) = a
+      | otherwise                              = b

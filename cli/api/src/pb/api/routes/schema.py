@@ -1,4 +1,4 @@
-"""`Sch` views (Plan 153 D1 + D2 + D4 + D6) — thin route layer, delegates to services.schema."""
+"""`Sch` views (Plan 153 D1 + D2 + D3 + D4 + D5 + D6) — thin route layer, delegates to services.schema."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from pb.api.models import (
     ColumnAffinityResponse,
     ColumnUsageResponse,
     CoUpdateRitualsResponse,
+    DecompositionCandidatesResponse,
     FkGraphResponse,
     ProcedureFootprintResponse,
 )
@@ -17,6 +18,7 @@ from pb.api.services.schema import (
     get_column_affinity,
     get_column_managers,
     get_column_usage,
+    get_decomposition_candidates,
     get_fk_graph,
     get_procedure_footprint,
 )
@@ -80,3 +82,19 @@ async def get_column_managers_route(
     conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
     return get_column_managers(conn, namespace or None, table_name, column_name)
+
+
+@router.get(
+    "/api/schema/decomposition-candidates/{table_name}",
+    response_model=DecompositionCandidatesResponse,
+)
+async def get_decomposition_candidates_route(
+    table_name: str,
+    namespace: str = Query("", description="Table namespace/schema, if any"),
+    min_similarity: float = Query(0.7, ge=0.0, le=1.0, description="Minimum dendrogram merge similarity to rank"),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    result = get_decomposition_candidates(conn, namespace or None, table_name, min_similarity)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Table not found: {table_name}")
+    return result
