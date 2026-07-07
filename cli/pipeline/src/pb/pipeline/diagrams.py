@@ -11,6 +11,7 @@ import networkx as nx
 from pb.lib.diagram_builder import (
     render_calls,
     render_dw_tables,
+    render_fk_graph,
     render_heatmap,
     render_inheritance,
     render_proc_tables,
@@ -192,6 +193,49 @@ def build_proc_tables(
     return render_proc_tables(rows, table_name)
 
 
+_FK_EDGE_SQL = """
+    SELECT DISTINCT
+        fo.namespace AS from_namespace, fo.table_name AS from_table, fo.column_name AS from_column,
+        t.namespace AS to_namespace, t.table_name AS to_table, t.column_name AS to_column
+    FROM schema_morphisms m
+    JOIN schema_objects fo ON fo.object_key = m.from_key
+    JOIN schema_objects t ON t.object_key = m.to_key
+    WHERE m.leg_kind = 'fk' AND m.fk_source = ?
+"""
+
+
+def build_fk_graph(conn: Conn) -> graphviz.Digraph:
+    """Plan 153 D2: implied-FK graph, code (`dw_join`) vs DDL evidence.
+
+    Mirrors `pb.api.services.schema.get_fk_graph`'s directed-pair-matching
+    classification (duplicated rather than imported: `pipeline` never
+    depends on `api`), dropping the constraint_name/dw_sources annotation
+    lookups this diagram doesn't render.
+    """
+    ddl_rows = conn.execute(_FK_EDGE_SQL, ["ddl"]).fetchall()
+    dwj_rows = conn.execute(_FK_EDGE_SQL, ["dw_join"]).fetchall()
+
+    def pair(row: tuple) -> tuple[tuple, tuple]:
+        a = (row[0], row[1], row[2])
+        b = (row[3], row[4], row[5])
+        return (a, b)
+
+    ddl_pairs = {pair(r) for r in ddl_rows}
+    ddl_pairs_or_reverse = ddl_pairs | {(b, a) for a, b in ddl_pairs}
+    dwj_pairs = {pair(r) for r in dwj_rows}
+    dwj_pairs_or_reverse = dwj_pairs | {(b, a) for a, b in dwj_pairs}
+
+    edges: list[tuple[str, str, str, str, str]] = []
+    for r in dwj_rows:
+        category = "corroborated" if pair(r) in ddl_pairs_or_reverse else "unenforced"
+        edges.append((r[1], r[2], r[4], r[5], category))
+    for r in ddl_rows:
+        if pair(r) not in dwj_pairs_or_reverse:
+            edges.append((r[1], r[2], r[4], r[5], "unused"))
+
+    return render_fk_graph(edges)
+
+
 def render_svg(kind: str, conn: Conn, **params: Any) -> str:
     """Build and render a diagram to SVG with LRU caching.
 
@@ -218,6 +262,7 @@ def render_svg(kind: str, conn: Conn, **params: Any) -> str:
         "proc-tables": lambda: build_proc_tables(
             conn, table_name=params.get("table_name", ""), focal=params.get("focal", ""),
         ),
+        "fk-graph": lambda: build_fk_graph(conn),
     }
     builder = builders.get(kind)
     if builder is None:

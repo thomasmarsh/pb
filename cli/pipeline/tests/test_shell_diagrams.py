@@ -10,6 +10,7 @@ from pb.pipeline.diagrams import (
     _svg_cache,
     build_calls,
     build_dw_tables,
+    build_fk_graph,
     build_heatmap,
     build_inheritance,
     render_svg,
@@ -214,7 +215,28 @@ def test_render_svg_unknown_kind_raises(conn):
 
 
 # ---------------------------------------------------------------------------
-# G. DOT roundtrip (requires dot binary)
+# G. FK graph (Plan 153 D2) — needs --ddl + sqlglot bridge, uses the
+# session-scoped schema_db_conn fixture from root conftest.py, not the
+# plain `conn` fixture above (which lacks --ddl and leaves Sch empty).
+# ---------------------------------------------------------------------------
+
+
+def test_fk_graph_counts_match_pinned_schema_service_numbers(schema_db_conn):
+    src = dot_source(build_fk_graph, schema_db_conn)
+    assert "digraph" in src
+    # pinned in api/tests/test_schema_service.py::test_get_fk_graph_counts
+    assert src.count("dashed") == 5  # unenforced edges
+
+
+def test_fk_graph_unenforced_edge_present_and_dashed(schema_db_conn):
+    src = dot_source(build_fk_graph, schema_db_conn)
+    assert "usrgroupperm" in src
+    assert "usractions" in src
+    assert "dashed" in src
+
+
+# ---------------------------------------------------------------------------
+# H. DOT roundtrip (requires dot binary)
 # ---------------------------------------------------------------------------
 
 

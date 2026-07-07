@@ -7,7 +7,8 @@ export type DiagramKind =
   | "heatmap"
   | "sql-lineage"
   | "table-lineage"
-  | "proc-tables";
+  | "proc-tables"
+  | "fk-graph";
 
 export const HAS_FOCUS: ReadonlySet<DiagramKind> = new Set([
   "calls",
@@ -23,6 +24,7 @@ export const AUTO_GENERATE: ReadonlySet<DiagramKind> = new Set([
   "dw-tables",
   "sql-lineage",
   "proc-tables",
+  "fk-graph",
 ]);
 
 export function parsePbUrl(href: string | null): { kind: "object" | "table"; name: string; meta: Record<string, string> } | null {

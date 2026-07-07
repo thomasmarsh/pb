@@ -390,3 +390,45 @@ def render_proc_tables(
         dot.node("empty", label=msg, shape="plaintext", fontcolor="#5c5f72")
 
     return dot
+
+
+_FK_CATEGORY_STYLE = {
+    "corroborated": ("#4ade80", "solid"),
+    "unenforced": ("#f87171", "dashed"),
+    "unused": ("#808080", "dotted"),
+}
+
+
+def render_fk_graph(
+    edges: list[tuple[str, str, str, str, str]],
+) -> graphviz.Digraph:
+    """Plan 153 D2: implied-FK graph, code (`dw_join`) vs DDL evidence.
+
+    Each edge is (from_table, from_column, to_table, to_column, category),
+    category one of corroborated/unenforced/unused (see
+    `pb.api.services.schema.get_fk_graph` for the classification). Dashed
+    red edges (unenforced) are the actionable finding: a DW JOIN implies an
+    FK relationship the DDL never declares.
+    """
+    dot = graphviz.Digraph(engine="dot", name="fk_graph")
+    apply_defaults(dot)
+    dot.attr(rankdir="LR", splines="ortho", nodesep="0.3", ranksep="1.0")
+    dot.attr("node", shape="cylinder", style="filled,rounded")
+
+    seen_tables: set[str] = set()
+    for from_table, from_col, to_table, to_col, category in edges:
+        for tbl in (from_table, to_table):
+            if tbl not in seen_tables:
+                dot.node(tbl, label=tbl, fillcolor="#1F2F1F", fontcolor="#C8F0CA", fontsize="9", URL=f"pb://table/{tbl}")
+                seen_tables.add(tbl)
+        color, style = _FK_CATEGORY_STYLE.get(category, ("#B0B0B0", "solid"))
+        dot.edge(
+            from_table, to_table,
+            xlabel=f"{from_col}→{to_col}", color=color, style=style,
+            fontcolor=color, fontsize="7", penwidth="0.8",
+        )
+
+    if not edges:
+        dot.node("empty", label="No FK relationships found", shape="plaintext", fontcolor="#5c5f72")
+
+    return dot

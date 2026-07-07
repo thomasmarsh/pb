@@ -23,6 +23,7 @@ _KINDS = (
     "sql-lineage",
     "table-lineage",
     "proc-tables",
+    "fk-graph",
 )
 
 

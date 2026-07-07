@@ -3,6 +3,7 @@ from pb.lib.diagram_builder import (
     kind_color,
     render_calls,
     render_dw_tables,
+    render_fk_graph,
     render_heatmap,
     render_inheritance,
     render_proc_tables,
@@ -71,3 +72,26 @@ def test_render_dw_tables_dedupes_dw_names():
 def test_render_heatmap_legend_present():
     dot = render_heatmap([("obj_a", "powerscript", 0, 0)], [])
     assert "Cyclomatic complexity" in dot.source
+
+
+def test_render_fk_graph_empty_shows_placeholder():
+    dot = render_fk_graph([])
+    assert "No FK relationships found" in dot.source
+
+
+def test_render_fk_graph_colors_by_category():
+    edges = [
+        ("usrgroups", "kodgroup", "usrmembers", "kodgroup", "corroborated"),
+        ("usrgroupperm", "kodaction", "usractions", "kodaction", "unenforced"),
+        ("afxtable", "kodowner", "afxowner", "kodowner", "unused"),
+    ]
+    dot = render_fk_graph(edges)
+    assert "usrgroups" in dot.source
+    assert "usrmembers" in dot.source
+    assert "usrgroupperm" in dot.source
+    assert "usractions" in dot.source
+    assert "afxtable" in dot.source
+    assert "afxowner" in dot.source
+    # three distinct edge styles, one per category
+    assert "dashed" in dot.source
+    assert "dotted" in dot.source

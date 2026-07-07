@@ -25,6 +25,16 @@ const heatmapDiagrams = {
   itemsLoaded: true,
 };
 
+const fkGraphDiagrams = {
+  active: "fk-graph" as const,
+  svg: null,
+  loading: false,
+  params: {},
+  tableNames: ["usrgroups"],
+  objectNames: ["w_main"],
+  itemsLoaded: true,
+};
+
 describe("Diagrams component", () => {
   it("shows loading state when loading", () => {
     renderWithStore(Diagrams, {
@@ -61,5 +71,11 @@ describe("Diagrams component", () => {
       diagrams: { ...callsDiagrams, active: "dw-tables" },
     });
     expect(container.querySelector(".diagram-container")).toBeDefined();
+  });
+
+  it("includes an fk-graph tab and hides Generate button for it (auto-generate)", () => {
+    renderWithStore(Diagrams, { diagrams: fkGraphDiagrams });
+    expect(screen.getByText("fk-graph")).toBeDefined();
+    expect(screen.queryByText("Generate")).toBeNull();
   });
 });
