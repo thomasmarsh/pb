@@ -9,6 +9,7 @@ module PB.Pipeline.DuckDb
   , DwObjectRow (..)
   , DwControlRow (..)
   , DwRetrieveTableRow (..)
+  , DwRetrieveColumnRow (..)
   , DwJoinRow (..)
   , SqlStmtRow (..)
   , SqlStmtColumnRow (..)
@@ -23,6 +24,7 @@ module PB.Pipeline.DuckDb
   , appendDwObjects
   , appendDwControls
   , appendDwRetrieveTables
+  , appendDwRetrieveColumns
   , appendDwJoins
   , appendLocalVars
   , appendCallSites
@@ -48,6 +50,11 @@ module PB.Pipeline.DuckDb
   , queryTaintInputs
   , queryProcInfos
   , queryDwObjectSet
+  , queryDwRetrieveColumns
+  , queryDwJoinLegs
+  , querySqlCols
+  , queryCatColumns
+  , queryCatFks
   -- Phase B appenders
   , appendResolvedTypes
   , appendResolvedCalls
@@ -58,6 +65,8 @@ module PB.Pipeline.DuckDb
   , appendTaintPaths
   , appendTaintAnnotations
   , appendDeadCode
+  , appendSchemaObjects
+  , appendSchemaMorphisms
   ) where
 
 import PB.Prelude
@@ -69,6 +78,13 @@ import PB.Analysis.TypeResolve
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.DeadCode    qualified as DeadCode
+import PB.Analysis.SchemaCategory
+  ( StmtId (..), SchObject (..), LegKind (..), FkSource (..), SchMorphism (..)
+  , schObjectKey
+  , DwRetrieveColRow (..), DwJoinLegRow (..), SqlColRow (..)
+  , CatColumnRow (..), CatFkRow (..)
+  )
+import PB.Pipeline.SqlParse    (TableRef (..))
 import PB.Pipeline.Serialise   ()
 
 import Database.DuckDB.Simple
@@ -153,6 +169,8 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
         \(file TEXT, object TEXT, style TEXT, layout_json TEXT, retrieve_sql TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_retrieve_tables \
         \(file TEXT, dw_name TEXT, table_name TEXT)"
+      , "CREATE TABLE IF NOT EXISTS dw_retrieve_columns \
+        \(file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT, column_name TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_joins \
         \(file TEXT, dw_name TEXT, left_ref TEXT, op TEXT, right_ref TEXT, \
         \outer1 TEXT, outer2 TEXT)"
@@ -202,6 +220,11 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       , "CREATE TABLE IF NOT EXISTS dead_code \
         \(object TEXT, proc_name TEXT, proc_type TEXT, cyclomatic INTEGER, \
         \confidence TEXT, caller_count_naive INTEGER, caller_count_scoped INTEGER)"
+      , "CREATE TABLE IF NOT EXISTS schema_objects \
+        \(object_key TEXT, kind TEXT, namespace TEXT, table_name TEXT, column_name TEXT, \
+        \stmt_file TEXT, stmt_object TEXT, stmt_proc TEXT, stmt_line INTEGER)"
+      , "CREATE TABLE IF NOT EXISTS schema_morphisms \
+        \(from_key TEXT, to_key TEXT, leg_kind TEXT, fk_source TEXT)"
       , "CREATE OR REPLACE VIEW all_sql_tables AS \
         \SELECT file, dw_name AS object, 'datawindow' AS source, \
         \'retrieve' AS operation, table_name, NULL AS proc_name, NULL::INT AS line \
@@ -268,6 +291,14 @@ data DwRetrieveTableRow = DwRetrieveTableRow
   { drtrFile      :: Text
   , drtrDwName    :: Text
   , drtrTableName :: Text
+  }
+
+data DwRetrieveColumnRow = DwRetrieveColumnRow
+  { drcrFile       :: Text
+  , drcrDwName     :: Text
+  , drcrNamespace  :: Maybe Text
+  , drcrTableName  :: Text
+  , drcrColumnName :: Text
   }
 
 data DwJoinRow = DwJoinRow
@@ -414,6 +445,17 @@ appendDwRetrieveTables conn rows = withRaw conn "dw_retrieve_tables" $ \app ->
     aText app (drtrFile r)
     aText app (drtrDwName r)
     aText app (drtrTableName r)
+    endRow app
+
+appendDwRetrieveColumns :: DuckConn -> [DwRetrieveColumnRow] -> IO ()
+appendDwRetrieveColumns _    [] = pure ()
+appendDwRetrieveColumns conn rows = withRaw conn "dw_retrieve_columns" $ \app ->
+  for_ rows $ \r -> do
+    aText      app (drcrFile r)
+    aText      app (drcrDwName r)
+    aMaybeText app (drcrNamespace r)
+    aText      app (drcrTableName r)
+    aText      app (drcrColumnName r)
     endRow app
 
 appendDwJoins :: DuckConn -> [DwJoinRow] -> IO ()
@@ -661,6 +703,36 @@ instance FromRow Taint.ResolvedCallRow where
 instance FromRow DeadCode.ProcInfo where
   fromRow = DeadCode.ProcInfo <$> field <*> field <*> field <*> field
 
+instance FromRow DwRetrieveColRow where
+  fromRow = DwRetrieveColRow <$> field <*> field <*> field <*> field <*> field
+
+instance FromRow DwJoinLegRow where
+  fromRow = DwJoinLegRow <$> field <*> field <*> field <*> field
+
+instance FromRow SqlColRow where
+  fromRow = do
+    f_  <- field
+    o_  <- field
+    p_  <- field
+    l_  <- field
+    ns_ <- field
+    tb_ <- field
+    c_  <- field
+    w_  <- field
+    pure SqlColRow
+      { scStmt      = SqlStmtId f_ o_ p_ l_
+      , scNamespace = ns_
+      , scTable     = tb_
+      , scColumn    = c_
+      , scIsWrite   = w_
+      }
+
+instance FromRow CatColumnRow where
+  fromRow = CatColumnRow <$> field <*> field <*> field
+
+instance FromRow CatFkRow where
+  fromRow = CatFkRow <$> field <*> field <*> field <*> field <*> field <*> field
+
 -- Local row types for complex grouping queries
 data SqlRow5 = SqlRow5 !Text !Text !Text !Int !Text
 
@@ -781,6 +853,29 @@ queryDwObjectSet :: DuckConn -> IO (Set.Set Text)
 queryDwObjectSet conn = do
   rows <- query_ conn "SELECT DISTINCT object FROM dw_objects" :: IO [OneText]
   pure (Set.fromList [t | OneText t <- rows])
+
+-- | Plan 148 Phase 1b: SchemaCategory read-side queries.
+queryDwRetrieveColumns :: DuckConn -> IO [DwRetrieveColRow]
+queryDwRetrieveColumns conn = query_ conn
+  "SELECT file, dw_name, namespace, table_name, column_name FROM dw_retrieve_columns"
+
+queryDwJoinLegs :: DuckConn -> IO [DwJoinLegRow]
+queryDwJoinLegs conn = query_ conn
+  "SELECT file, dw_name, left_ref, right_ref FROM dw_joins"
+
+querySqlCols :: DuckConn -> IO [SqlColRow]
+querySqlCols conn = query_ conn
+  "SELECT file, object, proc_name, line, namespace, table_name, column_name, is_write \
+  \FROM sql_statement_columns"
+
+queryCatColumns :: DuckConn -> IO [CatColumnRow]
+queryCatColumns conn = query_ conn
+  "SELECT namespace, table_name, column_name FROM catalog_columns"
+
+queryCatFks :: DuckConn -> IO [CatFkRow]
+queryCatFks conn = query_ conn
+  "SELECT from_namespace, from_table, from_column, to_namespace, to_table, to_column \
+  \FROM catalog_fks"
 
 -- ---------------------------------------------------------------------------
 -- Phase B appenders
@@ -913,6 +1008,60 @@ appendDeadCode conn rows = withRaw conn "dead_code" $ \app ->
     aText     app (DeadCode.dpConfidence      d)
     aInt      app (DeadCode.dpCallerCountNaive  d)
     aInt      app (DeadCode.dpCallerCountScoped d)
+    endRow app
+
+-- | (kind text, fk_source text) for a 'LegKind'.
+renderLegKind :: LegKind -> (Text, Maybe Text)
+renderLegKind LegReads         = ("reads",    Nothing)
+renderLegKind LegWrites        = ("writes",   Nothing)
+renderLegKind LegRetrieve      = ("retrieve", Nothing)
+renderLegKind (LegFk FkDdl)    = ("fk", Just "ddl")
+renderLegKind (LegFk FkDwJoin) = ("fk", Just "dw_join")
+
+appendSchemaObjects :: DuckConn -> [SchObject] -> IO ()
+appendSchemaObjects _    [] = pure ()
+appendSchemaObjects conn objs = withRaw conn "schema_objects" $ \app ->
+  for_ objs $ \o -> do
+    aText app (schObjectKey o)
+    case o of
+      ColumnObj (TableRef ns tbl) col -> do
+        aText      app "column"
+        aMaybeText app ns
+        aMaybeText app (Just tbl)
+        aMaybeText app (Just col)
+        aMaybeText app Nothing
+        aMaybeText app Nothing
+        aMaybeText app Nothing
+        aMaybeInt  app Nothing
+      StmtObj (SqlStmtId f obj_ p l) -> do
+        aText      app "stmt"
+        aMaybeText app Nothing
+        aMaybeText app Nothing
+        aMaybeText app Nothing
+        aMaybeText app (Just f)
+        aMaybeText app (Just obj_)
+        aMaybeText app (Just p)
+        aMaybeInt  app (Just l)
+      StmtObj (DwRetrieveId f dw) -> do
+        aText      app "dw_retrieve"
+        aMaybeText app Nothing
+        aMaybeText app Nothing
+        aMaybeText app Nothing
+        aMaybeText app (Just f)
+        aMaybeText app (Just dw)
+        aMaybeText app Nothing
+        aMaybeInt  app Nothing
+    endRow app
+
+appendSchemaMorphisms :: DuckConn -> [SchMorphism] -> IO ()
+appendSchemaMorphisms _    [] = pure ()
+appendSchemaMorphisms conn ms = withRaw conn "schema_morphisms" $ \app ->
+  for_ ms $ \m -> do
+    aText      app (schObjectKey (legFrom m))
+    aText      app (schObjectKey (legTo m))
+    let (kindText, fkSrc) = renderLegKind (legKind m)
+    aText      app kindText
+    aMaybeText app fkSrc
     endRow app
 
 -- ---------------------------------------------------------------------------

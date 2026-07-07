@@ -29,6 +29,7 @@ import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, procEnv)
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
+import PB.Analysis.SchemaCategory (splitColumnRef)
 import PB.Analysis.TypeResolve
   ( LocalVar, CallSite, GlobalVar (..)
   , extractCallSites, extractDwCallSites, extractGlobalVars, extractLocalVars
@@ -53,12 +54,12 @@ import PB.Pipeline.FileWalk    (walkAllSrFiles)
 import PB.Pipeline.DuckDb
   ( DuckConn, withWriteConn, initSchema
   , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
-  , DwRetrieveTableRow (..), DwJoinRow (..), SqlStmtRow (..)
+  , DwRetrieveTableRow (..), DwRetrieveColumnRow (..), DwJoinRow (..), SqlStmtRow (..)
   , SqlStmtColumnRow (..), SqlStmtFilterRow (..)
   , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..)
   , SourceFileRow (..)
   , appendObjects, appendProcedures
-  , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwJoins
+  , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwRetrieveColumns, appendDwJoins
   , appendLocalVars, appendCallSites, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
   , appendSqlStmtColumns, appendSqlStmtFilters
@@ -118,6 +119,7 @@ data CompiledDw = CompiledDw
   { cdDwObjectRow      :: DwObjectRow
   , cdDwControls       :: [DwControlRow]
   , cdDwRetrieveTables :: [DwRetrieveTableRow]
+  , cdDwRetrieveColumns :: [DwRetrieveColumnRow]
   , cdDwJoins          :: [DwJoinRow]
   , cdCallSites        :: [CallSite]
   , cdSourceContent    :: Maybe SourceFileRow
@@ -211,6 +213,13 @@ compileOne wsEnv mBridge confidence outcome = case outcome of
         rtbls = case dwTable dw >>= dtRetrieve of
           Just (DwRetrieveOk r) -> [ DwRetrieveTableRow fpT obj t | t <- drTables r ]
           _                     -> []
+        rcols = case dwTable dw >>= dtRetrieve of
+          Just (DwRetrieveOk r) ->
+            [ DwRetrieveColumnRow fpT obj (trNamespace tref) (trTable tref) col
+            | c <- drColumns r
+            , Just (tref, col) <- [splitColumnRef c]
+            ]
+          _                     -> []
         jrows = case dwTable dw >>= dtRetrieve of
           Just (DwRetrieveOk r) ->
             [ DwJoinRow fpT obj (djLeft j) (djOp j) (djRight j) (djOuter1 j) (djOuter2 j)
@@ -220,6 +229,7 @@ compileOne wsEnv mBridge confidence outcome = case outcome of
       { cdDwObjectRow      = DwObjectRow fpT obj style layoutJson retrieveSql
       , cdDwControls       = ctls
       , cdDwRetrieveTables = rtbls
+      , cdDwRetrieveColumns = rcols
       , cdDwJoins          = jrows
       , cdCallSites        = css
       , cdSourceContent    = Just (SourceFileRow fpT contents)
@@ -343,6 +353,7 @@ appendToDb conn (CFDw r) = do
   appendDwObjects        conn [cdDwObjectRow r]
   appendDwControls       conn (cdDwControls r)
   appendDwRetrieveTables conn (cdDwRetrieveTables r)
+  appendDwRetrieveColumns conn (cdDwRetrieveColumns r)
   appendDwJoins          conn (cdDwJoins r)
   appendCallSites        conn (cdCallSites r)
   appendSourceFiles      conn (catMaybes [cdSourceContent r])

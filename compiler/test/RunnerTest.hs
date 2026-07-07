@@ -1,14 +1,18 @@
 module RunnerTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, catalogToRows, CompiledFile (..), CompiledPs (..))
+import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, catalogToRows, CompiledFile (..), CompiledPs (..), CompiledDw (..))
 import PB.Pipeline.Emit    (parsePowerScriptFile, ParsedFile (..), ParseOutcome (..))
 import PB.Pipeline.DuckDb
   ( ProcRow (..), SqlStmtColumnRow (..), SqlStmtFilterRow (..)
   , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..)
+  , DwRetrieveColumnRow (..)
   )
 import PB.AST.BodyStmt     (BodyStmt (..))
-import PB.AST.DataWindow   (DwRetrieve (..), DwRetrieveOrRaw (..), DwWhereClause (..))
+import PB.AST.DataWindow
+  ( DwRetrieve (..), DwRetrieveOrRaw (..), DwWhereClause (..)
+  , DataWindowFile (..), DwObjectAttrs (..), DwTable (..)
+  )
 import PB.AST.Expr         (Expr (..))
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile   (TypeBlock (..), TypeDecl (..), srPrimaryObject, srFunctions, FunctionBlock (..), FnSig (..))
@@ -618,6 +622,35 @@ tests = testGroup "Pipeline.Runner"
         map cfkrFromColumn fkRows @?= ["order_id", "line_no"]
         map cfkrToColumn   fkRows @?= ["id", "seq"]
         map cfkrOrdinal    fkRows @?= [0, 1]
+    ]
+
+  , testGroup "dw_retrieve_columns construction (Plan 148 Phase 1b)"
+    [ testCase "compileOne splits qualified drColumns into DwRetrieveColumnRow" $ do
+        let retrieve = DwRetrieve
+              { drVersion   = 400
+              , drTables    = ["misth_zpkrat"]
+              , drColumns   = ["misth_zpkrat.kodkrat", "misth_zpkrat.desckrat"]
+              , drArguments = []
+              , drWhere     = []
+              , drJoins     = []
+              }
+            dwFile = DataWindowFile
+              { dwRelease  = 400
+              , dwObject   = DwObjectAttrs mempty
+              , dwTable    = Just (DwTable [] (Just (DwRetrieveOk retrieve)) Nothing Nothing [])
+              , dwBands    = []
+              , dwGroups   = []
+              , dwControls = []
+              , dwUnknowns = []
+              , dwMeta     = mempty
+              }
+            ws = buildWorkspaceEnv []
+        cf <- compileOne ws Nothing "confirmed" (PsDw "d_test.srd" "" dwFile)
+        case cf of
+          CFDw cd ->
+            map (\r -> (drcrTableName r, drcrColumnName r)) (cdDwRetrieveColumns cd)
+              @?= [("misth_zpkrat", "kodkrat"), ("misth_zpkrat", "desckrat")]
+          _ -> assertFailure "expected CFDw"
     ]
   ]
 

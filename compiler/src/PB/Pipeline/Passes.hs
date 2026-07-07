@@ -8,15 +8,20 @@ import PB.Analysis.Builtins    (builtinFnNames, builtinMethodNames)
 import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TypeResolve
+import PB.Analysis.SchemaCategory
+  ( SchemaInputs (..), SchGraph (..), buildSchema )
 import PB.Pipeline.DuckDb
   ( DuckConn
   , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
   , queryProcDefs, queryProcUses, queryResolvedCalls
   , queryTaintInputs, queryProcInfos, queryDwObjectSet
+  , queryDwRetrieveColumns, queryDwJoinLegs, querySqlCols
+  , queryCatColumns, queryCatFks
   , appendResolvedTypes, appendResolvedCalls
   , appendInterprocEdges, appendProcSummaries
   , appendTaintSources, appendTaintSinks, appendTaintPaths
   , appendTaintAnnotations, appendDeadCode
+  , appendSchemaObjects, appendSchemaMorphisms
   )
 
 import Data.Aeson          (Value (..), encode, object, (.=))
@@ -46,6 +51,7 @@ runPhaseB conn = do
   inh   <- runPass5  conn
   allRC <- runPass67 conn
   runPass8 conn inh allRC
+  runPass9 conn
 
 runPass5 :: DuckConn -> IO (Map.Map Text Text)
 runPass5 conn = do
@@ -102,3 +108,23 @@ runPass8 conn inh allRC = do
       dead = DeadCode.computeDeadProcedures
                procs rawCalls resolvedCalls (Map.toList inh) dws
   appendDeadCode conn dead
+
+-- | Pass 9 (Plan 148 Phase 1b): materialize the schema category @Sch@ from
+-- Phase A's DW-retrieve/DW-join/SQL-column/DDL-catalog tables.
+runPass9 :: DuckConn -> IO ()
+runPass9 conn = do
+  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Building schema category" :: Text)])
+  drCols  <- queryDwRetrieveColumns conn
+  djLegs  <- queryDwJoinLegs        conn
+  sqlCols <- querySqlCols           conn
+  catCols <- queryCatColumns        conn
+  catFks  <- queryCatFks            conn
+  let sch = buildSchema SchemaInputs
+        { inDwRetrieveColumns = drCols
+        , inDwJoins           = djLegs
+        , inSqlColumns        = sqlCols
+        , inCatalogColumns    = catCols
+        , inCatalogFks        = catFks
+        }
+  appendSchemaObjects   conn (Set.toList (sgObjects sch))
+  appendSchemaMorphisms conn (sgLegs sch)

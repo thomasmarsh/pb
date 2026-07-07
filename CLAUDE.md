@@ -814,11 +814,14 @@ stripBom          :: Text -> Text
 ### `PB.Pipeline.Passes`
 
 ```haskell
--- Phase B orchestration: link analysis (passes 5-8) in DuckDB mode.
+-- Phase B orchestration: link analysis (passes 5-9) in DuckDB mode.
 runPhaseB :: DuckConn -> IO ()
 -- Internally: runPass5 (resolveTypes + resolveCalls → resolved_types/calls),
 --             runPass67 (buildInterprocEdges + taint → interproc_edges/taint_*),
 --             runPass8 (computeDeadProcedures → dead_code)
+--             runPass9 (Plan 148 Phase 1b, 2026-07-07: queryDwRetrieveColumns/
+--               queryDwJoinLegs/querySqlCols/queryCatColumns/queryCatFks →
+--               SchemaCategory.buildSchema → schema_objects/schema_morphisms)
 ```
 
 ### `PB.Pipeline.SqlParse`
@@ -830,9 +833,11 @@ runPhaseB :: DuckConn -> IO ()
 -- attribution. TableRef/CatalogTable/CatalogPrimaryKey/CatalogForeignKey/
 -- SchemaCatalog (Plan 148 Phase 1a-3, 2026-07-07) are the static DDL
 -- catalog shape -- row-oriented (list, not Map TableRef [Text]) to match
--- the JSON wire format and DuckDb's row-oriented appenders directly; a
--- future PB.Analysis.SchemaCategory (Phase 1b) builds a Map view with one
--- Map.fromList over scTables/scPrimaryKeys if needed.
+-- the JSON wire format and DuckDb's row-oriented appenders directly.
+-- PB.Analysis.SchemaCategory (Phase 1b, 2026-07-07) does NOT consume this
+-- type directly -- it takes catalog_columns/catalog_fks rows queried back
+-- from DuckDb (CatColumnRow/CatFkRow, its own read-shape types) instead,
+-- keeping PB.Analysis.* free of any duckdb-ffi dependency.
 data ColumnRef = ColumnRef { crNamespace, crTable :: Maybe Text, crColumn :: Text, crIsWrite :: Bool }
 data RowFilter = RowFilter { rfNamespace, rfTable :: Maybe Text, rfColumn, rfOp :: Text, rfValues :: [Text] }
 data SqlResult = SqlResult { srTables, srColumns :: [Text], srOperation :: Maybe Text
@@ -872,6 +877,9 @@ catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogF
 -- fromColumns[i]/toColumns[i] by position.
 -- Internal: CompiledPs, CompiledDw, CompiledFile, compileOne, appendToDb,
 --           workerLoopFiles, workerLoopFilesNoBridge, emitProgress, jsonText
+-- CompiledDw gained cdDwRetrieveColumns :: [DwRetrieveColumnRow] (Plan 148
+-- Phase 1b, 2026-07-07): compileOne's PsDw branch splits each DwRetrieve's
+-- drColumns via SchemaCategory.splitColumnRef.
 -- Phase A: parse → compile → append to DuckDB (concurrent producer-consumer)
 -- Phase B: delegates to PB.Pipeline.Passes.runPhaseB
 --
@@ -1170,6 +1178,60 @@ builtinFnNames     :: Set Text     -- free functions (used by resolveCalls)
 builtinMethodNames :: Set Text     -- class methods
 ```
 
+### `PB.Analysis.SchemaCategory` (Plan 148 Phase 1b, 2026-07-07)
+
+```haskell
+-- Pure. The DB schema as a free category (Sch). Objects are (table,column)
+-- pairs and SQL-statement/DW-retrieve instances; morphisms are the "legs" a
+-- statement has into columns it reads/writes, plus FK morphisms from DW
+-- JOIN blocks and DDL foreign keys. Span encoding of a hyperedge -- see
+-- doc/plan/148-db-schema-category.md "Design" section for the rationale.
+-- Reuses TableRef from PB.Pipeline.SqlParse (does not redefine it).
+data StmtId = SqlStmtId { siFile, siObject, siProc :: Text, siLine :: Int }
+            | DwRetrieveId { siFile, siDwName :: Text }
+data SchObject = ColumnObj TableRef Text | StmtObj StmtId
+data FkSource  = FkDdl | FkDwJoin
+data LegKind   = LegReads | LegWrites | LegRetrieve | LegFk FkSource
+data SchMorphism = SchMorphism { legFrom, legTo :: SchObject, legKind :: LegKind }
+data SchGraph  = SchGraph { sgObjects :: Set.Set SchObject, sgLegs :: [SchMorphism]
+                          , sgOut, sgIn :: Map.Map SchObject [SchMorphism] }
+schObjectKey :: SchObject -> Text   -- canonical DB key (object_key/from_key/to_key)
+
+-- Free-category path structure (composable leg chains; Phase 2 traversal target).
+data SchPath = SchPath { spFrom, spTo :: SchObject, spLegs :: [SchMorphism] }
+idPath      :: SchObject -> SchPath
+composePath :: SchPath -> SchPath -> Maybe SchPath   -- Nothing iff spTo p /= spFrom q
+
+splitColumnRef :: Text -> Maybe (TableRef, Text)
+-- Last-dot split (namespace.table.column), lowercased. Nothing for
+-- unqualified text or a malformed ref (trailing dot etc).
+
+-- SchemaInputs' five fields are Analysis-owned "read-shape" row types --
+-- distinct from (but same-shaped as) PB.Pipeline.DuckDb's write-side row
+-- types (DwJoinRow/SqlStmtColumnRow/CatalogColumnRow/CatalogFkRow), same
+-- split as TypeResolve.ResolvedCall (write) vs. Taint.ResolvedCallRow
+-- (read) for resolved_calls. Keeps PB.Analysis.* free of any
+-- PB.Pipeline.DuckDb/duckdb-ffi dependency. DuckDb.hs's
+-- queryDwRetrieveColumns/queryDwJoinLegs/querySqlCols/queryCatColumns/
+-- queryCatFks return these types directly (new FromRow orphan instances).
+data DwRetrieveColRow = DwRetrieveColRow { drcFile, drcDwName :: Text, drcNamespace :: Maybe Text, drcTable, drcColumn :: Text }
+data DwJoinLegRow     = DwJoinLegRow { djlFile, djlDwName, djlLeftRef, djlRightRef :: Text }
+data SqlColRow        = SqlColRow { scStmt :: StmtId, scNamespace :: Maybe Text, scTable :: Maybe Text, scColumn :: Text, scIsWrite :: Bool }
+-- scTable = Nothing for an ambiguous unqualified column (old-style implicit
+-- join, no catalog to resolve against) -- buildSchema skips these rows
+-- rather than guessing; they produce no ColumnObj/leg.
+data CatColumnRow = CatColumnRow { cclNamespace :: Maybe Text, cclTable, cclColumn :: Text }
+data CatFkRow     = CatFkRow { cfrFromNamespace :: Maybe Text, cfrFromTable, cfrFromColumn :: Text
+                              , cfrToNamespace :: Maybe Text, cfrToTable, cfrToColumn :: Text }
+data SchemaInputs = SchemaInputs { inDwRetrieveColumns :: [DwRetrieveColRow], inDwJoins :: [DwJoinLegRow]
+                                  , inSqlColumns :: [SqlColRow], inCatalogColumns :: [CatColumnRow]
+                                  , inCatalogFks :: [CatFkRow] }
+buildSchema :: SchemaInputs -> SchGraph   -- total, pure
+-- Catalog-only columns (no statement/JOIN touches them) still become
+-- objects with no legs -- a free normalization signal (dead-column
+-- candidates); see done-condition verification below for real counts.
+```
+
 ### `PB.Pipeline.FileWalk`
 
 ```haskell
@@ -1204,6 +1266,11 @@ appendSqlStmtColumns, appendSqlStmtFilters :: DuckConn -> [row] -> IO ()
 -- PB.Pipeline.SqlParse.parseDdl.
 appendCatalogColumns, appendCatalogPks, appendCatalogFks :: DuckConn -> [row] -> IO ()
 appendParseErrors :: DuckConn -> [row] -> IO ()
+-- dw_retrieve_columns (Plan 148 Phase 1b, 2026-07-07): (file, dw_name,
+-- namespace, table_name, column_name), one row per qualified DwRetrieve
+-- column ref (splitColumnRef'd from drColumns in Runner.hs's PsDw branch --
+-- fills the "drColumns never reaches DuckDB" survey gap).
+appendDwRetrieveColumns :: DuckConn -> [DwRetrieveColumnRow] -> IO ()
 -- Phase B read helpers (SELECT → typed rows):
 queryLocalVars, queryCallSites, queryGlobalVars :: DuckConn -> IO [row]
 queryObjInfo     :: DuckConn -> IO [(Text, Text)]       -- (file, object) pairs per PS file
@@ -1213,11 +1280,25 @@ queryResolvedCalls :: DuckConn -> IO [Taint.ResolvedCallRow]
 queryTaintInputs :: DuckConn -> IO [Taint.TaintFileInputs]  -- includes procedure-less PS objects via objects table
 queryProcInfos   :: DuckConn -> IO [TypeResolve.LocalVar]   -- for Pass 5 resolveTypes
 queryDwObjectSet :: DuckConn -> IO (Set Text)
+-- SchemaCategory read-side queries (Plan 148 Phase 1b, 2026-07-07): return
+-- PB.Analysis.SchemaCategory's own read-shape types directly (new FromRow
+-- orphan instances here), consumed by Passes.hs's runPass9.
+queryDwRetrieveColumns :: DuckConn -> IO [SchemaCategory.DwRetrieveColRow]
+queryDwJoinLegs        :: DuckConn -> IO [SchemaCategory.DwJoinLegRow]
+querySqlCols           :: DuckConn -> IO [SchemaCategory.SqlColRow]
+queryCatColumns        :: DuckConn -> IO [SchemaCategory.CatColumnRow]
+queryCatFks            :: DuckConn -> IO [SchemaCategory.CatFkRow]
 -- Phase B write appenders:
 appendResolvedTypes, appendResolvedCalls :: DuckConn -> [row] -> IO ()
 appendInterprocEdges, appendProcSummaries :: DuckConn -> [row] -> IO ()
 appendTaintSources, appendTaintSinks, appendTaintPaths, appendTaintAnnotations :: DuckConn -> [row] -> IO ()
 appendDeadCode   :: DuckConn -> [DeadCode.DeadProcedure] -> IO ()
+-- schema_objects/schema_morphisms (Plan 148 Phase 1b, 2026-07-07): written
+-- by runPass9 from SchemaCategory.buildSchema's SchGraph. object_key/
+-- from_key/to_key columns hold SchemaCategory.schObjectKey's canonical
+-- string form.
+appendSchemaObjects   :: DuckConn -> [SchemaCategory.SchObject]   -> IO ()
+appendSchemaMorphisms :: DuckConn -> [SchemaCategory.SchMorphism] -> IO ()
 -- Schema init:
 withWriteConn    :: FilePath -> (DuckConn -> IO a) -> IO a
 initSchema       :: DuckConn -> IO ()
