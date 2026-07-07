@@ -1,5 +1,6 @@
-"""`Sch` consumers (Plan 153 D2 + D4 + D6) — implied-FK graph, column-usage
-classification, and statement-management views.
+"""`Sch` consumers (Plan 153 D1 + D2 + D4 + D6) — co-update rituals,
+implied-FK graph, column-usage classification, and statement-management
+views.
 
 Pure presentation over Plan 148's schema_objects/schema_morphisms/catalog_*/
 sql_statement_columns tables. No traversal, no new DuckDB tables.
@@ -32,6 +33,77 @@ def _edge_key(row: dict[str, Any]) -> tuple[ColumnKey, ColumnKey]:
     a: ColumnKey = (row["from_namespace"], row["from_table"], row["from_column"])
     b: ColumnKey = (row["to_namespace"], row["to_table"], row["to_column"])
     return _canon(a, b)
+
+
+def _column_ref_from_key(col: ColumnKey) -> dict[str, Any]:
+    return {"namespace": col[0], "table": col[1], "column": col[2]}
+
+
+def _stmt_ref(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "file": row["stmt_file"],
+        "object": row["stmt_object"],
+        "proc_name": row["stmt_proc"],
+        "line": row["stmt_line"],
+    }
+
+
+_CO_WRITE_SQL = """
+    SELECT m.from_key AS stmt_key,
+           o.stmt_file, o.stmt_object, o.stmt_proc, o.stmt_line,
+           c.namespace, c.table_name, c.column_name
+    FROM schema_morphisms m
+    JOIN schema_objects o ON o.object_key = m.from_key
+    JOIN schema_objects c ON c.object_key = m.to_key
+    WHERE m.leg_kind = 'writes'
+"""
+
+
+def get_co_update_rituals(conn: duckdb.DuckDBPyConnection, min_support: int = 2) -> dict[str, Any]:
+    """D1: co-update rituals & violations.
+
+    A ritual is a column pair written together by at least `min_support`
+    distinct statements. A violation is a statement that writes exactly one
+    column of an established ritual pair, breaking the convention. Computed
+    in Python over the `writes` leg set (74 rows corpus-wide) rather than a
+    nested SQL self-join — the set-difference logic is clearer this way and
+    the data volume doesn't warrant pushing it back into SQL (see this
+    deliverable's own "promote to a pass only if scoring outgrows SQL" note).
+    """
+    write_rows = rows(conn.execute(_CO_WRITE_SQL))
+
+    stmts_by_col: dict[ColumnKey, set[str]] = defaultdict(set)
+    stmt_ref: dict[str, dict[str, Any]] = {}
+    for r in write_rows:
+        col: ColumnKey = (r["namespace"], r["table_name"], r["column_name"])
+        stmts_by_col[col].add(r["stmt_key"])
+        stmt_ref[r["stmt_key"]] = _stmt_ref(r)
+
+    cols = sorted(stmts_by_col)
+    rituals: list[dict[str, Any]] = []
+    for i, c1 in enumerate(cols):
+        for c2 in cols[i + 1 :]:
+            both = stmts_by_col[c1] & stmts_by_col[c2]
+            if len(both) < min_support:
+                continue
+            violations = [
+                {**stmt_ref[s], "written_column": _column_ref_from_key(c1)}
+                for s in sorted(stmts_by_col[c1] - stmts_by_col[c2])
+            ] + [
+                {**stmt_ref[s], "written_column": _column_ref_from_key(c2)}
+                for s in sorted(stmts_by_col[c2] - stmts_by_col[c1])
+            ]
+            rituals.append(
+                {
+                    "column_a": _column_ref_from_key(c1),
+                    "column_b": _column_ref_from_key(c2),
+                    "co_write_support": len(both),
+                    "violations": violations,
+                }
+            )
+
+    rituals.sort(key=lambda r: -r["co_write_support"])
+    return {"rituals": rituals}
 
 
 _FK_EDGE_SQL = """

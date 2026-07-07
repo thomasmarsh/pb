@@ -1,4 +1,4 @@
-"""Unit tests for pb.api.services.schema (Plan 153 D2 + D4 + D6).
+"""Unit tests for pb.api.services.schema (Plan 153 D1 + D2 + D4 + D6).
 
 Uses the `schema_db_conn` fixture (DDL catalog + SQL bridge enabled) — the
 plain `db_conn` fixture has neither and cannot exercise these tables.
@@ -8,11 +8,58 @@ from __future__ import annotations
 
 import duckdb
 from pb.api.services.schema import (
+    get_co_update_rituals,
     get_column_managers,
     get_column_usage,
     get_fk_graph,
     get_procedure_footprint,
 )
+
+
+def test_get_co_update_rituals_counts(schema_db_conn: duckdb.DuckDBPyConnection):
+    result = get_co_update_rituals(schema_db_conn)
+    # Re-verified 2026-07-07 against a freshly-rebuilt schema DB before
+    # implementing (this session's own prerequisite, after the D4 spike
+    # number turned out stale last session): 74 total `writes` legs produce
+    # 45 column pairs with co-write support >= 2 (the default min_support).
+    assert len(result["rituals"]) == 45
+    top = result["rituals"][0]
+    assert top["co_write_support"] == 3
+    assert {top["column_a"]["column"], top["column_b"]["column"]} <= {"kodfinal", "kodypal", "kodxrisi"}
+    assert top["column_a"]["table"] == "misth_final_ypal"
+
+
+def test_get_co_update_rituals_top_pairs_are_misth_final_ypal(schema_db_conn: duckdb.DuckDBPyConnection):
+    result = get_co_update_rituals(schema_db_conn)
+    top_support_3 = [r for r in result["rituals"] if r["co_write_support"] == 3]
+    assert len(top_support_3) == 3
+    pairs = {frozenset((r["column_a"]["column"], r["column_b"]["column"])) for r in top_support_3}
+    assert pairs == {
+        frozenset({"kodfinal", "kodypal"}),
+        frozenset({"kodfinal", "kodxrisi"}),
+        frozenset({"kodxrisi", "kodypal"}),
+    }
+    for r in top_support_3:
+        assert r["column_a"]["table"] == "misth_final_ypal"
+        assert r["column_b"]["table"] == "misth_final_ypal"
+
+
+def test_get_co_update_rituals_no_violations_in_corpus(schema_db_conn: duckdb.DuckDBPyConnection):
+    # Real finding, not a placeholder: every statement in this 422-file
+    # corpus that writes one column of an established ritual pair also
+    # writes its partner — zero anomalies, unlike D1's original prediction
+    # that violations would be common. Worth surfacing as-is rather than
+    # assuming this list should be non-empty.
+    result = get_co_update_rituals(schema_db_conn)
+    assert sum(len(r["violations"]) for r in result["rituals"]) == 0
+
+
+def test_get_co_update_rituals_min_support_threshold(schema_db_conn: duckdb.DuckDBPyConnection):
+    # min_support=1 admits every co-occurring pair (76 support=1 + 45 at >=2).
+    result = get_co_update_rituals(schema_db_conn, min_support=1)
+    assert len(result["rituals"]) == 121
+    result3 = get_co_update_rituals(schema_db_conn, min_support=3)
+    assert len(result3["rituals"]) == 3
 
 
 def test_get_fk_graph_counts(schema_db_conn: duckdb.DuckDBPyConnection):

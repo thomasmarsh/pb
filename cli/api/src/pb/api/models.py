@@ -20,6 +20,28 @@ class FkColumnRef(BaseModel):
     column: str
 
 
+class StatementRef(BaseModel):
+    file: str
+    object: str
+    proc_name: str
+    line: int
+
+
+class RitualViolation(StatementRef):
+    written_column: FkColumnRef
+
+
+class CoUpdateRitual(BaseModel):
+    column_a: FkColumnRef
+    column_b: FkColumnRef
+    co_write_support: int
+    violations: list[RitualViolation]
+
+
+class CoUpdateRitualsResponse(BaseModel):
+    rituals: list[CoUpdateRitual]
+
+
 class FkGraphEdge(BaseModel):
     from_column: FkColumnRef
     to_column: FkColumnRef

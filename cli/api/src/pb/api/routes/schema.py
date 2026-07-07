@@ -1,12 +1,18 @@
-"""`Sch` views (Plan 153 D2 + D4 + D6) — thin route layer, delegates to services.schema."""
+"""`Sch` views (Plan 153 D1 + D2 + D4 + D6) — thin route layer, delegates to services.schema."""
 
 from __future__ import annotations
 
 import duckdb
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pb.api.models import ColumnUsageResponse, FkGraphResponse, ProcedureFootprintResponse
+from pb.api.models import (
+    ColumnUsageResponse,
+    CoUpdateRitualsResponse,
+    FkGraphResponse,
+    ProcedureFootprintResponse,
+)
 from pb.api.routes.dependencies import get_db
 from pb.api.services.schema import (
+    get_co_update_rituals,
     get_column_managers,
     get_column_usage,
     get_fk_graph,
@@ -14,6 +20,14 @@ from pb.api.services.schema import (
 )
 
 router = APIRouter()
+
+
+@router.get("/api/schema/co-update-rituals", response_model=CoUpdateRitualsResponse)
+async def get_co_update_rituals_route(
+    min_support: int = Query(2, ge=1, description="Minimum co-write statement count to qualify as a ritual"),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    return get_co_update_rituals(conn, min_support)
 
 
 @router.get("/api/schema/fk-graph", response_model=FkGraphResponse)
