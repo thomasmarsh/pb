@@ -18,6 +18,7 @@ from pb.api.routes import (
     procedures,
     queries,
     runtime,
+    schema,
     search,
     sql,
     static,
@@ -50,6 +51,7 @@ def create_app(db_path: str = "pb.duckdb") -> FastAPI:
     app.include_router(queries.router)
     app.include_router(runtime.router)
     app.include_router(sql.router)
+    app.include_router(schema.router)
     app.include_router(tables.router)
     app.include_router(errors.router)
     app.include_router(static.router)
