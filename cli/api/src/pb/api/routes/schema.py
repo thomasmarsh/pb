@@ -1,12 +1,17 @@
-"""`Sch` views (Plan 153 D2 + D6) — thin route layer, delegates to services.schema."""
+"""`Sch` views (Plan 153 D2 + D4 + D6) — thin route layer, delegates to services.schema."""
 
 from __future__ import annotations
 
 import duckdb
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pb.api.models import FkGraphResponse, ProcedureFootprintResponse
+from pb.api.models import ColumnUsageResponse, FkGraphResponse, ProcedureFootprintResponse
 from pb.api.routes.dependencies import get_db
-from pb.api.services.schema import get_column_managers, get_fk_graph, get_procedure_footprint
+from pb.api.services.schema import (
+    get_column_managers,
+    get_column_usage,
+    get_fk_graph,
+    get_procedure_footprint,
+)
 
 router = APIRouter()
 
@@ -14,6 +19,11 @@ router = APIRouter()
 @router.get("/api/schema/fk-graph", response_model=FkGraphResponse)
 async def get_fk_graph_route(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
     return get_fk_graph(conn)
+
+
+@router.get("/api/schema/column-usage", response_model=ColumnUsageResponse)
+async def get_column_usage_route(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
+    return get_column_usage(conn)
 
 
 @router.get(

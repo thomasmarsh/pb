@@ -1,4 +1,5 @@
-"""`Sch` consumers (Plan 153 D2 + D6) — implied-FK graph and statement-management views.
+"""`Sch` consumers (Plan 153 D2 + D4 + D6) — implied-FK graph, column-usage
+classification, and statement-management views.
 
 Pure presentation over Plan 148's schema_objects/schema_morphisms/catalog_*/
 sql_statement_columns tables. No traversal, no new DuckDB tables.
@@ -99,6 +100,61 @@ def get_fk_graph(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     unused = [_build_entry(r) for r in ddl_edges if _pair(r) not in dwj_pairs_or_reverse]
 
     return {"corroborated": corroborated, "unenforced": unenforced, "unused": unused}
+
+
+_COLUMN_USAGE_SQL = """
+    WITH cat AS (
+        SELECT DISTINCT namespace, table_name, column_name FROM catalog_columns
+    ), write_touch AS (
+        SELECT DISTINCT o.namespace, o.table_name, o.column_name
+        FROM schema_morphisms m JOIN schema_objects o ON o.object_key = m.to_key
+        WHERE m.leg_kind = 'writes'
+    ), read_touch AS (
+        SELECT namespace, table_name, column_name FROM (
+            SELECT o.namespace, o.table_name, o.column_name
+            FROM schema_morphisms m JOIN schema_objects o ON o.object_key = m.from_key
+            WHERE m.leg_kind = 'reads'
+            UNION
+            SELECT o.namespace, o.table_name, o.column_name
+            FROM schema_morphisms m JOIN schema_objects o ON o.object_key = m.to_key
+            WHERE m.leg_kind = 'retrieve'
+        )
+    )
+    SELECT c.namespace, c.table_name, c.column_name,
+           (w.table_name IS NOT NULL) AS has_write,
+           (r.table_name IS NOT NULL) AS has_read
+    FROM cat c
+    LEFT JOIN write_touch w
+      ON w.namespace IS NOT DISTINCT FROM c.namespace
+     AND w.table_name = c.table_name AND w.column_name = c.column_name
+    LEFT JOIN read_touch r
+      ON r.namespace IS NOT DISTINCT FROM c.namespace
+     AND r.table_name = c.table_name AND r.column_name = c.column_name
+"""
+
+
+def get_column_usage(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+    # Three-way classification (D4): every catalog column, bucketed by
+    # whether any schema_morphisms leg ever reads or writes it. Catalog-only
+    # columns join to NULL on both sides ("dead").
+    result: dict[str, list[dict[str, Any]]] = {
+        "dead": [],
+        "write_only": [],
+        "read_only": [],
+        "read_write": [],
+    }
+    for r in rows(conn.execute(_COLUMN_USAGE_SQL)):
+        ref = {"namespace": r["namespace"], "table": r["table_name"], "column": r["column_name"]}
+        has_write, has_read = r["has_write"], r["has_read"]
+        if has_write and has_read:
+            result["read_write"].append(ref)
+        elif has_write:
+            result["write_only"].append(ref)
+        elif has_read:
+            result["read_only"].append(ref)
+        else:
+            result["dead"].append(ref)
+    return result
 
 
 def get_procedure_footprint(

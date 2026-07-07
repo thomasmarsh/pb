@@ -1,4 +1,4 @@
-"""Unit tests for pb.api.services.schema (Plan 153 D2 + D6).
+"""Unit tests for pb.api.services.schema (Plan 153 D2 + D4 + D6).
 
 Uses the `schema_db_conn` fixture (DDL catalog + SQL bridge enabled) — the
 plain `db_conn` fixture has neither and cannot exercise these tables.
@@ -7,7 +7,12 @@ plain `db_conn` fixture has neither and cannot exercise these tables.
 from __future__ import annotations
 
 import duckdb
-from pb.api.services.schema import get_column_managers, get_fk_graph, get_procedure_footprint
+from pb.api.services.schema import (
+    get_column_managers,
+    get_column_usage,
+    get_fk_graph,
+    get_procedure_footprint,
+)
 
 
 def test_get_fk_graph_counts(schema_db_conn: duckdb.DuckDBPyConnection):
@@ -42,6 +47,32 @@ def test_get_fk_graph_unused_edges_have_no_dw_source(schema_db_conn: duckdb.Duck
     result = get_fk_graph(schema_db_conn)
     for e in result["unused"]:
         assert e["dw_sources"] == []
+
+
+def test_get_column_usage_counts(schema_db_conn: duckdb.DuckDBPyConnection):
+    result = get_column_usage(schema_db_conn)
+    # Re-verified against a freshly-rebuilt schema DB (2026-07-07, twice, same
+    # 4 columns both times) — corrects this plan's own earlier ad hoc spike,
+    # which had reported 0 dead columns. Not a corpus-size artifact: these 4
+    # are real, reproducible catalog-only columns with no reads or writes
+    # anywhere in the 422-file corpus.
+    assert len(result["dead"]) == 4
+    assert len(result["write_only"]) == 0
+    assert len(result["read_only"]) == 172
+    assert len(result["read_write"]) == 53
+    total = sum(len(v) for v in result.values())
+    assert total == 229
+
+
+def test_get_column_usage_dead_columns_named(schema_db_conn: duckdb.DuckDBPyConnection):
+    result = get_column_usage(schema_db_conn)
+    dead = {(c["table"], c["column"]) for c in result["dead"]}
+    assert dead == {
+        ("afxtable", "tablename"),
+        ("afxtable", "tabledesc"),
+        ("afxtablefields", "sorting"),
+        ("misth_ypal", "kodtitlos"),
+    }
 
 
 def test_get_procedure_footprint_fn_perm(schema_db_conn: duckdb.DuckDBPyConnection):

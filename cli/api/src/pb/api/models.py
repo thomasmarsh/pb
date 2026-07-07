@@ -33,6 +33,13 @@ class FkGraphResponse(BaseModel):
     unused: list[FkGraphEdge]
 
 
+class ColumnUsageResponse(BaseModel):
+    dead: list[FkColumnRef]
+    write_only: list[FkColumnRef]
+    read_only: list[FkColumnRef]
+    read_write: list[FkColumnRef]
+
+
 class ColumnTouch(BaseModel):
     namespace: str | None
     table: str
