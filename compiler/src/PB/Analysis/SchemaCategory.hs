@@ -28,6 +28,11 @@ module PB.Analysis.SchemaCategory
   , CatFkRow (..)
   , SchemaInputs (..)
   , buildSchema
+    -- Traversal (Plan 148 Phase 2)
+  , blastRadius
+  , validationWalkBack
+  , ValidationConstraint (..)
+  , constraintWriters
   ) where
 
 import PB.Prelude
@@ -249,3 +254,60 @@ buildSchema inputs =
       [ ColumnObj (TableRef (cclNamespace c) (cclTable c)) (cclColumn c)
       | c <- inCatalogColumns inputs
       ]
+
+-- ---------------------------------------------------------------------------
+-- Traversal (Plan 148 Phase 2)
+
+-- | Shared recursive path enumerator. Cycle-safe: an object already on the
+-- current path is never revisited, so recursion always terminates even on
+-- a cyclic FK graph. Returns one entry per distinct reachable object
+-- (including the identity path at the seed) — multiple routes to the same
+-- object yield multiple entries, since a path carries provenance that a
+-- bare reachability boolean would discard.
+walkPaths
+  :: (SchGraph -> Map.Map SchObject [SchMorphism])  -- ^ adjacency map to follow
+  -> (SchPath -> SchMorphism -> SchPath)             -- ^ extend a path with one leg
+  -> (SchPath -> SchObject)                          -- ^ frontier object to look up next
+  -> (SchMorphism -> SchObject)                      -- ^ the object a leg discovers
+  -> SchGraph -> SchObject -> [SchPath]
+walkPaths adj step frontier discovered g seed = go (idPath seed) (Set.singleton seed)
+  where
+    go path visited =
+      path : concatMap extend (Map.findWithDefault [] (frontier path) (adj g))
+      where
+        extend leg
+          | Set.member (discovered leg) visited = []
+          | otherwise = go (step path leg) (Set.insert (discovered leg) visited)
+
+-- | All paths reachable forward from the seed (sgOut). North-star Q1 ("if
+-- this column mutates, what else is affected") — the coslice under a
+-- ColumnObj/StmtObj. Every returned path's 'spFrom' is the seed.
+blastRadius :: SchGraph -> SchObject -> [SchPath]
+blastRadius = walkPaths sgOut extendForward spTo legTo
+  where
+    extendForward path leg = SchPath (spFrom path) (legTo leg) (spLegs path <> [leg])
+
+-- | All paths that feed into the seed (sgIn), oriented in genuine morphism
+-- direction (ancestor -> seed). North-star Q2 ("what can write to this
+-- column") — the slice over a ColumnObj (the "validation walk-back").
+-- Every returned path's 'spTo' is the seed.
+validationWalkBack :: SchGraph -> SchObject -> [SchPath]
+validationWalkBack = walkPaths sgIn extendBackward spFrom legFrom
+  where
+    extendBackward path leg = SchPath (legFrom leg) (spTo path) (leg : spLegs path)
+
+-- | Hand-seeded validation constraint (Phase 2 does not infer constraints —
+-- see doc/plan/148-db-schema-category.md's Non-goals). 'vcColumn' is
+-- expected to be a 'ColumnObj'.
+data ValidationConstraint = ValidationConstraint
+  { vcColumn      :: SchObject
+  , vcDescription :: Text
+  } deriving (Show, Eq)
+
+-- | Every StmtId (SQL statement or DW retrieve) that can write into the
+-- constraint's column, directly or transitively via an FK chain — the
+-- checklist of code sites to inspect for that constraint.
+constraintWriters :: SchGraph -> ValidationConstraint -> [StmtId]
+constraintWriters g c =
+  Set.toList (Set.fromList
+    [ sid | p <- validationWalkBack g (vcColumn c), StmtObj sid <- [spFrom p] ])

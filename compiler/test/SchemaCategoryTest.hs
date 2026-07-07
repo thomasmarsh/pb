@@ -164,6 +164,113 @@ tests = testGroup "SchemaCategory"
           lhs = composePath p1 p2 >>= \p12 -> composePath p12 p3
           rhs = composePath p2 p3 >>= \p23 -> composePath p1 p23
       lhs === rhs
+
+  , testGroup "Traversal"
+    [ testCase "blastRadius includes the identity path at the seed" $
+        let colA = ColumnObj (TableRef Nothing "a") "x"
+            sch  = buildSchema emptyInputs
+        in assertBool "idPath colA present" (idPath colA `elem` blastRadius sch colA)
+
+    , testCase "blastRadius follows a LegReads -> LegWrites two-hop chain" $
+        let colA = ColumnObj (TableRef Nothing "a") "x"
+            colB = ColumnObj (TableRef Nothing "b") "y"
+            sid  = SqlStmtId "f.srf" "obj" "proc" 5
+            inp  = emptyInputs
+              { inSqlColumns =
+                  [ SqlColRow sid Nothing (Just "a") "x" False  -- LegReads: colA -> stmt
+                  , SqlColRow sid Nothing (Just "b") "y" True   -- LegWrites: stmt -> colB
+                  ]
+              }
+            sch = buildSchema inp
+            paths = blastRadius sch colA
+            expected = SchPath colA colB
+              [ SchMorphism colA (StmtObj sid) LegReads
+              , SchMorphism (StmtObj sid) colB LegWrites
+              ]
+        in assertBool "two-hop path colA -> stmt -> colB present" (expected `elem` paths)
+
+    , testCase "blastRadius is cycle-safe on a cyclic FK graph (terminates, no path revisits an object)" $
+        let colA = ColumnObj (TableRef Nothing "a") "x"
+            inp  = emptyInputs
+              { inCatalogFks =
+                  [ CatFkRow Nothing "a" "x" Nothing "b" "y"
+                  , CatFkRow Nothing "b" "y" Nothing "a" "x"
+                  ]
+              }
+            sch = buildSchema inp
+            paths = blastRadius sch colA
+            objsIn p = spFrom p : map legTo (spLegs p)
+            noRevisit p = let os = objsIn p in length os == length (Set.fromList (map schObjectKey os))
+        in do
+          assertBool "terminates with a finite, small result" (length paths <= 4)
+          assertBool "no path revisits an object" (all noRevisit paths)
+
+    , testCase "validationWalkBack finds a direct LegWrites writer" $
+        let colA = ColumnObj (TableRef Nothing "account") "balance"
+            sid  = SqlStmtId "f.srf" "obj" "proc" 5
+            inp  = emptyInputs
+              { inSqlColumns = [ SqlColRow sid Nothing (Just "account") "balance" True ] }
+            sch = buildSchema inp
+            expected = SchPath (StmtObj sid) colA [ SchMorphism (StmtObj sid) colA LegWrites ]
+        in assertBool "writer path present" (expected `elem` validationWalkBack sch colA)
+
+    , testCase "validationWalkBack finds a DW retrieve via LegRetrieve" $
+        let colA = ColumnObj (TableRef Nothing "orders") "id"
+            dwId = DwRetrieveId "d_test.srd" "d_test"
+            inp  = emptyInputs
+              { inDwRetrieveColumns =
+                  [ DwRetrieveColRow "d_test.srd" "d_test" Nothing "orders" "id" ] }
+            sch = buildSchema inp
+            expected = SchPath (StmtObj dwId) colA [ SchMorphism (StmtObj dwId) colA LegRetrieve ]
+        in assertBool "retrieve path present" (expected `elem` validationWalkBack sch colA)
+
+    , testCase "validationWalkBack follows an FK chain transitively (usrgroupperm.kodaction -> usractions.kodaction shape)" $
+        let colGroupPerm = ColumnObj (TableRef Nothing "usrgroupperm") "kodaction"
+            colActions    = ColumnObj (TableRef Nothing "usractions") "kodaction"
+            sid = SqlStmtId "f.srf" "obj" "proc" 1
+            inp = emptyInputs
+              { inCatalogFks =
+                  [ CatFkRow Nothing "usrgroupperm" "kodaction" Nothing "usractions" "kodaction" ]
+              , inSqlColumns =
+                  [ SqlColRow sid Nothing (Just "usrgroupperm") "kodaction" True ]
+              }
+            sch = buildSchema inp
+            expected = SchPath (StmtObj sid) colActions
+              [ SchMorphism (StmtObj sid) colGroupPerm LegWrites
+              , SchMorphism colGroupPerm colActions (LegFk FkDdl)
+              ]
+        in assertBool "writer-through-FK path present" (expected `elem` validationWalkBack sch colActions)
+
+    , testCase "constraintWriters returns every StmtId reachable backward from the constraint's column" $
+        let colA = ColumnObj (TableRef Nothing "account") "status"
+            sid  = SqlStmtId "f.srf" "obj" "proc" 9
+            dwId = DwRetrieveId "d.srd" "d_test"
+            inp  = emptyInputs
+              { inSqlColumns = [ SqlColRow sid Nothing (Just "account") "status" True ]
+              , inDwRetrieveColumns =
+                  [ DwRetrieveColRow "d.srd" "d_test" Nothing "account" "status" ]
+              }
+            sch = buildSchema inp
+            found = constraintWriters sch constraint
+            constraint = ValidationConstraint colA "status must be one of A/I/P"
+        in do
+          assertBool "sql writer found" (sid `elem` found)
+          assertBool "dw retrieve found" (dwId `elem` found)
+
+    , testProperty "no path from blastRadius or validationWalkBack revisits an object" $ property $ do
+        inp <- forAll genSchemaInputs
+        let sch = buildSchema inp
+            objsIn p = spFrom p : map legTo (spLegs p)
+            noRevisit p = let os = objsIn p in length os == length (Set.fromList (map schObjectKey os))
+        assert (all noRevisit (concatMap (blastRadius sch) (Set.toList (sgObjects sch))))
+        assert (all noRevisit (concatMap (validationWalkBack sch) (Set.toList (sgObjects sch))))
+
+    , testProperty "every validationWalkBack path ends at the seed; every blastRadius path starts at the seed" $ property $ do
+        inp <- forAll genSchemaInputs
+        let sch = buildSchema inp
+        assert (all (\o -> all (\p -> spTo p == o) (validationWalkBack sch o)) (Set.toList (sgObjects sch)))
+        assert (all (\o -> all (\p -> spFrom p == o) (blastRadius sch o)) (Set.toList (sgObjects sch)))
+    ]
   ]
 
 -- | Total indexing for the fixed-length generated chain (avoids the banned

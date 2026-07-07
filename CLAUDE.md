@@ -1178,7 +1178,7 @@ builtinFnNames     :: Set Text     -- free functions (used by resolveCalls)
 builtinMethodNames :: Set Text     -- class methods
 ```
 
-### `PB.Analysis.SchemaCategory` (Plan 148 Phase 1b, 2026-07-07)
+### `PB.Analysis.SchemaCategory` (Plan 148 Phase 1b/2, 2026-07-07)
 
 ```haskell
 -- Pure. The DB schema as a free category (Sch). Objects are (table,column)
@@ -1230,6 +1230,20 @@ buildSchema :: SchemaInputs -> SchGraph   -- total, pure
 -- Catalog-only columns (no statement/JOIN touches them) still become
 -- objects with no legs -- a free normalization signal (dead-column
 -- candidates); see done-condition verification below for real counts.
+
+-- Traversal (Phase 2, 2026-07-07). Shared cycle-safe walker: a path-local
+-- visited set means an object already on the current path is never
+-- revisited, so recursion terminates even on a real cyclic FK graph
+-- (corpus-confirmed: misth_final_ypal.kodfinal <-> misth_final.kodfinal).
+-- Each returns one SchPath entry per distinct reachable object, not a
+-- bare reachability boolean.
+blastRadius        :: SchGraph -> SchObject -> [SchPath]   -- forward via sgOut; every result's spFrom == seed
+validationWalkBack :: SchGraph -> SchObject -> [SchPath]   -- backward via sgIn; every result's spTo == seed
+data ValidationConstraint = ValidationConstraint { vcColumn :: SchObject, vcDescription :: Text }
+-- vcColumn expected to be a ColumnObj. Hand-seeded fixture, not inferred.
+constraintWriters :: SchGraph -> ValidationConstraint -> [StmtId]
+-- Dedup'd StmtIds reachable backward from vcColumn (SqlStmtId writers +
+-- DwRetrieveId retrieves), direct or via an FK chain.
 ```
 
 ### `PB.Pipeline.FileWalk`
