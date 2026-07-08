@@ -34,7 +34,13 @@ from collections import Counter
 from pathlib import Path
 
 import sqlglot
-from pb.lib.ddl import _split_statements, _strip_constraint_state, _strip_view_editioning_clause
+from pb.lib.ddl import (
+    _detect_hard_wrap_width,
+    _dewrap_hard_wrapped_lines,
+    _split_statements,
+    _strip_constraint_state,
+    _strip_view_editioning_clause,
+)
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel, ParseError, TokenError
 
@@ -269,6 +275,13 @@ def main() -> None:
     args = ap.parse_args()
 
     raw_text = Path(args.ddl_file).read_text(errors="replace")
+
+    wrap_width = _detect_hard_wrap_width(raw_text)
+    if wrap_width is not None:
+        raw_text = _dewrap_hard_wrapped_lines(raw_text, wrap_width)
+        print(f"NOTE: detected hard line-wrap at width={wrap_width}, reflowed before analysis")
+        print()
+
     stripped_text = _strip_view_editioning_clause(_strip_constraint_state(raw_text))
 
     raw_chunks = _split_statements(raw_text)
