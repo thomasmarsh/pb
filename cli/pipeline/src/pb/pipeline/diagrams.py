@@ -41,48 +41,34 @@ _PLACEHOLDER_SVG = (
     "</svg>"
 )
 
-# Attribute overrides tried in order after the primary (as-configured) render
-# fails. Each dict is applied cumulatively via dot.attr(), so overlap="prism"
-# set by the builder never survives into a retry. "scale" and "false" both
-# avoid the triangulation-dependent code path that "prism" needs (missing on
-# some graphviz builds, e.g. RHEL): "remove_overlap: Graphviz not built with
-# triangulation library".
-_RENDER_FALLBACKS: tuple[dict[str, str], ...] = (
-    {"splines": "true", "overlap": "scale"},
-    {"splines": "true", "overlap": "false"},
-)
-
 
 def _render_svg(dot) -> str:
     """Render a graphviz object to SVG.
 
-    Never raises for a rendering failure (a malformed graph, an unsupported
-    engine feature, a crashing `dot` subprocess, ...) -- one bad diagram must
-    not take down the page it's embedded in. Falls back through
-    `_RENDER_FALLBACKS`, then returns `_PLACEHOLDER_SVG` if every attempt
-    fails. `graphviz.backend.execute.ExecutableNotFound` (the binary is
-    missing entirely, not a rendering quirk) is the one exception still
-    raised, so the route can report a clear 503 instead of silently hiding
-    a missing dependency behind a placeholder image.
+    A single attempt, no attribute-mutating retry ladder: the graph attrs a
+    diagram builder requests (`pb.lib.diagram_builder`) must already be
+    supported by any graphviz build -- e.g. never `overlap="prism"`, which
+    needs a triangulation library many distro packages (Homebrew, several
+    Linux distros) omit and reliably fails with "remove_overlap: Graphviz
+    not built with triangulation library". Fix an unsupported default at
+    the builder that requests it, not with a fallback here.
+
+    What this function guarantees: it never raises for a rendering failure
+    (a malformed graph, an unsupported engine feature, a crashing `dot`
+    subprocess, ...) -- one bad diagram must not break the page it's
+    embedded in. `graphviz.backend.execute.ExecutableNotFound` (the `dot`
+    binary is missing entirely -- an infrastructure problem, not a
+    rendering quirk) is the one exception still raised, so the route can
+    report a clear 503 instead of silently hiding a missing dependency
+    behind a placeholder image.
     """
     try:
         return dot.pipe(format="svg").decode("utf-8")
     except graphviz.backend.execute.ExecutableNotFound:
         raise
     except Exception:
-        log.warning("Primary render failed", exc_info=True)
-
-    for i, overrides in enumerate(_RENDER_FALLBACKS):
-        dot.attr(**overrides)
-        try:
-            return dot.pipe(format="svg").decode("utf-8")
-        except graphviz.backend.execute.ExecutableNotFound:
-            raise
-        except Exception:
-            log.warning("Render fallback %d %r failed", i + 1, overrides, exc_info=True)
-
-    log.error("All render fallbacks exhausted; returning placeholder SVG")
-    return _PLACEHOLDER_SVG
+        log.error("Diagram render failed; returning placeholder SVG", exc_info=True)
+        return _PLACEHOLDER_SVG
 
 
 def build_inheritance(

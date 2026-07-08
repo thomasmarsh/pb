@@ -214,7 +214,11 @@ def render_heatmap(
     dot = graphviz.Graph(engine="sfdp", name="heatmap")
     apply_defaults(dot)
     dot.attr(
-        overlap="prism",
+        # "prism" needs graphviz's triangulation library, which many distro
+        # packages (Homebrew, several Linux distros) don't build in --
+        # "scale" gives the same node-overlap removal via a core algorithm
+        # present in every graphviz build.
+        overlap="scale",
         splines="curved",
         outputorder="edgesfirst",
         K="1.2",

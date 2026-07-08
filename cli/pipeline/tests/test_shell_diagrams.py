@@ -320,55 +320,36 @@ def test_window_table_lattice_has_edges(schema_db_conn):
 
 
 class FakeDot:
-    def __init__(self, fail_count: int):
-        """fail_count=N means the first N calls to .pipe() raise; the (N+1)th succeeds."""
-        self.fail_count = fail_count
+    def __init__(self, exc: Exception | None):
+        """exc=None means .pipe() succeeds; otherwise every call raises exc."""
+        self.exc = exc
         self.calls = 0
-        self.attrs: list[dict] = []
-
-    def attr(self, **kwargs):
-        self.attrs.append(kwargs)
 
     def pipe(self, format: str) -> bytes:  # noqa: A002
         self.calls += 1
-        if self.calls <= self.fail_count:
-            raise graphviz.backend.execute.CalledProcessError(1, ["dot"])
+        if self.exc is not None:
+            raise self.exc
         return b"<svg>ok</svg>"
 
 
-def test_render_svg_succeeds_on_first_try():
-    dot = FakeDot(fail_count=0)
+def test_render_svg_returns_pipe_output_on_success():
+    dot = FakeDot(exc=None)
     assert _render_svg(dot) == "<svg>ok</svg>"
     assert dot.calls == 1
-    assert dot.attrs == []
 
 
-def test_render_svg_falls_back_on_primary_failure():
-    dot = FakeDot(fail_count=1)
-    assert _render_svg(dot) == "<svg>ok</svg>"
-    assert dot.calls == 2
-    assert dot.attrs == [{"splines": "true", "overlap": "scale"}]
+def test_render_svg_returns_placeholder_on_called_process_error():
+    dot = FakeDot(exc=graphviz.backend.execute.CalledProcessError(1, ["dot"]))
+    assert _render_svg(dot) == _PLACEHOLDER_SVG
+    assert dot.calls == 1
 
 
-def test_render_svg_falls_back_through_all_overlap_values():
-    dot = FakeDot(fail_count=2)
-    assert _render_svg(dot) == "<svg>ok</svg>"
-    assert dot.calls == 3
-    assert dot.attrs == [
-        {"splines": "true", "overlap": "scale"},
-        {"splines": "true", "overlap": "false"},
-    ]
-
-
-def test_render_svg_returns_placeholder_when_every_attempt_fails():
-    dot = FakeDot(fail_count=99)
+def test_render_svg_returns_placeholder_on_any_other_exception():
+    dot = FakeDot(exc=RuntimeError("dot crashed"))
     assert _render_svg(dot) == _PLACEHOLDER_SVG
 
 
 def test_render_svg_reraises_executable_not_found():
-    class MissingBinaryDot(FakeDot):
-        def pipe(self, format: str) -> bytes:  # noqa: A002
-            raise graphviz.backend.execute.ExecutableNotFound(["dot"])
-
+    dot = FakeDot(exc=graphviz.backend.execute.ExecutableNotFound(["dot"]))
     with pytest.raises(graphviz.backend.execute.ExecutableNotFound):
-        _render_svg(MissingBinaryDot(fail_count=0))
+        _render_svg(dot)
