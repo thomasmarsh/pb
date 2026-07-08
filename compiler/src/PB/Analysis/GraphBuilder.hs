@@ -49,7 +49,7 @@ import PB.Analysis.InstrGraph (InstrNode (..), InstrGraph (..))
 import PB.Analysis.CallClassify (collectBodyLocals)
 import PB.Analysis.SSA (buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
-import Control.Monad.State.Strict (State, gets, modify, runState)
+import Control.Monad.State.Strict (State, evalState, gets, modify, runState)
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -81,22 +81,48 @@ data LowCat
 
 -- | Lower a typed 'CatOp' to an untyped 'LowCat'.  Pure structural
 -- traversal — no 'unsafeCoerce', no runtime type inspection.
+--
+-- Memoized by 'CatTagged'\'s blockId (threaded via an internal 'State', not
+-- exposed in the signature): 'compileBlock'/'compileLoopBody' (CatLower.hs)
+-- already memoize compilation by blockId, so a merge point reached by N
+-- predecessors is compiled once and the SAME 'CatOp' heap value is embedded
+-- at all N call sites — real Haskell sharing. Without this memo, walking
+-- that shared DAG here would re-run the full recursive conversion once per
+-- embedding, and — because every switch's N-way fan-in reconverges on the
+-- single block that starts the next switch — that cost compounds
+-- multiplicatively across a chain of switches (fn_dateolografos.srf's real
+-- shape: 7 sequential/nested choose/case blocks). This is safe because a
+-- given blockId's tagged content is identical at every occurrence within
+-- one procedure's compiled term, by construction of that same
+-- 'compileBlock'/'compileLoopBody' memo — so caching by blockId text alone
+-- (ignoring the GADT's type parameters) is sound: a repeat encounter always
+-- carries the same content, never a different one under the same tag.
 toLowCat :: CatOp a b -> LowCat
-toLowCat CatId              = LId
-toLowCat (CatAssignWithRhs v e) = LAssignWithRhs v e
-toLowCat (CatCompose g f)   = LCompose (toLowCat g) (toLowCat f)
-toLowCat (CatFanIn t f)     = LFanIn (toLowCat t) (toLowCat f)
-toLowCat (CatLoop body)     = LLoop (toLowCat body)
-toLowCat CatInl             = LInl
-toLowCat CatInr             = LInr
-toLowCat CatSplitValue      = LSplitValue
-toLowCat (CatEval e)        = LEval e
-toLowCat (CatFork l r)      = LFork (toLowCat l) (toLowCat r)
-toLowCat (CatCall n args)   = LCall n args
-toLowCat (CatSuspend e args) = LSuspend e args
-toLowCat CatReturn          = LReturn
-toLowCat (CatTagged bid f)  = LTagged bid (toLowCat f)
-toLowCat _                  = LErasable  -- CatExl, CatExr, CatConst, CatLookup, CatAssign, CatTry
+toLowCat op = evalState (go op) Map.empty
+  where
+    go :: CatOp x y -> State (Map.Map Text LowCat) LowCat
+    go CatId              = pure LId
+    go (CatAssignWithRhs v e) = pure (LAssignWithRhs v e)
+    go (CatCompose g f)   = LCompose <$> go g <*> go f
+    go (CatFanIn t f)     = LFanIn <$> go t <*> go f
+    go (CatLoop body)     = LLoop <$> go body
+    go CatInl             = pure LInl
+    go CatInr             = pure LInr
+    go CatSplitValue      = pure LSplitValue
+    go (CatEval e)        = pure (LEval e)
+    go (CatFork l r)      = LFork <$> go l <*> go r
+    go (CatCall n args)   = pure (LCall n args)
+    go (CatSuspend e args) = pure (LSuspend e args)
+    go CatReturn          = pure LReturn
+    go (CatTagged bid f)  = do
+      cached <- gets (Map.lookup bid)
+      case cached of
+        Just inner -> pure (LTagged bid inner)
+        Nothing    -> do
+          inner <- go f
+          modify (Map.insert bid inner)
+          pure (LTagged bid inner)
+    go _                  = pure LErasable  -- CatExl, CatExr, CatConst, CatLookup, CatAssign, CatTry
 
 -- ============================================================================
 -- 1b. Wiring diagrams (Plan 149 Phase 1): shared-block extraction

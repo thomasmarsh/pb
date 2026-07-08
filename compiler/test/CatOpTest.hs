@@ -6,7 +6,7 @@ import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..),
                             DispatchExpr (..), DispatchMode (..))
 import PB.AST.Type         (PbType (..))
 import PB.AST.BodyStmt     (BodyStmt (..), PbCall (..), IfStmt (..), ElseIf (..), ForStmt (..), DoStmt (..), DoCondition (..),
-                            TryStmt (..), CatchClause (..))
+                            TryStmt (..), CatchClause (..), ChooseStmt (..), CaseClause (..))
 import PB.AST.Located      (Located (..))
 import PB.Analysis.CatOp
 import PB.Analysis.CatLower (compileSsa)
@@ -24,12 +24,26 @@ import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
 import Control.Monad.State.Strict (runStateT)
 import qualified Control.Exception as CE
+import GHC.Conc             (getAllocationCounter, setAllocationCounter)
+import Data.Int              (Int64)
+import System.Timeout       (timeout)
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import qualified Data.List       as L
+import qualified Data.Text       as T
 import Test.Tasty           (TestTree, testGroup)
-import Test.Tasty.HUnit     (assertBool, assertEqual, testCase, (@?=))
+import Test.Tasty.HUnit     (assertBool, assertEqual, assertFailure, testCase, (@?=))
+
+-- | Bytes allocated (on this capability) while running an action, via GHC's
+-- allocation-counter primitive -- deterministic across machines of differing
+-- speed/load, unlike a wall-clock measurement (see its use below).
+measureAllocBytes :: IO a -> IO Int64
+measureAllocBytes act = do
+  setAllocationCounter maxBound
+  _ <- act
+  remaining <- getAllocationCounter
+  pure (maxBound P.- remaining)
 
 -- | Default compileSsa with empty type env and no user functions.
 compileSsaDefault :: SsaProc -> CatOp () ()
@@ -1201,6 +1215,68 @@ tests = testGroup "CatOp"
             expectedCounts = [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]
             newShape = canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
         in pathCallCounts newShape @?= expectedCounts
+    ]
+
+  , testGroup "toLowCat merge-block memoization: sequential choose/case chains stay linear, not multiplicative"
+    -- 'compileBlock' (CatLower.hs) already memoizes by blockId, so a merge point
+    -- reached by N predecessors is compiled once and the SAME 'CatOp' heap value is
+    -- embedded at all N call sites -- real Haskell sharing. But 'toLowCat'
+    -- (GraphBuilder.hs) walks that shared DAG with no memo of its own: each of the
+    -- N embeddings triggers an independent, full recursive conversion of the shared
+    -- subtree into 'LowCat'. A chain of switches makes this compound
+    -- multiplicatively: every switch's N-way fan-in reconverges on the single block
+    -- that starts the next switch, so 'toLowCat' re-converts that next switch's
+    -- entire (further-nested) content once per predecessor branch of the current
+    -- one. This is exactly fn_dateolografos.srf's real shape (7 sequential/nested
+    -- choose/case blocks, ~79 total clauses) -- cost-center profiling attributed
+    -- 86-93% of that file's compile time and ~2GB of allocation to 'toLowCat' alone,
+    -- even though Plan 150's CatTagged/bsBlockPcMemo already keeps the final
+    -- InstrGraph's own node count linear (see the "GraphBuilder node-sharing" group
+    -- above) -- that fix covers 'compileLowCatToInstr's re-lowering, a stage strictly
+    -- after 'toLowCat', which still pays the full multiplicative cost constructing
+    -- the (later-deduplicated) 'LowCat' tree in the first place.
+    --
+    -- Assertions are on *bytes allocated* (via 'GHC.Conc.getAllocationCounter'), not
+    -- wall-clock time: allocation count is deterministic across CI machines of
+    -- differing speed/load, where a wall-clock bound would be flaky. A generous
+    -- 'timeout' wraps each as a hang-safety-net only (the fixed algorithm finishes
+    -- in milliseconds; it exists so a regression fails fast instead of hanging the
+    -- suite), not as the pass/fail signal.
+    [ testCase "7 sequential choose/case blocks, 8 clauses each (fn_dateolografos shape): allocates < 20MB" $ do
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            chooseGroup g =
+              Located (g P.* 100) (BsChoose (ChooseStmt
+                (ExLvalue (Lvalue [LvSegment ("s" <> T.pack (show g)) Nothing]))
+                [ CaseClause (Just [tok (T.pack (show i))])
+                    [Located (g P.* 100 P.+ i) (BsCall (call ("c" <> T.pack (show g) <> "_" <> T.pack (show i))))]
+                | i <- [1 .. 8 :: Int] ]))
+            body = [ chooseGroup g | g <- [1 .. 7 :: Int] ]
+        mBytes <- timeout 30000000 (measureAllocBytes
+          (CE.evaluate (length (igNodes (compileProcedureViaCatOp emptyEnv Set.empty body)))))
+        case mBytes of
+          Nothing -> assertFailure "did not complete within the 30s hang-safety-net timeout"
+          Just bytes -> assertBool
+            ("allocated " <> show bytes <> " bytes; expected < 20MB (pre-fix: unmemoized toLowCat \
+             \allocates hundreds of MB+ from combinatorial re-conversion across chained switches)")
+            (bytes P.< 20 P.* 1000 P.* 1000)
+
+    , testCase "18 sequential if/else groups: allocates < 20MB, not 2^18 blowup" $ do
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            group base =
+              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
+                  [Located (base P.+ 2) (BsCall (call ("a" <> T.pack (show base))))] []
+                  (Just [Located (base P.+ 3) (BsCall (call ("b" <> T.pack (show base))))])))
+              , Located (base P.+ 4) (BsCall (call ("tail" <> T.pack (show base))))
+              ]
+            body = concatMap group [ n P.* 4 | n <- [0 .. 17 :: Int] ]
+        mBytes <- timeout 30000000 (measureAllocBytes
+          (CE.evaluate (length (igNodes (compileProcedureViaCatOp emptyEnv Set.empty body)))))
+        case mBytes of
+          Nothing -> assertFailure "did not complete within the 30s hang-safety-net timeout"
+          Just bytes -> assertBool
+            ("allocated " <> show bytes <> " bytes; expected < 20MB (pre-fix: 2^18 node \
+             \reconstructions in toLowCat)")
+            (bytes P.< 20 P.* 1000 P.* 1000)
     ]
 
   , testGroup "collectWiring (Plan 149 Phase 1)"
