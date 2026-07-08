@@ -469,6 +469,7 @@ runModeDb srcDir dbPath ddlArgs dialect = do
             , "statements_total" .= dsStatementsTotal stats
             , "statements_parsed" .= dsStatementsParsed stats
             , "statements_skipped" .= dsStatementsSkipped stats
+            , "skipped_previews" .= dsSkippedPreviews stats
             , "tables" .= length (scTables (ddlCatalog resp))
             , "primary_keys" .= length pkRows
             , "foreign_keys" .= length (scForeignKeys (ddlCatalog resp))

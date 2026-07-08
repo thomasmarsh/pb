@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 
 import sqlglot
 from sqlglot import exp
-from sqlglot.errors import ErrorLevel
+from sqlglot.errors import ErrorLevel, TokenError
 from sqlglot.optimizer.qualify import qualify
 
 _CONSTRAINT_STATE_RE = re.compile(
@@ -53,12 +53,23 @@ _CONSTRAINT_STATE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_VIEW_EDITIONING_RE = re.compile(r"\b(?:NON)?EDITIONABLE\b", re.IGNORECASE)
+
 
 def _strip_constraint_state(text: str) -> str:
     """Remove Oracle's constraint_state tail keywords (ENABLE/DISABLE/
     VALIDATE/NOVALIDATE/USING INDEX [name]) that sqlglot's grammar does not
     parse, in either CREATE TABLE or ALTER TABLE ADD CONSTRAINT context."""
     return _CONSTRAINT_STATE_RE.sub("", text)
+
+
+def _strip_view_editioning_clause(text: str) -> str:
+    """Remove Oracle's EDITIONABLE/NONEDITIONABLE view-editioning keyword
+    (e.g. `CREATE OR REPLACE FORCE EDITIONABLE VIEW ...`). Same failure class
+    as `_strip_constraint_state` — sqlglot's oracle dialect parses bare
+    FORCE/NOFORCE fine but falls back to an opaque exp.Command for the whole
+    statement once EDITIONABLE/NONEDITIONABLE appears."""
+    return _VIEW_EDITIONING_RE.sub("", text)
 
 
 @dataclass(frozen=True)
@@ -111,6 +122,13 @@ class DdlStats:
     statements_total: int
     statements_parsed: int
     statements_skipped: int  # fell back to an unstructured exp.Command
+    # One preview string per silently-lost statement, category-prefixed:
+    # "[unparsed] <sql, truncated>" for an exp.Command fallback (also
+    # counted in statements_skipped), "[unresolved view] <name>" for a
+    # CREATE VIEW the fixed-point loop below never resolved (NOT counted in
+    # statements_skipped — a distinct loss category with no counter of its
+    # own until now).
+    skipped_previews: tuple[str, ...] = ()
 
 
 def _table_ident(table_expr: exp.Table, default_namespace: str | None = None) -> tuple[str | None, str]:
@@ -252,6 +270,111 @@ def _resolve_view(
     return TableColumns(namespace=ns, table=table_name, columns=columns)
 
 
+def _unresolved_view_preview(stmt: exp.Create, dialect: str, default_namespace: str | None) -> str:
+    """Best-effort name for a CREATE VIEW the fixed-point loop never
+    resolved, for the "[unresolved view]" skipped_previews entry. Falls back
+    to a truncated SQL preview if the view's own target isn't a plain
+    identified table (should not happen for real DDL, but this module never
+    raises on malformed input)."""
+    view_target = stmt.this
+    table_expr = view_target.this if isinstance(view_target, exp.Schema) else view_target
+    if isinstance(table_expr, exp.Table):
+        ns, name = _table_ident(table_expr, default_namespace)
+        return f"{ns}.{name}" if ns else name
+    return stmt.sql(dialect=dialect)[:200]
+
+
+def _split_statements(text: str) -> list[str]:
+    """Split DDL text into individual statements on top-level semicolons,
+    tracking single/double-quoted string state and `--`/`/* */` comments so
+    a semicolon inside a literal or comment doesn't split mid-statement.
+    Used only as a fallback when sqlglot's own tokenizer can't process the
+    whole file in one pass (a hard `TokenError`, distinct from the
+    WARN-level per-statement `exp.Command` fallback `parse_ddl` normally
+    relies on) — the goal is to isolate the one statement that broke
+    tokenizing rather than lose the entire file. This is a best-effort
+    recovery, not a real tokenizer: a genuinely malformed string literal
+    (e.g. an unescaped apostrophe, the actual failure this exists to work
+    around) has an inherently ambiguous end position, so this scanner can
+    still misjudge where that *one* statement ends and swallow whatever
+    comes after it into the same broken chunk — but everything strictly
+    before the corruption still splits and parses correctly, which is
+    always at least as good as the current all-or-nothing failure."""
+    statements: list[str] = []
+    buf: list[str] = []
+    i = 0
+    n = len(text)
+    in_squote = in_dquote = False
+    in_line_comment = in_block_comment = False
+    while i < n:
+        c = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if in_line_comment:
+            buf.append(c)
+            i += 1
+            if c == "\n":
+                in_line_comment = False
+            continue
+        if in_block_comment:
+            buf.append(c)
+            if c == "*" and nxt == "/":
+                buf.append(nxt)
+                i += 2
+                in_block_comment = False
+                continue
+            i += 1
+            continue
+        if in_squote:
+            buf.append(c)
+            i += 1
+            if c == "'":
+                if nxt == "'":  # doubled '' escape stays inside the string
+                    buf.append(nxt)
+                    i += 1
+                else:
+                    in_squote = False
+            continue
+        if in_dquote:
+            buf.append(c)
+            i += 1
+            if c == '"':
+                in_dquote = False
+            continue
+        if c == "'":
+            in_squote = True
+            buf.append(c)
+            i += 1
+            continue
+        if c == '"':
+            in_dquote = True
+            buf.append(c)
+            i += 1
+            continue
+        if c == "-" and nxt == "-":
+            in_line_comment = True
+            buf.append(c)
+            i += 1
+            continue
+        if c == "/" and nxt == "*":
+            in_block_comment = True
+            buf.append(c)
+            i += 1
+            continue
+        if c == ";":
+            stmt = "".join(buf).strip()
+            if stmt:
+                statements.append(stmt)
+            buf = []
+            i += 1
+            continue
+        buf.append(c)
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        statements.append(tail)
+    return statements
+
+
 def parse_ddl(
     text: str, dialect: str = "mysql", default_namespace: str | None = None
 ) -> tuple[Catalog, DdlStats]:
@@ -261,19 +384,40 @@ def parse_ddl(
     not lose every other table in the file. `default_namespace` fills in
     the schema for a table (or FK reference) left unqualified in the DDL
     text, matching the common per-schema-dump export convention."""
-    text = _strip_constraint_state(text)
-    statements = sqlglot.parse(text, dialect=dialect, error_level=ErrorLevel.WARN)
+    text = _strip_view_editioning_clause(_strip_constraint_state(text))
+
+    skipped = 0
+    tokenize_error_count = 0
+    skipped_previews: list[str] = []
+    try:
+        statements = sqlglot.parse(text, dialect=dialect, error_level=ErrorLevel.WARN)
+    except TokenError:
+        # The whole file failed to tokenize (e.g. a malformed string
+        # literal) -- fall back to a conservative semicolon-based split so
+        # ONE bad statement doesn't lose every table in the file. See
+        # _split_statements' own docstring for why this recovery is
+        # best-effort, not guaranteed complete. Caught narrowly (TokenError
+        # only, not bare Exception): a caller error like an unknown dialect
+        # name (ValueError) must still propagate as a hard failure, not get
+        # silently absorbed into per-chunk skipped_previews.
+        statements = []
+        for chunk in _split_statements(text):
+            try:
+                statements.extend(sqlglot.parse(chunk, dialect=dialect, error_level=ErrorLevel.WARN))
+            except TokenError:
+                tokenize_error_count += 1
+                skipped_previews.append(f"[tokenize error] {chunk[:200]}")
 
     tables: list[TableColumns] = []
     primary_keys: list[TablePrimaryKey] = []
     foreign_keys: list[ForeignKey] = []
     checks: list[CheckConstraint] = []
-    skipped = 0
     view_stmts: list[exp.Create] = []
 
     for stmt in statements:
         if isinstance(stmt, exp.Command):
             skipped += 1
+            skipped_previews.append(f"[unparsed] {stmt.sql(dialect=dialect)[:200]}")
             continue
 
         if isinstance(stmt, exp.Create) and stmt.kind == "VIEW":
@@ -331,9 +475,13 @@ def parse_ddl(
             known_columns[row.table] = {c: "" for c in row.columns}
         remaining = still_remaining
 
+    for stmt in remaining:
+        skipped_previews.append(f"[unresolved view] {_unresolved_view_preview(stmt, dialect, default_namespace)}")
+
     stats = DdlStats(
-        statements_total=len(statements),
+        statements_total=len(statements) + tokenize_error_count,
         statements_parsed=len(statements) - skipped,
-        statements_skipped=skipped,
+        statements_skipped=skipped + tokenize_error_count,
+        skipped_previews=tuple(skipped_previews),
     )
     return Catalog(tables=tables, primary_keys=primary_keys, foreign_keys=foreign_keys, checks=checks), stats

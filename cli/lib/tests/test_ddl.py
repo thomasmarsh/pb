@@ -124,6 +124,76 @@ def test_parse_ddl_partial_failure_keeps_other_tables():
     assert stats.statements_total == 3
 
 
+_EDITIONABLE_VIEW = '''CREATE OR REPLACE FORCE EDITIONABLE VIEW "SCHEMA"."NAME" AS
+SELECT "A", "B" FROM "SCHEMA"."T"
+'''
+
+
+def test_parse_ddl_strips_editionable_clause_and_parses_view():
+    catalog, stats = parse_ddl(_EDITIONABLE_VIEW, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert len(catalog.tables) == 1
+    table = catalog.tables[0]
+    assert table.namespace == "schema"
+    assert table.table == "name"
+    assert set(table.columns) == {"a", "b"}
+
+
+def test_parse_ddl_skipped_statement_preview_captured():
+    sql = '''
+    CREATE TABLE t1 (id NUMBER(10,2));
+    CREATE UNIQUE INDEX "S"."UK_T2" ON "S"."T2" ("ID");
+    '''
+    _catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert len(stats.skipped_previews) == 1
+    assert stats.skipped_previews[0].startswith("[unparsed] ")
+    assert "UK_T2" in stats.skipped_previews[0]
+
+
+def test_parse_ddl_unresolved_view_preview_captured():
+    sql = '''
+    CREATE TABLE t1 (id NUMBER);
+    CREATE VIEW v_unknown AS SELECT * FROM some_other_table_not_in_this_dump;
+    '''
+    _catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert stats.skipped_previews == ("[unresolved view] v_unknown",)
+
+
+# A single unescaped apostrophe makes the *whole file* unlexable to
+# sqlglot's tokenizer (a hard TokenError, not the WARN-level per-statement
+# exp.Command fallback) -- real-world trigger found live via a 4-schema
+# Oracle DDL load. Confirmed empirically before writing these tests: without
+# the _split_statements fallback in parse_ddl, this raises TokenError
+# straight out of sqlglot.parse and every table in the file is lost.
+_UNTERMINATED_QUOTE_STMT = "COMMENT ON COLUMN t2.name IS 'patient's identifier';"
+
+
+def test_parse_ddl_tokenize_error_recovers_statements_before_the_break():
+    sql = f'''
+    CREATE TABLE t1 (id NUMBER);
+    CREATE TABLE t3 (id NUMBER);
+    {_UNTERMINATED_QUOTE_STMT}
+    '''
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert {t.table for t in catalog.tables} == {"t1", "t3"}
+    assert stats.statements_skipped == 1
+    assert len(stats.skipped_previews) == 1
+    assert stats.skipped_previews[0].startswith("[tokenize error] ")
+
+
+def test_parse_ddl_tokenize_error_does_not_raise():
+    sql = f'''
+    CREATE TABLE t1 (id NUMBER);
+    {_UNTERMINATED_QUOTE_STMT}
+    '''
+    # Must not raise -- this is the exact regression this fallback exists
+    # to close (previously a bare TokenError out of sqlglot.parse).
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert {t.table for t in catalog.tables} == {"t1"}
+    assert stats.statements_skipped >= 1
+
+
 def test_parse_ddl_default_namespace_applied_to_unqualified_table():
     catalog, _stats = parse_ddl("CREATE TABLE clinicalaccession (acc_id NUMBER)", dialect="oracle", default_namespace="CLIMS")
     assert catalog.tables[0].namespace == "clims"

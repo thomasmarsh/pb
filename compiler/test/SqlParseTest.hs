@@ -257,6 +257,25 @@ tests = testGroup "SqlParse"
           Just cat -> assertEqual "checks default" [] (scChecks cat)
     ]
 
+  , testGroup "DdlStats decode"
+    [ testCase "decodes skipped_previews when present" $ do
+        let json = "{\"statements_total\":3,\"statements_parsed\":2,\"statements_skipped\":1,\
+                    \\"skipped_previews\":[\"[unparsed] CREATE INDEX ...\",\"[unresolved view] v_x\"]}"
+            mres = decode json :: Maybe DdlStats
+        case mres of
+          Nothing -> assertFailure "DdlStats failed to decode"
+          Just stats -> assertEqual "skipped_previews"
+            ["[unparsed] CREATE INDEX ...", "[unresolved view] v_x"]
+            (dsSkippedPreviews stats)
+
+    , testCase "missing skipped_previews key defaults to empty (older bridge worker)" $ do
+        let json = "{\"statements_total\":1,\"statements_parsed\":1,\"statements_skipped\":0}"
+            mres = decode json :: Maybe DdlStats
+        case mres of
+          Nothing    -> assertFailure "DdlStats failed to decode"
+          Just stats -> assertEqual "skipped_previews default" [] (dsSkippedPreviews stats)
+    ]
+
   , testGroup "SqlBridgePool"
     [ testCase "missing binary raises exception" $ do
         result <- try @SomeException (startSqlBridgePool 1 "/nonexistent/pb-sql-worker" "oracle")
@@ -304,6 +323,8 @@ tests = testGroup "SqlParse"
         assertEqual "fk from/to" (TableRef Nothing "afxfilterd", TableRef Nothing "afxfilter")
           (cfkFromTable (scForeignKeys cat !! 0), cfkToTable (scForeignKeys cat !! 0))
         assertEqual "checks count" 1 (length (scChecks cat))
+        assertEqual "skipped_previews default (worker sent no such key)"
+          [] (dsSkippedPreviews (ddlStats resp))
         shutdownSqlBridgePool pool
     ]
   ]

@@ -181,10 +181,18 @@ emptySchemaCatalog = SchemaCatalog [] [] [] []
 -- 'dsStatementsSkipped' counts statements sqlglot could not structurally
 -- parse (fell back to an inert Command) even at WARN error level -- surfaced
 -- so a silently-empty catalog is never mistaken for "the DDL loaded fine."
+-- 'dsSkippedPreviews' (skipped-statement-preview threading follow-up) is one
+-- preview string per silently-lost statement, category-prefixed:
+-- "[unparsed] ..." for a Command fallback (also counted in
+-- dsStatementsSkipped) or "[unresolved view] ..." for a CREATE VIEW the
+-- Python side's fixed-point loop never resolved (NOT counted in
+-- dsStatementsSkipped -- a distinct loss category). Parsed with '.:?' since
+-- older bridge workers (e.g. test fixtures) may not send this key.
 data DdlStats = DdlStats
   { dsStatementsTotal   :: Int
   , dsStatementsParsed  :: Int
   , dsStatementsSkipped :: Int
+  , dsSkippedPreviews   :: [Text]
   } deriving (Show, Eq)
 
 instance FromJSON DdlStats where
@@ -192,9 +200,10 @@ instance FromJSON DdlStats where
     <$> o .: "statements_total"
     <*> o .: "statements_parsed"
     <*> o .: "statements_skipped"
+    <*> o .:? "skipped_previews" .!= []
 
 emptyDdlStats :: DdlStats
-emptyDdlStats = DdlStats 0 0 0
+emptyDdlStats = DdlStats 0 0 0 []
 
 -- | Full response envelope for a "ddl"-kind bridge request. 'ddlParseOk' is
 -- false only for a hard failure outside sqlglot's own per-statement WARN-level

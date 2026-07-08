@@ -206,6 +206,31 @@ def test_format_ddl_loaded_zero_tables_flagged_even_when_fully_parsed():
     assert "0 table(s)" in lines[0]
 
 
+def test_format_ddl_loaded_skipped_previews_shown():
+    lines = _format_ddl_loaded(
+        _ddl_event(
+            statements_parsed=42,
+            statements_skipped=3,
+            skipped_previews=["[unparsed] CREATE INDEX ...", "[unresolved view] v_x"],
+        )
+    )
+    assert len(lines) == 3
+    assert "⚠" in lines[0]
+    assert "[unparsed] CREATE INDEX ..." in lines[1]
+    assert "[unresolved view] v_x" in lines[2]
+
+
+def test_format_ddl_loaded_previews_flagged_even_with_zero_skipped_count():
+    # Unresolved views never increment statements_skipped, so previews alone
+    # must be enough to flag the ⚠ branch.
+    lines = _format_ddl_loaded(
+        _ddl_event(skipped_previews=["[unresolved view] v_unknown"])
+    )
+    assert "⚠" in lines[0]
+    assert len(lines) == 2
+    assert "[unresolved view] v_unknown" in lines[1]
+
+
 def test_format_ddl_loaded_parse_failure_shows_error():
     lines = _format_ddl_loaded(
         _ddl_event(parse_ok=False, error="unexpected token at line 12", tables=0)

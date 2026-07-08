@@ -15,7 +15,8 @@ A request with "kind": "ddl" is dispatched to parse_ddl instead:
 Request:  {"kind": "ddl", "ddl": "CREATE TABLE ...", "dialect": "mysql", "namespace": "CLIMS"}
 Response: {"kind": "ddl", "parse_ok": true,
            "catalog": {"tables": [...], "primary_keys": [...], "foreign_keys": [...], "checks": [...]},
-           "stats": {"statements_total": N, "statements_parsed": N, "statements_skipped": N},
+           "stats": {"statements_total": N, "statements_parsed": N, "statements_skipped": N,
+                      "skipped_previews": ["[unparsed] ...", "[unresolved view] ...", ...]},
            "error": null}
 
 On a hard failure (an exception outside of sqlglot's own per-statement WARN-level

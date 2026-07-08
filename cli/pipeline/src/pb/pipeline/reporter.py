@@ -141,11 +141,15 @@ def _format_ddl_loaded(event: dict) -> list[str]:
     """Rich-markup lines for one --ddl file's load result (pbc's "ddl_loaded"
     progress event). Flags two distinct failure shapes: whole-file structural
     failure (parse_ok=False — e.g. the SQL bridge itself errored) and silent
-    partial/total loss (parse_ok=True but statements_skipped > 0 or
-    tables == 0) — the latter is what happens when sqlglot can't structurally
-    parse a statement (e.g. an unmodeled Oracle keyword like EDITIONABLE) and
-    falls back to an opaque Command instead of raising, so nothing else in
-    the pipeline ever sees an error for it."""
+    partial/total loss (parse_ok=True but statements_skipped > 0, tables == 0,
+    or skipped_previews non-empty) — the latter is what happens when sqlglot
+    can't structurally parse a statement (e.g. an unmodeled Oracle keyword)
+    and falls back to an opaque Command instead of raising, or when a CREATE
+    VIEW's fixed-point resolution loop never resolves it, so nothing else in
+    the pipeline ever sees an error for it. skipped_previews (present since
+    the skipped-statement-preview threading follow-up) carries one preview
+    line per lost statement, printed indented under the summary line so the
+    user can see *which* statement failed, not just how many."""
     namespace = event.get("namespace") or "(default)"
     path = event.get("path", "?")
     parse_ok = event.get("parse_ok", True)
@@ -164,16 +168,19 @@ def _format_ddl_loaded(event: dict) -> list[str]:
     pks = event.get("primary_keys", 0)
     fks = event.get("foreign_keys", 0)
     checks = event.get("checks", 0)
+    previews = event.get("skipped_previews", [])
 
     counts = f"{tables} table(s) · {pks} pk(s) · {fks} fk(s) · {checks} check(s)"
     stmt_summary = f"{parsed}/{total} statements"
 
-    if skipped > 0 or tables == 0:
+    if skipped > 0 or tables == 0 or previews:
         skip_note = f", [yellow]{skipped} skipped[/yellow]" if skipped > 0 else ""
-        return [
+        lines = [
             f"[yellow]⚠[/yellow] DDL  [bold]{namespace}[/bold]  {path}  {counts}"
             f"  ({stmt_summary}{skip_note})"
         ]
+        lines.extend(f"    [yellow]· {preview}[/yellow]" for preview in previews)
+        return lines
     return [f"[green]✓[/green] DDL  [bold]{namespace}[/bold]  {path}  {counts}  ({stmt_summary})"]
 
 
