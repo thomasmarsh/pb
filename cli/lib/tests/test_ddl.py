@@ -283,3 +283,57 @@ def test_parse_ddl_view_and_table_coexist_in_catalog():
     '''
     catalog, _stats = parse_ddl(sql, dialect="oracle")
     assert {t.table for t in catalog.tables} == {"orders", "customers", "v_orders"}
+
+
+# --- USING INDEX physical-attribute tail (found via real corpus triage: the
+# common Oracle export shape attaches TABLESPACE/STORAGE/PCTFREE/etc. to a
+# constraint's backing index, and the bare USING INDEX [name] stripping
+# above leaves that tail behind as syntax garbage, still losing the whole
+# statement) -----------------------------------------------------------------
+
+_USING_INDEX_NAMED_TABLE = '''CREATE TABLE "CLIMS"."CLINICALACCESSION" (
+  "ACC_ID" CHAR(13) NOT NULL ENABLE,
+  CONSTRAINT "PK_CLINICALACCESSION" PRIMARY KEY ("ACC_ID")
+    USING INDEX "CLIMS"."PK_CLINICALACCESSION_IDX"
+    TABLESPACE "USERS"
+    STORAGE (INITIAL 65536 NEXT 1048576 MINEXTENTS 1 MAXEXTENTS 2147483645 PCTINCREASE 0)
+    ENABLE
+)
+'''
+
+
+def test_parse_ddl_strips_using_index_named_with_physical_attrs():
+    catalog, stats = parse_ddl(_USING_INDEX_NAMED_TABLE, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert len(catalog.primary_keys) == 1
+    assert catalog.primary_keys[0].columns == ("acc_id",)
+
+
+_USING_INDEX_UNNAMED_TABLE = '''CREATE TABLE "CLIMS"."PATIENT" (
+  "PAT_ID" CHAR(10) NOT NULL ENABLE,
+  CONSTRAINT "UK_PATIENT" UNIQUE ("PAT_ID")
+    USING INDEX PCTFREE 10 INITRANS 2 MAXTRANS 255 LOGGING
+    ENABLE
+)
+'''
+
+
+def test_parse_ddl_strips_using_index_unnamed_with_physical_attrs():
+    catalog, stats = parse_ddl(_USING_INDEX_UNNAMED_TABLE, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert len(catalog.tables) == 1
+    assert set(catalog.tables[0].columns) == {"pat_id"}
+
+
+def test_parse_ddl_alter_table_add_constraint_using_index_with_physical_attrs():
+    sql = '''
+    CREATE TABLE "CLIMS"."CLINICALACCESSION" ("ACC_ID" CHAR(13));
+    ALTER TABLE "CLIMS"."CLINICALACCESSION"
+      ADD CONSTRAINT "PK_CA" PRIMARY KEY ("ACC_ID")
+      USING INDEX TABLESPACE "USERS" STORAGE (INITIAL 65536 NEXT 1048576) NOCOMPRESS
+      ENABLE;
+    '''
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert len(catalog.primary_keys) == 1
+    assert catalog.primary_keys[0].columns == ("acc_id",)

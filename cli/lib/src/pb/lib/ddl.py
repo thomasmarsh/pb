@@ -46,8 +46,45 @@ from sqlglot import exp
 from sqlglot.errors import ErrorLevel, TokenError
 from sqlglot.optimizer.qualify import qualify
 
+_INDEX_ATTR_KEYWORDS = (
+    r"TABLESPACE|STORAGE|PCTFREE|PCTUSED|INITRANS|MAXTRANS|LOGGING|NOLOGGING"
+    r"|COMPUTE|COMPRESS|NOCOMPRESS|ENABLE|DISABLE"
+)
+
+# One physical/storage attribute that can follow USING INDEX [name] when a
+# constraint's backing index gets its own segment attributes -- the common
+# real-Oracle-export shape found via corpus triage (2026-07-08): the bare
+# "USING INDEX [name]" stripped below leaves this tail behind as syntax
+# garbage, still losing the whole statement to sqlglot's exp.Command
+# fallback. STORAGE's inner clause is assumed non-nested (true for the
+# physical_attributes_clause grammar; no parens ever appear inside it).
+_INDEX_PHYSICAL_ATTR = (
+    r"TABLESPACE\s+\"?[A-Za-z_][\w$#]*\"?"
+    r"|STORAGE\s*\([^()]*\)"
+    r"|PCTFREE\s+\d+"
+    r"|PCTUSED\s+\d+"
+    r"|INITRANS\s+\d+"
+    r"|MAXTRANS\s+\d+"
+    r"|COMPUTE\s+STATISTICS"
+    r"|LOGGING"
+    r"|NOLOGGING"
+    r"|COMPRESS(?:\s+\d+)?"
+    r"|NOCOMPRESS"
+)
+
+# Index name after USING INDEX: bare or quoted identifier, optionally
+# schema-qualified (e.g. "CLIMS"."PK_IDX" or bare_schema.bare_idx).
+_QUALIFIED_IDENT = r'(?:"[^"]+"|[A-Za-z_][\w$#]*)(?:\.(?:"[^"]+"|[A-Za-z_][\w$#]*))?'
+
 _CONSTRAINT_STATE_RE = re.compile(
-    r"\bUSING\s+INDEX(\s+\"[^\"]+\"|\s+[A-Za-z_][\w$#]*)?\b"
+    # No trailing \b on this branch: the optional name/attrs groups can end
+    # on a non-word character (closing quote or paren), and a `\b` there
+    # would force a backtrack that truncates the match right before it --
+    # e.g. USING INDEX "CLIMS"."IDX" TABLESPACE "USERS" would match only up
+    # to `"USER` (stopping short of the closing quote) instead of `"USERS"`.
+    r"\bUSING\s+INDEX"
+    rf"(?:\s+(?!(?:{_INDEX_ATTR_KEYWORDS})\b){_QUALIFIED_IDENT})?"
+    rf"(?:\s+(?:{_INDEX_PHYSICAL_ATTR}))*"
     r"|\b(?:ENABLE|DISABLE)(?:\s+(?:VALIDATE|NOVALIDATE))?\b"
     r"|\b(?:VALIDATE|NOVALIDATE)\b",
     re.IGNORECASE,
@@ -58,8 +95,16 @@ _VIEW_EDITIONING_RE = re.compile(r"\b(?:NON)?EDITIONABLE\b", re.IGNORECASE)
 
 def _strip_constraint_state(text: str) -> str:
     """Remove Oracle's constraint_state tail keywords (ENABLE/DISABLE/
-    VALIDATE/NOVALIDATE/USING INDEX [name]) that sqlglot's grammar does not
-    parse, in either CREATE TABLE or ALTER TABLE ADD CONSTRAINT context."""
+    VALIDATE/NOVALIDATE/USING INDEX [name] [physical attributes]) that
+    sqlglot's grammar does not parse, in either CREATE TABLE or ALTER TABLE
+    ADD CONSTRAINT context. USING INDEX also consumes a following run of
+    physical/storage attributes (TABLESPACE/STORAGE(...)/PCTFREE/PCTUSED/
+    INITRANS/MAXTRANS/LOGGING/NOLOGGING/COMPUTE STATISTICS/COMPRESS/
+    NOCOMPRESS) attached to the constraint's backing index -- real Oracle
+    exports attach these far more often than not (corpus triage, 2026-07-08:
+    dominant cause of catalog-impacting DDL statement loss, ~79% of it on one
+    real schema), and a bare USING INDEX [name] strip leaves them behind as
+    syntax garbage that still fails the whole statement."""
     return _CONSTRAINT_STATE_RE.sub("", text)
 
 
