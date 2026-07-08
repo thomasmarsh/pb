@@ -458,7 +458,7 @@ extractDwCallSites file obj dw = concatMap fromCtrl (dwControls dw)
 -- | Extract global variable declarations (variables block + global instances).
 extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
 extractGlobalVars file obj sf =
-  declGlobals <> instanceGlobals
+  declGlobals <> instanceGlobals <> forwardInstanceGlobals
   where
     declGlobals = case srVariables sf of
       Nothing -> []
@@ -482,6 +482,18 @@ extractGlobalVars file obj sf =
           }
       | gi <- srGlobalInstances sf
       ]
+    forwardInstanceGlobals = case srForward sf of
+      Nothing -> []
+      Just ForwardBlock { fwdInstances = gis } ->
+        [ GlobalVar
+            { gvFile   = file
+            , gvObject = obj
+            , gvName   = giName gi
+            , gvType   = giType gi
+            , gvMods   = []
+            }
+        | gi <- gis
+        ]
 
 -- | A control (or an object's own outer 'TypeBlock') whose 'dataobject'
 -- property is a literal string. Static-only: this does not follow runtime

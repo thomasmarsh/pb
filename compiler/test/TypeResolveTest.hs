@@ -577,6 +577,20 @@ tests = testGroup "TypeResolve"
               , srFunctions = [], srSubroutines = []
               }
         in extractGlobalVars "w.srf" "w_test" sf @?= []
+
+    , testCase "forward-declared global instance is extracted" $
+        let sf = emptySrFile
+              { srForward = Just ForwardBlock
+                  { fwdTypes = []
+                  , fwdInstances = [GlobalInstance "transaction" "sqlca"]
+                  }
+              }
+            gvs = extractGlobalVars "app.sra" "app" sf
+        in case gvs of
+          [gv] -> do
+            gvName gv @?= "sqlca"
+            gvType gv @?= "transaction"
+          other -> assertFailure ("expected 1 global var, got " <> show (length other))
     ]
 
   , testGroup "extractDwControlBindings"
