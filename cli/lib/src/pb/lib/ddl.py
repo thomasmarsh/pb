@@ -48,7 +48,8 @@ from sqlglot.optimizer.qualify import qualify
 
 _INDEX_ATTR_KEYWORDS = (
     r"TABLESPACE|STORAGE|PCTFREE|PCTUSED|INITRANS|MAXTRANS|LOGGING|NOLOGGING"
-    r"|COMPUTE|COMPRESS|NOCOMPRESS|ENABLE|DISABLE"
+    r"|COMPUTE|COMPRESS|NOCOMPRESS|PARALLEL|NOPARALLEL|MONITORING|NOMONITORING"
+    r"|ENABLE|DISABLE"
 )
 
 # One physical/storage attribute that can follow USING INDEX [name] when a
@@ -58,6 +59,9 @@ _INDEX_ATTR_KEYWORDS = (
 # garbage, still losing the whole statement to sqlglot's exp.Command
 # fallback. STORAGE's inner clause is assumed non-nested (true for the
 # physical_attributes_clause grammar; no parens ever appear inside it).
+# PARALLEL/MONITORING found in a second triage pass on the same real schema
+# after the first round of keywords still left ~35% of catalog-impacting
+# USING INDEX losses unfixed.
 _INDEX_PHYSICAL_ATTR = (
     r"TABLESPACE\s+\"?[A-Za-z_][\w$#]*\"?"
     r"|STORAGE\s*\([^()]*\)"
@@ -70,11 +74,19 @@ _INDEX_PHYSICAL_ATTR = (
     r"|NOLOGGING"
     r"|COMPRESS(?:\s+\d+)?"
     r"|NOCOMPRESS"
+    r"|PARALLEL(?:\s+\d+)?"
+    r"|NOPARALLEL"
+    r"|MONITORING(?:\s+USAGE)?"
+    r"|NOMONITORING"
 )
 
 # Index name after USING INDEX: bare or quoted identifier, optionally
-# schema-qualified (e.g. "CLIMS"."PK_IDX" or bare_schema.bare_idx).
+# schema-qualified (e.g. "CLIMS"."PK_IDX" or bare_schema.bare_idx), OR an
+# explicit inline column list (USING INDEX (col1, col2)) -- a distinct
+# Oracle syntax from naming an existing/new index, found in the same
+# corpus triage.
 _QUALIFIED_IDENT = r'(?:"[^"]+"|[A-Za-z_][\w$#]*)(?:\.(?:"[^"]+"|[A-Za-z_][\w$#]*))?'
+_USING_INDEX_NAME_OR_COLUMN_LIST = rf"(?:(?!(?:{_INDEX_ATTR_KEYWORDS})\b){_QUALIFIED_IDENT}|\([^()]*\))"
 
 _CONSTRAINT_STATE_RE = re.compile(
     # No trailing \b on this branch: the optional name/attrs groups can end
@@ -83,37 +95,58 @@ _CONSTRAINT_STATE_RE = re.compile(
     # e.g. USING INDEX "CLIMS"."IDX" TABLESPACE "USERS" would match only up
     # to `"USER` (stopping short of the closing quote) instead of `"USERS"`.
     r"\bUSING\s+INDEX"
-    rf"(?:\s+(?!(?:{_INDEX_ATTR_KEYWORDS})\b){_QUALIFIED_IDENT})?"
+    rf"(?:\s+{_USING_INDEX_NAME_OR_COLUMN_LIST})?"
     rf"(?:\s+(?:{_INDEX_PHYSICAL_ATTR}))*"
     r"|\b(?:ENABLE|DISABLE)(?:\s+(?:VALIDATE|NOVALIDATE))?\b"
-    r"|\b(?:VALIDATE|NOVALIDATE)\b",
+    r"|\b(?:VALIDATE|NOVALIDATE)\b"
+    # Table-level ROWDEPENDENCIES/NOROWDEPENDENCIES and virtual-column
+    # VIRTUAL: unrelated to constraint_state proper, but the same failure
+    # class (a bare keyword sqlglot's oracle grammar doesn't model) and rare
+    # enough elsewhere in DDL that a global bare-word strip is safe --
+    # matches the precedent set by ENABLE/DISABLE above.
+    r"|\b(?:NON)?ROWDEPENDENCIES\b"
+    r"|\bVIRTUAL\b",
     re.IGNORECASE,
 )
 
-_VIEW_EDITIONING_RE = re.compile(r"\b(?:NON)?EDITIONABLE\b", re.IGNORECASE)
+_VIEW_EDITIONING_RE = re.compile(
+    r"\b(?:NON)?EDITIONABLE\b"
+    # BEQUEATH DEFINER/CURRENT_USER: a separate view-header clause sqlglot's
+    # oracle dialect doesn't model, found in the same corpus triage as
+    # EDITIONABLE -- same failure class, same fix (bare-clause strip).
+    r"|\bBEQUEATH\s+(?:DEFINER|CURRENT_USER)\b",
+    re.IGNORECASE,
+)
 
 
 def _strip_constraint_state(text: str) -> str:
     """Remove Oracle's constraint_state tail keywords (ENABLE/DISABLE/
-    VALIDATE/NOVALIDATE/USING INDEX [name] [physical attributes]) that
-    sqlglot's grammar does not parse, in either CREATE TABLE or ALTER TABLE
-    ADD CONSTRAINT context. USING INDEX also consumes a following run of
+    VALIDATE/NOVALIDATE/USING INDEX [name or column list] [physical
+    attributes]) that sqlglot's grammar does not parse, in either CREATE
+    TABLE or ALTER TABLE ADD CONSTRAINT context. USING INDEX also consumes
+    a following name (or an explicit inline column list) plus a run of
     physical/storage attributes (TABLESPACE/STORAGE(...)/PCTFREE/PCTUSED/
     INITRANS/MAXTRANS/LOGGING/NOLOGGING/COMPUTE STATISTICS/COMPRESS/
-    NOCOMPRESS) attached to the constraint's backing index -- real Oracle
-    exports attach these far more often than not (corpus triage, 2026-07-08:
-    dominant cause of catalog-impacting DDL statement loss, ~79% of it on one
-    real schema), and a bare USING INDEX [name] strip leaves them behind as
-    syntax garbage that still fails the whole statement."""
+    NOCOMPRESS/PARALLEL/NOPARALLEL/MONITORING/NOMONITORING) attached to the
+    constraint's backing index -- real Oracle exports attach these far more
+    often than not (corpus triage, 2026-07-08: dominant cause of
+    catalog-impacting DDL statement loss on one real schema; two rounds of
+    triage were needed since PARALLEL/MONITORING/the column-list form
+    weren't caught by the first pass), and a bare USING INDEX [name] strip
+    leaves them behind as syntax garbage that still fails the whole
+    statement. Also strips table-level ROWDEPENDENCIES/NOROWDEPENDENCIES and
+    virtual-column VIRTUAL -- unrelated to constraint_state proper, but the
+    same failure class, found in the same triage."""
     return _CONSTRAINT_STATE_RE.sub("", text)
 
 
 def _strip_view_editioning_clause(text: str) -> str:
     """Remove Oracle's EDITIONABLE/NONEDITIONABLE view-editioning keyword
-    (e.g. `CREATE OR REPLACE FORCE EDITIONABLE VIEW ...`). Same failure class
-    as `_strip_constraint_state` — sqlglot's oracle dialect parses bare
+    (e.g. `CREATE OR REPLACE FORCE EDITIONABLE VIEW ...`) and BEQUEATH
+    DEFINER/CURRENT_USER view-header clause. Same failure class as
+    `_strip_constraint_state` — sqlglot's oracle dialect parses bare
     FORCE/NOFORCE fine but falls back to an opaque exp.Command for the whole
-    statement once EDITIONABLE/NONEDITIONABLE appears."""
+    statement once EDITIONABLE/NONEDITIONABLE or BEQUEATH appears."""
     return _VIEW_EDITIONING_RE.sub("", text)
 
 

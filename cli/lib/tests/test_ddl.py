@@ -337,3 +337,46 @@ def test_parse_ddl_alter_table_add_constraint_using_index_with_physical_attrs():
     assert stats.statements_skipped == 0
     assert len(catalog.primary_keys) == 1
     assert catalog.primary_keys[0].columns == ("acc_id",)
+
+
+# --- Second round of real-corpus-triage findings (2026-07-08): PARALLEL/
+# MONITORING as USING INDEX attributes, an explicit column-list form of
+# USING INDEX, table-level ROWDEPENDENCIES, virtual-column VIRTUAL, and
+# view-header BEQUEATH DEFINER/CURRENT_USER -- each independently confirmed
+# via synthetic reproduction to trip sqlglot's oracle dialect into the same
+# whole-statement exp.Command fallback. -----------------------------------
+
+
+def test_parse_ddl_using_index_with_parallel_and_monitoring():
+    sql = 'CREATE TABLE T1 (A NUMBER, CONSTRAINT PK1 PRIMARY KEY (A) USING INDEX PARALLEL 4 MONITORING USAGE ENABLE)'
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert len(catalog.primary_keys) == 1
+
+
+def test_parse_ddl_using_index_explicit_column_list():
+    sql = 'CREATE TABLE T1 (A NUMBER, B NUMBER, CONSTRAINT UK1 UNIQUE (A) USING INDEX (A) ENABLE)'
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"a", "b"}
+
+
+def test_parse_ddl_strips_table_level_rowdependencies():
+    sql = "CREATE TABLE T1 (A NUMBER) ROWDEPENDENCIES"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert catalog.tables[0].columns == ("a",)
+
+
+def test_parse_ddl_strips_virtual_column_keyword():
+    sql = "CREATE TABLE T1 (A NUMBER, B NUMBER GENERATED ALWAYS AS (A + 1) VIRTUAL)"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"a", "b"}
+
+
+def test_parse_ddl_strips_view_bequeath_clause():
+    sql = "CREATE OR REPLACE FORCE EDITIONABLE VIEW V1 BEQUEATH DEFINER AS SELECT A FROM T1"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"a"}
