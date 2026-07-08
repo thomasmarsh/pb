@@ -108,6 +108,8 @@ export { LineEdit } from "./components/controls/LineEdit.js";
 export { StaticText } from "./components/controls/StaticText.js";
 
 // Detail
+export { AnalysisExplainer } from "./components/detail/AnalysisExplainer.js";
+export type { AnalysisExplainerContent } from "./components/detail/AnalysisExplainer.js";
 export { AnalysisSummaryBar } from "./components/detail/AnalysisSummaryBar.js";
 export type { SummaryItem } from "./components/detail/AnalysisSummaryBar.js";
 export { CodeBlock, SqlBlock } from "./components/detail/CodeBlock.js";

@@ -358,5 +358,22 @@ describe("TableDetail source-first", () => {
       fireEvent.click(summaryPillBtn("Column Affinity")!);
       expect(document.body.textContent).toContain("No column affinity data for this table.");
     });
+
+    it("clicking the panel's info button opens the explainer with worked example content", () => {
+      renderTableDetail();
+      fireEvent.click(summaryPillBtn("Column Affinity")!);
+      fireEvent.click(document.querySelector("[aria-label='What is this?']")!);
+      expect(document.body.textContent).toContain("average-linkage clustering");
+      expect(document.body.textContent).toContain("employee(name, email, salary, hire_date, dept_id)");
+    });
+
+    it("Escape closes the explainer along with the other panels", () => {
+      renderTableDetail();
+      fireEvent.click(summaryPillBtn("Column Affinity")!);
+      fireEvent.click(document.querySelector("[aria-label='What is this?']")!);
+      expect(document.body.textContent).toContain("average-linkage clustering");
+      fireEvent.keyDown(document.querySelector(".detail-body")!.parentElement!, { key: "Escape" });
+      expect(document.body.textContent).not.toContain("average-linkage clustering");
+    });
   });
 });

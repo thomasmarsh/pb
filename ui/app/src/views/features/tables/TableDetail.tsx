@@ -7,11 +7,11 @@ import type { AppAction } from "../../../actions.js";
 import type { TableDetail as TableDetailData, TableProcedureRef, ImpactInheritedRef, ImpactDirectRef, FkColumnRef, CoUpdateRitual } from "@pb/platform";
 import {
   Loading, ColumnRow, EntityCard, DetailHeader, BackButton,
-  AnalysisSummaryBar, ContextualPanel,
+  AnalysisSummaryBar, ContextualPanel, AnalysisExplainer,
 } from "@pb/platform";
 import type { SummaryItem } from "@pb/platform";
 import { DecompositionCandidatesCore } from "../analysis/DecompositionCandidatesCore.js";
-import { ColumnAffinityCore } from "../analysis/ColumnAffinityCore.js";
+import { ColumnAffinityCore, COLUMN_AFFINITY_EXPLAINER } from "../analysis/ColumnAffinityCore.js";
 
 const WRITE_OPS = new Set(["INSERT", "UPDATE", "DELETE"]);
 
@@ -192,6 +192,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
   const [showCoUpdateRituals, setShowCoUpdateRituals] = createSignal(false);
   const [showDecomposition, setShowDecomposition] = createSignal(false);
   const [showColumnAffinity, setShowColumnAffinity] = createSignal(false);
+  const [showColumnAffinityHelp, setShowColumnAffinityHelp] = createSignal(false);
 
   const readers = d.procedures.filter((p) => !WRITE_OPS.has(p.operation));
   const writers = d.procedures.filter((p) => WRITE_OPS.has(p.operation));
@@ -243,6 +244,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
       setShowCoUpdateRituals(false);
       setShowDecomposition(false);
       setShowColumnAffinity(false);
+      setShowColumnAffinityHelp(false);
     }
   }
 
@@ -343,11 +345,21 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
         </Show>
 
         <Show when={showColumnAffinity()}>
-          <ContextualPanel title="Column Affinity Heat Matrix" onClose={() => setShowColumnAffinity(false)}>
+          <ContextualPanel
+            title="Column Affinity Heat Matrix"
+            onClose={() => setShowColumnAffinity(false)}
+            onHelp={() => setShowColumnAffinityHelp(true)}
+          >
             <ColumnAffinityCore store={store} table={d.table_name} />
           </ContextualPanel>
         </Show>
       </div>
+
+      <AnalysisExplainer
+        open={showColumnAffinityHelp()}
+        onClose={() => setShowColumnAffinityHelp(false)}
+        content={COLUMN_AFFINITY_EXPLAINER}
+      />
     </div>
   );
 }

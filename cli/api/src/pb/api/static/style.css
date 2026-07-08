@@ -1594,6 +1594,33 @@ kbd.kbd {
     white-space: nowrap;
 }
 
+/* ── AnalysisExplainer ───────────────────────────────────────────────────── */
+.help-panel-header { flex-shrink: 0; }
+.explainer-body {
+    overflow-y: auto; flex: 1; min-height: 0;
+    padding: 4px 16px 12px;
+    /* Content routinely exceeds the modal's max-height (Plan 156 follow-up:
+       reported "not scrollable" — it does scroll, but macOS hides overlay
+       scrollbars until interaction, so there was no visible cue). Force a
+       persistent, styled scrollbar instead of relying on OS auto-hide. */
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+}
+.explainer-body::-webkit-scrollbar { width: 8px; }
+.explainer-body::-webkit-scrollbar-track { background: transparent; }
+.explainer-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.explainer-body::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+.explainer-section { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.explainer-section:last-child { border-bottom: none; }
+.explainer-section h4 {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.6px;
+    text-transform: uppercase; color: var(--text-muted);
+    margin: 0 0 6px;
+}
+.explainer-section p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
+.explainer-example { padding: 8px 0 0; }
+.explainer-tips { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+
 /* ── PhaseGate full-page ─────────────────────────────────────────────────── */
 .phase-gate {
     display: flex; flex-direction: column; align-items: flex-start;
