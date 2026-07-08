@@ -60,7 +60,7 @@ function HeatMatrix(props: { columns: string[]; matrix: number[][] }): JSX.Eleme
   );
 }
 
-function DendrogramList(props: { merges: { similarity: number; members: string[] }[] }): JSX.Element {
+export function DendrogramList(props: { merges: { similarity: number; members: string[] }[] }): JSX.Element {
   return (
     <ul style={{ margin: "8px 0 0 0", "padding-left": "16px", "font-size": "12px" }}>
       <For each={props.merges}>
@@ -80,7 +80,9 @@ function DendrogramList(props: { merges: { similarity: number; members: string[]
 // batch touches both), dept_id/mgr_id are touched independently of either
 // cluster, so the dendrogram merges the two natural pairs early and only
 // joins the whole table together at low similarity.
-const AFFINITY_EXAMPLE_COLUMNS = ["name", "email", "salary", "hire_date", "dept_id"];
+// Exported so DecompositionCandidatesCore's explainer can continue this same
+// worked example (Plan 156 rollout) rather than inventing a second one.
+export const AFFINITY_EXAMPLE_COLUMNS = ["name", "email", "salary", "hire_date", "dept_id"];
 const AFFINITY_EXAMPLE_MATRIX = [
   [0, 26, 2, 2, 4],
   [26, 0, 2, 2, 4],
@@ -88,7 +90,7 @@ const AFFINITY_EXAMPLE_MATRIX = [
   [2, 2, 24, 0, 1],
   [4, 4, 1, 1, 0],
 ];
-const AFFINITY_EXAMPLE_MERGES = [
+export const AFFINITY_EXAMPLE_MERGES = [
   { similarity: 0.93, members: ["name", "email"] },
   { similarity: 0.89, members: ["salary", "hire_date"] },
   { similarity: 0.31, members: ["name", "email", "salary", "hire_date"] },

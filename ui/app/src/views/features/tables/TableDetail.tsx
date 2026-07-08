@@ -10,7 +10,7 @@ import {
   AnalysisSummaryBar, ContextualPanel, AnalysisExplainer,
 } from "@pb/platform";
 import type { SummaryItem } from "@pb/platform";
-import { DecompositionCandidatesCore } from "../analysis/DecompositionCandidatesCore.js";
+import { DecompositionCandidatesCore, DECOMPOSITION_EXPLAINER } from "../analysis/DecompositionCandidatesCore.js";
 import { ColumnAffinityCore, COLUMN_AFFINITY_EXPLAINER } from "../analysis/ColumnAffinityCore.js";
 
 const WRITE_OPS = new Set(["INSERT", "UPDATE", "DELETE"]);
@@ -191,6 +191,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
   const [showColumnUsage, setShowColumnUsage] = createSignal(false);
   const [showCoUpdateRituals, setShowCoUpdateRituals] = createSignal(false);
   const [showDecomposition, setShowDecomposition] = createSignal(false);
+  const [showDecompositionHelp, setShowDecompositionHelp] = createSignal(false);
   const [showColumnAffinity, setShowColumnAffinity] = createSignal(false);
   const [showColumnAffinityHelp, setShowColumnAffinityHelp] = createSignal(false);
 
@@ -243,6 +244,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
       setShowColumnUsage(false);
       setShowCoUpdateRituals(false);
       setShowDecomposition(false);
+      setShowDecompositionHelp(false);
       setShowColumnAffinity(false);
       setShowColumnAffinityHelp(false);
     }
@@ -339,7 +341,11 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
         </Show>
 
         <Show when={showDecomposition()}>
-          <ContextualPanel title="Decomposition Candidates" onClose={() => setShowDecomposition(false)}>
+          <ContextualPanel
+            title="Decomposition Candidates"
+            onClose={() => setShowDecomposition(false)}
+            onHelp={() => setShowDecompositionHelp(true)}
+          >
             <DecompositionCandidatesCore store={store} table={d.table_name} />
           </ContextualPanel>
         </Show>
@@ -354,6 +360,12 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
           </ContextualPanel>
         </Show>
       </div>
+
+      <AnalysisExplainer
+        open={showDecompositionHelp()}
+        onClose={() => setShowDecompositionHelp(false)}
+        content={DECOMPOSITION_EXPLAINER}
+      />
 
       <AnalysisExplainer
         open={showColumnAffinityHelp()}

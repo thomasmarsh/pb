@@ -314,6 +314,24 @@ describe("TableDetail source-first", () => {
       expect(document.body.textContent).toContain("proc_6");
       expect(document.body.textContent).toContain("Show less");
     });
+
+    it("clicking the panel's info button opens the explainer with worked example content", () => {
+      renderTableDetail();
+      fireEvent.click(summaryPillBtn("Decomposition")!);
+      fireEvent.click(document.querySelector("[aria-label='What is this?']")!);
+      expect(document.body.textContent).toContain("blast radius");
+      expect(document.body.textContent).toContain("employee(name, email, salary, hire_date, dept_id)");
+      expect(document.body.textContent).toContain("employee_profile");
+    });
+
+    it("Escape closes the explainer along with the other panels", () => {
+      renderTableDetail();
+      fireEvent.click(summaryPillBtn("Decomposition")!);
+      fireEvent.click(document.querySelector("[aria-label='What is this?']")!);
+      expect(document.body.textContent).toContain("employee_profile");
+      fireEvent.keyDown(document.querySelector(".detail-body")!.parentElement!, { key: "Escape" });
+      expect(document.body.textContent).not.toContain("employee_profile");
+    });
   });
 
   describe("Column Affinity pill (Plan 153 D3)", () => {
