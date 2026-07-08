@@ -248,6 +248,20 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
         <InlineDiagram kind="heatmap" store={store} compact />
       </div>
 
+      <div class="card">
+        <div class="card-header">
+          <h2>Foreign Key Graph</h2>
+        </div>
+        <InlineDiagram kind="fk-graph" store={store} compact />
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Window–Table Lattice</h2>
+        </div>
+        <InlineDiagram kind="window-table-lattice" store={store} compact />
+      </div>
+
       <Show when={s()!.by_kind && s()!.by_kind!.length > 0}>
         <div class="card">
           <div class="card-header"><h2>Object Types</h2></div>
