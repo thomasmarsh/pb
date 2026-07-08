@@ -140,3 +140,76 @@ def test_parse_ddl_fk_reference_falls_back_to_default_namespace():
     sql = 'CREATE TABLE t (id NUMBER, CONSTRAINT fk_t FOREIGN KEY (id) REFERENCES other_table (id))'
     catalog, _stats = parse_ddl(sql, dialect="oracle", default_namespace="CLIMS")
     assert catalog.foreign_keys[0].to_namespace == "clims"
+
+
+# --- CREATE VIEW support -----------------------------------------------------
+
+_ORDERS_CUSTOMERS_TABLES = '''
+CREATE TABLE orders (id NUMBER, customer_id NUMBER, total NUMBER);
+CREATE TABLE customers (id NUMBER, name VARCHAR2(100));
+'''
+
+
+def test_parse_ddl_view_with_explicit_column_list():
+    sql = _ORDERS_CUSTOMERS_TABLES + '''
+    CREATE VIEW v_orders (oid, cust, amt) AS SELECT id, customer_id, total FROM orders;
+    '''
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    view = next(t for t in catalog.tables if t.table == "v_orders")
+    assert view.columns == ("oid", "cust", "amt")
+    assert stats.statements_skipped == 0
+
+
+def test_parse_ddl_view_select_star_resolved_against_known_table():
+    sql = _ORDERS_CUSTOMERS_TABLES + '''
+    CREATE VIEW v_orders AS SELECT * FROM orders;
+    '''
+    catalog, _stats = parse_ddl(sql, dialect="oracle")
+    view = next(t for t in catalog.tables if t.table == "v_orders")
+    assert set(view.columns) == {"id", "customer_id", "total"}
+
+
+def test_parse_ddl_view_select_star_with_join_resolved_against_two_tables():
+    sql = _ORDERS_CUSTOMERS_TABLES + '''
+    CREATE VIEW v_order_customers AS
+      SELECT * FROM orders o JOIN customers c ON o.customer_id = c.id;
+    '''
+    catalog, _stats = parse_ddl(sql, dialect="oracle")
+    view = next(t for t in catalog.tables if t.table == "v_order_customers")
+    assert set(view.columns) == {"id", "customer_id", "total", "name"}
+
+
+def test_parse_ddl_view_select_with_aliases_no_explicit_list():
+    sql = _ORDERS_CUSTOMERS_TABLES + '''
+    CREATE VIEW v_orders AS SELECT id AS order_id, total AS order_total FROM orders;
+    '''
+    catalog, _stats = parse_ddl(sql, dialect="oracle")
+    view = next(t for t in catalog.tables if t.table == "v_orders")
+    assert view.columns == ("order_id", "order_total")
+
+
+def test_parse_ddl_view_selecting_from_another_view_multi_pass():
+    sql = _ORDERS_CUSTOMERS_TABLES + '''
+    CREATE VIEW v_orders AS SELECT * FROM orders;
+    CREATE VIEW v_orders_wrapper AS SELECT * FROM v_orders;
+    '''
+    catalog, _stats = parse_ddl(sql, dialect="oracle")
+    wrapper = next(t for t in catalog.tables if t.table == "v_orders_wrapper")
+    assert set(wrapper.columns) == {"id", "customer_id", "total"}
+
+
+def test_parse_ddl_view_select_star_unresolvable_table_produces_no_row():
+    sql = '''
+    CREATE TABLE t1 (id NUMBER);
+    CREATE VIEW v_unknown AS SELECT * FROM some_other_table_not_in_this_dump;
+    '''
+    catalog, _stats = parse_ddl(sql, dialect="oracle")
+    assert {t.table for t in catalog.tables} == {"t1"}
+
+
+def test_parse_ddl_view_and_table_coexist_in_catalog():
+    sql = _ORDERS_CUSTOMERS_TABLES + '''
+    CREATE VIEW v_orders AS SELECT * FROM orders;
+    '''
+    catalog, _stats = parse_ddl(sql, dialect="oracle")
+    assert {t.table for t in catalog.tables} == {"orders", "customers", "v_orders"}

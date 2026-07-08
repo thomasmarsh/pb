@@ -1,6 +1,21 @@
 """DDL catalog parsing — wraps sqlglot to extract a static schema catalog
 (tables/columns, primary keys, foreign keys, check constraints) from a
-CREATE TABLE dump.
+CREATE TABLE / CREATE VIEW dump. A view is treated as a table from the
+analysis perspective — its resolved column list lands in the same
+Catalog.tables list, with no namespace/table distinction between the two —
+since Sch-based analysis only cares about what a statement reads/writes, not
+whether the underlying object is a physical table or a view. A view's
+columns come from either its own explicit column list
+(`CREATE VIEW v (a, b) AS ...`) or, more commonly, its underlying SELECT's
+output columns (`named_selects`), expanding any `SELECT *` via sqlglot's
+optimizer against the tables/views already known from this same DDL dump.
+Because a view can select from another view, resolution runs as a
+fixed-point loop over the deferred CREATE VIEW statements: each pass
+resolves whatever it can and folds those columns back into the working
+catalog so a later pass can resolve views that depend on them; a pass that
+makes no progress means the rest depend on something outside this DDL file
+(or sqlglot couldn't expand a star) and are left out of the catalog — no
+column list is ever guessed.
 
 Plan 148 Phase 1a-3: openpay ships its own DDL
 (example/openpay-0.1.1b/schema-0.1.1.sql) as ground truth — no live DB
@@ -29,6 +44,7 @@ from dataclasses import dataclass, field
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
+from sqlglot.optimizer.qualify import qualify
 
 _CONSTRAINT_STATE_RE = re.compile(
     r"\bUSING\s+INDEX(\s+\"[^\"]+\"|\s+[A-Za-z_][\w$#]*)?\b"
@@ -175,6 +191,67 @@ def _process_constraint(
                 )
 
 
+def _view_explicit_columns(view_target: exp.Table | exp.Schema) -> tuple[str, ...] | None:
+    """Columns from CREATE VIEW v (col1, col2) AS ... — None if the view
+    doesn't declare an explicit list (the common case; columns must then be
+    inferred from the SELECT's own output instead)."""
+    if isinstance(view_target, exp.Schema):
+        cols = tuple(i.name.lower() for i in view_target.expressions if i.name)
+        return cols or None
+    return None
+
+
+def _view_select_columns(
+    query: exp.Query, known_columns: dict[str, object], dialect: str
+) -> tuple[str, ...] | None:
+    """Output column names inferred from a view's underlying query. Returns
+    None if a `SELECT *` / `t.*` can't be expanded — the source table or view
+    isn't in `known_columns` yet, which for a view-on-view chain means "not
+    resolved on this pass, try again once known_columns has grown" rather
+    than a permanent failure. qualify() itself never raises on a plain
+    unresolvable star (it just leaves it unexpanded), but we still guard
+    broadly since this module never raises on malformed DDL input."""
+    if query.find(exp.Star) is None:
+        names = tuple(n.lower() for n in query.named_selects if n and n != "*")
+        return names or None
+    try:
+        qualified = qualify(query, schema=known_columns, dialect=dialect)
+    except Exception:
+        return None
+    if qualified.find(exp.Star) is not None:
+        return None
+    names = tuple(n.lower() for n in qualified.named_selects if n and n != "*")
+    return names or None
+
+
+def _resolve_view(
+    stmt: exp.Create,
+    known_columns: dict[str, object],
+    dialect: str,
+    default_namespace: str | None,
+) -> TableColumns | None:
+    """Resolve one deferred CREATE VIEW statement to a TableColumns row, or
+    None if its columns can't be determined yet (or ever) — the caller
+    retries unresolved views across passes as `known_columns` grows from
+    other newly-resolved views, and gives up once a full pass makes no
+    progress."""
+    view_target = stmt.this
+    table_expr = view_target.this if isinstance(view_target, exp.Schema) else view_target
+    if not isinstance(table_expr, exp.Table):
+        return None
+    ns, table_name = _table_ident(table_expr, default_namespace)
+
+    columns = _view_explicit_columns(view_target)
+    if columns is None:
+        query = stmt.args.get("expression")
+        if query is None:
+            return None
+        columns = _view_select_columns(query, known_columns, dialect)
+    if columns is None:
+        return None
+    return TableColumns(namespace=ns, table=table_name, columns=columns)
+
+
 def parse_ddl(
     text: str, dialect: str = "mysql", default_namespace: str | None = None
 ) -> tuple[Catalog, DdlStats]:
@@ -192,13 +269,17 @@ def parse_ddl(
     foreign_keys: list[ForeignKey] = []
     checks: list[CheckConstraint] = []
     skipped = 0
+    view_stmts: list[exp.Create] = []
 
     for stmt in statements:
         if isinstance(stmt, exp.Command):
             skipped += 1
             continue
 
-        if isinstance(stmt, exp.Create) and stmt.kind == "TABLE":
+        if isinstance(stmt, exp.Create) and stmt.kind == "VIEW":
+            view_stmts.append(stmt)
+
+        elif isinstance(stmt, exp.Create) and stmt.kind == "TABLE":
             schema = stmt.this
             table_expr = schema.this if isinstance(schema, exp.Schema) else schema
             if not isinstance(table_expr, exp.Table):
@@ -231,6 +312,24 @@ def parse_ddl(
                         c, ns, table_name, default_namespace, dialect,
                         primary_keys, foreign_keys, checks,
                     )
+
+    known_columns: dict[str, object] = {t.table: {c: "" for c in t.columns} for t in tables}
+    remaining = view_stmts
+    while remaining:
+        resolved: list[TableColumns] = []
+        still_remaining: list[exp.Create] = []
+        for stmt in remaining:
+            row = _resolve_view(stmt, known_columns, dialect, default_namespace)
+            if row is None:
+                still_remaining.append(stmt)
+            else:
+                resolved.append(row)
+        if not resolved:
+            break
+        for row in resolved:
+            tables.append(row)
+            known_columns[row.table] = {c: "" for c in row.columns}
+        remaining = still_remaining
 
     stats = DdlStats(
         statements_total=len(statements),
