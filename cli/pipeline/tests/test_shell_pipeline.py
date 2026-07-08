@@ -116,10 +116,36 @@ def test_run_passes_ddl_flag_when_given(monkeypatch, tmp_path):
     src_dir = tmp_path / "src"
     src_dir.mkdir()
     ddl_path = tmp_path / "schema.sql"
-    run(src_dir, str(tmp_path / "out.duckdb"), Path("/fake/bin"), reporter, ddl=ddl_path)
+    run(src_dir, str(tmp_path / "out.duckdb"), Path("/fake/bin"), reporter, ddl=[str(ddl_path)])
 
     assert "--ddl" in called_args
     assert called_args[called_args.index("--ddl") + 1] == str(ddl_path)
+
+
+def test_run_passes_multiple_schema_tagged_ddl_flags_when_given(monkeypatch, tmp_path):
+    called_args: list = []
+
+    def fake_popen(args, **kwargs):
+        called_args.extend(args)
+        return _FakePopen(returncode=1)
+
+    monkeypatch.setattr("pb.pipeline.pipeline.subprocess.Popen", fake_popen)
+
+    reporter = RecordingReporter()
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    run(
+        src_dir,
+        str(tmp_path / "out.duckdb"),
+        Path("/fake/bin"),
+        reporter,
+        ddl=["CLIMS:clims.sql", "CLIMS_COMMON:common.sql"],
+    )
+
+    ddl_indices = [i for i, a in enumerate(called_args) if a == "--ddl"]
+    assert len(ddl_indices) == 2
+    assert called_args[ddl_indices[0] + 1] == "CLIMS:clims.sql"
+    assert called_args[ddl_indices[1] + 1] == "CLIMS_COMMON:common.sql"
 
 
 def test_run_success_renames_db(monkeypatch, tmp_path):

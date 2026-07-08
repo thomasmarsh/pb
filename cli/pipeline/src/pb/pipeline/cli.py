@@ -49,7 +49,14 @@ def index(
     reset: bool = typer.Option(False, "--reset", help="Drop all tables and do a full re-parse."),
     sql_dialect: str = typer.Option("oracle", "--sql-dialect", help="SQL dialect for sqlglot (oracle/tsql/sybase)."),
     repo: Optional[Path] = typer.Option(None, "--repo", help="Repo root (auto-detect if omitted)."),
-    ddl: Optional[Path] = typer.Option(None, "--ddl", help="DDL schema file — populates catalog_columns/catalog_fks so Sch-based analyses (column usage, FK graph, etc.) have real data."),
+    ddl: list[str] = typer.Option(
+        [],
+        "--ddl",
+        help="DDL schema file, optionally schema-tagged as SCHEMA:path (repeatable, "
+        "e.g. --ddl CLIMS:clims.sql --ddl CLIMS_COMMON:common.sql). Populates "
+        "catalog_columns/catalog_fks so Sch-based analyses (column usage, FK graph, etc.) "
+        "have real data.",
+    ),
 ) -> None:
     """Parse → import → analyze, incremental by default (only changed files).
 
@@ -214,7 +221,14 @@ def explore(
     reset: bool = typer.Option(False, "--reset", help="Drop all tables and do a full re-parse."),
     sql_dialect: str = typer.Option("oracle", "--sql-dialect", help="SQL dialect for sqlglot (oracle/tsql/sybase)."),
     repo: Optional[Path] = typer.Option(None, "--repo", help="Repo root (auto-detect if omitted)."),
-    ddl: Optional[Path] = typer.Option(None, "--ddl", help="DDL schema file — populates catalog_columns/catalog_fks so Sch-based analyses (column usage, FK graph, etc.) have real data."),
+    ddl: list[str] = typer.Option(
+        [],
+        "--ddl",
+        help="DDL schema file, optionally schema-tagged as SCHEMA:path (repeatable, "
+        "e.g. --ddl CLIMS:clims.sql --ddl CLIMS_COMMON:common.sql). Populates "
+        "catalog_columns/catalog_fks so Sch-based analyses (column usage, FK graph, etc.) "
+        "have real data.",
+    ),
 ) -> None:
     """Start the interactive DuckDB explorer web UI.
 
