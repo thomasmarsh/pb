@@ -1,17 +1,31 @@
 {-# LANGUAGE StrictData #-}
 -- | Static Single Assignment (SSA) intermediate representation.
 --
--- Pure module — no I/O.  The SSA pass converts PB's imperative AST
--- ('BodyStmt') into SSA form where every variable is assigned exactly once.
---
--- This eliminates mutation, making variables map directly to named products
--- in the subsequent categorical compilation step.
+-- Pure module — no I/O.  Converts PB's imperative AST ('BodyStmt') into a
+-- block-structured form ('SsaProc') keyed by CFG block id, which the
+-- subsequent categorical compilation step ('PB.Analysis.CatLower') consumes
+-- directly by (unversioned) variable name — see the module-level history
+-- note below for why this is not classic dominance-based SSA.
 --
 -- Pipeline: 'PB.AST.BodyStmt' → SSA → 'PB.Analysis.CatOp'
+--
+-- __History (Plan 155 F1, 2026-07-08):__ this module used to also compute a
+-- full dominance-based SSA renaming (dominator tree, dominance frontiers,
+-- phi-node placement and filling, per-variable version numbers). That
+-- machinery was deleted: 'PB.Analysis.CatLower' has always compiled every
+-- variable reference back down to its bare, unversioned name ('svName') —
+-- never the version number — because PB's execution model has one mutable
+-- runtime slot per variable name, not per lexical scope. Renaming therefore
+-- only ever changed a field ('svVersion') nothing downstream read, and phi
+-- placement only ever produced phi nodes with an always-empty source list
+-- (no call site fed 'predMap' into them), so phi resolution always compiled
+-- to a no-op. Removing both eliminates real per-compile dead computation
+-- (dominance frontiers computed and then discarded on every single compile)
+-- and the standing trap of a type that looked like textbook SSA but wasn't
+-- wired up as one. See @doc/plan/155-analysis-code-quality-audit.md@ (F1).
 module PB.Analysis.SSA
   ( -- * SSA Variables
     SsaVar (..)
-  , renderSsaVar
     -- * SSA Values
   , SsaVal (..)
     -- * SSA Instructions
@@ -19,8 +33,6 @@ module PB.Analysis.SSA
     -- * Basic Blocks
   , SsaBlock (..)
   , SsaTerm (..)
-    -- * Phi Nodes
-  , SsaPhi (..)
     -- * SSA Procedure
   , SsaProc (..)
     -- * Construction
@@ -36,23 +48,19 @@ import PB.Analysis.TypeEnv (ScopedTypeEnv)
 import PB.Analysis.CallClassify (lvHead)
 import PB.Grammar.Body     (parseExpr)
 import PB.Lexing.Token     (Token (..))
-import Control.Monad.State.Strict
 import GHC.Generics         (Generic)
 import qualified Data.Map.Strict as Map
-import qualified Data.Set        as Set
 import qualified Data.Text       as T
 
 -- ============================================================================
 -- SSA Variables
 -- ============================================================================
 
-data SsaVar = SsaVar
-  { svName    :: Text
-  , svVersion :: Int
+-- | A PB variable, identified by its bare source name only. There is no
+-- version number — see the module-level history note.
+newtype SsaVar = SsaVar
+  { svName :: Text
   } deriving (Eq, Ord, Show, Generic)
-
-renderSsaVar :: SsaVar -> Text
-renderSsaVar (SsaVar n v) = n <> "_" <> T.pack (show v)
 
 -- ============================================================================
 -- SSA Values
@@ -94,24 +102,18 @@ data SsaTerm
   deriving (Eq, Show, Generic)
 
 -- ============================================================================
--- Phi Nodes
--- ============================================================================
-
-data SsaPhi = SsaPhi
-  { spResult  :: SsaVar
-  , spSources :: [(Text, SsaVar)]
-  } deriving (Eq, Show, Generic)
-
--- ============================================================================
 -- SSA Procedure
 -- ============================================================================
 
 data SsaProc = SsaProc
   { spName  :: Text
   , spBlocks :: Map.Map Text SsaBlock
-  , spPhis   :: Map.Map Text [SsaPhi]
   , spEntry  :: Text
   , spVars   :: [SsaVar]
+    -- ^ Every variable assigned anywhere in the procedure, one entry per
+    -- assignment, in block-declaration order. Not consumed by
+    -- 'PB.Analysis.CatLower' (which walks 'spBlocks' directly) — kept for
+    -- tests and debugging.
   } deriving (Eq, Show, Generic)
 
 -- ============================================================================
@@ -121,35 +123,16 @@ data SsaProc = SsaProc
 buildSsa :: ScopedTypeEnv -> Text -> [Located BodyStmt] -> SsaProc
 buildSsa _env procName stmts =
   let cfg       = buildCfg stmts
-      entry     = cfgEntry cfg
-      blockIds  = map cbId (cfgBlocks cfg)
       blockMap  = Map.fromList [ (cbId b, b) | b <- cfgBlocks cfg ]
-      predMap   = buildPredMap (cfgEdges cfg)
       edgeMap   = buildEdgeMap (cfgEdges cfg)
-      succMap   = buildSuccMap (cfgEdges cfg)
-      rpoOrder  = reversePostorder entry succMap blockIds
       headerStmts   = findLoopHeaderStmts edgeMap blockMap
       backEdgeStmts = findLoopBackEdgeStmts (cfgEdges cfg) headerStmts
-      idom      = computeIdom entry rpoOrder predMap
-      dfMap     = computeDF blockIds predMap idom
-      varDefs   = findVarDefs blockMap
-      phis0     = placePhis dfMap varDefs
       rawBlocks = Map.mapWithKey (cfgBlockToSsa edgeMap headerStmts backEdgeStmts) blockMap
-      domTree   = buildDomTree idom entry
-      initRename = RenameState
-        { rVersion = Map.empty
-        , rCurrent = Map.empty
-        , rBlocks  = rawBlocks
-        , rPhis    = phis0
-        , rAllVars = []
-        }
-      finalRename = execState (renameWalk entry domTree succMap) initRename
   in SsaProc
     { spName   = procName
-    , spBlocks = rBlocks finalRename
-    , spPhis   = rPhis finalRename
-    , spEntry  = entry
-    , spVars   = reverse (rAllVars finalRename)
+    , spBlocks = rawBlocks
+    , spEntry  = cfgEntry cfg
+    , spVars   = concatMap (map saVar . sbAssigns) (Map.elems rawBlocks)
     }
 
 -- ============================================================================
@@ -185,185 +168,8 @@ headDef _ (x:_) = x
 buildEdgeMap :: [CfgEdge] -> Map.Map Text [CfgEdge]
 buildEdgeMap = foldl' (\m e -> Map.insertWith (++) (ceSrc e) [e] m) Map.empty
 
-buildPredMap :: [CfgEdge] -> Map.Map Text (Set.Set Text)
-buildPredMap = foldl' (\m e -> Map.insertWith Set.union (ceDst e) (Set.singleton (ceSrc e)) m) Map.empty
-
-buildSuccMap :: [CfgEdge] -> Map.Map Text (Set.Set Text)
-buildSuccMap = foldl' (\m e -> Map.insertWith Set.union (ceSrc e) (Set.singleton (ceDst e)) m) Map.empty
-
 -- ============================================================================
--- Step 1b: Reverse postorder (feeds the dominator/frontier computation below)
--- ============================================================================
-
--- | Reverse postorder of the CFG's successor graph starting at 'entry'.
--- Blocks unreachable from entry (should not occur in a well-formed CFG, but
--- kept total rather than silently dropped) are appended afterward, in their
--- original relative order.
---
--- This ordering is what lets 'computeIdom' converge in a small constant
--- number of passes instead of a number of passes proportional to block
--- count: a block's predecessors (other than genuine loop back-edges) are
--- guaranteed to appear earlier in RPO, so a single Gauss-Seidel pass over
--- RPO order already has each block's forward predecessors resolved by the
--- time it's processed. See Cooper, Harvey & Kennedy, "A Simple, Fast
--- Dominance Algorithm" — this is exactly their algorithm's block ordering.
-reversePostorder :: Text -> Map.Map Text (Set.Set Text) -> [Text] -> [Text]
-reversePostorder entry succMap allBlockIds =
-  let (_, postorder) = dfs Set.empty entry
-      rpo            = reverse postorder
-      reached        = Set.fromList rpo
-      rest           = filter (`Set.notMember` reached) allBlockIds
-  in rpo ++ rest
-  where
-    dfs visited b
-      | b `Set.member` visited = (visited, [])
-      | otherwise =
-          let visited1 = Set.insert b visited
-              succs    = Set.toList (Map.findWithDefault Set.empty b succMap)
-              (visitedF, childrenPost) = foldl'
-                (\(vis, acc) s -> let (vis', po) = dfs vis s in (vis', acc ++ po))
-                (visited1, []) succs
-          in (visitedF, childrenPost ++ [b])
-
--- ============================================================================
--- Step 2: Dominator tree (iterative dataflow, Cooper/Harvey/Kennedy)
--- ============================================================================
-
--- | Computes each non-entry block's immediate dominator. 'rpoOrder' must be
--- 'reversePostorder' of the same CFG 'predMap' was built from — processing
--- blocks in that order with Gauss-Seidel updates (each block's computation
--- immediately sees this same pass's updates to earlier blocks, not just the
--- previous pass's snapshot) is what bounds this to ~2-3 passes for the
--- reducible control flow real PowerBuilder procedures produce, instead of
--- up to O(blocks) passes under an arbitrary order with snapshot-only
--- updates (the previous implementation) — the fixed point reached is
--- identical either way (dataflow fixed points don't depend on update
--- order), only convergence speed differs.
-computeIdom :: Text -> [Text] -> Map.Map Text (Set.Set Text) -> Map.Map Text Text
-computeIdom entry rpoOrder predMap = go initIdom
-  where
-    nonEntry = filter (/= entry) rpoOrder
-    initIdom = Map.fromList [ (b, entry) | b <- nonEntry ]
-
-    go curIdom =
-      let (nextIdom, changed) = foldl' step (curIdom, False) nonEntry
-      in if changed then go nextIdom else nextIdom
-
-    step (idomAcc, chg) b =
-      let new = stepOne b idomAcc
-      in case Map.lookup b idomAcc of
-           Just old | old == new -> (idomAcc, chg)
-           _                     -> (Map.insert b new idomAcc, True)
-
-    stepOne b curIdom = case Map.lookup b predMap of
-      Nothing    -> b
-      Just preds ->
-        let resolved = [ getPredIdom p curIdom | p <- Set.toList preds ]
-        in case resolved of
-             []     -> b
-             (p:ps) -> foldl' (intersect curIdom) p ps
-
-    getPredIdom p curIdom
-      | p == entry = entry
-      | otherwise  = Map.findWithDefault p p curIdom
-
-    intersect curIdom a b
-      | a == b    = a
-      | otherwise =
-          let aChain = chainUp curIdom a
-              bSet   = Set.fromList (chainUp curIdom b)
-          in headDef a (filter (`Set.member` bSet) aChain)
-
-    chainUp curIdom = goChain Set.empty
-      where
-        goChain seen y
-          | y `Set.member` seen = [y]
-          | y == entry          = [y]
-          | otherwise =
-              let seen' = Set.insert y seen
-              in case Map.lookup y curIdom of
-                   Nothing    -> [y]
-                   Just p | p == y -> [y]
-                          | otherwise -> y : goChain seen' p
-
--- ============================================================================
--- Step 3: Dominance frontiers
--- ============================================================================
-
--- | Direct (non-iterative) dominance-frontier computation — Cytron, Ferrante,
--- Rosen, Wegman & Zadeck's original algorithm. Once 'idom' is known, DF
--- needs no fixed point at all: for each join point @b@ (2+ predecessors),
--- walk each predecessor up its idom chain until reaching @idom(b)@, adding
--- @b@ to every block's frontier passed along the way. O(blocks * domDepth)
--- total, vs. the previous fixed-point formulation's O(blocks) full-graph
--- passes to converge (each doing @Set.unions@ work per block) — the
--- fixed-point version was solving a problem that has a closed-form answer
--- once idom exists.
-computeDF :: [Text] -> Map.Map Text (Set.Set Text) -> Map.Map Text Text -> Map.Map Text (Set.Set Text)
-computeDF blockIds predMap idom = foldl' addForBlock initDF blockIds
-  where
-    initDF = Map.fromList [ (b, Set.empty) | b <- blockIds ]
-
-    addForBlock df b =
-      let preds = Set.toList (Map.findWithDefault Set.empty b predMap)
-      in case preds of
-           (_ : _ : _) -> foldl' (climbFrom b) df preds
-           _           -> df
-
-    climbFrom b df0 p = climb df0 p
-      where
-        bIdom = Map.findWithDefault b b idom
-        climb df runner
-          | runner == bIdom = df
-          | otherwise =
-              let df'        = Map.insertWith Set.union runner (Set.singleton b) df
-                  nextRunner = Map.findWithDefault runner runner idom
-              in if nextRunner == runner then df' else climb df' nextRunner
-
--- ============================================================================
--- Step 4: Find variable definitions per block
--- ============================================================================
-
-stmtVarName :: BodyStmt -> Maybe Text
-stmtVarName (BsAssign lv _)             = Just (lvHead lv)
-stmtVarName (BsLocalVar _ _ vn _)       = Just vn
-stmtVarName (BsAugAssign (t:_) _ _)     = Just (tkText t)
-stmtVarName (BsInc (t:_))               = Just (tkText t)
-stmtVarName (BsDec (t:_))               = Just (tkText t)
-stmtVarName (BsAssignExpr (ExLvalue lv) _) = Just (lvHead lv)
-stmtVarName (BsDestroy lv)              = Just (lvHead lv)
-stmtVarName _                           = Nothing
-
-findVarDefs :: Map.Map Text CfgBlock -> Map.Map Text (Set.Set Text)
-findVarDefs blockMap = foldl' addBlock Map.empty (Map.elems blockMap)
-  where
-    addBlock acc blk =
-      let defs = mapMaybe (stmtVarName . locNode) (cbStmts blk)
-      in foldl' (\m v -> Map.insertWith Set.union v (Set.singleton (cbId blk)) m) acc defs
-
--- ============================================================================
--- Step 5: Phi insertion
--- ============================================================================
-
-placePhis :: Map.Map Text (Set.Set Text) -> Map.Map Text (Set.Set Text) -> Map.Map Text [SsaPhi]
-placePhis dfMap varDefs =
-  foldl' (\acc (varName, defBlks) -> insertPhisFor varName defBlks acc) Map.empty (Map.toList varDefs)
-  where
-    insertPhisFor varName defBlks acc = go acc Set.empty (Set.toList defBlks)
-      where
-        go a _visited [] = a
-        go a visited (b:bs) =
-          let dfs = Map.findWithDefault Set.empty b dfMap
-              newFs = Set.filter (`Set.notMember` visited) dfs
-              (a', visited') = Set.foldl' (\(acc', vis') f ->
-                let phi = SsaPhi (SsaVar varName 0) []
-                    existing = Map.findWithDefault [] f acc'
-                in (Map.insert f (existing ++ [phi]) acc', Set.insert f vis')
-                ) (a, visited) newFs
-          in go a' visited' (bs ++ Set.toList newFs)
-
--- ============================================================================
--- Step 6: Convert CFG blocks to SSA blocks (pre-rename)
+-- Step 2: Convert CFG blocks to SSA blocks
 -- ============================================================================
 
 cfgBlockToSsa :: Map.Map Text [CfgEdge] -> Map.Map Text BodyStmt -> Map.Map Text BodyStmt
@@ -372,8 +178,8 @@ cfgBlockToSsa edgeMap headerStmts backEdgeStmts label blk =
   let ownAssigns  = concatMap (stmtToAssigns . locNode) (cbStmts blk)
       incrAssigns = case Map.lookup label backEdgeStmts of
         Just (BsFor (ForStmt var _ _ mStep _)) ->
-          [ SsaAssign (SsaVar (lvHead var) 0)
-              (SsaBinOp BopAdd (SsaVarRef (SsaVar (lvHead var) 0))
+          [ SsaAssign (SsaVar (lvHead var))
+              (SsaBinOp BopAdd (SsaVarRef (SsaVar (lvHead var)))
                                 (exprToSsaVal (fromMaybe (ExInt "1") mStep))) ]
         _ -> []
       assigns  = ownAssigns ++ incrAssigns
@@ -421,15 +227,15 @@ findLoopHeaderStmts edgeMap blockMap = Map.fromList
 
 stmtToAssigns :: BodyStmt -> [SsaAssign]
 stmtToAssigns (BsAssign lv expr) =
-  [SsaAssign (SsaVar (lvHead lv) 0) (exprToSsaVal expr)]
+  [SsaAssign (SsaVar (lvHead lv)) (exprToSsaVal expr)]
 -- The old compiler synthesizes the loop variable's init assign by hand
 -- (InstrGraph.hs's BsFor case); the new pipeline needs the same thing here,
 -- since this is the one block that legitimately owns the raw BsFor node in
 -- its own cbStmts (CfgBuild.lowerFor flushes it onto the pre-loop block).
 stmtToAssigns (BsFor (ForStmt var from _ _ _)) =
-  [SsaAssign (SsaVar (lvHead var) 0) (exprToSsaVal from)]
+  [SsaAssign (SsaVar (lvHead var)) (exprToSsaVal from)]
 stmtToAssigns (BsLocalVar _ _ varName (Just expr)) =
-  [SsaAssign (SsaVar varName 0) (exprToSsaVal expr)]
+  [SsaAssign (SsaVar varName) (exprToSsaVal expr)]
 stmtToAssigns (BsLocalVar {}) = []
 stmtToAssigns (BsAugAssign toks op rhsToks) =
   let varName = case toks of { (t:_) -> tkText t; [] -> "_" }
@@ -437,19 +243,19 @@ stmtToAssigns (BsAugAssign toks op rhsToks) =
       augOpToBinOp AugSub = BopSub
       augOpToBinOp AugMul = BopMul
       augOpToBinOp AugDiv = BopDiv
-  in [SsaAssign (SsaVar varName 0) (SsaBinOp (augOpToBinOp op) (SsaConst (lhsToExpr toks)) (exprToSsaVal (rawArgsToExpr rhsToks)))]
+  in [SsaAssign (SsaVar varName) (SsaBinOp (augOpToBinOp op) (SsaConst (lhsToExpr toks)) (exprToSsaVal (rawArgsToExpr rhsToks)))]
 stmtToAssigns (BsInc toks) =
   let varName = case toks of { (t:_) -> tkText t; [] -> "_" }
-  in [SsaAssign (SsaVar varName 0) (SsaBinOp BopAdd (SsaConst (lhsToExpr toks)) (SsaConst (ExInt "1")))]
+  in [SsaAssign (SsaVar varName) (SsaBinOp BopAdd (SsaConst (lhsToExpr toks)) (SsaConst (ExInt "1")))]
 stmtToAssigns (BsDec toks) =
   let varName = case toks of { (t:_) -> tkText t; [] -> "_" }
-  in [SsaAssign (SsaVar varName 0) (SsaBinOp BopSub (SsaConst (lhsToExpr toks)) (SsaConst (ExInt "1")))]
+  in [SsaAssign (SsaVar varName) (SsaBinOp BopSub (SsaConst (lhsToExpr toks)) (SsaConst (ExInt "1")))]
 stmtToAssigns (BsAssignExpr lhsExpr rhsExpr) =
-  [SsaAssign (SsaVar (assignTarget lhsExpr) 0) (exprToSsaVal rhsExpr)]
+  [SsaAssign (SsaVar (assignTarget lhsExpr)) (exprToSsaVal rhsExpr)]
 stmtToAssigns (BsDestroy lv) =
-  [SsaAssign (SsaVar (lvHead lv) 0) SsaNull]
+  [SsaAssign (SsaVar (lvHead lv)) SsaNull]
 stmtToAssigns (BsCall expr) =
-  [SsaAssign (SsaVar "_" 0) (SsaConst expr)]
+  [SsaAssign (SsaVar "_") (SsaConst expr)]
 -- BsPbCall: CALL ancestor::event super-dispatch (Plan 145 Phase 3). Encoded as a
 -- single-segment synthetic ExCall so it flows through the existing
 -- classifyExpr/compileCallExpr machinery in PB.Analysis.CatOp and lowers to a
@@ -458,7 +264,7 @@ stmtToAssigns (BsCall expr) =
 -- (PB identifiers can't contain "::"), or isBuiltinSuspendFn's fixed list, so
 -- it always classifies PureCall.
 stmtToAssigns (BsPbCall (PbCall ancestor event)) =
-  [SsaAssign (SsaVar "_" 0)
+  [SsaAssign (SsaVar "_")
              (SsaConst (ExCall (Lvalue [LvSegment (ancestor <> "::" <> event) Nothing]) []))]
 -- Control-flow statements produce no SSA assign of their own. CfgBuild.lower
 -- keeps the trailing control stmt as the last element of a block's cbStmts
@@ -486,7 +292,7 @@ exprToSsaVal :: Expr -> SsaVal
 exprToSsaVal ExNull            = SsaNull
 exprToSsaVal (ExBinOp l op r)  = SsaBinOp op (exprToSsaVal l) (exprToSsaVal r)
 exprToSsaVal (ExNot e)         = SsaNot (exprToSsaVal e)
-exprToSsaVal (ExLvalue lv@(Lvalue [LvSegment _ Nothing])) = SsaVarRef (SsaVar (lvHead lv) 0)
+exprToSsaVal (ExLvalue lv@(Lvalue [LvSegment _ Nothing])) = SsaVarRef (SsaVar (lvHead lv))
 exprToSsaVal e                 = SsaConst e
 
 cfgTermToSsa :: Maybe BodyStmt -> [CfgEdge] -> [Located BodyStmt] -> SsaTerm
@@ -588,113 +394,3 @@ findEdgeLabel :: Text -> [CfgEdge] -> Text
 findEdgeLabel lbl edges = case [ ceDst e | e <- edges, ceLabel e == lbl ] of
   (d:_) -> d
   []    -> case edges of { (e:_) -> ceDst e; [] -> "" }
-
--- ============================================================================
--- Step 7: Build dominator tree (parent → children)
--- ============================================================================
-
-buildDomTree :: Map.Map Text Text -> Text -> Map.Map Text [Text]
-buildDomTree idom entry = foldl' add Map.empty (Map.toList idom)
-  where
-    add m (b, parent)
-      | b == entry = m
-      | otherwise  = Map.insertWith (++) parent [b] m
-
--- ============================================================================
--- Step 8: Variable renaming via dominator tree DFS
--- ============================================================================
-
-data RenameState = RenameState
-  { rVersion :: !(Map.Map Text Int)
-  , rCurrent :: !(Map.Map Text SsaVar)
-  , rBlocks  :: !(Map.Map Text SsaBlock)
-  , rPhis    :: !(Map.Map Text [SsaPhi])
-  , rAllVars :: ![SsaVar]
-  }
-
-type RenameM = State RenameState
-
--- | Create a new version of a variable and record it.
-newVersion :: Text -> RenameM SsaVar
-newVersion varName = do
-  st <- get
-  let cur   = Map.findWithDefault 0 varName (rVersion st)
-      next  = cur + 1
-      sv    = SsaVar varName next
-  put st
-    { rVersion = Map.insert varName next (rVersion st)
-    , rCurrent = Map.insert varName sv (rCurrent st)
-    , rAllVars = sv : rAllVars st
-    }
-  pure sv
-
--- | Rename variables in the dominator tree via DFS.
--- For each block:
---   1. Rename phi results
---   2. Rename assignments (LHS gets new version, RHS refs get current version)
---   3. For each successor with phi nodes from this block, fill the phi source
---   4. Recurse into dominator children
-renameWalk :: Text -> Map.Map Text [Text] -> Map.Map Text (Set.Set Text) -> RenameM ()
-renameWalk lbl domTree succMap = do
-  -- 1. Rename phi results
-  phiList <- gets (Map.findWithDefault [] lbl . rPhis)
-  phiList' <- mapM renamePhiResult phiList
-  modify' $ \st -> st { rPhis = Map.insert lbl phiList' (rPhis st) }
-
-  -- 2. Rename block assigns
-  blk <- gets (Map.findWithDefault (SsaBlock [] (SsaReturn Nothing)) lbl . rBlocks)
-  assigns' <- mapM renameAssign (sbAssigns blk)
-  modify' $ \st -> st { rBlocks = Map.insert lbl (SsaBlock assigns' (sbTerm blk)) (rBlocks st) }
-
-  -- 3. Fill phi sources in successor blocks
-  let successors = Map.findWithDefault Set.empty lbl succMap
-  mapM_ (fillPhiSources lbl) (Set.toList successors)
-
-  -- 4. Recurse into dominator children
-  let children = Map.findWithDefault [] lbl domTree
-  mapM_ (\c -> renameWalk c domTree succMap) children
-
-renamePhiResult :: SsaPhi -> RenameM SsaPhi
-renamePhiResult phi = do
-  sv <- newVersion (svName (spResult phi))
-  pure phi { spResult = sv }
-
-renameAssign :: SsaAssign -> RenameM SsaAssign
-renameAssign (SsaAssign sv rhs) = do
-  sv' <- newVersion (svName sv)
-  rhs' <- renameVal rhs
-  pure (SsaAssign sv' rhs')
-
-renameVal :: SsaVal -> RenameM SsaVal
-renameVal SsaNull            = pure SsaNull
-renameVal (SsaConst e)       = pure (SsaConst e)
-renameVal (SsaVarRef sv)     = SsaVarRef <$> currentVar (svName sv)
-renameVal (SsaBinOp op l r)  = SsaBinOp op <$> renameVal l <*> renameVal r
-renameVal (SsaNot e)         = SsaNot <$> renameVal e
-
-currentVar :: Text -> RenameM SsaVar
-currentVar varName = do
-  cur <- gets (Map.lookup varName . rCurrent)
-  case cur of
-    Just sv -> pure sv
-    Nothing -> newVersion varName
-
--- | When control flows from srcLbl to dstLbl, fill phi source references.
--- For each phi at dstLbl that has a source from srcLbl, set the source
--- variable to the current version at srcLbl.
-fillPhiSources :: Text -> Text -> RenameM ()
-fillPhiSources srcLbl dstLbl = do
-  phisAtDst <- gets (Map.findWithDefault [] dstLbl . rPhis)
-  currentMap <- gets rCurrent
-  let updated = map (fillOne currentMap) phisAtDst
-  modify' $ \st -> st { rPhis = Map.insert dstLbl updated (rPhis st) }
-  where
-    fillOne curMap phi =
-      let updatedSources = map (\(src, sv) ->
-            if src == srcLbl
-            then case Map.lookup (svName sv) curMap of
-                   Just currentSv -> (src, currentSv)
-                   Nothing        -> (src, sv)  -- variable never assigned, keep placeholder
-            else (src, sv)
-            ) (spSources phi)
-      in phi { spSources = updatedSources }

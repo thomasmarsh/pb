@@ -994,19 +994,55 @@ data CatOp a b where  -- initial algebra; 20 constructors incl. CatLoop/CatRetur
 -- CatOp () () and structurally matches -Wno-inaccessible-code/-overlapping-patterns.
 ```
 
+### `PB.Analysis.SSA`
+
+```haskell
+-- Pure. Converts a procedure's body ('[Located BodyStmt]') into a
+-- block-structured 'SsaProc' ('PB.Analysis.CatLower' consumes it directly by
+-- unversioned variable name). NOT dominance-based SSA despite the name —
+-- Plan 155 F1 (2026-07-08) deleted the dominator-tree/dominance-frontier/
+-- phi-placement/variable-renaming machinery this module used to have: it
+-- was fully vestigial (every phi's source list was always [], and renaming
+-- only ever touched a version field nothing downstream read — PB has no
+-- block-scoped locals, so there was never a case needing per-version
+-- disambiguation). See the module's own top-of-file history note for the
+-- full argument. ~396 lines (was ~700).
+newtype SsaVar = SsaVar { svName :: Text }   -- no version field
+data SsaVal = SsaConst Expr | SsaVarRef SsaVar | SsaBinOp BinOp SsaVal SsaVal | SsaNot SsaVal | SsaNull
+data SsaAssign = SsaAssign { saVar :: SsaVar, saRhs :: SsaVal }
+data SsaBlock = SsaBlock { sbAssigns :: [SsaAssign], sbTerm :: SsaTerm }
+data SsaTerm = SsaGoto Text | SsaBranch SsaVal Text Text
+             | SsaSwitch SsaVal [(SsaVal, Text)] Text | SsaReturn (Maybe SsaVal)
+             | SsaBreak | SsaContinue
+data SsaProc = SsaProc { spName :: Text, spBlocks :: Map.Map Text SsaBlock
+                        , spEntry :: Text, spVars :: [SsaVar] }
+  -- spVars: every assigned var, one entry per assignment, block-declaration
+  -- order. Not consumed by CatLower (which walks spBlocks directly) — kept
+  -- for tests/debugging only.
+buildSsa :: ScopedTypeEnv -> Text -> [Located BodyStmt] -> SsaProc
+-- Internal (not exported): assignTarget, lhsToExpr, rawArgsToExpr, headDef,
+-- buildEdgeMap, cfgBlockToSsa, findLoopBackEdgeStmts, findLoopHeaderStmts,
+-- stmtToAssigns, exprToSsaVal, cfgTermToSsa, doCondExpr, findControlStmt,
+-- findEdgeLabel.
+```
+
 ### `PB.Analysis.CatLower`
 
 ```haskell
 -- Pure. SSA -> CatOp lowering (the categorical pipeline's largest, most
--- intricate stage — ~640 lines; all of Plan 144's loop-nesting machinery
--- and most of Plan 146's correctness fixes live here). Split from CatOp.hs
--- Plan 151.
+-- intricate stage; all of Plan 144's loop-nesting machinery and most of
+-- Plan 146's correctness fixes live here). Split from CatOp.hs Plan 151.
+-- Plan 155 F1 (2026-07-08): compilePhiAssignments deleted — it composed
+-- against PB.Analysis.SSA's phi machinery, which was always a no-op (see
+-- that module's own history note). compileTerm/compileLoopTerm/
+-- compileLoopBranchPath no longer take a "prevBlock"/"blockId" argument
+-- (it existed only to feed that dead call).
 data CompileCtx = CompileCtx { ccEnv :: ScopedTypeEnv, ccUserFns :: Set Text, ccMergePoints :: Set Text }
 compileSsa :: ScopedTypeEnv -> Set.Set Text -> SsaProc -> CatOp () ()
 -- Internal (not exported): computeMergePoints, termSuccessors, computeLoopHeaders,
 -- computeLoopNestParents, computeAllLoopExits, computeLoopBodyBlocks,
 -- discoverReachable, canReach, determineLoopExitTarget, compileBlock,
--- compileLoopBody, ssaValToExpr, compilePhiAssignments, compileTerm,
+-- compileLoopBody, ssaValToExpr, compileTerm,
 -- compileLoopTerm, compileLoopBranchPath, isLoopExit, compileAssigns,
 -- compileAssign, compileCallExpr.
 ```

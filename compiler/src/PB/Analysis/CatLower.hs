@@ -34,7 +34,7 @@ import PB.Analysis.CatOp (Category (..), CatOp (..), branch)
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName, calleeName, isTriggerEvent, segName, parseArgList)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Analysis.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
-                         SsaTerm (..), SsaPhi (..), SsaProc (..))
+                         SsaTerm (..), SsaProc (..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
@@ -389,7 +389,7 @@ compileBlock ctx proc blockId memo headers exits activeLoop
       Nothing    -> (CatId, memo)
       Just block ->
         let assignsOp  = compileAssigns ctx (sbAssigns block)
-            (termOp, memo1) = compileTerm ctx proc blockId memo headers exits activeLoop (sbTerm block)
+            (termOp, memo1) = compileTerm ctx proc memo headers exits activeLoop (sbTerm block)
             rawResult = case (assignsOp, termOp) of
                        (CatId, _) -> termOp
                        (_, CatId) -> assignsOp
@@ -444,7 +444,7 @@ compileLoopBody ctx proc blockId visited headers exits activeLoop
       Nothing    -> (CatInr, visited)
       Just block ->
         let assignsOp  = compileAssigns ctx (sbAssigns block)
-            (termOp, v1) = compileLoopTerm ctx proc blockId visited headers exits activeLoop (sbTerm block)
+            (termOp, v1) = compileLoopTerm ctx proc visited headers exits activeLoop (sbTerm block)
             rawResult = case assignsOp of
                        CatId -> termOp
                        _     -> termOp . assignsOp
@@ -463,80 +463,58 @@ ssaValToExpr (SsaBinOp op l r)  = ExBinOp (ssaValToExpr l) op (ssaValToExpr r)
 ssaValToExpr (SsaNot v)         = ExNot (ssaValToExpr v)
 ssaValToExpr SsaNull            = ExNull
 
--- | Emit named assignments for any Phi nodes requiring resolution
--- when transitioning from @prevBlock@ into @currentBlock@.
-compilePhiAssignments :: CompileCtx -> SsaProc -> Text -> Text -> CatOp () ()
-compilePhiAssignments ctx proc prevBlock currentBlock =
-  case Map.lookup currentBlock (spPhis proc) of
-    Nothing   -> CatId
-    Just phis -> compileAssigns ctx (mapMaybe findMatchingSource phis)
-  where
-    findMatchingSource phi =
-      case [ sv | (src, sv) <- spSources phi, src == prevBlock ] of
-        (sourceVar : _) -> Just (SsaAssign (spResult phi) (SsaVarRef sourceVar))
-        []              -> Nothing
-
--- | Standard terminators (outside loops). Injects phi resolution before target blocks.
+-- | Standard terminators (outside loops).
 -- Returns @(CatOp, updatedMemo)@ to thread the global memo (see 'compileBlock').
-compileTerm :: CompileCtx -> SsaProc -> Text -> Map.Map Text (CatOp () ()) -> Set.Set Text -> Map.Map Text Text
+compileTerm :: CompileCtx -> SsaProc -> Map.Map Text (CatOp () ()) -> Set.Set Text -> Map.Map Text Text
             -> Maybe Text -> SsaTerm -> (CatOp () (), Map.Map Text (CatOp () ()))
-compileTerm _ctx _proc _blockId memo _headers _exits _activeLoop (SsaReturn _) = (CatId, memo)
-compileTerm ctx proc blockId memo headers exits activeLoop (SsaGoto target) =
-  let (targetOp, m1) = compileBlock ctx proc target memo headers exits activeLoop
-  in (targetOp . compilePhiAssignments ctx proc blockId target, m1)
-compileTerm ctx proc blockId memo headers exits activeLoop (SsaBranch cond t f) =
+compileTerm _ctx _proc memo _headers _exits _activeLoop (SsaReturn _) = (CatId, memo)
+compileTerm ctx proc memo headers exits activeLoop (SsaGoto target) =
+  compileBlock ctx proc target memo headers exits activeLoop
+compileTerm ctx proc memo headers exits activeLoop (SsaBranch cond t f) =
   let (tOp, m1) = compileBlock ctx proc t memo headers exits activeLoop
       (fOp, m2) = compileBlock ctx proc f m1 headers exits activeLoop
-      combined  = branch (ssaValToExpr cond)
-                    (tOp . compilePhiAssignments ctx proc blockId t)
-                    (fOp . compilePhiAssignments ctx proc blockId f)
+      combined  = branch (ssaValToExpr cond) tOp fOp
   in (combined, m2)
-compileTerm _ctx _proc _ memo _ _ _ SsaBreak    = (CatId, memo)
-compileTerm _ctx _proc _ memo _ _ _ SsaContinue = (CatId, memo)
-compileTerm ctx proc blockId memo headers exits activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
-  let (defaultOp, m0) = compileBlock ctx proc defaultTarget memo headers exits activeLoop
-      seed = (defaultOp . compilePhiAssignments ctx proc blockId defaultTarget, m0)
+compileTerm _ctx _proc memo _ _ _ SsaBreak    = (CatId, memo)
+compileTerm _ctx _proc memo _ _ _ SsaContinue = (CatId, memo)
+compileTerm ctx proc memo headers exits activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
+  let seed = compileBlock ctx proc defaultTarget memo headers exits activeLoop
       step (val, target) (accOp, m) =
         let (targetOp, m') = compileBlock ctx proc target m headers exits activeLoop
-            combined = targetOp . compilePhiAssignments ctx proc blockId target
             cond = ExBinOp (ssaValToExpr scrutinee) BopEq (ssaValToExpr val)
-        in (branch cond combined accOp, m')
+        in (branch cond targetOp accOp, m')
   in foldr step seed pairs
 
 -- | Loop terminators. Returns @(CatOp () (Either () ()), visited)@.
-compileLoopTerm :: CompileCtx -> SsaProc -> Text -> Map.Map Text (CatOp () (Either () ())) -> Set.Set Text -> Map.Map Text Text
+compileLoopTerm :: CompileCtx -> SsaProc -> Map.Map Text (CatOp () (Either () ())) -> Set.Set Text -> Map.Map Text Text
                 -> Maybe Text -> SsaTerm -> (CatOp () (Either () ()), Map.Map Text (CatOp () (Either () ())))
-compileLoopTerm ctx proc blockId visited headers exits activeLoop (SsaGoto target)
+compileLoopTerm ctx proc visited headers exits activeLoop (SsaGoto target)
   | Just target == activeLoop = (CatInl, visited)
   | isLoopExit headers exits proc activeLoop target = (CatInr, visited)
-  | otherwise =
-      let (targetOp, v1) = compileLoopBody ctx proc target visited headers exits activeLoop
-      in (targetOp . compilePhiAssignments ctx proc blockId target, v1)
-compileLoopTerm ctx proc blockId visited headers exits activeLoop (SsaBranch cond t f) =
-  let (tOp, v1) = compileLoopBranchPath ctx proc blockId t visited headers exits activeLoop
-      (fOp, v2) = compileLoopBranchPath ctx proc blockId f v1 headers exits activeLoop
+  | otherwise = compileLoopBody ctx proc target visited headers exits activeLoop
+compileLoopTerm ctx proc visited headers exits activeLoop (SsaBranch cond t f) =
+  let (tOp, v1) = compileLoopBranchPath ctx proc t visited headers exits activeLoop
+      (fOp, v2) = compileLoopBranchPath ctx proc f v1 headers exits activeLoop
       combined  = branch (ssaValToExpr cond) tOp fOp
   in (combined, v2)
-compileLoopTerm _ctx _proc _ visited _ _ _ (SsaReturn _) = (CatReturn, visited)
-compileLoopTerm _ctx _proc _ visited _ _ _ SsaBreak      = (CatInr, visited)
-compileLoopTerm _ctx _proc _ visited _ _ _ SsaContinue   = (CatInl, visited)
-compileLoopTerm ctx proc blockId visited headers exits activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
-  let (defaultOp, v0) = compileLoopBranchPath ctx proc blockId defaultTarget visited headers exits activeLoop
+compileLoopTerm _ctx _proc visited _ _ _ (SsaReturn _) = (CatReturn, visited)
+compileLoopTerm _ctx _proc visited _ _ _ SsaBreak      = (CatInr, visited)
+compileLoopTerm _ctx _proc visited _ _ _ SsaContinue   = (CatInl, visited)
+compileLoopTerm ctx proc visited headers exits activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
+  let seed = compileLoopBranchPath ctx proc defaultTarget visited headers exits activeLoop
       step (val, target) (accOp, v) =
-        let (targetOp, v') = compileLoopBranchPath ctx proc blockId target v headers exits activeLoop
+        let (targetOp, v') = compileLoopBranchPath ctx proc target v headers exits activeLoop
             cond = ExBinOp (ssaValToExpr scrutinee) BopEq (ssaValToExpr val)
         in (branch cond targetOp accOp, v')
-  in foldr step (defaultOp, v0) pairs
+  in foldr step seed pairs
 
 -- | Compile a branch target inside a loop, wrapping in the appropriate Either.
-compileLoopBranchPath :: CompileCtx -> SsaProc -> Text -> Text -> Map.Map Text (CatOp () (Either () ())) -> Set.Set Text -> Map.Map Text Text
+compileLoopBranchPath :: CompileCtx -> SsaProc -> Text -> Map.Map Text (CatOp () (Either () ())) -> Set.Set Text -> Map.Map Text Text
                       -> Maybe Text -> (CatOp () (Either () ()), Map.Map Text (CatOp () (Either () ())))
-compileLoopBranchPath ctx proc prevBlock target visited headers exits activeLoop
+compileLoopBranchPath ctx proc target visited headers exits activeLoop
   | Just target == activeLoop = (CatInl, visited)
   | isLoopExit headers exits proc activeLoop target = (CatInr, visited)
-  | otherwise =
-      let (targetOp, v1) = compileLoopBody ctx proc target visited headers exits activeLoop
-      in (targetOp . compilePhiAssignments ctx proc prevBlock target, v1)
+  | otherwise = compileLoopBody ctx proc target visited headers exits activeLoop
 
 -- | Check if a target block is outside the current loop cycle.
 -- A block is a loop exit if it is not part of the loop body.
@@ -585,15 +563,14 @@ compileAssigns ctx (a:as) = compileAssigns ctx as . compileAssign ctx a
 -- @x = f()@ (Plan 145 Phase 1B re-sample Finding B).
 --
 -- Both this and 'ssaValToExpr'\'s 'SsaVarRef' case use 'svName' (the plain PB
--- variable name), never 'renderSsaVar' (which appends the SSA version number,
--- e.g. \"x_1\"): the version number is an internal device for phi-node
--- placement during SSA construction, not part of the variable's real runtime
--- identity — the old compiler never renames at all, and an imperative
--- execution model only ever has one mutable slot per real variable regardless
--- of how many SSA versions it was split into. Using 'renderSsaVar' here leaked
--- the version suffix into the observable trace/final-env, a divergence the
--- Plan 145 shape oracle couldn't see (it never compares variable names) but
--- Plan 146's trace oracle does — confirmed the dominant remaining bug class
+-- variable name — 'PB.Analysis.SSA.SsaVar' carries nothing else since Plan
+-- 155 F1 deleted its old SSA-version field): an imperative execution model
+-- only ever has one mutable slot per real variable, and the old compiler
+-- never renamed at all. An earlier revision of this code rendered a
+-- version-suffixed name (e.g. \"x_1\") here instead, which leaked into the
+-- observable trace/final-env — a divergence the Plan 145 shape oracle
+-- couldn't see (it never compares variable names) but Plan 146's trace
+-- oracle does — confirmed the dominant remaining bug class
 -- (~70% of the OpenPay --dual-trace corpus diffs) via direct hand-trace of
 -- @m_misth_final_details_list::create@ (Plan 146 Phase 2c).
 compileAssign :: CompileCtx -> SsaAssign -> CatOp () ()

@@ -78,8 +78,9 @@ evalExpr = evalExprMocked Map.empty
 --
 -- Covers the subset 'PB.Analysis.CatOp.ssaValToExpr' and hand-built 'CatOp'
 -- fixtures actually produce: literals, a single-segment 'ExLvalue' (SSA
--- variable references are always this shape — see 'renderSsaVar' call
--- sites), binops, 'ExNot', 'ExNeg', 'ExNull'. 'ExCall'\/'ExMethodCall' —
+-- variable references are always this shape — see 'PB.Analysis.SSA.SsaVar'
+-- and its bare, unversioned 'svName'), binops, 'ExNot', 'ExNeg', 'ExNull'.
+-- 'ExCall'\/'ExMethodCall' —
 -- the shape 'PB.Analysis.CatOp.compileAssign' embeds directly for @x = f()@,
 -- never as a 'CatSuspend'\/'CatCall' node with a result slot — resolve via
 -- 'MockResponses', keyed on 'calleeName' and the evaluated argument list

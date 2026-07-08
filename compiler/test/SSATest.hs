@@ -42,9 +42,6 @@ blockCount = Map.size . spBlocks
 allVarNames :: SsaProc -> [Text]
 allVarNames = map svName . spVars
 
-phiVarNames :: SsaProc -> [Text]
-phiVarNames sa = [ svName (spResult p) | phis <- Map.elems (spPhis sa), p <- phis ]
-
 getBlock :: SsaProc -> Text -> SsaBlock
 getBlock sa lbl = case Map.lookup lbl (spBlocks sa) of
   Just b  -> b
@@ -131,14 +128,6 @@ tests = testGroup "SSA"
             _ -> assertBool "expected SsaBinOp with SsaVarRef" False
           other -> assertBool ("expected two assigns, got " <> show (length other)) (length other == 2)
 
-    , testCase "no phi nodes in linear code" $ do
-        let sa = buildSsa emptyEnv "proc"
-                  [ at 1 (BsAssign (lv1 "x") (ExInt "1"))
-                  , at 2 (BsAssign (lv1 "y") (ExInt "2"))
-                  , at 3 (BsAssign (lv1 "z") (ExInt "3"))
-                  ]
-        phiVarNames sa @?= []
-
     , testCase "local var with init becomes assign" $ do
         let sa = buildSsa emptyEnv "proc"
                   [at 1 (BsLocalVar [] (PtPrimitive "integer") "x" (Just (ExInt "42")))]
@@ -207,38 +196,6 @@ tests = testGroup "SSA"
                       (Just [at 4 (BsAssign (lv1 "y") (ExInt "3"))])))
                   ]
         assertBool "has 4+ blocks" (blockCount sa >= 4)
-
-    , testCase "if/else with y in both branches creates phi" $ do
-        let sa = buildSsa emptyEnv "proc"
-                  [ at 1 (BsIf (IfStmt (ExBool True)
-                      [at 2 (BsAssign (lv1 "y") (ExInt "1"))]
-                      []
-                      (Just [at 3 (BsAssign (lv1 "y") (ExInt "2"))])))
-                  ]
-        assertBool "y has phi" (elem "y" (phiVarNames sa))
-
-    , testCase "if without else — phi inserted at merge (standard SSA)" $ do
-        -- Standard SSA inserts phis at dominance frontiers regardless of liveness.
-        -- The merge block is a DF of the then-block because it has another predecessor.
-        let sa = buildSsa emptyEnv "proc"
-                  [ at 1 (BsIf (IfStmt (ExBool True)
-                      [at 2 (BsAssign (lv1 "y") (ExInt "1"))]
-                      []
-                      Nothing))
-                  ]
-        -- y is defined in then-block, merge is DF(then) → phi for y
-        assertBool "y has phi at merge" (elem "y" (phiVarNames sa))
-
-    , testCase "variable defined in then and else creates single phi" $ do
-        let sa = buildSsa emptyEnv "proc"
-                  [ at 1 (BsAssign (lv1 "x") (ExInt "0"))
-                  , at 2 (BsIf (IfStmt (ExBool True)
-                      [at 3 (BsAssign (lv1 "x") (ExInt "1"))]
-                      []
-                      (Just [at 4 (BsAssign (lv1 "x") (ExInt "2"))])))
-                  ]
-        -- x defined in entry, then, else → phi at merge
-        assertBool "x has phi" (elem "x" (phiVarNames sa))
     ]
 
   , testGroup "loops"
@@ -247,15 +204,6 @@ tests = testGroup "SSA"
                   [ at 1 (BsFor (ForStmt (lv1 "i") (ExInt "1") (ExInt "10") Nothing
                       [at 2 (BsAssign (lv1 "x") (ExInt "0"))]))]
         assertBool "has multiple blocks" (blockCount sa >= 3)
-
-    , testCase "for loop with body reassign gets phi" $ do
-        -- x defined before loop and inside loop body → phi at loop header/merge
-        let sa = buildSsa emptyEnv "proc"
-                  [ at 1 (BsAssign (lv1 "x") (ExInt "0"))
-                  , at 2 (BsFor (ForStmt (lv1 "i") (ExInt "1") (ExInt "10") Nothing
-                      [at 3 (BsAssign (lv1 "x") (ExBinOp (ExLvalue (lv1 "x")) BopAdd (ExInt "1")))]))
-                  ]
-        assertBool "x has phi" (elem "x" (phiVarNames sa))
 
     , testCase "for loop header block gets SsaBranch, not a bare SsaReturn (Plan 145 block-collapse)" $ do
         -- CfgBuild.lowerFor flushes the raw BsFor node onto the *predecessor*
@@ -332,26 +280,6 @@ tests = testGroup "SSA"
         assertBool "all targets exist"
           (all (`Map.member` spBlocks sa) allTargets)
 
-    , testCase "phi sources reference existing blocks" $ do
-        let sa = buildSsa emptyEnv "proc"
-                  [ at 1 (BsIf (IfStmt (ExBool True)
-                      [at 2 (BsAssign (lv1 "y") (ExInt "1"))]
-                      []
-                      (Just [at 3 (BsAssign (lv1 "y") (ExInt "2"))])))
-                  ]
-        let allPhiSrcs = [ src | phis <- Map.elems (spPhis sa), p <- phis, (src, _) <- spSources p ]
-        assertBool "all phi sources exist"
-          (all (`Map.member` spBlocks sa) allPhiSrcs)
-
-    , testCase "all SSA vars have version > 0" $ do
-        let sa = buildSsa emptyEnv "proc"
-                  [ at 1 (BsAssign (lv1 "x") (ExInt "1"))
-                  , at 2 (BsIf (IfStmt (ExBool True)
-                      [at 3 (BsAssign (lv1 "y") (ExInt "2"))]
-                      []
-                      (Just [at 4 (BsAssign (lv1 "y") (ExInt "3"))])))
-                  ]
-        assertBool "all versions > 0" (all ((> 0) . svVersion) (spVars sa))
     ]
 
   , testGroup "scaling (Plan 150 follow-up)"
@@ -419,7 +347,7 @@ tests = testGroup "SSA"
             sa = buildSsa emptyEnv "proc" [at 1 (BsChoose (ChooseStmt (ExLvalue (lv1 "y")) clauses))]
         case sbTerm (entryBlock sa) of
           SsaSwitch scrutinee pairs def -> do
-            scrutinee @?= SsaVarRef (SsaVar "y" 0)
+            scrutinee @?= SsaVarRef (SsaVar "y")
             map fst pairs @?= [SsaConst (ExInt "1"), SsaConst (ExInt "2"), SsaConst (ExInt "3")]
             assertBool "default target is not one of the clause targets"
               (def `notElem` map snd pairs)
@@ -460,7 +388,7 @@ tests = testGroup "SSA"
 
     -- BsCall (ExDispatch) — standalone `.Post`/`.Trigger`/`Dynamic ... Event(...)`
     -- (PB's inter-object messaging idiom). stmtToAssigns's BsCall case is
-    -- expr-agnostic (SsaAssign (SsaVar "_" 0) (SsaConst expr) regardless of
+    -- expr-agnostic (SsaAssign (SsaVar "_") (SsaConst expr) regardless of
     -- expr's constructor), so this already worked before Plan 145's ExDispatch
     -- fix — the confirmed bug was one layer down, in CatOp.compileAssign. Kept
     -- here as an explicit regression guard for the SSA layer's expr-agnosticism.

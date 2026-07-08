@@ -17,7 +17,7 @@ import PB.Analysis.InstrGraph (ShapeNode (..), canonicalize, normalizeCallTag)
 import PB.Analysis.CallClassify (parseArgList, collectBodyLocals)
 import PB.Analysis.InstrInterp (runInstrGraphTrace, TraceOutcome (..))
 import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
-                            SsaTerm (..), SsaProc (..), renderSsaVar, buildSsa)
+                            SsaTerm (..), SsaProc (..), buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Lexing.Lexer     (tokenizeLine, LexLine (..))
 import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
@@ -68,7 +68,6 @@ mkSsa assigns term = SsaProc
   { spName   = "test"
   , spBlocks = Map.fromList
       [ ("entry", SsaBlock { sbAssigns = assigns, sbTerm = term }) ]
-  , spPhis   = Map.empty
   , spEntry  = "entry"
   , spVars   = [saVar a | a <- assigns]
   }
@@ -304,13 +303,7 @@ tests = testGroup "CatOp"
     ]
 
   , testGroup "SSA data types"
-    [ testCase "SsaVar renders correctly" $
-        renderSsaVar (SsaVar "x" 1) @?= "x_1"
-
-    , testCase "SsaVar ordering" $
-        assertBool "x_1 < x_2" (SsaVar "x" 1 P.< SsaVar "x" 2)
-
-    , testCase "SsaProc placeholder" $
+    [ testCase "SsaProc placeholder" $
         let sa = buildSsa P.undefined "test_proc" [] :: SsaProc
         in spName sa @?= "test_proc"
     ]
@@ -323,14 +316,14 @@ tests = testGroup "CatOp"
 
     , testCase "single assign with SsaReturn" $
         let sa = mkSsa
-              [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))]
+              [SsaAssign (SsaVar "x") (SsaConst (ExInt "1"))]
               (SsaReturn Nothing)
             result = compileSsaDefault sa
         in assertBool "contains x assign" (hasAssign "x" result)
 
     , testCase "single assign structure: CatAssignWithRhs with embedded RHS" $
         let sa = mkSsa
-              [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))]
+              [SsaAssign (SsaVar "x") (SsaConst (ExInt "1"))]
               (SsaReturn Nothing)
             result = compileSsaDefault sa
         in case result of
@@ -340,8 +333,8 @@ tests = testGroup "CatOp"
 
     , testCase "two linear assigns fold via CatCompose" $
         let sa = mkSsa
-              [ SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))
-              , SsaAssign (SsaVar "y" 1) (SsaConst (ExInt "2"))
+              [ SsaAssign (SsaVar "x") (SsaConst (ExInt "1"))
+              , SsaAssign (SsaVar "y") (SsaConst (ExInt "2"))
               ]
               (SsaReturn Nothing)
             result = compileSsaDefault sa
@@ -360,8 +353,8 @@ tests = testGroup "CatOp"
 
     , testCase "assign with SsaVarRef embeds ExLvalue in RHS" $
         let sa = mkSsa
-              [ SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))
-              , SsaAssign (SsaVar "y" 1) (SsaVarRef (SsaVar "x" 1))
+              [ SsaAssign (SsaVar "x") (SsaConst (ExInt "1"))
+              , SsaAssign (SsaVar "y") (SsaVarRef (SsaVar "x"))
               ]
               (SsaReturn Nothing)
             result = compileSsaDefault sa
@@ -372,13 +365,12 @@ tests = testGroup "CatOp"
               { spName   = "test"
               , spBlocks = Map.fromList
                   [ ("entry", SsaBlock
-                      { sbAssigns = [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))]
+                      { sbAssigns = [SsaAssign (SsaVar "x") (SsaConst (ExInt "1"))]
                       , sbTerm = SsaGoto "target" })
                   , ("target", SsaBlock
-                      { sbAssigns = [SsaAssign (SsaVar "y" 1) (SsaConst (ExInt "2"))]
+                      { sbAssigns = [SsaAssign (SsaVar "y") (SsaConst (ExInt "2"))]
                       , sbTerm = SsaReturn Nothing })
                   ]
-              , spPhis   = Map.empty
               , spEntry  = "entry"
               , spVars   = []
               }
@@ -394,13 +386,12 @@ tests = testGroup "CatOp"
                       { sbAssigns = []
                       , sbTerm = SsaBranch (SsaConst (ExBool True)) "then" "else" })
                   , ("then", SsaBlock
-                      { sbAssigns = [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))]
+                      { sbAssigns = [SsaAssign (SsaVar "x") (SsaConst (ExInt "1"))]
                       , sbTerm = SsaReturn Nothing })
                   , ("else", SsaBlock
-                      { sbAssigns = [SsaAssign (SsaVar "y" 1) (SsaConst (ExInt "2"))]
+                      { sbAssigns = [SsaAssign (SsaVar "y") (SsaConst (ExInt "2"))]
                       , sbTerm = SsaReturn Nothing })
                   ]
-              , spPhis   = Map.empty
               , spEntry  = "entry"
               , spVars   = []
               }
@@ -415,16 +406,15 @@ tests = testGroup "CatOp"
               , spBlocks = Map.fromList
                   [ ("entry", SsaBlock
                       { sbAssigns = []
-                      , sbTerm = SsaSwitch (SsaVarRef (SsaVar "y" 0))
+                      , sbTerm = SsaSwitch (SsaVarRef (SsaVar "y"))
                           [ (SsaConst (ExInt "1"), "c1")
                           , (SsaConst (ExInt "2"), "c2")
                           ]
                           "cdef" })
-                  , ("c1",   SsaBlock { sbAssigns = [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "10"))], sbTerm = SsaReturn Nothing })
-                  , ("c2",   SsaBlock { sbAssigns = [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "20"))], sbTerm = SsaReturn Nothing })
-                  , ("cdef", SsaBlock { sbAssigns = [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "99"))], sbTerm = SsaReturn Nothing })
+                  , ("c1",   SsaBlock { sbAssigns = [SsaAssign (SsaVar "x") (SsaConst (ExInt "10"))], sbTerm = SsaReturn Nothing })
+                  , ("c2",   SsaBlock { sbAssigns = [SsaAssign (SsaVar "x") (SsaConst (ExInt "20"))], sbTerm = SsaReturn Nothing })
+                  , ("cdef", SsaBlock { sbAssigns = [SsaAssign (SsaVar "x") (SsaConst (ExInt "99"))], sbTerm = SsaReturn Nothing })
                   ]
-              , spPhis   = Map.empty
               , spEntry  = "entry"
               , spVars   = []
               }
@@ -441,19 +431,18 @@ tests = testGroup "CatOp"
               { spName   = "test"
               , spBlocks = Map.fromList
                   [ ("entry", SsaBlock
-                      { sbAssigns = [SsaAssign (SsaVar "i" 1) (SsaConst (ExInt "1"))]
+                      { sbAssigns = [SsaAssign (SsaVar "i") (SsaConst (ExInt "1"))]
                       , sbTerm = SsaGoto "header" })
                   , ("header", SsaBlock
-                      { sbAssigns = [SsaAssign (SsaVar "i" 2) (SsaVarRef (SsaVar "i" 1))]
+                      { sbAssigns = [SsaAssign (SsaVar "i") (SsaVarRef (SsaVar "i"))]
                       , sbTerm = SsaBranch (SsaConst (ExBool True)) "body" "exit" })
                   , ("body", SsaBlock
-                      { sbAssigns = [SsaAssign (SsaVar "i" 3) (SsaBinOp BopAdd (SsaVarRef (SsaVar "i" 2)) (SsaConst (ExInt "1")))]
+                      { sbAssigns = [SsaAssign (SsaVar "i") (SsaBinOp BopAdd (SsaVarRef (SsaVar "i")) (SsaConst (ExInt "1")))]
                       , sbTerm = SsaGoto "header" })
                   , ("exit", SsaBlock
                       { sbAssigns = []
                       , sbTerm = SsaReturn Nothing })
                   ]
-              , spPhis   = Map.empty
               , spEntry  = "entry"
               , spVars   = []
               }
@@ -478,13 +467,13 @@ tests = testGroup "CatOp"
               { spName   = "test"
               , spBlocks = Map.fromList
                   [ ("entry", SsaBlock
-                      { sbAssigns = [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "1"))]
+                      { sbAssigns = [SsaAssign (SsaVar "x") (SsaConst (ExInt "1"))]
                       , sbTerm = SsaGoto "outer" })
                   , ("outer", SsaBlock
                       { sbAssigns = []
                       , sbTerm = SsaBranch (SsaConst (ExBool True)) "inner" "outer_exit" })
                   , ("inner", SsaBlock
-                      { sbAssigns = [SsaAssign (SsaVar "x" 2) (SsaBinOp BopAdd (SsaVarRef (SsaVar "x" 1)) (SsaConst (ExInt "1")))]
+                      { sbAssigns = [SsaAssign (SsaVar "x") (SsaBinOp BopAdd (SsaVarRef (SsaVar "x")) (SsaConst (ExInt "1")))]
                       , sbTerm = SsaBranch (SsaConst (ExBool True)) "inner_body" "inner_exit" })
                   , ("inner_body", SsaBlock
                       { sbAssigns = []
@@ -496,7 +485,6 @@ tests = testGroup "CatOp"
                       { sbAssigns = []
                       , sbTerm = SsaReturn Nothing })
                   ]
-              , spPhis   = Map.empty
               , spEntry  = "entry"
               , spVars   = []
               }
@@ -515,14 +503,14 @@ tests = testGroup "CatOp"
         -- only in the header, which is never subject to this revisit path), so this fixture
         -- terminates deterministically whether or not the bug is present — unlike routing
         -- the loop bound through the shared tail itself, which would hang forever pre-fix.
-        let iterV = SsaVarRef (SsaVar "iter" 0)
-            yV    = SsaVarRef (SsaVar "y" 0)
+        let iterV = SsaVarRef (SsaVar "iter")
+            yV    = SsaVarRef (SsaVar "y")
             sa = SsaProc
               { spName   = "test"
               , spBlocks = Map.fromList
                   [ ("entry", SsaBlock { sbAssigns = [], sbTerm = SsaGoto "header" })
                   , ("header", SsaBlock
-                      { sbAssigns = [SsaAssign (SsaVar "iter" 0) (SsaBinOp BopAdd iterV (SsaConst (ExInt "1")))]
+                      { sbAssigns = [SsaAssign (SsaVar "iter") (SsaBinOp BopAdd iterV (SsaConst (ExInt "1")))]
                       , sbTerm = SsaBranch (SsaBinOp BopLe iterV (SsaConst (ExInt "2"))) "body_cond" "exit" })
                   , ("body_cond", SsaBlock
                       { sbAssigns = []
@@ -530,11 +518,10 @@ tests = testGroup "CatOp"
                   , ("then_arm", SsaBlock { sbAssigns = [], sbTerm = SsaGoto "shared_tail" })
                   , ("else_arm", SsaBlock { sbAssigns = [], sbTerm = SsaGoto "shared_tail" })
                   , ("shared_tail", SsaBlock
-                      { sbAssigns = [SsaAssign (SsaVar "y" 0) (SsaBinOp BopAdd yV (SsaConst (ExInt "1")))]
+                      { sbAssigns = [SsaAssign (SsaVar "y") (SsaBinOp BopAdd yV (SsaConst (ExInt "1")))]
                       , sbTerm = SsaGoto "header" })
                   , ("exit", SsaBlock { sbAssigns = [], sbTerm = SsaReturn Nothing })
                   ]
-              , spPhis   = Map.empty
               , spEntry  = "entry"
               , spVars   = []
               }
@@ -557,13 +544,12 @@ tests = testGroup "CatOp"
                       { sbAssigns = []
                       , sbTerm = SsaBranch (SsaConst (ExBool True)) "body" "exit" })
                   , ("body", SsaBlock
-                      { sbAssigns = [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "42"))]
+                      { sbAssigns = [SsaAssign (SsaVar "x") (SsaConst (ExInt "42"))]
                       , sbTerm = SsaGoto "header" })
                   , ("exit", SsaBlock
                       { sbAssigns = []
                       , sbTerm = SsaReturn Nothing })
                   ]
-              , spPhis   = Map.empty
               , spEntry  = "entry"
               , spVars   = []
               }
@@ -578,7 +564,7 @@ tests = testGroup "CatOp"
         let callExpr = ExCall
               { callee   = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]
               , callArgs = [] }
-            sa = mkSsa [SsaAssign (SsaVar "_" 1) (SsaConst callExpr)] (SsaReturn Nothing)
+            sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr)] (SsaReturn Nothing)
             result = compileSsa dwEnv Set.empty sa
         in assertBool "should contain CatSuspend with effect retrieve:dw_foo"
              (hasCatSuspendEffect "retrieve:dw_foo" result)
@@ -589,14 +575,14 @@ tests = testGroup "CatOp"
               { receiver   = ExLvalue (Lvalue [LvSegment "sqlca" Nothing])
               , method     = "commit"
               , methodArgs = [] }
-            sa = mkSsa [SsaAssign (SsaVar "_" 1) (SsaConst callExpr)] (SsaReturn Nothing)
+            sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr)] (SsaReturn Nothing)
             result = compileSsa dwEnv Set.empty sa
         in assertBool "should contain CatSuspend with effect executeSql"
              (hasCatSuspendEffect "executeSql" result)
 
     , testCase "ExCall pure user function does not emit CatSuspend" $
         let callExpr = ExCall { callee = Lvalue [LvSegment "my_func" Nothing], callArgs = [] }
-            sa = mkSsa [SsaAssign (SsaVar "_" 1) (SsaConst callExpr)] (SsaReturn Nothing)
+            sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr)] (SsaReturn Nothing)
             result = compileSsa emptyEnv Set.empty sa
         in assertBool "pure call should produce no CatSuspend" (not (hasAnyCatSuspend result))
 
@@ -620,7 +606,7 @@ tests = testGroup "CatOp"
     -- never special-cases a call RHS on BsAssign; it always emits one InstrAssign.
     [ testCase "x = my_func() (pure) assigns, does not emit a bare CatCall" $
         let callExpr = ExCall { callee = Lvalue [LvSegment "my_func" Nothing], callArgs = [] }
-            sa = mkSsa [SsaAssign (SsaVar "x" 1) (SsaConst callExpr)] (SsaReturn Nothing)
+            sa = mkSsa [SsaAssign (SsaVar "x") (SsaConst callExpr)] (SsaReturn Nothing)
             result = compileSsa emptyEnv Set.empty sa
         in assertBool "x assign present, no bare CatCall"
              (hasAssign "x" result P.&& not (hasAnyCatCall result))
@@ -629,7 +615,7 @@ tests = testGroup "CatOp"
         let callExpr = ExCall
               { callee   = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]
               , callArgs = [] }
-            sa = mkSsa [SsaAssign (SsaVar "x" 1) (SsaConst callExpr)] (SsaReturn Nothing)
+            sa = mkSsa [SsaAssign (SsaVar "x") (SsaConst callExpr)] (SsaReturn Nothing)
             result = compileSsa dwEnv Set.empty sa
         in assertBool "x assign present, no CatSuspend"
              (hasAssign "x" result P.&& not (hasAnyCatSuspend result))
@@ -639,7 +625,7 @@ tests = testGroup "CatOp"
         let callExpr = ExCall
               { callee   = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]
               , callArgs = [] }
-            sa = mkSsa [SsaAssign (SsaVar "_" 1) (SsaConst callExpr)] (SsaReturn Nothing)
+            sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr)] (SsaReturn Nothing)
             result = compileSsa dwEnv Set.empty sa
         in assertBool "should still contain CatSuspend" (hasAnyCatSuspend result)
 
@@ -827,10 +813,9 @@ tests = testGroup "CatOp"
               , spBlocks = Map.fromList
                   [ ("entry", SsaBlock [] (SsaGoto "header"))
                   , ("header", SsaBlock [] (SsaBranch (SsaConst (ExBool True)) "body" "exit"))
-                  , ("body", SsaBlock [SsaAssign (SsaVar "x" 1) (SsaConst (ExInt "42"))] (SsaGoto "header"))
+                  , ("body", SsaBlock [SsaAssign (SsaVar "x") (SsaConst (ExInt "42"))] (SsaGoto "header"))
                   , ("exit", SsaBlock [] (SsaReturn Nothing))
                   ]
-              , spPhis   = Map.empty
               , spEntry  = "entry"
               , spVars   = []
               }
@@ -863,11 +848,10 @@ tests = testGroup "CatOp"
               { spName   = "test"
               , spBlocks = Map.fromList
                   [ ("entry", SsaBlock
-                      { sbAssigns = [ SsaAssign (SsaVar "a" 1) (SsaConst (ExInt "1"))
-                                     , SsaAssign (SsaVar "b" 1) (SsaConst (ExInt "2")) ]
+                      { sbAssigns = [ SsaAssign (SsaVar "a") (SsaConst (ExInt "1"))
+                                     , SsaAssign (SsaVar "b") (SsaConst (ExInt "2")) ]
                       , sbTerm = SsaReturn Nothing })
                   ]
-              , spPhis   = Map.empty
               , spEntry  = "entry"
               , spVars   = []
               }
@@ -1527,18 +1511,17 @@ tests = testGroup "CatOp"
     -- target. Fixture below mirrors that shape: an outer counted loop whose
     -- body always enters an inner counted loop (with a structural bypass
     -- edge, matching the real "if without else" shape) before looping back.
-    [ let oiV = SsaVarRef (SsaVar "oi" 0)
-          iiV = SsaVarRef (SsaVar "ii" 0)
-          yV  = SsaVarRef (SsaVar "y" 0)
+    [ let oiV = SsaVarRef (SsaVar "oi")
+          iiV = SsaVarRef (SsaVar "ii")
+          yV  = SsaVarRef (SsaVar "y")
           nestedLoopsSsa = SsaProc
             { spName   = "test"
             , spEntry  = "entry"
             , spVars   = []
-            , spPhis   = Map.empty
             , spBlocks = Map.fromList
                 [ ("entry", SsaBlock
-                    { sbAssigns = [ SsaAssign (SsaVar "oi" 0) (SsaConst (ExInt "0"))
-                                  , SsaAssign (SsaVar "y" 0) (SsaConst (ExInt "0")) ]
+                    { sbAssigns = [ SsaAssign (SsaVar "oi") (SsaConst (ExInt "0"))
+                                  , SsaAssign (SsaVar "y") (SsaConst (ExInt "0")) ]
                     , sbTerm = SsaGoto "outer_header" })
                 , ("outer_header", SsaBlock
                     { sbAssigns = []
@@ -1547,18 +1530,18 @@ tests = testGroup "CatOp"
                     { sbAssigns = []
                     , sbTerm = SsaBranch (SsaConst (ExBool True)) "outer_enter_inner" "outer_merge" })
                 , ("outer_enter_inner", SsaBlock
-                    { sbAssigns = [SsaAssign (SsaVar "ii" 0) (SsaConst (ExInt "0"))]
+                    { sbAssigns = [SsaAssign (SsaVar "ii") (SsaConst (ExInt "0"))]
                     , sbTerm = SsaGoto "inner_header" })
                 , ("inner_header", SsaBlock
                     { sbAssigns = []
                     , sbTerm = SsaBranch (SsaBinOp BopLt iiV (SsaConst (ExInt "3"))) "inner_body" "inner_exit" })
                 , ("inner_body", SsaBlock
-                    { sbAssigns = [ SsaAssign (SsaVar "ii" 0) (SsaBinOp BopAdd iiV (SsaConst (ExInt "1")))
-                                  , SsaAssign (SsaVar "y" 0) (SsaBinOp BopAdd yV (SsaConst (ExInt "1"))) ]
+                    { sbAssigns = [ SsaAssign (SsaVar "ii") (SsaBinOp BopAdd iiV (SsaConst (ExInt "1")))
+                                  , SsaAssign (SsaVar "y") (SsaBinOp BopAdd yV (SsaConst (ExInt "1"))) ]
                     , sbTerm = SsaGoto "inner_header" })
                 , ("inner_exit", SsaBlock { sbAssigns = [], sbTerm = SsaGoto "outer_merge" })
                 , ("outer_merge", SsaBlock
-                    { sbAssigns = [SsaAssign (SsaVar "oi" 0) (SsaBinOp BopAdd oiV (SsaConst (ExInt "1")))]
+                    { sbAssigns = [SsaAssign (SsaVar "oi") (SsaBinOp BopAdd oiV (SsaConst (ExInt "1")))]
                     , sbTerm = SsaGoto "outer_header" })
                 , ("outer_exit", SsaBlock { sbAssigns = [], sbTerm = SsaReturn Nothing })
                 ]
@@ -1605,20 +1588,19 @@ tests = testGroup "CatOp"
     -- post-loop block with its own distinguishing assign. Block names are
     -- chosen so "c_continue" sorts before "z_exit" — reproducing the exact
     -- alphabetical-tiebreak failure mode, not a coincidence-proof shape.
-    [ let xV  = SsaVarRef (SsaVar "x" 0)
-          yV  = SsaVarRef (SsaVar "y" 0)
-          scV = SsaVarRef (SsaVar "skip_count" 0)
+    [ let xV  = SsaVarRef (SsaVar "x")
+          yV  = SsaVarRef (SsaVar "y")
+          scV = SsaVarRef (SsaVar "skip_count")
           continueSsa = SsaProc
             { spName   = "test"
             , spEntry  = "entry"
             , spVars   = []
-            , spPhis   = Map.empty
             , spBlocks = Map.fromList
                 [ ("entry", SsaBlock
-                    { sbAssigns = [ SsaAssign (SsaVar "x" 0) (SsaConst (ExInt "0"))
-                                  , SsaAssign (SsaVar "y" 0) (SsaConst (ExInt "0"))
-                                  , SsaAssign (SsaVar "skip_count" 0) (SsaConst (ExInt "0"))
-                                  , SsaAssign (SsaVar "done" 0) (SsaConst (ExInt "0")) ]
+                    { sbAssigns = [ SsaAssign (SsaVar "x") (SsaConst (ExInt "0"))
+                                  , SsaAssign (SsaVar "y") (SsaConst (ExInt "0"))
+                                  , SsaAssign (SsaVar "skip_count") (SsaConst (ExInt "0"))
+                                  , SsaAssign (SsaVar "done") (SsaConst (ExInt "0")) ]
                     , sbTerm = SsaGoto "header" })
                 , ("header", SsaBlock
                     { sbAssigns = []
@@ -1627,15 +1609,15 @@ tests = testGroup "CatOp"
                     { sbAssigns = []
                     , sbTerm = SsaBranch (SsaBinOp BopEq xV (SsaConst (ExInt "1"))) "c_continue" "normal_body" })
                 , ("c_continue", SsaBlock
-                    { sbAssigns = [ SsaAssign (SsaVar "x" 0) (SsaBinOp BopAdd xV (SsaConst (ExInt "1")))
-                                  , SsaAssign (SsaVar "skip_count" 0) (SsaBinOp BopAdd scV (SsaConst (ExInt "1"))) ]
+                    { sbAssigns = [ SsaAssign (SsaVar "x") (SsaBinOp BopAdd xV (SsaConst (ExInt "1")))
+                                  , SsaAssign (SsaVar "skip_count") (SsaBinOp BopAdd scV (SsaConst (ExInt "1"))) ]
                     , sbTerm = SsaContinue })
                 , ("normal_body", SsaBlock
-                    { sbAssigns = [ SsaAssign (SsaVar "y" 0) (SsaBinOp BopAdd yV (SsaConst (ExInt "1")))
-                                  , SsaAssign (SsaVar "x" 0) (SsaBinOp BopAdd xV (SsaConst (ExInt "1"))) ]
+                    { sbAssigns = [ SsaAssign (SsaVar "y") (SsaBinOp BopAdd yV (SsaConst (ExInt "1")))
+                                  , SsaAssign (SsaVar "x") (SsaBinOp BopAdd xV (SsaConst (ExInt "1"))) ]
                     , sbTerm = SsaGoto "header" })
                 , ("z_exit", SsaBlock
-                    { sbAssigns = [SsaAssign (SsaVar "done" 0) (SsaConst (ExInt "1"))]
+                    { sbAssigns = [SsaAssign (SsaVar "done") (SsaConst (ExInt "1"))]
                     , sbTerm = SsaReturn Nothing })
                 ]
             }
@@ -1708,14 +1690,13 @@ tests = testGroup "CatOp"
     -- loop completes normally without ever hitting return; (2) does hitting
     -- return mid-loop actually terminate the procedure instead of falling
     -- through to that trailing code.
-    (let xV  = SsaVarRef (SsaVar "x" 0)
-         yV  = SsaVarRef (SsaVar "y" 0)
-         trV = SsaVarRef (SsaVar "trigger" 0)
+    (let xV  = SsaVarRef (SsaVar "x")
+         yV  = SsaVarRef (SsaVar "y")
+         trV = SsaVarRef (SsaVar "trigger")
          returnSsa = SsaProc
            { spName   = "test"
            , spEntry  = "entry"
            , spVars   = []
-           , spPhis   = Map.empty
            , spBlocks = Map.fromList
                [ ("entry", SsaBlock { sbAssigns = [], sbTerm = SsaGoto "header" })
                , ("header", SsaBlock
@@ -1725,14 +1706,14 @@ tests = testGroup "CatOp"
                    { sbAssigns = []
                    , sbTerm = SsaBranch (SsaBinOp BopEq trV (SsaConst (ExInt "1"))) "return_block" "normal_body" })
                , ("return_block", SsaBlock
-                   { sbAssigns = [SsaAssign (SsaVar "y" 0) (SsaConst (ExInt "999"))]
+                   { sbAssigns = [SsaAssign (SsaVar "y") (SsaConst (ExInt "999"))]
                    , sbTerm = SsaReturn Nothing })
                , ("normal_body", SsaBlock
-                   { sbAssigns = [ SsaAssign (SsaVar "x" 0) (SsaBinOp BopAdd xV (SsaConst (ExInt "1")))
-                                 , SsaAssign (SsaVar "y" 0) (SsaBinOp BopAdd yV (SsaConst (ExInt "1"))) ]
+                   { sbAssigns = [ SsaAssign (SsaVar "x") (SsaBinOp BopAdd xV (SsaConst (ExInt "1")))
+                                 , SsaAssign (SsaVar "y") (SsaBinOp BopAdd yV (SsaConst (ExInt "1"))) ]
                    , sbTerm = SsaGoto "header" })
                , ("z_exit", SsaBlock
-                   { sbAssigns = [SsaAssign (SsaVar "done" 0) (SsaConst (ExInt "1"))]
+                   { sbAssigns = [SsaAssign (SsaVar "done") (SsaConst (ExInt "1"))]
                    , sbTerm = SsaReturn Nothing })
                ]
            }
