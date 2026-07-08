@@ -259,26 +259,43 @@ buildSchema inputs =
 -- ---------------------------------------------------------------------------
 -- Traversal (Plan 148 Phase 2)
 
--- | Shared recursive path enumerator. Cycle-safe: an object already on the
--- current path is never revisited, so recursion always terminates even on
--- a cyclic FK graph. Returns one entry per distinct reachable object
--- (including the identity path at the seed) — multiple routes to the same
--- object yield multiple entries, since a path carries provenance that a
--- bare reachability boolean would discard.
+-- | Shared BFS path finder. Returns at most one entry per distinct
+-- reachable object (including the identity path at the seed) — the
+-- shortest (fewest-hop) path to it, via a graph-global visited set (an
+-- object is marked visited the moment it is first discovered, at any
+-- distance from the seed, and is never expanded again). Cycle-safe by
+-- construction: the visited set guarantees each object is enqueued at
+-- most once, so termination and O(V+E) work don't depend on the graph
+-- being acyclic.
+--
+-- This intentionally does NOT enumerate every simple path to every object.
+-- An earlier DFS-with-path-local-visited version did that, and on a DAG
+-- with repeated diamond shapes (ordinary in a real FK/SQL-touch schema —
+-- several tables joining back through a shared hub table) path count grows
+-- multiplicatively per diamond layer even though the reachable-object count
+-- stays linear: real corpus-scale schema graphs made this an exponential
+-- blowup. No consumer (columnCoslice, constraintWriters) needs more than
+-- one path per object — both already collapse to shortest-path-per-target.
 walkPaths
   :: (SchGraph -> Map.Map SchObject [SchMorphism])  -- ^ adjacency map to follow
   -> (SchPath -> SchMorphism -> SchPath)             -- ^ extend a path with one leg
   -> (SchPath -> SchObject)                          -- ^ frontier object to look up next
   -> (SchMorphism -> SchObject)                      -- ^ the object a leg discovers
   -> SchGraph -> SchObject -> [SchPath]
-walkPaths adj step frontier discovered g seed = go (idPath seed) (Set.singleton seed)
+walkPaths adj step frontier discovered g seed =
+  reverse (go (Set.singleton seed) [idPath seed] [idPath seed])
   where
-    go path visited =
-      path : concatMap extend (Map.findWithDefault [] (frontier path) (adj g))
-      where
-        extend leg
-          | Set.member (discovered leg) visited = []
-          | otherwise = go (step path leg) (Set.insert (discovered leg) visited)
+    go _visited acc [] = acc
+    go visited acc (path : queue) =
+      let legs = Map.findWithDefault [] (frontier path) (adj g)
+          (visited', acc', extra) = foldl' consider (visited, acc, []) legs
+          consider (vis, a, ex) leg =
+            let obj = discovered leg
+            in if Set.member obj vis
+               then (vis, a, ex)
+               else let p' = step path leg
+                    in (Set.insert obj vis, p' : a, p' : ex)
+      in go visited' acc' (queue ++ reverse extra)
 
 -- | All paths reachable forward from the seed (sgOut). North-star Q1 ("if
 -- this column mutates, what else is affected") — the coslice under a

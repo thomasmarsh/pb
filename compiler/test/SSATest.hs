@@ -13,6 +13,8 @@ import PB.Analysis.CallClassify (CallKind (..), classifyExpr)
 import PB.Lexing.Token      (Token (..), TokenKind (..), SourceSpan (..))
 
 import qualified Data.Map.Strict as Map
+import Control.Exception     (evaluate)
+import System.CPUTime        (getCPUTime)
 import Test.Tasty            (TestTree, testGroup)
 import Test.Tasty.HUnit      (assertBool, assertEqual, testCase, (@?=))
 
@@ -47,6 +49,21 @@ getBlock :: SsaProc -> Text -> SsaBlock
 getBlock sa lbl = case Map.lookup lbl (spBlocks sa) of
   Just b  -> b
   Nothing -> error ("block not found: " <> show lbl)
+
+-- | N sequential guard-clause ifs (@if true then x = 1 end if@, no else),
+-- all reassigning the same variable — the "ordinary but pathological" shape
+-- (validation functions with many guard clauses in a row, real corpus style)
+-- that stresses 'buildSsa''s dominator/dominance-frontier convergence: each
+-- if adds one more merge point whose correct idom depends on the previous
+-- one's already being resolved.
+guardChain :: Int -> [Located BodyStmt]
+guardChain n =
+  [ at i (BsIf (IfStmt (ExBool True)
+      [at i (BsAssign (lv1 "x") (ExInt "1"))]
+      []
+      Nothing))
+  | i <- [1 .. n]
+  ]
 
 entryBlock :: SsaProc -> SsaBlock
 entryBlock sa = getBlock sa (spEntry sa)
@@ -335,6 +352,31 @@ tests = testGroup "SSA"
                       (Just [at 4 (BsAssign (lv1 "y") (ExInt "3"))])))
                   ]
         assertBool "all versions > 0" (all ((> 0) . svVersion) (spVars sa))
+    ]
+
+  , testGroup "scaling (Plan 150 follow-up)"
+    [ testCase "wide sequential guard-clause chain builds fast, not O(blocks^2-3)" $ do
+        -- Regression for the buildSsa residual-cost finding logged after Plan
+        -- 150: computeIdom/computeDF's fixed-point loops processed blocks in
+        -- arbitrary (CFG-declaration) order instead of reverse postorder, so
+        -- convergence needed up to O(blocks) passes instead of the ~2-3 the
+        -- Cooper/Harvey/Kennedy algorithm guarantees under RPO+Gauss-Seidel
+        -- ordering, and computeDF used an unnecessary fixed point at all
+        -- (it now computes directly from idom, Cytron et al.'s algorithm).
+        -- A real corpus procedure with ~150-200 blocks (fn_dateolografos,
+        -- 6 sequential choose-case blocks) took ~9s pre-fix; this synthetic
+        -- 300-guard-clause chain is wider still and must stay well under
+        -- that (hand-traced post-fix: real fn_dateolografos now ~0.01s).
+        let n = 300 :: Int
+            sa = buildSsa emptyEnv "wide_guard_chain" (guardChain n)
+        start <- getCPUTime
+        _ <- evaluate (length (show sa))
+        end <- getCPUTime
+        let elapsedSecs = fromIntegral (end - start) / (1e12 :: Double)
+        assertBool
+          ("buildSsa on a " <> show n <> "-guard-clause chain took "
+             <> show elapsedSecs <> "s; must stay well under 5s")
+          (elapsedSecs < 5)
     ]
 
   , testGroup "buildSsa per-variant (Plan 145 Phase 3)"

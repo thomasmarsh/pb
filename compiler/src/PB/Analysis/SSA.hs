@@ -126,15 +126,16 @@ buildSsa _env procName stmts =
       blockMap  = Map.fromList [ (cbId b, b) | b <- cfgBlocks cfg ]
       predMap   = buildPredMap (cfgEdges cfg)
       edgeMap   = buildEdgeMap (cfgEdges cfg)
+      succMap   = buildSuccMap (cfgEdges cfg)
+      rpoOrder  = reversePostorder entry succMap blockIds
       headerStmts   = findLoopHeaderStmts edgeMap blockMap
       backEdgeStmts = findLoopBackEdgeStmts (cfgEdges cfg) headerStmts
-      idom      = computeIdom entry blockIds predMap
+      idom      = computeIdom entry rpoOrder predMap
       dfMap     = computeDF blockIds predMap idom
       varDefs   = findVarDefs blockMap
       phis0     = placePhis dfMap varDefs
       rawBlocks = Map.mapWithKey (cfgBlockToSsa edgeMap headerStmts backEdgeStmts) blockMap
       domTree   = buildDomTree idom entry
-      succMap   = buildSuccMap (cfgEdges cfg)
       initRename = RenameState
         { rVersion = Map.empty
         , rCurrent = Map.empty
@@ -191,18 +192,68 @@ buildSuccMap :: [CfgEdge] -> Map.Map Text (Set.Set Text)
 buildSuccMap = foldl' (\m e -> Map.insertWith Set.union (ceSrc e) (Set.singleton (ceDst e)) m) Map.empty
 
 -- ============================================================================
--- Step 2: Dominator tree (iterative dataflow)
+-- Step 1b: Reverse postorder (feeds the dominator/frontier computation below)
 -- ============================================================================
 
-computeIdom :: Text -> [Text] -> Map.Map Text (Set.Set Text) -> Map.Map Text Text
-computeIdom entry blockIds predMap = go initIdom
+-- | Reverse postorder of the CFG's successor graph starting at 'entry'.
+-- Blocks unreachable from entry (should not occur in a well-formed CFG, but
+-- kept total rather than silently dropped) are appended afterward, in their
+-- original relative order.
+--
+-- This ordering is what lets 'computeIdom' converge in a small constant
+-- number of passes instead of a number of passes proportional to block
+-- count: a block's predecessors (other than genuine loop back-edges) are
+-- guaranteed to appear earlier in RPO, so a single Gauss-Seidel pass over
+-- RPO order already has each block's forward predecessors resolved by the
+-- time it's processed. See Cooper, Harvey & Kennedy, "A Simple, Fast
+-- Dominance Algorithm" — this is exactly their algorithm's block ordering.
+reversePostorder :: Text -> Map.Map Text (Set.Set Text) -> [Text] -> [Text]
+reversePostorder entry succMap allBlockIds =
+  let (_, postorder) = dfs Set.empty entry
+      rpo            = reverse postorder
+      reached        = Set.fromList rpo
+      rest           = filter (`Set.notMember` reached) allBlockIds
+  in rpo ++ rest
   where
-    nonEntry = filter (/= entry) blockIds
+    dfs visited b
+      | b `Set.member` visited = (visited, [])
+      | otherwise =
+          let visited1 = Set.insert b visited
+              succs    = Set.toList (Map.findWithDefault Set.empty b succMap)
+              (visitedF, childrenPost) = foldl'
+                (\(vis, acc) s -> let (vis', po) = dfs vis s in (vis', acc ++ po))
+                (visited1, []) succs
+          in (visitedF, childrenPost ++ [b])
+
+-- ============================================================================
+-- Step 2: Dominator tree (iterative dataflow, Cooper/Harvey/Kennedy)
+-- ============================================================================
+
+-- | Computes each non-entry block's immediate dominator. 'rpoOrder' must be
+-- 'reversePostorder' of the same CFG 'predMap' was built from — processing
+-- blocks in that order with Gauss-Seidel updates (each block's computation
+-- immediately sees this same pass's updates to earlier blocks, not just the
+-- previous pass's snapshot) is what bounds this to ~2-3 passes for the
+-- reducible control flow real PowerBuilder procedures produce, instead of
+-- up to O(blocks) passes under an arbitrary order with snapshot-only
+-- updates (the previous implementation) — the fixed point reached is
+-- identical either way (dataflow fixed points don't depend on update
+-- order), only convergence speed differs.
+computeIdom :: Text -> [Text] -> Map.Map Text (Set.Set Text) -> Map.Map Text Text
+computeIdom entry rpoOrder predMap = go initIdom
+  where
+    nonEntry = filter (/= entry) rpoOrder
     initIdom = Map.fromList [ (b, entry) | b <- nonEntry ]
 
     go curIdom =
-      let nextIdom = Map.fromList [ (b, stepOne b curIdom) | b <- nonEntry ]
-      in if nextIdom == curIdom then curIdom else go nextIdom
+      let (nextIdom, changed) = foldl' step (curIdom, False) nonEntry
+      in if changed then go nextIdom else nextIdom
+
+    step (idomAcc, chg) b =
+      let new = stepOne b idomAcc
+      in case Map.lookup b idomAcc of
+           Just old | old == new -> (idomAcc, chg)
+           _                     -> (Map.insert b new idomAcc, True)
 
     stepOne b curIdom = case Map.lookup b predMap of
       Nothing    -> b
@@ -239,25 +290,35 @@ computeIdom entry blockIds predMap = go initIdom
 -- Step 3: Dominance frontiers
 -- ============================================================================
 
+-- | Direct (non-iterative) dominance-frontier computation — Cytron, Ferrante,
+-- Rosen, Wegman & Zadeck's original algorithm. Once 'idom' is known, DF
+-- needs no fixed point at all: for each join point @b@ (2+ predecessors),
+-- walk each predecessor up its idom chain until reaching @idom(b)@, adding
+-- @b@ to every block's frontier passed along the way. O(blocks * domDepth)
+-- total, vs. the previous fixed-point formulation's O(blocks) full-graph
+-- passes to converge (each doing @Set.unions@ work per block) — the
+-- fixed-point version was solving a problem that has a closed-form answer
+-- once idom exists.
 computeDF :: [Text] -> Map.Map Text (Set.Set Text) -> Map.Map Text Text -> Map.Map Text (Set.Set Text)
-computeDF blockIds predMap idom = fixedPoint initDF
+computeDF blockIds predMap idom = foldl' addForBlock initDF blockIds
   where
     initDF = Map.fromList [ (b, Set.empty) | b <- blockIds ]
 
-    fixedPoint df =
-      let nextDF = foldl' (\m b -> Map.insert b (computeDFb b df) m) df blockIds
-      in if nextDF == df then df else fixedPoint nextDF
+    addForBlock df b =
+      let preds = Set.toList (Map.findWithDefault Set.empty b predMap)
+      in case preds of
+           (_ : _ : _) -> foldl' (climbFrom b) df preds
+           _           -> df
 
-    computeDFb b df =
-      let preds = Map.findWithDefault Set.empty b predMap
-          s1 = Set.filter (\p -> Map.lookup p idom /= Just b) preds
-          s2 = Set.unions
-            [ Map.findWithDefault Set.empty succNode df
-            | p <- Set.toList preds
-            , let succNode = Map.findWithDefault p p idom
-            , succNode /= b
-            ]
-      in s1 `Set.union` s2
+    climbFrom b df0 p = climb df0 p
+      where
+        bIdom = Map.findWithDefault b b idom
+        climb df runner
+          | runner == bIdom = df
+          | otherwise =
+              let df'        = Map.insertWith Set.union runner (Set.singleton b) df
+                  nextRunner = Map.findWithDefault runner runner idom
+              in if nextRunner == runner then df' else climb df' nextRunner
 
 -- ============================================================================
 -- Step 4: Find variable definitions per block

@@ -5,6 +5,7 @@ import PB.Analysis.SchemaCategory
 import PB.Pipeline.SqlParse (TableRef (..))
 
 import qualified Data.Set  as Set
+import qualified Data.Text as T
 
 import Hedgehog          (Gen, assert, forAll, property, (===))
 import qualified Hedgehog.Gen   as Gen
@@ -204,6 +205,33 @@ tests = testGroup "SchemaCategory"
         in do
           assertBool "terminates with a finite, small result" (length paths <= 4)
           assertBool "no path revisits an object" (all noRevisit paths)
+
+    , testCase "blastRadius stays linear (not exponential) through a chain of diamond FK joins" $
+        -- Regression for the exponential-blowup bug (walkPaths used to enumerate
+        -- every simple path, not just reachable objects): a chain of N diamonds
+        -- (each hub table FKs out to two branch tables that both FK back into the
+        -- next hub) has O(N) simple paths reaching the final hub for every extra
+        -- layer doubled under the old DFS-all-paths algorithm — 2^15 = 32768 paths
+        -- to the last hub alone. The fixed BFS-with-global-visited walk returns at
+        -- most one (shortest) path per distinct reachable object.
+        let n = 15 :: Int
+            tbl i suffix = "t" <> T.pack (show (i :: Int)) <> suffix
+            col = "id"
+            layerFks i =
+              [ CatFkRow Nothing (tbl i "") col Nothing (tbl i "a") col
+              , CatFkRow Nothing (tbl i "") col Nothing (tbl i "b") col
+              , CatFkRow Nothing (tbl i "a") col Nothing (tbl (i + 1) "") col
+              , CatFkRow Nothing (tbl i "b") col Nothing (tbl (i + 1) "") col
+              ]
+            inp = emptyInputs { inCatalogFks = concatMap layerFks [0 .. n - 1] }
+            sch = buildSchema inp
+            seed = ColumnObj (TableRef Nothing (tbl 0 "")) col
+            paths = blastRadius sch seed
+            objectCount = Set.size (sgObjects sch)
+        in assertBool
+             ("path count " <> show (length paths) <> " should stay <= object count "
+                <> show objectCount <> " (was exponential pre-fix)")
+             (length paths <= objectCount)
 
     , testCase "validationWalkBack finds a direct LegWrites writer" $
         let colA = ColumnObj (TableRef Nothing "account") "balance"
