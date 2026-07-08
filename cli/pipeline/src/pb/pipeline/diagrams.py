@@ -34,16 +34,33 @@ def _cache_key(kind: str, params: dict[str, Any]) -> str:
 
 
 def _render_svg(dot) -> str:
-    """Render a graphviz object to SVG. Falls back to Bezier splines if the
-    primary engine fails (e.g. missing triangulate on RHEL)."""
+    """Render a graphviz object to SVG, degrading gracefully if the primary
+    engine fails (e.g. missing triangulation library on RHEL, so
+    overlap="prism" errors out with "remove_overlap: Graphviz not built
+    with triangulation library").
+
+    Two fallback attempts, each overriding both splines and overlap so a
+    stale `overlap="prism"` can't survive into the retry:
+      1. splines="true", overlap="scale" -- scale-based overlap removal
+         needs no triangulation library and works on any graphviz build.
+      2. splines="true", overlap="false" -- skip overlap removal entirely,
+         in case "scale" itself is unsupported by this build/engine.
+    """
     try:
         return dot.pipe(format="svg").decode("utf-8")
     except graphviz.backend.execute.ExecutableNotFound:
         raise
     except Exception:
-        log.warning("Primary render failed, retrying with splines=true", exc_info=True)
-        dot.attr(splines="true")
-        return dot.pipe(format="svg").decode("utf-8")
+        log.warning("Primary render failed, retrying with overlap=scale", exc_info=True)
+        dot.attr(splines="true", overlap="scale")
+        try:
+            return dot.pipe(format="svg").decode("utf-8")
+        except graphviz.backend.execute.ExecutableNotFound:
+            raise
+        except Exception:
+            log.warning("overlap=scale retry failed, retrying with overlap=false", exc_info=True)
+            dot.attr(overlap="false")
+            return dot.pipe(format="svg").decode("utf-8")
 
 
 def build_inheritance(
