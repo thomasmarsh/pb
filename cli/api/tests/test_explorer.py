@@ -36,14 +36,20 @@ def client_with_sql(db_path, tmp_path_factory):
          "synthetic_test_table", "id",
          "SELECT id FROM synthetic_test_table WHERE id = 1", True],
     )
+    # Column order must match PB.Pipeline.DuckDb's real schema
+    # (file, dw_name, namespace, table_name, column_name) — a hardcoded
+    # positional INSERT with a different order previously landed values in
+    # the wrong columns whenever db_path's real pbc run had already created
+    # this table (making CREATE TABLE IF NOT EXISTS a silent no-op).
     conn.execute("""
         CREATE TABLE IF NOT EXISTS dw_retrieve_columns (
-            file TEXT, dw_name TEXT, column_fqn TEXT, column_name TEXT, table_name TEXT
+            file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT, column_name TEXT
         )
     """)
     conn.execute(
-        "INSERT INTO dw_retrieve_columns VALUES (?,?,?,?,?)",
-        ["", "dw_synth", "synthetic_test_table.id", "id", "synthetic_test_table"],
+        "INSERT INTO dw_retrieve_columns (file, dw_name, namespace, table_name, column_name) "
+        "VALUES (?,?,?,?,?)",
+        ["", "dw_synth", None, "synthetic_test_table", "id"],
     )
     # objects schema: file, kind, object, ancestor, layout_json, type_blocks_json, confidence
     # Add a child object that inherits from fn_sqlerror for impact-lineage tests.
