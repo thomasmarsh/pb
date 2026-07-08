@@ -42,6 +42,8 @@ data Value
 instance Eq Value where
   VInt a  == VInt b  = a == b
   VReal a == VReal b = a == b || (isNaN a && isNaN b)
+  VInt a  == VReal b = fromIntegral a == b
+  VReal a == VInt b  = a == fromIntegral b
   VStr a  == VStr b  = a == b
   VBool a == VBool b = a == b
   VNull   == VNull   = True
@@ -147,10 +149,11 @@ toBool :: Value -> Bool
 toBool (VBool b) = b
 toBool _         = False
 
+-- | PB-semantic equality for 'evalBinOp' 'BopEq'/'BopNe'. Identical to 'Eq'
+-- 'Value' now that the mixed Int/Real and NaN cases are unified there — kept
+-- as a named alias so 'evalBinOp' call sites stay self-documenting.
 valEq :: Value -> Value -> Bool
-valEq (VInt a)  (VReal b) = fromIntegral a == b
-valEq (VReal a) (VInt b)  = a == fromIntegral b
-valEq a         b         = a == b
+valEq = (==)
 
 compareValues :: Value -> Value -> Ordering
 compareValues (VStr a) (VStr b) = compare a b

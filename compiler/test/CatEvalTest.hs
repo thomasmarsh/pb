@@ -104,6 +104,17 @@ tests = testGroup "CatEval"
         assertBool "NaN should not equal a real number" (VReal (0/0) /= VReal 1.0)
     , testCase "VReal 1.0 == VReal 1.0 still uses ordinary equality" $
         VReal 1.0 @?= VReal 1.0
+
+      -- Plan 155 F2: 'Eq' 'Value' used to disagree with 'valEq' (the
+      -- PB-semantic equality behind 'BopEq'/'BopNe') on mixed Int/Real
+      -- comparisons -- 'VInt 3 == VReal 3.0' was 'False' under the derived-
+      -- style 'Eq' instance. Unified so both agree.
+    , testCase "VInt 3 == VReal 3.0" $
+        VInt 3 @?= VReal 3.0
+    , testCase "VReal 3.0 == VInt 3" $
+        VReal 3.0 @?= VInt 3
+    , testCase "VInt 3 /= VReal 3.5" $
+        assertBool "VInt 3 should not equal VReal 3.5" (VInt 3 /= VReal 3.5)
     ]
 
   , testGroup "evalExprMocked / call-shaped Expr resolves via mock table (Plan 146 Phase 2a)"
