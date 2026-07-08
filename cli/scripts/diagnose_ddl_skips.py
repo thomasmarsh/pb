@@ -78,6 +78,67 @@ _ADD_CONSTRAINT_RE = re.compile(r"\bADD\s+CONSTRAINT\b", re.IGNORECASE)
 _INDEX_RE = re.compile(r"^\s*CREATE\s+(?:UNIQUE\s+|BITMAP\s+)?INDEX\b", re.IGNORECASE)
 
 
+def _find_matching_close_paren(text: str, open_idx: int) -> int | None:
+    """Index of the ')' matching text[open_idx] == '(' (quote-aware, so a
+    ')' inside a string/quoted-identifier literal isn't miscounted), or
+    None if unbalanced."""
+    depth = 0
+    i = open_idx
+    n = len(text)
+    in_squote = in_dquote = False
+    while i < n:
+        c = text[i]
+        if in_squote:
+            if c == "'":
+                if i + 1 < n and text[i + 1] == "'":
+                    i += 2
+                    continue
+                in_squote = False
+            i += 1
+            continue
+        if in_dquote:
+            if c == '"':
+                in_dquote = False
+            i += 1
+            continue
+        if c == "'":
+            in_squote = True
+        elif c == '"':
+            in_dquote = True
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return None
+
+
+def _tail_clause_would_fix(raw_sql: str, dialect: str) -> bool | None:
+    """For a CREATE TABLE statement, truncate to the closing paren of the
+    column/constraint list and re-parse. If the truncated form parses fine,
+    the failure is caused entirely by an as-yet-unidentified TRAILING clause
+    (the same fixable class as every keyword already stripped in ddl.py) --
+    not by anything inside the column/constraint definitions themselves.
+    Content-free: reports only True/False/None, never any text. Returns
+    None if no top-level "(" is found (shouldn't happen for a real CREATE
+    TABLE) or it's unbalanced."""
+    open_idx = raw_sql.find("(")
+    if open_idx == -1:
+        return None
+    close_idx = _find_matching_close_paren(raw_sql, open_idx)
+    if close_idx is None:
+        return None
+    truncated = raw_sql[: close_idx + 1]
+    stripped = _strip_view_editioning_clause(_strip_constraint_state(truncated))
+    try:
+        parsed = sqlglot.parse(stripped, dialect=dialect, error_level=ErrorLevel.WARN)
+    except (ParseError, TokenError):
+        return False
+    return bool(parsed) and not isinstance(parsed[0], exp.Command)
+
+
 def _leading_label(sql: str) -> str:
     m = _LEADING_KEYWORD_RE.match(sql)
     if not m:
@@ -154,6 +215,7 @@ def main() -> None:
     none_count = 0
     none_count_impacting = 0
     length_stats: list[int] = []
+    unexplained_table_impacting: list[str] = []  # raw sql of TABLE-labeled, catalog-impacting, no keyword hit
 
     for _i, raw in skipped:
         length_stats.append(len(raw))
@@ -174,6 +236,8 @@ def main() -> None:
             none_count += 1
             if impacting:
                 none_count_impacting += 1
+                if label == "TABLE" and not raw.strip().upper().startswith("ALTER"):
+                    unexplained_table_impacting.append(raw)
 
     print("--- skipped statements by leading keyword ---")
     for kw, n in leading_counts.most_common():
@@ -205,6 +269,26 @@ def main() -> None:
         print()
         print("--- full statement length (chars) of skipped statements ---")
         print(f"  min={length_stats[0]} median={length_stats[n // 2]} max={length_stats[-1]}")
+
+    if unexplained_table_impacting:
+        print()
+        print("--- bisection of unexplained CREATE TABLE losses (content-free) ---")
+        print("    Truncates each statement to the closing paren of its column/constraint")
+        print("    list and re-parses. 'trailing-clause' means an as-yet-unidentified tail")
+        print("    keyword (same fixable class as everything already stripped) is the sole")
+        print("    cause; 'inside column/constraint list' means the failure is NOT a tail")
+        print("    clause and needs a different kind of fix.")
+        outcome_counts: Counter[str] = Counter()
+        for raw in unexplained_table_impacting:
+            result = _tail_clause_would_fix(raw, args.dialect)
+            if result is True:
+                outcome_counts["trailing-clause (truncated form parses fine)"] += 1
+            elif result is False:
+                outcome_counts["inside column/constraint list (still fails when truncated)"] += 1
+            else:
+                outcome_counts["unbalanced parens / could not bisect"] += 1
+        for label, n in outcome_counts.most_common():
+            print(f"  {label}: {n}")
 
 
 if __name__ == "__main__":

@@ -99,13 +99,17 @@ _CONSTRAINT_STATE_RE = re.compile(
     rf"(?:\s+(?:{_INDEX_PHYSICAL_ATTR}))*"
     r"|\b(?:ENABLE|DISABLE)(?:\s+(?:VALIDATE|NOVALIDATE))?\b"
     r"|\b(?:VALIDATE|NOVALIDATE)\b"
-    # Table-level ROWDEPENDENCIES/NOROWDEPENDENCIES and virtual-column
-    # VIRTUAL: unrelated to constraint_state proper, but the same failure
-    # class (a bare keyword sqlglot's oracle grammar doesn't model) and rare
-    # enough elsewhere in DDL that a global bare-word strip is safe --
-    # matches the precedent set by ENABLE/DISABLE above.
+    # Table-level ROWDEPENDENCIES/NOROWDEPENDENCIES, virtual-column VIRTUAL,
+    # LOB storage clause, and SEGMENT CREATION IMMEDIATE/DEFERRED: unrelated
+    # to constraint_state proper, but the same failure class (a bare
+    # keyword/clause sqlglot's oracle grammar doesn't model) and rare enough
+    # elsewhere in DDL that a global strip is safe -- matches the precedent
+    # set by ENABLE/DISABLE above. LOB's inner column-list and STORE AS
+    # parenthesized attributes are assumed non-nested, same as STORAGE(...).
     r"|\b(?:NON)?ROWDEPENDENCIES\b"
-    r"|\bVIRTUAL\b",
+    r"|\bVIRTUAL\b"
+    r"|\bLOB\s*\([^()]*\)\s*STORE\s+AS\s*(?:SECUREFILE|BASICFILE)?\s*(?:\([^()]*\))?"
+    r"|\bSEGMENT\s+CREATION\s+(?:IMMEDIATE|DEFERRED)\b",
     re.IGNORECASE,
 )
 

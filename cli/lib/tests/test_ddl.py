@@ -380,3 +380,26 @@ def test_parse_ddl_strips_view_bequeath_clause():
     catalog, stats = parse_ddl(sql, dialect="oracle")
     assert stats.statements_skipped == 0
     assert set(catalog.tables[0].columns) == {"a"}
+
+
+# --- Third round of real-corpus-triage findings (2026-07-08): LOB storage
+# clause and SEGMENT CREATION IMMEDIATE/DEFERRED, both table-level tail
+# clauses confirmed via synthetic reproduction. (IDENTITY columns and bare
+# table-level CACHE were also checked in this round and found to already
+# parse fine -- their keyword hits in the triage histogram were red
+# herrings, co-occurring with an unrelated failure in the same statement,
+# not causal themselves; no fix needed for those.) ------------------------
+
+
+def test_parse_ddl_strips_lob_store_as_clause():
+    sql = "CREATE TABLE T1 (A NUMBER, B CLOB) LOB (B) STORE AS SECUREFILE (TABLESPACE USERS)"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"a", "b"}
+
+
+def test_parse_ddl_strips_segment_creation_clause():
+    sql = "CREATE TABLE T1 (A NUMBER) SEGMENT CREATION IMMEDIATE"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert catalog.tables[0].columns == ("a",)
