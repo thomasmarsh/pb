@@ -137,6 +137,50 @@ class RunnerProgress(Protocol):
     def on_event(self, event: dict) -> None: ...
 
 
+def _format_ddl_loaded(event: dict) -> list[str]:
+    """Rich-markup lines for one --ddl file's load result (pbc's "ddl_loaded"
+    progress event). Flags two distinct failure shapes: whole-file structural
+    failure (parse_ok=False — e.g. the SQL bridge itself errored) and silent
+    partial/total loss (parse_ok=True but statements_skipped > 0 or
+    tables == 0) — the latter is what happens when sqlglot can't structurally
+    parse a statement (e.g. an unmodeled Oracle keyword like EDITIONABLE) and
+    falls back to an opaque Command instead of raising, so nothing else in
+    the pipeline ever sees an error for it."""
+    namespace = event.get("namespace") or "(default)"
+    path = event.get("path", "?")
+    parse_ok = event.get("parse_ok", True)
+
+    if not parse_ok:
+        lines = [f"[red]✗[/red] DDL  [bold]{namespace}[/bold]  {path}  — failed to parse"]
+        error = event.get("error")
+        if error:
+            lines.append(f"    [red]{error}[/red]")
+        return lines
+
+    total = event.get("statements_total", 0)
+    parsed = event.get("statements_parsed", 0)
+    skipped = event.get("statements_skipped", 0)
+    tables = event.get("tables", 0)
+    pks = event.get("primary_keys", 0)
+    fks = event.get("foreign_keys", 0)
+    checks = event.get("checks", 0)
+
+    counts = f"{tables} table(s) · {pks} pk(s) · {fks} fk(s) · {checks} check(s)"
+    stmt_summary = f"{parsed}/{total} statements"
+
+    if skipped > 0 or tables == 0:
+        skip_note = f", [yellow]{skipped} skipped[/yellow]" if skipped > 0 else ""
+        return [
+            f"[yellow]⚠[/yellow] DDL  [bold]{namespace}[/bold]  {path}  {counts}"
+            f"  ({stmt_summary}{skip_note})"
+        ]
+    return [f"[green]✓[/green] DDL  [bold]{namespace}[/bold]  {path}  {counts}  ({stmt_summary})"]
+
+
+def _format_warning(event: dict) -> str:
+    return f"[yellow]⚠[/yellow] {event.get('message', '')}"
+
+
 class _LiveRunnerProgress:
     """Drives a Rich Live display from pbc JSONL progress events.
 
@@ -204,6 +248,11 @@ class _LiveRunnerProgress:
                     self._errors += 1
             elif tag == "step":
                 self._step = event["label"]
+            elif tag == "ddl_loaded":
+                for line in _format_ddl_loaded(event):
+                    self._console.print(line)
+            elif tag == "warning":
+                self._console.print(_format_warning(event))
         self._refresh()
 
     def _refresh(self) -> None:

@@ -6,7 +6,7 @@ These tests require no cabal build and no duckdb — pure Python.
 import json
 
 from pb.lib.state import FileDiff
-from pb.pipeline.reporter import RecordingReporter
+from pb.pipeline.reporter import RecordingReporter, _format_ddl_loaded, _format_warning
 
 
 def _diff(new=0, changed=0, deleted=0, unchanged=0) -> FileDiff:
@@ -155,6 +155,88 @@ def test_done_nothing_to_do():
     assert ev["diff"] == {"new": 0, "changed": 0, "deleted": 0}
     assert ev["parsed"] == 0
     assert ev["errors"] == 0
+
+
+# ── DDL diagnostics (ddl_loaded / warning progress events) ────────────────────
+
+
+def _ddl_event(**overrides) -> dict:
+    base = {
+        "tag": "ddl_loaded",
+        "path": "clims_schema1.sql",
+        "namespace": "CLIMS",
+        "parse_ok": True,
+        "error": None,
+        "statements_total": 45,
+        "statements_parsed": 45,
+        "statements_skipped": 0,
+        "tables": 10,
+        "primary_keys": 8,
+        "foreign_keys": 12,
+        "checks": 2,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_format_ddl_loaded_healthy_file():
+    lines = _format_ddl_loaded(_ddl_event())
+    assert len(lines) == 1
+    assert "✓" in lines[0]
+    assert "⚠" not in lines[0]
+    assert "CLIMS" in lines[0]
+    assert "clims_schema1.sql" in lines[0]
+    assert "10 table(s)" in lines[0]
+    assert "45/45 statements" in lines[0]
+
+
+def test_format_ddl_loaded_skipped_statements_flagged():
+    lines = _format_ddl_loaded(_ddl_event(statements_parsed=42, statements_skipped=3))
+    assert len(lines) == 1
+    assert "⚠" in lines[0]
+    assert "42/45 statements" in lines[0]
+
+
+def test_format_ddl_loaded_zero_tables_flagged_even_when_fully_parsed():
+    lines = _format_ddl_loaded(
+        _ddl_event(tables=0, primary_keys=0, foreign_keys=0, checks=0)
+    )
+    assert len(lines) == 1
+    assert "⚠" in lines[0]
+    assert "0 table(s)" in lines[0]
+
+
+def test_format_ddl_loaded_parse_failure_shows_error():
+    lines = _format_ddl_loaded(
+        _ddl_event(parse_ok=False, error="unexpected token at line 12", tables=0)
+    )
+    assert any("✗" in line for line in lines)
+    assert any("unexpected token at line 12" in line for line in lines)
+
+
+def test_format_warning():
+    line = _format_warning({"tag": "warning", "message": "--ddl given but PB_SQL_WORKER not set"})
+    assert "⚠" in line
+    assert "PB_SQL_WORKER" in line
+
+
+def test_recording_reporter_passes_through_ddl_loaded_event():
+    r = RecordingReporter()
+    with r.runner_progress() as prog:
+        prog.on_event(_ddl_event())
+    matches = [e for e in r.events if e.get("tag") == "ddl_loaded"]
+    assert len(matches) == 1
+    assert matches[0]["type"] == "runner_event"
+    assert matches[0]["tables"] == 10
+
+
+def test_recording_reporter_passes_through_warning_event():
+    r = RecordingReporter()
+    with r.runner_progress() as prog:
+        prog.on_event({"tag": "warning", "message": "--ddl given but PB_SQL_WORKER not set"})
+    matches = [e for e in r.events if e.get("tag") == "warning"]
+    assert len(matches) == 1
+    assert matches[0]["message"] == "--ddl given but PB_SQL_WORKER not set"
 
 
 # ── JSON-serialisability ──────────────────────────────────────────────────────
