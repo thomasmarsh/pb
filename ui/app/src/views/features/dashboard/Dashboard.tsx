@@ -157,7 +157,7 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
     { label: "Procedures",        value: fmt(s()?.procedures), route: { view: "proceduresList" } as Route },
     { label: "Unreferenced DWs",  value: fmt(s()?.dead_dw),   route: { view: "queries", queryName: "dead-dw" } as Route },
     ...(s()?.ddl_loaded ? [
-      { label: "Unenforced FKs", value: fmt(s()?.unenforced_fk_count), route: { view: "diagrams" } as Route },
+      { label: "Unenforced FKs", value: fmt(s()?.unenforced_fk_count), route: { view: "diagrams", kind: "fk-graph" } as Route },
       { label: "Dead Columns",   value: fmt(s()?.dead_column_count),   route: { view: "tables" }   as Route },
     ] : []),
   ]);
@@ -235,7 +235,7 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
             metric={s()?.ddl_loaded
               ? `${fmt(s()!.corroborated_fk_count)} corroborated FKs · ${fmt(s()!.unenforced_fk_count)} unenforced · ${fmt(s()!.co_update_violation_count)} co-update violation${s()!.co_update_violation_count === 1 ? "" : "s"}`
               : "—"}
-            route={s()?.ddl_loaded ? { view: "diagrams" } : null}
+            route={s()?.ddl_loaded ? { view: "diagrams", kind: "fk-graph" } : null}
             store={store}
           />
         </div>

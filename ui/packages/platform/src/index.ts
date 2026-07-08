@@ -71,7 +71,7 @@ export type { TablesAction } from "./features/tables/actions.js";
 export { anonymizeText } from "./utils/anonymize.js";
 export { parsePbUrl, getPbHref, diagramUrl } from "./utils/diagram.js";
 export type { DiagramKind } from "./utils/diagram.js";
-export { HAS_FOCUS, AUTO_GENERATE } from "./utils/diagram.js";
+export { HAS_FOCUS, AUTO_GENERATE, DIAGRAM_KINDS } from "./utils/diagram.js";
 export { debounce } from "./utils/debounce.js";
 export { procBadge, shortFile } from "./utils/format.js";
 export { highlightSql, highlightPowerScript, highlightAsync, PB_KEYWORDS } from "./utils/highlight.js";

@@ -1,6 +1,7 @@
 // features/navigation/routes.ts — Typed route codec.
 
 import type { Route } from "./types.js";
+import { DIAGRAM_KINDS, type DiagramKind } from "../../utils/diagram.js";
 
 export type { Route };
 
@@ -17,7 +18,8 @@ export function print(route: Route): string {
     case "tables":           return "/tables";
     case "tableDetail":      return "/tables/"      + encodeURIComponent(route.name);
     case "libraryDetail":    return "/library/"     + encodeURIComponent(route.name);
-    case "diagrams":         return "/diagrams";
+    case "diagrams":
+      return route.kind ? `/diagrams?kind=${encodeURIComponent(route.kind)}` : "/diagrams";
     case "queries": {
       if (route.sqlText) {
         return "/queries?" + new URLSearchParams({ sql: route.sqlText }).toString();
@@ -66,7 +68,15 @@ export function parse(path: string, search?: string): Route {
     case "library":
       if (segs[1]) return { view: "libraryDetail", name: decodeURIComponent(segs[1]) };
       return { view: "dashboard" };
-    case "diagrams":   return { view: "diagrams" };
+    case "diagrams": {
+      const raw = search ? (search.startsWith("?") ? search.slice(1) : search) : "";
+      const sp = new URLSearchParams(raw);
+      const kind = sp.get("kind");
+      if (kind && (DIAGRAM_KINDS as readonly string[]).includes(kind)) {
+        return { view: "diagrams", kind: kind as DiagramKind };
+      }
+      return { view: "diagrams" };
+    }
     case "queries": {
       const raw = search ? (search.startsWith("?") ? search.slice(1) : search) : "";
       const sp = new URLSearchParams(raw);

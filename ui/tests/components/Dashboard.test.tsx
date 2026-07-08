@@ -141,6 +141,31 @@ describe("Dashboard component", () => {
     expect(screen.getByText("47 corroborated FKs · 5 unenforced · 0 co-update violations")).toBeDefined();
   });
 
+  it("clicking Unenforced FKs tile deep-links to the fk-graph diagram", () => {
+    const { captured } = renderWithStore(Dashboard, {
+      dashboard: { ...initialDashboardState, stats: sampleStats },
+    });
+    fireEvent.click(screen.getByText("Unenforced FKs"));
+    expect(captured).toContainEqual({
+      tag: "nav",
+      action: { tag: "navigate", route: { view: "diagrams", kind: "fk-graph" } },
+    });
+  });
+
+  it("clicking Schema Integrity row's View link deep-links to the fk-graph diagram", () => {
+    const { captured, container } = renderWithStore(Dashboard, {
+      dashboard: { ...initialDashboardState, stats: sampleStats },
+    });
+    const rows = [...container.querySelectorAll(".phase-health-row")];
+    const schemaRow = rows.find((r) => r.textContent?.includes("Schema Integrity"));
+    expect(schemaRow).toBeDefined();
+    fireEvent.click(schemaRow!.querySelector(".phase-health-link")!);
+    expect(captured).toContainEqual({
+      tag: "nav",
+      action: { tag: "navigate", route: { view: "diagrams", kind: "fk-graph" } },
+    });
+  });
+
   it("hides schema tiles and shows a banner when ddl is not loaded", () => {
     const noDdlStats = { ...sampleStats, ddl_loaded: false };
     renderWithStore(Dashboard, {

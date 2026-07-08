@@ -55,7 +55,7 @@ describe("Diagrams component", () => {
   });
 
   it("hides Generate button for auto-generate diagrams", () => {
-    renderWithStore(Diagrams, { diagrams: heatmapDiagrams });
+    renderWithStore(Diagrams, { diagrams: { ...heatmapDiagrams } });
     expect(screen.queryByText("Generate")).toBeNull();
   });
 
@@ -74,8 +74,44 @@ describe("Diagrams component", () => {
   });
 
   it("includes an fk-graph tab and hides Generate button for it (auto-generate)", () => {
-    renderWithStore(Diagrams, { diagrams: fkGraphDiagrams });
+    renderWithStore(Diagrams, { diagrams: { ...fkGraphDiagrams } });
     expect(screen.getByText("fk-graph")).toBeDefined();
     expect(screen.queryByText("Generate")).toBeNull();
+  });
+
+  it("deep-links to route.kind on mount, selecting and auto-generating it", () => {
+    const { captured } = renderWithStore(Diagrams, {
+      nav: {
+        route: { view: "diagrams", kind: "fk-graph" },
+        crumbs: [],
+        history: [{ view: "diagrams", kind: "fk-graph" }],
+        historyIdx: 0,
+        askContext: null,
+      },
+      diagrams: { ...heatmapDiagrams, active: "inheritance" },
+    });
+    expect(captured).toContainEqual({ tag: "diagrams", action: { tag: "select", kind: "fk-graph" } });
+    expect(captured).toContainEqual({ tag: "diagrams", action: { tag: "generate" } });
+  });
+
+  it("does not re-select when route.kind already matches the active tab", () => {
+    const { captured } = renderWithStore(Diagrams, {
+      nav: {
+        route: { view: "diagrams", kind: "fk-graph" },
+        crumbs: [],
+        history: [{ view: "diagrams", kind: "fk-graph" }],
+        historyIdx: 0,
+        askContext: null,
+      },
+      diagrams: { ...fkGraphDiagrams },
+    });
+    const selectActions = captured.filter((a) => a.tag === "diagrams" && a.action.tag === "select");
+    expect(selectActions.length).toBe(0);
+  });
+
+  it("ignores a diagrams route with no kind (existing behavior)", () => {
+    const { captured } = renderWithStore(Diagrams, { diagrams: { ...callsDiagrams } });
+    const selectActions = captured.filter((a) => a.tag === "diagrams" && a.action.tag === "select");
+    expect(selectActions.length).toBe(0);
   });
 });

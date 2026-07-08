@@ -11,6 +11,11 @@ export type DiagramKind =
   | "fk-graph"
   | "window-table-lattice";
 
+export const DIAGRAM_KINDS: readonly DiagramKind[] = [
+  "inheritance", "calls", "dw-tables", "heatmap", "sql-lineage",
+  "table-lineage", "proc-tables", "fk-graph", "window-table-lattice",
+];
+
 export const HAS_FOCUS: ReadonlySet<DiagramKind> = new Set([
   "calls",
   "dw-tables",

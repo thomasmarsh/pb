@@ -5,7 +5,7 @@ import { Tabs } from "@kobalte/core/tabs";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../../state.js";
 import type { AppAction } from "../../../actions.js";
-import { ComboboxInput, SvgToolbar, DiagramTooltip, parsePbUrl, getPbHref, HAS_FOCUS, AUTO_GENERATE } from "@pb/platform";
+import { ComboboxInput, SvgToolbar, DiagramTooltip, parsePbUrl, getPbHref, HAS_FOCUS, AUTO_GENERATE, DIAGRAM_KINDS } from "@pb/platform";
 import type { DiagramKind } from "@pb/platform";
 
 export function Diagrams(props: { store: Store<AppState, AppAction> }) {
@@ -24,7 +24,14 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   onCleanup(() => { if (hideTimer) clearTimeout(hideTimer); });
 
   onMount(() => {
-    store.dispatch({ tag: "nav", action: { tag: "navigate", route: { view: "diagrams" } } });
+    const route = snap().nav.route;
+    const deepLinkKind = route.view === "diagrams" ? route.kind : undefined;
+    store.dispatch({ tag: "nav", action: { tag: "navigate", route: deepLinkKind ? { view: "diagrams", kind: deepLinkKind } : { view: "diagrams" } } });
+    if (deepLinkKind && deepLinkKind !== dg().active) {
+      setActiveTab(deepLinkKind);
+      store.dispatch({ tag: "diagrams", action: { tag: "select", kind: deepLinkKind } });
+      if (AUTO_GENERATE.has(deepLinkKind)) store.dispatch({ tag: "diagrams", action: { tag: "generate" } });
+    }
     if (!dg().itemsLoaded) {
       store.dispatch({ tag: "diagrams", action: { tag: "loadItems" } });
     }
@@ -134,7 +141,7 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
         if (AUTO_GENERATE.has(v as DiagramKind)) store.dispatch({ tag: "diagrams", action: { tag: "generate" } });
       }}>
         <Tabs.List class="tab-bar">
-          <For each={["inheritance", "calls", "dw-tables", "heatmap", "sql-lineage", "table-lineage", "proc-tables", "fk-graph", "window-table-lattice"] as DiagramKind[]}>
+          <For each={DIAGRAM_KINDS}>
             {(kind) => <Tabs.Trigger value={kind} class="tab-btn">{kind}</Tabs.Trigger>}
           </For>
         </Tabs.List>

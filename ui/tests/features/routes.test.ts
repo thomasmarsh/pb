@@ -46,6 +46,14 @@ describe("parse", () => {
     expect(parse("/diagrams")).toEqual({ view: "diagrams" });
   });
 
+  it('"/diagrams" with ?kind=fk-graph resolves to diagrams with kind', () => {
+    expect(parse("/diagrams", "?kind=fk-graph")).toEqual({ view: "diagrams", kind: "fk-graph" });
+  });
+
+  it('"/diagrams" with an unknown ?kind= falls back to no kind', () => {
+    expect(parse("/diagrams", "?kind=not-a-real-kind")).toEqual({ view: "diagrams" });
+  });
+
   it('"/queries" resolves to queries with no queryName', () => {
     expect(parse("/queries")).toEqual({ view: "queries" });
   });
@@ -127,6 +135,17 @@ describe("print", () => {
 
   it('datawindows maps to "/datawindows"', () => {
     expect(print({ view: "datawindows" })).toBe("/datawindows");
+  });
+
+  it('diagrams with kind maps to "/diagrams?kind={kind}"', () => {
+    expect(print({ view: "diagrams", kind: "fk-graph" })).toBe("/diagrams?kind=fk-graph");
+  });
+
+  it('round-trip: diagrams with kind preserves kind', () => {
+    const route = { view: "diagrams" as const, kind: "window-table-lattice" as const };
+    const printed = print(route);
+    const [pathname, search] = printed.split("?");
+    expect(parse(pathname!, search ? `?${search}` : undefined)).toEqual(route);
   });
 
   it('URL-encodes special characters in segments', () => {
