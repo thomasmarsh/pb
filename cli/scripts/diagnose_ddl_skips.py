@@ -5,13 +5,22 @@ keyword-frequency histograms -- never raw statement text, table names, or
 column names -- so the output is safe to share even when the DDL file
 itself contains sensitive schema/business data.
 
-Mirrors pb.lib.ddl.parse_ddl's own statement pipeline (constraint-state
-stripping, view-editioning stripping, TokenError-recovery split) but scans
-each skipped statement's FULL un-truncated SQL text for known Oracle
-physical/storage keywords -- parse_ddl's own skipped_previews truncates each
-entry to 200 chars for display, which hides any tail clause that appears
-after a long qualified name + column list (the common case for real Oracle
-exports), so a keyword search against skipped_previews alone undercounts.
+Parses statement-by-statement (via ddl.py's own `_split_statements`
+semicolon/quote/comment-aware splitter) rather than parse_ddl's whole-file
+pass, so each raw (pre-constraint-state-stripping) statement string stays
+available for keyword search alongside its parse outcome. This matters
+because `_strip_constraint_state` deletes ENABLE/DISABLE/USING INDEX from
+the text *before* parsing -- scanning only the post-strip rendering (as an
+earlier version of this script did) makes any ENABLE/DISABLE-related
+failure invisible to the keyword histogram.
+
+Also classifies each skipped statement as catalog-impacting or harmless:
+`parse_ddl` only ever extracts columns/PK/FK/CHECK data from CREATE TABLE,
+CREATE VIEW, and ALTER TABLE statements containing an ADD CONSTRAINT action
+-- a plain CREATE INDEX or an ALTER TABLE with only MODIFY/ENABLE/DISABLE/
+RENAME CONSTRAINT actions never feeds the catalog even when it parses
+successfully, so its being "skipped" costs nothing. The raw statements_
+skipped/statements_total ratio conflates the two; this script reports both.
 
 Usage:
     cd cli && uv run python scripts/diagnose_ddl_skips.py /path/to/real_schema.sql --dialect oracle [--default-namespace SCHEMA]
@@ -27,12 +36,17 @@ from pathlib import Path
 import sqlglot
 from pb.lib.ddl import _split_statements, _strip_constraint_state, _strip_view_editioning_clause
 from sqlglot import exp
-from sqlglot.errors import ErrorLevel, TokenError
+from sqlglot.errors import ErrorLevel, ParseError, TokenError
 
-# Oracle physical-storage / partitioning / segment-attribute keywords known to
-# trip sqlglot's grammar into an opaque exp.Command fallback for the whole
-# statement (same failure class as ENABLE/USING INDEX, just a wider
-# vocabulary). We only count matches -- never print the surrounding text.
+# Keywords/phrases confirmed (via synthetic reproduction against sqlglot's
+# oracle dialect, independent of any customer data) to trip the whole
+# containing statement into an opaque exp.Command fallback. Two families:
+# physical/storage/segment-attribute tail clauses on CREATE TABLE/INDEX, and
+# ALTER TABLE action forms sqlglot's oracle grammar doesn't structurally
+# support at all (MODIFY, standalone ENABLE/DISABLE/RENAME CONSTRAINT).
+# Matched against the RAW pre-strip statement text -- _strip_constraint_state
+# deletes ENABLE/DISABLE/USING INDEX from the text before parsing, so
+# searching post-strip text would make those causes invisible.
 _KEYWORDS = [
     "STORAGE", "TABLESPACE", "PCTFREE", "PCTUSED", "INITRANS", "MAXTRANS",
     "LOGGING", "NOLOGGING", "PARTITION BY", "SUBPARTITION", "ORGANIZATION INDEX",
@@ -43,7 +57,11 @@ _KEYWORDS = [
     "FREELIST GROUPS", "BUFFER_POOL", "FLASH_CACHE", "RESULT_CACHE",
     "ROWDEPENDENCIES", "NOROWDEPENDENCIES", "INMEMORY", "ENCRYPT",
     "SUPPLEMENTAL LOG", "USING INDEX", "REVERSE", "COMPUTE STATISTICS",
-    "VISIBLE", "INVISIBLE", "ONLINE", "MODIFY", "UNUSABLE",
+    "VISIBLE", "INVISIBLE", "ONLINE", "UNUSABLE", "DEFAULT ON NULL",
+    "BITMAP",
+    # ALTER TABLE action forms confirmed unsupported independent of any tail:
+    "MODIFY", "ENABLE CONSTRAINT", "DISABLE CONSTRAINT", "RENAME CONSTRAINT",
+    "ENABLE ", "DISABLE ",
 ]
 
 _LEADING_KEYWORD_RE = re.compile(
@@ -54,6 +72,9 @@ _LEADING_KEYWORD_RE = re.compile(
     r"|DROP\s+(\w+))",
     re.IGNORECASE,
 )
+
+_ADD_CONSTRAINT_RE = re.compile(r"\bADD\s+CONSTRAINT\b", re.IGNORECASE)
+_INDEX_RE = re.compile(r"^\s*CREATE\s+(?:UNIQUE\s+|BITMAP\s+)?INDEX\b", re.IGNORECASE)
 
 
 def _leading_label(sql: str) -> str:
@@ -66,68 +87,116 @@ def _leading_label(sql: str) -> str:
     return "(other/none)"
 
 
+def _is_catalog_impacting(label: str, raw_sql: str) -> bool:
+    """Mirrors parse_ddl's own consumption rule: only CREATE TABLE, CREATE
+    VIEW, and an ALTER TABLE that contains an ADD CONSTRAINT action can ever
+    contribute columns/PK/FK/CHECK data to the catalog -- so only losing one
+    of THOSE actually loses catalog data. A plain CREATE INDEX or an ALTER
+    TABLE with only MODIFY/ENABLE/DISABLE/RENAME CONSTRAINT actions was never
+    going to contribute anything regardless of parse outcome."""
+    if label == "TABLE" and _INDEX_RE.match(raw_sql):
+        return False  # shouldn't happen (INDEX statements label as INDEX/UNIQUE), just in case
+    if label in ("VIEW",):
+        return True
+    if label == "TABLE" and not raw_sql.strip().upper().startswith("ALTER"):
+        return True  # CREATE TABLE
+    if raw_sql.strip().upper().startswith("ALTER"):
+        return bool(_ADD_CONSTRAINT_RE.search(raw_sql))
+    return False  # CREATE INDEX / CREATE UNIQUE INDEX / CREATE BITMAP INDEX / other
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("ddl_file")
     ap.add_argument("--dialect", default="oracle")
+    ap.add_argument("--default-namespace", default=None, help="accepted for CLI compatibility; unused (doesn't affect parse success/failure)")
     args = ap.parse_args()
 
-    text = Path(args.ddl_file).read_text(errors="replace")
-    stripped = _strip_view_editioning_clause(_strip_constraint_state(text))
+    raw_text = Path(args.ddl_file).read_text(errors="replace")
+    stripped_text = _strip_view_editioning_clause(_strip_constraint_state(raw_text))
 
-    tokenize_error_count = 0
-    try:
-        statements = sqlglot.parse(stripped, dialect=args.dialect, error_level=ErrorLevel.WARN)
-    except TokenError:
-        statements = []
-        for chunk in _split_statements(stripped):
-            try:
-                statements.extend(sqlglot.parse(chunk, dialect=args.dialect, error_level=ErrorLevel.WARN))
-            except TokenError:
-                tokenize_error_count += 1
+    raw_chunks = _split_statements(raw_text)
+    stripped_chunks = _split_statements(stripped_text)
 
-    total = len(statements) + tokenize_error_count
-    skipped_stmts = [s for s in statements if isinstance(s, exp.Command)]
-    parsed_count = len(statements) - len(skipped_stmts)
+    if len(raw_chunks) != len(stripped_chunks):
+        print(
+            f"NOTE: raw/stripped statement count differs ({len(raw_chunks)} vs "
+            f"{len(stripped_chunks)}) -- keyword correlation may be off by a few entries"
+        )
+
+    total = len(stripped_chunks)
+    parsed_count = 0
+    skipped: list[tuple[int, str]] = []  # (index, raw_sql)
+
+    for i, chunk in enumerate(stripped_chunks):
+        try:
+            parsed = sqlglot.parse(chunk, dialect=args.dialect, error_level=ErrorLevel.WARN)
+        except (ParseError, TokenError):
+            parsed = []
+        is_command = bool(parsed) and isinstance(parsed[0], exp.Command)
+        if not parsed or is_command:
+            raw = raw_chunks[i] if i < len(raw_chunks) else chunk
+            skipped.append((i, raw))
+        else:
+            parsed_count += 1
 
     print(f"statements_total={total}")
     print(f"statements_parsed={parsed_count}")
-    print(f"statements_skipped={len(skipped_stmts) + tokenize_error_count}")
-    print(f"  of which tokenize_error={tokenize_error_count}, unparsed_command={len(skipped_stmts)}")
-    print(f"skip_rate={(len(skipped_stmts) + tokenize_error_count) / max(total, 1):.1%}")
+    print(f"statements_skipped={len(skipped)}")
+    print(f"skip_rate={len(skipped) / max(total, 1):.1%}")
     print()
 
     leading_counts: Counter[str] = Counter()
+    impact_counts: Counter[str] = Counter()
     keyword_hits: Counter[str] = Counter()
-    stmts_with_no_known_keyword = 0
+    keyword_hits_impacting: Counter[str] = Counter()
+    none_count = 0
+    none_count_impacting = 0
     length_stats: list[int] = []
 
-    for stmt in skipped_stmts:
-        full_sql = stmt.sql(dialect=args.dialect)
-        length_stats.append(len(full_sql))
-        leading_counts[_leading_label(full_sql)] += 1
+    for _i, raw in skipped:
+        length_stats.append(len(raw))
+        label = _leading_label(raw)
+        leading_counts[label] += 1
+        impacting = _is_catalog_impacting(label, raw)
+        impact_counts["catalog-impacting" if impacting else "harmless (never fed catalog)"] += 1
 
-        upper_sql = full_sql.upper()
+        upper = raw.upper()
         hit_any = False
         for kw in _KEYWORDS:
-            if kw in upper_sql:
+            if kw in upper:
                 keyword_hits[kw] += 1
                 hit_any = True
+                if impacting:
+                    keyword_hits_impacting[kw] += 1
         if not hit_any:
-            stmts_with_no_known_keyword += 1
+            none_count += 1
+            if impacting:
+                none_count_impacting += 1
 
-    print("--- skipped statements by leading keyword (full text, not truncated) ---")
+    print("--- skipped statements by leading keyword ---")
     for kw, n in leading_counts.most_common():
         print(f"  {kw}: {n}")
 
     print()
-    print("--- Oracle physical/storage keyword hits within skipped statements (full text) ---")
-    print("    (a statement can hit more than one keyword; counts overlap)")
-    for kw, n in keyword_hits.most_common(40):
-        print(f"  {kw}: {n}")
+    print("--- catalog impact of skipped statements ---")
+    print("    (only CREATE TABLE / CREATE VIEW / ALTER TABLE...ADD CONSTRAINT can ever")
+    print("     contribute columns/PK/FK/CHECK data -- everything else was never captured")
+    print("     regardless of whether it parses)")
+    for label, n in impact_counts.most_common():
+        print(f"  {label}: {n}")
 
     print()
-    print(f"skipped statements matching NONE of the known keywords: {stmts_with_no_known_keyword} / {len(skipped_stmts)}")
+    print("--- keyword hits, ALL skipped statements (raw pre-strip text) ---")
+    for kw, n in keyword_hits.most_common(40):
+        print(f"  {kw}: {n}")
+    print(f"  matching none: {none_count} / {len(skipped)}")
+
+    print()
+    print("--- keyword hits, CATALOG-IMPACTING skipped statements only ---")
+    for kw, n in keyword_hits_impacting.most_common(40):
+        print(f"  {kw}: {n}")
+    print(f"  matching none: {none_count_impacting} / {impact_counts['catalog-impacting']}")
 
     if length_stats:
         length_stats.sort()
