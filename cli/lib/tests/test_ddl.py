@@ -425,3 +425,71 @@ def test_parse_ddl_strips_column_level_visible():
     catalog, stats = parse_ddl(sql, dialect="oracle")
     assert stats.statements_skipped == 0
     assert set(catalog.tables[0].columns) == {"a", "b"}
+
+
+# --- Fifth round (2026-07-08): a real Oracle DDL dump can be hard-wrapped
+# at a fixed column width by whatever tool exported or transferred it (e.g.
+# SQL*Plus with LINESIZE=80, the classic default) -- physical lines get
+# chopped at exactly N characters regardless of token boundaries, which can
+# split a keyword itself across a real newline (`ENABLE` becomes literally
+# `EN\nABLE` in the file). No regex-based keyword strip can ever match a
+# keyword broken across a real line boundary. Confirmed via
+# scripts/check_ddl_line_wrap.py on a real customer schema: max_line_length
+# =80 accounted for 20.9% of all lines -- far above any coincidental
+# clustering. `_detect_hard_wrap_width`/`_dewrap_hard_wrapped_lines`
+# reconstruct the true logical text before any other preprocessing.
+
+
+def _hard_wrap(text: str, width: int) -> str:
+    """Test helper: simulate a fixed-width hard-wrap tool (e.g. SQL*Plus
+    SPOOL with LINESIZE=width) by chopping text into width-character
+    physical lines with no regard for token boundaries."""
+    return "\n".join(text[i : i + width] for i in range(0, len(text), width))
+
+
+def test_parse_ddl_dewraps_hard_wrapped_file():
+    # Detection requires a statistically meaningful sample (>=20 lines,
+    # >=5 at the max length) to avoid false-triggering on tiny inputs where
+    # a couple of short lines can coincidentally share a length -- so this
+    # fixture repeats enough statements to legitimately cross those floors,
+    # matching how a real hard-wrapped export actually looks (thousands of
+    # lines, not a handful).
+    original = "".join(
+        f"CREATE TABLE T{i} (A VARCHAR2(10), CONSTRAINT CK{i} CHECK (t_active_status IN ('Y', 'N')) ENABLE);"
+        for i in range(20)
+    )
+    wrapped = _hard_wrap(original, 80)
+    wrapped_lines = wrapped.split("\n")
+    lines_at_80 = sum(1 for line in wrapped_lines if len(line) == 80)
+    # Sanity check on the test fixture itself: confirm the wrap really did
+    # split keywords mid-word and produced enough width-80 lines to clear
+    # the detector's sample-size floors -- i.e. this reproduces the real
+    # failure mode, not a degenerate case.
+    assert len(wrapped_lines) >= 20
+    assert lines_at_80 >= 5
+
+    catalog, stats = parse_ddl(wrapped, dialect="oracle")
+    assert stats.dewrapped is True
+    assert stats.statements_skipped == 0
+    assert {t.table for t in catalog.tables} == {f"t{i}" for i in range(20)}
+
+
+def test_parse_ddl_does_not_dewrap_normally_formatted_file():
+    # openpay's real DDL: naturally varying line lengths, well below the
+    # detection threshold -- must NOT be touched by the dewrap heuristic.
+    text = _SCHEMA_PATH.read_text()
+    _catalog, stats = parse_ddl(text, dialect="mysql")
+    assert stats.dewrapped is False
+
+
+def test_parse_ddl_does_not_dewrap_small_multiline_input():
+    # Regression: a small fixture (few lines) can have one line length
+    # shared by 1/3 of all lines purely by coincidence, which used to trip
+    # the ratio-only threshold and corrupt the text (this exact 2-statement,
+    # 3-line shape broke test_parse_ddl_strips_editionable_clause_and_parses_view
+    # by merging "AS" and "SELECT" into "ASSELECT" before the min-sample-size
+    # floors were added).
+    catalog, stats = parse_ddl(_EDITIONABLE_VIEW, dialect="oracle")
+    assert stats.dewrapped is False
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"a", "b"}

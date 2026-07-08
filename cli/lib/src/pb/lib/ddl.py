@@ -216,6 +216,13 @@ class DdlStats:
     # statements_skipped — a distinct loss category with no counter of its
     # own until now).
     skipped_previews: tuple[str, ...] = ()
+    # True if _detect_hard_wrap_width found strong evidence the input was
+    # hard-wrapped at a fixed column width (e.g. SQL*Plus SPOOL with
+    # LINESIZE=80) and _dewrap_hard_wrapped_lines ran before any other
+    # preprocessing. See that function's docstring — this is a real,
+    # confirmed failure mode found via corpus triage (2026-07-08): a keyword
+    # can be split across a physical line boundary mid-word.
+    dewrapped: bool = False
 
 
 def _table_ident(table_expr: exp.Table, default_namespace: str | None = None) -> tuple[str | None, str]:
@@ -462,6 +469,74 @@ def _split_statements(text: str) -> list[str]:
     return statements
 
 
+_HARD_WRAP_DETECTION_THRESHOLD = 0.15
+# Below this many total lines (or this many lines at the max length), a
+# concentration ratio isn't statistically meaningful -- a handful of short,
+# normally-formatted lines can easily share a length by pure coincidence
+# (found via a real regression: a 3-line test fixture had 1/3 lines share
+# its max length, tripping the ratio threshold alone). Real hard-wrapped
+# exports run to thousands of lines with thousands sharing the wrap width,
+# so these floors don't affect genuine detection.
+_HARD_WRAP_MIN_LINES = 20
+_HARD_WRAP_MIN_LINES_AT_MAX = 5
+
+
+def _detect_hard_wrap_width(text: str) -> int | None:
+    """Detect whether `text` was hard-wrapped at a fixed column width by
+    whatever tool exported or transferred it (e.g. SQL*Plus SPOOL with
+    LINESIZE=80, the classic default) — such tools chop the raw output
+    character stream at exactly N characters with no regard for token
+    boundaries, unlike a text editor's word-aware soft wrap. This can split
+    a keyword itself across a real newline (`ENABLE` becomes literally
+    `EN\\nABLE` in the file), a failure no regex-based keyword strip can
+    ever match since it expects each keyword as one contiguous token.
+    Found via real-corpus triage (2026-07-08): a customer's DDL dump had
+    max_line_length=80 accounting for 20.9% of all lines — far beyond
+    anything coincidental. Returns the wrap width if the single most common
+    (maximum) line length accounts for more than
+    `_HARD_WRAP_DETECTION_THRESHOLD` of all lines (and both are above the
+    minimum sample-size floors), else None (ordinary variable-length
+    formatting, or too little text to tell; do not rewrap)."""
+    lines = text.split("\n")
+    if len(lines) < _HARD_WRAP_MIN_LINES:
+        return None
+    lengths: dict[int, int] = {}
+    for line in lines:
+        n = len(line)
+        lengths[n] = lengths.get(n, 0) + 1
+    max_len = max(lengths)
+    if max_len == 0:
+        return None
+    if (
+        lengths[max_len] >= _HARD_WRAP_MIN_LINES_AT_MAX
+        and lengths[max_len] / len(lines) > _HARD_WRAP_DETECTION_THRESHOLD
+    ):
+        return max_len
+    return None
+
+
+def _dewrap_hard_wrapped_lines(text: str, wrap_width: int) -> str:
+    """Reconstruct the true logical text from output hard-wrapped at
+    `wrap_width`: a fixed-width wrap tool chops the character stream at
+    exactly N characters with nothing skipped or inserted, so any physical
+    line at *exactly* wrap_width chars is a continuation and must be joined
+    to the next line with no separator; any shorter line (including a blank
+    line) marks a genuine line break in the original, unwrapped text and is
+    kept as a real newline."""
+    lines = text.split("\n")
+    out: list[str] = []
+    buf = ""
+    for line in lines:
+        buf += line
+        if len(line) == wrap_width:
+            continue
+        out.append(buf)
+        buf = ""
+    if buf:
+        out.append(buf)
+    return "\n".join(out)
+
+
 def parse_ddl(
     text: str, dialect: str = "mysql", default_namespace: str | None = None
 ) -> tuple[Catalog, DdlStats]:
@@ -471,6 +546,10 @@ def parse_ddl(
     not lose every other table in the file. `default_namespace` fills in
     the schema for a table (or FK reference) left unqualified in the DDL
     text, matching the common per-schema-dump export convention."""
+    wrap_width = _detect_hard_wrap_width(text)
+    dewrapped = wrap_width is not None
+    if wrap_width is not None:
+        text = _dewrap_hard_wrapped_lines(text, wrap_width)
     text = _strip_view_editioning_clause(_strip_constraint_state(text))
 
     skipped = 0
@@ -570,5 +649,6 @@ def parse_ddl(
         statements_parsed=len(statements) - skipped,
         statements_skipped=skipped + tokenize_error_count,
         skipped_previews=tuple(skipped_previews),
+        dewrapped=dewrapped,
     )
     return Catalog(tables=tables, primary_keys=primary_keys, foreign_keys=foreign_keys, checks=checks), stats
