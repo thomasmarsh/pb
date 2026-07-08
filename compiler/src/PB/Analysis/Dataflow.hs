@@ -229,9 +229,11 @@ extractDefsUses blk = BlockFlow
 -- ---------------------------------------------------------------------------
 -- Reaching definitions
 
--- | Compute predecessor block ids from edge list.
-predecessors :: [CfgEdge] -> Text -> [Text]
-predecessors edges bid = [ceSrc e | e <- edges, ceDst e == bid]
+-- | Precompute a block's predecessor ids once per edge list, so the
+-- fixpoint loop below does a Map lookup per block per iteration instead of
+-- rescanning the full edge list.
+buildPredMap :: [CfgEdge] -> Map.Map Text [Text]
+buildPredMap = foldl' (\m e -> Map.insertWith (++) (ceDst e) [ceSrc e] m) Map.empty
 
 -- | Iterative forward dataflow for reaching definitions.
 -- Returns (reaching_in, reaching_out) mapping block_id → set of variable names.
@@ -239,7 +241,7 @@ reachingDefinitions :: Cfg -> Map.Map Text BlockFlow -> (Map.Map Text (Set.Set T
 reachingDefinitions cfg blockFlows = fix initial
   where
     blockIds = map cbId (cfgBlocks cfg)
-    edges    = cfgEdges cfg
+    predMap  = buildPredMap (cfgEdges cfg)
 
     initial :: (Map.Map Text (Set.Set Text), Map.Map Text (Set.Set Text))
     initial =
@@ -259,7 +261,7 @@ reachingDefinitions cfg blockFlows = fix initial
     step (rIn, rOut, changed) bid
       | bid == cfgEntry cfg = (rIn, rOut, changed)
       | otherwise =
-          let preds = predecessors edges bid
+          let preds = Map.findWithDefault [] bid predMap
               newIn = Set.unions [Map.findWithDefault Set.empty p rOut | p <- preds]
               oldIn = Map.findWithDefault Set.empty bid rIn
               bf    = Map.lookup bid blockFlows

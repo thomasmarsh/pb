@@ -40,6 +40,7 @@ import PB.Prelude
 import PB.Pipeline.SqlParse (TableRef (..))
 
 import qualified Data.Map.Strict as Map
+import qualified Data.Sequence   as Seq
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
 
@@ -283,19 +284,20 @@ walkPaths
   -> (SchMorphism -> SchObject)                      -- ^ the object a leg discovers
   -> SchGraph -> SchObject -> [SchPath]
 walkPaths adj step frontier discovered g seed =
-  reverse (go (Set.singleton seed) [idPath seed] [idPath seed])
+  reverse (go (Set.singleton seed) [idPath seed] (Seq.singleton (idPath seed)))
   where
-    go _visited acc [] = acc
-    go visited acc (path : queue) =
-      let legs = Map.findWithDefault [] (frontier path) (adj g)
-          (visited', acc', extra) = foldl' consider (visited, acc, []) legs
-          consider (vis, a, ex) leg =
-            let obj = discovered leg
-            in if Set.member obj vis
-               then (vis, a, ex)
-               else let p' = step path leg
-                    in (Set.insert obj vis, p' : a, p' : ex)
-      in go visited' acc' (queue ++ reverse extra)
+    go visited acc queue = case Seq.viewl queue of
+      Seq.EmptyL -> acc
+      path Seq.:< queue' ->
+        let legs = Map.findWithDefault [] (frontier path) (adj g)
+            (visited', acc', extra) = foldl' consider (visited, acc, []) legs
+            consider (vis, a, ex) leg =
+              let obj = discovered leg
+              in if Set.member obj vis
+                 then (vis, a, ex)
+                 else let p' = step path leg
+                      in (Set.insert obj vis, p' : a, p' : ex)
+        in go visited' acc' (queue' Seq.>< Seq.fromList (reverse extra))
 
 -- | All paths reachable forward from the seed (sgOut). North-star Q1 ("if
 -- this column mutates, what else is affected") — the coslice under a

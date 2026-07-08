@@ -53,7 +53,7 @@ data Cfg = Cfg
 data BuildSt = BuildSt
   { bsCount    :: !Int
   , bsBlockMap :: !(Map.Map Text CfgBlock)
-  , bsOrder    :: ![Text]     -- block creation order (append)
+  , bsOrder    :: ![Text]     -- newest first (reverse on exit)
   , bsEdges    :: ![CfgEdge]  -- newest first (reverse on exit)
   , bsExits    :: ![Text]     -- newest first (reverse on exit)
   }
@@ -68,7 +68,7 @@ newBlock = do
   put st
     { bsCount    = n + 1
     , bsBlockMap = Map.insert bid (CfgBlock bid [] Nothing Nothing) (bsBlockMap st)
-    , bsOrder    = bsOrder st ++ [bid]
+    , bsOrder    = bid : bsOrder st
     }
   pure bid
 
@@ -295,7 +295,7 @@ buildCfg :: [Located BodyStmt] -> Cfg
 buildCfg body =
   let initSt = BuildSt 0 Map.empty [] [] []
       (entryId, finalSt) = runState go initSt
-      blocks = [ b | bid <- bsOrder finalSt
+      blocks = [ b | bid <- reverse (bsOrder finalSt)
                    , Just b <- [Map.lookup bid (bsBlockMap finalSt)] ]
   in Cfg
     { cfgEntry  = entryId
