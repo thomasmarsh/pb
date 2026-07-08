@@ -72,7 +72,7 @@ _KEYWORDS = [
 
 _LEADING_KEYWORD_RE = re.compile(
     r"^\s*(CREATE(?:\s+OR\s+REPLACE)?(?:\s+FORCE)?(?:\s+(?:NON)?EDITIONABLE)?"
-    r"\s+(?:GLOBAL\s+TEMPORARY\s+)?(\w+)"
+    r"(?:\s+MATERIALIZED)?\s+(?:GLOBAL\s+TEMPORARY\s+)?(\w+)"
     r"|ALTER\s+(\w+)"
     r"|COMMENT\s+ON\s+(\w+)"
     r"|GRANT\b()"

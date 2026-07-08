@@ -493,3 +493,39 @@ def test_parse_ddl_does_not_dewrap_small_multiline_input():
     assert stats.dewrapped is False
     assert stats.statements_skipped == 0
     assert set(catalog.tables[0].columns) == {"a", "b"}
+
+
+# --- Sixth round (2026-07-08): after the hard-wrap fix eliminated the bulk
+# of real-corpus loss, the remaining catalog-impacting failures exposed an
+# architectural gap -- every physical/storage-attribute strip so far
+# (_INDEX_PHYSICAL_ATTR) only fired when attached to a `USING INDEX` clause.
+# A BARE table-level or materialized-view-level physical attribute (e.g.
+# `CREATE TABLE t (...) TABLESPACE x`, with no USING INDEX/constraint
+# involved at all) was never covered -- confirmed still failing even after
+# every prior round. Also: a LOB store-as clause with a *nested* paren
+# (e.g. `STORE AS SECUREFILE (TABLESPACE x STORAGE(...))`) broke the
+# existing LOB regex's single-level `[^()]*` assumption.
+
+
+def test_parse_ddl_strips_bare_table_level_tablespace():
+    sql = "CREATE TABLE T1 (A NUMBER, B VARCHAR2(10)) TABLESPACE USERS"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"a", "b"}
+
+
+def test_parse_ddl_strips_bare_materialized_view_physical_attrs():
+    sql = (
+        "CREATE MATERIALIZED VIEW MV1 PCTFREE 10 PCTUSED 40 INITRANS 1 MAXTRANS 255 "
+        "LOGGING SEGMENT CREATION IMMEDIATE NOCOMPRESS AS SELECT A FROM T1"
+    )
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"a"}
+
+
+def test_parse_ddl_strips_lob_store_as_with_nested_storage_paren():
+    sql = "CREATE TABLE T1 (A NUMBER, B CLOB) LOB (B) STORE AS SECUREFILE (TABLESPACE USERS STORAGE(INITIAL 100K) LOGGING)"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"a", "b"}

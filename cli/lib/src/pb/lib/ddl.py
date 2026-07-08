@@ -88,6 +88,14 @@ _INDEX_PHYSICAL_ATTR = (
 _QUALIFIED_IDENT = r'(?:"[^"]+"|[A-Za-z_][\w$#]*)(?:\.(?:"[^"]+"|[A-Za-z_][\w$#]*))?'
 _USING_INDEX_NAME_OR_COLUMN_LIST = rf"(?:(?!(?:{_INDEX_ATTR_KEYWORDS})\b){_QUALIFIED_IDENT}|\([^()]*\))"
 
+# A parenthesized group allowing one level of nesting -- e.g. a LOB's
+# `STORE AS SECUREFILE (TABLESPACE x STORAGE(...))`, where the outer
+# STORE-AS attribute list itself wraps a nested STORAGE(...) clause. Plain
+# `\([^()]*\)` (used for STORAGE's own inner clause, which is never nested
+# in real Oracle grammar) isn't enough one level up. Doesn't handle two or
+# more levels of nesting -- not needed for any real shape found so far.
+_PAREN_GROUP_ONE_LEVEL_NESTED = r"\((?:[^()]|\([^()]*\))*\)"
+
 _CONSTRAINT_STATE_RE = re.compile(
     # No trailing \b on this branch: the optional name/attrs groups can end
     # on a non-word character (closing quote or paren), and a `\b` there
@@ -104,17 +112,31 @@ _CONSTRAINT_STATE_RE = re.compile(
     # to constraint_state proper, but the same failure class (a bare
     # keyword/clause sqlglot's oracle grammar doesn't model) and rare enough
     # elsewhere in DDL that a global strip is safe -- matches the precedent
-    # set by ENABLE/DISABLE above. LOB's inner column-list and STORE AS
-    # parenthesized attributes are assumed non-nested, same as STORAGE(...).
+    # set by ENABLE/DISABLE above.
     r"|\b(?:NON)?ROWDEPENDENCIES\b"
     r"|\bVIRTUAL\b"
-    r"|\bLOB\s*\([^()]*\)\s*STORE\s+AS\s*(?:SECUREFILE|BASICFILE)?\s*(?:\([^()]*\))?"
+    rf"|\bLOB\s*\([^()]*\)\s*STORE\s+AS\s*(?:SECUREFILE|BASICFILE)?\s*(?:{_PAREN_GROUP_ONE_LEVEL_NESTED})?"
     r"|\bSEGMENT\s+CREATION\s+(?:IMMEDIATE|DEFERRED)\b"
     # Column-level VISIBLE/INVISIBLE modifier: a distinct context from the
     # USING INDEX ... VISIBLE case (which sqlglot already tolerates without
     # stripping) -- found via the bisection+redaction tool in
     # diagnose_ddl_skips.py (2026-07-08).
-    r"|\b(?:IN)?VISIBLE\b",
+    r"|\b(?:IN)?VISIBLE\b"
+    # BARE physical/storage attributes -- same vocabulary as
+    # _INDEX_PHYSICAL_ATTR, but NOT attached to a USING INDEX clause at all.
+    # Architectural gap found via a second real-corpus triage pass
+    # (2026-07-08) after the hard-wrap fix cleared away most of the noise:
+    # every physical-attribute strip up to this point only fired when
+    # preceded by "USING INDEX" -- a bare table-level tail
+    # (`CREATE TABLE t (...) TABLESPACE x`) or a CREATE MATERIALIZED VIEW's
+    # own attribute list (`CREATE MATERIALIZED VIEW mv PCTFREE 10 ... AS
+    # SELECT ...`) was never covered by any prior round, despite reusing the
+    # identical keyword vocabulary. Listed last (lowest alternation
+    # priority) so the more specific USING-INDEX-attached branch above still
+    # wins when applicable; matches ANY run of one or more of these
+    # keywords, which is safe here since none of them carry catalog-relevant
+    # information (columns/PK/FK/CHECK) regardless of where they appear.
+    rf"|\b(?:{_INDEX_PHYSICAL_ATTR})(?:\s+(?:{_INDEX_PHYSICAL_ATTR}))*",
     re.IGNORECASE,
 )
 
@@ -145,7 +167,13 @@ def _strip_constraint_state(text: str) -> str:
     leaves them behind as syntax garbage that still fails the whole
     statement. Also strips table-level ROWDEPENDENCIES/NOROWDEPENDENCIES and
     virtual-column VIRTUAL -- unrelated to constraint_state proper, but the
-    same failure class, found in the same triage."""
+    same failure class, found in the same triage. A third round
+    (2026-07-08, after the hard-wrap fix in parse_ddl cleared away most
+    other noise) found that every physical-attribute strip above only fired
+    when attached to USING INDEX -- the same keyword vocabulary also strips
+    as a BARE run wherever it appears (a table's own TABLESPACE tail, a
+    materialized view's PCTFREE/PCTUSED/... attribute list, etc.), since
+    none of it carries catalog-relevant information regardless of context."""
     return _CONSTRAINT_STATE_RE.sub("", text)
 
 
