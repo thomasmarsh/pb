@@ -115,6 +115,100 @@ def _find_matching_close_paren(text: str, open_idx: int) -> int | None:
     return None
 
 
+def _split_top_level_commas(text: str) -> list[str]:
+    """Split text on commas at paren-depth 0 (quote-aware)."""
+    elements = []
+    buf: list[str] = []
+    depth = 0
+    in_squote = in_dquote = False
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if in_squote:
+            buf.append(c)
+            if c == "'":
+                if i + 1 < n and text[i + 1] == "'":
+                    buf.append(text[i + 1])
+                    i += 2
+                    continue
+                in_squote = False
+            i += 1
+            continue
+        if in_dquote:
+            buf.append(c)
+            if c == '"':
+                in_dquote = False
+            i += 1
+            continue
+        if c == "'":
+            in_squote = True
+        elif c == '"':
+            in_dquote = True
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        if c == "," and depth == 0:
+            elements.append("".join(buf).strip())
+            buf = []
+            i += 1
+            continue
+        buf.append(c)
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        elements.append(tail)
+    return elements
+
+
+def _redact(text: str) -> str:
+    """Replace quoted identifiers and string literals with placeholders,
+    collapse whitespace. Safe to print: strips every piece of actual
+    schema/business content while keeping SQL keywords, types, and
+    punctuation, which reveal the syntax shape that's failing."""
+    text = re.sub(r'"[^"]+"', "<ID>", text)
+    text = re.sub(r"'(?:[^']|'')*'", "<STR>", text)
+    return " ".join(text.split())
+
+
+def _isolate_failing_element(raw_sql: str, dialect: str) -> str | None:
+    """For a CREATE TABLE statement confirmed (via `_tail_clause_would_fix`
+    returning False) to fail inside its column/constraint list rather than
+    on a trailing clause: bisect the top-level comma-separated elements to
+    find the first one whose inclusion breaks parsing, and return that one
+    element's raw (unredacted) text. Callers must redact before printing.
+    Linear scan, not binary search: failure isn't guaranteed monotonic in
+    element count (an earlier element could depend on context established
+    by this one), so "first k where truncating-to-k fails" is well-defined
+    but binary search's monotonicity assumption isn't safe here."""
+    open_idx = raw_sql.find("(")
+    if open_idx == -1:
+        return None
+    close_idx = _find_matching_close_paren(raw_sql, open_idx)
+    if close_idx is None:
+        return None
+    header = raw_sql[: open_idx + 1]
+    inner = raw_sql[open_idx + 1 : close_idx]
+    elements = _split_top_level_commas(inner)
+    if not elements:
+        return None
+
+    def parses(k: int) -> bool:
+        candidate = header + ", ".join(elements[:k]) + ")"
+        stripped = _strip_view_editioning_clause(_strip_constraint_state(candidate))
+        try:
+            parsed = sqlglot.parse(stripped, dialect=dialect, error_level=ErrorLevel.WARN)
+        except (ParseError, TokenError):
+            return False
+        return bool(parsed) and not isinstance(parsed[0], exp.Command)
+
+    for k in range(1, len(elements) + 1):
+        if not parses(k):
+            return elements[k - 1]
+    return None
+
+
 def _tail_clause_would_fix(raw_sql: str, dialect: str) -> bool | None:
     """For a CREATE TABLE statement, truncate to the closing paren of the
     column/constraint list and re-parse. If the truncated form parses fine,
@@ -279,16 +373,30 @@ def main() -> None:
         print("    cause; 'inside column/constraint list' means the failure is NOT a tail")
         print("    clause and needs a different kind of fix.")
         outcome_counts: Counter[str] = Counter()
+        redacted_patterns: Counter[str] = Counter()
         for raw in unexplained_table_impacting:
             result = _tail_clause_would_fix(raw, args.dialect)
             if result is True:
                 outcome_counts["trailing-clause (truncated form parses fine)"] += 1
             elif result is False:
                 outcome_counts["inside column/constraint list (still fails when truncated)"] += 1
+                element = _isolate_failing_element(raw, args.dialect)
+                if element is not None:
+                    redacted_patterns[_redact(element)] += 1
+                else:
+                    outcome_counts["  (bisection couldn't isolate a single element)"] += 1
             else:
                 outcome_counts["unbalanced parens / could not bisect"] += 1
         for label, n in outcome_counts.most_common():
             print(f"  {label}: {n}")
+
+        if redacted_patterns:
+            print()
+            print("--- isolated failing column/constraint definitions, REDACTED ---")
+            print("    Every quoted identifier -> <ID>, every string literal -> <STR>.")
+            print("    Deduplicated by exact redacted text -- safe to paste back as-is.")
+            for pattern, n in redacted_patterns.most_common(20):
+                print(f"  x{n}: {pattern}")
 
 
 if __name__ == "__main__":

@@ -403,3 +403,25 @@ def test_parse_ddl_strips_segment_creation_clause():
     catalog, stats = parse_ddl(sql, dialect="oracle")
     assert stats.statements_skipped == 0
     assert catalog.tables[0].columns == ("a",)
+
+
+# --- Fourth round: found via the new bisection+redaction tool in
+# scripts/diagnose_ddl_skips.py, which isolates the exact failing column/
+# constraint definition and redacts identifiers before printing -- the
+# redacted shape `<ID> NUMBER INVISIBLE` immediately identified this as a
+# distinct context from the already-fixed USING INDEX ... VISIBLE case
+# (2026-07-08): a bare column-level VISIBLE/INVISIBLE modifier still fails.
+
+
+def test_parse_ddl_strips_column_level_invisible():
+    sql = "CREATE TABLE T1 (A NUMBER, B NUMBER INVISIBLE)"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"a", "b"}
+
+
+def test_parse_ddl_strips_column_level_visible():
+    sql = "CREATE TABLE T1 (A NUMBER, B NUMBER VISIBLE)"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"a", "b"}

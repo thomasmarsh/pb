@@ -109,7 +109,12 @@ _CONSTRAINT_STATE_RE = re.compile(
     r"|\b(?:NON)?ROWDEPENDENCIES\b"
     r"|\bVIRTUAL\b"
     r"|\bLOB\s*\([^()]*\)\s*STORE\s+AS\s*(?:SECUREFILE|BASICFILE)?\s*(?:\([^()]*\))?"
-    r"|\bSEGMENT\s+CREATION\s+(?:IMMEDIATE|DEFERRED)\b",
+    r"|\bSEGMENT\s+CREATION\s+(?:IMMEDIATE|DEFERRED)\b"
+    # Column-level VISIBLE/INVISIBLE modifier: a distinct context from the
+    # USING INDEX ... VISIBLE case (which sqlglot already tolerates without
+    # stripping) -- found via the bisection+redaction tool in
+    # diagnose_ddl_skips.py (2026-07-08).
+    r"|\b(?:IN)?VISIBLE\b",
     re.IGNORECASE,
 )
 
