@@ -844,6 +844,24 @@ runPass10 :: DuckConn -> SchGraph -> IO ()
 -- type directly -- it takes catalog_columns/catalog_fks rows queried back
 -- from DuckDb (CatColumnRow/CatFkRow, its own read-shape types) instead,
 -- keeping PB.Analysis.* free of any duckdb-ffi dependency.
+--
+-- Oracle DDL hardening (2026-07-08): SchemaCatalog gained scChecks
+-- (CatalogCheckConstraint -- named CHECK predicates, sqlglot's normalized-SQL
+-- rendering, not a re-parsed expression AST). SqlBridgePool gained
+-- sbpDialect :: Text, set once at pool construction and used by BOTH
+-- sendReceive (regular SQL) and parseDdl (DDL) -- previously DDL parsing
+-- hardcoded "mysql" while SQL parsing hardcoded "oracle", a silent drift
+-- that zeroed catalog_columns/catalog_pks for any non-MySQL corpus. parseDdl
+-- now returns the full DdlResponse envelope (catalog + stats + parse_ok +
+-- error), not just SchemaCatalog -- Runner.hs surfaces this via emitProgress
+-- so a silently-empty catalog can never again go unreported. parseDdl also
+-- takes a Maybe Text default-namespace (fills in the schema for a table/FK
+-- reference left unqualified in the DDL text -- the common per-schema-dump
+-- export convention); sql_worker.py's parse_ddl uses error_level=WARN and
+-- strips Oracle's ENABLE/DISABLE/VALIDATE/NOVALIDATE/USING INDEX
+-- constraint-state tail before parsing (sqlglot's grammar doesn't model it,
+-- and one occurrence anywhere in a CREATE TABLE poisons the whole
+-- statement otherwise) -- see cli/lib/src/pb/lib/ddl.py's module docstring.
 data ColumnRef = ColumnRef { crNamespace, crTable :: Maybe Text, crColumn :: Text, crIsWrite :: Bool }
 data RowFilter = RowFilter { rfNamespace, rfTable :: Maybe Text, rfColumn, rfOp :: Text, rfValues :: [Text] }
 data SqlResult = SqlResult { srTables, srColumns :: [Text], srOperation :: Maybe Text
@@ -855,13 +873,20 @@ data CatalogForeignKey = CatalogForeignKey
   { cfkConstraintName :: Maybe Text
   , cfkFromTable :: TableRef, cfkFromColumns :: [Text]
   , cfkToTable   :: TableRef, cfkToColumns   :: [Text] }   -- from/to columns paired by position
+data CatalogCheckConstraint = CatalogCheckConstraint
+  { cckConstraintName :: Maybe Text, cckTable :: TableRef, cckPredicate :: Text }
 data SchemaCatalog = SchemaCatalog
-  { scTables :: [CatalogTable], scPrimaryKeys :: [CatalogPrimaryKey], scForeignKeys :: [CatalogForeignKey] }
-data SqlBridgePool = SqlBridgePool { sbpSlots :: Vector (IORef WorkerConn), sbpBinary :: FilePath }
-startSqlBridgePool  :: Int -> FilePath -> IO SqlBridgePool
+  { scTables :: [CatalogTable], scPrimaryKeys :: [CatalogPrimaryKey]
+  , scForeignKeys :: [CatalogForeignKey], scChecks :: [CatalogCheckConstraint] }
+data DdlStats = DdlStats { dsStatementsTotal, dsStatementsParsed, dsStatementsSkipped :: Int }
+data DdlResponse = DdlResponse
+  { ddlCatalog :: SchemaCatalog, ddlStats :: DdlStats, ddlParseOk :: Bool, ddlError :: Maybe Text }
+data SqlBridgePool = SqlBridgePool
+  { sbpSlots :: Vector (IORef WorkerConn), sbpBinary :: FilePath, sbpDialect :: Text }
+startSqlBridgePool  :: Int -> FilePath -> Text -> IO SqlBridgePool   -- n, bin, dialect (shared by parseSql + parseDdl)
 shutdownSqlBridgePool :: SqlBridgePool -> IO ()
 parseSql :: SqlBridgePool -> Int -> Text -> IO SqlResult          -- per-statement, any slot; retries once on worker crash
-parseDdl :: SqlBridgePool -> Text -> Text -> IO SchemaCatalog     -- dialect, ddlText; always slot 0 (one-shot per run)
+parseDdl :: SqlBridgePool -> Maybe Text -> Text -> IO DdlResponse -- pool, defaultNamespace, ddlText; always slot 0 (one-shot per run)
 extractBsRawNodes :: [Located BodyStmt] -> [(Int, Text)]          -- recurses into if/for/do/choose bodies
 -- Internal: requestResponse (shared framing, both parseSql/parseDdl go through it), encodeLen/decodeLen (4-byte BE length prefix)
 ```
@@ -871,16 +896,33 @@ extractBsRawNodes :: [Located BodyStmt] -> [(Int, Text)]          -- recurses in
 ```haskell
 -- Batch orchestration: DuckDB streaming, worker loops.
 -- Re-exports from Emit: runFile, collectStatements, wrapSrFile, extractWindowLayout, reconstructRetrieveSql
-runModeDb :: FilePath -> FilePath -> Maybe FilePath -> IO ()
--- srcDir, dbPath, optional DDL catalog file (Plan 148 Phase 1a-3, added
--- 2026-07-07). When Just and PB_SQL_WORKER is set, reads the file once,
--- calls parseDdl, and appends via catalogToRows before the per-file worker
--- loop. When Just but no bridge, emits a "warning" progress event and skips
--- (no hard error). Main.hs's --ddl flag threads through here.
-catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogFkRow])
+runModeDb :: FilePath -> FilePath -> [Text] -> Text -> IO ()
+-- srcDir, dbPath, ddlArgs, dialect (Plan 148 Phase 1a-3; Oracle hardening
+-- 2026-07-08 changed the DDL param from Maybe FilePath to [Text] and added
+-- the dialect param). ddlArgs are raw --ddl CLI values in [schema:]path form
+-- (repeatable -- e.g. --ddl CLIMS:clims.sql --ddl CLIMS_COMMON:common.sql for
+-- multiple per-schema dumps with cross-schema FKs). dialect is the sqlglot
+-- dialect for BOTH DDL and regular embedded-SQL parsing, set once on the
+-- SqlBridgePool (see SqlParse's sbpDialect) so the two can't drift --
+-- previously DDL silently hardcoded "mysql" while SQL parsing hardcoded
+-- "oracle", which zeroed catalog_columns/catalog_pks for any non-MySQL
+-- corpus. When PB_SQL_WORKER is set, each ddlArg is read + parsed
+-- independently (parseDdlArg splits the schema tag, parseDdl applies it as
+-- the default namespace for unqualified tables/FK refs in that file) and
+-- appended via catalogToRows; an emitProgress "ddl_loaded" event reports
+-- per-file parse_ok/error/statement-stats/table+pk+fk+check counts -- so a
+-- silently-empty catalog (the original bug report) can never go unnoticed
+-- again. When no bridge, emits a "warning" progress event per ddlArg and
+-- skips (no hard error). Main.hs's --ddl/--sql-dialect flags thread through here.
+parseDdlArg :: Text -> (Maybe Text, FilePath)
+-- Pure. Splits a --ddl CLI value in [schema:]path form -- the prefix before
+-- the first ':' is treated as a schema tag only when it contains no '/' (so
+-- a bare path with no tag, e.g. "../clims.sql", passes through untouched).
+catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogFkRow], [CatalogCheckRow])
 -- Pure. Flattens SqlParse's row-oriented SchemaCatalog into DuckDb's row
 -- types, assigning positional ordinals; composite FKs pair
--- fromColumns[i]/toColumns[i] by position.
+-- fromColumns[i]/toColumns[i] by position. 4th tuple element (checks) added
+-- alongside SchemaCatalog's scChecks field, 2026-07-08.
 -- Internal: CompiledPs, CompiledDw, CompiledFile, compileOne, appendToDb,
 --           workerLoopFiles, workerLoopFilesNoBridge, emitProgress, jsonText
 -- CompiledDw gained cdDwRetrieveColumns :: [DwRetrieveColumnRow] (Plan 148
@@ -1393,10 +1435,16 @@ appendSqlStmtColumns, appendSqlStmtFilters :: DuckConn -> [row] -> IO ()
 -- catalog_columns/catalog_pks/catalog_fks (Plan 148 Phase 1a-3, 2026-07-07):
 -- static DDL catalog, row-oriented (namespace/table_name/column_name/ordinal
 -- for columns+pks; +constraint_name/from_*/to_* for fks, one row per
--- from/to column pair for composite FKs). Populated once per run (not per
--- file) from PB.Pipeline.Runner.catalogToRows, itself fed by
--- PB.Pipeline.SqlParse.parseDdl.
+-- from/to column pair for composite FKs). Populated once per DDL file (Oracle
+-- hardening 2026-07-08: now once per --ddl arg, not once per run -- multiple
+-- schema-tagged dumps each get their own parseDdl call) from
+-- PB.Pipeline.Runner.catalogToRows, itself fed by PB.Pipeline.SqlParse.parseDdl.
 appendCatalogColumns, appendCatalogPks, appendCatalogFks :: DuckConn -> [row] -> IO ()
+-- catalog_checks (2026-07-08): (constraint_name, namespace, table_name,
+-- predicate) -- named CHECK constraints, sqlglot's normalized-SQL predicate
+-- text (not a re-parsed expression AST; see SqlParse's CatalogCheckConstraint
+-- doc comment for why). Fed by the same per-DDL-file catalogToRows call.
+appendCatalogChecks :: DuckConn -> [CatalogCheckRow] -> IO ()
 appendParseErrors :: DuckConn -> [row] -> IO ()
 -- dw_retrieve_columns (Plan 148 Phase 1b, 2026-07-07): (file, dw_name,
 -- namespace, table_name, column_name), one row per qualified DwRetrieve

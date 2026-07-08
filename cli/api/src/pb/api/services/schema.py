@@ -26,6 +26,23 @@ from pb.pipeline.lattice import compute_window_table_lattice
 ColumnKey = tuple[str | None, str, str]
 
 
+def _norm(s: str | None) -> str | None:
+    """Table/column/namespace identifiers are always lowercased on ingestion
+    (both the DDL catalog and SQL-derived TableRef -- see PB.Pipeline.SqlParse's
+    TableRef doc comment). Route params arrive in whatever case the caller used,
+    so every lookup against catalog_columns/schema_objects/sql_statement_columns
+    must normalize here first or it silently matches zero rows."""
+    return s.lower() if s is not None else None
+
+
+def _column_key_sort(c: ColumnKey) -> tuple[str, str, str]:
+    """`ColumnKey`'s namespace is `None` for an unqualified column (common for
+    DW-retrieve columns) and a string for a schema-qualified one (common for
+    catalog/SQL-derived columns) -- the same corpus mixes both, and plain
+    `sorted()` on tuples raises TypeError comparing None < str."""
+    return (c[0] or "", c[1], c[2])
+
+
 def _column_ref(row: dict[str, Any], prefix: str) -> dict[str, Any]:
     return {
         "namespace": row[f"{prefix}_namespace"],
@@ -35,7 +52,7 @@ def _column_ref(row: dict[str, Any], prefix: str) -> dict[str, Any]:
 
 
 def _canon(a: ColumnKey, b: ColumnKey) -> tuple[ColumnKey, ColumnKey]:
-    return (a, b) if a <= b else (b, a)
+    return (a, b) if _column_key_sort(a) <= _column_key_sort(b) else (b, a)
 
 
 def _edge_key(row: dict[str, Any]) -> tuple[ColumnKey, ColumnKey]:
@@ -88,7 +105,7 @@ def get_co_update_rituals(conn: duckdb.DuckDBPyConnection, min_support: int = 2)
         stmts_by_col[col].add(r["stmt_key"])
         stmt_ref[r["stmt_key"]] = _stmt_ref(r)
 
-    cols = sorted(stmts_by_col)
+    cols = sorted(stmts_by_col, key=_column_key_sort)
     rituals: list[dict[str, Any]] = []
     for i, c1 in enumerate(cols):
         for c2 in cols[i + 1 :]:
@@ -364,6 +381,7 @@ def get_column_affinity(
     linkage (Open Question 2 resolved — Navathe bond energy is unwarranted
     at this corpus's scale).
     """
+    namespace, table_name = _norm(namespace), table_name.lower()
     exists = conn.execute(
         "SELECT 1 FROM catalog_columns WHERE table_name = ? AND namespace IS NOT DISTINCT FROM ? LIMIT 1",
         [table_name, namespace],
@@ -393,6 +411,7 @@ def get_column_affinity(
 def get_column_managers(
     conn: duckdb.DuckDBPyConnection, namespace: str | None, table: str, column: str
 ) -> list[dict[str, Any]]:
+    namespace, table, column = _norm(namespace), table.lower(), column.lower()
     sql_rows = rows(
         conn.execute(
             "SELECT file, object, proc_name, line, is_write FROM sql_statement_columns "
@@ -498,6 +517,7 @@ def get_decomposition_candidates(
     directly from `decomposition_coslice`; ritual/FK evidence reuses D1's
     and D2's own services rather than re-querying schema_morphisms.
     """
+    namespace, table_name = _norm(namespace), table_name.lower()
     affinity = get_column_affinity(conn, namespace, table_name)
     if affinity is None:
         return None

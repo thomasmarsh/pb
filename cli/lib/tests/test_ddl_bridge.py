@@ -69,21 +69,52 @@ def test_ddl_request_returns_catalog(worker):
     _send(worker, {"kind": "ddl", "ddl": _DDL, "dialect": "mysql"})
     resp = _recv(worker)
     assert resp["parse_ok"] is True
+    assert resp["error"] is None
     tables = {t["table"] for t in resp["catalog"]["tables"]}
     assert tables == {"afxfilter", "afxfilterd"}
     fks = resp["catalog"]["foreign_keys"]
     assert len(fks) == 1
     assert fks[0]["from_table"] == "afxfilterd"
     assert fks[0]["to_table"] == "afxfilter"
+    assert resp["stats"]["statements_skipped"] == 0
     # Worker must still be alive and dispatch a plain "sql" request afterward
     _send(worker, {"sql": "SELECT 1 FROM dual", "dialect": "oracle"})
     resp2 = _recv(worker)
     assert resp2["parse_ok"] is True
 
 
-def test_malformed_ddl_returns_parse_ok_false(worker):
-    _send(worker, {"kind": "ddl", "ddl": "NOT VALID DDL !!!", "dialect": "mysql"})
+def test_unsupported_ddl_statement_still_returns_parse_ok_with_empty_catalog(worker):
+    """A statement sqlglot can't structurally parse (WARN error level) falls
+    back to a skipped Command rather than raising -- one bad statement must
+    not report the whole request as failed."""
+    _send(worker, {
+        "kind": "ddl",
+        "ddl": 'CREATE UNIQUE INDEX "S"."UK_T2" ON "S"."T2" ("ID")',
+        "dialect": "oracle",
+    })
+    resp = _recv(worker)
+    assert resp["parse_ok"] is True
+    assert resp["catalog"] == {"tables": [], "primary_keys": [], "foreign_keys": [], "checks": []}
+    assert resp["stats"]["statements_skipped"] == 1
+    assert worker.poll() is None
+
+
+def test_ddl_request_with_unknown_dialect_reports_error(worker):
+    _send(worker, {"kind": "ddl", "ddl": _DDL, "dialect": "not_a_real_dialect"})
     resp = _recv(worker)
     assert resp["parse_ok"] is False
-    assert resp["catalog"] == {"tables": [], "primary_keys": [], "foreign_keys": []}
+    assert resp["catalog"] == {"tables": [], "primary_keys": [], "foreign_keys": [], "checks": []}
+    assert resp["error"] is not None
     assert worker.poll() is None
+
+
+def test_ddl_request_applies_default_namespace(worker):
+    _send(worker, {
+        "kind": "ddl",
+        "ddl": "CREATE TABLE t (id number)",
+        "dialect": "oracle",
+        "namespace": "CLIMS",
+    })
+    resp = _recv(worker)
+    assert resp["parse_ok"] is True
+    assert resp["catalog"]["tables"][0]["namespace"] == "clims"

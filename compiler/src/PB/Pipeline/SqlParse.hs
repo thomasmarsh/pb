@@ -6,7 +6,10 @@ module PB.Pipeline.SqlParse
   , CatalogTable (..)
   , CatalogPrimaryKey (..)
   , CatalogForeignKey (..)
+  , CatalogCheckConstraint (..)
   , SchemaCatalog (..)
+  , DdlStats (..)
+  , DdlResponse (..)
   , WorkerConn (..)
   , SqlBridgePool (..)
   , startSqlBridgePool
@@ -137,6 +140,23 @@ instance FromJSON CatalogForeignKey where
     <*> (TableRef <$> o .:? "to_namespace" <*> o .: "to_table")
     <*> o .: "to_columns"
 
+-- | A named CHECK constraint's raw predicate (e.g. @STATUS IN ('T', 'TG')@),
+-- captured as sqlglot's normalized-SQL rendering rather than re-parsed --
+-- this tool models column *structure* (tables/PK/FK), not full SQL semantics,
+-- but the allowed-value information a CHECK predicate encodes is too
+-- valuable to discard just because we're not writing a CHECK-expression AST.
+data CatalogCheckConstraint = CatalogCheckConstraint
+  { cckConstraintName :: Maybe Text
+  , cckTable          :: TableRef
+  , cckPredicate      :: Text
+  } deriving (Show, Eq)
+
+instance FromJSON CatalogCheckConstraint where
+  parseJSON = withObject "CatalogCheckConstraint" $ \o -> CatalogCheckConstraint
+    <$> o .:? "constraint_name"
+    <*> (TableRef <$> o .:? "namespace" <*> o .: "table")
+    <*> o .: "predicate"
+
 -- | A static schema catalog parsed from a DDL dump (Plan 148 Phase 1a-3).
 -- Flat/row-oriented (not @Map TableRef [Text]@) to match the JSON wire
 -- shape and DuckDB's row-oriented appenders directly.
@@ -144,6 +164,7 @@ data SchemaCatalog = SchemaCatalog
   { scTables      :: [CatalogTable]
   , scPrimaryKeys :: [CatalogPrimaryKey]
   , scForeignKeys :: [CatalogForeignKey]
+  , scChecks      :: [CatalogCheckConstraint]
   } deriving (Show, Eq)
 
 instance FromJSON SchemaCatalog where
@@ -151,9 +172,50 @@ instance FromJSON SchemaCatalog where
     <$> o .: "tables"
     <*> o .: "primary_keys"
     <*> o .: "foreign_keys"
+    <*> o .:? "checks" .!= []
 
 emptySchemaCatalog :: SchemaCatalog
-emptySchemaCatalog = SchemaCatalog [] [] []
+emptySchemaCatalog = SchemaCatalog [] [] [] []
+
+-- | Per-request statement bookkeeping (Oracle DDL hardening follow-up):
+-- 'dsStatementsSkipped' counts statements sqlglot could not structurally
+-- parse (fell back to an inert Command) even at WARN error level -- surfaced
+-- so a silently-empty catalog is never mistaken for "the DDL loaded fine."
+data DdlStats = DdlStats
+  { dsStatementsTotal   :: Int
+  , dsStatementsParsed  :: Int
+  , dsStatementsSkipped :: Int
+  } deriving (Show, Eq)
+
+instance FromJSON DdlStats where
+  parseJSON = withObject "DdlStats" $ \o -> DdlStats
+    <$> o .: "statements_total"
+    <*> o .: "statements_parsed"
+    <*> o .: "statements_skipped"
+
+emptyDdlStats :: DdlStats
+emptyDdlStats = DdlStats 0 0 0
+
+-- | Full response envelope for a "ddl"-kind bridge request. 'ddlParseOk' is
+-- false only for a hard failure outside sqlglot's own per-statement WARN-level
+-- recovery (e.g. an unknown dialect name) -- 'ddlError' then carries the
+-- exception message instead of being silently swallowed.
+data DdlResponse = DdlResponse
+  { ddlCatalog :: SchemaCatalog
+  , ddlStats   :: DdlStats
+  , ddlParseOk :: Bool
+  , ddlError   :: Maybe Text
+  } deriving (Show, Eq)
+
+instance FromJSON DdlResponse where
+  parseJSON = withObject "DdlResponse" $ \o -> DdlResponse
+    <$> o .: "catalog"
+    <*> o .: "stats"
+    <*> o .: "parse_ok"
+    <*> o .:? "error"
+
+emptyDdlResponse :: Text -> DdlResponse
+emptyDdlResponse err = DdlResponse emptySchemaCatalog emptyDdlStats False (Just err)
 
 data WorkerConn = WorkerConn
   { wcStdin   :: Handle
@@ -162,8 +224,9 @@ data WorkerConn = WorkerConn
   }
 
 data SqlBridgePool = SqlBridgePool
-  { sbpSlots  :: V.Vector (IORef WorkerConn)
-  , sbpBinary :: FilePath
+  { sbpSlots   :: V.Vector (IORef WorkerConn)
+  , sbpBinary  :: FilePath
+  , sbpDialect :: Text
   }
 
 
@@ -171,10 +234,13 @@ data SqlBridgePool = SqlBridgePool
 -- Pool lifecycle
 -- ---------------------------------------------------------------------------
 
-startSqlBridgePool :: Int -> FilePath -> IO SqlBridgePool
-startSqlBridgePool n bin = do
+-- | 'dialect' governs both regular SQL-statement parsing ('parseSql') and DDL
+-- parsing ('parseDdl') -- set once here rather than threaded separately
+-- through each, so the two can never structurally drift apart.
+startSqlBridgePool :: Int -> FilePath -> Text -> IO SqlBridgePool
+startSqlBridgePool n bin dialect = do
   slots <- mapM (\_ -> startWorker bin >>= newIORef) [0 .. n - 1]
-  pure $ SqlBridgePool { sbpSlots = V.fromList slots, sbpBinary = bin }
+  pure $ SqlBridgePool { sbpSlots = V.fromList slots, sbpBinary = bin, sbpDialect = dialect }
 
 shutdownSqlBridgePool :: SqlBridgePool -> IO ()
 shutdownSqlBridgePool pool =
@@ -203,30 +269,35 @@ parseSql pool idx sqlText = do
       pure $ fromMaybe (SqlResult [] [] Nothing False [] []) mres2
   where
     safeRequest conn = do
-      r <- try @SomeException (timeout 30_000_000 (sendReceive conn sqlText))
+      r <- try @SomeException (timeout 30_000_000 (sendReceive conn (sbpDialect pool) sqlText))
       pure $ case r of
         Right (Just (Just res)) -> Just res
         _                       -> Nothing
 
--- | Parse a DDL dump into a 'SchemaCatalog' via the bridge's "ddl" request
+-- | Parse a DDL dump into a 'DdlResponse' via the bridge's "ddl" request
 -- kind. Always uses slot 0 -- this is a one-shot, once-per-run call (unlike
 -- 'parseSql', which is called once per SQL statement across all worker
 -- slots), so there is no need to thread a slot index through the caller.
-parseDdl :: SqlBridgePool -> Text -> Text -> IO SchemaCatalog
-parseDdl pool dialect ddlText = do
+-- 'dialect' comes from the pool ('sbpDialect'), the same value 'parseSql'
+-- uses for regular SQL statements, so the two can't disagree.
+-- 'defaultNamespace' fills in the schema for a table (or FK reference) left
+-- unqualified in the DDL text -- the common per-schema-dump export
+-- convention (e.g. a file named clims.sql implicitly belongs to CLIMS).
+parseDdl :: SqlBridgePool -> Maybe Text -> Text -> IO DdlResponse
+parseDdl pool defaultNamespace ddlText = do
   let ref = sbpSlots pool V.! 0
   conn <- readIORef ref
   mres <- safeRequest conn
   case mres of
-    Just cat -> pure cat
+    Just resp -> pure resp
     Nothing -> do
       restartWorker pool ref conn
       conn' <- readIORef ref
       mres2 <- safeRequest conn'
-      pure $ fromMaybe emptySchemaCatalog mres2
+      pure $ fromMaybe (emptyDdlResponse "ddl request failed (bridge worker crashed or timed out)") mres2
   where
     safeRequest conn = do
-      r <- try @SomeException (timeout 30_000_000 (ddlSendReceive conn dialect ddlText))
+      r <- try @SomeException (timeout 30_000_000 (ddlSendReceive conn (sbpDialect pool) defaultNamespace ddlText))
       pure $ case r of
         Right (Just (Just res)) -> Just res
         _                       -> Nothing
@@ -251,21 +322,16 @@ restartWorker pool ref old = do
   conn' <- startWorker (sbpBinary pool)
   writeIORef ref conn'
 
-sendReceive :: WorkerConn -> Text -> IO (Maybe SqlResult)
-sendReceive conn sqlText =
-  requestResponse conn (object ["sql" .= sqlText, "dialect" .= ("oracle" :: Text)])
+sendReceive :: WorkerConn -> Text -> Text -> IO (Maybe SqlResult)
+sendReceive conn dialect sqlText =
+  requestResponse conn (object ["sql" .= sqlText, "dialect" .= dialect])
 
--- | Response envelope for a "ddl"-kind request; only the "catalog" key is
--- of interest here ("kind"/"parse_ok" are for the Python-side worker log).
-newtype DdlResponse = DdlResponse { unDdlResponse :: SchemaCatalog }
-
-instance FromJSON DdlResponse where
-  parseJSON = withObject "DdlResponse" $ \o -> DdlResponse <$> o .: "catalog"
-
-ddlSendReceive :: WorkerConn -> Text -> Text -> IO (Maybe SchemaCatalog)
-ddlSendReceive conn dialect ddlText =
-  fmap unDdlResponse <$>
-    requestResponse conn (object ["kind" .= ("ddl" :: Text), "ddl" .= ddlText, "dialect" .= dialect])
+ddlSendReceive :: WorkerConn -> Text -> Maybe Text -> Text -> IO (Maybe DdlResponse)
+ddlSendReceive conn dialect defaultNamespace ddlText =
+  requestResponse conn (object
+    [ "kind" .= ("ddl" :: Text), "ddl" .= ddlText, "dialect" .= dialect
+    , "namespace" .= defaultNamespace
+    ])
 
 requestResponse :: FromJSON a => WorkerConn -> Value -> IO (Maybe a)
 requestResponse conn payload = do

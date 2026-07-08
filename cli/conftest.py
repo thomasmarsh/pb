@@ -66,7 +66,10 @@ def schema_db_path(tmp_path_factory) -> str:
     run_env = os.environ.copy()
     run_env["PB_SQL_WORKER"] = str(sql_worker)
     result = subprocess.run(
-        [str(binary), "-i", str(OPENPAY_DIR), "--db", db, "--ddl", str(OPENPAY_DDL)],
+        [
+            str(binary), "-i", str(OPENPAY_DIR), "--db", db,
+            "--ddl", str(OPENPAY_DDL), "--sql-dialect", "mysql",
+        ],
         capture_output=True,
         text=True,
         env=run_env,

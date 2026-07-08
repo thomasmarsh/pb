@@ -11,6 +11,7 @@ module PB.Pipeline.Runner
   , compileOne
   , appendToDb
   , catalogToRows
+  , parseDdlArg
   , CompiledFile (..)
   , CompiledPs (..)
   , CompiledDw (..)
@@ -46,7 +47,8 @@ import PB.Pipeline.Passes    (runPhaseB)
 import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse
   ( SqlResult (..), ColumnRef (..), RowFilter (..), SqlBridgePool
-  , TableRef (..), CatalogTable (..), CatalogPrimaryKey (..), CatalogForeignKey (..), SchemaCatalog (..)
+  , TableRef (..), CatalogTable (..), CatalogPrimaryKey (..), CatalogForeignKey (..)
+  , CatalogCheckConstraint (..), SchemaCatalog (..), DdlStats (..), DdlResponse (..)
   , startSqlBridgePool, shutdownSqlBridgePool
   , parseSql, parseDdl, extractBsRawNodes
   )
@@ -56,14 +58,14 @@ import PB.Pipeline.DuckDb
   , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
   , DwRetrieveTableRow (..), DwRetrieveColumnRow (..), DwJoinRow (..), SqlStmtRow (..)
   , SqlStmtColumnRow (..), SqlStmtFilterRow (..)
-  , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..)
+  , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..), CatalogCheckRow (..)
   , SourceFileRow (..)
   , appendObjects, appendProcedures
   , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwRetrieveColumns, appendDwJoins
   , appendLocalVars, appendCallSites, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
   , appendSqlStmtColumns, appendSqlStmtFilters
-  , appendCatalogColumns, appendCatalogPks, appendCatalogFks
+  , appendCatalogColumns, appendCatalogPks, appendCatalogFks, appendCatalogChecks
   , appendParseErrors, appendSourceFiles
   )
 
@@ -364,11 +366,12 @@ appendToDb _    CFSkip = pure ()
 -- | Flatten a 'SchemaCatalog' into DuckDB's row-oriented catalog tables,
 -- assigning positional ordinals (0-based) within each table/PK/FK group.
 -- Composite FKs pair @fromColumns[i]@ with @toColumns[i]@ by position.
-catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogFkRow])
+catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogFkRow], [CatalogCheckRow])
 catalogToRows cat =
   ( concatMap toColumnRows (scTables cat)
   , concatMap toPkRows (scPrimaryKeys cat)
   , concatMap toFkRows (scForeignKeys cat)
+  , map toCheckRow (scChecks cat)
   )
   where
     toColumnRows (CatalogTable ref cols) =
@@ -380,9 +383,31 @@ catalogToRows cat =
                      (trNamespace toRef) (trTable toRef) tc i
       | (i, fc, tc) <- zip3 [0 :: Int ..] fromCols toCols
       ]
+    toCheckRow (CatalogCheckConstraint mName ref predicate) =
+      CatalogCheckRow mName (trNamespace ref) (trTable ref) predicate
 
-runModeDb :: FilePath -> FilePath -> Maybe FilePath -> IO ()
-runModeDb srcDir dbPath mDdlPath = do
+-- | Split a @--ddl@ CLI argument in @[schema:]path@ form. The prefix is
+-- treated as a schema name only when it contains no path separator --
+-- otherwise (e.g. a bare relative/absolute path with no schema tag) the
+-- whole string is the path. Lets a dump file with an implicit schema
+-- (e.g. @clims.sql@, exported while connected to CLIMS) be tagged on the
+-- command line: @--ddl CLIMS:../clims.sql@.
+parseDdlArg :: Text -> (Maybe Text, FilePath)
+parseDdlArg arg =
+  case T.breakOn ":" arg of
+    (prefix, rest)
+      | not (T.null rest), not ("/" `T.isInfixOf` prefix) ->
+          (Just prefix, T.unpack (T.drop 1 rest))
+    _ -> (Nothing, T.unpack arg)
+
+-- | 'ddlArgs' are raw @--ddl@ CLI values in @[schema:]path@ form (see
+-- 'parseDdlArg'), one per DDL dump file -- e.g. multiple per-schema exports
+-- (@--ddl CLIMS:clims.sql --ddl CLIMS_COMMON:clims-common.sql@) whose
+-- cross-schema FK references resolve against each other once loaded.
+-- 'dialect' is the sqlglot dialect for both DDL and regular SQL-statement
+-- parsing (see 'PB.Pipeline.SqlParse.SqlBridgePool').
+runModeDb :: FilePath -> FilePath -> [Text] -> Text -> IO ()
+runModeDb srcDir dbPath ddlArgs dialect = do
   files <- walkAllSrFiles srcDir
   let total = length files
   emitProgress (object ["tag" .= ("total" :: Text), "n" .= total])
@@ -412,7 +437,7 @@ runModeDb srcDir dbPath mDdlPath = do
       appendToDb conn cf) stdlibParsed
     case mBridgeBin of
       Nothing -> do
-        for_ mDdlPath $ \_ -> emitProgress (object
+        for_ ddlArgs $ \_ -> emitProgress (object
           [ "tag" .= ("warning" :: Text)
           , "message" .= ("--ddl given but PB_SQL_WORKER not set; skipping DDL ingestion" :: Text)
           ])
@@ -424,14 +449,31 @@ runModeDb srcDir dbPath mDdlPath = do
           (\k -> workerLoopFilesNoBridge k workQ wsEnv conn mutex errCount)
           [0 .. nWorkers - 1]
       Just bin -> do
-        pool  <- startSqlBridgePool nWorkers bin
-        for_ mDdlPath $ \ddlPath -> do
+        pool <- startSqlBridgePool nWorkers bin dialect
+        for_ ddlArgs $ \rawArg -> do
+          let (mSchema, ddlPath) = parseDdlArg rawArg
           ddlText <- readFile ddlPath
-          catalog <- parseDdl pool "mysql" ddlText
-          let (colRows, pkRows, fkRows) = catalogToRows catalog
+          resp <- parseDdl pool mSchema ddlText
+          let stats = ddlStats resp
+              (colRows, pkRows, fkRows, checkRows) = catalogToRows (ddlCatalog resp)
           appendCatalogColumns conn colRows
           appendCatalogPks     conn pkRows
           appendCatalogFks     conn fkRows
+          appendCatalogChecks  conn checkRows
+          emitProgress (object
+            [ "tag" .= ("ddl_loaded" :: Text)
+            , "path" .= ddlPath
+            , "namespace" .= mSchema
+            , "parse_ok" .= ddlParseOk resp
+            , "error" .= ddlError resp
+            , "statements_total" .= dsStatementsTotal stats
+            , "statements_parsed" .= dsStatementsParsed stats
+            , "statements_skipped" .= dsStatementsSkipped stats
+            , "tables" .= length (scTables (ddlCatalog resp))
+            , "primary_keys" .= length pkRows
+            , "foreign_keys" .= length (scForeignKeys (ddlCatalog resp))
+            , "checks" .= length checkRows
+            ])
         workQ <- newTQueueIO
         atomically (mapM_ (writeTQueue workQ) files)
         mutex <- newMVar ()

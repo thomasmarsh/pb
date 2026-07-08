@@ -63,11 +63,14 @@ ddlWorkerLines =
   , "    m = read()"
   , "    if m is None: sys.exit(0)"
   , "    if m.get('kind') == 'ddl':"
-  , "        write({'kind': 'ddl', 'parse_ok': True, 'catalog': {"
+  , "        write({'kind': 'ddl', 'parse_ok': True, 'error': None,"
+  , "            'stats': {'statements_total': 1, 'statements_parsed': 1, 'statements_skipped': 0},"
+  , "            'catalog': {"
   , "            'tables': [{'namespace': None, 'table': 'afxfilterd', 'columns': ['kodfilterd', 'kodfilter']}],"
   , "            'primary_keys': [{'namespace': None, 'table': 'afxfilterd', 'columns': ['kodfilterd']}],"
   , "            'foreign_keys': [{'constraint_name': '0_15', 'from_namespace': None, 'from_table': 'afxfilterd',"
-  , "                'from_columns': ['kodfilter'], 'to_namespace': None, 'to_table': 'afxfilter', 'to_columns': ['kodfilter']}]"
+  , "                'from_columns': ['kodfilter'], 'to_namespace': None, 'to_table': 'afxfilter', 'to_columns': ['kodfilter']}],"
+  , "            'checks': [{'constraint_name': 'ck_1', 'namespace': None, 'table': 'afxfilterd', 'predicate': 'kodfilter > 0'}]"
   , "        }})"
   , "    else:"
   , "        write({'tables':['t'],'columns':['c'],'operation':'SELECT','parse_ok':True})"
@@ -217,14 +220,16 @@ tests = testGroup "SqlParse"
     ]
 
   , testGroup "SchemaCatalog decode"
-    [ testCase "decodes tables/primary_keys/foreign_keys" $ do
+    [ testCase "decodes tables/primary_keys/foreign_keys/checks" $ do
         let json = "{\"tables\":[{\"namespace\":null,\"table\":\"afxfilterd\",\
                     \\"columns\":[\"kodfilterd\",\"kodfilter\"]}],\
                     \\"primary_keys\":[{\"namespace\":null,\"table\":\"afxfilterd\",\
                     \\"columns\":[\"kodfilterd\"]}],\
                     \\"foreign_keys\":[{\"constraint_name\":\"0_15\",\
                     \\"from_namespace\":null,\"from_table\":\"afxfilterd\",\"from_columns\":[\"kodfilter\"],\
-                    \\"to_namespace\":null,\"to_table\":\"afxfilter\",\"to_columns\":[\"kodfilter\"]}]}"
+                    \\"to_namespace\":null,\"to_table\":\"afxfilter\",\"to_columns\":[\"kodfilter\"]}],\
+                    \\"checks\":[{\"constraint_name\":\"ck_1\",\"namespace\":null,\
+                    \\"table\":\"afxfilterd\",\"predicate\":\"kodfilter > 0\"}]}"
             mres = decode json :: Maybe SchemaCatalog
         case mres of
           Nothing -> assertFailure "SchemaCatalog failed to decode"
@@ -239,16 +244,27 @@ tests = testGroup "SqlParse"
             assertEqual "fk constraint name" (Just "0_15") (cfkConstraintName fk)
             assertEqual "fk from table" (TableRef Nothing "afxfilterd") (cfkFromTable fk)
             assertEqual "fk to table" (TableRef Nothing "afxfilter") (cfkToTable fk)
+            assertEqual "checks count" 1 (length (scChecks cat))
+            let chk = scChecks cat !! 0
+            assertEqual "check constraint name" (Just "ck_1") (cckConstraintName chk)
+            assertEqual "check predicate" "kodfilter > 0" (cckPredicate chk)
+
+    , testCase "missing checks key defaults to empty" $ do
+        let json = "{\"tables\":[],\"primary_keys\":[],\"foreign_keys\":[]}"
+            mres = decode json :: Maybe SchemaCatalog
+        case mres of
+          Nothing  -> assertFailure "SchemaCatalog failed to decode"
+          Just cat -> assertEqual "checks default" [] (scChecks cat)
     ]
 
   , testGroup "SqlBridgePool"
     [ testCase "missing binary raises exception" $ do
-        result <- try @SomeException (startSqlBridgePool 1 "/nonexistent/pb-sql-worker")
+        result <- try @SomeException (startSqlBridgePool 1 "/nonexistent/pb-sql-worker" "oracle")
         assertBool "should throw on missing binary" (isLeft result)
 
     , testCase "pool of 2: send 5 requests each, all succeed" $ do
         script <- installScript "pb_mock_worker.py" mockWorkerLines
-        pool   <- startSqlBridgePool 2 script
+        pool   <- startSqlBridgePool 2 script "oracle"
         results0 <- mapM (\_ -> parseSql pool 0 "SELECT foo FROM bar") [1..5 :: Int]
         results1 <- mapM (\_ -> parseSql pool 1 "SELECT baz FROM qux") [1..5 :: Int]
         traverse_ (\r -> assertEqual "parse_ok" True (srParseOk r))   (results0 <> results1)
@@ -258,7 +274,7 @@ tests = testGroup "SqlParse"
 
     , testCase "no cross-worker interference" $ do
         script <- installScript "pb_mock_worker.py" mockWorkerLines
-        pool   <- startSqlBridgePool 2 script
+        pool   <- startSqlBridgePool 2 script "oracle"
         r0 <- parseSql pool 0 "SELECT from_worker_0"
         r1 <- parseSql pool 1 "SELECT from_worker_1"
         assertEqual "w0 parse_ok" True (srParseOk r0)
@@ -270,7 +286,7 @@ tests = testGroup "SqlParse"
         -- The pool auto-restarts; the retry spawns a fresh crash-script process
         -- which handles that 1 retry request before exiting again.
         crashScript <- installScript "pb_crash_worker.py" crashWorkerLines
-        pool <- startSqlBridgePool 1 crashScript
+        pool <- startSqlBridgePool 1 crashScript "oracle"
         r1 <- parseSql pool 0 "SELECT 1"
         assertEqual "first call (before crash)" True (srParseOk r1)
         -- Worker crashed after responding. Next call triggers restart.
@@ -280,11 +296,14 @@ tests = testGroup "SqlParse"
 
     , testCase "parseDdl decodes catalog from ddl worker" $ do
         script <- installScript "pb_ddl_worker.py" ddlWorkerLines
-        pool   <- startSqlBridgePool 1 script
-        cat    <- parseDdl pool "mysql" "CREATE TABLE afxfilterd (...)"
+        pool   <- startSqlBridgePool 1 script "mysql"
+        resp   <- parseDdl pool Nothing "CREATE TABLE afxfilterd (...)"
+        assertEqual "parse_ok" True (ddlParseOk resp)
+        let cat = ddlCatalog resp
         assertEqual "tables count" 1 (length (scTables cat))
         assertEqual "fk from/to" (TableRef Nothing "afxfilterd", TableRef Nothing "afxfilter")
           (cfkFromTable (scForeignKeys cat !! 0), cfkToTable (scForeignKeys cat !! 0))
+        assertEqual "checks count" 1 (length (scChecks cat))
         shutdownSqlBridgePool pool
     ]
   ]

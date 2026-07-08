@@ -17,6 +17,7 @@ module PB.Pipeline.DuckDb
   , CatalogColumnRow (..)
   , CatalogPkRow (..)
   , CatalogFkRow (..)
+  , CatalogCheckRow (..)
   , SourceFileRow (..)
   -- Phase A appenders
   , appendObjects
@@ -37,6 +38,7 @@ module PB.Pipeline.DuckDb
   , appendCatalogColumns
   , appendCatalogPks
   , appendCatalogFks
+  , appendCatalogChecks
   , appendParseErrors
   , appendSourceFiles
   -- Phase B queries
@@ -183,6 +185,8 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       , "CREATE TABLE IF NOT EXISTS catalog_fks \
         \(constraint_name TEXT, from_namespace TEXT, from_table TEXT, from_column TEXT, \
         \to_namespace TEXT, to_table TEXT, to_column TEXT, ordinal INTEGER)"
+      , "CREATE TABLE IF NOT EXISTS catalog_checks \
+        \(constraint_name TEXT, namespace TEXT, table_name TEXT, predicate TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_controls \
         \(file TEXT, object TEXT, band TEXT, control_type TEXT, name TEXT, \
         \x INTEGER, y INTEGER, width INTEGER, height INTEGER, expression TEXT)"
@@ -374,6 +378,13 @@ data CatalogFkRow = CatalogFkRow
   , cfkrToTable        :: Text
   , cfkrToColumn       :: Text
   , cfkrOrdinal        :: Int
+  }
+
+data CatalogCheckRow = CatalogCheckRow
+  { cckrConstraintName :: Maybe Text
+  , cckrNamespace      :: Maybe Text
+  , cckrTableName      :: Text
+  , cckrPredicate      :: Text
   }
 
 data SourceFileRow = SourceFileRow
@@ -618,6 +629,16 @@ appendCatalogFks conn rows = withRaw conn "catalog_fks" $ \app ->
     aText      app (cfkrToTable        r)
     aText      app (cfkrToColumn       r)
     aInt       app (cfkrOrdinal        r)
+    endRow app
+
+appendCatalogChecks :: DuckConn -> [CatalogCheckRow] -> IO ()
+appendCatalogChecks _    [] = pure ()
+appendCatalogChecks conn rows = withRaw conn "catalog_checks" $ \app ->
+  for_ rows $ \r -> do
+    aMaybeText app (cckrConstraintName r)
+    aMaybeText app (cckrNamespace      r)
+    aText      app (cckrTableName      r)
+    aText      app (cckrPredicate      r)
     endRow app
 
 appendParseErrors :: DuckConn -> [(FilePath, Text)] -> IO ()

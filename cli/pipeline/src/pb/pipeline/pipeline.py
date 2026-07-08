@@ -52,7 +52,7 @@ def run(
     if sql_worker:
         run_env["PB_SQL_WORKER"] = str(sql_worker)
 
-    argv = [str(binary), "-i", str(src_dir), "--db", db_new]
+    argv = [str(binary), "-i", str(src_dir), "--db", db_new, "--sql-dialect", dialect]
     if ddl is not None:
         argv += ["--ddl", str(ddl)]
 

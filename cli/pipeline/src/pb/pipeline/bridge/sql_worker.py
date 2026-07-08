@@ -12,9 +12,15 @@ Response: {"tables": [...], "columns": [...], "operation": "SELECT", "parse_ok":
 
 A request with "kind": "ddl" is dispatched to parse_ddl instead:
 
-Request:  {"kind": "ddl", "ddl": "CREATE TABLE ...", "dialect": "mysql"}
+Request:  {"kind": "ddl", "ddl": "CREATE TABLE ...", "dialect": "mysql", "namespace": "CLIMS"}
 Response: {"kind": "ddl", "parse_ok": true,
-           "catalog": {"tables": [...], "primary_keys": [...], "foreign_keys": [...]}}
+           "catalog": {"tables": [...], "primary_keys": [...], "foreign_keys": [...], "checks": [...]},
+           "stats": {"statements_total": N, "statements_parsed": N, "statements_skipped": N},
+           "error": null}
+
+On a hard failure (an exception outside of sqlglot's own per-statement WARN-level
+recovery, e.g. a totally unreadable file), "parse_ok" is false, "catalog" is empty,
+and "error" carries the exception message instead of being silently swallowed.
 """
 
 from __future__ import annotations
@@ -24,7 +30,7 @@ import struct
 import sys
 from dataclasses import asdict
 
-from pb.lib.ddl import Catalog, parse_ddl
+from pb.lib.ddl import Catalog, DdlStats, parse_ddl
 from pb.lib.sql import parse_pb_sql
 
 _HEADER = struct.Struct(">I")
@@ -48,17 +54,31 @@ def _write_msg(stream, obj: dict) -> None:
     stream.flush()
 
 
-_EMPTY_CATALOG = asdict(Catalog(tables=[], primary_keys=[], foreign_keys=[]))
+_EMPTY_CATALOG = asdict(Catalog(tables=[], primary_keys=[], foreign_keys=[], checks=[]))
+_EMPTY_STATS = asdict(DdlStats(statements_total=0, statements_parsed=0, statements_skipped=0))
 
 
 def _handle_ddl(msg: dict) -> dict:
     ddl = msg.get("ddl", "")
     dialect = msg.get("dialect", "mysql")
+    namespace = msg.get("namespace")
     try:
-        catalog = parse_ddl(ddl, dialect)
-        return {"kind": "ddl", "parse_ok": True, "catalog": asdict(catalog)}
-    except Exception:
-        return {"kind": "ddl", "parse_ok": False, "catalog": _EMPTY_CATALOG}
+        catalog, stats = parse_ddl(ddl, dialect, namespace)
+        return {
+            "kind": "ddl",
+            "parse_ok": True,
+            "catalog": asdict(catalog),
+            "stats": asdict(stats),
+            "error": None,
+        }
+    except Exception as exc:
+        return {
+            "kind": "ddl",
+            "parse_ok": False,
+            "catalog": _EMPTY_CATALOG,
+            "stats": _EMPTY_STATS,
+            "error": str(exc),
+        }
 
 
 def main() -> None:

@@ -5,7 +5,7 @@ import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql
 import PB.Pipeline.Emit    (parsePowerScriptFile, ParsedFile (..), ParseOutcome (..))
 import PB.Pipeline.DuckDb
   ( ProcRow (..), SqlStmtColumnRow (..), SqlStmtFilterRow (..)
-  , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..)
+  , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..), CatalogCheckRow (..)
   , DwRetrieveColumnRow (..)
   )
 import PB.AST.BodyStmt     (BodyStmt (..))
@@ -22,7 +22,8 @@ import PB.Analysis.GraphBuilder (compileProcedureViaCatOp)
 import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse
   ( startSqlBridgePool, shutdownSqlBridgePool
-  , TableRef (..), CatalogTable (..), CatalogPrimaryKey (..), CatalogForeignKey (..), SchemaCatalog (..)
+  , TableRef (..), CatalogTable (..), CatalogPrimaryKey (..), CatalogForeignKey (..)
+  , CatalogCheckConstraint (..), SchemaCatalog (..)
   )
 
 import Data.Aeson (Value (..), object, decodeStrict, toJSON, (.=))
@@ -574,7 +575,7 @@ tests = testGroup "Pipeline.Runner"
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
           Right (sf, spans) -> do
             script <- installMockSqlWorkerWithRefs
-            pool   <- startSqlBridgePool 1 script
+            pool   <- startSqlBridgePool 1 script "oracle"
             let ws = buildWorkspaceEnv [sf]
                 pf = ParsedFile { pfPath = "uf_retrieve.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
             cf <- compileOne ws (Just (pool, 0)) "confirmed" (PsParsed pf)
@@ -599,14 +600,18 @@ tests = testGroup "Pipeline.Runner"
                       (TableRef Nothing "afxfilterd") ["kodfilter"]
                       (TableRef Nothing "afxfilter")  ["kodfilter"]
                   ]
+              , scChecks =
+                  [ CatalogCheckConstraint (Just "ck_1") (TableRef Nothing "afxfilterd") "kodfilter > 0" ]
               }
-            (colRows, pkRows, fkRows) = catalogToRows cat
+            (colRows, pkRows, fkRows, checkRows) = catalogToRows cat
         map cclrColumnName colRows @?= ["kodfilterd", "kodfilter"]
         map cclrOrdinal    colRows @?= [0, 1]
         map cpkrColumnName pkRows  @?= ["kodfilterd"]
         map cfkrFromColumn fkRows  @?= ["kodfilter"]
         map cfkrToColumn   fkRows  @?= ["kodfilter"]
         map cfkrConstraintName fkRows @?= [Just "0_15"]
+        map cckrConstraintName checkRows @?= [Just "ck_1"]
+        map cckrPredicate      checkRows @?= ["kodfilter > 0"]
 
     , testCase "composite FK pairs from/to columns positionally" $ do
         let cat = SchemaCatalog
@@ -617,8 +622,9 @@ tests = testGroup "Pipeline.Runner"
                       (TableRef Nothing "line_item") ["order_id", "line_no"]
                       (TableRef Nothing "orders")     ["id", "seq"]
                   ]
+              , scChecks = []
               }
-            (_, _, fkRows) = catalogToRows cat
+            (_, _, fkRows, _) = catalogToRows cat
         map cfkrFromColumn fkRows @?= ["order_id", "line_no"]
         map cfkrToColumn   fkRows @?= ["id", "seq"]
         map cfkrOrdinal    fkRows @?= [0, 1]

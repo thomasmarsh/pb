@@ -19,6 +19,40 @@ from pb.api.services.schema import (
 )
 
 
+def test_get_co_update_rituals_mixed_namespace_sort():
+    """Regression: ColumnKey's namespace is None for an unqualified column
+    (e.g. a DW-retrieve leg) and a string for a schema-qualified one (e.g. a
+    catalog-backed SQL leg) -- both can appear in the same corpus, and a bare
+    `sorted()` over (namespace, table, column) tuples raises TypeError
+    comparing None < str the moment one of each appears."""
+    conn = duckdb.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE schema_objects "
+        "(object_key TEXT, kind TEXT, namespace TEXT, table_name TEXT, column_name TEXT, "
+        "stmt_file TEXT, stmt_object TEXT, stmt_proc TEXT, stmt_line INTEGER)"
+    )
+    conn.execute("CREATE TABLE schema_morphisms (from_key TEXT, to_key TEXT, leg_kind TEXT, fk_source TEXT)")
+
+    conn.execute(
+        "INSERT INTO schema_objects VALUES "
+        "('stmt1', 'stmt', NULL, NULL, NULL, 'f.srw', 'w_f', 'p1', 1), "
+        "('stmt2', 'stmt', NULL, NULL, NULL, 'f.srw', 'w_f', 'p2', 2), "
+        "('col_unqual', 'column', NULL, 't1', 'c1', NULL, NULL, NULL, NULL), "
+        "('col_qual', 'column', 'clims', 't2', 'c2', NULL, NULL, NULL, NULL)"
+    )
+    conn.execute(
+        "INSERT INTO schema_morphisms VALUES "
+        "('stmt1', 'col_unqual', 'writes', NULL), "
+        "('stmt1', 'col_qual', 'writes', NULL), "
+        "('stmt2', 'col_unqual', 'writes', NULL), "
+        "('stmt2', 'col_qual', 'writes', NULL)"
+    )
+
+    result = get_co_update_rituals(conn, min_support=2)
+    assert len(result["rituals"]) == 1
+    assert result["rituals"][0]["co_write_support"] == 2
+
+
 def test_get_co_update_rituals_counts(schema_db_conn: duckdb.DuckDBPyConnection):
     result = get_co_update_rituals(schema_db_conn)
     # Re-verified 2026-07-07 against a freshly-rebuilt schema DB before
