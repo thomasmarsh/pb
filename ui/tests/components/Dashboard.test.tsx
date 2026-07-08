@@ -33,6 +33,13 @@ const sampleStats: StatsResponse = {
     { object: "w_base", pagerank: 0.05, in_degree: 30, out_degree: 10 },
     { object: "w_main", pagerank: 0.03, in_degree: 20, out_degree: 15 },
   ],
+  ddl_loaded: true,
+  unenforced_fk_count: 5,
+  unused_fk_count: 36,
+  corroborated_fk_count: 47,
+  dead_column_count: 4,
+  co_update_pair_count: 45,
+  co_update_violation_count: 0,
 };
 
 afterEach(() => {
@@ -114,5 +121,33 @@ describe("Dashboard component", () => {
       (a) => a.tag === "objects" && a.action.tag === "select",
     );
     expect(selectActions.length).toBe(1);
+  });
+
+  it("renders unenforced FKs and dead columns tiles when ddl_loaded", () => {
+    renderWithStore(Dashboard, {
+      dashboard: { ...initialDashboardState, stats: sampleStats },
+    });
+    expect(screen.getByText("Unenforced FKs")).toBeDefined();
+    expect(screen.getByText("5")).toBeDefined();
+    expect(screen.getByText("Dead Columns")).toBeDefined();
+    expect(screen.getByText("4")).toBeDefined();
+  });
+
+  it("renders Schema Integrity capability row when ddl_loaded", () => {
+    renderWithStore(Dashboard, {
+      dashboard: { ...initialDashboardState, stats: sampleStats },
+    });
+    expect(screen.getByText("Schema Integrity")).toBeDefined();
+    expect(screen.getByText("47 corroborated FKs · 5 unenforced · 0 co-update violations")).toBeDefined();
+  });
+
+  it("hides schema tiles and shows a banner when ddl is not loaded", () => {
+    const noDdlStats = { ...sampleStats, ddl_loaded: false };
+    renderWithStore(Dashboard, {
+      dashboard: { ...initialDashboardState, stats: noDdlStats },
+    });
+    expect(screen.queryByText("Unenforced FKs")).toBeNull();
+    expect(screen.queryByText("Dead Columns")).toBeNull();
+    expect(screen.getByText(/No DDL schema loaded/)).toBeDefined();
   });
 });

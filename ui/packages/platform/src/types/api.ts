@@ -187,6 +187,13 @@ export interface StatsResponse {
   resolved_type_count?: number;
   resolved_call_count?: number;
   dead_dw?: number;
+  ddl_loaded?: boolean;
+  unenforced_fk_count?: number;
+  unused_fk_count?: number;
+  corroborated_fk_count?: number;
+  dead_column_count?: number;
+  co_update_pair_count?: number;
+  co_update_violation_count?: number;
 }
 
 export interface QueryParam {

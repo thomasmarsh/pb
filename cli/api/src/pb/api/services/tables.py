@@ -7,6 +7,7 @@ from typing import Any
 
 import duckdb
 from pb.api.routes.dependencies import _WRITE_OPS, rows
+from pb.api.services.schema import get_co_update_rituals, get_column_usage, get_fk_graph
 
 
 def list_tables(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
@@ -288,5 +289,34 @@ def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         stats["dead_dw"] = row[0] if row else 0
     except Exception:
         stats["dead_dw"] = 0
+
+    try:
+        row = conn.execute("SELECT count(*) FROM catalog_columns").fetchone()
+        stats["ddl_loaded"] = bool(row and row[0] > 0)
+    except Exception:
+        stats["ddl_loaded"] = False
+
+    try:
+        fk_graph = get_fk_graph(conn)
+        stats["corroborated_fk_count"] = len(fk_graph["corroborated"])
+        stats["unenforced_fk_count"] = len(fk_graph["unenforced"])
+        stats["unused_fk_count"] = len(fk_graph["unused"])
+    except Exception:
+        stats["corroborated_fk_count"] = 0
+        stats["unenforced_fk_count"] = 0
+        stats["unused_fk_count"] = 0
+
+    try:
+        stats["dead_column_count"] = len(get_column_usage(conn)["dead"])
+    except Exception:
+        stats["dead_column_count"] = 0
+
+    try:
+        rituals = get_co_update_rituals(conn)["rituals"]
+        stats["co_update_pair_count"] = len(rituals)
+        stats["co_update_violation_count"] = sum(len(r["violations"]) for r in rituals)
+    except Exception:
+        stats["co_update_pair_count"] = 0
+        stats["co_update_violation_count"] = 0
 
     return stats

@@ -156,6 +156,10 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
     { label: "DB Tables",         value: fmt(s()?.tables),     route: { view: "tables" }        as Route },
     { label: "Procedures",        value: fmt(s()?.procedures), route: { view: "proceduresList" } as Route },
     { label: "Unreferenced DWs",  value: fmt(s()?.dead_dw),   route: { view: "queries", queryName: "dead-dw" } as Route },
+    ...(s()?.ddl_loaded ? [
+      { label: "Unenforced FKs", value: fmt(s()?.unenforced_fk_count), route: { view: "diagrams" } as Route },
+      { label: "Dead Columns",   value: fmt(s()?.dead_column_count),   route: { view: "tables" }   as Route },
+    ] : []),
   ]);
 
   return (
@@ -193,6 +197,13 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
         </div>
       </Show>
 
+      {/* DDL-not-loaded banner */}
+      <Show when={s()?.ddl_loaded === false}>
+        <div class="parse-error-banner">
+          <span><AlertTriangle size={13} style={{ "vertical-align": "middle" }} /> No DDL schema loaded — FK and column-usage findings are incomplete. Re-index with <code>--ddl</code>.</span>
+        </div>
+      </Show>
+
       {/* Analysis capability rows */}
       <div class="card" style={{ "margin-bottom": "16px" }}>
         <div class="card-header"><h2>Analysis</h2></div>
@@ -217,6 +228,14 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
               ? `${fmt(s()!.taint_path_count)} taint path${s()!.taint_path_count === 1 ? "" : "s"}`
               : "—"}
             route={{ view: "taintExplorer" }}
+            store={store}
+          />
+          <CapabilityRow
+            label="Schema Integrity"
+            metric={s()?.ddl_loaded
+              ? `${fmt(s()!.corroborated_fk_count)} corroborated FKs · ${fmt(s()!.unenforced_fk_count)} unenforced · ${fmt(s()!.co_update_violation_count)} co-update violation${s()!.co_update_violation_count === 1 ? "" : "s"}`
+              : "—"}
+            route={s()?.ddl_loaded ? { view: "diagrams" } : null}
             store={store}
           />
         </div>

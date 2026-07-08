@@ -67,3 +67,39 @@ def test_get_table_stats(db_conn: duckdb.DuckDBPyConnection):
     assert "by_kind" in result
     assert "top_complex" in result
     assert "top_pagerank" in result
+
+
+def test_get_table_stats_ddl_not_loaded(db_conn: duckdb.DuckDBPyConnection):
+    # db_conn is built without --ddl or the SQL bridge (see conftest.py).
+    # catalog_columns/catalog_fks/sql_statement_columns are empty, but
+    # dw_joins (native Haskell AST parsing, no bridge needed) is NOT — so
+    # get_fk_graph's "unenforced" bucket is every dw_join edge (none can be
+    # corroborated with no DDL to check against), not 0. This is the exact
+    # silent-degradation trap Plan 154 exists to surface: without ddl_loaded,
+    # a nonzero unenforced_fk_count means "can't check", not "checked, found
+    # 52 real violations". corroborated/unused genuinely are 0 (both require
+    # catalog_fks). dead_column_count/co_update_* genuinely are 0 too
+    # (catalog_columns and sql_statement_columns are both bridge/DDL-gated).
+    result = get_table_stats(db_conn)
+    assert result["ddl_loaded"] is False
+    assert result["unenforced_fk_count"] == 52
+    assert result["unused_fk_count"] == 0
+    assert result["corroborated_fk_count"] == 0
+    assert result["dead_column_count"] == 0
+    assert result["co_update_pair_count"] == 0
+    assert result["co_update_violation_count"] == 0
+
+
+def test_get_table_stats_with_ddl_loaded(schema_db_conn: duckdb.DuckDBPyConnection):
+    # schema_db_conn is built with --ddl + the SQL bridge — pinned to the
+    # same real openpay counts test_schema_service.py's D1/D2/D4 tests
+    # already verify independently (47/5/36 FKs, 4 dead columns, 45 pairs /
+    # 0 violations at the default min_support=2).
+    result = get_table_stats(schema_db_conn)
+    assert result["ddl_loaded"] is True
+    assert result["corroborated_fk_count"] == 47
+    assert result["unenforced_fk_count"] == 5
+    assert result["unused_fk_count"] == 36
+    assert result["dead_column_count"] == 4
+    assert result["co_update_pair_count"] == 45
+    assert result["co_update_violation_count"] == 0
