@@ -1976,6 +1976,15 @@ kbd.kbd {
     padding-bottom: 4px;
     border-bottom: 1px solid var(--border);
     margin-bottom: 4px;
+    /* .decomp-detail (the scroll container) has many trees stacked with
+       potentially 100+ rows each — once you scroll past a tree's own
+       header its rows read as an anonymous list with no indication of
+       which root/direction they belong to. Sticking each header to the
+       top of the scroll area keeps that context visible; stacking is the
+       native "sibling sticky headers" effect (each header pins at top:0
+       until the next one's normal flow position reaches it). */
+    position: sticky; top: 0; z-index: 1;
+    background: var(--bg-card);
 }
 .decomp-tree-count { white-space: nowrap; }
 .decomp-tree-rows { display: flex; flex-direction: column; }
