@@ -27,12 +27,25 @@ and "error" carries the exception message instead of being silently swallowed.
 from __future__ import annotations
 
 import json
+import logging
 import struct
 import sys
 from dataclasses import asdict
 
 from pb.lib.ddl import Catalog, DdlStats, parse_ddl
 from pb.lib.sql import parse_pb_sql
+
+# sqlglot's own internal logger writes truncated RAW SQL -- including real
+# table/schema/column names from whatever DDL/SQL this worker is asked to
+# parse -- to stderr on every WARN-level parse fallback (logger.warning)
+# and on each individual parse error under WARN error_level (logger.error).
+# That doesn't corrupt this process's stdout wire protocol, but it does
+# leak customer schema content into stderr, which `pb index` and anything
+# else driving this worker will surface to whoever is watching. CRITICAL
+# is the only threshold that silences both calls (ERROR alone still lets
+# logger.error(...) through -- confirmed the same way for the standalone
+# scripts/diagnose_ddl_skips.py diagnostic).
+logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
 
 _HEADER = struct.Struct(">I")
 
