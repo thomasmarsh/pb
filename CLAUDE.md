@@ -815,7 +815,9 @@ stripBom          :: Text -> Text
 
 ```haskell
 -- Phase B orchestration: link analysis (passes 5-10) in DuckDB mode.
-runPhaseB :: DuckConn -> IO ()
+runPhaseB :: DuckConn -> Maybe Text -> IO ()
+-- 2nd param is mDefaultNamespace (Plan 157 Phase 1, 2026-07-09), threaded
+-- through from Runner.runModeDb's --default-namespace flag into runPass9.
 -- Internally: runPass5 (resolveTypes + resolveCalls → resolved_types/calls),
 --             runPass67 (buildInterprocEdges + taint → interproc_edges/taint_*),
 --             runPass8 (computeDeadProcedures → dead_code)
@@ -823,10 +825,11 @@ runPhaseB :: DuckConn -> IO ()
 --               queryDwJoinLegs/querySqlCols/queryCatColumns/queryCatFks →
 --               SchemaCategory.buildSchema → schema_objects/schema_morphisms;
 --               now returns SchGraph, not (), so Pass 10 can traverse it
---               without rebuilding from DB rows)
+--               without rebuilding from DB rows. mDefaultNamespace (Plan 157
+--               Phase 1) flows into SchemaInputs' inDefaultNamespace field.)
 --             runPass10 (Plan 153 D5, 2026-07-07: columnCoslice over every
 --               ColumnObj in the graph → decomposition_coslice)
-runPass9  :: DuckConn -> IO SchGraph
+runPass9  :: DuckConn -> Maybe Text -> IO SchGraph
 runPass10 :: DuckConn -> SchGraph -> IO ()
 ```
 
@@ -909,7 +912,7 @@ extractBsRawNodes :: [Located BodyStmt] -> [(Int, Text)]          -- recurses in
 ```haskell
 -- Batch orchestration: DuckDB streaming, worker loops.
 -- Re-exports from Emit: runFile, collectStatements, wrapSrFile, extractWindowLayout, reconstructRetrieveSql
-runModeDb :: FilePath -> FilePath -> [Text] -> Text -> Maybe FilePath -> IO ()
+runModeDb :: FilePath -> FilePath -> [Text] -> Text -> Maybe FilePath -> Maybe Text -> IO ()
 -- srcDir, dbPath, ddlArgs, dialect, mSqlWorkerFlag (Plan 148 Phase 1a-3; Oracle
 -- hardening 2026-07-08 changed the DDL param from Maybe FilePath to [Text] and
 -- added the dialect param). ddlArgs are raw --ddl CLI values in [schema:]path
@@ -940,7 +943,11 @@ runModeDb :: FilePath -> FilePath -> [Text] -> Text -> Maybe FilePath -> IO ()
 -- (the original bug report) can never go unnoticed again. When no bridge,
 -- emits a "warning" progress event per ddlArg and skips (no hard error).
 -- Main.hs's --ddl/--sql-dialect/--sql-worker-python flags thread through
--- here.
+-- here. The final 'Maybe Text' param is --default-namespace (Plan 157;
+-- Phase 0 threaded it this far as mDefaultNamespace, Phase 1 wires it
+-- through runPhaseB/runPass9 into SchemaCategory.buildSchema, which
+-- resolves an unqualified table ref to this namespace iff the DDL catalog
+-- defines the table under it -- never guessed).
 parseDdlArg :: Text -> (Maybe Text, FilePath)
 -- Pure. Splits a --ddl CLI value in [schema:]path form -- the prefix before
 -- the first ':' is treated as a schema tag only when it contains no '/' (so
@@ -956,7 +963,8 @@ catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogF
 -- Phase 1b, 2026-07-07): compileOne's PsDw branch splits each DwRetrieve's
 -- drColumns via SchemaCategory.splitColumnRef.
 -- Phase A: parse → compile → append to DuckDB (concurrent producer-consumer)
--- Phase B: delegates to PB.Pipeline.Passes.runPhaseB
+-- Phase B: delegates to PB.Pipeline.Passes.runPhaseB (takes the
+-- mDefaultNamespace param, Plan 157 Phase 1)
 --
 -- Plan 144 Phase 5 Step 7 (2026-07-06): the old CpsCompile.compileProcedure
 -- compiler and every diagnostic that compared it against
@@ -1339,8 +1347,8 @@ splitColumnRef :: Text -> Maybe (TableRef, Text)
 -- Last-dot split (namespace.table.column), lowercased. Nothing for
 -- unqualified text or a malformed ref (trailing dot etc).
 
--- SchemaInputs' five fields are Analysis-owned "read-shape" row types --
--- distinct from (but same-shaped as) PB.Pipeline.DuckDb's write-side row
+-- SchemaInputs' first five fields are Analysis-owned "read-shape" row types
+-- -- distinct from (but same-shaped as) PB.Pipeline.DuckDb's write-side row
 -- types (DwJoinRow/SqlStmtColumnRow/CatalogColumnRow/CatalogFkRow), same
 -- split as TypeResolve.ResolvedCall (write) vs. Taint.ResolvedCallRow
 -- (read) for resolved_calls. Keeps PB.Analysis.* free of any
@@ -1358,11 +1366,22 @@ data CatFkRow     = CatFkRow { cfrFromNamespace :: Maybe Text, cfrFromTable, cfr
                               , cfrToNamespace :: Maybe Text, cfrToTable, cfrToColumn :: Text }
 data SchemaInputs = SchemaInputs { inDwRetrieveColumns :: [DwRetrieveColRow], inDwJoins :: [DwJoinLegRow]
                                   , inSqlColumns :: [SqlColRow], inCatalogColumns :: [CatColumnRow]
-                                  , inCatalogFks :: [CatFkRow] }
+                                  , inCatalogFks :: [CatFkRow], inDefaultNamespace :: Maybe Text }
 buildSchema :: SchemaInputs -> SchGraph   -- total, pure
 -- Catalog-only columns (no statement/JOIN touches them) still become
 -- objects with no legs -- a free normalization signal (dead-column
 -- candidates); see done-condition verification below for real counts.
+-- inDefaultNamespace (Plan 157 Phase 1, 2026-07-09): a local unexported
+-- resolveTableRef helper resolves a Nothing-namespace TableRef (built at
+-- the sqlLegs/dwRetrieveLegs/dwJoinLegs construction sites) to
+-- TableRef (Just ns) tbl iff inCatalogColumns actually defines (ns, tbl)
+-- -- never guessed; already-qualified refs and DDL-sourced legs
+-- (ddlFkLegs, catalogOnlyObjects) are untouched. This is what unifies an
+-- unqualified SQL/DW-retrieve column with the catalog's schema-qualified
+-- ColumnObj for the same physical table (the root cause behind an
+-- empty-looking column-affinity/decomposition/FK-graph query for any
+-- table whose real touches are all unqualified -- see BACKLOG/doc/plan/
+-- 157-default-namespace.md).
 
 -- Traversal (Phase 2, 2026-07-07). Shared cycle-safe walker: a path-local
 -- visited set means an object already on the current path is never

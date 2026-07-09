@@ -18,7 +18,7 @@ import Test.Tasty.Hedgehog    (testProperty)
 -- Helpers
 
 emptyInputs :: SchemaInputs
-emptyInputs = SchemaInputs [] [] [] [] []
+emptyInputs = SchemaInputs [] [] [] [] [] Nothing
 
 tests :: TestTree
 tests = testGroup "SchemaCategory"
@@ -122,6 +122,79 @@ tests = testGroup "SchemaCategory"
           assertBool "catalog-only column is an object" (Set.member unusedObj (sgObjects sch))
           assertBool "catalog-only column has no legs"
             (not (any (\m -> legFrom m == unusedObj || legTo m == unusedObj) (sgLegs sch)))
+    ]
+
+  , testGroup "defaultNamespace"
+    [ testCase "unqualified SQL column unifies with catalog-only ColumnObj under matching default namespace" $
+        let sid = SqlStmtId "f.srf" "obj" "proc" 5
+            resolvedObj = ColumnObj (TableRef (Just "clims") "clinicalaccession") "id"
+            inp = emptyInputs
+              { inSqlColumns =
+                  [ SqlColRow sid Nothing (Just "clinicalaccession") "id" False ]
+              , inCatalogColumns =
+                  [ CatColumnRow (Just "clims") "clinicalaccession" "id" ]
+              , inDefaultNamespace = Just "clims"
+              }
+            sch = buildSchema inp
+        in do
+          assertBool "resolved (clims-qualified) object present"
+            (Set.member resolvedObj (sgObjects sch))
+          assertBool "no unresolved (unqualified) duplicate object"
+            (not (Set.member (ColumnObj (TableRef Nothing "clinicalaccession") "id") (sgObjects sch)))
+          assertBool "reads leg attaches to the resolved object"
+            (SchMorphism resolvedObj (StmtObj sid) LegReads `elem` sgLegs sch)
+
+    , testCase "unqualified ref stays unresolved when default namespace's catalog has no matching table" $
+        let sid = SqlStmtId "f.srf" "obj" "proc" 5
+            unresolvedObj = ColumnObj (TableRef Nothing "orphan_table") "id"
+            inp = emptyInputs
+              { inSqlColumns =
+                  [ SqlColRow sid Nothing (Just "orphan_table") "id" False ]
+              , inCatalogColumns =
+                  [ CatColumnRow (Just "clims") "other_table" "id" ]
+              , inDefaultNamespace = Just "clims"
+              }
+            sch = buildSchema inp
+        in do
+          assertBool "unresolved object present"
+            (Set.member unresolvedObj (sgObjects sch))
+          assertBool "reads leg attaches to the unresolved object"
+            (SchMorphism unresolvedObj (StmtObj sid) LegReads `elem` sgLegs sch)
+
+    , testCase "no default namespace configured leaves TableRef Nothing unchanged (regression pin)" $
+        let sid = SqlStmtId "f.srf" "obj" "proc" 5
+            inp = emptyInputs
+              { inSqlColumns = [ SqlColRow sid Nothing (Just "account") "balance" True ]
+              , inCatalogColumns = [ CatColumnRow (Just "clims") "account" "balance" ]
+              , inDefaultNamespace = Nothing
+              }
+            sch = buildSchema inp
+        in assertBool "leg still targets the unqualified (Nothing-namespace) object"
+             (SchMorphism (StmtObj sid) (ColumnObj (TableRef Nothing "account") "balance") LegWrites
+                `elem` sgLegs sch)
+
+    , testCase "table defined in multiple namespaces: only the default-namespace copy absorbs unqualified legs" $
+        let sid = SqlStmtId "f.srf" "obj" "proc" 5
+            resolvedObj    = ColumnObj (TableRef (Just "clims") "clinicalaccession") "id"
+            commonObj      = ColumnObj (TableRef (Just "clims_common") "clinicalaccession") "id"
+            archiveObj     = ColumnObj (TableRef (Just "clims_archive") "clinicalaccession") "id"
+            inp = emptyInputs
+              { inSqlColumns =
+                  [ SqlColRow sid Nothing (Just "clinicalaccession") "id" False ]
+              , inCatalogColumns =
+                  [ CatColumnRow (Just "clims") "clinicalaccession" "id"
+                  , CatColumnRow (Just "clims_common") "clinicalaccession" "id"
+                  , CatColumnRow (Just "clims_archive") "clinicalaccession" "id"
+                  ]
+              , inDefaultNamespace = Just "clims"
+              }
+            sch = buildSchema inp
+            hasLegTo o = any (\m -> legTo m == o || legFrom m == o) (sgLegs sch)
+        in do
+          assertBool "default-namespace copy absorbs the unqualified leg"
+            (SchMorphism resolvedObj (StmtObj sid) LegReads `elem` sgLegs sch)
+          assertBool "clims_common copy has no legs" (not (hasLegTo commonObj))
+          assertBool "clims_archive copy has no legs" (not (hasLegTo archiveObj))
     ]
 
   , testGroup "SchPath"
@@ -445,3 +518,4 @@ genSchemaInputs = SchemaInputs
   <*> Gen.list (Range.linear 0 4) genSqlColRow
   <*> Gen.list (Range.linear 0 4) genCatColumnRow
   <*> Gen.list (Range.linear 0 4) genCatFkRow
+  <*> genMaybeNs

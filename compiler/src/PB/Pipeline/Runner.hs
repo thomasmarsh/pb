@@ -417,11 +417,12 @@ parseDdlArg arg =
 -- back to the PB_SQL_WORKER env var (lookupEnv, expected to hold a python
 -- interpreter path too) when the flag is omitted, for direct/manual
 -- `cabal run pbc --` invocations. The final 'Maybe Text' is
--- @--default-namespace@ (Plan 157 Phase 0): threaded this far only -- Phase 1
--- wires it into 'runPass9'/'buildSchema' so unqualified table references can
--- resolve against it. Underscore-prefixed until then to keep -Wall clean.
+-- @--default-namespace@ (Plan 157): threaded into 'runPhaseB' -> 'runPass9'
+-- -> 'buildSchema', which resolves an unqualified SQL/DW-retrieve/DW-join
+-- table reference against it iff the DDL catalog defines the table under
+-- that namespace -- never guessed.
 runModeDb :: FilePath -> FilePath -> [Text] -> Text -> Maybe FilePath -> Maybe Text -> IO ()
-runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag _mDefaultNamespace = do
+runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
   files <- walkAllSrFiles srcDir
   let total = length files
   emitProgress (object ["tag" .= ("total" :: Text), "n" .= total])
@@ -499,7 +500,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag _mDefaultNamespace = do
           (\k -> workerLoopFiles k workQ pool wsEnv conn mutex errCount)
           [0 .. nWorkers - 1]
           `finally` shutdownSqlBridgePool pool
-    runPhaseB conn  -- Phase B: link analysis (passes 5–8)
+    runPhaseB conn mDefaultNamespace  -- Phase B: link analysis (passes 5–8)
 
   errors <- readIORef errCount
   emitProgress (object ["tag" .= ("done" :: Text), "parsed" .= (total - errors), "errors" .= errors])

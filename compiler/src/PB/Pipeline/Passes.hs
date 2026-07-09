@@ -46,13 +46,13 @@ lastName t = T.takeWhileEnd (/= '.') t
 -- | Phase B: read Phase A tables from DuckDB, run link analysis, write results.
 -- Runs sequentially after Phase A is complete. Split into three functions so
 -- each pass's bindings go out of scope (and are GC-eligible) before the next.
-runPhaseB :: DuckConn -> IO ()
-runPhaseB conn = do
+runPhaseB :: DuckConn -> Maybe Text -> IO ()
+runPhaseB conn mDefaultNamespace = do
   emitProgress (object ["tag" .= ("phase" :: Text), "name" .= ("B" :: Text)])
   inh   <- runPass5  conn
   allRC <- runPass67 conn
   runPass8 conn inh allRC
-  sch   <- runPass9 conn
+  sch   <- runPass9 conn mDefaultNamespace
   runPass10 conn sch
 
 runPass5 :: DuckConn -> IO (Map.Map Text Text)
@@ -111,11 +111,12 @@ runPass8 conn inh allRC = do
                procs rawCalls resolvedCalls (Map.toList inh) dws
   appendDeadCode conn dead
 
--- | Pass 9 (Plan 148 Phase 1b): materialize the schema category @Sch@ from
--- Phase A's DW-retrieve/DW-join/SQL-column/DDL-catalog tables. Returns the
--- graph so Pass 10 can traverse it without rebuilding from DB rows.
-runPass9 :: DuckConn -> IO SchGraph
-runPass9 conn = do
+-- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157
+-- Phase 1): materialize the schema category @Sch@ from Phase A's
+-- DW-retrieve/DW-join/SQL-column/DDL-catalog tables. Returns the graph so
+-- Pass 10 can traverse it without rebuilding from DB rows.
+runPass9 :: DuckConn -> Maybe Text -> IO SchGraph
+runPass9 conn mDefaultNamespace = do
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Building schema category" :: Text)])
   drCols  <- queryDwRetrieveColumns conn
   djLegs  <- queryDwJoinLegs        conn
@@ -128,6 +129,7 @@ runPass9 conn = do
         , inSqlColumns        = sqlCols
         , inCatalogColumns    = catCols
         , inCatalogFks        = catFks
+        , inDefaultNamespace  = mDefaultNamespace
         }
   appendSchemaObjects   conn (Set.toList (sgObjects sch))
   appendSchemaMorphisms conn (sgLegs sch)

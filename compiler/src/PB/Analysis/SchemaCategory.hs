@@ -201,6 +201,12 @@ data SchemaInputs = SchemaInputs
   , inSqlColumns        :: [SqlColRow]
   , inCatalogColumns    :: [CatColumnRow]
   , inCatalogFks        :: [CatFkRow]
+  , inDefaultNamespace  :: Maybe Text
+    -- ^ Plan 157 Phase 1: the corpus's configured default schema
+    -- (@--default-namespace@). An unqualified 'TableRef' in
+    -- 'inSqlColumns'/'inDwRetrieveColumns'/'inDwJoins' resolves to this
+    -- namespace only when the DDL catalog ('inCatalogColumns') actually
+    -- defines the table under it — never guessed.
   } deriving (Show, Eq)
 
 -- | Total, pure: builds the full 'SchGraph' from Phase A/DDL inputs.
@@ -216,9 +222,26 @@ buildSchema inputs =
     , sgIn      = Map.fromListWith (<>) [ (legTo m,   [m]) | m <- allLegs ]
     }
   where
+    -- | (namespace, table) pairs the DDL catalog actually defines, restricted
+    -- to Just-namespace rows — "is this table real under the default schema."
+    catalogNamespacedTables :: Set.Set (Text, Text)
+    catalogNamespacedTables = Set.fromList
+      [ (ns, cclTable c) | c <- inCatalogColumns inputs, Just ns <- [cclNamespace c] ]
+
+    -- | Resolve a Nothing-namespace 'TableRef' against the configured default
+    -- namespace, iff the DDL catalog defines that table under it. Already-
+    -- qualified refs and refs with no matching catalog entry pass through
+    -- unchanged — never guessed.
+    resolveTableRef :: TableRef -> TableRef
+    resolveTableRef tr@(TableRef (Just _) _) = tr
+    resolveTableRef tr@(TableRef Nothing tbl) =
+      case inDefaultNamespace inputs of
+        Just ns | Set.member (ns, tbl) catalogNamespacedTables -> TableRef (Just ns) tbl
+        _ -> tr
+
     dwRetrieveLegs =
       [ SchMorphism (StmtObj (DwRetrieveId (drcFile r) (drcDwName r)))
-                     (ColumnObj (TableRef (drcNamespace r) (drcTable r)) (drcColumn r))
+                     (ColumnObj (resolveTableRef (TableRef (drcNamespace r) (drcTable r))) (drcColumn r))
                      LegRetrieve
       | r <- inDwRetrieveColumns inputs
       ]
@@ -227,7 +250,7 @@ buildSchema inputs =
       [ SchMorphism from to kind
       | r <- inSqlColumns inputs
       , Just tbl <- [scTable r]
-      , let colObj  = ColumnObj (TableRef (scNamespace r) tbl) (scColumn r)
+      , let colObj  = ColumnObj (resolveTableRef (TableRef (scNamespace r) tbl)) (scColumn r)
             stmtObj = StmtObj (scStmt r)
             (from, to, kind)
               | scIsWrite r = (stmtObj, colObj, LegWrites)
@@ -235,7 +258,7 @@ buildSchema inputs =
       ]
 
     dwJoinLegs =
-      [ SchMorphism (ColumnObj lt lc) (ColumnObj rt rc) (LegFk FkDwJoin)
+      [ SchMorphism (ColumnObj (resolveTableRef lt) lc) (ColumnObj (resolveTableRef rt) rc) (LegFk FkDwJoin)
       | j <- inDwJoins inputs
       , Just (lt, lc) <- [splitColumnRef (djlLeftRef j)]
       , Just (rt, rc) <- [splitColumnRef (djlRightRef j)]
