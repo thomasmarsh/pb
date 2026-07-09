@@ -6,8 +6,14 @@
 // shared prefixes so the UI doesn't repeat them on every row.
 
 import { describe, it, expect } from "vitest";
-import { buildPathForest, schemaObjectKey } from "../../app/src/views/features/analysis/DecompositionCandidatesCore.js";
-import type { DecompositionEvidencePath, SchemaObjectRef } from "@pb/platform";
+import { fireEvent, render } from "@solidjs/testing-library";
+import {
+  buildPathForest,
+  schemaObjectKey,
+  DecompositionCandidatesTable,
+} from "../../app/src/views/features/analysis/DecompositionCandidatesCore.js";
+import { createTestStore } from "../helpers.js";
+import type { DecompositionCandidate, DecompositionEvidencePath, SchemaObjectRef } from "@pb/platform";
 
 const col = (column: string): SchemaObjectRef => ({ kind: "column", namespace: null, table: "orders", column });
 const sql = (proc: string, line: number): SchemaObjectRef => ({
@@ -120,5 +126,69 @@ describe("buildPathForest", () => {
     const depths = forest[0]!.rows.map((r) => r.depth);
     // a(0), stmt1(1) shared once, then x(2)+b(3) and y(2)+c(3) each on their own branch.
     expect(depths).toEqual([0, 1, 2, 3, 2, 3]);
+  });
+});
+
+// DecompositionCandidatesTable — expandable-row accordion replacing the old
+// side-by-side master/detail split (Plan 158 follow-up: fixed-height detail
+// pane fell out of view on a long scroll, hover-preview made it easy to
+// clip a neighboring row's evidence by accident). Rows expand independently
+// rather than accordion-exclusive, so two candidates can be compared.
+function candidate(column: string, target: SchemaObjectRef): DecompositionCandidate {
+  return {
+    columns: [column],
+    similarity: 0.9,
+    ritual_support: 1,
+    unenforced_fk_count: 0,
+    coslice_size: 1,
+    score: 0.5,
+    paths: [{ target, direction: "forward", legs: [] }],
+  };
+}
+
+function renderTable(candidates: DecompositionCandidate[]) {
+  const { store } = createTestStore();
+  return render(() => <DecompositionCandidatesTable candidates={candidates} store={store} />);
+}
+
+function evidenceHeadings(): string[] {
+  return [...document.querySelectorAll(".decomp-evidence-row")].map((row) => row.textContent ?? "");
+}
+
+function rows(): HTMLElement[] {
+  return [...document.querySelectorAll(".decomp-row")] as HTMLElement[];
+}
+
+describe("DecompositionCandidatesTable", () => {
+  const candidates = [candidate("a", col("a")), candidate("b", col("b"))];
+
+  it("expands the top-ranked candidate by default", () => {
+    renderTable(candidates);
+    expect(evidenceHeadings()).toHaveLength(1);
+    expect(evidenceHeadings()[0]).toContain("Evidence for a");
+  });
+
+  it("expands a clicked row without collapsing a previously expanded one", () => {
+    renderTable(candidates);
+    fireEvent.click(rows()[1]!);
+    const headings = evidenceHeadings();
+    expect(headings).toHaveLength(2);
+    expect(headings.some((h) => h.includes("Evidence for a"))).toBe(true);
+    expect(headings.some((h) => h.includes("Evidence for b"))).toBe(true);
+  });
+
+  it("collapses a row when it is clicked again, leaving others expanded", () => {
+    renderTable(candidates);
+    fireEvent.click(rows()[1]!); // expand b, a stays expanded
+    fireEvent.click(rows()[0]!); // collapse a
+    const headings = evidenceHeadings();
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toContain("Evidence for b");
+  });
+
+  it("renders an empty candidates list with no expanded rows and no crash", () => {
+    renderTable([]);
+    expect(rows()).toHaveLength(0);
+    expect(evidenceHeadings()).toHaveLength(0);
   });
 });

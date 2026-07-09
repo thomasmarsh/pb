@@ -396,7 +396,7 @@ describe("TableDetail source-first", () => {
       expect(document.body.textContent).not.toContain("employee_profile");
     });
 
-    describe("columns-view layout (Finder-style master/detail)", () => {
+    describe("expandable evidence rows (Finder-style accordion)", () => {
       function twoCandidateData(): DecompositionCandidatesResponse {
         return {
           table: "orders",
@@ -441,68 +441,56 @@ describe("TableDetail source-first", () => {
       }
 
       function decompRow(colText: string): Element | undefined {
-        return [...document.querySelectorAll(".decomp-master tbody tr")].find((r) =>
+        return [...document.querySelectorAll(".decomp-row")].find((r) =>
           r.textContent?.includes(colText),
         );
       }
 
-      it("renders a master pane with only scoring columns and a separate detail pane", () => {
+      function evidenceRows(): Element[] {
+        return [...document.querySelectorAll(".decomp-evidence-row")];
+      }
+
+      it("renders a single table with scoring columns, no separate master/detail split", () => {
         renderTableDetail(baseDetail, null, null, twoCandidateData());
         fireEvent.click(summaryPillBtn("Decomposition")!);
 
-        expect(document.querySelector(".decomp-master")).not.toBeNull();
-        expect(document.querySelector(".decomp-detail")).not.toBeNull();
-        // Master pane header has no "Evidence paths" column.
-        const masterHeaders = [...document.querySelectorAll(".decomp-master thead th")].map((h) => h.textContent);
-        expect(masterHeaders).not.toContain("Evidence paths");
+        expect(document.querySelector(".decomp-table-wrap")).not.toBeNull();
+        expect(document.querySelector(".decomp-master")).toBeNull();
+        expect(document.querySelector(".decomp-detail")).toBeNull();
+        // No "Evidence paths" column mixed into the scoring table's header.
+        const headers = [...document.querySelectorAll(".decomp-table-wrap thead th")].map((h) => h.textContent);
+        expect(headers).not.toContain("Evidence paths");
         expect(document.body.textContent).toContain("a, b");
         expect(document.body.textContent).toContain("c, d");
       });
 
-      it("previews the top-scored candidate's evidence in the detail pane by default", () => {
+      it("expands the top-scored candidate's evidence by default", () => {
         renderTableDetail(baseDetail, null, null, twoCandidateData());
         fireEvent.click(summaryPillBtn("Decomposition")!);
 
-        const detail = document.querySelector(".decomp-detail");
-        expect(detail?.textContent).toContain("proc_top");
-        expect(detail?.textContent).not.toContain("proc_second");
+        expect(evidenceRows()).toHaveLength(1);
+        expect(evidenceRows()[0]?.textContent).toContain("proc_top");
       });
 
-      it("clicking a master row pins its evidence in the detail pane", () => {
+      it("clicking a row expands its evidence without collapsing the previously expanded one", () => {
         renderTableDetail(baseDetail, null, null, twoCandidateData());
         fireEvent.click(summaryPillBtn("Decomposition")!);
 
         fireEvent.click(decompRow("c, d")!);
-        const detail = document.querySelector(".decomp-detail");
-        expect(detail?.textContent).toContain("proc_second");
-        expect(detail?.textContent).not.toContain("proc_top");
+        const combined = evidenceRows().map((r) => r.textContent).join("\n");
+        expect(combined).toContain("proc_top");
+        expect(combined).toContain("proc_second");
       });
 
-      it("hovering a different row previews it without losing the pinned selection", () => {
+      it("clicking an already-expanded row collapses just that row", () => {
         renderTableDetail(baseDetail, null, null, twoCandidateData());
         fireEvent.click(summaryPillBtn("Decomposition")!);
-        fireEvent.click(decompRow("c, d")!);
 
-        fireEvent.mouseEnter(decompRow("a, b")!);
-        expect(document.querySelector(".decomp-detail")?.textContent).toContain("proc_top");
+        fireEvent.click(decompRow("c, d")!); // expand c,d — a,b stays expanded
+        fireEvent.click(decompRow("a, b")!); // collapse a,b
 
-        fireEvent.mouseLeave(document.querySelector(".decomp-columns-view")!);
-        expect(document.querySelector(".decomp-detail")?.textContent).toContain("proc_second");
-      });
-
-      it("keeps the hover preview while the mouse travels into the detail pane", () => {
-        renderTableDetail(baseDetail, null, null, twoCandidateData());
-        fireEvent.click(summaryPillBtn("Decomposition")!);
-        fireEvent.click(decompRow("c, d")!);
-
-        fireEvent.mouseEnter(decompRow("a, b")!);
-        // Leaving the row itself (e.g. moving toward the detail pane) must not
-        // revert the preview — only leaving the whole master+detail widget does.
-        fireEvent.mouseLeave(decompRow("a, b")!);
-        expect(document.querySelector(".decomp-detail")?.textContent).toContain("proc_top");
-
-        fireEvent.mouseEnter(document.querySelector(".decomp-detail")!);
-        expect(document.querySelector(".decomp-detail")?.textContent).toContain("proc_top");
+        expect(evidenceRows()).toHaveLength(1);
+        expect(evidenceRows()[0]?.textContent).toContain("proc_second");
       });
     });
   });
