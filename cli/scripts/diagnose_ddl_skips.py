@@ -167,6 +167,75 @@ def _isolate_failing_element(dialect_instance: Dialect, tokens: list[Token], sql
     return None
 
 
+def _find_query_start(tokens: list[Token]) -> int | None:
+    """Index of the first top-level ALIAS ("AS") token -- marks where a
+    CREATE VIEW/MATERIALIZED VIEW's underlying query begins. None if not
+    found before a semicolon or end of input (e.g. a MATERIALIZED VIEW LOG,
+    which references a base table via ON rather than a query via AS, or a
+    genuinely malformed statement)."""
+    depth = 0
+    for i, t in enumerate(tokens):
+        if t.token_type == TokenType.L_PAREN:
+            depth += 1
+        elif t.token_type == TokenType.R_PAREN:
+            depth -= 1
+        elif t.token_type == TokenType.SEMICOLON:
+            return None
+        elif t.token_type == TokenType.ALIAS and depth == 0:
+            return i
+    return None
+
+
+def _isolate_view_header_break(dialect_instance: Dialect, tokens: list[Token], sql: str) -> str | None:
+    """For a VIEW/MATERIALIZED VIEW-labeled statement: replace everything
+    from AS onward with a trivial placeholder query, then bisect the
+    header (everything before AS) by token count to find the shortest
+    prefix that still fails. Every real failure found this session lived in
+    the header (physical attributes, refresh clauses, editioning), never in
+    the underlying SELECT, so this is a much sharper tool here than the
+    comma-element bisection used for CREATE TABLE. Returns the REDACTED
+    text around the breaking token (a few tokens of context on each side),
+    or None if no AS was found or the header alone already parses fine
+    (failure must be in the query itself -- rare).
+
+    Two-phase scan, not a single forward pass: parses(k) is NOT monotonic in
+    k here, unlike the CREATE TABLE comma-element case. A short prefix
+    (e.g. just "CREATE", "CREATE OR") is trivially invalid regardless of
+    where the real problem is, so a naive "first k that fails" would always
+    report the very start of the statement. Phase 1 skips past that
+    "too-short-to-be-a-header-at-all" zone to find the first k that DOES
+    parse (a valid minimal header); phase 2 then finds where it breaks
+    again from there, which is the real answer."""
+    as_idx = _find_query_start(tokens)
+    if as_idx is None:
+        return None
+    placeholder = dialect_instance.tokenize("SELECT 1")
+
+    def parses(k: int) -> bool:
+        candidate = tokens[:k] + placeholder
+        try:
+            parsed = _parse_tokens(dialect_instance, candidate, sql)
+        except (ParseError, TokenError):
+            return False
+        return bool(parsed) and not isinstance(parsed[0], exp.Command)
+
+    if parses(as_idx + 1):
+        return None  # header alone is fine -- failure is in the query itself
+
+    k = 1
+    while k <= as_idx and not parses(k):
+        k += 1
+    if k > as_idx:
+        return None  # never valid even close to the full header -- can't isolate
+
+    for j in range(k, as_idx + 2):
+        if not parses(j):
+            start = max(0, j - 3)
+            end = min(len(tokens), j + 2)
+            return _redacted_text(tokens, start, end)
+    return None
+
+
 def _leading_label(sql: str) -> str:
     m = _LEADING_KEYWORD_RE.match(sql)
     if not m:
@@ -242,7 +311,8 @@ def main() -> None:
     none_count = 0
     none_count_impacting = 0
     length_stats: list[int] = []
-    unexplained_table_impacting: list[str] = []  # raw sql of TABLE-labeled, catalog-impacting, no keyword hit
+    table_impacting: list[str] = []  # CREATE TABLE, catalog-impacting, still failing (any reason)
+    view_impacting: list[str] = []  # CREATE/MATERIALIZED VIEW, catalog-impacting, still failing (any reason)
 
     for raw in skipped:
         length_stats.append(len(raw))
@@ -263,8 +333,12 @@ def main() -> None:
             none_count += 1
             if impacting:
                 none_count_impacting += 1
-                if label == "TABLE" and not raw.strip().upper().startswith("ALTER"):
-                    unexplained_table_impacting.append(raw)
+
+        if impacting:
+            if label == "TABLE" and not raw.strip().upper().startswith("ALTER"):
+                table_impacting.append(raw)
+            elif label == "VIEW":
+                view_impacting.append(raw)
 
     print("--- skipped statements by leading keyword ---")
     for kw, n in leading_counts.most_common():
@@ -297,9 +371,9 @@ def main() -> None:
         print("--- full statement length (chars) of skipped statements ---")
         print(f"  min={length_stats[0]} median={length_stats[n // 2]} max={length_stats[-1]}")
 
-    if unexplained_table_impacting:
+    if table_impacting:
         print()
-        print("--- bisection of unexplained CREATE TABLE losses (content-free) ---")
+        print("--- bisection of catalog-impacting CREATE TABLE losses (content-free) ---")
         print("    Truncates each statement to the closing paren of its column/constraint")
         print("    list and re-parses. 'trailing-clause' means an as-yet-unidentified tail")
         print("    keyword (same fixable class as everything already stripped) is the sole")
@@ -307,7 +381,7 @@ def main() -> None:
         print("    clause and needs a different kind of fix.")
         outcome_counts: Counter[str] = Counter()
         redacted_patterns: Counter[str] = Counter()
-        for raw in unexplained_table_impacting:
+        for raw in table_impacting:
             tokens = dialect_instance.tokenize(raw)
             result = _tail_clause_would_fix(dialect_instance, tokens, raw)
             if result is True:
@@ -326,10 +400,42 @@ def main() -> None:
 
         if redacted_patterns:
             print()
-            print("--- isolated failing column/constraint definitions, REDACTED ---")
+            print("--- isolated failing CREATE TABLE column/constraint definitions, REDACTED ---")
             print("    Every quoted identifier -> <ID>, every string literal -> <STR>.")
             print("    Deduplicated by exact redacted text -- safe to paste back as-is.")
             for pattern, n in redacted_patterns.most_common(20):
+                print(f"  x{n}: {pattern}")
+
+    if view_impacting:
+        print()
+        print("--- bisection of catalog-impacting VIEW/MATERIALIZED VIEW losses (content-free) ---")
+        print("    Replaces everything from AS onward with a trivial placeholder query, then")
+        print("    bisects the header by token count. Every real failure found this session")
+        print("    lived in the header (physical attrs, refresh clauses, editioning), never")
+        print("    in the underlying SELECT, so this is a sharp tool here.")
+        view_redacted: Counter[str] = Counter()
+        no_as_found = 0
+        header_fine = 0
+        for raw in view_impacting:
+            tokens = dialect_instance.tokenize(raw)
+            if _find_query_start(tokens) is None:
+                no_as_found += 1
+                continue
+            element = _isolate_view_header_break(dialect_instance, tokens, raw)
+            if element is not None:
+                view_redacted[element] += 1
+            else:
+                header_fine += 1
+        if no_as_found:
+            print(f"  no AS found (e.g. MATERIALIZED VIEW LOG, references a table not a query): {no_as_found}")
+        if header_fine:
+            print(f"  header alone parses fine (failure must be in the query itself): {header_fine}")
+        if view_redacted:
+            print()
+            print("--- isolated failing VIEW header regions, REDACTED ---")
+            print("    Every quoted identifier -> <ID>, every string literal -> <STR>.")
+            print("    Deduplicated by exact redacted text -- safe to paste back as-is.")
+            for pattern, n in view_redacted.most_common(20):
                 print(f"  x{n}: {pattern}")
 
 
