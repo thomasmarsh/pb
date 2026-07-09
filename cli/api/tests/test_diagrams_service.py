@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import duckdb
 import graphviz
 from pb.api.services.diagrams import get_cfg_diagram, get_wiring_diagram
@@ -73,6 +75,33 @@ def test_get_cfg_diagram_returns_placeholder_on_render_failure(monkeypatch, db_c
         raise graphviz.backend.execute.CalledProcessError(1, ["dot"])
 
     monkeypatch.setattr(graphviz.Digraph, "pipe", _raise)
+
+    row = db_conn.execute(
+        "SELECT object, proc_name FROM procedures WHERE cfg_json IS NOT NULL LIMIT 1"
+    ).fetchone()
+    assert row is not None, "no procedures with cfg_json in fixture corpus"
+    object_name, proc_name = row
+
+    result = get_cfg_diagram(db_conn, object_name, proc_name)
+
+    assert result is not None
+    assert result["svg"] == _PLACEHOLDER_SVG
+
+
+def test_get_cfg_diagram_survives_real_dot_subprocess_failure(monkeypatch, db_conn, tmp_path):
+    """Same guarantee as test_get_cfg_diagram_returns_placeholder_on_render_failure,
+    but through a REAL failing `dot` subprocess on PATH (simulating a graphviz
+    build missing the triangulation library) rather than a monkeypatched
+    graphviz.Digraph.pipe -- exercises the actual subprocess.run ->
+    graphviz.backend.execute.CalledProcessError path the fix guards against."""
+    fake_dot = tmp_path / "dot"
+    fake_dot.write_text(
+        "#!/bin/sh\n"
+        'echo "Error: remove_overlap: Graphviz not built with triangulation library" >&2\n'
+        "exit 1\n"
+    )
+    fake_dot.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
 
     row = db_conn.execute(
         "SELECT object, proc_name FROM procedures WHERE cfg_json IS NOT NULL LIMIT 1"
