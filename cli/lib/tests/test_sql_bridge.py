@@ -95,6 +95,7 @@ def test_ten_valid_requests(worker):
         # lists on the wire, same as the worker's own json.dumps/loads.
         assert resp["column_refs"] == json.loads(json.dumps(meta.get("column_refs", [])))
         assert resp["row_filters"] == json.loads(json.dumps(meta.get("row_filters", [])))
+        assert resp["table_refs"] == json.loads(json.dumps(meta.get("table_refs", [])))
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +113,21 @@ def test_join_request_returns_scoped_column_refs(worker):
     assert ("customer", "cust_name", False) in got
     assert ("orders", "cust_id", False) in got
     assert ("customer", "cust_id", False) in got
+
+
+# ---------------------------------------------------------------------------
+# Test: table_refs (Plan 157 Phase 4.5) sees a column-less table touch that
+# column_refs can never see (no explicit column list to attribute).
+# ---------------------------------------------------------------------------
+
+
+def test_bare_delete_has_table_ref_but_no_column_refs(worker):
+    sql = "DELETE FROM log_entries WHERE entry_date < :ld_cutoff"
+    _send(worker, {"sql": sql, "dialect": "oracle"})
+    resp = _recv(worker)
+    assert resp["parse_ok"] is True
+    assert resp["column_refs"] == []
+    assert resp["table_refs"] == [{"namespace": None, "table": "log_entries"}]
 
 
 # ---------------------------------------------------------------------------

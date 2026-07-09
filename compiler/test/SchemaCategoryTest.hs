@@ -124,6 +124,41 @@ tests = testGroup "SchemaCategory"
             (not (any (\m -> legFrom m == unusedObj || legTo m == unusedObj) (sgLegs sch)))
     ]
 
+  , testGroup "resolveTableRef"
+    [ testCase "catalogNamespacedTables restricts to Just-namespace rows" $
+        catalogNamespacedTables
+          [ CatColumnRow (Just "clims") "account" "id"
+          , CatColumnRow Nothing "orphan" "id"
+          , CatColumnRow (Just "clims") "account" "balance"
+          ]
+          @?= Set.fromList [("clims", "account")]
+
+    , testCase "already-qualified ref passes through unchanged regardless of catalog" $
+        resolveTableRef (Set.fromList [("clims", "account")]) (Just "clims")
+          (TableRef (Just "other") "account")
+          @?= TableRef (Just "other") "account"
+
+    , testCase "unqualified ref resolves against a matching catalog entry" $
+        resolveTableRef (Set.fromList [("clims", "account")]) (Just "clims")
+          (TableRef Nothing "account")
+          @?= TableRef (Just "clims") "account"
+
+    , testCase "unqualified ref with no catalog entry under default namespace stays unresolved" $
+        resolveTableRef (Set.fromList [("clims", "other")]) (Just "clims")
+          (TableRef Nothing "account")
+          @?= TableRef Nothing "account"
+
+    , testCase "no default namespace leaves unqualified ref unchanged" $
+        resolveTableRef (Set.fromList [("clims", "account")]) Nothing
+          (TableRef Nothing "account")
+          @?= TableRef Nothing "account"
+
+    , testCase "default namespace comparison is case-insensitive against the lowercase catalog" $
+        resolveTableRef (Set.fromList [("clims", "account")]) (Just "CLIMS")
+          (TableRef Nothing "account")
+          @?= TableRef (Just "clims") "account"
+    ]
+
   , testGroup "defaultNamespace"
     [ testCase "unqualified SQL column unifies with catalog-only ColumnObj under matching default namespace" $
         let sid = SqlStmtId "f.srf" "obj" "proc" 5

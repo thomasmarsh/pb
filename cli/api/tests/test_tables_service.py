@@ -16,13 +16,22 @@ from pb.api.services.tables import (
 
 def _multi_namespace_conn(default_namespace: str | None = None) -> duckdb.DuckDBPyConnection:
     """Synthetic corpus: `clinicalaccession` defined identically in three
-    schemas (the real-world case that motivated this) plus one table that
-    only ever shows up via SQL usage, never in the DDL catalog at all."""
+    schemas (the real-world case that motivated this), each with its own
+    resolved-namespace usage row except `clims_common` (genuinely unused),
+    plus one table that only ever shows up via SQL usage, never in the DDL
+    catalog at all (namespace NULL -- unqualified, unresolved).
+
+    Plan 157 Phase 4.5: `all_sql_tables` now carries a real per-reference
+    resolved `namespace` (sourced from `sql_statement_tables`/
+    `dw_retrieve_tables` in production; this fixture models that shape
+    directly since it doesn't go through a real pbc reindex).
+    """
     conn = duckdb.connect(":memory:")
     conn.execute("CREATE TABLE catalog_columns (namespace TEXT, table_name TEXT, column_name TEXT, ordinal INTEGER)")
     conn.execute(
         "CREATE TABLE all_sql_tables "
-        "(file TEXT, object TEXT, source TEXT, operation TEXT, table_name TEXT, proc_name TEXT, line INTEGER)"
+        "(file TEXT, object TEXT, source TEXT, operation TEXT, namespace TEXT, table_name TEXT, "
+        "proc_name TEXT, line INTEGER)"
     )
     conn.execute("CREATE TABLE objects (file TEXT, kind TEXT, object TEXT, ancestor TEXT)")
     conn.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
@@ -35,8 +44,9 @@ def _multi_namespace_conn(default_namespace: str | None = None) -> duckdb.DuckDB
     )
     conn.execute(
         "INSERT INTO all_sql_tables VALUES "
-        "('f.srw', 'w_f', 'powerscript', 'select', 'clinicalaccession', 'p1', 1), "
-        "('f.srw', 'w_f', 'powerscript', 'select', 'legacy_only', 'p2', 2)"
+        "('f.srw', 'w_f', 'powerscript', 'select', 'clims', 'clinicalaccession', 'p1', 1), "
+        "('f2.srw', 'w_archive', 'powerscript', 'select', 'clims_archive', 'clinicalaccession', 'p3', 1), "
+        "('f.srw', 'w_f', 'powerscript', 'select', NULL, 'legacy_only', 'p2', 2)"
     )
     if default_namespace is not None:
         conn.execute("INSERT INTO metadata VALUES ('default_namespace', ?)", [default_namespace])
@@ -118,46 +128,32 @@ def test_list_schemas_multiple_namespaces_ranked_by_table_name():
     ]
 
 
-def test_list_tables_scoped_to_namespace_disambiguates_collisions():
-    conn = _multi_namespace_conn(default_namespace="clims")
+def test_list_tables_scoped_to_namespace_shows_own_real_usage():
+    # Plan 157 Phase 4.5: every namespace now shows its OWN resolved usage
+    # (from sql_statement_tables/dw_retrieve_tables), not a gate keyed off
+    # "is this the configured default namespace" -- supersedes Phase 2.
+    conn = _multi_namespace_conn()
     clims = list_tables(conn, namespace="clims")
     assert [t["table_name"] for t in clims] == ["clinicalaccession", "patient"]
     for t in clims:
         assert t["namespace"] == "clims"
-    # clims is the configured default namespace, so the unqualified
-    # all_sql_tables layer's usage attaches here.
     assert clims[0]["ps_count"] == 1
 
     archive = list_tables(conn, namespace="clims_archive")
     assert [t["table_name"] for t in archive] == ["clinicalaccession"]
-    # clims_archive is scoped-but-non-default: the unqualified SQL-usage
-    # index can't tell which schema a bare `clinicalaccession` reference
-    # actually meant, and it almost certainly meant the default connection's
-    # schema (clims) -- so a non-default scope must see zero usage rather
-    # than the same row every same-named schema would otherwise show.
-    assert archive[0]["ps_count"] == 0
-    assert archive[0]["dw_count"] == 0
-    assert archive[0]["file_count"] == 0
-
-
-def test_list_tables_scoped_to_non_default_namespace_zeros_usage():
-    conn = _multi_namespace_conn(default_namespace="clims")
-    for ns in ("clims_archive", "clims_common"):
-        result = list_tables(conn, namespace=ns)
-        assert [t["table_name"] for t in result] == ["clinicalaccession"]
-        assert result[0]["ps_count"] == 0
-        assert result[0]["dw_count"] == 0
-        assert result[0]["file_count"] == 0
-
-
-def test_list_tables_scoped_without_default_namespace_configured_keeps_legacy_join():
-    # No --default-namespace configured at all: preserve the pre-Phase-2
-    # behavior of joining usage on bare table_name regardless of scope,
-    # rather than zeroing everything out just because a namespace param
-    # was passed.
-    conn = _multi_namespace_conn(default_namespace=None)
-    archive = list_tables(conn, namespace="clims_archive")
+    # clims_archive is scoped-but-not-configured-as-default, yet it has a
+    # real resolved-namespace usage row of its own -- it must show that
+    # usage, not zero (the exact gap Phase 2's gate left open).
     assert archive[0]["ps_count"] == 1
+    assert archive[0]["namespace"] == "clims_archive"
+
+    common = list_tables(conn, namespace="clims_common")
+    assert [t["table_name"] for t in common] == ["clinicalaccession"]
+    # clims_common genuinely has no usage row in this fixture -- honestly
+    # empty, not borrowed from and not confused with clims_archive's usage.
+    assert common[0]["ps_count"] == 0
+    assert common[0]["dw_count"] == 0
+    assert common[0]["file_count"] == 0
 
 
 def test_list_tables_unscoped_keeps_legacy_flat_behavior():
@@ -180,29 +176,35 @@ def test_get_table_detail_scoped_to_missing_namespace_is_not_found():
     assert get_table_detail(conn, "clinicalaccession", namespace="not_a_real_schema") is None
 
 
-def test_get_table_detail_scoped_to_default_namespace_keeps_usage():
-    conn = _multi_namespace_conn(default_namespace="clims")
-    result = get_table_detail(conn, "clinicalaccession", namespace="clims")
-    assert result is not None
-    assert result["ps_count"] == 1
-    assert [p["object"] for p in result["procedures"]] == ["w_f"]
-    assert result["impact"]["direct"]
+def test_get_table_detail_scoped_to_namespace_shows_own_real_usage():
+    # Plan 157 Phase 4.5: clims and clims_archive each have their own
+    # resolved-namespace usage row -- both must show it, not just whichever
+    # happens to be the corpus's configured default (supersedes Phase 2).
+    conn = _multi_namespace_conn()
+
+    clims = get_table_detail(conn, "clinicalaccession", namespace="clims")
+    assert clims is not None
+    assert clims["ps_count"] == 1
+    assert [p["object"] for p in clims["procedures"]] == ["w_f"]
+    assert clims["impact"]["direct"]
+
+    archive = get_table_detail(conn, "clinicalaccession", namespace="clims_archive")
+    assert archive is not None
+    assert archive["ps_count"] == 1
+    assert [p["object"] for p in archive["procedures"]] == ["w_archive"]
+    assert archive["impact"]["direct"]
 
 
-def test_get_table_detail_scoped_to_non_default_namespace_zeros_usage():
-    conn = _multi_namespace_conn(default_namespace="clims")
+def test_get_table_detail_scoped_to_namespace_with_no_usage_is_honestly_empty():
+    conn = _multi_namespace_conn()
     result = get_table_detail(conn, "clinicalaccession", namespace="clims_common")
     assert result is not None
     assert result["namespace"] == "clims_common"
-    # clims_common is scoped-but-non-default: the unqualified all_sql_tables
-    # layer can't confirm the usage was actually against this schema, so
-    # usage-derived fields must read as honestly empty, not borrowed from
-    # the default schema's row.
+    # clims_common genuinely has no usage row in this fixture.
     assert result["ps_count"] == 0
     assert result["datawindows"] == []
     assert result["columns"] == []
     assert result["columns_detail"] == []
-    assert result["where"] == []
     assert result["procedures"] == []
     assert result["impact"] == {"direct": [], "inherited": []}
 

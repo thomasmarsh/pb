@@ -3,6 +3,7 @@ module PB.Pipeline.SqlParse
   , ColumnRef (..)
   , RowFilter (..)
   , TableRef (..)
+  , splitTableRef
   , CatalogTable (..)
   , CatalogPrimaryKey (..)
   , CatalogForeignKey (..)
@@ -28,6 +29,7 @@ import Control.Exception          (SomeException, try)
 import Data.Aeson                 (FromJSON (..), Value, decode, encode, object, withObject, (.=), (.:), (.:?), (.!=))
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BL
+import qualified Data.Text            as T
 import Data.Bits                  (shiftL, shiftR, (.&.))
 import Data.IORef
 import qualified Data.Vector          as V
@@ -82,6 +84,12 @@ data SqlResult = SqlResult
   , srParseOk    :: Bool
   , srColumnRefs :: [ColumnRef]
   , srRowFilters :: [RowFilter]
+  , srTableRefs  :: [TableRef]
+    -- ^ Plan 157 Phase 4.5: namespace-aware sibling of 'srTables', extracted
+    -- straight from the statement's own table list (not derived from
+    -- 'srColumnRefs') -- so a column-less table touch (@SELECT COUNT(*)
+    -- FROM t@, bare @DELETE FROM t@) still gets a table-level object, which
+    -- an extraction keyed off column refs alone can never see.
   } deriving (Show, Eq)
 
 instance FromJSON SqlResult where
@@ -92,6 +100,7 @@ instance FromJSON SqlResult where
     <*> o .:  "parse_ok"
     <*> o .:? "column_refs" .!= []
     <*> o .:? "row_filters" .!= []
+    <*> o .:? "table_refs"  .!= []
 
 -- | A table identifier, optionally schema/namespace-qualified. Lowercased by
 -- the Python-side extractor.
@@ -104,6 +113,19 @@ instance FromJSON TableRef where
   parseJSON = withObject "TableRef" $ \o -> TableRef
     <$> o .:? "namespace"
     <*> o .:  "table"
+
+-- | Split a bare/qualified table identifier ("table" or "ns.table") on the
+-- last dot. Lowercase-normalized, total (no dot -> 'TableRef' 'Nothing').
+-- Mirrors 'PB.Analysis.SchemaCategory.splitColumnRef''s convention for the
+-- table-only case (a DW retrieve's @table(NAME=...)@ clause and a SQL
+-- statement's raw table list are both bare text with no guaranteed
+-- namespace prefix, same as a column ref).
+splitTableRef :: Text -> TableRef
+splitTableRef raw =
+  case T.breakOnEnd "." (T.toLower raw) of
+    (pre, tbl)
+      | T.null pre -> TableRef Nothing tbl
+      | otherwise  -> TableRef (Just (T.dropEnd 1 pre)) tbl
 
 -- | A table's ordered column list, as declared in DDL (Plan 148 Phase 1a-3).
 data CatalogTable = CatalogTable
@@ -295,7 +317,7 @@ parseSql pool idx sqlText = do
       restartWorker pool ref conn
       conn' <- readIORef ref
       mres2 <- safeRequest conn'
-      pure $ fromMaybe (SqlResult [] [] Nothing False [] []) mres2
+      pure $ fromMaybe (SqlResult [] [] Nothing False [] [] []) mres2
   where
     safeRequest conn = do
       r <- try @SomeException (timeout 30_000_000 (sendReceive conn (sbpDialect pool) sqlText))

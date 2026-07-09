@@ -13,7 +13,7 @@ import System.Directory  (getTemporaryDirectory)
 import System.Process    (callProcess)
 
 import Test.Tasty       (TestTree, testGroup)
-import Test.Tasty.HUnit (assertEqual, assertBool, assertFailure, testCase)
+import Test.Tasty.HUnit (assertEqual, assertBool, assertFailure, testCase, (@?=))
 
 import Prelude ((!!))
 
@@ -217,6 +217,34 @@ tests = testGroup "SqlParse"
           Just res -> do
             assertEqual "column_refs default" [] (srColumnRefs res)
             assertEqual "row_filters default" [] (srRowFilters res)
+
+    , testCase "decodes table_refs (Plan 157 Phase 4.5)" $ do
+        let json = "{\"tables\":[\"t\"],\"columns\":[],\
+                    \\"operation\":\"DELETE\",\"parse_ok\":true,\
+                    \\"table_refs\":[{\"namespace\":null,\"table\":\"t\"}]}"
+            mres = decode json :: Maybe SqlResult
+        case mres of
+          Nothing -> assertFailure "SqlResult failed to decode"
+          Just res -> assertEqual "table_refs" [TableRef Nothing "t"] (srTableRefs res)
+
+    , testCase "missing table_refs defaults to empty (Plan 157 Phase 4.5)" $ do
+        let json = "{\"tables\":[\"t\"],\"columns\":[\"c\"],\
+                    \\"operation\":\"SELECT\",\"parse_ok\":true}"
+            mres = decode json :: Maybe SqlResult
+        case mres of
+          Nothing -> assertFailure "SqlResult failed to decode"
+          Just res -> assertEqual "table_refs default" [] (srTableRefs res)
+    ]
+
+  , testGroup "splitTableRef (Plan 157 Phase 4.5)"
+    [ testCase "bare table name has no namespace" $
+        splitTableRef "misth_zpkrat" @?= TableRef Nothing "misth_zpkrat"
+
+    , testCase "namespace-qualified table splits on last dot" $
+        splitTableRef "openpay.misth_zpkrat" @?= TableRef (Just "openpay") "misth_zpkrat"
+
+    , testCase "lowercases the result" $
+        splitTableRef "OPENPAY.MISTH_ZPKRAT" @?= TableRef (Just "openpay") "misth_zpkrat"
     ]
 
   , testGroup "SchemaCatalog decode"

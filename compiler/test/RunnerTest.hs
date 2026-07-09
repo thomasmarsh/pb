@@ -7,6 +7,8 @@ import PB.Pipeline.DuckDb
   ( ProcRow (..), SqlStmtColumnRow (..), SqlStmtFilterRow (..)
   , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..), CatalogCheckRow (..)
   , DwRetrieveColumnRow (..)
+  , DwRetrieveTableRow (..)
+  , SqlStmtTableRow (..)
   )
 import PB.AST.BodyStmt     (BodyStmt (..))
 import PB.AST.DataWindow
@@ -335,7 +337,7 @@ tests = testGroup "Pipeline.Runner"
 
             , testCase "compileOne's ProcRow.prInstrJson matches compileProcedureViaCatOp" $ do
                 let pf = ParsedFile { pfPath = "uf_test.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
-                cf <- compileOne ws Nothing "confirmed" (PsParsed pf)
+                cf <- compileOne Set.empty Nothing ws Nothing "confirmed" (PsParsed pf)
                 case cf of
                   CFPs cps -> case cpsProcRows cps of
                     (row:_) -> case decodeStrict (TE.encodeUtf8 (prInstrJson row)) :: Maybe Value of
@@ -578,13 +580,69 @@ tests = testGroup "Pipeline.Runner"
             pool   <- startSqlBridgePool 1 script [] "oracle"
             let ws = buildWorkspaceEnv [sf]
                 pf = ParsedFile { pfPath = "uf_retrieve.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
-            cf <- compileOne ws (Just (pool, 0)) "confirmed" (PsParsed pf)
+            cf <- compileOne Set.empty Nothing ws (Just (pool, 0)) "confirmed" (PsParsed pf)
             shutdownSqlBridgePool pool
             case cf of
               CFPs cps -> do
                 map sscrColumnName (cpsSqlStmtColumns cps) @?= ["kodgroup", "addrec"]
                 map sscrTableName  (cpsSqlStmtColumns cps) @?= [Just "usrgroupperm", Nothing]
                 map ssfrColumnName (cpsSqlStmtFilters cps) @?= ["status"]
+              _ -> assertFailure "expected CFPs"
+
+    , testCase "persistence-time resolution (Plan 157 Phase 4.5): unqualified column ref \
+               \gets a resolved namespace when a matching catalog + default namespace are \
+               \threaded into compileOne" $ do
+        let src = T.unlines
+              [ "public function boolean uf_retrieve ()"
+              , "select a from b;"
+              , "end function"
+              ]
+        case parsePowerScriptFile src of
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Right (sf, spans) -> do
+            script <- installMockSqlWorkerWithRefs
+            pool   <- startSqlBridgePool 1 script [] "oracle"
+            let ws = buildWorkspaceEnv [sf]
+                pf = ParsedFile { pfPath = "uf_retrieve.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                catTables = Set.fromList [("openpay", "usrgroupperm")]
+            cf <- compileOne catTables (Just "openpay") ws (Just (pool, 0)) "confirmed" (PsParsed pf)
+            shutdownSqlBridgePool pool
+            case cf of
+              CFPs cps -> do
+                map sscrTableName (cpsSqlStmtColumns cps) @?= [Just "usrgroupperm", Nothing]
+                map sscrNamespace (cpsSqlStmtColumns cps)
+                  @?= [Just "openpay", Nothing]
+                  -- "usrgroupperm" resolves (matches the catalog under the
+                  -- default namespace); the Nothing-table ref ("addrec")
+                  -- has nothing to resolve against and stays Nothing —
+                  -- same conservatism as buildSchema.
+              _ -> assertFailure "expected CFPs"
+
+    , testCase "sql_statement_tables (Plan 157 Phase 4.5): table_refs populate cpsSqlStmtTables, \
+               \including a column-less table touch, and resolve against the default namespace" $ do
+        let src = T.unlines
+              [ "public function boolean uf_retrieve ()"
+              , "select a from b;"
+              , "end function"
+              ]
+        case parsePowerScriptFile src of
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Right (sf, spans) -> do
+            script <- installMockSqlWorkerWithTableRefs
+            pool   <- startSqlBridgePool 1 script [] "oracle"
+            let ws = buildWorkspaceEnv [sf]
+                pf = ParsedFile { pfPath = "uf_retrieve.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
+                catTables = Set.fromList [("openpay", "usrgroupperm")]
+            cf <- compileOne catTables (Just "openpay") ws (Just (pool, 0)) "confirmed" (PsParsed pf)
+            shutdownSqlBridgePool pool
+            case cf of
+              CFPs cps ->
+                -- "usrgroupperm" has a real column_ref, "audit_log" is a
+                -- column-less touch (e.g. a bare DELETE) -- both still get a
+                -- sql_statement_tables row, and only the catalog-matched one
+                -- resolves to the default namespace.
+                map (\r -> (sstrNamespace r, sstrTableName r)) (cpsSqlStmtTables cps)
+                  @?= [(Just "openpay", "usrgroupperm"), (Nothing, "audit_log")]
               _ -> assertFailure "expected CFPs"
     ]
 
@@ -651,11 +709,43 @@ tests = testGroup "Pipeline.Runner"
               , dwMeta     = mempty
               }
             ws = buildWorkspaceEnv []
-        cf <- compileOne ws Nothing "confirmed" (PsDw "d_test.srd" "" dwFile)
+        cf <- compileOne Set.empty Nothing ws Nothing "confirmed" (PsDw "d_test.srd" "" dwFile)
         case cf of
           CFDw cd ->
             map (\r -> (drcrTableName r, drcrColumnName r)) (cdDwRetrieveColumns cd)
               @?= [("misth_zpkrat", "kodkrat"), ("misth_zpkrat", "desckrat")]
+          _ -> assertFailure "expected CFDw"
+
+    , testCase "persistence-time resolution (Plan 157 Phase 4.5): unqualified DW retrieve \
+               \column gets a resolved namespace when a matching catalog + default \
+               \namespace are threaded into compileOne" $ do
+        let retrieve = DwRetrieve
+              { drVersion   = 400
+              , drTables    = ["misth_zpkrat"]
+              , drColumns   = ["misth_zpkrat.kodkrat"]
+              , drArguments = []
+              , drWhere     = []
+              , drJoins     = []
+              }
+            dwFile = DataWindowFile
+              { dwRelease  = 400
+              , dwObject   = DwObjectAttrs mempty
+              , dwTable    = Just (DwTable [] (Just (DwRetrieveOk retrieve)) Nothing Nothing [])
+              , dwBands    = []
+              , dwGroups   = []
+              , dwControls = []
+              , dwUnknowns = []
+              , dwMeta     = mempty
+              }
+            ws = buildWorkspaceEnv []
+            catTables = Set.fromList [("openpay", "misth_zpkrat")]
+        cf <- compileOne catTables (Just "openpay") ws Nothing "confirmed" (PsDw "d_test.srd" "" dwFile)
+        case cf of
+          CFDw cd -> do
+            map (\r -> (drcrNamespace r, drcrTableName r, drcrColumnName r)) (cdDwRetrieveColumns cd)
+              @?= [(Just "openpay", "misth_zpkrat", "kodkrat")]
+            map (\r -> (drtrNamespace r, drtrTableName r)) (cdDwRetrieveTables cd)
+              @?= [(Just "openpay", "misth_zpkrat")]
           _ -> assertFailure "expected CFDw"
     ]
   ]
@@ -694,6 +784,50 @@ installMockSqlWorkerWithRefs = do
         , "        ],"
         , "        'row_filters': ["
         , "            {'namespace': None, 'table': 'account', 'column': 'status', 'op': '=', 'values': ['Active']},"
+        , "        ],"
+        , "    })"
+        ]
+  writeFile path (T.unlines ls)
+  callProcess "chmod" ["+x", path]
+  pure path
+
+-- | Mock SQL bridge worker: answers with a canned response carrying
+-- table_refs (Plan 157 Phase 4.5) for two tables, one with a column_ref and
+-- one without (a column-less table touch, e.g. a bare DELETE) -- to test
+-- that cpsSqlStmtTables is populated for both, independent of whether a
+-- column ref exists.
+installMockSqlWorkerWithTableRefs :: IO FilePath
+installMockSqlWorkerWithTableRefs = do
+  tmp <- getTemporaryDirectory
+  let path = tmp <> "/pb_mock_worker_table_refs.py"
+      ls =
+        [ "#!/usr/bin/env python3"
+        , "import sys, json, struct"
+        , "H = struct.Struct('>I')"
+        , "def read():"
+        , "    h = sys.stdin.buffer.read(4)"
+        , "    if len(h) < 4: return None"
+        , "    (n,) = H.unpack(h)"
+        , "    return json.loads(sys.stdin.buffer.read(n))"
+        , "def write(obj):"
+        , "    b = json.dumps(obj).encode()"
+        , "    sys.stdout.buffer.write(H.pack(len(b)) + b)"
+        , "    sys.stdout.buffer.flush()"
+        , "while True:"
+        , "    m = read()"
+        , "    if m is None: sys.exit(0)"
+        , "    write({"
+        , "        'tables': ['usrgroupperm', 'audit_log'],"
+        , "        'columns': ['kodgroup'],"
+        , "        'operation': 'DELETE',"
+        , "        'parse_ok': True,"
+        , "        'column_refs': ["
+        , "            {'namespace': None, 'table': 'usrgroupperm', 'column': 'kodgroup', 'is_write': True},"
+        , "        ],"
+        , "        'row_filters': [],"
+        , "        'table_refs': ["
+        , "            {'namespace': None, 'table': 'usrgroupperm'},"
+        , "            {'namespace': None, 'table': 'audit_log'},"
         , "        ],"
         , "    })"
         ]

@@ -3,8 +3,8 @@ against a real multi-schema reindex — `multi_schema_db_conn` (see
 `cli/conftest.py`) runs the actual `pbc` binary over OpenPay tagged as two
 DDL schemas (`OPENPAY`, and a synthetic `OPENPAY_ARCHIVE` redefining
 `misth_zpkrat`), not a hand-built DuckDB fixture. `test_tables_service.py`'s
-`_multi_namespace_conn()` already covers the Phase 2 query-layer logic at
-the unit level; this file exists because that fixture can never catch a bug
+`_multi_namespace_conn()` already covers the Plan 157 Phase 4.5 query-layer
+logic at the unit level; this file exists because that fixture can never catch a bug
 in the *pipeline* itself (parsing, DDL ingestion, `buildSchema` resolution,
 CLI-argument threading) — exactly the class of bug this fixture found on
 its first real run (see the `--default-namespace` case-sensitivity fix,
@@ -51,12 +51,13 @@ def test_default_namespace_table_shows_real_usage(multi_schema_db_conn: duckdb.D
 
 
 def test_non_default_namespace_table_shows_honest_zero_usage(multi_schema_db_conn: duckdb.DuckDBPyConnection):
-    # Phase 2's current gate: a real table that exists in a non-default
-    # schema, with no source anywhere explicitly qualifying it to that
-    # schema, must show zero usage -- not borrow openpay's real usage just
-    # because the bare table name matches. (Superseded by Plan 157 Phase
-    # 4.5's real per-reference resolution once that lands -- this pins
-    # today's documented, intentional interim behavior.)
+    # Plan 157 Phase 4.5: this is now a *resolved* zero, not a gated one --
+    # sql_statement_tables/dw_retrieve_tables carry a real per-reference
+    # namespace, and no real OpenPay source actually qualifies a
+    # misth_zpkrat reference to the synthetic openpay_archive schema, so
+    # resolution correctly finds nothing to attach here (distinct from
+    # Phase 2's old gate, which zeroed every non-default namespace
+    # unconditionally regardless of whether real per-schema usage existed).
     detail = get_table_detail(multi_schema_db_conn, "misth_zpkrat", namespace="openpay_archive")
     assert detail is not None
     assert detail["dw_count"] == 0

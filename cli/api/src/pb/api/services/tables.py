@@ -6,7 +6,7 @@ from collections import defaultdict
 from typing import Any
 
 import duckdb
-from pb.api.routes.dependencies import _WRITE_OPS, rows
+from pb.api.routes.dependencies import rows
 from pb.api.services.schema import get_co_update_rituals, get_column_usage, get_fk_graph
 
 
@@ -51,26 +51,11 @@ def list_tables(conn: duckdb.DuckDBPyConnection, namespace: str | None = None) -
             ORDER BY (dw_count + ps_count) DESC, table_name
         """)
         )
-    # Scoped to one schema: table identity comes from the DDL catalog (the
-    # only namespace-aware source). Usage counts join on bare table_name
-    # (all_sql_tables has no namespace of its own to match) only when this
-    # is the corpus's configured default namespace -- an unqualified SQL/DW
-    # reference almost certainly resolves against the default connection's
-    # schema, not an unrelated same-named table in another schema. A scoped
-    # but non-default namespace, or a corpus with no default configured at
-    # all (single-schema precedent), keeps/uses the join as before.
-    default_ns = get_default_namespace(conn)
-    if default_ns is not None and namespace != default_ns:
-        return rows(
-            conn.execute(
-                """
-                SELECT table_name, ? AS namespace, 0 AS dw_count, 0 AS ps_count, 0 AS file_count
-                FROM (SELECT DISTINCT table_name FROM catalog_columns WHERE namespace = ?) c
-                ORDER BY table_name
-            """,
-                [namespace, namespace],
-            )
-        )
+    # Scoped to one schema: table identity comes from the DDL catalog, usage
+    # counts join on all_sql_tables' own resolved namespace (Plan 157 Phase
+    # 4.5 -- sql_statement_tables/dw_retrieve_tables now carry a real
+    # per-reference namespace, so every schema gets its own honest usage,
+    # not just the corpus's configured default).
     return rows(
         conn.execute(
             """
@@ -81,33 +66,47 @@ def list_tables(conn: duckdb.DuckDBPyConnection, namespace: str | None = None) -
                 count(*) FILTER (WHERE a.source = 'powerscript') AS ps_count,
                 count(DISTINCT a.file)                            AS file_count
             FROM (SELECT DISTINCT table_name FROM catalog_columns WHERE namespace = ?) c
-            LEFT JOIN all_sql_tables a ON a.table_name = c.table_name
+            LEFT JOIN all_sql_tables a ON a.table_name = c.table_name AND a.namespace = ?
             GROUP BY c.table_name
             ORDER BY (dw_count + ps_count) DESC, c.table_name
         """,
-            [namespace, namespace],
+            [namespace, namespace, namespace],
         )
     )
 
 
-def column_lineage(conn: duckdb.DuckDBPyConnection, table_name: str) -> list[dict]:
+def column_lineage(
+    conn: duckdb.DuckDBPyConnection, table_name: str, namespace: str | None = None
+) -> list[dict]:
+    ns_filter = "namespace IS NOT DISTINCT FROM ?"
     try:
         dw_cols = rows(
             conn.execute(
-                "SELECT column_name, dw_name FROM dw_retrieve_columns WHERE table_name = ? ORDER BY column_name, dw_name",
-                [table_name],
+                f"SELECT column_name, dw_name FROM dw_retrieve_columns "
+                f"WHERE table_name = ? AND {ns_filter} ORDER BY column_name, dw_name",
+                [table_name, namespace],
             )
         )
     except Exception:
         dw_cols = []
     try:
+        # Joins through sql_statement_columns (Plan 157 Phase 4.5: carries a
+        # real per-column resolved namespace and is_write flag, unlike the
+        # legacy CSV-split sql_statements.columns/tables this used to read)
+        # back to sql_statements only for the statement's operation text,
+        # which the UI still renders per PS reference.
         ps_cols = rows(
             conn.execute(
-                "SELECT unnest(string_split(columns, ',')) AS col, object, proc_name, operation "
-                "FROM sql_statements "
-                "WHERE list_contains(string_split(tables, ','), ?) "
-                "  AND columns IS NOT NULL AND columns != ''",
-                [table_name],
+                f"""
+                SELECT sc.column_name AS col, sc.object, sc.proc_name, sc.is_write, s.operation
+                FROM sql_statement_columns sc
+                JOIN sql_statements s
+                  ON s.file = sc.file AND s.object = sc.object
+                 AND s.proc_name = sc.proc_name AND s.line = sc.line
+                WHERE sc.table_name = ? AND sc.{ns_filter}
+                ORDER BY sc.column_name
+            """,
+                [table_name, namespace],
             )
         )
     except Exception:
@@ -129,7 +128,7 @@ def column_lineage(conn: duckdb.DuckDBPyConnection, table_name: str) -> list[dic
     for r in ps_cols:
         col = r["col"]
         ref = {"object": r["object"], "proc_name": r["proc_name"], "operation": r["operation"]}
-        bucket = "ps_writers" if r["operation"] in _WRITE_OPS else "ps_readers"
+        bucket = "ps_writers" if r["is_write"] else "ps_readers"
         col_map[col][bucket].append(ref)
 
     return [
@@ -146,11 +145,15 @@ def column_lineage(conn: duckdb.DuckDBPyConnection, table_name: str) -> list[dic
     ]
 
 
-def impact_lineage(conn: duckdb.DuckDBPyConnection, table_name: str) -> dict:
+def impact_lineage(
+    conn: duckdb.DuckDBPyConnection, table_name: str, namespace: str | None = None
+) -> dict:
+    ns_filter = "namespace IS NOT DISTINCT FROM ?"
     direct_rows = rows(
         conn.execute(
-            "SELECT DISTINCT object, source, operation FROM all_sql_tables WHERE table_name = ? ORDER BY object",
-            [table_name],
+            f"SELECT DISTINCT object, source, operation FROM all_sql_tables "
+            f"WHERE table_name = ? AND {ns_filter} ORDER BY object",
+            [table_name, namespace],
         )
     )
     direct_objects = {r["object"] for r in direct_rows}
@@ -206,76 +209,64 @@ def get_table_detail(
         if not in_schema:
             return None
 
-    # The unqualified all_sql_tables/dw_retrieve_*/sql_statements layer has
-    # no namespace of its own, so it can't confirm a reference actually
-    # belongs to a non-default schema. Attribute its rows here only when
-    # unscoped, scoped to the corpus's configured default namespace, or when
-    # no default is configured at all (single-schema precedent) -- otherwise
-    # a scoped-but-non-default table reads as honestly empty rather than
-    # borrowing another same-named schema's usage.
-    default_ns = get_default_namespace(conn)
-    use_unqualified = namespace is None or namespace == default_ns or default_ns is None
-
-    if use_unqualified:
-        all_refs = rows(
-            conn.execute(
-                "SELECT source, object, proc_name, line, operation, file "
-                "FROM all_sql_tables WHERE table_name = ? ORDER BY source, object",
-                [table_name],
-            )
+    # Plan 157 Phase 4.5: every layer below now carries its own resolved
+    # namespace (sql_statement_tables/dw_retrieve_tables/
+    # sql_statement_columns/dw_retrieve_columns), so a scoped-but-non-default
+    # namespace shows its own real usage instead of reading as gated-empty.
+    ns_filter = "namespace IS NOT DISTINCT FROM ?"
+    all_refs = rows(
+        conn.execute(
+            f"SELECT source, object, proc_name, line, operation, file "
+            f"FROM all_sql_tables WHERE table_name = ? AND {ns_filter} ORDER BY source, object",
+            [table_name, namespace],
         )
-    else:
-        all_refs = []
+    )
     if namespace is None and not all_refs:
         return None
 
-    if use_unqualified:
-        try:
-            dws = rows(
-                conn.execute(
-                    "SELECT DISTINCT dw_name, file FROM dw_retrieve_tables WHERE table_name = ? ORDER BY dw_name",
-                    [table_name],
-                )
-            )
-        except Exception:
-            dws = []
-        try:
-            columns = rows(
-                conn.execute(
-                    "SELECT dw_name, column_fqn, column_name "
-                    "FROM dw_retrieve_columns WHERE table_name = ? ORDER BY dw_name, column_name",
-                    [table_name],
-                )
-            )
-        except Exception:
-            columns = []
-        try:
-            where = rows(
-                conn.execute(
-                    "SELECT dw_name, idx, exp1, op, exp2, logic "
-                    "FROM dw_retrieve_where WHERE exp1 LIKE ? OR exp2 LIKE ? ORDER BY dw_name, idx",
-                    [f"%{table_name}%", f"%{table_name}%"],
-                )
-            )
-        except Exception:
-            where = []
-        procedures = rows(
+    try:
+        dws = rows(
             conn.execute(
-                "SELECT DISTINCT object, proc_name, operation "
-                "FROM all_sql_tables "
-                "WHERE table_name = ? AND source = 'powerscript' ORDER BY object, proc_name",
-                [table_name],
+                f"SELECT DISTINCT dw_name, file FROM dw_retrieve_tables "
+                f"WHERE table_name = ? AND {ns_filter} ORDER BY dw_name",
+                [table_name, namespace],
             )
         )
-        columns_detail = column_lineage(conn, table_name)
-        impact = impact_lineage(conn, table_name)
-    else:
+    except Exception:
         dws = []
+    try:
+        columns = rows(
+            conn.execute(
+                f"SELECT dw_name, column_fqn, column_name "
+                f"FROM dw_retrieve_columns WHERE table_name = ? AND {ns_filter} ORDER BY dw_name, column_name",
+                [table_name, namespace],
+            )
+        )
+    except Exception:
         columns = []
+    try:
+        # dw_retrieve_where carries no namespace of its own and is matched
+        # by a LIKE over the table name (not a real column-level filter) --
+        # unaffected by the namespace scoping in this function.
+        where = rows(
+            conn.execute(
+                "SELECT dw_name, idx, exp1, op, exp2, logic "
+                "FROM dw_retrieve_where WHERE exp1 LIKE ? OR exp2 LIKE ? ORDER BY dw_name, idx",
+                [f"%{table_name}%", f"%{table_name}%"],
+            )
+        )
+    except Exception:
         where = []
-        procedures = []
-        columns_detail = []
-        impact = {"direct": [], "inherited": []}
+    procedures = rows(
+        conn.execute(
+            f"SELECT DISTINCT object, proc_name, operation "
+            f"FROM all_sql_tables "
+            f"WHERE table_name = ? AND source = 'powerscript' AND {ns_filter} ORDER BY object, proc_name",
+            [table_name, namespace],
+        )
+    )
+    columns_detail = column_lineage(conn, table_name, namespace)
+    impact = impact_lineage(conn, table_name, namespace)
 
     return {
         "table_name": table_name,

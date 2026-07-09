@@ -69,6 +69,32 @@ def extract_columns(ast) -> list[str]:
 
 
 @dataclass(frozen=True)
+class TableRef:
+    """A table identifier, optionally schema/namespace-qualified. Namespace-
+    aware sibling of `extract_tables`' flat, bare-name list (Plan 157 Phase
+    4.5) -- walks `exp.Table` directly, independent of any column reference,
+    so a column-less table touch (`SELECT COUNT(*) FROM t`, bare `DELETE
+    FROM t`) still produces a table-level ref."""
+
+    namespace: str | None
+    table: str
+
+
+def extract_table_refs(ast) -> list[TableRef]:
+    seen: set[tuple[str | None, str]] = set()
+    refs: list[TableRef] = []
+    for t in ast.find_all(exp.Table):
+        if not t.name:
+            continue
+        ns, table = _table_ident(t)
+        if (ns, table) in seen:
+            continue
+        seen.add((ns, table))
+        refs.append(TableRef(ns, table))
+    return refs
+
+
+@dataclass(frozen=True)
 class ColumnRef:
     """A single column reference, scoped to the table it was actually read from
     or written to (unlike extract_columns' flat, table-less name list)."""
@@ -246,9 +272,9 @@ def parse_pb_sql(
 ) -> tuple[list[dict] | None, list[str], list[str], dict]:
     """Parse PB embedded SQL.
 
-    Returns (parsed_dict, tables, columns, metadata). metadata's "column_refs"
-    and "row_filters" keys carry the scope-aware extraction (list[dict],
-    JSON-ready) alongside the legacy flat tables/columns lists.
+    Returns (parsed_dict, tables, columns, metadata). metadata's "column_refs",
+    "row_filters", and "table_refs" keys carry the scope-aware extraction
+    (list[dict], JSON-ready) alongside the legacy flat tables/columns lists.
     parsed_dict is None for unstructured forms (cursors, dynamic SQL, connections).
     """
     operation = raw_sql.strip().split()[0].upper() if raw_sql.strip() else "UNKNOWN"
@@ -271,6 +297,7 @@ def parse_pb_sql(
             columns = extract_columns(ast)
             meta["column_refs"] = [asdict(r) for r in extract_column_refs(ast, catalog)]
             meta["row_filters"] = [asdict(f) for f in extract_row_filters(ast)]
+            meta["table_refs"] = [asdict(r) for r in extract_table_refs(ast)]
             return ast.dump(), tables, columns, meta
         except Exception as e:
             last_error = e

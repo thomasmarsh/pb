@@ -30,7 +30,10 @@ import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, procEnv)
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
-import PB.Analysis.SchemaCategory (splitColumnRef)
+import PB.Analysis.SchemaCategory
+  ( splitColumnRef, catalogNamespacedTables, resolveTableRef
+  , CatColumnRow (..)
+  )
 import PB.Analysis.TypeResolve
   ( LocalVar, CallSite, GlobalVar (..)
   , extractCallSites, extractDwCallSites, extractGlobalVars, extractLocalVars
@@ -47,7 +50,7 @@ import PB.Pipeline.Passes    (runPhaseB)
 import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse
   ( SqlResult (..), ColumnRef (..), RowFilter (..), SqlBridgePool
-  , TableRef (..), CatalogTable (..), CatalogPrimaryKey (..), CatalogForeignKey (..)
+  , TableRef (..), splitTableRef, CatalogTable (..), CatalogPrimaryKey (..), CatalogForeignKey (..)
   , CatalogCheckConstraint (..), SchemaCatalog (..), DdlStats (..), DdlResponse (..)
   , startSqlBridgePool, shutdownSqlBridgePool, sqlWorkerModuleArgs
   , parseSql, parseDdl, extractBsRawNodes
@@ -57,14 +60,14 @@ import PB.Pipeline.DuckDb
   ( DuckConn, withWriteConn, initSchema
   , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
   , DwRetrieveTableRow (..), DwRetrieveColumnRow (..), DwJoinRow (..), SqlStmtRow (..)
-  , SqlStmtColumnRow (..), SqlStmtFilterRow (..)
+  , SqlStmtColumnRow (..), SqlStmtFilterRow (..), SqlStmtTableRow (..)
   , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..), CatalogCheckRow (..)
   , SourceFileRow (..)
   , appendObjects, appendProcedures
   , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwRetrieveColumns, appendDwJoins
   , appendLocalVars, appendCallSites, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
-  , appendSqlStmtColumns, appendSqlStmtFilters
+  , appendSqlStmtColumns, appendSqlStmtFilters, appendSqlStmtTables
   , appendCatalogColumns, appendCatalogPks, appendCatalogFks, appendCatalogChecks
   , appendParseErrors, appendSourceFiles
   )
@@ -114,6 +117,7 @@ data CompiledPs = CompiledPs
   , cpsSqlStmts      :: [SqlStmtRow]
   , cpsSqlStmtColumns :: [SqlStmtColumnRow]
   , cpsSqlStmtFilters :: [SqlStmtFilterRow]
+  , cpsSqlStmtTables :: [SqlStmtTableRow]
   , cpsSourceContent :: Maybe SourceFileRow
   }
 
@@ -133,8 +137,16 @@ data CompiledFile
   | CFError FilePath Text
   | CFSkip
 
-compileOne :: WorkspaceEnv -> Maybe (SqlBridgePool, Int) -> Text -> ParseOutcome -> IO CompiledFile
-compileOne wsEnv mBridge confidence outcome = case outcome of
+-- | 'catTables'/'mDefaultNamespace' (Plan 157 Phase 4.5): the DDL catalog's
+-- (namespace, table) pairs and the configured @--default-namespace@,
+-- applied via 'resolveTableRef' at the point a 'SqlStmtColumnRow'/
+-- 'DwRetrieveColumnRow' is built — so the persisted row itself carries a
+-- resolved namespace, not just 'PB.Analysis.SchemaCategory.buildSchema''s
+-- in-memory 'SchGraph'. Both are already fully known before Phase A starts
+-- (every @--ddl@ arg is loaded in 'runModeDb' before any worker launches),
+-- so no DB round-trip is needed here — just threading a pure value through.
+compileOne :: Set.Set (Text, Text) -> Maybe Text -> WorkspaceEnv -> Maybe (SqlBridgePool, Int) -> Text -> ParseOutcome -> IO CompiledFile
+compileOne catTables mDefaultNamespace wsEnv mBridge confidence outcome = case outcome of
 
   PsParsed pf -> do
     let sf   = pfSrFile pf
@@ -173,15 +185,16 @@ compileOne wsEnv mBridge confidence outcome = case outcome of
           <> [ (ssName  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
           <> [ (esName  (evSig ev), evBody ev) | ev <- srEvents      sf ]
           <> [ (obEvent ob,         obBody ob) | ob <- srOnBlocks    sf ]
-    (sqlRows, sqlColRows, sqlFilterRows) <- case mBridge of
+    (sqlRows, sqlColRows, sqlFilterRows, sqlTableRows) <- case mBridge of
       Nothing       ->
         -- No SQL bridge: extract raw SQL from BsRaw nodes (same as extractSqlStmts)
-        pure (concatMap (rawSqlRow fp obj) procBodies, [], [])
+        pure (concatMap (rawSqlRow fp obj) procBodies, [], [], [])
       Just (pool,k) -> do
-        triples <- mapM (extractProcSql pool k fp obj) procBodies
-        pure ( concatMap (\(a,_,_) -> a) triples
-             , concatMap (\(_,b,_) -> b) triples
-             , concatMap (\(_,_,c) -> c) triples
+        quads <- mapM (extractProcSql resolve pool k fp obj) procBodies
+        pure ( concatMap (\(a,_,_,_) -> a) quads
+             , concatMap (\(_,b,_,_) -> b) quads
+             , concatMap (\(_,_,c,_) -> c) quads
+             , concatMap (\(_,_,_,d) -> d) quads
              )
     pure $ CFPs $ CompiledPs
       { cpsObjectRow     = ObjectRow fp "powerscript" obj anc
@@ -196,6 +209,7 @@ compileOne wsEnv mBridge confidence outcome = case outcome of
       , cpsSqlStmts      = sqlRows
       , cpsSqlStmtColumns = sqlColRows
       , cpsSqlStmtFilters = sqlFilterRows
+      , cpsSqlStmtTables = sqlTableRows
       , cpsSourceContent = Just (SourceFileRow fp (pfContents pf))
       }
 
@@ -213,13 +227,18 @@ compileOne wsEnv mBridge confidence outcome = case outcome of
         css   = extractDwCallSites fpT obj dw
         retrieveSql = fmap reconstructRetrieveSql (dwTable dw >>= dtRetrieve)
         rtbls = case dwTable dw >>= dtRetrieve of
-          Just (DwRetrieveOk r) -> [ DwRetrieveTableRow fpT obj t | t <- drTables r ]
+          Just (DwRetrieveOk r) ->
+            [ DwRetrieveTableRow fpT obj (trNamespace resolvedRef) (trTable resolvedRef)
+            | t <- drTables r
+            , let resolvedRef = resolve (splitTableRef t)
+            ]
           _                     -> []
         rcols = case dwTable dw >>= dtRetrieve of
           Just (DwRetrieveOk r) ->
-            [ DwRetrieveColumnRow fpT obj (trNamespace tref) (trTable tref) col
+            [ DwRetrieveColumnRow fpT obj (trNamespace resolvedRef) (trTable resolvedRef) col
             | c <- drColumns r
             , Just (tref, col) <- [splitColumnRef c]
+            , let resolvedRef = resolve tref
             ]
           _                     -> []
         jrows = case dwTable dw >>= dtRetrieve of
@@ -239,6 +258,10 @@ compileOne wsEnv mBridge confidence outcome = case outcome of
 
   PsFailed fp err -> pure $ CFError fp err
   OtherFile _     -> pure CFSkip
+
+  where
+    resolve :: TableRef -> TableRef
+    resolve = resolveTableRef catTables mDefaultNamespace
 
 renderBandKind :: Maybe DwBandKind -> Text
 renderBandKind Nothing               = ""
@@ -269,15 +292,25 @@ rawSqlRow fpT obj (pName, body) =
       ["DECLARE","OPEN","FETCH","CLOSE","COMMIT","ROLLBACK","CONNECT","DISCONNECT"]
 
 extractProcSql
-  :: SqlBridgePool -> Int -> Text -> Text -> (Text, [Located BodyStmt])
-  -> IO ([SqlStmtRow], [SqlStmtColumnRow], [SqlStmtFilterRow])
-extractProcSql pool k fp obj (pName, body) = do
-  triples <- mapM parseNode (extractBsRawNodes body)
-  pure ( map (\(row,_,_) -> row) triples
-       , concatMap (\(_,cols,_) -> cols) triples
-       , concatMap (\(_,_,filts) -> filts) triples
+  :: (TableRef -> TableRef) -> SqlBridgePool -> Int -> Text -> Text -> (Text, [Located BodyStmt])
+  -> IO ([SqlStmtRow], [SqlStmtColumnRow], [SqlStmtFilterRow], [SqlStmtTableRow])
+extractProcSql resolve pool k fp obj (pName, body) = do
+  quads <- mapM parseNode (extractBsRawNodes body)
+  pure ( map (\(row,_,_,_) -> row) quads
+       , concatMap (\(_,cols,_,_) -> cols) quads
+       , concatMap (\(_,_,filts,_) -> filts) quads
+       , concatMap (\(_,_,_,tbls) -> tbls) quads
        )
   where
+    -- | Only a column ref with a known table can be resolved — an
+    -- ambiguous unqualified column ('crTable' Nothing, no catalog to
+    -- disambiguate against) passes through unchanged, same conservatism
+    -- 'PB.Analysis.SchemaCategory.buildSchema' already applies.
+    resolveColRef :: Maybe Text -> Maybe Text -> (Maybe Text, Maybe Text)
+    resolveColRef _   Nothing    = (Nothing, Nothing)
+    resolveColRef mNs (Just tbl) =
+      let TableRef mNs' tbl' = resolve (TableRef mNs tbl) in (mNs', Just tbl')
+
     parseNode (ln, rawTxt) = do
       res <- parseSql pool k rawTxt
       let row = SqlStmtRow fp obj pName ln
@@ -287,17 +320,24 @@ extractProcSql pool k fp obj (pName, body) = do
                   rawTxt
                   (srParseOk res)
           colRows =
-            [ SqlStmtColumnRow fp obj pName ln (crNamespace c) (crTable c) (crColumn c) (crIsWrite c)
-            | c <- srColumnRefs res ]
+            [ SqlStmtColumnRow fp obj pName ln ns tbl (crColumn c) (crIsWrite c)
+            | c <- srColumnRefs res
+            , let (ns, tbl) = resolveColRef (crNamespace c) (crTable c)
+            ]
           filterRows =
             [ SqlStmtFilterRow fp obj pName ln (rfNamespace f) (rfTable f) (rfColumn f) (rfOp f)
                 (jsonText (toJSON (rfValues f)))
             | f <- srRowFilters res ]
-      pure (row, colRows, filterRows)
+          tableRows =
+            [ SqlStmtTableRow fp obj pName ln (srOperation res) (trNamespace resolvedRef) (trTable resolvedRef)
+            | t <- srTableRefs res
+            , let resolvedRef = resolve t
+            ]
+      pure (row, colRows, filterRows, tableRows)
 
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each without a SQL bridge.
-workerLoopFilesNoBridge :: Int -> TQueue FilePath -> WorkspaceEnv -> DuckConn -> MVar () -> IORef Int -> IO ()
-workerLoopFilesNoBridge k workQ wsEnv conn mutex errCount = go
+workerLoopFilesNoBridge :: Set.Set (Text, Text) -> Maybe Text -> Int -> TQueue FilePath -> WorkspaceEnv -> DuckConn -> MVar () -> IORef Int -> IO ()
+workerLoopFilesNoBridge catTables mDefaultNamespace k workQ wsEnv conn mutex errCount = go
   where
     go = do
       mFile <- atomically $ do
@@ -309,7 +349,7 @@ workerLoopFilesNoBridge k workQ wsEnv conn mutex errCount = go
           let fp = T.pack file
           emitProgress (object ["tag" .= ("worker_start" :: Text), "worker" .= k, "file" .= fp])
           outcome  <- parseOutcome file
-          compiled <- compileOne wsEnv Nothing "confirmed" outcome
+          compiled <- compileOne catTables mDefaultNamespace wsEnv Nothing "confirmed" outcome
           let ok = case compiled of { CFError {} -> False; _ -> True }
           when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
           withMVar mutex $ \_ -> appendToDb conn compiled
@@ -318,8 +358,8 @@ workerLoopFilesNoBridge k workQ wsEnv conn mutex errCount = go
 
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each with bridge slot k,
 --   serialises DB writes through a shared mutex (DuckDB connections are not thread-safe).
-workerLoopFiles :: Int -> TQueue FilePath -> SqlBridgePool -> WorkspaceEnv -> DuckConn -> MVar () -> IORef Int -> IO ()
-workerLoopFiles k workQ pool wsEnv conn mutex errCount = go
+workerLoopFiles :: Set.Set (Text, Text) -> Maybe Text -> Int -> TQueue FilePath -> SqlBridgePool -> WorkspaceEnv -> DuckConn -> MVar () -> IORef Int -> IO ()
+workerLoopFiles catTables mDefaultNamespace k workQ pool wsEnv conn mutex errCount = go
   where
     go = do
       mFile <- atomically $ do
@@ -331,7 +371,7 @@ workerLoopFiles k workQ pool wsEnv conn mutex errCount = go
           let fp = T.pack file
           emitProgress (object ["tag" .= ("worker_start" :: Text), "worker" .= k, "file" .= fp])
           outcome  <- parseOutcome file
-          compiled <- compileOne wsEnv (Just (pool, k)) "confirmed" outcome
+          compiled <- compileOne catTables mDefaultNamespace wsEnv (Just (pool, k)) "confirmed" outcome
           let ok = case compiled of { CFError {} -> False; _ -> True }
           when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
           withMVar mutex $ \_ -> appendToDb conn compiled
@@ -350,6 +390,7 @@ appendToDb conn (CFPs r) = do
   appendSqlStmts   conn (cpsSqlStmts r)
   appendSqlStmtColumns conn (cpsSqlStmtColumns r)
   appendSqlStmtFilters conn (cpsSqlStmtFilters r)
+  appendSqlStmtTables  conn (cpsSqlStmtTables r)
   appendSourceFiles conn (catMaybes [cpsSourceContent r])
 appendToDb conn (CFDw r) = do
   appendDwObjects        conn [cdDwObjectRow r]
@@ -450,7 +491,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     initSchema conn
     -- Load stdlib first so type lookups in user-code Phase B see the base classes.
     mapM_ (\pf -> do
-      cf <- compileOne wsEnv Nothing "speculative" (PsParsed pf)
+      cf <- compileOne Set.empty mDefaultNamespace wsEnv Nothing "speculative" (PsParsed pf)
       appendToDb conn cf) stdlibParsed
     case mBridgeBin of
       Nothing -> do
@@ -460,15 +501,17 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
                           \(pass --sql-worker-python or set PB_SQL_WORKER); skipping DDL ingestion" :: Text)
           ])
         -- N worker threads drain a shared queue; serialize DB writes through mutex.
+        -- No DDL is loaded on this path, so the catalog is empty and
+        -- resolveTableRef is a no-op regardless of mDefaultNamespace.
         workQ <- newTQueueIO
         atomically (mapM_ (writeTQueue workQ) files)
         mutex <- newMVar ()
         mapConcurrently_
-          (\k -> workerLoopFilesNoBridge k workQ wsEnv conn mutex errCount)
+          (\k -> workerLoopFilesNoBridge Set.empty mDefaultNamespace k workQ wsEnv conn mutex errCount)
           [0 .. nWorkers - 1]
       Just pythonExe -> do
         pool <- startSqlBridgePool nWorkers pythonExe sqlWorkerModuleArgs dialect
-        for_ ddlArgs $ \rawArg -> do
+        allColRows <- mapM (\rawArg -> do
           let (mSchema, ddlPath) = parseDdlArg rawArg
           ddlText <- readFile ddlPath
           resp <- parseDdl pool mSchema ddlText
@@ -493,11 +536,19 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
             , "foreign_keys" .= length (scForeignKeys (ddlCatalog resp))
             , "checks" .= length checkRows
             ])
+          pure colRows) ddlArgs
+        -- Every --ddl arg is loaded before any file worker launches, so the
+        -- full cross-file catalog is known up front (Plan 157 Phase 4.5:
+        -- persistence-time namespace resolution needs the complete set, not
+        -- just the file currently being compiled's own DDL tag).
+        let catTables = catalogNamespacedTables
+              [ CatColumnRow (cclrNamespace c) (cclrTableName c) (cclrColumnName c)
+              | c <- concat allColRows ]
         workQ <- newTQueueIO
         atomically (mapM_ (writeTQueue workQ) files)
         mutex <- newMVar ()
         mapConcurrently_
-          (\k -> workerLoopFiles k workQ pool wsEnv conn mutex errCount)
+          (\k -> workerLoopFiles catTables mDefaultNamespace k workQ pool wsEnv conn mutex errCount)
           [0 .. nWorkers - 1]
           `finally` shutdownSqlBridgePool pool
     runPhaseB conn mDefaultNamespace  -- Phase B: link analysis (passes 5–8)

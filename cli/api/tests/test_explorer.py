@@ -36,6 +36,37 @@ def client_with_sql(db_path, tmp_path_factory):
          "synthetic_test_table", "id",
          "SELECT id FROM synthetic_test_table WHERE id = 1", True],
     )
+    # sql_statement_tables (Plan 157 Phase 4.5): all_sql_tables is now a VIEW
+    # over this table (and dw_retrieve_tables) instead of CSV-splitting
+    # sql_statements.tables -- the synthetic row above alone no longer
+    # surfaces through /api/tables without this.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sql_statement_tables (
+            file TEXT, object TEXT, proc_name TEXT, line INTEGER,
+            operation TEXT, namespace TEXT, table_name TEXT
+        )
+    """)
+    conn.execute(
+        "INSERT INTO sql_statement_tables (file, object, proc_name, line, operation, namespace, table_name) "
+        "VALUES (?,?,?,?,?,?,?)",
+        ["", "fn_sqlerror", "fn_sqlerror", 0, "SELECT", None, "synthetic_test_table"],
+    )
+    # sql_statement_columns (Plan 157 Phase 4.5): column_lineage's PS side now
+    # reads per-column namespace/is_write from here (joined back to
+    # sql_statements for the operation text) instead of CSV-splitting
+    # sql_statements.columns/tables.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sql_statement_columns (
+            file TEXT, object TEXT, proc_name TEXT, line INTEGER,
+            namespace TEXT, table_name TEXT, column_name TEXT, is_write BOOLEAN
+        )
+    """)
+    conn.execute(
+        "INSERT INTO sql_statement_columns "
+        "(file, object, proc_name, line, namespace, table_name, column_name, is_write) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        ["", "fn_sqlerror", "fn_sqlerror", 0, None, "synthetic_test_table", "id", False],
+    )
     # Column order must match PB.Pipeline.DuckDb's real schema
     # (file, dw_name, namespace, table_name, column_name) — a hardcoded
     # positional INSERT with a different order previously landed values in

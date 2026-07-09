@@ -10,6 +10,7 @@ import PB.Runtime.StdLib   (parseStdlibFiles)
 import Database.DuckDB.Simple          (Query, query_)
 import Database.DuckDB.Simple.FromRow  (FromRow (..), field)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set        as Set
 import qualified Data.Text       as T
 
 import Test.Tasty       (TestTree, testGroup)
@@ -42,7 +43,7 @@ withStdlibDb act = withWriteConn ":memory:" $ \conn -> do
   pfs <- parseStdlibFiles
   let wsEnv = buildWorkspaceEnv (map pfSrFile pfs)
   mapM_ (\pf -> do
-    cf <- compileOne wsEnv Nothing "speculative" (PsParsed pf)
+    cf <- compileOne Set.empty Nothing wsEnv Nothing "speculative" (PsParsed pf)
     appendToDb conn cf) pfs
   act conn
 
@@ -100,7 +101,7 @@ testUserConfirmed = withWriteConn ":memory:" $ \conn -> do
     Right (sf, sp) -> do
       let wsEnv = buildWorkspaceEnv [sf]
           pf    = ParsedFile "w_test.srw" sf sp src
-      cf <- compileOne wsEnv Nothing "confirmed" (PsParsed pf)
+      cf <- compileOne Set.empty Nothing wsEnv Nothing "confirmed" (PsParsed pf)
       appendToDb conn cf
   confs <- queryOneTexts conn "SELECT confidence FROM objects"
   assertEqual "user object is confirmed" ["confirmed"] confs

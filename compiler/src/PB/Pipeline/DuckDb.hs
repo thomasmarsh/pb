@@ -14,6 +14,7 @@ module PB.Pipeline.DuckDb
   , SqlStmtRow (..)
   , SqlStmtColumnRow (..)
   , SqlStmtFilterRow (..)
+  , SqlStmtTableRow (..)
   , CatalogColumnRow (..)
   , CatalogPkRow (..)
   , CatalogFkRow (..)
@@ -35,6 +36,7 @@ module PB.Pipeline.DuckDb
   , appendSqlStmts
   , appendSqlStmtColumns
   , appendSqlStmtFilters
+  , appendSqlStmtTables
   , appendCatalogColumns
   , appendCatalogPks
   , appendCatalogFks
@@ -169,10 +171,19 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       , "CREATE TABLE IF NOT EXISTS sql_statement_filters \
         \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
         \namespace TEXT, table_name TEXT, column_name TEXT, op TEXT, values_json TEXT)"
+      -- Plan 157 Phase 4.5: namespace-aware sibling of sql_statements.tables
+      -- (comma-joined, no namespace, kept untouched -- see that field's own
+      -- consumers). One row per (statement, table) pair, extracted straight
+      -- from the statement's table list (not derived from
+      -- sql_statement_columns), so a column-less table touch (bare DELETE,
+      -- SELECT COUNT(*)) still gets a table-level row.
+      , "CREATE TABLE IF NOT EXISTS sql_statement_tables \
+        \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
+        \operation TEXT, namespace TEXT, table_name TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_objects \
         \(file TEXT, object TEXT, style TEXT, layout_json TEXT, retrieve_sql TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_retrieve_tables \
-        \(file TEXT, dw_name TEXT, table_name TEXT)"
+        \(file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_retrieve_columns \
         \(file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT, column_name TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_joins \
@@ -234,16 +245,18 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       , "CREATE TABLE IF NOT EXISTS decomposition_coslice \
         \(seed_key TEXT, target_key TEXT, direction TEXT, leg_ordinal INTEGER, \
         \leg_from TEXT, leg_to TEXT, leg_kind TEXT, fk_source TEXT)"
+      -- Plan 157 Phase 4.5: reads from the namespace-carrying
+      -- dw_retrieve_tables/sql_statement_tables directly -- no more
+      -- CSV-split of sql_statements.tables (which has no namespace of its
+      -- own; kept as-is for its other consumers).
       , "CREATE OR REPLACE VIEW all_sql_tables AS \
         \SELECT file, dw_name AS object, 'datawindow' AS source, \
-        \'retrieve' AS operation, table_name, NULL AS proc_name, NULL::INT AS line \
+        \'retrieve' AS operation, namespace, table_name, NULL AS proc_name, NULL::INT AS line \
         \FROM dw_retrieve_tables \
         \UNION ALL \
-        \SELECT s.file, s.object, 'powerscript' AS source, s.operation, \
-        \TRIM(t) AS table_name, s.proc_name, s.line \
-        \FROM sql_statements s, \
-        \unnest(string_split(s.tables, ',')) t(t) \
-        \WHERE s.tables IS NOT NULL AND s.tables != ''"
+        \SELECT file, object, 'powerscript' AS source, operation, \
+        \namespace, table_name, proc_name, line \
+        \FROM sql_statement_tables"
       ]
 
 -- ---------------------------------------------------------------------------
@@ -299,6 +312,7 @@ data DwControlRow = DwControlRow
 data DwRetrieveTableRow = DwRetrieveTableRow
   { drtrFile      :: Text
   , drtrDwName    :: Text
+  , drtrNamespace :: Maybe Text
   , drtrTableName :: Text
   }
 
@@ -353,6 +367,18 @@ data SqlStmtFilterRow = SqlStmtFilterRow
   , ssfrColumnName :: Text
   , ssfrOp         :: Text
   , ssfrValuesJson :: Text
+  }
+
+-- | One row of sql_statement_tables (Plan 157 Phase 4.5): a namespace-aware
+-- sibling of sql_statements.tables, one row per (statement, table) pair.
+data SqlStmtTableRow = SqlStmtTableRow
+  { sstrFile      :: Text
+  , sstrObject    :: Text
+  , sstrProcName  :: Text
+  , sstrLine      :: Int
+  , sstrOperation :: Maybe Text
+  , sstrNamespace :: Maybe Text
+  , sstrTableName :: Text
   }
 
 data CatalogColumnRow = CatalogColumnRow
@@ -460,6 +486,7 @@ appendDwRetrieveTables conn rows = withRaw conn "dw_retrieve_tables" $ \app ->
   for_ rows $ \r -> do
     aText app (drtrFile r)
     aText app (drtrDwName r)
+    aMaybeText app (drtrNamespace r)
     aText app (drtrTableName r)
     endRow app
 
@@ -595,6 +622,19 @@ appendSqlStmtFilters conn rows = withRaw conn "sql_statement_filters" $ \app ->
     aText      app (ssfrColumnName r)
     aText      app (ssfrOp r)
     aText      app (ssfrValuesJson r)
+    endRow app
+
+appendSqlStmtTables :: DuckConn -> [SqlStmtTableRow] -> IO ()
+appendSqlStmtTables _    [] = pure ()
+appendSqlStmtTables conn rows = withRaw conn "sql_statement_tables" $ \app ->
+  for_ rows $ \r -> do
+    aText      app (sstrFile r)
+    aText      app (sstrObject r)
+    aText      app (sstrProcName r)
+    aInt       app (sstrLine r)
+    aMaybeText app (sstrOperation r)
+    aMaybeText app (sstrNamespace r)
+    aText      app (sstrTableName r)
     endRow app
 
 appendCatalogColumns :: DuckConn -> [CatalogColumnRow] -> IO ()

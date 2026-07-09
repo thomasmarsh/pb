@@ -28,6 +28,11 @@ module PB.Analysis.SchemaCategory
   , CatFkRow (..)
   , SchemaInputs (..)
   , buildSchema
+    -- Namespace resolution (Plan 157 Phase 4.5: shared by buildSchema and
+    -- any other write site that needs to resolve an unqualified TableRef,
+    -- e.g. persistence-time resolution in PB.Pipeline.Runner)
+  , catalogNamespacedTables
+  , resolveTableRef
     -- Traversal (Plan 148 Phase 2)
   , blastRadius
   , validationWalkBack
@@ -209,6 +214,31 @@ data SchemaInputs = SchemaInputs
     -- defines the table under it — never guessed.
   } deriving (Show, Eq)
 
+-- | (namespace, table) pairs the DDL catalog actually defines, restricted
+-- to Just-namespace rows — "is this table real under the default schema."
+catalogNamespacedTables :: [CatColumnRow] -> Set.Set (Text, Text)
+catalogNamespacedTables catCols = Set.fromList
+  [ (ns, cclTable c) | c <- catCols, Just ns <- [cclNamespace c] ]
+
+-- | Resolve a Nothing-namespace 'TableRef' against the configured default
+-- namespace, iff the DDL catalog defines that table under it. Already-
+-- qualified refs and refs with no matching catalog entry pass through
+-- unchanged — never guessed. The default namespace is lowercased here, at
+-- the point of comparison — matches the "namespaces are always lowercase"
+-- invariant every DDL-derived 'TableRef' already follows (see
+-- 'PB.Pipeline.SqlParse.TableRef' and @ddl.py@'s @_table_ident@).
+-- @--default-namespace@ is a raw CLI value with no such normalization
+-- applied anywhere upstream of here — a case mismatch (e.g.
+-- @--default-namespace CLIMS@ against a catalog-derived @"clims"@) silently
+-- resolved nothing, confirmed via a real multi-schema reindex (Plan 157
+-- Phase 4/5 fixture).
+resolveTableRef :: Set.Set (Text, Text) -> Maybe Text -> TableRef -> TableRef
+resolveTableRef _ _ tr@(TableRef (Just _) _) = tr
+resolveTableRef catTables mDefaultNs tr@(TableRef Nothing tbl) =
+  case T.toLower <$> mDefaultNs of
+    Just ns | Set.member (ns, tbl) catTables -> TableRef (Just ns) tbl
+    _ -> tr
+
 -- | Total, pure: builds the full 'SchGraph' from Phase A/DDL inputs.
 -- Columns that only appear in the catalog (no statement or JOIN touches
 -- them) still become objects with no legs — a free normalization signal
@@ -222,37 +252,15 @@ buildSchema inputs =
     , sgIn      = Map.fromListWith (<>) [ (legTo m,   [m]) | m <- allLegs ]
     }
   where
-    -- | (namespace, table) pairs the DDL catalog actually defines, restricted
-    -- to Just-namespace rows — "is this table real under the default schema."
-    catalogNamespacedTables :: Set.Set (Text, Text)
-    catalogNamespacedTables = Set.fromList
-      [ (ns, cclTable c) | c <- inCatalogColumns inputs, Just ns <- [cclNamespace c] ]
+    catTables :: Set.Set (Text, Text)
+    catTables = catalogNamespacedTables (inCatalogColumns inputs)
 
-    -- | Lowercased once, here, at the point of comparison — matches the
-    -- "namespaces are always lowercase" invariant every DDL-derived
-    -- 'TableRef' already follows (see 'PB.Pipeline.SqlParse.TableRef' and
-    -- @ddl.py@'s @_table_ident@). @--default-namespace@ is a raw CLI value
-    -- with no such normalization applied anywhere upstream of here — a
-    -- case mismatch (e.g. @--default-namespace CLIMS@ against a
-    -- catalog-derived @"clims"@) silently resolved nothing, confirmed via
-    -- a real multi-schema reindex (Plan 157 Phase 4/5 fixture).
-    normalizedDefaultNamespace :: Maybe Text
-    normalizedDefaultNamespace = T.toLower <$> inDefaultNamespace inputs
-
-    -- | Resolve a Nothing-namespace 'TableRef' against the configured default
-    -- namespace, iff the DDL catalog defines that table under it. Already-
-    -- qualified refs and refs with no matching catalog entry pass through
-    -- unchanged — never guessed.
-    resolveTableRef :: TableRef -> TableRef
-    resolveTableRef tr@(TableRef (Just _) _) = tr
-    resolveTableRef tr@(TableRef Nothing tbl) =
-      case normalizedDefaultNamespace of
-        Just ns | Set.member (ns, tbl) catalogNamespacedTables -> TableRef (Just ns) tbl
-        _ -> tr
+    resolve :: TableRef -> TableRef
+    resolve = resolveTableRef catTables (inDefaultNamespace inputs)
 
     dwRetrieveLegs =
       [ SchMorphism (StmtObj (DwRetrieveId (drcFile r) (drcDwName r)))
-                     (ColumnObj (resolveTableRef (TableRef (drcNamespace r) (drcTable r))) (drcColumn r))
+                     (ColumnObj (resolve (TableRef (drcNamespace r) (drcTable r))) (drcColumn r))
                      LegRetrieve
       | r <- inDwRetrieveColumns inputs
       ]
@@ -261,7 +269,7 @@ buildSchema inputs =
       [ SchMorphism from to kind
       | r <- inSqlColumns inputs
       , Just tbl <- [scTable r]
-      , let colObj  = ColumnObj (resolveTableRef (TableRef (scNamespace r) tbl)) (scColumn r)
+      , let colObj  = ColumnObj (resolve (TableRef (scNamespace r) tbl)) (scColumn r)
             stmtObj = StmtObj (scStmt r)
             (from, to, kind)
               | scIsWrite r = (stmtObj, colObj, LegWrites)
@@ -269,7 +277,7 @@ buildSchema inputs =
       ]
 
     dwJoinLegs =
-      [ SchMorphism (ColumnObj (resolveTableRef lt) lc) (ColumnObj (resolveTableRef rt) rc) (LegFk FkDwJoin)
+      [ SchMorphism (ColumnObj (resolve lt) lc) (ColumnObj (resolve rt) rc) (LegFk FkDwJoin)
       | j <- inDwJoins inputs
       , Just (lt, lc) <- [splitColumnRef (djlLeftRef j)]
       , Just (rt, rc) <- [splitColumnRef (djlRightRef j)]

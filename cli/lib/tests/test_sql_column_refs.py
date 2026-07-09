@@ -18,8 +18,10 @@ import sqlglot
 from pb.lib.sql import (
     ColumnRef,
     RowFilter,
+    TableRef,
     extract_column_refs,
     extract_row_filters,
+    extract_table_refs,
     pb_sql_to_standard,
 )
 
@@ -189,3 +191,45 @@ def test_row_filter_eq_and_in_extracted():
         or ("account", "kind", "in", ("A", "B")) in got
     )
     assert all(isinstance(f, RowFilter) for f in filters)
+
+
+# ---------------------------------------------------------------------------
+# extract_table_refs (Plan 157 Phase 4.5): namespace-aware sibling of
+# extract_tables, independent of column refs -- must see column-less table
+# touches (bare DELETE, SELECT COUNT(*)) that extract_column_refs can't.
+# ---------------------------------------------------------------------------
+
+
+def test_table_refs_unqualified_table():
+    raw = "SELECT cust_name FROM customer WHERE cust_id = :li_id"
+    ast = _parse(raw)
+    refs = extract_table_refs(ast)
+    assert refs == [TableRef(None, "customer")]
+
+
+def test_table_refs_namespace_qualified():
+    raw = "SELECT cust_name FROM openpay.customer WHERE cust_id = :li_id"
+    ast = _parse(raw)
+    refs = extract_table_refs(ast)
+    assert refs == [TableRef("openpay", "customer")]
+
+
+def test_table_refs_bare_delete_has_no_columns_but_has_table_ref():
+    raw = "DELETE FROM account WHERE kodkrat = :ls_kodkrat"
+    ast = _parse(raw)
+    assert extract_column_refs(ast) == []
+    assert extract_table_refs(ast) == [TableRef(None, "account")]
+
+
+def test_table_refs_select_count_star_has_no_columns_but_has_table_ref():
+    raw = "SELECT COUNT(*) FROM account"
+    ast = _parse(raw)
+    assert extract_column_refs(ast) == []
+    assert extract_table_refs(ast) == [TableRef(None, "account")]
+
+
+def test_table_refs_dedupes_repeated_table_in_join():
+    raw = "SELECT a.id FROM account a JOIN account b ON a.parent_id = b.id"
+    ast = _parse(raw)
+    refs = extract_table_refs(ast)
+    assert refs == [TableRef(None, "account")]
