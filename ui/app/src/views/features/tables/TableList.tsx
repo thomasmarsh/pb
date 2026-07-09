@@ -9,16 +9,20 @@ import { EntityCard, Loading, useListKeyboard } from "@pb/platform";
 export function TableList(props: { store: Store<AppState, AppAction> }) {
   const snap = props.store.getState();
   const ts = () => snap().tables;
+  const routeNamespace = () => {
+    const r = snap().nav.route;
+    return r.view === "tables" ? r.namespace : undefined;
+  };
 
   onMount(() => {
-    if (ts().items.length === 0) {
-      props.store.dispatch({ tag: "tables", action: { tag: "search", q: "" } });
+    if (ts().items.length === 0 || ts().namespace !== (routeNamespace() ?? null)) {
+      props.store.dispatch({ tag: "tables", action: { tag: "search", q: "", namespace: routeNamespace() } });
     }
   });
 
   useListKeyboard({
     items: () => filtered().map((item) => ({
-      select: () => props.store.dispatch({ tag: "tables", action: { tag: "select", name: item.table_name } }),
+      select: () => props.store.dispatch({ tag: "tables", action: { tag: "select", name: item.table_name, namespace: item.namespace } }),
     })),
     tableSelector: ".table-list-table",
   });
@@ -33,8 +37,9 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
   const showingLabel = () => {
     const q = ts().q;
     const f = filtered();
-    if (!q) return `Tables (${ts().items.length})`;
-    return `Tables — showing ${f.length} of ${ts().items.length}`;
+    const label = ts().namespace ? `Tables in ${ts().namespace}` : "Tables";
+    if (!q) return `${label} (${ts().items.length})`;
+    return `${label} — showing ${f.length} of ${ts().items.length}`;
   };
 
   return (
@@ -74,7 +79,7 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
                     <EntityCard
                       type="table"
                       name={t.table_name}
-                      onClick={() => props.store.dispatch({ tag: "tables", action: { tag: "select", name: t.table_name } })}
+                      onClick={() => props.store.dispatch({ tag: "tables", action: { tag: "select", name: t.table_name, namespace: t.namespace } })}
                     />
                   </td>
                   <td>{String(t.dw_count)}</td>

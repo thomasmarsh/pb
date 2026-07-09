@@ -10,18 +10,60 @@ from pb.api.routes.dependencies import _WRITE_OPS, rows
 from pb.api.services.schema import get_co_update_rituals, get_column_usage, get_fk_graph
 
 
-def list_tables(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
+def list_schemas(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
+    """Distinct namespaces known to the DDL catalog, with their table count.
+
+    `catalog_columns` is the only namespace-aware source in the DB --
+    `all_sql_tables` (embedded-SQL usage) never carries a schema qualifier,
+    so it cannot itself distinguish same-named tables across schemas. A
+    single-schema/no-DDL corpus (the common case) has an empty
+    `catalog_columns` and returns `[]` here -- callers should treat that as
+    "no schema picker needed", not an error.
+    """
     return rows(
         conn.execute("""
-        SELECT
-            table_name,
-            count(*) FILTER (WHERE source = 'datawindow')  AS dw_count,
-            count(*) FILTER (WHERE source = 'powerscript') AS ps_count,
-            count(DISTINCT file)                           AS file_count
-        FROM all_sql_tables
-        GROUP BY table_name
-        ORDER BY (dw_count + ps_count) DESC, table_name
+        SELECT namespace, count(DISTINCT table_name) AS table_count
+        FROM catalog_columns
+        WHERE namespace IS NOT NULL
+        GROUP BY namespace
+        ORDER BY namespace
     """)
+    )
+
+
+def list_tables(conn: duckdb.DuckDBPyConnection, namespace: str | None = None) -> list[dict[str, Any]]:
+    if namespace is None:
+        return rows(
+            conn.execute("""
+            SELECT
+                table_name,
+                count(*) FILTER (WHERE source = 'datawindow')  AS dw_count,
+                count(*) FILTER (WHERE source = 'powerscript') AS ps_count,
+                count(DISTINCT file)                           AS file_count
+            FROM all_sql_tables
+            GROUP BY table_name
+            ORDER BY (dw_count + ps_count) DESC, table_name
+        """)
+        )
+    # Scoped to one schema: table identity comes from the DDL catalog (the
+    # only namespace-aware source); usage counts still join on bare
+    # table_name since all_sql_tables has no namespace of its own to match.
+    return rows(
+        conn.execute(
+            """
+            SELECT
+                c.table_name,
+                ? AS namespace,
+                count(*) FILTER (WHERE a.source = 'datawindow')  AS dw_count,
+                count(*) FILTER (WHERE a.source = 'powerscript') AS ps_count,
+                count(DISTINCT a.file)                            AS file_count
+            FROM (SELECT DISTINCT table_name FROM catalog_columns WHERE namespace = ?) c
+            LEFT JOIN all_sql_tables a ON a.table_name = c.table_name
+            GROUP BY c.table_name
+            ORDER BY (dw_count + ps_count) DESC, c.table_name
+        """,
+            [namespace, namespace],
+        )
     )
 
 
@@ -127,7 +169,20 @@ def impact_lineage(conn: duckdb.DuckDBPyConnection, table_name: str) -> dict:
     }
 
 
-def get_table_detail(conn: duckdb.DuckDBPyConnection, table_name: str) -> dict[str, Any] | None:
+def get_table_detail(
+    conn: duckdb.DuckDBPyConnection, table_name: str, namespace: str | None = None
+) -> dict[str, Any] | None:
+    if namespace is not None:
+        # Existence is checked against the DDL catalog, not all_sql_tables:
+        # the latter has no namespace of its own, so it can't confirm a
+        # table exists specifically *within* the requested schema.
+        in_schema = conn.execute(
+            "SELECT 1 FROM catalog_columns WHERE namespace = ? AND table_name = ? LIMIT 1",
+            [namespace, table_name],
+        ).fetchone()
+        if not in_schema:
+            return None
+
     all_refs = rows(
         conn.execute(
             "SELECT source, object, proc_name, line, operation, file "
@@ -135,7 +190,7 @@ def get_table_detail(conn: duckdb.DuckDBPyConnection, table_name: str) -> dict[s
             [table_name],
         )
     )
-    if not all_refs:
+    if namespace is None and not all_refs:
         return None
 
     try:
@@ -177,6 +232,7 @@ def get_table_detail(conn: duckdb.DuckDBPyConnection, table_name: str) -> dict[s
     )
     return {
         "table_name": table_name,
+        **({"namespace": namespace} if namespace is not None else {}),
         "dw_count": len(dws),
         "ps_count": len(procedures),
         "datawindows": dws,

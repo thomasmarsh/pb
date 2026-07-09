@@ -221,8 +221,14 @@ export interface QueryResult {
 
 // ── Tables ───────────────────────────────────────────────────────────────────
 
+export interface SchemaSummary {
+  namespace:   string;
+  table_count: number;
+}
+
 export interface TableSummary {
   table_name: string;
+  namespace?: string;
   dw_count:   number;
   ps_count:   number;
   file_count: number;
@@ -268,6 +274,7 @@ export interface TableImpact {
 
 export interface TableDetail {
   table_name:     string;
+  namespace?:     string;
   dw_count:       number;
   ps_count:       number;
   datawindows:    { dw_name: string; file: string }[];

@@ -14,6 +14,7 @@ import type {
   ExploreTreeResponse,
 
   ExploreProcDetail,
+  SchemaSummary,
   TableSummary,
   TableDetail,
   ErrorListResponse,
@@ -53,12 +54,13 @@ export interface ApiClient {
   getExploreTree(): Promise<ExploreTreeResponse>;
   getExploreProcedure(objectName: string, procName: string): Promise<ExploreProcDetail>;
   getExploreDatawindow(name: string): Promise<DwDetailResponse>;
-  getTables(): Promise<TableSummary[]>;
-  getTableDetail(name: string): Promise<TableDetail>;
+  getSchemas(): Promise<SchemaSummary[]>;
+  getTables(namespace?: string): Promise<TableSummary[]>;
+  getTableDetail(name: string, namespace?: string): Promise<TableDetail>;
   getColumnUsage(): Promise<ColumnUsageResponse>;
   getCoUpdateRituals(): Promise<CoUpdateRitualsResponse>;
-  getDecompositionCandidates(table: string): Promise<DecompositionCandidatesResponse>;
-  getColumnAffinity(table: string): Promise<ColumnAffinityResponse>;
+  getDecompositionCandidates(table: string, namespace?: string): Promise<DecompositionCandidatesResponse>;
+  getColumnAffinity(table: string, namespace?: string): Promise<ColumnAffinityResponse>;
   getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse>;
   getDwQueries(): Promise<Record<string, string>>;
   executeSql(sql: string, params: unknown[]): Promise<SQLResult>;
@@ -113,12 +115,13 @@ export function createEnv(api: ApiClient): Env {
     getExploreTree: () => lift(() => api.getExploreTree()),
     getExploreProcedure: (o, p) => lift(() => api.getExploreProcedure(o, p)),
     getExploreDatawindow: (n) => lift(() => api.getExploreDatawindow(n)),
-    getTables: () => lift(() => api.getTables()),
-    getTableDetail: (n) => lift(() => api.getTableDetail(n)),
+    getSchemas: () => lift(() => api.getSchemas()),
+    getTables: (ns?: string) => lift(() => api.getTables(ns)),
+    getTableDetail: (n: string, ns?: string) => lift(() => api.getTableDetail(n, ns)),
     getColumnUsage: () => lift(() => api.getColumnUsage()),
     getCoUpdateRituals: () => lift(() => api.getCoUpdateRituals()),
-    getDecompositionCandidates: (t) => lift(() => api.getDecompositionCandidates(t)),
-    getColumnAffinity: (t) => lift(() => api.getColumnAffinity(t)),
+    getDecompositionCandidates: (t: string, ns?: string) => lift(() => api.getDecompositionCandidates(t, ns)),
+    getColumnAffinity: (t: string, ns?: string) => lift(() => api.getColumnAffinity(t, ns)),
     getErrors: (p) => lift(() => api.getErrors(p)),
     getDwQueries: () => lift(() => api.getDwQueries()),
     executeSql: (sql, params) => lift(() => api.executeSql(sql, params)),
@@ -259,12 +262,18 @@ export function createApiClient(): ApiClient {
       return fetchJson(`/api/datawindow/${encodeURIComponent(name)}`);
     },
 
-    async getTables(): Promise<TableSummary[]> {
-      return fetchJson("/api/tables");
+    async getSchemas(): Promise<SchemaSummary[]> {
+      return fetchJson("/api/schemas");
     },
 
-    async getTableDetail(name: string): Promise<TableDetail> {
-      return fetchJson(`/api/tables/${encodeURIComponent(name)}`);
+    async getTables(namespace?: string): Promise<TableSummary[]> {
+      const qs = namespace ? "?" + apiParams({ namespace }) : "";
+      return fetchJson(`/api/tables${qs}`);
+    },
+
+    async getTableDetail(name: string, namespace?: string): Promise<TableDetail> {
+      const qs = namespace ? "?" + apiParams({ namespace }) : "";
+      return fetchJson(`/api/tables/${encodeURIComponent(name)}${qs}`);
     },
 
     async getColumnUsage(): Promise<ColumnUsageResponse> {
@@ -275,12 +284,14 @@ export function createApiClient(): ApiClient {
       return fetchJson("/api/schema/co-update-rituals");
     },
 
-    async getDecompositionCandidates(table: string): Promise<DecompositionCandidatesResponse> {
-      return fetchJson(`/api/schema/decomposition-candidates/${encodeURIComponent(table)}`);
+    async getDecompositionCandidates(table: string, namespace?: string): Promise<DecompositionCandidatesResponse> {
+      const qs = namespace ? "?" + apiParams({ namespace }) : "";
+      return fetchJson(`/api/schema/decomposition-candidates/${encodeURIComponent(table)}${qs}`);
     },
 
-    async getColumnAffinity(table: string): Promise<ColumnAffinityResponse> {
-      return fetchJson(`/api/schema/column-affinity/${encodeURIComponent(table)}`);
+    async getColumnAffinity(table: string, namespace?: string): Promise<ColumnAffinityResponse> {
+      const qs = namespace ? "?" + apiParams({ namespace }) : "";
+      return fetchJson(`/api/schema/column-affinity/${encodeURIComponent(table)}${qs}`);
     },
 
     async getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse> {

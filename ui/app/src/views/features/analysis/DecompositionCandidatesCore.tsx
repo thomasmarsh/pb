@@ -18,6 +18,7 @@ import { DendrogramList, AFFINITY_EXAMPLE_MERGES } from "./ColumnAffinityCore.js
 export interface DecompositionCandidatesCoreProps {
   store: Store<AppState, AppAction>;
   table: string;
+  namespace?: string;
 }
 
 // Coslice sizes routinely reach 100+ statements (e.g. misth_final_ypal's
@@ -187,7 +188,7 @@ export function DecompositionCandidatesCore(props: DecompositionCandidatesCorePr
   onMount(() => {
     props.store.dispatch({
       tag: "tables",
-      action: { tag: "decomposition-candidates-load", tableName: props.table },
+      action: { tag: "decomposition-candidates-load", tableName: props.table, namespace: props.namespace },
     });
   });
 

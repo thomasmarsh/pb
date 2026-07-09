@@ -10,8 +10,9 @@ export type Route =
   | { view: "proceduresList" }
   | { view: "datawindows" }
   | { view: "dwDetail";        name: string }
-  | { view: "tables" }
-  | { view: "tableDetail";     name: string }
+  | { view: "schemas" }
+  | { view: "tables"; namespace?: string }
+  | { view: "tableDetail";     name: string; namespace?: string }
   | { view: "diagrams"; kind?: DiagramKind }
   | { view: "queries"; queryName?: string; queryParams?: Record<string, string>; sqlText?: string }
   | { view: "search" }

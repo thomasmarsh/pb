@@ -252,6 +252,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
 
   const subtitle = (
     <p style={{ color: "var(--text-muted)", margin: "0", "font-size": "13px" }}>
+      {d.namespace ? <>schema {d.namespace} · </> : null}
       {d.dw_count} DW reader{d.dw_count !== 1 ? "s" : ""} · {readers.length} procedure reader{readers.length !== 1 ? "s" : ""} · {writers.length} writer{writers.length !== 1 ? "s" : ""}
     </p>
   );
@@ -346,7 +347,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
             onClose={() => setShowDecomposition(false)}
             onHelp={() => setShowDecompositionHelp(true)}
           >
-            <DecompositionCandidatesCore store={store} table={d.table_name} />
+            <DecompositionCandidatesCore store={store} table={d.table_name} namespace={d.namespace} />
           </ContextualPanel>
         </Show>
 
@@ -356,7 +357,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
             onClose={() => setShowColumnAffinity(false)}
             onHelp={() => setShowColumnAffinityHelp(true)}
           >
-            <ColumnAffinityCore store={store} table={d.table_name} />
+            <ColumnAffinityCore store={store} table={d.table_name} namespace={d.namespace} />
           </ContextualPanel>
         </Show>
       </div>

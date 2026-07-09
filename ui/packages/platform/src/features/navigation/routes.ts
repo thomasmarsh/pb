@@ -15,8 +15,12 @@ export function print(route: Route): string {
     case "proceduresList":   return "/procedures";
     case "datawindows":      return "/datawindows";
     case "dwDetail":         return "/datawindows/" + encodeURIComponent(route.name);
-    case "tables":           return "/tables";
-    case "tableDetail":      return "/tables/"      + encodeURIComponent(route.name);
+    case "schemas":          return "/schemas";
+    case "tables":
+      return route.namespace ? `/tables?ns=${encodeURIComponent(route.namespace)}` : "/tables";
+    case "tableDetail":
+      return "/tables/" + encodeURIComponent(route.name)
+             + (route.namespace ? `?ns=${encodeURIComponent(route.namespace)}` : "");
     case "libraryDetail":    return "/library/"     + encodeURIComponent(route.name);
     case "diagrams":
       return route.kind ? `/diagrams?kind=${encodeURIComponent(route.kind)}` : "/diagrams";
@@ -62,9 +66,16 @@ export function parse(path: string, search?: string): Route {
     case "datawindows":
       if (segs[1]) return { view: "dwDetail", name: decodeURIComponent(segs[1]) };
       return { view: "datawindows" };
-    case "tables":
-      if (segs[1]) return { view: "tableDetail", name: decodeURIComponent(segs[1]) };
-      return { view: "tables" };
+    case "schemas":
+      return { view: "schemas" };
+    case "tables": {
+      const raw = search ? (search.startsWith("?") ? search.slice(1) : search) : "";
+      const ns = new URLSearchParams(raw).get("ns");
+      if (segs[1]) {
+        return { view: "tableDetail", name: decodeURIComponent(segs[1]), ...(ns ? { namespace: ns } : {}) };
+      }
+      return { view: "tables", ...(ns ? { namespace: ns } : {}) };
+    }
     case "library":
       if (segs[1]) return { view: "libraryDetail", name: decodeURIComponent(segs[1]) };
       return { view: "dashboard" };

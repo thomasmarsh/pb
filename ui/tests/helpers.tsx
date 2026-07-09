@@ -33,6 +33,7 @@ export const mockEnv: AppEnv = {
   getExploreTree: () => Effect.none(),
   getExploreProcedure: () => Effect.none(),
   getExploreDatawindow: () => Effect.none(),
+  getSchemas: () => Effect.none(),
   getTables: () => Effect.none(),
   getTableDetail: () => Effect.none(),
   getColumnUsage: () => Effect.none(),

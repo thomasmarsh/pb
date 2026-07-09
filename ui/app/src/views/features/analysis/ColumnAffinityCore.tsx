@@ -16,6 +16,7 @@ import type { AnalysisExplainerContent } from "@pb/platform";
 export interface ColumnAffinityCoreProps {
   store: Store<AppState, AppAction>;
   table: string;
+  namespace?: string;
 }
 
 // Sequential single-hue scale (dataviz skill: magnitude -> one hue, light to
@@ -132,7 +133,7 @@ export function ColumnAffinityCore(props: ColumnAffinityCoreProps): JSX.Element 
   onMount(() => {
     props.store.dispatch({
       tag: "tables",
-      action: { tag: "column-affinity-load", tableName: props.table },
+      action: { tag: "column-affinity-load", tableName: props.table, namespace: props.namespace },
     });
   });
 

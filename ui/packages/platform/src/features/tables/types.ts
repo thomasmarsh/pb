@@ -1,8 +1,14 @@
 // features/tables/types.ts
 
-import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse } from "../../types/api.js";
+import type { SchemaSummary, TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse } from "../../types/api.js";
 
 export interface TablesState {
+  // Schemas (SCHEMAS > TABLES > [table] nav) — empty for the common
+  // single-schema/no-DDL corpus, which has no navigable schema level at all.
+  schemas:        SchemaSummary[];
+  schemasLoading: boolean;
+  // Schema currently scoping the table list/detail below, if any.
+  namespace: string | null;
   items:   TableSummary[];
   total:   number;
   q:       string;
@@ -24,6 +30,7 @@ export interface TablesState {
 }
 
 export const initialTablesState: TablesState = {
+  schemas: [], schemasLoading: false, namespace: null,
   items: [], total: 0, q: "", loading: false, detail: null, error: null,
   columnUsage: null, columnUsageLoading: false,
   coUpdateRituals: null, coUpdateRitualsLoading: false,

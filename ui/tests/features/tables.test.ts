@@ -5,9 +5,10 @@ import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { tablesReducer, initialTablesState, type TablesEnv } from "@pb/platform";
 import type { TablesState } from "@pb/platform";
-import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse } from "@pb/platform";
+import type { SchemaSummary, TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse } from "@pb/platform";
 
 const mockEnv: TablesEnv = {
+  getSchemas:          () => Effect.none(),
   getTables:           () => Effect.none(),
   getTableDetail:      () => Effect.none(),
   getColumnUsage:      () => Effect.none(),
@@ -37,6 +38,69 @@ const detail: TableDetail = {
 };
 
 describe("tables reducer", () => {
+  describe("tables/schemas-load", () => {
+    const schemas: SchemaSummary[] = [
+      { namespace: "clims", table_count: 42 },
+      { namespace: "clims_archive", table_count: 1 },
+    ];
+
+    it("sets schemasLoading and fires getSchemas", () => {
+      const env: TablesEnv = { ...mockEnv, getSchemas: () => Effect.send(schemas) };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "schemas-load" }, (s) => {
+        s.schemasLoading = true;
+      });
+      ts.receive({ tag: "schemas-loaded", schemas }, (s) => {
+        s.schemas = schemas;
+        s.schemasLoading = false;
+      });
+    });
+
+    it("does nothing if already loaded", () => {
+      const state: TablesState = { ...initialTablesState, schemas };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "schemas-load" }, () => {});
+    });
+
+    it("does nothing if a load is already in flight", () => {
+      const state: TablesState = { ...initialTablesState, schemasLoading: true };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "schemas-load" }, () => {});
+    });
+
+    it("fires getSchemas; rejection maps to schemas-error", async () => {
+      const env: TablesEnv = {
+        ...mockEnv,
+        getSchemas: () => Effect.fromPromise(() => Promise.reject(new Error("timeout"))),
+      };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "schemas-load" }, (s) => {
+        s.schemasLoading = true;
+      });
+      await ts.drain();
+      ts.receive({ tag: "schemas-error", error: "timeout" }, (s) => {
+        s.schemasLoading = false;
+      });
+    });
+  });
+
+  describe("tables/select-schema", () => {
+    it("sets namespace, clears items, navigates to the scoped tables route", () => {
+      const navigateRoutes: object[] = [];
+      const env: TablesEnv = {
+        ...mockEnv,
+        navigate: (action) => { if (action.tag === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
+      };
+      const state: TablesState = { ...initialTablesState, items: [row("orders")] };
+      const ts = createTestStore(tablesReducer, env, state);
+      ts.send({ tag: "select-schema", namespace: "clims" }, (s) => {
+        s.namespace = "clims";
+        s.items = [];
+      });
+      expect(navigateRoutes).toEqual([{ view: "tables", namespace: "clims" }]);
+    });
+  });
+
   describe("tables/search", () => {
     it("sets q and loading, navigates to tables route", () => {
       const navigateCalls: string[] = [];
@@ -63,6 +127,30 @@ describe("tables reducer", () => {
       ts.receive({ tag: "loaded", items }, (s) => {
         s.items = items;
         s.total = 2;
+        s.loading = false;
+      });
+    });
+
+    it("scoped to a namespace: sets namespace, navigates to the scoped route, fires getTables(namespace)", () => {
+      const navigateRoutes: object[] = [];
+      const tablesCalls: (string | undefined)[] = [];
+      const items = [row("clinicalaccession")];
+      const env: TablesEnv = {
+        ...mockEnv,
+        navigate: (action) => { if (action.tag === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
+        getTables: (ns) => { tablesCalls.push(ns); return Effect.send(items); },
+      };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "search", q: "", namespace: "clims" }, (s) => {
+        s.q = "";
+        s.namespace = "clims";
+        s.loading = true;
+      });
+      expect(navigateRoutes).toEqual([{ view: "tables", namespace: "clims" }]);
+      expect(tablesCalls).toEqual(["clims"]);
+      ts.receive({ tag: "loaded", items }, (s) => {
+        s.items = items;
+        s.total = 1;
         s.loading = false;
       });
     });
@@ -140,6 +228,29 @@ describe("tables reducer", () => {
         s.loading = false;
       });
     });
+
+    it("scoped to a namespace: navigates to the scoped tableDetail route, fires getTableDetail(name, namespace)", () => {
+      const navigateRoutes: object[] = [];
+      const detailCalls: (string | undefined)[] = [];
+      const env: TablesEnv = {
+        ...mockEnv,
+        navigate: (action) => { if (action.tag === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
+        getTableDetail: (_n, ns) => { detailCalls.push(ns); return Effect.send(detail); },
+      };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "select", name: "clinicalaccession", namespace: "clims_common" }, (s) => {
+        s.detail = null;
+        s.error  = null;
+        s.decompositionCandidates = null;
+        s.decompositionCandidatesLoading = false;
+      });
+      expect(navigateRoutes).toEqual([{ view: "tableDetail", name: "clinicalaccession", namespace: "clims_common" }]);
+      expect(detailCalls).toEqual(["clims_common"]);
+      ts.receive({ tag: "detail-loaded", detail }, (s) => {
+        s.detail = detail;
+        s.loading = false;
+      });
+    });
   });
 
   describe("tables/detail-loaded", () => {
@@ -179,6 +290,25 @@ describe("tables reducer", () => {
         s.error  = null;
       });
       expect(navigateRoutes).toEqual([{ view: "tables" }]);
+    });
+
+    it("preserves the scoping namespace when navigating back to the scoped tables route", () => {
+      const navigateRoutes: object[] = [];
+      const env: TablesEnv = {
+        ...mockEnv,
+        navigate: (action) => { if (action.tag === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
+      };
+      const ts = createTestStore(tablesReducer, env, {
+        ...initialTablesState,
+        detail,
+        error: null,
+        namespace: "clims",
+      } as TablesState);
+      ts.send({ tag: "back" }, (s) => {
+        s.detail = null;
+        s.error  = null;
+      });
+      expect(navigateRoutes).toEqual([{ view: "tables", namespace: "clims" }]);
     });
 
     it("clears error when navigating back", () => {
@@ -412,6 +542,23 @@ describe("tables reducer", () => {
         s.decompositionCandidatesLoading = false;
       });
     });
+
+    it("threads namespace through to getDecompositionCandidates", () => {
+      const calls: (string | undefined)[] = [];
+      const env: TablesEnv = {
+        ...mockEnv,
+        getDecompositionCandidates: (_t, ns) => { calls.push(ns); return Effect.send(candidates); },
+      };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "decomposition-candidates-load", tableName: "clinicalaccession", namespace: "clims_common" }, (s) => {
+        s.decompositionCandidatesLoading = true;
+      });
+      expect(calls).toEqual(["clims_common"]);
+      ts.receive({ tag: "decomposition-candidates-loaded", data: candidates }, (s) => {
+        s.decompositionCandidates = candidates;
+        s.decompositionCandidatesLoading = false;
+      });
+    });
   });
 
   describe("tables/decomposition-candidates-loaded", () => {
@@ -499,6 +646,23 @@ describe("tables reducer", () => {
       await ts.drain();
       ts.receive({ tag: "column-affinity-error", error: "timeout" }, (s) => {
         s.columnAffinity = { error: "timeout" };
+        s.columnAffinityLoading = false;
+      });
+    });
+
+    it("threads namespace through to getColumnAffinity", () => {
+      const calls: (string | undefined)[] = [];
+      const env: TablesEnv = {
+        ...mockEnv,
+        getColumnAffinity: (_t, ns) => { calls.push(ns); return Effect.send(affinity); },
+      };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "column-affinity-load", tableName: "clinicalaccession", namespace: "clims_common" }, (s) => {
+        s.columnAffinityLoading = true;
+      });
+      expect(calls).toEqual(["clims_common"]);
+      ts.receive({ tag: "column-affinity-loaded", data: affinity }, (s) => {
+        s.columnAffinity = affinity;
         s.columnAffinityLoading = false;
       });
     });

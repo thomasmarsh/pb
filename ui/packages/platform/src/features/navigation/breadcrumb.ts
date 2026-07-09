@@ -49,14 +49,25 @@ export function crumbsForRoute(route: Route): BreadcrumbSegment[] {
         { icon: ICONS.datawindow, label: route.name,    route },
       ];
 
-    case "tables":
-      return [{ icon: ICONS.list, label: "Tables", route }];
+    case "schemas":
+      return [{ icon: ICONS.list, label: "Schemas", route }];
 
-    case "tableDetail":
+    case "tables":
+      return route.namespace
+        ? [
+            { icon: ICONS.list, label: "Schemas",        route: { view: "schemas" } },
+            { icon: ICONS.list, label: route.namespace,  route },
+          ]
+        : [{ icon: ICONS.list, label: "Tables", route }];
+
+    case "tableDetail": {
+      const tablesRoute: Route = route.namespace ? { view: "tables", namespace: route.namespace } : { view: "tables" };
       return [
-        { icon: ICONS.list,  label: "Tables",    route: { view: "tables" } },
+        ...(route.namespace ? [{ icon: ICONS.list, label: "Schemas", route: { view: "schemas" } as Route }] : []),
+        { icon: ICONS.list,  label: route.namespace ?? "Tables", route: tablesRoute },
         { icon: ICONS.table, label: route.name,  route },
       ];
+    }
 
     case "search":
       return [{ icon: ICONS.list, label: "Search", route }];

@@ -3,19 +3,20 @@
 import { Effect, type Reducer } from "@pb/core";
 import type { TablesState } from "./types.js";
 import type { TablesAction } from "./actions.js";
-import type { TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse } from "../../types/api.js";
+import type { SchemaSummary, TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse } from "../../types/api.js";
 import type { NavigationAction } from "../navigation/types.js";
 
 export type { TablesState };
 export { initialTablesState } from "./types.js";
 
 export interface TablesEnv {
-  getTables(): Effect<TableSummary[]>;
-  getTableDetail(name: string): Effect<TableDetail>;
+  getSchemas(): Effect<SchemaSummary[]>;
+  getTables(namespace?: string): Effect<TableSummary[]>;
+  getTableDetail(name: string, namespace?: string): Effect<TableDetail>;
   getColumnUsage(): Effect<ColumnUsageResponse>;
   getCoUpdateRituals(): Effect<CoUpdateRitualsResponse>;
-  getDecompositionCandidates(table: string): Effect<DecompositionCandidatesResponse>;
-  getColumnAffinity(table: string): Effect<ColumnAffinityResponse>;
+  getDecompositionCandidates(table: string, namespace?: string): Effect<DecompositionCandidatesResponse>;
+  getColumnAffinity(table: string, namespace?: string): Effect<ColumnAffinityResponse>;
   navigate(action: NavigationAction): Effect<never>;
 }
 
@@ -23,14 +24,37 @@ function errMsg(e: unknown): string { return e instanceof Error ? e.message : St
 
 function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effect<TablesAction> | null {
   switch (action.tag) {
+  case "schemas-load": {
+    if (draft.schemas.length > 0 || draft.schemasLoading) return null;
+    draft.schemasLoading = true;
+    return env.getSchemas()
+      .map((schemas): TablesAction => ({ tag: "schemas-loaded", schemas }))
+      .catch((e): TablesAction => ({ tag: "schemas-error", error: errMsg(e) }));
+  }
+  case "schemas-loaded":
+    draft.schemas = action.schemas;
+    draft.schemasLoading = false;
+    return null;
+  case "schemas-error":
+    draft.schemasLoading = false;
+    return null;
+  case "select-schema":
+    draft.namespace = action.namespace;
+    draft.items = [];
+    env.navigate({ tag: "navigate", route: { view: "tables", namespace: action.namespace } });
+    return null;
   case "filter":
     draft.q = action.q;
     return null;
   case "search":
     draft.q = action.q;
+    draft.namespace = action.namespace ?? null;
     draft.loading = true;
-    env.navigate({ tag: "navigate", route: { view: "tables" } });
-    return env.getTables()
+    env.navigate({
+      tag: "navigate",
+      route: action.namespace ? { view: "tables", namespace: action.namespace } : { view: "tables" },
+    });
+    return env.getTables(action.namespace)
       .map((items): TablesAction => ({ tag: "loaded", items }));
   case "loaded":
     draft.items = action.items;
@@ -44,8 +68,13 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
     draft.decompositionCandidatesLoading = false;
     draft.columnAffinity = null;
     draft.columnAffinityLoading = false;
-    env.navigate({ tag: "navigate", route: { view: "tableDetail", name: action.name } });
-    return env.getTableDetail(action.name)
+    env.navigate({
+      tag: "navigate",
+      route: action.namespace
+        ? { view: "tableDetail", name: action.name, namespace: action.namespace }
+        : { view: "tableDetail", name: action.name },
+    });
+    return env.getTableDetail(action.name, action.namespace)
       .map((detail): TablesAction => ({ tag: "detail-loaded", detail }))
       .catch((e): TablesAction => ({ tag: "detail-error", error: errMsg(e) }));
   case "detail-loaded":
@@ -59,7 +88,10 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
   case "back":
     draft.detail = null;
     draft.error = null;
-    env.navigate({ tag: "navigate", route: { view: "tables" } });
+    env.navigate({
+      tag: "navigate",
+      route: draft.namespace ? { view: "tables", namespace: draft.namespace } : { view: "tables" },
+    });
     return null;
   case "column-usage-load": {
     if (draft.columnUsage || draft.columnUsageLoading) return null;
@@ -97,7 +129,7 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
       && draft.decompositionCandidates.table === action.tableName;
     if (already || draft.decompositionCandidatesLoading) return null;
     draft.decompositionCandidatesLoading = true;
-    return env.getDecompositionCandidates(action.tableName)
+    return env.getDecompositionCandidates(action.tableName, action.namespace)
       .map((data): TablesAction => ({ tag: "decomposition-candidates-loaded", data }))
       .catch((e): TablesAction => ({ tag: "decomposition-candidates-error", error: errMsg(e) }));
   }
@@ -115,7 +147,7 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
       && draft.columnAffinity.table === action.tableName;
     if (already || draft.columnAffinityLoading) return null;
     draft.columnAffinityLoading = true;
-    return env.getColumnAffinity(action.tableName)
+    return env.getColumnAffinity(action.tableName, action.namespace)
       .map((data): TablesAction => ({ tag: "column-affinity-loaded", data }))
       .catch((e): TablesAction => ({ tag: "column-affinity-error", error: errMsg(e) }));
   }
