@@ -7,12 +7,22 @@ import sys
 from pathlib import Path
 
 
+def _find_ancestor_containing(start: Path, marker: Path) -> Path | None:
+    """Walk `start` and its ancestors looking for one that has `marker` (a
+    relative path) as a child. Returns the matching ancestor directory
+    itself (not the marker path), or None if no ancestor has it."""
+    for p in [start, *start.parents]:
+        if (p / marker).exists():
+            return p
+    return None
+
+
 def find_repo(repo: Path | None = None) -> Path:
     if repo:
         return repo
-    for p in [Path.cwd(), *Path.cwd().parents]:
-        if (p / "compiler" / "pb-compiler.cabal").exists():
-            return p
+    found = _find_ancestor_containing(Path.cwd(), Path("compiler") / "pb-compiler.cabal")
+    if found is not None:
+        return found
     sys.exit(
         "error: cannot locate repo root (no compiler/pb-compiler.cabal found). Run from within the pb repo, or pass --repo."
     )
@@ -56,11 +66,27 @@ def build_runner(repo: Path, verbose: bool = False) -> Path:
 
 
 def find_sql_worker() -> Path | None:
-    """Return the path to the pb-sql-worker script if it is installed, else None."""
-    venv_bin = Path(__file__).parent.parent.parent / ".venv" / "bin" / "pb-sql-worker"
-    if venv_bin.exists():
-        return venv_bin
-    # Fallback: check PATH
+    """Return the path to the pb-sql-worker script if it is installed, else
+    None. pb-sql-worker is a console-script entry point installed into
+    whichever venv `cli/` (this Python workspace's root) was synced with --
+    always at `cli/.venv/bin/pb-sql-worker` for this repo's fixed
+    structure. That's fully deterministic, not something that varies per
+    machine or invocation, so no configuration should ever be needed to
+    find it. Walks up from this file's own install location (not CWD, so
+    this works regardless of what directory `pb` is invoked from) checking
+    each ancestor for `.venv/bin/pb-sql-worker`, rather than hardcoding a
+    specific parent-count -- a hardcoded count silently missed the real
+    venv (found via a real bug report, 2026-07-09: it looked 3 parents up
+    when `cli/` is actually 5 parents up from this file), always falling
+    through to the PATH-based fallback below, which only works if the venv
+    happens to be activated/on PATH at invocation time. Walking ancestors
+    is also resilient to this package moving to a different depth under
+    `cli/` in the future."""
+    marker = Path(".venv") / "bin" / "pb-sql-worker"
+    found = _find_ancestor_containing(Path(__file__).resolve().parent, marker)
+    if found is not None:
+        return found / marker
+    # Fallback: check PATH (e.g. an unusual install where cli/ itself was moved)
     import shutil
     found = shutil.which("pb-sql-worker")
     return Path(found) if found else None
