@@ -1958,6 +1958,57 @@ kbd.kbd {
 }
 .trace-callgraph-proc:hover { text-decoration: underline; }
 
+/* ── Decomposition evidence paths ─────────────────────────────────────────── */
+/* One row per path: a direction-colored left border (mirrors LinearTrace's
+   affected/affecting slice coloring) plus a deduplicated node chain — each
+   leg's shared from/to endpoint is rendered once, not twice. */
+
+.decomp-path-list { display: flex; flex-direction: column; gap: 0; }
+.decomp-path { display: flex; gap: 0; }
+.decomp-path-border {
+    width: 2px;
+    border-radius: 1px;
+    flex-shrink: 0;
+    margin-right: 10px;
+    background: var(--border);
+}
+.decomp-path-border-forward  { background: var(--orange); }
+.decomp-path-border-backward { background: var(--purple); }
+.decomp-path-body {
+    flex: 1;
+    min-width: 0;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+}
+.decomp-path:last-child .decomp-path-body { border-bottom: none; }
+
+.decomp-dir-badge {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.4px;
+    padding: 1px 5px; border-radius: 3px;
+    border: 1px solid currentColor;
+    color: var(--text-muted);
+}
+.decomp-dir-forward  { color: var(--orange); }
+.decomp-dir-backward { color: var(--purple); }
+
+.decomp-path-chain {
+    display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+    font-size: 12px;
+    margin-top: 4px;
+}
+.decomp-leg-badge {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
+    padding: 1px 5px; border-radius: 3px;
+    border: 1px solid currentColor;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    cursor: default;
+}
+.decomp-leg-reads    { color: var(--accent); }
+.decomp-leg-writes   { color: var(--red); }
+.decomp-leg-retrieve { color: var(--green); }
+.decomp-leg-fk       { color: var(--purple); }
+
 /* ── TaintExplorer ────────────────────────────────────────────────────────── */
 
 .taint-filters {

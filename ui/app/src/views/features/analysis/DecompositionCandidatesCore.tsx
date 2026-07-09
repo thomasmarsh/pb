@@ -62,33 +62,67 @@ function SchemaObjectRefLink(props: { obj: SchemaObjectRef; store: Store<AppStat
   );
 }
 
+// A path's legs chain from node to node (leg[i].to_object === leg[i+1].from_object),
+// so the naive rendering — "from --kind--> to" per leg — repeats every shared
+// midpoint twice. Flatten to the deduplicated node sequence instead: the
+// target itself falls out naturally as one end of the chain (whichever end
+// depends on direction), so it doesn't need to be shown separately either.
+function pathChainNodes(p: DecompositionEvidencePath): SchemaObjectRef[] {
+  if (p.legs.length === 0) return [p.target];
+  return [p.legs[0]!.from_object, ...p.legs.map((leg) => leg.to_object)];
+}
+
+const LEG_KIND_TITLE: Record<string, string> = {
+  reads: "read in this statement",
+  writes: "written in this statement",
+  retrieve: "retrieved via this DataWindow",
+  fk: "linked by a foreign key",
+};
+
+function directionClass(direction: string): string {
+  return direction === "forward" || direction === "backward" ? direction : "other";
+}
+
 function EvidencePathsCell(props: { paths: DecompositionEvidencePath[]; store: Store<AppState, AppAction> }): JSX.Element {
   const [expanded, setExpanded] = createSignal(false);
   const visible = createMemo(() => (expanded() ? props.paths : props.paths.slice(0, PATH_PREVIEW_COUNT)));
 
   return (
     <Show when={props.paths.length > 0} fallback={<span style={{ color: "var(--text-muted)" }}>None</span>}>
-      <ul style={{ margin: "0", "padding-left": "16px", "list-style": "none" }}>
+      <div class="decomp-path-list">
         <For each={visible()}>
-          {(p) => (
-            <li style={{ display: "flex", "align-items": "center", gap: "4px", "flex-wrap": "wrap", "margin-bottom": "2px" }}>
-              <SchemaObjectRefLink obj={p.target} store={props.store} /> <span style={{ color: "var(--text-muted)" }}>({p.direction})</span>
-              <For each={p.legs}>
-                {(leg) => (
-                  <>
-                    <span style={{ color: "var(--text-muted)" }}>·</span>
-                    <SchemaObjectRefLink obj={leg.from_object} store={props.store} />
-                    <span style={{ color: "var(--text-muted)" }}>--{leg.leg_kind}--&gt;</span>
-                    <SchemaObjectRefLink obj={leg.to_object} store={props.store} />
-                  </>
-                )}
-              </For>
-            </li>
-          )}
+          {(p) => {
+            const nodes = pathChainNodes(p);
+            return (
+              <div class="decomp-path">
+                <div class={`decomp-path-border decomp-path-border-${directionClass(p.direction)}`} />
+                <div class="decomp-path-body">
+                  <span class={`decomp-dir-badge decomp-dir-${directionClass(p.direction)}`}>{p.direction}</span>
+                  <div class="decomp-path-chain">
+                    <For each={nodes}>
+                      {(node, i) => (
+                        <>
+                          <Show when={i() > 0}>
+                            <span
+                              class={`decomp-leg-badge decomp-leg-${p.legs[i() - 1]!.leg_kind}`}
+                              title={LEG_KIND_TITLE[p.legs[i() - 1]!.leg_kind] ?? p.legs[i() - 1]!.leg_kind}
+                            >
+                              {p.legs[i() - 1]!.leg_kind} &rarr;
+                            </span>
+                          </Show>
+                          <SchemaObjectRefLink obj={node} store={props.store} />
+                        </>
+                      )}
+                    </For>
+                  </div>
+                </div>
+              </div>
+            );
+          }}
         </For>
-      </ul>
+      </div>
       <Show when={props.paths.length > PATH_PREVIEW_COUNT}>
-        <button type="button" class="link-btn" style={{ "font-size": "11px" }} onClick={() => setExpanded((v) => !v)}>
+        <button type="button" class="link-btn" style={{ "font-size": "11px", "margin-top": "6px" }} onClick={() => setExpanded((v) => !v)}>
           {expanded() ? "Show less" : `Show ${props.paths.length - PATH_PREVIEW_COUNT} more`}
         </button>
       </Show>
