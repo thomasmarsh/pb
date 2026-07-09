@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections import OrderedDict
 from typing import Any
 
+import duckdb
 import graphviz
 import networkx as nx
 from pb.lib.diagram_builder import (
@@ -20,12 +22,15 @@ from pb.lib.diagram_builder import (
     render_table_lineage,
 )
 from pb.pipeline.db import Conn
+from pb.pipeline.jobs import JobRegistry, JobStatus
 from pb.pipeline.lattice import compute_window_table_lattice
 
 log = logging.getLogger(__name__)
 
 _CACHE_MAX = 64
 _svg_cache: OrderedDict[str, str] = OrderedDict()
+_cache_lock = threading.Lock()  # guards _svg_cache -- job workers write from non-request threads
+_job_registry = JobRegistry()
 
 
 def _cache_key(kind: str, params: dict[str, Any]) -> str:
@@ -290,9 +295,10 @@ def render_svg(kind: str, conn: Conn, **params: Any) -> str:
     and cache storage.
     """
     key = _cache_key(kind, params)
-    if key in _svg_cache:
-        _svg_cache.move_to_end(key)
-        return _svg_cache[key]
+    with _cache_lock:
+        if key in _svg_cache:
+            _svg_cache.move_to_end(key)
+            return _svg_cache[key]
 
     builders = {
         "inheritance": lambda: build_inheritance(conn, root=params.get("root")),
@@ -318,8 +324,52 @@ def render_svg(kind: str, conn: Conn, **params: Any) -> str:
     dot = builder()
     svg = render_dot_to_svg(dot)
 
-    _svg_cache[key] = svg
-    if len(_svg_cache) > _CACHE_MAX:
-        _svg_cache.popitem(last=False)
+    with _cache_lock:
+        _svg_cache[key] = svg
+        if len(_svg_cache) > _CACHE_MAX:
+            _svg_cache.popitem(last=False)
 
     return svg
+
+
+def submit_diagram_job(kind: str, db_path: str, **params: Any) -> dict[str, Any]:
+    """Plan 159: async entry point for GET /api/diagram/{kind}?async=1.
+
+    Returns {"status": "done", "result": svg} immediately on an `_svg_cache`
+    hit (no job created); otherwise submits a render to `_job_registry` and
+    returns {"status": "pending", "jobId": ...}, attaching to an in-flight
+    job for the same kind+params rather than duplicating the render.
+    """
+    key = _cache_key(kind, params)
+    with _cache_lock:
+        if key in _svg_cache:
+            _svg_cache.move_to_end(key)
+            return {"status": "done", "result": _svg_cache[key]}
+
+    def render() -> str:
+        # Own connection: the request-scoped `conn` from FastAPI's `get_db`
+        # dependency is closed the instant the async endpoint returns --
+        # long before (or while) this job thread is still running.
+        conn = duckdb.connect(db_path, read_only=True)
+        try:
+            return render_svg(kind, conn, **params)
+        finally:
+            conn.close()
+
+    job_id = _job_registry.submit(key, render)
+    return {"status": "pending", "jobId": job_id}
+
+
+def get_diagram_job(job_id: str) -> dict[str, Any] | None:
+    """Plan 159: async entry point for GET /api/diagram-jobs/{jobId}.
+
+    None if job_id is unknown (route maps this to 404).
+    """
+    job = _job_registry.get(job_id)
+    if job is None:
+        return None
+    if job.status == JobStatus.PENDING:
+        return {"status": "pending"}
+    if job.status == JobStatus.DONE:
+        return {"status": "done", "result": job.result}
+    return {"status": "error", "error": job.error}

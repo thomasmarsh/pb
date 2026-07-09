@@ -28,7 +28,7 @@ afterEach(() => {
 
 describe("InlineDiagram", () => {
   it("shows loading overlay before effect resolves", async () => {
-    const env = { ...mockEnv, getDiagram: () => Effect.none() } as AppEnv;
+    const env = { ...mockEnv, submitDiagramJob: () => Effect.none() } as AppEnv;
     const store = createStore(initialState(), reducer, env);
     const { container } = render(() =>
       <InlineDiagram kind="heatmap" store={store} />,
@@ -39,7 +39,7 @@ describe("InlineDiagram", () => {
   });
 
   it("renders SVG from getDiagram response", async () => {
-    const env = { ...mockEnv, getDiagram: () => Effect.send('<svg id="test"></svg>') } as AppEnv;
+    const env = { ...mockEnv, submitDiagramJob: () => Effect.send({ status: "done" as const, result: '<svg id="test"></svg>' }) } as AppEnv;
     const store = createStore(initialState(), reducer, env);
     const { container } = render(() =>
       <InlineDiagram kind="heatmap" store={store} />,
@@ -50,7 +50,7 @@ describe("InlineDiagram", () => {
 
   it("strips <title> elements from SVG", async () => {
     const svg = '<svg><a href="pb://object/x"><title>tooltip</title><rect/></a></svg>';
-    const env = { ...mockEnv, getDiagram: () => Effect.send(svg) } as AppEnv;
+    const env = { ...mockEnv, submitDiagramJob: () => Effect.send({ status: "done" as const, result: svg }) } as AppEnv;
     const store = createStore(initialState(), reducer, env);
     const { container } = render(() =>
       <InlineDiagram kind="heatmap" store={store} />,
@@ -60,7 +60,7 @@ describe("InlineDiagram", () => {
   });
 
   it("shows error message on getDiagram failure", async () => {
-    const env = { ...mockEnv, getDiagram: () => Effect.fromPromise(() => Promise.reject(new Error("HTTP 503"))) } as AppEnv;
+    const env = { ...mockEnv, submitDiagramJob: () => Effect.fromPromise(() => Promise.reject(new Error("HTTP 503"))) } as AppEnv;
     const store = createStore(initialState(), reducer, env);
     const { container } = render(() =>
       <InlineDiagram kind="heatmap" store={store} />,
@@ -76,7 +76,7 @@ describe("InlineDiagram", () => {
   });
 
   it("applies compact class when compact prop set", () => {
-    const env = { ...mockEnv, getDiagram: () => Effect.send("<svg></svg>") } as AppEnv;
+    const env = { ...mockEnv, submitDiagramJob: () => Effect.send({ status: "done" as const, result: "<svg></svg>" }) } as AppEnv;
     const store = createStore(initialState(), reducer, env);
     const { container } = render(() =>
       <InlineDiagram kind="heatmap" store={store} compact />,
@@ -86,7 +86,7 @@ describe("InlineDiagram", () => {
 
   it("navigates to objectDetail on pb://object click", async () => {
     const svgWithLink = `<svg><a href="pb://object/w_main"><rect/></a></svg>`;
-    const env = { ...mockEnv, getDiagram: () => Effect.send(svgWithLink) } as AppEnv;
+    const env = { ...mockEnv, submitDiagramJob: () => Effect.send({ status: "done" as const, result: svgWithLink }) } as AppEnv;
     const captured: AppAction[] = [];
     const store = createStore(initialState(), reducer, env, (a) => { captured.push(a); });
     const { container } = render(() =>
@@ -102,7 +102,7 @@ describe("InlineDiagram", () => {
 
   it("navigates to tableDetail on pb://table click", async () => {
     const svgWithLink = `<svg><a href="pb://table/customer"><rect/></a></svg>`;
-    const env = { ...mockEnv, getDiagram: () => Effect.send(svgWithLink) } as AppEnv;
+    const env = { ...mockEnv, submitDiagramJob: () => Effect.send({ status: "done" as const, result: svgWithLink }) } as AppEnv;
     const captured: AppAction[] = [];
     const store = createStore(initialState(), reducer, env, (a) => { captured.push(a); });
     const { container } = render(() =>

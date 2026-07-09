@@ -1,20 +1,21 @@
 // features/diagrams/reducer.ts — Diagrams feature reducer (valtio draft style).
 
-import { Effect, type Reducer } from "@pb/core";
+import { Effect, jobPollReduce, initialJobPollState, type Reducer, type JobPollEnv, type JobSubmitResult, type JobPollResult } from "@pb/core";
 import type { DiagramsState } from "./types.js";
 import type { DiagramsAction } from "./actions.js";
 import type { TableSummary, ListObjectsResponse } from "../../types/api.js";
 import type { NavigationAction } from "../navigation/types.js";
 
 export interface DiagramsEnv {
-  getDiagram(kind: string, params: Record<string, string | number>): Effect<string>;
+  submitDiagramJob(kind: string, params: Record<string, string | number>): Effect<JobSubmitResult<string>>;
+  pollDiagramJob(jobId: string): Effect<JobPollResult<string>>;
   getTables(): Effect<TableSummary[]>;
   getAllObjects(): Effect<ListObjectsResponse>;
   navigate(action: NavigationAction): Effect<never>;
 }
 
 export const initialDiagramsState: DiagramsState = {
-  active: "inheritance", svg: null, loading: false, params: {},
+  active: "inheritance", job: initialJobPollState<string>(), params: {},
   tableNames: [], objectNames: [], itemsLoaded: false,
 };
 
@@ -22,26 +23,27 @@ function reduce(draft: DiagramsState, action: DiagramsAction, env: DiagramsEnv):
   switch (action.tag) {
   case "select":
     draft.active = action.kind;
-    draft.svg = null;
-    draft.loading = false;
+    draft.job = initialJobPollState<string>();
     return null;
   case "params":
     Object.assign(draft.params, action.params);
     return null;
-  case "generate":
-    draft.loading = true;
-    return env.getDiagram(draft.active, draft.params)
-      .map((svg): DiagramsAction => ({ tag: "loaded", svg }))
-      .catch((e): DiagramsAction => ({ tag: "error", error: String(e) }));
-  case "loaded":
-    draft.svg = action.svg;
-    draft.loading = false;
-    return null;
-  case "error":
-    draft.svg = null;
-    draft.loading = false;
-    draft.error = action.error;
-    return null;
+  case "generate": {
+    const jobEnv: JobPollEnv<string> = {
+      submitJob: () => env.submitDiagramJob(draft.active, draft.params),
+      pollJob: (jobId) => env.pollDiagramJob(jobId),
+    };
+    const eff = jobPollReduce(draft.job, { tag: "start" }, jobEnv);
+    return eff ? eff.map((a): DiagramsAction => ({ tag: "job", action: a })) : null;
+  }
+  case "job": {
+    const jobEnv: JobPollEnv<string> = {
+      submitJob: () => env.submitDiagramJob(draft.active, draft.params),
+      pollJob: (jobId) => env.pollDiagramJob(jobId),
+    };
+    const eff = jobPollReduce(draft.job, action.action, jobEnv);
+    return eff ? eff.map((a): DiagramsAction => ({ tag: "job", action: a })) : null;
+  }
   case "loadItems":
     if (draft.itemsLoaded) return null;
     return Effect.merge(

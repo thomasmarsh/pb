@@ -1,29 +1,15 @@
 // features/analysis/CFGCore.tsx — Embeddable CFG rendering core (no AnalysisView wrapper).
 
-import { Show, For, createResource, createSignal, createMemo, onMount, onCleanup } from "solid-js";
+import { Show, For, createEffect, createSignal, createMemo, onMount, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
-import { createPanZoom } from "@pb/platform";
+import type { Store } from "@pb/core";
+import { createPanZoom, type CfgNodeState, type CfgBlockDetail } from "@pb/platform";
 import { highlightPowerScript } from "@pb/platform";
+import type { AppState } from "../../../state.js";
+import type { AppAction } from "../../../actions.js";
 
-interface NodeState {
-  blockId: string;
-  state: string;
-}
-
-interface BlockDetail {
-  blockId: string;
-  firstLine: number | null;
-  lastLine: number | null;
-  stmts: string[];
-}
-
-interface CfgResponse {
-  svg: string;
-  nodeStates: NodeState[];
-  blocks: BlockDetail[];
-  sourceOriginal: string | null;
-  procStartLine: number | null;
-}
+type NodeState = CfgNodeState;
+type BlockDetail = CfgBlockDetail;
 
 interface Tooltip {
   html: string;
@@ -34,6 +20,7 @@ interface Tooltip {
 export interface CFGCoreProps {
   object: string;
   proc: string;
+  store: Store<AppState, AppAction>;
   onGoto: () => void;
   gotoLabel?: string;
 }
@@ -199,13 +186,21 @@ export function CFGCore(props: CFGCoreProps): JSX.Element {
   });
 
   const key = () => `${props.object}::${props.proc}`;
-  const [data] = createResource(key, async (): Promise<CfgResponse> => {
+
+  createEffect(() => {
+    const k = key();
     setFocusedBlock(null);
-    const url = `/api/diagrams/cfg/${encodeURIComponent(props.object)}/${encodeURIComponent(props.proc)}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.json() as Promise<CfgResponse>;
+    props.store.dispatch({
+      tag: "cfgDiagram",
+      action: { tag: "request", key: k, object: props.object, proc: props.proc },
+    });
   });
+
+  const snap = props.store.getState();
+  const entry = () => snap().cfgDiagrams[key()];
+  const loading = () => entry()?.job.status === "pending";
+  const error = () => entry()?.job.status === "error";
+  const data = () => entry()?.job.result ?? null;
 
   const sourceLines = createMemo((): string[] => {
     const d = data();
@@ -301,19 +296,19 @@ export function CFGCore(props: CFGCoreProps): JSX.Element {
 
   return (
     <>
-      <Show when={data.loading}>
+      <Show when={loading()}>
         <div class="diagram-container">
           <div class="loading-overlay"><div class="spinner" /> Loading CFG…</div>
         </div>
       </Show>
-      <Show when={data.error}>
+      <Show when={error()}>
         <div class="diagram-container">
           <div class="loading-overlay" style={{ color: "var(--red)" }}>
             CFG unavailable — procedure not found or has no body.
           </div>
         </div>
       </Show>
-      <Show when={!data.loading && !data.error && data()}>
+      <Show when={!loading() && !error() && data()}>
         {(d) => (
           <div class="cfg-split">
             <div class="cfg-diagram-pane">

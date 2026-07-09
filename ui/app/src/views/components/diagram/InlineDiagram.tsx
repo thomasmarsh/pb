@@ -53,10 +53,10 @@ export function InlineDiagram(props: InlineDiagramProps) {
 
   const snap = props.store.getState();
   const entry = () => snap().inlineDiagrams[key()];
-  const loading = () => entry()?.loading ?? false;
-  const error = () => entry()?.error ?? null;
+  const loading = () => entry()?.job.status === "pending";
+  const error = () => entry()?.job.error ?? null;
   const svg = () => {
-    const raw = entry()?.svg;
+    const raw = entry()?.job.result;
     return raw ? stripSvgTitles(raw) : null;
   };
 

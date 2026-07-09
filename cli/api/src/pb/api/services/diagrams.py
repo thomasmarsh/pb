@@ -8,7 +8,7 @@ from typing import Any
 import duckdb
 from pb.lib.cfg_builder import cfg_from_json, compute_node_states
 from pb.lib.cfg_renderer import cfg_to_dot
-from pb.pipeline.diagrams import render_dot_to_svg
+from pb.pipeline.diagrams import _job_registry, render_dot_to_svg
 
 
 def get_cfg_diagram(
@@ -69,6 +69,30 @@ def get_cfg_diagram(
         "sourceOriginal": None,
         "procStartLine": proc_start_line,
     }
+
+
+def submit_cfg_diagram_job(db_path: str, object_name: str, proc_name: str) -> dict[str, Any]:
+    """Plan 159: async entry point for GET /api/diagrams/cfg/{object}/{proc}?async=1.
+
+    Reuses pb.pipeline.diagrams's shared job registry (keyed distinctly from
+    kind-based diagram jobs so the two never collide). No result cache today
+    (get_cfg_diagram itself doesn't cache) -- only the job's own short-lived
+    result, until the registry evicts it.
+    """
+    key = f"cfg:{object_name}:{proc_name}"
+
+    def render() -> dict[str, Any]:
+        conn = duckdb.connect(db_path, read_only=True)
+        try:
+            result = get_cfg_diagram(conn, object_name, proc_name)
+        finally:
+            conn.close()
+        if result is None:
+            raise ValueError("Procedure not found or has no body")
+        return result
+
+    job_id = _job_registry.submit(key, render)
+    return {"status": "pending", "jobId": job_id}
 
 
 def get_wiring_diagram(

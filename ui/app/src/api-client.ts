@@ -24,9 +24,10 @@ import type {
   CoUpdateRitualsResponse,
   DecompositionCandidatesResponse,
   ColumnAffinityResponse,
+  CfgDiagramResponse,
 } from "@pb/platform";
 import { type DataWindowFile, type AstData, type WindowLayout } from "@pb/interpreter";
-import { Effect, type SQLResult } from "@pb/core";
+import { Effect, type SQLResult, type JobSubmitResult, type JobPollResult } from "@pb/core";
 import type { AppEnv as Env } from "./reducer.js";
 import type { Theme } from "./state.js";
 import type { NavigationAction } from "@pb/platform";
@@ -47,7 +48,9 @@ export interface ApiClient {
   getDwLayout(name: string): Promise<DataWindowFile>;
   getObjectAst(name: string): Promise<AstData>;
   getObjectLayout(name: string): Promise<WindowLayout>;
-  getDiagram(kind: string, params: Record<string, string | number>): Promise<string>;
+  submitDiagramJob(kind: string, params: Record<string, string | number>): Promise<JobSubmitResult<string>>;
+  pollDiagramJob<T>(jobId: string): Promise<JobPollResult<T>>;
+  submitCfgDiagramJob(object: string, proc: string): Promise<JobSubmitResult<CfgDiagramResponse>>;
   getQueries(): Promise<{ queries: QueryDef[] }>;
   runQuery(name: string, params: Record<string, string>): Promise<QueryResult>;
   runSql(sql: string): Promise<QueryResult>;
@@ -108,7 +111,10 @@ export function createEnv(api: ApiClient): Env {
     getDwLayout: (n) => lift(() => api.getDwLayout(n)),
     getObjectAst: (n) => lift(() => api.getObjectAst(n)),
     getObjectLayout: (n) => lift(() => api.getObjectLayout(n)),
-    getDiagram: (k, p) => lift(() => api.getDiagram(k, p)),
+    submitDiagramJob: (k, p) => lift(() => api.submitDiagramJob(k, p)),
+    pollDiagramJob: (jobId) => lift(() => api.pollDiagramJob<string>(jobId)),
+    submitCfgDiagramJob: (o, p) => lift(() => api.submitCfgDiagramJob(o, p)),
+    pollCfgDiagramJob: (jobId) => lift(() => api.pollDiagramJob<CfgDiagramResponse>(jobId)),
     getQueries: () => lift(() => api.getQueries()),
     runQuery: (n, p) => lift(() => api.runQuery(n, p)),
     runSql: (sql) => lift(() => api.runSql(sql)),
@@ -213,13 +219,21 @@ export function createApiClient(): ApiClient {
       return fetchJson("/api/objects/" + encodeURIComponent(name) + "/layout");
     },
 
-    async getDiagram(
+    async submitDiagramJob(
       kind: string,
       params: Record<string, string | number>,
-    ): Promise<string> {
-      const r = await fetch(`/api/diagram/${kind}?` + apiParams(params));
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.text();
+    ): Promise<JobSubmitResult<string>> {
+      return fetchJson(`/api/diagram/${kind}?` + apiParams({ ...params, async: 1 }));
+    },
+
+    async pollDiagramJob<T>(jobId: string): Promise<JobPollResult<T>> {
+      return fetchJson(`/api/diagram-jobs/${encodeURIComponent(jobId)}`);
+    },
+
+    async submitCfgDiagramJob(object: string, proc: string): Promise<JobSubmitResult<CfgDiagramResponse>> {
+      return fetchJson(
+        `/api/diagrams/cfg/${encodeURIComponent(object)}/${encodeURIComponent(proc)}?async=1`,
+      );
     },
 
     async getQueries(): Promise<{ queries: QueryDef[] }> {

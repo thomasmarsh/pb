@@ -1,9 +1,10 @@
 // app/reducer.ts — App-level reducer: combines all feature reducers.
 // Owns initialState() factory, the top-level reducer, and all app↔feature lenses.
 
-import { pullback, pullbackWithNav, combine, Effect } from "@pb/core";
+import { pullback, pullbackWithNav, combine, Effect, jobPollReduce, initialJobPollState, type JobPollEnv, type JobSubmitResult, type JobPollResult } from "@pb/core";
 import type { AppState } from "./state.js";
 import type { AppAction } from "./actions.js";
+import type { CfgDiagramResponse } from "@pb/platform";
 
 import { navReducer, type NavEnv, dashboardReducer, type DashboardEnv, initialDashboardState, exploreReducer, makeInitialExploreState, type ExploreEnv, objectsReducer, type ObjectsEnv, initialObjectsState, datawindowsReducer, type DatawindowsEnv, initialDatawindowsState, tablesReducer, type TablesEnv, initialTablesState, diagramsReducer, type DiagramsEnv, initialDiagramsState, queriesReducer, type QueriesEnv, initialQueriesState, searchReducer, type SearchEnv, initialSearchState, errorsReducer, type ErrorsEnv, initialErrorsState, type NavigationAction, type ExploreAction, type ObjectsAction, type DatawindowsAction, type TablesAction, type DiagramsAction, type QueriesAction, type SearchAction, type ErrorsAction } from "@pb/platform";
 import { runtimeReducer, type RuntimeEnv, initialRuntimeState, windowManagerReducer, initialWindowManagerState, launchReducer, initialLaunchState, type LaunchAction, type WindowManagerAction } from "@pb/windowing";
@@ -15,11 +16,16 @@ export type { RuntimeAction } from "@pb/windowing";
 
 import type { Theme } from "./state.js";
 
-export type AppEnv = NavEnv & DashboardEnv & ExploreEnv & ObjectsEnv & DatawindowsEnv & TablesEnv & DiagramsEnv & QueriesEnv & SearchEnv & ErrorsEnv & ThemeEnv & RuntimeEnv;
+export type AppEnv = NavEnv & DashboardEnv & ExploreEnv & ObjectsEnv & DatawindowsEnv & TablesEnv & DiagramsEnv & QueriesEnv & SearchEnv & ErrorsEnv & ThemeEnv & RuntimeEnv & CfgDiagramEnv;
 
 export interface ThemeEnv {
   loadTheme(): Effect<Theme>;
   applyTheme(theme: Theme): Effect<never>;
+}
+
+export interface CfgDiagramEnv {
+  submitCfgDiagramJob(object: string, proc: string): Effect<JobSubmitResult<CfgDiagramResponse>>;
+  pollCfgDiagramJob(jobId: string): Effect<JobPollResult<CfgDiagramResponse>>;
 }
 
 // ── Lenses (app-level: connect features to AppState) ─────────────────────────
@@ -59,6 +65,7 @@ export function initialState(): AppState {
     explore: makeInitialExploreState(),
     errors: initialErrorsState,
     inlineDiagrams: {},
+    cfgDiagrams: {},
     runtimes: {},
     windowManager: initialWindowManagerState,
     launch: initialLaunchState,
@@ -109,19 +116,50 @@ export function reducer(draft: AppState, action: AppAction, env: AppEnv): Effect
     switch (ia.tag) {
     case "request": {
       const existing = draft.inlineDiagrams[ia.key];
-      if (existing?.loading) return null;
-      draft.inlineDiagrams[ia.key] = { svg: null, loading: true, error: null };
-      return env.getDiagram(ia.kind, ia.params)
-        .map((svg): AppAction => ({ tag: "inlineDiagram", action: { tag: "loaded", key: ia.key, svg } }))
-        .catch((e): AppAction => ({ tag: "inlineDiagram", action: { tag: "error", key: ia.key, error: String(e) } }));
+      if (existing?.job.status === "pending") return null;
+      draft.inlineDiagrams[ia.key] = { kind: ia.kind, params: ia.params, job: initialJobPollState<string>() };
+      const jobEnv: JobPollEnv<string> = {
+        submitJob: () => env.submitDiagramJob(ia.kind, ia.params),
+        pollJob: (jobId) => env.pollDiagramJob(jobId),
+      };
+      const eff = jobPollReduce(draft.inlineDiagrams[ia.key]!.job, { tag: "start" }, jobEnv);
+      return eff ? eff.map((a): AppAction => ({ tag: "inlineDiagram", action: { tag: "job", key: ia.key, action: a } })) : null;
     }
-    case "loaded": {
-      draft.inlineDiagrams[ia.key] = { svg: ia.svg, loading: false, error: null };
-      return null;
+    case "job": {
+      const entry = draft.inlineDiagrams[ia.key];
+      if (!entry) return null;
+      const jobEnv: JobPollEnv<string> = {
+        submitJob: () => env.submitDiagramJob(entry.kind, entry.params),
+        pollJob: (jobId) => env.pollDiagramJob(jobId),
+      };
+      const eff = jobPollReduce(entry.job, ia.action, jobEnv);
+      return eff ? eff.map((a): AppAction => ({ tag: "inlineDiagram", action: { tag: "job", key: ia.key, action: a } })) : null;
     }
-    case "error": {
-      draft.inlineDiagrams[ia.key] = { svg: null, loading: false, error: ia.error };
-      return null;
+    }
+  }
+  if (action.tag === "cfgDiagram") {
+    const { action: ca } = action;
+    switch (ca.tag) {
+    case "request": {
+      const existing = draft.cfgDiagrams[ca.key];
+      if (existing?.job.status === "pending") return null;
+      draft.cfgDiagrams[ca.key] = { object: ca.object, proc: ca.proc, job: initialJobPollState<CfgDiagramResponse>() };
+      const jobEnv: JobPollEnv<CfgDiagramResponse> = {
+        submitJob: () => env.submitCfgDiagramJob(ca.object, ca.proc),
+        pollJob: (jobId) => env.pollCfgDiagramJob(jobId),
+      };
+      const eff = jobPollReduce(draft.cfgDiagrams[ca.key]!.job, { tag: "start" }, jobEnv);
+      return eff ? eff.map((a): AppAction => ({ tag: "cfgDiagram", action: { tag: "job", key: ca.key, action: a } })) : null;
+    }
+    case "job": {
+      const entry = draft.cfgDiagrams[ca.key];
+      if (!entry) return null;
+      const jobEnv: JobPollEnv<CfgDiagramResponse> = {
+        submitJob: () => env.submitCfgDiagramJob(entry.object, entry.proc),
+        pollJob: (jobId) => env.pollCfgDiagramJob(jobId),
+      };
+      const eff = jobPollReduce(entry.job, ca.action, jobEnv);
+      return eff ? eff.map((a): AppAction => ({ tag: "cfgDiagram", action: { tag: "job", key: ca.key, action: a } })) : null;
     }
     }
   }

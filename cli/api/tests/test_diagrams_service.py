@@ -137,3 +137,62 @@ def test_get_cfg_diagram_endpoint_returns_503_on_executable_not_found(monkeypatc
 
     r = client.get(f"/api/diagrams/cfg/{object_name}/{proc_name}")
     assert r.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# submit_cfg_diagram_job (Plan 159 async job/poll subsystem)
+# ---------------------------------------------------------------------------
+
+
+def test_submit_cfg_diagram_job_happy_path_pending_then_done(db_path):
+    import time
+
+    from pb.api.services.diagrams import submit_cfg_diagram_job
+    from pb.pipeline.diagrams import get_diagram_job
+
+    conn = duckdb.connect(db_path, read_only=True)
+    row = conn.execute(
+        "SELECT object, proc_name FROM procedures WHERE cfg_json IS NOT NULL LIMIT 1"
+    ).fetchone()
+    conn.close()
+    assert row is not None, "no procedures with cfg_json in fixture corpus"
+    object_name, proc_name = row
+
+    envelope = submit_cfg_diagram_job(db_path, object_name, proc_name)
+    assert envelope["status"] == "pending"
+    job_id = envelope["jobId"]
+
+    deadline = time.time() + 10.0
+    done = None
+    while time.time() < deadline:
+        done = get_diagram_job(job_id)
+        assert done is not None
+        if done["status"] != "pending":
+            break
+        time.sleep(0.01)
+
+    assert done["status"] == "done"
+    assert "svg" in done["result"]
+    assert "nodeStates" in done["result"]
+
+
+def test_submit_cfg_diagram_job_missing_procedure_reports_error(db_path):
+    import time
+
+    from pb.api.services.diagrams import submit_cfg_diagram_job
+    from pb.pipeline.diagrams import get_diagram_job
+
+    envelope = submit_cfg_diagram_job(db_path, "__nonexistent_object__", "__nonexistent_proc__")
+    assert envelope["status"] == "pending"
+    job_id = envelope["jobId"]
+
+    deadline = time.time() + 10.0
+    done = None
+    while time.time() < deadline:
+        done = get_diagram_job(job_id)
+        assert done is not None
+        if done["status"] != "pending":
+            break
+        time.sleep(0.01)
+
+    assert done["status"] == "error"

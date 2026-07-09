@@ -114,7 +114,7 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   }
 
   function downloadSvg() {
-    const svg = dg().svg;
+    const svg = dg().job.result;
     if (!svg) return;
     const blob = new Blob([svg], { type: "image/svg+xml" });
     const url = URL.createObjectURL(blob);
@@ -126,7 +126,7 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
   }
 
   function copySvg() {
-    const svg = dg().svg;
+    const svg = dg().job.result;
     if (!svg) return;
     navigator.clipboard.writeText(svg);
   }
@@ -173,29 +173,29 @@ export function Diagrams(props: { store: Store<AppState, AppAction> }) {
       </Show>
 
       <div class="card">
-        <Show when={dg().loading}>
+        <Show when={dg().job.status === "pending"}>
           <div class="diagram-container">
             <div class="loading-overlay"><div class="spinner" /> Generating diagram...</div>
           </div>
         </Show>
-        <Show when={dg().svg}>
+        <Show when={dg().job.result}>
           <div style={{ position: "relative" }}>
             <SvgToolbar onCopy={copySvg} onDownload={downloadSvg} />
             <div
               class="diagram-container"
-              innerHTML={dg().svg!}
+              innerHTML={dg().job.result!}
               onClick={handleSvgClick}
               onMouseOver={handleSvgMouseOver}
               onMouseOut={handleSvgMouseOut}
             />
           </div>
         </Show>
-        <Show when={dg().error}>
+        <Show when={dg().job.error}>
           <div class="diagram-container">
-            <div class="loading-overlay" style={{ color: "var(--red)" }}>Error: {dg().error}</div>
+            <div class="loading-overlay" style={{ color: "var(--red)" }}>Error: {dg().job.error}</div>
           </div>
         </Show>
-        <Show when={!dg().loading && !dg().svg && !dg().error}>
+        <Show when={dg().job.status === "idle"}>
           <div class="diagram-container">
             <div class="loading-overlay">Select options and click Generate</div>
           </div>

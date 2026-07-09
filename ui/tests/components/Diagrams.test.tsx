@@ -2,13 +2,13 @@
 
 import { describe, it, expect } from "vitest";
 import { screen } from "@solidjs/testing-library";
+import { initialJobPollState } from "@pb/core";
 import { renderWithStore } from "../helpers.js";
 import { Diagrams } from "../../app/src/views/features/diagrams/Diagrams.js";
 
 const callsDiagrams = {
   active: "calls" as const,
-  svg: null,
-  loading: false,
+  job: initialJobPollState<string>(),
   params: {},
   tableNames: ["customers", "orders"],
   objectNames: ["w_main", "u_helper"],
@@ -17,8 +17,7 @@ const callsDiagrams = {
 
 const heatmapDiagrams = {
   active: "heatmap" as const,
-  svg: null,
-  loading: false,
+  job: initialJobPollState<string>(),
   params: {},
   tableNames: ["customers"],
   objectNames: ["w_main"],
@@ -27,8 +26,7 @@ const heatmapDiagrams = {
 
 const fkGraphDiagrams = {
   active: "fk-graph" as const,
-  svg: null,
-  loading: false,
+  job: initialJobPollState<string>(),
   params: {},
   tableNames: ["usrgroups"],
   objectNames: ["w_main"],
@@ -38,14 +36,14 @@ const fkGraphDiagrams = {
 describe("Diagrams component", () => {
   it("shows loading state when loading", () => {
     renderWithStore(Diagrams, {
-      diagrams: { ...callsDiagrams, loading: true },
+      diagrams: { ...callsDiagrams, job: { ...initialJobPollState<string>(), status: "pending" } },
     });
     expect(screen.getByText("Generating diagram...")).toBeDefined();
   });
 
   it("shows SVG output with copy/download icon buttons", () => {
     const { container } = renderWithStore(Diagrams, {
-      diagrams: { ...callsDiagrams, svg: '<svg viewBox="0 0 100 100"><rect/></svg>' },
+      diagrams: { ...callsDiagrams, job: { ...initialJobPollState<string>(), status: "done", result: '<svg viewBox="0 0 100 100"><rect/></svg>' } },
     });
     const svg = container.querySelector(".diagram-container svg");
     expect(svg).not.toBeNull();
@@ -61,7 +59,7 @@ describe("Diagrams component", () => {
 
   it("shows error when error exists", () => {
     renderWithStore(Diagrams, {
-      diagrams: { ...callsDiagrams, error: "timeout" },
+      diagrams: { ...callsDiagrams, job: { ...initialJobPollState<string>(), status: "error", error: "timeout" } },
     });
     expect(screen.getByText("Error: timeout")).toBeDefined();
   });

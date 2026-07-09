@@ -21,6 +21,13 @@ export class Effect<A> {
     return new Effect(send => thunk().then(a => { send(a); }));
   }
 
+  /** An effect that sends a single value after `ms` milliseconds. For poll-loop backoff. */
+  static delay<A>(ms: number, a: A): Effect<A> {
+    return new Effect(send => new Promise(resolve => {
+      setTimeout(() => { send(a); resolve(); }, ms);
+    }));
+  }
+
   /** Run all effects concurrently; each sends into the same channel. */
   static merge<A>(...effects: Effect<A>[]): Effect<A> {
     return new Effect(send =>

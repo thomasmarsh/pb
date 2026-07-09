@@ -35,6 +35,7 @@ export function CFGDiagram(props: { store: Store<AppState, AppAction> }): JSX.El
       <CFGCore
         object={object()}
         proc={proc()}
+        store={props.store}
         onGoto={gotoProc}
       />
     </AnalysisView>

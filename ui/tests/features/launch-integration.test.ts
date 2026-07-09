@@ -40,7 +40,10 @@ function createAppEnv(astResponses: Record<string, AstData>): AppEnv {
         (): Promise<AstData> => Promise.reject(new Error(`not found: ${name}`)),
       );
     },
-    getDiagram: () => Effect.none(),
+    submitDiagramJob: () => Effect.none(),
+    pollDiagramJob: () => Effect.none(),
+    submitCfgDiagramJob: () => Effect.none(),
+    pollCfgDiagramJob: () => Effect.none(),
     getQueries: () => Effect.none(),
     runQuery: () => Effect.none(),
     runSql: () => Effect.none(),

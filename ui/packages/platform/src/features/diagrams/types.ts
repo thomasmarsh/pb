@@ -1,13 +1,12 @@
 // features/diagrams/types.ts
 
+import type { JobPollState } from "@pb/core";
 import type { DiagramKind } from "../../utils/diagram.js";
 
 export interface DiagramsState {
   active: DiagramKind;
-  svg: string | null;
-  loading: boolean;
+  job: JobPollState<string>;
   params: Record<string, string | number>;
-  error?: string;
   tableNames: string[];
   objectNames: string[];
   itemsLoaded: boolean;

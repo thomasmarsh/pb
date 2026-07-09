@@ -19,6 +19,10 @@ def get_conn(request: Request) -> duckdb.DuckDBPyConnection:
     return duckdb.connect(db_path, read_only=True)
 
 
+def get_db_path(request: Request) -> str:
+    return request.app.state.db_path
+
+
 def get_db(request: Request) -> Generator[duckdb.DuckDBPyConnection, None, None]:
     db_path: str = request.app.state.db_path
     if not os.path.exists(db_path):

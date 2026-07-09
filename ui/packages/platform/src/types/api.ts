@@ -136,6 +136,26 @@ export interface WiringDiagramResponse {
   procStartLine: number | null;
 }
 
+export interface CfgNodeState {
+  blockId: string;
+  state: string;
+}
+
+export interface CfgBlockDetail {
+  blockId: string;
+  firstLine: number | null;
+  lastLine: number | null;
+  stmts: string[];
+}
+
+export interface CfgDiagramResponse {
+  svg: string;
+  nodeStates: CfgNodeState[];
+  blocks: CfgBlockDetail[];
+  sourceOriginal: string | null;
+  procStartLine: number | null;
+}
+
 export interface DwDetailResponse {
   name: string;
   file: string;

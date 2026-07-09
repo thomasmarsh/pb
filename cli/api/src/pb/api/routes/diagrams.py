@@ -9,9 +9,9 @@ import graphviz
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pb.api.models import WiringDiagramResponse
-from pb.api.routes.dependencies import get_db
-from pb.api.services.diagrams import get_cfg_diagram, get_wiring_diagram
-from pb.pipeline.diagrams import render_svg
+from pb.api.routes.dependencies import get_db, get_db_path
+from pb.api.services.diagrams import get_cfg_diagram, get_wiring_diagram, submit_cfg_diagram_job
+from pb.pipeline.diagrams import get_diagram_job, render_svg, submit_diagram_job
 
 router = APIRouter()
 
@@ -32,11 +32,13 @@ _KINDS = (
 async def get_diagram(
     kind: str,
     conn: duckdb.DuckDBPyConnection = Depends(get_db),
+    db_path: str = Depends(get_db_path),
     root: str = Query("", description="Root object (inheritance)"),
     focal: str = Query("", description="Focal object (calls)"),
     depth: int = Query(2, description="Ego-graph radius (calls)"),
     table: str = Query("", description="Filter DB table (dw-tables)"),
     dw: str = Query("", description="Filter by DW name (dw-tables)"),
+    async_: bool = Query(False, alias="async", description="Return a job id instead of blocking"),
 ):
     if kind not in _KINDS:
         raise HTTPException(status_code=400, detail=f"Unknown diagram: {kind}")
@@ -61,6 +63,9 @@ async def get_diagram(
         if focal:
             params["focal"] = focal
 
+    if async_:
+        return submit_diagram_job(kind, db_path, **params)
+
     try:
         svg = render_svg(kind, conn, **params)
     except ValueError as e:
@@ -73,12 +78,25 @@ async def get_diagram(
     return Response(content=svg, media_type="image/svg+xml")
 
 
+@router.get("/api/diagram-jobs/{job_id}")
+async def get_diagram_job_endpoint(job_id: str):
+    envelope = get_diagram_job(job_id)
+    if envelope is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return envelope
+
+
 @router.get("/api/diagrams/cfg/{object_name}/{proc_name}")
 async def get_cfg_diagram_endpoint(
     object_name: str,
     proc_name: str,
     conn: duckdb.DuckDBPyConnection = Depends(get_db),
+    db_path: str = Depends(get_db_path),
+    async_: bool = Query(False, alias="async", description="Return a job id instead of blocking"),
 ):
+    if async_:
+        return submit_cfg_diagram_job(db_path, object_name, proc_name)
+
     try:
         result = get_cfg_diagram(conn, object_name, proc_name)
     except graphviz.backend.execute.ExecutableNotFound:

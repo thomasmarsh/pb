@@ -257,6 +257,7 @@ function ProcedureDetailContent(props: {
                 <CFGCore
                   object={p.object}
                   proc={p.name}
+                  store={store}
                   onGoto={() =>
                     store.dispatch({
                       tag: "nav",

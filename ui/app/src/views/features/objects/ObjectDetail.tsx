@@ -454,6 +454,7 @@ function ObjectDetailContent(props: {
                 <CFGCore
                   object={t().procObject}
                   proc={t().procName}
+                  store={store}
                   onGoto={() =>
                     store.dispatch({
                       tag: "nav",

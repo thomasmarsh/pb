@@ -95,7 +95,7 @@ describe("Dashboard component", () => {
   });
 
   it("renders complexity heatmap section", async () => {
-    const env = { ...mockEnv, getDiagram: () => Effect.send('<svg id="heatmap-svg"></svg>') } as AppEnv;
+    const env = { ...mockEnv, submitDiagramJob: () => Effect.send({ status: "done" as const, result: '<svg id="heatmap-svg"></svg>' }) } as AppEnv;
     const state = { ...initialState(), dashboard: { ...initialDashboardState, stats: sampleStats } };
     const store = createStore(state, reducer, env);
     const { container } = render(() => <Dashboard store={store} />);
