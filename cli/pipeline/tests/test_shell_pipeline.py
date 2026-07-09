@@ -153,8 +153,13 @@ def test_run_passes_default_namespace_flag_when_given(monkeypatch, tmp_path):
     src_dir.mkdir()
     run(src_dir, str(tmp_path / "out.duckdb"), Path("/fake/bin"), reporter, default_namespace="CLIMS")
 
+    # Lowercased before reaching argv: catalog_columns.namespace is always
+    # lowercase (ddl.py's _table_ident), regardless of --ddl tag casing, so
+    # a raw-case --default-namespace value must be normalized to match or
+    # buildSchema's resolution silently does nothing (Plan 157 Phase 4/5
+    # regression, found via a real multi-schema reindex).
     assert "--default-namespace" in called_args
-    assert called_args[called_args.index("--default-namespace") + 1] == "CLIMS"
+    assert called_args[called_args.index("--default-namespace") + 1] == "clims"
 
 
 def test_run_always_passes_sql_worker_python_flag(monkeypatch, tmp_path):
@@ -247,7 +252,10 @@ def test_run_writes_default_namespace_to_metadata_on_success(monkeypatch, tmp_pa
     row = conn.execute("SELECT value FROM metadata WHERE key = 'default_namespace'").fetchone()
     conn.close()
     assert row is not None
-    assert row[0] == "CLIMS"
+    # Lowercased before storage: get_default_namespace's callers compare it
+    # directly against /api/schemas' (catalog-derived, lowercase) namespace
+    # values, so a raw-case stored value would silently never match.
+    assert row[0] == "clims"
 
 
 def test_run_reset_deletes_existing_db(monkeypatch, tmp_path):

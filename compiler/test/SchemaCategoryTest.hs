@@ -195,6 +195,27 @@ tests = testGroup "SchemaCategory"
             (SchMorphism resolvedObj (StmtObj sid) LegReads `elem` sgLegs sch)
           assertBool "clims_common copy has no legs" (not (hasLegTo commonObj))
           assertBool "clims_archive copy has no legs" (not (hasLegTo archiveObj))
+
+    , testCase "default namespace resolves case-insensitively against the (always-lowercase) catalog" $
+        -- Regression: --default-namespace is a raw CLI value with no
+        -- upstream case normalization, while catalog_columns.namespace is
+        -- always lowercased by ddl.py's _table_ident regardless of --ddl
+        -- tag casing. A user typing --default-namespace CLIMS (the plan's
+        -- own motivating example) against a lowercase-derived "clims"
+        -- catalog must still resolve — found via a real multi-schema
+        -- reindex (Plan 157 Phase 4/5), not by this test suite originally.
+        let sid = SqlStmtId "f.srf" "obj" "proc" 5
+            resolvedObj = ColumnObj (TableRef (Just "clims") "clinicalaccession") "id"
+            inp = emptyInputs
+              { inSqlColumns =
+                  [ SqlColRow sid Nothing (Just "clinicalaccession") "id" False ]
+              , inCatalogColumns =
+                  [ CatColumnRow (Just "clims") "clinicalaccession" "id" ]
+              , inDefaultNamespace = Just "CLIMS"
+              }
+            sch = buildSchema inp
+        in assertBool "resolves despite --default-namespace CLIMS vs. catalog's lowercase clims"
+             (SchMorphism resolvedObj (StmtObj sid) LegReads `elem` sgLegs sch)
     ]
 
   , testGroup "SchPath"

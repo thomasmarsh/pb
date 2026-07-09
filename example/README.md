@@ -14,6 +14,12 @@ Windows-1253; bytes above `0x7F` appear in comments, string literals, and object
 descriptions — never in structural tokens. Plan 12 (`plan/12-encoding.md`) handles
 this at the I/O boundary.
 
+**`openpay-0.1.1b/schema-archive.sql`** is a synthetic DDL fixture, not part of the
+real OpenPay export — it redefines `misth_zpkrat` under a second schema tag, used
+with `schema-0.1.1.sql` (tagged `OPENPAY`) via `--ddl OPENPAY_ARCHIVE:schema-archive.sql`
+to give the corpus a genuine multi-schema shape for Plan 157's `multi_schema_db_conn`
+test fixture (`cli/conftest.py`). See `doc/plan/157-default-namespace.md`.
+
 ## File types
 
 Every `.sr*` file begins with two stripped header lines:

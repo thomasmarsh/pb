@@ -43,6 +43,17 @@ def run(
     ddl: Sequence[str] = (),
     default_namespace: str | None = None,
 ) -> None:
+    # Normalized once, here, at the single choke point every caller (index/
+    # explore) goes through: catalog namespaces are always lowercased by
+    # ddl.py's _table_ident regardless of --ddl tag casing, so a raw-case
+    # --default-namespace value (e.g. "CLIMS") would otherwise never match
+    # and silently resolve nothing — confirmed via a real multi-schema
+    # reindex (Plan 157 Phase 4/5). Also keeps metadata's stored value
+    # consistent with /api/schemas' (catalog-derived, lowercase) namespaces,
+    # which the UI's schema picker compares directly.
+    if default_namespace:
+        default_namespace = default_namespace.lower()
+
     src_dir = src_dir.resolve()
     db_new = db + ".new"
 

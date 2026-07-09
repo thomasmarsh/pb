@@ -228,6 +228,17 @@ buildSchema inputs =
     catalogNamespacedTables = Set.fromList
       [ (ns, cclTable c) | c <- inCatalogColumns inputs, Just ns <- [cclNamespace c] ]
 
+    -- | Lowercased once, here, at the point of comparison — matches the
+    -- "namespaces are always lowercase" invariant every DDL-derived
+    -- 'TableRef' already follows (see 'PB.Pipeline.SqlParse.TableRef' and
+    -- @ddl.py@'s @_table_ident@). @--default-namespace@ is a raw CLI value
+    -- with no such normalization applied anywhere upstream of here — a
+    -- case mismatch (e.g. @--default-namespace CLIMS@ against a
+    -- catalog-derived @"clims"@) silently resolved nothing, confirmed via
+    -- a real multi-schema reindex (Plan 157 Phase 4/5 fixture).
+    normalizedDefaultNamespace :: Maybe Text
+    normalizedDefaultNamespace = T.toLower <$> inDefaultNamespace inputs
+
     -- | Resolve a Nothing-namespace 'TableRef' against the configured default
     -- namespace, iff the DDL catalog defines that table under it. Already-
     -- qualified refs and refs with no matching catalog entry pass through
@@ -235,7 +246,7 @@ buildSchema inputs =
     resolveTableRef :: TableRef -> TableRef
     resolveTableRef tr@(TableRef (Just _) _) = tr
     resolveTableRef tr@(TableRef Nothing tbl) =
-      case inDefaultNamespace inputs of
+      case normalizedDefaultNamespace of
         Just ns | Set.member (ns, tbl) catalogNamespacedTables -> TableRef (Just ns) tbl
         _ -> tr
 
