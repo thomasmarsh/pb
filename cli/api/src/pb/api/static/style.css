@@ -1959,43 +1959,43 @@ kbd.kbd {
 .trace-callgraph-proc:hover { text-decoration: underline; }
 
 /* ── Decomposition evidence paths ─────────────────────────────────────────── */
-/* One row per path: a direction-colored left border (mirrors LinearTrace's
-   affected/affecting slice coloring) plus a deduplicated node chain — each
-   leg's shared from/to endpoint is rendered once, not twice. */
+/* columnCoslice paths are a union of shortest paths radiating outward from
+   each candidate column, so dozens of them routinely share a long common
+   prefix (same seed -> same intermediate statement, diverging only near the
+   target). Rendered as a forest — one tree per direction+seed — with shared
+   prefixes compressed like `tree`/sorted-directory-listing output instead
+   of repeating them on every flat row (see buildPathForest in
+   DecompositionCandidatesCore.tsx). Depth-based indentation, not a rigid
+   grid, is the comparable axis: how far a branch has to travel before it
+   diverges from its siblings. */
 
-.decomp-path-list { display: flex; flex-direction: column; gap: 0; }
-.decomp-path { display: flex; gap: 0; }
-.decomp-path-border {
-    width: 2px;
-    border-radius: 1px;
-    flex-shrink: 0;
-    margin-right: 10px;
-    background: var(--border);
-}
-.decomp-path-border-forward  { background: var(--orange); }
-.decomp-path-border-backward { background: var(--purple); }
-.decomp-path-body {
-    flex: 1;
-    min-width: 0;
-    padding: 6px 0;
+.decomp-forest { display: flex; flex-direction: column; gap: 14px; }
+.decomp-tree-header {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    font-size: 11px; color: var(--text-muted);
+    padding-bottom: 4px;
     border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
 }
-.decomp-path:last-child .decomp-path-body { border-bottom: none; }
+.decomp-tree-count { white-space: nowrap; }
+.decomp-tree-rows { display: flex; flex-direction: column; }
+.decomp-tree-row {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 12px;
+    padding: 2px 0;
+}
+.decomp-tree-row-target { font-weight: 600; }
 
 .decomp-dir-badge {
     font-size: 10px; font-weight: 600; letter-spacing: 0.4px;
     padding: 1px 5px; border-radius: 3px;
     border: 1px solid currentColor;
     color: var(--text-muted);
+    flex-shrink: 0;
 }
 .decomp-dir-forward  { color: var(--orange); }
 .decomp-dir-backward { color: var(--purple); }
 
-.decomp-path-chain {
-    display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
-    font-size: 12px;
-    margin-top: 4px;
-}
 .decomp-leg-badge {
     font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
     padding: 1px 5px; border-radius: 3px;
