@@ -25,187 +25,368 @@ needed. The parsed Catalog also feeds extract_column_refs' catalog= param
 Real Oracle DDL exports (e.g. from SQL Developer / exp/impdp) wrap almost
 every constraint in a `constraint_state` tail sqlglot's grammar does not
 model: `NOT NULL ENABLE`, `PRIMARY KEY (...) USING INDEX ENABLE`,
-`FOREIGN KEY (...) REFERENCES ... ENABLE`. A single one of these anywhere
-in a CREATE TABLE's body causes sqlglot to fall back to an opaque `Command`
-for the *entire* statement (columns included) — so `_strip_constraint_state`
-removes this fixed, Oracle-documented keyword vocabulary before parsing
-rather than trying to teach sqlglot a grammar extension for it. We deliberately
-do not write a custom Oracle DDL parser for the rest of the grammar — sqlglot
-already covers CREATE TABLE/ALTER TABLE ADD CONSTRAINT structurally once this
-tail is stripped, and Oracle DDL surface area (partitioning, storage/LOB
-clauses, sequences, triggers, ...) is not otherwise a target of this tool.
+`FOREIGN KEY (...) REFERENCES ... ENABLE` — plus a long, empirically-
+discovered list of physical/storage attributes (TABLESPACE, PCTFREE,
+STORAGE(...), ...), materialized-view refresh clauses (BUILD, REFRESH,
+ENABLE/DISABLE QUERY REWRITE), and view-header clauses (EDITIONABLE,
+BEQUEATH) sqlglot's oracle dialect doesn't model either. A single one of
+these anywhere in a statement causes sqlglot to fall back to an opaque
+`Command` for the *entire* statement (columns included).
+
+`_filter_ddl_tokens` removes this fixed, Oracle-documented keyword
+vocabulary at the TOKEN level — tokenize with sqlglot's own tokenizer,
+drop the token runs matching known-unsupported clauses, hand the filtered
+token list back to sqlglot's parser (which accepts a pre-tokenized list
+directly, no re-serialization to text needed). This replaced an earlier
+character-level regex implementation (2026-07-08 sessions) that
+accumulated real fragility as the keyword list grew: hand-rolled quote/
+comment/paren-depth tracking duplicated across multiple functions, a
+backtracking `\b`-boundary bug that silently truncated matches for a whole
+round before being caught, a "one level of nesting" cap on parenthesized
+attribute lists that broke on real two-level-nested data, and an
+open-ended non-greedy `REFRESH...AS` regex with no way to verify it
+stopped at the right depth. Token-level filtering gets quote/comment
+handling for free from the tokenizer (a keyword can never accidentally
+match inside a string literal, since string tokens are a distinct type),
+tracks nesting via an exact paren-depth counter over real paren tokens
+(no depth cap), and can verify a clause's end boundary sits at the correct
+depth before stopping. We deliberately still do not write a custom Oracle
+DDL parser for the rest of the grammar — sqlglot already covers
+CREATE TABLE/ALTER TABLE ADD CONSTRAINT structurally once this token
+vocabulary is filtered, and Oracle DDL surface area (partitioning,
+sequences, triggers, PL/SQL bodies, ...) is not otherwise a target of
+this tool.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
-import sqlglot
-from sqlglot import exp
+from sqlglot import Dialect, exp
 from sqlglot.errors import ErrorLevel, TokenError
 from sqlglot.optimizer.qualify import qualify
+from sqlglot.tokenizer_core import Token, TokenType
 
-_INDEX_ATTR_KEYWORDS = (
-    r"TABLESPACE|STORAGE|PCTFREE|PCTUSED|INITRANS|MAXTRANS|LOGGING|NOLOGGING"
-    r"|COMPUTE|COMPRESS|NOCOMPRESS|PARALLEL|NOPARALLEL|MONITORING|NOMONITORING"
-    r"|ENABLE|DISABLE"
+# Oracle physical/storage attributes that can appear either attached to a
+# constraint's backing index (`USING INDEX [name] TABLESPACE x ...`) or bare
+# (a table's own tail, or a materialized view's attribute list) -- same
+# vocabulary either way, found across several rounds of real-corpus triage
+# (2026-07-08): none of it carries catalog-relevant information (columns/
+# PK/FK/CHECK) regardless of where it appears, so it's always safe to drop.
+_PHYSICAL_ATTR_KEYWORDS = frozenset({
+    "TABLESPACE", "STORAGE", "PCTFREE", "PCTUSED", "INITRANS", "MAXTRANS",
+    "LOGGING", "NOLOGGING", "COMPRESS", "NOCOMPRESS", "PARALLEL",
+    "NOPARALLEL", "MONITORING", "NOMONITORING",
+})
+
+# Bare single-token clauses that are always safe to drop outright, found
+# across several rounds of real-corpus triage (2026-07-08): table-level
+# ROWDEPENDENCIES/NOROWDEPENDENCIES, virtual-column VIRTUAL, column-level
+# VISIBLE/INVISIBLE (a distinct context from the USING INDEX ... VISIBLE
+# case, which sqlglot already tolerates without stripping), and view-header
+# EDITIONABLE/NONEDITIONABLE.
+_BARE_DROP_KEYWORDS = frozenset({
+    "ROWDEPENDENCIES", "NOROWDEPENDENCIES", "VIRTUAL", "VISIBLE",
+    "INVISIBLE", "EDITIONABLE", "NONEDITIONABLE",
+})
+
+
+def _kw(token: Token, *names: str) -> bool:
+    """True if token's text (case-insensitive) is one of `names`. Works for
+    compound tokens sqlglot merges into one (e.g. PRIMARY KEY, START WITH)
+    since this compares the token's own .text, not individual words."""
+    return token.text.upper() in names
+
+
+def _skip_paren(tokens: list[Token], open_idx: int) -> int:
+    """Index just past the ')' matching tokens[open_idx] == L_PAREN, at
+    arbitrary nesting depth (a plain counter over real paren tokens --
+    unlike the regex era, there is no "how many levels deep" guess to get
+    wrong). Returns len(tokens) if unbalanced (shouldn't happen for valid
+    DDL; the caller just consumes to the end rather than crashing)."""
+    depth = 0
+    i = open_idx
+    n = len(tokens)
+    while i < n:
+        if tokens[i].token_type == TokenType.L_PAREN:
+            depth += 1
+        elif tokens[i].token_type == TokenType.R_PAREN:
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def _match_one_physical_attr(tokens: list[Token], i: int) -> int | None:
+    """Match exactly one physical/storage attribute (keyword plus its
+    value, if any) starting at tokens[i]. Returns the index past the match,
+    or None if tokens[i] isn't the start of one."""
+    if i >= len(tokens) or tokens[i].token_type != TokenType.VAR:
+        return None
+    word = tokens[i].text.upper()
+    j = i + 1
+    if word == "TABLESPACE":
+        if j < len(tokens) and tokens[j].token_type in (TokenType.VAR, TokenType.IDENTIFIER):
+            return j + 1
+        return j
+    if word == "STORAGE":
+        if j < len(tokens) and tokens[j].token_type == TokenType.L_PAREN:
+            return _skip_paren(tokens, j)
+        return j
+    if word in ("PCTFREE", "PCTUSED", "INITRANS", "MAXTRANS"):
+        if j < len(tokens) and tokens[j].token_type == TokenType.NUMBER:
+            return j + 1
+        return j
+    if word == "COMPUTE":
+        if j < len(tokens) and _kw(tokens[j], "STATISTICS"):
+            return j + 1
+        return None  # bare "COMPUTE" isn't a recognized attribute; don't consume
+    if word == "COMPRESS":
+        if j < len(tokens) and tokens[j].token_type == TokenType.NUMBER:
+            return j + 1
+        return j
+    if word == "PARALLEL":
+        if j < len(tokens) and tokens[j].token_type == TokenType.NUMBER:
+            return j + 1
+        return j
+    if word == "MONITORING":
+        if j < len(tokens) and _kw(tokens[j], "USAGE"):
+            return j + 1
+        return j
+    if word in ("LOGGING", "NOLOGGING", "NOCOMPRESS", "NOPARALLEL", "NOMONITORING"):
+        return j
+    return None
+
+
+def _match_physical_attr_run(tokens: list[Token], i: int) -> int | None:
+    """Match a repeated run of one-or-more physical attributes. Returns the
+    index past the last one matched, or None if tokens[i] doesn't start
+    one at all (distinguishes "matched zero" from "matched none" for
+    callers that need to know whether anything was consumed)."""
+    end = None
+    j = i
+    while True:
+        nxt = _match_one_physical_attr(tokens, j)
+        if nxt is None:
+            break
+        j = nxt
+        end = j
+    return end
+
+
+def _match_using_index_name(tokens: list[Token], i: int) -> int | None:
+    """Match an optional index name after USING INDEX: bare or quoted
+    identifier, optionally schema-qualified (ns.name or "ns"."name").
+    Quoted (IDENTIFIER-typed) names never collide with a physical-attribute
+    keyword -- quoting can't produce that ambiguity -- but a bare (VAR-typed)
+    token must be checked against the physical-attribute vocabulary first,
+    since "USING INDEX TABLESPACE x" has no name at all, and TABLESPACE
+    would otherwise be misread as one."""
+    if i >= len(tokens):
+        return None
+    t = tokens[i]
+    if t.token_type == TokenType.IDENTIFIER:
+        j = i + 1
+    elif t.token_type == TokenType.VAR and t.text.upper() not in _PHYSICAL_ATTR_KEYWORDS:
+        j = i + 1
+    else:
+        return None
+    if (
+        j + 1 < len(tokens)
+        and tokens[j].token_type == TokenType.DOT
+        and tokens[j + 1].token_type in (TokenType.VAR, TokenType.IDENTIFIER)
+    ):
+        j += 2
+    return j
+
+
+def _match_using_index_clause(tokens: list[Token], i: int) -> int | None:
+    """USING INDEX [name | (column list)] [physical attributes]*, the
+    dominant real-corpus cause of catalog-impacting DDL loss found across
+    several rounds of triage (2026-07-08) -- a constraint's backing index
+    almost always carries its own segment attributes in a real Oracle
+    export. The explicit column-list form (`USING INDEX (col1, col2)`) is a
+    distinct Oracle syntax from naming an existing/new index."""
+    if i >= len(tokens) or tokens[i].token_type != TokenType.USING:
+        return None
+    j = i + 1
+    if j >= len(tokens) or tokens[j].token_type != TokenType.INDEX:
+        return None
+    j += 1
+    if j < len(tokens) and tokens[j].token_type == TokenType.L_PAREN:
+        j = _skip_paren(tokens, j)
+    else:
+        name_end = _match_using_index_name(tokens, j)
+        if name_end is not None:
+            j = name_end
+    attrs_end = _match_physical_attr_run(tokens, j)
+    if attrs_end is not None:
+        j = attrs_end
+    return j
+
+
+def _match_enable_disable_clause(tokens: list[Token], i: int) -> int | None:
+    """ENABLE|DISABLE [VALIDATE|NOVALIDATE|QUERY REWRITE]. QUERY REWRITE is
+    a materialized view's own clause (2026-07-08); without it, a bare
+    ENABLE/DISABLE match alone would leave "QUERY REWRITE" behind."""
+    if i >= len(tokens) or not _kw(tokens[i], "ENABLE", "DISABLE"):
+        return None
+    j = i + 1
+    if j < len(tokens) and _kw(tokens[j], "VALIDATE", "NOVALIDATE"):
+        return j + 1
+    if j + 1 < len(tokens) and _kw(tokens[j], "QUERY") and _kw(tokens[j + 1], "REWRITE"):
+        return j + 2
+    return j
+
+
+def _match_bare_validate_clause(tokens: list[Token], i: int) -> int | None:
+    """VALIDATE|NOVALIDATE appearing without a preceding ENABLE/DISABLE."""
+    if i < len(tokens) and _kw(tokens[i], "VALIDATE", "NOVALIDATE"):
+        return i + 1
+    return None
+
+
+def _match_lob_store_as_clause(tokens: list[Token], i: int) -> int | None:
+    """LOB (col[, col...]) STORE AS [SECUREFILE|BASICFILE] [(attributes)],
+    where the attribute list can itself nest a STORAGE(...) clause -- the
+    exact case the old regex's one-level nesting cap broke on; _skip_paren's
+    real depth counter handles any nesting depth."""
+    if i >= len(tokens) or not _kw(tokens[i], "LOB"):
+        return None
+    j = i + 1
+    if j >= len(tokens) or tokens[j].token_type != TokenType.L_PAREN:
+        return None
+    j = _skip_paren(tokens, j)
+    if j >= len(tokens) or not _kw(tokens[j], "STORE"):
+        return None
+    j += 1
+    if j >= len(tokens) or tokens[j].token_type != TokenType.ALIAS:  # "AS"
+        return None
+    j += 1
+    if j < len(tokens) and _kw(tokens[j], "SECUREFILE", "BASICFILE"):
+        j += 1
+    if j < len(tokens) and tokens[j].token_type == TokenType.L_PAREN:
+        j = _skip_paren(tokens, j)
+    return j
+
+
+def _match_segment_creation_clause(tokens: list[Token], i: int) -> int | None:
+    if i >= len(tokens) or not _kw(tokens[i], "SEGMENT"):
+        return None
+    j = i + 1
+    if j >= len(tokens) or not _kw(tokens[j], "CREATION"):
+        return None
+    j += 1
+    if j < len(tokens) and _kw(tokens[j], "IMMEDIATE", "DEFERRED"):
+        return j + 1
+    return None
+
+
+def _match_build_clause(tokens: list[Token], i: int) -> int | None:
+    if i >= len(tokens) or not _kw(tokens[i], "BUILD"):
+        return None
+    j = i + 1
+    if j < len(tokens) and _kw(tokens[j], "IMMEDIATE", "DEFERRED"):
+        return j + 1
+    return None
+
+
+def _match_refresh_clause(tokens: list[Token], i: int) -> int | None:
+    """A materialized view's REFRESH clause: FAST/COMPLETE/FORCE,
+    ON COMMIT/ON DEMAND, START WITH/NEXT date expressions, WITH PRIMARY
+    KEY/WITH ROWID, USING ... TRUSTED CONSTRAINTS, FOR UPDATE -- too varied
+    to enumerate keyword-by-keyword like physical attributes (2026-07-08),
+    so this scans from REFRESH up to (not including) the view's own
+    AS SELECT/AS (, verifying paren depth returns to 0 and no semicolon is
+    crossed first -- the token-level equivalent of the old regex's
+    non-greedy lookahead, but able to actually confirm the boundary is
+    correct rather than hoping REFRESH's vocabulary never contains "AS"."""
+    if i >= len(tokens) or not _kw(tokens[i], "REFRESH"):
+        return None
+    depth = 0
+    j = i + 1
+    n = len(tokens)
+    while j < n:
+        t = tokens[j]
+        if t.token_type == TokenType.L_PAREN:
+            depth += 1
+        elif t.token_type == TokenType.R_PAREN:
+            depth -= 1
+        elif t.token_type == TokenType.SEMICOLON:
+            return None  # ran into the next statement without finding AS
+        elif t.token_type == TokenType.ALIAS and depth == 0:
+            return j  # stop before the AS token itself
+        j += 1
+    return None  # no AS found before end of input
+
+
+def _match_bequeath_clause(tokens: list[Token], i: int) -> int | None:
+    if i >= len(tokens) or not _kw(tokens[i], "BEQUEATH"):
+        return None
+    j = i + 1
+    if j < len(tokens) and _kw(tokens[j], "DEFINER"):
+        return j + 1
+    if j < len(tokens) and tokens[j].token_type == TokenType.CURRENT_USER:
+        return j + 1
+    return None
+
+
+def _match_bare_drop_keyword(tokens: list[Token], i: int) -> int | None:
+    if i < len(tokens) and tokens[i].token_type == TokenType.VAR and tokens[i].text.upper() in _BARE_DROP_KEYWORDS:
+        return i + 1
+    return None
+
+
+# Tried in order at each token position; the first to match wins and its
+# span is dropped. Order matters only where matchers could otherwise
+# overlap (e.g. _match_using_index_clause must run before the bare
+# _match_physical_attr_run would otherwise treat a USING-INDEX-attached
+# TABLESPACE as if it were standalone) -- listed most-specific first.
+_DDL_TOKEN_MATCHERS = (
+    _match_using_index_clause,
+    _match_enable_disable_clause,
+    _match_bare_validate_clause,
+    _match_lob_store_as_clause,
+    _match_segment_creation_clause,
+    _match_build_clause,
+    _match_refresh_clause,
+    _match_bequeath_clause,
+    _match_bare_drop_keyword,
+    _match_physical_attr_run,
 )
 
-# One physical/storage attribute that can follow USING INDEX [name] when a
-# constraint's backing index gets its own segment attributes -- the common
-# real-Oracle-export shape found via corpus triage (2026-07-08): the bare
-# "USING INDEX [name]" stripped below leaves this tail behind as syntax
-# garbage, still losing the whole statement to sqlglot's exp.Command
-# fallback. STORAGE's inner clause is assumed non-nested (true for the
-# physical_attributes_clause grammar; no parens ever appear inside it).
-# PARALLEL/MONITORING found in a second triage pass on the same real schema
-# after the first round of keywords still left ~35% of catalog-impacting
-# USING INDEX losses unfixed.
-_INDEX_PHYSICAL_ATTR = (
-    r"TABLESPACE\s+\"?[A-Za-z_][\w$#]*\"?"
-    r"|STORAGE\s*\([^()]*\)"
-    r"|PCTFREE\s+\d+"
-    r"|PCTUSED\s+\d+"
-    r"|INITRANS\s+\d+"
-    r"|MAXTRANS\s+\d+"
-    r"|COMPUTE\s+STATISTICS"
-    r"|LOGGING"
-    r"|NOLOGGING"
-    r"|COMPRESS(?:\s+\d+)?"
-    r"|NOCOMPRESS"
-    r"|PARALLEL(?:\s+\d+)?"
-    r"|NOPARALLEL"
-    r"|MONITORING(?:\s+USAGE)?"
-    r"|NOMONITORING"
-)
 
-# Index name after USING INDEX: bare or quoted identifier, optionally
-# schema-qualified (e.g. "CLIMS"."PK_IDX" or bare_schema.bare_idx), OR an
-# explicit inline column list (USING INDEX (col1, col2)) -- a distinct
-# Oracle syntax from naming an existing/new index, found in the same
-# corpus triage.
-_QUALIFIED_IDENT = r'(?:"[^"]+"|[A-Za-z_][\w$#]*)(?:\.(?:"[^"]+"|[A-Za-z_][\w$#]*))?'
-_USING_INDEX_NAME_OR_COLUMN_LIST = rf"(?:(?!(?:{_INDEX_ATTR_KEYWORDS})\b){_QUALIFIED_IDENT}|\([^()]*\))"
-
-# A parenthesized group allowing one level of nesting -- e.g. a LOB's
-# `STORE AS SECUREFILE (TABLESPACE x STORAGE(...))`, where the outer
-# STORE-AS attribute list itself wraps a nested STORAGE(...) clause. Plain
-# `\([^()]*\)` (used for STORAGE's own inner clause, which is never nested
-# in real Oracle grammar) isn't enough one level up. Doesn't handle two or
-# more levels of nesting -- not needed for any real shape found so far.
-_PAREN_GROUP_ONE_LEVEL_NESTED = r"\((?:[^()]|\([^()]*\))*\)"
-
-_CONSTRAINT_STATE_RE = re.compile(
-    # No trailing \b on this branch: the optional name/attrs groups can end
-    # on a non-word character (closing quote or paren), and a `\b` there
-    # would force a backtrack that truncates the match right before it --
-    # e.g. USING INDEX "CLIMS"."IDX" TABLESPACE "USERS" would match only up
-    # to `"USER` (stopping short of the closing quote) instead of `"USERS"`.
-    r"\bUSING\s+INDEX"
-    rf"(?:\s+{_USING_INDEX_NAME_OR_COLUMN_LIST})?"
-    rf"(?:\s+(?:{_INDEX_PHYSICAL_ATTR}))*"
-    # QUERY REWRITE added alongside VALIDATE/NOVALIDATE (2026-07-08): a
-    # materialized view's ENABLE/DISABLE QUERY REWRITE clause -- without
-    # this, the bare ENABLE/DISABLE branch still matches just the
-    # ENABLE/DISABLE word and leaves "QUERY REWRITE" behind as syntax
-    # garbage, same failure shape as every other constraint_state case.
-    r"|\b(?:ENABLE|DISABLE)(?:\s+(?:VALIDATE|NOVALIDATE|QUERY\s+REWRITE))?\b"
-    r"|\b(?:VALIDATE|NOVALIDATE)\b"
-    # Table-level ROWDEPENDENCIES/NOROWDEPENDENCIES, virtual-column VIRTUAL,
-    # LOB storage clause, and SEGMENT CREATION IMMEDIATE/DEFERRED: unrelated
-    # to constraint_state proper, but the same failure class (a bare
-    # keyword/clause sqlglot's oracle grammar doesn't model) and rare enough
-    # elsewhere in DDL that a global strip is safe -- matches the precedent
-    # set by ENABLE/DISABLE above.
-    r"|\b(?:NON)?ROWDEPENDENCIES\b"
-    r"|\bVIRTUAL\b"
-    rf"|\bLOB\s*\([^()]*\)\s*STORE\s+AS\s*(?:SECUREFILE|BASICFILE)?\s*(?:{_PAREN_GROUP_ONE_LEVEL_NESTED})?"
-    r"|\bSEGMENT\s+CREATION\s+(?:IMMEDIATE|DEFERRED)\b"
-    # Materialized-view refresh-strategy clauses (2026-07-08): unlike the
-    # physical/storage attributes above, essentially every real materialized
-    # view specifies one of these, so they -- not the physical attrs -- were
-    # the actual remaining blocker on a real corpus even after the bare-attr
-    # fix (which only fixed the *labeling*, not the parse, since it never
-    # touched this separate clause family). BUILD IMMEDIATE/DEFERRED is a
-    # bare two-word clause; REFRESH's own grammar (FAST/COMPLETE/FORCE,
-    # ON COMMIT/ON DEMAND, START WITH/NEXT date expressions, WITH PRIMARY
-    # KEY/WITH ROWID, USING ... TRUSTED CONSTRAINTS, FOR UPDATE) is too
-    # varied to enumerate keyword-by-keyword like physical attributes, so
-    # this strips everything from REFRESH up to (not including) the view's
-    # own AS SELECT/AS ( -- none of Oracle's REFRESH clause vocabulary
-    # contains a bare AS keyword, so the lookahead can't over-consume into
-    # the query itself.
-    r"|\bBUILD\s+(?:IMMEDIATE|DEFERRED)\b"
-    r"|\bREFRESH\b[\s\S]*?(?=\bAS\b)"
-    # Column-level VISIBLE/INVISIBLE modifier: a distinct context from the
-    # USING INDEX ... VISIBLE case (which sqlglot already tolerates without
-    # stripping) -- found via the bisection+redaction tool in
-    # diagnose_ddl_skips.py (2026-07-08).
-    r"|\b(?:IN)?VISIBLE\b"
-    # BARE physical/storage attributes -- same vocabulary as
-    # _INDEX_PHYSICAL_ATTR, but NOT attached to a USING INDEX clause at all.
-    # Architectural gap found via a second real-corpus triage pass
-    # (2026-07-08) after the hard-wrap fix cleared away most of the noise:
-    # every physical-attribute strip up to this point only fired when
-    # preceded by "USING INDEX" -- a bare table-level tail
-    # (`CREATE TABLE t (...) TABLESPACE x`) or a CREATE MATERIALIZED VIEW's
-    # own attribute list (`CREATE MATERIALIZED VIEW mv PCTFREE 10 ... AS
-    # SELECT ...`) was never covered by any prior round, despite reusing the
-    # identical keyword vocabulary. Listed last (lowest alternation
-    # priority) so the more specific USING-INDEX-attached branch above still
-    # wins when applicable; matches ANY run of one or more of these
-    # keywords, which is safe here since none of them carry catalog-relevant
-    # information (columns/PK/FK/CHECK) regardless of where they appear.
-    rf"|\b(?:{_INDEX_PHYSICAL_ATTR})(?:\s+(?:{_INDEX_PHYSICAL_ATTR}))*",
-    re.IGNORECASE,
-)
-
-_VIEW_EDITIONING_RE = re.compile(
-    r"\b(?:NON)?EDITIONABLE\b"
-    # BEQUEATH DEFINER/CURRENT_USER: a separate view-header clause sqlglot's
-    # oracle dialect doesn't model, found in the same corpus triage as
-    # EDITIONABLE -- same failure class, same fix (bare-clause strip).
-    r"|\bBEQUEATH\s+(?:DEFINER|CURRENT_USER)\b",
-    re.IGNORECASE,
-)
+def _filter_ddl_tokens(tokens: list[Token]) -> list[Token]:
+    """Drop every token run matching a known-unsupported Oracle DDL clause
+    (constraint_state, physical/storage attributes, materialized-view
+    refresh strategy, view-header clauses -- see module docstring), leaving
+    everything else untouched. The filtered token list is handed directly
+    to sqlglot's parser; no re-serialization to SQL text is needed."""
+    out: list[Token] = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        matched_end = None
+        for matcher in _DDL_TOKEN_MATCHERS:
+            end = matcher(tokens, i)
+            if end is not None and end > i:
+                matched_end = end
+                break
+        if matched_end is not None:
+            i = matched_end
+            continue
+        out.append(tokens[i])
+        i += 1
+    return out
 
 
-def _strip_constraint_state(text: str) -> str:
-    """Remove Oracle's constraint_state tail keywords (ENABLE/DISABLE/
-    VALIDATE/NOVALIDATE/USING INDEX [name or column list] [physical
-    attributes]) that sqlglot's grammar does not parse, in either CREATE
-    TABLE or ALTER TABLE ADD CONSTRAINT context. USING INDEX also consumes
-    a following name (or an explicit inline column list) plus a run of
-    physical/storage attributes (TABLESPACE/STORAGE(...)/PCTFREE/PCTUSED/
-    INITRANS/MAXTRANS/LOGGING/NOLOGGING/COMPUTE STATISTICS/COMPRESS/
-    NOCOMPRESS/PARALLEL/NOPARALLEL/MONITORING/NOMONITORING) attached to the
-    constraint's backing index -- real Oracle exports attach these far more
-    often than not (corpus triage, 2026-07-08: dominant cause of
-    catalog-impacting DDL statement loss on one real schema; two rounds of
-    triage were needed since PARALLEL/MONITORING/the column-list form
-    weren't caught by the first pass), and a bare USING INDEX [name] strip
-    leaves them behind as syntax garbage that still fails the whole
-    statement. Also strips table-level ROWDEPENDENCIES/NOROWDEPENDENCIES and
-    virtual-column VIRTUAL -- unrelated to constraint_state proper, but the
-    same failure class, found in the same triage. A third round
-    (2026-07-08, after the hard-wrap fix in parse_ddl cleared away most
-    other noise) found that every physical-attribute strip above only fired
-    when attached to USING INDEX -- the same keyword vocabulary also strips
-    as a BARE run wherever it appears (a table's own TABLESPACE tail, a
-    materialized view's PCTFREE/PCTUSED/... attribute list, etc.), since
-    none of it carries catalog-relevant information regardless of context."""
-    return _CONSTRAINT_STATE_RE.sub("", text)
-
-
-def _strip_view_editioning_clause(text: str) -> str:
-    """Remove Oracle's EDITIONABLE/NONEDITIONABLE view-editioning keyword
-    (e.g. `CREATE OR REPLACE FORCE EDITIONABLE VIEW ...`) and BEQUEATH
-    DEFINER/CURRENT_USER view-header clause. Same failure class as
-    `_strip_constraint_state` — sqlglot's oracle dialect parses bare
-    FORCE/NOFORCE fine but falls back to an opaque exp.Command for the whole
-    statement once EDITIONABLE/NONEDITIONABLE or BEQUEATH appears."""
-    return _VIEW_EDITIONING_RE.sub("", text)
+def _tokenize_and_filter(dialect_instance: Dialect, text: str) -> list[Token]:
+    """Tokenize `text` with `dialect_instance`'s own tokenizer and drop
+    unsupported-clause token runs. May raise TokenError (e.g. a malformed
+    string literal) -- callers handle that the same way they did for the
+    old text-level pipeline."""
+    return _filter_ddl_tokens(dialect_instance.tokenize(text))
 
 
 @dataclass(frozen=True)
@@ -631,13 +812,15 @@ def parse_ddl(
     dewrapped = wrap_width is not None
     if wrap_width is not None:
         text = _dewrap_hard_wrapped_lines(text, wrap_width)
-    text = _strip_view_editioning_clause(_strip_constraint_state(text))
+
+    dialect_instance = Dialect.get_or_raise(dialect)
 
     skipped = 0
     tokenize_error_count = 0
     skipped_previews: list[str] = []
     try:
-        statements = sqlglot.parse(text, dialect=dialect, error_level=ErrorLevel.WARN)
+        filtered_tokens = _tokenize_and_filter(dialect_instance, text)
+        statements = dialect_instance.parser(error_level=ErrorLevel.WARN).parse(filtered_tokens, text)
     except TokenError:
         # The whole file failed to tokenize (e.g. a malformed string
         # literal) -- fall back to a conservative semicolon-based split so
@@ -650,7 +833,8 @@ def parse_ddl(
         statements = []
         for chunk in _split_statements(text):
             try:
-                statements.extend(sqlglot.parse(chunk, dialect=dialect, error_level=ErrorLevel.WARN))
+                chunk_tokens = _tokenize_and_filter(dialect_instance, chunk)
+                statements.extend(dialect_instance.parser(error_level=ErrorLevel.WARN).parse(chunk_tokens, chunk))
             except TokenError:
                 tokenize_error_count += 1
                 skipped_previews.append(f"[tokenize error] {chunk[:200]}")

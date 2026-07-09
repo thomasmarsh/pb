@@ -5,14 +5,12 @@ keyword-frequency histograms -- never raw statement text, table names, or
 column names -- so the output is safe to share even when the DDL file
 itself contains sensitive schema/business data.
 
-Parses statement-by-statement (via ddl.py's own `_split_statements`
-semicolon/quote/comment-aware splitter) rather than parse_ddl's whole-file
-pass, so each raw (pre-constraint-state-stripping) statement string stays
-available for keyword search alongside its parse outcome. This matters
-because `_strip_constraint_state` deletes ENABLE/DISABLE/USING INDEX from
-the text *before* parsing -- scanning only the post-strip rendering (as an
-earlier version of this script did) makes any ENABLE/DISABLE-related
-failure invisible to the keyword histogram.
+Mirrors pb.lib.ddl.parse_ddl's own token-filter pipeline (2026-07-08:
+replaced an earlier character-level regex implementation -- see that
+module's docstring for why) so every diagnostic here reflects exactly what
+the real parser does. Bisection works by slicing the token list directly
+(no text reconstruction, no re-tokenizing) and redacts by token TYPE
+(IDENTIFIER/STRING) rather than regex pattern matching on rendered text.
 
 Also classifies each skipped statement as catalog-impacting or harmless:
 `parse_ddl` only ever extracts columns/PK/FK/CHECK data from CREATE TABLE,
@@ -33,26 +31,23 @@ import re
 from collections import Counter
 from pathlib import Path
 
-import sqlglot
 from pb.lib.ddl import (
     _detect_hard_wrap_width,
     _dewrap_hard_wrapped_lines,
+    _filter_ddl_tokens,
+    _skip_paren,
     _split_statements,
-    _strip_constraint_state,
-    _strip_view_editioning_clause,
 )
-from sqlglot import exp
+from sqlglot import Dialect, exp
 from sqlglot.errors import ErrorLevel, ParseError, TokenError
+from sqlglot.tokenizer_core import Token, TokenType
 
 # Keywords/phrases confirmed (via synthetic reproduction against sqlglot's
 # oracle dialect, independent of any customer data) to trip the whole
-# containing statement into an opaque exp.Command fallback. Two families:
-# physical/storage/segment-attribute tail clauses on CREATE TABLE/INDEX, and
-# ALTER TABLE action forms sqlglot's oracle grammar doesn't structurally
-# support at all (MODIFY, standalone ENABLE/DISABLE/RENAME CONSTRAINT).
-# Matched against the RAW pre-strip statement text -- _strip_constraint_state
-# deletes ENABLE/DISABLE/USING INDEX from the text before parsing, so
-# searching post-strip text would make those causes invisible.
+# containing statement into an opaque exp.Command fallback. ddl.py's token
+# filter now handles all of these -- this histogram exists to flag whether
+# a still-failing statement contains something that OUGHT to be handled but
+# somehow isn't (a real regression) versus something genuinely new.
 _KEYWORDS = [
     "STORAGE", "TABLESPACE", "PCTFREE", "PCTUSED", "INITRANS", "MAXTRANS",
     "LOGGING", "NOLOGGING", "PARTITION BY", "SUBPARTITION", "ORGANIZATION INDEX",
@@ -64,8 +59,7 @@ _KEYWORDS = [
     "ROWDEPENDENCIES", "NOROWDEPENDENCIES", "INMEMORY", "ENCRYPT",
     "SUPPLEMENTAL LOG", "USING INDEX", "REVERSE", "COMPUTE STATISTICS",
     "VISIBLE", "INVISIBLE", "ONLINE", "UNUSABLE", "DEFAULT ON NULL",
-    "BITMAP",
-    # ALTER TABLE action forms confirmed unsupported independent of any tail:
+    "BITMAP", "BUILD", "REFRESH", "QUERY REWRITE", "BEQUEATH", "EDITIONABLE",
     "MODIFY", "ENABLE CONSTRAINT", "DISABLE CONSTRAINT", "RENAME CONSTRAINT",
     "ENABLE ", "DISABLE ",
 ]
@@ -84,159 +78,93 @@ _ADD_CONSTRAINT_RE = re.compile(r"\bADD\s+CONSTRAINT\b", re.IGNORECASE)
 _INDEX_RE = re.compile(r"^\s*CREATE\s+(?:UNIQUE\s+|BITMAP\s+)?INDEX\b", re.IGNORECASE)
 
 
-def _find_matching_close_paren(text: str, open_idx: int) -> int | None:
-    """Index of the ')' matching text[open_idx] == '(' (quote-aware, so a
-    ')' inside a string/quoted-identifier literal isn't miscounted), or
-    None if unbalanced."""
+def _parse_tokens(dialect_instance: Dialect, tokens: list[Token], sql_for_errors: str) -> list[exp.Expr | None]:
+    filtered = _filter_ddl_tokens(tokens)
+    return dialect_instance.parser(error_level=ErrorLevel.WARN).parse(filtered, sql_for_errors)
+
+
+def _top_level_comma_positions(tokens: list[Token], start: int, end: int) -> list[int]:
+    """Indices of commas at paren-depth 0 within tokens[start:end)."""
+    positions = []
     depth = 0
-    i = open_idx
-    n = len(text)
-    in_squote = in_dquote = False
-    while i < n:
-        c = text[i]
-        if in_squote:
-            if c == "'":
-                if i + 1 < n and text[i + 1] == "'":
-                    i += 2
-                    continue
-                in_squote = False
-            i += 1
-            continue
-        if in_dquote:
-            if c == '"':
-                in_dquote = False
-            i += 1
-            continue
-        if c == "'":
-            in_squote = True
-        elif c == '"':
-            in_dquote = True
-        elif c == "(":
+    for i in range(start, end):
+        t = tokens[i]
+        if t.token_type == TokenType.L_PAREN:
             depth += 1
-        elif c == ")":
+        elif t.token_type == TokenType.R_PAREN:
             depth -= 1
-            if depth == 0:
-                return i
-        i += 1
-    return None
+        elif t.token_type == TokenType.COMMA and depth == 0:
+            positions.append(i)
+    return positions
 
 
-def _split_top_level_commas(text: str) -> list[str]:
-    """Split text on commas at paren-depth 0 (quote-aware)."""
-    elements = []
-    buf: list[str] = []
-    depth = 0
-    in_squote = in_dquote = False
-    i = 0
-    n = len(text)
-    while i < n:
-        c = text[i]
-        if in_squote:
-            buf.append(c)
-            if c == "'":
-                if i + 1 < n and text[i + 1] == "'":
-                    buf.append(text[i + 1])
-                    i += 2
-                    continue
-                in_squote = False
-            i += 1
-            continue
-        if in_dquote:
-            buf.append(c)
-            if c == '"':
-                in_dquote = False
-            i += 1
-            continue
-        if c == "'":
-            in_squote = True
-        elif c == '"':
-            in_dquote = True
-        elif c == "(":
-            depth += 1
-        elif c == ")":
-            depth -= 1
-        if c == "," and depth == 0:
-            elements.append("".join(buf).strip())
-            buf = []
-            i += 1
-            continue
-        buf.append(c)
-        i += 1
-    tail = "".join(buf).strip()
-    if tail:
-        elements.append(tail)
-    return elements
+def _redact_token_text(t: Token) -> str:
+    """Per-token-type redaction: exact and robust (no regex pattern
+    matching on rendered text) since the tokenizer already knows exactly
+    which tokens are quoted identifiers vs. string literals."""
+    if t.token_type == TokenType.IDENTIFIER:
+        return "<ID>"
+    if t.token_type in (TokenType.STRING, TokenType.NATIONAL_STRING):
+        return "<STR>"
+    return t.text
 
 
-def _redact(text: str) -> str:
-    """Replace quoted identifiers and string literals with placeholders,
-    collapse whitespace. Safe to print: strips every piece of actual
-    schema/business content while keeping SQL keywords, types, and
-    punctuation, which reveal the syntax shape that's failing."""
-    text = re.sub(r'"[^"]+"', "<ID>", text)
-    text = re.sub(r"'(?:[^']|'')*'", "<STR>", text)
-    return " ".join(text.split())
+def _redacted_text(tokens: list[Token], start: int, end: int) -> str:
+    return " ".join(_redact_token_text(t) for t in tokens[start:end])
 
 
-def _isolate_failing_element(raw_sql: str, dialect: str) -> str | None:
-    """For a CREATE TABLE statement confirmed (via `_tail_clause_would_fix`
-    returning False) to fail inside its column/constraint list rather than
-    on a trailing clause: bisect the top-level comma-separated elements to
-    find the first one whose inclusion breaks parsing, and return that one
-    element's raw (unredacted) text. Callers must redact before printing.
-    Linear scan, not binary search: failure isn't guaranteed monotonic in
-    element count (an earlier element could depend on context established
-    by this one), so "first k where truncating-to-k fails" is well-defined
-    but binary search's monotonicity assumption isn't safe here."""
-    open_idx = raw_sql.find("(")
-    if open_idx == -1:
+def _tail_clause_would_fix(dialect_instance: Dialect, tokens: list[Token], sql: str) -> bool | None:
+    """Truncate to the closing paren of the column/constraint list and
+    re-parse. If the truncated form parses fine, the failure is caused
+    entirely by an as-yet-unidentified TRAILING clause; if it still fails,
+    the problem is inside the column/constraint definitions themselves.
+    Content-free: reports only True/False/None. None if no top-level "("
+    is found or it's unbalanced."""
+    open_idx = next((i for i, t in enumerate(tokens) if t.token_type == TokenType.L_PAREN), None)
+    if open_idx is None:
         return None
-    close_idx = _find_matching_close_paren(raw_sql, open_idx)
-    if close_idx is None:
+    close_idx = _skip_paren(tokens, open_idx) - 1
+    if close_idx >= len(tokens) or tokens[close_idx].token_type != TokenType.R_PAREN:
         return None
-    header = raw_sql[: open_idx + 1]
-    inner = raw_sql[open_idx + 1 : close_idx]
-    elements = _split_top_level_commas(inner)
-    if not elements:
+    truncated = tokens[: close_idx + 1]
+    try:
+        parsed = _parse_tokens(dialect_instance, truncated, sql)
+    except (ParseError, TokenError):
+        return False
+    return bool(parsed) and not isinstance(parsed[0], exp.Command)
+
+
+def _isolate_failing_element(dialect_instance: Dialect, tokens: list[Token], sql: str) -> str | None:
+    """Bisect the top-level comma-separated column/constraint definitions
+    to find the first one whose inclusion breaks parsing, and return its
+    REDACTED text (safe to print). Linear scan, not binary search: failure
+    isn't guaranteed monotonic in element count (an earlier element could
+    depend on context established by this one)."""
+    open_idx = next((i for i, t in enumerate(tokens) if t.token_type == TokenType.L_PAREN), None)
+    if open_idx is None:
+        return None
+    close_idx = _skip_paren(tokens, open_idx) - 1
+    if close_idx >= len(tokens) or tokens[close_idx].token_type != TokenType.R_PAREN:
+        return None
+    commas = _top_level_comma_positions(tokens, open_idx + 1, close_idx)
+    element_bounds = [open_idx + 1] + [c + 1 for c in commas]
+    element_ends = commas + [close_idx]
+    if not element_bounds:
         return None
 
     def parses(k: int) -> bool:
-        candidate = header + ", ".join(elements[:k]) + ")"
-        stripped = _strip_view_editioning_clause(_strip_constraint_state(candidate))
+        candidate = tokens[: open_idx + 1] + tokens[element_bounds[0] : element_ends[k - 1]] + [tokens[close_idx]]
         try:
-            parsed = sqlglot.parse(stripped, dialect=dialect, error_level=ErrorLevel.WARN)
+            parsed = _parse_tokens(dialect_instance, candidate, sql)
         except (ParseError, TokenError):
             return False
         return bool(parsed) and not isinstance(parsed[0], exp.Command)
 
-    for k in range(1, len(elements) + 1):
+    for k in range(1, len(element_bounds) + 1):
         if not parses(k):
-            return elements[k - 1]
+            start = element_bounds[0] if k == 1 else element_bounds[k - 1]
+            return _redacted_text(tokens, start, element_ends[k - 1])
     return None
-
-
-def _tail_clause_would_fix(raw_sql: str, dialect: str) -> bool | None:
-    """For a CREATE TABLE statement, truncate to the closing paren of the
-    column/constraint list and re-parse. If the truncated form parses fine,
-    the failure is caused entirely by an as-yet-unidentified TRAILING clause
-    (the same fixable class as every keyword already stripped in ddl.py) --
-    not by anything inside the column/constraint definitions themselves.
-    Content-free: reports only True/False/None, never any text. Returns
-    None if no top-level "(" is found (shouldn't happen for a real CREATE
-    TABLE) or it's unbalanced."""
-    open_idx = raw_sql.find("(")
-    if open_idx == -1:
-        return None
-    close_idx = _find_matching_close_paren(raw_sql, open_idx)
-    if close_idx is None:
-        return None
-    truncated = raw_sql[: close_idx + 1]
-    stripped = _strip_view_editioning_clause(_strip_constraint_state(truncated))
-    try:
-        parsed = sqlglot.parse(stripped, dialect=dialect, error_level=ErrorLevel.WARN)
-    except (ParseError, TokenError):
-        return False
-    return bool(parsed) and not isinstance(parsed[0], exp.Command)
 
 
 def _leading_label(sql: str) -> str:
@@ -282,30 +210,22 @@ def main() -> None:
         print(f"NOTE: detected hard line-wrap at width={wrap_width}, reflowed before analysis")
         print()
 
-    stripped_text = _strip_view_editioning_clause(_strip_constraint_state(raw_text))
-
+    dialect_instance = Dialect.get_or_raise(args.dialect)
     raw_chunks = _split_statements(raw_text)
-    stripped_chunks = _split_statements(stripped_text)
 
-    if len(raw_chunks) != len(stripped_chunks):
-        print(
-            f"NOTE: raw/stripped statement count differs ({len(raw_chunks)} vs "
-            f"{len(stripped_chunks)}) -- keyword correlation may be off by a few entries"
-        )
-
-    total = len(stripped_chunks)
+    total = len(raw_chunks)
     parsed_count = 0
-    skipped: list[tuple[int, str]] = []  # (index, raw_sql)
+    skipped: list[str] = []
 
-    for i, chunk in enumerate(stripped_chunks):
+    for chunk in raw_chunks:
         try:
-            parsed = sqlglot.parse(chunk, dialect=args.dialect, error_level=ErrorLevel.WARN)
+            tokens = dialect_instance.tokenize(chunk)
+            parsed = _parse_tokens(dialect_instance, tokens, chunk)
         except (ParseError, TokenError):
             parsed = []
         is_command = bool(parsed) and isinstance(parsed[0], exp.Command)
         if not parsed or is_command:
-            raw = raw_chunks[i] if i < len(raw_chunks) else chunk
-            skipped.append((i, raw))
+            skipped.append(chunk)
         else:
             parsed_count += 1
 
@@ -324,7 +244,7 @@ def main() -> None:
     length_stats: list[int] = []
     unexplained_table_impacting: list[str] = []  # raw sql of TABLE-labeled, catalog-impacting, no keyword hit
 
-    for _i, raw in skipped:
+    for raw in skipped:
         length_stats.append(len(raw))
         label = _leading_label(raw)
         leading_counts[label] += 1
@@ -359,7 +279,7 @@ def main() -> None:
         print(f"  {label}: {n}")
 
     print()
-    print("--- keyword hits, ALL skipped statements (raw pre-strip text) ---")
+    print("--- keyword hits, ALL skipped statements (raw text) ---")
     for kw, n in keyword_hits.most_common(40):
         print(f"  {kw}: {n}")
     print(f"  matching none: {none_count} / {len(skipped)}")
@@ -388,14 +308,15 @@ def main() -> None:
         outcome_counts: Counter[str] = Counter()
         redacted_patterns: Counter[str] = Counter()
         for raw in unexplained_table_impacting:
-            result = _tail_clause_would_fix(raw, args.dialect)
+            tokens = dialect_instance.tokenize(raw)
+            result = _tail_clause_would_fix(dialect_instance, tokens, raw)
             if result is True:
                 outcome_counts["trailing-clause (truncated form parses fine)"] += 1
             elif result is False:
                 outcome_counts["inside column/constraint list (still fails when truncated)"] += 1
-                element = _isolate_failing_element(raw, args.dialect)
+                element = _isolate_failing_element(dialect_instance, tokens, raw)
                 if element is not None:
-                    redacted_patterns[_redact(element)] += 1
+                    redacted_patterns[element] += 1
                 else:
                     outcome_counts["  (bisection couldn't isolate a single element)"] += 1
             else:
