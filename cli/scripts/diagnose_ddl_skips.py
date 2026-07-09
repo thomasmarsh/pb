@@ -27,6 +27,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 from collections import Counter
 from pathlib import Path
@@ -41,6 +42,15 @@ from pb.lib.ddl import (
 from sqlglot import Dialect, exp
 from sqlglot.errors import ErrorLevel, ParseError, TokenError
 from sqlglot.tokenizer_core import Token, TokenType
+
+# sqlglot's own internal logger prints truncated RAW SQL (real table/schema/
+# column names) to stderr both on a WARN-level parse fallback (logger.warning)
+# AND on each individual parse error under WARN error_level (logger.error) --
+# completely independent of this script's own redaction, and multiplied many
+# times over by bisection's internal re-parse attempts. CRITICAL is the only
+# threshold that silences both; ERROR alone still let logger.error(...) calls
+# through (found by testing against a deliberately malformed statement).
+logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
 
 # Keywords/phrases confirmed (via synthetic reproduction against sqlglot's
 # oracle dialect, independent of any customer data) to trip the whole
