@@ -8,6 +8,7 @@ import PB.Pipeline.DuckDb
   , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..), CatalogCheckRow (..)
   , DwRetrieveColumnRow (..)
   , DwRetrieveTableRow (..)
+  , DwRetrieveWhereRow (..)
   , SqlStmtTableRow (..)
   )
 import PB.AST.BodyStmt     (BodyStmt (..))
@@ -746,6 +747,40 @@ tests = testGroup "Pipeline.Runner"
               @?= [(Just "openpay", "misth_zpkrat", "kodkrat")]
             map (\r -> (drtrNamespace r, drtrTableName r)) (cdDwRetrieveTables cd)
               @?= [(Just "openpay", "misth_zpkrat")]
+          _ -> assertFailure "expected CFDw"
+    ]
+
+  , testGroup "dw_retrieve_where construction (Track SCHEMA-BUGS)"
+    [ testCase "compileOne carries drWhere into DwRetrieveWhereRow, preserving order and idx" $ do
+        let retrieve = DwRetrieve
+              { drVersion   = 400
+              , drTables    = ["misth_zpkrat"]
+              , drColumns   = ["misth_zpkrat.kodkrat"]
+              , drArguments = []
+              , drWhere     =
+                  [ DwWhereClause "misth_zpkrat.kodxrisi" "=" ":arg1" (Just "and")
+                  , DwWhereClause "t.mycol" ">" "100" Nothing
+                  ]
+              , drJoins     = []
+              }
+            dwFile = DataWindowFile
+              { dwRelease  = 400
+              , dwObject   = DwObjectAttrs mempty
+              , dwTable    = Just (DwTable [] (Just (DwRetrieveOk retrieve)) Nothing Nothing [])
+              , dwBands    = []
+              , dwGroups   = []
+              , dwControls = []
+              , dwUnknowns = []
+              , dwMeta     = mempty
+              }
+            ws = buildWorkspaceEnv []
+        cf <- compileOne Set.empty Nothing ws Nothing "confirmed" (PsDw "d_test.srd" "" dwFile)
+        case cf of
+          CFDw cd ->
+            map (\r -> (drwrIdx r, drwrExp1 r, drwrOp r, drwrExp2 r, drwrLogic r)) (cdDwRetrieveWhere cd)
+              @?= [ (0, "misth_zpkrat.kodxrisi", "=", ":arg1", Just "and")
+                  , (1, "t.mycol", ">", "100", Nothing)
+                  ]
           _ -> assertFailure "expected CFDw"
     ]
   ]

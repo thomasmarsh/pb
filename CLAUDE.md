@@ -1497,6 +1497,14 @@ appendParseErrors :: DuckConn -> [row] -> IO ()
 -- column ref (splitColumnRef'd from drColumns in Runner.hs's PsDw branch --
 -- fills the "drColumns never reaches DuckDB" survey gap).
 appendDwRetrieveColumns :: DuckConn -> [DwRetrieveColumnRow] -> IO ()
+-- dw_retrieve_where (Track SCHEMA-BUGS, 2026-07-09): (file, dw_name, idx,
+-- exp1, op, exp2, logic) -- one row per DwWhereClause in a DwRetrieve's
+-- drWhere, idx preserves clause order (zip [0..] at the Runner.hs
+-- construction site). Mirrors dw_joins's shape exactly. Restores a feature
+-- that datawindows.py/tables.py already queried (exception-guarded, so it
+-- silently returned [] rather than erroring) but the table never existed in
+-- initSchema -- found incidentally during Plan 157 Phase 4.5.
+appendDwRetrieveWhere :: DuckConn -> [DwRetrieveWhereRow] -> IO ()
 -- Phase B read helpers (SELECT → typed rows):
 queryLocalVars, queryCallSites, queryGlobalVars :: DuckConn -> IO [row]
 queryObjInfo     :: DuckConn -> IO [(Text, Text)]       -- (file, object) pairs per PS file

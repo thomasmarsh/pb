@@ -11,6 +11,7 @@ module PB.Pipeline.DuckDb
   , DwRetrieveTableRow (..)
   , DwRetrieveColumnRow (..)
   , DwJoinRow (..)
+  , DwRetrieveWhereRow (..)
   , SqlStmtRow (..)
   , SqlStmtColumnRow (..)
   , SqlStmtFilterRow (..)
@@ -28,6 +29,7 @@ module PB.Pipeline.DuckDb
   , appendDwRetrieveTables
   , appendDwRetrieveColumns
   , appendDwJoins
+  , appendDwRetrieveWhere
   , appendLocalVars
   , appendCallSites
   , appendGlobalVars
@@ -189,6 +191,8 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       , "CREATE TABLE IF NOT EXISTS dw_joins \
         \(file TEXT, dw_name TEXT, left_ref TEXT, op TEXT, right_ref TEXT, \
         \outer1 TEXT, outer2 TEXT)"
+      , "CREATE TABLE IF NOT EXISTS dw_retrieve_where \
+        \(file TEXT, dw_name TEXT, idx INTEGER, exp1 TEXT, op TEXT, exp2 TEXT, logic TEXT)"
       , "CREATE TABLE IF NOT EXISTS catalog_columns \
         \(namespace TEXT, table_name TEXT, column_name TEXT, ordinal INTEGER)"
       , "CREATE TABLE IF NOT EXISTS catalog_pks \
@@ -332,6 +336,16 @@ data DwJoinRow = DwJoinRow
   , djrRightRef :: Text
   , djrOuter1   :: Maybe Text
   , djrOuter2   :: Maybe Text
+  }
+
+data DwRetrieveWhereRow = DwRetrieveWhereRow
+  { drwrFile   :: Text
+  , drwrDwName :: Text
+  , drwrIdx    :: Int
+  , drwrExp1   :: Text
+  , drwrOp     :: Text
+  , drwrExp2   :: Text
+  , drwrLogic  :: Maybe Text
   }
 
 data SqlStmtRow = SqlStmtRow
@@ -512,6 +526,19 @@ appendDwJoins conn rows = withRaw conn "dw_joins" $ \app ->
     aText      app (djrRightRef r)
     aMaybeText app (djrOuter1 r)
     aMaybeText app (djrOuter2 r)
+    endRow app
+
+appendDwRetrieveWhere :: DuckConn -> [DwRetrieveWhereRow] -> IO ()
+appendDwRetrieveWhere _    [] = pure ()
+appendDwRetrieveWhere conn rows = withRaw conn "dw_retrieve_where" $ \app ->
+  for_ rows $ \r -> do
+    aText      app (drwrFile r)
+    aText      app (drwrDwName r)
+    aInt       app (drwrIdx r)
+    aText      app (drwrExp1 r)
+    aText      app (drwrOp r)
+    aText      app (drwrExp2 r)
+    aMaybeText app (drwrLogic r)
     endRow app
 
 appendLocalVars :: DuckConn -> [LocalVar] -> IO ()

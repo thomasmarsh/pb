@@ -65,6 +65,7 @@ import PB.Pipeline.DuckDb
   , SourceFileRow (..)
   , appendObjects, appendProcedures
   , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwRetrieveColumns, appendDwJoins
+  , appendDwRetrieveWhere, DwRetrieveWhereRow (..)
   , appendLocalVars, appendCallSites, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
   , appendSqlStmtColumns, appendSqlStmtFilters, appendSqlStmtTables
@@ -127,6 +128,7 @@ data CompiledDw = CompiledDw
   , cdDwRetrieveTables :: [DwRetrieveTableRow]
   , cdDwRetrieveColumns :: [DwRetrieveColumnRow]
   , cdDwJoins          :: [DwJoinRow]
+  , cdDwRetrieveWhere  :: [DwRetrieveWhereRow]
   , cdCallSites        :: [CallSite]
   , cdSourceContent    :: Maybe SourceFileRow
   }
@@ -246,12 +248,18 @@ compileOne catTables mDefaultNamespace wsEnv mBridge confidence outcome = case o
             [ DwJoinRow fpT obj (djLeft j) (djOp j) (djRight j) (djOuter1 j) (djOuter2 j)
             | j <- drJoins r ]
           _                     -> []
+        wrows = case dwTable dw >>= dtRetrieve of
+          Just (DwRetrieveOk r) ->
+            [ DwRetrieveWhereRow fpT obj idx (dwcExp1 w) (dwcOp w) (dwcExp2 w) (dwcLogic w)
+            | (idx, w) <- zip [0..] (drWhere r) ]
+          _                     -> []
     pure $ CFDw $ CompiledDw
       { cdDwObjectRow      = DwObjectRow fpT obj style layoutJson retrieveSql
       , cdDwControls       = ctls
       , cdDwRetrieveTables = rtbls
       , cdDwRetrieveColumns = rcols
       , cdDwJoins          = jrows
+      , cdDwRetrieveWhere  = wrows
       , cdCallSites        = css
       , cdSourceContent    = Just (SourceFileRow fpT contents)
       }
@@ -398,6 +406,7 @@ appendToDb conn (CFDw r) = do
   appendDwRetrieveTables conn (cdDwRetrieveTables r)
   appendDwRetrieveColumns conn (cdDwRetrieveColumns r)
   appendDwJoins          conn (cdDwJoins r)
+  appendDwRetrieveWhere  conn (cdDwRetrieveWhere r)
   appendCallSites        conn (cdCallSites r)
   appendSourceFiles      conn (catMaybes [cdSourceContent r])
 appendToDb conn (CFError fp err) =

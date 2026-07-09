@@ -20,6 +20,7 @@ tests = testGroup "DuckDb"
   , testCase "appendSqlStmtColumns/Filters accept rows" testAppendSqlStmtColumnsFilters
   , testCase "appendCatalogColumns/Pks/Fks accept rows" testAppendCatalogRows
   , testCase "appendDwRetrieveColumns accepts rows"  testAppendDwRetrieveColumns
+  , testCase "appendDwRetrieveWhere accepts rows"    testAppendDwRetrieveWhere
   , testCase "SchemaCategory Phase B queries round-trip Phase A appends"
       testSchemaCategoryQueryRoundTrip
   , testCase "appendSchemaObjects/Morphisms accept rows" testAppendSchemaObjectsMorphisms
@@ -99,6 +100,16 @@ testAppendDwRetrieveColumns = withWriteConn ":memory:" $ \conn -> do
     ]
   -- Appending an empty list after a real batch must not throw
   appendDwRetrieveColumns conn []
+
+testAppendDwRetrieveWhere :: IO ()
+testAppendDwRetrieveWhere = withWriteConn ":memory:" $ \conn -> do
+  initSchema conn
+  appendDwRetrieveWhere conn
+    [ DwRetrieveWhereRow "d_test.srd" "d_test" 0 "misth_zpkrat.kodxrisi" "=" ":arg1" (Just "and")
+    , DwRetrieveWhereRow "d_test.srd" "d_test" 1 "t.mycol" ">" "100" Nothing
+    ]
+  -- Appending an empty list after a real batch must not throw
+  appendDwRetrieveWhere conn []
 
 -- | Plan 148 Phase 1b: appends via the Phase A row types, queries back via
 -- the new SchemaCategory read-side query functions, and confirms the
