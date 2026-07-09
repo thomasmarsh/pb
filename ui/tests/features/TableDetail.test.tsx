@@ -343,7 +343,7 @@ describe("TableDetail source-first", () => {
     });
 
     it("truncates evidence paths beyond the preview count with a 'Show N more' toggle", () => {
-      const paths = Array.from({ length: 7 }, (_, i) => ({
+      const paths = Array.from({ length: 17 }, (_, i) => ({
         target: { kind: "sql" as const, file: "/tmp/x.srw", object: "n_svc", proc_name: `proc_${i}`, line: i },
         direction: "backward",
         legs: [{
@@ -360,7 +360,7 @@ describe("TableDetail source-first", () => {
           similarity: 1.0,
           ritual_support: 0,
           unenforced_fk_count: 0,
-          coslice_size: 7,
+          coslice_size: 17,
           score: 0,
           paths,
         }],
@@ -368,13 +368,13 @@ describe("TableDetail source-first", () => {
       renderTableDetail(baseDetail, null, null, data);
       fireEvent.click(summaryPillBtn("Decomposition")!);
       expect(document.body.textContent).toContain("proc_0");
-      expect(document.body.textContent).toContain("proc_4");
-      expect(document.body.textContent).not.toContain("proc_5");
+      expect(document.body.textContent).toContain("proc_14");
+      expect(document.body.textContent).not.toContain("proc_15");
       expect(document.body.textContent).toContain("Show 2 more");
 
       fireEvent.click([...document.querySelectorAll("button")].find((b) => b.textContent === "Show 2 more")!);
-      expect(document.body.textContent).toContain("proc_5");
-      expect(document.body.textContent).toContain("proc_6");
+      expect(document.body.textContent).toContain("proc_15");
+      expect(document.body.textContent).toContain("proc_16");
       expect(document.body.textContent).toContain("Show less");
     });
 
@@ -394,6 +394,101 @@ describe("TableDetail source-first", () => {
       expect(document.body.textContent).toContain("employee_profile");
       fireEvent.keyDown(document.querySelector(".detail-body")!.parentElement!, { key: "Escape" });
       expect(document.body.textContent).not.toContain("employee_profile");
+    });
+
+    describe("columns-view layout (Finder-style master/detail)", () => {
+      function twoCandidateData(): DecompositionCandidatesResponse {
+        return {
+          table: "orders",
+          namespace: null,
+          candidates: [
+            {
+              columns: ["a", "b"],
+              similarity: 0.9,
+              ritual_support: 2,
+              unenforced_fk_count: 0,
+              coslice_size: 3,
+              score: 0.8,
+              paths: [{
+                target: { kind: "sql", file: "/tmp/x.srw", object: "n_svc", proc_name: "proc_top", line: 1 },
+                direction: "backward",
+                legs: [{
+                  from_object: { kind: "column", namespace: null, table: "orders", column: "a" },
+                  to_object: { kind: "sql", file: "/tmp/x.srw", object: "n_svc", proc_name: "proc_top", line: 1 },
+                  leg_kind: "writes",
+                }],
+              }],
+            },
+            {
+              columns: ["c", "d"],
+              similarity: 0.5,
+              ritual_support: 1,
+              unenforced_fk_count: 0,
+              coslice_size: 1,
+              score: 0.2,
+              paths: [{
+                target: { kind: "sql", file: "/tmp/y.srw", object: "n_svc", proc_name: "proc_second", line: 2 },
+                direction: "backward",
+                legs: [{
+                  from_object: { kind: "column", namespace: null, table: "orders", column: "c" },
+                  to_object: { kind: "sql", file: "/tmp/y.srw", object: "n_svc", proc_name: "proc_second", line: 2 },
+                  leg_kind: "writes",
+                }],
+              }],
+            },
+          ],
+        };
+      }
+
+      function decompRow(colText: string): Element | undefined {
+        return [...document.querySelectorAll(".decomp-master tbody tr")].find((r) =>
+          r.textContent?.includes(colText),
+        );
+      }
+
+      it("renders a master pane with only scoring columns and a separate detail pane", () => {
+        renderTableDetail(baseDetail, null, null, twoCandidateData());
+        fireEvent.click(summaryPillBtn("Decomposition")!);
+
+        expect(document.querySelector(".decomp-master")).not.toBeNull();
+        expect(document.querySelector(".decomp-detail")).not.toBeNull();
+        // Master pane header has no "Evidence paths" column.
+        const masterHeaders = [...document.querySelectorAll(".decomp-master thead th")].map((h) => h.textContent);
+        expect(masterHeaders).not.toContain("Evidence paths");
+        expect(document.body.textContent).toContain("a, b");
+        expect(document.body.textContent).toContain("c, d");
+      });
+
+      it("previews the top-scored candidate's evidence in the detail pane by default", () => {
+        renderTableDetail(baseDetail, null, null, twoCandidateData());
+        fireEvent.click(summaryPillBtn("Decomposition")!);
+
+        const detail = document.querySelector(".decomp-detail");
+        expect(detail?.textContent).toContain("proc_top");
+        expect(detail?.textContent).not.toContain("proc_second");
+      });
+
+      it("clicking a master row pins its evidence in the detail pane", () => {
+        renderTableDetail(baseDetail, null, null, twoCandidateData());
+        fireEvent.click(summaryPillBtn("Decomposition")!);
+
+        fireEvent.click(decompRow("c, d")!);
+        const detail = document.querySelector(".decomp-detail");
+        expect(detail?.textContent).toContain("proc_second");
+        expect(detail?.textContent).not.toContain("proc_top");
+      });
+
+      it("hovering a different row previews it without losing the pinned selection", () => {
+        renderTableDetail(baseDetail, null, null, twoCandidateData());
+        fireEvent.click(summaryPillBtn("Decomposition")!);
+        fireEvent.click(decompRow("c, d")!);
+
+        fireEvent.mouseEnter(decompRow("a, b")!);
+        expect(document.querySelector(".decomp-detail")?.textContent).toContain("proc_top");
+
+        fireEvent.mouseLeave(decompRow("a, b")!);
+        expect(document.querySelector(".decomp-detail")?.textContent).toContain("proc_second");
+      });
     });
   });
 

@@ -10,7 +10,7 @@ import type { JSX } from "solid-js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../../state.js";
 import type { AppAction } from "../../../actions.js";
-import type { DecompositionEvidencePath, SchemaObjectRef, AnalysisExplainerContent } from "@pb/platform";
+import type { DecompositionCandidate, DecompositionEvidencePath, SchemaObjectRef, AnalysisExplainerContent } from "@pb/platform";
 import { EntityCard } from "@pb/platform";
 import { TableChip } from "../../components/detail/TableChip.js";
 import { DendrogramList, AFFINITY_EXAMPLE_MERGES } from "./ColumnAffinityCore.js";
@@ -25,8 +25,9 @@ export interface DecompositionCandidatesCoreProps {
 // {kodfinal,kodxrisi,kodypal} = 120) — the API intentionally returns every
 // path (pinned by test_get_decomposition_candidates_zero_evidence_still_
 // reports_real_coslice), so truncation belongs here, in the UI, not the
-// response shape.
-const PATH_PREVIEW_COUNT = 5;
+// response shape. The detail pane (below) has its own dedicated space, so
+// it can afford a larger preview count than a table cell could.
+const PATH_PREVIEW_COUNT = 15;
 
 // Renders a SchemaObjectRef as a real clickable entity rather than a
 // formatted label: column -> TableChip + ".column", sql -> EntityCard
@@ -182,6 +183,80 @@ export const DECOMPOSITION_EXPLAINER: AnalysisExplainerContent = {
   ),
 };
 
+// Finder/NeXTSTEP column-view layout: a compact master table carrying only
+// the ranked scoring signal, with the (potentially 100+-entry) evidence
+// paths broken out into an adjacent detail pane driven by hover-preview
+// (doesn't disturb your place while scanning) with click-to-pin (stays put
+// while you scroll the detail pane). Defaults to the top-ranked candidate
+// so the detail pane is never empty on load.
+function DecompositionColumnsView(props: {
+  candidates: DecompositionCandidate[];
+  store: Store<AppState, AppAction>;
+}): JSX.Element {
+  const [pinned, setPinned] = createSignal(0);
+  const [hovered, setHovered] = createSignal<number | null>(null);
+  const activeIdx = createMemo(() => hovered() ?? pinned());
+  const active = createMemo(() => props.candidates[activeIdx()]);
+
+  return (
+    <div class="decomp-columns-view" style={{ display: "flex", gap: "12px", "align-items": "flex-start" }}>
+      <div class="decomp-master" style={{ flex: "1 1 55%", "min-width": "0" }}>
+        <table class="data-table" style={{ "font-size": "12px" }}>
+          <thead>
+            <tr>
+              <th>Columns</th>
+              <th>Similarity</th>
+              <th>Ritual support</th>
+              <th>Unenforced FKs</th>
+              <th>Coslice size</th>
+              <th>Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            <For each={props.candidates}>
+              {(c, i) => (
+                <tr
+                  class="decomp-row"
+                  classList={{ "decomp-row-active": activeIdx() === i() }}
+                  style={{ cursor: "pointer", background: activeIdx() === i() ? "var(--bg-hover)" : undefined }}
+                  onMouseEnter={() => setHovered(i())}
+                  onMouseLeave={() => setHovered(null)}
+                  onClick={() => setPinned(i())}
+                >
+                  <td>{c.columns.join(", ")}</td>
+                  <td>{c.similarity.toFixed(3)}</td>
+                  <td>{c.ritual_support}</td>
+                  <td>{c.unenforced_fk_count}</td>
+                  <td>{c.coslice_size}</td>
+                  <td>{c.score !== null ? c.score.toFixed(3) : "–"}</td>
+                </tr>
+              )}
+            </For>
+          </tbody>
+        </table>
+      </div>
+      <div
+        class="decomp-detail"
+        style={{
+          flex: "1 1 45%", "min-width": "0", "max-height": "360px", "overflow-y": "auto",
+          border: "1px solid var(--border)", "border-radius": "6px", padding: "8px 10px",
+        }}
+      >
+        <Show when={active()}>
+          {(a) => (
+            <>
+              <div style={{ "font-weight": 600, "font-size": "12px", "margin-bottom": "6px" }}>
+                Evidence for {a().columns.join(", ")}
+              </div>
+              <EvidencePathsCell paths={a().paths} store={props.store} />
+            </>
+          )}
+        </Show>
+      </div>
+    </div>
+  );
+}
+
 export function DecompositionCandidatesCore(props: DecompositionCandidatesCoreProps): JSX.Element {
   const snap = props.store.getState();
 
@@ -224,34 +299,7 @@ export function DecompositionCandidatesCore(props: DecompositionCandidatesCorePr
               </div>
             }
           >
-            <table class="data-table" style={{ "font-size": "12px" }}>
-              <thead>
-                <tr>
-                  <th>Columns</th>
-                  <th>Similarity</th>
-                  <th>Ritual support</th>
-                  <th>Unenforced FKs</th>
-                  <th>Coslice size</th>
-                  <th>Score</th>
-                  <th>Evidence paths</th>
-                </tr>
-              </thead>
-              <tbody>
-                <For each={data().candidates}>
-                  {(c) => (
-                    <tr>
-                      <td>{c.columns.join(", ")}</td>
-                      <td>{c.similarity.toFixed(3)}</td>
-                      <td>{c.ritual_support}</td>
-                      <td>{c.unenforced_fk_count}</td>
-                      <td>{c.coslice_size}</td>
-                      <td>{c.score !== null ? c.score.toFixed(3) : "–"}</td>
-                      <td><EvidencePathsCell paths={c.paths} store={props.store} /></td>
-                    </tr>
-                  )}
-                </For>
-              </tbody>
-            </table>
+            <DecompositionColumnsView candidates={data().candidates} store={props.store} />
           </Show>
         )}
       </Show>
