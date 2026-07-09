@@ -57,6 +57,13 @@ def index(
         "catalog_columns/catalog_fks so Sch-based analyses (column usage, FK graph, etc.) "
         "have real data.",
     ),
+    default_namespace: Optional[str] = typer.Option(
+        None,
+        "--default-namespace",
+        help="Corpus's default DB schema (e.g. CLIMS). An unqualified table reference "
+        "resolves against this schema when the DDL catalog confirms it defines that "
+        "table; otherwise it stays unresolved. Optional -- omit for single-schema corpora.",
+    ),
 ) -> None:
     """Parse → import → analyze, incremental by default (only changed files).
 
@@ -67,7 +74,10 @@ def index(
     repo_path = env.build.find_repo(repo)
     binary = env.build.find_binary(repo_path) if no_build else _build(repo_path, reporter)
     with resolve_source_dir(Path(input_path), reporter) as src_dir:
-        run_pipeline(src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect, input_path=input_path, ddl=ddl)
+        run_pipeline(
+            src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect,
+            input_path=input_path, ddl=ddl, default_namespace=default_namespace,
+        )
 
 
 # ── pb extract ────────────────────────────────────────────────────────────────
@@ -229,6 +239,13 @@ def explore(
         "catalog_columns/catalog_fks so Sch-based analyses (column usage, FK graph, etc.) "
         "have real data.",
     ),
+    default_namespace: Optional[str] = typer.Option(
+        None,
+        "--default-namespace",
+        help="Corpus's default DB schema (e.g. CLIMS). An unqualified table reference "
+        "resolves against this schema when the DDL catalog confirms it defines that "
+        "table; otherwise it stays unresolved. Optional -- omit for single-schema corpora.",
+    ),
 ) -> None:
     """Start the interactive DuckDB explorer web UI.
 
@@ -241,7 +258,10 @@ def explore(
             repo_path = env.build.find_repo(repo)
             binary = env.build.find_binary(repo_path) if no_build else _build(repo_path, reporter)
             with resolve_source_dir(Path(input_path), reporter) as src_dir:
-                run_pipeline(src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect, input_path=input_path, ddl=ddl)
+                run_pipeline(
+                    src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect,
+                    input_path=input_path, ddl=ddl, default_namespace=default_namespace,
+                )
         else:
             typer.echo("Database is up-to-date, skipping index.")
 

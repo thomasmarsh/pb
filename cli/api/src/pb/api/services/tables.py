@@ -10,6 +10,12 @@ from pb.api.routes.dependencies import _WRITE_OPS, rows
 from pb.api.services.schema import get_co_update_rituals, get_column_usage, get_fk_graph
 
 
+def get_default_namespace(conn: duckdb.DuckDBPyConnection) -> str | None:
+    """Return the corpus's configured default schema, or None if unset."""
+    row = conn.execute("SELECT value FROM metadata WHERE key = 'default_namespace'").fetchone()
+    return row[0] if row else None
+
+
 def list_schemas(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     """Distinct namespaces known to the DDL catalog, with their table count.
 
@@ -245,7 +251,7 @@ def get_table_detail(
 
 
 def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
-    stats: dict[str, Any] = {}
+    stats: dict[str, Any] = {"default_namespace": get_default_namespace(conn)}
     for table in (
         "objects",
         "procedures",

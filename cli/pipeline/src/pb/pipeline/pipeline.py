@@ -41,6 +41,7 @@ def run(
     dialect: str = "oracle",
     input_path: Path | None = None,
     ddl: Sequence[str] = (),
+    default_namespace: str | None = None,
 ) -> None:
     src_dir = src_dir.resolve()
     db_new = db + ".new"
@@ -62,6 +63,8 @@ def run(
     ]
     for d in ddl:
         argv += ["--ddl", d]
+    if default_namespace:
+        argv += ["--default-namespace", default_namespace]
 
     errors = 0
     raw_stderr_lines: list[str] = []
@@ -104,6 +107,11 @@ def run(
             "INSERT OR REPLACE INTO metadata VALUES (?, ?)",
             ["ingestion_root", str(src_dir)],
         )
+        if default_namespace:
+            conn.execute(
+                "INSERT OR REPLACE INTO metadata VALUES (?, ?)",
+                ["default_namespace", default_namespace],
+            )
 
     Path(db_new).rename(db)
 

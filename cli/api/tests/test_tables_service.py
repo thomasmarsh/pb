@@ -5,6 +5,7 @@ from __future__ import annotations
 import duckdb
 from pb.api.services.tables import (
     column_lineage,
+    get_default_namespace,
     get_table_detail,
     get_table_stats,
     impact_lineage,
@@ -158,6 +159,25 @@ def test_get_table_stats(db_conn: duckdb.DuckDBPyConnection):
     assert "by_kind" in result
     assert "top_complex" in result
     assert "top_pagerank" in result
+
+
+def test_get_default_namespace_returns_none_when_unset(db_conn: duckdb.DuckDBPyConnection):
+    # db_conn's metadata table exists (setup_db_extras) but has no
+    # default_namespace row -- the common single-schema corpus case.
+    assert get_default_namespace(db_conn) is None
+
+
+def test_get_default_namespace_returns_configured_value():
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO metadata VALUES ('default_namespace', 'CLIMS')")
+    assert get_default_namespace(conn) == "CLIMS"
+
+
+def test_get_table_stats_includes_default_namespace_field(db_conn: duckdb.DuckDBPyConnection):
+    result = get_table_stats(db_conn)
+    assert "default_namespace" in result
+    assert result["default_namespace"] is None
 
 
 def test_get_table_stats_ddl_not_loaded(db_conn: duckdb.DuckDBPyConnection):

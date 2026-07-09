@@ -122,6 +122,41 @@ def test_run_passes_ddl_flag_when_given(monkeypatch, tmp_path):
     assert called_args[called_args.index("--ddl") + 1] == str(ddl_path)
 
 
+def test_run_omits_default_namespace_flag_when_not_given(monkeypatch, tmp_path):
+    called_args: list = []
+
+    def fake_popen(args, **kwargs):
+        called_args.extend(args)
+        return _FakePopen(returncode=1)
+
+    monkeypatch.setattr("pb.pipeline.pipeline.subprocess.Popen", fake_popen)
+
+    reporter = RecordingReporter()
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    run(src_dir, str(tmp_path / "out.duckdb"), Path("/fake/bin"), reporter)
+
+    assert "--default-namespace" not in called_args
+
+
+def test_run_passes_default_namespace_flag_when_given(monkeypatch, tmp_path):
+    called_args: list = []
+
+    def fake_popen(args, **kwargs):
+        called_args.extend(args)
+        return _FakePopen(returncode=1)
+
+    monkeypatch.setattr("pb.pipeline.pipeline.subprocess.Popen", fake_popen)
+
+    reporter = RecordingReporter()
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    run(src_dir, str(tmp_path / "out.duckdb"), Path("/fake/bin"), reporter, default_namespace="CLIMS")
+
+    assert "--default-namespace" in called_args
+    assert called_args[called_args.index("--default-namespace") + 1] == "CLIMS"
+
+
 def test_run_always_passes_sql_worker_python_flag(monkeypatch, tmp_path):
     # No discovery step exists anymore -- sys.executable is always defined,
     # so run() must pass it unconditionally, every invocation.
@@ -192,6 +227,27 @@ def test_run_success_renames_db(monkeypatch, tmp_path):
     done = [ev for ev in reporter.events if ev["type"] == "done"]
     assert len(done) == 1
     assert done[0]["errors"] == 0
+
+
+def test_run_writes_default_namespace_to_metadata_on_success(monkeypatch, tmp_path):
+    db_path = str(tmp_path / "out.duckdb")
+
+    def fake_popen(args, **kwargs):
+        new_path = args[args.index("--db") + 1]
+        _make_minimal_db(new_path)
+        done_line = b'{"tag":"done","parsed":5,"errors":0}'
+        return _FakePopen(returncode=0, stderr_lines=[done_line])
+
+    monkeypatch.setattr("pb.pipeline.pipeline.subprocess.Popen", fake_popen)
+
+    reporter = RecordingReporter()
+    run(tmp_path, db_path, Path("/fake/bin"), reporter, default_namespace="CLIMS")
+
+    conn = duckdb.connect(db_path, read_only=True)
+    row = conn.execute("SELECT value FROM metadata WHERE key = 'default_namespace'").fetchone()
+    conn.close()
+    assert row is not None
+    assert row[0] == "CLIMS"
 
 
 def test_run_reset_deletes_existing_db(monkeypatch, tmp_path):

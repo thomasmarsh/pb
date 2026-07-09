@@ -13,6 +13,7 @@ data Options = Options
   , optDdl        :: [Text]
   , optSqlDialect :: Text
   , optSqlWorkerPython :: Maybe FilePath
+  , optDefaultNamespace :: Maybe Text
   }
 
 optParser :: Parser Options
@@ -30,13 +31,18 @@ optParser = Options
                        \Overrides PB_SQL_WORKER env var; the pb CLI always passes its own \
                        \sys.executable here unconditionally, so bridge availability can't be \
                        \lost to environment-variable propagation."))
+  <*> optional (strOption (long "default-namespace" <> metavar "NAMESPACE"
+              <> help "Corpus's default DB schema (Plan 157). An unqualified table \
+                       \reference resolves against this schema when the DDL catalog \
+                       \confirms it defines that table; otherwise it stays unresolved. \
+                       \Optional -- omitting it preserves single-schema behavior."))
 
 main :: IO ()
 main = do
   getNumProcessors >>= setNumCapabilities
   opts <- execParser (info (optParser <**> helper) desc)
   case (optInput opts, optDb opts) of
-    (Just inp, Just db) -> runModeDb inp db (optDdl opts) (optSqlDialect opts) (optSqlWorkerPython opts)
-    _ -> die "usage: pbc -i <srcdir> --db <file> [--ddl [SCHEMA:]<file>]... [--sql-dialect <dialect>] [--sql-worker-python <bin>]"
+    (Just inp, Just db) -> runModeDb inp db (optDdl opts) (optSqlDialect opts) (optSqlWorkerPython opts) (optDefaultNamespace opts)
+    _ -> die "usage: pbc -i <srcdir> --db <file> [--ddl [SCHEMA:]<file>]... [--sql-dialect <dialect>] [--sql-worker-python <bin>] [--default-namespace <schema>]"
   where
     desc = fullDesc <> progDesc "Parse a PowerBuilder source tree into a DuckDB AST database"

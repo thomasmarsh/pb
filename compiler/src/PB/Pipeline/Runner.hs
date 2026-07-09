@@ -416,9 +416,12 @@ parseDdlArg arg =
 -- distribution is fixed and needs no separate discovery step either. Falls
 -- back to the PB_SQL_WORKER env var (lookupEnv, expected to hold a python
 -- interpreter path too) when the flag is omitted, for direct/manual
--- `cabal run pbc --` invocations.
-runModeDb :: FilePath -> FilePath -> [Text] -> Text -> Maybe FilePath -> IO ()
-runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag = do
+-- `cabal run pbc --` invocations. The final 'Maybe Text' is
+-- @--default-namespace@ (Plan 157 Phase 0): threaded this far only -- Phase 1
+-- wires it into 'runPass9'/'buildSchema' so unqualified table references can
+-- resolve against it. Underscore-prefixed until then to keep -Wall clean.
+runModeDb :: FilePath -> FilePath -> [Text] -> Text -> Maybe FilePath -> Maybe Text -> IO ()
+runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag _mDefaultNamespace = do
   files <- walkAllSrFiles srcDir
   let total = length files
   emitProgress (object ["tag" .= ("total" :: Text), "n" .= total])
