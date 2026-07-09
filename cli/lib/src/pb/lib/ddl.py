@@ -421,12 +421,155 @@ def _filter_ddl_tokens(tokens: list[Token]) -> list[Token]:
     return out
 
 
+def _match_interval_unit_pair(tokens: list[Token], i: int) -> tuple[int, list[Token]] | None:
+    """Match DAY[(n)] TO SECOND[(n)] or YEAR[(n)] TO MONTH starting at i --
+    both as an INTERVAL type declaration (INTERVAL DAY(n) TO SECOND(n)) and
+    as Oracle's idiom for casting an arbitrary expression's result to an
+    interval ((expr) DAY(n) TO SECOND(n), typically a date/timestamp
+    subtraction), which has no INTERVAL keyword to anchor on. Returns
+    (end_index, tokens_to_keep) with the precision parens dropped, or None
+    if tokens[i] doesn't start this pattern. YEAR must pair with MONTH and
+    DAY with SECOND, Oracle's only two valid combinations -- an incidental
+    "YEAR ... TO ... SECOND" elsewhere would not match and is left alone."""
+    if i >= len(tokens) or not _kw(tokens[i], "DAY", "YEAR"):
+        return None
+    unit1 = tokens[i]
+    j = i + 1
+    if j < len(tokens) and tokens[j].token_type == TokenType.L_PAREN:
+        j = _skip_paren(tokens, j)
+    if j >= len(tokens) or not _kw(tokens[j], "TO"):
+        return None
+    to_tok = tokens[j]
+    j += 1
+    expected_unit2 = "MONTH" if unit1.text.upper() == "YEAR" else "SECOND"
+    if j >= len(tokens) or not _kw(tokens[j], expected_unit2):
+        return None
+    unit2 = tokens[j]
+    j += 1
+    if j < len(tokens) and tokens[j].token_type == TokenType.L_PAREN:
+        j = _skip_paren(tokens, j)
+    return j, [unit1, to_tok, unit2]
+
+
+def _strip_interval_precision(tokens: list[Token]) -> list[Token]:
+    """Remove Oracle's precision annotations from DAY(n) TO SECOND(n) /
+    YEAR(n) TO MONTH sequences wherever they appear -- sqlglot's oracle
+    dialect supports the bare DAY TO SECOND / YEAR TO MONTH form but not
+    the precision numbers, and column/expression type precision isn't
+    captured by this catalog anyway. A separate pass from
+    _filter_ddl_tokens, applied first: this rewrites in place (keep DAY/TO/
+    SECOND, drop only the parenthesized numbers) rather than dropping a
+    whole matched span outright, a different shape than every other
+    matcher in this module."""
+    out: list[Token] = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        m = _match_interval_unit_pair(tokens, i)
+        if m is not None:
+            end, keep = m
+            out.extend(keep)
+            i = end
+            continue
+        out.append(tokens[i])
+        i += 1
+    return out
+
+
+def _match_one_identity_option(tokens: list[Token], i: int) -> int | None:
+    """Match exactly one Oracle identity_option (per Oracle's own
+    documented grammar for the parenthesized form: START WITH n|LIMIT
+    VALUE, INCREMENT BY n, MAXVALUE n|NOMAXVALUE, MINVALUE n|NOMINVALUE,
+    CYCLE|NOCYCLE, CACHE n|NOCACHE, ORDER|NOORDER, plus the newer KEEP|
+    NOKEEP/SCALE|NOSCALE) starting at tokens[i]. Returns the index past the
+    match, or None if tokens[i] isn't the start of one."""
+    if i >= len(tokens):
+        return None
+    t = tokens[i]
+    if t.token_type == TokenType.START_WITH:
+        j = i + 1
+        if j < len(tokens) and tokens[j].token_type == TokenType.NUMBER:
+            return j + 1
+        return j
+    if t.token_type == TokenType.CACHE:
+        j = i + 1
+        if j < len(tokens) and tokens[j].token_type == TokenType.NUMBER:
+            return j + 1
+        return j
+    if t.token_type == TokenType.KEEP:
+        return i + 1
+    if t.token_type != TokenType.VAR:
+        return None
+    word = t.text.upper()
+    j = i + 1
+    if word in ("MINVALUE", "MAXVALUE"):
+        if j < len(tokens) and tokens[j].token_type == TokenType.NUMBER:
+            return j + 1
+        return j
+    if word == "INCREMENT":
+        if j < len(tokens) and _kw(tokens[j], "BY"):
+            j += 1
+            if j < len(tokens) and tokens[j].token_type == TokenType.NUMBER:
+                return j + 1
+            return j
+        return None
+    if word in ("NOCACHE", "NOORDER", "ORDER", "NOCYCLE", "CYCLE", "NOMAXVALUE", "NOMINVALUE", "NOKEEP", "SCALE", "NOSCALE"):
+        return j
+    return None
+
+
+def _match_identity_options_run(tokens: list[Token], i: int) -> int | None:
+    """Match a repeated run of one-or-more identity_options. Returns the
+    index past the last one matched, or None if tokens[i] doesn't start
+    one at all."""
+    end = None
+    j = i
+    while True:
+        nxt = _match_one_identity_option(tokens, j)
+        if nxt is None:
+            break
+        j = nxt
+        end = j
+    return end
+
+
+def _strip_bare_identity_options(tokens: list[Token]) -> list[Token]:
+    """Strip an IDENTITY clause's options list when it appears WITHOUT
+    enclosing parens -- confirmed real Oracle syntax on a real schema
+    (2026-07-09), not a malformed export: `GENERATED ALWAYS AS IDENTITY
+    MINVALUE 1 MAXVALUE ... NOSCALE`, no parens at all. sqlglot's oracle
+    dialect (matching Oracle's own *documented* grammar, which does show
+    the options list as parenthesized) already handles the parenthesized
+    form fine -- confirmed via direct testing -- so this only touches the
+    bare form, leaving `IDENTITY (...)` alone. Keeps the IDENTITY keyword
+    itself (still meaningful, required syntax) and drops only the options
+    that follow, same vocabulary as the parenthesized form -- none of it is
+    catalog-relevant regardless of context. A separate pass, applied
+    alongside _strip_interval_precision: both rewrite in place rather than
+    dropping a whole matched span outright."""
+    out: list[Token] = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        t = tokens[i]
+        out.append(t)
+        i += 1
+        if _kw(t, "IDENTITY") and not (i < n and tokens[i].token_type == TokenType.L_PAREN):
+            end = _match_identity_options_run(tokens, i)
+            if end is not None:
+                i = end
+    return out
+
+
 def _tokenize_and_filter(dialect_instance: Dialect, text: str) -> list[Token]:
     """Tokenize `text` with `dialect_instance`'s own tokenizer and drop
     unsupported-clause token runs. May raise TokenError (e.g. a malformed
     string literal) -- callers handle that the same way they did for the
     old text-level pipeline."""
-    return _filter_ddl_tokens(dialect_instance.tokenize(text))
+    tokens = dialect_instance.tokenize(text)
+    tokens = _strip_interval_precision(tokens)
+    tokens = _strip_bare_identity_options(tokens)
+    return _filter_ddl_tokens(tokens)
 
 
 @dataclass(frozen=True)

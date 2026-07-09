@@ -657,3 +657,62 @@ def test_parse_ddl_real_materialized_view_shape():
     catalog, stats = parse_ddl(sql, dialect="oracle")
     assert stats.statements_skipped == 0
     assert catalog.tables[0].table == "mv1"
+
+
+# --- Ninth round (2026-07-09): found via the redacted CREATE TABLE
+# bisection output on a real schema. sqlglot's oracle dialect supports the
+# bare INTERVAL DAY TO SECOND / INTERVAL YEAR TO MONTH type forms, and the
+# same DAY TO SECOND / YEAR TO MONTH suffix used to cast an arbitrary
+# expression's result (Oracle's idiom for a date/timestamp subtraction:
+# (expr) DAY TO SECOND), but chokes on Oracle's precision annotations --
+# (n) after DAY/YEAR/SECOND/MONTH -- in either context. Column/expression
+# type precision isn't captured by this catalog anyway, so dropping it is
+# safe.
+
+
+def test_parse_ddl_strips_interval_day_to_second_precision():
+    sql = "CREATE TABLE T1 (A INTERVAL DAY(5) TO SECOND(6))"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert catalog.tables[0].columns == ("a",)
+
+
+def test_parse_ddl_strips_interval_year_to_month_precision():
+    sql = "CREATE TABLE T1 (A INTERVAL YEAR(4) TO MONTH)"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert catalog.tables[0].columns == ("a",)
+
+
+def test_parse_ddl_strips_interval_cast_precision_in_virtual_column():
+    sql = (
+        "CREATE TABLE T1 (A DATE, B DATE, C INTERVAL DAY(5) TO SECOND(6) "
+        "GENERATED ALWAYS AS (CASE WHEN A IS NULL THEN NULL ELSE (B - A) DAY(5) TO SECOND(6) END) VIRTUAL)"
+    )
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"a", "b", "c"}
+
+
+def test_parse_ddl_strips_bare_identity_options_no_parens():
+    # Confirmed real Oracle syntax (2026-07-09), not a transcription error:
+    # the IDENTITY options list appearing WITHOUT enclosing parens, unlike
+    # the already-working parenthesized form. sqlglot's oracle dialect
+    # (matching Oracle's own documented grammar) expects parens whenever
+    # identity options are given, so a bare options run still breaks it.
+    sql = (
+        "CREATE TABLE T1 (A NUMBER GENERATED ALWAYS AS IDENTITY MINVALUE 1 MAXVALUE 999999999999999999999 "
+        "INCREMENT BY 1 START WITH 76666 CACHE 20 NOORDER NOCYCLE NOKEEP NOSCALE NOT NULL ENABLE)"
+    )
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert catalog.tables[0].columns == ("a",)
+
+
+def test_parse_ddl_still_handles_parenthesized_identity_options():
+    # Regression: the already-working parenthesized form must not be
+    # affected by the new bare-options stripping.
+    sql = "CREATE TABLE T1 (A NUMBER GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1) NOT NULL ENABLE)"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert catalog.tables[0].columns == ("a",)
