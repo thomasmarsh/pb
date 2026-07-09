@@ -15,7 +15,6 @@ export function print(route: Route): string {
     case "proceduresList":   return "/procedures";
     case "datawindows":      return "/datawindows";
     case "dwDetail":         return "/datawindows/" + encodeURIComponent(route.name);
-    case "schemas":          return "/schemas";
     case "tables":
       return route.namespace ? `/tables?ns=${encodeURIComponent(route.namespace)}` : "/tables";
     case "tableDetail":
@@ -66,8 +65,6 @@ export function parse(path: string, search?: string): Route {
     case "datawindows":
       if (segs[1]) return { view: "dwDetail", name: decodeURIComponent(segs[1]) };
       return { view: "datawindows" };
-    case "schemas":
-      return { view: "schemas" };
     case "tables": {
       const raw = search ? (search.startsWith("?") ? search.slice(1) : search) : "";
       const ns = new URLSearchParams(raw).get("ns");

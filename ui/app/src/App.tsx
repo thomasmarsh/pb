@@ -55,7 +55,7 @@ function ViewRouter(props: { store: Store<AppState, AppAction> }): JSX.Element {
       <Show when={snap().nav.route.view === "proceduresList"}><ProceduresList store={props.store} /></Show>
       <Show when={snap().nav.route.view === "datawindows"}><DataWindows store={props.store} /></Show>
       <Show when={snap().nav.route.view === "dwDetail"}><DWDetail store={props.store} /></Show>
-      <Show when={snap().nav.route.view === "schemas" || snap().nav.route.view === "tables" || snap().nav.route.view === "tableDetail"}><Tables store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "tables" || snap().nav.route.view === "tableDetail"}><Tables store={props.store} /></Show>
       <Show when={snap().nav.route.view === "diagrams"}><Diagrams store={props.store} /></Show>
       <Show when={snap().nav.route.view === "queries"}><Queries store={props.store} /></Show>
       <Show when={snap().nav.route.view === "search"}><Search store={props.store} /></Show>

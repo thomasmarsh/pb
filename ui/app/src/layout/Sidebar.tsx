@@ -28,7 +28,6 @@ import { LibraryNode } from "../views/features/explore/TreeNodes.js";
 const ENTITY_NAV: { label: string; view: string; icon: IconComp }[] = [
   { label: "Objects",     view: "objects",        icon: Box },
   { label: "DataWindows", view: "datawindows",    icon: Grid3X3 },
-  { label: "Schemas",     view: "schemas",        icon: Database },
   { label: "Tables",      view: "tables",         icon: Database },
   { label: "Procedures",  view: "proceduresList", icon: Code2 },
 ];

@@ -9,6 +9,10 @@ export interface TablesState {
   schemasLoading: boolean;
   // Schema currently scoping the table list/detail below, if any.
   namespace: string | null;
+  // Corpus's configured default schema (from /api/stats), used to seed the
+  // schema picker when the route doesn't already specify a namespace.
+  defaultNamespace: string | null;
+  statsLoading: boolean;
   items:   TableSummary[];
   total:   number;
   q:       string;
@@ -30,7 +34,7 @@ export interface TablesState {
 }
 
 export const initialTablesState: TablesState = {
-  schemas: [], schemasLoading: false, namespace: null,
+  schemas: [], schemasLoading: false, namespace: null, defaultNamespace: null, statsLoading: false,
   items: [], total: 0, q: "", loading: false, detail: null, error: null,
   columnUsage: null, columnUsageLoading: false,
   coUpdateRituals: null, coUpdateRitualsLoading: false,

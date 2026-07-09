@@ -169,6 +169,7 @@ export interface SearchResponse {
 }
 
 export interface StatsResponse {
+  default_namespace?: string | null;
   objects: number;
   procedures: number;
   dw_controls: number;

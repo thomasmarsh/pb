@@ -3,7 +3,7 @@
 import { Effect, type Reducer } from "@pb/core";
 import type { TablesState } from "./types.js";
 import type { TablesAction } from "./actions.js";
-import type { SchemaSummary, TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse } from "../../types/api.js";
+import type { SchemaSummary, TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse, StatsResponse } from "../../types/api.js";
 import type { NavigationAction } from "../navigation/types.js";
 
 export type { TablesState };
@@ -17,20 +17,69 @@ export interface TablesEnv {
   getCoUpdateRituals(): Effect<CoUpdateRitualsResponse>;
   getDecompositionCandidates(table: string, namespace?: string): Effect<DecompositionCandidatesResponse>;
   getColumnAffinity(table: string, namespace?: string): Effect<ColumnAffinityResponse>;
+  getStats(): Effect<StatsResponse>;
   navigate(action: NavigationAction): Effect<never>;
 }
 
 function errMsg(e: unknown): string { return e instanceof Error ? e.message : String(e); }
 
+// Shared building blocks — each fires its effect and mutates draft's loading
+// flags, or returns null if there's nothing to do. Reused by both the
+// standalone actions (schemas-load/stats-load/search) and "mount" (which
+// fires all three together via Effect.merge) so the sequencing lives once,
+// in the reducer, not scattered across component dispatches.
+
+function fireSchemasLoad(draft: TablesState, env: TablesEnv): Effect<TablesAction> | null {
+  if (draft.schemas.length > 0 || draft.schemasLoading) return null;
+  draft.schemasLoading = true;
+  return env.getSchemas()
+    .map((schemas): TablesAction => ({ tag: "schemas-loaded", schemas }))
+    .catch((e): TablesAction => ({ tag: "schemas-error", error: errMsg(e) }));
+}
+
+function fireStatsLoad(draft: TablesState, env: TablesEnv): Effect<TablesAction> | null {
+  if (draft.defaultNamespace !== null || draft.statsLoading) return null;
+  draft.statsLoading = true;
+  return env.getStats()
+    .map((stats): TablesAction => ({ tag: "stats-loaded", defaultNamespace: stats.default_namespace ?? null }))
+    .catch((): TablesAction => ({ tag: "stats-error" }));
+}
+
+// Fires the table-list fetch for q/namespace, navigating and resetting q.
+// Used for a fresh load (mount, or the default namespace arriving after
+// mount) — unconditional, unlike fireSearchIfNeeded below.
+function fireSearch(draft: TablesState, env: TablesEnv, q: string, namespace: string | undefined): Effect<TablesAction> {
+  draft.q = q;
+  draft.namespace = namespace ?? null;
+  draft.loading = true;
+  env.navigate({
+    tag: "navigate",
+    route: namespace ? { view: "tables", namespace } : { view: "tables" },
+  });
+  return env.getTables(namespace)
+    .map((items): TablesAction => ({ tag: "loaded", items }));
+}
+
+// Mount-time variant: skips the fetch entirely if the view already has
+// matching data loaded (e.g. remounting after navigating back).
+function fireSearchIfNeeded(draft: TablesState, env: TablesEnv, namespace: string | undefined): Effect<TablesAction> | null {
+  const target = namespace ?? null;
+  if (draft.items.length > 0 && draft.namespace === target) return null;
+  return fireSearch(draft, env, "", namespace);
+}
+
 function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effect<TablesAction> | null {
   switch (action.tag) {
-  case "schemas-load": {
-    if (draft.schemas.length > 0 || draft.schemasLoading) return null;
-    draft.schemasLoading = true;
-    return env.getSchemas()
-      .map((schemas): TablesAction => ({ tag: "schemas-loaded", schemas }))
-      .catch((e): TablesAction => ({ tag: "schemas-error", error: errMsg(e) }));
+  case "mount": {
+    const effects = [
+      fireSchemasLoad(draft, env),
+      fireStatsLoad(draft, env),
+      fireSearchIfNeeded(draft, env, action.namespace),
+    ].filter((e): e is Effect<TablesAction> => e !== null);
+    return effects.length > 0 ? Effect.merge(...effects) : null;
   }
+  case "schemas-load":
+    return fireSchemasLoad(draft, env);
   case "schemas-loaded":
     draft.schemas = action.schemas;
     draft.schemasLoading = false;
@@ -38,24 +87,26 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
   case "schemas-error":
     draft.schemasLoading = false;
     return null;
-  case "select-schema":
-    draft.namespace = action.namespace;
-    draft.items = [];
-    env.navigate({ tag: "navigate", route: { view: "tables", namespace: action.namespace } });
+  case "stats-load":
+    return fireStatsLoad(draft, env);
+  case "stats-loaded": {
+    draft.defaultNamespace = action.defaultNamespace;
+    draft.statsLoading = false;
+    // The route didn't pin a namespace before the default arrived — adopt
+    // it now, same as if the route had specified it from the start.
+    if (action.defaultNamespace && draft.namespace === null) {
+      return fireSearch(draft, env, draft.q, action.defaultNamespace);
+    }
+    return null;
+  }
+  case "stats-error":
+    draft.statsLoading = false;
     return null;
   case "filter":
     draft.q = action.q;
     return null;
   case "search":
-    draft.q = action.q;
-    draft.namespace = action.namespace ?? null;
-    draft.loading = true;
-    env.navigate({
-      tag: "navigate",
-      route: action.namespace ? { view: "tables", namespace: action.namespace } : { view: "tables" },
-    });
-    return env.getTables(action.namespace)
-      .map((items): TablesAction => ({ tag: "loaded", items }));
+    return fireSearch(draft, env, action.q, action.namespace);
   case "loaded":
     draft.items = action.items;
     draft.total = action.items.length;

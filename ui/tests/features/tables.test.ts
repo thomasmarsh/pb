@@ -5,7 +5,7 @@ import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { tablesReducer, initialTablesState, type TablesEnv } from "@pb/platform";
 import type { TablesState } from "@pb/platform";
-import type { SchemaSummary, TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse } from "@pb/platform";
+import type { SchemaSummary, TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse, StatsResponse } from "@pb/platform";
 
 const mockEnv: TablesEnv = {
   getSchemas:          () => Effect.none(),
@@ -15,6 +15,7 @@ const mockEnv: TablesEnv = {
   getCoUpdateRituals:  () => Effect.none(),
   getDecompositionCandidates: () => Effect.none(),
   getColumnAffinity:   () => Effect.none(),
+  getStats:            () => Effect.none(),
   navigate:            () => Effect.none(),
 };
 
@@ -84,20 +85,173 @@ describe("tables reducer", () => {
     });
   });
 
-  describe("tables/select-schema", () => {
-    it("sets namespace, clears items, navigates to the scoped tables route", () => {
+  describe("tables/stats-load", () => {
+    // No default_namespace here on purpose: this describe block covers the
+    // load-once mechanic in isolation. The "adopt default and cascade into
+    // search" behavior has its own describe block below (tables/stats-loaded).
+    const stats: StatsResponse = {
+      default_namespace: null,
+      objects: 0, procedures: 0, dw_controls: 0, dw_retrieve_tables: 0,
+      dw_retrieve_columns: 0, inherits: 0, calls: 0, object_metrics: 0,
+      tables: 0, by_kind: [], top_complex: [], top_pagerank: [],
+    };
+
+    it("sets statsLoading and fires getStats", () => {
+      const env: TablesEnv = { ...mockEnv, getStats: () => Effect.send(stats) };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "stats-load" }, (s) => {
+        s.statsLoading = true;
+      });
+      ts.receive({ tag: "stats-loaded", defaultNamespace: null }, (s) => {
+        s.statsLoading = false;
+      });
+    });
+
+    it("does nothing if already loaded", () => {
+      const state: TablesState = { ...initialTablesState, defaultNamespace: "clims" };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "stats-load" }, () => {});
+    });
+
+    it("does nothing if a load is already in flight", () => {
+      const state: TablesState = { ...initialTablesState, statsLoading: true };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "stats-load" }, () => {});
+    });
+
+    it("fires getStats; rejection maps to stats-error", async () => {
+      const env: TablesEnv = {
+        ...mockEnv,
+        getStats: () => Effect.fromPromise(() => Promise.reject(new Error("timeout"))),
+      };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "stats-load" }, (s) => {
+        s.statsLoading = true;
+      });
+      await ts.drain();
+      ts.receive({ tag: "stats-error" }, (s) => {
+        s.statsLoading = false;
+      });
+    });
+  });
+
+  describe("tables/stats-loaded", () => {
+    it("when the route hasn't picked a namespace, adopts the default and fires search", () => {
       const navigateRoutes: object[] = [];
+      const tablesCalls: (string | undefined)[] = [];
+      const items = [row("clinicalaccession")];
       const env: TablesEnv = {
         ...mockEnv,
         navigate: (action) => { if (action.tag === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
+        getTables: (ns) => { tablesCalls.push(ns); return Effect.send(items); },
       };
-      const state: TablesState = { ...initialTablesState, items: [row("orders")] };
+      const state: TablesState = { ...initialTablesState, statsLoading: true };
       const ts = createTestStore(tablesReducer, env, state);
-      ts.send({ tag: "select-schema", namespace: "clims" }, (s) => {
+      ts.send({ tag: "stats-loaded", defaultNamespace: "clims" }, (s) => {
+        s.defaultNamespace = "clims";
+        s.statsLoading = false;
         s.namespace = "clims";
-        s.items = [];
+        s.loading = true;
       });
       expect(navigateRoutes).toEqual([{ view: "tables", namespace: "clims" }]);
+      expect(tablesCalls).toEqual(["clims"]);
+      ts.receive({ tag: "loaded", items }, (s) => {
+        s.items = items;
+        s.total = 1;
+        s.loading = false;
+      });
+    });
+
+    it("when a namespace is already set (route-scoped), does not override it", () => {
+      const state: TablesState = { ...initialTablesState, statsLoading: true, namespace: "clims_archive" };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "stats-loaded", defaultNamespace: "clims" }, (s) => {
+        s.defaultNamespace = "clims";
+        s.statsLoading = false;
+      });
+    });
+
+    it("with no default namespace configured, does nothing further", () => {
+      const state: TablesState = { ...initialTablesState, statsLoading: true };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "stats-loaded", defaultNamespace: null }, (s) => {
+        s.statsLoading = false;
+      });
+    });
+  });
+
+  describe("tables/mount", () => {
+    it("fresh mount, scoped: merges schemas-load + stats-load + search effects", () => {
+      const schemas: SchemaSummary[] = [{ namespace: "clims", table_count: 5 }];
+      const stats: StatsResponse = {
+        default_namespace: "clims",
+        objects: 0, procedures: 0, dw_controls: 0, dw_retrieve_tables: 0,
+        dw_retrieve_columns: 0, inherits: 0, calls: 0, object_metrics: 0,
+        tables: 0, by_kind: [], top_complex: [], top_pagerank: [],
+      };
+      const items = [row("clinicalaccession")];
+      const navigateRoutes: object[] = [];
+      const env: TablesEnv = {
+        ...mockEnv,
+        getSchemas: () => Effect.send(schemas),
+        getStats: () => Effect.send(stats),
+        getTables: () => Effect.send(items),
+        navigate: (action) => { if (action.tag === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
+      };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "mount", namespace: "clims" }, (s) => {
+        s.schemasLoading = true;
+        s.statsLoading = true;
+        s.namespace = "clims";
+        s.loading = true;
+      });
+      ts.receive({ tag: "schemas-loaded", schemas }, (s) => {
+        s.schemas = schemas;
+        s.schemasLoading = false;
+      });
+      ts.receive({ tag: "stats-loaded", defaultNamespace: "clims" }, (s) => {
+        s.defaultNamespace = "clims";
+        s.statsLoading = false;
+      });
+      ts.receive({ tag: "loaded", items }, (s) => {
+        s.items = items;
+        s.total = 1;
+        s.loading = false;
+      });
+      expect(navigateRoutes).toEqual([{ view: "tables", namespace: "clims" }]);
+    });
+
+    it("remount with matching namespace and items already loaded skips the search fetch", () => {
+      const state: TablesState = {
+        ...initialTablesState,
+        items: [row("orders")], namespace: "clims",
+        schemas: [{ namespace: "clims", table_count: 1 }],
+        defaultNamespace: "clims",
+      };
+      const ts = createTestStore(tablesReducer, mockEnv, state);
+      ts.send({ tag: "mount", namespace: "clims" }, () => {});
+    });
+
+    it("remount with a different namespace re-fires the search fetch", () => {
+      const items = [row("clims_archive_tbl")];
+      const env: TablesEnv = { ...mockEnv, getTables: () => Effect.send(items) };
+      const state: TablesState = {
+        ...initialTablesState,
+        items: [row("orders")], namespace: "clims",
+        schemas: [{ namespace: "clims", table_count: 1 }],
+        defaultNamespace: "clims",
+      };
+      const ts = createTestStore(tablesReducer, env, state);
+      ts.send({ tag: "mount", namespace: "clims_archive" }, (s) => {
+        s.namespace = "clims_archive";
+        s.q = "";
+        s.loading = true;
+      });
+      ts.receive({ tag: "loaded", items }, (s) => {
+        s.items = items;
+        s.total = 1;
+        s.loading = false;
+      });
     });
   });
 

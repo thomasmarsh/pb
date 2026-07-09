@@ -10,7 +10,6 @@ export type Route =
   | { view: "proceduresList" }
   | { view: "datawindows" }
   | { view: "dwDetail";        name: string }
-  | { view: "schemas" }
   | { view: "tables"; namespace?: string }
   | { view: "tableDetail";     name: string; namespace?: string }
   | { view: "diagrams"; kind?: DiagramKind }

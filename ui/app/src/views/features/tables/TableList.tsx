@@ -15,9 +15,7 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
   };
 
   onMount(() => {
-    if (ts().items.length === 0 || ts().namespace !== (routeNamespace() ?? null)) {
-      props.store.dispatch({ tag: "tables", action: { tag: "search", q: "", namespace: routeNamespace() } });
-    }
+    props.store.dispatch({ tag: "tables", action: { tag: "mount", namespace: routeNamespace() } });
   });
 
   useListKeyboard({
@@ -54,6 +52,21 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
             props.store.dispatch({ tag: "tables", action: { tag: "filter", q: e.currentTarget.value } });
           }}
         />
+        <Show when={ts().schemas.length > 1}>
+          <select
+            class="schema-select"
+            value={ts().namespace ?? ""}
+            onChange={(e) => {
+              const namespace = e.currentTarget.value || undefined;
+              props.store.dispatch({ tag: "tables", action: { tag: "search", q: ts().q, namespace } });
+            }}
+          >
+            <option value="">All schemas</option>
+            <For each={ts().schemas}>
+              {(s) => <option value={s.namespace}>{s.namespace}</option>}
+            </For>
+          </select>
+        </Show>
       </div>
 
       <Show when={ts().loading && ts().items.length === 0}><Loading /></Show>

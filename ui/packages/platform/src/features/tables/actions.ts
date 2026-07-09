@@ -3,11 +3,16 @@
 import type { SchemaSummary, TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse } from "../../types/api.js";
 
 export type TablesAction =
-  // Schemas (SCHEMAS > TABLES > [table] nav)
+  // TableList mount: loads schemas + default namespace + the table list in
+  // one dispatch: the reducer owns the sequencing (Plan 157 Phase 4).
+  | { tag: "mount"; namespace?: string }
+  // Schema picker, inline in TableList (Plan 157 Phase 4)
   | { tag: "schemas-load" }
   | { tag: "schemas-loaded"; schemas: SchemaSummary[] }
   | { tag: "schemas-error";  error: string }
-  | { tag: "select-schema";  namespace: string }
+  | { tag: "stats-load" }
+  | { tag: "stats-loaded";  defaultNamespace: string | null }
+  | { tag: "stats-error" }
   | { tag: "search";        q: string; namespace?: string }
   | { tag: "filter";        q: string }
   | { tag: "loaded";        items: TableSummary[] }
