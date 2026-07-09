@@ -105,7 +105,12 @@ _CONSTRAINT_STATE_RE = re.compile(
     r"\bUSING\s+INDEX"
     rf"(?:\s+{_USING_INDEX_NAME_OR_COLUMN_LIST})?"
     rf"(?:\s+(?:{_INDEX_PHYSICAL_ATTR}))*"
-    r"|\b(?:ENABLE|DISABLE)(?:\s+(?:VALIDATE|NOVALIDATE))?\b"
+    # QUERY REWRITE added alongside VALIDATE/NOVALIDATE (2026-07-08): a
+    # materialized view's ENABLE/DISABLE QUERY REWRITE clause -- without
+    # this, the bare ENABLE/DISABLE branch still matches just the
+    # ENABLE/DISABLE word and leaves "QUERY REWRITE" behind as syntax
+    # garbage, same failure shape as every other constraint_state case.
+    r"|\b(?:ENABLE|DISABLE)(?:\s+(?:VALIDATE|NOVALIDATE|QUERY\s+REWRITE))?\b"
     r"|\b(?:VALIDATE|NOVALIDATE)\b"
     # Table-level ROWDEPENDENCIES/NOROWDEPENDENCIES, virtual-column VIRTUAL,
     # LOB storage clause, and SEGMENT CREATION IMMEDIATE/DEFERRED: unrelated
@@ -117,6 +122,22 @@ _CONSTRAINT_STATE_RE = re.compile(
     r"|\bVIRTUAL\b"
     rf"|\bLOB\s*\([^()]*\)\s*STORE\s+AS\s*(?:SECUREFILE|BASICFILE)?\s*(?:{_PAREN_GROUP_ONE_LEVEL_NESTED})?"
     r"|\bSEGMENT\s+CREATION\s+(?:IMMEDIATE|DEFERRED)\b"
+    # Materialized-view refresh-strategy clauses (2026-07-08): unlike the
+    # physical/storage attributes above, essentially every real materialized
+    # view specifies one of these, so they -- not the physical attrs -- were
+    # the actual remaining blocker on a real corpus even after the bare-attr
+    # fix (which only fixed the *labeling*, not the parse, since it never
+    # touched this separate clause family). BUILD IMMEDIATE/DEFERRED is a
+    # bare two-word clause; REFRESH's own grammar (FAST/COMPLETE/FORCE,
+    # ON COMMIT/ON DEMAND, START WITH/NEXT date expressions, WITH PRIMARY
+    # KEY/WITH ROWID, USING ... TRUSTED CONSTRAINTS, FOR UPDATE) is too
+    # varied to enumerate keyword-by-keyword like physical attributes, so
+    # this strips everything from REFRESH up to (not including) the view's
+    # own AS SELECT/AS ( -- none of Oracle's REFRESH clause vocabulary
+    # contains a bare AS keyword, so the lookahead can't over-consume into
+    # the query itself.
+    r"|\bBUILD\s+(?:IMMEDIATE|DEFERRED)\b"
+    r"|\bREFRESH\b[\s\S]*?(?=\bAS\b)"
     # Column-level VISIBLE/INVISIBLE modifier: a distinct context from the
     # USING INDEX ... VISIBLE case (which sqlglot already tolerates without
     # stripping) -- found via the bisection+redaction tool in
@@ -334,9 +355,22 @@ def _process_constraint(
 def _view_explicit_columns(view_target: exp.Table | exp.Schema) -> tuple[str, ...] | None:
     """Columns from CREATE VIEW v (col1, col2) AS ... — None if the view
     doesn't declare an explicit list (the common case; columns must then be
-    inferred from the SELECT's own output instead)."""
+    inferred from the SELECT's own output instead). A materialized view's
+    column list can also mix in TABLE-shaped entries -- typed `ColumnDef`s
+    plus inline CONSTRAINT/PrimaryKey/ForeignKey clauses -- rather than
+    CREATE VIEW's plain name-only `Identifier` list; only ColumnDef/
+    Identifier entries are real columns, so constraint entries are
+    filtered out here and handled separately by the caller via
+    _process_constraint. Confirmed via real-corpus testing (2026-07-08): an
+    inline `CONSTRAINT pk1 PRIMARY KEY (...)` was otherwise producing the
+    constraint's own name as a phantom column and silently dropping the
+    primary key."""
     if isinstance(view_target, exp.Schema):
-        cols = tuple(i.name.lower() for i in view_target.expressions if i.name)
+        cols = tuple(
+            i.name.lower()
+            for i in view_target.expressions
+            if isinstance(i, (exp.ColumnDef, exp.Identifier)) and i.name
+        )
         return cols or None
     return None
 
@@ -369,12 +403,22 @@ def _resolve_view(
     known_columns: dict[str, object],
     dialect: str,
     default_namespace: str | None,
+    primary_keys: list[TablePrimaryKey],
+    foreign_keys: list[ForeignKey],
+    checks: list[CheckConstraint],
 ) -> TableColumns | None:
     """Resolve one deferred CREATE VIEW statement to a TableColumns row, or
     None if its columns can't be determined yet (or ever) — the caller
     retries unresolved views across passes as `known_columns` grows from
     other newly-resolved views, and gives up once a full pass makes no
-    progress."""
+    progress. Also extracts any inline PK/FK/CHECK constraints from a
+    materialized view's TABLE-shaped column list (see
+    _view_explicit_columns) into the same primary_keys/foreign_keys/checks
+    lists CREATE TABLE populates — mutated in place, but only once
+    resolution actually succeeds (not on every retry pass): this function
+    gets called again for any view still unresolved after a pass, and
+    processing constraints unconditionally would duplicate PK/FK/CHECK
+    entries for any view that takes 2+ passes to resolve its columns."""
     view_target = stmt.this
     table_expr = view_target.this if isinstance(view_target, exp.Schema) else view_target
     if not isinstance(table_expr, exp.Table):
@@ -389,6 +433,15 @@ def _resolve_view(
         columns = _view_select_columns(query, known_columns, dialect)
     if columns is None:
         return None
+
+    if isinstance(view_target, exp.Schema):
+        for c in view_target.expressions:
+            if isinstance(c, (exp.Constraint, exp.PrimaryKey, exp.ForeignKey)):
+                _process_constraint(
+                    c, ns, table_name, default_namespace, dialect,
+                    primary_keys, foreign_keys, checks,
+                )
+
     return TableColumns(namespace=ns, table=table_name, columns=columns)
 
 
@@ -657,7 +710,7 @@ def parse_ddl(
         resolved: list[TableColumns] = []
         still_remaining: list[exp.Create] = []
         for stmt in remaining:
-            row = _resolve_view(stmt, known_columns, dialect, default_namespace)
+            row = _resolve_view(stmt, known_columns, dialect, default_namespace, primary_keys, foreign_keys, checks)
             if row is None:
                 still_remaining.append(stmt)
             else:

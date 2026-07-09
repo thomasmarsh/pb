@@ -529,3 +529,79 @@ def test_parse_ddl_strips_lob_store_as_with_nested_storage_paren():
     catalog, stats = parse_ddl(sql, dialect="oracle")
     assert stats.statements_skipped == 0
     assert set(catalog.tables[0].columns) == {"a", "b"}
+
+
+# --- Seventh round (2026-07-08): the bare-physical-attrs fix above resolved
+# the LABELING/harmless-vs-catalog-impacting confusion for materialized
+# views, but did not move the real-corpus skip count at all -- the actual
+# blocker turned out to be materialized-view-specific refresh-strategy
+# clauses, unrelated to physical storage attributes, which essentially
+# every real materialized view specifies: BUILD IMMEDIATE/DEFERRED, REFRESH
+# FAST/COMPLETE/FORCE [ON COMMIT|ON DEMAND] [START WITH ...] [NEXT ...]
+# [WITH PRIMARY KEY|WITH ROWID] [USING ...] [FOR UPDATE], and
+# ENABLE/DISABLE QUERY REWRITE.
+
+
+def test_parse_ddl_strips_materialized_view_build_clause():
+    sql = "CREATE MATERIALIZED VIEW MV1 BUILD IMMEDIATE AS SELECT A FROM T1"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"a"}
+
+
+def test_parse_ddl_strips_materialized_view_refresh_clause():
+    sql = "CREATE MATERIALIZED VIEW MV1 BUILD IMMEDIATE REFRESH FAST ON COMMIT AS SELECT A FROM T1"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"a"}
+
+
+def test_parse_ddl_strips_materialized_view_refresh_with_trusted_constraints():
+    sql = "CREATE MATERIALIZED VIEW MV1 REFRESH FAST ON COMMIT USING TRUSTED CONSTRAINTS AS SELECT A FROM T1"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"a"}
+
+
+def test_parse_ddl_strips_materialized_view_enable_query_rewrite():
+    sql = "CREATE MATERIALIZED VIEW MV1 ENABLE QUERY REWRITE AS SELECT A FROM T1"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"a"}
+
+
+def test_parse_ddl_materialized_view_inline_pk_not_treated_as_column():
+    # Regression: found via real-corpus testing (2026-07-08). A materialized
+    # view's explicit column list can mix ColumnDef entries with inline
+    # CONSTRAINT/PrimaryKey clauses, unlike CREATE VIEW's plain name-only
+    # list -- the constraint's own name ("pk1") was being treated as a
+    # phantom column, and the primary key was silently dropped entirely.
+    sql = '''
+    CREATE MATERIALIZED VIEW MV1 (
+      COL1 NUMBER, COL2 VARCHAR2(10),
+      CONSTRAINT PK1 PRIMARY KEY (COL1) USING INDEX ENABLE
+    )
+    BUILD IMMEDIATE REFRESH FAST ON COMMIT
+    AS SELECT COL1, COL2 FROM T1
+    '''
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert set(catalog.tables[0].columns) == {"col1", "col2"}
+    assert len(catalog.primary_keys) == 1
+    assert catalog.primary_keys[0].columns == ("col1",)
+
+
+def test_parse_ddl_materialized_view_column_list_resolves_across_passes_once():
+    # Regression: a materialized view whose column resolution takes 2+
+    # fixed-point passes (view-on-view chain) must not have its inline
+    # constraints processed more than once -- _resolve_view is retried for
+    # every unresolved view on every pass.
+    sql = '''
+    CREATE VIEW V1 AS SELECT A FROM T1;
+    CREATE MATERIALIZED VIEW MV1 (
+      A NUMBER,
+      CONSTRAINT PK1 PRIMARY KEY (A)
+    ) AS SELECT A FROM V1
+    '''
+    catalog, _stats = parse_ddl(sql, dialect="oracle")
+    assert len(catalog.primary_keys) == 1
