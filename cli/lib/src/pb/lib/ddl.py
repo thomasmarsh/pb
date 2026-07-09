@@ -90,6 +90,20 @@ _BARE_DROP_KEYWORDS = frozenset({
     "INVISIBLE", "EDITIONABLE", "NONEDITIONABLE",
 })
 
+# Every keyword that starts one of this module's OTHER clause matchers.
+# A bare "USING INDEX" with no real name (common at the materialized-view
+# level, not attached to any constraint) can be immediately followed by one
+# of these -- e.g. "USING INDEX\nREFRESH FORCE ON DEMAND" -- and without this
+# check _match_using_index_name would misread REFRESH/BUILD/etc. as the
+# index's name and swallow it, leaving the clause it belongs to with no
+# anchor keyword left to match on. Found (2026-07-09) via a real
+# materialized view shape where this exact adjacency broke REFRESH's own
+# matcher after USING INDEX silently ate the word "REFRESH".
+_CLAUSE_START_KEYWORDS = _PHYSICAL_ATTR_KEYWORDS | _BARE_DROP_KEYWORDS | frozenset({
+    "REFRESH", "BUILD", "SEGMENT", "ORGANIZATION", "LOB", "BEQUEATH",
+    "ENABLE", "DISABLE", "VALIDATE", "NOVALIDATE",
+})
+
 
 def _kw(token: Token, *names: str) -> bool:
     """True if token's text (case-insensitive) is one of `names`. Works for
@@ -178,17 +192,20 @@ def _match_physical_attr_run(tokens: list[Token], i: int) -> int | None:
 def _match_using_index_name(tokens: list[Token], i: int) -> int | None:
     """Match an optional index name after USING INDEX: bare or quoted
     identifier, optionally schema-qualified (ns.name or "ns"."name").
-    Quoted (IDENTIFIER-typed) names never collide with a physical-attribute
-    keyword -- quoting can't produce that ambiguity -- but a bare (VAR-typed)
-    token must be checked against the physical-attribute vocabulary first,
-    since "USING INDEX TABLESPACE x" has no name at all, and TABLESPACE
-    would otherwise be misread as one."""
+    Quoted (IDENTIFIER-typed) names never collide with a clause keyword --
+    quoting can't produce that ambiguity -- but a bare (VAR-typed) token
+    must be checked against every OTHER clause's own starting keyword
+    first: "USING INDEX TABLESPACE x" and a bare materialized-view-level
+    "USING INDEX" immediately followed by "REFRESH ..." both have no name
+    at all, and the following keyword would otherwise be misread as one
+    (see _CLAUSE_START_KEYWORDS's own docstring for the real case this
+    broke)."""
     if i >= len(tokens):
         return None
     t = tokens[i]
     if t.token_type == TokenType.IDENTIFIER:
         j = i + 1
-    elif t.token_type == TokenType.VAR and t.text.upper() not in _PHYSICAL_ATTR_KEYWORDS:
+    elif t.token_type == TokenType.VAR and t.text.upper() not in _CLAUSE_START_KEYWORDS:
         j = i + 1
     else:
         return None
@@ -338,6 +355,28 @@ def _match_bare_drop_keyword(tokens: list[Token], i: int) -> int | None:
     return None
 
 
+def _match_organization_clause(tokens: list[Token], i: int) -> int | None:
+    """ORGANIZATION HEAP|INDEX|EXTERNAL (attrs) -- table storage
+    organization (HEAP is Oracle's own default, included for completeness
+    since real exports write it explicitly). EXTERNAL's own attribute list
+    is a single parenthesized group (TYPE/DEFAULT DIRECTORY/ACCESS
+    PARAMETERS/LOCATION), handled the same way as every other attribute
+    group via _skip_paren rather than enumerating its own grammar. Found
+    (2026-07-09) via a real materialized view shape: the sole remaining
+    blocker in that exact real-world statement."""
+    if i >= len(tokens) or not _kw(tokens[i], "ORGANIZATION"):
+        return None
+    j = i + 1
+    if j < len(tokens) and _kw(tokens[j], "HEAP", "INDEX"):
+        return j + 1
+    if j < len(tokens) and _kw(tokens[j], "EXTERNAL"):
+        j += 1
+        if j < len(tokens) and tokens[j].token_type == TokenType.L_PAREN:
+            return _skip_paren(tokens, j)
+        return j
+    return None
+
+
 # Tried in order at each token position; the first to match wins and its
 # span is dropped. Order matters only where matchers could otherwise
 # overlap (e.g. _match_using_index_clause must run before the bare
@@ -349,6 +388,7 @@ _DDL_TOKEN_MATCHERS = (
     _match_bare_validate_clause,
     _match_lob_store_as_clause,
     _match_segment_creation_clause,
+    _match_organization_clause,
     _match_build_clause,
     _match_refresh_clause,
     _match_bequeath_clause,

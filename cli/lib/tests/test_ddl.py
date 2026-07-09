@@ -605,3 +605,55 @@ def test_parse_ddl_materialized_view_column_list_resolves_across_passes_once():
     '''
     catalog, _stats = parse_ddl(sql, dialect="oracle")
     assert len(catalog.primary_keys) == 1
+
+
+# --- Eighth round (2026-07-09): found via a real materialized view shape
+# the user hand-typed after the sqlglot-logger privacy leak was fixed. The
+# ORGANIZATION clause (table storage organization -- HEAP is the default,
+# INDEX for index-organized tables, EXTERNAL for external tables) was the
+# sole remaining blocker in that exact real-world shape; everything else
+# in it (bare MV-level USING INDEX with no name/attrs, the full
+# REFRESH...USING...USING... chain) already worked.
+
+
+def test_parse_ddl_strips_organization_heap():
+    sql = "CREATE TABLE T1 (A NUMBER) ORGANIZATION HEAP"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert catalog.tables[0].columns == ("a",)
+
+
+def test_parse_ddl_strips_organization_index():
+    sql = "CREATE TABLE T1 (A NUMBER PRIMARY KEY) ORGANIZATION INDEX"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert catalog.tables[0].columns == ("a",)
+
+
+def test_parse_ddl_strips_organization_external():
+    sql = "CREATE TABLE T1 (A NUMBER) ORGANIZATION EXTERNAL (TYPE ORACLE_LOADER)"
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert catalog.tables[0].columns == ("a",)
+
+
+def test_parse_ddl_real_materialized_view_shape():
+    # The full real-world shape (identifiers genericized) that surfaced the
+    # ORGANIZATION HEAP gap: column list, SEGMENT CREATION, ORGANIZATION
+    # HEAP with physical attrs, BUILD, bare MV-level USING INDEX, and a
+    # REFRESH clause chaining two USING sub-clauses before AS.
+    sql = '''
+    CREATE MATERIALIZED VIEW "S"."MV1" ("A", "B", "C")
+      SEGMENT CREATION IMMEDIATE
+      ORGANIZATION HEAP PCTFREE 10 PCTUSED 40 INITRANS 1 MAXTRANS 255
+      NOCOMPRESS LOGGING
+      BUILD IMMEDIATE
+      USING INDEX
+      REFRESH FORCE ON DEMAND
+      USING DEFAULT LOCAL ROLLBACK SEGMENT
+      USING ENFORCED CONSTRAINTS DISABLE ON QUERY COMPUTATION DISABLE QUERY REWRITE
+      AS SELECT * FROM T1
+    '''
+    catalog, stats = parse_ddl(sql, dialect="oracle")
+    assert stats.statements_skipped == 0
+    assert catalog.tables[0].table == "mv1"
