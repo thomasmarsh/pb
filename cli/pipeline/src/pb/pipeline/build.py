@@ -4,6 +4,7 @@ import hashlib
 import re
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 
@@ -67,26 +68,26 @@ def build_runner(repo: Path, verbose: bool = False) -> Path:
 
 def find_sql_worker() -> Path | None:
     """Return the path to the pb-sql-worker script if it is installed, else
-    None. pb-sql-worker is a console-script entry point installed into
-    whichever venv `cli/` (this Python workspace's root) was synced with --
-    always at `cli/.venv/bin/pb-sql-worker` for this repo's fixed
-    structure. That's fully deterministic, not something that varies per
-    machine or invocation, so no configuration should ever be needed to
-    find it. Walks up from this file's own install location (not CWD, so
-    this works regardless of what directory `pb` is invoked from) checking
-    each ancestor for `.venv/bin/pb-sql-worker`, rather than hardcoding a
-    specific parent-count -- a hardcoded count silently missed the real
-    venv (found via a real bug report, 2026-07-09: it looked 3 parents up
-    when `cli/` is actually 5 parents up from this file), always falling
-    through to the PATH-based fallback below, which only works if the venv
-    happens to be activated/on PATH at invocation time. Walking ancestors
-    is also resilient to this package moving to a different depth under
-    `cli/` in the future."""
-    marker = Path(".venv") / "bin" / "pb-sql-worker"
-    found = _find_ancestor_containing(Path(__file__).resolve().parent, marker)
-    if found is not None:
-        return found / marker
-    # Fallback: check PATH (e.g. an unusual install where cli/ itself was moved)
+    None. pb-sql-worker is a console-script entry point in the same
+    `pb_pipeline` distribution as `pb` itself, so pip/uv always install it
+    into `sysconfig.get_path("scripts")` of whichever interpreter is
+    currently running this code -- that's true by construction for any
+    install layout (editable dev checkout, non-editable wheel, a venv
+    named something other than `.venv`, a system/container Python with no
+    venv at all), unlike searching ancestor directories for a marker path
+    that assumes a specific on-disk structure. No configuration or
+    environment variable should ever be needed to find it (real bug
+    report, 2026-07-09: an earlier ancestor-walk-for-`.venv` version
+    depended on the venv literally being named `.venv` and reachable from
+    this file's install location, which doesn't hold for every deployment
+    shape)."""
+    scripts_dir = Path(sysconfig.get_path("scripts"))
+    for name in ("pb-sql-worker", "pb-sql-worker.exe"):
+        candidate = scripts_dir / name
+        if candidate.exists():
+            return candidate
+    # Last-resort fallback: PATH (e.g. scripts_dir wasn't used for the
+    # install that put pb-sql-worker somewhere else reachable another way).
     import shutil
     found = shutil.which("pb-sql-worker")
     return Path(found) if found else None
