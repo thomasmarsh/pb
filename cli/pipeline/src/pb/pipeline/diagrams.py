@@ -42,7 +42,7 @@ _PLACEHOLDER_SVG = (
 )
 
 
-def _render_svg(dot) -> str:
+def render_dot_to_svg(dot) -> str:
     """Render a graphviz object to SVG.
 
     A single attempt, no attribute-mutating retry ladder: the graph attrs a
@@ -61,6 +61,14 @@ def _render_svg(dot) -> str:
     rendering quirk) is the one exception still raised, so the route can
     report a clear 503 instead of silently hiding a missing dependency
     behind a placeholder image.
+
+    Public (not `_`-prefixed): every graphviz.Digraph render in the codebase
+    must go through this one guarantee. `pb.api.services.diagrams.get_cfg_diagram`
+    builds its own `cfg_to_dot(...)` graph outside the `kind`-based builders
+    dict below and calls this directly -- a previous version of that function
+    called `dot.pipe()` itself with only an `ExecutableNotFound` guard, so the
+    same triangulation-library failure that this function exists to contain
+    took that endpoint down uncaught.
     """
     try:
         return dot.pipe(format="svg").decode("utf-8")
@@ -308,7 +316,7 @@ def render_svg(kind: str, conn: Conn, **params: Any) -> str:
         raise ValueError(f"Unknown diagram: {kind}")
 
     dot = builder()
-    svg = _render_svg(dot)
+    svg = render_dot_to_svg(dot)
 
     _svg_cache[key] = svg
     if len(_svg_cache) > _CACHE_MAX:

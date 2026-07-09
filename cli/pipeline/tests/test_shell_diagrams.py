@@ -9,7 +9,6 @@ import pytest
 from pb.pipeline.build import find_repo
 from pb.pipeline.diagrams import (
     _PLACEHOLDER_SVG,
-    _render_svg,
     _svg_cache,
     build_calls,
     build_dw_tables,
@@ -17,6 +16,7 @@ from pb.pipeline.diagrams import (
     build_heatmap,
     build_inheritance,
     build_window_table_lattice,
+    render_dot_to_svg,
     render_svg,
 )
 
@@ -312,7 +312,7 @@ def test_window_table_lattice_has_edges(schema_db_conn):
 
 
 # ---------------------------------------------------------------------------
-# J. _render_svg resilience — a rendering failure must never propagate as an
+# J. render_dot_to_svg resilience — a rendering failure must never propagate as an
 # exception, since a single bad diagram (e.g. a graphviz build missing the
 # triangulation library) must not break the page it's embedded in. Uses a
 # fake dot object so this doesn't depend on a real `dot` binary or corpus DB.
@@ -334,22 +334,22 @@ class FakeDot:
 
 def test_render_svg_returns_pipe_output_on_success():
     dot = FakeDot(exc=None)
-    assert _render_svg(dot) == "<svg>ok</svg>"
+    assert render_dot_to_svg(dot) == "<svg>ok</svg>"
     assert dot.calls == 1
 
 
 def test_render_svg_returns_placeholder_on_called_process_error():
     dot = FakeDot(exc=graphviz.backend.execute.CalledProcessError(1, ["dot"]))
-    assert _render_svg(dot) == _PLACEHOLDER_SVG
+    assert render_dot_to_svg(dot) == _PLACEHOLDER_SVG
     assert dot.calls == 1
 
 
 def test_render_svg_returns_placeholder_on_any_other_exception():
     dot = FakeDot(exc=RuntimeError("dot crashed"))
-    assert _render_svg(dot) == _PLACEHOLDER_SVG
+    assert render_dot_to_svg(dot) == _PLACEHOLDER_SVG
 
 
 def test_render_svg_reraises_executable_not_found():
     dot = FakeDot(exc=graphviz.backend.execute.ExecutableNotFound(["dot"]))
     with pytest.raises(graphviz.backend.execute.ExecutableNotFound):
-        _render_svg(dot)
+        render_dot_to_svg(dot)

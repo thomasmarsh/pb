@@ -6,9 +6,9 @@ import json
 from typing import Any
 
 import duckdb
-import graphviz
 from pb.lib.cfg_builder import cfg_from_json, compute_node_states
 from pb.lib.cfg_renderer import cfg_to_dot
+from pb.pipeline.diagrams import render_dot_to_svg
 
 
 def get_cfg_diagram(
@@ -45,10 +45,7 @@ def get_cfg_diagram(
         pass
 
     dot = cfg_to_dot(cfg, node_states)
-    try:
-        svg = dot.pipe(format="svg").decode("utf-8")
-    except graphviz.backend.execute.ExecutableNotFound:
-        raise
+    svg = render_dot_to_svg(dot)
 
     def _stmt_label(s: dict) -> str:
         tag = s.get("node", {}).get("tag", "?")
