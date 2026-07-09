@@ -52,8 +52,25 @@ def list_tables(conn: duckdb.DuckDBPyConnection, namespace: str | None = None) -
         """)
         )
     # Scoped to one schema: table identity comes from the DDL catalog (the
-    # only namespace-aware source); usage counts still join on bare
-    # table_name since all_sql_tables has no namespace of its own to match.
+    # only namespace-aware source). Usage counts join on bare table_name
+    # (all_sql_tables has no namespace of its own to match) only when this
+    # is the corpus's configured default namespace -- an unqualified SQL/DW
+    # reference almost certainly resolves against the default connection's
+    # schema, not an unrelated same-named table in another schema. A scoped
+    # but non-default namespace, or a corpus with no default configured at
+    # all (single-schema precedent), keeps/uses the join as before.
+    default_ns = get_default_namespace(conn)
+    if default_ns is not None and namespace != default_ns:
+        return rows(
+            conn.execute(
+                """
+                SELECT table_name, ? AS namespace, 0 AS dw_count, 0 AS ps_count, 0 AS file_count
+                FROM (SELECT DISTINCT table_name FROM catalog_columns WHERE namespace = ?) c
+                ORDER BY table_name
+            """,
+                [namespace, namespace],
+            )
+        )
     return rows(
         conn.execute(
             """
@@ -189,53 +206,77 @@ def get_table_detail(
         if not in_schema:
             return None
 
-    all_refs = rows(
-        conn.execute(
-            "SELECT source, object, proc_name, line, operation, file "
-            "FROM all_sql_tables WHERE table_name = ? ORDER BY source, object",
-            [table_name],
+    # The unqualified all_sql_tables/dw_retrieve_*/sql_statements layer has
+    # no namespace of its own, so it can't confirm a reference actually
+    # belongs to a non-default schema. Attribute its rows here only when
+    # unscoped, scoped to the corpus's configured default namespace, or when
+    # no default is configured at all (single-schema precedent) -- otherwise
+    # a scoped-but-non-default table reads as honestly empty rather than
+    # borrowing another same-named schema's usage.
+    default_ns = get_default_namespace(conn)
+    use_unqualified = namespace is None or namespace == default_ns or default_ns is None
+
+    if use_unqualified:
+        all_refs = rows(
+            conn.execute(
+                "SELECT source, object, proc_name, line, operation, file "
+                "FROM all_sql_tables WHERE table_name = ? ORDER BY source, object",
+                [table_name],
+            )
         )
-    )
+    else:
+        all_refs = []
     if namespace is None and not all_refs:
         return None
 
-    try:
-        dws = rows(
+    if use_unqualified:
+        try:
+            dws = rows(
+                conn.execute(
+                    "SELECT DISTINCT dw_name, file FROM dw_retrieve_tables WHERE table_name = ? ORDER BY dw_name",
+                    [table_name],
+                )
+            )
+        except Exception:
+            dws = []
+        try:
+            columns = rows(
+                conn.execute(
+                    "SELECT dw_name, column_fqn, column_name "
+                    "FROM dw_retrieve_columns WHERE table_name = ? ORDER BY dw_name, column_name",
+                    [table_name],
+                )
+            )
+        except Exception:
+            columns = []
+        try:
+            where = rows(
+                conn.execute(
+                    "SELECT dw_name, idx, exp1, op, exp2, logic "
+                    "FROM dw_retrieve_where WHERE exp1 LIKE ? OR exp2 LIKE ? ORDER BY dw_name, idx",
+                    [f"%{table_name}%", f"%{table_name}%"],
+                )
+            )
+        except Exception:
+            where = []
+        procedures = rows(
             conn.execute(
-                "SELECT DISTINCT dw_name, file FROM dw_retrieve_tables WHERE table_name = ? ORDER BY dw_name",
+                "SELECT DISTINCT object, proc_name, operation "
+                "FROM all_sql_tables "
+                "WHERE table_name = ? AND source = 'powerscript' ORDER BY object, proc_name",
                 [table_name],
             )
         )
-    except Exception:
+        columns_detail = column_lineage(conn, table_name)
+        impact = impact_lineage(conn, table_name)
+    else:
         dws = []
-    try:
-        columns = rows(
-            conn.execute(
-                "SELECT dw_name, column_fqn, column_name "
-                "FROM dw_retrieve_columns WHERE table_name = ? ORDER BY dw_name, column_name",
-                [table_name],
-            )
-        )
-    except Exception:
         columns = []
-    try:
-        where = rows(
-            conn.execute(
-                "SELECT dw_name, idx, exp1, op, exp2, logic "
-                "FROM dw_retrieve_where WHERE exp1 LIKE ? OR exp2 LIKE ? ORDER BY dw_name, idx",
-                [f"%{table_name}%", f"%{table_name}%"],
-            )
-        )
-    except Exception:
         where = []
-    procedures = rows(
-        conn.execute(
-            "SELECT DISTINCT object, proc_name, operation "
-            "FROM all_sql_tables "
-            "WHERE table_name = ? AND source = 'powerscript' ORDER BY object, proc_name",
-            [table_name],
-        )
-    )
+        procedures = []
+        columns_detail = []
+        impact = {"direct": [], "inherited": []}
+
     return {
         "table_name": table_name,
         **({"namespace": namespace} if namespace is not None else {}),
@@ -243,10 +284,10 @@ def get_table_detail(
         "ps_count": len(procedures),
         "datawindows": dws,
         "columns": columns,
-        "columns_detail": column_lineage(conn, table_name),
+        "columns_detail": columns_detail,
         "where": where,
         "procedures": procedures,
-        "impact": impact_lineage(conn, table_name),
+        "impact": impact,
     }
 
 

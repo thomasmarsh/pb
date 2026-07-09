@@ -14,7 +14,7 @@ from pb.api.services.tables import (
 )
 
 
-def _multi_namespace_conn() -> duckdb.DuckDBPyConnection:
+def _multi_namespace_conn(default_namespace: str | None = None) -> duckdb.DuckDBPyConnection:
     """Synthetic corpus: `clinicalaccession` defined identically in three
     schemas (the real-world case that motivated this) plus one table that
     only ever shows up via SQL usage, never in the DDL catalog at all."""
@@ -25,6 +25,7 @@ def _multi_namespace_conn() -> duckdb.DuckDBPyConnection:
         "(file TEXT, object TEXT, source TEXT, operation TEXT, table_name TEXT, proc_name TEXT, line INTEGER)"
     )
     conn.execute("CREATE TABLE objects (file TEXT, kind TEXT, object TEXT, ancestor TEXT)")
+    conn.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
     conn.execute(
         "INSERT INTO catalog_columns VALUES "
         "('clims', 'clinicalaccession', 'id', 0), "
@@ -37,6 +38,8 @@ def _multi_namespace_conn() -> duckdb.DuckDBPyConnection:
         "('f.srw', 'w_f', 'powerscript', 'select', 'clinicalaccession', 'p1', 1), "
         "('f.srw', 'w_f', 'powerscript', 'select', 'legacy_only', 'p2', 2)"
     )
+    if default_namespace is not None:
+        conn.execute("INSERT INTO metadata VALUES ('default_namespace', ?)", [default_namespace])
     return conn
 
 
@@ -116,17 +119,44 @@ def test_list_schemas_multiple_namespaces_ranked_by_table_name():
 
 
 def test_list_tables_scoped_to_namespace_disambiguates_collisions():
-    conn = _multi_namespace_conn()
+    conn = _multi_namespace_conn(default_namespace="clims")
     clims = list_tables(conn, namespace="clims")
     assert [t["table_name"] for t in clims] == ["clinicalaccession", "patient"]
     for t in clims:
         assert t["namespace"] == "clims"
+    # clims is the configured default namespace, so the unqualified
+    # all_sql_tables layer's usage attaches here.
+    assert clims[0]["ps_count"] == 1
 
     archive = list_tables(conn, namespace="clims_archive")
     assert [t["table_name"] for t in archive] == ["clinicalaccession"]
-    # usage counts join on bare table_name (the SQL-usage index has no
-    # namespace of its own), so the one all_sql_tables row for
-    # clinicalaccession is visible from every namespace that defines it.
+    # clims_archive is scoped-but-non-default: the unqualified SQL-usage
+    # index can't tell which schema a bare `clinicalaccession` reference
+    # actually meant, and it almost certainly meant the default connection's
+    # schema (clims) -- so a non-default scope must see zero usage rather
+    # than the same row every same-named schema would otherwise show.
+    assert archive[0]["ps_count"] == 0
+    assert archive[0]["dw_count"] == 0
+    assert archive[0]["file_count"] == 0
+
+
+def test_list_tables_scoped_to_non_default_namespace_zeros_usage():
+    conn = _multi_namespace_conn(default_namespace="clims")
+    for ns in ("clims_archive", "clims_common"):
+        result = list_tables(conn, namespace=ns)
+        assert [t["table_name"] for t in result] == ["clinicalaccession"]
+        assert result[0]["ps_count"] == 0
+        assert result[0]["dw_count"] == 0
+        assert result[0]["file_count"] == 0
+
+
+def test_list_tables_scoped_without_default_namespace_configured_keeps_legacy_join():
+    # No --default-namespace configured at all: preserve the pre-Phase-2
+    # behavior of joining usage on bare table_name regardless of scope,
+    # rather than zeroing everything out just because a namespace param
+    # was passed.
+    conn = _multi_namespace_conn(default_namespace=None)
+    archive = list_tables(conn, namespace="clims_archive")
     assert archive[0]["ps_count"] == 1
 
 
@@ -148,6 +178,33 @@ def test_get_table_detail_scoped_to_namespace():
 def test_get_table_detail_scoped_to_missing_namespace_is_not_found():
     conn = _multi_namespace_conn()
     assert get_table_detail(conn, "clinicalaccession", namespace="not_a_real_schema") is None
+
+
+def test_get_table_detail_scoped_to_default_namespace_keeps_usage():
+    conn = _multi_namespace_conn(default_namespace="clims")
+    result = get_table_detail(conn, "clinicalaccession", namespace="clims")
+    assert result is not None
+    assert result["ps_count"] == 1
+    assert [p["object"] for p in result["procedures"]] == ["w_f"]
+    assert result["impact"]["direct"]
+
+
+def test_get_table_detail_scoped_to_non_default_namespace_zeros_usage():
+    conn = _multi_namespace_conn(default_namespace="clims")
+    result = get_table_detail(conn, "clinicalaccession", namespace="clims_common")
+    assert result is not None
+    assert result["namespace"] == "clims_common"
+    # clims_common is scoped-but-non-default: the unqualified all_sql_tables
+    # layer can't confirm the usage was actually against this schema, so
+    # usage-derived fields must read as honestly empty, not borrowed from
+    # the default schema's row.
+    assert result["ps_count"] == 0
+    assert result["datawindows"] == []
+    assert result["columns"] == []
+    assert result["columns_detail"] == []
+    assert result["where"] == []
+    assert result["procedures"] == []
+    assert result["impact"] == {"direct": [], "inherited": []}
 
 
 def test_get_table_stats(db_conn: duckdb.DuckDBPyConnection):
