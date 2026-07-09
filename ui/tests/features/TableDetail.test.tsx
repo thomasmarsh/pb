@@ -164,6 +164,41 @@ describe("TableDetail source-first", () => {
       expect(document.body.textContent).toContain("legacy_flag");
       expect(document.body.textContent).toContain("audit_stamp");
     });
+
+    it("excludes dead/write-only columns from a same-named table in a different namespace", () => {
+      const detail: TableDetailData = { ...baseDetail, namespace: "clims" };
+      const usage: ColumnUsageResponse = {
+        dead: [{ namespace: "clims_archive", table: "orders", column: "legacy_flag" }],
+        write_only: [{ namespace: "clims_archive", table: "orders", column: "audit_stamp" }],
+        read_only: [],
+        read_write: [],
+      };
+      renderTableDetail(detail, usage);
+      expect(summaryBar()?.textContent).not.toContain("Column Usage");
+    });
+
+    it("includes dead/write-only columns when namespace matches the table's own namespace", () => {
+      const detail: TableDetailData = { ...baseDetail, namespace: "clims" };
+      const usage: ColumnUsageResponse = {
+        dead: [{ namespace: "clims", table: "orders", column: "legacy_flag" }],
+        write_only: [{ namespace: "clims", table: "orders", column: "audit_stamp" }],
+        read_only: [],
+        read_write: [],
+      };
+      renderTableDetail(detail, usage);
+      expect(summaryBar()?.textContent).toContain("Column Usage (2)");
+    });
+
+    it("treats null and undefined namespace as equal for the common single-schema corpus", () => {
+      const usage: ColumnUsageResponse = {
+        dead: [{ namespace: null, table: "orders", column: "legacy_flag" }],
+        write_only: [],
+        read_only: [],
+        read_write: [],
+      };
+      renderTableDetail(baseDetail, usage);
+      expect(summaryBar()?.textContent).toContain("Column Usage (1)");
+    });
   });
 
   describe("Co-update Rituals pill (Plan 153 D1)", () => {
@@ -214,6 +249,34 @@ describe("TableDetail source-first", () => {
       expect(document.body.textContent).toContain("orders.status");
       expect(document.body.textContent).toContain("orders.status_reason");
       expect(document.body.textContent).toContain("set_status");
+    });
+
+    it("excludes rituals whose column belongs to a same-named table in a different namespace", () => {
+      const detail: TableDetailData = { ...baseDetail, namespace: "clims" };
+      const rituals: CoUpdateRitualsResponse = {
+        rituals: [{
+          column_a: { namespace: "clims_archive", table: "orders", column: "status" },
+          column_b: { namespace: "clims_archive", table: "orders", column: "status_reason" },
+          co_write_support: 3,
+          violations: [],
+        }],
+      };
+      renderTableDetail(detail, null, rituals);
+      expect(summaryBar()?.textContent).not.toContain("Co-update Rituals");
+    });
+
+    it("includes rituals when the ritual column's namespace matches the table's own namespace", () => {
+      const detail: TableDetailData = { ...baseDetail, namespace: "clims" };
+      const rituals: CoUpdateRitualsResponse = {
+        rituals: [{
+          column_a: { namespace: "clims", table: "orders", column: "status" },
+          column_b: { namespace: "clims", table: "orders", column: "status_reason" },
+          co_write_support: 3,
+          violations: [],
+        }],
+      };
+      renderTableDetail(detail, null, rituals);
+      expect(summaryBar()?.textContent).toContain("Co-update Rituals (1)");
     });
   });
 

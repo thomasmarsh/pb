@@ -70,6 +70,10 @@ function refLabel(col: FkColumnRef): string {
   return `${col.namespace ? `${col.namespace}.` : ""}${col.table}.${col.column}`;
 }
 
+function sameNamespacedTable(col: FkColumnRef, d: TableDetailData): boolean {
+  return col.table === d.table_name && (col.namespace ?? null) === (d.namespace ?? null);
+}
+
 function RitualList(props: { rituals: CoUpdateRitual[] }) {
   return (
     <table class="data-table">
@@ -205,11 +209,11 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
   const columnUsageState = createMemo(() => store.getState()().tables.columnUsage);
   const deadColumns = createMemo(() => {
     const cu = columnUsageState();
-    return cu && !("error" in cu) ? cu.dead.filter((c) => c.table === d.table_name) : [];
+    return cu && !("error" in cu) ? cu.dead.filter((c) => sameNamespacedTable(c, d)) : [];
   });
   const writeOnlyColumns = createMemo(() => {
     const cu = columnUsageState();
-    return cu && !("error" in cu) ? cu.write_only.filter((c) => c.table === d.table_name) : [];
+    return cu && !("error" in cu) ? cu.write_only.filter((c) => sameNamespacedTable(c, d)) : [];
   });
   const columnUsageCount = () => deadColumns().length + writeOnlyColumns().length;
   const hasColumnUsage = () => columnUsageCount() > 0;
@@ -219,7 +223,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
   const tableRituals = createMemo(() => {
     const cr = coUpdateRitualsState();
     return cr && !("error" in cr)
-      ? cr.rituals.filter((r) => r.column_a.table === d.table_name || r.column_b.table === d.table_name)
+      ? cr.rituals.filter((r) => sameNamespacedTable(r.column_a, d) || sameNamespacedTable(r.column_b, d))
       : [];
   });
   const hasCoUpdateRituals = () => tableRituals().length > 0;
