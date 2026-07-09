@@ -12,6 +12,7 @@ data Options = Options
   , optDb         :: Maybe FilePath
   , optDdl        :: [Text]
   , optSqlDialect :: Text
+  , optSqlWorker  :: Maybe FilePath
   }
 
 optParser :: Parser Options
@@ -22,13 +23,17 @@ optParser = Options
               <> help "DDL catalog file, optionally schema-tagged (repeatable, e.g. --ddl CLIMS:clims.sql)"))
   <*> strOption (long "sql-dialect" <> metavar "DIALECT" <> value "oracle"
               <> help "sqlglot dialect for both DDL and embedded-SQL parsing (default: oracle)")
+  <*> optional (strOption (long "sql-worker" <> metavar "BIN"
+              <> help "Path to the pb-sql-worker binary (overrides PB_SQL_WORKER env var; \
+                       \the pb CLI resolves and passes this explicitly so DDL/SQL parsing \
+                       \doesn't depend on environment-variable propagation)"))
 
 main :: IO ()
 main = do
   getNumProcessors >>= setNumCapabilities
   opts <- execParser (info (optParser <**> helper) desc)
   case (optInput opts, optDb opts) of
-    (Just inp, Just db) -> runModeDb inp db (optDdl opts) (optSqlDialect opts)
-    _ -> die "usage: pbc -i <srcdir> --db <file> [--ddl [SCHEMA:]<file>]... [--sql-dialect <dialect>]"
+    (Just inp, Just db) -> runModeDb inp db (optDdl opts) (optSqlDialect opts) (optSqlWorker opts)
+    _ -> die "usage: pbc -i <srcdir> --db <file> [--ddl [SCHEMA:]<file>]... [--sql-dialect <dialect>] [--sql-worker <bin>]"
   where
     desc = fullDesc <> progDesc "Parse a PowerBuilder source tree into a DuckDB AST database"

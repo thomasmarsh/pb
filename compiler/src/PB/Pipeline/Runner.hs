@@ -405,9 +405,16 @@ parseDdlArg arg =
 -- (@--ddl CLIMS:clims.sql --ddl CLIMS_COMMON:clims-common.sql@) whose
 -- cross-schema FK references resolve against each other once loaded.
 -- 'dialect' is the sqlglot dialect for both DDL and regular SQL-statement
--- parsing (see 'PB.Pipeline.SqlParse.SqlBridgePool').
-runModeDb :: FilePath -> FilePath -> [Text] -> Text -> IO ()
-runModeDb srcDir dbPath ddlArgs dialect = do
+-- parsing (see 'PB.Pipeline.SqlParse.SqlBridgePool'). 'mSqlWorkerFlag' is the
+-- resolved pb-sql-worker binary path passed explicitly via @--sql-worker@ --
+-- the pb CLI resolves this itself (via sysconfig, deterministic per
+-- interpreter) and passes it as an argument rather than an environment
+-- variable, so bridge availability can't be lost anywhere in a
+-- shell -> uv run -> python -> subprocess chain. Falls back to the
+-- PB_SQL_WORKER env var (lookupEnv) when the flag is omitted, for direct/
+-- manual `cabal run pbc --` invocations.
+runModeDb :: FilePath -> FilePath -> [Text] -> Text -> Maybe FilePath -> IO ()
+runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag = do
   files <- walkAllSrFiles srcDir
   let total = length files
   emitProgress (object ["tag" .= ("total" :: Text), "n" .= total])
@@ -423,7 +430,9 @@ runModeDb srcDir dbPath ddlArgs dialect = do
                 (map pfSrFile stdlibParsed ++ [pfSrFile pf | PsParsed pf <- outcomes0])
   _ <- evaluate (Map.size (weGlobals wsEnv) + Map.size (weHierarchy wsEnv))
 
-  mBridgeBin <- lookupEnv "PB_SQL_WORKER"
+  mBridgeBin <- case mSqlWorkerFlag of
+    Just bin -> pure (Just bin)
+    Nothing  -> lookupEnv "PB_SQL_WORKER"
   nWorkers   <- getNumCapabilities
   errCount   <- newIORef (0 :: Int)
 

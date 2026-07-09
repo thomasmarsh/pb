@@ -896,24 +896,32 @@ extractBsRawNodes :: [Located BodyStmt] -> [(Int, Text)]          -- recurses in
 ```haskell
 -- Batch orchestration: DuckDB streaming, worker loops.
 -- Re-exports from Emit: runFile, collectStatements, wrapSrFile, extractWindowLayout, reconstructRetrieveSql
-runModeDb :: FilePath -> FilePath -> [Text] -> Text -> IO ()
--- srcDir, dbPath, ddlArgs, dialect (Plan 148 Phase 1a-3; Oracle hardening
--- 2026-07-08 changed the DDL param from Maybe FilePath to [Text] and added
--- the dialect param). ddlArgs are raw --ddl CLI values in [schema:]path form
--- (repeatable -- e.g. --ddl CLIMS:clims.sql --ddl CLIMS_COMMON:common.sql for
--- multiple per-schema dumps with cross-schema FKs). dialect is the sqlglot
+runModeDb :: FilePath -> FilePath -> [Text] -> Text -> Maybe FilePath -> IO ()
+-- srcDir, dbPath, ddlArgs, dialect, mSqlWorkerFlag (Plan 148 Phase 1a-3; Oracle
+-- hardening 2026-07-08 changed the DDL param from Maybe FilePath to [Text] and
+-- added the dialect param). ddlArgs are raw --ddl CLI values in [schema:]path
+-- form (repeatable -- e.g. --ddl CLIMS:clims.sql --ddl CLIMS_COMMON:common.sql
+-- for multiple per-schema dumps with cross-schema FKs). dialect is the sqlglot
 -- dialect for BOTH DDL and regular embedded-SQL parsing, set once on the
 -- SqlBridgePool (see SqlParse's sbpDialect) so the two can't drift --
 -- previously DDL silently hardcoded "mysql" while SQL parsing hardcoded
 -- "oracle", which zeroed catalog_columns/catalog_pks for any non-MySQL
--- corpus. When PB_SQL_WORKER is set, each ddlArg is read + parsed
--- independently (parseDdlArg splits the schema tag, parseDdl applies it as
--- the default namespace for unqualified tables/FK refs in that file) and
--- appended via catalogToRows; an emitProgress "ddl_loaded" event reports
--- per-file parse_ok/error/statement-stats/table+pk+fk+check counts -- so a
+-- corpus. mSqlWorkerFlag (SQL bridge discovery hardening, 2026-07-09) is the
+-- resolved pb-sql-worker path passed explicitly via --sql-worker; preferred
+-- over lookupEnv "PB_SQL_WORKER" (used only when the flag is Nothing, for
+-- direct/manual `cabal run pbc --` invocations) so bridge availability can't
+-- be lost anywhere in a shell -> uv run -> python -> subprocess.Popen chain --
+-- the pb CLI resolves the path itself (sysconfig-independent of repo layout)
+-- and passes it as an argument rather than relying on env-var propagation.
+-- When the bridge is available, each ddlArg is read + parsed independently
+-- (parseDdlArg splits the schema tag, parseDdl applies it as the default
+-- namespace for unqualified tables/FK refs in that file) and appended via
+-- catalogToRows; an emitProgress "ddl_loaded" event reports per-file
+-- parse_ok/error/statement-stats/table+pk+fk+check counts -- so a
 -- silently-empty catalog (the original bug report) can never go unnoticed
 -- again. When no bridge, emits a "warning" progress event per ddlArg and
--- skips (no hard error). Main.hs's --ddl/--sql-dialect flags thread through here.
+-- skips (no hard error). Main.hs's --ddl/--sql-dialect/--sql-worker flags
+-- thread through here.
 parseDdlArg :: Text -> (Maybe Text, FilePath)
 -- Pure. Splits a --ddl CLI value in [schema:]path form -- the prefix before
 -- the first ':' is treated as a schema tag only when it contains no '/' (so

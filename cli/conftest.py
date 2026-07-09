@@ -1,6 +1,5 @@
 """Shared fixtures — session-scoped to avoid rebuilding pbc output 4x."""
 
-import os
 import subprocess
 
 import duckdb
@@ -52,7 +51,7 @@ def schema_db_path(tmp_path_factory) -> str:
 
     `Sch` (Plan 148: schema_objects/schema_morphisms/catalog_*/
     sql_statement_columns) is only fully populated when both --ddl and the
-    sqlglot bridge (PB_SQL_WORKER) are active. The shared `db_path` fixture
+    sqlglot bridge (via --sql-worker) are active. The shared `db_path` fixture
     has neither, so Plan 153's D2/D6 tests need their own build rather than
     silently asserting against an empty Sch.
     """
@@ -63,16 +62,14 @@ def schema_db_path(tmp_path_factory) -> str:
     db = str(tmp / "schema_test.duckdb")
 
     binary = find_binary(REPO_ROOT)
-    run_env = os.environ.copy()
-    run_env["PB_SQL_WORKER"] = str(sql_worker)
     result = subprocess.run(
         [
             str(binary), "-i", str(OPENPAY_DIR), "--db", db,
             "--ddl", str(OPENPAY_DDL), "--sql-dialect", "mysql",
+            "--sql-worker", str(sql_worker),
         ],
         capture_output=True,
         text=True,
-        env=run_env,
     )
     assert result.returncode == 0, result.stderr
 

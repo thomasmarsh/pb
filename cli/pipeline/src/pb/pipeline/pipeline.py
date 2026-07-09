@@ -50,10 +50,10 @@ def run(
 
     run_env = os.environ.copy()
     sql_worker = find_sql_worker()
-    if sql_worker:
-        run_env["PB_SQL_WORKER"] = str(sql_worker)
 
     argv = [str(binary), "-i", str(src_dir), "--db", db_new, "--sql-dialect", dialect]
+    if sql_worker:
+        argv += ["--sql-worker", str(sql_worker)]
     for d in ddl:
         argv += ["--ddl", d]
 
