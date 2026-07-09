@@ -1,8 +1,9 @@
 module Main (main) where
 
 import PB.Prelude
-import PB.Pipeline.Runner (runModeDb)
+import PB.Pipeline.Runner (runModeDb, validateDdlNamespaceConfig)
 
+import qualified Data.Text as T
 import Options.Applicative
 import System.Exit (die)
 import GHC.Conc   (getNumProcessors, setNumCapabilities)
@@ -41,6 +42,9 @@ main :: IO ()
 main = do
   getNumProcessors >>= setNumCapabilities
   opts <- execParser (info (optParser <**> helper) desc)
+  case validateDdlNamespaceConfig (optDdl opts) (optDefaultNamespace opts) of
+    Left err -> die (T.unpack ("pbc: " <> err))
+    Right () -> pure ()
   case (optInput opts, optDb opts) of
     (Just inp, Just db) -> runModeDb inp db (optDdl opts) (optSqlDialect opts) (optSqlWorkerPython opts) (optDefaultNamespace opts)
     _ -> die "usage: pbc -i <srcdir> --db <file> [--ddl [SCHEMA:]<file>]... [--sql-dialect <dialect>] [--sql-worker-python <bin>] [--default-namespace <schema>]"

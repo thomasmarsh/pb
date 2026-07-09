@@ -12,6 +12,7 @@ module PB.Pipeline.Runner
   , appendToDb
   , catalogToRows
   , parseDdlArg
+  , validateDdlNamespaceConfig
   , CompiledFile (..)
   , CompiledPs (..)
   , CompiledDw (..)
@@ -449,6 +450,27 @@ parseDdlArg arg =
       | not (T.null rest), not ("/" `T.isInfixOf` prefix) ->
           (Just prefix, T.unpack (T.drop 1 rest))
     _ -> (Nothing, T.unpack arg)
+
+-- | Plan 157 Phase 6: reject an ambiguous launch before any work starts.
+-- 'resolveTableRef' (see 'PB.Analysis.SchemaCategory') is a pure no-op
+-- whenever the default namespace is 'Nothing' — every unqualified table
+-- reference in the corpus then silently fails to resolve against any
+-- schema-tagged catalog, with no error anywhere in the run. As soon as
+-- even one @--ddl@ arg carries an explicit @SCHEMA:@ tag, a default becomes
+-- mandatory: there is no other way for an unqualified reference to pick a
+-- schema. 'Left' carries a user-facing message; the caller is expected to
+-- 'die' with it.
+validateDdlNamespaceConfig :: [Text] -> Maybe Text -> Either Text ()
+validateDdlNamespaceConfig ddlArgs mDefaultNamespace
+  | Set.null taggedSchemas || isJust mDefaultNamespace = Right ()
+  | otherwise = Left $
+      "--ddl <SCHEMA:file> was given (schema(s): "
+        <> T.intercalate ", " (Set.toList taggedSchemas)
+        <> ") but --default-namespace was not. Unqualified table references "
+        <> "in the corpus cannot resolve against any of the tagged schemas "
+        <> "without one. Pass --default-namespace <schema>."
+  where
+    taggedSchemas = Set.fromList [s | arg <- ddlArgs, (Just s, _) <- [parseDdlArg arg]]
 
 -- | 'ddlArgs' are raw @--ddl@ CLI values in @[schema:]path@ form (see
 -- 'parseDdlArg'), one per DDL dump file -- e.g. multiple per-schema exports

@@ -1,7 +1,7 @@
 module RunnerTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, catalogToRows, CompiledFile (..), CompiledPs (..), CompiledDw (..))
+import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, catalogToRows, validateDdlNamespaceConfig, CompiledFile (..), CompiledPs (..), CompiledDw (..))
 import PB.Pipeline.Emit    (parsePowerScriptFile, ParsedFile (..), ParseOutcome (..))
 import PB.Pipeline.DuckDb
   ( ProcRow (..), SqlStmtColumnRow (..), SqlStmtFilterRow (..)
@@ -782,6 +782,28 @@ tests = testGroup "Pipeline.Runner"
                   , (1, "t.mycol", ">", "100", Nothing)
                   ]
           _ -> assertFailure "expected CFDw"
+    ]
+
+  , testGroup "validateDdlNamespaceConfig (Plan 157 Phase 6)"
+    [ testCase "no --ddl args: no default namespace required" $
+        validateDdlNamespaceConfig [] Nothing @?= Right ()
+    , testCase "untagged --ddl args: no default namespace required" $
+        validateDdlNamespaceConfig ["clims.sql", "../common.sql"] Nothing @?= Right ()
+    , testCase "single tagged --ddl with a default namespace: ok" $
+        validateDdlNamespaceConfig ["CLIMS:clims.sql"] (Just "CLIMS") @?= Right ()
+    , testCase "single tagged --ddl with no default namespace: rejected" $
+        case validateDdlNamespaceConfig ["CLIMS:clims.sql"] Nothing of
+          Left err -> assertBool "message names the tagged schema" ("CLIMS" `T.isInfixOf` err)
+          Right () -> assertFailure "expected Left, got Right ()"
+    , testCase "multiple tagged --ddl with no default namespace: rejected, names both schemas" $
+        case validateDdlNamespaceConfig ["CLIMS:a.sql", "CLIMS_COMMON:b.sql"] Nothing of
+          Left err -> assertBool "message names both tagged schemas"
+            ("CLIMS" `T.isInfixOf` err && "CLIMS_COMMON" `T.isInfixOf` err)
+          Right () -> assertFailure "expected Left, got Right ()"
+    , testCase "mixed tagged + untagged --ddl with no default namespace: rejected" $
+        case validateDdlNamespaceConfig ["CLIMS:a.sql", "untagged.sql"] Nothing of
+          Left _   -> pure ()
+          Right () -> assertFailure "expected Left, got Right ()"
     ]
   ]
 
