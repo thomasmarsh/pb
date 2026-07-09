@@ -12,7 +12,7 @@ data Options = Options
   , optDb         :: Maybe FilePath
   , optDdl        :: [Text]
   , optSqlDialect :: Text
-  , optSqlWorker  :: Maybe FilePath
+  , optSqlWorkerPython :: Maybe FilePath
   }
 
 optParser :: Parser Options
@@ -23,17 +23,20 @@ optParser = Options
               <> help "DDL catalog file, optionally schema-tagged (repeatable, e.g. --ddl CLIMS:clims.sql)"))
   <*> strOption (long "sql-dialect" <> metavar "DIALECT" <> value "oracle"
               <> help "sqlglot dialect for both DDL and embedded-SQL parsing (default: oracle)")
-  <*> optional (strOption (long "sql-worker" <> metavar "BIN"
-              <> help "Path to the pb-sql-worker binary (overrides PB_SQL_WORKER env var; \
-                       \the pb CLI resolves and passes this explicitly so DDL/SQL parsing \
-                       \doesn't depend on environment-variable propagation)"))
+  <*> optional (strOption (long "sql-worker-python" <> metavar "BIN"
+              <> help "Path to the python interpreter used to launch the SQL bridge worker \
+                       \(pb.pipeline.bridge.sql_worker, run via -m -- its location is fixed \
+                       \within the pb_pipeline distribution and needs no separate discovery). \
+                       \Overrides PB_SQL_WORKER env var; the pb CLI always passes its own \
+                       \sys.executable here unconditionally, so bridge availability can't be \
+                       \lost to environment-variable propagation."))
 
 main :: IO ()
 main = do
   getNumProcessors >>= setNumCapabilities
   opts <- execParser (info (optParser <**> helper) desc)
   case (optInput opts, optDb opts) of
-    (Just inp, Just db) -> runModeDb inp db (optDdl opts) (optSqlDialect opts) (optSqlWorker opts)
-    _ -> die "usage: pbc -i <srcdir> --db <file> [--ddl [SCHEMA:]<file>]... [--sql-dialect <dialect>] [--sql-worker <bin>]"
+    (Just inp, Just db) -> runModeDb inp db (optDdl opts) (optSqlDialect opts) (optSqlWorkerPython opts)
+    _ -> die "usage: pbc -i <srcdir> --db <file> [--ddl [SCHEMA:]<file>]... [--sql-dialect <dialect>] [--sql-worker-python <bin>]"
   where
     desc = fullDesc <> progDesc "Parse a PowerBuilder source tree into a DuckDB AST database"

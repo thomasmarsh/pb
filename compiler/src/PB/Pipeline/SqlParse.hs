@@ -12,6 +12,7 @@ module PB.Pipeline.SqlParse
   , DdlResponse (..)
   , WorkerConn (..)
   , SqlBridgePool (..)
+  , sqlWorkerModuleArgs
   , startSqlBridgePool
   , parseSql
   , parseDdl
@@ -232,9 +233,21 @@ data WorkerConn = WorkerConn
   , wcProcess :: ProcessHandle
   }
 
+-- | Args used to launch the real (non-test-mock) sql-worker bridge: run the
+-- checked-in @pb.pipeline.bridge.sql_worker@ module via @python -m@, under
+-- whichever interpreter the pb CLI resolves itself (always @sys.executable@
+-- -- see 'PB.Pipeline.Runner.runModeDb'). The module's location within its
+-- own distribution is fixed and requires no discovery: if the interpreter
+-- can import the 'pb.pipeline.build' module that resolves it, it can import
+-- this sibling module too, since both are always installed together as part
+-- of the same @pb_pipeline@ distribution.
+sqlWorkerModuleArgs :: [String]
+sqlWorkerModuleArgs = ["-m", "pb.pipeline.bridge.sql_worker"]
+
 data SqlBridgePool = SqlBridgePool
   { sbpSlots   :: V.Vector (IORef WorkerConn)
-  , sbpBinary  :: FilePath
+  , sbpCmd     :: FilePath
+  , sbpArgs    :: [String]
   , sbpDialect :: Text
   }
 
@@ -245,11 +258,18 @@ data SqlBridgePool = SqlBridgePool
 
 -- | 'dialect' governs both regular SQL-statement parsing ('parseSql') and DDL
 -- parsing ('parseDdl') -- set once here rather than threaded separately
--- through each, so the two can never structurally drift apart.
-startSqlBridgePool :: Int -> FilePath -> Text -> IO SqlBridgePool
-startSqlBridgePool n bin dialect = do
-  slots <- mapM (\_ -> startWorker bin >>= newIORef) [0 .. n - 1]
-  pure $ SqlBridgePool { sbpSlots = V.fromList slots, sbpBinary = bin, sbpDialect = dialect }
+-- through each, so the two can never structurally drift apart. 'cmd'/'args'
+-- are exec'd directly as @cmd args@ (no shell) -- production passes the
+-- resolved python interpreter as 'cmd' and @["-m",
+-- "pb.pipeline.bridge.sql_worker"]@ as 'args' (see 'PB.Pipeline.Runner'),
+-- since the worker module's checked-in source location is fixed and
+-- requires no discovery at all; the test suite passes a directly-executable
+-- mock script as 'cmd' with 'args' = [] to substitute fake worker behavior
+-- (crash-on-Nth-request, wrong protocol, etc).
+startSqlBridgePool :: Int -> FilePath -> [String] -> Text -> IO SqlBridgePool
+startSqlBridgePool n cmd args dialect = do
+  slots <- mapM (\_ -> startWorker cmd args >>= newIORef) [0 .. n - 1]
+  pure $ SqlBridgePool { sbpSlots = V.fromList slots, sbpCmd = cmd, sbpArgs = args, sbpDialect = dialect }
 
 shutdownSqlBridgePool :: SqlBridgePool -> IO ()
 shutdownSqlBridgePool pool =
@@ -316,10 +336,10 @@ parseDdl pool defaultNamespace ddlText = do
 -- Wire protocol helpers
 -- ---------------------------------------------------------------------------
 
-startWorker :: FilePath -> IO WorkerConn
-startWorker bin = do
+startWorker :: FilePath -> [String] -> IO WorkerConn
+startWorker cmd args = do
   (Just hIn, Just hOut, _, ph) <- createProcess
-    (proc bin []) { std_in = CreatePipe, std_out = CreatePipe, std_err = Inherit }
+    (proc cmd args) { std_in = CreatePipe, std_out = CreatePipe, std_err = Inherit }
   hSetBinaryMode hIn  True
   hSetBinaryMode hOut True
   pure $ WorkerConn { wcStdin = hIn, wcStdout = hOut, wcProcess = ph }
@@ -328,7 +348,7 @@ restartWorker :: SqlBridgePool -> IORef WorkerConn -> WorkerConn -> IO ()
 restartWorker pool ref old = do
   _ <- try @SomeException (terminateProcess (wcProcess old))
   _ <- try @SomeException (waitForProcess (wcProcess old))
-  conn' <- startWorker (sbpBinary pool)
+  conn' <- startWorker (sbpCmd pool) (sbpArgs pool)
   writeIORef ref conn'
 
 sendReceive :: WorkerConn -> Text -> Text -> IO (Maybe SqlResult)

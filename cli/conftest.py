@@ -1,10 +1,11 @@
 """Shared fixtures — session-scoped to avoid rebuilding pbc output 4x."""
 
 import subprocess
+import sys
 
 import duckdb
 import pytest
-from pb.pipeline.build import find_binary, find_repo, find_sql_worker
+from pb.pipeline.build import find_binary, find_repo
 from pb.pipeline.db import db_connection, setup_db_extras
 from pb.pipeline.metrics import compute_metrics
 from pb.pipeline.reporter import LiveReporter
@@ -51,13 +52,10 @@ def schema_db_path(tmp_path_factory) -> str:
 
     `Sch` (Plan 148: schema_objects/schema_morphisms/catalog_*/
     sql_statement_columns) is only fully populated when both --ddl and the
-    sqlglot bridge (via --sql-worker) are active. The shared `db_path` fixture
-    has neither, so Plan 153's D2/D6 tests need their own build rather than
-    silently asserting against an empty Sch.
+    sqlglot bridge (via --sql-worker-python) are active. The shared `db_path`
+    fixture has neither, so Plan 153's D2/D6 tests need their own build
+    rather than silently asserting against an empty Sch.
     """
-    sql_worker = find_sql_worker()
-    assert sql_worker is not None, "pb-sql-worker not found — build cli/.venv first"
-
     tmp = tmp_path_factory.mktemp("schema_db")
     db = str(tmp / "schema_test.duckdb")
 
@@ -66,7 +64,7 @@ def schema_db_path(tmp_path_factory) -> str:
         [
             str(binary), "-i", str(OPENPAY_DIR), "--db", db,
             "--ddl", str(OPENPAY_DDL), "--sql-dialect", "mysql",
-            "--sql-worker", str(sql_worker),
+            "--sql-worker-python", sys.executable,
         ],
         capture_output=True,
         text=True,

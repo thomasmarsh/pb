@@ -122,7 +122,11 @@ def test_run_passes_ddl_flag_when_given(monkeypatch, tmp_path):
     assert called_args[called_args.index("--ddl") + 1] == str(ddl_path)
 
 
-def test_run_passes_sql_worker_flag_when_found(monkeypatch, tmp_path):
+def test_run_always_passes_sql_worker_python_flag(monkeypatch, tmp_path):
+    # No discovery step exists anymore -- sys.executable is always defined,
+    # so run() must pass it unconditionally, every invocation.
+    import sys
+
     called_args: list = []
 
     def fake_popen(args, **kwargs):
@@ -130,33 +134,14 @@ def test_run_passes_sql_worker_flag_when_found(monkeypatch, tmp_path):
         return _FakePopen(returncode=1)
 
     monkeypatch.setattr("pb.pipeline.pipeline.subprocess.Popen", fake_popen)
-    monkeypatch.setattr("pb.pipeline.pipeline.find_sql_worker", lambda: Path("/fake/pb-sql-worker"))
 
     reporter = RecordingReporter()
     src_dir = tmp_path / "src"
     src_dir.mkdir()
     run(src_dir, str(tmp_path / "out.duckdb"), Path("/fake/bin"), reporter)
 
-    assert "--sql-worker" in called_args
-    assert called_args[called_args.index("--sql-worker") + 1] == "/fake/pb-sql-worker"
-
-
-def test_run_omits_sql_worker_flag_when_not_found(monkeypatch, tmp_path):
-    called_args: list = []
-
-    def fake_popen(args, **kwargs):
-        called_args.extend(args)
-        return _FakePopen(returncode=1)
-
-    monkeypatch.setattr("pb.pipeline.pipeline.subprocess.Popen", fake_popen)
-    monkeypatch.setattr("pb.pipeline.pipeline.find_sql_worker", lambda: None)
-
-    reporter = RecordingReporter()
-    src_dir = tmp_path / "src"
-    src_dir.mkdir()
-    run(src_dir, str(tmp_path / "out.duckdb"), Path("/fake/bin"), reporter)
-
-    assert "--sql-worker" not in called_args
+    assert "--sql-worker-python" in called_args
+    assert called_args[called_args.index("--sql-worker-python") + 1] == sys.executable
 
 
 def test_run_passes_multiple_schema_tagged_ddl_flags_when_given(monkeypatch, tmp_path):

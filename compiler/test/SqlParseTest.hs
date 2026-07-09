@@ -278,12 +278,12 @@ tests = testGroup "SqlParse"
 
   , testGroup "SqlBridgePool"
     [ testCase "missing binary raises exception" $ do
-        result <- try @SomeException (startSqlBridgePool 1 "/nonexistent/pb-sql-worker" "oracle")
+        result <- try @SomeException (startSqlBridgePool 1 "/nonexistent/pb-sql-worker" [] "oracle")
         assertBool "should throw on missing binary" (isLeft result)
 
     , testCase "pool of 2: send 5 requests each, all succeed" $ do
         script <- installScript "pb_mock_worker.py" mockWorkerLines
-        pool   <- startSqlBridgePool 2 script "oracle"
+        pool   <- startSqlBridgePool 2 script [] "oracle"
         results0 <- mapM (\_ -> parseSql pool 0 "SELECT foo FROM bar") [1..5 :: Int]
         results1 <- mapM (\_ -> parseSql pool 1 "SELECT baz FROM qux") [1..5 :: Int]
         traverse_ (\r -> assertEqual "parse_ok" True (srParseOk r))   (results0 <> results1)
@@ -293,7 +293,7 @@ tests = testGroup "SqlParse"
 
     , testCase "no cross-worker interference" $ do
         script <- installScript "pb_mock_worker.py" mockWorkerLines
-        pool   <- startSqlBridgePool 2 script "oracle"
+        pool   <- startSqlBridgePool 2 script [] "oracle"
         r0 <- parseSql pool 0 "SELECT from_worker_0"
         r1 <- parseSql pool 1 "SELECT from_worker_1"
         assertEqual "w0 parse_ok" True (srParseOk r0)
@@ -305,7 +305,7 @@ tests = testGroup "SqlParse"
         -- The pool auto-restarts; the retry spawns a fresh crash-script process
         -- which handles that 1 retry request before exiting again.
         crashScript <- installScript "pb_crash_worker.py" crashWorkerLines
-        pool <- startSqlBridgePool 1 crashScript "oracle"
+        pool <- startSqlBridgePool 1 crashScript [] "oracle"
         r1 <- parseSql pool 0 "SELECT 1"
         assertEqual "first call (before crash)" True (srParseOk r1)
         -- Worker crashed after responding. Next call triggers restart.
@@ -315,7 +315,7 @@ tests = testGroup "SqlParse"
 
     , testCase "parseDdl decodes catalog from ddl worker" $ do
         script <- installScript "pb_ddl_worker.py" ddlWorkerLines
-        pool   <- startSqlBridgePool 1 script "mysql"
+        pool   <- startSqlBridgePool 1 script [] "mysql"
         resp   <- parseDdl pool Nothing "CREATE TABLE afxfilterd (...)"
         assertEqual "parse_ok" True (ddlParseOk resp)
         let cat = ddlCatalog resp

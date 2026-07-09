@@ -4,7 +4,6 @@ import hashlib
 import re
 import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
 
@@ -64,33 +63,6 @@ def build_runner(repo: Path, verbose: bool = False) -> Path:
             print(r.stderr, file=sys.stderr)
         sys.exit(1)
     return find_binary(repo)
-
-
-def find_sql_worker() -> Path | None:
-    """Return the path to the pb-sql-worker script if it is installed, else
-    None. pb-sql-worker is a console-script entry point in the same
-    `pb_pipeline` distribution as `pb` itself, so pip/uv always install it
-    into `sysconfig.get_path("scripts")` of whichever interpreter is
-    currently running this code -- that's true by construction for any
-    install layout (editable dev checkout, non-editable wheel, a venv
-    named something other than `.venv`, a system/container Python with no
-    venv at all), unlike searching ancestor directories for a marker path
-    that assumes a specific on-disk structure. No configuration or
-    environment variable should ever be needed to find it (real bug
-    report, 2026-07-09: an earlier ancestor-walk-for-`.venv` version
-    depended on the venv literally being named `.venv` and reachable from
-    this file's install location, which doesn't hold for every deployment
-    shape)."""
-    scripts_dir = Path(sysconfig.get_path("scripts"))
-    for name in ("pb-sql-worker", "pb-sql-worker.exe"):
-        candidate = scripts_dir / name
-        if candidate.exists():
-            return candidate
-    # Last-resort fallback: PATH (e.g. scripts_dir wasn't used for the
-    # install that put pb-sql-worker somewhere else reachable another way).
-    import shutil
-    found = shutil.which("pb-sql-worker")
-    return Path(found) if found else None
 
 
 _SR_EXT = re.compile(r"\.sr[a-z]$", re.IGNORECASE)

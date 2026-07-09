@@ -49,7 +49,7 @@ import PB.Pipeline.SqlParse
   ( SqlResult (..), ColumnRef (..), RowFilter (..), SqlBridgePool
   , TableRef (..), CatalogTable (..), CatalogPrimaryKey (..), CatalogForeignKey (..)
   , CatalogCheckConstraint (..), SchemaCatalog (..), DdlStats (..), DdlResponse (..)
-  , startSqlBridgePool, shutdownSqlBridgePool
+  , startSqlBridgePool, shutdownSqlBridgePool, sqlWorkerModuleArgs
   , parseSql, parseDdl, extractBsRawNodes
   )
 import PB.Pipeline.FileWalk    (walkAllSrFiles)
@@ -405,14 +405,18 @@ parseDdlArg arg =
 -- (@--ddl CLIMS:clims.sql --ddl CLIMS_COMMON:clims-common.sql@) whose
 -- cross-schema FK references resolve against each other once loaded.
 -- 'dialect' is the sqlglot dialect for both DDL and regular SQL-statement
--- parsing (see 'PB.Pipeline.SqlParse.SqlBridgePool'). 'mSqlWorkerFlag' is the
--- resolved pb-sql-worker binary path passed explicitly via @--sql-worker@ --
--- the pb CLI resolves this itself (via sysconfig, deterministic per
--- interpreter) and passes it as an argument rather than an environment
--- variable, so bridge availability can't be lost anywhere in a
--- shell -> uv run -> python -> subprocess chain. Falls back to the
--- PB_SQL_WORKER env var (lookupEnv) when the flag is omitted, for direct/
--- manual `cabal run pbc --` invocations.
+-- parsing (see 'PB.Pipeline.SqlParse.SqlBridgePool'). 'mSqlWorkerFlag' is a
+-- python interpreter path passed explicitly via @--sql-worker-python@ -- the
+-- pb CLI always passes its own @sys.executable@ here unconditionally (no
+-- discovery/lookup needed on the Python side at all: a running interpreter's
+-- own path is never absent), so bridge availability can't be lost anywhere
+-- in a shell -> uv run -> python -> subprocess chain. The bridge worker
+-- itself is launched as @pythonExe -m pb.pipeline.bridge.sql_worker@ (see
+-- 'sqlWorkerModuleArgs') -- the checked-in module's location within its own
+-- distribution is fixed and needs no separate discovery step either. Falls
+-- back to the PB_SQL_WORKER env var (lookupEnv, expected to hold a python
+-- interpreter path too) when the flag is omitted, for direct/manual
+-- `cabal run pbc --` invocations.
 runModeDb :: FilePath -> FilePath -> [Text] -> Text -> Maybe FilePath -> IO ()
 runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag = do
   files <- walkAllSrFiles srcDir
@@ -448,7 +452,8 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag = do
       Nothing -> do
         for_ ddlArgs $ \_ -> emitProgress (object
           [ "tag" .= ("warning" :: Text)
-          , "message" .= ("--ddl given but PB_SQL_WORKER not set; skipping DDL ingestion" :: Text)
+          , "message" .= ("--ddl given but no python interpreter available for the SQL bridge \
+                          \(pass --sql-worker-python or set PB_SQL_WORKER); skipping DDL ingestion" :: Text)
           ])
         -- N worker threads drain a shared queue; serialize DB writes through mutex.
         workQ <- newTQueueIO
@@ -457,8 +462,8 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag = do
         mapConcurrently_
           (\k -> workerLoopFilesNoBridge k workQ wsEnv conn mutex errCount)
           [0 .. nWorkers - 1]
-      Just bin -> do
-        pool <- startSqlBridgePool nWorkers bin dialect
+      Just pythonExe -> do
+        pool <- startSqlBridgePool nWorkers pythonExe sqlWorkerModuleArgs dialect
         for_ ddlArgs $ \rawArg -> do
           let (mSchema, ddlPath) = parseDdlArg rawArg
           ddlText <- readFile ddlPath

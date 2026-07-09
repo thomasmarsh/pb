@@ -882,8 +882,21 @@ data DdlStats = DdlStats { dsStatementsTotal, dsStatementsParsed, dsStatementsSk
 data DdlResponse = DdlResponse
   { ddlCatalog :: SchemaCatalog, ddlStats :: DdlStats, ddlParseOk :: Bool, ddlError :: Maybe Text }
 data SqlBridgePool = SqlBridgePool
-  { sbpSlots :: Vector (IORef WorkerConn), sbpBinary :: FilePath, sbpDialect :: Text }
-startSqlBridgePool  :: Int -> FilePath -> Text -> IO SqlBridgePool   -- n, bin, dialect (shared by parseSql + parseDdl)
+  { sbpSlots :: Vector (IORef WorkerConn), sbpCmd :: FilePath, sbpArgs :: [String], sbpDialect :: Text }
+-- sbpCmd/sbpArgs (SQL bridge discovery hardening, 2026-07-09; was sbpBinary,
+-- always exec'd with no args): startWorker now execs `cmd args` directly
+-- (no shell). Production (PB.Pipeline.Runner) sets cmd = the python
+-- interpreter path from --sql-worker-python (always sys.executable from the
+-- pb CLI, never absent) and args = sqlWorkerModuleArgs = ["-m",
+-- "pb.pipeline.bridge.sql_worker"] -- the worker module's location within
+-- its own distribution is fixed and needs no discovery (formerly execed an
+-- *installed pb-sql-worker console-script shim* directly, which depended on
+-- that shim existing at all -- removed). Tests (SqlParseTest.hs/
+-- RunnerTest.hs) pass a directly-executable shebang'd mock-worker script as
+-- cmd with args = [] to substitute fake worker behavior (crash-on-Nth-
+-- request, wrong protocol, etc) -- unchanged from before this rename.
+sqlWorkerModuleArgs :: [String]  -- = ["-m", "pb.pipeline.bridge.sql_worker"]; exported constant
+startSqlBridgePool  :: Int -> FilePath -> [String] -> Text -> IO SqlBridgePool   -- n, cmd, args, dialect (shared by parseSql + parseDdl)
 shutdownSqlBridgePool :: SqlBridgePool -> IO ()
 parseSql :: SqlBridgePool -> Int -> Text -> IO SqlResult          -- per-statement, any slot; retries once on worker crash
 parseDdl :: SqlBridgePool -> Maybe Text -> Text -> IO DdlResponse -- pool, defaultNamespace, ddlText; always slot 0 (one-shot per run)
@@ -906,22 +919,28 @@ runModeDb :: FilePath -> FilePath -> [Text] -> Text -> Maybe FilePath -> IO ()
 -- SqlBridgePool (see SqlParse's sbpDialect) so the two can't drift --
 -- previously DDL silently hardcoded "mysql" while SQL parsing hardcoded
 -- "oracle", which zeroed catalog_columns/catalog_pks for any non-MySQL
--- corpus. mSqlWorkerFlag (SQL bridge discovery hardening, 2026-07-09) is the
--- resolved pb-sql-worker path passed explicitly via --sql-worker; preferred
--- over lookupEnv "PB_SQL_WORKER" (used only when the flag is Nothing, for
+-- corpus. mSqlWorkerFlag (SQL bridge discovery hardening, 2026-07-09; final
+-- form after 3 rounds -- see BACKLOG's retrospective) is a python
+-- interpreter path passed explicitly via --sql-worker-python; preferred over
+-- lookupEnv "PB_SQL_WORKER" (used only when the flag is Nothing, for
 -- direct/manual `cabal run pbc --` invocations) so bridge availability can't
--- be lost anywhere in a shell -> uv run -> python -> subprocess.Popen chain --
--- the pb CLI resolves the path itself (sysconfig-independent of repo layout)
--- and passes it as an argument rather than relying on env-var propagation.
--- When the bridge is available, each ddlArg is read + parsed independently
--- (parseDdlArg splits the schema tag, parseDdl applies it as the default
--- namespace for unqualified tables/FK refs in that file) and appended via
--- catalogToRows; an emitProgress "ddl_loaded" event reports per-file
--- parse_ok/error/statement-stats/table+pk+fk+check counts -- so a
--- silently-empty catalog (the original bug report) can never go unnoticed
--- again. When no bridge, emits a "warning" progress event per ddlArg and
--- skips (no hard error). Main.hs's --ddl/--sql-dialect/--sql-worker flags
--- thread through here.
+-- be lost anywhere in a shell -> uv run -> python -> subprocess.Popen chain.
+-- The pb CLI always passes its own sys.executable here unconditionally --
+-- never absent for a running interpreter, so there is no discovery/lookup
+-- on the Python side at all. The bridge worker itself is then launched as
+-- `pythonExe -m pb.pipeline.bridge.sql_worker` (SqlParse.sqlWorkerModuleArgs)
+-- rather than exec'ing an installed pb-sql-worker console-script shim --
+-- the checked-in module's location within its own distribution is fixed
+-- and needs no separate discovery step either. When the bridge is
+-- available, each ddlArg is read + parsed independently (parseDdlArg splits
+-- the schema tag, parseDdl applies it as the default namespace for
+-- unqualified tables/FK refs in that file) and appended via catalogToRows;
+-- an emitProgress "ddl_loaded" event reports per-file parse_ok/error/
+-- statement-stats/table+pk+fk+check counts -- so a silently-empty catalog
+-- (the original bug report) can never go unnoticed again. When no bridge,
+-- emits a "warning" progress event per ddlArg and skips (no hard error).
+-- Main.hs's --ddl/--sql-dialect/--sql-worker-python flags thread through
+-- here.
 parseDdlArg :: Text -> (Maybe Text, FilePath)
 -- Pure. Splits a --ddl CLI value in [schema:]path form -- the prefix before
 -- the first ':' is treated as a schema tag only when it contains no '/' (so

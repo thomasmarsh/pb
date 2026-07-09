@@ -575,7 +575,7 @@ tests = testGroup "Pipeline.Runner"
           Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
           Right (sf, spans) -> do
             script <- installMockSqlWorkerWithRefs
-            pool   <- startSqlBridgePool 1 script "oracle"
+            pool   <- startSqlBridgePool 1 script [] "oracle"
             let ws = buildWorkspaceEnv [sf]
                 pf = ParsedFile { pfPath = "uf_retrieve.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
             cf <- compileOne ws (Just (pool, 0)) "confirmed" (PsParsed pf)

@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import threading
 from collections.abc import Sequence
 from pathlib import Path
 
-from pb.pipeline.build import find_sql_worker
 from pb.pipeline.db import setup_db_extras
 from pb.pipeline.env import env
 from pb.pipeline.metrics import compute_metrics
@@ -49,11 +49,17 @@ def run(
         Path(db).unlink()
 
     run_env = os.environ.copy()
-    sql_worker = find_sql_worker()
 
-    argv = [str(binary), "-i", str(src_dir), "--db", db_new, "--sql-dialect", dialect]
-    if sql_worker:
-        argv += ["--sql-worker", str(sql_worker)]
+    # sys.executable is always defined for a running interpreter -- no
+    # discovery needed. pbc launches the SQL bridge worker as
+    # `sys.executable -m pb.pipeline.bridge.sql_worker`; that module's
+    # location is fixed within this same distribution, so if this code is
+    # running at all, the worker module is importable under this exact
+    # interpreter too.
+    argv = [
+        str(binary), "-i", str(src_dir), "--db", db_new, "--sql-dialect", dialect,
+        "--sql-worker-python", sys.executable,
+    ]
     for d in ddl:
         argv += ["--ddl", d]
 
