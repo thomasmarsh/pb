@@ -486,8 +486,23 @@ describe("TableDetail source-first", () => {
         fireEvent.mouseEnter(decompRow("a, b")!);
         expect(document.querySelector(".decomp-detail")?.textContent).toContain("proc_top");
 
-        fireEvent.mouseLeave(decompRow("a, b")!);
+        fireEvent.mouseLeave(document.querySelector(".decomp-columns-view")!);
         expect(document.querySelector(".decomp-detail")?.textContent).toContain("proc_second");
+      });
+
+      it("keeps the hover preview while the mouse travels into the detail pane", () => {
+        renderTableDetail(baseDetail, null, null, twoCandidateData());
+        fireEvent.click(summaryPillBtn("Decomposition")!);
+        fireEvent.click(decompRow("c, d")!);
+
+        fireEvent.mouseEnter(decompRow("a, b")!);
+        // Leaving the row itself (e.g. moving toward the detail pane) must not
+        // revert the preview — only leaving the whole master+detail widget does.
+        fireEvent.mouseLeave(decompRow("a, b")!);
+        expect(document.querySelector(".decomp-detail")?.textContent).toContain("proc_top");
+
+        fireEvent.mouseEnter(document.querySelector(".decomp-detail")!);
+        expect(document.querySelector(".decomp-detail")?.textContent).toContain("proc_top");
       });
     });
   });

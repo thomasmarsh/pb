@@ -199,9 +199,21 @@ function DecompositionColumnsView(props: {
   const active = createMemo(() => props.candidates[activeIdx()]);
 
   return (
-    <div class="decomp-columns-view" style={{ display: "flex", gap: "12px", "align-items": "flex-start" }}>
-      <div class="decomp-master" style={{ flex: "1 1 55%", "min-width": "0" }}>
-        <table class="data-table" style={{ "font-size": "12px" }}>
+    <div
+      class="decomp-columns-view"
+      style={{ display: "flex", gap: "12px", "align-items": "flex-start" }}
+      onMouseLeave={() => setHovered(null)}
+    >
+      <div class="decomp-master" style={{ flex: "1 1 55%", "min-width": "0", "overflow-x": "auto" }}>
+        <table class="data-table" style={{ "font-size": "12px", "table-layout": "fixed", width: "100%" }}>
+          <colgroup>
+            <col style={{ width: "34%" }} />
+            <col style={{ width: "14%" }} />
+            <col style={{ width: "16%" }} />
+            <col style={{ width: "14%" }} />
+            <col style={{ width: "12%" }} />
+            <col style={{ width: "10%" }} />
+          </colgroup>
           <thead>
             <tr>
               <th>Columns</th>
@@ -220,10 +232,14 @@ function DecompositionColumnsView(props: {
                   classList={{ "decomp-row-active": activeIdx() === i() }}
                   style={{ cursor: "pointer", background: activeIdx() === i() ? "var(--bg-hover)" : undefined }}
                   onMouseEnter={() => setHovered(i())}
-                  onMouseLeave={() => setHovered(null)}
                   onClick={() => setPinned(i())}
                 >
-                  <td>{c.columns.join(", ")}</td>
+                  <td
+                    style={{ overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}
+                    title={c.columns.join(", ")}
+                  >
+                    {c.columns.join(", ")}
+                  </td>
                   <td>{c.similarity.toFixed(3)}</td>
                   <td>{c.ritual_support}</td>
                   <td>{c.unenforced_fk_count}</td>
@@ -240,6 +256,7 @@ function DecompositionColumnsView(props: {
         style={{
           flex: "1 1 45%", "min-width": "0", "max-height": "360px", "overflow-y": "auto",
           border: "1px solid var(--border)", "border-radius": "6px", padding: "8px 10px",
+          position: "sticky", top: "0",
         }}
       >
         <Show when={active()}>
