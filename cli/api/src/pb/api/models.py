@@ -164,6 +164,33 @@ class DecompositionCandidatesResponse(BaseModel):
     candidates: list[DecompositionCandidate]
 
 
+class FootprintColumnRef(BaseModel):
+    namespace: str | None
+    table: str
+    column: str
+
+
+class FootprintLeg(BaseModel):
+    column: FootprintColumnRef
+    leg_kind: str
+    leg_source: str
+
+
+class FootprintStatement(BaseModel):
+    stmt_key: str
+    file: str
+    line: int | None
+    legs: list[FootprintLeg]
+
+
+class FootprintResponse(BaseModel):
+    object: str
+    proc_name: str | None
+    kind: str
+    statements: list[FootprintStatement]
+    blast_radius: list[DecompositionEvidencePath]
+
+
 class LatticeConcept(BaseModel):
     extent: list[str]
     intent: list[str]

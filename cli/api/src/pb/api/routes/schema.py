@@ -10,6 +10,7 @@ from pb.api.models import (
     CoUpdateRitualsResponse,
     DecompositionCandidatesResponse,
     FkGraphResponse,
+    FootprintResponse,
     ProcedureFootprintResponse,
     WindowTableLatticeResponse,
 )
@@ -21,6 +22,7 @@ from pb.api.services.schema import (
     get_column_usage,
     get_decomposition_candidates,
     get_fk_graph,
+    get_footprint,
     get_procedure_footprint,
     get_window_table_lattice,
 )
@@ -61,6 +63,19 @@ async def get_procedure_footprint_route(
             status_code=404,
             detail=f"Procedure not found: {object_name}.{proc_name}",
         )
+    return result
+
+
+@router.get("/api/schema/footprint/{object_name}", response_model=FootprintResponse)
+async def get_footprint_route(
+    object_name: str,
+    proc: str | None = Query(None, description="Procedure name; omit for a DataWindow retrieve footprint"),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    result = get_footprint(conn, object_name, proc)
+    if result is None:
+        label = f"{object_name}.{proc}" if proc else object_name
+        raise HTTPException(status_code=404, detail=f"No footprint found for {label}")
     return result
 
 

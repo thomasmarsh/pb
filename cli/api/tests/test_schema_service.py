@@ -14,6 +14,7 @@ from pb.api.services.schema import (
     get_column_usage,
     get_decomposition_candidates,
     get_fk_graph,
+    get_footprint,
     get_procedure_footprint,
     get_window_table_lattice,
 )
@@ -92,9 +93,16 @@ def test_get_co_update_rituals_no_violations_in_corpus(schema_db_conn: duckdb.Du
 
 
 def test_get_co_update_rituals_min_support_threshold(schema_db_conn: duckdb.DuckDBPyConnection):
-    # min_support=1 admits every co-occurring pair (76 support=1 + 45 at >=2).
+    # min_support=1 admits every co-occurring pair (77 support=1 + 45 at >=2).
+    # Was 121 (76 + 45) -- Plan 164 Phase C/E (2026-07-10, same day) resolved
+    # w_misth_fylo_form.srw's runtime DW-alias SetItem call, adding a new
+    # cat_footprint_columns-derived LegWrites edge and, with it, a new
+    # cross-table co-write pair: misth_fylo_epidom.kodfylo <->
+    # misth_fylo_krat.kodfylo (support=1). Re-verified directly against a
+    # freshly-rebuilt schema DB (Plan 163 Phase 5 session) rather than
+    # assumed from BACKLOG's diagnosis alone.
     result = get_co_update_rituals(schema_db_conn, min_support=1)
-    assert len(result["rituals"]) == 121
+    assert len(result["rituals"]) == 122
     result3 = get_co_update_rituals(schema_db_conn, min_support=3)
     assert len(result3["rituals"]) == 3
 
@@ -192,6 +200,70 @@ def test_get_procedure_footprint_fn_perm(schema_db_conn: duckdb.DuckDBPyConnecti
 
 def test_get_procedure_footprint_not_found(schema_db_conn: duckdb.DuckDBPyConnection):
     assert get_procedure_footprint(schema_db_conn, "__nonexistent__", "__nope__") is None
+
+
+def test_get_footprint_ps_object_fn_perm(schema_db_conn: duckdb.DuckDBPyConnection):
+    """Plan 163 Phase 5: the unified, leg_source-carrying footprint over
+    schema_objects/schema_morphisms, for the same fn_perm/fn_perm PS case
+    get_procedure_footprint's own tests use -- confirms the new leg-based
+    shape agrees with the old sql_statement_columns-based one on real data."""
+    result = get_footprint(schema_db_conn, "fn_perm", "fn_perm")
+    assert result is not None
+    assert result["object"] == "fn_perm"
+    assert result["proc_name"] == "fn_perm"
+    assert result["kind"] == "sql"
+    assert [s["line"] for s in result["statements"]] == [30, 41, 52, 63, 74]
+
+    for stmt in result["statements"]:
+        cols = {(leg["column"]["table"], leg["column"]["column"]) for leg in stmt["legs"]}
+        assert cols == {
+            ("usrgroupperm", "kodgroup"),
+            ("usrgroupperm", "kodaction"),
+            ("usrmembers", "kodgroup"),
+            ("usrmembers", "koduser"),
+        }
+        for leg in stmt["legs"]:
+            assert leg["leg_kind"] == "reads"
+            assert leg["leg_source"] == "sql_text"
+
+
+def test_get_footprint_dw_retrieve(schema_db_conn: duckdb.DuckDBPyConnection):
+    """proc omitted -> DW retrieve lookup, keyed the same way a PS object is
+    (schema_objects.stmt_object carries the DW's own name for a dw_retrieve
+    row) -- confirmed real, non-guessed count against the openpay corpus."""
+    result = get_footprint(schema_db_conn, "dw_misth_final_details_list")
+    assert result is not None
+    assert result["object"] == "dw_misth_final_details_list"
+    assert result["proc_name"] is None
+    assert result["kind"] == "dw_retrieve"
+    assert len(result["statements"]) == 1
+    legs = result["statements"][0]["legs"]
+    assert len(legs) == 13
+    assert {leg["leg_kind"] for leg in legs} == {"retrieve"}
+    cols = {(leg["column"]["table"], leg["column"]["column"]) for leg in legs}
+    assert ("misth_final", "kodfinal") in cols
+    assert ("misth_final_ypal", "kodxrisi") in cols
+
+
+def test_get_footprint_blast_radius_fn_perm(schema_db_conn: duckdb.DuckDBPyConnection):
+    """Blast radius is the union of decomposition_coslice reachability across
+    every column the object's own footprint touches -- real corpus count,
+    queried directly against a freshly-built schema DB before writing this
+    assertion (not guessed): 19 distinct reachable statements from fn_perm's
+    4 touched columns, including fn_perm's own 5 lines (other columns' reads
+    legs point back at the same statements) plus DW retrieves/other PS call
+    sites that touch usrgroupperm/usrmembers columns."""
+    result = get_footprint(schema_db_conn, "fn_perm", "fn_perm")
+    assert result is not None
+    assert len(result["blast_radius"]) == 19
+
+
+def test_get_footprint_ps_not_found(schema_db_conn: duckdb.DuckDBPyConnection):
+    assert get_footprint(schema_db_conn, "__nonexistent__", "__nope__") is None
+
+
+def test_get_footprint_dw_not_found(schema_db_conn: duckdb.DuckDBPyConnection):
+    assert get_footprint(schema_db_conn, "__nonexistent_dw__") is None
 
 
 def test_get_column_managers_includes_fn_perm(schema_db_conn: duckdb.DuckDBPyConnection):

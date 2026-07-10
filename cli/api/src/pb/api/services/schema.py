@@ -319,6 +319,105 @@ def get_procedure_footprint(
     }
 
 
+_FOOTPRINT_LEGS_SQL = """
+    SELECT s.object_key AS stmt_key,
+           m.leg_kind, m.leg_source,
+           o.namespace, o.table_name, o.column_name
+    FROM schema_objects s
+    JOIN schema_morphisms m ON m.from_key = s.object_key OR m.to_key = s.object_key
+    JOIN schema_objects o ON o.object_key = (CASE WHEN m.from_key = s.object_key THEN m.to_key ELSE m.from_key END)
+    WHERE s.object_key IN ({placeholders})
+    ORDER BY s.object_key, m.leg_kind, o.table_name, o.column_name
+"""
+
+
+def get_footprint(
+    conn: duckdb.DuckDBPyConnection, object_name: str, proc_name: str | None = None
+) -> dict[str, Any] | None:
+    """Plan 163 Phase 5: unified footprint over schema_objects/schema_morphisms,
+    front-end-agnostic to whether `object_name` denotes a DW retrieve
+    (`proc_name` absent) or a PS object (`proc_name` given) -- a DW's own name
+    lives in schema_objects.stmt_object for its `dw_retrieve`-kind row (see
+    PB.Pipeline.DuckDb.appendSchemaObjects's DwRetrieveId branch), the same
+    column a PS statement's owning object name uses, so one query shape
+    covers both. Deliberately additive alongside the older, PS-only
+    get_procedure_footprint (which reads sql_statement_columns, has no
+    leg_source, and cannot address a DW at all) -- retiring that one is
+    Phase 6's job, once the UI has a replacement to move onto; no interim
+    compatibility wrapper is built here on purpose.
+    """
+    if proc_name is None:
+        kind = "dw_retrieve"
+        stmt_rows = rows(
+            conn.execute(
+                "SELECT object_key, stmt_file, stmt_line FROM schema_objects "
+                "WHERE kind = 'dw_retrieve' AND stmt_object = ?",
+                [object_name],
+            )
+        )
+    else:
+        kind = "sql"
+        stmt_rows = rows(
+            conn.execute(
+                "SELECT object_key, stmt_file, stmt_line FROM schema_objects "
+                "WHERE kind = 'stmt' AND stmt_object = ? AND stmt_proc = ?",
+                [object_name, proc_name],
+            )
+        )
+    if not stmt_rows:
+        return None
+
+    stmt_keys = [r["object_key"] for r in stmt_rows]
+    placeholders = ",".join("?" for _ in stmt_keys)
+    leg_rows = rows(conn.execute(_FOOTPRINT_LEGS_SQL.format(placeholders=placeholders), stmt_keys))
+
+    by_stmt: dict[str, dict[str, Any]] = {
+        r["object_key"]: {"stmt_key": r["object_key"], "file": r["stmt_file"], "line": r["stmt_line"], "legs": []}
+        for r in stmt_rows
+    }
+    for r in leg_rows:
+        by_stmt[r["stmt_key"]]["legs"].append(
+            {
+                "column": {"namespace": r["namespace"], "table": r["table_name"], "column": r["column_name"]},
+                "leg_kind": r["leg_kind"],
+                "leg_source": r["leg_source"],
+            }
+        )
+
+    statements = sorted(by_stmt.values(), key=lambda s: (s["line"] is None, s["line"] or 0, s["stmt_key"]))
+
+    touched_columns = {
+        (leg["column"]["namespace"], leg["column"]["table"], leg["column"]["column"])
+        for stmt in statements
+        for leg in stmt["legs"]
+    }
+    seed_keys = [_column_key(ns, tbl, col) for ns, tbl, col in touched_columns]
+    paths_by_target = _coslice_paths(conn, seed_keys)
+    blast_radius = [
+        {
+            "target": _parse_object_key(target),
+            "direction": legs[0]["direction"],
+            "legs": [
+                {
+                    "from_object": _parse_object_key(leg["leg_from"]),
+                    "to_object": _parse_object_key(leg["leg_to"]),
+                    "leg_kind": leg["leg_kind"],
+                }
+                for leg in legs
+            ],
+        }
+        for target, legs in sorted(paths_by_target.items())
+    ]
+
+    return {
+        "object": object_name,
+        "proc_name": proc_name,
+        "kind": kind,
+        "statements": statements,
+        "blast_radius": blast_radius,
+    }
+
+
 _COLUMN_AFFINITY_LEGS_SQL = """
     WITH legs AS (
         SELECT o1.column_name AS col, m.to_key AS stmt_key
