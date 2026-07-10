@@ -58,6 +58,7 @@ library
     PB.Analysis.SSA
     PB.Analysis.SchemaCategory
     PB.Analysis.SchFootprint
+    PB.Analysis.DwFootprint
     PB.Analysis.Taint
     PB.Analysis.TypeEnv
     PB.Analysis.TypeResolve
@@ -137,6 +138,7 @@ test-suite pb-compiler-test
     , RunnerTest
     , SchemaCategoryTest
     , SchFootprintTest
+    , DwFootprintTest
     , SerialiseTest
     , SplitterTest
     , SqlParseTest

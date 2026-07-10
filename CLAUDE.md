@@ -1499,6 +1499,45 @@ newtype SchFootprint a b = SchFootprint { runSchFootprint :: FunctorCtx -> Set.S
 foldSchFootprint :: FunctorCtx -> CatOp a b -> Set.Set SchMorphism
 ```
 
+### `PB.Analysis.DwFootprint` (Plan 163 Phase 2, done 2026-07-10)
+
+```haskell
+-- Pure. The "Fdw" half of Plan 163's cospan (schema <- statement, tagged by
+-- front-end), sibling to PB.Analysis.SchFootprint's "Fps" functor. Unlike
+-- SchFootprint (folds a compiled CatOp term), a DW retrieve has no control
+-- flow -- this is a total walk over the already-parsed DwTable/DwRetrieve
+-- record straight into the same Set SchMorphism codomain. Deliberately
+-- reproduces all four leg categories (column list, update-table, WHERE,
+-- joins) directly from the AST -- overlaps with PB.Analysis.SchemaCategory
+-- .buildSchema's existing row-based dwRetrieveLegs/dwJoinLegs producers on
+-- purpose; reconciling the two under a shared leg_source column is Plan
+-- 163 Phase 3/4, not this module's job. Real openpay-corpus row-count diff
+-- (134 real .srd files, real catalog_columns, cabal-repl script, not wired
+-- into Runner.hs/DuckDb.hs): LegRetrieve 863 -> 863 (exact match, corrobo-
+-- rates the row-based producer), LegFk FkDwJoin 52 distinct edges both ways
+-- (192 raw rows in schema_morphisms is the same 52 edges un-deduped -- sgLegs
+-- is a list, not a Set), LegWrites 0 -> 559 (new), LegReads/WHERE 0 -> 175
+-- (new, DDL-catalog-gated). See doc/plan/163-unified-statement-footprint.md
+-- Phase 2 for the full diff table.
+data DwFootprintCtx = DwFootprintCtx
+  { dfcCatalogTables    :: Set.Set (Text, Text)             -- (namespace, table) DDL defines -- feeds resolveTableRef
+  , dfcCatalogColumns   :: Set.Set (Maybe Text, Text, Text)  -- (namespace, table, column) DDL defines -- WHERE-leg gate only
+  , dfcDefaultNamespace :: Maybe Text
+  }
+mkDwFootprintCtx :: [CatColumnRow] -> Maybe Text -> DwFootprintCtx  -- from the same catalog_columns rows buildSchema consumes
+-- Recognizes a plain, unsubscripted 2- or 3-segment dotted ExLvalue
+-- (table.column / namespace.table.column) as a column ref; any other shape
+-- (subscript, 1 or 4+ segments, ExHostVar, literals, calls) -> Nothing.
+-- Segment names lowercased, mirrors SchemaCategory.splitColumnRef.
+lvalueColumnRef :: Expr -> Maybe (TableRef, Text)
+-- file, dwName, the DwTable (not just DwRetrieve -- dtColumns/dtUpdate live
+-- there, sibling to dtRetrieve). WHERE-derived LegReads legs are the only
+-- catalog-gated category (via dfcCatalogColumns) -- LegRetrieve/LegWrites/
+-- LegFk are never catalog-checked, matching buildSchema's existing column/
+-- join producers, which don't check catalog membership either.
+dwRetrieveFootprint :: DwFootprintCtx -> Text -> Text -> DwTable -> Set.Set SchMorphism
+```
+
 ### `PB.Pipeline.FileWalk`
 
 ```haskell
