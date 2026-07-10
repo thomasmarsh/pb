@@ -137,6 +137,29 @@ tests = testGroup "TypeEnv"
                       { fwdTypes = []
                       , fwdInstances = [GlobalInstance "menu" "m_item"] }) }
         in srPrimaryObject sf @?= ("", Nothing)
+
+    , testCase "prefers type block matching forward's first entry over textually-first type block" $
+        -- Real corpus shape (pbexamw1.pbl/w_dw_copy.srw): a top-level
+        -- `type os_data from structure` block is declared before the file's
+        -- real `global type w_dw_copy from w_center` block, but the forward
+        -- block's first entry names w_dw_copy as the file's own type.
+        let sf = emptyFile
+                  { srForward = Just (ForwardBlock
+                      { fwdTypes = [TypeDecl "w_dw_copy" "w_center" Nothing]
+                      , fwdInstances = [] })
+                  , srTypeBlocks =
+                      [ TypeBlock (TypeDecl "os_data" "structure" Nothing) []
+                      , TypeBlock (TypeDecl "w_dw_copy" "w_center" Nothing) []
+                      ] }
+        in srPrimaryObject sf @?= ("w_dw_copy", Just "w_center")
+
+    , testCase "falls back to first type block when forward's first entry matches nothing" $
+        let sf = emptyFile
+                  { srForward = Just (ForwardBlock
+                      { fwdTypes = [TypeDecl "nonexistent" "window" Nothing]
+                      , fwdInstances = [] })
+                  , srTypeBlocks = [TypeBlock (TypeDecl "os_data" "structure" Nothing) []] }
+        in srPrimaryObject sf @?= ("os_data", Just "structure")
     ]
 
   , testGroup "srAllTypeDecls"

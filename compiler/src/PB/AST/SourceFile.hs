@@ -25,6 +25,7 @@ import PB.Prelude
 import PB.AST.BodyStmt    (BodyStmt)
 import PB.AST.Located     (Located)
 import GHC.Generics       (Generic)
+import qualified Data.Text as T
 
 data SrFile = SrFile
   { srHeaders         :: [Text]
@@ -136,12 +137,32 @@ srAllTypeDecls sf =
        Nothing -> []
        Just ForwardBlock { fwdTypes = tds } -> tds
 
--- | Primary object name and ancestor. Tries srTypeBlocks first (authoritative),
--- falls back to forward block, then returns ("", Nothing).
+-- | Primary object name and ancestor. Prefers the srTypeBlocks entry whose
+-- name matches the forward block's first fwdTypes entry -- PowerBuilder's
+-- export convention always declares the file's own type first in forward,
+-- ahead of any nested control forwards, so this is a reliable signal even
+-- when a top-level non-visual type (e.g. `type os_data from structure`) is
+-- textually declared before the file's real window/user-object type block.
+-- Falls back to the textually-first srTypeBlocks entry (old behavior) when
+-- there's no forward block or no name match, then to the forward block,
+-- then ("", Nothing).
 srPrimaryObject :: SrFile -> (Text, Maybe Text)
-srPrimaryObject sf = case srTypeBlocks sf of
-  (tb:_) -> (tdName (tbDecl tb), Just (tdAncestor (tbDecl tb)))
-  []     -> case srForward sf of
-              Just (ForwardBlock { fwdTypes = (td:_) }) ->
-                (tdName td, Just (tdAncestor td))
-              _ -> ("", Nothing)
+srPrimaryObject sf = case matchByForwardHead of
+  Just (name, anc) -> (name, Just anc)
+  Nothing -> case srTypeBlocks sf of
+    (tb:_) -> (tdName (tbDecl tb), Just (tdAncestor (tbDecl tb)))
+    []     -> case srForward sf of
+                Just (ForwardBlock { fwdTypes = (td:_) }) ->
+                  (tdName td, Just (tdAncestor td))
+                _ -> ("", Nothing)
+  where
+    matchByForwardHead :: Maybe (Text, Text)
+    matchByForwardHead = do
+      ForwardBlock { fwdTypes = (fwdHead:_) } <- srForward sf
+      case [ decl
+           | tb <- srTypeBlocks sf
+           , let decl = tbDecl tb
+           , T.toLower (tdName decl) == T.toLower (tdName fwdHead)
+           ] of
+        (decl:_) -> Just (tdName decl, tdAncestor decl)
+        []       -> Nothing

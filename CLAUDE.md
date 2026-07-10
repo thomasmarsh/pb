@@ -796,6 +796,23 @@ data FunctionBlock   = FunctionBlock   { fbSig :: FnSig,   fbBody :: [Located Bo
 data SubroutineBlock = SubroutineBlock { sbSig :: SubSig,  sbBody :: [Located BodyStmt] }
 data EventBlock      = EventBlock      { evSig :: EventSig, evOwner :: Maybe Text, evBody :: [Located BodyStmt] }
 data OnBlock         = OnBlock         { obQualName :: Text, obOwner :: Text, obEvent :: Text, obBody :: [Located BodyStmt] }
+
+srAllTypeDecls  :: SrFile -> [TypeDecl]           -- srTypeBlocks decls, then forward-only decls
+srPrimaryObject :: SrFile -> (Text, Maybe Text)   -- (name, ancestor) of the file's own object
+-- srPrimaryObject (fixed Plan 163 Phase 3.5, 2026-07-10): prefers the
+-- srTypeBlocks entry whose tdName matches the forward block's first
+-- fwdTypes entry (PB's exporter always declares the file's own type first
+-- in forward, ahead of nested control forwards) -- NOT simply "head of
+-- srTypeBlocks". Falls back to head-of-srTypeBlocks, then forward's own
+-- first entry, then ("", Nothing), when there's no forward block or no
+-- name match. Needed because a top-level non-visual type block (e.g.
+-- `type os_data from structure`) can be declared textually before the
+-- file's real window/user-object block; every consumer keying off this
+-- single per-file "obj" (Runner.hs's compileOne, Emit.hs's wrapSrFile,
+-- Taint.hs's extractTaintInputs) was silently misattributing every
+-- procedure/call-site/SetItem-binding-lookup in such files (11/433 files in
+-- PowerBuilder-Example-extract, 0/139 in openpay -- see BACKLOG's closed
+-- "Plan 163 Phase 3 wiring session" entry).
 ```
 
 ### `PB.Grammar.File`
@@ -1030,14 +1047,18 @@ catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogF
 -- baked in here) as a SqlStmtColumnRow, appended via
 -- appendCatFootprintColumns. workerLoopFiles/workerLoopFilesNoBridge both
 -- gained the same globalDwColumns param, threaded through from runModeDb.
--- KNOWN GAP (see BACKLOG "Plan 163 Phase 3 wiring session"): resolveSetItem
--- matches on (T.toLower obj, ctrl), and obj comes from srPrimaryObject's
--- "first type block in file" heuristic -- if a file declares a non-window
--- type block (e.g. `type X from structure`) before its real window/user-
--- object type block, obj is wrong for every table in that file, not just
--- this one, and the SetItem binding lookup silently misses. Confirmed via a
--- real corpus file (pbexamw1.pbl/w_dw_copy.srw); not fixed here (different
--- root cause than this phase's charter).
+-- FIXED (Plan 163 Phase 3.5, 2026-07-10, see BACKLOG's now-closed "Plan 163
+-- Phase 3 wiring session" entry): resolveSetItem matches on
+-- (T.toLower obj, ctrl), and obj comes from srPrimaryObject -- previously
+-- wrong for any file declaring a non-window type block (e.g. `type X from
+-- structure`) before its real window/user-object type block (11/433 files
+-- in PowerBuilder-Example-extract, 0/139 in openpay). srPrimaryObject now
+-- prefers the srTypeBlocks entry matching the forward block's first
+-- fwdTypes entry (see its own Code Index entry below); verified against
+-- pbexamw1.pbl/w_dw_copy.srw that objects/procedures now attribute to
+-- w_dw_copy (not os_data) and cat_footprint_columns went from 0 to 5 rows
+-- across PowerBuilder-Example-extract. Openpay's separate 0/6 SetItem gap
+-- (runtime aliasing, e.g. `ctrl = other.uo.dw`) is unrelated and still open.
 -- Phase A: parse → compile → append to DuckDB (concurrent producer-consumer)
 -- Phase B: delegates to PB.Pipeline.Passes.runPhaseB (takes the
 -- mDefaultNamespace param, Plan 157 Phase 1)
