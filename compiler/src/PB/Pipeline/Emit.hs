@@ -44,7 +44,7 @@ import qualified Data.Text.Encoding as TE
 import Data.Char           (intToDigit, toLower)
 import Data.Either         (lefts)
 import Data.Word           (Word8)
-import System.FilePath     (takeBaseName, takeExtension)
+import System.FilePath     (takeBaseName, takeExtension, makeRelative)
 import Text.Read           (readMaybe)
 import Control.Exception   (SomeException, try)
 
@@ -273,25 +273,31 @@ data ParseOutcome
   | PsFailed FilePath Text
   | OtherFile FilePath
 
--- | Attempt to parse one file.
-parseOutcome :: FilePath -> IO ParseOutcome
-parseOutcome src = case fileKind src of
+-- | Attempt to parse one file. @root@ is the ingestion root (the @-i@
+-- directory); every stored/returned path is relative to it, not the
+-- absolute disk path used to actually read the file -- an ingestion root
+-- is often a throwaway extraction temp dir, and the absolute path is never
+-- useful downstream (DB rows, JSON, progress events).
+parseOutcome :: FilePath -> FilePath -> IO ParseOutcome
+parseOutcome root src = case fileKind src of
   PowerScript -> do
     readResult <- try (readFile src) :: IO (Either SomeException Text)
     pure $ case readResult of
-      Left  ex -> PsFailed src (T.pack (show ex))
+      Left  ex -> PsFailed rel (T.pack (show ex))
       Right contents ->
         case parsePowerScriptFile (stripBom contents) of
-          Left  err      -> PsFailed src err
-          Right (sf, sp) -> PsParsed (ParsedFile src sf sp contents)
+          Left  err      -> PsFailed rel err
+          Right (sf, sp) -> PsParsed (ParsedFile rel sf sp contents)
   DataWindow -> do
     readResult <- try (readFile src) :: IO (Either SomeException Text)
     pure $ case readResult of
-      Left  ex       -> PsFailed src (T.pack (show ex))
+      Left  ex       -> PsFailed rel (T.pack (show ex))
       Right contents -> case parseDataWindow (stripBom contents) of
-        Left  err -> PsFailed src err
-        Right dw  -> PsDw src contents dw
-  _ -> pure (OtherFile src)
+        Left  err -> PsFailed rel err
+        Right dw  -> PsDw rel contents dw
+  _ -> pure (OtherFile rel)
+  where
+    rel = makeRelative root src
 
 -- ---------------------------------------------------------------------------
 -- Window layout extraction

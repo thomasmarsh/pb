@@ -92,7 +92,7 @@ import Data.IORef          (IORef, newIORef, readIORef, atomicModifyIORef')
 import qualified Data.Set           as Set
 import qualified Data.Text          as T
 import qualified Data.Text.Encoding as TE
-import System.FilePath     (takeBaseName)
+import System.FilePath     (takeBaseName, makeRelative)
 import qualified Data.Map.Strict as Map
 
 -- | Emit a single JSON progress event to stderr for the Python reporter.
@@ -345,8 +345,9 @@ extractProcSql resolve pool k fp obj (pName, body) = do
       pure (row, colRows, filterRows, tableRows)
 
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each without a SQL bridge.
-workerLoopFilesNoBridge :: Set.Set (Text, Text) -> Maybe Text -> Int -> TQueue FilePath -> WorkspaceEnv -> DuckConn -> MVar () -> IORef Int -> IO ()
-workerLoopFilesNoBridge catTables mDefaultNamespace k workQ wsEnv conn mutex errCount = go
+-- @root@ is the ingestion root, used to relativize every stored/reported path.
+workerLoopFilesNoBridge :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> Int -> TQueue FilePath -> WorkspaceEnv -> DuckConn -> MVar () -> IORef Int -> IO ()
+workerLoopFilesNoBridge root catTables mDefaultNamespace k workQ wsEnv conn mutex errCount = go
   where
     go = do
       mFile <- atomically $ do
@@ -355,9 +356,9 @@ workerLoopFilesNoBridge catTables mDefaultNamespace k workQ wsEnv conn mutex err
       case mFile of
         Nothing   -> pure ()
         Just file -> do
-          let fp = T.pack file
+          let fp = T.pack (makeRelative root file)
           emitProgress (object ["tag" .= ("worker_start" :: Text), "worker" .= k, "file" .= fp])
-          outcome  <- parseOutcome file
+          outcome  <- parseOutcome root file
           compiled <- compileOne catTables mDefaultNamespace wsEnv Nothing "confirmed" outcome
           let ok = case compiled of { CFError {} -> False; _ -> True }
           when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
@@ -367,8 +368,9 @@ workerLoopFilesNoBridge catTables mDefaultNamespace k workQ wsEnv conn mutex err
 
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each with bridge slot k,
 --   serialises DB writes through a shared mutex (DuckDB connections are not thread-safe).
-workerLoopFiles :: Set.Set (Text, Text) -> Maybe Text -> Int -> TQueue FilePath -> SqlBridgePool -> WorkspaceEnv -> DuckConn -> MVar () -> IORef Int -> IO ()
-workerLoopFiles catTables mDefaultNamespace k workQ pool wsEnv conn mutex errCount = go
+-- @root@ is the ingestion root, used to relativize every stored/reported path.
+workerLoopFiles :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> Int -> TQueue FilePath -> SqlBridgePool -> WorkspaceEnv -> DuckConn -> MVar () -> IORef Int -> IO ()
+workerLoopFiles root catTables mDefaultNamespace k workQ pool wsEnv conn mutex errCount = go
   where
     go = do
       mFile <- atomically $ do
@@ -377,9 +379,9 @@ workerLoopFiles catTables mDefaultNamespace k workQ pool wsEnv conn mutex errCou
       case mFile of
         Nothing   -> pure ()
         Just file -> do
-          let fp = T.pack file
+          let fp = T.pack (makeRelative root file)
           emitProgress (object ["tag" .= ("worker_start" :: Text), "worker" .= k, "file" .= fp])
-          outcome  <- parseOutcome file
+          outcome  <- parseOutcome root file
           compiled <- compileOne catTables mDefaultNamespace wsEnv (Just (pool, k)) "confirmed" outcome
           let ok = case compiled of { CFError {} -> False; _ -> True }
           when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
@@ -503,7 +505,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
   stdlibParsed <- parseStdlibFiles
   emitProgress (object ["tag" .= ("phase" :: Text), "name" .= ("A0" :: Text), "total" .= total])
   outcomes0 <- mapConcurrently (\file -> do
-    outcome <- parseOutcome file
+    outcome <- parseOutcome srcDir file
     emitProgress (object ["tag" .= ("file_done" :: Text), "phase" .= ("A0" :: Text)])
     pure outcome) files
   let wsEnv = buildWorkspaceEnv
@@ -538,7 +540,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
         atomically (mapM_ (writeTQueue workQ) files)
         mutex <- newMVar ()
         mapConcurrently_
-          (\k -> workerLoopFilesNoBridge Set.empty mDefaultNamespace k workQ wsEnv conn mutex errCount)
+          (\k -> workerLoopFilesNoBridge srcDir Set.empty mDefaultNamespace k workQ wsEnv conn mutex errCount)
           [0 .. nWorkers - 1]
       Just pythonExe -> do
         pool <- startSqlBridgePool nWorkers pythonExe sqlWorkerModuleArgs dialect
@@ -579,7 +581,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
         atomically (mapM_ (writeTQueue workQ) files)
         mutex <- newMVar ()
         mapConcurrently_
-          (\k -> workerLoopFiles catTables mDefaultNamespace k workQ pool wsEnv conn mutex errCount)
+          (\k -> workerLoopFiles srcDir catTables mDefaultNamespace k workQ pool wsEnv conn mutex errCount)
           [0 .. nWorkers - 1]
           `finally` shutdownSqlBridgePool pool
     runPhaseB conn mDefaultNamespace  -- Phase B: link analysis (passes 5–8)

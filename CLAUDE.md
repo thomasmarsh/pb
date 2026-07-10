@@ -807,7 +807,15 @@ fileKind          :: FilePath -> FileKind
 data FileKind     = DataWindow | Pipeline | Project | PowerScript
 data ParsedFile   = ParsedFile { pfPath :: FilePath, pfSrFile :: SrFile, pfSpans :: SrSpans, pfContents :: Text }
 data ParseOutcome = PsParsed ParsedFile | PsDw FilePath Text DataWindowFile | PsFailed FilePath Text | OtherFile FilePath
-parseOutcome      :: FilePath -> IO ParseOutcome
+parseOutcome      :: FilePath -> FilePath -> IO ParseOutcome
+-- root -> src -> outcome (path relativization, 2026-07-09): every path in
+-- the returned ParsedFile/PsDw/PsFailed/OtherFile is `makeRelative root src`,
+-- not the raw absolute src used to actually read the file. This is the sole
+-- choke point for ingested-path storage -- compileOne and every DB row
+-- constructor just reads pfPath/the FilePath in the outcome verbatim, so
+-- fixing it here fixes every stored/displayed path. Callers thread the
+-- ingestion root (runModeDb's srcDir) down through workerLoopFiles/
+-- workerLoopFilesNoBridge (see PB.Pipeline.Runner below).
 stripBom          :: Text -> Text
 ```
 

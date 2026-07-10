@@ -2,7 +2,7 @@ module RunnerTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, catalogToRows, validateDdlNamespaceConfig, CompiledFile (..), CompiledPs (..), CompiledDw (..))
-import PB.Pipeline.Emit    (parsePowerScriptFile, ParsedFile (..), ParseOutcome (..))
+import PB.Pipeline.Emit    (parsePowerScriptFile, parseOutcome, ParsedFile (..), ParseOutcome (..))
 import PB.Pipeline.DuckDb
   ( ProcRow (..), SqlStmtColumnRow (..), SqlStmtFilterRow (..)
   , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..), CatalogCheckRow (..)
@@ -35,7 +35,9 @@ import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Set          as Set
 import qualified Data.Text         as T
 import qualified Data.Text.Encoding as TE
-import System.Directory  (getTemporaryDirectory)
+import System.Directory  (getTemporaryDirectory, createDirectoryIfMissing, removeFile)
+import System.FilePath    ((</>))
+import System.IO         (openTempFile, hClose)
 import System.Process    (callProcess)
 
 import Test.Tasty       (TestTree, testGroup)
@@ -58,6 +60,19 @@ arrayLen _         = 0
 firstOf :: Value -> Value
 firstOf (Array v) = case toList v of { (x : _) -> x ; [] -> Null }
 firstOf _         = Null
+
+-- | A fresh, uniquely-named empty directory under the system temp dir, for
+-- tests that need a real ingestion-root directory on disk (parseOutcome's
+-- relativization reads real files, so it can't be tested with in-memory
+-- source text alone).
+freshRelPathRoot :: IO FilePath
+freshRelPathRoot = do
+  tmp <- getTemporaryDirectory
+  (path, h) <- openTempFile tmp "pb_relpath_root"
+  hClose h
+  removeFile path
+  createDirectoryIfMissing True path
+  pure path
 
 -- ---------------------------------------------------------------------------
 -- Tests
@@ -804,6 +819,53 @@ tests = testGroup "Pipeline.Runner"
         case validateDdlNamespaceConfig ["CLIMS:a.sql", "untagged.sql"] Nothing of
           Left _   -> pure ()
           Right () -> assertFailure "expected Left, got Right ()"
+    ]
+
+  , testGroup "parseOutcome relativizes stored path to the ingestion root"
+    [ testCase "PowerScript file: pfPath is relative to root, not the absolute disk path" $ do
+        root <- freshRelPathRoot
+        let dir = root </> "foo.pbl"
+        createDirectoryIfMissing True dir
+        let absPath = dir </> "bar.srf"
+        writeFile absPath ""
+        outcome <- parseOutcome root absPath
+        case outcome of
+          PsParsed pf -> pfPath pf @?= "foo.pbl" </> "bar.srf"
+          _           -> assertFailure "expected PsParsed"
+
+    , testCase "PowerScript parse failure still reports the relativized path" $ do
+        root <- freshRelPathRoot
+        let dir = root </> "foo.pbl"
+        createDirectoryIfMissing True dir
+        let absPath = dir </> "bad.srf"
+        writeFile absPath "~illegal\n"
+        outcome <- parseOutcome root absPath
+        case outcome of
+          PsFailed p _ -> p @?= "foo.pbl" </> "bad.srf"
+          _            -> assertFailure "expected PsFailed"
+
+    , testCase "non-source extension (.srp): OtherFile still reports the relativized path" $ do
+        root <- freshRelPathRoot
+        let dir = root </> "foo.pbl"
+        createDirectoryIfMissing True dir
+        let absPath = dir </> "test.srp"
+        writeFile absPath "PIPELINE(source_connect=foo)\n"
+        outcome <- parseOutcome root absPath
+        case outcome of
+          OtherFile p -> p @?= "foo.pbl" </> "test.srp"
+          _           -> assertFailure "expected OtherFile"
+
+    , testCase "file outside root falls back to the unmodified path (makeRelative's own safe default)" $ do
+        root   <- freshRelPathRoot
+        other  <- freshRelPathRoot
+        let dir = other </> "foo.pbl"
+        createDirectoryIfMissing True dir
+        let absPath = dir </> "bar.srf"
+        writeFile absPath ""
+        outcome <- parseOutcome root absPath
+        case outcome of
+          PsParsed pf -> pfPath pf @?= absPath
+          _           -> assertFailure "expected PsParsed"
     ]
   ]
 
