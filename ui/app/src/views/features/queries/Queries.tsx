@@ -1,11 +1,14 @@
 // Queries.tsx — Ask surface: free-text NL/SQL input + predefined SQL query catalogue.
+// Each query (the Ask box, and every catalogue entry) owns its own result panel,
+// rendered directly beneath it — Scalar/Swagger-style "try it" panels, not a single
+// shared results region at the bottom of the page.
 
 import { Show, For, onMount, createSignal } from "solid-js";
 import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ArrowUpDown, type QueryColumn } from "@pb/platform";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../../state.js";
 import type { AppAction } from "../../../actions.js";
-import { SqlBlock, EntityCard } from "@pb/platform";
+import { SqlBlock, EntityCard, ASK_RUN_KEY } from "@pb/platform";
 import type { EntityType } from "@pb/platform";
 
 const PAGE_SIZE = 50;
@@ -81,67 +84,139 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
     }
   }
 
-  const queryPaneLabel = () => q().isSqlMode ? "SQL query" : "generated query";
+  const askRun = () => q().runs[ASK_RUN_KEY];
 
-  // ── Sorted + paged row helpers ─────────────────────────────────────────────
+  // ── Inline result panel — shared by the Ask box and every catalogue query ──
 
-  function sortedRows(): Record<string, unknown>[] {
-    const state = q();
-    const results = state.results;
-    if (!results || "error" in results || !("rows" in results)) return [];
-    const rows = (results as { rows: Record<string, unknown>[] }).rows;
-    if (!state.sortCol) return rows;
-    const col = state.sortCol;
-    const dir = state.sortDir;
-    return [...rows].sort((a, b) => {
-      const cmp = String(a[col] ?? "").localeCompare(String(b[col] ?? ""), undefined, { numeric: true });
-      return dir === "asc" ? cmp : -cmp;
-    });
-  }
+  function ResultPanel(panelProps: { runKey: string; title: string }) {
+    const run = () => q().runs[panelProps.runKey];
 
-  function pagedRows() {
-    const page = q().page;
-    return sortedRows().slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-  }
-
-  function totalPages() {
-    return Math.max(1, Math.ceil(sortedRows().length / PAGE_SIZE));
-  }
-
-  function handleEntityClick(col: QueryColumn, row: Record<string, unknown>) {
-    const entityName = String(row[col.name] ?? "");
-    const results = q().results;
-    const columns: QueryColumn[] = (results && "columns" in results) ? (results as { columns: QueryColumn[] }).columns : [];
-    const objectCol = columns.find(c => c.entity_type === "object");
-    const objectName = objectCol ? String(row[objectCol.name] ?? "") : null;
-    store.dispatch({
-      tag: "queries",
-      action: { tag: "navigate-to-entity", entityType: col.entity_type!, entityName, objectName },
-    });
-  }
-
-  function renderCell(col: QueryColumn, row: Record<string, unknown>) {
-    const val = row[col.name];
-    const display = val != null ? String(val) : "";
-    const entityType = display && col.entity_type ? ENTITY_TYPE_MAP[col.entity_type] : null;
-    if (entityType) {
-      return (
-        <td>
-          <EntityCard
-            type={entityType}
-            name={display}
-            onClick={() => handleEntityClick(col, row)}
-          />
-        </td>
-      );
+    function sortedRows(): Record<string, unknown>[] {
+      const r = run();
+      if (!r || !r.results || "error" in r.results || !("rows" in r.results)) return [];
+      const rows = (r.results as { rows: Record<string, unknown>[] }).rows;
+      if (!r.sortCol) return rows;
+      const col = r.sortCol;
+      const dir = r.sortDir;
+      return [...rows].sort((a, b) => {
+        const cmp = String(a[col] ?? "").localeCompare(String(b[col] ?? ""), undefined, { numeric: true });
+        return dir === "asc" ? cmp : -cmp;
+      });
     }
-    return <td>{display}</td>;
-  }
 
-  const hasResults = () => {
-    const r = q().results;
-    return !!(r && "rows" in r && (r as { rows: unknown[] }).rows?.length);
-  };
+    function pagedRows() {
+      const page = run()?.page ?? 0;
+      return sortedRows().slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+    }
+
+    function totalPages() {
+      return Math.max(1, Math.ceil(sortedRows().length / PAGE_SIZE));
+    }
+
+    function handleEntityClick(col: QueryColumn, row: Record<string, unknown>) {
+      const entityName = String(row[col.name] ?? "");
+      const results = run()?.results;
+      const columns: QueryColumn[] = (results && "columns" in results) ? (results as { columns: QueryColumn[] }).columns : [];
+      const objectCol = columns.find(c => c.entity_type === "object");
+      const objectName = objectCol ? String(row[objectCol.name] ?? "") : null;
+      store.dispatch({
+        tag: "queries",
+        action: { tag: "navigate-to-entity", key: panelProps.runKey, entityType: col.entity_type!, entityName, objectName },
+      });
+    }
+
+    function renderCell(col: QueryColumn, row: Record<string, unknown>) {
+      const val = row[col.name];
+      const display = val != null ? String(val) : "";
+      const entityType = display && col.entity_type ? ENTITY_TYPE_MAP[col.entity_type] : null;
+      if (entityType) {
+        return (
+          <td>
+            <EntityCard
+              type={entityType}
+              name={display}
+              onClick={() => handleEntityClick(col, row)}
+            />
+          </td>
+        );
+      }
+      return <td>{display}</td>;
+    }
+
+    const hasResults = () => {
+      const r = run()?.results;
+      return !!(r && "rows" in r && (r as { rows: unknown[] }).rows?.length);
+    };
+
+    return (
+      <>
+        <Show when={run()?.loading}>
+          <p style={{ color: "var(--text-muted)", padding: "8px 16px", "font-size": "12px" }}>Running…</p>
+        </Show>
+        <Show when={run()?.results}>
+          <Show when={"error" in (run()!.results ?? {})} fallback={
+            <Show when={hasResults()}>
+              <div class="card" style={{ margin: "12px 0 0" }}>
+                <div class="card-header">
+                  <h3>{panelProps.title} — {(run()!.results as { rows: unknown[] }).rows.length} rows</h3>
+                </div>
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <For each={(run()!.results as { columns: QueryColumn[] }).columns}>
+                        {(col) => (
+                          <th
+                            style={{ cursor: "pointer", "user-select": "none" }}
+                            onClick={() => store.dispatch({ tag: "queries", action: { tag: "sort", key: panelProps.runKey, col: col.name } })}
+                          >
+                            {col.name}
+                            {" "}
+                            <Show when={run()?.sortCol === col.name}
+                              fallback={<ArrowUpDown size={11} style={{ opacity: "0.3", "vertical-align": "middle" }} />}
+                            >
+                              {run()?.sortDir === "asc" ? <ChevronUp size={11} style={{ "vertical-align": "middle" }} /> : <ChevronDown size={11} style={{ "vertical-align": "middle" }} />}
+                            </Show>
+                          </th>
+                        )}
+                      </For>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <For each={pagedRows()}>
+                      {(row) => (
+                        <tr>
+                          <For each={(run()!.results as { columns: QueryColumn[] }).columns}>
+                            {(col) => renderCell(col, row)}
+                          </For>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
+                <Show when={totalPages() > 1}>
+                  <div style={{ display: "flex", gap: "8px", padding: "8px", "align-items": "center", "font-size": "12px" }}>
+                    <button class="filter-pill"
+                            disabled={(run()?.page ?? 0) === 0}
+                            onClick={() => store.dispatch({ tag: "queries", action: { tag: "set-page", key: panelProps.runKey, page: (run()?.page ?? 0) - 1 } })}>
+                      <ChevronLeft size={13} /> Prev
+                    </button>
+                    <span>Page {(run()?.page ?? 0) + 1} of {totalPages()}</span>
+                    <button class="filter-pill"
+                            disabled={(run()?.page ?? 0) >= totalPages() - 1}
+                            onClick={() => store.dispatch({ tag: "queries", action: { tag: "set-page", key: panelProps.runKey, page: (run()?.page ?? 0) + 1 } })}>
+                      Next <ChevronRight size={13} />
+                    </button>
+                  </div>
+                </Show>
+              </div>
+            </Show>
+          }>
+            <p style={{ color: "var(--red)", padding: "8px 16px" }}>{(run()!.results as { error: string }).error}</p>
+          </Show>
+        </Show>
+      </>
+    );
+  }
 
   return (
     <div class="card">
@@ -154,7 +229,7 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
             class="search-input"
             placeholder="Ask pb anything… or start with SELECT to write SQL directly."
             rows={2}
-            disabled={q().loading}
+            disabled={askRun()?.loading ?? false}
             value={q().askText}
             style={{ flex: "1", resize: "vertical", "min-height": "40px", padding: "8px 10px", "font-size": "13px", "font-family": "inherit" }}
             onInput={(e) => store.dispatch({ tag: "queries", action: { tag: "set-ask-text", text: e.currentTarget.value } })}
@@ -162,11 +237,11 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
           />
           <button
             class="filter-pill active"
-            disabled={q().loading || !q().askText.trim()}
+            disabled={(askRun()?.loading ?? false) || !q().askText.trim()}
             style={{ "white-space": "nowrap", "align-self": "flex-end" }}
             onClick={() => store.dispatch({ tag: "queries", action: { tag: "submit-ask" } })}
           >
-            {q().loading ? "Running…" : "Ask"}
+            {askRun()?.loading ? "Running…" : "Ask"}
           </button>
         </div>
 
@@ -178,7 +253,7 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
               style={{ "font-size": "11px" }}
               onClick={() => store.dispatch({ tag: "queries", action: { tag: "toggle-query-pane" } })}
             >
-              {q().queryPaneOpen ? <><ChevronUp size={12} /> Hide {queryPaneLabel()}</> : <><ChevronDown size={12} /> Show {queryPaneLabel()}</>}
+              {q().queryPaneOpen ? <><ChevronUp size={12} /> Hide SQL query</> : <><ChevronDown size={12} /> Show SQL query</>}
             </button>
           </div>
         </Show>
@@ -187,7 +262,7 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
         <Show when={q().queryPaneOpen && q().generatedSql !== null}>
           <div style={{ "margin-top": "8px", border: "1px solid var(--border)", "border-radius": "4px", overflow: "hidden" }}>
             <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center", padding: "4px 8px", background: "var(--bg-secondary)", "font-size": "11px", color: "var(--text-muted)" }}>
-              <span>{q().isSqlMode ? "SQL Query" : "Generated Query"}</span>
+              <span>SQL Query</span>
               <button
                 class="filter-pill active"
                 style={{ "font-size": "11px", padding: "2px 8px" }}
@@ -225,6 +300,9 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
             </For>
           </div>
         </Show>
+
+        {/* Ask box's own result panel, directly beneath it */}
+        <ResultPanel runKey={ASK_RUN_KEY} title="Result" />
       </div>
 
       {/* ── Predefined SQL query catalogue ─────────────────────────────────── */}
@@ -277,73 +355,13 @@ export function Queries(props: { store: Store<AppState, AppAction> }) {
                 <Show when={shownSql().has(query.name) && query.sql}>
                   <SqlBlock code={query.sql!} style={{ "margin-top": "8px", "font-size": "11px" }} />
                 </Show>
+
+                {/* This query's own result panel, directly beneath it */}
+                <ResultPanel runKey={query.name} title={query.name} />
               </div>
             );
           }}
         </For>
-      </Show>
-
-      {/* ── Results ─────────────────────────────────────────────────────────── */}
-      <Show when={q().results}>
-        <Show when={"error" in (q().results ?? {})} fallback={
-          <Show when={hasResults()}>
-            <div class="card" style={{ margin: "12px 16px 0" }}>
-              <div class="card-header">
-                <h3>{q().resultsName} — {(q().results as { rows: unknown[] }).rows.length} rows</h3>
-              </div>
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <For each={(q().results as { columns: QueryColumn[] }).columns}>
-                      {(col) => (
-                        <th
-                          style={{ cursor: "pointer", "user-select": "none" }}
-                          onClick={() => store.dispatch({ tag: "queries", action: { tag: "sort", col: col.name } })}
-                        >
-                          {col.name}
-                          {" "}
-                          <Show when={q().sortCol === col.name}
-                            fallback={<ArrowUpDown size={11} style={{ opacity: "0.3", "vertical-align": "middle" }} />}
-                          >
-                            {q().sortDir === "asc" ? <ChevronUp size={11} style={{ "vertical-align": "middle" }} /> : <ChevronDown size={11} style={{ "vertical-align": "middle" }} />}
-                          </Show>
-                        </th>
-                      )}
-                    </For>
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={pagedRows()}>
-                    {(row) => (
-                      <tr>
-                        <For each={(q().results as { columns: QueryColumn[] }).columns}>
-                          {(col) => renderCell(col, row)}
-                        </For>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
-              <Show when={totalPages() > 1}>
-                <div style={{ display: "flex", gap: "8px", padding: "8px", "align-items": "center", "font-size": "12px" }}>
-                  <button class="filter-pill"
-                          disabled={q().page === 0}
-                          onClick={() => store.dispatch({ tag: "queries", action: { tag: "set-page", page: q().page - 1 } })}>
-                    <ChevronLeft size={13} /> Prev
-                  </button>
-                  <span>Page {q().page + 1} of {totalPages()}</span>
-                  <button class="filter-pill"
-                          disabled={q().page >= totalPages() - 1}
-                          onClick={() => store.dispatch({ tag: "queries", action: { tag: "set-page", page: q().page + 1 } })}>
-                    Next <ChevronRight size={13} />
-                  </button>
-                </div>
-              </Show>
-            </div>
-          </Show>
-        }>
-          <p style={{ color: "var(--red)", padding: "8px 16px" }}>{(q().results as { error: string }).error}</p>
-        </Show>
       </Show>
     </div>
   );

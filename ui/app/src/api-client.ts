@@ -102,7 +102,7 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`API ${r.status}`);
+  if (!r.ok) throw new Error((await errorDetail(r)) ?? `API ${r.status}`);
   return r.json() as Promise<T>;
 }
 
@@ -261,15 +261,7 @@ export function createApiClient(): ApiClient {
     },
 
     async runSql(sql: string): Promise<QueryResult> {
-      const r = await fetch("/api/queries/run-sql", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sql }),
-      });
-      if (!r.ok) throw new Error(await r.text().then((t) => {
-        try { return (JSON.parse(t) as { detail: string }).detail; } catch { return `API ${r.status}`; }
-      }));
-      return r.json() as Promise<QueryResult>;
+      return postJson("/api/queries/run-sql", { sql });
     },
 
     async getExploreTree(): Promise<ExploreTreeResponse> {

@@ -4,7 +4,7 @@ import { describe, it, expect } from "vitest";
 import { screen, fireEvent } from "@solidjs/testing-library";
 import { renderWithStore } from "../helpers.js";
 import { Queries } from "../../app/src/views/features/queries/Queries.js";
-import { initialQueriesState } from "@pb/platform";
+import { initialQueriesState, ASK_RUN_KEY } from "@pb/platform";
 
 const sampleQueries = [
   {
@@ -53,36 +53,84 @@ describe("Queries component", () => {
     expect(pre!.textContent).toContain("procedures");
   });
 
-  it("renders results table when results exist", () => {
+  it("renders a catalogue query's results directly beneath that query, not in a shared panel", () => {
     renderWithStore(Queries, {
       queries: {
         ...initialQueriesState,
-        items: [],
-        results: {
-          columns: [
-            { name: "name", entity_type: null },
-            { name: "cc",   entity_type: null },
-          ],
-          rows: [{ name: "of_calc", cc: 15 }, { name: "of_draw", cc: 8 }],
+        items: sampleQueries,
+        runs: {
+          top_complex: {
+            results: {
+              columns: [
+                { name: "name", entity_type: null },
+                { name: "cc", entity_type: null },
+              ],
+              rows: [{ name: "of_calc", cc: 15 }, { name: "of_draw", cc: 8 }],
+            },
+            queryParams: {},
+            sql: null,
+            sortCol: null,
+            sortDir: "asc",
+            page: 0,
+            loading: false,
+          },
         },
-        resultsName: "top_complex",
       },
     });
-    expect(screen.getByText(/top_complex/)).toBeDefined();
     expect(screen.getByText("of_calc")).toBeDefined();
     expect(screen.getByText("of_draw")).toBeDefined();
   });
 
-  it("renders error message when results contain error", () => {
+  it("renders an error message for a catalogue query's own run", () => {
     renderWithStore(Queries, {
       queries: {
         ...initialQueriesState,
-        items: [],
-        results: { error: "connection refused" },
-        resultsName: "top_complex",
+        items: sampleQueries,
+        runs: {
+          top_complex: {
+            results: { error: "connection refused" },
+            queryParams: {},
+            sql: null,
+            sortCol: null,
+            sortDir: "asc",
+            page: 0,
+            loading: false,
+          },
+        },
       },
     });
     expect(screen.getByText("connection refused")).toBeDefined();
+  });
+
+  it("renders the Ask box's own results independently of a catalogue query's results", () => {
+    renderWithStore(Queries, {
+      queries: {
+        ...initialQueriesState,
+        items: sampleQueries,
+        runs: {
+          top_complex: {
+            results: { columns: [{ name: "name", entity_type: null }], rows: [{ name: "catalogue_row" }] },
+            queryParams: {},
+            sql: null,
+            sortCol: null,
+            sortDir: "asc",
+            page: 0,
+            loading: false,
+          },
+          [ASK_RUN_KEY]: {
+            results: { columns: [{ name: "name", entity_type: null }], rows: [{ name: "ask_row" }] },
+            queryParams: {},
+            sql: "SELECT name FROM objects",
+            sortCol: null,
+            sortDir: "asc",
+            page: 0,
+            loading: false,
+          },
+        },
+      },
+    });
+    expect(screen.getByText("catalogue_row")).toBeDefined();
+    expect(screen.getByText("ask_row")).toBeDefined();
   });
 
   it("renders query param inputs with default values", () => {

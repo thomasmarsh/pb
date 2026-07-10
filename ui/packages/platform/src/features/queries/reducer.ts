@@ -1,7 +1,7 @@
 // features/queries/reducer.ts — Queries feature reducer (valtio draft style).
 
 import { Effect, type Reducer } from "@pb/core";
-import type { QueriesState } from "./types.js";
+import { ASK_RUN_KEY, type QueriesState, type QueryRunState } from "./types.js";
 import type { QueriesAction } from "./actions.js";
 import type { QueryDef, QueryResult } from "../../types/api.js";
 import type { NavigationAction, Route } from "../navigation/types.js";
@@ -13,20 +13,18 @@ export interface QueriesEnv {
   navigate(action: NavigationAction): Effect<never>;
 }
 
+function emptyRun(): QueryRunState {
+  return { results: null, queryParams: {}, sql: null, sortCol: null, sortDir: "asc", page: 0, loading: false };
+}
+
 export const initialQueriesState: QueriesState = {
   items: [],
-  results: null,
-  resultsName: "",
-  queryParams: {},
-  sortCol: null,
-  sortDir: "asc",
-  page: 0,
-  loading: false,
+  itemsLoading: false,
+  runs: {},
   askText: "",
   generatedSql: null,
   queryPaneOpen: false,
   recentQueries: [],
-  isSqlMode: false,
 };
 
 function entityRoute(entityType: string, entityName: string, objectName: string | null): Route | null {
@@ -50,75 +48,85 @@ function pushRecent(current: string[], sql: string): string[] {
 }
 
 function execRunSql(draft: QueriesState, sql: string, env: QueriesEnv): Effect<QueriesAction> {
+  const key = ASK_RUN_KEY;
   draft.generatedSql = sql;
-  draft.resultsName = sql.slice(0, 50);
-  draft.isSqlMode = true;
-  draft.results = null;
-  draft.page = 0;
-  draft.loading = true;
+  draft.runs[key] = { ...emptyRun(), sql, loading: true };
   draft.recentQueries = pushRecent(draft.recentQueries, sql);
   env.navigate({ tag: "navigate", route: { view: "queries", sqlText: sql } });
   return env.runSql(sql)
-    .map((data): QueriesAction => ({ tag: "result", data }))
-    .catch((e): QueriesAction => ({ tag: "error", error: String(e) }));
+    .map((data): QueriesAction => ({ tag: "result", key, data }))
+    .catch((e): QueriesAction => ({ tag: "error", key, error: String(e) }));
 }
 
 function reduce(draft: QueriesState, action: QueriesAction, env: QueriesEnv): Effect<QueriesAction> | null {
   switch (action.tag) {
   case "load":
-    draft.loading = true;
+    draft.itemsLoading = true;
     return env.getQueries().map((data): QueriesAction => ({ tag: "loaded", items: data.queries }));
   case "loaded":
     draft.items = action.items;
-    draft.loading = false;
+    draft.itemsLoading = false;
     return null;
-  case "run":
-    draft.results = null;
-    draft.resultsName = action.name;
-    draft.queryParams = action.params;
-    draft.isSqlMode = false;
-    draft.page = 0;
+  case "run": {
+    const key = action.name;
+    draft.runs[key] = { ...emptyRun(), queryParams: action.params, loading: true };
     env.navigate({ tag: "navigate", route: { view: "queries", queryName: action.name, queryParams: action.params } });
     return env.runQuery(action.name, action.params)
-      .map((data): QueriesAction => ({ tag: "result", data }))
-      .catch((e): QueriesAction => ({ tag: "error", error: String(e) }));
-  case "result":
-    draft.results = action.data;
-    draft.loading = false;
+      .map((data): QueriesAction => ({ tag: "result", key, data }))
+      .catch((e): QueriesAction => ({ tag: "error", key, error: String(e) }));
+  }
+  case "result": {
+    const run = draft.runs[action.key] ?? emptyRun();
+    run.results = action.data;
+    run.loading = false;
+    draft.runs[action.key] = run;
     return null;
-  case "error":
-    draft.results = { error: action.error };
-    draft.loading = false;
-    draft.queryPaneOpen = true;
+  }
+  case "error": {
+    const run = draft.runs[action.key] ?? emptyRun();
+    run.results = { error: action.error };
+    run.loading = false;
+    draft.runs[action.key] = run;
+    if (action.key === ASK_RUN_KEY) draft.queryPaneOpen = true;
     return null;
-  case "restore":
-    if (draft.resultsName === action.name && draft.results !== null) return null;
-    draft.resultsName = action.name;
-    draft.queryParams = action.params;
+  }
+  case "restore": {
+    const key = action.name;
+    const existing = draft.runs[key];
+    if (existing && existing.results !== null) return null;
+    draft.runs[key] = { ...(existing ?? emptyRun()), queryParams: action.params };
     return env.runQuery(action.name, action.params)
-      .map((data): QueriesAction => ({ tag: "result", data }))
-      .catch((e): QueriesAction => ({ tag: "error", error: String(e) }));
+      .map((data): QueriesAction => ({ tag: "result", key, data }))
+      .catch((e): QueriesAction => ({ tag: "error", key, error: String(e) }));
+  }
   case "navigate-to-entity": {
     const route = entityRoute(action.entityType, action.entityName, action.objectName);
     if (!route) return null;
-    const queryRoute: Route = draft.isSqlMode && draft.generatedSql
-      ? { view: "queries", sqlText: draft.generatedSql }
-      : { view: "queries", queryName: draft.resultsName, queryParams: draft.queryParams };
-    env.navigate({ tag: "navigate-from-ask", route, queryName: draft.resultsName, queryRoute });
+    const run = draft.runs[action.key];
+    const queryRoute: Route = action.key === ASK_RUN_KEY && run?.sql
+      ? { view: "queries", sqlText: run.sql }
+      : { view: "queries", queryName: action.key, queryParams: run?.queryParams ?? {} };
+    env.navigate({ tag: "navigate-from-ask", route, queryName: action.key, queryRoute });
     return null;
   }
-  case "sort":
-    if (draft.sortCol === action.col) {
-      draft.sortDir = draft.sortDir === "asc" ? "desc" : "asc";
+  case "sort": {
+    const run = draft.runs[action.key];
+    if (!run) return null;
+    if (run.sortCol === action.col) {
+      run.sortDir = run.sortDir === "asc" ? "desc" : "asc";
     } else {
-      draft.sortCol = action.col;
-      draft.sortDir = "asc";
+      run.sortCol = action.col;
+      run.sortDir = "asc";
     }
-    draft.page = 0;
+    run.page = 0;
     return null;
-  case "set-page":
-    draft.page = action.page;
+  }
+  case "set-page": {
+    const run = draft.runs[action.key];
+    if (!run) return null;
+    run.page = action.page;
     return null;
+  }
   case "set-ask-text":
     draft.askText = action.text;
     return null;
@@ -128,7 +136,10 @@ function reduce(draft: QueriesState, action: QueriesAction, env: QueriesEnv): Ef
     if (isSqlQuery(text)) {
       return execRunSql(draft, draft.askText.trim(), env);
     }
-    draft.results = { error: "NL translation is not available at P1 — start your question with SELECT or WITH to query directly." };
+    draft.runs[ASK_RUN_KEY] = {
+      ...emptyRun(),
+      results: { error: "NL translation is not available at P1 — start your question with SELECT or WITH to query directly." },
+    };
     return null;
   }
   case "toggle-query-pane":

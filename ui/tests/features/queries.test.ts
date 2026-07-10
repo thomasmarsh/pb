@@ -3,8 +3,8 @@
 import { describe, it, expect } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
-import { queriesReducer, initialQueriesState, type QueriesEnv } from "@pb/platform";
-import type { QueriesState } from "@pb/platform";
+import { queriesReducer, initialQueriesState, ASK_RUN_KEY, type QueriesEnv } from "@pb/platform";
+import type { QueriesState, QueryRunState } from "@pb/platform";
 import type { NavigationAction } from "@pb/platform";
 
 function makeMockEnv(): QueriesEnv & { lastNavigate: NavigationAction | null; lastSql: string | null } {
@@ -19,28 +19,44 @@ function makeMockEnv(): QueriesEnv & { lastNavigate: NavigationAction | null; la
   return env;
 }
 
+function emptyRun(overrides: Partial<QueryRunState> = {}): QueryRunState {
+  return { results: null, queryParams: {}, sql: null, sortCol: null, sortDir: "asc", page: 0, loading: false, ...overrides };
+}
+
 describe("queries reducer", () => {
   describe("queries/loaded", () => {
-    it("populates items and clears loading", () => {
+    it("populates items and clears itemsLoading", () => {
       const items = [{ name: "top", description: "Most complex", params: [] }];
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, initialQueriesState);
       ts.send({ tag: "loaded", items }, (s) => {
         s.items = items;
-        s.loading = false;
+        s.itemsLoading = false;
       });
     });
   });
 
   describe("queries/run", () => {
-    it("clears results, sets resultsName and queryParams", () => {
-      const init: QueriesState = { ...initialQueriesState, results: { columns: [], rows: [{ x: 1 }] } };
+    it("creates a fresh run keyed by query name, marked loading", () => {
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, initialQueriesState);
+      ts.send({ tag: "run", name: "top", params: { n: "5" } }, (s) => {
+        s.runs = { top: emptyRun({ queryParams: { n: "5" }, loading: true }) };
+      });
+    });
+
+    it("does not disturb another query's existing run", () => {
+      const init: QueriesState = {
+        ...initialQueriesState,
+        runs: { other: emptyRun({ results: { columns: [], rows: [{ x: 1 }] } }) },
+      };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ tag: "run", name: "top", params: { n: "5" } }, (s) => {
-        s.results = null;
-        s.resultsName = "top";
-        s.queryParams = { n: "5" };
+      ts.send({ tag: "run", name: "top", params: {} }, (s) => {
+        s.runs = {
+          other: emptyRun({ results: { columns: [], rows: [{ x: 1 }] } }),
+          top: emptyRun({ loading: true }),
+        };
       });
     });
 
@@ -56,28 +72,54 @@ describe("queries reducer", () => {
   });
 
   describe("queries/result", () => {
-    it("populates results and clears loading", () => {
+    it("populates the run's results and clears its loading, keyed by action.key", () => {
       const data = { columns: [{ name: "obj", entity_type: null }], rows: [{ obj: "foo" }] };
+      const init: QueriesState = { ...initialQueriesState, runs: { top: emptyRun({ loading: true }) } };
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, init);
+      ts.send({ tag: "result", key: "top", data }, (s) => {
+        s.runs = { top: emptyRun({ results: data, loading: false }) };
+      });
+    });
+  });
+
+  describe("queries/error", () => {
+    it("sets the run's results to an error and clears loading", () => {
+      const init: QueriesState = { ...initialQueriesState, runs: { top: emptyRun({ loading: true }) } };
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, init);
+      ts.send({ tag: "error", key: "top", error: "boom" }, (s) => {
+        s.runs = { top: emptyRun({ results: { error: "boom" }, loading: false }) };
+      });
+    });
+
+    it("opens the query pane only when the erroring run is the Ask run", () => {
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, initialQueriesState);
-      ts.send({ tag: "result", data }, (s) => {
-        s.results = data;
-        s.loading = false;
+      ts.send({ tag: "error", key: ASK_RUN_KEY, error: "boom" }, (s) => {
+        s.runs = { [ASK_RUN_KEY]: emptyRun({ results: { error: "boom" } }) };
+        s.queryPaneOpen = true;
+      });
+    });
+
+    it("does not open the query pane for a catalogue query error", () => {
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, initialQueriesState);
+      ts.send({ tag: "error", key: "top", error: "boom" }, (s) => {
+        s.runs = { top: emptyRun({ results: { error: "boom" } }) };
       });
     });
   });
 
   describe("queries/restore", () => {
-    it("skips re-run when resultsName matches and results are non-null", () => {
+    it("skips re-run when the run exists and has non-null results", () => {
       const existing = {
         columns: [{ name: "obj", entity_type: null as string | null }],
         rows: [{ obj: "foo" }],
       };
       const init: QueriesState = {
         ...initialQueriesState,
-        resultsName: "top",
-        queryParams: { n: "5" },
-        results: existing,
+        runs: { top: emptyRun({ queryParams: { n: "5" }, results: existing }) },
       };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
@@ -85,35 +127,33 @@ describe("queries reducer", () => {
       expect(env.lastNavigate).toBeNull();
     });
 
-    it("re-runs query when resultsName differs", () => {
+    it("re-runs query when no run exists yet", () => {
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, initialQueriesState);
       ts.send({ tag: "restore", name: "callers", params: { name: "f_proc" } }, (s) => {
-        s.resultsName = "callers";
-        s.queryParams = { name: "f_proc" };
+        s.runs = { callers: emptyRun({ queryParams: { name: "f_proc" } }) };
       });
     });
 
-    it("re-runs query when results are null even if name matches", () => {
-      const init: QueriesState = { ...initialQueriesState, resultsName: "top", results: null };
+    it("re-runs query when results are null even if the run exists", () => {
+      const init: QueriesState = { ...initialQueriesState, runs: { top: emptyRun() } };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
       ts.send({ tag: "restore", name: "top", params: {} }, (s) => {
-        s.queryParams = {};
+        s.runs = { top: emptyRun() };
       });
     });
   });
 
   describe("queries/navigate-to-entity", () => {
-    it("calls navigate-from-ask for object entity type", () => {
+    it("calls navigate-from-ask for object entity type, using the run's queryParams", () => {
       const init: QueriesState = {
         ...initialQueriesState,
-        resultsName: "top",
-        queryParams: { n: "5" },
+        runs: { top: emptyRun({ queryParams: { n: "5" } }) },
       };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ tag: "navigate-to-entity", entityType: "object", entityName: "w_payment", objectName: null });
+      ts.send({ tag: "navigate-to-entity", key: "top", entityType: "object", entityName: "w_payment", objectName: null });
       expect(env.lastNavigate).toEqual({
         tag: "navigate-from-ask",
         route: { view: "objectDetail", name: "w_payment" },
@@ -125,13 +165,13 @@ describe("queries reducer", () => {
     it("constructs procedureDetail route from entityName + objectName", () => {
       const init: QueriesState = {
         ...initialQueriesState,
-        resultsName: "callers",
-        queryParams: { name: "f_validate" },
+        runs: { callers: emptyRun({ queryParams: { name: "f_validate" } }) },
       };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
       ts.send({
         tag: "navigate-to-entity",
+        key: "callers",
         entityType: "procedure",
         entityName: "f_validate",
         objectName: "w_payment",
@@ -145,10 +185,10 @@ describe("queries reducer", () => {
     });
 
     it("constructs dwDetail route for datawindow entity type", () => {
-      const init: QueriesState = { ...initialQueriesState, resultsName: "dw", queryParams: {} };
+      const init: QueriesState = { ...initialQueriesState, runs: { dw: emptyRun() } };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ tag: "navigate-to-entity", entityType: "datawindow", entityName: "d_grid", objectName: null });
+      ts.send({ tag: "navigate-to-entity", key: "dw", entityType: "datawindow", entityName: "d_grid", objectName: null });
       expect(env.lastNavigate).toMatchObject({
         tag: "navigate-from-ask",
         route: { view: "dwDetail", name: "d_grid" },
@@ -156,10 +196,10 @@ describe("queries reducer", () => {
     });
 
     it("constructs tableDetail route for table entity type", () => {
-      const init: QueriesState = { ...initialQueriesState, resultsName: "sql_tables", queryParams: {} };
+      const init: QueriesState = { ...initialQueriesState, runs: { sql_tables: emptyRun() } };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ tag: "navigate-to-entity", entityType: "table", entityName: "accounts", objectName: null });
+      ts.send({ tag: "navigate-to-entity", key: "sql_tables", entityType: "table", entityName: "accounts", objectName: null });
       expect(env.lastNavigate).toMatchObject({
         tag: "navigate-from-ask",
         route: { view: "tableDetail", name: "accounts" },
@@ -169,21 +209,19 @@ describe("queries reducer", () => {
     it("does nothing for unknown entity type", () => {
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, initialQueriesState);
-      ts.send({ tag: "navigate-to-entity", entityType: "unknown", entityName: "x", objectName: null });
+      ts.send({ tag: "navigate-to-entity", key: "top", entityType: "unknown", entityName: "x", objectName: null });
       expect(env.lastNavigate).toBeNull();
     });
 
-    it("in SQL mode uses sqlText queryRoute", () => {
+    it("for the Ask run key, uses the sqlText queryRoute", () => {
       const sql = "SELECT name FROM objects";
       const init: QueriesState = {
         ...initialQueriesState,
-        resultsName: "SELECT name FROM ob",
-        generatedSql: sql,
-        isSqlMode: true,
+        runs: { [ASK_RUN_KEY]: emptyRun({ sql }) },
       };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ tag: "navigate-to-entity", entityType: "object", entityName: "w_pay", objectName: null });
+      ts.send({ tag: "navigate-to-entity", key: ASK_RUN_KEY, entityType: "object", entityName: "w_pay", objectName: null });
       expect(env.lastNavigate).toMatchObject({
         tag: "navigate-from-ask",
         route: { view: "objectDetail", name: "w_pay" },
@@ -193,55 +231,63 @@ describe("queries reducer", () => {
   });
 
   describe("queries/sort", () => {
-    it("sets sortCol and defaults to asc", () => {
+    it("sets sortCol and defaults to asc on the targeted run", () => {
+      const init: QueriesState = { ...initialQueriesState, runs: { top: emptyRun() } };
       const env = makeMockEnv();
-      const ts = createTestStore(queriesReducer, env, initialQueriesState);
-      ts.send({ tag: "sort", col: "name" }, (s) => {
-        s.sortCol = "name";
-        s.sortDir = "asc";
-        s.page = 0;
+      const ts = createTestStore(queriesReducer, env, init);
+      ts.send({ tag: "sort", key: "top", col: "name" }, (s) => {
+        s.runs = { top: emptyRun({ sortCol: "name", sortDir: "asc" }) };
       });
     });
 
     it("toggles to desc on same column", () => {
-      const init: QueriesState = { ...initialQueriesState, sortCol: "name", sortDir: "asc" };
+      const init: QueriesState = { ...initialQueriesState, runs: { top: emptyRun({ sortCol: "name", sortDir: "asc" }) } };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ tag: "sort", col: "name" }, (s) => {
-        s.sortDir = "desc";
-        s.page = 0;
+      ts.send({ tag: "sort", key: "top", col: "name" }, (s) => {
+        s.runs = { top: emptyRun({ sortCol: "name", sortDir: "desc" }) };
       });
     });
 
     it("toggles back to asc when already desc", () => {
-      const init: QueriesState = { ...initialQueriesState, sortCol: "name", sortDir: "desc" };
+      const init: QueriesState = { ...initialQueriesState, runs: { top: emptyRun({ sortCol: "name", sortDir: "desc" }) } };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ tag: "sort", col: "name" }, (s) => {
-        s.sortDir = "asc";
-        s.page = 0;
+      ts.send({ tag: "sort", key: "top", col: "name" }, (s) => {
+        s.runs = { top: emptyRun({ sortCol: "name", sortDir: "asc" }) };
       });
     });
 
     it("resets to asc and clears page on new column", () => {
-      const init: QueriesState = { ...initialQueriesState, sortCol: "name", sortDir: "desc", page: 3 };
+      const init: QueriesState = { ...initialQueriesState, runs: { top: emptyRun({ sortCol: "name", sortDir: "desc", page: 3 }) } };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
-      ts.send({ tag: "sort", col: "cyclomatic" }, (s) => {
-        s.sortCol = "cyclomatic";
-        s.sortDir = "asc";
-        s.page = 0;
+      ts.send({ tag: "sort", key: "top", col: "cyclomatic" }, (s) => {
+        s.runs = { top: emptyRun({ sortCol: "cyclomatic", sortDir: "asc", page: 0 }) };
       });
+    });
+
+    it("does nothing when the run does not exist", () => {
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, initialQueriesState);
+      ts.send({ tag: "sort", key: "missing", col: "name" });
     });
   });
 
   describe("queries/set-page", () => {
-    it("sets page number", () => {
+    it("sets page number on the targeted run", () => {
+      const init: QueriesState = { ...initialQueriesState, runs: { top: emptyRun() } };
+      const env = makeMockEnv();
+      const ts = createTestStore(queriesReducer, env, init);
+      ts.send({ tag: "set-page", key: "top", page: 2 }, (s) => {
+        s.runs = { top: emptyRun({ page: 2 }) };
+      });
+    });
+
+    it("does nothing when the run does not exist", () => {
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, initialQueriesState);
-      ts.send({ tag: "set-page", page: 2 }, (s) => {
-        s.page = 2;
-      });
+      ts.send({ tag: "set-page", key: "missing", page: 2 });
     });
   });
 
@@ -287,18 +333,13 @@ describe("queries reducer", () => {
   });
 
   describe("queries/run-sql", () => {
-    it("sets generatedSql, resultsName (truncated), isSqlMode, clears results", () => {
+    it("sets generatedSql and creates a loading run under the Ask key", () => {
       const sql = "SELECT name, object FROM procedures ORDER BY cyclomatic DESC LIMIT 20";
-      const init: QueriesState = { ...initialQueriesState, results: { columns: [], rows: [] } };
       const env = makeMockEnv();
-      const ts = createTestStore(queriesReducer, env, init);
+      const ts = createTestStore(queriesReducer, env, initialQueriesState);
       ts.send({ tag: "run-sql", sql }, (s) => {
         s.generatedSql = sql;
-        s.resultsName = sql.slice(0, 50);
-        s.isSqlMode = true;
-        s.results = null;
-        s.page = 0;
-        s.loading = true;
+        s.runs = { [ASK_RUN_KEY]: emptyRun({ sql, loading: true }) };
         s.recentQueries = [sql];
       });
     });
@@ -310,11 +351,7 @@ describe("queries reducer", () => {
       const ts = createTestStore(queriesReducer, env, init);
       ts.send({ tag: "run-sql", sql: "SELECT 1" }, (s) => {
         s.generatedSql = "SELECT 1";
-        s.resultsName = "SELECT 1";
-        s.isSqlMode = true;
-        s.results = null;
-        s.page = 0;
-        s.loading = true;
+        s.runs = { [ASK_RUN_KEY]: emptyRun({ sql: "SELECT 1", loading: true }) };
         s.recentQueries = ["SELECT 1", "q1", "q2", "q3", "q4"];
       });
     });
@@ -325,11 +362,7 @@ describe("queries reducer", () => {
       const ts = createTestStore(queriesReducer, env, init);
       ts.send({ tag: "run-sql", sql: "SELECT 1" }, (s) => {
         s.generatedSql = "SELECT 1";
-        s.resultsName = "SELECT 1";
-        s.isSqlMode = true;
-        s.results = null;
-        s.page = 0;
-        s.loading = true;
+        s.runs = { [ASK_RUN_KEY]: emptyRun({ sql: "SELECT 1", loading: true }) };
         s.recentQueries = ["SELECT 1", "q2"];
       });
     });
@@ -353,7 +386,7 @@ describe("queries reducer", () => {
       expect(env.lastSql).toBe(sql);
     });
 
-    it("on failure: sets error and opens query pane", async () => {
+    it("on failure: sets error on the Ask run and opens query pane", async () => {
       const sql = "SELECT invalid";
       const env: QueriesEnv & { lastNavigate: NavigationAction | null; lastSql: string | null } = {
         lastNavigate: null,
@@ -366,9 +399,9 @@ describe("queries reducer", () => {
       const ts = createTestStore(queriesReducer, env, initialQueriesState);
       ts.send({ tag: "run-sql", sql });
       await ts.drain();
-      ts.receive({ tag: "error", error: "Error: syntax error" }, (s) => {
-        s.results = { error: "Error: syntax error" };
-        s.loading = false;
+      ts.receive({ tag: "error", key: ASK_RUN_KEY, error: "Error: syntax error" }, (s) => {
+        s.runs[ASK_RUN_KEY]!.results = { error: "Error: syntax error" };
+        s.runs[ASK_RUN_KEY]!.loading = false;
         s.queryPaneOpen = true;
       });
     });
@@ -399,12 +432,12 @@ describe("queries reducer", () => {
       expect(env.lastSql).not.toBeNull();
     });
 
-    it("NL input sets error result (no LLM at P1)", () => {
+    it("NL input sets an error result on the Ask run (no LLM at P1)", () => {
       const init: QueriesState = { ...initialQueriesState, askText: "which procedures call f_validate?" };
       const env = makeMockEnv();
       const ts = createTestStore(queriesReducer, env, init);
       ts.send({ tag: "submit-ask" }, (s) => {
-        s.results = { error: expect.stringContaining("SELECT") as unknown as string };
+        s.runs = { [ASK_RUN_KEY]: emptyRun({ results: { error: expect.stringContaining("SELECT") as unknown as string } }) };
       });
       expect(env.lastSql).toBeNull();
     });
@@ -426,11 +459,7 @@ describe("queries reducer", () => {
       ts.send({ tag: "run-recent", text: sql }, (s) => {
         s.askText = sql;
         s.generatedSql = sql;
-        s.resultsName = sql.slice(0, 50);
-        s.isSqlMode = true;
-        s.results = null;
-        s.page = 0;
-        s.loading = true;
+        s.runs = { [ASK_RUN_KEY]: emptyRun({ sql, loading: true }) };
         s.recentQueries = [sql];
       });
       expect(env.lastSql).toBe(sql);

@@ -50,7 +50,8 @@ export type { ObjectsAction } from "./features/objects/actions.js";
 // Queries
 export { queriesReducer, initialQueriesState } from "./features/queries/reducer.js";
 export type { QueriesEnv } from "./features/queries/reducer.js";
-export type { QueriesState } from "./features/queries/types.js";
+export { ASK_RUN_KEY } from "./features/queries/types.js";
+export type { QueriesState, QueryRunState } from "./features/queries/types.js";
 export type { QueriesAction } from "./features/queries/actions.js";
 
 // Search
