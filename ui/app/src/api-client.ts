@@ -21,9 +21,7 @@ import type {
   WiringDiagramResponse,
   ProcedureFootprintResponse,
   ColumnUsageResponse,
-  CoUpdateRitualsResponse,
   DecompositionCandidatesResponse,
-  ColumnAffinityResponse,
   CfgDiagramResponse,
 } from "@pb/platform";
 import { type DataWindowFile, type AstData, type WindowLayout } from "@pb/interpreter";
@@ -61,9 +59,7 @@ export interface ApiClient {
   getTables(namespace?: string): Promise<TableSummary[]>;
   getTableDetail(name: string, namespace?: string): Promise<TableDetail>;
   getColumnUsage(): Promise<ColumnUsageResponse>;
-  getCoUpdateRituals(): Promise<CoUpdateRitualsResponse>;
   getDecompositionCandidates(table: string, namespace?: string): Promise<DecompositionCandidatesResponse>;
-  getColumnAffinity(table: string, namespace?: string): Promise<ColumnAffinityResponse>;
   getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse>;
   getDwQueries(): Promise<Record<string, string>>;
   executeSql(sql: string, params: unknown[]): Promise<SQLResult>;
@@ -138,9 +134,7 @@ export function createEnv(api: ApiClient): Env {
     getTables: (ns?: string) => lift(() => api.getTables(ns)),
     getTableDetail: (n: string, ns?: string) => lift(() => api.getTableDetail(n, ns)),
     getColumnUsage: () => lift(() => api.getColumnUsage()),
-    getCoUpdateRituals: () => lift(() => api.getCoUpdateRituals()),
     getDecompositionCandidates: (t: string, ns?: string) => lift(() => api.getDecompositionCandidates(t, ns)),
-    getColumnAffinity: (t: string, ns?: string) => lift(() => api.getColumnAffinity(t, ns)),
     getErrors: (p) => lift(() => api.getErrors(p)),
     getDwQueries: () => lift(() => api.getDwQueries()),
     executeSql: (sql, params) => lift(() => api.executeSql(sql, params)),
@@ -303,18 +297,9 @@ export function createApiClient(): ApiClient {
       return fetchJson("/api/schema/column-usage");
     },
 
-    async getCoUpdateRituals(): Promise<CoUpdateRitualsResponse> {
-      return fetchJson("/api/schema/co-update-rituals");
-    },
-
     async getDecompositionCandidates(table: string, namespace?: string): Promise<DecompositionCandidatesResponse> {
       const qs = namespace ? "?" + apiParams({ namespace }) : "";
       return fetchJson(`/api/schema/decomposition-candidates/${encodeURIComponent(table)}${qs}`);
-    },
-
-    async getColumnAffinity(table: string, namespace?: string): Promise<ColumnAffinityResponse> {
-      const qs = namespace ? "?" + apiParams({ namespace }) : "";
-      return fetchJson(`/api/schema/column-affinity/${encodeURIComponent(table)}${qs}`);
     },
 
     async getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse> {

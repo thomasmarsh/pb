@@ -527,6 +527,7 @@ export interface DecompositionCandidate {
   columns: string[];
   similarity: number;
   ritual_support: number;
+  ritual_pairs: CoUpdateRitual[];
   unenforced_fk_count: number;
   coslice_size: number;
   score: number | null;
@@ -536,6 +537,7 @@ export interface DecompositionCandidate {
 export interface DecompositionCandidatesResponse {
   table: string;
   namespace: string | null;
+  affinity: ColumnAffinityFields;
   candidates: DecompositionCandidate[];
 }
 
@@ -544,12 +546,15 @@ export interface DendrogramMerge {
   members: string[];
 }
 
-export interface ColumnAffinityResponse {
-  table: string;
-  namespace: string | null;
+export interface ColumnAffinityFields {
   columns: string[];
   co_access_matrix: number[][];
   dendrogram: DendrogramMerge[];
+}
+
+export interface ColumnAffinityResponse extends ColumnAffinityFields {
+  table: string;
+  namespace: string | null;
 }
 
 // ── Program slicing ──────────────────────────────────────────────────────────

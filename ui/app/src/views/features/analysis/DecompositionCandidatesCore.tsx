@@ -4,16 +4,31 @@
 //
 // Data flows through the tables feature's env/reducer (CLAUDE.md Rule 1/2),
 // mirroring ProcedureFootprintCore.tsx — not a self-fetching component.
+//
+// Consolidation (2026-07-09): this is now the sole entry point for schema-
+// normalization analysis on a table — the table-wide Column Affinity heat
+// matrix + dendrogram render once here as an overview (previously their own
+// standalone panel), and each candidate's own co-update ritual evidence
+// renders inside its expandable row, scoped to just that candidate's 2-4
+// columns rather than a whole-table cross join of every column pair (see
+// RitualViolationsList below for why only violations are shown).
 
 import { Show, Switch, Match, For, createMemo, createSignal, onMount } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../../state.js";
 import type { AppAction } from "../../../actions.js";
-import type { DecompositionCandidate, DecompositionEvidencePath, SchemaObjectRef, AnalysisExplainerContent } from "@pb/platform";
+import type {
+  DecompositionCandidate,
+  DecompositionEvidencePath,
+  SchemaObjectRef,
+  AnalysisExplainerContent,
+  CoUpdateRitual,
+  FkColumnRef,
+} from "@pb/platform";
 import { EntityCard } from "@pb/platform";
 import { TableChip } from "../../components/detail/TableChip.js";
-import { DendrogramList, AFFINITY_EXAMPLE_MERGES } from "./ColumnAffinityCore.js";
+import { HeatMatrix, DendrogramList, AFFINITY_EXAMPLE_COLUMNS, AFFINITY_EXAMPLE_MATRIX, AFFINITY_EXAMPLE_MERGES } from "./ColumnAffinityCore.js";
 
 export interface DecompositionCandidatesCoreProps {
   store: Store<AppState, AppAction>;
@@ -246,6 +261,52 @@ function EvidencePathsCell(props: { paths: DecompositionEvidencePath[]; store: S
   );
 }
 
+function refLabel(col: FkColumnRef): string {
+  return `${col.namespace ? `${col.namespace}.` : ""}${col.table}.${col.column}`;
+}
+
+// Every ritual pair reaching this component already has at least one
+// violation — get_decomposition_candidates (schema.py) filters the routine
+// "always written together, no exceptions" pairs out before returning
+// ritual_pairs, since those just restate what the affinity heatmap above
+// already shows visually. What's left is the actionable case: a statement
+// that broke an established co-write convention by writing one column of
+// the pair but not the other.
+function RitualViolationsList(props: { pairs: CoUpdateRitual[] }): JSX.Element {
+  return (
+    <div style={{ "margin-top": "12px" }}>
+      <div style={{ "font-weight": 600, "font-size": "12px", "margin-bottom": "6px" }}>
+        Co-update rule violations
+      </div>
+      <table class="data-table" style={{ "font-size": "12px" }}>
+        <thead><tr><th>Column A</th><th>Column B</th><th>Co-write support</th><th>Violations</th></tr></thead>
+        <tbody>
+          <For each={props.pairs}>
+            {(ritual) => (
+              <tr>
+                <td style={{ padding: "4px 8px" }}>{refLabel(ritual.column_a)}</td>
+                <td style={{ padding: "4px 8px" }}>{refLabel(ritual.column_b)}</td>
+                <td>{ritual.co_write_support}</td>
+                <td>
+                  <ul style={{ margin: "0", "padding-left": "16px" }}>
+                    <For each={ritual.violations}>
+                      {(v) => (
+                        <li>
+                          {v.object}.{v.proc_name} (line {v.line}) wrote only {refLabel(v.written_column)}
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </td>
+              </tr>
+            )}
+          </For>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // A minimal "table shape" box for the before/after split payoff below — not
 // the real TableChip (which navigates a live store), just enough visual
 // structure to show what "split into two tables" means concretely.
@@ -258,44 +319,83 @@ function SchemaBox(props: { name: string; columns: string[] }): JSX.Element {
   );
 }
 
-// Continues Column Affinity's employee(name, email, salary, hire_date,
-// dept_id) example (Plan 156 rollout) rather than inventing a second one —
-// the {name, email} cluster that merges early there is the same candidate
-// scored here, now with corroborating ritual/FK evidence and the concrete
-// before/after split it implies.
+// Synthetic violation example (no store, no API) — teaches the one concept
+// this panel's own ritual evidence otherwise never demonstrates in real
+// data: this corpus (see doc/plan/153's D1 retrospective) has never found a
+// single co-update violation, so a real screenshot could only ever show an
+// empty list. of_save_name_only writes `name` without its usual partner
+// `email` — that's what breaks an established co-write convention.
+const RITUAL_VIOLATION_EXAMPLE: CoUpdateRitual = {
+  column_a: { namespace: null, table: "employee", column: "name" },
+  column_b: { namespace: null, table: "employee", column: "email" },
+  co_write_support: 4,
+  violations: [
+    {
+      file: "u_profile.srw",
+      object: "w_profile_edit",
+      proc_name: "of_save_name_only",
+      line: 88,
+      written_column: { namespace: null, table: "employee", column: "name" },
+    },
+  ],
+};
+
+// Consolidates what used to be two separate explainers (Column Affinity's
+// own, and this one) into a single walkthrough — Column Affinity is no
+// longer a standalone panel, it's the overview at the top of this one, and
+// co-update rituals are evidence nested inside each candidate row, not a
+// panel of their own. Continues the employee(name, email, salary,
+// hire_date, dept_id) example throughout (Plan 156 rollout, merged further
+// 2026-07-09) rather than inventing a new one per section.
 export const DECOMPOSITION_EXPLAINER: AnalysisExplainerContent = {
   title: "Decomposition Candidates",
   whatItIs:
     "A ranked, multi-signal verdict for whether a table should be split in " +
-    "two. It combines the same column co-access affinity behind Column " +
-    "Affinity with co-update rituals (do the columns change together row " +
-    "by row, not just in the same statement?), unenforced foreign-key " +
+    "two. The overview at the top is a heat matrix of how often each pair " +
+    "of columns is touched together by the same SQL statement or " +
+    "DataWindow retrieve, plus a dendrogram clustering columns that " +
+    "co-occur — columns merging together at high similarity are almost " +
+    "always read or written in the same breath. Each ranked candidate " +
+    "below is one of those clusters, scored by combining that similarity " +
+    "with co-update rituals (do the columns change together row by row, " +
+    "not just in the same statement type?), unenforced foreign-key " +
     "evidence, and the coslice size (a math term for 'blast radius' — " +
     "every SQL statement or DataWindow retrieve you'd have to touch, found " +
     "by following column reads/writes and FK edges outward from these " +
     "columns) that would need to change if the split actually happened.",
   howItsUsed:
     "Each row is one candidate split. Columns is the block that clusters " +
-    "together; Similarity mirrors the Column Affinity dendrogram's merge " +
-    "height; Ritual support and Unenforced FKs are independent evidence " +
-    "the two halves are really separate entities today, not just " +
-    "habitually queried together; Coslice size (the blast radius above) " +
-    "is the cost of acting on the recommendation; Score folds all of it " +
-    "into one ranking. This panel is downstream of Column Affinity — open " +
-    "that panel's own explainer to see how the underlying matrix and " +
-    "dendrogram are built.",
+    "together in the heat matrix above; Similarity mirrors that " +
+    "dendrogram's merge height; Ritual support and Unenforced FKs are " +
+    "independent evidence the two halves are really separate entities " +
+    "today, not just habitually queried together; Coslice size (the blast " +
+    "radius above) is the cost of acting on the recommendation; Score " +
+    "folds all of it into one ranking. Click a row to expand its evidence " +
+    "— the blast-radius paths, and, only when one exists, a co-update rule " +
+    "violation: a statement that wrote one column of an established pair " +
+    "without its usual partner (see the example below). A pair with no " +
+    "violations means its columns are, without exception, always written " +
+    "together — which the heat matrix above already shows, so nothing " +
+    "further is listed for it.",
   tips: [
+    "The number in each heat-matrix cell is a statement count, not a row count — a high count means many statements touch both columns, not that many rows share a value.",
+    "A cluster that merges early (high similarity) and stays separate from the rest of the table in the dendrogram is the strongest split signal.",
     "High similarity with zero ritual support and zero unenforced FKs is weaker evidence than the same similarity backed by both — the extra signals rule out 'just happens to be queried together'.",
     "Score is null, not zero, when there isn't enough evidence to combine the signals confidently — read it as 'unscored', not 'bad'.",
     "Coslice size (the blast radius — see 'What it is' above) routinely reaches 100+ for tables with many downstream FK dependents — a bigger number means a bigger migration, not necessarily a bad split.",
     "Unenforced FK evidence needs a loaded DDL catalog (--ddl) to mean anything; with none loaded every candidate reports 0 unenforced FKs, which reads as 'no evidence' rather than 'nothing found'.",
+    "A ritual violation is a real anomaly, not routine output — most tables will never show one, and that's the expected, healthy case, not a sign the feature found nothing.",
   ],
   example: () => (
     <>
       <p style={{ margin: "0 0 8px", "font-size": "12px", color: "var(--text-muted)" }}>
-        Continuing the <code>employee(name, email, salary, hire_date, dept_id)</code> example from Column Affinity — the {"{name, email}"} cluster that merged early there also has corroborating ritual and FK evidence:
+        Sample <code>employee(name, email, salary, hire_date, dept_id)</code> — a profile-edit form always reads/writes {"{name, email}"} together, payroll always touches {"{salary, hire_date}"} together, and dept_id is touched independently of both:
       </p>
+      <HeatMatrix columns={AFFINITY_EXAMPLE_COLUMNS} matrix={AFFINITY_EXAMPLE_MATRIX} />
       <DendrogramList merges={AFFINITY_EXAMPLE_MERGES.slice(0, 1)} />
+      <p style={{ margin: "10px 0 0", "font-size": "12px", color: "var(--text-muted)" }}>
+        The {"{name, email}"} cluster that merged early above also has corroborating ritual and FK evidence, so it ranks as a candidate:
+      </p>
       <table class="data-table" style={{ "font-size": "12px", margin: "10px 0" }}>
         <thead>
           <tr>
@@ -318,6 +418,10 @@ export const DECOMPOSITION_EXPLAINER: AnalysisExplainerContent = {
           </tr>
         </tbody>
       </table>
+      <p style={{ margin: "10px 0 0", "font-size": "12px", color: "var(--text-muted)" }}>
+        Ritual support of 4 means 4 statements write both columns together. One of those statements broke that pattern — expanding the row's evidence would show:
+      </p>
+      <RitualViolationsList pairs={[RITUAL_VIOLATION_EXAMPLE]} />
       <p style={{ margin: "8px 0", "font-size": "12px", color: "var(--text-muted)" }}>
         Score 0.81 says: split it. Here's what that split looks like —
       </p>
@@ -413,6 +517,9 @@ export function DecompositionCandidatesTable(props: {
                       </div>
                       <div style={{ "max-height": "min(60vh, 520px)", "overflow-y": "auto" }}>
                         <EvidencePathsCell paths={c.paths} store={props.store} />
+                        <Show when={c.ritual_pairs.length > 0}>
+                          <RitualViolationsList pairs={c.ritual_pairs} />
+                        </Show>
                       </div>
                     </td>
                   </tr>
@@ -460,16 +567,27 @@ export function DecompositionCandidatesCore(props: DecompositionCandidatesCorePr
       </Show>
       <Show when={current()}>
         {(data) => (
-          <Show
-            when={data().candidates.length > 0}
-            fallback={
-              <div style={{ padding: "8px 0", color: "var(--text-muted)", "font-size": "13px" }}>
-                No decomposition candidates found for this table.
+          <>
+            <Show when={data().affinity.columns.length > 0}>
+              <div style={{ "margin-bottom": "16px" }}>
+                <div style={{ "font-weight": 600, "font-size": "12px", "margin-bottom": "6px" }}>
+                  Column Affinity (overview)
+                </div>
+                <HeatMatrix columns={data().affinity.columns} matrix={data().affinity.co_access_matrix} />
+                <DendrogramList merges={data().affinity.dendrogram} />
               </div>
-            }
-          >
-            <DecompositionCandidatesTable candidates={data().candidates} store={props.store} />
-          </Show>
+            </Show>
+            <Show
+              when={data().candidates.length > 0}
+              fallback={
+                <div style={{ padding: "8px 0", color: "var(--text-muted)", "font-size": "13px" }}>
+                  No decomposition candidates found for this table.
+                </div>
+              }
+            >
+              <DecompositionCandidatesTable candidates={data().candidates} store={props.store} />
+            </Show>
+          </>
         )}
       </Show>
     </>

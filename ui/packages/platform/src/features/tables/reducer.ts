@@ -3,7 +3,7 @@
 import { Effect, type Reducer } from "@pb/core";
 import type { TablesState } from "./types.js";
 import type { TablesAction } from "./actions.js";
-import type { SchemaSummary, TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse, StatsResponse } from "../../types/api.js";
+import type { SchemaSummary, TableSummary, TableDetail, ColumnUsageResponse, DecompositionCandidatesResponse, StatsResponse } from "../../types/api.js";
 import type { NavigationAction } from "../navigation/types.js";
 
 export type { TablesState };
@@ -14,9 +14,7 @@ export interface TablesEnv {
   getTables(namespace?: string): Effect<TableSummary[]>;
   getTableDetail(name: string, namespace?: string): Effect<TableDetail>;
   getColumnUsage(): Effect<ColumnUsageResponse>;
-  getCoUpdateRituals(): Effect<CoUpdateRitualsResponse>;
   getDecompositionCandidates(table: string, namespace?: string): Effect<DecompositionCandidatesResponse>;
-  getColumnAffinity(table: string, namespace?: string): Effect<ColumnAffinityResponse>;
   getStats(): Effect<StatsResponse>;
   navigate(action: NavigationAction): Effect<never>;
 }
@@ -117,8 +115,6 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
     draft.error = null;
     draft.decompositionCandidates = null;
     draft.decompositionCandidatesLoading = false;
-    draft.columnAffinity = null;
-    draft.columnAffinityLoading = false;
     env.navigate({
       tag: "navigate",
       route: action.namespace
@@ -171,21 +167,6 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
     draft.columnUsage = { error: action.error };
     draft.columnUsageLoading = false;
     return null;
-  case "co-update-rituals-load": {
-    if (draft.coUpdateRituals || draft.coUpdateRitualsLoading) return null;
-    draft.coUpdateRitualsLoading = true;
-    return env.getCoUpdateRituals()
-      .map((data): TablesAction => ({ tag: "co-update-rituals-loaded", data }))
-      .catch((e): TablesAction => ({ tag: "co-update-rituals-error", error: errMsg(e) }));
-  }
-  case "co-update-rituals-loaded":
-    draft.coUpdateRituals = action.data;
-    draft.coUpdateRitualsLoading = false;
-    return null;
-  case "co-update-rituals-error":
-    draft.coUpdateRituals = { error: action.error };
-    draft.coUpdateRitualsLoading = false;
-    return null;
   case "decomposition-candidates-load": {
     const already = draft.decompositionCandidates
       && "table" in draft.decompositionCandidates
@@ -203,24 +184,6 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
   case "decomposition-candidates-error":
     draft.decompositionCandidates = { error: action.error };
     draft.decompositionCandidatesLoading = false;
-    return null;
-  case "column-affinity-load": {
-    const already = draft.columnAffinity
-      && "table" in draft.columnAffinity
-      && draft.columnAffinity.table === action.tableName;
-    if (already || draft.columnAffinityLoading) return null;
-    draft.columnAffinityLoading = true;
-    return env.getColumnAffinity(action.tableName, action.namespace)
-      .map((data): TablesAction => ({ tag: "column-affinity-loaded", data }))
-      .catch((e): TablesAction => ({ tag: "column-affinity-error", error: errMsg(e) }));
-  }
-  case "column-affinity-loaded":
-    draft.columnAffinity = action.data;
-    draft.columnAffinityLoading = false;
-    return null;
-  case "column-affinity-error":
-    draft.columnAffinity = { error: action.error };
-    draft.columnAffinityLoading = false;
     return null;
   default:
     return null;

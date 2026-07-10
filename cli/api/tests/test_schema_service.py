@@ -392,6 +392,64 @@ def test_get_decomposition_candidates_min_similarity_filters_low_blocks(
     assert all(c["similarity"] >= 0.95 for c in strict["candidates"])
 
 
+def test_get_decomposition_candidates_includes_table_wide_affinity_overview(
+    schema_db_conn: duckdb.DuckDBPyConnection,
+):
+    # Consolidation (2026-07-09): the standalone Column Affinity panel folds
+    # into this one -- the response now carries the same table-wide heat
+    # matrix + dendrogram get_column_affinity returns on its own, so the UI
+    # has one fetch instead of two.
+    result = get_decomposition_candidates(schema_db_conn, None, "misth_final_ypal", min_similarity=0.7)
+    affinity = get_column_affinity(schema_db_conn, None, "misth_final_ypal")
+    assert result["affinity"] == {
+        "columns": affinity["columns"],
+        "co_access_matrix": affinity["co_access_matrix"],
+        "dendrogram": affinity["dendrogram"],
+    }
+
+
+def test_get_decomposition_candidates_ritual_pairs_empty_when_corpus_has_no_violations(
+    schema_db_conn: duckdb.DuckDBPyConnection,
+):
+    # misth_final_ypal has real, nonzero ritual_support (see
+    # test_get_decomposition_candidates_misth_final_ypal_real_scores) but --
+    # per test_get_co_update_rituals_no_violations_in_corpus -- this corpus has
+    # zero violations anywhere. ritual_pairs (the UI drill-down list) narrows
+    # to violations only, so it must be empty here even though ritual_support
+    # is not.
+    result = get_decomposition_candidates(schema_db_conn, None, "misth_final_ypal", min_similarity=0.7)
+    triple = next(c for c in result["candidates"] if set(c["columns"]) == {"kodfinal", "kodxrisi", "kodypal"})
+    assert triple["ritual_support"] == 9
+    assert triple["ritual_pairs"] == []
+
+
+def test_candidate_ritual_evidence_sums_support_but_filters_pairs_to_violations_only():
+    from pb.api.services.schema import _candidate_ritual_evidence
+
+    col_a = {"namespace": None, "table": "t", "column": "a"}
+    col_b = {"namespace": None, "table": "t", "column": "b"}
+    col_c = {"namespace": None, "table": "t", "column": "c"}
+    clean_violation = {"file": "f.srw", "object": "w_f", "proc_name": "p3", "line": 3, "written_column": col_a}
+
+    rituals = [
+        {"column_a": col_a, "column_b": col_b, "co_write_support": 2, "violations": []},
+        {"column_a": col_b, "column_b": col_c, "co_write_support": 3, "violations": [clean_violation]},
+        # Different table -- must not be counted in the "t" block at all.
+        {
+            "column_a": {"namespace": None, "table": "other", "column": "a"},
+            "column_b": {"namespace": None, "table": "other", "column": "b"},
+            "co_write_support": 5,
+            "violations": [],
+        },
+    ]
+
+    support, pairs = _candidate_ritual_evidence(rituals, None, "t", {"a", "b", "c"})
+    assert support == 5
+    assert len(pairs) == 1
+    assert pairs[0]["column_a"] == col_b
+    assert pairs[0]["column_b"] == col_c
+
+
 def test_get_window_table_lattice_counts(schema_db_conn: duckdb.DuckDBPyConnection):
     result = get_window_table_lattice(schema_db_conn)
     assert len(result["windows"]) == 64

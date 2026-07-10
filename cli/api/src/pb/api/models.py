@@ -111,12 +111,15 @@ class DendrogramMerge(BaseModel):
     members: list[str]
 
 
-class ColumnAffinityResponse(BaseModel):
-    table: str
-    namespace: str | None
+class ColumnAffinityFields(BaseModel):
     columns: list[str]
     co_access_matrix: list[list[int]]
     dendrogram: list[DendrogramMerge]
+
+
+class ColumnAffinityResponse(ColumnAffinityFields):
+    table: str
+    namespace: str | None
 
 
 class SchemaObjectRef(BaseModel):
@@ -147,6 +150,7 @@ class DecompositionCandidate(BaseModel):
     columns: list[str]
     similarity: float
     ritual_support: int
+    ritual_pairs: list[CoUpdateRitual]
     unenforced_fk_count: int
     coslice_size: int
     score: float | None
@@ -156,6 +160,7 @@ class DecompositionCandidate(BaseModel):
 class DecompositionCandidatesResponse(BaseModel):
     table: str
     namespace: str | None
+    affinity: ColumnAffinityFields
     candidates: list[DecompositionCandidate]
 
 

@@ -1,6 +1,6 @@
 // features/tables/types.ts
 
-import type { SchemaSummary, TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse } from "../../types/api.js";
+import type { SchemaSummary, TableSummary, TableDetail, ColumnUsageResponse, DecompositionCandidatesResponse } from "../../types/api.js";
 
 export interface TablesState {
   // Schemas (SCHEMAS > TABLES > [table] nav) — empty for the common
@@ -22,22 +22,16 @@ export interface TablesState {
   // Corpus-wide column usage (Plan 153 D4) — lazily loaded once, reused across every table
   columnUsage: ColumnUsageResponse | { error: string } | null;
   columnUsageLoading: boolean;
-  // Corpus-wide co-update rituals (Plan 153 D1) — lazily loaded once, reused across every table
-  coUpdateRituals: CoUpdateRitualsResponse | { error: string } | null;
-  coUpdateRitualsLoading: boolean;
-  // Decomposition candidates (Plan 153 D5) — per-table, lazily loaded when the panel toggles on
+  // Decomposition candidates (Plan 153 D5) — per-table, lazily loaded when the panel toggles on.
+  // Carries the table-wide Column Affinity overview and per-candidate
+  // co-update ritual evidence inline (consolidation, 2026-07-09).
   decompositionCandidates: DecompositionCandidatesResponse | { error: string } | null;
   decompositionCandidatesLoading: boolean;
-  // Column affinity (Plan 153 D3) — per-table, lazily loaded when the panel toggles on
-  columnAffinity: ColumnAffinityResponse | { error: string } | null;
-  columnAffinityLoading: boolean;
 }
 
 export const initialTablesState: TablesState = {
   schemas: [], schemasLoading: false, namespace: null, defaultNamespace: null, statsLoading: false,
   items: [], total: 0, q: "", loading: false, detail: null, error: null,
   columnUsage: null, columnUsageLoading: false,
-  coUpdateRituals: null, coUpdateRitualsLoading: false,
   decompositionCandidates: null, decompositionCandidatesLoading: false,
-  columnAffinity: null, columnAffinityLoading: false,
 };

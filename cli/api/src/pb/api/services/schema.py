@@ -503,6 +503,28 @@ def _in_block(col_ref: dict[str, Any], namespace: str | None, table: str, member
     return col_ref["table"] == table and col_ref["namespace"] == namespace and col_ref["column"] in members
 
 
+def _candidate_ritual_evidence(
+    rituals: list[dict[str, Any]], namespace: str | None, table_name: str, members: set[str]
+) -> tuple[int, list[dict[str, Any]]]:
+    """`ritual_support` sums co-write support across every qualifying pair in
+    the block (the score signal); `ritual_pairs` narrows the same pairs down
+    to only those with at least one violation -- a pair with zero violations
+    just says its columns are, without exception, always written together,
+    which the affinity heatmap already shows visually. Surfacing every
+    pair regardless of violations reproduces the same repetitive, low-signal
+    listing this deliverable was built to avoid (see doc/plan/153's own D1
+    retrospective: 0 violations across 45 qualifying pairs in this corpus)."""
+    block = [
+        r
+        for r in rituals
+        if _in_block(r["column_a"], namespace, table_name, members)
+        and _in_block(r["column_b"], namespace, table_name, members)
+    ]
+    ritual_support = sum(r["co_write_support"] for r in block)
+    ritual_pairs = [r for r in block if r["violations"]]
+    return ritual_support, ritual_pairs
+
+
 def get_decomposition_candidates(
     conn: duckdb.DuckDBPyConnection,
     namespace: str | None,
@@ -531,12 +553,7 @@ def get_decomposition_candidates(
             continue
         members = set(merge["members"])
 
-        ritual_support = sum(
-            r["co_write_support"]
-            for r in rituals
-            if _in_block(r["column_a"], namespace, table_name, members)
-            and _in_block(r["column_b"], namespace, table_name, members)
-        )
+        ritual_support, ritual_pairs = _candidate_ritual_evidence(rituals, namespace, table_name, members)
         unenforced_fk_count = sum(
             1
             for e in fk_graph["unenforced"]
@@ -554,6 +571,7 @@ def get_decomposition_candidates(
                 "columns": sorted(members),
                 "similarity": merge["similarity"],
                 "ritual_support": ritual_support,
+                "ritual_pairs": ritual_pairs,
                 "unenforced_fk_count": unenforced_fk_count,
                 "coslice_size": coslice_size,
                 "score": score,
@@ -576,7 +594,16 @@ def get_decomposition_candidates(
         )
 
     candidates.sort(key=lambda c: (c["score"] is None, -(c["score"] or 0)))
-    return {"table": table_name, "namespace": namespace, "candidates": candidates}
+    return {
+        "table": table_name,
+        "namespace": namespace,
+        "affinity": {
+            "columns": affinity["columns"],
+            "co_access_matrix": affinity["co_access_matrix"],
+            "dendrogram": affinity["dendrogram"],
+        },
+        "candidates": candidates,
+    }
 
 
 def get_window_table_lattice(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:

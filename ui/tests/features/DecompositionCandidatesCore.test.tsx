@@ -139,6 +139,7 @@ function candidate(column: string, target: SchemaObjectRef): DecompositionCandid
     columns: [column],
     similarity: 0.9,
     ritual_support: 1,
+    ritual_pairs: [],
     unenforced_fk_count: 0,
     coslice_size: 1,
     score: 0.5,

@@ -5,19 +5,19 @@ import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { tablesReducer, initialTablesState, type TablesEnv } from "@pb/platform";
 import type { TablesState } from "@pb/platform";
-import type { SchemaSummary, TableSummary, TableDetail, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse, StatsResponse } from "@pb/platform";
+import type { SchemaSummary, TableSummary, TableDetail, ColumnUsageResponse, DecompositionCandidatesResponse, StatsResponse } from "@pb/platform";
 
 const mockEnv: TablesEnv = {
   getSchemas:          () => Effect.none(),
   getTables:           () => Effect.none(),
   getTableDetail:      () => Effect.none(),
   getColumnUsage:      () => Effect.none(),
-  getCoUpdateRituals:  () => Effect.none(),
   getDecompositionCandidates: () => Effect.none(),
-  getColumnAffinity:   () => Effect.none(),
   getStats:            () => Effect.none(),
   navigate:            () => Effect.none(),
 };
+
+const EMPTY_AFFINITY = { columns: [], co_access_matrix: [], dendrogram: [] };
 
 const row = (name: string): TableSummary => ({
   table_name: name, namespace: null, dw_count: 1, ps_count: 2, file_count: 3,
@@ -585,91 +585,17 @@ describe("tables reducer", () => {
     });
   });
 
-  describe("tables/co-update-rituals-load", () => {
-    const rituals: CoUpdateRitualsResponse = {
-      rituals: [
-        {
-          column_a: { namespace: null, table: "misth_final_ypal", column: "kodfinal" },
-          column_b: { namespace: null, table: "misth_final_ypal", column: "kodypal" },
-          co_write_support: 3,
-          violations: [],
-        },
-      ],
-    };
-
-    it("sets coUpdateRitualsLoading and fires getCoUpdateRituals", () => {
-      const env: TablesEnv = { ...mockEnv, getCoUpdateRituals: () => Effect.send(rituals) };
-      const ts = createTestStore(tablesReducer, env, initialTablesState);
-      ts.send({ tag: "co-update-rituals-load" }, (s) => {
-        s.coUpdateRitualsLoading = true;
-      });
-      ts.receive({ tag: "co-update-rituals-loaded", data: rituals }, (s) => {
-        s.coUpdateRituals = rituals;
-        s.coUpdateRitualsLoading = false;
-      });
-    });
-
-    it("does nothing if already loaded", () => {
-      const state: TablesState = { ...initialTablesState, coUpdateRituals: rituals };
-      const ts = createTestStore(tablesReducer, mockEnv, state);
-      ts.send({ tag: "co-update-rituals-load" }, () => {});
-    });
-
-    it("does nothing if a load is already in flight", () => {
-      const state: TablesState = { ...initialTablesState, coUpdateRitualsLoading: true };
-      const ts = createTestStore(tablesReducer, mockEnv, state);
-      ts.send({ tag: "co-update-rituals-load" }, () => {});
-    });
-
-    it("fires getCoUpdateRituals; rejection maps to co-update-rituals-error", async () => {
-      const env: TablesEnv = {
-        ...mockEnv,
-        getCoUpdateRituals: () => Effect.fromPromise(() => Promise.reject(new Error("timeout"))),
-      };
-      const ts = createTestStore(tablesReducer, env, initialTablesState);
-      ts.send({ tag: "co-update-rituals-load" }, (s) => {
-        s.coUpdateRitualsLoading = true;
-      });
-      await ts.drain();
-      ts.receive({ tag: "co-update-rituals-error", error: "timeout" }, (s) => {
-        s.coUpdateRituals = { error: "timeout" };
-        s.coUpdateRitualsLoading = false;
-      });
-    });
-  });
-
-  describe("tables/co-update-rituals-loaded", () => {
-    it("stores the rituals and clears loading", () => {
-      const rituals: CoUpdateRitualsResponse = { rituals: [] };
-      const state: TablesState = { ...initialTablesState, coUpdateRitualsLoading: true };
-      const ts = createTestStore(tablesReducer, mockEnv, state);
-      ts.send({ tag: "co-update-rituals-loaded", data: rituals }, (s) => {
-        s.coUpdateRituals = rituals;
-        s.coUpdateRitualsLoading = false;
-      });
-    });
-  });
-
-  describe("tables/co-update-rituals-error", () => {
-    it("stores the error and clears loading", () => {
-      const state: TablesState = { ...initialTablesState, coUpdateRitualsLoading: true };
-      const ts = createTestStore(tablesReducer, mockEnv, state);
-      ts.send({ tag: "co-update-rituals-error", error: "boom" }, (s) => {
-        s.coUpdateRituals = { error: "boom" };
-        s.coUpdateRitualsLoading = false;
-      });
-    });
-  });
-
   describe("tables/decomposition-candidates-load", () => {
     const candidates: DecompositionCandidatesResponse = {
       table: "misth_final_ypal",
       namespace: null,
+      affinity: EMPTY_AFFINITY,
       candidates: [
         {
           columns: ["kodfinal", "kodxrisi", "kodypal"],
           similarity: 0.9,
           ritual_support: 3,
+          ritual_pairs: [],
           unenforced_fk_count: 0,
           coslice_size: 120,
           score: 0.025,
@@ -704,7 +630,7 @@ describe("tables reducer", () => {
 
     it("re-fires when the table name differs from what's loaded", () => {
       const state: TablesState = { ...initialTablesState, decompositionCandidates: candidates };
-      const other: DecompositionCandidatesResponse = { table: "orders", namespace: null, candidates: [] };
+      const other: DecompositionCandidatesResponse = { table: "orders", namespace: null, affinity: EMPTY_AFFINITY, candidates: [] };
       const env: TablesEnv = { ...mockEnv, getDecompositionCandidates: () => Effect.send(other) };
       const ts = createTestStore(tablesReducer, env, state);
       ts.send({ tag: "decomposition-candidates-load", tableName: "orders" }, (s) => {
@@ -752,7 +678,7 @@ describe("tables reducer", () => {
 
   describe("tables/decomposition-candidates-loaded", () => {
     it("stores the candidates and clears loading", () => {
-      const data: DecompositionCandidatesResponse = { table: "orders", namespace: null, candidates: [] };
+      const data: DecompositionCandidatesResponse = { table: "orders", namespace: null, affinity: EMPTY_AFFINITY, candidates: [] };
       const state: TablesState = { ...initialTablesState, decompositionCandidatesLoading: true };
       const ts = createTestStore(tablesReducer, mockEnv, state);
       ts.send({ tag: "decomposition-candidates-loaded", data }, (s) => {
@@ -773,110 +699,4 @@ describe("tables reducer", () => {
     });
   });
 
-  describe("tables/column-affinity-load", () => {
-    const affinity: ColumnAffinityResponse = {
-      table: "misth_ypal",
-      namespace: null,
-      columns: ["name", "surname", "fathername"],
-      co_access_matrix: [[27, 27, 26], [27, 27, 26], [26, 26, 26]],
-      dendrogram: [
-        { similarity: 1.0, members: ["name", "surname"] },
-        { similarity: 0.963, members: ["fathername", "name", "surname"] },
-      ],
-    };
-
-    it("sets columnAffinityLoading and fires getColumnAffinity", () => {
-      const env: TablesEnv = { ...mockEnv, getColumnAffinity: () => Effect.send(affinity) };
-      const ts = createTestStore(tablesReducer, env, initialTablesState);
-      ts.send({ tag: "column-affinity-load", tableName: "misth_ypal" }, (s) => {
-        s.columnAffinityLoading = true;
-      });
-      ts.receive({ tag: "column-affinity-loaded", data: affinity }, (s) => {
-        s.columnAffinity = affinity;
-        s.columnAffinityLoading = false;
-      });
-    });
-
-    it("does nothing if already loaded for this table", () => {
-      const state: TablesState = { ...initialTablesState, columnAffinity: affinity };
-      const ts = createTestStore(tablesReducer, mockEnv, state);
-      ts.send({ tag: "column-affinity-load", tableName: "misth_ypal" }, () => {});
-    });
-
-    it("does nothing if a load is already in flight", () => {
-      const state: TablesState = { ...initialTablesState, columnAffinityLoading: true };
-      const ts = createTestStore(tablesReducer, mockEnv, state);
-      ts.send({ tag: "column-affinity-load", tableName: "misth_ypal" }, () => {});
-    });
-
-    it("re-fires when the table name differs from what's loaded", () => {
-      const state: TablesState = { ...initialTablesState, columnAffinity: affinity };
-      const other: ColumnAffinityResponse = { table: "orders", namespace: null, columns: [], co_access_matrix: [], dendrogram: [] };
-      const env: TablesEnv = { ...mockEnv, getColumnAffinity: () => Effect.send(other) };
-      const ts = createTestStore(tablesReducer, env, state);
-      ts.send({ tag: "column-affinity-load", tableName: "orders" }, (s) => {
-        s.columnAffinityLoading = true;
-      });
-      ts.receive({ tag: "column-affinity-loaded", data: other }, (s) => {
-        s.columnAffinity = other;
-        s.columnAffinityLoading = false;
-      });
-    });
-
-    it("fires getColumnAffinity; rejection maps to column-affinity-error", async () => {
-      const env: TablesEnv = {
-        ...mockEnv,
-        getColumnAffinity: () => Effect.fromPromise(() => Promise.reject(new Error("timeout"))),
-      };
-      const ts = createTestStore(tablesReducer, env, initialTablesState);
-      ts.send({ tag: "column-affinity-load", tableName: "misth_ypal" }, (s) => {
-        s.columnAffinityLoading = true;
-      });
-      await ts.drain();
-      ts.receive({ tag: "column-affinity-error", error: "timeout" }, (s) => {
-        s.columnAffinity = { error: "timeout" };
-        s.columnAffinityLoading = false;
-      });
-    });
-
-    it("threads namespace through to getColumnAffinity", () => {
-      const calls: (string | undefined)[] = [];
-      const env: TablesEnv = {
-        ...mockEnv,
-        getColumnAffinity: (_t, ns) => { calls.push(ns); return Effect.send(affinity); },
-      };
-      const ts = createTestStore(tablesReducer, env, initialTablesState);
-      ts.send({ tag: "column-affinity-load", tableName: "clinicalaccession", namespace: "clims_common" }, (s) => {
-        s.columnAffinityLoading = true;
-      });
-      expect(calls).toEqual(["clims_common"]);
-      ts.receive({ tag: "column-affinity-loaded", data: affinity }, (s) => {
-        s.columnAffinity = affinity;
-        s.columnAffinityLoading = false;
-      });
-    });
-  });
-
-  describe("tables/column-affinity-loaded", () => {
-    it("stores the affinity data and clears loading", () => {
-      const data: ColumnAffinityResponse = { table: "orders", namespace: null, columns: [], co_access_matrix: [], dendrogram: [] };
-      const state: TablesState = { ...initialTablesState, columnAffinityLoading: true };
-      const ts = createTestStore(tablesReducer, mockEnv, state);
-      ts.send({ tag: "column-affinity-loaded", data }, (s) => {
-        s.columnAffinity = data;
-        s.columnAffinityLoading = false;
-      });
-    });
-  });
-
-  describe("tables/column-affinity-error", () => {
-    it("stores the error and clears loading", () => {
-      const state: TablesState = { ...initialTablesState, columnAffinityLoading: true };
-      const ts = createTestStore(tablesReducer, mockEnv, state);
-      ts.send({ tag: "column-affinity-error", error: "boom" }, (s) => {
-        s.columnAffinity = { error: "boom" };
-        s.columnAffinityLoading = false;
-      });
-    });
-  });
 });

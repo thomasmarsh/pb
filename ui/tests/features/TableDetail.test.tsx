@@ -5,7 +5,9 @@ import { fireEvent, render } from "@solidjs/testing-library";
 import { TableDetail } from "../../app/src/views/features/tables/TableDetail.js";
 import { createTestStore } from "../helpers.js";
 import { initialTablesState } from "@pb/platform";
-import type { TableDetail as TableDetailData, ColumnUsageResponse, CoUpdateRitualsResponse, DecompositionCandidatesResponse, ColumnAffinityResponse } from "@pb/platform";
+import type { TableDetail as TableDetailData, ColumnUsageResponse, DecompositionCandidatesResponse } from "@pb/platform";
+
+const EMPTY_AFFINITY = { columns: [], co_access_matrix: [], dendrogram: [] };
 
 const baseDetail: TableDetailData = {
   table_name: "orders",
@@ -26,12 +28,10 @@ const baseDetail: TableDetailData = {
 function renderTableDetail(
   detail: TableDetailData = baseDetail,
   columnUsage: ColumnUsageResponse | null = null,
-  coUpdateRituals: CoUpdateRitualsResponse | null = null,
   decompositionCandidates: DecompositionCandidatesResponse | null = null,
-  columnAffinity: ColumnAffinityResponse | null = null,
 ) {
   const { store } = createTestStore({
-    tables: { ...initialTablesState, detail, columnUsage, coUpdateRituals, decompositionCandidates, columnAffinity },
+    tables: { ...initialTablesState, detail, columnUsage, decompositionCandidates },
   });
   render(() => <TableDetail store={store} />);
 }
@@ -202,85 +202,6 @@ describe("TableDetail source-first", () => {
     });
   });
 
-  describe("Co-update Rituals pill (Plan 153 D1)", () => {
-    it("hidden when coUpdateRituals is not loaded", () => {
-      renderTableDetail(baseDetail, null, null);
-      expect(summaryBar()?.textContent).not.toContain("Co-update Rituals");
-    });
-
-    it("hidden when this table has no rituals", () => {
-      const rituals: CoUpdateRitualsResponse = {
-        rituals: [{
-          column_a: { namespace: null, table: "other_table", column: "x" },
-          column_b: { namespace: null, table: "other_table", column: "y" },
-          co_write_support: 3,
-          violations: [],
-        }],
-      };
-      renderTableDetail(baseDetail, null, rituals);
-      expect(summaryBar()?.textContent).not.toContain("Co-update Rituals");
-    });
-
-    it("shows count of this table's rituals", () => {
-      const rituals: CoUpdateRitualsResponse = {
-        rituals: [{
-          column_a: { namespace: null, table: "orders", column: "status" },
-          column_b: { namespace: null, table: "orders", column: "status_reason" },
-          co_write_support: 3,
-          violations: [],
-        }],
-      };
-      renderTableDetail(baseDetail, null, rituals);
-      expect(summaryBar()?.textContent).toContain("Co-update Rituals (1)");
-    });
-
-    it("clicking the pill opens a panel listing the ritual columns and violations", () => {
-      const rituals: CoUpdateRitualsResponse = {
-        rituals: [{
-          column_a: { namespace: null, table: "orders", column: "status" },
-          column_b: { namespace: null, table: "orders", column: "status_reason" },
-          co_write_support: 3,
-          violations: [
-            { file: "n_svc.srw", object: "n_svc", proc_name: "set_status", line: 42, written_column: { namespace: null, table: "orders", column: "status" } },
-          ],
-        }],
-      };
-      renderTableDetail(baseDetail, null, rituals);
-      fireEvent.click(summaryPillBtn("Co-update Rituals")!);
-      expect(document.body.textContent).toContain("orders.status");
-      expect(document.body.textContent).toContain("orders.status_reason");
-      expect(document.body.textContent).toContain("set_status");
-    });
-
-    it("excludes rituals whose column belongs to a same-named table in a different namespace", () => {
-      const detail: TableDetailData = { ...baseDetail, namespace: "clims" };
-      const rituals: CoUpdateRitualsResponse = {
-        rituals: [{
-          column_a: { namespace: "clims_archive", table: "orders", column: "status" },
-          column_b: { namespace: "clims_archive", table: "orders", column: "status_reason" },
-          co_write_support: 3,
-          violations: [],
-        }],
-      };
-      renderTableDetail(detail, null, rituals);
-      expect(summaryBar()?.textContent).not.toContain("Co-update Rituals");
-    });
-
-    it("includes rituals when the ritual column's namespace matches the table's own namespace", () => {
-      const detail: TableDetailData = { ...baseDetail, namespace: "clims" };
-      const rituals: CoUpdateRitualsResponse = {
-        rituals: [{
-          column_a: { namespace: "clims", table: "orders", column: "status" },
-          column_b: { namespace: "clims", table: "orders", column: "status_reason" },
-          co_write_support: 3,
-          violations: [],
-        }],
-      };
-      renderTableDetail(detail, null, rituals);
-      expect(summaryBar()?.textContent).toContain("Co-update Rituals (1)");
-    });
-  });
-
   describe("Decomposition Candidates pill (Plan 153 D5)", () => {
     it("always shown, no count", () => {
       renderTableDetail();
@@ -305,10 +226,12 @@ describe("TableDetail source-first", () => {
       const data: DecompositionCandidatesResponse = {
         table: "orders",
         namespace: null,
+        affinity: EMPTY_AFFINITY,
         candidates: [{
           columns: ["status", "status_reason"],
           similarity: 1.0,
           ritual_support: 3,
+          ritual_pairs: [],
           unenforced_fk_count: 0,
           coslice_size: 2,
           score: 1.5,
@@ -334,7 +257,7 @@ describe("TableDetail source-first", () => {
           ],
         }],
       };
-      renderTableDetail(baseDetail, null, null, data);
+      renderTableDetail(baseDetail, null, data);
       fireEvent.click(summaryPillBtn("Decomposition")!);
       expect(document.body.textContent).toContain("status, status_reason");
       expect(document.body.textContent).toContain("n_svc.set_status");
@@ -356,17 +279,19 @@ describe("TableDetail source-first", () => {
       const data: DecompositionCandidatesResponse = {
         table: "orders",
         namespace: null,
+        affinity: EMPTY_AFFINITY,
         candidates: [{
           columns: ["status"],
           similarity: 1.0,
           ritual_support: 0,
+          ritual_pairs: [],
           unenforced_fk_count: 0,
           coslice_size: 17,
           score: 0,
           paths,
         }],
       };
-      renderTableDetail(baseDetail, null, null, data);
+      renderTableDetail(baseDetail, null, data);
       fireEvent.click(summaryPillBtn("Decomposition")!);
       expect(document.body.textContent).toContain("proc_0");
       expect(document.body.textContent).toContain("proc_14");
@@ -402,11 +327,13 @@ describe("TableDetail source-first", () => {
         return {
           table: "orders",
           namespace: null,
+          affinity: EMPTY_AFFINITY,
           candidates: [
             {
               columns: ["a", "b"],
               similarity: 0.9,
               ritual_support: 2,
+              ritual_pairs: [],
               unenforced_fk_count: 0,
               coslice_size: 3,
               score: 0.8,
@@ -424,6 +351,7 @@ describe("TableDetail source-first", () => {
               columns: ["c", "d"],
               similarity: 0.5,
               ritual_support: 1,
+              ritual_pairs: [],
               unenforced_fk_count: 0,
               coslice_size: 1,
               score: 0.2,
@@ -452,7 +380,7 @@ describe("TableDetail source-first", () => {
       }
 
       it("renders a single table with scoring columns, no separate master/detail split", () => {
-        renderTableDetail(baseDetail, null, null, twoCandidateData());
+        renderTableDetail(baseDetail, null, twoCandidateData());
         fireEvent.click(summaryPillBtn("Decomposition")!);
 
         expect(document.querySelector(".decomp-table-wrap")).not.toBeNull();
@@ -466,7 +394,7 @@ describe("TableDetail source-first", () => {
       });
 
       it("expands the top-scored candidate's evidence by default", () => {
-        renderTableDetail(baseDetail, null, null, twoCandidateData());
+        renderTableDetail(baseDetail, null, twoCandidateData());
         fireEvent.click(summaryPillBtn("Decomposition")!);
 
         expect(evidenceRows()).toHaveLength(1);
@@ -474,7 +402,7 @@ describe("TableDetail source-first", () => {
       });
 
       it("clicking a row expands its evidence without collapsing the previously expanded one", () => {
-        renderTableDetail(baseDetail, null, null, twoCandidateData());
+        renderTableDetail(baseDetail, null, twoCandidateData());
         fireEvent.click(summaryPillBtn("Decomposition")!);
 
         fireEvent.click(decompRow("c, d")!);
@@ -484,7 +412,7 @@ describe("TableDetail source-first", () => {
       });
 
       it("clicking an already-expanded row collapses just that row", () => {
-        renderTableDetail(baseDetail, null, null, twoCandidateData());
+        renderTableDetail(baseDetail, null, twoCandidateData());
         fireEvent.click(summaryPillBtn("Decomposition")!);
 
         fireEvent.click(decompRow("c, d")!); // expand c,d — a,b stays expanded
@@ -496,64 +424,94 @@ describe("TableDetail source-first", () => {
     });
   });
 
-  describe("Column Affinity pill (Plan 153 D3)", () => {
-    it("always shown, no count", () => {
+  describe("Column Affinity + co-update rituals, consolidated into Decomposition Candidates (2026-07-09)", () => {
+    it("no separate Column Affinity or Co-update Rituals pill exists", () => {
       renderTableDetail();
-      expect(summaryBar()?.textContent).toContain("Column Affinity");
+      expect(summaryBar()?.textContent).not.toContain("Column Affinity");
+      expect(summaryBar()?.textContent).not.toContain("Co-update Rituals");
     });
 
-    it("clicking the pill opens a panel titled 'Column Affinity Heat Matrix'", () => {
-      renderTableDetail();
-      fireEvent.click(summaryPillBtn("Column Affinity")!);
-      expect(document.body.textContent).toContain("Column Affinity Heat Matrix");
-    });
-
-    it("clicking the pill again closes the panel", () => {
-      renderTableDetail();
-      fireEvent.click(summaryPillBtn("Column Affinity")!);
-      expect(document.body.textContent).toContain("Column Affinity Heat Matrix");
-      fireEvent.click(summaryPillBtn("Column Affinity")!);
-      expect(document.body.textContent).not.toContain("Column Affinity Heat Matrix");
-    });
-
-    it("renders the heat matrix cells and dendrogram merges", () => {
-      const data: ColumnAffinityResponse = {
+    it("renders the table-wide affinity heat matrix and dendrogram as an overview inside the Decomposition panel", () => {
+      const data: DecompositionCandidatesResponse = {
         table: "orders",
         namespace: null,
-        columns: ["name", "surname"],
-        co_access_matrix: [[27, 27], [27, 27]],
-        dendrogram: [{ similarity: 1.0, members: ["name", "surname"] }],
+        affinity: {
+          columns: ["name", "surname"],
+          co_access_matrix: [[27, 27], [27, 27]],
+          dendrogram: [{ similarity: 1.0, members: ["name", "surname"] }],
+        },
+        candidates: [],
       };
-      renderTableDetail(baseDetail, null, null, null, data);
-      fireEvent.click(summaryPillBtn("Column Affinity")!);
+      renderTableDetail(baseDetail, null, data);
+      fireEvent.click(summaryPillBtn("Decomposition")!);
+      expect(document.body.textContent).toContain("Column Affinity (overview)");
       expect(document.body.textContent).toContain("name");
       expect(document.body.textContent).toContain("surname");
       expect(document.body.textContent).toContain("27");
       expect(document.body.textContent).toContain("similarity 1.000");
     });
 
-    it("shows a fallback message when the table has no touched columns", () => {
-      const data: ColumnAffinityResponse = { table: "orders", namespace: null, columns: [], co_access_matrix: [], dendrogram: [] };
-      renderTableDetail(baseDetail, null, null, null, data);
-      fireEvent.click(summaryPillBtn("Column Affinity")!);
-      expect(document.body.textContent).toContain("No column affinity data for this table.");
+    it("renders co-update rule violations inside a candidate's expanded evidence, only when they exist", () => {
+      const data: DecompositionCandidatesResponse = {
+        table: "orders",
+        namespace: null,
+        affinity: EMPTY_AFFINITY,
+        candidates: [{
+          columns: ["status", "status_reason"],
+          similarity: 1.0,
+          ritual_support: 3,
+          ritual_pairs: [{
+            column_a: { namespace: null, table: "orders", column: "status" },
+            column_b: { namespace: null, table: "orders", column: "status_reason" },
+            co_write_support: 3,
+            violations: [
+              { file: "n_svc.srw", object: "n_svc", proc_name: "set_status", line: 42, written_column: { namespace: null, table: "orders", column: "status" } },
+            ],
+          }],
+          unenforced_fk_count: 0,
+          coslice_size: 2,
+          score: 1.5,
+          paths: [],
+        }],
+      };
+      renderTableDetail(baseDetail, null, data);
+      fireEvent.click(summaryPillBtn("Decomposition")!);
+      expect(document.body.textContent).toContain("Co-update rule violations");
+      expect(document.body.textContent).toContain("orders.status");
+      expect(document.body.textContent).toContain("orders.status_reason");
+      expect(document.body.textContent).toContain("set_status");
     });
 
-    it("clicking the panel's info button opens the explainer with worked example content", () => {
+    it("omits the co-update rule violations block when a candidate has none", () => {
+      const data: DecompositionCandidatesResponse = {
+        table: "orders",
+        namespace: null,
+        affinity: EMPTY_AFFINITY,
+        candidates: [{
+          columns: ["status", "status_reason"],
+          similarity: 1.0,
+          ritual_support: 3,
+          ritual_pairs: [],
+          unenforced_fk_count: 0,
+          coslice_size: 2,
+          score: 1.5,
+          paths: [],
+        }],
+      };
+      renderTableDetail(baseDetail, null, data);
+      fireEvent.click(summaryPillBtn("Decomposition")!);
+      expect(document.body.textContent).not.toContain("Co-update rule violations");
+    });
+
+    it("the merged explainer covers both affinity clustering and co-update violations", () => {
       renderTableDetail();
-      fireEvent.click(summaryPillBtn("Column Affinity")!);
+      fireEvent.click(summaryPillBtn("Decomposition")!);
       fireEvent.click(document.querySelector("[aria-label='What is this?']")!);
-      expect(document.body.textContent).toContain("average-linkage clustering");
+      expect(document.body.textContent).toContain("blast radius");
       expect(document.body.textContent).toContain("employee(name, email, salary, hire_date, dept_id)");
-    });
-
-    it("Escape closes the explainer along with the other panels", () => {
-      renderTableDetail();
-      fireEvent.click(summaryPillBtn("Column Affinity")!);
-      fireEvent.click(document.querySelector("[aria-label='What is this?']")!);
-      expect(document.body.textContent).toContain("average-linkage clustering");
-      fireEvent.keyDown(document.querySelector(".detail-body")!.parentElement!, { key: "Escape" });
-      expect(document.body.textContent).not.toContain("average-linkage clustering");
+      expect(document.body.textContent).toContain("employee_profile");
+      expect(document.body.textContent).toContain("Co-update rule violations");
+      expect(document.body.textContent).toContain("of_save_name_only");
     });
   });
 });
