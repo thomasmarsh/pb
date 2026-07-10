@@ -6,11 +6,15 @@ This repository contains three independent runtimes that form a pipeline:
 **TypeScript** renders the interactive web UI (a pnpm workspace of four
 packages plus the SPA shell).
 
-`pb index` drives `pbc --db FILE` (DuckDB-direct mode): Haskell writes all
-analysis results (procedures, call resolution, taint, dead code, DW/SQL
-schema category, decomposition candidates) directly to DuckDB. Python reads
-but never writes the analysis tables. `pbc --jsonl` also exists, for
-piping to other tools.
+`pb index` drives `pbc --db FILE`: Haskell writes all analysis results
+(procedures, call resolution, taint, dead code, DW/SQL schema category,
+decomposition candidates) directly to DuckDB. Python reads but never
+writes the analysis tables.
+
+`pbc` also shells out *to* Python for SQL dialect handling: every embedded
+SQL statement and every `--ddl`-supplied DDL catalog file is sent over a
+subprocess bridge to a pool of `sql_worker.py` processes wrapping
+`sqlglot` (see "Haskell ↔ Python: SQL/DDL bridge" below).
 
 There is no code-generation step between Haskell and TypeScript. AST wire
 types are hand-maintained on both sides (see "Common gotchas" below).
@@ -36,7 +40,8 @@ pb/
 ├── cli/                       Python workspace (uv), three packages — see doc/architecture-cli.md
 │   ├── lib/src/pb/lib/         Pure data transforms, zero I/O
 │   ├── pipeline/src/pb/pipeline/  Imperative boundary: pbc invocation, DuckDB, CLI commands
-│   │   └── commands/           check-corpus, clean, dead-code, bombadil (dev) sub-commands
+│   │   ├── commands/           check-corpus, clean, dead-code, bombadil (dev) sub-commands
+│   │   └── bridge/             sql_worker.py — SQL/DDL parsing subprocess, spawned directly by pbc
 │   ├── api/src/pb/api/         FastAPI web layer
 │   │   ├── routes/             Thin endpoint handlers (one module per concern)
 │   │   ├── services/           Business logic called by routes
@@ -75,14 +80,18 @@ pb/
 ```mermaid
 flowchart TD
     SRC["PowerBuilder source files\n.srw .sru .srd …"]
+    DDL["--ddl catalog file(s)\n(optional, schema-tagged)"]
     RUNNER["pbc --db FILE\n(Haskell binary, passes 1-8)"]
+    BRIDGE["sql_worker.py pool\n(cli/pipeline/.../bridge/,\nsqlglot via subprocess)"]
     DB[("pb.duckdb")]
     EXPLORE["pb explore\n(cli/pipeline/src/pb/pipeline/cli.py)"]
     API["FastAPI\n(cli/api/src/pb/api/)"]
     SPA["SolidJS SPA\n(ui/app/ + ui/packages/*)"]
 
     SRC -->|"pb index\n→ pbc --db"| RUNNER
-    RUNNER -->|"writes directly\n(objects, procedures, dw_*, sql_*,\ntaint_*, schema_objects, decomposition_coslice …)"| DB
+    DDL -->|"--ddl [schema:]file"| RUNNER
+    RUNNER <-->|"length-prefixed JSON\nover stdin/stdout"| BRIDGE
+    RUNNER -->|"writes directly\n(objects, procedures, dw_*, sql_*,\ncatalog_*, taint_*, schema_objects,\ndecomposition_coslice …)"| DB
     DB --> EXPLORE
     EXPLORE --> API
     API -->|"HTTP /api/*"| SPA
@@ -90,12 +99,13 @@ flowchart TD
 
 The Python layer never reads source files directly, and never re-derives
 analysis results Haskell already computed. `pb index` shells out to `pbc
---db`, so Haskell owns parsing *and* all downstream static-analysis passes
+--db`, so Haskell owns parsing and all downstream static-analysis passes
 (dataflow, taint, call resolution, dead code, the DB-schema-as-category
-model). Python's own computational work is limited to incremental re-run
-bookkeeping (`metadata` table, source hashing) and NetworkX graph metrics
-(`object_metrics` — PageRank, betweenness, DIT), which have no Haskell
-equivalent.
+model); `pbc` in turn calls back into a pool of Python subprocess workers
+for SQL/DDL dialect parsing via `sqlglot`. Python's own computational work
+otherwise is limited to incremental re-run bookkeeping (`metadata` table,
+source hashing) and NetworkX graph metrics (`object_metrics` — PageRank,
+betweenness, DIT).
 
 ---
 
@@ -106,11 +116,13 @@ flowchart LR
     subgraph Haskell["Haskell (pbc)"]
         HS_SER["Serialise.hs\naeson orphan ToJSON instances"]
         HS_DB["DuckDb.hs\ninitSchema + append*/query*"]
+        HS_SQL["SqlParse.hs\nSqlBridgePool"]
     end
     subgraph Python["Python (cli/{lib,pipeline,api}/)"]
         PY_BUILD["pipeline/build.py\nensure_explorer_built"]
         PY_RUN["pipeline/pipeline.py\npb index → pbc --db"]
         PY_API["api/routes/*, api/services/*\nFastAPI"]
+        PY_BRIDGE["pipeline/bridge/sql_worker.py\nsqlglot"]
     end
     subgraph TS["TypeScript (ui/)"]
         TS_TYPES["packages/interpreter/src/types/ast.ts\n(hand-maintained)"]
@@ -118,6 +130,8 @@ flowchart LR
     end
 
     HS_DB -->|"pbc --db\nDuckDB tables"| PY_RUN
+    PY_RUN -->|"spawns pbc with\n--sql-worker-python sys.executable"| HS_SQL
+    HS_SQL <-->|"subprocess pool,\nlength-prefixed JSON"| PY_BRIDGE
     PY_BUILD -->|"pnpm build\nVite → App.js"| TS_APP
     PY_API -->|"HTTP /api/*\nJSON"| TS_APP
     TS_APP -.->|"types kept in sync by hand\nagainst Serialise.hs"| HS_SER
@@ -134,15 +148,13 @@ notes). The TypeScript side mirrors it by hand in
 changes, that file must be updated manually; nothing enforces the
 correspondence at build time.
 
-### Haskell → Python: DuckDB (primary) / JSONL (secondary)
+### Haskell → Python: DuckDB
 
 `pbc -i SRC_DIR --db FILE` runs all eight passes in Haskell and writes every
 analysis table directly (see `doc/architecture-pipeline.md` for the full
-schema). `pb index` invokes this mode; Python's `pb.pipeline.pipeline.run`
-handles incremental state (`metadata` table, SHA-256 source hashing) around
-the `pbc` subprocess call. `pbc --jsonl` (one JSON object per file to
-stdout) still exists for ad-hoc streaming/piping use but is not the path
-`pb index` takes.
+schema). `pb index` invokes it; Python's `pb.pipeline.pipeline.run` handles
+incremental state (`metadata` table, SHA-256 source hashing) around the
+`pbc` subprocess call.
 
 The JSON encoding follows `genericToJSON` conventions:
 
@@ -157,6 +169,41 @@ Tag strings are Haskell constructor names verbatim (`"BsIf"`, `"ExCall"`,
 `"DwRetrieveOk"` — **not** short forms like `"if"` or `"ok"`).  Any Python
 or TypeScript code that pattern-matches on these strings must use the full
 constructor name.
+
+### Haskell ↔ Python: SQL/DDL bridge (subprocess, reverse direction)
+
+`pbc` calls back into Python for SQL dialect handling — the one piece of
+SQL parsing Haskell delegates rather than reimplements.
+`PB.Pipeline.SqlParse` (`compiler/src/PB/Pipeline/SqlParse.hs`) launches a
+pool of `sys.executable -m pb.pipeline.bridge.sql_worker` subprocesses
+(`cli/pipeline/src/pb/pipeline/bridge/sql_worker.py`), each wrapping
+`sqlglot` via `pb.lib.sql.parse_pb_sql` / `pb.lib.ddl.parse_ddl`. The wire
+protocol, both directions, is a 4-byte big-endian length prefix followed by
+a UTF-8 JSON body over the subprocess's stdin/stdout:
+
+- Every embedded SQL statement found in a procedure body is sent as one
+  request — `{"sql": "...", "dialect": "oracle"}` — and comes back with
+  `column_refs`/`row_filters`/`table_refs`/`operation`, populating
+  `sql_statements`/`sql_statement_columns`/`sql_statement_filters`.
+- Each `--ddl [SCHEMA:]FILE` argument (repeatable — Oracle corpora are
+  often dumped one file per schema) is sent as
+  `{"kind": "ddl", "ddl": "...", "dialect": "...", "namespace": "..."}`
+  and comes back with a full catalog (tables, primary keys, foreign keys,
+  check constraints), populating `catalog_columns`/`catalog_pks`/
+  `catalog_fks`/`catalog_checks`.
+
+`--sql-dialect` (default `oracle`) feeds *both* request kinds from a single
+flag, so DDL and embedded-SQL parsing can never drift to different
+dialects within one run. `--sql-worker-python` pins the interpreter used
+to launch the bridge; `pb index` always passes its own `sys.executable` so
+bridge availability can't be lost across the `uv run → python →
+subprocess.Popen` chain. `--default-namespace` resolves an unqualified
+table/column reference against a named schema, but only when the DDL
+catalog actually defines the table there — never guessed (see
+`PB.Analysis.SchemaCategory`). If the bridge is unavailable, `pbc` still
+runs rather than hard-failing; for DDL specifically, each skipped `--ddl`
+file emits a `warning` progress event so a silently-empty catalog is never
+silent.
 
 ### Python → TypeScript: static files
 
@@ -290,6 +337,8 @@ state.
 | DuckDB-direct I/O (passes 1–8) | `compiler/src/PB/Pipeline/DuckDb.hs` |
 | DB-schema-as-category model | `compiler/src/PB/Analysis/SchemaCategory.hs`, `SchFootprint.hs` |
 | CLI entry point (Haskell) | `compiler/app/Main.hs` |
+| SQL/DDL bridge (Haskell side, spawns the pool) | `compiler/src/PB/Pipeline/SqlParse.hs` |
+| SQL/DDL bridge worker (Python side, wraps sqlglot) | `cli/pipeline/src/pb/pipeline/bridge/sql_worker.py`, `cli/lib/src/pb/lib/sql.py`, `cli/lib/src/pb/lib/ddl.py` |
 | Pure Python transforms | `cli/lib/src/pb/lib/` |
 | DuckDB invocation + `pb index` orchestration | `cli/pipeline/src/pb/pipeline/pipeline.py`, `env.py` |
 | FastAPI endpoints | `cli/api/src/pb/api/routes/` |

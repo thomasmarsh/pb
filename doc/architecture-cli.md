@@ -78,11 +78,21 @@ env = ShellEnv()
 ```
 
 Each sub-environment groups related side-effecting operations behind typed
-fields. DuckDB schema DDL, incremental state tracking, batch row import,
-and JSONL ingestion are owned entirely by Haskell
-(`compiler/src/PB/Pipeline/DuckDb.hs`'s `initSchema`/`append*` — see
-`doc/architecture-pipeline.md`); `env.py` covers only the imperative
-boundary Python itself owns.
+fields. The DuckDB schema is split: Haskell owns every analysis-table's DDL
+and row insertion (`compiler/src/PB/Pipeline/DuckDb.hs`'s
+`initSchema`/`append*` — see `doc/architecture-pipeline.md`), while Python
+owns two tables of its own via `db.py`'s `setup_db_extras`/`_EXTRAS_DDL`:
+`metadata` (incremental-state bookkeeping — source hashing, last-run
+tracking) and `object_metrics` (NetworkX graph metrics — PageRank,
+betweenness, DIT — written via `db_batch.py`'s `bulk_insert`). `env.py`
+covers the rest of the imperative boundary Python itself owns.
+
+`pipeline.py`'s `run()` launches the `pbc` subprocess directly via
+`subprocess.Popen` (passing `--sql-worker-python sys.executable`, `--ddl`,
+`--sql-dialect`, `--default-namespace`); `pbc` in turn spawns its own pool
+of `sql_worker.py` subprocess workers for SQL/DDL dialect parsing (see
+`doc/architecture.md`'s "SQL/DDL bridge" section). Python supplies the
+worker module; Haskell owns the pool lifecycle.
 
 ### `BuildEnv` (9 fields)
 Repo discovery, binary builds, file enumeration, source/PBL hashing, and

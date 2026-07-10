@@ -265,18 +265,18 @@ statement node (deferred to E8 — requires lexer changes).
 ## 4. Scalable Compilation Pipeline
 
 ```
-[ 1,700 Source Files ]
-         │
-         ▼  pbc --db FILE  (DuckDB-direct mode — all passes 1-8 in Haskell)
-[ pb.duckdb ]  ← written directly; no JSON intermediate
-         │
-         │  (alternative: pbc --jsonl | pb index — JSONL streaming mode)
-         │
-[ pb.duckdb ]
-  ├── objects            (one row per source file / type declaration)
+[ 1,700 Source Files ]  [ --ddl catalog file(s), optional ]
+         │                          │
+         ▼  pbc --db FILE  (DuckDB-direct mode — all passes 1-8 in Haskell) ◀───┘
+         │  (embedded SQL + DDL text round-trips through a pool of
+         │   sql_worker.py subprocesses wrapping sqlglot — see
+         │   doc/architecture.md's "SQL/DDL bridge" section)
+         ▼
+[ pb.duckdb ]  ← written directly by pbc
+  ├── objects            (one row per source file / type declaration; ancestry via objects.ancestor)
   ├── source_files / parse_errors
   ├── procedures         (functions, subroutines, events, on-blocks;
-  │                        body_json, instr_graph_json, wiring_json)
+  │                        instr_graph_json, wiring_json)
   ├── dw_objects / dw_controls
   ├── dw_retrieve_tables / dw_retrieve_columns / dw_retrieve_where / dw_joins
   ├── sql_statements / sql_statement_columns / sql_statement_filters / sql_statement_tables
@@ -289,27 +289,25 @@ statement node (deferred to E8 — requires lexer changes).
   ├── dead_code
   ├── schema_objects / schema_morphisms   (DB schema as a free category — Plan 148)
   ├── decomposition_coslice               (per-column rewrite-cost paths — Plan 153 D5)
-  ├── inherits           (declared ancestry edges)
-  ├── calls              (raw call graph edges)
   └── object_metrics     (PageRank, betweenness, cyclomatic — pb analyze)
          │
          ├──▶  SQL queries (LLM-generated, answers any structural question)
          ├──▶  pb analyze  (NetworkX graph metrics → object_metrics)
-         ├──▶  pb diagram  (GraphViz SVG: inheritance, calls, DW-tables, heatmap)
-         └──▶  pb explore  (FastAPI + SolidJS SPA — interactive analysis UI)
+         └──▶  pb explore  (FastAPI + SolidJS SPA — interactive analysis UI,
+                             incl. /api/diagram* GraphViz rendering)
 ```
 
 ### Serialisation rules
 
-1. **Do not generate one giant JSON file.** Use per-file `.json` output (`-o` mode) or
-   streaming JSONL (`--jsonl` mode). DuckDB `read_ndjson_auto` can query JSONL directly
-   without loading all files into memory.
-2. **`pbc --db FILE` for bulk processing:** the primary path (`pb index`
-   shells out to it directly) runs all 8 passes in Haskell and populates
-   `pb.duckdb` with no JSON intermediate at all. `pbc --jsonl` remains
-   available for streaming JSON to other tools, but there is no `pb import`
-   command that consumes it — DuckDB's `read_ndjson_auto` can query a JSONL
-   stream directly if needed.
+1. **`pbc --db FILE` populates `pb.duckdb` directly.** `pb index` shells
+   out to `pbc --db`; Haskell runs all 8 passes and writes every table
+   directly.
+2. **Embedded SQL and `--ddl` catalogs are parsed via a Python subprocess
+   bridge.** `pbc` spawns a pool of `sql_worker.py` processes wrapping
+   `sqlglot` over a length-prefixed JSON stdin/stdout protocol; see
+   `doc/architecture.md`'s "Haskell ↔ Python: SQL/DDL bridge" section for
+   the flags (`--ddl`, `--sql-dialect`, `--sql-worker-python`,
+   `--default-namespace`) and wire format.
 3. **Tilde-escaping:** Normalise `~"` → `"` and `~~` → `~` in all string values before
    serialisation. The `pbDwStringChunk` lexer function handles this.
 
@@ -339,9 +337,7 @@ procedures (
     params TEXT, return_type TEXT,
     cyclomatic INT,           -- McCabe complexity (branches + 1)
     confidence TEXT
-    -- NOTE: no body_json column in the DuckDB-direct schema; the full body
-    -- lives inside instr_graph_json/wiring_json. body_json only appears in
-    -- the legacy -o/--jsonl per-file JSON output.
+    -- Body text lives inside instr_graph_json/wiring_json.
 )
 
 -- DataWindow objects + visual controls
@@ -420,16 +416,16 @@ schema_morphisms (from_key TEXT, to_key TEXT, leg_kind TEXT, fk_source TEXT)
 decomposition_coslice (seed_key TEXT, target_key TEXT, direction TEXT, leg_ordinal INT,
                         leg_from TEXT, leg_to TEXT, leg_kind TEXT, fk_source TEXT)
 
--- Graph edges
-inherits (from_object TEXT, to_object TEXT)
-calls    (file TEXT, object TEXT, from_proc TEXT, to_name TEXT, call_type TEXT)
+-- Inheritance is `objects.ancestor` (walked via a recursive CTE, see the
+-- example query below); the call graph is `call_sites` (raw) /
+-- `resolved_calls` (cross-file resolved) above.
 
--- Pre-computed graph metrics (populated by `pb analyze`, Python/NetworkX — the one
--- analysis table Haskell does not write)
+-- Pre-computed graph metrics (populated by `pb analyze`, Python/NetworkX;
+-- schema DDL owned by `db.py:setup_db_extras`)
 object_metrics (
     object TEXT, in_degree INT, out_degree INT,
     betweenness DOUBLE, pagerank DOUBLE,
-    max_cyclomatic INT, avg_cyclomatic DOUBLE, dit INT
+    max_cyclomatic INT, avg_cyclomatic DOUBLE, dit INT, cbo INT
 )
 ```
 
@@ -472,9 +468,8 @@ WHERE expression LIKE '%fn_misth%';
 
 | Tool | Language | Input | Output |
 |---|---|---|---|
-| `pbc --db FILE` | Haskell | source dir | pb.duckdb (all passes 1–8, primary path) |
-| `pbc --jsonl` | Haskell | source dir | JSONL stream (ad-hoc streaming/piping) |
-| `pbc -o DIR` | Haskell | source dir | per-file JSON, mirrored under `DIR` (ad-hoc inspection) |
+| `pbc --db FILE [--ddl [SCHEMA:]FILE]... [--sql-dialect D] [--sql-worker-python BIN] [--default-namespace NS]` | Haskell | source dir (+ optional DDL files) | pb.duckdb (all passes 1–8) |
+| `sql_worker.py` (bridge) | Python, subprocess pool spawned by `pbc` | SQL/DDL text over stdin (length-prefixed JSON) | sqlglot-parsed columns/tables/catalog over stdout |
 | `pb index` | Python (CLI) | source dir | pb.duckdb — drives `pbc --db` directly, plus incremental-state bookkeeping |
 | `pb analyze` | Python (CLI) | pb.duckdb | object_metrics table (NetworkX: PageRank, betweenness, DIT) |
 | `pb explore` | Python + TS | pb.duckdb | FastAPI (`cli/api/`) + SolidJS SPA (`ui/`), incl. `/api/diagram*` for GraphViz SVG rendering |

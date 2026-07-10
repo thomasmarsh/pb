@@ -97,9 +97,11 @@ def hash_pbl_dir(input_path: Path) -> dict[str, str]:
 def ensure_explorer_built(repo: Path, verbose: bool = False) -> None:
     """Ensure the explorer TypeScript bundle is up-to-date.
 
-    Rebuilds the TypeScript bundle if any source file is newer than the bundle
-    output. The prebuild step (pnpm prebuild) regenerates ast.generated.ts via
-    cabal run pbc --emit-ts automatically when pnpm build is invoked.
+    Rebuilds the TypeScript bundle (via `pnpm build`) if any source file is
+    newer than the bundle output. There is no codegen step: `pbc` has no
+    `--emit-ts` flag, and the AST wire types in
+    `ui/packages/interpreter/src/types/ast.ts` are hand-maintained against
+    `compiler/src/PB/Pipeline/Serialise.hs`.
     """
     ui_dir = repo / "ui"
     dist_js = repo / "cli" / "api" / "src" / "pb" / "api" / "static" / "dist" / "App.js"
