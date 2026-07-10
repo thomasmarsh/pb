@@ -710,20 +710,30 @@ data DwWhereClause = DwWhereClause
   { dwcExp1, dwcOp, dwcExp2 :: Text, dwcLogic :: Maybe Text
   , dwcParsedExp1, dwcParsedExp2 :: Maybe Expr }  -- Plan 163 Phase 1 (D2)
 -- Mirrors DwControl's dwcParsedExpression/dwcParsedFormat naming/pipeline.
--- 33/186 real corpus rows (openpay) have an unbalanced stray paren on one
--- operand (a compound predicate's grouping leaked into the boundary
--- clause's raw EXP1/EXP2 by the .srd exporter — see BACKLOG's ".srd
--- WHERE-clause paren leakage" entry, not yet fixed). dwcParsedExp1/2 fall
--- back to Nothing when parseExpr's total ExRaw-fallback fires — except
--- parseExpr's TkColon/host-var branch (PB.Grammar.Body) doesn't check for
--- leftover tokens, so a trailing stray ")" after a host var (the common
--- EXP2 shape) is silently dropped rather than triggering the ExRaw
--- fallback; see the same BACKLOG entry's follow-on note.
+-- 33/187 real corpus rows (openpay) carry a surplus leading '(' on EXP1
+-- and/or trailing ')' on EXP2 -- PowerBuilder's own WHERE-grid grouping
+-- parens, spliced onto whichever row sits at a visual group's boundary
+-- (see doc/spec.md 7.3 "WHERE-clause grouping-paren leakage"; confirmed
+-- NOT a powerbuilder-pbl-dump bug -- that tool does a verbatim byte
+-- extraction, see doc/pbl.md's "Data chain" note). Fixed 2026-07-10:
+-- parseWhereOperand strips the surplus via stripSurplusParens before
+-- parsing, so dwcParsedExp1/2 resolve normally even on group-boundary
+-- rows; dwcExp1/dwcExp2 (raw) stay verbatim, unaffected.
 
 -- PB.Grammar.DataWindow
 parseWhereOperand :: Text -> Maybe Expr
--- Not exported. tokenizeExpr/parseExpr pipeline (same as DwControl's
--- expression/format fields); top-level ExRaw result -> Nothing.
+-- Not exported. stripSurplusParens . tokenizeExpr . parseExpr pipeline
+-- (same tokenizeExpr/parseExpr DwControl's expression/format fields use,
+-- plus the paren-leakage strip); top-level ExRaw result -> Nothing.
+stripSurplusParens :: Text -> Text
+-- Not exported. Strips a leading run of '(' from EXP1 (or trailing run of
+-- ')' from EXP2) only while the text's own net paren balance is nonzero --
+-- an already-balanced parenthesized sub-expression (real function call,
+-- `(a+b)`) is left untouched. Deliberately local/per-field: does not (and
+-- doesn't need to) reconstruct true cross-row group nesting -- verified
+-- empirically (zero anomalies across all 33 affected corpus rows) that the
+-- surplus is always a pure leading/trailing run, never interior or
+-- cross-contaminated between EXP1/EXP2.
 ```
 
 ### `PB.Grammar.Body`

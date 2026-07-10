@@ -141,6 +141,16 @@ Stores object data in chained blocks.
 
 **Data chain:** Follow `next` pointers until 0. Concatenate data from all blocks.
 
+**Verbatim extraction, confirmed (2026-07-10).** `powerbuilder-pbl-dump`'s
+`extract_data_from_entry`/`getTextFromData`/`save_2_file` (`pbl_util.py`) do nothing
+but walk this chain, concatenate the decoded block bytes, and write the result to
+disk after trimming the comment-length prefix — no text transformation or
+re-serialization of any kind. Any textual oddity found in an extracted `.srd`/`.srw`/
+etc. file (e.g. the PBSELECT WHERE-clause grouping-paren leakage documented in
+`doc/spec.md` section 7.3) is therefore PowerBuilder's own native serialization, not
+an artifact of this extraction tool — verified by reading the extractor source, not
+assumed.
+
 ---
 
 ### 6. TRL* — Trailer Block (DLL/EXE only, 512 bytes)

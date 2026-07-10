@@ -448,16 +448,44 @@ pWhereBlock = pPbsBlock "WHERE" $ do
 
 -- | Parse a WHERE-clause operand (dwcExp1/dwcExp2) through the same
 -- tokenizeExpr/parseExpr pipeline DwControl's expression/format fields use.
--- parseExpr is total (ExRaw fallback); a top-level ExRaw means nothing
--- structured was recognized (e.g. an unmatched paren carried over from a
--- compound predicate split across sibling WHERE clauses — see BACKLOG's
--- ".srd WHERE-clause paren leakage" entry), so store Nothing rather than a
--- useless raw-token wrapper.
+-- Strips surplus grouping parens first (see 'stripSurplusParens' — this is
+-- the ".srd WHERE-clause paren leakage" fix, doc/spec.md 7.3). parseExpr is
+-- total (ExRaw fallback); a top-level ExRaw means nothing structured was
+-- recognized, so store Nothing rather than a useless raw-token wrapper.
 parseWhereOperand :: Text -> Maybe Expr
 parseWhereOperand raw =
-    case parseExpr (tokenizeExpr raw) of
+    case parseExpr (tokenizeExpr (stripSurplusParens raw)) of
         ExRaw _ -> Nothing
         expr    -> Just expr
+
+-- | Strip a leading run of '(' from the front of the text while its net
+-- paren count (opens minus closes) is positive, and a trailing run of ')'
+-- from the back while net negative. Never touches an already-balanced
+-- parenthesized sub-expression (a real function call, `(a+b)`) since those
+-- have net-zero balance throughout. Fixes the ".srd WHERE-clause paren
+-- leakage" bug (doc/spec.md 7.3, BACKLOG.md): PowerBuilder's WHERE grid
+-- splices a visual group's literal parens onto whichever row sits at the
+-- group's boundary, with no separate field recording the grouping — so
+-- EXP1/EXP2 can carry a surplus of leading/trailing parens left over from
+-- a group spanning that row and its siblings. Recovering each row's own
+-- comparison operands only needs this local surplus stripped; the true
+-- cross-row group nesting is discarded (not represented in DwWhereClause
+-- at all) since dwcParsedExp1/dwcParsedExp2 only need the operand itself.
+stripSurplusParens :: Text -> Text
+stripSurplusParens = stripTrailingCloses . stripLeadingOpens
+  where
+    netParenBalance :: Text -> Int
+    netParenBalance t = T.length (T.filter (== '(') t) - T.length (T.filter (== ')') t)
+
+    stripLeadingOpens :: Text -> Text
+    stripLeadingOpens t = case T.uncons (T.stripStart t) of
+        Just ('(', rest) | netParenBalance t > 0 -> stripLeadingOpens rest
+        _                                        -> t
+
+    stripTrailingCloses :: Text -> Text
+    stripTrailingCloses t = case T.unsnoc (T.stripEnd t) of
+        Just (rest, ')') | netParenBalance t < 0 -> stripTrailingCloses rest
+        _                                        -> t
 
 pJoinBlock :: PbsP DwJoin
 pJoinBlock = pPbsBlock "JOIN" $ do

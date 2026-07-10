@@ -730,25 +730,14 @@ tests = testGroup "DataWindow"
                 DwRetrieveRaw _ -> assertFailure "expected DwRetrieveOk"
                 DwRetrieveOk dr -> dwcParsedExp2 (head' (drWhere dr)) @?= Just (ExInt "1")
 
-          , testCase "unbalanced outer-paren boundary clause: EXP1 (leading '(') is Nothing; \
-                     \EXP2 (trailing ')') still resolves via parseExpr's leftover-ignoring host-var branch" $
-              -- Real .srd shape (final.pbl/dw_misth_final_form.srd): a compound
-              -- predicate's grouping parens leak into the boundary clauses'
-              -- EXP1/EXP2 with no matching close/open on that side. Logged as
-              -- its own bug (BACKLOG.md, ".srd WHERE-clause paren leakage") —
-              -- Phase 1 does not paper over it. EXP1's leading "(" makes
-              -- parseAtom's paren branch fail outright (no matching close),
-              -- so parseExpr falls back to a top-level ExRaw and we store
-              -- Nothing. EXP2's trailing ")" behaves differently: verified by
-              -- running this test against the real implementation,
-              -- PB.Grammar.Body.parseExpr's TkColon/host-var branch
-              -- (line ~334-337) does not check that all tokens were consumed
-              -- — it discards leftover tokens after the lvalue prefix — so
-              -- ":arg_kodfinal )" still resolves to a real ExHostVar, silently
-              -- dropping the trailing ")". This is pre-existing parseExpr
-              -- behavior (used by DwControl today too), out of scope for this
-              -- phase to change; noted in the BACKLOG bug entry for the
-              -- future diagnostic session.
+          , testCase "unbalanced outer-paren boundary clause: raw text keeps the leaked \
+                     \parens verbatim, but both parsed operands resolve cleanly" $
+              -- Real .srd shape (final.pbl/dw_misth_final_form.srd), documented in
+              -- doc/spec.md 7.3 "WHERE-clause grouping-paren leakage": PowerBuilder's
+              -- WHERE grid splices a group's literal parens onto the boundary rows'
+              -- EXP1/EXP2 text. dwcExp1/dwcExp2 preserve that verbatim (needed for
+              -- reconstructRetrieveSql); dwcParsedExp1/dwcParsedExp2 strip the
+              -- provably-surplus leading '(' / trailing ')' before parsing.
               case parsePbSelect
                      "PBSELECT( VERSION(400) TABLE(NAME=~\"misth_final~\") \
                      \WHERE( EXP1 =~\"( misth_final.kodfinal~\" OP =~\"=~\" \
@@ -758,8 +747,48 @@ tests = testGroup "DataWindow"
                   let wc = head' (drWhere dr)
                   dwcExp1 wc @?= "( misth_final.kodfinal"
                   dwcExp2 wc @?= ":arg_kodfinal )"
-                  dwcParsedExp1 wc @?= Nothing
+                  dwcParsedExp1 wc @?=
+                    Just (ExLvalue (Lvalue [LvSegment "misth_final" Nothing, LvSegment "kodfinal" Nothing]))
                   dwcParsedExp2 wc @?= Just (ExHostVar (Lvalue [LvSegment "arg_kodfinal" Nothing]))
+
+          , testCase "nested group boundary clause (3-row chain, depth-2 nesting): both \
+                     \outer- and inner-group surplus parens stripped" $
+              -- Real .srd shape (print.pbl/sprn_final_epidom_ypal.srd): the whole
+              -- 3-row AND chain is itself wrapped in an outer group, so the first
+              -- row's EXP1 carries 2 leading '(' (outer + this row's own) and the
+              -- last row's EXP2 carries 2 trailing ')' (this row's own + outer).
+              case parsePbSelect
+                     "PBSELECT( VERSION(400) TABLE(NAME=~\"misth_final_ypal_epidom~\") \
+                     \WHERE( EXP1 =~\"( ( misth_final_ypal_epidom.kodfinal~\" OP =~\"=~\" \
+                     \EXP2 =~\":arg_kodfinal )~\" LOGIC =~\"and~\" ) \
+                     \WHERE( EXP1 =~\"( misth_final_ypal_epidom.kodypal~\" OP =~\"=~\" \
+                     \EXP2 =~\":arg_kodypal )~\" LOGIC =~\"and~\" ) \
+                     \WHERE( EXP1 =~\"( misth_final_ypal_epidom.kodxrisi~\" OP =~\"=~\" \
+                     \EXP2 =~\":arg_kodxrisi ) )~\" ) )" of
+                DwRetrieveRaw _ -> assertFailure "expected DwRetrieveOk"
+                DwRetrieveOk dr -> case drWhere dr of
+                  [w1, w2, w3] -> do
+                    dwcParsedExp1 w1 @?=
+                      Just (ExLvalue (Lvalue [LvSegment "misth_final_ypal_epidom" Nothing, LvSegment "kodfinal" Nothing]))
+                    dwcParsedExp2 w1 @?= Just (ExHostVar (Lvalue [LvSegment "arg_kodfinal" Nothing]))
+                    dwcParsedExp1 w2 @?=
+                      Just (ExLvalue (Lvalue [LvSegment "misth_final_ypal_epidom" Nothing, LvSegment "kodypal" Nothing]))
+                    dwcParsedExp2 w2 @?= Just (ExHostVar (Lvalue [LvSegment "arg_kodypal" Nothing]))
+                    dwcParsedExp1 w3 @?=
+                      Just (ExLvalue (Lvalue [LvSegment "misth_final_ypal_epidom" Nothing, LvSegment "kodxrisi" Nothing]))
+                    dwcParsedExp2 w3 @?= Just (ExHostVar (Lvalue [LvSegment "arg_kodxrisi" Nothing]))
+                  ws -> assertFailure ("expected exactly 3 WHERE clauses, got " <> show (length ws))
+
+          , testCase "balanced internal parens are not stripped (real function call untouched)" $
+              -- A legitimately balanced call in EXP2 must survive: only a strict
+              -- paren-count imbalance triggers stripping, never a matched pair.
+              case parsePbSelect
+                     "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") \
+                     \WHERE( EXP1 =~\"t.x~\" OP =~\"=~\" EXP2 =~\"upper(x)~\" ) )" of
+                DwRetrieveRaw _ -> assertFailure "expected DwRetrieveOk"
+                DwRetrieveOk dr ->
+                  stripExprSpans (dwcParsedExp2 (head' (drWhere dr))) @?=
+                    stripExprSpans (Just (ExCall (Lvalue [LvSegment "upper" Nothing]) [[tok "x"]]))
           ]
 
       , testGroup "PBSELECT JOIN"

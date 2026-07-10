@@ -682,6 +682,29 @@ allows SQL double-quoted identifiers to be stored (e.g. `~~~"tablename~~~"` enco
 `~~` (escaped tilde) + `~"` (closing delimiter): the chunk parser must consume
 `~~"` atomically before attempting to match `~"` as the string close.
 
+**WHERE-clause grouping-paren leakage.** PowerBuilder's DW painter "Where" tab is a
+flat per-row grid (column / operator / value / AND-OR) with a paren-grouping toggle
+per row; it has no separate field for "this row is inside a group." When the grid is
+serialized to `PBSELECT(...)` text, a group's literal `(`/`)` characters are spliced
+directly onto whichever row sits at the group's boundary: an unmatched leading `(` on
+that group's first row's `EXP1`, an unmatched trailing `)` on its last row's `EXP2`.
+Confirmed (2026-07-10) against the openpay corpus (`example/openpay-0.1.1b-extract`,
+187 `WHERE(...)` blocks across 105 files) that this is a real, faithfully-extracted
+property of the format, not a bug in `powerbuilder-pbl-dump` — see `doc/pbl.md`'s
+"Data chain" note. It is **not** always a single group spanning exactly two sibling
+rows: a group can be a single row (redundant self-wrap, `(col = val)`) or nest, e.g.
+`( (a = :x) and (b = :y) and (c = :z) )` — a 3-row chain where the first row's `EXP1`
+carries *two* leading `(` and the last row's `EXP2` carries *two* trailing `)`.
+Empirically (33/187 affected rows in the corpus, zero exceptions), the surplus is
+always a pure leading run of `(` at the very start of `EXP1`'s text or a pure
+trailing run of `)` at the very end of `EXP2`'s text — never interior, never on the
+wrong operand — so each row's own comparison operands can be recovered locally
+(strip only the provably-surplus run) without reconstructing the true group nesting.
+`PB.AST.DataWindow.DwWhereClause`'s raw `dwcExp1`/`dwcExp2` fields preserve this text
+verbatim (needed for `reconstructRetrieveSql`, which just re-concatenates clause
+texts in order and is unaffected); `dwcParsedExp1`/`dwcParsedExp2` are derived from a
+paren-stripped copy. See BACKLOG's ".srd WHERE-clause paren leakage" entry.
+
 Some corpus files use single-quoted values `'...'` instead of tilde-quoted values.
 `VERSION(...)` is optional (absent in ~15% of corpus files).
 `COMPUTE`, `JOIN`, `GROUP`, and unknown block names may appear inside the outer `()`
