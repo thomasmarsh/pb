@@ -28,10 +28,12 @@ lv2 a b = Lvalue [LvSegment a Nothing, LvSegment b Nothing]
 
 emptyEnv :: ScopedTypeEnv
 emptyEnv = ScopedTypeEnv
-  { steGlobal    = Map.empty
-  , steInstance  = Map.empty
-  , steLocal     = Map.empty
-  , steHierarchy = Map.empty
+  { steGlobal       = Map.empty
+  , steInstance     = Map.empty
+  , steLocal        = Map.empty
+  , steHierarchy    = Map.empty
+  , steObject       = ""
+  , steControlIndex = Map.empty
   }
 
 noFns :: Set.Set Text

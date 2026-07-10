@@ -196,7 +196,7 @@ compileOne catTables mDefaultNamespace wsEnv controlIdx globalDwColumns mBridge 
         userFns = Set.fromList
           $  map (T.toLower . fnsName . fbSig) (srFunctions  sf)
           <> map (T.toLower . ssName  . sbSig) (srSubroutines sf)
-        mkProcEnv params = procEnv wsEnv obj (parseParams params)
+        mkProcEnv params = procEnv wsEnv controlIdx obj (parseParams params)
         lvs  = extractLocalVars  fp obj sf
         css  = extractCallSites  fp obj sf
         gvs  = extractGlobalVars fp obj sf

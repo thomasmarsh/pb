@@ -37,7 +37,7 @@ import Test.Tasty.Hedgehog  (testProperty)
 -- Fixtures
 
 emptyEnv :: ScopedTypeEnv
-emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty
+emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty "" Map.empty
 
 ctx0 :: FunctorCtx
 ctx0 = FunctorCtx
@@ -199,7 +199,7 @@ tests = testGroup "SchFootprint"
                 case [ ev | ev <- srEvents sf, esName (evSig ev) == "clicked", evOwner ev == Just "cb_getitem" ] of
                   [ev] -> do
                     let ws       = buildWorkspaceEnv [sf]
-                        env      = procEnv ws "w_dw_copy" []
+                        env      = procEnv ws (buildControlIndex [sf]) "w_dw_copy" []
                         ssaProc  = buildSsa env "clicked" (evBody ev)
                         term     = compileSsa env Set.empty ssaProc
                         bindings = extractDwControlBindings srwPathT sf
@@ -267,9 +267,9 @@ tests = testGroup "SchFootprint"
                         findSub n = [ sb | sb <- srSubroutines sf, ssName (sbSig sb) == n ]
                     case (findSub "of_open", findSub "if_kodfylo_changed") of
                      ([ofOpen], [ifChanged]) -> do
-                       let openEnv    = procEnv ws "w_misth_fylo_form" []
+                       let openEnv    = procEnv ws idx "w_misth_fylo_form" []
                            aliasBindings = runtimeDwAliasBindings idx (weHierarchy ws) "w_misth_fylo_form" openEnv (sbBody ofOpen)
-                           changedEnv = procEnv ws "w_misth_fylo_form" []
+                           changedEnv = procEnv ws idx "w_misth_fylo_form" []
                            ssaProc    = buildSsa changedEnv "if_kodfylo_changed" (sbBody ifChanged)
                            term       = compileSsa changedEnv Set.empty ssaProc
                            dwCols = case dwTable dwFile >>= dtRetrieve of

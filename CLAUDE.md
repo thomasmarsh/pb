@@ -1167,10 +1167,29 @@ data CallKind = PureCall | SuspendCall
 classifyExpr :: ScopedTypeEnv -> Expr -> CallKind
 -- classifyExpr returns SuspendCall (no effect name baked in).
 -- effectName is a separate function (takes pre-parsed [Expr] args).
+-- ExCall branch (Plan 164 D4, 2026-07-10): a single segment checks
+-- isBuiltinSuspendFn; 2+ segments splits into (all-but-last, last) via
+-- resolveLvalueType/reverse (no partial head/init/last -- PB.Prelude hides
+-- them) and classifies on the resolved head-chain's type + the last segment
+-- as method name. Previously only exactly-2-segment chains (`dw_1.retrieve()`)
+-- were handled; a real dotted-chain-then-call of 3+ segments (the ONLY shape
+-- Grammar.Body's lvaluePrefix/chainCalls ever produces for e.g.
+-- `tab1.page1.uo_epidom.dw.Retrieve()` -- it's always a flat ExCall, never
+-- nested ExMethodCall) silently fell through to PureCall.
 effectName :: Expr -> [Expr] -> Text
 isBuiltinSuspendFn :: Text -> Bool
 isTypedSuspend :: Map.Map Text Text -> Text -> Text -> Bool
+resolveLvalueType :: ScopedTypeEnv -> Lvalue -> Maybe Text
+-- Not exported. Shared by classifyExpr's ExCall branch and
+-- resolveReceiverType's ExLvalue branch (Plan 164 D4). 1 segment ->
+-- lookupScopedVar; 2+ segments -> resolveMemberChainType (steControlIndex
+-- env) (steHierarchy env) (steObject env) segs -- the workspace-wide
+-- multi-hop control-chain resolver from PB.Analysis.ControlHierarchy.
 resolveReceiverType :: ScopedTypeEnv -> Expr -> Maybe Text
+-- ExLvalue branch now calls resolveLvalueType (multi-hop, was: first-segment
+-- only). ExCall-as-receiver branch (a receiver that is itself a call, e.g.
+-- `foo().bar()`) deliberately left single-segment-only -- that's call
+-- return-type inference, a different unsolved problem, out of D4's scope.
 calleeName :: Expr -> Text
 segName :: LvSegment -> Text
 lvHead :: Lvalue -> Text
@@ -1431,6 +1450,40 @@ withProcScope    :: [(Text, PbType)] -> TypeEnv -> TypeEnv  -- overlay params (s
 -- Phase A, 2026-07-10) -- a backtick-declared ancestor resolves to just the
 -- class part, so lookupBaseType/isDescendantOf's chain walk doesn't
 -- silently stop at a backtick-compound node.
+
+-- Workspace-wide + per-procedure scoped env (built once per compile run /
+-- once per procedure respectively); consumed by CallClassify/CatLower/
+-- GraphBuilder's whole SSA->CatOp pipeline.
+data WorkspaceEnv = WorkspaceEnv
+  { weGlobals      :: Map.Map Text PbType
+  , weInstanceVars :: Map.Map Text (Map.Map Text PbType)  -- object name -> instance vars
+  , weHierarchy    :: Map.Map Text Text                   -- full inheritance map
+  }
+buildWorkspaceEnv :: [SrFile] -> WorkspaceEnv
+
+-- steObject/steControlIndex (Plan 164 D4, 2026-07-10): the enclosing
+-- object name and workspace-wide ControlIndex, added so
+-- CallClassify.resolveLvalueType can resolve a multi-segment dotted chain
+-- (e.g. tab1.page1.uo_epidom) via PB.Analysis.ControlHierarchy
+-- .resolveMemberChainType instead of only ever inspecting the first
+-- segment. Piggybacks on ScopedTypeEnv the same way steHierarchy already
+-- does -- one opaque value threaded through the whole compile pipeline,
+-- no signature changes needed in CatLower/GraphBuilder/CompileCtx.
+data ScopedTypeEnv = ScopedTypeEnv
+  { steGlobal       :: Map.Map Text PbType
+  , steInstance     :: Map.Map Text PbType
+  , steLocal        :: Map.Map Text PbType   -- params only in P2a; body locals added in P2b
+  , steHierarchy    :: Map.Map Text Text
+  , steObject       :: Text          -- enclosing object; root for multi-hop chain resolution
+  , steControlIndex :: ControlIndex  -- from PB.Analysis.ControlHierarchy
+  }
+procEnv :: WorkspaceEnv -> ControlIndex -> Text -> [(Text, PbType)] -> ScopedTypeEnv
+-- Gained the ControlIndex param in Plan 164 D4 (was: WorkspaceEnv -> Text ->
+-- params -> ScopedTypeEnv). Callers: Runner.hs passes its workspace-wide
+-- controlIdx (already built for SchFootprint's SetItem resolution, Plan 164
+-- Phase C); Emit.hs's single-file wrapSrFile builds `buildControlIndex [sf]`
+-- locally (same single-file scope buildWorkspaceEnv [srFile] already has).
+lookupScopedVar :: Text -> ScopedTypeEnv -> Maybe PbType  -- case-insensitive; steLocal > steInstance > steGlobal
 ```
 
 ### `PB.Analysis.TypeResolve` (Plan 109 — Pass 5)

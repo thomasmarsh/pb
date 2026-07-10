@@ -48,14 +48,16 @@ import Test.Tasty.HUnit (testCase, (@?=))
 -- 'CatOpTest.hs's @dwEnv@ uses.
 dwEnv :: ScopedTypeEnv
 dwEnv = ScopedTypeEnv
-  { steGlobal    = Map.fromList [("dw_foo", PtPrimitive "datawindow")]
-  , steInstance  = Map.empty
-  , steLocal     = Map.empty
-  , steHierarchy = Map.empty
+  { steGlobal       = Map.fromList [("dw_foo", PtPrimitive "datawindow")]
+  , steInstance     = Map.empty
+  , steLocal        = Map.empty
+  , steHierarchy    = Map.empty
+  , steObject       = ""
+  , steControlIndex = Map.empty
   }
 
 emptyEnv :: ScopedTypeEnv
-emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty
+emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty "" Map.empty
 
 lv :: Text -> Lvalue
 lv n = Lvalue [LvSegment n Nothing]

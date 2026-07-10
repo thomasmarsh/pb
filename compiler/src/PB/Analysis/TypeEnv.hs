@@ -19,6 +19,7 @@ import PB.AST.BodyStmt (BodyStmt (..))
 import PB.AST.Located  (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type
+import PB.Analysis.ControlHierarchy (ControlIndex)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
@@ -124,10 +125,12 @@ data WorkspaceEnv = WorkspaceEnv
 -- | Procedure-scoped env built per (object, procedure) call site.
 -- Lookup order: steLocal > steInstance > steGlobal.
 data ScopedTypeEnv = ScopedTypeEnv
-  { steGlobal    :: Map.Map Text PbType
-  , steInstance  :: Map.Map Text PbType
-  , steLocal     :: Map.Map Text PbType   -- params only in P2a; body locals added in P2b
-  , steHierarchy :: Map.Map Text Text
+  { steGlobal       :: Map.Map Text PbType
+  , steInstance     :: Map.Map Text PbType
+  , steLocal        :: Map.Map Text PbType   -- params only in P2a; body locals added in P2b
+  , steHierarchy    :: Map.Map Text Text
+  , steObject       :: Text          -- enclosing object name; root for multi-hop chain resolution (Plan 164 D4)
+  , steControlIndex :: ControlIndex  -- workspace-wide control index; see PB.Analysis.ControlHierarchy (Plan 164 D4)
   } deriving (Eq, Show)
 
 buildWorkspaceEnv :: [SrFile] -> WorkspaceEnv
@@ -166,13 +169,15 @@ extractInstanceVars sf = Map.fromList
   ]
 
 -- | Build a ScopedTypeEnv for one (object, params) pair from a WorkspaceEnv.
-procEnv :: WorkspaceEnv -> Text -> [(Text, PbType)] -> ScopedTypeEnv
-procEnv ws objName params = ScopedTypeEnv
-  { steGlobal    = weGlobals ws
-  , steInstance  = fromMaybe Map.empty
-                     (Map.lookup (T.toLower objName) (weInstanceVars ws))
-  , steLocal     = Map.fromList [(T.toLower n, ty) | (n, ty) <- params]
-  , steHierarchy = weHierarchy ws
+procEnv :: WorkspaceEnv -> ControlIndex -> Text -> [(Text, PbType)] -> ScopedTypeEnv
+procEnv ws idx objName params = ScopedTypeEnv
+  { steGlobal       = weGlobals ws
+  , steInstance     = fromMaybe Map.empty
+                         (Map.lookup (T.toLower objName) (weInstanceVars ws))
+  , steLocal        = Map.fromList [(T.toLower n, ty) | (n, ty) <- params]
+  , steHierarchy    = weHierarchy ws
+  , steObject       = objName
+  , steControlIndex = idx
   }
 
 -- | Case-insensitive lookup: steLocal > steInstance > steGlobal.

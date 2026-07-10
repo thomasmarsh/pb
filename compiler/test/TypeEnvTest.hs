@@ -235,6 +235,7 @@ tests = testGroup "TypeEnv"
               , steInstance = Map.singleton "x" (PtPrimitive "integer")
               , steGlobal   = Map.empty
               , steHierarchy = Map.empty
+              , steObject = "", steControlIndex = Map.empty
               }
         in lookupScopedVar "x" env @?= Just (PtPrimitive "string")
 
@@ -244,6 +245,7 @@ tests = testGroup "TypeEnv"
               , steInstance = Map.singleton "y" (PtPrimitive "long")
               , steGlobal   = Map.singleton "y" (PtPrimitive "integer")
               , steHierarchy = Map.empty
+              , steObject = "", steControlIndex = Map.empty
               }
         in lookupScopedVar "y" env @?= Just (PtPrimitive "long")
 
@@ -253,6 +255,7 @@ tests = testGroup "TypeEnv"
               , steInstance = Map.empty
               , steGlobal   = Map.singleton "z" (PtPrimitive "boolean")
               , steHierarchy = Map.empty
+              , steObject = "", steControlIndex = Map.empty
               }
         in lookupScopedVar "z" env @?= Just (PtPrimitive "boolean")
 
@@ -262,6 +265,7 @@ tests = testGroup "TypeEnv"
               , steInstance = Map.empty
               , steGlobal   = Map.empty
               , steHierarchy = Map.empty
+              , steObject = "", steControlIndex = Map.empty
               }
         in lookupScopedVar "FOO" env @?= Just (PtPrimitive "string")
 
@@ -273,7 +277,7 @@ tests = testGroup "TypeEnv"
               { srTypeBlocks = [TypeBlock (TypeDecl "obj_b" "window" Nothing)
                   [Located 1 (BsLocalVar [] (PtPrimitive "string") "foo" Nothing)]] }
             ws  = buildWorkspaceEnv [sfA, sfB]
-        in lookupScopedVar "foo" (procEnv ws "obj_a" []) @?= Just (PtPrimitive "integer")
+        in lookupScopedVar "foo" (procEnv ws Map.empty "obj_a" []) @?= Just (PtPrimitive "integer")
 
     , testCase "procEnv wires correct instance layer for obj_b" $
         let sfA = emptyFile
@@ -283,7 +287,7 @@ tests = testGroup "TypeEnv"
               { srTypeBlocks = [TypeBlock (TypeDecl "obj_b" "window" Nothing)
                   [Located 1 (BsLocalVar [] (PtPrimitive "string") "foo" Nothing)]] }
             ws  = buildWorkspaceEnv [sfA, sfB]
-        in lookupScopedVar "foo" (procEnv ws "obj_b" []) @?= Just (PtPrimitive "string")
+        in lookupScopedVar "foo" (procEnv ws Map.empty "obj_b" []) @?= Just (PtPrimitive "string")
 
     ]
 

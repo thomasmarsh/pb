@@ -27,6 +27,7 @@ import PB.Lexing.Splitter   (Statement (..), splitStatements)
 import PB.Pipeline.Preprocess  (LogicalLine (..), normalizeText, stripHeaders)
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv,
                                 procEnv, ScopedTypeEnv)
+import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.Cfg    (buildCfg)
 import PB.Analysis.GraphBuilder
   ( compileProcedureViaCatOp, compileProcedureToLowCat, collectWiring, WiringPayload (..) )
@@ -127,12 +128,16 @@ wrapSrFile withInstr path sf spans ws =
     let (objName, ancestor) = srPrimaryObject sf
         objName' = if T.null objName then T.pack path else objName
 
+        -- Single-file mode: no cross-file workspace, so the ControlIndex is
+        -- built from just this file (same scope 'ws' itself already has).
+        controlIdx = buildControlIndex [sf]
+
         -- Per-procedure env: params + object instance vars from workspace.
         procEnvFor :: Text -> ScopedTypeEnv
-        procEnvFor paramsText = procEnv ws objName (parseParams paramsText)
+        procEnvFor paramsText = procEnv ws controlIdx objName (parseParams paramsText)
 
         emptyProcEnv :: ScopedTypeEnv
-        emptyProcEnv = procEnv ws objName []
+        emptyProcEnv = procEnv ws controlIdx objName []
 
         -- User-defined function names (lower-cased) for InstrGraph callproc dispatch.
         userFns :: Set.Set Text

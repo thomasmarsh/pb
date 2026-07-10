@@ -1,4 +1,4 @@
-module ControlHierarchyTest (tests) where
+module ControlHierarchyTest (tests, withFyloFixture) where
 
 import PB.Prelude
 import PB.AST.SourceFile        (SrFile (..), TypeDecl (..), TypeBlock (..))

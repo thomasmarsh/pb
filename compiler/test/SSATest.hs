@@ -34,7 +34,7 @@ strTok :: Text -> Token
 strTok t = Token TkStringDouble t (SourceSpan 1 1 1)
 
 emptyEnv :: ScopedTypeEnv
-emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty
+emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty "" Map.empty
 
 blockCount :: SsaProc -> Int
 blockCount = Map.size . spBlocks
@@ -408,14 +408,16 @@ tests = testGroup "SSA"
     [ testCase "dw_foo.retrieve() → SuspendCall" $
         classifyExpr
           ScopedTypeEnv { steGlobal = Map.singleton "dw_foo" (PtPrimitive "datawindow")
-                        , steInstance = Map.empty, steLocal = Map.empty, steHierarchy = Map.empty }
+                        , steInstance = Map.empty, steLocal = Map.empty, steHierarchy = Map.empty
+                        , steObject = "", steControlIndex = Map.empty }
           (ExCall { callee = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing], callArgs = [] })
           @?= SuspendCall
 
     , testCase "commit() with Transaction type → SuspendCall" $
         classifyExpr
           ScopedTypeEnv { steGlobal = Map.singleton "sqlca" (PtPrimitive "transaction")
-                        , steInstance = Map.empty, steLocal = Map.empty, steHierarchy = Map.empty }
+                        , steInstance = Map.empty, steLocal = Map.empty, steHierarchy = Map.empty
+                        , steObject = "", steControlIndex = Map.empty }
           (ExCall { callee = Lvalue [LvSegment "sqlca" Nothing, LvSegment "commit" Nothing], callArgs = [] })
           @?= SuspendCall
 

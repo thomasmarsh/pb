@@ -21,6 +21,7 @@ import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile   (TypeBlock (..), TypeDecl (..), srPrimaryObject, srFunctions, FunctionBlock (..), FnSig (..))
 import PB.AST.Type         (PbType (..))
 import PB.Analysis.TypeEnv    (buildWorkspaceEnv, procEnv)
+import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.GraphBuilder (compileProcedureViaCatOp)
 import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse
@@ -344,7 +345,7 @@ tests = testGroup "Pipeline.Runner"
               fb            = case srFunctions sf of { (f:_) -> f; [] -> error "impossible: fixture has one function" }
               body          = fbBody fb
               userFns       = Set.fromList [T.toLower (fnsName (fbSig fb))]
-              env           = procEnv ws objName []
+              env           = procEnv ws (buildControlIndex [sf]) objName []
               newJson       = toJSON (compileProcedureViaCatOp env userFns body)
           in testGroup "if/else with shared trailing call"
             [ testCase "wrapSrFile's instrGraph matches compileProcedureViaCatOp" $

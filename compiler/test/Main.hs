@@ -33,6 +33,7 @@ import qualified TokenTest
 import qualified TypeEnvTest
 import qualified TypeResolveTest
 import qualified ControlHierarchyTest
+import qualified CallClassifyTest
 
 
 import Prelude
@@ -76,4 +77,5 @@ tests = testGroup "pb-compiler"
   , TypeEnvTest.tests
   , TypeResolveTest.tests
   , ControlHierarchyTest.tests
+  , CallClassifyTest.tests
   ]

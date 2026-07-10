@@ -26,6 +26,7 @@ import PB.AST.BodyStmt
 import PB.AST.Expr
 import PB.AST.Located    (Located (..))
 import PB.AST.Type       (PbType, renderPbType)
+import PB.Analysis.ControlHierarchy (resolveMemberChainType)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVar, isDescendantOf)
 import PB.Grammar.Body   (parseExpr)
 import PB.Lexing.Token   (Token (..))
@@ -50,15 +51,17 @@ data CallKind = PureCall | SuspendCall deriving (Eq, Show)
 -- The effect name is computed separately by 'effectName'.
 classifyExpr :: ScopedTypeEnv -> Expr -> CallKind
 classifyExpr env (ExCall lv _) =
-  let lnames = map (T.toLower . segName) (segments lv)
-  in case lnames of
-       [name]
-         | isBuiltinSuspendFn name -> SuspendCall
-       [headN, meth]
-         | Just pty <- lookupScopedVar headN env
-         , let ty = T.toLower (renderPbType pty)
-         , isTypedSuspend (steHierarchy env) ty meth -> SuspendCall
-       _ -> PureCall
+  case segments lv of
+    [s] | isBuiltinSuspendFn (T.toLower (segName s)) -> SuspendCall
+    segs@(_ : _ : _) ->
+      case reverse segs of
+        methSeg : revHeadSegs ->
+          let meth = T.toLower (segName methSeg)
+          in case resolveLvalueType env (Lvalue (reverse revHeadSegs)) of
+               Just ty | isTypedSuspend (steHierarchy env) ty meth -> SuspendCall
+               _ -> PureCall
+        [] -> PureCall
+    _ -> PureCall
 classifyExpr env (ExMethodCall recv meth _) =
   case resolveReceiverType env recv of
     Just ty | isTypedSuspend (steHierarchy env) ty (T.toLower meth) -> SuspendCall
@@ -108,12 +111,21 @@ isTypedSuspend inh ty meth
                   "rowscopy", "rowsmove", "sharedata", "print", "modify"]
     transMethods = ["commit", "rollback", "connect", "disconnect", "autocommit"]
 
+-- | Resolve an lvalue's declared/effective type. A bare single segment is a
+-- local\/instance\/global variable lookup; two or more segments is a dotted
+-- control chain (e.g. @tab1.page1.uo_epidom@), resolved via the workspace-wide
+-- 'ControlIndex' starting from the enclosing object ('steObject') — Plan 164
+-- D4. Falls back to 'Nothing' on any unresolvable hop rather than guessing.
+resolveLvalueType :: ScopedTypeEnv -> Lvalue -> Maybe Text
+resolveLvalueType env lv = case segments lv of
+  []   -> Nothing
+  [s]  -> fmap (T.toLower . renderPbType) (lookupScopedVar (segName s) env)
+  segs -> resolveMemberChainType (steControlIndex env) (steHierarchy env)
+                                 (steObject env) (map segName segs)
+
 -- | Resolve the declared type name of a receiver expression (not walked to root).
 resolveReceiverType :: ScopedTypeEnv -> Expr -> Maybe Text
-resolveReceiverType env (ExLvalue lv) =
-  case segments lv of
-    (s:_) -> fmap (T.toLower . renderPbType) (lookupScopedVar (segName s) env)
-    []    -> Nothing
+resolveReceiverType env (ExLvalue lv) = resolveLvalueType env lv
 resolveReceiverType env (ExCall lv _) =
   case segments lv of
     [single] -> fmap (T.toLower . renderPbType) (lookupScopedVar (segName single) env)

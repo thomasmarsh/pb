@@ -50,7 +50,7 @@ compileSsaDefault :: SsaProc -> CatOp () ()
 compileSsaDefault = compileSsa emptyEnv Set.empty
 
 emptyEnv :: ScopedTypeEnv
-emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty
+emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty "" Map.empty
 
 -- | Tokenize a single source snippet into one 'Token' via the real lexer
 -- (mirrors 'InstrGraphTest.hs's identical helper) — used to build genuine
@@ -212,10 +212,12 @@ pathCallCounts nodes = L.sort (go 0 0)
 -- | Environment with datawindow and transaction typed variables.
 dwEnv :: ScopedTypeEnv
 dwEnv = ScopedTypeEnv
-  { steGlobal    = Map.fromList [("dw_foo", PtPrimitive "datawindow"), ("sqlca", PtPrimitive "transaction")]
-  , steInstance  = Map.empty
-  , steLocal     = Map.empty
-  , steHierarchy = Map.empty
+  { steGlobal       = Map.fromList [("dw_foo", PtPrimitive "datawindow"), ("sqlca", PtPrimitive "transaction")]
+  , steInstance     = Map.empty
+  , steLocal        = Map.empty
+  , steHierarchy    = Map.empty
+  , steObject       = ""
+  , steControlIndex = Map.empty
   }
 
 -- | Run a compiled 'CatOp' term through 'runCat'\/'Interp', returning the

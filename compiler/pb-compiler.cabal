@@ -148,6 +148,7 @@ test-suite pb-compiler-test
     , TypeEnvTest
     , TypeResolveTest
     , ControlHierarchyTest
+    , CallClassifyTest
   build-depends:
     , base ^>=4.20.1.0
     , pb-compiler
