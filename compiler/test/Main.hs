@@ -32,6 +32,7 @@ import qualified StreamTest
 import qualified TokenTest
 import qualified TypeEnvTest
 import qualified TypeResolveTest
+import qualified ControlHierarchyTest
 
 
 import Prelude
@@ -74,4 +75,5 @@ tests = testGroup "pb-compiler"
   , StreamTest.tests
   , TypeEnvTest.tests
   , TypeResolveTest.tests
+  , ControlHierarchyTest.tests
   ]

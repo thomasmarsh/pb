@@ -1434,6 +1434,13 @@ classifyControlType :: Text -> Maybe Text  -- dw_main → datawindow (naming con
 -- (ctrl = other.uo.dw, real corpus pattern in w_misth_fylo_form.srw) — no
 -- binding produced rather than guessing.
 extractDwControlBindings :: Text -> SrFile -> [DwControlBinding]
+-- findLiteralDataObject (Plan 164 Phase B, 2026-07-10): the "dataobject"-
+-- literal-BsLocalVar scan extractDwControlBindings always did, promoted
+-- from a local `where`-bound helper to a top-level export so
+-- PB.Analysis.ControlHierarchy.buildControlIndex can reuse it verbatim
+-- instead of reimplementing the same scan a third time (already duplicated
+-- once, separately, in Emit.extractWindowLayout).
+findLiteralDataObject :: [Located BodyStmt] -> Maybe Text
 -- Record types: LocalVar{lvFile,lvObject,lvProcName,lvVarName,lvRawType,lvIsParam,lvScopeLine}
 --   CallSite{csFile,csObject,csFromProc,csToName,csCallType,csLine}
 --   GlobalVar{gvFile,gvObject,gvName,gvType,gvMods}
@@ -1441,6 +1448,66 @@ extractDwControlBindings :: Text -> SrFile -> [DwControlBinding]
 --   ResolvedCall{rcFile,rcObject,rcFromProc,rcToName,rcCallType,rcLine,rcTargetObject,rcTargetProc,rcKind,rcConfidence}
 --   DwControlBinding{dcbFile,dcbObject,dcbControlName,dcbDwName}
 --   (lvPbType exists but is excluded from JSON.)
+```
+
+### `PB.Analysis.ControlHierarchy` (Plan 164 Phase B, done 2026-07-10)
+
+```haskell
+-- Pure. Workspace-wide control/object hierarchy index + multi-hop
+-- member-chain resolver -- generalizes TypeResolve.extractDwControlBindings
+-- (per-file) to walk a dotted chain (e.g. tab1.page1.uo_epidom.dw) across
+-- file boundaries. All ControlDecl Text fields except cdDwBinding are
+-- lowercased at construction time (case-insensitive lookup).
+data ControlDecl = ControlDecl
+  { cdOwner :: Text, cdName :: Text, cdAncestorType :: Text
+  , cdOverridesName :: Maybe Text, cdDwBinding :: Maybe Text }
+type ControlIndex = Map.Map (Text, Text) ControlDecl   -- (owner, name), both lowercased
+buildControlIndex :: [SrFile] -> ControlIndex
+-- Uses TypeResolve.findLiteralDataObject for cdDwBinding; last-file-wins on
+-- an (owner, name) collision (plain Map.fromList bias) -- since a control's
+-- owner key is its *literal* tdWithin name (not a globally-qualified path,
+-- same limitation as extractDwControlBindings already had per-file, just
+-- widened workspace-wide), two unrelated hierarchies reusing a common local
+-- name (e.g. "cb_ok" within "w_main") can collide; accepted per Stage 1
+-- review, not fixed here.
+
+resolveMemberChainType      :: ControlIndex -> Map.Map Text Text -> Text -> [Text] -> Maybe Text
+resolveMemberChainDwBinding :: ControlIndex -> Map.Map Text Text -> Text -> [Text] -> Maybe Text
+-- Both take a starting object and chain segments (e.g. "w_misth_fylo_form",
+-- ["tab1","page1","uo_epidom","dw"]); the Map.Map Text Text is an inherits
+-- map (TypeResolve.buildInheritsMap's raw, case-sensitive output is fine --
+-- normalized internally once per call). Each hop resolves via lookupWithAncestry
+-- (direct (owner,name) lookup, else walk owner's own class-ancestor chain via
+-- the inherits map, cycle-safe) then unwinds any D1 cdOverridesName chain
+-- (cycle-safe) to a fully-resolved terminal ControlDecl. Continuing to the
+-- NEXT segment tries two scopes in order, since a single strategy can't
+-- distinguish them from a per-file view: (1) the resolved control's own
+-- literal name (the "visual tree" convention -- every file in one window's
+-- own ancestor chain redeclares a nested control `within <literal-name>`,
+-- so the same literal name is the right scope at every level); (2) only if
+-- that fails, the fully-resolved ancestor type (the "has-a" convention --
+-- an embedded instance of a *different* class has its own children declared
+-- `within <ClassName>` in that class's own file, never under the instance
+-- name its container gave it -- e.g. uo_epidom's `.dw` control is declared
+-- `within uo_misth_fylo_epidom_grid`, not `within uo_epidom`).
+-- resolveMemberChainType returns the fully-unwound terminal's cdAncestorType
+-- (the true base type). resolveMemberChainDwBinding does NOT use the same
+-- full-unwind value for the binding -- it returns the CLOSEST override's
+-- cdDwBinding found while unwinding (first Just wins, closest to furthest),
+-- since a more-derived override's own literal dataobject must win over
+-- whatever a generic ancestor declares (or, commonly, doesn't declare)
+-- further up -- confirmed against real data: uo_misth_fylo_epidom_grid's own
+-- `dw` control sets dataobject="dw_misth_fylo_epidom_list", but its D1
+-- override target (u_grid's own `dw`, `from datawindow`) sets none at all;
+-- a naive full-unwind-for-everything design would have returned Nothing for
+-- exactly the case this module exists to resolve (Plan 163 Phase 3's
+-- "openpay 0/6" SetItem gap). Both Nothing when any hop is unresolvable --
+-- no guessing past what the workspace actually declares.
+-- Verified end-to-end against the real fylo.pbl/w_misth_fylo_form.srw +
+-- afxlib.pbl/w_form_tab2.srw + fylo.pbl/uo_misth_fylo_epidom_grid.sru +
+-- afxlib.pbl/u_grid.sru fixture (openpay corpus): tab1.page1.uo_epidom.dw
+-- from w_misth_fylo_form resolves to type "datawindow" / binding
+-- "dw_misth_fylo_epidom_list". Not yet wired into production (Phase C).
 ```
 
 ### `PB.Analysis.Builtins`

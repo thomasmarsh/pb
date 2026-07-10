@@ -24,6 +24,7 @@ module PB.Analysis.TypeResolve
   , extractDwCallSites
   , extractGlobalVars
   , extractDwControlBindings
+  , findLiteralDataObject
   , resolveTypes
   , resolveCalls
   , buildInheritsMap
@@ -521,16 +522,21 @@ extractDwControlBindings file sf =
         (owner, ctrlName) = case tdWithin decl of
           Just parent -> (parent, tdName decl)
           Nothing     -> (tdName decl, "this")
-  , Just dwName <- [findDataObject (tbBody tb)]
+  , Just dwName <- [findLiteralDataObject (tbBody tb)]
   ]
-  where
-    findDataObject stmts = case
-      [ s
-      | Located _ BsLocalVar { varName = n, varInit = Just (ExStr s) } <- stmts
-      , T.toLower n == "dataobject"
-      ] of
-        (s:_) -> Just s
-        []    -> Nothing
+
+-- | The literal string value of a @dataobject@ property set directly in a
+-- 'TypeBlock's body (via a 'BsLocalVar' with a string-literal initializer),
+-- if any. Shared by 'extractDwControlBindings' (per-file) and
+-- 'PB.Analysis.ControlHierarchy.buildControlIndex' (workspace-wide).
+findLiteralDataObject :: [Located BodyStmt] -> Maybe Text
+findLiteralDataObject stmts = case
+  [ s
+  | Located _ BsLocalVar { varName = n, varInit = Just (ExStr s) } <- stmts
+  , T.toLower n == "dataobject"
+  ] of
+    (s:_) -> Just s
+    []    -> Nothing
 
 -- ---------------------------------------------------------------------------
 -- Workspace-level graph builders
