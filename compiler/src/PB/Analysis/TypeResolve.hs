@@ -536,11 +536,16 @@ extractDwControlBindings file sf =
 -- Workspace-level graph builders
 
 -- | Build an inheritance map (child → parent) from all srTypeBlocks.
+-- A backtick-declared ancestor (e.g. @w_form_tab2`page1@ -- "extend
+-- ancestor's own control of this same name") resolves to just the
+-- ancestor class part, so the chain walk in 'ancestorChain'/'resolveVirtual'
+-- can actually find that object rather than silently stopping at a node
+-- no object is ever named ('splitAncestorRef').
 buildInheritsMap :: [SrFile] -> Map.Map Text Text
 buildInheritsMap = Map.fromList . concatMap fileInherits
   where
     fileInherits sf =
-      [ (tdName td, tdAncestor td) | td <- srAllTypeDecls sf ]
+      [ (tdName td, fst (splitAncestorRef (tdAncestor td))) | td <- srAllTypeDecls sf ]
 
 -- | Build a proc map (object → set of proc names) from all procedures.
 buildProcMap :: [SrFile] -> Map.Map Text (Set.Set Text)

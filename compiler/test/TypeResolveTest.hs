@@ -268,6 +268,10 @@ tests = testGroup "TypeResolve"
               m   = buildInheritsMap [sf1, sf2]
           Map.lookup "w_a" m @?= Just "w_b"
           Map.lookup "w_c" m @?= Just "w_d"
+
+      , testCase "backtick ancestor ref resolves to the class part, not the raw compound string (w_misth_fylo_form.srw's page1 shape)" $ do
+          let sf = emptySrFile { srTypeBlocks = [ mkTB "page1" "w_form_tab2`page1" ] }
+          Map.lookup "page1" (buildInheritsMap [sf]) @?= Just "w_form_tab2"
       ]
 
   , testGroup "buildProcMap"

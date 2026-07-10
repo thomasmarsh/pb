@@ -68,10 +68,13 @@ extractGlobalVars sf =
        , tdWithin (tbDecl tb) == Nothing
        ]
 
--- | Extract type declarations for inheritance resolution.
+-- | Extract type declarations for inheritance resolution. A backtick-declared
+-- ancestor (e.g. @w_form_tab2`page1@) resolves to just the ancestor class
+-- part -- see 'splitAncestorRef' and 'PB.Analysis.TypeResolve.buildInheritsMap'
+-- (same fix, same reasoning, applied here for 'lookupBaseType'/'isDescendantOf').
 extractTypeDecls :: SrFile -> Map.Map Text Text
 extractTypeDecls sf =
-  Map.fromList [ (T.toLower (tdName td), T.toLower (tdAncestor td))
+  Map.fromList [ (T.toLower (tdName td), T.toLower (fst (splitAncestorRef (tdAncestor td))))
                | td <- srAllTypeDecls sf ]
 
 -- | Look up a variable's type (case-insensitive).

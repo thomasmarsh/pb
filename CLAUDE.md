@@ -799,6 +799,21 @@ data OnBlock         = OnBlock         { obQualName :: Text, obOwner :: Text, ob
 
 srAllTypeDecls  :: SrFile -> [TypeDecl]           -- srTypeBlocks decls, then forward-only decls
 srPrimaryObject :: SrFile -> (Text, Maybe Text)   -- (name, ancestor) of the file's own object
+splitAncestorRef :: Text -> (Text, Maybe Text)
+-- Plan 164 Phase A (2026-07-10). Splits PowerBuilder's "AncestorClass`LocalName"
+-- control-override syntax (e.g. tdAncestor = "w_form_tab2`page1", meaning
+-- "this local override of page1 is based on ancestor w_form_tab2's own
+-- declaration of a control named page1"). The lexer treats backtick as an
+-- identifier-continuation char (isIdentCont), so tdAncestor carries the whole
+-- compound token verbatim with nothing splitting it apart before this.
+-- (class, Nothing) when there's no backtick; splits at the first backtick
+-- only. Consumed by TypeResolve.buildInheritsMap and TypeEnv.extractTypeDecls
+-- (both build a name->ancestor map used for ancestor-chain walks -- without
+-- this, a chain hits a backtick-declared node and silently stops, since no
+-- object is ever literally named "w_form_tab2`page1") and by
+-- Emit.extractWindowLayout's mkControl (replaced an ad hoc, Just-half-discarding
+-- T.takeWhile (/= '`') that did the same job one-off, cosmetically, for the
+-- rendered control "type" label).
 -- srPrimaryObject (fixed Plan 163 Phase 3.5, 2026-07-10): prefers the
 -- srTypeBlocks entry whose tdName matches the forward block's first
 -- fwdTypes entry (PB's exporter always declares the file's own type first
@@ -1380,6 +1395,11 @@ lookupVarType    :: Text -> TypeEnv -> Maybe PbType      -- case-insensitive
 lookupUserType   :: Text -> TypeEnv -> Maybe Text        -- case-insensitive
 lookupBaseType   :: Text -> TypeEnv -> Maybe Text        -- resolves var → base type, walks inheritance chain with cycle guard
 withProcScope    :: [(Text, PbType)] -> TypeEnv -> TypeEnv  -- overlay params (shadow globals of same name)
+-- extractTypeDecls (internal, feeds teUserTypes/weHierarchy) now applies
+-- PB.AST.SourceFile.splitAncestorRef to tdAncestor before use (Plan 164
+-- Phase A, 2026-07-10) -- a backtick-declared ancestor resolves to just the
+-- class part, so lookupBaseType/isDescendantOf's chain walk doesn't
+-- silently stop at a backtick-compound node.
 ```
 
 ### `PB.Analysis.TypeResolve` (Plan 109 — Pass 5)
@@ -1392,6 +1412,13 @@ extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
 resolveTypes :: [LocalVar] -> Set Text -> Set Text -> [ResolvedType]   -- objs, userTypes; falls back to control-name inference
 resolveCalls :: [CallSite] -> Map Text (Set Text) -> Map Text Text -> Set Text -> Set Text -> [ResolvedCall]
 buildInheritsMap :: [SrFile] -> Map Text Text
+-- buildInheritsMap now applies PB.AST.SourceFile.splitAncestorRef to
+-- tdAncestor before storing the parent value (Plan 164 Phase A,
+-- 2026-07-10) -- same fix/reasoning as TypeEnv.extractTypeDecls above;
+-- fixes a latent gap where a backtick-declared ancestor (e.g. PowerBuilder's
+-- "w_form_tab2`page1" extend-ancestor's-own-control syntax) made
+-- ancestorChain/resolveVirtual silently stop, since no object is ever
+-- literally named the raw compound string.
 buildProcMap     :: [SrFile] -> Map Text (Set Text)
 buildObjectSet, buildUserTypeSet :: [SrFile] -> Set Text
 parseParams :: Text -> [(Text, PbType)]          -- "ref long al_row" → ("al_row", PtPrimitive "long")

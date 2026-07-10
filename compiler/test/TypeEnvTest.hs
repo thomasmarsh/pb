@@ -4,7 +4,8 @@ import PB.Prelude
 import PB.AST.BodyStmt       (BodyStmt (..))
 import PB.AST.Located        (Located (..))
 import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeDecl (..), TypeBlock (..),
-                              GlobalInstance (..), srAllTypeDecls, srPrimaryObject)
+                              GlobalInstance (..), srAllTypeDecls, srPrimaryObject,
+                              splitAncestorRef)
 import PB.AST.Type           (PbType (..), parseTypeText)
 import PB.Analysis.TypeEnv   (TypeEnv (..), buildWorkspaceTypeEnv, lookupVarType, lookupUserType,
                               lookupBaseType, isDescendantOf,
@@ -315,5 +316,43 @@ tests = testGroup "TypeEnv"
     , testCase "cycle guard — does not loop forever" $
         let inh = Map.fromList [("a", "b"), ("b", "a")]
         in isDescendantOf inh "a" (Set.singleton "c") @?= False
+    ]
+
+  , testGroup "splitAncestorRef"
+    [ testCase "no backtick returns whole text unchanged, Nothing" $
+        splitAncestorRef "w_form_tab2" @?= ("w_form_tab2", Nothing)
+
+    , testCase "backtick splits into ancestor class and override name" $
+        splitAncestorRef "w_form_tab2`page1" @?= ("w_form_tab2", Just "page1")
+
+    , testCase "real corpus shape (w_misth_fylo_form.srw's page1)" $
+        splitAncestorRef "w_form_tab2`page1" @?= ("w_form_tab2", Just "page1")
+
+    , testCase "empty text" $
+        splitAncestorRef "" @?= ("", Nothing)
+
+    , testCase "backtick at start yields empty ancestor class" $
+        splitAncestorRef "`dw_1" @?= ("", Just "dw_1")
+
+    , testCase "multiple backticks split at the first only" $
+        splitAncestorRef "a`b`c" @?= ("a", Just "b`c")
+    ]
+
+  , testGroup "extractTypeDecls backtick handling (via lookupUserType/lookupBaseType)"
+    [ testCase "backtick ancestor resolves to the class part, not the raw compound string" $
+        let tb  = TypeBlock (TypeDecl "page1" "w_form_tab2`page1" (Just "tab1")) []
+            sf  = emptyFile { srTypeBlocks = [tb] }
+            env = buildWorkspaceTypeEnv [sf]
+        in lookupUserType "page1" env @?= Just "w_form_tab2"
+
+    , testCase "chain walk continues through a backtick-declared intermediate type" $
+        let tbPage = TypeBlock (TypeDecl "page1" "w_form_tab2`page1" (Just "tab1")) []
+            tbBase = TypeBlock (TypeDecl "w_form_tab2" "window" Nothing) []
+            sf  = emptyFile { srTypeBlocks = [tbPage, tbBase] }
+            env = TypeEnv
+              { teVars      = Map.fromList [("uo_x", PtUserDefined "page1")]
+              , teUserTypes = teUserTypes (buildWorkspaceTypeEnv [sf])
+              }
+        in lookupBaseType "uo_x" env @?= Just "window"
     ]
   ]

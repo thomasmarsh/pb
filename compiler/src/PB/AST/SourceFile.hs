@@ -19,6 +19,7 @@ module PB.AST.SourceFile
   , OnBlock (..)
   , srAllTypeDecls
   , srPrimaryObject
+  , splitAncestorRef
   ) where
 
 import PB.Prelude
@@ -166,3 +167,19 @@ srPrimaryObject sf = case matchByForwardHead of
            ] of
         (decl:_) -> Just (tdName decl, tdAncestor decl)
         []       -> Nothing
+
+-- | Split PowerBuilder's "AncestorClass`LocalName" control-override syntax
+-- (e.g. @w_form_tab2\`page1@ -- "this local override of @page1@ is based on
+-- ancestor @w_form_tab2@'s own declaration of a control named @page1@").
+-- The lexer treats backtick as an identifier-continuation character
+-- ('PB.Lexing.Lexer.isIdentCont'), so a 'TypeDecl's 'tdAncestor' carries the
+-- whole compound token verbatim; this splits it back apart for any consumer
+-- that needs to walk the ancestor as a real object name (e.g.
+-- 'PB.Analysis.TypeResolve.buildInheritsMap'). 'Nothing' (2nd component)
+-- when there's no backtick -- the ordinary case. Splits at the first
+-- backtick only.
+splitAncestorRef :: Text -> (Text, Maybe Text)
+splitAncestorRef t = case T.breakOn "`" t of
+  (before, rest)
+    | T.null rest -> (before, Nothing)
+    | otherwise   -> (before, Just (T.drop 1 rest))
