@@ -295,10 +295,11 @@ def resolve_table_namespaces(conn: duckdb.DuckDBPyConnection, table_name: str) -
     Reads `all_sql_tables` rather than `catalog_columns` so it also resolves
     tables that only ever show up in embedded SQL / DW retrieves with no DDL
     loaded at all (where the true namespace is `None`, a real value, not a
-    missing one). A table name that maps to more than one distinct namespace
-    means the name genuinely is ambiguous without a schema qualifier -- e.g.
-    the same table name reused across two DDL-tagged schemas (see
-    PB.Pipeline.Runner's --ddl `[schema:]path` support).
+    missing one). A real corpus can legitimately return many rows here --
+    e.g. the same table replicated across dozens of per-tenant schemas --
+    that is not by itself ambiguity; see `resolve_table_detail`, which
+    applies the corpus's own default-namespace rule before treating this
+    list as anything more than a fallback.
     """
     result = rows(
         conn.execute(
@@ -311,25 +312,30 @@ def resolve_table_namespaces(conn: duckdb.DuckDBPyConnection, table_name: str) -
 
 def resolve_table_detail(conn: duckdb.DuckDBPyConnection, table_name: str) -> dict[str, Any] | None:
     """Bare-name table lookup: resolves the owning namespace and returns
-    that table's detail, an ambiguity marker, or None if the name is unknown.
+    that table's detail, or None if the name can't be resolved at all.
 
-    This is the only path that should ever accept a table name with no
-    namespace attached -- every other caller either already knows the
-    namespace (scoped list, path-qualified detail route) or is deliberately
-    asking "which schema is this in?" (this function). It must never guess:
-    a name that resolves to zero or multiple namespaces is reported as such,
-    not silently coerced to one answer.
+    Mirrors the compiler's own rule for an unqualified table reference in
+    source (`PB.Analysis.SchemaCategory`'s `resolveTableRef`, driven by
+    `--default-namespace`): a bare reference means the default schema, not
+    "ask which one." A table name existing under many schemas is normal in
+    a multi-tenant corpus and is never itself grounds to bail out -- there
+    is always an explicit schema per the corpus's own convention, and a bare
+    lookup here is exactly the "no explicit schema given" case that
+    convention already has an answer for. Only genuinely falls through to
+    "can't resolve" (None) when the table isn't in the default namespace
+    *and* spans 2+ non-default namespaces with no rule to pick between them
+    -- which should mean some other UI surface dropped real per-reference
+    namespace context it already had, not that this corpus is ambiguous.
     """
+    default_ns = get_default_namespace(conn)
+    if default_ns is not None:
+        result = get_table_detail(conn, table_name, default_ns)
+        if result is not None:
+            return result
     candidates = resolve_table_namespaces(conn, table_name)
-    if len(candidates) == 0:
-        return None
-    if len(candidates) > 1:
-        return {
-            "ambiguous": True,
-            "table_name": table_name,
-            "namespaces": sorted(ns for ns in candidates if ns is not None),
-        }
-    return get_table_detail(conn, table_name, candidates[0])
+    if len(candidates) == 1:
+        return get_table_detail(conn, table_name, candidates[0])
+    return None
 
 
 def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:

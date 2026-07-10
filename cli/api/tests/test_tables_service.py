@@ -181,7 +181,11 @@ def test_resolve_table_namespaces_single_match():
     assert resolve_table_namespaces(conn, "legacy_only") == [None]
 
 
-def test_resolve_table_namespaces_ambiguous_across_schemas():
+def test_resolve_table_namespaces_multiple_real_schemas():
+    # A table name existing under several schemas is normal (e.g. the same
+    # table replicated per-tenant) -- this is a plain fact-finding query,
+    # not itself a verdict of ambiguity. See resolve_table_detail for how
+    # that fact gets resolved to a single answer.
     conn = _multi_namespace_conn()
     assert set(resolve_table_namespaces(conn, "clinicalaccession")) == {"clims", "clims_archive"}
 
@@ -199,17 +203,40 @@ def test_resolve_table_detail_unambiguous_resolves_real_namespace():
     assert result["table_name"] == "legacy_only"
 
 
-def test_resolve_table_detail_ambiguous_reports_candidates_not_a_guess():
-    # clinicalaccession is defined in three schemas but has real usage rows
-    # in two of them -- resolve_table_detail must refuse to silently pick
-    # one, since guessing wrong would show the wrong table's lineage.
-    conn = _multi_namespace_conn()
+def test_resolve_table_detail_prefers_default_namespace_over_other_real_matches():
+    # This is the actual production shape: the same table replicated across
+    # many (here: two) schemas, with a corpus-configured default namespace.
+    # A bare lookup must resolve to the default deterministically -- exactly
+    # how the compiler already resolves an unqualified reference in source
+    # (PB.Analysis.SchemaCategory's resolveTableRef) -- not bail out just
+    # because other schemas also happen to have a same-named table.
+    conn = _multi_namespace_conn(default_namespace="clims_archive")
     result = resolve_table_detail(conn, "clinicalaccession")
-    assert result == {
-        "ambiguous": True,
-        "table_name": "clinicalaccession",
-        "namespaces": ["clims", "clims_archive"],
-    }
+    assert result is not None
+    assert result["namespace"] == "clims_archive"
+    assert result["ps_count"] == 1
+    assert [p["object"] for p in result["procedures"]] == ["w_archive"]
+
+
+def test_resolve_table_detail_no_default_and_multiple_real_matches_is_not_found():
+    # No corpus-configured default namespace, and the name spans 2+ schemas
+    # with real usage in each -- there is no rule to pick between them, so
+    # this must be an honest "can't resolve", not a guess and not a picker
+    # UI. In practice this means some other UI surface should have passed
+    # its own already-known per-reference namespace instead of a bare name.
+    conn = _multi_namespace_conn()
+    assert resolve_table_detail(conn, "clinicalaccession") is None
+
+
+def test_resolve_table_detail_default_namespace_missing_falls_back_to_sole_match():
+    # Default namespace is configured but doesn't have this table at all
+    # (e.g. a per-tenant-only table) -- if there's exactly one other real
+    # namespace, that's still a single deterministic answer, not a guess.
+    conn = _multi_namespace_conn(default_namespace="clims")
+    result = resolve_table_detail(conn, "legacy_only")
+    assert result is not None
+    assert result["namespace"] is None
+    assert result["table_name"] == "legacy_only"
 
 
 def test_resolve_table_detail_unknown_table_is_not_found():

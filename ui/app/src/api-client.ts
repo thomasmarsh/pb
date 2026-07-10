@@ -82,11 +82,6 @@ async function errorDetail(r: Response): Promise<string | undefined> {
     const body: unknown = await r.json();
     if (body && typeof body === "object") {
       const b = body as Record<string, unknown>;
-      // GET /api/tables/{name} reports a name ambiguous across schemas this
-      // way instead of guessing one — see resolve_table_detail in tables.py.
-      if (b.ambiguous && Array.isArray(b.namespaces)) {
-        return `Table "${String(b.table_name)}" exists in multiple schemas (${b.namespaces.join(", ")}) — specify one.`;
-      }
       if (typeof b.detail === "string") return b.detail;
     }
   } catch {

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import duckdb
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse
 from pb.api.routes.dependencies import get_db
 from pb.api.services.tables import (
     get_table_detail,
@@ -50,15 +49,13 @@ async def get_table(
 ):
     """Bare-name lookup for callers that don't yet know the table's schema
     (a typed URL, a table name lifted from search/DW-lineage results that
-    predates namespace resolution). Resolves the namespace server-side
-    rather than guessing NULL -- returns 300 with the candidate namespace
-    list if the name is ambiguous across schemas, never a wrong table.
+    predates namespace resolution). Resolves via the corpus's own
+    default-namespace rule -- see resolve_table_detail -- rather than
+    guessing NULL or asking the caller to disambiguate.
     """
     result = resolve_table_detail(conn, table_name)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Table not found: {table_name}")
-    if result.get("ambiguous"):
-        return JSONResponse(status_code=300, content=result)
     return result
 
 
