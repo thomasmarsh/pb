@@ -3,16 +3,17 @@ module SchFootprintTest (tests) where
 import PB.Prelude hiding (id, (.))
 import PB.AST.DataWindow      (DataWindowFile (..), DwTable (..), DwRetrieve (..), DwRetrieveOrRaw (..))
 import PB.AST.Expr            (Expr (..), Lvalue (..), LvSegment (..))
-import PB.AST.SourceFile      (SrFile (..), EventBlock (..), EventSig (..))
+import PB.AST.SourceFile      (SrFile (..), EventBlock (..), EventSig (..), SubroutineBlock (..), SubSig (..))
 import PB.Analysis.CatOp      (Category (..), Cartesian (..), Cocartesian (..),
                                 CatOp (..), branch)
 import PB.Analysis.CatEval    (Value)
 import PB.Analysis.CatLower   (compileSsa)
+import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.SchFootprint
 import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), FkSource (..),
                                     DwRetrieveColRow (..), splitColumnRef)
 import PB.Analysis.SSA        (buildSsa)
-import PB.Analysis.TypeEnv    (ScopedTypeEnv (..), buildWorkspaceEnv, procEnv)
+import PB.Analysis.TypeEnv    (ScopedTypeEnv (..), WorkspaceEnv (..), buildWorkspaceEnv, procEnv)
 import PB.Analysis.TypeResolve (extractDwControlBindings)
 import PB.Grammar.DataWindow  (parseDataWindow)
 import PB.Pipeline.Emit       (parsePowerScriptFile)
@@ -222,5 +223,77 @@ tests = testGroup "SchFootprint"
                     L.length dwCols @?= 5
                     Set.member expected footprint @?= True
                   other -> assertFailure ("expected exactly 1 clicked/cb_getitem event, got " <> show (length other))
+    ]
+
+  , testGroup "Plan 164 Phase C done-condition: real corpus example (fylo.pbl runtime DW alias)"
+    -- The openpay "0/6 SetItem resolution" gap Plan 164 exists to close:
+    -- w_misth_fylo_form.srw's of_open subroutine aliases the instance var
+    -- idw_epidom to tab1.page1.uo_epidom.dw (a control two files away whose
+    -- own static dataobject= is dw_misth_fylo_epidom_list); a *different*
+    -- subroutine, if_kodfylo_changed, later calls
+    -- idw_epidom.setitem(i, "kodfylo", ...). Neither
+    -- extractDwControlBindings (no literal dataobject= on idw_epidom
+    -- itself -- it's a plain instance var, not a control) nor a
+    -- same-procedure-only scan (the alias assignment and the SetItem call
+    -- are in different subroutines) can resolve this without
+    -- runtimeDwAliasBindings aggregating across the whole file, exactly as
+    -- 'PB.Pipeline.Runner.compileOne' now does.
+    [ testCase "SetItem on an aliased instance var resolves to misth_fylo_epidom.kodfylo" $ do
+        let srwPath = "example/openpay-0.1.1b-extract/fylo.pbl/w_misth_fylo_form.srw"
+            paths =
+              [ srwPath
+              , "example/openpay-0.1.1b-extract/afxlib.pbl/w_form_tab2.srw"
+              , "example/openpay-0.1.1b-extract/fylo.pbl/uo_misth_fylo_epidom_grid.sru"
+              , "example/openpay-0.1.1b-extract/afxlib.pbl/u_grid.sru"
+              ]
+            srdPath  = "example/openpay-0.1.1b-extract/fylo.pbl/dw_misth_fylo_epidom_list.srd"
+            srwPathT = T.pack srwPath
+        exist    <- traverse doesFileExist paths
+        srdExists <- doesFileExist srdPath
+        if not (and exist && srdExists)
+          then pure ()  -- corpus not present in this environment; vacuous pass
+          else do
+            parsed <- traverse (\p -> parsePowerScriptFile <$> readFile p) paths
+            srdSrc <- readFile srdPath
+            case (sequence parsed, parseDataWindow srdSrc) of
+              (Left e, _)  -> assertFailure ("failed to parse fylo fixture: " <> T.unpack e)
+              (_, Left e)  -> assertFailure ("failed to parse dw_misth_fylo_epidom_list.srd: " <> T.unpack e)
+              (Right pairs, Right dwFile) ->
+                case map fst pairs of
+                  [sf, sf2, sf3, sf4] -> do
+                    let sfs = [sf, sf2, sf3, sf4]
+                        ws  = buildWorkspaceEnv sfs
+                        idx = buildControlIndex sfs
+                        findSub n = [ sb | sb <- srSubroutines sf, ssName (sbSig sb) == n ]
+                    case (findSub "of_open", findSub "if_kodfylo_changed") of
+                     ([ofOpen], [ifChanged]) -> do
+                       let openEnv    = procEnv ws "w_misth_fylo_form" []
+                           aliasBindings = runtimeDwAliasBindings idx (weHierarchy ws) "w_misth_fylo_form" openEnv (sbBody ofOpen)
+                           changedEnv = procEnv ws "w_misth_fylo_form" []
+                           ssaProc    = buildSsa changedEnv "if_kodfylo_changed" (sbBody ifChanged)
+                           term       = compileSsa changedEnv Set.empty ssaProc
+                           dwCols = case dwTable dwFile >>= dtRetrieve of
+                             Just (DwRetrieveOk retrieve) ->
+                               [ DwRetrieveColRow (T.pack srdPath) "dw_misth_fylo_epidom_list" ns tbl col
+                               | ref <- drColumns retrieve
+                               , Just (TableRef ns tbl, col) <- [splitColumnRef ref]
+                               ]
+                             _ -> []
+                           ctx = FunctorCtx
+                             { fcStmtObj         = SqlStmtId srwPathT "w_misth_fylo_form" "if_kodfylo_changed" 0
+                             , fcTypeEnv         = changedEnv
+                             , fcDwColumns       = dwColumnsFromRows dwCols
+                             , fcControlBindings = aliasBindings
+                             }
+                           footprint = foldSchFootprint ctx term
+                           expected  = SchMorphism (StmtObj (fcStmtObj ctx))
+                                                    (ColumnObj (TableRef Nothing "misth_fylo_epidom") "kodfylo")
+                                                    LegWrites
+                       aliasBindings @?= Map.fromList [(("w_misth_fylo_form", "idw_epidom"), "dw_misth_fylo_epidom_list")]
+                       Set.member expected footprint @?= True
+                     (openMatches, changedMatches) -> assertFailure
+                       ("expected exactly 1 of_open and 1 if_kodfylo_changed subroutine, got "
+                         <> show (length openMatches) <> "/" <> show (length changedMatches))
+                  other -> assertFailure ("expected 4 parsed fixture files, got " <> show (length other))
     ]
   ]

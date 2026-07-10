@@ -1052,9 +1052,8 @@ catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogF
 -- DuckDb-side DwRetrieveColumnRow, not SchemaCategory's DwRetrieveColRow --
 -- same write-side/read-shape split as SqlParse's row types). Per procedure,
 -- compileOne builds a PB.Analysis.SchFootprint.FunctorCtx (fcStmtObj =
--- SqlStmtId fp obj pName sLine; fcControlBindings from
--- TypeResolve.extractDwControlBindings fp sf, purely per-file, no cross-file
--- threading needed) and folds compileProcedureToCatOp through
+-- SqlStmtId fp obj pName sLine; fcControlBindings = controlBindings'
+-- (Plan 164 Phase C, see below) and folds compileProcedureToCatOp through
 -- foldSchFootprint; morphismToColRow (Runner.hs, not exported) converts
 -- each resulting SchMorphism back into the same SqlColRow-shaped raw fact
 -- inSqlColumns already uses (see SchemaCategory's SchemaInputs note above
@@ -1072,8 +1071,37 @@ catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogF
 -- fwdTypes entry (see its own Code Index entry below); verified against
 -- pbexamw1.pbl/w_dw_copy.srw that objects/procedures now attribute to
 -- w_dw_copy (not os_data) and cat_footprint_columns went from 0 to 5 rows
--- across PowerBuilder-Example-extract. Openpay's separate 0/6 SetItem gap
--- (runtime aliasing, e.g. `ctrl = other.uo.dw`) is unrelated and still open.
+-- across PowerBuilder-Example-extract (this 5-row count is PowerBuilder-
+-- Example's real baseline -- Plan 164's plan file/BACKLOG previously
+-- misremembered it as "7/7"; re-confirmed via git stash before Phase C's
+-- own changes too). Openpay's separate 0/6 SetItem gap (runtime aliasing,
+-- e.g. `ctrl = other.uo.dw`) is addressed by Plan 164 Phase C below (though
+-- its real-corpus gate doesn't fully materialize -- see that note).
+--
+-- compileOne gained a ControlIndex param (Plan 164 Phase C, 2026-07-10),
+-- threaded through workerLoopFiles/workerLoopFilesNoBridge from a
+-- workspace-wide `controlIdx = buildControlIndex allParsedSrFiles` built
+-- once in runModeDb (same input file set as wsEnv). Inside the PsParsed
+-- branch, the zip logic that used to be inlined directly into procs's list
+-- comprehension is now a shared `procSpecs` binding (used by both procs and
+-- the new alias scan below -- no behavior change, just de-duplication).
+-- `aliasBindings = Map.unions [PB.Analysis.SchFootprint.runtimeDwAliasBindings
+-- controlIdx (weHierarchy wsEnv) obj procEnvWithLocals body | ... <- procSpecs]`
+-- scans every procedure in the file (steLocal seeded per-procedure via
+-- CallClassify.collectBodyLocals) for the runtime DW-alias-assignment
+-- pattern and unions the results file-wide (the alias assignment and the
+-- SetItem call site are commonly in different procedures -- confirmed
+-- against the real w_misth_fylo_form.srw example). `controlBindings' =
+-- Map.union controlBindings aliasBindings` (static literal bindings win on
+-- a key collision) is what every procedure's FunctorCtx now uses instead of
+-- the old file-static-only controlBindings. KNOWN LIMITATION (found via
+-- full-corpus verification, not fixed this phase -- BACKLOG's Plan 164
+-- Phase E): controlIdx's own (owner, name) key collides across unrelated
+-- windows reusing a common generic child-control name at full-corpus scale,
+-- so this wiring's real openpay gate (2 new cat_footprint_columns rows)
+-- doesn't yet materialize even though the wiring itself is correct
+-- (real-corpus-fixture-verified in isolation -- see SchFootprint's own
+-- runtimeDwAliasBindings entry above).
 -- Phase A: parse → compile → append to DuckDB (concurrent producer-consumer)
 -- Phase B: delegates to PB.Pipeline.Passes.runPhaseB (takes the
 -- mDefaultNamespace param, Plan 157 Phase 1)
@@ -1469,7 +1497,13 @@ buildControlIndex :: [SrFile] -> ControlIndex
 -- same limitation as extractDwControlBindings already had per-file, just
 -- widened workspace-wide), two unrelated hierarchies reusing a common local
 -- name (e.g. "cb_ok" within "w_main") can collide; accepted per Stage 1
--- review, not fixed here.
+-- review, not fixed here. CONFIRMED IN PRODUCTION, not just theoretical
+-- (Plan 164 Phase C, 2026-07-10): 11 windows in the openpay corpus alone
+-- redeclare "page1" within "tab1", which defeats Phase C's real-corpus
+-- SetItem-resolution gate at full-workspace scale even though the same
+-- resolver is correct on an isolated fixture -- see BACKLOG's Plan 164
+-- Phase E entry (proposed fix: qualify the owner key by the enclosing
+-- top-level window/user-object, not just the immediate tdWithin name).
 
 resolveMemberChainType      :: ControlIndex -> Map.Map Text Text -> Text -> [Text] -> Maybe Text
 resolveMemberChainDwBinding :: ControlIndex -> Map.Map Text Text -> Text -> [Text] -> Maybe Text
@@ -1657,6 +1691,42 @@ newtype SchFootprint a b = SchFootprint { runSchFootprint :: FunctorCtx -> Set.S
 -- text extraction cannot see since there is no SQL statement in this
 -- procedure at all).
 foldSchFootprint :: FunctorCtx -> CatOp a b -> Set.Set SchMorphism
+
+-- runtimeDwAliasBindings (Plan 164 Phase C / D3, done 2026-07-10): the
+-- second, dynamic source Runner.hs's compileOne merges into
+-- fcControlBindings alongside controlBindingsMap's static one. Scans a
+-- procedure body for BsAssign lhs rhs where lhs is a bare
+-- datawindow/datastore-typed instance-or-local var (checked via
+-- lookupScopedVar) and rhs is a multi-segment member-chain lvalue (e.g.
+-- idw_epidom = tab1.page1.uo_epidom.dw); resolves rhs via
+-- PB.Analysis.ControlHierarchy.resolveMemberChainDwBinding. BsAssignExpr is
+-- not scanned -- classifyBodyStmt only emits it when the LHS does NOT parse
+-- as a plain Lvalue, which a bare instance var always does. Recurses into
+-- if/for/do/choose (mirrors Taint.extractSqlStmts); any lookup miss
+-- contributes nothing, no guessing. Real-corpus-verified (unit test, not
+-- just synthetic): w_misth_fylo_form.srw's of_open assigns the alias,
+-- if_kodfylo_changed calls SetItem on it -- two DIFFERENT procedures, which
+-- is why compileOne aggregates this file-wide (Map.unions over every
+-- procedure's own runtimeDwAliasBindings call, each with steLocal seeded
+-- via CallClassify.collectBodyLocals), not per-procedure.
+--
+-- KNOWN LIMITATION (found via this same real-corpus verification, not
+-- fixed here -- see BACKLOG's Plan 164 Phase E entry): ControlHierarchy's
+-- ControlIndex keys on (owner, name) using only the immediate tdWithin
+-- name, which collides across unrelated windows reusing a common generic
+-- child-control name (e.g. "page1" within "tab1", declared by 11 different
+-- windows in the openpay corpus). Confirmed via cabal repl over the full
+-- 422-file corpus: this makes the workspace-wide resolveMemberChainDwBinding
+-- call above land on a real-but-wrong DW name for w_misth_fylo_form's own
+-- chain in production (the isolated 4-file fixture this module's own test
+-- uses resolves correctly -- the collision only manifests at full-corpus
+-- scale). resolveSetItem's final column-name match fails on the wrong DW's
+-- columns, so this fails closed (no row) rather than open (a wrong row),
+-- but the openpay real-corpus gate this phase targeted (2 new
+-- cat_footprint_columns rows) does not currently materialize.
+runtimeDwAliasBindings
+  :: ControlIndex -> Map.Map Text Text -> Text -> ScopedTypeEnv
+  -> [Located BodyStmt] -> Map.Map (Text, Text) Text
 ```
 
 ### `PB.Analysis.DwFootprint` (Plan 163 Phase 2, done 2026-07-10)

@@ -29,8 +29,10 @@ import PB.Analysis.GraphBuilder
   ( compileProcedureViaCatOp, compileProcedureToLowCat, compileProcedureToCatOp
   , collectWiring, WiringPayload (..)
   )
+import PB.Analysis.CallClassify (collectBodyLocals)
+import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
 import PB.Analysis.DeadCode    qualified as DeadCode
-import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv, procEnv)
+import PB.Analysis.TypeEnv     (WorkspaceEnv (..), ScopedTypeEnv (..), buildWorkspaceEnv, procEnv)
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.SchemaCategory
@@ -39,7 +41,9 @@ import PB.Analysis.SchemaCategory
   , StmtId (..), SchObject (..), SchMorphism (..), LegKind (..)
   )
 import PB.Analysis.SchFootprint
-  ( FunctorCtx (..), foldSchFootprint, controlBindingsMap, dwColumnsFromRows )
+  ( FunctorCtx (..), foldSchFootprint, controlBindingsMap, dwColumnsFromRows
+  , runtimeDwAliasBindings
+  )
 import PB.Analysis.TypeResolve
   ( LocalVar, CallSite, GlobalVar (..)
   , extractCallSites, extractDwCallSites, extractGlobalVars, extractLocalVars
@@ -173,8 +177,16 @@ morphismToColRow _ = Nothing
 -- may reference a DW compiled by a different worker), so it is built once
 -- in 'runModeDb' from Phase A0's already-parsed 'PsDw' outcomes, not
 -- re-derived per file here.
-compileOne :: Set.Set (Text, Text) -> Maybe Text -> WorkspaceEnv -> Map.Map Text [(TableRef, Text)] -> Maybe (SqlBridgePool, Int) -> Text -> ParseOutcome -> IO CompiledFile
-compileOne catTables mDefaultNamespace wsEnv globalDwColumns mBridge confidence outcome = case outcome of
+--
+-- 'controlIdx' (Plan 164 Phase C): the workspace-wide 'ControlIndex' built
+-- once in 'runModeDb' (same input file set as 'wsEnv') from
+-- 'PB.Analysis.ControlHierarchy.buildControlIndex'. The 'PsParsed' branch
+-- uses it, together with 'wsEnv''s own 'weHierarchy' inherits map, to
+-- extend a file's static @fcControlBindings@ with runtime DataWindow-alias
+-- assignments found in its own procedure bodies (see
+-- 'PB.Analysis.SchFootprint.runtimeDwAliasBindings').
+compileOne :: Set.Set (Text, Text) -> Maybe Text -> WorkspaceEnv -> ControlIndex -> Map.Map Text [(TableRef, Text)] -> Maybe (SqlBridgePool, Int) -> Text -> ParseOutcome -> IO CompiledFile
+compileOne catTables mDefaultNamespace wsEnv controlIdx globalDwColumns mBridge confidence outcome = case outcome of
 
   PsParsed pf -> do
     let sf   = pfSrFile pf
@@ -189,6 +201,36 @@ compileOne catTables mDefaultNamespace wsEnv globalDwColumns mBridge confidence 
         css  = extractCallSites  fp obj sf
         gvs  = extractGlobalVars fp obj sf
         controlBindings = controlBindingsMap (extractDwControlBindings fp sf)
+        -- Shared by both 'aliasBindings' and 'procs' below, so the
+        -- (sLine, eLine)/(pName, pType, instrParams, taintParams, retType,
+        -- body) zip logic exists exactly once.
+        procSpecs =
+              zip (spFunctions   sp) [ (fnsName (fbSig fb), "function",   fnsParams (fbSig fb), fnsParams    (fbSig fb), fnsReturnType (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
+              <>
+              zip (spSubroutines sp) [ (ssName  (sbSig sb), "subroutine", ssParams  (sbSig sb), ssParams     (sbSig sb), "",                       sbBody sb) | sb <- srSubroutines sf ]
+              <>
+              zip (spEvents      sp) [ (esName  (evSig ev), "event",      "",                   esRawSig     (evSig ev), "",                       evBody ev) | ev <- srEvents      sf ]
+              <>
+              zip (spOnBlocks    sp) [ (obEvent ob,         "on",         "",                   "",                      "",                       obBody ob) | ob <- srOnBlocks    sf ]
+        -- Plan 164 Phase C / D3: runtime DataWindow-alias assignments
+        -- (e.g. idw_epidom = tab1.page1.uo_epidom.dw), scanned across every
+        -- procedure body in this file and merged into the static bindings.
+        -- steLocal is seeded with the procedure's own body locals
+        -- (collectBodyLocals), mirroring GraphBuilder's own seeding, so an
+        -- alias assigned to a local (not just an instance) variable still
+        -- resolves. On an (object, control) key collision between two
+        -- procedures' alias assignments, Map.unions keeps the first result
+        -- (procSpecs order) -- an accepted simplification, since a real
+        -- alias var is assigned once (constructor/open event) in practice.
+        aliasBindings = Map.unions
+          [ runtimeDwAliasBindings controlIdx (weHierarchy wsEnv) obj procEnvWithLocals body
+          | (_, (_, _, instrParams, _, _, body)) <- procSpecs
+          , let baseEnv = mkProcEnv instrParams
+                procEnvWithLocals = baseEnv { steLocal = collectBodyLocals body <> steLocal baseEnv }
+          ]
+        -- Static literal bindings win on key collision -- a directly
+        -- declared dataobject= is more trustworthy than an inferred alias.
+        controlBindings' = Map.union controlBindings aliasBindings
         procs =
           [ let cfg      = buildCfg body
                 cfgJs    = jsonText (toJSON cfg)
@@ -201,7 +243,7 @@ compileOne catTables mDefaultNamespace wsEnv globalDwColumns mBridge confidence 
                   { fcStmtObj         = SqlStmtId fp obj pName sLine
                   , fcTypeEnv         = mkProcEnv instrParams
                   , fcDwColumns       = globalDwColumns
-                  , fcControlBindings = controlBindings
+                  , fcControlBindings = controlBindings'
                   }
                 catFpRows = mapMaybe morphismToColRow
                   (Set.toList (foldSchFootprint footprintCtx
@@ -210,14 +252,7 @@ compileOne catTables mDefaultNamespace wsEnv globalDwColumns mBridge confidence 
                    taintParams retType (Just cyclo) confidence
                , flow
                , catFpRows )
-          | ((sLine, eLine), (pName, pType, instrParams, taintParams, retType, body)) <-
-              zip (spFunctions   sp) [ (fnsName (fbSig fb), "function",   fnsParams (fbSig fb), fnsParams    (fbSig fb), fnsReturnType (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
-              <>
-              zip (spSubroutines sp) [ (ssName  (sbSig sb), "subroutine", ssParams  (sbSig sb), ssParams     (sbSig sb), "",                       sbBody sb) | sb <- srSubroutines sf ]
-              <>
-              zip (spEvents      sp) [ (esName  (evSig ev), "event",      "",                   esRawSig     (evSig ev), "",                       evBody ev) | ev <- srEvents      sf ]
-              <>
-              zip (spOnBlocks    sp) [ (obEvent ob,         "on",         "",                   "",                      "",                       obBody ob) | ob <- srOnBlocks    sf ]
+          | ((sLine, eLine), (pName, pType, instrParams, taintParams, retType, body)) <- procSpecs
           ]
         procBodies =
              [ (fnsName (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
@@ -406,8 +441,8 @@ dwRetrieveColRowsForFootprint resolve fp dw =
 
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each without a SQL bridge.
 -- @root@ is the ingestion root, used to relativize every stored/reported path.
-workerLoopFilesNoBridge :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> Int -> TQueue FilePath -> WorkspaceEnv -> Map.Map Text [(TableRef, Text)] -> DuckConn -> MVar () -> IORef Int -> IO ()
-workerLoopFilesNoBridge root catTables mDefaultNamespace k workQ wsEnv globalDwColumns conn mutex errCount = go
+workerLoopFilesNoBridge :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> Int -> TQueue FilePath -> WorkspaceEnv -> ControlIndex -> Map.Map Text [(TableRef, Text)] -> DuckConn -> MVar () -> IORef Int -> IO ()
+workerLoopFilesNoBridge root catTables mDefaultNamespace k workQ wsEnv controlIdx globalDwColumns conn mutex errCount = go
   where
     go = do
       mFile <- atomically $ do
@@ -419,7 +454,7 @@ workerLoopFilesNoBridge root catTables mDefaultNamespace k workQ wsEnv globalDwC
           let fp = T.pack (makeRelative root file)
           emitProgress (object ["tag" .= ("worker_start" :: Text), "worker" .= k, "file" .= fp])
           outcome  <- parseOutcome root file
-          compiled <- compileOne catTables mDefaultNamespace wsEnv globalDwColumns Nothing "confirmed" outcome
+          compiled <- compileOne catTables mDefaultNamespace wsEnv controlIdx globalDwColumns Nothing "confirmed" outcome
           let ok = case compiled of { CFError {} -> False; _ -> True }
           when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
           withMVar mutex $ \_ -> appendToDb conn compiled
@@ -429,8 +464,8 @@ workerLoopFilesNoBridge root catTables mDefaultNamespace k workQ wsEnv globalDwC
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each with bridge slot k,
 --   serialises DB writes through a shared mutex (DuckDB connections are not thread-safe).
 -- @root@ is the ingestion root, used to relativize every stored/reported path.
-workerLoopFiles :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> Int -> TQueue FilePath -> SqlBridgePool -> WorkspaceEnv -> Map.Map Text [(TableRef, Text)] -> DuckConn -> MVar () -> IORef Int -> IO ()
-workerLoopFiles root catTables mDefaultNamespace k workQ pool wsEnv globalDwColumns conn mutex errCount = go
+workerLoopFiles :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> Int -> TQueue FilePath -> SqlBridgePool -> WorkspaceEnv -> ControlIndex -> Map.Map Text [(TableRef, Text)] -> DuckConn -> MVar () -> IORef Int -> IO ()
+workerLoopFiles root catTables mDefaultNamespace k workQ pool wsEnv controlIdx globalDwColumns conn mutex errCount = go
   where
     go = do
       mFile <- atomically $ do
@@ -442,7 +477,7 @@ workerLoopFiles root catTables mDefaultNamespace k workQ pool wsEnv globalDwColu
           let fp = T.pack (makeRelative root file)
           emitProgress (object ["tag" .= ("worker_start" :: Text), "worker" .= k, "file" .= fp])
           outcome  <- parseOutcome root file
-          compiled <- compileOne catTables mDefaultNamespace wsEnv globalDwColumns (Just (pool, k)) "confirmed" outcome
+          compiled <- compileOne catTables mDefaultNamespace wsEnv controlIdx globalDwColumns (Just (pool, k)) "confirmed" outcome
           let ok = case compiled of { CFError {} -> False; _ -> True }
           when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
           withMVar mutex $ \_ -> appendToDb conn compiled
@@ -569,9 +604,17 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     outcome <- parseOutcome srcDir file
     emitProgress (object ["tag" .= ("file_done" :: Text), "phase" .= ("A0" :: Text)])
     pure outcome) files
-  let wsEnv = buildWorkspaceEnv
-                (map pfSrFile stdlibParsed ++ [pfSrFile pf | PsParsed pf <- outcomes0])
+  let allParsedSrFiles = map pfSrFile stdlibParsed ++ [pfSrFile pf | PsParsed pf <- outcomes0]
+      wsEnv = buildWorkspaceEnv allParsedSrFiles
   _ <- evaluate (Map.size (weGlobals wsEnv) + Map.size (weHierarchy wsEnv))
+
+  -- Plan 164 Phase C: workspace-wide control/object hierarchy index, built
+  -- once from the same parsed-file set as wsEnv, so a runtime DW-alias
+  -- assignment in one file can resolve a member-chain through controls
+  -- declared in a different file (see 'runtimeDwAliasBindings' in
+  -- 'compileOne' below).
+  let controlIdx = buildControlIndex allParsedSrFiles
+  _ <- evaluate (Map.size controlIdx)
 
   -- Every DW file, already parsed in Phase A0 above -- Plan 163 Phase 3
   -- needs this cross-file (a PowerScript SetItem call may reference a DW
@@ -592,7 +635,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     -- Load stdlib first so type lookups in user-code Phase B see the base classes.
     -- Stdlib has no DW files of its own, so an empty map is correct here.
     mapM_ (\pf -> do
-      cf <- compileOne Set.empty mDefaultNamespace wsEnv Map.empty Nothing "speculative" (PsParsed pf)
+      cf <- compileOne Set.empty mDefaultNamespace wsEnv controlIdx Map.empty Nothing "speculative" (PsParsed pf)
       appendToDb conn cf) stdlibParsed
     case mBridgeBin of
       Nothing -> do
@@ -611,7 +654,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
         atomically (mapM_ (writeTQueue workQ) files)
         mutex <- newMVar ()
         mapConcurrently_
-          (\k -> workerLoopFilesNoBridge srcDir Set.empty mDefaultNamespace k workQ wsEnv globalDwColumns conn mutex errCount)
+          (\k -> workerLoopFilesNoBridge srcDir Set.empty mDefaultNamespace k workQ wsEnv controlIdx globalDwColumns conn mutex errCount)
           [0 .. nWorkers - 1]
       Just pythonExe -> do
         pool <- startSqlBridgePool nWorkers pythonExe sqlWorkerModuleArgs dialect
@@ -655,7 +698,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
         atomically (mapM_ (writeTQueue workQ) files)
         mutex <- newMVar ()
         mapConcurrently_
-          (\k -> workerLoopFiles srcDir catTables mDefaultNamespace k workQ pool wsEnv globalDwColumns conn mutex errCount)
+          (\k -> workerLoopFiles srcDir catTables mDefaultNamespace k workQ pool wsEnv controlIdx globalDwColumns conn mutex errCount)
           [0 .. nWorkers - 1]
           `finally` shutdownSqlBridgePool pool
     runPhaseB conn mDefaultNamespace  -- Phase B: link analysis (passes 5–8)

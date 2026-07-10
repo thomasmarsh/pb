@@ -28,14 +28,20 @@ module PB.Analysis.SchFootprint
   , foldSchFootprint
   , controlBindingsMap
   , dwColumnsFromRows
+  , runtimeDwAliasBindings
   ) where
 
 import PB.Prelude hiding (id, (.), lookup)
+import PB.AST.BodyStmt (BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..), ChooseStmt (..), ElseIf (..), CaseClause (..))
+import PB.AST.Located (Located (..))
+import PB.AST.Type (renderPbType)
+import PB.Analysis.CallClassify (segName)
 import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), CatOp, foldCat)
+import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainDwBinding)
 import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), DwRetrieveColRow (..))
-import PB.Analysis.TypeEnv (ScopedTypeEnv)
+import PB.Analysis.TypeEnv (ScopedTypeEnv, lookupScopedVar)
 import PB.Analysis.TypeResolve (DwControlBinding (..))
-import PB.AST.Expr (Expr (..))
+import PB.AST.Expr (Expr (..), Lvalue (..), LvSegment (..))
 import PB.Pipeline.SqlParse (TableRef (..))
 
 import qualified Data.List       as L
@@ -151,3 +157,54 @@ instance Effectful SchFootprint where
 -- | Run a compiled 'CatOp' term through the 'SchFootprint' functor.
 foldSchFootprint :: FunctorCtx -> CatOp a b -> Set.Set SchMorphism
 foldSchFootprint ctx op = runSchFootprint (foldCat op) ctx
+
+-- | Scan one procedure body for the runtime DataWindow-aliasing pattern
+-- Plan 164 Phase C\/D3 exists to resolve -- e.g.
+-- @idw_epidom = tab1.page1.uo_epidom.dw@ -- a @datawindow@\/@datastore@-typed
+-- instance variable assigned from a multi-hop member-chain lvalue, rather
+-- than bound via a literal @dataobject=@ declaration on the variable's own
+-- control. Resolves each hit via
+-- 'PB.Analysis.ControlHierarchy.resolveMemberChainDwBinding' and feeds the
+-- same @(object, control) -> dwName@ map 'resolveSetItem' already reads, so
+-- a later @SetItem@ call on the aliased variable resolves the same way a
+-- directly-declared control binding would.
+--
+-- Only 'BsAssign' is scanned: 'PB.Grammar.Body.classifyBodyStmt' emits
+-- 'BsAssignExpr' only when the LHS does NOT parse as a plain 'Lvalue' (e.g.
+-- a method-call-chain LHS) -- a bare single-segment instance variable
+-- always parses as a plain 'Lvalue', so 'BsAssignExpr' can never carry this
+-- pattern's shape and does not need to be scanned.
+--
+-- Recurses into if\/for\/do\/choose bodies, mirroring
+-- 'PB.Analysis.Taint.extractSqlStmts'. Any lookup miss (non-datawindow\/
+-- datastore LHS, single-segment RHS, unresolvable chain) contributes
+-- nothing to the result -- no guessing past what the resolver itself can
+-- resolve.
+runtimeDwAliasBindings
+  :: ControlIndex -> Map.Map Text Text -> Text -> ScopedTypeEnv
+  -> [Located BodyStmt] -> Map.Map (Text, Text) Text
+runtimeDwAliasBindings idx inh obj env stmts = Map.fromList (concatMap go stmts)
+  where
+    go (Located _ (BsAssign lhs rhs)) = maybe [] pure (tryBind lhs rhs)
+    go (Located _ (BsIf (IfStmt _ then_ eis mel))) =
+      concatMap go then_
+      <> concatMap (\ei -> concatMap go (eifBody ei)) eis
+      <> maybe [] (concatMap go) mel
+    go (Located _ (BsFor (ForStmt _ _ _ _ body))) = concatMap go body
+    go (Located _ (BsDo (DoStmt _ body _)))       = concatMap go body
+    go (Located _ (BsChoose (ChooseStmt _ clauses))) =
+      concatMap (\c -> concatMap go (ccBody c)) clauses
+    go _ = []
+
+    tryBind lhs rhsExpr = case (segments lhs, rhsExpr) of
+      ([LvSegment lhsName Nothing], ExLvalue rhsLv)
+        | rhsSegs <- map segName (segments rhsLv)
+        , length rhsSegs > 1
+        , isDwTyped lhsName ->
+            (\dwName -> ((T.toLower obj, T.toLower lhsName), T.toLower dwName))
+              <$> resolveMemberChainDwBinding idx inh obj rhsSegs
+      _ -> Nothing
+
+    isDwTyped lhsName = case lookupScopedVar lhsName env of
+      Just ty -> T.toLower (renderPbType ty) `elem` ["datawindow", "datastore"]
+      Nothing -> False
