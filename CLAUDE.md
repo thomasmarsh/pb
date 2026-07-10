@@ -1075,8 +1075,10 @@ catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogF
 -- Example's real baseline -- Plan 164's plan file/BACKLOG previously
 -- misremembered it as "7/7"; re-confirmed via git stash before Phase C's
 -- own changes too). Openpay's separate 0/6 SetItem gap (runtime aliasing,
--- e.g. `ctrl = other.uo.dw`) is addressed by Plan 164 Phase C below (though
--- its real-corpus gate doesn't fully materialize -- see that note).
+-- e.g. `ctrl = other.uo.dw`) is addressed by Plan 164 Phase C below;
+-- Phase C's own real-corpus gate didn't fully materialize until Phase E's
+-- ControlIndex key-qualification fix (see that note) -- both now confirmed
+-- against the real corpus.
 --
 -- compileOne gained a ControlIndex param (Plan 164 Phase C, 2026-07-10),
 -- threaded through workerLoopFiles/workerLoopFilesNoBridge from a
@@ -1094,14 +1096,15 @@ catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogF
 -- against the real w_misth_fylo_form.srw example). `controlBindings' =
 -- Map.union controlBindings aliasBindings` (static literal bindings win on
 -- a key collision) is what every procedure's FunctorCtx now uses instead of
--- the old file-static-only controlBindings. KNOWN LIMITATION (found via
--- full-corpus verification, not fixed this phase -- BACKLOG's Plan 164
--- Phase E): controlIdx's own (owner, name) key collides across unrelated
--- windows reusing a common generic child-control name at full-corpus scale,
--- so this wiring's real openpay gate (2 new cat_footprint_columns rows)
--- doesn't yet materialize even though the wiring itself is correct
--- (real-corpus-fixture-verified in isolation -- see SchFootprint's own
--- runtimeDwAliasBindings entry above).
+-- the old file-static-only controlBindings. FIXED (Plan 164 Phase E,
+-- 2026-07-10): controlIdx's own (owner, name) key used to collide across
+-- unrelated windows reusing a common generic child-control name at
+-- full-corpus scale, so this wiring's real openpay gate (2 new
+-- cat_footprint_columns rows) didn't materialize even though the wiring
+-- itself was correct (real-corpus-fixture-verified in isolation). Phase E
+-- qualified ControlIndex's key to (root, owner, name) -- see
+-- PB.Analysis.ControlHierarchy's own entry below -- and the gate now
+-- reaches 2/2 rows against the real corpus.
 -- Phase A: parse → compile → append to DuckDB (concurrent producer-consumer)
 -- Phase B: delegates to PB.Pipeline.Passes.runPhaseB (takes the
 -- mDefaultNamespace param, Plan 157 Phase 1)
@@ -1478,7 +1481,7 @@ findLiteralDataObject :: [Located BodyStmt] -> Maybe Text
 --   (lvPbType exists but is excluded from JSON.)
 ```
 
-### `PB.Analysis.ControlHierarchy` (Plan 164 Phase B, done 2026-07-10)
+### `PB.Analysis.ControlHierarchy` (Plan 164 Phase B, done 2026-07-10; key qualification Phase E, done 2026-07-10)
 
 ```haskell
 -- Pure. Workspace-wide control/object hierarchy index + multi-hop
@@ -1489,41 +1492,62 @@ findLiteralDataObject :: [Located BodyStmt] -> Maybe Text
 data ControlDecl = ControlDecl
   { cdOwner :: Text, cdName :: Text, cdAncestorType :: Text
   , cdOverridesName :: Maybe Text, cdDwBinding :: Maybe Text }
-type ControlIndex = Map.Map (Text, Text) ControlDecl   -- (owner, name), both lowercased
+type ControlIndex = Map.Map (Text, Text, Text) ControlDecl   -- (root, owner, name), all lowercased
 buildControlIndex :: [SrFile] -> ControlIndex
--- Uses TypeResolve.findLiteralDataObject for cdDwBinding; last-file-wins on
--- an (owner, name) collision (plain Map.fromList bias) -- since a control's
--- owner key is its *literal* tdWithin name (not a globally-qualified path,
--- same limitation as extractDwControlBindings already had per-file, just
--- widened workspace-wide), two unrelated hierarchies reusing a common local
--- name (e.g. "cb_ok" within "w_main") can collide; accepted per Stage 1
--- review, not fixed here. CONFIRMED IN PRODUCTION, not just theoretical
--- (Plan 164 Phase C, 2026-07-10): 11 windows in the openpay corpus alone
--- redeclare "page1" within "tab1", which defeats Phase C's real-corpus
--- SetItem-resolution gate at full-workspace scale even though the same
--- resolver is correct on an isolated fixture -- see BACKLOG's Plan 164
--- Phase E entry (proposed fix: qualify the owner key by the enclosing
--- top-level window/user-object, not just the immediate tdWithin name).
+-- Uses TypeResolve.findLiteralDataObject for cdDwBinding. root = fst
+-- (srPrimaryObject sf) for whichever file declared the TypeBlock -- the
+-- Phase E fix. A flat (owner, name) key (Phase B's original design)
+-- collided across unrelated windows redeclaring a common generic
+-- child-control name -- CONFIRMED IN PRODUCTION (Plan 164 Phase C,
+-- 2026-07-10): 11 windows in the openpay corpus alone redeclare "page1"
+-- within "tab1", so last-file-wins Map.fromList bias picked an arbitrary
+-- one, defeating Phase C's real-corpus SetItem-resolution gate even though
+-- the resolver was correct on an isolated fixture. Qualifying by root (each
+-- window's own redeclaration gets its own entry) fixed it: openpay's
+-- cat_footprint_columns reached the targeted 2 rows for w_misth_fylo_form.
 
 resolveMemberChainType      :: ControlIndex -> Map.Map Text Text -> Text -> [Text] -> Maybe Text
 resolveMemberChainDwBinding :: ControlIndex -> Map.Map Text Text -> Text -> [Text] -> Maybe Text
 -- Both take a starting object and chain segments (e.g. "w_misth_fylo_form",
 -- ["tab1","page1","uo_epidom","dw"]); the Map.Map Text Text is an inherits
 -- map (TypeResolve.buildInheritsMap's raw, case-sensitive output is fine --
--- normalized internally once per call). Each hop resolves via lookupWithAncestry
--- (direct (owner,name) lookup, else walk owner's own class-ancestor chain via
--- the inherits map, cycle-safe) then unwinds any D1 cdOverridesName chain
--- (cycle-safe) to a fully-resolved terminal ControlDecl. Continuing to the
--- NEXT segment tries two scopes in order, since a single strategy can't
--- distinguish them from a per-file view: (1) the resolved control's own
--- literal name (the "visual tree" convention -- every file in one window's
--- own ancestor chain redeclares a nested control `within <literal-name>`,
--- so the same literal name is the right scope at every level); (2) only if
--- that fails, the fully-resolved ancestor type (the "has-a" convention --
--- an embedded instance of a *different* class has its own children declared
--- `within <ClassName>` in that class's own file, never under the instance
--- name its container gave it -- e.g. uo_epidom's `.dw` control is declared
--- `within uo_misth_fylo_epidom_grid`, not `within uo_epidom`).
+-- normalized internally once per call). Public signatures are unchanged
+-- since Phase B -- obj already serves as root==owner for the first hop, so
+-- Phase E's key-shape change needed zero caller changes (Runner.hs,
+-- SchFootprint.hs).
+--
+-- Each hop resolves via lookupScoped (Phase E; replaces the old
+-- lookupWithAncestry): direct (root,owner,name) lookup, else walk root's
+-- own class-ancestor chain via the inherits map (cycle-safe on root), then
+-- unwinds any D1 cdOverridesName chain (cycle-safe on (root,owner,name))
+-- to a fully-resolved terminal ControlDecl. lookupScoped distinguishes two
+-- modes by whether root == owner at the call's start: "coupled" (true at
+-- the very first hop, and again right after a has-a jump -- "does this
+-- class directly declare a control called name") walks owner in lock-step
+-- with root on ancestor-chain fallback; "decoupled" (owner is a literal
+-- parent-control name distinct from root, e.g. continuing into page1
+-- within tab1) holds owner fixed and only root climbs. The same
+-- distinction governs D1 override-unwinding, derived for free from
+-- foundRoot == cdOwner decl (no separate flag threaded) -- naively always
+-- switching both root and owner to cdAncestorType decl on every override
+-- (matching Phase B's original 2-tuple-owner-only formula) would mis-scope
+-- a *nested* override's target (page1's own override must stay scoped to
+-- the literal tab1 in the ancestor's own file, not jump to the ancestor
+-- class's top-level scope).
+--
+-- Continuing to the NEXT segment tries two (root, owner) pairs in order,
+-- since a single strategy can't distinguish them from a per-file view: (1)
+-- the resolved control's own literal name with root held fixed (the
+-- "visual tree" convention -- every file in one window's own ancestor
+-- chain redeclares a nested control `within <literal-name>`, so the same
+-- literal name is the right scope at every level, still within the SAME
+-- window's own declaration space); (2) only if that fails, switching BOTH
+-- root and owner to the fully-resolved ancestor type (the "has-a"
+-- convention -- an embedded instance of a *different* class has its own
+-- children declared `within <ClassName>` in that class's own file, never
+-- under the instance name its container gave it -- e.g. uo_epidom's `.dw`
+-- control is declared `within uo_misth_fylo_epidom_grid`, not `within
+-- uo_epidom`, in uo_misth_fylo_epidom_grid's OWN separate file).
 -- resolveMemberChainType returns the fully-unwound terminal's cdAncestorType
 -- (the true base type). resolveMemberChainDwBinding does NOT use the same
 -- full-unwind value for the binding -- it returns the CLOSEST override's
@@ -1541,7 +1565,10 @@ resolveMemberChainDwBinding :: ControlIndex -> Map.Map Text Text -> Text -> [Tex
 -- afxlib.pbl/w_form_tab2.srw + fylo.pbl/uo_misth_fylo_epidom_grid.sru +
 -- afxlib.pbl/u_grid.sru fixture (openpay corpus): tab1.page1.uo_epidom.dw
 -- from w_misth_fylo_form resolves to type "datawindow" / binding
--- "dw_misth_fylo_epidom_list". Not yet wired into production (Phase C).
+-- "dw_misth_fylo_epidom_list". Wired into production since Phase C; full
+-- workspace-scale correctness confirmed by Phase E (real --db ingestion:
+-- openpay cat_footprint_columns 0->2 for w_misth_fylo_form, PowerBuilder-
+-- Example stayed at 5, no regression).
 ```
 
 ### `PB.Analysis.Builtins`
@@ -1710,20 +1737,21 @@ foldSchFootprint :: FunctorCtx -> CatOp a b -> Set.Set SchMorphism
 -- procedure's own runtimeDwAliasBindings call, each with steLocal seeded
 -- via CallClassify.collectBodyLocals), not per-procedure.
 --
--- KNOWN LIMITATION (found via this same real-corpus verification, not
--- fixed here -- see BACKLOG's Plan 164 Phase E entry): ControlHierarchy's
--- ControlIndex keys on (owner, name) using only the immediate tdWithin
--- name, which collides across unrelated windows reusing a common generic
+-- FIXED (Plan 164 Phase E, done 2026-07-10 -- was a KNOWN LIMITATION found
+-- via this same real-corpus verification): ControlHierarchy's ControlIndex
+-- used to key on (owner, name) using only the immediate tdWithin name,
+-- which collided across unrelated windows reusing a common generic
 -- child-control name (e.g. "page1" within "tab1", declared by 11 different
--- windows in the openpay corpus). Confirmed via cabal repl over the full
--- 422-file corpus: this makes the workspace-wide resolveMemberChainDwBinding
+-- windows in the openpay corpus) -- confirmed via cabal repl over the full
+-- 422-file corpus to make the workspace-wide resolveMemberChainDwBinding
 -- call above land on a real-but-wrong DW name for w_misth_fylo_form's own
 -- chain in production (the isolated 4-file fixture this module's own test
--- uses resolves correctly -- the collision only manifests at full-corpus
--- scale). resolveSetItem's final column-name match fails on the wrong DW's
--- columns, so this fails closed (no row) rather than open (a wrong row),
--- but the openpay real-corpus gate this phase targeted (2 new
--- cat_footprint_columns rows) does not currently materialize.
+-- uses resolved correctly even before the fix -- the collision only
+-- manifested at full-corpus scale). Phase E qualified ControlIndex's key
+-- to (root, owner, name), root = the declaring file's own top-level object
+-- -- see PB.Analysis.ControlHierarchy's own entry above for the full
+-- design. Confirmed via real --db ingestion: openpay's
+-- cat_footprint_columns now reaches 2/2 rows for w_misth_fylo_form.
 runtimeDwAliasBindings
   :: ControlIndex -> Map.Map Text Text -> Text -> ScopedTypeEnv
   -> [Located BodyStmt] -> Map.Map (Text, Text) Text
