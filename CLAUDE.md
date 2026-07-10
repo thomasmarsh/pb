@@ -869,7 +869,8 @@ runPhaseB :: DuckConn -> Maybe Text -> IO ()
 --             runPass67 (buildInterprocEdges + taint → interproc_edges/taint_*),
 --             runPass8 (computeDeadProcedures → dead_code)
 --             runPass9 (Plan 148 Phase 1b, 2026-07-07: queryDwRetrieveColumns/
---               queryDwJoinLegs/querySqlCols/queryCatColumns/queryCatFks →
+--               queryDwJoinLegs/querySqlCols/queryCatFootprintColumns (Plan 163
+--               Phase 3, 2026-07-10)/queryCatColumns/queryCatFks →
 --               SchemaCategory.buildSchema → schema_objects/schema_morphisms;
 --               now returns SchGraph, not (), so Pass 10 can traverse it
 --               without rebuilding from DB rows. mDefaultNamespace (Plan 157
@@ -1009,6 +1010,34 @@ catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogF
 -- CompiledDw gained cdDwRetrieveColumns :: [DwRetrieveColumnRow] (Plan 148
 -- Phase 1b, 2026-07-07): compileOne's PsDw branch splits each DwRetrieve's
 -- drColumns via SchemaCategory.splitColumnRef.
+-- CompiledPs gained cpsCatFootprintColumns :: [SqlStmtColumnRow] (Plan 163
+-- Phase 3, 2026-07-10). compileOne's type signature gained a 4th positional
+-- param, globalDwColumns :: Map.Map Text [(TableRef, Text)] (every DW's
+-- resolved retrieve columns, keyed by lowercased DW name) -- built once in
+-- runModeDb from Phase A0's already-parsed PsDw outcomes via the new pure
+-- helper dwRetrieveColRowsForFootprint (deliberately not shared with
+-- compileOne's own PsDw-branch DW-column extraction, which builds the
+-- DuckDb-side DwRetrieveColumnRow, not SchemaCategory's DwRetrieveColRow --
+-- same write-side/read-shape split as SqlParse's row types). Per procedure,
+-- compileOne builds a PB.Analysis.SchFootprint.FunctorCtx (fcStmtObj =
+-- SqlStmtId fp obj pName sLine; fcControlBindings from
+-- TypeResolve.extractDwControlBindings fp sf, purely per-file, no cross-file
+-- threading needed) and folds compileProcedureToCatOp through
+-- foldSchFootprint; morphismToColRow (Runner.hs, not exported) converts
+-- each resulting SchMorphism back into the same SqlColRow-shaped raw fact
+-- inSqlColumns already uses (see SchemaCategory's SchemaInputs note above
+-- for why -- namespace resolution must stay centralized in buildSchema, not
+-- baked in here) as a SqlStmtColumnRow, appended via
+-- appendCatFootprintColumns. workerLoopFiles/workerLoopFilesNoBridge both
+-- gained the same globalDwColumns param, threaded through from runModeDb.
+-- KNOWN GAP (see BACKLOG "Plan 163 Phase 3 wiring session"): resolveSetItem
+-- matches on (T.toLower obj, ctrl), and obj comes from srPrimaryObject's
+-- "first type block in file" heuristic -- if a file declares a non-window
+-- type block (e.g. `type X from structure`) before its real window/user-
+-- object type block, obj is wrong for every table in that file, not just
+-- this one, and the SetItem binding lookup silently misses. Confirmed via a
+-- real corpus file (pbexamw1.pbl/w_dw_copy.srw); not fixed here (different
+-- root cause than this phase's charter).
 -- Phase A: parse → compile → append to DuckDB (concurrent producer-consumer)
 -- Phase B: delegates to PB.Pipeline.Passes.runPhaseB (takes the
 -- mDefaultNamespace param, Plan 157 Phase 1)
@@ -1212,6 +1241,14 @@ buildInstrGraph :: CatOp () () -> InstrGraph
 -- BsLocalVar decls (collectBodyLocals) before compiling, so classifyExpr can
 -- resolve locally-declared datastore/datawindow/transaction variable types.
 compileProcedureViaCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> InstrGraph
+-- Plan 163 Phase 3 (2026-07-10): PB.Analysis.SchFootprint.foldSchFootprint
+-- needs the raw compiled CatOp term (via foldCat), which neither sibling
+-- above exposes (one flattens to InstrGraph, the other to LowCat). Same
+-- buildSsa/compileSsa pipeline, one step shallower; deliberately not
+-- factored to share code with the other two (same rationale as
+-- compileProcedureToLowCat's own doc comment -- SSA is now compiled a
+-- third time per procedure, pre-existing duplication pattern, not new).
+compileProcedureToCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CatOp () ()
 ```
 
 ### `PB.Analysis.CatInterp`
@@ -1412,8 +1449,16 @@ data CatColumnRow = CatColumnRow { cclNamespace :: Maybe Text, cclTable, cclColu
 data CatFkRow     = CatFkRow { cfrFromNamespace :: Maybe Text, cfrFromTable, cfrFromColumn :: Text
                               , cfrToNamespace :: Maybe Text, cfrToTable, cfrToColumn :: Text }
 data SchemaInputs = SchemaInputs { inDwRetrieveColumns :: [DwRetrieveColRow], inDwJoins :: [DwJoinLegRow]
-                                  , inSqlColumns :: [SqlColRow], inCatalogColumns :: [CatColumnRow]
+                                  , inSqlColumns :: [SqlColRow], inCatFootprintColumns :: [SqlColRow]
+                                  , inCatalogColumns :: [CatColumnRow]
                                   , inCatalogFks :: [CatFkRow], inDefaultNamespace :: Maybe Text }
+-- inCatFootprintColumns (Plan 163 Phase 3, 2026-07-10): same SqlColRow shape
+-- and resolve treatment as inSqlColumns, sourced from
+-- PB.Analysis.SchFootprint.foldSchFootprint (dynamic-dispatch writes, e.g. a
+-- DataWindow SetItem call) instead of sqlglot text extraction. Kept as its
+-- own field (not merged into inSqlColumns) so each row's producing
+-- technique stays distinguishable for a future leg_source column (Phase 4).
+-- buildSchema folds it through the same mkSqlLegs helper inSqlColumns uses.
 buildSchema :: SchemaInputs -> SchGraph   -- total, pure
 -- Catalog-only columns (no statement/JOIN touches them) still become
 -- objects with no legs -- a free normalization signal (dead-column
@@ -1564,6 +1609,13 @@ appendObjects, appendProcedures, appendDwObjects, appendDwControls :: DuckConn -
 appendLocalVars, appendCallSites, appendGlobalVars :: DuckConn -> [row] -> IO ()
 appendProcDefs, appendProcUses, appendSqlStmts :: DuckConn -> [row] -> IO ()
 appendSqlStmtColumns, appendSqlStmtFilters :: DuckConn -> [row] -> IO ()
+-- cat_footprint_columns (Plan 163 Phase 3, 2026-07-10): identical shape to
+-- sql_statement_columns, populated by PB.Analysis.SchFootprint.foldSchFootprint
+-- (currently: DataWindow SetItem calls with a literal column + a statically-
+-- resolvable control binding) instead of sqlglot text extraction. Kept as
+-- its own table (not merged into sql_statement_columns) for future
+-- leg_source provenance tagging. Reuses SqlStmtColumnRow on the append side.
+appendCatFootprintColumns :: DuckConn -> [SqlStmtColumnRow] -> IO ()
 -- catalog_columns/catalog_pks/catalog_fks (Plan 148 Phase 1a-3, 2026-07-07):
 -- static DDL catalog, row-oriented (namespace/table_name/column_name/ordinal
 -- for columns+pks; +constraint_name/from_*/to_* for fks, one row per
@@ -1606,6 +1658,10 @@ queryDwObjectSet :: DuckConn -> IO (Set Text)
 queryDwRetrieveColumns :: DuckConn -> IO [SchemaCategory.DwRetrieveColRow]
 queryDwJoinLegs        :: DuckConn -> IO [SchemaCategory.DwJoinLegRow]
 querySqlCols           :: DuckConn -> IO [SchemaCategory.SqlColRow]
+-- queryCatFootprintColumns (Plan 163 Phase 3): same shape/query as
+-- querySqlCols, reading cat_footprint_columns instead -- the existing
+-- FromRow SqlColRow instance is reused verbatim, no new instance needed.
+queryCatFootprintColumns :: DuckConn -> IO [SchemaCategory.SqlColRow]
 queryCatColumns        :: DuckConn -> IO [SchemaCategory.CatColumnRow]
 queryCatFks            :: DuckConn -> IO [SchemaCategory.CatFkRow]
 -- Phase B write appenders:

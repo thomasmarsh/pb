@@ -201,17 +201,28 @@ data CatFkRow = CatFkRow
   } deriving (Show, Eq)
 
 data SchemaInputs = SchemaInputs
-  { inDwRetrieveColumns :: [DwRetrieveColRow]
-  , inDwJoins           :: [DwJoinLegRow]
-  , inSqlColumns        :: [SqlColRow]
-  , inCatalogColumns    :: [CatColumnRow]
-  , inCatalogFks        :: [CatFkRow]
-  , inDefaultNamespace  :: Maybe Text
+  { inDwRetrieveColumns   :: [DwRetrieveColRow]
+  , inDwJoins             :: [DwJoinLegRow]
+  , inSqlColumns          :: [SqlColRow]
+  , inCatFootprintColumns :: [SqlColRow]
+    -- ^ Plan 163 Phase 3: same shape and resolution treatment as
+    -- 'inSqlColumns', but sourced from 'PB.Analysis.SchFootprint's
+    -- @CatOp -> Sch@ functor (dynamic-dispatch writes, e.g. a DataWindow
+    -- @SetItem@ call, invisible to sqlglot's text-based extraction) rather
+    -- than parsed SQL text. Kept as a separate field, not merged into
+    -- 'inSqlColumns', so each row's producing technique stays
+    -- distinguishable — Plan 163 Phase 4's @leg_source@ column tags rows by
+    -- which physical ingestion table (and therefore which producer) they
+    -- came from.
+  , inCatalogColumns      :: [CatColumnRow]
+  , inCatalogFks          :: [CatFkRow]
+  , inDefaultNamespace    :: Maybe Text
     -- ^ Plan 157 Phase 1: the corpus's configured default schema
     -- (@--default-namespace@). An unqualified 'TableRef' in
-    -- 'inSqlColumns'/'inDwRetrieveColumns'/'inDwJoins' resolves to this
-    -- namespace only when the DDL catalog ('inCatalogColumns') actually
-    -- defines the table under it — never guessed.
+    -- 'inSqlColumns'/'inCatFootprintColumns'/'inDwRetrieveColumns'/
+    -- 'inDwJoins' resolves to this namespace only when the DDL catalog
+    -- ('inCatalogColumns') actually defines the table under it — never
+    -- guessed.
   } deriving (Show, Eq)
 
 -- | (namespace, table) pairs the DDL catalog actually defines, restricted
@@ -265,9 +276,13 @@ buildSchema inputs =
       | r <- inDwRetrieveColumns inputs
       ]
 
-    sqlLegs =
+    -- Shared by 'sqlLegs' and 'catFootprintLegs': both are lists of
+    -- 'SqlColRow' (a statement touching a resolved-or-unresolved column),
+    -- differing only in which ingestion table/producer they came from.
+    mkSqlLegs :: [SqlColRow] -> [SchMorphism]
+    mkSqlLegs rows =
       [ SchMorphism from to kind
-      | r <- inSqlColumns inputs
+      | r <- rows
       , Just tbl <- [scTable r]
       , let colObj  = ColumnObj (resolve (TableRef (scNamespace r) tbl)) (scColumn r)
             stmtObj = StmtObj (scStmt r)
@@ -275,6 +290,10 @@ buildSchema inputs =
               | scIsWrite r = (stmtObj, colObj, LegWrites)
               | otherwise   = (colObj, stmtObj, LegReads)
       ]
+
+    sqlLegs = mkSqlLegs (inSqlColumns inputs)
+
+    catFootprintLegs = mkSqlLegs (inCatFootprintColumns inputs)
 
     dwJoinLegs =
       [ SchMorphism (ColumnObj (resolve lt) lc) (ColumnObj (resolve rt) rc) (LegFk FkDwJoin)
@@ -290,7 +309,7 @@ buildSchema inputs =
       | f <- inCatalogFks inputs
       ]
 
-    allLegs = dwRetrieveLegs <> sqlLegs <> dwJoinLegs <> ddlFkLegs
+    allLegs = dwRetrieveLegs <> sqlLegs <> catFootprintLegs <> dwJoinLegs <> ddlFkLegs
 
     legObjects = Set.fromList (concatMap (\m -> [legFrom m, legTo m]) allLegs)
 

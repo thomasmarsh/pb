@@ -1852,6 +1852,27 @@ tests = testGroup "CatOp"
              Map.lookup "z" newEnv @?= Just (VInt 2)
     ]
 
+  , testGroup "compileProcedureToCatOp (Plan 163 Phase 3)"
+    -- PB.Analysis.SchFootprint.foldSchFootprint needs the raw compiled CatOp
+    -- term (via foldCat), which neither compileProcedureViaCatOp (flattens
+    -- to InstrGraph) nor compileProcedureToLowCat (flattens to LowCat)
+    -- exposes. compileProcedureToCatOp mirrors the same SSA -> CatOp
+    -- pipeline, stopping one step earlier.
+    [ testCase "toLowCat . compileProcedureToCatOp matches compileProcedureToLowCat directly" $
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            body = [ Located 1 (BsIf (IfStmt (ExBool True)
+                       [Located 2 (BsCall (call "callA"))] []
+                       (Just [Located 3 (BsCall (call "callB"))])))
+                   , Located 4 (BsCall (call "callC"))
+                   ]
+        in toLowCat (compileProcedureToCatOp emptyEnv Set.empty body)
+             @?= compileProcedureToLowCat emptyEnv Set.empty body
+
+    , testCase "empty body: still matches compileProcedureToLowCat (totalizes, no crash)" $
+        toLowCat (compileProcedureToCatOp emptyEnv Set.empty [])
+          @?= compileProcedureToLowCat emptyEnv Set.empty []
+    ]
+
   , testGroup "parseArgList / collectBodyLocals (retained helpers, Plan 144 Phase 5 Step 7)"
     -- Ported from the now-deleted InstrGraphTest.hs's "Gap 3" and "body locals"
     -- groups: these exercised the two PB.Analysis.InstrGraph helpers that

@@ -36,6 +36,7 @@ module PB.Analysis.GraphBuilder
     -- * Pipeline entry point
   , compileProcedureViaCatOp
   , compileProcedureToLowCat
+  , compileProcedureToCatOp
   ) where
 
 import PB.Prelude hiding (id, (.), lookup)
@@ -432,3 +433,16 @@ compileProcedureToLowCat :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] 
 compileProcedureToLowCat env userFns body =
   let env' = env { steLocal = collectBodyLocals body `Map.union` steLocal env }
   in toLowCat (compileSsa env' userFns (buildSsa env' "proc" body))
+
+-- | Same SSA → CatOp pipeline as 'compileProcedureViaCatOp'/
+-- 'compileProcedureToLowCat', stopping at the raw compiled 'CatOp' term
+-- (Plan 163 Phase 3 — 'PB.Analysis.SchFootprint.foldSchFootprint' folds
+-- over exactly this type via 'PB.Analysis.CatOp.foldCat', and no existing
+-- entry point exposed it). Deliberately not factored to share code with
+-- the other two, same rationale as 'compileProcedureToLowCat''s own doc
+-- comment: duplicating this one small env-seeding expression is a smaller
+-- risk than refactoring the verified production hot path.
+compileProcedureToCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CatOp () ()
+compileProcedureToCatOp env userFns body =
+  let env' = env { steLocal = collectBodyLocals body `Map.union` steLocal env }
+  in compileSsa env' userFns (buildSsa env' "proc" body)

@@ -39,6 +39,7 @@ module PB.Pipeline.DuckDb
   , appendSqlStmtColumns
   , appendSqlStmtFilters
   , appendSqlStmtTables
+  , appendCatFootprintColumns
   , appendCatalogColumns
   , appendCatalogPks
   , appendCatalogFks
@@ -59,6 +60,7 @@ module PB.Pipeline.DuckDb
   , queryDwRetrieveColumns
   , queryDwJoinLegs
   , querySqlCols
+  , queryCatFootprintColumns
   , queryCatColumns
   , queryCatFks
   -- Phase B appenders
@@ -173,6 +175,16 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       , "CREATE TABLE IF NOT EXISTS sql_statement_filters \
         \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
         \namespace TEXT, table_name TEXT, column_name TEXT, op TEXT, values_json TEXT)"
+      -- Plan 163 Phase 3: same shape as sql_statement_columns, populated by
+      -- PB.Analysis.SchFootprint's CatOp -> Sch functor instead of sqlglot
+      -- text extraction (today: DataWindow SetItem calls with a literal
+      -- column argument and a statically-resolvable control binding -- see
+      -- that module's doc comment). Kept as its own table, not merged into
+      -- sql_statement_columns, so Phase 4's leg_source column can tag rows
+      -- by producer without an extra column on this table.
+      , "CREATE TABLE IF NOT EXISTS cat_footprint_columns \
+        \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
+        \namespace TEXT, table_name TEXT, column_name TEXT, is_write BOOLEAN)"
       -- Plan 157 Phase 4.5: namespace-aware sibling of sql_statements.tables
       -- (comma-joined, no namespace, kept untouched -- see that field's own
       -- consumers). One row per (statement, table) pair, extracted straight
@@ -636,6 +648,23 @@ appendSqlStmtColumns conn rows = withRaw conn "sql_statement_columns" $ \app ->
     aBool      app (sscrIsWrite r)
     endRow app
 
+-- | Plan 163 Phase 3: same row shape/append pattern as
+-- 'appendSqlStmtColumns' (reuses 'SqlStmtColumnRow' rather than a bespoke
+-- type), writing to 'cat_footprint_columns' instead.
+appendCatFootprintColumns :: DuckConn -> [SqlStmtColumnRow] -> IO ()
+appendCatFootprintColumns _    [] = pure ()
+appendCatFootprintColumns conn rows = withRaw conn "cat_footprint_columns" $ \app ->
+  for_ rows $ \r -> do
+    aText      app (sscrFile r)
+    aText      app (sscrObject r)
+    aText      app (sscrProcName r)
+    aInt       app (sscrLine r)
+    aMaybeText app (sscrNamespace r)
+    aMaybeText app (sscrTableName r)
+    aText      app (sscrColumnName r)
+    aBool      app (sscrIsWrite r)
+    endRow app
+
 appendSqlStmtFilters :: DuckConn -> [SqlStmtFilterRow] -> IO ()
 appendSqlStmtFilters _    [] = pure ()
 appendSqlStmtFilters conn rows = withRaw conn "sql_statement_filters" $ \app ->
@@ -960,6 +989,14 @@ querySqlCols :: DuckConn -> IO [SqlColRow]
 querySqlCols conn = query_ conn
   "SELECT file, object, proc_name, line, namespace, table_name, column_name, is_write \
   \FROM sql_statement_columns"
+
+-- | Plan 163 Phase 3: same shape/query as 'querySqlCols', reading
+-- 'cat_footprint_columns' instead -- the existing 'FromRow' 'SqlColRow'
+-- instance is reused verbatim.
+queryCatFootprintColumns :: DuckConn -> IO [SqlColRow]
+queryCatFootprintColumns conn = query_ conn
+  "SELECT file, object, proc_name, line, namespace, table_name, column_name, is_write \
+  \FROM cat_footprint_columns"
 
 queryCatColumns :: DuckConn -> IO [CatColumnRow]
 queryCatColumns conn = query_ conn

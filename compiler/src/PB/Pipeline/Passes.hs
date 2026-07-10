@@ -16,6 +16,7 @@ import PB.Pipeline.DuckDb
   , queryProcDefs, queryProcUses, queryResolvedCalls
   , queryTaintInputs, queryProcInfos, queryDwObjectSet
   , queryDwRetrieveColumns, queryDwJoinLegs, querySqlCols
+  , queryCatFootprintColumns
   , queryCatColumns, queryCatFks
   , appendResolvedTypes, appendResolvedCalls
   , appendInterprocEdges, appendProcSummaries
@@ -118,18 +119,20 @@ runPass8 conn inh allRC = do
 runPass9 :: DuckConn -> Maybe Text -> IO SchGraph
 runPass9 conn mDefaultNamespace = do
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Building schema category" :: Text)])
-  drCols  <- queryDwRetrieveColumns conn
-  djLegs  <- queryDwJoinLegs        conn
-  sqlCols <- querySqlCols           conn
-  catCols <- queryCatColumns        conn
-  catFks  <- queryCatFks            conn
+  drCols  <- queryDwRetrieveColumns  conn
+  djLegs  <- queryDwJoinLegs         conn
+  sqlCols <- querySqlCols            conn
+  cfCols  <- queryCatFootprintColumns conn
+  catCols <- queryCatColumns         conn
+  catFks  <- queryCatFks             conn
   let sch = buildSchema SchemaInputs
-        { inDwRetrieveColumns = drCols
-        , inDwJoins           = djLegs
-        , inSqlColumns        = sqlCols
-        , inCatalogColumns    = catCols
-        , inCatalogFks        = catFks
-        , inDefaultNamespace  = mDefaultNamespace
+        { inDwRetrieveColumns   = drCols
+        , inDwJoins             = djLegs
+        , inSqlColumns          = sqlCols
+        , inCatFootprintColumns = cfCols
+        , inCatalogColumns      = catCols
+        , inCatalogFks          = catFks
+        , inDefaultNamespace    = mDefaultNamespace
         }
   appendSchemaObjects   conn (Set.toList (sgObjects sch))
   appendSchemaMorphisms conn (sgLegs sch)

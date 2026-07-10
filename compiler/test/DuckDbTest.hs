@@ -25,6 +25,8 @@ tests = testGroup "DuckDb"
       testSchemaCategoryQueryRoundTrip
   , testCase "appendSchemaObjects/Morphisms accept rows" testAppendSchemaObjectsMorphisms
   , testCase "appendDecompositionCoslice accepts rows" testAppendDecompositionCoslice
+  , testCase "appendCatFootprintColumns/queryCatFootprintColumns round-trip"
+      testCatFootprintColumnsRoundTrip
   ]
 
 testInitSchema :: IO ()
@@ -146,6 +148,27 @@ testSchemaCategoryQueryRoundTrip = withWriteConn ":memory:" $ \conn -> do
     [CatColumnRow Nothing "afxfilterd" "kodfilterd"] catCols
   assertEqual "catalog_fks round-trip"
     [CatFkRow Nothing "afxfilterd" "kodfilter" Nothing "afxfilter" "kodfilter"] catFks
+
+-- | Plan 163 Phase 3: cat_footprint_columns is a separate table from
+-- sql_statement_columns but reuses the same row types on both the append
+-- (SqlStmtColumnRow) and query (SqlColRow) sides -- confirms the append/
+-- query round-trip works against the new table name, and that it stays
+-- independent of sql_statement_columns (querySqlCols sees none of these rows).
+testCatFootprintColumnsRoundTrip :: IO ()
+testCatFootprintColumnsRoundTrip = withWriteConn ":memory:" $ \conn -> do
+  initSchema conn
+  appendCatFootprintColumns conn
+    [ SqlStmtColumnRow "w_dw_copy.srw" "w_dw_copy" "clicked" 553 Nothing (Just "sales_order_items") "id" True ]
+  -- Appending an empty list after a real batch must not throw
+  appendCatFootprintColumns conn []
+
+  cfCols  <- queryCatFootprintColumns conn
+  sqlCols <- querySqlCols             conn
+
+  assertEqual "cat_footprint_columns round-trip"
+    [SqlColRow (SqlStmtId "w_dw_copy.srw" "w_dw_copy" "clicked" 553) Nothing (Just "sales_order_items") "id" True]
+    cfCols
+  assertEqual "sql_statement_columns unaffected (separate table)" [] sqlCols
 
 testAppendSchemaObjectsMorphisms :: IO ()
 testAppendSchemaObjectsMorphisms = withWriteConn ":memory:" $ \conn -> do

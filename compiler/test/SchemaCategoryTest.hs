@@ -18,7 +18,7 @@ import Test.Tasty.Hedgehog    (testProperty)
 -- Helpers
 
 emptyInputs :: SchemaInputs
-emptyInputs = SchemaInputs [] [] [] [] [] Nothing
+emptyInputs = SchemaInputs [] [] [] [] [] [] Nothing
 
 tests :: TestTree
 tests = testGroup "SchemaCategory"
@@ -122,6 +122,43 @@ tests = testGroup "SchemaCategory"
           assertBool "catalog-only column is an object" (Set.member unusedObj (sgObjects sch))
           assertBool "catalog-only column has no legs"
             (not (any (\m -> legFrom m == unusedObj || legTo m == unusedObj) (sgLegs sch)))
+
+    , testCase "cat-footprint column produces a LegWrites morphism, same as inSqlColumns (Plan 163 Phase 3)" $
+        let sid = SqlStmtId "w_dw_copy.srw" "w_dw_copy" "clicked" 553
+            inp = emptyInputs
+              { inCatFootprintColumns =
+                  [ SqlColRow sid Nothing (Just "sales_order_items") "id" True ] }
+            sch = buildSchema inp
+        in sgLegs sch @?=
+             [ SchMorphism (StmtObj sid) (ColumnObj (TableRef Nothing "sales_order_items") "id") LegWrites ]
+
+    , testCase "empty inCatFootprintColumns is a no-op" $
+        let sid = SqlStmtId "f.srf" "obj" "proc" 5
+            inp = emptyInputs
+              { inSqlColumns = [ SqlColRow sid Nothing (Just "account") "balance" True ]
+              , inCatFootprintColumns = []
+              }
+            withoutField = emptyInputs { inSqlColumns = inSqlColumns inp }
+        in do
+          sgLegs    (buildSchema inp) @?= sgLegs    (buildSchema withoutField)
+          sgObjects (buildSchema inp) @?= sgObjects (buildSchema withoutField)
+
+    , testCase "cat-footprint legs resolve through the same default-namespace path as SQL legs" $
+        let sid = SqlStmtId "w_dw_copy.srw" "w_dw_copy" "clicked" 553
+            resolvedObj = ColumnObj (TableRef (Just "clims") "sales_order_items") "id"
+            inp = emptyInputs
+              { inCatFootprintColumns =
+                  [ SqlColRow sid Nothing (Just "sales_order_items") "id" True ]
+              , inCatalogColumns =
+                  [ CatColumnRow (Just "clims") "sales_order_items" "id" ]
+              , inDefaultNamespace = Just "clims"
+              }
+            sch = buildSchema inp
+        in do
+          assertBool "resolved (clims-qualified) object present"
+            (Set.member resolvedObj (sgObjects sch))
+          assertBool "writes leg attaches to the resolved object"
+            (SchMorphism (StmtObj sid) resolvedObj LegWrites `elem` sgLegs sch)
     ]
 
   , testGroup "resolveTableRef"
@@ -571,6 +608,7 @@ genSchemaInputs :: Gen SchemaInputs
 genSchemaInputs = SchemaInputs
   <$> Gen.list (Range.linear 0 4) genDwRetrieveColRow
   <*> Gen.list (Range.linear 0 4) genDwJoinLegRow
+  <*> Gen.list (Range.linear 0 4) genSqlColRow
   <*> Gen.list (Range.linear 0 4) genSqlColRow
   <*> Gen.list (Range.linear 0 4) genCatColumnRow
   <*> Gen.list (Range.linear 0 4) genCatFkRow
