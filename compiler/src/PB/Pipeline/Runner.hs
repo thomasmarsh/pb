@@ -158,7 +158,7 @@ data CompiledFile
 -- is its sole non-trivial producer) — the catch-all 'Nothing' totalizes
 -- against any future shape rather than crashing (Plan 163 Phase 3).
 morphismToColRow :: SchMorphism -> Maybe SqlStmtColumnRow
-morphismToColRow (SchMorphism (StmtObj (SqlStmtId f o p l)) (ColumnObj (TableRef ns tbl) col) LegWrites) =
+morphismToColRow (SchMorphism (StmtObj (SqlStmtId f o p l)) (ColumnObj (TableRef ns tbl) col) LegWrites _) =
   Just (SqlStmtColumnRow f o p l ns (Just tbl) col True)
 morphismToColRow _ = Nothing
 

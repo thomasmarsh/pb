@@ -9,8 +9,9 @@ module PB.Analysis.SchemaCategory
   ( -- Core category
     StmtId (..)
   , SchObject (..)
-  , FkSource (..)
   , LegKind (..)
+  , LegSource (..)
+  , renderLegSource
   , SchMorphism (..)
   , SchGraph (..)
   , schObjectKey
@@ -66,23 +67,41 @@ data SchObject
   | StmtObj StmtId
   deriving (Show, Eq, Ord)
 
--- | Provenance of an FK-derived morphism — kept distinct so a leg's origin
--- (code evidence vs. static DDL) is never lost.
-data FkSource = FkDdl | FkDwJoin
-  deriving (Show, Eq, Ord)
-
 -- | Generating edges of the free category.
 data LegKind
   = LegReads
   | LegWrites
   | LegRetrieve
-  | LegFk FkSource
+  | LegFk
   deriving (Show, Eq, Ord)
 
+-- | Plan 163 Phase 4 (D3): which analysis technique produced a given leg —
+-- orthogonal to 'LegKind' (the leg's direction/role) and to 'StmtId' (which
+-- front-end produced the statement). Supersedes the old 'FkSource' type,
+-- which covered only 'LegFk' rows ('FkDdl'/'FkDwJoin') via a second field;
+-- every leg now carries provenance, not just FK ones.
+data LegSource
+  = SrcSqlText      -- ^ sqlglot text extraction of an embedded SQL statement.
+  | SrcCatFootprint -- ^ 'PB.Analysis.SchFootprint's @CatOp -> Sch@ functor (dynamic-dispatch writes, e.g. @SetItem@).
+  | SrcDwRetrieve   -- ^ A DW retrieve's column list or update-table columns.
+  | SrcDwJoin       -- ^ A DataWindow @JOIN@ block.
+  | SrcDwWhere       -- ^ A DW retrieve's WHERE-clause predicate operand.
+  | SrcDdlFk        -- ^ A DDL-declared foreign key.
+  deriving (Show, Eq, Ord)
+
+renderLegSource :: LegSource -> Text
+renderLegSource SrcSqlText      = "sql_text"
+renderLegSource SrcCatFootprint = "cat_footprint"
+renderLegSource SrcDwRetrieve   = "dw_retrieve"
+renderLegSource SrcDwJoin       = "dw_join"
+renderLegSource SrcDwWhere      = "dw_where"
+renderLegSource SrcDdlFk        = "ddl_fk"
+
 data SchMorphism = SchMorphism
-  { legFrom :: SchObject
-  , legTo   :: SchObject
-  , legKind :: LegKind
+  { legFrom   :: SchObject
+  , legTo     :: SchObject
+  , legKind   :: LegKind
+  , legSource :: LegSource
   } deriving (Show, Eq, Ord)
 
 -- | The materialized graph: objects, the generating edges, and adjacency
@@ -272,16 +291,17 @@ buildSchema inputs =
     dwRetrieveLegs =
       [ SchMorphism (StmtObj (DwRetrieveId (drcFile r) (drcDwName r)))
                      (ColumnObj (resolve (TableRef (drcNamespace r) (drcTable r))) (drcColumn r))
-                     LegRetrieve
+                     LegRetrieve SrcDwRetrieve
       | r <- inDwRetrieveColumns inputs
       ]
 
     -- Shared by 'sqlLegs' and 'catFootprintLegs': both are lists of
     -- 'SqlColRow' (a statement touching a resolved-or-unresolved column),
-    -- differing only in which ingestion table/producer they came from.
-    mkSqlLegs :: [SqlColRow] -> [SchMorphism]
-    mkSqlLegs rows =
-      [ SchMorphism from to kind
+    -- differing only in which ingestion table/producer they came from —
+    -- 'src' names that producer for the 'legSource' column (D3).
+    mkSqlLegs :: LegSource -> [SqlColRow] -> [SchMorphism]
+    mkSqlLegs src rows =
+      [ SchMorphism from to kind src
       | r <- rows
       , Just tbl <- [scTable r]
       , let colObj  = ColumnObj (resolve (TableRef (scNamespace r) tbl)) (scColumn r)
@@ -291,12 +311,12 @@ buildSchema inputs =
               | otherwise   = (colObj, stmtObj, LegReads)
       ]
 
-    sqlLegs = mkSqlLegs (inSqlColumns inputs)
+    sqlLegs = mkSqlLegs SrcSqlText (inSqlColumns inputs)
 
-    catFootprintLegs = mkSqlLegs (inCatFootprintColumns inputs)
+    catFootprintLegs = mkSqlLegs SrcCatFootprint (inCatFootprintColumns inputs)
 
     dwJoinLegs =
-      [ SchMorphism (ColumnObj (resolve lt) lc) (ColumnObj (resolve rt) rc) (LegFk FkDwJoin)
+      [ SchMorphism (ColumnObj (resolve lt) lc) (ColumnObj (resolve rt) rc) LegFk SrcDwJoin
       | j <- inDwJoins inputs
       , Just (lt, lc) <- [splitColumnRef (djlLeftRef j)]
       , Just (rt, rc) <- [splitColumnRef (djlRightRef j)]
@@ -305,7 +325,7 @@ buildSchema inputs =
     ddlFkLegs =
       [ SchMorphism (ColumnObj (TableRef (cfrFromNamespace f) (cfrFromTable f)) (cfrFromColumn f))
                      (ColumnObj (TableRef (cfrToNamespace f) (cfrToTable f)) (cfrToColumn f))
-                     (LegFk FkDdl)
+                     LegFk SrcDdlFk
       | f <- inCatalogFks inputs
       ]
 

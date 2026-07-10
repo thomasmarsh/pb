@@ -139,7 +139,7 @@ _FK_EDGE_SQL = """
     FROM schema_morphisms m
     JOIN schema_objects fo ON fo.object_key = m.from_key
     JOIN schema_objects t ON t.object_key = m.to_key
-    WHERE m.leg_kind = 'fk' AND m.fk_source = ?
+    WHERE m.leg_kind = 'fk' AND m.leg_source = ?
 """
 
 
@@ -157,7 +157,7 @@ def get_fk_graph(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     # schema_morphisms for one real relationship; collapsing those before
     # counting undercounts "corroborated" relative to the D2 spike's own query
     # (which this test suite's exact counts are pinned to).
-    ddl_edges = rows(conn.execute(_FK_EDGE_SQL, ["ddl"]))
+    ddl_edges = rows(conn.execute(_FK_EDGE_SQL, ["ddl_fk"]))
     dwj_edges = rows(conn.execute(_FK_EDGE_SQL, ["dw_join"]))
 
     ddl_pairs = {_pair(r) for r in ddl_edges}

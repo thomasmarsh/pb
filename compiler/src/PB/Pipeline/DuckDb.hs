@@ -88,7 +88,8 @@ import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.SchemaCategory
-  ( StmtId (..), SchObject (..), LegKind (..), FkSource (..), SchMorphism (..)
+  ( StmtId (..), SchObject (..), LegKind (..), renderLegSource
+  , SchMorphism (..)
   , SchPath (..)
   , schObjectKey
   , DwRetrieveColRow (..), DwJoinLegRow (..), SqlColRow (..)
@@ -257,10 +258,10 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
         \(object_key TEXT, kind TEXT, namespace TEXT, table_name TEXT, column_name TEXT, \
         \stmt_file TEXT, stmt_object TEXT, stmt_proc TEXT, stmt_line INTEGER)"
       , "CREATE TABLE IF NOT EXISTS schema_morphisms \
-        \(from_key TEXT, to_key TEXT, leg_kind TEXT, fk_source TEXT)"
+        \(from_key TEXT, to_key TEXT, leg_kind TEXT, leg_source TEXT)"
       , "CREATE TABLE IF NOT EXISTS decomposition_coslice \
         \(seed_key TEXT, target_key TEXT, direction TEXT, leg_ordinal INTEGER, \
-        \leg_from TEXT, leg_to TEXT, leg_kind TEXT, fk_source TEXT)"
+        \leg_from TEXT, leg_to TEXT, leg_kind TEXT, leg_source TEXT)"
       -- Plan 157 Phase 4.5: reads from the namespace-carrying
       -- dw_retrieve_tables/sql_statement_tables directly -- no more
       -- CSV-split of sql_statements.tables (which has no namespace of its
@@ -1140,13 +1141,14 @@ appendDeadCode conn rows = withRaw conn "dead_code" $ \app ->
     aInt      app (DeadCode.dpCallerCountScoped d)
     endRow app
 
--- | (kind text, fk_source text) for a 'LegKind'.
-renderLegKind :: LegKind -> (Text, Maybe Text)
-renderLegKind LegReads         = ("reads",    Nothing)
-renderLegKind LegWrites        = ("writes",   Nothing)
-renderLegKind LegRetrieve      = ("retrieve", Nothing)
-renderLegKind (LegFk FkDdl)    = ("fk", Just "ddl")
-renderLegKind (LegFk FkDwJoin) = ("fk", Just "dw_join")
+-- | Kind text for a 'LegKind'. Provenance (formerly a second, FK-only
+-- @fk_source@ column derived here) is now the general 'legSource' field on
+-- every 'SchMorphism' row -- see 'renderLegSource' (Plan 163 Phase 4, D3).
+renderLegKind :: LegKind -> Text
+renderLegKind LegReads    = "reads"
+renderLegKind LegWrites   = "writes"
+renderLegKind LegRetrieve = "retrieve"
+renderLegKind LegFk       = "fk"
 
 appendSchemaObjects :: DuckConn -> [SchObject] -> IO ()
 appendSchemaObjects _    [] = pure ()
@@ -1189,9 +1191,8 @@ appendSchemaMorphisms conn ms = withRaw conn "schema_morphisms" $ \app ->
   for_ ms $ \m -> do
     aText      app (schObjectKey (legFrom m))
     aText      app (schObjectKey (legTo m))
-    let (kindText, fkSrc) = renderLegKind (legKind m)
-    aText      app kindText
-    aMaybeText app fkSrc
+    aText      app (renderLegKind (legKind m))
+    aText      app (renderLegSource (legSource m))
     endRow app
 
 -- | Plan 153 D5: one row per leg of each column's materialized coslice path
@@ -1212,9 +1213,8 @@ appendDecompositionCoslice conn rows = withRaw conn "decomposition_coslice" $ \a
         aInt       app ordinal
         aText      app (schObjectKey (legFrom leg))
         aText      app (schObjectKey (legTo leg))
-        let (kindText, fkSrc) = renderLegKind (legKind leg)
-        aText      app kindText
-        aMaybeText app fkSrc
+        aText      app (renderLegKind (legKind leg))
+        aText      app (renderLegSource (legSource leg))
         endRow app
 
 -- ---------------------------------------------------------------------------

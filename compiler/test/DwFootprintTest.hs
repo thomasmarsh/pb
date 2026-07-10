@@ -6,7 +6,7 @@ import PB.AST.DataWindow      (DwTable (..), DwColumn (..), DwRetrieve (..), DwR
 import PB.AST.Expr            (Expr (..), Lvalue (..), LvSegment (..))
 import PB.Analysis.DwFootprint
 import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..),
-                                    FkSource (..), CatColumnRow (..))
+                                    LegSource (..), CatColumnRow (..))
 import PB.Grammar.DataWindow  (parsePbSelect)
 import PB.Pipeline.SqlParse   (TableRef (..))
 
@@ -82,8 +82,8 @@ tests = testGroup "DwFootprint"
           let r = emptyRetrieve { drColumns = ["misth_final.kodfinal", "misth_final.descfinal"] }
           in dwRetrieveFootprint ctx0 "f.srd" "dw1" (mkTable r [])
                @?= Set.fromList
-                     [ SchMorphism stmt1 (ColumnObj (TableRef Nothing "misth_final") "kodfinal") LegRetrieve
-                     , SchMorphism stmt1 (ColumnObj (TableRef Nothing "misth_final") "descfinal") LegRetrieve
+                     [ SchMorphism stmt1 (ColumnObj (TableRef Nothing "misth_final") "kodfinal") LegRetrieve SrcDwRetrieve
+                     , SchMorphism stmt1 (ColumnObj (TableRef Nothing "misth_final") "descfinal") LegRetrieve SrcDwRetrieve
                      ]
       ]
 
@@ -91,7 +91,7 @@ tests = testGroup "DwFootprint"
       [ testCase "dcUpdate=True column with dcDbName produces a LegWrites leg" $
           dwRetrieveFootprint ctx0 "f.srd" "dw1" (mkTable emptyRetrieve [writeColumn])
             @?= Set.singleton
-                  (SchMorphism stmt1 (ColumnObj (TableRef Nothing "misth_final") "kodfinal") LegWrites)
+                  (SchMorphism stmt1 (ColumnObj (TableRef Nothing "misth_final") "kodfinal") LegWrites SrcDwRetrieve)
 
       , testCase "dcUpdate=False column produces no leg" $
           dwRetrieveFootprint ctx0 "f.srd" "dw1"
@@ -119,7 +119,7 @@ tests = testGroup "DwFootprint"
                @?= Set.singleton
                      (SchMorphism (ColumnObj (TableRef Nothing "afxfilterd") "kodfilter")
                                   (StmtObj (DwRetrieveId "afxfilterd.srd" "dw_afx"))
-                                  LegReads)
+                                  LegReads SrcDwWhere)
 
       , testCase "same WHERE, empty catalog: no leg (no guessing past what the catalog confirms)" $
           let sql = "PBSELECT( VERSION(400) TABLE(NAME=~\"afxfilterd~\") \
@@ -139,7 +139,7 @@ tests = testGroup "DwFootprint"
               ctx = mkDwFootprintCtx [CatColumnRow (Just "openpay") "misth_final" "kodfinal"] Nothing
           in dwRetrieveFootprint ctx "f.srd" "dw1" (mkTable r [])
                @?= Set.singleton
-                     (SchMorphism (ColumnObj (TableRef (Just "openpay") "misth_final") "kodfinal") stmt1 LegReads)
+                     (SchMorphism (ColumnObj (TableRef (Just "openpay") "misth_final") "kodfinal") stmt1 LegReads SrcDwWhere)
 
       , testCase "literal EXP2 (ExInt) contributes no leg of its own" $
           let wc = DwWhereClause "misth_final.isasf" "=" "1" Nothing
@@ -149,7 +149,7 @@ tests = testGroup "DwFootprint"
               ctx = mkDwFootprintCtx [CatColumnRow Nothing "misth_final" "isasf"] Nothing
           in dwRetrieveFootprint ctx "f.srd" "dw1" (mkTable r [])
                @?= Set.singleton
-                     (SchMorphism (ColumnObj (TableRef Nothing "misth_final") "isasf") stmt1 LegReads)
+                     (SchMorphism (ColumnObj (TableRef Nothing "misth_final") "isasf") stmt1 LegReads SrcDwWhere)
       ]
 
   , testGroup "dwRetrieveFootprint: joins -> LegFk FkDwJoin"
@@ -160,7 +160,7 @@ tests = testGroup "DwFootprint"
                @?= Set.singleton
                      (SchMorphism (ColumnObj (TableRef Nothing "a") "x")
                                   (ColumnObj (TableRef Nothing "b") "y")
-                                  (LegFk FkDwJoin))
+                                  LegFk SrcDwJoin)
       ]
 
   , testGroup "dwRetrieveFootprint: totality on missing/raw retrieve"
@@ -171,7 +171,7 @@ tests = testGroup "DwFootprint"
                 }
           in dwRetrieveFootprint ctx0 "f.srd" "dw1" table
                @?= Set.singleton
-                     (SchMorphism stmt1 (ColumnObj (TableRef Nothing "misth_final") "kodfinal") LegWrites)
+                     (SchMorphism stmt1 (ColumnObj (TableRef Nothing "misth_final") "kodfinal") LegWrites SrcDwRetrieve)
 
       , testCase "dtRetrieve = Just (DwRetrieveRaw _) yields only write legs, no crash" $
           let table = DwTable
@@ -180,7 +180,7 @@ tests = testGroup "DwFootprint"
                 }
           in dwRetrieveFootprint ctx0 "f.srd" "dw1" table
                @?= Set.singleton
-                     (SchMorphism stmt1 (ColumnObj (TableRef Nothing "misth_final") "kodfinal") LegWrites)
+                     (SchMorphism stmt1 (ColumnObj (TableRef Nothing "misth_final") "kodfinal") LegWrites SrcDwRetrieve)
       ]
 
   , testGroup "dwRetrieveFootprint: default-namespace resolution"
@@ -189,6 +189,6 @@ tests = testGroup "DwFootprint"
               ctx = mkDwFootprintCtx [CatColumnRow (Just "openpay") "misth_final" "kodfinal"] (Just "openpay")
           in dwRetrieveFootprint ctx "f.srd" "dw1" (mkTable r [])
                @?= Set.singleton
-                     (SchMorphism stmt1 (ColumnObj (TableRef (Just "openpay") "misth_final") "kodfinal") LegRetrieve)
+                     (SchMorphism stmt1 (ColumnObj (TableRef (Just "openpay") "misth_final") "kodfinal") LegRetrieve SrcDwRetrieve)
       ]
   ]

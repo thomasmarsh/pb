@@ -11,8 +11,11 @@
 -- with 'PB.Analysis.SchemaCategory.buildSchema's existing row-based
 -- @dwRetrieveLegs@\/@dwJoinLegs@ producers (fed via DB-persisted
 -- @DwRetrieveColRow@\/@DwJoinLegRow@ rows). That duplication is intentional
--- for this phase -- reconciling\/deduping the two producers under a shared
--- @leg_source@ column is Plan 163 Phase 3\/4's job, not this one's.
+-- for this phase -- this module has no production call sites yet (see
+-- Plan 163's own Phase 2 status note); wiring it in and reconciling any
+-- overlap with @buildSchema@'s existing producers is future-phase work.
+-- Each of the four leg categories already tags its own 'LegSource' (Plan
+-- 163 Phase 4, D3) so a future wiring session doesn't need to revisit this.
 module PB.Analysis.DwFootprint
   ( DwFootprintCtx (..)
   , mkDwFootprintCtx
@@ -27,7 +30,7 @@ import PB.AST.DataWindow
   )
 import PB.AST.Expr (Expr (..), Lvalue (..), LvSegment (..))
 import PB.Analysis.SchemaCategory
-  ( SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), FkSource (..)
+  ( SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..)
   , CatColumnRow (..), splitColumnRef, resolveTableRef, catalogNamespacedTables
   )
 import PB.Pipeline.SqlParse (TableRef (..))
@@ -109,7 +112,7 @@ dwRetrieveFootprint ctx file dwName table =
 
     -- Column list -> LegRetrieve.
     retrieveLegs = Set.fromList
-      [ SchMorphism stmtObj (ColumnObj (resolve tref) col) LegRetrieve
+      [ SchMorphism stmtObj (ColumnObj (resolve tref) col) LegRetrieve SrcDwRetrieve
       | Just r <- [mRetrieve]
       , c <- drColumns r
       , Just (tref, col) <- [splitColumnRef c]
@@ -120,7 +123,7 @@ dwRetrieveFootprint ctx file dwName table =
     -- splitColumnRef already parses for drColumns -- no separate parse of
     -- dtUpdate's bare table name needed.
     writeLegs = Set.fromList
-      [ SchMorphism stmtObj (ColumnObj (resolve tref) col) LegWrites
+      [ SchMorphism stmtObj (ColumnObj (resolve tref) col) LegWrites SrcDwRetrieve
       | c <- dtColumns table
       , dcUpdate c
       , Just dbname <- [dcDbName c]
@@ -130,7 +133,7 @@ dwRetrieveFootprint ctx file dwName table =
     -- WHERE predicate Expr tree -> LegReads, gated on DDL catalog
     -- membership (no guessing past what the catalog confirms).
     whereLegs = Set.fromList
-      [ SchMorphism (ColumnObj resolvedRef col) stmtObj LegReads
+      [ SchMorphism (ColumnObj resolvedRef col) stmtObj LegReads SrcDwWhere
       | Just r <- [mRetrieve]
       , w <- drWhere r
       , me <- [dwcParsedExp1 w, dwcParsedExp2 w]
@@ -140,9 +143,9 @@ dwRetrieveFootprint ctx file dwName table =
       , Set.member (ns, tbl, col) (dfcCatalogColumns ctx)
       ]
 
-    -- Joins -> LegFk FkDwJoin.
+    -- Joins -> LegFk, SrcDwJoin.
     joinLegs = Set.fromList
-      [ SchMorphism (ColumnObj (resolve lt) lc) (ColumnObj (resolve rt) rc) (LegFk FkDwJoin)
+      [ SchMorphism (ColumnObj (resolve lt) lc) (ColumnObj (resolve rt) rc) LegFk SrcDwJoin
       | Just r <- [mRetrieve]
       , j <- drJoins r
       , Just (lt, lc) <- [splitColumnRef (djLeft j)]

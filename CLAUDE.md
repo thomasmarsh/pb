@@ -1644,9 +1644,19 @@ builtinMethodNames :: Set Text     -- class methods
 data StmtId = SqlStmtId { siFile, siObject, siProc :: Text, siLine :: Int }
             | DwRetrieveId { siFile, siDwName :: Text }
 data SchObject = ColumnObj TableRef Text | StmtObj StmtId
-data FkSource  = FkDdl | FkDwJoin
-data LegKind   = LegReads | LegWrites | LegRetrieve | LegFk FkSource
-data SchMorphism = SchMorphism { legFrom, legTo :: SchObject, legKind :: LegKind }
+data LegKind   = LegReads | LegWrites | LegRetrieve | LegFk
+-- LegSource (Plan 163 Phase 4, D3, 2026-07-10): supersedes the old FkSource
+-- type (FkDdl | FkDwJoin, a second field meaningful only on LegFk rows) --
+-- every SchMorphism now carries provenance, tagging which analysis
+-- technique found it. Orthogonal to StmtId's front-end tag (DW/PS/future
+-- PL/SQL) and to LegKind (the leg's direction/role).
+data LegSource = SrcSqlText | SrcCatFootprint | SrcDwRetrieve
+               | SrcDwJoin | SrcDwWhere | SrcDdlFk
+renderLegSource :: LegSource -> Text
+-- SrcSqlText->"sql_text", SrcCatFootprint->"cat_footprint",
+-- SrcDwRetrieve->"dw_retrieve", SrcDwJoin->"dw_join",
+-- SrcDwWhere->"dw_where", SrcDdlFk->"ddl_fk"
+data SchMorphism = SchMorphism { legFrom, legTo :: SchObject, legKind :: LegKind, legSource :: LegSource }
 data SchGraph  = SchGraph { sgObjects :: Set.Set SchObject, sgLegs :: [SchMorphism]
                           , sgOut, sgIn :: Map.Map SchObject [SchMorphism] }
 schObjectKey :: SchObject -> Text   -- canonical DB key (object_key/from_key/to_key)
@@ -1938,7 +1948,9 @@ appendDeadCode   :: DuckConn -> [DeadCode.DeadProcedure] -> IO ()
 -- schema_objects/schema_morphisms (Plan 148 Phase 1b, 2026-07-07): written
 -- by runPass9 from SchemaCategory.buildSchema's SchGraph. object_key/
 -- from_key/to_key columns hold SchemaCategory.schObjectKey's canonical
--- string form.
+-- string form. schema_morphisms' leg_source column (Plan 163 Phase 4,
+-- 2026-07-10; was fk_source, FK-only) holds renderLegSource (legSource m)
+-- for every row -- see SchemaCategory's LegSource entry above.
 appendSchemaObjects   :: DuckConn -> [SchemaCategory.SchObject]   -> IO ()
 appendSchemaMorphisms :: DuckConn -> [SchemaCategory.SchMorphism] -> IO ()
 -- decomposition_coslice (Plan 153 D5, 2026-07-07): written by runPass10,

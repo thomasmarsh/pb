@@ -240,7 +240,7 @@ _FK_EDGE_SQL = """
     FROM schema_morphisms m
     JOIN schema_objects fo ON fo.object_key = m.from_key
     JOIN schema_objects t ON t.object_key = m.to_key
-    WHERE m.leg_kind = 'fk' AND m.fk_source = ?
+    WHERE m.leg_kind = 'fk' AND m.leg_source = ?
 """
 
 
@@ -252,7 +252,7 @@ def build_fk_graph(conn: Conn) -> graphviz.Digraph:
     depends on `api`), dropping the constraint_name/dw_sources annotation
     lookups this diagram doesn't render.
     """
-    ddl_rows = conn.execute(_FK_EDGE_SQL, ["ddl"]).fetchall()
+    ddl_rows = conn.execute(_FK_EDGE_SQL, ["ddl_fk"]).fetchall()
     dwj_rows = conn.execute(_FK_EDGE_SQL, ["dw_join"]).fetchall()
 
     def pair(row: tuple) -> tuple[tuple, tuple]:

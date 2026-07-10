@@ -38,7 +38,7 @@ import PB.AST.Type (renderPbType)
 import PB.Analysis.CallClassify (segName)
 import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), CatOp, foldCat)
 import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainDwBinding)
-import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), DwRetrieveColRow (..))
+import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..), DwRetrieveColRow (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv, lookupScopedVar)
 import PB.Analysis.TypeResolve (DwControlBinding (..))
 import PB.AST.Expr (Expr (..), Lvalue (..), LvSegment (..))
@@ -148,7 +148,7 @@ instance Effectful SchFootprint where
   suspend _ _ = SchFootprint (const Set.empty)
   callProc name args = SchFootprint $ \ctx ->
     case resolveSetItem ctx name args of
-      Just (tbl, col) -> Set.singleton (SchMorphism (StmtObj (fcStmtObj ctx)) (ColumnObj tbl col) LegWrites)
+      Just (tbl, col) -> Set.singleton (SchMorphism (StmtObj (fcStmtObj ctx)) (ColumnObj tbl col) LegWrites SrcCatFootprint)
       Nothing         -> Set.empty
   splitValue = SchFootprint (const Set.empty)
   ret        = SchFootprint (const Set.empty)

@@ -10,7 +10,7 @@ import PB.Analysis.CatEval    (Value)
 import PB.Analysis.CatLower   (compileSsa)
 import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.SchFootprint
-import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), FkSource (..),
+import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..),
                                     DwRetrieveColRow (..), splitColumnRef)
 import PB.Analysis.SSA        (buildSsa)
 import PB.Analysis.TypeEnv    (ScopedTypeEnv (..), WorkspaceEnv (..), buildWorkspaceEnv, procEnv)
@@ -64,11 +64,11 @@ lvExpr n = ExLvalue (Lvalue [LvSegment n Nothing])
 
 -- Content is arbitrary: only used to exercise Set union as a monoid.
 morphismA, morphismB, morphismC, morphismD, morphismE :: SchMorphism
-morphismA = SchMorphism (ColumnObj (TableRef Nothing "t1") "a") (StmtObj (SqlStmtId "f" "o" "p" 1)) LegReads
-morphismB = SchMorphism (StmtObj (SqlStmtId "f" "o" "p" 2)) (ColumnObj (TableRef Nothing "t2") "b") LegWrites
-morphismC = SchMorphism (StmtObj (DwRetrieveId "f" "dw1")) (ColumnObj (TableRef Nothing "t3") "c") LegRetrieve
-morphismD = SchMorphism (ColumnObj (TableRef Nothing "t4") "d") (ColumnObj (TableRef Nothing "t5") "e") (LegFk FkDdl)
-morphismE = SchMorphism (ColumnObj (TableRef Nothing "t6") "f") (ColumnObj (TableRef Nothing "t7") "g") (LegFk FkDwJoin)
+morphismA = SchMorphism (ColumnObj (TableRef Nothing "t1") "a") (StmtObj (SqlStmtId "f" "o" "p" 1)) LegReads SrcSqlText
+morphismB = SchMorphism (StmtObj (SqlStmtId "f" "o" "p" 2)) (ColumnObj (TableRef Nothing "t2") "b") LegWrites SrcSqlText
+morphismC = SchMorphism (StmtObj (DwRetrieveId "f" "dw1")) (ColumnObj (TableRef Nothing "t3") "c") LegRetrieve SrcDwRetrieve
+morphismD = SchMorphism (ColumnObj (TableRef Nothing "t4") "d") (ColumnObj (TableRef Nothing "t5") "e") LegFk SrcDdlFk
+morphismE = SchMorphism (ColumnObj (TableRef Nothing "t6") "f") (ColumnObj (TableRef Nothing "t7") "g") LegFk SrcDwJoin
 
 allMorphisms :: [SchMorphism]
 allMorphisms = [morphismA, morphismB, morphismC, morphismD, morphismE]
@@ -158,7 +158,7 @@ tests = testGroup "SchFootprint"
           @?= Set.singleton
                 (SchMorphism (StmtObj (fcStmtObj ctx1))
                              (ColumnObj (TableRef Nothing "sales_order_items") "id")
-                             LegWrites)
+                             LegWrites SrcCatFootprint)
 
     , testCase "unbound control yields empty footprint" $
         foldSchFootprint ctx1
@@ -219,7 +219,7 @@ tests = testGroup "SchFootprint"
                         footprint = foldSchFootprint ctx term
                         expected = SchMorphism (StmtObj (fcStmtObj ctx))
                                                (ColumnObj (TableRef Nothing "sales_order_items") "id")
-                                               LegWrites
+                                               LegWrites SrcCatFootprint
                     L.length dwCols @?= 5
                     Set.member expected footprint @?= True
                   other -> assertFailure ("expected exactly 1 clicked/cb_getitem event, got " <> show (length other))
@@ -288,7 +288,7 @@ tests = testGroup "SchFootprint"
                            footprint = foldSchFootprint ctx term
                            expected  = SchMorphism (StmtObj (fcStmtObj ctx))
                                                     (ColumnObj (TableRef Nothing "misth_fylo_epidom") "kodfylo")
-                                                    LegWrites
+                                                    LegWrites SrcCatFootprint
                        aliasBindings @?= Map.fromList [(("w_misth_fylo_form", "idw_epidom"), "dw_misth_fylo_epidom_list")]
                        Set.member expected footprint @?= True
                      (openMatches, changedMatches) -> assertFailure

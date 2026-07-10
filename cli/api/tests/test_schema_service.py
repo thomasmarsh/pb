@@ -31,7 +31,7 @@ def test_get_co_update_rituals_mixed_namespace_sort():
         "(object_key TEXT, kind TEXT, namespace TEXT, table_name TEXT, column_name TEXT, "
         "stmt_file TEXT, stmt_object TEXT, stmt_proc TEXT, stmt_line INTEGER)"
     )
-    conn.execute("CREATE TABLE schema_morphisms (from_key TEXT, to_key TEXT, leg_kind TEXT, fk_source TEXT)")
+    conn.execute("CREATE TABLE schema_morphisms (from_key TEXT, to_key TEXT, leg_kind TEXT, leg_source TEXT)")
 
     conn.execute(
         "INSERT INTO schema_objects VALUES "

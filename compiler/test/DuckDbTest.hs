@@ -3,12 +3,14 @@ module DuckDbTest (tests) where
 import PB.Prelude
 import PB.Pipeline.DuckDb
 import PB.Analysis.SchemaCategory
-  ( StmtId (..), SchObject (..), LegKind (..), FkSource (..), SchMorphism (..)
+  ( StmtId (..), SchObject (..), LegKind (..), LegSource (..), SchMorphism (..)
   , SchPath (..)
   , DwRetrieveColRow (..), DwJoinLegRow (..), SqlColRow (..)
   , CatColumnRow (..), CatFkRow (..)
   )
 import PB.Pipeline.SqlParse (TableRef (..))
+import Database.DuckDB.Simple           (query_)
+import Database.DuckDB.Simple.FromRow   (FromRow (..), field)
 import Test.Tasty             (TestTree, testGroup)
 import Test.Tasty.HUnit       (testCase, assertEqual)
 
@@ -170,6 +172,15 @@ testCatFootprintColumnsRoundTrip = withWriteConn ":memory:" $ \conn -> do
     cfCols
   assertEqual "sql_statement_columns unaffected (separate table)" [] sqlCols
 
+-- | Local row shape for reading back (leg_kind, leg_source) pairs raw --
+-- no production query function exists for schema_morphisms/
+-- decomposition_coslice (Python reads them directly via SQL), so these
+-- tests query_ the DuckDB connection directly rather than adding one.
+data KindSourceRow = KindSourceRow Text Text deriving (Eq, Show)
+
+instance FromRow KindSourceRow where
+  fromRow = KindSourceRow <$> field <*> field
+
 testAppendSchemaObjectsMorphisms :: IO ()
 testAppendSchemaObjectsMorphisms = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
@@ -178,19 +189,29 @@ testAppendSchemaObjectsMorphisms = withWriteConn ":memory:" $ \conn -> do
       stmt = StmtObj (SqlStmtId "f.srf" "obj" "proc" 1)
   appendSchemaObjects conn [colA, colB, stmt]
   appendSchemaMorphisms conn
-    [ SchMorphism stmt colA LegReads
-    , SchMorphism colA colB (LegFk FkDdl)
+    [ SchMorphism stmt colA LegReads SrcSqlText
+    , SchMorphism colA colB LegFk SrcDdlFk
     ]
   -- Appending empty lists after a real batch must not throw
   appendSchemaObjects   conn []
   appendSchemaMorphisms conn []
+
+  rows <- query_ conn "SELECT leg_kind, leg_source FROM schema_morphisms ORDER BY leg_kind"
+  assertEqual "leg_source persists per row (Plan 163 Phase 4, D3)"
+    [KindSourceRow "fk" "ddl_fk", KindSourceRow "reads" "sql_text"]
+    rows
 
 testAppendDecompositionCoslice :: IO ()
 testAppendDecompositionCoslice = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
   let colA = ColumnObj (TableRef Nothing "a") "x"
       stmt = SqlStmtId "f.srf" "obj" "proc" 1
-      path = SchPath colA (StmtObj stmt) [ SchMorphism colA (StmtObj stmt) LegReads ]
+      path = SchPath colA (StmtObj stmt) [ SchMorphism colA (StmtObj stmt) LegReads SrcSqlText ]
   appendDecompositionCoslice conn [ (colA, [path]) ]
   -- Appending an empty list after a real batch must not throw
   appendDecompositionCoslice conn []
+
+  rows <- query_ conn "SELECT leg_kind, leg_source FROM decomposition_coslice"
+  assertEqual "leg_source persists on decomposition_coslice rows (Plan 163 Phase 4, D3)"
+    [KindSourceRow "reads" "sql_text"]
+    rows

@@ -50,7 +50,7 @@ tests = testGroup "SchemaCategory"
         in sgLegs sch @?=
              [ SchMorphism (StmtObj (DwRetrieveId "d_test.srd" "d_test"))
                             (ColumnObj (TableRef Nothing "orders") "id")
-                            LegRetrieve
+                            LegRetrieve SrcDwRetrieve
              ]
 
     , testCase "multi-table stmt columns attributed via sql_statement_columns" $
@@ -64,16 +64,16 @@ tests = testGroup "SchemaCategory"
             sch = buildSchema inp
         in do
           assertBool "a.x leg present"
-            (SchMorphism (ColumnObj (TableRef Nothing "a") "x") (StmtObj sid) LegReads
+            (SchMorphism (ColumnObj (TableRef Nothing "a") "x") (StmtObj sid) LegReads SrcSqlText
                `elem` sgLegs sch)
           assertBool "b.y leg present"
-            (SchMorphism (ColumnObj (TableRef Nothing "b") "y") (StmtObj sid) LegReads
+            (SchMorphism (ColumnObj (TableRef Nothing "b") "y") (StmtObj sid) LegReads SrcSqlText
                `elem` sgLegs sch)
           assertBool "no cross-attribution a.y"
-            (not (SchMorphism (ColumnObj (TableRef Nothing "a") "y") (StmtObj sid) LegReads
+            (not (SchMorphism (ColumnObj (TableRef Nothing "a") "y") (StmtObj sid) LegReads SrcSqlText
                     `elem` sgLegs sch))
           assertBool "no cross-attribution b.x"
-            (not (SchMorphism (ColumnObj (TableRef Nothing "b") "x") (StmtObj sid) LegReads
+            (not (SchMorphism (ColumnObj (TableRef Nothing "b") "x") (StmtObj sid) LegReads SrcSqlText
                     `elem` sgLegs sch))
 
     , testCase "write column produces stmt -> column leg" $
@@ -82,7 +82,7 @@ tests = testGroup "SchemaCategory"
               { inSqlColumns = [ SqlColRow sid Nothing (Just "account") "balance" True ] }
             sch = buildSchema inp
         in sgLegs sch @?=
-             [ SchMorphism (StmtObj sid) (ColumnObj (TableRef Nothing "account") "balance") LegWrites ]
+             [ SchMorphism (StmtObj sid) (ColumnObj (TableRef Nothing "account") "balance") LegWrites SrcSqlText ]
 
     , testCase "stmt column with no resolved table_name produces no ColumnObj/leg" $
         let sid = SqlStmtId "fn_perm.srf" "fn_perm" "fn_perm" 30
@@ -100,7 +100,7 @@ tests = testGroup "SchemaCategory"
         in sgLegs sch @?=
              [ SchMorphism (ColumnObj (TableRef Nothing "usruserperm") "kodapp")
                             (ColumnObj (TableRef Nothing "usrapps") "kodapp")
-                            (LegFk FkDwJoin)
+                            LegFk SrcDwJoin
              ]
 
     , testCase "catalog FK emits LegFk FkDdl; catalog-only columns become objects with no legs" $
@@ -115,7 +115,7 @@ tests = testGroup "SchemaCategory"
             sch = buildSchema inp
             fkLeg = SchMorphism (ColumnObj (TableRef Nothing "usrgroupperm") "kodaction")
                                   (ColumnObj (TableRef Nothing "usractions")   "kodaction")
-                                  (LegFk FkDdl)
+                                  LegFk SrcDdlFk
             unusedObj = ColumnObj (TableRef Nothing "usrgroupperm") "unused_col"
         in do
           assertBool "FK leg present" (fkLeg `elem` sgLegs sch)
@@ -130,7 +130,7 @@ tests = testGroup "SchemaCategory"
                   [ SqlColRow sid Nothing (Just "sales_order_items") "id" True ] }
             sch = buildSchema inp
         in sgLegs sch @?=
-             [ SchMorphism (StmtObj sid) (ColumnObj (TableRef Nothing "sales_order_items") "id") LegWrites ]
+             [ SchMorphism (StmtObj sid) (ColumnObj (TableRef Nothing "sales_order_items") "id") LegWrites SrcCatFootprint ]
 
     , testCase "empty inCatFootprintColumns is a no-op" $
         let sid = SqlStmtId "f.srf" "obj" "proc" 5
@@ -158,7 +158,39 @@ tests = testGroup "SchemaCategory"
           assertBool "resolved (clims-qualified) object present"
             (Set.member resolvedObj (sgObjects sch))
           assertBool "writes leg attaches to the resolved object"
-            (SchMorphism (StmtObj sid) resolvedObj LegWrites `elem` sgLegs sch)
+            (SchMorphism (StmtObj sid) resolvedObj LegWrites SrcCatFootprint `elem` sgLegs sch)
+    ]
+
+  , testGroup "leg_source tagging (Plan 163 Phase 4, D3)"
+    [ testCase "dw_retrieve_columns row tags SrcDwRetrieve" $
+        let inp = emptyInputs
+              { inDwRetrieveColumns =
+                  [ DwRetrieveColRow "d_test.srd" "d_test" Nothing "orders" "id" ] }
+        in map legSource (sgLegs (buildSchema inp)) @?= [SrcDwRetrieve]
+
+    , testCase "sql_statement_columns row tags SrcSqlText" $
+        let sid = SqlStmtId "f.srf" "obj" "proc" 5
+            inp = emptyInputs
+              { inSqlColumns = [ SqlColRow sid Nothing (Just "account") "balance" True ] }
+        in map legSource (sgLegs (buildSchema inp)) @?= [SrcSqlText]
+
+    , testCase "cat_footprint_columns row tags SrcCatFootprint" $
+        let sid = SqlStmtId "w_dw_copy.srw" "w_dw_copy" "clicked" 553
+            inp = emptyInputs
+              { inCatFootprintColumns =
+                  [ SqlColRow sid Nothing (Just "sales_order_items") "id" True ] }
+        in map legSource (sgLegs (buildSchema inp)) @?= [SrcCatFootprint]
+
+    , testCase "dw_joins row tags SrcDwJoin" $
+        let inp = emptyInputs
+              { inDwJoins = [ DwJoinLegRow "dw.srd" "dw_usruserperm_list" "usruserperm.kodapp" "usrapps.kodapp" ] }
+        in map legSource (sgLegs (buildSchema inp)) @?= [SrcDwJoin]
+
+    , testCase "catalog_fks row tags SrcDdlFk" $
+        let inp = emptyInputs
+              { inCatalogFks =
+                  [ CatFkRow Nothing "usrgroupperm" "kodaction" Nothing "usractions" "kodaction" ] }
+        in map legSource (sgLegs (buildSchema inp)) @?= [SrcDdlFk]
     ]
 
   , testGroup "resolveTableRef"
@@ -214,7 +246,7 @@ tests = testGroup "SchemaCategory"
           assertBool "no unresolved (unqualified) duplicate object"
             (not (Set.member (ColumnObj (TableRef Nothing "clinicalaccession") "id") (sgObjects sch)))
           assertBool "reads leg attaches to the resolved object"
-            (SchMorphism resolvedObj (StmtObj sid) LegReads `elem` sgLegs sch)
+            (SchMorphism resolvedObj (StmtObj sid) LegReads SrcSqlText `elem` sgLegs sch)
 
     , testCase "unqualified ref stays unresolved when default namespace's catalog has no matching table" $
         let sid = SqlStmtId "f.srf" "obj" "proc" 5
@@ -231,7 +263,7 @@ tests = testGroup "SchemaCategory"
           assertBool "unresolved object present"
             (Set.member unresolvedObj (sgObjects sch))
           assertBool "reads leg attaches to the unresolved object"
-            (SchMorphism unresolvedObj (StmtObj sid) LegReads `elem` sgLegs sch)
+            (SchMorphism unresolvedObj (StmtObj sid) LegReads SrcSqlText `elem` sgLegs sch)
 
     , testCase "no default namespace configured leaves TableRef Nothing unchanged (regression pin)" $
         let sid = SqlStmtId "f.srf" "obj" "proc" 5
@@ -242,7 +274,7 @@ tests = testGroup "SchemaCategory"
               }
             sch = buildSchema inp
         in assertBool "leg still targets the unqualified (Nothing-namespace) object"
-             (SchMorphism (StmtObj sid) (ColumnObj (TableRef Nothing "account") "balance") LegWrites
+             (SchMorphism (StmtObj sid) (ColumnObj (TableRef Nothing "account") "balance") LegWrites SrcSqlText
                 `elem` sgLegs sch)
 
     , testCase "table defined in multiple namespaces: only the default-namespace copy absorbs unqualified legs" $
@@ -264,7 +296,7 @@ tests = testGroup "SchemaCategory"
             hasLegTo o = any (\m -> legTo m == o || legFrom m == o) (sgLegs sch)
         in do
           assertBool "default-namespace copy absorbs the unqualified leg"
-            (SchMorphism resolvedObj (StmtObj sid) LegReads `elem` sgLegs sch)
+            (SchMorphism resolvedObj (StmtObj sid) LegReads SrcSqlText `elem` sgLegs sch)
           assertBool "clims_common copy has no legs" (not (hasLegTo commonObj))
           assertBool "clims_archive copy has no legs" (not (hasLegTo archiveObj))
 
@@ -287,7 +319,7 @@ tests = testGroup "SchemaCategory"
               }
             sch = buildSchema inp
         in assertBool "resolves despite --default-namespace CLIMS vs. catalog's lowercase clims"
-             (SchMorphism resolvedObj (StmtObj sid) LegReads `elem` sgLegs sch)
+             (SchMorphism resolvedObj (StmtObj sid) LegReads SrcSqlText `elem` sgLegs sch)
     ]
 
   , testGroup "SchPath"
@@ -295,13 +327,13 @@ tests = testGroup "SchemaCategory"
         let oA = ColumnObj (TableRef Nothing "a") "x"
             oB = ColumnObj (TableRef Nothing "b") "y"
             oC = ColumnObj (TableRef Nothing "c") "z"
-            p  = SchPath oA oB [ SchMorphism oA oB LegReads ]
+            p  = SchPath oA oB [ SchMorphism oA oB LegReads SrcSqlText ]
         in composePath p (idPath oC) @?= Nothing
 
     , testCase "idPath is left and right unit" $
         let oA = ColumnObj (TableRef Nothing "a") "x"
             oB = ColumnObj (TableRef Nothing "b") "y"
-            p  = SchPath oA oB [ SchMorphism oA oB LegReads ]
+            p  = SchPath oA oB [ SchMorphism oA oB LegReads SrcSqlText ]
         in do
           composePath (idPath oA) p @?= Just p
           composePath p (idPath oB) @?= Just p
@@ -321,7 +353,7 @@ tests = testGroup "SchemaCategory"
       n <- forAll $ Gen.int (Range.linear 1 6)
       objs <- forAll $ Gen.list (Range.singleton (n + 1)) genObj
       let chain = objs
-          legs  = [ SchMorphism a b LegReads | (a, b) <- zip chain (drop 1 chain) ]
+          legs  = [ SchMorphism a b LegReads SrcSqlText | (a, b) <- zip chain (drop 1 chain) ]
       i <- forAll $ Gen.int (Range.linear 0 n)
       j <- forAll $ Gen.int (Range.linear i n)
       let slice lo hi = SchPath (chain !!! lo) (chain !!! hi) (take (hi - lo) (drop lo legs))
@@ -351,8 +383,8 @@ tests = testGroup "SchemaCategory"
             sch = buildSchema inp
             paths = blastRadius sch colA
             expected = SchPath colA colB
-              [ SchMorphism colA (StmtObj sid) LegReads
-              , SchMorphism (StmtObj sid) colB LegWrites
+              [ SchMorphism colA (StmtObj sid) LegReads SrcSqlText
+              , SchMorphism (StmtObj sid) colB LegWrites SrcSqlText
               ]
         in assertBool "two-hop path colA -> stmt -> colB present" (expected `elem` paths)
 
@@ -405,7 +437,7 @@ tests = testGroup "SchemaCategory"
             inp  = emptyInputs
               { inSqlColumns = [ SqlColRow sid Nothing (Just "account") "balance" True ] }
             sch = buildSchema inp
-            expected = SchPath (StmtObj sid) colA [ SchMorphism (StmtObj sid) colA LegWrites ]
+            expected = SchPath (StmtObj sid) colA [ SchMorphism (StmtObj sid) colA LegWrites SrcSqlText ]
         in assertBool "writer path present" (expected `elem` validationWalkBack sch colA)
 
     , testCase "validationWalkBack finds a DW retrieve via LegRetrieve" $
@@ -415,7 +447,7 @@ tests = testGroup "SchemaCategory"
               { inDwRetrieveColumns =
                   [ DwRetrieveColRow "d_test.srd" "d_test" Nothing "orders" "id" ] }
             sch = buildSchema inp
-            expected = SchPath (StmtObj dwId) colA [ SchMorphism (StmtObj dwId) colA LegRetrieve ]
+            expected = SchPath (StmtObj dwId) colA [ SchMorphism (StmtObj dwId) colA LegRetrieve SrcDwRetrieve ]
         in assertBool "retrieve path present" (expected `elem` validationWalkBack sch colA)
 
     , testCase "validationWalkBack follows an FK chain transitively (usrgroupperm.kodaction -> usractions.kodaction shape)" $
@@ -430,8 +462,8 @@ tests = testGroup "SchemaCategory"
               }
             sch = buildSchema inp
             expected = SchPath (StmtObj sid) colActions
-              [ SchMorphism (StmtObj sid) colGroupPerm LegWrites
-              , SchMorphism colGroupPerm colActions (LegFk FkDdl)
+              [ SchMorphism (StmtObj sid) colGroupPerm LegWrites SrcSqlText
+              , SchMorphism colGroupPerm colActions LegFk SrcDdlFk
               ]
         in assertBool "writer-through-FK path present" (expected `elem` validationWalkBack sch colActions)
 
@@ -473,7 +505,7 @@ tests = testGroup "SchemaCategory"
             inp  = emptyInputs
               { inSqlColumns = [ SqlColRow sid Nothing (Just "a") "x" False ] }  -- LegReads: colA -> stmt
             sch = buildSchema inp
-            expected = SchPath colA (StmtObj sid) [ SchMorphism colA (StmtObj sid) LegReads ]
+            expected = SchPath colA (StmtObj sid) [ SchMorphism colA (StmtObj sid) LegReads SrcSqlText ]
         in assertBool "reads-leg path present" (expected `elem` columnCoslice sch colA)
 
     , testCase "backward-only reachable statement appears via its writes leg" $
@@ -482,7 +514,7 @@ tests = testGroup "SchemaCategory"
             inp  = emptyInputs
               { inSqlColumns = [ SqlColRow sid Nothing (Just "account") "balance" True ] }  -- LegWrites: stmt -> colA
             sch = buildSchema inp
-            expected = SchPath (StmtObj sid) colA [ SchMorphism (StmtObj sid) colA LegWrites ]
+            expected = SchPath (StmtObj sid) colA [ SchMorphism (StmtObj sid) colA LegWrites SrcSqlText ]
         in assertBool "writes-leg path present" (expected `elem` columnCoslice sch colA)
 
     , testCase "statement reachable via both forward and backward directions is deduped to one entry, the shorter path" $
@@ -502,7 +534,7 @@ tests = testGroup "SchemaCategory"
               SchPath from to _ | from == colA && to == StmtObj sid -> True
               SchPath from to _ | from == StmtObj sid && to == colA -> True
               _ -> False
-            shortPath = SchPath colA (StmtObj sid) [ SchMorphism colA (StmtObj sid) LegReads ]
+            shortPath = SchPath colA (StmtObj sid) [ SchMorphism colA (StmtObj sid) LegReads SrcSqlText ]
         in do
           assertBool "exactly one entry reaches the statement" (length (filter matchesStmt paths) == 1)
           assertBool "the kept entry is the shorter (1-hop) forward path" (shortPath `elem` paths)
@@ -519,8 +551,8 @@ tests = testGroup "SchemaCategory"
               }
             sch = buildSchema inp
             expected = SchPath (StmtObj sid) colActions
-              [ SchMorphism (StmtObj sid) colGroupPerm LegWrites
-              , SchMorphism colGroupPerm colActions (LegFk FkDdl)
+              [ SchMorphism (StmtObj sid) colGroupPerm LegWrites SrcSqlText
+              , SchMorphism colGroupPerm colActions LegFk SrcDdlFk
               ]
         in assertBool "two-hop FK writer path present" (expected `elem` columnCoslice sch colActions)
 
