@@ -63,8 +63,8 @@ untestable without mocking I/O frameworks.
 
 ## The `ShellEnv` pattern
 
-`shell/env.py` defines a composition of three domain-specific environments
-on a single top-level dataclass:
+`cli/pipeline/src/pb/pipeline/env.py` defines a composition of three
+domain-specific environments on a single top-level dataclass:
 
 ```python
 @dataclass
@@ -78,25 +78,28 @@ env = ShellEnv()
 ```
 
 Each sub-environment groups related side-effecting operations behind typed
-fields:
+fields. DuckDB schema DDL, incremental state tracking, batch row import,
+and JSONL ingestion are owned entirely by Haskell
+(`compiler/src/PB/Pipeline/DuckDb.hs`'s `initSchema`/`append*` — see
+`doc/architecture-pipeline.md`); `env.py` covers only the imperative
+boundary Python itself owns.
 
-### `BuildEnv` (8 fields)
-Repo discovery, binary builds, file enumeration, source hashing, and
+### `BuildEnv` (9 fields)
+Repo discovery, binary builds, file enumeration, source/PBL hashing, and
 explorer build management. Fields: `find_repo`, `get_queries_dir`,
 `find_binary`, `build_runner`, `walk_sr_files`, `count_sr_files`,
-`hash_source_dir`, `ensure_explorer_built`.
+`hash_source_dir`, `hash_pbl_dir`, `ensure_explorer_built`.
 
-### `RunnerEnv` (2 fields)
-Parsing via the `pbc` Haskell binary and rich error rendering.
-Fields: `parse_stream`, `render_error`.
+### `RunnerEnv` (1 field)
+Rich error rendering for parse failures surfaced from `pbc`. Field:
+`render_error`.
 
-### `StorageEnv` (15 fields)
-DuckDB connection management, schema DDL, incremental state tracking,
-batch import, and metric computation.
-Fields: `db_connection`, `create_schema`, `drop_tables`,
-`create_state_table`, `load_file_state`, `delete_file_rows`,
-`save_file_state`, `build_subset_tmpdir`, `import_batch`,
-`run_from_jsonl_lines`, `compute_dit`, `compute_metrics`, `connect`.
+### `StorageEnv` (2 fields)
+DuckDB connection management and a SQL-parse-failure count query. Fields:
+`db_connection`, `count_sql_parse_failures`. `compute_metrics`/
+`compute_dit` (`pipeline/metrics.py`, Python/NetworkX graph metrics) are
+called directly by the `analyze` command rather than routed through
+`ShellEnv`.
 
 ### `reporter`
 A `Reporter` protocol instance (default: `LiveReporter`). Alternatives
@@ -115,7 +118,7 @@ from dataclasses import replace
 from pb.pipeline.env import ShellEnv
 
 test_env = ShellEnv(
-    runner=replace(env.runner, parse_stream=my_mock_stream),
+    runner=replace(env.runner, render_error=my_mock_render_error),
 )
 ```
 
@@ -123,11 +126,11 @@ test_env = ShellEnv(
 
 Fields whose real function has keyword-only parameters or defaults that
 call sites rely on use a `Protocol` class preserving the full signature
-(e.g., `ParseStream`, `FindRepo`, `BuildRunner`, `EnsureExplorerBuilt`,
-`DbConnection`, `ImportBatch`, `RunFromJsonlLines`). All other fields use
-plain `Callable[[...], ...]` annotations — pyright still checks the
-assigned function against the field's type, but no class boilerplate is
-needed where the real signature adds nothing a `Callable` cannot express.
+(currently: `FindRepo`, `BuildRunner`, `EnsureExplorerBuilt`,
+`DbConnection`). All other fields use plain `Callable[[...], ...]`
+annotations — pyright still checks the assigned function against the
+field's type, but no class boilerplate is needed where the real signature
+adds nothing a `Callable` cannot express.
 
 ---
 
@@ -139,11 +142,13 @@ needed where the real signature adds nothing a `Callable` cannot express.
 |---|---|---|
 | `models.py` | Row types (`NamedTuple`) and `RowBatch` container | `ObjectRow`, `ProcedureRow`, `CallRow`, `DwControlRow`, `SqlStatementRow`, `InheritsRow`, `RowBatch`, `new_row_batch`, `TABLES` |
 | `sql.py` | PowerBuilder SQL parser (wraps sqlglot with PB-specific rewrites) | `parse_pb_sql` |
+| `ddl.py` | DDL catalog parsing helpers (Oracle constraint-state stripping, etc.) — Python-side counterpart to the Haskell `--ddl` bridge path | see module for current exports |
 | `state.py` | Pure file-state diffing | `FileDiff`, `diff_state` |
 | `cfg_builder.py` | CFG reconstruction from JSON | `cfg_from_json`, `compute_node_states` |
 | `cfg_renderer.py` | CFG → GraphViz DOT | `cfg_to_dot` |
 | `diagram_builder.py` | Pure diagram styling and GraphViz render functions | `render_calls`, `render_dw_tables`, `render_heatmap`, `render_inheritance`, `render_proc_tables`, `render_sql_lineage`, `render_table_lineage`, `KIND_COLORS`, `GRAPH_ATTRS` |
 | `slicing.py` | Backward/forward program slicing | `backward_slice`, `forward_slice`, `build_proc_def_use` |
+| `data/` | Static reference data package (e.g. lookup tables consumed by pure transforms) | see package for current exports |
 
 ### `pb.pipeline` — Imperative boundary (I/O-bound)
 
@@ -161,16 +166,27 @@ needed where the real signature adds nothing a `Callable` cannot express.
 | `reporter.py` | Unified output protocol for pipeline operations | `Reporter`, `LiveReporter`, `RecordingReporter` |
 | `queries.py` | Auto-register `queries/*.sql` files as `pb query <name>` commands | `register_queries` |
 | `impact.py` | Impact analysis command | `run_impact` |
+| `jobs.py` | Async job submit/poll backing store for long-running renders (diagram jobs) | see module for current exports |
+| `lattice.py` | Window/table lattice computation backing `pb.api`'s schema lattice endpoint | see module for current exports |
 | `commands/corpus.py` | `pb check-corpus` implementation | `run` |
 | `commands/clean.py` | `pb clean` implementation | `run` |
 | `commands/bombadil.py` | Dev subcommands | `app` |
 | `bridge/sql_worker.py` | SQL bridge subprocess worker (stdin/stdout jsonl) | `main` |
+
+Top-level CLI commands wired in `cli.py`: `index`, `extract`, `dead-code`,
+`impact`, `clean`, `check-corpus`, `analyze`, `explore`, plus the `query`
+sub-app (one command per `queries/*.sql` file) and the `dev` sub-app
+(Bombadil). There is no `pb diagram` or `pb render` command — diagram
+rendering and body rendering are both served through the FastAPI layer
+(`/api/diagram*`, `/api/diagrams/*`) and consumed by the UI, not invoked
+from the CLI.
 
 ### `pb.api` — FastAPI web layer
 
 | Module | Purpose | Key exports |
 |---|---|---|
 | `app.py` | FastAPI application factory, router registration, SPA fallback | `create_app` |
+| `models.py` | Shared Pydantic response models used across routes | see module for current exports |
 | `routes/dependencies.py` | Shared DB connection dependency and `rows()` helper | `get_db`, `get_conn`, `rows` |
 | `routes/objects.py` | Object listing, detail, source, explore tree endpoints | Router: `/api/objects` |
 | `routes/procedures.py` | Procedure listing and detail endpoints | Router: `/api/procedures` |
@@ -178,10 +194,25 @@ needed where the real signature adds nothing a `Callable` cannot express.
 | `routes/datawindows.py` | DataWindow listing, control detail, lineage endpoints | Router: `/api/datawindows` |
 | `routes/tables.py` | Table inventory, lineage detail, DB stats | Router: `/api/tables` |
 | `routes/queries.py` | Canned SQL query execution endpoints | Router: `/api/query` |
-| `routes/diagrams.py` | SVG diagram generation endpoints | Router: `/api/diagrams` |
-| `routes/static.py` | SPA index.html serving | Router: serves `index.html` for non-API paths |
+| `routes/sql.py` | Ad-hoc SQL execution (the UI's "Ask" query runner); supports `PB_SQL_MOCK=1` | Router: `POST /api/sql/execute` |
+| `routes/diagrams.py` | Static SVG diagrams (`/api/diagram/{kind}`), async diagram-job submit/poll (`/api/diagram-jobs/{job_id}`), and CFG/wiring-diagram endpoints scoped to one procedure | Router: `/api/diagram*`, `/api/diagrams/*` |
+| `routes/analysis.py` | Dead code, taint sources/sinks/paths/annotations, backward/forward slice | Router: `/api/analysis/*` |
+| `routes/schema.py` | DB-schema-as-category endpoints: FK graph, column usage/affinity/managers, co-update rituals, procedure footprint, decomposition candidates, window-table lattice | Router: `/api/schema/*` |
+| `routes/runtime.py` | Runtime interpreter support data (e.g. DW query inventory for the mock/live SQL backend) | Router: `/api/runtime/*` |
+| `routes/libraries.py` | Per-PBL-library detail endpoint | Router: `/api/libraries/{name}` |
+| `routes/errors.py` | Parse-error listing and source lookup for failed files | Router: `/api/errors*` |
+| `routes/static.py` | SPA index.html serving | Router: serves `index.html` for non-API, non-static paths |
 | `services/datawindows.py` | DataWindow business logic | `list_datawindows`, `get_dw_detail`, `get_dw_controls` |
 | `services/tables.py` | Table business logic | `list_tables`, `get_table_detail`, `get_table_stats` |
+| `services/objects.py` | Object business logic backing `routes/objects.py` | see module for current exports |
+| `services/procedures.py` | Procedure business logic backing `routes/procedures.py` | see module for current exports |
+| `services/search.py` | Full-text search business logic | see module for current exports |
+| `services/queries.py` | Canned-query execution business logic | see module for current exports |
+| `services/diagrams.py` | Diagram rendering orchestration (sync SVG + async job path) | `render_svg`-style helpers; see module for current exports |
+| `services/analysis.py` | Dead code / taint / slicing business logic backing `routes/analysis.py` | see module for current exports |
+| `services/schema.py` | DB-schema-as-category business logic (Plan 148/153/157) | `get_fk_graph`, `get_procedure_footprint`, `get_column_managers`, `get_column_usage`, `get_column_affinity`, `get_co_update_rituals`, `get_decomposition_candidates`, `get_window_table_lattice` |
+| `services/libraries.py` | Per-library business logic backing `routes/libraries.py` | see module for current exports |
+| `services/errors.py` | Parse-error business logic backing `routes/errors.py` | see module for current exports |
 
 ### Top-level
 
@@ -249,7 +280,7 @@ The refactoring (Plans 59–68) structured the Python layer into three packages:
 - **pb.lib** — pure transforms, zero I/O, independently testable
 - **pb.pipeline** — CLI tool + orchestration, mockable via `ShellEnv`
 - **pb.api** — FastAPI web layer, thin routes + service business logic
-- **339 tests**, ruff clean, pyright 0 errors.
+- Ratcheted test count (see `cli && uv run pytest lib/tests/ pipeline/tests/ api/tests/` for the current total), ruff clean, pyright 0 errors baseline.
 - **Mockable boundaries** — every side effect flows through `ShellEnv`,
   enabling unit tests that don't touch the filesystem, database, or
   subprocesses.

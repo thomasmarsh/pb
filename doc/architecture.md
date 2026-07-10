@@ -1,20 +1,19 @@
 # Architecture
 
-> **⚠ STALE:** This document references the old `pb_cli/` layout. The Python
-> layer has been restructured into a uv workspace with three packages
-> (`pb.lib`, `pb.pipeline`, `pb.api`). See `doc/architecture-cli.md` for the
-> updated CLI architecture. A full rewrite of this document is planned.
-
 This repository contains three independent runtimes that form a pipeline:
 **Haskell** parses PowerBuilder source files and runs all analysis passes,
 **Python** drives orchestration and presents data via FastAPI, and
-**TypeScript** renders the interactive web UI.
+**TypeScript** renders the interactive web UI (a pnpm workspace of four
+packages plus the SPA shell).
 
-In DuckDB-direct mode (`pbc --db FILE`), Haskell writes all analysis
-results (procedures, call resolution, taint, dead code) directly to DuckDB —
-Python reads but never writes the analysis tables.  The older JSONL mode
-(`pbc --jsonl | pb index`) still works for incremental re-runs via
-`pb index`.
+`pb index` drives `pbc --db FILE` (DuckDB-direct mode): Haskell writes all
+analysis results (procedures, call resolution, taint, dead code, DW/SQL
+schema category, decomposition candidates) directly to DuckDB. Python reads
+but never writes the analysis tables. `pbc --jsonl` also exists, for
+piping to other tools.
+
+There is no code-generation step between Haskell and TypeScript. AST wire
+types are hand-maintained on both sides (see "Common gotchas" below).
 
 ---
 
@@ -22,68 +21,51 @@ Python reads but never writes the analysis tables.  The older JSONL mode
 
 ```
 pb/
-├── compiler/                   Haskell parser (pb-compiler)
-│   ├── src/                  Library (PB.* modules)
-│   ├── app/                  pbc executable
-│   ├── test/                 Test suite
-│   └── pb-compiler.cabal          Cabal project configuration
-├── cli/                      Python CLI tools
-│   ├── pb_cli/               Python package (./pb or uv run --project cli pb_cli)
-│   │   ├── cli.py            Entry point — all CLI sub-commands
-│   │   ├── build.py          Build management: locate cabal binary, drive pnpm
-│   │   ├── common.py         DuckDB schema (CREATE TABLE) + INSERT statements
-│   │   ├── index.py          JSONL → DuckDB ingestion (pb index)
-│   │   ├── analyze.py        Call graph metrics, cyclomatic complexity (pb analyze)
-│   │   ├── diagram.py        GraphViz SVG generation (pb diagram)
-│   │   ├── debt.py           BsRaw / ExRaw / DW coverage analyser (pb debt)
-│   │   ├── queries.py        Auto-register queries/*.sql as `pb query` commands
-│   │   ├── state.py          Incremental state tracking (file mtimes)
-│   │   ├── pbl.py            .pbl extraction via powerbuilder-pbl-dump
-│   │   └── explorer/         FastAPI backend (pb explore)
-│   │       ├── api.py        FastAPI router — all /api/* endpoints
-│   │       ├── app.py        App factory — mounts router + static files
-│   │       ├── render.py     AST body_json → human-readable PBScript
-│   │       └── static/       Served at /static/
-│   │           ├── index.html  SPA shell page
-│   │           ├── style.css
-│   │           └── dist/     Vite build output (app.js) — not in git
-│   ├── tests/                pytest test suite
-│   ├── pyproject.toml        Python project configuration
-│   └── uv.lock               Python dependency lockfile
-├── ui/                       TypeScript / SolidJS SPA source
-│   ├── src/
-│   │   ├── App.tsx           SPA root component — wires store + routes
-│   │   ├── core/             TCA-style framework primitives
-│   │   │   ├── reducer.ts    Reducer<S,A,Env> type, pullback(), combine()
-│   │   │   ├── effect.ts     Effect<A> class for async side effects
-│   │   │   └── store.ts      createStore(), scope() — getState() on Store/ScopedStore
-│   │   ├── app/              App-level wiring
-│   │   │   ├── state.ts      AppState shape (single state tree)
-│   │   │   ├── actions.ts    AppAction tagged union (routes to feature reducers)
-│   │   │   ├── reducer.ts    combine() + pullback() for all feature reducers
-│   │   │   └── api-client.ts Typed wrappers around /api/* endpoints
-│   │   ├── features/         One sub-directory per feature slice
-│   │   │   ├── navigation/   View routing, stats, detail panels
-│   │   │   ├── objects/      Object list, search, sort, pagination
-│   │   │   ├── diagrams/     SVG call-graph and lineage diagrams
-│   │   │   ├── queries/      Custom SQL query runner
-│   │   │   ├── search/       Full-text search
-│   │   │   └── explore/      AST explorer (procedure body viewer)
-│   │   ├── components/       SolidJS UI components (one file per panel)
-│   │   └── types/
-│   │       ├── api.ts              Hand-written API response shapes
-│   │       └── ast.generated.ts    Generated from Haskell — not in git
-│   ├── tests/                Vitest test suite
-│   ├── package.json          pnpm project (SolidJS, Vite, Vitest)
-│   ├── vite.config.ts        Builds src/App.tsx → ../cli/pb_cli/explorer/static/dist/
-│   └── tsconfig.json
-├── pb                        Top-level wrapper: uv run --project cli pb_cli $*
-├── doc/                      Documentation and planning
-│   ├── plan/                 Planning artifacts (BACKLOG, STRATEGY, session plans)
-│   ├── spec.md               Parser specification
-│   └── pbl-spec.txt          PBL file format spec
-├── queries/                  SQL files served as `pb query <name>` commands
-└── example/                  Corpus data (openpay-0.1.1b, PowerBuilder-Example)
+├── compiler/                   Haskell parser + analysis engine (pb-compiler)
+│   ├── src/PB/
+│   │   ├── AST/               Data types only (Located, Expr, BodyStmt, Type, SourceFile, DataWindow)
+│   │   ├── Lexing/            Tokenization, layout, string mode
+│   │   ├── Grammar/           megaparsec parsers (Body, File, Stream, DataWindow)
+│   │   ├── Pipeline/          Preprocess, Emit, Passes, Runner, Serialise, FileWalk, DuckDb, SqlParse
+│   │   ├── Analysis/          Cfg, Dataflow, Taint, TypeEnv/TypeResolve, CatOp/CatLower/GraphBuilder,
+│   │   │                      SchemaCategory, SchFootprint (categorical IR + DB-schema-as-category)
+│   │   └── Prelude.hs         Custom Prelude — no String, no partial functions
+│   ├── app/Main.hs             pbc executable — flag parsing + dispatch only
+│   ├── test/                   Test suite (HUnit + Hedgehog, corpus oracle tests)
+│   └── pb-compiler.cabal
+├── cli/                       Python workspace (uv), three packages — see doc/architecture-cli.md
+│   ├── lib/src/pb/lib/         Pure data transforms, zero I/O
+│   ├── pipeline/src/pb/pipeline/  Imperative boundary: pbc invocation, DuckDB, CLI commands
+│   │   └── commands/           check-corpus, clean, dead-code, bombadil (dev) sub-commands
+│   ├── api/src/pb/api/         FastAPI web layer
+│   │   ├── routes/             Thin endpoint handlers (one module per concern)
+│   │   ├── services/           Business logic called by routes
+│   │   └── static/dist/        Vite build output (App.js) — not in git; served at /static/
+│   ├── lib/tests/, pipeline/tests/, api/tests/   pytest suites (per-package)
+│   └── pyproject.toml + uv.lock (workspace root)
+├── ui/                        TypeScript pnpm workspace — SolidJS
+│   ├── packages/
+│   │   ├── core/               Framework primitives: Reducer/Effect/Store, job-poll (async diagram jobs)
+│   │   ├── interpreter/        PB runtime interpreter: instr-graph execution, DataWindow layout/render
+│   │   ├── platform/           Feature reducers + shared components + API types (the bulk of the app)
+│   │   └── windowing/          MDI-style window manager (launch/manager/runner reducers)
+│   ├── app/                    SPA shell — imports all four packages
+│   │   └── src/
+│   │       ├── App.tsx         Root component
+│   │       ├── state.ts / actions.ts / reducer.ts / api-client.ts   App-level wiring
+│   │       └── views/features/ Per-feature view components (analysis, dashboard, datawindows,
+│   │                            diagrams, errors, explore, launch, library, navigation, objects,
+│   │                            queries, search, tables)
+│   ├── tests/                  Vitest suite for the SPA shell
+│   ├── pnpm-workspace.yaml, package.json, vite.config.ts, vitest.config.ts (workspace root)
+│   └── bombadil-spec.ts        Temporal-logic PBT spec (see doc/bombadil.md)
+├── pb                          Top-level wrapper: uv run --project cli pb $*
+├── doc/                        Documentation and planning
+│   ├── plan/                  Planning artifacts (BACKLOG, STRATEGY, session plans) — gitignored
+│   ├── spec.md                Parser specification
+│   └── pbl-spec.txt           PBL file format spec
+├── queries/                    SQL files served as `pb query <name>` commands
+└── example/                    Corpus data (openpay-0.1.1b, PowerBuilder-Example)
 ```
 
 ---
@@ -93,134 +75,27 @@ pb/
 ```mermaid
 flowchart TD
     SRC["PowerBuilder source files\n.srw .sru .srd …"]
-    RUNNER["pbc\n(Haskell binary)"]
-    JSONL["JSONL stream\none JSON object per file"]
-    INDEX["pb index\n(cli/pb_cli/index.py)"]
+    RUNNER["pbc --db FILE\n(Haskell binary, passes 1-8)"]
     DB[("pb.duckdb")]
-    ANALYZE["pb analyze\n(cli/pb_cli/analyze.py)\ncall graph · cyclomatic complexity"]
-    EXPLORE["pb explore\n(cli/pb_cli/cli.py)"]
-    API["FastAPI\n(cli/pb_cli/explorer/api.py)"]
-    SPA["SolidJS SPA\n(ui/src/)"]
+    EXPLORE["pb explore\n(cli/pipeline/src/pb/pipeline/cli.py)"]
+    API["FastAPI\n(cli/api/src/pb/api/)"]
+    SPA["SolidJS SPA\n(ui/app/ + ui/packages/*)"]
 
-    SRC -->|"cabal run pbc\n-i SRC --jsonl"| RUNNER
-    RUNNER --> JSONL
-    JSONL --> INDEX
-    INDEX --> DB
-    DB --> ANALYZE
-    ANALYZE --> DB
+    SRC -->|"pb index\n→ pbc --db"| RUNNER
+    RUNNER -->|"writes directly\n(objects, procedures, dw_*, sql_*,\ntaint_*, schema_objects, decomposition_coslice …)"| DB
     DB --> EXPLORE
     EXPLORE --> API
     API -->|"HTTP /api/*"| SPA
 ```
 
-The Python layer never reads source files directly.  In DuckDB-direct mode it
-does not read analysis JSON at all — Haskell writes to DuckDB and Python reads
-from there.  In JSONL mode Python consumes the JSON stream from `pbc`.
-
----
-
-## Ingest pipeline internals
-
-`pb index` drives a two-phase pipeline: **import** then **graph metrics**.
-Understanding where time goes matters because the pipeline takes several minutes
-on a mid-size codebase (~1051 files, 50 000 DB rows).
-
-### Phase breakdown
-
-| Phase | Typical time | Bottleneck |
-|-------|-------------|-----------|
-| Parsing (subprocess) | ~13 s | Haskell GC + file I/O |
-| Indexing | ~3 m 40 s | JSON (de)serialisation, sqlglot SQL parsing, DuckDB writes |
-| Graph metrics | ~3 m 30 s | NetworkX betweenness centrality — O(V²E) exact algorithm |
-| **Total** | **~10 min** | |
-
-### Indexing phase (`cli/pb_cli/index.py`)
-
-`import_batch` accumulates all rows from the parsed object stream into Python
-lists (one list per table), then flushes in chunks of 5 000 rows inside a
-single explicit `BEGIN`/`COMMIT` transaction.
-
-The following work happens **in-memory before any DB write** to avoid
-re-reading the `procedures` table later:
-
-- **Cyclomatic complexity** — `count_branches(body) + 1` is computed on the
-  already-deserialized body dict in `_proc_row()` and stored directly in the
-  `procedures.cyclomatic` column.
-- **Call extraction** — `walk_calls(body)` runs on the same dict in
-  `_import_ps()` and populates `rows['calls']` directly.
-
-Both operations were previously a separate analyze sub-phase that re-fetched
-every procedure from the DB and re-parsed `body_json` through `json.loads`.
-Merging them into indexing eliminates ~2 m 10 s of redundant work.
-
-SQL statements embedded in procedure bodies (`SELECT`, `INSERT`, etc.) are
-identified by `_is_sql()` and parsed by `sqlglot` (with Oracle dialect) to
-extract table/column references.  This is the remaining CPU cost inside
-indexing.
-
-### Graph metrics phase (`cli/pb_cli/analyze.py`)
-
-`compute_metrics` rebuilds `object_metrics` from scratch on every run using
-four NetworkX operations over the call graph:
-
-1. **Betweenness centrality** — approximated by sampling `k = min(500, |V|)`
-   pivot nodes (`nx.betweenness_centrality(G, k=k)`).  Exact computation is
-   O(V²E) and dominates runtime for large graphs; sampling gives directionally
-   correct values at a fraction of the cost.
-2. **PageRank** — iterative power method (default 100 iterations, tol 1e-6).
-3. **DIT** (depth of inheritance tree) — BFS from each root of the inheritance
-   graph.
-4. **Row assembly + insert** — one bulk `executemany` into `object_metrics`.
-
-`object_metrics` and `calls` are treated differently:
-
-- `object_metrics` is always fully rebuilt (DROP + CREATE + INSERT).
-- `calls` is an incremental table in the permanent schema: rows for modified or
-  deleted files are pruned by `delete_file_rows` before re-ingestion, so
-  partial re-runs stay consistent.
-
-### Data flow inside `pb index`
-
-```mermaid
-flowchart TD
-    SRC["Source files\n.srw .sru .srd …"]
-    RUNNER["pbc\n(Haskell, subprocess)"]
-    JSONL["JSONL stream"]
-    PARSE["parse_stream()\ncli/pb_cli/parse.py"]
-    IMPORT["import_batch()\ncli/pb_cli/importing.py"]
-    SCHEMA["DuckDB schema\ncli/pb_cli/common.py"]
-
-    subgraph IMPORT_DETAIL["import_batch — per procedure"]
-        PROC_ROW["_proc_row()\n• json.dumps(body)\n• count_branches → cyclomatic"]
-        WALK["walk_calls(body)\n→ rows['calls']"]
-        SQL_PARSE["_extract_sql()\nsqlglot → sql_statements"]
-    end
-
-    DB[("pb.duckdb")]
-    METRICS["compute_metrics()\ncli/pb_cli/analyze.py"]
-
-    subgraph METRICS_DETAIL["compute_metrics"]
-        BC["betweenness_centrality\n(k=min(500,|V|) sampling)"]
-        PR["pagerank"]
-        DIT["compute_dit()"]
-        INS["INSERT object_metrics"]
-    end
-
-    SRC --> RUNNER --> JSONL --> PARSE --> IMPORT
-    SCHEMA --> DB
-    IMPORT --> IMPORT_DETAIL
-    IMPORT_DETAIL -->|"BEGIN … COMMIT\n5000-row chunks"| DB
-    DB --> METRICS --> METRICS_DETAIL --> DB
-```
-
-### Incremental re-runs
-
-`pipeline.py` hashes every source file with SHA-256 and stores results in
-`file_state`.  On re-run, only new or changed files are parsed and re-ingested.
-`delete_file_rows` prunes all rows for the changed file across every table in
-`TABLES` (including `calls`) before the new rows are inserted.  `object_metrics`
-is always fully rebuilt from the current `calls` and `procedures` tables after
-any indexing activity.
+The Python layer never reads source files directly, and never re-derives
+analysis results Haskell already computed. `pb index` shells out to `pbc
+--db`, so Haskell owns parsing *and* all downstream static-analysis passes
+(dataflow, taint, call resolution, dead code, the DB-schema-as-category
+model). Python's own computational work is limited to incremental re-run
+bookkeeping (`metadata` table, source hashing) and NetworkX graph metrics
+(`object_metrics` — PageRank, betweenness, DIT), which have no Haskell
+equivalent.
 
 ---
 
@@ -229,48 +104,47 @@ any indexing activity.
 ```mermaid
 flowchart LR
     subgraph Haskell["Haskell (pbc)"]
-        HS_SER["Serialise.hs\naeson + aeson-typescript"]
+        HS_SER["Serialise.hs\naeson orphan ToJSON instances"]
+        HS_DB["DuckDb.hs\ninitSchema + append*/query*"]
     end
-    subgraph Python["Python (cli/pb_cli/)"]
-        PY_BUILD["build.py\nensure_explorer_built"]
-        PY_IDX["index.py\nrun_from_jsonl_lines"]
-        PY_ANA["analyze.py\nwalk_calls · count_branches"]
-        PY_API["explorer/api.py\nFastAPI"]
+    subgraph Python["Python (cli/{lib,pipeline,api}/)"]
+        PY_BUILD["pipeline/build.py\nensure_explorer_built"]
+        PY_RUN["pipeline/pipeline.py\npb index → pbc --db"]
+        PY_API["api/routes/*, api/services/*\nFastAPI"]
     end
-    subgraph TS["TypeScript (ui/src/)"]
-        TS_TYPES["types/ast.generated.ts\n(build artifact)"]
-        TS_APP["App.tsx\nSolidJS SPA"]
+    subgraph TS["TypeScript (ui/)"]
+        TS_TYPES["packages/interpreter/src/types/ast.ts\n(hand-maintained)"]
+        TS_APP["app/src/App.tsx\nSolidJS SPA"]
     end
 
-    HS_SER -->|"--emit-ts\npnpm prebuild"| TS_TYPES
-    HS_SER -->|"--jsonl\nJSONL stream"| PY_IDX
+    HS_DB -->|"pbc --db\nDuckDB tables"| PY_RUN
     PY_BUILD -->|"pnpm build\nVite → App.js"| TS_APP
-    PY_IDX --> PY_ANA
     PY_API -->|"HTTP /api/*\nJSON"| TS_APP
+    TS_APP -.->|"types kept in sync by hand\nagainst Serialise.hs"| HS_SER
+    TS_TYPES -.-> TS_APP
 ```
 
-### Haskell → TypeScript: `--emit-ts`
+### Haskell → TypeScript: hand-maintained types (no codegen)
 
-`pbc --emit-ts` uses `aeson-typescript` to derive TypeScript type
-definitions directly from the Haskell AST types and prints them to stdout.
-The `prebuild` npm script writes this output to
-`src/types/ast.generated.ts` each time `pnpm build` is invoked:
+`compiler/src/PB/Pipeline/Serialise.hs` is the source of truth for wire
+shape (tag strings, `contents` wrapping, field-name stripping — see the
+"Common gotchas" section and `CLAUDE.md`'s JSON body-statement encoding
+notes). The TypeScript side mirrors it by hand in
+`ui/packages/interpreter/src/types/ast.ts`. When a Haskell AST constructor
+changes, that file must be updated manually; nothing enforces the
+correspondence at build time.
 
-```json
-"prebuild": "cabal run --project-dir ../parser pbc -v0 -- --emit-ts > src/types/ast.generated.ts"
-```
+### Haskell → Python: DuckDB (primary) / JSONL (secondary)
 
-`ast.generated.ts` is a build artifact (not committed to git) that emits
-`export type` / `export interface` declarations.  It is imported by
-`ui/src/types/state.ts`, `actions.ts`, `core.ts`, `api-client.ts`, and
-`components/Explore.tsx` to type the `BodyStmt[]` AST payloads flowing
-through the explore API.
+`pbc -i SRC_DIR --db FILE` runs all eight passes in Haskell and writes every
+analysis table directly (see `doc/architecture-pipeline.md` for the full
+schema). `pb index` invokes this mode; Python's `pb.pipeline.pipeline.run`
+handles incremental state (`metadata` table, SHA-256 source hashing) around
+the `pbc` subprocess call. `pbc --jsonl` (one JSON object per file to
+stdout) still exists for ad-hoc streaming/piping use but is not the path
+`pb index` takes.
 
-### Haskell → Python: JSONL
-
-`pbc -i SRC_DIR --jsonl` prints one JSON object per file to stdout.
-`cli/pb_cli/index.py:run_from_jsonl_lines` reads this stream and populates
-DuckDB.  The JSON encoding follows `genericToJSON` conventions:
+The JSON encoding follows `genericToJSON` conventions:
 
 | Shape | Haskell | JSON |
 |-------|---------|------|
@@ -286,61 +160,99 @@ constructor name.
 
 ### Python → TypeScript: static files
 
-`cli/pb_cli/build.py:ensure_explorer_built` calls `pnpm build` (with
-`--frozen-lockfile install` first if `node_modules` is absent).  `pnpm build`
-runs `prebuild` (emits TypeScript types) then Vite, writing
-`static/dist/App.js`.  The FastAPI app mounts `static/` at `/static/`.
+`cli/pipeline/src/pb/pipeline/build.py:ensure_explorer_built` calls `pnpm
+build` in `ui/` (with `pnpm install --frozen-lockfile` first if
+`node_modules` is absent). Vite writes the bundle to
+`cli/api/src/pb/api/static/dist/App.js`. The FastAPI app
+(`cli/api/src/pb/api/app.py`) mounts that `static/` directory at
+`/static/` and serves `index.html` for any non-`api/`, non-`static/` path
+(SPA fallback, `routes/static.py`).
 
-Staleness is determined by comparing the mtime of `cli/pb_cli/explorer/static/dist/app.js`
-against `ui/src/**/*.ts`, `ui/src/**/*.tsx`, `ui/package.json`, and `ui/vite.config.ts`.
+Staleness is determined by comparing the mtime of
+`cli/api/src/pb/api/static/dist/App.js` against the UI workspace's source
+files (`ui/app/src/**`, `ui/packages/*/src/**`, lockfile/config files).
 
 ### TypeScript → FastAPI: HTTP
 
-`src/api-client.ts` issues typed `fetch` calls to `/api/*` endpoints.
-`src/types/api.ts` hand-documents the response shapes.  There is no code
-generation for the API contract — changes to `api.py` must be reflected in
-`api.ts` manually.
+`ui/app/src/api-client.ts` issues typed `fetch` calls to `/api/*`
+endpoints. `ui/packages/platform/src/types/api.ts` hand-documents the
+response shapes. There is no code generation for the API contract —
+changes to any `cli/api/src/pb/api/routes/*.py` / `services/*.py` pair must
+be reflected in `api-client.ts`/`api.ts` manually. Per **UI Architecture
+Rule 1** (see `CLAUDE.md`), no component may call `fetch` directly — every
+HTTP call flows through an `Env` method wired via `api-client.ts`.
 
 ---
 
 ## UI state architecture
 
-The SPA uses a TCA 1.0–inspired architecture (`core/`) layered over
+The SPA uses a TCA 1.0–inspired architecture layered over
 [Valtio](https://github.com/pmndrs/valtio) for reactive state and SolidJS
-signals for rendering.
+signals for rendering. The framework primitives live in `@pb/core`
+(`ui/packages/core/`); every other package and `ui/app/` depends on it.
 
-### Core abstractions
+### Core abstractions (`@pb/core`, `ui/packages/core/src/`)
 
-**`Reducer<S, A, Env>`** (`core/reducer.ts`)
+**`Reducer<S, A, Env>`** (`reducer.ts`)
 
 A pure function `(draft: S, action: A, env: Env) => Effect<A> | null`.
 Reducers mutate `draft` in place (Valtio proxy) and optionally return an
-`Effect` describing async side work.  Two composition helpers:
+`Effect` describing async side work. Composition helpers:
 
 - `pullback(child, get, match, widen, getEnv)` — scopes a child reducer to a
   slice of parent state and a subset of parent actions.
+- `pullbackWithNav(...)` — like `pullback`, but also intercepts `env.navigate()`
+  calls synchronously and folds them into the same dispatch cycle (see
+  `doc/nav-philosophy.md` and **UI Architecture Rule 3** in `CLAUDE.md`).
 - `combine(...reducers)` — runs all reducers over the same draft and merges
   any returned effects.
 
-**`Effect<A>`** (`core/effect.ts`)
+**`Effect<A>`** (`effect.ts`)
 
-An opaque wrapper around `(send: (a: A) => void) => Promise<void>`.  Effects
+An opaque wrapper around `(send: (a: A) => void) => Promise<void>`. Effects
 are returned from reducers; the store executes them after the synchronous
-mutation is complete and dispatches the resulting actions back into the store.
-Combinators: `Effect.fromPromise`, `Effect.send`, `Effect.merge`, `.map`,
-`.catch`.
+mutation is complete and dispatches the resulting actions back into the
+store. Combinators: `Effect.none`, `Effect.send`, `Effect.fromPromise`,
+`Effect.merge`, `.map`, `.catch`.
 
-**`createStore`** (`core/store.ts`)
+**`createStore`** (`store.ts`)
 
-Creates a Valtio `proxy` and a `dispatch` function.  Each `dispatch` call
-runs the top-level reducer synchronously (mutating the proxy), then executes
-any returned `Effect` asynchronously.  `store.getState()` returns a SolidJS
-reactive accessor for the current state snapshot (call inside a component);
-`scope` narrows a parent store to a child state/action slice for prop-drilling.
+Creates a Valtio `proxy` and a `dispatch` function. `scope` narrows a
+parent store to a child state/action slice for prop-drilling.
 
-### Feature slices
+**`job-poll.ts`**
 
-Each feature under `features/` is self-contained:
+Generic async job-submit/poll state machine (submit → poll with
+exponential backoff, `JOB_POLL_BACKOFF_START_MS`/`_MAX_MS`, capped at
+`JOB_POLL_MAX_ATTEMPTS`) used by the async diagram-rendering subsystem
+(`/api/diagram-jobs/{job_id}`, Plan 159) so a slow GraphViz render doesn't
+block the request/response cycle.
+
+### `@pb/interpreter` (`ui/packages/interpreter/src/`)
+
+A client-side interpreter for the compiled PB `InstrGraph`/wiring output
+(mirrors the Haskell-side `PB.Analysis.InstrGraph`/`GraphBuilder` shapes —
+see `CLAUDE.md`'s Code Index). `instr/runner.ts` executes an instruction
+graph against a mock or live SQL backend; `render-window.ts` and
+`dwLayout.ts` turn a DataWindow's compiled layout + control values into a
+logical render tree for the UI's window-runner. `types/ast.ts` is the
+hand-maintained AST wire-type mirror described above. Used by the runtime
+test pattern documented in `CLAUDE.md` (`MockRuntimeEnv` + `renderWindow()`).
+
+### `@pb/windowing` (`ui/packages/windowing/src/`)
+
+State machines for simulating a PowerBuilder MDI application shell:
+`launch/` (opening a window from a menu/event), `manager/` (tracking open
+window instances), `runner/` (per-window event dispatch). Consumed by
+`ui/app/src/views/features/launch` and `library`.
+
+### `@pb/platform` (`ui/packages/platform/src/`)
+
+The bulk of the application: shared components (`components/`, including
+DataWindow grid/preview rendering, diagrams, source viewer, analysis
+panels) and feature slices under `features/` — `dashboard`, `datawindows`,
+`diagrams`, `errors`, `explore`, `navigation`, `objects`, `queries`,
+`search`, `tables`. Each feature slice follows the same shape:
 
 | File | Purpose |
 |------|---------|
@@ -349,15 +261,22 @@ Each feature under `features/` is self-contained:
 | `reducer.ts` | `*Reducer` + `*Env` interface (API dependencies) |
 
 The `*Env` interface lists every external dependency (API calls, etc.) as
-`Effect`-returning methods.  This keeps reducers pure and trivially testable —
-tests inject a fake `Env` with `Effect.send`.
+`Effect`-returning methods — see **UI Architecture Rules 1, 2, 4** in
+`CLAUDE.md` for the mandatory checklist when adding a new API call. This
+keeps reducers pure and trivially testable: tests inject a fake `Env` with
+`Effect.send`, never `vi.stubGlobal`.
 
-### Wiring
+### `ui/app/` — SPA shell
 
-`app/reducer.ts` calls `combine(pullback(navReducer, …), pullback(objectsReducer, …), …)`
-to produce the single top-level `AppState` / `AppAction` reducer.
-`App.tsx` calls `createStore(initialState(), reducer, env)` once and passes
-`dispatch` (and scoped stores) down the component tree.
+`app/src/reducer.ts` calls `combine(pullbackWithNav(navReducer, …),
+pullback(objectsReducer, …), …)` across reducers pulled from `@pb/platform`
+and `@pb/windowing` to produce the single top-level `AppState`/`AppAction`
+reducer. `App.tsx` calls `createStore(initialState(), reducer, env)` once
+and passes `dispatch` (and scoped stores) down the component tree.
+`app/src/views/features/` holds the SolidJS view components — one
+directory per feature, largely 1:1 with `@pb/platform`'s `features/`, plus
+two view-only additions (`launch`, `library`) that render `@pb/windowing`
+state.
 
 ---
 
@@ -367,21 +286,22 @@ to produce the single top-level `AppState` / `AppAction` reducer.
 |---------|---------|
 | Parsing PowerBuilder syntax | `compiler/src/PB/Lexing/`, `compiler/src/PB/Grammar/` |
 | AST data types | `compiler/src/PB/AST/` |
-| JSON serialisation + TS codegen | `compiler/src/PB/Pipeline/Serialise.hs` |
+| JSON serialisation | `compiler/src/PB/Pipeline/Serialise.hs` |
 | DuckDB-direct I/O (passes 1–8) | `compiler/src/PB/Pipeline/DuckDb.hs` |
+| DB-schema-as-category model | `compiler/src/PB/Analysis/SchemaCategory.hs`, `SchFootprint.hs` |
 | CLI entry point (Haskell) | `compiler/app/Main.hs` |
-| DuckDB schema (Python side) | `cli/pb_cli/common.py` |
-| JSONL → DuckDB ingestion | `cli/pb_cli/index.py` |
-| Call graph + cyclomatic complexity | `cli/pb_cli/analyze.py` |
-| FastAPI endpoints | `cli/pb_cli/explorer/api.py` |
-| AST → PBScript rendering | `cli/pb_cli/explorer/render.py` |
-| Explorer build orchestration | `cli/pb_cli/build.py:ensure_explorer_built` |
-| SPA root | `ui/src/App.tsx` |
-| SPA state shape | `ui/src/app/state.ts`, `ui/src/features/*/types.ts` |
-| SPA actions | `ui/src/app/actions.ts`, `ui/src/features/*/actions.ts` |
-| SPA reducer + store | `ui/src/core/reducer.ts`, `ui/src/core/store.ts`, `ui/src/app/reducer.ts` |
-| SPA async effects | `ui/src/core/effect.ts` |
-| Generated AST types (TS) | `ui/src/types/ast.generated.ts` (build artifact; `pnpm prebuild` regenerates) |
+| Pure Python transforms | `cli/lib/src/pb/lib/` |
+| DuckDB invocation + `pb index` orchestration | `cli/pipeline/src/pb/pipeline/pipeline.py`, `env.py` |
+| FastAPI endpoints | `cli/api/src/pb/api/routes/` |
+| API business logic | `cli/api/src/pb/api/services/` |
+| Explorer build orchestration | `cli/pipeline/src/pb/pipeline/build.py:ensure_explorer_built` |
+| SPA root | `ui/app/src/App.tsx` |
+| SPA state/actions/reducer/api-client | `ui/app/src/state.ts`, `actions.ts`, `reducer.ts`, `api-client.ts` |
+| Reducer/Effect/Store framework | `ui/packages/core/src/` |
+| PB runtime interpreter | `ui/packages/interpreter/src/` |
+| Feature reducers + shared components | `ui/packages/platform/src/` |
+| MDI window-manager state machines | `ui/packages/windowing/src/` |
+| Hand-maintained AST wire types (TS) | `ui/packages/interpreter/src/types/ast.ts` |
 | SQL query commands | `queries/*.sql` |
 
 ---
@@ -391,13 +311,15 @@ to produce the single top-level `AppState` / `AppAction` reducer.
 | Layer | Command | Location |
 |-------|---------|----------|
 | Haskell | `cabal test` (in `compiler/`) | `compiler/test/` |
-| Python | `uv run pytest` (in `cli/`) | `cli/tests/` |
-| TypeScript | `pnpm test` (in `ui/`) | `ui/tests/` |
-| Debt gate | `uv run --project cli pb_cli debt` | checks ExRaw, BsRaw, DW coverage |
+| Python | `uv run pytest lib/tests/ pipeline/tests/ api/tests/` (in `cli/`) | `cli/lib/tests/`, `cli/pipeline/tests/`, `cli/api/tests/` |
+| TypeScript | `pnpm test` (in `ui/`) | `ui/tests/` (SPA shell) + `ui/packages/*/tests/` (per-package; vitest workspace config includes both) |
+| Corpus gate | `./pb check-corpus` | 0 parse errors expected across the full corpus |
 
 Haskell tests include corpus oracle tests (`test/CorpusDebtTest.hs`,
 `test/CorpusInvariantTest.hs`) that gate on zero corpus errors and ratcheted
-ExRaw/BsRaw counts.
+ExRaw/BsRaw counts. Bombadil (`ui/bombadil-spec.ts`, see `doc/bombadil.md`)
+is a separate temporal-logic PBT suite against a running `pb explore`
+backend — not part of `pnpm test`.
 
 ---
 
@@ -405,15 +327,15 @@ ExRaw/BsRaw counts.
 
 ```bash
 # 1. Build and test Haskell
-cd parser && cabal build && cabal test
+cd compiler && cabal build && cabal test
 
-# 2. Install Python deps
+# 2. Install Python deps (uv workspace: lib + pipeline + api)
 cd cli && uv sync
 
-# 3. Run pb index to populate pb.duckdb
+# 3. Run pb index to populate pb.duckdb (drives pbc --db directly)
 ./pb index example/openpay-0.1.1b-extract
 
-# 4. Start the explorer (auto-builds TS on first run)
+# 4. Start the explorer (auto-builds the ui/ pnpm workspace on first run)
 ./pb explore
 ```
 
@@ -421,22 +343,27 @@ cd cli && uv sync
 
 ## Common gotchas
 
-**Tag names use Haskell constructor names.**  After the plan-36 serialise
-rewrite (`6fa3e1a`), tag strings are full constructor names (`"BsIf"`,
-`"ExCall"`, `"DwRetrieveOk"`).  Short forms (`"if"`, `"call_expr"`, `"ok"`)
-no longer appear in any JSON output.  Python code that checks `node["tag"]`
-must use the full name.
+**Tag names use Haskell constructor names.** Tag strings are full
+constructor names (`"BsIf"`, `"ExCall"`, `"DwRetrieveOk"`). Short forms
+(`"if"`, `"call_expr"`, `"ok"`) never appear in any JSON output. Python or
+TypeScript code that checks `node["tag"]` / `node.tag` must use the full
+name.
 
-**`contents` wrapping.**  Single-value constructors always put their payload
-under `"contents"`.  Record constructors put fields at the same level as
-`"tag"`.  There is no way to tell from the tag name alone — consult
-`compiler/src/PB/Pipeline/Serialise.hs` or `ui/src/types/ast.generated.ts`.
+**`contents` wrapping.** Single-value constructors always put their payload
+under `"contents"`. Record constructors put fields at the same level as
+`"tag"`. There is no way to tell from the tag name alone — consult
+`compiler/src/PB/Pipeline/Serialise.hs` or
+`ui/packages/interpreter/src/types/ast.ts`.
 
-**`ast.generated.ts` is not in git.**  It is regenerated by `pnpm prebuild`
-on every `pnpm build`.  If TypeScript compilation fails on a clean checkout,
-run `pnpm run codegen` (or `pnpm build`) to create it.
+**AST wire types are hand-maintained, not generated.** `pbc` has no
+`--emit-ts` flag and there is no `ast.generated.ts` file. TypeScript types
+for the AST wire format live in
+`ui/packages/interpreter/src/types/ast.ts` and must be updated by hand
+whenever a `PB.AST.*` constructor changes. Note:
+`cli/pipeline/src/pb/pipeline/build.py:ensure_explorer_built`'s docstring
+still describes a `pnpm prebuild` / `--emit-ts` codegen step — that
+docstring does not match what the function does; do not trust it.
 
-**`pb.duckdb` is a local artefact.**  Tests must never reuse a root-level
+**`pb.duckdb` is a local artefact.** Tests must never reuse a root-level
 `pb.duckdb`; each test fixture that needs a database should create a fresh
-temp file.  The explorer test fixture (`test_explorer.py`) and index test
-fixture (`test_index.py`) both do this.
+temp file.

@@ -29,11 +29,14 @@ front-end and writing canonical fact tables directly into **DuckDB**. This enabl
 
 - **The LLM writes SQL, not code searches:** It converts natural language questions into
   deterministic SQL queries against `pb.duckdb`, executed locally in milliseconds.
-- **The LLM reads pseudo-PBScript, not JSON:** The `pb-render` tool converts any
-  function or event body from the AST back to readable PowerScript, reducing context
-  token cost and hallucination risk.
-- **Diagrams communicate structure:** `pb-diagram` generates GraphViz SVGs for
-  inheritance hierarchies, call graphs, DW-table dependencies, and complexity heatmaps.
+- **The LLM reads pseudo-PBScript, not JSON:** The Explore UI (backed by `body_json`/
+  `instr_graph_json`) renders any function or event body back to readable PowerScript,
+  reducing context token cost and hallucination risk.
+- **Diagrams communicate structure:** the `/api/diagram*` endpoints (`cli/api/src/pb/api/
+  routes/diagrams.py`) generate GraphViz SVGs for inheritance hierarchies, call graphs,
+  DW-table dependencies, complexity heatmaps, CFGs, and wiring diagrams — synchronously
+  for small graphs, or via an async job/poll path (`/api/diagram-jobs/{job_id}`) for
+  slower renders.
 
 ---
 
@@ -61,7 +64,7 @@ database lineage — the system runs a multi-stage agentic loop.
 │                  │                      │    tabular result
 │                  │<─────────────────────┘
 └──────────────────┘   5. (Optional) LLM call:
-                           pb-render shows code body;
+                           Explore UI / body_json shows code body;
                            LLM summarises into English
 ```
 
@@ -88,8 +91,9 @@ this need exists yet for the stated use cases.
 2. **Query Generation:** The LLM receives the `pb.duckdb` schema (§5) and generates SQL.
 3. **Local Execution:** DuckDB runs the query against indexed fact tables — milliseconds,
    not minutes.
-4. **Render (optional):** The LLM calls `pb-render --object X --proc itemchanged` to get
-   a readable pseudo-PBScript body for any procedure in the result set.
+4. **Render (optional):** The UI's Explore feature renders any procedure body from
+   `procedures.instr_graph_json`/`wiring_json` back to readable pseudo-PBScript
+   client-side (`ui/packages/interpreter/`), served through the FastAPI/SPA layer.
 5. **Synthesis:** The LLM translates the focused result into a markdown analysis.
 
 ### Concrete Simulation: Analysis of Form Validations
@@ -161,9 +165,9 @@ w_invoice_entry.srw          | w_invoice_entry   | function      | of_check_amou
 
 #### Step 3: Optional — render the event body
 
-```bash
-pbc --render -i ./src --object w_invoice_entry --proc itemchanged
-```
+There is no CLI render flag; the Explore feature in the UI renders a
+procedure's body (from `procedures.instr_graph_json`/`wiring_json`, looked
+up by object + procedure name) back to readable pseudo-PowerScript:
 
 ```powerscript
 // itemchanged  [event]
@@ -270,15 +274,21 @@ statement node (deferred to E8 — requires lexer changes).
          │
 [ pb.duckdb ]
   ├── objects            (one row per source file / type declaration)
-  ├── procedures         (functions, subroutines, events, on-blocks; instr_graph_json)
-  ├── dw_objects / dw_controls / dw_retrieve_*
-  ├── sql_statements     (embedded SQL per procedure)
+  ├── source_files / parse_errors
+  ├── procedures         (functions, subroutines, events, on-blocks;
+  │                        body_json, instr_graph_json, wiring_json)
+  ├── dw_objects / dw_controls
+  ├── dw_retrieve_tables / dw_retrieve_columns / dw_retrieve_where / dw_joins
+  ├── sql_statements / sql_statement_columns / sql_statement_filters / sql_statement_tables
+  ├── catalog_columns / catalog_pks / catalog_fks / catalog_checks   (DDL catalog, --ddl)
   ├── local_vars / call_sites / global_vars
   ├── proc_defs / proc_uses    (def-use chains)
-  ├── resolved_types / resolved_calls / global_vars
+  ├── resolved_types / resolved_calls
   ├── interproc_edges / procedure_summaries
   ├── taint_sources / taint_sinks / taint_paths / taint_annotations
   ├── dead_code
+  ├── schema_objects / schema_morphisms   (DB schema as a free category — Plan 148)
+  ├── decomposition_coslice               (per-column rewrite-cost paths — Plan 153 D5)
   ├── inherits           (declared ancestry edges)
   ├── calls              (raw call graph edges)
   └── object_metrics     (PageRank, betweenness, cyclomatic — pb analyze)
@@ -294,8 +304,12 @@ statement node (deferred to E8 — requires lexer changes).
 1. **Do not generate one giant JSON file.** Use per-file `.json` output (`-o` mode) or
    streaming JSONL (`--jsonl` mode). DuckDB `read_ndjson_auto` can query JSONL directly
    without loading all files into memory.
-2. **JSONL for bulk processing:** `pbc --jsonl | uv run pb import`
-   populates `pb.duckdb` in a single streaming pass.
+2. **`pbc --db FILE` for bulk processing:** the primary path (`pb index`
+   shells out to it directly) runs all 8 passes in Haskell and populates
+   `pb.duckdb` with no JSON intermediate at all. `pbc --jsonl` remains
+   available for streaming JSON to other tools, but there is no `pb import`
+   command that consumes it — DuckDB's `read_ndjson_auto` can query a JSONL
+   stream directly if needed.
 3. **Tilde-escaping:** Normalise `~"` → `"` and `~~` → `~` in all string values before
    serialisation. The `pbDwStringChunk` lexer function handles this.
 
@@ -305,37 +319,113 @@ statement node (deferred to E8 — requires lexer changes).
 
 This is the authoritative query contract. LLMs and scripts should target these tables.
 
+This mirrors `compiler/src/PB/Pipeline/DuckDb.hs`'s `initSchema` — the
+authoritative source if this list drifts.
+
 ```sql
 -- One row per source file (or per global type declaration in multi-type files)
-objects (file TEXT, name TEXT, kind TEXT, ancestor TEXT)
+objects (file TEXT, kind TEXT, object TEXT, ancestor TEXT, layout_json TEXT,
+         type_blocks_json TEXT, confidence TEXT)
+source_files (file TEXT PRIMARY KEY, lines TEXT)
+parse_errors (file TEXT, error TEXT)
 
 -- Every callable unit: functions, subroutines, events, on-blocks
 procedures (
-    file TEXT, object TEXT, proc_type TEXT, name TEXT,
-    modifiers TEXT, params TEXT, return_type TEXT,
+    file TEXT, object TEXT, proc_name TEXT, proc_type TEXT,
     start_line INT, end_line INT,
-    cyclomatic INT,         -- McCabe complexity (branches + 1)
-    body_json JSON          -- full body for ad-hoc inspection / pb-render
+    cfg_json TEXT,            -- PB.Analysis.Cfg
+    instr_graph_json TEXT,    -- PB.Analysis.GraphBuilder / InstrGraph (flat, PC-indexed)
+    wiring_json TEXT,         -- PB.Analysis.GraphBuilder's LowCat wiring diagram (Plan 149)
+    params TEXT, return_type TEXT,
+    cyclomatic INT,           -- McCabe complexity (branches + 1)
+    confidence TEXT
+    -- NOTE: no body_json column in the DuckDB-direct schema; the full body
+    -- lives inside instr_graph_json/wiring_json. body_json only appears in
+    -- the legacy -o/--jsonl per-file JSON output.
 )
 
--- DataWindow visual controls
+-- DataWindow objects + visual controls
+dw_objects  (file TEXT, object TEXT, style TEXT, layout_json TEXT, retrieve_sql TEXT)
 dw_controls (
-    file TEXT, dw_name TEXT, control_name TEXT, control_type TEXT,
-    band TEXT, x INT, y INT, width INT, height INT,
-    expression TEXT, tab_seq INT, source_line INT
+    file TEXT, object TEXT, band TEXT, control_type TEXT, name TEXT,
+    x INT, y INT, width INT, height INT, expression TEXT
 )
 
--- PBSELECT retrieval decomposition
-dw_retrieve_tables  (file TEXT, dw_name TEXT, table_name TEXT)
-dw_retrieve_columns (file TEXT, dw_name TEXT, column_fqn TEXT, table_name TEXT, column_name TEXT)
+-- PBSELECT retrieval decomposition (namespace-aware, Plan 157)
+dw_retrieve_tables  (file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT)
+dw_retrieve_columns (file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT, column_name TEXT)
 dw_retrieve_where   (file TEXT, dw_name TEXT, idx INT, exp1 TEXT, op TEXT, exp2 TEXT, logic TEXT)
-dw_arguments        (file TEXT, dw_name TEXT, arg_name TEXT, arg_type TEXT)
+dw_joins            (file TEXT, dw_name TEXT, left_ref TEXT, op TEXT, right_ref TEXT,
+                      outer1 TEXT, outer2 TEXT)
+
+-- Embedded SQL per procedure, plus per-column/filter/table attribution
+sql_statements         (file TEXT, object TEXT, proc_name TEXT, line INT,
+                         operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN)
+sql_statement_columns  (file TEXT, object TEXT, proc_name TEXT, line INT,
+                         namespace TEXT, table_name TEXT, column_name TEXT, is_write BOOLEAN)
+sql_statement_filters  (file TEXT, object TEXT, proc_name TEXT, line INT,
+                         namespace TEXT, table_name TEXT, column_name TEXT, op TEXT, values_json TEXT)
+sql_statement_tables   (file TEXT, object TEXT, proc_name TEXT, line INT,
+                         operation TEXT, namespace TEXT, table_name TEXT)
+all_sql_tables         -- VIEW: UNION of dw_retrieve_tables + sql_statement_tables, one row shape
+
+-- Static DDL catalog (populated from --ddl files via the sqlglot bridge)
+catalog_columns (namespace TEXT, table_name TEXT, column_name TEXT, ordinal INT)
+catalog_pks     (namespace TEXT, table_name TEXT, column_name TEXT, ordinal INT)
+catalog_fks     (constraint_name TEXT, from_namespace TEXT, from_table TEXT, from_column TEXT,
+                  to_namespace TEXT, to_table TEXT, to_column TEXT, ordinal INT)
+catalog_checks  (constraint_name TEXT, namespace TEXT, table_name TEXT, predicate TEXT)
+
+-- Intra-procedural def-use + cross-file type/call resolution
+local_vars      (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, raw_type TEXT,
+                  is_param BOOLEAN, scope_line INT)
+call_sites      (file TEXT, object TEXT, from_proc TEXT, to_name TEXT, call_type TEXT, line INT)
+global_vars     (file TEXT, object TEXT, var_name TEXT, var_type TEXT, mods TEXT)
+proc_defs       (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, block_id TEXT,
+                  stmt_index INT, line INT, kind TEXT)
+proc_uses       (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, block_id TEXT,
+                  stmt_index INT, line INT, kind TEXT)
+resolved_types  (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, raw_type TEXT,
+                  kind TEXT, target TEXT, is_param BOOLEAN, scope_line INT)
+resolved_calls  (file TEXT, object TEXT, from_proc TEXT, to_name TEXT, call_type TEXT, line INT,
+                  target_object TEXT, target_proc TEXT, kind TEXT, confidence TEXT)
+
+-- Inter-procedural taint analysis
+interproc_edges     (caller_object TEXT, caller_proc TEXT, caller_line INT,
+                      callee_object TEXT, callee_proc TEXT, edge_kind TEXT, var_name TEXT,
+                      caller_context TEXT, callee_context TEXT)
+procedure_summaries (file TEXT, object TEXT, proc_name TEXT, params_in TEXT,
+                      globals_read TEXT, globals_written TEXT, return_flows_to TEXT)
+taint_sources        (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, source_type TEXT, line INT)
+taint_sinks          (file TEXT, object TEXT, proc_name TEXT, var_name TEXT, sink_type TEXT,
+                       severity TEXT, line INT)
+taint_paths          (source_file TEXT, source_object TEXT, source_proc TEXT, source_var TEXT,
+                       sink_file TEXT, sink_object TEXT, sink_proc TEXT, sink_var TEXT,
+                       severity TEXT, category TEXT, steps_json TEXT)
+taint_annotations    (file TEXT, object TEXT, proc_name TEXT, block_id TEXT,
+                       is_taint_entry BOOLEAN, is_taint_sink BOOLEAN, tainted_vars TEXT)
+
+dead_code (object TEXT, proc_name TEXT, proc_type TEXT, cyclomatic INT, confidence TEXT,
+           caller_count_naive INT, caller_count_scoped INT)
+
+-- DB schema as a free category (Plan 148): objects are (table,column) pairs and
+-- SQL-statement/DW-retrieve instances; morphisms are the legs a statement has into
+-- the columns it touches, plus FK morphisms from DW JOINs and DDL foreign keys.
+schema_objects   (object_key TEXT, kind TEXT, namespace TEXT, table_name TEXT, column_name TEXT,
+                   stmt_file TEXT, stmt_object TEXT, stmt_proc TEXT, stmt_line INT)
+schema_morphisms (from_key TEXT, to_key TEXT, leg_kind TEXT, fk_source TEXT)
+
+-- Per-column "rewrite cost": union of forward blast-radius + backward validation-walk,
+-- collapsed to the shortest path per reachable statement (Plan 153 D5)
+decomposition_coslice (seed_key TEXT, target_key TEXT, direction TEXT, leg_ordinal INT,
+                        leg_from TEXT, leg_to TEXT, leg_kind TEXT, fk_source TEXT)
 
 -- Graph edges
 inherits (from_object TEXT, to_object TEXT)
 calls    (file TEXT, object TEXT, from_proc TEXT, to_name TEXT, call_type TEXT)
 
--- Pre-computed graph metrics (populated by pb-analyze)
+-- Pre-computed graph metrics (populated by `pb analyze`, Python/NetworkX — the one
+-- analysis table Haskell does not write)
 object_metrics (
     object TEXT, in_degree INT, out_degree INT,
     betweenness DOUBLE, pagerank DOUBLE,
@@ -345,29 +435,33 @@ object_metrics (
 
 ### Example canonical queries
 
+Note: `objects` holds PowerScript objects only (`.srw`/`.sru`/`.srf`/…);
+DataWindow files (`.srd`) are separate rows in `dw_objects`, keyed by
+`dw_name` in the `dw_*` tables — there is no `objects` row to join against
+for a DW by file path.
+
 ```sql
--- What DB tables does w_invoice_entry read?
-SELECT DISTINCT dt.table_name
-FROM objects o
-JOIN dw_retrieve_tables dt ON o.file = dt.file
-WHERE o.name = 'w_invoice_entry';
+-- What DB tables does a given DataWindow retrieve from?
+SELECT DISTINCT dt.namespace, dt.table_name
+FROM dw_retrieve_tables dt
+WHERE dt.dw_name = 'd_invoice_detail';
 
 -- Full inheritance chain for an object
 WITH RECURSIVE anc AS (
-  SELECT name, ancestor FROM objects WHERE name = 'w_invoice_entry'
+  SELECT object, ancestor FROM objects WHERE object = 'w_invoice_entry'
   UNION ALL
-  SELECT o.name, o.ancestor FROM objects o
-    JOIN anc a ON o.name = a.ancestor WHERE o.ancestor IS NOT NULL
+  SELECT o.object, o.ancestor FROM objects o
+    JOIN anc a ON o.object = a.ancestor WHERE o.ancestor IS NOT NULL
 )
 SELECT * FROM anc;
 
 -- Top 10 complexity hotspots
-SELECT o.name, m.max_cyclomatic, m.in_degree, m.pagerank
-FROM objects o JOIN object_metrics m ON o.name = m.object
+SELECT o.object, m.max_cyclomatic, m.in_degree, m.pagerank
+FROM objects o JOIN object_metrics m ON o.object = m.object
 ORDER BY m.max_cyclomatic DESC LIMIT 10;
 
 -- All compute expressions referencing a specific DB function
-SELECT file, dw_name, control_name, expression
+SELECT file, object, name AS control_name, expression
 FROM dw_controls
 WHERE expression LIKE '%fn_misth%';
 ```
@@ -378,10 +472,11 @@ WHERE expression LIKE '%fn_misth%';
 
 | Tool | Language | Input | Output |
 |---|---|---|---|
-| `pbc --db FILE` | Haskell | source dir | pb.duckdb (all passes 1–8) |
-| `pbc --jsonl` | Haskell | source dir | JSONL stream (legacy) |
-| `pbc -o DIR` | Haskell | source dir | per-file JSON + manifest.json (legacy) |
-| `pb index` | Python | JSONL | pb.duckdb (JSONL ingestion path) |
-| `pb analyze` | Python | pb.duckdb | object_metrics table |
-| `pb diagram` | Python | pb.duckdb | GraphViz SVG |
-| `pb explore` | Python + TS | pb.duckdb | FastAPI + SolidJS SPA |
+| `pbc --db FILE` | Haskell | source dir | pb.duckdb (all passes 1–8, primary path) |
+| `pbc --jsonl` | Haskell | source dir | JSONL stream (ad-hoc streaming/piping) |
+| `pbc -o DIR` | Haskell | source dir | per-file JSON, mirrored under `DIR` (ad-hoc inspection) |
+| `pb index` | Python (CLI) | source dir | pb.duckdb — drives `pbc --db` directly, plus incremental-state bookkeeping |
+| `pb analyze` | Python (CLI) | pb.duckdb | object_metrics table (NetworkX: PageRank, betweenness, DIT) |
+| `pb explore` | Python + TS | pb.duckdb | FastAPI (`cli/api/`) + SolidJS SPA (`ui/`), incl. `/api/diagram*` for GraphViz SVG rendering |
+| `pb check-corpus` | Python (CLI) | source dir | pass/fail gate: 0 parse errors expected |
+| `pb dead-code` / `pb impact` / `pb clean` | Python (CLI) | pb.duckdb | terminal reports |
