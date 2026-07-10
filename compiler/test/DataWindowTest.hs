@@ -633,7 +633,9 @@ tests = testGroup "DataWindow"
             ( "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") COLUMN(NAME=~\"t.x~\")"
            <> "WHERE( EXP1 =~\"t.x~\" OP =~\"=~\" EXP2 =~\":arg_x~\" ) )" )
           @?= DwRetrieveOk (DwRetrieve 400 ["t"] ["t.x"] []
-                [DwWhereClause "t.x" "=" ":arg_x" Nothing] [])
+                [DwWhereClause "t.x" "=" ":arg_x" Nothing
+                  (Just (ExLvalue (Lvalue [LvSegment "t" Nothing, LvSegment "x" Nothing])))
+                  (Just (ExHostVar (Lvalue [LvSegment "arg_x" Nothing])))] [])
 
       , testCase "multi-table, multiple where clauses with LOGIC" $
           parsePbSelect
@@ -643,7 +645,11 @@ tests = testGroup "DataWindow"
            <> " WHERE( EXP1 =~\"b.y~\" OP =~\"=~\" EXP2 =~\":q~\" ) )" )
           @?= DwRetrieveOk (DwRetrieve 400 ["a","b"] ["a.x"] []
                 [ DwWhereClause "a.x" "=" ":p" (Just "and")
-                , DwWhereClause "b.y" "=" ":q" Nothing ] [])
+                    (Just (ExLvalue (Lvalue [LvSegment "a" Nothing, LvSegment "x" Nothing])))
+                    (Just (ExHostVar (Lvalue [LvSegment "p" Nothing])))
+                , DwWhereClause "b.y" "=" ":q" Nothing
+                    (Just (ExLvalue (Lvalue [LvSegment "b" Nothing, LvSegment "y" Nothing])))
+                    (Just (ExHostVar (Lvalue [LvSegment "q" Nothing]))) ] [])
 
       , testCase "host var in EXP2 retains colon prefix" $ do
           let result = parsePbSelect
@@ -658,7 +664,9 @@ tests = testGroup "DataWindow"
             "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") \
             \WHERE( EXP1 =~\"t.x~\" OP =~\"is not~\" EXP2 =~\"null~\" ) )"
           @?= DwRetrieveOk (DwRetrieve 400 ["t"] [] []
-                [DwWhereClause "t.x" "is not" "null" Nothing] [])
+                [DwWhereClause "t.x" "is not" "null" Nothing
+                  (Just (ExLvalue (Lvalue [LvSegment "t" Nothing, LvSegment "x" Nothing])))
+                  (Just ExNull)] [])
 
       , testCase "ARG outside outer paren parsed" $
           parsePbSelect
@@ -667,7 +675,9 @@ tests = testGroup "DataWindow"
            <> " ARG(NAME = ~\"aid~\" TYPE = string)" )
           @?= DwRetrieveOk (DwRetrieve 400 ["t"] []
                 [DwArgument "aid" "string"]
-                [DwWhereClause "t.id" "=" ":aid" Nothing] [])
+                [DwWhereClause "t.id" "=" ":aid" Nothing
+                  (Just (ExLvalue (Lvalue [LvSegment "t" Nothing, LvSegment "id" Nothing])))
+                  (Just (ExHostVar (Lvalue [LvSegment "aid" Nothing])))] [])
 
       , testCase "ARG date type" $
           parsePbSelect
@@ -677,6 +687,80 @@ tests = testGroup "DataWindow"
       , testCase "fallback raw on non-PBSELECT input" $
           parsePbSelect "SELECT x FROM t"
           @?= DwRetrieveRaw "SELECT x FROM t"
+
+      , testGroup "WHERE operand parsing (dwcParsedExp1/dwcParsedExp2)"
+          -- Real shapes sampled from pb.duckdb's dw_retrieve_where (openpay
+          -- corpus, this session) — see doc/plan/163-unified-statement-footprint.md
+          -- "Phase 0 findings" and the Plan 163 Phase 1 BACKLOG entry.
+          [ testCase "plain table.column EXP1 parses to ExLvalue; :arg EXP2 to ExHostVar" $
+              case parsePbSelect
+                     "PBSELECT( VERSION(400) TABLE(NAME=~\"afxfilterd~\") \
+                     \WHERE( EXP1 =~\"afxfilterd.kodfilter~\" OP =~\"=~\" \
+                     \EXP2 =~\":kodfilter~\" ) )" of
+                DwRetrieveRaw _ -> assertFailure "expected DwRetrieveOk"
+                DwRetrieveOk dr -> do
+                  let wc = head' (drWhere dr)
+                  dwcParsedExp1 wc @?=
+                    Just (ExLvalue (Lvalue [LvSegment "afxfilterd" Nothing, LvSegment "kodfilter" Nothing]))
+                  dwcParsedExp2 wc @?=
+                    Just (ExHostVar (Lvalue [LvSegment "kodfilter" Nothing]))
+
+          , testCase "literal NULL (uppercase) EXP2 parses to ExNull" $
+              case parsePbSelect
+                     "PBSELECT( VERSION(400) TABLE(NAME=~\"t~\") \
+                     \WHERE( EXP1 =~\"t.x~\" OP =~\"is~\" EXP2 =~\"NULL~\" ) )" of
+                DwRetrieveRaw _ -> assertFailure "expected DwRetrieveOk"
+                DwRetrieveOk dr -> dwcParsedExp2 (head' (drWhere dr)) @?= Just ExNull
+
+          , testCase "literal negative-int EXP2 (-1) parses to ExNeg (ExInt)" $
+              case parsePbSelect
+                     "PBSELECT( VERSION(400) TABLE(NAME=~\"usrusers~\") \
+                     \WHERE( EXP1 =~\"usrusers.koduser~\" OP =~\"<>~\" EXP2 =~\"-1~\" ) )" of
+                DwRetrieveRaw _ -> assertFailure "expected DwRetrieveOk"
+                DwRetrieveOk dr -> do
+                  let wc = head' (drWhere dr)
+                  dwcParsedExp1 wc @?=
+                    Just (ExLvalue (Lvalue [LvSegment "usrusers" Nothing, LvSegment "koduser" Nothing]))
+                  dwcParsedExp2 wc @?= Just (ExNeg (ExInt "1"))
+
+          , testCase "literal small-int EXP2 (1) parses to ExInt" $
+              case parsePbSelect
+                     "PBSELECT( VERSION(400) TABLE(NAME=~\"misth_zpepidom~\") \
+                     \WHERE( EXP1 =~\"misth_zpepidom.isasf~\" OP =~\"=~\" EXP2 =~\"1~\" ) )" of
+                DwRetrieveRaw _ -> assertFailure "expected DwRetrieveOk"
+                DwRetrieveOk dr -> dwcParsedExp2 (head' (drWhere dr)) @?= Just (ExInt "1")
+
+          , testCase "unbalanced outer-paren boundary clause: EXP1 (leading '(') is Nothing; \
+                     \EXP2 (trailing ')') still resolves via parseExpr's leftover-ignoring host-var branch" $
+              -- Real .srd shape (final.pbl/dw_misth_final_form.srd): a compound
+              -- predicate's grouping parens leak into the boundary clauses'
+              -- EXP1/EXP2 with no matching close/open on that side. Logged as
+              -- its own bug (BACKLOG.md, ".srd WHERE-clause paren leakage") —
+              -- Phase 1 does not paper over it. EXP1's leading "(" makes
+              -- parseAtom's paren branch fail outright (no matching close),
+              -- so parseExpr falls back to a top-level ExRaw and we store
+              -- Nothing. EXP2's trailing ")" behaves differently: verified by
+              -- running this test against the real implementation,
+              -- PB.Grammar.Body.parseExpr's TkColon/host-var branch
+              -- (line ~334-337) does not check that all tokens were consumed
+              -- — it discards leftover tokens after the lvalue prefix — so
+              -- ":arg_kodfinal )" still resolves to a real ExHostVar, silently
+              -- dropping the trailing ")". This is pre-existing parseExpr
+              -- behavior (used by DwControl today too), out of scope for this
+              -- phase to change; noted in the BACKLOG bug entry for the
+              -- future diagnostic session.
+              case parsePbSelect
+                     "PBSELECT( VERSION(400) TABLE(NAME=~\"misth_final~\") \
+                     \WHERE( EXP1 =~\"( misth_final.kodfinal~\" OP =~\"=~\" \
+                     \EXP2 =~\":arg_kodfinal )~\" ) )" of
+                DwRetrieveRaw _ -> assertFailure "expected DwRetrieveOk"
+                DwRetrieveOk dr -> do
+                  let wc = head' (drWhere dr)
+                  dwcExp1 wc @?= "( misth_final.kodfinal"
+                  dwcExp2 wc @?= ":arg_kodfinal )"
+                  dwcParsedExp1 wc @?= Nothing
+                  dwcParsedExp2 wc @?= Just (ExHostVar (Lvalue [LvSegment "arg_kodfinal" Nothing]))
+          ]
 
       , testGroup "PBSELECT JOIN"
           [ testCase "single join parsed into drJoins" $

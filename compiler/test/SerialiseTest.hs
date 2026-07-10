@@ -108,7 +108,8 @@ tests = testGroup "Serialise"
 
       , testCase "DwRetrieveOk with where clause serialises clause fields" $ do
           let wc = DwWhereClause { dwcExp1 = "t.id", dwcOp = "=", dwcExp2 = ":arg"
-                                 , dwcLogic = Nothing }
+                                 , dwcLogic = Nothing
+                                 , dwcParsedExp1 = Nothing, dwcParsedExp2 = Nothing }
               dr = DwRetrieve { drVersion = 400, drTables = ["t"], drColumns = []
                               , drArguments = [], drWhere = [wc], drJoins = [] }
               v  = toJSON (DwRetrieveOk dr)

@@ -13,6 +13,7 @@ module PB.Grammar.DataWindow
 
 import PB.Prelude
 import PB.AST.DataWindow
+import PB.AST.Expr           (Expr (ExRaw))
 import PB.Grammar.Body       (parseExpr)
 import PB.Lexing.DataWindow  (DwBlock (..), DwAttr (..), scanBlocks, scanBlockAttrs, extractParenBlock)
 import PB.Lexing.Escape      (pbSelectTildeStr)
@@ -442,7 +443,21 @@ pWhereBlock = pPbsBlock "WHERE" $ do
     exp2  <- pKvStr "EXP2"
     logic <- optional (try (pKvStr "LOGIC"))
     pPbsWs
-    pure (DwWhereClause exp1 op exp2 logic)
+    pure (DwWhereClause exp1 op exp2 logic
+            (parseWhereOperand exp1) (parseWhereOperand exp2))
+
+-- | Parse a WHERE-clause operand (dwcExp1/dwcExp2) through the same
+-- tokenizeExpr/parseExpr pipeline DwControl's expression/format fields use.
+-- parseExpr is total (ExRaw fallback); a top-level ExRaw means nothing
+-- structured was recognized (e.g. an unmatched paren carried over from a
+-- compound predicate split across sibling WHERE clauses — see BACKLOG's
+-- ".srd WHERE-clause paren leakage" entry), so store Nothing rather than a
+-- useless raw-token wrapper.
+parseWhereOperand :: Text -> Maybe Expr
+parseWhereOperand raw =
+    case parseExpr (tokenizeExpr raw) of
+        ExRaw _ -> Nothing
+        expr    -> Just expr
 
 pJoinBlock :: PbsP DwJoin
 pJoinBlock = pPbsBlock "JOIN" $ do

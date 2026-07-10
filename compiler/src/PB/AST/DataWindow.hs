@@ -44,10 +44,12 @@ data DwTable = DwTable
   } deriving (Eq, Show, Generic)
 
 data DwWhereClause = DwWhereClause
-  { dwcExp1  :: Text
-  , dwcOp    :: Text
-  , dwcExp2  :: Text
-  , dwcLogic :: Maybe Text
+  { dwcExp1       :: Text
+  , dwcOp         :: Text
+  , dwcExp2       :: Text
+  , dwcLogic      :: Maybe Text
+  , dwcParsedExp1 :: Maybe Expr
+  , dwcParsedExp2 :: Maybe Expr
   } deriving (Eq, Show, Generic)
 
 data DwJoin = DwJoin

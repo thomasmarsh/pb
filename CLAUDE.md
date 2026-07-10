@@ -697,6 +697,35 @@ parseTypeText :: Text -> PbType          -- inverse, used by TypeResolve/TypeEnv
 -- No IsString instance. primitiveNames list in-module.
 ```
 
+### `PB.AST.DataWindow` / `PB.Grammar.DataWindow`
+
+Partial entry — only the fields/functions touched by Plan 163 Phase 1
+(2026-07-10). The rest of these modules' types (`DwBand`/`DwGroup`/
+`DwColumn`/`DwTable`/`DwControl`/etc, and their parsers) are not yet
+indexed here.
+
+```haskell
+-- PB.AST.DataWindow
+data DwWhereClause = DwWhereClause
+  { dwcExp1, dwcOp, dwcExp2 :: Text, dwcLogic :: Maybe Text
+  , dwcParsedExp1, dwcParsedExp2 :: Maybe Expr }  -- Plan 163 Phase 1 (D2)
+-- Mirrors DwControl's dwcParsedExpression/dwcParsedFormat naming/pipeline.
+-- 33/186 real corpus rows (openpay) have an unbalanced stray paren on one
+-- operand (a compound predicate's grouping leaked into the boundary
+-- clause's raw EXP1/EXP2 by the .srd exporter — see BACKLOG's ".srd
+-- WHERE-clause paren leakage" entry, not yet fixed). dwcParsedExp1/2 fall
+-- back to Nothing when parseExpr's total ExRaw-fallback fires — except
+-- parseExpr's TkColon/host-var branch (PB.Grammar.Body) doesn't check for
+-- leftover tokens, so a trailing stray ")" after a host var (the common
+-- EXP2 shape) is silently dropped rather than triggering the ExRaw
+-- fallback; see the same BACKLOG entry's follow-on note.
+
+-- PB.Grammar.DataWindow
+parseWhereOperand :: Text -> Maybe Expr
+-- Not exported. tokenizeExpr/parseExpr pipeline (same as DwControl's
+-- expression/format fields); top-level ExRaw result -> Nothing.
+```
+
 ### `PB.Grammar.Body`
 
 ```haskell

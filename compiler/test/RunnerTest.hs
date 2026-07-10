@@ -551,7 +551,9 @@ tests = testGroup "Pipeline.Runner"
                            , drWhere     = [ DwWhereClause { dwcExp1  = "misth_zpkrat.kodxrisi"
                                                            , dwcOp    = "="
                                                            , dwcExp2  = ":arg_kodxrisi"
-                                                           , dwcLogic = Nothing } ]
+                                                           , dwcLogic = Nothing
+                                                           , dwcParsedExp1 = Nothing
+                                                           , dwcParsedExp2 = Nothing } ]
                            , drJoins     = []
                            }
         in reconstructRetrieveSql (DwRetrieveOk r)
@@ -562,8 +564,8 @@ tests = testGroup "Pipeline.Runner"
                            , drTables    = ["tbl"]
                            , drColumns   = ["tbl.a"]
                            , drArguments = []
-                           , drWhere     = [ DwWhereClause "tbl.kodfinal" "=" ":arg1" (Just "and")
-                                           , DwWhereClause "tbl.kodxrisi" "=" ":arg2" Nothing
+                           , drWhere     = [ DwWhereClause "tbl.kodfinal" "=" ":arg1" (Just "and") Nothing Nothing
+                                           , DwWhereClause "tbl.kodxrisi" "=" ":arg2" Nothing Nothing Nothing
                                            ]
                            , drJoins     = []
                            }
@@ -575,7 +577,7 @@ tests = testGroup "Pipeline.Runner"
                            , drTables    = ["t"]
                            , drColumns   = ["t.myCol"]
                            , drArguments = []
-                           , drWhere     = [ DwWhereClause "t.myCol" ">" "100" Nothing ]
+                           , drWhere     = [ DwWhereClause "t.myCol" ">" "100" Nothing Nothing Nothing ]
                            , drJoins     = []
                            }
         in reconstructRetrieveSql (DwRetrieveOk r)
@@ -773,8 +775,8 @@ tests = testGroup "Pipeline.Runner"
               , drColumns   = ["misth_zpkrat.kodkrat"]
               , drArguments = []
               , drWhere     =
-                  [ DwWhereClause "misth_zpkrat.kodxrisi" "=" ":arg1" (Just "and")
-                  , DwWhereClause "t.mycol" ">" "100" Nothing
+                  [ DwWhereClause "misth_zpkrat.kodxrisi" "=" ":arg1" (Just "and") Nothing Nothing
+                  , DwWhereClause "t.mycol" ">" "100" Nothing Nothing Nothing
                   ]
               , drJoins     = []
               }
