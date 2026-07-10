@@ -20,11 +20,12 @@ const mockEnv: TablesEnv = {
 };
 
 const row = (name: string): TableSummary => ({
-  table_name: name, dw_count: 1, ps_count: 2, file_count: 3,
+  table_name: name, namespace: null, dw_count: 1, ps_count: 2, file_count: 3,
 });
 
 const detail: TableDetail = {
   table_name: "orders",
+  namespace: null,
   dw_count: 1,
   ps_count: 2,
   datawindows: [{ dw_name: "dw_orders", file: "a.srd" }],
@@ -414,6 +415,40 @@ describe("tables reducer", () => {
         s.detail  = detail;
         s.loading = false;
       });
+    });
+
+    it("self-heals the URL to the resolved namespace, even when select fired with none", () => {
+      // Every bare-name entry point (TableChip, GlobalSearch, DWDetail,
+      // ObjectDetail, a hand-typed /tables/{name} URL) dispatches "select"
+      // with no namespace. The server resolves it; this makes sure the
+      // route corrects itself once that resolved namespace comes back, so
+      // the canonical /tables/{namespace}/{name} URL is never skipped.
+      const navigateRoutes: object[] = [];
+      const env: TablesEnv = {
+        ...mockEnv,
+        navigate: (action) => { if (action.tag === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
+      };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      const resolved: TableDetail = { ...detail, table_name: "clinicalaccession", namespace: "clims" };
+      ts.send({ tag: "detail-loaded", detail: resolved }, (s) => {
+        s.detail  = resolved;
+        s.loading = false;
+      });
+      expect(navigateRoutes).toEqual([{ view: "tableDetail", name: "clinicalaccession", namespace: "clims" }]);
+    });
+
+    it("keeps the URL namespace-free when the resolved table genuinely has none", () => {
+      const navigateRoutes: object[] = [];
+      const env: TablesEnv = {
+        ...mockEnv,
+        navigate: (action) => { if (action.tag === "navigate") navigateRoutes.push(action.route); return Effect.none(); },
+      };
+      const ts = createTestStore(tablesReducer, env, initialTablesState);
+      ts.send({ tag: "detail-loaded", detail }, (s) => {
+        s.detail  = detail;
+        s.loading = false;
+      });
+      expect(navigateRoutes).toEqual([{ view: "tableDetail", name: "orders" }]);
     });
   });
 

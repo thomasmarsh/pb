@@ -11,6 +11,8 @@ from pb.api.services.tables import (
     impact_lineage,
     list_schemas,
     list_tables,
+    resolve_table_detail,
+    resolve_table_namespaces,
 )
 
 
@@ -156,11 +158,63 @@ def test_list_tables_scoped_to_namespace_shows_own_real_usage():
     assert common[0]["file_count"] == 0
 
 
-def test_list_tables_unscoped_keeps_legacy_flat_behavior():
+def test_list_tables_unscoped_shows_real_namespace_per_row():
+    # The "All schemas" roll-up must never merge same-named tables from
+    # different schemas into one collapsed row, and must never omit the
+    # namespace a caller needs in order to navigate into detail -- that
+    # omission is exactly what made a listed table 404 on click (the row
+    # carried no namespace, and the bare-name detail lookup used to treat
+    # "no namespace given" as "namespace IS NULL", which real DDL-resolved
+    # rows never are).
     conn = _multi_namespace_conn()
     result = list_tables(conn, namespace=None)
-    assert {t["table_name"] for t in result} == {"clinicalaccession", "legacy_only"}
-    assert all("namespace" not in t for t in result)
+    by_key = {(t["table_name"], t["namespace"]): t for t in result}
+    assert ("clinicalaccession", "clims") in by_key
+    assert ("clinicalaccession", "clims_archive") in by_key
+    assert ("legacy_only", None) in by_key
+    assert by_key[("clinicalaccession", "clims")]["ps_count"] == 1
+    assert by_key[("clinicalaccession", "clims_archive")]["ps_count"] == 1
+
+
+def test_resolve_table_namespaces_single_match():
+    conn = _multi_namespace_conn()
+    assert resolve_table_namespaces(conn, "legacy_only") == [None]
+
+
+def test_resolve_table_namespaces_ambiguous_across_schemas():
+    conn = _multi_namespace_conn()
+    assert set(resolve_table_namespaces(conn, "clinicalaccession")) == {"clims", "clims_archive"}
+
+
+def test_resolve_table_namespaces_unknown_table():
+    conn = _multi_namespace_conn()
+    assert resolve_table_namespaces(conn, "__nonexistent__") == []
+
+
+def test_resolve_table_detail_unambiguous_resolves_real_namespace():
+    conn = _multi_namespace_conn()
+    result = resolve_table_detail(conn, "legacy_only")
+    assert result is not None
+    assert result["namespace"] is None
+    assert result["table_name"] == "legacy_only"
+
+
+def test_resolve_table_detail_ambiguous_reports_candidates_not_a_guess():
+    # clinicalaccession is defined in three schemas but has real usage rows
+    # in two of them -- resolve_table_detail must refuse to silently pick
+    # one, since guessing wrong would show the wrong table's lineage.
+    conn = _multi_namespace_conn()
+    result = resolve_table_detail(conn, "clinicalaccession")
+    assert result == {
+        "ambiguous": True,
+        "table_name": "clinicalaccession",
+        "namespaces": ["clims", "clims_archive"],
+    }
+
+
+def test_resolve_table_detail_unknown_table_is_not_found():
+    conn = _multi_namespace_conn()
+    assert resolve_table_detail(conn, "__nonexistent__") is None
 
 
 def test_get_table_detail_scoped_to_namespace():

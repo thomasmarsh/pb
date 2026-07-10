@@ -18,8 +18,14 @@ export function print(route: Route): string {
     case "tables":
       return route.namespace ? `/tables?ns=${encodeURIComponent(route.namespace)}` : "/tables";
     case "tableDetail":
-      return "/tables/" + encodeURIComponent(route.name)
-             + (route.namespace ? `?ns=${encodeURIComponent(route.namespace)}` : "");
+      // Namespace is a path segment, not a query param: a table's identity
+      // is (namespace, name), not name-filtered-by-namespace. `/tables/foo`
+      // (no namespace) is only ever a provisional/unresolved URL — the app
+      // corrects it to the canonical `/tables/{namespace}/foo` once the
+      // detail response reports the table's real namespace.
+      return route.namespace
+        ? "/tables/" + encodeURIComponent(route.namespace) + "/" + encodeURIComponent(route.name)
+        : "/tables/" + encodeURIComponent(route.name);
     case "libraryDetail":    return "/library/"     + encodeURIComponent(route.name);
     case "diagrams":
       return route.kind ? `/diagrams?kind=${encodeURIComponent(route.kind)}` : "/diagrams";
@@ -66,11 +72,18 @@ export function parse(path: string, search?: string): Route {
       if (segs[1]) return { view: "dwDetail", name: decodeURIComponent(segs[1]) };
       return { view: "datawindows" };
     case "tables": {
+      // /tables/{namespace}/{table} (canonical) vs /tables/{table} (provisional,
+      // unresolved) — disambiguated by segment count, same convention as
+      // /objects/{name}/{proc}. The list itself keeps ?ns= (a collection
+      // filter, not an identity component).
+      if (segs[2]) {
+        return { view: "tableDetail", name: decodeURIComponent(segs[2]), namespace: decodeURIComponent(segs[1]!) };
+      }
+      if (segs[1]) {
+        return { view: "tableDetail", name: decodeURIComponent(segs[1]) };
+      }
       const raw = search ? (search.startsWith("?") ? search.slice(1) : search) : "";
       const ns = new URLSearchParams(raw).get("ns");
-      if (segs[1]) {
-        return { view: "tableDetail", name: decodeURIComponent(segs[1]), ...(ns ? { namespace: ns } : {}) };
-      }
       return { view: "tables", ...(ns ? { namespace: ns } : {}) };
     }
     case "library":

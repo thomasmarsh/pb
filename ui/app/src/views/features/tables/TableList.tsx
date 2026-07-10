@@ -20,7 +20,7 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
 
   useListKeyboard({
     items: () => filtered().map((item) => ({
-      select: () => props.store.dispatch({ tag: "tables", action: { tag: "select", name: item.table_name, namespace: item.namespace } }),
+      select: () => props.store.dispatch({ tag: "tables", action: { tag: "select", name: item.table_name, namespace: item.namespace ?? undefined } }),
     })),
     tableSelector: ".table-list-table",
   });
@@ -92,7 +92,7 @@ export function TableList(props: { store: Store<AppState, AppAction> }) {
                     <EntityCard
                       type="table"
                       name={t.table_name}
-                      onClick={() => props.store.dispatch({ tag: "tables", action: { tag: "select", name: t.table_name, namespace: t.namespace } })}
+                      onClick={() => props.store.dispatch({ tag: "tables", action: { tag: "select", name: t.table_name, namespace: t.namespace ?? undefined } })}
                     />
                   </td>
                   <td>{String(t.dw_count)}</td>

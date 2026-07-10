@@ -160,7 +160,7 @@ export interface DwDetailResponse {
   name: string;
   file: string;
   controls: DwControlRow[];
-  retrieve_tables: string[];
+  retrieve_tables: { table_name: string; namespace: string | null }[];
   retrieve_columns: { column_fqn: string; table_name: string; column_name: string }[];
   retrieve_where: { idx: number; exp1: string; op: string; exp2: string; logic: string }[];
   arguments: { arg_name: string; arg_type: string }[];
@@ -185,7 +185,7 @@ export interface SearchResponse {
   objects: ObjectRow[];
   procedures: { object: string; proc_type: string; name: string; modifiers: string; start_line: number }[];
   datawindows: { dw_name: string; control_name: string; control_type: string }[];
-  tables: { table_name: string; dw_count: number; ps_count: number }[];
+  tables: { table_name: string; namespace: string | null; dw_count: number; ps_count: number }[];
 }
 
 export interface StatsResponse {
@@ -249,7 +249,7 @@ export interface SchemaSummary {
 
 export interface TableSummary {
   table_name: string;
-  namespace?: string;
+  namespace:  string | null;
   dw_count:   number;
   ps_count:   number;
   file_count: number;
@@ -295,7 +295,7 @@ export interface TableImpact {
 
 export interface TableDetail {
   table_name:     string;
-  namespace?:     string;
+  namespace:      string | null;
   dw_count:       number;
   ps_count:       number;
   datawindows:    { dw_name: string; file: string }[];

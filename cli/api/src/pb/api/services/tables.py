@@ -39,15 +39,22 @@ def list_schemas(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
 
 def list_tables(conn: duckdb.DuckDBPyConnection, namespace: str | None = None) -> list[dict[str, Any]]:
     if namespace is None:
+        # Cross-namespace roll-up ("All schemas" in the UI) -- but every row
+        # still carries its own real namespace. Grouping by table_name alone
+        # would (a) silently merge same-named tables from different schemas
+        # into one row and (b) drop the namespace a caller needs to navigate
+        # into that table's detail page -- the exact bug that made a listed
+        # table 404 on click (namespace was never in the row to begin with).
         return rows(
             conn.execute("""
             SELECT
                 table_name,
+                namespace,
                 count(*) FILTER (WHERE source = 'datawindow')  AS dw_count,
                 count(*) FILTER (WHERE source = 'powerscript') AS ps_count,
                 count(DISTINCT file)                           AS file_count
             FROM all_sql_tables
-            GROUP BY table_name
+            GROUP BY table_name, namespace
             ORDER BY (dw_count + ps_count) DESC, table_name
         """)
         )
@@ -270,7 +277,7 @@ def get_table_detail(
 
     return {
         "table_name": table_name,
-        **({"namespace": namespace} if namespace is not None else {}),
+        "namespace": namespace,
         "dw_count": len(dws),
         "ps_count": len(procedures),
         "datawindows": dws,
@@ -280,6 +287,49 @@ def get_table_detail(
         "procedures": procedures,
         "impact": impact,
     }
+
+
+def resolve_table_namespaces(conn: duckdb.DuckDBPyConnection, table_name: str) -> list[str | None]:
+    """Every namespace a table with this name is known under.
+
+    Reads `all_sql_tables` rather than `catalog_columns` so it also resolves
+    tables that only ever show up in embedded SQL / DW retrieves with no DDL
+    loaded at all (where the true namespace is `None`, a real value, not a
+    missing one). A table name that maps to more than one distinct namespace
+    means the name genuinely is ambiguous without a schema qualifier -- e.g.
+    the same table name reused across two DDL-tagged schemas (see
+    PB.Pipeline.Runner's --ddl `[schema:]path` support).
+    """
+    result = rows(
+        conn.execute(
+            "SELECT DISTINCT namespace FROM all_sql_tables WHERE table_name = ?",
+            [table_name],
+        )
+    )
+    return [r["namespace"] for r in result]
+
+
+def resolve_table_detail(conn: duckdb.DuckDBPyConnection, table_name: str) -> dict[str, Any] | None:
+    """Bare-name table lookup: resolves the owning namespace and returns
+    that table's detail, an ambiguity marker, or None if the name is unknown.
+
+    This is the only path that should ever accept a table name with no
+    namespace attached -- every other caller either already knows the
+    namespace (scoped list, path-qualified detail route) or is deliberately
+    asking "which schema is this in?" (this function). It must never guess:
+    a name that resolves to zero or multiple namespaces is reported as such,
+    not silently coerced to one answer.
+    """
+    candidates = resolve_table_namespaces(conn, table_name)
+    if len(candidates) == 0:
+        return None
+    if len(candidates) > 1:
+        return {
+            "ambiguous": True,
+            "table_name": table_name,
+            "namespaces": sorted(ns for ns in candidates if ns is not None),
+        }
+    return get_table_detail(conn, table_name, candidates[0])
 
 
 def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:

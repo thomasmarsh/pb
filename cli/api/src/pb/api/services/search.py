@@ -36,12 +36,12 @@ def global_search(conn: duckdb.DuckDBPyConnection, q: str) -> dict[str, Any]:
     )
     tables = rows(
         conn.execute(
-            "SELECT DISTINCT table_name, "
+            "SELECT table_name, namespace, "
             "  count(*) FILTER (WHERE source='datawindow')  AS dw_count, "
             "  count(*) FILTER (WHERE source='powerscript') AS ps_count "
             "FROM all_sql_tables "
             "WHERE lower(table_name) LIKE ? "
-            "GROUP BY table_name ORDER BY (dw_count+ps_count) DESC LIMIT 20",
+            "GROUP BY table_name, namespace ORDER BY (dw_count+ps_count) DESC LIMIT 20",
             [f"%{q.lower()}%"],
         )
     )

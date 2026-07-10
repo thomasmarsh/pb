@@ -131,6 +131,18 @@ function reduce(draft: TablesState, action: TablesAction, env: TablesEnv): Effec
   case "detail-loaded":
     draft.detail = action.detail;
     draft.loading = false;
+    // Self-heal the URL: every entry point that only had a bare table name
+    // (TableChip, GlobalSearch, DWDetail, ObjectDetail, or a hand-typed
+    // /tables/{name} URL) dispatches "select" with namespace unset. Once the
+    // server resolves the real namespace, correct the address bar to the
+    // canonical /tables/{namespace}/{name} form so landing on this screen
+    // without a namespace is never the persisted state.
+    env.navigate({
+      tag: "navigate",
+      route: action.detail.namespace
+        ? { view: "tableDetail", name: action.detail.table_name, namespace: action.detail.namespace }
+        : { view: "tableDetail", name: action.detail.table_name },
+    });
     return null;
   case "detail-error":
     draft.error = action.error;

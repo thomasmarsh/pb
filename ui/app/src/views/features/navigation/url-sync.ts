@@ -21,7 +21,7 @@ function dispatchFromRoute(dispatch: Dispatch<AppAction>, route: Route): void {
       dispatch({ tag: "datawindows", action: { tag: "select", name: route.name } });
       break;
     case "tableDetail":
-      dispatch({ tag: "tables", action: { tag: "select", name: route.name } });
+      dispatch({ tag: "tables", action: { tag: "select", name: route.name, namespace: route.namespace } });
       break;
     case "queries":
       dispatch({ tag: "nav", action: { tag: "navigate", route } });

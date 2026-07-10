@@ -351,7 +351,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
             onClose={() => setShowDecomposition(false)}
             onHelp={() => setShowDecompositionHelp(true)}
           >
-            <DecompositionCandidatesCore store={store} table={d.table_name} namespace={d.namespace} />
+            <DecompositionCandidatesCore store={store} table={d.table_name} namespace={d.namespace ?? undefined} />
           </ContextualPanel>
         </Show>
 
@@ -361,7 +361,7 @@ function DetailContent(props: { detail: TableDetailData; store: Store<AppState, 
             onClose={() => setShowColumnAffinity(false)}
             onHelp={() => setShowColumnAffinityHelp(true)}
           >
-            <ColumnAffinityCore store={store} table={d.table_name} namespace={d.namespace} />
+            <ColumnAffinityCore store={store} table={d.table_name} namespace={d.namespace ?? undefined} />
           </ContextualPanel>
         </Show>
       </div>

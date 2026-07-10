@@ -109,8 +109,8 @@ export function DwDetailCore(props: { d: DwDetailResponse; layout: DataWindowFil
               title=""
               items={d.retrieve_tables.map((t) => ({
                 type: "table" as const,
-                name: t,
-                onClick: () => store.dispatch({ tag: "tables", action: { tag: "select", name: t } }),
+                name: t.table_name,
+                onClick: () => store.dispatch({ tag: "tables", action: { tag: "select", name: t.table_name, namespace: t.namespace ?? undefined } }),
               }))}
             />
           </ContextualPanel>

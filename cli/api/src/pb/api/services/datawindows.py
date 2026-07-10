@@ -20,7 +20,11 @@ def get_dw_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]:
     )
     try:
         tables = rows(
-            conn.execute("SELECT table_name FROM dw_retrieve_tables WHERE dw_name = ? ORDER BY table_name", [name])
+            conn.execute(
+                "SELECT DISTINCT table_name, namespace FROM dw_retrieve_tables "
+                "WHERE dw_name = ? ORDER BY table_name",
+                [name],
+            )
         )
     except Exception:
         tables = []
@@ -59,7 +63,7 @@ def get_dw_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any]:
 
     return {
         "controls": controls,
-        "retrieve_tables": [t["table_name"] for t in tables],
+        "retrieve_tables": [{"table_name": t["table_name"], "namespace": t["namespace"]} for t in tables],
         "retrieve_columns": columns,
         "retrieve_where": where,
         "arguments": arguments,

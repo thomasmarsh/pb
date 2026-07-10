@@ -15,7 +15,7 @@ function makeDw(overrides: Partial<DwDetailResponse> = {}): DwDetailResponse {
     controls: [
       { control_name: "col_id", control_type: "column", band: "detail", x: 10, y: 20, width: 80, height: 24, expression: null, tab_seq: null, source_line: null },
     ],
-    retrieve_tables: ["orders", "customers"],
+    retrieve_tables: [{ table_name: "orders", namespace: null }, { table_name: "customers", namespace: null }],
     retrieve_columns: [{ column_fqn: "orders.id", table_name: "orders", column_name: "id" }],
     retrieve_where: [{ idx: 1, exp1: "orders.id", op: "=", exp2: ":arg_id", logic: "" }],
     arguments: [{ arg_name: "arg_id", arg_type: "long" }],
@@ -168,7 +168,7 @@ describe("DWDetail source-first", () => {
   });
 
   it("Tables pill shows count from retrieve_tables", () => {
-    renderDWDetail({ retrieve_tables: ["orders", "customers"] });
+    renderDWDetail({ retrieve_tables: [{ table_name: "orders", namespace: null }, { table_name: "customers", namespace: null }] });
     expect(summaryBar()?.textContent).toContain("Tables (2)");
   });
 
@@ -178,7 +178,7 @@ describe("DWDetail source-first", () => {
   });
 
   it("clicking Tables pill opens panel with table names", () => {
-    renderDWDetail({ retrieve_tables: ["orders", "customers"] });
+    renderDWDetail({ retrieve_tables: [{ table_name: "orders", namespace: null }, { table_name: "customers", namespace: null }] });
     fireEvent.click(summaryPillBtn("Tables")!);
     expect(document.body.textContent).toContain("orders");
     expect(document.body.textContent).toContain("customers");

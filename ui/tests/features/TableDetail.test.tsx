@@ -9,6 +9,7 @@ import type { TableDetail as TableDetailData, ColumnUsageResponse, CoUpdateRitua
 
 const baseDetail: TableDetailData = {
   table_name: "orders",
+  namespace: null,
   dw_count: 1,
   ps_count: 2,
   datawindows: [{ dw_name: "dw_orders", file: "a.srd" }],

@@ -77,9 +77,27 @@ function apiParams(obj: Record<string, string | number>): string {
   return p.toString();
 }
 
+async function errorDetail(r: Response): Promise<string | undefined> {
+  try {
+    const body: unknown = await r.json();
+    if (body && typeof body === "object") {
+      const b = body as Record<string, unknown>;
+      // GET /api/tables/{name} reports a name ambiguous across schemas this
+      // way instead of guessing one — see resolve_table_detail in tables.py.
+      if (b.ambiguous && Array.isArray(b.namespaces)) {
+        return `Table "${String(b.table_name)}" exists in multiple schemas (${b.namespaces.join(", ")}) — specify one.`;
+      }
+      if (typeof b.detail === "string") return b.detail;
+    }
+  } catch {
+    // Non-JSON error body — fall through to the generic message.
+  }
+  return undefined;
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const r = await fetch(url);
-  if (!r.ok) throw new Error(`API ${r.status}`);
+  if (!r.ok) throw new Error((await errorDetail(r)) ?? `API ${r.status}`);
   return r.json() as Promise<T>;
 }
 
@@ -286,8 +304,12 @@ export function createApiClient(): ApiClient {
     },
 
     async getTableDetail(name: string, namespace?: string): Promise<TableDetail> {
-      const qs = namespace ? "?" + apiParams({ namespace }) : "";
-      return fetchJson(`/api/tables/${encodeURIComponent(name)}${qs}`);
+      // Namespace is a path segment (table identity), not a query filter:
+      // /api/tables/{namespace}/{name} when known, /api/tables/{name} when
+      // the caller only has a bare name and needs the server to resolve it.
+      return namespace
+        ? fetchJson(`/api/tables/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)
+        : fetchJson(`/api/tables/${encodeURIComponent(name)}`);
     },
 
     async getColumnUsage(): Promise<ColumnUsageResponse> {

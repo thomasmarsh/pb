@@ -144,7 +144,7 @@ export function GlobalSearch(props: { store: Store<AppState, AppAction> }): JSX.
               <For each={results()!.tables!.slice(0, 8)}>
                 {(t) => (
                   <button class="gs-result-item" onClick={() => navigateAndClose(() =>
-                    store.dispatch({ tag: "tables", action: { tag: "select", name: t.table_name } })
+                    store.dispatch({ tag: "tables", action: { tag: "select", name: t.table_name, namespace: t.namespace ?? undefined } })
                   )}>
                     <span class="gs-result-icon" aria-hidden="true"><Dynamic component={entityIcon("table")} size={14} /></span>
                     <span class="gs-result-name">{t.table_name}</span>
