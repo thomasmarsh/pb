@@ -138,6 +138,7 @@ public class CoverageReport {
         String innermostRule;
         String offendingType;
         List<String> expectedTypes;
+        int line;
     }
 
     static class RedactedErrorListener extends BaseErrorListener {
@@ -147,6 +148,7 @@ public class CoverageReport {
         public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line,
                                  int charPositionInLine, String msg, RecognitionException e) {
             ErrorEntry entry = new ErrorEntry();
+            entry.line = line;
 
             String innermost = null;
             if (recognizer instanceof Parser) {
@@ -336,6 +338,18 @@ public class CoverageReport {
         // key: "rule|found|expected1,expected2,..."
         Map<String, Integer> failCategoryCounts = new LinkedHashMap<String, Integer>();
         Map<String, String> failCategoryDisplay = new LinkedHashMap<String, String>();
+        // Position of the first error within its file, bucketed as a
+        // fraction of file length -- "early" (<10%) is the strongest signal
+        // a category is a genuine, isolated coverage gap (the very first
+        // construct in the file is what broke); "late" (>50%) is a strong
+        // signal it's a cascading/secondary symptom of something upstream
+        // in the same file (ANTLR's own error-recovery resync, or simply a
+        // different earlier construct this report attributes to a
+        // different category since only the first error per FILE is
+        // counted, not first error per problem). Matches this project's
+        // "primary failures hide secondary failures" principle -- without
+        // this, a downstream artifact is indistinguishable from a real gap.
+        Map<String, int[]> failCategoryPosition = new LinkedHashMap<String, int[]>(); // [early, mid, late]
 
         long totalDewrapJoins = 0;
         int filesDewrapped = 0;
@@ -386,6 +400,14 @@ public class CoverageReport {
             if (!opt.noDewrap) {
                 DewrapResult dr = dewrapHardWrappedLines(text, opt.dewrapWidth, opt.dewrapTolerance);
                 text = dr.text;
+                // Recompute for the position-bucket denominator below:
+                // ANTLR's error line numbers are measured against this
+                // POST-dewrap text, which has fewer lines than nLines
+                // (originally captured pre-dewrap) whenever any rejoining
+                // happened -- using the larger pre-dewrap count here would
+                // systematically understate the fraction for exactly the
+                // heavily-wrapped files this bucketing exists to analyze.
+                nLines = countLines(text);
                 if (dr.joins > 0) {
                     totalDewrapJoins += dr.joins;
                     filesDewrapped++;
@@ -431,6 +453,16 @@ public class CoverageReport {
                 failCategoryCounts.put(key, cur == null ? 1 : cur + 1);
                 failCategoryDisplay.put(key, "rule=" + first.innermostRule + "  found=" + first.offendingType
                         + "  expected=[" + expectedStr + "]");
+
+                int[] posCounts = failCategoryPosition.get(key);
+                if (posCounts == null) {
+                    posCounts = new int[3];
+                    failCategoryPosition.put(key, posCounts);
+                }
+                double frac = nLines > 0 ? first.line / (double) nLines : 0;
+                if (frac < 0.10) posCounts[0]++;
+                else if (frac <= 0.50) posCounts[1]++;
+                else posCounts[2]++;
             }
         }
 
@@ -483,6 +515,9 @@ public class CoverageReport {
         }
 
         System.out.printf("%nTop %d failure categories (innermost_rule, offending_token_type, expected_token_types):%n", opt.topN);
+        System.out.println("  (position = where in its file the error falls: early <10%, mid 10-50%, late >50% --");
+        System.out.println("   early is the strongest signal of a genuine isolated gap; late suggests a cascading/");
+        System.out.println("   secondary symptom of something earlier in the same file, not this construct itself)");
         List<Map.Entry<String, Integer>> failEntries = new ArrayList<Map.Entry<String, Integer>>(failCategoryCounts.entrySet());
         Collections.sort(failEntries, new Comparator<Map.Entry<String, Integer>>() {
             public int compare(Map.Entry<String, Integer> a, Map.Entry<String, Integer> b) {
@@ -492,7 +527,9 @@ public class CoverageReport {
         int shown = 0;
         for (Map.Entry<String, Integer> e : failEntries) {
             if (shown++ >= opt.topN) break;
-            System.out.printf("  %4d  %s%n", e.getValue(), failCategoryDisplay.get(e.getKey()));
+            int[] pos = failCategoryPosition.get(e.getKey());
+            String posStr = pos == null ? "" : String.format("  [early=%d mid=%d late=%d]", pos[0], pos[1], pos[2]);
+            System.out.printf("  %4d  %s%s%n", e.getValue(), failCategoryDisplay.get(e.getKey()), posStr);
         }
 
         System.out.println("\n" + repeat("=", 70));
