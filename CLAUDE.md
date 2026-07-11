@@ -893,7 +893,7 @@ stripBom          :: Text -> Text
 ### `PB.Pipeline.Passes`
 
 ```haskell
--- Phase B orchestration: link analysis (passes 5-10) in DuckDB mode.
+-- Phase B orchestration: link analysis (passes 5-11) in DuckDB mode.
 runPhaseB :: DuckConn -> Maybe Text -> IO ()
 -- 2nd param is mDefaultNamespace (Plan 157 Phase 1, 2026-07-09), threaded
 -- through from Runner.runModeDb's --default-namespace flag into runPass9.
@@ -910,8 +910,94 @@ runPhaseB :: DuckConn -> Maybe Text -> IO ()
 --               Phase 1) flows into SchemaInputs' inDefaultNamespace field.)
 --             runPass10 (Plan 153 D5, 2026-07-07: columnCoslice over every
 --               ColumnObj in the graph → decomposition_coslice)
+--             runPass11 (Plan 161 Phase 1, 2026-07-11: materializes
+--               PB.Pipeline.Datalog's reachesRules/liveProcRules programs →
+--               reaches/live_proc tables. Uses Datalog.runRuleSetWith's
+--               per-relation progress callback, not the plain runRuleSet --
+--               emits one "step" event per relation so the CLI reporter
+--               doesn't show one silent blanket step for the whole pass;
+--               see PB.Pipeline.Datalog's own entry for why.)
 runPass9  :: DuckConn -> Maybe Text -> IO SchGraph
 runPass10 :: DuckConn -> SchGraph -> IO ()
+runPass11 :: DuckConn -> IO ()
+```
+
+### `PB.Pipeline.Datalog` (Plan 161 Phase 1, done 2026-07-11)
+
+```haskell
+-- Pure IR + a DuckDB-native rule-set-to-SQL compiler for the reaches-style
+-- whole-program queries Plan 161 exists to replace bespoke Haskell
+-- traversals with. EDB relations (leg/dead/stmt) are VIEWS over existing
+-- tables (initEdbViews) -- no fact-marshalling round trip through Haskell;
+-- IDB (derived) relations materialize into their own real tables via
+-- runRuleSet, so downstream consumers (a future Explorer API, Phase 4)
+-- read a plain DuckDB table like any other.
+data Relation = Relation { relName :: Text, relCols :: [Text] }
+-- litArgs are variable names or the wildcard "_", positionally aligned to
+-- relCols of litRelation (same arity -- mismatched lengths = malformed Rule).
+data Literal  = Literal { litRelation :: Relation, litArgs :: [Text], litNegated :: Bool }
+data Rule     = Rule { ruleHead :: Literal, ruleBody :: [Literal] }        -- ruleHead's litNegated always False
+data RuleSet  = RuleSet { rsRelations :: [Relation], rsRules :: [Rule] }   -- a relation may have several alternative rules, unioned
+
+stratify :: RuleSet -> Either Text [Relation]
+-- Kahn's-algorithm topological sort over the derived-relation dependency
+-- graph (a rule's head depends on every OTHER relation named in its body,
+-- negated or not; a relation's own direct self-reference is excluded from
+-- this graph -- that's the WITH RECURSIVE case, not a stratification
+-- ordering problem). Left "unstratifiable: cyclic dependency ..." for any
+-- cross-relation cycle -- Phase 1 scope has no mutual-recursion support,
+-- rejects rather than guesses an evaluation order.
+
+compileRelation :: RuleSet -> Relation -> Query
+-- Every rule whose head is this relation, unioned (SELECT DISTINCT + plain
+-- UNION, so DuckDB's own dedup handles fixpoint termination). A rule whose
+-- body positively self-references its own head relation compiles into the
+-- recursive term of a WITH RECURSIVE name(cols) AS (base UNION recursive)
+-- statement; everything else is a plain join (FROM relA AS b0, relB AS b1,
+-- ... with equi-join WHERE conditions from repeated variable occurrences)
+-- with each negated body literal compiled to a NOT EXISTS correlated
+-- subquery. A relation with zero rules compiles to a well-typed empty
+-- result (CAST(NULL AS VARCHAR) AS col, ... WHERE FALSE).
+-- Internal (not exported): compileBody, compileRule, lookupBound (errors
+-- clearly -- not a bare Map.! crash -- on a head/negated-literal variable
+-- with no earlier positive-body binding), emptyRelationQuery, topoSort.
+
+runRuleSet     :: Connection -> RuleSet -> IO ()
+runRuleSetWith :: (Relation -> IO ()) -> Connection -> RuleSet -> IO ()
+-- runRuleSet = runRuleSetWith (\_ -> pure ()). In stratify order: DROP
+-- TABLE IF EXISTS <name>; CREATE TABLE <name> AS <compileRelation ...>.
+-- runRuleSetWith's callback fires once per relation just before it
+-- materializes -- PB.Pipeline.Passes' runPass11 wires this to emitProgress
+-- (one "step" event per relation, e.g. "Datalog: reaches") rather than
+-- calling plain runRuleSet, because the CLI reporter's Phase B view shows
+-- only the latest step label with no sub-progress bar -- a single silent
+-- step per pass already reads as a long pause elsewhere in Phase B, and
+-- Phase 3's rule sets (implied_fk, workflow_rule, migration risk scoring)
+-- are expected to be markedly larger/slower than Phase 1's two. Any future
+-- rule set MUST use runRuleSetWith, not bare runRuleSet, for this reason.
+
+initEdbViews :: Connection -> IO ()
+-- (Re)creates leg (from schema_morphisms), dead (from dead_code), and stmt
+-- (from schema_objects) as views. stmt is filtered to kind = 'stmt' ONLY --
+-- excluding kind = 'dw_retrieve' rows is deliberate: a DwRetrieveId
+-- StmtObj's stmt_proc is always NULL, and dead_code only keys on real
+-- (object, proc_name) pairs, so a NULL proc vacuously passes `NOT EXISTS
+-- dead` -- every DW retrieve would otherwise pollute live_proc as
+-- unconditionally "live" (found via a real openpay --db smoke run: 114/115
+-- stmt rows were this noise before the fix).
+
+reachesRules  :: RuleSet
+-- reaches(X,Y) :- leg(X,Y,_).  reaches(X,Z) :- reaches(X,Y), leg(Y,Z,_).
+-- The Phase 0-validated port of SchemaCategory.blastRadius/
+-- validationWalkBack's existence-only core (both functions' reachable set
+-- reprojects off this one relation, either direction). Materializes to
+-- table "reaches".
+liveProcRules :: RuleSet
+-- live_proc(Object,Proc) :- stmt(_,Object,Proc,_), !dead(Object,Proc).
+-- Real stratified-negation demonstration (Plan 161 Open Question 4):
+-- dead_code is fully computed (Pass 8) before Pass 11 ever runs, so no
+-- cross-run ordering is needed here beyond stratify confirming live_proc
+-- isn't negatively self-referential. Materializes to table "live_proc".
 ```
 
 ### `PB.Pipeline.SqlParse`

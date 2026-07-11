@@ -10,6 +10,7 @@ import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TypeResolve
 import PB.Analysis.SchemaCategory
   ( SchemaInputs (..), SchGraph (..), SchObject (..), buildSchema, columnCoslice )
+import PB.Pipeline.Datalog qualified as Datalog
 import PB.Pipeline.DuckDb
   ( DuckConn
   , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
@@ -56,6 +57,7 @@ runPhaseB conn mDefaultNamespace = do
   runPass8 conn inh allRC
   sch   <- runPass9 conn mDefaultNamespace
   runPass10 conn sch
+  runPass11 conn
 
 runPass5 :: DuckConn -> IO (Map.Map Text Text)
 runPass5 conn = do
@@ -142,6 +144,27 @@ runPass9 conn mDefaultNamespace = do
   appendSchemaObjects   conn (Set.toList (sgObjects sch))
   appendSchemaMorphisms conn (sgLegs sch)
   pure sch
+
+-- | Pass 11 (Plan 161 Phase 1): materialize the DuckDB-native Datalog
+-- programs (@reaches@/@live_proc@) as their own tables. Not yet wired to
+-- any UI/API consumer (Plan 161 Phase 4) -- mirrors Pass 10's own
+-- precedent of landing before a named consumer exists.
+--
+-- Emits one "step" event per relation (via 'Datalog.runRuleSetWith'), not
+-- one blanket event for the whole pass: the Python reporter's Phase B
+-- rendering shows only the latest step label with no sub-progress bar, so
+-- a single silent step here would otherwise become a growing invisible
+-- pause as Plan 161 Phase 3 adds more/larger rule sets to this pass (see
+-- that plan's Status note).
+runPass11 :: DuckConn -> IO ()
+runPass11 conn = do
+  Datalog.initEdbViews conn
+  let onRelation rel = emitProgress (object
+        [ "tag" .= ("step" :: Text)
+        , "label" .= ("Datalog: " <> Datalog.relName rel)
+        ])
+  Datalog.runRuleSetWith onRelation conn Datalog.reachesRules
+  Datalog.runRuleSetWith onRelation conn Datalog.liveProcRules
 
 -- | Pass 10 (Plan 153 D5): for every column object, materialize its
 -- 'columnCoslice' (rewrite-cost lineage) so Python's decomposition-ranking
