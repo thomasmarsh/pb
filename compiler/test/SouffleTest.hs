@@ -1,7 +1,7 @@
-module DatalogTest (tests) where
+module SouffleTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.Datalog
+import PB.Pipeline.Souffle
 import PB.Pipeline.DuckDb
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), LegSource (..), SchMorphism (..)
@@ -20,51 +20,17 @@ import Test.Tasty.HUnit (assertBool, testCase, (@?=))
 emptyInputs :: SchemaInputs
 emptyInputs = SchemaInputs [] [] [] [] [] [] [] [] Nothing
 
+-- | Same behavioral assertions as the old DuckDB-native 'PB.Pipeline.Datalog'
+-- test suite -- 'reachesRules'/'liveProcRules' are the same values, now
+-- materialized via the Souffle CLI instead of generated SQL. There is no
+-- Souffle-backend counterpart to the old "stratify" unit-test group:
+-- stratification is Souffle's own job now (see 'PB.Pipeline.Souffle''s
+-- module header), so there is nothing left at the Haskell level to assert
+-- on there.
 tests :: TestTree
-tests = testGroup "Datalog"
+tests = testGroup "Souffle"
 
-  [ testGroup "stratify"
-    [ testCase "orders a relation referenced only positively before its dependent" $
-        let r1 = Relation "r1" ["a", "b"]
-            r2 = Relation "r2" ["a", "b"]
-            rs = RuleSet
-              { rsRelations = [r2, r1]   -- deliberately reversed
-              , rsRules =
-                  [ Rule (Literal r2 ["a", "b"] False) [ Literal r1 ["a", "b"] False ] ]
-              }
-        in stratify rs @?= Right [r1, r2]
-
-    , testCase "orders a negated-dependency relation before its dependent" $
-        let src      = Relation "src" ["x"]
-            hasA     = Relation "has_a" ["x"]
-            missingA = Relation "missing_a" ["x"]
-            rs = RuleSet
-              { rsRelations = [missingA, hasA]   -- deliberately reversed
-              , rsRules =
-                  [ Rule (Literal hasA ["x"] False)     [ Literal src ["x"] False ]
-                  , Rule (Literal missingA ["x"] False)
-                      [ Literal src ["x"] False, Literal hasA ["x"] True ]
-                  ]
-              }
-        in stratify rs @?= Right [hasA, missingA]
-
-    , testCase "rejects a negative cycle with Left" $
-        let src   = Relation "src" ["x"]
-            cycA  = Relation "cyc_a" ["x"]
-            cycB  = Relation "cyc_b" ["x"]
-            rs = RuleSet
-              { rsRelations = [cycA, cycB]
-              , rsRules =
-                  [ Rule (Literal cycA ["x"] False)
-                      [ Literal src ["x"] False, Literal cycB ["x"] True ]
-                  , Rule (Literal cycB ["x"] False)
-                      [ Literal src ["x"] False, Literal cycA ["x"] True ]
-                  ]
-              }
-        in assertBool "negative cycle must be rejected" (isLeftDL (stratify rs))
-    ]
-
-  , testGroup "reachesRules"
+  [ testGroup "reachesRules"
     [ testCase "two-hop chain: reaches contains both hops and the transitive pair" $
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
@@ -168,7 +134,3 @@ tests = testGroup "Datalog"
           assertBool "no dw_retrieve row leaks into live_proc" (null rows)
     ]
   ]
-  where
-    isLeftDL :: Either a b -> Bool
-    isLeftDL (Left _)  = True
-    isLeftDL (Right _) = False

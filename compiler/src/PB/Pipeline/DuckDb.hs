@@ -80,6 +80,10 @@ module PB.Pipeline.DuckDb
   , appendSchemaObjects
   , appendSchemaMorphisms
   , appendDecompositionCoslice
+  -- Generic EDB/IDB bridge (Plan 161 -- Souffle)
+  , queryTextRows
+  , recreateTextTable
+  , appendTextRows
   ) where
 
 import PB.Prelude
@@ -103,9 +107,9 @@ import PB.Pipeline.SqlParse    (TableRef (..))
 import PB.Pipeline.Serialise   ()
 
 import Database.DuckDB.Simple
-  (Connection, Query, execute_, withConnection, query_)
+  (Connection, Query (..), execute_, withConnection, query_)
 import Database.DuckDB.Simple.Internal (withConnectionHandle)
-import Database.DuckDB.Simple.FromRow  (FromRow (..), field)
+import Database.DuckDB.Simple.FromRow  (FromRow (..), field, numFieldsRemaining)
 import Database.DuckDB.FFI
   ( c_duckdb_appender_create
   , c_duckdb_appender_flush
@@ -1264,6 +1268,60 @@ appendDecompositionCoslice conn rows = withRaw conn "decomposition_coslice" $ \a
         aText      app (renderLegKind (legKind leg))
         aText      app (renderLegSource (legSource leg))
         endRow app
+
+-- ---------------------------------------------------------------------------
+-- Generic EDB/IDB bridge (Plan 161 -- Souffle rewrite)
+--
+-- 'PB.Pipeline.Souffle' needs to read/write relations whose column count is
+-- a runtime value ('PB.Pipeline.Souffle.Relation''s 'relCols'), not fixed by
+-- a Haskell type -- so no per-relation 'FromRow'/appender pair is possible.
+-- These three are the dynamic-arity counterparts of the typed
+-- query/appender pairs above, values passed through as TEXT throughout
+-- (every EDB relation this project currently feeds Datalog/Souffle -- keys,
+-- kinds, names -- is already string-shaped; a numeric column like 'stmt's
+-- 'line' is CAST to VARCHAR at read time since no current rule inspects it
+-- other than by equality/wildcard).
+
+-- | A row of arbitrary width, all columns read via their 'FromField' Text
+-- instance. Not exported -- only 'queryTextRows' constructs one.
+newtype TextRow = TextRow { unTextRow :: [Text] }
+
+instance FromRow TextRow where
+  fromRow = TextRow <$> go
+    where
+      go = do
+        n <- numFieldsRemaining
+        if n <= 0 then pure [] else (:) <$> field <*> go
+
+-- | Read every row of a table or view as TEXT columns, in the given column
+-- order (CAST to VARCHAR at the SQL level, so this works regardless of the
+-- underlying column type).
+queryTextRows :: DuckConn -> Text -> [Text] -> IO [[Text]]
+queryTextRows conn tblOrView cols = do
+  rows <- query_ conn (Query sql)
+  pure (map unTextRow rows)
+  where
+    sql = "SELECT " <> T.intercalate ", "
+            [ "CAST(" <> c <> " AS VARCHAR)" | c <- cols ]
+            <> " FROM " <> tblOrView
+
+-- | (Re)create a table with the given column names, all TEXT, dropping any
+-- previous table of that name first -- the write-side counterpart of
+-- 'queryTextRows', used to materialize a computed relation's result rows.
+recreateTextTable :: DuckConn -> Text -> [Text] -> IO ()
+recreateTextTable conn tbl cols = do
+  void $ execute_ conn (Query ("DROP TABLE IF EXISTS " <> tbl))
+  void $ execute_ conn (Query ("CREATE TABLE " <> tbl <> " ("
+    <> T.intercalate ", " [ c <> " TEXT" | c <- cols ] <> ")"))
+
+-- | Append rows of uniform (but runtime-known) arity as TEXT columns -- no
+-- per-arity 'ToRow' instance needed.
+appendTextRows :: DuckConn -> Text -> [[Text]] -> IO ()
+appendTextRows _    _   []   = pure ()
+appendTextRows conn tbl rows = withRaw conn tbl $ \app ->
+  for_ rows $ \r -> do
+    for_ r (aText app)
+    endRow app
 
 -- ---------------------------------------------------------------------------
 -- Internal helpers

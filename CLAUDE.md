@@ -910,28 +910,34 @@ runPhaseB :: DuckConn -> Maybe Text -> IO ()
 --               Phase 1) flows into SchemaInputs' inDefaultNamespace field.)
 --             runPass10 (Plan 153 D5, 2026-07-07: columnCoslice over every
 --               ColumnObj in the graph → decomposition_coslice)
---             runPass11 (Plan 161 Phase 1, 2026-07-11: materializes
---               PB.Pipeline.Datalog's reachesRules/liveProcRules programs →
---               reaches/live_proc tables. Uses Datalog.runRuleSetWith's
+--             runPass11 (Plan 161, 2026-07-11; Souffle backend since same
+--               day's Phase 0 reversal: materializes
+--               PB.Pipeline.Souffle's reachesRules/liveProcRules programs →
+--               reaches/live_proc tables. Uses Souffle.runRuleSetWith's
 --               per-relation progress callback, not the plain runRuleSet --
 --               emits one "step" event per relation so the CLI reporter
 --               doesn't show one silent blanket step for the whole pass;
---               see PB.Pipeline.Datalog's own entry for why.)
+--               see PB.Pipeline.Souffle's own entry for why.)
 runPass9  :: DuckConn -> Maybe Text -> IO SchGraph
 runPass10 :: DuckConn -> SchGraph -> IO ()
 runPass11 :: DuckConn -> IO ()
 ```
 
-### `PB.Pipeline.Datalog` (Plan 161 Phase 1, done 2026-07-11)
+### `PB.Pipeline.Souffle` (Plan 161, Souffle migration done 2026-07-11 -- replaces the deleted `PB.Pipeline.Datalog`)
 
 ```haskell
--- Pure IR + a DuckDB-native rule-set-to-SQL compiler for the reaches-style
--- whole-program queries Plan 161 exists to replace bespoke Haskell
--- traversals with. EDB relations (leg/dead/stmt) are VIEWS over existing
--- tables (initEdbViews) -- no fact-marshalling round trip through Haskell;
--- IDB (derived) relations materialize into their own real tables via
--- runRuleSet, so downstream consumers (a future Explorer API, Phase 4)
--- read a plain DuckDB table like any other.
+-- Pure IR + a Souffle-CLI backend for the reaches-style whole-program
+-- queries Plan 161 exists to replace bespoke Haskell traversals with.
+-- Phase 0's original DuckDB-native decision was reversed same-day (see the
+-- plan's "Phase 0 -- reopened" section): a Homebrew packaging bug wrongly
+-- disqualified Souffle's compiled mode, and a re-measure with it included
+-- showed Souffle beating DuckDB-native; a realistic aggregate rule (caller
+-- fan-in count) had no home in the old IR's plain-SELECT compiler at all.
+-- Same IR as before: EDB relations (leg/dead/stmt) are VIEWS over existing
+-- tables (initEdbViews) -- no fact-marshalling round trip through DuckDB
+-- itself, though facts DO now round-trip through Haskell once, out to
+-- Souffle's .facts files and back from its .csv output (unlike the old
+-- module, which stayed inside DuckDB via WITH RECURSIVE the whole time).
 data Relation = Relation { relName :: Text, relCols :: [Text] }
 -- litArgs are variable names or the wildcard "_", positionally aligned to
 -- relCols of litRelation (same arity -- mismatched lengths = malformed Rule).
@@ -939,44 +945,43 @@ data Literal  = Literal { litRelation :: Relation, litArgs :: [Text], litNegated
 data Rule     = Rule { ruleHead :: Literal, ruleBody :: [Literal] }        -- ruleHead's litNegated always False
 data RuleSet  = RuleSet { rsRelations :: [Relation], rsRules :: [Rule] }   -- a relation may have several alternative rules, unioned
 
-stratify :: RuleSet -> Either Text [Relation]
--- Kahn's-algorithm topological sort over the derived-relation dependency
--- graph (a rule's head depends on every OTHER relation named in its body,
--- negated or not; a relation's own direct self-reference is excluded from
--- this graph -- that's the WITH RECURSIVE case, not a stratification
--- ordering problem). Left "unstratifiable: cyclic dependency ..." for any
--- cross-relation cycle -- Phase 1 scope has no mutual-recursion support,
--- rejects rather than guesses an evaluation order.
+edbRelations :: RuleSet -> [Relation]
+-- Every relation referenced in any rule's head/body that is NOT in
+-- rsRelations (the derived/IDB set) -- these are the EDB relations the
+-- program assumes are already populated. Souffle hard-errors on a missing
+-- .facts file for a declared .input relation, so every one of these gets a
+-- file written, even an empty one.
 
-compileRelation :: RuleSet -> Relation -> Query
--- Every rule whose head is this relation, unioned (SELECT DISTINCT + plain
--- UNION, so DuckDB's own dedup handles fixpoint termination). A rule whose
--- body positively self-references its own head relation compiles into the
--- recursive term of a WITH RECURSIVE name(cols) AS (base UNION recursive)
--- statement; everything else is a plain join (FROM relA AS b0, relB AS b1,
--- ... with equi-join WHERE conditions from repeated variable occurrences)
--- with each negated body literal compiled to a NOT EXISTS correlated
--- subquery. A relation with zero rules compiles to a well-typed empty
--- result (CAST(NULL AS VARCHAR) AS col, ... WHERE FALSE).
--- Internal (not exported): compileBody, compileRule, lookupBound (errors
--- clearly -- not a bare Map.! crash -- on a head/negated-literal variable
--- with no earlier positive-body binding), emptyRelationQuery, topoSort.
+compileProgram :: RuleSet -> Text
+-- Renders a full Souffle .dl program: .decl+.input per EDB relation
+-- (edbRelations), .decl+.output+translated rules per IDB relation
+-- (rsRelations). Every column is declared `symbol` (Souffle's string type)
+-- -- every value this project currently feeds through (schema keys, kinds,
+-- object names) is already string-shaped. Souffle stratifies and evaluates
+-- the whole program itself -- no ordering step is needed from the caller
+-- (the old module's stratify/topoSort/compileRelation/compileBody/
+-- compileRule/lookupBound are GONE; there is nothing left at the Haskell
+-- level for them to do).
 
-runRuleSet     :: Connection -> RuleSet -> IO ()
-runRuleSetWith :: (Relation -> IO ()) -> Connection -> RuleSet -> IO ()
--- runRuleSet = runRuleSetWith (\_ -> pure ()). In stratify order: DROP
--- TABLE IF EXISTS <name>; CREATE TABLE <name> AS <compileRelation ...>.
--- runRuleSetWith's callback fires once per relation just before it
--- materializes -- PB.Pipeline.Passes' runPass11 wires this to emitProgress
--- (one "step" event per relation, e.g. "Datalog: reaches") rather than
--- calling plain runRuleSet, because the CLI reporter's Phase B view shows
--- only the latest step label with no sub-progress bar -- a single silent
--- step per pass already reads as a long pause elsewhere in Phase B, and
--- Phase 3's rule sets (implied_fk, workflow_rule, migration risk scoring)
--- are expected to be markedly larger/slower than Phase 1's two. Any future
--- rule set MUST use runRuleSetWith, not bare runRuleSet, for this reason.
+runRuleSet     :: DuckConn -> RuleSet -> IO ()
+runRuleSetWith :: (Relation -> IO ()) -> DuckConn -> RuleSet -> IO ()
+-- runRuleSet = runRuleSetWith (\_ -> pure ()). Per call: withSystemTempDirectory
+-- (temporary pkg) -> for each edbRelations member, PB.Pipeline.DuckDb.queryTextRows
+-- reads its current rows and writes a tab-separated <name>.facts file (always
+-- written, even with zero rows) -> compileProgram's output written to a .dl
+-- file -> `souffle -F factsDir -D outDir program.dl` via readProcessWithExitCode
+-- (interpreted mode; a non-zero exit is a hard `error`, same tier as the old
+-- module's unstratifiable-ruleset error) -> for each rsRelations member, calls
+-- onRelation (PB.Pipeline.Passes' runPass11 wires this to emitProgress, one
+-- "step" event per relation, e.g. "Datalog: reaches", same reason as before:
+-- the CLI reporter's Phase B view shows only the latest step label with no
+-- sub-progress bar), reads back its <name>.csv output, then
+-- PB.Pipeline.DuckDb.recreateTextTable + appendTextRows materializes it as a
+-- DuckDB table (drop + create all-TEXT columns, generic-arity append -- see
+-- that module's own entry). Any future, larger Phase 3 rule set MUST use
+-- runRuleSetWith, not bare runRuleSet, for the same reason as before.
 
-initEdbViews :: Connection -> IO ()
+initEdbViews :: DuckConn -> IO ()
 -- (Re)creates leg (from schema_morphisms), dead (from dead_code), and stmt
 -- (from schema_objects) as views. stmt is filtered to kind = 'stmt' ONLY --
 -- excluding kind = 'dw_retrieve' rows is deliberate: a DwRetrieveId
@@ -991,13 +996,15 @@ reachesRules  :: RuleSet
 -- The Phase 0-validated port of SchemaCategory.blastRadius/
 -- validationWalkBack's existence-only core (both functions' reachable set
 -- reprojects off this one relation, either direction). Materializes to
--- table "reaches".
+-- table "reaches". Souffle handles the self-recursion natively -- no
+-- WITH RECURSIVE translation needed on this side.
 liveProcRules :: RuleSet
 -- live_proc(Object,Proc) :- stmt(_,Object,Proc,_), !dead(Object,Proc).
 -- Real stratified-negation demonstration (Plan 161 Open Question 4):
 -- dead_code is fully computed (Pass 8) before Pass 11 ever runs, so no
--- cross-run ordering is needed here beyond stratify confirming live_proc
--- isn't negatively self-referential. Materializes to table "live_proc".
+-- cross-run ordering is needed here -- Souffle only has to confirm
+-- live_proc isn't negatively self-referential (it is not). Materializes to
+-- table "live_proc".
 ```
 
 ### `PB.Pipeline.SqlParse`
@@ -2113,6 +2120,27 @@ appendSchemaMorphisms :: DuckConn -> [SchemaCategory.SchMorphism] -> IO ()
 -- leg_ordinal orders a target's legs within its (seed_key, target_key)
 -- path. Python's get_decomposition_candidates (cli/api) is the sole reader.
 appendDecompositionCoslice :: DuckConn -> [(SchemaCategory.SchObject, [SchemaCategory.SchPath])] -> IO ()
+-- Generic EDB/IDB bridge (Plan 161, Souffle migration, 2026-07-11):
+-- PB.Pipeline.Souffle needs to read/write relations whose column count is a
+-- runtime value (Relation's relCols), not fixed by a Haskell type -- no
+-- per-relation FromRow/appender pair is possible, so these three are the
+-- dynamic-arity counterparts of the typed query/appender pairs above.
+-- Every value round-trips as TEXT (every EDB relation currently fed through
+-- -- keys, kinds, names -- is already string-shaped; a numeric column like
+-- stmt's line is CAST to VARCHAR at read time since no rule inspects it
+-- other than by equality/wildcard).
+queryTextRows     :: DuckConn -> Text -> [Text] -> IO [[Text]]
+-- table/view name, column names -> rows, in that column order, each value
+-- CAST(... AS VARCHAR) at the SQL level (works regardless of underlying
+-- column type). Backed by an internal, unexported `newtype TextRow = TextRow
+-- [Text]` FromRow instance built on numFieldsRemaining/field (loops until no
+-- fields remain, rather than a fixed-arity tuple instance).
+recreateTextTable :: DuckConn -> Text -> [Text] -> IO ()
+-- DROP TABLE IF EXISTS + CREATE TABLE with the given column names, all TEXT
+-- -- the write-side counterpart of queryTextRows.
+appendTextRows    :: DuckConn -> Text -> [[Text]] -> IO ()
+-- Generic-arity appender (reuses the existing withRaw/aText/endRow
+-- machinery) -- no per-arity ToRow instance needed.
 -- Schema init:
 withWriteConn    :: FilePath -> (DuckConn -> IO a) -> IO a
 initSchema       :: DuckConn -> IO ()
