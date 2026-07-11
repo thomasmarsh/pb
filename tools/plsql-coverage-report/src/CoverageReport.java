@@ -350,6 +350,12 @@ public class CoverageReport {
         // "primary failures hide secondary failures" principle -- without
         // this, a downstream artifact is indistinguishable from a real gap.
         Map<String, int[]> failCategoryPosition = new LinkedHashMap<String, int[]>(); // [early, mid, late]
+        // File-size (line count) stats per category -- a tiny file (a few
+        // lines) failing "early" all but confirms the failure is the file's
+        // own leading construct, not a preamble/header problem or a
+        // cascade from something else; a large file failing "early" instead
+        // points at a header/banner-line issue specific to that file kind.
+        Map<String, long[]> failCategorySize = new LinkedHashMap<String, long[]>(); // [min, max, sum, count]
 
         long totalDewrapJoins = 0;
         int filesDewrapped = 0;
@@ -463,6 +469,16 @@ public class CoverageReport {
                 if (frac < 0.10) posCounts[0]++;
                 else if (frac <= 0.50) posCounts[1]++;
                 else posCounts[2]++;
+
+                long[] sizeStats = failCategorySize.get(key);
+                if (sizeStats == null) {
+                    sizeStats = new long[]{Long.MAX_VALUE, Long.MIN_VALUE, 0, 0};
+                    failCategorySize.put(key, sizeStats);
+                }
+                sizeStats[0] = Math.min(sizeStats[0], nLines);
+                sizeStats[1] = Math.max(sizeStats[1], nLines);
+                sizeStats[2] += nLines;
+                sizeStats[3] += 1;
             }
         }
 
@@ -529,7 +545,12 @@ public class CoverageReport {
             if (shown++ >= opt.topN) break;
             int[] pos = failCategoryPosition.get(e.getKey());
             String posStr = pos == null ? "" : String.format("  [early=%d mid=%d late=%d]", pos[0], pos[1], pos[2]);
-            System.out.printf("  %4d  %s%s%n", e.getValue(), failCategoryDisplay.get(e.getKey()), posStr);
+            long[] size = failCategorySize.get(e.getKey());
+            String sizeStr = "";
+            if (size != null && size[3] > 0) {
+                sizeStr = String.format("  [lines: min=%d avg=%d max=%d]", size[0], size[2] / size[3], size[1]);
+            }
+            System.out.printf("  %4d  %s%s%s%n", e.getValue(), failCategoryDisplay.get(e.getKey()), posStr, sizeStr);
         }
 
         System.out.println("\n" + repeat("=", 70));
