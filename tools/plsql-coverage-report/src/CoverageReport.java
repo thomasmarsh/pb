@@ -74,6 +74,7 @@ public class CoverageReport {
         int dewrapWidth = 80;
         int dewrapTolerance = 0;
         boolean noDewrap = false;
+        File dumpFailures = null;
     }
 
     /** Rejoins lines hard-wrapped mid-token at a fixed column width.
@@ -139,6 +140,7 @@ public class CoverageReport {
         String offendingType;
         List<String> expectedTypes;
         int line;
+        int charOffset = -1; // start index of the offending token in the parsed text, -1 if unavailable
     }
 
     static class RedactedErrorListener extends BaseErrorListener {
@@ -164,6 +166,7 @@ public class CoverageReport {
             if (offendingSymbol instanceof Token) {
                 Token t = (Token) offendingSymbol;
                 offendingType = symbolicName(recognizer, t.getType());
+                entry.charOffset = t.getStartIndex();
             }
             entry.offendingType = offendingType;
 
@@ -280,6 +283,8 @@ public class CoverageReport {
                 o.dewrapTolerance = Integer.parseInt(args[++i]);
             } else if (a.equals("--no-dewrap")) {
                 o.noDewrap = true;
+            } else if (a.equals("--dump-failures")) {
+                o.dumpFailures = new File(args[++i]);
             } else if (a.equals("--ext")) {
                 Set<String> exts = new HashSet<String>();
                 while (i + 1 < args.length && !args[i + 1].startsWith("--")) {
@@ -311,6 +316,11 @@ public class CoverageReport {
         System.out.println("  --dewrap-width N           Column width for the hard-wrap rejoin heuristic (default: 80)");
         System.out.println("  --dewrap-tolerance N       +/- tolerance in chars when matching --dewrap-width (default: 0)");
         System.out.println("  --no-dewrap                Disable the hard-wrap rejoin heuristic entirely");
+        System.out.println("  --dump-failures FILE       Write a local TSV (category, file path, error line,");
+        System.out.println("                             char offset, file line count) for every failing file.");
+        System.out.println("                             NOT redacted -- for your own local investigation only,");
+        System.out.println("                             do not paste this file's contents back into a shared");
+        System.out.println("                             report. Off by default.");
     }
 
     public static void main(String[] args) throws Exception {
@@ -319,6 +329,12 @@ public class CoverageReport {
         if (!opt.corpusDir.isDirectory()) {
             System.err.println("error: " + opt.corpusDir + " is not a directory");
             System.exit(1);
+        }
+
+        java.io.PrintWriter dumpWriter = null;
+        if (opt.dumpFailures != null) {
+            dumpWriter = new java.io.PrintWriter(new java.io.FileWriter(opt.dumpFailures));
+            dumpWriter.println("category\tfile_path\terror_line\tchar_offset\tfile_line_count");
         }
 
         List<File> files = collectFiles(opt.corpusDir, opt.exts);
@@ -356,6 +372,20 @@ public class CoverageReport {
         // cascade from something else; a large file failing "early" instead
         // points at a header/banner-line issue specific to that file kind.
         Map<String, long[]> failCategorySize = new LinkedHashMap<String, long[]>(); // [min, max, sum, count]
+        // "Self-heal" diagnostic: when the first error is unit_statement
+        // hitting a bare object-type keyword (SYNONYM/TRIGGER/PROCEDURE/...)
+        // where a fresh CREATE/ALTER/DROP-led statement was expected, the
+        // natural hypothesis is that a real CREATE token immediately
+        // upstream got swallowed by something else's error-recovery resync
+        // -- i.e. this file's true fault lies earlier, and this category is
+        // a downstream symptom, not an independent grammar gap. Test it
+        // directly, without ever needing to see file content: reparse the
+        // tail of the SAME file starting at the offending token with a
+        // synthetic "CREATE " prepended. If that reparses clean, the
+        // object's own declaration was fine all along -- confirms the
+        // cascade theory. If it still fails, the object's own syntax has a
+        // further problem beyond just a missing CREATE.
+        Map<String, int[]> failCategorySelfHeal = new LinkedHashMap<String, int[]>(); // [healed, attempted]
 
         long totalDewrapJoins = 0;
         int filesDewrapped = 0;
@@ -479,6 +509,33 @@ public class CoverageReport {
                 sizeStats[1] = Math.max(sizeStats[1], nLines);
                 sizeStats[2] += nLines;
                 sizeStats[3] += 1;
+
+                if ("unit_statement".equals(first.innermostRule) && first.charOffset >= 0
+                        && first.charOffset < parseText.length()) {
+                    final String healTail = "CREATE " + parseText.substring(first.charOffset);
+                    Future<List<ErrorEntry>> healFuture = executor.submit(new Callable<List<ErrorEntry>>() {
+                        public List<ErrorEntry> call() throws Exception {
+                            return parseFile(healTail);
+                        }
+                    });
+                    boolean healed;
+                    try {
+                        healed = healFuture.get(opt.timeoutSec, TimeUnit.SECONDS).isEmpty();
+                    } catch (Exception ignore) {
+                        healed = false;
+                    }
+                    int[] healStats = failCategorySelfHeal.get(key);
+                    if (healStats == null) {
+                        healStats = new int[2];
+                        failCategorySelfHeal.put(key, healStats);
+                    }
+                    if (healed) healStats[0]++;
+                    healStats[1]++;
+                }
+
+                if (dumpWriter != null) {
+                    dumpWriter.printf("%s\t%s\t%d\t%d\t%d%n", key, path.getPath(), first.line, first.charOffset, nLines);
+                }
             }
         }
 
@@ -550,11 +607,26 @@ public class CoverageReport {
             if (size != null && size[3] > 0) {
                 sizeStr = String.format("  [lines: min=%d avg=%d max=%d]", size[0], size[2] / size[3], size[1]);
             }
-            System.out.printf("  %4d  %s%s%s%n", e.getValue(), failCategoryDisplay.get(e.getKey()), posStr, sizeStr);
+            int[] heal = failCategorySelfHeal.get(e.getKey());
+            String healStr = heal == null ? "" : String.format("  [self-heals=%d/%d]", heal[0], heal[1]);
+            System.out.printf("  %4d  %s%s%s%s%n", e.getValue(), failCategoryDisplay.get(e.getKey()), posStr, sizeStr, healStr);
+        }
+        if (!failCategorySelfHeal.isEmpty()) {
+            System.out.println("\n  self-heals=H/N: for unit_statement-rule categories only (a bare object-type");
+            System.out.println("  keyword where a fresh CREATE/ALTER/DROP statement was expected), reparsed the");
+            System.out.println("  file's tail from the offending token with a synthetic \"CREATE \" prepended.");
+            System.out.println("  High H/N confirms the object's own declaration was fine -- something upstream");
+            System.out.println("  in the same file is the real fault, this category is a downstream symptom.");
+        }
+
+        if (dumpWriter != null) {
+            dumpWriter.close();
+            System.out.println("\nWrote per-failure detail (file paths, NOT redacted) to: " + opt.dumpFailures);
+            System.out.println("For your own local investigation -- do not paste that file's contents back.");
         }
 
         System.out.println("\n" + repeat("=", 70));
-        System.out.println("End of report. Nothing else was written or transmitted.");
+        System.out.println("End of report. Nothing else was written or transmitted" + (dumpWriter != null ? " (besides the --dump-failures file you asked for)" : "") + ".");
         System.out.println(repeat("=", 70));
 
         System.exit(0);
