@@ -121,6 +121,7 @@ test-suite pb-compiler-test
   other-modules:
       DuckDbTest
     , SouffleTest
+    , SouffleEngineTest
     , StdLibTest
     , BodyParserTest
     , BodyStmtTest

@@ -19,6 +19,8 @@ module PB.Pipeline.Souffle
   , compileProgram
   , runRuleSet
   , runRuleSetWith
+  , orderRuleSets
+  , runRuleSets
   ) where
 
 import PB.Prelude
@@ -33,6 +35,8 @@ import System.Exit          (ExitCode (..))
 import System.FilePath      ((</>))
 import System.IO.Temp        (withSystemTempDirectory)
 import System.Process        (readProcessWithExitCode)
+
+import qualified Data.Set as Set
 
 -- ---------------------------------------------------------------------------
 -- Rule IR (unchanged from the old DuckDB-native module -- see Plan 161)
@@ -156,3 +160,80 @@ runRuleSetWith onRelation conn rs =
       appendTextRows conn (relName rel) rows
 
 
+-- ---------------------------------------------------------------------------
+-- Multi-rule-set execution (Plan 166 Stage 8)
+
+-- | The relation NAMES a 'RuleSet' derives (its IDB outputs).
+idbNames :: RuleSet -> Set.Set Text
+idbNames rs = Set.fromList [ relName rel | rel <- rsRelations rs ]
+
+-- | The relation NAMES a 'RuleSet' consumes but does not derive (its EDB
+-- inputs).
+edbNames :: RuleSet -> Set.Set Text
+edbNames rs = Set.fromList [ relName rel | rel <- edbRelations rs ]
+
+-- | Topologically order rule sets by their EDB\/IDB dependency: A precedes B
+-- when A produces a relation B consumes as an EDB input (A's IDB outputs ∩
+-- B's EDB inputs, nonempty). External EDBs (DuckDB tables\/views no rule set
+-- in the collection derives) impose no ordering. Duplicate rule sets are
+-- preserved in the output but do not add edges.
+--
+-- Returns @Left cycle@ with the names of the rule-set relations involved in
+-- a dependency cycle (or, when rule sets are structurally identical and the
+-- cycle is between two copies of the same one, both sides), or @Right ordered@
+-- with a dependency-respecting order. The order is NOT unique: independent
+-- rule sets keep their input order (stable), as does this whole function's
+-- contract with 'runRuleSets' below.
+--
+-- This is the pure, testable core. It inspects only relation NAMES (via
+-- 'relName'), so two rule sets that reference the same-named relation
+-- agree on that edge regardless of column-shape differences (the shapes
+-- must in practice agree for the downstream Souffle run to typecheck).
+orderRuleSets :: [RuleSet] -> Either [RuleSet] [RuleSet]
+orderRuleSets ruleSets = go [] (Set.fromList [0..length ruleSets - 1])
+  where
+    -- Stable insertion order for emitting results.
+    indexed = List.zip [0 :: Int ..] ruleSets
+    outs i  = idbNames  (ruleSets List.!! i)
+    ins  i  = edbNames  (ruleSets List.!! i)
+    -- i depends on j when j produces a relation i consumes.
+    deps i  = [ j | (j, _) <- indexed
+                  , i /= j
+                  , not (Set.null (outs j `Set.intersection` ins i)) ]
+
+    go :: [RuleSet] -> Set.Set Int -> Either [RuleSet] [RuleSet]
+    go acc pending
+      | Set.null pending = Right acc
+      | null ready       =
+          -- No ready node => cycle among the pending. Return the cyclic
+          -- rule sets themselves (in stable input order) so the caller can
+          -- diagnose which programs are involved.
+          Left [ ruleSets List.!! i | (i, _) <- indexed, i `Set.member` pending ]
+      | otherwise        =
+          go (acc <> [ ruleSets List.!! i | i <- ready ])
+             (pending `Set.difference` Set.fromList ready)
+      where
+        -- A pending index is "ready" if none of its dependencies are still
+        -- pending. Emission order follows `indexed` (input order), so
+        -- independent rule sets keep their relative input order (stable).
+        ready = [ i | (i, _) <- indexed
+                    , i `Set.member` pending
+                    , all (`notElem` pending) (deps i) ]
+
+-- | Run a collection of rule sets in dependency order: 'orderRuleSets'
+-- resolves the order, then each rule set runs via 'runRuleSetWith' (exporting
+-- its EDB facts, shelling out to @souffle@, materializing its IDB outputs
+-- back to DuckDB) so the next rule set can read those outputs as EDB.
+--
+-- @onRelation@ fires once per IDB relation just before it is materialized,
+-- same contract as 'runRuleSetWith'. A dependency cycle is raised via
+-- 'error' naming the cyclic rule sets' IDB relations -- this is a static,
+-- programmer-visible configuration error, not a runtime data condition.
+runRuleSets :: (Relation -> IO ()) -> DuckConn -> [RuleSet] -> IO ()
+runRuleSets onRelation conn ruleSets =
+  case orderRuleSets ruleSets of
+    Left cyclic ->
+      let cyclicNames = [ T.unpack (relName rel) | rs' <- cyclic, rel <- rsRelations rs' ]
+      in error ("PB.Pipeline.Souffle.runRuleSets: dependency cycle among rule sets (IDB relations: "
+                <> show cyclicNames <> ")")
+    Right ordered -> for_ ordered (runRuleSetWith onRelation conn)

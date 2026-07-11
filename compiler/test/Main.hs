@@ -2,6 +2,7 @@ module Main (main) where
 
 import qualified DuckDbTest
 import qualified SouffleTest
+import qualified SouffleEngineTest
 import qualified StdLibTest
 import qualified BodyParserTest
 import qualified BodyStmtTest
@@ -47,6 +48,7 @@ tests :: TestTree
 tests = testGroup "pb-compiler"
   [ DuckDbTest.tests
   , SouffleTest.tests
+  , SouffleEngineTest.tests
   , StdLibTest.tests
   , BodyParserTest.tests
   , BodyStmtTest.tests
