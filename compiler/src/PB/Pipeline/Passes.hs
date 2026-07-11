@@ -11,6 +11,8 @@ import PB.Analysis.TypeResolve
 import PB.Analysis.SchemaCategory
   ( SchemaInputs (..), SchGraph (..), SchObject (..), buildSchema, columnCoslice )
 import PB.Pipeline.Souffle qualified as Souffle
+import PB.Analysis.Rules.Schema qualified as SchemaRules
+import PB.Analysis.Rules.DeadCode qualified as DeadCodeRules
 import PB.Pipeline.DuckDb
   ( DuckConn
   , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
@@ -126,8 +128,8 @@ runPass8 conn inh allRC = do
   let inhList = Map.toList inh
       overrideEdges = DeadCode.computeOverrideEdges procs inhList
   appendProcedureOverrides conn overrideEdges
-  Souffle.initDeadReachEdbViews conn
-  Souffle.runRuleSetWith souffleProgress conn Souffle.deadReachRules
+  DeadCodeRules.initDeadReachEdbViews conn
+  Souffle.runRuleSetWith souffleProgress conn DeadCodeRules.deadReachRules
   deadSet <- queryProcDead conn
   let rawCalls      = [ (Taint.rcrObject r, Taint.rcrFromProc r, lastName (Taint.rcrToName r))
                       | r <- allRC ]
@@ -185,9 +187,9 @@ runPass9 conn mDefaultNamespace = do
 -- that plan's Status note).
 runPass11 :: DuckConn -> IO ()
 runPass11 conn = do
-  Souffle.initEdbViews conn
-  Souffle.runRuleSetWith souffleProgress conn Souffle.reachesRules
-  Souffle.runRuleSetWith souffleProgress conn Souffle.liveProcRules
+  SchemaRules.initEdbViews conn
+  Souffle.runRuleSetWith souffleProgress conn SchemaRules.reachesRules
+  Souffle.runRuleSetWith souffleProgress conn DeadCodeRules.liveProcRules
 
 -- | Pass 10 (Plan 153 D5): for every column object, materialize its
 -- 'columnCoslice' (rewrite-cost lineage) so Python's decomposition-ranking

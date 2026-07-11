@@ -2,6 +2,8 @@ module SouffleTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.Souffle
+import PB.Analysis.Rules.Schema
+import PB.Analysis.Rules.DeadCode
 import PB.Pipeline.DuckDb
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), LegSource (..), SchMorphism (..)
