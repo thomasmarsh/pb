@@ -77,7 +77,6 @@ module PB.Pipeline.DuckDb
   , appendTaintPaths
   , appendTaintAnnotations
   , appendDeadCode
-  , appendProcedureOverrides
   , appendSchemaObjects
   , appendSchemaMorphisms
   , appendDecompositionCoslice
@@ -267,14 +266,6 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       , "CREATE TABLE IF NOT EXISTS dead_code \
         \(object TEXT, proc_name TEXT, proc_type TEXT, cyclomatic INTEGER, \
         \confidence TEXT, caller_count_naive INTEGER, caller_count_scoped INTEGER)"
-      -- Plan 161 Phase 2b: the override-edge flattening
-      -- 'PB.Analysis.DeadCode.computeOverrideEdges' already computes for
-      -- computeDeadProcedures' own BFS adjacency, persisted so the Souffle
-      -- `overrides` EDB view (PB.Pipeline.Souffle) can read it back -- same
-      -- "stays Haskell/SQL-computed" treatment `leg` gets over
-      -- schema_morphisms for `reaches`.
-      , "CREATE TABLE IF NOT EXISTS procedure_overrides \
-        \(child_object TEXT, method TEXT, parent_object TEXT)"
       , "CREATE TABLE IF NOT EXISTS schema_objects \
         \(object_key TEXT, kind TEXT, namespace TEXT, table_name TEXT, column_name TEXT, \
         \stmt_file TEXT, stmt_object TEXT, stmt_proc TEXT, stmt_line INTEGER)"
@@ -1205,18 +1196,6 @@ appendDeadCode conn rows = withRaw conn "dead_code" $ \app ->
     aText     app (DeadCode.dpConfidence      d)
     aInt      app (DeadCode.dpCallerCountNaive  d)
     aInt      app (DeadCode.dpCallerCountScoped d)
-    endRow app
-
--- | Plan 161 Phase 2b: persist 'DeadCode.computeOverrideEdges'' flattened
--- (childObj, method, parentObj) triples so the Souffle @overrides@ EDB view
--- can read them back (see 'PB.Pipeline.Souffle.initDeadReachEdbViews').
-appendProcedureOverrides :: DuckConn -> [(Text, Text, Text)] -> IO ()
-appendProcedureOverrides _    [] = pure ()
-appendProcedureOverrides conn rows = withRaw conn "procedure_overrides" $ \app ->
-  for_ rows $ \(childObj, method, parentObj) -> do
-    aText app childObj
-    aText app method
-    aText app parentObj
     endRow app
 
 -- | Kind text for a 'LegKind'. Provenance (formerly a second, FK-only

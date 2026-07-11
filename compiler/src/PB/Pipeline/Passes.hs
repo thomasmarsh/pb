@@ -25,7 +25,7 @@ import PB.Pipeline.DuckDb
   , appendResolvedTypes, appendResolvedCalls
   , appendInterprocEdges, appendProcSummaries
   , appendTaintSources, appendTaintSinks, appendTaintPaths
-  , appendTaintAnnotations, appendDeadCode, appendProcedureOverrides
+  , appendTaintAnnotations, appendDeadCode
   , appendSchemaObjects, appendSchemaMorphisms
   , appendDecompositionCoslice
   )
@@ -63,9 +63,9 @@ souffleProgress rel = emitProgress (object
 runPhaseB :: DuckConn -> Maybe Text -> IO ()
 runPhaseB conn mDefaultNamespace = do
   emitProgress (object ["tag" .= ("phase" :: Text), "name" .= ("B" :: Text)])
-  inh   <- runPass5  conn
+  _    <- runPass5  conn
   allRC <- runPass67 conn
-  runPass8 conn inh allRC
+  runPass8 conn allRC
   sch   <- runPass9 conn mDefaultNamespace
   runPass10 conn sch
   runPass11 conn
@@ -112,22 +112,20 @@ runPass67 conn = do
 
 -- | Pass 8 (Plan 161 Phase 2b cutover, 2026-07-11): dead-code detection.
 -- Reachability itself is Datalog now (@proc_reachable@\/@proc_dead@, via
--- 'Souffle.deadReachRules') -- proven exact against the old Haskell BFS on
--- the real corpus (104/104 rows) before that BFS was deleted from
--- 'DeadCode'. Sequence per run: (1) compute\/append the @overrides@ EDB
--- fact table (still Haskell/SQL-computed, same treatment @leg@ gets for
--- @reaches@ -- see 'DeadCode.computeOverrideEdges'), (2) run
--- 'Souffle.deadReachRules' to materialize @proc_dead@, (3) read @proc_dead@
--- back and classify confidence\/caller-counts in Haskell
+-- 'DeadCodeRules.deadReachRules') -- proven exact against the old Haskell
+-- BFS on the real corpus (104/104 rows) before that BFS was deleted from
+-- 'DeadCode'. Plan 166 Stage 2 moved the inheritance closure into Datalog
+-- too (@descendant@\/@override_edge@, derived from the faithful @inherits@
+-- EDB projection over @objects.ancestor@), so there is no Haskell
+-- override-edge step left here. Sequence per run: (1) run
+-- 'DeadCodeRules.deadReachRules' to materialize @proc_dead@, (2) read
+-- @proc_dead@ back and classify confidence\/caller-counts in Haskell
 -- ('DeadCode.classifyDeadProcedures') -- the one piece with no Datalog
 -- equivalent, since it's report formatting, not a fixpoint query.
-runPass8 :: DuckConn -> Map.Map Text Text -> [Taint.ResolvedCallRow] -> IO ()
-runPass8 conn inh allRC = do
+runPass8 :: DuckConn -> [Taint.ResolvedCallRow] -> IO ()
+runPass8 conn allRC = do
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Dead code detection" :: Text)])
   procs <- queryProcInfos conn
-  let inhList = Map.toList inh
-      overrideEdges = DeadCode.computeOverrideEdges procs inhList
-  appendProcedureOverrides conn overrideEdges
   DeadCodeRules.initDeadReachEdbViews conn
   Souffle.runRuleSetWith souffleProgress conn DeadCodeRules.deadReachRules
   deadSet <- queryProcDead conn

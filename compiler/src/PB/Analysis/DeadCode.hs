@@ -3,7 +3,6 @@ module PB.Analysis.DeadCode
   ( DeadProcedure (..)
   , ProcInfo (..)
   , classifyDeadProcedures
-  , computeOverrideEdges
   , cyclomaticComplexity
   ) where
 
@@ -40,46 +39,6 @@ cyclomaticComplexity cfg =
   let n = length (cfgBlocks cfg)
       e = length (cfgEdges cfg)
   in  if n == 0 then 1 else e - n + 2
-
--- | Every (childObj, method, parentObj) triple where childObj is a
--- transitive descendant of parentObj and both declare a procedure named
--- method — the override-edge flattening 'PB.Pipeline.Souffle.deadReachRules'
--- folds into its @proc_reachable@ walk via the @overrides@ EDB relation.
--- Uses the full transitive descendant closure so grandchild overrides are
--- included even when the intermediate parent does not define the method
--- (see 'SouffleTest.hs''s "grandchild override reachable" case).
---
--- This flattening step itself stays Haskell/SQL-computed (Plan 161 Phase
--- 2b, 2026-07-11) — same treatment 'leg' already gets for @reaches@ —
--- persisted as a fact table ('PB.Pipeline.DuckDb.appendProcedureOverrides')
--- and consumed as the Souffle @overrides@ EDB relation.
-computeOverrideEdges :: [ProcInfo] -> [(Text, Text)] -> [(Text, Text, Text)]
-computeOverrideEdges procedures inherits =
-  [ (childObj, method, parentObj)
-  | (parentObj, methods) <- Map.toList methodsByObj
-  , childObj <- allDescOf parentObj
-  , method <- Set.toList methods
-  , (childObj, method) `Map.member` procIndex
-  ]
-  where
-    procIndex = Map.fromList
-      [ ((piObject p, piName p), p) | p <- procedures ]
-
-    childrenOf = Map.fromListWith (++)
-      [ (parent, [child]) | (child, parent) <- inherits ]
-
-    -- BFS over childrenOf to collect all transitive descendants of a node.
-    allDescOf :: Text -> [Text]
-    allDescOf root = go Set.empty (Map.findWithDefault [] root childrenOf)
-      where
-        go visited [] = Set.toList visited
-        go visited (x:xs)
-          | Set.member x visited = go visited xs
-          | otherwise = go (Set.insert x visited)
-                           (xs ++ Map.findWithDefault [] x childrenOf)
-
-    methodsByObj = Map.fromListWith Set.union
-      [ (piObject p, Set.singleton (piName p)) | p <- procedures ]
 
 -- | Classify confidence/caller-counts for a given, already-known dead set.
 --

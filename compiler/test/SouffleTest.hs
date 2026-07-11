@@ -10,7 +10,7 @@ import PB.Analysis.SchemaCategory
   , SchemaInputs (..), SqlColRow (..), SchGraph (..)
   , buildSchema, blastRadius, schObjectKey, spTo
   )
-import PB.Analysis.DeadCode (ProcInfo (..), computeOverrideEdges)
+import PB.Analysis.DeadCode (ProcInfo (..))
 import PB.Analysis.TypeResolve (ResolvedCall (..))
 import PB.Pipeline.SqlParse (TableRef (..))
 
@@ -25,14 +25,19 @@ emptyInputs = SchemaInputs [] [] [] [] [] [] [] [] Nothing
 
 -- ---------------------------------------------------------------------------
 -- Plan 161 Phase 2b fixtures: seed procedures/resolved_calls/dw_objects/
--- procedure_overrides the way 'PB.Pipeline.Passes.runPass8' populates them
--- in production, from the same (procs, rawCalls, resolvedCalls, inherits,
+-- objects the way 'PB.Pipeline.Passes.runPass8' populates them in
+-- production, from the same (procs, rawCalls, resolvedCalls, inherits,
 -- dwObjects) shape the old Haskell BFS used to take before it was deleted
 -- (Plan 161 Phase 2b cutover) -- so each fixture below exercises the
 -- SQL-view EDB layer ('initDeadReachEdbViews') against a hand-verified
 -- expected dead set (each one cross-checked against the old Haskell BFS
 -- before it was deleted, and against the real openpay corpus -- see
 -- BACKLOG's Phase 2b session entry).
+--
+-- Plan 166 Stage 2: inheritance is seeded via @objects.ancestor@ (read by
+-- the faithful @inherits@ EDB view), not via the deleted
+-- @procedure_overrides@ table. The @inherits@ (child, parent) tuples below
+-- become @objects@ rows whose @ancestor@ is the parent.
 
 seedDeadCodeFixture
   :: DuckConn
@@ -58,7 +63,13 @@ seedDeadCodeFixture conn procs calls resolved inherits dwObjs = do
            (Just tgtObj) (Just tgtProc) "call" "high"
        | (obj, fromProc, tgtObj, tgtProc) <- resolved
        ]
-  appendProcedureOverrides conn (computeOverrideEdges procs inherits)
+  -- Plan 166 Stage 2: seed inheritance as objects.ancestor rows; the
+  -- faithful `inherits` EDB view (initDeadReachEdbViews) reads these, and
+  -- the `descendant`/`override_edge` IDB rules derive the closure.
+  appendObjects conn
+    [ ObjectRow "f.sru" "object" child (Just parent) Nothing Nothing "confirmed"
+    | (child, parent) <- inherits
+    ]
 
 deadObjProcPairs :: DuckConn -> IO (Set.Set (Text, Text))
 deadObjProcPairs conn = do
