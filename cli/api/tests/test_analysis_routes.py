@@ -444,6 +444,62 @@ def test_slice_cross_proc_works_with_scoped_fetch(taint_client):
 
 
 # ---------------------------------------------------------------------------
+# GET /api/analysis/live-procedures (Plan 161 Phase 4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def live_proc_client(tmp_path_factory):
+    """TestClient backed by a synthetic DB with a populated live_proc table."""
+    tmp = tmp_path_factory.mktemp("live_proc_db")
+    db_path = str(tmp / "live_proc.duckdb")
+    conn = duckdb.connect(db_path)
+    conn.execute("CREATE TABLE live_proc (object TEXT NOT NULL, proc TEXT NOT NULL)")
+    for row in [("w_obj", "proc_a"), ("w_obj", "proc_b")]:
+        conn.execute("INSERT INTO live_proc VALUES (?, ?)", row)
+    conn.close()
+
+    from fastapi.testclient import TestClient
+    from pb.api import create_app
+
+    app = create_app(db_path)
+    return TestClient(app)
+
+
+@pytest.fixture(scope="module")
+def empty_live_proc_client(tmp_path_factory):
+    """TestClient backed by a synthetic DB with an empty live_proc table."""
+    tmp = tmp_path_factory.mktemp("empty_live_proc_db")
+    db_path = str(tmp / "empty_live_proc.duckdb")
+    conn = duckdb.connect(db_path)
+    conn.execute("CREATE TABLE live_proc (object TEXT NOT NULL, proc TEXT NOT NULL)")
+    conn.close()
+
+    from fastapi.testclient import TestClient
+    from pb.api import create_app
+
+    app = create_app(db_path)
+    return TestClient(app)
+
+
+def test_live_procedures_route_returns_items(live_proc_client):
+    r = live_proc_client.get("/api/analysis/live-procedures")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 2
+    names = {(item["object"], item["proc_name"]) for item in body["items"]}
+    assert names == {("w_obj", "proc_a"), ("w_obj", "proc_b")}
+
+
+def test_live_procedures_route_empty_when_no_live_procs(empty_live_proc_client):
+    r = empty_live_proc_client.get("/api/analysis/live-procedures")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 0
+    assert body["items"] == []
+
+
+# ---------------------------------------------------------------------------
 # Regression: existing dead-code endpoint still works against real corpus
 # ---------------------------------------------------------------------------
 
@@ -466,3 +522,19 @@ def test_dead_code_endpoint_still_works(db_path):
     assert entry_point_names == set(), (
         f"Event/on handlers incorrectly reported as dead: {entry_point_names}"
     )
+
+
+def test_live_procedures_endpoint_works_against_real_corpus(db_path):
+    """Ensure the live-procedures endpoint (Plan 161 Souffle live_proc table)
+    works against the real openpay corpus, produced by pbc --db's runPass11."""
+    from fastapi.testclient import TestClient
+    from pb.api import create_app
+
+    app = create_app(db_path)
+    client = TestClient(app)
+    r = client.get("/api/analysis/live-procedures")
+    assert r.status_code == 200
+    body = r.json()
+    assert "items" in body
+    assert "total" in body
+    assert body["total"] == len(body["items"])

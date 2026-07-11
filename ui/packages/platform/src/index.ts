@@ -2,6 +2,12 @@
 
 // ── Feature reducers + types + actions ──────────────────────────────────────
 
+// Analysis (Plan 161 Phase 4 — Souffle live_proc IDB)
+export { analysisReducer, initialAnalysisState } from "./features/analysis/reducer.js";
+export type { AnalysisEnv } from "./features/analysis/reducer.js";
+export type { AnalysisState } from "./features/analysis/types.js";
+export type { AnalysisAction } from "./features/analysis/actions.js";
+
 // Dashboard
 export { dashboardReducer, initialDashboardState } from "./features/dashboard/reducer.js";
 export type { DashboardEnv } from "./features/dashboard/reducer.js";

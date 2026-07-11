@@ -392,6 +392,18 @@ export interface DeadCodeResponse {
   total: number;
 }
 
+// ── Live procedures (Plan 161 Phase 4 — Souffle live_proc IDB) ──────────────
+
+export interface LiveProcedureRef {
+  object: string;
+  proc_name: string;
+}
+
+export interface LiveProceduresResponse {
+  items: LiveProcedureRef[];
+  total: number;
+}
+
 // ── Taint analysis ───────────────────────────────────────────────────────────
 
 export interface TaintEndpoint {

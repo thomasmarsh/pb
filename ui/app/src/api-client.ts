@@ -18,6 +18,7 @@ import type {
   TableSummary,
   TableDetail,
   ErrorListResponse,
+  LiveProceduresResponse,
   WiringDiagramResponse,
   FootprintResponse,
   ColumnUsageResponse,
@@ -61,6 +62,7 @@ export interface ApiClient {
   getColumnUsage(): Promise<ColumnUsageResponse>;
   getDecompositionCandidates(table: string, namespace?: string): Promise<DecompositionCandidatesResponse>;
   getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse>;
+  getLiveProcedures(): Promise<LiveProceduresResponse>;
   getDwQueries(): Promise<Record<string, string>>;
   executeSql(sql: string, params: unknown[]): Promise<SQLResult>;
 }
@@ -136,6 +138,7 @@ export function createEnv(api: ApiClient): Env {
     getColumnUsage: () => lift(() => api.getColumnUsage()),
     getDecompositionCandidates: (t: string, ns?: string) => lift(() => api.getDecompositionCandidates(t, ns)),
     getErrors: (p) => lift(() => api.getErrors(p)),
+    getLiveProcedures: () => lift(() => api.getLiveProcedures().then((r) => r.items)),
     getDwQueries: () => lift(() => api.getDwQueries()),
     executeSql: (sql, params) => lift(() => api.executeSql(sql, params)),
     loadTheme: (): Effect<Theme> => {
@@ -303,6 +306,10 @@ export function createApiClient(): ApiClient {
 
     async getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse> {
       return fetchJson("/api/errors?" + apiParams({ kind: params.kind ?? "", q: params.q ?? "", limit: params.limit ?? 200, offset: params.offset ?? 0 }));
+    },
+
+    async getLiveProcedures(): Promise<LiveProceduresResponse> {
+      return fetchJson("/api/analysis/live-procedures");
     },
 
     async getDwQueries(): Promise<Record<string, string>> {

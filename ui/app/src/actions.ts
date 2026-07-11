@@ -2,7 +2,7 @@
 
 import type { JobPollAction } from "@pb/core";
 import type { DashboardAction, CfgDiagramResponse } from "@pb/platform";
-import { type ExploreAction, type ObjectsAction, type DatawindowsAction, type TablesAction, type DiagramsAction, type QueriesAction, type SearchAction, type ErrorsAction, type NavigationAction, type DiagramKind } from "@pb/platform";
+import { type ExploreAction, type ObjectsAction, type DatawindowsAction, type TablesAction, type DiagramsAction, type QueriesAction, type SearchAction, type ErrorsAction, type AnalysisAction, type NavigationAction, type DiagramKind } from "@pb/platform";
 import { type RuntimeAction, type WindowManagerAction, type LaunchAction } from "@pb/windowing";
 import type { Theme } from "./state.js";
 
@@ -28,6 +28,7 @@ export type AppAction =
   | { tag: "queries"; action: QueriesAction }
   | { tag: "search"; action: SearchAction }
   | { tag: "errors"; action: ErrorsAction }
+  | { tag: "analysis"; action: AnalysisAction }
   | { tag: "inlineDiagram"; action: InlineDiagramAction }
   | { tag: "cfgDiagram"; action: CfgDiagramAction }
   | { tag: "runtime"; windowId: string; action: RuntimeAction }

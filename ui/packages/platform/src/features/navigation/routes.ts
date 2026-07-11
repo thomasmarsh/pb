@@ -44,6 +44,7 @@ export function print(route: Route): string {
     case "explore":          return "/explore";
     case "errors":           return "/errors";
     case "deadCode":         return "/dead-code";
+    case "liveProcedures":   return "/live-procedures";
     case "taintExplorer":    return "/taint";
     case "taintPathView":    return "/taint/" + route.pathId;
     case "sliceView":
@@ -115,6 +116,7 @@ export function parse(path: string, search?: string): Route {
     case "explore":    return { view: "explore" };
     case "errors":     return { view: "errors" };
     case "dead-code":    return { view: "deadCode" };
+    case "live-procedures": return { view: "liveProcedures" };
     case "taint": {
       if (segs[1] && /^\d+$/.test(segs[1])) {
         return { view: "taintPathView", pathId: parseInt(segs[1], 10) };

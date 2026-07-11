@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import duckdb
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pb.api.models import LiveProceduresResponse
 from pb.api.routes.dependencies import get_db
 from pb.api.services.analysis import (
     get_dead_code,
+    get_live_procedures,
     get_program_slice,
     get_taint_annotations,
     get_taint_path,
@@ -21,6 +23,12 @@ router = APIRouter()
 @router.get("/api/analysis/dead-code")
 async def dead_code(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
     items = get_dead_code(conn)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/api/analysis/live-procedures", response_model=LiveProceduresResponse)
+async def live_procedures(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
+    items = get_live_procedures(conn)
     return {"items": items, "total": len(items)}
 
 

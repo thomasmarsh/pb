@@ -18,6 +18,14 @@ def get_dead_code(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     ))
 
 
+def get_live_procedures(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
+    """Procedures the Souffle live_proc IDB confirms reachable and not dead
+    (Plan 161 Phase 4 — see PB.Pipeline.Souffle's liveProcRules)."""
+    return rows(conn.execute(
+        "SELECT object, proc AS proc_name FROM live_proc ORDER BY object, proc_name"
+    ))
+
+
 def get_taint_paths(
     conn: duckdb.DuckDBPyConnection,
     *,

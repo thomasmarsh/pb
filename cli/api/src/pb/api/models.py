@@ -88,6 +88,16 @@ class ColumnAffinityResponse(ColumnAffinityFields):
     namespace: str | None
 
 
+class LiveProcedureRef(BaseModel):
+    object: str
+    proc_name: str
+
+
+class LiveProceduresResponse(BaseModel):
+    items: list[LiveProcedureRef]
+    total: int
+
+
 class SchemaObjectRef(BaseModel):
     kind: str
     file: str | None = None
