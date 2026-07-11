@@ -11,6 +11,7 @@ import {
   EntityListCard, AnalysisSummaryBar, ContextualPanel,
 } from "@pb/platform";
 import type { SummaryItem } from "@pb/platform";
+import { FootprintPanel } from "../analysis/FootprintPanel.js";
 
 function DWControlsTable(props: { controls: DwControlRow[] }) {
   return (
@@ -51,6 +52,7 @@ export function DwDetailCore(props: { d: DwDetailResponse; layout: DataWindowFil
   const [showUsedByObjects, setShowUsedByObjects] = createSignal(false);
   const [showUsedByProcs, setShowUsedByProcs] = createSignal(false);
   const [showRetrieve, setShowRetrieve] = createSignal(false);
+  const [showFootprint, setShowFootprint] = createSignal(false);
 
   const hasWhere = d.retrieve_where.length > 0;
   const hasArgs = d.arguments.length > 0;
@@ -63,6 +65,7 @@ export function DwDetailCore(props: { d: DwDetailResponse; layout: DataWindowFil
     ...(usedByObjCount > 0 ? [{ label: "Used By Objects", count: usedByObjCount, active: showUsedByObjects(), onClick: () => setShowUsedByObjects((v) => !v) } as SummaryItem] : []),
     ...(usedByProcCount > 0 ? [{ label: "Used By Procs", count: usedByProcCount, active: showUsedByProcs(), onClick: () => setShowUsedByProcs((v) => !v) } as SummaryItem] : []),
     ...(hasWhere || hasArgs ? [{ label: "Retrieve", active: showRetrieve(), onClick: () => setShowRetrieve((v) => !v) } as SummaryItem] : []),
+    { label: "Footprint", active: showFootprint(), onClick: () => setShowFootprint((v) => !v) } as SummaryItem,
   ];
 
   function handleKeyDown(e: KeyboardEvent): void {
@@ -71,6 +74,7 @@ export function DwDetailCore(props: { d: DwDetailResponse; layout: DataWindowFil
       setShowUsedByObjects(false);
       setShowUsedByProcs(false);
       setShowRetrieve(false);
+      setShowFootprint(false);
     }
   }
 
@@ -182,6 +186,12 @@ export function DwDetailCore(props: { d: DwDetailResponse; layout: DataWindowFil
                 </div>
               </Show>
             </>
+          </ContextualPanel>
+        </Show>
+
+        <Show when={showFootprint()}>
+          <ContextualPanel title="Footprint" onClose={() => setShowFootprint(false)}>
+            <FootprintPanel store={store} target={{ kind: "dw", object: d.name }} />
           </ContextualPanel>
         </Show>
       </div>

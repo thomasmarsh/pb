@@ -3,7 +3,11 @@
 // table by co-update/FK/blast-radius evidence.
 //
 // Data flows through the tables feature's env/reducer (CLAUDE.md Rule 1/2),
-// mirroring ProcedureFootprintCore.tsx — not a self-fetching component.
+// mirroring FootprintPanel.tsx — not a self-fetching component.
+//
+// EvidencePathsCell (below) is exported for reuse by FootprintPanel.tsx's
+// blast-radius section (Plan 163 Phase 6) — same DecompositionEvidencePath
+// shape, no need for a second tree renderer.
 //
 // Consolidation (2026-07-09): this is now the sole entry point for schema-
 // normalization analysis on a table — the table-wide Column Affinity heat
@@ -209,7 +213,7 @@ export function buildPathForest(paths: DecompositionEvidencePath[]): PathTree[] 
   });
 }
 
-function EvidencePathsCell(props: { paths: DecompositionEvidencePath[]; store: Store<AppState, AppAction> }): JSX.Element {
+export function EvidencePathsCell(props: { paths: DecompositionEvidencePath[]; store: Store<AppState, AppAction> }): JSX.Element {
   const [expanded, setExpanded] = createSignal(false);
   const visible = createMemo(() => (expanded() ? props.paths : props.paths.slice(0, PATH_PREVIEW_COUNT)));
   const forest = createMemo(() => buildPathForest(visible()));

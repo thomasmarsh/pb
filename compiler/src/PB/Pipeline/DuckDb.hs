@@ -28,6 +28,8 @@ module PB.Pipeline.DuckDb
   , appendDwControls
   , appendDwRetrieveTables
   , appendDwRetrieveColumns
+  , appendDwWriteColumns
+  , appendDwWhereColumns
   , appendDwJoins
   , appendDwRetrieveWhere
   , appendLocalVars
@@ -58,6 +60,8 @@ module PB.Pipeline.DuckDb
   , queryProcInfos
   , queryDwObjectSet
   , queryDwRetrieveColumns
+  , queryDwWriteColumns
+  , queryDwWhereColumns
   , queryDwJoinLegs
   , querySqlCols
   , queryCatFootprintColumns
@@ -200,6 +204,10 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       , "CREATE TABLE IF NOT EXISTS dw_retrieve_tables \
         \(file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_retrieve_columns \
+        \(file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT, column_name TEXT)"
+      , "CREATE TABLE IF NOT EXISTS dw_write_columns \
+        \(file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT, column_name TEXT)"
+      , "CREATE TABLE IF NOT EXISTS dw_where_columns \
         \(file TEXT, dw_name TEXT, namespace TEXT, table_name TEXT, column_name TEXT)"
       , "CREATE TABLE IF NOT EXISTS dw_joins \
         \(file TEXT, dw_name TEXT, left_ref TEXT, op TEXT, right_ref TEXT, \
@@ -520,6 +528,36 @@ appendDwRetrieveTables conn rows = withRaw conn "dw_retrieve_tables" $ \app ->
 appendDwRetrieveColumns :: DuckConn -> [DwRetrieveColumnRow] -> IO ()
 appendDwRetrieveColumns _    [] = pure ()
 appendDwRetrieveColumns conn rows = withRaw conn "dw_retrieve_columns" $ \app ->
+  for_ rows $ \r -> do
+    aText      app (drcrFile r)
+    aText      app (drcrDwName r)
+    aMaybeText app (drcrNamespace r)
+    aText      app (drcrTableName r)
+    aText      app (drcrColumnName r)
+    endRow app
+
+-- | Plan 163 Phase 6: a DW's update-table columns (@DwColumn@'s @dcUpdate@),
+-- computed via 'PB.Analysis.DwFootprint.dwRetrieveFootprint' at compile
+-- time -- same row shape as 'appendDwRetrieveColumns', a separate table so
+-- the leg_kind (LegWrites, not LegRetrieve) stays evident from which table
+-- a row came from, matching 'appendCatFootprintColumns's own precedent.
+appendDwWriteColumns :: DuckConn -> [DwRetrieveColumnRow] -> IO ()
+appendDwWriteColumns _    [] = pure ()
+appendDwWriteColumns conn rows = withRaw conn "dw_write_columns" $ \app ->
+  for_ rows $ \r -> do
+    aText      app (drcrFile r)
+    aText      app (drcrDwName r)
+    aMaybeText app (drcrNamespace r)
+    aText      app (drcrTableName r)
+    aText      app (drcrColumnName r)
+    endRow app
+
+-- | Plan 163 Phase 6: a DW retrieve's WHERE-operand columns (catalog-gated
+-- by 'PB.Analysis.DwFootprint.dwRetrieveFootprint' itself), same shape
+-- as 'appendDwWriteColumns'.
+appendDwWhereColumns :: DuckConn -> [DwRetrieveColumnRow] -> IO ()
+appendDwWhereColumns _    [] = pure ()
+appendDwWhereColumns conn rows = withRaw conn "dw_where_columns" $ \app ->
   for_ rows $ \r -> do
     aText      app (drcrFile r)
     aText      app (drcrDwName r)
@@ -981,6 +1019,16 @@ queryDwObjectSet conn = do
 queryDwRetrieveColumns :: DuckConn -> IO [DwRetrieveColRow]
 queryDwRetrieveColumns conn = query_ conn
   "SELECT file, dw_name, namespace, table_name, column_name FROM dw_retrieve_columns"
+
+-- | Plan 163 Phase 6. Same 'DwRetrieveColRow' 'FromRow' shape as
+-- 'queryDwRetrieveColumns' -- only the source table differs.
+queryDwWriteColumns :: DuckConn -> IO [DwRetrieveColRow]
+queryDwWriteColumns conn = query_ conn
+  "SELECT file, dw_name, namespace, table_name, column_name FROM dw_write_columns"
+
+queryDwWhereColumns :: DuckConn -> IO [DwRetrieveColRow]
+queryDwWhereColumns conn = query_ conn
+  "SELECT file, dw_name, namespace, table_name, column_name FROM dw_where_columns"
 
 queryDwJoinLegs :: DuckConn -> IO [DwJoinLegRow]
 queryDwJoinLegs conn = query_ conn

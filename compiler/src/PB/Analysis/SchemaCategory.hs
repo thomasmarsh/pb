@@ -222,6 +222,18 @@ data CatFkRow = CatFkRow
 data SchemaInputs = SchemaInputs
   { inDwRetrieveColumns   :: [DwRetrieveColRow]
   , inDwJoins             :: [DwJoinLegRow]
+  , inDwWriteColumns      :: [DwRetrieveColRow]
+    -- ^ Plan 163 Phase 6 (wiring 'PB.Analysis.DwFootprint.dwRetrieveFootprint'
+    -- into production): a DW's update-table columns (@DwColumn@'s
+    -- @dcUpdate@) -> 'LegWrites'. Same row shape as 'inDwRetrieveColumns'
+    -- (each row is (file, dwName, namespace, table, column)) -- a write leg
+    -- and a retrieve leg are both keyed to a single 'DwRetrieveId', no
+    -- per-row "kind" needed since the two never share a table.
+  , inDwWhereColumns      :: [DwRetrieveColRow]
+    -- ^ Plan 163 Phase 6: a DW retrieve's WHERE-operand columns (gated on
+    -- DDL catalog membership by the producer, same as
+    -- 'PB.Analysis.DwFootprint.dwRetrieveFootprint's own @whereLegs@) ->
+    -- 'LegReads'.
   , inSqlColumns          :: [SqlColRow]
   , inCatFootprintColumns :: [SqlColRow]
     -- ^ Plan 163 Phase 3: same shape and resolution treatment as
@@ -295,6 +307,24 @@ buildSchema inputs =
       | r <- inDwRetrieveColumns inputs
       ]
 
+    -- Plan 163 Phase 6: DW update-table columns -> LegWrites, same shape as
+    -- 'dwRetrieveLegs' but stmt -> column (a write), not column -> stmt.
+    dwWriteLegs =
+      [ SchMorphism (StmtObj (DwRetrieveId (drcFile r) (drcDwName r)))
+                     (ColumnObj (resolve (TableRef (drcNamespace r) (drcTable r))) (drcColumn r))
+                     LegWrites SrcDwRetrieve
+      | r <- inDwWriteColumns inputs
+      ]
+
+    -- Plan 163 Phase 6: DW WHERE-operand columns -> LegReads (already
+    -- catalog-gated by the producer, see 'PB.Analysis.DwFootprint').
+    dwWhereLegs =
+      [ SchMorphism (ColumnObj (resolve (TableRef (drcNamespace r) (drcTable r))) (drcColumn r))
+                     (StmtObj (DwRetrieveId (drcFile r) (drcDwName r)))
+                     LegReads SrcDwWhere
+      | r <- inDwWhereColumns inputs
+      ]
+
     -- Shared by 'sqlLegs' and 'catFootprintLegs': both are lists of
     -- 'SqlColRow' (a statement touching a resolved-or-unresolved column),
     -- differing only in which ingestion table/producer they came from —
@@ -329,7 +359,7 @@ buildSchema inputs =
       | f <- inCatalogFks inputs
       ]
 
-    allLegs = dwRetrieveLegs <> sqlLegs <> catFootprintLegs <> dwJoinLegs <> ddlFkLegs
+    allLegs = dwRetrieveLegs <> dwWriteLegs <> dwWhereLegs <> sqlLegs <> catFootprintLegs <> dwJoinLegs <> ddlFkLegs
 
     legObjects = Set.fromList (concatMap (\m -> [legFrom m, legTo m]) allLegs)
 

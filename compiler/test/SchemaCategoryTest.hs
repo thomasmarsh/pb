@@ -18,7 +18,7 @@ import Test.Tasty.Hedgehog    (testProperty)
 -- Helpers
 
 emptyInputs :: SchemaInputs
-emptyInputs = SchemaInputs [] [] [] [] [] [] Nothing
+emptyInputs = SchemaInputs [] [] [] [] [] [] [] [] Nothing
 
 tests :: TestTree
 tests = testGroup "SchemaCategory"
@@ -51,6 +51,35 @@ tests = testGroup "SchemaCategory"
              [ SchMorphism (StmtObj (DwRetrieveId "d_test.srd" "d_test"))
                             (ColumnObj (TableRef Nothing "orders") "id")
                             LegRetrieve SrcDwRetrieve
+             ]
+
+    , testCase "DW update-table column emits LegWrites stmt -> column, tagged SrcDwRetrieve" $
+        -- Plan 163 Phase 6: wiring PB.Analysis.DwFootprint.dwRetrieveFootprint's
+        -- writeLegs into production. A DW's update=yes column (e.g.
+        -- dw_misth_final_list.srd's `column=(... update=yes ...
+        -- dbname="misth_final.kodfinal")`) must produce a LegWrites leg the
+        -- same shape a PS INSERT/UPDATE statement's write column would.
+        let inp = emptyInputs
+              { inDwWriteColumns =
+                  [ DwRetrieveColRow "d_test.srd" "d_test" Nothing "misth_final" "kodfinal" ]
+              }
+            sch = buildSchema inp
+        in sgLegs sch @?=
+             [ SchMorphism (StmtObj (DwRetrieveId "d_test.srd" "d_test"))
+                            (ColumnObj (TableRef Nothing "misth_final") "kodfinal")
+                            LegWrites SrcDwRetrieve
+             ]
+
+    , testCase "DW WHERE-operand column emits LegReads column -> stmt, tagged SrcDwWhere" $
+        let inp = emptyInputs
+              { inDwWhereColumns =
+                  [ DwRetrieveColRow "d_test.srd" "d_test" Nothing "misth_final" "kodxrisi" ]
+              }
+            sch = buildSchema inp
+        in sgLegs sch @?=
+             [ SchMorphism (ColumnObj (TableRef Nothing "misth_final") "kodxrisi")
+                            (StmtObj (DwRetrieveId "d_test.srd" "d_test"))
+                            LegReads SrcDwWhere
              ]
 
     , testCase "multi-table stmt columns attributed via sql_statement_columns" $
@@ -640,6 +669,8 @@ genSchemaInputs :: Gen SchemaInputs
 genSchemaInputs = SchemaInputs
   <$> Gen.list (Range.linear 0 4) genDwRetrieveColRow
   <*> Gen.list (Range.linear 0 4) genDwJoinLegRow
+  <*> Gen.list (Range.linear 0 4) genDwRetrieveColRow
+  <*> Gen.list (Range.linear 0 4) genDwRetrieveColRow
   <*> Gen.list (Range.linear 0 4) genSqlColRow
   <*> Gen.list (Range.linear 0 4) genSqlColRow
   <*> Gen.list (Range.linear 0 4) genCatColumnRow

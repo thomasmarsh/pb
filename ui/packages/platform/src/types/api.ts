@@ -430,40 +430,6 @@ export interface TaintPathsResponse {
 
 // ── Schema category (Plan 148/153) ───────────────────────────────────────────
 
-export interface ColumnTouch {
-  namespace: string | null;
-  table: string;
-  column: string;
-  is_write: boolean;
-}
-
-export interface FilterTouch {
-  namespace: string | null;
-  table: string;
-  column: string;
-  op: string;
-  values_json: string | null;
-}
-
-export interface UnresolvedRef {
-  line: number;
-  raw_name: string;
-}
-
-export interface StatementFootprint {
-  line: number;
-  file: string;
-  columns: ColumnTouch[];
-  filters: FilterTouch[];
-}
-
-export interface ProcedureFootprintResponse {
-  object: string;
-  proc_name: string;
-  statements: StatementFootprint[];
-  unresolved: UnresolvedRef[];
-}
-
 export interface FkColumnRef {
   namespace: string | null;
   table: string;
@@ -539,6 +505,35 @@ export interface DecompositionCandidatesResponse {
   namespace: string | null;
   affinity: ColumnAffinityFields;
   candidates: DecompositionCandidate[];
+}
+
+// ── Unified footprint (Plan 163 Phase 5/6) ───────────────────────────────────
+
+export interface FootprintColumnRef {
+  namespace: string | null;
+  table: string;
+  column: string;
+}
+
+export interface FootprintLeg {
+  column: FootprintColumnRef;
+  leg_kind: string;
+  leg_source: string;
+}
+
+export interface FootprintStatement {
+  stmt_key: string;
+  file: string;
+  line: number | null;
+  legs: FootprintLeg[];
+}
+
+export interface FootprintResponse {
+  object: string;
+  proc_name: string | null;
+  kind: string;
+  statements: FootprintStatement[];
+  blast_radius: DecompositionEvidencePath[];
 }
 
 export interface DendrogramMerge {

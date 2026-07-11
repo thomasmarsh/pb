@@ -4,12 +4,13 @@ import { describe, it, expect } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { datawindowsReducer, initialDatawindowsState, type DatawindowsEnv } from "@pb/platform";
-import type { ListObjectsResponse, DwDetailResponse } from "@pb/platform";
+import type { ListObjectsResponse, DwDetailResponse, FootprintResponse, DatawindowsState } from "@pb/platform";
 
 const mockEnv: DatawindowsEnv = {
   getObjects: () => Effect.none(),
   getDW: () => Effect.none(),
   getDwLayout: () => Effect.none(),
+  getFootprint: () => Effect.none(),
   navigate: () => Effect.none(),
 };
 
@@ -91,6 +92,21 @@ describe("datawindows reducer", () => {
         s.dwDetail = { ...detailData, loading: false };
       });
     });
+
+    it("resets footprint state when navigating to a (possibly different) DW", () => {
+      const state: DatawindowsState = {
+        ...initialDatawindowsState,
+        footprint: { object: "d_old", proc_name: null, kind: "dw_retrieve", statements: [], blast_radius: [] },
+        footprintLoading: true,
+      };
+      const ts = createTestStore(datawindowsReducer, mockEnv, state);
+      ts.send({ tag: "select", name: "d_new" }, (s) => {
+        s.dwDetail = null;
+        s.dwLayout = null;
+        s.footprint = null;
+        s.footprintLoading = false;
+      });
+    });
   });
 
   describe("datawindows/detail-loaded", () => {
@@ -108,6 +124,62 @@ describe("datawindows reducer", () => {
       const ts = createTestStore(datawindowsReducer, mockEnv, initialDatawindowsState);
       ts.send({ tag: "detail-error", error: "timeout" }, (s) => {
         s.dwDetail = { error: "timeout" };
+      });
+    });
+  });
+
+  describe("datawindows/footprint-load", () => {
+    it("sets footprintLoading and fires getFootprint", () => {
+      const ts = createTestStore(datawindowsReducer, mockEnv, initialDatawindowsState);
+      ts.send({ tag: "footprint-load", dwName: "d_foo" }, (s) => {
+        s.footprintLoading = true;
+      });
+    });
+
+    it("does nothing if already loaded for the same DW", () => {
+      const loaded: FootprintResponse = { object: "d_foo", proc_name: null, kind: "dw_retrieve", statements: [], blast_radius: [] };
+      const state: DatawindowsState = { ...initialDatawindowsState, footprint: loaded };
+      const ts = createTestStore(datawindowsReducer, mockEnv, state);
+      ts.send({ tag: "footprint-load", dwName: "d_foo" }, () => {});
+    });
+
+    it("does nothing if a load is already in flight", () => {
+      const state: DatawindowsState = { ...initialDatawindowsState, footprintLoading: true };
+      const ts = createTestStore(datawindowsReducer, mockEnv, state);
+      ts.send({ tag: "footprint-load", dwName: "d_foo" }, () => {});
+    });
+  });
+
+  describe("datawindows/footprint-loaded", () => {
+    it("stores the footprint and clears loading", () => {
+      const data: FootprintResponse = {
+        object: "d_foo",
+        proc_name: null,
+        kind: "dw_retrieve",
+        statements: [{
+          stmt_key: "dw:d_foo",
+          file: "d_foo.srd",
+          line: null,
+          legs: [{ column: { namespace: null, table: "usrmembers", column: "koduser" }, leg_kind: "retrieve", leg_source: "dw_retrieve" }],
+        }],
+        blast_radius: [],
+      };
+      const state: DatawindowsState = { ...initialDatawindowsState, footprintLoading: true };
+      const ts = createTestStore(datawindowsReducer, mockEnv, state);
+      ts.send({ tag: "footprint-loaded", data }, (s) => {
+        s.footprint = data;
+        s.footprintLoading = false;
+      });
+    });
+  });
+
+  describe("datawindows/footprint-error", () => {
+    it("stores the error and clears loading", () => {
+      const state: DatawindowsState = { ...initialDatawindowsState, footprintLoading: true };
+      const ts = createTestStore(datawindowsReducer, mockEnv, state);
+      ts.send({ tag: "footprint-error", error: "boom" }, (s) => {
+        s.footprint = { error: "boom" };
+        s.footprintLoading = false;
       });
     });
   });

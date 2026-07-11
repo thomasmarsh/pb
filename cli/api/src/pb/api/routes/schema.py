@@ -11,7 +11,6 @@ from pb.api.models import (
     DecompositionCandidatesResponse,
     FkGraphResponse,
     FootprintResponse,
-    ProcedureFootprintResponse,
     WindowTableLatticeResponse,
 )
 from pb.api.routes.dependencies import get_db
@@ -23,7 +22,6 @@ from pb.api.services.schema import (
     get_decomposition_candidates,
     get_fk_graph,
     get_footprint,
-    get_procedure_footprint,
     get_window_table_lattice,
 )
 
@@ -46,24 +44,6 @@ async def get_fk_graph_route(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
 @router.get("/api/schema/column-usage", response_model=ColumnUsageResponse)
 async def get_column_usage_route(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
     return get_column_usage(conn)
-
-
-@router.get(
-    "/api/schema/footprint/{object_name}/{proc_name}",
-    response_model=ProcedureFootprintResponse,
-)
-async def get_procedure_footprint_route(
-    object_name: str,
-    proc_name: str,
-    conn: duckdb.DuckDBPyConnection = Depends(get_db),
-):
-    result = get_procedure_footprint(conn, object_name, proc_name)
-    if result is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Procedure not found: {object_name}.{proc_name}",
-        )
-    return result
 
 
 @router.get("/api/schema/footprint/{object_name}", response_model=FootprintResponse)

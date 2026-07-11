@@ -15,7 +15,6 @@ from pb.api.services.schema import (
     get_decomposition_candidates,
     get_fk_graph,
     get_footprint,
-    get_procedure_footprint,
     get_window_table_lattice,
 )
 
@@ -43,10 +42,10 @@ def test_get_co_update_rituals_mixed_namespace_sort():
     )
     conn.execute(
         "INSERT INTO schema_morphisms VALUES "
-        "('stmt1', 'col_unqual', 'writes', NULL), "
-        "('stmt1', 'col_qual', 'writes', NULL), "
-        "('stmt2', 'col_unqual', 'writes', NULL), "
-        "('stmt2', 'col_qual', 'writes', NULL)"
+        "('stmt1', 'col_unqual', 'writes', 'sql_text'), "
+        "('stmt1', 'col_qual', 'writes', 'sql_text'), "
+        "('stmt2', 'col_unqual', 'writes', 'sql_text'), "
+        "('stmt2', 'col_qual', 'writes', 'sql_text')"
     )
 
     result = get_co_update_rituals(conn, min_support=2)
@@ -150,8 +149,16 @@ def test_get_column_usage_counts(schema_db_conn: duckdb.DuckDBPyConnection):
     # anywhere in the 422-file corpus.
     assert len(result["dead"]) == 4
     assert len(result["write_only"]) == 0
-    assert len(result["read_only"]) == 172
-    assert len(result["read_write"]) == 53
+    # read_only 5 / read_write 220 (was 172 / 53): Plan 163 Phase 6 wired DW
+    # update-table writes into schema_morphisms (get_column_usage
+    # deliberately does NOT filter leg_source the way get_co_update_rituals
+    # now does — "is this column ever written by anything" legitimately
+    # includes a DataWindow's own generated Update(), unlike ritual/violation
+    # detection's narrower "do independent code paths agree" question). Most
+    # previously read_only DW-retrieve columns are also update=yes columns
+    # of the same DW, so they correctly move into read_write.
+    assert len(result["read_only"]) == 5
+    assert len(result["read_write"]) == 220
     total = sum(len(v) for v in result.values())
     assert total == 229
 
@@ -167,46 +174,9 @@ def test_get_column_usage_dead_columns_named(schema_db_conn: duckdb.DuckDBPyConn
     }
 
 
-def test_get_procedure_footprint_fn_perm(schema_db_conn: duckdb.DuckDBPyConnection):
-    result = get_procedure_footprint(schema_db_conn, "fn_perm", "fn_perm")
-    assert result is not None
-    assert [s["line"] for s in result["statements"]] == [30, 41, 52, 63, 74]
-
-    for stmt in result["statements"]:
-        cols = {(c["table"], c["column"]) for c in stmt["columns"]}
-        assert cols == {
-            ("usrgroupperm", "kodgroup"),
-            ("usrgroupperm", "kodaction"),
-            ("usrmembers", "kodgroup"),
-            ("usrmembers", "koduser"),
-        }
-        # Open Question 1: literal-only row-filter rider yields ~0 rows on
-        # real embedded SQL (host-variable-bound predicates) — do not treat
-        # an empty filters list as a bug.
-        assert stmt["filters"] == []
-
-    # the ambiguous addrec/editrec/delrec/openlist/openform action names
-    # (table_name IS NULL) must be excluded from columns and reported
-    # separately, one per statement line.
-    assert [u["line"] for u in result["unresolved"]] == [30, 41, 52, 63, 74]
-    assert {u["raw_name"] for u in result["unresolved"]} == {
-        "addrec",
-        "editrec",
-        "delrec",
-        "openlist",
-        "openform",
-    }
-
-
-def test_get_procedure_footprint_not_found(schema_db_conn: duckdb.DuckDBPyConnection):
-    assert get_procedure_footprint(schema_db_conn, "__nonexistent__", "__nope__") is None
-
-
 def test_get_footprint_ps_object_fn_perm(schema_db_conn: duckdb.DuckDBPyConnection):
     """Plan 163 Phase 5: the unified, leg_source-carrying footprint over
-    schema_objects/schema_morphisms, for the same fn_perm/fn_perm PS case
-    get_procedure_footprint's own tests use -- confirms the new leg-based
-    shape agrees with the old sql_statement_columns-based one on real data."""
+    schema_objects/schema_morphisms, for the fn_perm/fn_perm PS case."""
     result = get_footprint(schema_db_conn, "fn_perm", "fn_perm")
     assert result is not None
     assert result["object"] == "fn_perm"
@@ -238,11 +208,30 @@ def test_get_footprint_dw_retrieve(schema_db_conn: duckdb.DuckDBPyConnection):
     assert result["kind"] == "dw_retrieve"
     assert len(result["statements"]) == 1
     legs = result["statements"][0]["legs"]
-    assert len(legs) == 13
-    assert {leg["leg_kind"] for leg in legs} == {"retrieve"}
+    # 14 (was 13 pre-Phase 6): the 13 retrieve legs plus one new WHERE-derived
+    # LegReads leg (misth_final_ypal.kodxrisi, leg_source=dw_where) now that
+    # Plan 163 Phase 6 wires DwFootprint's write/where legs into production.
+    assert len(legs) == 14
+    assert {leg["leg_kind"] for leg in legs} == {"retrieve", "reads"}
     cols = {(leg["column"]["table"], leg["column"]["column"]) for leg in legs}
     assert ("misth_final", "kodfinal") in cols
     assert ("misth_final_ypal", "kodxrisi") in cols
+
+
+def test_get_footprint_dw_no_retrieve_sql(schema_db_conn: duckdb.DuckDBPyConnection):
+    """Regression (Plan 163 Phase 6): dw_misth_final_search is a real,
+    existing criteria-entry DataWindow with no retrieve SQL at all
+    (dw_objects.retrieve_sql IS NULL for it in the real corpus) -- it has no
+    schema_objects row, but it exists, so this must return an empty
+    footprint (200), not None (404 -- which is reserved for an object that
+    doesn't exist at all, see test_get_footprint_dw_not_found below)."""
+    result = get_footprint(schema_db_conn, "dw_misth_final_search")
+    assert result is not None
+    assert result["object"] == "dw_misth_final_search"
+    assert result["proc_name"] is None
+    assert result["kind"] == "dw_retrieve"
+    assert result["statements"] == []
+    assert result["blast_radius"] == []
 
 
 def test_get_footprint_blast_radius_fn_perm(schema_db_conn: duckdb.DuckDBPyConnection):
@@ -326,8 +315,13 @@ def test_get_column_affinity_dendrogram_finds_named_blocks(schema_db_conn: duckd
     assert frozenset({"fathername", "name", "surname"}) in merges
     assert abs(merges[frozenset({"fathername", "name", "surname"})] - 0.963) < 0.001
 
+    # 0.8462 (was 0.9167): shifted by Plan 163 Phase 6's DW-write/WHERE-read
+    # leg wiring, which changed misth_ypal's real co-access counts -- a
+    # genuine consequence of surfacing previously-invisible DW read/write
+    # footprint, not a bug (re-verified directly against a freshly-rebuilt
+    # schema DB, not guessed).
     assert frozenset({"kodypal", "kodxrisi"}) in merges
-    assert abs(merges[frozenset({"kodypal", "kodxrisi"})] - 0.9167) < 0.001
+    assert abs(merges[frozenset({"kodypal", "kodxrisi"})] - 0.8462) < 0.001
 
     assert frozenset({"bathmos", "klados"}) in merges
     assert merges[frozenset({"bathmos", "klados"})] == 1.0
@@ -374,9 +368,12 @@ def test_get_decomposition_candidates_zero_evidence_still_reports_real_coslice(
     name_surname = by_cols[frozenset({"name", "surname"})]
     assert name_surname["ritual_support"] == 0
     assert name_surname["unenforced_fk_count"] == 0
-    assert name_surname["coslice_size"] == 27
+    # coslice_size/len(paths) 65 (was 27): Plan 163 Phase 6's DW write/WHERE-
+    # read legs expand real reachability from these columns -- a genuine
+    # consequence of surfacing previously-invisible DW footprint, not a bug.
+    assert name_surname["coslice_size"] == 65
     assert name_surname["score"] == 0.0
-    assert len(name_surname["paths"]) == 27
+    assert len(name_surname["paths"]) == 65
 
 
 def test_get_decomposition_candidates_misth_final_ypal_real_scores(schema_db_conn: duckdb.DuckDBPyConnection):
@@ -386,16 +383,25 @@ def test_get_decomposition_candidates_misth_final_ypal_real_scores(schema_db_con
     result = get_decomposition_candidates(schema_db_conn, None, "misth_final_ypal", min_similarity=0.7)
     by_cols = {frozenset(c["columns"]): c for c in result["candidates"]}
 
+    # coslice_size 153 (was 120): same Plan 163 Phase 6 reachability
+    # expansion as above (DW write/WHERE-read legs are real new edges).
+    # ritual_support stays 9 -- get_co_update_rituals excludes DW-sourced
+    # writes (see its own docstring), so this real PS-code co-write evidence
+    # is unaffected by the write-leg wiring.
     triple = by_cols[frozenset({"kodfinal", "kodxrisi", "kodypal"})]
     assert triple["ritual_support"] == 9
     assert triple["unenforced_fk_count"] == 0
-    assert triple["coslice_size"] == 120
-    assert triple["score"] == 9 / 120
+    assert triple["coslice_size"] == 153
+    assert triple["score"] == 9 / 153
 
-    pair = by_cols[frozenset({"kodfinal", "kodxrisi"})]
+    # {kodfinal, kodxrisi} no longer clears min_similarity=0.7 on its own
+    # (the same real co-access shift that moved misth_ypal's kodypal/kodxrisi
+    # merge similarity, see test_get_column_affinity_dendrogram_finds_named_
+    # blocks) -- {kodxrisi, kodypal} is the pair that does now.
+    pair = by_cols[frozenset({"kodxrisi", "kodypal"})]
     assert pair["ritual_support"] == 3
-    assert pair["coslice_size"] == 119
-    assert pair["score"] == 3 / 119
+    assert pair["coslice_size"] == 153
+    assert pair["score"] == 3 / 153
 
 
 def test_get_decomposition_candidates_paths_explain_fk_chained_reach(schema_db_conn: duckdb.DuckDBPyConnection):
@@ -415,10 +421,16 @@ def test_get_decomposition_candidates_paths_explain_fk_chained_reach(schema_db_c
     assert fk_chained["direction"] == "backward"
     assert len(fk_chained["legs"]) == 2
 
+    # leg_kind "writes" (was "retrieve"): dw_misth_final_form is an editable
+    # form whose own update=yes columns now include kodfinal (Plan 163 Phase
+    # 6's DW-write wiring) -- the coslice traversal's adjacency now finds
+    # this leg via the new writes edge between the same two objects rather
+    # than the pre-existing retrieve edge (both are real; this is which one
+    # the BFS discovers first, deterministic given allLegs' fixed fold order).
     leg0 = fk_chained["legs"][0]
     assert leg0["from_object"] == {"kind": "dw_retrieve", "file": leg0["from_object"]["file"], "dw_name": "dw_misth_final_form"}
     assert leg0["to_object"] == {"kind": "column", "namespace": None, "table": "misth_final", "column": "kodfinal"}
-    assert leg0["leg_kind"] == "retrieve"
+    assert leg0["leg_kind"] == "writes"
 
     leg1 = fk_chained["legs"][1]
     assert leg1["from_object"] == {"kind": "column", "namespace": None, "table": "misth_final", "column": "kodfinal"}

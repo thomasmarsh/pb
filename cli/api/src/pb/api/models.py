@@ -62,40 +62,6 @@ class ColumnUsageResponse(BaseModel):
     read_write: list[FkColumnRef]
 
 
-class ColumnTouch(BaseModel):
-    namespace: str | None
-    table: str
-    column: str
-    is_write: bool
-
-
-class FilterTouch(BaseModel):
-    namespace: str | None
-    table: str
-    column: str
-    op: str
-    values_json: str | None
-
-
-class UnresolvedRef(BaseModel):
-    line: int
-    raw_name: str
-
-
-class StatementFootprint(BaseModel):
-    line: int
-    file: str
-    columns: list[ColumnTouch]
-    filters: list[FilterTouch]
-
-
-class ProcedureFootprintResponse(BaseModel):
-    object: str
-    proc_name: str
-    statements: list[StatementFootprint]
-    unresolved: list[UnresolvedRef]
-
-
 class ColumnManagerRef(BaseModel):
     kind: str
     file: str

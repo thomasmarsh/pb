@@ -902,7 +902,8 @@ runPhaseB :: DuckConn -> Maybe Text -> IO ()
 --             runPass8 (computeDeadProcedures → dead_code)
 --             runPass9 (Plan 148 Phase 1b, 2026-07-07: queryDwRetrieveColumns/
 --               queryDwJoinLegs/querySqlCols/queryCatFootprintColumns (Plan 163
---               Phase 3, 2026-07-10)/queryCatColumns/queryCatFks →
+--               Phase 3, 2026-07-10)/queryDwWriteColumns/queryDwWhereColumns
+--               (Plan 163 Phase 6, 2026-07-10)/queryCatColumns/queryCatFks →
 --               SchemaCategory.buildSchema → schema_objects/schema_morphisms;
 --               now returns SchGraph, not (), so Pass 10 can traverse it
 --               without rebuilding from DB rows. mDefaultNamespace (Plan 157
@@ -1042,6 +1043,23 @@ catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogF
 -- CompiledDw gained cdDwRetrieveColumns :: [DwRetrieveColumnRow] (Plan 148
 -- Phase 1b, 2026-07-07): compileOne's PsDw branch splits each DwRetrieve's
 -- drColumns via SchemaCategory.splitColumnRef.
+--
+-- compileOne gained a DwFootprintCtx param (Plan 163 Phase 6, 2026-07-10),
+-- slotted right after mDefaultNamespace: compileOne :: Set.Set (Text, Text)
+-- -> Maybe Text -> DwFootprintCtx -> WorkspaceEnv -> ControlIndex ->
+-- Map.Map Text [(TableRef, Text)] -> Maybe (SqlBridgePool, Int) -> Text ->
+-- ParseOutcome -> IO CompiledFile. Built once in runModeDb from the same
+-- DDL catalog rows catTables is derived from (mkDwFootprintCtx catCols
+-- mDefaultNamespace on the bridge path; mkDwFootprintCtx [] mDefaultNamespace
+-- -- empty catalog -- on the no-bridge path, matching catTables there), then
+-- threaded through workerLoopFiles/workerLoopFilesNoBridge the same way
+-- wsEnv/controlIdx already are. The PsDw branch calls
+-- PB.Analysis.DwFootprint.dwRetrieveFootprint dwfCtx fpT obj table and
+-- keeps only its LegWrites/LegReads legs (pattern-matched directly off the
+-- Set SchMorphism; LegRetrieve/LegFk are dropped -- see this module's own
+-- CompiledDw fields below), producing 2 new CompiledDw fields:
+-- cdDwWriteColumns, cdDwWhereColumns :: [DwRetrieveColumnRow], appended via
+-- 2 new DuckDb functions appendDwWriteColumns/appendDwWhereColumns.
 -- CompiledPs gained cpsCatFootprintColumns :: [SqlStmtColumnRow] (Plan 163
 -- Phase 3, 2026-07-10). compileOne's type signature gained a 4th positional
 -- param, globalDwColumns :: Map.Map Text [(TableRef, Text)] (every DW's
@@ -1688,6 +1706,7 @@ data CatColumnRow = CatColumnRow { cclNamespace :: Maybe Text, cclTable, cclColu
 data CatFkRow     = CatFkRow { cfrFromNamespace :: Maybe Text, cfrFromTable, cfrFromColumn :: Text
                               , cfrToNamespace :: Maybe Text, cfrToTable, cfrToColumn :: Text }
 data SchemaInputs = SchemaInputs { inDwRetrieveColumns :: [DwRetrieveColRow], inDwJoins :: [DwJoinLegRow]
+                                  , inDwWriteColumns :: [DwRetrieveColRow], inDwWhereColumns :: [DwRetrieveColRow]
                                   , inSqlColumns :: [SqlColRow], inCatFootprintColumns :: [SqlColRow]
                                   , inCatalogColumns :: [CatColumnRow]
                                   , inCatalogFks :: [CatFkRow], inDefaultNamespace :: Maybe Text }
@@ -1698,6 +1717,37 @@ data SchemaInputs = SchemaInputs { inDwRetrieveColumns :: [DwRetrieveColRow], in
 -- own field (not merged into inSqlColumns) so each row's producing
 -- technique stays distinguishable for a future leg_source column (Phase 4).
 -- buildSchema folds it through the same mkSqlLegs helper inSqlColumns uses.
+--
+-- inDwWriteColumns/inDwWhereColumns (Plan 163 Phase 6, 2026-07-10): wires
+-- PB.Analysis.DwFootprint.dwRetrieveFootprint's LegWrites/LegReads legs
+-- (DW update-table columns / catalog-gated WHERE-operand columns) into
+-- production -- same DwRetrieveColRow shape as inDwRetrieveColumns, reusing
+-- its existing FromRow instance (dw_write_columns/dw_where_columns are new
+-- DuckDb tables, same 5-column shape as dw_retrieve_columns). buildSchema's
+-- dwWriteLegs/dwWhereLegs comprehensions mirror dwRetrieveLegs exactly
+-- (StmtObj (DwRetrieveId ..) <-> ColumnObj), just LegWrites/SrcDwRetrieve
+-- and LegReads/SrcDwWhere respectively instead of LegRetrieve/SrcDwRetrieve.
+-- Real-corpus-verified: 559 write legs, 175 WHERE-read legs (openpay),
+-- exact match to Phase 2's own predicted counts. dwRetrieveFootprint's
+-- LegRetrieve/LegFk legs are NOT also fed through these fields -- Runner.hs's
+-- compileOne keeps only LegWrites/LegReads from its dwRetrieveFootprint
+-- call, since inDwRetrieveColumns/inDwJoins already cover retrieve/FK.
+--
+-- IMPORTANT (found wiring this in, not anticipated by the plan): DW-sourced
+-- writes are deliberately EXCLUDED from cli's get_co_update_rituals/
+-- get_decomposition_candidates ritual-evidence query (`_CO_WRITE_SQL` filters
+-- `leg_source != 'dw_retrieve'`) even though they're fully present in
+-- schema_morphisms/get_footprint/get_column_usage. A DW's update=yes column
+-- set is a *design-time* "this form treats these columns as one editable
+-- unit" fact -- PowerBuilder's generated Update() rewrites the whole SET
+-- clause from the buffer every save, regardless of which field the user
+-- touched, so it can't attest "these changed together in this save" the way
+-- a PS write does. Blending the two into one co_write_support number
+-- inflated this corpus's ritual count 45->1685 and its (previously zero,
+-- genuinely verified) violation count 0->1092 -- see doc/plan/163-unified-
+-- statement-footprint.md's Open Question #5 for the full rationale, and
+-- its still-open follow-on: report DW-column-grouping as its own,
+-- lower-confidence evidence type rather than only omitting it.
 buildSchema :: SchemaInputs -> SchGraph   -- total, pure
 -- Catalog-only columns (no statement/JOIN touches them) still become
 -- objects with no legs -- a free normalization signal (dead-column
@@ -1820,7 +1870,7 @@ runtimeDwAliasBindings
   -> [Located BodyStmt] -> Map.Map (Text, Text) Text
 ```
 
-### `PB.Analysis.DwFootprint` (Plan 163 Phase 2, done 2026-07-10)
+### `PB.Analysis.DwFootprint` (Plan 163 Phase 2, done 2026-07-10; wired into production Phase 6, 2026-07-10)
 
 ```haskell
 -- Pure. The "Fdw" half of Plan 163's cospan (schema <- statement, tagged by
@@ -1831,15 +1881,24 @@ runtimeDwAliasBindings
 -- reproduces all four leg categories (column list, update-table, WHERE,
 -- joins) directly from the AST -- overlaps with PB.Analysis.SchemaCategory
 -- .buildSchema's existing row-based dwRetrieveLegs/dwJoinLegs producers on
--- purpose; reconciling the two under a shared leg_source column is Plan
--- 163 Phase 3/4, not this module's job. Real openpay-corpus row-count diff
--- (134 real .srd files, real catalog_columns, cabal-repl script, not wired
--- into Runner.hs/DuckDb.hs): LegRetrieve 863 -> 863 (exact match, corrobo-
--- rates the row-based producer), LegFk FkDwJoin 52 distinct edges both ways
--- (192 raw rows in schema_morphisms is the same 52 edges un-deduped -- sgLegs
--- is a list, not a Set), LegWrites 0 -> 559 (new), LegReads/WHERE 0 -> 175
--- (new, DDL-catalog-gated). See doc/plan/163-unified-statement-footprint.md
+-- purpose. Real openpay-corpus row-count diff (134 real .srd files, real
+-- catalog_columns): LegRetrieve 863 -> 863 (exact match, corroborates the
+-- row-based producer), LegFk FkDwJoin 52 distinct edges both ways (192 raw
+-- rows in schema_morphisms is the same 52 edges un-deduped -- sgLegs is a
+-- list, not a Set), LegWrites 0 -> 559 (new), LegReads/WHERE 0 -> 175 (new,
+-- DDL-catalog-gated). See doc/plan/163-unified-statement-footprint.md
 -- Phase 2 for the full diff table.
+--
+-- Phase 6 wiring (2026-07-10): PB.Pipeline.Runner's compileOne PsDw branch
+-- now calls dwRetrieveFootprint for real and keeps only its LegWrites/
+-- LegReads legs (LegRetrieve/LegFk are dropped at that call site --
+-- inDwRetrieveColumns/inDwJoins already persist those, via the pre-existing
+-- row-based producers this module's own LegRetrieve/LegFk output is
+-- reconciled against above -- keeping both would double-count in
+-- schema_morphisms). See PB.Analysis.SchemaCategory's SchemaInputs entry
+-- for the inDwWriteColumns/inDwWhereColumns fields this feeds, and its own
+-- note on why cli's get_co_update_rituals deliberately excludes these
+-- writes from ritual/violation detection.
 data DwFootprintCtx = DwFootprintCtx
   { dfcCatalogTables    :: Set.Set (Text, Text)             -- (namespace, table) DDL defines -- feeds resolveTableRef
   , dfcCatalogColumns   :: Set.Set (Maybe Text, Text, Text)  -- (namespace, table, column) DDL defines -- WHERE-leg gate only
@@ -1911,6 +1970,10 @@ appendParseErrors :: DuckConn -> [row] -> IO ()
 -- column ref (splitColumnRef'd from drColumns in Runner.hs's PsDw branch --
 -- fills the "drColumns never reaches DuckDB" survey gap).
 appendDwRetrieveColumns :: DuckConn -> [DwRetrieveColumnRow] -> IO ()
+-- dw_write_columns/dw_where_columns (Plan 163 Phase 6, 2026-07-10): same
+-- 5-column shape as dw_retrieve_columns, populated from Runner.hs's
+-- compileOne PsDw branch (dwRetrieveFootprint's LegWrites/LegReads legs).
+appendDwWriteColumns, appendDwWhereColumns :: DuckConn -> [DwRetrieveColumnRow] -> IO ()
 -- dw_retrieve_where (Track SCHEMA-BUGS, 2026-07-09): (file, dw_name, idx,
 -- exp1, op, exp2, logic) -- one row per DwWhereClause in a DwRetrieve's
 -- drWhere, idx preserves clause order (zip [0..] at the Runner.hs
@@ -1932,6 +1995,9 @@ queryDwObjectSet :: DuckConn -> IO (Set Text)
 -- PB.Analysis.SchemaCategory's own read-shape types directly (new FromRow
 -- orphan instances here), consumed by Passes.hs's runPass9.
 queryDwRetrieveColumns :: DuckConn -> IO [SchemaCategory.DwRetrieveColRow]
+-- queryDwWriteColumns/queryDwWhereColumns (Plan 163 Phase 6): same query
+-- shape as queryDwRetrieveColumns, reading dw_write_columns/dw_where_columns.
+queryDwWriteColumns, queryDwWhereColumns :: DuckConn -> IO [SchemaCategory.DwRetrieveColRow]
 queryDwJoinLegs        :: DuckConn -> IO [SchemaCategory.DwJoinLegRow]
 querySqlCols           :: DuckConn -> IO [SchemaCategory.SqlColRow]
 -- queryCatFootprintColumns (Plan 163 Phase 3): same shape/query as

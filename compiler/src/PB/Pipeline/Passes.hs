@@ -15,7 +15,8 @@ import PB.Pipeline.DuckDb
   , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
   , queryProcDefs, queryProcUses, queryResolvedCalls
   , queryTaintInputs, queryProcInfos, queryDwObjectSet
-  , queryDwRetrieveColumns, queryDwJoinLegs, querySqlCols
+  , queryDwRetrieveColumns, queryDwWriteColumns, queryDwWhereColumns
+  , queryDwJoinLegs, querySqlCols
   , queryCatFootprintColumns
   , queryCatColumns, queryCatFks
   , appendResolvedTypes, appendResolvedCalls
@@ -120,6 +121,8 @@ runPass9 :: DuckConn -> Maybe Text -> IO SchGraph
 runPass9 conn mDefaultNamespace = do
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Building schema category" :: Text)])
   drCols  <- queryDwRetrieveColumns  conn
+  dwCols  <- queryDwWriteColumns     conn
+  dwhCols <- queryDwWhereColumns     conn
   djLegs  <- queryDwJoinLegs         conn
   sqlCols <- querySqlCols            conn
   cfCols  <- queryCatFootprintColumns conn
@@ -128,6 +131,8 @@ runPass9 conn mDefaultNamespace = do
   let sch = buildSchema SchemaInputs
         { inDwRetrieveColumns   = drCols
         , inDwJoins             = djLegs
+        , inDwWriteColumns      = dwCols
+        , inDwWhereColumns      = dwhCols
         , inSqlColumns          = sqlCols
         , inCatFootprintColumns = cfCols
         , inCatalogColumns      = catCols

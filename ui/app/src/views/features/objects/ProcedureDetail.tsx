@@ -13,7 +13,7 @@ import type { SummaryItem } from "@pb/platform";
 import { SqlStatementCard } from "../../components/detail/SqlStatementCard.js";
 import { CFGCore } from "../analysis/CFGCore.js";
 import { WiringCore } from "../analysis/WiringCore.js";
-import { ProcedureFootprintCore } from "../analysis/ProcedureFootprintCore.js";
+import { FootprintPanel } from "../analysis/FootprintPanel.js";
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
@@ -276,7 +276,7 @@ function ProcedureDetailContent(props: {
 
         <Show when={showFootprint()}>
           <ContextualPanel title="Procedure Footprint" onClose={() => setShowFootprint(false)}>
-            <ProcedureFootprintCore store={store} object={p.object} proc={p.name} />
+            <FootprintPanel store={store} target={{ kind: "proc", object: p.object, proc: p.name }} />
           </ContextualPanel>
         </Show>
       </div>

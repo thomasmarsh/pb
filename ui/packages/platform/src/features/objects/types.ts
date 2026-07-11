@@ -1,6 +1,6 @@
 // features/objects/types.ts
 
-import type { ObjectRow, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ProcedureListItem, WiringDiagramResponse, ProcedureFootprintResponse } from "../../types/api.js";
+import type { ObjectRow, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ProcedureListItem, WiringDiagramResponse, FootprintResponse } from "../../types/api.js";
 import { type AstData, type WindowLayout } from "@pb/interpreter";
 
 export interface ObjectsState {
@@ -22,9 +22,9 @@ export interface ObjectsState {
   // Wiring diagram (Plan 149 Phase 3) — lazily loaded when the panel toggles on
   wiringDiagram: (WiringDiagramResponse & { object: string; proc: string }) | { error: string } | null;
   wiringDiagramLoading: boolean;
-  // Procedure footprint (Plan 153 D6) — lazily loaded when the panel toggles on
-  procedureFootprint: ProcedureFootprintResponse | { error: string } | null;
-  procedureFootprintLoading: boolean;
+  // Unified footprint (Plan 163 Phase 6) — lazily loaded when the panel toggles on
+  footprint: FootprintResponse | { error: string } | null;
+  footprintLoading: boolean;
   // Procedures list screen
   proceduresList: ProcedureListItem[] | null;
   proceduresListLoading: boolean;

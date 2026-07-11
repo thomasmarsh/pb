@@ -81,7 +81,7 @@ _CO_WRITE_SQL = """
     FROM schema_morphisms m
     JOIN schema_objects o ON o.object_key = m.from_key
     JOIN schema_objects c ON c.object_key = m.to_key
-    WHERE m.leg_kind = 'writes'
+    WHERE m.leg_kind = 'writes' AND m.leg_source != 'dw_retrieve'
 """
 
 
@@ -95,6 +95,32 @@ def get_co_update_rituals(conn: duckdb.DuckDBPyConnection, min_support: int = 2)
     nested SQL self-join — the set-difference logic is clearer this way and
     the data volume doesn't warrant pushing it back into SQL (see this
     deliverable's own "promote to a pass only if scoring outgrows SQL" note).
+
+    `leg_source != 'dw_retrieve'` (Plan 163 Phase 6, wiring DW update-table
+    writes into schema_morphisms -- see doc/plan/163-unified-statement-
+    footprint.md's "Open questions" for the full design rationale, not just
+    this docstring): a PS `UPDATE`/`SetItem` write is a *runtime* fact --
+    this code path chose to change these columns together, right now. A
+    DataWindow's `update=yes` column set is a *design-time* fact instead --
+    the form treats these columns as one editable unit -- and PowerBuilder's
+    generated Update() SQL rewrites its whole SET clause from the current
+    buffer on every save regardless of which field the user actually
+    touched, so it can never tell you "these changed together in this save"
+    the way a PS write does. That's real evidence, just evidence of a
+    different thing (UI/schema grouping, not a business-logic convention) --
+    not noise to be discarded, but not the same signal `co_write_support`
+    was built to measure either. Blending the two costs real information:
+    it did not just add DW-derived rituals, it inflated this corpus's count
+    from 45 to 1685 and its (previously zero, genuinely verified) violation
+    count to 1092, because ordinary single-column PS `UPDATE`s started
+    "violating" rituals that only existed because some unrelated DW form
+    happened to bind that column alongside others. Excluding DW writes here
+    keeps this specific signal meaningful; the DW-grouping signal itself
+    isn't lost, just not surfaced through this query -- DW writes are still
+    fully visible via get_footprint, get_column_usage, and blast_radius
+    (which read schema_morphisms directly), and a future session could
+    surface "DW co-edit groups" as its own first-class concept rather than
+    folding it into this one.
     """
     write_rows = rows(conn.execute(_CO_WRITE_SQL))
 
@@ -255,70 +281,6 @@ def get_column_usage(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     return result
 
 
-def get_procedure_footprint(
-    conn: duckdb.DuckDBPyConnection, object_name: str, proc_name: str
-) -> dict[str, Any] | None:
-    exists = conn.execute(
-        "SELECT 1 FROM procedures WHERE object = ? AND proc_name = ? LIMIT 1",
-        [object_name, proc_name],
-    ).fetchone()
-    if not exists:
-        return None
-
-    col_rows = rows(
-        conn.execute(
-            "SELECT line, file, namespace, table_name, column_name, is_write "
-            "FROM sql_statement_columns WHERE object = ? AND proc_name = ? ORDER BY line",
-            [object_name, proc_name],
-        )
-    )
-    filter_rows = rows(
-        conn.execute(
-            "SELECT line, namespace, table_name, column_name, op, values_json "
-            "FROM sql_statement_filters WHERE object = ? AND proc_name = ? ORDER BY line",
-            [object_name, proc_name],
-        )
-    )
-
-    by_line: dict[int, dict[str, Any]] = {}
-    unresolved: list[dict[str, Any]] = []
-    for r in col_rows:
-        line = r["line"]
-        if r["table_name"] is None:
-            unresolved.append({"line": line, "raw_name": r["column_name"]})
-            continue
-        entry = by_line.setdefault(line, {"line": line, "file": r["file"], "columns": [], "filters": []})
-        entry["columns"].append(
-            {
-                "namespace": r["namespace"],
-                "table": r["table_name"],
-                "column": r["column_name"],
-                "is_write": r["is_write"],
-            }
-        )
-
-    for r in filter_rows:
-        line = r["line"]
-        if r["table_name"] is None or line not in by_line:
-            continue
-        by_line[line]["filters"].append(
-            {
-                "namespace": r["namespace"],
-                "table": r["table_name"],
-                "column": r["column_name"],
-                "op": r["op"],
-                "values_json": r["values_json"],
-            }
-        )
-
-    return {
-        "object": object_name,
-        "proc_name": proc_name,
-        "statements": [by_line[line] for line in sorted(by_line)],
-        "unresolved": unresolved,
-    }
-
-
 _FOOTPRINT_LEGS_SQL = """
     SELECT s.object_key AS stmt_key,
            m.leg_kind, m.leg_source,
@@ -340,11 +302,10 @@ def get_footprint(
     lives in schema_objects.stmt_object for its `dw_retrieve`-kind row (see
     PB.Pipeline.DuckDb.appendSchemaObjects's DwRetrieveId branch), the same
     column a PS statement's owning object name uses, so one query shape
-    covers both. Deliberately additive alongside the older, PS-only
-    get_procedure_footprint (which reads sql_statement_columns, has no
-    leg_source, and cannot address a DW at all) -- retiring that one is
-    Phase 6's job, once the UI has a replacement to move onto; no interim
-    compatibility wrapper is built here on purpose.
+    covers both. Sole footprint source since Phase 6 (2026-07-10) -- the
+    older, PS-only get_procedure_footprint (sql_statement_columns, no
+    leg_source, no DW support) was retired once FootprintPanel moved onto
+    this endpoint in the UI.
     """
     if proc_name is None:
         kind = "dw_retrieve"
@@ -365,7 +326,27 @@ def get_footprint(
             )
         )
     if not stmt_rows:
-        return None
+        # No schema_objects row means "no footprint legs found," which is
+        # ambiguous between "this object/proc doesn't exist" (real 404) and
+        # "it exists but touches no SQL/retrieve at all" -- e.g. a
+        # criteria-entry DataWindow with no retrieve SQL (dw_objects.
+        # retrieve_sql IS NULL), or a procedure with no embedded SQL. The
+        # old PS-only get_procedure_footprint distinguished these via a
+        # `procedures` existence check independent of SQL-statement count;
+        # this unified endpoint needs the same distinction for both fronts,
+        # via dw_objects for a DW and procedures for a PS proc, else a
+        # perfectly normal no-SQL object 404s as if it didn't exist.
+        exists = (
+            conn.execute("SELECT 1 FROM dw_objects WHERE object = ? LIMIT 1", [object_name]).fetchone()
+            if proc_name is None
+            else conn.execute(
+                "SELECT 1 FROM procedures WHERE object = ? AND proc_name = ? LIMIT 1",
+                [object_name, proc_name],
+            ).fetchone()
+        )
+        if not exists:
+            return None
+        return {"object": object_name, "proc_name": proc_name, "kind": kind, "statements": [], "blast_radius": []}
 
     stmt_keys = [r["object_key"] for r in stmt_rows]
     placeholders = ",".join("?" for _ in stmt_keys)

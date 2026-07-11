@@ -4,7 +4,7 @@ import { describe, it } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { objectsReducer, initialObjectsState, type ObjectsEnv } from "@pb/platform";
-import type { ListObjectsResponse, WiringDiagramResponse, ProcedureFootprintResponse, ObjectsState } from "@pb/platform";
+import type { ListObjectsResponse, WiringDiagramResponse, FootprintResponse, ObjectsState } from "@pb/platform";
 
 const mockEnv: ObjectsEnv = {
   getObjects: () => Effect.none(),
@@ -16,7 +16,7 @@ const mockEnv: ObjectsEnv = {
   getProcedure: () => Effect.none(),
   getProcedures: () => Effect.none(),
   getWiringDiagram: () => Effect.none(),
-  getProcedureFootprint: () => Effect.none(),
+  getFootprint: () => Effect.none(),
   navigate: () => Effect.none(),
 };
 
@@ -130,42 +130,42 @@ describe("objects reducer", () => {
   });
 
   describe("objects/proc-select", () => {
-    it("resets wiringDiagram and procedureFootprint state when navigating to a (possibly different) procedure", () => {
+    it("resets wiringDiagram and footprint state when navigating to a (possibly different) procedure", () => {
       const state: ObjectsState = {
         ...initialObjectsState,
         wiringDiagram: { term: { tag: "LId" as const }, sharedBlocks: {}, sourceOriginal: null, procStartLine: null, object: "w_old", proc: "of_old" },
         wiringDiagramLoading: true,
-        procedureFootprint: { object: "w_old", proc_name: "of_old", statements: [], unresolved: [] },
-        procedureFootprintLoading: true,
+        footprint: { object: "w_old", proc_name: "of_old", kind: "sql", statements: [], blast_radius: [] },
+        footprintLoading: true,
       };
       const ts = createTestStore(objectsReducer, mockEnv, state);
       ts.send({ tag: "proc-select", objectName: "w_new", procName: "of_new" }, (s) => {
         s.procedureDetail = null;
         s.wiringDiagram = null;
         s.wiringDiagramLoading = false;
-        s.procedureFootprint = null;
-        s.procedureFootprintLoading = false;
+        s.footprint = null;
+        s.footprintLoading = false;
       });
     });
   });
 
   describe("objects/footprint-load", () => {
-    it("sets procedureFootprintLoading and fires getProcedureFootprint", () => {
+    it("sets footprintLoading and fires getFootprint", () => {
       const ts = createTestStore(objectsReducer, mockEnv, initialObjectsState);
       ts.send({ tag: "footprint-load", objectName: "w_foo", procName: "of_bar" }, (s) => {
-        s.procedureFootprintLoading = true;
+        s.footprintLoading = true;
       });
     });
 
     it("does nothing if already loaded for the same object/proc", () => {
-      const loaded: ProcedureFootprintResponse = { object: "w_foo", proc_name: "of_bar", statements: [], unresolved: [] };
-      const state: ObjectsState = { ...initialObjectsState, procedureFootprint: loaded };
+      const loaded: FootprintResponse = { object: "w_foo", proc_name: "of_bar", kind: "sql", statements: [], blast_radius: [] };
+      const state: ObjectsState = { ...initialObjectsState, footprint: loaded };
       const ts = createTestStore(objectsReducer, mockEnv, state);
       ts.send({ tag: "footprint-load", objectName: "w_foo", procName: "of_bar" }, () => {});
     });
 
     it("does nothing if a load is already in flight", () => {
-      const state: ObjectsState = { ...initialObjectsState, procedureFootprintLoading: true };
+      const state: ObjectsState = { ...initialObjectsState, footprintLoading: true };
       const ts = createTestStore(objectsReducer, mockEnv, state);
       ts.send({ tag: "footprint-load", objectName: "w_foo", procName: "of_bar" }, () => {});
     });
@@ -173,28 +173,34 @@ describe("objects reducer", () => {
 
   describe("objects/footprint-loaded", () => {
     it("stores the footprint and clears loading", () => {
-      const data: ProcedureFootprintResponse = {
+      const data: FootprintResponse = {
         object: "w_foo",
         proc_name: "of_bar",
-        statements: [{ line: 30, file: "w_foo.srw", columns: [{ namespace: null, table: "usrmembers", column: "koduser", is_write: false }], filters: [] }],
-        unresolved: [],
+        kind: "sql",
+        statements: [{
+          stmt_key: "stmt:1",
+          file: "w_foo.srw",
+          line: 30,
+          legs: [{ column: { namespace: null, table: "usrmembers", column: "koduser" }, leg_kind: "reads", leg_source: "sql_text" }],
+        }],
+        blast_radius: [],
       };
-      const state: ObjectsState = { ...initialObjectsState, procedureFootprintLoading: true };
+      const state: ObjectsState = { ...initialObjectsState, footprintLoading: true };
       const ts = createTestStore(objectsReducer, mockEnv, state);
       ts.send({ tag: "footprint-loaded", data }, (s) => {
-        s.procedureFootprint = data;
-        s.procedureFootprintLoading = false;
+        s.footprint = data;
+        s.footprintLoading = false;
       });
     });
   });
 
   describe("objects/footprint-error", () => {
     it("stores the error and clears loading", () => {
-      const state: ObjectsState = { ...initialObjectsState, procedureFootprintLoading: true };
+      const state: ObjectsState = { ...initialObjectsState, footprintLoading: true };
       const ts = createTestStore(objectsReducer, mockEnv, state);
       ts.send({ tag: "footprint-error", error: "boom" }, (s) => {
-        s.procedureFootprint = { error: "boom" };
-        s.procedureFootprintLoading = false;
+        s.footprint = { error: "boom" };
+        s.footprintLoading = false;
       });
     });
   });

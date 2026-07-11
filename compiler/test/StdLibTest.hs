@@ -5,6 +5,7 @@ import PB.Pipeline.DuckDb
 import PB.Pipeline.Emit    (ParsedFile (..), ParseOutcome (..), parsePowerScriptFile, stripBom)
 import PB.Pipeline.Runner  (compileOne, appendToDb)
 import PB.Analysis.TypeEnv (WorkspaceEnv (..), buildWorkspaceEnv)
+import PB.Analysis.DwFootprint (mkDwFootprintCtx)
 import PB.Runtime.StdLib   (parseStdlibFiles)
 
 import Database.DuckDB.Simple          (Query, query_)
@@ -43,7 +44,7 @@ withStdlibDb act = withWriteConn ":memory:" $ \conn -> do
   pfs <- parseStdlibFiles
   let wsEnv = buildWorkspaceEnv (map pfSrFile pfs)
   mapM_ (\pf -> do
-    cf <- compileOne Set.empty Nothing wsEnv Map.empty Map.empty Nothing "speculative" (PsParsed pf)
+    cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) wsEnv Map.empty Map.empty Nothing "speculative" (PsParsed pf)
     appendToDb conn cf) pfs
   act conn
 
@@ -101,7 +102,7 @@ testUserConfirmed = withWriteConn ":memory:" $ \conn -> do
     Right (sf, sp) -> do
       let wsEnv = buildWorkspaceEnv [sf]
           pf    = ParsedFile "w_test.srw" sf sp src
-      cf <- compileOne Set.empty Nothing wsEnv Map.empty Map.empty Nothing "confirmed" (PsParsed pf)
+      cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) wsEnv Map.empty Map.empty Nothing "confirmed" (PsParsed pf)
       appendToDb conn cf
   confs <- queryOneTexts conn "SELECT confidence FROM objects"
   assertEqual "user object is confirmed" ["confirmed"] confs

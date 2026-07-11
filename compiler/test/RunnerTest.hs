@@ -23,6 +23,7 @@ import PB.AST.Type         (PbType (..))
 import PB.Analysis.TypeEnv    (buildWorkspaceEnv, procEnv)
 import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.GraphBuilder (compileProcedureViaCatOp)
+import PB.Analysis.DwFootprint (mkDwFootprintCtx)
 import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse
   ( startSqlBridgePool, shutdownSqlBridgePool
@@ -355,7 +356,7 @@ tests = testGroup "Pipeline.Runner"
 
             , testCase "compileOne's ProcRow.prInstrJson matches compileProcedureViaCatOp" $ do
                 let pf = ParsedFile { pfPath = "uf_test.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
-                cf <- compileOne Set.empty Nothing ws Map.empty Map.empty Nothing "confirmed" (PsParsed pf)
+                cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty Map.empty Nothing "confirmed" (PsParsed pf)
                 case cf of
                   CFPs cps -> case cpsProcRows cps of
                     (row:_) -> case decodeStrict (TE.encodeUtf8 (prInstrJson row)) :: Maybe Value of
@@ -612,7 +613,7 @@ tests = testGroup "Pipeline.Runner"
             let ws = buildWorkspaceEnv [sf]
                 pf = ParsedFile { pfPath = "w_dw_copy.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
                 globalDwColumns = Map.fromList [("d_items", [(TableRef Nothing "sales_order_items", "id")])]
-            cf <- compileOne Set.empty Nothing ws Map.empty globalDwColumns Nothing "confirmed" (PsParsed pf)
+            cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty globalDwColumns Nothing "confirmed" (PsParsed pf)
             case cf of
               CFPs cps -> do
                 map sscrColumnName (cpsCatFootprintColumns cps) @?= ["id"]
@@ -646,7 +647,7 @@ tests = testGroup "Pipeline.Runner"
             let ws = buildWorkspaceEnv [sf]
                 pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
                 globalDwColumns = Map.fromList [("d_items", [(TableRef Nothing "sales_order_items", "id")])]
-            cf <- compileOne Set.empty Nothing ws Map.empty globalDwColumns Nothing "confirmed" (PsParsed pf)
+            cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty globalDwColumns Nothing "confirmed" (PsParsed pf)
             case cf of
               CFPs cps -> assertBool "no cat-footprint rows" (null (cpsCatFootprintColumns cps))
               _ -> assertFailure "expected CFPs"
@@ -666,7 +667,7 @@ tests = testGroup "Pipeline.Runner"
             pool   <- startSqlBridgePool 1 script [] "oracle"
             let ws = buildWorkspaceEnv [sf]
                 pf = ParsedFile { pfPath = "uf_retrieve.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
-            cf <- compileOne Set.empty Nothing ws Map.empty Map.empty (Just (pool, 0)) "confirmed" (PsParsed pf)
+            cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty Map.empty (Just (pool, 0)) "confirmed" (PsParsed pf)
             shutdownSqlBridgePool pool
             case cf of
               CFPs cps -> do
@@ -691,7 +692,7 @@ tests = testGroup "Pipeline.Runner"
             let ws = buildWorkspaceEnv [sf]
                 pf = ParsedFile { pfPath = "uf_retrieve.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
                 catTables = Set.fromList [("openpay", "usrgroupperm")]
-            cf <- compileOne catTables (Just "openpay") ws Map.empty Map.empty (Just (pool, 0)) "confirmed" (PsParsed pf)
+            cf <- compileOne catTables (Just "openpay") (mkDwFootprintCtx [] (Just "openpay")) ws Map.empty Map.empty (Just (pool, 0)) "confirmed" (PsParsed pf)
             shutdownSqlBridgePool pool
             case cf of
               CFPs cps -> do
@@ -719,7 +720,7 @@ tests = testGroup "Pipeline.Runner"
             let ws = buildWorkspaceEnv [sf]
                 pf = ParsedFile { pfPath = "uf_retrieve.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
                 catTables = Set.fromList [("openpay", "usrgroupperm")]
-            cf <- compileOne catTables (Just "openpay") ws Map.empty Map.empty (Just (pool, 0)) "confirmed" (PsParsed pf)
+            cf <- compileOne catTables (Just "openpay") (mkDwFootprintCtx [] (Just "openpay")) ws Map.empty Map.empty (Just (pool, 0)) "confirmed" (PsParsed pf)
             shutdownSqlBridgePool pool
             case cf of
               CFPs cps ->
@@ -795,7 +796,7 @@ tests = testGroup "Pipeline.Runner"
               , dwMeta     = mempty
               }
             ws = buildWorkspaceEnv []
-        cf <- compileOne Set.empty Nothing ws Map.empty Map.empty Nothing "confirmed" (PsDw "d_test.srd" "" dwFile)
+        cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty Map.empty Nothing "confirmed" (PsDw "d_test.srd" "" dwFile)
         case cf of
           CFDw cd ->
             map (\r -> (drcrTableName r, drcrColumnName r)) (cdDwRetrieveColumns cd)
@@ -825,7 +826,7 @@ tests = testGroup "Pipeline.Runner"
               }
             ws = buildWorkspaceEnv []
             catTables = Set.fromList [("openpay", "misth_zpkrat")]
-        cf <- compileOne catTables (Just "openpay") ws Map.empty Map.empty Nothing "confirmed" (PsDw "d_test.srd" "" dwFile)
+        cf <- compileOne catTables (Just "openpay") (mkDwFootprintCtx [] (Just "openpay")) ws Map.empty Map.empty Nothing "confirmed" (PsDw "d_test.srd" "" dwFile)
         case cf of
           CFDw cd -> do
             map (\r -> (drcrNamespace r, drcrTableName r, drcrColumnName r)) (cdDwRetrieveColumns cd)
@@ -859,7 +860,7 @@ tests = testGroup "Pipeline.Runner"
               , dwMeta     = mempty
               }
             ws = buildWorkspaceEnv []
-        cf <- compileOne Set.empty Nothing ws Map.empty Map.empty Nothing "confirmed" (PsDw "d_test.srd" "" dwFile)
+        cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty Map.empty Nothing "confirmed" (PsDw "d_test.srd" "" dwFile)
         case cf of
           CFDw cd ->
             map (\r -> (drwrIdx r, drwrExp1 r, drwrOp r, drwrExp2 r, drwrLogic r)) (cdDwRetrieveWhere cd)

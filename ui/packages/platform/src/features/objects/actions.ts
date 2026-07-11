@@ -1,6 +1,6 @@
 // features/objects/actions.ts — Objects feature actions (self-contained).
 
-import type { ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ObjectRow, ProcedureListItem, WiringDiagramResponse, ProcedureFootprintResponse } from "../../types/api.js";
+import type { ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ObjectRow, ProcedureListItem, WiringDiagramResponse, FootprintResponse } from "../../types/api.js";
 import { type AstData, type WindowLayout } from "@pb/interpreter";
 
 export type ObjectsAction =
@@ -37,8 +37,8 @@ export type ObjectsAction =
   | { tag: "wiring-load"; objectName: string; procName: string }
   | { tag: "wiring-loaded"; objectName: string; procName: string; data: WiringDiagramResponse }
   | { tag: "wiring-error"; error: string }
-  // Procedure footprint (Plan 153 D6)
+  // Unified footprint (Plan 163 Phase 6)
   | { tag: "footprint-load"; objectName: string; procName: string }
-  | { tag: "footprint-loaded"; data: ProcedureFootprintResponse }
+  | { tag: "footprint-loaded"; data: FootprintResponse }
   | { tag: "footprint-error"; error: string }
   ;
