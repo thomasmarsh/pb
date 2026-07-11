@@ -10,17 +10,15 @@ All regex patterns are given in their raw string form (PCRE-compatible, case-ins
 
 | Extension | Object type      | Parser path     |
 | --------- | ---------------- | --------------- |
-| `.srs`    | Window           | PowerScript     |
+| `.srw`    | Window           | PowerScript     |
+| `.srs`    | Structure        | PowerScript     |
 | `.sru`    | UserObject       | PowerScript     |
 | `.srf`    | Function         | PowerScript     |
 | `.srm`    | Menu             | PowerScript     |
-| `.srw`    | Application      | PowerScript     |
-| `.sra`    | Structure        | PowerScript     |
-| `.sro`    | Object (generic) | PowerScript     |
-| `.srd`    | DataWindow       | DataWindow (§7) |
+| `.sra`    | Application      | PowerScript     |
 | `.srp`    | Pipeline         | PowerScript     |
-| `.srj`    | Query            | PowerScript     |
-| `.srq`    | Query variant    | PowerScript     |
+| `.srj`    | Project          | PowerScript     |
+| `.srd`    | DataWindow       | DataWindow (§7) |
 
 `.srd` files are a completely different syntax from all others and must use a separate parser path.
 
