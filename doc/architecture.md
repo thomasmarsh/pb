@@ -109,6 +109,76 @@ betweenness, DIT).
 
 ---
 
+## Schema category (`Sch`): the unified statement-footprint cospan
+
+`compiler/src/PB/Analysis/SchemaCategory.hs` models the database schema as
+a category: objects are `SchObject = ColumnObj TableRef Text | StmtObj
+StmtId`, and morphisms (`SchMorphism`) are the "legs" a statement has into
+the columns it reads or writes. `StmtId` is a **tag on top of a shared
+object type** marking which front-end produced the statement
+(`SqlStmtId` for PowerScript embedded SQL, `DwRetrieveId` for a DataWindow
+retrieve) — DataWindow and PowerScript are not separately-engineered
+schema relationships, they are two legs of a cospan converging on the same
+`Sch` codomain:
+
+```
+CatOp --Fps--> Sch <--Fdw-- DwRetrieve
+```
+
+- `Fps` is `PB.Analysis.SchFootprint`'s `foldSchFootprint`, a second
+  instance of `PB.Analysis.CatOp`'s `Category`/`Cartesian`/`Cocartesian`/
+  `Effectful` typeclasses (alongside `CatInterp`'s direct-execution
+  instance) — it folds a compiled `CatOp` term straight into `Set
+  SchMorphism`, with no separate walker. It complements, not replaces, the
+  sqlglot-text leg producer (`querySqlCols`) that reads literal embedded
+  `SELECT`/`INSERT`/`UPDATE`/`DELETE` text — `Fps` alone reaches
+  dynamic-dispatch writes sqlglot cannot see (e.g. a DataWindow
+  `SetItem(row, "col", value)` call resolved through `ControlHierarchy`'s
+  static control/DW bindings).
+- `Fdw` is `PB.Analysis.DwFootprint.dwRetrieveFootprint`, a total,
+  control-flow-free walk over an already-parsed `DwTable` (column list,
+  update-table, WHERE-predicate `Expr` tree, joins) into the same `Set
+  SchMorphism` codomain. A DW retrieve is deliberately **not** compiled
+  through `CatOp` — it has no procedure body to give it a CFG, so forcing
+  it through the imperative `CatOp` GADT would be a false unification of
+  the vehicle when only the destination (`Sch`) needs to be shared.
+
+Both legs are independent domains and independent functors; the only thing
+that unifies is the destination type and the materialization/read path.
+`Pass 9` (`PB.Pipeline.Passes.runPass9`, calling
+`SchemaCategory.buildSchema`) combines every leg producer — DW-retrieve,
+DW-join, DW-write, DW-WHERE, sqlglot-text, `SchFootprint`/`CatOp`, and
+DDL-derived FK legs — into one `SchGraph`, written to shared
+`schema_objects`/`schema_morphisms` DuckDB tables. Every `schema_morphisms`
+row carries a `leg_source` column (`"sql_text"`, `"cat_footprint"`,
+`"dw_retrieve"`, `"dw_join"`, `"dw_where"`, `"ddl_fk"`) — orthogonal to the
+`StmtId` front-end tag — recording which analysis *technique* found that
+touch, since one statement can accumulate legs from more than one
+technique. `Pass 10`'s `columnCoslice` (blast radius / validation walk,
+written to `decomposition_coslice`) traverses this graph
+source-agnostically — a column's "who touches this" answer is already
+front-end-blind by construction.
+
+On the read side, `GET /api/schema/footprint/{object_name}`
+(`cli/api/src/pb/api/routes/schema.py`) and the SPA's `FootprintPanel`
+(`ui/app/src/views/features/analysis/FootprintPanel.tsx`, shared by
+`ProcedureDetail` and `DWDetail`) both read `schema_morphisms` uniformly —
+one endpoint, one component, regardless of whether the target is a
+PowerScript procedure or a DataWindow. Declared UI/render structure (DW
+bands/controls/layout) stays a genuinely separate relationship and does
+not flow through this model — only schema-touching legs do.
+
+**Reserved third leg.** The cospan has an explicit open slot for PL/SQL:
+`PlsqlBody --Fplsql--> Sch`, adding a `PlsqlStmtId` case to `StmtId` and
+compiling PL/SQL bodies through a `CatOp`-shaped IR (real control flow,
+same reasoning as PowerScript, unlike a DW retrieve). See
+`doc/plan/162-plsql-python-frontend.md`'s "out of scope, follow-on plan"
+note and `doc/plan/163-unified-statement-footprint.md` (Phase 8) for the
+full design — landing the third functor should require zero new tables,
+endpoints, or UI components if this shape holds.
+
+---
+
 ## Cross-component interfaces
 
 ```mermaid
