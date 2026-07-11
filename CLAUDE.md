@@ -899,7 +899,14 @@ runPhaseB :: DuckConn -> Maybe Text -> IO ()
 -- through from Runner.runModeDb's --default-namespace flag into runPass9.
 -- Internally: runPass5 (resolveTypes + resolveCalls → resolved_types/calls),
 --             runPass67 (buildInterprocEdges + taint → interproc_edges/taint_*),
---             runPass8 (computeDeadProcedures → dead_code)
+--             runPass8 (Plan 161 Phase 2b cutover, 2026-07-11: dead-code
+--               detection now runs Datalog INSIDE this pass, not just
+--               Haskell -- computeOverrideEdges → procedure_overrides →
+--               Souffle.deadReachRules → proc_dead → queryProcDead reads it
+--               back → DeadCode.classifyDeadProcedures (confidence/
+--               caller-count classification, the only Haskell-only piece
+--               left) → dead_code. computeDeadProcedures/bfs are DELETED --
+--               see PB.Analysis.DeadCode's own entry.)
 --             runPass9 (Plan 148 Phase 1b, 2026-07-07: queryDwRetrieveColumns/
 --               queryDwJoinLegs/querySqlCols/queryCatFootprintColumns (Plan 163
 --               Phase 3, 2026-07-10)/queryDwWriteColumns/queryDwWhereColumns
@@ -913,7 +920,10 @@ runPhaseB :: DuckConn -> Maybe Text -> IO ()
 --             runPass11 (Plan 161, 2026-07-11; Souffle backend since same
 --               day's Phase 0 reversal: materializes
 --               PB.Pipeline.Souffle's reachesRules/liveProcRules programs →
---               reaches/live_proc tables. Uses Souffle.runRuleSetWith's
+--               reaches/live_proc tables. deadReachRules is NOT run here
+--               (Plan 161 Phase 2b, moved into runPass8 -- see above) but
+--               liveProcRules depends on proc_dead already existing, which
+--               Pass 8 running first guarantees. Uses Souffle.runRuleSetWith's
 --               per-relation progress callback, not the plain runRuleSet --
 --               emits one "step" event per relation so the CLI reporter
 --               doesn't show one silent blanket step for the whole pass;
@@ -982,14 +992,15 @@ runRuleSetWith :: (Relation -> IO ()) -> DuckConn -> RuleSet -> IO ()
 -- runRuleSetWith, not bare runRuleSet, for the same reason as before.
 
 initEdbViews :: DuckConn -> IO ()
--- (Re)creates leg (from schema_morphisms), dead (from dead_code), and stmt
--- (from schema_objects) as views. stmt is filtered to kind = 'stmt' ONLY --
--- excluding kind = 'dw_retrieve' rows is deliberate: a DwRetrieveId
--- StmtObj's stmt_proc is always NULL, and dead_code only keys on real
--- (object, proc_name) pairs, so a NULL proc vacuously passes `NOT EXISTS
--- dead` -- every DW retrieve would otherwise pollute live_proc as
--- unconditionally "live" (found via a real openpay --db smoke run: 114/115
--- stmt rows were this noise before the fix).
+-- (Re)creates leg (from schema_morphisms) and stmt (from schema_objects) as
+-- views. stmt is filtered to kind = 'stmt' ONLY -- excluding kind =
+-- 'dw_retrieve' rows is deliberate: a DwRetrieveId StmtObj's stmt_proc is
+-- always NULL, and proc_dead only keys on real (object, proc) pairs, so a
+-- NULL proc vacuously passes `NOT EXISTS proc_dead` -- every DW retrieve
+-- would otherwise pollute live_proc as unconditionally "live" (found via a
+-- real openpay --db smoke run: 114/115 stmt rows were this noise before
+-- the fix). No "dead" view here (Plan 161 Phase 2b cutover, 2026-07-11):
+-- liveProcRules reads proc_dead directly instead -- see its own entry.
 
 reachesRules  :: RuleSet
 -- reaches(X,Y) :- leg(X,Y,_).  reaches(X,Z) :- reaches(X,Y), leg(Y,Z,_).
@@ -999,12 +1010,37 @@ reachesRules  :: RuleSet
 -- table "reaches". Souffle handles the self-recursion natively -- no
 -- WITH RECURSIVE translation needed on this side.
 liveProcRules :: RuleSet
--- live_proc(Object,Proc) :- stmt(_,Object,Proc,_), !dead(Object,Proc).
--- Real stratified-negation demonstration (Plan 161 Open Question 4):
--- dead_code is fully computed (Pass 8) before Pass 11 ever runs, so no
--- cross-run ordering is needed here -- Souffle only has to confirm
--- live_proc isn't negatively self-referential (it is not). Materializes to
--- table "live_proc".
+-- live_proc(Object,Proc) :- stmt(_,Object,Proc,_), !proc_dead(Object,Proc).
+-- Real stratified-negation demonstration (Plan 161 Open Question 4). Reads
+-- proc_dead (deadReachRules) directly -- Plan 161 Phase 2b cutover,
+-- 2026-07-11: used to read a `dead` EDB view over the Haskell-computed
+-- dead_code table until real-corpus parity was proven exact; runPass8 now
+-- runs deadReachRules BEFORE this ruleset (required ordering -- proc_dead
+-- must already exist when this ruleset exports its EDB facts).
+
+-- Plan 161 Phase 2b (2026-07-11): port of the seeded-BFS reachability core
+-- that used to live in Haskell as DeadCode.computeDeadProcedures (deleted
+-- once parity was proven exact on two real corpora -- 104/104 openpay,
+-- 279/279 PowerBuilder-Example -- see PB.Analysis.DeadCode.classifyDeadProcedures,
+-- its replacement, which now takes the dead set as an INPUT instead of
+-- computing it). initDeadReachEdbViews (Re)creates proc/entry/calls (SQL
+-- views over procedures/resolved_calls/dw_objects -- every read of
+-- `procedures` filters `confidence != 'speculative'`, excluding synthetic
+-- builtin-class method stubs; a real --db run caught this the hard way,
+-- inflating proc_dead by 45 rows before the fix) and overrides (a thin
+-- view over the procedure_overrides table, fed by
+-- DeadCode.computeOverrideEdges -- that edge-flattening step stays
+-- Haskell/SQL-computed, same treatment `leg` gets for `reaches`). Must run
+-- after PB.Pipeline.DuckDb.initSchema.
+initDeadReachEdbViews :: DuckConn -> IO ()
+deadReachRules :: RuleSet
+-- proc_reachable(Object,Proc) :- entry(Object,Proc).
+-- proc_reachable(Object,Proc) :- proc_reachable(CObj,CProc), calls(CObj,CProc,Object,Proc).
+-- proc_reachable(ChildObj,Method) :- proc_reachable(ParentObj,Method), overrides(ChildObj,Method,ParentObj).
+-- proc_dead(Object,Proc) :- proc(Object,Proc), !proc_reachable(Object,Proc).
+-- Materializes to tables "proc_reachable"/"proc_dead". PB.Pipeline.Passes.runPass8
+-- runs this INSIDE dead-code detection (before classifying confidence),
+-- not in runPass11 (which now only runs reachesRules/liveProcRules).
 ```
 
 ### `PB.Pipeline.SqlParse`
@@ -1546,6 +1582,49 @@ buildTaintAnnotations :: Set (Text,Text,Text) -> [TaintSource] -> [TaintSink] ->
 taintAnalysis      :: [ResolvedCallRow] -> [DefRow] -> [UseRow] -> Set Text -> Text -> SrFile -> TaintResult
 ```
 
+### `PB.Analysis.DeadCode` (Plan 161 Phase 2b cutover, 2026-07-11)
+
+```haskell
+data ProcInfo = ProcInfo { piObject, piName, piProcType :: Text, piCyclomatic :: Maybe Int }
+data DeadProcedure = DeadProcedure
+  { dpObject, dpName, dpProcType :: Text, dpCyclomatic :: Maybe Int
+  , dpConfidence :: Text   -- "high" | "medium" | "low"
+  , dpCallerCountNaive, dpCallerCountScoped :: Int
+  }
+
+cyclomaticComplexity :: Cfg -> Int   -- E - N + 2, unrelated to the reachability logic below
+
+-- computeDeadProcedures (the seeded-BFS reachability computation: same-object
+-- + cross-object + override-propagation edges, event/on/DW seeds) is GONE --
+-- deleted once its Datalog port (PB.Pipeline.Souffle.deadReachRules --
+-- proc_reachable/proc_dead) was proven exact against it on two real corpora
+-- (104/104 openpay, 279/279 PowerBuilder-Example), rather than kept as a
+-- dual-implementation "oracle": Souffle is already a hard runtime dependency
+-- of this pipeline (shelled out to unconditionally since Plan 161 Phase 1),
+-- so a redundant Haskell copy bought no dependency-safety margin, only
+-- upkeep cost. classifyDeadProcedures is what replaced it -- same output
+-- shape, but takes the dead set as an INPUT (read back from proc_dead via
+-- PB.Pipeline.DuckDb.queryProcDead) instead of computing it. What's left is
+-- genuinely Haskell-only: confidence/caller-count classification is report
+-- formatting, not a fixpoint query.
+classifyDeadProcedures
+  :: Set (Text, Text)            -- dead (object, proc) pairs, from proc_dead
+  -> [ProcInfo]                  -- all procedures
+  -> [(Text, Text, Text)]        -- raw calls: (object, from_proc, to_name)
+  -> [(Text, Text, Text, Text)]  -- resolved calls: (object, from_proc, target_object, target_proc)
+  -> [DeadProcedure]
+
+-- Every (childObj, method, parentObj) triple where childObj is a transitive
+-- descendant of parentObj and both declare a procedure named method --
+-- extracted from the old computeDeadProcedures' override-edge flattening
+-- (allDescOf/methodsByObj), which stays Haskell/SQL-computed (same
+-- treatment `leg` gets for `reaches`) since it's persisted as a fact table
+-- (PB.Pipeline.DuckDb.appendProcedureOverrides -> procedure_overrides table)
+-- and consumed as PB.Pipeline.Souffle's `overrides` EDB relation, not
+-- reimplemented in Datalog itself.
+computeOverrideEdges :: [ProcInfo] -> [(Text, Text)] -> [(Text, Text, Text)]
+```
+
 ### `PB.Analysis.TypeEnv`
 
 ```haskell
@@ -1865,11 +1944,13 @@ buildSchema :: SchemaInputs -> SchGraph   -- total, pure
 -- bare reachability boolean.
 blastRadius        :: SchGraph -> SchObject -> [SchPath]   -- forward via sgOut; every result's spFrom == seed
 validationWalkBack :: SchGraph -> SchObject -> [SchPath]   -- backward via sgIn; every result's spTo == seed
-data ValidationConstraint = ValidationConstraint { vcColumn :: SchObject, vcDescription :: Text }
--- vcColumn expected to be a ColumnObj. Hand-seeded fixture, not inferred.
-constraintWriters :: SchGraph -> ValidationConstraint -> [StmtId]
--- Dedup'd StmtIds reachable backward from vcColumn (SqlStmtId writers +
--- DwRetrieveId retrieves), direct or via an FK chain.
+-- Plan 161 Phase 2a (2026-07-11): these two's *existence-only* projection
+-- is superseded by the Souffle `reaches` relation (PB.Pipeline.Souffle),
+-- proven equivalent by a parity oracle test -- but they are NOT dead code:
+-- their *path-carrying* form is columnCoslice's live implementation
+-- (below), still the only path-carrying traversal in the system pending
+-- Phase 2c. ValidationConstraint/constraintWriters (a thin wrapper that
+-- had zero production callers) were deleted in the same session.
 
 -- Plan 153 D5 (2026-07-07): the "rewrite cost" of moving a column --
 -- union of blastRadius + validationWalkBack, collapsed to the shortest
@@ -2082,8 +2163,19 @@ queryProcDefs    :: DuckConn -> IO [Taint.DefRow]
 queryProcUses    :: DuckConn -> IO [Taint.UseRow]
 queryResolvedCalls :: DuckConn -> IO [Taint.ResolvedCallRow]
 queryTaintInputs :: DuckConn -> IO [Taint.TaintFileInputs]  -- includes procedure-less PS objects via objects table
-queryProcInfos   :: DuckConn -> IO [TypeResolve.LocalVar]   -- for Pass 5 resolveTypes
-queryDwObjectSet :: DuckConn -> IO (Set Text)
+queryProcInfos   :: DuckConn -> IO [DeadCode.ProcInfo]
+-- Filters `confidence != 'speculative'` (excludes synthetic builtin-class
+-- method stubs). Feeds Pass 8's overrideEdges computation and
+-- PB.Pipeline.Souffle's proc/entry/calls EDB views apply the same filter.
+-- queryDwObjectSet is GONE (Plan 161 Phase 2b cutover, 2026-07-11):
+-- DW-object seeding for dead-code reachability moved entirely into
+-- Souffle's `entry` EDB view (SQL JOIN against dw_objects); no Haskell
+-- consumer of the raw DW-object set remained once that happened.
+queryProcDead :: DuckConn -> IO (Set (Text, Text))
+-- Plan 161 Phase 2b cutover: reads back proc_dead (Souffle.deadReachRules'
+-- materialized output) so runPass8 can pass it into
+-- DeadCode.classifyDeadProcedures instead of computing the dead set in
+-- Haskell.
 -- SchemaCategory read-side queries (Plan 148 Phase 1b, 2026-07-07): return
 -- PB.Analysis.SchemaCategory's own read-shape types directly (new FromRow
 -- orphan instances here), consumed by Passes.hs's runPass9.
@@ -2104,6 +2196,11 @@ appendResolvedTypes, appendResolvedCalls :: DuckConn -> [row] -> IO ()
 appendInterprocEdges, appendProcSummaries :: DuckConn -> [row] -> IO ()
 appendTaintSources, appendTaintSinks, appendTaintPaths, appendTaintAnnotations :: DuckConn -> [row] -> IO ()
 appendDeadCode   :: DuckConn -> [DeadCode.DeadProcedure] -> IO ()
+-- procedure_overrides (Plan 161 Phase 2b, 2026-07-11): (child_object,
+-- method, parent_object) rows from DeadCode.computeOverrideEdges, read
+-- back by Souffle's `overrides` EDB view (initDeadReachEdbViews). Written
+-- by runPass8 before deadReachRules runs.
+appendProcedureOverrides :: DuckConn -> [(Text, Text, Text)] -> IO ()
 -- schema_objects/schema_morphisms (Plan 148 Phase 1b, 2026-07-07): written
 -- by runPass9 from SchemaCategory.buildSchema's SchGraph. object_key/
 -- from_key/to_key columns hold SchemaCategory.schObjectKey's canonical

@@ -496,22 +496,6 @@ tests = testGroup "SchemaCategory"
               ]
         in assertBool "writer-through-FK path present" (expected `elem` validationWalkBack sch colActions)
 
-    , testCase "constraintWriters returns every StmtId reachable backward from the constraint's column" $
-        let colA = ColumnObj (TableRef Nothing "account") "status"
-            sid  = SqlStmtId "f.srf" "obj" "proc" 9
-            dwId = DwRetrieveId "d.srd" "d_test"
-            inp  = emptyInputs
-              { inSqlColumns = [ SqlColRow sid Nothing (Just "account") "status" True ]
-              , inDwRetrieveColumns =
-                  [ DwRetrieveColRow "d.srd" "d_test" Nothing "account" "status" ]
-              }
-            sch = buildSchema inp
-            found = constraintWriters sch constraint
-            constraint = ValidationConstraint colA "status must be one of A/I/P"
-        in do
-          assertBool "sql writer found" (sid `elem` found)
-          assertBool "dw retrieve found" (dwId `elem` found)
-
     , testProperty "no path from blastRadius or validationWalkBack revisits an object" $ property $ do
         inp <- forAll genSchemaInputs
         let sch = buildSchema inp

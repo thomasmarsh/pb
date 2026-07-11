@@ -37,8 +37,6 @@ module PB.Analysis.SchemaCategory
     -- Traversal (Plan 148 Phase 2)
   , blastRadius
   , validationWalkBack
-  , ValidationConstraint (..)
-  , constraintWriters
   , columnCoslice
   ) where
 
@@ -386,8 +384,8 @@ buildSchema inputs =
 -- several tables joining back through a shared hub table) path count grows
 -- multiplicatively per diamond layer even though the reachable-object count
 -- stays linear: real corpus-scale schema graphs made this an exponential
--- blowup. No consumer (columnCoslice, constraintWriters) needs more than
--- one path per object — both already collapse to shortest-path-per-target.
+-- blowup. No consumer (columnCoslice) needs more than one path per object —
+-- it already collapses to shortest-path-per-target.
 walkPaths
   :: (SchGraph -> Map.Map SchObject [SchMorphism])  -- ^ adjacency map to follow
   -> (SchPath -> SchMorphism -> SchPath)             -- ^ extend a path with one leg
@@ -413,6 +411,17 @@ walkPaths adj step frontier discovered g seed =
 -- | All paths reachable forward from the seed (sgOut). North-star Q1 ("if
 -- this column mutates, what else is affected") — the coslice under a
 -- ColumnObj/StmtObj. Every returned path's 'spFrom' is the seed.
+--
+-- Plan 161 Phase 2a (2026-07-11): this function's *existence-only*
+-- projection (which objects are reachable, discarding the path) is
+-- superseded by the Souffle @reaches@ relation ('PB.Pipeline.Souffle.
+-- reachesRules') -- proven equivalent by 'SouffleTest.hs''s
+-- "reaches's non-identity endpoints match SchemaCategory.blastRadius"
+-- parity oracle. This *path-carrying* form is NOT superseded and remains
+-- the live implementation behind 'columnCoslice' (-> @decomposition_coslice@,
+-- the system's most-used traversal) until Plan 161 Phase 2c lands either a
+-- path-carrying Datalog encoding or a lazy path-reconstruction split -- do
+-- not delete this pending that.
 blastRadius :: SchGraph -> SchObject -> [SchPath]
 blastRadius = walkPaths sgOut extendForward spTo legTo
   where
@@ -422,26 +431,14 @@ blastRadius = walkPaths sgOut extendForward spTo legTo
 -- direction (ancestor -> seed). North-star Q2 ("what can write to this
 -- column") — the slice over a ColumnObj (the "validation walk-back").
 -- Every returned path's 'spTo' is the seed.
+--
+-- Plan 161 Phase 2a: same status as 'blastRadius' above -- existence-only
+-- projection superseded by @reaches@, path-carrying form still live via
+-- 'columnCoslice'.
 validationWalkBack :: SchGraph -> SchObject -> [SchPath]
 validationWalkBack = walkPaths sgIn extendBackward spFrom legFrom
   where
     extendBackward path leg = SchPath (legFrom leg) (spTo path) (leg : spLegs path)
-
--- | Hand-seeded validation constraint (Phase 2 does not infer constraints —
--- see doc/plan/148-db-schema-category.md's Non-goals). 'vcColumn' is
--- expected to be a 'ColumnObj'.
-data ValidationConstraint = ValidationConstraint
-  { vcColumn      :: SchObject
-  , vcDescription :: Text
-  } deriving (Show, Eq)
-
--- | Every StmtId (SQL statement or DW retrieve) that can write into the
--- constraint's column, directly or transitively via an FK chain — the
--- checklist of code sites to inspect for that constraint.
-constraintWriters :: SchGraph -> ValidationConstraint -> [StmtId]
-constraintWriters g c =
-  Set.toList (Set.fromList
-    [ sid | p <- validationWalkBack g (vcColumn c), StmtObj sid <- [spFrom p] ])
 
 -- | The "rewrite cost" of moving a column (Plan 153 D5): every distinct
 -- statement reachable either forward (this column is read, possibly via an

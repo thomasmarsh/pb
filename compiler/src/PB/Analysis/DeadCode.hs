@@ -2,7 +2,8 @@
 module PB.Analysis.DeadCode
   ( DeadProcedure (..)
   , ProcInfo (..)
-  , computeDeadProcedures
+  , classifyDeadProcedures
+  , computeOverrideEdges
   , cyclomaticComplexity
   ) where
 
@@ -10,7 +11,6 @@ import PB.Prelude
 import PB.Analysis.Cfg  (Cfg (..))
 import Data.List              (sortOn)
 import Data.Map.Strict qualified as Map
-import Data.Sequence qualified as Seq
 import Data.Set qualified as Set
 import Data.Text qualified as T
 
@@ -41,97 +41,69 @@ cyclomaticComplexity cfg =
       e = length (cfgEdges cfg)
   in  if n == 0 then 1 else e - n + 2
 
--- | Compute unreachable procedures via BFS from entry points.
+-- | Every (childObj, method, parentObj) triple where childObj is a
+-- transitive descendant of parentObj and both declare a procedure named
+-- method — the override-edge flattening 'PB.Pipeline.Souffle.deadReachRules'
+-- folds into its @proc_reachable@ walk via the @overrides@ EDB relation.
+-- Uses the full transitive descendant closure so grandchild overrides are
+-- included even when the intermediate parent does not define the method
+-- (see 'SouffleTest.hs''s "grandchild override reachable" case).
 --
--- Inputs:
---   procedures — all procedures in the workspace
---   calls      — raw call sites (object, from_proc, to_name)
---   resolved   — resolved calls (object, from_proc, target_object, target_proc)
---   inherits   — inheritance edges (child, parent)
---   dwObjects  — set of DataWindow object names
-computeDeadProcedures
-  :: [ProcInfo]              -- ^ all procedures
-  -> [(Text, Text, Text)]    -- ^ raw calls: (object, from_proc, to_name)
+-- This flattening step itself stays Haskell/SQL-computed (Plan 161 Phase
+-- 2b, 2026-07-11) — same treatment 'leg' already gets for @reaches@ —
+-- persisted as a fact table ('PB.Pipeline.DuckDb.appendProcedureOverrides')
+-- and consumed as the Souffle @overrides@ EDB relation.
+computeOverrideEdges :: [ProcInfo] -> [(Text, Text)] -> [(Text, Text, Text)]
+computeOverrideEdges procedures inherits =
+  [ (childObj, method, parentObj)
+  | (parentObj, methods) <- Map.toList methodsByObj
+  , childObj <- allDescOf parentObj
+  , method <- Set.toList methods
+  , (childObj, method) `Map.member` procIndex
+  ]
+  where
+    procIndex = Map.fromList
+      [ ((piObject p, piName p), p) | p <- procedures ]
+
+    childrenOf = Map.fromListWith (++)
+      [ (parent, [child]) | (child, parent) <- inherits ]
+
+    -- BFS over childrenOf to collect all transitive descendants of a node.
+    allDescOf :: Text -> [Text]
+    allDescOf root = go Set.empty (Map.findWithDefault [] root childrenOf)
+      where
+        go visited [] = Set.toList visited
+        go visited (x:xs)
+          | Set.member x visited = go visited xs
+          | otherwise = go (Set.insert x visited)
+                           (xs ++ Map.findWithDefault [] x childrenOf)
+
+    methodsByObj = Map.fromListWith Set.union
+      [ (piObject p, Set.singleton (piName p)) | p <- procedures ]
+
+-- | Classify confidence/caller-counts for a given, already-known dead set.
+--
+-- Plan 161 Phase 2b cutover (2026-07-11): this used to also COMPUTE the
+-- dead set itself, via a seeded BFS over same-object/cross-object/override
+-- call edges (the "reachable" core the plan's Migration Inventory tracked).
+-- That reachability walk is now Datalog (see 'PB.Pipeline.Souffle.deadReachRules'
+-- -- @proc_reachable@\/@proc_dead@), proven exact on the real corpus
+-- (104/104 rows vs. the old Haskell BFS) before the Haskell copy was
+-- deleted here, so 'PB.Pipeline.Passes.runPass8' now reads @proc_dead@
+-- back from DuckDB and passes it in as 'deadSet'. What's left here is
+-- genuinely Haskell-only: confidence/caller-count classification has no
+-- Datalog equivalent (it's a report-formatting concern, not a fixpoint
+-- query) and still needs 'calls'\/'resolved' for the naive\/scoped caller
+-- counts. 'inherits'\/@dwObjects@ are gone from the signature -- they were
+-- only ever used to seed\/extend the BFS, which no longer happens here.
+classifyDeadProcedures
+  :: Set.Set (Text, Text)       -- ^ dead (object, proc) pairs, from @proc_dead@
+  -> [ProcInfo]                 -- ^ all procedures
+  -> [(Text, Text, Text)]       -- ^ raw calls: (object, from_proc, to_name)
   -> [(Text, Text, Text, Text)] -- ^ resolved calls: (object, from_proc, target_object, target_proc)
-  -> [(Text, Text)]          -- ^ inherits: (child, parent)
-  -> Set.Set Text            -- ^ DataWindow object names
   -> [DeadProcedure]
-computeDeadProcedures procedures calls resolved inherits dwObjects =
-  let -- Index procedures by (object, name)
-      procIndex = Map.fromList
-        [ ((piObject p, piName p), p) | p <- procedures ]
-
-      -- Index procedure names by object (case-insensitive lookup)
-      procsByObj :: Map.Map Text (Map.Map Text Text)
-      procsByObj = Map.fromListWith Map.union
-        [ (piObject p, Map.singleton (T.toLower (piName p)) (piName p))
-        | p <- procedures
-        ]
-
-      -- Build same-object edges: caller -> callee when callee lives in same object
-      sameObjEdges = Map.fromListWith (++)
-        [ ((obj, fromProc), [(obj, matched)])
-        | (obj, fromProc, toName) <- calls
-        , nameMap <- maybeToList (Map.lookup obj procsByObj)
-        , matched <- maybeToList (Map.lookup (T.toLower toName) nameMap)
-        ]
-
-      -- Build cross-object edges from resolved calls
-      crossObjEdges = Map.fromListWith (++)
-        [ ((obj, fromProc), [(tgtObj, tgtProc)])
-        | (obj, fromProc, tgtObj, tgtProc) <- resolved
-        ]
-
-      -- Build override edges: if parent.m is reachable, child.m is too.
-      -- Uses the full transitive descendant closure so grandchild overrides are
-      -- included even when the intermediate parent does not define the method.
-      childrenOf = Map.fromListWith (++)
-        [ (parent, [child]) | (child, parent) <- inherits ]
-
-      -- BFS over childrenOf to collect all transitive descendants of a node.
-      allDescOf :: Text -> [Text]
-      allDescOf root = go Set.empty (Map.findWithDefault [] root childrenOf)
-        where
-          go visited [] = Set.toList visited
-          go visited (x:xs)
-            | Set.member x visited = go visited xs
-            | otherwise = go (Set.insert x visited)
-                             (xs ++ Map.findWithDefault [] x childrenOf)
-
-      methodsByObj = Map.fromListWith Set.union
-        [ (piObject p, Set.singleton (piName p)) | p <- procedures ]
-
-      overrideEdges = Map.fromListWith (++)
-        [ ((parentObj, method), [(childObj, method)])
-        | (parentObj, methods) <- Map.toList methodsByObj
-        , childObj <- allDescOf parentObj
-        , method <- Set.toList methods
-        , (childObj, method) `Map.member` procIndex
-        ]
-
-      -- Combine all edges
-      allEdges = Map.unionWith (++) (Map.unionWith (++) sameObjEdges crossObjEdges) overrideEdges
-
-      -- Seed 1: event and on handlers are always reachable
-      seeds = Set.fromList
-        [ (piObject p, piName p)
-        | p <- procedures
-        , piProcType p `elem` ["event", "on"]
-        ]
-
-      -- Seed 2: procedures in DW objects that have calls are reachable
-      dwSeeds = Set.fromList
-        [ (obj, fromProc)
-        | (obj, fromProc, _) <- calls
-        , obj `Set.member` dwObjects
-        ]
-
-      allSeeds = Set.union seeds dwSeeds
-
-      -- BFS from seeds
-      reachable = bfs allSeeds allEdges
-
-      -- Compute caller counts for dead procedures
+classifyDeadProcedures deadSet procedures calls resolved =
+  let -- Compute caller counts for dead procedures
       naiveMap = Map.fromListWith Set.union
         [ (T.toLower toName, Set.singleton (obj, fromProc))
         | (obj, fromProc, toName) <- calls
@@ -162,19 +134,6 @@ computeDeadProcedures procedures calls resolved inherits dwObjects =
                   Map.findWithDefault 0 (piObject p, piName p) scopedMap
               })
         | p <- procedures
-        , (piObject p, piName p) `Set.notMember` reachable
+        , (piObject p, piName p) `Set.member` deadSet
         ]
-      dead = sortOn (\d -> (dpObject d, dpName d)) (Map.elems deadMap)
-  in  sortOn (\d -> (dpObject d, dpName d)) dead
-
--- | BFS reachability from seed set through adjacency map.
-bfs :: Set.Set (Text, Text) -> Map.Map (Text, Text) [(Text, Text)] -> Set.Set (Text, Text)
-bfs seeds edges = go seeds (Seq.fromList (Set.toList seeds))
-  where
-    go visited queue = case Seq.viewl queue of
-      Seq.EmptyL -> visited
-      current Seq.:< rest ->
-        let neighbors    = Map.findWithDefault [] current edges
-            newNeighbors = filter (`Set.notMember` visited) neighbors
-            visited'     = foldl' (flip Set.insert) visited newNeighbors
-        in  go visited' (rest Seq.>< Seq.fromList newNeighbors)
+  in  sortOn (\d -> (dpObject d, dpName d)) (Map.elems deadMap)

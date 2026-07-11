@@ -15,7 +15,7 @@ import PB.Pipeline.DuckDb
   ( DuckConn
   , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
   , queryProcDefs, queryProcUses, queryResolvedCalls
-  , queryTaintInputs, queryProcInfos, queryDwObjectSet
+  , queryTaintInputs, queryProcInfos, queryProcDead
   , queryDwRetrieveColumns, queryDwWriteColumns, queryDwWhereColumns
   , queryDwJoinLegs, querySqlCols
   , queryCatFootprintColumns
@@ -23,7 +23,7 @@ import PB.Pipeline.DuckDb
   , appendResolvedTypes, appendResolvedCalls
   , appendInterprocEdges, appendProcSummaries
   , appendTaintSources, appendTaintSinks, appendTaintPaths
-  , appendTaintAnnotations, appendDeadCode
+  , appendTaintAnnotations, appendDeadCode, appendProcedureOverrides
   , appendSchemaObjects, appendSchemaMorphisms
   , appendDecompositionCoslice
   )
@@ -45,6 +45,15 @@ emitProgress v = do
 -- | Last dot-separated segment of a dotted name, e.g. "dw.setfocus" → "setfocus".
 lastName :: Text -> Text
 lastName t = T.takeWhileEnd (/= '.') t
+
+-- | Shared per-relation progress callback for 'Souffle.runRuleSetWith' calls
+-- across passes 8 and 11 -- see 'runPass11'\'s doc comment for why one event
+-- per relation, not one per pass.
+souffleProgress :: Souffle.Relation -> IO ()
+souffleProgress rel = emitProgress (object
+  [ "tag" .= ("step" :: Text)
+  , "label" .= ("Datalog: " <> Souffle.relName rel)
+  ])
 
 -- | Phase B: read Phase A tables from DuckDB, run link analysis, write results.
 -- Runs sequentially after Phase A is complete. Split into three functions so
@@ -99,11 +108,27 @@ runPass67 conn = do
   appendTaintAnnotations conn allAnnotations
   pure allRC
 
+-- | Pass 8 (Plan 161 Phase 2b cutover, 2026-07-11): dead-code detection.
+-- Reachability itself is Datalog now (@proc_reachable@\/@proc_dead@, via
+-- 'Souffle.deadReachRules') -- proven exact against the old Haskell BFS on
+-- the real corpus (104/104 rows) before that BFS was deleted from
+-- 'DeadCode'. Sequence per run: (1) compute\/append the @overrides@ EDB
+-- fact table (still Haskell/SQL-computed, same treatment @leg@ gets for
+-- @reaches@ -- see 'DeadCode.computeOverrideEdges'), (2) run
+-- 'Souffle.deadReachRules' to materialize @proc_dead@, (3) read @proc_dead@
+-- back and classify confidence\/caller-counts in Haskell
+-- ('DeadCode.classifyDeadProcedures') -- the one piece with no Datalog
+-- equivalent, since it's report formatting, not a fixpoint query.
 runPass8 :: DuckConn -> Map.Map Text Text -> [Taint.ResolvedCallRow] -> IO ()
 runPass8 conn inh allRC = do
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Dead code detection" :: Text)])
-  procs <- queryProcInfos   conn
-  dws   <- queryDwObjectSet conn
+  procs <- queryProcInfos conn
+  let inhList = Map.toList inh
+      overrideEdges = DeadCode.computeOverrideEdges procs inhList
+  appendProcedureOverrides conn overrideEdges
+  Souffle.initDeadReachEdbViews conn
+  Souffle.runRuleSetWith souffleProgress conn Souffle.deadReachRules
+  deadSet <- queryProcDead conn
   let rawCalls      = [ (Taint.rcrObject r, Taint.rcrFromProc r, lastName (Taint.rcrToName r))
                       | r <- allRC ]
       resolvedCalls = [ (Taint.rcrObject r, Taint.rcrFromProc r, o, p)
@@ -111,8 +136,7 @@ runPass8 conn inh allRC = do
                       , Just o <- [Taint.rcrTargetObject r]
                       , Just p <- [Taint.rcrTargetProc   r]
                       ]
-      dead = DeadCode.computeDeadProcedures
-               procs rawCalls resolvedCalls (Map.toList inh) dws
+      dead = DeadCode.classifyDeadProcedures deadSet procs rawCalls resolvedCalls
   appendDeadCode conn dead
 
 -- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157
@@ -146,9 +170,12 @@ runPass9 conn mDefaultNamespace = do
   pure sch
 
 -- | Pass 11 (Plan 161 -- Souffle rewrite): materialize the Souffle-backed
--- Datalog programs (@reaches@/@live_proc@) as their own DuckDB tables. Not
--- yet wired to any UI/API consumer (Plan 161 Phase 4) -- mirrors Pass 10's
--- own precedent of landing before a named consumer exists.
+-- @reaches@/@live_proc@ Datalog programs as their own DuckDB tables, wired
+-- to the Explorer API/UI (Plan 161 Phase 4). @liveProcRules@ reads
+-- @proc_dead@ directly (Plan 161 Phase 2b cutover) -- Pass 8 runs
+-- 'Souffle.deadReachRules' and must therefore run before this pass (it
+-- does; see 'runPhaseB'), so @proc_dead@ already exists by the time
+-- @liveProcRules@ exports it as an EDB relation.
 --
 -- Emits one "step" event per relation (via 'Souffle.runRuleSetWith'), not
 -- one blanket event for the whole pass: the Python reporter's Phase B
@@ -159,12 +186,8 @@ runPass9 conn mDefaultNamespace = do
 runPass11 :: DuckConn -> IO ()
 runPass11 conn = do
   Souffle.initEdbViews conn
-  let onRelation rel = emitProgress (object
-        [ "tag" .= ("step" :: Text)
-        , "label" .= ("Datalog: " <> Souffle.relName rel)
-        ])
-  Souffle.runRuleSetWith onRelation conn Souffle.reachesRules
-  Souffle.runRuleSetWith onRelation conn Souffle.liveProcRules
+  Souffle.runRuleSetWith souffleProgress conn Souffle.reachesRules
+  Souffle.runRuleSetWith souffleProgress conn Souffle.liveProcRules
 
 -- | Pass 10 (Plan 153 D5): for every column object, materialize its
 -- 'columnCoslice' (rewrite-cost lineage) so Python's decomposition-ranking

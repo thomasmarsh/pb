@@ -7,6 +7,15 @@ import Data.Set qualified as Set
 import Test.Tasty
 import Test.Tasty.HUnit
 
+-- | Plan 161 Phase 2b cutover (2026-07-11): 'computeDeadProcedures' (the
+-- seeded-BFS reachability computation) was deleted once its Datalog port
+-- ('PB.Pipeline.Souffle.deadReachRules') was proven exact on the real
+-- corpus -- see that module and 'SouffleTest.hs' for the reachability-shape
+-- coverage (event/on seeds, override propagation, cross-object calls,
+-- DW-object seeds, etc.) that used to live here. What remains genuinely
+-- Haskell-only is 'classifyDeadProcedures': confidence/caller-count
+-- classification GIVEN an already-known dead set -- report formatting, not
+-- a fixpoint query.
 tests :: TestTree
 tests = testGroup "DeadCode"
   [ testGroup "cyclomaticComplexity"
@@ -17,101 +26,67 @@ tests = testGroup "DeadCode"
     , testCase "branch" $
         cyclomaticComplexity branchCfg @?= 2
     ]
-  , testGroup "computeDeadProcedures"
-    [ testCase "event handlers are seeds" $
-        length (computeDeadProcedures [procEv] [] [] [] Set.empty) @?= 0
-    , testCase "on handlers are seeds" $
-        length (computeDeadProcedures [procOn] [] [] [] Set.empty) @?= 0
-    , testCase "unreachable function is dead" $
-        let dead = computeDeadProcedures [procFn] [] [] [] Set.empty
-        in  length dead @?= 1
-    , testCase "called function is reachable from seed" $
-        let dead = computeDeadProcedures
-              [procEv, procFnA, procFnB]
-              [("obj", "ev", "fn_a"), ("obj", "fn_a", "fn_b")]
-              [] [] Set.empty
-        in  length dead @?= 0
-    , testCase "uncalled function is dead" $
-        let dead = computeDeadProcedures [procFnA, procFnB] [] [] [] Set.empty
-        in  length dead @?= 2
-    , testCase "transitive reachability" $
-        let dead = computeDeadProcedures
-              [procEv, procFnA, procFnB]
-              [("obj", "ev", "fn_a"), ("obj", "fn_a", "fn_b")]
-              [] [] Set.empty
-        in  length dead @?= 0
-    , testCase "dead chain" $
-        let dead = computeDeadProcedures
-              [procFnC, procFnD]
-              [("obj", "fn_c", "fn_d")]
-              [] [] Set.empty
-        in  length dead @?= 2
-    , testCase "cross-object reachability" $
-        let dead = computeDeadProcedures
-              [procEv, ProcInfo "obj2" "fn_x" "function" Nothing]
-              []
-              [("obj", "ev", "obj2", "fn_x")]
-              [] Set.empty
-        in  length dead @?= 0
-    , testCase "override propagation" $
-        let dead = computeDeadProcedures
-              [ ProcInfo "obj_base" "base_hook" "event" Nothing
-              , ProcInfo "obj_child" "base_hook" "function" Nothing
-              ]
-              [("obj_base", "base_hook", "base_hook")]
-              []
-              [("obj_child", "obj_base")]
-              Set.empty
-        in  length dead @?= 0
-    , testCase "DW object procedures are seeds" $
-        let dwFnA = ProcInfo "obj_dw" "fn_a" "function" Nothing
-            dwFnB = ProcInfo "obj_dw" "fn_b" "function" Nothing
-            dead = computeDeadProcedures
-              [dwFnA, dwFnB]
-              [("obj_dw", "fn_a", "fn_b")]
-              [] [] (Set.singleton "obj_dw")
-        in  length dead @?= 0
-    , testCase "confidence high when no callers" $ do
-        let dead = computeDeadProcedures [procFn] [] [] [] Set.empty
-        case dead of
+  , testGroup "classifyDeadProcedures"
+    [ testCase "empty dead set produces no dead procedures" $
+        classifyDeadProcedures Set.empty [procFn] [] [] @?= []
+
+    , testCase "a procedure in the dead set appears in the output" $
+        let dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) [procFn] [] []
+        in  map (\d -> (dpObject d, dpName d)) dead @?= [("obj", "fn")]
+
+    , testCase "a procedure not in the dead set is excluded" $
+        classifyDeadProcedures (Set.singleton ("obj", "other")) [procFn] [] [] @?= []
+
+    , testCase "confidence high when no callers at all" $
+        let dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) [procFn] [] []
+        in case dead of
           [d] -> dpConfidence d @?= "high"
           _   -> assertFailure ("expected 1 dead proc, got " <> show (length dead))
-    , testCase "confidence medium when naive callers but no scoped" $ do
-        let dead = computeDeadProcedures
-              [procFn]
-              [("other_obj", "other", "fn")]
-              [] [] Set.empty
-        case dead of
+
+    , testCase "confidence medium when naive callers but no scoped resolution" $
+        let dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) [procFn]
+              [("other_obj", "other", "fn")] []
+        in case dead of
           [d] -> dpConfidence d @?= "medium"
           _   -> assertFailure ("expected 1 dead proc, got " <> show (length dead))
-    , testCase "confidence low when scoped callers" $ do
-        let dead = computeDeadProcedures
-              [procFn]
+
+    , testCase "confidence low when a scoped (resolved) caller exists" $
+        let dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) [procFn]
               [("other_obj", "other", "fn")]
               [("other_obj", "other", "obj", "fn")]
-              [] Set.empty
-        case dead of
+        in case dead of
           [d] -> dpConfidence d @?= "low"
           _   -> assertFailure ("expected 1 dead proc, got " <> show (length dead))
+
+    , testCase "caller counts reflect naive and scoped tallies" $
+        let dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) [procFn]
+              [("a", "x", "fn"), ("b", "y", "fn")]
+              [("a", "x", "obj", "fn")]
+        in case dead of
+          [d] -> (dpCallerCountNaive d, dpCallerCountScoped d) @?= (2, 1)
+          _   -> assertFailure ("expected 1 dead proc, got " <> show (length dead))
+
+    , testCase "cyclomatic complexity passes through unchanged" $
+        let dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) [procFn] [] []
+        in case dead of
+          [d] -> dpCyclomatic d @?= Just 2
+          _   -> assertFailure ("expected 1 dead proc, got " <> show (length dead))
+
+    , testCase "dedupes overloaded procedures sharing (object, name)" $
+        let overloads =
+              [ ProcInfo "obj" "fn" "function" (Just 1)
+              , ProcInfo "obj" "fn" "function" (Just 3)
+              ]
+            dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) overloads [] []
+        in length dead @?= 1
+
     , testCase "sorted by object then name" $
-        let dead = computeDeadProcedures
+        let dead = classifyDeadProcedures
+              (Set.fromList [("obj_z", "fn_b"), ("obj_a", "fn_a")])
               [ ProcInfo "obj_z" "fn_b" "function" Nothing
               , ProcInfo "obj_a" "fn_a" "function" Nothing
-              ] [] [] [] Set.empty
-        in  map dpObject dead @?= ["obj_a", "obj_z"]
-    , testCase "grandchild override reachable when intermediate lacks the method" $
-        -- gp.hook is a reachable event seed; child overrides hook but is separated from
-        -- gp by an intermediate class p that does NOT define hook.
-        -- With direct-children-only override edges, child.hook would be wrongly dead.
-        let dead = computeDeadProcedures
-              [ ProcInfo "gp"    "hook" "event"    Nothing
-              , ProcInfo "child" "hook" "function" Nothing
-              ]
-              []
-              []
-              [("p", "gp"), ("child", "p")]   -- gp → p → child, p has no hook
-              Set.empty
-        in  length dead @?= 0
+              ] [] []
+        in map dpObject dead @?= ["obj_a", "obj_z"]
     ]
   ]
 
@@ -154,23 +129,5 @@ branchCfg = Cfg
       ]
   }
 
-procEv :: ProcInfo
-procEv = ProcInfo "obj" "ev" "event" (Just 1)
-
-procOn :: ProcInfo
-procOn = ProcInfo "obj" "on_h" "on" (Just 1)
-
 procFn :: ProcInfo
 procFn = ProcInfo "obj" "fn" "function" (Just 2)
-
-procFnA :: ProcInfo
-procFnA = ProcInfo "obj" "fn_a" "function" (Just 1)
-
-procFnB :: ProcInfo
-procFnB = ProcInfo "obj" "fn_b" "function" (Just 1)
-
-procFnC :: ProcInfo
-procFnC = ProcInfo "obj" "fn_c" "function" (Just 1)
-
-procFnD :: ProcInfo
-procFnD = ProcInfo "obj" "fn_d" "function" (Just 1)
