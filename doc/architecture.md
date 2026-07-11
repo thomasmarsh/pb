@@ -168,6 +168,84 @@ PowerScript procedure or a DataWindow. Declared UI/render structure (DW
 bands/controls/layout) stays a genuinely separate relationship and does
 not flow through this model — only schema-touching legs do.
 
+### Formal shape of `CatOp`: an Elgot theory with an exceptions operation
+
+`CatOp`'s three-typeclass split (`Cartesian` / `Cocartesian` / `Effectful`,
+`PB.Analysis.CatOp.hs`) is not an arbitrary case split — it is, up to naming,
+a known algebraic structure, and writing that down here is what actually
+lets a new `foldCat` instance (the reserved PL/SQL leg below, or any future
+one) be checked for correctness against real laws instead of "does it
+compile and pass the existing tests."
+
+A plain **Lawvere theory** — a category whose objects are all finite
+products of one sort — has products (`Cartesian`) but no coproducts, no
+iteration, and no non-local exit. `CatOp` needs all three (`branch`,
+`loopK`, `CatReturn`), so the right formal target is not a bare Lawvere
+theory but two standard extensions of one, stacked:
+
+- **Elgot theory** (Bloom & Ésik, *Iteration Theories*, 1993; see also
+  Goncharov/Schröder/Rauch's *Elgot monads*) — a Cartesian theory plus a
+  uniform iteration operator `† : (X → A + X) → (X → A)` satisfying the
+  Conway fixed-point identities. `loopK :: k a (Either a b) -> k a b` is
+  this operator, Left/Right relabeled. This is what `Cocartesian` +
+  `loopK` together are.
+- **Algebraic theory of exceptions** (Plotkin & Power, *Notions of
+  Computation Determine Monads*, 2002) — one nullary "raise" operation per
+  theory, whose only law is that it absorbs every following operation
+  (`raise ; f = raise`). `ret :: k a b` (`CatReturn`) is this operation;
+  `foldCat`'s per-backend dispatch (`Interp` throws `ReturnUnwind`,
+  `SchFootprint` treats it as `Set.empty`) is exactly "each model of the
+  theory supplies its own carrier for the effect," which the framework
+  predicts rather than special-cases.
+
+`Effectful`'s `eval`/`assign`/`lookup`/`suspend`/`callProc`/`splitValue` are
+the theory's own operation signature — the PB-specific algebra riding on
+top of the Elgot-plus-exceptions scaffold. A correct new `foldCat` instance
+must give total, law-respecting definitions for all of these; an instance
+that (like `SchFootprint`) makes some of them constant is a legitimate
+model (the "erase to a monoid" interpretation Elliott's *compiling to
+categories* calls the "constant-annotation category"), not a violation —
+but an instance that makes `loopK` non-uniform (behaves differently on
+semantically-equal loop bodies) or lets `ret` fail to absorb would be.
+
+**Where the environment lives is deliberately outside this theory.**
+`compileSsa` always produces `CatOp () ()` — the `env` type parameter
+carries no data. Real variable storage lives in whatever state the fold
+target threads through its own carrier (`Interp`'s `InterpState { isEnv ::
+Map Text Value, ... }`; a future `SchFootprint`-style pass would thread its
+own `Map Text (Set SchObject)` the same way). This is not an oversight:
+the theory's operations (`assign`, `lookup`) are structural symbols with no
+fixed meaning until a model supplies one, exactly per Plotkin/Power — model
+independence is the point, and it is what let `SchFootprint` reuse the same
+27 constructors as `Interp` with a completely different notion of "value."
+
+**Trigger conditions for revisiting the environment's representation**
+(currently a dynamic, string-keyed `Map`, evaluated and rejected as a
+present-tense change in the 2026-07-11 CatOp/Lawvere review — this note
+exists so that rejection doesn't have to be re-derived from scratch next
+time it's raised): revisit a typed, arity-tracked environment
+(`Fin n`-indexed, or similar) if and when **any** of —
+
+1. A backend needs compile-time-verified register allocation directly off
+   `CatOp` (not via `GraphBuilder`'s existing PC-indexed `InstrGraph`
+   flattening, which already is the flat target for codegen-shaped
+   consumers).
+2. `CatTagged`/`bsBlockPcMemo` (`GraphBuilder`'s Plan 150 dedup) is
+   measurably failing to collapse shared SSA blocks on some new merge
+   topology — i.e. the sharing problem this scaffolding was built to solve
+   recurs in a shape it doesn't handle.
+3. A `foldCat` instance needs cross-variable data-flow provenance that
+   *cannot* be expressed as threaded state in that instance's own carrier
+   (the `InstrState`-style escape hatch above stops working) — e.g. because
+   the provenance itself needs to be verified by the type checker, not just
+   computed.
+
+Absent one of these, the honest cost/benefit (worked through in the
+2026-07-11 review) is: no currently-identified future capability requires
+it, and the concrete asks that motivated the question — GADT-level dead-store
+rewrites, cross-call dependency tracking for schema footprints — are already
+achievable against the current `Text`-keyed representation without it.
+
 **Reserved third leg.** The cospan has an explicit open slot for PL/SQL:
 `PlsqlBody --Fplsql--> Sch`, adding a `PlsqlStmtId` case to `StmtId` and
 compiling PL/SQL bodies through a `CatOp`-shaped IR (real control flow,
