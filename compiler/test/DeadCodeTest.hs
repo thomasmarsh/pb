@@ -2,7 +2,7 @@ module DeadCodeTest (tests) where
 
 import PB.Prelude
 import PB.Analysis.DeadCode
-import PB.Analysis.Cfg  (Cfg (..), CfgBlock (..), CfgEdge (..))
+import PB.Analysis.Cfg  (Cfg (..), CfgBlock (..), CfgEdge (..), cyclomaticComplexity)
 import Data.Set qualified as Set
 import Test.Tasty
 import Test.Tasty.HUnit

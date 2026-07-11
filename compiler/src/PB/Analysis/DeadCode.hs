@@ -3,11 +3,10 @@ module PB.Analysis.DeadCode
   ( DeadProcedure (..)
   , ProcInfo (..)
   , classifyDeadProcedures
-  , cyclomaticComplexity
   ) where
 
 import PB.Prelude
-import PB.Analysis.Cfg  (Cfg (..))
+
 import Data.List              (sortOn)
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
@@ -31,14 +30,6 @@ data DeadProcedure = DeadProcedure
   , dpCallerCountNaive  :: Int
   , dpCallerCountScoped :: Int
   } deriving (Eq, Show)
-
--- | Compute cyclomatic complexity from a CFG: E - N + 2*P.
--- For a single connected procedure body, P = 1, so complexity = E - N + 2.
-cyclomaticComplexity :: Cfg -> Int
-cyclomaticComplexity cfg =
-  let n = length (cfgBlocks cfg)
-      e = length (cfgEdges cfg)
-  in  if n == 0 then 1 else e - n + 2
 
 -- | Classify confidence/caller-counts for a given, already-known dead set.
 --

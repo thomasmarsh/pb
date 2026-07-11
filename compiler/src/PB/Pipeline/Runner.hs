@@ -24,14 +24,14 @@ import PB.AST.DataWindow
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.Grammar.File       (SrSpans (..))
-import PB.Analysis.Cfg    (buildCfg)
+import PB.Analysis.Cfg    (buildCfg, cyclomaticComplexity)
 import PB.Analysis.GraphBuilder
   ( compileProcedureViaCatOp, compileProcedureToLowCat, compileProcedureToCatOp
   , collectWiring, WiringPayload (..)
   )
 import PB.Analysis.CallClassify (collectBodyLocals)
 import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
-import PB.Analysis.DeadCode    qualified as DeadCode
+
 import PB.Analysis.TypeEnv     (WorkspaceEnv (..), ScopedTypeEnv (..), buildWorkspaceEnv, procEnv)
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
@@ -259,7 +259,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns m
                 (wiringTerm, wiringShared) = collectWiring (compileProcedureToLowCat (mkProcEnv instrParams) userFns body)
                 wiringJs = jsonText (toJSON (WiringPayload wiringTerm wiringShared))
                 flow     = (fp, obj, pName, Dataflow.analyzeProcedure obj pName cfg)
-                cyclo    = DeadCode.cyclomaticComplexity cfg
+                cyclo    = cyclomaticComplexity cfg
                 footprintCtx = FunctorCtx
                   { fcStmtObj         = SqlStmtId fp obj pName sLine
                   , fcTypeEnv         = mkProcEnv instrParams

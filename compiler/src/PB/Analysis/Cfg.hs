@@ -13,6 +13,7 @@ module PB.Analysis.Cfg
   , CfgEdge (..)
   , Cfg (..)
   , buildCfg
+  , cyclomaticComplexity
   ) where
 
 import PB.Prelude
@@ -308,3 +309,14 @@ buildCfg body =
       entryId <- newBlock
       _       <- lower body entryId Nothing
       pure entryId
+
+
+-- | Compute cyclomatic complexity from a CFG: E - N + 2*P.
+-- For a single connected procedure body, P = 1, so complexity = E - N + 2.
+-- (Moved from 'PB.Analysis.DeadCode' by Plan 166 Stage 7: it is a graph
+-- property of 'Cfg', not a dead-code concern.)
+cyclomaticComplexity :: Cfg -> Int
+cyclomaticComplexity cfg =
+  let n = length (cfgBlocks cfg)
+      e = length (cfgEdges cfg)
+  in  if n == 0 then 1 else e - n + 2
