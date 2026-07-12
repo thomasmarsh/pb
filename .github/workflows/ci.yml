@@ -54,6 +54,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y graphviz
 
+      - name: Install Souffle
+        run: |
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository -y ppa:souffle-lang/souffle
+          sudo apt-get update
+          sudo apt-get install -y souffle
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
