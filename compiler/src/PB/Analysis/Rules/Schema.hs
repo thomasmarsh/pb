@@ -85,6 +85,7 @@ reachesRules = RuleSet
              , Literal legRel ["y", "z", "_"] False Nothing
              ]
       ]
+  , rsChoiceDomains = []
   }
 
 -- ---------------------------------------------------------------------------
@@ -138,10 +139,23 @@ cosliceRules = RuleSet
       -- (reaches is written once, reused by every consumer).
 
       [ -- Forward shortest distance: seed -> node (follows leg direction).
-        -- The @n != s@ guard is ESSENTIAL for termination on cyclic graphs
-        -- (real schema graphs have FK cycles) -- without it min_dist keeps
-        -- deriving ever-larger distances around the cycle forever (verified:
-        -- souffle diverges on a 3-node A->B->C->A cycle without the guard).
+        -- @choice-domain (s, node)@ on minDistRel (see rsChoiceDomains below)
+        -- is what makes this terminate on cyclic graphs: Souffle locks each
+        -- (s, node) key to the FIRST distance derived for it and silently
+        -- drops any later tuple sharing that key. Semi-naive evaluation only
+        -- derives distance d+1 from already-established distance-d tuples,
+        -- so distances are produced in non-decreasing order and the first
+        -- (hence locked-in) value for any key is always the shortest. The
+        -- @n != s@ guard alone is NOT sufficient: it only blocks the seed
+        -- itself from being revisited, but a cycle among non-seed nodes
+        -- (e.g. a<->b, neither equal to the seed) still makes min_dist
+        -- derive ever-larger distances for a and b forever -- reproduced
+        -- directly against the real souffle binary (2-node cycle not
+        -- through the seed hangs without choice-domain; terminates with the
+        -- correct minimum once it's added). @n != s@ is kept anyway (now
+        -- redundant with choice-domain, but harmless) since it also blocks
+        -- the seed's own distance-0 tuple from being overwritten before
+        -- choice-domain would otherwise lock it in on iteration 0.
         -- Arithmetic @dprev + 1@ is inline in the head (Souffle accepts this).
         Rule (Literal minDistRel ["s", "s", "0"] False Nothing)
                [ Literal seedRel ["s"] False Nothing ]
@@ -192,5 +206,9 @@ cosliceRules = RuleSet
                , Literal legRel ["t", "lt", "kind"] False Nothing
                , Literal minDistBackRel ["s", "t", "o + 1"] False Nothing
                ]
+      ]
+  , rsChoiceDomains =
+      [ ("min_dist", ["s", "node"])
+      , ("min_dist_back", ["s", "node"])
       ]
   }

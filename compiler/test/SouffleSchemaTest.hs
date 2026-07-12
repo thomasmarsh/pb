@@ -11,6 +11,7 @@ import PB.Analysis.SchemaCategory
   )
 import PB.Pipeline.SqlParse (TableRef (..))
 
+import qualified Data.Map.Strict as Map
 import qualified Data.Set  as Set
 import qualified Data.Text as T
 
@@ -153,5 +154,37 @@ tests = testGroup "Souffle.Schema"
               targetCount = case fwdTargets of (Only c : _) -> c; [] -> 0
           assertBool ("target count " <> show targetCount <> " should stay <= object count " <> show objCount)
                      (targetCount <= objCount)
+
+    , -- Regression for the real-corpus hang found post-Phase-2c: an FK cycle
+      -- among nodes OTHER than the seed (col_B <-> col_C, neither equal to
+      -- the seed col_A) used to make min_dist derive ever-larger distances
+      -- for col_B/col_C forever -- the `n != s` guard only blocks the SEED
+      -- from being revisited, not other cycle members. If this test hangs,
+      -- the choice-domain fix (rsChoiceDomains on minDistRel/minDistBackRel
+      -- in cosliceRules) has regressed. Asserts both termination (the test
+      -- completes at all) and correctness (each node's distance is unique
+      -- and minimal, not just "some" value from an unbounded cycle walk).
+      testCase "FK cycle not through the seed terminates with minimal, unique distances" $
+        withWriteConn ":memory:" $ \conn -> do
+          initSchema conn
+          initEdbViews conn
+          let colA = ColumnObj (TableRef Nothing "a") "x"
+              colB = ColumnObj (TableRef Nothing "b") "y"
+              colC = ColumnObj (TableRef Nothing "c") "z"
+              colAKey = schObjectKey colA
+              colBKey = schObjectKey colB
+              colCKey = schObjectKey colC
+          appendSchemaObjects conn [colA, colB, colC]
+          appendSchemaMorphisms conn
+            [ SchMorphism colA colB LegFk SrcDdlFk
+            , SchMorphism colB colC LegFk SrcDdlFk
+            , SchMorphism colC colB LegFk SrcDdlFk
+            ]
+          runRuleSets (\_ -> pure ()) conn [reachesRules, cosliceRules]
+          rows <- query conn "SELECT node, dist FROM min_dist WHERE s = ?" (Only colAKey)
+                    :: IO [(Text, Text)]
+          let byNode = Map.fromListWith (<>) [ (n, [d]) | (n, d) <- rows ]
+          Map.lookup colBKey byNode @?= Just ["1"]
+          Map.lookup colCKey byNode @?= Just ["2"]
     ]
   ]

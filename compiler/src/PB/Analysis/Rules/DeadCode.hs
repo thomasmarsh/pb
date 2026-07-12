@@ -57,6 +57,7 @@ liveProcRules = RuleSet
              , Literal procDeadRel ["object", "proc"] True Nothing
              ]
       ]
+  , rsChoiceDomains = []
   }
 
 -- ---------------------------------------------------------------------------
@@ -238,6 +239,7 @@ callerCountRules = RuleSet
              , Literal hasScopedCallerRel ["object", "proc"] False Nothing
              ]
       ]
+  , rsChoiceDomains = []
   }
 
 -- ---------------------------------------------------------------------------
@@ -287,6 +289,7 @@ deadCodeRowsRules = RuleSet
              , Literal callerCountScopedFinalRel ["o", "p", "sn"] False Nothing
              ]
       ]
+  , rsChoiceDomains = []
   }
 
 procRel, entryRel, callsRel, inheritsRel, descendantRel, overrideEdgeRel, procReachableRel, procDeadRel :: Relation
@@ -347,4 +350,5 @@ deadReachRules = RuleSet
              , Literal procReachableRel ["object", "proc"] True Nothing
              ]
       ]
+  , rsChoiceDomains = []
   }

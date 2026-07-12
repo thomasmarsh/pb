@@ -20,6 +20,7 @@ rs outs ins = RuleSet
   , rsRules     = [ Rule (Literal (mkRel o) ["x"] False Nothing)
                         [ Literal (mkRel i) ["x"] False Nothing | i <- ins ]
                   | o <- outs ]
+  , rsChoiceDomains = []
   }
 
 tests :: TestTree

@@ -109,9 +109,18 @@ data Rule = Rule
 
 -- | A whole program: every derived (IDB) relation it defines, and every
 -- rule (a relation may have several alternative rules, unioned together).
+-- 'rsChoiceDomains' names, per IDB relation (by 'relName'), the column
+-- subset Souffle should treat as a functional-dependency key via its
+-- @choice-domain@ declaration modifier: once any tuple with a given key is
+-- derived, further tuples sharing that key are dropped rather than added.
+-- @[]@ (the default for every relation not listed) means no choice-domain.
+-- This is Souffle's documented idiom for a shortest-distance/BFS-style
+-- relation on a cyclic graph -- see 'PB.Analysis.Rules.Schema.cosliceRules'
+-- for why plain recursion diverges there without it.
 data RuleSet = RuleSet
-  { rsRelations :: [Relation]
-  , rsRules     :: [Rule]
+  { rsRelations      :: [Relation]
+  , rsRules          :: [Rule]
+  , rsChoiceDomains  :: [(Text, [Text])]
   } deriving (Eq, Show)
 
 -- ---------------------------------------------------------------------------
@@ -165,9 +174,13 @@ renderRule (Rule hd body) =
 
 -- | Every column is declared with its explicit type (default @symbol@ for
 -- most relations; @unsigned@ for aggregate-output columns like @count@).
-declOf :: Relation -> Text
-declOf rel = ".decl " <> relName rel <> "("
+-- A non-empty 'choiceDomain' column list renders Souffle's
+-- @choice-domain (col, ...)@ decl modifier (see 'rsChoiceDomains').
+declOf :: [Text] -> Relation -> Text
+declOf choiceDomain rel = ".decl " <> relName rel <> "("
   <> T.intercalate ", " [ n <> ": " <> t | (n, t) <- relCols rel ] <> ")"
+  <> (if null choiceDomain then ""
+      else " choice-domain (" <> T.intercalate ", " choiceDomain <> ")")
 
 -- | Render a full @.dl@ program: @.decl@/@.input@ for every EDB relation,
 -- @.decl@/@.output@ + translated rules for every IDB relation
@@ -175,13 +188,14 @@ declOf rel = ".decl " <> relName rel <> "("
 -- itself -- no ordering is needed from the caller.
 compileProgram :: RuleSet -> Text
 compileProgram rs = T.unlines $
-  [ declOf rel | rel <- edbs ] <>
+  [ declOf [] rel | rel <- edbs ] <>
   [ ".input " <> relName rel | rel <- edbs ] <>
-  [ declOf rel | rel <- rsRelations rs ] <>
+  [ declOf (choiceDomainFor rel) rel | rel <- rsRelations rs ] <>
   [ ".output " <> relName rel | rel <- rsRelations rs ] <>
   [ renderRule r | r <- rsRules rs ]
   where
     edbs = edbRelations rs
+    choiceDomainFor rel = fromMaybe [] (lookup (relName rel) (rsChoiceDomains rs))
 
 -- ---------------------------------------------------------------------------
 -- Execution: export facts -> run souffle -> import results
