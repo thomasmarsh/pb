@@ -86,10 +86,9 @@ liveProcRules = RuleSet
 -- Every read of @procedures@ below excludes @confidence = 'speculative'@
 -- rows -- synthetic stub procedures registered for PB base classes
 -- (@dwobject@\/@powerobject@\/@window@\/... method resolution), never real
--- workspace code. 'PB.Pipeline.DuckDb.queryProcInfos' already applies this
--- filter; a real openpay @--db@ run caught the gap when a naive unfiltered
--- @proc@ view here inflated @proc_dead@ by 45 rows, all builtin stub
--- methods, versus the real @dead_code@ table.
+-- workspace code. A real openpay @--db@ run caught the gap when a naive
+-- unfiltered @proc@ view here inflated @proc_dead@ by 45 rows, all builtin
+-- stub methods, versus the real @dead_code@ table.
 initDeadReachEdbViews :: DuckConn -> IO ()
 initDeadReachEdbViews conn = for_ views (void . execute_ conn)
   where

@@ -519,41 +519,33 @@ stripBom          :: Text -> Text
 ### `PB.Pipeline.Passes`
 
 ```haskell
--- Phase B orchestration: link analysis (passes 5-11) in DuckDB mode.
+-- Phase B orchestration: link analysis in DuckDB mode. Structured as two
+-- sub-phases (Plan 166 follow-up 1, 2026-07-12):
+--   B1 (Haskell + EDB materialization): runPass5 (resolveTypes + resolveCalls
+--     → resolved_types/resolved_calls), runPass67 (buildInterprocEdges +
+--     taint → interproc_edges/taint_*), runPass9 (SchemaCategory.buildSchema
+--     → schema_objects/schema_morphisms; returns SchGraph), then
+--     materializeAllEdbViews (every SQL-view EDB relation the Soufflé rule
+--     sets assume: DeadCodeRules.initDeadReachEdbViews over
+--     procedures/resolved_calls/objects + SchemaRules.initEdbViews over
+--     schema_morphisms/schema_objects).
+--   B2 (one Soufflé run): every Phase B Datalog rule set runs in a single
+--     Souffle.runRuleSets call (allDatalogRuleSets = deadReachRules,
+--     callerCountRules, deadCodeRowsRules, reachesRules, cosliceRules,
+--     liveProcRules). orderRuleSets resolves every Soufflé-internal
+--     dependency edge automatically (proc_dead before deadCodeRowsRules/
+--     liveProcRules; reaches before cosliceRules). The only manual
+--     sequencing left is the Phase A→B boundary B1 enforces (EDB views'
+--     source tables must be populated before the views are created) -- a
+--     genuine data dependency, not an on-demand coupling between rule sets.
+--     Then the two SQL materializers project IDB output into API-facing
+--     tables: materializeDeadCode (dead_code_rows → dead_code) and
+--     materializeDecompositionCoslice (path_leg_fwd/back →
+--     decomposition_coslice).
 runPhaseB :: DuckConn -> Maybe Text -> IO ()
 -- 2nd param is mDefaultNamespace (Plan 157 Phase 1, 2026-07-09), threaded
 -- through from Runner.runModeDb's --default-namespace flag into runPass9.
--- Internally: runPass5 (resolveTypes + resolveCalls → resolved_types/calls),
---             runPass67 (buildInterprocEdges + taint → interproc_edges/taint_*),
---             runPass8 (Plan 161 Phase 2b cutover, 2026-07-11: dead-code
---               detection now runs Datalog INSIDE this pass, not just
---               Haskell -- computeOverrideEdges → procedure_overrides →
---               Souffle.deadReachRules → proc_dead → queryProcDead reads it
---               back → DeadCode.classifyDeadProcedures (confidence/
---               caller-count classification, the only Haskell-only piece
---               left) → dead_code. computeDeadProcedures/bfs are DELETED --
---               see PB.Analysis.DeadCode's own entry.)
---             runPass9 (Plan 148 Phase 1b, 2026-07-07: queryDwRetrieveColumns/
---               queryDwJoinLegs/querySqlCols/queryCatFootprintColumns (Plan 163
---               Phase 3, 2026-07-10)/queryDwWriteColumns/queryDwWhereColumns
---               (Plan 163 Phase 6, 2026-07-10)/queryCatColumns/queryCatFks →
---               SchemaCategory.buildSchema → schema_objects/schema_morphisms;
---               now returns SchGraph, not (), so Pass 10 can traverse it
---               without rebuilding from DB rows. mDefaultNamespace (Plan 157
---               Phase 1) flows into SchemaInputs' inDefaultNamespace field.)
---             runPass10 (Plan 161 Phase 2c: materializes decomposition_coslice
---               via cosliceRules → materializeDecompositionCoslice)
---             runPass11 (Plan 161, 2026-07-11; Souffle backend since same
---               day's Phase 0 reversal: materializes
---               PB.Pipeline.Souffle's liveProcRules program → live_proc table.
---               deadReachRules is NOT run here (Plan 161 Phase 2b, moved into
---               runPass8 -- see above) but liveProcRules depends on proc_dead
---               already existing, which Pass 8 running first guarantees.
---               Reaches and the EDB views are now produced by Pass 10, so this
---               pass no longer calls initEdbViews or runs reachesRules itself.
-runPass9  :: DuckConn -> Maybe Text -> IO SchGraph
-runPass10 :: DuckConn -> SchGraph -> IO ()
-runPass11 :: DuckConn -> IO ()
+runPass9 :: DuckConn -> Maybe Text -> IO SchGraph
 ```
 
 ### `PB.Pipeline.Souffle` (Plan 161, Souffle migration done 2026-07-11 -- replaces the deleted `PB.Pipeline.Datalog`)

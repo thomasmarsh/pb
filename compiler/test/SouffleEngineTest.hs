@@ -5,7 +5,12 @@ import PB.Pipeline.Souffle
   ( Relation (..), symRelation, Rule (..), RuleSet (..)
   , orderRuleSets, edbRelations, compileProgram
   )
+import PB.Analysis.Rules.DeadCode qualified as DeadCode
+  ( deadReachRules, callerCountRules, deadCodeRowsRules, liveProcRules )
+import PB.Analysis.Rules.Schema qualified as Schema
+  ( reachesRules, cosliceRules )
 
+import qualified Data.List  as List (elemIndex)
 import qualified Data.Text as T
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit ((@?=), testCase)
@@ -29,7 +34,8 @@ rs outs ins = RuleSet
   }
 
 tests :: TestTree
-tests = testGroup "SouffleEngine" [ orderRuleSetsTests, compileProgramTests ]
+tests = testGroup "SouffleEngine"
+  [ orderRuleSetsTests, productionOrderTests, compileProgramTests ]
 
 orderRuleSetsTests :: TestTree
 orderRuleSetsTests = testGroup "orderRuleSets"
@@ -72,6 +78,53 @@ orderRuleSetsTests = testGroup "orderRuleSets"
       case orderRuleSets [rs ["x"] ["y"], rs ["y"] ["x"]] of
         Left _  -> pure ()
         Right _ -> error "expected a dependency-cycle Left, got an order"
+  ]
+
+-- | The full Phase B rule-set collection ('PB.Pipeline.Passes.runPhaseB'
+-- runs these via one 'runRuleSets' call). Asserting here, at the pure
+-- 'orderRuleSets' layer, that the merged production set is cycle-free and
+-- respects the known cross-rule-set edges -- so the single-call structure
+-- in 'runPhaseB' is statically sound, not just runtime-verified.
+productionOrderTests :: TestTree
+productionOrderTests = testGroup "orderRuleSets (production set)"
+  [ testCase "full Phase B rule-set collection orders without a cycle" $
+      case orderRuleSets productionRuleSets of
+        Left cyclic -> error ("unexpected cycle in production rule sets: "
+                                <> show (map rsRelations cyclic))
+        Right _    -> pure ()
+
+  , testCase "deadReachRules precedes liveProcRules (proc_dead edge)" $
+      -- liveProcRules consumes proc_dead, which only deadReachRules derives.
+      assertBefore DeadCode.deadReachRules DeadCode.liveProcRules
+
+  , testCase "deadReachRules precedes deadCodeRowsRules (proc_dead edge)" $
+      -- deadCodeRowsRules consumes proc_dead, which only deadReachRules derives.
+      assertBefore DeadCode.deadReachRules DeadCode.deadCodeRowsRules
+
+  , testCase "reachesRules precedes cosliceRules (reaches edge)" $
+      -- cosliceRules consumes reaches, which only reachesRules derives.
+      assertBefore Schema.reachesRules Schema.cosliceRules
+  ]
+  where
+    -- Assert producer appears before consumer in orderRuleSets' output.
+    assertBefore producer consumer = case orderRuleSets productionRuleSets of
+      Left cyclic -> error ("unexpected cycle: " <> show (map rsRelations cyclic))
+      Right ordered ->
+        let producerIx = List.elemIndex producer ordered
+            consumerIx = List.elemIndex consumer ordered
+        in case (producerIx, consumerIx) of
+          (Just p, Just c) | p < c -> pure ()
+          _ -> error ("expected " <> show (rsRelations producer)
+                      <> " before " <> show (rsRelations consumer)
+                      <> " in " <> show (map rsRelations ordered))
+
+-- | The exact rule-set collection 'PB.Pipeline.Passes.runPhaseB' passes to
+-- one 'runRuleSets' call, in its stable input order.
+productionRuleSets :: [RuleSet]
+productionRuleSets =
+  [ DeadCode.deadReachRules, DeadCode.callerCountRules, DeadCode.deadCodeRowsRules
+  , Schema.reachesRules, Schema.cosliceRules
+  , DeadCode.liveProcRules
   ]
 
 compileProgramTests :: TestTree

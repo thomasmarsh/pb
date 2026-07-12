@@ -43,9 +43,12 @@ emitProgress v = do
   BS.hPut stderr (BSL.toStrict (encode v) <> "\n")
   hFlush stderr
 
--- | Shared per-relation progress callback for 'Souffle.runRuleSetWith' calls
--- across passes 8 and 11 -- see 'runPass11'\'s doc comment for why one event
--- per relation, not one per pass.
+-- | Shared per-relation progress callback for 'Souffle.runRuleSets' in
+-- 'runPhaseB': one @step@ event per IDB relation just before it is
+-- materialized. The Python reporter's Phase B view shows only the latest
+-- step label (no sub-progress bar), so per-relation granularity keeps the
+-- label current as each rule set's outputs land rather than stalling on a
+-- single blanket label for the whole Datalog run.
 souffleProgress :: Souffle.Relation -> IO ()
 souffleProgress rel = emitProgress (object
   [ "tag" .= ("step" :: Text)
@@ -53,17 +56,69 @@ souffleProgress rel = emitProgress (object
   ])
 
 -- | Phase B: read Phase A tables from DuckDB, run link analysis, write results.
--- Runs sequentially after Phase A is complete. Split into three functions so
--- each pass's bindings go out of scope (and are GC-eligible) before the next.
+-- Structured as two sub-phases:
+--
+-- * **B1 (Haskell + EDB materialization):** the analyses that can't be
+--   expressed as Soufflé rules run here — type/call resolution
+--   ('runPass5', populating @resolved_calls@), interproc-edge and taint
+--   analysis ('runPass67'), and schema-category construction ('runPass9',
+--   populating @schema_objects@\/@schema_morphisms@). Then
+--   'materializeAllEdbViews' creates every SQL-view EDB relation the
+--   Soufflé rule sets below assume: the dead-code EDBs
+--   ('DeadCodeRules.initDeadReachEdbViews', over @procedures@\/
+--   @resolved_calls@\/@objects@) and the schema EDBs
+--   ('SchemaRules.initEdbViews', over @schema_morphisms@\/
+--   @schema_objects@).
+-- * **B2 (one Soufflé run):** every Phase B Datalog rule set runs in a
+--   single 'Souffle.runRuleSets' call. 'Souffle.orderRuleSets' resolves
+--   every Soufflé-internal dependency edge automatically —
+--   @proc_dead@ (from 'DeadCodeRules.deadReachRules') before
+--   'DeadCodeRules.deadCodeRowsRules' and 'DeadCodeRules.liveProcRules';
+--   @reaches@ (from 'SchemaRules.reachesRules') before
+--   'SchemaRules.cosliceRules'. The only sequencing that remains manual is
+--   the Phase A→B boundary enforced by B1 (the EDB views' source tables
+--   must be populated before the views are created), which is a genuine
+--   data dependency, not an on-demand coupling between rule sets. Finally
+--   the two SQL materializers project IDB output tables into their
+--   API-facing shapes (@dead_code_rows@→@dead_code@,
+--   @path_leg_fwd@\/@path_leg_back@→@decomposition_coslice@).
 runPhaseB :: DuckConn -> Maybe Text -> IO ()
 runPhaseB conn mDefaultNamespace = do
   emitProgress (object ["tag" .= ("phase" :: Text), "name" .= ("B" :: Text)])
-  _    <- runPass5  conn
+  -- B1: prerequisite Haskell analyses + EDB materialization.
+  _   <- runPass5  conn
   runPass67 conn
-  runPass8 conn
-  sch   <- runPass9 conn mDefaultNamespace
-  runPass10 conn sch
-  runPass11 conn
+  _sch <- runPass9 conn mDefaultNamespace
+  materializeAllEdbViews conn
+  -- B2: all Soufflé rule sets in one dependency-ordered run.
+  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Datalog analysis" :: Text)])
+  Souffle.runRuleSets souffleProgress conn allDatalogRuleSets
+  materializeDeadCode conn
+  materializeDecompositionCoslice conn
+
+-- | Materialize every EDB view the Soufflé rule sets in 'allDatalogRuleSets'
+-- assume already exist. Each 'init*EdbViews' is idempotent (@CREATE OR
+-- REPLACE VIEW@); together they cover the dead-code and schema EDB layers.
+-- Must run after 'runPass5' (for @resolved_calls@) and 'runPass9' (for
+-- @schema_objects@\/@schema_morphisms@).
+materializeAllEdbViews :: DuckConn -> IO ()
+materializeAllEdbViews conn = do
+  DeadCodeRules.initDeadReachEdbViews conn
+  SchemaRules.initEdbViews conn
+
+-- | Every Soufflé rule set run in Phase B. 'Souffle.runRuleSets' topologically
+-- orders these by their IDB-output ∩ EDB-input edges, so the order listed
+-- here is the stable tie-break for independent rule sets only — the real
+-- ordering is data-driven. See 'runPhaseB' for the edge inventory.
+allDatalogRuleSets :: [Souffle.RuleSet]
+allDatalogRuleSets =
+  [ DeadCodeRules.deadReachRules
+  , DeadCodeRules.callerCountRules
+  , DeadCodeRules.deadCodeRowsRules
+  , SchemaRules.reachesRules
+  , SchemaRules.cosliceRules
+  , DeadCodeRules.liveProcRules
+  ]
 
 runPass5 :: DuckConn -> IO (Map.Map Text Text)
 runPass5 conn = do
@@ -105,22 +160,6 @@ runPass67 conn = do
   appendTaintAnnotations conn allAnnotations
   pure ()
 
--- | Pass 8: dead-code detection, fully Datalog-materialized. Runs
--- 'DeadCodeRules.deadReachRules' (reachability -> @proc_dead@),
--- 'DeadCodeRules.callerCountRules' (caller-count aggregates + confidence),
--- and 'DeadCodeRules.deadCodeRowsRules' (the final per-procedure join) via
--- 'Souffle.runRuleSets', then 'materializeDeadCode' projects
--- @dead_code_rows@ into the @dead_code@ table (picking the
--- highest-@cyclomatic@ row per overloaded name). No Haskell classification
--- step remains.
-runPass8 :: DuckConn -> IO ()
-runPass8 conn = do
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Dead code detection" :: Text)])
-  DeadCodeRules.initDeadReachEdbViews conn
-  Souffle.runRuleSets souffleProgress conn
-    [DeadCodeRules.deadReachRules, DeadCodeRules.callerCountRules, DeadCodeRules.deadCodeRowsRules]
-  materializeDeadCode conn
-
 -- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157
 -- Phase 1): materialize the schema category @Sch@ from Phase A's
 -- DW-retrieve/DW-join/SQL-column/DDL-catalog tables. Returns the graph so
@@ -150,40 +189,3 @@ runPass9 conn mDefaultNamespace = do
   appendSchemaObjects   conn (Set.toList (sgObjects sch))
   appendSchemaMorphisms conn (sgLegs sch)
   pure sch
-
--- | Pass 11 (Plan 161 -- Souffle rewrite): materialize @live_proc@, the
--- stratified-negation demo wired into the Explorer API/UI (Plan 161
--- Phase 4). @liveProcRules@ reads @proc_dead@ (Pass 8) and @stmt@ (the
--- EDB view Pass 10's 'SchemaRules.initEdbViews' call created) directly --
--- both must already exist by the time this pass runs (they do; see
--- 'runPhaseB'). @reaches@ and the EDB views are now produced by Pass 10,
--- so this pass no longer calls 'SchemaRules.initEdbViews' or runs
--- @reachesRules@ itself.
---
--- Emits one "step" event per relation (via 'Souffle.runRuleSets''s
--- progress callback, threaded to 'Souffle.runRuleSetWith'), not one
--- blanket event for the whole pass: the Python reporter's Phase B
--- rendering shows only the latest step label with no sub-progress bar, so
--- a single silent step here would otherwise become a growing invisible
--- pause as Plan 161 Phase 3 adds more/larger rule sets to this pass.
-runPass11 :: DuckConn -> IO ()
-runPass11 conn = do
-  Souffle.runRuleSets souffleProgress conn
-    [ DeadCodeRules.liveProcRules ]
-
--- | Pass 10 (Plan 161 Phase 2c): materialize @decomposition_coslice@ via
--- the Souffle @cosliceRules@ substrate ('PB.Analysis.Rules.Schema').
--- 'SchemaRules.cosliceRules' runs after 'SchemaRules.reachesRules'
--- (cosliceRules consumes @reaches@ as EDB; 'Souffle.runRuleSets' orders
--- them by that dependency automatically), then
--- 'materializeDecompositionCoslice' projects the @path_leg_fwd@\/
--- @path_leg_back@ tables into the 8-column @decomposition_coslice@ shape
--- (tie-break via ROW_NUMBER, leg_source joined from schema_morphisms,
--- StmtObj-only target filter). No Haskell graph traversal remains.
-runPass10 :: DuckConn -> SchGraph -> IO ()
-runPass10 conn _sch = do
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Computing decomposition coslices" :: Text)])
-  SchemaRules.initEdbViews conn
-  Souffle.runRuleSets souffleProgress conn
-    [ SchemaRules.reachesRules, SchemaRules.cosliceRules ]
-  materializeDecompositionCoslice conn
