@@ -119,7 +119,8 @@ test-suite pb-compiler-test
   main-is: Main.hs
   other-modules:
       DuckDbTest
-    , SouffleTest
+    , SouffleSchemaTest
+    , SouffleDeadCodeTest
     , SouffleEngineTest
     , StdLibTest
     , BodyParserTest
