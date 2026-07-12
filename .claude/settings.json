@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(duckdb pb.duckdb ' *)",
+      "Bash(git status *)",
+      "Bash(jobs -l)",
+      "Bash(echo \"started $!\")",
+      "Bash(python3 -c ' *)",
+      "Bash(mimo run *)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
+    ]
+  }
+}

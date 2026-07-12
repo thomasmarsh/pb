@@ -53,5 +53,5 @@ memory_bank/
 .mimocode/
 mimocode.json
 
-# claude
-.claude
+# claude — personal/machine-specific only; skills and shared settings.json are tracked
+.claude/settings.local.json
