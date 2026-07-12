@@ -8,7 +8,7 @@ import PB.Analysis.Builtins    (builtinFnNames, builtinMethodNames)
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TypeResolve
 import PB.Analysis.SchemaCategory
-  ( SchemaInputs (..), SchGraph (..), SchObject (..), buildSchema, columnCoslice )
+  ( SchemaInputs (..), SchGraph (..), buildSchema )
 import PB.Pipeline.Souffle qualified as Souffle
 import PB.Analysis.Rules.Schema qualified as SchemaRules
 import PB.Analysis.Rules.DeadCode qualified as DeadCodeRules
@@ -26,7 +26,7 @@ import PB.Pipeline.DuckDb
   , appendTaintSources, appendTaintSinks, appendTaintPaths
   , appendTaintAnnotations
   , appendSchemaObjects, appendSchemaMorphisms
-  , appendDecompositionCoslice
+  , materializeDecompositionCoslice
   , materializeDeadCode
   )
 
@@ -151,16 +151,14 @@ runPass9 conn mDefaultNamespace = do
   appendSchemaMorphisms conn (sgLegs sch)
   pure sch
 
--- | Pass 11 (Plan 161 -- Souffle rewrite): materialize the Souffle-backed
--- @reaches@/@live_proc@ Datalog programs as their own DuckDB tables, wired
--- to the Explorer API/UI (Plan 161 Phase 4). @liveProcRules@ reads
--- @proc_dead@ directly (Plan 161 Phase 2b cutover) -- Pass 8 runs
--- 'DeadCodeRules.deadReachRules' and must therefore run before this pass
--- (it does; see 'runPhaseB'), so @proc_dead@ already exists by the time
--- @liveProcRules@ exports it as an EDB relation. Within this pass the two
--- rule sets are independent (no shared IDB\/EDB relations), so
--- 'Souffle.runRuleSets' orders them freely; stable order keeps
--- @reachesRules@ before @liveProcRules@.
+-- | Pass 11 (Plan 161 -- Souffle rewrite): materialize @live_proc@, the
+-- stratified-negation demo wired into the Explorer API/UI (Plan 161
+-- Phase 4). @liveProcRules@ reads @proc_dead@ (Pass 8) and @stmt@ (the
+-- EDB view Pass 10's 'SchemaRules.initEdbViews' call created) directly --
+-- both must already exist by the time this pass runs (they do; see
+-- 'runPhaseB'). @reaches@ and the EDB views are now produced by Pass 10,
+-- so this pass no longer calls 'SchemaRules.initEdbViews' or runs
+-- @reachesRules@ itself.
 --
 -- Emits one "step" event per relation (via 'Souffle.runRuleSets''s
 -- progress callback, threaded to 'Souffle.runRuleSetWith'), not one
@@ -170,16 +168,22 @@ runPass9 conn mDefaultNamespace = do
 -- pause as Plan 161 Phase 3 adds more/larger rule sets to this pass.
 runPass11 :: DuckConn -> IO ()
 runPass11 conn = do
+  Souffle.runRuleSets souffleProgress conn
+    [ DeadCodeRules.liveProcRules ]
+
+-- | Pass 10 (Plan 161 Phase 2c): materialize @decomposition_coslice@ via
+-- the Souffle @cosliceRules@ substrate ('PB.Analysis.Rules.Schema').
+-- 'SchemaRules.cosliceRules' runs after 'SchemaRules.reachesRules'
+-- (cosliceRules consumes @reaches@ as EDB; 'Souffle.runRuleSets' orders
+-- them by that dependency automatically), then
+-- 'materializeDecompositionCoslice' projects the @path_leg_fwd@\/
+-- @path_leg_back@ tables into the 8-column @decomposition_coslice@ shape
+-- (tie-break via ROW_NUMBER, leg_source joined from schema_morphisms,
+-- StmtObj-only target filter). No Haskell graph traversal remains.
+runPass10 :: DuckConn -> SchGraph -> IO ()
+runPass10 conn _sch = do
+  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Computing decomposition coslices" :: Text)])
   SchemaRules.initEdbViews conn
   Souffle.runRuleSets souffleProgress conn
-    [ SchemaRules.reachesRules, DeadCodeRules.liveProcRules ]
-
--- | Pass 10 (Plan 153 D5): for every column object, materialize its
--- 'columnCoslice' (rewrite-cost lineage) so Python's decomposition-ranking
--- service reads pre-computed reachability rather than re-deriving it.
-runPass10 :: DuckConn -> SchGraph -> IO ()
-runPass10 conn sch = do
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Computing decomposition coslices" :: Text)])
-  let columnObjs = [ o | o@(ColumnObj _ _) <- Set.toList (sgObjects sch) ]
-      coslices   = [ (o, columnCoslice sch o) | o <- columnObjs ]
-  appendDecompositionCoslice conn coslices
+    [ SchemaRules.reachesRules, SchemaRules.cosliceRules ]
+  materializeDecompositionCoslice conn

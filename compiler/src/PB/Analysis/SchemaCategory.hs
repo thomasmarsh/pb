@@ -15,10 +15,6 @@ module PB.Analysis.SchemaCategory
   , SchMorphism (..)
   , SchGraph (..)
   , schObjectKey
-    -- Free-category path structure
-  , SchPath (..)
-  , idPath
-  , composePath
     -- Column-ref parsing
   , splitColumnRef
     -- Construction
@@ -34,17 +30,12 @@ module PB.Analysis.SchemaCategory
     -- e.g. persistence-time resolution in PB.Pipeline.Runner)
   , catalogNamespacedTables
   , resolveTableRef
-    -- Traversal (Plan 148 Phase 2)
-  , blastRadius
-  , validationWalkBack
-  , columnCoslice
   ) where
 
 import PB.Prelude
 import PB.Pipeline.SqlParse (TableRef (..))
 
 import qualified Data.Map.Strict as Map
-import qualified Data.Sequence   as Seq
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
 
@@ -119,26 +110,6 @@ schObjectKey (StmtObj (SqlStmtId f o p l)) =
   "stmt:sql:" <> f <> ":" <> o <> ":" <> p <> ":" <> T.pack (show l)
 schObjectKey (StmtObj (DwRetrieveId f dw)) =
   "stmt:dw:" <> f <> ":" <> dw
-
--- ---------------------------------------------------------------------------
--- Free-category path structure (composable leg chains)
-
-data SchPath = SchPath
-  { spFrom :: SchObject
-  , spTo   :: SchObject
-  , spLegs :: [SchMorphism]
-  } deriving (Show, Eq)
-
--- | The identity path at an object (the empty leg chain).
-idPath :: SchObject -> SchPath
-idPath o = SchPath o o []
-
--- | Path concatenation. Defined iff the first path's codomain is the
--- second's domain — @Nothing@ otherwise (no coercion, no guessing).
-composePath :: SchPath -> SchPath -> Maybe SchPath
-composePath p q
-  | spTo p == spFrom q = Just (SchPath (spFrom p) (spTo q) (spLegs p <> spLegs q))
-  | otherwise           = Nothing
 
 -- ---------------------------------------------------------------------------
 -- Column-ref parsing
@@ -366,97 +337,3 @@ buildSchema inputs =
       | c <- inCatalogColumns inputs
       ]
 
--- ---------------------------------------------------------------------------
--- Traversal (Plan 148 Phase 2)
-
--- | Shared BFS path finder. Returns at most one entry per distinct
--- reachable object (including the identity path at the seed) — the
--- shortest (fewest-hop) path to it, via a graph-global visited set (an
--- object is marked visited the moment it is first discovered, at any
--- distance from the seed, and is never expanded again). Cycle-safe by
--- construction: the visited set guarantees each object is enqueued at
--- most once, so termination and O(V+E) work don't depend on the graph
--- being acyclic.
---
--- This intentionally does NOT enumerate every simple path to every object.
--- An earlier DFS-with-path-local-visited version did that, and on a DAG
--- with repeated diamond shapes (ordinary in a real FK/SQL-touch schema —
--- several tables joining back through a shared hub table) path count grows
--- multiplicatively per diamond layer even though the reachable-object count
--- stays linear: real corpus-scale schema graphs made this an exponential
--- blowup. No consumer (columnCoslice) needs more than one path per object —
--- it already collapses to shortest-path-per-target.
-walkPaths
-  :: (SchGraph -> Map.Map SchObject [SchMorphism])  -- ^ adjacency map to follow
-  -> (SchPath -> SchMorphism -> SchPath)             -- ^ extend a path with one leg
-  -> (SchPath -> SchObject)                          -- ^ frontier object to look up next
-  -> (SchMorphism -> SchObject)                      -- ^ the object a leg discovers
-  -> SchGraph -> SchObject -> [SchPath]
-walkPaths adj step frontier discovered g seed =
-  reverse (go (Set.singleton seed) [idPath seed] (Seq.singleton (idPath seed)))
-  where
-    go visited acc queue = case Seq.viewl queue of
-      Seq.EmptyL -> acc
-      path Seq.:< queue' ->
-        let legs = Map.findWithDefault [] (frontier path) (adj g)
-            (visited', acc', extra) = foldl' consider (visited, acc, []) legs
-            consider (vis, a, ex) leg =
-              let obj = discovered leg
-              in if Set.member obj vis
-                 then (vis, a, ex)
-                 else let p' = step path leg
-                      in (Set.insert obj vis, p' : a, p' : ex)
-        in go visited' acc' (queue' Seq.>< Seq.fromList (reverse extra))
-
--- | All paths reachable forward from the seed (sgOut). North-star Q1 ("if
--- this column mutates, what else is affected") — the coslice under a
--- ColumnObj/StmtObj. Every returned path's 'spFrom' is the seed.
---
--- Plan 161 Phase 2a (2026-07-11): this function's *existence-only*
--- projection (which objects are reachable, discarding the path) is
--- superseded by the Souffle @reaches@ relation ('PB.Pipeline.Souffle.
--- reachesRules') -- proven equivalent by 'SouffleTest.hs''s
--- "reaches's non-identity endpoints match SchemaCategory.blastRadius"
--- parity oracle. This *path-carrying* form is NOT superseded and remains
--- the live implementation behind 'columnCoslice' (-> @decomposition_coslice@,
--- the system's most-used traversal) until Plan 161 Phase 2c lands either a
--- path-carrying Datalog encoding or a lazy path-reconstruction split -- do
--- not delete this pending that.
-blastRadius :: SchGraph -> SchObject -> [SchPath]
-blastRadius = walkPaths sgOut extendForward spTo legTo
-  where
-    extendForward path leg = SchPath (spFrom path) (legTo leg) (spLegs path <> [leg])
-
--- | All paths that feed into the seed (sgIn), oriented in genuine morphism
--- direction (ancestor -> seed). North-star Q2 ("what can write to this
--- column") — the slice over a ColumnObj (the "validation walk-back").
--- Every returned path's 'spTo' is the seed.
---
--- Plan 161 Phase 2a: same status as 'blastRadius' above -- existence-only
--- projection superseded by @reaches@, path-carrying form still live via
--- 'columnCoslice'.
-validationWalkBack :: SchGraph -> SchObject -> [SchPath]
-validationWalkBack = walkPaths sgIn extendBackward spFrom legFrom
-  where
-    extendBackward path leg = SchPath (legFrom leg) (spTo path) (leg : spLegs path)
-
--- | The "rewrite cost" of moving a column (Plan 153 D5): every distinct
--- statement reachable either forward (this column is read, possibly via an
--- FK chain, by something downstream) or backward (this column is written or
--- retrieved into, possibly via an FK chain) — one path per distinct
--- statement, since a bare count would discard the explanation of *why* a
--- site is affected.
-columnCoslice :: SchGraph -> SchObject -> [SchPath]
-columnCoslice g seed =
-  Map.elems (Map.fromListWith shorter
-    [ (endpoint p, p)
-    | p <- blastRadius g seed <> validationWalkBack g seed
-    , StmtObj _ <- [endpoint p]
-    ])
-  where
-    endpoint p
-      | spFrom p == seed = spTo p
-      | otherwise         = spFrom p
-    shorter a b
-      | length (spLegs a) <= length (spLegs b) = a
-      | otherwise                              = b

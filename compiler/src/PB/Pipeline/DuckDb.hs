@@ -77,7 +77,7 @@ module PB.Pipeline.DuckDb
   , materializeDeadCode
   , appendSchemaObjects
   , appendSchemaMorphisms
-  , appendDecompositionCoslice
+  , materializeDecompositionCoslice
   -- Generic EDB/IDB bridge (Plan 161 -- Souffle)
   , queryTextRows
   , recreateTextTable
@@ -95,7 +95,6 @@ import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), renderLegSource
   , SchMorphism (..)
-  , SchPath (..)
   , schObjectKey
   , DwRetrieveColRow (..), DwJoinLegRow (..), SqlColRow (..)
   , CatColumnRow (..), CatFkRow (..)
@@ -1262,27 +1261,64 @@ appendSchemaMorphisms conn ms = withRaw conn "schema_morphisms" $ \app ->
     aText      app (renderLegSource (legSource m))
     endRow app
 
--- | Plan 153 D5: one row per leg of each column's materialized coslice path
--- ('PB.Analysis.SchemaCategory.columnCoslice'), so Python can read the
--- rewrite-cost lineage directly rather than re-deriving it.
-appendDecompositionCoslice :: DuckConn -> [(SchObject, [SchPath])] -> IO ()
-appendDecompositionCoslice _    [] = pure ()
-appendDecompositionCoslice conn rows = withRaw conn "decomposition_coslice" $ \app ->
-  for_ rows $ \(seed, paths) ->
-    for_ paths $ \p -> do
-      let direction :: Text
-          direction = if spFrom p == seed then "forward" else "backward"
-          target    = if spFrom p == seed then spTo p else spFrom p
-      for_ (zip [0 :: Int ..] (spLegs p)) $ \(ordinal, leg) -> do
-        aText      app (schObjectKey seed)
-        aText      app (schObjectKey target)
-        aText      app direction
-        aInt       app ordinal
-        aText      app (schObjectKey (legFrom leg))
-        aText      app (schObjectKey (legTo leg))
-        aText      app (renderLegKind (legKind leg))
-        aText      app (renderLegSource (legSource leg))
-        endRow app
+-- | Plan 161 Phase 2c: materialize @decomposition_coslice@ from the Souffle
+-- @path_leg_fwd@\/@path_leg_back@ tables (produced by
+-- 'PB.Analysis.Rules.Schema.cosliceRules'), replacing the old
+-- Haskell-walked 'appendDecompositionCoslice'. A pure SQL projection -- no
+-- traversal, no Haskell graph walk -- satisfying the Plan 166 EDB-discipline
+-- functor property (the @path_leg@ tables are the reasoning; this is a
+-- rename\/join into the 8-column consumer shape).
+--
+-- Three things happen here that the Datalog layer can't express:
+--
+-- 1. __Tie-break.__ Souffle set semantics emit every shortest leg through a
+--    diamond (a bounded 2x, not exponential -- verified on a 15-diamond
+--    stress fixture). @ROW_NUMBER() OVER (PARTITION BY seed, target,
+--    leg_ord ORDER BY leg_from, leg_to)@ picks one deterministic witness
+--    per ordinal, so Python's @_coslice_paths@ chain-rebuilder (which
+--    groups by @(seed, target)@ and orders by @leg_ordinal@) sees exactly
+--    one contiguous leg chain per path.
+--
+-- 2. __leg_source recovery.@ The Souffle @path_leg@ tables carry
+--    @leg_from@\/@leg_to@\/@leg_kind@ but not @leg_source@ (the
+--    provenance column 'appendSchemaMorphisms' writes). Joined back from
+--    @schema_morphisms@ on the three keys it shares with @path_leg@.
+--
+-- 3. __Target filtering.__ 'columnCoslice' keeps only @StmtObj@ targets
+--    (statements and DW retrieves) -- column intermediates appear in
+--    @path_leg@ as traversal hops but are not rewrite-cost endpoints.
+--    Filtered via @schema_objects.kind IN ('stmt', 'dw_retrieve')@.
+materializeDecompositionCoslice :: DuckConn -> IO ()
+materializeDecompositionCoslice conn =
+  void $ execute_ conn (Query sql)
+  where
+    sql = T.unlines
+      [ "INSERT INTO decomposition_coslice"
+      , "  (seed_key, target_key, direction, leg_ordinal, leg_from, leg_to, leg_kind, leg_source)"
+      , "WITH candidates AS ("
+      , "  SELECT s AS seed_key, target AS target_key, 'forward' AS direction,"
+      , "         CAST(leg_ord AS INTEGER) AS leg_ordinal, lf AS leg_from, lt AS leg_to, kind AS leg_kind"
+      , "    FROM path_leg_fwd"
+      , "  UNION ALL"
+      , "  SELECT s AS seed_key, target AS target_key, 'backward' AS direction,"
+      , "         CAST(leg_ord AS INTEGER) AS leg_ordinal, lf AS leg_from, lt AS leg_to, kind AS leg_kind"
+      , "    FROM path_leg_back"
+      , "), ranked AS ("
+      , "  SELECT c.seed_key, c.target_key, c.direction, c.leg_ordinal, c.leg_from, c.leg_to, c.leg_kind,"
+      , "         sm.leg_source,"
+      , "         ROW_NUMBER() OVER (PARTITION BY c.seed_key, c.target_key, c.leg_ordinal"
+      , "                           ORDER BY c.leg_from, c.leg_to) AS rn"
+      , "    FROM candidates c"
+      , "    JOIN schema_objects so ON so.object_key = c.target_key"
+      , "                       AND so.kind IN ('stmt', 'dw_retrieve')"
+      , "    LEFT JOIN schema_morphisms sm ON sm.from_key = c.leg_from"
+      , "                                AND sm.to_key   = c.leg_to"
+      , "                                AND sm.leg_kind = c.leg_kind"
+      , ")"
+      , "SELECT seed_key, target_key, direction, leg_ordinal, leg_from, leg_to, leg_kind,"
+      , "       COALESCE(leg_source, '') AS leg_source"
+      , "  FROM ranked WHERE rn = 1"
+      ]
 
 -- ---------------------------------------------------------------------------
 -- Generic EDB/IDB bridge (Plan 161 -- Souffle rewrite)

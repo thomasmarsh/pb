@@ -84,12 +84,21 @@ data Aggregate = Aggregate
 -- or by 'edbRelations' for an aggregate literal (see their @Just agg@
 -- branches). Construction sites conventionally set 'litRelation' to
 -- 'aggWitness' as a harmless placeholder, but nothing depends on that.
-data Literal = Literal
+--
+-- The @LitBare@ alternative renders its 'Text' argument verbatim as a body
+-- atom (e.g. @"n != s"@, @"d = dprev + 1"@) and contributes NO EDB
+-- relation -- it is for Souffle's native comparison/arithmetic operators,
+-- which have no relation form the IR could otherwise name. Added Plan 161
+-- Phase 2c for cosliceRules' @min_dist@ guard and arithmetic.
+data Literal
+  = Literal
   { litRelation  :: Relation
   , litArgs      :: [Text]
   , litNegated   :: Bool
   , litAggregate :: Maybe Aggregate
-  } deriving (Eq, Show)
+  }
+  | LitBare Text
+  deriving (Eq, Show)
 
 -- | One Horn clause: @ruleHead :- ruleBody@. 'litNegated' on 'ruleHead' is
 -- always 'False'.
@@ -118,16 +127,23 @@ edbRelations rs = List.nub $
   [ litRelation lit
   | r <- rsRules rs
   , lit <- ruleHead r : ruleBody r
-  , isNothing (litAggregate lit)
-  , litRelation lit `notElem` rsRelations rs
+  , Just lit' <- [isRelationLit lit]
+  , isNothing (litAggregate lit')
+  , litRelation lit' `notElem` rsRelations rs
   ]
   <>
   [ aggWitness agg
   | r <- rsRules rs
   , lit <- ruleBody r
-  , Just agg <- [litAggregate lit]
+  , Just lit' <- [isRelationLit lit]
+  , Just agg <- [litAggregate lit']
   , aggWitness agg `notElem` rsRelations rs
   ]
+  where
+    -- 'LitBare' carries no relation (it's a bare operator like "n != s"),
+    -- so it contributes nothing to the EDB set.
+    isRelationLit lit@Literal{} = Just lit
+    isRelationLit LitBare{}    = Nothing
 
 -- | Render one literal as Souffle syntax: @relName(arg1, arg2, ...)@,
 -- negated literals prefixed with @!@. The wildcard @"_"@ passes through
@@ -136,6 +152,7 @@ edbRelations rs = List.nub $
 -- @N = count : { witnessRel(args) }@ -- 'litArgs' carries the bound
 -- variable name(s), 'litAggregate' carries the function and witness.
 renderLiteral :: Literal -> Text
+renderLiteral (LitBare t) = t
 renderLiteral (Literal rel args neg Nothing) =
   (if neg then "!" else "") <> relName rel <> "(" <> T.intercalate ", " args <> ")"
 renderLiteral (Literal _ args _neg (Just (Aggregate func witRel witArgs))) =

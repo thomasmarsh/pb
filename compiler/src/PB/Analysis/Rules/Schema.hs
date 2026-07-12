@@ -6,6 +6,7 @@
 module PB.Analysis.Rules.Schema
   ( initEdbViews
   , reachesRules
+  , cosliceRules
   ) where
 
 import PB.Prelude
@@ -52,6 +53,12 @@ initEdbViews conn = for_ views (void . execute_ conn)
         "CREATE OR REPLACE VIEW stmt AS \
         \SELECT stmt_file AS file, stmt_object AS object, stmt_proc AS proc, stmt_line AS line \
         \FROM schema_objects WHERE kind = 'stmt'"
+      , -- Plan 161 Phase 2c: the seed relation for cosliceRules — every column
+        -- object (the coslice is computed per-column; stmt/dw_retrieve objects
+        -- are reached as targets, never seeded). A faithful thin projection of
+        -- schema_objects, no closure.
+        "CREATE OR REPLACE VIEW seed AS \
+        \SELECT object_key AS x FROM schema_objects WHERE kind = 'column'"
       ]
 
 -- ---------------------------------------------------------------------------
@@ -77,5 +84,113 @@ reachesRules = RuleSet
              [ Literal reachesRel ["x", "y"] False Nothing
              , Literal legRel ["y", "z", "_"] False Nothing
              ]
+      ]
+  }
+
+-- ---------------------------------------------------------------------------
+-- Plan 161 Phase 2c: coslice path-witness reconstruction.
+--
+-- 'columnCoslice' = blastRadius (forward walk) ∪ validationWalkBack
+-- (backward walk), deduped to one shortest path per StmtObj target. The
+-- existence-only core is 'reaches' above (already shipped). This program
+-- reconstructs the leg-chain *witness* — the per-leg rows the
+-- @decomposition_coslice@ table carries for the Python/UI blast-radius and
+-- decomposition-candidate surfaces.
+--
+-- Encoding (verified against the real @souffle@ binary on a 15-diamond
+-- stress fixture matching 'SchemaCategoryTest.hs''s exponential-blowup
+-- regression case — see the plan's Step 1 spike notes):
+--
+--   * @min_dist@/@min_dist_back@ compute shortest forward/backward
+--     distance via a native Souffle recursive fixpoint.
+--   * @path_leg_fwd@/@path_leg_back@ emit every shortest leg on a path
+--     from seed to target. The disjunction (leg ends at target, OR leg
+--     ends at an intermediate that reaches target) is expressed as two
+--     unioned rules — the same pattern 'reachesRules' uses, avoiding any
+--     IR extension for disjunction.
+--   * Through a diamond, multiple legs tie at one ordinal (bounded by
+--     the diamond's width, NOT exponential in path count — verified 2x,
+--     not 2^n). The deterministic single-witness tie-break is deferred to
+--     SQL materialization ('materializeDecompositionCoslice'), which
+--     picks one via ROW_NUMBER(). This keeps the IR free of
+--     inequality/comparison operators (the Souffle aggregate witness
+--     problem forbids exporting the min leg_from from inside an
+--     aggregate body anyway).
+--
+-- All four path_leg relations are IDB outputs; 'seed' is the new EDB view
+-- ('initEdbViews' above); 'leg' and 'reaches' are reused.
+
+seedRel, minDistRel, minDistBackRel, pathLegFwdRel, pathLegBackRel :: Relation
+seedRel        = symRelation "seed" ["x"]
+minDistRel     = Relation "min_dist"     [("s", "symbol"), ("node", "symbol"), ("dist", "number")]
+minDistBackRel = Relation "min_dist_back" [("s", "symbol"), ("node", "symbol"), ("dist", "number")]
+pathLegFwdRel  = Relation "path_leg_fwd"  [("s","symbol"),("target","symbol"),("leg_ord","number"),("lf","symbol"),("lt","symbol"),("kind","symbol")]
+pathLegBackRel = Relation "path_leg_back" [("s","symbol"),("target","symbol"),("leg_ord","number"),("lf","symbol"),("lt","symbol"),("kind","symbol")]
+
+cosliceRules :: RuleSet
+cosliceRules = RuleSet
+  { rsRelations = [minDistRel, minDistBackRel, pathLegFwdRel, pathLegBackRel]
+  , rsRules =
+      -- reaches is consumed as EDB (not defined here): runRuleSets orders
+      -- cosliceRules after reachesRules, which materializes the reaches
+      -- table cosliceRules then reads as input. This keeps each ruleset
+      -- single-purpose and matches the Plan 166 shared-predicate discipline
+      -- (reaches is written once, reused by every consumer).
+
+      [ -- Forward shortest distance: seed -> node (follows leg direction).
+        -- The @n != s@ guard is ESSENTIAL for termination on cyclic graphs
+        -- (real schema graphs have FK cycles) -- without it min_dist keeps
+        -- deriving ever-larger distances around the cycle forever (verified:
+        -- souffle diverges on a 3-node A->B->C->A cycle without the guard).
+        -- Arithmetic @dprev + 1@ is inline in the head (Souffle accepts this).
+        Rule (Literal minDistRel ["s", "s", "0"] False Nothing)
+               [ Literal seedRel ["s"] False Nothing ]
+      , Rule (Literal minDistRel ["s", "n", "dprev + 1"] False Nothing)
+               [ Literal minDistRel ["s", "p", "dprev"] False Nothing
+               , Literal legRel ["p", "n", "_"] False Nothing
+               , LitBare "n != s"
+               ]
+
+      -- Backward shortest distance: seed -> node (follows legs REVERSED:
+      -- an in-edge TO p is FROM n, hence leg(n, p, _) not leg(p, n, _)).
+      , Rule (Literal minDistBackRel ["s", "s", "0"] False Nothing)
+               [ Literal seedRel ["s"] False Nothing ]
+      , Rule (Literal minDistBackRel ["s", "n", "dprev + 1"] False Nothing)
+               [ Literal minDistBackRel ["s", "p", "dprev"] False Nothing
+               , Literal legRel ["n", "p", "_"] False Nothing
+               , LitBare "n != s"
+               ]
+
+      -- Forward path legs: two unioned rules express the disjunction
+      -- (LT = T ; reaches(LT, T)) -- the same unioned-rules pattern
+      -- 'reachesRules' uses, avoiding any IR extension for disjunction.
+      -- Rule 2 unifies LT with T via the shared variable name in head+body.
+      -- @o + 1@ is inline in the min_dist body arg (verified: Souffle
+      -- accepts inline arithmetic in body literal arguments).
+      , Rule (Literal pathLegFwdRel ["s", "t", "o", "lf", "lt", "kind"] False Nothing)
+               [ Literal minDistRel ["s", "lf", "o"] False Nothing
+               , Literal legRel ["lf", "lt", "kind"] False Nothing
+               , Literal minDistRel ["s", "lt", "o + 1"] False Nothing
+               , Literal reachesRel ["lt", "t"] False Nothing
+               ]
+      , Rule (Literal pathLegFwdRel ["s", "t", "o", "lf", "t", "kind"] False Nothing)
+               [ Literal minDistRel ["s", "lf", "o"] False Nothing
+               , Literal legRel ["lf", "t", "kind"] False Nothing
+               , Literal minDistRel ["s", "t", "o + 1"] False Nothing
+               ]
+
+      -- Backward path legs (legs oriented in real morphism direction; seed
+      -- is the path's TO endpoint, so we look up min_dist_back at lt and lf).
+      , Rule (Literal pathLegBackRel ["s", "t", "o", "lf", "lt", "kind"] False Nothing)
+               [ Literal minDistBackRel ["s", "lt", "o"] False Nothing
+               , Literal legRel ["lf", "lt", "kind"] False Nothing
+               , Literal minDistBackRel ["s", "lf", "o + 1"] False Nothing
+               , Literal reachesRel ["t", "lf"] False Nothing
+               ]
+      , Rule (Literal pathLegBackRel ["s", "t", "o", "t", "lt", "kind"] False Nothing)
+               [ Literal minDistBackRel ["s", "lt", "o"] False Nothing
+               , Literal legRel ["t", "lt", "kind"] False Nothing
+               , Literal minDistBackRel ["s", "t", "o + 1"] False Nothing
+               ]
       ]
   }

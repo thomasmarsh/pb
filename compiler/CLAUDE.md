@@ -541,19 +541,16 @@ runPhaseB :: DuckConn -> Maybe Text -> IO ()
 --               now returns SchGraph, not (), so Pass 10 can traverse it
 --               without rebuilding from DB rows. mDefaultNamespace (Plan 157
 --               Phase 1) flows into SchemaInputs' inDefaultNamespace field.)
---             runPass10 (Plan 153 D5, 2026-07-07: columnCoslice over every
---               ColumnObj in the graph → decomposition_coslice)
+--             runPass10 (Plan 161 Phase 2c: materializes decomposition_coslice
+--               via cosliceRules → materializeDecompositionCoslice)
 --             runPass11 (Plan 161, 2026-07-11; Souffle backend since same
 --               day's Phase 0 reversal: materializes
---               PB.Pipeline.Souffle's reachesRules/liveProcRules programs →
---               reaches/live_proc tables. deadReachRules is NOT run here
---               (Plan 161 Phase 2b, moved into runPass8 -- see above) but
---               liveProcRules depends on proc_dead already existing, which
---               Pass 8 running first guarantees. Uses Souffle.runRuleSetWith's
---               per-relation progress callback, not the plain runRuleSet --
---               emits one "step" event per relation so the CLI reporter
---               doesn't show one silent blanket step for the whole pass;
---               see PB.Pipeline.Souffle's own entry for why.)
+--               PB.Pipeline.Souffle's liveProcRules program → live_proc table.
+--               deadReachRules is NOT run here (Plan 161 Phase 2b, moved into
+--               runPass8 -- see above) but liveProcRules depends on proc_dead
+--               already existing, which Pass 8 running first guarantees.
+--               Reaches and the EDB views are now produced by Pass 10, so this
+--               pass no longer calls initEdbViews or runs reachesRules itself.
 runPass9  :: DuckConn -> Maybe Text -> IO SchGraph
 runPass10 :: DuckConn -> SchGraph -> IO ()
 runPass11 :: DuckConn -> IO ()
@@ -577,7 +574,11 @@ runPass11 :: DuckConn -> IO ()
 data Relation = Relation { relName :: Text, relCols :: [Text] }
 -- litArgs are variable names or the wildcard "_", positionally aligned to
 -- relCols of litRelation (same arity -- mismatched lengths = malformed Rule).
-data Literal  = Literal { litRelation :: Relation, litArgs :: [Text], litNegated :: Bool }
+-- LitBare renders its Text argument verbatim as a body atom (e.g. "n != s",
+-- "d = dprev + 1") -- for Souffle's native comparison/arithmetic operators.
+data Literal
+  = Literal { litRelation :: Relation, litArgs :: [Text], litNegated :: Bool }
+  | LitBare Text
 data Rule     = Rule { ruleHead :: Literal, ruleBody :: [Literal] }        -- ruleHead's litNegated always False
 data RuleSet  = RuleSet { rsRelations :: [Relation], rsRules :: [Rule] }   -- a relation may have several alternative rules, unioned
 
@@ -618,23 +619,30 @@ runRuleSetWith :: (Relation -> IO ()) -> DuckConn -> RuleSet -> IO ()
 -- runRuleSetWith, not bare runRuleSet, for the same reason as before.
 
 initEdbViews :: DuckConn -> IO ()
--- (Re)creates leg (from schema_morphisms) and stmt (from schema_objects) as
--- views. stmt is filtered to kind = 'stmt' ONLY -- excluding kind =
--- 'dw_retrieve' rows is deliberate: a DwRetrieveId StmtObj's stmt_proc is
--- always NULL, and proc_dead only keys on real (object, proc) pairs, so a
--- NULL proc vacuously passes `NOT EXISTS proc_dead` -- every DW retrieve
--- would otherwise pollute live_proc as unconditionally "live" (found via a
--- real openpay --db smoke run: 114/115 stmt rows were this noise before
--- the fix). No "dead" view here (Plan 161 Phase 2b cutover, 2026-07-11):
--- liveProcRules reads proc_dead directly instead -- see its own entry.
+-- (Re)creates leg (from schema_morphisms), stmt (from schema_objects), and
+-- seed (column objects, the coslice seed) as views. stmt is filtered to
+-- kind = 'stmt' ONLY -- excluding kind = 'dw_retrieve' rows is deliberate:
+-- a DwRetrieveId StmtObj's stmt_proc is always NULL, and proc_dead only
+-- keys on real (object, proc) pairs, so a NULL proc vacuously passes
+-- `NOT EXISTS proc_dead` -- every DW retrieve would otherwise pollute
+-- live_proc as unconditionally "live" (found via a real openpay --db smoke
+-- run: 114/115 stmt rows were this noise before the fix). No "dead" view
+-- here (Plan 161 Phase 2b cutover, 2026-07-11): liveProcRules reads
+-- proc_dead directly instead -- see its own entry.
 
 reachesRules  :: RuleSet
 -- reaches(X,Y) :- leg(X,Y,_).  reaches(X,Z) :- reaches(X,Y), leg(Y,Z,_).
--- The Phase 0-validated port of SchemaCategory.blastRadius/
--- validationWalkBack's existence-only core (both functions' reachable set
--- reprojects off this one relation, either direction). Materializes to
--- table "reaches". Souffle handles the self-recursion natively -- no
--- WITH RECURSIVE translation needed on this side.
+-- Materializes to table "reaches". Souffle handles the self-recursion
+-- natively -- no WITH RECURSIVE translation needed on this side.
+
+cosliceRules :: RuleSet
+-- Plan 161 Phase 2c: path-leg witness reconstruction for decomposition_coslice.
+-- min_dist/min_dist_back compute shortest forward/backward distance; path_leg_fwd/
+-- path_leg_back emit every shortest leg on a shortest path from seed to target.
+-- Uses LitBare for the "n != s" termination guard and inline arithmetic in
+-- head arguments. Reuses reaches and leg as EDB; runRuleSets orders after
+-- reachesRules. Materialized by materializeDecompositionCoslice (DuckDb.hs).
+
 liveProcRules :: RuleSet
 -- live_proc(Object,Proc) :- stmt(_,Object,Proc,_), !proc_dead(Object,Proc).
 -- Real stratified-negation demonstration (Plan 161 Open Question 4). Reads
@@ -1477,11 +1485,6 @@ data SchGraph  = SchGraph { sgObjects :: Set.Set SchObject, sgLegs :: [SchMorphi
                           , sgOut, sgIn :: Map.Map SchObject [SchMorphism] }
 schObjectKey :: SchObject -> Text   -- canonical DB key (object_key/from_key/to_key)
 
--- Free-category path structure (composable leg chains; Phase 2 traversal target).
-data SchPath = SchPath { spFrom, spTo :: SchObject, spLegs :: [SchMorphism] }
-idPath      :: SchObject -> SchPath
-composePath :: SchPath -> SchPath -> Maybe SchPath   -- Nothing iff spTo p /= spFrom q
-
 splitColumnRef :: Text -> Maybe (TableRef, Text)
 -- Last-dot split (namespace.table.column), lowercased. Nothing for
 -- unqualified text or a malformed ref (trailing dot etc).
@@ -1561,32 +1564,6 @@ buildSchema :: SchemaInputs -> SchGraph   -- total, pure
 -- empty-looking column-affinity/decomposition/FK-graph query for any
 -- table whose real touches are all unqualified -- see BACKLOG/doc/plan/
 -- 157-default-namespace.md).
-
--- Traversal (Phase 2, 2026-07-07). Shared cycle-safe walker: a path-local
--- visited set means an object already on the current path is never
--- revisited, so recursion terminates even on a real cyclic FK graph
--- (corpus-confirmed: misth_final_ypal.kodfinal <-> misth_final.kodfinal).
--- Each returns one SchPath entry per distinct reachable object, not a
--- bare reachability boolean.
-blastRadius        :: SchGraph -> SchObject -> [SchPath]   -- forward via sgOut; every result's spFrom == seed
-validationWalkBack :: SchGraph -> SchObject -> [SchPath]   -- backward via sgIn; every result's spTo == seed
--- Plan 161 Phase 2a (2026-07-11): these two's *existence-only* projection
--- is superseded by the Souffle `reaches` relation (PB.Pipeline.Souffle),
--- proven equivalent by a parity oracle test -- but they are NOT dead code:
--- their *path-carrying* form is columnCoslice's live implementation
--- (below), still the only path-carrying traversal in the system pending
--- Phase 2c. ValidationConstraint/constraintWriters (a thin wrapper that
--- had zero production callers) were deleted in the same session.
-
--- Plan 153 D5 (2026-07-07): the "rewrite cost" of moving a column --
--- union of blastRadius + validationWalkBack, collapsed to the shortest
--- path per distinct reachable StmtObj (ColumnObj-only endpoints, e.g. an
--- FK hop with no statement at the far end, are dropped). Consumed by
--- PB.Pipeline.Passes.runPass10, which materializes one row per (seed
--- column, target statement, leg) to decomposition_coslice for every
--- ColumnObj in the corpus -- Python's get_decomposition_candidates never
--- recomputes reachability, only reads this table.
-columnCoslice :: SchGraph -> SchObject -> [SchPath]
 ```
 
 ### `PB.Analysis.SchFootprint` (Plan 148 Phase 3, done 2026-07-07)
@@ -1836,13 +1813,12 @@ appendProcedureOverrides :: DuckConn -> [(Text, Text, Text)] -> IO ()
 appendSchemaObjects   :: DuckConn -> [SchemaCategory.SchObject]   -> IO ()
 appendSchemaMorphisms :: DuckConn -> [SchemaCategory.SchMorphism] -> IO ()
 -- decomposition_coslice (Plan 153 D5, 2026-07-07): written by runPass10,
--- one row per leg of each column's columnCoslice path. seed_key/target_key
--- are schObjectKey strings; direction is "forward" (blastRadius) or
--- "backward" (validationWalkBack), derived by comparing the path's spFrom
--- to the seed at flatten time (SchPath itself carries no direction tag).
--- leg_ordinal orders a target's legs within its (seed_key, target_key)
--- path. Python's get_decomposition_candidates (cli/api) is the sole reader.
-appendDecompositionCoslice :: DuckConn -> [(SchemaCategory.SchObject, [SchemaCategory.SchPath])] -> IO ()
+-- decomposition_coslice (Plan 161 Phase 2c): materialized from the Souffle
+-- path_leg_fwd/path_leg_back tables via materializeDecompositionCoslice.
+-- Tie-break via ROW_NUMBER, leg_source joined from schema_morphisms,
+-- StmtObj-only target filter. Python's get_decomposition_candidates (cli/api)
+-- is the sole reader.
+materializeDecompositionCoslice :: DuckConn -> IO ()
 -- Generic EDB/IDB bridge (Plan 161, Souffle migration, 2026-07-11):
 -- PB.Pipeline.Souffle needs to read/write relations whose column count is a
 -- runtime value (Relation's relCols), not fixed by a Haskell type -- no

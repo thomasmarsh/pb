@@ -4,12 +4,11 @@ import PB.Prelude
 import PB.Pipeline.DuckDb
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), LegSource (..), SchMorphism (..)
-  , SchPath (..)
   , DwRetrieveColRow (..), DwJoinLegRow (..), SqlColRow (..)
   , CatColumnRow (..), CatFkRow (..)
   )
 import PB.Pipeline.SqlParse (TableRef (..))
-import Database.DuckDB.Simple           (query_)
+import Database.DuckDB.Simple           (Query (..), execute_, query_)
 import Database.DuckDB.Simple.FromRow   (FromRow (..), field)
 import Test.Tasty             (TestTree, testGroup)
 import Test.Tasty.HUnit       (testCase, assertEqual)
@@ -26,7 +25,7 @@ tests = testGroup "DuckDb"
   , testCase "SchemaCategory Phase B queries round-trip Phase A appends"
       testSchemaCategoryQueryRoundTrip
   , testCase "appendSchemaObjects/Morphisms accept rows" testAppendSchemaObjectsMorphisms
-  , testCase "appendDecompositionCoslice accepts rows" testAppendDecompositionCoslice
+  , testCase "materializeDecompositionCoslice projects path_leg + recovers leg_source" testMaterializeDecompositionCoslice
   , testCase "appendCatFootprintColumns/queryCatFootprintColumns round-trip"
       testCatFootprintColumnsRoundTrip
   ]
@@ -201,17 +200,28 @@ testAppendSchemaObjectsMorphisms = withWriteConn ":memory:" $ \conn -> do
     [KindSourceRow "fk" "ddl_fk", KindSourceRow "reads" "sql_text"]
     rows
 
-testAppendDecompositionCoslice :: IO ()
-testAppendDecompositionCoslice = withWriteConn ":memory:" $ \conn -> do
+testMaterializeDecompositionCoslice :: IO ()
+testMaterializeDecompositionCoslice = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
-  let colA = ColumnObj (TableRef Nothing "a") "x"
-      stmt = SqlStmtId "f.srf" "obj" "proc" 1
-      path = SchPath colA (StmtObj stmt) [ SchMorphism colA (StmtObj stmt) LegReads SrcSqlText ]
-  appendDecompositionCoslice conn [ (colA, [path]) ]
-  -- Appending an empty list after a real batch must not throw
-  appendDecompositionCoslice conn []
+  -- Seed the inputs materializeDecompositionCoslice reads from: a stmt target,
+  -- the morphism (leg_source recovery), and a forward path_leg row (seed -> stmt).
+  let colAKey = "col:a.x"
+      stmtKey = "stmt:sql:f.srf:obj:proc:1"
+  appendSchemaObjects conn [ ColumnObj (TableRef Nothing "a") "x"
+                           , StmtObj (SqlStmtId "f.srf" "obj" "proc" 1) ]
+  appendSchemaMorphisms conn [ SchMorphism (ColumnObj (TableRef Nothing "a") "x")
+                               (StmtObj (SqlStmtId "f.srf" "obj" "proc" 1))
+                               LegReads SrcSqlText ]
+  -- Simulate the Souffle path_leg_fwd output table (materialized by runRuleSet).
+  -- recreateTextTable + appendTextRows would be the production path; here the
+  -- SQL projection is what's under test, so we hand-create the table.
+  void $ execute_ conn (Query "CREATE TABLE path_leg_fwd (s TEXT, target TEXT, leg_ord TEXT, lf TEXT, lt TEXT, kind TEXT)")
+  void $ execute_ conn (Query ("INSERT INTO path_leg_fwd VALUES ('"
+    <> colAKey <> "', '" <> stmtKey <> "', '0', '" <> colAKey <> "', '" <> stmtKey <> "', 'reads')"))
+  void $ execute_ conn (Query "CREATE TABLE path_leg_back (s TEXT, target TEXT, leg_ord TEXT, lf TEXT, lt TEXT, kind TEXT)")
+  materializeDecompositionCoslice conn
 
   rows <- query_ conn "SELECT leg_kind, leg_source FROM decomposition_coslice"
-  assertEqual "leg_source persists on decomposition_coslice rows (Plan 163 Phase 4, D3)"
+  assertEqual "leg_source recovered via schema_morphisms join (Plan 161 Phase 2c)"
     [KindSourceRow "reads" "sql_text"]
     rows
