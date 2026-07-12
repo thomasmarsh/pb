@@ -105,18 +105,14 @@ runPass67 conn = do
   appendTaintAnnotations conn allAnnotations
   pure ()
 
--- | Pass 8 (Plan 161 Phase 2b cutover, 2026-07-11): dead-code detection.
--- Reachability itself is Datalog now (@proc_reachable@\/@proc_dead@, via
--- 'DeadCodeRules.deadReachRules') -- proven exact against the old Haskell
--- BFS on the real corpus (104/104 rows) before that BFS was deleted from
--- 'DeadCode'. Plan 166 Stage 2 moved the inheritance closure into Datalog
--- too (@descendant@\/@override_edge@, derived from the faithful @inherits@
--- EDB projection over @objects.ancestor@), so there is no Haskell
--- override-edge step left here. Sequence per run: (1) run
--- 'DeadCodeRules.deadReachRules' to materialize @proc_dead@, (2) read
--- @proc_dead@ back and classify confidence\/caller-counts in Haskell
--- ('DeadCode.classifyDeadProcedures') -- the one piece with no Datalog
--- equivalent, since it's report formatting, not a fixpoint query.
+-- | Pass 8: dead-code detection, fully Datalog-materialized. Runs
+-- 'DeadCodeRules.deadReachRules' (reachability -> @proc_dead@),
+-- 'DeadCodeRules.callerCountRules' (caller-count aggregates + confidence),
+-- and 'DeadCodeRules.deadCodeRowsRules' (the final per-procedure join) via
+-- 'Souffle.runRuleSets', then 'materializeDeadCode' projects
+-- @dead_code_rows@ into the @dead_code@ table (picking the
+-- highest-@cyclomatic@ row per overloaded name). No Haskell classification
+-- step remains.
 runPass8 :: DuckConn -> IO ()
 runPass8 conn = do
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Dead code detection" :: Text)])

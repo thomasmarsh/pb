@@ -43,15 +43,11 @@ liveProcRel = symRelation "live_proc" ["object", "proc"]
 
 -- | @live_proc(Object,Proc) :- stmt(_,Object,Proc,_), !proc_dead(Object,Proc).@
 --
--- Real stratified-negation demonstration answering Plan 161's Open
--- Question 4. Reads 'procDeadRel' (@proc_dead@, 'deadReachRules') directly
--- -- Plan 161 Phase 2b cutover, 2026-07-11: used to read a @dead@ EDB view
--- over the Haskell-computed @dead_code@ table (populated by Pass 8) until
--- real-corpus parity between @proc_dead@ and @dead_code@ was confirmed
--- exact (104/104 rows, openpay corpus). 'deadReachRules' MUST run before
--- this ruleset -- see 'PB.Pipeline.Passes.runPass11' for the required
--- ordering ('queryTextRows' errors if @proc_dead@ doesn't exist yet when
--- this ruleset exports its EDB facts).
+-- Stratified negation over 'procDeadRel' (@proc_dead@, materialized by
+-- 'deadReachRules'). 'deadReachRules' MUST run before this ruleset -- see
+-- 'PB.Pipeline.Passes.runPass11' for the required ordering ('queryTextRows'
+-- errors if @proc_dead@ doesn't exist yet when this ruleset exports its
+-- EDB facts).
 liveProcRules :: RuleSet
 liveProcRules = RuleSet
   { rsRelations = [liveProcRel]
@@ -64,32 +60,29 @@ liveProcRules = RuleSet
   }
 
 -- ---------------------------------------------------------------------------
--- Plan 161 Phase 2b: port of the seeded-BFS reachability core that used to
--- live in 'PB.Analysis.DeadCode.computeDeadProcedures' (deleted once
--- parity was proven -- see 'PB.Analysis.DeadCode.classifyDeadProcedures',
--- its replacement, which now takes the dead set as an input instead of
--- computing it). Materializes to 'proc_reachable'/'proc_dead';
--- 'liveProcRules' above reads 'procDeadRel' directly (the cutover, done
--- once real-corpus parity against the Haskell BFS was confirmed exact --
--- see that ruleset's doc comment). 'dead_code' itself is untouched: it
--- still carries confidence/cyclomatic/caller-count fields with no Datalog
--- equivalent, for the Dead Code Explorer API.
+-- Reachability: seeds from 'entry', walks 'calls', and folds in inheritance
+-- overrides via 'descendant'/'override_edge'. Materializes
+-- 'proc_reachable'/'proc_dead'; 'liveProcRules' above and
+-- 'callerCountRules'/'deadCodeRowsRules' below all read 'procDeadRel'
+-- directly. Confidence and caller-count classification are themselves
+-- Datalog now -- see 'callerCountRules'/'deadCodeRowsRules' below;
+-- 'dead_code' is populated purely from @dead_code_rows@
+-- ('PB.Pipeline.DuckDb.materializeDeadCode'), with no Haskell
+-- classification step left.
 --
--- Plan 166 Stage 2: the @overrides@ EDB relation (a Haskell-computed
--- @procedure_overrides@ closure) is gone. Inheritance is now a faithful
--- @inherits@ EDB projection over @objects.ancestor@, and the transitive
--- @descendant@ closure + the derived @override_edge@ triple are IDB rules
--- below. @descendant@ is a reusable shared predicate for any future
--- inheritance-aware analysis (taint, business-rule reachability).
+-- @inherits@ is a faithful EDB projection over @objects.ancestor@;
+-- @descendant@ (its transitive closure) and @override_edge@ (the derived
+-- same-method-different-object triple) are IDB rules below. @descendant@
+-- is a reusable shared predicate for any future inheritance-aware
+-- analysis (taint, business-rule reachability).
 
 -- | (Re)create the EDB views 'deadReachRules' assumes: @proc@ (every known
 -- procedure), @entry@ (event\/on handlers, plus DW-object procedures with
--- outbound calls), @calls@ (same-object case-insensitive name-matched calls
--- union cross-object resolved calls -- mirrors 'PB.Pipeline.Passes.runPass8'\'s
--- @rawCalls@\/@resolvedCalls@ split, both derived from @resolved_calls@),
--- @inherits@ (a faithful thin projection: @object@\/@ancestor@ pairs from
--- @objects@, the source inheritance fact -- no closure, no derivation).
--- Must run after 'PB.Pipeline.DuckDb.initSchema'.
+-- outbound calls), @calls@ (same-object case-insensitive name-matched calls,
+-- unioned with cross-object resolved calls, both derived from
+-- @resolved_calls@), @inherits@ (a faithful thin projection: @object@\/
+-- @ancestor@ pairs from @objects@, the source inheritance fact -- no
+-- closure, no derivation). Must run after 'PB.Pipeline.DuckDb.initSchema'.
 --
 -- Every read of @procedures@ below excludes @confidence = 'speculative'@
 -- rows -- synthetic stub procedures registered for PB base classes
@@ -175,13 +168,13 @@ confidenceRel = symRelation "confidence" ["object", "proc", "level"]
 -- @caller_count_naive(CalleeName, N) :- has_naive_caller(CalleeName), N = count : { call_ref(_,_,CalleeName) }.@
 -- @caller_count_scoped(Obj, Proc, N) :- has_scoped_caller(Obj,Proc), N = count : { resolved_call_edge(_,_,Obj,Proc,L) }.@
 --
--- Plan 166 Stage 4: caller counts moved into Datalog so
--- 'DeadCode.classifyDeadProcedures' reads pre-computed maps instead of
--- building them from raw call lists. The scoped aggregate's trailing
--- @line@-position column is bound to a real variable @L@ (not @_@) so
--- each call site is a distinct witness row (see 'resolvedCallEdgeRel'\'s
--- doc comment for why this matters and why the naive aggregate has no
--- such column at all).
+-- Caller counts and confidence classification, both materialized here --
+-- no Haskell classification step remains (see
+-- 'PB.Pipeline.DuckDb.materializeDeadCode' for the final projection into
+-- @dead_code@). The scoped aggregate's trailing @line@-position column is
+-- bound to a real variable @L@ (not @_@) so each call site is a distinct
+-- witness row (see 'resolvedCallEdgeRel'\'s doc comment for why this
+-- matters and why the naive aggregate has no such column at all).
 callerCountRules :: RuleSet
 callerCountRules = RuleSet
   { rsRelations = [hasNaiveCallerRel, hasScopedCallerRel, callerCountNaiveRel, callerCountScopedRel, confidenceRel]
@@ -283,21 +276,18 @@ procDeadRel      = symRelation "proc_dead"      ["object", "proc"]
 -- @descendant(Child,GP) :- inherits(Child,Parent), descendant(Parent,GP).@ -- (transitive closure)
 -- @override_edge(ChildObj,Method,ParentObj) :- proc(ParentObj,Method), descendant(ChildObj,ParentObj), proc(ChildObj,Method).@
 --
--- The Plan 161 Phase 2b port of the seeded-BFS reachability core that used
--- to live in Haskell as 'PB.Analysis.DeadCode.computeDeadProcedures' (now
--- deleted -- see 'PB.Analysis.DeadCode.classifyDeadProcedures' for what
--- replaced it, and 'PB.Pipeline.Passes.runPass8' for how the two combine).
--- Plan 166 Stage 2 adds @descendant@\/@override_edge@ as IDB relations,
--- replacing the Haskell-computed @procedure_overrides@ closure that used to
--- feed the (now-removed) @overrides@ EDB relation.
+-- Seeded-BFS reachability, expressed as Datalog fixpoint rules: seed from
+-- 'entry', propagate through 'calls' and through inheritance overrides via
+-- 'override_edge'. @proc_dead@ is every known 'proc' not reached. See
+-- 'PB.Pipeline.Passes.runPass8' for how this combines with
+-- 'callerCountRules'\/'deadCodeRowsRules' into the final @dead_code@ table.
 deadReachRules :: RuleSet
 deadReachRules = RuleSet
   { rsRelations = [procReachableRel, procDeadRel, descendantRel, overrideEdgeRel]
   , rsRules =
       [ -- Shared predicates: the inheritance transitive closure and the
-        -- derived override triple. descendant replaces the private BFS that
-        -- used to live in PB.Analysis.DeadCode.computeOverrideEdges;
-        -- override_edge is the join that BFS's output encoded.
+        -- derived override triple (child object, method name, ancestor
+        -- object that declares it).
         Rule (Literal descendantRel ["child", "parent"] False Nothing)
              [ Literal inheritsRel ["child", "parent"] False Nothing ]
       , Rule (Literal descendantRel ["child", "gp"] False Nothing)

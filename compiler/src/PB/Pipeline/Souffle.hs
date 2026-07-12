@@ -1,15 +1,12 @@
--- | Plan 161 (reopened Phase 0, 2026-07-11) -- Souffle-backed replacement
--- for the DuckDB-native rule compiler this module used to be
--- ('PB.Pipeline.Datalog', deleted). Same engine-agnostic
--- 'Relation'\/'Literal'\/'Rule'\/'RuleSet' IR; the backend now emits a
--- Souffle @.dl@ program, shells out to the @souffle@ CLI (interpreted mode)
--- against exported EDB fact files, and reads its IDB output back into
--- DuckDB tables. Stratification, negation, and recursion are Souffle's own
--- job now -- there is no Haskell-level stratifier/rule-to-SQL compiler left
--- to test (see the plan's reopened Phase 0 for why: a realistic
--- Phase-3-shaped aggregate rule had no home in the old IR's compiler at
--- all, confirming the expressiveness gap the DuckDB-native path would have
--- required building out by hand).
+-- | Engine adapter for Datalog rule sets: the engine-agnostic
+-- 'Relation'\/'Literal'\/'Rule'\/'RuleSet' IR, plus a Souffle CLI backend
+-- ('compileProgram' renders a @.dl@ program; 'runRuleSet'\/'runRuleSetWith'
+-- export EDB facts, shell out to @souffle@ interpreted mode, and import IDB
+-- output back into DuckDB tables; 'orderRuleSets'\/'runRuleSets'
+-- topologically order and run a collection of rule sets). Concrete domain
+-- rule sets (dead-code, schema reachability, ...) live in
+-- @PB.Analysis.Rules.*@, not here -- this module owns only the IR and the
+-- execution mechanics.
 module PB.Pipeline.Souffle
   ( Relation (..)
   , symRelation
@@ -42,7 +39,7 @@ import System.Process        (readProcessWithExitCode)
 import qualified Data.Set as Set
 
 -- ---------------------------------------------------------------------------
--- Rule IR (unchanged from the old DuckDB-native module -- see Plan 161)
+-- Rule IR
 
 -- | A named relation with its column names, in positional order. For an IDB
 -- relation this also names the DuckDB table 'runRuleSet' creates; for an
