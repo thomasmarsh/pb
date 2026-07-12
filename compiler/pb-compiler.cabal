@@ -54,7 +54,6 @@ library
     PB.Analysis.InstrGraph
     PB.Analysis.InstrInterp
     PB.Analysis.Dataflow
-    PB.Analysis.DeadCode
     PB.Analysis.SSA
     PB.Analysis.SchemaCategory
     PB.Analysis.SchFootprint

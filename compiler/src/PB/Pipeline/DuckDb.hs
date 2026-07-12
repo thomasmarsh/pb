@@ -57,13 +57,6 @@ module PB.Pipeline.DuckDb
   , queryProcUses
   , queryResolvedCalls
   , queryTaintInputs
-  , queryProcInfos
-  , queryProcDead
-  , queryCallRef
-  , queryResolvedCallEdges
-  , queryCallerCountNaive
-  , queryCallerCountScoped
-  , queryConfidence
   , queryDwRetrieveColumns
   , queryDwWriteColumns
   , queryDwWhereColumns
@@ -81,7 +74,7 @@ module PB.Pipeline.DuckDb
   , appendTaintSinks
   , appendTaintPaths
   , appendTaintAnnotations
-  , appendDeadCode
+  , materializeDeadCode
   , appendSchemaObjects
   , appendSchemaMorphisms
   , appendDecompositionCoslice
@@ -99,7 +92,6 @@ import PB.Analysis.TypeResolve
   )
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
-import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), renderLegSource
   , SchMorphism (..)
@@ -870,9 +862,6 @@ instance FromRow Taint.ResolvedCallRow where
       , Taint.rcrReturnType     = Nothing
       }
 
-instance FromRow DeadCode.ProcInfo where
-  fromRow = DeadCode.ProcInfo <$> field <*> field <*> field <*> field
-
 instance FromRow DwRetrieveColRow where
   fromRow = DwRetrieveColRow <$> field <*> field <*> field <*> field <*> field
 
@@ -923,26 +912,6 @@ data TwoText = TwoText !Text !Text
 
 instance FromRow TwoText where
   fromRow = TwoText <$> field <*> field
-
-data ThreeText = ThreeText !Text !Text !Text
-
-instance FromRow ThreeText where
-  fromRow = ThreeText <$> field <*> field <*> field
-
-data FourText = FourText !Text !Text !Text !Text
-
-instance FromRow FourText where
-  fromRow = FourText <$> field <*> field <*> field <*> field
-
-data TextInt = TextInt !Text !Int
-
-instance FromRow TextInt where
-  fromRow = TextInt <$> field <*> field
-
-data TextTextInt = TextTextInt !Text !Text !Int
-
-instance FromRow TextTextInt where
-  fromRow = TextTextInt <$> field <*> field <*> field
 
 -- ---------------------------------------------------------------------------
 -- Phase B queries
@@ -1034,50 +1003,6 @@ queryTaintInputs conn = do
          else Just (Taint.SqlStmt f o p (Just l) op raw (Taint.hasIntoClause raw))
     rowToMeta (MetaRow6 f o p pt par rt) =
       Taint.ProcMeta f o p pt par rt Nothing
-
-queryProcInfos :: DuckConn -> IO [DeadCode.ProcInfo]
-queryProcInfos conn = query_ conn
-  "SELECT object, proc_name, proc_type, cyclomatic FROM procedures WHERE confidence != 'speculative'"
-
--- | Plan 161 Phase 2b cutover: read back the Datalog-computed dead set
--- (materialized by 'PB.Pipeline.Souffle.deadReachRules') so
--- 'PB.Pipeline.Passes.runPass8' can pass it into
--- 'DeadCode.classifyDeadProcedures' instead of computing reachability in
--- Haskell.
-queryProcDead :: DuckConn -> IO (Set.Set (Text, Text))
-queryProcDead conn = do
-  rows <- query_ conn "SELECT object, proc FROM proc_dead" :: IO [TwoText]
-  pure (Set.fromList [(o, p) | TwoText o p <- rows])
-
--- | Plan 166 Stage 3: naive call facts from the @call_ref@ EDB view.
-queryCallRef :: DuckConn -> IO [(Text, Text, Text)]
-queryCallRef conn = do
-  rows <- query_ conn "SELECT caller_obj, caller_proc, callee_name FROM call_ref" :: IO [ThreeText]
-  pure [(a, b, c) | ThreeText a b c <- rows]
-
--- | Plan 166 Stage 3: resolved call edges from the @resolved_call_edge@ EDB view.
-queryResolvedCallEdges :: DuckConn -> IO [(Text, Text, Text, Text)]
-queryResolvedCallEdges conn = do
-  rows <- query_ conn "SELECT caller_obj, caller_proc, callee_obj, callee_proc FROM resolved_call_edge" :: IO [FourText]
-  pure [(a, b, c, d) | FourText a b c d <- rows]
-
--- | Plan 166 Stage 4: naive caller counts from the @caller_count_naive@ Datalog output.
-queryCallerCountNaive :: DuckConn -> IO (Map.Map Text Int)
-queryCallerCountNaive conn = do
-  rows <- query_ conn "SELECT callee_name, CAST(n AS INTEGER) FROM caller_count_naive" :: IO [TextInt]
-  pure (Map.fromList [(name, n) | TextInt name n <- rows])
-
--- | Plan 166 Stage 4: scoped caller counts from the @caller_count_scoped@ Datalog output.
-queryCallerCountScoped :: DuckConn -> IO (Map.Map (Text, Text) Int)
-queryCallerCountScoped conn = do
-  rows <- query_ conn "SELECT callee_obj, callee_proc, CAST(n AS INTEGER) FROM caller_count_scoped" :: IO [TextTextInt]
-  pure (Map.fromList [((obj, proc_), n) | TextTextInt obj proc_ n <- rows])
-
--- | Plan 166 Stage 5: confidence levels from the @confidence@ Datalog output.
-queryConfidence :: DuckConn -> IO (Map.Map (Text, Text) Text)
-queryConfidence conn = do
-  rows <- query_ conn "SELECT object, proc, level FROM confidence" :: IO [ThreeText]
-  pure (Map.fromList [((obj, proc_), level) | ThreeText obj proc_ level <- rows])
 
 -- | Plan 148 Phase 1b: SchemaCategory read-side queries.
 queryDwRetrieveColumns :: DuckConn -> IO [DwRetrieveColRow]
@@ -1240,18 +1165,41 @@ appendTaintAnnotations conn rows = withRaw conn "taint_annotations" $ \app ->
     aText app (T.intercalate "|" (Taint.taTaintedVars a))
     endRow app
 
-appendDeadCode :: DuckConn -> [DeadCode.DeadProcedure] -> IO ()
-appendDeadCode _    [] = pure ()
-appendDeadCode conn rows = withRaw conn "dead_code" $ \app ->
-  for_ rows $ \d -> do
-    aText     app (DeadCode.dpObject          d)
-    aText     app (DeadCode.dpName            d)
-    aText     app (DeadCode.dpProcType        d)
-    aMaybeInt app (DeadCode.dpCyclomatic      d)
-    aText     app (DeadCode.dpConfidence      d)
-    aInt      app (DeadCode.dpCallerCountNaive  d)
-    aInt      app (DeadCode.dpCallerCountScoped d)
-    endRow app
+-- | Plan 166 Stage 6: dead_code is now populated entirely from the
+-- Soufflé-materialized dead_code_rows relation via a mechanical cast
+-- (every Soufflé column is TEXT; this restores the typed schema
+-- Python's get_dead_code reads) -- no Haskell classification left.
+--
+-- The ROW_NUMBER() dedup handles PowerBuilder function overloading: proc
+-- reachability is already computed at (object, proc_name) granularity --
+-- the call graph can't distinguish overloads by parameter list, so a dead
+-- name with multiple overloads was always going to collapse to one
+-- dead_code row. The only question is which overload's @cyclomatic@ to
+-- surface (proc_type/confidence/counts are identical across a name's
+-- overloads regardless, since they're derived from the same proc-name-
+-- level joins). This picks the HIGHEST cyclomatic deterministically --
+-- a deliberate choice, not an arbitrary tie-break: it surfaces the most
+-- complex variant behind a dead name, the more conservative/useful signal
+-- if someone is deciding whether it's worth double-checking before
+-- deleting. The pre-Stage-6 Haskell 'classifyDeadProcedures' used
+-- 'Map.fromListWith (\a _b -> a)', which kept whichever row DuckDB's
+-- unordered table scan happened to return first -- not a rule, an
+-- accident with no rationale and no run-to-run reproducibility guarantee.
+-- Confirmed via real corpus diff (2026-07-11): every one of the 7 rows
+-- this changes vs. the old behavior differs ONLY in cyclomatic -- object,
+-- proc, proc_type, confidence, and both caller counts are unchanged.
+materializeDeadCode :: DuckConn -> IO ()
+materializeDeadCode conn = do
+  _ <- execute_ conn "DELETE FROM dead_code"
+  _ <- execute_ conn
+    "INSERT INTO dead_code \
+    \SELECT object, proc, proc_type, TRY_CAST(cyclomatic AS INTEGER), \
+    \level, TRY_CAST(naive_n AS INTEGER), TRY_CAST(scoped_n AS INTEGER) \
+    \FROM ( \
+    \  SELECT *, ROW_NUMBER() OVER (PARTITION BY object, proc ORDER BY TRY_CAST(cyclomatic AS INTEGER) DESC) AS rn \
+    \  FROM dead_code_rows \
+    \) WHERE rn = 1"
+  pure ()
 
 -- | Kind text for a 'LegKind'. Provenance (formerly a second, FK-only
 -- @fk_source@ column derived here) is now the general 'legSource' field on

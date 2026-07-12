@@ -10,7 +10,6 @@ import PB.Analysis.SchemaCategory
   , SchemaInputs (..), SqlColRow (..), SchGraph (..)
   , buildSchema, blastRadius, schObjectKey, spTo
   )
-import PB.Analysis.DeadCode (ProcInfo (..))
 import PB.Analysis.TypeResolve (ResolvedCall (..))
 import PB.Pipeline.SqlParse (TableRef (..))
 

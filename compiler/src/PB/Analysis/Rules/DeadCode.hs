@@ -13,6 +13,8 @@ module PB.Analysis.Rules.DeadCode
   , deadReachRules
   , liveProcRules
   , callerCountRules
+  , deadCodeRowsRules
+  , ProcInfo (..)
   , confidenceRel
   , callRefRel
   , resolvedCallEdgeRel
@@ -23,6 +25,14 @@ import PB.Prelude
 import PB.Pipeline.Souffle (Relation (..), symRelation, Aggregate (..), Literal (..), Rule (..), RuleSet (..))
 import PB.Pipeline.DuckDb (DuckConn)
 import Database.DuckDB.Simple (Query (..), execute_)
+
+-- | A procedure in the workspace.
+data ProcInfo = ProcInfo
+  { piObject   :: Text
+  , piName     :: Text
+  , piProcType :: Text   -- "function" | "subroutine" | "event" | "on"
+  , piCyclomatic :: Maybe Int
+  } deriving (Eq, Show)
 
 -- ---------------------------------------------------------------------------
 -- liveProcRules
@@ -123,6 +133,11 @@ initDeadReachEdbViews conn = for_ views (void . execute_ conn)
         \COALESCE(CAST(line AS VARCHAR), '') AS line \
         \FROM resolved_calls \
         \WHERE target_object IS NOT NULL AND target_proc IS NOT NULL"
+      , "CREATE OR REPLACE VIEW proc_meta AS \
+        \SELECT object, proc_name AS proc, proc_type, \
+        \COALESCE(CAST(cyclomatic AS VARCHAR), '') AS cyclomatic, \
+        \LOWER(proc_name) AS proc_lower \
+        \FROM procedures WHERE confidence != 'speculative'"
       ]
 
 -- | 'callRefRel' deliberately has NO @line@ column, unlike
@@ -196,6 +211,55 @@ callerCountRules = RuleSet
              [ Literal procRel ["object", "proc"] False Nothing
              , Literal hasNaiveCallerRel ["proc"] False Nothing
              , Literal hasScopedCallerRel ["object", "proc"] False Nothing
+             ]
+      ]
+  }
+
+-- ---------------------------------------------------------------------------
+-- Plan 166 Stage 6: dead-code rows as Soufflé output.
+
+procMetaRel :: Relation
+procMetaRel = symRelation "proc_meta" ["object", "proc", "proc_type", "cyclomatic", "proc_lower"]
+
+callerCountNaiveFinalRel, callerCountScopedFinalRel, deadCodeRowsRel :: Relation
+callerCountNaiveFinalRel  = Relation "caller_count_naive_final"  [("proc_lower", "symbol"), ("n", "number")]
+callerCountScopedFinalRel = Relation "caller_count_scoped_final" [("object", "symbol"), ("proc", "symbol"), ("n", "number")]
+deadCodeRowsRel = Relation "dead_code_rows"
+  [ ("object", "symbol"), ("proc", "symbol"), ("proc_type", "symbol")
+  , ("cyclomatic", "symbol"), ("level", "symbol")
+  , ("naive_n", "number"), ("scoped_n", "number")
+  ]
+
+-- | @caller_count_naive_final(P, N) :- caller_count_naive(P, N).@
+-- @caller_count_naive_final(P, 0) :- proc_meta(_, _, _, _, P), !has_naive_caller(P).@
+-- @caller_count_scoped_final(O, P, N) :- caller_count_scoped(O, P, N).@
+-- @caller_count_scoped_final(O, P, 0) :- proc(O, P), !has_scoped_caller(O, P).@
+-- @dead_code_rows(O, P, PT, Cyc, Lvl, NN, SN) :-
+--     proc_dead(O, P), proc_meta(O, P, PT, Cyc, PLower),
+--     confidence(O, P, Lvl), caller_count_naive_final(PLower, NN),
+--     caller_count_scoped_final(O, P, SN).@
+deadCodeRowsRules :: RuleSet
+deadCodeRowsRules = RuleSet
+  { rsRelations = [callerCountNaiveFinalRel, callerCountScopedFinalRel, deadCodeRowsRel]
+  , rsRules =
+      [ Rule (Literal callerCountNaiveFinalRel ["p", "n"] False Nothing)
+             [ Literal callerCountNaiveRel ["p", "n"] False Nothing ]
+      , Rule (Literal callerCountNaiveFinalRel ["p", "0"] False Nothing)
+             [ Literal procMetaRel ["_", "_", "_", "_", "p"] False Nothing
+             , Literal hasNaiveCallerRel ["p"] True Nothing
+             ]
+      , Rule (Literal callerCountScopedFinalRel ["o", "p", "n"] False Nothing)
+             [ Literal callerCountScopedRel ["o", "p", "n"] False Nothing ]
+      , Rule (Literal callerCountScopedFinalRel ["o", "p", "0"] False Nothing)
+             [ Literal procRel ["o", "p"] False Nothing
+             , Literal hasScopedCallerRel ["o", "p"] True Nothing
+             ]
+      , Rule (Literal deadCodeRowsRel ["o", "p", "pt", "cyc", "lvl", "nn", "sn"] False Nothing)
+             [ Literal procDeadRel ["o", "p"] False Nothing
+             , Literal procMetaRel ["o", "p", "pt", "cyc", "plower"] False Nothing
+             , Literal confidenceRel ["o", "p", "lvl"] False Nothing
+             , Literal callerCountNaiveFinalRel ["plower", "nn"] False Nothing
+             , Literal callerCountScopedFinalRel ["o", "p", "sn"] False Nothing
              ]
       ]
   }

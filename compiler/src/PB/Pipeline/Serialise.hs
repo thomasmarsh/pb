@@ -17,7 +17,6 @@ import PB.Analysis.Cfg   (CfgBlock, CfgEdge, Cfg)
 import PB.Analysis.InstrGraph   (InstrNode, InstrGraph)
 import PB.Analysis.GraphBuilder (LowCat (..), WiringPayload (..))
 import PB.Analysis.Taint      (InterprocEdge (..), ProcedureSummary (..), ProcSummaryReturnFlow (..))
-import PB.Analysis.DeadCode   (DeadProcedure (..))
 
 -- | Strip a camelCase field-name prefix, e.g. "fnsMods" → "mods",
 --   "fnsReturnType" → "returnType", "srForward" → "forward".
@@ -150,17 +149,5 @@ instance ToJSON ProcedureSummary where
     , "params_in"       .= psParamsIn s
     , "globals_read"    .= psGlobalsRead s
     , "globals_written" .= psGlobalsWritten s
-    , "return_flows_to" .= psReturnFlowsTo s
-    ]
-
--- DeadProcedure — manual instance to match Python snake_case keys
-instance ToJSON DeadProcedure where
-  toJSON d = J.object
-    [ "object"              .= dpObject d
-    , "name"                .= dpName d
-    , "proc_type"           .= dpProcType d
-    , "cyclomatic"          .= dpCyclomatic d
-    , "confidence"          .= dpConfidence d
-    , "caller_count_naive"  .= dpCallerCountNaive d
-    , "caller_count_scoped" .= dpCallerCountScoped d
-    ]
+     , "return_flows_to" .= psReturnFlowsTo s
+     ]

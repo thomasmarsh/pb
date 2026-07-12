@@ -5,7 +5,6 @@ module PB.Pipeline.Passes
 
 import PB.Prelude
 import PB.Analysis.Builtins    (builtinFnNames, builtinMethodNames)
-import PB.Analysis.DeadCode    qualified as DeadCode
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TypeResolve
 import PB.Analysis.SchemaCategory
@@ -17,8 +16,7 @@ import PB.Pipeline.DuckDb
   ( DuckConn
   , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
   , queryProcDefs, queryProcUses, queryResolvedCalls
-  , queryTaintInputs, queryProcInfos, queryProcDead
-  , queryCallerCountNaive, queryCallerCountScoped, queryConfidence
+  , queryTaintInputs
   , queryDwRetrieveColumns, queryDwWriteColumns, queryDwWhereColumns
   , queryDwJoinLegs, querySqlCols
   , queryCatFootprintColumns
@@ -26,9 +24,10 @@ import PB.Pipeline.DuckDb
   , appendResolvedTypes, appendResolvedCalls
   , appendInterprocEdges, appendProcSummaries
   , appendTaintSources, appendTaintSinks, appendTaintPaths
-  , appendTaintAnnotations, appendDeadCode
+  , appendTaintAnnotations
   , appendSchemaObjects, appendSchemaMorphisms
   , appendDecompositionCoslice
+  , materializeDeadCode
   )
 
 import Data.Aeson          (Value (..), encode, object, (.=))
@@ -121,16 +120,10 @@ runPass67 conn = do
 runPass8 :: DuckConn -> IO ()
 runPass8 conn = do
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Dead code detection" :: Text)])
-  procs <- queryProcInfos conn
   DeadCodeRules.initDeadReachEdbViews conn
   Souffle.runRuleSets souffleProgress conn
-    [DeadCodeRules.deadReachRules, DeadCodeRules.callerCountRules]
-  deadSet      <- queryProcDead conn
-  naiveCounts  <- queryCallerCountNaive  conn
-  scopedCounts <- queryCallerCountScoped conn
-  confidences  <- queryConfidence conn
-  let dead = DeadCode.classifyDeadProcedures deadSet procs naiveCounts scopedCounts confidences
-  appendDeadCode conn dead
+    [DeadCodeRules.deadReachRules, DeadCodeRules.callerCountRules, DeadCodeRules.deadCodeRowsRules]
+  materializeDeadCode conn
 
 -- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157
 -- Phase 1): materialize the schema category @Sch@ from Phase A's
