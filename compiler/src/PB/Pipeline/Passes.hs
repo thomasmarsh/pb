@@ -173,21 +173,24 @@ runPass9 conn mDefaultNamespace = do
 -- @reaches@/@live_proc@ Datalog programs as their own DuckDB tables, wired
 -- to the Explorer API/UI (Plan 161 Phase 4). @liveProcRules@ reads
 -- @proc_dead@ directly (Plan 161 Phase 2b cutover) -- Pass 8 runs
--- 'Souffle.deadReachRules' and must therefore run before this pass (it
--- does; see 'runPhaseB'), so @proc_dead@ already exists by the time
--- @liveProcRules@ exports it as an EDB relation.
+-- 'DeadCodeRules.deadReachRules' and must therefore run before this pass
+-- (it does; see 'runPhaseB'), so @proc_dead@ already exists by the time
+-- @liveProcRules@ exports it as an EDB relation. Within this pass the two
+-- rule sets are independent (no shared IDB\/EDB relations), so
+-- 'Souffle.runRuleSets' orders them freely; stable order keeps
+-- @reachesRules@ before @liveProcRules@.
 --
--- Emits one "step" event per relation (via 'Souffle.runRuleSetWith'), not
--- one blanket event for the whole pass: the Python reporter's Phase B
+-- Emits one "step" event per relation (via 'Souffle.runRuleSets''s
+-- progress callback, threaded to 'Souffle.runRuleSetWith'), not one
+-- blanket event for the whole pass: the Python reporter's Phase B
 -- rendering shows only the latest step label with no sub-progress bar, so
 -- a single silent step here would otherwise become a growing invisible
--- pause as Plan 161 Phase 3 adds more/larger rule sets to this pass (see
--- that plan's Status note).
+-- pause as Plan 161 Phase 3 adds more/larger rule sets to this pass.
 runPass11 :: DuckConn -> IO ()
 runPass11 conn = do
   SchemaRules.initEdbViews conn
-  Souffle.runRuleSetWith souffleProgress conn SchemaRules.reachesRules
-  Souffle.runRuleSetWith souffleProgress conn DeadCodeRules.liveProcRules
+  Souffle.runRuleSets souffleProgress conn
+    [ SchemaRules.reachesRules, DeadCodeRules.liveProcRules ]
 
 -- | Pass 10 (Plan 153 D5): for every column object, materialize its
 -- 'columnCoslice' (rewrite-cost lineage) so Python's decomposition-ranking
