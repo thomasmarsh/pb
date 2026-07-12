@@ -54,8 +54,9 @@ classifyDeadProcedures
   -> [ProcInfo]                 -- ^ all procedures
   -> Map.Map Text Int           -- ^ naive caller counts (callee_name -> count), from @caller_count_naive@
   -> Map.Map (Text, Text) Int   -- ^ scoped caller counts ((object, proc) -> count), from @caller_count_scoped@
+  -> Map.Map (Text, Text) Text  -- ^ confidence levels ((object, proc) -> level), from @confidence@
   -> [DeadProcedure]
-classifyDeadProcedures deadSet procedures naiveCounts scopedCounts =
+classifyDeadProcedures deadSet procedures naiveCounts scopedCounts confidences =
   let -- Collect dead procedures (deduplicate on (object, name) --
       -- overloaded functions may produce multiple ProcInfo entries).
       deadMap = Map.fromListWith (\a _b -> a)
@@ -65,11 +66,7 @@ classifyDeadProcedures deadSet procedures naiveCounts scopedCounts =
               , dpProcType = piProcType p
               , dpCyclomatic = piCyclomatic p
               , dpConfidence =
-                  let naive  = Map.findWithDefault 0 (T.toLower (piName p)) naiveCounts
-                      scoped = Map.findWithDefault 0 (piObject p, piName p) scopedCounts
-                  in if naive == 0 then "high"
-                     else if scoped == 0 then "medium"
-                     else "low"
+                  Map.findWithDefault "low" (piObject p, piName p) confidences
               , dpCallerCountNaive =
                   Map.findWithDefault 0 (T.toLower (piName p)) naiveCounts
               , dpCallerCountScoped =

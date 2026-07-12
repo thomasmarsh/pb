@@ -18,7 +18,7 @@ import PB.Pipeline.DuckDb
   , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
   , queryProcDefs, queryProcUses, queryResolvedCalls
   , queryTaintInputs, queryProcInfos, queryProcDead
-  , queryCallerCountNaive, queryCallerCountScoped
+  , queryCallerCountNaive, queryCallerCountScoped, queryConfidence
   , queryDwRetrieveColumns, queryDwWriteColumns, queryDwWhereColumns
   , queryDwJoinLegs, querySqlCols
   , queryCatFootprintColumns
@@ -128,7 +128,8 @@ runPass8 conn = do
   deadSet      <- queryProcDead conn
   naiveCounts  <- queryCallerCountNaive  conn
   scopedCounts <- queryCallerCountScoped conn
-  let dead = DeadCode.classifyDeadProcedures deadSet procs naiveCounts scopedCounts
+  confidences  <- queryConfidence conn
+  let dead = DeadCode.classifyDeadProcedures deadSet procs naiveCounts scopedCounts confidences
   appendDeadCode conn dead
 
 -- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157

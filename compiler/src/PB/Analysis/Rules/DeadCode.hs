@@ -13,6 +13,7 @@ module PB.Analysis.Rules.DeadCode
   , deadReachRules
   , liveProcRules
   , callerCountRules
+  , confidenceRel
   , callRefRel
   , resolvedCallEdgeRel
   ) where
@@ -151,6 +152,9 @@ hasScopedCallerRel   = symRelation "has_scoped_caller"   ["callee_obj", "callee_
 callerCountNaiveRel  = Relation "caller_count_naive" [("callee_name", "symbol"), ("n", "number")]
 callerCountScopedRel = Relation "caller_count_scoped" [("callee_obj", "symbol"), ("callee_proc", "symbol"), ("n", "number")]
 
+confidenceRel :: Relation
+confidenceRel = symRelation "confidence" ["object", "proc", "level"]
+
 -- | @has_naive_caller(CalleeName) :- call_ref(_,_,CalleeName).@
 -- @has_scoped_caller(Obj,Proc) :- resolved_call_edge(_,_,Obj,Proc,_).@
 -- @caller_count_naive(CalleeName, N) :- has_naive_caller(CalleeName), N = count : { call_ref(_,_,CalleeName) }.@
@@ -165,7 +169,7 @@ callerCountScopedRel = Relation "caller_count_scoped" [("callee_obj", "symbol"),
 -- such column at all).
 callerCountRules :: RuleSet
 callerCountRules = RuleSet
-  { rsRelations = [hasNaiveCallerRel, hasScopedCallerRel, callerCountNaiveRel, callerCountScopedRel]
+  { rsRelations = [hasNaiveCallerRel, hasScopedCallerRel, callerCountNaiveRel, callerCountScopedRel, confidenceRel]
   , rsRules =
       [ Rule (Literal hasNaiveCallerRel ["callee_name"] False Nothing)
              [ Literal callRefRel ["_", "_", "callee_name"] False Nothing ]
@@ -178,6 +182,20 @@ callerCountRules = RuleSet
       , Rule (Literal callerCountScopedRel ["callee_obj", "callee_proc", "n"] False Nothing)
              [ Literal hasScopedCallerRel ["callee_obj", "callee_proc"] False Nothing
              , Literal resolvedCallEdgeRel ["n"] False (Just (Aggregate "count" resolvedCallEdgeRel ["_", "_", "callee_obj", "callee_proc", "l"]))
+             ]
+      , Rule (Literal confidenceRel ["object", "proc", "\"high\""] False Nothing)
+             [ Literal procRel ["object", "proc"] False Nothing
+             , Literal hasNaiveCallerRel ["proc"] True Nothing
+             ]
+      , Rule (Literal confidenceRel ["object", "proc", "\"medium\""] False Nothing)
+             [ Literal procRel ["object", "proc"] False Nothing
+             , Literal hasNaiveCallerRel ["proc"] False Nothing
+             , Literal hasScopedCallerRel ["object", "proc"] True Nothing
+             ]
+      , Rule (Literal confidenceRel ["object", "proc", "\"low\""] False Nothing)
+             [ Literal procRel ["object", "proc"] False Nothing
+             , Literal hasNaiveCallerRel ["proc"] False Nothing
+             , Literal hasScopedCallerRel ["object", "proc"] False Nothing
              ]
       ]
   }

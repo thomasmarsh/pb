@@ -63,6 +63,7 @@ module PB.Pipeline.DuckDb
   , queryResolvedCallEdges
   , queryCallerCountNaive
   , queryCallerCountScoped
+  , queryConfidence
   , queryDwRetrieveColumns
   , queryDwWriteColumns
   , queryDwWhereColumns
@@ -1071,6 +1072,12 @@ queryCallerCountScoped :: DuckConn -> IO (Map.Map (Text, Text) Int)
 queryCallerCountScoped conn = do
   rows <- query_ conn "SELECT callee_obj, callee_proc, CAST(n AS INTEGER) FROM caller_count_scoped" :: IO [TextTextInt]
   pure (Map.fromList [((obj, proc_), n) | TextTextInt obj proc_ n <- rows])
+
+-- | Plan 166 Stage 5: confidence levels from the @confidence@ Datalog output.
+queryConfidence :: DuckConn -> IO (Map.Map (Text, Text) Text)
+queryConfidence conn = do
+  rows <- query_ conn "SELECT object, proc, level FROM confidence" :: IO [ThreeText]
+  pure (Map.fromList [((obj, proc_), level) | ThreeText obj proc_ level <- rows])
 
 -- | Plan 148 Phase 1b: SchemaCategory read-side queries.
 queryDwRetrieveColumns :: DuckConn -> IO [DwRetrieveColRow]
