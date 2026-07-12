@@ -1309,9 +1309,24 @@ materializeDecompositionCoslice conn =
       , "         CAST(leg_ord AS INTEGER) AS leg_ordinal, lf AS leg_from, lt AS leg_to, kind AS leg_kind"
       , "    FROM path_leg_fwd"
       , "  UNION ALL"
-      , "  SELECT s AS seed_key, target AS target_key, 'backward' AS direction,"
-      , "         CAST(leg_ord AS INTEGER) AS leg_ordinal, lf AS leg_from, lt AS leg_to, kind AS leg_kind"
-      , "    FROM path_leg_back"
+      -- Backward legs are reversed to target->seed ordering: the Datalog
+      -- `path_leg_back` emit (ascending ordinal, seed=0 outward) reads
+      -- seed->target, but the deleted Haskell `validationWalkBack`'s
+      -- `extendBackward (leg : spLegs path)` prepended each walked-back leg,
+      -- so its `spLegs` read target->seed -- the convention
+      -- `PB.Analysis.SchemaCategory.columnCoslice` shipped and every Python/UI
+      -- consumer (incl. `seedRootedChain` in `DecompositionCandidatesCore.tsx`,
+      -- which expects the path's non-seed end to be the target) inherits.
+      -- Renumbering per (seed, target) as `max_ord - leg_ord` inverts the
+      -- ordering while keeping ordinals contiguous and 0-based; the per-path
+      -- JOIN is essential so a forward path's ordinals are left untouched.
+      , "  SELECT pb.s AS seed_key, pb.target AS target_key, 'backward' AS direction,"
+      , "         CAST(mo.max_ord AS INTEGER) - CAST(pb.leg_ord AS INTEGER) AS leg_ordinal,"
+      , "         pb.lf AS leg_from, pb.lt AS leg_to, pb.kind AS leg_kind"
+      , "    FROM path_leg_back pb"
+      , "    JOIN (SELECT s, target, MAX(CAST(leg_ord AS INTEGER)) AS max_ord"
+      , "            FROM path_leg_back GROUP BY s, target) mo"
+      , "      ON mo.s = pb.s AND mo.target = pb.target"
       , "), ranked AS ("
       , "  SELECT c.seed_key, c.target_key, c.direction, c.leg_ordinal, c.leg_from, c.leg_to, c.leg_kind,"
       , "         sm.leg_source,"

@@ -43,8 +43,31 @@ initEdbViews conn = for_ views (void . execute_ conn)
   where
     views :: [Query]
     views =
-      [ "CREATE OR REPLACE VIEW leg AS \
-        \SELECT from_key AS x, to_key AS y, leg_kind FROM schema_morphisms"
+      [ -- Plan 161 Phase 2c: collapse parallel `schema_morphisms` edges that
+        -- connect the same (from, to) pair with different `leg_kind` down to
+        -- a single deterministic one *before* any rule sees them -- Souffle's
+        -- `leg` relation is a set, so without this the engine keeps an
+        -- arbitrary one per (from, to) pair and re-builds of the same corpus
+        -- pick differently (reproduced on the real openpay corpus: 559
+        -- (from, to) pairs collide, all with both `retrieve` and `writes`;
+        -- which survived was nondeterministic run-to-run). The deleted
+        -- `PB.Analysis.SchemaCategory.allLegs` resolved this as an accident
+        -- of its fold order (`dwRetrieveLegs <> dwWriteLegs <> ...`, then
+        -- `Map.fromListWith (<>)` + BFS-prepend) that put `writes` ahead of
+        -- `retrieve` in each per-key adjacency list, so BFS discovered
+        -- `writes` first. The CASE below encodes that same precedence
+        -- explicitly: `writes` < `retrieve` < everything-else-tied-at-2.
+        -- Only (from, to) pairs with >1 distinct kind compete; a lone kind
+        -- row (fk, reads, writes-via-other-sources) always wins its own
+        -- single-row partition regardless of its CASE value.
+        "CREATE OR REPLACE VIEW leg AS \
+        \SELECT from_key AS x, to_key AS y, leg_kind FROM ( \
+          \SELECT from_key, to_key, leg_kind, \
+                 \ROW_NUMBER() OVER (PARTITION BY from_key, to_key \
+                   \ORDER BY CASE leg_kind WHEN 'writes' THEN 0 \
+                                          \WHEN 'retrieve' THEN 1 \
+                                          \ELSE 2 END) AS rn \
+            \FROM schema_morphisms) WHERE rn = 1"
       , -- 'dw_retrieve'-kind schema_objects rows are deliberately excluded: their
         -- stmt_proc is always NULL (a DW retrieve isn't a procedure), which would
         -- make `dead(Object,Proc)` vacuously never match and every DW retrieve
