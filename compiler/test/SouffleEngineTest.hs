@@ -2,7 +2,7 @@ module SouffleEngineTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.Souffle
-  ( Relation (..), Literal (..), Rule (..), RuleSet (..), orderRuleSets )
+  ( Relation (..), symRelation, Literal (..), Rule (..), RuleSet (..), orderRuleSets )
 
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit ((@?=), testCase)
@@ -11,14 +11,14 @@ import Test.Tasty.HUnit ((@?=), testCase)
 -- tests readable. A rule set "produces" its rsRelations and "consumes" any
 -- relation in a rule body that is not an rsRelation.
 mkRel :: Text -> Relation
-mkRel n = Relation n ["x"]
+mkRel n = symRelation n ["x"]
 
 -- | A rule set that derives @outs@ from @ins@ (one body literal per input).
 rs :: [Text] -> [Text] -> RuleSet
 rs outs ins = RuleSet
   { rsRelations = map mkRel outs
-  , rsRules     = [ Rule (Literal (mkRel o) ["x"] False)
-                        [ Literal (mkRel i) ["x"] False | i <- ins ]
+  , rsRules     = [ Rule (Literal (mkRel o) ["x"] False Nothing)
+                        [ Literal (mkRel i) ["x"] False Nothing | i <- ins ]
                   | o <- outs ]
   }
 

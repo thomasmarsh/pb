@@ -59,6 +59,10 @@ module PB.Pipeline.DuckDb
   , queryTaintInputs
   , queryProcInfos
   , queryProcDead
+  , queryCallRef
+  , queryResolvedCallEdges
+  , queryCallerCountNaive
+  , queryCallerCountScoped
   , queryDwRetrieveColumns
   , queryDwWriteColumns
   , queryDwWhereColumns
@@ -919,6 +923,26 @@ data TwoText = TwoText !Text !Text
 instance FromRow TwoText where
   fromRow = TwoText <$> field <*> field
 
+data ThreeText = ThreeText !Text !Text !Text
+
+instance FromRow ThreeText where
+  fromRow = ThreeText <$> field <*> field <*> field
+
+data FourText = FourText !Text !Text !Text !Text
+
+instance FromRow FourText where
+  fromRow = FourText <$> field <*> field <*> field <*> field
+
+data TextInt = TextInt !Text !Int
+
+instance FromRow TextInt where
+  fromRow = TextInt <$> field <*> field
+
+data TextTextInt = TextTextInt !Text !Text !Int
+
+instance FromRow TextTextInt where
+  fromRow = TextTextInt <$> field <*> field <*> field
+
 -- ---------------------------------------------------------------------------
 -- Phase B queries
 
@@ -1023,6 +1047,30 @@ queryProcDead :: DuckConn -> IO (Set.Set (Text, Text))
 queryProcDead conn = do
   rows <- query_ conn "SELECT object, proc FROM proc_dead" :: IO [TwoText]
   pure (Set.fromList [(o, p) | TwoText o p <- rows])
+
+-- | Plan 166 Stage 3: naive call facts from the @call_ref@ EDB view.
+queryCallRef :: DuckConn -> IO [(Text, Text, Text)]
+queryCallRef conn = do
+  rows <- query_ conn "SELECT caller_obj, caller_proc, callee_name FROM call_ref" :: IO [ThreeText]
+  pure [(a, b, c) | ThreeText a b c <- rows]
+
+-- | Plan 166 Stage 3: resolved call edges from the @resolved_call_edge@ EDB view.
+queryResolvedCallEdges :: DuckConn -> IO [(Text, Text, Text, Text)]
+queryResolvedCallEdges conn = do
+  rows <- query_ conn "SELECT caller_obj, caller_proc, callee_obj, callee_proc FROM resolved_call_edge" :: IO [FourText]
+  pure [(a, b, c, d) | FourText a b c d <- rows]
+
+-- | Plan 166 Stage 4: naive caller counts from the @caller_count_naive@ Datalog output.
+queryCallerCountNaive :: DuckConn -> IO (Map.Map Text Int)
+queryCallerCountNaive conn = do
+  rows <- query_ conn "SELECT callee_name, CAST(n AS INTEGER) FROM caller_count_naive" :: IO [TextInt]
+  pure (Map.fromList [(name, n) | TextInt name n <- rows])
+
+-- | Plan 166 Stage 4: scoped caller counts from the @caller_count_scoped@ Datalog output.
+queryCallerCountScoped :: DuckConn -> IO (Map.Map (Text, Text) Int)
+queryCallerCountScoped conn = do
+  rows <- query_ conn "SELECT callee_obj, callee_proc, CAST(n AS INTEGER) FROM caller_count_scoped" :: IO [TextTextInt]
+  pure (Map.fromList [((obj, proc_), n) | TextTextInt obj proc_ n <- rows])
 
 -- | Plan 148 Phase 1b: SchemaCategory read-side queries.
 queryDwRetrieveColumns :: DuckConn -> IO [DwRetrieveColRow]

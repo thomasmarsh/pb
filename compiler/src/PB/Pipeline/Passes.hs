@@ -18,6 +18,7 @@ import PB.Pipeline.DuckDb
   , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
   , queryProcDefs, queryProcUses, queryResolvedCalls
   , queryTaintInputs, queryProcInfos, queryProcDead
+  , queryCallerCountNaive, queryCallerCountScoped
   , queryDwRetrieveColumns, queryDwWriteColumns, queryDwWhereColumns
   , queryDwJoinLegs, querySqlCols
   , queryCatFootprintColumns
@@ -33,7 +34,6 @@ import PB.Pipeline.DuckDb
 import Data.Aeson          (Value (..), encode, object, (.=))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
-import qualified Data.Text       as T
 import System.IO           (hFlush, stderr)
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
@@ -43,10 +43,6 @@ emitProgress :: Value -> IO ()
 emitProgress v = do
   BS.hPut stderr (BSL.toStrict (encode v) <> "\n")
   hFlush stderr
-
--- | Last dot-separated segment of a dotted name, e.g. "dw.setfocus" → "setfocus".
-lastName :: Text -> Text
-lastName t = T.takeWhileEnd (/= '.') t
 
 -- | Shared per-relation progress callback for 'Souffle.runRuleSetWith' calls
 -- across passes 8 and 11 -- see 'runPass11'\'s doc comment for why one event
@@ -64,8 +60,8 @@ runPhaseB :: DuckConn -> Maybe Text -> IO ()
 runPhaseB conn mDefaultNamespace = do
   emitProgress (object ["tag" .= ("phase" :: Text), "name" .= ("B" :: Text)])
   _    <- runPass5  conn
-  allRC <- runPass67 conn
-  runPass8 conn allRC
+  runPass67 conn
+  runPass8 conn
   sch   <- runPass9 conn mDefaultNamespace
   runPass10 conn sch
   runPass11 conn
@@ -83,7 +79,7 @@ runPass5 conn = do
   pure inh
 
 -- | Pass 6+7: compute interproc edges and taint ONCE corpus-wide (not once per file).
-runPass67 :: DuckConn -> IO [Taint.ResolvedCallRow]
+runPass67 :: DuckConn -> IO ()
 runPass67 conn = do
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Building call graph" :: Text)])
   gvs  <- queryGlobalVars     conn
@@ -108,7 +104,7 @@ runPass67 conn = do
   appendTaintSinks       conn allSinks
   appendTaintPaths       conn allPaths
   appendTaintAnnotations conn allAnnotations
-  pure allRC
+  pure ()
 
 -- | Pass 8 (Plan 161 Phase 2b cutover, 2026-07-11): dead-code detection.
 -- Reachability itself is Datalog now (@proc_reachable@\/@proc_dead@, via
@@ -122,21 +118,17 @@ runPass67 conn = do
 -- @proc_dead@ back and classify confidence\/caller-counts in Haskell
 -- ('DeadCode.classifyDeadProcedures') -- the one piece with no Datalog
 -- equivalent, since it's report formatting, not a fixpoint query.
-runPass8 :: DuckConn -> [Taint.ResolvedCallRow] -> IO ()
-runPass8 conn allRC = do
+runPass8 :: DuckConn -> IO ()
+runPass8 conn = do
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Dead code detection" :: Text)])
   procs <- queryProcInfos conn
   DeadCodeRules.initDeadReachEdbViews conn
-  Souffle.runRuleSetWith souffleProgress conn DeadCodeRules.deadReachRules
-  deadSet <- queryProcDead conn
-  let rawCalls      = [ (Taint.rcrObject r, Taint.rcrFromProc r, lastName (Taint.rcrToName r))
-                      | r <- allRC ]
-      resolvedCalls = [ (Taint.rcrObject r, Taint.rcrFromProc r, o, p)
-                      | r <- allRC
-                      , Just o <- [Taint.rcrTargetObject r]
-                      , Just p <- [Taint.rcrTargetProc   r]
-                      ]
-      dead = DeadCode.classifyDeadProcedures deadSet procs rawCalls resolvedCalls
+  Souffle.runRuleSets souffleProgress conn
+    [DeadCodeRules.deadReachRules, DeadCodeRules.callerCountRules]
+  deadSet      <- queryProcDead conn
+  naiveCounts  <- queryCallerCountNaive  conn
+  scopedCounts <- queryCallerCountScoped conn
+  let dead = DeadCode.classifyDeadProcedures deadSet procs naiveCounts scopedCounts
   appendDeadCode conn dead
 
 -- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157

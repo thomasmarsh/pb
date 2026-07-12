@@ -3,6 +3,7 @@ module DeadCodeTest (tests) where
 import PB.Prelude
 import PB.Analysis.DeadCode
 import PB.Analysis.Cfg  (Cfg (..), CfgBlock (..), CfgEdge (..), cyclomaticComplexity)
+import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -28,46 +29,46 @@ tests = testGroup "DeadCode"
     ]
   , testGroup "classifyDeadProcedures"
     [ testCase "empty dead set produces no dead procedures" $
-        classifyDeadProcedures Set.empty [procFn] [] [] @?= []
+        classifyDeadProcedures Set.empty [procFn] Map.empty Map.empty @?= []
 
     , testCase "a procedure in the dead set appears in the output" $
-        let dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) [procFn] [] []
+        let dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) [procFn] Map.empty Map.empty
         in  map (\d -> (dpObject d, dpName d)) dead @?= [("obj", "fn")]
 
     , testCase "a procedure not in the dead set is excluded" $
-        classifyDeadProcedures (Set.singleton ("obj", "other")) [procFn] [] [] @?= []
+        classifyDeadProcedures (Set.singleton ("obj", "other")) [procFn] Map.empty Map.empty @?= []
 
     , testCase "confidence high when no callers at all" $
-        let dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) [procFn] [] []
+        let dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) [procFn] Map.empty Map.empty
         in case dead of
           [d] -> dpConfidence d @?= "high"
           _   -> assertFailure ("expected 1 dead proc, got " <> show (length dead))
 
     , testCase "confidence medium when naive callers but no scoped resolution" $
         let dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) [procFn]
-              [("other_obj", "other", "fn")] []
+              (Map.singleton "fn" 1) Map.empty
         in case dead of
           [d] -> dpConfidence d @?= "medium"
           _   -> assertFailure ("expected 1 dead proc, got " <> show (length dead))
 
     , testCase "confidence low when a scoped (resolved) caller exists" $
         let dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) [procFn]
-              [("other_obj", "other", "fn")]
-              [("other_obj", "other", "obj", "fn")]
+              (Map.singleton "fn" 1)
+              (Map.singleton ("obj", "fn") 1)
         in case dead of
           [d] -> dpConfidence d @?= "low"
           _   -> assertFailure ("expected 1 dead proc, got " <> show (length dead))
 
     , testCase "caller counts reflect naive and scoped tallies" $
         let dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) [procFn]
-              [("a", "x", "fn"), ("b", "y", "fn")]
-              [("a", "x", "obj", "fn")]
+              (Map.singleton "fn" 2)
+              (Map.singleton ("obj", "fn") 1)
         in case dead of
           [d] -> (dpCallerCountNaive d, dpCallerCountScoped d) @?= (2, 1)
           _   -> assertFailure ("expected 1 dead proc, got " <> show (length dead))
 
     , testCase "cyclomatic complexity passes through unchanged" $
-        let dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) [procFn] [] []
+        let dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) [procFn] Map.empty Map.empty
         in case dead of
           [d] -> dpCyclomatic d @?= Just 2
           _   -> assertFailure ("expected 1 dead proc, got " <> show (length dead))
@@ -77,7 +78,7 @@ tests = testGroup "DeadCode"
               [ ProcInfo "obj" "fn" "function" (Just 1)
               , ProcInfo "obj" "fn" "function" (Just 3)
               ]
-            dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) overloads [] []
+            dead = classifyDeadProcedures (Set.singleton ("obj", "fn")) overloads Map.empty Map.empty
         in length dead @?= 1
 
     , testCase "sorted by object then name" $
@@ -85,7 +86,7 @@ tests = testGroup "DeadCode"
               (Set.fromList [("obj_z", "fn_b"), ("obj_a", "fn_a")])
               [ ProcInfo "obj_z" "fn_b" "function" Nothing
               , ProcInfo "obj_a" "fn_a" "function" Nothing
-              ] [] []
+              ] Map.empty Map.empty
         in map dpObject dead @?= ["obj_a", "obj_z"]
     ]
   ]

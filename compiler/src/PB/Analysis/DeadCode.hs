@@ -43,28 +43,20 @@ data DeadProcedure = DeadProcedure
 -- back from DuckDB and passes it in as 'deadSet'. What's left here is
 -- genuinely Haskell-only: confidence/caller-count classification has no
 -- Datalog equivalent (it's a report-formatting concern, not a fixpoint
--- query) and still needs 'calls'\/'resolved' for the naive\/scoped caller
--- counts. 'inherits'\/@dwObjects@ are gone from the signature -- they were
--- only ever used to seed\/extend the BFS, which no longer happens here.
+-- query).
+--
+-- Plan 166 Stage 4: caller counts are now pre-computed by Soufflé
+-- ('callerCountRules' in 'PB.Pipeline.Rules.DeadCode') and read back as
+-- 'Map.Map' arguments, replacing the raw call lists that used to be
+-- aggregated internally.
 classifyDeadProcedures
   :: Set.Set (Text, Text)       -- ^ dead (object, proc) pairs, from @proc_dead@
   -> [ProcInfo]                 -- ^ all procedures
-  -> [(Text, Text, Text)]       -- ^ raw calls: (object, from_proc, to_name)
-  -> [(Text, Text, Text, Text)] -- ^ resolved calls: (object, from_proc, target_object, target_proc)
+  -> Map.Map Text Int           -- ^ naive caller counts (callee_name -> count), from @caller_count_naive@
+  -> Map.Map (Text, Text) Int   -- ^ scoped caller counts ((object, proc) -> count), from @caller_count_scoped@
   -> [DeadProcedure]
-classifyDeadProcedures deadSet procedures calls resolved =
-  let -- Compute caller counts for dead procedures
-      naiveMap = Map.fromListWith Set.union
-        [ (T.toLower toName, Set.singleton (obj, fromProc))
-        | (obj, fromProc, toName) <- calls
-        ]
-
-      scopedMap = Map.fromListWith (+)
-        [ ((tgtObj, tgtProc), 1 :: Int)
-        | (_, _, tgtObj, tgtProc) <- resolved
-        ]
-
-      -- Collect dead procedures (deduplicate on (object, name) —
+classifyDeadProcedures deadSet procedures naiveCounts scopedCounts =
+  let -- Collect dead procedures (deduplicate on (object, name) --
       -- overloaded functions may produce multiple ProcInfo entries).
       deadMap = Map.fromListWith (\a _b -> a)
         [ ((piObject p, piName p), DeadProcedure
@@ -73,15 +65,15 @@ classifyDeadProcedures deadSet procedures calls resolved =
               , dpProcType = piProcType p
               , dpCyclomatic = piCyclomatic p
               , dpConfidence =
-                  let naive = Set.size (Map.findWithDefault Set.empty (T.toLower (piName p)) naiveMap)
-                      scoped = Map.findWithDefault 0 (piObject p, piName p) scopedMap
+                  let naive  = Map.findWithDefault 0 (T.toLower (piName p)) naiveCounts
+                      scoped = Map.findWithDefault 0 (piObject p, piName p) scopedCounts
                   in if naive == 0 then "high"
                      else if scoped == 0 then "medium"
                      else "low"
               , dpCallerCountNaive =
-                  Set.size (Map.findWithDefault Set.empty (T.toLower (piName p)) naiveMap)
+                  Map.findWithDefault 0 (T.toLower (piName p)) naiveCounts
               , dpCallerCountScoped =
-                  Map.findWithDefault 0 (piObject p, piName p) scopedMap
+                  Map.findWithDefault 0 (piObject p, piName p) scopedCounts
               })
         | p <- procedures
         , (piObject p, piName p) `Set.member` deadSet

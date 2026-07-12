@@ -12,6 +12,9 @@
 -- required building out by hand).
 module PB.Pipeline.Souffle
   ( Relation (..)
+  , symRelation
+  , colNames
+  , Aggregate (..)
   , Literal (..)
   , Rule (..)
   , RuleSet (..)
@@ -44,19 +47,43 @@ import qualified Data.Set as Set
 -- | A named relation with its column names, in positional order. For an IDB
 -- relation this also names the DuckDB table 'runRuleSet' creates; for an
 -- EDB relation it names an existing table or a view 'initEdbViews' creates
--- over one.
+-- over one. Each column is a @(name, type)@ pair -- type defaults to
+-- @"symbol"@ for every existing caller; use @(name, \"unsigned\")@ for
+-- aggregate-output columns.
 data Relation = Relation
   { relName :: Text
-  , relCols :: [Text]
+  , relCols :: [(Text, Text)]
   } deriving (Eq, Ord, Show)
+
+-- | Convenience constructor: all columns are @symbol@.
+symRelation :: Text -> [Text] -> Relation
+symRelation name cols = Relation name [ (c, "symbol") | c <- cols ]
+
+-- | Extract column names only (dropping types).
+colNames :: Relation -> [Text]
+colNames = map fst . relCols
+
+-- | An aggregate binding in a rule body: @N = count : { witnessRel(args) }@.
+-- Souffle syntax: the aggregate variable is bound to the result of the
+-- aggregate function applied over the witness relation's matching rows.
+data Aggregate = Aggregate
+  { aggFunc :: Text          -- ^ aggregate function name (e.g. "count")
+  , aggWitness :: Relation  -- ^ the witness relation to aggregate over
+  , aggWitnessArgs :: [Text] -- ^ args to the witness relation (positionally aligned to aggWitness's columns)
+  } deriving (Eq, Show)
 
 -- | One literal in a rule body (or the head). 'litArgs' are variable names
 -- or the wildcard @"_"@, positionally aligned to 'relCols' of 'litRelation'
 -- (same arity -- mismatched lengths are a malformed 'Rule').
+--
+-- When 'litAggregate' is @Just agg@, the literal renders as an aggregate
+-- binding: @N = count : { witnessRel(args) }@ (the head's corresponding
+-- position carries the bound variable name @N@). Only valid in a rule body.
 data Literal = Literal
-  { litRelation :: Relation
-  , litArgs     :: [Text]
-  , litNegated  :: Bool
+  { litRelation  :: Relation
+  , litArgs      :: [Text]
+  , litNegated   :: Bool
+  , litAggregate :: Maybe Aggregate
   } deriving (Eq, Show)
 
 -- | One Horn clause: @ruleHead :- ruleBody@. 'litNegated' on 'ruleHead' is
@@ -82,31 +109,43 @@ data RuleSet = RuleSet
 -- Souffle needs a @.facts@ file for each one, even an empty one (a missing
 -- fact file for a declared @.input@ relation is a hard Souffle error).
 edbRelations :: RuleSet -> [Relation]
-edbRelations rs = List.nub
+edbRelations rs = List.nub $
   [ litRelation lit
   | r <- rsRules rs
   , lit <- ruleHead r : ruleBody r
+  , isNothing (litAggregate lit)
   , litRelation lit `notElem` rsRelations rs
+  ]
+  <>
+  [ aggWitness agg
+  | r <- rsRules rs
+  , lit <- ruleBody r
+  , Just agg <- [litAggregate lit]
+  , aggWitness agg `notElem` rsRelations rs
   ]
 
 -- | Render one literal as Souffle syntax: @relName(arg1, arg2, ...)@,
 -- negated literals prefixed with @!@. The wildcard @"_"@ passes through
 -- unchanged -- Souffle uses the same convention for anonymous variables
--- this IR already does.
+-- this IR already does. An aggregate binding renders as
+-- @N = count : { witnessRel(args) }@ -- 'litArgs' carries the bound
+-- variable name(s), 'litAggregate' carries the function and witness.
 renderLiteral :: Literal -> Text
-renderLiteral (Literal rel args neg) =
+renderLiteral (Literal rel args neg Nothing) =
   (if neg then "!" else "") <> relName rel <> "(" <> T.intercalate ", " args <> ")"
+renderLiteral (Literal _ args _neg (Just (Aggregate func witRel witArgs))) =
+  T.intercalate ", " args
+  <> " = " <> func <> " : { " <> relName witRel <> "(" <> T.intercalate ", " witArgs <> ") }"
 
 renderRule :: Rule -> Text
 renderRule (Rule hd body) =
   renderLiteral hd <> " :- " <> T.intercalate ", " (map renderLiteral body) <> "."
 
--- | Every column is declared @symbol@ (Souffle's string type) -- every
--- value this project currently feeds through (schema keys, kinds, object
--- names) is already string-shaped; see this module's own header comment.
+-- | Every column is declared with its explicit type (default @symbol@ for
+-- most relations; @unsigned@ for aggregate-output columns like @count@).
 declOf :: Relation -> Text
 declOf rel = ".decl " <> relName rel <> "("
-  <> T.intercalate ", " [ c <> ": symbol" | c <- relCols rel ] <> ")"
+  <> T.intercalate ", " [ n <> ": " <> t | (n, t) <- relCols rel ] <> ")"
 
 -- | Render a full @.dl@ program: @.decl@/@.input@ for every EDB relation,
 -- @.decl@/@.output@ + translated rules for every IDB relation
@@ -142,7 +181,7 @@ runRuleSetWith onRelation conn rs =
     createDirectoryIfMissing True factsDir
     createDirectoryIfMissing True outDir
     for_ (edbRelations rs) $ \rel -> do
-      rows <- queryTextRows conn (relName rel) (relCols rel)
+      rows <- queryTextRows conn (relName rel) (colNames rel)
       writeFile (factsDir </> T.unpack (relName rel) <> ".facts")
         (T.unlines [ T.intercalate "\t" row | row <- rows ])
     writeFile progFile (compileProgram rs)
@@ -156,7 +195,7 @@ runRuleSetWith onRelation conn rs =
       onRelation rel
       contents <- readFile (outDir </> T.unpack (relName rel) <> ".csv")
       let rows = [ T.splitOn "\t" line | line <- T.lines contents, not (T.null line) ]
-      recreateTextTable conn (relName rel) (relCols rel)
+      recreateTextTable conn (relName rel) (colNames rel)
       appendTextRows conn (relName rel) rows
 
 

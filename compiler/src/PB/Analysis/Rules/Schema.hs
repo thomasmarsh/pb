@@ -10,7 +10,7 @@ module PB.Analysis.Rules.Schema
 
 import PB.Prelude
 
-import PB.Pipeline.Souffle (Relation (..), Literal (..), Rule (..), RuleSet (..))
+import PB.Pipeline.Souffle (Relation (..), symRelation, Literal (..), Rule (..), RuleSet (..))
 import PB.Pipeline.DuckDb (DuckConn)
 import Database.DuckDB.Simple (Query (..), execute_)
 
@@ -57,8 +57,8 @@ initEdbViews conn = for_ views (void . execute_ conn)
 -- Concrete program
 
 legRel, reachesRel :: Relation
-legRel     = Relation "leg" ["x", "y", "leg_kind"]
-reachesRel = Relation "reaches" ["x", "y"]
+legRel     = symRelation "leg" ["x", "y", "leg_kind"]
+reachesRel = symRelation "reaches" ["x", "y"]
 
 -- | @reaches(X,Y) :- leg(X,Y,_).@
 -- @reaches(X,Z) :- reaches(X,Y), leg(Y,Z,_).@
@@ -70,11 +70,11 @@ reachesRules :: RuleSet
 reachesRules = RuleSet
   { rsRelations = [reachesRel]
   , rsRules =
-      [ Rule (Literal reachesRel ["x", "y"] False)
-             [ Literal legRel ["x", "y", "_"] False ]
-      , Rule (Literal reachesRel ["x", "z"] False)
-             [ Literal reachesRel ["x", "y"] False
-             , Literal legRel ["y", "z", "_"] False
+      [ Rule (Literal reachesRel ["x", "y"] False Nothing)
+             [ Literal legRel ["x", "y", "_"] False Nothing ]
+      , Rule (Literal reachesRel ["x", "z"] False Nothing)
+             [ Literal reachesRel ["x", "y"] False Nothing
+             , Literal legRel ["y", "z", "_"] False Nothing
              ]
       ]
   }

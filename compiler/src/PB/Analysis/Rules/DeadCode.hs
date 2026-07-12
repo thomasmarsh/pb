@@ -12,11 +12,14 @@ module PB.Analysis.Rules.DeadCode
   ( initDeadReachEdbViews
   , deadReachRules
   , liveProcRules
+  , callerCountRules
+  , callRefRel
+  , resolvedCallEdgeRel
   ) where
 
 import PB.Prelude
 
-import PB.Pipeline.Souffle (Relation (..), Literal (..), Rule (..), RuleSet (..))
+import PB.Pipeline.Souffle (Relation (..), symRelation, Aggregate (..), Literal (..), Rule (..), RuleSet (..))
 import PB.Pipeline.DuckDb (DuckConn)
 import Database.DuckDB.Simple (Query (..), execute_)
 
@@ -24,8 +27,8 @@ import Database.DuckDB.Simple (Query (..), execute_)
 -- liveProcRules
 
 stmtRel, liveProcRel :: Relation
-stmtRel     = Relation "stmt" ["file", "object", "proc", "line"]
-liveProcRel = Relation "live_proc" ["object", "proc"]
+stmtRel     = symRelation "stmt" ["file", "object", "proc", "line"]
+liveProcRel = symRelation "live_proc" ["object", "proc"]
 
 -- | @live_proc(Object,Proc) :- stmt(_,Object,Proc,_), !proc_dead(Object,Proc).@
 --
@@ -42,9 +45,9 @@ liveProcRules :: RuleSet
 liveProcRules = RuleSet
   { rsRelations = [liveProcRel]
   , rsRules =
-      [ Rule (Literal liveProcRel ["object", "proc"] False)
-             [ Literal stmtRel ["_", "object", "proc", "_"] False
-             , Literal procDeadRel ["object", "proc"] True
+      [ Rule (Literal liveProcRel ["object", "proc"] False Nothing)
+             [ Literal stmtRel ["_", "object", "proc", "_"] False Nothing
+             , Literal procDeadRel ["object", "proc"] True Nothing
              ]
       ]
   }
@@ -109,17 +112,85 @@ initDeadReachEdbViews conn = for_ views (void . execute_ conn)
         \WHERE r.target_object IS NOT NULL AND r.target_proc IS NOT NULL"
       , "CREATE OR REPLACE VIEW inherits AS \
         \SELECT object AS child, ancestor AS parent FROM objects WHERE ancestor IS NOT NULL"
+      , "CREATE OR REPLACE VIEW call_ref AS \
+        \SELECT DISTINCT object AS caller_obj, from_proc AS caller_proc, \
+        \LOWER(regexp_extract(to_name, '[^.]*$')) AS callee_name \
+        \FROM resolved_calls"
+      , "CREATE OR REPLACE VIEW resolved_call_edge AS \
+        \SELECT object AS caller_obj, from_proc AS caller_proc, \
+        \target_object AS callee_obj, target_proc AS callee_proc, \
+        \COALESCE(CAST(line AS VARCHAR), '') AS line \
+        \FROM resolved_calls \
+        \WHERE target_object IS NOT NULL AND target_proc IS NOT NULL"
       ]
 
+-- | 'callRefRel' deliberately has NO @line@ column, unlike
+-- 'resolvedCallEdgeRel'. Soufflé relations are sets: a witness relation's
+-- own column shape determines what counts as a "distinct" fact. Naive
+-- caller counts must dedupe by (caller_obj, caller_proc) regardless of how
+-- many lines/times that pair references the same callee name (matching the
+-- original Haskell @Set.union@/@Set.singleton@ dedup) -- keeping @line@ out
+-- of this relation entirely is what makes that dedup happen for free at
+-- fact-load time, since a Soufflé @count : { ... }@ aggregate counts
+-- matching ROWS of the witness relation regardless of which of its columns
+-- are named vs. wildcarded in the query (verified empirically against the
+-- @souffle@ CLI: wildcarding a present column does NOT project/dedupe it
+-- away). 'resolvedCallEdgeRel' keeps @line@ because the scoped count must
+-- NOT dedupe -- it counts every call site, matching the original Haskell
+-- @Map.fromListWith (+)@ which added 1 per row with no distinctness check.
+callRefRel, resolvedCallEdgeRel :: Relation
+callRefRel          = symRelation "call_ref"           ["caller_obj", "caller_proc", "callee_name"]
+resolvedCallEdgeRel = symRelation "resolved_call_edge"  ["caller_obj", "caller_proc", "callee_obj", "callee_proc", "line"]
+
+-- ---------------------------------------------------------------------------
+-- Plan 166 Stage 4: caller counts as Soufflé aggregates.
+
+hasNaiveCallerRel, hasScopedCallerRel, callerCountNaiveRel, callerCountScopedRel :: Relation
+hasNaiveCallerRel    = symRelation "has_naive_caller"    ["callee_name"]
+hasScopedCallerRel   = symRelation "has_scoped_caller"   ["callee_obj", "callee_proc"]
+callerCountNaiveRel  = Relation "caller_count_naive" [("callee_name", "symbol"), ("n", "number")]
+callerCountScopedRel = Relation "caller_count_scoped" [("callee_obj", "symbol"), ("callee_proc", "symbol"), ("n", "number")]
+
+-- | @has_naive_caller(CalleeName) :- call_ref(_,_,CalleeName).@
+-- @has_scoped_caller(Obj,Proc) :- resolved_call_edge(_,_,Obj,Proc,_).@
+-- @caller_count_naive(CalleeName, N) :- has_naive_caller(CalleeName), N = count : { call_ref(_,_,CalleeName) }.@
+-- @caller_count_scoped(Obj, Proc, N) :- has_scoped_caller(Obj,Proc), N = count : { resolved_call_edge(_,_,Obj,Proc,L) }.@
+--
+-- Plan 166 Stage 4: caller counts moved into Datalog so
+-- 'DeadCode.classifyDeadProcedures' reads pre-computed maps instead of
+-- building them from raw call lists. The scoped aggregate's trailing
+-- @line@-position column is bound to a real variable @L@ (not @_@) so
+-- each call site is a distinct witness row (see 'resolvedCallEdgeRel'\'s
+-- doc comment for why this matters and why the naive aggregate has no
+-- such column at all).
+callerCountRules :: RuleSet
+callerCountRules = RuleSet
+  { rsRelations = [hasNaiveCallerRel, hasScopedCallerRel, callerCountNaiveRel, callerCountScopedRel]
+  , rsRules =
+      [ Rule (Literal hasNaiveCallerRel ["callee_name"] False Nothing)
+             [ Literal callRefRel ["_", "_", "callee_name"] False Nothing ]
+      , Rule (Literal hasScopedCallerRel ["callee_obj", "callee_proc"] False Nothing)
+             [ Literal resolvedCallEdgeRel ["_", "_", "callee_obj", "callee_proc", "_"] False Nothing ]
+      , Rule (Literal callerCountNaiveRel ["callee_name", "n"] False Nothing)
+             [ Literal hasNaiveCallerRel ["callee_name"] False Nothing
+             , Literal callRefRel ["n"] False (Just (Aggregate "count" callRefRel ["_", "_", "callee_name"]))
+             ]
+      , Rule (Literal callerCountScopedRel ["callee_obj", "callee_proc", "n"] False Nothing)
+             [ Literal hasScopedCallerRel ["callee_obj", "callee_proc"] False Nothing
+             , Literal resolvedCallEdgeRel ["n"] False (Just (Aggregate "count" resolvedCallEdgeRel ["_", "_", "callee_obj", "callee_proc", "l"]))
+             ]
+      ]
+  }
+
 procRel, entryRel, callsRel, inheritsRel, descendantRel, overrideEdgeRel, procReachableRel, procDeadRel :: Relation
-procRel          = Relation "proc"           ["object", "proc"]
-entryRel         = Relation "entry"          ["object", "proc"]
-callsRel         = Relation "calls"          ["caller_obj", "caller_proc", "callee_obj", "callee_proc"]
-inheritsRel      = Relation "inherits"       ["child", "parent"]
-descendantRel    = Relation "descendant"     ["child", "parent"]
-overrideEdgeRel  = Relation "override_edge"  ["child_obj", "method", "parent_obj"]
-procReachableRel = Relation "proc_reachable" ["object", "proc"]
-procDeadRel      = Relation "proc_dead"      ["object", "proc"]
+procRel          = symRelation "proc"           ["object", "proc"]
+entryRel         = symRelation "entry"          ["object", "proc"]
+callsRel         = symRelation "calls"          ["caller_obj", "caller_proc", "callee_obj", "callee_proc"]
+inheritsRel      = symRelation "inherits"       ["child", "parent"]
+descendantRel    = symRelation "descendant"     ["child", "parent"]
+overrideEdgeRel  = symRelation "override_edge"  ["child_obj", "method", "parent_obj"]
+procReachableRel = symRelation "proc_reachable" ["object", "proc"]
+procDeadRel      = symRelation "proc_dead"      ["object", "proc"]
 
 -- | @proc_reachable(Object,Proc) :- entry(Object,Proc).@
 -- @proc_reachable(Object,Proc) :- proc_reachable(CObj,CProc), calls(CObj,CProc,Object,Proc).@
@@ -145,31 +216,31 @@ deadReachRules = RuleSet
         -- derived override triple. descendant replaces the private BFS that
         -- used to live in PB.Analysis.DeadCode.computeOverrideEdges;
         -- override_edge is the join that BFS's output encoded.
-        Rule (Literal descendantRel ["child", "parent"] False)
-             [ Literal inheritsRel ["child", "parent"] False ]
-      , Rule (Literal descendantRel ["child", "gp"] False)
-             [ Literal inheritsRel ["child", "parent"] False
-             , Literal descendantRel ["parent", "gp"] False
+        Rule (Literal descendantRel ["child", "parent"] False Nothing)
+             [ Literal inheritsRel ["child", "parent"] False Nothing ]
+      , Rule (Literal descendantRel ["child", "gp"] False Nothing)
+             [ Literal inheritsRel ["child", "parent"] False Nothing
+             , Literal descendantRel ["parent", "gp"] False Nothing
              ]
-      , Rule (Literal overrideEdgeRel ["child_obj", "method", "parent_obj"] False)
-             [ Literal procRel ["parent_obj", "method"] False
-             , Literal descendantRel ["child_obj", "parent_obj"] False
-             , Literal procRel ["child_obj", "method"] False
+      , Rule (Literal overrideEdgeRel ["child_obj", "method", "parent_obj"] False Nothing)
+             [ Literal procRel ["parent_obj", "method"] False Nothing
+             , Literal descendantRel ["child_obj", "parent_obj"] False Nothing
+             , Literal procRel ["child_obj", "method"] False Nothing
              ]
       , -- Reachability: seed from entries, walk calls, fold in override edges.
-        Rule (Literal procReachableRel ["object", "proc"] False)
-             [ Literal entryRel ["object", "proc"] False ]
-      , Rule (Literal procReachableRel ["object", "proc"] False)
-             [ Literal procReachableRel ["cobj", "cproc"] False
-             , Literal callsRel ["cobj", "cproc", "object", "proc"] False
+        Rule (Literal procReachableRel ["object", "proc"] False Nothing)
+             [ Literal entryRel ["object", "proc"] False Nothing ]
+      , Rule (Literal procReachableRel ["object", "proc"] False Nothing)
+             [ Literal procReachableRel ["cobj", "cproc"] False Nothing
+             , Literal callsRel ["cobj", "cproc", "object", "proc"] False Nothing
              ]
-      , Rule (Literal procReachableRel ["childobj", "method"] False)
-             [ Literal procReachableRel ["parentobj", "method"] False
-             , Literal overrideEdgeRel ["childobj", "method", "parentobj"] False
+      , Rule (Literal procReachableRel ["childobj", "method"] False Nothing)
+             [ Literal procReachableRel ["parentobj", "method"] False Nothing
+             , Literal overrideEdgeRel ["childobj", "method", "parentobj"] False Nothing
              ]
-      , Rule (Literal procDeadRel ["object", "proc"] False)
-             [ Literal procRel ["object", "proc"] False
-             , Literal procReachableRel ["object", "proc"] True
+      , Rule (Literal procDeadRel ["object", "proc"] False Nothing)
+             [ Literal procRel ["object", "proc"] False Nothing
+             , Literal procReachableRel ["object", "proc"] True Nothing
              ]
       ]
   }
