@@ -1,5 +1,7 @@
 -- | Engine adapter for Datalog rule sets: the engine-agnostic
--- 'Relation'\/'Literal'\/'Rule'\/'RuleSet' IR, plus a Souffle CLI backend
+-- 'Relation'\/'Rule'\/'RuleSet' IR (rules are literal Souffle text plus an
+-- explicit relation-reference list, not a typed literal AST -- see 'Rule'),
+-- plus a Souffle CLI backend
 -- ('compileProgram' renders a @.dl@ program; 'runRuleSet'\/'runRuleSetWith'
 -- export EDB facts, shell out to @souffle@ interpreted mode, and import IDB
 -- output back into DuckDB tables; 'orderRuleSets'\/'runRuleSets'
@@ -11,8 +13,6 @@ module PB.Pipeline.Souffle
   ( Relation (..)
   , symRelation
   , colNames
-  , Aggregate (..)
-  , Literal (..)
   , Rule (..)
   , RuleSet (..)
   , edbRelations
@@ -61,50 +61,21 @@ symRelation name cols = Relation name [ (c, "symbol") | c <- cols ]
 colNames :: Relation -> [Text]
 colNames = map fst . relCols
 
--- | An aggregate binding in a rule body: @N = count : { witnessRel(args) }@.
--- Souffle syntax: the aggregate variable is bound to the result of the
--- aggregate function applied over the witness relation's matching rows.
-data Aggregate = Aggregate
-  { aggFunc :: Text          -- ^ aggregate function name (e.g. "count")
-  , aggWitness :: Relation  -- ^ the witness relation to aggregate over
-  , aggWitnessArgs :: [Text] -- ^ args to the witness relation (positionally aligned to aggWitness's columns)
-  } deriving (Eq, Show)
-
--- | One literal in a rule body (or the head). When 'litAggregate' is
--- 'Nothing', 'litArgs' are variable names or the wildcard @"_"@,
--- positionally aligned to 'relCols' of 'litRelation' (same arity --
--- mismatched lengths are a malformed 'Rule').
+-- | One Horn clause, as literal Souffle syntax (no trailing @.@ --
+-- 'renderRule' appends it) -- e.g. @"reaches(x, z) :- reaches(x, y), leg(y,
+-- z, _)"@, or, using Souffle's own aggregate/negation/arithmetic syntax
+-- directly, @"n = count : { call_ref(_, _, callee_name) }"@ or
+-- @"!has_scoped_caller(object, proc)"@ in a body position.
 --
--- When 'litAggregate' is @Just agg@, the literal renders as an aggregate
--- binding: @N = count : { witnessRel(args) }@ (the head's corresponding
--- position carries the bound variable name @N@). Only valid in a rule
--- body. In this case 'litArgs' holds the bound result variable(s), NOT
--- 'litRelation'\'s own column args -- the two need not (and typically
--- won't) share an arity, since 'litRelation' is not read by 'renderLiteral'
--- or by 'edbRelations' for an aggregate literal (see their @Just agg@
--- branches). Construction sites conventionally set 'litRelation' to
--- 'aggWitness' as a harmless placeholder, but nothing depends on that.
---
--- The @LitBare@ alternative renders its 'Text' argument verbatim as a body
--- atom (e.g. @"n != s"@, @"d = dprev + 1"@) and contributes NO EDB
--- relation -- it is for Souffle's native comparison/arithmetic operators,
--- which have no relation form the IR could otherwise name. Added Plan 161
--- Phase 2c for cosliceRules' @min_dist@ guard and arithmetic.
-data Literal
-  = Literal
-  { litRelation  :: Relation
-  , litArgs      :: [Text]
-  , litNegated   :: Bool
-  , litAggregate :: Maybe Aggregate
-  }
-  | LitBare Text
-  deriving (Eq, Show)
-
--- | One Horn clause: @ruleHead :- ruleBody@. 'litNegated' on 'ruleHead' is
--- always 'False'.
+-- 'ruleRefs' names every relation the clause mentions -- head, body, and
+-- any aggregate witness. 'edbRelations' and 'orderRuleSets' read this list
+-- (not 'ruleText') to infer EDB/IDB membership and cross-'RuleSet'
+-- dependency edges, so it must be kept in sync with 'ruleText' by the
+-- caller: a relation mentioned only in a negated, aggregated, or otherwise
+-- non-head position still belongs here.
 data Rule = Rule
-  { ruleHead :: Literal
-  , ruleBody :: [Literal]
+  { ruleText :: Text
+  , ruleRefs :: [Relation]
   } deriving (Eq, Show)
 
 -- | A whole program: every derived (IDB) relation it defines, and every
@@ -132,45 +103,16 @@ data RuleSet = RuleSet
 -- Souffle needs a @.facts@ file for each one, even an empty one (a missing
 -- fact file for a declared @.input@ relation is a hard Souffle error).
 edbRelations :: RuleSet -> [Relation]
-edbRelations rs = List.nub $
-  [ litRelation lit
+edbRelations rs = List.nub
+  [ rel
   | r <- rsRules rs
-  , lit <- ruleHead r : ruleBody r
-  , Just lit' <- [isRelationLit lit]
-  , isNothing (litAggregate lit')
-  , litRelation lit' `notElem` rsRelations rs
+  , rel <- ruleRefs r
+  , rel `notElem` rsRelations rs
   ]
-  <>
-  [ aggWitness agg
-  | r <- rsRules rs
-  , lit <- ruleBody r
-  , Just lit' <- [isRelationLit lit]
-  , Just agg <- [litAggregate lit']
-  , aggWitness agg `notElem` rsRelations rs
-  ]
-  where
-    -- 'LitBare' carries no relation (it's a bare operator like "n != s"),
-    -- so it contributes nothing to the EDB set.
-    isRelationLit lit@Literal{} = Just lit
-    isRelationLit LitBare{}    = Nothing
 
--- | Render one literal as Souffle syntax: @relName(arg1, arg2, ...)@,
--- negated literals prefixed with @!@. The wildcard @"_"@ passes through
--- unchanged -- Souffle uses the same convention for anonymous variables
--- this IR already does. An aggregate binding renders as
--- @N = count : { witnessRel(args) }@ -- 'litArgs' carries the bound
--- variable name(s), 'litAggregate' carries the function and witness.
-renderLiteral :: Literal -> Text
-renderLiteral (LitBare t) = t
-renderLiteral (Literal rel args neg Nothing) =
-  (if neg then "!" else "") <> relName rel <> "(" <> T.intercalate ", " args <> ")"
-renderLiteral (Literal _ args _neg (Just (Aggregate func witRel witArgs))) =
-  T.intercalate ", " args
-  <> " = " <> func <> " : { " <> relName witRel <> "(" <> T.intercalate ", " witArgs <> ") }"
-
+-- | Append Souffle's clause-terminating @.@ to a rule's literal text.
 renderRule :: Rule -> Text
-renderRule (Rule hd body) =
-  renderLiteral hd <> " :- " <> T.intercalate ", " (map renderLiteral body) <> "."
+renderRule (Rule t _) = t <> "."
 
 -- | Every column is declared with its explicit type (default @symbol@ for
 -- most relations; @unsigned@ for aggregate-output columns like @count@).

@@ -11,7 +11,7 @@ module PB.Analysis.Rules.Schema
 
 import PB.Prelude
 
-import PB.Pipeline.Souffle (Relation (..), symRelation, Literal (..), Rule (..), RuleSet (..))
+import PB.Pipeline.Souffle (Relation (..), symRelation, Rule (..), RuleSet (..))
 import PB.Pipeline.DuckDb (DuckConn)
 import Database.DuckDB.Simple (Query (..), execute_)
 
@@ -78,12 +78,8 @@ reachesRules :: RuleSet
 reachesRules = RuleSet
   { rsRelations = [reachesRel]
   , rsRules =
-      [ Rule (Literal reachesRel ["x", "y"] False Nothing)
-             [ Literal legRel ["x", "y", "_"] False Nothing ]
-      , Rule (Literal reachesRel ["x", "z"] False Nothing)
-             [ Literal reachesRel ["x", "y"] False Nothing
-             , Literal legRel ["y", "z", "_"] False Nothing
-             ]
+      [ Rule "reaches(x, y) :- leg(x, y, _)" [reachesRel, legRel]
+      , Rule "reaches(x, z) :- reaches(x, y), leg(y, z, _)" [reachesRel, legRel]
       ]
   , rsChoiceDomains = []
   }
@@ -157,23 +153,15 @@ cosliceRules = RuleSet
         -- the seed's own distance-0 tuple from being overwritten before
         -- choice-domain would otherwise lock it in on iteration 0.
         -- Arithmetic @dprev + 1@ is inline in the head (Souffle accepts this).
-        Rule (Literal minDistRel ["s", "s", "0"] False Nothing)
-               [ Literal seedRel ["s"] False Nothing ]
-      , Rule (Literal minDistRel ["s", "n", "dprev + 1"] False Nothing)
-               [ Literal minDistRel ["s", "p", "dprev"] False Nothing
-               , Literal legRel ["p", "n", "_"] False Nothing
-               , LitBare "n != s"
-               ]
+        Rule "min_dist(s, s, 0) :- seed(s)" [minDistRel, seedRel]
+      , Rule "min_dist(s, n, dprev + 1) :- min_dist(s, p, dprev), leg(p, n, _), n != s"
+             [minDistRel, legRel]
 
       -- Backward shortest distance: seed -> node (follows legs REVERSED:
       -- an in-edge TO p is FROM n, hence leg(n, p, _) not leg(p, n, _)).
-      , Rule (Literal minDistBackRel ["s", "s", "0"] False Nothing)
-               [ Literal seedRel ["s"] False Nothing ]
-      , Rule (Literal minDistBackRel ["s", "n", "dprev + 1"] False Nothing)
-               [ Literal minDistBackRel ["s", "p", "dprev"] False Nothing
-               , Literal legRel ["n", "p", "_"] False Nothing
-               , LitBare "n != s"
-               ]
+      , Rule "min_dist_back(s, s, 0) :- seed(s)" [minDistBackRel, seedRel]
+      , Rule "min_dist_back(s, n, dprev + 1) :- min_dist_back(s, p, dprev), leg(n, p, _), n != s"
+             [minDistBackRel, legRel]
 
       -- Forward path legs: two unioned rules express the disjunction
       -- (LT = T ; reaches(LT, T)) -- the same unioned-rules pattern
@@ -181,31 +169,17 @@ cosliceRules = RuleSet
       -- Rule 2 unifies LT with T via the shared variable name in head+body.
       -- @o + 1@ is inline in the min_dist body arg (verified: Souffle
       -- accepts inline arithmetic in body literal arguments).
-      , Rule (Literal pathLegFwdRel ["s", "t", "o", "lf", "lt", "kind"] False Nothing)
-               [ Literal minDistRel ["s", "lf", "o"] False Nothing
-               , Literal legRel ["lf", "lt", "kind"] False Nothing
-               , Literal minDistRel ["s", "lt", "o + 1"] False Nothing
-               , Literal reachesRel ["lt", "t"] False Nothing
-               ]
-      , Rule (Literal pathLegFwdRel ["s", "t", "o", "lf", "t", "kind"] False Nothing)
-               [ Literal minDistRel ["s", "lf", "o"] False Nothing
-               , Literal legRel ["lf", "t", "kind"] False Nothing
-               , Literal minDistRel ["s", "t", "o + 1"] False Nothing
-               ]
+      , Rule "path_leg_fwd(s, t, o, lf, lt, kind) :- min_dist(s, lf, o), leg(lf, lt, kind), min_dist(s, lt, o + 1), reaches(lt, t)"
+             [pathLegFwdRel, minDistRel, legRel, reachesRel]
+      , Rule "path_leg_fwd(s, t, o, lf, t, kind) :- min_dist(s, lf, o), leg(lf, t, kind), min_dist(s, t, o + 1)"
+             [pathLegFwdRel, minDistRel, legRel]
 
       -- Backward path legs (legs oriented in real morphism direction; seed
       -- is the path's TO endpoint, so we look up min_dist_back at lt and lf).
-      , Rule (Literal pathLegBackRel ["s", "t", "o", "lf", "lt", "kind"] False Nothing)
-               [ Literal minDistBackRel ["s", "lt", "o"] False Nothing
-               , Literal legRel ["lf", "lt", "kind"] False Nothing
-               , Literal minDistBackRel ["s", "lf", "o + 1"] False Nothing
-               , Literal reachesRel ["t", "lf"] False Nothing
-               ]
-      , Rule (Literal pathLegBackRel ["s", "t", "o", "t", "lt", "kind"] False Nothing)
-               [ Literal minDistBackRel ["s", "lt", "o"] False Nothing
-               , Literal legRel ["t", "lt", "kind"] False Nothing
-               , Literal minDistBackRel ["s", "t", "o + 1"] False Nothing
-               ]
+      , Rule "path_leg_back(s, t, o, lf, lt, kind) :- min_dist_back(s, lt, o), leg(lf, lt, kind), min_dist_back(s, lf, o + 1), reaches(t, lf)"
+             [pathLegBackRel, minDistBackRel, legRel, reachesRel]
+      , Rule "path_leg_back(s, t, o, t, lt, kind) :- min_dist_back(s, lt, o), leg(t, lt, kind), min_dist_back(s, t, o + 1)"
+             [pathLegBackRel, minDistBackRel, legRel]
       ]
   , rsChoiceDomains =
       [ ("min_dist", ["s", "node"])

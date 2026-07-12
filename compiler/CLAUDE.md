@@ -571,19 +571,27 @@ runPass11 :: DuckConn -> IO ()
 -- itself, though facts DO now round-trip through Haskell once, out to
 -- Souffle's .facts files and back from its .csv output (unlike the old
 -- module, which stayed inside DuckDB via WITH RECURSIVE the whole time).
-data Relation = Relation { relName :: Text, relCols :: [Text] }
--- litArgs are variable names or the wildcard "_", positionally aligned to
--- relCols of litRelation (same arity -- mismatched lengths = malformed Rule).
--- LitBare renders its Text argument verbatim as a body atom (e.g. "n != s",
--- "d = dprev + 1") -- for Souffle's native comparison/arithmetic operators.
-data Literal
-  = Literal { litRelation :: Relation, litArgs :: [Text], litNegated :: Bool }
-  | LitBare Text
-data Rule     = Rule { ruleHead :: Literal, ruleBody :: [Literal] }        -- ruleHead's litNegated always False
+data Relation = Relation { relName :: Text, relCols :: [(Text, Text)] }  -- (name, souffle type), default "symbol"
+-- Rule authoring dropped the Literal/Aggregate typed-AST layer (was:
+-- ruleHead/ruleBody :: Literal, a positional-arg AST rendered by
+-- renderLiteral). It gave no real static safety -- arity/variable-name
+-- consistency between head and body was a documented runtime invariant,
+-- never a type-checked one -- while being strictly more verbose than the
+-- Souffle text it rendered, and it had already grown a LitBare escape
+-- hatch (raw text) for anything Souffle-native (comparisons, arithmetic,
+-- aggregate "N = count : { ... }" syntax) that didn't fit a flat relation
+-- atom. Rules are now literal Souffle clause text plus an explicit
+-- relation-reference list.
+data Rule = Rule { ruleText :: Text, ruleRefs :: [Relation] }
+-- ruleText: one full Horn clause in Souffle syntax, no trailing '.'
+-- ("reaches(x, z) :- reaches(x, y), leg(y, z, _)"). ruleRefs: every
+-- relation the clause mentions (head, body, any aggregate witness) --
+-- edbRelations/orderRuleSets read ONLY this, not ruleText, so it must be
+-- kept in sync by the rule's author.
 data RuleSet  = RuleSet { rsRelations :: [Relation], rsRules :: [Rule] }   -- a relation may have several alternative rules, unioned
 
 edbRelations :: RuleSet -> [Relation]
--- Every relation referenced in any rule's head/body that is NOT in
+-- List.nub of every ruleRefs entry across rsRules that is NOT in
 -- rsRelations (the derived/IDB set) -- these are the EDB relations the
 -- program assumes are already populated. Souffle hard-errors on a missing
 -- .facts file for a declared .input relation, so every one of these gets a

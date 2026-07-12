@@ -2,14 +2,19 @@ module SouffleEngineTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.Souffle
-  ( Relation (..), symRelation, Literal (..), Rule (..), RuleSet (..), orderRuleSets )
+  ( Relation (..), symRelation, Rule (..), RuleSet (..)
+  , orderRuleSets, edbRelations, compileProgram
+  )
 
+import qualified Data.Text as T
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit ((@?=), testCase)
 
 -- Small helpers to build rule sets by relation name, keeping the dependency
 -- tests readable. A rule set "produces" its rsRelations and "consumes" any
--- relation in a rule body that is not an rsRelation.
+-- relation in a rule body that is not an rsRelation. ruleText here is a
+-- placeholder never rendered/run by these tests -- only ruleRefs (what
+-- orderRuleSets/edbRelations actually read) needs to be accurate.
 mkRel :: Text -> Relation
 mkRel n = symRelation n ["x"]
 
@@ -17,14 +22,17 @@ mkRel n = symRelation n ["x"]
 rs :: [Text] -> [Text] -> RuleSet
 rs outs ins = RuleSet
   { rsRelations = map mkRel outs
-  , rsRules     = [ Rule (Literal (mkRel o) ["x"] False Nothing)
-                        [ Literal (mkRel i) ["x"] False Nothing | i <- ins ]
+  , rsRules     = [ Rule (relName (mkRel o) <> " :- " <> T.intercalate ", " (map relName (map mkRel ins)))
+                          (mkRel o : map mkRel ins)
                   | o <- outs ]
   , rsChoiceDomains = []
   }
 
 tests :: TestTree
-tests = testGroup "SouffleEngine.orderRuleSets"
+tests = testGroup "SouffleEngine" [ orderRuleSetsTests, compileProgramTests ]
+
+orderRuleSetsTests :: TestTree
+orderRuleSetsTests = testGroup "orderRuleSets"
   [ testCase "empty collection orders to empty" $
       orderRuleSets [] @?= Right []
 
@@ -64,4 +72,26 @@ tests = testGroup "SouffleEngine.orderRuleSets"
       case orderRuleSets [rs ["x"] ["y"], rs ["y"] ["x"]] of
         Left _  -> pure ()
         Right _ -> error "expected a dependency-cycle Left, got an order"
+  ]
+
+compileProgramTests :: TestTree
+compileProgramTests = testGroup "compileProgram"
+  [ testCase "edbRelations derives from ruleRefs not rsRelations" $
+      edbRelations (rs ["b"] ["a"]) @?= [mkRel "a"]
+
+  , testCase "compileProgram appends trailing dot to ruleText" $
+      let edge = symRelation "edge" ["x", "y"]
+          path = symRelation "path" ["x", "y"]
+          ruleSet = RuleSet
+            { rsRelations = [path]
+            , rsRules = [Rule "path(x, y) :- edge(x, y)" [path, edge]]
+            , rsChoiceDomains = []
+            }
+      in compileProgram ruleSet @?= T.unlines
+           [ ".decl edge(x: symbol, y: symbol)"
+           , ".input edge"
+           , ".decl path(x: symbol, y: symbol)"
+           , ".output path"
+           , "path(x, y) :- edge(x, y)."
+           ]
   ]

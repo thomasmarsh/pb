@@ -22,7 +22,7 @@ module PB.Analysis.Rules.DeadCode
 
 import PB.Prelude
 
-import PB.Pipeline.Souffle (Relation (..), symRelation, Aggregate (..), Literal (..), Rule (..), RuleSet (..))
+import PB.Pipeline.Souffle (Relation (..), symRelation, Rule (..), RuleSet (..))
 import PB.Pipeline.DuckDb (DuckConn)
 import Database.DuckDB.Simple (Query (..), execute_)
 
@@ -52,10 +52,8 @@ liveProcRules :: RuleSet
 liveProcRules = RuleSet
   { rsRelations = [liveProcRel]
   , rsRules =
-      [ Rule (Literal liveProcRel ["object", "proc"] False Nothing)
-             [ Literal stmtRel ["_", "object", "proc", "_"] False Nothing
-             , Literal procDeadRel ["object", "proc"] True Nothing
-             ]
+      [ Rule "live_proc(object, proc) :- stmt(_, object, proc, _), !proc_dead(object, proc)"
+             [liveProcRel, stmtRel, procDeadRel]
       ]
   , rsChoiceDomains = []
   }
@@ -212,32 +210,20 @@ callerCountRules :: RuleSet
 callerCountRules = RuleSet
   { rsRelations = [hasNaiveCallerRel, hasScopedCallerRel, callerCountNaiveRel, callerCountScopedRel, confidenceRel]
   , rsRules =
-      [ Rule (Literal hasNaiveCallerRel ["callee_name"] False Nothing)
-             [ Literal callRefRel ["_", "_", "callee_name"] False Nothing ]
-      , Rule (Literal hasScopedCallerRel ["callee_obj", "callee_proc"] False Nothing)
-             [ Literal resolvedCallEdgeRel ["_", "_", "callee_obj", "callee_proc", "_"] False Nothing ]
-      , Rule (Literal callerCountNaiveRel ["callee_name", "n"] False Nothing)
-             [ Literal hasNaiveCallerRel ["callee_name"] False Nothing
-             , Literal callRefRel ["n"] False (Just (Aggregate "count" callRefRel ["_", "_", "callee_name"]))
-             ]
-      , Rule (Literal callerCountScopedRel ["callee_obj", "callee_proc", "n"] False Nothing)
-             [ Literal hasScopedCallerRel ["callee_obj", "callee_proc"] False Nothing
-             , Literal resolvedCallEdgeRel ["n"] False (Just (Aggregate "count" resolvedCallEdgeRel ["_", "_", "callee_obj", "callee_proc", "l"]))
-             ]
-      , Rule (Literal confidenceRel ["object", "proc", "\"high\""] False Nothing)
-             [ Literal procMetaRel ["object", "proc", "_", "_", "plower"] False Nothing
-             , Literal hasNaiveCallerRel ["plower"] True Nothing
-             ]
-      , Rule (Literal confidenceRel ["object", "proc", "\"medium\""] False Nothing)
-             [ Literal procMetaRel ["object", "proc", "_", "_", "plower"] False Nothing
-             , Literal hasNaiveCallerRel ["plower"] False Nothing
-             , Literal hasScopedCallerRel ["object", "proc"] True Nothing
-             ]
-      , Rule (Literal confidenceRel ["object", "proc", "\"low\""] False Nothing)
-             [ Literal procMetaRel ["object", "proc", "_", "_", "plower"] False Nothing
-             , Literal hasNaiveCallerRel ["plower"] False Nothing
-             , Literal hasScopedCallerRel ["object", "proc"] False Nothing
-             ]
+      [ Rule "has_naive_caller(callee_name) :- call_ref(_, _, callee_name)"
+             [hasNaiveCallerRel, callRefRel]
+      , Rule "has_scoped_caller(callee_obj, callee_proc) :- resolved_call_edge(_, _, callee_obj, callee_proc, _)"
+             [hasScopedCallerRel, resolvedCallEdgeRel]
+      , Rule "caller_count_naive(callee_name, n) :- has_naive_caller(callee_name), n = count : { call_ref(_, _, callee_name) }"
+             [callerCountNaiveRel, hasNaiveCallerRel, callRefRel]
+      , Rule "caller_count_scoped(callee_obj, callee_proc, n) :- has_scoped_caller(callee_obj, callee_proc), n = count : { resolved_call_edge(_, _, callee_obj, callee_proc, l) }"
+             [callerCountScopedRel, hasScopedCallerRel, resolvedCallEdgeRel]
+      , Rule "confidence(object, proc, \"high\") :- proc_meta(object, proc, _, _, plower), !has_naive_caller(plower)"
+             [confidenceRel, procMetaRel, hasNaiveCallerRel]
+      , Rule "confidence(object, proc, \"medium\") :- proc_meta(object, proc, _, _, plower), has_naive_caller(plower), !has_scoped_caller(object, proc)"
+             [confidenceRel, procMetaRel, hasNaiveCallerRel, hasScopedCallerRel]
+      , Rule "confidence(object, proc, \"low\") :- proc_meta(object, proc, _, _, plower), has_naive_caller(plower), has_scoped_caller(object, proc)"
+             [confidenceRel, procMetaRel, hasNaiveCallerRel, hasScopedCallerRel]
       ]
   , rsChoiceDomains = []
   }
@@ -269,25 +255,16 @@ deadCodeRowsRules :: RuleSet
 deadCodeRowsRules = RuleSet
   { rsRelations = [callerCountNaiveFinalRel, callerCountScopedFinalRel, deadCodeRowsRel]
   , rsRules =
-      [ Rule (Literal callerCountNaiveFinalRel ["p", "n"] False Nothing)
-             [ Literal callerCountNaiveRel ["p", "n"] False Nothing ]
-      , Rule (Literal callerCountNaiveFinalRel ["p", "0"] False Nothing)
-             [ Literal procMetaRel ["_", "_", "_", "_", "p"] False Nothing
-             , Literal hasNaiveCallerRel ["p"] True Nothing
-             ]
-      , Rule (Literal callerCountScopedFinalRel ["o", "p", "n"] False Nothing)
-             [ Literal callerCountScopedRel ["o", "p", "n"] False Nothing ]
-      , Rule (Literal callerCountScopedFinalRel ["o", "p", "0"] False Nothing)
-             [ Literal procRel ["o", "p"] False Nothing
-             , Literal hasScopedCallerRel ["o", "p"] True Nothing
-             ]
-      , Rule (Literal deadCodeRowsRel ["o", "p", "pt", "cyc", "lvl", "nn", "sn"] False Nothing)
-             [ Literal procDeadRel ["o", "p"] False Nothing
-             , Literal procMetaRel ["o", "p", "pt", "cyc", "plower"] False Nothing
-             , Literal confidenceRel ["o", "p", "lvl"] False Nothing
-             , Literal callerCountNaiveFinalRel ["plower", "nn"] False Nothing
-             , Literal callerCountScopedFinalRel ["o", "p", "sn"] False Nothing
-             ]
+      [ Rule "caller_count_naive_final(p, n) :- caller_count_naive(p, n)"
+             [callerCountNaiveFinalRel, callerCountNaiveRel]
+      , Rule "caller_count_naive_final(p, 0) :- proc_meta(_, _, _, _, p), !has_naive_caller(p)"
+             [callerCountNaiveFinalRel, procMetaRel, hasNaiveCallerRel]
+      , Rule "caller_count_scoped_final(o, p, n) :- caller_count_scoped(o, p, n)"
+             [callerCountScopedFinalRel, callerCountScopedRel]
+      , Rule "caller_count_scoped_final(o, p, 0) :- proc(o, p), !has_scoped_caller(o, p)"
+             [callerCountScopedFinalRel, procRel, hasScopedCallerRel]
+      , Rule "dead_code_rows(o, p, pt, cyc, lvl, nn, sn) :- proc_dead(o, p), proc_meta(o, p, pt, cyc, plower), confidence(o, p, lvl), caller_count_naive_final(plower, nn), caller_count_scoped_final(o, p, sn)"
+             [deadCodeRowsRel, procDeadRel, procMetaRel, confidenceRel, callerCountNaiveFinalRel, callerCountScopedFinalRel]
       ]
   , rsChoiceDomains = []
   }
@@ -323,32 +300,21 @@ deadReachRules = RuleSet
       [ -- Shared predicates: the inheritance transitive closure and the
         -- derived override triple (child object, method name, ancestor
         -- object that declares it).
-        Rule (Literal descendantRel ["child", "parent"] False Nothing)
-             [ Literal inheritsRel ["child", "parent"] False Nothing ]
-      , Rule (Literal descendantRel ["child", "gp"] False Nothing)
-             [ Literal inheritsRel ["child", "parent"] False Nothing
-             , Literal descendantRel ["parent", "gp"] False Nothing
-             ]
-      , Rule (Literal overrideEdgeRel ["child_obj", "method", "parent_obj"] False Nothing)
-             [ Literal procRel ["parent_obj", "method"] False Nothing
-             , Literal descendantRel ["child_obj", "parent_obj"] False Nothing
-             , Literal procRel ["child_obj", "method"] False Nothing
-             ]
+        Rule "descendant(child, parent) :- inherits(child, parent)"
+             [descendantRel, inheritsRel]
+      , Rule "descendant(child, gp) :- inherits(child, parent), descendant(parent, gp)"
+             [descendantRel, inheritsRel]
+      , Rule "override_edge(child_obj, method, parent_obj) :- proc(parent_obj, method), descendant(child_obj, parent_obj), proc(child_obj, method)"
+             [overrideEdgeRel, procRel, descendantRel]
       , -- Reachability: seed from entries, walk calls, fold in override edges.
-        Rule (Literal procReachableRel ["object", "proc"] False Nothing)
-             [ Literal entryRel ["object", "proc"] False Nothing ]
-      , Rule (Literal procReachableRel ["object", "proc"] False Nothing)
-             [ Literal procReachableRel ["cobj", "cproc"] False Nothing
-             , Literal callsRel ["cobj", "cproc", "object", "proc"] False Nothing
-             ]
-      , Rule (Literal procReachableRel ["childobj", "method"] False Nothing)
-             [ Literal procReachableRel ["parentobj", "method"] False Nothing
-             , Literal overrideEdgeRel ["childobj", "method", "parentobj"] False Nothing
-             ]
-      , Rule (Literal procDeadRel ["object", "proc"] False Nothing)
-             [ Literal procRel ["object", "proc"] False Nothing
-             , Literal procReachableRel ["object", "proc"] True Nothing
-             ]
+        Rule "proc_reachable(object, proc) :- entry(object, proc)"
+             [procReachableRel, entryRel]
+      , Rule "proc_reachable(object, proc) :- proc_reachable(cobj, cproc), calls(cobj, cproc, object, proc)"
+             [procReachableRel, callsRel]
+      , Rule "proc_reachable(childobj, method) :- proc_reachable(parentobj, method), override_edge(childobj, method, parentobj)"
+             [procReachableRel, overrideEdgeRel]
+      , Rule "proc_dead(object, proc) :- proc(object, proc), !proc_reachable(object, proc)"
+             [procDeadRel, procRel, procReachableRel]
       ]
   , rsChoiceDomains = []
   }
