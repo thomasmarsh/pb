@@ -169,14 +169,28 @@ cosliceRules = RuleSet
       -- Rule 2 unifies LT with T via the shared variable name in head+body.
       -- @o + 1@ is inline in the min_dist body arg (verified: Souffle
       -- accepts inline arithmetic in body literal arguments).
-      , Rule "path_leg_fwd(s, t, o, lf, lt, kind) :- min_dist(s, lf, o), leg(lf, lt, kind), min_dist(s, lt, o + 1), reaches(lt, t)"
+      --
+      -- Rule 1's @reaches(lt, t)@ guard alone is NOT sufficient on a cyclic
+      -- graph: 'reaches' is pure existence (no distance bound), so on a
+      -- corpus with real graph cycles it admits legs from far outside t's
+      -- own shortest-path envelope (confirmed against a real corpus: a
+      -- target whose own min_dist is 2 picked up witness legs at ordinals
+      -- up to 7, none of them lying on any actual shortest path to it).
+      -- @min_dist(s, t, td), o + 1 < td@ bounds the intermediate hop to
+      -- strictly within t's own distance -- rule 2 already supplies the
+      -- final hop (ordinal td - 1) directly, so rule 1 only needs to cover
+      -- ordinals before that.
+      , Rule "path_leg_fwd(s, t, o, lf, lt, kind) :- min_dist(s, lf, o), leg(lf, lt, kind), min_dist(s, lt, o + 1), min_dist(s, t, td), o + 1 < td, reaches(lt, t)"
              [pathLegFwdRel, minDistRel, legRel, reachesRel]
       , Rule "path_leg_fwd(s, t, o, lf, t, kind) :- min_dist(s, lf, o), leg(lf, t, kind), min_dist(s, t, o + 1)"
              [pathLegFwdRel, minDistRel, legRel]
 
       -- Backward path legs (legs oriented in real morphism direction; seed
       -- is the path's TO endpoint, so we look up min_dist_back at lt and lf).
-      , Rule "path_leg_back(s, t, o, lf, lt, kind) :- min_dist_back(s, lt, o), leg(lf, lt, kind), min_dist_back(s, lf, o + 1), reaches(t, lf)"
+      -- Same min_dist_back-bounded guard as the forward rule above, same
+      -- reason (a real cyclic graph otherwise admits legs from outside t's
+      -- own shortest-path envelope).
+      , Rule "path_leg_back(s, t, o, lf, lt, kind) :- min_dist_back(s, lt, o), leg(lf, lt, kind), min_dist_back(s, lf, o + 1), min_dist_back(s, t, td), o + 1 < td, reaches(t, lf)"
              [pathLegBackRel, minDistBackRel, legRel, reachesRel]
       , Rule "path_leg_back(s, t, o, t, lt, kind) :- min_dist_back(s, lt, o), leg(t, lt, kind), min_dist_back(s, t, o + 1)"
              [pathLegBackRel, minDistBackRel, legRel]

@@ -568,12 +568,38 @@ def _coslice_paths(conn: duckdb.DuckDBPyConnection, seed_keys: list[str]) -> dic
             seed_keys,
         )
     )
-    by_path: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    # Keyed on (seed, target, direction), not just (seed, target): a forward
+    # path and a backward path from the same seed to the same target are
+    # independently derived (path_leg_fwd/path_leg_back) and can both exist
+    # -- merging them under one key concatenated two distinct leg chains
+    # into one, inflating the leg count and corrupting leg_ordinal sequencing
+    # (found via a real-corpus regression: a 2-leg FK-chained path reported
+    # 6 legs because a same-seed backward path to the same target was
+    # silently appended onto the forward one).
+    by_path: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for r in leg_rows:
-        by_path[(r["seed_key"], r["target_key"])].append(r)
+        by_path[(r["seed_key"], r["target_key"], r["direction"])].append(r)
 
+    # Per (seed, target): if both a forward and a backward path reach it,
+    # keep the shorter one, preferring "backward" on an equal-length tie --
+    # matches the deleted PB.Analysis.SchemaCategory.columnCoslice's
+    # `Map.fromListWith shorter` fold over `blastRadius <> validationWalkBack`
+    # (forward folded first, backward second; `shorter new old` keeps `new`
+    # -- the second-folded value, i.e. backward -- when lengths are equal).
+    per_seed_target: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for direction in ("forward", "backward"):
+        for (seed, target, d), legs in by_path.items():
+            if d != direction:
+                continue
+            key = (seed, target)
+            if key not in per_seed_target or len(legs) <= len(per_seed_target[key]):
+                per_seed_target[key] = legs
+
+    # Across different seed columns in the same block: keep the shortest
+    # path to a given target (no direction preference at this level -- the
+    # original Haskell computed columnCoslice per single seed only).
     best: dict[str, list[dict[str, Any]]] = {}
-    for (_seed, target), legs in by_path.items():
+    for (_seed, target), legs in per_seed_target.items():
         if target not in best or len(legs) < len(best[target]):
             best[target] = legs
     return best

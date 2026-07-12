@@ -1288,6 +1288,15 @@ appendSchemaMorphisms conn ms = withRaw conn "schema_morphisms" $ \app ->
 --    (statements and DW retrieves) -- column intermediates appear in
 --    @path_leg@ as traversal hops but are not rewrite-cost endpoints.
 --    Filtered via @schema_objects.kind IN ('stmt', 'dw_retrieve')@.
+-- | ROW_NUMBER's PARTITION BY includes 'direction': a forward path and a
+-- backward path from the same seed to the same target are independently
+-- derived (path_leg_fwd/path_leg_back) and their leg_ordinal sequences are
+-- unrelated -- without 'direction' in the partition key, a forward leg and
+-- a backward leg sharing an ordinal number compete for the same witness
+-- slot, scrambling both into one row set with non-contiguous, mixed-origin
+-- ordinals (found via a real-corpus regression: a target's surviving rows
+-- had ordinals 0,4,5,6,7 from 'backward' interleaved with 1,2,3 from
+-- 'forward' -- neither a valid forward nor backward path).
 materializeDecompositionCoslice :: DuckConn -> IO ()
 materializeDecompositionCoslice conn =
   void $ execute_ conn (Query sql)
@@ -1306,7 +1315,7 @@ materializeDecompositionCoslice conn =
       , "), ranked AS ("
       , "  SELECT c.seed_key, c.target_key, c.direction, c.leg_ordinal, c.leg_from, c.leg_to, c.leg_kind,"
       , "         sm.leg_source,"
-      , "         ROW_NUMBER() OVER (PARTITION BY c.seed_key, c.target_key, c.leg_ordinal"
+      , "         ROW_NUMBER() OVER (PARTITION BY c.seed_key, c.target_key, c.direction, c.leg_ordinal"
       , "                           ORDER BY c.leg_from, c.leg_to) AS rn"
       , "    FROM candidates c"
       , "    JOIN schema_objects so ON so.object_key = c.target_key"
