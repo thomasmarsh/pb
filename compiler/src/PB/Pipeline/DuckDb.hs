@@ -1181,7 +1181,14 @@ appendTaintAnnotations conn rows = withRaw conn "taint_annotations" $ \app ->
 -- a deliberate choice, not an arbitrary tie-break: it surfaces the most
 -- complex variant behind a dead name, the more conservative/useful signal
 -- if someone is deciding whether it's worth double-checking before
--- deleting. The pre-Stage-6 Haskell 'classifyDeadProcedures' used
+-- deleting. @NULLS LAST@ on the @DESC@ order is written explicitly rather
+-- than relied on implicitly: DuckDB's current default for @DESC@ already
+-- puts @NULL@ last (verified empirically -- an overload with an unknown
+-- cyclomatic does NOT win the tie-break over a real value), but that
+-- default is an engine behavior, not a documented guarantee this module
+-- depends on elsewhere, so it's spelled out here rather than left implicit.
+-- (Regression test: 'SouffleDeadCodeTest.hs'\'s "overloaded procedure with
+-- one unknown cyclomatic" case.) The pre-Stage-6 Haskell 'classifyDeadProcedures' used
 -- 'Map.fromListWith (\a _b -> a)', which kept whichever row DuckDB's
 -- unordered table scan happened to return first -- not a rule, an
 -- accident with no rationale and no run-to-run reproducibility guarantee.
@@ -1196,7 +1203,7 @@ materializeDeadCode conn = do
     \SELECT object, proc, proc_type, TRY_CAST(cyclomatic AS INTEGER), \
     \level, TRY_CAST(naive_n AS INTEGER), TRY_CAST(scoped_n AS INTEGER) \
     \FROM ( \
-    \  SELECT *, ROW_NUMBER() OVER (PARTITION BY object, proc ORDER BY TRY_CAST(cyclomatic AS INTEGER) DESC) AS rn \
+    \  SELECT *, ROW_NUMBER() OVER (PARTITION BY object, proc ORDER BY TRY_CAST(cyclomatic AS INTEGER) DESC NULLS LAST) AS rn \
     \  FROM dead_code_rows \
     \) WHERE rn = 1"
   pure ()

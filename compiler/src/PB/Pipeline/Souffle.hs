@@ -29,6 +29,7 @@ import PB.Pipeline.DuckDb
   (DuckConn, queryTextRows, recreateTextTable, appendTextRows)
 
 import qualified Data.List  as List
+import qualified Data.Map.Strict as Map
 import qualified Data.Text  as T
 import System.Directory     (createDirectoryIfMissing)
 import System.Exit          (ExitCode (..))
@@ -69,13 +70,20 @@ data Aggregate = Aggregate
   , aggWitnessArgs :: [Text] -- ^ args to the witness relation (positionally aligned to aggWitness's columns)
   } deriving (Eq, Show)
 
--- | One literal in a rule body (or the head). 'litArgs' are variable names
--- or the wildcard @"_"@, positionally aligned to 'relCols' of 'litRelation'
--- (same arity -- mismatched lengths are a malformed 'Rule').
+-- | One literal in a rule body (or the head). When 'litAggregate' is
+-- 'Nothing', 'litArgs' are variable names or the wildcard @"_"@,
+-- positionally aligned to 'relCols' of 'litRelation' (same arity --
+-- mismatched lengths are a malformed 'Rule').
 --
 -- When 'litAggregate' is @Just agg@, the literal renders as an aggregate
 -- binding: @N = count : { witnessRel(args) }@ (the head's corresponding
--- position carries the bound variable name @N@). Only valid in a rule body.
+-- position carries the bound variable name @N@). Only valid in a rule
+-- body. In this case 'litArgs' holds the bound result variable(s), NOT
+-- 'litRelation'\'s own column args -- the two need not (and typically
+-- won't) share an arity, since 'litRelation' is not read by 'renderLiteral'
+-- or by 'edbRelations' for an aggregate literal (see their @Just agg@
+-- branches). Construction sites conventionally set 'litRelation' to
+-- 'aggWitness' as a harmless placeholder, but nothing depends on that.
 data Literal = Literal
   { litRelation  :: Relation
   , litArgs      :: [Text]
@@ -230,8 +238,19 @@ orderRuleSets ruleSets = go [] (Set.fromList [0..length ruleSets - 1])
   where
     -- Stable insertion order for emitting results.
     indexed = List.zip [0 :: Int ..] ruleSets
-    outs i  = idbNames  (ruleSets List.!! i)
-    ins  i  = edbNames  (ruleSets List.!! i)
+    -- 'byIndex'/'at' replace a partial 'List.!!' lookup: every index used
+    -- below is drawn from 'indexed' itself, so the lookup can never
+    -- actually miss -- but that invariant lives in the shape of this
+    -- function's own recursion, not in a type, so a total lookup here
+    -- turns a future bookkeeping slip into a labelled crash instead of an
+    -- uncaught "index too large" (CLAUDE.md bans partial functions
+    -- including @(!!)@ for exactly this reason).
+    byIndex = Map.fromList indexed
+    at i    = Map.findWithDefault
+                (error ("impossible: orderRuleSets index " <> show i <> " out of range"))
+                i byIndex
+    outs i  = idbNames  (at i)
+    ins  i  = edbNames  (at i)
     -- i depends on j when j produces a relation i consumes.
     deps i  = [ j | (j, _) <- indexed
                   , i /= j
@@ -244,9 +263,9 @@ orderRuleSets ruleSets = go [] (Set.fromList [0..length ruleSets - 1])
           -- No ready node => cycle among the pending. Return the cyclic
           -- rule sets themselves (in stable input order) so the caller can
           -- diagnose which programs are involved.
-          Left [ ruleSets List.!! i | (i, _) <- indexed, i `Set.member` pending ]
+          Left [ at i | (i, _) <- indexed, i `Set.member` pending ]
       | otherwise        =
-          go (acc <> [ ruleSets List.!! i | i <- ready ])
+          go (acc <> [ at i | i <- ready ])
              (pending `Set.difference` Set.fromList ready)
       where
         -- A pending index is "ready" if none of its dependencies are still

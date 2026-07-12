@@ -32,10 +32,11 @@ import Database.DuckDB.Simple (Query (..), execute_)
 -- referenced table at @CREATE VIEW@ time, not lazily at query time) even
 -- in tests\/passes that only run 'reachesRules' and never touch dead-code
 -- at all -- reading @proc_dead@ straight from 'liveProcRules' avoids that
--- ordering coupling entirely. @dead_code@ itself is unchanged and still
--- Haskell-computed: it carries confidence/cyclomatic/caller-count fields
--- ('PB.Analysis.DeadCode.DeadProcedure') with no Datalog equivalent, and is
--- still the sole source for the Dead Code Explorer API (@get_dead_code@).
+-- ordering coupling entirely. @dead_code@ itself (Plan 166 Stage 6) is now
+-- populated purely from Datalog's @dead_code_rows@ relation via
+-- 'PB.Pipeline.DuckDb.materializeDeadCode' -- no Haskell classification
+-- step remains -- and is still the sole source for the Dead Code Explorer
+-- API (@get_dead_code@).
 initEdbViews :: DuckConn -> IO ()
 initEdbViews conn = for_ views (void . execute_ conn)
   where

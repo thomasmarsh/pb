@@ -104,19 +104,12 @@ initDeadReachEdbViews conn = for_ views (void . execute_ conn)
         \UNION \
         \SELECT DISTINCT r.object, r.from_proc \
         \FROM resolved_calls r JOIN dw_objects d ON d.object = r.object"
-      , "CREATE OR REPLACE VIEW calls AS \
-        \SELECT DISTINCT r.object AS caller_obj, r.from_proc AS caller_proc, \
-        \p.object AS callee_obj, p.proc_name AS callee_proc \
-        \FROM resolved_calls r \
-        \JOIN procedures p ON p.object = r.object AND p.confidence != 'speculative' \
-        \  AND LOWER(p.proc_name) = LOWER(regexp_extract(r.to_name, '[^.]*$')) \
-        \UNION \
-        \SELECT DISTINCT r.object, r.from_proc, r.target_object, r.target_proc \
-        \FROM resolved_calls r \
-        \WHERE r.target_object IS NOT NULL AND r.target_proc IS NOT NULL"
       , "CREATE OR REPLACE VIEW inherits AS \
         \SELECT object AS child, ancestor AS parent FROM objects WHERE ancestor IS NOT NULL"
-      , "CREATE OR REPLACE VIEW call_ref AS \
+      , -- call_ref/resolved_call_edge must be created before calls (below),
+        -- which is now built FROM them rather than re-deriving the same
+        -- resolved_calls joins a third time -- see calls' own comment.
+        "CREATE OR REPLACE VIEW call_ref AS \
         \SELECT DISTINCT object AS caller_obj, from_proc AS caller_proc, \
         \LOWER(regexp_extract(to_name, '[^.]*$')) AS callee_name \
         \FROM resolved_calls"
@@ -126,6 +119,28 @@ initDeadReachEdbViews conn = for_ views (void . execute_ conn)
         \COALESCE(CAST(line AS VARCHAR), '') AS line \
         \FROM resolved_calls \
         \WHERE target_object IS NOT NULL AND target_proc IS NOT NULL"
+      , -- calls is built FROM call_ref/resolved_call_edge (not a third,
+        -- independent re-derivation of the same resolved_calls joins) so
+        -- the case-insensitive name-match expression and the
+        -- target-object/target-proc resolved-call predicate each have
+        -- exactly one definition. Semantically identical to the old
+        -- inline joins: call_ref's own DISTINCT collapses duplicate
+        -- (caller_obj, caller_proc, callee_name) rows before the join
+        -- against procedures, same as the old outer DISTINCT did after
+        -- joining; resolved_call_edge is intentionally NOT distinct on
+        -- (caller_obj, caller_proc, callee_obj, callee_proc) (it keeps one
+        -- row per call site for the scoped caller count -- see its own
+        -- doc comment), but calls' own UNION (not UNION ALL) dedupes the
+        -- combined result regardless, matching the old branch's outer
+        -- DISTINCT exactly.
+        "CREATE OR REPLACE VIEW calls AS \
+        \SELECT DISTINCT cr.caller_obj, cr.caller_proc, \
+        \p.object AS callee_obj, p.proc_name AS callee_proc \
+        \FROM call_ref cr \
+        \JOIN procedures p ON p.object = cr.caller_obj AND p.confidence != 'speculative' \
+        \  AND LOWER(p.proc_name) = cr.callee_name \
+        \UNION \
+        \SELECT caller_obj, caller_proc, callee_obj, callee_proc FROM resolved_call_edge"
       , "CREATE OR REPLACE VIEW proc_meta AS \
         \SELECT object, proc_name AS proc, proc_type, \
         \COALESCE(CAST(cyclomatic AS VARCHAR), '') AS cyclomatic, \
@@ -175,6 +190,23 @@ confidenceRel = symRelation "confidence" ["object", "proc", "level"]
 -- bound to a real variable @L@ (not @_@) so each call site is a distinct
 -- witness row (see 'resolvedCallEdgeRel'\'s doc comment for why this
 -- matters and why the naive aggregate has no such column at all).
+--
+-- Confidence joins through 'procMetaRel' (not 'procRel') specifically to
+-- get its lowercased @proc_lower@ column: 'hasNaiveCallerRel'\'s facts are
+-- always lowercase (derived from 'callRefRel', which applies @LOWER()@ --
+-- see its view definition), but PowerBuilder identifiers are
+-- case-insensitive, so a raw-case @proc@ variable from 'procRel' would only
+-- unify with a naive-caller fact when the declared name happens to already
+-- be all-lowercase. A dead proc declared e.g. @of_Calculate@ with a real
+-- unresolved caller @of_calculate()@ would otherwise never match
+-- @has_naive_caller@, silently misclassifying it @high@ (no callers) while
+-- @dead_code_rows@\'s own @naive_n@ (correctly joined through
+-- @proc_meta@\'s @proc_lower@) reports a nonzero count for the same row --
+-- a mutually inconsistent confidence/count pair. 'hasScopedCallerRel' stays
+-- keyed on raw-case @object@\/@proc@: its facts come from
+-- 'resolvedCallEdgeRel', whose @callee_obj@\/@callee_proc@ are resolved
+-- (case-correct) target identifiers, already the same case as
+-- 'procMetaRel'\'s @object@\/@proc@.
 callerCountRules :: RuleSet
 callerCountRules = RuleSet
   { rsRelations = [hasNaiveCallerRel, hasScopedCallerRel, callerCountNaiveRel, callerCountScopedRel, confidenceRel]
@@ -192,17 +224,17 @@ callerCountRules = RuleSet
              , Literal resolvedCallEdgeRel ["n"] False (Just (Aggregate "count" resolvedCallEdgeRel ["_", "_", "callee_obj", "callee_proc", "l"]))
              ]
       , Rule (Literal confidenceRel ["object", "proc", "\"high\""] False Nothing)
-             [ Literal procRel ["object", "proc"] False Nothing
-             , Literal hasNaiveCallerRel ["proc"] True Nothing
+             [ Literal procMetaRel ["object", "proc", "_", "_", "plower"] False Nothing
+             , Literal hasNaiveCallerRel ["plower"] True Nothing
              ]
       , Rule (Literal confidenceRel ["object", "proc", "\"medium\""] False Nothing)
-             [ Literal procRel ["object", "proc"] False Nothing
-             , Literal hasNaiveCallerRel ["proc"] False Nothing
+             [ Literal procMetaRel ["object", "proc", "_", "_", "plower"] False Nothing
+             , Literal hasNaiveCallerRel ["plower"] False Nothing
              , Literal hasScopedCallerRel ["object", "proc"] True Nothing
              ]
       , Rule (Literal confidenceRel ["object", "proc", "\"low\""] False Nothing)
-             [ Literal procRel ["object", "proc"] False Nothing
-             , Literal hasNaiveCallerRel ["proc"] False Nothing
+             [ Literal procMetaRel ["object", "proc", "_", "_", "plower"] False Nothing
+             , Literal hasNaiveCallerRel ["plower"] False Nothing
              , Literal hasScopedCallerRel ["object", "proc"] False Nothing
              ]
       ]

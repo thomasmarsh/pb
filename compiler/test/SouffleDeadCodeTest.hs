@@ -315,6 +315,20 @@ tests = testGroup "Souffle.DeadCode"
         [ ("other_obj", "other", "fn") ]
         [ ("other_obj", "other", "obj", "fn") ]
         ("obj", "fn") "low"
+
+    , assertConfidence "mixed-case declared name with a differently-cased naive caller -> medium, not high"
+        -- Regression: confidenceRel used to unify a raw-case `proc` variable
+        -- (from `proc`/procRel) directly against `has_naive_caller`'s facts,
+        -- which are always lowercased (call_ref's LOWER(regexp_extract(...))).
+        -- PowerBuilder identifiers are case-insensitive, so a declared name
+        -- like `of_Calculate` with a real (differently-cased) unresolved
+        -- caller would never match, silently misclassifying it "high" (no
+        -- callers) instead of "medium". Fixed by joining confidence through
+        -- proc_meta's lowercased proc_lower column instead of proc's raw case.
+        [ ProcInfo "obj" "of_Calculate" "function" (Just 1) ]
+        [ ("other_obj", "other", "OF_CALCULATE") ]
+        []
+        ("obj", "of_Calculate") "medium"
     ]
 
   , testGroup "deadCodeRowsRules / materializeDeadCode"
@@ -368,5 +382,27 @@ tests = testGroup "Souffle.DeadCode"
             "SELECT cyclomatic FROM dead_code WHERE object = 'obj' AND proc_name = 'fn'"
             :: IO [Only Int]
           [ c | Only c <- rows ] @?= [7]
+
+    , testCase "overloaded procedure with one unknown cyclomatic: the known value still wins the tie-break" $
+        -- Regression: ORDER BY ... DESC without NULLS LAST defaults to
+        -- NULLS FIRST in DuckDB, so an overload with an unknown (Nothing)
+        -- cyclomatic would sort ahead of a sibling with a real value,
+        -- contradicting materializeDeadCode's documented "keeps the
+        -- highest-cyclomatic row" tie-break.
+        withWriteConn ":memory:" $ \conn -> do
+          initSchema conn
+          initDeadReachEdbViews conn
+          seedDeadCodeFixture conn
+            [ ProcInfo "obj" "fn" "function" Nothing
+            , ProcInfo "obj" "fn" "function" (Just 5)
+            ]
+            [] [] [] Set.empty
+          runRuleSets (\_ -> pure ()) conn
+            [deadReachRules, callerCountRules, deadCodeRowsRules]
+          materializeDeadCode conn
+          rows <- query_ conn
+            "SELECT cyclomatic FROM dead_code WHERE object = 'obj' AND proc_name = 'fn'"
+            :: IO [Only Int]
+          [ c | Only c <- rows ] @?= [5]
     ]
   ]
