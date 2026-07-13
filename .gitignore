@@ -6,6 +6,8 @@ doc/arXiv-1602.03501v3/
 
 # Haskell
 dist-newstyle/
+*.hi
+*.o
 
 # Python
 __pycache__
