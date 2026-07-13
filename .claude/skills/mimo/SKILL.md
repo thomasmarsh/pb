@@ -59,6 +59,29 @@ consequences (a shared branch, a build that others depend on).
   don't chain further stages automatically just because mimo's own report
   says it succeeded and offers to continue.
 
+### What delegates well vs. what doesn't
+
+Calibration from real sessions:
+
+- **Delegates cleanly (one-pass):** read-only surveys and doc production
+  (enumerate X across the codebase, classify each, write a reference
+  table); applying an already-verified, literally-specified change
+  (exact code to add, exact file, exact line); mechanical
+  find-and-replace with a precise gate. A fold-survey task that would
+  have cost the orchestrator many tokens of reading landed in ~1.5
+  minutes with accurate line citations, verified by spot-check. These
+  are mimo's sweet spot — use it aggressively here.
+- **Does not delegate well:** anything where the *correct answer is not
+  yet known* — open design questions, "figure out the right semantics
+  for X," debugging an unknown failure, decisions about external tool
+  behavior you haven't verified yourself. Resolve those first (this is
+  the "verify first, delegate second" rule), *then* the remaining
+  "apply the known answer" work becomes delegable.
+
+When in doubt about which kind of task you have, ask: "can I write down
+the exact expected output right now?" If yes → delegate. If no → it's
+verify-first work; do that piece yourself, delegate the rest.
+
 ## Writing the spec file
 
 - **State current file state precisely.** Paste the exact current
@@ -102,6 +125,19 @@ Run that second command via the Bash tool with the background option so
 the harness notifies you when it exits, rather than sleeping in a loop
 yourself.
 
+**Use the wait productively.** While the wait-loop runs in the
+background, do the *verify-first* work for the next step yourself — the
+piece that requires judgment and can't be delegated (confirming an
+external CLI's actual behavior, reading a module to settle an open
+design question, checking whether an output path is gitignored). This
+turns the delegation latency from dead time into parallel progress and
+is the pattern that makes orchestrating mimo efficient rather than just
+"fire and wait." One session: mimo surveyed folds in the background
+while the orchestrator verified (ahead of delegating golden capture)
+that the `--dual-trace` oracle the plan relied on had been deleted in an
+earlier phase — a finding that reshaped the next step and would
+otherwise have been handed to mimo to rediscover, badly.
+
 Gotchas, confirmed against the actual CLI (`mimo run --help` / `mimo
 --help` disagree with each other — verify against `run --help`
 specifically, don't assume a top-level flag carries over):
@@ -135,6 +171,58 @@ artifact left at the same path, not any actual logic bug — always check
 the run's own exit code and success marker, not just a truncated tail of
 its output.
 
+## Recognizing successful completion (don't kill a finishing run)
+
+mimo's log does not always end with an obvious "DONE" banner. A run that
+has written its target artifact, run its verification gate, and printed a
+short report ("All checks pass: …") **is finished** — even if the process
+PID lingers a few seconds while the CLI tears down, and even if the log's
+last line is a quiet status line rather than a fanfare. Two real
+misjudgments to avoid, both observed:
+
+1. **"It reported empty `git status`, so it must not have written
+   anything."** Check the *filesystem* (`ls` the expected output path),
+   not just `git status`. In one session the output file landed under a
+   *gitignored* directory (`doc/plan/`, ignored repo-wide), so `git
+   status` was vacuously empty even though the file existed on disk and
+   was correct. The vacuous gate is the hazard, not mimo's work — see the
+   next section.
+2. **"The PID is still alive, so it must be stuck."** A process can
+   persist briefly past its final log line during teardown. Before
+   killing, re-read the tail of the log: if it printed a Stop-section
+   report (build status, file list, gate result), the work is done; the
+   PID will exit on its own. Killing a run that already reported success
+   wastes the work and forces a redo.
+
+The reliable signal of completion is the **Stop-section report itself**
+(a list of gate results + files touched), not process liveness and not
+git status. When in doubt, `ls` the artifact and read it.
+
+## Verification gates can pass vacuously — check the artifact exists
+
+A gate built on `git status`/`git diff` being empty only proves *no
+tracked file changed*. It says nothing about whether the intended
+*output artifact* was created if that artifact lives under a gitignored
+path (this repo ignores `doc/plan/`, `BACKLOG`, `STRATEGY`, and others
+by design — see `.gitignore` and `CLAUDE.md`). Observed: a read-only
+doc-production task reported "✅ `git status --porcelain` empty, ✅ `git
+diff --name-only` empty" — both true, both *vacuous*, because the one
+file it was supposed to create is gitignored. The file was in fact
+correctly written; the gate just couldn't see it.
+
+When the deliverable is an untracked/gitignored file (plan docs,
+one-off reports), make the gate **positively assert the artifact**:
+
+- `test -f <path> && wc -l <path>` — the file exists and is non-empty.
+- A structural check on its contents (`grep -c '^|' <path>` for a table
+  row count; `grep -q '<required heading>' <path>`).
+- Keep the `git diff --name-only`-is-empty check too — it still proves
+  no *source* was touched, which is the real invariant for read-only
+  tasks. Just don't let it be the *only* check.
+
+Before writing the spec, check whether the output path is gitignored
+(`git check-ignore -v <path>`). If it is, write the gate accordingly.
+
 ## When mimo appears stuck
 
 If mimo looks like it's flailing on something genuinely subtle (not a
@@ -147,6 +235,13 @@ converging on a sound engine extension). Prefer: read the current diff,
 form a judgment about direction of travel, and only then decide to let it
 continue, correct it with a narrow follow-up, or take over the remaining
 piece yourself.
+
+The flip side, learned the hard way the session before this skill was
+written: **don't mistake a *finishing* run for a *stuck* run.** A run
+that has already written its artifact, passed its gate, and printed its
+Stop-section report is done; the PID may linger briefly during teardown.
+Re-read the log tail and `ls` the output before concluding anything is
+wrong (see "Recognizing successful completion" above).
 
 ## Known Souffle/Datalog gotchas (grow this list as more are found)
 
