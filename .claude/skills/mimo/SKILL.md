@@ -104,6 +104,34 @@ violate, and (c) a hard verification gate, and trust the build-fix loop
 to close mechanical gaps — while you watch the diff afterward for any
 "fix" that crosses from mechanical into behavioral.
 
+**Refinement — when the spec itself has a semantic flaw (not just a
+type-level one), mimo cannot self-correct; the orchestrator must.** A
+distinct failure mode from the above: the spec's *design* contains a
+genuine semantic ambiguity or flaw (not a missing `unsafeCoerce` or a
+type-index mismatch, but a wrong equation or an underspecified
+combinator). In one session (Plan 167 Phase 5a, 2026-07-13), the spec's
+`ELet`/`EVar` fold clauses had a soundness gap: the cache-hit/miss logic
+for the let-binding was underspecified, and the orchestrator's "verified"
+equation was subtly wrong about what an `EVar` recovers. mimo hit a type
+error on the `ELet` clause and iterated *four* times trying to close it —
+each "fix" crossed further from the intended semantics (caching `id`,
+making `EVar` return `id`, pinning types with `foldPure PId`). None were
+correct, because the bug was in the *design*, not the *plumbing*: no
+amount of type-level ingenuity rescues a wrong equation. **The signal:
+when mimo iterates more than ~2× on a single clause and each fix is
+plausible-looking but semantically different from the last, the spec
+itself is the problem.** Kill the run, re-derive the correct semantics
+yourself (in this session: a GHCi trace of the fold's actual output
+settled what `ELet`/`EVar` should produce), fix the spec and the code
+directly, and re-delegate only the now-mechanical remainder. The test
+gate is the ground truth here: a failing assertion that contradicts
+mimo's "fix" is telling you the design is wrong, not the test. (The
+flip side: a test whose *expectation* was wrong — as this session's
+`callCount @?= 1` initially was, testing an idealized force-time sharing
+that 5a doesn't provide — is the other half of the same coin. Verify the
+*test's* expectation against the actual semantics before trusting it as
+the gate.)
+
 ## Writing the spec file
 
 - **State current file state precisely.** Paste the exact current
