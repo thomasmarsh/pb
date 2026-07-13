@@ -235,6 +235,28 @@ runInterpTrace term initEnv = do
           `CE.catch` (\(ReturnUnwind capturedSt) -> return capturedSt)
   return (isEnv st, P.reverse (isTrace st))
 
+-- | Run an 'Eff' term through 'foldFreyd' to 'Interp', returning the
+-- final environment and the trace in chronological order.
+runEffTrace :: Eff a a -> a -> Map.Map Text Value -> IO (Map.Map Text Value, [TraceEvent])
+runEffTrace eff input initEnv = do
+  st <- (P.snd P.<$> runStateT (runInterp (foldFreyd eff) input) (InterpState initEnv [] Map.empty))
+          `CE.catch` (\(ReturnUnwind capturedSt) -> return capturedSt)
+  return (isEnv st, P.reverse (isTrace st))
+
+-- | Generic version of 'runInterpTrace' for non-@()@ types.
+runInterpTraceGen :: a -> CatOp a b -> Map.Map Text Value -> IO (Map.Map Text Value, [TraceEvent])
+runInterpTraceGen input term initEnv = do
+  st <- (P.snd P.<$> runStateT (runInterp (runCat term) input) (InterpState initEnv [] Map.empty))
+          `CE.catch` (\(ReturnUnwind capturedSt) -> return capturedSt)
+  return (isEnv st, P.reverse (isTrace st))
+
+-- | Generic version of 'runEffTrace' for non-@()@ types.
+runEffTraceGen :: a -> Eff a b -> Map.Map Text Value -> IO (Map.Map Text Value, [TraceEvent])
+runEffTraceGen input eff initEnv = do
+  st <- (P.snd P.<$> runStateT (runInterp (foldFreyd eff) input) (InterpState initEnv [] Map.empty))
+          `CE.catch` (\(ReturnUnwind capturedSt) -> return capturedSt)
+  return (isEnv st, P.reverse (isTrace st))
+
 -- | Every distinct 'LTagged' blockId appearing anywhere in a 'LowCat' term
 -- (Plan 149 Phase 1's 'collectWiring' tests) — deduplicated, since a shared
 -- blockId's own nested tags are only reachable through one occurrence.
@@ -2059,4 +2081,123 @@ tests = testGroup "CatOp"
         -- Structural equality between original and rehydrated.
         feq op (inlineTable term) @?= True
     ]
+
+    , testGroup "Phase 5a: Freyd split (Pure/Eff/J) — foldFreyd faithfulness"
+      [ testCase "J PId folds to id" $ do
+          let eff = J PId :: Eff () ()
+              cat = CatId :: CatOp () ()
+          effTrace <- runEffTrace eff () Map.empty
+          catTrace <- runInterpTrace cat Map.empty
+          effTrace @?= catTrace
+
+      , testCase "J (PEval e) folds to eval e" $ do
+          let e = ExInt "42"
+              eff = J (PEval e) :: Eff () Value
+              cat = CatEval e :: CatOp () Value
+          effTrace <- runEffTraceGen () eff Map.empty
+          catTrace <- runInterpTraceGen () cat Map.empty
+          effTrace @?= catTrace
+
+      , testCase "EAssignWithRhs folds equivalently to CatAssignWithRhs" $ do
+          let e = ExInt "99"
+              eff = EAssignWithRhs "x" e :: Eff () ()
+              cat = CatAssignWithRhs "x" e :: CatOp () ()
+          effTrace <- runEffTrace eff () Map.empty
+          catTrace <- runInterpTrace cat Map.empty
+          effTrace @?= catTrace
+
+      , testCase "ECall folds to callProc" $ do
+          let eff = ECall "myproc" [ExInt "1"] :: Eff () ()
+              cat = CatCall "myproc" [ExInt "1"] :: CatOp () ()
+          effTrace <- runEffTrace eff () Map.empty
+          catTrace <- runInterpTrace cat Map.empty
+          effTrace @?= catTrace
+
+      , testCase "ESuspend folds to suspend" $ do
+          let eff = ESuspend "myeff" [ExInt "2"] :: Eff () ()
+              cat = CatSuspend "myeff" [ExInt "2"] :: CatOp () ()
+          effTrace <- runEffTrace eff () Map.empty
+          catTrace <- runInterpTrace cat Map.empty
+          effTrace @?= catTrace
+
+      , testCase "EReturn folds to ret" $ do
+          let eff = EReturn :: Eff () ()
+              cat = CatReturn :: CatOp () ()
+          effTrace <- runEffTrace eff () Map.empty
+          catTrace <- runInterpTrace cat Map.empty
+          effTrace @?= catTrace
+
+      , testCase "J (PFork PId PId) folds to fork id id" $ do
+          let eff = J (PFork PId PId) :: Eff () ((), ())
+              cat = CatFork CatId CatId :: CatOp () ((), ())
+          effTrace <- runEffTraceGen () eff Map.empty
+          catTrace <- runInterpTraceGen () cat Map.empty
+          effTrace @?= catTrace
+
+      , testCase "J PExl folds to exl" $ do
+          let eff = J PExl :: Eff ((), ()) ()
+              cat = CatExl :: CatOp ((), ()) ()
+          effTrace <- runEffTraceGen ((), ()) eff Map.empty
+          catTrace <- runInterpTraceGen ((), ()) cat Map.empty
+          effTrace @?= catTrace
+
+      , testCase "J PExr folds to exr" $ do
+          let eff = J PExr :: Eff ((), ()) ()
+              cat = CatExr :: CatOp ((), ()) ()
+          effTrace <- runEffTraceGen ((), ()) eff Map.empty
+          catTrace <- runInterpTraceGen ((), ()) cat Map.empty
+          effTrace @?= catTrace
+
+      , testCase "EComp folds equivalently to CatCompose" $ do
+          let eff = EComp (ECall "f" []) (EAssignWithRhs "x" (ExInt "0")) :: Eff () ()
+              cat = CatCompose (CatCall "f" []) (CatAssignWithRhs "x" (ExInt "0")) :: CatOp () ()
+          effTrace <- runEffTrace eff () Map.empty
+          catTrace <- runInterpTrace cat Map.empty
+          effTrace @?= catTrace
+
+      , testCase "ELoop folds equivalently to CatLoop" $ do
+          let body = J PInr :: Eff () (Either () ())
+              eff = ELoop body :: Eff () ()
+              body' = CatInr :: CatOp () (Either () ())
+              cat = CatLoop body' :: CatOp () ()
+          effTrace <- runEffTrace eff () Map.empty
+          catTrace <- runInterpTrace cat Map.empty
+          effTrace @?= catTrace
+
+      , testCase "ELet/EVar folds body then continuation with cached result" $ do
+          -- ELet name body cont folds to (foldFreyd cont) . (foldFreyd body):
+          -- body runs once (establishing the binding), then cont runs — each
+          -- EVar inside cont recovers body's folded morphism from the cache
+          -- (FOLD-time sharing: the body term is traversed once, not re-folded
+          -- per EVar). At the Interp layer, recovering and sequencing a k a b
+          -- closure re-executes it — correct Interp semantics, NOT the
+          -- force-time bug (SchFootprint-only; see plan's fold-vs-force
+          -- section). Here body=ECall, cont=EComp (EVar)(EVar) folds to
+          -- bK.bK; overall (bK.bK).bK runs the call 3 times (1 body + 2 uses).
+          let body = ECall "shared_proc" [] :: Eff () ()
+              cont = EComp (EVar "shared") (EVar "shared") :: Eff () ()
+              eff = ELet "shared" body cont :: Eff () ()
+          (_effEnv, effTrace) <- runEffTrace eff () Map.empty
+          let callCount = length [() | TeCall "shared_proc" _ <- effTrace]
+          callCount @?= 3
+
+      , testCase "ELet without EVar use: body runs once, continuation runs" $ do
+          -- The simplest ELet: body runs, then a continuation that does NOT
+          -- reference the binding. Both effects appear exactly once.
+          let body = ECall "setup" [] :: Eff () ()
+              cont = ECall "teardown" [] :: Eff () ()
+              eff = ELet "x" body cont :: Eff () ()
+          (_effEnv, effTrace) <- runEffTrace eff () Map.empty
+          let setupCount = length [() | TeCall "setup" _ <- effTrace]
+              teardownCount = length [() | TeCall "teardown" _ <- effTrace]
+          setupCount @?= 1
+          teardownCount @?= 1
+
+      , testCase "J (PFanIn PInl PInr) folds to fanin" $ do
+          let eff = J (PFanIn PInl PInr) :: Eff (Either () ()) (Either () ())
+              cat = CatFanIn CatInl CatInr :: CatOp (Either () ()) (Either () ())
+          effTrace <- runEffTraceGen (Left ()) eff Map.empty
+          catTrace <- runInterpTraceGen (Left ()) cat Map.empty
+          effTrace @?= catTrace
+      ]
   ]

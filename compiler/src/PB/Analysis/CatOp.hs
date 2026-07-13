@@ -45,6 +45,10 @@ module PB.Analysis.CatOp
   , extractTable
   , inlineTable
   , feq
+    -- * Plan 167 Phase 5a — the Freyd split (Pure / Eff / J)
+  , Pure (..)
+  , Eff (..)
+  , foldFreyd
   ) where
 
 import PB.Prelude hiding (id, (.), lookup)
@@ -515,3 +519,140 @@ instance Effectful CatOp where
   splitValue = CatSplitValue
   ret        = CatReturn
   loopK      = CatLoop
+
+-- ============================================================================
+-- 5. Plan 167 Phase 5a — the Freyd split: Pure / Eff / J
+-- ============================================================================
+
+-- The principled end-state's TYPES and FOLD. Introduced here WITHOUT
+-- retargeting compileSsa (that is Phase 5b); the existing single-type CatOp
+-- remains the live production IR until 5b lands. Phase 5a is verified by
+-- hand-built Eff terms folded through foldFreyd and cross-checked against
+-- the equivalent CatOp terms (see CatOpTest.hs "Phase 5a: Freyd split"
+-- group).
+--
+-- KEY VERIFIED FINDING (2026-07-13): @eval@ is PURE. The plan doc's
+-- principled end-state sketch originally placed @EEval@ in Eff; that is
+-- wrong. @Interp@'s @eval@ (CatInterp.hs:94) is a single @gets@ — a pure
+-- read of the environment, no @modify'@, no @TraceEvent@ (the TraceEvent
+-- ADT, CatEval.hs:57-63, has no TeEval). @SchFootprint@'s @eval@ returns
+-- @Set.empty@ unconditionally. So @eval@ lives in Pure as @PEval@; the
+-- @Effectful Eff@ instance embeds it via @eval e = J (PEval e)@. See
+-- doc/plan/167-structural-sharing-catop-lowcat.md §"The principled
+-- end-state" (corrected).
+
+-- | The cartesian (pure) category. Duplication is free: @'PFork' f f@ is a
+-- well-formed pure morphism and always safe. Carries the structural routing
+-- (identity, composition, products, sums) plus pure expression evaluation.
+data Pure a b where
+  PId     :: Pure a a
+  PComp   :: Pure b c -> Pure a b -> Pure a c
+  PFork   :: Pure a b -> Pure a c -> Pure a (b, c)
+  PExl    :: Pure (a, b) a
+  PExr    :: Pure (a, b) b
+  PInl    :: Pure a (Either a b)
+  PInr    :: Pure b (Either a b)
+  PFanIn  :: Pure a c -> Pure b c -> Pure (Either a b) c
+  PEval   :: Expr -> Pure a Value
+
+instance Category Pure where
+  id  = PId
+  (.) = PComp
+
+instance Cartesian Pure where
+  exl = PExl
+  exr = PExr
+  (&&&) = PFork
+
+instance Cocartesian Pure where
+  inl   = PInl
+  inr   = PInr
+  (|||) = PFanIn
+
+-- | The premonoidal (effectful) category. Sharing is NAMED, not inlined:
+-- 'ELet' binds the body once under a name; 'EVar' is a use site. There is
+-- NO 'EFork' — the tensor is only central, and 'ELet' is the ONLY sharing
+-- form for effectful morphisms. A cartesian fork over an effectful subterm
+-- must go through 'J' (embedding a 'Pure' fork), which cannot duplicate an
+-- effect.
+data Eff a b where
+  J       :: Pure a b -> Eff a b
+  ELet    :: Text -> Eff a b -> Eff b c -> Eff a c
+  EVar    :: Text -> Eff a b
+  EComp   :: Eff b c -> Eff a b -> Eff a c
+  EAssign       :: Text -> Eff (env, Value) env
+  EAssignWithRhs :: Text -> Expr -> Eff env env
+  ECall         :: Text -> [Expr] -> Eff args ()
+  ESuspend      :: Text -> [Expr] -> Eff args ()
+  ESplitValue   :: Eff (env, Value) (Either env env)
+  ELoop    :: Eff a (Either a b) -> Eff a b
+  EReturn  :: Eff a b
+
+instance Category Eff where
+  id  = J PId
+  (.) = EComp
+
+instance Effectful Eff where
+  eval e          = J (PEval e)
+  assign var      = EAssign var
+  lookup _        = error "Eff.lookup: dead (compileSsa never emits lookup)"
+  suspend n as    = ESuspend n as
+  callProc n as   = ECall n as
+  splitValue      = ESplitValue
+  ret             = EReturn
+  loopK body      = ELoop body
+
+-- | The Freyd fold: interpret an 'Eff' term into any target category that
+-- implements 'Effectful'/'Cartesian'/'Cocartesian'. Every 'Eff' constructor
+-- dispatches to the corresponding typeclass method; 'J' recursively folds
+-- the embedded 'Pure' via 'foldPure'. One resolution helper caches by name
+-- for 'ELet'/'EVar'.
+foldFreyd :: forall k a b. (Effectful k, Cartesian k, Cocartesian k) => Eff a b -> k a b
+foldFreyd e = fst (go e Map.empty)
+  where
+    foldPure :: Pure x y -> k x y
+    foldPure PId           = id
+    foldPure (PComp g f)   = foldPure g . foldPure f
+    foldPure (PFork l r)   = foldPure l &&& foldPure r
+    foldPure PExl          = exl
+    foldPure PExr          = exr
+    foldPure PInl          = inl
+    foldPure PInr          = inr
+    foldPure (PFanIn t f)  = foldPure t ||| foldPure f
+    foldPure (PEval e')    = eval e'
+
+    go :: forall x y. Eff x y -> Map.Map Text Any -> (k x y, Map.Map Text Any)
+    go (J p)              m = (foldPure p, m)
+    go (EComp g f)        m = case go g m of (gK, m1) -> case go f m1 of (fK, m2) -> (gK . fK, m2)
+    go (EAssign var)      m = (assign var, m)
+    go (EAssignWithRhs v e') m = (assign v . (id &&& eval e'), m)
+    go (ECall n as)       m = (callProc n as, m)
+    go (ESuspend n as)    m = (suspend n as, m)
+    go ESplitValue        m = (splitValue, m)
+    go (ELoop body)       m = case go body m of (bK, m1) -> (loopK bK, m1)
+    go EReturn            m = (ret, m)
+    go (ELet name body cont) m =
+      -- Fold the body once, cache its folded result @bK :: k a b1@ under
+      -- @name@, then fold the continuation with the cache containing @name@.
+      -- An @'EVar' name@ inside @cont@ recovers @bK@. The overall @ELet name
+      -- body cont :: Eff a c@ folds to @cK . bK@ (run body, then cont) —
+      -- sequential composition, since @cont :: Eff b1 c@ takes the body's
+      -- result as its input. The cache is what lets a body bound once be
+      -- referenced (and, once 5b/5c wire merge blocks, shared) without
+      -- re-folding; it is the same @Any@/@unsafeCoerce@ discipline 'foldCat'
+      -- uses (CatOp.hs:175-181) for the same GADT reason: @EVar name ::
+      -- Eff x y@ recovers a @k a b1@ cached under @name@, sound only when
+      -- @EVar@ appears at a position whose type index matches the body's
+      -- (which the term's well-typedness guarantees). Phase 5d revisits
+      -- typing this cache.
+      case go body m of
+        (bK, m1) -> case go cont (Map.insert name (unsafeCoerce bK :: Any) m1) of
+          (cK, m2) -> (cK . bK, m2)
+    go (EVar name) m =
+      -- A use site: recover the cached folded result for @name@. Soundness
+      -- mirrors 'foldCat''s 'CatLetRef' clause (CatOp.hs:203-219): the cached
+      -- @k a b1@ is exactly the type this @EVar name :: Eff x y@ expects to
+      -- recover, by the well-typedness of the enclosing 'ELet'.
+      case Map.lookup name m of
+        Just cached -> (unsafeCoerce cached, m)
+        Nothing     -> error ("foldFreyd: unbound EVar " <> show name)
