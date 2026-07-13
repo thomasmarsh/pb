@@ -132,6 +132,25 @@ to close mechanical gaps — while you watch the diff afterward for any
 
 ## Invocation mechanics
 
+**Primary pattern — the Bash tool's `run_in_background` option** (no
+trailing `&`):
+
+```bash
+mimo run "<message>" --dir <project-path> --dangerously-skip-permissions --file=<spec-path> > <logfile> 2>&1
+```
+
+Invoke this via the Bash tool with `run_in_background: true`. This keeps
+mimo attached to the harness's own background-task tracking, so the
+completion notification fires on the *mimo process itself* (not on a
+launcher shell). Reliability confirmed over two consecutive sessions
+(Plan 167 Phase 4 folds 1 and 2, 2026-07-13): the notification fired on
+the right process both times, and `pgrep -f "mimo run"` disambiguated
+cleanly while the run was in flight. This is the pattern to reach for by
+default.
+
+**Fallback pattern — bare trailing `&` + `kill -0` wait-loop.** Use only
+if `run_in_background` is unavailable for some reason:
+
 ```bash
 mimo run "<message>" --dir <project-path> --dangerously-skip-permissions --file=<spec-path> > <logfile> 2>&1 &
 MIMO_PID=$!
@@ -145,7 +164,7 @@ while kill -0 $MIMO_PID 2>/dev/null; do sleep 5; done; echo "mimo done"
 
 Run that second command via the Bash tool with the background option so
 the harness notifies you when it exits, rather than sleeping in a loop
-yourself.
+yourself. Caveats specific to the `&` launcher are in the gotchas below.
 
 **Use the wait productively.** While the wait-loop runs in the
 background, do the *verify-first* work for the next step yourself — the
@@ -177,26 +196,25 @@ specifically, don't assume a top-level flag carries over):
   harness's own background-task output capture does — the user asked for
   this explicitly after finding the harness's internal task-output file
   wasn't readily tailable.
-- Launching with a bare trailing `&` detaches mimo from the harness's
-  own background-task tracking, **but the harness still sends a
-  "completed (exit code 0)" notification when the *launcher shell*
-  exits** — which is immediately, because `&` returns right away. That
-  notification is about the wrong process. Two real sessions have now
-  mistaken it for mimo's completion: one concluded mimo had finished
-  (it hadn't — only the launcher shell had); the next saw an empty
-  `git diff` and a 4-line log and nearly concluded mimo exited without
-  doing anything, when in fact it was actively mid-task and went on to
-  complete correctly. **The disambiguating check:** `pgrep -f "mimo
-  run"`. If it returns a PID, mimo is still running — ignore the
-  harness's launcher-shell notification and poll that PID yourself via
-  the `kill -0` wait-loop pattern above. Treat the harness notification
+- Launching with a bare trailing `&` (the fallback pattern above)
+  detaches mimo from the harness's own background-task tracking, **but
+  the harness still sends a "completed (exit code 0)" notification when
+  the *launcher shell* exits** — which is immediately, because `&`
+  returns right away. That notification is about the wrong process. Two
+  real sessions have mistaken it for mimo's completion: one concluded
+  mimo had finished (it hadn't — only the launcher shell had); the next
+  saw an empty `git diff` and a 4-line log and nearly concluded mimo
+  exited without doing anything, when in fact it was actively mid-task
+  and went on to complete correctly. **The disambiguating check:**
+  `pgrep -f "mimo run"`. If it returns a PID, mimo is still running —
+  ignore the harness's launcher-shell notification and poll that PID
+  yourself via the `kill -0` wait-loop. Treat the harness notification
   for an `&`-launched process as unreliable about mimo's actual state;
-  the `pgrep` + log-tail are the ground truth. (Cleaner alternative:
-  launch without `&` via the Bash tool's own `run_in_background`
-  option, which keeps mimo attached to the harness's tracking so the
-  completion notification fires on the right process. The `&` pattern
-  above predates that being reliable; prefer `run_in_background` when
-  you can.)
+  the `pgrep` + log-tail are the ground truth. **This hazard is why
+  `run_in_background` (the primary pattern above) is preferred: it keeps
+  mimo attached to the harness's tracking, so the completion
+  notification fires on the right process and the ambiguity does not
+  arise.**
 
 ## Debugging a reported mismatch/failure
 
