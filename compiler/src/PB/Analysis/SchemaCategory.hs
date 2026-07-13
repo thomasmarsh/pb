@@ -103,13 +103,29 @@ data SchGraph = SchGraph
   }
 
 -- | Canonical string key for an object (DB storage: object_key/from_key/to_key).
+-- Identifiers are drawn raw from the PB extraction tables and may carry stray
+-- control characters (notably newlines inside object/proc names). Such a
+-- character would later break Soufflé fact-file parsing (one physical line is
+-- one tuple; no escape syntax) and otherwise corrupt the @:@/@.@-delimited
+-- key structure, so each segment is sanitized here at the source.
 schObjectKey :: SchObject -> Text
 schObjectKey (ColumnObj (TableRef ns tbl) col) =
-  "col:" <> maybe "" (<> ".") ns <> tbl <> "." <> col
+  "col:" <> maybe "" (\n -> sanitizeIdent n <> ".") ns
+            <> sanitizeIdent tbl <> "." <> sanitizeIdent col
 schObjectKey (StmtObj (SqlStmtId f o p l)) =
-  "stmt:sql:" <> f <> ":" <> o <> ":" <> p <> ":" <> T.pack (show l)
+  -- 'l' is an 'Int' line number, never user-controlled, so it is not cleaned.
+  "stmt:sql:" <> sanitizeIdent f <> ":" <> sanitizeIdent o <> ":"
+                <> sanitizeIdent p <> ":" <> T.pack (show l)
 schObjectKey (StmtObj (DwRetrieveId f dw)) =
-  "stmt:dw:" <> f <> ":" <> dw
+  "stmt:dw:" <> sanitizeIdent f <> ":" <> sanitizeIdent dw
+
+-- | Collapse any character that would break a Soufflé fact field or the
+-- @:@/@.@-delimited key grammar into a single space. A space (rather than
+-- empty) keeps keys round-trip stable across the DuckDB -> Soufflé -> DuckDB
+-- pipeline and avoids producing empty key segments.
+sanitizeIdent :: Text -> Text
+sanitizeIdent =
+  T.replace "\t" " " . T.replace "\n" " " . T.replace "\r" " "
 
 -- ---------------------------------------------------------------------------
 -- Column-ref parsing

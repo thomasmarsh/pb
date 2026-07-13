@@ -142,6 +142,18 @@ compileProgram rs = T.unlines $
 -- ---------------------------------------------------------------------------
 -- Execution: export facts -> run souffle -> import results
 
+-- | Soufflé fact files are line- and tab-delimited with no escape syntax:
+-- one physical line is one tuple, columns split on tab. Any @\n@, @\r@, or
+-- @\t@ inside a field value therefore either splits a tuple (Soufflé aborts
+-- with "Values missing ... cannot parse fact file") or shifts the column
+-- count. Replace record/column delimiters with a space so every field stays
+-- a single token. Object keys are also sanitized at their source in
+-- 'PB.Analysis.SchemaCategory.schObjectKey'; this is the catch-all that keeps
+-- any other EDB relation from tripping the same failure.
+sanitizeFactField :: Text -> Text
+sanitizeFactField =
+  T.replace "\t" " " . T.replace "\n" " " . T.replace "\r" " "
+
 -- | Materialize every relation in 'rsRelations' as a DuckDB table (dropping
 -- any previous table of the same name first).
 runRuleSet :: DuckConn -> RuleSet -> IO ()
@@ -161,7 +173,7 @@ runRuleSetWith onRelation conn rs =
     for_ (edbRelations rs) $ \rel -> do
       rows <- queryTextRows conn (relName rel) (colNames rel)
       writeFile (factsDir </> T.unpack (relName rel) <> ".facts")
-        (T.unlines [ T.intercalate "\t" row | row <- rows ])
+        (T.unlines [ T.intercalate "\t" (map sanitizeFactField row) | row <- rows ])
     writeFile progFile (compileProgram rs)
     (exitCode, _out, err) <- readProcessWithExitCode "souffle"
       ["-F", factsDir, "-D", outDir, progFile] ""

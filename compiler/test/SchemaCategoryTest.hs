@@ -39,6 +39,35 @@ tests = testGroup "SchemaCategory"
         splitColumnRef "Sales.Customer.ID" @?= Just (TableRef (Just "sales") "customer", "id")
     ]
 
+  , testGroup "schObjectKey sanitizes record/column delimiters"
+    -- Regression: an identifier carrying a stray newline (seen in a
+    -- production corpus's object/proc name) used to land verbatim in a
+    -- schema_morphisms.from_key, then in leg.facts, splitting one tuple
+    -- across two physical lines and aborting Soufflé with
+    -- "Values missing in line N; cannot parse fact file leg.facts!".
+    -- Every identifier segment is sanitized to a single space; the Int line
+    -- number is never cleaned.
+    [ testCase "ColumnObj: newline/tab/CR in ns/table/col collapse to spaces" $
+        schObjectKey (ColumnObj (TableRef (Just "sa\tles") "cust\nomers") "id\r")
+          @?= "col:sa les.cust omers.id "
+
+    , testCase "ColumnObj: no namespace keeps the key well-formed" $
+        schObjectKey (ColumnObj (TableRef Nothing "ord\ters") "id")
+          @?= "col:ord ers.id"
+
+    , testCase "StmtObj (SqlStmtId): newline/tab/CR in file/obj/proc collapse; line number untouched" $
+        schObjectKey (StmtObj (SqlStmtId "f\n.srf" "ob\tj" "pr\roc" 30))
+          @?= "stmt:sql:f .srf:ob j:pr oc:30"
+
+    , testCase "StmtObj (DwRetrieveId): newline/tab/CR in file/dw collapse" $
+        schObjectKey (StmtObj (DwRetrieveId "d_\ntest.srd" "d\ttest"))
+          @?= "stmt:dw:d_ test.srd:d test"
+
+    , testCase "clean identifiers pass through unchanged" $
+        schObjectKey (ColumnObj (TableRef (Just "sales") "orders") "id")
+          @?= "col:sales.orders.id"
+    ]
+
   , testGroup "buildSchema"
     [ testCase "DW retrieve column emits LegRetrieve per qualified column" $
         let inp = emptyInputs
