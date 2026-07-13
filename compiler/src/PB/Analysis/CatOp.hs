@@ -44,6 +44,8 @@ module PB.Analysis.CatOp
 import PB.Prelude hiding (id, (.), lookup)
 import qualified Prelude as P
 import Unsafe.Coerce (unsafeCoerce)
+import qualified Data.Map.Strict as Map
+import GHC.Exts (Any)
 import PB.AST.Expr (Expr (..))
 import PB.Analysis.CatEval (Value (..))
 
@@ -116,27 +118,95 @@ branch cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)
 -- 'CatTagged' is transparent — it exists only so 'PB.Analysis.GraphBuilder'
 -- can recognize repeat encounters of the same SSA block, which has no
 -- meaning for any other fold target.
+--
+-- __'CatTagged' memoization.__ A shared merge-block DAG (the shape
+-- 'PB.Analysis.CatLower.compileBlock'\'s blockId memo produces: the /same/
+-- 'CatOp' heap value embedded at every fan-in predecessor of a merge block)
+-- is folded once per embedding. Because that shared subterm itself contains
+-- the next reconvergent fan-in, the cost is O(2^depth) in the number of
+-- sequential reconvergent switches — the same class of blowup Plan 150
+-- fixed for 'PB.Analysis.GraphBuilder.toLowCat'\/@compileLowCatToInstr@
+-- (see the "GraphBuilder node-sharing" tests in @CatOpTest@). Nothing folded
+-- a 'CatTagged'-bearing term on a hot path before Plan 163 Phase 3 wired
+-- 'PB.Analysis.SchFootprint.foldSchFootprint' into
+-- 'PB.Pipeline.Runner.compileOne', so this fold lacked the matching memo
+-- until that wiring surfaced it (a real 1763-file corpus went from a
+-- 7-minute run to a full stall at ~1261 files). The memo caches by blockId
+-- on the first encounter and reuses on every repeat — sound because
+-- 'CatTagged :: CatOp a b -> CatOp a b' preserves both type params, so the
+-- cached result's type @k a b@ is provably what the uncached recursion
+-- would have returned (same 'unsafeCoerce'-through-an-opaque-cell
+-- discipline 'feq' below uses for the same GADT reason). Mirrors
+-- 'toLowCat'\'s own memo exactly (Plan 150).
 foldCat :: (Effectful k, Cartesian k, Cocartesian k) => CatOp a b -> k a b
-foldCat CatId                   = id
-foldCat (CatCompose g f)        = foldCat g . foldCat f
-foldCat (CatFork l r)           = foldCat l &&& foldCat r
-foldCat CatExl                  = exl
-foldCat CatExr                  = exr
-foldCat (CatConst e)            = eval e
-foldCat CatInl                  = inl
-foldCat CatInr                  = inr
-foldCat CatReturn                = ret
-foldCat (CatFanIn t f)           = foldCat t ||| foldCat f
-foldCat (CatAssign var)          = assign var
-foldCat (CatAssignWithRhs var e) = assign var . (id &&& eval e)
-foldCat (CatLookup var)          = lookup var
-foldCat (CatLoop body)           = loopK (foldCat body)
-foldCat (CatEval e)              = eval e
-foldCat (CatCall name args)      = callProc name args
-foldCat (CatSuspend eff args)    = suspend eff args
-foldCat CatSplitValue            = splitValue
-foldCat (CatTry body _handler)   = foldCat body
-foldCat (CatTagged _ f)          = foldCat f
+foldCat op = fst (go op Map.empty)
+  where
+    -- 'go' threads a 'Map Text Any' blockId→result cache through the term
+    -- and returns @(folded result, updated cache)@. The cache flows
+    -- sequentially through every binary constructor (CatCompose, CatFork,
+    -- CatFanIn) so that a 'CatTagged' block discovered while folding one
+    -- subterm is visible to its siblings — this is what stops a shared
+    -- merge-block DAG from being re-folded once per embedding. The
+    -- per-top-level-term cache starts empty, matching
+    -- 'PB.Analysis.GraphBuilder.toLowCat'\'s @evalState ... Map.empty@.
+    --
+    -- The result type @k x y@ varies per subterm (GADT-indexed), but the
+    -- cache is uniform 'Any', so returning @(k x y, Map Text Any)@ tuples
+    -- threads the cache through without pinning a single @x y@ for the
+    -- whole traversal — the obstruction that rules out a plain @StateT@
+    -- here. This is the same explicit-(result,state)-tuple style
+    -- 'collectWiring'\/'walkShared' uses in GraphBuilder.hs for the
+    -- equivalent 'LowCat' dedup.
+    --
+    -- Soundness of the 'Any'\/'unsafeCoerce' cell: 'CatTagged :: CatOp a b
+    -- -> CatOp a b' preserves both type params, so a cached @k x y@ stored
+    -- under @bid@ is exactly the type the next @CatTagged bid _@ encounter
+    -- expects to recover. 'compileBlock'\'s own memo (Plan 150) guarantees
+    -- one canonical compiled value per @bid@ within a term, so a repeat
+    -- @bid@ always carries identical content. Same discipline 'feq' uses
+    -- in this module for the same GADT reason.
+    go :: (Effectful k, Cartesian k, Cocartesian k)
+       => CatOp x y -> Map.Map Text Any -> (k x y, Map.Map Text Any)
+    go CatId                    m = (id, m)
+    go (CatCompose g f)         m = case go g m of (gK, m1) -> case go f m1 of (fK, m2) -> (gK . fK, m2)
+    go (CatFork l r)            m = case go l m of (lK, m1) -> case go r m1 of (rK, m2) -> (lK &&& rK, m2)
+    go CatExl                   m = (exl, m)
+    go CatExr                   m = (exr, m)
+    go (CatConst e)             m = (eval e, m)
+    go CatInl                   m = (inl, m)
+    go CatInr                   m = (inr, m)
+    go CatReturn                m = (ret, m)
+    go (CatFanIn t f)           m = case go t m of (tK, m1) -> case go f m1 of (fK, m2) -> (tK ||| fK, m2)
+    go (CatAssign var)          m = (assign var, m)
+    go (CatAssignWithRhs var e) m = (assign var . (id &&& eval e), m)
+    go (CatLookup var)          m = (lookup var, m)
+    go (CatLoop body)           m = case go body m of (bK, m1) -> (loopK bK, m1)
+    go (CatEval e)              m = (eval e, m)
+    go (CatCall name args)      m = (callProc name args, m)
+    go (CatSuspend eff args)    m = (suspend eff args, m)
+    go CatSplitValue            m = (splitValue, m)
+    go (CatTry body _handler)   m = go body m
+    go (CatTagged bid f)        m = case Map.lookup bid m of
+      -- A shared merge-block subterm (Plan 150): its fold result is
+      -- identical at every embedding, so cache it under @bid@ on the first
+      -- encounter and reuse on every repeat. This is the single fix point
+      -- for the O(2^depth) blowup a shared 'CatTagged' DAG would otherwise
+      -- cause — see the headnote above and the matching memo in
+      -- 'PB.Analysis.GraphBuilder.toLowCat'.
+      Just cached -> (unsafeCoerce cached, m)
+      Nothing     ->
+        -- Fold f with the incoming cache (not yet containing bid), then
+        -- insert bid's result so siblings and later ancestors reuse it.
+        -- Mirrors 'toLowCat' exactly: the first encounter of bid within
+        -- f's own subterms would re-fold, but 'compileBlock' guarantees a
+        -- block never contains itself, so bid cannot appear in f's own
+        -- subterms — the cache only needs to cover siblings/later, which
+        -- threading the cache through CatCompose/CatFork/CatFanIn (above)
+        -- provides. No coerce on this return path — r is at f's own type
+        -- params (x y), which 'CatTagged' preserves; only the 'Just'
+        -- branch coerces.
+        let (r, m') = go f m
+        in (r, Map.insert bid (unsafeCoerce r :: Any) m')
 
 -- ============================================================================
 -- 3. The GADT: Initial Algebra

@@ -13,6 +13,8 @@ import PB.Analysis.CatLower (compileSsa)
 import PB.Analysis.GraphBuilder
 import PB.Analysis.CatInterp
 import PB.Analysis.CatEval (Value (..), TraceEvent (..))
+import PB.Analysis.SchFootprint (foldSchFootprint, FunctorCtx (..))
+import PB.Analysis.SchemaCategory (StmtId (..))
 import PB.Analysis.InstrGraph (ShapeNode (..), canonicalize, normalizeCallTag)
 import PB.Analysis.CallClassify (parseArgList, collectBodyLocals)
 import PB.Analysis.InstrInterp (runInstrGraphTrace, TraceOutcome (..))
@@ -1263,6 +1265,107 @@ tests = testGroup "CatOp"
             ("allocated " <> show bytes <> " bytes; expected < 20MB (pre-fix: 2^18 node \
              \reconstructions in toLowCat)")
             (bytes P.< 20 P.* 1000 P.* 1000)
+    ]
+
+  , testGroup "foldCat CatTagged memoization: SchFootprint fold over a shared-merge-block DAG stays linear"
+    -- The Plan 150 / toLowCat memo group above covers the lowering folds
+    -- ('toLowCat', 'compileLowCatToInstr' via 'bsBlockPcMemo', 'collectWiring'
+    -- via 'walkShared'). 'PB.Analysis.CatOp.foldCat' — the generic catamorphism
+    -- over 'CatOp', used by both 'PB.Analysis.CatInterp.runCat' (test) and
+    -- 'PB.Analysis.SchFootprint.foldSchFootprint' (production, per-procedure in
+    -- 'PB.Pipeline.Runner.compileOne') — had NO matching 'CatTagged' memo until
+    -- this fix: @foldCat (CatTagged _ f) = foldCat f@ recursed unconditionally,
+    -- re-folding a shared merge-block subterm once per embedding. With each such
+    -- subterm containing the next reconvergent fan-in, the cost is O(2^depth) in
+    -- the number of sequential reconvergent switches — the same class of blowup
+    -- the toLowCat memo group above guards against, one layer up.
+    --
+    -- Nothing folded a 'CatTagged'-bearing term on a hot path before Plan 163
+    -- Phase 3 wired 'foldSchFootprint' into 'compileOne' (commit 6510af8), so
+    -- the absence of the memo only surfaced as a real regression: a 1763-file
+    -- ~300 KLOC corpus that previously compiled in ~7 minutes stalled at
+    -- ~1261 files, with workers wedged on the highest-switch-count procedures.
+    -- These tests pin the memo's presence so the same wiring change (or any
+    -- future 'foldCat' caller) can't silently reintroduce it. Assertions are
+    -- bytes-allocated, mirroring the toLowCat memo group; the fixed algorithm
+    -- finishes in milliseconds and the timeout is a hang-safety-net only.
+    [ testCase "18 sequential if/else groups: foldSchFootprint stays linear, not 2^18 re-folds" $ do
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            group base =
+              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
+                  [Located (base P.+ 2) (BsCall (call ("a" <> T.pack (show base))))] []
+                  (Just [Located (base P.+ 3) (BsCall (call ("b" <> T.pack (show base))))])))
+              , Located (base P.+ 4) (BsCall (call ("tail" <> T.pack (show base))))
+              ]
+            body = concatMap group [ n P.* 4 | n <- [0 .. 17 :: Int] ]
+            term = compileProcedureToCatOp emptyEnv Set.empty body
+            ctx  = FunctorCtx
+              { fcStmtObj         = SqlStmtId "f.srf" "obj" "proc" 1
+              , fcTypeEnv         = emptyEnv
+              , fcDwColumns       = Map.empty
+              , fcControlBindings = Map.empty
+              }
+        mBytes <- timeout 30000000 (measureAllocBytes
+          (CE.evaluate (Set.size (foldSchFootprint ctx term))))
+        case mBytes of
+          Nothing -> assertFailure "did not complete within the 30s hang-safety-net timeout"
+          Just bytes -> assertBool
+            ("allocated " <> show bytes <> " bytes; expected < 150MB (memoized baseline ~80MB \
+             \on this machine; the heavier SchFootprint constant vs LowCat — building/unions of \
+             \Set SchMorphism closures per node — sets a higher linear floor than the <20MB \
+             \toLowCat memo test on the same input. Pre-fix: ~582MB unmemoized; without the \
+             \memo, a 25-switch corpus procedure is in the GB range and stalls the run)")
+            (bytes P.< 150 P.* 1000 P.* 1000)
+
+    , testCase "7 sequential choose/case blocks, 8 clauses each (fn_dateolografos shape): foldSchFootprint stays linear" $ do
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            chooseGroup g =
+              Located (g P.* 100) (BsChoose (ChooseStmt
+                (ExLvalue (Lvalue [LvSegment ("s" <> T.pack (show g)) Nothing]))
+                [ CaseClause (Just [tok (T.pack (show i))])
+                    [Located (g P.* 100 P.+ i) (BsCall (call ("c" <> T.pack (show g) <> "_" <> T.pack (show i))))]
+                | i <- [1 .. 8 :: Int] ]))
+            body = [ chooseGroup g | g <- [1 .. 7 :: Int] ]
+            term = compileProcedureToCatOp emptyEnv Set.empty body
+            ctx  = FunctorCtx
+              { fcStmtObj         = SqlStmtId "f.srf" "obj" "proc" 1
+              , fcTypeEnv         = emptyEnv
+              , fcDwColumns       = Map.empty
+              , fcControlBindings = Map.empty
+              }
+        mBytes <- timeout 30000000 (measureAllocBytes
+          (CE.evaluate (Set.size (foldSchFootprint ctx term))))
+        case mBytes of
+          Nothing -> assertFailure "did not complete within the 30s hang-safety-net timeout"
+          Just bytes -> assertBool
+            ("allocated " <> show bytes <> " bytes; expected < 600MB (memoized baseline ~350MB; \
+             \the 8-way fan-in per choose block multiplies SchFootprint's per-node Set-union cost \
+             \vs the 2-way if/else case above. Pre-fix: ~5.2GB unmemoized — combinatorial across \
+             \the 7 chained 8-clause blocks)")
+            (bytes P.< 600 P.* 1000 P.* 1000)
+
+    , testCase "foldCat memo preserves semantics: a shared tagged block's footprint is folded correctly" $
+        -- Memo correctness, not just performance: the memo returns the same
+        -- result the unmemoized fold would. SchFootprint's only non-empty
+        -- Effectful method is 'callProc' (SetItem recognition), which produces
+        -- nothing here (no control bindings), so the footprint is empty — but
+        -- the assertion exercises the full fold path including CatTagged hits.
+        -- The memo must never corrupt the result (e.g. return a stale or
+        -- type-mismatched cached value); if it did, the result set would differ.
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            body = [ Located 1 (BsIf (IfStmt (ExBool True)
+                       [Located 2 (BsCall (call "callA"))] []
+                       (Just [Located 3 (BsCall (call "callB"))])))
+                   , Located 4 (BsCall (call "callC"))
+                   ]
+            term = compileProcedureToCatOp emptyEnv Set.empty body
+            ctx  = FunctorCtx
+              { fcStmtObj         = SqlStmtId "f.srf" "obj" "proc" 1
+              , fcTypeEnv         = emptyEnv
+              , fcDwColumns       = Map.empty
+              , fcControlBindings = Map.empty
+              }
+        in foldSchFootprint ctx term @?= Set.empty
     ]
 
   , testGroup "collectWiring (Plan 149 Phase 1)"
