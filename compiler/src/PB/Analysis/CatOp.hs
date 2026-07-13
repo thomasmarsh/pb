@@ -39,6 +39,7 @@ module PB.Analysis.CatOp
     -- * Derived combinators
   , branch
   , foldCat
+  , foldCatOp
     -- * Plan 167 Phase 3 — shared-term table (intermediate representation)
   , CatTerm (..)
   , extractTable
@@ -143,8 +144,16 @@ branch cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)
 -- would have returned (same 'unsafeCoerce'-through-an-opaque-cell
 -- discipline 'feq' below uses for the same GADT reason). Mirrors
 -- 'toLowCat'\'s own memo exactly (Plan 150).
-foldCat :: (Effectful k, Cartesian k, Cocartesian k) => CatOp a b -> k a b
-foldCat op = fst (go op Map.empty)
+--
+-- __Phase 4 (table-native).__ 'foldCat' now takes a 'CatTerm' (spine +
+-- table) and resolves 'CatLetRef bid' by consulting the table, folding
+-- the body once and caching the result — the same cache mechanism the
+-- 'CatTagged' clause uses, with the body sourced from the table instead
+-- of inline. The 'CatTagged' clause is retained (defensive; removed in
+-- Phase 7). 'foldCatOp' is the pre-Phase-4 signature for callers folding
+-- bare 'CatOp' terms with no sharing.
+foldCat :: (Effectful k, Cartesian k, Cocartesian k) => CatTerm a b -> k a b
+foldCat (CatTerm spine table) = fst (go spine Map.empty)
   where
     -- 'go' threads a 'Map Text Any' blockId→result cache through the term
     -- and returns @(folded result, updated cache)@. The cache flows
@@ -191,7 +200,23 @@ foldCat op = fst (go op Map.empty)
     go (CatSuspend eff args)    m = (suspend eff args, m)
     go CatSplitValue            m = (splitValue, m)
     go (CatTry body _handler)   m = go body m
-    go (CatLetRef _)            _ = error "foldCat: CatLetRef should have been inlined by inlineTable"
+    go (CatLetRef bid)         m = case Map.lookup bid m of
+      -- Phase 4: consult the CatTerm's table at this use site. The table
+      -- holds the raw monomorphic CatOp () () body that CatTagged would
+      -- have inlined here (Phase 3 finding: compileSsa is uniformly
+      -- CatOp () (), so the unsafeCoerce to the use-site's x y is
+      -- representation-identity, same discipline feq uses). The
+      -- fold-result cache (Map Text Any) is the SAME mechanism the
+      -- CatTagged clause below uses: fold the body once on first
+      -- encounter, cache the k x y result under bid, reuse on every
+      -- repeat. Soundness identical to CatTagged's — CatLetRef preserves
+      -- both type params, and compileBlock guarantees one canonical body
+      -- per bid (CatOp.hs:201-203 headnote).
+      Just cached -> (unsafeCoerce cached, m)
+      Nothing     -> case Map.lookup bid table of
+        Just body -> let (r, m') = go (unsafeCoerce body :: CatOp x y) m
+                     in (r, Map.insert bid (unsafeCoerce r :: Any) m')
+        Nothing   -> error ("foldCat: unbound CatLetRef " <> show bid)
     go (CatTagged bid f)        m = case Map.lookup bid m of
       -- A shared merge-block subterm (Plan 150): its fold result is
       -- identical at every embedding, so cache it under @bid@ on the first
@@ -213,6 +238,15 @@ foldCat op = fst (go op Map.empty)
         -- branch coerces.
         let (r, m') = go f m
         in (r, Map.insert bid (unsafeCoerce r :: Any) m')
+
+-- | Fold a bare 'CatOp' (no shared-term table) — the pre-Phase-4
+-- signature of 'foldCat', kept as a convenience for callers that fold
+-- hand-built 'CatOp' terms with no 'CatLetRef' use sites (tests,
+-- 'PB.Analysis.CatInterp.runCat'). Equivalent to
+-- @foldCat (CatTerm op Map.empty)@. 'foldCat' itself now takes a
+-- 'CatTerm' so it can consult the table at 'CatLetRef' use sites.
+foldCatOp :: (Effectful k, Cartesian k, Cocartesian k) => CatOp a b -> k a b
+foldCatOp op = foldCat (CatTerm op Map.empty)
 
 -- ============================================================================
 -- 3. The GADT: Initial Algebra

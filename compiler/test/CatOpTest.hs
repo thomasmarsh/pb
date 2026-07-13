@@ -718,7 +718,7 @@ tests = testGroup "CatOp"
     -- per-constructor match).
     [ testCase "foldCat CatAssignWithRhs updates env and emits TeAssign" $ do
         let term = CatAssignWithRhs "x_1" (ExInt "42") :: CatOp () ()
-        (_, st) <- runStateT (runInterp (foldCat term) ()) (InterpState Map.empty [] Map.empty)
+        (_, st) <- runStateT (runInterp (foldCatOp term) ()) (InterpState Map.empty [] Map.empty)
         Map.lookup "x_1" (isEnv st) @?= Just (VInt 42)
         P.reverse (isTrace st) @?= [TeAssign "x_1" (VInt 42)]
 
@@ -726,12 +726,12 @@ tests = testGroup "CatOp"
         let term = branch (ExBool True)
                      (CatAssignWithRhs "then_taken" (ExInt "1"))
                      (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
-        (_, st) <- runStateT (runInterp (foldCat term) ()) (InterpState Map.empty [] Map.empty)
+        (_, st) <- runStateT (runInterp (foldCatOp term) ()) (InterpState Map.empty [] Map.empty)
         P.reverse (isTrace st) @?= [TeBranch True, TeAssign "then_taken" (VInt 1)]
 
     , testCase "ret aborts via ReturnUnwind, matching CatReturn's prior direct-coded behavior" $ do
         let term = CatReturn :: CatOp () ()
-        st <- (P.snd P.<$> runStateT (runInterp (foldCat term) ())
+        st <- (P.snd P.<$> runStateT (runInterp (foldCatOp term) ())
                  (InterpState (Map.fromList [("x", VInt 1)]) [] Map.empty))
                 `CE.catch` (\(ReturnUnwind capturedSt) -> return capturedSt)
         isEnv st @?= Map.fromList [("x", VInt 1)]
@@ -744,7 +744,7 @@ tests = testGroup "CatOp"
                          (CatInl . CatAssignWithRhs "i" incr)
                          CatInr :: CatOp () (Either () ())
             term = CatLoop loopBody :: CatOp () ()
-        (_, st) <- runStateT (runInterp (foldCat term) ()) (InterpState (Map.fromList [("i", VInt 0)]) [] Map.empty)
+        (_, st) <- runStateT (runInterp (foldCatOp term) ()) (InterpState (Map.fromList [("i", VInt 0)]) [] Map.empty)
         Map.lookup "i" (isEnv st) @?= Just (VInt 3)
     ]
 

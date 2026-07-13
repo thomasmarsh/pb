@@ -28,7 +28,7 @@ import qualified Prelude as P
 import Control.Monad.State.Strict (StateT, get, modify', gets, evalStateT)
 import Control.Monad.IO.Class (liftIO)
 import Control.Exception (Exception, throwIO)
-import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), CatOp (..), foldCat)
+import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), CatOp (..), foldCatOp)
 import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExprMocked)
 import qualified Data.Map.Strict as Map
 
@@ -138,11 +138,11 @@ runInterpIO :: Interp a b -> a -> IO b
 runInterpIO (Interp f) x = evalStateT (f x) (InterpState Map.empty [] Map.empty)
 
 -- | Interpret a compiled 'CatOp' term directly via 'Interp'. Plan 148 Phase
--- 3: this used to be its own per-constructor match; it is now 'foldCat'
+-- 3: this used to be its own per-constructor match; it is now 'foldCatOp'
 -- specialized to @k = Interp@, since every case reduces to a
 -- 'Category'\/'Cartesian'\/'Cocartesian'\/'Effectful' method call with no
 -- Interp-specific logic left outside the instance definitions above
 -- ('ret'\/'loopK' carry what used to be 'CatReturn'\/'CatLoop's bespoke
 -- cases).
 runCat :: CatOp a b -> Interp a b
-runCat = foldCat
+runCat = foldCatOp
