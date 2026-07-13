@@ -1969,11 +1969,11 @@ tests = testGroup "CatOp"
                        (Just [Located 3 (BsCall (call "callB"))])))
                    , Located 4 (BsCall (call "callC"))
                    ]
-        in toLowCat (compileProcedureToCatOp emptyEnv Set.empty body)
+        in toLowCatOp (compileProcedureToCatOp emptyEnv Set.empty body)
              @?= compileProcedureToLowCat emptyEnv Set.empty body
 
     , testCase "empty body: still matches compileProcedureToLowCat (totalizes, no crash)" $
-        toLowCat (compileProcedureToCatOp emptyEnv Set.empty [])
+        toLowCatOp (compileProcedureToCatOp emptyEnv Set.empty [])
           @?= compileProcedureToLowCat emptyEnv Set.empty []
     ]
 

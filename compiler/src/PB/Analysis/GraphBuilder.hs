@@ -17,6 +17,7 @@ module PB.Analysis.GraphBuilder
   ( -- * LowCat intermediary
     LowCat (..)
   , toLowCat
+  , toLowCatOp
   , extractCondLowCat
     -- * Wiring diagrams (Plan 149 Phase 1)
   , WiringPayload (..)
@@ -99,8 +100,23 @@ data LowCat
 -- 'compileBlock'/'compileLoopBody' memo — so caching by blockId text alone
 -- (ignoring the GADT's type parameters) is sound: a repeat encounter always
 -- carries the same content, never a different one under the same tag.
-toLowCat :: CatOp a b -> LowCat
-toLowCat op = evalState (go op) Map.empty
+--
+-- __Phase 4 (table-native).__ 'toLowCat' now takes a 'CatTerm' (spine +
+-- table) and resolves 'CatLetRef bid' by consulting the table, folding the
+-- body once and caching the result in the 'State' memo — the same memo
+-- mechanism the 'CatTagged' clause uses, with the body sourced from the
+-- table instead of inline. No 'unsafeCoerce' is needed (unlike 'foldCat'\'s
+-- 'CatLetRef' clause): 'go' is polymorphic and produces monomorphic
+-- 'LowCat', so the table\'s 'CatOp () ()' body folds directly. The
+-- 'CatTagged' clause is retained (defensive; removed in Phase 7). The
+-- produced 'LowCat' still carries 'LTagged bid inner' (body inlined into
+-- LowCat) — NOT a name-only reference — so 'compileLowCatToInstr' and
+-- 'collectWiring' see the identical term they see today; their own memos
+-- ('bsBlockPcMemo', 'walkShared') remain load-bearing and are NOT dropped
+-- (those belong to Phase 6). 'toLowCatOp' is the pre-Phase-4 signature for
+-- callers lowering bare 'CatOp' terms with no sharing.
+toLowCat :: CatTerm a b -> LowCat
+toLowCat (CatTerm spine table) = evalState (go spine) Map.empty
   where
     go :: CatOp x y -> State (Map.Map Text LowCat) LowCat
     go CatId              = pure LId
@@ -124,7 +140,26 @@ toLowCat op = evalState (go op) Map.empty
           inner <- go f
           modify (Map.insert bid inner)
           pure (LTagged bid inner)
+    go (CatLetRef bid)    = do
+      cached <- gets (Map.lookup bid)
+      case cached of
+        Just inner -> pure (LTagged bid inner)
+        Nothing    -> case Map.lookup bid table of
+          Just body -> do
+            inner <- go body
+            modify (Map.insert bid inner)
+            pure (LTagged bid inner)
+          Nothing   -> error ("toLowCat: unbound CatLetRef " <> show bid)
     go _                  = pure LErasable  -- CatExl, CatExr, CatConst, CatLookup, CatAssign, CatTry
+
+-- | Lower a bare 'CatOp' (no shared-term table) — the pre-Phase-4 signature
+-- of 'toLowCat', kept as a convenience for callers that fold hand-built
+-- 'CatOp' terms with no 'CatLetRef' use sites (the production hot path:
+-- 'compileCatToInstr' via 'buildInstrGraph'/'compileProcedureViaCatOp').
+-- Equivalent to @toLowCat (CatTerm op Map.empty)@. 'toLowCat' itself now
+-- takes a 'CatTerm' so it can consult the table at 'CatLetRef' use sites.
+toLowCatOp :: CatOp a b -> LowCat
+toLowCatOp op = toLowCat (CatTerm op Map.empty)
 
 -- ============================================================================
 -- 1b. Wiring diagrams (Plan 149 Phase 1): shared-block extraction
@@ -252,7 +287,7 @@ initState = BuilderState { bsNodes = Map.empty, bsNextPc = 0, bsSourceLines = []
 -- | Compile a CatOp into InstrGraph nodes.
 -- Lowers to 'LowCat' first (stripping GADT types), then compiles.
 compileCatToInstr :: CatOp a b -> Int -> GraphBuilder Int
-compileCatToInstr catOp nextPc = compileLowCatToInstr (toLowCat catOp) nextPc
+compileCatToInstr catOp nextPc = compileLowCatToInstr (toLowCatOp catOp) nextPc
 
 -- | Compile a 'LowCat' into InstrGraph nodes using backward chaining.
 -- Takes the continuation PC (where to jump after) and returns the entry PC.
@@ -425,15 +460,17 @@ compileProcedureViaCatOp env userFns body =
 
 -- | Same SSA → CatOp pipeline as 'compileProcedureViaCatOp', stopping at the
 -- 'LowCat' term instead of flattening to 'InstrGraph' (Plan 149 Phase 1 —
--- wiring diagrams need the term itself). Deliberately NOT factored to share
--- code with 'compileProcedureViaCatOp' — that function is the verified
--- production hot path (Plan 146's oracle gated every change to it on a
--- byte-identical `--dual-trace` diff list), and duplicating this one small
--- env-seeding expression is a smaller risk than refactoring it.
+-- wiring diagrams need the term itself).
+--
+-- Plan 167 Phase 4 (table-native): now lowers via 'compileProcedureToCatTerm'
+-- (the 'CatTerm' spine + table) and the table-native 'toLowCat', which
+-- resolves 'CatLetRef' use sites from the table. The produced 'LowCat' still
+-- carries 'LTagged bid inner' (body inlined) — the identical shape
+-- 'compileLowCatToInstr'/'collectWiring' consume — so 'bsBlockPcMemo' and
+-- 'walkShared' remain load-bearing (deleted in Phase 6, not here).
 compileProcedureToLowCat :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> LowCat
 compileProcedureToLowCat env userFns body =
-  let env' = env { steLocal = collectBodyLocals body `Map.union` steLocal env }
-  in toLowCat (compileSsa env' userFns (buildSsa env' "proc" body))
+  toLowCat (compileProcedureToCatTerm env userFns body)
 
 -- | Same SSA → CatOp pipeline as 'compileProcedureViaCatOp'/
 -- 'compileProcedureToLowCat', stopping at the raw compiled 'CatOp' term
