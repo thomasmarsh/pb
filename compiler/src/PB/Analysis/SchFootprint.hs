@@ -36,7 +36,7 @@ import PB.AST.BodyStmt (BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..), C
 import PB.AST.Located (Located (..))
 import PB.AST.Type (renderPbType)
 import PB.Analysis.CallClassify (segName)
-import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), CatOp, foldCat)
+import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), CatOp (..))
 import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainDwBinding)
 import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..), DwRetrieveColRow (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv, lookupScopedVar)
@@ -115,6 +115,15 @@ resolveSetItem ctx name args = do
 -- '(&&&)', and '(|||)' are all pointwise union — the 'Category' laws hold
 -- by construction since set union is an associative monoid with 'mempty'
 -- as identity.
+--
+-- __Test-only semantic oracle since Plan 167 Phase 1 (2026-07-13).__ The
+-- production path is 'foldSchFootprint' (a direct force-time-memoized
+-- fold); this newtype, its four instances, and 'runSchFootprint' are kept
+-- ONLY as the spec that direct fold implements — driven by the \"category
+-- laws\" test group in SchFootprintTest. Do not add a new production
+-- caller through the instance route: it memoizes the fold but not the
+-- force (the bug Phase 1 fixed) and will re-force shared 'CatTagged'
+-- subtrees O(N) times.
 newtype SchFootprint a b = SchFootprint { runSchFootprint :: FunctorCtx -> Set.Set SchMorphism }
 
 instance Category SchFootprint where
@@ -155,8 +164,71 @@ instance Effectful SchFootprint where
   loopK (SchFootprint f) = SchFootprint f
 
 -- | Run a compiled 'CatOp' term through the 'SchFootprint' functor.
+--
+-- Plan 167 Phase 1: a DIRECT, force-time-memoized fold, NOT the
+-- @runSchFootprint (foldCat op) ctx@ route it used through 2026-07-13.
+-- That route memoized the FOLD (closure construction, via foldCat's
+-- 'CatTagged' cache) but not the FORCE (closure application):
+-- 'SchFootprint' is a deferred @(FunctorCtx -> Set)@ constant functor,
+-- so a 'CatTagged' subtree embedded at N positions was re-forced N times
+-- — O(2^N) on reconvergent control flow (confirmed by scaling probe:
+-- ~4x alloc per +2 switches). This fold caches the FORCED 'Set' per
+-- blockId, so a shared subtree's footprint is computed once and reused
+-- at every embedding — the force-time analogue of LowCat's
+-- @bsBlockPcMemo@ ('PB.Analysis.GraphBuilder.compileLowCatToInstr'
+-- 'LTagged' case). Simpler than that memo: @ctx@ is fixed for the whole
+-- call, so the key is just @blockId@ (no continuation-pc dimension).
+--
+-- Soundness: 'SchFootprint' is a constant functor (phantom a\/b), so
+-- folding directly is semantically equivalent to the instance route BY
+-- CONSTRUCTION — the instance equations ARE this fold's spec (kept as a
+-- test-only oracle via the \"category laws\" group in SchFootprintTest).
+-- The cache holds monomorphic @Set SchMorphism@ (no unsafeCoerce\/Any,
+-- unlike 'foldCat'\'s GADT-indexed cache). A @CatTagged bid f@ produces
+-- exactly the Set folding @f@ would, so caching under @bid@ and returning
+-- on repeat is the identity on the result. 'compileBlock' guarantees a
+-- block never contains itself ('PB.Analysis.CatOp.foldCat' headnote), so
+-- insert-after-recursion is cycle-safe.
 foldSchFootprint :: FunctorCtx -> CatOp a b -> Set.Set SchMorphism
-foldSchFootprint ctx op = runSchFootprint (foldCat op) ctx
+foldSchFootprint ctx op = fst (go op Map.empty)
+  where
+    -- Threads a blockId -> forced-Set cache through the term exactly as
+    -- foldCat threads its (k x y, Map) cache (CatOp.hs:168-179): the
+    -- cache flows sequentially through every binary constructor so a
+    -- CatTagged discovered in one subterm is visible to its siblings.
+    go :: CatOp x y -> Map.Map Text (Set.Set SchMorphism)
+       -> (Set.Set SchMorphism, Map.Map Text (Set.Set SchMorphism))
+    go CatId                    m = (Set.empty, m)
+    go (CatCompose g f)         m = let (rg, m1) = go g m in let (rf, m2) = go f m1 in (rg <> rf, m2)
+    go (CatFork l r)            m = let (rl, m1) = go l m in let (rr, m2) = go r m1 in (rl <> rr, m2)
+    go CatExl                   m = (Set.empty, m)
+    go CatExr                   m = (Set.empty, m)
+    go (CatConst _)             m = (Set.empty, m)
+    go CatInl                   m = (Set.empty, m)
+    go CatInr                   m = (Set.empty, m)
+    go CatReturn                m = (Set.empty, m)
+    go (CatFanIn t f)           m = let (rt, m1) = go t m in let (rf, m2) = go f m1 in (rt <> rf, m2)
+    go (CatAssign _)            m = (Set.empty, m)
+    go (CatAssignWithRhs _ _)   m = (Set.empty, m)
+    go (CatLookup _)            m = (Set.empty, m)
+    go (CatLoop body)           m = go body m
+    go (CatEval _)              m = (Set.empty, m)
+    go (CatCall name args)      m = (callFootprint name args, m)
+    go (CatSuspend _ _)         m = (Set.empty, m)
+    go CatSplitValue            m = (Set.empty, m)
+    go (CatTry body _handler)   m = go body m
+    go (CatTagged bid f)        m = case Map.lookup bid m of
+        Just cached -> (cached, m)
+        Nothing     -> let (r, m') = go f m in (r, Map.insert bid r m')
+
+    -- CatCall is the sole non-empty leaf: mirrors the 'callProc' instance
+    -- (above) verbatim, so the exact-output oracle (SchFootprintTest.hs
+    -- ~line 156) is preserved bit-for-bit.
+    callFootprint :: Text -> [Expr] -> Set.Set SchMorphism
+    callFootprint name args =
+      case resolveSetItem ctx name args of
+        Just (tbl, col) -> Set.singleton (SchMorphism (StmtObj (fcStmtObj ctx)) (ColumnObj tbl col) LegWrites SrcCatFootprint)
+        Nothing         -> Set.empty
 
 -- | Scan one procedure body for the runtime DataWindow-aliasing pattern
 -- Plan 164 Phase C\/D3 exists to resolve -- e.g.

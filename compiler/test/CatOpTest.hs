@@ -1310,12 +1310,11 @@ tests = testGroup "CatOp"
         case mBytes of
           Nothing -> assertFailure "did not complete within the 30s hang-safety-net timeout"
           Just bytes -> assertBool
-            ("allocated " <> show bytes <> " bytes; expected < 150MB (memoized baseline ~80MB \
-             \on this machine; the heavier SchFootprint constant vs LowCat — building/unions of \
-             \Set SchMorphism closures per node — sets a higher linear floor than the <20MB \
-             \toLowCat memo test on the same input. Pre-fix: ~582MB unmemoized; without the \
-             \memo, a 25-switch corpus procedure is in the GB range and stalls the run)")
-            (bytes P.< 150 P.* 1000 P.* 1000)
+            ("allocated " <> show bytes <> " bytes; expected < 5MB (Plan 167 Phase 1 force-time \
+             \memo: measured ~0.4MB; the old <150MB bound was an exponential baseline that passed \
+             \only because the force-time bug was present. Pre-Phase-1: ~80MB re-forcing shared \
+             \CatTagged subtrees at every embedding)")
+            (bytes P.< 5 P.* 1000 P.* 1000)
 
     , testCase "7 sequential choose/case blocks, 8 clauses each (fn_dateolografos shape): foldSchFootprint stays linear" $ do
         let call n = ExCall (Lvalue [LvSegment n Nothing]) []
@@ -1338,11 +1337,11 @@ tests = testGroup "CatOp"
         case mBytes of
           Nothing -> assertFailure "did not complete within the 30s hang-safety-net timeout"
           Just bytes -> assertBool
-            ("allocated " <> show bytes <> " bytes; expected < 600MB (memoized baseline ~350MB; \
-             \the 8-way fan-in per choose block multiplies SchFootprint's per-node Set-union cost \
-             \vs the 2-way if/else case above. Pre-fix: ~5.2GB unmemoized — combinatorial across \
+            ("allocated " <> show bytes <> " bytes; expected < 20MB (Plan 167 Phase 1 force-time \
+             \memo on 8-way fan-in; the old <600MB bound was an exponential baseline that passed \
+             \only because the force-time bug was present. Pre-Phase-1: ~350MB combinatorial across \
              \the 7 chained 8-clause blocks)")
-            (bytes P.< 600 P.* 1000 P.* 1000)
+            (bytes P.< 20 P.* 1000 P.* 1000)
 
     , testCase "foldCat memo preserves semantics: a shared tagged block's footprint is folded correctly" $
         -- Memo correctness, not just performance: the memo returns the same

@@ -3,6 +3,7 @@ module SchFootprintTest (tests) where
 import PB.Prelude hiding (id, (.))
 import PB.AST.DataWindow      (DataWindowFile (..), DwTable (..), DwRetrieve (..), DwRetrieveOrRaw (..))
 import PB.AST.Expr            (Expr (..), Lvalue (..), LvSegment (..))
+import PB.AST.Located        (Located (..))
 import PB.AST.SourceFile      (SrFile (..), EventBlock (..), EventSig (..), SubroutineBlock (..), SubSig (..))
 import PB.Analysis.CatOp      (Category (..), Cartesian (..), Cocartesian (..),
                                 CatOp (..), branch)
@@ -19,6 +20,14 @@ import PB.Grammar.DataWindow  (parseDataWindow)
 import PB.Pipeline.Emit       (parsePowerScriptFile)
 import PB.Pipeline.SqlParse   (TableRef (..))
 
+import qualified Prelude        as P
+import qualified Control.Exception as CE
+import           GHC.Conc         (getAllocationCounter, setAllocationCounter)
+import           Data.Int         (Int64)
+import           System.Timeout   (timeout)
+import           PB.AST.BodyStmt  (BodyStmt (..), IfStmt (..), ChooseStmt (..), CaseClause (..))
+import           PB.Analysis.GraphBuilder (compileProcedureToCatOp)
+
 import qualified Data.List       as L
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
@@ -30,7 +39,7 @@ import Hedgehog             (forAll, property, (===), Gen)
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import Test.Tasty           (TestTree, testGroup)
-import Test.Tasty.HUnit     (assertFailure, testCase, (@?=))
+import Test.Tasty.HUnit     (assertBool, assertFailure, testCase, (@?=))
 import Test.Tasty.Hedgehog  (testProperty)
 
 -- ---------------------------------------------------------------------------
@@ -46,6 +55,13 @@ ctx0 = FunctorCtx
   , fcDwColumns       = Map.empty
   , fcControlBindings = Map.empty
   }
+
+measureAllocBytes :: IO a -> IO Int64
+measureAllocBytes act = do
+  setAllocationCounter maxBound
+  _ <- act
+  remaining <- getAllocationCounter
+  pure (maxBound P.- remaining)
 
 -- | Mirrors the real w_dw_copy.srw shape (dw_dest control statically bound
 -- to d_items, whose retrieve exposes sales_order_items.{id,line_id}).
@@ -107,6 +123,84 @@ tests = testGroup "SchFootprint"
             h = SchFootprint (const sC) :: SchFootprint () ()
         runSchFootprint ((f . g) . h) ctx0 === runSchFootprint (f . (g . h)) ctx0
         runSchFootprint (f . g) ctx0 === Set.union sA sB
+    ]
+
+  , testGroup "force-time memo (Plan 167 Phase 1): foldSchFootprint stays linear on a shared-merge-block DAG"
+    [ testCase "18 sequential if/else groups: forces each CatTagged once, not 2^18 re-forces" $ do
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            group base =
+              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
+                  [Located (base P.+ 2) (BsCall (call ("a" <> T.pack (show base))))] []
+                  (Just [Located (base P.+ 3) (BsCall (call ("b" <> T.pack (show base))))])))
+              , Located (base P.+ 4) (BsCall (call ("tail" <> T.pack (show base))))
+              ]
+            body = concatMap group [ n P.* 4 | n <- [0 .. 17 :: Int] ]
+            term = compileProcedureToCatOp emptyEnv Set.empty body
+            ctx  = FunctorCtx
+              { fcStmtObj         = SqlStmtId "f.srf" "obj" "proc" 1
+              , fcTypeEnv         = emptyEnv
+              , fcDwColumns       = Map.empty
+              , fcControlBindings = Map.empty
+              }
+        mBytes <- timeout 30000000 (measureAllocBytes
+          (CE.evaluate (Set.size (foldSchFootprint ctx term))))
+        case mBytes of
+          Nothing -> assertFailure "did not complete within the 30s hang-safety-net timeout"
+          Just bytes -> assertBool
+            ("allocated " <> show bytes <> " bytes; expected < 5MB (post-fix force-time \
+             \memo: measured ~0.4MB; pre-fix ~80MB re-forcing shared CatTagged subtrees)")
+            (bytes P.< 5 P.* 1000 P.* 1000)
+
+    , testCase "7 sequential choose/case blocks, 8 clauses each: forces linear, not 2^N" $ do
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            chooseGroup g =
+              Located (g P.* 100) (BsChoose (ChooseStmt
+                (ExLvalue (Lvalue [LvSegment ("s" <> T.pack (show g)) Nothing]))
+                [ CaseClause Nothing
+                    [Located (g P.* 100 P.+ i) (BsCall (call ("c" <> T.pack (show g) <> "_" <> T.pack (show i))))]
+                | i <- [1 .. 8 :: Int] ]))
+            body = [ chooseGroup g | g <- [1 .. 7 :: Int] ]
+            term = compileProcedureToCatOp emptyEnv Set.empty body
+            ctx  = FunctorCtx
+              { fcStmtObj         = SqlStmtId "f.srf" "obj" "proc" 1
+              , fcTypeEnv         = emptyEnv
+              , fcDwColumns       = Map.empty
+              , fcControlBindings = Map.empty
+              }
+        mBytes <- timeout 30000000 (measureAllocBytes
+          (CE.evaluate (Set.size (foldSchFootprint ctx term))))
+        case mBytes of
+          Nothing -> assertFailure "did not complete within the 30s hang-safety-net timeout"
+          Just bytes -> assertBool
+            ("allocated " <> show bytes <> " bytes; expected < 20MB (post-fix force-time \
+             \memo on 8-way fan-in; pre-fix ~350MB combinatorial across the 7 chained blocks)")
+            (bytes P.< 20 P.* 1000 P.* 1000)
+
+    , testCase "scaling ratio: 20 vs 10 if/else switches allocates <5x (near-linear), not ~600x" $ do
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            mkBody n = concatMap group [ i P.* 4 | i <- [0 .. n P.- 1] ]
+              where
+                group base =
+                  [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
+                      [Located (base P.+ 2) (BsCall (call ("a" <> T.pack (show base))))] []
+                      (Just [Located (base P.+ 3) (BsCall (call ("b" <> T.pack (show base))))])))
+                  , Located (base P.+ 4) (BsCall (call ("tail" <> T.pack (show base))))
+                  ]
+            ctx = FunctorCtx
+              { fcStmtObj         = SqlStmtId "f.srf" "obj" "proc" 1
+              , fcTypeEnv         = emptyEnv
+              , fcDwColumns       = Map.empty
+              , fcControlBindings = Map.empty
+              }
+            term10 = compileProcedureToCatOp emptyEnv Set.empty (mkBody 10)
+            term20 = compileProcedureToCatOp emptyEnv Set.empty (mkBody 20)
+        b10 <- measureAllocBytes (CE.evaluate (Set.size (foldSchFootprint ctx term10)))
+        b20 <- measureAllocBytes (CE.evaluate (Set.size (foldSchFootprint ctx term20)))
+        let ratio = fromIntegral b20 / fromIntegral b10 :: Double
+        assertBool
+          ("20/10 switch ratio " <> show ratio <> "x; expected < 5x (linear). bytes: "
+             <> show b10 <> " -> " <> show b20)
+          (ratio P.< 5.0)
     ]
 
   , testGroup "foldSchFootprint over CatOp (infra slice: always empty)"
