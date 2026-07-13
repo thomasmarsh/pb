@@ -217,6 +217,7 @@ foldSchFootprint ctx op = fst (go op Map.empty)
     go (CatSuspend _ _)         m = (Set.empty, m)
     go CatSplitValue            m = (Set.empty, m)
     go (CatTry body _handler)   m = go body m
+    go (CatLetRef _)            _ = error "foldSchFootprint: CatLetRef should have been inlined by inlineTable"
     go (CatTagged bid f)        m = case Map.lookup bid m of
         Just cached -> (cached, m)
         Nothing     -> let (r, m') = go f m in (r, Map.insert bid r m')

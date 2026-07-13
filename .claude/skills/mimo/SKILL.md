@@ -82,6 +82,28 @@ When in doubt about which kind of task you have, ask: "can I write down
 the exact expected output right now?" If yes → delegate. If no → it's
 verify-first work; do that piece yourself, delegate the rest.
 
+**Refinement — "verified" is not the same as "compile-clean."** A spec
+whose *design* is verified (the orchestrator has reasoned through the
+semantics and knows the right answer) can still contain type-level
+defects that only surface at build time — a GADT constructor whose
+handler has a different type index than the body (`CatTry`'s handler is
+`CatOp (a, Value) b`, not `CatOp a b`), an exhaustive pattern match that
+becomes non-exhaustive when a new constructor is added, a missing
+`unsafeCoerce` the orchestrator didn't need to think through at design
+time. In one session, a "fully verified" spec for adding a GADT
+constructor + a rehydration function had *two* such defects; mimo
+caught both at the build, diagnosed them correctly (grepping the
+constructor's real signature, recognizing the same `unsafeCoerce`
+discipline an adjacent function already uses), applied minimal fixes,
+and went green — all without orchestrator intervention. **The lesson: a
+well-specified task absorbs its own compile-time corrections.** Do not
+over-fit a spec to prevent every conceivable type error (you will miss
+some, and the attempt bloats the spec); instead, give mimo (a) the
+exact intended design, (b) the non-negotiable invariants it must not
+violate, and (c) a hard verification gate, and trust the build-fix loop
+to close mechanical gaps — while you watch the diff afterward for any
+"fix" that crosses from mechanical into behavioral.
+
 ## Writing the spec file
 
 - **State current file state precisely.** Paste the exact current
@@ -155,11 +177,26 @@ specifically, don't assume a top-level flag carries over):
   harness's own background-task output capture does — the user asked for
   this explicitly after finding the harness's internal task-output file
   wasn't readily tailable.
-- Launching with a bare trailing `&` detaches the process from the
-  harness's own background-task tracking, so you won't get an automatic
-  completion notification — follow up immediately with the `kill -0`
-  wait-loop pattern above via the Bash tool's background option so you
-  do get notified.
+- Launching with a bare trailing `&` detaches mimo from the harness's
+  own background-task tracking, **but the harness still sends a
+  "completed (exit code 0)" notification when the *launcher shell*
+  exits** — which is immediately, because `&` returns right away. That
+  notification is about the wrong process. Two real sessions have now
+  mistaken it for mimo's completion: one concluded mimo had finished
+  (it hadn't — only the launcher shell had); the next saw an empty
+  `git diff` and a 4-line log and nearly concluded mimo exited without
+  doing anything, when in fact it was actively mid-task and went on to
+  complete correctly. **The disambiguating check:** `pgrep -f "mimo
+  run"`. If it returns a PID, mimo is still running — ignore the
+  harness's launcher-shell notification and poll that PID yourself via
+  the `kill -0` wait-loop pattern above. Treat the harness notification
+  for an `&`-launched process as unreliable about mimo's actual state;
+  the `pgrep` + log-tail are the ground truth. (Cleaner alternative:
+  launch without `&` via the Bash tool's own `run_in_background`
+  option, which keeps mimo attached to the harness's tracking so the
+  completion notification fires on the right process. The `&` pattern
+  above predates that being reliable; prefer `run_in_background` when
+  you can.)
 
 ## Debugging a reported mismatch/failure
 
@@ -177,8 +214,8 @@ mimo's log does not always end with an obvious "DONE" banner. A run that
 has written its target artifact, run its verification gate, and printed a
 short report ("All checks pass: …") **is finished** — even if the process
 PID lingers a few seconds while the CLI tears down, and even if the log's
-last line is a quiet status line rather than a fanfare. Two real
-misjudgments to avoid, both observed:
+last line is a quiet status line rather than a fanfare. Three real
+misjudgments to avoid, all observed:
 
 1. **"It reported empty `git status`, so it must not have written
    anything."** Check the *filesystem* (`ls` the expected output path),
@@ -193,10 +230,21 @@ misjudgments to avoid, both observed:
    report (build status, file list, gate result), the work is done; the
    PID will exit on its own. Killing a run that already reported success
    wastes the work and forces a redo.
+3. **"The harness said it completed, so it must be done."** If mimo was
+   launched with `&`, the harness's "completed (exit code 0)"
+   notification fires when the *launcher shell* exits — immediately —
+   not when mimo finishes. One session read that notification, saw a
+   4-line log and an empty `git diff`, and nearly concluded mimo had
+   exited without doing anything; `pgrep -f "mimo run"` showed it was
+   actively working and it went on to succeed. Full account and the
+   disambiguating check are in the "Invocation mechanics" gotchas
+   above.
 
 The reliable signal of completion is the **Stop-section report itself**
-(a list of gate results + files touched), not process liveness and not
-git status. When in doubt, `ls` the artifact and read it.
+(a list of gate results + files touched), not process liveness, not
+git status, and not the harness's launcher-shell notification. When in
+doubt, `pgrep -f "mimo run"` (is it still running?) plus `ls` the
+artifact and read it.
 
 ## Verification gates can pass vacuously — check the artifact exists
 

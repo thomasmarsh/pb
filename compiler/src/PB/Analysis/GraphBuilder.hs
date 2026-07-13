@@ -37,6 +37,7 @@ module PB.Analysis.GraphBuilder
   , compileProcedureViaCatOp
   , compileProcedureToLowCat
   , compileProcedureToCatOp
+  , compileProcedureToCatTerm
   ) where
 
 import PB.Prelude hiding (id, (.), lookup)
@@ -44,7 +45,7 @@ import qualified Prelude as P
 import PB.AST.Expr (Expr (..))
 import PB.AST.BodyStmt (BodyStmt)
 import PB.AST.Located  (Located (..))
-import PB.Analysis.CatOp (CatOp (..))
+import PB.Analysis.CatOp (CatOp (..), extractTable, inlineTable, CatTerm (..))
 import PB.Analysis.CatLower (compileSsa)
 import PB.Analysis.InstrGraph (InstrNode (..), InstrGraph (..))
 import PB.Analysis.CallClassify (collectBodyLocals)
@@ -444,5 +445,20 @@ compileProcedureToLowCat env userFns body =
 -- risk than refactoring the verified production hot path.
 compileProcedureToCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CatOp () ()
 compileProcedureToCatOp env userFns body =
+  inlineTable (compileProcedureToCatTerm env userFns body)
+
+-- | Plan 167 Phase 3 — the compiled term WITH its shared-term table.
+-- Same SSA → CatOp pipeline as 'compileProcedureToCatOp' (and the same
+-- env-seeding preamble, duplicated per the convention documented at
+-- 'compileProcedureToLowCat' — the production hot path is NOT factored
+-- to share this one expression), stopping at the 'CatTerm' (spine +
+-- table) instead of the bare 'CatOp'. The spine's 'CatTagged' nodes are
+-- rewritten to name-only 'CatLetRef'; each body lives once in the table.
+--
+-- 'compileProcedureToCatOp' is redefined below as
+-- @inlineTable . compileProcedureToCatTerm@, so the two are
+-- observationally identical for every existing consumer.
+compileProcedureToCatTerm :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CatTerm () ()
+compileProcedureToCatTerm env userFns body =
   let env' = env { steLocal = collectBodyLocals body `Map.union` steLocal env }
-  in compileSsa env' userFns (buildSsa env' "proc" body)
+  in extractTable (compileSsa env' userFns (buildSsa env' "proc" body))

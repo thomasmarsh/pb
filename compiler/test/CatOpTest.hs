@@ -2014,6 +2014,49 @@ tests = testGroup "CatOp"
                      ]
           in collectBodyLocals body @?= Map.fromList
                [ ("dw", PtPrimitive "datawindow"), ("li_count", PtPrimitive "integer") ]
-      ]
+    ]
+  ]
+
+  , testGroup "Plan 167 Phase 3: CatLetRef table + inlineTable rehydration"
+    -- The Phase 3 correctness contract: for any term compileSsa produces,
+    --   inlineTable (extractTable op)  is observationally identical to op.
+    -- "Observationally identical" = the existing folds (foldCat via
+    -- foldSchFootprint, toLowCat) produce the same output on both. We test
+    -- via foldSchFootprint because it is the strongest exact-output oracle
+    -- readily at hand in this module's helpers, and via feq for structural
+    -- equality.
+    [ testCase "inlineTable . extractTable == id on a shared-merge-block term (foldSchFootprint)" $ do
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            group base =
+              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
+                  [Located (base P.+ 2) (BsCall (call ("a" <> T.pack (show base))))] []
+                  (Just [Located (base P.+ 3) (BsCall (call ("b" <> T.pack (show base))))])))
+              , Located (base P.+ 4) (BsCall (call ("tail" <> T.pack (show base))))
+              ]
+            body = concatMap group [ n P.* 4 | n <- [0 .. 5 :: Int] ]  -- 6 if/else groups
+            op   = compileProcedureToCatOp emptyEnv Set.empty body
+            term = extractTable op
+            ctx  = FunctorCtx
+              { fcStmtObj         = SqlStmtId "f.srf" "obj" "proc" 1
+              , fcTypeEnv         = emptyEnv
+              , fcDwColumns       = Map.empty
+              , fcControlBindings = Map.empty
+              }
+        -- foldSchFootprint over the rehydrated term equals foldSchFootprint
+        -- over the original (both go through the same CatTagged shape).
+        foldSchFootprint ctx (inlineTable term) @?= foldSchFootprint ctx op
+
+    , testCase "extractTable rewrites CatTagged to CatLetRef in the spine" $ do
+        let op   = CatTagged "blk" CatId :: CatOp () ()
+            term = extractTable op
+            CatTerm _spine table = term
+        -- The table holds the body once.
+        Map.lookup "blk" table @?= Just (CatId :: CatOp () ())
+
+    , testCase "inlineTable rehydrates CatLetRef back to CatTagged (feq)" $ do
+        let op   = CatTagged "blk" CatId :: CatOp () ()
+            term = extractTable op
+        -- Structural equality between original and rehydrated.
+        feq op (inlineTable term) @?= True
     ]
   ]

@@ -39,6 +39,11 @@ module PB.Analysis.CatOp
     -- * Derived combinators
   , branch
   , foldCat
+    -- * Plan 167 Phase 3 — shared-term table (intermediate representation)
+  , CatTerm (..)
+  , extractTable
+  , inlineTable
+  , feq
   ) where
 
 import PB.Prelude hiding (id, (.), lookup)
@@ -186,6 +191,7 @@ foldCat op = fst (go op Map.empty)
     go (CatSuspend eff args)    m = (suspend eff args, m)
     go CatSplitValue            m = (splitValue, m)
     go (CatTry body _handler)   m = go body m
+    go (CatLetRef _)            _ = error "foldCat: CatLetRef should have been inlined by inlineTable"
     go (CatTagged bid f)        m = case Map.lookup bid m of
       -- A shared merge-block subterm (Plan 150): its fold result is
       -- identical at every embedding, so cache it under @bid@ on the first
@@ -277,6 +283,22 @@ data CatOp a b where
   -- re-allocating a full duplicate subgraph for) the same content again.
   CatTagged  :: Text -> CatOp a b -> CatOp a b
 
+  -- | Plan 167 Phase 3 — a use site of a let-bound merge-block body.
+  -- Carries ONLY the blockId name; the body lives once in the
+  -- 'CatTerm' table (built by 'extractTable'). Identity in both types
+  -- and execution, exactly like 'CatTagged' — the table entry under
+  -- this blockId holds the body that 'CatTagged' would have inlined
+  -- here. Phase 3's 'inlineTable' rehydrates 'CatLetRef bid' back to
+  -- 'CatTagged bid body' so existing folds are unchanged; Phase 4
+  -- makes folds table-native and 'inlineTable' is retired.
+  --
+  -- The table is monomorphic 'CatOp () ()' (compileSsa is monomorphic),
+  -- so no 'Any'/'unsafeCoerce' is involved at the table layer. The
+  -- 'CatLetRef' constructor preserves both type params (like 'CatTagged'),
+  -- so the existing 'foldCat' soundness argument below (lines ~161-167)
+  -- is untouched.
+  CatLetRef  :: Text -> CatOp a b
+
 -- Manual Show instance (GADTs can't derive)
 instance Show (CatOp a b) where
   show CatId = "CatId"
@@ -299,6 +321,7 @@ instance Show (CatOp a b) where
   show CatSplitValue = "CatSplitValue"
   show (CatTry _ _) = "CatTry .."
   show (CatTagged t _) = "CatTagged " <> show t <> " .."
+  show (CatLetRef t)   = "CatLetRef " <> show t
 
 -- Manual Eq instance (GADTs can't derive).
 -- Delegates to feq which does the coercion + structural matching.
@@ -335,7 +358,101 @@ feq x y = go (unsafeCoerce x) (unsafeCoerce y)
     go CatSplitValue CatSplitValue = True
     go (CatTry f g) (CatTry f' g') = feq f f' P.&& feq g g'
     go (CatTagged t f) (CatTagged t' f') = t == t' P.&& feq f f'
+    go (CatLetRef t) (CatLetRef t') = t == t'
     go _ _ = False
+
+-- ============================================================================
+-- Plan 167 Phase 3 — the shared-term table (intermediate representation)
+-- ============================================================================
+--
+-- A let-bound CatOp term: the spine plus a table of the named merge-block
+-- bodies it references. Built once by 'extractTable' from a compiled
+-- 'CatOp' (which still uses 'CatTagged' internally). The spine's
+-- 'CatTagged' nodes are rewritten to 'CatLetRef' (name only); the body
+-- each one stood for is recorded once in the table under its blockId.
+--
+-- This is an INTERMEDIATE representation, not the end-state. It makes
+-- sharing visible (the body appears once, in the table, not once per
+-- predecessor embedding). Phase 4 makes the folds table-native;
+-- Phase 5 refines this into the two-type Freyd split ('Pure'/'Eff'/
+-- 'ELet'/'EVar'). Any reader who stops here has stopped short — see
+-- doc/plan/167-structural-sharing-catop-lowcat.md Phase 3.
+data CatTerm a b = CatTerm (CatOp a b) (Map.Map Text (CatOp () ()))
+
+-- | Extract the shared-term table from a compiled 'CatOp', rewriting
+-- each 'CatTagged bid body' in the spine to a name-only 'CatLetRef bid'
+-- and recording @body@ once under @bid@ in the table.
+--
+-- Two passes: (1) 'collectBodies' walks the term sharing-aware (mirrors
+-- 'walkShared' in GraphBuilder.hs:160–169) and records each blockId's
+-- body once, recursing into it to find nested tags; (2) 'goRewrite'
+-- walks the original term and replaces each 'CatTagged bid _' with
+-- 'CatLetRef bid', leaving every other constructor structurally
+-- unchanged. Sharing-awareness lives entirely in pass (1); pass (2) is
+-- a shallow, non-memoized structural rewrite.
+--
+-- Soundness of the body-discard on repeat encounters in 'collectBodies':
+-- 'compileBlock'/'compileLoopBody' (CatLower.hs) guarantee one canonical
+-- compiled value per blockId within a procedure's term (the same
+-- guarantee 'foldCat'/'toLowCat'/'walkShared' already rely on), so a
+-- repeat encounter always carries the same body. The recursion only
+-- needs to cover siblings/later positions, which the 'Map'-threading
+-- through 'CatCompose'/'CatFork'/'CatFanIn' provides.
+--
+-- The 'unsafeCoerce' on the body in 'collectBodies' is sound:
+-- 'compileSsa' is monomorphic 'CatOp () ()', so every body is in fact
+-- 'CatOp () ()' at every call site this phase produces. Same discipline
+-- 'feq' uses at line 313.
+extractTable :: CatOp a b -> CatTerm a b
+extractTable op = CatTerm (goRewrite (collectBodies Map.empty op) op)
+                          (collectBodies Map.empty op)
+  where
+    collectBodies :: Map.Map Text (CatOp () ()) -> CatOp x y -> Map.Map Text (CatOp () ())
+    collectBodies acc (CatTagged bid body)
+      | Map.member bid acc = acc
+      | otherwise          = collectBodies (Map.insert bid (unsafeCoerce body) acc) body
+    collectBodies acc (CatCompose g f) = collectBodies (collectBodies acc g) f
+    collectBodies acc (CatFork l r)    = collectBodies (collectBodies acc l) r
+    collectBodies acc (CatFanIn t f)   = collectBodies (collectBodies acc t) f
+    collectBodies acc (CatLoop body)   = collectBodies acc body
+    collectBodies acc (CatTry body h)  = collectBodies (collectBodies acc body) h
+    collectBodies acc _                = acc
+
+    goRewrite :: Map.Map Text (CatOp () ()) -> CatOp x y -> CatOp x y
+    goRewrite _ (CatTagged bid _) = CatLetRef bid
+    goRewrite t (CatCompose g f)  = CatCompose (goRewrite t g) (goRewrite t f)
+    goRewrite t (CatFork l r)     = CatFork (goRewrite t l) (goRewrite t r)
+    goRewrite t (CatFanIn a b)    = CatFanIn (goRewrite t a) (goRewrite t b)
+    goRewrite t (CatLoop body)    = CatLoop (goRewrite t body)
+    goRewrite t (CatTry b h)      = CatTry (goRewrite t b) (goRewrite t h)
+    goRewrite _ other             = other
+
+-- | The rehydration boundary (Phase 3 only — retired in Phase 4 once the
+-- folds are table-native). Substitutes each 'CatLetRef bid' in the spine
+-- with the body stored under @bid@ in the table, re-wrapped as
+-- 'CatTagged bid body' so that every existing fold ('foldCat',
+-- 'foldSchFootprint', 'toLowCat', 'feq') sees exactly the term shape it
+-- sees today. For any term @op@ produced by 'compileSsa':
+--
+--   inlineTable (extractTable op)  is observationally identical to op
+--
+-- — the Phase 3 correctness contract: the refactor changes the
+-- representation of sharing, not what a procedure computes. Verified by
+-- the new test group in CatOpTest.hs and by the unchanged
+-- GoldenFixtureTest + SchFootprint exact-output assertions.
+inlineTable :: CatTerm a b -> CatOp a b
+inlineTable (CatTerm spine table) = go spine
+  where
+    go :: forall x y. CatOp x y -> CatOp x y
+    go (CatLetRef bid)  = case Map.lookup bid table of
+      Just body -> CatTagged bid (unsafeCoerce body :: CatOp x y)
+      Nothing   -> error ("inlineTable: unbound CatLetRef " <> show bid)
+    go (CatCompose g f) = CatCompose (go g) (go f)
+    go (CatFork l r)    = CatFork (go l) (go r)
+    go (CatFanIn a b)   = CatFanIn (go a) (go b)
+    go (CatLoop body)   = CatLoop (go body)
+    go (CatTry b h)     = CatTry (go b) (go h)
+    go other            = other
 
 -- ============================================================================
 -- 4. CatOp Instances
