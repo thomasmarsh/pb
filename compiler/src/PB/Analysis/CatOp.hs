@@ -49,6 +49,7 @@ module PB.Analysis.CatOp
   , Pure (..)
   , Eff (..)
   , foldFreyd
+  , branchEff
   ) where
 
 import PB.Prelude hiding (id, (.), lookup)
@@ -111,6 +112,15 @@ class Category k => Effectful k where
 -- @branch cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)@
 branch :: (Effectful k, Cartesian k, Cocartesian k) => Expr -> k env b -> k env b -> k env b
 branch cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)
+
+-- | 'branch' specialized to the Freyd split ('Eff'). Same equation, but the
+-- pure fork @(id &&& eval cond)@ goes through the 'J' inclusion explicitly,
+-- marking the pure/effectful boundary. This is what 'compileSsa' (Phase 5b)
+-- emits at an 'SsaBranch'/'SsaSwitch' site: the arms are effectful 'Eff'
+-- blocks, the test is a pure 'Expr', and 'EFanIn' (not 'PFork') is the
+-- join — choice, not duplication (see 'EFanIn').
+branchEff :: Expr -> Eff env b -> Eff env b -> Eff env b
+branchEff cond thenK elseK = (thenK ||| elseK) . splitValue . J (PId &&& PEval cond)
 
 -- | The fold 'CatOp' is initial for: interpret a compiled term into any
 -- target category that implements 'Effectful'\/'Cartesian'\/'Cocartesian'
@@ -585,12 +595,25 @@ data Eff a b where
   ECall         :: Text -> [Expr] -> Eff args ()
   ESuspend      :: Text -> [Expr] -> Eff args ()
   ESplitValue   :: Eff (env, Value) (Either env env)
+  -- Sum-elimination (branch fan-in). The arms are effectful (compileSsa's
+  -- branch targets contain assigns/calls/suspends), so they cannot live in
+  -- 'Pure'; but '(|||)' is CHOICE, not duplication — @Interp@'s '(|||)'
+  -- dispatches one arm at runtime (CatInterp.hs:89-91), so unlike 'PFork'
+  -- it cannot duplicate an effect. This is the bug-class distinction the
+  -- Freyd split rests on: 'Cartesian'/'PFork' over 'Eff' is forbidden
+  -- (duplication), 'Cocartesian'/'EFanIn' over 'Eff' is sound (choice).
+  EFanIn        :: Eff a c -> Eff b c -> Eff (Either a b) c
   ELoop    :: Eff a (Either a b) -> Eff a b
   EReturn  :: Eff a b
 
 instance Category Eff where
   id  = J PId
   (.) = EComp
+
+instance Cocartesian Eff where
+  inl   = J PInl
+  inr   = J PInr
+  (|||) = EFanIn
 
 instance Effectful Eff where
   eval e          = J (PEval e)
@@ -629,6 +652,7 @@ foldFreyd e = fst (go e Map.empty)
     go (ECall n as)       m = (callProc n as, m)
     go (ESuspend n as)    m = (suspend n as, m)
     go ESplitValue        m = (splitValue, m)
+    go (EFanIn t f)       m = case go t m of (tK, m1) -> case go f m1 of (fK, m2) -> (tK ||| fK, m2)
     go (ELoop body)       m = case go body m of (bK, m1) -> (loopK bK, m1)
     go EReturn            m = (ret, m)
     go (ELet name body cont) m =

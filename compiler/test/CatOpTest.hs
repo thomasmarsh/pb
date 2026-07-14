@@ -2199,5 +2199,50 @@ tests = testGroup "CatOp"
           effTrace <- runEffTraceGen (Left ()) eff Map.empty
           catTrace <- runInterpTraceGen (Left ()) cat Map.empty
           effTrace @?= catTrace
+
+      , testCase "branchEff folds equivalently to branch (then-arm, true cond)" $ do
+          -- The load-bearing Phase 5b design check: branchEff (an Eff-level
+          -- branch with effectful arms, joined by EFanIn) folds to the SAME
+          -- Interp trace as the CatOp-level branch. This is what compileSsa
+          -- will emit at every SsaBranch/SsaSwitch site. Verifies that the
+          -- pure fork (J (PId &&& PEval cond)) + ESplitValue + EFanIn of two
+          -- effectful arms reproduces branch cond t f exactly.
+          let cond = ExBool True
+              eff = branchEff cond
+                      (EAssignWithRhs "then_taken" (ExInt "1"))
+                      (EAssignWithRhs "else_taken" (ExInt "2")) :: Eff () ()
+              cat = branch cond
+                      (CatAssignWithRhs "then_taken" (ExInt "1"))
+                      (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
+          effTrace <- runEffTrace eff () Map.empty
+          catTrace <- runInterpTrace cat Map.empty
+          effTrace @?= catTrace
+
+      , testCase "branchEff folds equivalently to branch (else-arm, false cond)" $ do
+          let cond = ExBool False
+              eff = branchEff cond
+                      (EAssignWithRhs "then_taken" (ExInt "1"))
+                      (EAssignWithRhs "else_taken" (ExInt "2")) :: Eff () ()
+              cat = branch cond
+                      (CatAssignWithRhs "then_taken" (ExInt "1"))
+                      (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
+          effTrace <- runEffTrace eff () Map.empty
+          catTrace <- runInterpTrace cat Map.empty
+          effTrace @?= catTrace
+
+      , testCase "branchEff with effectful-call arms folds equivalently to branch" $ do
+          -- Arms carry ECall effects (not just assigns) — the realistic
+          -- compileSsa case where a branch target is a block that suspends
+          -- a side-effect. Confirms EFanIn of effectful arms is faithful.
+          let cond = ExBool True
+              eff = branchEff cond
+                      (ECall "then_proc" [ExInt "1"])
+                      (ECall "else_proc" [ExInt "2"]) :: Eff () ()
+              cat = branch cond
+                      (CatCall "then_proc" [ExInt "1"])
+                      (CatCall "else_proc" [ExInt "2"]) :: CatOp () ()
+          effTrace <- runEffTrace eff () Map.empty
+          catTrace <- runInterpTrace cat Map.empty
+          effTrace @?= catTrace
       ]
   ]
