@@ -49,7 +49,12 @@ module PB.Analysis.CatOp
   , Pure (..)
   , Eff (..)
   , foldFreyd
+  , foldFreydOp
   , branchEff
+    -- * Plan 167 Phase 7 Step 2 — the Eff shared-term table
+  , EffTerm (..)
+  , extractEffTable
+  , inlineEffTable
   ) where
 
 import PB.Prelude hiding (id, (.), lookup)
@@ -593,15 +598,18 @@ instance Cocartesian Pure where
   (|||) = PFanIn
 
 -- | The premonoidal (effectful) category. Sharing is NAMED, not inlined:
--- 'ELet' binds the body once under a name; 'EVar' is a use site. There is
--- NO 'EFork' — the tensor is only central, and 'ELet' is the ONLY sharing
--- form for effectful morphisms. A cartesian fork over an effectful subterm
--- must go through 'J' (embedding a 'Pure' fork), which cannot duplicate an
--- effect.
+-- 'ELetRef' is a name-only marker for a merge-block body recorded once in
+-- an 'EffTerm''s table (mirrors 'CatLetRef' — see the Phase 7 Step 2
+-- section below). There is NO 'EFork' — the tensor is only central. A
+-- cartesian fork over an effectful subterm must go through 'J' (embedding
+-- a 'Pure' fork), which cannot duplicate an effect.
 data Eff a b where
   J       :: Pure a b -> Eff a b
-  ELet    :: Text -> Eff a b -> Eff b c -> Eff a c
-  EVar    :: Text -> Eff a b
+  -- | Name-only marker; identity-shaped like 'CatLetRef' — NOT a binder.
+  -- Carries no body and no continuation, so (unlike the 'ELet'/'EVar' pair
+  -- this replaces) it has no execution order of its own to get wrong; the
+  -- body it names lives once, in the enclosing 'EffTerm''s table.
+  ELetRef :: Text -> Eff a b
   EComp   :: Eff b c -> Eff a b -> Eff a c
   EAssign       :: Text -> Eff (env, Value) env
   EAssignWithRhs :: Text -> Expr -> Eff env env
@@ -639,13 +647,64 @@ instance Effectful Eff where
   loopK body      = ELoop body
   branchK cond thenK elseK = (thenK ||| elseK) . splitValue . J (PId &&& PEval cond)
 
--- | The Freyd fold: interpret an 'Eff' term into any target category that
+-- ============================================================================
+-- Plan 167 Phase 7 Step 2 — the Eff shared-term table
+-- ============================================================================
+--
+-- Mirrors 'CatTerm'/'extractTable'/'inlineTable' (Phase 3, above) in shape,
+-- not in extraction mechanism: 'CatTagged' carries its body inline
+-- (@CatTagged :: Text -> CatOp a b -> CatOp a b@), so 'extractTable' can
+-- discover every shared body by walking a plain 'CatOp' value. 'ELetRef'
+-- carries NO body (@ELetRef :: Text -> Eff a b@, name-only, shaped like
+-- 'CatLetRef' not 'CatTagged') — a bare 'Eff' value with 'ELetRef' markers
+-- in it has nothing left for a generic walk to recover a body from. So
+-- 'extractEffTable' is necessarily degenerate on any term already in
+-- 'ELetRef' form (there are no bodies embedded to collect — see below); the
+-- real table is built during compilation, by 'PB.Analysis.CatLowerEff'
+-- threading an accumulator alongside its existing per-block memo (the same
+-- point 'compileBlock' emits 'CatTagged', ported to insert into a table
+-- instead of wrapping the spine). 'extractEffTable' still earns its type
+-- signature's parity with 'extractTable': it is the correct (and, for a
+-- term built entirely from 'J'/'EComp'/etc with no pre-existing 'ELetRef',
+-- exact) answer for a sharing-free term, and completes the
+-- 'inlineEffTable' round-trip API test-writers expect from the 'CatTerm'
+-- precedent.
+data EffTerm a b = EffTerm (Eff a b) (Map.Map Text (Eff () ()))
+
+-- | Wrap a bare 'Eff' term with an empty table. Correct (not an
+-- approximation) for any term with no 'ELetRef' in it, which is every
+-- hand-built term in this module's own test suite and every term this
+-- function can actually inspect: 'ELetRef' carries no body, so no walk
+-- over a bare 'Eff' value can ever populate a non-trivial table — see the
+-- headnote above.
+extractEffTable :: Eff a b -> EffTerm a b
+extractEffTable eff = EffTerm eff Map.empty
+
+-- | Substitute each 'ELetRef bid' in the spine with the body stored under
+-- @bid@ in the table. Unlike 'inlineTable', there is no wrapper to
+-- restore ('ELetRef' has no 'CatTagged'-equivalent to rehydrate into) —
+-- the body is spliced in directly.
+inlineEffTable :: EffTerm a b -> Eff a b
+inlineEffTable (EffTerm spine table) = go spine
+  where
+    go :: forall x y. Eff x y -> Eff x y
+    go (ELetRef bid)  = case Map.lookup bid table of
+      Just body -> unsafeCoerce body :: Eff x y
+      Nothing   -> error ("inlineEffTable: unbound ELetRef " <> show bid)
+    go (EComp g f)    = EComp (go g) (go f)
+    go (EFanIn a b)   = EFanIn (go a) (go b)
+    go (ELoop body)   = ELoop (go body)
+    go other          = other
+
+-- | The Freyd fold: interpret an 'EffTerm' into any target category that
 -- implements 'Effectful'/'Cartesian'/'Cocartesian'. Every 'Eff' constructor
 -- dispatches to the corresponding typeclass method; 'J' recursively folds
--- the embedded 'Pure' via 'foldPure'. One resolution helper caches by name
--- for 'ELet'/'EVar'.
-foldFreyd :: forall k a b. (Effectful k, Cartesian k, Cocartesian k) => Eff a b -> k a b
-foldFreyd e = fst (go e Map.empty)
+-- the embedded 'Pure' via 'foldPure'. 'ELetRef' is resolved by a cache
+-- keyed on blockId alone — exactly 'foldCat''s 'CatLetRef' clause
+-- (CatOp.hs:229-245): fold the table's body once on first encounter, cache
+-- the @k a b@ result under @bid@, reuse on every repeat.
+foldFreyd :: forall k a b. (Effectful k, Cartesian k, Cocartesian k) => EffTerm a b -> k a b
+foldFreyd (EffTerm spine table) = fst (go spine Map.empty)
   where
     foldPure :: Pure x y -> k x y
     foldPure PId           = id
@@ -669,28 +728,16 @@ foldFreyd e = fst (go e Map.empty)
     go (EFanIn t f)       m = case go t m of (tK, m1) -> case go f m1 of (fK, m2) -> (tK ||| fK, m2)
     go (ELoop body)       m = case go body m of (bK, m1) -> (loopK bK, m1)
     go EReturn            m = (ret, m)
-    go (ELet name body cont) m =
-      -- Fold the body once, cache its folded result @bK :: k a b1@ under
-      -- @name@, then fold the continuation with the cache containing @name@.
-      -- An @'EVar' name@ inside @cont@ recovers @bK@. The overall @ELet name
-      -- body cont :: Eff a c@ folds to @cK . bK@ (run body, then cont) —
-      -- sequential composition, since @cont :: Eff b1 c@ takes the body's
-      -- result as its input. The cache is what lets a body bound once be
-      -- referenced (and, once 5b/5c wire merge blocks, shared) without
-      -- re-folding; it is the same @Any@/@unsafeCoerce@ discipline 'foldCat'
-      -- uses (CatOp.hs:175-181) for the same GADT reason: @EVar name ::
-      -- Eff x y@ recovers a @k a b1@ cached under @name@, sound only when
-      -- @EVar@ appears at a position whose type index matches the body's
-      -- (which the term's well-typedness guarantees). Phase 5d revisits
-      -- typing this cache.
-      case go body m of
-        (bK, m1) -> case go cont (Map.insert name (unsafeCoerce bK :: Any) m1) of
-          (cK, m2) -> (cK . bK, m2)
-    go (EVar name) m =
-      -- A use site: recover the cached folded result for @name@. Soundness
-      -- mirrors 'foldCat''s 'CatLetRef' clause (CatOp.hs:203-219): the cached
-      -- @k a b1@ is exactly the type this @EVar name :: Eff x y@ expects to
-      -- recover, by the well-typedness of the enclosing 'ELet'.
-      case Map.lookup name m of
-        Just cached -> (unsafeCoerce cached, m)
-        Nothing     -> error ("foldFreyd: unbound EVar " <> show name)
+    go (ELetRef bid)      m = case Map.lookup bid m of
+      Just cached -> (unsafeCoerce cached, m)
+      Nothing     -> case Map.lookup bid table of
+        Just body -> let (r, m') = go (unsafeCoerce body :: Eff x y) m
+                     in (r, Map.insert bid (unsafeCoerce r :: Any) m')
+        Nothing   -> error ("foldFreyd: unbound ELetRef " <> show bid)
+
+-- | Fold a bare 'Eff' term (no shared-term table) — the pre-Phase-7
+-- signature of 'foldFreyd', kept for callers folding hand-built terms with
+-- no 'ELetRef' use sites (this module's own Phase 5a/5b test fixtures).
+-- Equivalent to @foldFreyd (extractEffTable eff)@.
+foldFreydOp :: (Effectful k, Cartesian k, Cocartesian k) => Eff a b -> k a b
+foldFreydOp eff = foldFreyd (extractEffTable eff)

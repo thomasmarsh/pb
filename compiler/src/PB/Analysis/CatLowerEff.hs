@@ -8,7 +8,7 @@ module PB.Analysis.CatLowerEff
 
 import PB.Prelude hiding (id, (.), lookup)
 import PB.AST.Expr (Expr (..), Lvalue (..), BinOp (BopEq))
-import PB.Analysis.CatOp (Category (..), Eff (..), Pure (..), branchEff)
+import PB.Analysis.CatOp (Category (..), Eff (..), EffTerm (..), Pure (..), branchEff)
 import PB.Analysis.CatLower (CompileCtx (..), computeMergePoints, ssaValToExpr,
                               computeLoopHeaders, computeAllLoopExits, isLoopExit)
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName,
@@ -19,133 +19,158 @@ import PB.Analysis.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import Unsafe.Coerce (unsafeCoerce)
 
--- | Parallel to 'compileSsa': compile an SSA procedure into an 'Eff' term.
-compileSsaToEff :: ScopedTypeEnv -> Set.Set Text -> SsaProc -> Eff () ()
+-- | Parallel to 'compileSsa': compile an SSA procedure into an 'EffTerm'.
+-- The table is built during compilation (not by a later generic walk):
+-- 'ELetRef' carries no body, so 'PB.Analysis.CatOp.extractEffTable' cannot
+-- recover one from a bare 'Eff' value — see that function's headnote.
+compileSsaToEff :: ScopedTypeEnv -> Set.Set Text -> SsaProc -> EffTerm () ()
 compileSsaToEff env userFns proc =
   let ctx     = CompileCtx env userFns (computeMergePoints proc)
       headers = computeLoopHeaders proc
       exits   = computeAllLoopExits headers proc
-      (result, _finalMemo) = compileBlockToEff ctx proc (spEntry proc) Map.empty headers exits Nothing
-  in result
+      (result, _finalMemo, table) =
+        compileBlockToEff ctx proc (spEntry proc) Map.empty Map.empty headers exits Nothing
+  in EffTerm result table
 
--- | Main compiler orchestrator. Returns @(Eff, updatedMemo)@.
--- Mirrors 'compileBlock' exactly — only the output type changes.
+-- | Main compiler orchestrator. Returns @(Eff, updatedMemo, updatedTable)@.
+-- Mirrors 'compileBlock' exactly, with one addition: a merge point (Plan
+-- 150's 'ccMergePoints') emits 'ELetRef' in the spine — the position
+-- 'compileBlock' emits @'CatTagged' blockId rawResult@ (CatLower.hs:414-415)
+-- — and records the untagged @rawResult@ in @table@ under @blockId@. Unlike
+-- 'CatTagged' (which carries the body inline, letting 'extractTable'
+-- rediscover it later), 'ELetRef' has nowhere to carry it, so @table@ is
+-- built here, eagerly, at the same point the value is computed.
 compileBlockToEff :: CompileCtx -> SsaProc
                   -> Text
+                  -> Map.Map Text (Eff () ())
                   -> Map.Map Text (Eff () ())
                   -> Set.Set Text
                   -> Map.Map Text Text
                   -> Maybe Text
-                  -> (Eff () (), Map.Map Text (Eff () ()))
-compileBlockToEff ctx proc blockId memo headers exits activeLoop
-  | Just blockId == activeLoop = (J PId, memo)
-  | Just cached <- Map.lookup blockId memo = (cached, memo)
+                  -> (Eff () (), Map.Map Text (Eff () ()), Map.Map Text (Eff () ()))
+compileBlockToEff ctx proc blockId memo table headers exits activeLoop
+  | Just blockId == activeLoop = (J PId, memo, table)
+  | Just cached <- Map.lookup blockId memo = (cached, memo, table)
   | Set.member blockId headers =
       let seedVisited = Map.fromList [ (bid, J PInl) | bid <- Map.keys memo ]
-          (loopBodyOp, visitedFromLoop) = compileLoopBodyToEff ctx proc blockId seedVisited headers exits (Just blockId)
+          (loopBodyOp, visitedFromLoop, table1) =
+            compileLoopBodyToEff ctx proc blockId seedVisited table headers exits (Just blockId)
           memoFromLoop = Map.union memo (Map.fromSet (const (J PId)) (Map.keysSet visitedFromLoop))
           exitBlockId = Map.findWithDefault
             (error "impossible: every element of 'headers' is resolved by computeAllLoopExits before compileBlock runs")
             blockId exits
-          (postLoopOp, finalMemo) = compileBlockToEff ctx proc exitBlockId memoFromLoop headers exits activeLoop
-      in (postLoopOp . ELoop loopBodyOp, finalMemo)
+          (postLoopOp, finalMemo, table2) =
+            compileBlockToEff ctx proc exitBlockId memoFromLoop table1 headers exits activeLoop
+      in (postLoopOp . ELoop loopBodyOp, finalMemo, table2)
   | otherwise = case Map.lookup blockId (spBlocks proc) of
-      Nothing    -> (J PId, memo)
+      Nothing    -> (J PId, memo, table)
       Just block ->
         let assignsOp  = compileAssignsToEff ctx (sbAssigns block)
-            (termOp, memo1) = compileTermToEff ctx proc memo headers exits activeLoop (sbTerm block)
+            (termOp, memo1, table1) = compileTermToEff ctx proc memo table headers exits activeLoop (sbTerm block)
             rawResult = case (assignsOp, termOp) of
                        (J PId, _) -> termOp
                        (_, J PId) -> assignsOp
                        _          -> EComp termOp assignsOp
-            -- CatTagged memoizes in foldCat (body folds once per blockId);
-            -- ELet/EVar in foldFreyd runs the body at both the bind site and
-            -- each use site (bK . bK). The compile-level memo already
-            -- ensures each block compiles once; foldFreyd folding each
-            -- occurrence independently is correct because only one branch
-            -- executes at runtime. So we skip the ELet/EVar wrapping here.
-            memo2 = Map.insert blockId rawResult memo1
-        in (rawResult, memo2)
+            isMerge = Set.member blockId (ccMergePoints ctx)
+            result  = if isMerge then ELetRef blockId else rawResult
+            memo2   = Map.insert blockId result memo1
+            table2  = if isMerge then Map.insert blockId rawResult table1 else table1
+        in (result, memo2, table2)
 
--- | Compile the body of a loop. Returns @(Eff () (Either () ()), visited)@.
--- Mirrors 'compileLoopBody' exactly.
+-- | Compile the body of a loop. Returns @(Eff, updatedVisited, updatedTable)@.
+-- Mirrors 'compileLoopBody' exactly, with the same 'ELetRef'/table addition
+-- 'compileBlockToEff' makes above (Plan 150: a loop body can itself
+-- contain a merge point reached by 2+ predecessors).
 compileLoopBodyToEff :: CompileCtx -> SsaProc -> Text -> Map.Map Text (Eff () (Either () ()))
+                     -> Map.Map Text (Eff () ())
                      -> Set.Set Text -> Map.Map Text Text -> Maybe Text
-                     -> (Eff () (Either () ()), Map.Map Text (Eff () (Either () ())))
-compileLoopBodyToEff ctx proc blockId visited headers exits activeLoop
-  | Just cached <- Map.lookup blockId visited = (cached, visited)
+                     -> (Eff () (Either () ()), Map.Map Text (Eff () (Either () ())), Map.Map Text (Eff () ()))
+compileLoopBodyToEff ctx proc blockId visited table headers exits activeLoop
+  | Just cached <- Map.lookup blockId visited = (cached, visited, table)
   | Set.member blockId headers && Just blockId /= activeLoop =
       let nestedExit = Map.findWithDefault
             (error "impossible: every element of 'headers' is resolved by computeAllLoopExits")
             blockId exits
-          (innerBody, v1) = compileLoopBodyToEff ctx proc blockId visited headers exits (Just blockId)
-          (afterOp, v2) = compileLoopBodyToEff ctx proc nestedExit v1 headers exits activeLoop
-      in (afterOp . ELoop innerBody, v2)
+          (innerBody, v1, table1) = compileLoopBodyToEff ctx proc blockId visited table headers exits (Just blockId)
+          (afterOp, v2, table2) = compileLoopBodyToEff ctx proc nestedExit v1 table1 headers exits activeLoop
+      in (afterOp . ELoop innerBody, v2, table2)
   | otherwise = case Map.lookup blockId (spBlocks proc) of
-      Nothing    -> (J PInr, visited)
+      Nothing    -> (J PInr, visited, table)
       Just block ->
         let assignsOp  = compileAssignsToEff ctx (sbAssigns block)
-            (termOp, v1) = compileLoopTermToEff ctx proc visited headers exits activeLoop (sbTerm block)
+            (termOp, v1, table1) = compileLoopTermToEff ctx proc visited table headers exits activeLoop (sbTerm block)
             rawResult = case assignsOp of
                        J PId -> termOp
                        _     -> EComp termOp assignsOp
-        in (rawResult, Map.insert blockId rawResult v1)
+            isMerge = Set.member blockId (ccMergePoints ctx)
+            result  = if isMerge then ELetRef blockId else rawResult
+            -- table entries are uniformly 'Eff () ()' (matches
+            -- 'extractTable's 'collectBodies' discipline, CatOp.hs:462-465)
+            -- even though a loop body's own rawResult is really
+            -- 'Eff () (Either () ())' here; foldFreyd's 'ELetRef' clause
+            -- coerces back to whatever the use site's type index expects.
+            table2  = if isMerge then Map.insert blockId (unsafeCoerce rawResult) table1 else table1
+        in (result, Map.insert blockId result v1, table2)
 
 -- | Standard terminators (outside loops).
 -- Mirrors 'compileTerm' exactly.
-compileTermToEff :: CompileCtx -> SsaProc -> Map.Map Text (Eff () ()) -> Set.Set Text -> Map.Map Text Text
-                 -> Maybe Text -> SsaTerm -> (Eff () (), Map.Map Text (Eff () ()))
-compileTermToEff _ctx _proc memo _headers _exits _activeLoop (SsaReturn _) = (J PId, memo)
-compileTermToEff ctx proc memo headers exits activeLoop (SsaGoto target) =
-  compileBlockToEff ctx proc target memo headers exits activeLoop
-compileTermToEff ctx proc memo headers exits activeLoop (SsaBranch cond t f) =
-  let (tOp, m1) = compileBlockToEff ctx proc t memo headers exits activeLoop
-      (fOp, m2) = compileBlockToEff ctx proc f m1 headers exits activeLoop
+compileTermToEff :: CompileCtx -> SsaProc -> Map.Map Text (Eff () ()) -> Map.Map Text (Eff () ())
+                 -> Set.Set Text -> Map.Map Text Text
+                 -> Maybe Text -> SsaTerm -> (Eff () (), Map.Map Text (Eff () ()), Map.Map Text (Eff () ()))
+compileTermToEff _ctx _proc memo table _headers _exits _activeLoop (SsaReturn _) = (J PId, memo, table)
+compileTermToEff ctx proc memo table headers exits activeLoop (SsaGoto target) =
+  compileBlockToEff ctx proc target memo table headers exits activeLoop
+compileTermToEff ctx proc memo table headers exits activeLoop (SsaBranch cond t f) =
+  let (tOp, m1, table1) = compileBlockToEff ctx proc t memo table headers exits activeLoop
+      (fOp, m2, table2) = compileBlockToEff ctx proc f m1 table1 headers exits activeLoop
       combined  = branchEff (ssaValToExpr cond) tOp fOp
-  in (combined, m2)
-compileTermToEff _ctx _proc memo _ _ _ SsaBreak    = (J PId, memo)
-compileTermToEff _ctx _proc memo _ _ _ SsaContinue = (J PId, memo)
-compileTermToEff ctx proc memo headers exits activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
-  let seed = compileBlockToEff ctx proc defaultTarget memo headers exits activeLoop
-      step (val, target) (accOp, m) =
-        let (targetOp, m') = compileBlockToEff ctx proc target m headers exits activeLoop
+  in (combined, m2, table2)
+compileTermToEff _ctx _proc memo table _ _ _ SsaBreak    = (J PId, memo, table)
+compileTermToEff _ctx _proc memo table _ _ _ SsaContinue = (J PId, memo, table)
+compileTermToEff ctx proc memo table headers exits activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
+  let seed = compileBlockToEff ctx proc defaultTarget memo table headers exits activeLoop
+      step (val, target) (accOp, m, t) =
+        let (targetOp, m', t') = compileBlockToEff ctx proc target m t headers exits activeLoop
             cond = ExBinOp (ssaValToExpr scrutinee) BopEq (ssaValToExpr val)
-        in (branchEff cond targetOp accOp, m')
+        in (branchEff cond targetOp accOp, m', t')
   in foldr step seed pairs
 
--- | Loop terminators. Returns @(Eff () (Either () ()), visited)@.
+-- | Loop terminators. Returns @(Eff () (Either () ()), visited, table)@.
 -- Mirrors 'compileLoopTerm' exactly.
-compileLoopTermToEff :: CompileCtx -> SsaProc -> Map.Map Text (Eff () (Either () ())) -> Set.Set Text -> Map.Map Text Text
-                     -> Maybe Text -> SsaTerm -> (Eff () (Either () ()), Map.Map Text (Eff () (Either () ())))
-compileLoopTermToEff ctx proc visited headers exits activeLoop (SsaGoto target)
-  | Just target == activeLoop = (J PInl, visited)
-  | isLoopExit headers exits proc activeLoop target = (J PInr, visited)
-  | otherwise = compileLoopBodyToEff ctx proc target visited headers exits activeLoop
-compileLoopTermToEff ctx proc visited headers exits activeLoop (SsaBranch cond t f) =
-  let (tOp, v1) = compileLoopBranchPathToEff ctx proc t visited headers exits activeLoop
-      (fOp, v2) = compileLoopBranchPathToEff ctx proc f v1 headers exits activeLoop
+compileLoopTermToEff :: CompileCtx -> SsaProc -> Map.Map Text (Eff () (Either () ())) -> Map.Map Text (Eff () ())
+                     -> Set.Set Text -> Map.Map Text Text
+                     -> Maybe Text -> SsaTerm -> (Eff () (Either () ()), Map.Map Text (Eff () (Either () ())), Map.Map Text (Eff () ()))
+compileLoopTermToEff ctx proc visited table headers exits activeLoop (SsaGoto target)
+  | Just target == activeLoop = (J PInl, visited, table)
+  | isLoopExit headers exits proc activeLoop target = (J PInr, visited, table)
+  | otherwise = compileLoopBodyToEff ctx proc target visited table headers exits activeLoop
+compileLoopTermToEff ctx proc visited table headers exits activeLoop (SsaBranch cond t f) =
+  let (tOp, v1, table1) = compileLoopBranchPathToEff ctx proc t visited table headers exits activeLoop
+      (fOp, v2, table2) = compileLoopBranchPathToEff ctx proc f v1 table1 headers exits activeLoop
       combined  = branchEff (ssaValToExpr cond) tOp fOp
-  in (combined, v2)
-compileLoopTermToEff _ctx _proc visited _ _ _ (SsaReturn _) = (EReturn, visited)
-compileLoopTermToEff _ctx _proc visited _ _ _ SsaBreak      = (J PInr, visited)
-compileLoopTermToEff _ctx _proc visited _ _ _ SsaContinue   = (J PInl, visited)
-compileLoopTermToEff ctx proc visited headers exits activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
-  let seed = compileLoopBranchPathToEff ctx proc defaultTarget visited headers exits activeLoop
-      step (val, target) (accOp, v) =
-        let (targetOp, v') = compileLoopBranchPathToEff ctx proc target v headers exits activeLoop
+  in (combined, v2, table2)
+compileLoopTermToEff _ctx _proc visited table _ _ _ (SsaReturn _) = (EReturn, visited, table)
+compileLoopTermToEff _ctx _proc visited table _ _ _ SsaBreak      = (J PInr, visited, table)
+compileLoopTermToEff _ctx _proc visited table _ _ _ SsaContinue   = (J PInl, visited, table)
+compileLoopTermToEff ctx proc visited table headers exits activeLoop (SsaSwitch scrutinee pairs defaultTarget) =
+  let seed = compileLoopBranchPathToEff ctx proc defaultTarget visited table headers exits activeLoop
+      step (val, target) (accOp, v, t) =
+        let (targetOp, v', t') = compileLoopBranchPathToEff ctx proc target v t headers exits activeLoop
             cond = ExBinOp (ssaValToExpr scrutinee) BopEq (ssaValToExpr val)
-        in (branchEff cond targetOp accOp, v')
+        in (branchEff cond targetOp accOp, v', t')
   in foldr step seed pairs
 
 -- | Compile a branch target inside a loop.
 -- Mirrors 'compileLoopBranchPath' exactly.
-compileLoopBranchPathToEff :: CompileCtx -> SsaProc -> Text -> Map.Map Text (Eff () (Either () ())) -> Set.Set Text -> Map.Map Text Text
-                           -> Maybe Text -> (Eff () (Either () ()), Map.Map Text (Eff () (Either () ())))
-compileLoopBranchPathToEff ctx proc target visited headers exits activeLoop
-  | Just target == activeLoop = (J PInl, visited)
-  | isLoopExit headers exits proc activeLoop target = (J PInr, visited)
-  | otherwise = compileLoopBodyToEff ctx proc target visited headers exits activeLoop
+compileLoopBranchPathToEff :: CompileCtx -> SsaProc -> Text -> Map.Map Text (Eff () (Either () ())) -> Map.Map Text (Eff () ())
+                           -> Set.Set Text -> Map.Map Text Text
+                           -> Maybe Text -> (Eff () (Either () ()), Map.Map Text (Eff () (Either () ())), Map.Map Text (Eff () ()))
+compileLoopBranchPathToEff ctx proc target visited table headers exits activeLoop
+  | Just target == activeLoop = (J PInl, visited, table)
+  | isLoopExit headers exits proc activeLoop target = (J PInr, visited, table)
+  | otherwise = compileLoopBodyToEff ctx proc target visited table headers exits activeLoop
 
 -- | Compile a list of SSA assignments by folding with composition.
 -- Mirrors 'compileAssigns' exactly.

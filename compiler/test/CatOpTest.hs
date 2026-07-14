@@ -236,11 +236,11 @@ runInterpTrace term initEnv = do
           `CE.catch` (\(ReturnUnwind capturedSt) -> return capturedSt)
   return (isEnv st, P.reverse (isTrace st))
 
--- | Run an 'Eff' term through 'foldFreyd' to 'Interp', returning the
--- final environment and the trace in chronological order.
+-- | Run a bare, sharing-free 'Eff' term through 'foldFreydOp' to 'Interp',
+-- returning the final environment and the trace in chronological order.
 runEffTrace :: Eff a a -> a -> Map.Map Text Value -> IO (Map.Map Text Value, [TraceEvent])
 runEffTrace eff input initEnv = do
-  st <- (P.snd P.<$> runStateT (runInterp (foldFreyd eff) input) (InterpState initEnv [] Map.empty))
+  st <- (P.snd P.<$> runStateT (runInterp (foldFreydOp eff) input) (InterpState initEnv [] Map.empty))
           `CE.catch` (\(ReturnUnwind capturedSt) -> return capturedSt)
   return (isEnv st, P.reverse (isTrace st))
 
@@ -254,7 +254,24 @@ runInterpTraceGen input term initEnv = do
 -- | Generic version of 'runEffTrace' for non-@()@ types.
 runEffTraceGen :: a -> Eff a b -> Map.Map Text Value -> IO (Map.Map Text Value, [TraceEvent])
 runEffTraceGen input eff initEnv = do
-  st <- (P.snd P.<$> runStateT (runInterp (foldFreyd eff) input) (InterpState initEnv [] Map.empty))
+  st <- (P.snd P.<$> runStateT (runInterp (foldFreydOp eff) input) (InterpState initEnv [] Map.empty))
+          `CE.catch` (\(ReturnUnwind capturedSt) -> return capturedSt)
+  return (isEnv st, P.reverse (isTrace st))
+
+-- | Run a compiled 'EffTerm' (with a real shared-term table) through
+-- 'foldFreyd' to 'Interp' — the 'EffTerm' counterpart of 'runEffTrace',
+-- for terms produced by 'compileProcedureToEff' (which may contain
+-- 'ELetRef' merge-point markers).
+runEffTermTrace :: EffTerm a a -> a -> Map.Map Text Value -> IO (Map.Map Text Value, [TraceEvent])
+runEffTermTrace effTerm input initEnv = do
+  st <- (P.snd P.<$> runStateT (runInterp (foldFreyd effTerm) input) (InterpState initEnv [] Map.empty))
+          `CE.catch` (\(ReturnUnwind capturedSt) -> return capturedSt)
+  return (isEnv st, P.reverse (isTrace st))
+
+-- | Generic version of 'runEffTermTrace' for non-@()@ types.
+runEffTermTraceGen :: a -> EffTerm a b -> Map.Map Text Value -> IO (Map.Map Text Value, [TraceEvent])
+runEffTermTraceGen input effTerm initEnv = do
+  st <- (P.snd P.<$> runStateT (runInterp (foldFreyd effTerm) input) (InterpState initEnv [] Map.empty))
           `CE.catch` (\(ReturnUnwind capturedSt) -> return capturedSt)
   return (isEnv st, P.reverse (isTrace st))
 
@@ -2083,6 +2100,39 @@ tests = testGroup "CatOp"
         feq op (inlineTable term) @?= True
     ]
 
+  , testGroup "Plan 167 Phase 7 Step 2: EffTerm table + inlineEffTable rehydration"
+    -- Mirrors the 'CatTerm' group above in SHAPE, not extraction mechanism:
+    -- 'ELetRef' carries no body (unlike 'CatTagged'), so 'extractEffTable'
+    -- cannot discover a non-trivial table from a bare term — see its own
+    -- headnote in CatOp.hs. It is still the correct answer (not an
+    -- approximation) on any sharing-free term, which is every term these
+    -- tests construct by hand. 'Eff' has no 'Eq' instance (unlike 'CatOp'
+    -- via 'feq'), so equivalence here is checked observationally, via
+    -- trace comparison — the same style every other 'Eff' test in this
+    -- module already uses.
+    [ testCase "extractEffTable wraps a sharing-free term with an empty table" $ do
+        let eff = ECall "shared_proc" [] :: Eff () ()
+            EffTerm spine table = extractEffTable eff
+        Map.null table @?= True
+        (_, spineTrace) <- runEffTrace spine () Map.empty
+        (_, effTrace)   <- runEffTrace eff () Map.empty
+        spineTrace @?= effTrace
+
+    , testCase "inlineEffTable rehydrates ELetRef back to the table's body" $ do
+        let body       = ECall "shared_proc" [] :: Eff () ()
+            effTerm     = EffTerm (ELetRef "blk") (Map.fromList [("blk", body)])
+            rehydrated = inlineEffTable effTerm
+        (_, rehydratedTrace) <- runEffTrace rehydrated () Map.empty
+        (_, bodyTrace)       <- runEffTrace body () Map.empty
+        rehydratedTrace @?= bodyTrace
+
+    , testCase "inlineEffTable . extractEffTable == id on a sharing-free term (observational)" $ do
+        let eff = EComp (ECall "b" []) (ECall "a" []) :: Eff () ()
+        (_, roundTripTrace) <- runEffTrace (inlineEffTable (extractEffTable eff)) () Map.empty
+        (_, origTrace)      <- runEffTrace eff () Map.empty
+        roundTripTrace @?= origTrace
+    ]
+
     , testGroup "Phase 5a: Freyd split (Pure/Eff/J) — foldFreyd faithfulness"
       [ testCase "J PId folds to id" $ do
           let eff = J PId :: Eff () ()
@@ -2165,30 +2215,35 @@ tests = testGroup "CatOp"
           catTrace <- runInterpTrace cat Map.empty
           effTrace @?= catTrace
 
-      , testCase "ELet/EVar folds body then continuation with cached result" $ do
-          -- ELet name body cont folds to (foldFreyd cont) . (foldFreyd body):
-          -- body runs once (establishing the binding), then cont runs — each
-          -- EVar inside cont recovers body's folded morphism from the cache
-          -- (FOLD-time sharing: the body term is traversed once, not re-folded
-          -- per EVar). At the Interp layer, recovering and sequencing a k a b
-          -- closure re-executes it — correct Interp semantics, NOT the
-          -- force-time bug (SchFootprint-only; see plan's fold-vs-force
-          -- section). Here body=ECall, cont=EComp (EVar)(EVar) folds to
-          -- bK.bK; overall (bK.bK).bK runs the call 3 times (1 body + 2 uses).
-          let body = ECall "shared_proc" [] :: Eff () ()
-              cont = EComp (EVar "shared") (EVar "shared") :: Eff () ()
-              eff = ELet "shared" body cont :: Eff () ()
-          (_effEnv, effTrace) <- runEffTrace eff () Map.empty
-          let callCount = length [() | TeCall "shared_proc" _ <- effTrace]
-          callCount @?= 3
+      , testCase "ELetRef resolves via the table, fold-caches on first encounter" $ do
+          -- The real merge-point shape: 'ELetRef "shared"' appears at BOTH
+          -- arms of an 'EFanIn' (mutually exclusive branches reconverging
+          -- on one block — the only shape a real 'ELetRef' ever appears
+          -- in, per CatLowerEff's merge-point emission). foldFreyd folds
+          -- the table's body once (first 'ELetRef' encounter), caches the
+          -- k () () result under "shared", and the second 'ELetRef'
+          -- occurrence reuses the CACHED FOLD — not a re-traversal of the
+          -- body term. Because '(|||)' is CHOICE (Interp dispatches
+          -- exactly one arm at runtime), the shared body executes exactly
+          -- once regardless of which arm is taken — unlike the old
+          -- 'ELet'/'EVar' shape this replaces, which composed the cached
+          -- morphism into a sequential '.', re-executing it per use site.
+          let body    = ECall "shared_proc" [] :: Eff () ()
+              spine   = EFanIn (ELetRef "shared") (ELetRef "shared") :: Eff (Either () ()) ()
+              effTerm = EffTerm spine (Map.fromList [("shared", body)])
+              callCount tr = length [() | TeCall "shared_proc" _ <- tr]
+          (_, leftTrace)  <- runEffTermTraceGen (Left ())  effTerm Map.empty
+          (_, rightTrace) <- runEffTermTraceGen (Right ()) effTerm Map.empty
+          callCount leftTrace  @?= 1
+          callCount rightTrace @?= 1
 
-      , testCase "ELet without EVar use: body runs once, continuation runs" $ do
-          -- The simplest ELet: body runs, then a continuation that does NOT
-          -- reference the binding. Both effects appear exactly once.
-          let body = ECall "setup" [] :: Eff () ()
-              cont = ECall "teardown" [] :: Eff () ()
-              eff = ELet "x" body cont :: Eff () ()
-          (_effEnv, effTrace) <- runEffTrace eff () Map.empty
+      , testCase "ELetRef composed with unrelated effects: only the named block is shared" $ do
+          -- 'ELetRef "x"' appears once, sequenced after an unrelated call —
+          -- the table lookup must not disturb ordinary composition.
+          let body    = ECall "setup" [] :: Eff () ()
+              spine   = EComp (ECall "teardown" []) (ELetRef "x") :: Eff () ()
+              effTerm = EffTerm spine (Map.fromList [("x", body)])
+          (_effEnv, effTrace) <- runEffTermTrace effTerm () Map.empty
           let setupCount = length [() | TeCall "setup" _ <- effTrace]
               teardownCount = length [() | TeCall "teardown" _ <- effTrace]
           setupCount @?= 1
@@ -2253,7 +2308,7 @@ tests = testGroup "CatOp"
               catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
               effTerm   = compileProcedureToEff emptyEnv Set.empty body
           catTrace <- runInterpTrace catOpTerm Map.empty
-          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace <- runEffTermTrace effTerm () Map.empty
           effTrace @?= catTrace
 
       , testCase "single assign — EAssignWithRhs cross-check" $ do
@@ -2261,7 +2316,7 @@ tests = testGroup "CatOp"
               catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
               effTerm   = compileProcedureToEff emptyEnv Set.empty body
           catTrace <- runInterpTrace catOpTerm Map.empty
-          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace <- runEffTermTrace effTerm () Map.empty
           effTrace @?= catTrace
 
       , testCase "if/else with calls — branchEff cross-check" $ do
@@ -2271,7 +2326,7 @@ tests = testGroup "CatOp"
               catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
               effTerm   = compileProcedureToEff emptyEnv Set.empty body
           catTrace <- runInterpTrace catOpTerm Map.empty
-          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace <- runEffTermTrace effTerm () Map.empty
           effTrace @?= catTrace
 
       , testCase "for-loop with body call — ELoop cross-check" $ do
@@ -2281,10 +2336,10 @@ tests = testGroup "CatOp"
               catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
               effTerm   = compileProcedureToEff emptyEnv Set.empty body
           catTrace <- runInterpTrace catOpTerm Map.empty
-          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace <- runEffTermTrace effTerm () Map.empty
           effTrace @?= catTrace
 
-      , testCase "if/else with shared tail — ELet/EVar merge-point cross-check" $ do
+      , testCase "if/else with shared tail — ELetRef merge-point cross-check" $ do
           let thenCall = Located 2 (BsPbCall (PbCall "obj" "then_event"))
               elseCall = Located 3 (BsPbCall (PbCall "obj" "else_event"))
               tailCall = Located 4 (BsPbCall (PbCall "obj" "tail_event"))
@@ -2293,7 +2348,7 @@ tests = testGroup "CatOp"
               catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
               effTerm   = compileProcedureToEff emptyEnv Set.empty body
           catTrace <- runInterpTrace catOpTerm Map.empty
-          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace <- runEffTermTrace effTerm () Map.empty
           effTrace @?= catTrace
       ]
 
@@ -2310,7 +2365,7 @@ tests = testGroup "CatOp"
               catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
               effTerm   = compileProcedureToEff emptyEnv Set.empty body
           catTrace <- runInterpTrace catOpTerm Map.empty
-          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace <- runEffTermTrace effTerm () Map.empty
           effTrace @?= catTrace
 
       , testCase "choose with 3 cases + default (SsaSwitch cross-check)" $ do
@@ -2323,7 +2378,7 @@ tests = testGroup "CatOp"
               catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
               effTerm   = compileProcedureToEff emptyEnv Set.empty body
           catTrace <- runInterpTrace catOpTerm Map.empty
-          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace <- runEffTermTrace effTerm () Map.empty
           effTrace @?= catTrace
 
       , testCase "nested for-loops (loop body is another loop)" $ do
@@ -2335,7 +2390,7 @@ tests = testGroup "CatOp"
               catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
               effTerm   = compileProcedureToEff emptyEnv Set.empty body
           catTrace <- runInterpTrace catOpTerm Map.empty
-          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace <- runEffTermTrace effTerm () Map.empty
           effTrace @?= catTrace
 
       , testCase "loop body with if/else and shared tail (merge inside a loop)" $ do
@@ -2354,7 +2409,7 @@ tests = testGroup "CatOp"
               catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
               effTerm   = compileProcedureToEff emptyEnv Set.empty body
           catTrace <- runInterpTrace catOpTerm Map.empty
-          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace <- runEffTermTrace effTerm () Map.empty
           effTrace @?= catTrace
 
       , testCase "if/elseif/else chain (elseif flattening)" $ do
@@ -2367,7 +2422,7 @@ tests = testGroup "CatOp"
               catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
               effTerm   = compileProcedureToEff emptyEnv Set.empty body
           catTrace <- runInterpTrace catOpTerm Map.empty
-          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace <- runEffTermTrace effTerm () Map.empty
           effTrace @?= catTrace
       ]
 
@@ -2510,8 +2565,8 @@ tests = testGroup "CatOp"
             viaBranchEff = branchEff cond te fe
             viaBranchK   = branchK cond te fe :: Eff () ()
             golden = [TeBranch True, TeAssign "then_taken" (VInt 1)]
-        (_, st1) <- runStateT (runInterp (foldFreyd viaBranchEff) ()) (InterpState Map.empty [] Map.empty)
-        (_, st2) <- runStateT (runInterp (foldFreyd viaBranchK) ()) (InterpState Map.empty [] Map.empty)
+        (_, st1) <- runStateT (runInterp (foldFreydOp viaBranchEff) ()) (InterpState Map.empty [] Map.empty)
+        (_, st2) <- runStateT (runInterp (foldFreydOp viaBranchK) ()) (InterpState Map.empty [] Map.empty)
         P.reverse (isTrace st1) @?= golden
         P.reverse (isTrace st2) @?= golden
 
