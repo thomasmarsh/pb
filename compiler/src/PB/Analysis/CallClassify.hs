@@ -114,8 +114,8 @@ isTypedSuspend inh ty meth
 -- | Resolve an lvalue's declared/effective type. A bare single segment is a
 -- local\/instance\/global variable lookup; two or more segments is a dotted
 -- control chain (e.g. @tab1.page1.uo_epidom@), resolved via the workspace-wide
--- 'ControlIndex' starting from the enclosing object ('steObject') — Plan 164
--- D4. Falls back to 'Nothing' on any unresolvable hop rather than guessing.
+-- 'ControlIndex' starting from the enclosing object ('steObject'). Falls
+-- back to 'Nothing' on any unresolvable hop rather than guessing.
 resolveLvalueType :: ScopedTypeEnv -> Lvalue -> Maybe Text
 resolveLvalueType env lv = case segments lv of
   []   -> Nothing
@@ -152,7 +152,7 @@ lvHead lv = case segments lv of { (s:_) -> segName s; [] -> "_" }
 
 -- | Detect `TriggerEvent(...)` or `this.TriggerEvent(...)` call sites that
 -- should be lowered to a `InstrCallProc "triggerevent"` dispatch node rather
--- than a normal InstrCall/InstrSuspend (Plan 115 item 2).
+-- than a normal InstrCall/InstrSuspend.
 isTriggerEvent :: Lvalue -> Bool
 isTriggerEvent lv = case map (T.toLower . segName) (segments lv) of
   [s]   -> s == "triggerevent"

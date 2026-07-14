@@ -4,28 +4,23 @@
 -- point to flat @InstrGraph@ (the PC-indexed representation the TS runtime
 -- executes) — plus 'WiringBuilder', the sibling 'EffTerm'-native flattener
 -- for wiring diagrams. Flattening goes via a named graph
--- ('PB.Analysis.InstrGraph.InstrGraph''/'linearize', Plan 167 Phase 6
--- Approach C): nodes are compiled into a 'Text'-keyed graph (dedup on
--- blockId alone, no continuation-keyed memo) and then numbered by a single
--- pure BFS pass.
+-- ('PB.Analysis.InstrGraph.InstrGraph''/'linearize'): nodes are compiled
+-- into a 'Text'-keyed graph (dedup on blockId alone, no continuation-keyed
+-- memo) and then numbered by a single pure BFS pass.
 --
 -- Pure module — no I/O (the @NamedBuilder@ monad is a bare 'State', never
--- 'IO'). Split out of 'PB.Analysis.CatOp' in Plan 151, alongside
--- 'PB.Analysis.CatLowerEff' (SSA → 'EffTerm') and 'PB.Analysis.CatInterp'
--- (direct 'EffTerm' execution) — those three plus the core 'PB.Analysis.CatOp'
--- module together are "the categorical compiler pipeline"; this module is
--- specifically its last stage, the one that produces the artifact
--- ('InstrGraph') the rest of the compiler pipeline and the TS runtime
--- actually consume.
+-- 'IO'). This module is the last stage of the categorical compiler
+-- pipeline, producing the artifact ('InstrGraph') the rest of the compiler
+-- pipeline and the TS runtime actually consume.
 module PB.Analysis.GraphBuilder
-  ( -- * Named-graph InstrGraph' construction (Plan 167 Phase 6, Approach C)
+  ( -- * Named-graph InstrGraph' construction
     InstrNode (..)
   , InstrGraph (..)
-    -- * NamedGraphBuilder: Effectful instance over EffTerm (Plan 167 Phase 7 Step 4)
+    -- * NamedGraphBuilder: Effectful instance over EffTerm
   , NGB (..)
   , buildEffGraphNamed
   , compileProcedureViaEffTerm
-    -- * WiringBuilder: Effectful instance over EffTerm for wiring diagrams (Plan 167 Phase 7 Step 7)
+    -- * WiringBuilder: Effectful instance over EffTerm for wiring diagrams
   , WiringNode (..)
   , WiringGraph (..)
   , WB (..)
@@ -62,7 +57,7 @@ import qualified Data.Text as T
 -- without this, 'classifyExpr' can never resolve a *locally-declared*
 -- datastore/datawindow/transaction variable's type, so a suspend method
 -- call on it (retrieve/update/commit/…) always falls through to the
--- conservative 'PureCall' default (Plan 146 Phase 2e).
+-- conservative 'PureCall' default.
 compileProcedureToEff :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> EffTerm () ()
 compileProcedureToEff env userFns body =
   let env' = env { steLocal = collectBodyLocals body `Map.union` steLocal env }
@@ -106,8 +101,7 @@ freshName = NamedBuilder $ do
 defineNode :: Text -> InstrNode' Text -> NamedBuilder ()
 defineNode name node = NamedBuilder $ modify $ \s -> s { nbsNodes = Map.insert name node (nbsNodes s) }
 -- ============================================================================
--- 3. NamedGraphBuilder: an 'Effectful' instance over 'EffTerm' (Plan 167
---    Phase 7 Step 4)
+-- 3. NamedGraphBuilder: an 'Effectful' instance over 'EffTerm'
 -- ============================================================================
 --
 -- Collapses the two-stage 'toLowCat' (CatOp -> LowCat) + 'buildLowCatGraphNamed'
@@ -184,23 +178,20 @@ instance Effectful NGB where
   -- own fold, while the body's "next" stays THIS loopK call's own incoming
   -- 'next' (the true post-loop exit target) — mirrors
   -- 'patchLoopHeaderNamed'\'s @compileLoopBodyLowCatNamed body loopHeaderName
-  -- nextName@ call exactly. Passing 'loopHeaderName' for both (an earlier
-  -- draft's bug, caught by the "nested for-loops" trace-equivalence test
-  -- below) makes 'inr' — the loop's own exit case — resolve back to the
-  -- header instead of out of the loop, so the loop never terminates.
-  -- Then defines that header as an unconditional jump to the body's entry.
-  -- Correct but not shape-minimal: 'patchLoopHeaderNamed' additionally fuses
-  -- a leading branch straight into the header node, skipping the extra
-  -- 'InstrNop''; NGB always emits the Nop. Left for Phase 7 Step 5's
-  -- canonical-shape reconciliation, not a correctness gap.
+  -- nextName@ call exactly. Passing 'loopHeaderName' for both makes 'inr'
+  -- — the loop's own exit case — resolve back to the header instead of out
+  -- of the loop, so the loop never terminates. Then defines that header as
+  -- an unconditional jump to the body's entry. Correct but not
+  -- shape-minimal: 'patchLoopHeaderNamed' additionally fuses a leading
+  -- branch straight into the header node, skipping the extra 'InstrNop'';
+  -- NGB always emits the Nop.
   loopK (NGB body) = NGB (\next _loopCont -> do
     loopHeaderName <- freshName
     bodyEntry <- body next loopHeaderName
     defineNode loopHeaderName (InstrNop' { npNext' = bodyEntry })
     return loopHeaderName)
-  -- The whole point of Step 4: direct, simultaneous access to the condition
-  -- and both arms (Open Question 2) instead of peeking a generically-folded
-  -- structure apart after the fact.
+  -- The whole point: direct, simultaneous access to the condition and both
+  -- arms instead of peeking a generically-folded structure apart after the fact.
   branchK cond (NGB t) (NGB f) = NGB (\next loopCont -> do
     elseEntry <- f next loopCont
     thenEntry <- t next loopCont
@@ -214,13 +205,13 @@ instance Effectful NGB where
     n <- freshName
     defineNode n (InstrAssign' { anVar' = var, anRhs' = e, anNext' = next })
     return n)
-  -- The 'nbsBlockMemo'-equivalent cache the charter calls for: memoizes by
-  -- blockId in 'NamedBuilder'\'s own state, so a shared body is
-  -- *materialized* once regardless of how many syntactic 'ELetRef'
-  -- occurrences 'foldFreyd'\'s own (fold-time-only) cache lets reach here.
-  -- Without this, each occurrence would re-invoke the folded 'NGB' action
-  -- and allocate a fresh copy of the whole shared block's nodes — the exact
-  -- multiplicative blowup Phase 1 exists to prevent, reintroduced here.
+  -- The 'nbsBlockMemo'-equivalent cache: memoizes by blockId in
+  -- 'NamedBuilder'\'s own state, so a shared body is *materialized* once
+  -- regardless of how many syntactic 'ELetRef' occurrences 'foldFreyd'\'s
+  -- own (fold-time-only) cache lets reach here. Without this, each
+  -- occurrence would re-invoke the folded 'NGB' action and allocate a
+  -- fresh copy of the whole shared block's nodes — the exact multiplicative
+  -- blowup this memoization exists to prevent.
   memoTag bid (NGB action) = NGB (\next loopCont -> do
     memo <- NamedBuilder (gets nbsBlockMemo)
     case Map.lookup bid memo of
@@ -247,8 +238,8 @@ buildEffGraphNamed effTerm =
 -- | Same SSA -> 'Eff' pipeline as 'compileProcedureToEff', flattened via the
 -- collapsed 'foldFreyd'/'NGB' path instead of 'compileProcedureViaCatOp'\'s
 -- 'toLowCat' + 'buildLowCatGraphNamed' two stages. The production entry
--- point since Plan 167 Phase 7 Step 6 (both 'PB.Pipeline.Emit' and
--- 'PB.Pipeline.Runner' call this, not 'compileProcedureViaCatOp').
+-- point (both 'PB.Pipeline.Emit' and 'PB.Pipeline.Runner' call this, not
+-- 'compileProcedureViaCatOp').
 compileProcedureViaEffTerm :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> InstrGraph
 compileProcedureViaEffTerm env userFns body =
   linearize (buildEffGraphNamed (compileProcedureToEff env userFns body))
@@ -294,9 +285,8 @@ data WiringNode p
 
 -- | A procedure's wiring diagram: every distinct node, keyed by name, plus
 -- the entry name — the same "nodes keyed by name, edges by reference" shape
--- 'InstrGraph'' already has (Plan 167 structural-sharing plan, Open
--- Question 3). Serializes directly (no 'WiringPayload'-style term\/shared
--- split needed — see this section's own header note).
+-- 'InstrGraph'' already has. Serializes directly (no 'WiringPayload'-style
+-- term/shared split needed).
 data WiringGraph p = WiringGraph
   { wgNodes :: Map.Map Text (WiringNode p)
   , wgEntry :: p
@@ -403,12 +393,11 @@ instance Effectful WB where
     bodyEntry <- body next loopHeaderName
     defineWireNode loopHeaderName (WireNop { wnNext = bodyEntry })
     return loopHeaderName)
-  -- "Default": the generic 'branch' derivation (Plan 167's Open Question 2
-  -- resolution), not a fused primitive like 'NGB'\'s override — a wiring
-  -- diagram wants cond\/then\/else as separate visible nodes, which running
-  -- the derivation for real (given this instance's non-erased 'eval'\/
-  -- '(&&&)') produces directly: a 'WireCond' node immediately upstream of
-  -- the 'WireBranch' fork built by '(|||)'.
+  -- "Default": the generic 'branch' derivation, not a fused primitive like
+  -- 'NGB'\'s override — a wiring diagram wants cond/then/else as separate
+  -- visible nodes, which running the derivation for real (given this
+  -- instance's non-erased 'eval'/'(&&&)') produces directly: a 'WireCond'
+  -- node immediately upstream of the 'WireBranch' fork built by '(|||)'.
   branchK cond t f = branch cond t f
   assignWithRhs var e = WB (\next _loopCont -> do
     n <- freshWireName
@@ -416,8 +405,8 @@ instance Effectful WB where
     return n)
   -- Same reasoning as 'NGB'\'s 'memoTag': without this, a shared 'ELetRef'
   -- body would be re-materialized (fresh node names allocated) once per
-  -- syntactic occurrence, reintroducing the multiplicative blowup Phase 1
-  -- exists to prevent.
+  -- syntactic occurrence, reintroducing the multiplicative blowup this
+  -- memoization exists to prevent.
   memoTag bid (WB action) = WB (\next loopCont -> do
     memo <- WiringB (gets wbsBlockMemo)
     case Map.lookup bid memo of

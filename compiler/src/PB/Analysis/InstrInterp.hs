@@ -5,8 +5,7 @@
 -- threading a variable environment and accumulating the same 'TraceEvent'
 -- shape 'PB.Analysis.CatInterp.runEff' produces, using the one shared
 -- 'PB.Analysis.CatEval.evalExprMocked' so both backends evaluate
--- conditions/RHS values (including mocked call responses) identically
--- (Plan 146 Phase 1D / 2a).
+-- conditions/RHS values (including mocked call responses) identically.
 module PB.Analysis.InstrInterp
   ( runInstrGraphTrace
   , TraceOutcome (..)

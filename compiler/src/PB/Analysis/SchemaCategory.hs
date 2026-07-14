@@ -1,10 +1,9 @@
--- | Plan 148 Phase 1b: the database schema as a free category (@Sch@).
+-- | The database schema as a free category (@Sch@).
 --
 -- Objects are @(table, column)@ pairs and SQL-statement/DW-retrieve
 -- instances; morphisms are the "legs" a statement has into the columns it
 -- reads/writes, plus FK morphisms recovered from DataWindow @JOIN@ blocks
--- and DDL foreign keys. See doc/plan/148-db-schema-category.md for the
--- design rationale (span encoding of a hyperedge, free-category structure).
+-- and DDL foreign keys.
 module PB.Analysis.SchemaCategory
   ( -- Core category
     StmtId (..)
@@ -25,9 +24,9 @@ module PB.Analysis.SchemaCategory
   , CatFkRow (..)
   , SchemaInputs (..)
   , buildSchema
-    -- Namespace resolution (Plan 157 Phase 4.5: shared by buildSchema and
-    -- any other write site that needs to resolve an unqualified TableRef,
-    -- e.g. persistence-time resolution in PB.Pipeline.Runner)
+    -- Namespace resolution (shared by buildSchema and any other write site
+    -- that needs to resolve an unqualified TableRef, e.g. persistence-time
+    -- resolution in PB.Pipeline.Runner)
   , catalogNamespacedTables
   , resolveTableRef
   ) where
@@ -64,9 +63,9 @@ data LegKind
   | LegFk
   deriving (Show, Eq, Ord)
 
--- | Plan 163 Phase 4 (D3): which analysis technique produced a given leg —
--- orthogonal to 'LegKind' (the leg's direction/role) and to 'StmtId' (which
--- front-end produced the statement). Supersedes the old 'FkSource' type,
+-- | Which analysis technique produced a given leg — orthogonal to 'LegKind'
+-- (the leg's direction/role) and to 'StmtId' (which front-end produced the
+-- statement). Supersedes the old 'FkSource' type,
 -- which covered only 'LegFk' rows ('FkDdl'/'FkDwJoin') via a second field;
 -- every leg now carries provenance, not just FK ones.
 data LegSource
@@ -208,35 +207,34 @@ data SchemaInputs = SchemaInputs
   { inDwRetrieveColumns   :: [DwRetrieveColRow]
   , inDwJoins             :: [DwJoinLegRow]
   , inDwWriteColumns      :: [DwRetrieveColRow]
-    -- ^ Plan 163 Phase 6 (wiring 'PB.Analysis.DwFootprint.dwRetrieveFootprint'
-    -- into production): a DW's update-table columns (@DwColumn@'s
-    -- @dcUpdate@) -> 'LegWrites'. Same row shape as 'inDwRetrieveColumns'
-    -- (each row is (file, dwName, namespace, table, column)) -- a write leg
-    -- and a retrieve leg are both keyed to a single 'DwRetrieveId', no
-    -- per-row "kind" needed since the two never share a table.
+    -- ^ A DW's update-table columns (@DwColumn@'s @dcUpdate@) -> 'LegWrites'.
+    -- Same row shape as 'inDwRetrieveColumns' (each row is (file, dwName,
+    -- namespace, table, column)) -- a write leg and a retrieve leg are both
+    -- keyed to a single 'DwRetrieveId', no per-row "kind" needed since the
+    -- two never share a table.
   , inDwWhereColumns      :: [DwRetrieveColRow]
-    -- ^ Plan 163 Phase 6: a DW retrieve's WHERE-operand columns (gated on
+    -- ^ A DW retrieve's WHERE-operand columns (gated on
     -- DDL catalog membership by the producer, same as
     -- 'PB.Analysis.DwFootprint.dwRetrieveFootprint's own @whereLegs@) ->
     -- 'LegReads'.
   , inSqlColumns          :: [SqlColRow]
   , inCatFootprintColumns :: [SqlColRow]
-    -- ^ Plan 163 Phase 3: same shape and resolution treatment as
-    -- 'inSqlColumns', but sourced from 'PB.Analysis.SchFootprint's
-    -- @EffTerm -> Sch@ functor (dynamic-dispatch writes, e.g. a DataWindow
-    -- @SetItem@ call, invisible to sqlglot's text-based extraction) rather
-    -- than parsed SQL text. Kept as a separate field, not merged into
-    -- 'inSqlColumns', so each row's producing technique stays
-    -- distinguishable — Plan 163 Phase 4's @leg_source@ column tags rows by
-    -- which physical ingestion table (and therefore which producer) they
+    -- ^ Same shape and resolution treatment as 'inSqlColumns', but sourced
+    -- from 'PB.Analysis.SchFootprint's @EffTerm -> Sch@ functor (dynamic-
+    -- dispatch writes, e.g. a DataWindow @SetItem@ call, invisible to
+    -- sqlglot's text-based extraction) rather than parsed SQL text. Kept as
+    -- a separate field, not merged into 'inSqlColumns', so each row's
+    -- producing technique stays distinguishable — the @leg_source@ column
+    -- tags rows by which physical ingestion table (and therefore which
+    -- producer) they
     -- came from.
   , inCatalogColumns      :: [CatColumnRow]
   , inCatalogFks          :: [CatFkRow]
   , inDefaultNamespace    :: Maybe Text
-    -- ^ Plan 157 Phase 1: the corpus's configured default schema
-    -- (@--default-namespace@). An unqualified 'TableRef' in
-    -- 'inSqlColumns'/'inCatFootprintColumns'/'inDwRetrieveColumns'/
-    -- 'inDwJoins' resolves to this namespace only when the DDL catalog
+    -- ^ The corpus's configured default schema (@--default-namespace@). An
+    -- unqualified 'TableRef' in 'inSqlColumns'/'inCatFootprintColumns'/
+    -- 'inDwRetrieveColumns'/'inDwJoins' resolves to this namespace only when
+    -- the DDL catalog
     -- ('inCatalogColumns') actually defines the table under it — never
     -- guessed.
   } deriving (Show, Eq)
@@ -257,8 +255,7 @@ catalogNamespacedTables catCols = Set.fromList
 -- @--default-namespace@ is a raw CLI value with no such normalization
 -- applied anywhere upstream of here — a case mismatch (e.g.
 -- @--default-namespace CLIMS@ against a catalog-derived @"clims"@) silently
--- resolved nothing, confirmed via a real multi-schema reindex (Plan 157
--- Phase 4/5 fixture).
+-- resolved nothing.
 resolveTableRef :: Set.Set (Text, Text) -> Maybe Text -> TableRef -> TableRef
 resolveTableRef _ _ tr@(TableRef (Just _) _) = tr
 resolveTableRef catTables mDefaultNs tr@(TableRef Nothing tbl) =
@@ -292,8 +289,8 @@ buildSchema inputs =
       | r <- inDwRetrieveColumns inputs
       ]
 
-    -- Plan 163 Phase 6: DW update-table columns -> LegWrites, same shape as
-    -- 'dwRetrieveLegs' but stmt -> column (a write), not column -> stmt.
+    -- DW update-table columns -> LegWrites, same shape as 'dwRetrieveLegs'
+    -- but stmt -> column (a write), not column -> stmt.
     dwWriteLegs =
       [ SchMorphism (StmtObj (DwRetrieveId (drcFile r) (drcDwName r)))
                      (ColumnObj (resolve (TableRef (drcNamespace r) (drcTable r))) (drcColumn r))
@@ -301,8 +298,8 @@ buildSchema inputs =
       | r <- inDwWriteColumns inputs
       ]
 
-    -- Plan 163 Phase 6: DW WHERE-operand columns -> LegReads (already
-    -- catalog-gated by the producer, see 'PB.Analysis.DwFootprint').
+    -- DW WHERE-operand columns -> LegReads (already catalog-gated by the
+    -- producer, see 'PB.Analysis.DwFootprint').
     dwWhereLegs =
       [ SchMorphism (ColumnObj (resolve (TableRef (drcNamespace r) (drcTable r))) (drcColumn r))
                      (StmtObj (DwRetrieveId (drcFile r) (drcDwName r)))

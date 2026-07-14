@@ -129,8 +129,8 @@ data ScopedTypeEnv = ScopedTypeEnv
   , steInstance     :: Map.Map Text PbType
   , steLocal        :: Map.Map Text PbType   -- params only in P2a; body locals added in P2b
   , steHierarchy    :: Map.Map Text Text
-  , steObject       :: Text          -- enclosing object name; root for multi-hop chain resolution (Plan 164 D4)
-  , steControlIndex :: ControlIndex  -- workspace-wide control index; see PB.Analysis.ControlHierarchy (Plan 164 D4)
+  , steObject       :: Text          -- enclosing object name; root for multi-hop chain resolution
+  , steControlIndex :: ControlIndex  -- workspace-wide control index; see PB.Analysis.ControlHierarchy
   } deriving (Eq, Show)
 
 buildWorkspaceEnv :: [SrFile] -> WorkspaceEnv

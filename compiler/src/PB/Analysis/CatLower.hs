@@ -4,11 +4,7 @@
 --
 -- Pure module — no I/O. Takes a 'SsaProc' (already in SSA form — see
 -- 'PB.Analysis.SSA') and computes the loop-header/merge-point/loop-exit
--- structure 'PB.Analysis.CatLowerEff.compileSsaToEff' needs to lower it —
--- all of Plan 144's loop-nesting machinery and most of Plan 146's
--- correctness fixes live here. Split out of 'PB.Analysis.CatOp' in Plan
--- 151, alongside 'PB.Analysis.CatInterp' (direct execution) and
--- 'PB.Analysis.GraphBuilder' (flattening to 'InstrGraph').
+-- structure 'PB.Analysis.CatLowerEff.compileSsaToEff' needs to lower it.
 module PB.Analysis.CatLower
   ( CompileCtx (..)
   , computeMergePoints
@@ -40,8 +36,8 @@ data CompileCtx = CompileCtx
   { ccEnv         :: ScopedTypeEnv    -- ^ Type environment for call classification
   , ccUserFns     :: Set.Set Text     -- ^ User-defined function names (lower-cased)
   , ccMergePoints :: Set.Set Text
-    -- ^ BlockIds reached by 2+ predecessor edges anywhere in the procedure
-    -- (Plan 150). The only blocks 'PB.Analysis.CatLowerEff.compileBlockToEff'/
+    -- ^ BlockIds reached by 2+ predecessor edges anywhere in the procedure.
+    -- The only blocks 'PB.Analysis.CatLowerEff.compileBlockToEff'/
     -- 'compileLoopBodyToEff' can ever return via their memo's cache-hit
     -- branch — i.e. the only ones a second predecessor can reach the same
     -- compiled 'PB.Analysis.CatOp.Eff' value for — so the only ones that
@@ -66,8 +62,7 @@ data CompileCtx = CompileCtx
 -- (LFanIn ..) ..@ structural detection (it doesn't unwrap 'LTagged'), which
 -- silently fell back to its unpatched-forwarding-'InstrNop' path — and,
 -- worse, mis-threaded the loop's own back-edge, causing loops to stop
--- after one iteration. Confirmed via the regression this caused in the
--- loop test suite (Plan 150 Phase 3).
+-- after one iteration.
 computeMergePoints :: SsaProc -> Set.Set Text
 computeMergePoints proc =
   Map.keysSet (Map.filter (P.> 1) predCounts) `Set.difference` computeLoopHeaders proc
@@ -89,13 +84,11 @@ termSuccessors _                        = []
 -- The 'visited' set is threaded across sibling successors (via 'foldl''), not
 -- reset per-sibling — each block is fully explored at most once across the whole
 -- walk, giving O(V+E). A per-sibling reset was fine when every block had at most
--- one real successor (a 'choose case' always collapsed to a single 'SsaGoto' —
--- Plan 145 Bug B), but 'SsaSwitch' genuinely fans out to N clause targets that
--- reconverge at one merge block; without this threading, that shared downstream
--- region gets re-explored from scratch once per sibling, compounding
--- multiplicatively across every subsequent branch/switch in the same procedure
--- (Plan 146 Phase 2b: this hung real corpus procedures once Bug B started
--- reporting real N-way fan-out instead of always exactly one edge).
+-- one real successor (a 'choose case' always collapsed to a single 'SsaGoto'),
+-- but 'SsaSwitch' genuinely fans out to N clause targets that reconverge at
+-- one merge block; without this threading, that shared downstream region gets
+-- re-explored from scratch once per sibling, compounding multiplicatively across
+-- every subsequent branch/switch in the same procedure.
 computeLoopHeaders :: SsaProc -> Set.Set Text
 computeLoopHeaders proc = fst (go (spEntry proc) Set.empty Set.empty)
   where
@@ -117,8 +110,8 @@ computeLoopHeaders proc = fst (go (spEntry proc) Set.empty Set.empty)
 -- header currently active" down the recursion — a header is labeled with
 -- whichever header was active the first time it's visited. Needed so
 -- 'computeAllLoopExits' can resolve nested (child) loops strictly before the
--- loops that contain them (Plan 146 Phase 2f — see its comment for why
--- resolution order matters).
+-- loops that contain them (see 'computeAllLoopExits' for why resolution
+-- order matters).
 computeLoopNestParents :: Set.Set Text -> SsaProc -> Map.Map Text (Maybe Text)
 computeLoopNestParents headers proc = snd (go (spEntry proc) Nothing Set.empty Map.empty)
   where
@@ -141,15 +134,10 @@ computeLoopNestParents headers proc = snd (go (spEntry proc) Nothing Set.empty M
 -- (child) loops strictly before their enclosing (parent) loops — so an
 -- outer loop's own reachability walk can treat an already-resolved nested
 -- loop as an opaque single-exit region, instead of either stopping dead at
--- it (which used to drop real body blocks only reachable through the nested
--- loop) or walking through it unbounded (which can escape through an
--- *enclosing* loop's own back-edge and produce a bogus "exit" — the bug this
--- fixes). Confirmed via direct hand-trace of a real corpus --dual-trace diff
--- (w_dynsql_format4::ue_execute, whose do-while loop contains a for-loop):
--- the outer and inner loop headers were resolved as *each other's* exit
--- target, causing the new compiler's execution to run away past the
--- --dual-trace fuel bound where the old compiler terminated in a handful of
--- steps (Plan 146 Phase 2f).
+-- it (which drops real body blocks only reachable through the nested loop)
+-- or walking through it unbounded (which can escape through an
+-- *enclosing* loop's own back-edge and produce a bogus "exit" — the bug
+-- this fixes).
 computeAllLoopExits :: Set.Set Text -> SsaProc -> Map.Map Text Text
 computeAllLoopExits headers proc =
   let parents = computeLoopNestParents headers proc
@@ -171,9 +159,9 @@ computeAllLoopExits headers proc =
 -- recomputing an O(V+E) function that often would multiply the cost right back up.
 -- 'resolvedExits' holds exit targets for headers already resolved by
 -- 'computeAllLoopExits' at a strictly deeper nesting level than 'headerId' —
--- used to treat those nested loops as opaque single-exit regions (Plan 146
--- Phase 2f); a foreign header absent from it is an enclosing/unrelated loop,
--- handled exactly as before (a hard stop).
+-- used to treat those nested loops as opaque single-exit regions; a foreign
+-- header absent from it is an enclosing/unrelated loop, handled exactly as
+-- before (a hard stop).
 computeLoopBodyBlocks :: Set.Set Text -> Map.Map Text Text -> SsaProc -> Text -> Set.Set Text
 computeLoopBodyBlocks headers resolvedExits proc headerId =
   let headerSuccs = case Map.lookup headerId (spBlocks proc) of
@@ -187,8 +175,8 @@ computeLoopBodyBlocks headers resolvedExits proc headerId =
 -- already present in 'resolvedExits' (a more-deeply-nested loop) is treated
 -- as an opaque pass-through: recorded as reachable, then the walk continues
 -- from its own resolved exit target rather than its raw successors or a
--- dead stop (Plan 146 Phase 2f). A foreign header absent from 'resolvedExits'
--- (an enclosing or unrelated loop) still stops the walk, exactly as before.
+-- dead stop. A foreign header absent from 'resolvedExits' (an enclosing or
+-- unrelated loop) still stops the walk, exactly as before.
 discoverReachable :: Set.Set Text -> Map.Map Text Text -> SsaProc -> Text -> Text -> Set.Set Text -> Set.Set Text
 discoverReachable headers resolvedExits proc headerId currentBlock visited
   | Set.member currentBlock visited = visited
@@ -209,13 +197,11 @@ discoverReachable headers resolvedExits proc headerId currentBlock visited
 -- reason 'computeLoopHeaders' does — see its comment. Mirrors
 -- 'discoverReachable's foreign-header handling: a resolved (nested) header
 -- redirects through its own exit target instead of freely walking its
--- internals (which used to let a nested loop's own exit block "reach back"
--- via escaping through an *enclosing* loop's back-edge — Plan 146 Phase 2f);
--- an unresolved (enclosing/unrelated) header still stops the walk.
+-- internals; an unresolved (enclosing/unrelated) header still stops the walk.
 --
 -- A block terminating in 'SsaContinue'/'SsaBreak' is always treated as
--- reaching (Plan 146 Phase 2g). 'termSuccessors' deliberately returns @[]@
--- for both — they're handled as special-cased control transfers elsewhere
+-- reaching. 'termSuccessors' deliberately returns @[]@ for both — they're
+-- handled as special-cased control transfers elsewhere
 -- (@compileLoopTerm@/@compileLoopBranchPath@), not real graph edges — so a
 -- pure forward walk can never step off of one. Left unhandled, that made
 -- 'canReach' wrongly exclude such a block from the loop's own body: it then
@@ -230,11 +216,10 @@ discoverReachable headers resolvedExits proc headerId currentBlock visited
 -- are that loop's own body by construction, regardless of where their
 -- (elsewhere-handled) control transfer actually lands.
 --
--- 'SsaReturn' deliberately does NOT get the same treatment (Plan 146 Phase
--- 2i tried this, and it was wrong — reverted). Unlike continue/break,
--- a return statement is not lexically restricted to loop bodies: a
--- return-terminated block reached by forwarding through a loop's own real
--- exit edge (e.g. an if/else merge block with nothing left in the
+-- 'SsaReturn' deliberately does NOT get the same treatment. Unlike
+-- continue/break, a return statement is not lexically restricted to loop
+-- bodies: a return-terminated block reached by forwarding through a loop's
+-- own real exit edge (e.g. an if/else merge block with nothing left in the
 -- procedure, reached both from an unrelated earlier branch AND from this
 -- loop's exit) is not a loop-body member at all, and treating it as one
 -- here made it eligible for 'computeLoopBodyBlocks' — which then let
@@ -280,18 +265,18 @@ canReach headers resolvedExits proc startBlock0 targetBlock visited0 = fst (go s
 -- header contributes only its own resolved exit target here, not its raw
 -- (purely internal to that nested loop) successors — otherwise a nested
 -- loop's own body block leaks through as a spurious "exit" of the
--- enclosing loop (Plan 146 Phase 2f).
+-- enclosing loop.
 --
 -- Prefers a non-return-terminated candidate when 'exits' has more than
--- one (Plan 146 Phase 2i): a body-internal early return (e.g. an elseif
--- branch's own @return@, handled directly by 'isLoopExit' below so it
--- never needs to appear here at all — see @w_customer_report::open@) can
--- still show up as a second, spurious "successor not in body" candidate
--- for the same reasons continue/break used to (Phase 2f/2g's alphabetical
--- tiebreak fragility) whenever the return-terminated block happens to be
--- reachable from some other body block's branch. Falling back to a
--- return-terminated candidate when it's the *only* one preserves the
--- legitimate "loop; return" shape (nothing else left in the procedure).
+-- one: a body-internal early return (e.g. an elseif branch's own @return@,
+-- handled directly by 'isLoopExit' below so it never needs to appear here
+-- at all — see @w_customer_report::open@) can still show up as a second,
+-- spurious "successor not in body" candidate for the same reasons
+-- continue/break can (alphabetical tiebreak fragility) whenever the
+-- return-terminated block happens to be reachable from some other body
+-- block's branch. Falling back to a return-terminated candidate when it's
+-- the *only* one preserves the legitimate "loop; return" shape (nothing
+-- else left in the procedure).
 determineLoopExitTarget :: Set.Set Text -> Map.Map Text Text -> SsaProc -> Text -> Text
 determineLoopExitTarget headers resolvedExits proc headerId =
   let bodyBlocks  = computeLoopBodyBlocks headers resolvedExits proc headerId

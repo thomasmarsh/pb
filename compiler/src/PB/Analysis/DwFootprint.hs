@@ -1,21 +1,17 @@
--- | Plan 163 Phase 2: the DW-retrieve-to-'PB.Analysis.SchemaCategory.Sch'
--- producer -- the "Fdw" half of D1's cospan
--- (see doc\/plan\/163-unified-statement-footprint.md), sibling to
--- 'PB.Analysis.SchFootprint's "Fps" functor. Unlike 'SchFootprint', which
--- folds a compiled @EffTerm@, a DW retrieve has no control flow to fold
--- -- this is a plain, total walk over the already-parsed 'DwTable'\/
--- 'DwRetrieve' record straight into the same @Set SchMorphism@ codomain.
+-- | The DW-retrieve-to-'PB.Analysis.SchemaCategory.Sch' producer — the
+-- "Fdw" half of the cospan, sibling to 'PB.Analysis.SchFootprint's "Fps"
+-- functor. Unlike 'SchFootprint', which folds a compiled @EffTerm@, a DW
+-- retrieve has no control flow to fold — this is a plain, total walk over
+-- the already-parsed 'DwTable'\/'DwRetrieve' record straight into the same
+-- @Set SchMorphism@ codomain.
 --
--- Reproduces all four leg categories D1 names (column list, update-table,
--- WHERE predicate, joins) directly from the AST, deliberately overlapping
--- with 'PB.Analysis.SchemaCategory.buildSchema's existing row-based
+-- Reproduces all four leg categories (column list, update-table, WHERE
+-- predicate, joins) directly from the AST, deliberately overlapping with
+-- 'PB.Analysis.SchemaCategory.buildSchema's existing row-based
 -- @dwRetrieveLegs@\/@dwJoinLegs@ producers (fed via DB-persisted
--- @DwRetrieveColRow@\/@DwJoinLegRow@ rows). That duplication is intentional
--- for this phase -- this module has no production call sites yet (see
--- Plan 163's own Phase 2 status note); wiring it in and reconciling any
--- overlap with @buildSchema@'s existing producers is future-phase work.
--- Each of the four leg categories already tags its own 'LegSource' (Plan
--- 163 Phase 4, D3) so a future wiring session doesn't need to revisit this.
+-- @DwRetrieveColRow@\/@DwJoinLegRow@ rows). Each of the four leg
+-- categories already tags its own 'LegSource' so a future wiring session
+-- doesn't need to revisit this.
 module PB.Analysis.DwFootprint
   ( DwFootprintCtx (..)
   , mkDwFootprintCtx

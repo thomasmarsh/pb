@@ -4,15 +4,8 @@
 -- canonical-shape helpers ('ShapeNode', 'canonicalize', 'normalizeCallTag')
 -- used by hand-trace\/golden-fixture tests.
 --
--- The original monadic forward-chaining compiler
--- ('compileProcedure' :: 'PB.Analysis.TypeEnv.ScopedTypeEnv' -> ... ->
--- 'InstrGraph') that built these graphs directly from a 'BodyStmt' list was
--- deleted in Plan 144 Phase 5 Step 7, once the SSA → categorical-IR →
--- 'InstrGraph' pipeline was swapped into production and verified equivalent
--- (0 corpus errors, 0/7547 @--dual-trace@ diffs, hand-compiled golden
--- fixtures). Production now flattens via
--- 'PB.Analysis.GraphBuilder.compileProcedureViaEffTerm' (SSA →
--- 'PB.Analysis.CatOp.EffTerm' → 'InstrGraph').
+-- Production flattens via 'PB.Analysis.GraphBuilder.compileProcedureViaEffTerm'
+-- (SSA → 'PB.Analysis.CatOp.EffTerm' → 'InstrGraph').
 --
 -- The resulting graph has no nested control flow; all branching is via
 -- explicit node indices. The TypeScript step() driver executes the graph.
@@ -23,7 +16,7 @@ module PB.Analysis.InstrGraph
   , ShapeNode (..)
   , canonicalize
   , normalizeCallTag
-    -- * Plan 167 Phase 6 — named-graph intermediate (Approach C)
+    -- * Named-graph intermediate
   , InstrNode' (..)
   , InstrGraph' (..)
   , linearize
@@ -125,31 +118,27 @@ shapeOf look node = case node of
 
 -- | Collapse the SCall\/SCProc tag-naming divergence: the SSA\/Eff
 -- pipeline always lowers calls to 'InstrCallProc' ('SCProc'), while the
--- deleted old compiler emitted plain 'InstrCall' ('SCall') for non-user-function
+-- old compiler emitted plain 'InstrCall' ('SCall') for non-user-function
 -- callees and 'InstrCallProc' only for user-defined functions\/subroutines.
 -- This is a pure node-tag difference with no effect on control flow or shape
--- (Plan 145 Phase 1B) — comparisons that care about genuine
--- structural\/semantic parity should normalize it first so this accepted,
--- harmless divergence doesn't mask real diffs.
+-- — comparisons that care about genuine structural\/semantic parity should
+-- normalize it first so this accepted, harmless divergence doesn't mask real
+-- diffs.
 normalizeCallTag :: ShapeNode -> ShapeNode
 normalizeCallTag (SCProc n) = SCall n
 normalizeCallTag other      = other
 
 -- ---------------------------------------------------------------------------
--- Plan 167 Phase 6 — the named-graph intermediate (Approach C)
+-- The named-graph intermediate
 --
 -- 'InstrGraph' construction (PB.Analysis.GraphBuilder's NamedGraphBuilder,
 -- via 'compileProcedureViaEffTerm') addresses nodes by 'Text' name (mirroring
--- 'PB.Analysis.SSA.SsaBlock's own
--- successor naming) rather than by an eagerly-allocated pc, so a merge block
--- reached by N predecessors is exactly one 'Map.Map' entry — dedup is
--- 'Map.Map' key uniqueness, not a memo. (An earlier, since-retired
--- PC-threaded design allocated 'Int' pcs eagerly during a backward-chaining
--- walk and needed a 2D @(blockId, continuation pc)@ memo to avoid re-lowering
--- the same content N times; the named design has no continuation dimension
--- to key on in the first place.) 'linearize' numbers the named graph into
--- the flat pc-indexed 'InstrGraph' the rest of the pipeline (and the TS
--- runtime) consume, in one pure BFS pass with no state threading.
+-- 'PB.Analysis.SSA.SsaBlock's own successor naming) rather than by an
+-- eagerly-allocated pc, so a merge block reached by N predecessors is exactly
+-- one 'Map.Map' entry — dedup is 'Map.Map' key uniqueness, not a memo.
+-- 'linearize' numbers the named graph into the flat pc-indexed 'InstrGraph'
+-- the rest of the pipeline (and the TS runtime) consume, in one pure BFS
+-- pass with no state threading.
 
 -- | 'InstrNode' parameterized over its successor-reference type: 'Text'
 -- during named-graph construction, 'Int' after 'linearize'. Constructor set

@@ -66,7 +66,7 @@ pbBuiltins = Set.fromList
   , "treeviewitem", "dwitemstatus", "menu"
   ]
 
--- | Naming-convention map for window control type inference (Plan 90a).
+-- | Naming-convention map for window control type inference.
 -- Prefix -> PB class name. Longer prefixes first to avoid false matches.
 -- TODO: this is wrong since these prefixes are just convention and culture,
 -- not a hard rule. The only correct mapping is .sr* -> type.

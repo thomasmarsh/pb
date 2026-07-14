@@ -29,13 +29,13 @@ module PB.Analysis.CatOp
   , Effectful (..)
     -- * Derived combinators
   , branch
-    -- * Plan 167 Phase 5a — the Freyd split (Pure / Eff / J)
+    -- * The Freyd split (Pure / Eff / J)
   , Pure (..)
   , Eff (..)
   , foldFreyd
   , foldFreydOp
   , branchEff
-    -- * Plan 167 Phase 7 Step 2 — the Eff shared-term table
+    -- * The Eff shared-term table
   , EffTerm (..)
   , extractEffTable
   , inlineEffTable
@@ -82,7 +82,7 @@ class Category k => Effectful k where
   -- | Procedure-terminal escape ('CatReturn'). Every target category must
   -- say what "abort past every enclosing construct" means for it — 'Interp'
   -- throws, a static-analysis target like 'PB.Analysis.SchFootprint' can
-  -- just treat it as a no-op (Plan 148 Phase 3).
+  -- just treat it as a no-op.
   ret        :: k a b
   -- | Loop combinator ('ELoop'): run the body repeatedly while it returns
   -- 'Left', stopping at the first 'Right'. Added alongside 'ret' so
@@ -90,16 +90,14 @@ class Category k => Effectful k where
   -- special-casing these two constructors per-interpreter.
   loopK      :: k a (Either a b) -> k a b
   -- | Categorical branching ('CatFanIn'/'EFanIn'-forming), promoted from a
-  -- derived combinator (Plan 167 Phase 7 Step 1) to a primitive so a target
-  -- category can override it with direct, simultaneous access to the
-  -- condition and both arms — a generic per-constructor fold can never
-  -- recover that access once each has been folded/erased independently (see
-  -- doc/plan/167-structural-sharing-catop-lowcat.md's "Open Question 2").
+  -- derived combinator to a primitive so a target category can override it
+  -- with direct, simultaneous access to the condition and both arms — a
+  -- generic per-constructor fold can never recover that access once each
+  -- has been folded/erased independently.
   -- No default: 'Eff' has no 'Cartesian' instance and must not gain one
-  -- (a cartesian fork over an effectful subterm must not typecheck — see
-  -- that plan's "Why a Pure term can never smuggle in a duplicated Eff
-  -- reference"), so a defaulted body requiring 'Cartesian k' is unsound for
-  -- this class. Every instance defines 'branchK' explicitly instead.
+  -- (a cartesian fork over an effectful subterm must not typecheck), so a
+  -- defaulted body requiring 'Cartesian k' is unsound for this class.
+  -- Every instance defines 'branchK' explicitly instead.
   branchK    :: Expr -> k a c -> k a c -> k a c
   -- | Fused assign-with-rhs ('CatAssignWithRhs'\/'EAssignWithRhs'-forming),
   -- a fold-target primitive for the same reason 'branchK' is one, and with
@@ -159,19 +157,14 @@ branchEff = EBranch
 
 -- The principled end-state's TYPES and FOLD: 'Pure' is the cartesian
 -- (duplication-safe) category; 'Eff' is the premonoidal (effectful)
--- category, with the 'J' constructor embedding a 'Pure' morphism. Verified
--- by hand-built 'Eff' terms folded through 'foldFreyd' (see EffTermTest.hs
--- "Freyd split" group).
+-- category, with the 'J' constructor embedding a 'Pure' morphism.
 --
--- KEY VERIFIED FINDING (2026-07-13): @eval@ is PURE. The plan doc's
--- principled end-state sketch originally placed @EEval@ in Eff; that is
--- wrong. @Interp@'s @eval@ (CatInterp.hs:94) is a single @gets@ — a pure
--- read of the environment, no @modify'@, no @TraceEvent@ (the TraceEvent
--- ADT, CatEval.hs:57-63, has no TeEval). @SchFootprint@'s @eval@ returns
--- @Set.empty@ unconditionally. So @eval@ lives in Pure as @PEval@; the
--- @Effectful Eff@ instance embeds it via @eval e = J (PEval e)@. See
--- doc/plan/167-structural-sharing-catop-lowcat.md §"The principled
--- end-state" (corrected).
+-- KEY FINDING: @eval@ is PURE. @Interp@'s @eval@ (CatInterp.hs:94) is a
+-- single @gets@ — a pure read of the environment, no @modify'@, no
+-- @TraceEvent@ (the TraceEvent ADT, CatEval.hs:57-63, has no TeEval).
+-- @SchFootprint@'s @eval@ returns @Set.empty@ unconditionally. So @eval@
+-- lives in Pure as @PEval@; the @Effectful Eff@ instance embeds it via
+-- @eval e = J (PEval e)@.
 
 -- | The cartesian (pure) category. Duplication is free: @'PFork' f f@ is a
 -- well-formed pure morphism and always safe. Carries the structural routing
@@ -228,15 +221,14 @@ data Eff a b where
   -- Freyd split rests on: 'Cartesian'/'PFork' over 'Eff' is forbidden
   -- (duplication), 'Cocartesian'/'EFanIn' over 'Eff' is sound (choice).
   EFanIn        :: Eff a c -> Eff b c -> Eff (Either a b) c
-  -- | A genuine branch primitive (Plan 167 Phase 7 Step 4), not sugar for
-  -- 'EFanIn'/'ESplitValue'/'J' — 'branchK' needs direct, simultaneous
-  -- access to the condition and both arms (Open Question 2), which a
-  -- generic per-constructor fold can never recover once each has been
-  -- folded/erased independently. Symmetric with 'EAssignWithRhs' (also a
-  -- fused term primitive, not a derived composition). 'branchEff' is now
-  -- just @EBranch@; the structural expansion this replaces is still what
-  -- every existing instance's 'branchK' body computes (see the class
-  -- Effectful' Plan 167 Phase 7 Step 1 note) — behaviour-preserving.
+  -- | A genuine branch primitive, not sugar for 'EFanIn'/'ESplitValue'/'J'
+  -- — 'branchK' needs direct, simultaneous access to the condition and
+  -- both arms, which a generic per-constructor fold can never recover once
+  -- each has been folded/erased independently. Symmetric with
+  -- 'EAssignWithRhs' (also a fused term primitive, not a derived
+  -- composition). 'branchEff' is now just @EBranch@; the structural
+  -- expansion this replaces is still what every existing instance's
+  -- 'branchK' body computes — behaviour-preserving.
   EBranch  :: Expr -> Eff a c -> Eff a c -> Eff a c
   ELoop    :: Eff a (Either a b) -> Eff a b
   EReturn  :: Eff a b
@@ -344,9 +336,9 @@ foldFreyd (EffTerm spine table) = fst (go spine Map.empty)
                      in (r', Map.insert bid (unsafeCoerce r' :: Any) m')
         Nothing   -> error ("foldFreyd: unbound ELetRef " <> show bid)
 
--- | Fold a bare 'Eff' term (no shared-term table) — the pre-Phase-7
--- signature of 'foldFreyd', kept for callers folding hand-built terms with
--- no 'ELetRef' use sites (this module's own Phase 5a/5b test fixtures).
--- Equivalent to @foldFreyd (extractEffTable eff)@.
+-- | Fold a bare 'Eff' term (no shared-term table) — the simpler signature
+-- of 'foldFreyd', kept for callers folding hand-built terms with no
+-- 'ELetRef' use sites (this module's own test fixtures). Equivalent to
+-- @foldFreyd (extractEffTable eff)@.
 foldFreydOp :: (Effectful k, Cartesian k, Cocartesian k) => Eff a b -> k a b
 foldFreydOp eff = foldFreyd (extractEffTable eff)

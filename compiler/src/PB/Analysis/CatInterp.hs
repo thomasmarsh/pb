@@ -8,11 +8,11 @@
 -- target. Used for testing: evaluating a compiled procedure without going
 -- through the 'PB.Analysis.GraphBuilder' flattening step or the TS runtime.
 --
--- Split out of 'PB.Analysis.CatOp' in Plan 151. Parallels
--- 'PB.Analysis.InstrInterp' (the flat @InstrGraph@-level trace interpreter) —
--- 'CatInterp' interprets 'EffTerm's directly, 'InstrInterp' interprets the
--- flattened output of 'PB.Analysis.GraphBuilder'; the two backends are
--- cross-checked against each other by a semantic-equivalence oracle test.
+-- Parallels 'PB.Analysis.InstrInterp' (the flat @InstrGraph@-level trace
+-- interpreter) — 'CatInterp' interprets 'EffTerm's directly, 'InstrInterp'
+-- interprets the flattened output of 'PB.Analysis.GraphBuilder'; the two
+-- backends are cross-checked against each other by a semantic-equivalence
+-- oracle test.
 module PB.Analysis.CatInterp
   ( Interp (..)
   , InterpState (..)
@@ -39,10 +39,9 @@ import qualified Data.Map.Strict as Map
 -- environment ('CatOp'\'s @env@ type parameter is structural wiring only —
 -- 'PB.Analysis.CatLower.compileSsa' always produces @CatOp () ()@ — so real
 -- variable storage lives here instead), the accumulating observable trace,
--- and the mocked call\/suspend responses available for this run (Plan 146
--- Phase 2a) — read-only from 'Interp'\'s own perspective, but threaded
--- through the same state for simplicity rather than adding a separate
--- 'ReaderT' layer.
+-- and the mocked call/suspend responses available for this run — read-only
+-- from 'Interp'\'s own perspective, but threaded through the same state
+-- for simplicity rather than adding a separate 'ReaderT' layer.
 --
 -- 'isTrace' accumulates newest-first (prepend is O(1)); reverse once when
 -- reading it back out.
@@ -52,10 +51,10 @@ data InterpState = InterpState
   , isMocks :: MockResponses
   }
 
--- | Thrown by 'CatReturn' (Plan 146 Phase 2i) to unwind the 'Interp'
--- backend's plain function composition straight past every enclosing loop
--- (however deeply nested) and any post-loop continuation, landing exactly
--- where the currently-running procedure was invoked from. Carries the
+-- | Thrown by 'CatReturn' to unwind the 'Interp' backend's plain function
+-- composition straight past every enclosing loop (however deeply nested)
+-- and any post-loop continuation, landing exactly where the currently-
+-- running procedure was invoked from. Carries the
 -- 'InterpState' snapshot taken at the point of the throw — 'StateT's own
 -- state isn't otherwise recoverable across an IO exception, since the whole
 -- @(a, s)@ pair is discarded the instant the underlying 'IO' action throws.

@@ -1,5 +1,5 @@
 -- | Shared runtime value model, expression evaluator, and observable trace
--- type for Plan 146's semantic-equivalence oracle.
+-- type for the semantic-equivalence oracle.
 --
 -- Pure module — no I/O. 'evalExpr' is written once here so both the
 -- 'PB.Analysis.CatInterp' 'Interp' backend and 'PB.Analysis.InstrInterp's
@@ -35,9 +35,9 @@ data Value
 
 -- | Structural equality treating NaN as equal to itself, unlike 'Double's own
 -- 'Eq' instance. This type's equality is used to diff two independently
--- compiled traces for behavioral equivalence (Plan 146's @--dual-trace@);
--- under IEEE754 semantics @NaN /= NaN@ would make two runs that both
--- legitimately produce the same NaN (e.g. a @0.0/0.0@ ratio) look like a
+-- compiled traces for behavioral equivalence; under IEEE754 semantics
+-- @NaN /= NaN@ would make two runs that both legitimately produce the same
+-- NaN (e.g. a @0.0/0.0@ ratio) look like a
 -- divergence when there is none.
 instance Eq Value where
   VInt a  == VInt b  = a == b
@@ -64,7 +64,7 @@ data TraceEvent
 
 -- | A recorded call/suspend response: @(calleeName, evaluated-args) -> result@,
 -- shared by both interpreters so the same @(effect, args)@ pair always
--- resolves to the same mocked value in a given comparison (Plan 146 Phase 2).
+-- resolves to the same mocked value in a given comparison.
 type MockResponses = Map.Map (Text, [Value]) Value
 
 -- | Evaluate an 'Expr' against a variable environment, with no mock

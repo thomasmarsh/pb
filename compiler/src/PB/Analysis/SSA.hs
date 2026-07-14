@@ -4,25 +4,19 @@
 -- Pure module — no I/O.  Converts PB's imperative AST ('BodyStmt') into a
 -- block-structured form ('SsaProc') keyed by CFG block id, which the
 -- subsequent categorical compilation step ('PB.Analysis.CatLower') consumes
--- directly by (unversioned) variable name — see the module-level history
--- note below for why this is not classic dominance-based SSA.
+-- directly by (unversioned) variable name.
 --
 -- Pipeline: 'PB.AST.BodyStmt' → SSA → 'PB.Analysis.CatOp.Eff'
 --
--- __History (Plan 155 F1, 2026-07-08):__ this module used to also compute a
--- full dominance-based SSA renaming (dominator tree, dominance frontiers,
--- phi-node placement and filling, per-variable version numbers). That
--- machinery was deleted: 'PB.Analysis.CatLower' has always compiled every
--- variable reference back down to its bare, unversioned name ('svName') —
--- never the version number — because PB's execution model has one mutable
--- runtime slot per variable name, not per lexical scope. Renaming therefore
--- only ever changed a field ('svVersion') nothing downstream read, and phi
--- placement only ever produced phi nodes with an always-empty source list
--- (no call site fed 'predMap' into them), so phi resolution always compiled
--- to a no-op. Removing both eliminates real per-compile dead computation
--- (dominance frontiers computed and then discarded on every single compile)
--- and the standing trap of a type that looked like textbook SSA but wasn't
--- wired up as one. See @doc/plan/155-analysis-code-quality-audit.md@ (F1).
+-- __Design note:__ This module does not compute dominance-based SSA renaming
+-- (dominator tree, dominance frontiers, phi-node placement, per-variable
+-- version numbers). 'PB.Analysis.CatLower' compiles every variable reference
+-- back down to its bare, unversioned name ('svName') — never the version
+-- number — because PB's execution model has one mutable runtime slot per
+-- variable name, not per lexical scope. Renaming would only change a field
+-- ('svVersion') nothing downstream reads, and phi placement would only
+-- produce phi nodes with an always-empty source list (no call site feeds
+-- 'predMap' into them), so phi resolution always compiles to a no-op.
 module PB.Analysis.SSA
   ( -- * SSA Variables
     SsaVar (..)
@@ -256,21 +250,20 @@ stmtToAssigns (BsDestroy lv) =
   [SsaAssign (SsaVar (lvHead lv)) SsaNull]
 stmtToAssigns (BsCall expr) =
   [SsaAssign (SsaVar "_") (SsaConst expr)]
--- BsPbCall: CALL ancestor::event super-dispatch (Plan 145 Phase 3). Encoded as a
--- single-segment synthetic ExCall so it flows through the existing
--- classifyExpr/compileCallExpr machinery in PB.Analysis.CatLowerEff and lowers to a
--- InstrCallProc, matching PB.Analysis.InstrGraph's explicit BsPbCall case. The
--- "ancestor::event" text can never collide with isTriggerEvent, a user-fn name
--- (PB identifiers can't contain "::"), or isBuiltinSuspendFn's fixed list, so
--- it always classifies PureCall.
+-- BsPbCall: CALL ancestor::event super-dispatch. Encoded as a single-segment
+-- synthetic ExCall so it flows through the existing classifyExpr/compileCallExpr
+-- machinery in PB.Analysis.CatLowerEff and lowers to a InstrCallProc, matching
+-- PB.Analysis.InstrGraph's explicit BsPbCall case. The "ancestor::event" text
+-- can never collide with isTriggerEvent, a user-fn name (PB identifiers can't
+-- contain "::"), or isBuiltinSuspendFn's fixed list, so it always classifies
+-- PureCall.
 stmtToAssigns (BsPbCall (PbCall ancestor event)) =
   [SsaAssign (SsaVar "_")
              (SsaConst (ExCall (Lvalue [LvSegment (ancestor <> "::" <> event) Nothing]) []))]
 -- Control-flow statements produce no SSA assign of their own. CfgBuild.lower
 -- keeps the trailing control stmt as the last element of a block's cbStmts
 -- (so cfgTermToSsa's findControlStmt can find it), but its "value" is the
--- block terminator, not an assignment — cfgTermToSsa handles all of these
--- (Plan 146 Phase 4 audit: was reached via the old catch-all, now explicit).
+-- block terminator, not an assignment — cfgTermToSsa handles all of these.
 stmtToAssigns (BsIf {})     = []
 stmtToAssigns (BsDo {})     = []
 stmtToAssigns (BsChoose {}) = []
@@ -324,14 +317,14 @@ cfgTermToSsa mHeaderStmt edges stmts = case findControlStmt stmts of
     -- 'findLoopHeaderStmts') — reconstruct the branch from there rather than
     -- falling through to the generic (and here, wrong) `SsaReturn Nothing`.
     --
-    -- Plan 146 Phase 4 audit: this outer `_` is typed as `Maybe BodyStmt`, so
-    -- GHC sees it as covering `Nothing` *and* `Just` of any of the 12
-    -- non-control BodyStmt constructors — but `isCtrl` (above) guarantees
-    -- `findControlStmt` only ever returns `Just` for the 7 constructors
-    -- already matched, so the `Just`-of-a-non-control-stmt half of this
-    -- wildcard is unreachable by construction, not an audit gap. Left as a
-    -- wildcard rather than enumerated with dead `error "impossible"` arms,
-    -- which would add real risk (a typo there is worse than the status quo)
+    -- This outer `_` is typed as `Maybe BodyStmt`, so GHC sees it as covering
+    -- `Nothing` *and* `Just` of any of the 12 non-control BodyStmt constructors
+    -- — but `isCtrl` (above) guarantees `findControlStmt` only ever returns
+    -- `Just` for the 7 constructors already matched, so the `Just`-of-a-non-
+    -- control-stmt half of this wildcard is unreachable by construction, not an
+    -- audit gap. Left as a wildcard rather than enumerated with dead
+    -- `error "impossible"` arms, which would add real risk (a typo there is
+    -- worse than the status quo)
     -- for no practical safety gain.
     _ -> case mHeaderStmt of
       Just (BsFor (ForStmt var _ to _ _)) ->
@@ -343,13 +336,12 @@ cfgTermToSsa mHeaderStmt edges stmts = case findControlStmt stmts of
       Just (BsDo (DoStmt Nothing _ (Just cond))) ->
         SsaBranch (exprToSsaVal (doCondExpr cond))
                   (findEdgeLabel "T" edges) (findEdgeLabel "F" edges)
-      -- Plan 146 Phase 4 audit: covers `Nothing` (block is not a recognized
-      -- loop header — the common case) plus, type-wise, `Just` of any
-      -- BodyStmt/DoCondition combination other than the three shapes
-      -- `findLoopHeaderStmts`'s `trailingLoopStmt` ever produces (e.g. a
-      -- `DoStmt` with both a leading and trailing condition, which the
-      -- parser never builds) — type-possible but unreachable by
-      -- construction, not an audit gap.
+      -- Covers `Nothing` (block is not a recognized loop header — the common
+      -- case) plus, type-wise, `Just` of any BodyStmt/DoCondition combination
+      -- other than the three shapes `findLoopHeaderStmts`'s `trailingLoopStmt`
+      -- ever produces (e.g. a `DoStmt` with both a leading and trailing
+      -- condition, which the parser never builds) — type-possible but
+      -- unreachable by construction.
       _ -> case edges of
         [e] -> SsaGoto (ceDst e)
         _   -> SsaReturn Nothing
@@ -374,9 +366,8 @@ findControlStmt (Located _ s : rest)
     isCtrl (BsReturn _) = True
     isCtrl BsExit      = True
     isCtrl BsContinue  = True
-    -- Plan 146 Phase 4 audit: the remaining 12 constructors were previously
-    -- caught by a single `isCtrl _ = False` wildcard; enumerated explicitly
-    -- so a future BodyStmt constructor trips -Wincomplete-patterns here.
+    -- Enumerated explicitly (not a wildcard) so a future BodyStmt constructor
+    -- trips -Wincomplete-patterns here.
     isCtrl (BsLocalVar {})   = False
     isCtrl (BsAssign {})     = False
     isCtrl (BsAugAssign {})  = False

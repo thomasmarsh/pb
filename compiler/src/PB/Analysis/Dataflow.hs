@@ -96,8 +96,7 @@ walkExprIdents = go
       -- match core/dataflow.py's _walk_expr_idents (which checks for
       -- tag=="TkIdent" dicts that the Haskell JSON emitter never produces for
       -- subscripts, so it systematically misses them). Extracting subscripts
-      -- here would over-count row/i/ll_row uses vs the baseline. Plan 111d-2
-      -- can revisit whether subscript idents should be real uses.
+      -- here would over-count row/i/ll_row uses vs the baseline.
       maybe Set.empty Set.singleton (lvRoot lv)
     go (ExCall lv args) =
       let root = maybe Set.empty Set.singleton (lvRoot lv)

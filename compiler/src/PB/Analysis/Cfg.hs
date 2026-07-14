@@ -167,9 +167,6 @@ lowerIf (BsIf (IfStmt _ thenStmts elseIfs elseStmts)) currentId loopHead = do
   -- (reversed elseIfs, nextFt) shape exactly): each elseif gets its own
   -- dedicated test block whose "T" edge enters a fresh body-entry block and
   -- whose "F" edge chains to the next test (or to elseFt for the last one).
-  -- Plan 146: the previous version never referenced 'eifCond' at all — every
-  -- elseif body was wired as unconditionally reachable via one plain "F"
-  -- edge once the prior test failed, and that body block doubled as the
   -- chain link to the next elseif, giving it two outgoing edges (its own
   -- exit to merge, plus the bogus chain edge) — which makes
   -- cfgTermToSsa's single-edge fallback default to 'SsaReturn Nothing',
@@ -234,10 +231,7 @@ lowerDo stmt@(BsDo (DoStmt mCond bodyStmts mLoop)) currentId _loopHead = do
         -- header needing condition-reconstruction, the same mechanism the
         -- top-tested case relies on for its own empty condId block. CONTINUE
         -- inside the body re-tests the condition (loopHead = condId), not a
-        -- bare jump back to the top (Plan 146 Phase 2e: the previous version
-        -- of this branch had no condId at all — one unconditional edge
-        -- straight from bodyExitId to mergeId, so the loop body always ran
-        -- exactly once regardless of the actual condition).
+        -- bare jump back to the top.
         condId      <- newBlock
         bodyEntryId <- newBlock
         addEdge currentId bodyEntryId ""
@@ -313,8 +307,6 @@ buildCfg body =
 
 -- | Compute cyclomatic complexity from a CFG: E - N + 2*P.
 -- For a single connected procedure body, P = 1, so complexity = E - N + 2.
--- (Moved from 'PB.Analysis.DeadCode' by Plan 166 Stage 7: it is a graph
--- property of 'Cfg', not a dead-code concern.)
 cyclomaticComplexity :: Cfg -> Int
 cyclomaticComplexity cfg =
   let n = length (cfgBlocks cfg)

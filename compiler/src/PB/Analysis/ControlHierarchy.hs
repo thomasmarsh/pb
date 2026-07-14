@@ -1,6 +1,6 @@
 {-# LANGUAGE StrictData #-}
 -- | Workspace-wide control/object hierarchy index and multi-hop member-chain
--- resolver (Plan 164 Phase B / D2; key qualification Phase E).
+-- resolver.
 --
 -- Pure module — no I/O. Generalizes 'PB.Analysis.TypeResolve.extractDwControlBindings'
 -- (per-file) into a workspace-wide index that can walk a dotted member chain

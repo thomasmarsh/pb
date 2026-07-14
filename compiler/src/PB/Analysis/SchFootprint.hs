@@ -1,25 +1,22 @@
 -- | The functor @F : EffTerm -> Sch_|_@, implemented as another instance of
 -- 'PB.Analysis.CatOp's 'Category'\/'Cartesian'\/'Cocartesian'\/'Effectful'
--- classes rather than a hand-written match over the GADT (see
--- doc\/plan\/148-db-schema-category.md's "(a) Categorical structure" design
--- amendment).
+-- classes rather than a hand-written match over the GADT.
 --
 -- 'callProc' recognizes a DataWindow @SetItem@ call with a literal column
 -- name and resolves it to a real 'SchMorphism' via 'fcControlBindings'
--- (the DW-control -> DW-object binding this module's infra-slice session
--- found missing) and 'fcDwColumns'. Deliberately uses 'callProc', not
--- 'suspend': @SetItem@ does not currently classify as a suspending call
--- ('PB.Analysis.CallClassify.dwMethods' omits it), and that is semantically
--- correct — unlike @Retrieve@\/@Open@\/@Close@, @SetItem@ is a synchronous,
--- in-process buffer mutation with no async round-trip, so 'suspend' (the
--- hook the interpreter and UI runtime use to mean "must await an external
--- response") is the wrong mechanism. @SetItem@ already compiles to
--- @ECall (calleeName expr) parsedArgs@ today, so 'callProc' is the
--- correct, zero-risk hook — no change to 'PB.Analysis.CallClassify' needed.
--- Every other 'Effectful' method remains a constant empty footprint;
--- 'suspend' and the @ExHostVar@ case remain unimplemented (not needed —
--- the 'callProc' path below already reaches a real corpus example, see
--- @doc\/plan\/148-db-schema-category.md@).
+-- (the DW-control -> DW-object binding) and 'fcDwColumns'. Deliberately
+-- uses 'callProc', not 'suspend': @SetItem@ does not currently classify as
+-- a suspending call ('PB.Analysis.CallClassify.dwMethods' omits it), and
+-- that is semantically correct — unlike @Retrieve@\/@Open@\/@Close@,
+-- @SetItem@ is a synchronous, in-process buffer mutation with no async
+-- round-trip, so 'suspend' (the hook the interpreter and UI runtime use to
+-- mean "must await an external response") is the wrong mechanism. @SetItem@
+-- already compiles to @ECall (calleeName expr) parsedArgs@ today, so
+-- 'callProc' is the correct, zero-risk hook — no change to
+-- 'PB.Analysis.CallClassify' needed. Every other 'Effectful' method
+-- remains a constant empty footprint; 'suspend' and the @ExHostVar@ case
+-- remain unimplemented (not needed — the 'callProc' path below already
+-- reaches a real corpus example).
 module PB.Analysis.SchFootprint
   ( FunctorCtx (..)
   , SchFootprint (..)
@@ -207,9 +204,8 @@ foldSchFootprintEff ctx (EffTerm spine table) = fst (go spine Map.empty)
         Just (tbl, col) -> Set.singleton (SchMorphism (StmtObj (fcStmtObj ctx)) (ColumnObj tbl col) LegWrites SrcCatFootprint)
         Nothing         -> Set.empty
 
--- | Scan one procedure body for the runtime DataWindow-aliasing pattern
--- Plan 164 Phase C\/D3 exists to resolve -- e.g.
--- @idw_epidom = tab1.page1.uo_epidom.dw@ -- a @datawindow@\/@datastore@-typed
+-- | Scan one procedure body for the runtime DataWindow-aliasing pattern —
+-- e.g. @idw_epidom = tab1.page1.uo_epidom.dw@ — a @datawindow@\/@datastore@-typed
 -- instance variable assigned from a multi-hop member-chain lvalue, rather
 -- than bound via a literal @dataobject=@ declaration on the variable's own
 -- control. Resolves each hit via
