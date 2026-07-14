@@ -24,6 +24,17 @@
 module PB.Analysis.CatLower
   ( compileSsa
   , CompileCtx (..)
+  , computeMergePoints
+  , computeLoopHeaders
+  , computeLoopNestParents
+  , computeAllLoopExits
+  , computeLoopBodyBlocks
+  , discoverReachable
+  , canReach
+  , determineLoopExitTarget
+  , isLoopExit
+  , termSuccessors
+  , ssaValToExpr
   ) where
 
 import PB.Prelude hiding (id, (.), lookup)

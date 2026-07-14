@@ -49,6 +49,7 @@ library
     PB.Analysis.CatEval
     PB.Analysis.CatOp
     PB.Analysis.CatLower
+    PB.Analysis.CatLowerEff
     PB.Analysis.GraphBuilder
     PB.Analysis.CatInterp
     PB.Analysis.InstrGraph

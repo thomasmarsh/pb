@@ -39,6 +39,7 @@ module PB.Analysis.GraphBuilder
   , compileProcedureToLowCat
   , compileProcedureToCatOp
   , compileProcedureToCatTerm
+  , compileProcedureToEff
   ) where
 
 import PB.Prelude hiding (id, (.), lookup)
@@ -46,8 +47,9 @@ import qualified Prelude as P
 import PB.AST.Expr (Expr (..))
 import PB.AST.BodyStmt (BodyStmt)
 import PB.AST.Located  (Located (..))
-import PB.Analysis.CatOp (CatOp (..), extractTable, inlineTable, CatTerm (..))
+import PB.Analysis.CatOp (CatOp (..), Eff (..), extractTable, inlineTable, CatTerm (..))
 import PB.Analysis.CatLower (compileSsa)
+import PB.Analysis.CatLowerEff (compileSsaToEff)
 import PB.Analysis.InstrGraph (InstrNode (..), InstrGraph (..))
 import PB.Analysis.CallClassify (collectBodyLocals)
 import PB.Analysis.SSA (buildSsa)
@@ -483,6 +485,18 @@ compileProcedureToLowCat env userFns body =
 compileProcedureToCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CatOp () ()
 compileProcedureToCatOp env userFns body =
   inlineTable (compileProcedureToCatTerm env userFns body)
+
+-- | Plan 167 Phase 5b Step 1 — same SSA → Eff pipeline as
+-- 'compileProcedureToCatOp', stopping at the 'Eff' term (the Freyd
+-- premonoidal category) instead of 'CatOp'. Parallel to
+-- 'compileProcedureToCatOp', kept side-by-side for cross-checking;
+-- Phase 5b Step 2 will switch the entry points once the cross-check is
+-- green over the fixture corpus. Same env-seeding preamble, duplicated
+-- per the convention documented at 'compileProcedureToLowCat'.
+compileProcedureToEff :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> Eff () ()
+compileProcedureToEff env userFns body =
+  let env' = env { steLocal = collectBodyLocals body `Map.union` steLocal env }
+  in compileSsaToEff env' userFns (buildSsa env' "proc" body)
 
 -- | Plan 167 Phase 3 — the compiled term WITH its shared-term table.
 -- Same SSA → CatOp pipeline as 'compileProcedureToCatOp' (and the same

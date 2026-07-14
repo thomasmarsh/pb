@@ -2245,4 +2245,54 @@ tests = testGroup "CatOp"
           catTrace <- runInterpTrace cat Map.empty
           effTrace @?= catTrace
       ]
+
+    , testGroup "Phase 5b Step 1: compileSsaToEff cross-check"
+      [ testCase "empty body — both paths produce no-op trace" $ do
+          let body = [] :: [Located BodyStmt]
+              catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
+              effTerm   = compileProcedureToEff emptyEnv Set.empty body
+          catTrace <- runInterpTrace catOpTerm Map.empty
+          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace @?= catTrace
+
+      , testCase "single assign — EAssignWithRhs cross-check" $ do
+          let body = [Located 1 (BsAssign (Lvalue [LvSegment "x" Nothing]) (ExInt "42"))]
+              catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
+              effTerm   = compileProcedureToEff emptyEnv Set.empty body
+          catTrace <- runInterpTrace catOpTerm Map.empty
+          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace @?= catTrace
+
+      , testCase "if/else with calls — branchEff cross-check" $ do
+          let thenCall = Located 2 (BsPbCall (PbCall "obj" "then_event"))
+              elseCall = Located 3 (BsPbCall (PbCall "obj" "else_event"))
+              body = [Located 1 (BsIf (IfStmt (ExBool True) [thenCall] [] (Just [elseCall])))]
+              catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
+              effTerm   = compileProcedureToEff emptyEnv Set.empty body
+          catTrace <- runInterpTrace catOpTerm Map.empty
+          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace @?= catTrace
+
+      , testCase "for-loop with body call — ELoop cross-check" $ do
+          let body = [Located 1 (BsFor (ForStmt (Lvalue [LvSegment "li_count" Nothing])
+                        (ExInt "1") (ExInt "10") Nothing
+                        [Located 2 (BsPbCall (PbCall "obj" "loop_event"))]))]
+              catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
+              effTerm   = compileProcedureToEff emptyEnv Set.empty body
+          catTrace <- runInterpTrace catOpTerm Map.empty
+          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace @?= catTrace
+
+      , testCase "if/else with shared tail — ELet/EVar merge-point cross-check" $ do
+          let thenCall = Located 2 (BsPbCall (PbCall "obj" "then_event"))
+              elseCall = Located 3 (BsPbCall (PbCall "obj" "else_event"))
+              tailCall = Located 4 (BsPbCall (PbCall "obj" "tail_event"))
+              body = [ Located 1 (BsIf (IfStmt (ExBool True) [thenCall] [] (Just [elseCall])))
+                     , tailCall ]
+              catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
+              effTerm   = compileProcedureToEff emptyEnv Set.empty body
+          catTrace <- runInterpTrace catOpTerm Map.empty
+          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace @?= catTrace
+      ]
   ]
