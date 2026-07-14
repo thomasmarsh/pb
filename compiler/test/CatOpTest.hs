@@ -2369,4 +2369,141 @@ tests = testGroup "CatOp"
           effTrace <- runEffTrace effTerm () Map.empty
           effTrace @?= catTrace
       ]
+
+  , testGroup "Phase 6 step 5 (Approach C): compileProcedureViaCatOpNamed cross-check — structural sharing, no bsBlockPcMemo"
+    -- 'compileProcedureViaCatOpNamed' (GraphBuilder.hs) is a parallel entry
+    -- point that flattens via a named graph ('InstrNode''/'InstrGraph'') +
+    -- 'linearize' instead of 'compileLowCatToInstr'/'BuilderState.bsBlockPcMemo'.
+    -- A shared merge block is exactly one 'Map.Map' entry (dedup is key
+    -- uniqueness), not a 2D-keyed memo — see the doc comment at
+    -- 'compileProcedureViaCatOpNamed'. These tests assert the two
+    -- flattening paths produce the SAME canonical shape ('canonicalize'
+    -- erases pc-numbering differences, since the two paths number nodes in
+    -- different orders) on every merge/branch/loop shape the existing test
+    -- suite already covers, plus the allocation-bound stress fixture
+    -- proving the structural path also stays linear, not exponential,
+    -- with no memo at all.
+    [ testCase "if/else with shared tail: same canonical shape" $
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            body = [ Located 1 (BsIf (IfStmt (ExBool True)
+                       [Located 2 (BsCall (call "callA"))] []
+                       (Just [Located 3 (BsCall (call "callB"))])))
+                   , Located 4 (BsCall (call "callC"))
+                   , Located 5 (BsCall (call "callD"))
+                   ]
+            oldShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
+        in newShape @?= oldShape
+
+    , testCase "nested if inside if/else with shared trailing calls: same canonical shape" $
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            innerIf = BsIf (IfStmt (ExBool True)
+                        [Located 3 (BsCall (call "callA"))] []
+                        (Just [Located 4 (BsCall (call "callB"))]))
+            body = [ Located 1 (BsIf (IfStmt (ExBool True)
+                       [ Located 2 innerIf
+                       , Located 5 (BsCall (call "callC"))
+                       , Located 6 (BsCall (call "callD"))
+                       ] [] Nothing))
+                   ]
+            oldShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
+        in newShape @?= oldShape
+
+    , testCase "choose with 3 cases + default: same canonical shape" $
+        let clauses = [ CaseClause (Just [tok "1"]) [Located 2 (BsPbCall (PbCall "obj" "case1_event"))]
+                      , CaseClause (Just [tok "2"]) [Located 3 (BsPbCall (PbCall "obj" "case2_event"))]
+                      , CaseClause (Just [tok "3"]) [Located 4 (BsPbCall (PbCall "obj" "case3_event"))]
+                      , CaseClause Nothing          [Located 5 (BsPbCall (PbCall "obj" "default_event"))]
+                      ]
+            body = [Located 1 (BsChoose (ChooseStmt (ExLvalue (Lvalue [LvSegment "sel" Nothing])) clauses))]
+            oldShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
+        in newShape @?= oldShape
+
+    , testCase "nested for-loops: same canonical shape" $
+        let body = [ Located 1 (BsFor (ForStmt (Lvalue [LvSegment "i" Nothing])
+                      (ExInt "1") (ExInt "3") Nothing
+                      [ Located 2 (BsFor (ForStmt (Lvalue [LvSegment "j" Nothing])
+                          (ExInt "1") (ExInt "3") Nothing
+                          [Located 3 (BsPbCall (PbCall "obj" "inner_event"))]))]))]
+            oldShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
+        in newShape @?= oldShape
+
+    , testCase "loop body with if/else and shared tail (merge inside a loop): same canonical shape" $
+        let iter = Lvalue [LvSegment "iter" Nothing]
+            body = [ Located 1 (BsAssign iter (ExInt "0"))
+                   , Located 2 (BsDo (DoStmt
+                      (Just (DoWhile (ExBinOp (ExLvalue iter) BopLt (ExInt "2"))))
+                      [ Located 3 (BsAssign iter (ExBinOp (ExLvalue iter) BopAdd (ExInt "1")))
+                      , Located 4 (BsIf (IfStmt (ExBinOp (ExLvalue iter) BopEq (ExInt "1"))
+                                           [Located 5 (BsPbCall (PbCall "obj" "then_event"))] []
+                                           (Just [Located 6 (BsPbCall (PbCall "obj" "else_event"))])))
+                      , Located 7 (BsPbCall (PbCall "obj" "tail_event"))
+                      ]
+                      Nothing))
+                   ]
+            oldShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
+        in newShape @?= oldShape
+
+    , testCase "if/elseif/else chain: same canonical shape" $
+        let body = [ Located 1 (BsIf (IfStmt (ExBool True)
+                      [Located 2 (BsPbCall (PbCall "obj" "first_event"))]
+                      [ ElseIf (ExBool False) [Located 3 (BsPbCall (PbCall "obj" "second_event"))]
+                      , ElseIf (ExBool False) [Located 4 (BsPbCall (PbCall "obj" "third_event"))]
+                      ]
+                      (Just [Located 5 (BsPbCall (PbCall "obj" "default_event"))])))]
+            oldShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
+        in newShape @?= oldShape
+
+    , testCase "4 sequential if/else groups: same per-path call counts as compileProcedureViaCatOp" $
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            group (thenN, elseN, tailN, base) =
+              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
+                  [Located (base P.+ 2) (BsCall (call thenN))] []
+                  (Just [Located (base P.+ 3) (BsCall (call elseN))])))
+              , Located (base P.+ 4) (BsCall (call tailN))
+              ]
+            body = concatMap group
+              [ ("callA1", "callB1", "ctail1", 0), ("callA2", "callB2", "ctail2", 4)
+              , ("callA3", "callB3", "ctail3", 8), ("callA4", "callB4", "ctail4", 12)
+              ]
+            expectedCounts = [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]
+            newShape = canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
+        in pathCallCounts newShape @?= expectedCounts
+
+    , testCase "18 sequential if/else groups: allocates < 20MB, not 2^18 blowup, with NO bsBlockPcMemo" $ do
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            group base =
+              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
+                  [Located (base P.+ 2) (BsCall (call ("a" <> T.pack (show base))))] []
+                  (Just [Located (base P.+ 3) (BsCall (call ("b" <> T.pack (show base))))])))
+              , Located (base P.+ 4) (BsCall (call ("tail" <> T.pack (show base))))
+              ]
+            body = concatMap group [ n P.* 4 | n <- [0 .. 17 :: Int] ]
+        mBytes <- timeout 30000000 (measureAllocBytes
+          (CE.evaluate (length (igNodes (compileProcedureViaCatOpNamed emptyEnv Set.empty body)))))
+        case mBytes of
+          Nothing -> assertFailure "did not complete within the 30s hang-safety-net timeout"
+          Just bytes -> assertBool
+            ("allocated " <> show bytes <> " bytes; expected < 20MB (structural sharing via \
+             \Map.Map key uniqueness should stay linear with no memo at all)")
+            (bytes P.< 20 P.* 1000 P.* 1000)
+
+    , testCase "18 sequential if/else groups: same canonical shape as compileProcedureViaCatOp" $
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            group base =
+              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
+                  [Located (base P.+ 2) (BsCall (call ("a" <> T.pack (show base))))] []
+                  (Just [Located (base P.+ 3) (BsCall (call ("b" <> T.pack (show base))))])))
+              , Located (base P.+ 4) (BsCall (call ("tail" <> T.pack (show base))))
+              ]
+            body = concatMap group [ n P.* 4 | n <- [0 .. 17 :: Int] ]
+            oldShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
+        in newShape @?= oldShape
+    ]
   ]

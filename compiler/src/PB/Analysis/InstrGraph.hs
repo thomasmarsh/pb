@@ -1,4 +1,5 @@
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE DeriveFunctor #-}
 -- | Shared instruction-graph types: 'InstrNode'\/'InstrGraph' plus the
 -- canonical-shape helpers ('ShapeNode', 'canonicalize', 'normalizeCallTag')
 -- used by hand-trace\/golden-fixture tests.
@@ -20,6 +21,10 @@ module PB.Analysis.InstrGraph
   , ShapeNode (..)
   , canonicalize
   , normalizeCallTag
+    -- * Plan 167 Phase 6 — named-graph intermediate (Approach C)
+  , InstrNode' (..)
+  , InstrGraph' (..)
+  , linearize
   ) where
 
 import PB.Prelude
@@ -127,3 +132,90 @@ shapeOf look node = case node of
 normalizeCallTag :: ShapeNode -> ShapeNode
 normalizeCallTag (SCProc n) = SCall n
 normalizeCallTag other      = other
+
+-- ---------------------------------------------------------------------------
+-- Plan 167 Phase 6 — the named-graph intermediate (Approach C)
+--
+-- 'InstrGraph' construction (PB.Analysis.GraphBuilder.compileLowCatToInstr)
+-- is a backward-chaining compiler: it takes a continuation pc and returns an
+-- entry pc, threading fresh 'Int' pcs as it goes. A merge block reached by N
+-- predecessors therefore needs its own memo ('BuilderState.bsBlockPcMemo',
+-- keyed 2D on @(blockId, continuation pc)@) to avoid re-lowering the same
+-- content N times. 'InstrNode''\/'InstrGraph'' sidestep this: nodes are
+-- addressed by 'Text' name (mirroring 'PB.Analysis.SSA.SsaBlock's own
+-- successor naming) instead of by an eagerly-allocated pc, so a shared block
+-- is exactly one 'Map.Map' entry — dedup is 'Map.Map' key uniqueness, not a
+-- memo. 'linearize' numbers the named graph into the flat pc-indexed
+-- 'InstrGraph' the rest of the pipeline (and the TS runtime) consume, in one
+-- pure BFS pass with no state threading.
+
+-- | 'InstrNode' parameterized over its successor-reference type: 'Text'
+-- during named-graph construction, 'Int' after 'linearize'. Constructor set
+-- matches the subset 'PB.Analysis.GraphBuilder.compileLowCatToInstr' actually
+-- allocates for real 'PB.Analysis.CatLower.compileSsa' output — 'InstrCall'
+-- \/'InstrGoto' are never produced (see 'normalizeCallTag''s own comment on
+-- 'SCall'\/'SCProc').
+data InstrNode' p
+  = InstrAssign'   { anVar' :: Text, anRhs' :: Expr, anNext' :: p }
+  | InstrBranch'   { brCond' :: Expr, brThenPc' :: p, brElsePc' :: p }
+  | InstrCallProc' { cpCallee' :: Text, cpArgs' :: [Expr], cpNext' :: p }
+  | InstrSuspend'  { suEffect' :: Text, suArgs' :: [Expr], suVar' :: Maybe Text, suContinuation' :: p }
+  | InstrReturn'   { reValue' :: Maybe Expr }
+  | InstrNop'      { npNext' :: p }
+  deriving (Eq, Show, Generic, Functor)
+
+-- | A named graph: nodes keyed by their own name, successor fields
+-- referencing other names directly (no pc allocation at construction time).
+data InstrGraph' p = InstrGraph'
+  { igNodes' :: Map.Map Text (InstrNode' p)
+  , igEntry' :: Text
+  } deriving (Eq, Show, Generic)
+
+-- | Number a named graph into the flat, pc-indexed 'InstrGraph'. Pure BFS
+-- from 'igEntry'' — every name is visited (and numbered) exactly once by
+-- construction, so this needs no memo either. The traversal order need not
+-- match 'compileLowCatToInstr''s own numbering: 'canonicalize' already
+-- normalizes both to a BFS-order shape for comparison.
+linearize :: InstrGraph' Text -> InstrGraph
+linearize g =
+  let order = bfsOrderNamed (igEntry' g) (igNodes' g)
+      pcOf  = Map.fromList (zip order [0 ..])
+      look n = case Map.lookup n pcOf of
+        Just pc -> pc
+        Nothing -> error ("linearize: dangling reference " <> show n)
+      nodesInOrder = [ node | name <- order, Just node <- [Map.lookup name (igNodes' g)] ]
+  in InstrGraph
+       { igNodes            = map (toInstrNode . fmap look) nodesInOrder
+       , igEntry            = look (igEntry' g)
+       , igSuspensionPoints = []
+       , igSourceMap        = []
+       }
+
+-- | BFS traversal from entry over a named graph, returning names in
+-- visitation order (each name once). Mirrors 'bfsOrder' above.
+bfsOrderNamed :: Text -> Map.Map Text (InstrNode' Text) -> [Text]
+bfsOrderNamed entry nodeMap = go [entry] Set.empty []
+  where
+    succs node = case node of
+      InstrAssign'   { anNext' }              -> [anNext']
+      InstrBranch'   { brThenPc', brElsePc' } -> [brThenPc', brElsePc']
+      InstrCallProc' { cpNext' }              -> [cpNext']
+      InstrSuspend'  { suContinuation' }      -> [suContinuation']
+      InstrReturn'   {}                       -> []
+      InstrNop'      { npNext' }              -> [npNext']
+    go []       _       acc = reverse acc
+    go (n:rest) visited acc
+      | Set.member n visited = go rest visited acc
+      | otherwise = case Map.lookup n nodeMap of
+          Nothing   -> go rest (Set.insert n visited) acc
+          Just node -> go (rest ++ succs node) (Set.insert n visited) (n : acc)
+
+-- | 'InstrNode'' with every successor already renumbered to 'Int' -> the
+-- corresponding plain 'InstrNode'.
+toInstrNode :: InstrNode' Int -> InstrNode
+toInstrNode (InstrAssign' v e n)     = InstrAssign   { anVar = v, anRhs = e, anNext = n }
+toInstrNode (InstrBranch' c t f)     = InstrBranch   { brCond = c, brThenPc = t, brElsePc = f }
+toInstrNode (InstrCallProc' n as nx) = InstrCallProc { cpCallee = n, cpArgs = as, cpNext = nx }
+toInstrNode (InstrSuspend' e as v c) = InstrSuspend  { suEffect = e, suArgs = as, suVar = v, suContinuation = c }
+toInstrNode (InstrReturn' v)         = InstrReturn   { reValue = v }
+toInstrNode (InstrNop' n)            = InstrNop      { npNext = n }

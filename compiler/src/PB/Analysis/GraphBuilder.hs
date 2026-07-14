@@ -40,6 +40,8 @@ module PB.Analysis.GraphBuilder
   , compileProcedureToCatOp
   , compileProcedureToCatTerm
   , compileProcedureToEff
+    -- * Plan 167 Phase 6 — named-graph InstrGraph' construction (Approach C)
+  , compileProcedureViaCatOpNamed
   ) where
 
 import PB.Prelude hiding (id, (.), lookup)
@@ -50,7 +52,7 @@ import PB.AST.Located  (Located (..))
 import PB.Analysis.CatOp (CatOp (..), Eff (..), extractTable, inlineTable, CatTerm (..))
 import PB.Analysis.CatLower (compileSsa)
 import PB.Analysis.CatLowerEff (compileSsaToEff)
-import PB.Analysis.InstrGraph (InstrNode (..), InstrGraph (..))
+import PB.Analysis.InstrGraph (InstrNode (..), InstrGraph (..), InstrNode' (..), InstrGraph' (..), linearize)
 import PB.Analysis.CallClassify (collectBodyLocals)
 import PB.Analysis.SSA (buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
@@ -58,6 +60,7 @@ import Control.Monad.State.Strict (State, evalState, gets, modify, runState)
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Data.Text as T
 
 -- ============================================================================
 -- 1. LowCat: Monomorphic Categorical Intermediate Representation
@@ -513,3 +516,197 @@ compileProcedureToCatTerm :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt]
 compileProcedureToCatTerm env userFns body =
   let env' = env { steLocal = collectBodyLocals body `Map.union` steLocal env }
   in extractTable (compileSsa env' userFns (buildSsa env' "proc" body))
+
+-- ============================================================================
+-- 3. Named-graph InstrGraph' construction (Plan 167 Phase 6 — Approach C)
+-- ============================================================================
+--
+-- 'compileLowCatToInstrNamed' mirrors 'compileLowCatToInstr' equation for
+-- equation (same branch-pattern detection, same join-point-free special
+-- case, same loop-header patch shape) — the only difference is that a
+-- node's address is a 'Text' name minted (or reused) here instead of an
+-- 'Int' pc allocated by 'BuilderState'. A merge block's dedup is 'Map.Map'
+-- key uniqueness in 'nbsBlockMemo' (keyed on blockId alone), not
+-- 'bsBlockPcMemo''s 2D @(blockId, continuation pc)@ key — the continuation
+-- component of that key is provably redundant for a genuine merge: every
+-- predecessor of the same blockId is threaded the same downstream
+-- continuation by the same CPS-threading argument 'bsBlockPcMemo''s own
+-- docstring already relies on (GraphBuilder.hs:224-233), so caching on
+-- blockId alone is sound here for the same reason it's sound there.
+--
+-- Not yet wired into production ('compileProcedureViaCatOp' is untouched);
+-- kept side-by-side for cross-checking, per this plan's convention.
+
+-- | State for the named-graph builder.
+data NamedBuilderState = NamedBuilderState
+  { nbsNodes     :: Map.Map Text (InstrNode' Text)
+  , nbsCounter   :: Int
+  , nbsExitName  :: Text
+    -- ^ The one true exit name (mirrors 'BuilderState.bsExitPc'), fixed for
+    -- the whole build regardless of loop nesting.
+  , nbsBlockMemo :: Map.Map Text Text
+    -- ^ blockId -> the entry name already compiled for it.
+  }
+
+newtype NamedBuilder a = NamedBuilder { runNamedBuilder :: State NamedBuilderState a }
+
+instance Functor NamedBuilder where
+  fmap f (NamedBuilder m) = NamedBuilder (fmap f m)
+
+instance Applicative NamedBuilder where
+  pure a = NamedBuilder (pure a)
+  NamedBuilder f <*> NamedBuilder a = NamedBuilder (f <*> a)
+
+instance Monad NamedBuilder where
+  NamedBuilder m >>= f = NamedBuilder (m >>= (runNamedBuilder P.. f))
+
+initNamedState :: NamedBuilderState
+initNamedState = NamedBuilderState
+  { nbsNodes = Map.empty, nbsCounter = 0, nbsExitName = "", nbsBlockMemo = Map.empty }
+
+-- | Mint a fresh, globally-unique synthetic node name.
+freshName :: NamedBuilder Text
+freshName = NamedBuilder $ do
+  n <- gets nbsCounter
+  modify $ \s -> s { nbsCounter = n P.+ 1 }
+  return ("n" <> T.pack (show n))
+
+-- | Define a node under a given name.
+defineNode :: Text -> InstrNode' Text -> NamedBuilder ()
+defineNode name node = NamedBuilder $ modify $ \s -> s { nbsNodes = Map.insert name node (nbsNodes s) }
+
+-- | Compile a 'LowCat' into a named graph, given the name execution
+-- continues at afterward. Returns the name of the compiled subgraph's entry.
+compileLowCatToInstrNamed :: LowCat -> Text -> NamedBuilder Text
+compileLowCatToInstrNamed LId nextName = return nextName
+compileLowCatToInstrNamed (LAssignWithRhs var expr) nextName = do
+  n <- freshName
+  defineNode n (InstrAssign' { anVar' = var, anRhs' = expr, anNext' = nextName })
+  return n
+-- Branch pattern: intercept LFanIn + condition before LCompose tears them apart.
+compileLowCatToInstrNamed (LCompose g f) nextName = case inspectBranchLowCat g of
+  Just (tOp, fOp) -> do
+    -- No join node: both arms fall through directly to nextName, matching
+    -- 'compileLowCatToInstr''s own no-join special case.
+    let branchCond = extractCondLowCat f
+    elseEntry <- compileLowCatToInstrNamed fOp nextName
+    thenEntry <- compileLowCatToInstrNamed tOp nextName
+    n <- freshName
+    defineNode n (InstrBranch' { brCond' = branchCond, brThenPc' = thenEntry, brElsePc' = elseEntry })
+    compileLowCatToInstrNamed f n
+  Nothing -> do
+    gEntry <- compileLowCatToInstrNamed g nextName
+    compileLowCatToInstrNamed f gEntry
+compileLowCatToInstrNamed (LFanIn tOp fOp) nextName = do
+  elseEntry <- compileLowCatToInstrNamed fOp nextName
+  thenEntry <- compileLowCatToInstrNamed tOp nextName
+  n <- freshName
+  defineNode n (InstrBranch' { brCond' = ExNull, brThenPc' = thenEntry, brElsePc' = elseEntry })
+  return n
+compileLowCatToInstrNamed (LLoop body) nextName = do
+  loopHeaderName <- freshName
+  patchLoopHeaderNamed body loopHeaderName nextName
+  return loopHeaderName
+compileLowCatToInstrNamed (LCall name args) nextName = do
+  n <- freshName
+  defineNode n (InstrCallProc' { cpCallee' = name, cpArgs' = args, cpNext' = nextName })
+  return n
+compileLowCatToInstrNamed (LSuspend eff args) nextName = do
+  n <- freshName
+  defineNode n (InstrSuspend' { suEffect' = eff, suArgs' = args, suVar' = Nothing, suContinuation' = nextName })
+  return n
+-- | True procedure return: resolve straight to the one true exit, ignoring
+-- whatever local continuation this call site threaded in.
+compileLowCatToInstrNamed LReturn _nextName = NamedBuilder (gets nbsExitName)
+-- | A merge block's tagged content. On the first encounter, compile it for
+-- real and remember its entry name; on every later encounter, reuse that
+-- name — this IS the structural dedup ('nbsBlockMemo' collapses
+-- 'bsBlockPcMemo''s 2D key to 1D; see this section's headnote).
+compileLowCatToInstrNamed (LTagged bid inner) nextName = do
+  memo <- NamedBuilder (gets nbsBlockMemo)
+  case Map.lookup bid memo of
+    Just entry -> return entry
+    Nothing -> do
+      entry <- compileLowCatToInstrNamed inner nextName
+      NamedBuilder $ modify $ \s -> s { nbsBlockMemo = Map.insert bid entry (nbsBlockMemo s) }
+      return entry
+-- Structural / erased constructors (LInl/LInr/LEval/LFork/LSplitValue/LErasable
+-- outside loop context — mirrors 'compileLowCatToInstr''s own catch-all).
+compileLowCatToInstrNamed _ nextName = return nextName
+
+-- | Mirrors 'patchLoopHeaderLowCat': compiles the loop header/body content
+-- and defines 'loopHeaderName' with the resulting node. No "reserve then
+-- patch" two-step is needed here — unlike an 'Int' pc, a 'Text' name doesn't
+-- need a concrete value before children can reference it; 'defineNode' after
+-- computing the children is sufficient.
+patchLoopHeaderNamed :: LowCat -> Text -> Text -> NamedBuilder ()
+patchLoopHeaderNamed (LCompose g f) loopHeaderName nextName
+  | Just (tOp, fOp) <- inspectBranchLowCat g = do
+      let branchCond = extractCondLowCat f
+      elseEntry <- compileLoopBodyLowCatNamed fOp loopHeaderName nextName
+      thenEntry <- compileLoopBodyLowCatNamed tOp loopHeaderName nextName
+      defineNode loopHeaderName (InstrBranch' { brCond' = branchCond, brThenPc' = thenEntry, brElsePc' = elseEntry })
+patchLoopHeaderNamed body loopHeaderName nextName = do
+  bodyEntry <- compileLoopBodyLowCatNamed body loopHeaderName nextName
+  defineNode loopHeaderName (InstrNop' { npNext' = bodyEntry })
+
+-- | Mirrors 'compileLoopBodyLowCat'. 'LInl'\/'LInr' resolve directly to
+-- 'loopHeaderName'\/'nextName' — no node allocated, matching the old
+-- compiler's treatment of the implicit loop continue\/break.
+compileLoopBodyLowCatNamed :: LowCat -> Text -> Text -> NamedBuilder Text
+compileLoopBodyLowCatNamed LInl loopHeaderName _nextName = return loopHeaderName
+compileLoopBodyLowCatNamed LInr _loopHeaderName nextName = return nextName
+compileLoopBodyLowCatNamed (LCompose g f) loopHeaderName nextName
+  | Just (tOp, fOp) <- inspectBranchLowCat g = do
+      let branchCond = extractCondLowCat f
+      elseEntry <- compileLoopBodyLowCatNamed fOp loopHeaderName nextName
+      thenEntry <- compileLoopBodyLowCatNamed tOp loopHeaderName nextName
+      n <- freshName
+      defineNode n (InstrBranch' { brCond' = branchCond, brThenPc' = thenEntry, brElsePc' = elseEntry })
+      compileLoopBodyLowCatNamed f loopHeaderName n
+compileLoopBodyLowCatNamed (LCompose g f) loopHeaderName nextName = do
+  gEntry <- compileLoopBodyLowCatNamed g loopHeaderName nextName
+  compileLoopBodyLowCatNamed f loopHeaderName gEntry
+compileLoopBodyLowCatNamed (LFanIn tOp fOp) loopHeaderName nextName = do
+  thenEntry <- compileLoopBodyLowCatNamed tOp loopHeaderName nextName
+  elseEntry <- compileLoopBodyLowCatNamed fOp loopHeaderName nextName
+  n <- freshName
+  defineNode n (InstrBranch' { brCond' = ExNull, brThenPc' = thenEntry, brElsePc' = elseEntry })
+  return n
+-- | A merge block inside a loop body — must recurse via
+-- 'compileLoopBodyLowCatNamed' (not delegate to the loop-unaware
+-- 'compileLowCatToInstrNamed'), same reason as 'compileLoopBodyLowCat''s own
+-- 'LTagged' clause: a nested 'LInl'\/'LInr' inside must still resolve against
+-- 'loopHeaderName'\/'nextName', not lose the back-edge. Shares 'nbsBlockMemo'
+-- with the top-level compiler (global to the whole build, like
+-- 'bsBlockPcMemo').
+compileLoopBodyLowCatNamed (LTagged bid inner) loopHeaderName nextName = do
+  memo <- NamedBuilder (gets nbsBlockMemo)
+  case Map.lookup bid memo of
+    Just entry -> return entry
+    Nothing -> do
+      entry <- compileLoopBodyLowCatNamed inner loopHeaderName nextName
+      NamedBuilder $ modify $ \s -> s { nbsBlockMemo = Map.insert bid entry (nbsBlockMemo s) }
+      return entry
+compileLoopBodyLowCatNamed linearOp _loopHeaderName nextName =
+  compileLowCatToInstrNamed linearOp nextName
+
+-- | Build a named graph from a 'LowCat' term. Mirrors 'buildInstrGraph'.
+buildLowCatGraphNamed :: LowCat -> InstrGraph' Text
+buildLowCatGraphNamed lowCat =
+  let (entryName, finalState) = runState (runNamedBuilder $ do
+        exitName <- freshName
+        defineNode exitName (InstrReturn' { reValue' = Nothing })
+        NamedBuilder $ modify $ \s -> s { nbsExitName = exitName }
+        compileLowCatToInstrNamed lowCat exitName
+        ) initNamedState
+  in InstrGraph' { igNodes' = nbsNodes finalState, igEntry' = entryName }
+
+-- | Plan 167 Phase 6 (Approach C) — same SSA -> CatOp -> LowCat pipeline as
+-- 'compileProcedureViaCatOp', but flattened via the named-graph builder +
+-- 'linearize' instead of 'compileCatToInstr'\/'BuilderState.bsBlockPcMemo'.
+-- Parallel entry point, kept side-by-side for cross-checking (this plan's
+-- convention throughout Phase 5\/6). Not yet wired into production.
+compileProcedureViaCatOpNamed :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> InstrGraph
+compileProcedureViaCatOpNamed env userFns body =
+  linearize (buildLowCatGraphNamed (compileProcedureToLowCat env userFns body))
