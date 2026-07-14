@@ -2426,6 +2426,78 @@ tests = testGroup "CatOp"
           effTrace @?= catTrace
       ]
 
+    , testGroup "Phase 7 Step 3: OQ1 fixture gate — foldFreyd via SchFootprint matches foldSchFootprint"
+      -- The Interp half of this gate was already established by Step 2
+      -- (the "compileSsaToEff cross-check" groups above run every fixture
+      -- through both 'runInterpTrace'/'compileProcedureToCatOp' and
+      -- 'runEffTermTrace'/'compileProcedureToEff'). What's untested is the
+      -- SECOND 'Effectful'/'Cartesian'/'Cocartesian' instance in this
+      -- module's own suite: 'PB.Analysis.SchFootprint'. Unlike 'Interp',
+      -- production does NOT fold an 'EffTerm' through the 'SchFootprint'
+      -- instance route — 'foldSchFootprint' is a direct, force-time-memoized
+      -- fold over 'CatOp' specifically because the naive instance route
+      -- re-forces a shared 'CatTagged' subtree once per embedding (see
+      -- SchFootprint.hs's module headnote). 'foldFreyd' only memoizes the
+      -- FOLD (its own 'ELetRef' cache is fold-time, same shape as the
+      -- pre-Phase-1 bug) — so this group checks OUTPUT correctness of
+      -- 'foldFreyd @SchFootprint' against the production oracle on shapes
+      -- that actually exercise sharing (merge blocks) and branching, not
+      -- performance (a future step's concern if this ever becomes a
+      -- production path).
+      [ let ctxSetItem :: FunctorCtx
+            ctxSetItem = FunctorCtx
+              { fcStmtObj         = SqlStmtId "f.srf" "obj" "proc" 1
+              , fcTypeEnv         = emptyEnv
+              , fcDwColumns       = Map.fromList
+                  [ ("d1", [ (TableRef Nothing "t1", "c1"), (TableRef Nothing "t1", "c2") ]) ]
+              , fcControlBindings = Map.fromList [ (("obj", "dw1"), "d1") ]
+              }
+
+            setItemCall :: Text -> Expr
+            setItemCall col = ExCall
+              { callee   = Lvalue [LvSegment "dw1" Nothing, LvSegment "SetItem" Nothing]
+              , callArgs = [[tok "1"], [tok ("\"" <> col <> "\"")], [tok "gs_val"]]
+              }
+
+            crossCheckSchFootprint :: [Located BodyStmt] -> IO ()
+            crossCheckSchFootprint body = do
+              let catFp = foldSchFootprint ctxSetItem (compileProcedureToCatOp emptyEnv Set.empty body)
+                  effFp = runSchFootprint
+                            (foldFreyd (compileProcedureToEff emptyEnv Set.empty body) :: SchFootprint () ())
+                            ctxSetItem
+              effFp @?= catFp
+
+        in testGroup "fixtures"
+        [ testCase "empty body — both paths produce empty footprint" $
+            crossCheckSchFootprint []
+
+        , testCase "single SetItem call — literal column resolves identically on both paths" $
+            crossCheckSchFootprint [Located 1 (BsCall (setItemCall "c1"))]
+
+        , testCase "if/else with SetItem in both arms — branchK footprint union matches" $
+            crossCheckSchFootprint
+              [ Located 1 (BsIf (IfStmt (ExBool True)
+                  [Located 2 (BsCall (setItemCall "c1"))] []
+                  (Just [Located 3 (BsCall (setItemCall "c2"))])))
+              ]
+
+        , testCase "if/else with shared tail SetItem call — ELetRef merge-point footprint matches \
+                   \foldSchFootprint's CatTagged cache" $
+            crossCheckSchFootprint
+              [ Located 1 (BsIf (IfStmt (ExBool True)
+                  [Located 2 (BsPbCall (PbCall "obj" "then_event"))] []
+                  (Just [Located 3 (BsPbCall (PbCall "obj" "else_event"))])))
+              , Located 4 (BsCall (setItemCall "c1"))
+              ]
+
+        , testCase "for-loop with SetItem in body — ELoop/CatLoop footprint matches" $
+            crossCheckSchFootprint
+              [Located 1 (BsFor (ForStmt (Lvalue [LvSegment "li_count" Nothing])
+                (ExInt "1") (ExInt "10") Nothing
+                [Located 2 (BsCall (setItemCall "c2"))]))]
+        ]
+      ]
+
   , testGroup "Phase 6 (Approach C): named-graph structural sharing — merge/branch/loop canonical shapes"
     -- 'compileProcedureViaCatOp' flattens via a named graph
     -- ('InstrNode''/'InstrGraph'') + 'linearize' — dedup on merge-block
