@@ -15,7 +15,7 @@ import PB.AST.Type        (PbType)
 import PB.Lexing.Token    (Token (..))
 import PB.Analysis.Cfg   (CfgBlock, CfgEdge, Cfg)
 import PB.Analysis.InstrGraph   (InstrNode, InstrGraph)
-import PB.Analysis.GraphBuilder (LowCat (..), WiringPayload (..))
+import PB.Analysis.GraphBuilder (LowCat (..), WiringNode (..), WiringGraph (..))
 import PB.Analysis.Taint      (InterprocEdge (..), ProcedureSummary (..), ProcSummaryReturnFlow (..))
 
 -- | Strip a camelCase field-name prefix, e.g. "fnsMods" → "mods",
@@ -112,11 +112,12 @@ instance ToJSON LowCat where
   toJSON (LTagged bid _inner) = J.object ["tag" .= ("LTagged" :: Text), "blockId" .= bid]
   toJSON other                = genericToJSON customOptions other
 
-instance ToJSON WiringPayload where
-  toJSON w = J.object
-    [ "term"         .= wpTerm w
-    , "sharedBlocks" .= wpShared w
-    ]
+-- WiringGraph/WiringNode (Plan 167 Phase 7 Step 7, wiring diagrams) — plain
+-- genericToJSON: the graph is already flat and name-addressed (a node is
+-- defined once per name, referenced by name elsewhere), so no manual
+-- term/sharedBlocks split is needed the way 'LowCat'\'s 'WiringPayload' did.
+instance ToJSON p => ToJSON (WiringNode p)  where toJSON = genericToJSON customOptions
+instance ToJSON p => ToJSON (WiringGraph p) where toJSON = genericToJSON customOptions
 
 -- InterprocEdge — manual instance to match Python snake_case keys
 instance ToJSON InterprocEdge where

@@ -30,7 +30,7 @@ import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv,
 import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.Cfg    (buildCfg)
 import PB.Analysis.GraphBuilder
-  ( compileProcedureViaEffTerm, compileProcedureToLowCat, collectWiring, WiringPayload (..) )
+  ( compileProcedureViaEffTerm, compileProcedureToWiring )
 import PB.Analysis.TypeResolve (parseParams)
 import PB.Pipeline.Serialise   ()
 
@@ -161,9 +161,8 @@ wrapSrFile withInstr path sf spans ws =
             let cfg = buildCfg body
                 base = KM.insert "cfg" (toJSON cfg) o
             in Object $ if withInstr
-                then let (wiringTerm, wiringShared) = collectWiring (compileProcedureToLowCat env userFns body)
-                     in KM.insert "instrGraph" (toJSON (compileProcedureViaEffTerm env userFns body))
-                      $ KM.insert "wiring" (toJSON (WiringPayload wiringTerm wiringShared)) base
+                then KM.insert "instrGraph" (toJSON (compileProcedureViaEffTerm env userFns body))
+                   $ KM.insert "wiring" (toJSON (compileProcedureToWiring env userFns body)) base
                 else base
         injectCompiled _ _ v = v
 

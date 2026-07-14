@@ -9,7 +9,7 @@ import PB.AST.SourceFile (SrFile (..))
 import PB.Grammar.File        (SrSpans (..))
 import PB.Pipeline.Runner     (wrapSrFile)
 import PB.Analysis.TypeEnv    (buildWorkspaceEnv)
-import PB.Analysis.GraphBuilder (LowCat (..), WiringPayload (..))
+import PB.Analysis.GraphBuilder (LowCat (..), WiringNode (..), WiringGraph (..))
 import PB.Pipeline.Serialise  ()
 
 import Data.Aeson          (Value (..), toJSON)
@@ -125,7 +125,7 @@ tests = testGroup "Serialise"
           field "arguments" (field "contents" v) @?= toJSON [arg]
       ]
 
-  , testGroup "LowCat / WiringPayload (Plan 149 Phase 1)"
+  , testGroup "LowCat (Plan 149 Phase 1)"
       [ testCase "LTagged serialises as a bare reference: tag + blockId, no contents" $ do
           let v = toJSON (LTagged "b3" (LAssignWithRhs "x" (ExInt "1")))
           field "tag"     v @?= String "LTagged"
@@ -137,17 +137,25 @@ tests = testGroup "Serialise"
           let v = toJSON LId
           field "tag" v @?= String "LId"
           assertBool "LId (nullary) has no contents field" (not (hasField "contents" v))
+      ]
 
-      , testCase "WiringPayload has term + sharedBlocks, sharedBlocks keyed by blockId" $ do
-          let inner = LAssignWithRhs "x" (ExInt "1")
-              w = WiringPayload
-                    { wpTerm = LTagged "b1" inner
-                    , wpShared = Map.fromList [("b1", inner)]
+  , testGroup "WiringGraph / WiringNode (Plan 167 Phase 7 Step 7)"
+      [ testCase "WiringGraph has nodes + entry, nodes keyed by name" $ do
+          let g = WiringGraph
+                    { wgNodes = Map.fromList [("w0", WireAssign "x" (ExInt "1") "w1")]
+                    , wgEntry = "w0" :: Text
                     }
-              v = toJSON w
-          field "tag"     (field "term" v) @?= String "LTagged"
-          field "blockId" (field "term" v) @?= String "b1"
-          field "tag" (field "b1" (field "sharedBlocks" v)) @?= String "LAssignWithRhs"
+              v = toJSON g
+          field "entry" v @?= String "w0"
+          field "tag" (field "w0" (field "nodes" v)) @?= String "WireAssign"
+
+      , testCase "WireCond and WireBranch serialise as separate, distinct node shapes" $ do
+          let condV   = toJSON (WireCond (ExBool True) ("next" :: Text))
+              branchV = toJSON (WireBranch ("then" :: Text) "else")
+          field "tag" condV @?= String "WireCond"
+          field "tag" branchV @?= String "WireBranch"
+          assertBool "WireBranch carries no condition field of its own"
+            (not (hasField "expr" branchV))
       ]
 
   ]

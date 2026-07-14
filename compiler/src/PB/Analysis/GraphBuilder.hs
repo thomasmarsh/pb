@@ -26,9 +26,6 @@ module PB.Analysis.GraphBuilder
   , toLowCat
   , toLowCatOp
   , extractCondLowCat
-    -- * Wiring diagrams (Plan 149 Phase 1)
-  , WiringPayload (..)
-  , collectWiring
     -- * Named-graph InstrGraph' construction (Plan 167 Phase 6, Approach C)
   , buildInstrGraphNamed
   , InstrNode (..)
@@ -37,6 +34,12 @@ module PB.Analysis.GraphBuilder
   , NGB (..)
   , buildEffGraphNamed
   , compileProcedureViaEffTerm
+    -- * WiringBuilder: Effectful instance over EffTerm for wiring diagrams (Plan 167 Phase 7 Step 7)
+  , WiringNode (..)
+  , WiringGraph (..)
+  , WB (..)
+  , buildEffGraphWiring
+  , compileProcedureToWiring
     -- * Pipeline entry point
   , compileProcedureViaCatOp
   , compileProcedureToLowCat
@@ -52,7 +55,7 @@ import PB.AST.BodyStmt (BodyStmt)
 import PB.AST.Located  (Located (..))
 import PB.Analysis.CatOp
   ( CatOp (..), EffTerm (..), extractTable, inlineTable, CatTerm (..)
-  , Category (..), Cartesian (..), Cocartesian (..), Effectful (..), foldFreyd
+  , Category (..), Cartesian (..), Cocartesian (..), Effectful (..), foldFreyd, branch
   )
 import PB.Analysis.CatLower (compileSsa)
 import PB.Analysis.CatLowerEff (compileSsaToEff)
@@ -169,48 +172,6 @@ toLowCat (CatTerm spine table) = evalState (go spine) Map.empty
 -- takes a 'CatTerm' so it can consult the table at 'CatLetRef' use sites.
 toLowCatOp :: CatOp a b -> LowCat
 toLowCatOp op = toLowCat (CatTerm op Map.empty)
-
--- ============================================================================
--- 1b. Wiring diagrams (Plan 149 Phase 1): shared-block extraction
--- ============================================================================
-
--- | The wire payload for a procedure's wiring diagram: the term as compiled
--- (still containing 'LTagged' markers), plus every tagged merge block's real
--- content, keyed by its blockId, collected exactly once each.
---
--- 'ToJSON' (in "PB.Pipeline.Serialise") serialises 'LTagged' as a bare
--- reference (blockId only, no inlined payload) — the real content only ever
--- appears once, as a 'wpShared' entry. Without this split, a naive JSON
--- encoding of 'wpTerm' alone would inline a shared merge block's full
--- subtree once per predecessor, reproducing Plan 150's exact
--- multiplicative node-blowup bug at the serialization layer (found
--- empirically during Plan 149 Phase 0: a naive fold over 'LowCat' hung for
--- 15+ minutes on a real corpus procedure before this dedup was added).
-data WiringPayload = WiringPayload
-  { wpTerm   :: LowCat
-  , wpShared :: Map.Map Text LowCat
-  } deriving (Eq, Show, Generic)
-
--- | Split a compiled 'LowCat' term into itself (unchanged — 'LTagged'
--- markers stay in place) plus a side table of every distinct tagged merge
--- block's content, collected once per blockId. Mirrors 'nbsBlockMemo'\'s
--- contract: the first encounter of a given blockId records its content and
--- recurses into it (to find any further tags nested inside); a repeat
--- encounter is skipped outright, since its content — and everything nested
--- inside it — was already collected the first time.
-collectWiring :: LowCat -> (LowCat, Map.Map Text LowCat)
-collectWiring t = (t, walkShared Map.empty t)
-
-walkShared :: Map.Map Text LowCat -> LowCat -> Map.Map Text LowCat
-walkShared acc node = case node of
-  LTagged bid inner
-    | Map.member bid acc -> acc
-    | otherwise          -> walkShared (Map.insert bid inner acc) inner
-  LCompose a b -> walkShared (walkShared acc a) b
-  LFanIn a b   -> walkShared (walkShared acc a) b
-  LFork a b    -> walkShared (walkShared acc a) b
-  LLoop a      -> walkShared acc a
-  _            -> acc
 
 -- | Detect a branch: is this LowCat a LFanIn?
 inspectBranchLowCat :: LowCat -> Maybe (LowCat, LowCat)
@@ -640,3 +601,199 @@ buildEffGraphNamed effTerm =
 compileProcedureViaEffTerm :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> InstrGraph
 compileProcedureViaEffTerm env userFns body =
   linearize (buildEffGraphNamed (compileProcedureToEff env userFns body))
+
+-- ============================================================================
+-- 4. WiringBuilder: an 'Effectful' instance over 'EffTerm' for wiring
+--    diagrams (Plan 167 Phase 7 Step 7), replacing 'collectWiring'/
+--    'WiringPayload'
+-- ============================================================================
+--
+-- Answers a different question than 'NGB': not "what flat instruction
+-- sequence executes this" but "what does this program's shape look like as
+-- a shared DAG". 'InstrGraph'' (a 'Text'-keyed 'Map' + entry name) already
+-- IS a flat, shared, name-addressed graph — a node is defined once per name
+-- and referenced by name elsewhere — so no bespoke second pass over a
+-- tree-shaped intermediate ('collectWiring'\/'walkShared') is needed the way
+-- it was for 'LowCat': dedup falls out of 'Map.Map' key uniqueness in
+-- 'wbsBlockMemo', the same argument that already makes 'NGB'\'s 'memoTag'
+-- sound.
+--
+-- 'WiringNode' is a sibling type to 'InstrNode'', not a reuse of it: unlike
+-- 'NGB', a wiring diagram wants the branch condition as its own visible node
+-- ('WireCond'), with a separate join\/fork node ('WireBranch', no condition
+-- of its own — it already appeared upstream). Reusing 'InstrNode'' would
+-- force 'linearize'\/'toInstrNode' (the execution-ISA path, shared with
+-- 'NGB') to grow a dead-but-mandatory case for a node no execution path ever
+-- produces — the same duplication cost 'LowCat' already pays against
+-- 'InstrNode'' is the smaller price here too.
+data WiringNode p
+  = WireAssign  { waVar :: Text, waRhs :: Expr, waNext :: p }
+  | WireCond    { wcExpr :: Expr, wcNext :: p }
+    -- ^ The branch condition, evaluated for display — a single-successor
+    -- node with no fork of its own.
+  | WireBranch  { wtThen :: p, wtElse :: p }
+    -- ^ The then\/else fork\/join. No condition field: 'branchK'\'s generic
+    -- derivation (below) always runs 'eval' (a 'WireCond') immediately
+    -- upstream of this, so the condition is already visible one node back.
+  | WireCall    { wclCallee :: Text, wclArgs :: [Expr], wclNext :: p }
+  | WireSuspend { wsEffect :: Text, wsArgs :: [Expr], wsNext :: p }
+  | WireReturn
+  | WireNop     { wnNext :: p }
+  deriving (Eq, Show, Generic)
+
+-- | A procedure's wiring diagram: every distinct node, keyed by name, plus
+-- the entry name — the same "nodes keyed by name, edges by reference" shape
+-- 'InstrGraph'' already has (Plan 167 structural-sharing plan, Open
+-- Question 3). Serializes directly (no 'WiringPayload'-style term\/shared
+-- split needed — see this section's own header note).
+data WiringGraph p = WiringGraph
+  { wgNodes :: Map.Map Text (WiringNode p)
+  , wgEntry :: p
+  } deriving (Eq, Show, Generic)
+
+-- | State for the wiring-diagram builder. Sibling to 'NamedBuilderState',
+-- keyed to 'WiringNode' instead of 'InstrNode''.
+data WiringBuilderState = WiringBuilderState
+  { wbsNodes     :: Map.Map Text (WiringNode Text)
+  , wbsCounter   :: Int
+  , wbsExitName  :: Text
+  , wbsBlockMemo :: Map.Map Text Text
+  }
+
+newtype WiringB a = WiringB { runWiringB :: State WiringBuilderState a }
+
+instance Functor WiringB where
+  fmap f (WiringB m) = WiringB (fmap f m)
+
+instance Applicative WiringB where
+  pure a = WiringB (pure a)
+  WiringB f <*> WiringB a = WiringB (f <*> a)
+
+instance Monad WiringB where
+  WiringB m >>= f = WiringB (m >>= (runWiringB P.. f))
+
+initWiringState :: WiringBuilderState
+initWiringState = WiringBuilderState
+  { wbsNodes = Map.empty, wbsCounter = 0, wbsExitName = "", wbsBlockMemo = Map.empty }
+
+freshWireName :: WiringB Text
+freshWireName = WiringB $ do
+  n <- gets wbsCounter
+  modify $ \s -> s { wbsCounter = n P.+ 1 }
+  return ("w" <> T.pack (show n))
+
+defineWireNode :: Text -> WiringNode Text -> WiringB ()
+defineWireNode name node = WiringB $ modify $ \s -> s { wbsNodes = Map.insert name node (wbsNodes s) }
+
+-- | @runWB morphism next loopCont@ — same continuation shape as 'NGB'
+-- (see its own header note for why a loop needs two distinct
+-- continuations).
+newtype WB a b = WB { runWB :: Text -> Text -> WiringB Text }
+
+instance Category WB where
+  id = WB (\next _loopCont -> return next)
+  WB g . WB f = WB (\next loopCont -> do
+    gEntry <- g next loopCont
+    f gEntry loopCont)
+
+instance Cartesian WB where
+  -- Vestigial, same reasoning as 'NGB'\'s instance: a cartesian fork over
+  -- an effectful subterm never typechecks, so no compiled 'EffTerm' can
+  -- ever reach these directly.
+  exl = WB (\next _loopCont -> return next)
+  exr = WB (\next _loopCont -> return next)
+  -- NOT erased like 'NGB'\'s (deliberately): 'branchK'\'s generic
+  -- derivation below relies on @id &&& eval cond@ actually building
+  -- 'eval'\'s node ('g', the RHS) — erasing both arguments the way 'NGB'
+  -- does would silently drop the condition, since 'NGB' never routes
+  -- through this operator at all (it overrides 'branchK' directly).
+  -- 'f' (always 'id' at every real call site) contributes nothing, so
+  -- only 'g' need run.
+  WB f &&& WB g = WB (\next loopCont -> do
+    gEntry <- g next loopCont
+    f gEntry loopCont)
+
+instance Cocartesian WB where
+  inl = WB (\_next loopCont -> return loopCont)
+  inr = WB (\next _loopCont -> return next)
+  WB t ||| WB f = WB (\next loopCont -> do
+    elseEntry <- f next loopCont
+    thenEntry <- t next loopCont
+    n <- freshWireName
+    defineWireNode n (WireBranch { wtThen = thenEntry, wtElse = elseEntry })
+    return n)
+
+instance Effectful WB where
+  -- The whole point of 'WiringBuilder': unlike 'NGB', 'eval' is NOT erased
+  -- — it builds a real, visible 'WireCond' node, so 'branchK'\'s generic
+  -- derivation (below) surfaces the condition as its own node instead of
+  -- fusing it into the fork.
+  eval e = WB (\next _loopCont -> do
+    n <- freshWireName
+    defineWireNode n (WireCond { wcExpr = e, wcNext = next })
+    return n)
+  assign _ = WB (\next _loopCont -> return next)
+  lookup _ = WB (\next _loopCont -> return next)
+  suspend eff args = WB (\next _loopCont -> do
+    n <- freshWireName
+    defineWireNode n (WireSuspend { wsEffect = eff, wsArgs = args, wsNext = next })
+    return n)
+  callProc name args = WB (\next _loopCont -> do
+    n <- freshWireName
+    defineWireNode n (WireCall { wclCallee = name, wclArgs = args, wclNext = next })
+    return n)
+  splitValue = WB (\next _loopCont -> return next)
+  ret = WB (\_next _loopCont -> WiringB (gets wbsExitName))
+  -- Structurally identical to 'NGB'\'s 'loopK' (mirrors
+  -- 'patchLoopHeaderNamed'\'s shape) — loop-header fusion is an NGB-only
+  -- ISA concern, not a wiring-diagram one.
+  loopK (WB body) = WB (\next _loopCont -> do
+    loopHeaderName <- freshWireName
+    bodyEntry <- body next loopHeaderName
+    defineWireNode loopHeaderName (WireNop { wnNext = bodyEntry })
+    return loopHeaderName)
+  -- "Default": the generic 'branch' derivation (Plan 167's Open Question 2
+  -- resolution), not a fused primitive like 'NGB'\'s override — a wiring
+  -- diagram wants cond\/then\/else as separate visible nodes, which running
+  -- the derivation for real (given this instance's non-erased 'eval'\/
+  -- '(&&&)') produces directly: a 'WireCond' node immediately upstream of
+  -- the 'WireBranch' fork built by '(|||)'.
+  branchK cond t f = branch cond t f
+  assignWithRhs var e = WB (\next _loopCont -> do
+    n <- freshWireName
+    defineWireNode n (WireAssign { waVar = var, waRhs = e, waNext = next })
+    return n)
+  -- Same reasoning as 'NGB'\'s 'memoTag': without this, a shared 'ELetRef'
+  -- body would be re-materialized (fresh node names allocated) once per
+  -- syntactic occurrence, reintroducing the multiplicative blowup Phase 1
+  -- exists to prevent.
+  memoTag bid (WB action) = WB (\next loopCont -> do
+    memo <- WiringB (gets wbsBlockMemo)
+    case Map.lookup bid memo of
+      Just entry -> return entry
+      Nothing -> do
+        entry <- action next loopCont
+        WiringB $ modify $ \s -> s { wbsBlockMemo = Map.insert bid entry (wbsBlockMemo s) }
+        return entry)
+
+-- | Build a wiring diagram directly from an 'EffTerm' via 'foldFreyd'
+-- specialized to 'WB' — the replacement for 'collectWiring'\/'WiringPayload'.
+-- No enclosing loop at the top level, so the initial loop-continuation
+-- argument is never read (see 'WB'\'s header note, same as 'NGB'\'s).
+buildEffGraphWiring :: EffTerm () () -> WiringGraph Text
+buildEffGraphWiring effTerm =
+  let (entryName, finalState) = runState (runWiringB $ do
+        exitName <- freshWireName
+        defineWireNode exitName WireReturn
+        WiringB $ modify $ \s -> s { wbsExitName = exitName }
+        runWB (foldFreyd effTerm) exitName exitName
+        ) initWiringState
+  in WiringGraph { wgNodes = wbsNodes finalState, wgEntry = entryName }
+
+-- | Same SSA -> 'Eff' pipeline as 'compileProcedureToEff', flattened via
+-- 'buildEffGraphWiring' instead of 'buildEffGraphNamed' — the wiring
+-- diagram's own entry point. Replaces
+-- @collectWiring (compileProcedureToLowCat env userFns body)@.
+compileProcedureToWiring :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> WiringGraph Text
+compileProcedureToWiring env userFns body =
+  buildEffGraphWiring (compileProcedureToEff env userFns body)

@@ -26,9 +26,7 @@ import PB.AST.SourceFile
 import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.Cfg    (buildCfg, cyclomaticComplexity)
 import PB.Analysis.GraphBuilder
-  ( compileProcedureViaEffTerm, compileProcedureToLowCat, compileProcedureToEff
-  , collectWiring, WiringPayload (..)
-  )
+  ( compileProcedureViaEffTerm, compileProcedureToEff, compileProcedureToWiring )
 import PB.Analysis.CallClassify (collectBodyLocals)
 import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
 
@@ -256,8 +254,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns m
           [ let cfg      = buildCfg body
                 cfgJs    = jsonText (toJSON cfg)
                 instrJs    = jsonText (toJSON (compileProcedureViaEffTerm (mkProcEnv instrParams) userFns body))
-                (wiringTerm, wiringShared) = collectWiring (compileProcedureToLowCat (mkProcEnv instrParams) userFns body)
-                wiringJs = jsonText (toJSON (WiringPayload wiringTerm wiringShared))
+                wiringJs = jsonText (toJSON (compileProcedureToWiring (mkProcEnv instrParams) userFns body))
                 flow     = (fp, obj, pName, Dataflow.analyzeProcedure obj pName cfg)
                 cyclo    = cyclomaticComplexity cfg
                 footprintCtx = FunctorCtx

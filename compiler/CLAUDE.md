@@ -1112,18 +1112,13 @@ data LowCat = LId | LCompose .. | LAssignWithRhs .. | LFanIn .. | LLoop ..
 toLowCat :: CatTerm a b -> LowCat
 toLowCatOp :: CatOp a b -> LowCat
 extractCondLowCat :: LowCat -> Expr
--- Plan 149 Phase 1 (wiring diagrams): WiringPayload/collectWiring/
--- compileProcedureToLowCat. LErasable/CatTry are empirically dead for real
--- procedures (0/7667 across both corpora, Plan 149 Phase 0) -- LowCat is
--- reused as-is for the wire term, no new type. collectWiring extracts every
--- distinct LTagged blockId's content exactly once into a side map; the
--- ToJSON LowCat instance (PB.Pipeline.Serialise) serialises LTagged as a
--- bare {tag,blockId} reference with NO inlined payload -- a naive fold that
--- walks LTagged's inner content directly reproduces Plan 150's exact
--- multiplicative node-blowup one layer up (found empirically: the Phase 0
--- survey script hung for 15+ minutes until this dedup was added).
-data WiringPayload = WiringPayload { wpTerm :: LowCat, wpShared :: Map.Map Text LowCat }
-collectWiring :: LowCat -> (LowCat, Map.Map Text LowCat)
+-- LErasable/CatTry are empirically dead for real procedures (0/7667 across
+-- both corpora, Plan 149 Phase 0) -- LowCat is reused as-is (toLowCat/
+-- compileProcedureToLowCat/compileProcedureViaCatOp), no new type needed for
+-- that legacy path. The ToJSON LowCat instance (PB.Pipeline.Serialise)
+-- still serialises LTagged as a bare {tag,blockId} reference (no inlined
+-- payload) -- exercised by tests, though its sole production consumer
+-- (WiringPayload, below) is retired.
 compileProcedureToLowCat :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> LowCat
 -- Named-graph InstrGraph' construction (Plan 167 Phase 6, Approach C):
 -- flattening's current mechanism regardless of source term. NamedBuilder is
@@ -1163,6 +1158,36 @@ compileProcedureToEff :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> 
 -- branch into it) -- proven behaviorally inert corpus-wide (Phase 7 Step 5:
 -- 7547/7547 real procedures, zero unexplained mismatches).
 compileProcedureViaEffTerm :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> InstrGraph
+-- WiringBuilder (WB): a third Effectful instance over EffTerm (Plan 167
+-- Phase 7 Step 7), replacing collectWiring/WiringPayload -- WiringGraph's
+-- wgNodes is already a flat Text-keyed Map, so dedup falls out of Map key
+-- uniqueness (via memoTag) instead of a bespoke second pass over LowCat.
+-- Sibling node/state types to NGB's own (WiringNode/WiringBuilderState/
+-- WiringB), NOT a reuse of InstrNode'/NamedBuilder -- reusing the ISA type
+-- would force linearize/toInstrNode (shared with NGB's real execution path)
+-- to grow a dead-but-mandatory case for a node no execution path produces.
+data WiringNode p = WireAssign {..} | WireCond { wcExpr :: Expr, wcNext :: p }
+                  | WireBranch { wtThen :: p, wtElse :: p } | WireCall {..}
+                  | WireSuspend {..} | WireReturn | WireNop {..}
+data WiringGraph p = WiringGraph { wgNodes :: Map.Map Text (WiringNode p), wgEntry :: p }
+newtype WB a b = WB { runWB :: Text -> Text -> WiringB Text }
+-- The one behavioral difference from NGB: branchK is the *generic*
+-- `branch` derivation ("default"), not a fused primitive -- WB's eval/(&&&)
+-- are NOT erased the way NGB's are, so `(t \|\|\| f) . splitValue . (id &&&
+-- eval cond)` genuinely builds a WireCond node immediately upstream of the
+-- WireBranch fork `(\|\|\|)` builds, instead of fusing cond+fork into one
+-- node. Real-corpus-verified: WireCond count == WireBranch count exactly,
+-- 1:1, on every procedure checked (e.g. w_data_explorer.of_set_lv_item: 5
+-- and 5), and each WireCond's own `next` points directly at its WireBranch.
+buildEffGraphWiring :: EffTerm () () -> WiringGraph Text
+compileProcedureToWiring :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> WiringGraph Text
+-- Production entry point for the "wiring" JSON key (PB.Pipeline.Emit's
+-- injectCompiled) and the wiring_json DuckDB column (PB.Pipeline.Runner's
+-- compileOne) since Plan 167 Phase 7 Step 7 -- replaces
+-- collectWiring (compileProcedureToLowCat ...) / WiringPayload at both call
+-- sites. Serializes directly via genericToJSON (WiringGraph/WiringNode's
+-- ToJSON, PB.Pipeline.Serialise) -- no manual term/sharedBlocks split
+-- needed, unlike WiringPayload's.
 ```
 
 ### `PB.Analysis.CatInterp`

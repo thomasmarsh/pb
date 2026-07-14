@@ -275,37 +275,6 @@ runEffTermTraceGen input effTerm initEnv = do
           `CE.catch` (\(ReturnUnwind capturedSt) -> return capturedSt)
   return (isEnv st, P.reverse (isTrace st))
 
--- | Every distinct 'LTagged' blockId appearing anywhere in a 'LowCat' term
--- (Plan 149 Phase 1's 'collectWiring' tests) — deduplicated, since a shared
--- blockId's own nested tags are only reachable through one occurrence.
-collectTagIds :: LowCat -> [Text]
-collectTagIds = Set.toList P.. go Set.empty
-  where
-    go seen node = case node of
-      LTagged bid inner
-        | Set.member bid seen -> seen
-        | otherwise           -> go (Set.insert bid seen) inner
-      LCompose a b -> go (go seen a) b
-      LFanIn a b   -> go (go seen a) b
-      LFork a b    -> go (go seen a) b
-      LLoop a      -> go seen a
-      _            -> seen
-
--- | How many times a given blockId's 'LTagged' tag is referenced anywhere in
--- a raw (not yet 'collectWiring'-processed) 'LowCat' term — used to confirm
--- a test fixture exhibits real sharing (referenced 2+ times), not just an
--- incidental single tag.
-countTagOccurrences :: Text -> LowCat -> Int
-countTagOccurrences target = go
-  where
-    go node = case node of
-      LTagged bid inner -> (if bid P.== target then 1 else 0) P.+ go inner
-      LCompose a b -> go a P.+ go b
-      LFanIn a b   -> go a P.+ go b
-      LFork a b    -> go a P.+ go b
-      LLoop a      -> go a
-      _            -> 0
-
 -- ---------------------------------------------------------------------------
 -- Tests
 
@@ -1453,19 +1422,47 @@ tests = testGroup "CatOp"
         in foldSchFootprint ctx term @?= Set.empty
     ]
 
-  , testGroup "collectWiring (Plan 149 Phase 1)"
-    -- Plan 149 Phase 0's survey found that a naive fold over 'LowCat' (e.g.
-    -- a JSON serializer that just recurses into every constructor) re-walks
-    -- a shared 'LTagged' block once per predecessor, reproducing Plan 150's
-    -- exact multiplicative-blowup bug one layer up — the first survey
-    -- attempt hung for 15+ minutes on a real corpus procedure before this
-    -- was diagnosed. 'collectWiring' must extract each distinct blockId's
-    -- content exactly once, regardless of how many times its tag is
-    -- referenced in the term (mirroring 'bsBlockPcMemo'\'s contract).
-    [ testCase "shared tail (if/else, both arms) is collected exactly once, referenced twice" $
-        -- Same fixture as "compileBlock memoization ... both arms" above:
-        -- the trailing callC/callD block is reached from both the then-arm
-        -- and the else-arm, so it is tagged and its tag is referenced twice.
+  , testGroup "Phase 7 Step 7: WiringBuilder (WB) Effectful instance over EffTerm"
+    -- 'compileProcedureToWiring' replaces 'collectWiring'\/'WiringPayload':
+    -- 'WiringGraph'\'s 'wgNodes' is already a flat, 'Text'-keyed 'Map', so
+    -- dedup falls out of 'Map.Map' key uniqueness (via 'memoTag', the same
+    -- mechanism\/argument Step 4's 'NGB' already established) instead of a
+    -- bespoke second pass over a tree-shaped 'LowCat'. The one behavioral
+    -- difference from 'NGB': 'branchK' is the *generic* derivation (@branch@
+    -- itself, "default"), not a fused primitive — a real condition-eval node
+    -- ('WireCond') sits immediately upstream of the fork ('WireBranch'),
+    -- instead of being folded into one instruction the way 'NGB'\'s
+    -- 'InstrBranch'' is.
+    [ testCase "single assignment compiles to exactly one WireAssign node carrying the real var and expr" $
+        let body = [Located 1 (BsAssign (Lvalue [LvSegment "x" Nothing]) (ExInt "42"))]
+            graph = compileProcedureToWiring emptyEnv Set.empty body
+            assigns = [n | n@WireAssign{} <- Map.elems (wgNodes graph)]
+        in case assigns of
+             [WireAssign { waVar, waRhs }] -> do
+               waVar @?= "x"
+               waRhs @?= ExInt "42"
+             other -> assertFailure ("expected exactly 1 WireAssign node, got " <> show (length other))
+
+    , testCase "branch condition is its own WireCond node, immediately upstream of a condition-free WireBranch fork" $
+        let cond = ExBinOp (ExLvalue (Lvalue [LvSegment "x" Nothing])) BopGt (ExInt "0")
+            body = [Located 1 (BsIf (IfStmt cond
+                      [Located 2 (BsPbCall (PbCall "obj" "then_event"))] []
+                      (Just [Located 3 (BsPbCall (PbCall "obj" "else_event"))])))]
+            graph = compileProcedureToWiring emptyEnv Set.empty body
+            nodes = wgNodes graph
+            conds    = [(n, c) | (n, c@WireCond{}) <- Map.toList nodes]
+            branches = [n | n@WireBranch{} <- Map.elems nodes]
+        in case (conds, branches) of
+             ([(_condName, WireCond { wcExpr, wcNext })], [_]) -> do
+               wcExpr @?= cond
+               assertBool "the WireCond's own successor is a WireBranch (fork sits directly downstream)"
+                 (case Map.lookup wcNext nodes of { Just WireBranch{} -> True; _ -> False })
+             other -> assertFailure ("expected exactly 1 WireCond + 1 WireBranch, got " <> show (length (fst other), length (snd other)))
+
+    , testCase "shared tail (if/else, both arms) is collected exactly once, referenced from both arms" $
+        -- Same fixture as the 'toLowCat'/'compileBlock' memoization tests
+        -- above: the trailing callC/callD block is reached from both the
+        -- then-arm and the else-arm.
         let call n = ExCall (Lvalue [LvSegment n Nothing]) []
             body = [ Located 1 (BsIf (IfStmt (ExBool True)
                        [Located 2 (BsCall (call "callA"))] []
@@ -1473,35 +1470,41 @@ tests = testGroup "CatOp"
                    , Located 4 (BsCall (call "callC"))
                    , Located 5 (BsCall (call "callD"))
                    ]
-            low = compileProcedureToLowCat emptyEnv Set.empty body
-            (term, shared) = collectWiring low
-            taggedIds = collectTagIds term
-        in do
-          assertEqual "exactly one distinct shared blockId" 1 (L.length taggedIds)
-          assertEqual "sharedBlocks has exactly one entry" 1 (Map.size shared)
-          assertBool "the shared blockId is referenced at least twice in the raw term (real sharing)"
-            (case taggedIds of { [bid] -> countTagOccurrences bid term P.>= 2; _ -> False })
-          assertBool "the shared blockId's content actually holds real assigns/calls, not an empty placeholder"
-            (case taggedIds of { [bid] -> Map.member bid shared; _ -> False })
+            graph = compileProcedureToWiring emptyEnv Set.empty body
+            nodes = wgNodes graph
+            callCNames = [n | (n, WireCall { wclCallee }) <- Map.toList nodes, wclCallee == "callC"]
+            successorsOf p = case p of
+              WireAssign { waNext }   -> [waNext]
+              WireCond   { wcNext }   -> [wcNext]
+              WireBranch { wtThen, wtElse } -> [wtThen, wtElse]
+              WireCall   { wclNext }  -> [wclNext]
+              WireSuspend{ wsNext }   -> [wsNext]
+              WireReturn              -> []
+              WireNop    { wnNext }   -> [wnNext]
+            allSuccessors = concatMap successorsOf (Map.elems nodes)
+        in case callCNames of
+             [callCName] -> assertBool "callC's node is referenced by at least 2 predecessors (real sharing)"
+               (L.length (L.filter (== callCName) allSuccessors) P.>= 2)
+             other -> assertFailure ("expected exactly 1 distinct callC node, got " <> show (length other))
 
-    , testCase "no merge points: term unchanged, sharedBlocks empty" $
+    , testCase "4 sequential if/else groups: shared-tail call counts stay uniform (memoTag prevents duplication)" $
         let call n = ExCall (Lvalue [LvSegment n Nothing]) []
-            body = [ Located 1 (BsCall (call "callA")) ]
-            low = compileProcedureToLowCat emptyEnv Set.empty body
-            (term, shared) = collectWiring low
-        in do
-          term @?= low
-          assertBool "sharedBlocks empty" (Map.null shared)
-
-    , testCase "hand-built repeat-tag shape: dedup keeps a single entry, terminates" $
-        -- A minimal, hand-built two-occurrence tag (not derived from a real
-        -- compile) — the defensive-only unit-level counterpart to the
-        -- corpus-derived test above; guards against a regression to
-        -- re-walking (and, for a self-referential shape, never terminating).
-        let inner1 = LAssignWithRhs "x" (ExInt "1")
-            shape  = LCompose (LTagged "m1" inner1) (LTagged "m1" inner1)
-            (_, shared) = collectWiring shape
-        in shared @?= Map.fromList [("m1", inner1)]
+            group (thenN, elseN, tailN, base) =
+              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
+                  [Located (base P.+ 2) (BsCall (call thenN))] []
+                  (Just [Located (base P.+ 3) (BsCall (call elseN))])))
+              , Located (base P.+ 4) (BsCall (call tailN))
+              ]
+            body = concatMap group
+              [ ("callA1", "callB1", "ctail1", 0), ("callA2", "callB2", "ctail2", 4)
+              , ("callA3", "callB3", "ctail3", 8), ("callA4", "callB4", "ctail4", 12)
+              ]
+            graph = compileProcedureToWiring emptyEnv Set.empty body
+            calls = [wclCallee | WireCall { wclCallee } <- Map.elems (wgNodes graph)]
+        in L.sort calls @?= L.sort
+             [ "callA1", "callB1", "ctail1", "callA2", "callB2", "ctail2"
+             , "callA3", "callB3", "ctail3", "callA4", "callB4", "ctail4"
+             ]
     ]
 
   , testGroup "Phase 1D: Interp vs GraphBuilder trace equivalence (Plan 146)"
