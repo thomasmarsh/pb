@@ -620,7 +620,7 @@ tests = testGroup "CatOp"
             body     = [Located 1 (BsCall callExpr)]
             ssaProc  = buildSsa dwEnv "proc" body
             catTree  = compileSsa dwEnv Set.empty ssaProc
-            graph    = buildInstrGraph catTree
+            graph    = buildInstrGraphNamed catTree
             hasInstrSuspend = any (\n -> case n of { InstrSuspend {} -> True; _ -> False }) (igNodes graph)
         in assertBool "InstrGraph should contain a InstrSuspend node" hasInstrSuspend
     ]
@@ -770,9 +770,9 @@ tests = testGroup "CatOp"
         Map.lookup "i" (isEnv st) @?= Just (VInt 3)
     ]
 
-  , testGroup "Phase 4: buildInstrGraph"
+  , testGroup "Phase 4: buildInstrGraphNamed"
     [ testCase "CatId compiles to just exit node" $
-        let graph = buildInstrGraph (CatId :: CatOp () ())
+        let graph = buildInstrGraphNamed (CatId :: CatOp () ())
         in do
           igEntry graph @?= 0
           case igNodes graph of
@@ -780,44 +780,44 @@ tests = testGroup "CatOp"
             other -> assertBool ("expected 1 exit node, got " <> show (P.length other)) False
 
     , testCase "CatAssignWithRhs compiles to InstrAssign + exit" $
-        let graph = buildInstrGraph (CatAssignWithRhs "x_1" (ExInt "42") :: CatOp () ())
+        let graph = buildInstrGraphNamed (CatAssignWithRhs "x_1" (ExInt "42") :: CatOp () ())
         in do
-          igEntry graph @?= 1
+          igEntry graph @?= 0
           case igNodes graph of
-            [InstrReturn Nothing, InstrAssign { anVar = "x_1", anRhs = ExInt "42", anNext = 0 }] ->
+            [InstrAssign { anVar = "x_1", anRhs = ExInt "42", anNext = 1 }, InstrReturn Nothing] ->
               return ()
-            other -> assertBool ("expected exit + assign, got " <> show (P.length other)) False
+            other -> assertBool ("expected assign + exit, got " <> show (P.length other)) False
 
     , testCase "two assigns chain entry→x_1→y_1→exit" $
         let op = CatAssignWithRhs "y_1" (ExInt "2") . CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
-            graph = buildInstrGraph op
+            graph = buildInstrGraphNamed op
         in do
-          igEntry graph @?= 2
+          igEntry graph @?= 0
           P.length (igNodes graph) @?= 3
           case igNodes graph of
-            (InstrReturn Nothing : InstrAssign { anVar = "y_1" } : InstrAssign { anVar = "x_1" } : []) -> return ()
-            _ -> assertBool "expected [exit, y_1, x_1]" False
+            (InstrAssign { anVar = "x_1" } : InstrAssign { anVar = "y_1" } : InstrReturn Nothing : []) -> return ()
+            _ -> assertBool "expected [x_1, y_1, exit]" False
 
     , testCase "branch compiles to InstrBranch diamond with no unconditional join nop (Plan 145 Finding A)" $
         let thenK = CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
             elseK = CatAssignWithRhs "y_1" (ExInt "2")
             op = branch (ExBool True) thenK elseK :: CatOp () ()
-            graph = buildInstrGraph op
+            graph = buildInstrGraphNamed op
         in do
           P.length (igNodes graph) @?= 4
           case igNodes graph of
-            ( InstrReturn Nothing
-              : InstrAssign { anVar = "y_1", anNext = 0 }
-              : InstrAssign { anVar = "x_1", anNext = 0 }
-              : InstrBranch { brThenPc = 2, brElsePc = 1 }
+            ( InstrBranch { brThenPc = 1, brElsePc = 2 }
+              : InstrAssign { anVar = "x_1", anNext = 3 }
+              : InstrAssign { anVar = "y_1", anNext = 3 }
+              : InstrReturn Nothing
               : [] ) -> return ()
-            nodes -> assertBool ("expected 4 nodes [exit, else, then, branch], got " <> show (P.length nodes) <> ": " <> show nodes) False
+            nodes -> assertBool ("expected 4 nodes [branch, then, else, exit], got " <> show (P.length nodes) <> ": " <> show nodes) False
 
     , testCase "branch condition preserved through LowCat (not ExNull)" $
         let thenK = CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
             elseK = CatAssignWithRhs "y_1" (ExInt "2")
             op = branch (ExBool True) thenK elseK :: CatOp () ()
-            graph = buildInstrGraph op
+            graph = buildInstrGraphNamed op
             branches = filter (\n -> case n of InstrBranch {} -> True; _ -> False) (igNodes graph)
         in case branches of
              [InstrBranch { brCond = ExBool True }] -> return ()
@@ -826,12 +826,12 @@ tests = testGroup "CatOp"
     , testCase "structural erasure preserves assignments" $
         let op = (CatExl :: CatOp (Int, Int) Int) `seq`
                  CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
-            graph = buildInstrGraph op
+            graph = buildInstrGraphNamed op
         in do
           P.length (igNodes graph) @?= 2
           case igNodes graph of
-            (InstrReturn Nothing : InstrAssign { anVar = "x_1" } : []) -> return ()
-            _ -> assertBool "expected [exit, assign]" False
+            (InstrAssign { anVar = "x_1" } : InstrReturn Nothing : []) -> return ()
+            _ -> assertBool "expected [assign, exit]" False
 
     , testCase "end-to-end: SSA loop → InstrGraph preserves assignments and back-edge" $
         let sa = SsaProc
@@ -846,7 +846,7 @@ tests = testGroup "CatOp"
               , spVars   = []
               }
             catTree  = compileSsaDefault sa
-            graph    = buildInstrGraph catTree
+            graph    = buildInstrGraphNamed catTree
             nodes    = igNodes graph
             hasInstrAssign v = any (\n -> case n of InstrAssign { anVar = v' } -> v' == v; _ -> False) nodes
             hasGoto        = any (\n -> case n of InstrGoto _ -> True; _ -> False) nodes
@@ -866,7 +866,7 @@ tests = testGroup "CatOp"
         -- own anNext closes the cycle, no InstrGoto is ever allocated.
         let loopBody = CatCompose CatInl (CatAssignWithRhs "counter" (ExInt "42")) :: CatOp () (Either () ())
             catTree  = CatLoop loopBody :: CatOp () ()
-            graph    = buildInstrGraph catTree
+            graph    = buildInstrGraphNamed catTree
         in canonicalize graph @?= [SNop 1, SAsgn 0]
 
     , testCase "end-to-end: simple linear SSA → InstrGraph" $
@@ -882,7 +882,7 @@ tests = testGroup "CatOp"
               , spVars   = []
               }
             catTree  = compileSsaDefault sa
-            graph    = buildInstrGraph catTree
+            graph    = buildInstrGraphNamed catTree
             nodes    = igNodes graph
         in do
           assertBool ("should have 3 nodes (exit + 2 assigns), got " <> show (P.length nodes))
@@ -967,7 +967,7 @@ tests = testGroup "CatOp"
               (CatCompose CatInl (CatAssignWithRhs "x_1" (ExInt "1")) :: CatOp () (Either () ()))
               (CatInr :: CatOp () (Either () ()))
             catTree = CatLoop innerBranch :: CatOp () ()
-            graph   = buildInstrGraph catTree
+            graph   = buildInstrGraphNamed catTree
         in canonicalize graph @?= [SBrnch 1 2, SAsgn 0, SRet]
     ]
 
@@ -1451,7 +1451,7 @@ tests = testGroup "CatOp"
     [ testCase "CatId: no trace, no env change" $ do
         let term = CatId :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) Map.empty
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphNamed term) Map.empty
         itrace @?= []
         itrace @?= gtrace
         ienv @?= genv
@@ -1459,7 +1459,7 @@ tests = testGroup "CatOp"
     , testCase "CatAssignWithRhs: same assign trace, same env" $ do
         let term = CatAssignWithRhs "x_1" (ExInt "42") :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) Map.empty
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphNamed term) Map.empty
         itrace @?= [TeAssign "x_1" (VInt 42)]
         itrace @?= gtrace
         ienv @?= genv
@@ -1467,7 +1467,7 @@ tests = testGroup "CatOp"
     , testCase "CatCompose: two assigns execute in the same order" $ do
         let term = CatAssignWithRhs "y_1" (ExInt "2") . CatAssignWithRhs "x_1" (ExInt "1") :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) Map.empty
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphNamed term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
@@ -1476,7 +1476,7 @@ tests = testGroup "CatOp"
                      (CatAssignWithRhs "then_taken" (ExInt "1"))
                      (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) Map.empty
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphNamed term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
@@ -1485,21 +1485,21 @@ tests = testGroup "CatOp"
                      (CatAssignWithRhs "then_taken" (ExInt "1"))
                      (CatAssignWithRhs "else_taken" (ExInt "2")) :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) Map.empty
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphNamed term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
     , testCase "CatSuspend: same effect name and evaluated args" $ do
         let term = CatSuspend "retrieve:dw_foo" [ExInt "1", ExStr "bar"] :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) Map.empty
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphNamed term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
     , testCase "CatCall: same callee and evaluated args" $ do
         let term = CatCall "my_func" [ExInt "5"] :: CatOp () ()
         (ienv, itrace) <- runInterpTrace term Map.empty
-        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) Map.empty
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphNamed term) Map.empty
         itrace @?= gtrace
         ienv @?= genv
 
@@ -1517,7 +1517,7 @@ tests = testGroup "CatOp"
             term = CatLoop loopBody :: CatOp () ()
             initEnv = Map.fromList [("i", VInt 0)]
         (ienv, itrace) <- runInterpTrace term initEnv
-        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraph term) initEnv
+        let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphNamed term) initEnv
         itrace @?= gtrace
         ienv @?= genv
         Map.lookup "i" ienv @?= Just (VInt 3)
@@ -1679,7 +1679,7 @@ tests = testGroup "CatOp"
           -- just a wrong-but-terminating result.
           maxSteps = 500 :: Int
           (finalEnv, trc, _) = runInstrGraphTrace maxSteps Map.empty
-                              (buildInstrGraph (compileSsaDefault nestedLoopsSsa)) initEnv
+                              (buildInstrGraphNamed (compileSsaDefault nestedLoopsSsa)) initEnv
       in testCase "outer loop containing an inner loop terminates with the correct final environment, not a runaway trace" $ do
            assertBool ("trace should terminate well under the " <> show maxSteps <> "-step fuel bound, got "
                          <> show (length trc) <> " steps (indicates the outer/inner loop headers were resolved as each other's exit target)")
@@ -1749,7 +1749,7 @@ tests = testGroup "CatOp"
             }
           initEnv = Map.fromList [("x", VInt 0), ("y", VInt 0), ("skip_count", VInt 0), ("done", VInt 0)]
           (finalEnv, _trc, _) = runInstrGraphTrace 100 Map.empty
-                                (buildInstrGraph (compileSsaDefault continueSsa)) initEnv
+                                (buildInstrGraphNamed (compileSsaDefault continueSsa)) initEnv
       in testCase "continue mid-loop still reaches the real post-loop block, not the continue block's own content" $ do
            Map.lookup "x" finalEnv @?= Just (VInt 3)
            Map.lookup "y" finalEnv @?= Just (VInt 2)
@@ -1845,7 +1845,7 @@ tests = testGroup "CatOp"
            }
          compiled = compileSsaDefault returnSsa
          runIt trigger = runInstrGraphTrace 100 Map.empty
-                           (buildInstrGraph compiled)
+                           (buildInstrGraphNamed compiled)
                            (Map.fromList [("x", VInt 0), ("y", VInt 0), ("done", VInt 0), ("trigger", VInt trigger)])
      in
      [ testCase "compiles to a CatReturn (not CatInr) for the return block" $
@@ -2370,20 +2370,16 @@ tests = testGroup "CatOp"
           effTrace @?= catTrace
       ]
 
-  , testGroup "Phase 6 step 5 (Approach C): compileProcedureViaCatOpNamed cross-check — structural sharing, no bsBlockPcMemo"
-    -- 'compileProcedureViaCatOpNamed' (GraphBuilder.hs) is a parallel entry
-    -- point that flattens via a named graph ('InstrNode''/'InstrGraph'') +
-    -- 'linearize' instead of 'compileLowCatToInstr'/'BuilderState.bsBlockPcMemo'.
-    -- A shared merge block is exactly one 'Map.Map' entry (dedup is key
-    -- uniqueness), not a 2D-keyed memo — see the doc comment at
-    -- 'compileProcedureViaCatOpNamed'. These tests assert the two
-    -- flattening paths produce the SAME canonical shape ('canonicalize'
-    -- erases pc-numbering differences, since the two paths number nodes in
-    -- different orders) on every merge/branch/loop shape the existing test
-    -- suite already covers, plus the allocation-bound stress fixture
-    -- proving the structural path also stays linear, not exponential,
-    -- with no memo at all.
-    [ testCase "if/else with shared tail: same canonical shape" $
+  , testGroup "Phase 6 (Approach C): named-graph structural sharing — merge/branch/loop canonical shapes"
+    -- 'compileProcedureViaCatOp' flattens via a named graph
+    -- ('InstrNode''/'InstrGraph'') + 'linearize' — dedup on merge-block
+    -- 'Map.Map' key uniqueness ('nbsBlockMemo', keyed on blockId alone),
+    -- not a 2D-keyed pc memo. These literal shapes were the cross-check
+    -- fixtures Plan 167 Phase 6 used to prove the named path matched the
+    -- (now-retired) PC-threaded lowering on every merge/branch/loop pattern
+    -- the rest of this test suite covers, before the production switch;
+    -- kept as direct regression assertions on the production entry point.
+    [ testCase "if/else with shared tail: canonical shape" $
         let call n = ExCall (Lvalue [LvSegment n Nothing]) []
             body = [ Located 1 (BsIf (IfStmt (ExBool True)
                        [Located 2 (BsCall (call "callA"))] []
@@ -2391,11 +2387,10 @@ tests = testGroup "CatOp"
                    , Located 4 (BsCall (call "callC"))
                    , Located 5 (BsCall (call "callD"))
                    ]
-            oldShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
-            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
-        in newShape @?= oldShape
+            shape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in shape @?= [SBrnch 1 2, SCall 3, SCall 3, SCall 4, SCall 5, SRet]
 
-    , testCase "nested if inside if/else with shared trailing calls: same canonical shape" $
+    , testCase "nested if inside if/else with shared trailing calls: canonical shape" $
         let call n = ExCall (Lvalue [LvSegment n Nothing]) []
             innerIf = BsIf (IfStmt (ExBool True)
                         [Located 3 (BsCall (call "callA"))] []
@@ -2406,32 +2401,29 @@ tests = testGroup "CatOp"
                        , Located 6 (BsCall (call "callD"))
                        ] [] Nothing))
                    ]
-            oldShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
-            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
-        in newShape @?= oldShape
+            shape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in shape @?= [SBrnch 1 2, SBrnch 3 4, SRet, SCall 5, SCall 5, SCall 6, SCall 2]
 
-    , testCase "choose with 3 cases + default: same canonical shape" $
+    , testCase "choose with 3 cases + default: canonical shape" $
         let clauses = [ CaseClause (Just [tok "1"]) [Located 2 (BsPbCall (PbCall "obj" "case1_event"))]
                       , CaseClause (Just [tok "2"]) [Located 3 (BsPbCall (PbCall "obj" "case2_event"))]
                       , CaseClause (Just [tok "3"]) [Located 4 (BsPbCall (PbCall "obj" "case3_event"))]
                       , CaseClause Nothing          [Located 5 (BsPbCall (PbCall "obj" "default_event"))]
                       ]
             body = [Located 1 (BsChoose (ChooseStmt (ExLvalue (Lvalue [LvSegment "sel" Nothing])) clauses))]
-            oldShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
-            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
-        in newShape @?= oldShape
+            shape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in shape @?= [SBrnch 1 2, SCall 3, SBrnch 4 5, SRet, SCall 3, SBrnch 6 7, SCall 3, SCall 3]
 
-    , testCase "nested for-loops: same canonical shape" $
+    , testCase "nested for-loops: canonical shape" $
         let body = [ Located 1 (BsFor (ForStmt (Lvalue [LvSegment "i" Nothing])
                       (ExInt "1") (ExInt "3") Nothing
                       [ Located 2 (BsFor (ForStmt (Lvalue [LvSegment "j" Nothing])
                           (ExInt "1") (ExInt "3") Nothing
                           [Located 3 (BsPbCall (PbCall "obj" "inner_event"))]))]))]
-            oldShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
-            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
-        in newShape @?= oldShape
+            shape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in shape @?= [SAsgn 1, SBrnch 2 3, SAsgn 4, SRet, SBrnch 5 6, SCall 7, SAsgn 1, SAsgn 4]
 
-    , testCase "loop body with if/else and shared tail (merge inside a loop): same canonical shape" $
+    , testCase "loop body with if/else and shared tail (merge inside a loop): canonical shape" $
         let iter = Lvalue [LvSegment "iter" Nothing]
             body = [ Located 1 (BsAssign iter (ExInt "0"))
                    , Located 2 (BsDo (DoStmt
@@ -2444,22 +2436,20 @@ tests = testGroup "CatOp"
                       ]
                       Nothing))
                    ]
-            oldShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
-            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
-        in newShape @?= oldShape
+            shape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in shape @?= [SAsgn 1, SBrnch 2 3, SAsgn 4, SRet, SBrnch 5 6, SCall 7, SCall 7, SCall 1]
 
-    , testCase "if/elseif/else chain: same canonical shape" $
+    , testCase "if/elseif/else chain: canonical shape" $
         let body = [ Located 1 (BsIf (IfStmt (ExBool True)
                       [Located 2 (BsPbCall (PbCall "obj" "first_event"))]
                       [ ElseIf (ExBool False) [Located 3 (BsPbCall (PbCall "obj" "second_event"))]
                       , ElseIf (ExBool False) [Located 4 (BsPbCall (PbCall "obj" "third_event"))]
                       ]
                       (Just [Located 5 (BsPbCall (PbCall "obj" "default_event"))])))]
-            oldShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
-            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
-        in newShape @?= oldShape
+            shape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in shape @?= [SBrnch 1 2, SCall 3, SBrnch 4 5, SRet, SCall 3, SBrnch 6 7, SCall 3, SCall 3]
 
-    , testCase "4 sequential if/else groups: same per-path call counts as compileProcedureViaCatOp" $
+    , testCase "4 sequential if/else groups: per-path call counts stay uniform (no compounding across merges)" $
         let call n = ExCall (Lvalue [LvSegment n Nothing]) []
             group (thenN, elseN, tailN, base) =
               [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
@@ -2472,10 +2462,10 @@ tests = testGroup "CatOp"
               , ("callA3", "callB3", "ctail3", 8), ("callA4", "callB4", "ctail4", 12)
               ]
             expectedCounts = [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]
-            newShape = canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
-        in pathCallCounts newShape @?= expectedCounts
+            shape = canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
+        in pathCallCounts shape @?= expectedCounts
 
-    , testCase "18 sequential if/else groups: allocates < 20MB, not 2^18 blowup, with NO bsBlockPcMemo" $ do
+    , testCase "18 sequential if/else groups: allocates < 20MB, not 2^18 blowup" $ do
         let call n = ExCall (Lvalue [LvSegment n Nothing]) []
             group base =
               [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
@@ -2485,25 +2475,12 @@ tests = testGroup "CatOp"
               ]
             body = concatMap group [ n P.* 4 | n <- [0 .. 17 :: Int] ]
         mBytes <- timeout 30000000 (measureAllocBytes
-          (CE.evaluate (length (igNodes (compileProcedureViaCatOpNamed emptyEnv Set.empty body)))))
+          (CE.evaluate (length (igNodes (compileProcedureViaCatOp emptyEnv Set.empty body)))))
         case mBytes of
           Nothing -> assertFailure "did not complete within the 30s hang-safety-net timeout"
           Just bytes -> assertBool
             ("allocated " <> show bytes <> " bytes; expected < 20MB (structural sharing via \
              \Map.Map key uniqueness should stay linear with no memo at all)")
             (bytes P.< 20 P.* 1000 P.* 1000)
-
-    , testCase "18 sequential if/else groups: same canonical shape as compileProcedureViaCatOp" $
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
-            group base =
-              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
-                  [Located (base P.+ 2) (BsCall (call ("a" <> T.pack (show base))))] []
-                  (Just [Located (base P.+ 3) (BsCall (call ("b" <> T.pack (show base))))])))
-              , Located (base P.+ 4) (BsCall (call ("tail" <> T.pack (show base))))
-              ]
-            body = concatMap group [ n P.* 4 | n <- [0 .. 17 :: Int] ]
-            oldShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOp emptyEnv Set.empty body)
-            newShape = normalizeCallTag <$> canonicalize (compileProcedureViaCatOpNamed emptyEnv Set.empty body)
-        in newShape @?= oldShape
     ]
   ]

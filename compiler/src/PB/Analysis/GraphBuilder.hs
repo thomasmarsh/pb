@@ -1,11 +1,14 @@
 {-# LANGUAGE StrictData #-}
--- | 'CatOp' → flat @InstrGraph@ flattening (the @GraphBuilder@ target), plus
--- 'LowCat' — the monomorphic intermediary that bridges the GADT-indexed
--- 'CatOp' to the flat, PC-indexed 'InstrGraph' the current TS runtime
--- executes — and the public one-call pipeline entry point,
--- 'compileProcedureViaCatOp'.
+-- | 'CatOp' → flat @InstrGraph@ flattening, plus 'LowCat' — the monomorphic
+-- intermediary that bridges the GADT-indexed 'CatOp' to the flat,
+-- PC-indexed 'InstrGraph' the current TS runtime executes — and the public
+-- one-call pipeline entry point, 'compileProcedureViaCatOp'. Flattening goes
+-- via a named graph ('PB.Analysis.InstrGraph.InstrGraph''/'linearize', Plan
+-- 167 Phase 6 Approach C): 'LowCat' nodes are compiled into a 'Text'-keyed
+-- graph (dedup on blockId alone, no continuation-keyed memo) and then
+-- numbered by a single pure BFS pass.
 --
--- Pure module — no I/O (the @GraphBuilder@ monad is a bare 'State', never
+-- Pure module — no I/O (the @NamedBuilder@ monad is a bare 'State', never
 -- 'IO'). Split out of 'PB.Analysis.CatOp' in Plan 151, alongside
 -- 'PB.Analysis.CatLower' (SSA → 'CatOp') and 'PB.Analysis.CatInterp'
 -- (direct 'CatOp' execution) — those three plus the core 'CatOp' module
@@ -22,16 +25,8 @@ module PB.Analysis.GraphBuilder
     -- * Wiring diagrams (Plan 149 Phase 1)
   , WiringPayload (..)
   , collectWiring
-    -- * GraphBuilder
-  , GraphBuilder (..)
-  , BuilderState (..)
-  , initState
-  , allocateNode
-  , peekNextPc
-  , registerNodeAt
-  , finalizeGraph
-  , compileCatToInstr
-  , buildInstrGraph
+    -- * Named-graph InstrGraph' construction (Plan 167 Phase 6, Approach C)
+  , buildInstrGraphNamed
   , InstrNode (..)
   , InstrGraph (..)
     -- * Pipeline entry point
@@ -40,8 +35,6 @@ module PB.Analysis.GraphBuilder
   , compileProcedureToCatOp
   , compileProcedureToCatTerm
   , compileProcedureToEff
-    -- * Plan 167 Phase 6 — named-graph InstrGraph' construction (Approach C)
-  , compileProcedureViaCatOpNamed
   ) where
 
 import PB.Prelude hiding (id, (.), lookup)
@@ -115,11 +108,11 @@ data LowCat
 -- 'LowCat', so the table\'s 'CatOp () ()' body folds directly. The
 -- 'CatTagged' clause is retained (defensive; removed in Phase 7). The
 -- produced 'LowCat' still carries 'LTagged bid inner' (body inlined into
--- LowCat) — NOT a name-only reference — so 'compileLowCatToInstr' and
+-- LowCat) — NOT a name-only reference — so 'compileLowCatToInstrNamed' and
 -- 'collectWiring' see the identical term they see today; their own memos
--- ('bsBlockPcMemo', 'walkShared') remain load-bearing and are NOT dropped
--- (those belong to Phase 6). 'toLowCatOp' is the pre-Phase-4 signature for
--- callers lowering bare 'CatOp' terms with no sharing.
+-- ('nbsBlockMemo', 'walkShared') remain load-bearing. 'toLowCatOp' is the
+-- pre-Phase-4 signature for callers lowering bare 'CatOp' terms with no
+-- sharing.
 toLowCat :: CatTerm a b -> LowCat
 toLowCat (CatTerm spine table) = evalState (go spine) Map.empty
   where
@@ -159,8 +152,8 @@ toLowCat (CatTerm spine table) = evalState (go spine) Map.empty
 
 -- | Lower a bare 'CatOp' (no shared-term table) — the pre-Phase-4 signature
 -- of 'toLowCat', kept as a convenience for callers that fold hand-built
--- 'CatOp' terms with no 'CatLetRef' use sites (the production hot path:
--- 'compileCatToInstr' via 'buildInstrGraph'/'compileProcedureViaCatOp').
+-- 'CatOp' terms with no 'CatLetRef' use sites ('buildInstrGraphNamed', and
+-- the CatOp-level unit tests in @CatOpTest@ that call it directly).
 -- Equivalent to @toLowCat (CatTerm op Map.empty)@. 'toLowCat' itself now
 -- takes a 'CatTerm' so it can consult the table at 'CatLetRef' use sites.
 toLowCatOp :: CatOp a b -> LowCat
@@ -189,12 +182,11 @@ data WiringPayload = WiringPayload
 
 -- | Split a compiled 'LowCat' term into itself (unchanged — 'LTagged'
 -- markers stay in place) plus a side table of every distinct tagged merge
--- block's content, collected once per blockId. Mirrors
--- 'BuilderState.bsBlockPcMemo'\'s contract: the first encounter of a given
--- blockId records its content and recurses into it (to find any further
--- tags nested inside); a repeat encounter is skipped outright, since its
--- content — and everything nested inside it — was already collected the
--- first time.
+-- block's content, collected once per blockId. Mirrors 'nbsBlockMemo'\'s
+-- contract: the first encounter of a given blockId records its content and
+-- recurses into it (to find any further tags nested inside); a repeat
+-- encounter is skipped outright, since its content — and everything nested
+-- inside it — was already collected the first time.
 collectWiring :: LowCat -> (LowCat, Map.Map Text LowCat)
 collectWiring t = (t, walkShared Map.empty t)
 
@@ -209,142 +201,6 @@ walkShared acc node = case node of
   LLoop a      -> walkShared acc a
   _            -> acc
 
--- ============================================================================
--- 2. GraphBuilder: InstrGraph Target (Phase 4 — backward chaining)
--- ============================================================================
-
--- | State for the graph builder.  Nodes are keyed by PC; allocation is sequential.
-data BuilderState = BuilderState
-  { bsNodes       :: Map.Map Int InstrNode
-  , bsNextPc      :: Int
-  , bsSourceLines :: [(Int, Int)]
-  , bsExitPc      :: Int
-    -- ^ The pc of the procedure's one true exit (the 'InstrReturn' node
-    -- allocated first, in 'buildInstrGraph'). Fixed for the whole build
-    -- regardless of loop nesting — 'LReturn' (Plan 146 Phase 2i) resolves
-    -- here directly instead of whatever local @nextPc@ a loop's own
-    -- break/post-loop threading passed in.
-  , bsBlockPcMemo :: Map.Map (Text, Int) Int
-    -- ^ Plan 150: (blockId, continuation pc) -> the pc already allocated
-    -- the first time 'compileLowCatToInstr' lowered a 'LTagged' node for this
-    -- blockId with this continuation. A merge block is only ever tagged
-    -- with the SAME blockId across every predecessor that reaches it, and
-    -- (since all predecessors of a genuine merge converge on the same
-    -- subsequent code) every encounter passes the same continuation pc —
-    -- so keying on both together is safe and lets a repeat encounter reuse
-    -- the existing pc instead of re-lowering (and re-allocating a full
-    -- duplicate subgraph for) the same content again.
-  }
-
--- | The graph builder monad.
-newtype GraphBuilder a = GraphBuilder { runBuilder :: State BuilderState a }
-
-instance Functor GraphBuilder where
-  fmap f (GraphBuilder m) = GraphBuilder (fmap f m)
-
-instance Applicative GraphBuilder where
-  pure a = GraphBuilder (pure a)
-  GraphBuilder f <*> GraphBuilder a = GraphBuilder (f <*> a)
-
-instance Monad GraphBuilder where
-  GraphBuilder m >>= f = GraphBuilder (m >>= (runBuilder P.. f))
-
--- | Get the next available PC without allocating.
-peekNextPc :: GraphBuilder Int
-peekNextPc = GraphBuilder (gets bsNextPc)
-
--- | Plan 150: look up a previously-lowered merge block's entry pc for this
--- exact (blockId, continuation) pair, if this is a repeat encounter.
-lookupBlockPcMemo :: Text -> Int -> GraphBuilder (Maybe Int)
-lookupBlockPcMemo bid nextPc = GraphBuilder (gets (Map.lookup (bid, nextPc) P.. bsBlockPcMemo))
-
--- | Plan 150: record a merge block's freshly-allocated entry pc so the next
--- encounter of the same (blockId, continuation) pair can reuse it.
-registerBlockPcMemo :: Text -> Int -> Int -> GraphBuilder ()
-registerBlockPcMemo bid nextPc pc = GraphBuilder $ modify $ \s ->
-  s { bsBlockPcMemo = Map.insert (bid, nextPc) pc (bsBlockPcMemo s) }
-
--- | Allocate a node at the next available PC and return its PC.
-allocateNode :: InstrNode -> GraphBuilder Int
-allocateNode node = do
-  pc <- peekNextPc
-  GraphBuilder $ modify $ \s -> s { bsNextPc = bsNextPc s P.+ 1, bsNodes = Map.insert pc node (bsNodes s) }
-  return pc
-
--- | Register a node at a specific PC (for patching, e.g. loop headers).
-registerNodeAt :: Int -> InstrNode -> GraphBuilder ()
-registerNodeAt pc node = GraphBuilder $ modify $ \s ->
-  s { bsNodes = Map.insert pc node (bsNodes s) }
-
--- | Finalize: convert the node map to a sorted list for InstrGraph.
-finalizeGraph :: Int -> BuilderState -> InstrGraph
-finalizeGraph entryPc s = InstrGraph
-  { igNodes            = map P.snd (Map.toAscList (bsNodes s))
-  , igEntry            = entryPc
-  , igSuspensionPoints = []
-  , igSourceMap        = bsSourceLines s
-  }
-
--- | Initial builder state.
-initState :: BuilderState
-initState = BuilderState { bsNodes = Map.empty, bsNextPc = 0, bsSourceLines = [], bsExitPc = 0, bsBlockPcMemo = Map.empty }
-
--- | Compile a CatOp into InstrGraph nodes.
--- Lowers to 'LowCat' first (stripping GADT types), then compiles.
-compileCatToInstr :: CatOp a b -> Int -> GraphBuilder Int
-compileCatToInstr catOp nextPc = compileLowCatToInstr (toLowCatOp catOp) nextPc
-
--- | Compile a 'LowCat' into InstrGraph nodes using backward chaining.
--- Takes the continuation PC (where to jump after) and returns the entry PC.
--- All pattern matching is on plain constructors — no unsafeCoerce.
-compileLowCatToInstr :: LowCat -> Int -> GraphBuilder Int
-compileLowCatToInstr LId nextPc = return nextPc
-compileLowCatToInstr (LAssignWithRhs var expr) nextPc =
-  allocateNode (InstrAssign { anVar = var, anRhs = expr, anNext = nextPc })
--- Branch pattern: intercept CatFanIn + condition before CatCompose tears them apart.
-compileLowCatToInstr (LCompose g f) nextPc = case inspectBranchLowCat g of
-  Just (tOp, fOp) -> do
-    -- No join InstrNop: both arms fall through directly to nextPc, matching the
-    -- old compiler (PB.Analysis.InstrGraph never allocates a node purely to
-    -- serve as a join point). See Plan 145 Finding A.
-    let branchCond = extractCondLowCat f
-    elseEntryPc <- compileLowCatToInstr fOp nextPc
-    thenEntryPc <- compileLowCatToInstr tOp nextPc
-    branchEntryPc <- allocateNode (InstrBranch { brCond = branchCond, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
-    compileLowCatToInstr f branchEntryPc
-  Nothing -> do
-    gEntryPc <- compileLowCatToInstr g nextPc
-    fEntryPc <- compileLowCatToInstr f gEntryPc
-    return fEntryPc
-compileLowCatToInstr (LFanIn tOp fOp) nextPc =
-  compileBranchDiamondLowCat ExNull tOp fOp nextPc
-compileLowCatToInstr (LLoop body) nextPc = compileLoopLowCat body nextPc
-compileLowCatToInstr (LCall name args) nextPc =
-  allocateNode (InstrCallProc { cpCallee = name, cpArgs = args, cpNext = nextPc })
-compileLowCatToInstr (LSuspend eff args) nextPc =
-  allocateNode (InstrSuspend { suEffect = eff, suArgs = args, suVar = Nothing, suContinuation = nextPc })
--- | True procedure return (Plan 146 Phase 2i): ignore whatever local
--- continuation this call site threaded in (a loop's own break/post-loop pc,
--- however deeply nested) and resolve straight to the one true exit recorded
--- in 'BuilderState' by 'buildInstrGraph'.
-compileLowCatToInstr LReturn _nextPc = GraphBuilder (gets bsExitPc)
--- | Plan 150: a merge block's tagged content. On the first encounter (for
--- this blockId + continuation), lower it for real and remember the pc; on
--- every later encounter, reuse that pc instead of re-lowering (and
--- re-allocating a full duplicate subgraph for) the same content again —
--- this is what stops sequential merge points (if/elseif chains,
--- choose/case) from compounding multiplicatively.
-compileLowCatToInstr (LTagged bid inner) nextPc = do
-  cached <- lookupBlockPcMemo bid nextPc
-  case cached of
-    Just pc -> return pc
-    Nothing -> do
-      pc <- compileLowCatToInstr inner nextPc
-      registerBlockPcMemo bid nextPc pc
-      return pc
--- Structural / erased constructors
-compileLowCatToInstr _ nextPc = return nextPc
-
 -- | Detect a branch: is this LowCat a LFanIn?
 inspectBranchLowCat :: LowCat -> Maybe (LowCat, LowCat)
 inspectBranchLowCat (LFanIn t f) = Just (t, f)
@@ -358,97 +214,28 @@ extractCondLowCat (LCompose _ inner) = extractCondLowCat inner
 extractCondLowCat (LFork _ rhs)      = extractCondLowCat rhs
 extractCondLowCat _                  = ExNull
 
--- | Emit a branch diamond: InstrBranch + then-path + else-path, converging at a join nop.
-compileBranchDiamondLowCat :: Expr -> LowCat -> LowCat -> Int -> GraphBuilder Int
-compileBranchDiamondLowCat cond tOp fOp nextPc = do
-  joinPc <- allocateNode (InstrNop { npNext = nextPc })
-  elseEntryPc <- compileLowCatToInstr fOp joinPc
-  thenEntryPc <- compileLowCatToInstr tOp joinPc
-  allocateNode (InstrBranch { brCond = cond, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
-
--- | Compile a loop: reserve a header pc, compile the body with a back-edge
--- to it, then patch the reserved pc directly with the header's real content
--- (typically a 'InstrBranch') instead of forwarding to a separately-allocated
--- node. Mirrors 'PB.Analysis.InstrGraph'\'s @BsFor@\/@BsDo@ pattern: emit a
--- placeholder pc, then @patchNode@ it in place once the real content is
--- known — no residual hop (Plan 145).
-compileLoopLowCat :: LowCat -> Int -> GraphBuilder Int
-compileLoopLowCat body nextPc = do
-  loopHeaderPc <- allocateNode (InstrNop { npNext = -1 })
-  patchLoopHeaderLowCat body loopHeaderPc nextPc
-  return loopHeaderPc
-
--- | Compile the loop's header\/body content, patching the reserved
--- 'loopHeaderPc' directly with the node the header produces (a 'InstrBranch'
--- for for\/while loops — the common case) rather than allocating a fresh pc
--- and leaving 'loopHeaderPc' as a forwarding 'InstrNop'. Falls back to the old
--- forwarding-'InstrNop' behaviour for any other shape (e.g. a headerless
--- infinite @do...loop@), which is unchanged from before this fix.
-patchLoopHeaderLowCat :: LowCat -> Int -> Int -> GraphBuilder ()
-patchLoopHeaderLowCat (LCompose g f) loopHeaderPc nextPc
-  | Just (tOp, fOp) <- inspectBranchLowCat g = do
-      let branchCond = extractCondLowCat f
-      elseEntryPc <- compileLoopBodyLowCat fOp loopHeaderPc nextPc
-      thenEntryPc <- compileLoopBodyLowCat tOp loopHeaderPc nextPc
-      registerNodeAt loopHeaderPc (InstrBranch { brCond = branchCond, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
-patchLoopHeaderLowCat body loopHeaderPc nextPc = do
-  bodyEntryPc <- compileLoopBodyLowCat body loopHeaderPc nextPc
-  registerNodeAt loopHeaderPc (InstrNop { npNext = bodyEntryPc })
-
--- | Compile a loop body. 'LInl'/'LInr' are pure value-routing markers (which
--- of the two known pcs execution resumes at) — structural/erased, like
--- 'LEval'\/'LFork'\/'LSplitValue' in 'compileLowCatToInstr'. They resolve
--- directly to 'loopHeaderPc'\/'nextPc' as entry pcs; no node is allocated.
--- The old compiler ('PB.Analysis.InstrGraph') never allocates a node for
--- the implicit loop continue\/break either — it threads @(incrPc,
--- fallthrough)@ straight through as raw pcs (Plan 145).
-compileLoopBodyLowCat :: LowCat -> Int -> Int -> GraphBuilder Int
-compileLoopBodyLowCat LInl loopHeaderPc _nextPc = return loopHeaderPc
-compileLoopBodyLowCat LInr _loopHeaderPc nextPc  = return nextPc
--- Branch pattern inside loops: intercept LFanIn + condition before LCompose tears them apart.
-compileLoopBodyLowCat (LCompose g f) loopHeaderPc nextPc
-  | Just (tOp, fOp) <- inspectBranchLowCat g = do
-      -- No join InstrNop here either — same fix as the top-level branch case
-      -- above (Plan 145 Finding A).
-      let branchCond = extractCondLowCat f
-      elseEntryPc <- compileLoopBodyLowCat fOp loopHeaderPc nextPc
-      thenEntryPc <- compileLoopBodyLowCat tOp loopHeaderPc nextPc
-      branchEntryPc <- allocateNode (InstrBranch { brCond = branchCond, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
-      compileLoopBodyLowCat f loopHeaderPc branchEntryPc
-compileLoopBodyLowCat (LCompose g f) loopHeaderPc nextPc = do
-  gEntryPc <- compileLoopBodyLowCat g loopHeaderPc nextPc
-  compileLoopBodyLowCat f loopHeaderPc gEntryPc
-compileLoopBodyLowCat (LFanIn tOp fOp) loopHeaderPc nextPc = do
-  thenEntryPc <- compileLoopBodyLowCat tOp loopHeaderPc nextPc
-  elseEntryPc <- compileLoopBodyLowCat fOp loopHeaderPc nextPc
-  allocateNode (InstrBranch { brCond = ExNull, brThenPc = thenEntryPc, brElsePc = elseEntryPc })
--- | Plan 150: a merge block inside a loop body (e.g. an if/else's shared
--- tail before the back-edge). Must recurse via 'compileLoopBodyLowCat'
--- (not delegate to the loop-unaware 'compileLowCatToInstr', which would
--- resolve a nested 'LInl'\/'LInr' against the wrong continuation and lose
--- the back-edge to 'loopHeaderPc' — confirmed by the regression this exact
--- gap caused in "loop containing if/else with a shared tail", Phase 3)
--- so the tag's own back-edge/break markers still resolve correctly.
-compileLoopBodyLowCat (LTagged bid inner) loopHeaderPc nextPc = do
-  cached <- lookupBlockPcMemo bid nextPc
-  case cached of
-    Just pc -> return pc
-    Nothing -> do
-      pc <- compileLoopBodyLowCat inner loopHeaderPc nextPc
-      registerBlockPcMemo bid nextPc pc
-      return pc
-compileLoopBodyLowCat linearOp _loopHeaderPc nextPc =
-  compileLowCatToInstr linearOp nextPc
-
--- | Build a flat InstrGraph from a structured CatOp.
-buildInstrGraph :: CatOp () () -> InstrGraph
-buildInstrGraph catOp =
-  let (entryPc, finalState) = runState (runBuilder $ do
-        exitPc <- allocateNode (InstrReturn Nothing)
-        GraphBuilder $ modify $ \s -> s { bsExitPc = exitPc }
-        compileCatToInstr catOp exitPc
-        ) initState
-  in finalizeGraph entryPc finalState
+-- ============================================================================
+-- 2. Named-graph InstrGraph' construction (Plan 167 Phase 6, Approach C)
+-- ============================================================================
+--
+-- 'compileLowCatToInstrNamed' (below) mirrors what the retired PC-threaded
+-- lowering used to do equation for equation (same branch-pattern detection,
+-- same join-point-free special case, same loop-header patch shape) — the
+-- only difference is that a node's address is a 'Text' name minted (or
+-- reused) here instead of an 'Int' pc allocated by a threaded 'State'. A
+-- merge block's dedup is 'Map.Map' key uniqueness in 'nbsBlockMemo' (keyed
+-- on blockId alone) — the continuation component a PC-threaded design would
+-- need is provably redundant for a genuine merge: every predecessor of the
+-- same blockId is threaded the same downstream continuation by the same
+-- CPS-threading argument this module has relied on since Plan 150, so
+-- caching on blockId alone is sound.
+--
+-- 'buildInstrGraphNamed' is the sole production flattening path
+-- ('compileProcedureViaCatOp' below); it also gives the CatOp-level unit
+-- tests in "CatOpTest" a direct entry point equivalent to the old
+-- @buildInstrGraph@.
+buildInstrGraphNamed :: CatOp a b -> InstrGraph
+buildInstrGraphNamed = linearize P.. buildLowCatGraphNamed P.. toLowCatOp
 
 -- | Unified entry point: compile a procedure body via the SSA → CatOp pipeline.
 --
@@ -458,10 +245,13 @@ buildInstrGraph catOp =
 -- datastore/datawindow/transaction variable's type, so a suspend method call
 -- on it (retrieve/update/commit/…) always falls through to the conservative
 -- 'PureCall' default (Plan 146 Phase 2e).
+-- Plan 167 Phase 6 (Approach C): flattens via the named-graph builder +
+-- 'linearize' ('buildInstrGraphNamed' composed with 'compileProcedureToLowCat',
+-- inlined here) instead of the retired PC-threaded 'BuilderState'\/
+-- 'bsBlockPcMemo' lowering.
 compileProcedureViaCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> InstrGraph
 compileProcedureViaCatOp env userFns body =
-  let env' = env { steLocal = collectBodyLocals body `Map.union` steLocal env }
-  in buildInstrGraph (compileSsa env' userFns (buildSsa env' "proc" body))
+  linearize (buildLowCatGraphNamed (compileProcedureToLowCat env userFns body))
 
 -- | Same SSA → CatOp pipeline as 'compileProcedureViaCatOp', stopping at the
 -- 'LowCat' term instead of flattening to 'InstrGraph' (Plan 149 Phase 1 —
@@ -471,8 +261,8 @@ compileProcedureViaCatOp env userFns body =
 -- (the 'CatTerm' spine + table) and the table-native 'toLowCat', which
 -- resolves 'CatLetRef' use sites from the table. The produced 'LowCat' still
 -- carries 'LTagged bid inner' (body inlined) — the identical shape
--- 'compileLowCatToInstr'/'collectWiring' consume — so 'bsBlockPcMemo' and
--- 'walkShared' remain load-bearing (deleted in Phase 6, not here).
+-- 'compileLowCatToInstrNamed'/'collectWiring' consume — so 'walkShared'
+-- remains load-bearing.
 compileProcedureToLowCat :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> LowCat
 compileProcedureToLowCat env userFns body =
   toLowCat (compileProcedureToCatTerm env userFns body)
@@ -517,33 +307,13 @@ compileProcedureToCatTerm env userFns body =
   let env' = env { steLocal = collectBodyLocals body `Map.union` steLocal env }
   in extractTable (compileSsa env' userFns (buildSsa env' "proc" body))
 
--- ============================================================================
--- 3. Named-graph InstrGraph' construction (Plan 167 Phase 6 — Approach C)
--- ============================================================================
---
--- 'compileLowCatToInstrNamed' mirrors 'compileLowCatToInstr' equation for
--- equation (same branch-pattern detection, same join-point-free special
--- case, same loop-header patch shape) — the only difference is that a
--- node's address is a 'Text' name minted (or reused) here instead of an
--- 'Int' pc allocated by 'BuilderState'. A merge block's dedup is 'Map.Map'
--- key uniqueness in 'nbsBlockMemo' (keyed on blockId alone), not
--- 'bsBlockPcMemo''s 2D @(blockId, continuation pc)@ key — the continuation
--- component of that key is provably redundant for a genuine merge: every
--- predecessor of the same blockId is threaded the same downstream
--- continuation by the same CPS-threading argument 'bsBlockPcMemo''s own
--- docstring already relies on (GraphBuilder.hs:224-233), so caching on
--- blockId alone is sound here for the same reason it's sound there.
---
--- Not yet wired into production ('compileProcedureViaCatOp' is untouched);
--- kept side-by-side for cross-checking, per this plan's convention.
-
 -- | State for the named-graph builder.
 data NamedBuilderState = NamedBuilderState
   { nbsNodes     :: Map.Map Text (InstrNode' Text)
   , nbsCounter   :: Int
   , nbsExitName  :: Text
-    -- ^ The one true exit name (mirrors 'BuilderState.bsExitPc'), fixed for
-    -- the whole build regardless of loop nesting.
+    -- ^ The one true exit name, fixed for the whole build regardless of
+    -- loop nesting.
   , nbsBlockMemo :: Map.Map Text Text
     -- ^ blockId -> the entry name already compiled for it.
   }
@@ -586,8 +356,9 @@ compileLowCatToInstrNamed (LAssignWithRhs var expr) nextName = do
 -- Branch pattern: intercept LFanIn + condition before LCompose tears them apart.
 compileLowCatToInstrNamed (LCompose g f) nextName = case inspectBranchLowCat g of
   Just (tOp, fOp) -> do
-    -- No join node: both arms fall through directly to nextName, matching
-    -- 'compileLowCatToInstr''s own no-join special case.
+    -- No join node: both arms fall through directly to nextName (Plan 145
+    -- Finding A — the compiler never allocates a node purely to serve as a
+    -- join point).
     let branchCond = extractCondLowCat f
     elseEntry <- compileLowCatToInstrNamed fOp nextName
     thenEntry <- compileLowCatToInstrNamed tOp nextName
@@ -620,8 +391,8 @@ compileLowCatToInstrNamed (LSuspend eff args) nextName = do
 compileLowCatToInstrNamed LReturn _nextName = NamedBuilder (gets nbsExitName)
 -- | A merge block's tagged content. On the first encounter, compile it for
 -- real and remember its entry name; on every later encounter, reuse that
--- name — this IS the structural dedup ('nbsBlockMemo' collapses
--- 'bsBlockPcMemo''s 2D key to 1D; see this section's headnote).
+-- name — this IS the structural dedup ('nbsBlockMemo' is 'Map.Map' key
+-- uniqueness on blockId alone; see this section's headnote).
 compileLowCatToInstrNamed (LTagged bid inner) nextName = do
   memo <- NamedBuilder (gets nbsBlockMemo)
   case Map.lookup bid memo of
@@ -630,15 +401,15 @@ compileLowCatToInstrNamed (LTagged bid inner) nextName = do
       entry <- compileLowCatToInstrNamed inner nextName
       NamedBuilder $ modify $ \s -> s { nbsBlockMemo = Map.insert bid entry (nbsBlockMemo s) }
       return entry
--- Structural / erased constructors (LInl/LInr/LEval/LFork/LSplitValue/LErasable
--- outside loop context — mirrors 'compileLowCatToInstr''s own catch-all).
+-- Structural / erased constructors: LInl/LInr/LEval/LFork/LSplitValue/
+-- LErasable outside loop context resolve straight to nextName, no node.
 compileLowCatToInstrNamed _ nextName = return nextName
 
--- | Mirrors 'patchLoopHeaderLowCat': compiles the loop header/body content
--- and defines 'loopHeaderName' with the resulting node. No "reserve then
--- patch" two-step is needed here — unlike an 'Int' pc, a 'Text' name doesn't
--- need a concrete value before children can reference it; 'defineNode' after
--- computing the children is sufficient.
+-- | Compiles the loop header/body content and defines 'loopHeaderName' with
+-- the resulting node. No "reserve then patch" two-step is needed — unlike
+-- an 'Int' pc, a 'Text' name doesn't need a concrete value before children
+-- can reference it; 'defineNode' after computing the children is
+-- sufficient.
 patchLoopHeaderNamed :: LowCat -> Text -> Text -> NamedBuilder ()
 patchLoopHeaderNamed (LCompose g f) loopHeaderName nextName
   | Just (tOp, fOp) <- inspectBranchLowCat g = do
@@ -650,9 +421,9 @@ patchLoopHeaderNamed body loopHeaderName nextName = do
   bodyEntry <- compileLoopBodyLowCatNamed body loopHeaderName nextName
   defineNode loopHeaderName (InstrNop' { npNext' = bodyEntry })
 
--- | Mirrors 'compileLoopBodyLowCat'. 'LInl'\/'LInr' resolve directly to
--- 'loopHeaderName'\/'nextName' — no node allocated, matching the old
--- compiler's treatment of the implicit loop continue\/break.
+-- | Compiles a loop body. 'LInl'\/'LInr' resolve directly to
+-- 'loopHeaderName'\/'nextName' — no node allocated for the implicit loop
+-- continue\/break (Plan 145).
 compileLoopBodyLowCatNamed :: LowCat -> Text -> Text -> NamedBuilder Text
 compileLoopBodyLowCatNamed LInl loopHeaderName _nextName = return loopHeaderName
 compileLoopBodyLowCatNamed LInr _loopHeaderName nextName = return nextName
@@ -675,11 +446,10 @@ compileLoopBodyLowCatNamed (LFanIn tOp fOp) loopHeaderName nextName = do
   return n
 -- | A merge block inside a loop body — must recurse via
 -- 'compileLoopBodyLowCatNamed' (not delegate to the loop-unaware
--- 'compileLowCatToInstrNamed'), same reason as 'compileLoopBodyLowCat''s own
--- 'LTagged' clause: a nested 'LInl'\/'LInr' inside must still resolve against
--- 'loopHeaderName'\/'nextName', not lose the back-edge. Shares 'nbsBlockMemo'
--- with the top-level compiler (global to the whole build, like
--- 'bsBlockPcMemo').
+-- 'compileLowCatToInstrNamed'): a nested 'LInl'\/'LInr' inside must still
+-- resolve against 'loopHeaderName'\/'nextName', not lose the back-edge.
+-- Shares 'nbsBlockMemo' with the top-level compiler (global to the whole
+-- build).
 compileLoopBodyLowCatNamed (LTagged bid inner) loopHeaderName nextName = do
   memo <- NamedBuilder (gets nbsBlockMemo)
   case Map.lookup bid memo of
@@ -691,7 +461,8 @@ compileLoopBodyLowCatNamed (LTagged bid inner) loopHeaderName nextName = do
 compileLoopBodyLowCatNamed linearOp _loopHeaderName nextName =
   compileLowCatToInstrNamed linearOp nextName
 
--- | Build a named graph from a 'LowCat' term. Mirrors 'buildInstrGraph'.
+-- | Build a named graph from a 'LowCat' term. The sole production
+-- flattening path, via 'compileProcedureViaCatOp'/'buildInstrGraphNamed'.
 buildLowCatGraphNamed :: LowCat -> InstrGraph' Text
 buildLowCatGraphNamed lowCat =
   let (entryName, finalState) = runState (runNamedBuilder $ do
@@ -701,12 +472,3 @@ buildLowCatGraphNamed lowCat =
         compileLowCatToInstrNamed lowCat exitName
         ) initNamedState
   in InstrGraph' { igNodes' = nbsNodes finalState, igEntry' = entryName }
-
--- | Plan 167 Phase 6 (Approach C) — same SSA -> CatOp -> LowCat pipeline as
--- 'compileProcedureViaCatOp', but flattened via the named-graph builder +
--- 'linearize' instead of 'compileCatToInstr'\/'BuilderState.bsBlockPcMemo'.
--- Parallel entry point, kept side-by-side for cross-checking (this plan's
--- convention throughout Phase 5\/6). Not yet wired into production.
-compileProcedureViaCatOpNamed :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> InstrGraph
-compileProcedureViaCatOpNamed env userFns body =
-  linearize (buildLowCatGraphNamed (compileProcedureToLowCat env userFns body))

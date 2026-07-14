@@ -136,25 +136,24 @@ normalizeCallTag other      = other
 -- ---------------------------------------------------------------------------
 -- Plan 167 Phase 6 — the named-graph intermediate (Approach C)
 --
--- 'InstrGraph' construction (PB.Analysis.GraphBuilder.compileLowCatToInstr)
--- is a backward-chaining compiler: it takes a continuation pc and returns an
--- entry pc, threading fresh 'Int' pcs as it goes. A merge block reached by N
--- predecessors therefore needs its own memo ('BuilderState.bsBlockPcMemo',
--- keyed 2D on @(blockId, continuation pc)@) to avoid re-lowering the same
--- content N times. 'InstrNode''\/'InstrGraph'' sidestep this: nodes are
--- addressed by 'Text' name (mirroring 'PB.Analysis.SSA.SsaBlock's own
--- successor naming) instead of by an eagerly-allocated pc, so a shared block
--- is exactly one 'Map.Map' entry — dedup is 'Map.Map' key uniqueness, not a
--- memo. 'linearize' numbers the named graph into the flat pc-indexed
--- 'InstrGraph' the rest of the pipeline (and the TS runtime) consume, in one
--- pure BFS pass with no state threading.
+-- 'InstrGraph' construction (PB.Analysis.GraphBuilder.compileLowCatToInstrNamed)
+-- addresses nodes by 'Text' name (mirroring 'PB.Analysis.SSA.SsaBlock's own
+-- successor naming) rather than by an eagerly-allocated pc, so a merge block
+-- reached by N predecessors is exactly one 'Map.Map' entry — dedup is
+-- 'Map.Map' key uniqueness, not a memo. (An earlier, since-retired
+-- PC-threaded design allocated 'Int' pcs eagerly during a backward-chaining
+-- walk and needed a 2D @(blockId, continuation pc)@ memo to avoid re-lowering
+-- the same content N times; the named design has no continuation dimension
+-- to key on in the first place.) 'linearize' numbers the named graph into
+-- the flat pc-indexed 'InstrGraph' the rest of the pipeline (and the TS
+-- runtime) consume, in one pure BFS pass with no state threading.
 
 -- | 'InstrNode' parameterized over its successor-reference type: 'Text'
 -- during named-graph construction, 'Int' after 'linearize'. Constructor set
--- matches the subset 'PB.Analysis.GraphBuilder.compileLowCatToInstr' actually
--- allocates for real 'PB.Analysis.CatLower.compileSsa' output — 'InstrCall'
--- \/'InstrGoto' are never produced (see 'normalizeCallTag''s own comment on
--- 'SCall'\/'SCProc').
+-- matches the subset 'PB.Analysis.GraphBuilder.compileLowCatToInstrNamed'
+-- actually allocates for real 'PB.Analysis.CatLower.compileSsa' output —
+-- 'InstrCall'\/'InstrGoto' are never produced (see 'normalizeCallTag''s own
+-- comment on 'SCall'\/'SCProc').
 data InstrNode' p
   = InstrAssign'   { anVar' :: Text, anRhs' :: Expr, anNext' :: p }
   | InstrBranch'   { brCond' :: Expr, brThenPc' :: p, brElsePc' :: p }
@@ -173,9 +172,9 @@ data InstrGraph' p = InstrGraph'
 
 -- | Number a named graph into the flat, pc-indexed 'InstrGraph'. Pure BFS
 -- from 'igEntry'' — every name is visited (and numbered) exactly once by
--- construction, so this needs no memo either. The traversal order need not
--- match 'compileLowCatToInstr''s own numbering: 'canonicalize' already
--- normalizes both to a BFS-order shape for comparison.
+-- construction, so this needs no memo either. This numbering need not match
+-- any other traversal's pc assignment: 'canonicalize' normalizes to a
+-- BFS-order shape for comparison, independent of numbering scheme.
 linearize :: InstrGraph' Text -> InstrGraph
 linearize g =
   let order = bfsOrderNamed (igEntry' g) (igNodes' g)

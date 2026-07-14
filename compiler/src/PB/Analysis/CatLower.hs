@@ -72,14 +72,16 @@ data CompileCtx = CompileCtx
 -- A loop header always has 2+ predecessors (the initial forward entry, plus
 -- at least one back-edge), so a naive predecessor count always flags it —
 -- but a header is never actually at risk of the physical-duplication bug
--- this tagging exists to fix: 'compileLoopLowCat' lowers a loop's header
--- content exactly once, as the sole argument to 'CatLoop', never embedded
--- at a second tree position. Tagging it anyway broke
--- 'patchLoopHeaderLowCat'\'s @LCompose (LFanIn ..) ..@ structural detection
--- (it doesn't unwrap 'LTagged'), which silently fell back to its
--- unpatched-forwarding-'InstrNop' path — and, worse, mis-threaded the loop's
--- own back-edge, causing loops to stop after one iteration. Confirmed via
--- the regression this caused in the loop test suite (Plan 150 Phase 3).
+-- this tagging exists to fix: the loop-lowering machinery
+-- (@compileLowCatToInstrNamed@'s @LLoop@ clause in
+-- "PB.Analysis.GraphBuilder") lowers a loop's header content exactly once,
+-- as the sole argument to 'CatLoop', never embedded at a second tree
+-- position. Tagging it anyway broke @patchLoopHeaderNamed@'s @LCompose
+-- (LFanIn ..) ..@ structural detection (it doesn't unwrap 'LTagged'), which
+-- silently fell back to its unpatched-forwarding-'InstrNop' path — and,
+-- worse, mis-threaded the loop's own back-edge, causing loops to stop
+-- after one iteration. Confirmed via the regression this caused in the
+-- loop test suite (Plan 150 Phase 3).
 computeMergePoints :: SsaProc -> Set.Set Text
 computeMergePoints proc =
   Map.keysSet (Map.filter (P.> 1) predCounts) `Set.difference` computeLoopHeaders proc

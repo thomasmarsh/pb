@@ -174,10 +174,10 @@ instance Effectful SchFootprint where
 -- — O(2^N) on reconvergent control flow (confirmed by scaling probe:
 -- ~4x alloc per +2 switches). This fold caches the FORCED 'Set' per
 -- blockId, so a shared subtree's footprint is computed once and reused
--- at every embedding — the force-time analogue of LowCat's
--- @bsBlockPcMemo@ ('PB.Analysis.GraphBuilder.compileLowCatToInstr'
--- 'LTagged' case). Simpler than that memo: @ctx@ is fixed for the whole
--- call, so the key is just @blockId@ (no continuation-pc dimension).
+-- at every embedding — the force-time analogue of LowCat's own
+-- @nbsBlockMemo@ ('PB.Analysis.GraphBuilder.compileLowCatToInstrNamed'\'s
+-- 'LTagged' case), which is likewise keyed on @blockId@ alone with no
+-- continuation dimension.
 --
 -- Soundness: 'SchFootprint' is a constant functor (phantom a\/b), so
 -- folding directly is semantically equivalent to the instance route BY

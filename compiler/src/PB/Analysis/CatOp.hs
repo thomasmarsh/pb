@@ -145,7 +145,7 @@ branchEff cond thenK elseK = (thenK ||| elseK) . splitValue . J (PId &&& PEval c
 -- is folded once per embedding. Because that shared subterm itself contains
 -- the next reconvergent fan-in, the cost is O(2^depth) in the number of
 -- sequential reconvergent switches — the same class of blowup Plan 150
--- fixed for 'PB.Analysis.GraphBuilder.toLowCat'\/@compileLowCatToInstr@
+-- fixed for 'PB.Analysis.GraphBuilder.toLowCat'\/@compileLowCatToInstrNamed@
 -- (see the "GraphBuilder node-sharing" tests in @CatOpTest@). Nothing folded
 -- a 'CatTagged'-bearing term on a hot path before Plan 163 Phase 3 wired
 -- 'PB.Analysis.SchFootprint.foldSchFootprint' into
