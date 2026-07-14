@@ -121,6 +121,8 @@ instance Effectful Interp where
 
   loopK = interpretLoop
 
+  branchK cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)
+
 -- | Execute a loop via recursion.  The body returns 'Left' to continue
 -- with updated state, or 'Right' to break with a final value.
 interpretLoop :: Interp a (Either a b) -> Interp a b

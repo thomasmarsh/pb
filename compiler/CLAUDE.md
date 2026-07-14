@@ -993,13 +993,35 @@ collectBodyLocals :: [Located BodyStmt] -> Map.Map Text PbType  -- imported by G
 class Category k where { id :: k a a; (.) :: k b c -> k a b -> k a c }
 class Category k => Cartesian k where { exl, exr, (&&&) }
 class Category k => Cocartesian k where { inl, inr, (|||) }
-class Category k => Effectful k where { eval, assign, lookup, suspend, callProc, splitValue, ret, loopK }
+class Category k => Effectful k where { eval, assign, lookup, suspend, callProc, splitValue, ret, loopK, branchK }
 -- ret/loopK added Plan 148 Phase 3 (2026-07-07): CatReturn/CatLoop were the
 -- only 2 of CatOp's 20 constructors with no existing class primitive to
 -- dispatch to (everything else, incl. CatAssignWithRhs = assign var . (id
 -- &&& eval e), already reduced). CatOp's own instance: ret = CatReturn,
 -- loopK = CatLoop. Interp's instance (PB.Analysis.CatInterp) absorbs the
 -- old bespoke CatReturn/CatLoop cases (throwIO ReturnUnwind / interpretLoop).
+-- branchK :: Expr -> k a c -> k a c -> k a c (Plan 167 Phase 7 Step 1,
+-- 2026-07-14): promotes branch/branchEff from derived combinators to a
+-- primitive, no-default Effectful method -- a future fold TARGET (e.g. a
+-- NamedGraphBuilder Effectful instance, Phase 7 Step 4) can override it for
+-- direct, simultaneous access to the condition and both arms, which a
+-- generic per-constructor fold can never recover once each is folded
+-- independently. Deliberately carries NO (Cartesian k, Cocartesian k)
+-- constraint anywhere (neither on the class head nor per-method): a
+-- per-method constraint over the class's own variable is still resolved by
+-- instance search at every call site, so it would make branchK uncallable
+-- at k = Eff (no Cartesian Eff instance exists, by design -- a cartesian
+-- fork over an effectful subterm must not typecheck). Since branchK has no
+-- default, no instance needs the constraint threaded through its own
+-- signature -- each instance resolves whatever it uses via ordinary global
+-- instance search on its own concrete type (Cartesian Pure via J, for
+-- Eff's case). All 4 instances (CatOp/Interp/SchFootprint/Eff, CatOp.hs/
+-- CatInterp.hs/SchFootprint.hs) match their prior branch/branchEff
+-- derivation exactly -- see doc/plan/167-structural-sharing-catop-lowcat.md's
+-- "Second correction (2026-07-14)" for the full evidence trail (a real
+-- cabal build error caught the first, constrained-signature attempt).
+-- branch/branchEff (the free term-building functions CatLower.hs/
+-- CatLowerEff.hs use) are unaffected and unchanged.
 branch  :: (Effectful k, Cartesian k, Cocartesian k) => Expr -> k env b -> k env b -> k env b
 foldCat :: (Effectful k, Cartesian k, Cocartesian k) => CatOp a b -> k a b
 -- foldCat (Plan 148 Phase 3): the fold CatOp is initial for, generalized to

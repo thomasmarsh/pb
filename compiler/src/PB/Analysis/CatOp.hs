@@ -101,6 +101,18 @@ class Category k => Effectful k where
   -- 'foldCat' can be generic over any 'Effectful' instance instead of
   -- special-casing these two constructors per-interpreter.
   loopK      :: k a (Either a b) -> k a b
+  -- | Categorical branching ('CatFanIn'/'EFanIn'-forming), promoted from a
+  -- derived combinator (Plan 167 Phase 7 Step 1) to a primitive so a target
+  -- category can override it with direct, simultaneous access to the
+  -- condition and both arms — a generic per-constructor fold can never
+  -- recover that access once each has been folded/erased independently (see
+  -- doc/plan/167-structural-sharing-catop-lowcat.md's "Open Question 2").
+  -- No default: 'Eff' has no 'Cartesian' instance and must not gain one
+  -- (a cartesian fork over an effectful subterm must not typecheck — see
+  -- that plan's "Why a Pure term can never smuggle in a duplicated Eff
+  -- reference"), so a defaulted body requiring 'Cartesian k' is unsound for
+  -- this class. Every instance defines 'branchK' explicitly instead.
+  branchK    :: Expr -> k a c -> k a c -> k a c
 
 -- ============================================================================
 -- 2. Derived Combinators
@@ -529,6 +541,7 @@ instance Effectful CatOp where
   splitValue = CatSplitValue
   ret        = CatReturn
   loopK      = CatLoop
+  branchK cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)
 
 -- ============================================================================
 -- 5. Plan 167 Phase 5a — the Freyd split: Pure / Eff / J
@@ -624,6 +637,7 @@ instance Effectful Eff where
   splitValue      = ESplitValue
   ret             = EReturn
   loopK body      = ELoop body
+  branchK cond thenK elseK = (thenK ||| elseK) . splitValue . J (PId &&& PEval cond)
 
 -- | The Freyd fold: interpret an 'Eff' term into any target category that
 -- implements 'Effectful'/'Cartesian'/'Cocartesian'. Every 'Eff' constructor

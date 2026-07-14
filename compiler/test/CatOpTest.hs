@@ -13,8 +13,9 @@ import PB.Analysis.CatLower (compileSsa)
 import PB.Analysis.GraphBuilder
 import PB.Analysis.CatInterp
 import PB.Analysis.CatEval (Value (..), TraceEvent (..))
-import PB.Analysis.SchFootprint (foldSchFootprint, FunctorCtx (..))
-import PB.Analysis.SchemaCategory (StmtId (..))
+import PB.Analysis.SchFootprint (foldSchFootprint, FunctorCtx (..), SchFootprint (..))
+import PB.Analysis.SchemaCategory (StmtId (..), SchMorphism (..), SchObject (..), LegKind (..), LegSource (..))
+import PB.Pipeline.SqlParse (TableRef (..))
 import PB.Analysis.InstrGraph (ShapeNode (..), canonicalize, normalizeCallTag)
 import PB.Analysis.CallClassify (parseArgList, collectBodyLocals)
 import PB.Analysis.InstrInterp (runInstrGraphTrace, TraceOutcome (..))
@@ -2482,5 +2483,54 @@ tests = testGroup "CatOp"
             ("allocated " <> show bytes <> " bytes; expected < 20MB (structural sharing via \
              \Map.Map key uniqueness should stay linear with no memo at all)")
             (bytes P.< 20 P.* 1000 P.* 1000)
+    ]
+
+  , testGroup "branchK (Plan 167 Phase 7 Step 1): primitive Effectful method matches its prior derivation"
+    -- 'branchK' is promoted from a derived combinator ('branch'/'branchEff')
+    -- to a primitive, no-default 'Effectful' method (doc/plan/167-phase7-
+    -- step1-branchk-charter.md). Every instance's 'branchK' body is asserted
+    -- byte-identical to the derivation it replaces; these tests are the
+    -- behavioral proof, not just a compile-success check.
+    [ testCase "branchK matches branch's trace for CatOp (via Interp)" $ do
+        let t = CatAssignWithRhs "then_taken" (ExInt "1") :: CatOp () ()
+            f = CatAssignWithRhs "else_taken" (ExInt "2") :: CatOp () ()
+            cond = ExBool True
+            viaBranch  = branch cond t f
+            viaBranchK = branchK cond t f :: CatOp () ()
+            golden = [TeBranch True, TeAssign "then_taken" (VInt 1)]
+        (_, st1) <- runStateT (runInterp (runCat viaBranch) ()) (InterpState Map.empty [] Map.empty)
+        (_, st2) <- runStateT (runInterp (runCat viaBranchK) ()) (InterpState Map.empty [] Map.empty)
+        P.reverse (isTrace st1) @?= golden
+        P.reverse (isTrace st2) @?= golden
+
+    , testCase "branchK matches branchEff's trace for Eff (via foldFreyd/Interp)" $ do
+        let te = EAssignWithRhs "then_taken" (ExInt "1") :: Eff () ()
+            fe = EAssignWithRhs "else_taken" (ExInt "2") :: Eff () ()
+            cond = ExBool True
+            viaBranchEff = branchEff cond te fe
+            viaBranchK   = branchK cond te fe :: Eff () ()
+            golden = [TeBranch True, TeAssign "then_taken" (VInt 1)]
+        (_, st1) <- runStateT (runInterp (foldFreyd viaBranchEff) ()) (InterpState Map.empty [] Map.empty)
+        (_, st2) <- runStateT (runInterp (foldFreyd viaBranchK) ()) (InterpState Map.empty [] Map.empty)
+        P.reverse (isTrace st1) @?= golden
+        P.reverse (isTrace st2) @?= golden
+
+    , testCase "branchK matches branch's footprint for SchFootprint (static over-approximation union)" $ do
+        let morphismT = SchMorphism (ColumnObj (TableRef Nothing "t1") "a")
+                          (StmtObj (SqlStmtId "f" "o" "p" 1)) LegReads SrcSqlText
+            morphismF = SchMorphism (StmtObj (SqlStmtId "f" "o" "p" 2))
+                          (ColumnObj (TableRef Nothing "t2") "b") LegWrites SrcSqlText
+            t = SchFootprint (const (Set.singleton morphismT)) :: SchFootprint () ()
+            f = SchFootprint (const (Set.singleton morphismF)) :: SchFootprint () ()
+            cond = ExBool True
+            ctx = FunctorCtx { fcStmtObj = SqlStmtId "f.srf" "obj" "proc" 1
+                              , fcTypeEnv = emptyEnv
+                              , fcDwColumns = Map.empty
+                              , fcControlBindings = Map.empty }
+            viaBranch  = branch cond t f
+            viaBranchK = branchK cond t f :: SchFootprint () ()
+            golden = Set.fromList [morphismT, morphismF]
+        runSchFootprint viaBranch ctx @?= golden
+        runSchFootprint viaBranchK ctx @?= golden
     ]
   ]
