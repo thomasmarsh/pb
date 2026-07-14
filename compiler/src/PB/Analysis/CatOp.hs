@@ -118,6 +118,33 @@ class Category k => Effectful k where
   -- reference"), so a defaulted body requiring 'Cartesian k' is unsound for
   -- this class. Every instance defines 'branchK' explicitly instead.
   branchK    :: Expr -> k a c -> k a c -> k a c
+  -- | Fused assign-with-rhs ('CatAssignWithRhs'\/'EAssignWithRhs'-forming),
+  -- a fold-target primitive for the same reason 'branchK' is one, and with
+  -- the same no-default treatment for the same reason: the generic
+  -- derivation @assign var . (id &&& eval e)@ needs 'Cartesian k' to state
+  -- as a default body, and (per the 'branchK' correction above) a
+  -- per-method constraint over the class's own type variable is resolved at
+  -- every call site regardless of which instance defines the method — so a
+  -- constrained default would make this uncallable at @k = Eff@ again. Every
+  -- instance defines it explicitly: @CatOp@\/@Interp@\/@SchFootprint@ repeat
+  -- their current derivation verbatim (zero behaviour change); @Eff@'s body
+  -- is just @EAssignWithRhs@ (already a fused term primitive — no derivation
+  -- needed); a carrier with no value channel (a graph-flattener addressed
+  -- only by continuation name, where @eval@\/'(&&&)' erase to no-ops)
+  -- overrides it with direct access to the variable and the expression.
+  assignWithRhs :: Text -> Expr -> k a a
+  -- | Hook for a carrier that must not re-*materialize* a shared 'ELetRef'
+  -- body on every occurrence, only re-*reference* it. 'foldFreyd''s own
+  -- cache prevents re-folding the same blockId twice within one fold call,
+  -- but the folded @k a b@ value it caches may still be invoked once per
+  -- occurrence when the whole term is finally run — safe for a carrier
+  -- whose values are idempotent to re-enter (choice-based 'Interp', pure-set
+  -- 'SchFootprint') but not for one that allocates fresh output on every
+  -- invocation (a graph builder minting new node names). Default is
+  -- identity: only such a carrier needs to override it, wrapping the body
+  -- with its own blockId-keyed memo before caching.
+  memoTag :: Text -> k a b -> k a b
+  memoTag _ r = r
 
 -- ============================================================================
 -- 2. Derived Combinators
@@ -137,7 +164,7 @@ branch cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)
 -- blocks, the test is a pure 'Expr', and 'EFanIn' (not 'PFork') is the
 -- join — choice, not duplication (see 'EFanIn').
 branchEff :: Expr -> Eff env b -> Eff env b -> Eff env b
-branchEff cond thenK elseK = (thenK ||| elseK) . splitValue . J (PId &&& PEval cond)
+branchEff = EBranch
 
 -- | The fold 'CatOp' is initial for: interpret a compiled term into any
 -- target category that implements 'Effectful'\/'Cartesian'\/'Cocartesian'
@@ -547,6 +574,7 @@ instance Effectful CatOp where
   ret        = CatReturn
   loopK      = CatLoop
   branchK cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)
+  assignWithRhs var e = assign var . (id &&& eval e)
 
 -- ============================================================================
 -- 5. Plan 167 Phase 5a — the Freyd split: Pure / Eff / J
@@ -624,6 +652,16 @@ data Eff a b where
   -- Freyd split rests on: 'Cartesian'/'PFork' over 'Eff' is forbidden
   -- (duplication), 'Cocartesian'/'EFanIn' over 'Eff' is sound (choice).
   EFanIn        :: Eff a c -> Eff b c -> Eff (Either a b) c
+  -- | A genuine branch primitive (Plan 167 Phase 7 Step 4), not sugar for
+  -- 'EFanIn'/'ESplitValue'/'J' — 'branchK' needs direct, simultaneous
+  -- access to the condition and both arms (Open Question 2), which a
+  -- generic per-constructor fold can never recover once each has been
+  -- folded/erased independently. Symmetric with 'EAssignWithRhs' (also a
+  -- fused term primitive, not a derived composition). 'branchEff' is now
+  -- just @EBranch@; the structural expansion this replaces is still what
+  -- every existing instance's 'branchK' body computes (see the class
+  -- Effectful' Plan 167 Phase 7 Step 1 note) — behaviour-preserving.
+  EBranch  :: Expr -> Eff a c -> Eff a c -> Eff a c
   ELoop    :: Eff a (Either a b) -> Eff a b
   EReturn  :: Eff a b
 
@@ -646,6 +684,7 @@ instance Effectful Eff where
   ret             = EReturn
   loopK body      = ELoop body
   branchK cond thenK elseK = (thenK ||| elseK) . splitValue . J (PId &&& PEval cond)
+  assignWithRhs var e = EAssignWithRhs var e
 
 -- ============================================================================
 -- Plan 167 Phase 7 Step 2 — the Eff shared-term table
@@ -693,6 +732,7 @@ inlineEffTable (EffTerm spine table) = go spine
       Nothing   -> error ("inlineEffTable: unbound ELetRef " <> show bid)
     go (EComp g f)    = EComp (go g) (go f)
     go (EFanIn a b)   = EFanIn (go a) (go b)
+    go (EBranch cond t f) = EBranch cond (go t) (go f)
     go (ELoop body)   = ELoop (go body)
     go other          = other
 
@@ -721,10 +761,11 @@ foldFreyd (EffTerm spine table) = fst (go spine Map.empty)
     go (J p)              m = (foldPure p, m)
     go (EComp g f)        m = case go g m of (gK, m1) -> case go f m1 of (fK, m2) -> (gK . fK, m2)
     go (EAssign var)      m = (assign var, m)
-    go (EAssignWithRhs v e') m = (assign v . (id &&& eval e'), m)
+    go (EAssignWithRhs v e') m = (assignWithRhs v e', m)
     go (ECall n as)       m = (callProc n as, m)
     go (ESuspend n as)    m = (suspend n as, m)
     go ESplitValue        m = (splitValue, m)
+    go (EBranch cond t f) m = case go t m of (tK, m1) -> case go f m1 of (fK, m2) -> (branchK cond tK fK, m2)
     go (EFanIn t f)       m = case go t m of (tK, m1) -> case go f m1 of (fK, m2) -> (tK ||| fK, m2)
     go (ELoop body)       m = case go body m of (bK, m1) -> (loopK bK, m1)
     go EReturn            m = (ret, m)
@@ -732,7 +773,8 @@ foldFreyd (EffTerm spine table) = fst (go spine Map.empty)
       Just cached -> (unsafeCoerce cached, m)
       Nothing     -> case Map.lookup bid table of
         Just body -> let (r, m') = go (unsafeCoerce body :: Eff x y) m
-                     in (r, Map.insert bid (unsafeCoerce r :: Any) m')
+                         r'       = memoTag bid r
+                     in (r', Map.insert bid (unsafeCoerce r' :: Any) m')
         Nothing   -> error ("foldFreyd: unbound ELetRef " <> show bid)
 
 -- | Fold a bare 'Eff' term (no shared-term table) — the pre-Phase-7

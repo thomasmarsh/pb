@@ -163,6 +163,7 @@ instance Effectful SchFootprint where
   ret        = SchFootprint (const Set.empty)
   loopK (SchFootprint f) = SchFootprint f
   branchK cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)
+  assignWithRhs var e = assign var . (id &&& eval e)
 
 -- | Run a compiled 'CatOp' term through the 'SchFootprint' functor.
 --

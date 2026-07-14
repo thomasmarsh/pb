@@ -29,6 +29,10 @@ module PB.Analysis.GraphBuilder
   , buildInstrGraphNamed
   , InstrNode (..)
   , InstrGraph (..)
+    -- * NamedGraphBuilder: Effectful instance over EffTerm (Plan 167 Phase 7 Step 4)
+  , NGB (..)
+  , buildEffGraphNamed
+  , compileProcedureViaEffTerm
     -- * Pipeline entry point
   , compileProcedureViaCatOp
   , compileProcedureToLowCat
@@ -42,7 +46,10 @@ import qualified Prelude as P
 import PB.AST.Expr (Expr (..))
 import PB.AST.BodyStmt (BodyStmt)
 import PB.AST.Located  (Located (..))
-import PB.Analysis.CatOp (CatOp (..), EffTerm (..), extractTable, inlineTable, CatTerm (..))
+import PB.Analysis.CatOp
+  ( CatOp (..), EffTerm (..), extractTable, inlineTable, CatTerm (..)
+  , Category (..), Cartesian (..), Cocartesian (..), Effectful (..), foldFreyd
+  )
 import PB.Analysis.CatLower (compileSsa)
 import PB.Analysis.CatLowerEff (compileSsaToEff)
 import PB.Analysis.InstrGraph (InstrNode (..), InstrGraph (..), InstrNode' (..), InstrGraph' (..), linearize)
@@ -473,3 +480,151 @@ buildLowCatGraphNamed lowCat =
         compileLowCatToInstrNamed lowCat exitName
         ) initNamedState
   in InstrGraph' { igNodes' = nbsNodes finalState, igEntry' = entryName }
+
+-- ============================================================================
+-- 3. NamedGraphBuilder: an 'Effectful' instance over 'EffTerm' (Plan 167
+--    Phase 7 Step 4)
+-- ============================================================================
+--
+-- Collapses the two-stage 'toLowCat' (CatOp -> LowCat) + 'buildLowCatGraphNamed'
+-- (LowCat -> InstrGraph') pipeline above into one 'foldFreyd' specialization:
+-- 'NGB' is a genuine 'Category'/'Cartesian'/'Cocartesian'/'Effectful' instance,
+-- not a bespoke compiler pattern-matching a monomorphic IR. Its representation
+-- mirrors 'compileLowCatToInstrNamed'\'s own signature (@LowCat -> Text ->
+-- NamedBuilder Text@ — "given where control continues after this morphism,
+-- return where control enters it") — a continuation category over 'NamedBuilder'.
+--
+-- Carries a SECOND 'Text' continuation beyond the "next" one
+-- 'compileLowCatToInstrNamed' itself needs, because of 'loopK': a loop body's
+-- 'Eff a (Either a b)' resolves 'Left' (continue) and 'Right' (exit) to TWO
+-- DIFFERENT targets ('compileLoopBodyLowCatNamed' takes @loopHeaderName@ and
+-- @nextName@ as separate arguments precisely because of this — its 'LInl'\/
+-- 'LInr' cases return different names). A single continuation cannot encode
+-- that split; every 'Cocartesian'/'Effectful' method threads the second
+-- ("innermost enclosing loop's re-entry point") argument unchanged, and only
+-- 'inl' reads it (a loop-continue) while everything else ignores it. Outside
+-- any loop it is never read — 'inl'/'inr' at the top level fold to the same
+-- no-op 'compileLowCatToInstrNamed'\'s catch-all gives them.
+newtype NGB a b = NGB { runNGB :: Text -> Text -> NamedBuilder Text }
+-- ^ @runNGB morphism next loopCont@.
+
+instance Category NGB where
+  id = NGB (\next _loopCont -> return next)
+  NGB g . NGB f = NGB (\next loopCont -> do
+    gEntry <- g next loopCont
+    f gEntry loopCont)
+
+-- | Vestigial: a cartesian fork over 'Eff' never typechecks (see 'Eff'\'s own
+-- header note), so no compiled 'EffTerm' can ever call these — needed only
+-- because 'foldFreyd'\'s signature requires 'Cartesian k'. Erasing to a no-op
+-- matches 'LFork'\/'LEval'\'s treatment in 'compileLowCatToInstrNamed'\'s
+-- catch-all (structural routing, no node).
+instance Cartesian NGB where
+  exl = NGB (\next _loopCont -> return next)
+  exr = NGB (\next _loopCont -> return next)
+  _ &&& _ = NGB (\next _loopCont -> return next)
+
+instance Cocartesian NGB where
+  inl = NGB (\_next loopCont -> return loopCont)
+  inr = NGB (\next _loopCont -> return next)
+  -- Generic fan-in: used only by a hand-built 'EFanIn' with no recognized
+  -- condition (production compiled terms exclusively go through 'EBranch',
+  -- dispatched via 'branchK' below — see CatOp.hs's Plan 167 Phase 7 Step 1
+  -- note). Matches 'compileLowCatToInstrNamed'\'s own 'LFanIn' clause,
+  -- placeholder 'ExNull' condition included.
+  NGB t ||| NGB f = NGB (\next loopCont -> do
+    elseEntry <- f next loopCont
+    thenEntry <- t next loopCont
+    n <- freshName
+    defineNode n (InstrBranch' { brCond' = ExNull, brThenPc' = thenEntry, brElsePc' = elseEntry })
+    return n)
+
+instance Effectful NGB where
+  -- Vestigial (same reasoning as 'Cartesian'\'s instance): a bare 'eval'\/
+  -- 'assign' pair is never emitted by compiled terms (only the fused
+  -- 'EAssignWithRhs', via 'assignWithRhs' below); erase to no-ops.
+  eval _   = NGB (\next _loopCont -> return next)
+  assign _ = NGB (\next _loopCont -> return next)
+  lookup _ = NGB (\next _loopCont -> return next)
+  suspend eff args = NGB (\next _loopCont -> do
+    n <- freshName
+    defineNode n (InstrSuspend' { suEffect' = eff, suArgs' = args, suVar' = Nothing, suContinuation' = next })
+    return n)
+  callProc name args = NGB (\next _loopCont -> do
+    n <- freshName
+    defineNode n (InstrCallProc' { cpCallee' = name, cpArgs' = args, cpNext' = next })
+    return n)
+  splitValue = NGB (\next _loopCont -> return next)
+  ret = NGB (\_next _loopCont -> NamedBuilder (gets nbsExitName))
+  -- Installs a fresh loop-header name as the new 'loopCont' for the body's
+  -- own fold, while the body's "next" stays THIS loopK call's own incoming
+  -- 'next' (the true post-loop exit target) — mirrors
+  -- 'patchLoopHeaderNamed'\'s @compileLoopBodyLowCatNamed body loopHeaderName
+  -- nextName@ call exactly. Passing 'loopHeaderName' for both (an earlier
+  -- draft's bug, caught by the "nested for-loops" trace-equivalence test
+  -- below) makes 'inr' — the loop's own exit case — resolve back to the
+  -- header instead of out of the loop, so the loop never terminates.
+  -- Then defines that header as an unconditional jump to the body's entry.
+  -- Correct but not shape-minimal: 'patchLoopHeaderNamed' additionally fuses
+  -- a leading branch straight into the header node, skipping the extra
+  -- 'InstrNop''; NGB always emits the Nop. Left for Phase 7 Step 5's
+  -- canonical-shape reconciliation, not a correctness gap.
+  loopK (NGB body) = NGB (\next _loopCont -> do
+    loopHeaderName <- freshName
+    bodyEntry <- body next loopHeaderName
+    defineNode loopHeaderName (InstrNop' { npNext' = bodyEntry })
+    return loopHeaderName)
+  -- The whole point of Step 4: direct, simultaneous access to the condition
+  -- and both arms (Open Question 2) instead of peeking a generically-folded
+  -- structure apart after the fact.
+  branchK cond (NGB t) (NGB f) = NGB (\next loopCont -> do
+    elseEntry <- f next loopCont
+    thenEntry <- t next loopCont
+    n <- freshName
+    defineNode n (InstrBranch' { brCond' = cond, brThenPc' = thenEntry, brElsePc' = elseEntry })
+    return n)
+  -- Direct access to the variable and the expression together — the generic
+  -- derivation (@assign var . (id &&& eval e)@) would erase through this
+  -- carrier's no-value-channel 'eval'\/'(&&&)', silently dropping the RHS.
+  assignWithRhs var e = NGB (\next _loopCont -> do
+    n <- freshName
+    defineNode n (InstrAssign' { anVar' = var, anRhs' = e, anNext' = next })
+    return n)
+  -- The 'nbsBlockMemo'-equivalent cache the charter calls for: memoizes by
+  -- blockId in 'NamedBuilder'\'s own state, so a shared body is
+  -- *materialized* once regardless of how many syntactic 'ELetRef'
+  -- occurrences 'foldFreyd'\'s own (fold-time-only) cache lets reach here.
+  -- Without this, each occurrence would re-invoke the folded 'NGB' action
+  -- and allocate a fresh copy of the whole shared block's nodes — the exact
+  -- multiplicative blowup Phase 1 exists to prevent, reintroduced here.
+  memoTag bid (NGB action) = NGB (\next loopCont -> do
+    memo <- NamedBuilder (gets nbsBlockMemo)
+    case Map.lookup bid memo of
+      Just entry -> return entry
+      Nothing -> do
+        entry <- action next loopCont
+        NamedBuilder $ modify $ \s -> s { nbsBlockMemo = Map.insert bid entry (nbsBlockMemo s) }
+        return entry)
+
+-- | Build a named graph directly from an 'EffTerm' via 'foldFreyd' specialized
+-- to 'NGB' — the collapsed replacement for 'toLowCat' + 'buildLowCatGraphNamed'.
+-- No enclosing loop at the top level, so the initial loop-continuation
+-- argument is never read (see 'NGB'\'s header note).
+buildEffGraphNamed :: EffTerm () () -> InstrGraph' Text
+buildEffGraphNamed effTerm =
+  let (entryName, finalState) = runState (runNamedBuilder $ do
+        exitName <- freshName
+        defineNode exitName (InstrReturn' { reValue' = Nothing })
+        NamedBuilder $ modify $ \s -> s { nbsExitName = exitName }
+        runNGB (foldFreyd effTerm) exitName exitName
+        ) initNamedState
+  in InstrGraph' { igNodes' = nbsNodes finalState, igEntry' = entryName }
+
+-- | Same SSA -> 'Eff' pipeline as 'compileProcedureToEff', flattened via the
+-- collapsed 'foldFreyd'/'NGB' path instead of 'compileProcedureViaCatOp'\'s
+-- 'toLowCat' + 'buildLowCatGraphNamed' two stages. Not yet the production
+-- entry point (Phase 7 Step 5/6 gate the switch); exists so tests can
+-- exercise the collapsed path directly.
+compileProcedureViaEffTerm :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> InstrGraph
+compileProcedureViaEffTerm env userFns body =
+  linearize (buildEffGraphNamed (compileProcedureToEff env userFns body))

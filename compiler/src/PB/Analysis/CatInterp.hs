@@ -122,6 +122,7 @@ instance Effectful Interp where
   loopK = interpretLoop
 
   branchK cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)
+  assignWithRhs var e = assign var . (id &&& eval e)
 
 -- | Execute a loop via recursion.  The body returns 'Left' to continue
 -- with updated state, or 'Right' to break with a final value.

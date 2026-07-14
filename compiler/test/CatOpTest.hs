@@ -2612,6 +2612,131 @@ tests = testGroup "CatOp"
             (bytes P.< 20 P.* 1000 P.* 1000)
     ]
 
+  , testGroup "Phase 7 Step 4: NamedGraphBuilder (NGB) Effectful instance over EffTerm"
+    -- 'compileProcedureViaEffTerm' collapses 'toLowCat' + 'buildLowCatGraphNamed'
+    -- into one 'foldFreyd' specialization to 'NGB' (GraphBuilder.hs). These
+    -- assertions gate the 3 fold-target primitives Step 4 needed beyond
+    -- 'branchK' itself (Open Question 2): 'branchK' is now actually
+    -- reachable via the new 'EBranch' term primitive (previously dead code —
+    -- 'branchEff' built the structural expansion directly, which 'foldFreyd'
+    -- tore apart generically, never dispatching to 'branchK'); 'assignWithRhs'
+    -- gives a carrier with no value channel direct access to the RHS (the
+    -- generic 'assign . (id &&& eval)' derivation erases through NGB's no-op
+    -- 'eval'/'(&&&)', silently dropping it); 'memoTag' guards against
+    -- re-*materializing* a shared 'ELetRef' body once per occurrence
+    -- ('foldFreyd's own cache only prevents re-*folding* it).
+    [ testCase "single assignment compiles to exactly one node carrying the real var and expr" $
+        let body = [Located 1 (BsAssign (Lvalue [LvSegment "x" Nothing]) (ExInt "42"))]
+            graph = compileProcedureViaEffTerm emptyEnv Set.empty body
+            assigns = [n | n@InstrAssign{} <- igNodes graph]
+        in case assigns of
+             [InstrAssign { anVar, anRhs }] -> do
+               anVar @?= "x"
+               anRhs @?= ExInt "42"
+             other -> assertFailure ("expected exactly 1 InstrAssign node, got " <> show (length other))
+
+    , testCase "branch node carries the real condition, not a placeholder" $
+        let cond = ExBinOp (ExLvalue (Lvalue [LvSegment "x" Nothing])) BopGt (ExInt "0")
+            body = [Located 1 (BsIf (IfStmt cond
+                      [Located 2 (BsPbCall (PbCall "obj" "then_event"))] []
+                      (Just [Located 3 (BsPbCall (PbCall "obj" "else_event"))])))]
+            graph = compileProcedureViaEffTerm emptyEnv Set.empty body
+            branches = [n | n@InstrBranch{} <- igNodes graph]
+        in case branches of
+             [InstrBranch { brCond }] -> brCond @?= cond
+             other -> assertFailure ("expected exactly 1 InstrBranch node, got " <> show (length other))
+
+    , testCase "if/else with shared tail: canonical shape matches compileProcedureViaCatOp" $
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            body = [ Located 1 (BsIf (IfStmt (ExBool True)
+                       [Located 2 (BsCall (call "callA"))] []
+                       (Just [Located 3 (BsCall (call "callB"))])))
+                   , Located 4 (BsCall (call "callC"))
+                   , Located 5 (BsCall (call "callD"))
+                   ]
+            shape = normalizeCallTag <$> canonicalize (compileProcedureViaEffTerm emptyEnv Set.empty body)
+        in shape @?= [SBrnch 1 2, SCall 3, SCall 3, SCall 4, SCall 5, SRet]
+
+    , testCase "choose with 3 cases + default: canonical shape matches compileProcedureViaCatOp" $
+        let clauses = [ CaseClause (Just [tok "1"]) [Located 2 (BsPbCall (PbCall "obj" "case1_event"))]
+                      , CaseClause (Just [tok "2"]) [Located 3 (BsPbCall (PbCall "obj" "case2_event"))]
+                      , CaseClause (Just [tok "3"]) [Located 4 (BsPbCall (PbCall "obj" "case3_event"))]
+                      , CaseClause Nothing          [Located 5 (BsPbCall (PbCall "obj" "default_event"))]
+                      ]
+            body = [Located 1 (BsChoose (ChooseStmt (ExLvalue (Lvalue [LvSegment "sel" Nothing])) clauses))]
+            shape = normalizeCallTag <$> canonicalize (compileProcedureViaEffTerm emptyEnv Set.empty body)
+        in shape @?= [SBrnch 1 2, SCall 3, SBrnch 4 5, SRet, SCall 3, SBrnch 6 7, SCall 3, SCall 3]
+
+    , testCase "4 sequential if/else groups: per-path call counts stay uniform (memoTag prevents duplication)" $
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            group (thenN, elseN, tailN, base) =
+              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
+                  [Located (base P.+ 2) (BsCall (call thenN))] []
+                  (Just [Located (base P.+ 3) (BsCall (call elseN))])))
+              , Located (base P.+ 4) (BsCall (call tailN))
+              ]
+            body = concatMap group
+              [ ("callA1", "callB1", "ctail1", 0), ("callA2", "callB2", "ctail2", 4)
+              , ("callA3", "callB3", "ctail3", 8), ("callA4", "callB4", "ctail4", 12)
+              ]
+            expectedCounts = [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]
+            shape = canonicalize (compileProcedureViaEffTerm emptyEnv Set.empty body)
+        in pathCallCounts shape @?= expectedCounts
+
+    , testCase "18 sequential if/else groups via foldFreyd/NGB: allocates < 20MB, not 2^18 blowup (memoTag)" $ do
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            group base =
+              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
+                  [Located (base P.+ 2) (BsCall (call ("a" <> T.pack (show base))))] []
+                  (Just [Located (base P.+ 3) (BsCall (call ("b" <> T.pack (show base))))])))
+              , Located (base P.+ 4) (BsCall (call ("tail" <> T.pack (show base))))
+              ]
+            body = concatMap group [ n P.* 4 | n <- [0 .. 17 :: Int] ]
+        mBytes <- timeout 30000000 (measureAllocBytes
+          (CE.evaluate (length (igNodes (compileProcedureViaEffTerm emptyEnv Set.empty body)))))
+        case mBytes of
+          Nothing -> assertFailure "did not complete within the 30s hang-safety-net timeout"
+          Just bytes -> assertBool
+            ("allocated " <> show bytes <> " bytes; expected < 20MB (memoTag should keep the \
+             \foldFreyd/NGB path linear, same as the LowCat path's Map.Map key uniqueness)")
+            (bytes P.< 20 P.* 1000 P.* 1000)
+
+    , testCase "loop body with if/else and shared tail: trace matches compileProcedureViaCatOp (loopK/EBranch correctness)" $
+        let iter = Lvalue [LvSegment "iter" Nothing]
+            body = [ Located 1 (BsAssign iter (ExInt "0"))
+                   , Located 2 (BsDo (DoStmt
+                      (Just (DoWhile (ExBinOp (ExLvalue iter) BopLt (ExInt "2"))))
+                      [ Located 3 (BsAssign iter (ExBinOp (ExLvalue iter) BopAdd (ExInt "1")))
+                      , Located 4 (BsIf (IfStmt (ExBinOp (ExLvalue iter) BopEq (ExInt "1"))
+                                           [Located 5 (BsPbCall (PbCall "obj" "then_event"))] []
+                                           (Just [Located 6 (BsPbCall (PbCall "obj" "else_event"))])))
+                      , Located 7 (BsPbCall (PbCall "obj" "tail_event"))
+                      ]
+                      Nothing))
+                   ]
+            catOpGraph = compileProcedureViaCatOp emptyEnv Set.empty body
+            effGraph   = compileProcedureViaEffTerm emptyEnv Set.empty body
+            (cenv, ctrace, _) = runInstrGraphTrace 10000 Map.empty catOpGraph Map.empty
+            (eenv, etrace, _) = runInstrGraphTrace 10000 Map.empty effGraph Map.empty
+        in do
+          ctrace @?= etrace
+          cenv @?= eenv
+
+    , testCase "nested for-loops: trace matches compileProcedureViaCatOp (nested loopK correctness)" $
+        let body = [ Located 1 (BsFor (ForStmt (Lvalue [LvSegment "i" Nothing])
+                      (ExInt "1") (ExInt "3") Nothing
+                      [ Located 2 (BsFor (ForStmt (Lvalue [LvSegment "j" Nothing])
+                          (ExInt "1") (ExInt "3") Nothing
+                          [Located 3 (BsPbCall (PbCall "obj" "inner_event"))]))]))]
+            catOpGraph = compileProcedureViaCatOp emptyEnv Set.empty body
+            effGraph   = compileProcedureViaEffTerm emptyEnv Set.empty body
+            (cenv, ctrace, _) = runInstrGraphTrace 10000 Map.empty catOpGraph Map.empty
+            (eenv, etrace, _) = runInstrGraphTrace 10000 Map.empty effGraph Map.empty
+        in do
+          ctrace @?= etrace
+          cenv @?= eenv
+    ]
+
   , testGroup "branchK (Plan 167 Phase 7 Step 1): primitive Effectful method matches its prior derivation"
     -- 'branchK' is promoted from a derived combinator ('branch'/'branchEff')
     -- to a primitive, no-default 'Effectful' method (doc/plan/167-phase7-
