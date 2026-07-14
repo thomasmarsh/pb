@@ -22,7 +22,7 @@ import PB.AST.SourceFile   (TypeBlock (..), TypeDecl (..), srPrimaryObject, srFu
 import PB.AST.Type         (PbType (..))
 import PB.Analysis.TypeEnv    (buildWorkspaceEnv, procEnv)
 import PB.Analysis.ControlHierarchy (buildControlIndex)
-import PB.Analysis.GraphBuilder (compileProcedureViaEffTerm)
+import PB.Compile.Flatten (compileProcedureViaEffTerm)
 import PB.Analysis.DwFootprint (mkDwFootprintCtx)
 import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse

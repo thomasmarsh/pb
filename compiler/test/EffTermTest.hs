@@ -8,17 +8,17 @@ import PB.AST.Type         (PbType (..))
 import PB.AST.BodyStmt     (BodyStmt (..), PbCall (..), IfStmt (..), ElseIf (..), ForStmt (..), DoStmt (..), DoCondition (..),
                             TryStmt (..), CatchClause (..), ChooseStmt (..), CaseClause (..))
 import PB.AST.Located      (Located (..))
-import PB.Analysis.CatOp
-import PB.Analysis.CatLowerEff (compileSsaToEff)
-import PB.Analysis.GraphBuilder
-import PB.Analysis.CatInterp
-import PB.Analysis.CatEval (Value (..), TraceEvent (..))
+import PB.Compile.IR
+import PB.Compile.FromSSA (compileSsaToEff)
+import PB.Compile.Flatten
+import PB.Compile.Interp
+import PB.Compile.ValueModel (Value (..), TraceEvent (..))
 import PB.Analysis.SchFootprint (FunctorCtx (..), SchFootprint (..))
 import PB.Analysis.SchemaCategory (StmtId (..), SchMorphism (..), SchObject (..), LegKind (..), LegSource (..))
 import PB.Pipeline.SqlParse (TableRef (..))
-import PB.Analysis.InstrGraph (ShapeNode (..), canonicalize, normalizeCallTag, linearize)
+import PB.Compile.InstrTypes (ShapeNode (..), canonicalize, normalizeCallTag, linearize)
 import PB.Analysis.CallClassify (parseArgList, collectBodyLocals)
-import PB.Analysis.InstrInterp (runInstrGraphTrace, TraceOutcome (..))
+import PB.Compile.InstrInterp (runInstrGraphTrace, TraceOutcome (..))
 import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                             SsaTerm (..), SsaProc (..), buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))

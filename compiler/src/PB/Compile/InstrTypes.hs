@@ -4,13 +4,13 @@
 -- canonical-shape helpers ('ShapeNode', 'canonicalize', 'normalizeCallTag')
 -- used by hand-trace\/golden-fixture tests.
 --
--- Production flattens via 'PB.Analysis.GraphBuilder.compileProcedureViaEffTerm'
--- (SSA → 'PB.Analysis.CatOp.EffTerm' → 'InstrGraph').
+-- Production flattens via 'PB.Compile.Flatten.compileProcedureViaEffTerm'
+-- (SSA → 'PB.Compile.IR.EffTerm' → 'InstrGraph').
 --
 -- The resulting graph has no nested control flow; all branching is via
 -- explicit node indices. The TypeScript step() driver executes the graph.
 -- Python stores the result as instr_graph_json on the procedures table.
-module PB.Analysis.InstrGraph
+module PB.Compile.InstrTypes
   ( InstrNode (..)
   , InstrGraph (..)
   , ShapeNode (..)
@@ -131,7 +131,7 @@ normalizeCallTag other      = other
 -- ---------------------------------------------------------------------------
 -- The named-graph intermediate
 --
--- 'InstrGraph' construction (PB.Analysis.GraphBuilder's NamedGraphBuilder,
+-- 'InstrGraph' construction (PB.Compile.Flatten's NamedGraphBuilder,
 -- via 'compileProcedureViaEffTerm') addresses nodes by 'Text' name (mirroring
 -- 'PB.Analysis.SSA.SsaBlock's own successor naming) rather than by an
 -- eagerly-allocated pc, so a merge block reached by N predecessors is exactly
@@ -143,7 +143,7 @@ normalizeCallTag other      = other
 -- | 'InstrNode' parameterized over its successor-reference type: 'Text'
 -- during named-graph construction, 'Int' after 'linearize'. Constructor set
 -- matches the subset NamedGraphBuilder actually allocates for real
--- 'PB.Analysis.CatLowerEff.compileSsaToEff' output — 'InstrCall'\/'InstrGoto'
+-- 'PB.Compile.FromSSA.compileSsaToEff' output — 'InstrCall'\/'InstrGoto'
 -- are never produced (see 'normalizeCallTag''s own comment on
 -- 'SCall'\/'SCProc').
 data InstrNode' p

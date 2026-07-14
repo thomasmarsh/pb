@@ -4,7 +4,7 @@
 -- point to flat @InstrGraph@ (the PC-indexed representation the TS runtime
 -- executes) — plus 'WiringBuilder', the sibling 'EffTerm'-native flattener
 -- for wiring diagrams. Flattening goes via a named graph
--- ('PB.Analysis.InstrGraph.InstrGraph''/'linearize'): nodes are compiled
+-- ('PB.Compile.InstrTypes.InstrGraph''/'linearize'): nodes are compiled
 -- into a 'Text'-keyed graph (dedup on blockId alone, no continuation-keyed
 -- memo) and then numbered by a single pure BFS pass.
 --
@@ -12,7 +12,7 @@
 -- 'IO'). This module is the last stage of the categorical compiler
 -- pipeline, producing the artifact ('InstrGraph') the rest of the compiler
 -- pipeline and the TS runtime actually consume.
-module PB.Analysis.GraphBuilder
+module PB.Compile.Flatten
   ( -- * Named-graph InstrGraph' construction
     InstrNode (..)
   , InstrGraph (..)
@@ -35,12 +35,12 @@ import qualified Prelude as P
 import PB.AST.Expr (Expr (..))
 import PB.AST.BodyStmt (BodyStmt)
 import PB.AST.Located  (Located (..))
-import PB.Analysis.CatOp
+import PB.Compile.IR
   ( EffTerm (..)
   , Category (..), Cartesian (..), Cocartesian (..), Effectful (..), foldFreyd, branch
   )
-import PB.Analysis.CatLowerEff (compileSsaToEff)
-import PB.Analysis.InstrGraph (InstrNode (..), InstrGraph (..), InstrNode' (..), InstrGraph' (..), linearize)
+import PB.Compile.FromSSA (compileSsaToEff)
+import PB.Compile.InstrTypes (InstrNode (..), InstrGraph (..), InstrNode' (..), InstrGraph' (..), linearize)
 import PB.Analysis.CallClassify (collectBodyLocals)
 import PB.Analysis.SSA (buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
@@ -53,7 +53,7 @@ import qualified Data.Text as T
 -- | Compile a procedure body via the SSA → 'Eff' pipeline, stopping at the
 -- 'EffTerm' (the Freyd premonoidal category, spine + shared-term table).
 -- Seeds 'steLocal' with the body's own local variable declarations before
--- compiling, mirroring 'PB.Analysis.InstrGraph.compileProcedure' exactly —
+-- compiling, mirroring 'PB.Compile.InstrTypes.compileProcedure' exactly —
 -- without this, 'classifyExpr' can never resolve a *locally-declared*
 -- datastore/datawindow/transaction variable's type, so a suspend method
 -- call on it (retrieve/update/commit/…) always falls through to the

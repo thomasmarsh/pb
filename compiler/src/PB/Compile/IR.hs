@@ -10,18 +10,18 @@
 -- 'Cocartesian', 'Effectful') plus the Freyd-split GADT pair 'Pure'/'Eff'
 -- that implements them. The surrounding pipeline lives in sibling modules:
 --
---   * 'PB.Analysis.CatLowerEff'  — SSA → 'Eff' compilation (@compileSsaToEff@)
---   * 'PB.Analysis.GraphBuilder' — 'Eff' → flat @InstrGraph@ flattening
+--   * 'PB.Compile.FromSSA'  — SSA → 'Eff' compilation (@compileSsaToEff@)
+--   * 'PB.Compile.Flatten' — 'Eff' → flat @InstrGraph@ flattening
 --     (the @NamedGraphBuilder@ target), plus the public one-call entry point
 --     @compileProcedureViaEffTerm@
---   * 'PB.Analysis.CatInterp'    — direct Haskell execution (@Interp@ target,
+--   * 'PB.Compile.Interp'    — direct Haskell execution (@Interp@ target,
 --     used for testing)
 --
 -- Design: Monadic Freer Category with SSA variables. After SSA, variables
 -- are immutable, so a variable lookup is a static offset (no dynamic
 -- string table). Assignment takes @(env, Value) → env@, making the
 -- environment type active.
-module PB.Analysis.CatOp
+module PB.Compile.IR
   ( -- * Typeclasses
     Category (..)
   , Cartesian (..)
@@ -46,7 +46,7 @@ import Unsafe.Coerce (unsafeCoerce)
 import qualified Data.Map.Strict as Map
 import GHC.Exts (Any)
 import PB.AST.Expr (Expr (..))
-import PB.Analysis.CatEval (Value (..))
+import PB.Compile.ValueModel (Value (..))
 
 -- ============================================================================
 -- 1. Core Typeclasses
@@ -134,17 +134,17 @@ class Category k => Effectful k where
 -- | Universal categorical branching. Evaluates a condition, keeps the
 -- environment context, and forks. Used directly by any 'Effectful'
 -- carrier that also has 'Cartesian'/'Cocartesian' instances (e.g.
--- 'PB.Analysis.GraphBuilder.WB', whose @branchK@ is this generic
+-- 'PB.Compile.Flatten.WB', whose @branchK@ is this generic
 -- derivation rather than a fused primitive — a wiring diagram wants the
 -- branch condition as its own visible node, not fused into the fork the
--- way 'PB.Analysis.GraphBuilder.NGB' does it).
+-- way 'PB.Compile.Flatten.NGB' does it).
 branch :: (Effectful k, Cartesian k, Cocartesian k) => Expr -> k env b -> k env b -> k env b
 branch cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)
 
 -- | 'branch' specialized to the Freyd split ('Eff'). Same equation, but the
 -- pure fork @(id &&& eval cond)@ goes through the 'J' inclusion explicitly,
 -- marking the pure/effectful boundary. This is what
--- 'PB.Analysis.CatLowerEff.compileSsaToEff' emits at an
+-- 'PB.Compile.FromSSA.compileSsaToEff' emits at an
 -- 'SsaBranch'/'SsaSwitch' site: the arms are effectful 'Eff' blocks, the
 -- test is a pure 'Expr', and 'EFanIn' (not 'PFork') is the join — choice,
 -- not duplication (see 'EFanIn').
@@ -213,7 +213,7 @@ data Eff a b where
   ESuspend      :: Text -> [Expr] -> Eff args ()
   ESplitValue   :: Eff (env, Value) (Either env env)
   -- Sum-elimination (branch fan-in). The arms are effectful
-  -- ('PB.Analysis.CatLowerEff.compileSsaToEff's branch targets contain
+  -- ('PB.Compile.FromSSA.compileSsaToEff's branch targets contain
   -- assigns/calls/suspends), so they cannot live in
   -- 'Pure'; but '(|||)' is CHOICE, not duplication — @Interp@'s '(|||)'
   -- dispatches one arm at runtime (CatInterp.hs:89-91), so unlike 'PFork'
@@ -263,7 +263,7 @@ instance Effectful Eff where
 -- generic walk to recover a body from. So 'extractEffTable' is necessarily
 -- degenerate on any term already in 'ELetRef' form (there are no bodies
 -- embedded to collect — see below); the real table is built during
--- compilation, by 'PB.Analysis.CatLowerEff' threading an accumulator
+-- compilation, by 'PB.Compile.FromSSA' threading an accumulator
 -- alongside its per-block memo, inserting each shared block's body into
 -- the table under its blockId as it is compiled. 'extractEffTable' is the
 -- correct (and, for a term built entirely from 'J'/'EComp'/etc with no

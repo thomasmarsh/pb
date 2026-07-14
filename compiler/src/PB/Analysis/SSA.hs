@@ -3,14 +3,14 @@
 --
 -- Pure module — no I/O.  Converts PB's imperative AST ('BodyStmt') into a
 -- block-structured form ('SsaProc') keyed by CFG block id, which the
--- subsequent categorical compilation step ('PB.Analysis.CatLower') consumes
+-- subsequent categorical compilation step ('PB.Compile.LoopAnalysis') consumes
 -- directly by (unversioned) variable name.
 --
--- Pipeline: 'PB.AST.BodyStmt' → SSA → 'PB.Analysis.CatOp.Eff'
+-- Pipeline: 'PB.AST.BodyStmt' → SSA → 'PB.Compile.IR.Eff'
 --
 -- __Design note:__ This module does not compute dominance-based SSA renaming
 -- (dominator tree, dominance frontiers, phi-node placement, per-variable
--- version numbers). 'PB.Analysis.CatLower' compiles every variable reference
+-- version numbers). 'PB.Compile.LoopAnalysis' compiles every variable reference
 -- back down to its bare, unversioned name ('svName') — never the version
 -- number — because PB's execution model has one mutable runtime slot per
 -- variable name, not per lexical scope. Renaming would only change a field
@@ -106,7 +106,7 @@ data SsaProc = SsaProc
   , spVars   :: [SsaVar]
     -- ^ Every variable assigned anywhere in the procedure, one entry per
     -- assignment, in block-declaration order. Not consumed by
-    -- 'PB.Analysis.CatLower' (which walks 'spBlocks' directly) — kept for
+    -- 'PB.Compile.LoopAnalysis' (which walks 'spBlocks' directly) — kept for
     -- tests and debugging.
   } deriving (Eq, Show, Generic)
 
@@ -183,7 +183,7 @@ cfgBlockToSsa edgeMap headerStmts backEdgeStmts label blk =
 
 -- | The counterpart to 'findLoopHeaderStmts': @lowerFor@ never synthesizes an
 -- increment statement anywhere in the CFG (the old compiler builds it
--- procedurally, by hand, in 'PB.Analysis.InstrGraph'). This maps each loop
+-- procedurally, by hand, in 'PB.Compile.InstrTypes'). This maps each loop
 -- body's back-edge-source block id to the originating @BsFor@ node, so
 -- 'cfgBlockToSsa' can append the missing @i = i + step@ assign to that
 -- block — the same synthesis the old compiler performs explicitly.
@@ -252,8 +252,8 @@ stmtToAssigns (BsCall expr) =
   [SsaAssign (SsaVar "_") (SsaConst expr)]
 -- BsPbCall: CALL ancestor::event super-dispatch. Encoded as a single-segment
 -- synthetic ExCall so it flows through the existing classifyExpr/compileCallExpr
--- machinery in PB.Analysis.CatLowerEff and lowers to a InstrCallProc, matching
--- PB.Analysis.InstrGraph's explicit BsPbCall case. The "ancestor::event" text
+-- machinery in PB.Compile.FromSSA and lowers to a InstrCallProc, matching
+-- PB.Compile.InstrTypes's explicit BsPbCall case. The "ancestor::event" text
 -- can never collide with isTriggerEvent, a user-fn name (PB identifiers can't
 -- contain "::"), or isBuiltinSuspendFn's fixed list, so it always classifies
 -- PureCall.

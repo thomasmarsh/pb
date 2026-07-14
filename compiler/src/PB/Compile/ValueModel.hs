@@ -2,11 +2,11 @@
 -- type for the semantic-equivalence oracle.
 --
 -- Pure module — no I/O. 'evalExpr' is written once here so both the
--- 'PB.Analysis.CatInterp' 'Interp' backend and 'PB.Analysis.InstrInterp's
+-- 'PB.Compile.Interp' 'Interp' backend and 'PB.Compile.InstrInterp's
 -- 'InstrGraph' trace-interpreter evaluate conditions/RHS values identically —
 -- two independently hand-rolled evaluators that happen to disagree would be
 -- a testing bug indistinguishable from a compiler bug.
-module PB.Analysis.CatEval
+module PB.Compile.ValueModel
   ( Value (..)
   , TraceEvent (..)
   , MockResponses
@@ -49,7 +49,7 @@ instance Eq Value where
   VNull   == VNull   = True
   _       == _       = False
 
--- | An observable effect produced while interpreting an 'PB.Analysis.CatOp.Eff'
+-- | An observable effect produced while interpreting an 'PB.Compile.IR.Eff'
 -- (or an 'InstrGraph') term: a variable assignment, an effect
 -- invocation with its evaluated arguments, a branch decision, or a return.
 -- Two executions are "equivalent" iff their traces are equal for the same
@@ -78,12 +78,12 @@ evalExpr = evalExprMocked Map.empty
 -- | Evaluate an 'Expr' against a variable environment and a table of mocked
 -- call\/suspend responses.
 --
--- Covers the subset 'PB.Analysis.CatLower.ssaValToExpr' and hand-built 'Eff'
+-- Covers the subset 'PB.Compile.LoopAnalysis.ssaValToExpr' and hand-built 'Eff'
 -- fixtures actually produce: literals, a single-segment 'ExLvalue' (SSA
 -- variable references are always this shape — see 'PB.Analysis.SSA.SsaVar'
 -- and its bare, unversioned 'svName'), binops, 'ExNot', 'ExNeg', 'ExNull'.
 -- 'ExCall'\/'ExMethodCall' —
--- the shape 'PB.Analysis.CatLowerEff.compileAssignToEff' embeds directly for
+-- the shape 'PB.Compile.FromSSA.compileAssignToEff' embeds directly for
 -- @x = f()@, never as an 'ESuspend'\/'ECall' node with a result slot — resolve via
 -- 'MockResponses', keyed on 'calleeName' and the evaluated argument list
 -- (raw argument token lists are parsed with the same

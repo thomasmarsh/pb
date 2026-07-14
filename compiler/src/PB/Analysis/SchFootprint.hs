@@ -1,5 +1,5 @@
 -- | The functor @F : EffTerm -> Sch_|_@, implemented as another instance of
--- 'PB.Analysis.CatOp's 'Category'\/'Cartesian'\/'Cocartesian'\/'Effectful'
+-- 'PB.Compile.IR's 'Category'\/'Cartesian'\/'Cocartesian'\/'Effectful'
 -- classes rather than a hand-written match over the GADT.
 --
 -- 'callProc' recognizes a DataWindow @SetItem@ call with a literal column
@@ -31,7 +31,7 @@ import PB.AST.BodyStmt (BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..), C
 import PB.AST.Located (Located (..))
 import PB.AST.Type (renderPbType)
 import PB.Analysis.CallClassify (segName)
-import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), Eff (..), EffTerm (..))
+import PB.Compile.IR (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), Eff (..), EffTerm (..))
 import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainDwBinding)
 import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..), DwRetrieveColRow (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv, lookupScopedVar)
@@ -162,7 +162,7 @@ instance Effectful SchFootprint where
 -- | A direct, force-time-memoized fold of a compiled 'EffTerm' through the
 -- 'SchFootprint' functor — THE PRODUCTION ENTRY POINT
 -- ('PB.Pipeline.Runner.compileOne' calls this, not the generic
--- 'PB.Analysis.CatOp.foldFreyd'/instance-dispatch route). 'J _' covers
+-- 'PB.Compile.IR.foldFreyd'/instance-dispatch route). 'J _' covers
 -- every embedded 'Pure' morphism (id\/compose\/fork\/exl\/exr\/inl\/inr\/
 -- fanin\/eval), all constant-empty; 'EBranch' unions both arms and ignores
 -- the condition, matching the 'branchK' instance derivation

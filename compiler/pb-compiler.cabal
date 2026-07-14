@@ -46,14 +46,14 @@ library
     PB.Analysis.Builtins
     PB.Analysis.CallClassify
     PB.Analysis.Cfg
-    PB.Analysis.CatEval
-    PB.Analysis.CatOp
-    PB.Analysis.CatLower
-    PB.Analysis.CatLowerEff
-    PB.Analysis.GraphBuilder
-    PB.Analysis.CatInterp
-    PB.Analysis.InstrGraph
-    PB.Analysis.InstrInterp
+    PB.Compile.IR
+    PB.Compile.LoopAnalysis
+    PB.Compile.FromSSA
+    PB.Compile.Flatten
+    PB.Compile.Interp
+    PB.Compile.InstrTypes
+    PB.Compile.InstrInterp
+    PB.Compile.ValueModel
     PB.Analysis.Dataflow
     PB.Analysis.SSA
     PB.Analysis.SchemaCategory

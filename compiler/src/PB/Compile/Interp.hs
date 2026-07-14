@@ -6,14 +6,14 @@
 {-# LANGUAGE LambdaCase #-}
 -- | Direct Haskell execution of a compiled 'EffTerm' — the @Interp@
 -- target. Used for testing: evaluating a compiled procedure without going
--- through the 'PB.Analysis.GraphBuilder' flattening step or the TS runtime.
+-- through the 'PB.Compile.Flatten' flattening step or the TS runtime.
 --
--- Parallels 'PB.Analysis.InstrInterp' (the flat @InstrGraph@-level trace
+-- Parallels 'PB.Compile.InstrInterp' (the flat @InstrGraph@-level trace
 -- interpreter) — 'CatInterp' interprets 'EffTerm's directly, 'InstrInterp'
--- interprets the flattened output of 'PB.Analysis.GraphBuilder'; the two
+-- interprets the flattened output of 'PB.Compile.Flatten'; the two
 -- backends are cross-checked against each other by a semantic-equivalence
 -- oracle test.
-module PB.Analysis.CatInterp
+module PB.Compile.Interp
   ( Interp (..)
   , InterpState (..)
   , ReturnUnwind (..)
@@ -27,8 +27,8 @@ import qualified Prelude as P
 import Control.Monad.State.Strict (StateT, get, modify', gets, evalStateT)
 import Control.Monad.IO.Class (liftIO)
 import Control.Exception (Exception, throwIO)
-import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), EffTerm, foldFreyd)
-import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExprMocked)
+import PB.Compile.IR (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), EffTerm, foldFreyd)
+import PB.Compile.ValueModel (Value (..), TraceEvent (..), MockResponses, evalExprMocked)
 import qualified Data.Map.Strict as Map
 
 -- ============================================================================
@@ -37,7 +37,7 @@ import qualified Data.Map.Strict as Map
 
 -- | Persistent state threaded through an 'Interp' run: the named-variable
 -- environment ('CatOp'\'s @env@ type parameter is structural wiring only —
--- 'PB.Analysis.CatLower.compileSsa' always produces @CatOp () ()@ — so real
+-- 'PB.Compile.LoopAnalysis.compileSsa' always produces @CatOp () ()@ — so real
 -- variable storage lives here instead), the accumulating observable trace,
 -- and the mocked call/suspend responses available for this run — read-only
 -- from 'Interp'\'s own perspective, but threaded through the same state

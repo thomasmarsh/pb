@@ -1,11 +1,11 @@
 -- | Hand-compiled golden fixtures — the compiler's hard semantic gate.
 --
--- Each fixture's expected 'PB.Analysis.CatEval.TraceEvent' sequence and
+-- Each fixture's expected 'PB.Compile.ValueModel.TraceEvent' sequence and
 -- final environment is pinned to a value derived by hand from PB's
 -- documented statement semantics (see @doc/spec.md@ and each fixture's own
 -- comment) — independent of what the compiler happens to produce — and
--- then asserted against 'PB.Analysis.GraphBuilder.compileProcedureViaEffTerm'
--- (the production SSA → 'PB.Analysis.CatOp.EffTerm' → 'InstrGraph'
+-- then asserted against 'PB.Compile.Flatten.compileProcedureViaEffTerm'
+-- (the production SSA → 'PB.Compile.IR.EffTerm' → 'InstrGraph'
 -- pipeline).
 --
 -- Deliberately small and curated, not exhaustive (Phase 1/2's generated and
@@ -24,9 +24,9 @@ import PB.AST.Type         ()
 import PB.AST.BodyStmt     (BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..), DoCondition (..),
                             ChooseStmt (..), CaseClause (..))
 import PB.AST.Located      (Located (..))
-import PB.Analysis.GraphBuilder (compileProcedureViaEffTerm)
-import PB.Analysis.CatEval (Value (..), TraceEvent (..))
-import PB.Analysis.InstrInterp  (runInstrGraphTrace)
+import PB.Compile.Flatten (compileProcedureViaEffTerm)
+import PB.Compile.ValueModel (Value (..), TraceEvent (..))
+import PB.Compile.InstrInterp  (runInstrGraphTrace)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.AST.Type         (PbType (..))
 import PB.Lexing.Lexer     (tokenizeLine, LexLine (..))

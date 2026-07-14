@@ -14,8 +14,8 @@ import PB.AST.SourceFile
 import PB.AST.Type        (PbType)
 import PB.Lexing.Token    (Token (..))
 import PB.Analysis.Cfg   (CfgBlock, CfgEdge, Cfg)
-import PB.Analysis.InstrGraph   (InstrNode, InstrGraph)
-import PB.Analysis.GraphBuilder (WiringNode (..), WiringGraph (..))
+import PB.Compile.InstrTypes   (InstrNode, InstrGraph)
+import PB.Compile.Flatten (WiringNode (..), WiringGraph (..))
 import PB.Analysis.Taint      (InterprocEdge (..), ProcedureSummary (..), ProcSummaryReturnFlow (..))
 
 -- | Strip a camelCase field-name prefix, e.g. "fnsMods" → "mods",

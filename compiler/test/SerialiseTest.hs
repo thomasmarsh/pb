@@ -9,7 +9,7 @@ import PB.AST.SourceFile (SrFile (..))
 import PB.Grammar.File        (SrSpans (..))
 import PB.Pipeline.Runner     (wrapSrFile)
 import PB.Analysis.TypeEnv    (buildWorkspaceEnv)
-import PB.Analysis.GraphBuilder (WiringNode (..), WiringGraph (..))
+import PB.Compile.Flatten (WiringNode (..), WiringGraph (..))
 import PB.Pipeline.Serialise  ()
 
 import Data.Aeson          (Value (..), toJSON)

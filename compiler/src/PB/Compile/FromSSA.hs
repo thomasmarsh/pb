@@ -1,15 +1,15 @@
 {-# LANGUAGE StrictData #-}
--- | Parallel SSA → 'Eff' compilation — mirrors 'PB.Analysis.CatLower'
+-- | Parallel SSA → 'Eff' compilation — mirrors 'PB.Compile.LoopAnalysis'
 -- exactly, emitting 'Eff' instead of 'CatOp'. Kept side-by-side for
 -- cross-checking; Phase 5b Step 2 will switch entry points.
-module PB.Analysis.CatLowerEff
+module PB.Compile.FromSSA
   ( compileSsaToEff
   ) where
 
 import PB.Prelude hiding (id, (.), lookup)
 import PB.AST.Expr (Expr (..), Lvalue (..), BinOp (BopEq))
-import PB.Analysis.CatOp (Category (..), Eff (..), EffTerm (..), Pure (..), branchEff)
-import PB.Analysis.CatLower (CompileCtx (..), computeMergePoints, ssaValToExpr,
+import PB.Compile.IR (Category (..), Eff (..), EffTerm (..), Pure (..), branchEff)
+import PB.Compile.LoopAnalysis (CompileCtx (..), computeMergePoints, ssaValToExpr,
                               computeLoopHeaders, computeAllLoopExits, isLoopExit)
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName,
                                  calleeName, isTriggerEvent, segName, parseArgList)
@@ -23,7 +23,7 @@ import Unsafe.Coerce (unsafeCoerce)
 
 -- | Parallel to 'compileSsa': compile an SSA procedure into an 'EffTerm'.
 -- The table is built during compilation (not by a later generic walk):
--- 'ELetRef' carries no body, so 'PB.Analysis.CatOp.extractEffTable' cannot
+-- 'ELetRef' carries no body, so 'PB.Compile.IR.extractEffTable' cannot
 -- recover one from a bare 'Eff' value — see that function's headnote.
 compileSsaToEff :: ScopedTypeEnv -> Set.Set Text -> SsaProc -> EffTerm () ()
 compileSsaToEff env userFns proc =

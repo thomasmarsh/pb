@@ -184,8 +184,9 @@ Mark done/pending as body parsers land.
 | `PB.AST.*`      | Data types only — no parsing logic (Located, Expr, BodyStmt, Type, SourceFile, DataWindow)                                          |
 | `PB.Lexing.*`   | Tokenization, layout, string mode                                                                                                   |
 | `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)                                                                                 |
+| `PB.Compile.*`  | Compilation pipeline: IR types (IR), loop analysis (LoopAnalysis), SSA lowering (FromSSA), flattening (Flatten), instruction types (InstrTypes), value model (ValueModel), interpreters (Interp, InstrInterp) |
 | `PB.Pipeline.*` | Multi-step transformations: Preprocess, Emit, Passes, Runner, Serialise, FileWalk, DuckDb, SqlParse, Church                        |
-| `PB.Analysis.*` | Pure analysis passes: Cfg, InstrGraph, Dataflow, DeadCode, Taint, TypeEnv, TypeResolve, Builtins                                      |
+| `PB.Analysis.*` | Pure analysis passes: Cfg, Dataflow, DeadCode, Taint, TypeEnv, TypeResolve, Builtins, SchemaCategory, SchFootprint, DwFootprint, ControlHierarchy |
 | `PB.Prelude`    | Custom Prelude — no parsing or transformation logic                                                                                 |
 
 New modules go in the most specific matching directory. If a new layer is needed, propose it in Stage 1.

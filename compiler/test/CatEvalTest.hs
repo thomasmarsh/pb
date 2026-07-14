@@ -2,7 +2,7 @@ module CatEvalTest (tests) where
 
 import PB.Prelude
 import PB.AST.Expr (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
-import PB.Analysis.CatEval (Value (..), MockResponses, evalExpr, evalExprMocked)
+import PB.Compile.ValueModel (Value (..), MockResponses, evalExpr, evalExprMocked)
 import PB.Lexing.Token (Token (..), TokenKind (..), SourceSpan (..))
 
 import qualified Data.Map.Strict as Map

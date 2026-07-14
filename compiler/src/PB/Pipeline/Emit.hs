@@ -29,7 +29,7 @@ import PB.Analysis.TypeEnv     (WorkspaceEnv (..), buildWorkspaceEnv,
                                 procEnv, ScopedTypeEnv)
 import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.Cfg    (buildCfg)
-import PB.Analysis.GraphBuilder
+import PB.Compile.Flatten
   ( compileProcedureViaEffTerm, compileProcedureToWiring )
 import PB.Analysis.TypeResolve (parseParams)
 import PB.Pipeline.Serialise   ()

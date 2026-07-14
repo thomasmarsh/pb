@@ -1,11 +1,11 @@
 {-# LANGUAGE StrictData #-}
 -- | Loop/merge-point analysis shared by the SSA → 'Eff' lowering pass
--- ('PB.Analysis.CatLowerEff').
+-- ('PB.Compile.FromSSA').
 --
 -- Pure module — no I/O. Takes a 'SsaProc' (already in SSA form — see
 -- 'PB.Analysis.SSA') and computes the loop-header/merge-point/loop-exit
--- structure 'PB.Analysis.CatLowerEff.compileSsaToEff' needs to lower it.
-module PB.Analysis.CatLower
+-- structure 'PB.Compile.FromSSA.compileSsaToEff' needs to lower it.
+module PB.Compile.LoopAnalysis
   ( CompileCtx (..)
   , computeMergePoints
   , computeLoopHeaders
@@ -31,17 +31,17 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
 -- | Compilation context threaded through all SSA→'Eff' lowering helpers
--- ('PB.Analysis.CatLowerEff').
+-- ('PB.Compile.FromSSA').
 data CompileCtx = CompileCtx
   { ccEnv         :: ScopedTypeEnv    -- ^ Type environment for call classification
   , ccUserFns     :: Set.Set Text     -- ^ User-defined function names (lower-cased)
   , ccMergePoints :: Set.Set Text
     -- ^ BlockIds reached by 2+ predecessor edges anywhere in the procedure.
-    -- The only blocks 'PB.Analysis.CatLowerEff.compileBlockToEff'/
+    -- The only blocks 'PB.Compile.FromSSA.compileBlockToEff'/
     -- 'compileLoopBodyToEff' can ever return via their memo's cache-hit
     -- branch — i.e. the only ones a second predecessor can reach the same
-    -- compiled 'PB.Analysis.CatOp.Eff' value for — so the only ones that
-    -- need an 'PB.Analysis.CatOp.ELetRef' identity for the table-native
+    -- compiled 'PB.Compile.IR.Eff' value for — so the only ones that
+    -- need an 'PB.Compile.IR.ELetRef' identity for the table-native
     -- fold to physically share downstream instead of re-lowering (and
     -- re-allocating a full duplicate subterm) on every encounter.
   }
@@ -56,7 +56,7 @@ data CompileCtx = CompileCtx
 -- but a header is never actually at risk of the physical-duplication bug
 -- this tagging exists to fix: the loop-lowering machinery
 -- (@compileLowCatToInstrNamed@'s @LLoop@ clause in
--- "PB.Analysis.GraphBuilder") lowers a loop's header content exactly once,
+-- "PB.Compile.Flatten") lowers a loop's header content exactly once,
 -- as the sole argument to 'CatLoop', never embedded at a second tree
 -- position. Tagging it anyway broke @patchLoopHeaderNamed@'s @LCompose
 -- (LFanIn ..) ..@ structural detection (it doesn't unwrap 'LTagged'), which

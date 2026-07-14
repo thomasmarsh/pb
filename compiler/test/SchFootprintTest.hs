@@ -5,10 +5,10 @@ import PB.AST.DataWindow      (DataWindowFile (..), DwTable (..), DwRetrieve (..
 import PB.AST.Expr            (Expr (..), Lvalue (..), LvSegment (..))
 import PB.AST.Located        (Located (..))
 import PB.AST.SourceFile      (SrFile (..), EventBlock (..), EventSig (..), SubroutineBlock (..), SubSig (..))
-import PB.Analysis.CatOp      (Category (..), Cartesian (..), Cocartesian (..),
+import PB.Compile.IR         (Category (..), Cartesian (..), Cocartesian (..),
                                 Eff (..), Pure (..), EffTerm (..), branchEff, extractEffTable)
-import PB.Analysis.CatEval    (Value)
-import PB.Analysis.CatLowerEff (compileSsaToEff)
+import PB.Compile.ValueModel   (Value)
+import PB.Compile.FromSSA (compileSsaToEff)
 import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.SchFootprint
 import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..),
@@ -26,7 +26,7 @@ import           GHC.Conc         (getAllocationCounter, setAllocationCounter)
 import           Data.Int         (Int64)
 import           System.Timeout   (timeout)
 import           PB.AST.BodyStmt  (BodyStmt (..), IfStmt (..), ChooseStmt (..), CaseClause (..))
-import           PB.Analysis.GraphBuilder (compileProcedureToEff)
+import           PB.Compile.Flatten (compileProcedureToEff)
 
 import qualified Data.List       as L
 import qualified Data.Map.Strict as Map

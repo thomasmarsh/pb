@@ -25,7 +25,7 @@ import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.Cfg    (buildCfg, cyclomaticComplexity)
-import PB.Analysis.GraphBuilder
+import PB.Compile.Flatten
   ( compileProcedureViaEffTerm, compileProcedureToEff, compileProcedureToWiring )
 import PB.Analysis.CallClassify (collectBodyLocals)
 import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
