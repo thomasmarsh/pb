@@ -211,7 +211,7 @@ function reduce(draft: ObjectsState, action: ObjectsAction, env: ObjectsEnv): Ef
     return null;
   case "wiring-load": {
     const already = draft.wiringDiagram
-      && "term" in draft.wiringDiagram
+      && "nodes" in draft.wiringDiagram
       && draft.wiringDiagram.object === action.objectName
       && draft.wiringDiagram.proc === action.procName;
     if (already || draft.wiringDiagramLoading) return null;

@@ -1,6 +1,6 @@
 // API types derived from DuckDB schema and api.py routes.
 
-import type { WireTerm } from "@pb/interpreter";
+import type { WiringNode } from "@pb/interpreter";
 
 // ── DuckDB table rows ───────────────────────────────────────────────────────
 
@@ -130,8 +130,8 @@ export interface ProcedureDetailResponse extends ProcedureRow {
 }
 
 export interface WiringDiagramResponse {
-  term: WireTerm;
-  sharedBlocks: Record<string, WireTerm>;
+  nodes: Record<string, WiringNode>;
+  entry: string;
   sourceOriginal: string | null;
   procStartLine: number | null;
 }

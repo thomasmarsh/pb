@@ -55,7 +55,7 @@ export function WiringCore(props: WiringCoreProps): JSX.Element {
     const e = entry();
     if (!e || "error" in e) return null;
     if (e.object !== props.object || e.proc !== props.proc) return null;
-    return layoutWiring({ term: e.term, sharedBlocks: e.sharedBlocks });
+    return layoutWiring({ nodes: e.nodes, entry: e.entry });
   });
 
   function fitView(): void {

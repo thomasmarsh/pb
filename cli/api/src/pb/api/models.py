@@ -8,8 +8,8 @@ from pydantic import BaseModel
 
 
 class WiringDiagramResponse(BaseModel):
-    term: dict[str, Any]
-    sharedBlocks: dict[str, Any]
+    nodes: dict[str, Any]
+    entry: str
     sourceOriginal: str | None
     procStartLine: int | None
 

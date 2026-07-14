@@ -1,19 +1,16 @@
-// features/analysis/wiring-layout.ts — pure term → positioned-diagram fold (Plan 149 Phase 3).
+// features/analysis/wiring-layout.ts — pure graph → positioned-diagram walk (Plan 167 Phase 7).
 //
-// No DOM, no Solid. Consumes a WiringPayload (WireTerm + shared-block side
-// table, mirroring PB.Analysis.GraphBuilder.LowCat/WiringPayload) and produces
-// absolute-coordinate boxes/wires/regions for WiringCore.tsx to render as SVG.
+// No DOM, no Solid. Consumes a WiringGraph (flat, name-addressed graph of
+// WiringNode values, mirroring PB.Analysis.GraphBuilder.WiringGraph) and
+// produces absolute-coordinate boxes/wires/regions for WiringCore.tsx to
+// render as SVG.
 //
-// Every subterm is folded to a Diagram exposing exactly one entry port (left)
-// and one exit port (right) — even LFanIn/LFork/LSplitValue, which are only
-// ever reached via the raw-constructor fallback (real corpus terms are
-// 100%-matched by recognizeBranch per Plan 149 Phase 0 finding 4). This
-// uniform 1-in/1-out contract is what makes LCompose stacking a simple
-// left-to-right fuse; the fallback's exposed single exit for LFork (which is
-// structurally two parallel outputs) is a deliberate simplification — dead
-// code on real data, "correct, just uglier" per the plan's own tolerance.
+// Every node is folded to a Diagram exposing exactly one entry port (left)
+// and one exit port (right). The graph is walked from `entry`, following
+// `next` references. Branches fork into two lanes that reconverge at a
+// shared join point. Back-edges (loops) render as feedback wires.
 
-import type { WireTerm, WiringPayload, Expr, Lvalue, BinOp } from "@pb/interpreter";
+import type { WiringNode, WiringGraph, Expr, Lvalue, BinOp } from "@pb/interpreter";
 
 export type BoxKind =
   | "eval" | "assign" | "call" | "suspend" | "return" | "cond"
@@ -50,34 +47,6 @@ export interface WiringLayout {
   height: number;
 }
 
-export interface BranchIdiom {
-  cond: Expr;
-  thenBranch: WireTerm;
-  elseBranch: WireTerm;
-}
-
-// ── Idiom recognition (presentation only, never semantic) ───────────────────
-//
-// The `branch` combinator (CatOp.hs:89-90) always compiles to exactly this
-// shape: LCompose(LFanIn(t,f), LCompose(LSplitValue, LFork(LId, LEval cond))).
-// Verified 5374/5374 real branch/while join sites match it (Plan 149 Phase 0
-// finding 4) — no separate case needed for a branch nested inside a loop.
-
-export function recognizeBranch(term: WireTerm): BranchIdiom | null {
-  if (term.tag !== "LCompose") return null;
-  const [g, f] = term.contents;
-  if (g.tag !== "LFanIn") return null;
-  if (f.tag !== "LCompose") return null;
-  const [split, fork] = f.contents;
-  if (split.tag !== "LSplitValue") return null;
-  if (fork.tag !== "LFork") return null;
-  const [idPart, evalPart] = fork.contents;
-  if (idPart.tag !== "LId") return null;
-  if (evalPart.tag !== "LEval") return null;
-  const [thenBranch, elseBranch] = g.contents;
-  return { cond: evalPart.contents, thenBranch, elseBranch };
-}
-
 // ── Expression pretty-printing (box labels only) ─────────────────────────────
 
 const BIN_OP_SYMBOL: Record<BinOp, string> = {
@@ -92,8 +61,12 @@ function prettyLvalue(lv: Lvalue): string {
     .join(".");
 }
 
-function prettyArgs(args: string[][]): string {
+function prettyTokenArgs(args: string[][]): string {
   return args.map((a) => a.join(" ")).join(", ");
+}
+
+function prettyExprArgs(args: Expr[]): string {
+  return args.map(prettyExpr).join(", ");
 }
 
 export function prettyExpr(e: Expr): string {
@@ -107,9 +80,9 @@ export function prettyExpr(e: Expr): string {
   case "ExNull":       return "null";
   case "ExEnum":       return `${e.contents}!`;
   case "ExLvalue":     return prettyLvalue(e.contents);
-  case "ExCall":       return `${prettyLvalue(e.callee)}(${prettyArgs(e.args)})`;
-  case "ExMethodCall": return `${prettyExpr(e.receiver)}.${e.method}(${prettyArgs(e.args)})`;
-  case "ExDispatch":   return `${e.contents.object ? prettyLvalue(e.contents.object) + "." : ""}${e.contents.name}(${prettyArgs(e.contents.args)})`;
+  case "ExCall":       return `${prettyLvalue(e.callee)}(${prettyTokenArgs(e.args)})`;
+  case "ExMethodCall": return `${prettyExpr(e.receiver)}.${e.method}(${prettyTokenArgs(e.args)})`;
+  case "ExDispatch":   return `${e.contents.object ? prettyLvalue(e.contents.object) + "." : ""}${e.contents.name}(${prettyTokenArgs(e.contents.args)})`;
   case "ExCreate":     return `CREATE ${e.contents}`;
   case "ExCreateUsing": return `CREATE USING ${prettyExpr(e.contents)}`;
   case "ExArray":      return `{${e.contents.map(prettyExpr).join(", ")}}`;
@@ -131,7 +104,7 @@ const SEG_W = 28;
 const LANE_GAP = 16;
 const REGION_PAD = 14;
 
-// ── Diagram: the fold's intermediate representation ─────────────────────────
+// ── Diagram: the walk's intermediate representation ──────────────────────────
 // Every Diagram exposes exactly one left entry port (x=0, y=entryY) and one
 // right exit port (x=width, y=exitY), regardless of internal complexity.
 
@@ -157,10 +130,6 @@ function translate(d: Diagram, dx: number, dy: number): Diagram {
   };
 }
 
-// Box width is sized to the label — a fixed width overflowed badly for
-// anything longer than a short identifier (e.g. a chained method call or a
-// multi-arg SQL suspend effect), since real corpus labels vary from a bare
-// variable name to a full call expression with several arguments.
 function leafBox(id: string, kind: BoxKind, label: string): Diagram {
   const width = Math.max(BOX_MIN_W, Math.ceil(label.length * CHAR_W) + BOX_LABEL_PAD);
   return {
@@ -180,9 +149,6 @@ function wireOnly(id: string): Diagram {
   };
 }
 
-// Sequential composition: f executes first (left), g second (right). Mirrors
-// `LCompose g f` — f then g. Aligns f's exit port with g's entry port,
-// shifting whichever diagram sits higher so the seam wire is a straight line.
 function composeH(idPrefix: string, f: Diagram, g: Diagram): Diagram {
   const fOffsetY = Math.max(0, g.entryY - f.exitY);
   const gOffsetY = Math.max(0, f.exitY - g.entryY);
@@ -204,14 +170,6 @@ function composeH(idPrefix: string, f: Diagram, g: Diagram): Diagram {
   };
 }
 
-// Stacks N diagrams vertically (each starting at x=SEG_W) behind one shared
-// entry fork-point and one shared exit join-point — the "stacked branch
-// regions merging into one output wire" shape used by the if-region (N=2,
-// with a cond box prefix), the raw LFanIn/LFork fallback (N=2, never hit on
-// real corpus data per Phase 0 finding 4), and an elseif/choose-case chain
-// (N>2 — see layoutElseifChain: without this, each elseif nests another full
-// if-region inside the previous one's else lane, ballooning canvas width
-// roughly linearly per clause on real corpus procedures with long chains).
 function layoutLadder(path: string, kind: RegionKind, label: string, lanes: Diagram[], addRegion = true): Diagram {
   const lanesX = SEG_W;
   let y = 0;
@@ -226,7 +184,8 @@ function layoutLadder(path: string, kind: RegionKind, label: string, lanes: Diag
   const joinX = lanesX + lanesWidth + SEG_W;
   const joinY = translated.reduce((sum, l) => sum + l.exitY, 0) / translated.length;
   const forkWires = translated.map((l, i): LayoutWire => ({ id: `${path}.fork${i}`, points: [{ x: 0, y: forkY }, { x: lanesX, y: l.entryY }] }));
-  const joinWires = translated.map((l, i): LayoutWire => ({ id: `${path}.join${i}`, points: [{ x: lanesX + lanesWidth, y: l.exitY }, { x: joinX, y: joinY }] }));
+  // Join wires connect each lane's ACTUAL exit (not a uniform x) to the common join point
+  const joinWires = translated.map((l, i): LayoutWire => ({ id: `${path}.join${i}`, points: [{ x: lanesX + l.width, y: l.exitY }, { x: joinX, y: joinY }] }));
   const region: LayoutRegion = { id: `${path}.region`, kind, label, x: 0, y: 0, width: joinX, height };
   return {
     width: joinX,
@@ -243,182 +202,217 @@ function layoutForkJoin(path: string, kind: RegionKind, label: string, top: Diag
   return layoutLadder(path, kind, label, [top, bottom], addRegion);
 }
 
-function layoutIfRegion(branch: BranchIdiom, path: string, ctx: FoldCtx): Diagram {
-  const condD = leafBox(`${path}.cond`, "cond", prettyExpr(branch.cond));
-  const thenD = layoutTerm(branch.thenBranch, `${path}.then`, ctx);
-  const elseD = layoutTerm(branch.elseBranch, `${path}.else`, ctx);
-  // addRegion=false: the fork/join lanes are wrapped by this function's own
-  // "if" region below, spanning cond box + lanes together — an inner region
-  // here would be a redundant duplicate of the same "if" kind.
-  const forkJoin = layoutForkJoin(path, "if", "if", thenD, elseD, false);
-  const combined = composeH(path, condD, forkJoin);
-  const region: LayoutRegion = { id: `${path}.if-region`, kind: "if", label: "if", x: 0, y: 0, width: combined.width, height: combined.height };
-  return { ...combined, regions: [...combined.regions, region] };
-}
-
-// Follows a chain of recognized branches through their "else" arm — an
-// elseif/choose-case ladder compiles to nested branches (each elseif's body
-// is the previous branch's else arm), so a naive fold re-triggers
-// layoutIfRegion at every level, nesting a full-width region inside the
-// previous one's else lane. Real corpus procedures with long elseif chains
-// (e.g. w_krat_total_search::of_createwhere, 12+ clauses) balloon to a
-// canvas tens of thousands of units wide this way — unreadable at any
-// scale that fits a panel. Collecting the whole chain up front lets
-// layoutElseifChain render it as one flat ladder instead.
-// A subsequent elseif clause is frequently compiled behind an LTagged
-// shared-block reference (any CFG merge point gets tagged, not just ones
-// with 2+ real references — see PB.Analysis.GraphBuilder.collectWiring's
-// own doc comment). Dereference through it here so the chain keeps
-// following into the real branch, consuming (ctx.seen) the tag exactly
-// once, same as layoutTerm's own LTagged case — never for the *starting*
-// term itself (clauses.length === 0), since a bare, not-yet-processed
-// LTagged there might not be a branch at all, and must be left untouched
-// for the normal first-expansion-vs-jump-box handling in layoutTerm.
-// LCompose(x, LId) / LCompose(LId, x) are no-op identity wrappers the
-// compiler leaves in place rather than simplifying away (seen throughout
-// real corpus terms — e.g. plain LId residues are common). A tagged
-// continuation is frequently wrapped this way (LCompose[LTagged(bid), LId]
-// in the real w_krat_total_search::of_createwhere term, not a bare
-// LTagged), so the chain-follower must see through these before it can
-// even find the tag to dereference.
-function skipIdentity(term: WireTerm): WireTerm {
-  if (term.tag === "LCompose") {
-    const [g, f] = term.contents;
-    if (f.tag === "LId") return skipIdentity(g);
-    if (g.tag === "LId") return skipIdentity(f);
-  }
-  return term;
-}
-
-export function collectBranchChain(term: WireTerm, ctx: FoldCtx): { clauses: { cond: Expr; body: WireTerm }[]; finalElse: WireTerm } {
-  const clauses: { cond: Expr; body: WireTerm }[] = [];
-  let current = term;
-  for (;;) {
-    let probe = skipIdentity(current);
-    if (clauses.length > 0 && probe.tag === "LTagged" && !ctx.seen.has(probe.blockId)) {
-      const inner = ctx.sharedBlocks[probe.blockId];
-      if (inner) {
-        ctx.seen.add(probe.blockId);
-        probe = skipIdentity(inner);
-      }
-    }
-    const m = recognizeBranch(probe);
-    if (!m) { current = probe; break; }
-    clauses.push({ cond: m.cond, body: m.thenBranch });
-    current = m.elseBranch;
-  }
-  return { clauses, finalElse: current };
-}
-
-function layoutElseifChain(chain: { clauses: { cond: Expr; body: WireTerm }[]; finalElse: WireTerm }, path: string, ctx: FoldCtx): Diagram {
-  const rows = chain.clauses.map((clause, i) => {
-    const condD = leafBox(`${path}.clause${i}.cond`, "cond", prettyExpr(clause.cond));
-    const bodyD = layoutTerm(clause.body, `${path}.clause${i}.body`, ctx);
-    return composeH(`${path}.clause${i}`, condD, bodyD);
-  });
-  const elseD = layoutTerm(chain.finalElse, `${path}.else`, ctx);
-  return layoutLadder(path, "if", "if/elseif", [...rows, elseD]);
-}
-
-// Wraps a loop body in a rounded region. LInl-tagged ("continue") boxes
-// inside the body get a feedback wire routed back to the region's own entry
-// port instead of the ordinary rightward exit wire composeH would otherwise
-// have given them (their box still has a normal exit port geometrically —
-// this just adds the extra loop-back wire on top; it does not repurpose the
-// existing rightward seam, which is harmless dead geometry for a continue box).
-function layoutLoopRegion(path: string, body: Diagram): Diagram {
-  const bodyT = translate(body, REGION_PAD, REGION_PAD);
-  const feedbackWires: LayoutWire[] = bodyT.boxes
-    .filter((b) => b.kind === "continue-cap")
-    .map((b) => ({
-      id: `${b.id}.feedback`,
-      points: [
-        { x: b.x + b.width, y: b.y + b.height / 2 },
-        { x: REGION_PAD, y: bodyT.entryY },
-      ],
-    }));
-  const width = bodyT.width + 2 * REGION_PAD;
-  const height = bodyT.height + 2 * REGION_PAD;
-  const region: LayoutRegion = { id: `${path}.loop-region`, kind: "loop", label: "loop", x: 0, y: 0, width, height };
-  return {
-    width, height,
-    entryY: bodyT.entryY,
-    exitY: bodyT.exitY,
-    boxes: bodyT.boxes,
-    wires: [...bodyT.wires, ...feedbackWires],
-    regions: [...bodyT.regions, region],
-  };
-}
+// ── Graph walk context ────────────────────────────────────────────────────────
 
 export interface FoldCtx {
-  sharedBlocks: Record<string, WireTerm>;
+  nodes: Record<string, WiringNode>;
   seen: Set<string>;
   insideLoop: boolean;
 }
 
-function layoutTerm(term: WireTerm, path: string, ctx: FoldCtx): Diagram {
-  const chain = collectBranchChain(term, ctx);
-  if (chain.clauses.length === 1) {
-    const c = chain.clauses[0]!;
-    return layoutIfRegion({ cond: c.cond, thenBranch: c.body, elseBranch: chain.finalElse }, path, ctx);
+// Find the join point of two branches: the first node that both arms reach.
+// Returns the join-point name (the node where both paths reconverge).
+function findJoinPoint(
+  thenStart: string,
+  elseStart: string,
+  ctx: FoldCtx,
+): string {
+  // Collect all reachable names from the then-arm (bounded walk)
+  const thenReachable = new Set<string>();
+  const queue = [thenStart];
+  for (let steps = 0; steps < 500 && queue.length > 0; steps++) {
+    const name = queue.pop()!;
+    if (thenReachable.has(name)) continue;
+    thenReachable.add(name);
+    const node = ctx.nodes[name];
+    if (!node) continue;
+    if (node.tag === "WireReturn") continue;
+    if (node.tag === "WireBranch") {
+      queue.push(node.then, node.else);
+    } else {
+      queue.push(node.next);
+    }
   }
-  if (chain.clauses.length >= 2) return layoutElseifChain(chain, path, ctx);
+  // Walk the else-arm until we hit a node in thenReachable
+  const visited = new Set<string>();
+  const equeue = [elseStart];
+  for (let steps = 0; steps < 500 && equeue.length > 0; steps++) {
+    const name = equeue.pop()!;
+    if (visited.has(name)) continue;
+    visited.add(name);
+    if (thenReachable.has(name)) return name;
+    const node = ctx.nodes[name];
+    if (!node) return name;
+    if (node.tag === "WireReturn") return name;
+    if (node.tag === "WireBranch") {
+      equeue.push(node.then, node.else);
+    } else {
+      equeue.push(node.next);
+    }
+  }
+  return elseStart;
+}
 
-  switch (term.tag) {
-  case "LId":          return wireOnly(path);
-  case "LErasable":    return wireOnly(path);
-  case "LReturn":      return leafBox(path, "return", "return");
-  case "LInl":         return leafBox(path, ctx.insideLoop ? "continue-cap" : "opaque", ctx.insideLoop ? "continue" : "Left");
-  case "LInr":         return leafBox(path, ctx.insideLoop ? "exit-cap" : "opaque", ctx.insideLoop ? "exit" : "Right");
-  case "LSplitValue":  return leafBox(path, "split", "split");
-  case "LEval":        return leafBox(path, "eval", prettyExpr(term.contents));
-  case "LAssignWithRhs": {
-    const [name, expr] = term.contents;
-    return leafBox(path, "assign", `${name} := ${prettyExpr(expr)}`);
+// ── Main graph walk ───────────────────────────────────────────────────────────
+
+// Collect a chain of elseif-style branches: WireCond → WireBranch where the
+// else-arm is another WireCond → WireBranch, etc. Returns the collected
+// clauses and the final else-arm's entry name.
+function collectBranchChain(
+  entryName: string,
+  ctx: FoldCtx,
+): { clauses: { cond: Expr; thenName: string }[]; elseName: string } {
+  const clauses: { cond: Expr; thenName: string }[] = [];
+  let currentName = entryName;
+  for (;;) {
+    const node = ctx.nodes[currentName];
+    if (!node || node.tag !== "WireCond") return { clauses, elseName: currentName };
+    const condExpr = node.expr;
+    const branchName = node.next;
+    const branchNode = ctx.nodes[branchName];
+    if (!branchNode || branchNode.tag !== "WireBranch") return { clauses, elseName: currentName };
+    clauses.push({ cond: condExpr, thenName: branchNode.then });
+    currentName = branchNode.else;
   }
-  case "LCall": {
-    const [name, args] = term.contents;
-    return leafBox(path, "call", `${name}(${args.map(prettyExpr).join(", ")})`);
+}
+
+function walkNode(name: string, path: string, ctx: FoldCtx, joinTarget?: string): Diagram {
+  // If this is the join point of a branch, render as wire-only (the join point
+  // is rendered separately after both arms merge).
+  if (joinTarget !== undefined && name === joinTarget) return wireOnly(path);
+
+  // Already rendered — back-edge or shared tail
+  if (ctx.seen.has(name)) {
+    const node = ctx.nodes[name];
+    if (node && node.tag === "WireNop") {
+      // Back-edge to loop header — render as feedback wire
+      return leafBox(path, "continue-cap", `loop-back`);
+    }
+    return leafBox(path, "jump", `\u21a9 ${name}`);
   }
-  case "LSuspend": {
-    const [eff, args] = term.contents;
-    return leafBox(path, "suspend", `${eff}(${args.map(prettyExpr).join(", ")})`);
+  ctx.seen.add(name);
+
+  const node = ctx.nodes[name];
+  if (!node) return wireOnly(path);
+
+  switch (node.tag) {
+  case "WireReturn":
+    return leafBox(path, "return", "return");
+
+  case "WireNop": {
+    // Loop header — walk the body
+    const bodyD = walkNode(node.next, `${path}.body`, { ...ctx, insideLoop: true });
+    // Wrap in loop region with feedback wires from continue-cap boxes
+    const bodyT = translate(bodyD, REGION_PAD, REGION_PAD);
+    const feedbackWires: LayoutWire[] = bodyT.boxes
+      .filter((b) => b.kind === "continue-cap")
+      .map((b) => ({
+        id: `${b.id}.feedback`,
+        points: [
+          { x: b.x + b.width, y: b.y + b.height / 2 },
+          { x: REGION_PAD, y: bodyT.entryY },
+        ],
+      }));
+    const width = bodyT.width + 2 * REGION_PAD;
+    const height = bodyT.height + 2 * REGION_PAD;
+    const region: LayoutRegion = { id: `${path}.loop-region`, kind: "loop", label: "loop", x: 0, y: 0, width, height };
+    return {
+      width, height,
+      entryY: bodyT.entryY,
+      exitY: bodyT.exitY,
+      boxes: bodyT.boxes,
+      wires: [...bodyT.wires, ...feedbackWires],
+      regions: [...bodyT.regions, region],
+    };
   }
-  case "LCompose": {
-    const [g, f] = term.contents;
-    const fD = layoutTerm(f, `${path}.f`, ctx);
-    const gD = layoutTerm(g, `${path}.g`, ctx);
-    return composeH(path, fD, gD);
+
+  case "WireAssign": {
+    const box = leafBox(path, "assign", `${node.var} := ${prettyExpr(node.rhs)}`);
+    const succD = walkNode(node.next, `${path}.next`, ctx);
+    return composeH(path, box, succD);
   }
-  case "LFanIn": {
-    const [t, e] = term.contents;
-    const tD = layoutTerm(t, `${path}.t`, ctx);
-    const eD = layoutTerm(e, `${path}.e`, ctx);
-    return layoutForkJoin(path, "fanin", "fanin", tD, eD);
+
+  case "WireCond": {
+    // Collect elseif chain (WireCond → WireBranch → WireCond → ...)
+    const chain = collectBranchChain(name, ctx);
+    if (chain.clauses.length >= 2) {
+      // ElseIf/choose ladder — render as flat ladder
+      const rows = chain.clauses.map((clause, i) => {
+        const condD = leafBox(`${path}.clause${i}.cond`, "cond", prettyExpr(clause.cond));
+        const thenCtx = { ...ctx, seen: new Set(ctx.seen) };
+        const bodyD = walkNode(clause.thenName, `${path}.clause${i}.body`, thenCtx);
+        for (const s of thenCtx.seen) ctx.seen.add(s);
+        return composeH(`${path}.clause${i}`, condD, bodyD);
+      });
+      const elseCtx = { ...ctx, seen: new Set(ctx.seen) };
+      const elseD = walkNode(chain.elseName, `${path}.else`, elseCtx);
+      for (const s of elseCtx.seen) ctx.seen.add(s);
+      return layoutLadder(path, "if", "if/elseif", [...rows, elseD]);
+    }
+    if (chain.clauses.length === 1) {
+      // Single if/else — render as cond + fork/join
+      const clause = chain.clauses[0]!;
+      const condD = leafBox(`${path}.cond`, "cond", prettyExpr(clause.cond));
+      // Find join point — the node where both arms reconverge
+      const joinName = findJoinPoint(clause.thenName, chain.elseName, ctx);
+      // Walk then-arm up to join point (joinTarget makes it stop with wire-only)
+      const thenCtx = { ...ctx, seen: new Set(ctx.seen) };
+      const thenD = walkNode(clause.thenName, `${path}.then`, thenCtx, joinName);
+      for (const s of thenCtx.seen) ctx.seen.add(s);
+      // Walk else-arm up to join point
+      const elseCtx = { ...ctx, seen: new Set(ctx.seen) };
+      const elseD = walkNode(chain.elseName, `${path}.else`, elseCtx, joinName);
+      for (const s of elseCtx.seen) ctx.seen.add(s);
+      // Render the join point node separately
+      const joinD = walkNode(joinName, `${path}.join`, ctx);
+      // Fork/join: both arms → join point
+      const forkJoinRaw = layoutForkJoin(path, "if", "if", thenD, elseD, false);
+      // Append the join point after the fork/join
+      const forkJoin = composeH(`${path}.forkjoin`, forkJoinRaw, joinD);
+      const combined = composeH(path, condD, forkJoin);
+      const region: LayoutRegion = { id: `${path}.if-region`, kind: "if", label: "if", x: 0, y: 0, width: combined.width, height: combined.height };
+      return { ...combined, regions: [...combined.regions, region] };
+    }
+    // No chain — just a bare WireCond (shouldn't happen in practice)
+    const box = leafBox(path, "cond", prettyExpr(node.expr));
+    const succD = walkNode(node.next, `${path}.next`, ctx);
+    return composeH(path, box, succD);
   }
-  case "LFork": {
-    const [l, r] = term.contents;
-    const lD = layoutTerm(l, `${path}.l`, ctx);
-    const rD = layoutTerm(r, `${path}.r`, ctx);
-    return layoutForkJoin(path, "fork", "fork", lD, rD);
+
+  case "WireBranch": {
+    // Standalone WireBranch (not preceded by WireCond) — render as fork/join
+    const joinName = findJoinPoint(node.then, node.else, ctx);
+    const thenCtx = { ...ctx, seen: new Set(ctx.seen) };
+    const thenD = walkNode(node.then, `${path}.then`, thenCtx, joinName);
+    for (const s of thenCtx.seen) ctx.seen.add(s);
+    const elseCtx = { ...ctx, seen: new Set(ctx.seen) };
+    const elseD = walkNode(node.else, `${path}.else`, elseCtx, joinName);
+    for (const s of elseCtx.seen) ctx.seen.add(s);
+    const joinD = walkNode(joinName, `${path}.join`, ctx);
+    const forkJoinRaw = layoutForkJoin(path, "fork", "fork", thenD, elseD);
+    return composeH(`${path}.forkjoin`, forkJoinRaw, joinD);
   }
-  case "LLoop": {
-    const bodyD = layoutTerm(term.contents, `${path}.body`, { ...ctx, insideLoop: true });
-    return layoutLoopRegion(path, bodyD);
+
+  case "WireCall": {
+    const label = `${node.callee}(${prettyExprArgs(node.args)})`;
+    const box = leafBox(path, "call", label);
+    const succD = walkNode(node.next, `${path}.next`, ctx);
+    return composeH(path, box, succD);
   }
-  case "LTagged": {
-    const { blockId } = term;
-    if (ctx.seen.has(blockId)) return leafBox(path, "jump", `↩ ${blockId}`);
-    ctx.seen.add(blockId);
-    const inner = ctx.sharedBlocks[blockId];
-    if (!inner) throw new Error(`wiring-layout: LTagged references unknown blockId ${blockId}`);
-    return layoutTerm(inner, `${path}.shared`, ctx);
+
+  case "WireSuspend": {
+    const label = `${node.effect}(${prettyExprArgs(node.args)})`;
+    const box = leafBox(path, "suspend", label);
+    const succD = walkNode(node.next, `${path}.next`, ctx);
+    return composeH(path, box, succD);
   }
   }
 }
 
-export function layoutWiring(payload: WiringPayload): WiringLayout {
-  const ctx: FoldCtx = { sharedBlocks: payload.sharedBlocks, seen: new Set(), insideLoop: false };
-  const d = layoutTerm(payload.term, "0", ctx);
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+export function layoutWiring(graph: WiringGraph): WiringLayout {
+  const ctx: FoldCtx = { nodes: graph.nodes, seen: new Set(), insideLoop: false };
+  const d = walkNode(graph.entry, "0", ctx);
   return { boxes: d.boxes, wires: d.wires, regions: d.regions, width: d.width, height: d.height };
 }

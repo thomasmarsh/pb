@@ -93,7 +93,7 @@ describe("objects reducer", () => {
     });
 
     it("does nothing if already loaded for the same object/proc", () => {
-      const loaded = { term: { tag: "LId" as const }, sharedBlocks: {}, sourceOriginal: null, procStartLine: null, object: "w_foo", proc: "of_bar" };
+      const loaded = { nodes: { w0: { tag: "WireReturn" as const } }, entry: "w0", sourceOriginal: null, procStartLine: null, object: "w_foo", proc: "of_bar" };
       const state: ObjectsState = { ...initialObjectsState, wiringDiagram: loaded };
       const ts = createTestStore(objectsReducer, mockEnv, state);
       ts.send({ tag: "wiring-load", objectName: "w_foo", procName: "of_bar" }, () => {});
@@ -108,7 +108,7 @@ describe("objects reducer", () => {
 
   describe("objects/wiring-loaded", () => {
     it("stores the diagram keyed by object/proc and clears loading", () => {
-      const data: WiringDiagramResponse = { term: { tag: "LId" }, sharedBlocks: {}, sourceOriginal: null, procStartLine: 10 };
+      const data: WiringDiagramResponse = { nodes: { w0: { tag: "WireReturn" } }, entry: "w0", sourceOriginal: null, procStartLine: 10 };
       const state: ObjectsState = { ...initialObjectsState, wiringDiagramLoading: true };
       const ts = createTestStore(objectsReducer, mockEnv, state);
       ts.send({ tag: "wiring-loaded", objectName: "w_foo", procName: "of_bar", data }, (s) => {
@@ -133,7 +133,7 @@ describe("objects reducer", () => {
     it("resets wiringDiagram and footprint state when navigating to a (possibly different) procedure", () => {
       const state: ObjectsState = {
         ...initialObjectsState,
-        wiringDiagram: { term: { tag: "LId" as const }, sharedBlocks: {}, sourceOriginal: null, procStartLine: null, object: "w_old", proc: "of_old" },
+        wiringDiagram: { nodes: { w0: { tag: "WireReturn" as const } }, entry: "w0", sourceOriginal: null, procStartLine: null, object: "w_old", proc: "of_old" },
         wiringDiagramLoading: true,
         footprint: { object: "w_old", proc_name: "of_old", kind: "sql", statements: [], blast_radius: [] },
         footprintLoading: true,

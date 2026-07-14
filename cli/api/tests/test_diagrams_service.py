@@ -20,8 +20,8 @@ def test_get_wiring_diagram_happy_path(db_conn: duckdb.DuckDBPyConnection):
     result = get_wiring_diagram(db_conn, object_name, proc_name)
 
     assert result is not None
-    assert "tag" in result["term"]
-    assert isinstance(result["sharedBlocks"], dict)
+    assert isinstance(result["nodes"], dict)
+    assert isinstance(result["entry"], str)
     assert result["sourceOriginal"] is None
     assert "procStartLine" in result
 

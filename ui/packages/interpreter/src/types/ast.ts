@@ -57,31 +57,22 @@ export type PbType =
   | { tag: "PtAny" }
   | { tag: "PtDecimalPrec"; contents: number };
 
-// ── LowCat wiring term (Plan 149) ────────────────────────────────────────────
-// Mirrors PB.Analysis.GraphBuilder.LowCat exactly. Verified against live
-// `pbc --db` output (not committed example JSON), 2026-07-06. LTagged is a
-// bare reference — its payload lives exactly once in WiringPayload's
-// sharedBlocks, never inlined, regardless of how many times the tag recurs.
-export type WireTerm =
-  | { tag: "LId" }
-  | { tag: "LCompose";       contents: [WireTerm, WireTerm] }  // [g, f]: f then g
-  | { tag: "LAssignWithRhs"; contents: [string, Expr] }
-  | { tag: "LFanIn";         contents: [WireTerm, WireTerm] }  // [thenBranch, elseBranch]
-  | { tag: "LLoop";          contents: WireTerm }
-  | { tag: "LInl" }                                            // loop continue (back-edge)
-  | { tag: "LInr" }                                            // loop break (back-edge)
-  | { tag: "LSplitValue" }
-  | { tag: "LEval";          contents: Expr }
-  | { tag: "LFork";          contents: [WireTerm, WireTerm] }
-  | { tag: "LCall";          contents: [string, Expr[]] }
-  | { tag: "LSuspend";       contents: [string, Expr[]] }
-  | { tag: "LReturn" }
-  | { tag: "LTagged";        blockId: string }
-  | { tag: "LErasable" };                                      // empirically 0/7667; must not crash
+// ── Wiring graph (Plan 167 Phase 7 Step 7) ──────────────────────────────────
+// Mirrors PB.Analysis.GraphBuilder.WiringNode/WiringGraph exactly.
+// A flat, name-addressed graph: each node is defined once in `nodes`,
+// referenced by name from other nodes' `next`/`then`/`else` fields.
+export type WiringNode =
+  | { tag: "WireAssign";  var: string; rhs: Expr; next: string }
+  | { tag: "WireCond";    expr: Expr; next: string }
+  | { tag: "WireBranch";  then: string; else: string }
+  | { tag: "WireCall";    callee: string; args: Expr[]; next: string }
+  | { tag: "WireSuspend"; effect: string; args: Expr[]; next: string }
+  | { tag: "WireReturn" }
+  | { tag: "WireNop";     next: string };
 
-export interface WiringPayload {
-  term: WireTerm;
-  sharedBlocks: Record<string, WireTerm>;
+export interface WiringGraph {
+  nodes: Record<string, WiringNode>;
+  entry: string;
 }
 
 // ── Located wrapper ──────────────────────────────────────────────────────────

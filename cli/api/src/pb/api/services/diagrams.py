@@ -115,8 +115,8 @@ def get_wiring_diagram(
     payload = json.loads(wiring_json_raw)
 
     return {
-        "term": payload["term"],
-        "sharedBlocks": payload.get("sharedBlocks", {}),
+        "nodes": payload.get("nodes", {}),
+        "entry": payload.get("entry", ""),
         "sourceOriginal": None,
         "procStartLine": proc_start_line,
     }
