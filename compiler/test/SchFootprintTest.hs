@@ -6,7 +6,7 @@ import PB.AST.Expr            (Expr (..), Lvalue (..), LvSegment (..))
 import PB.AST.Located        (Located (..))
 import PB.AST.SourceFile      (SrFile (..), EventBlock (..), EventSig (..), SubroutineBlock (..), SubSig (..))
 import PB.Analysis.CatOp      (Category (..), Cartesian (..), Cocartesian (..),
-                                CatOp (..), branch)
+                                CatOp (..), branch, Eff (..), extractEffTable)
 import PB.Analysis.CatEval    (Value)
 import PB.Analysis.CatLower   (compileSsa)
 import PB.Analysis.ControlHierarchy (buildControlIndex)
@@ -26,7 +26,7 @@ import           GHC.Conc         (getAllocationCounter, setAllocationCounter)
 import           Data.Int         (Int64)
 import           System.Timeout   (timeout)
 import           PB.AST.BodyStmt  (BodyStmt (..), IfStmt (..), ChooseStmt (..), CaseClause (..))
-import           PB.Analysis.GraphBuilder (compileProcedureToCatOp)
+import           PB.Analysis.GraphBuilder (compileProcedureToCatOp, compileProcedureToEff)
 
 import qualified Data.List       as L
 import qualified Data.Map.Strict as Map
@@ -271,6 +271,68 @@ tests = testGroup "SchFootprint"
 
     , testCase "non-SetItem calls remain empty" $
         foldSchFootprint ctx1 (CatCall "dw_dest.Retrieve" [] :: CatOp () ()) @?= Set.empty
+    ]
+
+  , testGroup "foldSchFootprintEff over Eff (Plan 167 Phase 7 Step 6: parity with foldSchFootprint)"
+    -- 'foldSchFootprintEff' mirrors 'foldSchFootprint's "callProc SetItem
+    -- detection" group term-for-term, via 'Eff'/'ECall' instead of
+    -- 'CatOp'/'CatCall'.
+    [ testCase "SetItem with literal column resolves to LegWrites when control/dw/column all bound" $
+        foldSchFootprintEff ctx1
+          (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", ExStr "id", lvExpr "li_Data"] :: Eff () ()))
+          @?= Set.singleton
+                (SchMorphism (StmtObj (fcStmtObj ctx1))
+                             (ColumnObj (TableRef Nothing "sales_order_items") "id")
+                             LegWrites SrcCatFootprint)
+
+    , testCase "unbound control yields empty footprint" $
+        foldSchFootprintEff ctx1
+          (extractEffTable (ECall "dw_other.SetItem" [lvExpr "ll_Cnt", ExStr "id", lvExpr "li_Data"] :: Eff () ()))
+          @?= Set.empty
+
+    , testCase "dynamic (non-literal) column argument yields empty footprint" $
+        foldSchFootprintEff ctx1
+          (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", lvExpr "ls_col", lvExpr "li_Data"] :: Eff () ()))
+          @?= Set.empty
+
+    , testCase "unknown column name in the bound dw yields empty footprint" $
+        foldSchFootprintEff ctx1
+          (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", ExStr "nonexistent_col", lvExpr "li_Data"] :: Eff () ()))
+          @?= Set.empty
+
+    , testCase "non-SetItem calls remain empty" $
+        foldSchFootprintEff ctx1 (extractEffTable (ECall "dw_dest.Retrieve" [] :: Eff () ())) @?= Set.empty
+
+    , testCase "18 sequential if/else groups: foldSchFootprintEff matches foldSchFootprint exactly (real shared-block fixture)" $ do
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            group base =
+              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
+                  [Located (base P.+ 2) (BsCall (call ("a" <> T.pack (show base))))] []
+                  (Just [Located (base P.+ 3) (BsCall (call ("b" <> T.pack (show base))))])))
+              , Located (base P.+ 4) (BsCall (call ("tail" <> T.pack (show base))))
+              ]
+            body = concatMap group [ n P.* 4 | n <- [0 .. 17 :: Int] ]
+            catTerm = compileProcedureToCatOp emptyEnv Set.empty body
+            effTerm = compileProcedureToEff emptyEnv Set.empty body
+        foldSchFootprintEff ctx0 effTerm @?= foldSchFootprint ctx0 catTerm
+
+    , testCase "18 sequential if/else groups: allocates < 20MB, not 2^18 blowup" $ do
+        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+            group base =
+              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
+                  [Located (base P.+ 2) (BsCall (call ("a" <> T.pack (show base))))] []
+                  (Just [Located (base P.+ 3) (BsCall (call ("b" <> T.pack (show base))))])))
+              , Located (base P.+ 4) (BsCall (call ("tail" <> T.pack (show base))))
+              ]
+            body = concatMap group [ n P.* 4 | n <- [0 .. 17 :: Int] ]
+            term = compileProcedureToEff emptyEnv Set.empty body
+        mBytes <- timeout 30000000 (measureAllocBytes (CE.evaluate (Set.size (foldSchFootprintEff ctx0 term))))
+        case mBytes of
+          Nothing -> assertFailure "did not complete within the 30s hang-safety-net timeout"
+          Just bytes -> assertBool
+            ("allocated " <> show bytes <> " bytes; expected < 20MB (foldSchFootprintEff's ELetRef \
+             \memo should keep this linear, same as foldSchFootprint's CatTagged memo)")
+            (bytes P.< 20 P.* 1000 P.* 1000)
     ]
 
   , testGroup "Phase 3 done-condition: real corpus example (w_dw_copy.srw / d_items.srd)"

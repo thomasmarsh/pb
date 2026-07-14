@@ -749,6 +749,52 @@ tests = testGroup "CatOp"
         P.reverse (isTrace st) @?= [TeCall "my_func" [VInt 5]]
     ]
 
+  , testGroup "Interp / runEff (Plan 167 Phase 7 Step 6: uniformity with runCat)"
+    -- 'runEff' is 'foldFreyd' specialized to 'Interp', added alongside
+    -- 'runCat' for parity — no production caller (Interp is test-only), same
+    -- as 'runCat' itself. Mirrors the "Interp / runCat" group's cases
+    -- exactly, term-for-term, via the 'Eff' GADT instead of 'CatOp'.
+    [ testCase "runEff (id :: Eff () ()) is identity, no trace" $ do
+        (result, st) <- runStateT (runInterp (runEff (extractEffTable (id :: Eff () ()))) ()) (InterpState Map.empty [] Map.empty)
+        result @?= ()
+        isTrace st @?= []
+
+    , testCase "runEff EAssignWithRhs updates env and emits TeAssign" $ do
+        let term = EAssignWithRhs "x_1" (ExInt "42") :: Eff () ()
+        (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
+        Map.lookup "x_1" (isEnv st) @?= Just (VInt 42)
+        P.reverse (isTrace st) @?= [TeAssign "x_1" (VInt 42)]
+
+    , testCase "runEff EComp threads env through both assigns in order" $ do
+        let term = EAssignWithRhs "y_1" (ExInt "2") . EAssignWithRhs "x_1" (ExInt "1") :: Eff () ()
+        (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
+        P.reverse (isTrace st) @?= [TeAssign "x_1" (VInt 1), TeAssign "y_1" (VInt 2)]
+
+    , testCase "runEff branchEff emits TeBranch True and takes the then-arm" $ do
+        let term = branchEff (ExBool True)
+                     (EAssignWithRhs "then_taken" (ExInt "1"))
+                     (EAssignWithRhs "else_taken" (ExInt "2")) :: Eff () ()
+        (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
+        P.reverse (isTrace st) @?= [TeBranch True, TeAssign "then_taken" (VInt 1)]
+
+    , testCase "runEff branchEff emits TeBranch False and takes the else-arm" $ do
+        let term = branchEff (ExBool False)
+                     (EAssignWithRhs "then_taken" (ExInt "1"))
+                     (EAssignWithRhs "else_taken" (ExInt "2")) :: Eff () ()
+        (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
+        P.reverse (isTrace st) @?= [TeBranch False, TeAssign "else_taken" (VInt 2)]
+
+    , testCase "runEff ESuspend records TeSuspend with evaluated args" $ do
+        let term = ESuspend "retrieve:dw_foo" [ExInt "1", ExStr "bar"] :: Eff () ()
+        (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
+        P.reverse (isTrace st) @?= [TeSuspend "retrieve:dw_foo" [VInt 1, VStr "bar"]]
+
+    , testCase "runEff ECall records TeCall with evaluated args" $ do
+        let term = ECall "my_func" [ExInt "5"] :: Eff () ()
+        (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
+        P.reverse (isTrace st) @?= [TeCall "my_func" [VInt 5]]
+    ]
+
   , testGroup "foldCat generalizes runCat (Plan 148 Phase 3)"
     -- runCat is now `foldCat` specialized to Interp — these pin that
     -- `foldCat` (called directly, not via the `runCat` alias) reproduces the

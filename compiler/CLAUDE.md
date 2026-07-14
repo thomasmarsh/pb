@@ -897,7 +897,14 @@ catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogF
 -- runModeDualTrace ("--dual-trace"), runInspect/runInspectOn ("--inspect"),
 -- isRealDiff, traceMaxSteps, and the corresponding Main.hs flags no longer
 -- exist. compileProcedureViaCatOp (now PB.Analysis.GraphBuilder, moved from
--- CatOp in the Plan 151 module split, 2026-07-06) is the sole compiler.
+-- CatOp in the Plan 151 module split, 2026-07-06) was the sole compiler
+-- through Plan 167 Phase 7 Step 6 (2026-07-14), which switched compileOne's
+-- instrJs binding (and Emit.hs's own instrGraph call site) to
+-- compileProcedureViaEffTerm, and its catFpRows binding (below) from
+-- foldSchFootprint/compileProcedureToCatOp to
+-- foldSchFootprintEff/compileProcedureToEff. compileProcedureViaCatOp/
+-- foldSchFootprint themselves are unchanged, kept as cross-check oracles
+-- until Phase 7 Step 8 retires the untyped CatOp/LowCat stack.
 ```
 
 ### `PB.Pipeline.Serialise`
@@ -1092,18 +1099,18 @@ compileSsa :: ScopedTypeEnv -> Set.Set Text -> SsaProc -> CatOp () ()
 ### `PB.Analysis.GraphBuilder`
 
 ```haskell
--- Pure (GraphBuilder monad is a bare State, never IO). CatOp -> flat InstrGraph
--- flattening (the "GraphBuilder" target from Plan 144 Phase 4), plus LowCat
--- (the monomorphic CatOp bridge -- no unsafeCoerce, deterministic pattern
--- matching) and the public one-call pipeline entry point. Split from
--- CatOp.hs Plan 151. CpsNode/CpsGraph/buildCpsGraph/compileCatToCps renamed
--- to InstrNode/InstrGraph/buildInstrGraph/compileCatToInstr in Plan 152
--- (the "CPS" name was inaccurate -- this is a flat, PC-indexed instruction
--- array, not continuation-passing style).
+-- Pure (every monad here is a bare State, never IO). CatOp/EffTerm -> flat
+-- InstrGraph flattening, plus LowCat (the monomorphic CatOp bridge -- no
+-- unsafeCoerce, deterministic pattern matching). Split from CatOp.hs Plan
+-- 151. The old PC-threaded GraphBuilder/BuilderState/buildInstrGraph/
+-- compileCatToInstr machinery (Plan 152's CpsNode/CpsGraph rename target)
+-- was DELETED in Plan 167 Phase 6 step 5b -- flattening goes via the named
+-- graph below (NamedBuilder/InstrGraph'/linearize) in every current path.
 data LowCat = LId | LCompose .. | LAssignWithRhs .. | LFanIn .. | LLoop ..
             | LInl | LInr | LSplitValue | LEval .. | LFork .. | LCall ..
             | LSuspend .. | LReturn | LTagged .. | LErasable
-toLowCat :: CatOp a b -> LowCat
+toLowCat :: CatTerm a b -> LowCat
+toLowCatOp :: CatOp a b -> LowCat
 extractCondLowCat :: LowCat -> Expr
 -- Plan 149 Phase 1 (wiring diagrams): WiringPayload/collectWiring/
 -- compileProcedureToLowCat. LErasable/CatTry are empirically dead for real
@@ -1118,18 +1125,19 @@ extractCondLowCat :: LowCat -> Expr
 data WiringPayload = WiringPayload { wpTerm :: LowCat, wpShared :: Map.Map Text LowCat }
 collectWiring :: LowCat -> (LowCat, Map.Map Text LowCat)
 compileProcedureToLowCat :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> LowCat
-newtype GraphBuilder a = GraphBuilder { runBuilder :: State BuilderState a }
-data BuilderState = BuilderState { bsNodes, bsNextPc, bsSourceLines, bsExitPc, bsBlockPcMemo }
-initState :: BuilderState
-allocateNode :: InstrNode -> GraphBuilder Int
-registerNodeAt :: Int -> InstrNode -> GraphBuilder ()
-finalizeGraph :: Int -> BuilderState -> InstrGraph
-compileCatToInstr :: CatOp a b -> Int -> GraphBuilder Int
-buildInstrGraph :: CatOp () () -> InstrGraph
--- Unified entry point: the sole compiler. Seeds steLocal from body's own
--- BsLocalVar decls (collectBodyLocals) before compiling, so classifyExpr can
--- resolve locally-declared datastore/datawindow/transaction variable types.
+-- Named-graph InstrGraph' construction (Plan 167 Phase 6, Approach C):
+-- flattening's current mechanism regardless of source term. NamedBuilder is
+-- a bare State over NamedBuilderState (nbsNodes, nbsBlockMemo keyed on
+-- blockId alone, nbsExitName); freshName/defineNode are its two primitives.
+newtype NamedBuilder a = NamedBuilder { runNamedBuilder :: State NamedBuilderState a }
+buildInstrGraphNamed :: CatOp a b -> InstrGraph
+-- CatOp -> LowCat -> named InstrGraph' -> linearize, in one call.
 compileProcedureViaCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> InstrGraph
+-- No longer the production entry point (Plan 167 Phase 7 Step 6 switched
+-- production to compileProcedureViaEffTerm below) -- kept as the Phase 7
+-- Step 4/5 tests' cross-check oracle until Phase 7 Step 8 retires the
+-- untyped CatOp/LowCat stack this function and its callees are built on.
+compileProcedureToCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CatOp () ()
 -- Plan 163 Phase 3 (2026-07-10): PB.Analysis.SchFootprint.foldSchFootprint
 -- needs the raw compiled CatOp term (via foldCat), which neither sibling
 -- above exposes (one flattens to InstrGraph, the other to LowCat). Same
@@ -1137,7 +1145,24 @@ compileProcedureViaCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] 
 -- factored to share code with the other two (same rationale as
 -- compileProcedureToLowCat's own doc comment -- SSA is now compiled a
 -- third time per procedure, pre-existing duplication pattern, not new).
-compileProcedureToCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CatOp () ()
+-- NamedGraphBuilder (NGB): Effectful instance directly over EffTerm (Plan
+-- 167 Phase 7 Step 4), collapsing toLowCat+buildLowCatGraphNamed into one
+-- foldFreyd specialization. NGB a b = Text -> Text -> NamedBuilder Text
+-- (next, loopCont -- a loop body's Left/Right exit needs two distinct
+-- continuations, one arg apiece).
+newtype NGB a b = NGB { runNGB :: Text -> Text -> NamedBuilder Text }
+buildEffGraphNamed :: EffTerm () () -> InstrGraph' Text
+compileProcedureToEff :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> EffTerm () ()
+-- THE PRODUCTION ENTRY POINT since Plan 167 Phase 7 Step 6 -- both
+-- PB.Pipeline.Emit's injectCompiled and PB.Pipeline.Runner's compileOne
+-- call this, not compileProcedureViaCatOp. Same buildEffGraphNamed +
+-- linearize pipeline as compileProcedureViaCatOp's CatOp-side counterpart,
+-- over EffTerm/NGB instead of CatOp/LowCat. Known, accepted shape gap vs.
+-- compileProcedureViaCatOp on loop-bearing bodies (NGB's loopK always
+-- emits an InstrNop' header where patchLoopHeaderNamed fuses a leading
+-- branch into it) -- proven behaviorally inert corpus-wide (Phase 7 Step 5:
+-- 7547/7547 real procedures, zero unexplained mismatches).
+compileProcedureViaEffTerm :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> InstrGraph
 ```
 
 ### `PB.Analysis.CatInterp`
@@ -1154,6 +1179,9 @@ newtype Interp a b = Interp { runInterp :: a -> StateT InterpState IO b }
 interpretLoop :: Interp a (Either a b) -> Interp a b
 runInterpIO :: Interp a b -> a -> IO b  -- fresh empty env/trace/mocks, discards final InterpState
 runCat :: CatOp a b -> Interp a b       -- Plan 148 Phase 3: now `runCat = foldCat` (Interp specialization)
+runEff :: EffTerm a b -> Interp a b     -- Plan 167 Phase 7 Step 6: `= foldFreyd` (Interp specialization),
+                                        -- added alongside runCat for uniformity -- no production caller,
+                                        -- same as runCat itself (Interp is test-only).
 ```
 
 ### `PB.Analysis.InstrGraph`
@@ -1163,7 +1191,9 @@ runCat :: CatOp a b -> Interp a b       -- Plan 148 Phase 3: now `runCat = foldC
 -- hand-trace/golden-fixture tests. Renamed from PB.Analysis.CpsCompile in
 -- Plan 151 Phase 2b (2026-07-06) — the monadic compileProcedure compiler
 -- this module used to house was deleted in Plan 144 Phase 5 Step 7; the
--- sole compiler is now PB.Analysis.GraphBuilder.compileProcedureViaCatOp.
+-- production compiler is PB.Analysis.GraphBuilder.compileProcedureViaEffTerm
+-- (Plan 167 Phase 7 Step 6; compileProcedureViaCatOp is the prior entry
+-- point, still live as a cross-check oracle).
 -- parseArgList/collectBodyLocals moved out to PB.Analysis.CallClassify in
 -- the same Phase 2b — they're generic AST/type helpers with nothing to do
 -- with this module's own InstrNode/InstrGraph types.
@@ -1630,6 +1660,18 @@ newtype SchFootprint a b = SchFootprint { runSchFootprint :: FunctorCtx -> Set.S
 -- text extraction cannot see since there is no SQL statement in this
 -- procedure at all).
 foldSchFootprint :: FunctorCtx -> CatOp a b -> Set.Set SchMorphism
+-- No longer the production entry point (Plan 167 Phase 7 Step 6 switched
+-- Runner.hs's compileOne to foldSchFootprintEff below) -- kept as a
+-- test/cross-check oracle. foldSchFootprintEff :: FunctorCtx -> EffTerm a b
+-- -> Set.Set SchMorphism -- THE PRODUCTION ENTRY POINT since Step 6. A
+-- clause-for-clause transliteration of foldSchFootprint's force-time-
+-- memoized `go` onto Eff's GADT (J _ covers every embedded Pure morphism,
+-- all constant-empty; EBranch/EFanIn both union their two arms; ELetRef
+-- resolves against EffTerm's table, memoized on blockId exactly like
+-- CatTagged). Corpus-wide-verified against foldSchFootprint with zero
+-- mismatches (422 openpay + 621 PowerBuilder-Example real files, temporary
+-- side-by-side comparison in compileOne, reverted after the run).
+foldSchFootprintEff :: FunctorCtx -> EffTerm a b -> Set.Set SchMorphism
 
 -- runtimeDwAliasBindings (Plan 164 Phase C / D3, done 2026-07-10): the
 -- second, dynamic source Runner.hs's compileOne merges into

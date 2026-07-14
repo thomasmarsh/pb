@@ -26,7 +26,7 @@ import PB.AST.SourceFile
 import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.Cfg    (buildCfg, cyclomaticComplexity)
 import PB.Analysis.GraphBuilder
-  ( compileProcedureViaCatOp, compileProcedureToLowCat, compileProcedureToCatOp
+  ( compileProcedureViaEffTerm, compileProcedureToLowCat, compileProcedureToEff
   , collectWiring, WiringPayload (..)
   )
 import PB.Analysis.CallClassify (collectBodyLocals)
@@ -41,7 +41,7 @@ import PB.Analysis.SchemaCategory
   , StmtId (..), SchObject (..), SchMorphism (..), LegKind (..), LegSource (..)
   )
 import PB.Analysis.SchFootprint
-  ( FunctorCtx (..), foldSchFootprint, controlBindingsMap, dwColumnsFromRows
+  ( FunctorCtx (..), foldSchFootprintEff, controlBindingsMap, dwColumnsFromRows
   , runtimeDwAliasBindings
   )
 import PB.Analysis.DwFootprint
@@ -255,7 +255,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns m
         procs =
           [ let cfg      = buildCfg body
                 cfgJs    = jsonText (toJSON cfg)
-                instrJs    = jsonText (toJSON (compileProcedureViaCatOp (mkProcEnv instrParams) userFns body))
+                instrJs    = jsonText (toJSON (compileProcedureViaEffTerm (mkProcEnv instrParams) userFns body))
                 (wiringTerm, wiringShared) = collectWiring (compileProcedureToLowCat (mkProcEnv instrParams) userFns body)
                 wiringJs = jsonText (toJSON (WiringPayload wiringTerm wiringShared))
                 flow     = (fp, obj, pName, Dataflow.analyzeProcedure obj pName cfg)
@@ -267,8 +267,8 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns m
                   , fcControlBindings = controlBindings'
                   }
                 catFpRows = mapMaybe morphismToColRow
-                  (Set.toList (foldSchFootprint footprintCtx
-                    (compileProcedureToCatOp (mkProcEnv instrParams) userFns body)))
+                  (Set.toList (foldSchFootprintEff footprintCtx
+                    (compileProcedureToEff (mkProcEnv instrParams) userFns body)))
             in ( ProcRow fp obj pName pType sLine eLine cfgJs instrJs wiringJs
                    taintParams retType (Just cyclo) confidence
                , flow

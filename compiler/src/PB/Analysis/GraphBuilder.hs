@@ -1,12 +1,16 @@
 {-# LANGUAGE StrictData #-}
 -- | 'CatOp' → flat @InstrGraph@ flattening, plus 'LowCat' — the monomorphic
 -- intermediary that bridges the GADT-indexed 'CatOp' to the flat,
--- PC-indexed 'InstrGraph' the current TS runtime executes — and the public
--- one-call pipeline entry point, 'compileProcedureViaCatOp'. Flattening goes
--- via a named graph ('PB.Analysis.InstrGraph.InstrGraph''/'linearize', Plan
--- 167 Phase 6 Approach C): 'LowCat' nodes are compiled into a 'Text'-keyed
--- graph (dedup on blockId alone, no continuation-keyed memo) and then
--- numbered by a single pure BFS pass.
+-- PC-indexed 'InstrGraph' the current TS runtime executes — and
+-- 'NamedGraphBuilder', the 'EffTerm'-native flattener whose entry point,
+-- 'compileProcedureViaEffTerm', is the production one-call pipeline entry
+-- point since Plan 167 Phase 7 Step 6 ('compileProcedureViaCatOp' is the
+-- prior 'CatOp'/'LowCat'-based entry point, kept as a test/cross-check
+-- oracle until Phase 7 Step 8 retires that stack). Flattening goes via a
+-- named graph ('PB.Analysis.InstrGraph.InstrGraph''/'linearize', Plan 167
+-- Phase 6 Approach C): nodes are compiled into a 'Text'-keyed graph (dedup
+-- on blockId alone, no continuation-keyed memo) and then numbered by a
+-- single pure BFS pass.
 --
 -- Pure module — no I/O (the @NamedBuilder@ monad is a bare 'State', never
 -- 'IO'). Split out of 'PB.Analysis.CatOp' in Plan 151, alongside
@@ -237,14 +241,17 @@ extractCondLowCat _                  = ExNull
 -- CPS-threading argument this module has relied on since Plan 150, so
 -- caching on blockId alone is sound.
 --
--- 'buildInstrGraphNamed' is the sole production flattening path
--- ('compileProcedureViaCatOp' below); it also gives the CatOp-level unit
+-- 'buildInstrGraphNamed' backs 'compileProcedureViaCatOp' below, which is
+-- no longer the production flattening path (Plan 167 Phase 7 Step 6
+-- switched production to 'compileProcedureViaEffTerm'/'buildEffGraphNamed')
+-- but stays live as a test/cross-check oracle until Phase 7 Step 8 retires
+-- the untyped 'CatOp'/'LowCat' stack; it also gives the CatOp-level unit
 -- tests in "CatOpTest" a direct entry point equivalent to the old
 -- @buildInstrGraph@.
 buildInstrGraphNamed :: CatOp a b -> InstrGraph
 buildInstrGraphNamed = linearize P.. buildLowCatGraphNamed P.. toLowCatOp
 
--- | Unified entry point: compile a procedure body via the SSA → CatOp pipeline.
+-- | Compile a procedure body via the SSA → CatOp → LowCat pipeline.
 --
 -- Seeds 'steLocal' with the body's own local variable declarations before
 -- compiling, mirroring 'PB.Analysis.InstrGraph.compileProcedure' exactly —
@@ -256,6 +263,11 @@ buildInstrGraphNamed = linearize P.. buildLowCatGraphNamed P.. toLowCatOp
 -- 'linearize' ('buildInstrGraphNamed' composed with 'compileProcedureToLowCat',
 -- inlined here) instead of the retired PC-threaded 'BuilderState'\/
 -- 'bsBlockPcMemo' lowering.
+--
+-- No longer the production entry point (Plan 167 Phase 7 Step 6 switched
+-- production to 'compileProcedureViaEffTerm') — kept as the Step 4/5 tests'
+-- cross-check oracle until Step 8 retires the untyped 'CatOp'\/'LowCat'
+-- stack this function and its callees are built on.
 compileProcedureViaCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> InstrGraph
 compileProcedureViaCatOp env userFns body =
   linearize (buildLowCatGraphNamed (compileProcedureToLowCat env userFns body))
@@ -622,9 +634,9 @@ buildEffGraphNamed effTerm =
 
 -- | Same SSA -> 'Eff' pipeline as 'compileProcedureToEff', flattened via the
 -- collapsed 'foldFreyd'/'NGB' path instead of 'compileProcedureViaCatOp'\'s
--- 'toLowCat' + 'buildLowCatGraphNamed' two stages. Not yet the production
--- entry point (Phase 7 Step 5/6 gate the switch); exists so tests can
--- exercise the collapsed path directly.
+-- 'toLowCat' + 'buildLowCatGraphNamed' two stages. The production entry
+-- point since Plan 167 Phase 7 Step 6 (both 'PB.Pipeline.Emit' and
+-- 'PB.Pipeline.Runner' call this, not 'compileProcedureViaCatOp').
 compileProcedureViaEffTerm :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> InstrGraph
 compileProcedureViaEffTerm env userFns body =
   linearize (buildEffGraphNamed (compileProcedureToEff env userFns body))

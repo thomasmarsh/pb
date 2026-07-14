@@ -20,6 +20,7 @@ module PB.Analysis.CatInterp
   , ReturnUnwind (..)
   , runInterpIO
   , runCat
+  , runEff
   , interpretLoop
   ) where
 
@@ -28,7 +29,7 @@ import qualified Prelude as P
 import Control.Monad.State.Strict (StateT, get, modify', gets, evalStateT)
 import Control.Monad.IO.Class (liftIO)
 import Control.Exception (Exception, throwIO)
-import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), CatOp (..), foldCatOp)
+import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), CatOp (..), EffTerm, foldCatOp, foldFreyd)
 import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExprMocked)
 import qualified Data.Map.Strict as Map
 
@@ -149,3 +150,10 @@ runInterpIO (Interp f) x = evalStateT (f x) (InterpState Map.empty [] Map.empty)
 -- cases).
 runCat :: CatOp a b -> Interp a b
 runCat = foldCatOp
+
+-- | Interpret a compiled 'EffTerm' directly via 'Interp' — 'foldFreyd'
+-- specialized to @k = Interp@, added for uniformity with 'runCat' (Plan 167
+-- Phase 7 Step 6). No production caller: 'Interp' is test-only, same as
+-- 'runCat' itself.
+runEff :: EffTerm a b -> Interp a b
+runEff = foldFreyd

@@ -22,7 +22,7 @@ import PB.AST.SourceFile   (TypeBlock (..), TypeDecl (..), srPrimaryObject, srFu
 import PB.AST.Type         (PbType (..))
 import PB.Analysis.TypeEnv    (buildWorkspaceEnv, procEnv)
 import PB.Analysis.ControlHierarchy (buildControlIndex)
-import PB.Analysis.GraphBuilder (compileProcedureViaCatOp)
+import PB.Analysis.GraphBuilder (compileProcedureViaEffTerm)
 import PB.Analysis.DwFootprint (mkDwFootprintCtx)
 import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse
@@ -321,11 +321,15 @@ tests = testGroup "Pipeline.Runner"
           Right v -> lookupObj2 "meta" "object" v @?= String "dw_sales"
     ]
 
-  , testGroup "production wiring uses compileProcedureViaCatOp (Plan 144 Phase 5 Step 6)"
+  , testGroup "production wiring uses compileProcedureViaEffTerm (Plan 167 Phase 7 Step 6)"
     -- Runner.hs:148 (compileOne, the real production path behind runModeDb)
-    -- and Emit.hs:158 (wrapSrFile's withInstr branch) both used to call the
-    -- old PB.Analysis.InstrGraph.compileProcedure (deleted in Plan 144 Phase
-    -- 5 Step 7). Both now call PB.Analysis.CatOp.compileProcedureViaCatOp.
+    -- and Emit.hs:158 (wrapSrFile's withInstr branch) both used to call
+    -- PB.Analysis.CatOp.compileProcedureViaCatOp (the CatOp/LowCat path,
+    -- Plan 144 Phase 5 Step 6) through Plan 167 Phase 7 Step 5's corpus-wide
+    -- cross-check. Both now call PB.Analysis.GraphBuilder.compileProcedureViaEffTerm
+    -- (the EffTerm/NamedGraphBuilder path) -- compileProcedureViaCatOp itself
+    -- is unchanged and stays live as a test/cross-check oracle until Step 8
+    -- retires the untyped CatOp/LowCat stack.
     [ let src = T.unlines
             [ "public function integer uf_test ()"
             , "integer li_a"
@@ -347,14 +351,14 @@ tests = testGroup "Pipeline.Runner"
               body          = fbBody fb
               userFns       = Set.fromList [T.toLower (fnsName (fbSig fb))]
               env           = procEnv ws (buildControlIndex [sf]) objName []
-              newJson       = toJSON (compileProcedureViaCatOp env userFns body)
+              newJson       = toJSON (compileProcedureViaEffTerm env userFns body)
           in testGroup "if/else with shared trailing call"
-            [ testCase "wrapSrFile's instrGraph matches compileProcedureViaCatOp" $
+            [ testCase "wrapSrFile's instrGraph matches compileProcedureViaEffTerm" $
                 let v      = wrapSrFile True "uf_test.srf" sf spans ws
                     instrVal = lookupObj "instrGraph" (firstOf (lookupObj "functions" v))
                 in instrVal @?= newJson
 
-            , testCase "compileOne's ProcRow.prInstrJson matches compileProcedureViaCatOp" $ do
+            , testCase "compileOne's ProcRow.prInstrJson matches compileProcedureViaEffTerm" $ do
                 let pf = ParsedFile { pfPath = "uf_test.srf", pfSrFile = sf, pfSpans = spans, pfContents = src }
                 cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty Map.empty Nothing "confirmed" (PsParsed pf)
                 case cf of

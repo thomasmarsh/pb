@@ -26,6 +26,7 @@ module PB.Analysis.SchFootprint
   ( FunctorCtx (..)
   , SchFootprint (..)
   , foldSchFootprint
+  , foldSchFootprintEff
   , controlBindingsMap
   , dwColumnsFromRows
   , runtimeDwAliasBindings
@@ -36,7 +37,7 @@ import PB.AST.BodyStmt (BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..), C
 import PB.AST.Located (Located (..))
 import PB.AST.Type (renderPbType)
 import PB.Analysis.CallClassify (segName)
-import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), CatOp (..))
+import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), CatOp (..), Eff (..), EffTerm (..))
 import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainDwBinding)
 import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..), DwRetrieveColRow (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv, lookupScopedVar)
@@ -227,6 +228,52 @@ foldSchFootprint ctx op = fst (go op Map.empty)
     -- CatCall is the sole non-empty leaf: mirrors the 'callProc' instance
     -- (above) verbatim, so the exact-output oracle (SchFootprintTest.hs
     -- ~line 156) is preserved bit-for-bit.
+    callFootprint :: Text -> [Expr] -> Set.Set SchMorphism
+    callFootprint name args =
+      case resolveSetItem ctx name args of
+        Just (tbl, col) -> Set.singleton (SchMorphism (StmtObj (fcStmtObj ctx)) (ColumnObj tbl col) LegWrites SrcCatFootprint)
+        Nothing         -> Set.empty
+
+-- | Same direct, force-time-memoized fold as 'foldSchFootprint', over
+-- 'EffTerm' instead of 'CatOp' (Plan 167 Phase 7 Step 6 — uniformity, not
+-- urgency: production still calls 'foldSchFootprint' via
+-- 'compileProcedureToCatOp' until this path is wired in). Transliterates
+-- 'foldSchFootprint'\'s 'go' clause-for-clause onto 'Eff'\'s GADT: 'J _'
+-- covers every embedded 'Pure' morphism (id\/compose\/fork\/exl\/exr\/inl\/
+-- inr\/fanin\/eval), all constant-empty, same as 'CatId'\/'CatExl'\/
+-- 'CatExr'\/'CatConst'\/'CatInl'\/'CatInr'\/'CatEval' were; 'EBranch'
+-- unions both arms and ignores the condition, matching the 'branchK'
+-- instance derivation @(thenK ||| elseK) . splitValue . (id &&& eval cond)@
+-- exactly (every term in that composition besides @thenK@\/@elseK@ is
+-- itself constant-empty, so the composition's union collapses to just
+-- @thenK <> elseK@). 'ELetRef' resolves against 'EffTerm'\'s own table,
+-- memoized on 'blockId' exactly like 'CatTagged' — a shared body is forced
+-- once and its 'Set' reused at every reference, not just its fold (the same
+-- O(2^N) re-forcing bug 'foldSchFootprint'\'s own module-header note
+-- documents fixing for the 'CatOp' side).
+foldSchFootprintEff :: FunctorCtx -> EffTerm a b -> Set.Set SchMorphism
+foldSchFootprintEff ctx (EffTerm spine table) = fst (go spine Map.empty)
+  where
+    go :: Eff x y -> Map.Map Text (Set.Set SchMorphism)
+       -> (Set.Set SchMorphism, Map.Map Text (Set.Set SchMorphism))
+    go (J _)                m = (Set.empty, m)
+    go (EComp g f)          m = let (rg, m1) = go g m in let (rf, m2) = go f m1 in (rg <> rf, m2)
+    go (EAssign _)          m = (Set.empty, m)
+    go (EAssignWithRhs _ _) m = (Set.empty, m)
+    go (ECall name args)    m = (callFootprint name args, m)
+    go (ESuspend _ _)       m = (Set.empty, m)
+    go ESplitValue          m = (Set.empty, m)
+    go (EFanIn t f)         m = let (rt, m1) = go t m in let (rf, m2) = go f m1 in (rt <> rf, m2)
+    go (EBranch _ t f)      m = let (rt, m1) = go t m in let (rf, m2) = go f m1 in (rt <> rf, m2)
+    go (ELoop body)         m = go body m
+    go EReturn              m = (Set.empty, m)
+    go (ELetRef bid)        m = case Map.lookup bid m of
+        Just cached -> (cached, m)
+        Nothing     -> case Map.lookup bid table of
+          Just body -> let (r, m') = go body m in (r, Map.insert bid r m')
+          Nothing   -> error ("foldSchFootprintEff: unbound ELetRef " <> show bid)
+
+    -- Mirrors 'foldSchFootprint'\'s own 'callFootprint' verbatim.
     callFootprint :: Text -> [Expr] -> Set.Set SchMorphism
     callFootprint name args =
       case resolveSetItem ctx name args of
