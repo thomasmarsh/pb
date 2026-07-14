@@ -133,7 +133,7 @@ normalizeCallTag other      = other
 --
 -- 'InstrGraph' construction (PB.Compile.Flatten's NamedGraphBuilder,
 -- via 'compileProcedureViaEffTerm') addresses nodes by 'Text' name (mirroring
--- 'PB.Analysis.SSA.SsaBlock's own successor naming) rather than by an
+-- 'PB.Compile.SSA.SsaBlock's own successor naming) rather than by an
 -- eagerly-allocated pc, so a merge block reached by N predecessors is exactly
 -- one 'Map.Map' entry — dedup is 'Map.Map' key uniqueness, not a memo.
 -- 'linearize' numbers the named graph into the flat pc-indexed 'InstrGraph'

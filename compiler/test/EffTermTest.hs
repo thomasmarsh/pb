@@ -19,7 +19,7 @@ import PB.Pipeline.SqlParse (TableRef (..))
 import PB.Compile.InstrTypes (ShapeNode (..), canonicalize, normalizeCallTag, linearize)
 import PB.Analysis.CallClassify (parseArgList, collectBodyLocals)
 import PB.Compile.InstrInterp (runInstrGraphTrace, TraceOutcome (..))
-import PB.Analysis.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
+import PB.Compile.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                             SsaTerm (..), SsaProc (..), buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Lexing.Lexer     (tokenizeLine, LexLine (..))
@@ -402,7 +402,7 @@ tests = testGroup "EffTerm"
              (any (\n -> case n of InstrSuspend {} -> True; _ -> False) (igNodes graph))
 
     -- Plan 145 Phase 1C/3: BsPbCall (`call ancestor::event`) used to be dropped
-    -- entirely by PB.Analysis.SSA.stmtToAssigns's catch-all. Confirms the fix
+    -- entirely by PB.Compile.SSA.stmtToAssigns's catch-all. Confirms the fix
     -- makes the pipeline match PB.Analysis.InstrGraph's old-compiler output
     -- for the exact m_ole_example::destroy regression case bit-for-bit, not
     -- just structurally equivalent.

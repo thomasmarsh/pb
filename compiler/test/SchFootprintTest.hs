@@ -13,7 +13,7 @@ import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.SchFootprint
 import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..),
                                     DwRetrieveColRow (..), splitColumnRef)
-import PB.Analysis.SSA        (buildSsa)
+import PB.Compile.SSA        (buildSsa)
 import PB.Analysis.TypeEnv    (ScopedTypeEnv (..), WorkspaceEnv (..), buildWorkspaceEnv, procEnv)
 import PB.Analysis.TypeResolve (extractDwControlBindings)
 import PB.Grammar.DataWindow  (parseDataWindow)

@@ -14,7 +14,7 @@ import PB.Compile.LoopAnalysis (CompileCtx (..), computeMergePoints, ssaValToExp
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName,
                                  calleeName, isTriggerEvent, segName, parseArgList)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
-import PB.Analysis.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
+import PB.Compile.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                          SsaTerm (..), SsaProc (..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set

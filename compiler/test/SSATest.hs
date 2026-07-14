@@ -7,7 +7,7 @@ import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..),
                             DispatchExpr (..), DispatchMode (..))
 import PB.AST.Located      (Located (..))
 import PB.AST.Type          (PbType (..))
-import PB.Analysis.SSA
+import PB.Compile.SSA
 import PB.Analysis.TypeEnv  (ScopedTypeEnv (..))
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr)
 import PB.Lexing.Token      (Token (..), TokenKind (..), SourceSpan (..))

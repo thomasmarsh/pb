@@ -17,7 +17,7 @@
 -- ('svVersion') nothing downstream reads, and phi placement would only
 -- produce phi nodes with an always-empty source list (no call site feeds
 -- 'predMap' into them), so phi resolution always compiles to a no-op.
-module PB.Analysis.SSA
+module PB.Compile.SSA
   ( -- * SSA Variables
     SsaVar (..)
     -- * SSA Values

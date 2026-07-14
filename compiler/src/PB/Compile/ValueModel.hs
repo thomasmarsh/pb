@@ -80,7 +80,7 @@ evalExpr = evalExprMocked Map.empty
 --
 -- Covers the subset 'PB.Compile.LoopAnalysis.ssaValToExpr' and hand-built 'Eff'
 -- fixtures actually produce: literals, a single-segment 'ExLvalue' (SSA
--- variable references are always this shape — see 'PB.Analysis.SSA.SsaVar'
+-- variable references are always this shape — see 'PB.Compile.SSA.SsaVar'
 -- and its bare, unversioned 'svName'), binops, 'ExNot', 'ExNeg', 'ExNull'.
 -- 'ExCall'\/'ExMethodCall' —
 -- the shape 'PB.Compile.FromSSA.compileAssignToEff' embeds directly for

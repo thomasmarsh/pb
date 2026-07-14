@@ -3,7 +3,7 @@
 -- ('PB.Compile.FromSSA').
 --
 -- Pure module — no I/O. Takes a 'SsaProc' (already in SSA form — see
--- 'PB.Analysis.SSA') and computes the loop-header/merge-point/loop-exit
+-- 'PB.Compile.SSA') and computes the loop-header/merge-point/loop-exit
 -- structure 'PB.Compile.FromSSA.compileSsaToEff' needs to lower it.
 module PB.Compile.LoopAnalysis
   ( CompileCtx (..)
@@ -25,7 +25,7 @@ import qualified Prelude as P
 import Data.List (sortOn)
 import PB.AST.Expr (Expr (..), LvSegment (..), Lvalue (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
-import PB.Analysis.SSA (SsaVar (..), SsaVal (..), SsaBlock (..),
+import PB.Compile.SSA (SsaVar (..), SsaVal (..), SsaBlock (..),
                          SsaTerm (..), SsaProc (..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set

@@ -47,6 +47,7 @@ library
     PB.Analysis.CallClassify
     PB.Analysis.Cfg
     PB.Compile.IR
+    PB.Compile.SSA
     PB.Compile.LoopAnalysis
     PB.Compile.FromSSA
     PB.Compile.Flatten
@@ -55,7 +56,6 @@ library
     PB.Compile.InstrInterp
     PB.Compile.ValueModel
     PB.Analysis.Dataflow
-    PB.Analysis.SSA
     PB.Analysis.SchemaCategory
     PB.Analysis.SchFootprint
     PB.Analysis.DwFootprint

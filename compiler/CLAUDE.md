@@ -184,7 +184,7 @@ Mark done/pending as body parsers land.
 | `PB.AST.*`      | Data types only — no parsing logic (Located, Expr, BodyStmt, Type, SourceFile, DataWindow)                                          |
 | `PB.Lexing.*`   | Tokenization, layout, string mode                                                                                                   |
 | `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)                                                                                 |
-| `PB.Compile.*`  | Compilation pipeline: IR types (IR), loop analysis (LoopAnalysis), SSA lowering (FromSSA), flattening (Flatten), instruction types (InstrTypes), value model (ValueModel), interpreters (Interp, InstrInterp) |
+| `PB.Compile.*`  | Compilation pipeline: SSA IR (SSA), IR types (IR), loop analysis (LoopAnalysis), SSA lowering (FromSSA), flattening (Flatten), instruction types (InstrTypes), value model (ValueModel), interpreters (Interp, InstrInterp) |
 | `PB.Pipeline.*` | Multi-step transformations: Preprocess, Emit, Passes, Runner, Serialise, FileWalk, DuckDb, SqlParse, Church                        |
 | `PB.Analysis.*` | Pure analysis passes: Cfg, Dataflow, DeadCode, Taint, TypeEnv, TypeResolve, Builtins, SchemaCategory, SchFootprint, DwFootprint, ControlHierarchy |
 | `PB.Prelude`    | Custom Prelude — no parsing or transformation logic                                                                                 |
@@ -1014,7 +1014,7 @@ data Eff a b where   -- the premonoidal (effectful) category
 data EffTerm a b = EffTerm (Eff a b) (Map Text (Eff () ()))  -- spine + shared-term table
 ```
 
-### `PB.Analysis.SSA`
+### `PB.Compile.SSA`
 
 ```haskell
 -- Pure. Converts a procedure's body ('[Located BodyStmt]') into a
@@ -1051,7 +1051,7 @@ buildSsa :: ScopedTypeEnv -> Text -> [Located BodyStmt] -> SsaProc
 ```haskell
 -- Pure. Loop/merge-point analysis shared by the SSA -> Eff lowering pass
 -- (PB.Compile.FromSSA). Takes a SsaProc (already in SSA form — see
--- PB.Analysis.SSA) and computes the loop-header/merge-point/loop-exit
+-- PB.Compile.SSA) and computes the loop-header/merge-point/loop-exit
 -- structure that compileSsaToEff needs to lower it.
 data CompileCtx = CompileCtx { ccEnv :: ScopedTypeEnv, ccUserFns :: Set Text, ccMergePoints :: Set Text }
 -- Exported: computeMergePoints, computeLoopHeaders, computeLoopNestParents,

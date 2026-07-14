@@ -42,7 +42,7 @@ import PB.Compile.IR
 import PB.Compile.FromSSA (compileSsaToEff)
 import PB.Compile.InstrTypes (InstrNode (..), InstrGraph (..), InstrNode' (..), InstrGraph' (..), linearize)
 import PB.Analysis.CallClassify (collectBodyLocals)
-import PB.Analysis.SSA (buildSsa)
+import PB.Compile.SSA (buildSsa)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import Control.Monad.State.Strict (State, gets, modify, runState)
 import GHC.Generics (Generic)

@@ -201,7 +201,7 @@ tests = testGroup "CfgBuild"
     -- `try...catch...end try` block as one opaque pending statement (the
     -- same fallback every non-control BodyStmt hits) — the try-body's own
     -- assigns/calls never became real CfgBlock content, so
-    -- 'PB.Analysis.SSA.stmtToAssigns's `BsTry {} -> []` silently dropped
+    -- 'PB.Compile.SSA.stmtToAssigns's `BsTry {} -> []` silently dropped
     -- them from SSA entirely. The old compiler (PB.Analysis.InstrGraph)
     -- compiles the try-body sequentially and each catch body as
     -- independently-reachable dead code (no static exception edge) — this
