@@ -196,7 +196,7 @@ New modules go in the most specific matching directory. If a new layer is needed
 ## Code Index
 
 Maintained here to avoid re-scanning the tree. **Update when exports change.**
-Verified against source on 2026-06-21 — if you edit a constructor and don't
+Verified against source on 2026-07-14 — if you edit a constructor and don't
 update the matching entry here, the next session re-derives it the hard way
 (this cost real time in the 111a session). Field names below are the raw
 Haskell record names; the Aeson wire shape renames them via `stripCamelCasePrefix`
@@ -897,7 +897,7 @@ catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogF
 -- verified equivalent — collectAllProcs, runModeDualCps ("--dual-cps"),
 -- runModeDualTrace ("--dual-trace"), runInspect/runInspectOn ("--inspect"),
 -- isRealDiff, traceMaxSteps, and the corresponding Main.hs flags no longer
--- exist. compileProcedureViaCatOp (now PB.Analysis.GraphBuilder, moved from
+-- exist. compileProcedureViaCatOp (now PB.Compile.Flatten, moved from
 -- CatOp in the Plan 151 module split, 2026-07-06) was the sole compiler
 -- through Plan 167 Phase 7 Step 6 (2026-07-14), which switched compileOne's
 -- instrJs binding (and Emit.hs's own instrGraph call site) to
@@ -917,10 +917,6 @@ catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogF
 -- Sum-type discriminator: "tag" key (string); single-field payload → "contents".
 -- InterprocEdge, ProcedureSummary, ProcSummaryReturnFlow use manual instances
 -- to match Python snake_case keys (caller_object, callee_proc, etc.).
--- LowCat (Plan 149 Phase 1): manual instance -- every constructor delegates
--- to genericToJSON EXCEPT LTagged, which is hand-written to emit only
--- {"tag":"LTagged","blockId":..} with NO "contents" (the real payload lives
--- once in WiringPayload's "sharedBlocks", not inlined at every reference).
 ```
 
 ### `PB.Pipeline.CfgBuild`
@@ -987,68 +983,42 @@ parseArgList      :: [Token] -> Expr                            -- imported by C
 collectBodyLocals :: [Located BodyStmt] -> Map.Map Text PbType  -- imported by GraphBuilder
 ```
 
-### `PB.Analysis.CatOp`
+### `PB.Compile.IR`
 
 ```haskell
--- Pure. The categorical IR only — typeclasses, GADT, instances. Plan 151
--- (2026-07-06) split the old 1367-line CatOp.hs (which had mixed 4 stages)
--- into this core module plus 3 siblings, each a single pipeline stage:
---   PB.Analysis.CatLower     -- SSA -> CatOp compilation (compileSsa)
---   PB.Analysis.GraphBuilder -- CatOp -> flat InstrGraph flattening,
---                            -- plus compileProcedureViaCatOp (the public
---                            -- one-call entry point Emit.hs/Runner.hs use)
---   PB.Analysis.CatInterp    -- direct Haskell execution (Interp/runCat)
+-- Pure module — no I/O. The typeclasses ('Category', 'Cartesian',
+-- 'Cocartesian', 'Effectful') plus the Freyd-split GADT pair 'Pure'/'Eff'
+-- that implements them. The surrounding pipeline lives in sibling modules:
+--
+--   * 'PB.Compile.FromSSA'  -- SSA -> Eff compilation (compileSsaToEff)
+--   * 'PB.Compile.Flatten'  -- Eff -> flat InstrGraph flattening
+--   * 'PB.Compile.Interp'   -- direct Haskell execution (Interp target,
+--                             used for testing)
 class Category k where { id :: k a a; (.) :: k b c -> k a b -> k a c }
 class Category k => Cartesian k where { exl, exr, (&&&) }
 class Category k => Cocartesian k where { inl, inr, (|||) }
-class Category k => Effectful k where { eval, assign, lookup, suspend, callProc, splitValue, ret, loopK, branchK }
--- ret/loopK added Plan 148 Phase 3 (2026-07-07): CatReturn/CatLoop were the
--- only 2 of CatOp's 20 constructors with no existing class primitive to
--- dispatch to (everything else, incl. CatAssignWithRhs = assign var . (id
--- &&& eval e), already reduced). CatOp's own instance: ret = CatReturn,
--- loopK = CatLoop. Interp's instance (PB.Analysis.CatInterp) absorbs the
--- old bespoke CatReturn/CatLoop cases (throwIO ReturnUnwind / interpretLoop).
--- branchK :: Expr -> k a c -> k a c -> k a c (Plan 167 Phase 7 Step 1,
--- 2026-07-14): promotes branch/branchEff from derived combinators to a
--- primitive, no-default Effectful method -- a future fold TARGET (e.g. a
--- NamedGraphBuilder Effectful instance, Phase 7 Step 4) can override it for
--- direct, simultaneous access to the condition and both arms, which a
--- generic per-constructor fold can never recover once each is folded
--- independently. Deliberately carries NO (Cartesian k, Cocartesian k)
--- constraint anywhere (neither on the class head nor per-method): a
--- per-method constraint over the class's own variable is still resolved by
--- instance search at every call site, so it would make branchK uncallable
--- at k = Eff (no Cartesian Eff instance exists, by design -- a cartesian
--- fork over an effectful subterm must not typecheck). Since branchK has no
--- default, no instance needs the constraint threaded through its own
--- signature -- each instance resolves whatever it uses via ordinary global
--- instance search on its own concrete type (Cartesian Pure via J, for
--- Eff's case). All 4 instances (CatOp/Interp/SchFootprint/Eff, CatOp.hs/
--- CatInterp.hs/SchFootprint.hs) match their prior branch/branchEff
--- derivation exactly -- see doc/plan/167-structural-sharing-catop-lowcat.md's
--- "Second correction (2026-07-14)" for the full evidence trail (a real
--- cabal build error caught the first, constrained-signature attempt).
--- branch/branchEff (the free term-building functions CatLower.hs/
--- CatLowerEff.hs use) are unaffected and unchanged.
+class Category k => Effectful k where { eval, assign, lookup, suspend, callProc, splitValue, ret, loopK, branchK, assignWithRhs, memoTag }
+-- branchK: promotes branching to a primitive with direct access to both arms.
+-- assignWithRhs: fused assign-with-rhs (avoids erasing the RHS through
+-- no-value-channel carriers like NGB/WB).
+-- memoTag: hook for carriers that must not re-materialize shared ELetRef bodies.
 branch  :: (Effectful k, Cartesian k, Cocartesian k) => Expr -> k env b -> k env b -> k env b
-foldCat :: (Effectful k, Cartesian k, Cocartesian k) => CatOp a b -> k a b
--- foldCat (Plan 148 Phase 3): the fold CatOp is initial for, generalized to
--- any Effectful/Cartesian/Cocartesian instance -- not just Interp.
--- PB.Analysis.CatInterp.runCat is now `runCat = foldCat`. Second instance:
--- PB.Analysis.SchFootprint (see its own Code Index entry).
-data CatOp a b where  -- initial algebra; 20 constructors incl. CatLoop/CatReturn/CatTagged
-  CatId, CatCompose, CatFork, CatExl, CatExr, CatConst, CatInl, CatInr, CatFanIn,
-  CatAssign, CatAssignWithRhs, CatLookup, CatLoop, CatReturn, CatEval, CatCall,
-  CatSuspend, CatSplitValue, CatTry, CatTagged :: ...
--- Manual Show/Eq (GADTs can't derive); Eq via feq, which unsafeCoerce's to
--- CatOp () () and structurally matches -Wno-inaccessible-code/-overlapping-patterns.
+branchEff :: Expr -> Eff env b -> Eff env b -> Eff env b
+foldFreyd :: EffTerm a b -> k a b  -- where k is any Effectful/Cartesian/Cocartesian instance
+data Pure a b where  -- the cartesian (duplication-safe) category
+  PId, PComp, PFork, PExl, PExr, PInl, PInr, PFanIn, PEval :: ...
+data Eff a b where   -- the premonoidal (effectful) category
+  J :: Pure a b -> Eff a b
+  EComp, EBranch, ELetRef, ELoop, EReturn, EAssign, EAssignWithRhs,
+  ECall, ESuspend, ESplitValue, EFanIn :: ...
+data EffTerm a b = EffTerm (Eff a b) (Map Text (Eff () ()))  -- spine + shared-term table
 ```
 
 ### `PB.Analysis.SSA`
 
 ```haskell
 -- Pure. Converts a procedure's body ('[Located BodyStmt]') into a
--- block-structured 'SsaProc' ('PB.Analysis.CatLower' consumes it directly by
+-- block-structured 'SsaProc' ('PB.Compile.LoopAnalysis' consumes it directly by
 -- unversioned variable name). NOT dominance-based SSA despite the name —
 -- Plan 155 F1 (2026-07-08) deleted the dominator-tree/dominance-frontier/
 -- phi-placement/variable-renaming machinery this module used to have: it
@@ -1076,163 +1046,70 @@ buildSsa :: ScopedTypeEnv -> Text -> [Located BodyStmt] -> SsaProc
 -- findEdgeLabel.
 ```
 
-### `PB.Analysis.CatLower`
+### `PB.Compile.LoopAnalysis`
 
 ```haskell
--- Pure. SSA -> CatOp lowering (the categorical pipeline's largest, most
--- intricate stage; all of Plan 144's loop-nesting machinery and most of
--- Plan 146's correctness fixes live here). Split from CatOp.hs Plan 151.
--- Plan 155 F1 (2026-07-08): compilePhiAssignments deleted — it composed
--- against PB.Analysis.SSA's phi machinery, which was always a no-op (see
--- that module's own history note). compileTerm/compileLoopTerm/
--- compileLoopBranchPath no longer take a "prevBlock"/"blockId" argument
--- (it existed only to feed that dead call).
+-- Pure. Loop/merge-point analysis shared by the SSA -> Eff lowering pass
+-- (PB.Compile.FromSSA). Takes a SsaProc (already in SSA form — see
+-- PB.Analysis.SSA) and computes the loop-header/merge-point/loop-exit
+-- structure that compileSsaToEff needs to lower it.
 data CompileCtx = CompileCtx { ccEnv :: ScopedTypeEnv, ccUserFns :: Set Text, ccMergePoints :: Set Text }
-compileSsa :: ScopedTypeEnv -> Set.Set Text -> SsaProc -> CatOp () ()
--- Internal (not exported): computeMergePoints, termSuccessors, computeLoopHeaders,
--- computeLoopNestParents, computeAllLoopExits, computeLoopBodyBlocks,
--- discoverReachable, canReach, determineLoopExitTarget, compileBlock,
--- compileLoopBody, ssaValToExpr, compileTerm,
--- compileLoopTerm, compileLoopBranchPath, isLoopExit, compileAssigns,
--- compileAssign, compileCallExpr.
+-- Exported: computeMergePoints, computeLoopHeaders, computeLoopNestParents,
+-- computeAllLoopExits, computeLoopBodyBlocks, discoverReachable, canReach,
+-- determineLoopExitTarget, isLoopExit, termSuccessors, ssaValToExpr.
 ```
 
-### `PB.Analysis.GraphBuilder`
+### `PB.Compile.Flatten`
 
 ```haskell
--- Pure (every monad here is a bare State, never IO). CatOp/EffTerm -> flat
--- InstrGraph flattening, plus LowCat (the monomorphic CatOp bridge -- no
--- unsafeCoerce, deterministic pattern matching). Split from CatOp.hs Plan
--- 151. The old PC-threaded GraphBuilder/BuilderState/buildInstrGraph/
--- compileCatToInstr machinery (Plan 152's CpsNode/CpsGraph rename target)
--- was DELETED in Plan 167 Phase 6 step 5b -- flattening goes via the named
--- graph below (NamedBuilder/InstrGraph'/linearize) in every current path.
-data LowCat = LId | LCompose .. | LAssignWithRhs .. | LFanIn .. | LLoop ..
-            | LInl | LInr | LSplitValue | LEval .. | LFork .. | LCall ..
-            | LSuspend .. | LReturn | LTagged .. | LErasable
-toLowCat :: CatTerm a b -> LowCat
-toLowCatOp :: CatOp a b -> LowCat
-extractCondLowCat :: LowCat -> Expr
--- LErasable/CatTry are empirically dead for real procedures (0/7667 across
--- both corpora, Plan 149 Phase 0) -- LowCat is reused as-is (toLowCat/
--- compileProcedureToLowCat/compileProcedureViaCatOp), no new type needed for
--- that legacy path. The ToJSON LowCat instance (PB.Pipeline.Serialise)
--- still serialises LTagged as a bare {tag,blockId} reference (no inlined
--- payload) -- exercised by tests, though its sole production consumer
--- (WiringPayload, below) is retired.
-compileProcedureToLowCat :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> LowCat
--- Named-graph InstrGraph' construction (Plan 167 Phase 6, Approach C):
--- flattening's current mechanism regardless of source term. NamedBuilder is
--- a bare State over NamedBuilderState (nbsNodes, nbsBlockMemo keyed on
--- blockId alone, nbsExitName); freshName/defineNode are its two primitives.
-newtype NamedBuilder a = NamedBuilder { runNamedBuilder :: State NamedBuilderState a }
-buildInstrGraphNamed :: CatOp a b -> InstrGraph
--- CatOp -> LowCat -> named InstrGraph' -> linearize, in one call.
-compileProcedureViaCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> InstrGraph
--- No longer the production entry point (Plan 167 Phase 7 Step 6 switched
--- production to compileProcedureViaEffTerm below) -- kept as the Phase 7
--- Step 4/5 tests' cross-check oracle until Phase 7 Step 8 retires the
--- untyped CatOp/LowCat stack this function and its callees are built on.
-compileProcedureToCatOp :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> CatOp () ()
--- Plan 163 Phase 3 (2026-07-10): PB.Analysis.SchFootprint.foldSchFootprint
--- needs the raw compiled CatOp term (via foldCat), which neither sibling
--- above exposes (one flattens to InstrGraph, the other to LowCat). Same
--- buildSsa/compileSsa pipeline, one step shallower; deliberately not
--- factored to share code with the other two (same rationale as
--- compileProcedureToLowCat's own doc comment -- SSA is now compiled a
--- third time per procedure, pre-existing duplication pattern, not new).
--- NamedGraphBuilder (NGB): Effectful instance directly over EffTerm (Plan
--- 167 Phase 7 Step 4), collapsing toLowCat+buildLowCatGraphNamed into one
--- foldFreyd specialization. NGB a b = Text -> Text -> NamedBuilder Text
--- (next, loopCont -- a loop body's Left/Right exit needs two distinct
--- continuations, one arg apiece).
+-- Pure (every monad here is a bare State, never IO). EffTerm -> flat
+-- InstrGraph flattening. Contains two Effectful instances over EffTerm:
+-- NGB (instruction-graph construction) and WB (wiring-diagram construction).
+--
+-- NamedGraphBuilder (NGB): the production flattener. NGB a b = Text -> Text ->
+-- NamedBuilder Text (next, loopCont). A loop body's Left/Right exit needs
+-- two distinct continuations.
 newtype NGB a b = NGB { runNGB :: Text -> Text -> NamedBuilder Text }
+newtype NamedBuilder a = NamedBuilder { runNamedBuilder :: State NamedBuilderState a }
 buildEffGraphNamed :: EffTerm () () -> InstrGraph' Text
 compileProcedureToEff :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> EffTerm () ()
--- THE PRODUCTION ENTRY POINT since Plan 167 Phase 7 Step 6 -- both
--- PB.Pipeline.Emit's injectCompiled and PB.Pipeline.Runner's compileOne
--- call this, not compileProcedureViaCatOp. Same buildEffGraphNamed +
--- linearize pipeline as compileProcedureViaCatOp's CatOp-side counterpart,
--- over EffTerm/NGB instead of CatOp/LowCat. Known, accepted shape gap vs.
--- compileProcedureViaCatOp on loop-bearing bodies (NGB's loopK always
--- emits an InstrNop' header where patchLoopHeaderNamed fuses a leading
--- branch into it) -- proven behaviorally inert corpus-wide (Phase 7 Step 5:
--- 7547/7547 real procedures, zero unexplained mismatches).
+-- THE PRODUCTION ENTRY POINT -- both PB.Pipeline.Emit's injectCompiled and
+-- PB.Pipeline.Runner's compileOne call this.
 compileProcedureViaEffTerm :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> InstrGraph
--- WiringBuilder (WB): a third Effectful instance over EffTerm (Plan 167
--- Phase 7 Step 7), replacing collectWiring/WiringPayload -- WiringGraph's
--- wgNodes is already a flat Text-keyed Map, so dedup falls out of Map key
--- uniqueness (via memoTag) instead of a bespoke second pass over LowCat.
--- Sibling node/state types to NGB's own (WiringNode/WiringBuilderState/
--- WiringB), NOT a reuse of InstrNode'/NamedBuilder -- reusing the ISA type
--- would force linearize/toInstrNode (shared with NGB's real execution path)
--- to grow a dead-but-mandatory case for a node no execution path produces.
+-- WiringBuilder (WB): a third Effectful instance over EffTerm, producing
+-- WiringGraph/WiringNode for JSON serialization. Dedup falls out of Map key
+-- uniqueness via memoTag.
 data WiringNode p = WireAssign {..} | WireCond { wcExpr :: Expr, wcNext :: p }
                   | WireBranch { wtThen :: p, wtElse :: p } | WireCall {..}
                   | WireSuspend {..} | WireReturn | WireNop {..}
 data WiringGraph p = WiringGraph { wgNodes :: Map.Map Text (WiringNode p), wgEntry :: p }
 newtype WB a b = WB { runWB :: Text -> Text -> WiringB Text }
--- The one behavioral difference from NGB: branchK is the *generic*
--- `branch` derivation ("default"), not a fused primitive -- WB's eval/(&&&)
--- are NOT erased the way NGB's are, so `(t \|\|\| f) . splitValue . (id &&&
--- eval cond)` genuinely builds a WireCond node immediately upstream of the
--- WireBranch fork `(\|\|\|)` builds, instead of fusing cond+fork into one
--- node. Real-corpus-verified: WireCond count == WireBranch count exactly,
--- 1:1, on every procedure checked (e.g. w_data_explorer.of_set_lv_item: 5
--- and 5), and each WireCond's own `next` points directly at its WireBranch.
 buildEffGraphWiring :: EffTerm () () -> WiringGraph Text
 compileProcedureToWiring :: ScopedTypeEnv -> Set.Set Text -> [Located BodyStmt] -> WiringGraph Text
--- Production entry point for the "wiring" JSON key (PB.Pipeline.Emit's
--- injectCompiled) and the wiring_json DuckDB column (PB.Pipeline.Runner's
--- compileOne) since Plan 167 Phase 7 Step 7 -- replaces
--- collectWiring (compileProcedureToLowCat ...) / WiringPayload at both call
--- sites. Serializes directly via genericToJSON (WiringGraph/WiringNode's
--- ToJSON, PB.Pipeline.Serialise) -- no manual term/sharedBlocks split
--- needed, unlike WiringPayload's.
 ```
 
-### `PB.Analysis.CatInterp`
+### `PB.Compile.Interp`
 
 ```haskell
--- Direct Haskell execution of a compiled CatOp term (the "Interp" target) --
--- used for testing, without going through GraphBuilder/InstrGraph or the TS
--- runtime. Parallels PB.Analysis.InstrInterp (interprets the flat InstrGraph
--- GraphBuilder produces instead) -- Plan 146's semantic-equivalence oracle
--- cross-checks the two. Split from CatOp.hs Plan 151.
+-- Direct Haskell execution of a compiled EffTerm (the "Interp" target) —
+-- used for testing, without going through PB.Compile.Flatten or the TS
+-- runtime. Parallels PB.Compile.InstrInterp (interprets the flat InstrGraph
+-- Flatten produces instead) — the semantic-equivalence oracle cross-checks
+-- the two.
 data InterpState = InterpState { isEnv :: Map.Map Text Value, isTrace :: [TraceEvent], isMocks :: MockResponses }
-newtype ReturnUnwind = ReturnUnwind InterpState  -- thrown by CatReturn to unwind past all enclosing loops
+newtype ReturnUnwind = ReturnUnwind InterpState  -- thrown by ret to unwind past all enclosing loops
 newtype Interp a b = Interp { runInterp :: a -> StateT InterpState IO b }
 interpretLoop :: Interp a (Either a b) -> Interp a b
-runInterpIO :: Interp a b -> a -> IO b  -- fresh empty env/trace/mocks, discards final InterpState
-runCat :: CatOp a b -> Interp a b       -- Plan 148 Phase 3: now `runCat = foldCat` (Interp specialization)
-runEff :: EffTerm a b -> Interp a b     -- Plan 167 Phase 7 Step 6: `= foldFreyd` (Interp specialization),
-                                        -- added alongside runCat for uniformity -- no production caller,
-                                        -- same as runCat itself (Interp is test-only).
+runInterpIO :: Interp a b -> a -> IO b
+runEff :: EffTerm a b -> Interp a b  -- foldFreyd specialization (test-only)
 ```
 
-### `PB.Analysis.InstrGraph`
+### `PB.Compile.InstrTypes`
 
 ```haskell
 -- Pure. Shared InstrNode/InstrGraph types + canonical-shape helpers for
--- hand-trace/golden-fixture tests. Renamed from PB.Analysis.CpsCompile in
--- Plan 151 Phase 2b (2026-07-06) — the monadic compileProcedure compiler
--- this module used to house was deleted in Plan 144 Phase 5 Step 7; the
--- production compiler is PB.Analysis.GraphBuilder.compileProcedureViaEffTerm
--- (Plan 167 Phase 7 Step 6; compileProcedureViaCatOp is the prior entry
--- point, still live as a cross-check oracle).
--- parseArgList/collectBodyLocals moved out to PB.Analysis.CallClassify in
--- the same Phase 2b — they're generic AST/type helpers with nothing to do
--- with this module's own InstrNode/InstrGraph types.
---
--- Renamed again from PB.Analysis.CpsGraph in Plan 152 (2026-07-06), along
--- with every CpsNode constructor and the JSON wire tags, the DuckDB
--- procedures.cps_graph_json column (-> instr_graph_json), the Python
--- "cpsGraph" dict key (-> "instrGraph"), and the TS
--- ui/packages/interpreter/src/cps/ directory (-> src/instr/). "CPS" was an
--- inaccurate name for this flat, PC-indexed instruction array (it has no
--- nested closures, so it isn't continuation-passing style) — see Plan 151's
--- "Explicitly NOT part of this plan" section for the Stage 0 rationale and
--- Plan 152 for the full cross-language rename record.
+-- hand-trace/golden-fixture tests. Production flattens via
+-- PB.Compile.Flatten.compileProcedureViaEffTerm (SSA -> EffTerm -> InstrGraph).
 data InstrNode = InstrAssign {..} | InstrBranch {..} | InstrGoto {..} | InstrCall {..}
                | InstrSuspend {..} | InstrReturn {..} | InstrNop {..} | InstrCallProc {..}
 data InstrGraph = InstrGraph { igNodes, igEntry, igSuspensionPoints, igSourceMap }
@@ -1242,6 +1119,10 @@ data ShapeNode = SAsgn Int | SBrnch Int Int | SGoto Int | SCall Int
                | SSusp Text Int | SRet | SNop Int | SCProc Int
 canonicalize     :: InstrGraph -> [ShapeNode]
 normalizeCallTag :: ShapeNode -> ShapeNode  -- SCProc n -> SCall n (cosmetic tag-only divergence)
+-- Named-graph intermediate (InstrGraph'/linearize):
+data InstrNode' p = InstrAssign' {..} | InstrBranch' {..} | ...
+data InstrGraph' p = InstrGraph' { igNodes' :: Map.Map Text (InstrNode' p), igEntry' :: p }
+linearize :: InstrGraph' p -> InstrGraph
 ```
 
 ### `PB.Analysis.Dataflow` (Plan 111a)
@@ -1340,7 +1221,7 @@ computeOverrideEdges :: [ProcInfo] -> [(Text, Text)] -> [(Text, Text, Text)]
 ### `PB.Analysis.TypeEnv`
 
 ```haskell
--- Cross-file type environment. Used by InstrGraph consumers + Runner (Plan 114 unified them).
+-- Cross-file type environment. Used by PB.Compile.Flatten consumers + Runner (Plan 114 unified them).
 data TypeEnv = TypeEnv { teVars :: Map Text PbType, teUserTypes :: Map Text Text }
 buildWorkspaceTypeEnv :: [SrFile] -> TypeEnv
 lookupVarType    :: Text -> TypeEnv -> Maybe PbType      -- case-insensitive
@@ -1804,7 +1685,7 @@ walkAllSrFiles :: FilePath -> IO [FilePath]   -- any .sr<single-char>
 -- procedures.wiring_json (Plan 149 Phase 1): ProcRow gained prWiringJson,
 -- positioned right after prInstrJson/instr_graph_json in both the DDL and
 -- appendProcedures' column order (raw positional Appender -- order must
--- match). Populated from PB.Analysis.GraphBuilder's WiringPayload
+-- match). Populated from PB.Compile.Flatten's WiringGraph
 -- (compileProcedureToLowCat + collectWiring), by both Runner.hs (--db mode)
 -- and Emit.hs's injectCompiled ("wiring" key, JSON -o mode, withInstr only).
 appendObjects, appendProcedures, appendDwObjects, appendDwControls :: DuckConn -> [row] -> IO ()

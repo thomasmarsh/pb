@@ -54,15 +54,10 @@ data CompileCtx = CompileCtx
 -- A loop header always has 2+ predecessors (the initial forward entry, plus
 -- at least one back-edge), so a naive predecessor count always flags it —
 -- but a header is never actually at risk of the physical-duplication bug
--- this tagging exists to fix: the loop-lowering machinery
--- (@compileLowCatToInstrNamed@'s @LLoop@ clause in
--- "PB.Compile.Flatten") lowers a loop's header content exactly once,
--- as the sole argument to 'CatLoop', never embedded at a second tree
--- position. Tagging it anyway broke @patchLoopHeaderNamed@'s @LCompose
--- (LFanIn ..) ..@ structural detection (it doesn't unwrap 'LTagged'), which
--- silently fell back to its unpatched-forwarding-'InstrNop' path — and,
--- worse, mis-threaded the loop's own back-edge, causing loops to stop
--- after one iteration.
+-- this tagging exists to fix: the loop-lowering machinery lowers a loop's
+-- header content exactly once, as the sole argument to 'ELoop', never
+-- embedded at a second tree position. Tagging it anyway caused the loop's
+-- back-edge to be mis-threaded, making loops stop after one iteration.
 computeMergePoints :: SsaProc -> Set.Set Text
 computeMergePoints proc =
   Map.keysSet (Map.filter (P.> 1) predCounts) `Set.difference` computeLoopHeaders proc
@@ -223,13 +218,11 @@ discoverReachable headers resolvedExits proc headerId currentBlock visited
 -- procedure, reached both from an unrelated earlier branch AND from this
 -- loop's exit) is not a loop-body member at all, and treating it as one
 -- here made it eligible for 'computeLoopBodyBlocks' — which then let
--- 'compileLoopBody' try to recompile a block that an *outer*, non-loop
--- branch had already compiled and memoized moments earlier as plain
--- 'CatId', via the 'seedVisited' \"already compiled outside this loop\"
--- placeholder in 'compileBlock'. That stale 'CatInl' placeholder silently
--- replaced the loop's real exit content, producing a branch node whose own
--- false edge pointed back at itself — an infinite loop (confirmed via
--- direct 'InstrGraph' inspection of the real corpus regression,
+-- the loop-lowering pass try to recompile a block that an *outer*, non-loop
+-- branch had already compiled and memoized moments earlier as a plain
+-- identity. That stale placeholder silently replaced the loop's real exit
+-- content, producing a branch node whose own false edge pointed back at
+-- itself — an infinite loop (confirmed via direct 'InstrGraph' inspection
 -- @w_regedit::itempopulate@). The genuine early-return-inside-a-loop case
 -- (@w_customer_report::open@ et al.) is instead handled directly in
 -- 'isLoopExit' below, which only special-cases a block whose *own*

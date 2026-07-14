@@ -79,7 +79,7 @@ class Category k => Effectful k where
   suspend    :: Text -> [Expr] -> k args ()
   callProc   :: Text -> [Expr] -> k args ()
   splitValue :: k (env, Value) (Either env env)
-  -- | Procedure-terminal escape ('CatReturn'). Every target category must
+  -- | Procedure-terminal escape. Every target category must
   -- say what "abort past every enclosing construct" means for it — 'Interp'
   -- throws, a static-analysis target like 'PB.Analysis.SchFootprint' can
   -- just treat it as a no-op.
@@ -89,7 +89,7 @@ class Category k => Effectful k where
   -- 'foldFreyd' can be generic over any 'Effectful' instance instead of
   -- special-casing these two constructors per-interpreter.
   loopK      :: k a (Either a b) -> k a b
-  -- | Categorical branching ('CatFanIn'/'EFanIn'-forming), promoted from a
+  -- | Categorical branching ('EFanIn'-forming), promoted from a
   -- derived combinator to a primitive so a target category can override it
   -- with direct, simultaneous access to the condition and both arms — a
   -- generic per-constructor fold can never recover that access once each
@@ -159,9 +159,9 @@ branchEff = EBranch
 -- (duplication-safe) category; 'Eff' is the premonoidal (effectful)
 -- category, with the 'J' constructor embedding a 'Pure' morphism.
 --
--- KEY FINDING: @eval@ is PURE. @Interp@'s @eval@ (CatInterp.hs:94) is a
+-- KEY FINDING: @eval@ is PURE. @Interp@'s @eval@ is a
 -- single @gets@ — a pure read of the environment, no @modify'@, no
--- @TraceEvent@ (the TraceEvent ADT, CatEval.hs:57-63, has no TeEval).
+-- @TraceEvent@ (the TraceEvent ADT has no TeEval).
 -- @SchFootprint@'s @eval@ returns @Set.empty@ unconditionally. So @eval@
 -- lives in Pure as @PEval@; the @Effectful Eff@ instance embeds it via
 -- @eval e = J (PEval e)@.
@@ -216,7 +216,7 @@ data Eff a b where
   -- ('PB.Compile.FromSSA.compileSsaToEff's branch targets contain
   -- assigns/calls/suspends), so they cannot live in
   -- 'Pure'; but '(|||)' is CHOICE, not duplication — @Interp@'s '(|||)'
-  -- dispatches one arm at runtime (CatInterp.hs:89-91), so unlike 'PFork'
+  -- dispatches one arm at runtime, so unlike 'PFork'
   -- it cannot duplicate an effect. This is the bug-class distinction the
   -- Freyd split rests on: 'Cartesian'/'PFork' over 'Eff' is forbidden
   -- (duplication), 'Cocartesian'/'EFanIn' over 'Eff' is sound (choice).

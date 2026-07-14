@@ -9,7 +9,7 @@
 -- through the 'PB.Compile.Flatten' flattening step or the TS runtime.
 --
 -- Parallels 'PB.Compile.InstrInterp' (the flat @InstrGraph@-level trace
--- interpreter) — 'CatInterp' interprets 'EffTerm's directly, 'InstrInterp'
+-- interpreter) — 'Interp' interprets 'EffTerm's directly, 'InstrInterp'
 -- interprets the flattened output of 'PB.Compile.Flatten'; the two
 -- backends are cross-checked against each other by a semantic-equivalence
 -- oracle test.
@@ -36,12 +36,12 @@ import qualified Data.Map.Strict as Map
 -- ============================================================================
 
 -- | Persistent state threaded through an 'Interp' run: the named-variable
--- environment ('CatOp'\'s @env@ type parameter is structural wiring only —
--- 'PB.Compile.LoopAnalysis.compileSsa' always produces @CatOp () ()@ — so real
--- variable storage lives here instead), the accumulating observable trace,
--- and the mocked call/suspend responses available for this run — read-only
--- from 'Interp'\'s own perspective, but threaded through the same state
--- for simplicity rather than adding a separate 'ReaderT' layer.
+-- environment (the @env@ type parameter is structural wiring only —
+-- 'PB.Compile.LoopAnalysis.compileSsa' always produces a wire-only env —
+-- so real variable storage lives here instead), the accumulating observable
+-- trace, and the mocked call/suspend responses available for this run —
+-- read-only from 'Interp'\'s own perspective, but threaded through the same
+-- state for simplicity rather than adding a separate 'ReaderT' layer.
 --
 -- 'isTrace' accumulates newest-first (prepend is O(1)); reverse once when
 -- reading it back out.
@@ -51,7 +51,7 @@ data InterpState = InterpState
   , isMocks :: MockResponses
   }
 
--- | Thrown by 'CatReturn' to unwind the 'Interp' backend's plain function
+-- | Thrown by 'ret' to unwind the 'Interp' backend's plain function
 -- composition straight past every enclosing loop (however deeply nested)
 -- and any post-loop continuation, landing exactly where the currently-
 -- running procedure was invoked from. Carries the
@@ -68,7 +68,7 @@ instance Show ReturnUnwind where
 
 instance Exception ReturnUnwind
 
--- | An execution interpreter category that maps 'CatOp a b' to direct
+-- | An execution interpreter category that maps 'EffTerm a b' to direct
 -- Haskell functions @a -> StateT InterpState IO b@.
 newtype Interp a b = Interp { runInterp :: a -> StateT InterpState IO b }
 

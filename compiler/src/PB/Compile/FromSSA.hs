@@ -1,6 +1,6 @@
 {-# LANGUAGE StrictData #-}
 -- | Parallel SSA → 'Eff' compilation — mirrors 'PB.Compile.LoopAnalysis'
--- exactly, emitting 'Eff' instead of 'CatOp'. Kept side-by-side for
+-- exactly, emitting 'Eff' instead of the older categorical IR. Kept side-by-side for
 -- cross-checking; Phase 5b Step 2 will switch entry points.
 module PB.Compile.FromSSA
   ( compileSsaToEff
@@ -35,13 +35,11 @@ compileSsaToEff env userFns proc =
   in EffTerm result table
 
 -- | Main compiler orchestrator. Returns @(Eff, updatedMemo, updatedTable)@.
--- Mirrors 'compileBlock' exactly, with one addition: a merge point (Plan
--- 150's 'ccMergePoints') emits 'ELetRef' in the spine — the position
--- 'compileBlock' emits @'CatTagged' blockId rawResult@ (CatLower.hs:414-415)
--- — and records the untagged @rawResult@ in @table@ under @blockId@. Unlike
--- 'CatTagged' (which carries the body inline, letting 'extractTable'
--- rediscover it later), 'ELetRef' has nowhere to carry it, so @table@ is
--- built here, eagerly, at the same point the value is computed.
+-- A merge point emits 'ELetRef' in the spine and records the untagged
+-- @rawResult@ in @table@ under @blockId@. Unlike the older 'CatTagged'
+-- (which carried the body inline, letting 'extractTable' rediscover it
+-- later), 'ELetRef' has nowhere to carry it, so @table@ is built here,
+-- eagerly, at the same point the value is computed.
 compileBlockToEff :: CompileCtx -> SsaProc
                   -> Text
                   -> Map.Map Text (Eff () ())
@@ -80,9 +78,8 @@ compileBlockToEff ctx proc blockId memo table headers exits activeLoop
         in (result, memo2, table2)
 
 -- | Compile the body of a loop. Returns @(Eff, updatedVisited, updatedTable)@.
--- Mirrors 'compileLoopBody' exactly, with the same 'ELetRef'/table addition
--- 'compileBlockToEff' makes above (Plan 150: a loop body can itself
--- contain a merge point reached by 2+ predecessors).
+-- Mirrors 'compileBlockToEff' exactly, with the same 'ELetRef'/table addition
+-- (a loop body can itself contain a merge point reached by 2+ predecessors).
 compileLoopBodyToEff :: CompileCtx -> SsaProc -> Text -> Map.Map Text (Eff () (Either () ()))
                      -> Map.Map Text (Eff () ())
                      -> Set.Set Text -> Map.Map Text Text -> Maybe Text
@@ -106,11 +103,10 @@ compileLoopBodyToEff ctx proc blockId visited table headers exits activeLoop
                        _     -> EComp termOp assignsOp
             isMerge = Set.member blockId (ccMergePoints ctx)
             result  = if isMerge then ELetRef blockId else rawResult
-            -- table entries are uniformly 'Eff () ()' (matches
-            -- 'extractTable's 'collectBodies' discipline, CatOp.hs:462-465)
-            -- even though a loop body's own rawResult is really
-            -- 'Eff () (Either () ())' here; foldFreyd's 'ELetRef' clause
-            -- coerces back to whatever the use site's type index expects.
+            -- table entries are uniformly 'Eff () ()' even though a loop
+            -- body's own rawResult is really 'Eff () (Either () ())' here;
+            -- foldFreyd's 'ELetRef' clause coerces back to whatever the use
+            -- site's type index expects.
             table2  = if isMerge then Map.insert blockId (unsafeCoerce rawResult) table1 else table1
         in (result, Map.insert blockId result v1, table2)
 
