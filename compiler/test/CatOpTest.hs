@@ -2295,4 +2295,78 @@ tests = testGroup "CatOp"
           effTrace <- runEffTrace effTerm () Map.empty
           effTrace @?= catTrace
       ]
+
+    , testGroup "Phase 5b Step 2: widened cross-check"
+      [ testCase "nested if/else (if inside an if-then arm)" $ do
+          let innerThen = Located 2 (BsPbCall (PbCall "obj" "inner_then_event"))
+              innerElse = Located 3 (BsPbCall (PbCall "obj" "inner_else_event"))
+              outerElse = Located 4 (BsPbCall (PbCall "obj" "outer_else_event"))
+              tailCall  = Located 5 (BsPbCall (PbCall "obj" "tail_event"))
+              body = [ Located 1 (BsIf (IfStmt (ExBool True)
+                            [ Located 2 (BsIf (IfStmt (ExBool False) [innerThen] [] (Just [innerElse]))) ]
+                            [] (Just [outerElse])))
+                     , tailCall ]
+              catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
+              effTerm   = compileProcedureToEff emptyEnv Set.empty body
+          catTrace <- runInterpTrace catOpTerm Map.empty
+          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace @?= catTrace
+
+      , testCase "choose with 3 cases + default (SsaSwitch cross-check)" $ do
+          let clauses = [ CaseClause (Just [tok "1"]) [Located 2 (BsPbCall (PbCall "obj" "case1_event"))]
+                        , CaseClause (Just [tok "2"]) [Located 3 (BsPbCall (PbCall "obj" "case2_event"))]
+                        , CaseClause (Just [tok "3"]) [Located 4 (BsPbCall (PbCall "obj" "case3_event"))]
+                        , CaseClause Nothing          [Located 5 (BsPbCall (PbCall "obj" "default_event"))]
+                        ]
+              body = [Located 1 (BsChoose (ChooseStmt (ExLvalue (Lvalue [LvSegment "sel" Nothing])) clauses))]
+              catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
+              effTerm   = compileProcedureToEff emptyEnv Set.empty body
+          catTrace <- runInterpTrace catOpTerm Map.empty
+          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace @?= catTrace
+
+      , testCase "nested for-loops (loop body is another loop)" $ do
+          let body = [ Located 1 (BsFor (ForStmt (Lvalue [LvSegment "i" Nothing])
+                        (ExInt "1") (ExInt "3") Nothing
+                        [ Located 2 (BsFor (ForStmt (Lvalue [LvSegment "j" Nothing])
+                            (ExInt "1") (ExInt "3") Nothing
+                            [Located 3 (BsPbCall (PbCall "obj" "inner_event"))]))]))]
+              catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
+              effTerm   = compileProcedureToEff emptyEnv Set.empty body
+          catTrace <- runInterpTrace catOpTerm Map.empty
+          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace @?= catTrace
+
+      , testCase "loop body with if/else and shared tail (merge inside a loop)" $ do
+          let iter = Lvalue [LvSegment "iter" Nothing]
+              body = [ Located 1 (BsAssign iter (ExInt "0"))
+                     , Located 2 (BsDo (DoStmt
+                        (Just (DoWhile (ExBinOp (ExLvalue iter) BopLt (ExInt "2"))))
+                        [ Located 3 (BsAssign iter (ExBinOp (ExLvalue iter) BopAdd (ExInt "1")))
+                        , Located 4 (BsIf (IfStmt (ExBinOp (ExLvalue iter) BopEq (ExInt "1"))
+                                             [Located 5 (BsPbCall (PbCall "obj" "then_event"))] []
+                                             (Just [Located 6 (BsPbCall (PbCall "obj" "else_event"))])))
+                        , Located 7 (BsPbCall (PbCall "obj" "tail_event"))
+                        ]
+                        Nothing))
+                     ]
+              catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
+              effTerm   = compileProcedureToEff emptyEnv Set.empty body
+          catTrace <- runInterpTrace catOpTerm Map.empty
+          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace @?= catTrace
+
+      , testCase "if/elseif/else chain (elseif flattening)" $ do
+          let body = [ Located 1 (BsIf (IfStmt (ExBool True)
+                        [Located 2 (BsPbCall (PbCall "obj" "first_event"))]
+                        [ ElseIf (ExBool False) [Located 3 (BsPbCall (PbCall "obj" "second_event"))]
+                        , ElseIf (ExBool False) [Located 4 (BsPbCall (PbCall "obj" "third_event"))]
+                        ]
+                        (Just [Located 5 (BsPbCall (PbCall "obj" "default_event"))])))]
+              catOpTerm = compileProcedureToCatOp emptyEnv Set.empty body
+              effTerm   = compileProcedureToEff emptyEnv Set.empty body
+          catTrace <- runInterpTrace catOpTerm Map.empty
+          effTrace <- runEffTrace effTerm () Map.empty
+          effTrace @?= catTrace
+      ]
   ]
