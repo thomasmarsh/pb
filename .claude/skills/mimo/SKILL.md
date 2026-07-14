@@ -132,6 +132,36 @@ that 5a doesn't provide — is the other half of the same coin. Verify the
 *test's* expectation against the actual semantics before trusting it as
 the gate.)
 
+**Refinement — a spec flaw is self-correcting WHEN the gate can see it.**
+The Phase 5a failure mode above (mimo flailing 4× on a flawed
+`ELet`/`EVar` clause) has a counterexample one session later (Plan 167
+Phase 5b Step 1, 2026-07-13): the spec's `CatTagged bid body → ELet bid
+body (EVar bid)` mapping was semantically wrong (it doubled the body's
+execution; the correct mapping is plain `body`, since `CatTagged` is
+identity-at-position and `Interp`'s one-arm `(|||)` runs one branch).
+mimo **caught it itself** at the verification gate (the shared-tail
+cross-check test failed), diagnosed the cause correctly (`foldFreyd`'s
+`ELet` produces `cK . bK` = body-twice vs `foldCat`'s `CatTagged` =
+body-once), and applied a sound fix — all without orchestrator
+intervention. **The difference from 5a: the 5b flaw was *observable at
+the gate*.** A failing cross-check test pointed unambiguously at the
+wrong row of the substitution table, and the fix was "drop this row,"
+not "derive the correct semantics of an underspecified combinator from
+scratch." 5a's flaw lived in fold semantics that no single test failure
+localized — mimo had to *invent* the right equation, which it cannot do.
+**The calibration:** a spec flaw whose wrongness shows up as a concrete,
+localizable test failure (a wrong cell in a table, an off-by-one, a
+misplaced arm) is self-correcting via the build-fix loop — let mimo fix
+it and *verify the fix is sound* afterward (trace the semantics
+yourself; "the test passes" is necessary but not sufficient when the
+test itself could pass for the wrong reason). A spec flaw whose
+wrongness is diffuse or requires re-deriving a design decision is NOT
+self-correcting — kill and re-derive. The signal that distinguishes them
+is whether mimo is *converging* (each fix closer to correct, the
+diagnosis pointing at a specific defect) or *flailing* (each fix a
+different plausible-looking guess, the diagnosis gesturing at the whole
+clause). Converging → let it run, verify after. Flailing → kill.
+
 ## Writing the spec file
 
 - **State current file state precisely.** Paste the exact current
