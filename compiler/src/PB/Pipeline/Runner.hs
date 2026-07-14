@@ -160,7 +160,7 @@ data CompiledFile
   | CFError FilePath Text
   | CFSkip
 
--- | Convert one 'foldSchFootprint'-produced 'SchMorphism' into the same
+-- | Convert one 'foldSchFootprintEff'-produced 'SchMorphism' into the same
 -- row shape 'appendCatFootprintColumns' persists. 'SchFootprint' only ever
 -- emits the @StmtObj -> ColumnObj@/'LegWrites' shape today ('resolveSetItem'
 -- is its sole non-trivial producer) — the catch-all 'Nothing' totalizes

@@ -9,7 +9,7 @@ import PB.AST.SourceFile (SrFile (..))
 import PB.Grammar.File        (SrSpans (..))
 import PB.Pipeline.Runner     (wrapSrFile)
 import PB.Analysis.TypeEnv    (buildWorkspaceEnv)
-import PB.Analysis.GraphBuilder (LowCat (..), WiringNode (..), WiringGraph (..))
+import PB.Analysis.GraphBuilder (WiringNode (..), WiringGraph (..))
 import PB.Pipeline.Serialise  ()
 
 import Data.Aeson          (Value (..), toJSON)
@@ -123,20 +123,6 @@ tests = testGroup "Serialise"
               v   = toJSON (DwRetrieveOk dr)
           field "tag" v @?= String "DwRetrieveOk"
           field "arguments" (field "contents" v) @?= toJSON [arg]
-      ]
-
-  , testGroup "LowCat (Plan 149 Phase 1)"
-      [ testCase "LTagged serialises as a bare reference: tag + blockId, no contents" $ do
-          let v = toJSON (LTagged "b3" (LAssignWithRhs "x" (ExInt "1")))
-          field "tag"     v @?= String "LTagged"
-          field "blockId" v @?= String "b3"
-          assertBool "LTagged must not inline its payload under 'contents'"
-            (not (hasField "contents" v))
-
-      , testCase "every other LowCat constructor keeps the generic tag/contents convention" $ do
-          let v = toJSON LId
-          field "tag" v @?= String "LId"
-          assertBool "LId (nullary) has no contents field" (not (hasField "contents" v))
       ]
 
   , testGroup "WiringGraph / WiringNode (Plan 167 Phase 7 Step 7)"

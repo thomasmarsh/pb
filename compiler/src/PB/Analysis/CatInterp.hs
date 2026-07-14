@@ -4,22 +4,20 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE LambdaCase #-}
--- | Direct Haskell execution of a compiled 'CatOp' term — the @Interp@
+-- | Direct Haskell execution of a compiled 'EffTerm' — the @Interp@
 -- target. Used for testing: evaluating a compiled procedure without going
 -- through the 'PB.Analysis.GraphBuilder' flattening step or the TS runtime.
 --
 -- Split out of 'PB.Analysis.CatOp' in Plan 151. Parallels
 -- 'PB.Analysis.InstrInterp' (the flat @InstrGraph@-level trace interpreter) —
--- 'CatInterp' interprets 'CatOp' terms directly, 'InstrInterp' interprets the
+-- 'CatInterp' interprets 'EffTerm's directly, 'InstrInterp' interprets the
 -- flattened output of 'PB.Analysis.GraphBuilder'; the two backends are
--- cross-checked against each other by Plan 146's semantic-equivalence
--- oracle tests.
+-- cross-checked against each other by a semantic-equivalence oracle test.
 module PB.Analysis.CatInterp
   ( Interp (..)
   , InterpState (..)
   , ReturnUnwind (..)
   , runInterpIO
-  , runCat
   , runEff
   , interpretLoop
   ) where
@@ -29,7 +27,7 @@ import qualified Prelude as P
 import Control.Monad.State.Strict (StateT, get, modify', gets, evalStateT)
 import Control.Monad.IO.Class (liftIO)
 import Control.Exception (Exception, throwIO)
-import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), CatOp (..), EffTerm, foldCatOp, foldFreyd)
+import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), EffTerm, foldFreyd)
 import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExprMocked)
 import qualified Data.Map.Strict as Map
 
@@ -141,19 +139,11 @@ interpretLoop (Interp body) = Interp go
 runInterpIO :: Interp a b -> a -> IO b
 runInterpIO (Interp f) x = evalStateT (f x) (InterpState Map.empty [] Map.empty)
 
--- | Interpret a compiled 'CatOp' term directly via 'Interp'. Plan 148 Phase
--- 3: this used to be its own per-constructor match; it is now 'foldCatOp'
+-- | Interpret a compiled 'EffTerm' directly via 'Interp' — 'foldFreyd'
 -- specialized to @k = Interp@, since every case reduces to a
 -- 'Category'\/'Cartesian'\/'Cocartesian'\/'Effectful' method call with no
 -- Interp-specific logic left outside the instance definitions above
--- ('ret'\/'loopK' carry what used to be 'CatReturn'\/'CatLoop's bespoke
--- cases).
-runCat :: CatOp a b -> Interp a b
-runCat = foldCatOp
-
--- | Interpret a compiled 'EffTerm' directly via 'Interp' — 'foldFreyd'
--- specialized to @k = Interp@, added for uniformity with 'runCat' (Plan 167
--- Phase 7 Step 6). No production caller: 'Interp' is test-only, same as
--- 'runCat' itself.
+-- ('ret'\/'loopK' carry what used to be the bespoke return/loop cases). No
+-- production caller: 'Interp' is test-only.
 runEff :: EffTerm a b -> Interp a b
 runEff = foldFreyd

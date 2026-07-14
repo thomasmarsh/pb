@@ -323,13 +323,9 @@ tests = testGroup "Pipeline.Runner"
 
   , testGroup "production wiring uses compileProcedureViaEffTerm (Plan 167 Phase 7 Step 6)"
     -- Runner.hs:148 (compileOne, the real production path behind runModeDb)
-    -- and Emit.hs:158 (wrapSrFile's withInstr branch) both used to call
-    -- PB.Analysis.CatOp.compileProcedureViaCatOp (the CatOp/LowCat path,
-    -- Plan 144 Phase 5 Step 6) through Plan 167 Phase 7 Step 5's corpus-wide
-    -- cross-check. Both now call PB.Analysis.GraphBuilder.compileProcedureViaEffTerm
-    -- (the EffTerm/NamedGraphBuilder path) -- compileProcedureViaCatOp itself
-    -- is unchanged and stays live as a test/cross-check oracle until Step 8
-    -- retires the untyped CatOp/LowCat stack.
+    -- and Emit.hs:158 (wrapSrFile's withInstr branch) both call
+    -- PB.Analysis.GraphBuilder.compileProcedureViaEffTerm (the
+    -- EffTerm/NamedGraphBuilder path).
     [ let src = T.unlines
             [ "public function integer uf_test ()"
             , "integer li_a"

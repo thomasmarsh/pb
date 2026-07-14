@@ -15,7 +15,7 @@ import PB.AST.Type        (PbType)
 import PB.Lexing.Token    (Token (..))
 import PB.Analysis.Cfg   (CfgBlock, CfgEdge, Cfg)
 import PB.Analysis.InstrGraph   (InstrNode, InstrGraph)
-import PB.Analysis.GraphBuilder (LowCat (..), WiringNode (..), WiringGraph (..))
+import PB.Analysis.GraphBuilder (WiringNode (..), WiringGraph (..))
 import PB.Analysis.Taint      (InterprocEdge (..), ProcedureSummary (..), ProcSummaryReturnFlow (..))
 
 -- | Strip a camelCase field-name prefix, e.g. "fnsMods" → "mods",
@@ -103,19 +103,10 @@ instance ToJSON Cfg       where toJSON = genericToJSON customOptions
 instance ToJSON InstrNode   where toJSON = genericToJSON customOptions
 instance ToJSON InstrGraph  where toJSON = genericToJSON customOptions
 
--- LowCat (Plan 149 wiring diagrams) — genericToJSON for every constructor
--- except LTagged, whose payload must NOT be inlined: the real content lives
--- exactly once in a WiringPayload's "sharedBlocks" table (see
--- PB.Analysis.GraphBuilder.collectWiring), and every occurrence of the tag
--- — including nested inside another shared block — is a bare reference.
-instance ToJSON LowCat where
-  toJSON (LTagged bid _inner) = J.object ["tag" .= ("LTagged" :: Text), "blockId" .= bid]
-  toJSON other                = genericToJSON customOptions other
-
--- WiringGraph/WiringNode (Plan 167 Phase 7 Step 7, wiring diagrams) — plain
--- genericToJSON: the graph is already flat and name-addressed (a node is
--- defined once per name, referenced by name elsewhere), so no manual
--- term/sharedBlocks split is needed the way 'LowCat'\'s 'WiringPayload' did.
+-- WiringGraph/WiringNode (wiring diagrams) — plain genericToJSON: the
+-- graph is already flat and name-addressed (a node is defined once per
+-- name, referenced by name elsewhere), so no manual term/sharedBlocks
+-- split is needed.
 instance ToJSON p => ToJSON (WiringNode p)  where toJSON = genericToJSON customOptions
 instance ToJSON p => ToJSON (WiringGraph p) where toJSON = genericToJSON customOptions
 

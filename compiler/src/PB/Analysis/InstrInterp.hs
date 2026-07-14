@@ -1,9 +1,9 @@
 -- | Trace-interpreter for the flat 'InstrGraph' target — the 'GraphBuilder'
--- counterpart to 'PB.Analysis.CatOp'\'s 'Interp'\/'runCat'.
+-- counterpart to 'PB.Analysis.CatInterp'\'s 'Interp'\/'runEff'.
 --
 -- Pure module — no I/O. Walks a compiled 'InstrGraph' from its entry pc,
 -- threading a variable environment and accumulating the same 'TraceEvent'
--- shape 'PB.Analysis.CatOp.runCat' produces, using the one shared
+-- shape 'PB.Analysis.CatInterp.runEff' produces, using the one shared
 -- 'PB.Analysis.CatEval.evalExprMocked' so both backends evaluate
 -- conditions/RHS values (including mocked call responses) identically
 -- (Plan 146 Phase 1D / 2a).
@@ -21,7 +21,7 @@ import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExpr
 -- a table of mocked call\/suspend responses, returning the final environment
 -- and the accumulated trace in chronological (oldest first) order — ready to
 -- compare directly against @P.reverse . isTrace@ from an
--- 'PB.Analysis.CatOp.Interp' run given the same 'MockResponses'.
+-- 'PB.Analysis.CatInterp.Interp' run given the same 'MockResponses'.
 --
 -- Takes an explicit @maxSteps@ fuel budget: a real PB loop's exit condition
 -- often depends on a call result (row count, SQL code, …) that an empty or
@@ -33,10 +33,10 @@ import PB.Analysis.CatEval (Value (..), TraceEvent (..), MockResponses, evalExpr
 -- (any divergence *before* the bound is still caught), just not a proof of
 -- equivalence past it.
 --
--- Mirrors 'PB.Analysis.CatOp.runCat'\'s behavior exactly, including what it
--- does *not* do: reaching 'InstrReturn' ends the walk without emitting a
--- 'TeReturn' (no 'CatOp' constructor 'runCat' interprets ever emits one
--- either — 'SsaReturn' always compiles to a structural 'CatId'\/exit-goto,
+-- Mirrors 'PB.Analysis.CatInterp.runEff'\'s behavior exactly, including what
+-- it does *not* do: reaching 'InstrReturn' ends the walk without emitting a
+-- 'TeReturn' (no 'Eff' constructor 'runEff' interprets ever emits one
+-- either — 'SsaReturn' always compiles to a structural identity\/exit-goto,
 -- never a distinct return opcode), so the two traces stay comparable.
 --
 -- Also returns a 'TraceOutcome' disclosing *why* the walk stopped: reaching a

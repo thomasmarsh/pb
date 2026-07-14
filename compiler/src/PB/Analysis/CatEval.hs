@@ -2,8 +2,8 @@
 -- type for Plan 146's semantic-equivalence oracle.
 --
 -- Pure module — no I/O. 'evalExpr' is written once here so both the
--- 'PB.Analysis.CatOp' 'Interp' backend (Phase 1) and the future 'InstrGraph'
--- trace-interpreter (Phase 2) evaluate conditions/RHS values identically —
+-- 'PB.Analysis.CatInterp' 'Interp' backend and 'PB.Analysis.InstrInterp's
+-- 'InstrGraph' trace-interpreter evaluate conditions/RHS values identically —
 -- two independently hand-rolled evaluators that happen to disagree would be
 -- a testing bug indistinguishable from a compiler bug.
 module PB.Analysis.CatEval
@@ -49,8 +49,8 @@ instance Eq Value where
   VNull   == VNull   = True
   _       == _       = False
 
--- | An observable effect produced while interpreting a 'CatOp' (or,
--- eventually, a 'InstrGraph') term: a variable assignment, an effect
+-- | An observable effect produced while interpreting an 'PB.Analysis.CatOp.Eff'
+-- (or an 'InstrGraph') term: a variable assignment, an effect
 -- invocation with its evaluated arguments, a branch decision, or a return.
 -- Two executions are "equivalent" iff their traces are equal for the same
 -- starting environment and the same mock suspend/call responses.
@@ -78,13 +78,13 @@ evalExpr = evalExprMocked Map.empty
 -- | Evaluate an 'Expr' against a variable environment and a table of mocked
 -- call\/suspend responses.
 --
--- Covers the subset 'PB.Analysis.CatOp.ssaValToExpr' and hand-built 'CatOp'
+-- Covers the subset 'PB.Analysis.CatLower.ssaValToExpr' and hand-built 'Eff'
 -- fixtures actually produce: literals, a single-segment 'ExLvalue' (SSA
 -- variable references are always this shape — see 'PB.Analysis.SSA.SsaVar'
 -- and its bare, unversioned 'svName'), binops, 'ExNot', 'ExNeg', 'ExNull'.
 -- 'ExCall'\/'ExMethodCall' —
--- the shape 'PB.Analysis.CatOp.compileAssign' embeds directly for @x = f()@,
--- never as a 'CatSuspend'\/'CatCall' node with a result slot — resolve via
+-- the shape 'PB.Analysis.CatLowerEff.compileAssignToEff' embeds directly for
+-- @x = f()@, never as an 'ESuspend'\/'ECall' node with a result slot — resolve via
 -- 'MockResponses', keyed on 'calleeName' and the evaluated argument list
 -- (raw argument token lists are parsed with the same
 -- 'PB.Analysis.CallClassify.parseArgList' the compiled pipeline itself uses,

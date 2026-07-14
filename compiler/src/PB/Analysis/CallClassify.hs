@@ -1,6 +1,6 @@
 {-# LANGUAGE StrictData #-}
 -- | Pure call classification helpers, plus a couple of small pure AST
--- utilities ('parseArgList', 'collectBodyLocals') used by the SSA→CatOp
+-- utilities ('parseArgList', 'collectBodyLocals') used by the SSA→EffTerm
 -- pipeline.  No monadic state, no InstrNode emission — just classification
 -- logic and name utilities.
 --

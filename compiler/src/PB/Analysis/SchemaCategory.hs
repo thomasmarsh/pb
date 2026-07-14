@@ -71,7 +71,7 @@ data LegKind
 -- every leg now carries provenance, not just FK ones.
 data LegSource
   = SrcSqlText      -- ^ sqlglot text extraction of an embedded SQL statement.
-  | SrcCatFootprint -- ^ 'PB.Analysis.SchFootprint's @CatOp -> Sch@ functor (dynamic-dispatch writes, e.g. @SetItem@).
+  | SrcCatFootprint -- ^ 'PB.Analysis.SchFootprint's @EffTerm -> Sch@ functor (dynamic-dispatch writes, e.g. @SetItem@).
   | SrcDwRetrieve   -- ^ A DW retrieve's column list or update-table columns.
   | SrcDwJoin       -- ^ A DataWindow @JOIN@ block.
   | SrcDwWhere       -- ^ A DW retrieve's WHERE-clause predicate operand.
@@ -223,7 +223,7 @@ data SchemaInputs = SchemaInputs
   , inCatFootprintColumns :: [SqlColRow]
     -- ^ Plan 163 Phase 3: same shape and resolution treatment as
     -- 'inSqlColumns', but sourced from 'PB.Analysis.SchFootprint's
-    -- @CatOp -> Sch@ functor (dynamic-dispatch writes, e.g. a DataWindow
+    -- @EffTerm -> Sch@ functor (dynamic-dispatch writes, e.g. a DataWindow
     -- @SetItem@ call, invisible to sqlglot's text-based extraction) rather
     -- than parsed SQL text. Kept as a separate field, not merged into
     -- 'inSqlColumns', so each row's producing technique stays

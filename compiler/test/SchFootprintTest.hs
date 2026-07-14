@@ -6,9 +6,9 @@ import PB.AST.Expr            (Expr (..), Lvalue (..), LvSegment (..))
 import PB.AST.Located        (Located (..))
 import PB.AST.SourceFile      (SrFile (..), EventBlock (..), EventSig (..), SubroutineBlock (..), SubSig (..))
 import PB.Analysis.CatOp      (Category (..), Cartesian (..), Cocartesian (..),
-                                CatOp (..), branch, Eff (..), extractEffTable)
+                                Eff (..), Pure (..), EffTerm (..), branchEff, extractEffTable)
 import PB.Analysis.CatEval    (Value)
-import PB.Analysis.CatLower   (compileSsa)
+import PB.Analysis.CatLowerEff (compileSsaToEff)
 import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Analysis.SchFootprint
 import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..),
@@ -26,7 +26,7 @@ import           GHC.Conc         (getAllocationCounter, setAllocationCounter)
 import           Data.Int         (Int64)
 import           System.Timeout   (timeout)
 import           PB.AST.BodyStmt  (BodyStmt (..), IfStmt (..), ChooseStmt (..), CaseClause (..))
-import           PB.Analysis.GraphBuilder (compileProcedureToCatOp, compileProcedureToEff)
+import           PB.Analysis.GraphBuilder (compileProcedureToEff)
 
 import qualified Data.List       as L
 import qualified Data.Map.Strict as Map
@@ -125,8 +125,8 @@ tests = testGroup "SchFootprint"
         runSchFootprint (f . g) ctx0 === Set.union sA sB
     ]
 
-  , testGroup "force-time memo (Plan 167 Phase 1): foldSchFootprint stays linear on a shared-merge-block DAG"
-    [ testCase "18 sequential if/else groups: forces each CatTagged once, not 2^18 re-forces" $ do
+  , testGroup "force-time memo (Plan 167 Phase 1): foldSchFootprintEff stays linear on a shared-merge-block DAG"
+    [ testCase "18 sequential if/else groups: forces each ELetRef once, not 2^18 re-forces" $ do
         let call n = ExCall (Lvalue [LvSegment n Nothing]) []
             group base =
               [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
@@ -135,7 +135,7 @@ tests = testGroup "SchFootprint"
               , Located (base P.+ 4) (BsCall (call ("tail" <> T.pack (show base))))
               ]
             body = concatMap group [ n P.* 4 | n <- [0 .. 17 :: Int] ]
-            term = compileProcedureToCatOp emptyEnv Set.empty body
+            term = compileProcedureToEff emptyEnv Set.empty body
             ctx  = FunctorCtx
               { fcStmtObj         = SqlStmtId "f.srf" "obj" "proc" 1
               , fcTypeEnv         = emptyEnv
@@ -143,12 +143,12 @@ tests = testGroup "SchFootprint"
               , fcControlBindings = Map.empty
               }
         mBytes <- timeout 30000000 (measureAllocBytes
-          (CE.evaluate (Set.size (foldSchFootprint ctx term))))
+          (CE.evaluate (Set.size (foldSchFootprintEff ctx term))))
         case mBytes of
           Nothing -> assertFailure "did not complete within the 30s hang-safety-net timeout"
           Just bytes -> assertBool
             ("allocated " <> show bytes <> " bytes; expected < 5MB (post-fix force-time \
-             \memo: measured ~0.4MB; pre-fix ~80MB re-forcing shared CatTagged subtrees)")
+             \memo: measured ~0.4MB; pre-fix ~80MB re-forcing shared ELetRef subtrees)")
             (bytes P.< 5 P.* 1000 P.* 1000)
 
     , testCase "7 sequential choose/case blocks, 8 clauses each: forces linear, not 2^N" $ do
@@ -160,7 +160,7 @@ tests = testGroup "SchFootprint"
                     [Located (g P.* 100 P.+ i) (BsCall (call ("c" <> T.pack (show g) <> "_" <> T.pack (show i))))]
                 | i <- [1 .. 8 :: Int] ]))
             body = [ chooseGroup g | g <- [1 .. 7 :: Int] ]
-            term = compileProcedureToCatOp emptyEnv Set.empty body
+            term = compileProcedureToEff emptyEnv Set.empty body
             ctx  = FunctorCtx
               { fcStmtObj         = SqlStmtId "f.srf" "obj" "proc" 1
               , fcTypeEnv         = emptyEnv
@@ -168,7 +168,7 @@ tests = testGroup "SchFootprint"
               , fcControlBindings = Map.empty
               }
         mBytes <- timeout 30000000 (measureAllocBytes
-          (CE.evaluate (Set.size (foldSchFootprint ctx term))))
+          (CE.evaluate (Set.size (foldSchFootprintEff ctx term))))
         case mBytes of
           Nothing -> assertFailure "did not complete within the 30s hang-safety-net timeout"
           Just bytes -> assertBool
@@ -192,10 +192,10 @@ tests = testGroup "SchFootprint"
               , fcDwColumns       = Map.empty
               , fcControlBindings = Map.empty
               }
-            term10 = compileProcedureToCatOp emptyEnv Set.empty (mkBody 10)
-            term20 = compileProcedureToCatOp emptyEnv Set.empty (mkBody 20)
-        b10 <- measureAllocBytes (CE.evaluate (Set.size (foldSchFootprint ctx term10)))
-        b20 <- measureAllocBytes (CE.evaluate (Set.size (foldSchFootprint ctx term20)))
+            term10 = compileProcedureToEff emptyEnv Set.empty (mkBody 10)
+            term20 = compileProcedureToEff emptyEnv Set.empty (mkBody 20)
+        b10 <- measureAllocBytes (CE.evaluate (Set.size (foldSchFootprintEff ctx term10)))
+        b20 <- measureAllocBytes (CE.evaluate (Set.size (foldSchFootprintEff ctx term20)))
         let ratio = fromIntegral b20 / fromIntegral b10 :: Double
         assertBool
           ("20/10 switch ratio " <> show ratio <> "x; expected < 5x (linear). bytes: "
@@ -203,80 +203,37 @@ tests = testGroup "SchFootprint"
           (ratio P.< 5.0)
     ]
 
-  , testGroup "foldSchFootprint over CatOp (infra slice: always empty)"
-    -- Every Effectful method is a constant empty footprint this session
-    -- (Plan 148 Phase 3 infra slice) -- these are the completeness check
-    -- that foldCat's generic dispatch reaches every one of CatOp's 20
-    -- constructors without falling over, not a check of any real morphism
-    -- detection (that lands in a follow-up session).
-    [ testCase "CatId / CatCompose / CatAssignWithRhs" $
-        foldSchFootprint ctx0 (CatAssignWithRhs "x" (ExInt "1") . CatId :: CatOp () ()) @?= Set.empty
+  , testGroup "foldSchFootprintEff over Eff (infra slice: always empty)"
+    -- Every Effectful method is a constant empty footprint except ECall's
+    -- SetItem case (below) -- these are the completeness check that every
+    -- one of 'Eff'\'s constructors folds without falling over, not a check
+    -- of any real morphism detection.
+    [ testCase "J PId / EComp / EAssignWithRhs" $
+        foldSchFootprintEff ctx0 (extractEffTable (EAssignWithRhs "x" (ExInt "1") `EComp` J PId :: Eff () ())) @?= Set.empty
 
-    , testCase "branch: CatFanIn / CatSplitValue / CatFork / CatEval / CatCall / CatSuspend" $
-        foldSchFootprint ctx0
-          (branch (ExBool True) (CatCall "f" []) (CatSuspend "retrieve:dw" []) :: CatOp () ())
+    , testCase "branch: EBranch / ESplitValue / ECall / ESuspend" $
+        foldSchFootprintEff ctx0
+          (extractEffTable (branchEff (ExBool True) (ECall "f" []) (ESuspend "retrieve:dw" []) :: Eff () ()))
           @?= Set.empty
 
-    , testCase "CatExl / CatExr" $ do
-        foldSchFootprint ctx0 (CatExl :: CatOp ((), ()) ()) @?= Set.empty
-        foldSchFootprint ctx0 (CatExr :: CatOp ((), ()) ()) @?= Set.empty
+    , testCase "J PInl / J PInr" $ do
+        foldSchFootprintEff ctx0 (extractEffTable (J PInl :: Eff () (Either () ()))) @?= Set.empty
+        foldSchFootprintEff ctx0 (extractEffTable (J PInr :: Eff () (Either () ()))) @?= Set.empty
 
-    , testCase "CatInl / CatInr" $ do
-        foldSchFootprint ctx0 (CatInl :: CatOp () (Either () ())) @?= Set.empty
-        foldSchFootprint ctx0 (CatInr :: CatOp () (Either () ())) @?= Set.empty
+    , testCase "EAssign" $
+        foldSchFootprintEff ctx0 (extractEffTable (EAssign "x" :: Eff ((), Value) ())) @?= Set.empty
 
-    , testCase "CatAssign / CatLookup" $ do
-        foldSchFootprint ctx0 (CatAssign "x" :: CatOp ((), Value) ()) @?= Set.empty
-        foldSchFootprint ctx0 (CatLookup "x" :: CatOp () Value) @?= Set.empty
+    , testCase "EReturn" $
+        foldSchFootprintEff ctx0 (extractEffTable (EReturn :: Eff () ())) @?= Set.empty
 
-    , testCase "CatReturn" $
-        foldSchFootprint ctx0 (CatReturn :: CatOp () ()) @?= Set.empty
+    , testCase "ELoop (immediate break)" $
+        foldSchFootprintEff ctx0 (extractEffTable (ELoop (J PInr :: Eff () (Either () ())) :: Eff () ())) @?= Set.empty
 
-    , testCase "CatLoop (immediate break)" $
-        foldSchFootprint ctx0 (CatLoop (CatInr :: CatOp () (Either () ())) :: CatOp () ()) @?= Set.empty
-
-    , testCase "CatTry" $
-        foldSchFootprint ctx0 (CatTry CatId (CatAssign "x") :: CatOp () ()) @?= Set.empty
-
-    , testCase "CatTagged" $
-        foldSchFootprint ctx0 (CatTagged "blk" CatId :: CatOp () ()) @?= Set.empty
-
-    , testCase "CatConst" $
-        foldSchFootprint ctx0 (CatConst (ExInt "1") :: CatOp () Value) @?= Set.empty
+    , testCase "ELetRef (shared block reference resolves via the table)" $
+        foldSchFootprintEff ctx0 (EffTerm (ELetRef "blk") (Map.singleton "blk" (J PId))) @?= Set.empty
     ]
 
-  , testGroup "callProc SetItem detection"
-    [ testCase "SetItem with literal column resolves to LegWrites when control/dw/column all bound" $
-        foldSchFootprint ctx1
-          (CatCall "dw_dest.SetItem" [lvExpr "ll_Cnt", ExStr "id", lvExpr "li_Data"] :: CatOp () ())
-          @?= Set.singleton
-                (SchMorphism (StmtObj (fcStmtObj ctx1))
-                             (ColumnObj (TableRef Nothing "sales_order_items") "id")
-                             LegWrites SrcCatFootprint)
-
-    , testCase "unbound control yields empty footprint" $
-        foldSchFootprint ctx1
-          (CatCall "dw_other.SetItem" [lvExpr "ll_Cnt", ExStr "id", lvExpr "li_Data"] :: CatOp () ())
-          @?= Set.empty
-
-    , testCase "dynamic (non-literal) column argument yields empty footprint" $
-        foldSchFootprint ctx1
-          (CatCall "dw_dest.SetItem" [lvExpr "ll_Cnt", lvExpr "ls_col", lvExpr "li_Data"] :: CatOp () ())
-          @?= Set.empty
-
-    , testCase "unknown column name in the bound dw yields empty footprint" $
-        foldSchFootprint ctx1
-          (CatCall "dw_dest.SetItem" [lvExpr "ll_Cnt", ExStr "nonexistent_col", lvExpr "li_Data"] :: CatOp () ())
-          @?= Set.empty
-
-    , testCase "non-SetItem calls remain empty" $
-        foldSchFootprint ctx1 (CatCall "dw_dest.Retrieve" [] :: CatOp () ()) @?= Set.empty
-    ]
-
-  , testGroup "foldSchFootprintEff over Eff (Plan 167 Phase 7 Step 6: parity with foldSchFootprint)"
-    -- 'foldSchFootprintEff' mirrors 'foldSchFootprint's "callProc SetItem
-    -- detection" group term-for-term, via 'Eff'/'ECall' instead of
-    -- 'CatOp'/'CatCall'.
+  , testGroup "foldSchFootprintEff: callProc SetItem detection"
     [ testCase "SetItem with literal column resolves to LegWrites when control/dw/column all bound" $
         foldSchFootprintEff ctx1
           (extractEffTable (ECall "dw_dest.SetItem" [lvExpr "ll_Cnt", ExStr "id", lvExpr "li_Data"] :: Eff () ()))
@@ -303,19 +260,6 @@ tests = testGroup "SchFootprint"
     , testCase "non-SetItem calls remain empty" $
         foldSchFootprintEff ctx1 (extractEffTable (ECall "dw_dest.Retrieve" [] :: Eff () ())) @?= Set.empty
 
-    , testCase "18 sequential if/else groups: foldSchFootprintEff matches foldSchFootprint exactly (real shared-block fixture)" $ do
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
-            group base =
-              [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
-                  [Located (base P.+ 2) (BsCall (call ("a" <> T.pack (show base))))] []
-                  (Just [Located (base P.+ 3) (BsCall (call ("b" <> T.pack (show base))))])))
-              , Located (base P.+ 4) (BsCall (call ("tail" <> T.pack (show base))))
-              ]
-            body = concatMap group [ n P.* 4 | n <- [0 .. 17 :: Int] ]
-            catTerm = compileProcedureToCatOp emptyEnv Set.empty body
-            effTerm = compileProcedureToEff emptyEnv Set.empty body
-        foldSchFootprintEff ctx0 effTerm @?= foldSchFootprint ctx0 catTerm
-
     , testCase "18 sequential if/else groups: allocates < 20MB, not 2^18 blowup" $ do
         let call n = ExCall (Lvalue [LvSegment n Nothing]) []
             group base =
@@ -331,7 +275,7 @@ tests = testGroup "SchFootprint"
           Nothing -> assertFailure "did not complete within the 30s hang-safety-net timeout"
           Just bytes -> assertBool
             ("allocated " <> show bytes <> " bytes; expected < 20MB (foldSchFootprintEff's ELetRef \
-             \memo should keep this linear, same as foldSchFootprint's CatTagged memo)")
+             \memo should keep this linear, not 2^18 re-forcing)")
             (bytes P.< 20 P.* 1000 P.* 1000)
     ]
 
@@ -357,7 +301,7 @@ tests = testGroup "SchFootprint"
                     let ws       = buildWorkspaceEnv [sf]
                         env      = procEnv ws (buildControlIndex [sf]) "w_dw_copy" []
                         ssaProc  = buildSsa env "clicked" (evBody ev)
-                        term     = compileSsa env Set.empty ssaProc
+                        term     = compileSsaToEff env Set.empty ssaProc
                         bindings = extractDwControlBindings srwPathT sf
                         dwCols = case dwTable dwFile >>= dtRetrieve of
                           Just (DwRetrieveOk retrieve) ->
@@ -372,7 +316,7 @@ tests = testGroup "SchFootprint"
                           , fcDwColumns       = dwColumnsFromRows dwCols
                           , fcControlBindings = controlBindingsMap bindings
                           }
-                        footprint = foldSchFootprint ctx term
+                        footprint = foldSchFootprintEff ctx term
                         expected = SchMorphism (StmtObj (fcStmtObj ctx))
                                                (ColumnObj (TableRef Nothing "sales_order_items") "id")
                                                LegWrites SrcCatFootprint
@@ -427,7 +371,7 @@ tests = testGroup "SchFootprint"
                            aliasBindings = runtimeDwAliasBindings idx (weHierarchy ws) "w_misth_fylo_form" openEnv (sbBody ofOpen)
                            changedEnv = procEnv ws idx "w_misth_fylo_form" []
                            ssaProc    = buildSsa changedEnv "if_kodfylo_changed" (sbBody ifChanged)
-                           term       = compileSsa changedEnv Set.empty ssaProc
+                           term       = compileSsaToEff changedEnv Set.empty ssaProc
                            dwCols = case dwTable dwFile >>= dtRetrieve of
                              Just (DwRetrieveOk retrieve) ->
                                [ DwRetrieveColRow (T.pack srdPath) "dw_misth_fylo_epidom_list" ns tbl col
@@ -441,7 +385,7 @@ tests = testGroup "SchFootprint"
                              , fcDwColumns       = dwColumnsFromRows dwCols
                              , fcControlBindings = aliasBindings
                              }
-                           footprint = foldSchFootprint ctx term
+                           footprint = foldSchFootprintEff ctx term
                            expected  = SchMorphism (StmtObj (fcStmtObj ctx))
                                                     (ColumnObj (TableRef Nothing "misth_fylo_epidom") "kodfylo")
                                                     LegWrites SrcCatFootprint

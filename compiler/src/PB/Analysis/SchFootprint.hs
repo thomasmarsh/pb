@@ -1,10 +1,8 @@
--- | Plan 148 Phase 3: the functor @F : CatOp -> Sch_|_@, implemented as
--- another instance of 'PB.Analysis.CatOp's
--- 'Category'\/'Cartesian'\/'Cocartesian'\/'Effectful' classes rather than a
--- hand-written match over the GADT (see
+-- | The functor @F : EffTerm -> Sch_|_@, implemented as another instance of
+-- 'PB.Analysis.CatOp's 'Category'\/'Cartesian'\/'Cocartesian'\/'Effectful'
+-- classes rather than a hand-written match over the GADT (see
 -- doc\/plan\/148-db-schema-category.md's "(a) Categorical structure" design
--- amendment). 'PB.Analysis.CatOp.foldCat' folds any compiled 'CatOp' term
--- into this instance for free.
+-- amendment).
 --
 -- 'callProc' recognizes a DataWindow @SetItem@ call with a literal column
 -- name and resolves it to a real 'SchMorphism' via 'fcControlBindings'
@@ -16,16 +14,15 @@
 -- in-process buffer mutation with no async round-trip, so 'suspend' (the
 -- hook the interpreter and UI runtime use to mean "must await an external
 -- response") is the wrong mechanism. @SetItem@ already compiles to
--- @CatCall (calleeName expr) parsedArgs@ today, so 'callProc' is the
+-- @ECall (calleeName expr) parsedArgs@ today, so 'callProc' is the
 -- correct, zero-risk hook — no change to 'PB.Analysis.CallClassify' needed.
 -- Every other 'Effectful' method remains a constant empty footprint;
 -- 'suspend' and the @ExHostVar@ case remain unimplemented (not needed —
--- the 'callProc' path below already reaches Phase 3's done-condition
--- against a real corpus example, see @doc\/plan\/148-db-schema-category.md@).
+-- the 'callProc' path below already reaches a real corpus example, see
+-- @doc\/plan\/148-db-schema-category.md@).
 module PB.Analysis.SchFootprint
   ( FunctorCtx (..)
   , SchFootprint (..)
-  , foldSchFootprint
   , foldSchFootprintEff
   , controlBindingsMap
   , dwColumnsFromRows
@@ -37,7 +34,7 @@ import PB.AST.BodyStmt (BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..), C
 import PB.AST.Located (Located (..))
 import PB.AST.Type (renderPbType)
 import PB.Analysis.CallClassify (segName)
-import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), CatOp (..), Eff (..), EffTerm (..))
+import PB.Analysis.CatOp (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), Eff (..), EffTerm (..))
 import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainDwBinding)
 import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..), DwRetrieveColRow (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv, lookupScopedVar)
@@ -50,7 +47,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
 
--- | Context 'SchFootprint' closes over. 'CatOp' terms carry no source
+-- | Context 'SchFootprint' closes over. 'EffTerm's carry no source
 -- line\/statement identity of their own, so any edge this functor derives
 -- is necessarily anchored at procedure granularity ('fcStmtObj'), coarser
 -- than Phase 1b's per-line 'StmtId's. 'fcDwColumns' (DW object name ->
@@ -84,8 +81,8 @@ dwColumnsFromRows rows = Map.fromListWith (<>)
   | r <- rows
   ]
 
--- | The object a compiled 'CatOp' term belongs to. 'CatOp' only ever
--- compiles from a PowerScript procedure body, so 'fcStmtObj' is always a
+-- | The object a compiled 'EffTerm' belongs to. It only ever compiles
+-- from a PowerScript procedure body, so 'fcStmtObj' is always a
 -- 'SqlStmtId' in practice — 'DwRetrieveId' has no such notion and is
 -- handled totally rather than assumed unreachable.
 stmtObject :: StmtId -> Maybe Text
@@ -117,14 +114,13 @@ resolveSetItem ctx name args = do
 -- by construction since set union is an associative monoid with 'mempty'
 -- as identity.
 --
--- __Test-only semantic oracle since Plan 167 Phase 1 (2026-07-13).__ The
--- production path is 'foldSchFootprint' (a direct force-time-memoized
--- fold); this newtype, its four instances, and 'runSchFootprint' are kept
--- ONLY as the spec that direct fold implements — driven by the \"category
--- laws\" test group in SchFootprintTest. Do not add a new production
--- caller through the instance route: it memoizes the fold but not the
--- force (the bug Phase 1 fixed) and will re-force shared 'CatTagged'
--- subtrees O(N) times.
+-- __Test-only semantic oracle.__ The production path is
+-- 'foldSchFootprintEff' (a direct force-time-memoized fold); this newtype,
+-- its four instances, and 'runSchFootprint' are kept ONLY as the spec that
+-- direct fold implements — driven by the \"category laws\" test group in
+-- SchFootprintTest. Do not add a new production caller through the
+-- instance route: it memoizes the fold but not the force and will
+-- re-force shared 'ELetRef' subtrees O(N) times.
 newtype SchFootprint a b = SchFootprint { runSchFootprint :: FunctorCtx -> Set.Set SchMorphism }
 
 instance Category SchFootprint where
@@ -166,91 +162,22 @@ instance Effectful SchFootprint where
   branchK cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)
   assignWithRhs var e = assign var . (id &&& eval e)
 
--- | Run a compiled 'CatOp' term through the 'SchFootprint' functor.
---
--- Plan 167 Phase 1: a DIRECT, force-time-memoized fold, NOT the
--- @runSchFootprint (foldCat op) ctx@ route it used through 2026-07-13.
--- That route memoized the FOLD (closure construction, via foldCat's
--- 'CatTagged' cache) but not the FORCE (closure application):
--- 'SchFootprint' is a deferred @(FunctorCtx -> Set)@ constant functor,
--- so a 'CatTagged' subtree embedded at N positions was re-forced N times
--- — O(2^N) on reconvergent control flow (confirmed by scaling probe:
--- ~4x alloc per +2 switches). This fold caches the FORCED 'Set' per
--- blockId, so a shared subtree's footprint is computed once and reused
--- at every embedding — the force-time analogue of LowCat's own
--- @nbsBlockMemo@ ('PB.Analysis.GraphBuilder.compileLowCatToInstrNamed'\'s
--- 'LTagged' case), which is likewise keyed on @blockId@ alone with no
--- continuation dimension.
---
--- Soundness: 'SchFootprint' is a constant functor (phantom a\/b), so
--- folding directly is semantically equivalent to the instance route BY
--- CONSTRUCTION — the instance equations ARE this fold's spec (kept as a
--- test-only oracle via the \"category laws\" group in SchFootprintTest).
--- The cache holds monomorphic @Set SchMorphism@ (no unsafeCoerce\/Any,
--- unlike 'foldCat'\'s GADT-indexed cache). A @CatTagged bid f@ produces
--- exactly the Set folding @f@ would, so caching under @bid@ and returning
--- on repeat is the identity on the result. 'compileBlock' guarantees a
--- block never contains itself ('PB.Analysis.CatOp.foldCat' headnote), so
--- insert-after-recursion is cycle-safe.
-foldSchFootprint :: FunctorCtx -> CatOp a b -> Set.Set SchMorphism
-foldSchFootprint ctx op = fst (go op Map.empty)
-  where
-    -- Threads a blockId -> forced-Set cache through the term exactly as
-    -- foldCat threads its (k x y, Map) cache (CatOp.hs:168-179): the
-    -- cache flows sequentially through every binary constructor so a
-    -- CatTagged discovered in one subterm is visible to its siblings.
-    go :: CatOp x y -> Map.Map Text (Set.Set SchMorphism)
-       -> (Set.Set SchMorphism, Map.Map Text (Set.Set SchMorphism))
-    go CatId                    m = (Set.empty, m)
-    go (CatCompose g f)         m = let (rg, m1) = go g m in let (rf, m2) = go f m1 in (rg <> rf, m2)
-    go (CatFork l r)            m = let (rl, m1) = go l m in let (rr, m2) = go r m1 in (rl <> rr, m2)
-    go CatExl                   m = (Set.empty, m)
-    go CatExr                   m = (Set.empty, m)
-    go (CatConst _)             m = (Set.empty, m)
-    go CatInl                   m = (Set.empty, m)
-    go CatInr                   m = (Set.empty, m)
-    go CatReturn                m = (Set.empty, m)
-    go (CatFanIn t f)           m = let (rt, m1) = go t m in let (rf, m2) = go f m1 in (rt <> rf, m2)
-    go (CatAssign _)            m = (Set.empty, m)
-    go (CatAssignWithRhs _ _)   m = (Set.empty, m)
-    go (CatLookup _)            m = (Set.empty, m)
-    go (CatLoop body)           m = go body m
-    go (CatEval _)              m = (Set.empty, m)
-    go (CatCall name args)      m = (callFootprint name args, m)
-    go (CatSuspend _ _)         m = (Set.empty, m)
-    go CatSplitValue            m = (Set.empty, m)
-    go (CatTry body _handler)   m = go body m
-    go (CatLetRef _)            _ = error "foldSchFootprint: CatLetRef should have been inlined by inlineTable"
-    go (CatTagged bid f)        m = case Map.lookup bid m of
-        Just cached -> (cached, m)
-        Nothing     -> let (r, m') = go f m in (r, Map.insert bid r m')
-
-    -- CatCall is the sole non-empty leaf: mirrors the 'callProc' instance
-    -- (above) verbatim, so the exact-output oracle (SchFootprintTest.hs
-    -- ~line 156) is preserved bit-for-bit.
-    callFootprint :: Text -> [Expr] -> Set.Set SchMorphism
-    callFootprint name args =
-      case resolveSetItem ctx name args of
-        Just (tbl, col) -> Set.singleton (SchMorphism (StmtObj (fcStmtObj ctx)) (ColumnObj tbl col) LegWrites SrcCatFootprint)
-        Nothing         -> Set.empty
-
--- | Same direct, force-time-memoized fold as 'foldSchFootprint', over
--- 'EffTerm' instead of 'CatOp' (Plan 167 Phase 7 Step 6 — uniformity, not
--- urgency: production still calls 'foldSchFootprint' via
--- 'compileProcedureToCatOp' until this path is wired in). Transliterates
--- 'foldSchFootprint'\'s 'go' clause-for-clause onto 'Eff'\'s GADT: 'J _'
--- covers every embedded 'Pure' morphism (id\/compose\/fork\/exl\/exr\/inl\/
--- inr\/fanin\/eval), all constant-empty, same as 'CatId'\/'CatExl'\/
--- 'CatExr'\/'CatConst'\/'CatInl'\/'CatInr'\/'CatEval' were; 'EBranch'
--- unions both arms and ignores the condition, matching the 'branchK'
--- instance derivation @(thenK ||| elseK) . splitValue . (id &&& eval cond)@
--- exactly (every term in that composition besides @thenK@\/@elseK@ is
--- itself constant-empty, so the composition's union collapses to just
--- @thenK <> elseK@). 'ELetRef' resolves against 'EffTerm'\'s own table,
--- memoized on 'blockId' exactly like 'CatTagged' — a shared body is forced
--- once and its 'Set' reused at every reference, not just its fold (the same
--- O(2^N) re-forcing bug 'foldSchFootprint'\'s own module-header note
--- documents fixing for the 'CatOp' side).
+-- | A direct, force-time-memoized fold of a compiled 'EffTerm' through the
+-- 'SchFootprint' functor — THE PRODUCTION ENTRY POINT
+-- ('PB.Pipeline.Runner.compileOne' calls this, not the generic
+-- 'PB.Analysis.CatOp.foldFreyd'/instance-dispatch route). 'J _' covers
+-- every embedded 'Pure' morphism (id\/compose\/fork\/exl\/exr\/inl\/inr\/
+-- fanin\/eval), all constant-empty; 'EBranch' unions both arms and ignores
+-- the condition, matching the 'branchK' instance derivation
+-- @(thenK ||| elseK) . splitValue . (id &&& eval cond)@ exactly (every term
+-- in that composition besides @thenK@\/@elseK@ is itself constant-empty,
+-- so the composition's union collapses to just @thenK <> elseK@).
+-- 'ELetRef' resolves against 'EffTerm'\'s own table, memoized on
+-- 'blockId': a shared body is forced once and its 'Set' reused at every
+-- reference, not just its fold — a bare @runSchFootprint (foldFreyd term)
+-- ctx@ route would memoize the FOLD (closure construction) but not the
+-- FORCE (closure application), so a shared subtree embedded at N positions
+-- would be re-forced N times (O(2^N) on reconvergent control flow).
 foldSchFootprintEff :: FunctorCtx -> EffTerm a b -> Set.Set SchMorphism
 foldSchFootprintEff ctx (EffTerm spine table) = fst (go spine Map.empty)
   where

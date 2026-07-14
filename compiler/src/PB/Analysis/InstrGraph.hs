@@ -7,10 +7,12 @@
 -- The original monadic forward-chaining compiler
 -- ('compileProcedure' :: 'PB.Analysis.TypeEnv.ScopedTypeEnv' -> ... ->
 -- 'InstrGraph') that built these graphs directly from a 'BodyStmt' list was
--- deleted in Plan 144 Phase 5 Step 7, once 'PB.Analysis.CatOp.compileProcedureViaCatOp'
--- (the @[Located BodyStmt] -> SsaProc -> CatOp () () -> InstrGraph@ pipeline)
--- was swapped into production (Step 6) and verified equivalent (0 corpus
--- errors, 0/7547 @--dual-trace@ diffs, hand-compiled golden fixtures).
+-- deleted in Plan 144 Phase 5 Step 7, once the SSA → categorical-IR →
+-- 'InstrGraph' pipeline was swapped into production and verified equivalent
+-- (0 corpus errors, 0/7547 @--dual-trace@ diffs, hand-compiled golden
+-- fixtures). Production now flattens via
+-- 'PB.Analysis.GraphBuilder.compileProcedureViaEffTerm' (SSA →
+-- 'PB.Analysis.CatOp.EffTerm' → 'InstrGraph').
 --
 -- The resulting graph has no nested control flow; all branching is via
 -- explicit node indices. The TypeScript step() driver executes the graph.
@@ -121,7 +123,7 @@ shapeOf look node = case node of
   InstrNop     { npNext }                   -> SNop   (if npNext < 0 then -1 else look npNext)
   InstrCallProc { cpNext }                  -> SCProc (look cpNext)
 
--- | Collapse the SCall\/SCProc tag-naming divergence: the SSA\/CatOp
+-- | Collapse the SCall\/SCProc tag-naming divergence: the SSA\/Eff
 -- pipeline always lowers calls to 'InstrCallProc' ('SCProc'), while the
 -- deleted old compiler emitted plain 'InstrCall' ('SCall') for non-user-function
 -- callees and 'InstrCallProc' only for user-defined functions\/subroutines.
@@ -136,8 +138,9 @@ normalizeCallTag other      = other
 -- ---------------------------------------------------------------------------
 -- Plan 167 Phase 6 — the named-graph intermediate (Approach C)
 --
--- 'InstrGraph' construction (PB.Analysis.GraphBuilder.compileLowCatToInstrNamed)
--- addresses nodes by 'Text' name (mirroring 'PB.Analysis.SSA.SsaBlock's own
+-- 'InstrGraph' construction (PB.Analysis.GraphBuilder's NamedGraphBuilder,
+-- via 'compileProcedureViaEffTerm') addresses nodes by 'Text' name (mirroring
+-- 'PB.Analysis.SSA.SsaBlock's own
 -- successor naming) rather than by an eagerly-allocated pc, so a merge block
 -- reached by N predecessors is exactly one 'Map.Map' entry — dedup is
 -- 'Map.Map' key uniqueness, not a memo. (An earlier, since-retired
@@ -150,10 +153,10 @@ normalizeCallTag other      = other
 
 -- | 'InstrNode' parameterized over its successor-reference type: 'Text'
 -- during named-graph construction, 'Int' after 'linearize'. Constructor set
--- matches the subset 'PB.Analysis.GraphBuilder.compileLowCatToInstrNamed'
--- actually allocates for real 'PB.Analysis.CatLower.compileSsa' output —
--- 'InstrCall'\/'InstrGoto' are never produced (see 'normalizeCallTag''s own
--- comment on 'SCall'\/'SCProc').
+-- matches the subset NamedGraphBuilder actually allocates for real
+-- 'PB.Analysis.CatLowerEff.compileSsaToEff' output — 'InstrCall'\/'InstrGoto'
+-- are never produced (see 'normalizeCallTag''s own comment on
+-- 'SCall'\/'SCProc').
 data InstrNode' p
   = InstrAssign'   { anVar' :: Text, anRhs' :: Expr, anNext' :: p }
   | InstrBranch'   { brCond' :: Expr, brThenPc' :: p, brElsePc' :: p }

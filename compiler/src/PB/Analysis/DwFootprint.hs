@@ -2,7 +2,7 @@
 -- producer -- the "Fdw" half of D1's cospan
 -- (see doc\/plan\/163-unified-statement-footprint.md), sibling to
 -- 'PB.Analysis.SchFootprint's "Fps" functor. Unlike 'SchFootprint', which
--- folds a compiled @CatOp@ term, a DW retrieve has no control flow to fold
+-- folds a compiled @EffTerm@, a DW retrieve has no control flow to fold
 -- -- this is a plain, total walk over the already-parsed 'DwTable'\/
 -- 'DwRetrieve' record straight into the same @Set SchMorphism@ codomain.
 --

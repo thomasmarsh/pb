@@ -7,7 +7,7 @@
 -- directly by (unversioned) variable name — see the module-level history
 -- note below for why this is not classic dominance-based SSA.
 --
--- Pipeline: 'PB.AST.BodyStmt' → SSA → 'PB.Analysis.CatOp'
+-- Pipeline: 'PB.AST.BodyStmt' → SSA → 'PB.Analysis.CatOp.Eff'
 --
 -- __History (Plan 155 F1, 2026-07-08):__ this module used to also compute a
 -- full dominance-based SSA renaming (dominator tree, dominance frontiers,
@@ -258,7 +258,7 @@ stmtToAssigns (BsCall expr) =
   [SsaAssign (SsaVar "_") (SsaConst expr)]
 -- BsPbCall: CALL ancestor::event super-dispatch (Plan 145 Phase 3). Encoded as a
 -- single-segment synthetic ExCall so it flows through the existing
--- classifyExpr/compileCallExpr machinery in PB.Analysis.CatOp and lowers to a
+-- classifyExpr/compileCallExpr machinery in PB.Analysis.CatLowerEff and lowers to a
 -- InstrCallProc, matching PB.Analysis.InstrGraph's explicit BsPbCall case. The
 -- "ancestor::event" text can never collide with isTriggerEvent, a user-fn name
 -- (PB identifiers can't contain "::"), or isBuiltinSuspendFn's fixed list, so

@@ -181,7 +181,7 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
         \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
         \namespace TEXT, table_name TEXT, column_name TEXT, op TEXT, values_json TEXT)"
       -- Plan 163 Phase 3: same shape as sql_statement_columns, populated by
-      -- PB.Analysis.SchFootprint's CatOp -> Sch functor instead of sqlglot
+      -- PB.Analysis.SchFootprint's EffTerm -> Sch functor instead of sqlglot
       -- text extraction (today: DataWindow SetItem calls with a literal
       -- column argument and a statically-resolvable control binding -- see
       -- that module's doc comment). Kept as its own table, not merged into

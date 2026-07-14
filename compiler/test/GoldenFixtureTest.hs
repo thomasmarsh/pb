@@ -1,17 +1,12 @@
--- | Plan 146 Phase 3 — hand-compiled golden fixtures.
+-- | Hand-compiled golden fixtures — the compiler's hard semantic gate.
 --
--- Every prior Plan 146 test (Phase 1D, Phase 2a-k) validated the new compiler
--- against the /old/ compiler: "old and new agree" was strong evidence but not
--- proof, since a bug shared by both compilers would have been invisible to
--- that comparison. This module instead pins each fixture's expected
--- 'PB.Analysis.CatEval.TraceEvent' sequence and final environment to a value
--- derived by hand from PB's documented statement semantics (see
--- @doc/spec.md@ and each fixture's own comment) — independent of what the
--- compiler happens to produce — and then asserts that
--- 'PB.Analysis.CatOp.compileProcedureViaCatOp' matches it exactly. (The old
--- compiler, 'PB.Analysis.InstrGraph.compileProcedure', was deleted in Plan
--- 144 Phase 5 Step 7 once this and the dual-trace corpus run confirmed
--- equivalence; these fixtures no longer compare against it.)
+-- Each fixture's expected 'PB.Analysis.CatEval.TraceEvent' sequence and
+-- final environment is pinned to a value derived by hand from PB's
+-- documented statement semantics (see @doc/spec.md@ and each fixture's own
+-- comment) — independent of what the compiler happens to produce — and
+-- then asserted against 'PB.Analysis.GraphBuilder.compileProcedureViaEffTerm'
+-- (the production SSA → 'PB.Analysis.CatOp.EffTerm' → 'InstrGraph'
+-- pipeline).
 --
 -- Deliberately small and curated, not exhaustive (Phase 1/2's generated and
 -- corpus-driven testing already cover broad syntax). Candidates are the
@@ -29,7 +24,7 @@ import PB.AST.Type         ()
 import PB.AST.BodyStmt     (BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..), DoCondition (..),
                             ChooseStmt (..), CaseClause (..))
 import PB.AST.Located      (Located (..))
-import PB.Analysis.GraphBuilder (compileProcedureViaCatOp)
+import PB.Analysis.GraphBuilder (compileProcedureViaEffTerm)
 import PB.Analysis.CatEval (Value (..), TraceEvent (..))
 import PB.Analysis.InstrInterp  (runInstrGraphTrace)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
@@ -45,7 +40,7 @@ import Test.Tasty.HUnit (testCase, (@?=))
 
 -- | Environment with one datawindow-typed global — enough to make
 -- @dw_foo.retrieve(...)@ classify as a suspend call, the same idiom
--- 'CatOpTest.hs's @dwEnv@ uses.
+-- 'EffTermTest.hs's @dwEnv@ uses.
 dwEnv :: ScopedTypeEnv
 dwEnv = ScopedTypeEnv
   { steGlobal       = Map.fromList [("dw_foo", PtPrimitive "datawindow")]
@@ -66,7 +61,7 @@ ex :: Text -> Expr
 ex n = ExLvalue (lv n)
 
 -- | Tokenize a source snippet into one real 'Token' (mirrors the identical
--- helper in 'CatOpTest.hs'/'InstrGraphTest.hs') — used to build genuine
+-- helper in 'EffTermTest.hs') — used to build genuine
 -- @callArgs@ token lists (e.g. a bare identifier reference) rather than
 -- hand-rolled fakes.
 tok :: Text -> Token
@@ -88,7 +83,7 @@ runNew :: ScopedTypeEnv -> [Located BodyStmt] -> Map.Map Text Value
        -> (Map.Map Text Value, [TraceEvent])
 runNew env body initEnv =
   let maxSteps = 500 :: Int
-      (ne, nt, _) = runInstrGraphTrace maxSteps Map.empty (compileProcedureViaCatOp env Set.empty body) initEnv
+      (ne, nt, _) = runInstrGraphTrace maxSteps Map.empty (compileProcedureViaEffTerm env Set.empty body) initEnv
   in (ne, nt)
 
 tests :: TestTree
@@ -264,7 +259,7 @@ tests = testGroup "Plan 146 Phase 3: hand-compiled golden fixtures"
     --
     -- "y = y + 1" is reached from both the then-arm and the else-arm on
     -- every iteration — the AST-level counterpart to the SSA-level fixture
-    -- in CatOpTest.hs's "compileLoopBody" group (Plan 146 item 7), here run
+    -- in EffTermTest.hs's "compileLoopBody" group (Plan 146 item 7), here run
     -- through the real BodyStmt->CFG->SSA pipeline instead of a hand-built
     -- SsaProc, with a fully hand-derived trace rather than just a
     -- final-value check.
