@@ -165,6 +165,7 @@ runPhaseB conn mDefaultNamespace = do
   reportLegSourceFanout conn
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Datalog analysis" :: Text)])
   Souffle.runRuleSetsWithStart souffleStart souffleProgress conn allDatalogRuleSets
+  TaintRules.reconstructTaintStepKind conn
   materializeDeadCode conn
   materializeDecompositionCoslice conn
   materializeTaintPaths conn

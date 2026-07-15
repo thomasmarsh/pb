@@ -837,137 +837,79 @@ deadReachRules :: RuleSet
 -- not in runPass11 (which now only runs reachesRules/liveProcRules).
 ```
 
-### `PB.Analysis.Rules.Taint` (Plan 161 Phase 2d; step_kind labeling Plan 171b, 2026-07-15; taint_sink guard + taint_reaches/taint_reaches_sink split + taint_source_live seed restriction perf fixes 2026-07-15)
+### `PB.Analysis.Rules.Taint` (Plan 161 Phase 2d; step_kind labeling Plan 171b, 2026-07-15; witness reconstruction moved to Haskell 2026-07-16)
 
 ```haskell
--- PERFORMANCE FIX 3 (2026-07-15, same incident, found because fix 2 below
--- stabilized memory -- 4.6GB+ climbing -> 406MB stable -- but runtime was
--- STILL the dominant pipeline cost at 6m45s+, live-confirmed via the new
--- souffleStart event showing the real ruleset/EDB counts, not a stale
--- label): taint_min_dist's per-source BFS seeded from EVERY taint_source
--- (1,815 on the real corpus), most of which never reach any sink at all
--- and so contribute zero rows to taint_path_leg/taint_confirmed/
--- taint_step_kind regardless. taint_source_live(s) :- taint_confirmed(s,
--- _) identifies sources with at least one confirmed sink; taint_min_dist
--- now seeds from taint_source_live instead of taint_source, pruning the
--- wasted per-source BFS for dead-end sources entirely. This ALSO required
--- moving taint_confirmed's own definition to derive from taint_reaches
--- (cheap: already source-seeded, plain existence join) instead of
--- taint_min_dist -- otherwise taint_min_dist -> taint_source_live ->
--- taint_confirmed -> taint_min_dist would be a rule cycle. Verified safe
--- via a full grep of compiler/ and cli/: unlike taint_reaches (which
--- materializeTaintAnnotations reads), taint_min_dist has NO consumer
--- outside this ruleset -- restricting its seed cannot narrow any external
--- contract. Verified on the same synthetic 420-source dead-chain fixture:
--- 0.82s -> 0.38s (2.2x), taint_min_dist 63,420 -> 3,020 rows (21x, only the
--- 20 live sources seeded) -- confirmed/step_kind/taint_reaches all
--- byte-identical to the pre-fix baseline. REGRESSION CAUGHT AND FIXED
--- before landing: taint_reaches has no reflexive base case (only derives
--- via 1+ real edges), unlike the old taint_min_dist-based taint_confirmed
--- definition, which got the 0-hop (source == sink, same variable) case for
--- free from taint_min_dist(s, s, 0)'s own seed -- my synthetic fixtures
--- never exercised that degenerate case, so this broke the EXISTING
--- "0-hop source-equals-sink pair" SouffleTaintTest.hs fixture (a real,
--- pre-existing adversarial test, not one added this session) until a
--- second explicit rule, `taint_confirmed(s, s) :- taint_source(s),
--- taint_sink(s)`, restored it. 1424/1424 tests pass, all 14
--- Souffle.Taint real-CLI cases (including this one) green.
---
--- PERFORMANCE FIX 2 (2026-07-15, same incident, found because fix 1 below
--- cut memory (4.6GB -> 406MB stable) but NOT runtime, still 6m45s+):
--- taint_reaches' seed is now taint_source only (was: every node with an
--- outgoing edge in the whole graph). materializeTaintAnnotations
--- (DuckDb.hs) is taint_reaches' ONLY other consumer, and it already
--- discards every row whose x isn't a taint_source via its own downstream
--- Set.member filter -- so restricting the SEED computes exactly the same
--- final (x, y) pairs, just without wastefully rooting the closure at every
--- other node too. This was the dominant remaining cost: on a synthetic
--- 420-source/63,000-edge fixture shaped like real code (400 "dead-end"
--- source chains that never reach a sink, 20 that do -- taint_edge is
--- deliberately undeduped/unfiltered, same as leg_source, so most taint
--- flows never reach a sink in practice), the OLD unrestricted taint_reaches
--- produced 4,756,500 rows (O(chain_length^2) per chain -- every node ALONG
--- a chain was also its own separate seed) vs. 63,000 for the source-seeded
--- version -- 3.01s/130MB -> 0.46s/22MB (6.5x/5.8x) on that fixture alone.
---
--- taint_path_leg's rule 1 (`taint_reaches(lt, t)`, checking "does this
--- intermediate node reach the target") CANNOT reuse the now-source-seeded
--- taint_reaches -- lt is generally not itself a taint_source, so that
--- check would almost never hold. Caught empirically before touching
--- production code: naively restricting taint_reaches' seed alone silently
--- truncated taint_path_leg to just the first/last hop of every path in a
--- synthetic test (3,020 expected taint_step_kind rows -> 40). Fixed by
--- adding a SEPARATE relation, `taint_reaches_sink(x, t)`, backward-seeded
--- from taint_sink (694 seeds on the real corpus, vs. tens of thousands of
--- candidate roots for an unrestricted forward closure) -- answers the
--- actual question taint_path_leg's rule 1 asks ("does arbitrary node x
--- reach specific sink t"), and taint_path_leg now reads THIS instead of
--- taint_reaches. taint_min_dist is deliberately NOT seed-restricted the
--- same way (stays seeded from every taint_source, dead-end or not) --
--- narrowing it would silently change materializeTaintAnnotations' "tainted
--- set" to exclude variables whose taint never reaches a sink, a real
--- product behavior change outside a pure perf fix's scope, not something
--- to do unilaterally. Verified byte-identical against the pre-fix baseline
--- on two synthetic fixtures (the dead-chains one above and the earlier
--- 100-source/50-hub/20-sink fixture from fix 1): taint_reaches (filtered to
--- x ∈ taint_source, i.e. what materializeTaintAnnotations actually uses)
--- identical, taint_confirmed identical, taint_step_kind (confirmed-pair-
--- filtered) identical. New `SouffleTaintTest.hs` `taintReaches` group (2
--- cases) closes a real pre-existing coverage gap -- no prior test asserted
--- on taint_reaches' own content at all (only on taint_confirmed/
--- taint_step_kind, neither of which exercises it): a dead-end node past no
--- sink must still appear (annotations need it), a node reachable only from
--- a non-source root must not (confirms the seed restriction is real).
---
--- PERFORMANCE FIX 1 (2026-07-15, same production incident as legRules'
--- O(group_size^2) fix): taint_path_leg's two rules now guard on
--- `taint_sink(t)`. Root cause: every downstream consumer of
--- taint_path_leg/taint_step_kind (materializeTaintPaths, DuckDb.hs) only
--- ever reads rows whose (s, t) pair is in taint_confirmed -- which already
--- requires taint_sink(t) -- but taint_path_leg's own rules derived a
--- witness leg for EVERY node t reachable from a source (not just real
--- sinks), so Souffle computed a full shortest-path-witness reconstruction
--- to every intermediate variable a taint value ever flows through, then
--- materializeTaintPaths' SQL JOIN silently discarded all but the
--- confirmed-sink subset. Verified against the real souffle 2.5 CLI on a
--- synthetic 100-source/7,000-edge/20-sink fixture (each source fanning out
--- to thousands of non-sink nodes, mirroring a real corpus' shared-utility-
--- layer shape): 11.7s/121MB -> 0.75s/28MB (15.6x/4.3x), taint_path_leg
--- 405,000 -> 4,000 rows (101x), taint_step_kind 407,000 -> 6,000 rows
--- (68x). taint_confirmed unchanged; taint_step_kind rows restricted to
--- confirmed (s, t) pairs (the only ones materializeTaintPaths ever reads)
--- verified byte-identical before/after. taint_min_dist/taint_reaches
--- themselves are untouched -- still computed to every reachable node,
--- since the BFS must pass through non-sink intermediates en route to a
--- distant sink; this guard only prunes witness-LEG reconstruction. Found
--- because "Datalog: leg"'s progress label is stale during this ruleset's
--- run (taintRules is topologically ready in the same round as legRules,
--- landing immediately after it -- see PB.Pipeline.Passes.souffleProgress's
--- own note) -- a live production run looked stuck on "leg" but process
--- inspection (temp dir contents: program.dl + taint_edge.facts) showed
--- taintRules actually executing. See doc/plan/171-datalog-decision-
--- migration.md's Postscript for the full incident writeup.
+-- taintRules (RuleSet) computes ONLY the two cheap fixpoint-shaped
+-- relations: taint_reaches(x, y) (transitive closure, seeded from
+-- taint_source) and taint_confirmed(s, t) (source→sink reachability, two
+-- rules: the 0-hop s==t case and the general taint_reaches(s,t) case).
+-- rsChoiceDomains is empty -- there is no per-source distance table left
+-- to need one.
+taintRules :: RuleSet
 
--- taintRules (RuleSet) gained taint_step_kind(s, t, leg_ord, lf, lt, kind,
--- step_kind, description) via rule specialization, replacing the SQL CASE
--- that used to live in materializeTaintPaths (a house-rule violation per
--- this file's own Datalog Rule Placement Discipline section). 4 rules:
--- (1) the leg starting at the source (leg_ord 0) is always labeled
--- "source" regardless of its real edge kind; (2) every other witness leg
--- passes its edge kind through unchanged as both step_kind and (via
--- Souffle's cat functor) the description text; (3) a terminal "arrived at
--- sink" marker row, one ordinal past the last witness leg (max-aggregate
--- over taint_path_leg, same idiom legRules uses for priority and
--- cosliceRules for min_dist), guarded s != t; (4) the 0-hop degenerate
--- case (source == sink) — a single "source-sink" row, since
--- taint_path_leg has no rows at all for that pair. `ord` is a reserved
--- word in Souffle 2.5 -- every relation here uses `leg_ord`, matching
--- taintPathLegRel's existing column name. materializeTaintPaths
--- (DuckDb.hs) now reads taint_step_kind directly -- no CASE, and the old
--- legs_with_sink UNION ALL that synthesized the terminal row in SQL is
--- gone (taint_step_kind already includes it). Real-corpus gate: openpay
--- taint_paths byte-identical (25/25 rows, full steps_json content) pre-
--- vs post-migration.
+-- reconstructTaintStepKind :: DuckConn -> IO () rebuilds taint_step_kind
+-- (s, t, leg_ord, lf, lt, kind, step_kind, description) as a plain Haskell
+-- BFS instead of a Souffle fixpoint -- one BFS per live source (shared
+-- across all of that source's confirmed sinks via a parent-pointer map,
+-- same worklist shape as PB.Analysis.Taint.propagateTaint but graph-
+-- structural and per-source rather than global), then a backward walk per
+-- confirmed (s, t) pair (mirrors PB.Analysis.Taint.traceTaintPath).
+-- Row/label shape matches the four Datalog rules it replaces exactly:
+-- leg_ord 0 is always "source" regardless of its real edge kind; every
+-- other leg passes its edge kind through as both step_kind and
+-- description; a terminal "sink" marker lands one ordinal past the last
+-- leg; the 0-hop (source == sink) case is a single "source-sink" row.
+-- Adjacency lists are pre-sorted ascending by (to, kind), so diamond ties
+-- resolve deterministically to the lexicographically smallest witness --
+-- NOT necessarily the same edge the old Datalog+SQL ranked_legs tie-break
+-- would have picked (that chose per (s,t) pair independently; this shares
+-- one tree per source), a documented cosmetic shape delta, same category
+-- Plan 171b already accepted for steps_json content. Confirmed-pair set,
+-- path lengths, and step_kind semantics are unaffected.
+--
+-- WHY: PB.Analysis.Rules.Taint carried four same-day perf fixes
+-- (2026-07-15, doc/plan/171-datalog-decision-migration.md's Postscript)
+-- restricting taint_min_dist/taint_path_leg's seeds -- all of them
+-- premised on "most sources are dead ends that never reach a sink", the
+-- shape of every synthetic fixture used to verify them. Real-corpus
+-- verification showed NO improvement after all four landed: a synthetic
+-- "shared-utility-layer" fixture (1,800 sources/700 sinks/~11K edges --
+-- 27x FEWER edges than the real 301,754-edge corpus, but with heavy
+-- reachable-set overlap across sources, mirroring shared library-proc
+-- structure) reproduced the same symptom -- taint_source_live came back
+-- 1,800/1,800 (every source "live", so that seed restriction did nothing),
+-- and the fully-fixed Datalog rules still took 190s/4.66GB on it.
+-- taint_reaches/taint_confirmed ALONE (no witness reconstruction) computed
+-- the SAME fixture in 0.79s/41MB -- essentially 100% of the cost was
+-- witness-path reconstruction (taint_min_dist/taint_path_leg), not knowing
+-- which (source, sink) pairs are confirmed. Root cause: computing a full
+-- per-source shortest-distance table for EVERY live source is inherently
+-- O(#live_sources x avg-reachable-set-size), which Datalog's declarative
+-- fixpoint has no way to avoid once "which pairs" and "what's the witness"
+-- are fused into one relation -- exactly the shape the pre-Datalog
+-- PB.Analysis.Taint.propagateTaint/traceTaintPath split (one global BFS,
+-- then a cheap per-sink backward walk) never had to pay. User explicitly
+-- chose to KEEP full per-(source,sink) attribution (richer security
+-- signal: every distinct attack vector shown, not collapsed to one path
+-- per sink) rather than reduce cardinality to match the old contract --
+-- so the fix is moving WHERE the witness reconstruction runs, not what it
+-- computes. Compiled-Haskell benchmark on the same hub fixture: 20.1s
+-- total (1.9s Souffle taint_reaches/taint_confirmed + 18.2s Haskell BFS
+-- reconstruction, the latter dominated by writing 3,230,980 output rows
+-- via DuckDB's row-at-a-time Appender, not graph traversal) vs. 190s
+-- baseline -- 9.4x, row count verified identical to a since-superseded
+-- Datalog-side choice-domain experiment (3,230,980 both ways). Currently
+-- runs inline in runPhaseB (PB.Pipeline.Passes) as part of `pb index`; a
+-- `pb explore`-triggered background job (compute confirmed pairs eagerly,
+-- backfill witnesses incrementally while the UI is running) was discussed
+-- as a fallback if real-corpus numbers make the inline cost too large, but
+-- not implemented -- inline-first was the explicit choice pending a real
+-- benchmark. Real-corpus verification (taint_paths/taint_annotations
+-- byte-identical modulo the documented tie-break delta, and the actual
+-- `pb index` wall-clock/memory number) is still owed, same caveat as the
+-- four fixes this supersedes -- not accessible to the assistant.
+reconstructTaintStepKind :: DuckConn -> IO ()
 ```
 
 ### `PB.Pipeline.SqlParse`

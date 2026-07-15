@@ -281,15 +281,66 @@ tests = testGroup "Souffle.Taint"
             (length [() | (_, _, _, _, _, _, sk, _) <- path, sk == "source"] == 1)
           assertBool "exactly one row labeled sink"
             (length [() | (_, _, _, _, _, _, sk, _) <- path, sk == "sink"] == 1)
+
+    , testCase "diamond: two equal-length paths pick the lexicographically smaller intermediate" $
+        withWriteConn ":memory:" $ \conn -> do
+          initSchema conn
+          -- A -> B -> D and A -> C -> D, both 2 hops. reconstructTaintStepKind's
+          -- BFS discovers B before C (adjacency pre-sorted ascending by
+          -- (to_key, kind), and "obj::proc_a::ls_b" < "obj::proc_a::ls_c"),
+          -- so D's parent must resolve to B's edge, not C's -- a real
+          -- diamond, unlike the "duplicate-key collision" case above (which
+          -- has only one actual edge despite its name).
+          insEdge conn "obj" "proc_a" "" "obj" "proc_a" "global_write" "ls_a" "ls_a" "ls_b"
+          insEdge conn "obj" "proc_a" "" "obj" "proc_a" "global_write" "ls_a" "ls_a" "ls_c"
+          insEdge conn "obj" "proc_a" "" "obj" "proc_a" "global_write" "ls_b" "ls_b" "ls_d"
+          insEdge conn "obj" "proc_a" "" "obj" "proc_a" "global_write" "ls_c" "ls_c" "ls_d"
+          insSource conn "f.srw" "obj" "proc_a" "ls_a" "db_read"
+          insSink   conn "f.srw" "obj" "proc_a" "ls_d" "db_write" "high"
+          rows <- runStepKind conn
+          let srcKey = "obj::proc_a::ls_a"
+              snkKey = "obj::proc_a::ls_d"
+              bKey   = "obj::proc_a::ls_b"
+              path = [r | r@(s, t, _, _, _, _, _, _) <- rows, s == srcKey, t == snkKey]
+              byOrd = sortOn (\(_, _, o, _, _, _, _, _) -> o) path
+          assertEqual "3 rows: source leg, passthrough leg, terminal sink" 3 (length byOrd)
+          assertBool "ordinal-0 leg lands at B (the smaller intermediate), not C"
+            (case byOrd of
+               (_, _, "0", _, lt, _, _, _) : _ -> lt == bKey
+               _ -> False)
+
+    , testCase "hub sharing: 2 sources x 1 hub x 2 sinks stays linear, no combinatorial fan-out" $
+        withWriteConn ":memory:" $ \conn -> do
+          initSchema conn
+          -- S1, S2 -> H -> T1, T2: 4 confirmed (source, sink) pairs, each a
+          -- 2-hop path (3 taint_step_kind rows). This is the shape that
+          -- caused the real production incident (doc/plan/171's Postscript)
+          -- under the old per-source-distance-table Datalog rules -- the
+          -- regression guard here is the row COUNT staying at exactly
+          -- 4 pairs x 3 rows, not exploding with shared-hub fan-in/fan-out.
+          insEdge conn "obj" "proc_a" "" "obj" "proc_a" "global_write" "ls_s1" "ls_s1" "ls_h"
+          insEdge conn "obj" "proc_a" "" "obj" "proc_a" "global_write" "ls_s2" "ls_s2" "ls_h"
+          insEdge conn "obj" "proc_a" "" "obj" "proc_a" "global_write" "ls_h"  "ls_h"  "ls_t1"
+          insEdge conn "obj" "proc_a" "" "obj" "proc_a" "global_write" "ls_h"  "ls_h"  "ls_t2"
+          insSource conn "f.srw" "obj" "proc_a" "ls_s1" "db_read"
+          insSource conn "f.srw" "obj" "proc_a" "ls_s2" "db_read"
+          insSink   conn "f.srw" "obj" "proc_a" "ls_t1" "db_write" "high"
+          insSink   conn "f.srw" "obj" "proc_a" "ls_t2" "db_write" "high"
+          rows <- runStepKind conn
+          assertEqual "4 confirmed pairs x 3 rows each = 12 total, no fan-out blowup"
+            12 (length rows)
     ]
   ]
 
--- | Run initSchema + initTaintEdbViews + taintRules, query taint_step_kind.
+-- | Run initSchema + initTaintEdbViews + taintRules +
+-- reconstructTaintStepKind (the Haskell BFS-based witness reconstruction,
+-- 2026-07-16), query taint_step_kind.
 runStepKind :: DuckConn -> IO [(Text, Text, Text, Text, Text, Text, Text, Text)]
 runStepKind conn = do
   initSchema conn
   initTaintEdbViews conn
   runRuleSet conn taintRules
+  reconstructTaintStepKind conn
   query_ conn
     "SELECT s, t, leg_ord, lf, lt, kind, step_kind, description FROM taint_step_kind"
     :: IO [(Text, Text, Text, Text, Text, Text, Text, Text)]

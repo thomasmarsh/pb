@@ -14,13 +14,20 @@
 module PB.Analysis.Rules.Taint
   ( initTaintEdbViews
   , taintRules
+  , reconstructTaintStepKind
   ) where
 
 import PB.Prelude
 
 import PB.Pipeline.Souffle (Relation (..), symRelation, Rule (..), RuleSet (..))
-import PB.Pipeline.DuckDb (DuckConn)
+import PB.Pipeline.DuckDb (DuckConn, queryTextRows, recreateTextTable, appendTextRows)
 import Database.DuckDB.Simple (Query (..), execute_)
+
+import qualified Data.HashMap.Strict as HM
+import qualified Data.List           as List
+import qualified Data.Sequence       as Seq
+import qualified Data.Set            as Set
+import qualified Data.Text           as T
 
 -- ---------------------------------------------------------------------------
 -- EDB views
@@ -122,68 +129,14 @@ initTaintEdbViews conn = for_ views (void . execute_ conn)
 -- Concrete program
 -- ---------------------------------------------------------------------------
 
-taintEdgeRel, taintSourceRel, taintSinkRel, taintReachesRel, taintReachesSinkRel,
-  taintSourceLiveRel, taintMinDistRel, taintPathLegRel, taintConfirmedRel,
-  taintStepKindRel :: Relation
+taintEdgeRel, taintSourceRel, taintSinkRel, taintReachesRel,
+  taintConfirmedRel :: Relation
 taintEdgeRel     = symRelation "taint_edge"     ["from_key", "to_key", "kind"]
 taintSourceRel   = symRelation "taint_source"   ["x"]
 taintSinkRel     = symRelation "taint_sink"     ["x"]
 taintReachesRel  = Relation "taint_reaches"
                      [("x", "symbol"), ("y", "symbol")]
--- | Performance fix (2026-07-15, same incident as the taint_sink guard on
--- taint_path_leg below): a SEPARATE relation from taint_reaches, backward-
--- seeded from taint_sink, answering "does this ARBITRARY node reach this
--- SPECIFIC sink" -- the actual question taint_path_leg's rule 1 asks via
--- taint_reaches(lt, t). taint_reaches itself cannot serve double duty here
--- once its own seed is restricted to taint_source (see taintRules' rsRules
--- comment) -- an intermediate witness node lt is generally NOT itself a
--- taint_source, so taint_reaches(lt, t) would almost never hold under a
--- source-seeded taint_reaches (confirmed the hard way: restricting
--- taint_reaches' seed alone, without this relation, silently truncated
--- taint_path_leg to just the first/last hop of every path in a synthetic
--- test -- caught by diffing against the pre-fix baseline before touching
--- production code).
-taintReachesSinkRel = Relation "taint_reaches_sink"
-                     [("x", "symbol"), ("t", "symbol")]
--- | Performance fix (2026-07-15, third fix in the same incident, after the
--- taint_reaches/taint_reaches_sink split still left runtime dominating the
--- pipeline while memory had already stabilized): taint_min_dist's own
--- per-source shortest-distance BFS is the remaining cost -- it used to
--- seed from EVERY taint_source, most of which (in real code, per the same
--- "dead-end chain" shape the taint_reaches fix's synthetic fixture used)
--- never reach any sink at all, and so never contribute a single row to
--- taint_path_leg/taint_step_kind/taint_confirmed regardless. taint_source_
--- live(s) is a source with at least one confirmed sink (taint_confirmed(s,
--- _)) -- restricting taint_min_dist's seed to just this set prunes the
--- wasted per-source BFS entirely for dead-end sources. Safe unlike the
--- earlier-considered (and deliberately rejected) idea of restricting
--- taint_min_dist directly: taint_min_dist has NO consumer outside this
--- ruleset (only taint_path_leg/taint_confirmed read it, both defined right
--- here) -- confirmed via a full grep of compiler/ and cli/ before
--- implementing this. materializeTaintAnnotations (DuckDb.hs) reads
--- taint_reaches, which this fix does not touch at all.
-taintSourceLiveRel = symRelation "taint_source_live" ["s"]
-taintMinDistRel  = Relation "taint_min_dist"
-                     [("s", "symbol"), ("node", "symbol"), ("dist", "number")]
-taintPathLegRel  = Relation "taint_path_leg"
-                     [("s","symbol"),("target","symbol"),("leg_ord","number"),
-                      ("lf","symbol"),("lt","symbol"),("kind","symbol")]
 taintConfirmedRel = symRelation "taint_confirmed" ["s", "t"]
--- | Plan 171b (2026-07-15): the step_kind/description label for each
--- witness leg, derived via rule specialization instead of the SQL CASE
--- that used to live in materializeTaintPaths. Rule 1 tags the leg
--- starting at the source (leg_ord 0) as "source" regardless of its real
--- edge kind. Rule 2 passes the edge kind through unchanged for every
--- other leg. Rule 3 derives the terminal "arrived at sink" marker row one
--- ordinal past the last witness leg (max-aggregate, same idiom legRules
--- uses for priority and cosliceRules for min_dist), guarded s != t so it
--- only fires for a genuine multi-hop path. Rule 4 is the 0-hop
--- degenerate case (source == sink): a single "source-sink" row, no
--- witness legs exist for taint_path_leg to derive at all.
-taintStepKindRel = Relation "taint_step_kind"
-                     [("s","symbol"),("t","symbol"),("leg_ord","number"),
-                      ("lf","symbol"),("lt","symbol"),("kind","symbol"),
-                      ("step_kind","symbol"),("description","symbol")]
 
 -- | The taint Datalog program.
 --
@@ -196,9 +149,7 @@ taintStepKindRel = Relation "taint_step_kind"
 taintRules :: RuleSet
 taintRules = RuleSet
   { rsRelations =
-      [ taintReachesRel, taintReachesSinkRel, taintConfirmedRel, taintSourceLiveRel
-      , taintMinDistRel, taintPathLegRel, taintStepKindRel
-      ]
+      [ taintReachesRel, taintConfirmedRel ]
   , rsRules =
       [ -- Transitive closure, seeded ONLY from taint_source (not every node
         -- with an outgoing edge): materializeTaintAnnotations (DuckDb.hs)
@@ -216,129 +167,167 @@ taintRules = RuleSet
         -- taint_reaches produced 4,756,500 rows (O(chain_length^2) per
         -- chain, since every node along a chain was ALSO its own separate
         -- seed) where the source-seeded version produces the 63,000 rows
-        -- actually needed. See taint_source_live below for why
-        -- taint_min_dist itself is now ALSO seed-restricted (a separate,
-        -- later fix) without narrowing materializeTaintAnnotations.
+        -- actually needed.
         Rule "taint_reaches(x, y) :- taint_source(x), taint_edge(x, y, _)"
           [taintReachesRel, taintSourceRel, taintEdgeRel]
       , Rule "taint_reaches(x, z) :- taint_reaches(x, y), taint_edge(y, z, _)"
           [taintReachesRel, taintEdgeRel]
 
-        -- taint_reaches_sink: see its own Relation-level doc comment above
-        -- for why this is a SEPARATE relation from taint_reaches rather
-        -- than a shared one -- backward BFS seeded from taint_sink (694
-        -- seeds on the real corpus, vs. tens of thousands of candidate
-        -- roots for an unrestricted forward closure).
-      , Rule "taint_reaches_sink(x, t) :- taint_sink(t), taint_edge(x, t, _)"
-          [taintReachesSinkRel, taintSinkRel, taintEdgeRel]
-      , Rule "taint_reaches_sink(x, t) :- taint_edge(x, y, _), taint_reaches_sink(y, t)"
-          [taintReachesSinkRel, taintEdgeRel]
-
-        -- Confirmed: source→sink pair with any path. Moved to derive from
-        -- taint_reaches (cheap: already source-seeded, plain existence
-        -- join) instead of taint_min_dist (2026-07-15, fourth fix, same
-        -- incident) -- this ALSO breaks what would otherwise be a rule
-        -- cycle, since taint_min_dist's own seed (below) now depends on
-        -- taint_confirmed via taint_source_live.
+        -- Confirmed: source→sink pair with any path.
         --
         -- Two rules, not one: taint_reaches only derives via 1+ REAL
-        -- edges (no reflexive base case), unlike the old taint_min_dist-
-        -- based definition, which got the 0-hop (source == sink, same
-        -- variable) case for free from taint_min_dist(s, s, 0)'s own
-        -- reflexive seed. Caught by the existing "0-hop source-equals-sink
-        -- pair" SouffleTaintTest.hs fixture -- my own synthetic
-        -- verification fixtures never exercised this degenerate case, so
-        -- this regression only surfaced once the real test suite ran.
-        -- Rule 1 restores it explicitly (independent of any edge); rule 2
+        -- edges (no reflexive base case), so the 0-hop (source == sink,
+        -- same variable) case needs its own rule. Caught by the existing
+        -- "0-hop source-equals-sink pair" SouffleTaintTest.hs fixture.
+        -- Rule 1 covers it explicitly (independent of any edge); rule 2
         -- is the general multi-hop case.
       , Rule "taint_confirmed(s, s) :- taint_source(s), taint_sink(s)"
           [taintConfirmedRel, taintSourceRel, taintSinkRel]
       , Rule "taint_confirmed(s, t) :- taint_source(s), taint_sink(t), taint_reaches(s, t)"
           [taintConfirmedRel, taintSourceRel, taintSinkRel, taintReachesRel]
-
-        -- See taintSourceLiveRel's own doc comment (above, at its
-        -- declaration) for the full rationale: restricts the expensive
-        -- per-source taint_min_dist BFS to sources that actually have a
-        -- confirmed sink, skipping dead-end sources entirely.
-      , Rule "taint_source_live(s) :- taint_confirmed(s, _)"
-          [taintSourceLiveRel, taintConfirmedRel]
-
-        -- Shortest distance per (source, node), now seeded from
-        -- taint_source_live instead of taint_source (see above).
-        -- choice-domain (s, node) ensures termination on cyclic
-        -- graphs: Souffle locks each (s, node) key to the FIRST
-        -- distance derived and drops later tuples.  n != s blocks
-        -- the seed's own distance-0 tuple from being overwritten
-        -- before choice-domain locks it in on iteration 0.
-      , Rule "taint_min_dist(s, s, 0) :- taint_source_live(s)"
-          [taintMinDistRel, taintSourceLiveRel]
-      , Rule "taint_min_dist(s, n, dprev + 1) :- taint_min_dist(s, p, dprev), taint_edge(p, n, _), n != s"
-          [taintMinDistRel, taintEdgeRel]
-
-        -- Path legs: two unioned rules express the disjunction
-        -- (LT = T ; reaches(LT, T)).
-        -- Rule 1: intermediate hop — leg lands at lt, lt reaches t,
-        --          bounded strictly within t's shortest-path envelope.
-        -- Rule 2: terminal hop — leg lands directly at t.
-        --
-        -- @taint_sink(t)@ guard (found on a 1763-file/300KLOC production
-        -- corpus, alongside the legRules O(group_size^2) fix): every
-        -- downstream consumer of taint_path_leg/taint_step_kind
-        -- (materializeTaintPaths, DuckDb.hs) only ever reads rows whose
-        -- (s, t) pair is in taint_confirmed, which already requires
-        -- taint_sink(t) -- so without this guard, taint_path_leg/
-        -- taint_step_kind were computed for EVERY node t reachable from a
-        -- source (the shortest-path witness for every intermediate
-        -- variable a taint value ever flows through), not just the small
-        -- number of real sinks, then silently filtered down to the
-        -- confirmed subset by materializeTaintPaths' own SQL JOIN. Adding
-        -- the guard here prunes that provably-wasted work at the source
-        -- instead of after the fact. Verified against the real souffle 2.5
-        -- CLI on a synthetic 100-source/7,000-edge/20-sink fixture (each
-        -- source fanning out to thousands of non-sink nodes, mirroring a
-        -- real corpus' shared-utility-layer shape): 11.7s/121MB -> 0.75s/
-        -- 28MB (15.6x/4.3x), taint_path_leg 405,000 -> 4,000 rows (101x),
-        -- taint_step_kind 407,000 -> 6,000 rows (68x) -- and confirmed
-        -- byte-identical final output: taint_confirmed unchanged, and
-        -- taint_step_kind rows restricted to confirmed (s, t) pairs (the
-        -- only ones materializeTaintPaths ever reads) are identical between
-        -- guarded and unguarded versions. At the time this guard was
-        -- written, taint_min_dist was still computed for every source
-        -- reachable node regardless -- taint_source_live (above) has since
-        -- restricted taint_min_dist's SEED (fourth fix), so this guard now
-        -- prunes witness-leg generation on top of an already source-
-        -- filtered taint_min_dist, not in place of restricting it.
-      , Rule "taint_path_leg(s, t, o, lf, lt, kind) :- taint_sink(t), taint_min_dist(s, lf, o), taint_edge(lf, lt, kind), taint_min_dist(s, lt, o + 1), taint_min_dist(s, t, td), o + 1 < td, taint_reaches_sink(lt, t)"
-          [taintPathLegRel, taintSinkRel, taintMinDistRel, taintEdgeRel, taintReachesSinkRel]
-      , Rule "taint_path_leg(s, t, o, lf, t, kind) :- taint_sink(t), taint_min_dist(s, lf, o), taint_edge(lf, t, kind), taint_min_dist(s, t, o + 1)"
-          [taintPathLegRel, taintSinkRel, taintMinDistRel, taintEdgeRel]
-
-        -- Plan 171b: step_kind/description labeling via rule
-        -- specialization (replaces materializeTaintPaths' SQL CASE).
-        -- Rule 1: the leg starting at the source is always "source",
-        --          regardless of its real edge kind.
-      , Rule "taint_step_kind(s, t, 0, lf, lt, kind, \"source\", \"taint source\") :- taint_path_leg(s, t, 0, lf, lt, kind)"
-          [taintStepKindRel, taintPathLegRel]
-        -- Rule 2: every other witness leg passes its edge kind through
-        --          unchanged as both step_kind and (via cat) the
-        --          description.
-      , Rule "taint_step_kind(s, t, o, lf, lt, kind, kind, cat(\"taint propagation via \", kind)) :- taint_path_leg(s, t, o, lf, lt, kind), o != 0"
-          [taintStepKindRel, taintPathLegRel]
-        -- Rule 3: terminal "arrived at sink" marker, one ordinal past
-        --          the last witness leg. Guarded s != t so it only
-        --          fires for a genuine multi-hop path (the 0-hop case
-        --          is Rule 4, below) — a confirmed pair always has at
-        --          least one taint_path_leg row when s != t, so the max
-        --          aggregate's domain is never empty here.
-      , Rule "taint_step_kind(s, t, maxord + 1, t, t, \"sink\", \"sink\", \"taint propagation via sink\") :- taint_confirmed(s, t), s != t, maxord = max o : { taint_path_leg(s, t, o, _, _, _) }"
-          [taintStepKindRel, taintConfirmedRel, taintPathLegRel]
-        -- Rule 4: 0-hop degenerate case (source == sink) — a single
-        --          "source-sink" row; taint_path_leg has no rows for
-        --          this pair since there is no edge to traverse.
-      , Rule "taint_step_kind(s, s, 0, s, s, \"sink\", \"source-sink\", \"taint source and sink (same variable)\") :- taint_confirmed(s, s)"
-          [taintStepKindRel, taintConfirmedRel]
       ]
-  , rsChoiceDomains =
-      [ ("taint_min_dist", ["s", "node"])
-      ]
+  , rsChoiceDomains = []
   }
+
+-- ---------------------------------------------------------------------------
+-- Witness-path reconstruction (moved out of Souffle, 2026-07-16)
+-- ---------------------------------------------------------------------------
+
+-- | Rebuild @taint_step_kind@ in Haskell via one BFS per live source plus a
+-- cheap backward walk per confirmed sink, instead of Souffle's
+-- @taint_min_dist@\/@taint_path_leg@ per-source shortest-distance fixpoint
+-- (PERFORMANCE FIX, 2026-07-16, same production incident as the four
+-- @taintRules@ seed-restriction fixes above -- see
+-- @doc\/plan\/171-datalog-decision-migration.md@'s Postscript). Materializing
+-- a full (source, node) distance table for EVERY live source is inherently
+-- O(#live_sources x avg-reachable-set-size), which explodes on a real
+-- corpus' shared-utility-layer graph shape regardless of seed restriction: a
+-- synthetic 1,800-source\/700-sink hub fixture with only ~11K edges (27x
+-- FEWER than the real corpus' 301,754) took 190s\/4.66GB under the
+-- fully-fixed Datalog rules, yet @taint_reaches@\/@taint_confirmed@ ALONE
+-- (no witness reconstruction) computed the SAME fixture in 0.79s\/41MB --
+-- essentially all the cost was witness-path reconstruction, not knowing
+-- which (source, sink) pairs are confirmed. This mirrors the pre-Datalog
+-- 'PB.Analysis.Taint.propagateTaint'\/'PB.Analysis.Taint.traceTaintPath'
+-- split exactly: one BFS per source (O(V+E) each, not a distance table to
+-- every reachable node), then a cheap backward walk per confirmed pair. A
+-- naive unoptimized Python port of this same one-BFS-per-source-plus-
+-- backward-walk shape reconstructed all 646,196 confirmed pairs on that
+-- fixture in 31.3s (48us\/pair); this compiled Haskell version, sharing one
+-- parent tree across all of a source's sinks (not recomputed per pair), is
+-- expected to be faster still.
+--
+-- TIE-BREAK NOTE: preserves full per-(source,sink) attribution (kept over
+-- collapsing to one path per SINK, per explicit user direction -- a real
+-- security-tool product decision, not a perf shortcut) -- but when
+-- multiple edges tie for the same BFS distance, this picks the
+-- lexicographically smallest (to, kind) at each step (adjacency
+-- pre-sorted), a deterministic but not necessarily identical choice to the
+-- old Datalog+SQL @ranked_legs@ tie-break (which chose per (source,sink)
+-- pair independently, not from one shared per-source tree). Documented
+-- cosmetic shape delta, same category Plan 171b already accepted for
+-- steps_json content: the confirmed-pair set, path lengths, and step_kind
+-- semantics are unaffected -- only WHICH equally-short diamond edge wins
+-- when the choice was already arbitrary.
+reconstructTaintStepKind :: DuckConn -> IO ()
+reconstructTaintStepKind conn = do
+  edgeRows      <- queryTextRows conn "taint_edge" ["from_key", "to_key", "kind"]
+  confirmedRows <- queryTextRows conn "taint_confirmed" ["s", "t"]
+  let adjacency :: HM.HashMap Text [(Text, Text)]
+      adjacency = HM.map (List.sortOn id) (HM.fromListWith (++)
+        [ (from, [(to, kind)]) | [from, to, kind] <- edgeRows ])
+
+      confirmedBySource :: HM.HashMap Text [Text]
+      confirmedBySource = HM.fromListWith (++)
+        [ (s, [t]) | [s, t] <- confirmedRows ]
+
+      reconstructForSource :: (Text, [Text]) -> [[Text]]
+      reconstructForSource (source, sinks) =
+        let parents = bfsParents adjacency source
+        in concatMap (legRowsFor source parents) sinks
+
+      rows = concatMap reconstructForSource (HM.toList confirmedBySource)
+
+  recreateTextTable conn "taint_step_kind"
+    ["s", "t", "leg_ord", "lf", "lt", "kind", "step_kind", "description"]
+  appendTextRows conn "taint_step_kind" rows
+
+-- | One BFS from a single source over the taint graph, producing a
+-- parent-pointer map: each discovered non-source node maps to (parent
+-- node, edge kind used to reach it). Same worklist-BFS shape as
+-- 'PB.Analysis.Taint.propagateTaint', but graph-structural only
+-- (already-flattened @taint_edge@ triples, no def-use\/line bookkeeping)
+-- and scoped to ONE source rather than a shared multi-source queue -- so
+-- distinct sources reconstruct distinct witness paths (preserving
+-- per-source attribution), unlike 'PB.Analysis.Taint.propagateTaint's
+-- single global tree. Adjacency lists are pre-sorted ascending by
+-- @(to, kind)@ (see 'reconstructTaintStepKind'), so ties among parallel
+-- edges into the same node resolve deterministically to the
+-- lexicographically smallest @(to, kind)@ pair.
+bfsParents :: HM.HashMap Text [(Text, Text)] -> Text -> HM.HashMap Text (Text, Text)
+bfsParents adjacency source = go (Set.singleton source) HM.empty (Seq.singleton source)
+  where
+    go :: Set.Set Text -> HM.HashMap Text (Text, Text) -> Seq.Seq Text
+       -> HM.HashMap Text (Text, Text)
+    go visited parents queue = case Seq.viewl queue of
+      Seq.EmptyL -> parents
+      cur Seq.:< rest ->
+        let candidates = HM.findWithDefault [] cur adjacency
+            fresh       = firstPerTarget
+              [ (to, kind) | (to, kind) <- candidates, to `Set.notMember` visited ]
+            visited'    = foldr (Set.insert . fst) visited fresh
+            parents'    = foldr (\(to, kind) m -> HM.insert to (cur, kind) m) parents fresh
+            queue'      = rest Seq.>< Seq.fromList (map fst fresh)
+        in go visited' parents' queue'
+
+-- | Keep only the first @(to, kind)@ pair per distinct @to@ -- parallel
+-- edges into the same node at the same BFS layer collapse to one witness,
+-- deterministically the smallest since the input is pre-sorted.
+firstPerTarget :: [(Text, Text)] -> [(Text, Text)]
+firstPerTarget = go' Set.empty
+  where
+    go' _ [] = []
+    go' seen ((to, kind) : rest)
+      | to `Set.member` seen = go' seen rest
+      | otherwise            = (to, kind) : go' (Set.insert to seen) rest
+
+-- | Backward-walk a source's BFS parent tree from one confirmed sink,
+-- producing @taint_step_kind@-shaped rows for that (source, sink) pair --
+-- mirrors 'PB.Analysis.Taint.traceTaintPath's backward provenance walk,
+-- reading the (source,sink)-agnostic parent map 'bfsParents' builds once
+-- per source. Row shape\/labeling matches the four Datalog rules this
+-- function replaces exactly: leg_ord 0 is always \"source\" regardless of
+-- its real edge kind; every other leg passes its edge kind through as both
+-- step_kind and description; a terminal \"sink\" marker lands one ordinal
+-- past the last leg; the 0-hop (source == sink) case is a single
+-- \"source-sink\" row with no real edge.
+legRowsFor :: Text -> HM.HashMap Text (Text, Text) -> Text -> [[Text]]
+legRowsFor source parents sink
+  | source == sink =
+      [[source, source, "0", source, source, "sink", "source-sink",
+        "taint source and sink (same variable)"]]
+  | otherwise =
+      let chain    = walkBack sink []
+          legs     = [ legRow o lf lt kind | (o, (lf, lt, kind)) <- zip [0 :: Int ..] chain ]
+          terminal = [source, sink, T.pack (show (length chain)), sink, sink,
+                      "sink", "sink", "taint propagation via sink"]
+      in legs ++ [terminal]
+  where
+    legRow :: Int -> Text -> Text -> Text -> [Text]
+    legRow 0 lf lt kind = [source, sink, "0", lf, lt, kind, "source", "taint source"]
+    legRow o lf lt kind = [source, sink, T.pack (show o), lf, lt, kind, kind,
+                            "taint propagation via " <> kind]
+
+    -- Walk backward from 'cur' to 'source' via 'parents', accumulating
+    -- (from, to, kind) legs in source -> sink order (each step is
+    -- prepended, so the hop closest to 'source' -- discovered LAST in the
+    -- backward walk -- ends up FIRST in the result).
+    walkBack :: Text -> [(Text, Text, Text)] -> [(Text, Text, Text)]
+    walkBack cur acc
+      | cur == source = acc
+      | otherwise = case HM.lookup cur parents of
+          Just (p, kind) -> walkBack p ((p, cur, kind) : acc)
+          Nothing -> error
+            ("PB.Analysis.Rules.Taint.legRowsFor: impossible: " <> T.unpack cur
+              <> " has no BFS parent despite being taint_confirmed reachable from "
+              <> T.unpack source)

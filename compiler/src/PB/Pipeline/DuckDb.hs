@@ -1398,8 +1398,8 @@ materializeDecompositionCoslice conn =
 -- Plan 161 Phase 2d: taint path materialization
 -- ---------------------------------------------------------------------------
 
--- | Materialize @taint_paths@ from Datalog output.  Reads
--- @taint_path_leg@ (witness legs) and @taint_confirmed@
+-- | Materialize @taint_paths@ from Datalog\/Haskell output.  Reads
+-- @taint_step_kind@ (witness legs) and @taint_confirmed@
 -- (source→sink reachability), joins back to @taint_sources@\/
 -- @taint_sinks@ for file info, and reproduces the existing
 -- 11-column table shape.
@@ -1411,13 +1411,22 @@ materializeDecompositionCoslice conn =
 --   * ORDER BY inside string_agg guarantees ordinal ordering.
 --
 -- Plan 171b (2026-07-15): step_kind/description no longer come from a
--- SQL CASE here — PB.Analysis.Rules.Taint's taintStepKindRel derives
--- them via rule specialization (a house-rule violation this migration
--- closes; see compiler/CLAUDE.md's Datalog Rule Placement Discipline).
+-- SQL CASE here — PB.Analysis.Rules.Taint derives them via rule
+-- specialization (a house-rule violation this migration closes; see
+-- compiler/CLAUDE.md's Datalog Rule Placement Discipline).
 -- taint_step_kind already includes the terminal "arrived at sink"
 -- marker row (and the 0-hop source==sink degenerate row), so the old
 -- legs_with_sink UNION ALL that synthesized it here is gone too — this
 -- materializer is now a pure rename/dedup/reshape of taint_step_kind.
+--
+-- PERFORMANCE FIX (2026-07-16): @taint_step_kind@ itself is no longer
+-- Souffle-derived (the per-source shortest-distance fixpoint that used to
+-- produce it, @taint_min_dist@\/@taint_path_leg@, is gone) — it is now
+-- written directly into a plain DuckDB table by
+-- 'PB.Analysis.Rules.Taint.reconstructTaintStepKind', a Haskell BFS-based
+-- reconstruction. This materializer's SQL is unchanged; it just reads a
+-- table populated a different way. See that function's own doc comment
+-- for the full rationale.
 materializeTaintPaths :: DuckConn -> IO ()
 materializeTaintPaths conn =
   void $ execute_ conn (Query sql)
