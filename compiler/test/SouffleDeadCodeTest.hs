@@ -147,8 +147,10 @@ tests = testGroup "Souffle.DeadCode"
           initSchema conn
           initDeadReachEdbViews conn
           runRuleSet conn deadReachRules
-          initEdbViews conn
           appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj1" "proc1" 5) ]
+          -- initEdbViews now materializes stmt eagerly (Plan 175 Phase 1) --
+          -- must run after appendSchemaObjects, not merely after initSchema.
+          initEdbViews conn
           runRuleSet conn liveProcRules
           rows <- query_ conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
           assertBool "(obj1,proc1) present" (("obj1", "proc1") `elem` rows)
@@ -163,8 +165,8 @@ tests = testGroup "Souffle.DeadCode"
             appendProcedures pool
               [ ProcRow "f.srf" "obj2" "proc2" "function" 1 1 "" "" "" "" "" (Just 1) "confirmed" ]
           runRuleSet conn deadReachRules
-          initEdbViews conn
           appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj2" "proc2" 9) ]
+          initEdbViews conn
           runRuleSet conn liveProcRules
           rows <- query_ conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
           assertBool "(obj2,proc2) absent" (("obj2", "proc2") `notElem` rows)
@@ -179,8 +181,8 @@ tests = testGroup "Souffle.DeadCode"
           initSchema conn
           initDeadReachEdbViews conn
           runRuleSet conn deadReachRules
-          initEdbViews conn
           appendSchemaObjects conn [ StmtObj (DwRetrieveId "d.srd" "d_test") ]
+          initEdbViews conn
           runRuleSet conn liveProcRules
           rows <- query_ conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
           assertBool "no dw_retrieve row leaks into live_proc" (null rows)

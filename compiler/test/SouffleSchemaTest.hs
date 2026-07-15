@@ -2,7 +2,8 @@ module SouffleSchemaTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.Souffle
-import PB.Analysis.Rules.Schema (initEdbViews, reachesRules, cosliceRules, legRules)
+import PB.Analysis.Rules.Schema
+  (initEdbViews, reachesRules, cosliceRules, legRules, legSourceRows, stmtRows, seedRows)
 import PB.Pipeline.DuckDb
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), LegSource (..), SchMorphism (..)
@@ -31,7 +32,36 @@ emptyInputs = SchemaInputs [] [] [] [] [] [] [] [] Nothing
 tests :: TestTree
 tests = testGroup "Souffle.Schema"
 
-  [ -- Plan 171a: 'legRules' moves the writes-vs-retrieve tie-break for
+  [ -- Plan 175 Phase 1 pilot: 'legSourceRows'/'stmtRows'/'seedRows' are the
+    -- pure Haskell functions that replaced 'initEdbViews''s @CREATE VIEW@
+    -- SQL for @leg_source@/@stmt@/@seed@. Unlike every other test in this
+    -- file, these need no 'DuckConn' at all -- the whole point of the
+    -- migration (see doc/plan/175-haskell-edb-reshaping-layer.md's
+    -- "Testability win" section).
+    testGroup "EdbReshaping"
+    [ testCase "legSourceRows renames from_key/to_key/leg_kind to x/y/kind, drops leg_source" $
+        legSourceRows [SchMorphismRow "col:a.x" "stmt:sql:f:o:p:5" "reads" "sql_text"]
+          @?= [["col:a.x", "stmt:sql:f:o:p:5", "reads"]]
+
+    , testCase "stmtRows: a SqlStmtId row becomes (file,object,proc,line)" $
+        stmtRows [StmtObj (SqlStmtId "f.srf" "obj1" "proc1" 5)]
+          @?= [["f.srf", "obj1", "proc1", "5"]]
+
+    , testCase "stmtRows: a DwRetrieveId row is excluded (stmt_proc always NULL, would pollute live_proc)" $
+        stmtRows [StmtObj (DwRetrieveId "d.srd" "d_test")] @?= []
+
+    , testCase "stmtRows: a ColumnObj row is excluded" $
+        stmtRows [ColumnObj (TableRef Nothing "a") "x"] @?= []
+
+    , testCase "seedRows: a ColumnObj row becomes its schObjectKey" $
+        seedRows [ColumnObj (TableRef Nothing "a") "x"]
+          @?= [[schObjectKey (ColumnObj (TableRef Nothing "a") "x")]]
+
+    , testCase "seedRows: a StmtObj row is excluded" $
+        seedRows [StmtObj (SqlStmtId "f.srf" "obj1" "proc1" 5)] @?= []
+    ]
+
+  , -- Plan 171a: 'legRules' moves the writes-vs-retrieve tie-break for
     -- @leg@ out of 'initEdbViews' SQL (a ROW_NUMBER/CASE pair, a house-rule
     -- violation per compiler/CLAUDE.md's Datalog Rule Placement Discipline)
     -- into rule specialization (leg_raw's priority column) + choice-domain
@@ -45,7 +75,6 @@ tests = testGroup "Souffle.Schema"
     [ testCase "duplicate-key collision: writes beats retrieve regardless of insertion order" $
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
-          initEdbViews conn
           let colA = ColumnObj (TableRef Nothing "a") "x"
               colB = ColumnObj (TableRef Nothing "b") "y"
           -- retrieve inserted first -- a naive "first tuple wins" derivation
@@ -54,6 +83,11 @@ tests = testGroup "Souffle.Schema"
             [ SchMorphism colA colB LegRetrieve SrcDwRetrieve
             , SchMorphism colA colB LegWrites   SrcSqlText
             ]
+          -- initEdbViews now materializes leg_source eagerly (Plan 175 Phase
+          -- 1) -- must run after the data it reads is populated, not merely
+          -- after initSchema creates the empty tables (a lazily-evaluated
+          -- CREATE VIEW tolerated the old call order; a plain table does not).
+          initEdbViews conn
           runRuleSet conn legRules
           rows <- query_ conn "SELECT x, y, leg_kind FROM leg" :: IO [(Text, Text, Text)]
           rows @?= [(schObjectKey colA, schObjectKey colB, "writes")]
@@ -61,12 +95,12 @@ tests = testGroup "Souffle.Schema"
     , testCase "0-hop self-referential collision resolves the same tie-break" $
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
-          initEdbViews conn
           let colA = ColumnObj (TableRef Nothing "a") "x"
           appendSchemaMorphisms conn
             [ SchMorphism colA colA LegRetrieve SrcDwRetrieve
             , SchMorphism colA colA LegWrites   SrcSqlText
             ]
+          initEdbViews conn
           runRuleSet conn legRules
           rows <- query_ conn "SELECT x, y, leg_kind FROM leg" :: IO [(Text, Text, Text)]
           rows @?= [(schObjectKey colA, schObjectKey colA, "writes")]
@@ -76,7 +110,6 @@ tests = testGroup "Souffle.Schema"
     [ testCase "two-hop chain: reaches contains both hops and the transitive pair" $
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
-          initEdbViews conn
           let colA = ColumnObj (TableRef Nothing "a") "x"
               colB = ColumnObj (TableRef Nothing "b") "y"
               sid  = SqlStmtId "f.srf" "obj" "proc" 5
@@ -88,6 +121,7 @@ tests = testGroup "Souffle.Schema"
                 }
               sch = buildSchema inp
           appendSchemaMorphisms conn (sgLegs sch)
+          initEdbViews conn
           runRuleSets (\_ -> pure ()) conn [legRules, reachesRules]
           rows <- query_ conn "SELECT x, y FROM reaches" :: IO [(Text, Text)]
           let got = Set.fromList rows
@@ -101,7 +135,6 @@ tests = testGroup "Souffle.Schema"
     , testCase "cyclic 2-node graph saturates and terminates (all 4 ordered pairs, no more)" $
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
-          initEdbViews conn
           let colA = ColumnObj (TableRef Nothing "a") "x"
               colB = ColumnObj (TableRef Nothing "b") "y"
               colAKey = schObjectKey colA
@@ -110,6 +143,7 @@ tests = testGroup "Souffle.Schema"
             [ SchMorphism colA colB LegFk SrcDdlFk
             , SchMorphism colB colA LegFk SrcDdlFk
             ]
+          initEdbViews conn
           runRuleSets (\_ -> pure ()) conn [legRules, reachesRules]
           rows <- query_ conn "SELECT x, y FROM reaches" :: IO [(Text, Text)]
           let got = Set.fromList rows
@@ -131,7 +165,6 @@ tests = testGroup "Souffle.Schema"
     [ testCase "forward+backward path_leg reaches both StmtObj targets, filters column intermediates" $
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
-          initEdbViews conn
           -- col_A --reads--> stmt_S --writes--> col_B --fk--> col_C --reads--> stmt_T
           -- col_X --writes--> col_A  (backward writer; a column, not a StmtObj)
           let colA = ColumnObj (TableRef Nothing "a") "x"
@@ -152,6 +185,7 @@ tests = testGroup "Souffle.Schema"
               allObjs = Set.insert colX (sgObjects sch)
           appendSchemaObjects conn (Set.toList allObjs)
           appendSchemaMorphisms conn allLegs
+          initEdbViews conn
           runRuleSets (\_ -> pure ()) conn [legRules, reachesRules, cosliceRules]
           -- StmtObj targets reached from colA: stmtS (forward, direct) and
           -- stmtT (forward, via col_B->col_C FK chain). col_X (backward writer)
@@ -170,7 +204,6 @@ tests = testGroup "Souffle.Schema"
     , testCase "diamond: path_leg emits ≤ object-count rows (no exponential blowup)" $
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
-          initEdbViews conn
           -- 15 chained diamonds (the SchemaCategoryTest.hs:436 stress fixture):
           -- layerFks i = [t_i->t_ia, t_i->t_ib, t_ia->t_{i+1}, t_ib->t_{i+1}]
           let n = 15 :: Int
@@ -187,6 +220,7 @@ tests = testGroup "Souffle.Schema"
               sch = buildSchema inp
           appendSchemaObjects conn (Set.toList (sgObjects sch))
           appendSchemaMorphisms conn (sgLegs sch)
+          initEdbViews conn
           runRuleSets (\_ -> pure ()) conn [legRules, reachesRules, cosliceRules]
           -- Parity gate: distinct targets reached from seed ≤ object count.
           -- (Matches walkPaths' "one path per reachable object" guarantee.)
@@ -208,7 +242,6 @@ tests = testGroup "Souffle.Schema"
       testCase "FK cycle not through the seed terminates with minimal, unique distances" $
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
-          initEdbViews conn
           let colA = ColumnObj (TableRef Nothing "a") "x"
               colB = ColumnObj (TableRef Nothing "b") "y"
               colC = ColumnObj (TableRef Nothing "c") "z"
@@ -221,6 +254,7 @@ tests = testGroup "Souffle.Schema"
             , SchMorphism colB colC LegFk SrcDdlFk
             , SchMorphism colC colB LegFk SrcDdlFk
             ]
+          initEdbViews conn
           runRuleSets (\_ -> pure ()) conn [legRules, reachesRules, cosliceRules]
           rows <- query conn "SELECT node, dist FROM min_dist WHERE s = ?" (Only colAKey)
                     :: IO [(Text, Text)]

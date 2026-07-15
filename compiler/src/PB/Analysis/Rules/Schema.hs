@@ -10,69 +10,89 @@ module PB.Analysis.Rules.Schema
   , legRules
   , LegSourceFanout (..)
   , legSourceFanout
+  -- Plan 175 Phase 1: pure EDB-reshaping functions (exported for unit tests)
+  , legSourceRows
+  , stmtRows
+  , seedRows
   ) where
 
 import PB.Prelude
 
 import PB.Pipeline.Souffle (Relation (..), symRelation, Rule (..), RuleSet (..))
-import PB.Pipeline.DuckDb (DuckConn)
-import Database.DuckDB.Simple (Query (..), execute_, query_)
+import PB.Pipeline.DuckDb
+  ( DuckConn, SchMorphismRow (..)
+  , querySchemaObjects, querySchemaMorphismRows
+  , recreateTextTable, appendTextRows
+  )
+import PB.Analysis.SchemaCategory (SchObject (..), StmtId (..), schObjectKey)
+import Database.DuckDB.Simple (query_)
 import Database.DuckDB.Simple.FromRow (FromRow (..), field)
 
--- ---------------------------------------------------------------------------
--- EDB views over existing DuckDB tables (no fact marshalling in DuckDB
--- itself -- 'PB.Pipeline.Souffle.queryTextRows' reads these directly)
+import qualified Data.Text as T
 
--- | (Re)create the EDB views every 'RuleSet' below assumes already exist:
--- @leg@ over 'schema_morphisms', @stmt@ over the 'StmtObj' rows of
--- 'schema_objects'. Must run after 'PB.Pipeline.DuckDb.initSchema'.
+-- ---------------------------------------------------------------------------
+-- EDB relations materialized from existing DuckDB tables (no fact
+-- marshalling in DuckDB itself -- 'PB.Pipeline.Souffle.queryTextRows' reads
+-- these directly)
+
+-- | (Re)materialize the EDB relations every 'RuleSet' below assumes already
+-- exist: @leg_source@ over 'schema_morphisms', @stmt@\/@seed@ over
+-- 'schema_objects'. Must run after 'PB.Pipeline.DuckDb.initSchema' AND after
+-- 'schema_objects'\/'schema_morphisms' have been populated (the read here is
+-- eager, not a lazily-evaluated SQL view -- unlike the old @CREATE VIEW@
+-- form, calling this before 'PB.Pipeline.DuckDb.appendSchemaObjects'\/
+-- 'appendSchemaMorphisms' materializes empty relations).
 --
--- No @dead@ view here (Plan 161 Phase 2b cutover, 2026-07-11): 'liveProcRules'
+-- __Plan 175 Phase 1 pilot exception__ -- not yet a Plan 170 rule-3
+-- amendment; see doc/plan/175-haskell-edb-reshaping-layer.md. This is the
+-- one @initXEdbViews@ in @PB.Analysis.Rules.*@ that materializes its EDB
+-- relations via a typed Haskell read + 'recreateTextTable'\/'appendTextRows'
+-- instead of @CREATE VIEW@ SQL -- 'PB.Analysis.Rules.DeadCode'\/'Taint'
+-- still use SQL views, pending this pilot's real-corpus gate.
+--
+-- No @dead@ relation here (Plan 161 Phase 2b cutover, 2026-07-11): 'liveProcRules'
 -- used to read a @dead@ view over the Haskell-computed @dead_code@ table;
 -- once real-corpus parity between @proc_dead@ (Datalog, 'deadReachRules')
 -- and @dead_code@ (Haskell BFS) was confirmed exact (104/104 rows, openpay
 -- corpus), it was switched to read the @proc_dead@ table directly --
--- closing the half-Haskell/half-Datalog gap Phase 1 left. A passthrough
--- view here would have to be created eagerly (DuckDB validates a view's
--- referenced table at @CREATE VIEW@ time, not lazily at query time) even
--- in tests\/passes that only run 'reachesRules' and never touch dead-code
--- at all -- reading @proc_dead@ straight from 'liveProcRules' avoids that
--- ordering coupling entirely. @dead_code@ itself (Plan 166 Stage 6) is now
--- populated purely from Datalog's @dead_code_rows@ relation via
--- 'PB.Pipeline.DuckDb.materializeDeadCode' -- no Haskell classification
--- step remains -- and is still the sole source for the Dead Code Explorer
--- API (@get_dead_code@).
+-- closing the half-Haskell/half-Datalog gap Phase 1 left. @dead_code@
+-- itself (Plan 166 Stage 6) is now populated purely from Datalog's
+-- @dead_code_rows@ relation via 'PB.Pipeline.DuckDb.materializeDeadCode' --
+-- no Haskell classification step remains -- and is still the sole source
+-- for the Dead Code Explorer API (@get_dead_code@).
 initEdbViews :: DuckConn -> IO ()
-initEdbViews conn = for_ views (void . execute_ conn)
+initEdbViews conn = do
+  morphisms <- querySchemaMorphismRows conn
+  objects   <- querySchemaObjects conn
+  materialize "leg_source" ["x", "y", "kind"]                  (legSourceRows morphisms)
+  materialize "stmt"       ["file", "object", "proc", "line"]  (stmtRows objects)
+  materialize "seed"       ["x"]                                (seedRows objects)
   where
-    views :: [Query]
-    views =
-      [ -- Plan 171a: pure rename over schema_morphisms -- no dedup, no CASE.
-        -- The writes-vs-retrieve tie-break (Plan 161 Phase 2c's original fix
-        -- for 559 colliding (from, to) pairs on the real openpay corpus,
-        -- previously a ROW_NUMBER/CASE pair right here) now lives in
-        -- 'legRules' below as Datalog rule specialization + choice-domain --
-        -- an EDB view may only rename/cast/filter by a static predicate per
-        -- compiler/CLAUDE.md's Datalog Rule Placement Discipline, and a
-        -- ROW_NUMBER/CASE pair picking a winner among competing facts is a
-        -- decision, not a projection.
-        "CREATE OR REPLACE VIEW leg_source AS \
-        \SELECT from_key AS x, to_key AS y, leg_kind AS kind FROM schema_morphisms"
-      , -- 'dw_retrieve'-kind schema_objects rows are deliberately excluded: their
-        -- stmt_proc is always NULL (a DW retrieve isn't a procedure), which would
-        -- make `dead(Object,Proc)` vacuously never match and every DW retrieve
-        -- unconditionally "live" -- confirmed against the real openpay corpus
-        -- (114/115 stmt rows were dw_retrieve noise before this restriction).
-        "CREATE OR REPLACE VIEW stmt AS \
-        \SELECT stmt_file AS file, stmt_object AS object, stmt_proc AS proc, stmt_line AS line \
-        \FROM schema_objects WHERE kind = 'stmt'"
-      , -- Plan 161 Phase 2c: the seed relation for cosliceRules — every column
-        -- object (the coslice is computed per-column; stmt/dw_retrieve objects
-        -- are reached as targets, never seeded). A faithful thin projection of
-        -- schema_objects, no closure.
-        "CREATE OR REPLACE VIEW seed AS \
-        \SELECT object_key AS x FROM schema_objects WHERE kind = 'column'"
-      ]
+    materialize name cols rows = do
+      recreateTextTable conn name cols
+      appendTextRows conn name rows
+
+-- | Plan 175 Phase 1 pilot exception -- not yet a Plan 170 rule-3 amendment;
+-- see doc/plan/175-haskell-edb-reshaping-layer.md. 'leg_source''s Haskell
+-- replacement for the old @CREATE VIEW@: a pure rename of
+-- ('smrFromKey', 'smrToKey', 'smrLegKind') to (x, y, kind).
+-- 'smrLegSource' is unused here, mirroring the old view's own projection.
+legSourceRows :: [SchMorphismRow] -> [[Text]]
+legSourceRows = map (\r -> [smrFromKey r, smrToKey r, smrLegKind r])
+
+-- | Plan 175 Phase 1 pilot exception. 'stmt''s Haskell replacement: filter
+-- to 'SqlStmtId' rows only (kind = 'stmt') and rename to (file, object,
+-- proc, line). 'DwRetrieveId' rows are deliberately excluded -- a DW
+-- retrieve's stmt_proc is always NULL, which would make @dead(Object,Proc)@
+-- vacuously never match and every DW retrieve unconditionally "live".
+stmtRows :: [SchObject] -> [[Text]]
+stmtRows objs = [ [f, o, p, T.pack (show l)] | StmtObj (SqlStmtId f o p l) <- objs ]
+
+-- | Plan 175 Phase 1 pilot exception. 'seed''s Haskell replacement: filter
+-- to 'ColumnObj' rows only (kind = 'column') and project to their
+-- 'schObjectKey'.
+seedRows :: [SchObject] -> [[Text]]
+seedRows objs = [ [schObjectKey o] | o@(ColumnObj _ _) <- objs ]
 
 -- ---------------------------------------------------------------------------
 -- Concrete program

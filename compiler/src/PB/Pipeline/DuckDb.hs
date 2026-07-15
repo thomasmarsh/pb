@@ -69,6 +69,10 @@ module PB.Pipeline.DuckDb
   , queryCatFootprintColumns
   , queryCatColumns
   , queryCatFks
+  -- Plan 175 Phase 1: typed EDB-reshaping-layer readers
+  , SchMorphismRow (..)
+  , querySchemaObjects
+  , querySchemaMorphismRows
   -- Phase B appenders
   , appendResolvedTypes
   , appendResolvedCalls
@@ -1076,6 +1080,56 @@ querySqlCols :: DuckConn -> IO [SqlColRow]
 querySqlCols conn = query_ conn
   "SELECT file, object, proc_name, line, namespace, table_name, column_name, is_write \
   \FROM sql_statement_columns"
+
+-- | Plan 175 Phase 1: typed reader over 'schema_objects', the inverse of
+-- 'appendSchemaObjects'. object_key is not selected -- 'schObjectKey' is a
+-- pure function of the other columns, so it is cheaper to recompute than to
+-- read back and never check for drift against the stored value.
+data SchObjectRow = SchObjectRow
+  !Text !(Maybe Text) !(Maybe Text) !(Maybe Text)
+  !(Maybe Text) !(Maybe Text) !(Maybe Text) !(Maybe Int)
+
+instance FromRow SchObjectRow where
+  fromRow = SchObjectRow
+    <$> field <*> field <*> field <*> field <*> field <*> field <*> field <*> field
+
+querySchemaObjects :: DuckConn -> IO [SchObject]
+querySchemaObjects conn = do
+  rows <- query_ conn
+    "SELECT kind, namespace, table_name, column_name, \
+    \stmt_file, stmt_object, stmt_proc, stmt_line FROM schema_objects"
+  pure (map toSchObject rows)
+  where
+    toSchObject (SchObjectRow "column" ns (Just tbl) (Just col) _ _ _ _) =
+      ColumnObj (TableRef ns tbl) col
+    toSchObject (SchObjectRow "stmt" _ _ _ (Just f) (Just o) (Just p) (Just l)) =
+      StmtObj (SqlStmtId f o p l)
+    toSchObject (SchObjectRow "dw_retrieve" _ _ _ (Just f) (Just dw) _ _) =
+      StmtObj (DwRetrieveId f dw)
+    toSchObject _ =
+      error "impossible: malformed schema_objects row (unknown kind or missing required column)"
+
+-- | Plan 175 Phase 1: typed reader over 'schema_morphisms'. Deliberately
+-- NOT 'SchemaCategory.SchMorphism' -- 'from_key'\/'to_key' are
+-- 'schObjectKey'-sanitized, one-way concatenated strings (control
+-- characters collapsed to space; see 'schObjectKey''s own doc comment), and
+-- no inverse parser exists anywhere in this codebase. 'leg_source' (this
+-- phase's only consumer) never needs the decoded object, only the raw key
+-- text -- inventing a from_key\/to_key parser here would be unproven
+-- machinery beyond this phase's scope.
+data SchMorphismRow = SchMorphismRow
+  { smrFromKey   :: !Text
+  , smrToKey     :: !Text
+  , smrLegKind   :: !Text
+  , smrLegSource :: !Text
+  } deriving (Eq, Show)
+
+instance FromRow SchMorphismRow where
+  fromRow = SchMorphismRow <$> field <*> field <*> field <*> field
+
+querySchemaMorphismRows :: DuckConn -> IO [SchMorphismRow]
+querySchemaMorphismRows conn = query_ conn
+  "SELECT from_key, to_key, leg_kind, leg_source FROM schema_morphisms"
 
 -- | Plan 163 Phase 3: same shape/query as 'querySqlCols', reading
 -- 'cat_footprint_columns' instead -- the existing 'FromRow' 'SqlColRow'
