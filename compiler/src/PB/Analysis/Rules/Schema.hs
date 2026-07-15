@@ -1,8 +1,8 @@
--- | Plan 166 Stage 1 -- the schema-category Datalog program, split out of
--- 'PB.Pipeline.Souffle' so the engine adapter stays free of domain
--- knowledge. Holds 'reachesRules' and the @leg@\/@stmt@ EDB-view
--- projections that ruleset (and 'PB.Analysis.Rules.DeadCode.liveProcRules')
--- assume already exist over @schema_morphisms@\/@schema_objects@.
+-- | The schema-category Datalog program, split out of 'PB.Pipeline.Souffle'
+-- so the engine adapter stays free of domain knowledge. Holds 'reachesRules'
+-- and the @leg@\/@stmt@ EDB-view projections that ruleset (and
+-- 'PB.Analysis.Rules.DeadCode.liveProcRules') assume already exist over
+-- @schema_morphisms@\/@schema_objects@.
 module PB.Analysis.Rules.Schema
   ( initEdbViews
   , reachesRules
@@ -10,7 +10,7 @@ module PB.Analysis.Rules.Schema
   , legRules
   , LegSourceFanout (..)
   , legSourceFanout
-  -- Plan 175 Phase 1: pure EDB-reshaping functions (exported for unit tests)
+  -- pure EDB-reshaping functions (exported for unit tests)
   , legSourceRows
   , stmtRows
   , seedRows
@@ -38,28 +38,17 @@ import qualified Data.Text as T
 -- | (Re)materialize the EDB relations every 'RuleSet' below assumes already
 -- exist: @leg_source@ over 'schema_morphisms', @stmt@\/@seed@ over
 -- 'schema_objects'. Must run after 'PB.Pipeline.DuckDb.initSchema' AND after
--- 'schema_objects'\/'schema_morphisms' have been populated (the read here is
--- eager, not a lazily-evaluated SQL view -- unlike the old @CREATE VIEW@
--- form, calling this before 'PB.Pipeline.DuckDb.appendSchemaObjects'\/
--- 'appendSchemaMorphisms' materializes empty relations).
+-- 'schema_objects'\/'schema_morphisms' have been populated: the read here is
+-- eager (a typed Haskell query materialized via 'recreateTextTable'\/
+-- 'appendTextRows'), not a lazily-evaluated SQL view, so calling this before
+-- 'PB.Pipeline.DuckDb.appendSchemaObjects'\/'appendSchemaMorphisms' populate
+-- their source tables materializes empty relations.
 --
--- __Plan 175 Phase 1 pilot exception__ -- not yet a Plan 170 rule-3
--- amendment; see doc/plan/175-haskell-edb-reshaping-layer.md. This is the
--- one @initXEdbViews@ in @PB.Analysis.Rules.*@ that materializes its EDB
--- relations via a typed Haskell read + 'recreateTextTable'\/'appendTextRows'
--- instead of @CREATE VIEW@ SQL -- 'PB.Analysis.Rules.DeadCode'\/'Taint'
--- still use SQL views, pending this pilot's real-corpus gate.
---
--- No @dead@ relation here (Plan 161 Phase 2b cutover, 2026-07-11): 'liveProcRules'
--- used to read a @dead@ view over the Haskell-computed @dead_code@ table;
--- once real-corpus parity between @proc_dead@ (Datalog, 'deadReachRules')
--- and @dead_code@ (Haskell BFS) was confirmed exact (104/104 rows, openpay
--- corpus), it was switched to read the @proc_dead@ table directly --
--- closing the half-Haskell/half-Datalog gap Phase 1 left. @dead_code@
--- itself (Plan 166 Stage 6) is now populated purely from Datalog's
--- @dead_code_rows@ relation via 'PB.Pipeline.DuckDb.materializeDeadCode' --
--- no Haskell classification step remains -- and is still the sole source
--- for the Dead Code Explorer API (@get_dead_code@).
+-- No @dead@ relation is materialized here: 'liveProcRules' reads
+-- @proc_dead@ (Datalog, 'deadReachRules') directly. @dead_code@ is
+-- populated purely from Datalog's @dead_code_rows@ relation via
+-- 'PB.Pipeline.DuckDb.materializeDeadCode' and is the sole source for the
+-- Dead Code Explorer API (@get_dead_code@).
 initEdbViews :: DuckConn -> IO ()
 initEdbViews conn = do
   morphisms <- querySchemaMorphismRows conn
@@ -72,25 +61,21 @@ initEdbViews conn = do
       recreateTextTable conn name cols
       appendTextRows conn name rows
 
--- | Plan 175 Phase 1 pilot exception -- not yet a Plan 170 rule-3 amendment;
--- see doc/plan/175-haskell-edb-reshaping-layer.md. 'leg_source''s Haskell
--- replacement for the old @CREATE VIEW@: a pure rename of
--- ('smrFromKey', 'smrToKey', 'smrLegKind') to (x, y, kind).
--- 'smrLegSource' is unused here, mirroring the old view's own projection.
+-- | Projects 'SchMorphismRow' into @leg_source@'s (x, y, kind) shape: a
+-- pure rename of ('smrFromKey', 'smrToKey', 'smrLegKind'). 'smrLegSource'
+-- is deliberately unused -- @leg_source@ carries no provenance column.
 legSourceRows :: [SchMorphismRow] -> [[Text]]
 legSourceRows = map (\r -> [smrFromKey r, smrToKey r, smrLegKind r])
 
--- | Plan 175 Phase 1 pilot exception. 'stmt''s Haskell replacement: filter
--- to 'SqlStmtId' rows only (kind = 'stmt') and rename to (file, object,
--- proc, line). 'DwRetrieveId' rows are deliberately excluded -- a DW
--- retrieve's stmt_proc is always NULL, which would make @dead(Object,Proc)@
+-- | Projects 'SchObject' into @stmt@'s (file, object, proc, line) shape,
+-- keeping only 'SqlStmtId' rows. 'DwRetrieveId' rows are excluded: a DW
+-- retrieve's proc is always NULL, which would make @dead(Object,Proc)@
 -- vacuously never match and every DW retrieve unconditionally "live".
 stmtRows :: [SchObject] -> [[Text]]
 stmtRows objs = [ [f, o, p, T.pack (show l)] | StmtObj (SqlStmtId f o p l) <- objs ]
 
--- | Plan 175 Phase 1 pilot exception. 'seed''s Haskell replacement: filter
--- to 'ColumnObj' rows only (kind = 'column') and project to their
--- 'schObjectKey'.
+-- | Projects 'SchObject' into @seed@'s single-column shape: keeps only
+-- 'ColumnObj' rows, projected to their 'schObjectKey'.
 seedRows :: [SchObject] -> [[Text]]
 seedRows objs = [ [schObjectKey o] | o@(ColumnObj _ _) <- objs ]
 
@@ -115,55 +100,34 @@ legP1Rel    = symRelation "leg_p1"     ["x", "y", "kind"]
 legP1KeyRel = symRelation "leg_p1_key" ["x", "y"]
 legP2Rel    = symRelation "leg_p2"     ["x", "y", "kind"]
 
--- | Plan 171a: the writes-vs-retrieve tie-break for @leg@, moved out of
--- 'initEdbViews' SQL (a ROW_NUMBER/CASE pair -- a house-rule violation, see
--- 'leg_source''s own comment above) into Datalog. 'leg_raw' tags each raw
--- @leg_source@ row with an explicit priority FACT via rule specialization
--- (three mutually exclusive rules on a literal @kind@ guard -- not a
--- positional SQL @CASE@): @writes@ -> 0, @retrieve@ -> 1, everything else
--- tied at 2 (matches the old CASE's precedence exactly; only (x, y) pairs
--- with >1 distinct kind ever compete -- real corpus: 559 pairs, all
--- writes-vs-retrieve).
+-- | The writes-vs-retrieve tie-break for @leg@, expressed in Datalog rather
+-- than as a SQL @ROW_NUMBER@\/@CASE@ pair (a house-rule violation, see
+-- 'leg_source''s own comment above). 'leg_raw' tags each raw @leg_source@
+-- row with an explicit priority FACT via rule specialization (three
+-- mutually exclusive rules on a literal @kind@ guard, not a positional SQL
+-- @CASE@): @writes@ -> 0, @retrieve@ -> 1, everything else tied at 2. Only
+-- (x, y) pairs with more than one distinct @kind@ ever compete.
 --
--- Performance rewrite (found on a 1763-file\/300KLOC production corpus, not
--- the smaller openpay\/PowerBuilder-Example dev corpora 171a was gated
--- against): the original @leg@ rule computed the tie-break with an inline
--- correlated aggregate, @leg(x, y, kind) :- leg_raw(x, y, kind, p), p = min
--- p2 : { leg_raw(x, y, _, p2) }@. Verified directly against the real
--- @souffle@ 2.5 CLI on synthetic fixtures: Souffle re-evaluates that
--- aggregate once per MATCHING ROW of the first body literal, not once per
--- distinct (x, y) key, so its cost is O(group_size^2) per key -- 200,000
--- rows spread over 200,000 near-unique keys ran in 0.34s, but the exact
--- same row count concentrated into 200 keys (1,000 duplicate rows/key) took
--- 4.4s (13x), and concentrating further to 40 keys x 5,000 rows/key scaled
--- the instruction count by another ~4.9x -- textbook quadratic-in-group-size
--- blowup. 'leg_source' is deliberately undeduped by design (see its own
--- comment above), so this is purely a function of how much duplicate\/
--- near-duplicate fan-in a real corpus has on one (x, y) edge (e.g. a
--- widely-shared FK edge, or the same statement\/column touch found
--- independently by both @inSqlColumns@ and @inCatFootprintColumns@) --
--- absent from the small dev corpora, plausible at 12x+ scale. Materializing
--- the aggregate into its own relation before joining (the usual Souffle
--- "aggregate-then-join" fix) does NOT help -- verified empirically
--- identical instruction count, since Souffle still fires the aggregate once
--- per row, not once per key.
---
--- Fix: a priority cascade via stratified negation + per-tier
+-- The tie-break is a priority cascade via stratified negation + per-tier
 -- @choice-domain@ (the same negation mechanism
--- 'PB.Analysis.Rules.DeadCode.liveProcRules' already uses, not a new
--- technique) -- no aggregate at all. @leg_p0@\/@leg_p1@\/@leg_p2@ each pick
--- (via their own @choice-domain@) one tuple per key at their own priority
--- tier, gated by the NEGATED existence of any higher-priority tuple for
--- that key (@leg_p1_key@\/@leg_p2@'s @!leg_p0_key@\/@!leg_p1_key@ guards);
--- @leg@ unions the three tiers. An existence check is a plain indexed
--- semi-join, not a full-group rescan, so cost is linear in 'leg_raw' size
--- regardless of key fan-in. Verified byte-identical @leg@ output against
--- the old aggregate rule on a 5%-collision fixture and an adversarial
--- battery (writes\/retrieve collision, retrieve\/fk collision, a
--- same-priority tie between two distinct \"other\" kinds, a 0-hop self-loop,
--- a 3-way collision) -- and a ~220x instruction-count reduction on the
--- pathological 40x5,000 fixture above, with no regression on the
--- near-unique-key case (0.60s -> 0.32s).
+-- 'PB.Analysis.Rules.DeadCode.liveProcRules' uses), not a correlated
+-- aggregate. @leg_p0@\/@leg_p1@\/@leg_p2@ each pick (via their own
+-- @choice-domain@) one tuple per key at their own priority tier, gated by
+-- the NEGATED existence of any higher-priority tuple for that key
+-- (@leg_p1_key@\/@leg_p2@'s @!leg_p0_key@\/@!leg_p1_key@ guards); @leg@
+-- unions the three tiers. An aggregate-based tie-break
+-- (@p = min p2 : { leg_raw(x, y, _, p2) }@) is asymptotically worse:
+-- Souffle re-evaluates a correlated aggregate once per MATCHING ROW of the
+-- first body literal, not once per distinct key, so its cost is
+-- O(group_size^2) per key -- quadratic in how much duplicate\/near-duplicate
+-- fan-in 'leg_source' (deliberately undeduped, see its own comment above)
+-- has on any one (x, y) edge (e.g. a widely-shared FK edge, or the same
+-- statement\/column touch found independently by both @inSqlColumns@ and
+-- @inCatFootprintColumns@). Materializing the aggregate into its own
+-- relation before joining does not help -- the aggregate still fires once
+-- per row, not once per key. The negated-existence cascade is a plain
+-- indexed semi-join per tier, so its cost is linear in 'leg_raw' size
+-- regardless of key fan-in.
 legRules :: RuleSet
 legRules = RuleSet
   { rsRelations = [legRawRel, legP0Rel, legP0KeyRel, legP1Rel, legP1KeyRel, legP2Rel, legRel]
@@ -202,16 +166,15 @@ legRules = RuleSet
 
 -- | Fan-in characterization for 'leg_source': total row count, distinct
 -- (x, y) key count, and the largest number of rows sharing one key. A
--- single cheap DuckDB @GROUP BY@ pass (milliseconds even at production
--- scale) -- logged before 'legRules' runs so a corpus with pathological
--- duplicate fan-in on one schema edge is visible immediately, rather than
--- discovered only via a slow\/memory-hungry Souffle run. Kept even after
--- the O(group_size^2) 'legRules' fix above: a large 'lsfMaxGroupSize' is
--- still worth an operator's attention on its own terms -- 'leg_source' has
--- only ~3 distinct @kind@ buckets, so hundreds/thousands of rows sharing
--- one exact (x, y) pair signals real duplication in the upstream extractors
--- (e.g. the same statement\/column touch double-counted by two independent
--- extraction techniques), not legitimate diversity.
+-- single cheap DuckDB @GROUP BY@ pass, logged before 'legRules' runs so a
+-- corpus with pathological duplicate fan-in on one schema edge is visible
+-- immediately rather than discovered only via a slow\/memory-hungry Souffle
+-- run. A large 'lsfMaxGroupSize' is worth an operator's attention on its
+-- own terms: 'leg_source' has only ~3 distinct @kind@ buckets, so
+-- hundreds\/thousands of rows sharing one exact (x, y) pair signals real
+-- duplication in the upstream extractors (e.g. the same statement\/column
+-- touch double-counted by two independent extraction techniques), not
+-- legitimate diversity.
 data LegSourceFanout = LegSourceFanout
   { lsfTotalRows    :: !Int
   , lsfDistinctKeys :: !Int
@@ -235,9 +198,9 @@ legSourceFanout conn = do
 -- | @reaches(X,Y) :- leg(X,Y,_).@
 -- @reaches(X,Z) :- reaches(X,Y), leg(Y,Z,_).@
 --
--- The Phase 0-validated port of 'PB.Analysis.SchemaCategory.blastRadius'/
--- 'validationWalkBack''s existence-only core: both functions' reachable-set
--- reprojects off this single relation (see Plan 161's Design section).
+-- The existence-only core of 'PB.Analysis.SchemaCategory.blastRadius'\/
+-- 'validationWalkBack': both functions' reachable-set reprojects off this
+-- single relation.
 reachesRules :: RuleSet
 reachesRules = RuleSet
   { rsRelations = [reachesRel]
@@ -249,18 +212,16 @@ reachesRules = RuleSet
   }
 
 -- ---------------------------------------------------------------------------
--- Plan 161 Phase 2c: coslice path-witness reconstruction.
+-- Coslice path-witness reconstruction.
 --
 -- 'columnCoslice' = blastRadius (forward walk) ∪ validationWalkBack
 -- (backward walk), deduped to one shortest path per StmtObj target. The
--- existence-only core is 'reaches' above (already shipped). This program
--- reconstructs the leg-chain *witness* — the per-leg rows the
--- @decomposition_coslice@ table carries for the Python/UI blast-radius and
--- decomposition-candidate surfaces.
+-- existence-only core is 'reaches' above. This program reconstructs the
+-- leg-chain *witness* — the per-leg rows the @decomposition_coslice@ table
+-- carries for the Python/UI blast-radius and decomposition-candidate
+-- surfaces.
 --
--- Encoding (verified against the real @souffle@ binary on a 15-diamond
--- stress fixture matching 'SchemaCategoryTest.hs''s exponential-blowup
--- regression case — see the plan's Step 1 spike notes):
+-- Encoding:
 --
 --   * @min_dist@/@min_dist_back@ compute shortest forward/backward
 --     distance via a native Souffle recursive fixpoint.
@@ -269,17 +230,16 @@ reachesRules = RuleSet
 --     ends at an intermediate that reaches target) is expressed as two
 --     unioned rules — the same pattern 'reachesRules' uses, avoiding any
 --     IR extension for disjunction.
---   * Through a diamond, multiple legs tie at one ordinal (bounded by
---     the diamond's width, NOT exponential in path count — verified 2x,
---     not 2^n). The deterministic single-witness tie-break is deferred to
---     SQL materialization ('materializeDecompositionCoslice'), which
---     picks one via ROW_NUMBER(). This keeps the IR free of
---     inequality/comparison operators (the Souffle aggregate witness
---     problem forbids exporting the min leg_from from inside an
---     aggregate body anyway).
+--   * Through a diamond, multiple legs tie at one ordinal (bounded by the
+--     diamond's width, not exponential in path count). The deterministic
+--     single-witness tie-break is deferred to SQL materialization
+--     ('materializeDecompositionCoslice'), which picks one via
+--     ROW_NUMBER(). This keeps the IR free of inequality/comparison
+--     operators — Souffle's aggregate-witness restriction forbids
+--     exporting the min leg_from from inside an aggregate body anyway.
 --
--- All four path_leg relations are IDB outputs; 'seed' is the new EDB view
--- ('initEdbViews' above); 'leg' and 'reaches' are reused.
+-- All four path_leg relations are IDB outputs; 'seed' is the EDB view from
+-- 'initEdbViews' above; 'leg' and 'reaches' are reused.
 
 seedRel, minDistRel, minDistBackRel, pathLegFwdRel, pathLegBackRel :: Relation
 seedRel        = symRelation "seed" ["x"]
@@ -295,8 +255,7 @@ cosliceRules = RuleSet
       -- reaches is consumed as EDB (not defined here): runRuleSets orders
       -- cosliceRules after reachesRules, which materializes the reaches
       -- table cosliceRules then reads as input. This keeps each ruleset
-      -- single-purpose and matches the Plan 166 shared-predicate discipline
-      -- (reaches is written once, reused by every consumer).
+      -- single-purpose: reaches is written once, reused by every consumer.
 
       [ -- Forward shortest distance: seed -> node (follows leg direction).
         -- @choice-domain (s, node)@ on minDistRel (see rsChoiceDomains below)
