@@ -17,6 +17,7 @@ module PB.Pipeline.Souffle
   , RuleSet (..)
   , edbRelations
   , compileProgram
+  , sanitizeFactField
   , runRuleSet
   , runRuleSetWith
   , orderRuleSets
@@ -184,7 +185,17 @@ runRuleSetWith onRelation conn rs =
     for_ (rsRelations rs) $ \rel -> do
       onRelation rel
       contents <- readFile (outDir </> T.unpack (relName rel) <> ".csv")
-      let rows = [ T.splitOn "\t" line | line <- T.lines contents, not (T.null line) ]
+      -- T.lines correctly excludes the spurious trailing entry a final
+      -- newline would otherwise produce, so no line filter is needed for
+      -- that -- but a naive "drop empty lines" filter (the previous
+      -- version of this code) is wrong: for a single-column relation, a
+      -- row whose one field is the empty string IS an empty line, and
+      -- gets silently dropped along with any real trailing blank. Only the
+      -- whole-file-empty case (relCols has >=1 columns but Soufflé wrote
+      -- zero output rows) needs special-casing, since T.lines "" == [""]
+      -- would otherwise fabricate one phantom zero-width row.
+      let rows = if T.null contents then []
+                 else [ T.splitOn "\t" line | line <- T.lines contents ]
       recreateTextTable conn (relName rel) (colNames rel)
       appendTextRows conn (relName rel) rows
 

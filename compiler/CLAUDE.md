@@ -680,6 +680,7 @@ compileProgram :: RuleSet -> Text
 
 runRuleSet     :: DuckConn -> RuleSet -> IO ()
 runRuleSetWith :: (Relation -> IO ()) -> DuckConn -> RuleSet -> IO ()
+sanitizeFactField :: Text -> Text
 -- runRuleSet = runRuleSetWith (\_ -> pure ()). Per call: withSystemTempDirectory
 -- (temporary pkg) -> for each edbRelations member, PB.Pipeline.DuckDb.queryTextRows
 -- reads its current rows and writes a tab-separated <name>.facts file (always
@@ -695,6 +696,17 @@ runRuleSetWith :: (Relation -> IO ()) -> DuckConn -> RuleSet -> IO ()
 -- DuckDB table (drop + create all-TEXT columns, generic-arity append -- see
 -- that module's own entry). Any future, larger Phase 3 rule set MUST use
 -- runRuleSetWith, not bare runRuleSet, for the same reason as before.
+-- FIXED (Plan 173, 2026-07-15): the .csv-output read path used to filter
+-- `not (T.null line)` on every line, meant to drop a spurious trailing
+-- blank line -- but for a single-column relation, a row whose one field is
+-- the empty string IS an empty line, so the filter silently dropped that
+-- row's tuple entirely (found via SouffleFuzzTest.hs's round-trip
+-- property, shrunk to a 1-column relation with one [""] row). Now only the
+-- whole-file-empty case (0 output rows) is special-cased; T.lines already
+-- excludes any spurious trailing-newline artifact on its own, no per-line
+-- filter needed. sanitizeFactField exported (was internal) so
+-- SouffleFuzzTest.hs's expected-output computation reuses the real
+-- sanitizer instead of a duplicate that could drift from it.
 
 initEdbViews :: DuckConn -> IO ()
 -- (Re)creates leg_source (from schema_morphisms), stmt (from schema_objects),

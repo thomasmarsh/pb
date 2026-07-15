@@ -125,6 +125,7 @@ test-suite pb-compiler-test
     , SouffleDeadCodeTest
     , SouffleTaintTest
     , SouffleEngineTest
+    , SouffleFuzzTest
     , StdLibTest
     , BodyParserTest
     , BodyStmtTest
