@@ -79,6 +79,8 @@ module PB.Pipeline.DuckDb
   , appendTaintPaths
   , appendTaintAnnotations
   , materializeDeadCode
+  , materializeTaintPaths
+  , materializeTaintAnnotations
   , appendSchemaObjects
   , appendSchemaMorphisms
   , materializeDecompositionCoslice
@@ -1391,6 +1393,165 @@ materializeDecompositionCoslice conn =
       , "       COALESCE(leg_source, '') AS leg_source"
       , "  FROM ranked WHERE rn = 1"
       ]
+
+-- ---------------------------------------------------------------------------
+-- Plan 161 Phase 2d: taint path materialization
+-- ---------------------------------------------------------------------------
+
+-- | Materialize @taint_paths@ from Datalog output.  Reads
+-- @taint_path_leg@ (witness legs) and @taint_confirmed@
+-- (source→sink reachability), joins back to @taint_sources@\/
+-- @taint_sinks@ for file info, and reproduces the existing
+-- 11-column table shape.
+--
+-- Design decisions (pre-stated in doc/plan/161-phase-2d-taint.md):
+--
+--   * Deterministic diamond tie-break via ROW_NUMBER (same pattern
+--     as materializeDecompositionCoslice).
+--   * Sink node included as a terminal row using sink_key directly
+--     (no derivation from leg_to needed).
+--   * ORDER BY inside string_agg guarantees ordinal ordering.
+materializeTaintPaths :: DuckConn -> IO ()
+materializeTaintPaths conn =
+  void $ execute_ conn (Query sql)
+  where
+    sql = T.unlines
+      [ "DELETE FROM taint_paths"
+      , ";"
+      , "INSERT INTO taint_paths"
+      , "  (source_file, source_object, source_proc, source_var,"
+      , "   sink_file, sink_object, sink_proc, sink_var,"
+      , "   severity, category, steps_json)"
+      , "WITH confirmed AS ("
+      , "  SELECT tc.s AS source_key, tc.t AS sink_key"
+      , "  FROM taint_confirmed tc"
+      , "),"
+      , "source_info AS ("
+      , "  SELECT ts.object || '::' || ts.proc_name || '::' || ts.var_name AS key,"
+      , "         ts.file, ts.object, ts.proc_name, ts.var_name"
+      , "  FROM taint_sources ts"
+      , "),"
+      , "sink_info AS ("
+      , "  SELECT tsk.object || '::' || tsk.proc_name || '::' || tsk.var_name AS key,"
+      , "         tsk.file, tsk.object, tsk.proc_name, tsk.var_name,"
+      , "         tsk.severity, tsk.sink_type"
+      , "  FROM taint_sinks tsk"
+      , "),"
+      , "ranked_legs AS ("
+      , "  SELECT tpl.s AS source_key, tpl.target AS sink_key,"
+      , "         CAST(tpl.leg_ord AS INTEGER) AS leg_ord,"
+      , "         tpl.lf AS leg_from, tpl.lt AS leg_to, tpl.kind AS leg_kind,"
+      , "         ROW_NUMBER() OVER ("
+      , "           PARTITION BY tpl.s, tpl.target, CAST(tpl.leg_ord AS INTEGER)"
+      , "           ORDER BY tpl.lf, tpl.lt"
+      , "         ) AS rn"
+      , "  FROM taint_path_leg tpl"
+      , "),"
+      , "legs_with_sink AS ("
+      , "  SELECT source_key, sink_key, leg_ord, leg_from, leg_to, leg_kind"
+      , "  FROM ranked_legs WHERE rn = 1"
+      , "  UNION ALL"
+      , "  SELECT source_key, sink_key,"
+      , "         MAX(leg_ord) + 1 AS leg_ord,"
+      , "         sink_key AS leg_from,"
+      , "         sink_key AS leg_to,"
+      , "         'sink' AS leg_kind"
+      , "  FROM ranked_legs WHERE rn = 1"
+      , "  GROUP BY source_key, sink_key"
+      , "),"
+      , "chains AS ("
+      , "  SELECT l.source_key, l.sink_key,"
+      , "         '[' ||"
+      , "           string_agg("
+      , "             '{\"object\":\"' || split_part(l.leg_from, '::', 1) ||"
+      , "             '\",\"proc_name\":\"' || split_part(l.leg_from, '::', 2) ||"
+      , "             '\",\"var_name\":\"' || split_part(l.leg_from, '::', 3) ||"
+      , "             '\",\"line\":null'"
+      , "             ',\"step_kind\":\"' || l.leg_kind || '\"'"
+      , "             ',\"description\":\"taint propagation via ' || l.leg_kind || '\"}',"
+      , "             ',' ORDER BY l.leg_ord"
+      , "           )"
+      , "         || ']' AS steps_json"
+      , "  FROM legs_with_sink l"
+      , "  GROUP BY l.source_key, l.sink_key"
+      , ")"
+      , "SELECT"
+      , "  si.file AS source_file,"
+      , "  si.object AS source_object,"
+      , "  si.proc_name AS source_proc,"
+      , "  si.var_name AS source_var,"
+      , "  sk.file AS sink_file,"
+      , "  sk.object AS sink_object,"
+      , "  sk.proc_name AS sink_proc,"
+      , "  sk.var_name AS sink_var,"
+      , "  sk.severity AS severity,"
+      , "  COALESCE("
+      , "    CASE WHEN sk.sink_type = 'db_write' THEN 'sql_injection'"
+      , "         WHEN sk.sink_type = 'exec_immediate' THEN 'exec_immediate'"
+      , "         ELSE 'general' END,"
+      , "    'general'"
+      , "  ) AS category,"
+      , "  COALESCE(ch.steps_json, '[]') AS steps_json"
+      , "FROM confirmed c"
+      , "JOIN source_info si ON si.key = c.source_key"
+      , "JOIN sink_info sk ON sk.key = c.sink_key"
+      , "LEFT JOIN chains ch ON ch.source_key = c.source_key AND ch.sink_key = c.sink_key"
+      ]
+
+-- | Materialize @taint_annotations@ from Datalog output.  Reads
+-- @taint_source@ (source nodes) and @taint_reaches@ (transitive
+-- closure) to rebuild the tainted set, then calls
+-- 'Taint.buildTaintAnnotations' (which needs @block_id@ from
+-- proc_defs/proc_uses).
+materializeTaintAnnotations :: DuckConn -> IO ()
+materializeTaintAnnotations conn = do
+  -- 1. Read taint_source keys (the source nodes themselves)
+  sourceRows <- queryTextRows conn "taint_source" ["x"]
+  -- 2. Read taint_reaches (all reachable pairs)
+  reachesRows <- queryTextRows conn "taint_reaches" ["x", "y"]
+  -- 3. Build the tainted set: sources ∪ {y | ∃x. taint_source(x) ∧ taint_reaches(x, y)}
+  --    Only targets reachable FROM a source are tainted — not all targets
+  --    in taint_reaches (which includes nodes reachable from non-source nodes).
+  let sourceKeys = Set.fromList
+        [ key
+        | [key] <- sourceRows
+        , case T.splitOn "::" key of { [_,_,_] -> True; _ -> False }
+        ]
+      -- Filter: only keep (x, y) pairs where x is a source
+      reachableFromSource = Set.fromList
+        [ toKey
+        | [fromKey, toKey] <- reachesRows
+        , fromKey `Set.member` sourceKeys
+        , case T.splitOn "::" toKey of { [_,_,_] -> True; _ -> False }
+        ]
+      parseTriple t = case T.splitOn "::" t of
+        [a, b, c] -> Just (a, b, c)
+        _         -> Nothing
+      taintedSet = Set.fromList
+        [ t | key <- Set.toList (sourceKeys <> reachableFromSource)
+            , Just t <- [parseTriple key]
+        ]
+  -- 4. Read proc_defs + proc_uses for block_id context
+  defs <- queryProcDefs conn
+  uses <- queryProcUses conn
+  -- 5. Read sources/sinks as Haskell types for buildTaintAnnotations
+  srcRows <- queryTextRows conn "taint_sources"
+               ["file","object","proc_name","var_name","source_type"]
+  snkRows <- queryTextRows conn "taint_sinks"
+               ["file","object","proc_name","var_name","sink_type","severity"]
+  let allSources = mapMaybe mkSource srcRows
+      allSinks   = mapMaybe mkSink   snkRows
+      mkSource [f,o,p,v,st] = Just Taint.TaintSource
+        { Taint.tsFile = f, Taint.tsObject = o, Taint.tsProcName = p
+        , Taint.tsVarName = v, Taint.tsSourceType = st, Taint.tsLine = Nothing }
+      mkSource _ = Nothing
+      mkSink [f,o,p,v,st,sev] = Just Taint.TaintSink
+        { Taint.tskFile = f, Taint.tskObject = o, Taint.tskProcName = p
+        , Taint.tskVarName = v, Taint.tskSinkType = st
+        , Taint.tskSeverity = sev, Taint.tskLine = Nothing }
+      mkSink _ = Nothing
+      annotations = Taint.buildTaintAnnotations taintedSet allSources allSinks defs uses
+  appendTaintAnnotations conn annotations
 
 -- ---------------------------------------------------------------------------
 -- Generic EDB/IDB bridge (Plan 161 -- Souffle rewrite)

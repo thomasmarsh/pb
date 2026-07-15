@@ -61,6 +61,7 @@ library
     PB.Analysis.DwFootprint
     PB.Analysis.Rules.DeadCode
     PB.Analysis.Rules.Schema
+    PB.Analysis.Rules.Taint
     PB.Analysis.Taint
     PB.Analysis.TypeEnv
     PB.Analysis.TypeResolve
@@ -122,6 +123,7 @@ test-suite pb-compiler-test
       DuckDbTest
     , SouffleSchemaTest
     , SouffleDeadCodeTest
+    , SouffleTaintTest
     , SouffleEngineTest
     , StdLibTest
     , BodyParserTest

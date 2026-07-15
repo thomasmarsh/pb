@@ -12,6 +12,7 @@ import PB.Analysis.SchemaCategory
 import PB.Pipeline.Souffle qualified as Souffle
 import PB.Analysis.Rules.Schema qualified as SchemaRules
 import PB.Analysis.Rules.DeadCode qualified as DeadCodeRules
+import PB.Analysis.Rules.Taint qualified as TaintRules
 import PB.Pipeline.DuckDb
   ( DuckConn
   , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
@@ -23,11 +24,12 @@ import PB.Pipeline.DuckDb
   , queryCatColumns, queryCatFks
   , appendResolvedTypes, appendResolvedCalls
   , appendInterprocEdges, appendProcSummaries
-  , appendTaintSources, appendTaintSinks, appendTaintPaths
-  , appendTaintAnnotations
+  , appendTaintSources, appendTaintSinks
   , appendSchemaObjects, appendSchemaMorphisms
   , materializeDecompositionCoslice
   , materializeDeadCode
+  , materializeTaintPaths
+  , materializeTaintAnnotations
   )
 
 import Data.Aeson          (Value (..), encode, object, (.=))
@@ -95,6 +97,8 @@ runPhaseB conn mDefaultNamespace = do
   Souffle.runRuleSets souffleProgress conn allDatalogRuleSets
   materializeDeadCode conn
   materializeDecompositionCoslice conn
+  materializeTaintPaths conn
+  materializeTaintAnnotations conn
 
 -- | Materialize every EDB view the Soufflé rule sets in 'allDatalogRuleSets'
 -- assume already exist. Each 'init*EdbViews' is idempotent (@CREATE OR
@@ -105,6 +109,7 @@ materializeAllEdbViews :: DuckConn -> IO ()
 materializeAllEdbViews conn = do
   DeadCodeRules.initDeadReachEdbViews conn
   SchemaRules.initEdbViews conn
+  TaintRules.initTaintEdbViews conn
 
 -- | Every Soufflé rule set run in Phase B. 'Souffle.runRuleSets' topologically
 -- orders these by their IDB-output ∩ EDB-input edges, so the order listed
@@ -118,6 +123,7 @@ allDatalogRuleSets =
   , SchemaRules.reachesRules
   , SchemaRules.cosliceRules
   , DeadCodeRules.liveProcRules
+  , TaintRules.taintRules
   ]
 
 runPass5 :: DuckConn -> IO (Map.Map Text Text)
@@ -132,7 +138,11 @@ runPass5 conn = do
   appendResolvedCalls conn rc
   pure inh
 
--- | Pass 6+7: compute interproc edges and taint ONCE corpus-wide (not once per file).
+-- | Pass 6+7: compute interproc edges and taint classification ONCE
+-- corpus-wide.  The BFS propagation (propagateTaint) and path
+-- reconstruction (buildTaintPaths/buildTaintAnnotations) are now
+-- handled by the Datalog rule set (TaintRules.taintRules) — this
+-- pass only produces the EDB tables those rules read from.
 runPass67 :: DuckConn -> IO ()
 runPass67 conn = do
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Building call graph" :: Text)])
@@ -148,16 +158,11 @@ runPass67 conn = do
       summaries      = Taint.buildProcedureSummaries edges defs uses globalVarNames allProcMetas
       allSources     = Taint.classifySources allSqlStmts allProcMetas
       allSinks       = Taint.classifySinks   allSqlStmts
-      (tainted, prov) = Taint.propagateTaint allSources defs uses edges
-      allPaths       = Taint.buildTaintPaths allSources allSinks prov
-      allAnnotations = Taint.buildTaintAnnotations tainted allSources allSinks defs uses
   appendInterprocEdges   conn edges
   appendProcSummaries    conn summaries
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Taint analysis" :: Text)])
+  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Taint classification" :: Text)])
   appendTaintSources     conn allSources
   appendTaintSinks       conn allSinks
-  appendTaintPaths       conn allPaths
-  appendTaintAnnotations conn allAnnotations
   pure ()
 
 -- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157
