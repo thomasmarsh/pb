@@ -600,10 +600,11 @@ stripBom          :: Text -> Text
 --     schema_morphisms/schema_objects).
 --   B2 (one Soufflé run): every Phase B Datalog rule set runs in a single
 --     Souffle.runRuleSets call (allDatalogRuleSets = deadReachRules,
---     callerCountRules, deadCodeRowsRules, reachesRules, cosliceRules,
---     liveProcRules). orderRuleSets resolves every Soufflé-internal
---     dependency edge automatically (proc_dead before deadCodeRowsRules/
---     liveProcRules; reaches before cosliceRules). The only manual
+--     callerCountRules, deadCodeRowsRules, legRules, reachesRules,
+--     cosliceRules, liveProcRules). orderRuleSets resolves every
+--     Soufflé-internal dependency edge automatically (proc_dead before
+--     deadCodeRowsRules/liveProcRules; leg before reaches; reaches before
+--     cosliceRules). The only manual
 --     sequencing left is the Phase A→B boundary B1 enforces (EDB views'
 --     source tables must be populated before the views are created) -- a
 --     genuine data dependency, not an on-demand coupling between rule sets.
@@ -627,8 +628,10 @@ runPass9 :: DuckConn -> Maybe Text -> IO SchGraph
 -- disqualified Souffle's compiled mode, and a re-measure with it included
 -- showed Souffle beating DuckDB-native; a realistic aggregate rule (caller
 -- fan-in count) had no home in the old IR's plain-SELECT compiler at all.
--- Same IR as before: EDB relations (leg/dead/stmt) are VIEWS over existing
--- tables (initEdbViews) -- no fact-marshalling round trip through DuckDB
+-- Same IR as before: most EDB relations (dead/stmt/leg_source) are VIEWS
+-- over existing tables (initEdbViews) -- leg is the one exception since
+-- Plan 171a (2026-07-15): it's Datalog-derived (legRules) from the
+-- leg_source view, not a view itself -- no fact-marshalling round trip through DuckDB
 -- itself, though facts DO now round-trip through Haskell once, out to
 -- Souffle's .facts files and back from its .csv output (unlike the old
 -- module, which stayed inside DuckDB via WITH RECURSIVE the whole time).
@@ -649,7 +652,13 @@ data Rule = Rule { ruleText :: Text, ruleRefs :: [Relation] }
 -- relation the clause mentions (head, body, any aggregate witness) --
 -- edbRelations/orderRuleSets read ONLY this, not ruleText, so it must be
 -- kept in sync by the rule's author.
-data RuleSet  = RuleSet { rsRelations :: [Relation], rsRules :: [Rule] }   -- a relation may have several alternative rules, unioned
+data RuleSet  = RuleSet { rsRelations :: [Relation], rsRules :: [Rule], rsChoiceDomains :: [(Text, [Text])] }
+-- a relation may have several alternative rules, unioned. rsChoiceDomains
+-- names, per IDB relation (by relName), the column subset rendered as a
+-- Souffle `choice-domain (...)` decl modifier -- once any tuple with a
+-- given key is derived, later tuples sharing that key are dropped. [] (the
+-- default) means no choice-domain. Used by min_dist/min_dist_back
+-- (cosliceRules) and leg (legRules, Plan 171a).
 
 edbRelations :: RuleSet -> [Relation]
 -- List.nub of every ruleRefs entry across rsRules that is NOT in
@@ -688,21 +697,41 @@ runRuleSetWith :: (Relation -> IO ()) -> DuckConn -> RuleSet -> IO ()
 -- runRuleSetWith, not bare runRuleSet, for the same reason as before.
 
 initEdbViews :: DuckConn -> IO ()
--- (Re)creates leg (from schema_morphisms), stmt (from schema_objects), and
--- seed (column objects, the coslice seed) as views. stmt is filtered to
--- kind = 'stmt' ONLY -- excluding kind = 'dw_retrieve' rows is deliberate:
--- a DwRetrieveId StmtObj's stmt_proc is always NULL, and proc_dead only
--- keys on real (object, proc) pairs, so a NULL proc vacuously passes
--- `NOT EXISTS proc_dead` -- every DW retrieve would otherwise pollute
--- live_proc as unconditionally "live" (found via a real openpay --db smoke
--- run: 114/115 stmt rows were this noise before the fix). No "dead" view
--- here (Plan 161 Phase 2b cutover, 2026-07-11): liveProcRules reads
--- proc_dead directly instead -- see its own entry.
+-- (Re)creates leg_source (from schema_morphisms), stmt (from schema_objects),
+-- and seed (column objects, the coslice seed) as views. leg_source is a pure
+-- rename (from_key/to_key/leg_kind -> x/y/kind), undeduped -- no CASE/
+-- ROW_NUMBER (Plan 171a, 2026-07-15: the old `leg` view here DID have a
+-- ROW_NUMBER/CASE writes-vs-retrieve tie-break, a house-rule violation per
+-- this file's own Datalog Rule Placement Discipline section; that decision
+-- moved into legRules below). stmt is filtered to kind = 'stmt' ONLY --
+-- excluding kind = 'dw_retrieve' rows is deliberate: a DwRetrieveId StmtObj's
+-- stmt_proc is always NULL, and proc_dead only keys on real (object, proc)
+-- pairs, so a NULL proc vacuously passes `NOT EXISTS proc_dead` -- every DW
+-- retrieve would otherwise pollute live_proc as unconditionally "live"
+-- (found via a real openpay --db smoke run: 114/115 stmt rows were this
+-- noise before the fix). No "dead" view here (Plan 161 Phase 2b cutover,
+-- 2026-07-11): liveProcRules reads proc_dead directly instead -- see its
+-- own entry.
+
+legRules :: RuleSet
+-- Plan 171a (2026-07-15): derives leg(x, y, kind) from leg_source, replacing
+-- the old SQL-view tie-break. leg_raw(x, y, kind, priority) tags each raw
+-- row via rule specialization on a literal kind guard (writes -> 0,
+-- retrieve -> 1, else -> 2 -- an explicit priority FACT per rule, not a
+-- positional CASE); leg itself picks the min-priority tuple per (x, y) via
+-- the same min-aggregate + choice-domain idiom cosliceRules uses for
+-- min_dist/min_dist_back. Verified deterministic against the real souffle
+-- binary across repeated runs, including a 0-hop self-loop (x == y)
+-- collision. Materializes to table "leg"; runRuleSets orders it before
+-- reachesRules (which reads leg as EDB). Real-corpus gate: openpay
+-- decomposition_coslice byte-identical (5261/5261 rows) pre- vs
+-- post-migration.
 
 reachesRules  :: RuleSet
 -- reaches(X,Y) :- leg(X,Y,_).  reaches(X,Z) :- reaches(X,Y), leg(Y,Z,_).
 -- Materializes to table "reaches". Souffle handles the self-recursion
--- natively -- no WITH RECURSIVE translation needed on this side.
+-- natively -- no WITH RECURSIVE translation needed on this side. leg is now
+-- Datalog-derived (legRules, above), not a raw SQL EDB view.
 
 cosliceRules :: RuleSet
 -- Plan 161 Phase 2c: path-leg witness reconstruction for decomposition_coslice.

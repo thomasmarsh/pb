@@ -7,6 +7,7 @@ module PB.Analysis.Rules.Schema
   ( initEdbViews
   , reachesRules
   , cosliceRules
+  , legRules
   ) where
 
 import PB.Prelude
@@ -43,31 +44,17 @@ initEdbViews conn = for_ views (void . execute_ conn)
   where
     views :: [Query]
     views =
-      [ -- Plan 161 Phase 2c: collapse parallel `schema_morphisms` edges that
-        -- connect the same (from, to) pair with different `leg_kind` down to
-        -- a single deterministic one *before* any rule sees them -- Souffle's
-        -- `leg` relation is a set, so without this the engine keeps an
-        -- arbitrary one per (from, to) pair and re-builds of the same corpus
-        -- pick differently (reproduced on the real openpay corpus: 559
-        -- (from, to) pairs collide, all with both `retrieve` and `writes`;
-        -- which survived was nondeterministic run-to-run). The deleted
-        -- `PB.Analysis.SchemaCategory.allLegs` resolved this as an accident
-        -- of its fold order (`dwRetrieveLegs <> dwWriteLegs <> ...`, then
-        -- `Map.fromListWith (<>)` + BFS-prepend) that put `writes` ahead of
-        -- `retrieve` in each per-key adjacency list, so BFS discovered
-        -- `writes` first. The CASE below encodes that same precedence
-        -- explicitly: `writes` < `retrieve` < everything-else-tied-at-2.
-        -- Only (from, to) pairs with >1 distinct kind compete; a lone kind
-        -- row (fk, reads, writes-via-other-sources) always wins its own
-        -- single-row partition regardless of its CASE value.
-        "CREATE OR REPLACE VIEW leg AS \
-        \SELECT from_key AS x, to_key AS y, leg_kind FROM ( \
-          \SELECT from_key, to_key, leg_kind, \
-                 \ROW_NUMBER() OVER (PARTITION BY from_key, to_key \
-                   \ORDER BY CASE leg_kind WHEN 'writes' THEN 0 \
-                                          \WHEN 'retrieve' THEN 1 \
-                                          \ELSE 2 END) AS rn \
-            \FROM schema_morphisms) WHERE rn = 1"
+      [ -- Plan 171a: pure rename over schema_morphisms -- no dedup, no CASE.
+        -- The writes-vs-retrieve tie-break (Plan 161 Phase 2c's original fix
+        -- for 559 colliding (from, to) pairs on the real openpay corpus,
+        -- previously a ROW_NUMBER/CASE pair right here) now lives in
+        -- 'legRules' below as Datalog rule specialization + choice-domain --
+        -- an EDB view may only rename/cast/filter by a static predicate per
+        -- compiler/CLAUDE.md's Datalog Rule Placement Discipline, and a
+        -- ROW_NUMBER/CASE pair picking a winner among competing facts is a
+        -- decision, not a projection.
+        "CREATE OR REPLACE VIEW leg_source AS \
+        \SELECT from_key AS x, to_key AS y, leg_kind AS kind FROM schema_morphisms"
       , -- 'dw_retrieve'-kind schema_objects rows are deliberately excluded: their
         -- stmt_proc is always NULL (a DW retrieve isn't a procedure), which would
         -- make `dead(Object,Proc)` vacuously never match and every DW retrieve
@@ -90,6 +77,42 @@ initEdbViews conn = for_ views (void . execute_ conn)
 legRel, reachesRel :: Relation
 legRel     = symRelation "leg" ["x", "y", "leg_kind"]
 reachesRel = symRelation "reaches" ["x", "y"]
+
+legSourceRel :: Relation
+legSourceRel = symRelation "leg_source" ["x", "y", "kind"]
+
+legRawRel :: Relation
+legRawRel = Relation "leg_raw"
+  [("x", "symbol"), ("y", "symbol"), ("kind", "symbol"), ("priority", "number")]
+
+-- | Plan 171a: the writes-vs-retrieve tie-break for @leg@, moved out of
+-- 'initEdbViews' SQL (a ROW_NUMBER/CASE pair -- a house-rule violation, see
+-- 'leg_source''s own comment above) into Datalog. 'leg_raw' tags each raw
+-- @leg_source@ row with an explicit priority FACT via rule specialization
+-- (three mutually exclusive rules on a literal @kind@ guard -- not a
+-- positional SQL @CASE@): @writes@ -> 0, @retrieve@ -> 1, everything else
+-- tied at 2 (matches the old CASE's precedence exactly; only (x, y) pairs
+-- with >1 distinct kind ever compete -- real corpus: 559 pairs, all
+-- writes-vs-retrieve). @leg@ then picks the minimum-priority tuple per key
+-- via the same @min@-aggregate + @choice-domain@ idiom 'cosliceRules' uses
+-- for @min_dist@/@min_dist_back@ -- verified deterministic across repeated
+-- runs against the real @souffle@ binary, including on a 0-hop self-loop
+-- collision (x == y) and on a tie among two same-priority "other" kinds.
+legRules :: RuleSet
+legRules = RuleSet
+  { rsRelations = [legRawRel, legRel]
+  , rsRules =
+      [ Rule "leg_raw(x, y, kind, 0) :- leg_source(x, y, kind), kind = \"writes\""
+             [legRawRel, legSourceRel]
+      , Rule "leg_raw(x, y, kind, 1) :- leg_source(x, y, kind), kind = \"retrieve\""
+             [legRawRel, legSourceRel]
+      , Rule "leg_raw(x, y, kind, 2) :- leg_source(x, y, kind), kind != \"writes\", kind != \"retrieve\""
+             [legRawRel, legSourceRel]
+      , Rule "leg(x, y, kind) :- leg_raw(x, y, kind, p), p = min p2 : { leg_raw(x, y, _, p2) }"
+             [legRel, legRawRel]
+      ]
+  , rsChoiceDomains = [ ("leg", ["x", "y"]) ]
+  }
 
 -- | @reaches(X,Y) :- leg(X,Y,_).@
 -- @reaches(X,Z) :- reaches(X,Y), leg(Y,Z,_).@

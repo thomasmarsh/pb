@@ -76,6 +76,7 @@ souffleProgress rel = emitProgress (object
 --   every Soufflé-internal dependency edge automatically —
 --   @proc_dead@ (from 'DeadCodeRules.deadReachRules') before
 --   'DeadCodeRules.deadCodeRowsRules' and 'DeadCodeRules.liveProcRules';
+--   @leg@ (from 'SchemaRules.legRules') before 'SchemaRules.reachesRules';
 --   @reaches@ (from 'SchemaRules.reachesRules') before
 --   'SchemaRules.cosliceRules'. The only sequencing that remains manual is
 --   the Phase A→B boundary enforced by B1 (the EDB views' source tables
@@ -120,6 +121,7 @@ allDatalogRuleSets =
   [ DeadCodeRules.deadReachRules
   , DeadCodeRules.callerCountRules
   , DeadCodeRules.deadCodeRowsRules
+  , SchemaRules.legRules
   , SchemaRules.reachesRules
   , SchemaRules.cosliceRules
   , DeadCodeRules.liveProcRules

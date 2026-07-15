@@ -2,7 +2,7 @@ module SouffleSchemaTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.Souffle
-import PB.Analysis.Rules.Schema
+import PB.Analysis.Rules.Schema (initEdbViews, reachesRules, cosliceRules, legRules)
 import PB.Pipeline.DuckDb
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), LegSource (..), SchMorphism (..)
@@ -31,7 +31,48 @@ emptyInputs = SchemaInputs [] [] [] [] [] [] [] [] Nothing
 tests :: TestTree
 tests = testGroup "Souffle.Schema"
 
-  [ testGroup "reachesRules"
+  [ -- Plan 171a: 'legRules' moves the writes-vs-retrieve tie-break for
+    -- @leg@ out of 'initEdbViews' SQL (a ROW_NUMBER/CASE pair, a house-rule
+    -- violation per compiler/CLAUDE.md's Datalog Rule Placement Discipline)
+    -- into rule specialization (leg_raw's priority column) + choice-domain
+    -- (leg itself) -- the same mechanism 'cosliceRules' already uses for
+    -- min_dist/min_dist_back. Off-seed-cycle coverage for this shape lives
+    -- in the existing "FK cycle not through the seed" cosliceRules test
+    -- below, which exercises Datalog-derived @leg@ end-to-end -- @leg@ has
+    -- no fixpoint of its own, so an isolated off-seed-cycle fixture isn't
+    -- structurally meaningful for this rule set alone.
+    testGroup "legRules"
+    [ testCase "duplicate-key collision: writes beats retrieve regardless of insertion order" $
+        withWriteConn ":memory:" $ \conn -> do
+          initSchema conn
+          initEdbViews conn
+          let colA = ColumnObj (TableRef Nothing "a") "x"
+              colB = ColumnObj (TableRef Nothing "b") "y"
+          -- retrieve inserted first -- a naive "first tuple wins" derivation
+          -- would pick retrieve; the priority tie-break must still pick writes.
+          appendSchemaMorphisms conn
+            [ SchMorphism colA colB LegRetrieve SrcDwRetrieve
+            , SchMorphism colA colB LegWrites   SrcSqlText
+            ]
+          runRuleSet conn legRules
+          rows <- query_ conn "SELECT x, y, leg_kind FROM leg" :: IO [(Text, Text, Text)]
+          rows @?= [(schObjectKey colA, schObjectKey colB, "writes")]
+
+    , testCase "0-hop self-referential collision resolves the same tie-break" $
+        withWriteConn ":memory:" $ \conn -> do
+          initSchema conn
+          initEdbViews conn
+          let colA = ColumnObj (TableRef Nothing "a") "x"
+          appendSchemaMorphisms conn
+            [ SchMorphism colA colA LegRetrieve SrcDwRetrieve
+            , SchMorphism colA colA LegWrites   SrcSqlText
+            ]
+          runRuleSet conn legRules
+          rows <- query_ conn "SELECT x, y, leg_kind FROM leg" :: IO [(Text, Text, Text)]
+          rows @?= [(schObjectKey colA, schObjectKey colA, "writes")]
+    ]
+
+  , testGroup "reachesRules"
     [ testCase "two-hop chain: reaches contains both hops and the transitive pair" $
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
@@ -47,7 +88,7 @@ tests = testGroup "Souffle.Schema"
                 }
               sch = buildSchema inp
           appendSchemaMorphisms conn (sgLegs sch)
-          runRuleSet conn reachesRules
+          runRuleSets (\_ -> pure ()) conn [legRules, reachesRules]
           rows <- query_ conn "SELECT x, y FROM reaches" :: IO [(Text, Text)]
           let got = Set.fromList rows
               colAKey = schObjectKey colA
@@ -69,7 +110,7 @@ tests = testGroup "Souffle.Schema"
             [ SchMorphism colA colB LegFk SrcDdlFk
             , SchMorphism colB colA LegFk SrcDdlFk
             ]
-          runRuleSet conn reachesRules
+          runRuleSets (\_ -> pure ()) conn [legRules, reachesRules]
           rows <- query_ conn "SELECT x, y FROM reaches" :: IO [(Text, Text)]
           let got = Set.fromList rows
           got @?= Set.fromList
@@ -111,7 +152,7 @@ tests = testGroup "Souffle.Schema"
               allObjs = Set.insert colX (sgObjects sch)
           appendSchemaObjects conn (Set.toList allObjs)
           appendSchemaMorphisms conn allLegs
-          runRuleSets (\_ -> pure ()) conn [reachesRules, cosliceRules]
+          runRuleSets (\_ -> pure ()) conn [legRules, reachesRules, cosliceRules]
           -- StmtObj targets reached from colA: stmtS (forward, direct) and
           -- stmtT (forward, via col_B->col_C FK chain). col_X (backward writer)
           -- is a column, filtered out by the StmtObj contract.
@@ -146,7 +187,7 @@ tests = testGroup "Souffle.Schema"
               sch = buildSchema inp
           appendSchemaObjects conn (Set.toList (sgObjects sch))
           appendSchemaMorphisms conn (sgLegs sch)
-          runRuleSets (\_ -> pure ()) conn [reachesRules, cosliceRules]
+          runRuleSets (\_ -> pure ()) conn [legRules, reachesRules, cosliceRules]
           -- Parity gate: distinct targets reached from seed ≤ object count.
           -- (Matches walkPaths' "one path per reachable object" guarantee.)
           fwdTargets <- query conn "SELECT COUNT(DISTINCT target) FROM path_leg_fwd WHERE s = ?" (Only seedKey) :: IO [Only Int]
@@ -180,7 +221,7 @@ tests = testGroup "Souffle.Schema"
             , SchMorphism colB colC LegFk SrcDdlFk
             , SchMorphism colC colB LegFk SrcDdlFk
             ]
-          runRuleSets (\_ -> pure ()) conn [reachesRules, cosliceRules]
+          runRuleSets (\_ -> pure ()) conn [legRules, reachesRules, cosliceRules]
           rows <- query conn "SELECT node, dist FROM min_dist WHERE s = ?" (Only colAKey)
                     :: IO [(Text, Text)]
           let byNode = Map.fromListWith (<>) [ (n, [d]) | (n, d) <- rows ]
