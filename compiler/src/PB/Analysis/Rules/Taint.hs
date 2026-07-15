@@ -122,13 +122,28 @@ initTaintEdbViews conn = for_ views (void . execute_ conn)
 -- Concrete program
 -- ---------------------------------------------------------------------------
 
-taintEdgeRel, taintSourceRel, taintSinkRel, taintReachesRel,
+taintEdgeRel, taintSourceRel, taintSinkRel, taintReachesRel, taintReachesSinkRel,
   taintMinDistRel, taintPathLegRel, taintConfirmedRel, taintStepKindRel :: Relation
 taintEdgeRel     = symRelation "taint_edge"     ["from_key", "to_key", "kind"]
 taintSourceRel   = symRelation "taint_source"   ["x"]
 taintSinkRel     = symRelation "taint_sink"     ["x"]
 taintReachesRel  = Relation "taint_reaches"
                      [("x", "symbol"), ("y", "symbol")]
+-- | Performance fix (2026-07-15, same incident as the taint_sink guard on
+-- taint_path_leg below): a SEPARATE relation from taint_reaches, backward-
+-- seeded from taint_sink, answering "does this ARBITRARY node reach this
+-- SPECIFIC sink" -- the actual question taint_path_leg's rule 1 asks via
+-- taint_reaches(lt, t). taint_reaches itself cannot serve double duty here
+-- once its own seed is restricted to taint_source (see taintRules' rsRules
+-- comment) -- an intermediate witness node lt is generally NOT itself a
+-- taint_source, so taint_reaches(lt, t) would almost never hold under a
+-- source-seeded taint_reaches (confirmed the hard way: restricting
+-- taint_reaches' seed alone, without this relation, silently truncated
+-- taint_path_leg to just the first/last hop of every path in a synthetic
+-- test -- caught by diffing against the pre-fix baseline before touching
+-- production code).
+taintReachesSinkRel = Relation "taint_reaches_sink"
+                     [("x", "symbol"), ("t", "symbol")]
 taintMinDistRel  = Relation "taint_min_dist"
                      [("s", "symbol"), ("node", "symbol"), ("dist", "number")]
 taintPathLegRel  = Relation "taint_path_leg"
@@ -162,16 +177,46 @@ taintStepKindRel = Relation "taint_step_kind"
 taintRules :: RuleSet
 taintRules = RuleSet
   { rsRelations =
-      [ taintReachesRel, taintMinDistRel, taintPathLegRel, taintConfirmedRel
-      , taintStepKindRel
+      [ taintReachesRel, taintReachesSinkRel, taintMinDistRel, taintPathLegRel
+      , taintConfirmedRel, taintStepKindRel
       ]
   , rsRules =
-      [ -- Transitive closure: exists so taint_path_leg can bound
-        -- intermediate hops.
-        Rule "taint_reaches(x, y) :- taint_edge(x, y, _)"
-          [taintReachesRel, taintEdgeRel]
+      [ -- Transitive closure, seeded ONLY from taint_source (not every node
+        -- with an outgoing edge): materializeTaintAnnotations (DuckDb.hs)
+        -- is the sole other consumer of taint_reaches, and it already
+        -- discards every (x, y) row where x isn't a taint_source via its
+        -- own downstream Set.member filter -- so seeding only from
+        -- taint_source computes exactly the same final (x, y) pairs, just
+        -- without wastefully rooting the closure at every other node too.
+        -- Verified byte-identical against the unrestricted version (with
+        -- the old seed's output filtered to x ∈ taint_source) on two
+        -- synthetic fixtures. This is the dominant cost on a real
+        -- 1763-file/300KLOC corpus: on a synthetic 420-source/63,000-edge
+        -- fixture shaped like real code (most tainted locals are dead ends
+        -- that never reach a sink, a few chains do), the OLD unrestricted
+        -- taint_reaches produced 4,756,500 rows (O(chain_length^2) per
+        -- chain, since every node along a chain was ALSO its own separate
+        -- seed) where the source-seeded version produces the 63,000 rows
+        -- actually needed. taint_min_dist is deliberately NOT seed-
+        -- restricted the same way (stays seeded from every taint_source,
+        -- dead-end or not) -- narrowing it would change
+        -- materializeTaintAnnotations' "tainted set" to exclude variables
+        -- whose taint never reaches a sink, a real product behavior change
+        -- outside a pure perf fix's scope.
+        Rule "taint_reaches(x, y) :- taint_source(x), taint_edge(x, y, _)"
+          [taintReachesRel, taintSourceRel, taintEdgeRel]
       , Rule "taint_reaches(x, z) :- taint_reaches(x, y), taint_edge(y, z, _)"
           [taintReachesRel, taintEdgeRel]
+
+        -- taint_reaches_sink: see its own Relation-level doc comment above
+        -- for why this is a SEPARATE relation from taint_reaches rather
+        -- than a shared one -- backward BFS seeded from taint_sink (694
+        -- seeds on the real corpus, vs. tens of thousands of candidate
+        -- roots for an unrestricted forward closure).
+      , Rule "taint_reaches_sink(x, t) :- taint_sink(t), taint_edge(x, t, _)"
+          [taintReachesSinkRel, taintSinkRel, taintEdgeRel]
+      , Rule "taint_reaches_sink(x, t) :- taint_edge(x, y, _), taint_reaches_sink(y, t)"
+          [taintReachesSinkRel, taintEdgeRel]
 
         -- Shortest distance per (source, node).
         -- choice-domain (s, node) ensures termination on cyclic
@@ -211,14 +256,14 @@ taintRules = RuleSet
         -- byte-identical final output: taint_confirmed unchanged, and
         -- taint_step_kind rows restricted to confirmed (s, t) pairs (the
         -- only ones materializeTaintPaths ever reads) are identical between
-        -- guarded and unguarded versions. taint_min_dist/taint_reaches
-        -- themselves are untouched by this guard (still computed to every
-        -- reachable node -- they must be, since the BFS has to pass through
-        -- non-sink intermediates en route to a distant sink) -- this only
+        -- guarded and unguarded versions. taint_min_dist itself is
+        -- untouched by this guard (still computed to every reachable node
+        -- -- it must be, since the BFS has to pass through non-sink
+        -- intermediates en route to a distant sink) -- this only
         -- prunes witness-LEG reconstruction, not the underlying distance
         -- fixpoint.
-      , Rule "taint_path_leg(s, t, o, lf, lt, kind) :- taint_sink(t), taint_min_dist(s, lf, o), taint_edge(lf, lt, kind), taint_min_dist(s, lt, o + 1), taint_min_dist(s, t, td), o + 1 < td, taint_reaches(lt, t)"
-          [taintPathLegRel, taintSinkRel, taintMinDistRel, taintEdgeRel, taintReachesRel]
+      , Rule "taint_path_leg(s, t, o, lf, lt, kind) :- taint_sink(t), taint_min_dist(s, lf, o), taint_edge(lf, lt, kind), taint_min_dist(s, lt, o + 1), taint_min_dist(s, t, td), o + 1 < td, taint_reaches_sink(lt, t)"
+          [taintPathLegRel, taintSinkRel, taintMinDistRel, taintEdgeRel, taintReachesSinkRel]
       , Rule "taint_path_leg(s, t, o, lf, t, kind) :- taint_sink(t), taint_min_dist(s, lf, o), taint_edge(lf, t, kind), taint_min_dist(s, t, o + 1)"
           [taintPathLegRel, taintSinkRel, taintMinDistRel, taintEdgeRel]
 

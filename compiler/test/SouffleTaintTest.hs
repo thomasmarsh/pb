@@ -165,6 +165,47 @@ tests = testGroup "Souffle.Taint"
           assertBool "B<->C cycle terminates, C still reachable" ((srcKey, snkKey) `elem` confirmed)
     ]
 
+  , testGroup "taintReaches"
+    -- Coverage gap closed 2026-07-15: taint_reaches' seed was restricted to
+    -- taint_source (perf fix, see PB.Analysis.Rules.Taint's own doc
+    -- comment) -- materializeTaintAnnotations (DuckDb.hs) is its sole other
+    -- consumer, and no existing test asserted on taint_reaches' own content
+    -- directly (only on taint_confirmed/taint_step_kind, which don't
+    -- exercise this relation at all). These two cases are exactly what a
+    -- source-seed restriction could get wrong: a dead-end node (never a
+    -- sink, must still be present -- narrowing this would silently change
+    -- materializeTaintAnnotations' "tainted set") and a node reachable only
+    -- from a non-source root (must be absent -- confirms the seed really
+    -- is restricted, not silently reverted to unrestricted).
+    [ testCase "dead-end node past no sink is still in taint_reaches (materializeTaintAnnotations needs it)" $
+        withWriteConn ":memory:" $ \conn -> do
+          initSchema conn
+          -- A -> B -> C chain, A is the only taint_source, C is NOT a
+          -- taint_sink (no insSink call at all) -- a pure dead end.
+          insEdge   conn "obj" "proc_a" "" "obj" "proc_b" "global_write" "ls_a" "ls_a" "ls_b"
+          insEdge   conn "obj" "proc_b" "" "obj" "proc_c" "global_write" "ls_b" "ls_b" "ls_c"
+          insSource conn "f.srw" "obj" "proc_a" "ls_a" "db_read"
+          initTaintEdbViews conn
+          runRuleSet conn taintRules
+          reaches <- query_ conn "SELECT x, y FROM taint_reaches" :: IO [(Text, Text)]
+          let srcKey = "obj::proc_a::ls_a"
+              bKey   = "obj::proc_b::ls_b"
+              cKey   = "obj::proc_c::ls_c"
+          assertBool "source reaches intermediate B" ((srcKey, bKey) `elem` reaches)
+          assertBool "source reaches dead-end C (no sink downstream)" ((srcKey, cKey) `elem` reaches)
+
+    , testCase "node reachable only from a non-source root is absent from taint_reaches" $
+        withWriteConn ":memory:" $ \conn -> do
+          initSchema conn
+          -- X -> Y edge where X is NOT a taint_source at all -- under the
+          -- source-seeded taint_reaches, X should never appear as a root.
+          insEdge   conn "obj" "proc_x" "" "obj" "proc_y" "global_write" "ls_x" "ls_x" "ls_y"
+          initTaintEdbViews conn
+          runRuleSet conn taintRules
+          reaches <- query_ conn "SELECT x, y FROM taint_reaches" :: IO [(Text, Text)]
+          assertEqual "no taint_source declared -> taint_reaches is empty" [] reaches
+    ]
+
   , testGroup "taintStepKind"
     [ testCase "linear 3-hop chain: source step, passthrough-kind steps, terminal sink step" $
         withWriteConn ":memory:" $ \conn -> do

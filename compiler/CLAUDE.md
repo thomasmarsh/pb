@@ -837,10 +837,56 @@ deadReachRules :: RuleSet
 -- not in runPass11 (which now only runs reachesRules/liveProcRules).
 ```
 
-### `PB.Analysis.Rules.Taint` (Plan 161 Phase 2d; step_kind labeling Plan 171b, 2026-07-15; taint_sink guard perf fix 2026-07-15)
+### `PB.Analysis.Rules.Taint` (Plan 161 Phase 2d; step_kind labeling Plan 171b, 2026-07-15; taint_sink guard + taint_reaches/taint_reaches_sink split perf fixes 2026-07-15)
 
 ```haskell
--- PERFORMANCE FIX (2026-07-15, same production incident as legRules'
+-- PERFORMANCE FIX 2 (2026-07-15, same incident, found because fix 1 below
+-- cut memory (4.6GB -> 406MB stable) but NOT runtime, still 6m45s+):
+-- taint_reaches' seed is now taint_source only (was: every node with an
+-- outgoing edge in the whole graph). materializeTaintAnnotations
+-- (DuckDb.hs) is taint_reaches' ONLY other consumer, and it already
+-- discards every row whose x isn't a taint_source via its own downstream
+-- Set.member filter -- so restricting the SEED computes exactly the same
+-- final (x, y) pairs, just without wastefully rooting the closure at every
+-- other node too. This was the dominant remaining cost: on a synthetic
+-- 420-source/63,000-edge fixture shaped like real code (400 "dead-end"
+-- source chains that never reach a sink, 20 that do -- taint_edge is
+-- deliberately undeduped/unfiltered, same as leg_source, so most taint
+-- flows never reach a sink in practice), the OLD unrestricted taint_reaches
+-- produced 4,756,500 rows (O(chain_length^2) per chain -- every node ALONG
+-- a chain was also its own separate seed) vs. 63,000 for the source-seeded
+-- version -- 3.01s/130MB -> 0.46s/22MB (6.5x/5.8x) on that fixture alone.
+--
+-- taint_path_leg's rule 1 (`taint_reaches(lt, t)`, checking "does this
+-- intermediate node reach the target") CANNOT reuse the now-source-seeded
+-- taint_reaches -- lt is generally not itself a taint_source, so that
+-- check would almost never hold. Caught empirically before touching
+-- production code: naively restricting taint_reaches' seed alone silently
+-- truncated taint_path_leg to just the first/last hop of every path in a
+-- synthetic test (3,020 expected taint_step_kind rows -> 40). Fixed by
+-- adding a SEPARATE relation, `taint_reaches_sink(x, t)`, backward-seeded
+-- from taint_sink (694 seeds on the real corpus, vs. tens of thousands of
+-- candidate roots for an unrestricted forward closure) -- answers the
+-- actual question taint_path_leg's rule 1 asks ("does arbitrary node x
+-- reach specific sink t"), and taint_path_leg now reads THIS instead of
+-- taint_reaches. taint_min_dist is deliberately NOT seed-restricted the
+-- same way (stays seeded from every taint_source, dead-end or not) --
+-- narrowing it would silently change materializeTaintAnnotations' "tainted
+-- set" to exclude variables whose taint never reaches a sink, a real
+-- product behavior change outside a pure perf fix's scope, not something
+-- to do unilaterally. Verified byte-identical against the pre-fix baseline
+-- on two synthetic fixtures (the dead-chains one above and the earlier
+-- 100-source/50-hub/20-sink fixture from fix 1): taint_reaches (filtered to
+-- x ∈ taint_source, i.e. what materializeTaintAnnotations actually uses)
+-- identical, taint_confirmed identical, taint_step_kind (confirmed-pair-
+-- filtered) identical. New `SouffleTaintTest.hs` `taintReaches` group (2
+-- cases) closes a real pre-existing coverage gap -- no prior test asserted
+-- on taint_reaches' own content at all (only on taint_confirmed/
+-- taint_step_kind, neither of which exercises it): a dead-end node past no
+-- sink must still appear (annotations need it), a node reachable only from
+-- a non-source root must not (confirms the seed restriction is real).
+--
+-- PERFORMANCE FIX 1 (2026-07-15, same production incident as legRules'
 -- O(group_size^2) fix): taint_path_leg's two rules now guard on
 -- `taint_sink(t)`. Root cause: every downstream consumer of
 -- taint_path_leg/taint_step_kind (materializeTaintPaths, DuckDb.hs) only
