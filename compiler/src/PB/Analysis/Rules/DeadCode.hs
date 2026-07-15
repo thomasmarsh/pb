@@ -14,7 +14,6 @@ module PB.Analysis.Rules.DeadCode
   , liveProcRules
   , callerCountRules
   , deadCodeRowsRules
-  , ProcInfo (..)
   , confidenceRel
   , callRefRel
   , resolvedCallEdgeRel
@@ -44,14 +43,6 @@ import PB.Analysis.Taint qualified as Taint
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
-
--- | A procedure in the workspace.
-data ProcInfo = ProcInfo
-  { piObject   :: Text
-  , piName     :: Text
-  , piProcType :: Text   -- "function" | "subroutine" | "event" | "on"
-  , piCyclomatic :: Maybe Int
-  } deriving (Eq, Show)
 
 -- ---------------------------------------------------------------------------
 -- liveProcRules

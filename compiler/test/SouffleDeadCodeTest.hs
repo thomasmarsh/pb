@@ -15,6 +15,16 @@ import Database.DuckDB.Simple (query, query_, Only (..))
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase, (@?=))
 
+-- | Terse fixture-builder shorthand for a procedure: 'seedDeadCodeFixture'
+-- expands each one into a full 'ProcRow' with placeholder values for every
+-- field these tests don't vary.
+data ProcInfo = ProcInfo
+  { piObject   :: Text
+  , piName     :: Text
+  , piProcType :: Text   -- "function" | "subroutine" | "event" | "on"
+  , piCyclomatic :: Maybe Int
+  } deriving (Eq, Show)
+
 phaseATables :: [Text]
 phaseATables =
   [ "objects", "procedures", "local_vars", "call_sites", "global_vars"

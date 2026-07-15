@@ -186,7 +186,7 @@ Mark done/pending as body parsers land.
 | `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)                                                                                 |
 | `PB.Compile.*`  | Compilation pipeline: SSA IR (SSA), IR types (IR), loop analysis (LoopAnalysis), SSA lowering (FromSSA), flattening (Flatten), instruction types (InstrTypes), value model (ValueModel), interpreters (Interp, InstrInterp) |
 | `PB.Pipeline.*` | Multi-step transformations: Preprocess, Emit, Passes, Runner, Serialise, FileWalk, DuckDb, SqlParse, Church                        |
-| `PB.Analysis.*` | Pure analysis passes: Cfg, Dataflow, DeadCode, Taint, TypeEnv, TypeResolve, Builtins, SchemaCategory, SchFootprint, DwFootprint, ControlHierarchy |
+| `PB.Analysis.*` | Pure analysis passes: Cfg, Dataflow, Taint, TypeEnv, TypeResolve, Builtins, SchemaCategory, SchFootprint, DwFootprint, ControlHierarchy. `PB.Analysis.Rules.*` holds the Soufflé rule sets + typed EDB-reshaping readers (DeadCode, Taint, Schema) |
 | `PB.Prelude`    | Custom Prelude — no parsing or transformation logic                                                                                 |
 
 New modules go in the most specific matching directory. If a new layer is needed, propose it in Stage 1.
@@ -703,10 +703,10 @@ sanitizeFactField :: Text -> Text
 -- file -> `souffle -F factsDir -D outDir program.dl` via readProcessWithExitCode
 -- (interpreted mode; a non-zero exit is a hard `error`, same tier as the old
 -- module's unstratifiable-ruleset error) -> for each rsRelations member, calls
--- onRelation (PB.Pipeline.Passes' runPass11 wires this to emitProgress, one
--- "step" event per relation, e.g. "Datalog: reaches", same reason as before:
--- the CLI reporter's Phase B view shows only the latest step label with no
--- sub-progress bar), reads back its <name>.csv output, then
+-- onRelation (runRuleSets' onRelation callback; PB.Pipeline.Passes' runPhaseB
+-- wires this to emitProgress, one "step" event per relation, e.g. "Datalog:
+-- reaches", same reason as before: the CLI reporter's Phase B view shows only
+-- the latest step label with no sub-progress bar), reads back its <name>.csv output, then
 -- PB.Pipeline.DuckDb.recreateTextTable + appendTextRows materializes it as a
 -- DuckDB table (drop + create all-TEXT columns, generic-arity append -- see
 -- that module's own entry). Any future, larger Phase 3 rule set MUST use
@@ -818,38 +818,85 @@ cosliceRules :: RuleSet
 -- head arguments. Reuses reaches and leg as EDB; runRuleSets orders after
 -- reachesRules. Materialized by materializeDecompositionCoslice (DuckDb.hs).
 
-liveProcRules :: RuleSet
--- live_proc(Object,Proc) :- stmt(_,Object,Proc,_), !proc_dead(Object,Proc).
--- Real stratified-negation demonstration (Plan 161 Open Question 4). Reads
--- proc_dead (deadReachRules) directly -- Plan 161 Phase 2b cutover,
--- 2026-07-11: used to read a `dead` EDB view over the Haskell-computed
--- dead_code table until real-corpus parity was proven exact; runPass8 now
--- runs deadReachRules BEFORE this ruleset (required ordering -- proc_dead
--- must already exist when this ruleset exports its EDB facts).
+```
 
+### `PB.Analysis.Rules.DeadCode` (Plan 161 Phase 2b cutover, 2026-07-11; EDB relations migrated to typed Haskell Plan 175 Phase 2, 2026-07-16; ProcInfo demoted to a test-local fixture type, 2026-07-16)
+
+```haskell
 -- initDeadReachEdbViews materializes proc/entry/inherits/call_ref/
--- resolved_call_edge/calls/proc_meta via typed Haskell reads
--- (queryProcedures/queryObjectAncestors/queryDwObjects/queryResolvedCalls)
--- and pure reshaping functions (procRows/procMetaRows/inheritsRows/
--- callRefRows/resolvedCallEdgeRows/entryRows/callsRows), materialized into
--- plain DuckDB tables via recreateTextTable/appendTextRows -- the
--- PB.Analysis.Rules.Schema pattern (see that module's own entry). Every
--- read of `procedures` excludes `confidence = 'speculative'`, excluding
--- synthetic builtin-class method stubs. descendant/override_edge (the
--- inheritance transitive closure and derived same-method-different-object
--- triple) are IDB rules inside deadReachRules below, reading `inherits`
--- (objects.ancestor, a faithful projection) as EDB. Must run after
--- PB.Pipeline.DuckDb.initSchema and after objects/procedures/
--- resolved_calls/dw_objects have been populated.
+-- resolved_call_edge/calls/proc_meta as plain DuckDB tables via typed
+-- readers (queryProcedures/queryObjectAncestors/queryDwObjects/
+-- queryResolvedCalls, PB.Pipeline.DuckDb) + pure reshaping functions --
+-- the PB.Analysis.Rules.Schema/Taint pattern (see those modules' own
+-- entries). Every read of `procedures` excludes `confidence =
+-- 'speculative'`, excluding synthetic builtin-class method stubs. Must run
+-- after PB.Pipeline.DuckDb.initSchema and after objects/procedures/
+-- resolved_calls/dw_objects have been populated; must also run AFTER a
+-- test fixture seeds those tables (initDeadReachEdbViews reads them
+-- eagerly, not as a lazily-evaluated SQL view).
 initDeadReachEdbViews :: DuckConn -> IO ()
+procRows          :: [ProcSummaryRow] -> [[Text]]              -- proc: (object, proc), speculative-filtered
+procMetaRows      :: [ProcSummaryRow] -> [[Text]]              -- proc_meta: + proc_type/cyclomatic/lowercased name
+inheritsRows      :: [(Text, Text)] -> [[Text]]                -- inherits: objects.ancestor, renamed (child, parent)
+entryRows         :: [ProcSummaryRow] -> [Taint.ResolvedCallRow] -> [Text] -> [[Text]]
+-- entry: event/on handlers (speculative-filtered) union every (object,
+-- from_proc) whose object is a known DW object.
+callRefRows       :: [Taint.ResolvedCallRow] -> [CallRef]
+-- call_ref: same-object case-insensitive callee-name references (the text
+-- after the last '.' in to_name, lowercased), deduped.
+resolvedCallEdgeRows :: [Taint.ResolvedCallRow] -> [ResolvedCallEdge]
+-- resolved_call_edge: fully cross-object-resolved call sites, NOT deduped
+-- (unlike callRefRows) -- the scoped caller count must count every call
+-- site, not collapse duplicates sharing the same (caller, callee).
+callsRows         :: [CallRef] -> [ProcSummaryRow] -> [ResolvedCallEdge] -> [CallEdge]
+-- calls: CallRef joined against procedures by lowercased name (speculative-
+-- filtered) unioned with ResolvedCallEdge (line column dropped), deduped.
+data CallRef         = CallRef { crCallerObj, crCallerProc, crCalleeName :: !Text }
+data ResolvedCallEdge = ResolvedCallEdge { rceCallerObj, rceCallerProc, rceCalleeObj, rceCalleeProc, rceLine :: !Text }
+data CallEdge        = CallEdge { ceCallerObj, ceCallerProc, ceCalleeObj, ceCalleeProc :: !Text }
+callRefRel, resolvedCallEdgeRel, confidenceRel :: Relation
+
 deadReachRules :: RuleSet
 -- proc_reachable(Object,Proc) :- entry(Object,Proc).
 -- proc_reachable(Object,Proc) :- proc_reachable(CObj,CProc), calls(CObj,CProc,Object,Proc).
 -- proc_reachable(ChildObj,Method) :- proc_reachable(ParentObj,Method), override_edge(ChildObj,Method,ParentObj).
 -- proc_dead(Object,Proc) :- proc(Object,Proc), !proc_reachable(Object,Proc).
--- Materializes to tables "proc_reachable"/"proc_dead". PB.Pipeline.Passes.runPass8
--- runs this INSIDE dead-code detection (before classifying confidence),
--- not in runPass11 (which now only runs reachesRules/liveProcRules).
+-- descendant(Child,Parent) :- inherits(Child,Parent).  -- transitive closure
+-- descendant(Child,GP) :- inherits(Child,Parent), descendant(Parent,GP).
+-- override_edge(ChildObj,Method,ParentObj) :- proc(ParentObj,Method), descendant(ChildObj,ParentObj), proc(ChildObj,Method).
+-- descendant/override_edge are internal IDB rules derived purely from
+-- inherits/proc -- no separate overrides EDB relation or Haskell
+-- pre-computation step exists. Materializes tables "proc_reachable"/
+-- "proc_dead". PB.Pipeline.Passes.runPhaseB's B2 sub-phase runs this
+-- (via allDatalogRuleSets, ordered before callerCountRules/
+-- deadCodeRowsRules/liveProcRules, which all read proc_dead).
+
+liveProcRules :: RuleSet
+-- live_proc(Object,Proc) :- stmt(_,Object,Proc,_), !proc_dead(Object,Proc).
+-- Real stratified-negation demonstration (Plan 161 Open Question 4). Reads
+-- proc_dead (deadReachRules) directly; runPhaseB's B2 orders deadReachRules
+-- first (required -- proc_dead must already exist when this ruleset
+-- exports its EDB facts).
+
+callerCountRules :: RuleSet
+-- has_naive_caller(CalleeName) :- call_ref(_,_,CalleeName).
+-- has_scoped_caller(Obj,Proc) :- resolved_call_edge(_,_,Obj,Proc,_).
+-- caller_count_naive(CalleeName,N) :- has_naive_caller(CalleeName), N = count : { call_ref(_,_,CalleeName) }.
+-- caller_count_scoped(Obj,Proc,N) :- has_scoped_caller(Obj,Proc), N = count : { resolved_call_edge(_,_,Obj,Proc,L) }.
+-- confidence(Object,Proc,"high"|"medium"|"low") -- 3 rules, joined through
+-- proc_meta's lowercased proc_lower column (PowerBuilder identifiers are
+-- case-insensitive; a raw-case join would silently misclassify a dead proc
+-- whose only unresolved caller differs in case).
+
+deadCodeRowsRules :: RuleSet
+-- caller_count_naive_final/caller_count_scoped_final: caller_count_naive/
+-- scoped's real counts, defaulted to 0 for a proc with no matching caller
+-- fact at all (Soufflé aggregates produce no row for an empty group).
+-- dead_code_rows(O,P,PT,Cyc,Lvl,NN,SN) :- proc_dead(O,P), proc_meta(O,P,PT,Cyc,PLower),
+--   confidence(O,P,Lvl), caller_count_naive_final(PLower,NN), caller_count_scoped_final(O,P,SN).
+-- Final projection into the dead_code table is
+-- PB.Pipeline.DuckDb.materializeDeadCode (mechanical TEXT->typed cast, no
+-- further classification -- see that function's own entry).
 ```
 
 ### `PB.Analysis.Rules.Taint` (Plan 161 Phase 2d; step_kind labeling Plan 171b, 2026-07-15; witness reconstruction moved to Haskell 2026-07-16; EDB relations migrated to typed Haskell Plan 175 Phase 3, 2026-07-15)
@@ -1206,6 +1253,7 @@ data CfgBlock = CfgBlock { cbId :: Text, cbStmts :: [Located BodyStmt], cbFirstL
 data CfgEdge  = CfgEdge  { ceSrc :: Text, ceDst :: Text, ceLabel :: Text }
 data Cfg      = Cfg      { cfgEntry :: Text, cfgExits :: [Text], cfgBlocks :: [CfgBlock], cfgEdges :: [CfgEdge] }
 -- Edge labels: "T"/"F" (branches), "" (fallthrough), "loop" (back-edge), "case:N".
+cyclomaticComplexity :: Cfg -> Int   -- E - N + 2
 ```
 
 ### `PB.Analysis.CallClassify`
@@ -1442,49 +1490,6 @@ propagateTaint     :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge] -
 traceTaintPath     :: TaintSource -> TaintSink -> Provenance -> [TaintStep]
 buildTaintAnnotations :: Set (Text,Text,Text) -> [TaintSource] -> [TaintSink] -> [DefRow] -> [UseRow] -> [TaintAnnotation]
 taintAnalysis      :: [ResolvedCallRow] -> [DefRow] -> [UseRow] -> Set Text -> Text -> SrFile -> TaintResult
-```
-
-### `PB.Analysis.DeadCode` (Plan 161 Phase 2b cutover, 2026-07-11)
-
-```haskell
-data ProcInfo = ProcInfo { piObject, piName, piProcType :: Text, piCyclomatic :: Maybe Int }
-data DeadProcedure = DeadProcedure
-  { dpObject, dpName, dpProcType :: Text, dpCyclomatic :: Maybe Int
-  , dpConfidence :: Text   -- "high" | "medium" | "low"
-  , dpCallerCountNaive, dpCallerCountScoped :: Int
-  }
-
-cyclomaticComplexity :: Cfg -> Int   -- E - N + 2, unrelated to the reachability logic below
-
--- computeDeadProcedures (the seeded-BFS reachability computation: same-object
--- + cross-object + override-propagation edges, event/on/DW seeds) is GONE --
--- deleted once its Datalog port (PB.Pipeline.Souffle.deadReachRules --
--- proc_reachable/proc_dead) was proven exact against it on two real corpora
--- (104/104 openpay, 279/279 PowerBuilder-Example), rather than kept as a
--- dual-implementation "oracle": Souffle is already a hard runtime dependency
--- of this pipeline (shelled out to unconditionally since Plan 161 Phase 1),
--- so a redundant Haskell copy bought no dependency-safety margin, only
--- upkeep cost. classifyDeadProcedures is what replaced it -- same output
--- shape, but takes the dead set as an INPUT (read back from proc_dead via
--- PB.Pipeline.DuckDb.queryProcDead) instead of computing it. What's left is
--- genuinely Haskell-only: confidence/caller-count classification is report
--- formatting, not a fixpoint query.
-classifyDeadProcedures
-  :: Set (Text, Text)            -- dead (object, proc) pairs, from proc_dead
-  -> [ProcInfo]                  -- all procedures
-  -> [(Text, Text, Text)]        -- raw calls: (object, from_proc, to_name)
-  -> [(Text, Text, Text, Text)]  -- resolved calls: (object, from_proc, target_object, target_proc)
-  -> [DeadProcedure]
-
--- Every (childObj, method, parentObj) triple where childObj is a transitive
--- descendant of parentObj and both declare a procedure named method --
--- extracted from the old computeDeadProcedures' override-edge flattening
--- (allDescOf/methodsByObj), which stays Haskell/SQL-computed (same
--- treatment `leg` gets for `reaches`) since it's persisted as a fact table
--- (PB.Pipeline.DuckDb.appendProcedureOverrides -> procedure_overrides table)
--- and consumed as PB.Pipeline.Souffle's `overrides` EDB relation, not
--- reimplemented in Datalog itself.
-computeOverrideEdges :: [ProcInfo] -> [(Text, Text)] -> [(Text, Text, Text)]
 ```
 
 ### `PB.Analysis.TypeEnv`
@@ -2005,19 +2010,10 @@ queryProcDefs    :: DuckConn -> IO [Taint.DefRow]
 queryProcUses    :: DuckConn -> IO [Taint.UseRow]
 queryResolvedCalls :: DuckConn -> IO [Taint.ResolvedCallRow]
 queryTaintInputs :: DuckConn -> IO [Taint.TaintFileInputs]  -- includes procedure-less PS objects via objects table
-queryProcInfos   :: DuckConn -> IO [DeadCode.ProcInfo]
--- Filters `confidence != 'speculative'` (excludes synthetic builtin-class
--- method stubs). Feeds Pass 8's overrideEdges computation and
--- PB.Pipeline.Souffle's proc/entry/calls EDB views apply the same filter.
 -- queryDwObjectSet is GONE (Plan 161 Phase 2b cutover, 2026-07-11):
 -- DW-object seeding for dead-code reachability moved entirely into
 -- Souffle's `entry` EDB view (SQL JOIN against dw_objects); no Haskell
 -- consumer of the raw DW-object set remained once that happened.
-queryProcDead :: DuckConn -> IO (Set (Text, Text))
--- Plan 161 Phase 2b cutover: reads back proc_dead (Souffle.deadReachRules'
--- materialized output) so runPass8 can pass it into
--- DeadCode.classifyDeadProcedures instead of computing the dead set in
--- Haskell.
 -- SchemaCategory read-side queries (Plan 148 Phase 1b, 2026-07-07): return
 -- PB.Analysis.SchemaCategory's own read-shape types directly (new FromRow
 -- orphan instances here), consumed by Passes.hs's runPass9.
@@ -2062,12 +2058,11 @@ queryTaintSinkRows   :: DuckConn -> IO [TaintKeyRow]  -- FROM taint_sinks
 appendResolvedTypes, appendResolvedCalls :: DuckConn -> [row] -> IO ()
 appendInterprocEdges, appendProcSummaries :: DuckConn -> [row] -> IO ()
 appendTaintSources, appendTaintSinks, appendTaintPaths, appendTaintAnnotations :: DuckConn -> [row] -> IO ()
-appendDeadCode   :: DuckConn -> [DeadCode.DeadProcedure] -> IO ()
--- procedure_overrides (Plan 161 Phase 2b, 2026-07-11): (child_object,
--- method, parent_object) rows from DeadCode.computeOverrideEdges, read
--- back by Souffle's `overrides` EDB view (initDeadReachEdbViews). Written
--- by runPass8 before deadReachRules runs.
-appendProcedureOverrides :: DuckConn -> [(Text, Text, Text)] -> IO ()
+-- dead_code: no appender -- materializeDeadCode (below, near
+-- materializeDecompositionCoslice) is a pure SQL INSERT...SELECT reading
+-- dead_code_rows (PB.Analysis.Rules.DeadCode.deadCodeRowsRules' Soufflé
+-- output), not a Haskell-row appender. See PB.Analysis.Rules.DeadCode's
+-- own Code Index entry for the rule sets that produce dead_code_rows.
 -- schema_objects/schema_morphisms (Plan 148 Phase 1b, 2026-07-07): written
 -- by runPass9 from SchemaCategory.buildSchema's SchGraph. object_key/
 -- from_key/to_key columns hold SchemaCategory.schObjectKey's canonical
@@ -2076,13 +2071,18 @@ appendProcedureOverrides :: DuckConn -> [(Text, Text, Text)] -> IO ()
 -- for every row -- see SchemaCategory's LegSource entry above.
 appendSchemaObjects   :: DuckConn -> [SchemaCategory.SchObject]   -> IO ()
 appendSchemaMorphisms :: DuckConn -> [SchemaCategory.SchMorphism] -> IO ()
--- decomposition_coslice (Plan 153 D5, 2026-07-07): written by runPass10,
 -- decomposition_coslice (Plan 161 Phase 2c): materialized from the Souffle
 -- path_leg_fwd/path_leg_back tables via materializeDecompositionCoslice.
 -- Tie-break via ROW_NUMBER, leg_source joined from schema_morphisms,
 -- StmtObj-only target filter. Python's get_decomposition_candidates (cli/api)
 -- is the sole reader.
 materializeDecompositionCoslice :: DuckConn -> IO ()
+-- dead_code (Plan 166 Stage 6): mechanical TEXT->typed INSERT...SELECT from
+-- dead_code_rows (PB.Analysis.Rules.DeadCode.deadCodeRowsRules' Soufflé
+-- output) -- no Haskell classification left. A ROW_NUMBER() dedup picks the
+-- highest-cyclomatic overload deterministically when PowerBuilder function
+-- overloading collapses several procedures to one (object, proc_name) row.
+materializeDeadCode :: DuckConn -> IO ()
 -- Generic EDB/IDB bridge (Plan 161, Souffle migration, 2026-07-11):
 -- PB.Pipeline.Souffle needs to read/write relations whose column count is a
 -- runtime value (Relation's relCols), not fixed by a Haskell type -- no
