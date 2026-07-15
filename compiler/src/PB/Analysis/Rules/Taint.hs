@@ -1,27 +1,33 @@
--- | Plan 161 Phase 2d: taint BFS reachability via Souffle.
+-- | Taint-flow EDB relations and Datalog rules, computed via Souffle.
 --
--- Port of 'PB.Analysis.Taint.propagateTaint''s BFS and
--- 'traceTaintPath''s path reconstruction to Souffle Datalog,
--- following the cosliceRules path-witness pattern.
---
--- The four edge rules (intra-proc def-use, arg, return, global-write)
--- are pure structural joins over @proc_defs@\/@proc_uses@\/
--- @interproc_edges@, computed as SQL VIEWs.  The Datalog program
--- computes transitive reachability (@taint_reaches@), shortest
--- distance with choice-domain for cycle termination
--- (@taint_min_dist@), witness legs (@taint_path_leg@), and
--- source→sink confirmation (@taint_confirmed@).
+-- The four edge relations (intra-proc def-use, arg, return, global-write)
+-- are pure structural joins\/filters over @proc_defs@\/@proc_uses@\/
+-- @interproc_edges@, unioned into @taint_edge@. The Datalog program
+-- computes transitive reachability (@taint_reaches@, seeded from
+-- @taint_source@) and source→sink confirmation (@taint_confirmed@).
+-- Witness-path reconstruction (@taint_step_kind@) runs separately in
+-- Haskell -- see 'reconstructTaintStepKind''s own doc comment.
 module PB.Analysis.Rules.Taint
   ( initTaintEdbViews
   , taintRules
   , reconstructTaintStepKind
+  , taintEdgeIntraRows
+  , taintEdgeArgRows
+  , taintEdgeGlobalRows
+  , taintEdgeReturnRows
+  , taintKeyRows
   ) where
 
 import PB.Prelude
 
 import PB.Pipeline.Souffle (Relation (..), symRelation, Rule (..), RuleSet (..))
-import PB.Pipeline.DuckDb (DuckConn, queryTextRows, recreateTextTable, appendTextRows)
-import Database.DuckDB.Simple (Query (..), execute_)
+import PB.Pipeline.DuckDb
+  ( DuckConn, queryTextRows, recreateTextTable, appendTextRows
+  , queryProcDefs, queryProcUses
+  , InterprocEdgeRow (..), queryInterprocEdges
+  , TaintKeyRow (..), queryTaintSourceRows, queryTaintSinkRows
+  )
+import PB.Analysis.Taint qualified as Taint
 
 import qualified Data.HashMap.Strict as HM
 import qualified Data.List           as List
@@ -30,100 +36,115 @@ import qualified Data.Set            as Set
 import qualified Data.Text           as T
 
 -- ---------------------------------------------------------------------------
--- EDB views
+-- EDB relations
 -- ---------------------------------------------------------------------------
 
--- | (Re)create the taint EDB views.  Must run after
+-- | (Re)materialize the taint EDB relations. Must run after
 -- 'PB.Pipeline.Passes.runPass67' populates @proc_defs@\/@proc_uses@\/
 -- @interproc_edges@\/@taint_sources@\/@taint_sinks@.
 --
--- @taint_edge@ is a UNION ALL of four views, each producing
+-- @taint_edge@ is the union of four edge shapes, each producing
 -- @(from_key, to_key, kind)@ where a key is @object::proc::var@.
--- @taint_source@ and @taint_sink@ project the key from the
--- classified source\/sink tables.
+-- @taint_source@\/@taint_sink@ project the key from the classified
+-- source\/sink tables. The four edge lists are combined in memory rather
+-- than each materialized under its own name -- nothing reads them except
+-- via this union.
 initTaintEdbViews :: DuckConn -> IO ()
-initTaintEdbViews conn = for_ views (void . execute_ conn)
+initTaintEdbViews conn = do
+  defs  <- queryProcDefs conn
+  uses  <- queryProcUses conn
+  edges <- queryInterprocEdges conn
+  srcs  <- queryTaintSourceRows conn
+  snks  <- queryTaintSinkRows conn
+  let edgeRows = taintEdgeIntraRows defs uses
+              ++ taintEdgeArgRows edges
+              ++ taintEdgeGlobalRows edges
+              ++ taintEdgeReturnRows uses edges
+  materialize "taint_edge"   ["from_key", "to_key", "kind"] edgeRows
+  materialize "taint_source" ["x"] (taintKeyRows srcs)
+  materialize "taint_sink"   ["x"] (taintKeyRows snks)
   where
-    views :: [Query]
-    views =
-      [ -- 1. Intra-proc def-use edge: a UseRow for var at line L,
-        --    and a DefRow for a DIFFERENT var at the same line L,
-        --    in the same (object, proc).  defsByLine only inserts
-        --    rows with Just line (Taint.hs:689), so d.line IS NOT
-        --    NULL is sufficient.  The uses side's NULL-line rows are
-        --    implicitly excluded by the JOIN condition (u.line = d.line
-        --    is false when either is NULL).
-        "CREATE OR REPLACE VIEW taint_edge_intra AS \
-        \SELECT \
-        \  u.object || '::' || u.proc_name || '::' || u.var_name AS from_key, \
-        \  d.object || '::' || d.proc_name || '::' || d.var_name AS to_key, \
-        \  'def' AS kind \
-        \FROM proc_uses u \
-        \JOIN proc_defs d \
-        \  ON u.object = d.object \
-        \ AND u.proc_name = d.proc_name \
-        \ AND u.line = d.line \
-        \WHERE u.var_name <> d.var_name \
-        \  AND d.line IS NOT NULL"
+    materialize name cols rows = do
+      recreateTextTable conn name cols
+      appendTextRows conn name rows
 
-        -- 2. Arg edge: straight projection of interproc_edges
-        --    WHERE edge_kind = 'arg'.
-      , "CREATE OR REPLACE VIEW taint_edge_arg AS \
-        \SELECT \
-        \  caller_object || '::' || caller_proc || '::' || caller_context AS from_key, \
-        \  callee_object || '::' || callee_proc || '::' || callee_context AS to_key, \
-        \  'arg' AS kind \
-        \FROM interproc_edges \
-        \WHERE edge_kind = 'arg'"
+-- | The @object::proc::var@ key every taint EDB relation joins on.
+taintKey :: Text -> Text -> Text -> Text
+taintKey obj proc var = obj <> "::" <> proc <> "::" <> var
 
-        -- 3. Global write edge: same shape, WHERE edge_kind = 'global_write'.
-      , "CREATE OR REPLACE VIEW taint_edge_global AS \
-        \SELECT \
-        \  caller_object || '::' || caller_proc || '::' || var_name AS from_key, \
-        \  callee_object || '::' || callee_proc || '::' || callee_context AS to_key, \
-        \  'global' AS kind \
-        \FROM interproc_edges \
-        \WHERE edge_kind = 'global_write'"
-
-        -- 4. Return edge: interproc_edges WHERE kind='return' JOIN
-        --    proc_uses WHERE kind='return'.  The interproc_edges row's
-        --    callee_context is the literal "return", not a real var;
-        --    the actual FROM-node var comes from the join against
-        --    proc_uses — propagateOne's returnSeeds requires the
-        --    CURRENTLY TAINTED var to itself have a kind='return' UseRow
-        --    in that proc before firing.
-      , "CREATE OR REPLACE VIEW taint_edge_return AS \
-        \SELECT \
-        \  u.object || '::' || u.proc_name || '::' || u.var_name AS from_key, \
-        \  e.caller_object || '::' || e.caller_proc || '::' || e.caller_context AS to_key, \
-        \  'return' AS kind \
-        \FROM interproc_edges e \
-        \JOIN proc_uses u \
-        \  ON u.object = e.callee_object \
-        \ AND u.proc_name = e.callee_proc \
-        \ AND u.kind = 'return' \
-        \WHERE e.edge_kind = 'return'"
-
-        -- Union all four edge views into one.
-      , "CREATE OR REPLACE VIEW taint_edge AS \
-        \SELECT from_key, to_key, kind FROM taint_edge_intra \
-        \UNION ALL \
-        \SELECT from_key, to_key, kind FROM taint_edge_arg \
-        \UNION ALL \
-        \SELECT from_key, to_key, kind FROM taint_edge_global \
-        \UNION ALL \
-        \SELECT from_key, to_key, kind FROM taint_edge_return"
-
-        -- Source view: key projection from taint_sources.
-      , "CREATE OR REPLACE VIEW taint_source AS \
-        \SELECT DISTINCT object || '::' || proc_name || '::' || var_name AS x \
-        \FROM taint_sources"
-
-        -- Sink view: key projection from taint_sinks.
-      , "CREATE OR REPLACE VIEW taint_sink AS \
-        \SELECT DISTINCT object || '::' || proc_name || '::' || var_name AS x \
-        \FROM taint_sinks"
+-- | Intra-proc def-use edge: a use of one var at line L and a def of a
+-- DIFFERENT var at the same line L, in the same (object, proc). A def with
+-- no recorded line can never join (its line can't equal any use's line); a
+-- use and def sharing both line and var name are the same assignment, not
+-- a flow, so that pair is excluded explicitly.
+taintEdgeIntraRows :: [Taint.DefRow] -> [Taint.UseRow] -> [[Text]]
+taintEdgeIntraRows defs uses =
+  [ [ taintKey (Taint.urObject u) (Taint.urProcName u) (Taint.urVarName u)
+    , taintKey (Taint.drObject d) (Taint.drProcName d) (Taint.drVarName d)
+    , "def"
+    ]
+  | u <- uses
+  , Just line <- [Taint.urLine u]
+  , d <- HM.findWithDefault [] (Taint.urObject u, Taint.urProcName u, line) defsByLine
+  , Taint.urVarName u /= Taint.drVarName d
+  ]
+  where
+    defsByLine :: HM.HashMap (Text, Text, Int) [Taint.DefRow]
+    defsByLine = HM.fromListWith (++)
+      [ ((Taint.drObject d, Taint.drProcName d, line), [d])
+      | d <- defs, Just line <- [Taint.drLine d]
       ]
+
+-- | Arg edge: a straight projection of @interproc_edges@ rows tagged
+-- @edge_kind = "arg"@.
+taintEdgeArgRows :: [InterprocEdgeRow] -> [[Text]]
+taintEdgeArgRows edges =
+  [ [ taintKey (ierCallerObject e) (ierCallerProc e) (ierCallerContext e)
+    , taintKey (ierCalleeObject e) (ierCalleeProc e) (ierCalleeContext e)
+    , "arg"
+    ]
+  | e <- edges, ierEdgeKind e == "arg"
+  ]
+
+-- | Global write edge: same shape as 'taintEdgeArgRows', tagged
+-- @edge_kind = "global_write"@ -- the caller side keys on the written
+-- global's own name rather than a call-site context.
+taintEdgeGlobalRows :: [InterprocEdgeRow] -> [[Text]]
+taintEdgeGlobalRows edges =
+  [ [ taintKey (ierCallerObject e) (ierCallerProc e) (ierVarName e)
+    , taintKey (ierCalleeObject e) (ierCalleeProc e) (ierCalleeContext e)
+    , "global"
+    ]
+  | e <- edges, ierEdgeKind e == "global_write"
+  ]
+
+-- | Return edge: an @interproc_edges@ row tagged @edge_kind = "return"@,
+-- joined against a @proc_uses@ row tagged @kind = "return"@ in the callee.
+-- The @interproc_edges@ row's own callee context is the literal string
+-- "return", not a real variable -- the actual tainted-from node is
+-- whichever var the callee itself uses with kind "return".
+taintEdgeReturnRows :: [Taint.UseRow] -> [InterprocEdgeRow] -> [[Text]]
+taintEdgeReturnRows uses edges =
+  [ [ taintKey (Taint.urObject u) (Taint.urProcName u) (Taint.urVarName u)
+    , taintKey (ierCallerObject e) (ierCallerProc e) (ierCallerContext e)
+    , "return"
+    ]
+  | e <- edges, ierEdgeKind e == "return"
+  , u <- HM.findWithDefault [] (ierCalleeObject e, ierCalleeProc e) returnUsesByCallee
+  ]
+  where
+    returnUsesByCallee :: HM.HashMap (Text, Text) [Taint.UseRow]
+    returnUsesByCallee = HM.fromListWith (++)
+      [ ((Taint.urObject u, Taint.urProcName u), [u])
+      | u <- uses, Taint.urKind u == "return"
+      ]
+
+-- | Distinct @object::proc::var@ keys from a @taint_sources@\/
+-- @taint_sinks@ read -- shared by @taint_source@ and @taint_sink@, which
+-- project the identical key shape from their own tables.
+taintKeyRows :: [TaintKeyRow] -> [[Text]]
+taintKeyRows rows = map (: []) . Set.toList . Set.fromList $
+  [ taintKey (tkrObject r) (tkrProcName r) (tkrVarName r) | r <- rows ]
 
 -- ---------------------------------------------------------------------------
 -- Concrete program
@@ -138,36 +159,25 @@ taintReachesRel  = Relation "taint_reaches"
                      [("x", "symbol"), ("y", "symbol")]
 taintConfirmedRel = symRelation "taint_confirmed" ["s", "t"]
 
--- | The taint Datalog program.
---
--- Forward-only (taint flows source→sink, no backward half unlike
--- cosliceRules).  @taint_min_dist@ uses @choice-domain (s, node)@
--- for cycle termination — same mechanism as cosliceRules' min_dist.
--- @taint_path_leg@ emits witness legs bounded by the shortest-path
--- envelope.  @taint_confirmed@ identifies (source, sink) pairs with
--- any path.
+-- | The taint Datalog program: forward-only reachability (taint flows
+-- source→sink, no backward half unlike cosliceRules) plus source→sink
+-- confirmation. Witness-path reconstruction (@taint_step_kind@) is computed
+-- separately, in Haskell -- see 'reconstructTaintStepKind'.
 taintRules :: RuleSet
 taintRules = RuleSet
   { rsRelations =
       [ taintReachesRel, taintConfirmedRel ]
   , rsRules =
-      [ -- Transitive closure, seeded ONLY from taint_source (not every node
-        -- with an outgoing edge): materializeTaintAnnotations (DuckDb.hs)
-        -- is the sole other consumer of taint_reaches, and it already
-        -- discards every (x, y) row where x isn't a taint_source via its
-        -- own downstream Set.member filter -- so seeding only from
-        -- taint_source computes exactly the same final (x, y) pairs, just
-        -- without wastefully rooting the closure at every other node too.
-        -- Verified byte-identical against the unrestricted version (with
-        -- the old seed's output filtered to x ∈ taint_source) on two
-        -- synthetic fixtures. This is the dominant cost on a real
-        -- 1763-file/300KLOC corpus: on a synthetic 420-source/63,000-edge
-        -- fixture shaped like real code (most tainted locals are dead ends
-        -- that never reach a sink, a few chains do), the OLD unrestricted
-        -- taint_reaches produced 4,756,500 rows (O(chain_length^2) per
-        -- chain, since every node along a chain was ALSO its own separate
-        -- seed) where the source-seeded version produces the 63,000 rows
-        -- actually needed.
+      [ -- Seeded ONLY from taint_source, not every node with an outgoing
+        -- edge: materializeTaintAnnotations (DuckDb.hs) is the sole other
+        -- consumer of taint_reaches, and it already discards every (x, y)
+        -- row where x isn't a taint_source via its own downstream
+        -- Set.member filter -- so this seeding computes exactly the same
+        -- final (x, y) pairs an unrestricted seed would, without rooting
+        -- the closure at every other node too. An unrestricted seed is
+        -- also strictly more expensive: every node along a chain becomes
+        -- its own separate seed, so row count grows with the square of
+        -- chain length rather than linearly.
         Rule "taint_reaches(x, y) :- taint_source(x), taint_edge(x, y, _)"
           [taintReachesRel, taintSourceRel, taintEdgeRel]
       , Rule "taint_reaches(x, z) :- taint_reaches(x, y), taint_edge(y, z, _)"
@@ -190,45 +200,31 @@ taintRules = RuleSet
   }
 
 -- ---------------------------------------------------------------------------
--- Witness-path reconstruction (moved out of Souffle, 2026-07-16)
+-- Witness-path reconstruction
 -- ---------------------------------------------------------------------------
 
--- | Rebuild @taint_step_kind@ in Haskell via one BFS per live source plus a
--- cheap backward walk per confirmed sink, instead of Souffle's
--- @taint_min_dist@\/@taint_path_leg@ per-source shortest-distance fixpoint
--- (PERFORMANCE FIX, 2026-07-16, same production incident as the four
--- @taintRules@ seed-restriction fixes above -- see
--- @doc\/plan\/171-datalog-decision-migration.md@'s Postscript). Materializing
--- a full (source, node) distance table for EVERY live source is inherently
--- O(#live_sources x avg-reachable-set-size), which explodes on a real
--- corpus' shared-utility-layer graph shape regardless of seed restriction: a
--- synthetic 1,800-source\/700-sink hub fixture with only ~11K edges (27x
--- FEWER than the real corpus' 301,754) took 190s\/4.66GB under the
--- fully-fixed Datalog rules, yet @taint_reaches@\/@taint_confirmed@ ALONE
--- (no witness reconstruction) computed the SAME fixture in 0.79s\/41MB --
--- essentially all the cost was witness-path reconstruction, not knowing
--- which (source, sink) pairs are confirmed. This mirrors the pre-Datalog
+-- | Rebuild @taint_step_kind@ via one BFS per live source, shared across
+-- all of that source's confirmed sinks through a parent-pointer map, plus a
+-- cheap backward walk per confirmed (source, sink) pair -- mirrors the
 -- 'PB.Analysis.Taint.propagateTaint'\/'PB.Analysis.Taint.traceTaintPath'
--- split exactly: one BFS per source (O(V+E) each, not a distance table to
--- every reachable node), then a cheap backward walk per confirmed pair. A
--- naive unoptimized Python port of this same one-BFS-per-source-plus-
--- backward-walk shape reconstructed all 646,196 confirmed pairs on that
--- fixture in 31.3s (48us\/pair); this compiled Haskell version, sharing one
--- parent tree across all of a source's sinks (not recomputed per pair), is
--- expected to be faster still.
+-- split: one BFS per source (O(V+E) each, not a distance table to every
+-- reachable node), then a cheap backward walk per confirmed pair.
+-- Materializing a full (source, node) distance table for every live source
+-- instead is inherently O(#live_sources x avg-reachable-set-size), which
+-- dominates cost on a corpus whose taint graph has a shared-utility-layer
+-- shape (many sources funnel through the same hub procedures) -- computing
+-- @taint_reaches@\/@taint_confirmed@ alone (no witness reconstruction) is
+-- orders of magnitude cheaper than adding that per-source distance table
+-- would be.
 --
--- TIE-BREAK NOTE: preserves full per-(source,sink) attribution (kept over
--- collapsing to one path per SINK, per explicit user direction -- a real
--- security-tool product decision, not a perf shortcut) -- but when
--- multiple edges tie for the same BFS distance, this picks the
--- lexicographically smallest (to, kind) at each step (adjacency
--- pre-sorted), a deterministic but not necessarily identical choice to the
--- old Datalog+SQL @ranked_legs@ tie-break (which chose per (source,sink)
--- pair independently, not from one shared per-source tree). Documented
--- cosmetic shape delta, same category Plan 171b already accepted for
--- steps_json content: the confirmed-pair set, path lengths, and step_kind
--- semantics are unaffected -- only WHICH equally-short diamond edge wins
--- when the choice was already arbitrary.
+-- Preserves full per-(source,sink) attribution rather than collapsing to
+-- one path per sink -- every distinct attack vector is reported, a richer
+-- security signal than a single representative path. When multiple edges
+-- tie for the same BFS distance, this picks the lexicographically smallest
+-- @(to, kind)@ pair at each step (adjacency pre-sorted) -- a deterministic
+-- but arbitrary tie-break: the confirmed-pair set, path lengths, and
+-- step_kind semantics are unaffected, only which equally-short diamond edge
+-- is reported as the witness.
 reconstructTaintStepKind :: DuckConn -> IO ()
 reconstructTaintStepKind conn = do
   edgeRows      <- queryTextRows conn "taint_edge" ["from_key", "to_key", "kind"]

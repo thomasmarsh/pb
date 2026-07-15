@@ -234,13 +234,15 @@ datalog-layer.md`), not settled precedent.
    backed by that plan's Phase 1 real-corpus gate; this destination used to
    be "an EDB view" — a `CREATE VIEW` string — before that evidence landed).
    `PB.Analysis.Rules.Schema`'s `legSourceRows`/`stmtRows`/`seedRows` (feeding
-   `querySchemaObjects`/`querySchemaMorphismRows`) and `PB.Analysis.Rules.DeadCode`'s
+   `querySchemaObjects`/`querySchemaMorphismRows`), `PB.Analysis.Rules.DeadCode`'s
    `procRows`/`procMetaRows`/`inheritsRows`/`callRefRows`/`resolvedCallEdgeRows`/
-   `entryRows`/`callsRows` are the reference pattern. `Taint.hs`'s EDB views
-   have not migrated yet (Plan 175 Phase 3, not started) — their
-   `CREATE VIEW` SQL is legacy, not a fresh violation of this rule; do not
-   write a _new_ `CREATE VIEW` for rule-3-shaped logic anywhere in the
-   codebase going forward.
+   `entryRows`/`callsRows`, and `PB.Analysis.Rules.Taint`'s
+   `taintEdgeIntraRows`/`taintEdgeArgRows`/`taintEdgeGlobalRows`/
+   `taintEdgeReturnRows`/`taintKeyRows` are the reference pattern. Every
+   `initXEdbViews` in `PB.Analysis.Rules.*` is now a typed Haskell
+   materializer — no `CREATE VIEW` SQL remains in this layer; do not write
+   a _new_ `CREATE VIEW` for rule-3-shaped logic anywhere in the codebase
+   going forward.
 
 **House rule: EDB reshaping logic may not decide anything.** A typed
 `PB.Analysis.Rules.*` reshaping function (or a not-yet-migrated legacy
@@ -850,9 +852,29 @@ deadReachRules :: RuleSet
 -- not in runPass11 (which now only runs reachesRules/liveProcRules).
 ```
 
-### `PB.Analysis.Rules.Taint` (Plan 161 Phase 2d; step_kind labeling Plan 171b, 2026-07-15; witness reconstruction moved to Haskell 2026-07-16)
+### `PB.Analysis.Rules.Taint` (Plan 161 Phase 2d; step_kind labeling Plan 171b, 2026-07-15; witness reconstruction moved to Haskell 2026-07-16; EDB relations migrated to typed Haskell Plan 175 Phase 3, 2026-07-15)
 
 ```haskell
+-- initTaintEdbViews :: DuckConn -> IO () (re)materializes taint_edge/
+-- taint_source/taint_sink as plain DuckDB tables via typed readers +
+-- pure reshaping functions -- the PB.Analysis.Rules.Schema/DeadCode
+-- pattern (see those modules' own entries). taintEdgeIntraRows joins
+-- queryProcDefs/queryProcUses results on (object, proc_name, line),
+-- excluding same-var pairs and defs with no line. taintEdgeArgRows/
+-- taintEdgeGlobalRows filter queryInterprocEdges's InterprocEdgeRow
+-- results by edge_kind ("arg"/"global_write"). taintEdgeReturnRows joins
+-- InterprocEdgeRow (edge_kind="return") against a proc_uses row
+-- (kind="return") in the callee. taintKeyRows projects+dedups a
+-- TaintKeyRow list (queryTaintSourceRows/queryTaintSinkRows, DuckDb.hs) to
+-- its object::proc::var key -- shared by both taint_source and
+-- taint_sink, which reduce to the identical key shape. The four edge
+-- lists are unioned into taint_edge in memory, not materialized under
+-- their own names -- nothing reads taint_edge_intra/_arg/_global/_return
+-- except via that union. Real-corpus gate MET, 2026-07-15: worktree-diff
+-- against HEAD (454b5e6), openpay taint_paths (25 rows)/taint_annotations
+-- (771 rows) and PowerBuilder-Example taint_paths (1 row)/
+-- taint_annotations (31 rows) all byte-identical.
+
 -- taintRules (RuleSet) computes ONLY the two cheap fixpoint-shaped
 -- relations: taint_reaches(x, y) (transitive closure, seeded from
 -- taint_source) and taint_confirmed(s, t) (source→sink reachability, two
@@ -918,10 +940,10 @@ taintRules :: RuleSet
 -- backfill witnesses incrementally while the UI is running) was discussed
 -- as a fallback if real-corpus numbers make the inline cost too large, but
 -- not implemented -- inline-first was the explicit choice pending a real
--- benchmark. Real-corpus verification (taint_paths/taint_annotations
--- byte-identical modulo the documented tie-break delta, and the actual
--- `pb index` wall-clock/memory number) is still owed, same caveat as the
--- four fixes this supersedes -- not accessible to the assistant.
+-- benchmark. Real-corpus taint_paths/taint_annotations byte-identical
+-- (see this module's own EDB-relations gate note above, which re-runs
+-- this same check); the actual `pb index` wall-clock/memory number on a
+-- production-scale corpus is still owed -- not accessible to the assistant.
 reconstructTaintStepKind :: DuckConn -> IO ()
 ```
 
@@ -2023,6 +2045,19 @@ data ProcSummaryRow = ProcSummaryRow
   , psrCyclomatic :: !(Maybe Int), psrConfidence :: !Text }
 queryProcedures :: DuckConn -> IO [ProcSummaryRow]
 queryDwObjects  :: DuckConn -> IO [Text]  -- "SELECT DISTINCT object FROM dw_objects"
+-- Same lean-reader treatment, feeding PB.Analysis.Rules.Taint's
+-- initTaintEdbViews (see that module's own entry). InterprocEdgeRow omits
+-- interproc_edges' caller_line column -- unread by every taint edge
+-- relation. TaintKeyRow is the shared (object, proc_name, var_name)
+-- projection both taint_sources and taint_sinks reduce to; neither reader
+-- touches file/source_type/sink_type/severity/line.
+data InterprocEdgeRow = InterprocEdgeRow
+  { ierCallerObject, ierCallerProc, ierCalleeObject, ierCalleeProc
+  , ierEdgeKind, ierVarName, ierCallerContext, ierCalleeContext :: !Text }
+queryInterprocEdges :: DuckConn -> IO [InterprocEdgeRow]
+data TaintKeyRow = TaintKeyRow { tkrObject, tkrProcName, tkrVarName :: !Text }
+queryTaintSourceRows :: DuckConn -> IO [TaintKeyRow]  -- FROM taint_sources
+queryTaintSinkRows   :: DuckConn -> IO [TaintKeyRow]  -- FROM taint_sinks
 -- Phase B write appenders:
 appendResolvedTypes, appendResolvedCalls :: DuckConn -> [row] -> IO ()
 appendInterprocEdges, appendProcSummaries :: DuckConn -> [row] -> IO ()

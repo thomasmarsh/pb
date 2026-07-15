@@ -4,6 +4,7 @@ import PB.Prelude
 import PB.Pipeline.Souffle
 import PB.Analysis.Rules.Taint
 import PB.Pipeline.DuckDb
+import PB.Analysis.Taint qualified as Taint
 
 import qualified Data.Text as T
 import Data.List (sortOn)
@@ -329,6 +330,69 @@ tests = testGroup "Souffle.Taint"
           rows <- runStepKind conn
           assertEqual "4 confirmed pairs x 3 rows each = 12 total, no fan-out blowup"
             12 (length rows)
+    ]
+
+  , testGroup "EdbRelations"
+    [ testGroup "taintEdgeIntraRows"
+      [ testCase "different var same line produces a def edge" $
+          let defs = [Taint.DefRow "f" "obj" "proc_a" "ls_b" "b0" 0 (Just 10) "assign"]
+              uses = [Taint.UseRow "f" "obj" "proc_a" "ls_x" "b0" 0 (Just 10) "assign"]
+          in assertEqual "one def edge, keyed use -> def"
+               [["obj::proc_a::ls_x", "obj::proc_a::ls_b", "def"]]
+               (taintEdgeIntraRows defs uses)
+
+      , testCase "same var same line is excluded" $
+          let defs = [Taint.DefRow "f" "obj" "proc_a" "ls_x" "b0" 0 (Just 10) "assign"]
+              uses = [Taint.UseRow "f" "obj" "proc_a" "ls_x" "b0" 0 (Just 10) "assign"]
+          in assertEqual "same-var pair is the assignment itself, not a flow"
+               [] (taintEdgeIntraRows defs uses)
+
+      , testCase "def with no line is excluded" $
+          let defs = [Taint.DefRow "f" "obj" "proc_a" "ls_b" "b0" 0 Nothing "assign"]
+              uses = [Taint.UseRow "f" "obj" "proc_a" "ls_x" "b0" 0 (Just 10) "assign"]
+          in assertEqual "a lineless def can never join a use's line"
+               [] (taintEdgeIntraRows defs uses)
+      ]
+
+    , testGroup "taintEdgeArgRows"
+      [ testCase "arg-kind edge included" $
+          let e = InterprocEdgeRow "obj" "proc_a" "obj" "proc_b" "arg" "ls_b" "ls_b" "ls_y"
+          in assertEqual "" [["obj::proc_a::ls_b", "obj::proc_b::ls_y", "arg"]]
+               (taintEdgeArgRows [e])
+
+      , testCase "non-arg-kind edge excluded" $
+          let e = InterprocEdgeRow "obj" "proc_a" "obj" "proc_b" "global_write" "ls_b" "ls_b" "ls_y"
+          in assertEqual "" [] (taintEdgeArgRows [e])
+      ]
+
+    , testGroup "taintEdgeGlobalRows"
+      [ testCase "global_write-kind edge keyed by var_name, not caller_context" $
+          let e = InterprocEdgeRow "obj" "proc_a" "obj" "proc_b" "global_write" "ls_g" "ls_b" "ls_y"
+          in assertEqual "" [["obj::proc_a::ls_g", "obj::proc_b::ls_y", "global"]]
+               (taintEdgeGlobalRows [e])
+
+      , testCase "non-global_write-kind edge excluded" $
+          let e = InterprocEdgeRow "obj" "proc_a" "obj" "proc_b" "arg" "ls_g" "ls_b" "ls_y"
+          in assertEqual "" [] (taintEdgeGlobalRows [e])
+      ]
+
+    , testGroup "taintEdgeReturnRows"
+      [ testCase "return edge joined against a matching return-kind use at the callee" $
+          let e = InterprocEdgeRow "obj" "proc_a" "obj" "proc_b" "return" "" "ls_call" "return"
+              u = Taint.UseRow "f" "obj" "proc_b" "ls_ret" "b0" 0 (Just 5) "return"
+          in assertEqual "from the callee's return-use, to the caller's call-site context"
+               [["obj::proc_b::ls_ret", "obj::proc_a::ls_call", "return"]]
+               (taintEdgeReturnRows [u] [e])
+
+      , testCase "return edge with no matching return use produces nothing" $
+          let e = InterprocEdgeRow "obj" "proc_a" "obj" "proc_b" "return" "" "ls_call" "return"
+              u = Taint.UseRow "f" "obj" "proc_b" "ls_ret" "b0" 0 (Just 5) "assign"
+          in assertEqual "" [] (taintEdgeReturnRows [u] [e])
+      ]
+
+    , testCase "taintKeyRows: duplicate (object,proc,var) rows collapse to one key" $
+        let rows = [TaintKeyRow "obj" "proc_a" "ls_x", TaintKeyRow "obj" "proc_a" "ls_x"]
+        in assertEqual "" [["obj::proc_a::ls_x"]] (taintKeyRows rows)
     ]
   ]
 

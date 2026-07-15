@@ -78,6 +78,12 @@ module PB.Pipeline.DuckDb
   , queryObjectAncestors
   , queryProcedures
   , queryDwObjects
+  -- Typed EDB-reshaping-layer readers (Taint.hs)
+  , InterprocEdgeRow (..)
+  , queryInterprocEdges
+  , TaintKeyRow (..)
+  , queryTaintSourceRows
+  , queryTaintSinkRows
   -- Phase B appenders
   , appendResolvedTypes
   , appendResolvedCalls
@@ -1176,6 +1182,53 @@ queryDwObjects :: DuckConn -> IO [Text]
 queryDwObjects conn = do
   rows <- query_ conn "SELECT DISTINCT object FROM dw_objects" :: IO [OneText]
   pure [o | OneText o <- rows]
+
+-- | Typed reader over @interproc_edges@, feeding
+-- 'PB.Analysis.Rules.Taint.taintEdgeArgRows'\/'taintEdgeGlobalRows'\/
+-- 'taintEdgeReturnRows'. Omits @caller_line@ -- none of the three consumers
+-- read it, only @caller_context@\/@callee_context@\/@var_name@\/@edge_kind@.
+data InterprocEdgeRow = InterprocEdgeRow
+  { ierCallerObject  :: !Text
+  , ierCallerProc    :: !Text
+  , ierCalleeObject  :: !Text
+  , ierCalleeProc    :: !Text
+  , ierEdgeKind      :: !Text
+  , ierVarName       :: !Text
+  , ierCallerContext :: !Text
+  , ierCalleeContext :: !Text
+  } deriving (Eq, Show)
+
+instance FromRow InterprocEdgeRow where
+  fromRow = InterprocEdgeRow
+    <$> field <*> field <*> field <*> field
+    <*> field <*> field <*> field <*> field
+
+queryInterprocEdges :: DuckConn -> IO [InterprocEdgeRow]
+queryInterprocEdges conn = query_ conn
+  "SELECT caller_object, caller_proc, callee_object, callee_proc, \
+  \edge_kind, var_name, caller_context, callee_context FROM interproc_edges"
+
+-- | Typed reader over @taint_sources@\/@taint_sinks@, feeding
+-- 'PB.Analysis.Rules.Taint.taintKeyRows'. Both tables reduce to the same
+-- (object, proc_name, var_name) key projection under this reader, so one
+-- row type and query shape serves both -- neither touches @file@\/
+-- @source_type@\/@sink_type@\/@severity@\/@line@.
+data TaintKeyRow = TaintKeyRow
+  { tkrObject   :: !Text
+  , tkrProcName :: !Text
+  , tkrVarName  :: !Text
+  } deriving (Eq, Show)
+
+instance FromRow TaintKeyRow where
+  fromRow = TaintKeyRow <$> field <*> field <*> field
+
+queryTaintSourceRows :: DuckConn -> IO [TaintKeyRow]
+queryTaintSourceRows conn = query_ conn
+  "SELECT object, proc_name, var_name FROM taint_sources"
+
+queryTaintSinkRows :: DuckConn -> IO [TaintKeyRow]
+queryTaintSinkRows conn = query_ conn
+  "SELECT object, proc_name, var_name FROM taint_sinks"
 
 -- | Plan 163 Phase 3: same shape/query as 'querySqlCols', reading
 -- 'cat_footprint_columns' instead -- the existing 'FromRow' 'SqlColRow'
