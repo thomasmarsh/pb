@@ -62,13 +62,13 @@ def run_impact(
         placeholders = ", ".join("?" * len(direct_objects))
         inherited = conn.execute(f"""
             WITH RECURSIVE desc_cte AS (
-                SELECT from_object AS obj, to_object AS via, 1 AS depth
+                SELECT child AS obj, parent AS via, 1 AS depth
                 FROM inherits
-                WHERE to_object IN ({placeholders})
+                WHERE parent IN ({placeholders})
                 UNION ALL
-                SELECT i.from_object, dc.via, dc.depth + 1
+                SELECT i.child, dc.via, dc.depth + 1
                 FROM inherits i
-                JOIN desc_cte dc ON i.to_object = dc.obj
+                JOIN desc_cte dc ON i.parent = dc.obj
                 WHERE dc.depth < 15
             )
             SELECT DISTINCT obj, via, min(depth) AS depth

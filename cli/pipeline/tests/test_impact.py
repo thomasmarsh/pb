@@ -24,7 +24,7 @@ def impact_db(tmp_path):
         )
     """)
     conn.execute("""
-        CREATE TABLE inherits (from_object TEXT, to_object TEXT)
+        CREATE TABLE inherits (child TEXT, parent TEXT)
     """)
     conn.execute("INSERT INTO inherits VALUES ('w_child', 'w_base')")
     conn.execute("""
