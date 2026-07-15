@@ -193,6 +193,74 @@ New modules go in the most specific matching directory. If a new layer is needed
 
 ---
 
+## Datalog Rule Placement Discipline (Plan 170)
+
+Read this before writing or reviewing any Souffle EDB view (`initXEdbViews`
+in `PB.Analysis.Rules.*`), materializer SQL (`materialize*` in
+`PB.Pipeline.DuckDb`), or Datalog rule. Governs where logic lives across the
+four surfaces a whole-program analysis touches: compiler phases
+(`PB.Grammar`/`PB.AST`/`PB.Compile`), `PB.Analysis.*` Haskell, EDB-view SQL,
+and Souffle Datalog rules (`PB.Pipeline.Souffle`/`PB.Analysis.Rules.*`).
+
+**History.** The original `PB.Pipeline.Datalog` (a hand-rolled DuckDB
+`WITH RECURSIVE` rule compiler — `stratify`/`compileBody`/`compileRule`,
+since deleted) was built from scratch on a misreading of project direction
+as "avoid Souffle." `PB.Pipeline.Souffle`'s current `Rule`/`RuleSet` IR
+(literal-text rules, a `ruleRefs` list the caller must hand-sync) and the
+EDB-view-heavy pattern in `PB.Analysis.Rules.*` partly inherit that
+detour's shape rather than being chosen specifically for Souffle. Treat
+them as legacy defaults open to revision (see `doc/plan/172-categorical-
+datalog-layer.md`), not settled precedent.
+
+**The three-question placement test.** For any new piece of logic:
+
+1. Is it true of ONE thing in isolation (one AST node/statement/procedure),
+   computable without an unbounded walk over the corpus? → a compiler phase
+   (syntax-only, single-file) or `PB.Analysis.*` Haskell (may need
+   cross-file context — `ControlIndex`/`WorkspaceEnv`/DDL catalog — but
+   still a bounded fold, never a fixpoint). Test with hand-typed HUnit
+   fixtures.
+2. Does answering it require an unbounded walk, a fixpoint, a count,
+   stratified negation, or picking a winner among competing derived facts?
+   → a Souffle Datalog rule. "Picking a winner among competing facts" is
+   the one people miss — that's what `choice-domain` and rule
+   specialization are _for_; it is not a SQL `CASE`'s job. Test via
+   `SouffleTest.hs`-style fixtures against the real `souffle` CLI.
+3. Otherwise — moving an already-computed fact from storage shape into
+   relation shape (rename, cast, static-predicate filter, union of
+   identically-shaped sources) — it's an EDB view.
+
+**House rule: EDB views and materializers may not decide anything.** A
+`CREATE VIEW` in `initXEdbViews`, or a materializer's `INSERT ... SELECT`,
+may only rename, cast, or filter by a static/structural predicate. If the
+SQL needs `CASE`, `ROW_NUMBER`/any window function, or `GROUP BY`/an
+aggregate to produce its answer, that is a decision (question 2's
+territory — a tie-break, a label, a count) and does not belong in
+view/materializer SQL. Move it into a Datalog rule (`choice-domain` for
+tie-breaks, rule specialization for labels, Souffle's own `count :`
+aggregate). This rule exists because every real bug found in the Datalog
+substrate to date — `leg`'s writes-vs-retrieve tie-break,
+`decomposition_coslice`'s direction-interleaved ordinals, `taint_paths`'
+`step_kind` mislabeling of 0-hop paths — lived in exactly this kind of SQL,
+caught only by real-corpus/real-UI spot checks, never by a test that ran
+before the fact. See `doc/plan/171-datalog-decision-migration.md` for the
+concrete migration of the two still-open instances.
+
+**Adversarial fixture requirement.** Any test-fixture set for a
+Datalog-backed relation must cover, not just the "interesting" connected
+case: (a) a duplicate-key collision (two facts competing for the same
+derived key), (b) a 0-hop/degenerate case (source == sink, self-loop), (c)
+a cycle not passing through the seed, where structurally possible for that
+relation. All three shapes have independently caused a real, shipped bug in
+this project and none were caught by the fixtures that existed at the time
+— a new relation's test group is incomplete without them.
+
+**Roadmap.** `doc/plan/170-datalog-discipline.md` is the index (history,
+rationale, and links to the concrete follow-on plans); this section is the
+enforceable summary and takes precedence if the two ever drift.
+
+---
+
 ## Code Index
 
 Maintained here to avoid re-scanning the tree. **Update when exports change.**
