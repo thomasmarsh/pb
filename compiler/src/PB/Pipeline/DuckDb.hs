@@ -1451,13 +1451,19 @@ materializeTaintPaths conn =
       , "  SELECT source_key, sink_key, leg_ord, leg_from, leg_to, leg_kind"
       , "  FROM ranked_legs WHERE rn = 1"
       , "  UNION ALL"
-      , "  SELECT source_key, sink_key,"
-      , "         MAX(leg_ord) + 1 AS leg_ord,"
-      , "         sink_key AS leg_from,"
-      , "         sink_key AS leg_to,"
+      -- Terminal sink row: derive from confirmed (not ranked_legs) so
+      -- every confirmed pair gets exactly one row, even 0-hop pairs
+      -- (source == sink, no taint_path_leg rows).  COALESCE handles
+      -- the zero-leg case: MAX(NULL) = NULL, COALESCE(NULL,-1)+1 = 0.
+      , "  SELECT c.source_key, c.sink_key,"
+      , "         COALESCE(MAX(l.leg_ord), -1) + 1 AS leg_ord,"
+      , "         c.sink_key AS leg_from,"
+      , "         c.sink_key AS leg_to,"
       , "         'sink' AS leg_kind"
-      , "  FROM ranked_legs WHERE rn = 1"
-      , "  GROUP BY source_key, sink_key"
+      , "  FROM confirmed c"
+      , "  LEFT JOIN ranked_legs l"
+      , "    ON l.source_key = c.source_key AND l.sink_key = c.sink_key AND l.rn = 1"
+      , "  GROUP BY c.source_key, c.sink_key"
       , "),"
       , "chains AS ("
       , "  SELECT l.source_key, l.sink_key,"
