@@ -53,10 +53,46 @@ emitProgress v = do
 -- step label (no sub-progress bar), so per-relation granularity keeps the
 -- label current as each rule set's outputs land rather than stalling on a
 -- single blanket label for the whole Datalog run.
+--
+-- CAVEAT (found in production, 2026-07-15): this callback only fires AFTER
+-- a ruleset's single monolithic @souffle@ subprocess exits -- while that
+-- subprocess is mid-flight (which can be minutes on a large corpus, see
+-- 'souffleStart' below), the displayed label is whatever the PREVIOUS
+-- ruleset in 'Souffle.orderRuleSets'\' resolved order last emitted, not
+-- the ruleset actually running. Concretely: 'allDatalogRuleSets' lists
+-- @taintRules@ last, but 'Souffle.orderRuleSets' batches independent
+-- rulesets (no relation-name dependency edge between them) into the same
+-- round in list order -- @taintRules@ has no dependency on any other
+-- ruleset's output, so it lands in ROUND 1 immediately after @legRules@
+-- (verified via @cabal repl@: @orderRuleSets allDatalogRuleSets@ = @[
+-- deadReachRules, callerCountRules, legRules, taintRules,
+-- deadCodeRowsRules, reachesRules, liveProcRules, cosliceRules ]@). A live
+-- run stuck on "Datalog: leg" for 13+ minutes was actually deep inside
+-- @taintRules@ (301,754-row @taint_edge.facts@) the whole time -- only
+-- confirmed via process\/temp-dir inspection, not this progress label. See
+-- 'souffleStart' for the fix, and 'PB.Analysis.Rules.Taint.taintRules'\'
+-- Code Index entry (compiler/CLAUDE.md) for the perf fix this incident
+-- also produced.
 souffleProgress :: Souffle.Relation -> IO ()
 souffleProgress rel = emitProgress (object
   [ "tag" .= ("step" :: Text)
   , "label" .= ("Datalog: " <> Souffle.relName rel)
+  ])
+
+-- | Fires right before each ruleset's @souffle@ subprocess starts (see
+-- 'Souffle.runRuleSetWithStart'), naming which ruleset is about to run and
+-- its EDB relations' exact row counts -- fixes 'souffleProgress'\'s own
+-- staleness caveat above by giving real-time visibility into what's
+-- ACTUALLY executing, not just what last finished.
+souffleStart :: Souffle.RuleSet -> [(Souffle.Relation, Int)] -> IO ()
+souffleStart rs counts = emitProgress (object
+  [ "tag" .= ("step" :: Text)
+  , "label" .= ("Datalog: running ["
+                 <> T.intercalate ", " (map Souffle.relName (Souffle.rsRelations rs))
+                 <> "] (" <> T.intercalate ", "
+                      [ Souffle.relName rel <> ": " <> T.pack (show n) <> " rows"
+                      | (rel, n) <- counts ]
+                 <> ")")
   ])
 
 -- | Characterize @leg_source@'s (x, y) key fan-in before 'SchemaRules.legRules'
@@ -128,7 +164,7 @@ runPhaseB conn mDefaultNamespace = do
   -- only via its wall-clock/memory symptoms.
   reportLegSourceFanout conn
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Datalog analysis" :: Text)])
-  Souffle.runRuleSets souffleProgress conn allDatalogRuleSets
+  Souffle.runRuleSetsWithStart souffleStart souffleProgress conn allDatalogRuleSets
   materializeDeadCode conn
   materializeDecompositionCoslice conn
   materializeTaintPaths conn

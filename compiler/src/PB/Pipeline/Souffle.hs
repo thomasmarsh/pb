@@ -20,8 +20,10 @@ module PB.Pipeline.Souffle
   , sanitizeFactField
   , runRuleSet
   , runRuleSetWith
+  , runRuleSetWithStart
   , orderRuleSets
   , runRuleSets
+  , runRuleSetsWithStart
   ) where
 
 import PB.Prelude
@@ -162,19 +164,41 @@ runRuleSet = runRuleSetWith (\_ -> pure ())
 
 -- | Like 'runRuleSet', but calls the given action just before materializing
 -- each IDB relation's result -- a pipeline pass wires this to its own
--- progress-reporting protocol (see 'PB.Pipeline.Passes.runPass11').
+-- progress-reporting protocol (see 'PB.Pipeline.Passes.runPass11'). A
+-- no-@onStart@ specialization of 'runRuleSetWithStart' below.
 runRuleSetWith :: (Relation -> IO ()) -> DuckConn -> RuleSet -> IO ()
-runRuleSetWith onRelation conn rs =
+runRuleSetWith = runRuleSetWithStart (\_ _ -> pure ())
+
+-- | Like 'runRuleSetWith', but additionally calls @onStart@ with this
+-- 'RuleSet' and its EDB relations' exact row counts, right after fact
+-- files are written but BEFORE the (possibly long-running) @souffle@
+-- subprocess starts -- essentially free (the row count falls out of the
+-- fact-file-writing query already being made), and lets a caller report
+-- what is about to run instead of discovering it only after the fact via
+-- process\/temp-dir inspection. Found necessary in production (2026-07-15):
+-- 'runRuleSets'\' per-relation @onRelation@ callback alone fires only
+-- AFTER a ruleset's single monolithic @souffle@ process exits, so while a
+-- slow ruleset is mid-flight the last-displayed progress label is whichever
+-- relation the PREVIOUS ruleset finished on -- a live run looked stuck on
+-- \"Datalog: leg\" for minutes when the actually-running ruleset (confirmed
+-- via 'orderRuleSets'\' topological batching -- see
+-- 'PB.Pipeline.Passes.souffleProgress'\'s own note) was 'PB.Analysis.Rules.
+-- Taint.taintRules', not 'PB.Analysis.Rules.Schema.legRules' at all.
+runRuleSetWithStart
+  :: (RuleSet -> [(Relation, Int)] -> IO ()) -> (Relation -> IO ()) -> DuckConn -> RuleSet -> IO ()
+runRuleSetWithStart onStart onRelation conn rs =
   withSystemTempDirectory "pb-souffle" $ \dir -> do
     let factsDir = dir </> "facts"
         outDir   = dir </> "out"
         progFile = dir </> "program.dl"
     createDirectoryIfMissing True factsDir
     createDirectoryIfMissing True outDir
-    for_ (edbRelations rs) $ \rel -> do
+    counts <- mapM (\rel -> do
       rows <- queryTextRows conn (relName rel) (colNames rel)
       writeFile (factsDir </> T.unpack (relName rel) <> ".facts")
         (T.unlines [ T.intercalate "\t" (map sanitizeFactField row) | row <- rows ])
+      pure (rel, length rows)) (edbRelations rs)
+    onStart rs counts
     writeFile progFile (compileProgram rs)
     (exitCode, _out, err) <- readProcessWithExitCode "souffle"
       ["-F", factsDir, "-D", outDir, progFile] ""
@@ -281,10 +305,17 @@ orderRuleSets ruleSets = go [] (Set.fromList [0..length ruleSets - 1])
 -- 'error' naming the cyclic rule sets' IDB relations -- this is a static,
 -- programmer-visible configuration error, not a runtime data condition.
 runRuleSets :: (Relation -> IO ()) -> DuckConn -> [RuleSet] -> IO ()
-runRuleSets onRelation conn ruleSets =
+runRuleSets = runRuleSetsWithStart (\_ _ -> pure ())
+
+-- | Like 'runRuleSets', but wires 'runRuleSetWithStart'\'s @onStart@ through
+-- each ruleset in the resolved order -- see that function's own doc comment
+-- for why this exists.
+runRuleSetsWithStart
+  :: (RuleSet -> [(Relation, Int)] -> IO ()) -> (Relation -> IO ()) -> DuckConn -> [RuleSet] -> IO ()
+runRuleSetsWithStart onStart onRelation conn ruleSets =
   case orderRuleSets ruleSets of
     Left cyclic ->
       let cyclicNames = [ T.unpack (relName rel) | rs' <- cyclic, rel <- rsRelations rs' ]
       in error ("PB.Pipeline.Souffle.runRuleSets: dependency cycle among rule sets (IDB relations: "
                 <> show cyclicNames <> ")")
-    Right ordered -> for_ ordered (runRuleSetWith onRelation conn)
+    Right ordered -> for_ ordered (runRuleSetWithStart onStart onRelation conn)

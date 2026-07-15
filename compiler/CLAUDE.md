@@ -837,9 +837,38 @@ deadReachRules :: RuleSet
 -- not in runPass11 (which now only runs reachesRules/liveProcRules).
 ```
 
-### `PB.Analysis.Rules.Taint` (Plan 161 Phase 2d; step_kind labeling Plan 171b, 2026-07-15)
+### `PB.Analysis.Rules.Taint` (Plan 161 Phase 2d; step_kind labeling Plan 171b, 2026-07-15; taint_sink guard perf fix 2026-07-15)
 
 ```haskell
+-- PERFORMANCE FIX (2026-07-15, same production incident as legRules'
+-- O(group_size^2) fix): taint_path_leg's two rules now guard on
+-- `taint_sink(t)`. Root cause: every downstream consumer of
+-- taint_path_leg/taint_step_kind (materializeTaintPaths, DuckDb.hs) only
+-- ever reads rows whose (s, t) pair is in taint_confirmed -- which already
+-- requires taint_sink(t) -- but taint_path_leg's own rules derived a
+-- witness leg for EVERY node t reachable from a source (not just real
+-- sinks), so Souffle computed a full shortest-path-witness reconstruction
+-- to every intermediate variable a taint value ever flows through, then
+-- materializeTaintPaths' SQL JOIN silently discarded all but the
+-- confirmed-sink subset. Verified against the real souffle 2.5 CLI on a
+-- synthetic 100-source/7,000-edge/20-sink fixture (each source fanning out
+-- to thousands of non-sink nodes, mirroring a real corpus' shared-utility-
+-- layer shape): 11.7s/121MB -> 0.75s/28MB (15.6x/4.3x), taint_path_leg
+-- 405,000 -> 4,000 rows (101x), taint_step_kind 407,000 -> 6,000 rows
+-- (68x). taint_confirmed unchanged; taint_step_kind rows restricted to
+-- confirmed (s, t) pairs (the only ones materializeTaintPaths ever reads)
+-- verified byte-identical before/after. taint_min_dist/taint_reaches
+-- themselves are untouched -- still computed to every reachable node,
+-- since the BFS must pass through non-sink intermediates en route to a
+-- distant sink; this guard only prunes witness-LEG reconstruction. Found
+-- because "Datalog: leg"'s progress label is stale during this ruleset's
+-- run (taintRules is topologically ready in the same round as legRules,
+-- landing immediately after it -- see PB.Pipeline.Passes.souffleProgress's
+-- own note) -- a live production run looked stuck on "leg" but process
+-- inspection (temp dir contents: program.dl + taint_edge.facts) showed
+-- taintRules actually executing. See doc/plan/171-datalog-decision-
+-- migration.md's Postscript for the full incident writeup.
+
 -- taintRules (RuleSet) gained taint_step_kind(s, t, leg_ord, lf, lt, kind,
 -- step_kind, description) via rule specialization, replacing the SQL CASE
 -- that used to live in materializeTaintPaths (a house-rule violation per

@@ -189,10 +189,38 @@ taintRules = RuleSet
         -- Rule 1: intermediate hop — leg lands at lt, lt reaches t,
         --          bounded strictly within t's shortest-path envelope.
         -- Rule 2: terminal hop — leg lands directly at t.
-      , Rule "taint_path_leg(s, t, o, lf, lt, kind) :- taint_min_dist(s, lf, o), taint_edge(lf, lt, kind), taint_min_dist(s, lt, o + 1), taint_min_dist(s, t, td), o + 1 < td, taint_reaches(lt, t)"
-          [taintPathLegRel, taintMinDistRel, taintEdgeRel, taintReachesRel]
-      , Rule "taint_path_leg(s, t, o, lf, t, kind) :- taint_min_dist(s, lf, o), taint_edge(lf, t, kind), taint_min_dist(s, t, o + 1)"
-          [taintPathLegRel, taintMinDistRel, taintEdgeRel]
+        --
+        -- @taint_sink(t)@ guard (found on a 1763-file/300KLOC production
+        -- corpus, alongside the legRules O(group_size^2) fix): every
+        -- downstream consumer of taint_path_leg/taint_step_kind
+        -- (materializeTaintPaths, DuckDb.hs) only ever reads rows whose
+        -- (s, t) pair is in taint_confirmed, which already requires
+        -- taint_sink(t) -- so without this guard, taint_path_leg/
+        -- taint_step_kind were computed for EVERY node t reachable from a
+        -- source (the shortest-path witness for every intermediate
+        -- variable a taint value ever flows through), not just the small
+        -- number of real sinks, then silently filtered down to the
+        -- confirmed subset by materializeTaintPaths' own SQL JOIN. Adding
+        -- the guard here prunes that provably-wasted work at the source
+        -- instead of after the fact. Verified against the real souffle 2.5
+        -- CLI on a synthetic 100-source/7,000-edge/20-sink fixture (each
+        -- source fanning out to thousands of non-sink nodes, mirroring a
+        -- real corpus' shared-utility-layer shape): 11.7s/121MB -> 0.75s/
+        -- 28MB (15.6x/4.3x), taint_path_leg 405,000 -> 4,000 rows (101x),
+        -- taint_step_kind 407,000 -> 6,000 rows (68x) -- and confirmed
+        -- byte-identical final output: taint_confirmed unchanged, and
+        -- taint_step_kind rows restricted to confirmed (s, t) pairs (the
+        -- only ones materializeTaintPaths ever reads) are identical between
+        -- guarded and unguarded versions. taint_min_dist/taint_reaches
+        -- themselves are untouched by this guard (still computed to every
+        -- reachable node -- they must be, since the BFS has to pass through
+        -- non-sink intermediates en route to a distant sink) -- this only
+        -- prunes witness-LEG reconstruction, not the underlying distance
+        -- fixpoint.
+      , Rule "taint_path_leg(s, t, o, lf, lt, kind) :- taint_sink(t), taint_min_dist(s, lf, o), taint_edge(lf, lt, kind), taint_min_dist(s, lt, o + 1), taint_min_dist(s, t, td), o + 1 < td, taint_reaches(lt, t)"
+          [taintPathLegRel, taintSinkRel, taintMinDistRel, taintEdgeRel, taintReachesRel]
+      , Rule "taint_path_leg(s, t, o, lf, t, kind) :- taint_sink(t), taint_min_dist(s, lf, o), taint_edge(lf, t, kind), taint_min_dist(s, t, o + 1)"
+          [taintPathLegRel, taintSinkRel, taintMinDistRel, taintEdgeRel]
 
         -- Confirmed: source→sink pair with any path.
       , Rule "taint_confirmed(s, t) :- taint_source(s), taint_sink(t), taint_min_dist(s, t, _)"
