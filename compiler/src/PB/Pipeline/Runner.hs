@@ -26,7 +26,9 @@ import PB.AST.SourceFile
 import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.Cfg    (buildCfg, cyclomaticComplexity)
 import PB.Compile.Flatten
-  ( compileProcedureViaEffTerm, compileProcedureToEff, compileProcedureToWiring )
+  ( compileProcedureToEff
+  , buildEffGraphNamed, buildEffGraphWiring )
+import PB.Compile.InstrTypes (linearize)
 import PB.Analysis.CallClassify (collectBodyLocals)
 import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
 
@@ -254,8 +256,9 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns m
         procs =
           [ let cfg      = buildCfg body
                 cfgJs    = jsonText (toJSON cfg)
-                instrJs    = jsonText (toJSON (compileProcedureViaEffTerm (mkProcEnv instrParams) userFns body))
-                wiringJs = jsonText (toJSON (compileProcedureToWiring (mkProcEnv instrParams) userFns body))
+                effTerm  = compileProcedureToEff (mkProcEnv instrParams) userFns body
+                instrJs    = jsonText (toJSON (linearize (buildEffGraphNamed effTerm)))
+                wiringJs = jsonText (toJSON (buildEffGraphWiring effTerm))
                 flow     = (fp, obj, pName, Dataflow.analyzeProcedure obj pName cfg)
                 cyclo    = cyclomaticComplexity cfg
                 footprintCtx = FunctorCtx
@@ -265,8 +268,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns m
                   , fcControlBindings = controlBindings'
                   }
                 catFpRows = mapMaybe morphismToColRow
-                  (Set.toList (foldSchFootprintEff footprintCtx
-                    (compileProcedureToEff (mkProcEnv instrParams) userFns body)))
+                  (Set.toList (foldSchFootprintEff footprintCtx effTerm))
             in ( ProcRow fp obj pName pType sLine eLine cfgJs instrJs wiringJs
                    taintParams retType (Just cyclo) confidence
                , flow
