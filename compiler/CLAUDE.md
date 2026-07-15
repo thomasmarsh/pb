@@ -228,23 +228,34 @@ datalog-layer.md`), not settled precedent.
    `SouffleTest.hs`-style fixtures against the real `souffle` CLI.
 3. Otherwise — moving an already-computed fact from storage shape into
    relation shape (rename, cast, static-predicate filter, union of
-   identically-shaped sources) — it's an EDB view.
+   identically-shaped sources) — it's a typed `PB.Analysis.Rules.*` Haskell
+   function, materialized into a plain DuckDB table via
+   `recreateTextTable`/`appendTextRows` (amended 2026-07-15 per Plan 175,
+   backed by that plan's Phase 1 real-corpus gate; this destination used to
+   be "an EDB view" — a `CREATE VIEW` string — before that evidence landed).
+   `PB.Analysis.Rules.Schema`'s `legSourceRows`/`stmtRows`/`seedRows` (feeding
+   `querySchemaObjects`/`querySchemaMorphismRows`) is the reference pattern.
+   `DeadCode.hs`'s and `Taint.hs`'s EDB views have not migrated yet (Plan
+   175 Phases 2/3, not started) — their `CREATE VIEW` SQL is legacy, not a
+   fresh violation of this rule; do not write a _new_ `CREATE VIEW` for
+   rule-3-shaped logic anywhere in the codebase going forward.
 
-**House rule: EDB views and materializers may not decide anything.** A
-`CREATE VIEW` in `initXEdbViews`, or a materializer's `INSERT ... SELECT`,
+**House rule: EDB reshaping logic may not decide anything.** A typed
+`PB.Analysis.Rules.*` reshaping function (or a not-yet-migrated legacy
+`CREATE VIEW` in `initXEdbViews`, or a materializer's `INSERT ... SELECT`)
 may only rename, cast, or filter by a static/structural predicate. If the
-SQL needs `CASE`, `ROW_NUMBER`/any window function, or `GROUP BY`/an
-aggregate to produce its answer, that is a decision (question 2's
-territory — a tie-break, a label, a count) and does not belong in
-view/materializer SQL. Move it into a Datalog rule (`choice-domain` for
-tie-breaks, rule specialization for labels, Souffle's own `count :`
-aggregate). This rule exists because every real bug found in the Datalog
-substrate to date — `leg`'s writes-vs-retrieve tie-break,
-`decomposition_coslice`'s direction-interleaved ordinals, `taint_paths`'
-`step_kind` mislabeling of 0-hop paths — lived in exactly this kind of SQL,
-caught only by real-corpus/real-UI spot checks, never by a test that ran
-before the fact. See `doc/plan/171-datalog-decision-migration.md` for the
-concrete migration of the two still-open instances.
+logic needs a `CASE`/branch, `ROW_NUMBER`/any window function, or a
+`GROUP BY`/aggregate to produce its answer, that is a decision (question 2's
+territory — a tie-break, a label, a count) and does not belong here. Move it
+into a Datalog rule (`choice-domain` for tie-breaks, rule specialization for
+labels, Souffle's own `count :` aggregate). This rule exists because every
+real bug found in the Datalog substrate to date — `leg`'s writes-vs-retrieve
+tie-break, `decomposition_coslice`'s direction-interleaved ordinals,
+`taint_paths`' `step_kind` mislabeling of 0-hop paths — lived in exactly
+this kind of logic, caught only by real-corpus/real-UI spot checks, never by
+a test that ran before the fact. See
+`doc/plan/171-datalog-decision-migration.md` for the concrete migration of
+the two still-open instances.
 
 **Adversarial fixture requirement.** Any test-fixture set for a
 Datalog-backed relation must cover, not just the "interesting" connected
