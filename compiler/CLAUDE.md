@@ -837,9 +837,42 @@ deadReachRules :: RuleSet
 -- not in runPass11 (which now only runs reachesRules/liveProcRules).
 ```
 
-### `PB.Analysis.Rules.Taint` (Plan 161 Phase 2d; step_kind labeling Plan 171b, 2026-07-15; taint_sink guard + taint_reaches/taint_reaches_sink split perf fixes 2026-07-15)
+### `PB.Analysis.Rules.Taint` (Plan 161 Phase 2d; step_kind labeling Plan 171b, 2026-07-15; taint_sink guard + taint_reaches/taint_reaches_sink split + taint_source_live seed restriction perf fixes 2026-07-15)
 
 ```haskell
+-- PERFORMANCE FIX 3 (2026-07-15, same incident, found because fix 2 below
+-- stabilized memory -- 4.6GB+ climbing -> 406MB stable -- but runtime was
+-- STILL the dominant pipeline cost at 6m45s+, live-confirmed via the new
+-- souffleStart event showing the real ruleset/EDB counts, not a stale
+-- label): taint_min_dist's per-source BFS seeded from EVERY taint_source
+-- (1,815 on the real corpus), most of which never reach any sink at all
+-- and so contribute zero rows to taint_path_leg/taint_confirmed/
+-- taint_step_kind regardless. taint_source_live(s) :- taint_confirmed(s,
+-- _) identifies sources with at least one confirmed sink; taint_min_dist
+-- now seeds from taint_source_live instead of taint_source, pruning the
+-- wasted per-source BFS for dead-end sources entirely. This ALSO required
+-- moving taint_confirmed's own definition to derive from taint_reaches
+-- (cheap: already source-seeded, plain existence join) instead of
+-- taint_min_dist -- otherwise taint_min_dist -> taint_source_live ->
+-- taint_confirmed -> taint_min_dist would be a rule cycle. Verified safe
+-- via a full grep of compiler/ and cli/: unlike taint_reaches (which
+-- materializeTaintAnnotations reads), taint_min_dist has NO consumer
+-- outside this ruleset -- restricting its seed cannot narrow any external
+-- contract. Verified on the same synthetic 420-source dead-chain fixture:
+-- 0.82s -> 0.38s (2.2x), taint_min_dist 63,420 -> 3,020 rows (21x, only the
+-- 20 live sources seeded) -- confirmed/step_kind/taint_reaches all
+-- byte-identical to the pre-fix baseline. REGRESSION CAUGHT AND FIXED
+-- before landing: taint_reaches has no reflexive base case (only derives
+-- via 1+ real edges), unlike the old taint_min_dist-based taint_confirmed
+-- definition, which got the 0-hop (source == sink, same variable) case for
+-- free from taint_min_dist(s, s, 0)'s own seed -- my synthetic fixtures
+-- never exercised that degenerate case, so this broke the EXISTING
+-- "0-hop source-equals-sink pair" SouffleTaintTest.hs fixture (a real,
+-- pre-existing adversarial test, not one added this session) until a
+-- second explicit rule, `taint_confirmed(s, s) :- taint_source(s),
+-- taint_sink(s)`, restored it. 1424/1424 tests pass, all 14
+-- Souffle.Taint real-CLI cases (including this one) green.
+--
 -- PERFORMANCE FIX 2 (2026-07-15, same incident, found because fix 1 below
 -- cut memory (4.6GB -> 406MB stable) but NOT runtime, still 6m45s+):
 -- taint_reaches' seed is now taint_source only (was: every node with an
