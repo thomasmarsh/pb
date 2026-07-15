@@ -8,13 +8,16 @@ module PB.Analysis.Rules.Schema
   , reachesRules
   , cosliceRules
   , legRules
+  , LegSourceFanout (..)
+  , legSourceFanout
   ) where
 
 import PB.Prelude
 
 import PB.Pipeline.Souffle (Relation (..), symRelation, Rule (..), RuleSet (..))
 import PB.Pipeline.DuckDb (DuckConn)
-import Database.DuckDB.Simple (Query (..), execute_)
+import Database.DuckDB.Simple (Query (..), execute_, query_)
+import Database.DuckDB.Simple.FromRow (FromRow (..), field)
 
 -- ---------------------------------------------------------------------------
 -- EDB views over existing DuckDB tables (no fact marshalling in DuckDB
@@ -85,6 +88,13 @@ legRawRel :: Relation
 legRawRel = Relation "leg_raw"
   [("x", "symbol"), ("y", "symbol"), ("kind", "symbol"), ("priority", "number")]
 
+legP0Rel, legP0KeyRel, legP1Rel, legP1KeyRel, legP2Rel :: Relation
+legP0Rel    = symRelation "leg_p0"     ["x", "y", "kind"]
+legP0KeyRel = symRelation "leg_p0_key" ["x", "y"]
+legP1Rel    = symRelation "leg_p1"     ["x", "y", "kind"]
+legP1KeyRel = symRelation "leg_p1_key" ["x", "y"]
+legP2Rel    = symRelation "leg_p2"     ["x", "y", "kind"]
+
 -- | Plan 171a: the writes-vs-retrieve tie-break for @leg@, moved out of
 -- 'initEdbViews' SQL (a ROW_NUMBER/CASE pair -- a house-rule violation, see
 -- 'leg_source''s own comment above) into Datalog. 'leg_raw' tags each raw
@@ -93,14 +103,50 @@ legRawRel = Relation "leg_raw"
 -- positional SQL @CASE@): @writes@ -> 0, @retrieve@ -> 1, everything else
 -- tied at 2 (matches the old CASE's precedence exactly; only (x, y) pairs
 -- with >1 distinct kind ever compete -- real corpus: 559 pairs, all
--- writes-vs-retrieve). @leg@ then picks the minimum-priority tuple per key
--- via the same @min@-aggregate + @choice-domain@ idiom 'cosliceRules' uses
--- for @min_dist@/@min_dist_back@ -- verified deterministic across repeated
--- runs against the real @souffle@ binary, including on a 0-hop self-loop
--- collision (x == y) and on a tie among two same-priority "other" kinds.
+-- writes-vs-retrieve).
+--
+-- Performance rewrite (found on a 1763-file\/300KLOC production corpus, not
+-- the smaller openpay\/PowerBuilder-Example dev corpora 171a was gated
+-- against): the original @leg@ rule computed the tie-break with an inline
+-- correlated aggregate, @leg(x, y, kind) :- leg_raw(x, y, kind, p), p = min
+-- p2 : { leg_raw(x, y, _, p2) }@. Verified directly against the real
+-- @souffle@ 2.5 CLI on synthetic fixtures: Souffle re-evaluates that
+-- aggregate once per MATCHING ROW of the first body literal, not once per
+-- distinct (x, y) key, so its cost is O(group_size^2) per key -- 200,000
+-- rows spread over 200,000 near-unique keys ran in 0.34s, but the exact
+-- same row count concentrated into 200 keys (1,000 duplicate rows/key) took
+-- 4.4s (13x), and concentrating further to 40 keys x 5,000 rows/key scaled
+-- the instruction count by another ~4.9x -- textbook quadratic-in-group-size
+-- blowup. 'leg_source' is deliberately undeduped by design (see its own
+-- comment above), so this is purely a function of how much duplicate\/
+-- near-duplicate fan-in a real corpus has on one (x, y) edge (e.g. a
+-- widely-shared FK edge, or the same statement\/column touch found
+-- independently by both @inSqlColumns@ and @inCatFootprintColumns@) --
+-- absent from the small dev corpora, plausible at 12x+ scale. Materializing
+-- the aggregate into its own relation before joining (the usual Souffle
+-- "aggregate-then-join" fix) does NOT help -- verified empirically
+-- identical instruction count, since Souffle still fires the aggregate once
+-- per row, not once per key.
+--
+-- Fix: a priority cascade via stratified negation + per-tier
+-- @choice-domain@ (the same negation mechanism
+-- 'PB.Analysis.Rules.DeadCode.liveProcRules' already uses, not a new
+-- technique) -- no aggregate at all. @leg_p0@\/@leg_p1@\/@leg_p2@ each pick
+-- (via their own @choice-domain@) one tuple per key at their own priority
+-- tier, gated by the NEGATED existence of any higher-priority tuple for
+-- that key (@leg_p1_key@\/@leg_p2@'s @!leg_p0_key@\/@!leg_p1_key@ guards);
+-- @leg@ unions the three tiers. An existence check is a plain indexed
+-- semi-join, not a full-group rescan, so cost is linear in 'leg_raw' size
+-- regardless of key fan-in. Verified byte-identical @leg@ output against
+-- the old aggregate rule on a 5%-collision fixture and an adversarial
+-- battery (writes\/retrieve collision, retrieve\/fk collision, a
+-- same-priority tie between two distinct \"other\" kinds, a 0-hop self-loop,
+-- a 3-way collision) -- and a ~220x instruction-count reduction on the
+-- pathological 40x5,000 fixture above, with no regression on the
+-- near-unique-key case (0.60s -> 0.32s).
 legRules :: RuleSet
 legRules = RuleSet
-  { rsRelations = [legRawRel, legRel]
+  { rsRelations = [legRawRel, legP0Rel, legP0KeyRel, legP1Rel, legP1KeyRel, legP2Rel, legRel]
   , rsRules =
       [ Rule "leg_raw(x, y, kind, 0) :- leg_source(x, y, kind), kind = \"writes\""
              [legRawRel, legSourceRel]
@@ -108,11 +154,63 @@ legRules = RuleSet
              [legRawRel, legSourceRel]
       , Rule "leg_raw(x, y, kind, 2) :- leg_source(x, y, kind), kind != \"writes\", kind != \"retrieve\""
              [legRawRel, legSourceRel]
-      , Rule "leg(x, y, kind) :- leg_raw(x, y, kind, p), p = min p2 : { leg_raw(x, y, _, p2) }"
-             [legRel, legRawRel]
+
+      , Rule "leg_p0(x, y, kind) :- leg_raw(x, y, kind, 0)"
+             [legP0Rel, legRawRel]
+      , Rule "leg_p0_key(x, y) :- leg_p0(x, y, _)"
+             [legP0KeyRel, legP0Rel]
+
+      , Rule "leg_p1(x, y, kind) :- leg_raw(x, y, kind, 1), !leg_p0_key(x, y)"
+             [legP1Rel, legRawRel, legP0KeyRel]
+      , Rule "leg_p1_key(x, y) :- leg_p1(x, y, _)"
+             [legP1KeyRel, legP1Rel]
+
+      , Rule "leg_p2(x, y, kind) :- leg_raw(x, y, kind, 2), !leg_p0_key(x, y), !leg_p1_key(x, y)"
+             [legP2Rel, legRawRel, legP0KeyRel, legP1KeyRel]
+
+      , Rule "leg(x, y, kind) :- leg_p0(x, y, kind)" [legRel, legP0Rel]
+      , Rule "leg(x, y, kind) :- leg_p1(x, y, kind)" [legRel, legP1Rel]
+      , Rule "leg(x, y, kind) :- leg_p2(x, y, kind)" [legRel, legP2Rel]
       ]
-  , rsChoiceDomains = [ ("leg", ["x", "y"]) ]
+  , rsChoiceDomains =
+      [ ("leg_p0", ["x", "y"])
+      , ("leg_p1", ["x", "y"])
+      , ("leg_p2", ["x", "y"])
+      , ("leg", ["x", "y"])
+      ]
   }
+
+-- | Fan-in characterization for 'leg_source': total row count, distinct
+-- (x, y) key count, and the largest number of rows sharing one key. A
+-- single cheap DuckDB @GROUP BY@ pass (milliseconds even at production
+-- scale) -- logged before 'legRules' runs so a corpus with pathological
+-- duplicate fan-in on one schema edge is visible immediately, rather than
+-- discovered only via a slow\/memory-hungry Souffle run. Kept even after
+-- the O(group_size^2) 'legRules' fix above: a large 'lsfMaxGroupSize' is
+-- still worth an operator's attention on its own terms -- 'leg_source' has
+-- only ~3 distinct @kind@ buckets, so hundreds/thousands of rows sharing
+-- one exact (x, y) pair signals real duplication in the upstream extractors
+-- (e.g. the same statement\/column touch double-counted by two independent
+-- extraction techniques), not legitimate diversity.
+data LegSourceFanout = LegSourceFanout
+  { lsfTotalRows    :: !Int
+  , lsfDistinctKeys :: !Int
+  , lsfMaxGroupSize :: !Int
+  } deriving (Eq, Show)
+
+newtype FanoutRow = FanoutRow LegSourceFanout
+
+instance FromRow FanoutRow where
+  fromRow = (\t k m -> FanoutRow (LegSourceFanout t k m)) <$> field <*> field <*> field
+
+legSourceFanout :: DuckConn -> IO LegSourceFanout
+legSourceFanout conn = do
+  rows <- query_ conn
+    "WITH g AS (SELECT x, y, COUNT(*) AS cnt FROM leg_source GROUP BY x, y) \
+    \SELECT (SELECT COUNT(*) FROM leg_source), COUNT(*), COALESCE(MAX(cnt), 0) FROM g"
+  pure $ case rows of
+    [FanoutRow f] -> f
+    _             -> LegSourceFanout 0 0 0
 
 -- | @reaches(X,Y) :- leg(X,Y,_).@
 -- @reaches(X,Z) :- reaches(X,Y), leg(Y,Z,_).@

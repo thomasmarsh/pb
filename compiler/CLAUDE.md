@@ -730,14 +730,64 @@ legRules :: RuleSet
 -- the old SQL-view tie-break. leg_raw(x, y, kind, priority) tags each raw
 -- row via rule specialization on a literal kind guard (writes -> 0,
 -- retrieve -> 1, else -> 2 -- an explicit priority FACT per rule, not a
--- positional CASE); leg itself picks the min-priority tuple per (x, y) via
--- the same min-aggregate + choice-domain idiom cosliceRules uses for
--- min_dist/min_dist_back. Verified deterministic against the real souffle
--- binary across repeated runs, including a 0-hop self-loop (x == y)
--- collision. Materializes to table "leg"; runRuleSets orders it before
--- reachesRules (which reads leg as EDB). Real-corpus gate: openpay
+-- positional CASE). Materializes to table "leg"; runRuleSets orders it
+-- before reachesRules (which reads leg as EDB). Real-corpus gate: openpay
 -- decomposition_coslice byte-identical (5261/5261 rows) pre- vs
--- post-migration.
+-- post-migration (171a original gate, still holds).
+--
+-- PERFORMANCE REWRITE (2026-07-15, found on a 1763-file/300KLOC production
+-- corpus): leg's original tie-break used an inline correlated aggregate,
+-- `leg(x,y,kind) :- leg_raw(x,y,kind,p), p = min p2 : { leg_raw(x,y,_,p2) }`
+-- (the same min-aggregate + choice-domain idiom cosliceRules uses for
+-- min_dist/min_dist_back). Verified against the real souffle 2.5 CLI on
+-- synthetic fixtures: Souffle re-evaluates that aggregate once per MATCHING
+-- ROW of the first body literal, not once per distinct (x, y) key, making
+-- cost O(group_size^2) per key -- fine when leg_source (deliberately
+-- undeduped, see initEdbViews above) has small collision groups (the
+-- openpay/PowerBuilder-Example dev corpora this was validated against), but
+-- catastrophic when a real corpus has large duplicate/near-duplicate fan-in
+-- on one (x, y) edge (confirmed synthetically: identical total row count,
+-- concentrated into fewer keys, cost scaled with the SQUARE of group size --
+-- 13x slower at 200x1000 vs 200000x~1, another ~4.9x at 40x5000). Splitting
+-- the aggregate into its own relation before joining (the usual Souffle
+-- "aggregate-then-join" fix) does NOT help -- verified empirically identical
+-- cost, since Souffle still fires the aggregate once per row, not once per
+-- key. Root cause of a live incident: "Datalog: leg" stalled 13+ minutes and
+-- 19.5GB+ resident (climbing, no plateau) on a real production corpus,
+-- vs. ~2 minutes/3GB for the whole prior (pre-171a, SQL-view-based) index.
+--
+-- Fix: leg is now a priority CASCADE via stratified negation + per-tier
+-- choice-domain, no aggregate -- leg_p0/leg_p1/leg_p2 relations each pick
+-- one tuple per key at their own priority tier (own choice-domain (x, y)),
+-- gated by the negated existence of any higher-priority tuple for that key
+-- (leg_p1's `!leg_p0_key(x,y)`, leg_p2's `!leg_p0_key(x,y), !leg_p1_key(x,y)`
+-- -- leg_p0_key/leg_p1_key are single-column existence projections of
+-- leg_p0/leg_p1); leg unions the three tiers. Same stratified-negation
+-- mechanism PB.Analysis.Rules.DeadCode.liveProcRules already uses -- not a
+-- new technique. An existence check is a plain indexed semi-join, so cost
+-- is linear in leg_raw size regardless of key fan-in. Verified byte-
+-- identical leg output vs. the old aggregate rule (5%-collision fixture +
+-- an adversarial battery: writes/retrieve collision, retrieve/fk collision,
+-- a same-priority tie between two distinct "other" kinds, a 0-hop
+-- self-loop, a 3-way collision) and a ~220x instruction-count reduction on
+-- the pathological 40x5,000 fixture, with no regression on the
+-- near-unique-key case. rsRelations now [legRawRel, legP0Rel, legP0KeyRel,
+-- legP1Rel, legP1KeyRel, legP2Rel, legRel]; rsChoiceDomains covers all of
+-- leg_p0/leg_p1/leg_p2/leg.
+--
+-- Companion diagnostic: PB.Analysis.Rules.Schema.legSourceFanout (also new
+-- this session) runs a cheap DuckDB GROUP BY over leg_source before
+-- legRules executes (wired into PB.Pipeline.Passes.runPhaseB's
+-- reportLegSourceFanout, right after materializeAllEdbViews) and reports
+-- (total rows, distinct (x,y) keys, max rows sharing one key) via the same
+-- progress-event channel as ddl_loaded/warning -- always emits a "step"
+-- summary line, plus a "warning" event if the largest group exceeds 500
+-- rows (heuristic threshold: leg_source has only ~3 distinct kind buckets,
+-- so a group that large signals real upstream duplication, not legitimate
+-- diversity). Kept even after the O(group_size^2) fix above -- the fan-in
+-- number is diagnostically useful on its own, and a fast up-front
+-- characterization beats discovering a pathological corpus shape only via
+-- a stalled/memory-hungry Souffle run.
 
 reachesRules  :: RuleSet
 -- reaches(X,Y) :- leg(X,Y,_).  reaches(X,Z) :- reaches(X,Y), leg(Y,Z,_).

@@ -11,6 +11,7 @@ import PB.Analysis.SchemaCategory
   ( SchemaInputs (..), SchGraph (..), buildSchema )
 import PB.Pipeline.Souffle qualified as Souffle
 import PB.Analysis.Rules.Schema qualified as SchemaRules
+import PB.Analysis.Rules.Schema (LegSourceFanout (..))
 import PB.Analysis.Rules.DeadCode qualified as DeadCodeRules
 import PB.Analysis.Rules.Taint qualified as TaintRules
 import PB.Pipeline.DuckDb
@@ -35,6 +36,7 @@ import PB.Pipeline.DuckDb
 import Data.Aeson          (Value (..), encode, object, (.=))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
+import qualified Data.Text       as T
 import System.IO           (hFlush, stderr)
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
@@ -56,6 +58,33 @@ souffleProgress rel = emitProgress (object
   [ "tag" .= ("step" :: Text)
   , "label" .= ("Datalog: " <> Souffle.relName rel)
   ])
+
+-- | Characterize @leg_source@'s (x, y) key fan-in before 'SchemaRules.legRules'
+-- runs (see that ruleset's own doc comment for the O(group_size^2) Souffle
+-- aggregate bug this was written to catch early). Always emits a one-line
+-- summary; additionally emits a @warning@ event when the largest group looks
+-- disproportionate -- 500 is a heuristic threshold, not a proven safe bound:
+-- 'leg_source' has only ~3 distinct @kind@ buckets, so a group this size is
+-- almost certainly duplicate/near-duplicate extraction on one schema edge
+-- rather than legitimate diversity, and is worth an operator's attention
+-- regardless of whether the current 'SchemaRules.legRules' handles it fast.
+reportLegSourceFanout :: DuckConn -> IO ()
+reportLegSourceFanout conn = do
+  LegSourceFanout total keys maxGroup <- SchemaRules.legSourceFanout conn
+  let n = T.pack . show
+  emitProgress (object
+    [ "tag" .= ("step" :: Text)
+    , "label" .= ("Datalog: leg_source -- " <> n total <> " rows, "
+                   <> n keys <> " keys, max " <> n maxGroup <> " rows/key")
+    ])
+  when (maxGroup > 500) $ emitProgress (object
+    [ "tag" .= ("warning" :: Text)
+    , "message" .= ("leg_source has a key with " <> n maxGroup <> " duplicate rows \
+                     \(out of " <> n total <> " total, " <> n keys <> " distinct keys) \
+                     \-- unusually large fan-in on one schema edge, likely duplicate/\
+                     \near-duplicate extraction rather than legitimate diversity; \
+                     \worth investigating the source before trusting downstream leg/reaches results" :: Text)
+    ])
 
 -- | Phase B: read Phase A tables from DuckDB, run link analysis, write results.
 -- Structured as two sub-phases:
@@ -93,7 +122,11 @@ runPhaseB conn mDefaultNamespace = do
   runPass67 conn
   _sch <- runPass9 conn mDefaultNamespace
   materializeAllEdbViews conn
-  -- B2: all Soufflé rule sets in one dependency-ordered run.
+  -- B2: all Soufflé rule sets in one dependency-ordered run. Characterize
+  -- leg_source's key fan-in first (see reportLegSourceFanout) -- cheap, and
+  -- surfaces a pathological corpus shape before the Souffle run rather than
+  -- only via its wall-clock/memory symptoms.
+  reportLegSourceFanout conn
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Datalog analysis" :: Text)])
   Souffle.runRuleSets souffleProgress conn allDatalogRuleSets
   materializeDeadCode conn
