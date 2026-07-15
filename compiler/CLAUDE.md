@@ -234,11 +234,13 @@ datalog-layer.md`), not settled precedent.
    backed by that plan's Phase 1 real-corpus gate; this destination used to
    be "an EDB view" — a `CREATE VIEW` string — before that evidence landed).
    `PB.Analysis.Rules.Schema`'s `legSourceRows`/`stmtRows`/`seedRows` (feeding
-   `querySchemaObjects`/`querySchemaMorphismRows`) is the reference pattern.
-   `DeadCode.hs`'s and `Taint.hs`'s EDB views have not migrated yet (Plan
-   175 Phases 2/3, not started) — their `CREATE VIEW` SQL is legacy, not a
-   fresh violation of this rule; do not write a _new_ `CREATE VIEW` for
-   rule-3-shaped logic anywhere in the codebase going forward.
+   `querySchemaObjects`/`querySchemaMorphismRows`) and `PB.Analysis.Rules.DeadCode`'s
+   `procRows`/`procMetaRows`/`inheritsRows`/`callRefRows`/`resolvedCallEdgeRows`/
+   `entryRows`/`callsRows` are the reference pattern. `Taint.hs`'s EDB views
+   have not migrated yet (Plan 175 Phase 3, not started) — their
+   `CREATE VIEW` SQL is legacy, not a fresh violation of this rule; do not
+   write a _new_ `CREATE VIEW` for rule-3-shaped logic anywhere in the
+   codebase going forward.
 
 **House rule: EDB reshaping logic may not decide anything.** A typed
 `PB.Analysis.Rules.*` reshaping function (or a not-yet-migrated legacy
@@ -823,25 +825,25 @@ liveProcRules :: RuleSet
 -- runs deadReachRules BEFORE this ruleset (required ordering -- proc_dead
 -- must already exist when this ruleset exports its EDB facts).
 
--- Plan 161 Phase 2b (2026-07-11): port of the seeded-BFS reachability core
--- that used to live in Haskell as DeadCode.computeDeadProcedures (deleted
--- once parity was proven exact on two real corpora -- 104/104 openpay,
--- 279/279 PowerBuilder-Example -- see PB.Analysis.DeadCode.classifyDeadProcedures,
--- its replacement, which now takes the dead set as an INPUT instead of
--- computing it). initDeadReachEdbViews (Re)creates proc/entry/calls (SQL
--- views over procedures/resolved_calls/dw_objects -- every read of
--- `procedures` filters `confidence != 'speculative'`, excluding synthetic
--- builtin-class method stubs; a real --db run caught this the hard way,
--- inflating proc_dead by 45 rows before the fix) and overrides (a thin
--- view over the procedure_overrides table, fed by
--- DeadCode.computeOverrideEdges -- that edge-flattening step stays
--- Haskell/SQL-computed, same treatment `leg` gets for `reaches`). Must run
--- after PB.Pipeline.DuckDb.initSchema.
+-- initDeadReachEdbViews materializes proc/entry/inherits/call_ref/
+-- resolved_call_edge/calls/proc_meta via typed Haskell reads
+-- (queryProcedures/queryObjectAncestors/queryDwObjects/queryResolvedCalls)
+-- and pure reshaping functions (procRows/procMetaRows/inheritsRows/
+-- callRefRows/resolvedCallEdgeRows/entryRows/callsRows), materialized into
+-- plain DuckDB tables via recreateTextTable/appendTextRows -- the
+-- PB.Analysis.Rules.Schema pattern (see that module's own entry). Every
+-- read of `procedures` excludes `confidence = 'speculative'`, excluding
+-- synthetic builtin-class method stubs. descendant/override_edge (the
+-- inheritance transitive closure and derived same-method-different-object
+-- triple) are IDB rules inside deadReachRules below, reading `inherits`
+-- (objects.ancestor, a faithful projection) as EDB. Must run after
+-- PB.Pipeline.DuckDb.initSchema and after objects/procedures/
+-- resolved_calls/dw_objects have been populated.
 initDeadReachEdbViews :: DuckConn -> IO ()
 deadReachRules :: RuleSet
 -- proc_reachable(Object,Proc) :- entry(Object,Proc).
 -- proc_reachable(Object,Proc) :- proc_reachable(CObj,CProc), calls(CObj,CProc,Object,Proc).
--- proc_reachable(ChildObj,Method) :- proc_reachable(ParentObj,Method), overrides(ChildObj,Method,ParentObj).
+-- proc_reachable(ChildObj,Method) :- proc_reachable(ParentObj,Method), override_edge(ChildObj,Method,ParentObj).
 -- proc_dead(Object,Proc) :- proc(Object,Proc), !proc_reachable(Object,Proc).
 -- Materializes to tables "proc_reachable"/"proc_dead". PB.Pipeline.Passes.runPass8
 -- runs this INSIDE dead-code detection (before classifying confidence),
@@ -2009,6 +2011,18 @@ querySqlCols           :: DuckConn -> IO [SchemaCategory.SqlColRow]
 queryCatFootprintColumns :: DuckConn -> IO [SchemaCategory.SqlColRow]
 queryCatColumns        :: DuckConn -> IO [SchemaCategory.CatColumnRow]
 queryCatFks            :: DuckConn -> IO [SchemaCategory.CatFkRow]
+-- Typed EDB-reshaping-layer readers feeding PB.Analysis.Rules.DeadCode's
+-- initDeadReachEdbViews (see that module's own entry). Deliberately lean,
+-- not the write-side ObjectRow/ProcRow/DwObjectRow -- those carry JSON blob
+-- columns (layout_json/type_blocks_json; cfg_json/instr_graph_json/
+-- wiring_json) none of DeadCode.hs's relations read.
+queryObjectAncestors :: DuckConn -> IO [(Text, Text)]
+-- "SELECT object, ancestor FROM objects WHERE ancestor IS NOT NULL"
+data ProcSummaryRow = ProcSummaryRow
+  { psrObject, psrProcName, psrProcType :: !Text
+  , psrCyclomatic :: !(Maybe Int), psrConfidence :: !Text }
+queryProcedures :: DuckConn -> IO [ProcSummaryRow]
+queryDwObjects  :: DuckConn -> IO [Text]  -- "SELECT DISTINCT object FROM dw_objects"
 -- Phase B write appenders:
 appendResolvedTypes, appendResolvedCalls :: DuckConn -> [row] -> IO ()
 appendInterprocEdges, appendProcSummaries :: DuckConn -> [row] -> IO ()

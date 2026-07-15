@@ -7,6 +7,7 @@ import PB.Analysis.Rules.DeadCode
 import PB.Pipeline.DuckDb
 import PB.Analysis.SchemaCategory (StmtId (..), SchObject (..))
 import PB.Analysis.TypeResolve (ResolvedCall (..))
+import PB.Analysis.Taint qualified as Taint
 
 import qualified Data.Set  as Set
 
@@ -79,6 +80,24 @@ seedDeadCodeFixture conn pool procs calls resolved inherits dwObjs = do
     | (child, parent) <- inherits
     ]
 
+-- | A resolved_calls row builder for the 'EdbRelations' pure-function tests
+-- below -- fields these functions never read (file, call_type, resolution
+-- kind, confidence, return_type) get fixed placeholder values.
+mkResolvedCall :: Text -> Text -> Text -> Maybe (Text, Text) -> Maybe Int -> Taint.ResolvedCallRow
+mkResolvedCall obj fromProc toName mTarget mLine = Taint.ResolvedCallRow
+  { Taint.rcrFile           = "f.srf"
+  , Taint.rcrObject         = obj
+  , Taint.rcrFromProc       = fromProc
+  , Taint.rcrToName         = toName
+  , Taint.rcrCallType       = "call"
+  , Taint.rcrCallLine       = mLine
+  , Taint.rcrTargetObject   = fst <$> mTarget
+  , Taint.rcrTargetProc     = snd <$> mTarget
+  , Taint.rcrResolutionKind = "call"
+  , Taint.rcrConfidence     = "high"
+  , Taint.rcrReturnType     = Nothing
+  }
+
 deadObjProcPairs :: DuckConn -> IO (Set.Set (Text, Text))
 deadObjProcPairs conn = do
   rows <- query_ conn "SELECT object, proc FROM proc_dead" :: IO [(Text, Text)]
@@ -95,9 +114,12 @@ assertDeadParity
 assertDeadParity name procs calls resolved inherits dwObjs expected =
   testCase name $ withWriteConn ":memory:" $ \conn -> do
     initSchema conn
-    initDeadReachEdbViews conn
     withAppenderPool conn phaseATables $ \pool -> do
       seedDeadCodeFixture conn pool procs calls resolved inherits dwObjs
+    -- Plan 175 Phase 2: initDeadReachEdbViews now reads procedures/objects/
+    -- resolved_calls/dw_objects eagerly (no longer a lazily-evaluated SQL
+    -- view) -- must run after the fixture is seeded, not before.
+    initDeadReachEdbViews conn
     runRuleSet conn deadReachRules
     got <- deadObjProcPairs conn
     got @?= expected
@@ -117,9 +139,9 @@ assertConfidence
 assertConfidence name procs calls resolved (obj, proc) expectedLevel =
   testCase name $ withWriteConn ":memory:" $ \conn -> do
     initSchema conn
-    initDeadReachEdbViews conn
     withAppenderPool conn phaseATables $ \pool -> do
       seedDeadCodeFixture conn pool procs calls resolved [] Set.empty
+    initDeadReachEdbViews conn
     runRuleSets (\_ -> pure ()) conn [deadReachRules, callerCountRules]
     rows <- query conn "SELECT level FROM confidence WHERE object = ? AND proc = ?"
               (obj, proc) :: IO [Only Text]
@@ -158,12 +180,12 @@ tests = testGroup "Souffle.DeadCode"
     , testCase "a stmt whose (object,proc) is in proc_dead is excluded from live_proc" $
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
-          initDeadReachEdbViews conn
           -- obj2/proc2: a function with no entry seed and no caller, so
           -- deadReachRules naturally computes it as dead.
           withAppenderPool conn phaseATables $ \pool ->
             appendProcedures pool
               [ ProcRow "f.srf" "obj2" "proc2" "function" 1 1 "" "" "" "" "" (Just 1) "confirmed" ]
+          initDeadReachEdbViews conn
           runRuleSet conn deadReachRules
           appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj2" "proc2" 9) ]
           initEdbViews conn
@@ -192,12 +214,12 @@ tests = testGroup "Souffle.DeadCode"
     [ testCase "same-object call reaches callee via case-insensitive name match" $
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
-          initDeadReachEdbViews conn
           withAppenderPool conn phaseATables $ \pool ->
             seedDeadCodeFixture conn pool
               [ ProcInfo "obj" "ev" "event" (Just 1), ProcInfo "obj" "fn_a" "function" (Just 1) ]
               [ ("obj", "ev", "FN_A") ]
               [] [] Set.empty
+          initDeadReachEdbViews conn
           runRuleSet conn deadReachRules
           got <- deadObjProcPairs conn
           assertBool "fn_a not dead" (("obj", "fn_a") `Set.notMember` got)
@@ -205,12 +227,12 @@ tests = testGroup "Souffle.DeadCode"
     , testCase "same-object call reaches callee through a dotted (control-qualified) to_name" $
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
-          initDeadReachEdbViews conn
           withAppenderPool conn phaseATables $ \pool ->
             seedDeadCodeFixture conn pool
               [ ProcInfo "obj" "ev" "event" (Just 1), ProcInfo "obj" "fn_a" "function" (Just 1) ]
               [ ("obj", "ev", "dw_1.fn_a") ]
               [] [] Set.empty
+          initDeadReachEdbViews conn
           runRuleSet conn deadReachRules
           got <- deadObjProcPairs conn
           assertBool "fn_a not dead" (("obj", "fn_a") `Set.notMember` got)
@@ -224,14 +246,14 @@ tests = testGroup "Souffle.DeadCode"
         -- they silently disagree.
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
-          initDeadReachEdbViews conn
           withAppenderPool conn phaseATables $ \pool ->
             appendProcedures pool
               [ ProcRow "builtin" "dwobject" "Retrieve" "function" 1 1 "" "" "" "" "" Nothing "speculative" ]
-          procRows <- query_ conn "SELECT object, proc FROM proc" :: IO [(Text, Text)]
-          entryRows <- query_ conn "SELECT object, proc FROM entry" :: IO [(Text, Text)]
-          assertBool "speculative stub excluded from proc view" (null procRows)
-          assertBool "speculative stub excluded from entry view" (null entryRows)
+          initDeadReachEdbViews conn
+          procViewRows <- query_ conn "SELECT object, proc FROM proc" :: IO [(Text, Text)]
+          entryViewRows <- query_ conn "SELECT object, proc FROM entry" :: IO [(Text, Text)]
+          assertBool "speculative stub excluded from proc view" (null procViewRows)
+          assertBool "speculative stub excluded from entry view" (null entryViewRows)
 
     , assertDeadParity "event handlers are seeds"
         [ ProcInfo "obj" "ev" "event" (Just 1) ] [] [] [] Set.empty
@@ -355,7 +377,6 @@ tests = testGroup "Souffle.DeadCode"
     [ testCase "caller counts land in dead_code_rows: naive counts every name-match, scoped only resolved edges" $
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
-          initDeadReachEdbViews conn
           withAppenderPool conn phaseATables $ \pool ->
             seedDeadCodeFixture conn pool
               [ ProcInfo "obj" "fn" "function" (Just 3) ]
@@ -365,10 +386,11 @@ tests = testGroup "Souffle.DeadCode"
               -- also satisfies the naive (name-match) relation -- 'call_ref'
               -- is built from every resolved_calls row regardless of
               -- resolution status (see 'initDeadReachEdbViews'' 'call_ref'
-              -- view) -- so naive_n counts all three callers while scoped_n
-              -- counts only the one truly-resolved edge.
+              -- reshaping) -- so naive_n counts all three callers while
+              -- scoped_n counts only the one truly-resolved edge.
               [ ("other_obj", "caller_c", "obj", "fn") ]
               [] Set.empty
+          initDeadReachEdbViews conn
           runRuleSets (\_ -> pure ()) conn
             [deadReachRules, callerCountRules, deadCodeRowsRules]
           -- dead_code_rows is a raw Souffle-materialized relation: every
@@ -390,13 +412,13 @@ tests = testGroup "Souffle.DeadCode"
         -- in PB.Pipeline.DuckDb).
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
-          initDeadReachEdbViews conn
           withAppenderPool conn phaseATables $ \pool ->
             seedDeadCodeFixture conn pool
               [ ProcInfo "obj" "fn" "function" (Just 3)
               , ProcInfo "obj" "fn" "function" (Just 7)
               ]
             [] [] [] Set.empty
+          initDeadReachEdbViews conn
           runRuleSets (\_ -> pure ()) conn
             [deadReachRules, callerCountRules, deadCodeRowsRules]
           materializeDeadCode conn
@@ -413,13 +435,13 @@ tests = testGroup "Souffle.DeadCode"
         -- highest-cyclomatic row" tie-break.
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
-          initDeadReachEdbViews conn
           withAppenderPool conn phaseATables $ \pool ->
             seedDeadCodeFixture conn pool
               [ ProcInfo "obj" "fn" "function" Nothing
               , ProcInfo "obj" "fn" "function" (Just 5)
               ]
             [] [] [] Set.empty
+          initDeadReachEdbViews conn
           runRuleSets (\_ -> pure ()) conn
             [deadReachRules, callerCountRules, deadCodeRowsRules]
           materializeDeadCode conn
@@ -427,5 +449,125 @@ tests = testGroup "Souffle.DeadCode"
             "SELECT cyclomatic FROM dead_code WHERE object = 'obj' AND proc_name = 'fn'"
             :: IO [Only Int]
           [ c | Only c <- rows ] @?= [5]
+    ]
+
+  , -- Plan 175 Phase 2: direct unit tests of 'initDeadReachEdbViews''s pure
+    -- reshaping functions -- no 'DuckConn'\/@souffle@ CLI needed, mirroring
+    -- 'SouffleSchemaTest.hs''s Phase 1 precedent.
+    testGroup "EdbRelations"
+    [ testGroup "procRows"
+      [ testCase "includes a confirmed procedure" $
+          procRows [ProcSummaryRow "obj" "fn" "function" (Just 1) "confirmed"]
+            @?= [["obj", "fn"]]
+      , testCase "excludes a speculative procedure" $
+          procRows [ProcSummaryRow "obj" "fn" "function" (Just 1) "speculative"]
+            @?= []
+      ]
+
+    , testGroup "procMetaRows"
+      [ testCase "renames+lowercases proc_name, coalesces a Just cyclomatic to text" $
+          procMetaRows [ProcSummaryRow "obj" "of_Calculate" "function" (Just 3) "confirmed"]
+            @?= [["obj", "of_Calculate", "function", "3", "of_calculate"]]
+      , testCase "coalesces a Nothing cyclomatic to empty text" $
+          procMetaRows [ProcSummaryRow "obj" "fn" "function" Nothing "confirmed"]
+            @?= [["obj", "fn", "function", "", "fn"]]
+      , testCase "excludes a speculative procedure" $
+          procMetaRows [ProcSummaryRow "obj" "fn" "function" (Just 1) "speculative"]
+            @?= []
+      ]
+
+    , testGroup "inheritsRows"
+      [ testCase "renames (object,ancestor) to (child,parent)" $
+          inheritsRows [("child_obj", "parent_obj")] @?= [["child_obj", "parent_obj"]]
+      ]
+
+    , testGroup "callRefRows"
+      [ testCase "extracts + lowercases the segment after the last dot" $
+          callRefRows [mkResolvedCall "obj" "ev" "dw_1.FN_A" Nothing Nothing]
+            @?= [CallRef "obj" "ev" "fn_a"]
+      , testCase "keeps a dotless name unchanged, just lowercased" $
+          callRefRows [mkResolvedCall "obj" "ev" "FN_A" Nothing Nothing]
+            @?= [CallRef "obj" "ev" "fn_a"]
+      , testCase "dedupes two rows sharing (caller_obj,caller_proc,callee_name)" $
+          callRefRows [ mkResolvedCall "obj" "ev" "fn_a" Nothing Nothing
+                      , mkResolvedCall "obj" "ev" "FN_A" Nothing Nothing
+                      ]
+            @?= [CallRef "obj" "ev" "fn_a"]
+      ]
+
+    , testGroup "resolvedCallEdgeRows"
+      [ testCase "includes a fully-resolved call, coalescing a present line to text" $
+          resolvedCallEdgeRows [mkResolvedCall "obj" "ev" "x" (Just ("tgt_obj", "tgt_fn")) (Just 42)]
+            @?= [ResolvedCallEdge "obj" "ev" "tgt_obj" "tgt_fn" "42"]
+      , testCase "coalesces a missing line to empty text" $
+          resolvedCallEdgeRows [mkResolvedCall "obj" "ev" "x" (Just ("tgt_obj", "tgt_fn")) Nothing]
+            @?= [ResolvedCallEdge "obj" "ev" "tgt_obj" "tgt_fn" ""]
+      , testCase "excludes a row with no target_object" $
+          resolvedCallEdgeRows
+            [ (mkResolvedCall "obj" "ev" "x" Nothing Nothing) { Taint.rcrTargetProc = Just "tgt_fn" } ]
+            @?= []
+      , testCase "excludes a row with no target_proc" $
+          resolvedCallEdgeRows
+            [ (mkResolvedCall "obj" "ev" "x" Nothing Nothing) { Taint.rcrTargetObject = Just "tgt_obj" } ]
+            @?= []
+      , testCase "keeps two duplicate call sites (not deduped)" $
+          length (resolvedCallEdgeRows
+                    [ mkResolvedCall "obj" "ev" "x" (Just ("tgt_obj", "tgt_fn")) (Just 1)
+                    , mkResolvedCall "obj" "ev" "x" (Just ("tgt_obj", "tgt_fn")) (Just 1)
+                    ])
+            @?= 2
+      ]
+
+    , testGroup "entryRows"
+      [ testCase "includes an event procedure" $
+          entryRows [ProcSummaryRow "obj" "ev" "event" (Just 1) "confirmed"] [] []
+            @?= [["obj", "ev"]]
+      , testCase "includes an on procedure" $
+          entryRows [ProcSummaryRow "obj" "on_h" "on" (Just 1) "confirmed"] [] []
+            @?= [["obj", "on_h"]]
+      , testCase "excludes a function procedure" $
+          entryRows [ProcSummaryRow "obj" "fn" "function" (Just 1) "confirmed"] [] []
+            @?= []
+      , testCase "excludes a speculative event procedure" $
+          entryRows [ProcSummaryRow "obj" "ev" "event" (Just 1) "speculative"] [] []
+            @?= []
+      , testCase "includes a resolved-call seed whose object is a DW object" $
+          entryRows [] [mkResolvedCall "dw_obj" "of_open" "x" Nothing Nothing] ["dw_obj"]
+            @?= [["dw_obj", "of_open"]]
+      , testCase "excludes a resolved-call seed whose object is not a DW object" $
+          entryRows [] [mkResolvedCall "plain_obj" "of_open" "x" Nothing Nothing] ["dw_obj"]
+            @?= []
+      , testCase "dedupes when both branches produce the same pair" $
+          entryRows [ProcSummaryRow "dw_obj" "ev" "event" (Just 1) "confirmed"]
+                    [mkResolvedCall "dw_obj" "ev" "x" Nothing Nothing]
+                    ["dw_obj"]
+            @?= [["dw_obj", "ev"]]
+      ]
+
+    , testGroup "callsRows"
+      [ testCase "same-object case-insensitive name match against a confirmed procedure" $
+          callsRows [CallRef "obj" "ev" "fn_a"]
+                    [ProcSummaryRow "obj" "fn_a" "function" (Just 1) "confirmed"]
+                    []
+            @?= [CallEdge "obj" "ev" "obj" "fn_a"]
+      , testCase "excludes a name match against a speculative procedure" $
+          callsRows [CallRef "obj" "ev" "fn_a"]
+                    [ProcSummaryRow "obj" "fn_a" "function" (Just 1) "speculative"]
+                    []
+            @?= []
+      , testCase "excludes a call_ref with no matching procedure name" $
+          callsRows [CallRef "obj" "ev" "fn_missing"]
+                    [ProcSummaryRow "obj" "fn_a" "function" (Just 1) "confirmed"]
+                    []
+            @?= []
+      , testCase "includes a resolved_call_edge unconditionally" $
+          callsRows [] [] [ResolvedCallEdge "obj" "ev" "obj2" "fn_x" "5"]
+            @?= [CallEdge "obj" "ev" "obj2" "fn_x"]
+      , testCase "dedupes when a name-match and a resolved edge coincide" $
+          callsRows [CallRef "obj" "ev" "fn_a"]
+                    [ProcSummaryRow "obj" "fn_a" "function" (Just 1) "confirmed"]
+                    [ResolvedCallEdge "obj" "ev" "obj" "fn_a" "9"]
+            @?= [CallEdge "obj" "ev" "obj" "fn_a"]
+      ]
     ]
   ]

@@ -195,9 +195,18 @@ Applies to architectural evaluations, migration recommendations, plan grounding,
 
 Applies to `doc/*.md`, architecture docs, plan files, and this file itself.
 
-- **Present-state only.** Describe what the system currently does. Do not add historical or narrative framing — no "used to", "no longer", "previously", "only X is available now". If history genuinely matters (a plan's changelog, a design-decision rationale), put it in a dedicated "History" subsection or a code comment tied to a specific decision — don't weave it into the prose describing current behavior.
+- **Present-state only.** Describe what the system currently does. Do not add historical or narrative framing — no "used to", "no longer", "previously", "only X is available now". If history genuinely matters (a plan's changelog, a design-decision rationale), put it in a dedicated "History" subsection — don't weave it into the prose describing current behavior.
 - **No negative framing for removed or unsupported capability.** Don't describe a feature by what it isn't or doesn't do relative to some prior state ("no jsonl support" reads as a complaint about a gap). Describe what it does support, full stop.
 - **State plan/phase relationships precisely.** Words like "supersedes," "replaces," or "extends" are ambiguous without a sentence of explanation — spell out the actual relationship rather than reaching for a one-word label that forces a clarifying round-trip.
+
+## Code Comments
+
+Source-code comments (Haskell/Python/TypeScript, docstrings, `-- |` Haddock blocks) are held to a stricter version of Documentation Style, not a looser one — the "code comment tied to a specific decision" carve-out that used to live in Documentation Style is gone. Code must read as clean and self-standing to someone with zero memory of how it got there.
+
+- **No work-log content in code.** Plan numbers, phase names, session dates, "Stage N", ticket references, and sentences like "this used to be a SQL view", "replaces the old X", "Plan 175 Phase 2 migrated this" do not belong in source comments — they belong in `doc/plan/` files, the session charter, or the commit message. A future reader of the code should not need to know a migration happened at all.
+- **Describe current behavior and non-obvious WHY only.** A comment earns its place by explaining something the code itself can't: a hidden invariant, a workaround for a specific bug, a subtle correctness reason for an otherwise-surprising choice. If the comment is only narrating what the code does, or narrating how the code came to be this way, delete it.
+- **A grounding fact may stay if it's load-bearing WHY, stripped of narrative.** "An unfiltered `proc` relation inflates `proc_dead` with every builtin stub method" is a reason to keep the filter — keep it. "A real openpay `--db` run in session N caught this" is a work-log detail — cut it.
+- **Test this by imagining the comment five years from now.** If a plan number or "used to" phrase would force a future reader to go dig up a deleted planning doc just to understand a comment in currently-live code, rewrite it.
 
 ---
 

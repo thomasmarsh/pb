@@ -1,13 +1,13 @@
--- | Plan 166 Stage 1+2 -- the dead-code Datalog programs, split out of
--- 'PB.Pipeline.Souffle'. Holds 'deadReachRules' (the seeded-BFS
+-- | The dead-code Datalog programs: 'deadReachRules' (the seeded-BFS
 -- reachability core that materializes @proc_reachable@\/@proc_dead@) and
--- 'liveProcRules' (stratified-negation over @proc_dead@), plus the
--- @proc@\/@entry@\/@calls@\/@inherits@ EDB views those rules assume.
+-- 'liveProcRules' (stratified negation over @proc_dead@), plus the typed
+-- Haskell functions that materialize the @proc@\/@entry@\/@calls@\/
+-- @inherits@\/@call_ref@\/@resolved_call_edge@\/@proc_meta@ EDB relations
+-- those rules assume.
 --
--- Plan 166 Stage 2: inheritance is now a faithful EDB projection
--- (@inherits@ over @objects.ancestor@); the transitive @descendant@ closure
--- and the derived @override_edge@ triple are IDB rules here, not a
--- Haskell-computed @procedure_overrides@ table frozen into the EDB layer.
+-- @inherits@ is a faithful projection of @objects.ancestor@; the transitive
+-- @descendant@ closure and the derived @override_edge@ triple (same method,
+-- different object) are IDB rules below.
 module PB.Analysis.Rules.DeadCode
   ( initDeadReachEdbViews
   , deadReachRules
@@ -18,13 +18,32 @@ module PB.Analysis.Rules.DeadCode
   , confidenceRel
   , callRefRel
   , resolvedCallEdgeRel
+  -- Pure EDB-relation-construction functions (exported for unit tests)
+  , procRows
+  , procMetaRows
+  , inheritsRows
+  , callRefRows
+  , resolvedCallEdgeRows
+  , entryRows
+  , callsRows
+  , CallRef (..)
+  , ResolvedCallEdge (..)
+  , CallEdge (..)
   ) where
 
 import PB.Prelude
 
 import PB.Pipeline.Souffle (Relation (..), symRelation, Rule (..), RuleSet (..))
-import PB.Pipeline.DuckDb (DuckConn)
-import Database.DuckDB.Simple (Query (..), execute_)
+import PB.Pipeline.DuckDb
+  ( DuckConn, ProcSummaryRow (..)
+  , queryObjectAncestors, queryProcedures, queryDwObjects, queryResolvedCalls
+  , recreateTextTable, appendTextRows
+  )
+import PB.Analysis.Taint qualified as Taint
+
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
+import qualified Data.Text as T
 
 -- | A procedure in the workspace.
 data ProcInfo = ProcInfo
@@ -63,109 +82,208 @@ liveProcRules = RuleSet
 -- overrides via 'descendant'/'override_edge'. Materializes
 -- 'proc_reachable'/'proc_dead'; 'liveProcRules' above and
 -- 'callerCountRules'/'deadCodeRowsRules' below all read 'procDeadRel'
--- directly. Confidence and caller-count classification are themselves
--- Datalog now -- see 'callerCountRules'/'deadCodeRowsRules' below;
--- 'dead_code' is populated purely from @dead_code_rows@
--- ('PB.Pipeline.DuckDb.materializeDeadCode'), with no Haskell
--- classification step left.
+-- directly. Confidence and caller-count classification are Datalog rules
+-- (see 'callerCountRules'\/'deadCodeRowsRules' below); @dead_code@ is
+-- populated from @dead_code_rows@ via 'PB.Pipeline.DuckDb.materializeDeadCode'.
 --
--- @inherits@ is a faithful EDB projection over @objects.ancestor@;
--- @descendant@ (its transitive closure) and @override_edge@ (the derived
--- same-method-different-object triple) are IDB rules below. @descendant@
--- is a reusable shared predicate for any future inheritance-aware
--- analysis (taint, business-rule reachability).
+-- @descendant@ is a reusable shared predicate for any future
+-- inheritance-aware analysis (taint, business-rule reachability).
 
--- | (Re)create the EDB views 'deadReachRules' assumes: @proc@ (every known
--- procedure), @entry@ (event\/on handlers, plus DW-object procedures with
--- outbound calls), @calls@ (same-object case-insensitive name-matched calls,
--- unioned with cross-object resolved calls, both derived from
+-- | Materializes the EDB relations 'deadReachRules' assumes: @proc@ (every
+-- known procedure), @entry@ (event\/on handlers, plus DW-object procedures
+-- with outbound calls), @calls@ (same-object case-insensitive name-matched
+-- calls, unioned with cross-object resolved calls, both derived from
 -- @resolved_calls@), @inherits@ (a faithful thin projection: @object@\/
 -- @ancestor@ pairs from @objects@, the source inheritance fact -- no
--- closure, no derivation). Must run after 'PB.Pipeline.DuckDb.initSchema'.
+-- closure, no derivation), @call_ref@\/@resolved_call_edge@ (the two
+-- @resolved_calls@-derived relations @calls@ is itself built from -- see
+-- 'callsRows'), and @proc_meta@ (procedure metadata for the caller-count\/
+-- confidence classification in 'callerCountRules'). Must run after
+-- 'PB.Pipeline.DuckDb.initSchema' and after @objects@\/@procedures@\/
+-- @resolved_calls@\/@dw_objects@ have been populated.
 --
--- Every read of @procedures@ below excludes @confidence = 'speculative'@
--- rows -- synthetic stub procedures registered for PB base classes
+-- @calls@ is computed by joining 'callRefRows'\/'resolvedCallEdgeRows''s
+-- output directly in memory, so the order the relations below are
+-- materialized in is cosmetic.
+--
+-- Every read of @procedures@ excludes @confidence = 'speculative'@ rows --
+-- synthetic stub procedures registered for PB base classes
 -- (@dwobject@\/@powerobject@\/@window@\/... method resolution), never real
--- workspace code. A real openpay @--db@ run caught the gap when a naive
--- unfiltered @proc@ view here inflated @proc_dead@ by 45 rows, all builtin
--- stub methods, versus the real @dead_code@ table.
+-- workspace code. An unfiltered @proc@ relation inflates @proc_dead@ with
+-- every one of these builtin stub methods.
 initDeadReachEdbViews :: DuckConn -> IO ()
-initDeadReachEdbViews conn = for_ views (void . execute_ conn)
+initDeadReachEdbViews conn = do
+  procs     <- queryProcedures conn
+  calls0    <- queryResolvedCalls conn
+  ancestors <- queryObjectAncestors conn
+  dwObjs    <- queryDwObjects conn
+  let refs      = callRefRows calls0
+      edges     = resolvedCallEdgeRows calls0
+      callEdges = callsRows refs procs edges
+  materialize "proc"     ["object", "proc"] (procRows procs)
+  materialize "entry"    ["object", "proc"] (entryRows procs calls0 dwObjs)
+  materialize "inherits" ["child", "parent"] (inheritsRows ancestors)
+  materialize "call_ref" ["caller_obj", "caller_proc", "callee_name"]
+    (map (\r -> [crCallerObj r, crCallerProc r, crCalleeName r]) refs)
+  materialize "resolved_call_edge"
+    ["caller_obj", "caller_proc", "callee_obj", "callee_proc", "line"]
+    (map (\e -> [rceCallerObj e, rceCallerProc e, rceCalleeObj e, rceCalleeProc e, rceLine e]) edges)
+  materialize "calls" ["caller_obj", "caller_proc", "callee_obj", "callee_proc"]
+    (map (\e -> [ceCallerObj e, ceCallerProc e, ceCalleeObj e, ceCalleeProc e]) callEdges)
+  materialize "proc_meta" ["object", "proc", "proc_type", "cyclomatic", "proc_lower"]
+    (procMetaRows procs)
   where
-    views :: [Query]
-    views =
-      [ "CREATE OR REPLACE VIEW proc AS \
-        \SELECT object, proc_name AS proc FROM procedures WHERE confidence != 'speculative'"
-      , "CREATE OR REPLACE VIEW entry AS \
-        \SELECT object, proc_name AS proc FROM procedures \
-        \WHERE proc_type IN ('event', 'on') AND confidence != 'speculative' \
-        \UNION \
-        \SELECT DISTINCT r.object, r.from_proc \
-        \FROM resolved_calls r JOIN dw_objects d ON d.object = r.object"
-      , "CREATE OR REPLACE VIEW inherits AS \
-        \SELECT object AS child, ancestor AS parent FROM objects WHERE ancestor IS NOT NULL"
-      , -- call_ref/resolved_call_edge must be created before calls (below),
-        -- which is now built FROM them rather than re-deriving the same
-        -- resolved_calls joins a third time -- see calls' own comment.
-        "CREATE OR REPLACE VIEW call_ref AS \
-        \SELECT DISTINCT object AS caller_obj, from_proc AS caller_proc, \
-        \LOWER(regexp_extract(to_name, '[^.]*$')) AS callee_name \
-        \FROM resolved_calls"
-      , "CREATE OR REPLACE VIEW resolved_call_edge AS \
-        \SELECT object AS caller_obj, from_proc AS caller_proc, \
-        \target_object AS callee_obj, target_proc AS callee_proc, \
-        \COALESCE(CAST(line AS VARCHAR), '') AS line \
-        \FROM resolved_calls \
-        \WHERE target_object IS NOT NULL AND target_proc IS NOT NULL"
-      , -- calls is built FROM call_ref/resolved_call_edge (not a third,
-        -- independent re-derivation of the same resolved_calls joins) so
-        -- the case-insensitive name-match expression and the
-        -- target-object/target-proc resolved-call predicate each have
-        -- exactly one definition. Semantically identical to the old
-        -- inline joins: call_ref's own DISTINCT collapses duplicate
-        -- (caller_obj, caller_proc, callee_name) rows before the join
-        -- against procedures, same as the old outer DISTINCT did after
-        -- joining; resolved_call_edge is intentionally NOT distinct on
-        -- (caller_obj, caller_proc, callee_obj, callee_proc) (it keeps one
-        -- row per call site for the scoped caller count -- see its own
-        -- doc comment), but calls' own UNION (not UNION ALL) dedupes the
-        -- combined result regardless, matching the old branch's outer
-        -- DISTINCT exactly.
-        "CREATE OR REPLACE VIEW calls AS \
-        \SELECT DISTINCT cr.caller_obj, cr.caller_proc, \
-        \p.object AS callee_obj, p.proc_name AS callee_proc \
-        \FROM call_ref cr \
-        \JOIN procedures p ON p.object = cr.caller_obj AND p.confidence != 'speculative' \
-        \  AND LOWER(p.proc_name) = cr.callee_name \
-        \UNION \
-        \SELECT caller_obj, caller_proc, callee_obj, callee_proc FROM resolved_call_edge"
-      , "CREATE OR REPLACE VIEW proc_meta AS \
-        \SELECT object, proc_name AS proc, proc_type, \
-        \COALESCE(CAST(cyclomatic AS VARCHAR), '') AS cyclomatic, \
-        \LOWER(proc_name) AS proc_lower \
-        \FROM procedures WHERE confidence != 'speculative'"
+    materialize name cols rows = do
+      recreateTextTable conn name cols
+      appendTextRows conn name rows
+
+-- | @proc@: every known procedure, excluding speculative (synthetic
+-- builtin-class stub) rows.
+procRows :: [ProcSummaryRow] -> [[Text]]
+procRows procs =
+  [ [psrObject r, psrProcName r]
+  | r <- procs, psrConfidence r /= "speculative"
+  ]
+
+-- | @proc_meta@: procedure metadata for caller-count\/confidence
+-- classification, same speculative filter as 'procRows'.
+procMetaRows :: [ProcSummaryRow] -> [[Text]]
+procMetaRows procs =
+  [ [ psrObject r, psrProcName r, psrProcType r
+    , maybe "" (T.pack . show) (psrCyclomatic r)
+    , T.toLower (psrProcName r)
+    ]
+  | r <- procs, psrConfidence r /= "speculative"
+  ]
+
+-- | @inherits@: (object,ancestor) pairs renamed to (child,parent).
+-- 'PB.Pipeline.DuckDb.queryObjectAncestors' already excludes NULL ancestors.
+inheritsRows :: [(Text, Text)] -> [[Text]]
+inheritsRows = map (\(child, parent) -> [child, parent])
+
+-- | A @call_ref@ row: same-object case-insensitive callee-name reference,
+-- derived from @resolved_calls@.
+data CallRef = CallRef
+  { crCallerObj  :: !Text
+  , crCallerProc :: !Text
+  , crCalleeName :: !Text
+  } deriving (Eq, Ord, Show)
+
+-- | A @resolved_call_edge@ row: a fully cross-object-resolved call site.
+data ResolvedCallEdge = ResolvedCallEdge
+  { rceCallerObj  :: !Text
+  , rceCallerProc :: !Text
+  , rceCalleeObj  :: !Text
+  , rceCalleeProc :: !Text
+  , rceLine       :: !Text
+  } deriving (Eq, Ord, Show)
+
+-- | A @calls@ row: the union 'callsRows' produces from 'CallRef'\/
+-- 'ResolvedCallEdge' (no @line@ column -- 'calls' is a pure reachability
+-- edge, unlike 'ResolvedCallEdge', which keeps @line@ so the scoped caller
+-- count doesn't dedupe distinct call sites).
+data CallEdge = CallEdge
+  { ceCallerObj  :: !Text
+  , ceCallerProc :: !Text
+  , ceCalleeObj  :: !Text
+  , ceCalleeProc :: !Text
+  } deriving (Eq, Ord, Show)
+
+-- | @call_ref@: same-object case-insensitive callee references, deduped to
+-- one row per distinct (caller_obj,caller_proc,callee_name). The callee
+-- name is the text after the last @.@ in @to_name@ (a control-qualified
+-- call like @dw_1.retrieve()@), lowercased.
+callRefRows :: [Taint.ResolvedCallRow] -> [CallRef]
+callRefRows calls = Set.toList . Set.fromList $
+  [ CallRef (Taint.rcrObject c) (Taint.rcrFromProc c)
+            (T.toLower (lastDotSegment (Taint.rcrToName c)))
+  | c <- calls
+  ]
+
+-- | The text after the last @.@ in @t@, or @t@ itself if it has none. Uses
+-- @reverse@-then-case-match rather than list 'last' ('PB.Prelude' hides
+-- partial functions) -- the same pattern 'PB.Analysis.CallClassify' uses for
+-- its own dotted-chain splits.
+lastDotSegment :: Text -> Text
+lastDotSegment t = case reverse (T.splitOn "." t) of
+  (x:_) -> x
+  []    -> t
+
+-- | @resolved_call_edge@: fully cross-object-resolved call sites (both a
+-- target object and proc), with a missing line coalesced to @""@.
+-- Deliberately not deduped (unlike 'callRefRows') -- see
+-- 'resolvedCallEdgeRel'\'s own doc comment: the scoped caller count must
+-- count every call site, not collapse duplicates sharing the same
+-- (caller,callee).
+resolvedCallEdgeRows :: [Taint.ResolvedCallRow] -> [ResolvedCallEdge]
+resolvedCallEdgeRows calls =
+  [ ResolvedCallEdge (Taint.rcrObject c) (Taint.rcrFromProc c) to tp
+      (maybe "" (T.pack . show) (Taint.rcrCallLine c))
+  | c <- calls
+  , Just to <- [Taint.rcrTargetObject c]
+  , Just tp <- [Taint.rcrTargetProc c]
+  ]
+
+-- | @entry@: the union of (a) event\/on handlers (confidence-filtered, same
+-- as 'procRows') and (b) every distinct (object,from_proc) pair from
+-- @resolved_calls@ whose object is a known DW object.
+entryRows :: [ProcSummaryRow] -> [Taint.ResolvedCallRow] -> [Text] -> [[Text]]
+entryRows procs calls dwObjs =
+  [ [o, p] | (o, p) <- Set.toList (Set.union fromProcs fromCalls) ]
+  where
+    dwObjSet = Set.fromList dwObjs
+    fromProcs = Set.fromList
+      [ (psrObject r, psrProcName r)
+      | r <- procs
+      , psrProcType r `elem` ["event", "on"]
+      , psrConfidence r /= "speculative"
+      ]
+    fromCalls = Set.fromList
+      [ (Taint.rcrObject c, Taint.rcrFromProc c)
+      | c <- calls
+      , Taint.rcrObject c `Set.member` dwObjSet
+      ]
+
+-- | @calls@: same-object case-insensitive name matches ('CallRef' joined
+-- against @procedures@ by lowercased name, confidence-filtered) unioned
+-- with 'ResolvedCallEdge' (its @line@ column dropped), deduped across the
+-- combined result.
+callsRows :: [CallRef] -> [ProcSummaryRow] -> [ResolvedCallEdge] -> [CallEdge]
+callsRows refs procs edges =
+  Set.toList . Set.fromList $ viaCallRef ++ viaResolved
+  where
+    procIndex = Map.fromListWith (++)
+      [ ((psrObject p, T.toLower (psrProcName p)), [psrProcName p])
+      | p <- procs, psrConfidence p /= "speculative"
+      ]
+    viaCallRef =
+      [ CallEdge (crCallerObj r) (crCallerProc r) (crCallerObj r) calleeName
+      | r <- refs
+      , calleeName <- fromMaybe [] (Map.lookup (crCallerObj r, crCalleeName r) procIndex)
+      ]
+    viaResolved =
+      [ CallEdge (rceCallerObj e) (rceCallerProc e) (rceCalleeObj e) (rceCalleeProc e)
+      | e <- edges
       ]
 
 -- | 'callRefRel' deliberately has NO @line@ column, unlike
 -- 'resolvedCallEdgeRel'. Soufflé relations are sets: a witness relation's
 -- own column shape determines what counts as a "distinct" fact. Naive
 -- caller counts must dedupe by (caller_obj, caller_proc) regardless of how
--- many lines/times that pair references the same callee name (matching the
--- original Haskell @Set.union@/@Set.singleton@ dedup) -- keeping @line@ out
--- of this relation entirely is what makes that dedup happen for free at
--- fact-load time, since a Soufflé @count : { ... }@ aggregate counts
--- matching ROWS of the witness relation regardless of which of its columns
--- are named vs. wildcarded in the query (verified empirically against the
--- @souffle@ CLI: wildcarding a present column does NOT project/dedupe it
--- away). 'resolvedCallEdgeRel' keeps @line@ because the scoped count must
--- NOT dedupe -- it counts every call site, matching the original Haskell
--- @Map.fromListWith (+)@ which added 1 per row with no distinctness check.
+-- many lines/times that pair references the same callee name -- keeping
+-- @line@ out of this relation entirely is what makes that dedup happen for
+-- free at fact-load time, since a Soufflé @count : { ... }@ aggregate
+-- counts matching ROWS of the witness relation regardless of which of its
+-- columns are named vs. wildcarded in the query (verified empirically
+-- against the @souffle@ CLI: wildcarding a present column does NOT
+-- project/dedupe it away). 'resolvedCallEdgeRel' keeps @line@ because the
+-- scoped count must NOT dedupe -- it counts every call site.
 callRefRel, resolvedCallEdgeRel :: Relation
 callRefRel          = symRelation "call_ref"           ["caller_obj", "caller_proc", "callee_name"]
 resolvedCallEdgeRel = symRelation "resolved_call_edge"  ["caller_obj", "caller_proc", "callee_obj", "callee_proc", "line"]
 
 -- ---------------------------------------------------------------------------
--- Plan 166 Stage 4: caller counts as Soufflé aggregates.
+-- Caller counts as Soufflé aggregates.
 
 hasNaiveCallerRel, hasScopedCallerRel, callerCountNaiveRel, callerCountScopedRel :: Relation
 hasNaiveCallerRel    = symRelation "has_naive_caller"    ["callee_name"]
@@ -181,19 +299,18 @@ confidenceRel = symRelation "confidence" ["object", "proc", "level"]
 -- @caller_count_naive(CalleeName, N) :- has_naive_caller(CalleeName), N = count : { call_ref(_,_,CalleeName) }.@
 -- @caller_count_scoped(Obj, Proc, N) :- has_scoped_caller(Obj,Proc), N = count : { resolved_call_edge(_,_,Obj,Proc,L) }.@
 --
--- Caller counts and confidence classification, both materialized here --
--- no Haskell classification step remains (see
+-- Caller counts and confidence classification are materialized here; see
 -- 'PB.Pipeline.DuckDb.materializeDeadCode' for the final projection into
--- @dead_code@). The scoped aggregate's trailing @line@-position column is
+-- @dead_code@. The scoped aggregate's trailing @line@-position column is
 -- bound to a real variable @L@ (not @_@) so each call site is a distinct
 -- witness row (see 'resolvedCallEdgeRel'\'s doc comment for why this
 -- matters and why the naive aggregate has no such column at all).
 --
 -- Confidence joins through 'procMetaRel' (not 'procRel') specifically to
 -- get its lowercased @proc_lower@ column: 'hasNaiveCallerRel'\'s facts are
--- always lowercase (derived from 'callRefRel', which applies @LOWER()@ --
--- see its view definition), but PowerBuilder identifiers are
--- case-insensitive, so a raw-case @proc@ variable from 'procRel' would only
+-- always lowercase ('callRefRows' lowercases @callee_name@), but
+-- PowerBuilder identifiers are case-insensitive, so a raw-case @proc@
+-- variable from 'procRel' would only
 -- unify with a naive-caller fact when the declared name happens to already
 -- be all-lowercase. A dead proc declared e.g. @of_Calculate@ with a real
 -- unresolved caller @of_calculate()@ would otherwise never match
@@ -228,7 +345,7 @@ callerCountRules = RuleSet
   }
 
 -- ---------------------------------------------------------------------------
--- Plan 166 Stage 6: dead-code rows as Soufflé output.
+-- Dead-code rows as Soufflé output.
 
 procMetaRel :: Relation
 procMetaRel = symRelation "proc_meta" ["object", "proc", "proc_type", "cyclomatic", "proc_lower"]

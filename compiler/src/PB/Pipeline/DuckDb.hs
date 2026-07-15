@@ -73,6 +73,11 @@ module PB.Pipeline.DuckDb
   , SchMorphismRow (..)
   , querySchemaObjects
   , querySchemaMorphismRows
+  -- Plan 175 Phase 2: typed EDB-reshaping-layer readers (DeadCode.hs)
+  , ProcSummaryRow (..)
+  , queryObjectAncestors
+  , queryProcedures
+  , queryDwObjects
   -- Phase B appenders
   , appendResolvedTypes
   , appendResolvedCalls
@@ -1130,6 +1135,47 @@ instance FromRow SchMorphismRow where
 querySchemaMorphismRows :: DuckConn -> IO [SchMorphismRow]
 querySchemaMorphismRows conn = query_ conn
   "SELECT from_key, to_key, leg_kind, leg_source FROM schema_morphisms"
+
+-- | Plan 175 Phase 2: typed reader over 'objects', feeding
+-- 'PB.Analysis.Rules.DeadCode.inheritsRows'. Deliberately not the write-side
+-- 'ObjectRow' -- that type carries 'orLayoutJson'\/'orTypeBlocksJson', which
+-- @inherits@ never reads; selecting only the two columns actually needed
+-- avoids transferring that JSON for every object row. The @ancestor IS NOT
+-- NULL@ filter is the same one 'queryObjInfo' already applies for its own
+-- @inhRows@.
+queryObjectAncestors :: DuckConn -> IO [(Text, Text)]
+queryObjectAncestors conn = do
+  rows <- query_ conn
+    "SELECT object, ancestor FROM objects WHERE ancestor IS NOT NULL" :: IO [TwoText]
+  pure [(o, a) | TwoText o a <- rows]
+
+-- | Plan 175 Phase 2: typed reader over 'procedures', feeding
+-- 'PB.Analysis.Rules.DeadCode.procRows'\/'procMetaRows'\/'entryRows'\/
+-- 'callsRows'. Deliberately not the write-side 'ProcRow' -- that type
+-- carries 'prCfgJson'\/'prInstrJson'\/'prWiringJson', none of which any of
+-- the four consumers read; selecting only the five columns actually needed
+-- avoids transferring that JSON for every procedure row.
+data ProcSummaryRow = ProcSummaryRow
+  { psrObject     :: !Text
+  , psrProcName   :: !Text
+  , psrProcType   :: !Text
+  , psrCyclomatic :: !(Maybe Int)
+  , psrConfidence :: !Text
+  } deriving (Eq, Show)
+
+instance FromRow ProcSummaryRow where
+  fromRow = ProcSummaryRow <$> field <*> field <*> field <*> field <*> field
+
+queryProcedures :: DuckConn -> IO [ProcSummaryRow]
+queryProcedures conn = query_ conn
+  "SELECT object, proc_name, proc_type, cyclomatic, confidence FROM procedures"
+
+-- | Plan 175 Phase 2: typed reader over 'dw_objects', feeding
+-- 'PB.Analysis.Rules.DeadCode.entryRows''s DW-object membership check.
+queryDwObjects :: DuckConn -> IO [Text]
+queryDwObjects conn = do
+  rows <- query_ conn "SELECT DISTINCT object FROM dw_objects" :: IO [OneText]
+  pure [o | OneText o <- rows]
 
 -- | Plan 163 Phase 3: same shape/query as 'querySqlCols', reading
 -- 'cat_footprint_columns' instead -- the existing 'FromRow' 'SqlColRow'
