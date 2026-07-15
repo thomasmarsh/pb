@@ -123,7 +123,7 @@ initTaintEdbViews conn = for_ views (void . execute_ conn)
 -- ---------------------------------------------------------------------------
 
 taintEdgeRel, taintSourceRel, taintSinkRel, taintReachesRel,
-  taintMinDistRel, taintPathLegRel, taintConfirmedRel :: Relation
+  taintMinDistRel, taintPathLegRel, taintConfirmedRel, taintStepKindRel :: Relation
 taintEdgeRel     = symRelation "taint_edge"     ["from_key", "to_key", "kind"]
 taintSourceRel   = symRelation "taint_source"   ["x"]
 taintSinkRel     = symRelation "taint_sink"     ["x"]
@@ -135,6 +135,21 @@ taintPathLegRel  = Relation "taint_path_leg"
                      [("s","symbol"),("target","symbol"),("leg_ord","number"),
                       ("lf","symbol"),("lt","symbol"),("kind","symbol")]
 taintConfirmedRel = symRelation "taint_confirmed" ["s", "t"]
+-- | Plan 171b (2026-07-15): the step_kind/description label for each
+-- witness leg, derived via rule specialization instead of the SQL CASE
+-- that used to live in materializeTaintPaths. Rule 1 tags the leg
+-- starting at the source (leg_ord 0) as "source" regardless of its real
+-- edge kind. Rule 2 passes the edge kind through unchanged for every
+-- other leg. Rule 3 derives the terminal "arrived at sink" marker row one
+-- ordinal past the last witness leg (max-aggregate, same idiom legRules
+-- uses for priority and cosliceRules for min_dist), guarded s != t so it
+-- only fires for a genuine multi-hop path. Rule 4 is the 0-hop
+-- degenerate case (source == sink): a single "source-sink" row, no
+-- witness legs exist for taint_path_leg to derive at all.
+taintStepKindRel = Relation "taint_step_kind"
+                     [("s","symbol"),("t","symbol"),("leg_ord","number"),
+                      ("lf","symbol"),("lt","symbol"),("kind","symbol"),
+                      ("step_kind","symbol"),("description","symbol")]
 
 -- | The taint Datalog program.
 --
@@ -148,6 +163,7 @@ taintRules :: RuleSet
 taintRules = RuleSet
   { rsRelations =
       [ taintReachesRel, taintMinDistRel, taintPathLegRel, taintConfirmedRel
+      , taintStepKindRel
       ]
   , rsRules =
       [ -- Transitive closure: exists so taint_path_leg can bound
@@ -181,6 +197,31 @@ taintRules = RuleSet
         -- Confirmed: source→sink pair with any path.
       , Rule "taint_confirmed(s, t) :- taint_source(s), taint_sink(t), taint_min_dist(s, t, _)"
           [taintConfirmedRel, taintSourceRel, taintSinkRel, taintMinDistRel]
+
+        -- Plan 171b: step_kind/description labeling via rule
+        -- specialization (replaces materializeTaintPaths' SQL CASE).
+        -- Rule 1: the leg starting at the source is always "source",
+        --          regardless of its real edge kind.
+      , Rule "taint_step_kind(s, t, 0, lf, lt, kind, \"source\", \"taint source\") :- taint_path_leg(s, t, 0, lf, lt, kind)"
+          [taintStepKindRel, taintPathLegRel]
+        -- Rule 2: every other witness leg passes its edge kind through
+        --          unchanged as both step_kind and (via cat) the
+        --          description.
+      , Rule "taint_step_kind(s, t, o, lf, lt, kind, kind, cat(\"taint propagation via \", kind)) :- taint_path_leg(s, t, o, lf, lt, kind), o != 0"
+          [taintStepKindRel, taintPathLegRel]
+        -- Rule 3: terminal "arrived at sink" marker, one ordinal past
+        --          the last witness leg. Guarded s != t so it only
+        --          fires for a genuine multi-hop path (the 0-hop case
+        --          is Rule 4, below) — a confirmed pair always has at
+        --          least one taint_path_leg row when s != t, so the max
+        --          aggregate's domain is never empty here.
+      , Rule "taint_step_kind(s, t, maxord + 1, t, t, \"sink\", \"sink\", \"taint propagation via sink\") :- taint_confirmed(s, t), s != t, maxord = max o : { taint_path_leg(s, t, o, _, _, _) }"
+          [taintStepKindRel, taintConfirmedRel, taintPathLegRel]
+        -- Rule 4: 0-hop degenerate case (source == sink) — a single
+        --          "source-sink" row; taint_path_leg has no rows for
+        --          this pair since there is no edge to traverse.
+      , Rule "taint_step_kind(s, s, 0, s, s, \"sink\", \"source-sink\", \"taint source and sink (same variable)\") :- taint_confirmed(s, s)"
+          [taintStepKindRel, taintConfirmedRel]
       ]
   , rsChoiceDomains =
       [ ("taint_min_dist", ["s", "node"])

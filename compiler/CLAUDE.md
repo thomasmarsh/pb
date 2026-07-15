@@ -775,6 +775,31 @@ deadReachRules :: RuleSet
 -- not in runPass11 (which now only runs reachesRules/liveProcRules).
 ```
 
+### `PB.Analysis.Rules.Taint` (Plan 161 Phase 2d; step_kind labeling Plan 171b, 2026-07-15)
+
+```haskell
+-- taintRules (RuleSet) gained taint_step_kind(s, t, leg_ord, lf, lt, kind,
+-- step_kind, description) via rule specialization, replacing the SQL CASE
+-- that used to live in materializeTaintPaths (a house-rule violation per
+-- this file's own Datalog Rule Placement Discipline section). 4 rules:
+-- (1) the leg starting at the source (leg_ord 0) is always labeled
+-- "source" regardless of its real edge kind; (2) every other witness leg
+-- passes its edge kind through unchanged as both step_kind and (via
+-- Souffle's cat functor) the description text; (3) a terminal "arrived at
+-- sink" marker row, one ordinal past the last witness leg (max-aggregate
+-- over taint_path_leg, same idiom legRules uses for priority and
+-- cosliceRules for min_dist), guarded s != t; (4) the 0-hop degenerate
+-- case (source == sink) — a single "source-sink" row, since
+-- taint_path_leg has no rows at all for that pair. `ord` is a reserved
+-- word in Souffle 2.5 -- every relation here uses `leg_ord`, matching
+-- taintPathLegRel's existing column name. materializeTaintPaths
+-- (DuckDb.hs) now reads taint_step_kind directly -- no CASE, and the old
+-- legs_with_sink UNION ALL that synthesized the terminal row in SQL is
+-- gone (taint_step_kind already includes it). Real-corpus gate: openpay
+-- taint_paths byte-identical (25/25 rows, full steps_json content) pre-
+-- vs post-migration.
+```
+
 ### `PB.Pipeline.SqlParse`
 
 ```haskell

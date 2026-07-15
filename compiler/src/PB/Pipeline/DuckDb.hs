@@ -1408,9 +1408,16 @@ materializeDecompositionCoslice conn =
 --
 --   * Deterministic diamond tie-break via ROW_NUMBER (same pattern
 --     as materializeDecompositionCoslice).
---   * Sink node included as a terminal row using sink_key directly
---     (no derivation from leg_to needed).
 --   * ORDER BY inside string_agg guarantees ordinal ordering.
+--
+-- Plan 171b (2026-07-15): step_kind/description no longer come from a
+-- SQL CASE here — PB.Analysis.Rules.Taint's taintStepKindRel derives
+-- them via rule specialization (a house-rule violation this migration
+-- closes; see compiler/CLAUDE.md's Datalog Rule Placement Discipline).
+-- taint_step_kind already includes the terminal "arrived at sink"
+-- marker row (and the 0-hop source==sink degenerate row), so the old
+-- legs_with_sink UNION ALL that synthesized it here is gone too — this
+-- materializer is now a pure rename/dedup/reshape of taint_step_kind.
 materializeTaintPaths :: DuckConn -> IO ()
 materializeTaintPaths conn =
   void $ execute_ conn (Query sql)
@@ -1438,32 +1445,15 @@ materializeTaintPaths conn =
       , "  FROM taint_sinks tsk"
       , "),"
       , "ranked_legs AS ("
-      , "  SELECT tpl.s AS source_key, tpl.target AS sink_key,"
-      , "         CAST(tpl.leg_ord AS INTEGER) AS leg_ord,"
-      , "         tpl.lf AS leg_from, tpl.lt AS leg_to, tpl.kind AS leg_kind,"
+      , "  SELECT tsk.s AS source_key, tsk.t AS sink_key,"
+      , "         CAST(tsk.leg_ord AS INTEGER) AS leg_ord,"
+      , "         tsk.lf AS leg_from, tsk.lt AS leg_to,"
+      , "         tsk.step_kind AS step_kind, tsk.description AS description,"
       , "         ROW_NUMBER() OVER ("
-      , "           PARTITION BY tpl.s, tpl.target, CAST(tpl.leg_ord AS INTEGER)"
-      , "           ORDER BY tpl.lf, tpl.lt"
+      , "           PARTITION BY tsk.s, tsk.t, CAST(tsk.leg_ord AS INTEGER)"
+      , "           ORDER BY tsk.lf, tsk.lt"
       , "         ) AS rn"
-      , "  FROM taint_path_leg tpl"
-      , "),"
-      , "legs_with_sink AS ("
-      , "  SELECT source_key, sink_key, leg_ord, leg_from, leg_to, leg_kind"
-      , "  FROM ranked_legs WHERE rn = 1"
-      , "  UNION ALL"
-      -- Terminal sink row: derive from confirmed (not ranked_legs) so
-      -- every confirmed pair gets exactly one row, even 0-hop pairs
-      -- (source == sink, no taint_path_leg rows).  COALESCE handles
-      -- the zero-leg case: MAX(NULL) = NULL, COALESCE(NULL,-1)+1 = 0.
-      , "  SELECT c.source_key, c.sink_key,"
-      , "         COALESCE(MAX(l.leg_ord), -1) + 1 AS leg_ord,"
-      , "         c.sink_key AS leg_from,"
-      , "         c.sink_key AS leg_to,"
-      , "         'sink' AS leg_kind"
-      , "  FROM confirmed c"
-      , "  LEFT JOIN ranked_legs l"
-      , "    ON l.source_key = c.source_key AND l.sink_key = c.sink_key AND l.rn = 1"
-      , "  GROUP BY c.source_key, c.sink_key"
+      , "  FROM taint_step_kind tsk"
       , "),"
       , "chains AS ("
       , "  SELECT l.source_key, l.sink_key,"
@@ -1473,19 +1463,12 @@ materializeTaintPaths conn =
       , "             '\",\"proc_name\":\"' || split_part(l.leg_from, '::', 2) ||"
       , "             '\",\"var_name\":\"' || split_part(l.leg_from, '::', 3) ||"
       , "             '\",\"line\":null'"
-      , "             ',\"step_kind\":\"' ||"
-      , "               (CASE WHEN l.source_key = l.sink_key THEN 'source-sink'"
-      , "                     WHEN l.leg_ord = 0 THEN 'source'"
-      , "                     ELSE l.leg_kind END) || '\"'"
-      , "             ',\"description\":\"' ||"
-      , "               (CASE WHEN l.source_key = l.sink_key THEN 'taint source and sink (same variable)'"
-      , "                     WHEN l.leg_ord = 0 THEN 'taint source'"
-      , "                     ELSE 'taint propagation via ' || l.leg_kind END)"
-      , "             || '\"}',"
+      , "             ',\"step_kind\":\"' || l.step_kind || '\"'"
+      , "             ',\"description\":\"' || l.description || '\"}',"
       , "             ',' ORDER BY l.leg_ord"
       , "           )"
       , "         || ']' AS steps_json"
-      , "  FROM legs_with_sink l"
+      , "  FROM ranked_legs l WHERE l.rn = 1"
       , "  GROUP BY l.source_key, l.sink_key"
       , ")"
       , "SELECT"
