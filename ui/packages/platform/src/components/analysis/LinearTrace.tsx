@@ -25,6 +25,7 @@ export interface LinearTraceProps {
 function stepLabel(stepKind: string, traceType: TraceType): string {
   if (traceType === "slice-backward") return "AFFECTED";
   if (traceType === "slice-forward")  return "AFFECTING";
+  if (stepKind === "source-sink") return "SOURCE+SINK";
   if (stepKind === "source") return "SOURCE";
   if (stepKind === "sink")   return "SINK";
   return "TRANSFORM";
@@ -33,6 +34,7 @@ function stepLabel(stepKind: string, traceType: TraceType): string {
 function stepBadgeClass(stepKind: string, traceType: TraceType): string {
   if (traceType === "slice-backward") return "badge step-badge step-badge-affected";
   if (traceType === "slice-forward")  return "badge step-badge step-badge-affecting";
+  if (stepKind === "source-sink") return "badge step-badge step-badge-source-sink";
   if (stepKind === "source") return "badge step-badge step-badge-source";
   if (stepKind === "sink")   return "badge step-badge step-badge-sink";
   return "badge step-badge step-badge-transform";
