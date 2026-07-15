@@ -43,10 +43,21 @@ withStdlibDb act = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
   pfs <- parseStdlibFiles
   let wsEnv = buildWorkspaceEnv (map pfSrFile pfs)
-  mapM_ (\pf -> do
-    cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) wsEnv Map.empty Map.empty Nothing "speculative" (PsParsed pf)
-    appendToDb conn cf) pfs
+  withAppenderPool conn phaseATables $ \pool -> do
+    mapM_ (\pf -> do
+      cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) wsEnv Map.empty Map.empty Nothing "speculative" (PsParsed pf)
+      appendToDb pool cf) pfs
   act conn
+  where
+    phaseATables =
+      [ "objects", "procedures", "local_vars", "call_sites", "global_vars"
+      , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
+      , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
+      , "source_files", "parse_errors"
+      , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
+      , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
+      , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
+      ]
 
 queryOneTexts :: DuckConn -> Query -> IO [Text]
 queryOneTexts conn sql = map unOneText <$> query_ conn sql
@@ -102,10 +113,21 @@ testUserConfirmed = withWriteConn ":memory:" $ \conn -> do
     Right (sf, sp) -> do
       let wsEnv = buildWorkspaceEnv [sf]
           pf    = ParsedFile "w_test.srw" sf sp src
-      cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) wsEnv Map.empty Map.empty Nothing "confirmed" (PsParsed pf)
-      appendToDb conn cf
+      withAppenderPool conn phaseATables $ \pool -> do
+        cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) wsEnv Map.empty Map.empty Nothing "confirmed" (PsParsed pf)
+        appendToDb pool cf
   confs <- queryOneTexts conn "SELECT confidence FROM objects"
   assertEqual "user object is confirmed" ["confirmed"] confs
+  where
+    phaseATables =
+      [ "objects", "procedures", "local_vars", "call_sites", "global_vars"
+      , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
+      , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
+      , "source_files", "parse_errors"
+      , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
+      , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
+      , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
+      ]
 
 testInheritance :: IO ()
 testInheritance = do

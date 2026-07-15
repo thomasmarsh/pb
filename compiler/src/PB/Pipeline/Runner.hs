@@ -68,7 +68,8 @@ import PB.Pipeline.SqlParse
   )
 import PB.Pipeline.FileWalk    (walkAllSrFiles)
 import PB.Pipeline.DuckDb
-  ( DuckConn, withWriteConn, initSchema
+  ( withWriteConn, initSchema
+  , AppenderPool, withAppenderPool
   , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
   , DwRetrieveTableRow (..), DwRetrieveColumnRow (..), DwJoinRow (..), SqlStmtRow (..)
   , SqlStmtColumnRow (..), SqlStmtFilterRow (..), SqlStmtTableRow (..)
@@ -476,8 +477,8 @@ dwRetrieveColRowsForFootprint resolve fp dw =
 
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each without a SQL bridge.
 -- @root@ is the ingestion root, used to relativize every stored/reported path.
-workerLoopFilesNoBridge :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> WorkspaceEnv -> ControlIndex -> Map.Map Text [(TableRef, Text)] -> DuckConn -> MVar () -> IORef Int -> IO ()
-workerLoopFilesNoBridge root catTables mDefaultNamespace dwfCtx k workQ wsEnv controlIdx globalDwColumns conn mutex errCount = go
+workerLoopFilesNoBridge :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> WorkspaceEnv -> ControlIndex -> Map.Map Text [(TableRef, Text)] -> AppenderPool -> MVar () -> IORef Int -> IO ()
+workerLoopFilesNoBridge root catTables mDefaultNamespace dwfCtx k workQ wsEnv controlIdx globalDwColumns appPool mutex errCount = go
   where
     go = do
       mFile <- atomically $ do
@@ -492,15 +493,15 @@ workerLoopFilesNoBridge root catTables mDefaultNamespace dwfCtx k workQ wsEnv co
           compiled <- compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns Nothing "confirmed" outcome
           let ok = case compiled of { CFError {} -> False; _ -> True }
           when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
-          withMVar mutex $ \_ -> appendToDb conn compiled
+          withMVar mutex $ \_ -> appendToDb appPool compiled
           emitProgress (object ["tag" .= ("worker_done" :: Text), "worker" .= k, "file" .= fp, "ok" .= ok])
           go
 
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each with bridge slot k,
 --   serialises DB writes through a shared mutex (DuckDB connections are not thread-safe).
 -- @root@ is the ingestion root, used to relativize every stored/reported path.
-workerLoopFiles :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> SqlBridgePool -> WorkspaceEnv -> ControlIndex -> Map.Map Text [(TableRef, Text)] -> DuckConn -> MVar () -> IORef Int -> IO ()
-workerLoopFiles root catTables mDefaultNamespace dwfCtx k workQ pool wsEnv controlIdx globalDwColumns conn mutex errCount = go
+workerLoopFiles :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> SqlBridgePool -> WorkspaceEnv -> ControlIndex -> Map.Map Text [(TableRef, Text)] -> AppenderPool -> MVar () -> IORef Int -> IO ()
+workerLoopFiles root catTables mDefaultNamespace dwfCtx k workQ pool wsEnv controlIdx globalDwColumns appPool mutex errCount = go
   where
     go = do
       mFile <- atomically $ do
@@ -515,38 +516,38 @@ workerLoopFiles root catTables mDefaultNamespace dwfCtx k workQ pool wsEnv contr
           compiled <- compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns (Just (pool, k)) "confirmed" outcome
           let ok = case compiled of { CFError {} -> False; _ -> True }
           when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
-          withMVar mutex $ \_ -> appendToDb conn compiled
+          withMVar mutex $ \_ -> appendToDb appPool compiled
           emitProgress (object ["tag" .= ("worker_done" :: Text), "worker" .= k, "file" .= fp, "ok" .= ok])
           go
 
-appendToDb :: DuckConn -> CompiledFile -> IO ()
-appendToDb conn (CFPs r) = do
-  appendObjects    conn [cpsObjectRow r]
-  appendProcedures conn (cpsProcRows r)
-  appendLocalVars  conn (cpsLocalVars r)
-  appendCallSites  conn (cpsCallSites r)
-  appendGlobalVars conn (cpsGlobalVars r)
-  appendProcDefs   conn (cpsProcFlows r)
-  appendProcUses   conn (cpsProcFlows r)
-  appendSqlStmts   conn (cpsSqlStmts r)
-  appendSqlStmtColumns conn (cpsSqlStmtColumns r)
-  appendSqlStmtFilters conn (cpsSqlStmtFilters r)
-  appendSqlStmtTables  conn (cpsSqlStmtTables r)
-  appendCatFootprintColumns conn (cpsCatFootprintColumns r)
-  appendSourceFiles conn (catMaybes [cpsSourceContent r])
-appendToDb conn (CFDw r) = do
-  appendDwObjects        conn [cdDwObjectRow r]
-  appendDwControls       conn (cdDwControls r)
-  appendDwRetrieveTables conn (cdDwRetrieveTables r)
-  appendDwRetrieveColumns conn (cdDwRetrieveColumns r)
-  appendDwWriteColumns   conn (cdDwWriteColumns r)
-  appendDwWhereColumns   conn (cdDwWhereColumns r)
-  appendDwJoins          conn (cdDwJoins r)
-  appendDwRetrieveWhere  conn (cdDwRetrieveWhere r)
-  appendCallSites        conn (cdCallSites r)
-  appendSourceFiles      conn (catMaybes [cdSourceContent r])
-appendToDb conn (CFError fp err) =
-  appendParseErrors conn [(fp, err)]
+appendToDb :: AppenderPool -> CompiledFile -> IO ()
+appendToDb pool (CFPs r) = do
+  appendObjects    pool [cpsObjectRow r]
+  appendProcedures pool (cpsProcRows r)
+  appendLocalVars  pool (cpsLocalVars r)
+  appendCallSites  pool (cpsCallSites r)
+  appendGlobalVars pool (cpsGlobalVars r)
+  appendProcDefs   pool (cpsProcFlows r)
+  appendProcUses   pool (cpsProcFlows r)
+  appendSqlStmts   pool (cpsSqlStmts r)
+  appendSqlStmtColumns pool (cpsSqlStmtColumns r)
+  appendSqlStmtFilters pool (cpsSqlStmtFilters r)
+  appendSqlStmtTables  pool (cpsSqlStmtTables r)
+  appendCatFootprintColumns pool (cpsCatFootprintColumns r)
+  appendSourceFiles pool (catMaybes [cpsSourceContent r])
+appendToDb pool (CFDw r) = do
+  appendDwObjects        pool [cdDwObjectRow r]
+  appendDwControls       pool (cdDwControls r)
+  appendDwRetrieveTables pool (cdDwRetrieveTables r)
+  appendDwRetrieveColumns pool (cdDwRetrieveColumns r)
+  appendDwWriteColumns   pool (cdDwWriteColumns r)
+  appendDwWhereColumns   pool (cdDwWhereColumns r)
+  appendDwJoins          pool (cdDwJoins r)
+  appendDwRetrieveWhere  pool (cdDwRetrieveWhere r)
+  appendCallSites        pool (cdCallSites r)
+  appendSourceFiles      pool (catMaybes [cdSourceContent r])
+appendToDb pool (CFError fp err) =
+  appendParseErrors pool [(fp, err)]
 appendToDb _    CFSkip = pure ()
 
 -- | Flatten a 'SchemaCatalog' into DuckDB's row-oriented catalog tables,
@@ -669,80 +670,95 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
 
   withWriteConn dbPath $ \conn -> do
     initSchema conn
-    -- Load stdlib first so type lookups in user-code Phase B see the base classes.
-    -- Stdlib has no DW files of its own, so an empty map is correct here.
-    mapM_ (\pf -> do
-      cf <- compileOne Set.empty mDefaultNamespace (mkDwFootprintCtx [] mDefaultNamespace) wsEnv controlIdx Map.empty Nothing "speculative" (PsParsed pf)
-      appendToDb conn cf) stdlibParsed
-    case mBridgeBin of
-      Nothing -> do
-        for_ ddlArgs $ \_ -> emitProgress (object
-          [ "tag" .= ("warning" :: Text)
-          , "message" .= ("--ddl given but no python interpreter available for the SQL bridge \
-                          \(pass --sql-worker-python or set PB_SQL_WORKER); skipping DDL ingestion" :: Text)
-          ])
-        -- N worker threads drain a shared queue; serialize DB writes through mutex.
-        -- No DDL is loaded on this path, so the catalog is empty and
-        -- resolveTableRef is a no-op regardless of mDefaultNamespace.
-        let globalDwColumns = dwColumnsFromRows
-              [ r | (fp, dw) <- dwOutcomes
-              , r <- dwRetrieveColRowsForFootprint (resolveTableRef Set.empty mDefaultNamespace) fp dw ]
-            dwfCtx = mkDwFootprintCtx [] mDefaultNamespace
-        workQ <- newTQueueIO
-        atomically (mapM_ (writeTQueue workQ) files)
-        mutex <- newMVar ()
-        mapConcurrently_
-          (\k -> workerLoopFilesNoBridge srcDir Set.empty mDefaultNamespace dwfCtx k workQ wsEnv controlIdx globalDwColumns conn mutex errCount)
-          [0 .. nWorkers - 1]
-      Just pythonExe -> do
-        pool <- startSqlBridgePool nWorkers pythonExe sqlWorkerModuleArgs dialect
-        allColRows <- mapM (\rawArg -> do
-          let (mSchema, ddlPath) = parseDdlArg rawArg
-          ddlText <- readFile ddlPath
-          resp <- parseDdl pool mSchema ddlText
-          let stats = ddlStats resp
-              (colRows, pkRows, fkRows, checkRows) = catalogToRows (ddlCatalog resp)
-          appendCatalogColumns conn colRows
-          appendCatalogPks     conn pkRows
-          appendCatalogFks     conn fkRows
-          appendCatalogChecks  conn checkRows
-          emitProgress (object
-            [ "tag" .= ("ddl_loaded" :: Text)
-            , "path" .= ddlPath
-            , "namespace" .= mSchema
-            , "parse_ok" .= ddlParseOk resp
-            , "error" .= ddlError resp
-            , "statements_total" .= dsStatementsTotal stats
-            , "statements_parsed" .= dsStatementsParsed stats
-            , "statements_skipped" .= dsStatementsSkipped stats
-            , "skipped_previews" .= dsSkippedPreviews stats
-            , "tables" .= length (scTables (ddlCatalog resp))
-            , "primary_keys" .= length pkRows
-            , "foreign_keys" .= length (scForeignKeys (ddlCatalog resp))
-            , "checks" .= length checkRows
+    -- Phase A tables: all tables written during the per-file compile loop
+    -- and DDL loading. The pool's scope closes (flushing all appenders)
+    -- before runPhaseB starts — this ordering is correctness-critical.
+    let phaseATables =
+          [ "objects", "procedures", "local_vars", "call_sites", "global_vars"
+          , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
+          , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
+          , "source_files", "parse_errors"
+          , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
+          , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
+          , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
+          ]
+    withAppenderPool conn phaseATables $ \appPool -> do
+      -- Load stdlib first so type lookups in user-code Phase B see the base classes.
+      -- Stdlib has no DW files of its own, so an empty map is correct here.
+      mapM_ (\pf -> do
+        cf <- compileOne Set.empty mDefaultNamespace (mkDwFootprintCtx [] mDefaultNamespace) wsEnv controlIdx Map.empty Nothing "speculative" (PsParsed pf)
+        appendToDb appPool cf) stdlibParsed
+      case mBridgeBin of
+        Nothing -> do
+          for_ ddlArgs $ \_ -> emitProgress (object
+            [ "tag" .= ("warning" :: Text)
+            , "message" .= ("--ddl given but no python interpreter available for the SQL bridge \
+                            \(pass --sql-worker-python or set PB_SQL_WORKER); skipping DDL ingestion" :: Text)
             ])
-          pure colRows) ddlArgs
-        -- Every --ddl arg is loaded before any file worker launches, so the
-        -- full cross-file catalog is known up front (Plan 157 Phase 4.5:
-        -- persistence-time namespace resolution needs the complete set, not
-        -- just the file currently being compiled's own DDL tag). 'catCols'
-        -- feeds both 'catTables' (namespace resolution) and 'dwfCtx'
-        -- (Plan 163 Phase 6: dwRetrieveFootprint's WHERE-leg catalog gate)
-        -- from the same DDL rows -- no need to collect it twice.
-        let catCols = [ CatColumnRow (cclrNamespace c) (cclrTableName c) (cclrColumnName c)
-                      | c <- concat allColRows ]
-            catTables = catalogNamespacedTables catCols
-            dwfCtx = mkDwFootprintCtx catCols mDefaultNamespace
-            globalDwColumns = dwColumnsFromRows
-              [ r | (fp, dw) <- dwOutcomes
-              , r <- dwRetrieveColRowsForFootprint (resolveTableRef catTables mDefaultNamespace) fp dw ]
-        workQ <- newTQueueIO
-        atomically (mapM_ (writeTQueue workQ) files)
-        mutex <- newMVar ()
-        mapConcurrently_
-          (\k -> workerLoopFiles srcDir catTables mDefaultNamespace dwfCtx k workQ pool wsEnv controlIdx globalDwColumns conn mutex errCount)
-          [0 .. nWorkers - 1]
-          `finally` shutdownSqlBridgePool pool
+          -- N worker threads drain a shared queue; serialize DB writes through mutex.
+          -- No DDL is loaded on this path, so the catalog is empty and
+          -- resolveTableRef is a no-op regardless of mDefaultNamespace.
+          let globalDwColumns = dwColumnsFromRows
+                [ r | (fp, dw) <- dwOutcomes
+                , r <- dwRetrieveColRowsForFootprint (resolveTableRef Set.empty mDefaultNamespace) fp dw ]
+              dwfCtx = mkDwFootprintCtx [] mDefaultNamespace
+          workQ <- newTQueueIO
+          atomically (mapM_ (writeTQueue workQ) files)
+          mutex <- newMVar ()
+          mapConcurrently_
+            (\k -> workerLoopFilesNoBridge srcDir Set.empty mDefaultNamespace dwfCtx k workQ wsEnv controlIdx globalDwColumns appPool mutex errCount)
+            [0 .. nWorkers - 1]
+        Just pythonExe -> do
+          sqlPool <- startSqlBridgePool nWorkers pythonExe sqlWorkerModuleArgs dialect
+          allColRows <- mapM (\rawArg -> do
+            let (mSchema, ddlPath) = parseDdlArg rawArg
+            ddlText <- readFile ddlPath
+            resp <- parseDdl sqlPool mSchema ddlText
+            let stats = ddlStats resp
+                (colRows, pkRows, fkRows, checkRows) = catalogToRows (ddlCatalog resp)
+            appendCatalogColumns appPool colRows
+            appendCatalogPks     appPool pkRows
+            appendCatalogFks     appPool fkRows
+            appendCatalogChecks  appPool checkRows
+            emitProgress (object
+              [ "tag" .= ("ddl_loaded" :: Text)
+              , "path" .= ddlPath
+              , "namespace" .= mSchema
+              , "parse_ok" .= ddlParseOk resp
+              , "error" .= ddlError resp
+              , "statements_total" .= dsStatementsTotal stats
+              , "statements_parsed" .= dsStatementsParsed stats
+              , "statements_skipped" .= dsStatementsSkipped stats
+              , "skipped_previews" .= dsSkippedPreviews stats
+              , "tables" .= length (scTables (ddlCatalog resp))
+              , "primary_keys" .= length pkRows
+              , "foreign_keys" .= length (scForeignKeys (ddlCatalog resp))
+              , "checks" .= length checkRows
+              ])
+            pure colRows) ddlArgs
+          -- Every --ddl arg is loaded before any file worker launches, so the
+          -- full cross-file catalog is known up front (Plan 157 Phase 4.5:
+          -- persistence-time namespace resolution needs the complete set, not
+          -- just the file currently being compiled's own DDL tag). 'catCols'
+          -- feeds both 'catTables' (namespace resolution) and 'dwfCtx'
+          -- (Plan 163 Phase 6: dwRetrieveFootprint's WHERE-leg catalog gate)
+          -- from the same DDL rows -- no need to collect it twice.
+          let catCols = [ CatColumnRow (cclrNamespace c) (cclrTableName c) (cclrColumnName c)
+                        | c <- concat allColRows ]
+              catTables = catalogNamespacedTables catCols
+              dwfCtx = mkDwFootprintCtx catCols mDefaultNamespace
+              globalDwColumns = dwColumnsFromRows
+                [ r | (fp, dw) <- dwOutcomes
+                , r <- dwRetrieveColRowsForFootprint (resolveTableRef catTables mDefaultNamespace) fp dw ]
+          workQ <- newTQueueIO
+          atomically (mapM_ (writeTQueue workQ) files)
+          mutex <- newMVar ()
+          mapConcurrently_
+            (\k -> workerLoopFiles srcDir catTables mDefaultNamespace dwfCtx k workQ sqlPool wsEnv controlIdx globalDwColumns appPool mutex errCount)
+            [0 .. nWorkers - 1]
+            `finally` shutdownSqlBridgePool sqlPool
+    -- Pool scope closed here: all Phase A appenders flushed + destroyed.
+    -- Phase B SQL queries now see the complete data.
     runPhaseB conn mDefaultNamespace  -- Phase B: link analysis (passes 5–8)
 
   errors <- readIORef errCount

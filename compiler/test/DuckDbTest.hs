@@ -13,6 +13,20 @@ import Database.DuckDB.Simple.FromRow   (FromRow (..), field)
 import Test.Tasty             (TestTree, testGroup)
 import Test.Tasty.HUnit       (testCase, assertEqual)
 
+phaseATables :: [Text]
+phaseATables =
+  [ "objects", "procedures", "local_vars", "call_sites", "global_vars"
+  , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
+  , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
+  , "source_files", "parse_errors"
+  , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
+  , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
+  , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
+  ]
+
+withTestPool :: DuckConn -> (AppenderPool -> IO a) -> IO a
+withTestPool conn = withAppenderPool conn phaseATables
+
 tests :: TestTree
 tests = testGroup "DuckDb"
   [ testCase "initSchema creates all Phase A tables" testInitSchema
@@ -33,86 +47,93 @@ tests = testGroup "DuckDb"
 testInitSchema :: IO ()
 testInitSchema = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
-  -- Append to a non-stub table proves schema is active (appender throws on unknown table)
-  appendObjects     conn []
-  appendParseErrors conn []
+  withTestPool conn $ \pool -> do
+    -- Append to a non-stub table proves schema is active (appender throws on unknown table)
+    appendObjects     pool []
+    appendParseErrors pool []
 
 testAppendObjects :: IO ()
 testAppendObjects = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
-  appendObjects conn
-    [ ObjectRow "test.srf" "powerscript" "w_test" (Just "w_ancestor") Nothing Nothing "confirmed"
-    , ObjectRow "other.sru" "powerscript" "u_util" Nothing            Nothing Nothing "confirmed"
-    ]
-  -- Appending an empty list after a real batch must not throw
-  appendObjects conn []
+  withTestPool conn $ \pool -> do
+    appendObjects pool
+      [ ObjectRow "test.srf" "powerscript" "w_test" (Just "w_ancestor") Nothing Nothing "confirmed"
+      , ObjectRow "other.sru" "powerscript" "u_util" Nothing            Nothing Nothing "confirmed"
+      ]
+    -- Appending an empty list after a real batch must not throw
+    appendObjects pool []
 
 testAppendProcedures :: IO ()
 testAppendProcedures = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
-  -- Two procedures with non-empty JSON blobs
-  let cfgJs  = "{\"entry\":\"b0\",\"exits\":[\"b0\"],\"blocks\":[],\"edges\":[]}"
-      instrJs  = "{\"nodes\":[],\"entry\":0,\"suspensionPoints\":[],\"sourceMap\":[]}"
-      wiringJs = "{\"nodes\":{\"w0\":{\"tag\":\"WireReturn\"}},\"entry\":\"w0\"}"
-  appendProcedures conn
-    [ ProcRow "test.srf" "w_test" "open"  "event"  1  10 cfgJs instrJs wiringJs "" "" (Just 1) "confirmed"
-    , ProcRow "test.srf" "w_test" "close" "event" 11  20 cfgJs instrJs wiringJs "" "" (Just 1) "confirmed"
-    ]
-  -- appendLocalVars sharing the same connection must not conflict
-  appendLocalVars conn []
-  assertEqual "procedures appended" () ()
+  withTestPool conn $ \pool -> do
+    -- Two procedures with non-empty JSON blobs
+    let cfgJs  = "{\"entry\":\"b0\",\"exits\":[\"b0\"],\"blocks\":[],\"edges\":[]}"
+        instrJs  = "{\"nodes\":[],\"entry\":0,\"suspensionPoints\":[],\"sourceMap\":[]}"
+        wiringJs = "{\"nodes\":{\"w0\":{\"tag\":\"WireReturn\"}},\"entry\":\"w0\"}"
+    appendProcedures pool
+      [ ProcRow "test.srf" "w_test" "open"  "event"  1  10 cfgJs instrJs wiringJs "" "" (Just 1) "confirmed"
+      , ProcRow "test.srf" "w_test" "close" "event" 11  20 cfgJs instrJs wiringJs "" "" (Just 1) "confirmed"
+      ]
+    -- appendLocalVars sharing the same pool must not conflict
+    appendLocalVars pool []
+    assertEqual "procedures appended" () ()
 
 testAppendSqlStmtColumnsFilters :: IO ()
 testAppendSqlStmtColumnsFilters = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
-  appendSqlStmtColumns conn
-    [ SqlStmtColumnRow "test.srf" "fn_perm" "fn_perm" 30 Nothing (Just "usrgroupperm") "kodgroup" False
-    , SqlStmtColumnRow "test.srf" "fn_perm" "fn_perm" 30 Nothing Nothing              "addrec"   False
-    ]
-  appendSqlStmtFilters conn
-    [ SqlStmtFilterRow "test.srf" "w_test" "of_test" 5 Nothing (Just "account") "status" "=" "[\"Active\"]"
-    ]
-  -- Appending an empty list after a real batch must not throw
-  appendSqlStmtColumns conn []
-  appendSqlStmtFilters conn []
+  withTestPool conn $ \pool -> do
+    appendSqlStmtColumns pool
+      [ SqlStmtColumnRow "test.srf" "fn_perm" "fn_perm" 30 Nothing (Just "usrgroupperm") "kodgroup" False
+      , SqlStmtColumnRow "test.srf" "fn_perm" "fn_perm" 30 Nothing Nothing              "addrec"   False
+      ]
+    appendSqlStmtFilters pool
+      [ SqlStmtFilterRow "test.srf" "w_test" "of_test" 5 Nothing (Just "account") "status" "=" "[\"Active\"]"
+      ]
+    -- Appending an empty list after a real batch must not throw
+    appendSqlStmtColumns pool []
+    appendSqlStmtFilters pool []
 
 testAppendCatalogRows :: IO ()
 testAppendCatalogRows = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
-  appendCatalogColumns conn
-    [ CatalogColumnRow Nothing "afxfilterd" "kodfilterd" 0
-    , CatalogColumnRow Nothing "afxfilterd" "kodfilter"  1
-    ]
-  appendCatalogPks conn
-    [ CatalogPkRow Nothing "afxfilterd" "kodfilterd" 0
-    ]
-  appendCatalogFks conn
-    [ CatalogFkRow (Just "0_15") Nothing "afxfilterd" "kodfilter" Nothing "afxfilter" "kodfilter" 0
-    ]
-  -- Appending an empty list after a real batch must not throw
-  appendCatalogColumns conn []
-  appendCatalogPks conn []
-  appendCatalogFks conn []
+  withTestPool conn $ \pool -> do
+    appendCatalogColumns pool
+      [ CatalogColumnRow Nothing "afxfilterd" "kodfilterd" 0
+      , CatalogColumnRow Nothing "afxfilterd" "kodfilter"  1
+      ]
+    appendCatalogPks pool
+      [ CatalogPkRow Nothing "afxfilterd" "kodfilterd" 0
+      ]
+    appendCatalogFks pool
+      [ CatalogFkRow (Just "0_15") Nothing "afxfilterd" "kodfilter" Nothing "afxfilter" "kodfilter" 0
+      ]
+    -- Appending an empty list after a real batch must not throw
+    appendCatalogColumns pool []
+    appendCatalogPks pool []
+    appendCatalogFks pool []
 
 testAppendDwRetrieveColumns :: IO ()
 testAppendDwRetrieveColumns = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
-  appendDwRetrieveColumns conn
-    [ DwRetrieveColumnRow "d_test.srd" "d_test" Nothing "misth_zpkrat" "kodkrat"
-    , DwRetrieveColumnRow "d_test.srd" "d_test" Nothing "misth_zpkrat" "desckrat"
-    ]
-  -- Appending an empty list after a real batch must not throw
-  appendDwRetrieveColumns conn []
+  withTestPool conn $ \pool -> do
+    appendDwRetrieveColumns pool
+      [ DwRetrieveColumnRow "d_test.srd" "d_test" Nothing "misth_zpkrat" "kodkrat"
+      , DwRetrieveColumnRow "d_test.srd" "d_test" Nothing "misth_zpkrat" "desckrat"
+      ]
+    -- Appending an empty list after a real batch must not throw
+    appendDwRetrieveColumns pool []
 
 testAppendDwRetrieveWhere :: IO ()
 testAppendDwRetrieveWhere = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
-  appendDwRetrieveWhere conn
-    [ DwRetrieveWhereRow "d_test.srd" "d_test" 0 "misth_zpkrat.kodxrisi" "=" ":arg1" (Just "and")
-    , DwRetrieveWhereRow "d_test.srd" "d_test" 1 "t.mycol" ">" "100" Nothing
-    ]
-  -- Appending an empty list after a real batch must not throw
-  appendDwRetrieveWhere conn []
+  withTestPool conn $ \pool -> do
+    appendDwRetrieveWhere pool
+      [ DwRetrieveWhereRow "d_test.srd" "d_test" 0 "misth_zpkrat.kodxrisi" "=" ":arg1" (Just "and")
+      , DwRetrieveWhereRow "d_test.srd" "d_test" 1 "t.mycol" ">" "100" Nothing
+      ]
+    -- Appending an empty list after a real batch must not throw
+    appendDwRetrieveWhere pool []
 
 -- | Plan 148 Phase 1b: appends via the Phase A row types, queries back via
 -- the new SchemaCategory read-side query functions, and confirms the
@@ -121,16 +142,17 @@ testAppendDwRetrieveWhere = withWriteConn ":memory:" $ \conn -> do
 testSchemaCategoryQueryRoundTrip :: IO ()
 testSchemaCategoryQueryRoundTrip = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
-  appendDwRetrieveColumns conn
-    [ DwRetrieveColumnRow "d_test.srd" "d_test" (Just "sales") "orders" "id" ]
-  appendDwJoins conn
-    [ DwJoinRow "d_test.srd" "d_test" "usruserperm.kodapp" "=" "usrapps.kodapp" Nothing Nothing ]
-  appendSqlStmtColumns conn
-    [ SqlStmtColumnRow "fn_perm.srf" "fn_perm" "fn_perm" 30 Nothing (Just "usrgroupperm") "kodgroup" False ]
-  appendCatalogColumns conn
-    [ CatalogColumnRow Nothing "afxfilterd" "kodfilterd" 0 ]
-  appendCatalogFks conn
-    [ CatalogFkRow (Just "0_15") Nothing "afxfilterd" "kodfilter" Nothing "afxfilter" "kodfilter" 0 ]
+  withTestPool conn $ \pool -> do
+    appendDwRetrieveColumns pool
+      [ DwRetrieveColumnRow "d_test.srd" "d_test" (Just "sales") "orders" "id" ]
+    appendDwJoins pool
+      [ DwJoinRow "d_test.srd" "d_test" "usruserperm.kodapp" "=" "usrapps.kodapp" Nothing Nothing ]
+    appendSqlStmtColumns pool
+      [ SqlStmtColumnRow "fn_perm.srf" "fn_perm" "fn_perm" 30 Nothing (Just "usrgroupperm") "kodgroup" False ]
+    appendCatalogColumns pool
+      [ CatalogColumnRow Nothing "afxfilterd" "kodfilterd" 0 ]
+    appendCatalogFks pool
+      [ CatalogFkRow (Just "0_15") Nothing "afxfilterd" "kodfilter" Nothing "afxfilter" "kodfilter" 0 ]
 
   drCols  <- queryDwRetrieveColumns conn
   djLegs  <- queryDwJoinLegs        conn
@@ -158,10 +180,11 @@ testSchemaCategoryQueryRoundTrip = withWriteConn ":memory:" $ \conn -> do
 testCatFootprintColumnsRoundTrip :: IO ()
 testCatFootprintColumnsRoundTrip = withWriteConn ":memory:" $ \conn -> do
   initSchema conn
-  appendCatFootprintColumns conn
-    [ SqlStmtColumnRow "w_dw_copy.srw" "w_dw_copy" "clicked" 553 Nothing (Just "sales_order_items") "id" True ]
-  -- Appending an empty list after a real batch must not throw
-  appendCatFootprintColumns conn []
+  withTestPool conn $ \pool -> do
+    appendCatFootprintColumns pool
+      [ SqlStmtColumnRow "w_dw_copy.srw" "w_dw_copy" "clicked" 553 Nothing (Just "sales_order_items") "id" True ]
+    -- Appending an empty list after a real batch must not throw
+    appendCatFootprintColumns pool []
 
   cfCols  <- queryCatFootprintColumns conn
   sqlCols <- querySqlCols             conn

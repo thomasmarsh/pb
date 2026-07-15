@@ -1681,24 +1681,23 @@ walkAllSrFiles :: FilePath -> IO [FilePath]   -- any .sr<single-char>
 -- DuckDB-direct I/O for pbc --db mode. C FFI to libduckdb.dylib via duckdb-ffi.
 -- Single-writer constraint: DuckConn is NOT thread-safe for concurrent appenders;
 -- runModeDb uses MVar mutex (bridge path) or sequential mapM_ (no-bridge path).
--- Phase A appenders (one per table, create + destroy per run):
--- procedures.wiring_json (Plan 149 Phase 1): ProcRow gained prWiringJson,
--- positioned right after prInstrJson/instr_graph_json in both the DDL and
--- appendProcedures' column order (raw positional Appender -- order must
--- match). Populated from PB.Compile.Flatten's WiringGraph
--- (compileProcedureToLowCat + collectWiring), by both Runner.hs (--db mode)
--- and Emit.hs's injectCompiled ("wiring" key, JSON -o mode, withInstr only).
-appendObjects, appendProcedures, appendDwObjects, appendDwControls :: DuckConn -> [row] -> IO ()
-appendLocalVars, appendCallSites, appendGlobalVars :: DuckConn -> [row] -> IO ()
-appendProcDefs, appendProcUses, appendSqlStmts :: DuckConn -> [row] -> IO ()
-appendSqlStmtColumns, appendSqlStmtFilters :: DuckConn -> [row] -> IO ()
+-- Phase A appenders (Plan 169: pooled, create once after initSchema, destroy at
+-- Phase A/B boundary — avoids ~13K create/flush/destroy FFI cycles per corpus):
+newtype AppenderPool = AppenderPool (Map.Map Text DuckDBAppender)
+withAppenderPool :: DuckConn -> [Text] -> (AppenderPool -> IO a) -> IO a
+appendRow :: AppenderPool -> Text -> (DuckDBAppender -> IO ()) -> IO ()
+-- Phase A appenders all take AppenderPool (not DuckConn):
+appendObjects, appendProcedures, appendDwObjects, appendDwControls :: AppenderPool -> [row] -> IO ()
+appendLocalVars, appendCallSites, appendGlobalVars :: AppenderPool -> [row] -> IO ()
+appendProcDefs, appendProcUses, appendSqlStmts :: AppenderPool -> [row] -> IO ()
+appendSqlStmtColumns, appendSqlStmtFilters :: AppenderPool -> [row] -> IO ()
 -- cat_footprint_columns (Plan 163 Phase 3, 2026-07-10): identical shape to
 -- sql_statement_columns, populated by PB.Analysis.SchFootprint.foldSchFootprint
 -- (currently: DataWindow SetItem calls with a literal column + a statically-
 -- resolvable control binding) instead of sqlglot text extraction. Kept as
 -- its own table (not merged into sql_statement_columns) for future
 -- leg_source provenance tagging. Reuses SqlStmtColumnRow on the append side.
-appendCatFootprintColumns :: DuckConn -> [SqlStmtColumnRow] -> IO ()
+appendCatFootprintColumns :: AppenderPool -> [SqlStmtColumnRow] -> IO ()
 -- catalog_columns/catalog_pks/catalog_fks (Plan 148 Phase 1a-3, 2026-07-07):
 -- static DDL catalog, row-oriented (namespace/table_name/column_name/ordinal
 -- for columns+pks; +constraint_name/from_*/to_* for fks, one row per
@@ -1706,22 +1705,22 @@ appendCatFootprintColumns :: DuckConn -> [SqlStmtColumnRow] -> IO ()
 -- hardening 2026-07-08: now once per --ddl arg, not once per run -- multiple
 -- schema-tagged dumps each get their own parseDdl call) from
 -- PB.Pipeline.Runner.catalogToRows, itself fed by PB.Pipeline.SqlParse.parseDdl.
-appendCatalogColumns, appendCatalogPks, appendCatalogFks :: DuckConn -> [row] -> IO ()
+appendCatalogColumns, appendCatalogPks, appendCatalogFks :: AppenderPool -> [row] -> IO ()
 -- catalog_checks (2026-07-08): (constraint_name, namespace, table_name,
 -- predicate) -- named CHECK constraints, sqlglot's normalized-SQL predicate
 -- text (not a re-parsed expression AST; see SqlParse's CatalogCheckConstraint
 -- doc comment for why). Fed by the same per-DDL-file catalogToRows call.
-appendCatalogChecks :: DuckConn -> [CatalogCheckRow] -> IO ()
-appendParseErrors :: DuckConn -> [row] -> IO ()
+appendCatalogChecks :: AppenderPool -> [CatalogCheckRow] -> IO ()
+appendParseErrors :: AppenderPool -> [row] -> IO ()
 -- dw_retrieve_columns (Plan 148 Phase 1b, 2026-07-07): (file, dw_name,
 -- namespace, table_name, column_name), one row per qualified DwRetrieve
 -- column ref (splitColumnRef'd from drColumns in Runner.hs's PsDw branch --
 -- fills the "drColumns never reaches DuckDB" survey gap).
-appendDwRetrieveColumns :: DuckConn -> [DwRetrieveColumnRow] -> IO ()
+appendDwRetrieveColumns :: AppenderPool -> [DwRetrieveColumnRow] -> IO ()
 -- dw_write_columns/dw_where_columns (Plan 163 Phase 6, 2026-07-10): same
 -- 5-column shape as dw_retrieve_columns, populated from Runner.hs's
 -- compileOne PsDw branch (dwRetrieveFootprint's LegWrites/LegReads legs).
-appendDwWriteColumns, appendDwWhereColumns :: DuckConn -> [DwRetrieveColumnRow] -> IO ()
+appendDwWriteColumns, appendDwWhereColumns :: AppenderPool -> [DwRetrieveColumnRow] -> IO ()
 -- dw_retrieve_where (Track SCHEMA-BUGS, 2026-07-09): (file, dw_name, idx,
 -- exp1, op, exp2, logic) -- one row per DwWhereClause in a DwRetrieve's
 -- drWhere, idx preserves clause order (zip [0..] at the Runner.hs
@@ -1729,7 +1728,7 @@ appendDwWriteColumns, appendDwWhereColumns :: DuckConn -> [DwRetrieveColumnRow] 
 -- that datawindows.py/tables.py already queried (exception-guarded, so it
 -- silently returned [] rather than erroring) but the table never existed in
 -- initSchema -- found incidentally during Plan 157 Phase 4.5.
-appendDwRetrieveWhere :: DuckConn -> [DwRetrieveWhereRow] -> IO ()
+appendDwRetrieveWhere :: AppenderPool -> [DwRetrieveWhereRow] -> IO ()
 -- Phase B read helpers (SELECT → typed rows):
 queryLocalVars, queryCallSites, queryGlobalVars :: DuckConn -> IO [row]
 queryObjInfo     :: DuckConn -> IO [(Text, Text)]       -- (file, object) pairs per PS file

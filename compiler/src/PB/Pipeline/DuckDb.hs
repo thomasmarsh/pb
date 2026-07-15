@@ -3,6 +3,10 @@ module PB.Pipeline.DuckDb
   ( DuckConn
   , withWriteConn
   , initSchema
+  -- Appender pool
+  , AppenderPool
+  , withAppenderPool
+  , appendRow
   -- Row types
   , ObjectRow (..)
   , ProcRow (..)
@@ -129,7 +133,7 @@ import qualified Data.Text               as T
 import qualified Data.Text.Encoding      as TE
 import           Control.Exception       (bracket)
 import           Data.Int                (Int32)
-import           Foreign                 (alloca, nullPtr, peek)
+import           Foreign                 (alloca, nullPtr, peek, poke)
 import           Foreign.C.Types         (CBool (..))
 
 -- ---------------------------------------------------------------------------
@@ -283,6 +287,50 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
         \namespace, table_name, proc_name, line \
         \FROM sql_statement_tables"
       ]
+
+-- ---------------------------------------------------------------------------
+-- Appender pool
+
+-- | A set of long-lived DuckDB appenders, one per table. Created once after
+-- 'initSchema' and destroyed (flush + destroy) once at the Phase A/B
+-- boundary. This avoids the ~13K create/flush/destroy FFI cycles that
+-- per-file appenders would otherwise require (Plan 169 Finding 1+2).
+newtype AppenderPool = AppenderPool (Map.Map Text DuckDBAppender)
+
+-- | Create one appender per table name, then run @action@. All appenders are
+-- flushed and destroyed when the scope exits (even on exception).
+withAppenderPool :: DuckConn -> [Text] -> (AppenderPool -> IO a) -> IO a
+withAppenderPool conn tables action =
+  withConnectionHandle conn $ \rawConn ->
+    bracket
+      (createAll rawConn tables)
+      destroyAll
+      (\pool -> action (AppenderPool pool))
+  where
+    createAll _ [] = pure Map.empty
+    createAll rawConn (t:ts) = do
+      app <- alloca $ \appPtr -> do
+        checkSt "appender_create" =<<
+          BS.useAsCString (TE.encodeUtf8 t) (\tn ->
+            c_duckdb_appender_create rawConn nullPtr tn appPtr)
+        peek appPtr
+      rest <- createAll rawConn ts
+      pure (Map.insert t app rest)
+
+    destroyAll pool = for_ (Map.elems pool) $ \app -> do
+      checkSt "appender_flush" =<< c_duckdb_appender_flush app
+      alloca $ \appPtrPtr -> do
+        poke appPtrPtr app
+        void $ c_duckdb_appender_destroy appPtrPtr
+
+-- | Append rows to a pooled table. Errors if the table is not in the pool
+-- (programmer error — all table names are compile-time literals).
+-- Flush happens once in 'withAppenderPool' teardown, not per call.
+appendRow :: AppenderPool -> Text -> (DuckDBAppender -> IO ()) -> IO ()
+appendRow (AppenderPool pool) tbl action =
+  case Map.lookup tbl pool of
+    Nothing -> error ("impossible: appender pool missing table " <> T.unpack tbl)
+    Just app -> action app
 
 -- ---------------------------------------------------------------------------
 -- Row types
@@ -456,9 +504,9 @@ data SourceFileRow = SourceFileRow
 -- ---------------------------------------------------------------------------
 -- Phase A appenders
 
-appendObjects :: DuckConn -> [ObjectRow] -> IO ()
+appendObjects :: AppenderPool -> [ObjectRow] -> IO ()
 appendObjects _    [] = pure ()
-appendObjects conn rows = withRaw conn "objects" $ \app ->
+appendObjects pool rows = appendRow pool "objects" $ \app ->
   for_ rows $ \r -> do
     aText      app (orFile           r)
     aText      app (orKind           r)
@@ -469,9 +517,9 @@ appendObjects conn rows = withRaw conn "objects" $ \app ->
     aText      app (orConfidence     r)
     endRow app
 
-appendProcedures :: DuckConn -> [ProcRow] -> IO ()
+appendProcedures :: AppenderPool -> [ProcRow] -> IO ()
 appendProcedures _    [] = pure ()
-appendProcedures conn rows = withRaw conn "procedures" $ \app ->
+appendProcedures pool rows = appendRow pool "procedures" $ \app ->
   for_ rows $ \r -> do
     aText     app (prFile       r)
     aText     app (prObject     r)
@@ -488,9 +536,9 @@ appendProcedures conn rows = withRaw conn "procedures" $ \app ->
     aText     app (prConfidence r)
     endRow app
 
-appendDwObjects :: DuckConn -> [DwObjectRow] -> IO ()
+appendDwObjects :: AppenderPool -> [DwObjectRow] -> IO ()
 appendDwObjects _    [] = pure ()
-appendDwObjects conn rows = withRaw conn "dw_objects" $ \app ->
+appendDwObjects pool rows = appendRow pool "dw_objects" $ \app ->
   for_ rows $ \r -> do
     aText     app (dorFile        r)
     aText     app (dorObject      r)
@@ -499,9 +547,9 @@ appendDwObjects conn rows = withRaw conn "dw_objects" $ \app ->
     aMaybeText app (dorRetrieveSql r)
     endRow app
 
-appendDwControls :: DuckConn -> [DwControlRow] -> IO ()
+appendDwControls :: AppenderPool -> [DwControlRow] -> IO ()
 appendDwControls _    [] = pure ()
-appendDwControls conn rows = withRaw conn "dw_controls" $ \app ->
+appendDwControls pool rows = appendRow pool "dw_controls" $ \app ->
   for_ rows $ \r -> do
     aText      app (dcrFile r)
     aText      app (dcrObject r)
@@ -515,9 +563,9 @@ appendDwControls conn rows = withRaw conn "dw_controls" $ \app ->
     aMaybeText app (dcrExpression r)
     endRow app
 
-appendDwRetrieveTables :: DuckConn -> [DwRetrieveTableRow] -> IO ()
+appendDwRetrieveTables :: AppenderPool -> [DwRetrieveTableRow] -> IO ()
 appendDwRetrieveTables _    [] = pure ()
-appendDwRetrieveTables conn rows = withRaw conn "dw_retrieve_tables" $ \app ->
+appendDwRetrieveTables pool rows = appendRow pool "dw_retrieve_tables" $ \app ->
   for_ rows $ \r -> do
     aText app (drtrFile r)
     aText app (drtrDwName r)
@@ -525,9 +573,9 @@ appendDwRetrieveTables conn rows = withRaw conn "dw_retrieve_tables" $ \app ->
     aText app (drtrTableName r)
     endRow app
 
-appendDwRetrieveColumns :: DuckConn -> [DwRetrieveColumnRow] -> IO ()
+appendDwRetrieveColumns :: AppenderPool -> [DwRetrieveColumnRow] -> IO ()
 appendDwRetrieveColumns _    [] = pure ()
-appendDwRetrieveColumns conn rows = withRaw conn "dw_retrieve_columns" $ \app ->
+appendDwRetrieveColumns pool rows = appendRow pool "dw_retrieve_columns" $ \app ->
   for_ rows $ \r -> do
     aText      app (drcrFile r)
     aText      app (drcrDwName r)
@@ -541,9 +589,9 @@ appendDwRetrieveColumns conn rows = withRaw conn "dw_retrieve_columns" $ \app ->
 -- time -- same row shape as 'appendDwRetrieveColumns', a separate table so
 -- the leg_kind (LegWrites, not LegRetrieve) stays evident from which table
 -- a row came from, matching 'appendCatFootprintColumns's own precedent.
-appendDwWriteColumns :: DuckConn -> [DwRetrieveColumnRow] -> IO ()
+appendDwWriteColumns :: AppenderPool -> [DwRetrieveColumnRow] -> IO ()
 appendDwWriteColumns _    [] = pure ()
-appendDwWriteColumns conn rows = withRaw conn "dw_write_columns" $ \app ->
+appendDwWriteColumns pool rows = appendRow pool "dw_write_columns" $ \app ->
   for_ rows $ \r -> do
     aText      app (drcrFile r)
     aText      app (drcrDwName r)
@@ -555,9 +603,9 @@ appendDwWriteColumns conn rows = withRaw conn "dw_write_columns" $ \app ->
 -- | Plan 163 Phase 6: a DW retrieve's WHERE-operand columns (catalog-gated
 -- by 'PB.Analysis.DwFootprint.dwRetrieveFootprint' itself), same shape
 -- as 'appendDwWriteColumns'.
-appendDwWhereColumns :: DuckConn -> [DwRetrieveColumnRow] -> IO ()
+appendDwWhereColumns :: AppenderPool -> [DwRetrieveColumnRow] -> IO ()
 appendDwWhereColumns _    [] = pure ()
-appendDwWhereColumns conn rows = withRaw conn "dw_where_columns" $ \app ->
+appendDwWhereColumns pool rows = appendRow pool "dw_where_columns" $ \app ->
   for_ rows $ \r -> do
     aText      app (drcrFile r)
     aText      app (drcrDwName r)
@@ -566,9 +614,9 @@ appendDwWhereColumns conn rows = withRaw conn "dw_where_columns" $ \app ->
     aText      app (drcrColumnName r)
     endRow app
 
-appendDwJoins :: DuckConn -> [DwJoinRow] -> IO ()
+appendDwJoins :: AppenderPool -> [DwJoinRow] -> IO ()
 appendDwJoins _    [] = pure ()
-appendDwJoins conn rows = withRaw conn "dw_joins" $ \app ->
+appendDwJoins pool rows = appendRow pool "dw_joins" $ \app ->
   for_ rows $ \r -> do
     aText      app (djrFile r)
     aText      app (djrDwName r)
@@ -579,9 +627,9 @@ appendDwJoins conn rows = withRaw conn "dw_joins" $ \app ->
     aMaybeText app (djrOuter2 r)
     endRow app
 
-appendDwRetrieveWhere :: DuckConn -> [DwRetrieveWhereRow] -> IO ()
+appendDwRetrieveWhere :: AppenderPool -> [DwRetrieveWhereRow] -> IO ()
 appendDwRetrieveWhere _    [] = pure ()
-appendDwRetrieveWhere conn rows = withRaw conn "dw_retrieve_where" $ \app ->
+appendDwRetrieveWhere pool rows = appendRow pool "dw_retrieve_where" $ \app ->
   for_ rows $ \r -> do
     aText      app (drwrFile r)
     aText      app (drwrDwName r)
@@ -592,9 +640,9 @@ appendDwRetrieveWhere conn rows = withRaw conn "dw_retrieve_where" $ \app ->
     aMaybeText app (drwrLogic r)
     endRow app
 
-appendLocalVars :: DuckConn -> [LocalVar] -> IO ()
+appendLocalVars :: AppenderPool -> [LocalVar] -> IO ()
 appendLocalVars _    [] = pure ()
-appendLocalVars conn lvs = withRaw conn "local_vars" $ \app ->
+appendLocalVars pool lvs = appendRow pool "local_vars" $ \app ->
   for_ lvs $ \lv -> do
     aText app (lvFile lv)
     aText app (lvObject lv)
@@ -605,9 +653,9 @@ appendLocalVars conn lvs = withRaw conn "local_vars" $ \app ->
     aInt  app (lvScopeLine lv)
     endRow app
 
-appendCallSites :: DuckConn -> [CallSite] -> IO ()
+appendCallSites :: AppenderPool -> [CallSite] -> IO ()
 appendCallSites _    [] = pure ()
-appendCallSites conn css = withRaw conn "call_sites" $ \app ->
+appendCallSites pool css = appendRow pool "call_sites" $ \app ->
   for_ css $ \cs -> do
     aText     app (csFile cs)
     aText     app (csObject cs)
@@ -617,9 +665,9 @@ appendCallSites conn css = withRaw conn "call_sites" $ \app ->
     aMaybeInt app (csLine cs)
     endRow app
 
-appendGlobalVars :: DuckConn -> [GlobalVar] -> IO ()
+appendGlobalVars :: AppenderPool -> [GlobalVar] -> IO ()
 appendGlobalVars _    [] = pure ()
-appendGlobalVars conn gvs = withRaw conn "global_vars" $ \app ->
+appendGlobalVars pool gvs = appendRow pool "global_vars" $ \app ->
   for_ gvs $ \gv -> do
     aText app (gvFile gv)
     aText app (gvObject gv)
@@ -628,9 +676,9 @@ appendGlobalVars conn gvs = withRaw conn "global_vars" $ \app ->
     aText app (T.intercalate "|" (gvMods gv))
     endRow app
 
-appendProcDefs :: DuckConn -> [(Text, Text, Text, Dataflow.ProcFlow)] -> IO ()
+appendProcDefs :: AppenderPool -> [(Text, Text, Text, Dataflow.ProcFlow)] -> IO ()
 appendProcDefs _    [] = pure ()
-appendProcDefs conn flows = withRaw conn "proc_defs" $ \app ->
+appendProcDefs pool flows = appendRow pool "proc_defs" $ \app ->
   for_ flows $ \(file, obj, proc_, pf) ->
     for_ (concatMap Dataflow.bfDefs (Map.elems (Dataflow.pfBlocks pf))) $ \d -> do
       aText     app file
@@ -643,9 +691,9 @@ appendProcDefs conn flows = withRaw conn "proc_defs" $ \app ->
       aText     app (Dataflow.dsKind d)
       endRow app
 
-appendProcUses :: DuckConn -> [(Text, Text, Text, Dataflow.ProcFlow)] -> IO ()
+appendProcUses :: AppenderPool -> [(Text, Text, Text, Dataflow.ProcFlow)] -> IO ()
 appendProcUses _    [] = pure ()
-appendProcUses conn flows = withRaw conn "proc_uses" $ \app ->
+appendProcUses pool flows = appendRow pool "proc_uses" $ \app ->
   for_ flows $ \(file, obj, proc_, pf) ->
     for_ (concatMap Dataflow.bfUses (Map.elems (Dataflow.pfBlocks pf))) $ \u -> do
       aText     app file
@@ -658,9 +706,9 @@ appendProcUses conn flows = withRaw conn "proc_uses" $ \app ->
       aText     app (Dataflow.usKind u)
       endRow app
 
-appendSqlStmts :: DuckConn -> [SqlStmtRow] -> IO ()
+appendSqlStmts :: AppenderPool -> [SqlStmtRow] -> IO ()
 appendSqlStmts _    [] = pure ()
-appendSqlStmts conn rows = withRaw conn "sql_statements" $ \app ->
+appendSqlStmts pool rows = appendRow pool "sql_statements" $ \app ->
   for_ rows $ \r -> do
     aText      app (ssrFile r)
     aText      app (ssrObject r)
@@ -673,9 +721,9 @@ appendSqlStmts conn rows = withRaw conn "sql_statements" $ \app ->
     aBool      app (ssrParseOk r)
     endRow app
 
-appendSqlStmtColumns :: DuckConn -> [SqlStmtColumnRow] -> IO ()
+appendSqlStmtColumns :: AppenderPool -> [SqlStmtColumnRow] -> IO ()
 appendSqlStmtColumns _    [] = pure ()
-appendSqlStmtColumns conn rows = withRaw conn "sql_statement_columns" $ \app ->
+appendSqlStmtColumns pool rows = appendRow pool "sql_statement_columns" $ \app ->
   for_ rows $ \r -> do
     aText      app (sscrFile r)
     aText      app (sscrObject r)
@@ -690,9 +738,9 @@ appendSqlStmtColumns conn rows = withRaw conn "sql_statement_columns" $ \app ->
 -- | Plan 163 Phase 3: same row shape/append pattern as
 -- 'appendSqlStmtColumns' (reuses 'SqlStmtColumnRow' rather than a bespoke
 -- type), writing to 'cat_footprint_columns' instead.
-appendCatFootprintColumns :: DuckConn -> [SqlStmtColumnRow] -> IO ()
+appendCatFootprintColumns :: AppenderPool -> [SqlStmtColumnRow] -> IO ()
 appendCatFootprintColumns _    [] = pure ()
-appendCatFootprintColumns conn rows = withRaw conn "cat_footprint_columns" $ \app ->
+appendCatFootprintColumns pool rows = appendRow pool "cat_footprint_columns" $ \app ->
   for_ rows $ \r -> do
     aText      app (sscrFile r)
     aText      app (sscrObject r)
@@ -704,9 +752,9 @@ appendCatFootprintColumns conn rows = withRaw conn "cat_footprint_columns" $ \ap
     aBool      app (sscrIsWrite r)
     endRow app
 
-appendSqlStmtFilters :: DuckConn -> [SqlStmtFilterRow] -> IO ()
+appendSqlStmtFilters :: AppenderPool -> [SqlStmtFilterRow] -> IO ()
 appendSqlStmtFilters _    [] = pure ()
-appendSqlStmtFilters conn rows = withRaw conn "sql_statement_filters" $ \app ->
+appendSqlStmtFilters pool rows = appendRow pool "sql_statement_filters" $ \app ->
   for_ rows $ \r -> do
     aText      app (ssfrFile r)
     aText      app (ssfrObject r)
@@ -719,9 +767,9 @@ appendSqlStmtFilters conn rows = withRaw conn "sql_statement_filters" $ \app ->
     aText      app (ssfrValuesJson r)
     endRow app
 
-appendSqlStmtTables :: DuckConn -> [SqlStmtTableRow] -> IO ()
+appendSqlStmtTables :: AppenderPool -> [SqlStmtTableRow] -> IO ()
 appendSqlStmtTables _    [] = pure ()
-appendSqlStmtTables conn rows = withRaw conn "sql_statement_tables" $ \app ->
+appendSqlStmtTables pool rows = appendRow pool "sql_statement_tables" $ \app ->
   for_ rows $ \r -> do
     aText      app (sstrFile r)
     aText      app (sstrObject r)
@@ -732,9 +780,9 @@ appendSqlStmtTables conn rows = withRaw conn "sql_statement_tables" $ \app ->
     aText      app (sstrTableName r)
     endRow app
 
-appendCatalogColumns :: DuckConn -> [CatalogColumnRow] -> IO ()
+appendCatalogColumns :: AppenderPool -> [CatalogColumnRow] -> IO ()
 appendCatalogColumns _    [] = pure ()
-appendCatalogColumns conn rows = withRaw conn "catalog_columns" $ \app ->
+appendCatalogColumns pool rows = appendRow pool "catalog_columns" $ \app ->
   for_ rows $ \r -> do
     aMaybeText app (cclrNamespace  r)
     aText      app (cclrTableName  r)
@@ -742,9 +790,9 @@ appendCatalogColumns conn rows = withRaw conn "catalog_columns" $ \app ->
     aInt       app (cclrOrdinal    r)
     endRow app
 
-appendCatalogPks :: DuckConn -> [CatalogPkRow] -> IO ()
+appendCatalogPks :: AppenderPool -> [CatalogPkRow] -> IO ()
 appendCatalogPks _    [] = pure ()
-appendCatalogPks conn rows = withRaw conn "catalog_pks" $ \app ->
+appendCatalogPks pool rows = appendRow pool "catalog_pks" $ \app ->
   for_ rows $ \r -> do
     aMaybeText app (cpkrNamespace  r)
     aText      app (cpkrTableName  r)
@@ -752,9 +800,9 @@ appendCatalogPks conn rows = withRaw conn "catalog_pks" $ \app ->
     aInt       app (cpkrOrdinal    r)
     endRow app
 
-appendCatalogFks :: DuckConn -> [CatalogFkRow] -> IO ()
+appendCatalogFks :: AppenderPool -> [CatalogFkRow] -> IO ()
 appendCatalogFks _    [] = pure ()
-appendCatalogFks conn rows = withRaw conn "catalog_fks" $ \app ->
+appendCatalogFks pool rows = appendRow pool "catalog_fks" $ \app ->
   for_ rows $ \r -> do
     aMaybeText app (cfkrConstraintName r)
     aMaybeText app (cfkrFromNamespace  r)
@@ -766,9 +814,9 @@ appendCatalogFks conn rows = withRaw conn "catalog_fks" $ \app ->
     aInt       app (cfkrOrdinal        r)
     endRow app
 
-appendCatalogChecks :: DuckConn -> [CatalogCheckRow] -> IO ()
+appendCatalogChecks :: AppenderPool -> [CatalogCheckRow] -> IO ()
 appendCatalogChecks _    [] = pure ()
-appendCatalogChecks conn rows = withRaw conn "catalog_checks" $ \app ->
+appendCatalogChecks pool rows = appendRow pool "catalog_checks" $ \app ->
   for_ rows $ \r -> do
     aMaybeText app (cckrConstraintName r)
     aMaybeText app (cckrNamespace      r)
@@ -776,17 +824,17 @@ appendCatalogChecks conn rows = withRaw conn "catalog_checks" $ \app ->
     aText      app (cckrPredicate      r)
     endRow app
 
-appendParseErrors :: DuckConn -> [(FilePath, Text)] -> IO ()
+appendParseErrors :: AppenderPool -> [(FilePath, Text)] -> IO ()
 appendParseErrors _    [] = pure ()
-appendParseErrors conn errs = withRaw conn "parse_errors" $ \app ->
+appendParseErrors pool errs = appendRow pool "parse_errors" $ \app ->
   for_ errs $ \(path, msg) -> do
     aText app (T.pack path)
     aText app msg
     endRow app
 
-appendSourceFiles :: DuckConn -> [SourceFileRow] -> IO ()
+appendSourceFiles :: AppenderPool -> [SourceFileRow] -> IO ()
 appendSourceFiles _    [] = pure ()
-appendSourceFiles conn rows = withRaw conn "source_files" $ \app ->
+appendSourceFiles pool rows = appendRow pool "source_files" $ \app ->
   for_ rows $ \r -> do
     aText app (sfrFile r)
     aText app (sfrLines r)
