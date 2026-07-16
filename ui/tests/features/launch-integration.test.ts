@@ -21,6 +21,7 @@ function makeAst(overrides?: Partial<AstData>): AstData {
 function createAppEnv(astResponses: Record<string, AstData>): AppEnv {
   return {
     getStats: () => Effect.none(),
+    getCodeQualityReport: () => Effect.none(),
     getObjects: () => Effect.none(),
     getObject: () => Effect.none(),
     getObjectSource: () => Effect.none(),

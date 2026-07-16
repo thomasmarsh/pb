@@ -217,6 +217,13 @@ export interface StatsResponse {
   co_update_violation_count?: number;
 }
 
+export interface CodeQualityReportResponse {
+  top_complexity_procedures: { object: string; proc_name: string; proc_type: string; cyclomatic: number }[];
+  dead_procedures_by_object: { object: string; dead_count: number }[];
+  taint_severity_distribution: { severity: string; count: number }[];
+  sql_statement_complexity_histogram: { table_count: number; statement_count: number }[];
+}
+
 export interface QueryParam {
   name: string;
   type: string;

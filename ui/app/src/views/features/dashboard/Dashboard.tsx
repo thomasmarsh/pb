@@ -93,6 +93,71 @@ function TopTablesWidget(props: { store: Store<AppState, AppAction> }) {
   );
 }
 
+function CodeQualityReportWidget(props: { store: Store<AppState, AppAction> }) {
+  const snap = props.store.getState();
+  const report = () => snap().dashboard.report;
+
+  onMount(() => {
+    props.store.dispatch({ tag: "dashboard", action: { tag: "loadReport" } });
+  });
+
+  return (
+    <Show when={report()}>
+      <div class="card">
+        <div class="card-header"><h2>Dead Procedures by Object</h2></div>
+        <table class="data-table">
+          <thead><tr><th>Object</th><th>Dead Procedures</th></tr></thead>
+          <tbody>
+            <For each={report()!.dead_procedures_by_object}>
+              {(d) => (
+                <tr class="clickable"
+                    onClick={() => props.store.dispatch({ tag: "objects", action: { tag: "select", name: d.object } })}>
+                  <td class="name-cell">{d.object}</td>
+                  <td>{String(d.dead_count)}</td>
+                </tr>
+              )}
+            </For>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h2>Taint Severity Distribution</h2></div>
+        <table class="data-table">
+          <thead><tr><th>Severity</th><th>Count</th></tr></thead>
+          <tbody>
+            <For each={report()!.taint_severity_distribution}>
+              {(d) => (
+                <tr>
+                  <td class="name-cell">{d.severity}</td>
+                  <td>{String(d.count)}</td>
+                </tr>
+              )}
+            </For>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h2>SQL Statement Complexity</h2></div>
+        <table class="data-table">
+          <thead><tr><th>Tables Joined</th><th>Statements</th></tr></thead>
+          <tbody>
+            <For each={report()!.sql_statement_complexity_histogram}>
+              {(d) => (
+                <tr>
+                  <td>{String(d.table_count)}</td>
+                  <td>{String(d.statement_count)}</td>
+                </tr>
+              )}
+            </For>
+          </tbody>
+        </table>
+      </div>
+    </Show>
+  );
+}
+
 interface CapabilityRowProps {
   label: string;
   metric: string;
@@ -293,6 +358,7 @@ export function Dashboard(props: { store: Store<AppState, AppAction> }) {
       </Show>
 
       <TopTablesWidget store={store} />
+      <CodeQualityReportWidget store={store} />
     </Show>
   );
 }

@@ -524,6 +524,130 @@ def test_dead_code_endpoint_still_works(db_path):
     )
 
 
+# ---------------------------------------------------------------------------
+# GET /api/analysis/report (Plan 174 T0-5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def report_client(tmp_path_factory):
+    """TestClient backed by a synthetic DB covering all 4 report aggregates."""
+    tmp = tmp_path_factory.mktemp("report_db")
+    db_path = str(tmp / "report.duckdb")
+    conn = duckdb.connect(db_path)
+
+    conn.execute("""
+        CREATE TABLE procedures (
+            object TEXT, proc_name TEXT, proc_type TEXT, cyclomatic INT
+        )
+    """)
+    # 12 rows so the LIMIT 10 in the report query is exercised.
+    for i, cyc in enumerate([25, 22, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2]):
+        conn.execute(
+            "INSERT INTO procedures VALUES (?, ?, ?, ?)",
+            ["obj_a", f"proc_{i}", "function", cyc],
+        )
+
+    conn.execute("""
+        CREATE TABLE dead_code (
+            object TEXT, proc_name TEXT, proc_type TEXT, cyclomatic INT,
+            confidence TEXT, caller_count_naive INT, caller_count_scoped INT
+        )
+    """)
+    for row in [
+        ("obj_a", "proc_dead_1", "function", 1, "high", 0, 0),
+        ("obj_a", "proc_dead_2", "function", 1, "high", 0, 0),
+        ("obj_a", "proc_dead_3", "function", 1, "high", 0, 0),
+        ("obj_b", "proc_dead_4", "function", 1, "high", 0, 0),
+    ]:
+        conn.execute("INSERT INTO dead_code VALUES (?, ?, ?, ?, ?, ?, ?)", row)
+
+    conn.execute("""
+        CREATE TABLE taint_paths (
+            source_file TEXT, source_object TEXT, source_proc TEXT, source_var TEXT,
+            sink_file TEXT, sink_object TEXT, sink_proc TEXT, sink_var TEXT,
+            severity TEXT, category TEXT, steps_json TEXT
+        )
+    """)
+    for severity in ["high", "high", "low"]:
+        conn.execute(
+            "INSERT INTO taint_paths VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            ["w.srf", "obj_a", "proc_a", "ls_y",
+             "w.srf", "obj_a", "proc_b", "ls_x",
+             severity, "sql_injection", "[]"],
+        )
+
+    conn.execute("""
+        CREATE TABLE sql_statements (
+            file TEXT, object TEXT, proc_name TEXT, line INT,
+            operation TEXT, tables TEXT, columns TEXT, raw_sql TEXT, parse_ok BOOLEAN
+        )
+    """)
+    for tables in ["tbl_a", "tbl_a,tbl_b", "tbl_a,tbl_b,tbl_c", "", "tbl_a,tbl_b"]:
+        conn.execute(
+            "INSERT INTO sql_statements VALUES (?,?,?,?,?,?,?,?,?)",
+            ["w.srf", "obj_a", "proc_a", 1, "SELECT", tables, "", "SELECT 1", True],
+        )
+
+    conn.close()
+
+    from fastapi.testclient import TestClient
+    from pb.api import create_app
+
+    app = create_app(db_path)
+    return TestClient(app)
+
+
+def test_report_top_complexity_procedures(report_client):
+    r = report_client.get("/api/analysis/report")
+    assert r.status_code == 200
+    top = r.json()["top_complexity_procedures"]
+    assert len(top) == 10
+    assert top[0]["proc_name"] == "proc_0"
+    assert top[0]["cyclomatic"] == 25
+    assert [p["cyclomatic"] for p in top] == sorted(
+        (p["cyclomatic"] for p in top), reverse=True
+    )
+
+
+def test_report_dead_procedures_by_object(report_client):
+    r = report_client.get("/api/analysis/report")
+    assert r.status_code == 200
+    dead_by_object = r.json()["dead_procedures_by_object"]
+    assert dead_by_object[0] == {"object": "obj_a", "dead_count": 3}
+    assert {"object": "obj_b", "dead_count": 1} in dead_by_object
+
+
+def test_report_taint_severity_distribution(report_client):
+    r = report_client.get("/api/analysis/report")
+    assert r.status_code == 200
+    dist = {d["severity"]: d["count"] for d in r.json()["taint_severity_distribution"]}
+    assert dist == {"high": 2, "low": 1}
+
+
+def test_report_sql_statement_complexity_histogram(report_client):
+    r = report_client.get("/api/analysis/report")
+    assert r.status_code == 200
+    hist = {h["table_count"]: h["statement_count"] for h in r.json()["sql_statement_complexity_histogram"]}
+    assert hist == {0: 1, 1: 1, 2: 2, 3: 1}
+
+
+def test_report_endpoint_works_against_real_corpus(db_path):
+    """Ensure the report endpoint works against the real openpay corpus."""
+    from fastapi.testclient import TestClient
+    from pb.api import create_app
+
+    app = create_app(db_path)
+    client = TestClient(app)
+    r = client.get("/api/analysis/report")
+    assert r.status_code == 200
+    body = r.json()
+    assert "top_complexity_procedures" in body
+    assert "dead_procedures_by_object" in body
+    assert "taint_severity_distribution" in body
+    assert "sql_statement_complexity_histogram" in body
+
+
 def test_live_procedures_endpoint_works_against_real_corpus(db_path):
     """Ensure the live-procedures endpoint (Plan 161 Souffle live_proc table)
     works against the real openpay corpus, produced by pbc --db's runPass11."""

@@ -242,6 +242,36 @@ def get_taint_sources(
     return {"sources": src_rows, "total": total}
 
 
+def get_code_quality_report(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+    """Aggregated code-quality signals — pure SQL over already-computed tables
+    (Plan 174 T0-5)."""
+    top_complexity_procedures = rows(conn.execute(
+        "SELECT object, proc_name, proc_type, cyclomatic FROM procedures "
+        "WHERE cyclomatic IS NOT NULL ORDER BY cyclomatic DESC LIMIT 10"
+    ))
+    dead_procedures_by_object = rows(conn.execute(
+        "SELECT object, COUNT(*) AS dead_count FROM dead_code "
+        "GROUP BY object ORDER BY dead_count DESC LIMIT 10"
+    ))
+    taint_severity_distribution = rows(conn.execute(
+        "SELECT severity, COUNT(*) AS count FROM taint_paths "
+        "GROUP BY severity ORDER BY count DESC"
+    ))
+    sql_statement_complexity_histogram = rows(conn.execute(
+        "SELECT table_count, COUNT(*) AS statement_count FROM ("
+        "  SELECT CASE WHEN tables IS NULL OR tables = '' THEN 0 "
+        "         ELSE len(string_split(tables, ',')) END AS table_count "
+        "  FROM sql_statements"
+        ") GROUP BY table_count ORDER BY table_count"
+    ))
+    return {
+        "top_complexity_procedures": top_complexity_procedures,
+        "dead_procedures_by_object": dead_procedures_by_object,
+        "taint_severity_distribution": taint_severity_distribution,
+        "sql_statement_complexity_histogram": sql_statement_complexity_histogram,
+    }
+
+
 def get_taint_sinks(
     conn: duckdb.DuckDBPyConnection,
     *,

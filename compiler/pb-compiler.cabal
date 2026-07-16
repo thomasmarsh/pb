@@ -46,6 +46,7 @@ library
     PB.Analysis.Builtins
     PB.Analysis.CallClassify
     PB.Analysis.Cfg
+    PB.Analysis.CloneDetect
     PB.Compile.IR
     PB.Compile.SSA
     PB.Compile.LoopAnalysis
@@ -159,6 +160,7 @@ test-suite pb-compiler-test
     , TypeResolveTest
     , ControlHierarchyTest
     , CallClassifyTest
+    , CloneDetectTest
   build-depends:
     , base ^>=4.20.1.0
     , pb-compiler

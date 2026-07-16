@@ -9,6 +9,7 @@ import type {
   DwDetailResponse,
   SearchResponse,
   StatsResponse,
+  CodeQualityReportResponse,
   QueryDef,
   QueryResult,
   ExploreTreeResponse,
@@ -34,6 +35,7 @@ import type { NavigationAction } from "@pb/platform";
 
 export interface ApiClient {
   getStats(): Promise<StatsResponse>;
+  getCodeQualityReport(): Promise<CodeQualityReportResponse>;
   getObjects(params: Record<string, string | number>): Promise<ListObjectsResponse>;
   getObject(name: string): Promise<ObjectDetailResponse>;
   getObjectSource(name: string): Promise<ObjectSourceResponse>;
@@ -109,6 +111,7 @@ export function createEnv(api: ApiClient): Env {
     Effect.fromPromise(thunk);
   return {
     getStats: () => lift(() => api.getStats()),
+    getCodeQualityReport: () => lift(() => api.getCodeQualityReport()),
     getObjects: (p) => lift(() => api.getObjects(p)),
     getObject: (n) => lift(() => api.getObject(n)),
     getObjectSource: (n) => lift(() => api.getObjectSource(n)),
@@ -164,6 +167,10 @@ export function createApiClient(): ApiClient {
   return {
     async getStats(): Promise<StatsResponse> {
       return fetchJson("/api/stats");
+    },
+
+    async getCodeQualityReport(): Promise<CodeQualityReportResponse> {
+      return fetchJson("/api/analysis/report");
     },
 
     async getObjects(

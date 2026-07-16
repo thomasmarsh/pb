@@ -2,7 +2,8 @@
 {-# LANGUAGE DeriveFunctor #-}
 -- | Shared instruction-graph types: 'InstrNode'\/'InstrGraph' plus the
 -- canonical-shape helpers ('ShapeNode', 'canonicalize', 'normalizeCallTag')
--- used by hand-trace\/golden-fixture tests.
+-- used by hand-trace\/golden-fixture tests and by
+-- 'PB.Analysis.CloneDetect'\'s semantic clone-family grouping.
 --
 -- Production flattens via 'PB.Compile.Flatten.compileProcedureViaEffTerm'
 -- (SSA → 'PB.Compile.IR.EffTerm' → 'InstrGraph').
@@ -64,7 +65,8 @@ data InstrGraph = InstrGraph
 -- | Structural shape of a InstrNode with all variable names and expression
 -- values erased.  PC targets are replaced by canonical indices (BFS order
 -- from entry).  Effect names on InstrSuspend are retained — they are the
--- correctness-critical signal.
+-- correctness-critical signal. Two procedures with 'Eq'-equal 'canonicalize'
+-- output are exact semantic-shape clones ('PB.Analysis.CloneDetect').
 data ShapeNode
   = SAsgn  Int        -- InstrAssign:   canonical anNext
   | SBrnch Int Int    -- InstrBranch:   canonical then, canonical else
@@ -74,7 +76,7 @@ data ShapeNode
   | SRet              -- InstrReturn
   | SNop   Int        -- InstrNop:      canonical npNext (-1 preserved)
   | SCProc Int        -- InstrCallProc: canonical cpNext
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- | BFS traversal from entry, returning PCs in visitation order.
 bfsOrder :: Int -> Map.Map Int InstrNode -> [Int]

@@ -9,7 +9,8 @@ import { reducer, initialState } from "../../app/src/reducer.js";
 import { initialDashboardState } from "@pb/platform";
 import { mockEnv } from "../helpers.js";
 import type { AppEnv } from "../../app/src/reducer.js";
-import type { StatsResponse } from "@pb/platform";
+import type { AppAction } from "../../app/src/actions.js";
+import type { StatsResponse, CodeQualityReportResponse } from "@pb/platform";
 
 const sampleStats: StatsResponse = {
   objects: 150,
@@ -40,6 +41,24 @@ const sampleStats: StatsResponse = {
   dead_column_count: 4,
   co_update_pair_count: 45,
   co_update_violation_count: 0,
+};
+
+const sampleReport: CodeQualityReportResponse = {
+  top_complexity_procedures: [
+    { object: "w_main", proc_name: "of_init", proc_type: "function", cyclomatic: 25 },
+  ],
+  dead_procedures_by_object: [
+    { object: "w_zzzdead", dead_count: 42 },
+    { object: "w_yyydead", dead_count: 17 },
+  ],
+  taint_severity_distribution: [
+    { severity: "critical", count: 9 },
+    { severity: "medium", count: 3 },
+  ],
+  sql_statement_complexity_histogram: [
+    { table_count: 1, statement_count: 13 },
+    { table_count: 3, statement_count: 6 },
+  ],
 };
 
 afterEach(() => {
@@ -163,6 +182,52 @@ describe("Dashboard component", () => {
     expect(captured).toContainEqual({
       tag: "nav",
       action: { tag: "navigate", route: { view: "diagrams", kind: "fk-graph" } },
+    });
+  });
+
+  it("renders dead-procedures-by-object card from the code quality report", async () => {
+    const env = { ...mockEnv, getCodeQualityReport: () => Effect.send(sampleReport) } as AppEnv;
+    const state = { ...initialState(), dashboard: { ...initialDashboardState, stats: sampleStats } };
+    const store = createStore(state, reducer, env);
+    render(() => <Dashboard store={store} />);
+    await vi.waitUntil(() => screen.queryByText("w_zzzdead") != null);
+    expect(screen.getByText("Dead Procedures by Object")).toBeDefined();
+    expect(screen.getByText("w_zzzdead")).toBeDefined();
+    expect(screen.getByText("42")).toBeDefined();
+  });
+
+  it("renders taint severity distribution card from the code quality report", async () => {
+    const env = { ...mockEnv, getCodeQualityReport: () => Effect.send(sampleReport) } as AppEnv;
+    const state = { ...initialState(), dashboard: { ...initialDashboardState, stats: sampleStats } };
+    const store = createStore(state, reducer, env);
+    render(() => <Dashboard store={store} />);
+    await vi.waitUntil(() => screen.queryByText("Taint Severity Distribution") != null);
+    expect(screen.getByText("critical")).toBeDefined();
+    expect(screen.getByText("9")).toBeDefined();
+  });
+
+  it("renders SQL statement complexity histogram card from the code quality report", async () => {
+    const env = { ...mockEnv, getCodeQualityReport: () => Effect.send(sampleReport) } as AppEnv;
+    const state = { ...initialState(), dashboard: { ...initialDashboardState, stats: sampleStats } };
+    const store = createStore(state, reducer, env);
+    render(() => <Dashboard store={store} />);
+    await vi.waitUntil(() => screen.queryByText("SQL Statement Complexity") != null);
+    expect(screen.getByText("13")).toBeDefined();
+    expect(screen.getByText("6")).toBeDefined();
+  });
+
+  it("clicking a dead-procedures-by-object row dispatches objects select", async () => {
+    const env = { ...mockEnv, getCodeQualityReport: () => Effect.send(sampleReport) } as AppEnv;
+    const state = { ...initialState(), dashboard: { ...initialDashboardState, stats: sampleStats } };
+    const store = createStore(state, reducer, env);
+    const captured: AppAction[] = [];
+    const wrappedStore = { ...store, dispatch: (a: AppAction) => { captured.push(a); store.dispatch(a); } };
+    render(() => <Dashboard store={wrappedStore} />);
+    await vi.waitUntil(() => screen.queryByText("w_zzzdead") != null);
+    fireEvent.click(screen.getByText("w_zzzdead"));
+    expect(captured).toContainEqual({
+      tag: "objects",
+      action: { tag: "select", name: "w_zzzdead" },
     });
   });
 

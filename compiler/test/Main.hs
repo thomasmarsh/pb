@@ -39,6 +39,7 @@ import qualified TypeEnvTest
 import qualified TypeResolveTest
 import qualified ControlHierarchyTest
 import qualified CallClassifyTest
+import qualified CloneDetectTest
 
 
 import Prelude
@@ -88,4 +89,5 @@ tests = testGroup "pb-compiler"
   , TypeResolveTest.tests
   , ControlHierarchyTest.tests
   , CallClassifyTest.tests
+  , CloneDetectTest.tests
   ]

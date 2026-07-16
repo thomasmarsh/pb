@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pb.api.models import LiveProceduresResponse
 from pb.api.routes.dependencies import get_db
 from pb.api.services.analysis import (
+    get_code_quality_report,
     get_dead_code,
     get_live_procedures,
     get_program_slice,
@@ -102,6 +103,11 @@ async def taint_sources(
     conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
     return get_taint_sources(conn, source_type=source_type, limit=limit)
+
+
+@router.get("/api/analysis/report")
+async def code_quality_report(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
+    return get_code_quality_report(conn)
 
 
 @router.get("/api/analysis/sinks")
