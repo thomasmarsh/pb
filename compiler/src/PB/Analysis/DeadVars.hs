@@ -105,18 +105,13 @@ deadStoresInBlock obj proc lvNames usedVars blockLiveOut bf = go idxsDesc blockL
               -> [DeadVarFinding obj proc (dsVar d) (dsLine d) OverwrittenBeforeRead]
             _ -> []
           -- A partial def (`obj.field = x`) doesn't kill `obj`'s liveness --
-          -- it overwrites one member, not the whole value -- and it
-          -- implicitly reads `obj` itself to reach into it (the treeviewitem/
-          -- datastore-population idiom: `ds = create datastore; ds.field =
-          -- x`). Without this, extractUseVars never records that implicit
-          -- read (only the RHS is walked for BsAssign), so the earlier full
-          -- def looks dead to this backward walk even though it's plainly
-          -- read by every subsequent `.field =` write.
+          -- it overwrites one member, not the whole value. 'useSet' already
+          -- carries the def's own implicit read of `obj` at this same
+          -- index ('PB.Analysis.Dataflow.extractUseVars's partialSelfUse),
+          -- so no separate term is needed here to keep the preceding full
+          -- def from looking dead.
           killed = case mDef of
             Just d | not (dsPartial d) -> Set.singleton (dsVar d)
             _                          -> Set.empty
-          partialUse = case mDef of
-            Just d | dsPartial d -> Set.singleton (dsVar d)
-            _                    -> Set.empty
-          live' = (live `Set.difference` killed) `Set.union` useSet `Set.union` partialUse
+          live' = (live `Set.difference` killed) `Set.union` useSet
       in finding <> go rest live'

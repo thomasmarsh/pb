@@ -170,6 +170,18 @@ tests = testGroup "Dataflow"
           Set.fromList (map usVar (bfUses bf)) @?= Set.fromList ["ll_count", "gs_kodxrisi", "ldt_today"]
           all (\u -> usKind u == "sql_host_var") (bfUses bf) @?= True
 
+    , testCase "BsAssign with a subscript index on the RHS creates a use of the index var" $
+        -- Generalization of the LHS-subscript fix above (Plan 174 T0-1
+        -- follow-on, item C): an ExLvalue with a subscript read anywhere in
+        -- an expression tree -- not just an assignment's own LHS -- must
+        -- surface the subscript's own identifiers too. `y = arr[i]` reads
+        -- both `arr` and `i`.
+        let rhsLv = Lvalue [LvSegment "arr" (Just ["i"])]
+            blk = mkBlock "b0" [at 1 (BsAssign (lv1 "y") (ExLvalue rhsLv))]
+            bf  = extractDefsUses blk
+        in do
+          Set.fromList (map usVar (bfUses bf)) @?= Set.fromList ["arr", "i"]
+
     , testCase "BsAssign with a subscript index on the LHS creates a use of the index var" $
         -- Real-corpus regression: this.Control[iCurrent+1] = this.pb_expr --
         -- iCurrent is read (to compute which array slot to write) but only
@@ -230,6 +242,16 @@ tests = testGroup "Dataflow"
           assertBool "a should reach b3" ("a" `Set.member` reaching)
           assertBool "b should reach b3" ("b" `Set.member` reaching)
           assertBool "c should reach b3" ("c" `Set.member` reaching)
+
+    , testCase "partial def still reaches through (bfGen unaffected by bfKill's partial-def exclusion)" $
+        -- bfGen always re-adds a partial def's own dsVar to newOut regardless
+        -- of bfKill, so excluding partial defs from bfKill (item A) must
+        -- leave reachingDefinitions output unchanged for this shape.
+        let b0 = mkBlock "b0" [at 1 (BsAssign (lv1 "x") (ExInt "1"))]
+            b1 = mkBlock "b1" [at 2 (BsAssign (Lvalue [LvSegment "x" Nothing, LvSegment "field" Nothing]) (ExInt "2"))]
+            cfg = mkCfg "b0" [b0, b1] [CfgEdge "b0" "b1" ""]
+            pf  = analyzeProcedure "obj" "proc" cfg
+        in Map.findWithDefault Set.empty "b1" (pfReachingOut pf) @?= Set.singleton "x"
     ]
 
   , testGroup "analyzeProcedure"
@@ -279,6 +301,18 @@ tests = testGroup "Dataflow"
             cfg = mkCfg "b0" [b0, b1] [CfgEdge "b0" "b1" ""]
             pf  = analyzeProcedure "obj" "proc" cfg
         in Map.findWithDefault Set.empty "b0" (pfLiveOut pf) @?= Set.empty
+
+    , testCase "two blocks: partial def in b1 does not kill x live-out of b0" $
+        -- Cross-block counterpart of DeadVars's "datastore-populate idiom"
+        -- test: a partial def in a SUCCESSOR block must not clobber a full
+        -- def's liveness computed by the shared bfKill, not just DeadVars's
+        -- own now-removed local walk (Plan 174 T0-1 follow-on, item A).
+        let b0 = mkBlock "b0" [at 1 (BsAssign (lv1 "x") (ExInt "1"))]
+            b1 = mkBlock "b1" [at 2 (BsAssign (Lvalue [LvSegment "x" Nothing, LvSegment "field" Nothing]) (ExInt "2"))]
+            cfg = mkCfg "b0" [b0, b1] [CfgEdge "b0" "b1" ""]
+            pf  = analyzeProcedure "obj" "proc" cfg
+        in assertBool "x should still be live-out of b0 (partial def in b1 reads x, doesn't kill it)"
+             ("x" `Set.member` Map.findWithDefault Set.empty "b0" (pfLiveOut pf))
 
     , testCase "diamond: var used only on one branch is live-out of entry" $
         let b0 = mkBlock "b0" [at 1 (BsAssign (lv1 "a") (ExInt "1"))]

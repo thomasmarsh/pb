@@ -1550,11 +1550,12 @@ data InstrGraph' p = InstrGraph' { igNodes' :: Map.Map Text (InstrNode' p), igEn
 linearize :: InstrGraph' p -> InstrGraph
 ```
 
-### `PB.Analysis.Dataflow` (Plan 111a; live variables + dsPartial added Plan 174 T0-1, 2026-07-16)
+### `PB.Analysis.Dataflow` (Plan 111a; live variables + dsPartial added Plan 174 T0-1, 2026-07-16; partial-def kill/use + subscript-read generalization Plan 174 T0-1 follow-on, 2026-07-16)
 
 ```haskell
 -- Pure intra-procedural dataflow: def-use + reaching definitions + live variables.
 extractDefsUses      :: CfgBlock -> BlockFlow
+extractSqlHostVars   :: Text -> [Text]   -- :identifier host-var names from raw embedded SQL text; also PB.Analysis.Taint's single source for this extraction (see that module's entry)
 reachingDefinitions  :: Cfg -> Map Text BlockFlow -> (Map Text (Set Text), Map Text (Set Text))
 liveVariables        :: Cfg -> Map Text BlockFlow -> (Map Text (Set Text), Map Text (Set Text))
 -- (liveIn, liveOut) per block, backward fixpoint mirroring reachingDefinitions
@@ -1578,21 +1579,38 @@ data ProcFlow  = ProcFlow  { pfObject :: Text, pfProc :: Text, pfBlocks :: Map T
                            , pfReachingIn :: Map Text (Set Text), pfReachingOut :: Map Text (Set Text)
                            , pfLiveIn :: Map Text (Set Text), pfLiveOut :: Map Text (Set Text)
                            , pfAllDefs :: Map Text [DefSite], pfAllUses :: Map Text [UseSite] }
--- walkExprIdents counts the ExCall callee root as a use (matches Python core/dataflow.py).
+-- walkExprIdents counts the ExCall callee root as a use (matches Python core/dataflow.py),
+-- and its ExLvalue case counts subscript-expression identifiers too, not just
+-- the root (`arr[i]` reads both `arr` and `i`) -- this covers a subscripted
+-- lvalue read anywhere an expression appears (RHS, conditions, call args,
+-- returns). extractUseVars's BsAssign case additionally calls
+-- lvalueSubscriptIdents directly on the LHS itself (an assignment's own LHS
+-- is never wrapped in an ExLvalue node, so walkExprIdents never sees it).
+--
+-- bfGen always includes every local def's dsVar, partial or not; bfKill
+-- excludes dsPartial defs -- a partial def reaches past the block (bfGen)
+-- but doesn't kill the variable's prior reaching/live value (bfKill), since
+-- it only overwrites one member. extractUseVars's BsAssign case also adds
+-- an implicit use of the def's own root var when isPartialDef holds (the
+-- partial write reads the struct to reach into it) -- this is the single
+-- source of truth both DeadVars.deadStoresInBlock's local backward walk and
+-- liveVariables/reachingDefinitions' block-level fixpoints read; there is no
+-- separate partial-def bookkeeping anywhere else in the codebase.
+--
 -- dsPartial/pfLiveIn/pfLiveOut are additive: dataflowDefRows/dataflowUseRows/
 -- dataflowFacet's JSON row shape is unchanged, so no Python-consumer wire
 -- format was touched by this addition.
 ```
 
-### `PB.Analysis.DeadVars` (Plan 174 T0-1, 2026-07-16)
+### `PB.Analysis.DeadVars` (Plan 174 T0-1, 2026-07-16; wired into the `--db` pipeline same day)
 
 ```haskell
 -- Pure query over Dataflow's ProcFlow + TypeResolve's LocalVar list --
 -- no new IR, no new fixpoint of its own (the one new fixpoint, live
 -- variables, lives in PB.Analysis.Dataflow as a generic companion to
--- reachingDefinitions). Not wired into the production pipeline/DB yet --
--- Plan 174's T0-1 entry frames this as spike-first; see BACKLOG's matching
--- entry for the real-corpus finding-count histogram.
+-- reachingDefinitions). Wired into the `--db` pipeline: Runner.hs's
+-- appendDeadVars populates the dead_vars table; see BACKLOG's Plan 174 T0-1
+-- entries for the real-corpus finding-count histogram.
 data DeadVarKind = NeverRead | OverwrittenBeforeRead | UnusedParam
 data DeadVarFinding = DeadVarFinding { dvfObject, dvfProc, dvfVar :: Text, dvfLine :: Maybe Int, dvfKind :: DeadVarKind }
 deadVarKindText :: DeadVarKind -> Text   -- "never-read" / "overwritten-before-read" / "unused-param"
@@ -1619,7 +1637,8 @@ findDeadVars :: [LocalVar] -> ProcFlow -> [DeadVarFinding]
 -- struct field write can't clobber a sibling field), and (c) the var IS
 -- read somewhere in the procedure (else it's already NeverRead -- this
 -- guard is what keeps the two kinds from double-reporting the same fully-
--- unused variable).
+-- unused variable). Trusts Dataflow's bfUses/dsPartial directly for the
+-- partial-def-doesn't-kill policy -- no local re-derivation of that policy.
 ```
 
 ### `PB.Analysis.Taint` (Plan 111 — 111b/c/d-2)
@@ -1630,6 +1649,9 @@ findDeadVars :: [LocalVar] -> ProcFlow -> [DeadVarFinding]
 -- DuckDB path: reads from DB via PB.Pipeline.DuckDb query helpers.
 -- Classifies sources (SELECT INTO, event params) and sinks (INSERT/UPDATE/DELETE/EXECUTE)
 -- from AST. extractSqlStmts recurses into BsIf/BsFor/BsDo/BsChoose, not just top-level BsRaw.
+-- classifySources/classifySinks extract :host_var names via
+-- PB.Analysis.Dataflow.extractSqlHostVars (imported, not reimplemented --
+-- this module has no host-var extraction of its own).
 -- Propagates through intra-proc def-use chains and inter-proc
 -- arg/return/global edges (computed internally from resolved_calls).
 data TaintSource = TaintSource { tsFile, tsObject, tsProcName, tsVarName, tsSourceType :: Text, tsLine :: Maybe Int }

@@ -55,13 +55,13 @@ import PB.AST.BodyStmt
   )
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
+import PB.Analysis.Dataflow (extractSqlHostVars)
 import PB.Analysis.TypeResolve (parseParams)
 
 import Data.Aeson
   ( FromJSON (..), ToJSON (..), (.:), (.:?), (.!=)
   , object, withObject, (.=)
   )
-import Data.Char            (isAlpha)
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Map.Strict     as Map
 import qualified Data.Sequence       as Seq
@@ -373,22 +373,6 @@ hasIntoClause txt =
       isInsert = "INSERT" `T.isPrefixOf` T.toUpper (T.strip txt)
   in hasInto && not isInsert
 
--- | Extract :identifier host variable names from text.
-extractHostVars :: Text -> [Text]
-extractHostVars txt = go txt
-  where
-    go t = case T.breakOn ":" t of
-      ("", rest) | T.null rest -> []
-                 | otherwise   -> go (T.drop 1 rest)
-      (_, rest) ->
-        let afterColon = T.drop 1 rest
-            (var, remaining) = T.span isIdentChar afterColon
-        in if T.null var
-           then go remaining
-           else var : go remaining
-
-    isIdentChar c = isAlpha c || c == '_' || (c >= '0' && c <= '9')
-
 -- | Walk AST body statements to extract SQL statements.
 extractSqlStmts :: Text -> Text -> Text -> [Located BodyStmt] -> [SqlStmt]
 extractSqlStmts file obj procName = concatMap go
@@ -472,7 +456,7 @@ classifySources sqlStmts procs =
       | otherwise =
           [ TaintSource (ssFile s) (ssObject s) (ssProcName s)
               var "db_read" (ssLine s)
-          | var <- extractHostVars (ssRawSql s)
+          | var <- extractSqlHostVars (ssRawSql s)
           ]
 
     procSources p
@@ -499,7 +483,7 @@ classifySinks = concatMap go
           let sinkType = if op `Set.member` execOps
                          then "exec_immediate" else "db_write"
               sev = Map.findWithDefault "high" sinkType severityMap
-              vars = extractHostVars (ssRawSql s)
+              vars = extractSqlHostVars (ssRawSql s)
           in if null vars
              then [TaintSink (ssFile s) (ssObject s) (ssProcName s)
                      "*exec" sinkType sev (ssLine s)]

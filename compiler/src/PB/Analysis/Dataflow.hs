@@ -16,6 +16,7 @@ module PB.Analysis.Dataflow
   , BlockFlow (..)
   , ProcFlow (..)
   , extractDefsUses
+  , extractSqlHostVars
   , reachingDefinitions
   , liveVariables
   , analyzeProcedure
@@ -102,12 +103,14 @@ walkExprIdents :: Expr -> Set.Set Text
 walkExprIdents = go
   where
     go (ExLvalue lv) =
-      -- Root ident only. Subscript tokens are intentionally NOT extracted to
-      -- match core/dataflow.py's _walk_expr_idents (which checks for
-      -- tag=="TkIdent" dicts that the Haskell JSON emitter never produces for
-      -- subscripts, so it systematically misses them). Extracting subscripts
-      -- here would over-count row/i/ll_row uses vs the baseline.
-      maybe Set.empty Set.singleton (lvRoot lv)
+      -- Root ident, plus any identifiers in the lvalue's own subscript
+      -- expressions (e.g. `arr[i+1]` reads `i` to compute which slot to
+      -- address) -- covers a subscripted lvalue read anywhere in an
+      -- expression tree (RHS, conditions, call args, returns), not just an
+      -- assignment's own LHS (see 'lvalueSubscriptIdents', used directly by
+      -- 'extractUseVars' for that LHS case since the LHS is never itself
+      -- wrapped in an 'ExLvalue' node).
+      maybe Set.empty Set.singleton (lvRoot lv) <> lvalueSubscriptIdents lv
     go (ExCall lv args) =
       let root = maybe Set.empty Set.singleton (lvRoot lv)
           argIdents = Set.fromList [tkText t | argToks <- args, t <- argToks, isIdent (tkText t)]
@@ -127,11 +130,12 @@ walkExprIdents = go
     go _ = Set.empty
 
 -- | Identifiers referenced in an lvalue's own subscript expressions (e.g.
--- @arr[i+1]@ reads @i@ to compute which slot to address) -- distinct from
--- 'walkExprIdents'' deliberate root-only handling of 'ExLvalue', which
--- covers an lvalue read as a plain expression (a RHS or condition use), not
--- an lvalue being assigned INTO. A def statement's own LHS subscript is
--- always a read, regardless of that policy.
+-- @arr[i+1]@ reads @i@ to compute which slot to address). Used both by
+-- 'walkExprIdents'' 'ExLvalue' case (a subscripted lvalue read as a plain
+-- expression -- RHS, condition, call arg, return) and directly by
+-- 'extractUseVars' for an assignment's own LHS, which is always a read of
+-- its subscript regardless of being the def target, and which is never
+-- itself wrapped in an 'ExLvalue' node for 'walkExprIdents' to see.
 lvalueSubscriptIdents :: Lvalue -> Set.Set Text
 lvalueSubscriptIdents (Lvalue segs) =
   Set.fromList [ t | LvSegment _ (Just toks) <- segs, t <- toks, isIdent t ]
@@ -192,7 +196,16 @@ defKind _                = "assign"
 -- would double-count every use inside if/for/do/choose blocks (this was the
 -- 111d-1 over-count bug: proc_uses 13824 vs the 11303 baseline).
 extractUseVars :: BodyStmt -> Set.Set Text
-extractUseVars (BsAssign lv rhs)      = walkExprIdents rhs <> lvalueSubscriptIdents lv
+extractUseVars stmt@(BsAssign lv rhs) =
+  walkExprIdents rhs <> lvalueSubscriptIdents lv <> partialSelfUse
+  where
+    -- A partial def (`item.label = x`) implicitly reads `item` itself to
+    -- reach into it -- without this, the preceding full def that produced
+    -- `item` looks dead to any backward walk keyed on def/use sites alone
+    -- (the datastore-populate idiom: `ds = create datastore; ds.field = x`).
+    partialSelfUse
+      | isPartialDef stmt = maybe Set.empty Set.singleton (lvRoot lv)
+      | otherwise          = Set.empty
 extractUseVars (BsLocalVar _ _ _ mInit) = maybe Set.empty walkExprIdents mInit
 extractUseVars (BsFor ft) =
   -- Loop var is a def; from/to/step are uses. Body is handled by CFG blocks.
@@ -255,7 +268,14 @@ extractDefsUses :: CfgBlock -> BlockFlow
 extractDefsUses blk = BlockFlow
   { bfBlockId = cbId blk
   , bfGen     = Set.fromList (map dsVar localDefs)
-  , bfKill    = Set.fromList (map dsVar localDefs)
+  , bfKill    = Set.fromList (map dsVar (filter (not . dsPartial) localDefs))
+  -- ^ A partial def doesn't kill the variable's reaching/live value -- it
+  -- overwrites one member, not the whole thing (see 'dsPartial'). 'bfGen'
+  -- deliberately still includes it: a def, even partial, does reach past
+  -- the block, and 'bfGen' always wins over 'bfKill' in the reaching/live
+  -- equations regardless of this exclusion (bfGen ∪ (in − bfKill)), so
+  -- narrowing bfKill alone can only add liveness/reaching info, never
+  -- remove it.
   , bfDefs    = localDefs
   , bfUses    = localUses
   }
