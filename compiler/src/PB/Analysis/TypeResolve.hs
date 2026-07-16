@@ -8,6 +8,8 @@
 --   extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
 --   resolveTypes      :: [LocalVar] -> Set Text -> Set Text -> [ResolvedType]
 --   resolveCalls      :: [CallSite] -> Map Text (Set Text) -> Map Text Text -> Set Text -> Set Text -> [ResolvedCall]
+--   resolveVirtual    :: Text -> Text -> Map Text (Set Text) -> Map Text Text -> (Maybe Text, Maybe Text, Text, Text)
+--   resolveStaticCall :: Text -> Map Text (Set Text) -> (Maybe Text, Maybe Text, Text, Text)
 --   buildInheritsMap  :: [SrFile] -> Map Text Text
 --   buildProcMap      :: [SrFile] -> Map Text (Set Text)
 --   buildObjectSet    :: [SrFile] -> Set Text
@@ -27,6 +29,8 @@ module PB.Analysis.TypeResolve
   , findLiteralDataObject
   , resolveTypes
   , resolveCalls
+  , resolveVirtual
+  , resolveStaticCall
   , ancestorChain
   , buildInheritsMap
   , buildProcMap
@@ -663,6 +667,24 @@ resolveVirtual toName objN procMap inherits =
               [obj] -> (Just obj, Just toName, "virtual", "high")
               _     -> (Nothing, Nothing, "unresolved", "low")
 
+-- | Resolve a dotted @ClassName.procName@ static\/global call reference
+-- against the workspace proc map (does not consult @inherits@ — a static
+-- reference names its target class directly, no ancestor walk). Exported so
+-- 'PB.Analysis.TypeCheck.inferExpr''s 'ExCall' case can resolve the same
+-- dotted-call shape directly from an 'Expr' node rather than re-deriving
+-- this dispatch a second time.
+resolveStaticCall :: Text -> Map.Map Text (Set.Set Text) -> (Maybe Text, Maybe Text, Text, Text)
+resolveStaticCall toName procMap =
+  let objSet   = Map.keysSet procMap
+      firstSeg = T.takeWhile (/= '.') toName
+      lastSeg  = T.takeWhileEnd (/= '.') toName
+  in if firstSeg `Set.member` objSet
+       then
+         if lastSeg `Set.member` Map.findWithDefault Set.empty firstSeg procMap
+           then (Just firstSeg, Just lastSeg, "static", "high")
+           else (Just firstSeg, Nothing, "static", "medium")
+       else (Nothing, Nothing, "unresolved", "low")
+
 -- | Resolve all call sites to their targets using cross-file proc and inherits maps.
 resolveCalls
   :: [CallSite]
@@ -700,7 +722,7 @@ resolveOne procMap inherits builtinFns builtinMethods cs =
       "ExCall" ->
         let toName = csToName site
         in if "." `T.isInfixOf` toName
-             then resolveStaticCall toName
+             then resolveStaticCall toName procMap
              else if T.toLower toName `Set.member` builtinFns
                     then (Nothing, Nothing, "builtin", "high")
                     else resolveVirtual toName (csObject site) procMap inherits
@@ -711,14 +733,3 @@ resolveOne procMap inherits builtinFns builtinMethods cs =
           else (Nothing, Nothing, "unresolved", "low")
       "ExDispatch"   -> (Nothing, Nothing, "unresolved", "low")
       _              -> (Nothing, Nothing, "unresolved", "low")
-
-    resolveStaticCall toName =
-      let objSet    = Map.keysSet procMap
-          firstSeg  = T.takeWhile (/= '.') toName
-          lastSeg   = T.takeWhileEnd (/= '.') toName
-      in if firstSeg `Set.member` objSet
-           then
-             if lastSeg `Set.member` Map.findWithDefault Set.empty firstSeg procMap
-               then (Just firstSeg, Just lastSeg, "static", "high")
-               else (Just firstSeg, Nothing, "static", "medium")
-           else (Nothing, Nothing, "unresolved", "low")

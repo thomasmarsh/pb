@@ -40,6 +40,7 @@ import qualified TokenTest
 import qualified TypeEnvTest
 import qualified TypeResolveTest
 import qualified TypeMismatchTest
+import qualified TypeCheckTest
 import qualified ControlHierarchyTest
 import qualified CallClassifyTest
 import qualified CloneDetectTest
@@ -93,6 +94,7 @@ tests = testGroup "pb-compiler"
   , TypeEnvTest.tests
   , TypeResolveTest.tests
   , TypeMismatchTest.tests
+  , TypeCheckTest.tests
   , ControlHierarchyTest.tests
   , CallClassifyTest.tests
   , CloneDetectTest.tests
