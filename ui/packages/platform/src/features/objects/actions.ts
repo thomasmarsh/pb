@@ -1,6 +1,6 @@
 // features/objects/actions.ts — Objects feature actions (self-contained).
 
-import type { ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ObjectRow, ProcedureListItem, WiringDiagramResponse, FootprintResponse } from "../../types/api.js";
+import type { ListObjectsResponse, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ObjectRow, ProcedureListItem, WiringDiagramResponse, FootprintResponse, SliceResult } from "../../types/api.js";
 import { type AstData, type WindowLayout } from "@pb/interpreter";
 
 export type ObjectsAction =
@@ -33,6 +33,10 @@ export type ObjectsAction =
   | { tag: "procs-list-filter-kind"; kind: string }
   | { tag: "procs-list-sort"; col: "name" | "object" | "cyclomatic" | "caller_count" }
   | { tag: "go-slice"; object: string; proc: string; line: number; direction: "backward" | "forward" }
+  | { tag: "highlight-slice"; object: string; proc: string; line: number; direction: "backward" | "forward" }
+  | { tag: "highlight-slice-loaded"; object: string; proc: string; data: SliceResult }
+  | { tag: "highlight-slice-error"; error: string }
+  | { tag: "clear-slice-highlight" }
   // Wiring diagram (Plan 149 Phase 3)
   | { tag: "wiring-load"; objectName: string; procName: string }
   | { tag: "wiring-loaded"; objectName: string; procName: string; data: WiringDiagramResponse }

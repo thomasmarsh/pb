@@ -26,6 +26,8 @@ function renderViewer(opts: {
   lines?: string[];
   knownProcs?: KnownProcInfo[];
   knownObjects?: { name: string; kind: string }[];
+  sliceHighlight?: { lines: Set<number>; label: string } | null;
+  onClearSliceHighlight?: () => void;
 } = {}) {
   const { store, captured } = createTestStore();
   render(() => (
@@ -36,6 +38,8 @@ function renderViewer(opts: {
       knownObjects={opts.knownObjects ?? []}
       knownProcs={opts.knownProcs ?? [knownProc]}
       objectName="w_host"
+      sliceHighlight={opts.sliceHighlight}
+      onClearSliceHighlight={opts.onClearSliceHighlight}
     />
   ));
   return { captured };
@@ -107,5 +111,43 @@ describe("SourceViewer", () => {
     );
     expect(a).toBeDefined();
     expect((a as any).action.name).toBe("w_main");
+  });
+
+  it("renders no dim overlay or banner when sliceHighlight is absent", () => {
+    renderViewer();
+    expect(document.querySelector(".source-slice-banner")).toBeNull();
+    expect(document.querySelector(".source-dim-overlay")).toBeNull();
+  });
+
+  it("renders the slice banner and dim overlays for non-highlighted gaps", () => {
+    renderViewer({
+      lines: ["a", "b", "c", "d", "e"],
+      sliceHighlight: { lines: new Set([3]), label: "Backward slice — 1 statement" },
+    });
+    const banner = document.querySelector(".source-slice-banner");
+    expect(banner).not.toBeNull();
+    expect(banner?.textContent).toContain("Backward slice — 1 statement");
+    // Lines 1-2 and 4-5 are dimmed around the single highlighted line 3.
+    expect(document.querySelectorAll(".source-dim-overlay").length).toBe(2);
+  });
+
+  it("renders one dim overlay covering the whole file when nothing is highlighted but sliceHighlight is set", () => {
+    renderViewer({
+      lines: ["a", "b", "c"],
+      sliceHighlight: { lines: new Set(), label: "Backward slice — 0 statements" },
+    });
+    expect(document.querySelectorAll(".source-dim-overlay").length).toBe(1);
+  });
+
+  it("Clear button calls onClearSliceHighlight", () => {
+    let cleared = false;
+    renderViewer({
+      lines: ["a", "b", "c"],
+      sliceHighlight: { lines: new Set([2]), label: "Backward slice" },
+      onClearSliceHighlight: () => { cleared = true; },
+    });
+    const btn = document.querySelector(".source-slice-banner button")!;
+    fireEvent.click(btn);
+    expect(cleared).toBe(true);
   });
 });

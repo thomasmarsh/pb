@@ -149,7 +149,7 @@ export { SourceGutter } from "./components/source/SourceGutter.js";
 export { SourceTooltip } from "./components/source/SourceTooltip.js";
 export { linkIdentifiers } from "./components/source/pure/identifiers.js";
 export {
-  lineFromY, overlayTop, overlayHeight, procSelectedRange, PIXELS_PER_LINE,
+  lineFromY, overlayTop, overlayHeight, procSelectedRange, dimmedRanges, PIXELS_PER_LINE,
 } from "./components/source/pure/line.js";
 export {
   buildObjectMap, buildProcMap, buildVarMap, buildProcCountMap, buildProcFirstLine,

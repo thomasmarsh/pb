@@ -1,6 +1,6 @@
 // SourceViewer.tsx — Source code viewer with cross-linked identifiers.
 
-import { Show, createSignal, createMemo, createEffect } from "solid-js";
+import { Show, For, createSignal, createMemo, createEffect } from "solid-js";
 import { highlightPowerScript, type ProcedureInfo, type KnownProcInfo, type LocalSymbolInfo } from "@pb/platform";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../../state.js";
@@ -12,7 +12,7 @@ import {
   linkIdentifiers,
   buildObjectMap, buildProcMap, buildVarMap, buildProcCountMap, buildProcFirstLine,
   buildObjectTooltip, buildProcTooltip, buildVarTooltip, buildProcBarTooltip, PROC_BADGE_COLORS,
-  lineFromY, overlayTop, overlayHeight, procSelectedRange,
+  lineFromY, overlayTop, overlayHeight, procSelectedRange, dimmedRanges,
 } from "@pb/platform";
 
 interface SourceViewerProps {
@@ -25,6 +25,8 @@ interface SourceViewerProps {
   selectedProcName?: string;
   onProcBarClick?: (proc: ProcedureInfo) => void;
   contextActions?: ContextActions;
+  sliceHighlight?: { lines: Set<number>; label: string } | null;
+  onClearSliceHighlight?: () => void;
 }
 
 export function SourceViewer(props: { store: Store<AppState, AppAction> } & SourceViewerProps) {
@@ -117,49 +119,71 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
   }
 
   return (
-    <div class="source-viewer">
-      <SourceGutter lines={props.lines} procFirstLine={procFirstLine()} />
-      <div
-        class="source-code-area"
-        onMouseOver={handleMouseOver}
-        onMouseOut={handleMouseOut}
-        onClick={handleClick}
-        onContextMenu={handleContextMenu}
-      >
-        <Show when={selectedRange()}>
-          <div
-            ref={procRangeBg}
-            class="source-proc-range-bg"
-            style={{
-              top: `${overlayTop(selectedRange()!.start)}px`,
-              height: `${overlayHeight(selectedRange()!.start, selectedRange()!.end)}px`,
-            }}
+    <div class="source-viewer-wrapper">
+      <Show when={props.sliceHighlight}>
+        {(sh) => (
+          <div class="source-slice-banner">
+            <span>{sh().label}</span>
+            <button onClick={() => props.onClearSliceHighlight?.()}>Clear</button>
+          </div>
+        )}
+      </Show>
+      <div class="source-viewer">
+        <SourceGutter lines={props.lines} procFirstLine={procFirstLine()} />
+        <div
+          class="source-code-area"
+          onMouseOver={handleMouseOver}
+          onMouseOut={handleMouseOut}
+          onClick={handleClick}
+          onContextMenu={handleContextMenu}
+        >
+          <Show when={selectedRange()}>
+            <div
+              ref={procRangeBg}
+              class="source-proc-range-bg"
+              style={{
+                top: `${overlayTop(selectedRange()!.start)}px`,
+                height: `${overlayHeight(selectedRange()!.start, selectedRange()!.end)}px`,
+              }}
+            />
+          </Show>
+          <Show when={props.sliceHighlight}>
+            {(sh) => (
+              <For each={dimmedRanges(props.lines.length, sh().lines)}>
+                {(r) => (
+                  <div
+                    class="source-dim-overlay"
+                    style={{ top: `${overlayTop(r.start)}px`, height: `${overlayHeight(r.start, r.end)}px` }}
+                  />
+                )}
+              </For>
+            )}
+          </Show>
+          <pre innerHTML={fullHtml()} />
+          <ProcOverlayBars
+            procedures={props.procedures}
+            selectedProcName={props.selectedProcName}
+            procCountMap={procCountMap()}
+            onBarEnter={(p, e) => setTooltip({
+              html: buildProcBarTooltip(p, procCountMap().get(p.name.toLowerCase()), PROC_BADGE_COLORS[p.proc_type ?? ""] ?? "#fff", props.objectName),
+              x: e.clientX + 12, y: e.clientY + 12,
+            })}
+            onBarLeave={() => setTooltip(null)}
+            onClick={(p) => props.onProcBarClick
+              ? props.onProcBarClick(p)
+              : store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: props.objectName, procName: p.name } })
+            }
           />
-        </Show>
-        <pre innerHTML={fullHtml()} />
-        <ProcOverlayBars
-          procedures={props.procedures}
-          selectedProcName={props.selectedProcName}
-          procCountMap={procCountMap()}
-          onBarEnter={(p, e) => setTooltip({
-            html: buildProcBarTooltip(p, procCountMap().get(p.name.toLowerCase()), PROC_BADGE_COLORS[p.proc_type ?? ""] ?? "#fff", props.objectName),
-            x: e.clientX + 12, y: e.clientY + 12,
-          })}
-          onBarLeave={() => setTooltip(null)}
-          onClick={(p) => props.onProcBarClick
-            ? props.onProcBarClick(p)
-            : store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: props.objectName, procName: p.name } })
-          }
+        </div>
+        <SourceTooltip tooltip={tooltip()} />
+        <SourceContextMenu
+          target={menuTarget()}
+          store={store}
+          objectName={props.objectName}
+          contextActions={props.contextActions}
+          onClose={() => setMenuTarget(null)}
         />
       </div>
-      <SourceTooltip tooltip={tooltip()} />
-      <SourceContextMenu
-        target={menuTarget()}
-        store={store}
-        objectName={props.objectName}
-        contextActions={props.contextActions}
-        onClose={() => setMenuTarget(null)}
-      />
     </div>
   );
 }

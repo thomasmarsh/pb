@@ -1,6 +1,6 @@
 // features/objects/types.ts
 
-import type { ObjectRow, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ProcedureListItem, WiringDiagramResponse, FootprintResponse } from "../../types/api.js";
+import type { ObjectRow, ObjectDetailResponse, ObjectSourceResponse, ProcedureDetailResponse, ProcedureListItem, WiringDiagramResponse, FootprintResponse, SliceResult } from "../../types/api.js";
 import { type AstData, type WindowLayout } from "@pb/interpreter";
 
 export interface ObjectsState {
@@ -25,6 +25,9 @@ export interface ObjectsState {
   // Unified footprint (Plan 163 Phase 6) — lazily loaded when the panel toggles on
   footprint: FootprintResponse | { error: string } | null;
   footprintLoading: boolean;
+  // Slice highlight overlay in the source view (Plan 174 T0-2)
+  sliceHighlight: (SliceResult & { object: string; proc: string }) | { error: string } | null;
+  sliceHighlightLoading: boolean;
   // Procedures list screen
   proceduresList: ProcedureListItem[] | null;
   proceduresListLoading: boolean;

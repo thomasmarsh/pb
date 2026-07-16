@@ -30,6 +30,7 @@ function createAppEnv(astResponses: Record<string, AstData>): AppEnv {
     getProcedures: () => Effect.none(),
     getWiringDiagram: () => Effect.none(),
     getFootprint: () => Effect.none(),
+    getSlice: () => Effect.none(),
     search: () => Effect.none(),
     getDW: () => Effect.none(),
     getDwLayout: () => Effect.none(),

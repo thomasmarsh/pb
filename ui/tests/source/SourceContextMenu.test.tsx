@@ -153,6 +153,20 @@ describe("SourceContextMenu", () => {
     )).toBe(true);
   });
 
+  it("Highlight backward slice dispatches highlight-slice with correct proc and line", () => {
+    const { captured } = renderMenu(procTarget);
+    const btn = [...document.querySelectorAll(".context-menu button")]
+      .find((b) => b.textContent?.includes("Highlight backward slice"))!;
+    expect(btn).toBeDefined();
+    fireEvent.click(btn);
+    expect(captured.some((a) =>
+      a.tag === "objects" && "action" in a &&
+      (a as any).action.tag === "highlight-slice" &&
+      (a as any).action.proc === "f_validate" &&
+      (a as any).action.line === 15
+    )).toBe(true);
+  });
+
   it("Escape key calls onClose", () => {
     const onClose = vi.fn();
     renderMenu(procTarget, {}, onClose);

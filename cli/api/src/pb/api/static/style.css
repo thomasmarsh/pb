@@ -631,6 +631,30 @@ body {
     pointer-events: none;
     z-index: 1;
 }
+.source-dim-overlay {
+    position: absolute;
+    left: 0; right: 0;
+    background: rgba(0, 0, 0, 0.75);
+    pointer-events: none;
+    z-index: 2;
+}
+.source-slice-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 12px;
+    margin-bottom: 6px;
+    background: rgba(108, 140, 255, 0.12);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--text-primary);
+}
+.source-slice-banner button {
+    font-size: 12px;
+    padding: 2px 10px;
+}
 .source-proc-tooltip {
     display: none;
     position: fixed;

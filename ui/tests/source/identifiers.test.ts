@@ -55,6 +55,19 @@ describe("linkIdentifiers", () => {
     expect(result).not.toContain("data-link-type");
   });
 
+  it("still links a global function whose object name equals its own function name", () => {
+    // PB global functions are their own PBL member — the enclosing object name and the
+    // function name are the same identifier, so the declaration line's own name must
+    // still resolve as a procedure link, not be swallowed by the self-reference guard.
+    const procs = new Map([["fn_param_maskdate", makeProc("fn_param_maskdate")]]);
+    const result = linkIdentifiers(
+      "global function string fn_param_maskdate ()",
+      emptyObj, procs, emptyVar, "fn_param_maskdate",
+    );
+    expect(result).toContain('data-link-type="procedure"');
+    expect(result).toContain('data-link-name="fn_param_maskdate"');
+  });
+
   it("skips PB keywords", () => {
     const procs = new Map([["if", makeProc("if")]]);
     const result = linkIdentifiers("if true then", emptyObj, procs, emptyVar, "self");

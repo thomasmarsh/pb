@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PIXELS_PER_LINE, lineFromY, overlayTop, overlayHeight, procSelectedRange } from "@pb/platform";
+import { PIXELS_PER_LINE, lineFromY, overlayTop, overlayHeight, procSelectedRange, dimmedRanges } from "@pb/platform";
 import type { ProcedureInfo } from "@pb/platform";
 
 function makeProc(name: string, start: number | null, end: number | null): ProcedureInfo {
@@ -69,5 +69,35 @@ describe("procSelectedRange", () => {
 
   it("returns start and end for a found proc", () => {
     expect(procSelectedRange(procs, "f_a")).toEqual({ start: 5, end: 10 });
+  });
+});
+
+describe("dimmedRanges", () => {
+  it("returns empty array for zero lines", () => {
+    expect(dimmedRanges(0, new Set())).toEqual([]);
+  });
+
+  it("returns one full-file range when nothing is highlighted", () => {
+    expect(dimmedRanges(5, new Set())).toEqual([{ start: 1, end: 5 }]);
+  });
+
+  it("returns empty array when every line is highlighted", () => {
+    expect(dimmedRanges(3, new Set([1, 2, 3]))).toEqual([]);
+  });
+
+  it("splits into gaps around highlighted lines", () => {
+    expect(dimmedRanges(10, new Set([3, 4, 7]))).toEqual([
+      { start: 1, end: 2 },
+      { start: 5, end: 6 },
+      { start: 8, end: 10 },
+    ]);
+  });
+
+  it("handles a dimmed range at the start only", () => {
+    expect(dimmedRanges(5, new Set([2, 3, 4, 5]))).toEqual([{ start: 1, end: 1 }]);
+  });
+
+  it("handles a dimmed range at the end only", () => {
+    expect(dimmedRanges(5, new Set([1, 2, 3, 4]))).toEqual([{ start: 5, end: 5 }]);
   });
 });

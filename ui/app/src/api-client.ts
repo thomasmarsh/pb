@@ -26,6 +26,7 @@ import type {
   ColumnUsageResponse,
   DecompositionCandidatesResponse,
   CfgDiagramResponse,
+  SliceResult,
 } from "@pb/platform";
 import { type DataWindowFile, type AstData, type WindowLayout } from "@pb/interpreter";
 import { Effect, type SQLResult, type JobSubmitResult, type JobPollResult } from "@pb/core";
@@ -45,6 +46,7 @@ export interface ApiClient {
   getProcedures(): Promise<ProcedureListItem[]>;
   getWiringDiagram(obj: string, proc: string): Promise<WiringDiagramResponse>;
   getFootprint(object: string, proc?: string): Promise<FootprintResponse>;
+  getSlice(object: string, proc: string, line: number, direction: "backward" | "forward"): Promise<SliceResult>;
   search(q: string): Promise<SearchResponse>;
   getDW(name: string): Promise<DwDetailResponse>;
   getDwLayout(name: string): Promise<DataWindowFile>;
@@ -122,6 +124,7 @@ export function createEnv(api: ApiClient): Env {
     getProcedures: () => lift(() => api.getProcedures()),
     getWiringDiagram: (o, p) => lift(() => api.getWiringDiagram(o, p)),
     getFootprint: (o, p) => lift(() => api.getFootprint(o, p)),
+    getSlice: (o, p, line, dir) => lift(() => api.getSlice(o, p, line, dir)),
     search: (q) => lift(() => api.search(q)),
     getDW: (n) => lift(() => api.getDW(n)),
     getDwLayout: (n) => lift(() => api.getDwLayout(n)),
@@ -216,6 +219,12 @@ export function createApiClient(): ApiClient {
     async getFootprint(object: string, proc?: string): Promise<FootprintResponse> {
       const qs = proc ? `?proc=${encodeURIComponent(proc)}` : "";
       return fetchJson(`/api/schema/footprint/${encodeURIComponent(object)}${qs}`);
+    },
+
+    async getSlice(object: string, proc: string, line: number, direction: "backward" | "forward"): Promise<SliceResult> {
+      return fetchJson(
+        `/api/analysis/slice/${encodeURIComponent(object)}/${encodeURIComponent(proc)}/${line}?direction=${direction}`,
+      );
     },
 
     async search(q: string): Promise<SearchResponse> {

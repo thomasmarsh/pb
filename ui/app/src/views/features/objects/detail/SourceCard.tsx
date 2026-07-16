@@ -16,9 +16,20 @@ export function SourceCard(props: {
   selectedProcName?: string;
   contextActions?: ContextActions;
 }) {
+  const snap = props.store.getState();
+
   const hasLines = () => {
     const s = props.sourceDetail;
     return s && "lines" in s && s.lines && s.lines.length > 0;
+  };
+
+  const sliceHighlight = (): { lines: Set<number>; label: string } | null => {
+    const sh = snap().objects.sliceHighlight;
+    if (!sh || "error" in sh || sh.object !== props.objectName) return null;
+    const lines = new Set(sh.steps.filter((s) => s.object === props.objectName).map((s) => s.line));
+    const dir = sh.direction === "forward" ? "Forward" : "Backward";
+    const count = sh.steps.length;
+    return { lines, label: `${dir} slice from ${sh.proc}:${sh.origin.line} — ${count} statement${count === 1 ? "" : "s"}` };
   };
 
   return (
@@ -48,6 +59,8 @@ export function SourceCard(props: {
           objectName={props.objectName}
           selectedProcName={props.selectedProcName}
           contextActions={props.contextActions}
+          sliceHighlight={sliceHighlight()}
+          onClearSliceHighlight={() => props.store.dispatch({ tag: "objects", action: { tag: "clear-slice-highlight" } })}
         />
       </Show>
     </div>
