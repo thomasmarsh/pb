@@ -46,6 +46,7 @@ export const mockEnv: AppEnv = {
   getErrors: () => Effect.none(),
   getLiveProcedures: () => Effect.none(),
   getDeadVars: () => Effect.none(),
+  getTypeMismatches: () => Effect.none(),
   getDwQueries: () => Effect.none(),
   executeSql: () => Effect.none(),
   navigate: () => Effect.none(),

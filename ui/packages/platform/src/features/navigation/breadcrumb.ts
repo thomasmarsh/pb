@@ -77,6 +77,9 @@ export function crumbsForRoute(route: Route): BreadcrumbSegment[] {
     case "deadVars":
       return [{ icon: ICONS.analysis, label: "Dead Variables", route }];
 
+    case "typeMismatches":
+      return [{ icon: ICONS.analysis, label: "Type Mismatches", route }];
+
     case "liveProcedures":
       return [{ icon: ICONS.analysis, label: "Live Procedures", route }];
 

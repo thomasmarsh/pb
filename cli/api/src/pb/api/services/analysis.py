@@ -25,6 +25,13 @@ def get_dead_vars(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     ))
 
 
+def get_type_mismatches(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
+    return rows(conn.execute(
+        "SELECT object, proc_name, line, target, lhs_type, rhs_desc, kind "
+        "FROM type_mismatches ORDER BY object, proc_name, line"
+    ))
+
+
 def get_live_procedures(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     """Procedures the Souffle live_proc IDB confirms reachable and not dead
     (Plan 161 Phase 4 — see PB.Pipeline.Souffle's liveProcRules)."""

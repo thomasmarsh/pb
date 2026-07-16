@@ -21,6 +21,7 @@ import type {
   ErrorListResponse,
   LiveProceduresResponse,
   DeadVarsResponse,
+  TypeMismatchesResponse,
   WiringDiagramResponse,
   FootprintResponse,
   ColumnUsageResponse,
@@ -69,6 +70,7 @@ export interface ApiClient {
   getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse>;
   getLiveProcedures(): Promise<LiveProceduresResponse>;
   getDeadVars(): Promise<DeadVarsResponse>;
+  getTypeMismatches(): Promise<TypeMismatchesResponse>;
   getDwQueries(): Promise<Record<string, string>>;
   executeSql(sql: string, params: unknown[]): Promise<SQLResult>;
 }
@@ -148,6 +150,7 @@ export function createEnv(api: ApiClient): Env {
     getErrors: (p) => lift(() => api.getErrors(p)),
     getLiveProcedures: () => lift(() => api.getLiveProcedures().then((r) => r.items)),
     getDeadVars: () => lift(() => api.getDeadVars().then((r) => r.items)),
+    getTypeMismatches: () => lift(() => api.getTypeMismatches().then((r) => r.items)),
     getDwQueries: () => lift(() => api.getDwQueries()),
     executeSql: (sql, params) => lift(() => api.executeSql(sql, params)),
     loadTheme: (): Effect<Theme> => {
@@ -333,6 +336,10 @@ export function createApiClient(): ApiClient {
 
     async getDeadVars(): Promise<DeadVarsResponse> {
       return fetchJson("/api/analysis/dead-vars");
+    },
+
+    async getTypeMismatches(): Promise<TypeMismatchesResponse> {
+      return fetchJson("/api/analysis/type-mismatches");
     },
 
     async getDwQueries(): Promise<Record<string, string>> {

@@ -20,6 +20,7 @@ export type Route =
   | { view: "libraryDetail"; name: string }
   | { view: "deadCode" }
   | { view: "deadVars" }
+  | { view: "typeMismatches" }
   | { view: "liveProcedures" }
   | { view: "taintExplorer" }
   | { view: "taintPathView"; pathId: number }

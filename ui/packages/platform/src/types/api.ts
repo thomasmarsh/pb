@@ -426,6 +426,23 @@ export interface DeadVarsResponse {
   total: number;
 }
 
+// ── Type mismatches (Plan 177 Phase 4b promotion) ────────────────────────────
+
+export interface TypeMismatchFinding {
+  object: string;
+  proc_name: string;
+  line: number;
+  target: string;
+  lhs_type: string;
+  rhs_desc: string;
+  kind: string;
+}
+
+export interface TypeMismatchesResponse {
+  items: TypeMismatchFinding[];
+  total: number;
+}
+
 // ── Taint analysis ───────────────────────────────────────────────────────────
 
 export interface TaintEndpoint {

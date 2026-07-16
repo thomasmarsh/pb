@@ -492,6 +492,77 @@ def test_dead_vars_endpoint_works_against_real_corpus(db_path):
 
 
 # ---------------------------------------------------------------------------
+# GET /api/analysis/type-mismatches (Plan 177 Phase 4b promotion)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def type_mismatches_client(tmp_path_factory):
+    """TestClient backed by a synthetic DB for the type-mismatches API endpoint.
+
+    Mismatch-finding correctness is tested in Haskell TypeCheckTest.hs. This
+    fixture writes a synthetic type_mismatches table (as the Haskell pipeline
+    would produce) and tests that the API endpoint reads it correctly.
+    """
+    tmp = tmp_path_factory.mktemp("type_mismatches_db")
+    db_path = str(tmp / "type_mismatches.duckdb")
+    conn = duckdb.connect(db_path)
+
+    conn.execute("""
+        CREATE TABLE type_mismatches (
+            object TEXT NOT NULL, proc_name TEXT NOT NULL, line INT NOT NULL,
+            target TEXT NOT NULL, lhs_type TEXT NOT NULL, rhs_desc TEXT NOT NULL,
+            kind TEXT NOT NULL
+        )
+    """)
+    for row in [
+        ("obj_a", "uf_save", 12, "ls_name", "string", "an integer literal", "assign-mismatch"),
+        ("obj_a", "uf_calc", 30, "uf_calc", "long", "a string literal", "return-mismatch"),
+        ("obj_b", "uf_call", 8, "al_row", "long", "a boolean literal", "call-arg-mismatch"),
+    ]:
+        conn.execute("INSERT INTO type_mismatches VALUES (?, ?, ?, ?, ?, ?, ?)", row)
+
+    conn.close()
+
+    from fastapi.testclient import TestClient
+    from pb.api import create_app
+
+    app = create_app(db_path)
+    return TestClient(app)
+
+
+def test_type_mismatches_returns_items(type_mismatches_client):
+    r = type_mismatches_client.get("/api/analysis/type-mismatches")
+    assert r.status_code == 200
+    body = r.json()
+    targets = {item["target"] for item in body["items"]}
+    assert targets == {"ls_name", "uf_calc", "al_row"}
+
+
+def test_type_mismatches_total_matches_items(type_mismatches_client):
+    r = type_mismatches_client.get("/api/analysis/type-mismatches")
+    body = r.json()
+    assert body["total"] == len(body["items"]) == 3
+
+
+def test_type_mismatches_endpoint_works_against_real_corpus(db_path):
+    """Ensure the type-mismatches endpoint works against the real openpay corpus."""
+    from fastapi.testclient import TestClient
+    from pb.api import create_app
+
+    app = create_app(db_path)
+    client = TestClient(app)
+    r = client.get("/api/analysis/type-mismatches")
+    assert r.status_code == 200
+    body = r.json()
+    assert "items" in body
+    assert "total" in body
+    assert body["total"] == len(body["items"])
+    kinds = {item["kind"] for item in body["items"]}
+    assert kinds <= {"assign-mismatch", "return-mismatch", "call-arg-mismatch"}
+
+
+# ---------------------------------------------------------------------------
 # Slice endpoint — scoped fetch regression
 # ---------------------------------------------------------------------------
 

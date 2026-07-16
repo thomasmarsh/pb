@@ -17,6 +17,7 @@ from pb.api.services.analysis import (
     get_taint_paths,
     get_taint_sinks,
     get_taint_sources,
+    get_type_mismatches,
 )
 
 router = APIRouter()
@@ -31,6 +32,12 @@ async def dead_code(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
 @router.get("/api/analysis/dead-vars")
 async def dead_vars(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
     items = get_dead_vars(conn)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/api/analysis/type-mismatches")
+async def type_mismatches(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
+    items = get_type_mismatches(conn)
     return {"items": items, "total": len(items)}
 
 
