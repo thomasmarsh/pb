@@ -4,15 +4,21 @@ import { describe, it } from "vitest";
 import { Effect } from "@pb/core";
 import { createTestStore } from "../test-store.js";
 import { analysisReducer, initialAnalysisState, type AnalysisEnv } from "@pb/platform";
-import type { LiveProcedureRef } from "@pb/platform";
+import type { LiveProcedureRef, DeadVarFinding } from "@pb/platform";
 
 const mockEnv: AnalysisEnv = {
   getLiveProcedures: () => Effect.none(),
+  getDeadVars: () => Effect.none(),
 };
 
 const items: LiveProcedureRef[] = [
   { object: "w_obj", proc_name: "proc_a" },
   { object: "w_obj", proc_name: "proc_b" },
+];
+
+const deadVarItems: DeadVarFinding[] = [
+  { object: "w_obj", proc_name: "uf_save", var_name: "li_unused", line: 12, kind: "never-read" },
+  { object: "w_obj", proc_name: "uf_save", var_name: "as_param", line: null, kind: "unused-param" },
 ];
 
 describe("analysis reducer", () => {
@@ -31,6 +37,24 @@ describe("analysis reducer", () => {
       const state = { ...initialAnalysisState, liveProcedures: items, liveProceduresLoaded: true };
       const ts = createTestStore(analysisReducer, mockEnv, state);
       ts.send({ tag: "load-live-procedures" }, () => {});
+    });
+  });
+
+  describe("analysis/load-dead-vars", () => {
+    it("fires getDeadVars and populates state on load", () => {
+      const env: AnalysisEnv = { ...mockEnv, getDeadVars: () => Effect.send(deadVarItems) };
+      const ts = createTestStore(analysisReducer, env, initialAnalysisState);
+      ts.send({ tag: "load-dead-vars" }, () => {});
+      ts.receive({ tag: "dead-vars-loaded", items: deadVarItems }, (s) => {
+        s.deadVars = deadVarItems;
+        s.deadVarsLoaded = true;
+      });
+    });
+
+    it("does nothing if already loaded", () => {
+      const state = { ...initialAnalysisState, deadVars: deadVarItems, deadVarsLoaded: true };
+      const ts = createTestStore(analysisReducer, mockEnv, state);
+      ts.send({ tag: "load-dead-vars" }, () => {});
     });
   });
 });

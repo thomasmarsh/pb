@@ -18,6 +18,13 @@ def get_dead_code(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     ))
 
 
+def get_dead_vars(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
+    return rows(conn.execute(
+        "SELECT object, proc_name, var_name, line, kind "
+        "FROM dead_vars ORDER BY object, proc_name, var_name"
+    ))
+
+
 def get_live_procedures(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     """Procedures the Souffle live_proc IDB confirms reachable and not dead
     (Plan 161 Phase 4 — see PB.Pipeline.Souffle's liveProcRules)."""

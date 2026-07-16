@@ -420,6 +420,78 @@ def test_dead_code_override_reachable_via_base(dead_code_client):
 
 
 # ---------------------------------------------------------------------------
+# GET /api/analysis/dead-vars (Plan 174 T0-1 promotion)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def dead_vars_client(tmp_path_factory):
+    """TestClient backed by a synthetic DB for the dead-vars API endpoint.
+
+    DeadVars finding correctness is tested in Haskell DeadVarsTest.hs and
+    RunnerTest.hs (cpsDeadVars wiring). This fixture writes a synthetic
+    dead_vars table (as the Haskell pipeline would produce) and tests that
+    the API endpoint reads it correctly.
+    """
+    tmp = tmp_path_factory.mktemp("dead_vars_db")
+    db_path = str(tmp / "dead_vars.duckdb")
+    conn = duckdb.connect(db_path)
+
+    conn.execute("""
+        CREATE TABLE dead_vars (
+            object TEXT NOT NULL, proc_name TEXT NOT NULL, var_name TEXT NOT NULL,
+            line INT, kind TEXT NOT NULL
+        )
+    """)
+    for row in [
+        ("obj_a", "uf_save", "li_unused", 12, "never-read"),
+        ("obj_a", "uf_save", "as_param", None, "unused-param"),
+        ("obj_b", "uf_calc", "li_stale", 30, "overwritten-before-read"),
+    ]:
+        conn.execute("INSERT INTO dead_vars VALUES (?, ?, ?, ?, ?)", row)
+
+    conn.close()
+
+    from fastapi.testclient import TestClient
+    from pb.api import create_app
+
+    app = create_app(db_path)
+    return TestClient(app)
+
+
+def test_dead_vars_returns_items(dead_vars_client):
+    r = dead_vars_client.get("/api/analysis/dead-vars")
+    assert r.status_code == 200
+    body = r.json()
+    var_names = {item["var_name"] for item in body["items"]}
+    assert var_names == {"li_unused", "as_param", "li_stale"}
+
+
+def test_dead_vars_total_matches_items(dead_vars_client):
+    r = dead_vars_client.get("/api/analysis/dead-vars")
+    body = r.json()
+    assert body["total"] == len(body["items"]) == 3
+
+
+def test_dead_vars_endpoint_works_against_real_corpus(db_path):
+    """Ensure the dead-vars endpoint works against the real openpay corpus."""
+    from fastapi.testclient import TestClient
+    from pb.api import create_app
+
+    app = create_app(db_path)
+    client = TestClient(app)
+    r = client.get("/api/analysis/dead-vars")
+    assert r.status_code == 200
+    body = r.json()
+    assert "items" in body
+    assert "total" in body
+    assert body["total"] == len(body["items"])
+    assert body["total"] > 0
+    kinds = {item["kind"] for item in body["items"]}
+    assert kinds <= {"never-read", "overwritten-before-read", "unused-param"}
+
+
+# ---------------------------------------------------------------------------
 # Slice endpoint — scoped fetch regression
 # ---------------------------------------------------------------------------
 

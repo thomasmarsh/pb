@@ -9,6 +9,7 @@ from pb.api.routes.dependencies import get_db
 from pb.api.services.analysis import (
     get_code_quality_report,
     get_dead_code,
+    get_dead_vars,
     get_live_procedures,
     get_program_slice,
     get_taint_annotations,
@@ -24,6 +25,12 @@ router = APIRouter()
 @router.get("/api/analysis/dead-code")
 async def dead_code(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
     items = get_dead_code(conn)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/api/analysis/dead-vars")
+async def dead_vars(conn: duckdb.DuckDBPyConnection = Depends(get_db)):
+    items = get_dead_vars(conn)
     return {"items": items, "total": len(items)}
 
 

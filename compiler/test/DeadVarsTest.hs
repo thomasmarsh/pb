@@ -107,7 +107,7 @@ tests = testGroup "DeadVars"
             ]
           cfg = mkCfg "b0" [blk] []
           pf  = analyzeProcedure "obj" "proc" cfg
-          fs  = findDeadVars [] pf
+          fs  = findDeadVars [localVar "li_x" 0] pf
       in kindsFor "li_x" fs @?= [OverwrittenBeforeRead]
 
   , testCase "same-block reassignment WITH intervening read is not flagged" $
@@ -130,7 +130,7 @@ tests = testGroup "DeadVars"
             ]
           cfg = mkCfg "b0" [b0, b1] [CfgEdge "b0" "b1" ""]
           pf  = analyzeProcedure "obj" "proc" cfg
-          fs  = findDeadVars [] pf
+          fs  = findDeadVars [localVar "li_x" 0] pf
       in kindsFor "li_x" fs @?= [OverwrittenBeforeRead]
 
   , testCase "end-of-procedure dead store: value assigned earlier, read, then reassigned and never read again" $
@@ -141,7 +141,7 @@ tests = testGroup "DeadVars"
             ]
           cfg = mkCfg "b0" [blk] []
           pf  = analyzeProcedure "obj" "proc" cfg
-          fs  = findDeadVars [] pf
+          fs  = findDeadVars [localVar "li_x" 0] pf
       in kindsFor "li_x" fs @?= [OverwrittenBeforeRead]
 
   , testCase "unused parameter is flagged unused-param" $
@@ -170,8 +170,45 @@ tests = testGroup "DeadVars"
             ]
           cfg = mkCfg "b0" [blk] []
           pf  = analyzeProcedure "obj" "proc" cfg
-          fs  = findDeadVars [] pf
+          fs  = findDeadVars [localVar "item" 0] pf
       in kindsFor "item" fs @?= []
+
+  , testCase "full def followed by a partial write on the same var is not flagged (datastore-populate idiom)" $
+      -- lds = create datastore; lds.DataObject = x; return lds -- real-corpus
+      -- regression. The partial write implicitly reads `lds` to reach into
+      -- it and doesn't clobber the rest of its value, so it must neither
+      -- itself be flagged (already covered by the treeviewitem case above)
+      -- NOR make the preceding full def look dead by killing `lds`'s
+      -- liveness on its way through the backward walk.
+      let blk = mkBlock "b0"
+            [ at 1 (BsAssign (lv1 "lds") (ExCreate "datastore"))
+            , at 2 (BsAssign (lv2 "lds" "dataobject") (ExLvalue (lv1 "as_dataobject")))
+            , at 3 (BsReturn (Just (ExLvalue (lv1 "lds"))))
+            ]
+          cfg = mkCfg "b0" [blk] []
+          pf  = analyzeProcedure "obj" "proc" cfg
+          fs  = findDeadVars [localVar "lds" 0] pf
+      in kindsFor "lds" fs @?= []
+
+  , testCase "instance/global variable reassignment is never flagged overwritten-before-read" $
+      -- Real-corpus regression: PB.Analysis.Dataflow has no notion of
+      -- variable scope, so ProcFlow's def/use sites cover EVERY assigned
+      -- identifier in the body -- instance vars and globals included, not
+      -- just declared locals/params. `ib_flag` here is never passed in
+      -- `lvs` (it isn't a declared local or param of this procedure), so
+      -- it must never be flagged even though its def/use shape (read in
+      -- an `if`, reassigned right after) looks identical to a genuine
+      -- same-block dead store on a real local.
+      let blk = mkBlock "b0"
+            [ at 1 (BsIf (IfStmt
+                { ifCond = ExLvalue (lv1 "ib_flag"), ifThen = []
+                , ifElseIfs = [], ifElse = Nothing }))
+            , at 2 (BsAssign (lv1 "ib_flag") (ExBool False))
+            ]
+          cfg = mkCfg "b0" [blk] []
+          pf  = analyzeProcedure "obj" "proc" cfg
+          fs  = findDeadVars [] pf
+      in kindsFor "ib_flag" fs @?= []
 
   , testCase "unused for-loop counter is not flagged (loop-idiom exclusion)" $
       let blk = mkBlock "b0"

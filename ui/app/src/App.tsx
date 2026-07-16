@@ -24,6 +24,7 @@ import { Explore } from "./views/features/explore/Explore.js";
 import { Errors } from "./views/features/errors/Errors.js";
 import { LibraryDetail } from "./views/features/library/LibraryDetail.js";
 import { DeadCode } from "./views/features/analysis/DeadCode.js";
+import { DeadVars } from "./views/features/analysis/DeadVars.js";
 import { LiveProcedures } from "./views/features/analysis/LiveProcedures.js";
 import { TaintExplorer } from "./views/features/analysis/TaintExplorer.js";
 import { TaintPathView } from "./views/features/analysis/TaintPathView.js";
@@ -64,6 +65,7 @@ function ViewRouter(props: { store: Store<AppState, AppAction> }): JSX.Element {
       <Show when={snap().nav.route.view === "errors"}><Errors store={props.store} /></Show>
       <Show when={snap().nav.route.view === "libraryDetail"}><LibraryDetail store={props.store} /></Show>
       <Show when={snap().nav.route.view === "deadCode"}><DeadCode store={props.store} /></Show>
+      <Show when={snap().nav.route.view === "deadVars"}><DeadVars store={props.store} /></Show>
       <Show when={snap().nav.route.view === "liveProcedures"}><LiveProcedures store={props.store} /></Show>
       <Show when={snap().nav.route.view === "taintExplorer"}><TaintExplorer store={props.store} /></Show>
       <Show when={snap().nav.route.view === "taintPathView"}><TaintPathView store={props.store} /></Show>

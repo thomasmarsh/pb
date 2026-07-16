@@ -8,6 +8,8 @@ import PB.Analysis.SchemaCategory
   , CatColumnRow (..), CatFkRow (..)
   , schObjectKey
   )
+import PB.Analysis.DeadVars
+  ( DeadVarFinding (..), DeadVarKind (..) )
 import PB.Pipeline.SqlParse (TableRef (..))
 import Database.DuckDB.Simple           (Query (..), execute_, query_)
 import Database.DuckDB.Simple.FromRow   (FromRow (..), field)
@@ -23,6 +25,7 @@ phaseATables =
   , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
   , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
   , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
+  , "dead_vars"
   ]
 
 withTestPool :: DuckConn -> (AppenderPool -> IO a) -> IO a
@@ -45,6 +48,7 @@ tests = testGroup "DuckDb"
   , testCase "materializeColumnRisk decodes ColKeys, excluding non-column (stmt) nodes" testMaterializeColumnRisk
   , testCase "appendCatFootprintColumns/queryCatFootprintColumns round-trip"
       testCatFootprintColumnsRoundTrip
+  , testCase "appendDeadVars round-trip"                 testAppendDeadVars
   ]
 
 testInitSchema :: IO ()
@@ -196,6 +200,33 @@ testCatFootprintColumnsRoundTrip = withWriteConn ":memory:" $ \conn -> do
     [SqlColRow (SqlStmtId "w_dw_copy.srw" "w_dw_copy" "clicked" 553) Nothing (Just "sales_order_items") "id" True]
     cfCols
   assertEqual "sql_statement_columns unaffected (separate table)" [] sqlCols
+
+-- | Local row shape for reading back @dead_vars@ -- no production query
+-- function exists (Python reads it directly via SQL), so this test query_s
+-- the DuckDB connection directly rather than adding one.
+data DeadVarRow = DeadVarRow Text Text Text (Maybe Int) Text deriving (Eq, Show)
+
+instance FromRow DeadVarRow where
+  fromRow = DeadVarRow <$> field <*> field <*> field <*> field <*> field
+
+testAppendDeadVars :: IO ()
+testAppendDeadVars = withWriteConn ":memory:" $ \conn -> do
+  initSchema conn
+  withTestPool conn $ \pool -> do
+    appendDeadVars pool
+      [ DeadVarFinding "w_test" "of_save" "li_unused" (Just 12) NeverRead
+      , DeadVarFinding "w_test" "of_save" "as_param"  Nothing   UnusedParam
+      ]
+    -- Appending an empty list after a real batch must not throw
+    appendDeadVars pool []
+
+  rows <- query_ conn
+    "SELECT object, proc_name, var_name, line, kind FROM dead_vars ORDER BY var_name"
+  assertEqual "dead_vars round-trips DeadVarFinding rows"
+    [ DeadVarRow "w_test" "of_save" "as_param"  Nothing   "unused-param"
+    , DeadVarRow "w_test" "of_save" "li_unused" (Just 12) "never-read"
+    ]
+    rows
 
 -- | Local row shape for reading back (leg_kind, leg_source) pairs raw --
 -- no production query function exists for schema_morphisms/

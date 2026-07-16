@@ -159,6 +159,27 @@ tests = testGroup "Dataflow"
               ]
             bf  = extractDefsUses blk
         in bfKill bf @?= Set.fromList ["x", "y"]
+
+    , testCase "BsRaw embedded SQL creates a use per :host_var" $
+        let blk = mkBlock "b0"
+              [ at 1 (BsRaw "select count(kodypal) into :ll_count from misth_ypal \
+                             \where kodxrisi = :gs_kodxrisi and exeldate <= :ldt_today") ]
+            bf  = extractDefsUses blk
+        in do
+          length (bfDefs bf) @?= 0
+          Set.fromList (map usVar (bfUses bf)) @?= Set.fromList ["ll_count", "gs_kodxrisi", "ldt_today"]
+          all (\u -> usKind u == "sql_host_var") (bfUses bf) @?= True
+
+    , testCase "BsAssign with a subscript index on the LHS creates a use of the index var" $
+        -- Real-corpus regression: this.Control[iCurrent+1] = this.pb_expr --
+        -- iCurrent is read (to compute which array slot to write) but only
+        -- appears inside the LHS's subscript, which extractUseVars never
+        -- looked at (it only ever walked the RHS).
+        let lhs = Lvalue [LvSegment "this" Nothing, LvSegment "control" (Just ["iCurrent", "+", "1"])]
+            blk = mkBlock "b0" [at 1 (BsAssign lhs (ExLvalue (lv1 "pb_expr")))]
+            bf  = extractDefsUses blk
+        in do
+          Set.member "iCurrent" (Set.fromList (map usVar (bfUses bf))) @?= True
     ]
 
   , testGroup "reachingDefinitions"

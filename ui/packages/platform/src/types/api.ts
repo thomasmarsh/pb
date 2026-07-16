@@ -411,6 +411,21 @@ export interface LiveProceduresResponse {
   total: number;
 }
 
+// ── Dead variables (Plan 174 T0-1 promotion) ─────────────────────────────────
+
+export interface DeadVarFinding {
+  object: string;
+  proc_name: string;
+  var_name: string;
+  line: number | null;
+  kind: string;
+}
+
+export interface DeadVarsResponse {
+  items: DeadVarFinding[];
+  total: number;
+}
+
 // ── Taint analysis ───────────────────────────────────────────────────────────
 
 export interface TaintEndpoint {

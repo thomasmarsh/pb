@@ -126,6 +126,16 @@ walkExprIdents = go
     go (ExRaw toks) = Set.fromList [t | t <- toks, isIdent t]
     go _ = Set.empty
 
+-- | Identifiers referenced in an lvalue's own subscript expressions (e.g.
+-- @arr[i+1]@ reads @i@ to compute which slot to address) -- distinct from
+-- 'walkExprIdents'' deliberate root-only handling of 'ExLvalue', which
+-- covers an lvalue read as a plain expression (a RHS or condition use), not
+-- an lvalue being assigned INTO. A def statement's own LHS subscript is
+-- always a read, regardless of that policy.
+lvalueSubscriptIdents :: Lvalue -> Set.Set Text
+lvalueSubscriptIdents (Lvalue segs) =
+  Set.fromList [ t | LvSegment _ (Just toks) <- segs, t <- toks, isIdent t ]
+
 -- | A valid PB identifier: first char alpha/underscore, rest alnum/underscore.
 -- Must match Python core/dataflow.py's _IDENT_RE (`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 -- exactly — it is applied to ExCall/ExMethodCall/ExDispatch/ExRaw token strings,
@@ -182,7 +192,7 @@ defKind _                = "assign"
 -- would double-count every use inside if/for/do/choose blocks (this was the
 -- 111d-1 over-count bug: proc_uses 13824 vs the 11303 baseline).
 extractUseVars :: BodyStmt -> Set.Set Text
-extractUseVars (BsAssign _ rhs)       = walkExprIdents rhs
+extractUseVars (BsAssign lv rhs)      = walkExprIdents rhs <> lvalueSubscriptIdents lv
 extractUseVars (BsLocalVar _ _ _ mInit) = maybe Set.empty walkExprIdents mInit
 extractUseVars (BsFor ft) =
   -- Loop var is a def; from/to/step are uses. Body is handled by CFG blocks.
@@ -205,7 +215,27 @@ extractUseVars (BsReturn mExpr) = maybe Set.empty walkExprIdents mExpr
 extractUseVars (BsCall expr)    = walkExprIdents expr
 extractUseVars (BsDestroy lv)   = maybe Set.empty Set.singleton (lvRoot lv)
 extractUseVars (BsAugAssign _ _ toks) = Set.fromList [tkText t | t <- toks, isIdent (tkText t)]
+extractUseVars (BsRaw txt)      = Set.fromList (extractSqlHostVars txt)
 extractUseVars _ = Set.empty
+
+-- | Extract :identifier host-variable names referenced in embedded SQL.
+-- 'BsRaw' carries raw, unparsed SQL text (embedded-SQL parsing is not yet
+-- part of the grammar), so a host-variable read like
+-- @where kodxrisi = :gs_kodxrisi@ is otherwise invisible to every def-use
+-- consumer -- 'liveVariables'/'reachingDefinitions' would treat the
+-- variable as never read, and any analysis built on top (e.g. DeadVars)
+-- would flag a genuinely-used variable as dead.
+extractSqlHostVars :: Text -> [Text]
+extractSqlHostVars = go
+  where
+    go t = case T.breakOn ":" t of
+      ("", rest) | T.null rest -> []
+                 | otherwise   -> go (T.drop 1 rest)
+      (_, rest) ->
+        let afterColon = T.drop 1 rest
+            (var, remaining) = T.span isIdentChar afterColon
+        in if T.null var then go remaining else var : go remaining
+    isIdentChar c = isAlpha c || c == '_' || (c >= '0' && c <= '9')
 
 -- | Determine use kind from statement tag.
 useKind :: BodyStmt -> Text
@@ -214,6 +244,7 @@ useKind (BsChoose {}) = "condition"
 useKind (BsReturn {}) = "return"
 useKind (BsCall {})   = "call_arg"
 useKind (BsFor {})    = "loop_range"
+useKind (BsRaw {})    = "sql_host_var"
 useKind _             = "rhs"
 
 -- ---------------------------------------------------------------------------

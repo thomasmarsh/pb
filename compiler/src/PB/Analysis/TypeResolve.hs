@@ -36,6 +36,7 @@ module PB.Analysis.TypeResolve
   , classifyPbType
   , classifyControlType
   , parseParams
+  , paramsToVars
   , callSitesExpr
   , srFileObject
   ) where

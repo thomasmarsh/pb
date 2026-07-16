@@ -24,6 +24,7 @@ import PB.Analysis.TypeEnv    (buildWorkspaceEnv, procEnv)
 import PB.Analysis.ControlHierarchy (buildControlIndex)
 import PB.Compile.Flatten (compileProcedureViaEffTerm)
 import PB.Analysis.DwFootprint (mkDwFootprintCtx)
+import PB.Analysis.DeadVars (DeadVarFinding (..), DeadVarKind (..))
 import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse
   ( startSqlBridgePool, shutdownSqlBridgePool
@@ -650,6 +651,117 @@ tests = testGroup "Pipeline.Runner"
             cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty globalDwColumns Nothing "confirmed" (PsParsed pf)
             case cf of
               CFPs cps -> assertBool "no cat-footprint rows" (null (cpsCatFootprintColumns cps))
+              _ -> assertFailure "expected CFPs"
+    ]
+
+  , testGroup "compileOne wires DeadVars into cpsDeadVars (Plan 174 T0-1 promotion)"
+    [ testCase "unused local + unused param produce cpsDeadVars findings" $ do
+        let src = T.unlines
+              [ "global type w_test from window"
+              , "end type"
+              , ""
+              , "public function integer uf_test (integer ai_unused)"
+              , "integer li_unused"
+              , "return 1"
+              , "end function"
+              ]
+        case parsePowerScriptFile src of
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Right (sf, spans) -> do
+            let ws = buildWorkspaceEnv [sf]
+                pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+            cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty Map.empty Nothing "confirmed" (PsParsed pf)
+            case cf of
+              CFPs cps -> do
+                let findings = [ (dvfVar f, dvfKind f) | f <- cpsDeadVars cps ]
+                assertBool "ai_unused flagged UnusedParam" (("ai_unused", UnusedParam) `elem` findings)
+                assertBool "li_unused flagged NeverRead"   (("li_unused", NeverRead)   `elem` findings)
+              _ -> assertFailure "expected CFPs"
+
+    , testCase "overloaded same-name functions: params don't cross-contaminate" $ do
+        -- Real-corpus regression shape (BACKLOG's T0-1 spike note,
+        -- eon_appeon_resize.of_getscale): extractLocalVars/paramsToVars
+        -- hardcode lvScopeLine=0 for every param, so filtering the file-wide
+        -- LocalVar list by proc name alone (with no span to disambiguate)
+        -- merges every overload's params into one bucket -- a param unique
+        -- to one overload gets reported as unused in EVERY overload sharing
+        -- that name, not just its own. compileOne re-derives each
+        -- overload's params fresh from its own instrParams/sLine instead of
+        -- reading them back out of the file-wide list, sidestepping this.
+        let src = T.unlines
+              [ "global type w_test from window"
+              , "end type"
+              , ""
+              , "public function integer uf_calc (integer ai_x)"
+              , "return ai_x + 1"
+              , "end function"
+              , ""
+              , "public function integer uf_calc (integer ai_x, integer ai_unused)"
+              , "return ai_x + 1"
+              , "end function"
+              ]
+        case parsePowerScriptFile src of
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Right (sf, spans) -> do
+            let ws = buildWorkspaceEnv [sf]
+                pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+            cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty Map.empty Nothing "confirmed" (PsParsed pf)
+            case cf of
+              CFPs cps -> do
+                let findings = [ (dvfVar f, dvfKind f) | f <- cpsDeadVars cps ]
+                findings @?= [("ai_unused", UnusedParam)]
+              _ -> assertFailure "expected CFPs"
+
+    , testCase "speculative confidence (builtin-class stub) produces no findings" $ do
+        -- Same exclusion PB.Analysis.Rules.DeadCode applies to 'procedures'
+        -- (confidence='speculative' marks a synthetic stdlib stub whose
+        -- unreferenced params are by design, not a real finding).
+        let src = T.unlines
+              [ "global type w_test from window"
+              , "end type"
+              , ""
+              , "public function integer uf_test (integer ai_unused)"
+              , "return 1"
+              , "end function"
+              ]
+        case parsePowerScriptFile src of
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Right (sf, spans) -> do
+            let ws = buildWorkspaceEnv [sf]
+                pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+            cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty Map.empty Nothing "speculative" (PsParsed pf)
+            case cf of
+              CFPs cps -> assertBool "no dead-var findings for speculative confidence" (null (cpsDeadVars cps))
+              _ -> assertFailure "expected CFPs"
+
+    , testCase "a local used only as a :host_var in embedded SQL is not flagged dead" $ do
+        -- Real-corpus regression: a var read only inside an embedded SQL
+        -- WHERE clause (":ldt_today") was invisible to Dataflow's
+        -- extractUseVars (BsRaw carries unparsed SQL text), so DeadVars
+        -- flagged it NeverRead even though it's genuinely used.
+        let src = T.unlines
+              [ "global type w_test from window"
+              , "end type"
+              , ""
+              , "public function integer uf_test ()"
+              , "date ldt_today"
+              , "long ll_count"
+              , "ldt_today = today()"
+              , "select count(kodypal) into :ll_count from misth_ypal where exeldate <= :ldt_today;"
+              , "return 1"
+              , "end function"
+              ]
+        case parsePowerScriptFile src of
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Right (sf, spans) -> do
+            let ws = buildWorkspaceEnv [sf]
+                pf = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+            cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty Map.empty Nothing "confirmed" (PsParsed pf)
+            case cf of
+              CFPs cps -> do
+                let findings = [ dvfVar f | f <- cpsDeadVars cps ]
+                assertBool "ldt_today not flagged dead" ("ldt_today" `notElem` findings)
+                assertBool "ll_count not flagged dead"  ("ll_count"  `notElem` findings)
               _ -> assertFailure "expected CFPs"
     ]
 

@@ -47,11 +47,12 @@ import PB.Analysis.SchFootprint
 import PB.Analysis.DwFootprint
   ( DwFootprintCtx, mkDwFootprintCtx, dwRetrieveFootprint )
 import PB.Analysis.TypeResolve
-  ( LocalVar, CallSite, GlobalVar (..)
+  ( LocalVar (..), CallSite, GlobalVar (..)
   , extractCallSites, extractDwCallSites, extractGlobalVars, extractLocalVars
   , extractDwControlBindings
-  , parseParams
+  , parseParams, paramsToVars
   )
+import PB.Analysis.DeadVars (DeadVarFinding, findDeadVars)
 import PB.Pipeline.Emit
   ( runFile, ParsedFile (..), ParseOutcome (..)
   , parseOutcome
@@ -81,7 +82,7 @@ import PB.Pipeline.DuckDb
   , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwRetrieveColumns
   , appendDwWriteColumns, appendDwWhereColumns, appendDwJoins
   , appendDwRetrieveWhere, DwRetrieveWhereRow (..)
-  , appendLocalVars, appendCallSites, appendGlobalVars
+  , appendLocalVars, appendDeadVars, appendCallSites, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
   , appendSqlStmtColumns, appendSqlStmtFilters, appendSqlStmtTables
   , appendCatFootprintColumns
@@ -128,6 +129,7 @@ data CompiledPs = CompiledPs
   { cpsObjectRow     :: ObjectRow
   , cpsProcRows      :: [ProcRow]
   , cpsLocalVars     :: [LocalVar]
+  , cpsDeadVars      :: [DeadVarFinding]
   , cpsCallSites     :: [CallSite]
   , cpsGlobalVars    :: [GlobalVar]
   , cpsProcFlows     :: [(Text, Text, Text, Dataflow.ProcFlow)]
@@ -259,7 +261,8 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns m
                 effTerm  = compileProcedureToEff (mkProcEnv instrParams) userFns body
                 instrJs    = jsonText (toJSON (linearize (buildEffGraphNamed effTerm)))
                 wiringJs = jsonText (toJSON (buildEffGraphWiring effTerm))
-                flow     = (fp, obj, pName, Dataflow.analyzeProcedure obj pName cfg)
+                pflow    = Dataflow.analyzeProcedure obj pName cfg
+                flow     = (fp, obj, pName, pflow)
                 cyclo    = cyclomaticComplexity cfg
                 footprintCtx = FunctorCtx
                   { fcStmtObj         = SqlStmtId fp obj pName sLine
@@ -269,10 +272,32 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns m
                   }
                 catFpRows = mapMaybe morphismToColRow
                   (Set.toList (foldSchFootprintEff footprintCtx effTerm))
+                -- DeadVars needs this procedure's own params/body-locals,
+                -- not the file-wide 'lvs' -- 'lvs' tags every param with
+                -- lvScopeLine=0 (extractLocalVars/paramsToVars has no span
+                -- info to give a param its own line), which would collapse
+                -- every overload of a same-named procedure onto one param
+                -- list. Re-deriving params from this comprehension's own
+                -- instrParams/sLine sidesteps that; body locals are
+                -- span-filtered against this procedure's own (sLine, eLine).
+                scopedParams  = paramsToVars fp obj pName instrParams sLine
+                scopedBodyLvs =
+                  [ lv | lv <- lvs, lvProcName lv == pName, not (lvIsParam lv)
+                       , sLine <= lvScopeLine lv, lvScopeLine lv <= eLine ]
+                -- Speculative confidence marks a synthetic builtin-class
+                -- method stub (PB.Runtime.StdLib) whose params are never
+                -- referenced by design -- same exclusion
+                -- PB.Analysis.Rules.DeadCode's procRows/procMetaRows apply
+                -- to 'procedures', kept here rather than as a query-time
+                -- filter since dead_vars carries no confidence column.
+                deadVars
+                  | confidence == "speculative" = []
+                  | otherwise = findDeadVars (scopedParams <> scopedBodyLvs) pflow
             in ( ProcRow fp obj pName pType sLine eLine cfgJs instrJs wiringJs
                    taintParams retType (Just cyclo) confidence
                , flow
-               , catFpRows )
+               , catFpRows
+               , deadVars )
           | ((sLine, eLine), (pName, pType, instrParams, taintParams, retType, body)) <- procSpecs
           ]
         procBodies =
@@ -296,16 +321,17 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns m
                              (fmap jsonText (extractWindowLayout (srTypeBlocks sf)))
                              (Just (jsonText (toJSON (srTypeBlocks sf))))
                              confidence
-      , cpsProcRows      = [ r | (r, _, _) <- procs ]
+      , cpsProcRows      = [ r | (r, _, _, _) <- procs ]
       , cpsLocalVars     = lvs
+      , cpsDeadVars      = concat [ dvs | (_, _, _, dvs) <- procs ]
       , cpsCallSites     = css
       , cpsGlobalVars    = gvs
-      , cpsProcFlows     = [ f | (_, f, _) <- procs ]
+      , cpsProcFlows     = [ f | (_, f, _, _) <- procs ]
       , cpsSqlStmts      = sqlRows
       , cpsSqlStmtColumns = sqlColRows
       , cpsSqlStmtFilters = sqlFilterRows
       , cpsSqlStmtTables = sqlTableRows
-      , cpsCatFootprintColumns = concat [ rs | (_, _, rs) <- procs ]
+      , cpsCatFootprintColumns = concat [ rs | (_, _, rs, _) <- procs ]
       , cpsSourceContent = Just (SourceFileRow fp (pfContents pf))
       }
 
@@ -527,6 +553,7 @@ appendToDb pool (CFPs r) = do
   appendObjects    pool [cpsObjectRow r]
   appendProcedures pool (cpsProcRows r)
   appendLocalVars  pool (cpsLocalVars r)
+  appendDeadVars   pool (cpsDeadVars r)
   appendCallSites  pool (cpsCallSites r)
   appendGlobalVars pool (cpsGlobalVars r)
   appendProcDefs   pool (cpsProcFlows r)
@@ -676,7 +703,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     -- and DDL loading. The pool's scope closes (flushing all appenders)
     -- before runPhaseB starts — this ordering is correctness-critical.
     let phaseATables =
-          [ "objects", "procedures", "local_vars", "call_sites", "global_vars"
+          [ "objects", "procedures", "local_vars", "dead_vars", "call_sites", "global_vars"
           , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
           , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
           , "source_files", "parse_errors"

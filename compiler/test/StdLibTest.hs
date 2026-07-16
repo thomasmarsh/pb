@@ -50,7 +50,7 @@ withStdlibDb act = withWriteConn ":memory:" $ \conn -> do
   act conn
   where
     phaseATables =
-      [ "objects", "procedures", "local_vars", "call_sites", "global_vars"
+      [ "objects", "procedures", "local_vars", "dead_vars", "call_sites", "global_vars"
       , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
       , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
       , "source_files", "parse_errors"
@@ -120,7 +120,7 @@ testUserConfirmed = withWriteConn ":memory:" $ \conn -> do
   assertEqual "user object is confirmed" ["confirmed"] confs
   where
     phaseATables =
-      [ "objects", "procedures", "local_vars", "call_sites", "global_vars"
+      [ "objects", "procedures", "local_vars", "dead_vars", "call_sites", "global_vars"
       , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
       , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
       , "source_files", "parse_errors"

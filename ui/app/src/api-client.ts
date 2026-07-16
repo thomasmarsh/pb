@@ -20,6 +20,7 @@ import type {
   TableDetail,
   ErrorListResponse,
   LiveProceduresResponse,
+  DeadVarsResponse,
   WiringDiagramResponse,
   FootprintResponse,
   ColumnUsageResponse,
@@ -65,6 +66,7 @@ export interface ApiClient {
   getDecompositionCandidates(table: string, namespace?: string): Promise<DecompositionCandidatesResponse>;
   getErrors(params: { kind?: string; q?: string; limit?: number; offset?: number }): Promise<ErrorListResponse>;
   getLiveProcedures(): Promise<LiveProceduresResponse>;
+  getDeadVars(): Promise<DeadVarsResponse>;
   getDwQueries(): Promise<Record<string, string>>;
   executeSql(sql: string, params: unknown[]): Promise<SQLResult>;
 }
@@ -142,6 +144,7 @@ export function createEnv(api: ApiClient): Env {
     getDecompositionCandidates: (t: string, ns?: string) => lift(() => api.getDecompositionCandidates(t, ns)),
     getErrors: (p) => lift(() => api.getErrors(p)),
     getLiveProcedures: () => lift(() => api.getLiveProcedures().then((r) => r.items)),
+    getDeadVars: () => lift(() => api.getDeadVars().then((r) => r.items)),
     getDwQueries: () => lift(() => api.getDwQueries()),
     executeSql: (sql, params) => lift(() => api.executeSql(sql, params)),
     loadTheme: (): Effect<Theme> => {
@@ -317,6 +320,10 @@ export function createApiClient(): ApiClient {
 
     async getLiveProcedures(): Promise<LiveProceduresResponse> {
       return fetchJson("/api/analysis/live-procedures");
+    },
+
+    async getDeadVars(): Promise<DeadVarsResponse> {
+      return fetchJson("/api/analysis/dead-vars");
     },
 
     async getDwQueries(): Promise<Record<string, string>> {
