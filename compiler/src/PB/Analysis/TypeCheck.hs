@@ -26,7 +26,7 @@
 -- cover the whole workspace before 'checkBody' runs on any single file.
 -- Only 'tcScope' varies per procedure. Public API:
 --
---   buildParamsMap :: [SrFile] -> Map (Text, Text) ProcSignature
+--   buildParamsMap :: [SrFile] -> Map (Text, Text) [ProcSignature]
 --   inferExpr      :: TypeCheckCtx -> Expr -> Maybe TypeFamily
 --   checkBody      :: TypeCheckCtx -> Text -> [Located BodyStmt] -> [TypeMismatchFinding]
 module PB.Analysis.TypeCheck
@@ -75,42 +75,83 @@ data TypeCheckCtx = TypeCheckCtx
   { tcScope          :: Map.Map Text TypeFamily
   , tcProcMap        :: Map.Map Text (Set.Set Text)
   , tcInherits       :: Map.Map Text Text
-  , tcParams         :: Map.Map (Text, Text) ProcSignature
+  , tcParams         :: Map.Map (Text, Text) [ProcSignature]
   , tcObjects        :: Set.Set Text
   , tcUserTypes      :: Set.Set Text
   , tcObject         :: Text
   , tcControlIdx     :: ControlIndex
   , tcBuiltinFns     :: Set.Set Text
   , tcBuiltinMethods :: Set.Set Text
+  -- | The return type of the specific procedure instance currently being
+  -- checked (parsed once, per real declaration -- 'Nothing' for a
+  -- subroutine\/event\/on-block). Deliberately NOT looked up via 'tcParams'
+  -- keyed on ('tcObject', procedure name): PowerBuilder function overloading
+  -- means several declarations can share that key, and the enclosing
+  -- procedure's own signature is already known unambiguously by the caller
+  -- (the exact 'SrFile' declaration being compiled), so re-deriving it
+  -- through a name-keyed lookup would reintroduce the same
+  -- overload-collision risk 'tcParams' itself now guards against below.
+  , tcOwnReturnType  :: Maybe PbType
   }
 
--- | Build a @(object, procName) -> ProcSignature@ map from every function\/
+-- | Build a @(object, procName) -> [ProcSignature]@ map from every function\/
 -- subroutine declaration across the whole workspace — mirrors
 -- 'PB.Analysis.TypeResolve.buildProcMap''s per-file fold shape, one level
 -- richer (keeps the parsed signature, not just the name). Workspace-wide
 -- because a call's target proc may live in any file, not just the caller's
 -- own — the same reason 'buildProcMap'\/'buildInheritsMap' are already
 -- built once across every parsed file before any per-file resolution runs.
-buildParamsMap :: [SrFile] -> Map.Map (Text, Text) ProcSignature
+--
+-- The value is a list, not a single 'ProcSignature': PowerBuilder allows
+-- function\/subroutine overloading (several declarations sharing one
+-- @(object, procName)@ key, differing only in parameter list). Collapsing
+-- them to one signature via last-declared-wins (the original design) meant
+-- every call to an overloaded name got checked against whichever overload
+-- happened to parse last, regardless of which one it actually targets —
+-- confirmed via a real-corpus false positive (openpay's @w_wizmain.getstep@,
+-- overloaded on @(string)@\/@(integer)@; every @getstep(\"somename\")@ call
+-- was checked against the @(integer)@ overload's params, producing a bogus
+-- \"expected numeric, found string literal\" finding). 'selectSignature'
+-- below picks the right overload from this list using the actual call's
+-- argument count.
+buildParamsMap :: [SrFile] -> Map.Map (Text, Text) [ProcSignature]
 buildParamsMap = foldl' addFile Map.empty
   where
     addFile acc sf =
       let obj = srFileObject sf
           fnEntries =
             [ ( (obj, fnsName (fbSig fb))
-              , ProcSignature
+              , [ProcSignature
                   (parseParams (fnsParams (fbSig fb)))
-                  (Just (parseTypeText (fnsReturnType (fbSig fb))))
+                  (Just (parseTypeText (fnsReturnType (fbSig fb))))]
               )
             | fb <- srFunctions sf
             ]
           subEntries =
             [ ( (obj, ssName (sbSig sb))
-              , ProcSignature (parseParams (ssParams (sbSig sb))) Nothing
+              , [ProcSignature (parseParams (ssParams (sbSig sb))) Nothing]
               )
             | sb <- srSubroutines sf
             ]
-      in foldl' (\m (k, v) -> Map.insert k v m) acc (fnEntries <> subEntries)
+      in foldl' (\m (k, v) -> Map.insertWith (flip (<>)) k v m) acc (fnEntries <> subEntries)
+
+-- | Pick the declared signature to use at a call site with @arity@ actual
+-- arguments. A single declared signature is used unconditionally (the
+-- overwhelming common case — a non-overloaded proc), preserving the
+-- existing "zip truncates to the shorter list, an arity mismatch is simply
+-- ignored" behavior for calls with a different actual argument count than
+-- declared. When 2+ signatures are declared under the same key (real
+-- overloading), only an EXACT, UNIQUE arity match disambiguates; zero or
+-- 2+ candidates at that arity (e.g. two overloads sharing the same
+-- parameter count, distinguished only by type — 'getstep(string)' vs
+-- 'getstep(integer)', both arity 1) is genuinely ambiguous without deeper
+-- argument-type-directed overload resolution, so it is skipped — never a
+-- guess, same discipline 'inferExpr' already follows throughout.
+selectSignature :: [ProcSignature] -> Int -> Maybe ProcSignature
+selectSignature [sig] _     = Just sig
+selectSignature sigs  arity = case filter ((== arity) . length . psParams) sigs of
+  [sig] -> Just sig
+  _     -> Nothing
 
 -- | Workspace-wide 'TypeCheckCtx' fields, computed once per compile run from
 -- every parsed 'SrFile' -- everything 'checkBody' needs except the two
@@ -126,7 +167,7 @@ buildParamsMap = foldl' addFile Map.empty
 data TypeCheckWorkspace = TypeCheckWorkspace
   { tcwProcMap   :: Map.Map Text (Set.Set Text)
   , tcwInherits  :: Map.Map Text Text
-  , tcwParams    :: Map.Map (Text, Text) ProcSignature
+  , tcwParams    :: Map.Map (Text, Text) [ProcSignature]
   , tcwObjects   :: Set.Set Text
   , tcwUserTypes :: Set.Set Text
   }
@@ -236,9 +277,12 @@ resolveCallTarget ctx ExMethodCall { receiver = recv, method = m } =
            _ -> Nothing
 resolveCallTarget _ _ = Nothing
 
-procReturnFamily :: TypeCheckCtx -> (Text, Text) -> Maybe TypeFamily
-procReturnFamily ctx target = do
-  sig   <- Map.lookup target (tcParams ctx)
+-- | @arity@ is the actual call's argument count, used to disambiguate an
+-- overloaded target name via 'selectSignature'.
+procReturnFamily :: TypeCheckCtx -> (Text, Text) -> Int -> Maybe TypeFamily
+procReturnFamily ctx target arity = do
+  sigs  <- Map.lookup target (tcParams ctx)
+  sig   <- selectSignature sigs arity
   retTy <- psReturnType sig
   Just (classifyFamily retTy (tcObjects ctx) (tcUserTypes ctx))
 
@@ -278,8 +322,8 @@ inferExpr ctx (ExNeg e) = case inferExpr ctx e of
 inferExpr ctx (ExCreate cls) = Just (classifyClassName ctx cls)
 inferExpr ctx (ExCreateUsing (ExStr cls)) = Just (classifyClassName ctx cls)
 inferExpr _   (ExCreateUsing _) = Nothing
-inferExpr ctx e@ExCall{}       = resolveCallTarget ctx e >>= procReturnFamily ctx
-inferExpr ctx e@ExMethodCall{} = resolveCallTarget ctx e >>= procReturnFamily ctx
+inferExpr ctx e@ExCall{}       = resolveCallTarget ctx e >>= \t -> procReturnFamily ctx t (length (rawArgs e))
+inferExpr ctx e@ExMethodCall{} = resolveCallTarget ctx e >>= \t -> procReturnFamily ctx t (length (rawArgs e))
 inferExpr _   _ = Nothing -- ExEnum/ExDispatch/ExArray/ExHostVar/ExRaw: no static type
 
 -- ---------------------------------------------------------------------------
@@ -315,15 +359,17 @@ callArgFindings :: TypeCheckCtx -> Text -> Int -> Expr -> [TypeMismatchFinding]
 callArgFindings ctx procN line e = concatMap oneCall (callExprsIn e)
   where
     oneCall callExpr = case resolveCallTarget ctx callExpr >>= (`Map.lookup` tcParams ctx) of
-      Nothing  -> []
-      Just sig ->
-        [ TypeMismatchFinding (tcObject ctx) procN line paramN (renderFamily paramFam) (rhsDesc argExpr) CallArgMismatch
-        | ((paramN, paramTy), argToks) <- zip (psParams sig) (rawArgs callExpr)
-        , let paramFam = classifyFamily paramTy (tcObjects ctx) (tcUserTypes ctx)
-        , let argExpr  = parseExpr argToks
-        , Just argFam <- [inferExpr ctx argExpr]
-        , not (compatible (tcInherits ctx) paramFam argFam)
-        ]
+      Nothing   -> []
+      Just sigs -> case selectSignature sigs (length (rawArgs callExpr)) of
+        Nothing  -> []
+        Just sig ->
+          [ TypeMismatchFinding (tcObject ctx) procN line paramN (renderFamily paramFam) (rhsDesc argExpr) CallArgMismatch
+          | ((paramN, paramTy), argToks) <- zip (psParams sig) (rawArgs callExpr)
+          , let paramFam = classifyFamily paramTy (tcObjects ctx) (tcUserTypes ctx)
+          , let argExpr  = parseExpr argToks
+          , Just argFam <- [inferExpr ctx argExpr]
+          , not (compatible (tcInherits ctx) paramFam argFam)
+          ]
 
 -- | A short rendering of an expression for a finding's diagnostic text.
 -- Only the shapes 'inferExpr' can actually type ever reach a finding, so the
@@ -350,8 +396,7 @@ assignFinding ctx procN line varN rhs =
 returnFinding :: TypeCheckCtx -> Text -> Int -> Expr -> [TypeMismatchFinding]
 returnFinding ctx procN line e =
   [ TypeMismatchFinding (tcObject ctx) procN line procN (renderFamily retFam) (rhsDesc e) ReturnMismatch
-  | Just sig   <- [Map.lookup (tcObject ctx, procN) (tcParams ctx)]
-  , Just retTy <- [psReturnType sig]
+  | Just retTy <- [tcOwnReturnType ctx]
   , let retFam = classifyFamily retTy (tcObjects ctx) (tcUserTypes ctx)
   , Just eFam  <- [inferExpr ctx e]
   , not (compatible (tcInherits ctx) retFam eFam)

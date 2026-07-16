@@ -23,6 +23,7 @@ import PB.AST.BodyStmt   (BodyStmt (..))
 import PB.AST.DataWindow
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
+import PB.AST.Type           (parseTypeText)
 import PB.Grammar.File       (SrSpans (..))
 import PB.Analysis.Cfg    (buildCfg, cyclomaticComplexity)
 import PB.Compile.Flatten
@@ -54,7 +55,7 @@ import PB.Analysis.TypeResolve
   )
 import PB.Analysis.DeadVars (DeadVarFinding, findDeadVars)
 import PB.Analysis.TypeCheck
-  ( TypeCheckCtx (..), TypeCheckWorkspace (..), ProcSignature (..)
+  ( TypeCheckCtx (..), TypeCheckWorkspace (..)
   , buildTypeCheckWorkspace, checkBody
   )
 import PB.Analysis.TypeMismatch (TypeMismatchFinding, classifyFamily)
@@ -301,21 +302,35 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                   | confidence == "speculative" = []
                   | otherwise = findDeadVars (scopedParams <> scopedBodyLvs) pflow
                 -- Plan 177 Phase 4: tcScope is this procedure's own params
-                -- (from tcw's already-parsed 'ProcSignature', not the raw
-                -- 'instrParams' text -- reuses the same lookup 'inferExpr's
-                -- own ExCall case makes) unioned with its body locals via
-                -- 'collectBodyLocals' -- both sides lowercased, matching
-                -- 'TypeCheck.hs's own tcScope-lookup convention. Same
-                -- "speculative confidence -> skip" gate as deadVars, for
-                -- the same stdlib-stub reason.
-                paramScope = case Map.lookup (obj, pName) (tcwParams tcw) of
-                  Just sig -> Map.fromList
-                    [ (T.toLower n, classifyFamily t (tcwObjects tcw) (tcwUserTypes tcw))
-                    | (n, t) <- psParams sig ]
-                  Nothing -> Map.empty
+                -- unioned with its body locals via 'collectBodyLocals' --
+                -- both sides lowercased, matching 'TypeCheck.hs's own
+                -- tcScope-lookup convention. Same "speculative confidence ->
+                -- skip" gate as deadVars, for the same stdlib-stub reason.
+                --
+                -- paramScope is derived directly from this comprehension's
+                -- own 'instrParams' (via 'parseParams', the same primitive
+                -- 'mkProcEnv' already calls above) rather than a
+                -- 'tcwParams'-keyed lookup -- 'tcwParams' is keyed only on
+                -- (object, procName) and PowerBuilder allows overloading, so
+                -- a same-named overload elsewhere in this object would
+                -- collide there. 'instrParams' is this SPECIFIC procedure
+                -- instance's own declaration text, always correct regardless
+                -- of how many other overloads share its name -- the same
+                -- "re-derive from this comprehension's own per-instance
+                -- data" fix 'scopedParams' above already applies for
+                -- DeadVars.
+                paramScope = Map.fromList
+                  [ (T.toLower n, classifyFamily t (tcwObjects tcw) (tcwUserTypes tcw))
+                  | (n, t) <- parseParams instrParams ]
                 bodyScope = Map.map
                   (\t -> classifyFamily t (tcwObjects tcw) (tcwUserTypes tcw))
                   (collectBodyLocals body)
+                -- Same per-instance reasoning as paramScope: the enclosing
+                -- procedure's own declared return type comes straight from
+                -- this comprehension's 'retType' text (empty for a
+                -- subroutine/event/on-block), never from a 'tcwParams'
+                -- lookup that could resolve to a different overload.
+                ownReturnType = if T.null retType then Nothing else Just (parseTypeText retType)
                 typeCheckCtx = TypeCheckCtx
                   { tcScope = paramScope <> bodyScope
                   , tcProcMap = tcwProcMap tcw
@@ -327,6 +342,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                   , tcControlIdx = controlIdx
                   , tcBuiltinFns = builtinFnNames
                   , tcBuiltinMethods = builtinMethodNames
+                  , tcOwnReturnType = ownReturnType
                   }
                 typeMismatches
                   | confidence == "speculative" = []

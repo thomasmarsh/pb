@@ -109,10 +109,18 @@ familyOfResolvedType rt = case rtKind rt of
 -- Compatibility
 
 -- | Is a value of family @rhs@ assignable to a variable of family @lhs@?
+-- Object compatibility checks both ancestor directions: PowerBuilder
+-- resolves an object assignment/argument/return at runtime regardless of
+-- which side is the more specific type (an ancestor-typed expression
+-- assigned into a descendant-typed slot is an implicit, runtime-checked
+-- downcast -- ordinary, idiomatic PB, not a compile-time error), so a
+-- one-directional ancestor check would flag every such assignment as a
+-- false positive.
 compatible :: Map.Map Text Text -> TypeFamily -> TypeFamily -> Bool
 compatible _        FamAny        _            = True
 compatible _        _             FamAny       = True
-compatible inherits (FamObject l) (FamObject r) = l == r || l `elem` ancestorChain r inherits
+compatible inherits (FamObject l) (FamObject r) =
+  l == r || l `elem` ancestorChain r inherits || r `elem` ancestorChain l inherits
 compatible _        l             r             = l == r
 
 -- ---------------------------------------------------------------------------

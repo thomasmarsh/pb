@@ -31,6 +31,7 @@ baseCtx = TypeCheckCtx
   , tcControlIdx     = Map.empty
   , tcBuiltinFns     = Set.empty
   , tcBuiltinMethods = Set.empty
+  , tcOwnReturnType  = Nothing
   }
 
 scope1 :: Map.Map Text TypeFamily
@@ -124,7 +125,7 @@ tests = testGroup "TypeCheck"
       [ testCase "resolved virtual call -> declared return type" $
           let ctx = baseCtx
                 { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_get"])]
-                , tcParams  = Map.fromList [(("w_main", "of_get"), ProcSignature [] (Just (PtPrimitive "integer")))]
+                , tcParams  = Map.fromList [(("w_main", "of_get"), [ProcSignature [] (Just (PtPrimitive "integer"))])]
                 }
           in inferExpr ctx (callE "of_get") @?= Just FamNumeric
 
@@ -133,14 +134,14 @@ tests = testGroup "TypeCheck"
                 { tcObject   = "w_child"
                 , tcInherits = Map.fromList [("w_child", "w_base")]
                 , tcProcMap  = Map.fromList [("w_base", Set.fromList ["of_get"])]
-                , tcParams   = Map.fromList [(("w_base", "of_get"), ProcSignature [] (Just (PtPrimitive "string")))]
+                , tcParams   = Map.fromList [(("w_base", "of_get"), [ProcSignature [] (Just (PtPrimitive "string"))])]
                 }
           in inferExpr ctx (callE "of_get") @?= Just FamString
 
       , testCase "call to a subroutine (no return type) -> Nothing" $
           let ctx = baseCtx
                 { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_do"])]
-                , tcParams  = Map.fromList [(("w_main", "of_do"), ProcSignature [] Nothing)]
+                , tcParams  = Map.fromList [(("w_main", "of_do"), [ProcSignature [] Nothing])]
                 }
           in inferExpr ctx (callE "of_do") @?= Nothing
 
@@ -151,7 +152,7 @@ tests = testGroup "TypeCheck"
       , testCase "dotted static call to another object's function -> declared return type" $
           let ctx = baseCtx
                 { tcProcMap = Map.fromList [("n_util", Set.fromList ["of_helper"])]
-                , tcParams  = Map.fromList [(("n_util", "of_helper"), ProcSignature [] (Just (PtPrimitive "boolean")))]
+                , tcParams  = Map.fromList [(("n_util", "of_helper"), [ProcSignature [] (Just (PtPrimitive "boolean"))])]
                 }
               e = ExCall { callee = Lvalue [LvSegment "n_util" Nothing, LvSegment "of_helper" Nothing], callArgs = [] }
           in inferExpr ctx e @?= Just FamBoolean
@@ -160,7 +161,7 @@ tests = testGroup "TypeCheck"
           let ctx = baseCtx
                 { tcScope   = Map.fromList [("lu_helper", FamObject "n_util")]
                 , tcProcMap = Map.fromList [("n_util", Set.fromList ["of_helper"])]
-                , tcParams  = Map.fromList [(("n_util", "of_helper"), ProcSignature [] (Just (PtPrimitive "long")))]
+                , tcParams  = Map.fromList [(("n_util", "of_helper"), [ProcSignature [] (Just (PtPrimitive "long"))])]
                 }
               e = ExMethodCall { receiver = varE "lu_helper", method = "of_helper", methodArgs = [] }
           in inferExpr ctx e @?= Just FamNumeric
@@ -267,14 +268,25 @@ tests = testGroup "TypeCheck"
           in map tmfLine fs @?= [7]
 
       , testCase "flags function return statement with incompatible type" $
-          let ctx = baseCtx
-                { tcParams = Map.fromList [(("w_main", "of_get"), ProcSignature [] (Just (PtPrimitive "integer")))] }
+          let ctx = baseCtx { tcOwnReturnType = Just (PtPrimitive "integer") }
           in checkBody ctx "of_get" [returnStmt (ExStr "bad") 12]
                @?= [TypeMismatchFinding "w_main" "of_get" 12 "of_get" "numeric" "\"bad\"" ReturnMismatch]
 
       , testCase "does not flag compatible function return statement" $
+          let ctx = baseCtx { tcOwnReturnType = Just (PtPrimitive "integer") }
+          in checkBody ctx "of_get" [returnStmt (ExInt "5") 12] @?= []
+
+      , testCase "return-type lookup is unaffected by other overloads sharing this proc's name" $
+          -- tcOwnReturnType is set directly by the caller (Runner.hs, from
+          -- this specific declaration's own retType text), not looked up
+          -- via tcParams keyed on (tcObject, procN) -- so a same-named
+          -- overload with a different return type declared elsewhere in
+          -- tcParams must not affect this check at all.
           let ctx = baseCtx
-                { tcParams = Map.fromList [(("w_main", "of_get"), ProcSignature [] (Just (PtPrimitive "integer")))] }
+                { tcOwnReturnType = Just (PtPrimitive "integer")
+                , tcParams = Map.fromList
+                    [ (("w_main", "of_get"), [ProcSignature [("as_y", PtPrimitive "string")] (Just (PtPrimitive "string"))]) ]
+                }
           in checkBody ctx "of_get" [returnStmt (ExInt "5") 12] @?= []
       ]
 
@@ -283,7 +295,7 @@ tests = testGroup "TypeCheck"
           let ctx = baseCtx
                 { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_take_int"])]
                 , tcParams  = Map.fromList
-                    [(("w_main", "of_take_int"), ProcSignature [("ai_x", PtPrimitive "integer")] Nothing)]
+                    [(("w_main", "of_take_int"), [ProcSignature [("ai_x", PtPrimitive "integer")] Nothing])]
                 }
               fs = checkBody ctx "of_test" [Located 3 (BsCall (callWithArgs "of_take_int" [strTok "oops"]))]
           in fs @?= [TypeMismatchFinding "w_main" "of_test" 3 "ai_x" "numeric" "\"oops\"" CallArgMismatch]
@@ -292,7 +304,7 @@ tests = testGroup "TypeCheck"
           let ctx = baseCtx
                 { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_take_int"])]
                 , tcParams  = Map.fromList
-                    [(("w_main", "of_take_int"), ProcSignature [("ai_x", PtPrimitive "integer")] Nothing)]
+                    [(("w_main", "of_take_int"), [ProcSignature [("ai_x", PtPrimitive "integer")] Nothing])]
                 }
           in checkBody ctx "of_test" [Located 3 (BsCall (callWithArgs "of_take_int" [intTok "5"]))] @?= []
 
@@ -301,7 +313,7 @@ tests = testGroup "TypeCheck"
                 { tcScope   = Map.fromList [("ls_name", FamString)]
                 , tcProcMap = Map.fromList [("w_main", Set.fromList ["of_take_int"])]
                 , tcParams  = Map.fromList
-                    [(("w_main", "of_take_int"), ProcSignature [("ai_x", PtPrimitive "integer")] Nothing)]
+                    [(("w_main", "of_take_int"), [ProcSignature [("ai_x", PtPrimitive "integer")] Nothing])]
                 }
               fs = checkBody ctx "of_test" [Located 4 (BsCall (callWithArgs "of_take_int" [identTok "ls_name"]))]
           in map tmfKind fs @?= [CallArgMismatch]
@@ -312,7 +324,7 @@ tests = testGroup "TypeCheck"
                 , tcInherits = Map.fromList [("w_child", "w_base")]
                 , tcProcMap  = Map.fromList [("w_main", Set.fromList ["of_take_base"])]
                 , tcParams   = Map.fromList
-                    [(("w_main", "of_take_base"), ProcSignature [("aw_x", PtUserDefined "w_base")] Nothing)]
+                    [(("w_main", "of_take_base"), [ProcSignature [("aw_x", PtUserDefined "w_base")] Nothing])]
                 , tcObjects  = Set.fromList ["w_base", "w_child"]
                 }
           in checkBody ctx "of_test" [Located 5 (BsCall (callWithArgs "of_take_base" [identTok "lw_child"]))] @?= []
@@ -326,7 +338,7 @@ tests = testGroup "TypeCheck"
                 { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_take_two"])]
                 , tcParams  = Map.fromList
                     [ ( ("w_main", "of_take_two")
-                      , ProcSignature [("ai_x", PtPrimitive "integer"), ("as_y", PtPrimitive "string")] Nothing
+                      , [ProcSignature [("ai_x", PtPrimitive "integer"), ("as_y", PtPrimitive "string")] Nothing]
                       )
                     ]
                 }
@@ -336,7 +348,7 @@ tests = testGroup "TypeCheck"
           let ctx = baseCtx
                 { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_take_one"])]
                 , tcParams  = Map.fromList
-                    [(("w_main", "of_take_one"), ProcSignature [("ai_x", PtPrimitive "integer")] Nothing)]
+                    [(("w_main", "of_take_one"), [ProcSignature [("ai_x", PtPrimitive "integer")] Nothing])]
                 }
           in checkBody ctx "of_test" [Located 8 (BsCall (callWithArgs "of_take_one" [intTok "5", strTok "extra"]))]
                @?= []
@@ -345,14 +357,62 @@ tests = testGroup "TypeCheck"
           let ctx = baseCtx
                 { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_outer", "of_inner"])]
                 , tcParams  = Map.fromList
-                    [ (("w_main", "of_outer"), ProcSignature [("ai_x", PtPrimitive "integer")] Nothing)
+                    [ (("w_main", "of_outer"), [ProcSignature [("ai_x", PtPrimitive "integer")] Nothing])
                     , ( ("w_main", "of_inner")
-                      , ProcSignature [("ai_y", PtPrimitive "integer")] (Just (PtPrimitive "integer"))
+                      , [ProcSignature [("ai_y", PtPrimitive "integer")] (Just (PtPrimitive "integer"))]
                       )
                     ]
                 }
               stmt = BsCall (callWithArgs "of_outer" [nestedCallArgTok "of_inner" (strTok "bad")])
               fs   = checkBody ctx "of_test" [Located 9 stmt]
           in map tmfKind fs @?= [CallArgMismatch]
+      ]
+
+  , testGroup "buildParamsMap/selectSignature: PB function overloading (new)"
+      -- Real-corpus regression (openpay's w_wizmain.getstep, overloaded on
+      -- (string)/(integer) -- both arity 1): a name-only ((object, proc))
+      -- lookup used to collapse both overloads to whichever parsed last,
+      -- checking every call against the wrong one regardless of which
+      -- overload it actually targets.
+      [ testCase "call to a name with 2+ same-arity overloads is skipped (ambiguous, never guessed)" $
+          let ctx = baseCtx
+                { tcProcMap = Map.fromList [("w_main", Set.fromList ["getstep"])]
+                , tcParams  = Map.fromList
+                    [ ( ("w_main", "getstep")
+                      , [ ProcSignature [("as_stepname", PtPrimitive "string")]  (Just (PtUserDefined "bcv_step"))
+                        , ProcSignature [("ai_pos",      PtPrimitive "integer")] (Just (PtUserDefined "bcv_step"))
+                        ]
+                      )
+                    ]
+                }
+          in checkBody ctx "of_test" [Located 1 (BsCall (callWithArgs "getstep" [strTok "kratsel"]))] @?= []
+
+      , testCase "return-type lookup for a same-arity-ambiguous overload is Nothing" $
+          let ctx = baseCtx
+                { tcProcMap = Map.fromList [("w_main", Set.fromList ["getstep"])]
+                , tcParams  = Map.fromList
+                    [ ( ("w_main", "getstep")
+                      , [ ProcSignature [("as_stepname", PtPrimitive "string")]  (Just (PtUserDefined "bcv_step"))
+                        , ProcSignature [("ai_pos",      PtPrimitive "integer")] (Just (PtUserDefined "bcv_step"))
+                        ]
+                      )
+                    ]
+                }
+          in inferExpr ctx (callWithArgs "getstep" [strTok "kratsel"]) @?= Nothing
+
+      , testCase "overloads differing by arity correctly disambiguate via the call's actual arg count" $
+          let ctx = baseCtx
+                { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_get"])]
+                , tcParams  = Map.fromList
+                    [ ( ("w_main", "of_get")
+                      , [ ProcSignature [("ai_pos", PtPrimitive "integer")] (Just (PtPrimitive "long"))
+                        , ProcSignature [("ai_pos", PtPrimitive "integer"), ("as_extra", PtPrimitive "string")]
+                                        (Just (PtPrimitive "long"))
+                        ]
+                      )
+                    ]
+                }
+              fs = checkBody ctx "of_test" [Located 2 (BsCall (callWithArgs "of_get" [strTok "kratsel"]))]
+          in fs @?= [TypeMismatchFinding "w_main" "of_test" 2 "ai_pos" "numeric" "\"kratsel\"" CallArgMismatch]
       ]
   ]

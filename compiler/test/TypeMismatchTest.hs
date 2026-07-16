@@ -101,8 +101,8 @@ tests = testGroup "TypeMismatch"
           compatible (Map.fromList [("w_child", "w_base")]) (FamObject "w_base") (FamObject "w_child") @?= True
       , testCase "object LHS rejects unrelated object RHS" $
           compatible Map.empty (FamObject "w_main") (FamObject "w_other") @?= False
-      , testCase "object LHS rejects supertype-direction mismatch" $
-          compatible (Map.fromList [("w_child", "w_base")]) (FamObject "w_child") (FamObject "w_base") @?= False
+      , testCase "object LHS accepts supertype-direction (downcast) RHS via ancestor chain" $
+          compatible (Map.fromList [("w_child", "w_base")]) (FamObject "w_child") (FamObject "w_base") @?= True
       , testCase "user_type LHS accepts exact-match user_type RHS" $
           compatible Map.empty (FamUserType "st_a") (FamUserType "st_a") @?= True
       , testCase "user_type LHS rejects mismatched user_type RHS" $
