@@ -1,6 +1,7 @@
 module PB.Prelude
   ( module X
   , Text
+  , nubOrd
   ) where
 
 import Prelude as X hiding
@@ -34,3 +35,8 @@ import Data.Text.IO       as X ( putStr, putStrLn
                                , getLine )
 
 import Data.Text (Text)
+import qualified Data.Set as Set
+
+-- | Deduplicate and sort a list. Like @Data.List.nub@ but O(n log n) instead of O(n²).
+nubOrd :: Ord a => [a] -> [a]
+nubOrd = Set.toAscList . Set.fromList

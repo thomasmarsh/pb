@@ -1142,6 +1142,26 @@ tests = testGroup "EffTerm"
              Map.lookup "x" newEnv @?= Just (VInt 1)
              Map.lookup "y" newEnv @?= Nothing
              Map.lookup "z" newEnv @?= Just (VInt 2)
+
+    , testCase "try-body nodes appear in graph shape (canonicalize)" $
+        let body = [ Located 1 (BsTry (TryStmt
+                       [Located 2 (BsAssign (Lvalue [LvSegment "x" Nothing]) (ExInt "1"))]
+                       []))
+                   ]
+            shape = canonicalize (compileProcedureViaEffTerm emptyEnv Set.empty body)
+        in shape @?= [SAsgn 1, SRet]
+
+    , testCase "BsThrow in isolation — no extra node, falls through to return" $
+        let body = [Located 1 (BsThrow (ExLvalue (Lvalue [LvSegment "err" Nothing])))]
+            graph = compileProcedureViaEffTerm emptyEnv Set.empty body
+        in canonicalize graph @?= [SRet]
+
+    , testCase "BsThrow after an assign — assign executes, throw produces no node" $
+        let body = [ Located 1 (BsAssign (Lvalue [LvSegment "x" Nothing]) (ExInt "1"))
+                   , Located 2 (BsThrow (ExLvalue (Lvalue [LvSegment "err" Nothing])))
+                   ]
+            graph = compileProcedureViaEffTerm emptyEnv Set.empty body
+        in canonicalize graph @?= [SAsgn 1, SRet]
     ]
 
   , testGroup "parseArgList / collectBodyLocals (retained helpers, Plan 144 Phase 5 Step 7)"

@@ -319,29 +319,38 @@ data ProcedureSummary = ProcedureSummary
 -- ---------------------------------------------------------------------------
 
 type Triple = (Text, Text, Text)
-type Provenance = HM.HashMap Triple (Text, Text, Maybe Text, Text, Text)
 
-_sqlKeywords :: Set.Set Text
-_sqlKeywords = Set.fromList
+data ProvEntry = ProvEntry
+  { peParentObj  :: Text
+  , peParentProc :: Text
+  , peParentVar  :: Maybe Text
+  , peStepKind   :: Text
+  , peDesc       :: Text
+  } deriving (Eq, Show)
+
+type Provenance = HM.HashMap Triple ProvEntry
+
+sqlKeywords :: Set.Set Text
+sqlKeywords = Set.fromList
   [ "SELECT", "INSERT", "UPDATE", "DELETE", "DECLARE"
   , "OPEN", "FETCH", "CLOSE", "COMMIT", "ROLLBACK"
   , "EXECUTE", "CONNECT", "DISCONNECT"
   ]
 
-_writeOps :: Set.Set Text
-_writeOps = Set.fromList ["INSERT", "UPDATE", "DELETE"]
+writeOps :: Set.Set Text
+writeOps = Set.fromList ["INSERT", "UPDATE", "DELETE"]
 
-_execOps :: Set.Set Text
-_execOps = Set.fromList ["EXECUTE"]
+execOps :: Set.Set Text
+execOps = Set.fromList ["EXECUTE"]
 
-_eventProcTypes :: Set.Set Text
-_eventProcTypes = Set.fromList ["event", "on"]
+eventProcTypes :: Set.Set Text
+eventProcTypes = Set.fromList ["event", "on"]
 
-_severity :: Map.Map Text Text
-_severity = Map.fromList [("db_write", "high"), ("exec_immediate", "critical")]
+severityMap :: Map.Map Text Text
+severityMap = Map.fromList [("db_write", "high"), ("exec_immediate", "critical")]
 
-_category :: Map.Map Text Text
-_category = Map.fromList [("db_write", "sql_injection"), ("exec_immediate", "exec_immediate")]
+categoryMap :: Map.Map Text Text
+categoryMap = Map.fromList [("db_write", "sql_injection"), ("exec_immediate", "exec_immediate")]
 
 -- ---------------------------------------------------------------------------
 -- AST extraction
@@ -353,7 +362,7 @@ classifyOperation txt =
   let first = case T.words (T.strip txt) of
         (w:_) -> T.toUpper w
         []    -> ""
-  in if first `Set.member` _sqlKeywords then first else ""
+  in if first `Set.member` sqlKeywords then first else ""
 
 -- | Check if raw SQL contains an INTO clause (SELECT ... INTO :var FROM ...).
 hasIntoClause :: Text -> Bool
@@ -467,7 +476,7 @@ classifySources sqlStmts procs =
           ]
 
     procSources p
-      | pmProcType p `Set.notMember` _eventProcTypes = []
+      | pmProcType p `Set.notMember` eventProcTypes = []
       | T.null (T.strip (pmParams p)) = []
       | otherwise =
           [ TaintSource (pmFile p) (pmObject p) (pmName p)
@@ -485,11 +494,11 @@ classifySinks :: [SqlStmt] -> [TaintSink]
 classifySinks = concatMap go
   where
     go s
-      | op `Set.notMember` _writeOps && op `Set.notMember` _execOps = []
+      | op `Set.notMember` writeOps && op `Set.notMember` execOps = []
       | otherwise =
-          let sinkType = if op `Set.member` _execOps
+          let sinkType = if op `Set.member` execOps
                          then "exec_immediate" else "db_write"
-              sev = Map.findWithDefault "high" sinkType _severity
+              sev = Map.findWithDefault "high" sinkType severityMap
               vars = extractHostVars (ssRawSql s)
           in if null vars
              then [TaintSink (ssFile s) (ssObject s) (ssProcName s)
@@ -729,8 +738,8 @@ propagateTaint sources defs uses edges =
         | otherwise ->
             let tainted' = Set.insert t tainted
                 provEntry = case mParent of
-                  Nothing         -> ("", "", Nothing, sk, desc)
-                  Just (po,pp,pv) -> (po, pp, Just pv, sk, desc)
+                  Nothing         -> ProvEntry "" "" Nothing sk desc
+                  Just (po,pp,pv) -> ProvEntry po pp (Just pv) sk desc
                 prov'    = HM.insert t provEntry prov
                 newSeeds = propagateOne t tainted'
             in  fixpoint tainted' prov' (rest Seq.>< Seq.fromList newSeeds)
@@ -806,8 +815,8 @@ traceTaintPath source sink prov =
     buildChain current target p acc =
       case HM.lookup current p of
         Nothing -> acc
-        Just (_, _, Nothing, _, _) -> current : acc  -- source node
-        Just (po, pp, Just pv, _, _) ->
+        Just ProvEntry{ peParentVar = Nothing } -> current : acc  -- source node
+        Just ProvEntry{ peParentObj = po, peParentProc = pp, peParentVar = Just pv } ->
           buildChain (po, pp, pv) target p (current : acc)
 
     makeStep :: Triple -> TaintStep
@@ -819,11 +828,11 @@ traceTaintPath source sink prov =
                | otherwise = Nothing
           sk   | isSource  = "source"
                | isSink    = "sink"
-               | otherwise = maybe "def" (\(_, _, _, k, _) -> k) (HM.lookup (o, p, v) prov)
+               | otherwise = maybe "def" peStepKind (HM.lookup (o, p, v) prov)
           desc | isSource  = "taint source: " <> tsSourceType source
                | isSink    = "taint sink: " <> tskSinkType sink
                | otherwise = maybe ("tainted variable " <> v)
-                                    (\(_, _, _, _, d) -> d)
+                                    peDesc
                                     (HM.lookup (o, p, v) prov)
       in TaintStep o p v line sk desc
 
@@ -893,7 +902,7 @@ taintAnalysis resolvedCalls defs uses globalVarNames tfi =
 buildTaintPaths :: [TaintSource] -> [TaintSink] -> Provenance -> [TaintPath]
 buildTaintPaths srcs snks prov =
   [ TaintPath src sink steps (tskSeverity sink)
-      (Map.findWithDefault "general" (tskSinkType sink) _category)
+      (Map.findWithDefault "general" (tskSinkType sink) categoryMap)
   | sink <- snks
   , let sinkTriple = (tskObject sink, tskProcName sink, tskVarName sink)
   , HM.member sinkTriple prov
@@ -910,12 +919,6 @@ findSourceRoot triple prov srcs =
 walkProvBack :: Triple -> Provenance -> Triple
 walkProvBack t p = case HM.lookup t p of
   Nothing    -> t
-  Just (_, _, Nothing, _, _) -> t
-  Just (po, pp, Just pv, _, _) -> walkProvBack (po, pp, pv) p
+  Just ProvEntry{ peParentVar = Nothing } -> t
+  Just ProvEntry{ peParentObj = po, peParentProc = pp, peParentVar = Just pv } -> walkProvBack (po, pp, pv) p
 
--- ---------------------------------------------------------------------------
--- Utilities
--- ---------------------------------------------------------------------------
-
-nubOrd :: Ord a => [a] -> [a]
-nubOrd = Set.toAscList . Set.fromList
