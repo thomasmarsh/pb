@@ -208,7 +208,33 @@ Source-code comments (Haskell/Python/TypeScript, docstrings, `-- |` Haddock bloc
 - **A grounding fact may stay if it's load-bearing WHY, stripped of narrative.** "An unfiltered `proc` relation inflates `proc_dead` with every builtin stub method" is a reason to keep the filter — keep it. "A real openpay `--db` run in session N caught this" is a work-log detail — cut it.
 - **Test this by imagining the comment five years from now.** If a plan number or "used to" phrase would force a future reader to go dig up a deleted planning doc just to understand a comment in currently-live code, rewrite it.
 
----
+## Primitive vs. Symptom Fixes
+
+Applies whenever the code being fixed reads from or derives its data from
+another module's computed structure — an analysis pass built on a shared
+`ProcFlow`/CFG, a UI reducer built on an API response, a materializer built
+on a Datalog relation.
+
+- **Find the primitive before writing the fix.** Identify which module
+  actually produces the wrong value, and `rg` for every other consumer of
+  that primitive. A fix that only changes the output where the bug was
+  observed, while the primitive itself still produces the same wrong value
+  for other callers, is incomplete — it patched a symptom, not the cause.
+- **State it in the Stage 1 proposal.** Name the primitive, name the other
+  known consumers, and say explicitly whether the fix lands in the
+  primitive or the consumer, and why. If a consumer re-derives policy the
+  primitive already half-encodes (a kill/use rule, a validation rule, a
+  formatting rule), prefer moving that policy into the primitive and
+  exposing it as data/fields, not recomputing it locally — a second
+  implementation of the same policy is where these bugs hide.
+- **Corpus/production-discovered bugs need this check especially.** Stage
+  0's narrow-test requirement targets unit-level bugs; a bug found via
+  real-corpus spot-checking additionally needs a "where does this data
+  actually come from" pass before the fix is written — the fastest fix is
+  almost always at the consumer, not the source, and that's the trap.
+- **A later architecture review catching this is a process gap, not just a
+  bug.** If Stage 1 should have caught a shared-primitive gap and didn't,
+  log why in `doc/plan/BACKLOG.md`'s finding, not only the fix itself.
 
 ## Testing Discipline
 
