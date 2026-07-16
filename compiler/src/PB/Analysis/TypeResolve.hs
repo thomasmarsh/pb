@@ -274,7 +274,12 @@ parseParams raw
     paramMods = ["ref", "readonly", "const", "constant", "value"]
 
     parseSegment seg =
-      let nonMods = dropWhile (\w -> T.toLower w `elem` paramMods) (T.words (T.strip seg))
+      let ws = dropWhile (\w -> T.toLower w `elem` paramMods) (T.words (T.strip seg))
+          -- Array params render as "type name [ ]" (parseParamsAndThrows joins
+          -- tokens with spaces, and '[' / ']' are separate tokens) -- the
+          -- brackets always trail the name with no dimension expression in a
+          -- signature, so everything from the first '[' on is discarded.
+          nonMods = takeWhile (/= "[") ws
       in case reverse nonMods of
            (nm : ty : _) -> Just (nm, parseTypeText ty)
            _             -> Nothing

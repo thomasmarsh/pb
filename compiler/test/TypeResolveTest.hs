@@ -147,6 +147,17 @@ tests = testGroup "TypeResolve"
       , testCase "readonly modifier stripped" $
           parseParams "readonly string as_x"
             @?= [("as_x", PtPrimitive "string")]
+
+      , testCase "array-bracket param name: readonly string aarray[]" $
+          -- Reproduces the exact reconstructed-text shape parseParamsAndThrows
+          -- produces (File.hs:184 joins tokens with " ", and '[' / ']' are
+          -- separate tokens), not a hand-written unbracketed string.
+          parseParams "readonly string aarray [ ]"
+            @?= [("aarray", PtPrimitive "string")]
+
+      , testCase "array-bracket param alongside a normal param" $
+          parseParams "readonly string aarray [ ] , string astr"
+            @?= [("aarray", PtPrimitive "string"), ("astr", PtPrimitive "string")]
       ]
 
   , testGroup "extractLocalVars"
