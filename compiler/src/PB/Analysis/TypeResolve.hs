@@ -27,6 +27,7 @@ module PB.Analysis.TypeResolve
   , findLiteralDataObject
   , resolveTypes
   , resolveCalls
+  , ancestorChain
   , buildInheritsMap
   , buildProcMap
   , buildObjectSet
