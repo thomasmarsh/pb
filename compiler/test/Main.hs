@@ -16,6 +16,7 @@ import qualified GoldenFixtureTest
 import qualified SSATest
 import qualified DataflowTest
 import qualified DeadCodeTest
+import qualified DeadVarsTest
 import qualified TaintTest
 import qualified EscapeTest
 import qualified ExprTest
@@ -66,6 +67,7 @@ tests = testGroup "pb-compiler"
   , SSATest.tests
   , DataflowTest.tests
   , DeadCodeTest.tests
+  , DeadVarsTest.tests
   , TaintTest.tests
   , EscapeTest.tests
   , ExprTest.tests

@@ -1550,21 +1550,76 @@ data InstrGraph' p = InstrGraph' { igNodes' :: Map.Map Text (InstrNode' p), igEn
 linearize :: InstrGraph' p -> InstrGraph
 ```
 
-### `PB.Analysis.Dataflow` (Plan 111a)
+### `PB.Analysis.Dataflow` (Plan 111a; live variables + dsPartial added Plan 174 T0-1, 2026-07-16)
 
 ```haskell
--- Pure intra-procedural dataflow: def-use + reaching definitions.
+-- Pure intra-procedural dataflow: def-use + reaching definitions + live variables.
 extractDefsUses      :: CfgBlock -> BlockFlow
 reachingDefinitions  :: Cfg -> Map Text BlockFlow -> (Map Text (Set Text), Map Text (Set Text))
+liveVariables        :: Cfg -> Map Text BlockFlow -> (Map Text (Set Text), Map Text (Set Text))
+-- (liveIn, liveOut) per block, backward fixpoint mirroring reachingDefinitions
+-- with edges reversed. useSet per block is upwardExposedUses (internal, not
+-- exported) -- a raw union of bfUses is WRONG here: a block that redefines a
+-- var and then reads its own redefinition (e.g. `li_x = 2; li_y = li_x`)
+-- must not count that read as "needed from outside the block."
 analyzeProcedure     :: Text -> Text -> Cfg -> ProcFlow   -- obj, proc, cfg
 -- analyzeWorkspace (Pass 6, writes proc_defs.json/proc_uses.json) is deferred to 111d-1.
-data DefSite = DefSite { dsVar :: Text, dsBlock :: Text, dsStmtIdx :: Int, dsLine :: Maybe Int, dsKind :: Text }
+data DefSite = DefSite { dsVar :: Text, dsBlock :: Text, dsStmtIdx :: Int, dsLine :: Maybe Int, dsKind :: Text, dsPartial :: Bool }
+-- dsPartial: True when this def writes only one member of a multi-segment
+-- lvalue (`item.label = x`), not the whole variable -- lvRoot collapses a
+-- member chain to its root, so `item.label = a; item.pictureindex = b`
+-- (the treeviewitem-population idiom) looks like two full redefinitions of
+-- `item` to any consumer keyed on dsVar alone unless it checks this flag.
+-- Only BsAssign's parsed Lvalue can populate it reliably; BsAugAssign/
+-- BsInc/BsDec (token-list based) always get False.
 data UseSite = UseSite { usVar :: Text, usBlock :: Text, usStmtIdx :: Int, usLine :: Maybe Int, usKind :: Text }
 data BlockFlow = BlockFlow { bfBlockId :: Text, bfGen :: Set Text, bfKill :: Set Text, bfDefs :: [DefSite], bfUses :: [UseSite] }
 data ProcFlow  = ProcFlow  { pfObject :: Text, pfProc :: Text, pfBlocks :: Map Text BlockFlow
                            , pfReachingIn :: Map Text (Set Text), pfReachingOut :: Map Text (Set Text)
+                           , pfLiveIn :: Map Text (Set Text), pfLiveOut :: Map Text (Set Text)
                            , pfAllDefs :: Map Text [DefSite], pfAllUses :: Map Text [UseSite] }
 -- walkExprIdents counts the ExCall callee root as a use (matches Python core/dataflow.py).
+-- dsPartial/pfLiveIn/pfLiveOut are additive: dataflowDefRows/dataflowUseRows/
+-- dataflowFacet's JSON row shape is unchanged, so no Python-consumer wire
+-- format was touched by this addition.
+```
+
+### `PB.Analysis.DeadVars` (Plan 174 T0-1, 2026-07-16)
+
+```haskell
+-- Pure query over Dataflow's ProcFlow + TypeResolve's LocalVar list --
+-- no new IR, no new fixpoint of its own (the one new fixpoint, live
+-- variables, lives in PB.Analysis.Dataflow as a generic companion to
+-- reachingDefinitions). Not wired into the production pipeline/DB yet --
+-- Plan 174's T0-1 entry frames this as spike-first; see BACKLOG's matching
+-- entry for the real-corpus finding-count histogram.
+data DeadVarKind = NeverRead | OverwrittenBeforeRead | UnusedParam
+data DeadVarFinding = DeadVarFinding { dvfObject, dvfProc, dvfVar :: Text, dvfLine :: Maybe Int, dvfKind :: DeadVarKind }
+deadVarKindText :: DeadVarKind -> Text   -- "never-read" / "overwritten-before-read" / "unused-param"
+findDeadVars :: [LocalVar] -> ProcFlow -> [DeadVarFinding]
+-- [LocalVar] MUST be pre-scoped by the caller to the specific procedure
+-- instance being analyzed -- lvProcName alone does not disambiguate same-
+-- named procedures in one file (PB menu items each own a "clicked" event
+-- body under the same name; PB also allows function overloading). Filter
+-- by lvScopeLine falling within that procedure's own (sLine, eLine) span
+-- for body locals. Parameters can't be scoped this way: extractLocalVars/
+-- paramsToVars hardcodes lvScopeLine=0 for every parameter, so a caller
+-- with overloaded same-name functions in one file will see the union of
+-- every overload's params for each -- a known, pre-existing limitation of
+-- extractLocalVars's output shape (not something this module introduces),
+-- confirmed via a real-corpus spike (eon_appeon_resize.of_getscale in the
+-- PowerBuilder-Example corpus, 9 overloads sharing one param list).
+--
+-- NeverRead: a declared local (LocalVar with lvIsParam=False) whose name
+-- never appears in pfAllUses. UnusedParam: same check, lvIsParam=True.
+-- OverwrittenBeforeRead: walks each block backward from pfLiveOut using
+-- bfDefs/bfUses; a def is flagged only when (a) its dsKind isn't
+-- local_var/for_var (a bare declaration or a for-loop counter is never the
+-- "dead" side of a pair -- idiomatic, not a bug), (b) dsPartial is False (a
+-- struct field write can't clobber a sibling field), and (c) the var IS
+-- read somewhere in the procedure (else it's already NeverRead -- this
+-- guard is what keeps the two kinds from double-reporting the same fully-
+-- unused variable).
 ```
 
 ### `PB.Analysis.Taint` (Plan 111 — 111b/c/d-2)

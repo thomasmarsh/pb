@@ -234,6 +234,43 @@ tests = testGroup "Dataflow"
         in length (Map.findWithDefault [] "x" (pfAllUses pf)) @?= 2
     ]
 
+  , testGroup "liveVariables"
+    [ testCase "single block: use makes var live-in, nothing after so live-out empty" $
+        let blk = mkBlock "b0" [at 1 (BsAssign (lv1 "y") (ExLvalue (lv1 "x")))]
+            cfg = mkCfg "b0" [blk] []
+            pf  = analyzeProcedure "obj" "proc" cfg
+        in do
+          Map.findWithDefault Set.empty "b0" (pfLiveIn pf) @?= Set.singleton "x"
+          Map.findWithDefault Set.empty "b0" (pfLiveOut pf) @?= Set.empty
+
+    , testCase "two blocks linear: use in b1 makes x live-out of b0" $
+        let b0 = mkBlock "b0" [at 1 (BsAssign (lv1 "x") (ExInt "1"))]
+            b1 = mkBlock "b1" [at 2 (BsAssign (lv1 "y") (ExLvalue (lv1 "x")))]
+            cfg = mkCfg "b0" [b0, b1] [CfgEdge "b0" "b1" ""]
+            pf  = analyzeProcedure "obj" "proc" cfg
+        in do
+          Map.findWithDefault Set.empty "b0" (pfLiveOut pf) @?= Set.singleton "x"
+          Map.findWithDefault Set.empty "b1" (pfLiveIn pf) @?= Set.singleton "x"
+
+    , testCase "two blocks: def in b1 with no use anywhere is not live-out of b0" $
+        let b0 = mkBlock "b0" [at 1 (BsAssign (lv1 "x") (ExInt "1"))]
+            b1 = mkBlock "b1" [at 2 (BsAssign (lv1 "x") (ExInt "2"))]
+            cfg = mkCfg "b0" [b0, b1] [CfgEdge "b0" "b1" ""]
+            pf  = analyzeProcedure "obj" "proc" cfg
+        in Map.findWithDefault Set.empty "b0" (pfLiveOut pf) @?= Set.empty
+
+    , testCase "diamond: var used only on one branch is live-out of entry" $
+        let b0 = mkBlock "b0" [at 1 (BsAssign (lv1 "a") (ExInt "1"))]
+            b1 = mkBlock "b1" [at 2 (BsAssign (lv1 "y") (ExLvalue (lv1 "a")))]
+            b2 = mkBlock "b2" [at 3 (BsAssign (lv1 "z") (ExInt "9"))]
+            cfg = mkCfg "b0" [b0, b1, b2]
+                    [ CfgEdge "b0" "b1" "T"
+                    , CfgEdge "b0" "b2" "F"
+                    ]
+            pf  = analyzeProcedure "obj" "proc" cfg
+        in assertBool "a should be live-out of b0" ("a" `Set.member` Map.findWithDefault Set.empty "b0" (pfLiveOut pf))
+    ]
+
   -- -----------------------------------------------------------------------
   -- 111d-1: per-procedure facet + flat row emission (Python consumer shape)
   --

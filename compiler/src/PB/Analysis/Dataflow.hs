@@ -17,6 +17,7 @@ module PB.Analysis.Dataflow
   , ProcFlow (..)
   , extractDefsUses
   , reachingDefinitions
+  , liveVariables
   , analyzeProcedure
   , dataflowDefRows
   , dataflowUseRows
@@ -45,6 +46,13 @@ data DefSite = DefSite
   , dsStmtIdx :: Int
   , dsLine    :: Maybe Int
   , dsKind    :: Text
+  , dsPartial :: Bool
+  -- ^ True when this def writes only one member of dsVar (e.g. the
+  -- @item.label = x@ in @item.label = x; item.pictureindex = y@) rather
+  -- than the whole variable — 'lvRoot' collapses a member chain to its
+  -- root, so two field writes to the same struct look identical to two
+  -- full redefinitions of the same scalar to any consumer keyed on dsVar
+  -- alone.
   } deriving (Eq, Show, Generic)
 
 data UseSite = UseSite
@@ -69,6 +77,8 @@ data ProcFlow = ProcFlow
   , pfBlocks     :: Map.Map Text BlockFlow
   , pfReachingIn  :: Map.Map Text (Set.Set Text)
   , pfReachingOut :: Map.Map Text (Set.Set Text)
+  , pfLiveIn     :: Map.Map Text (Set.Set Text)
+  , pfLiveOut    :: Map.Map Text (Set.Set Text)
   , pfAllDefs    :: Map.Map Text [DefSite]
   , pfAllUses    :: Map.Map Text [UseSite]
   } deriving (Eq, Show, Generic)
@@ -142,6 +152,15 @@ extractDefVar (BsAugAssign toks _ _) = listToMaybe [tkText t | t <- toks, isIden
 extractDefVar (BsInc toks)       = listToMaybe [tkText t | t <- toks, isIdent (tkText t)]
 extractDefVar (BsDec toks)       = listToMaybe [tkText t | t <- toks, isIdent (tkText t)]
 extractDefVar _                  = Nothing
+
+-- | True when a def only writes one member of a multi-segment lvalue
+-- (@item.label = x@), not the whole variable. Only BsAssign carries a
+-- parsed Lvalue with real segment structure; the token-list-based defs
+-- (BsAugAssign/BsInc/BsDec) can't reliably distinguish a member chain from
+-- a subscript here, so they're left False.
+isPartialDef :: BodyStmt -> Bool
+isPartialDef (BsAssign lv _) = length (segments lv) > 1
+isPartialDef _                = False
 
 -- | Map BodyStmt tag to def kind text.
 defKind :: BodyStmt -> Text
@@ -217,7 +236,7 @@ extractDefsUses blk = BlockFlow
     extractDef (idx, s) =
       case extractDefVar (locNode s) of
         Nothing -> []
-        Just v  -> [DefSite v bid idx (Just (locLine s)) (defKind (locNode s))]
+        Just v  -> [DefSite v bid idx (Just (locLine s)) (defKind (locNode s)) (isPartialDef (locNode s))]
 
     localUses = concatMap extractUse (zip [0..] stmts)
     extractUse (idx, s) =
@@ -275,6 +294,72 @@ reachingDefinitions cfg blockFlows = fix initial
              )
 
 -- ---------------------------------------------------------------------------
+-- Live variables
+
+-- | Precompute a block's successor ids once per edge list — the backward
+-- counterpart of 'buildPredMap'.
+buildSuccMap :: [CfgEdge] -> Map.Map Text [Text]
+buildSuccMap = foldl' (\m e -> Map.insertWith (++) (ceSrc e) [ceDst e] m) Map.empty
+
+-- | A block's upward-exposed uses: variables read before any def of that
+-- same variable earlier in the block. A block-level use set that included
+-- every use regardless of position would count a var as "needed from
+-- outside the block" even when the block redefines it before reading it
+-- (e.g. @li_x = 2; li_y = li_x@ reads the block's own redefinition, not
+-- whatever reached the block on entry) — the standard liveness equations
+-- require this upward-exposed refinement; a raw union of 'bfUses' does not
+-- satisfy it.
+upwardExposedUses :: BlockFlow -> Set.Set Text
+upwardExposedUses bf = snd (foldl' step (Set.empty, Set.empty) idxsAsc)
+  where
+    idxsAsc   = Set.toAscList (Set.fromList (map dsStmtIdx (bfDefs bf) <> map usStmtIdx (bfUses bf)))
+    defByIdx  = Map.fromList [(dsStmtIdx d, dsVar d) | d <- bfDefs bf]
+    usesByIdx = Map.fromListWith Set.union [(usStmtIdx u, Set.singleton (usVar u)) | u <- bfUses bf]
+    step (definedSoFar, exposed) idx =
+      let useSet = Map.findWithDefault Set.empty idx usesByIdx
+          exposed' = exposed <> Set.filter (`Set.notMember` definedSoFar) useSet
+          definedSoFar' = maybe definedSoFar (`Set.insert` definedSoFar) (Map.lookup idx defByIdx)
+      in (definedSoFar', exposed')
+
+-- | Iterative backward dataflow for live variables.
+-- Returns (live_in, live_out) mapping block_id → set of variable names.
+-- live_in[B]  = use[B] ∪ (live_out[B] − kill[B])
+-- live_out[B] = ∪ live_in[S] for successors S of B
+liveVariables :: Cfg -> Map.Map Text BlockFlow -> (Map.Map Text (Set.Set Text), Map.Map Text (Set.Set Text))
+liveVariables cfg blockFlows = fix initial
+  where
+    blockIds = map cbId (cfgBlocks cfg)
+    succMap  = buildSuccMap (cfgEdges cfg)
+
+    initial :: (Map.Map Text (Set.Set Text), Map.Map Text (Set.Set Text))
+    initial =
+      ( Map.fromList [(bid, Set.empty) | bid <- blockIds]
+      , Map.fromList [(bid, Set.empty) | bid <- blockIds]
+      )
+
+    fix :: (Map.Map Text (Set.Set Text), Map.Map Text (Set.Set Text))
+        -> (Map.Map Text (Set.Set Text), Map.Map Text (Set.Set Text))
+    fix (lIn, lOut) =
+      let (lIn', lOut', changed) = foldl' step (lIn, lOut, False) blockIds
+      in if changed then fix (lIn', lOut') else (lIn', lOut')
+
+    step (lIn, lOut, changed) bid =
+      let succs = Map.findWithDefault [] bid succMap
+          newOut = Set.unions [Map.findWithDefault Set.empty s lIn | s <- succs]
+          bf = Map.lookup bid blockFlows
+          useSet = maybe Set.empty upwardExposedUses bf
+          newIn = case bf of
+            Nothing -> useSet `Set.union` newOut
+            Just b  -> useSet `Set.union` (newOut `Set.difference` bfKill b)
+          oldIn  = Map.findWithDefault Set.empty bid lIn
+          oldOut = Map.findWithDefault Set.empty bid lOut
+          changed' = changed || newIn /= oldIn || newOut /= oldOut
+      in ( Map.insert bid newIn lIn
+         , Map.insert bid newOut lOut
+         , changed'
+         )
+
+-- ---------------------------------------------------------------------------
 -- Public entry point
 
 -- | Analyze a single procedure's dataflow.
@@ -285,6 +370,7 @@ analyzeProcedure obj proc cfg =
         | b <- cfgBlocks cfg
         ]
       (rIn, rOut) = reachingDefinitions cfg blockFlows
+      (lIn, lOut) = liveVariables cfg blockFlows
       allDefs = Map.fromListWith (++) [(dsVar d, [d]) | bf <- Map.elems blockFlows, d <- bfDefs bf]
       allUses = Map.fromListWith (++) [(usVar u, [u]) | bf <- Map.elems blockFlows, u <- bfUses bf]
   in ProcFlow
@@ -293,6 +379,8 @@ analyzeProcedure obj proc cfg =
       , pfBlocks      = blockFlows
       , pfReachingIn  = rIn
       , pfReachingOut = rOut
+      , pfLiveIn      = lIn
+      , pfLiveOut     = lOut
       , pfAllDefs     = allDefs
       , pfAllUses     = allUses
       }
