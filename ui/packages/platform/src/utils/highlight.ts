@@ -80,18 +80,31 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-export function highlightLine(line: string): string {
+export function highlightLine(
+  line: string,
+  startInBlockComment: boolean = false,
+): { html: string; inBlockComment: boolean } {
   let result = "";
   let i = 0;
   const len = line.length;
+
+  if (startInBlockComment) {
+    const end = line.indexOf("*/");
+    if (end === -1) {
+      return { html: `<span style="color:${COLORS.comment}">${escapeHtml(line)}</span>`, inBlockComment: true };
+    }
+    result += `<span style="color:${COLORS.comment}">${escapeHtml(line.slice(0, end + 2))}</span>`;
+    i = end + 2;
+  }
+
   while (i < len) {
     const ch = line[i]!;
     const next = i + 1 < len ? line[i + 1] : undefined;
     // Line comment
     if (ch === "/" && next === "/") {
-      return result + `<span style="color:${COLORS.comment}">${escapeHtml(line.slice(i))}</span>`;
+      return { html: result + `<span style="color:${COLORS.comment}">${escapeHtml(line.slice(i))}</span>`, inBlockComment: false };
     }
-    // Block comment start (simplified — single line)
+    // Block comment start — may or may not close on this same line.
     if (ch === "/" && next === "*") {
       const end = line.indexOf("*/", i + 2);
       if (end !== -1) {
@@ -99,7 +112,7 @@ export function highlightLine(line: string): string {
         i = end + 2;
         continue;
       } else {
-        return result + `<span style="color:${COLORS.comment}">${escapeHtml(line.slice(i))}</span>`;
+        return { html: result + `<span style="color:${COLORS.comment}">${escapeHtml(line.slice(i))}</span>`, inBlockComment: true };
       }
     }
     // Double-quoted string
@@ -189,11 +202,19 @@ export function highlightLine(line: string): string {
     result += escapeHtml(ch);
     i++;
   }
-  return result;
+  return { html: result, inBlockComment: false };
 }
 
 export function highlightPowerScript(code: string): string {
-  return code.split("\n").map(line => highlightLine(line)).join("\n");
+  let inBlockComment = false;
+  return code
+    .split("\n")
+    .map(line => {
+      const { html, inBlockComment: next } = highlightLine(line, inBlockComment);
+      inBlockComment = next;
+      return html;
+    })
+    .join("\n");
 }
 
 const CHUNK_SIZE = 200;
@@ -204,9 +225,17 @@ export function highlightPowerScriptChunked(
 ): void {
   const lines = code.split("\n");
   let i = 0;
+  let inBlockComment = false;
   function nextChunk() {
     const end = Math.min(i + CHUNK_SIZE, lines.length);
-    const chunk = lines.slice(i, end).map(line => highlightLine(line)).join("\n");
+    const chunk = lines
+      .slice(i, end)
+      .map(line => {
+        const { html, inBlockComment: next } = highlightLine(line, inBlockComment);
+        inBlockComment = next;
+        return html;
+      })
+      .join("\n");
     i = end;
     if (i >= lines.length) {
       onChunk(chunk, true);
