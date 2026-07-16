@@ -1191,9 +1191,25 @@ catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogF
 -- compileOne gained a DwFootprintCtx param (Plan 163 Phase 6, 2026-07-10),
 -- slotted right after mDefaultNamespace: compileOne :: Set.Set (Text, Text)
 -- -> Maybe Text -> DwFootprintCtx -> WorkspaceEnv -> ControlIndex ->
--- Map.Map Text [(TableRef, Text)] -> Maybe (SqlBridgePool, Int) -> Text ->
--- ParseOutcome -> IO CompiledFile. Built once in runModeDb from the same
--- DDL catalog rows catTables is derived from (mkDwFootprintCtx catCols
+-- TypeCheckWorkspace -> Map.Map Text [(TableRef, Text)] ->
+-- Maybe (SqlBridgePool, Int) -> Text -> ParseOutcome -> IO CompiledFile.
+-- TypeCheckWorkspace param added Plan 177 Phase 4a (2026-07-16), slotted
+-- right after controlIdx: PB.Analysis.TypeCheck.buildTypeCheckWorkspace
+-- allParsedSrFiles built once in runModeDb alongside wsEnv/controlIdx (every
+-- field is a pure fold over [SrFile], no DuckDB round-trip needed unlike
+-- resolveTypes/resolveCalls's Phase-B inputs), threaded through
+-- workerLoopFiles/workerLoopFilesNoBridge the same way. Per procedure,
+-- compileOne builds a TypeCheckCtx (params from tcwParams looked up on
+-- (obj, pName); body locals from CallClassify.collectBodyLocals, both sides
+-- lowercased -- see TypeCheck.hs's own tcScope case-sensitivity fix) and
+-- calls checkBody, gated on confidence /= "speculative" (same gate as
+-- deadVars below), producing CompiledPs's new
+-- cpsTypeMismatches :: [TypeMismatchFinding], appended via
+-- DuckDb.appendTypeMismatches into a new type_mismatches table (object,
+-- proc_name, line, target, lhs_type, rhs_desc, kind).
+--
+-- DwFootprintCtx itself is built once in runModeDb from the same DDL
+-- catalog rows catTables is derived from (mkDwFootprintCtx catCols
 -- mDefaultNamespace on the bridge path; mkDwFootprintCtx [] mDefaultNamespace
 -- -- empty catalog -- on the no-bridge path, matching catTables there), then
 -- threaded through workerLoopFiles/workerLoopFilesNoBridge the same way

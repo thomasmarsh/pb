@@ -32,7 +32,9 @@
 module PB.Analysis.TypeCheck
   ( ProcSignature (..)
   , TypeCheckCtx (..)
+  , TypeCheckWorkspace (..)
   , buildParamsMap
+  , buildTypeCheckWorkspace
   , inferExpr
   , checkBody
   ) where
@@ -45,7 +47,10 @@ import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText)
 import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainType)
 import PB.Analysis.TypeMismatch
-import PB.Analysis.TypeResolve (resolveVirtual, resolveStaticCall, parseParams, srFileObject)
+import PB.Analysis.TypeResolve
+  ( resolveVirtual, resolveStaticCall, parseParams, srFileObject
+  , buildProcMap, buildInheritsMap
+  )
 import PB.Grammar.Body   (parseExpr)
 import PB.Lexing.Token   (Token)
 import qualified Data.Map.Strict as Map
@@ -106,6 +111,43 @@ buildParamsMap = foldl' addFile Map.empty
             | sb <- srSubroutines sf
             ]
       in foldl' (\m (k, v) -> Map.insert k v m) acc (fnEntries <> subEntries)
+
+-- | Workspace-wide 'TypeCheckCtx' fields, computed once per compile run from
+-- every parsed 'SrFile' -- everything 'checkBody' needs except the two
+-- fields that vary per procedure ('tcScope') or per file ('tcObject').
+-- Mirrors 'PB.Pipeline.Runner.runModeDb''s existing 'WorkspaceEnv'\/
+-- 'ControlIndex' pattern (built once before the per-file compile loop
+-- starts, threaded through 'PB.Pipeline.Runner.compileOne') rather than
+-- 'PB.Analysis.TypeResolve.resolveTypes'\/'resolveCalls''s Phase-B
+-- DuckDB round-trip -- unlike those two passes' inputs (extracted
+-- 'PB.Analysis.TypeResolve.LocalVar'\/'CallSite' facts, only available
+-- post-extraction), every field here is a pure function of @['SrFile']@
+-- alone, already available before any file is compiled.
+data TypeCheckWorkspace = TypeCheckWorkspace
+  { tcwProcMap   :: Map.Map Text (Set.Set Text)
+  , tcwInherits  :: Map.Map Text Text
+  , tcwParams    :: Map.Map (Text, Text) ProcSignature
+  , tcwObjects   :: Set.Set Text
+  , tcwUserTypes :: Set.Set Text
+  }
+
+-- | Build once from every parsed file in the workspace. The object\/
+-- user-type split mirrors 'PB.Pipeline.DuckDb.queryObjInfo''s SQL exactly
+-- (an object whose declared ancestor is @structure@ is a user type;
+-- everything else, including no ancestor, is an object) -- kept in sync
+-- deliberately, since 'inferExpr'\/'checkBody' must classify the same
+-- object\/user_type universe 'resolveTypes'\/'resolveCalls' already do.
+buildTypeCheckWorkspace :: [SrFile] -> TypeCheckWorkspace
+buildTypeCheckWorkspace sfs = TypeCheckWorkspace
+  { tcwProcMap   = buildProcMap sfs
+  , tcwInherits  = buildInheritsMap sfs
+  , tcwParams    = buildParamsMap sfs
+  , tcwObjects   = Set.fromList
+      [ o | (o, anc) <- allObjs, maybe True ((/= "structure") . T.toLower) anc ]
+  , tcwUserTypes = Set.fromList
+      [ o | (o, Just anc) <- allObjs, T.toLower anc == "structure" ]
+  }
+  where allObjs = map srPrimaryObject sfs
 
 -- ---------------------------------------------------------------------------
 -- Expression typing
@@ -214,7 +256,12 @@ inferExpr _   (ExStr _)  = Just FamString
 inferExpr _   (ExDate _) = Just FamDateTime
 inferExpr _   (ExTime _) = Just FamDateTime
 inferExpr _   ExNull     = Nothing -- handled specially by callers, not a family
-inferExpr ctx (ExLvalue (Lvalue [LvSegment n Nothing])) = Map.lookup n (tcScope ctx)
+-- 'tcScope' is keyed by lowercased name -- PB identifiers are
+-- case-insensitive, and 'collectBodyLocals' (the production source of a
+-- procedure's body-local portion of 'tcScope') already lowercases its own
+-- keys; lowercasing here too means a param or local referenced with
+-- different casing than its declaration still resolves.
+inferExpr ctx (ExLvalue (Lvalue [LvSegment n Nothing])) = Map.lookup (T.toLower n) (tcScope ctx)
 inferExpr ctx (ExLvalue (Lvalue segs@(_ : _ : _))) =
   classifyClassName ctx <$>
     resolveMemberChainType (tcControlIdx ctx) (tcInherits ctx) (tcObject ctx) (map segName segs)
@@ -295,7 +342,7 @@ rhsDesc _ = "<expr>"
 assignFinding :: TypeCheckCtx -> Text -> Int -> Text -> Expr -> [TypeMismatchFinding]
 assignFinding ctx procN line varN rhs =
   [ TypeMismatchFinding (tcObject ctx) procN line varN (renderFamily lhsFam) (rhsDesc rhs) AssignMismatch
-  | Just lhsFam <- [Map.lookup varN (tcScope ctx)]
+  | Just lhsFam <- [Map.lookup (T.toLower varN) (tcScope ctx)]
   , Just rhsFam <- [inferExpr ctx rhs]
   , not (compatible (tcInherits ctx) lhsFam rhsFam)
   ]

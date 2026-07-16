@@ -38,6 +38,7 @@ module PB.Pipeline.DuckDb
   , appendDwRetrieveWhere
   , appendLocalVars
   , appendDeadVars
+  , appendTypeMismatches
   , appendCallSites
   , appendGlobalVars
   , appendProcDefs
@@ -117,6 +118,7 @@ import PB.Analysis.TypeResolve
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.DeadVars    (DeadVarFinding (..), deadVarKindText)
+import PB.Analysis.TypeMismatch (TypeMismatchFinding (..), mismatchKindText)
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), renderLegSource
   , SchMorphism (..)
@@ -289,6 +291,9 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
         \confidence TEXT, caller_count_naive INTEGER, caller_count_scoped INTEGER)"
       , "CREATE TABLE IF NOT EXISTS dead_vars \
         \(object TEXT, proc_name TEXT, var_name TEXT, line INTEGER, kind TEXT)"
+      , "CREATE TABLE IF NOT EXISTS type_mismatches \
+        \(object TEXT, proc_name TEXT, line INTEGER, target TEXT, \
+        \lhs_type TEXT, rhs_desc TEXT, kind TEXT)"
       , "CREATE TABLE IF NOT EXISTS schema_objects \
         \(object_key TEXT, kind TEXT, namespace TEXT, table_name TEXT, column_name TEXT, \
         \stmt_file TEXT, stmt_object TEXT, stmt_proc TEXT, stmt_line INTEGER)"
@@ -690,6 +695,19 @@ appendDeadVars pool rows = appendRow pool "dead_vars" $ \app ->
     aText     app (dvfVar f)
     aMaybeInt app (dvfLine f)
     aText     app (deadVarKindText (dvfKind f))
+    endRow app
+
+appendTypeMismatches :: AppenderPool -> [TypeMismatchFinding] -> IO ()
+appendTypeMismatches _    [] = pure ()
+appendTypeMismatches pool rows = appendRow pool "type_mismatches" $ \app ->
+  for_ rows $ \f -> do
+    aText app (tmfObject f)
+    aText app (tmfProc f)
+    aInt  app (tmfLine f)
+    aText app (tmfTarget f)
+    aText app (tmfLhsType f)
+    aText app (tmfRhsDesc f)
+    aText app (mismatchKindText (tmfKind f))
     endRow app
 
 appendCallSites :: AppenderPool -> [CallSite] -> IO ()

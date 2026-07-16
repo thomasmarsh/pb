@@ -53,6 +53,12 @@ import PB.Analysis.TypeResolve
   , parseParams, paramsToVars
   )
 import PB.Analysis.DeadVars (DeadVarFinding, findDeadVars)
+import PB.Analysis.TypeCheck
+  ( TypeCheckCtx (..), TypeCheckWorkspace (..), ProcSignature (..)
+  , buildTypeCheckWorkspace, checkBody
+  )
+import PB.Analysis.TypeMismatch (TypeMismatchFinding, classifyFamily)
+import PB.Analysis.Builtins (builtinFnNames, builtinMethodNames)
 import PB.Pipeline.Emit
   ( runFile, ParsedFile (..), ParseOutcome (..)
   , parseOutcome
@@ -82,7 +88,7 @@ import PB.Pipeline.DuckDb
   , appendDwObjects, appendDwControls, appendDwRetrieveTables, appendDwRetrieveColumns
   , appendDwWriteColumns, appendDwWhereColumns, appendDwJoins
   , appendDwRetrieveWhere, DwRetrieveWhereRow (..)
-  , appendLocalVars, appendDeadVars, appendCallSites, appendGlobalVars
+  , appendLocalVars, appendDeadVars, appendTypeMismatches, appendCallSites, appendGlobalVars
   , appendProcDefs, appendProcUses, appendSqlStmts
   , appendSqlStmtColumns, appendSqlStmtFilters, appendSqlStmtTables
   , appendCatFootprintColumns
@@ -130,6 +136,7 @@ data CompiledPs = CompiledPs
   , cpsProcRows      :: [ProcRow]
   , cpsLocalVars     :: [LocalVar]
   , cpsDeadVars      :: [DeadVarFinding]
+  , cpsTypeMismatches :: [TypeMismatchFinding]
   , cpsCallSites     :: [CallSite]
   , cpsGlobalVars    :: [GlobalVar]
   , cpsProcFlows     :: [(Text, Text, Text, Dataflow.ProcFlow)]
@@ -209,8 +216,8 @@ morphismToColRow _ = Nothing
 -- persist those via the pre-existing @dw_retrieve_columns@\/@dw_joins@
 -- producers; keeping both would double the corresponding rows in
 -- @schema_morphisms@.
-compileOne :: Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> WorkspaceEnv -> ControlIndex -> Map.Map Text [(TableRef, Text)] -> Maybe (SqlBridgePool, Int) -> Text -> ParseOutcome -> IO CompiledFile
-compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns mBridge confidence outcome = case outcome of
+compileOne :: Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> WorkspaceEnv -> ControlIndex -> TypeCheckWorkspace -> Map.Map Text [(TableRef, Text)] -> Maybe (SqlBridgePool, Int) -> Text -> ParseOutcome -> IO CompiledFile
+compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColumns mBridge confidence outcome = case outcome of
 
   PsParsed pf -> do
     let sf   = pfSrFile pf
@@ -293,11 +300,43 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns m
                 deadVars
                   | confidence == "speculative" = []
                   | otherwise = findDeadVars (scopedParams <> scopedBodyLvs) pflow
+                -- Plan 177 Phase 4: tcScope is this procedure's own params
+                -- (from tcw's already-parsed 'ProcSignature', not the raw
+                -- 'instrParams' text -- reuses the same lookup 'inferExpr's
+                -- own ExCall case makes) unioned with its body locals via
+                -- 'collectBodyLocals' -- both sides lowercased, matching
+                -- 'TypeCheck.hs's own tcScope-lookup convention. Same
+                -- "speculative confidence -> skip" gate as deadVars, for
+                -- the same stdlib-stub reason.
+                paramScope = case Map.lookup (obj, pName) (tcwParams tcw) of
+                  Just sig -> Map.fromList
+                    [ (T.toLower n, classifyFamily t (tcwObjects tcw) (tcwUserTypes tcw))
+                    | (n, t) <- psParams sig ]
+                  Nothing -> Map.empty
+                bodyScope = Map.map
+                  (\t -> classifyFamily t (tcwObjects tcw) (tcwUserTypes tcw))
+                  (collectBodyLocals body)
+                typeCheckCtx = TypeCheckCtx
+                  { tcScope = paramScope <> bodyScope
+                  , tcProcMap = tcwProcMap tcw
+                  , tcInherits = tcwInherits tcw
+                  , tcParams = tcwParams tcw
+                  , tcObjects = tcwObjects tcw
+                  , tcUserTypes = tcwUserTypes tcw
+                  , tcObject = obj
+                  , tcControlIdx = controlIdx
+                  , tcBuiltinFns = builtinFnNames
+                  , tcBuiltinMethods = builtinMethodNames
+                  }
+                typeMismatches
+                  | confidence == "speculative" = []
+                  | otherwise = checkBody typeCheckCtx pName body
             in ( ProcRow fp obj pName pType sLine eLine cfgJs instrJs wiringJs
                    taintParams retType (Just cyclo) confidence
                , flow
                , catFpRows
-               , deadVars )
+               , deadVars
+               , typeMismatches )
           | ((sLine, eLine), (pName, pType, instrParams, taintParams, retType, body)) <- procSpecs
           ]
         procBodies =
@@ -321,17 +360,18 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns m
                              (fmap jsonText (extractWindowLayout (srTypeBlocks sf)))
                              (Just (jsonText (toJSON (srTypeBlocks sf))))
                              confidence
-      , cpsProcRows      = [ r | (r, _, _, _) <- procs ]
+      , cpsProcRows      = [ r | (r, _, _, _, _) <- procs ]
       , cpsLocalVars     = lvs
-      , cpsDeadVars      = concat [ dvs | (_, _, _, dvs) <- procs ]
+      , cpsDeadVars      = concat [ dvs | (_, _, _, dvs, _) <- procs ]
+      , cpsTypeMismatches = concat [ tms | (_, _, _, _, tms) <- procs ]
       , cpsCallSites     = css
       , cpsGlobalVars    = gvs
-      , cpsProcFlows     = [ f | (_, f, _, _) <- procs ]
+      , cpsProcFlows     = [ f | (_, f, _, _, _) <- procs ]
       , cpsSqlStmts      = sqlRows
       , cpsSqlStmtColumns = sqlColRows
       , cpsSqlStmtFilters = sqlFilterRows
       , cpsSqlStmtTables = sqlTableRows
-      , cpsCatFootprintColumns = concat [ rs | (_, _, rs, _) <- procs ]
+      , cpsCatFootprintColumns = concat [ rs | (_, _, rs, _, _) <- procs ]
       , cpsSourceContent = Just (SourceFileRow fp (pfContents pf))
       }
 
@@ -505,8 +545,8 @@ dwRetrieveColRowsForFootprint resolve fp dw =
 
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each without a SQL bridge.
 -- @root@ is the ingestion root, used to relativize every stored/reported path.
-workerLoopFilesNoBridge :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> WorkspaceEnv -> ControlIndex -> Map.Map Text [(TableRef, Text)] -> AppenderPool -> MVar () -> IORef Int -> IO ()
-workerLoopFilesNoBridge root catTables mDefaultNamespace dwfCtx k workQ wsEnv controlIdx globalDwColumns appPool mutex errCount = go
+workerLoopFilesNoBridge :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> WorkspaceEnv -> ControlIndex -> TypeCheckWorkspace -> Map.Map Text [(TableRef, Text)] -> AppenderPool -> MVar () -> IORef Int -> IO ()
+workerLoopFilesNoBridge root catTables mDefaultNamespace dwfCtx k workQ wsEnv controlIdx tcw globalDwColumns appPool mutex errCount = go
   where
     go = do
       mFile <- atomically $ do
@@ -518,7 +558,7 @@ workerLoopFilesNoBridge root catTables mDefaultNamespace dwfCtx k workQ wsEnv co
           let fp = T.pack (makeRelative root file)
           emitProgress (object ["tag" .= ("worker_start" :: Text), "worker" .= k, "file" .= fp])
           outcome  <- parseOutcome root file
-          compiled <- compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns Nothing "confirmed" outcome
+          compiled <- compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColumns Nothing "confirmed" outcome
           let ok = case compiled of { CFError {} -> False; _ -> True }
           when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
           withMVar mutex $ \_ -> appendToDb appPool compiled
@@ -528,8 +568,8 @@ workerLoopFilesNoBridge root catTables mDefaultNamespace dwfCtx k workQ wsEnv co
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each with bridge slot k,
 --   serialises DB writes through a shared mutex (DuckDB connections are not thread-safe).
 -- @root@ is the ingestion root, used to relativize every stored/reported path.
-workerLoopFiles :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> SqlBridgePool -> WorkspaceEnv -> ControlIndex -> Map.Map Text [(TableRef, Text)] -> AppenderPool -> MVar () -> IORef Int -> IO ()
-workerLoopFiles root catTables mDefaultNamespace dwfCtx k workQ pool wsEnv controlIdx globalDwColumns appPool mutex errCount = go
+workerLoopFiles :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> SqlBridgePool -> WorkspaceEnv -> ControlIndex -> TypeCheckWorkspace -> Map.Map Text [(TableRef, Text)] -> AppenderPool -> MVar () -> IORef Int -> IO ()
+workerLoopFiles root catTables mDefaultNamespace dwfCtx k workQ pool wsEnv controlIdx tcw globalDwColumns appPool mutex errCount = go
   where
     go = do
       mFile <- atomically $ do
@@ -541,7 +581,7 @@ workerLoopFiles root catTables mDefaultNamespace dwfCtx k workQ pool wsEnv contr
           let fp = T.pack (makeRelative root file)
           emitProgress (object ["tag" .= ("worker_start" :: Text), "worker" .= k, "file" .= fp])
           outcome  <- parseOutcome root file
-          compiled <- compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx globalDwColumns (Just (pool, k)) "confirmed" outcome
+          compiled <- compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColumns (Just (pool, k)) "confirmed" outcome
           let ok = case compiled of { CFError {} -> False; _ -> True }
           when (not ok) $ atomicModifyIORef' errCount (\n -> (n + 1, ()))
           withMVar mutex $ \_ -> appendToDb appPool compiled
@@ -554,6 +594,7 @@ appendToDb pool (CFPs r) = do
   appendProcedures pool (cpsProcRows r)
   appendLocalVars  pool (cpsLocalVars r)
   appendDeadVars   pool (cpsDeadVars r)
+  appendTypeMismatches pool (cpsTypeMismatches r)
   appendCallSites  pool (cpsCallSites r)
   appendGlobalVars pool (cpsGlobalVars r)
   appendProcDefs   pool (cpsProcFlows r)
@@ -683,6 +724,14 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
   let controlIdx = buildControlIndex allParsedSrFiles
   _ <- evaluate (Map.size controlIdx)
 
+  -- Plan 177 Phase 4: workspace-wide type-check context, built once from
+  -- the same parsed-file set as wsEnv/controlIdx above -- every field is a
+  -- pure function of allParsedSrFiles (see TypeCheckWorkspace's own doc
+  -- comment), so no DuckDB round-trip is needed the way resolveTypes/
+  -- resolveCalls's Phase-B inputs require.
+  let tcw = buildTypeCheckWorkspace allParsedSrFiles
+  _ <- evaluate (Map.size (tcwProcMap tcw) + Map.size (tcwParams tcw))
+
   -- Every DW file, already parsed in Phase A0 above -- Plan 163 Phase 3
   -- needs this cross-file (a PowerScript SetItem call may reference a DW
   -- compiled by a different worker), so it's built once here rather than
@@ -703,7 +752,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     -- and DDL loading. The pool's scope closes (flushing all appenders)
     -- before runPhaseB starts — this ordering is correctness-critical.
     let phaseATables =
-          [ "objects", "procedures", "local_vars", "dead_vars", "call_sites", "global_vars"
+          [ "objects", "procedures", "local_vars", "dead_vars", "type_mismatches", "call_sites", "global_vars"
           , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
           , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
           , "source_files", "parse_errors"
@@ -715,7 +764,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
       -- Load stdlib first so type lookups in user-code Phase B see the base classes.
       -- Stdlib has no DW files of its own, so an empty map is correct here.
       mapM_ (\pf -> do
-        cf <- compileOne Set.empty mDefaultNamespace (mkDwFootprintCtx [] mDefaultNamespace) wsEnv controlIdx Map.empty Nothing "speculative" (PsParsed pf)
+        cf <- compileOne Set.empty mDefaultNamespace (mkDwFootprintCtx [] mDefaultNamespace) wsEnv controlIdx tcw Map.empty Nothing "speculative" (PsParsed pf)
         appendToDb appPool cf) stdlibParsed
       case mBridgeBin of
         Nothing -> do
@@ -735,7 +784,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
           atomically (mapM_ (writeTQueue workQ) files)
           mutex <- newMVar ()
           mapConcurrently_
-            (\k -> workerLoopFilesNoBridge srcDir Set.empty mDefaultNamespace dwfCtx k workQ wsEnv controlIdx globalDwColumns appPool mutex errCount)
+            (\k -> workerLoopFilesNoBridge srcDir Set.empty mDefaultNamespace dwfCtx k workQ wsEnv controlIdx tcw globalDwColumns appPool mutex errCount)
             [0 .. nWorkers - 1]
         Just pythonExe -> do
           sqlPool <- startSqlBridgePool nWorkers pythonExe sqlWorkerModuleArgs dialect
@@ -783,7 +832,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
           atomically (mapM_ (writeTQueue workQ) files)
           mutex <- newMVar ()
           mapConcurrently_
-            (\k -> workerLoopFiles srcDir catTables mDefaultNamespace dwfCtx k workQ sqlPool wsEnv controlIdx globalDwColumns appPool mutex errCount)
+            (\k -> workerLoopFiles srcDir catTables mDefaultNamespace dwfCtx k workQ sqlPool wsEnv controlIdx tcw globalDwColumns appPool mutex errCount)
             [0 .. nWorkers - 1]
             `finally` shutdownSqlBridgePool sqlPool
     -- Pool scope closed here: all Phase A appenders flushed + destroyed.

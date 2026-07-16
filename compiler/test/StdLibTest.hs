@@ -5,6 +5,7 @@ import PB.Pipeline.DuckDb
 import PB.Pipeline.Emit    (ParsedFile (..), ParseOutcome (..), parsePowerScriptFile, stripBom)
 import PB.Pipeline.Runner  (compileOne, appendToDb)
 import PB.Analysis.TypeEnv (WorkspaceEnv (..), buildWorkspaceEnv)
+import PB.Analysis.TypeCheck (buildTypeCheckWorkspace)
 import PB.Analysis.DwFootprint (mkDwFootprintCtx)
 import PB.Runtime.StdLib   (parseStdlibFiles)
 
@@ -45,12 +46,12 @@ withStdlibDb act = withWriteConn ":memory:" $ \conn -> do
   let wsEnv = buildWorkspaceEnv (map pfSrFile pfs)
   withAppenderPool conn phaseATables $ \pool -> do
     mapM_ (\pf -> do
-      cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) wsEnv Map.empty Map.empty Nothing "speculative" (PsParsed pf)
+      cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) wsEnv Map.empty (buildTypeCheckWorkspace []) Map.empty Nothing "speculative" (PsParsed pf)
       appendToDb pool cf) pfs
   act conn
   where
     phaseATables =
-      [ "objects", "procedures", "local_vars", "dead_vars", "call_sites", "global_vars"
+      [ "objects", "procedures", "local_vars", "dead_vars", "type_mismatches", "call_sites", "global_vars"
       , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
       , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
       , "source_files", "parse_errors"
@@ -114,13 +115,13 @@ testUserConfirmed = withWriteConn ":memory:" $ \conn -> do
       let wsEnv = buildWorkspaceEnv [sf]
           pf    = ParsedFile "w_test.srw" sf sp src
       withAppenderPool conn phaseATables $ \pool -> do
-        cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) wsEnv Map.empty Map.empty Nothing "confirmed" (PsParsed pf)
+        cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) wsEnv Map.empty (buildTypeCheckWorkspace []) Map.empty Nothing "confirmed" (PsParsed pf)
         appendToDb pool cf
   confs <- queryOneTexts conn "SELECT confidence FROM objects"
   assertEqual "user object is confirmed" ["confirmed"] confs
   where
     phaseATables =
-      [ "objects", "procedures", "local_vars", "dead_vars", "call_sites", "global_vars"
+      [ "objects", "procedures", "local_vars", "dead_vars", "type_mismatches", "call_sites", "global_vars"
       , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
       , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
       , "source_files", "parse_errors"
