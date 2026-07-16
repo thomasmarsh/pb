@@ -99,6 +99,8 @@ module PB.Pipeline.DuckDb
   , appendSchemaObjects
   , appendSchemaMorphisms
   , materializeDecompositionCoslice
+  , materializeImpliedFk
+  , materializeColumnRisk
   -- Generic EDB/IDB bridge (Plan 161 -- Souffle)
   , queryTextRows
   , recreateTextTable
@@ -291,6 +293,11 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       , "CREATE TABLE IF NOT EXISTS decomposition_coslice \
         \(seed_key TEXT, target_key TEXT, direction TEXT, leg_ordinal INTEGER, \
         \leg_from TEXT, leg_to TEXT, leg_kind TEXT, leg_source TEXT)"
+      , "CREATE TABLE IF NOT EXISTS implied_fk \
+        \(from_namespace TEXT, from_table TEXT, from_column TEXT, \
+        \to_namespace TEXT, to_table TEXT, to_column TEXT)"
+      , "CREATE TABLE IF NOT EXISTS column_risk \
+        \(namespace TEXT, table_name TEXT, column_name TEXT, downstream_count INTEGER)"
       -- Plan 157 Phase 4.5: reads from the namespace-carrying
       -- dw_retrieve_tables/sql_statement_tables directly -- no more
       -- CSV-split of sql_statements.tables (which has no namespace of its
@@ -1545,6 +1552,49 @@ materializeDecompositionCoslice conn =
       , "SELECT seed_key, target_key, direction, leg_ordinal, leg_from, leg_to, leg_kind,"
       , "       COALESCE(leg_source, '') AS leg_source"
       , "  FROM ranked WHERE rn = 1"
+      ]
+
+-- | Plan 161 Phase 3a: materialize @implied_fk@ from Souffle's
+-- @implied_fk_pairs@ (produced by 'PB.Analysis.Rules.Schema.impliedFkRules'),
+-- decoding each ColKey pair back to human-readable (namespace, table,
+-- column) via a join-back on @schema_objects.object_key@ -- the same
+-- decoding 'materializeDecompositionCoslice' uses, since 'schObjectKey' has
+-- no inverse parser in this codebase. A pure rename\/join projection, no
+-- decision logic.
+materializeImpliedFk :: DuckConn -> IO ()
+materializeImpliedFk conn =
+  void $ execute_ conn (Query sql)
+  where
+    sql = T.unlines
+      [ "INSERT INTO implied_fk"
+      , "  (from_namespace, from_table, from_column, to_namespace, to_table, to_column)"
+      , "SELECT so1.namespace, so1.table_name, so1.column_name,"
+      , "       so2.namespace, so2.table_name, so2.column_name"
+      , "  FROM implied_fk_pairs ifk"
+      , "  JOIN schema_objects so1 ON so1.object_key = ifk.x"
+      , "  JOIN schema_objects so2 ON so2.object_key = ifk.y"
+      ]
+
+-- | Plan 161 Phase 3a: materialize @column_risk@ from Souffle's
+-- @risk_count@ (produced by 'PB.Analysis.Rules.Schema.riskRules'), same
+-- join-back-on-@object_key@ decoding as 'materializeImpliedFk'. @risk_count@
+-- scores every 'reaches' node, including 'StmtObj' ones ('stmt'\/
+-- @dw_retrieve@ kinds), which carry no @namespace@\/@table_name@\/
+-- @column_name@ in @schema_objects@ (only @stmt_*@ fields) -- confirmed on
+-- the real openpay corpus, where 115 such rows materialized as opaque
+-- all-NULL triples. Migration risk scoring is inherently a per-COLUMN
+-- question (what breaks if this column changes), so this filters to
+-- @kind = 'column'@ only, the same restriction 'seedRows' already applies
+-- to the coslice walk's own starting points.
+materializeColumnRisk :: DuckConn -> IO ()
+materializeColumnRisk conn =
+  void $ execute_ conn (Query sql)
+  where
+    sql = T.unlines
+      [ "INSERT INTO column_risk (namespace, table_name, column_name, downstream_count)"
+      , "SELECT so.namespace, so.table_name, so.column_name, CAST(rc.n AS INTEGER)"
+      , "  FROM risk_count rc"
+      , "  JOIN schema_objects so ON so.object_key = rc.x AND so.kind = 'column'"
       ]
 
 -- ---------------------------------------------------------------------------

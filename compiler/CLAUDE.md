@@ -729,18 +729,18 @@ sanitizeFactField :: Text -> Text
 
 ```
 
-### `PB.Analysis.Rules.Schema` (Plan 161 cutover, 2026-07-11; coslice witness reconstruction Plan 161 Phase 2c, 2026-07-12; leg tie-break rewritten Plan 171a, 2026-07-15; EDB relations migrated to typed Haskell Plan 175 Phase 1, 2026-07-15)
+### `PB.Analysis.Rules.Schema` (Plan 161 cutover, 2026-07-11; coslice witness reconstruction Plan 161 Phase 2c, 2026-07-12; leg tie-break rewritten Plan 171a, 2026-07-15; EDB relations migrated to typed Haskell Plan 175 Phase 1, 2026-07-15; implied-FK + risk scoring Plan 161 Phase 3a, 2026-07-15)
 
 ```haskell
--- initEdbViews (re)materializes leg_source/stmt/seed as plain DuckDB tables
--- via typed readers (querySchemaMorphismRows/querySchemaObjects,
--- PB.Pipeline.DuckDb) + the pure reshaping functions below -- the same
--- pattern PB.Analysis.Rules.DeadCode/Taint use (see those modules' own
--- entries), NOT a CREATE VIEW. Must run after PB.Pipeline.DuckDb.initSchema
--- and after schema_objects/schema_morphisms have been populated
--- (PB.Pipeline.Passes.runPass9): the read is eager, not a lazily-evaluated
--- SQL view. No "dead" relation materialized here -- DeadCode.liveProcRules
--- reads proc_dead directly instead.
+-- initEdbViews (re)materializes leg_source/stmt/seed/join_leg/fk as plain
+-- DuckDB tables via typed readers (querySchemaMorphismRows/
+-- querySchemaObjects/queryCatFks, PB.Pipeline.DuckDb) + the pure reshaping
+-- functions below -- the same pattern PB.Analysis.Rules.DeadCode/Taint use
+-- (see those modules' own entries), NOT a CREATE VIEW. Must run after
+-- PB.Pipeline.DuckDb.initSchema and after schema_objects/schema_morphisms
+-- have been populated (PB.Pipeline.Passes.runPass9): the read is eager, not
+-- a lazily-evaluated SQL view. No "dead" relation materialized here --
+-- DeadCode.liveProcRules reads proc_dead directly instead.
 initEdbViews :: DuckConn -> IO ()
 legSourceRows :: [SchMorphismRow] -> [[Text]]
 -- leg_source: pure rename of (smrFromKey, smrToKey, smrLegKind);
@@ -757,6 +757,16 @@ stmtRows :: [SchObject] -> [[Text]]
 seedRows :: [SchObject] -> [[Text]]
 -- seed: keeps only ColumnObj rows, projected to schObjectKey -- the
 -- coslice walk's starting points.
+joinLegRows :: [SchMorphismRow] -> [[Text]]
+-- join_leg: (x, y) filtered to smrLegSource == "dw_join" -- the only
+-- LegSource expressing a genuine two-table join distinct from a
+-- DDL-declared FK (SrcDdlFk) or a statement touch. Embedded SQL JOINs are
+-- not modeled as legs at all, so implied-FK discovery below is scoped to
+-- DataWindow joins only.
+fkRows :: [CatFkRow] -> [[Text]]
+-- fk: (x, y) built via the identical schObjectKey encoding buildSchema
+-- applies to the same catalog_fks rows for its own SrcDdlFk legs -- a
+-- declared FK's key here always matches the leg it produces there.
 legRel, reachesRel :: Relation
 legSourceRel :: Relation
 legRawRel :: Relation
@@ -839,6 +849,38 @@ cosliceRules :: RuleSet
 -- table, matching the deleted Haskell columnCoslice's convention that
 -- every UI consumer (e.g. DecompositionCandidatesCore.tsx) still expects.
 -- Reuses seed (initEdbViews above) and leg/reaches as EDB; runRuleSets
+-- orders this after reachesRules.
+
+joinLegRel, fkRel, impliedFkRel :: Relation
+impliedFkRules :: RuleSet
+-- implied_fk_pairs(X, Y) :- join_leg(X, Y), !fk(X, Y), !fk(Y, X).
+-- A DataWindow join edge with no matching declared FK in EITHER direction
+-- (both orientations of fk are negated since a join's column order need
+-- not match the FK's declared from/to side). Materializes to
+-- implied_fk_pairs, a raw two-column ColKey table -- deliberately NOT
+-- named implied_fk, so PB.Pipeline.DuckDb.materializeImpliedFk's
+-- structured consumer table of that name is never clobbered by the
+-- generic-arity recreateTextTable every IDB relation goes through (same
+-- raw-vs-consumer name separation path_leg_fwd/back keep from
+-- decomposition_coslice). No dependency on legRules/reachesRules -- runs
+-- directly off initEdbViews' join_leg/fk EDB.
+
+hasReachesRel, riskCountRel :: Relation
+riskRules :: RuleSet
+-- risk_count(X, N) :- has_reaches(X), N = count : { reaches(X, _) }.
+-- Migration blast-radius / risk scoring: a downstream-footprint count
+-- aggregated DIRECTLY over the existing reaches relation (same count :
+-- idiom PB.Analysis.Rules.DeadCode.callerCountRules uses for caller
+-- fan-in) -- deliberately NOT a second risk_leg/risk_reach traversal
+-- unioning leg with implied_fk_pairs: every LegFk edge (DDL-declared or
+-- DW-join-derived) already renders as a kind="fk" row in leg_source/leg
+-- regardless of provenance (legSourceRows drops it), so reaches already
+-- walks every undeclared-join edge implied_fk flags -- re-deriving a
+-- parallel closure over the identical edge set would be a wasted second
+-- fixpoint, not a new traversal. implied_fk stays a standalone
+-- data-quality finding. Materializes to PB.Pipeline.DuckDb.
+-- materializeColumnRisk's human-readable column_risk table (kind =
+-- 'column' rows only -- see that function's own entry). runRuleSets
 -- orders this after reachesRules.
 ```
 
@@ -2099,6 +2141,19 @@ appendSchemaMorphisms :: DuckConn -> [SchemaCategory.SchMorphism] -> IO ()
 -- StmtObj-only target filter. Python's get_decomposition_candidates (cli/api)
 -- is the sole reader.
 materializeDecompositionCoslice :: DuckConn -> IO ()
+-- implied_fk/column_risk (Plan 161 Phase 3a, 2026-07-15): (namespace,
+-- table, column) x2 / (namespace, table, column, downstream_count) --
+-- decode Souffle's raw ColKey-pair output (implied_fk_pairs/risk_count,
+-- see PB.Analysis.Rules.Schema's impliedFkRules/riskRules) back to
+-- human-readable form via a join-back on schema_objects.object_key, same
+-- decoding materializeDecompositionCoslice uses (schObjectKey has no
+-- inverse parser). column_risk's join is restricted to kind = 'column' --
+-- risk_count also scores StmtObj (stmt/dw_retrieve) nodes, which have no
+-- namespace/table_name/column_name in schema_objects at all (only stmt_*
+-- fields); an unfiltered join materialized 115 opaque all-NULL rows on the
+-- real openpay corpus before this restriction.
+materializeImpliedFk   :: DuckConn -> IO ()
+materializeColumnRisk  :: DuckConn -> IO ()
 -- dead_code (Plan 166 Stage 6): mechanical TEXT->typed INSERT...SELECT from
 -- dead_code_rows (PB.Analysis.Rules.DeadCode.deadCodeRowsRules' Soufflé
 -- output) -- no Haskell classification left. A ROW_NUMBER() dedup picks the

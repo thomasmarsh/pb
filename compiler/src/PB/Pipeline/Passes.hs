@@ -28,6 +28,8 @@ import PB.Pipeline.DuckDb
   , appendTaintSources, appendTaintSinks
   , appendSchemaObjects, appendSchemaMorphisms
   , materializeDecompositionCoslice
+  , materializeImpliedFk
+  , materializeColumnRisk
   , materializeDeadCode
   , materializeTaintPaths
   , materializeTaintAnnotations
@@ -168,6 +170,8 @@ runPhaseB conn mDefaultNamespace = do
   TaintRules.reconstructTaintStepKind conn
   materializeDeadCode conn
   materializeDecompositionCoslice conn
+  materializeImpliedFk conn
+  materializeColumnRisk conn
   materializeTaintPaths conn
   materializeTaintAnnotations conn
 
@@ -194,6 +198,8 @@ allDatalogRuleSets =
   , SchemaRules.legRules
   , SchemaRules.reachesRules
   , SchemaRules.cosliceRules
+  , SchemaRules.impliedFkRules
+  , SchemaRules.riskRules
   , DeadCodeRules.liveProcRules
   , TaintRules.taintRules
   ]

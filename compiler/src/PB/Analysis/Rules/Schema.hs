@@ -8,12 +8,16 @@ module PB.Analysis.Rules.Schema
   , reachesRules
   , cosliceRules
   , legRules
+  , impliedFkRules
+  , riskRules
   , LegSourceFanout (..)
   , legSourceFanout
   -- pure EDB-reshaping functions (exported for unit tests)
   , legSourceRows
   , stmtRows
   , seedRows
+  , joinLegRows
+  , fkRows
   ) where
 
 import PB.Prelude
@@ -21,10 +25,12 @@ import PB.Prelude
 import PB.Pipeline.Souffle (Relation (..), symRelation, Rule (..), RuleSet (..))
 import PB.Pipeline.DuckDb
   ( DuckConn, SchMorphismRow (..)
-  , querySchemaObjects, querySchemaMorphismRows
+  , querySchemaObjects, querySchemaMorphismRows, queryCatFks
   , recreateTextTable, appendTextRows
   )
-import PB.Analysis.SchemaCategory (SchObject (..), StmtId (..), schObjectKey)
+import PB.Analysis.SchemaCategory
+  (SchObject (..), StmtId (..), CatFkRow (..), schObjectKey)
+import PB.Pipeline.SqlParse (TableRef (..))
 import Database.DuckDB.Simple (query_)
 import Database.DuckDB.Simple.FromRow (FromRow (..), field)
 
@@ -53,9 +59,12 @@ initEdbViews :: DuckConn -> IO ()
 initEdbViews conn = do
   morphisms <- querySchemaMorphismRows conn
   objects   <- querySchemaObjects conn
+  fks       <- queryCatFks conn
   materialize "leg_source" ["x", "y", "kind"]                  (legSourceRows morphisms)
   materialize "stmt"       ["file", "object", "proc", "line"]  (stmtRows objects)
   materialize "seed"       ["x"]                                (seedRows objects)
+  materialize "join_leg"   ["x", "y"]                           (joinLegRows morphisms)
+  materialize "fk"         ["x", "y"]                           (fkRows fks)
   where
     materialize name cols rows = do
       recreateTextTable conn name cols
@@ -78,6 +87,27 @@ stmtRows objs = [ [f, o, p, T.pack (show l)] | StmtObj (SqlStmtId f o p l) <- ob
 -- 'ColumnObj' rows, projected to their 'schObjectKey'.
 seedRows :: [SchObject] -> [[Text]]
 seedRows objs = [ [schObjectKey o] | o@(ColumnObj _ _) <- objs ]
+
+-- | Projects 'SchMorphismRow' into @join_leg@'s (x, y) shape: DW-join-derived
+-- edges only (@leg_source = "dw_join"@) -- the only 'PB.Analysis.
+-- SchemaCategory.LegSource' that expresses a genuine two-table join
+-- relationship distinct from a DDL-declared FK ('SrcDdlFk', already fully
+-- captured by 'catalog_fks') or a statement's read\/write touch. Embedded
+-- SQL @JOIN@s are not modeled as legs at all today (SQL-text legs are
+-- single-table read\/write), so implied-FK discovery is scoped to
+-- DataWindow joins only.
+joinLegRows :: [SchMorphismRow] -> [[Text]]
+joinLegRows rows = [ [smrFromKey r, smrToKey r] | r <- rows, smrLegSource r == "dw_join" ]
+
+-- | Projects 'CatFkRow' into @fk@'s (x, y) shape, using the identical
+-- 'schObjectKey' encoding 'PB.Analysis.SchemaCategory.buildSchema' applies
+-- to the same 'catalog_fks' rows for its own 'SrcDdlFk' legs -- so a
+-- declared FK's key here always matches the leg it produces there.
+fkRows :: [CatFkRow] -> [[Text]]
+fkRows = map $ \f ->
+  [ schObjectKey (ColumnObj (TableRef (cfrFromNamespace f) (cfrFromTable f)) (cfrFromColumn f))
+  , schObjectKey (ColumnObj (TableRef (cfrToNamespace f) (cfrToTable f)) (cfrToColumn f))
+  ]
 
 -- ---------------------------------------------------------------------------
 -- Concrete program
@@ -322,4 +352,74 @@ cosliceRules = RuleSet
       [ ("min_dist", ["s", "node"])
       , ("min_dist_back", ["s", "node"])
       ]
+  }
+
+-- ---------------------------------------------------------------------------
+-- Plan 161 Phase 3a: implied-FK discovery + composed risk scoring.
+
+joinLegRel, fkRel, impliedFkRel :: Relation
+joinLegRel   = symRelation "join_leg" ["x", "y"]
+fkRel        = symRelation "fk" ["x", "y"]
+impliedFkRel = symRelation "implied_fk_pairs" ["x", "y"]
+
+-- | @implied_fk_pairs(X, Y) :- join_leg(X, Y), !fk(X, Y), !fk(Y, X).@
+--
+-- A DataWindow join edge with no matching declared foreign key in EITHER
+-- direction -- a DW join's column order need not match the FK's declared
+-- from\/to side, so both orientations of 'fk' are negated. 'fk' contains
+-- only DDL-declared pairs, keyed identically to the 'SrcDdlFk' legs
+-- 'PB.Analysis.SchemaCategory.buildSchema' derives from the same
+-- 'catalog_fks' rows, so a real declared FK always negates out here; only a
+-- join with no backing declaration survives.
+--
+-- Materializes to 'implied_fk_pairs', a raw two-column ColKey table --
+-- deliberately NOT named @implied_fk@, so
+-- 'PB.Pipeline.DuckDb.materializeImpliedFk''s structured, human-readable
+-- @implied_fk@ consumer table (namespace\/table\/column pairs) is never
+-- clobbered by the generic-arity @recreateTextTable@ every IDB relation
+-- goes through -- the same raw-vs-consumer name separation 'cosliceRules'
+-- keeps between @path_leg_fwd@\/@path_leg_back@ and @decomposition_coslice@.
+impliedFkRules :: RuleSet
+impliedFkRules = RuleSet
+  { rsRelations = [impliedFkRel]
+  , rsRules =
+      [ Rule "implied_fk_pairs(x, y) :- join_leg(x, y), !fk(x, y), !fk(y, x)"
+             [impliedFkRel, joinLegRel, fkRel]
+      ]
+  , rsChoiceDomains = []
+  }
+
+hasReachesRel, riskCountRel :: Relation
+hasReachesRel = symRelation "has_reaches" ["x"]
+riskCountRel  = Relation "risk_count" [("x", "symbol"), ("n", "number")]
+
+-- | Migration blast-radius \/ risk scoring: counts each node's downstream
+-- footprint by aggregating directly over the EXISTING 'reachesRules'
+-- relation, via the same @count :@ idiom
+-- 'PB.Analysis.Rules.DeadCode.callerCountRules' already uses for caller
+-- fan-in (the @has_reaches@ seeding relation plays the same grounding role
+-- that rule's @has_naive_caller@ does).
+--
+-- Deliberately NOT a second traversal unioning 'leg' with
+-- 'impliedFkRules''s undeclared-join edges: every 'LegFk' edge -- DDL-declared
+-- ('SrcDdlFk') or DW-join-derived ('SrcDwJoin') -- already renders as a
+-- @kind = "fk"@ row in 'leg_source', hence in @leg@, regardless of which
+-- 'PB.Analysis.SchemaCategory.LegSource' produced it (see 'legSourceRows'
+-- above -- it drops provenance entirely). So 'reachesRules''s existing
+-- @reaches@ already walks through every undeclared join edge 'implied_fk'
+-- flags; re-deriving a parallel @risk_reach@ over the identical edge set
+-- would be a second, wasted fixpoint computation of the same relation, not
+-- a genuinely new traversal. 'implied_fk' stays a standalone
+-- data-quality/schema-hygiene finding (Phase 4 can later join a hop's
+-- @implied_fk@ membership into a risk-scored evidence path without this
+-- ruleset needing to know about it).
+riskRules :: RuleSet
+riskRules = RuleSet
+  { rsRelations = [hasReachesRel, riskCountRel]
+  , rsRules =
+      [ Rule "has_reaches(x) :- reaches(x, _)" [hasReachesRel, reachesRel]
+      , Rule "risk_count(x, n) :- has_reaches(x), n = count : { reaches(x, _) }"
+             [riskCountRel, hasReachesRel, reachesRel]
+      ]
+  , rsChoiceDomains = []
   }

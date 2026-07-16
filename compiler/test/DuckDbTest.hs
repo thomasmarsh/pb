@@ -6,6 +6,7 @@ import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), LegSource (..), SchMorphism (..)
   , DwRetrieveColRow (..), DwJoinLegRow (..), SqlColRow (..)
   , CatColumnRow (..), CatFkRow (..)
+  , schObjectKey
   )
 import PB.Pipeline.SqlParse (TableRef (..))
 import Database.DuckDB.Simple           (Query (..), execute_, query_)
@@ -40,6 +41,8 @@ tests = testGroup "DuckDb"
       testSchemaCategoryQueryRoundTrip
   , testCase "appendSchemaObjects/Morphisms accept rows" testAppendSchemaObjectsMorphisms
   , testCase "materializeDecompositionCoslice projects path_leg + recovers leg_source" testMaterializeDecompositionCoslice
+  , testCase "materializeImpliedFk decodes ColKey pairs to namespace/table/column" testMaterializeImpliedFk
+  , testCase "materializeColumnRisk decodes ColKeys, excluding non-column (stmt) nodes" testMaterializeColumnRisk
   , testCase "appendCatFootprintColumns/queryCatFootprintColumns round-trip"
       testCatFootprintColumnsRoundTrip
   ]
@@ -247,4 +250,58 @@ testMaterializeDecompositionCoslice = withWriteConn ":memory:" $ \conn -> do
   rows <- query_ conn "SELECT leg_kind, leg_source FROM decomposition_coslice"
   assertEqual "leg_source recovered via schema_morphisms join (Plan 161 Phase 2c)"
     [KindSourceRow "reads" "sql_text"]
+    rows
+
+-- | Local row shape for reading back (from_table, from_column, to_table,
+-- to_column) from @implied_fk@.
+data FkPairRow = FkPairRow Text Text Text Text deriving (Eq, Show)
+
+instance FromRow FkPairRow where
+  fromRow = FkPairRow <$> field <*> field <*> field <*> field
+
+testMaterializeImpliedFk :: IO ()
+testMaterializeImpliedFk = withWriteConn ":memory:" $ \conn -> do
+  initSchema conn
+  let colA = ColumnObj (TableRef Nothing "a") "x"
+      colB = ColumnObj (TableRef Nothing "b") "y"
+  appendSchemaObjects conn [colA, colB]
+  -- Simulate Souffle's implied_fk_pairs output (materialized by runRuleSet
+  -- via recreateTextTable/appendTextRows in production).
+  void $ execute_ conn (Query "CREATE TABLE implied_fk_pairs (x TEXT, y TEXT)")
+  void $ execute_ conn (Query ("INSERT INTO implied_fk_pairs VALUES ('"
+    <> schObjectKey colA <> "', '" <> schObjectKey colB <> "')"))
+  materializeImpliedFk conn
+
+  rows <- query_ conn
+    "SELECT from_table, from_column, to_table, to_column FROM implied_fk"
+  assertEqual "ColKey pair decoded to human-readable table/column names"
+    [FkPairRow "a" "x" "b" "y"]
+    rows
+
+-- | Local row shape for reading back (table_name, column_name,
+-- downstream_count) from @column_risk@.
+data RiskRow = RiskRow Text Text Int deriving (Eq, Show)
+
+instance FromRow RiskRow where
+  fromRow = RiskRow <$> field <*> field <*> field
+
+testMaterializeColumnRisk :: IO ()
+testMaterializeColumnRisk = withWriteConn ":memory:" $ \conn -> do
+  initSchema conn
+  let colA = ColumnObj (TableRef Nothing "a") "x"
+      stmt = StmtObj (SqlStmtId "f.srf" "obj" "proc" 1)
+  appendSchemaObjects conn [colA, stmt]
+  -- Simulate Souffle's risk_count output: one column node, one stmt node --
+  -- the stmt row exercises the kind = 'column' filter (a real bug found on
+  -- the openpay corpus: schema_objects has no namespace/table_name/
+  -- column_name for stmt/dw_retrieve kinds, so an unfiltered join
+  -- materialized 115 opaque all-NULL rows there).
+  void $ execute_ conn (Query "CREATE TABLE risk_count (x TEXT, n TEXT)")
+  void $ execute_ conn (Query ("INSERT INTO risk_count VALUES ('"
+    <> schObjectKey colA <> "', '3'), ('" <> schObjectKey stmt <> "', '7')"))
+  materializeColumnRisk conn
+
+  rows <- query_ conn "SELECT table_name, column_name, downstream_count FROM column_risk"
+  assertEqual "only the column-kind node is materialized, with its count"
+    [RiskRow "a" "x" 3]
     rows
