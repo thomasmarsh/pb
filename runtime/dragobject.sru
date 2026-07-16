@@ -1,4 +1,4 @@
 HA$PBExportHeader$dragobject.sru
 
-global type dragobject from powerobject
+global type dragobject from graphicobject
 end type

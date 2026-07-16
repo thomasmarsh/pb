@@ -1,4 +1,4 @@
 HA$PBExportHeader$datastore.sru
 
-global type datastore from dwobject
+global type datastore from nonvisualobject
 end type

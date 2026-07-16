@@ -107,5 +107,28 @@ tests = testGroup "TypeMismatch"
           compatible Map.empty (FamUserType "st_a") (FamUserType "st_a") @?= True
       , testCase "user_type LHS rejects mismatched user_type RHS" $
           compatible Map.empty (FamUserType "st_a") (FamUserType "st_b") @?= False
+      , testCase "builtin datawindow LHS accepts dragobject RHS (downcast)" $
+          compatible builtinInherits (FamObject "datawindow") (FamObject "dragobject") @?= True
+      , testCase "builtin dragobject LHS accepts datawindow RHS (upcast)" $
+          compatible builtinInherits (FamObject "dragobject") (FamObject "datawindow") @?= True
+      , testCase "builtin datawindow LHS accepts windowobject RHS (multi-hop ancestor)" $
+          compatible builtinInherits (FamObject "datawindow") (FamObject "windowobject") @?= True
+      , testCase "builtin datawindow LHS rejects datastore RHS (no shared ancestor)" $
+          compatible builtinInherits (FamObject "datawindow") (FamObject "datastore") @?= False
       ]
+  ]
+
+-- | Slice of the real runtime/*.sru builtin class hierarchy (see
+-- PB.Runtime.StdLib) relevant to the DataWindow-family ancestor tests
+-- above -- kept in sync by hand rather than parsed, since this module has
+-- no IO; PB.Runtime.StdLibTest.testInheritance exercises the real parsed
+-- stdlib map end-to-end.
+builtinInherits :: Map.Map Text Text
+builtinInherits = Map.fromList
+  [ ("windowobject",  "powerobject")
+  , ("graphicobject", "windowobject")
+  , ("dragobject",    "graphicobject")
+  , ("datawindow",    "dragobject")
+  , ("nonvisualobject", "powerobject")
+  , ("datastore",     "nonvisualobject")
   ]

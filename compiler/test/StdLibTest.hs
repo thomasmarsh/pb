@@ -138,17 +138,21 @@ testInheritance = do
     (Just "object")      (Map.lookup "powerobject"     ut)
   assertEqual "nonvisualobject → powerobject"
     (Just "powerobject") (Map.lookup "nonvisualobject" ut)
-  assertEqual "dragobject → powerobject"
-    (Just "powerobject") (Map.lookup "dragobject"      ut)
-  assertEqual "graphicobject → dragobject"
-    (Just "dragobject")  (Map.lookup "graphicobject"   ut)
-  assertEqual "windowobject → dragobject"
-    (Just "dragobject")  (Map.lookup "windowobject"    ut)
-  assertEqual "window → windowobject"
-    (Just "windowobject") (Map.lookup "window"         ut)
+  assertEqual "windowobject → powerobject"
+    (Just "powerobject") (Map.lookup "windowobject"    ut)
+  assertEqual "graphicobject → windowobject"
+    (Just "windowobject") (Map.lookup "graphicobject"  ut)
+  assertEqual "drawobject → graphicobject"
+    (Just "graphicobject") (Map.lookup "drawobject"    ut)
+  assertEqual "dragobject → graphicobject"
+    (Just "graphicobject") (Map.lookup "dragobject"    ut)
+  assertEqual "window → dragobject"
+    (Just "dragobject")  (Map.lookup "window"          ut)
+  assertEqual "userobject → dragobject"
+    (Just "dragobject")  (Map.lookup "userobject"      ut)
+  assertEqual "datawindow → dragobject"
+    (Just "dragobject")  (Map.lookup "datawindow"      ut)
   assertEqual "dwobject → powerobject"
     (Just "powerobject") (Map.lookup "dwobject"        ut)
-  assertEqual "datawindow → dwobject"
-    (Just "dwobject")    (Map.lookup "datawindow"      ut)
-  assertEqual "datastore → dwobject"
-    (Just "dwobject")    (Map.lookup "datastore"       ut)
+  assertEqual "datastore → nonvisualobject"
+    (Just "nonvisualobject") (Map.lookup "datastore"   ut)

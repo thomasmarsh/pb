@@ -1,6 +1,6 @@
 HA$PBExportHeader$window.sru
 
-global type window from windowobject
+global type window from dragobject
 end type
 
 public function integer Open (string as_sheetname)

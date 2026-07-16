@@ -1,6 +1,6 @@
 HA$PBExportHeader$graphicobject.sru
 
-global type graphicobject from dragobject
+global type graphicobject from windowobject
 end type
 
 type variables

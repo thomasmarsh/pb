@@ -1,4 +1,4 @@
 HA$PBExportHeader$windowobject.sru
 
-global type windowobject from dragobject
+global type windowobject from powerobject
 end type

@@ -144,6 +144,8 @@ Replace it with a real assertion before Stage 3 — a test that permanently says
 
 The parser specification is in `doc/spec.md` — consult it first for any question about lexical rules, token forms, file structure, or DataWindow syntax. It is synthesized from the battle-tested reference implementation and amended with corrections from the official Appeon docs.
 
+**`doc/pb2025r2/` is a full local mirror of the official Appeon PowerBuilder 2025 R2 help docs** (`objects_and_controls/`, `datawindow_reference/`, `powerscript_reference/`, `datawindow_programmers_guide/`, etc. — one subdirectory per manual). `grep -rn` it directly for any question about builtin system-class hierarchy, control/DW properties-events-functions, or PowerScript syntax before searching the web — it's faster and it's the authoritative source `doc/spec.md` itself is amended against. Individual per-function reference pages often state their inheritance directly (e.g. a DataWindow function's own page saying "Inherited from DragObject"), which is more reliable than the hierarchy diagrams in `objects_and_controls/`, several of which are images, not extractable text.
+
 **When the corpus contradicts SPEC.md, the corpus wins.** Real exported files are ground truth. Update SPEC.md to document the discrepancy before or alongside the parser fix — do not silently accept corpus patterns without recording them in the spec.
 
 ---

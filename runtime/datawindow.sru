@@ -1,6 +1,6 @@
 HA$PBExportHeader$datawindow.sru
 
-global type datawindow from dwobject
+global type datawindow from dragobject
 end type
 
 type variables
