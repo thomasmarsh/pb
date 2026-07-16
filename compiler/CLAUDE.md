@@ -1333,6 +1333,50 @@ data CallKind = PureCall | SuspendCall
 classifyExpr :: ScopedTypeEnv -> Expr -> CallKind
 -- classifyExpr returns SuspendCall (no effect name baked in).
 -- effectName is a separate function (takes pre-parsed [Expr] args).
+-- classifyExpr/CallKind feed FromSSA's ECall/ESuspend IR-node choice --
+-- a structural, single-bit decision -- and are unchanged by classifyEffects
+-- below (Plan 174 T0-6, 2026-07-16).
+
+data EffectTag = ReadsDb | WritesDb | WritesUi | Suspends
+classifyEffects :: ScopedTypeEnv -> Expr -> Set.Set EffectTag
+-- Additive sibling of classifyExpr/CallKind (kept separate, not a literal
+-- widening of CallKind -- see above): a call may carry several effect tags
+-- at once (e.g. a DW Update() both writes the DB and suspends), which a
+-- single-constructor CallKind can't express. Mirrors classifyExpr's
+-- dispatch shape exactly (same ExCall/ExMethodCall cases, same
+-- resolveLvalueType/resolveReceiverType plumbing); unresolvable/untyped
+-- calls fall back to Set.empty, the same conservative-fallback precedent
+-- classifyExpr uses for PureCall. Not yet consumed anywhere in production
+-- (feeds a future Plan 148 functor-key / Plan 149 wiring-box-styling
+-- consumer, neither wired up this session).
+builtinEffectTags :: Map.Map Text (Set.Set EffectTag)
+-- Free-function (single-segment ExCall) tags, keyed by the same names
+-- isBuiltinSuspendFn recognizes. run/execute -> {Suspends} only --
+-- confirmed against real corpus usage (bare Run("clipbrd.exe")/
+-- run(ls_tempfile) launch an external process/subshell, not a DB or UI
+-- effect in this project's vocabulary; a `.Run()` *method* call on an
+-- OLEOBJECT, e.g. WScript.Shell automation, is a different corpus pattern
+-- entirely and this single-segment dispatch never reaches it).
+-- isBuiltinSuspendFn is now `n \`Map.member\` builtinEffectTags` (was a
+-- flat elem list) -- single source of truth, no behavior change.
+dwTypes, transTypes :: Set.Set Text
+-- Hoisted to top-level (were where-bound locals of isTypedSuspend only).
+dwMethodEffectTags, transMethodEffectTags :: Map.Map Text (Set.Set EffectTag)
+-- Per-method tag tables. isTypedSuspend now checks `Map.member` against
+-- these (was a flat elem list) -- single source of truth, no behavior
+-- change to isTypedSuspend/classifyExpr. retrieve -> {Suspends,ReadsDb};
+-- update/delete/reset/rowscopy/rowsmove/sharedata/modify (buffer-mutating
+-- DW ops) -> {Suspends,WritesDb}; print -> {Suspends,WritesUi} (rendering
+-- output, not a data effect); commit -> {Suspends,WritesDb} (finalizes
+-- pending writes); rollback/connect/disconnect/autocommit ->
+-- {Suspends} only (connection/state management, no direct data effect).
+typedEffectTags :: Map.Map Text Text -> Text -> Text -> Set.Set EffectTag
+-- Method-call tag lookup mirroring isTypedSuspend's dwTypes/transTypes
+-- dispatch. SetItem (DW buffer writes) deliberately NOT folded in here --
+-- it's recognized by a completely different mechanism, a literal-argument
+-- pattern match in PB.Analysis.SchFootprint.resolveSetItem, not by
+-- isTypedSuspend's type-based dispatch table; out of scope for this
+-- widening.
 -- ExCall branch (Plan 164 D4, 2026-07-10): a single segment checks
 -- isBuiltinSuspendFn; 2+ segments splits into (all-but-last, last) via
 -- resolveLvalueType/reverse (no partial head/init/last -- PB.Prelude hides

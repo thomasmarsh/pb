@@ -9,6 +9,8 @@
 module PB.Analysis.CallClassify
   ( CallKind (..)
   , classifyExpr
+  , EffectTag (..)
+  , classifyEffects
   , effectName
   , calleeName
   , isTriggerEvent
@@ -42,6 +44,12 @@ import qualified Data.Text       as T
 -- '[Expr]' args to avoid importing Grammar.Body).
 data CallKind = PureCall | SuspendCall deriving (Eq, Show)
 
+-- | A tag describing one side effect a call performs. A call may carry
+-- several at once (e.g. a DataWindow @Update()@ both writes the DB and
+-- suspends) -- see 'classifyEffects'.
+data EffectTag = ReadsDb | WritesDb | WritesUi | Suspends
+  deriving (Eq, Ord, Show)
+
 -- ---------------------------------------------------------------------------
 -- Side-effect classification
 
@@ -68,6 +76,33 @@ classifyExpr env (ExMethodCall recv meth _) =
     _       -> PureCall
 classifyExpr _ _ = PureCall
 
+-- | Classify an expression's side effects as a set of tags -- an additive,
+-- finer-grained sibling of 'classifyExpr' (which stays a single-bit
+-- Pure/Suspend verdict feeding FromSSA's ECall/ESuspend IR-node choice; a
+-- call may carry several effect tags at once, e.g. a DataWindow @Update()@
+-- both writes the DB and suspends, which a single verdict can't express).
+-- Mirrors 'classifyExpr's dispatch shape exactly; unresolvable/untyped calls
+-- fall back to the empty set, the same conservative-fallback precedent
+-- 'classifyExpr' uses for 'PureCall'.
+classifyEffects :: ScopedTypeEnv -> Expr -> Set.Set EffectTag
+classifyEffects env (ExCall lv _) =
+  case segments lv of
+    [s] -> Map.findWithDefault Set.empty (T.toLower (segName s)) builtinEffectTags
+    segs@(_ : _ : _) ->
+      case reverse segs of
+        methSeg : revHeadSegs ->
+          let meth = T.toLower (segName methSeg)
+          in case resolveLvalueType env (Lvalue (reverse revHeadSegs)) of
+               Just ty -> typedEffectTags (steHierarchy env) ty meth
+               Nothing -> Set.empty
+        [] -> Set.empty
+    _ -> Set.empty
+classifyEffects env (ExMethodCall recv meth _) =
+  case resolveReceiverType env recv of
+    Just ty -> typedEffectTags (steHierarchy env) ty (T.toLower meth)
+    Nothing -> Set.empty
+classifyEffects _ _ = Set.empty
+
 -- ---------------------------------------------------------------------------
 -- Effect naming
 
@@ -93,23 +128,75 @@ effectName expr args =
 
 -- | Free functions that are always suspending regardless of receiver type.
 isBuiltinSuspendFn :: Text -> Bool
-isBuiltinSuspendFn n = n `elem`
-  ["open", "opensheet", "close", "execute", "run", "fn_retrievechild"]
+isBuiltinSuspendFn n = n `Map.member` builtinEffectTags
+
+-- | Effect tags for a free (single-segment) function name. 'run'/'execute'
+-- launch an external process/subshell (confirmed against real corpus usage,
+-- e.g. bare @Run("clipbrd.exe")@ and @run(ls_tempfile)@ calls -- distinct
+-- from a @.Run()@ method call on an OLE Automation object, which this
+-- single-segment dispatch never reaches) -- neither is a DB or UI effect in
+-- this project's vocabulary, so both carry 'Suspends' only.
+builtinEffectTags :: Map.Map Text (Set.Set EffectTag)
+builtinEffectTags = Map.fromList
+  [ ("open",             Set.fromList [Suspends, WritesUi])
+  , ("opensheet",        Set.fromList [Suspends, WritesUi])
+  , ("close",            Set.fromList [Suspends, WritesUi])
+  , ("fn_retrievechild", Set.fromList [Suspends, ReadsDb])
+  , ("execute",          Set.singleton Suspends)
+  , ("run",              Set.singleton Suspends)
+  ]
+
+dwTypes :: Set.Set Text
+dwTypes = Set.fromList ["datawindow", "datastore", "datawindowchild"]
+
+transTypes :: Set.Set Text
+transTypes = Set.singleton "transaction"
+
+-- | Effect tags for a DataWindow/DataStore method. 'retrieve' reads the DB;
+-- 'update'/'delete' and the remaining buffer-mutating operations
+-- ('reset'/'rowscopy'/'rowsmove'/'sharedata'/'modify') write it; 'print' is
+-- rendering/output, a UI effect rather than a data one.
+dwMethodEffectTags :: Map.Map Text (Set.Set EffectTag)
+dwMethodEffectTags = Map.fromList
+  [ ("retrieve",  Set.fromList [Suspends, ReadsDb])
+  , ("update",    Set.fromList [Suspends, WritesDb])
+  , ("delete",    Set.fromList [Suspends, WritesDb])
+  , ("reset",     Set.fromList [Suspends, WritesDb])
+  , ("rowscopy",  Set.fromList [Suspends, WritesDb])
+  , ("rowsmove",  Set.fromList [Suspends, WritesDb])
+  , ("sharedata", Set.fromList [Suspends, WritesDb])
+  , ("modify",    Set.fromList [Suspends, WritesDb])
+  , ("print",     Set.fromList [Suspends, WritesUi])
+  ]
+
+-- | Effect tags for a Transaction method. 'commit' finalizes pending writes;
+-- the rest are connection/state management with no direct data effect.
+transMethodEffectTags :: Map.Map Text (Set.Set EffectTag)
+transMethodEffectTags = Map.fromList
+  [ ("commit",     Set.fromList [Suspends, WritesDb])
+  , ("rollback",   Set.singleton Suspends)
+  , ("connect",    Set.singleton Suspends)
+  , ("disconnect", Set.singleton Suspends)
+  , ("autocommit", Set.singleton Suspends)
+  ]
 
 -- | Return True when a method on a type (given by declared name) is side-effecting.
 -- Uses isDescendantOf so user-defined DW/Transaction subclasses are handled
 -- correctly even when the full stdlib inheritance chain is loaded.
 isTypedSuspend :: Map.Map Text Text -> Text -> Text -> Bool
 isTypedSuspend inh ty meth
-  | isDescendantOf inh ty dwTypes    = meth `elem` dwMethods
-  | isDescendantOf inh ty transTypes = meth `elem` transMethods
+  | isDescendantOf inh ty dwTypes    = meth `Map.member` dwMethodEffectTags
+  | isDescendantOf inh ty transTypes = meth `Map.member` transMethodEffectTags
   | otherwise                        = False
-  where
-    dwTypes    = Set.fromList ["datawindow", "datastore", "datawindowchild"]
-    transTypes = Set.singleton "transaction"
-    dwMethods  = ["retrieve", "update", "delete", "reset",
-                  "rowscopy", "rowsmove", "sharedata", "print", "modify"]
-    transMethods = ["commit", "rollback", "connect", "disconnect", "autocommit"]
+
+-- | Effect tags for a method call on a resolved receiver type. Mirrors
+-- 'isTypedSuspend's dwTypes/transTypes dispatch, replacing each flat
+-- membership check with a per-method tag lookup against the same tables.
+typedEffectTags :: Map.Map Text Text -> Text -> Text -> Set.Set EffectTag
+typedEffectTags inh ty meth
+  | isDescendantOf inh ty dwTypes    = Map.findWithDefault Set.empty meth dwMethodEffectTags
+  | isDescendantOf inh ty transTypes = Map.findWithDefault Set.empty meth transMethodEffectTags
+  | otherwise                        = Set.empty
 
 -- | Resolve an lvalue's declared/effective type. A bare single segment is a
 -- local\/instance\/global variable lookup; two or more segments is a dotted
