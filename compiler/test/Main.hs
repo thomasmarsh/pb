@@ -17,6 +17,7 @@ import qualified SSATest
 import qualified DataflowTest
 import qualified DeadCodeTest
 import qualified DeadVarsTest
+import qualified InterpCoverageTest
 import qualified TaintTest
 import qualified EscapeTest
 import qualified ExprTest
@@ -68,6 +69,7 @@ tests = testGroup "pb-compiler"
   , DataflowTest.tests
   , DeadCodeTest.tests
   , DeadVarsTest.tests
+  , InterpCoverageTest.tests
   , TaintTest.tests
   , EscapeTest.tests
   , ExprTest.tests

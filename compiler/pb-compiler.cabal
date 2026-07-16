@@ -58,6 +58,7 @@ library
     PB.Compile.ValueModel
     PB.Analysis.Dataflow
     PB.Analysis.DeadVars
+    PB.Analysis.InterpCoverage
     PB.Analysis.SchemaCategory
     PB.Analysis.SchFootprint
     PB.Analysis.DwFootprint
@@ -140,6 +141,7 @@ test-suite pb-compiler-test
     , DataflowTest
     , DeadCodeTest
     , DeadVarsTest
+    , InterpCoverageTest
     , TaintTest
     , DataWindowTest
     , CorpusInvariantTest
