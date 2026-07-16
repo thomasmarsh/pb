@@ -12,7 +12,7 @@ import {
   linkIdentifiers,
   buildObjectMap, buildProcMap, buildVarMap, buildProcCountMap, buildProcFirstLine,
   buildObjectTooltip, buildProcTooltip, buildVarTooltip, buildProcBarTooltip, PROC_BADGE_COLORS,
-  lineFromY, overlayTop, overlayHeight, procSelectedRange, dimmedRanges,
+  lineFromY, overlayTop, overlayHeight, procSelectedRange, dimmedRanges, procedureAtLine,
 } from "@pb/platform";
 
 interface SourceViewerProps {
@@ -109,12 +109,14 @@ export function SourceViewer(props: { store: Store<AppState, AppAction> } & Sour
     const proc = linkType === "procedure" ? procMap().get(lower) : undefined;
     const counts = linkType === "procedure" ? procCountMap().get(lower) : undefined;
     const el = e.currentTarget as HTMLElement;
+    const sourceLine = lineFromY(e.clientY, el.getBoundingClientRect().top, el.scrollTop);
     setMenuTarget({
       linkType, linkName, x: e.clientX, y: e.clientY,
-      sourceLine: lineFromY(e.clientY, el.getBoundingClientRect().top, el.scrollTop),
+      sourceLine,
       callerCount: counts?.caller_count,
       calleeCount: counts?.callee_count,
       procObject: proc?.object,
+      viewedProcName: procedureAtLine(props.procedures, sourceLine)?.name,
     });
   }
 

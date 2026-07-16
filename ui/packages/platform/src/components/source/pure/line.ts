@@ -43,3 +43,12 @@ export function procSelectedRange(
   if (!proc || proc.start_line == null || proc.end_line == null) return null;
   return { start: proc.start_line, end: proc.end_line };
 }
+
+export function procedureAtLine(
+  procedures: ProcedureInfo[],
+  line: number,
+): ProcedureInfo | undefined {
+  return procedures.find(
+    p => p.start_line != null && p.end_line != null && line >= p.start_line && line <= p.end_line
+  );
+}

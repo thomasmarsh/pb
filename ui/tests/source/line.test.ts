@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PIXELS_PER_LINE, lineFromY, overlayTop, overlayHeight, procSelectedRange, dimmedRanges } from "@pb/platform";
+import { PIXELS_PER_LINE, lineFromY, overlayTop, overlayHeight, procSelectedRange, dimmedRanges, procedureAtLine } from "@pb/platform";
 import type { ProcedureInfo } from "@pb/platform";
 
 function makeProc(name: string, start: number | null, end: number | null): ProcedureInfo {
@@ -99,5 +99,30 @@ describe("dimmedRanges", () => {
 
   it("handles a dimmed range at the end only", () => {
     expect(dimmedRanges(5, new Set([1, 2, 3, 4]))).toEqual([{ start: 5, end: 5 }]);
+  });
+});
+
+describe("procedureAtLine", () => {
+  const procs = [makeProc("f_a", 5, 10), makeProc("f_b", 15, 20), makeProc("f_c", 25, null)];
+
+  it("returns the procedure whose range contains the line", () => {
+    expect(procedureAtLine(procs, 7)).toBe(procs[0]);
+  });
+
+  it("matches inclusive of the start and end boundary lines", () => {
+    expect(procedureAtLine(procs, 15)).toBe(procs[1]);
+    expect(procedureAtLine(procs, 20)).toBe(procs[1]);
+  });
+
+  it("returns undefined for a line outside every procedure's range", () => {
+    expect(procedureAtLine(procs, 12)).toBeUndefined();
+  });
+
+  it("returns undefined for a procedure with a null end_line", () => {
+    expect(procedureAtLine(procs, 25)).toBeUndefined();
+  });
+
+  it("returns undefined for an empty procedure list", () => {
+    expect(procedureAtLine([], 1)).toBeUndefined();
   });
 });

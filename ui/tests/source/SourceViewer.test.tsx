@@ -4,7 +4,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { fireEvent, render, cleanup } from "@solidjs/testing-library";
 import { SourceViewer } from "../../app/src/views/components/source/SourceViewer.js";
 import { createTestStore } from "../helpers.js";
-import type { KnownProcInfo } from "@pb/platform";
+import type { KnownProcInfo, ProcedureInfo } from "@pb/platform";
 
 afterEach(() => {
   cleanup();
@@ -24,6 +24,7 @@ const knownProc: KnownProcInfo = {
 
 function renderViewer(opts: {
   lines?: string[];
+  procedures?: ProcedureInfo[];
   knownProcs?: KnownProcInfo[];
   knownObjects?: { name: string; kind: string }[];
   sliceHighlight?: { lines: Set<number>; label: string } | null;
@@ -34,7 +35,7 @@ function renderViewer(opts: {
     <SourceViewer
       store={store}
       lines={opts.lines ?? ["f_helper()"]}
-      procedures={[]}
+      procedures={opts.procedures ?? []}
       knownObjects={opts.knownObjects ?? []}
       knownProcs={opts.knownProcs ?? [knownProc]}
       objectName="w_host"
@@ -149,5 +150,36 @@ describe("SourceViewer", () => {
     const btn = document.querySelector(".source-slice-banner button")!;
     fireEvent.click(btn);
     expect(cleared).toBe(true);
+  });
+
+  const viewedProc: ProcedureInfo = {
+    name: "f_current", proc_type: "function", modifiers: null, params: null,
+    return_type: null, start_line: 1, end_line: 5, cyclomatic: 1,
+  };
+
+  it("right-clicking a call to a procedure in a different object still slices the procedure enclosing the clicked line", () => {
+    const { captured } = renderViewer({ procedures: [viewedProc] });
+    fireEvent.contextMenu(getProcSpan()!, { clientX: 100, clientY: 0 });
+    const btn = [...document.querySelectorAll(".context-menu button")]
+      .find((b) => b.textContent?.includes("Generate backward slice"))!;
+    expect(btn).toBeDefined();
+    fireEvent.click(btn);
+    const a = captured.find(
+      (x) => x.tag === "objects" && (x as any).action.tag === "go-slice",
+    );
+    expect(a).toBeDefined();
+    // f_helper (the clicked span) is owned by w_test — the slice must target
+    // f_current/w_host (the procedure actually enclosing the clicked line
+    // in the currently viewed object), not the clicked identifier's own target.
+    expect((a as any).action.object).toBe("w_host");
+    expect((a as any).action.proc).toBe("f_current");
+    expect((a as any).action.line).toBe(1);
+  });
+
+  it("backward slice menu items are absent when no procedure encloses the clicked line", () => {
+    renderViewer({ procedures: [] });
+    fireEvent.contextMenu(getProcSpan()!, { clientX: 100, clientY: 0 });
+    const allText = document.querySelector(".context-menu")?.textContent ?? "";
+    expect(allText).not.toContain("backward slice");
   });
 });

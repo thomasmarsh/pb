@@ -18,6 +18,7 @@ const procTarget: ContextMenuTarget = {
   sourceLine: 15,
   callerCount: 3,
   calleeCount: 2,
+  viewedProcName: "f_current",
 };
 
 const objectTarget: ContextMenuTarget = {
@@ -26,6 +27,28 @@ const objectTarget: ContextMenuTarget = {
   x: 50,
   y: 80,
   sourceLine: 5,
+};
+
+// The clicked identifier (f_callee) resolves to a different procedure/object than
+// the one actually enclosing the clicked line (f_caller, in the viewed object) —
+// this is the shape that used to slice the wrong procedure entirely.
+const crossObjectProcTarget: ContextMenuTarget = {
+  linkType: "procedure",
+  linkName: "f_callee",
+  x: 100,
+  y: 200,
+  sourceLine: 42,
+  procObject: "w_other_object",
+  viewedProcName: "f_caller",
+};
+
+const varTargetInProc: ContextMenuTarget = {
+  linkType: "var",
+  linkName: "some_var",
+  x: 60,
+  y: 90,
+  sourceLine: 8,
+  viewedProcName: "f_current",
 };
 
 function renderMenu(
@@ -139,32 +162,61 @@ describe("SourceContextMenu", () => {
     expect(allText).not.toContain("backward slice");
   });
 
-  it("Backward slice dispatches go-slice with correct proc and line", () => {
-    const { captured } = renderMenu(procTarget);
-    const btn = [...document.querySelectorAll(".context-menu button")]
-      .find((b) => b.textContent?.toLowerCase().includes("backward slice"))!;
-    expect(btn).toBeDefined();
-    fireEvent.click(btn);
-    expect(captured.some((a) =>
-      a.tag === "objects" && "action" in a &&
-      (a as any).action.tag === "go-slice" &&
-      (a as any).action.proc === "f_validate" &&
-      (a as any).action.line === 15
-    )).toBe(true);
-  });
+  const sliceButtonMatchers: [string, string][] = [
+    ["go-slice", "generate backward slice"],
+    ["highlight-slice", "highlight backward slice"],
+  ];
 
-  it("Highlight backward slice dispatches highlight-slice with correct proc and line", () => {
-    const { captured } = renderMenu(procTarget);
-    const btn = [...document.querySelectorAll(".context-menu button")]
-      .find((b) => b.textContent?.includes("Highlight backward slice"))!;
-    expect(btn).toBeDefined();
-    fireEvent.click(btn);
-    expect(captured.some((a) =>
-      a.tag === "objects" && "action" in a &&
-      (a as any).action.tag === "highlight-slice" &&
-      (a as any).action.proc === "f_validate" &&
-      (a as any).action.line === 15
-    )).toBe(true);
+  for (const [actionTag, buttonText] of sliceButtonMatchers) {
+    it(`${actionTag} dispatches with the viewed procedure and clicked line, not the clicked identifier's own name`, () => {
+      const { captured } = renderMenu(procTarget);
+      const btn = [...document.querySelectorAll(".context-menu button")]
+        .find((b) => b.textContent?.toLowerCase().includes(buttonText))!;
+      expect(btn).toBeDefined();
+      fireEvent.click(btn);
+      expect(captured.some((a) =>
+        a.tag === "objects" && "action" in a &&
+        (a as any).action.tag === actionTag &&
+        (a as any).action.object === "w_payment" &&
+        (a as any).action.proc === "f_current" &&
+        (a as any).action.line === 15
+      )).toBe(true);
+    });
+
+    it(`${actionTag} targets the viewed object/procedure, not the clicked identifier's own resolved object/procedure`, () => {
+      const { captured } = renderMenu(crossObjectProcTarget);
+      const btn = [...document.querySelectorAll(".context-menu button")]
+        .find((b) => b.textContent?.toLowerCase().includes(buttonText))!;
+      expect(btn).toBeDefined();
+      fireEvent.click(btn);
+      expect(captured.some((a) =>
+        a.tag === "objects" && "action" in a &&
+        (a as any).action.tag === actionTag &&
+        (a as any).action.object === "w_payment" &&
+        (a as any).action.proc === "f_caller" &&
+        (a as any).action.line === 42
+      )).toBe(true);
+    });
+
+    it(`${actionTag} is available when right-clicking a variable inside a procedure`, () => {
+      const { captured } = renderMenu(varTargetInProc);
+      const btn = [...document.querySelectorAll(".context-menu button")]
+        .find((b) => b.textContent?.toLowerCase().includes(buttonText));
+      expect(btn).toBeDefined();
+      fireEvent.click(btn!);
+      expect(captured.some((a) =>
+        a.tag === "objects" && "action" in a &&
+        (a as any).action.tag === actionTag &&
+        (a as any).action.proc === "f_current" &&
+        (a as any).action.line === 8
+      )).toBe(true);
+    });
+  }
+
+  it("slice buttons are absent when no procedure encloses the clicked line", () => {
+    renderMenu(objectTarget);
+    const allText = document.querySelector(".context-menu")?.textContent ?? "";
+    expect(allText).not.toContain("backward slice");
   });
 
   it("Escape key calls onClose", () => {

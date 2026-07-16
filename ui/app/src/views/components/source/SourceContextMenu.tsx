@@ -13,6 +13,7 @@ export interface ContextMenuTarget {
   callerCount?: number;
   calleeCount?: number;
   procObject?: string;
+  viewedProcName?: string;
 }
 
 export interface ContextActions {
@@ -92,33 +93,39 @@ export function SourceContextMenu(props: SourceContextMenuProps): JSX.Element {
               </button>
 
               <button
-                onClick={() => act(() => {
-                  props.store.dispatch({
-                    tag: "objects",
-                    action: { tag: "go-slice", object: resolvedObject(), proc: name(), line: t().sourceLine, direction: "backward" },
-                  });
-                })}
-              >
-                Generate backward slice
-              </button>
-
-              <button
-                onClick={() => act(() => {
-                  props.store.dispatch({
-                    tag: "objects",
-                    action: { tag: "highlight-slice", object: resolvedObject(), proc: name(), line: t().sourceLine, direction: "backward" },
-                  });
-                })}
-              >
-                Highlight backward slice in source
-              </button>
-
-              <button
                 disabled={!ca()?.onViewTaint}
                 onClick={() => { if (ca()?.onViewTaint) act(() => ca()!.onViewTaint!(name(), resolvedObject())); }}
               >
                 View taint paths
               </button>
+            </Show>
+
+            <Show when={t().viewedProcName}>
+              {(viewedProcName) => (
+                <>
+                  <button
+                    onClick={() => act(() => {
+                      props.store.dispatch({
+                        tag: "objects",
+                        action: { tag: "go-slice", object: props.objectName, proc: viewedProcName(), line: t().sourceLine, direction: "backward" },
+                      });
+                    })}
+                  >
+                    Generate backward slice
+                  </button>
+
+                  <button
+                    onClick={() => act(() => {
+                      props.store.dispatch({
+                        tag: "objects",
+                        action: { tag: "highlight-slice", object: props.objectName, proc: viewedProcName(), line: t().sourceLine, direction: "backward" },
+                      });
+                    })}
+                  >
+                    Highlight backward slice in source
+                  </button>
+                </>
+              )}
             </Show>
           </div>
         );
