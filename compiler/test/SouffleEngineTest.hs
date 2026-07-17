@@ -12,11 +12,11 @@ import PB.Analysis.Rules.DeadCode qualified as DeadCode
 import PB.Analysis.Rules.Schema qualified as Schema
   ( reachesRules, cosliceRules )
 
-import Data.IORef        (modifyIORef, newIORef, readIORef)
+import Data.IORef        (modifyIORef, newIORef, readIORef, writeIORef)
 import qualified Data.List  as List (elemIndex)
 import qualified Data.Text as T
 import Test.Tasty       (TestTree, testGroup)
-import Test.Tasty.HUnit ((@?=), testCase)
+import Test.Tasty.HUnit ((@?=), assertBool, assertFailure, testCase)
 
 -- Small helpers to build rule sets by relation name, keeping the dependency
 -- tests readable. A rule set "produces" its rsRelations and "consumes" any
@@ -81,6 +81,27 @@ souffleHooksTests = testGroup "SouffleHooks"
         runRuleSetWithStart hooks conn (identityRuleSet rel)
         fired <- readIORef ref
         fired @?= [("hook_in2_out", Nothing), ("hook_in2_out", Just 2)]
+
+  , testCase "onRuleSetFinish fires once, after every onIdbRelation call, with a non-negative elapsed time" $
+      withWriteConn ":memory:" $ \conn -> do
+        let rel = symRelation "hook_in3" ["c1"]
+        recreateTextTable conn (relName rel) (colNames rel)
+        appendTextRows conn (relName rel) [["x"]]
+        order <- newIORef []
+        elapsedRef <- newIORef Nothing
+        let hooks = noSouffleHooks
+              { onIdbRelation  = \r _ -> modifyIORef order (++ [relName r])
+              , onRuleSetFinish = \_ ms -> do
+                  modifyIORef order (++ ["finish"])
+                  writeIORef elapsedRef (Just ms)
+              }
+        runRuleSetWithStart hooks conn (identityRuleSet rel)
+        firedOrder <- readIORef order
+        firedOrder @?= ["hook_in3_out", "hook_in3_out", "finish"]
+        mMs <- readIORef elapsedRef
+        case mMs of
+          Just ms -> assertBool "elapsed ms should be non-negative" (ms >= 0)
+          Nothing -> assertFailure "onRuleSetFinish never fired"
   ]
 
 orderRuleSetsTests :: TestTree

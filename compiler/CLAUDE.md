@@ -864,6 +864,18 @@ data SouffleHooks = SouffleHooks
     -- NEW: fires periodically (elapsed seconds) while souffle itself is
     -- running, via PB.Pipeline.Progress.withHeartbeat (15s interval,
     -- hardcoded in runRuleSetWithStart)
+  , onRuleSetFinish :: RuleSet -> Double -> IO ()
+    -- Fires once per ruleset, after the souffle subprocess has exited AND
+    -- every IDB relation has been read back into DuckDB -- elapsed_ms
+    -- covers the entire span from just before onRuleSetStart to here, the
+    -- actual cost of the ruleset's Datalog evaluation. Before this field
+    -- existed that span had NO timing anywhere in the progress protocol
+    -- (onEdbFact only covers the cheap pre-subprocess fact-writing loop;
+    -- onHeartbeat only fires past a 15s tick), so every real production
+    -- incident this protocol exists to diagnose (risk_count,
+    -- implied_fk_pairs, taint_reaches/taint_confirmed) rendered with no
+    -- duration in the diagnostics report at all -- found via direct Stage 0
+    -- reading of runRuleSetWithStart, not a corpus run.
   }
 noSouffleHooks :: SouffleHooks   -- every field a no-op
 runRuleSetWithStart  :: SouffleHooks -> DuckConn -> RuleSet -> IO ()
@@ -874,7 +886,12 @@ runRuleSetsWithStart :: SouffleHooks -> DuckConn -> [RuleSet] -> IO ()
 -- "before" Nothing case) so none of the ~30 existing test call sites
 -- (SouffleDeadCodeTest/SouffleSchemaTest/SouffleTaintTest/SouffleFuzzTest)
 -- needed touching. PB.Pipeline.Passes.runPhaseB builds the real SouffleHooks
--- value (souffleHooks) wiring all four fields to PB.Pipeline.Progress.emitEvent.
+-- value (souffleHooks) wiring all five fields to PB.Pipeline.Progress.emitEvent.
+-- souffleStart/souffleFinish share one souffleLabel :: RuleSet -> Text
+-- helper (no row counts baked into the label text -- those live entirely in
+-- the structured edb_rows field) so the two events carry an IDENTICAL label
+-- and the Python DiagnosticsCollector's flush-on-label-change pairing
+-- merges them into one report row (start's edb_rows + finish's elapsed_ms).
 
 ```
 

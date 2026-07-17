@@ -217,16 +217,30 @@ data SouffleHooks = SouffleHooks
     -- @souffle@ subprocess itself is running, so a long in-Souffle
     -- evaluation doesn't go dark between 'onRuleSetStart' and
     -- 'onIdbRelation'.
+  , onRuleSetFinish :: RuleSet -> Double -> IO ()
+    -- ^ Fires once per ruleset, after the @souffle@ subprocess has exited
+    -- AND every IDB relation has been read back and materialized into
+    -- DuckDB -- the elapsed milliseconds cover the entire span from right
+    -- before 'onRuleSetStart' fires to here, i.e. the actual cost of
+    -- running this ruleset's Datalog evaluation. Before this hook existed,
+    -- that span had NO timing anywhere: 'onEdbFact' only covers the cheap
+    -- pre-subprocess fact-writing loop, and 'onHeartbeat' only fires if the
+    -- subprocess outlives its 15s tick interval, so a ruleset finishing in
+    -- under 15s produced zero duration data at all. Every real production
+    -- incident this progress protocol exists to diagnose (@risk_count@,
+    -- @implied_fk_pairs@, @taint_reaches@\/@taint_confirmed@) is exactly
+    -- this span.
   }
 
 -- | Every hook is a no-op -- the base value every non-instrumented caller
 -- (including every existing test) starts from and overrides selectively.
 noSouffleHooks :: SouffleHooks
 noSouffleHooks = SouffleHooks
-  { onRuleSetStart = \_ _ -> pure ()
-  , onEdbFact      = \_ _ _ -> pure ()
-  , onIdbRelation  = \_ _ -> pure ()
-  , onHeartbeat    = \_ -> pure ()
+  { onRuleSetStart  = \_ _ -> pure ()
+  , onEdbFact       = \_ _ _ -> pure ()
+  , onIdbRelation   = \_ _ -> pure ()
+  , onHeartbeat     = \_ -> pure ()
+  , onRuleSetFinish = \_ _ -> pure ()
   }
 
 -- | Export EDB facts, run @souffle@, import IDB output back into DuckDB --
@@ -239,6 +253,7 @@ runRuleSetWithStart hooks conn rs =
         progFile = dir </> "program.dl"
     createDirectoryIfMissing True factsDir
     createDirectoryIfMissing True outDir
+    tRs0 <- getCurrentTime
     counts <- mapM (\rel -> do
       t0 <- getCurrentTime
       rows <- queryTextRows conn (relName rel) (colNames rel)
@@ -272,6 +287,8 @@ runRuleSetWithStart hooks conn rs =
       recreateTextTable conn (relName rel) (colNames rel)
       appendTextRows conn (relName rel) rows
       onIdbRelation hooks rel (Just (length rows))
+    tRs1 <- getCurrentTime
+    onRuleSetFinish hooks rs (msBetween tRs0 tRs1)
 
 -- | Milliseconds elapsed between two timestamps.
 msBetween :: UTCTime -> UTCTime -> Double

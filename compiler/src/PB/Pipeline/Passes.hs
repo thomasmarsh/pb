@@ -76,6 +76,18 @@ souffleProgress rel (Just n) =
     ("Datalog: " <> Souffle.relName rel <> " materialized (" <> T.pack (show n) <> " rows)")
     Nothing [] [(Souffle.relName rel, n)] Nothing)
 
+-- | Stable per-ruleset progress-event label, shared by 'souffleStart' and
+-- 'souffleFinish' so the Python 'DiagnosticsCollector' (which flushes a
+-- report row only when the @"step"@ event label changes) pairs the two into
+-- one row carrying both the start event's @edb_rows@ and the finish event's
+-- @elapsed_ms@ -- row counts live entirely in the structured fields, not
+-- baked into the label text, so the label stays identical between the two
+-- events regardless of what those counts are.
+souffleLabel :: Souffle.RuleSet -> Text
+souffleLabel rs = "Datalog: running ["
+  <> T.intercalate ", " (map Souffle.relName (Souffle.rsRelations rs))
+  <> "]"
+
 -- | Fires right before each ruleset's @souffle@ subprocess starts (see
 -- 'Souffle.runRuleSetWithStart'), naming which ruleset is about to run and
 -- its EDB relations' exact row counts -- fixes 'souffleProgress'\'s own
@@ -83,16 +95,23 @@ souffleProgress rel (Just n) =
 -- ACTUALLY executing, not just what last finished.
 souffleStart :: Souffle.RuleSet -> [(Souffle.Relation, Int)] -> IO ()
 souffleStart rs counts = Progress.emitEvent (Progress.EvStep
-  ("Datalog: running ["
-    <> T.intercalate ", " (map Souffle.relName (Souffle.rsRelations rs))
-    <> "] (" <> T.intercalate ", "
-         [ Souffle.relName rel <> ": " <> T.pack (show n) <> " rows"
-         | (rel, n) <- counts ]
-    <> ")")
+  (souffleLabel rs)
   Nothing
   [ (Souffle.relName rel, n) | (rel, n) <- counts ]
   []
   Nothing)
+
+-- | Fires once the ruleset's @souffle@ subprocess has exited and every IDB
+-- relation has been read back into DuckDB -- the actual cost of running
+-- this ruleset's Datalog evaluation, previously untimed anywhere (see
+-- 'Souffle.SouffleHooks'\' 'Souffle.onRuleSetFinish' doc comment). Shares
+-- 'souffleLabel' with 'souffleStart' so the diagnostics report renders one
+-- row per ruleset with a real duration instead of two disconnected,
+-- undurated rows.
+souffleFinish :: Souffle.RuleSet -> Double -> IO ()
+souffleFinish rs elapsedMs = do
+  mResidency <- Progress.residencySnapshot
+  Progress.emitEvent (Progress.EvStep (souffleLabel rs) (Just elapsedMs) [] [] mResidency)
 
 -- | Fires once per EDB relation, immediately after that relation's facts
 -- are queried and written into its @.facts@ file -- the concrete fix for a
@@ -121,10 +140,11 @@ souffleHeartbeat elapsedSec = do
 -- rule set run.
 souffleHooks :: Souffle.SouffleHooks
 souffleHooks = Souffle.noSouffleHooks
-  { Souffle.onRuleSetStart = souffleStart
-  , Souffle.onEdbFact      = souffleEdbFact
-  , Souffle.onIdbRelation  = souffleProgress
-  , Souffle.onHeartbeat    = souffleHeartbeat
+  { Souffle.onRuleSetStart  = souffleStart
+  , Souffle.onEdbFact       = souffleEdbFact
+  , Souffle.onIdbRelation   = souffleProgress
+  , Souffle.onHeartbeat     = souffleHeartbeat
+  , Souffle.onRuleSetFinish = souffleFinish
   }
 
 -- | Characterize @leg_source@'s (x, y) key fan-in before 'SchemaRules.legRules'
