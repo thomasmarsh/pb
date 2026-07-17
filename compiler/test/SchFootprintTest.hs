@@ -3,6 +3,7 @@ module SchFootprintTest (tests) where
 import PB.Prelude hiding (id, (.))
 import PB.AST.DataWindow      (DataWindowFile (..), DwTable (..), DwRetrieve (..), DwRetrieveOrRaw (..))
 import PB.AST.Expr            (Expr (..), Lvalue (..), LvSegment (..))
+import PB.AST.Ident           (mkIdent)
 import PB.AST.Located        (Located (..))
 import PB.AST.SourceFile      (SrFile (..), EventBlock (..), EventSig (..), SubroutineBlock (..), SubSig (..))
 import PB.Compile.IR         (Category (..), Cartesian (..), Cocartesian (..),
@@ -76,7 +77,7 @@ ctx1 = FunctorCtx
   }
 
 lvExpr :: Text -> Expr
-lvExpr n = ExLvalue (Lvalue [LvSegment n Nothing])
+lvExpr n = ExLvalue (Lvalue [LvSegment (mkIdent n) Nothing])
 
 -- Content is arbitrary: only used to exercise Set union as a monoid.
 morphismA, morphismB, morphismC, morphismD, morphismE :: SchMorphism
@@ -127,7 +128,7 @@ tests = testGroup "SchFootprint"
 
   , testGroup "force-time memo (Plan 167 Phase 1): foldSchFootprintEff stays linear on a shared-merge-block DAG"
     [ testCase "18 sequential if/else groups: forces each ELetRef once, not 2^18 re-forces" $ do
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+        let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
             group base =
               [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
                   [Located (base P.+ 2) (BsCall (call ("a" <> T.pack (show base))))] []
@@ -152,10 +153,10 @@ tests = testGroup "SchFootprint"
             (bytes P.< 5 P.* 1000 P.* 1000)
 
     , testCase "7 sequential choose/case blocks, 8 clauses each: forces linear, not 2^N" $ do
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+        let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
             chooseGroup g =
               Located (g P.* 100) (BsChoose (ChooseStmt
-                (ExLvalue (Lvalue [LvSegment ("s" <> T.pack (show g)) Nothing]))
+                (ExLvalue (Lvalue [LvSegment (mkIdent ("s" <> T.pack (show g))) Nothing]))
                 [ CaseClause Nothing
                     [Located (g P.* 100 P.+ i) (BsCall (call ("c" <> T.pack (show g) <> "_" <> T.pack (show i))))]
                 | i <- [1 .. 8 :: Int] ]))
@@ -177,7 +178,7 @@ tests = testGroup "SchFootprint"
             (bytes P.< 20 P.* 1000 P.* 1000)
 
     , testCase "scaling ratio: 20 vs 10 if/else switches allocates <5x (near-linear), not ~600x" $ do
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+        let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
             mkBody n = concatMap group [ i P.* 4 | i <- [0 .. n P.- 1] ]
               where
                 group base =
@@ -261,7 +262,7 @@ tests = testGroup "SchFootprint"
         foldSchFootprintEff ctx1 (extractEffTable (ECall "dw_dest.Retrieve" [] :: Eff () ())) @?= Set.empty
 
     , testCase "18 sequential if/else groups: allocates < 20MB, not 2^18 blowup" $ do
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+        let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
             group base =
               [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
                   [Located (base P.+ 2) (BsCall (call ("a" <> T.pack (show base))))] []

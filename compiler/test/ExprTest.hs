@@ -568,6 +568,13 @@ tests = testGroup "Expr"
     , testProperty "total: parseExpr never raises" propParseExprTotal
     , testProperty "roundtrip: ExRaw tokens identical to input" propExRawRoundtrip
     ]
+
+  , testGroup "LvSegment case-insensitive equality (Plan 178 Phase 2)"
+    [ testCase "name differing only in case -> equal (PB identifiers are case-insensitive)" $
+        LvSegment "Foo" Nothing @?= LvSegment "foo" Nothing
+    , testCase "distinct names -> unequal" $
+        (LvSegment "Foo" Nothing == LvSegment "Bar" Nothing) @?= False
+    ]
   ]
 
 -- ---------------------------------------------------------------------------

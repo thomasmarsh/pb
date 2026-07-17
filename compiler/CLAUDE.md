@@ -323,20 +323,22 @@ identSetOrigTexts :: IdentSet -> Set.Set Text
 -- originally-declared spellings an IdentSet recovers on lookup.
 ```
 
-Only `TypeDecl.tdName` is `Ident` so far (Phase 1's pilot conversion,
-`PB.AST.SourceFile`). Every other identifier-bearing AST field
-(`LvSegment.name`, `VarDecl.vdName`, `GlobalInstance.giName`, `FnSig.fnsName`,
-etc.) is still `Text` — see `doc/plan/178-canonical-identifier.md`'s
-"Deferred scope" for the ordered rollout. `TypeDecl.tdAncestor` stays `Text`
-deliberately (raw `AncestorClass\`LocalName` backtick-compound syntax, not a
-single identifier — `splitAncestorRef` parses it further).
+`TypeDecl.tdName` (Phase 1) and `LvSegment.name` (Phase 2, `PB.AST.Expr`) are
+`Ident`. Every other identifier-bearing AST field (`VarDecl.vdName`,
+`GlobalInstance.giName`, `FnSig.fnsName`, etc.) is still `Text` — see
+`doc/plan/178-canonical-identifier.md`'s "Deferred scope" for the ordered
+rollout. `TypeDecl.tdAncestor` stays `Text` deliberately (raw
+`AncestorClass\`LocalName` backtick-compound syntax, not a single identifier
+— `splitAncestorRef` parses it further).
 
 ### `PB.AST.Expr`
 
 ```haskell
 -- Field names are unprefixed (record-dot disambiguation under
--- DuplicateRecordFields). Token lists are [Text], NOT [Token].
-data LvSegment = LvSegment { name :: Text, subscript :: Maybe [Text] }
+-- DuplicateRecordFields). Token lists are [Text], NOT [Token]. name's
+-- derived Eq is case-insensitive (Ident's own Eq, Plan 178 Phase 2) --
+-- propagates to Lvalue's and Expr's own derived Eq for free.
+data LvSegment = LvSegment { name :: Ident, subscript :: Maybe [Text] }
 newtype Lvalue = Lvalue { segments :: [LvSegment] }   -- non-empty
 
 data BinOp
@@ -1455,7 +1457,14 @@ resolveReceiverType :: ScopedTypeEnv -> Expr -> Maybe Text
 -- `foo().bar()`) deliberately left single-segment-only -- that's call
 -- return-type inference, a different unsolved problem, out of D4's scope.
 calleeName :: Expr -> Text
-segName :: LvSegment -> Text
+segName :: LvSegment -> Ident
+-- Ident since Plan 178 Phase 2 (LvSegment.name migration). Callers use
+-- identCanon for case-insensitive lookups (classifyExpr/classifyEffects/
+-- resolveLvalueType/resolveReceiverType/isTriggerEvent), identOrig for
+-- display (calleeName/lvHead). segName is redefined identically as a local
+-- helper in TypeCheck.hs/TypeResolve.hs/DwFootprint.hs/Dataflow.hs -- not
+-- shared, each returns Ident too (Dataflow.hs's own segName shims back to
+-- Text via identOrig -- see its module entry below).
 lvHead :: Lvalue -> Text
 isTriggerEvent :: Lvalue -> Bool
 parseArgList      :: [Token] -> Expr                            -- imported by CatLower, CatEval
@@ -1608,6 +1617,12 @@ linearize :: InstrGraph' p -> InstrGraph
 
 ```haskell
 -- Pure intra-procedural dataflow: def-use + reaching definitions + live variables.
+-- lvRoot/walkExprIdents's local segName shims LvSegment.name's Ident back to
+-- Text via identOrig (Plan 178 Phase 2) -- var-name matching here is
+-- exact-Text, not case-folded, unlike every other segName consumer in the
+-- codebase. See BACKLOG's case-sensitivity finding: this may be a latent
+-- correctness gap (PB variable names are case-insensitive), deliberately
+-- not fixed in Phase 2 since it changes def/use matching behavior.
 extractDefsUses      :: CfgBlock -> BlockFlow
 extractSqlHostVars   :: Text -> [Text]   -- :identifier host-var names from raw embedded SQL text; also PB.Analysis.Taint's single source for this extraction (see that module's entry)
 reachingDefinitions  :: Cfg -> Map Text BlockFlow -> (Map Text (Set Text), Map Text (Set Text))

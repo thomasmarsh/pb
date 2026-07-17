@@ -3,6 +3,7 @@ module DataflowTest (tests) where
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr         (Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Ident        (mkIdent)
 import PB.AST.Type         (PbType (..))
 import PB.AST.Located      (Located (..))
 import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
@@ -26,7 +27,7 @@ at :: Int -> a -> Located a
 at n x = Located n x
 
 lv1 :: Text -> Lvalue
-lv1 n = Lvalue [LvSegment n Nothing]
+lv1 n = Lvalue [LvSegment (mkIdent n) Nothing]
 
 tok :: Text -> Token
 tok t = case lexResult (tokenizeLine ll) of

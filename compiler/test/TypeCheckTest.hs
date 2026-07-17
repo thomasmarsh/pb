@@ -6,7 +6,7 @@ import qualified Data.Set        as Set
 
 import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Ident       (identSetEmpty, identSetFromList, identSetSingleton)
+import PB.AST.Ident       (identSetEmpty, identSetFromList, identSetSingleton, mkIdent)
 import PB.AST.Located     (Located (..))
 import PB.AST.Type        (PbType (..))
 import PB.Analysis.ControlHierarchy (ControlDecl (..))
@@ -39,16 +39,16 @@ scope1 :: Map.Map Text TypeFamily
 scope1 = Map.fromList [("li_x", FamNumeric), ("ls_y", FamString), ("lb_z", FamBoolean)]
 
 varE :: Text -> Expr
-varE n = ExLvalue (Lvalue [LvSegment n Nothing])
+varE n = ExLvalue (Lvalue [LvSegment (mkIdent n) Nothing])
 
 callE :: Text -> Expr
-callE n = ExCall { callee = Lvalue [LvSegment n Nothing], callArgs = [] }
+callE n = ExCall { callee = Lvalue [LvSegment (mkIdent n) Nothing], callArgs = [] }
 
 assignStmt :: Text -> Expr -> Int -> Located BodyStmt
-assignStmt n rhs line = Located line (BsAssign (Lvalue [LvSegment n Nothing]) rhs)
+assignStmt n rhs line = Located line (BsAssign (Lvalue [LvSegment (mkIdent n) Nothing]) rhs)
 
 subscriptAssignStmt :: Text -> Expr -> Int -> Located BodyStmt
-subscriptAssignStmt n rhs line = Located line (BsAssign (Lvalue [LvSegment n (Just ["1"])]) rhs)
+subscriptAssignStmt n rhs line = Located line (BsAssign (Lvalue [LvSegment (mkIdent n) (Just ["1"])]) rhs)
 
 returnStmt :: Expr -> Int -> Located BodyStmt
 returnStmt e line = Located line (BsReturn (Just e))
@@ -73,7 +73,7 @@ identTok :: Text -> [Token]
 identTok n = [mkTok TkIdent n]
 
 callWithArgs :: Text -> [[Token]] -> Expr
-callWithArgs n args = ExCall { callee = Lvalue [LvSegment n Nothing], callArgs = args }
+callWithArgs n args = ExCall { callee = Lvalue [LvSegment (mkIdent n) Nothing], callArgs = args }
 
 -- | Token list for @name(argToks)@ -- one argument, itself a call -- used to
 -- build a "nested call as argument" fixture.

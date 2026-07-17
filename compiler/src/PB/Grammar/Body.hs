@@ -17,6 +17,7 @@ import PB.AST.BodyStmt
 import PB.AST.Expr        ( BinOp (..), Expr (..)
                           , DispatchExpr (..), DispatchMode (..)
                           , LvSegment (..), Lvalue (..) )
+import PB.AST.Ident       (mkIdent)
 import PB.AST.Located     (Located (..))
 import PB.AST.Type         (PbType (..))
 import PB.Grammar.Stream  (FileParser, satisfyStmt, isModifierToken, currentLine)
@@ -110,7 +111,7 @@ lvaluePrefix = goSegs
     goSegs (t:rest)
       | isSegmentName t = do
           (msub, afterSub) <- consumeSub rest
-          let seg = LvSegment (tkText t) msub
+          let seg = LvSegment (mkIdent (tkText t)) msub
           case afterSub of
             (dot:more) | tkKind dot == TkDot ->
               case goSegs more of
@@ -354,9 +355,9 @@ parseSingleToken t = case tkKind t of
   TkDateLiteral -> ExDate (tkText t)
   TkTimeLiteral -> ExTime (tkText t)
   TkEnumLiteral -> ExEnum (T.dropEnd 1 (tkText t))
-  TkIdent       -> ExLvalue (Lvalue [LvSegment (tkText t) Nothing])
-  TkOtherKw     -> ExLvalue (Lvalue [LvSegment (tkText t) Nothing])
-  TkDatatype    -> ExLvalue (Lvalue [LvSegment (tkText t) Nothing])
+  TkIdent       -> ExLvalue (Lvalue [LvSegment (mkIdent (tkText t)) Nothing])
+  TkOtherKw     -> ExLvalue (Lvalue [LvSegment (mkIdent (tkText t)) Nothing])
+  TkDatatype    -> ExLvalue (Lvalue [LvSegment (mkIdent (tkText t)) Nothing])
   _             -> ExRaw [tkText t]
 
 -- ---------------------------------------------------------------------------

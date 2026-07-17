@@ -20,6 +20,7 @@ module GoldenFixtureTest (tests) where
 
 import PB.Prelude
 import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Ident        (mkIdent)
 import PB.AST.Type         ()
 import PB.AST.BodyStmt     (BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..), DoCondition (..),
                             ChooseStmt (..), CaseClause (..))
@@ -55,7 +56,7 @@ emptyEnv :: ScopedTypeEnv
 emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty "" Map.empty
 
 lv :: Text -> Lvalue
-lv n = Lvalue [LvSegment n Nothing]
+lv n = Lvalue [LvSegment (mkIdent n) Nothing]
 
 ex :: Text -> Expr
 ex n = ExLvalue (lv n)

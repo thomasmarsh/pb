@@ -3,6 +3,7 @@ module CfgTest (tests) where
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr         (Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Ident        (mkIdent)
 import PB.AST.Located      (Located (..))
 import PB.Analysis.Cfg
 import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
@@ -31,7 +32,7 @@ at n x = Located n x
 
 -- A minimal lvalue with one segment.
 lv1 :: Text -> Lvalue
-lv1 n = Lvalue [LvSegment n Nothing]
+lv1 n = Lvalue [LvSegment (mkIdent n) Nothing]
 
 -- A minimal int-literal token for case-clause values.
 tok :: Text -> Token

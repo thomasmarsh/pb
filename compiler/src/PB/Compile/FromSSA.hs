@@ -8,6 +8,7 @@ module PB.Compile.FromSSA
 
 import PB.Prelude hiding (id, (.), lookup)
 import PB.AST.Expr (Expr (..), Lvalue (..), BinOp (BopEq))
+import PB.AST.Ident (identCanon, identOrig)
 import PB.Compile.IR (Category (..), Eff (..), EffTerm (..), Pure (..), branchEff)
 import PB.Compile.LoopAnalysis (CompileCtx (..), computeMergePoints, ssaValToExpr,
                               computeLoopHeaders, computeAllLoopExits, isLoopExit)
@@ -18,7 +19,6 @@ import PB.Compile.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                          SsaTerm (..), SsaProc (..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import qualified Data.Text as T
 import Unsafe.Coerce (unsafeCoerce)
 
 -- | Parallel to 'compileSsa': compile an SSA procedure into an 'EffTerm'.
@@ -205,11 +205,11 @@ compileCallExprToEff ctx _sv expr lv parsedArgs
   | isTriggerEvent lv =
       ECall "triggerevent" [evArg]
   | [seg] <- segments lv
-  , T.toLower (segName seg) == "fn_retrievechild" =
+  , identCanon (segName seg) == "fn_retrievechild" =
       ESuspend (effectName expr parsedArgs) paramArg
   | [seg] <- segments lv
-  , T.toLower (segName seg) `Set.member` ccUserFns ctx =
-      ECall (segName seg) parsedArgs
+  , identCanon (segName seg) `Set.member` ccUserFns ctx =
+      ECall (identOrig (segName seg)) parsedArgs
   | otherwise = case classifyExpr (ccEnv ctx) expr of
       SuspendCall -> ESuspend (effectName expr parsedArgs) parsedArgs
       PureCall -> ECall (calleeName expr) parsedArgs

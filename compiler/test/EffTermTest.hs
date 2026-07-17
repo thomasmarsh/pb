@@ -2,6 +2,7 @@ module EffTermTest (tests) where
 
 import PB.Prelude hiding (id, (.))
 import qualified Prelude as P
+import PB.AST.Ident        (mkIdent)
 import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..),
                             DispatchExpr (..), DispatchMode (..))
 import PB.AST.Type         (PbType (..))
@@ -520,7 +521,7 @@ tests = testGroup "EffTerm"
         -- Mirrors w_frame_menu_functions::destroy: the implicit "condition false"
         -- edge and the then-arm's fallthrough both converge on the same merge block,
         -- which holds the real trailing calls.
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+        let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
             body = [ Located 1 (BsIf (IfStmt (ExBool True) [Located 2 (BsCall (call "callA"))] [] Nothing))
                    , Located 3 (BsCall (call "callB"))
                    , Located 4 (BsCall (call "callC"))
@@ -534,7 +535,7 @@ tests = testGroup "EffTerm"
     , testCase "if/else, both arms: shared trailing calls survive on both paths" $
         -- Mirrors the mechanism behind w_dw_functions::clicked: both the then-arm and
         -- the else-arm converge on the same merge block holding real trailing calls.
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+        let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
             body = [ Located 1 (BsIf (IfStmt (ExBool True)
                        [Located 2 (BsCall (call "callA"))] []
                        (Just [Located 3 (BsCall (call "callB"))])))
@@ -549,7 +550,7 @@ tests = testGroup "EffTerm"
         -- Mirrors the exact real-world procedure this bug was root-caused from:
         -- an outer if containing an inner if/else, followed by two more calls that
         -- both inner arms must reach.
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+        let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
             innerIf = BsIf (IfStmt (ExBool True)
                         [Located 3 (BsCall (call "callA"))] []
                         (Just [Located 4 (BsCall (call "callB"))]))
@@ -566,7 +567,7 @@ tests = testGroup "EffTerm"
 
   , testGroup "GraphBuilder node-sharing: sequential merge points stay linear, not exponential (Plan 150)"
     [ testCase "4 sequential if/else groups: node count stays linear, not 2^4 = 16x" $
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+        let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
             group (thenN, elseN, tailN, base) =
               [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
                   [Located (base P.+ 2) (BsCall (call thenN))] []
@@ -584,7 +585,7 @@ tests = testGroup "EffTerm"
              (nodeCount P.< 40)
 
     , testCase "4 sequential if/else groups: old and new compilers agree on call counts per path" $
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+        let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
             group (thenN, elseN, tailN, base) =
               [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
                   [Located (base P.+ 2) (BsCall (call thenN))] []
@@ -641,7 +642,7 @@ tests = testGroup "EffTerm"
         -- Same fixture as the compileBlock-memoization tests above: the
         -- trailing callC/callD block is reached from both the then-arm and
         -- the else-arm.
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+        let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
             body = [ Located 1 (BsIf (IfStmt (ExBool True)
                        [Located 2 (BsCall (call "callA"))] []
                        (Just [Located 3 (BsCall (call "callB"))])))
@@ -666,7 +667,7 @@ tests = testGroup "EffTerm"
              other -> assertFailure ("expected exactly 1 distinct callC node, got " <> show (length other))
 
     , testCase "4 sequential if/else groups: shared-tail call counts stay uniform (memoTag prevents duplication)" $
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+        let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
             group (thenN, elseN, tailN, base) =
               [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
                   [Located (base P.+ 2) (BsCall (call thenN))] []
@@ -1301,7 +1302,7 @@ tests = testGroup "EffTerm"
              other -> assertFailure ("expected exactly 1 InstrBranch node, got " <> show (length other))
 
     , testCase "if/else with shared tail: canonical shape" $
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+        let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
             body = [ Located 1 (BsIf (IfStmt (ExBool True)
                        [Located 2 (BsCall (call "callA"))] []
                        (Just [Located 3 (BsCall (call "callB"))])))
@@ -1312,7 +1313,7 @@ tests = testGroup "EffTerm"
         in shape @?= [SBrnch 1 2, SCall 3, SCall 3, SCall 4, SCall 5, SRet]
 
     , testCase "nested if inside if/else with shared trailing calls: canonical shape" $
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+        let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
             innerIf = BsIf (IfStmt (ExBool True)
                         [Located 3 (BsCall (call "callA"))] []
                         (Just [Located 4 (BsCall (call "callB"))]))
@@ -1346,7 +1347,7 @@ tests = testGroup "EffTerm"
         in shape @?= [SBrnch 1 2, SCall 3, SBrnch 4 5, SRet, SCall 3, SBrnch 6 7, SCall 3, SCall 3]
 
     , testCase "4 sequential if/else groups: per-path call counts stay uniform (memoTag prevents duplication)" $
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+        let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
             group (thenN, elseN, tailN, base) =
               [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
                   [Located (base P.+ 2) (BsCall (call thenN))] []
@@ -1362,7 +1363,7 @@ tests = testGroup "EffTerm"
         in pathCallCounts shape @?= expectedCounts
 
     , testCase "18 sequential if/else groups via foldFreyd/NGB: allocates < 20MB, not 2^18 blowup (memoTag)" $ do
-        let call n = ExCall (Lvalue [LvSegment n Nothing]) []
+        let call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
             group base =
               [ Located (base P.+ 1) (BsIf (IfStmt (ExBool True)
                   [Located (base P.+ 2) (BsCall (call ("a" <> T.pack (show base))))] []

@@ -16,6 +16,7 @@ module PB.Compile.ValueModel
 
 import PB.Prelude
 import PB.AST.Expr (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Ident (identOrig)
 import PB.Analysis.CallClassify (calleeName, parseArgList)
 import PB.Lexing.Token (Token)
 import GHC.Generics (Generic)
@@ -98,7 +99,7 @@ evalExprMocked _     _   (ExInt t)  = VInt (fromMaybe 0 (readMaybe (T.unpack t))
 evalExprMocked _     _   (ExReal t) = VReal (fromMaybe 0.0 (readMaybe (T.unpack t)))
 evalExprMocked _     _   (ExStr t)  = VStr t
 evalExprMocked _     _   ExNull     = VNull
-evalExprMocked _     env (ExLvalue (Lvalue [LvSegment n Nothing])) = Map.findWithDefault VNull n env
+evalExprMocked _     env (ExLvalue (Lvalue [LvSegment n Nothing])) = Map.findWithDefault VNull (identOrig n) env
 evalExprMocked mocks env (ExBinOp l op r) = evalBinOp op (evalExprMocked mocks env l) (evalExprMocked mocks env r)
 evalExprMocked mocks env (ExNot e) = VBool (not (toBool (evalExprMocked mocks env e)))
 evalExprMocked mocks env (ExNeg e) = case evalExprMocked mocks env e of

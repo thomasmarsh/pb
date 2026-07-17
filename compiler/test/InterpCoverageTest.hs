@@ -2,6 +2,7 @@ module InterpCoverageTest (tests) where
 
 import PB.Prelude
 import PB.AST.Expr (BinOp (..), Expr (..), Lvalue (..), LvSegment (..))
+import PB.AST.Ident (mkIdent)
 import PB.AST.Located (Located (..))
 import PB.AST.BodyStmt
   ( BodyStmt (..), IfStmt (..), ElseIf (..), ForStmt (..), DoStmt (..)
@@ -28,13 +29,13 @@ import Test.Tasty.HUnit (assertEqual, testCase, (@?=))
 -- | A bare, unsubscripted single-segment lvalue -- the one 'ExLvalue' shape
 -- 'evalExprMocked' resolves without a mock.
 bareVar :: Text -> Expr
-bareVar n = ExLvalue (Lvalue [LvSegment n Nothing])
+bareVar n = ExLvalue (Lvalue [LvSegment (mkIdent n) Nothing])
 
 call :: Text -> Expr
-call n = ExCall (Lvalue [LvSegment n Nothing]) []
+call n = ExCall (Lvalue [LvSegment (mkIdent n) Nothing]) []
 
 mkLv :: Text -> Lvalue
-mkLv n = Lvalue [LvSegment n Nothing]
+mkLv n = Lvalue [LvSegment (mkIdent n) Nothing]
 
 loc :: BodyStmt -> Located BodyStmt
 loc = Located 1

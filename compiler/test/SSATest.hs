@@ -3,6 +3,7 @@ module SSATest (tests) where
 
 import PB.Prelude
 import PB.AST.BodyStmt
+import PB.AST.Ident        (mkIdent)
 import PB.AST.Expr         (BinOp (..), Expr (..), LvSegment (..), Lvalue (..),
                             DispatchExpr (..), DispatchMode (..))
 import PB.AST.Located      (Located (..))
@@ -25,7 +26,7 @@ at :: Int -> a -> Located a
 at n = Located n
 
 lv1 :: Text -> Lvalue
-lv1 n = Lvalue [LvSegment n Nothing]
+lv1 n = Lvalue [LvSegment (mkIdent n) Nothing]
 
 intTok :: Text -> Token
 intTok t = Token TkIntLiteral t (SourceSpan 1 1 1)

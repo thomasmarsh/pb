@@ -25,6 +25,7 @@ import PB.AST.DataWindow
   , DwWhereClause (..), DwJoin (..)
   )
 import PB.AST.Expr (Expr (..), Lvalue (..), LvSegment (..))
+import PB.AST.Ident (Ident, identCanon)
 import PB.Analysis.SchemaCategory
   ( SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..)
   , CatColumnRow (..), splitColumnRef, resolveTableRef, catalogNamespacedTables
@@ -73,18 +74,18 @@ mkDwFootprintCtx catCols mDefaultNs = DwFootprintCtx
 -- 'PB.Analysis.SchemaCategory.splitColumnRef's own normalization.
 lvalueColumnRef :: Expr -> Maybe (TableRef, Text)
 lvalueColumnRef (ExLvalue (Lvalue segs))
-  | all isPlainSegment segs = columnRefFromNames (map segName segs)
+  | all isPlainSegment segs = columnRefFromNames (map (identCanon . segName) segs)
 lvalueColumnRef _ = Nothing
 
 isPlainSegment :: LvSegment -> Bool
 isPlainSegment (LvSegment _ Nothing) = True
 isPlainSegment _                     = False
 
-segName :: LvSegment -> Text
+segName :: LvSegment -> Ident
 segName (LvSegment n _) = n
 
 columnRefFromNames :: [Text] -> Maybe (TableRef, Text)
-columnRefFromNames names = case map T.toLower names of
+columnRefFromNames names = case names of
   [tbl, col]     -> Just (TableRef Nothing tbl, col)
   [ns, tbl, col] -> Just (TableRef (Just ns) tbl, col)
   _              -> Nothing

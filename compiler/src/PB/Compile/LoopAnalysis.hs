@@ -24,6 +24,7 @@ import PB.Prelude hiding (id, (.), lookup)
 import qualified Prelude as P
 import Data.List (sortOn)
 import PB.AST.Expr (Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Ident (mkIdent)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Compile.SSA (SsaVar (..), SsaVal (..), SsaBlock (..),
                          SsaTerm (..), SsaProc (..))
@@ -294,7 +295,7 @@ determineLoopExitTarget headers resolvedExits proc headerId =
 -- 'Expr' (for embedding a condition/rhs directly in a lowered term).
 ssaValToExpr :: SsaVal -> Expr
 ssaValToExpr (SsaConst e)       = e
-ssaValToExpr (SsaVarRef sv)     = ExLvalue (Lvalue [LvSegment (svName sv) Nothing])
+ssaValToExpr (SsaVarRef sv)     = ExLvalue (Lvalue [LvSegment (mkIdent (svName sv)) Nothing])
 ssaValToExpr (SsaBinOp op l r)  = ExBinOp (ssaValToExpr l) op (ssaValToExpr r)
 ssaValToExpr (SsaNot v)         = ExNot (ssaValToExpr v)
 ssaValToExpr SsaNull            = ExNull

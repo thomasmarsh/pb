@@ -50,7 +50,7 @@ import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.DataWindow  (DataWindowFile (..), DwControl (..))
 import PB.AST.Expr
-import PB.AST.Ident       (identOrig)
+import PB.AST.Ident       (Ident, identOrig)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText, renderPbType)
@@ -293,14 +293,14 @@ parseParams raw
 -- ---------------------------------------------------------------------------
 -- Internal helpers for body walking
 
-segName :: LvSegment -> Text
+segName :: LvSegment -> Ident
 segName (LvSegment n _) = n
 
 dispatchName :: DispatchExpr -> Text
 dispatchName (DispatchExpr _ _ _ _ n _) = n
 
 lvalueName :: Lvalue -> Text
-lvalueName lv = T.intercalate "." (map segName (segments lv))
+lvalueName lv = T.intercalate "." (map (identOrig . segName) (segments lv))
 
 srFileObject :: SrFile -> Text
 srFileObject = identOrig . fst . srPrimaryObject

@@ -42,7 +42,7 @@ module PB.Analysis.TypeCheck
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Ident       (IdentSet, identOrig, identSetFromList, identSetLookup, identSetOrigTexts, mkIdent)
+import PB.AST.Ident       (Ident, IdentSet, identCanon, identOrig, identSetFromList, identSetLookup, identSetOrigTexts, mkIdent)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText)
@@ -194,7 +194,7 @@ buildTypeCheckWorkspace sfs = TypeCheckWorkspace
 -- ---------------------------------------------------------------------------
 -- Expression typing
 
-segName :: LvSegment -> Text
+segName :: LvSegment -> Ident
 segName (LvSegment n _) = n
 
 -- | Classify a literal\/resolved class name into a 'TypeFamily'.
@@ -251,7 +251,7 @@ combineBinOp BopXor _          _          = Nothing
 -- a different root, not a second resolver.
 resolveCallTarget :: TypeCheckCtx -> Expr -> Maybe (Text, Text)
 resolveCallTarget ctx ExCall { callee = lv } =
-  let toName = T.intercalate "." (map segName (segments lv))
+  let toName = T.intercalate "." (map (identOrig . segName) (segments lv))
   in if "." `T.isInfixOf` toName
        then case resolveStaticCall toName (tcProcMap ctx) of
               (Just o, Just p, _, _) -> Just (o, p)
@@ -300,10 +300,10 @@ inferExpr _   ExNull     = Nothing -- handled specially by callers, not a family
 -- procedure's body-local portion of 'tcScope') already lowercases its own
 -- keys; lowercasing here too means a param or local referenced with
 -- different casing than its declaration still resolves.
-inferExpr ctx (ExLvalue (Lvalue [LvSegment n Nothing])) = Map.lookup (T.toLower n) (tcScope ctx)
+inferExpr ctx (ExLvalue (Lvalue [LvSegment n Nothing])) = Map.lookup (identCanon n) (tcScope ctx)
 inferExpr ctx (ExLvalue (Lvalue segs@(_ : _ : _))) =
   classifyClassName ctx <$>
-    resolveMemberChainType (tcControlIdx ctx) (tcInherits ctx) (tcObject ctx) (map segName segs)
+    resolveMemberChainType (tcControlIdx ctx) (tcInherits ctx) (tcObject ctx) (map (identCanon . segName) segs)
 inferExpr ctx (ExBinOp l op r) = do
   lf <- inferExpr ctx l
   rf <- inferExpr ctx r
@@ -377,13 +377,13 @@ rhsDesc (ExReal s) = s
 rhsDesc (ExDate s) = s
 rhsDesc (ExTime s) = s
 rhsDesc (ExBool b) = if b then "true" else "false"
-rhsDesc (ExLvalue lv) = T.intercalate "." [n | LvSegment n _ <- segments lv]
+rhsDesc (ExLvalue lv) = T.intercalate "." [identOrig n | LvSegment n _ <- segments lv]
 rhsDesc _ = "<expr>"
 
-assignFinding :: TypeCheckCtx -> Text -> Int -> Text -> Expr -> [TypeMismatchFinding]
+assignFinding :: TypeCheckCtx -> Text -> Int -> Ident -> Expr -> [TypeMismatchFinding]
 assignFinding ctx procN line varN rhs =
-  [ TypeMismatchFinding (tcObject ctx) procN line varN (renderFamily lhsFam) (rhsDesc rhs) AssignMismatch
-  | Just lhsFam <- [Map.lookup (T.toLower varN) (tcScope ctx)]
+  [ TypeMismatchFinding (tcObject ctx) procN line (identOrig varN) (renderFamily lhsFam) (rhsDesc rhs) AssignMismatch
+  | Just lhsFam <- [Map.lookup (identCanon varN) (tcScope ctx)]
   , Just rhsFam <- [inferExpr ctx rhs]
   , not (compatible (tcInherits ctx) lhsFam rhsFam)
   ]

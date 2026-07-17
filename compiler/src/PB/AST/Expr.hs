@@ -9,13 +9,16 @@ module PB.AST.Expr
   ) where
 
 import PB.Prelude
+import PB.AST.Ident (Ident)
 import PB.Lexing.Token (Token (..))
 import GHC.Generics (Generic)
 
 -- | One segment of a dotted name, e.g. the `arr[i]` in `obj.arr[i].field`.
--- subscript holds the raw subscript expression tokens when present.
+-- subscript holds the raw subscript expression tokens when present. name's
+-- derived Eq compares only Ident's canonical form, so two LvSegments
+-- differing only in case are equal (PB identifiers are case-insensitive).
 data LvSegment = LvSegment
-  { name      :: Text
+  { name      :: Ident
   , subscript :: Maybe [Text]
   } deriving (Eq, Show, Generic)
 

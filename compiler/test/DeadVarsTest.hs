@@ -3,6 +3,7 @@ module DeadVarsTest (tests) where
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr    (Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Ident   (mkIdent)
 import PB.AST.Type    (PbType (..))
 import PB.AST.Located (Located (..))
 import PB.Analysis.Cfg      (Cfg (..), CfgBlock (..), CfgEdge (..))
@@ -20,11 +21,11 @@ at :: Int -> a -> Located a
 at n x = Located n x
 
 lv1 :: Text -> Lvalue
-lv1 n = Lvalue [LvSegment n Nothing]
+lv1 n = Lvalue [LvSegment (mkIdent n) Nothing]
 
 -- | A two-segment member-chain lvalue, e.g. @item.label@.
 lv2 :: Text -> Text -> Lvalue
-lv2 root field = Lvalue [LvSegment root Nothing, LvSegment field Nothing]
+lv2 root field = Lvalue [LvSegment (mkIdent root) Nothing, LvSegment (mkIdent field) Nothing]
 
 mkBlock :: Text -> [Located BodyStmt] -> CfgBlock
 mkBlock bid stmts = CfgBlock

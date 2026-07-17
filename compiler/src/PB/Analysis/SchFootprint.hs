@@ -31,6 +31,7 @@ import PB.AST.BodyStmt (BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..), C
 import PB.AST.Located (Located (..))
 import PB.AST.Type (renderPbType)
 import PB.Analysis.CallClassify (segName)
+import PB.AST.Ident (identCanon)
 import PB.Compile.IR (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), Eff (..), EffTerm (..))
 import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainDwBinding)
 import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..), DwRetrieveColRow (..))
@@ -243,13 +244,13 @@ runtimeDwAliasBindings idx inh obj env stmts = Map.fromList (concatMap go stmts)
 
     tryBind lhs rhsExpr = case (segments lhs, rhsExpr) of
       ([LvSegment lhsName Nothing], ExLvalue rhsLv)
-        | rhsSegs <- map segName (segments rhsLv)
+        | rhsSegs <- map (\s -> identCanon (segName s)) (segments rhsLv)
         , length rhsSegs > 1
         , isDwTyped lhsName ->
-            (\dwName -> ((T.toLower obj, T.toLower lhsName), T.toLower dwName))
+            (\dwName -> ((T.toLower obj, identCanon lhsName), T.toLower dwName))
               <$> resolveMemberChainDwBinding idx inh obj rhsSegs
       _ -> Nothing
 
-    isDwTyped lhsName = case lookupScopedVar lhsName env of
+    isDwTyped lhsName = case lookupScopedVar (identCanon lhsName) env of
       Just ty -> T.toLower (renderPbType ty) `elem` ["datawindow", "datastore"]
       Nothing -> False

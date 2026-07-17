@@ -63,7 +63,7 @@ localVarStmt nm ty line = Located line BsLocalVar
 callStmt :: T.Text -> Int -> Located BodyStmt
 callStmt callee_ line = Located line
   (BsCall (ExCall
-    { callee   = Lvalue [LvSegment callee_ Nothing]
+    { callee   = Lvalue [LvSegment (mkIdent callee_) Nothing]
     , callArgs = []
     }))
 

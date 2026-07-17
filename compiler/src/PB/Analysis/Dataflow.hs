@@ -28,6 +28,7 @@ module PB.Analysis.Dataflow
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
+import PB.AST.Ident    (identOrig)
 import PB.AST.Located  (Located (..))
 import PB.Lexing.Token (Token (..))
 import PB.Analysis.Cfg (Cfg (..), CfgBlock (..), CfgEdge (..))
@@ -92,8 +93,11 @@ lvRoot lv = case segments lv of
   (s:_) -> Just (segName s)
   []    -> Nothing
 
+-- | Original-cased text, not canonicalized -- def/use var-name matching
+-- here is exact-Text (see BACKLOG's case-sensitivity finding, Plan 178
+-- Phase 2), unlike every other 'segName' consumer in the codebase.
 segName :: LvSegment -> Text
-segName (LvSegment n _) = n
+segName (LvSegment n _) = identOrig n
 
 -- ---------------------------------------------------------------------------
 -- Expression identifier extraction

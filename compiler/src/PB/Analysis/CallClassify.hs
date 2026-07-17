@@ -26,6 +26,7 @@ module PB.Analysis.CallClassify
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
+import PB.AST.Ident      (Ident, identCanon, identOrig)
 import PB.AST.Located    (Located (..))
 import PB.AST.Type       (PbType, renderPbType)
 import PB.Analysis.ControlHierarchy (resolveMemberChainType)
@@ -60,11 +61,11 @@ data EffectTag = ReadsDb | WritesDb | WritesUi | Suspends
 classifyExpr :: ScopedTypeEnv -> Expr -> CallKind
 classifyExpr env (ExCall lv _) =
   case segments lv of
-    [s] | isBuiltinSuspendFn (T.toLower (segName s)) -> SuspendCall
+    [s] | isBuiltinSuspendFn (identCanon (segName s)) -> SuspendCall
     segs@(_ : _ : _) ->
       case reverse segs of
         methSeg : revHeadSegs ->
-          let meth = T.toLower (segName methSeg)
+          let meth = identCanon (segName methSeg)
           in case resolveLvalueType env (Lvalue (reverse revHeadSegs)) of
                Just ty | isTypedSuspend (steHierarchy env) ty meth -> SuspendCall
                _ -> PureCall
@@ -87,11 +88,11 @@ classifyExpr _ _ = PureCall
 classifyEffects :: ScopedTypeEnv -> Expr -> Set.Set EffectTag
 classifyEffects env (ExCall lv _) =
   case segments lv of
-    [s] -> Map.findWithDefault Set.empty (T.toLower (segName s)) builtinEffectTags
+    [s] -> Map.findWithDefault Set.empty (identCanon (segName s)) builtinEffectTags
     segs@(_ : _ : _) ->
       case reverse segs of
         methSeg : revHeadSegs ->
-          let meth = T.toLower (segName methSeg)
+          let meth = identCanon (segName methSeg)
           in case resolveLvalueType env (Lvalue (reverse revHeadSegs)) of
                Just ty -> typedEffectTags (steHierarchy env) ty meth
                Nothing -> Set.empty
@@ -117,7 +118,7 @@ effectName expr args =
   in if cn == "fn_retrievechild"
      then case args of
             (ExLvalue dv:ExStr col:_) ->
-              let dwCtrl = case segments dv of { (s:_) -> T.toLower (segName s); [] -> "?" }
+              let dwCtrl = case segments dv of { (s:_) -> identCanon (segName s); [] -> "?" }
               in "retrieve:child_" <> T.toLower col <> ":" <> dwCtrl
             (_:ExStr col:_) -> "retrieve:child_" <> T.toLower col <> ":?"
             _               -> "retrieve:child_?:?"
@@ -206,16 +207,16 @@ typedEffectTags inh ty meth
 resolveLvalueType :: ScopedTypeEnv -> Lvalue -> Maybe Text
 resolveLvalueType env lv = case segments lv of
   []   -> Nothing
-  [s]  -> fmap (T.toLower . renderPbType) (lookupScopedVar (segName s) env)
+  [s]  -> fmap (T.toLower . renderPbType) (lookupScopedVar (identCanon (segName s)) env)
   segs -> resolveMemberChainType (steControlIndex env) (steHierarchy env)
-                                 (steObject env) (map segName segs)
+                                 (steObject env) (map (identCanon . segName) segs)
 
 -- | Resolve the declared type name of a receiver expression (not walked to root).
 resolveReceiverType :: ScopedTypeEnv -> Expr -> Maybe Text
 resolveReceiverType env (ExLvalue lv) = resolveLvalueType env lv
 resolveReceiverType env (ExCall lv _) =
   case segments lv of
-    [single] -> fmap (T.toLower . renderPbType) (lookupScopedVar (segName single) env)
+    [single] -> fmap (T.toLower . renderPbType) (lookupScopedVar (identCanon (segName single)) env)
     _        -> Nothing
 resolveReceiverType _ _ = Nothing
 
@@ -223,25 +224,25 @@ resolveReceiverType _ _ = Nothing
 -- Effect naming
 
 calleeName :: Expr -> Text
-calleeName (ExCall lv _)          = T.intercalate "." (map segName (segments lv))
+calleeName (ExCall lv _)          = T.intercalate "." (map (identOrig . segName) (segments lv))
 calleeName (ExMethodCall recv m _) =
   let recvName = case recv of
-        ExLvalue lv -> T.intercalate "." (map segName (segments lv))
+        ExLvalue lv -> T.intercalate "." (map (identOrig . segName) (segments lv))
         _            -> "?"
   in recvName <> "." <> m
 calleeName _ = "?"
 
-segName :: LvSegment -> Text
+segName :: LvSegment -> Ident
 segName (LvSegment n _) = n
 
 lvHead :: Lvalue -> Text
-lvHead lv = case segments lv of { (s:_) -> segName s; [] -> "_" }
+lvHead lv = case segments lv of { (s:_) -> identOrig (segName s); [] -> "_" }
 
 -- | Detect `TriggerEvent(...)` or `this.TriggerEvent(...)` call sites that
 -- should be lowered to a `InstrCallProc "triggerevent"` dispatch node rather
 -- than a normal InstrCall/InstrSuspend.
 isTriggerEvent :: Lvalue -> Bool
-isTriggerEvent lv = case map (T.toLower . segName) (segments lv) of
+isTriggerEvent lv = case map (identCanon . segName) (segments lv) of
   [s]   -> s == "triggerevent"
   [t,s] -> t == "this" && s == "triggerevent"
   _     -> False

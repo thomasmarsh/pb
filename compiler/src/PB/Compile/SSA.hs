@@ -36,6 +36,7 @@ module PB.Compile.SSA
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
+import PB.AST.Ident    (mkIdent)
 import PB.AST.Located  (Located (..))
 import PB.Analysis.Cfg (Cfg (..), CfgBlock (..), CfgEdge (..), buildCfg)
 import PB.Analysis.TypeEnv (ScopedTypeEnv)
@@ -140,7 +141,7 @@ assignTarget (ExLvalue lv) = lvHead lv
 assignTarget _             = "_"
 
 lhsToExpr :: [Token] -> Expr
-lhsToExpr [t] = ExLvalue (Lvalue [LvSegment (tkText t) Nothing])
+lhsToExpr [t] = ExLvalue (Lvalue [LvSegment (mkIdent (tkText t)) Nothing])
 lhsToExpr ts  = ExRaw (map tkText ts)
 
 -- | Wrap a raw token list as an unparsed 'ExRaw' expression. Not a real
@@ -259,7 +260,7 @@ stmtToAssigns (BsCall expr) =
 -- PureCall.
 stmtToAssigns (BsPbCall (PbCall ancestor event)) =
   [SsaAssign (SsaVar "_")
-             (SsaConst (ExCall (Lvalue [LvSegment (ancestor <> "::" <> event) Nothing]) []))]
+             (SsaConst (ExCall (Lvalue [LvSegment (mkIdent (ancestor <> "::" <> event)) Nothing]) []))]
 -- Control-flow statements produce no SSA assign of their own. CfgBuild.lower
 -- keeps the trailing control stmt as the last element of a block's cbStmts
 -- (so cfgTermToSsa's findControlStmt can find it), but its "value" is the

@@ -2,6 +2,7 @@ module CallClassifyTest (tests) where
 
 import PB.Prelude
 import PB.AST.Expr             (Expr (..), Lvalue (..), LvSegment (..))
+import PB.AST.Ident            (mkIdent)
 import PB.AST.Type              (PbType (..))
 import PB.Analysis.CallClassify (CallKind (..), EffectTag (..), classifyExpr,
                                   classifyEffects, resolveReceiverType)
@@ -17,7 +18,7 @@ import Test.Tasty.HUnit     (testCase, (@?=))
 
 -- | Bare (unsubscripted) lvalue segment.
 seg :: Text -> LvSegment
-seg n = LvSegment n Nothing
+seg n = LvSegment (mkIdent n) Nothing
 
 lv :: [Text] -> Lvalue
 lv = Lvalue . map seg
