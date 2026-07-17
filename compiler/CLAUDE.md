@@ -1248,11 +1248,12 @@ catalogToRows :: SchemaCatalog -> ([CatalogColumnRow], [CatalogPkRow], [CatalogF
 -- field is a pure fold over [SrFile], no DuckDB round-trip needed unlike
 -- resolveTypes/resolveCalls's Phase-B inputs), threaded through
 -- workerLoopFiles/workerLoopFilesNoBridge the same way. Per procedure,
--- compileOne builds a TypeCheckCtx (params from tcwParams looked up on
--- (obj, pName); body locals from CallClassify.collectBodyLocals, both sides
--- lowercased -- see TypeCheck.hs's own tcScope case-sensitivity fix) and
--- calls checkBody, gated on confidence /= "speculative" (same gate as
--- deadVars below), producing CompiledPs's new
+-- compileOne builds a TypeCheckCtx whose tcEnv reuses the same ScopedTypeEnv
+-- shape 'aliasBindings' already builds (mkProcEnv instrParams, with
+-- steLocal further unioned with CallClassify.collectBodyLocals -- see
+-- TypeCheck.hs's own Code Index entry above for the unification this
+-- replaced) and calls checkBody, gated on confidence /= "speculative" (same
+-- gate as deadVars below), producing CompiledPs's new
 -- cpsTypeMismatches :: [TypeMismatchFinding], appended via
 -- DuckDb.appendTypeMismatches into a new type_mismatches table (object,
 -- proc_name, line, target, lhs_type, rhs_desc, kind).
@@ -1804,6 +1805,60 @@ procEnv :: WorkspaceEnv -> ControlIndex -> Text -> [(Text, PbType)] -> ScopedTyp
 -- Phase C); Emit.hs's single-file wrapSrFile builds `buildControlIndex [sf]`
 -- locally (same single-file scope buildWorkspaceEnv [srFile] already has).
 lookupScopedVar :: Text -> ScopedTypeEnv -> Maybe PbType  -- case-insensitive; steLocal > steInstance > steGlobal
+```
+
+### `PB.Analysis.TypeCheck` (Plan 177; unified onto `ScopedTypeEnv` 2026-07-16)
+
+```haskell
+-- Static-type decoration + AssignMismatch/ReturnMismatch/CallArgMismatch
+-- checking. tcEnv is the SAME ScopedTypeEnv type CallClassify/the SSA
+-- pipeline build per procedure (global > instance > local var typing,
+-- workspace hierarchy/control index/enclosing object) -- not a second
+-- representation. TypeFamily is computed on read via scopeFamily, never
+-- stored as its own Map.
+data ProcSignature = ProcSignature { psParams :: [(Text, PbType)], psReturnType :: Maybe PbType }
+data TypeCheckCtx = TypeCheckCtx
+  { tcEnv            :: ScopedTypeEnv        -- was tcScope/tcObject/tcInherits/tcControlIdx (4 fields -> 1)
+  , tcProcMap        :: Map.Map Text (Set.Set Text)
+  , tcParams         :: Map.Map (Text, Text) [ProcSignature]  -- overload-aware; selectSignature disambiguates by arity
+  , tcObjects        :: IdentSet
+  , tcUserTypes      :: IdentSet
+  , tcBuiltinFns     :: Set.Set Text
+  , tcBuiltinMethods :: Set.Set Text
+  , tcOwnReturnType  :: Maybe PbType          -- this specific procedure instance's own declared return type
+  }
+data TypeCheckWorkspace = TypeCheckWorkspace
+  { tcwProcMap :: Map.Map Text (Set.Set Text), tcwInherits :: Map.Map Text Text
+  , tcwParams :: Map.Map (Text, Text) [ProcSignature], tcwObjects, tcwUserTypes :: IdentSet }
+buildTypeCheckWorkspace :: [SrFile] -> TypeCheckWorkspace  -- pure fold, no DuckDB round-trip
+buildParamsMap :: [SrFile] -> Map.Map (Text, Text) [ProcSignature]
+
+-- TypeFamily view of one var name, projected from tcEnv (global > instance >
+-- local, case-insensitive) via classifyFamily -- replaces a direct Map
+-- lookup into a separately-constructed Map Text TypeFamily, so a bare
+-- instance/global var reference resolves here exactly as it already does
+-- for CallClassify's call classification (Runner.hs's old hand-rolled
+-- tcScope covered only params + body locals -- a real gap, fixed by this
+-- unification, not merely a naming cleanup).
+scopeFamily :: TypeCheckCtx -> Text -> Maybe TypeFamily
+
+inferExpr :: TypeCheckCtx -> Expr -> Maybe TypeFamily
+-- Partial, compositional. Nothing means "cannot determine statically",
+-- never a guess. ExLvalue single-segment -> scopeFamily; 2+ segments ->
+-- resolveMemberChainType (steControlIndex/steHierarchy/steObject of tcEnv).
+-- ExCall/ExMethodCall -> resolveCallTarget + tcParams lookup (arity-
+-- disambiguated). ExCreate/ExCreateUsing literal -> classifyClassName.
+checkBody :: TypeCheckCtx -> Text -> [Located BodyStmt] -> [TypeMismatchFinding]
+-- One traversal producing all 3 MismatchKinds; recurses into ExCall/
+-- ExMethodCall arguments wherever they appear, not just top-level call
+-- statements.
+
+-- Runner.hs's compileOne builds tcEnv once per procedure by reusing the same
+-- ScopedTypeEnv shape 'aliasBindings' already establishes: mkProcEnv
+-- instrParams (params only) with steLocal further unioned as
+-- `collectBodyLocals body <> steLocal baseEnv` (body locals win on a name
+-- collision with a param -- the ScopedTypeEnv precedent this unification
+-- adopted, reversing the old tcScope's param-wins order).
 ```
 
 ### `PB.Analysis.TypeResolve` (Plan 109 — Pass 5)

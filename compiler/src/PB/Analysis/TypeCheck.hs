@@ -46,7 +46,8 @@ import PB.AST.Ident       (Ident, IdentSet, identCanon, identOrig, identSetFromL
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText)
-import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainType)
+import PB.Analysis.ControlHierarchy (resolveMemberChainType)
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..), lookupScopedVar)
 import PB.Analysis.TypeFamily
 import PB.Analysis.TypeResolve
   ( resolveVirtual, resolveStaticCall, parseParams, srFileObject
@@ -69,18 +70,21 @@ data ProcSignature = ProcSignature
   } deriving (Eq, Show)
 
 -- | Everything 'inferExpr'\/'checkBody' need to resolve a call target or a
--- member chain, beyond the per-procedure 'tcScope'. Every field except
--- 'tcScope' and 'tcObject' is workspace-wide and shared across every
--- procedure in every file for one compile run.
+-- member chain, beyond the per-procedure variable scope. 'tcEnv' is the same
+-- 'ScopedTypeEnv' type 'PB.Analysis.CallClassify'\/the SSA\/EffTerm pipeline
+-- already build per procedure (global > instance > local var typing, plus
+-- the workspace object hierarchy\/control index\/enclosing object) — reused
+-- here rather than re-derived, so a bare instance\/global variable reference
+-- resolves the same way for type-mismatch checking as it does for call
+-- classification. Every field except 'tcEnv' (its 'steLocal') is
+-- workspace-wide and shared across every procedure in every file for one
+-- compile run.
 data TypeCheckCtx = TypeCheckCtx
-  { tcScope          :: Map.Map Text TypeFamily
+  { tcEnv            :: ScopedTypeEnv
   , tcProcMap        :: Map.Map Text (Set.Set Text)
-  , tcInherits       :: Map.Map Text Text
   , tcParams         :: Map.Map (Text, Text) [ProcSignature]
   , tcObjects        :: IdentSet
   , tcUserTypes      :: IdentSet
-  , tcObject         :: Text
-  , tcControlIdx     :: ControlIndex
   , tcBuiltinFns     :: Set.Set Text
   , tcBuiltinMethods :: Set.Set Text
   -- | The return type of the specific procedure instance currently being
@@ -200,16 +204,28 @@ segName (LvSegment n _) = n
 -- | Classify a literal\/resolved class name into a 'TypeFamily'.
 -- Case-insensitive: 'resolveMemberChainType' always returns a lowercased
 -- class name (see 'PB.Analysis.ControlHierarchy''s module haddock), while
--- 'tcObjects'\/'tcUserTypes' and 'tcInherits' preserve the source's original
--- declared case throughout. Returning the *original*-cased spelling here
--- (not the lowercased query) keeps every 'FamObject'\/'FamUserType' payload
--- in the one casing convention 'compatible''s ancestor-chain walk assumes —
--- a lowercased payload would silently never match 'tcInherits'' keys.
+-- 'tcObjects'\/'tcUserTypes' and 'steHierarchy' preserve the source's
+-- original declared case throughout. Returning the *original*-cased
+-- spelling here (not the lowercased query) keeps every
+-- 'FamObject'\/'FamUserType' payload in the one casing convention
+-- 'compatible''s ancestor-chain walk assumes — a lowercased payload would
+-- silently never match 'steHierarchy''s keys.
 classifyClassName :: TypeCheckCtx -> Text -> TypeFamily
 classifyClassName ctx cls
   | Just orig <- identSetLookup (mkIdent cls) (tcObjects ctx)   = FamObject orig
   | Just orig <- identSetLookup (mkIdent cls) (tcUserTypes ctx) = FamUserType orig
   | otherwise                                                   = FamAny
+
+-- | 'TypeFamily' view of one variable name, projected from 'tcEnv'
+-- (global > instance > local, case-insensitive — 'lookupScopedVar''s own
+-- precedent) via 'classifyFamily'. Replaces a direct @Map.lookup@ into a
+-- separately-constructed @Map Text TypeFamily@ so a bare instance\/global
+-- variable reference resolves here exactly as it already does for
+-- 'PB.Analysis.CallClassify''s call classification, instead of only ever
+-- covering params\/body-locals.
+scopeFamily :: TypeCheckCtx -> Text -> Maybe TypeFamily
+scopeFamily ctx n =
+  (\t -> classifyFamily t (tcObjects ctx) (tcUserTypes ctx)) <$> lookupScopedVar n (tcEnv ctx)
 
 -- | Combine two already-typed operand families through a 'BinOp'. Mirrors
 -- 'PB.Compile.ValueModel.evalBinOp'\/'numericOp''s existing runtime widening
@@ -258,7 +274,7 @@ resolveCallTarget ctx ExCall { callee = lv } =
               _                      -> Nothing
        else if T.toLower toName `Set.member` tcBuiltinFns ctx
               then Nothing
-              else case resolveVirtual toName (tcObject ctx) (tcProcMap ctx) (tcInherits ctx) of
+              else case resolveVirtual toName (steObject (tcEnv ctx)) (tcProcMap ctx) (steHierarchy (tcEnv ctx)) of
                      (Just o, Just p, _, _) -> Just (o, p)
                      _                      -> Nothing
 resolveCallTarget ctx ExMethodCall { receiver = recv, method = m } =
@@ -266,7 +282,7 @@ resolveCallTarget ctx ExMethodCall { receiver = recv, method = m } =
     then Nothing
     else case inferExpr ctx recv of
            Just (FamObject cls) ->
-             case resolveVirtual m (identOrig cls) (tcProcMap ctx) (tcInherits ctx) of
+             case resolveVirtual m (identOrig cls) (tcProcMap ctx) (steHierarchy (tcEnv ctx)) of
                (Just o, Just p, _, _) -> Just (o, p)
                _                      -> Nothing
            _ -> Nothing
@@ -295,15 +311,13 @@ inferExpr _   (ExStr _)  = Just FamString
 inferExpr _   (ExDate _) = Just FamDateTime
 inferExpr _   (ExTime _) = Just FamDateTime
 inferExpr _   ExNull     = Nothing -- handled specially by callers, not a family
--- 'tcScope' is keyed by lowercased name -- PB identifiers are
--- case-insensitive, and 'collectBodyLocals' (the production source of a
--- procedure's body-local portion of 'tcScope') already lowercases its own
--- keys; lowercasing here too means a param or local referenced with
--- different casing than its declaration still resolves.
-inferExpr ctx (ExLvalue (Lvalue [LvSegment n Nothing])) = Map.lookup (identCanon n) (tcScope ctx)
+-- 'scopeFamily'\/'lookupScopedVar' are case-insensitive, so a param,
+-- local, instance, or global var referenced with different casing than its
+-- declaration still resolves.
+inferExpr ctx (ExLvalue (Lvalue [LvSegment n Nothing])) = scopeFamily ctx (identCanon n)
 inferExpr ctx (ExLvalue (Lvalue segs@(_ : _ : _))) =
   classifyClassName ctx <$>
-    resolveMemberChainType (tcControlIdx ctx) (tcInherits ctx) (tcObject ctx) (map (identCanon . segName) segs)
+    resolveMemberChainType (steControlIndex (tcEnv ctx)) (steHierarchy (tcEnv ctx)) (steObject (tcEnv ctx)) (map (identCanon . segName) segs)
 inferExpr ctx (ExBinOp l op r) = do
   lf <- inferExpr ctx l
   rf <- inferExpr ctx r
@@ -358,12 +372,12 @@ callArgFindings ctx procN line e = concatMap oneCall (callExprsIn e)
       Just sigs -> case selectSignature sigs (length (rawArgs callExpr)) of
         Nothing  -> []
         Just sig ->
-          [ TypeMismatchFinding (tcObject ctx) procN line paramN (renderFamily paramFam) (rhsDesc argExpr) CallArgMismatch
+          [ TypeMismatchFinding (steObject (tcEnv ctx)) procN line paramN (renderFamily paramFam) (rhsDesc argExpr) CallArgMismatch
           | ((paramN, paramTy), argToks) <- zip (psParams sig) (rawArgs callExpr)
           , let paramFam = classifyFamily paramTy (tcObjects ctx) (tcUserTypes ctx)
           , let argExpr  = parseExpr argToks
           , Just argFam <- [inferExpr ctx argExpr]
-          , not (compatible (tcInherits ctx) paramFam argFam)
+          , not (compatible (steHierarchy (tcEnv ctx)) paramFam argFam)
           ]
 
 -- | A short rendering of an expression for a finding's diagnostic text.
@@ -382,19 +396,19 @@ rhsDesc _ = "<expr>"
 
 assignFinding :: TypeCheckCtx -> Text -> Int -> Ident -> Expr -> [TypeMismatchFinding]
 assignFinding ctx procN line varN rhs =
-  [ TypeMismatchFinding (tcObject ctx) procN line (identOrig varN) (renderFamily lhsFam) (rhsDesc rhs) AssignMismatch
-  | Just lhsFam <- [Map.lookup (identCanon varN) (tcScope ctx)]
+  [ TypeMismatchFinding (steObject (tcEnv ctx)) procN line (identOrig varN) (renderFamily lhsFam) (rhsDesc rhs) AssignMismatch
+  | Just lhsFam <- [scopeFamily ctx (identCanon varN)]
   , Just rhsFam <- [inferExpr ctx rhs]
-  , not (compatible (tcInherits ctx) lhsFam rhsFam)
+  , not (compatible (steHierarchy (tcEnv ctx)) lhsFam rhsFam)
   ]
 
 returnFinding :: TypeCheckCtx -> Text -> Int -> Expr -> [TypeMismatchFinding]
 returnFinding ctx procN line e =
-  [ TypeMismatchFinding (tcObject ctx) procN line procN (renderFamily retFam) (rhsDesc e) ReturnMismatch
+  [ TypeMismatchFinding (steObject (tcEnv ctx)) procN line procN (renderFamily retFam) (rhsDesc e) ReturnMismatch
   | Just retTy <- [tcOwnReturnType ctx]
   , let retFam = classifyFamily retTy (tcObjects ctx) (tcUserTypes ctx)
   , Just eFam  <- [inferExpr ctx e]
-  , not (compatible (tcInherits ctx) retFam eFam)
+  , not (compatible (steHierarchy (tcEnv ctx)) retFam eFam)
   ]
 
 condCallArgs :: TypeCheckCtx -> Text -> Int -> Maybe DoCondition -> [TypeMismatchFinding]

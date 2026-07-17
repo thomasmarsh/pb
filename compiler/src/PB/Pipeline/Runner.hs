@@ -59,7 +59,7 @@ import PB.Analysis.TypeCheck
   ( TypeCheckCtx (..), TypeCheckWorkspace (..)
   , buildTypeCheckWorkspace, checkBody
   )
-import PB.Analysis.TypeFamily (TypeMismatchFinding, classifyFamily)
+import PB.Analysis.TypeFamily (TypeMismatchFinding)
 import PB.Analysis.Builtins (builtinFnNames, builtinMethodNames)
 import PB.Pipeline.Emit
   ( runFile, ParsedFile (..), ParseOutcome (..)
@@ -303,45 +303,38 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                 deadVars
                   | confidence == "speculative" = []
                   | otherwise = findDeadVars (scopedParams <> scopedBodyLvs) pflow
-                -- Plan 177 Phase 4: tcScope is this procedure's own params
-                -- unioned with its body locals via 'collectBodyLocals' --
-                -- both sides lowercased, matching 'TypeCheck.hs's own
-                -- tcScope-lookup convention. Same "speculative confidence ->
+                -- Plan 177 follow-up (TypeCheckCtx/ScopedTypeEnv
+                -- unification): tcEnv reuses the same ScopedTypeEnv shape
+                -- CallClassify/the SSA pipeline already build for this
+                -- procedure (mkProcEnv instrParams -- global > instance >
+                -- local var typing, workspace hierarchy/control index),
+                -- with body locals folded into steLocal the same way
+                -- 'aliasBindings' above already does (collectBodyLocals body
+                -- <> steLocal baseEnv -- body locals win on a name
+                -- collision with a param, matching that established
+                -- precedent). This replaces a hand-rolled
+                -- params-and-body-locals-only 'Map Text TypeFamily' that
+                -- never covered instance/global vars at all -- a bare
+                -- instance/global variable reference is now visible to
+                -- 'inferExpr' via 'lookupScopedVar''s existing
+                -- global/instance/local lookup, the same way it already is
+                -- for call classification. Same "speculative confidence ->
                 -- skip" gate as deadVars, for the same stdlib-stub reason.
-                --
-                -- paramScope is derived directly from this comprehension's
-                -- own 'instrParams' (via 'parseParams', the same primitive
-                -- 'mkProcEnv' already calls above) rather than a
-                -- 'tcwParams'-keyed lookup -- 'tcwParams' is keyed only on
-                -- (object, procName) and PowerBuilder allows overloading, so
-                -- a same-named overload elsewhere in this object would
-                -- collide there. 'instrParams' is this SPECIFIC procedure
-                -- instance's own declaration text, always correct regardless
-                -- of how many other overloads share its name -- the same
-                -- "re-derive from this comprehension's own per-instance
-                -- data" fix 'scopedParams' above already applies for
-                -- DeadVars.
-                paramScope = Map.fromList
-                  [ (T.toLower n, classifyFamily t (tcwObjects tcw) (tcwUserTypes tcw))
-                  | (n, t) <- parseParams instrParams ]
-                bodyScope = Map.map
-                  (\t -> classifyFamily t (tcwObjects tcw) (tcwUserTypes tcw))
-                  (collectBodyLocals body)
-                -- Same per-instance reasoning as paramScope: the enclosing
-                -- procedure's own declared return type comes straight from
-                -- this comprehension's 'retType' text (empty for a
-                -- subroutine/event/on-block), never from a 'tcwParams'
-                -- lookup that could resolve to a different overload.
+                typeCheckBaseEnv = mkProcEnv instrParams
+                typeCheckEnv = typeCheckBaseEnv
+                  { steLocal = collectBodyLocals body <> steLocal typeCheckBaseEnv }
+                -- The enclosing procedure's own declared return type comes
+                -- straight from this comprehension's own 'retType' text
+                -- (empty for a subroutine/event/on-block), never from a
+                -- 'tcwParams' lookup that could resolve to a different
+                -- overload of the same name.
                 ownReturnType = if T.null retType then Nothing else Just (parseTypeText retType)
                 typeCheckCtx = TypeCheckCtx
-                  { tcScope = paramScope <> bodyScope
+                  { tcEnv = typeCheckEnv
                   , tcProcMap = tcwProcMap tcw
-                  , tcInherits = tcwInherits tcw
                   , tcParams = tcwParams tcw
                   , tcObjects = tcwObjects tcw
                   , tcUserTypes = tcwUserTypes tcw
-                  , tcObject = obj
-                  , tcControlIdx = controlIdx
                   , tcBuiltinFns = builtinFnNames
                   , tcBuiltinMethods = builtinMethodNames
                   , tcOwnReturnType = ownReturnType

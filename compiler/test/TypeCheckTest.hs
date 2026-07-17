@@ -3,6 +3,7 @@ module TypeCheckTest (tests) where
 import PB.Prelude
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
+import qualified Data.Text       as T
 
 import PB.AST.BodyStmt
 import PB.AST.Expr
@@ -10,6 +11,7 @@ import PB.AST.Ident       (identSetEmpty, identSetFromList, identSetSingleton, m
 import PB.AST.Located     (Located (..))
 import PB.AST.Type        (PbType (..))
 import PB.Analysis.ControlHierarchy (ControlDecl (..))
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Analysis.TypeFamily
 import PB.Analysis.TypeCheck
 import PB.Lexing.Token    (Token (..), TokenKind (..), SourceSpan (..))
@@ -22,21 +24,32 @@ import Test.Tasty.HUnit (testCase, (@?=))
 
 baseCtx :: TypeCheckCtx
 baseCtx = TypeCheckCtx
-  { tcScope          = Map.empty
+  { tcEnv = ScopedTypeEnv
+      { steGlobal       = Map.empty
+      , steInstance     = Map.empty
+      , steLocal        = Map.empty
+      , steHierarchy    = Map.empty
+      , steObject       = "w_main"
+      , steControlIndex = Map.empty
+      }
   , tcProcMap        = Map.empty
-  , tcInherits       = Map.empty
   , tcParams         = Map.empty
   , tcObjects        = identSetEmpty
   , tcUserTypes      = identSetEmpty
-  , tcObject         = "w_main"
-  , tcControlIdx     = Map.empty
   , tcBuiltinFns     = Set.empty
   , tcBuiltinMethods = Set.empty
   , tcOwnReturnType  = Nothing
   }
 
-scope1 :: Map.Map Text TypeFamily
-scope1 = Map.fromList [("li_x", FamNumeric), ("ls_y", FamString), ("lb_z", FamBoolean)]
+-- | Set 'tcEnv''s 'steLocal' from a name/'PbType' list -- the common case
+-- across these fixtures, which need a var visible to 'inferExpr' without
+-- overriding the enclosing object/hierarchy/control-index too. Lowercased
+-- to match 'PB.Analysis.TypeEnv.procEnv''s own convention.
+withVars :: [(Text, PbType)] -> TypeCheckCtx -> TypeCheckCtx
+withVars vs ctx = ctx { tcEnv = (tcEnv ctx) { steLocal = Map.fromList [(T.toLower n, t) | (n, t) <- vs] } }
+
+scope1Vars :: [(Text, PbType)]
+scope1Vars = [("li_x", PtPrimitive "integer"), ("ls_y", PtPrimitive "string"), ("lb_z", PtPrimitive "boolean")]
 
 varE :: Text -> Expr
 varE n = ExLvalue (Lvalue [LvSegment (mkIdent n) Nothing])
@@ -95,29 +108,29 @@ tests = testGroup "TypeCheck"
       , testCase "null literal -> Nothing (handled specially by callers, not a family)" $
           inferExpr baseCtx ExNull @?= Nothing
       , testCase "single-segment var resolves via scope" $
-          inferExpr (baseCtx { tcScope = scope1 }) (varE "li_x") @?= Just FamNumeric
+          inferExpr (withVars scope1Vars baseCtx) (varE "li_x") @?= Just FamNumeric
       , testCase "unresolved var name -> Nothing (no guessing)" $
-          inferExpr (baseCtx { tcScope = scope1 }) (varE "unknown_var") @?= Nothing
+          inferExpr (withVars scope1Vars baseCtx) (varE "unknown_var") @?= Nothing
       , testCase "numeric + numeric binop -> numeric" $
-          inferExpr (baseCtx { tcScope = scope1 }) (ExBinOp (varE "li_x") BopAdd (ExInt "1")) @?= Just FamNumeric
+          inferExpr (withVars scope1Vars baseCtx) (ExBinOp (varE "li_x") BopAdd (ExInt "1")) @?= Just FamNumeric
       , testCase "string + string binop (BopAdd concat) -> string" $
-          inferExpr (baseCtx { tcScope = scope1 }) (ExBinOp (varE "ls_y") BopAdd (ExStr "!")) @?= Just FamString
+          inferExpr (withVars scope1Vars baseCtx) (ExBinOp (varE "ls_y") BopAdd (ExStr "!")) @?= Just FamString
       , testCase "string + numeric binop -> Nothing (incompatible operand families)" $
-          inferExpr (baseCtx { tcScope = scope1 }) (ExBinOp (varE "ls_y") BopAdd (ExInt "1")) @?= Nothing
+          inferExpr (withVars scope1Vars baseCtx) (ExBinOp (varE "ls_y") BopAdd (ExInt "1")) @?= Nothing
       , testCase "comparison binop -> boolean regardless of operand family" $
-          inferExpr (baseCtx { tcScope = scope1 }) (ExBinOp (varE "li_x") BopLt (ExInt "1")) @?= Just FamBoolean
+          inferExpr (withVars scope1Vars baseCtx) (ExBinOp (varE "li_x") BopLt (ExInt "1")) @?= Just FamBoolean
       , testCase "logical And on two booleans -> boolean" $
-          inferExpr (baseCtx { tcScope = scope1 }) (ExBinOp (varE "lb_z") BopAnd (ExBool True)) @?= Just FamBoolean
+          inferExpr (withVars scope1Vars baseCtx) (ExBinOp (varE "lb_z") BopAnd (ExBool True)) @?= Just FamBoolean
       , testCase "logical And with a non-boolean operand -> Nothing" $
-          inferExpr (baseCtx { tcScope = scope1 }) (ExBinOp (varE "li_x") BopAnd (ExBool True)) @?= Nothing
+          inferExpr (withVars scope1Vars baseCtx) (ExBinOp (varE "li_x") BopAnd (ExBool True)) @?= Nothing
       , testCase "Not on a boolean operand -> boolean" $
-          inferExpr (baseCtx { tcScope = scope1 }) (ExNot (varE "lb_z")) @?= Just FamBoolean
+          inferExpr (withVars scope1Vars baseCtx) (ExNot (varE "lb_z")) @?= Just FamBoolean
       , testCase "Not on a non-boolean operand -> Nothing" $
-          inferExpr (baseCtx { tcScope = scope1 }) (ExNot (varE "li_x")) @?= Nothing
+          inferExpr (withVars scope1Vars baseCtx) (ExNot (varE "li_x")) @?= Nothing
       , testCase "Neg on a numeric operand -> numeric" $
-          inferExpr (baseCtx { tcScope = scope1 }) (ExNeg (varE "li_x")) @?= Just FamNumeric
+          inferExpr (withVars scope1Vars baseCtx) (ExNeg (varE "li_x")) @?= Just FamNumeric
       , testCase "Neg on a non-numeric operand -> Nothing" $
-          inferExpr (baseCtx { tcScope = scope1 }) (ExNeg (varE "ls_y")) @?= Nothing
+          inferExpr (withVars scope1Vars baseCtx) (ExNeg (varE "ls_y")) @?= Nothing
       , testCase "unresolved call expression -> Nothing" $
           inferExpr baseCtx (callE "f_get_value") @?= Nothing
       ]
@@ -132,10 +145,10 @@ tests = testGroup "TypeCheck"
 
       , testCase "resolved inherited call (ancestor chain) -> declared return type" $
           let ctx = baseCtx
-                { tcObject   = "w_child"
-                , tcInherits = Map.fromList [("w_child", "w_base")]
-                , tcProcMap  = Map.fromList [("w_base", Set.fromList ["of_get"])]
-                , tcParams   = Map.fromList [(("w_base", "of_get"), [ProcSignature [] (Just (PtPrimitive "string"))])]
+                { tcEnv = (tcEnv baseCtx)
+                    { steObject = "w_child", steHierarchy = Map.fromList [("w_child", "w_base")] }
+                , tcProcMap = Map.fromList [("w_base", Set.fromList ["of_get"])]
+                , tcParams  = Map.fromList [(("w_base", "of_get"), [ProcSignature [] (Just (PtPrimitive "string"))])]
                 }
           in inferExpr ctx (callE "of_get") @?= Just FamString
 
@@ -159,8 +172,8 @@ tests = testGroup "TypeCheck"
           in inferExpr ctx e @?= Just FamBoolean
 
       , testCase "method call on an object-typed local var -> resolved method's return type" $
-          let ctx = baseCtx
-                { tcScope   = Map.fromList [("lu_helper", FamObject "n_util")]
+          let ctx = (withVars [("lu_helper", PtUserDefined "n_util")] baseCtx)
+                { tcObjects = identSetSingleton "n_util"
                 , tcProcMap = Map.fromList [("n_util", Set.fromList ["of_helper"])]
                 , tcParams  = Map.fromList [(("n_util", "of_helper"), [ProcSignature [] (Just (PtPrimitive "long"))])]
                 }
@@ -168,10 +181,8 @@ tests = testGroup "TypeCheck"
           in inferExpr ctx e @?= Just FamNumeric
 
       , testCase "builtin method call -> Nothing" $
-          let ctx = baseCtx
-                { tcScope          = Map.fromList [("lds_1", FamObject "datastore")]
-                , tcBuiltinMethods = Set.singleton "retrieve"
-                }
+          let ctx = (withVars [("lds_1", PtPrimitive "datastore")] baseCtx)
+                { tcBuiltinMethods = Set.singleton "retrieve" }
               e = ExMethodCall { receiver = varE "lds_1", method = "Retrieve", methodArgs = [] }
           in inferExpr ctx e @?= Nothing
 
@@ -208,7 +219,10 @@ tests = testGroup "TypeCheck"
                                 , cdOverridesName = Nothing, cdDwBinding = Nothing }
                   )
                 ]
-              ctx = baseCtx { tcObjects = identSetSingleton "uo_epidom", tcControlIdx = idx }
+              ctx = baseCtx
+                { tcObjects = identSetSingleton "uo_epidom"
+                , tcEnv = (tcEnv baseCtx) { steControlIndex = idx }
+                }
               e = ExLvalue (Lvalue [LvSegment "tab1" Nothing, LvSegment "page1" Nothing])
           in inferExpr ctx e @?= Just (FamObject "uo_epidom")
 
@@ -219,52 +233,52 @@ tests = testGroup "TypeCheck"
 
   , testGroup "checkBody: assignment and return (ported from findTypeMismatches)"
       [ testCase "flags integer var assigned a string literal" $
-          checkBody (baseCtx { tcScope = Map.fromList [("li_x", FamNumeric)] }) "of_test"
+          checkBody (withVars [("li_x", PtPrimitive "integer")] baseCtx) "of_test"
                     [assignStmt "li_x" (ExStr "hello") 10]
             @?= [TypeMismatchFinding "w_main" "of_test" 10 "li_x" "numeric" "\"hello\"" AssignMismatch]
 
       , testCase "flags string var assigned a boolean literal" $
-          checkBody (baseCtx { tcScope = Map.fromList [("ls_y", FamString)] }) "of_test"
+          checkBody (withVars [("ls_y", PtPrimitive "string")] baseCtx) "of_test"
                     [assignStmt "ls_y" (ExBool True) 5]
             @?= [TypeMismatchFinding "w_main" "of_test" 5 "ls_y" "string" "true" AssignMismatch]
 
       , testCase "does not flag matching-family literal assignment" $
-          checkBody (baseCtx { tcScope = Map.fromList [("li_x", FamNumeric)] }) "of_test"
+          checkBody (withVars [("li_x", PtPrimitive "integer")] baseCtx) "of_test"
                     [assignStmt "li_x" (ExInt "5") 1]
             @?= []
 
       , testCase "does not flag var-to-var assignment of compatible resolved kinds" $
-          checkBody (baseCtx { tcScope = Map.fromList [("li_x", FamNumeric), ("li_y", FamNumeric)] }) "of_test"
+          checkBody (withVars [("li_x", PtPrimitive "integer"), ("li_y", PtPrimitive "integer")] baseCtx) "of_test"
                     [assignStmt "li_x" (varE "li_y") 1]
             @?= []
 
       , testCase "flags var-to-var assignment of incompatible resolved kinds" $
-          let fs = checkBody (baseCtx { tcScope = Map.fromList [("li_x", FamNumeric), ("ls_y", FamString)] })
+          let fs = checkBody (withVars [("li_x", PtPrimitive "integer"), ("ls_y", PtPrimitive "string")] baseCtx)
                              "of_test" [assignStmt "li_x" (varE "ls_y") 2]
           in map tmfKind fs @?= [AssignMismatch]
 
       , testCase "does not flag assignment to a null literal" $
-          checkBody (baseCtx { tcScope = Map.fromList [("li_x", FamNumeric)] }) "of_test"
+          checkBody (withVars [("li_x", PtPrimitive "integer")] baseCtx) "of_test"
                     [assignStmt "li_x" ExNull 1]
             @?= []
 
       , testCase "skips RHS shapes needing real inference (unresolved call expression)" $
-          checkBody (baseCtx { tcScope = Map.fromList [("li_x", FamNumeric)] }) "of_test"
+          checkBody (withVars [("li_x", PtPrimitive "integer")] baseCtx) "of_test"
                     [assignStmt "li_x" (callE "f_get") 1]
             @?= []
 
       , testCase "skips subscripted LHS lvalues" $
-          checkBody (baseCtx { tcScope = Map.fromList [("la_arr", FamNumeric)] }) "of_test"
+          checkBody (withVars [("la_arr", PtPrimitive "integer")] baseCtx) "of_test"
                     [subscriptAssignStmt "la_arr" (ExStr "bad") 1]
             @?= []
 
       , testCase "skips assignment when RHS var is itself unresolved" $
-          checkBody (baseCtx { tcScope = Map.fromList [("li_x", FamNumeric)] }) "of_test"
+          checkBody (withVars [("li_x", PtPrimitive "integer")] baseCtx) "of_test"
                     [assignStmt "li_x" (varE "lu_unknown") 1]
             @?= []
 
       , testCase "finds mismatches inside nested if bodies" $
-          let fs = checkBody (baseCtx { tcScope = Map.fromList [("li_x", FamNumeric)] }) "of_test"
+          let fs = checkBody (withVars [("li_x", PtPrimitive "integer")] baseCtx) "of_test"
                              [ifWrap [assignStmt "li_x" (ExStr "bad") 7] 6]
           in map tmfLine fs @?= [7]
 
@@ -280,9 +294,9 @@ tests = testGroup "TypeCheck"
       , testCase "return-type lookup is unaffected by other overloads sharing this proc's name" $
           -- tcOwnReturnType is set directly by the caller (Runner.hs, from
           -- this specific declaration's own retType text), not looked up
-          -- via tcParams keyed on (tcObject, procN) -- so a same-named
-          -- overload with a different return type declared elsewhere in
-          -- tcParams must not affect this check at all.
+          -- via tcParams keyed on (the enclosing object, procN) -- so a
+          -- same-named overload with a different return type declared
+          -- elsewhere in tcParams must not affect this check at all.
           let ctx = baseCtx
                 { tcOwnReturnType = Just (PtPrimitive "integer")
                 , tcParams = Map.fromList
@@ -310,9 +324,8 @@ tests = testGroup "TypeCheck"
           in checkBody ctx "of_test" [Located 3 (BsCall (callWithArgs "of_take_int" [intTok "5"]))] @?= []
 
       , testCase "call-arg typed through a caller-local variable is checked" $
-          let ctx = baseCtx
-                { tcScope   = Map.fromList [("ls_name", FamString)]
-                , tcProcMap = Map.fromList [("w_main", Set.fromList ["of_take_int"])]
+          let ctx = (withVars [("ls_name", PtPrimitive "string")] baseCtx)
+                { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_take_int"])]
                 , tcParams  = Map.fromList
                     [(("w_main", "of_take_int"), [ProcSignature [("ai_x", PtPrimitive "integer")] Nothing])]
                 }
@@ -321,8 +334,10 @@ tests = testGroup "TypeCheck"
 
       , testCase "object-subtype-compatible call-arg is not flagged" $
           let ctx = baseCtx
-                { tcScope    = Map.fromList [("lw_child", FamObject "w_child")]
-                , tcInherits = Map.fromList [("w_child", "w_base")]
+                { tcEnv = (tcEnv baseCtx)
+                    { steLocal     = Map.fromList [("lw_child", PtUserDefined "w_child")]
+                    , steHierarchy = Map.fromList [("w_child", "w_base")]
+                    }
                 , tcProcMap  = Map.fromList [("w_main", Set.fromList ["of_take_base"])]
                 , tcParams   = Map.fromList
                     [(("w_main", "of_take_base"), [ProcSignature [("aw_x", PtUserDefined "w_base")] Nothing])]

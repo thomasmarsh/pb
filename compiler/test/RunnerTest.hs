@@ -873,6 +873,43 @@ tests = testGroup "Pipeline.Runner"
             case cf of
               CFPs cps -> assertBool "no type-mismatch findings for speculative confidence" (null (cpsTypeMismatches cps))
               _ -> assertFailure "expected CFPs"
+
+    , testCase "assignment to a bare instance variable produces an AssignMismatch" $ do
+        -- Regression for the TypeCheckCtx/ScopedTypeEnv unification gap
+        -- (found scoping the Plan 177 follow-up, 2026-07-16): compileOne
+        -- used to build tcScope from only this procedure's own params +
+        -- collectBodyLocals, never from the workspace's instance/global
+        -- vars -- so a bare single-segment reference to an instance
+        -- variable (declared in "type variables ... end variables", the
+        -- real corpus's own instance-var syntax) was never in tcScope at
+        -- all, and inferExpr's single-segment ExLvalue case silently
+        -- returned Nothing for it, skipping the finding entirely.
+        let src = T.unlines
+              [ "global type w_test from window"
+              , "end type"
+              , ""
+              , "type variables"
+              , "integer ii_counter"
+              , "end variables"
+              , ""
+              , "public function integer uf_test ()"
+              , "ii_counter = \"abc\""
+              , "return 1"
+              , "end function"
+              ]
+        case parsePowerScriptFile src of
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Right (sf, spans) -> do
+            let ws  = buildWorkspaceEnv [sf]
+                tcw = buildTypeCheckWorkspace [sf]
+                pf  = ParsedFile { pfPath = "w_test.srw", pfSrFile = sf, pfSpans = spans, pfContents = src }
+            cf <- compileOne Set.empty Nothing (mkDwFootprintCtx [] Nothing) ws Map.empty tcw Map.empty Nothing "confirmed" (PsParsed pf)
+            case cf of
+              CFPs cps -> do
+                let findings = [ (tmfTarget f, tmfKind f) | f <- cpsTypeMismatches cps ]
+                assertBool "ii_counter flagged AssignMismatch"
+                  (("ii_counter", AssignMismatch) `elem` findings)
+              _ -> assertFailure "expected CFPs"
     ]
 
   , testGroup "compileOne with SQL bridge wires column_refs/row_filters (Plan 148 Phase 1a-2)"
