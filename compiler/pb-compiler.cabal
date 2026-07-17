@@ -69,7 +69,7 @@ library
     PB.Analysis.Taint
     PB.Analysis.TypeEnv
     PB.Analysis.TypeResolve
-    PB.Analysis.TypeMismatch
+    PB.Analysis.TypeFamily
     PB.Analysis.TypeCheck
     PB.Analysis.ControlHierarchy
     PB.Pipeline.Preprocess
@@ -166,7 +166,7 @@ test-suite pb-compiler-test
     , TokenTest
     , TypeEnvTest
     , TypeResolveTest
-    , TypeMismatchTest
+    , TypeFamilyTest
     , TypeCheckTest
     , ControlHierarchyTest
     , CallClassifyTest

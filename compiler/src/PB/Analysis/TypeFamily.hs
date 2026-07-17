@@ -9,7 +9,7 @@
 -- typing or AST walking lives here — see 'PB.Analysis.TypeCheck.inferExpr'
 -- \/'PB.Analysis.TypeCheck.checkBody' for the decorating walk that consumes
 -- this vocabulary.
-module PB.Analysis.TypeMismatch
+module PB.Analysis.TypeFamily
   ( TypeFamily (..)
   , MismatchKind (..)
   , mismatchKindText
@@ -21,6 +21,7 @@ module PB.Analysis.TypeMismatch
   ) where
 
 import PB.Prelude
+import PB.AST.Ident       (Ident, identOrig, mkIdent, IdentSet)
 import PB.AST.Type        (PbType (..), renderPbType)
 import PB.Analysis.TypeResolve (ResolvedType (..), classifyPbType, ancestorChain)
 import qualified Data.Map.Strict as Map
@@ -41,8 +42,8 @@ data TypeFamily
   | FamBoolean
   | FamDateTime
   | FamBlob
-  | FamObject   Text
-  | FamUserType Text
+  | FamObject   Ident
+  | FamUserType Ident
   | FamAny
   deriving (Eq, Show, Generic)
 
@@ -52,8 +53,8 @@ renderFamily FamString       = "string"
 renderFamily FamBoolean      = "boolean"
 renderFamily FamDateTime     = "datetime"
 renderFamily FamBlob         = "blob"
-renderFamily (FamObject t)   = "object:" <> t
-renderFamily (FamUserType t) = "user_type:" <> t
+renderFamily (FamObject t)   = "object:" <> identOrig t
+renderFamily (FamUserType t) = "user_type:" <> identOrig t
 renderFamily FamAny          = "any"
 
 numericNames, stringNames, dateTimeNames :: Set.Set Text
@@ -69,10 +70,10 @@ dateTimeNames = Set.fromList ["date", "datetime", "time"]
 -- policy here); only refines its "primitive" bucket into
 -- numeric\/string\/boolean\/datetime\/blob, which compatibility checking
 -- needs and identity resolution doesn't.
-classifyFamily :: PbType -> Set.Set Text -> Set.Set Text -> TypeFamily
+classifyFamily :: PbType -> IdentSet -> IdentSet -> TypeFamily
 classifyFamily ty objs userTypes = case classifyPbType ty objs userTypes of
-  ("object", Just t)    -> FamObject t
-  ("user_type", Just t) -> FamUserType t
+  ("object", Just t)    -> FamObject (mkIdent t)
+  ("user_type", Just t) -> FamUserType (mkIdent t)
   ("primitive", _)      -> primitiveFamily (renderPbType ty)
   _                     -> FamAny -- "any" / "unresolved": never guess, always compatible
 
@@ -100,8 +101,8 @@ primitiveFamily raw
 -- any variable it resolved.
 familyOfResolvedType :: ResolvedType -> TypeFamily
 familyOfResolvedType rt = case rtKind rt of
-  "object"    -> maybe FamAny FamObject (rtTarget rt)
-  "user_type" -> maybe FamAny FamUserType (rtTarget rt)
+  "object"    -> maybe FamAny (FamObject . mkIdent) (rtTarget rt)
+  "user_type" -> maybe FamAny (FamUserType . mkIdent) (rtTarget rt)
   "primitive" -> primitiveFamily (rtRawType rt)
   _           -> FamAny -- "any" / "unresolved": never guess
 
@@ -115,12 +116,17 @@ familyOfResolvedType rt = case rtKind rt of
 -- assigned into a descendant-typed slot is an implicit, runtime-checked
 -- downcast -- ordinary, idiomatic PB, not a compile-time error), so a
 -- one-directional ancestor check would flag every such assignment as a
--- false positive.
+-- false positive. The direct @l == r@ check is 'Ident''s own
+-- case-insensitive 'Eq'; the ancestor-chain walk itself stays exact-'Text'
+-- ('inherits' is 'PB.Analysis.TypeResolve.buildInheritsMap''s raw output,
+-- not yet migrated -- see BACKLOG).
 compatible :: Map.Map Text Text -> TypeFamily -> TypeFamily -> Bool
 compatible _        FamAny        _            = True
 compatible _        _             FamAny       = True
 compatible inherits (FamObject l) (FamObject r) =
-  l == r || l `elem` ancestorChain r inherits || r `elem` ancestorChain l inherits
+  l == r
+    || identOrig l `elem` ancestorChain (identOrig r) inherits
+    || identOrig r `elem` ancestorChain (identOrig l) inherits
 compatible _        l             r             = l == r
 
 -- ---------------------------------------------------------------------------

@@ -317,18 +317,14 @@ identSetFromList  :: [Ident] -> IdentSet
 identSetMember    :: Ident -> IdentSet -> Bool
 identSetLookup    :: Ident -> IdentSet -> Maybe Ident
 identSetToList    :: IdentSet -> [Ident]
-identSetOrigTexts :: IdentSet -> Set.Set Text
--- ^ Bridge to legacy Set.Set Text consumers not yet migrated to Ident
--- (e.g. PB.Analysis.TypeMismatch.classifyFamily) -- reconstructs the same
--- originally-declared spellings an IdentSet recovers on lookup.
 ```
 
 `TypeDecl.tdName` (Phase 1), `LvSegment.name` (Phase 2, `PB.AST.Expr`),
 `TypeDecl.tdAncestorClass`/`tdAncestorOverride` (Phase 3), `VarDecl.vdName`/
-`GlobalInstance.giName` (Phase 4), and `FnSig.fnsName`/`SubSig.ssName`/
-`EventSig.esName` (Phase 5) are `Ident`. `TypeMismatch.classifyFamily`'s
-`Set Text` interface is the sole remaining deferred item — see
-`doc/plan/178-canonical-identifier.md`'s "Deferred scope" section.
+`GlobalInstance.giName` (Phase 4), `FnSig.fnsName`/`SubSig.ssName`/
+`EventSig.esName` (Phase 5), and `TypeFamily`'s `FamObject`/`FamUserType`
+payload plus `classifyFamily`'s `Set Text` args (Phase 6, now `IdentSet`)
+are `Ident` -- Plan 178 is complete, no deferred items remain.
 `TypeDecl.tdAncestor` stays `Text` deliberately (raw
 `AncestorClass\`LocalName` backtick-compound syntax, not a single identifier
 — `splitAncestorRef` parses it further, minted once into
@@ -1817,7 +1813,7 @@ lookupScopedVar :: Text -> ScopedTypeEnv -> Maybe PbType  -- case-insensitive; s
 extractLocalVars  :: Text -> Text -> SrFile -> [LocalVar]   -- file, object, sf
 extractCallSites  :: Text -> Text -> SrFile -> [CallSite]
 extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
-resolveTypes :: [LocalVar] -> Set Text -> Set Text -> [ResolvedType]   -- objs, userTypes; falls back to control-name inference
+resolveTypes :: [LocalVar] -> IdentSet -> IdentSet -> [ResolvedType]   -- objs, userTypes; falls back to control-name inference
 resolveCalls :: [CallSite] -> Map Text (Set Text) -> Map Text Text -> Set Text -> Set Text -> [ResolvedCall]
 buildInheritsMap :: [SrFile] -> Map Text Text
 -- buildInheritsMap now applies PB.AST.SourceFile.splitAncestorRef to
@@ -1828,9 +1824,17 @@ buildInheritsMap :: [SrFile] -> Map Text Text
 -- ancestorChain/resolveVirtual silently stop, since no object is ever
 -- literally named the raw compound string.
 buildProcMap     :: [SrFile] -> Map Text (Set Text)
-buildObjectSet, buildUserTypeSet :: [SrFile] -> Set Text
+buildObjectSet, buildUserTypeSet :: [SrFile] -> IdentSet
+-- Plan 178 Phase 6 (2026-07-16): built straight from tdName td :: Ident, no
+-- new mint point (previously degraded it to Text via identOrig).
 parseParams :: Text -> [(Text, PbType)]          -- "ref long al_row" → ("al_row", PtPrimitive "long")
-classifyPbType :: PbType -> Set Text -> Set Text -> (Text, Maybe Text)  -- (kind, target)
+classifyPbType :: PbType -> IdentSet -> IdentSet -> (Text, Maybe Text)  -- (kind, target)
+-- PtUserDefined case matches via identSetLookup (case-insensitive, Plan 178
+-- Phase 6) -- returns the matched entry's own identOrig, never the query's,
+-- so a var declared with different casing than its object's own TypeDecl
+-- still resolves. classifyFamily (PB.Analysis.TypeFamily) and resolveTypes
+-- both delegate here; do not re-derive this matching policy at either
+-- call site.
 classifyControlType :: Text -> Maybe Text  -- dw_main → datawindow (naming convention)
 -- extractDwControlBindings (Plan 148 Phase 3, 2026-07-07): the DW-control ->
 -- DW-object binding extraction the Phase 3 infra-slice session found

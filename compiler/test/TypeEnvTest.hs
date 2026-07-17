@@ -3,7 +3,7 @@ module TypeEnvTest (tests) where
 import PB.Prelude
 import PB.AST.BodyStmt       (BodyStmt (..))
 import PB.AST.Located        (Located (..))
-import PB.AST.Ident          (identOrig, identCanon)
+import PB.AST.Ident          (identOrig, identCanon, identSetMember)
 import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeBlock (..),
                               GlobalInstance (..), srAllTypeDecls, srPrimaryObject,
                               splitAncestorRef, mkTypeDecl)
@@ -193,14 +193,14 @@ tests = testGroup "TypeEnv"
                   { srForward = Just (ForwardBlock
                       { fwdTypes = [mkTypeDecl "u_st" "pfc_u_st" Nothing]
                       , fwdInstances = [] }) }
-        in Set.member "u_st" (buildObjectSet [sf]) @?= True
+        in identSetMember "u_st" (buildObjectSet [sf]) @?= True
 
     , testCase "forward-only structure type is excluded" $
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
                       { fwdTypes = [mkTypeDecl "s_data" "structure" Nothing]
                       , fwdInstances = [] }) }
-        in Set.member "s_data" (buildObjectSet [sf]) @?= False
+        in identSetMember "s_data" (buildObjectSet [sf]) @?= False
     ]
 
   , testGroup "buildUserTypeSet"
@@ -209,14 +209,14 @@ tests = testGroup "TypeEnv"
                   { srForward = Just (ForwardBlock
                       { fwdTypes = [mkTypeDecl "s_data" "structure" Nothing]
                       , fwdInstances = [] }) }
-        in Set.member "s_data" (buildUserTypeSet [sf]) @?= True
+        in identSetMember "s_data" (buildUserTypeSet [sf]) @?= True
 
     , testCase "forward-only non-structure type is excluded" $
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
                       { fwdTypes = [mkTypeDecl "u_st" "pfc_u_st" Nothing]
                       , fwdInstances = [] }) }
-        in Set.member "u_st" (buildUserTypeSet [sf]) @?= False
+        in identSetMember "u_st" (buildUserTypeSet [sf]) @?= False
     ]
 
   , testGroup "extractGlobalVars forward instances"

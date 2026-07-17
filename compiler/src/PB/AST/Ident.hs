@@ -10,14 +10,12 @@ module PB.AST.Ident
   , identSetMember
   , identSetLookup
   , identSetToList
-  , identSetOrigTexts
   ) where
 
 import PB.Prelude
 import Data.Aeson  (ToJSON (..))
 import Data.String (IsString (..))
 import qualified Data.Map.Strict as Map
-import qualified Data.Set        as Set
 import qualified Data.Text       as T
 
 -- | A PowerBuilder identifier, carrying both the originally declared casing
@@ -73,9 +71,3 @@ identSetLookup needle (IdentSet m) = Map.lookup (identCanon needle) m
 
 identSetToList :: IdentSet -> [Ident]
 identSetToList (IdentSet m) = Map.elems m
-
--- | The originally-declared spellings as a plain 'Set.Set' 'Text' -- a
--- bridge for legacy consumers (e.g. 'PB.Analysis.TypeMismatch.classifyFamily')
--- that still key on exact-case 'Text' rather than 'Ident'.
-identSetOrigTexts :: IdentSet -> Set.Set Text
-identSetOrigTexts = Set.fromList . map identOrig . identSetToList

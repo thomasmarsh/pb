@@ -40,7 +40,7 @@ import qualified StreamTest
 import qualified TokenTest
 import qualified TypeEnvTest
 import qualified TypeResolveTest
-import qualified TypeMismatchTest
+import qualified TypeFamilyTest
 import qualified TypeCheckTest
 import qualified ControlHierarchyTest
 import qualified CallClassifyTest
@@ -95,7 +95,7 @@ tests = testGroup "pb-compiler"
   , StreamTest.tests
   , TypeEnvTest.tests
   , TypeResolveTest.tests
-  , TypeMismatchTest.tests
+  , TypeFamilyTest.tests
   , TypeCheckTest.tests
   , ControlHierarchyTest.tests
   , CallClassifyTest.tests

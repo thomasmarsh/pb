@@ -118,7 +118,7 @@ import PB.Analysis.TypeResolve
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.DeadVars    (DeadVarFinding (..), deadVarKindText)
-import PB.Analysis.TypeMismatch (TypeMismatchFinding (..), mismatchKindText)
+import PB.Analysis.TypeFamily (TypeMismatchFinding (..), mismatchKindText)
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), renderLegSource
   , SchMorphism (..)

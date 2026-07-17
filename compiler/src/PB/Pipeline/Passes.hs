@@ -4,6 +4,7 @@ module PB.Pipeline.Passes
   ) where
 
 import PB.Prelude
+import PB.AST.Ident            (identSetFromList, mkIdent)
 import PB.Analysis.Builtins    (builtinFnNames, builtinMethodNames)
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TypeResolve
@@ -210,7 +211,8 @@ runPass5 conn = do
   lvs                              <- queryLocalVars  conn
   css                              <- queryCallSites  conn
   (objSet, usrTypes, inh, procMap) <- queryObjInfo   conn
-  let rt = resolveTypes lvs objSet usrTypes
+  let rt = resolveTypes lvs (identSetFromList (map mkIdent (Set.toList objSet)))
+                             (identSetFromList (map mkIdent (Set.toList usrTypes)))
       rc = resolveCalls css procMap inh builtinFnNames builtinMethodNames
   appendResolvedTypes conn rt
   appendResolvedCalls conn rc

@@ -10,7 +10,7 @@ import PB.AST.Ident       (identSetEmpty, identSetFromList, identSetSingleton, m
 import PB.AST.Located     (Located (..))
 import PB.AST.Type        (PbType (..))
 import PB.Analysis.ControlHierarchy (ControlDecl (..))
-import PB.Analysis.TypeMismatch
+import PB.Analysis.TypeFamily
 import PB.Analysis.TypeCheck
 import PB.Lexing.Token    (Token (..), TokenKind (..), SourceSpan (..))
 

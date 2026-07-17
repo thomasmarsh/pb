@@ -6,14 +6,14 @@
 --   extractLocalVars  :: Text -> Text -> SrFile -> [LocalVar]
 --   extractCallSites  :: Text -> Text -> SrFile -> [CallSite]
 --   extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
---   resolveTypes      :: [LocalVar] -> Set Text -> Set Text -> [ResolvedType]
+--   resolveTypes      :: [LocalVar] -> IdentSet -> IdentSet -> [ResolvedType]
 --   resolveCalls      :: [CallSite] -> Map Text (Set Text) -> Map Text Text -> Set Text -> Set Text -> [ResolvedCall]
 --   resolveVirtual    :: Text -> Text -> Map Text (Set Text) -> Map Text Text -> (Maybe Text, Maybe Text, Text, Text)
 --   resolveStaticCall :: Text -> Map Text (Set Text) -> (Maybe Text, Maybe Text, Text, Text)
 --   buildInheritsMap  :: [SrFile] -> Map Text Text
 --   buildProcMap      :: [SrFile] -> Map Text (Set Text)
---   buildObjectSet    :: [SrFile] -> Set Text
---   buildUserTypeSet  :: [SrFile] -> Set Text
+--   buildObjectSet    :: [SrFile] -> IdentSet
+--   buildUserTypeSet  :: [SrFile] -> IdentSet
 module PB.Analysis.TypeResolve
   ( LocalVar (..)
   , CallSite (..)
@@ -50,7 +50,7 @@ import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.DataWindow  (DataWindowFile (..), DwControl (..))
 import PB.AST.Expr
-import PB.AST.Ident       (Ident, identOrig)
+import PB.AST.Ident       (Ident, IdentSet, identOrig, identSetFromList, identSetLookup, mkIdent)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText, renderPbType)
@@ -253,18 +253,24 @@ builtinClassNames = Set.fromList
   ]
 
 -- | Classify a PbType into a resolution kind and optional target name.
--- Mirrors Python classify_type() in type_resolution.py.
-classifyPbType :: PbType -> Set.Set Text -> Set.Set Text -> (Text, Maybe Text)
+-- Mirrors Python classify_type() in type_resolution.py. objs\/userTypes are
+-- matched case-insensitively via 'identSetLookup' -- PB identifiers are
+-- case-insensitive, so a declared type spelled differently from the
+-- matching 'TypeDecl''s own casing (e.g. a var declared @W_Main@ against an
+-- object declared @w_main@) must still resolve; the returned target text is
+-- always the matched entry's own declared casing ('identOrig'), never the
+-- query's, so every consumer sees one canonical spelling per object.
+classifyPbType :: PbType -> IdentSet -> IdentSet -> (Text, Maybe Text)
 classifyPbType (PtPrimitive t)   _    _
   | T.toLower t `Set.member` builtinClassNames = ("object",    Just (T.toLower t))
   | otherwise                                  = ("primitive", Nothing)
 classifyPbType (PtDecimalPrec _) _    _         = ("primitive", Nothing)
 classifyPbType PtAny             _    _         = ("any", Nothing)
 classifyPbType (PtUserDefined n) objs userTypes
-  | n `Set.member` objs                       = ("object", Just n)
-  | n `Set.member` userTypes                  = ("user_type", Just n)
-  | T.toLower n `Set.member` pbBuiltins       = ("primitive", Nothing)
-  | otherwise                                 = ("unresolved", Nothing)
+  | Just o <- identSetLookup (mkIdent n) objs       = ("object", Just (identOrig o))
+  | Just u <- identSetLookup (mkIdent n) userTypes  = ("user_type", Just (identOrig u))
+  | T.toLower n `Set.member` pbBuiltins             = ("primitive", Nothing)
+  | otherwise                                       = ("unresolved", Nothing)
 
 -- ---------------------------------------------------------------------------
 -- Parameter parsing
@@ -579,21 +585,21 @@ buildProcMap = foldl' addFile Map.empty
       in Map.insertWith Set.union obj names acc
 
 -- | All window/userobject-derived type names (not structures).
-buildObjectSet :: [SrFile] -> Set.Set Text
-buildObjectSet = Set.fromList . concatMap fileObjs
+buildObjectSet :: [SrFile] -> IdentSet
+buildObjectSet = identSetFromList . concatMap fileObjs
   where
     fileObjs sf =
-      [ identOrig (tdName td)
+      [ tdName td
       | td <- srAllTypeDecls sf
       , T.toLower (tdAncestor td) /= "structure"
       ]
 
 -- | All structure-derived type names (user-defined value types).
-buildUserTypeSet :: [SrFile] -> Set.Set Text
-buildUserTypeSet = Set.fromList . concatMap fileUserTypes
+buildUserTypeSet :: [SrFile] -> IdentSet
+buildUserTypeSet = identSetFromList . concatMap fileUserTypes
   where
     fileUserTypes sf =
-      [ identOrig (tdName td)
+      [ tdName td
       | td <- srAllTypeDecls sf
       , T.toLower (tdAncestor td) == "structure"
       ]
@@ -602,7 +608,7 @@ buildUserTypeSet = Set.fromList . concatMap fileUserTypes
 -- Type resolution
 
 -- | Classify each local variable's type.
-resolveTypes :: [LocalVar] -> Set.Set Text -> Set.Set Text -> [ResolvedType]
+resolveTypes :: [LocalVar] -> IdentSet -> IdentSet -> [ResolvedType]
 resolveTypes vars objs userTypes = map resolve vars
   where
     resolve lv =

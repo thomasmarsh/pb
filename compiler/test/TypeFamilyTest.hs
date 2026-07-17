@@ -1,12 +1,12 @@
-module TypeMismatchTest (tests) where
+module TypeFamilyTest (tests) where
 
 import PB.Prelude
 import qualified Data.Map.Strict as Map
-import qualified Data.Set        as Set
 
+import PB.AST.Ident       (identSetEmpty, identSetSingleton, mkIdent)
 import PB.AST.Type        (PbType (..))
 import PB.Analysis.TypeResolve (ResolvedType (..))
-import PB.Analysis.TypeMismatch
+import PB.Analysis.TypeFamily
 
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
@@ -31,10 +31,10 @@ mkRT obj proc varN rawTy kind target = ResolvedType
 -- Tests
 
 tests :: TestTree
-tests = testGroup "TypeMismatch"
+tests = testGroup "TypeFamily"
   [ testGroup "classifyFamily" $
       [ testCase (name <> " -> " <> show expected) $
-          classifyFamily (PtPrimitive raw) Set.empty Set.empty @?= expected
+          classifyFamily (PtPrimitive raw) identSetEmpty identSetEmpty @?= expected
       | (name, raw, expected) <-
           [ ("integer", "integer", FamNumeric)
           , ("long", "long", FamNumeric)
@@ -51,17 +51,19 @@ tests = testGroup "TypeMismatch"
           ]
       ] <>
       [ testCase "PtAny -> any" $
-          classifyFamily PtAny Set.empty Set.empty @?= FamAny
+          classifyFamily PtAny identSetEmpty identSetEmpty @?= FamAny
       , testCase "PtDecimalPrec -> numeric" $
-          classifyFamily (PtDecimalPrec 10) Set.empty Set.empty @?= FamNumeric
+          classifyFamily (PtDecimalPrec 10) identSetEmpty identSetEmpty @?= FamNumeric
       , testCase "PtPrimitive datawindow (builtin class) -> object" $
-          classifyFamily (PtPrimitive "datawindow") Set.empty Set.empty @?= FamObject "datawindow"
+          classifyFamily (PtPrimitive "datawindow") identSetEmpty identSetEmpty @?= FamObject "datawindow"
       , testCase "PtUserDefined in object set -> object with target" $
-          classifyFamily (PtUserDefined "w_main") (Set.singleton "w_main") Set.empty @?= FamObject "w_main"
+          classifyFamily (PtUserDefined "w_main") (identSetSingleton (mkIdent "w_main")) identSetEmpty @?= FamObject "w_main"
       , testCase "PtUserDefined in user type set -> user_type with target" $
-          classifyFamily (PtUserDefined "st_info") Set.empty (Set.singleton "st_info") @?= FamUserType "st_info"
+          classifyFamily (PtUserDefined "st_info") identSetEmpty (identSetSingleton (mkIdent "st_info")) @?= FamUserType "st_info"
       , testCase "PtUserDefined unresolved -> any (never guess)" $
-          classifyFamily (PtUserDefined "xyz_unknown") Set.empty Set.empty @?= FamAny
+          classifyFamily (PtUserDefined "xyz_unknown") identSetEmpty identSetEmpty @?= FamAny
+      , testCase "PtUserDefined case-insensitive match recovers declared casing" $
+          classifyFamily (PtUserDefined "W_Main") (identSetSingleton (mkIdent "w_main")) identSetEmpty @?= FamObject "w_main"
       ]
 
   , testGroup "familyOfResolvedType"

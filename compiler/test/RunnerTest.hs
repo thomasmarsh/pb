@@ -27,7 +27,7 @@ import PB.Compile.Flatten (compileProcedureViaEffTerm)
 import PB.Analysis.DwFootprint (mkDwFootprintCtx)
 import PB.Analysis.DeadVars (DeadVarFinding (..), DeadVarKind (..))
 import PB.Analysis.TypeCheck (buildTypeCheckWorkspace)
-import PB.Analysis.TypeMismatch (TypeMismatchFinding (..), MismatchKind (..))
+import PB.Analysis.TypeFamily (TypeMismatchFinding (..), MismatchKind (..))
 import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse
   ( startSqlBridgePool, shutdownSqlBridgePool

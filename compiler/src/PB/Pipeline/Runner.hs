@@ -21,7 +21,7 @@ module PB.Pipeline.Runner
 import PB.Prelude
 import PB.AST.BodyStmt   (BodyStmt (..))
 import PB.AST.DataWindow
-import PB.AST.Ident      (identCanon, identOrig, identSetOrigTexts)
+import PB.AST.Ident      (identCanon, identOrig)
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type           (parseTypeText)
@@ -59,7 +59,7 @@ import PB.Analysis.TypeCheck
   ( TypeCheckCtx (..), TypeCheckWorkspace (..)
   , buildTypeCheckWorkspace, checkBody
   )
-import PB.Analysis.TypeMismatch (TypeMismatchFinding, classifyFamily)
+import PB.Analysis.TypeFamily (TypeMismatchFinding, classifyFamily)
 import PB.Analysis.Builtins (builtinFnNames, builtinMethodNames)
 import PB.Pipeline.Emit
   ( runFile, ParsedFile (..), ParseOutcome (..)
@@ -322,10 +322,10 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                 -- data" fix 'scopedParams' above already applies for
                 -- DeadVars.
                 paramScope = Map.fromList
-                  [ (T.toLower n, classifyFamily t (identSetOrigTexts (tcwObjects tcw)) (identSetOrigTexts (tcwUserTypes tcw)))
+                  [ (T.toLower n, classifyFamily t (tcwObjects tcw) (tcwUserTypes tcw))
                   | (n, t) <- parseParams instrParams ]
                 bodyScope = Map.map
-                  (\t -> classifyFamily t (identSetOrigTexts (tcwObjects tcw)) (identSetOrigTexts (tcwUserTypes tcw)))
+                  (\t -> classifyFamily t (tcwObjects tcw) (tcwUserTypes tcw))
                   (collectBodyLocals body)
                 -- Same per-instance reasoning as paramScope: the enclosing
                 -- procedure's own declared return type comes straight from

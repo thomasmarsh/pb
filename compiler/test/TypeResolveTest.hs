@@ -10,7 +10,7 @@ import qualified Data.Text       as T
 
 import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Ident        (mkIdent)
+import PB.AST.Ident        (mkIdent, identSetEmpty, identSetSingleton)
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type         (PbType (..))
@@ -74,54 +74,60 @@ tests :: TestTree
 tests = testGroup "TypeResolve"
   [ testGroup "classifyPbType"
       [ testCase "PtPrimitive string → primitive" $ do
-          let (k, t) = classifyPbType (PtPrimitive "string") Set.empty Set.empty
+          let (k, t) = classifyPbType (PtPrimitive "string") identSetEmpty identSetEmpty
           k @?= "primitive"
           t @?= Nothing
 
       , testCase "PtAny → any" $ do
-          let (k, t) = classifyPbType PtAny Set.empty Set.empty
+          let (k, t) = classifyPbType PtAny identSetEmpty identSetEmpty
           k @?= "any"
           t @?= Nothing
 
       , testCase "PtDecimalPrec → primitive" $ do
-          let (k, t) = classifyPbType (PtDecimalPrec 10) Set.empty Set.empty
+          let (k, t) = classifyPbType (PtDecimalPrec 10) identSetEmpty identSetEmpty
           k @?= "primitive"
           t @?= Nothing
 
       , testCase "PtUserDefined in object set → object" $ do
           let (k, t) = classifyPbType (PtUserDefined "w_main")
-                         (Set.singleton "w_main") Set.empty
+                         (identSetSingleton (mkIdent "w_main")) identSetEmpty
           k @?= "object"
           t @?= Just "w_main"
 
       , testCase "PtUserDefined in user type set → user_type" $ do
           let (k, t) = classifyPbType (PtUserDefined "n_cst_service")
-                         Set.empty (Set.singleton "n_cst_service")
+                         identSetEmpty (identSetSingleton (mkIdent "n_cst_service"))
           k @?= "user_type"
           t @?= Just "n_cst_service"
 
+      , testCase "PtUserDefined case-insensitive match recovers declared casing" $ do
+          let (k, t) = classifyPbType (PtUserDefined "W_Main")
+                         (identSetSingleton (mkIdent "w_main")) identSetEmpty
+          k @?= "object"
+          t @?= Just "w_main"
+
       , testCase "PtUserDefined datawindow → primitive" $ do
-          let (k, t) = classifyPbType (PtUserDefined "datawindow") Set.empty Set.empty
+          let (k, t) = classifyPbType (PtUserDefined "datawindow") identSetEmpty identSetEmpty
           k @?= "primitive"
           t @?= Nothing
 
       , testCase "PtUserDefined Window mixed-case → primitive" $ do
-          let (k, t) = classifyPbType (PtUserDefined "Window") Set.empty Set.empty
+          let (k, t) = classifyPbType (PtUserDefined "Window") identSetEmpty identSetEmpty
           k @?= "primitive"
           t @?= Nothing
 
       , testCase "PtUserDefined xyz_unknown → unresolved" $ do
-          let (k, t) = classifyPbType (PtUserDefined "xyz_unknown") Set.empty Set.empty
+          let (k, t) = classifyPbType (PtUserDefined "xyz_unknown") identSetEmpty identSetEmpty
           k @?= "unresolved"
           t @?= Nothing
 
       , testCase "PtPrimitive datawindow → object (built-in class, not value primitive)" $ do
-          let (k, t) = classifyPbType (PtPrimitive "datawindow") Set.empty Set.empty
+          let (k, t) = classifyPbType (PtPrimitive "datawindow") identSetEmpty identSetEmpty
           k @?= "object"
           t @?= Just "datawindow"
 
       , testCase "PtPrimitive transaction → object (built-in class)" $ do
-          let (k, t) = classifyPbType (PtPrimitive "transaction") Set.empty Set.empty
+          let (k, t) = classifyPbType (PtPrimitive "transaction") identSetEmpty identSetEmpty
           k @?= "object"
           t @?= Just "transaction"
       ]
@@ -308,7 +314,7 @@ tests = testGroup "TypeResolve"
                 , lvScopeLine = 1
                 , lvPbType    = PtPrimitive "string"
                 }
-          case resolveTypes [lv] Set.empty Set.empty of
+          case resolveTypes [lv] identSetEmpty identSetEmpty of
             [rt] -> do
               rtKind rt   @?= "primitive"
               rtTarget rt @?= Nothing
@@ -325,7 +331,7 @@ tests = testGroup "TypeResolve"
                 , lvScopeLine = 2
                 , lvPbType    = PtUserDefined "w_main"
                 }
-          case resolveTypes [lv] (Set.singleton "w_main") Set.empty of
+          case resolveTypes [lv] (identSetSingleton (mkIdent "w_main")) identSetEmpty of
             [rt] -> do
               rtKind rt   @?= "object"
               rtTarget rt @?= Just "w_main"
@@ -662,7 +668,7 @@ tests = testGroup "TypeResolve"
     [ testCase "unresolved var with dw_ prefix falls back to datawindow" $ do
         let lv = LocalVar "w.srf" "w_test" "of_open" "dw_main"
                    "n_vo" False 1 (PtUserDefined "n_vo")
-            result = resolveTypes [lv] Set.empty Set.empty
+            result = resolveTypes [lv] identSetEmpty identSetEmpty
         case result of
           [rt] -> do
             rtKind   rt @?= "primitive"

@@ -2,7 +2,7 @@
 -- | Static-type decoration and mismatch checking.
 --
 -- Pure module — no I/O. 'inferExpr' is a partial, compositional expression
--- typer, generalizing 'PB.Analysis.TypeMismatch''s former @typeOfExpr@ with
+-- typer, generalizing 'PB.Analysis.TypeFamily''s former @typeOfExpr@ with
 -- call-target return-type lookup ('ExCall'\/'ExMethodCall'), literal
 -- @CREATE@ typing ('ExCreate'\/'ExCreateUsing'), and multi-hop member-chain
 -- resolution ('ExLvalue' with 2+ segments) — reusing
@@ -16,7 +16,7 @@
 -- 'checkBody' is the single traversal that replaces the former
 -- @walkBodyAssigns@\/@walkBodyReturns@ (and the never-landed
 -- @findCallArgMismatches@): one walk over a procedure body producing all
--- three 'PB.Analysis.TypeMismatch.MismatchKind' findings, checking a call's
+-- three 'PB.Analysis.TypeFamily.MismatchKind' findings, checking a call's
 -- arguments wherever the call appears — not just at statement top level.
 --
 -- 'TypeCheckCtx' is built once per compile run from workspace-wide data
@@ -42,12 +42,12 @@ module PB.Analysis.TypeCheck
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Ident       (Ident, IdentSet, identCanon, identOrig, identSetFromList, identSetLookup, identSetOrigTexts, mkIdent)
+import PB.AST.Ident       (Ident, IdentSet, identCanon, identOrig, identSetFromList, identSetLookup, mkIdent)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText)
 import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainType)
-import PB.Analysis.TypeMismatch
+import PB.Analysis.TypeFamily
 import PB.Analysis.TypeResolve
   ( resolveVirtual, resolveStaticCall, parseParams, srFileObject
   , buildProcMap, buildInheritsMap
@@ -207,9 +207,9 @@ segName (LvSegment n _) = n
 -- a lowercased payload would silently never match 'tcInherits'' keys.
 classifyClassName :: TypeCheckCtx -> Text -> TypeFamily
 classifyClassName ctx cls
-  | Just orig <- identOrig <$> identSetLookup (mkIdent cls) (tcObjects ctx)   = FamObject orig
-  | Just orig <- identOrig <$> identSetLookup (mkIdent cls) (tcUserTypes ctx) = FamUserType orig
-  | otherwise                                                                 = FamAny
+  | Just orig <- identSetLookup (mkIdent cls) (tcObjects ctx)   = FamObject orig
+  | Just orig <- identSetLookup (mkIdent cls) (tcUserTypes ctx) = FamUserType orig
+  | otherwise                                                   = FamAny
 
 -- | Combine two already-typed operand families through a 'BinOp'. Mirrors
 -- 'PB.Compile.ValueModel.evalBinOp'\/'numericOp''s existing runtime widening
@@ -266,7 +266,7 @@ resolveCallTarget ctx ExMethodCall { receiver = recv, method = m } =
     then Nothing
     else case inferExpr ctx recv of
            Just (FamObject cls) ->
-             case resolveVirtual m cls (tcProcMap ctx) (tcInherits ctx) of
+             case resolveVirtual m (identOrig cls) (tcProcMap ctx) (tcInherits ctx) of
                (Just o, Just p, _, _) -> Just (o, p)
                _                      -> Nothing
            _ -> Nothing
@@ -279,11 +279,11 @@ procReturnFamily ctx target arity = do
   sigs  <- Map.lookup target (tcParams ctx)
   sig   <- selectSignature sigs arity
   retTy <- psReturnType sig
-  Just (classifyFamily retTy (identSetOrigTexts (tcObjects ctx)) (identSetOrigTexts (tcUserTypes ctx)))
+  Just (classifyFamily retTy (tcObjects ctx) (tcUserTypes ctx))
 
 -- | A partial, compositional expression typer. 'Nothing' means "cannot
 -- determine statically" — never a guess. Supersedes
--- 'PB.Analysis.TypeMismatch''s former @typeOfExpr@: the literal\/single-var\/
+-- 'PB.Analysis.TypeFamily''s former @typeOfExpr@: the literal\/single-var\/
 -- binop\/not\/neg cases are that function's logic, recursing into
 -- 'inferExpr' itself (not the old @typeOfExpr@) so a call nested inside a
 -- binop or another call's argument types correctly too.
@@ -360,7 +360,7 @@ callArgFindings ctx procN line e = concatMap oneCall (callExprsIn e)
         Just sig ->
           [ TypeMismatchFinding (tcObject ctx) procN line paramN (renderFamily paramFam) (rhsDesc argExpr) CallArgMismatch
           | ((paramN, paramTy), argToks) <- zip (psParams sig) (rawArgs callExpr)
-          , let paramFam = classifyFamily paramTy (identSetOrigTexts (tcObjects ctx)) (identSetOrigTexts (tcUserTypes ctx))
+          , let paramFam = classifyFamily paramTy (tcObjects ctx) (tcUserTypes ctx)
           , let argExpr  = parseExpr argToks
           , Just argFam <- [inferExpr ctx argExpr]
           , not (compatible (tcInherits ctx) paramFam argFam)
@@ -392,7 +392,7 @@ returnFinding :: TypeCheckCtx -> Text -> Int -> Expr -> [TypeMismatchFinding]
 returnFinding ctx procN line e =
   [ TypeMismatchFinding (tcObject ctx) procN line procN (renderFamily retFam) (rhsDesc e) ReturnMismatch
   | Just retTy <- [tcOwnReturnType ctx]
-  , let retFam = classifyFamily retTy (identSetOrigTexts (tcObjects ctx)) (identSetOrigTexts (tcUserTypes ctx))
+  , let retFam = classifyFamily retTy (tcObjects ctx) (tcUserTypes ctx)
   , Just eFam  <- [inferExpr ctx e]
   , not (compatible (tcInherits ctx) retFam eFam)
   ]
