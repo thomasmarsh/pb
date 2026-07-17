@@ -292,6 +292,12 @@ tests = testGroup "TypeResolve"
           Map.lookup "page1" (buildInheritsMap [sf]) @?= Just "w_form_tab2"
       ]
 
+  , testGroup "ancestorChain"
+      [ testCase "walks a self-consistently-cased map even when the query key's own casing differs" $ do
+          let inh = Map.fromList [("w_child", "w_base")]
+          ancestorChain "W_Child" inh @?= ["W_Child", "w_base"]
+      ]
+
   , testGroup "buildProcMap"
       [ testCase "includes function names" $ do
           let sf = emptySrFile

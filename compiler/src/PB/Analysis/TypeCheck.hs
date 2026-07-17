@@ -171,7 +171,7 @@ selectSignature sigs  arity = case filter ((== arity) . length . psParams) sigs 
 -- alone, already available before any file is compiled.
 data TypeCheckWorkspace = TypeCheckWorkspace
   { tcwProcMap   :: Map.Map Text IdentSet
-  , tcwInherits  :: Map.Map Text Text
+  , tcwInherits  :: Map.Map Ident Ident
   , tcwParams    :: Map.Map (Text, Text) [ProcSignature]
   , tcwObjects   :: IdentSet
   , tcwUserTypes :: IdentSet
@@ -271,7 +271,7 @@ resolveCallTarget ctx ExCall { callee = lv } =
     [LvSegment nameIdent _] ->
       if identCanon nameIdent `Set.member` tcBuiltinFns ctx
         then Nothing
-        else case resolveVirtual nameIdent (steObject (tcEnv ctx)) (tcProcMap ctx) (hierarchyText ctx) of
+        else case resolveVirtual nameIdent (mkIdent (steObject (tcEnv ctx))) (tcProcMap ctx) (steHierarchy (tcEnv ctx)) of
                (Just o, Just p, _, _) -> Just (o, p)
                _                      -> Nothing
     _ ->
@@ -284,21 +284,11 @@ resolveCallTarget ctx ExMethodCall { receiver = recv, method = m } =
     then Nothing
     else case inferExpr ctx recv of
            Just (FamObject cls) ->
-             case resolveVirtual m (identOrig cls) (tcProcMap ctx) (hierarchyText ctx) of
+             case resolveVirtual m cls (tcProcMap ctx) (steHierarchy (tcEnv ctx)) of
                (Just o, Just p, _, _) -> Just (o, p)
                _                      -> Nothing
            _ -> Nothing
 resolveCallTarget _ _ = Nothing
-
--- | Project 'tcEnv''s 'Ident'-keyed 'steHierarchy' down to the canonical-
--- 'Text'-keyed shape 'PB.Analysis.TypeResolve.resolveVirtual'\/'ancestorChain'
--- still walk internally (that pair's other parameters -- 'tcProcMap',
--- the DuckDB-sourced inherits map 'PB.Pipeline.Passes.runPass67' feeds via
--- 'resolveCalls' -- are out of this migration's scope, so the primitive
--- itself stays untouched; only this one call site bridges to it).
-hierarchyText :: TypeCheckCtx -> Map.Map Text Text
-hierarchyText ctx =
-  Map.fromList (map (\(k, v) -> (identCanon k, identCanon v)) (Map.toList (steHierarchy (tcEnv ctx))))
 
 -- | @arity@ is the actual call's argument count, used to disambiguate an
 -- overloaded target name via 'selectSignature'.

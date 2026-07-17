@@ -4,7 +4,7 @@ module PB.Pipeline.Passes
   ) where
 
 import PB.Prelude
-import PB.AST.Ident            (identSetFromList, mkIdent)
+import PB.AST.Ident            (Ident, identSetFromList, mkIdent)
 import PB.Analysis.Builtins    (builtinFnNames, builtinMethodNames)
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TypeResolve
@@ -332,7 +332,7 @@ allDatalogRuleSets =
   , TaintRules.taintRules
   ]
 
-runPass5 :: DuckConn -> IO (Map.Map Text Text)
+runPass5 :: DuckConn -> IO (Map.Map Ident Ident)
 runPass5 conn = Progress.timedStep "Resolving types" $ do
   lvs                              <- queryLocalVars  conn
   css                              <- queryCallSites  conn

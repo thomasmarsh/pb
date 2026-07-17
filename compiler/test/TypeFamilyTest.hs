@@ -117,6 +117,8 @@ tests = testGroup "TypeFamily"
           compatible builtinInherits (FamObject "datawindow") (FamObject "windowobject") @?= True
       , testCase "builtin datawindow LHS rejects datastore RHS (no shared ancestor)" $
           compatible builtinInherits (FamObject "datawindow") (FamObject "datastore") @?= False
+      , testCase "ancestor chain matches when the object's own declared name isn't already lowercase" $
+          compatible (Map.fromList [("MyWindow", "MyBase")]) (FamObject "MyBase") (FamObject "MyWindow") @?= True
       ]
   ]
 

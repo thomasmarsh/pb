@@ -567,12 +567,17 @@ findLiteralDataObject stmts = case
 -- ancestor's own control of this same name") resolves to just the
 -- ancestor class part, so the chain walk in 'ancestorChain'/'resolveVirtual'
 -- can actually find that object rather than silently stopping at a node
--- no object is ever named ('splitAncestorRef').
-buildInheritsMap :: [SrFile] -> Map.Map Text Text
+-- no object is ever named ('splitAncestorRef'). 'Ident'-keyed (Plan 179
+-- Phase 5) so a chain walk starting from a differently-cased query (e.g.
+-- 'resolveVirtual''s caller-object argument) still matches this map's own
+-- entries -- PB identifiers are case-insensitive, and every node in this
+-- map is populated from the same 'Ident'-typed 'tdName'/'tdAncestorClass'
+-- fields, so canonical-keyed lookup is always safe here.
+buildInheritsMap :: [SrFile] -> Map.Map Ident Ident
 buildInheritsMap = Map.fromList . concatMap fileInherits
   where
     fileInherits sf =
-      [ (identOrig (tdName td), identOrig (tdAncestorClass td)) | td <- srAllTypeDecls sf ]
+      [ (tdName td, tdAncestorClass td) | td <- srAllTypeDecls sf ]
 
 -- | Build a proc map (object → set of proc names) from all procedures.
 -- The outer key stays the object's declared-casing 'Text' (unchanged —
@@ -644,7 +649,9 @@ resolveTypes vars objs userTypes = map resolve vars
 -- Call resolution
 
 -- | Walk the inheritance chain from a starting object, including itself.
-ancestorChain :: Text -> Map.Map Text Text -> [Text]
+-- 'Ident'-keyed (Plan 179 Phase 5) so the walk is case-insensitive at every
+-- hop, matching PB's own identifier semantics.
+ancestorChain :: Ident -> Map.Map Ident Ident -> [Ident]
 ancestorChain start inherits = go [start] start
   where
     go chain cur = case Map.lookup cur inherits of
@@ -659,23 +666,28 @@ ancestorChain start inherits = go [start] start
 -- from a 'Text' wire field such as 'CallSite.csToName' — never re-derived
 -- via 'T.toLower' downstream of that single mint). The resolved procedure
 -- name in the result is always the matched declaration's own casing
--- ('identOrig'), recovered via 'IdentSet', not the query's.
+-- ('identOrig'), recovered via 'IdentSet', not the query's. @objN@ is
+-- 'Ident' (Plan 179 Phase 5) so the ancestor-chain walk is case-insensitive
+-- at its very first hop too — @procMap@ itself stays declared-casing
+-- 'Text'-keyed (round-trips through 'PB.Analysis.TypeCheck.tcParams'), so
+-- every chain member is projected back via 'identOrig' at the point it's
+-- used as a 'procMap' key.
 resolveVirtual
   :: Ident
-  -> Text
+  -> Ident
   -> Map.Map Text IdentSet
-  -> Map.Map Text Text
+  -> Map.Map Ident Ident
   -> (Maybe Text, Maybe Text, Text, Text)
 resolveVirtual toNameIdent objN procMap inherits =
   let chain  = ancestorChain objN inherits
       found  = [ (anc, orig)
                | anc <- chain
-               , Just orig <- [identSetLookup toNameIdent (Map.findWithDefault identSetEmpty anc procMap)]
+               , Just orig <- [identSetLookup toNameIdent (Map.findWithDefault identSetEmpty (identOrig anc) procMap)]
                ]
   in case found of
        ((anc, orig):_) ->
          let kind = if anc == objN then "virtual" else "inherited"
-         in (Just anc, Just (identOrig orig), kind, "high")
+         in (Just (identOrig anc), Just (identOrig orig), kind, "high")
        [] ->
          -- Global fallback: if this name exists in exactly one object outside the
          -- caller's ancestor chain, resolve there (matches Python global_procs logic).
@@ -683,7 +695,7 @@ resolveVirtual toNameIdent objN procMap inherits =
              globalMatch = [ (obj, orig)
                            | (obj, procs) <- Map.toList procMap
                            , Just orig <- [identSetLookup toNameIdent procs]
-                           , obj `Set.notMember` chainSet
+                           , mkIdent obj `Set.notMember` chainSet
                            ]
          in case globalMatch of
               [(obj, orig)] -> (Just obj, Just (identOrig orig), "virtual", "high")
@@ -723,7 +735,7 @@ resolveStaticCall toName procMap =
 resolveCalls
   :: [CallSite]
   -> Map.Map Text IdentSet          -- proc_map: object → proc names
-  -> Map.Map Text Text              -- inherits: child → parent
+  -> Map.Map Ident Ident            -- inherits: child → parent
   -> Set.Set Text                   -- builtin free-function names (lowercase)
   -> Set.Set Text                   -- builtin method names (lowercase)
   -> [ResolvedCall]
@@ -732,7 +744,7 @@ resolveCalls sites procMap inherits builtinFns builtinMethods =
 
 resolveOne
   :: Map.Map Text IdentSet
-  -> Map.Map Text Text
+  -> Map.Map Ident Ident
   -> Set.Set Text
   -> Set.Set Text
   -> CallSite
@@ -761,8 +773,8 @@ resolveOne procMap inherits builtinFns builtinMethods cs =
                let toNameIdent = mkIdent toName
                in if identCanon toNameIdent `Set.member` builtinFns
                     then (Nothing, Nothing, "builtin", "high")
-                    else resolveVirtual toNameIdent (csObject site) procMap inherits
-      "ExCallArg"    -> resolveVirtual (mkIdent (csToName cs)) (csObject cs) procMap inherits
+                    else resolveVirtual toNameIdent (mkIdent (csObject site)) procMap inherits
+      "ExCallArg"    -> resolveVirtual (mkIdent (csToName cs)) (mkIdent (csObject cs)) procMap inherits
       "ExMethodCall" ->
         if identCanon (mkIdent (csToName site)) `Set.member` builtinMethods
           then (Nothing, Nothing, "builtin", "high")

@@ -111,7 +111,7 @@ module PB.Pipeline.DuckDb
   ) where
 
 import PB.Prelude
-import PB.AST.Ident             (IdentSet, identOrig, identSetSingleton, identSetUnion, mkIdent)
+import PB.AST.Ident             (Ident, IdentSet, identOrig, identSetSingleton, identSetUnion, mkIdent)
 import PB.AST.Type             (parseTypeText)
 import PB.Analysis.TypeResolve
   ( LocalVar (..), CallSite (..), GlobalVar (..)
@@ -1046,10 +1046,17 @@ queryGlobalVars :: DuckConn -> IO [GlobalVar]
 queryGlobalVars conn = query_ conn
   "SELECT file, object, var_name, var_type, mods FROM global_vars"
 
--- | Build the four workspace-wide maps needed by Pass 5 from the DB.
+-- | Build the four workspace-wide maps needed by Pass 5 from the DB. The
+-- inherits map is 'Ident'-keyed (Plan 179 Phase 5, mirroring
+-- 'PB.Analysis.TypeResolve.buildInheritsMap''s JSON-pipeline counterpart) --
+-- @objects.object@\/@objects.ancestor@ are read verbatim from independently
+-- parsed files with no cross-row case normalization, so a declaration's own
+-- casing and another file's reference to it as an ancestor can genuinely
+-- differ; 'PB.Analysis.TypeResolve.ancestorChain''s canonical-'Ident' walk
+-- is what makes that mismatch harmless.
 queryObjInfo
   :: DuckConn
-  -> IO (Set.Set Text, Set.Set Text, Map.Map Text Text, Map.Map Text IdentSet)
+  -> IO (Set.Set Text, Set.Set Text, Map.Map Ident Ident, Map.Map Text IdentSet)
 queryObjInfo conn = do
   objRows  <- query_ conn
     "SELECT object FROM objects \
@@ -1063,7 +1070,7 @@ queryObjInfo conn = do
   pure
     ( Set.fromList [t | OneText t <- objRows]
     , Set.fromList [t | OneText t <- usrRows]
-    , Map.fromList [(o, a) | TwoText o a <- inhRows]
+    , Map.fromList [(mkIdent o, mkIdent a) | TwoText o a <- inhRows]
     , Map.fromListWith identSetUnion
         [(o, identSetSingleton (mkIdent p)) | TwoText o p <- procRows]
     )

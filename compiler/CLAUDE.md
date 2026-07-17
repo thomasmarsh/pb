@@ -1926,20 +1926,17 @@ procEnv :: WorkspaceEnv -> ControlIndex -> Text -> [(Text, PbType)] -> ScopedTyp
 lookupScopedVar :: Ident -> ScopedTypeEnv -> Maybe PbType  -- case-insensitive; steLocal > steInstance > steGlobal
 ```
 
-Every direct consumer of `steHierarchy`/`weHierarchy` outside this module keeps
-its own other (deliberately un-migrated, Phase 5-scoped) parameters
-untouched via a one-line boundary shim projecting the `Ident`-keyed map back
-to `Map.Map Text Text` (`identCanon` on both sides, reproducing the exact
-prior lowercased shape): `TypeFamily.compatible` (shims internally) and
-`TypeCheck.hierarchyText`
-(shims at its 2 `resolveVirtual` call sites only — `resolveVirtual`/
-`resolveCalls`/`ancestorChain`/`buildInheritsMap` themselves are untouched,
-since `resolveCalls` also has a third caller, `PB.Pipeline.Passes`' DuckDB
-`queryObjInfo`-sourced inherits map, outside this migration's scope).
-`isTypedSuspend`/`typedEffectTags`/`isDescendantOf` (`CallClassify.hs`) take
-the `Ident`-keyed map directly — their other params (`ty`/`meth`/`targets`)
-are closed builtin-vocabulary `Text`, not identifiers, confirmed out of
-scope by Plan 179's Stage 0 audit.
+Every direct consumer of `steHierarchy`/`weHierarchy` outside this module
+now takes the `Ident`-keyed map directly, no projection shim. `isTypedSuspend`/
+`typedEffectTags`/`isDescendantOf` (`CallClassify.hs`) take it directly —
+their other params (`ty`/`meth`/`targets`) are closed builtin-vocabulary
+`Text`, not identifiers, confirmed out of scope by Plan 179's Stage 0 audit.
+`TypeFamily.compatible` and `TypeCheck.resolveCallTarget` also now take/pass
+it directly (Plan 179 Phase 5, 2026-07-17) — the `TypeCheck.hierarchyText`
+lowercasing-projection shim and `compatible`'s own `inheritsText` shim are
+both **deleted**; see `PB.Analysis.TypeResolve`'s own entry below for the
+`Map.Map Ident Ident`-typed `buildInheritsMap`/`ancestorChain`/`resolveVirtual`
+those two now feed straight into.
 
 ### `PB.Analysis.TypeCheck` (Plan 177; unified onto `ScopedTypeEnv` 2026-07-16)
 
@@ -2003,15 +2000,26 @@ extractLocalVars  :: Text -> Text -> SrFile -> [LocalVar]   -- file, object, sf
 extractCallSites  :: Text -> Text -> SrFile -> [CallSite]
 extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
 resolveTypes :: [LocalVar] -> IdentSet -> IdentSet -> [ResolvedType]   -- objs, userTypes; falls back to control-name inference
-resolveCalls :: [CallSite] -> Map Text (Set Text) -> Map Text Text -> Set Text -> Set Text -> [ResolvedCall]
-buildInheritsMap :: [SrFile] -> Map Text Text
+resolveCalls :: [CallSite] -> Map Text IdentSet -> Map Ident Ident -> Set Text -> Set Text -> [ResolvedCall]
+buildInheritsMap :: [SrFile] -> Map Ident Ident
 -- buildInheritsMap now applies PB.AST.SourceFile.splitAncestorRef to
 -- tdAncestor before storing the parent value (Plan 164 Phase A,
 -- 2026-07-10) -- same fix/reasoning as TypeEnv.extractTypeDecls above;
 -- fixes a latent gap where a backtick-declared ancestor (e.g. PowerBuilder's
 -- "w_form_tab2`page1" extend-ancestor's-own-control syntax) made
 -- ancestorChain/resolveVirtual silently stop, since no object is ever
--- literally named the raw compound string.
+-- literally named the raw compound string. Ident-keyed since Plan 179
+-- Phase 5 (2026-07-17) -- ancestorChain :: Ident -> Map Ident Ident ->
+-- [Ident] walks it via Ident's own canonical Eq/Ord, closing a real
+-- case-sensitivity gap (TypeFamily.compatible and
+-- TypeCheck.resolveCallTarget both queried an already-lowercased
+-- projection of this map with original-casing keys and silently missed).
+-- resolveVirtual :: Ident -> Ident -> Map Text IdentSet -> Map Ident Ident
+-- -> (Maybe Text, Maybe Text, Text, Text) -- objN (2nd arg) is Ident too
+-- now; procMap (3rd arg) deliberately stays declared-casing Text-keyed (a
+-- separately-scoped follow-up, see BACKLOG's "resolveVirtual's procMap
+-- outer key" entry), so every chain member is projected back via
+-- identOrig at the point it's used as a procMap key.
 buildProcMap     :: [SrFile] -> Map Text (Set Text)
 buildObjectSet, buildUserTypeSet :: [SrFile] -> IdentSet
 -- Plan 178 Phase 6 (2026-07-16): built straight from tdName td :: Ident, no

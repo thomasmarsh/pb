@@ -151,6 +151,25 @@ tests = testGroup "TypeCheck"
                 }
           in inferExpr ctx (callE "of_get") @?= Just FamString
 
+      , testCase "resolved inherited call still resolves when the enclosing object's declared casing isn't already lowercase" $
+          -- A decoy object also defines "of_get" so the ancestor-chain match
+          -- (not resolveVirtual's global-uniqueness fallback) must be what
+          -- resolves this call -- proving the fix, not just the fallback
+          -- accidentally working around it.
+          let ctx = baseCtx
+                { tcEnv = (tcEnv baseCtx)
+                    { steObject = "W_Child", steHierarchy = Map.fromList [("W_Child", "W_Base")] }
+                , tcProcMap = Map.fromList
+                    [ ("W_Base",  identSetFromList ["of_get"])
+                    , ("N_Decoy", identSetFromList ["of_get"])
+                    ]
+                , tcParams  = Map.fromList
+                    [ (("W_Base",  "of_get"), [ProcSignature [] (Just (PtPrimitive "string"))])
+                    , (("N_Decoy", "of_get"), [ProcSignature [] (Just (PtPrimitive "boolean"))])
+                    ]
+                }
+          in inferExpr ctx (callE "of_get") @?= Just FamString
+
       , testCase "call to a subroutine (no return type) -> Nothing" $
           let ctx = baseCtx
                 { tcProcMap = Map.fromList [("w_main", identSetFromList ["of_do"])]

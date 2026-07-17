@@ -1,7 +1,7 @@
 module ControlHierarchyTest (tests, withFyloFixture) where
 
 import PB.Prelude
-import PB.AST.Ident              (Ident, mkIdent)
+import PB.AST.Ident              (Ident)
 import PB.AST.SourceFile        (SrFile (..), TypeBlock (..), mkTypeDecl)
 import PB.AST.BodyStmt          (BodyStmt (..))
 import PB.AST.Expr               (Expr (..))
@@ -308,5 +308,5 @@ withFyloFixture check = do
         Right pairs ->
           let sfs = map fst pairs
               idx = buildControlIndex sfs
-              inh = Map.fromList (map (\(k, v) -> (mkIdent k, mkIdent v)) (Map.toList (buildInheritsMap sfs)))
+              inh = buildInheritsMap sfs
           in check idx inh
