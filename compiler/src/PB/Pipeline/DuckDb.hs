@@ -6,6 +6,7 @@ module PB.Pipeline.DuckDb
   -- Appender pool
   , AppenderPool
   , withAppenderPool
+  , withAppenderPoolTimed
   , appendRow
   -- Row types
   , ObjectRow (..)
@@ -129,6 +130,7 @@ import PB.Analysis.SchemaCategory
   )
 import PB.Pipeline.SqlParse    (TableRef (..))
 import PB.Pipeline.Serialise   ()
+import PB.Pipeline.Progress    qualified as Progress
 
 import Database.DuckDB.Simple
   (Connection, Query (..), execute_, withConnection, query_)
@@ -334,11 +336,21 @@ newtype AppenderPool = AppenderPool (Map.Map Text DuckDBAppender)
 -- | Create one appender per table name, then run @action@. All appenders are
 -- flushed and destroyed when the scope exits (even on exception).
 withAppenderPool :: DuckConn -> [Text] -> (AppenderPool -> IO a) -> IO a
-withAppenderPool conn tables action =
+withAppenderPool = withAppenderPoolTimed (\_ -> pure ())
+
+-- | Like 'withAppenderPool', but times the flush+destroy teardown via
+-- @sink@ (typically 'Progress.emitEvent') -- the only potentially slow part
+-- of this scope's exit (on a large corpus, flushing every buffered
+-- appender is real I/O), and a span a 'bracket' cleanup can't otherwise be
+-- timed from outside its own scope: by the time control returns to the
+-- caller of 'withAppenderPool', the flush has already silently happened.
+withAppenderPoolTimed
+  :: (Progress.ProgressEvent -> IO ()) -> DuckConn -> [Text] -> (AppenderPool -> IO a) -> IO a
+withAppenderPoolTimed sink conn tables action =
   withConnectionHandle conn $ \rawConn ->
     bracket
       (createAll rawConn tables)
-      destroyAll
+      (\pool -> Progress.timedStepTo sink "Flushing Phase A appender pool" (destroyAll pool))
       (\pool -> action (AppenderPool pool))
   where
     createAll _ [] = pure Map.empty

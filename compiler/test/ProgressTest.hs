@@ -37,6 +37,34 @@ tests = testGroup "Progress"
                   ]
       ]
 
+  , testGroup "stampEvent"
+      [ testCase "inserts since_start_ms alongside EvStep's existing fields" $
+          stampEvent 123.4 (EvStep "leg_source" Nothing [] [] Nothing) @?=
+            object
+              [ "tag"            .= ("step" :: Text)
+              , "label"          .= ("leg_source" :: Text)
+              , "since_start_ms" .= (123.4 :: Double)
+              ]
+
+      , testCase "inserts since_start_ms alongside EvPhase's existing fields" $
+          stampEvent 0 (EvPhase "B") @?=
+            object
+              [ "tag"            .= ("phase" :: Text)
+              , "name"           .= ("B" :: Text)
+              , "since_start_ms" .= (0 :: Double)
+              ]
+      ]
+
+  , testGroup "elapsedSinceStartMs"
+      [ testCase "is non-negative and monotonically non-decreasing across calls" $ do
+          a <- elapsedSinceStartMs
+          threadDelay 1000
+          b <- elapsedSinceStartMs
+          assertBool ("first call should be non-negative, got " <> show a) (a >= 0)
+          assertBool ("second call should not precede the first (a=" <> show a <> ", b=" <> show b <> ")")
+            (b >= a)
+      ]
+
   , testGroup "timedStepTo"
       [ testCase "emits a start event then an end event with elapsed_ms set" $ do
           ref <- newIORef []

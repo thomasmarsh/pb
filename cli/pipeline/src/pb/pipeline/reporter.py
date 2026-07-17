@@ -7,6 +7,7 @@ Two implementations:
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import threading
@@ -200,6 +201,144 @@ class _StepInfo:
     residency_mb: float | None = None
 
 
+# Categorical step-kind taxonomy for the HTML report's timeline swim lanes,
+# derived from each step's label prefix. Fixed order matches the validated
+# default categorical palette's slots 1-5 (references/palette.md in the
+# dataviz skill) -- never reordered/cycled per that palette's own rule.
+_KIND_ORDER = [
+    "Datalog ruleset run",
+    "Datalog EDB write",
+    "Datalog materialize/characterize",
+    "Taint EDB checkpoint",
+    "Pipeline orchestration",
+]
+
+
+def _step_kind(label: str) -> str:
+    if label.startswith("Datalog: running"):
+        return "Datalog ruleset run"
+    if label.startswith("Datalog: EDB"):
+        return "Datalog EDB write"
+    if label.startswith("Datalog:"):
+        return "Datalog materialize/characterize"
+    if label.startswith("Taint EDB counts"):
+        return "Taint EDB checkpoint"
+    return "Pipeline orchestration"
+
+
+# Below this, an unaccounted span is noise (heartbeats/short gaps between
+# adjacent steps), not a real instrumentation gap worth flagging.
+_MIN_GAP_MS = 300.0
+
+
+def _find_gaps(intervals: list[tuple[float, float]], total_span_ms: float) -> list[tuple[float, float]]:
+    """Spans of [0, total_span_ms] covered by no interval, at least
+    _MIN_GAP_MS wide -- the generic net for "something ran with zero
+    progress events" that catches whatever gap turns up next, not just the
+    ones a human happened to notice and hand-instrument today."""
+    if not intervals:
+        return [(0.0, total_span_ms)] if total_span_ms >= _MIN_GAP_MS else []
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted(intervals):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    gaps = []
+    cursor = 0.0
+    for start, end in merged:
+        if start - cursor >= _MIN_GAP_MS:
+            gaps.append((cursor, start))
+        cursor = max(cursor, end)
+    if total_span_ms - cursor >= _MIN_GAP_MS:
+        gaps.append((cursor, total_span_ms))
+    return gaps
+
+
+_HTML_TEMPLATE = """<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Pipeline Diagnostics Report</title>
+<style>
+  .viz-root {{
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --grid: #e3e2de;
+    --series-1: #2a78d6;
+    --series-2: #008300;
+    --series-3: #e87ba4;
+    --series-4: #eda100;
+    --series-5: #1baf7a;
+    --series-6: #eb6834;
+  }}
+  @media (prefers-color-scheme: dark) {{
+    .viz-root {{
+      color-scheme: dark;
+      --surface-1: #1a1a19;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --grid: #33322f;
+      --series-1: #3987e5;
+      --series-2: #008300;
+      --series-3: #d55181;
+      --series-4: #c98500;
+      --series-5: #199e70;
+      --series-6: #d95926;
+    }}
+  }}
+  body {{
+    background: var(--surface-1);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    max-width: 1200px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+  }}
+  h1, h2 {{ font-weight: 600; }}
+  h2 {{ margin-top: 2rem; font-size: 1.1rem; color: var(--text-secondary); }}
+  .timeline svg {{ max-width: 100%; height: auto; display: block; }}
+  .gap {{ fill: var(--text-secondary); opacity: 0.12; stroke: var(--text-secondary); stroke-width: 1; stroke-dasharray: 4,3; }}
+  .phase-guide {{ stroke: var(--grid); stroke-width: 1; stroke-dasharray: 3,3; }}
+  .lane-grid {{ stroke: var(--grid); stroke-width: 1; }}
+  .phase-label, .axis-tick {{ fill: var(--text-secondary); font-size: 10px; }}
+  .lane-label {{ fill: var(--text-secondary); font-size: 10px; }}
+  .bar {{ opacity: 0.92; }}
+  .bar.series-1 {{ fill: var(--series-1); }}
+  .bar.series-2 {{ fill: var(--series-2); }}
+  .bar.series-3 {{ fill: var(--series-3); }}
+  .bar.series-4 {{ fill: var(--series-4); }}
+  .bar.series-5 {{ fill: var(--series-5); }}
+  .bar.series-6 {{ fill: var(--series-6); }}
+  .legend {{ display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; margin: 0.5rem 0 1.5rem; font-size: 0.85rem; color: var(--text-secondary); }}
+  .legend-item {{ display: inline-flex; align-items: center; gap: 0.4rem; }}
+  .swatch {{ width: 10px; height: 10px; border-radius: 2px; display: inline-block; }}
+  .swatch.series-1 {{ background: var(--series-1); }}
+  .swatch.series-2 {{ background: var(--series-2); }}
+  .swatch.series-3 {{ background: var(--series-3); }}
+  .swatch.series-4 {{ background: var(--series-4); }}
+  .swatch.series-5 {{ background: var(--series-5); }}
+  .swatch.series-6 {{ background: var(--series-6); }}
+  table {{ border-collapse: collapse; width: 100%; font-size: 0.9rem; }}
+  th, td {{ text-align: left; padding: 0.35rem 0.75rem; border-bottom: 1px solid var(--grid); }}
+  th {{ color: var(--text-secondary); font-weight: 600; }}
+  ul.warnings li {{ color: #b25400; }}
+</style>
+</head>
+<body class="viz-root">
+<h1>Pipeline Diagnostics Report</h1>
+<p><strong>Total elapsed:</strong> {total_elapsed}</p>
+{phases_html}
+{timeline_html}
+{table_html}
+{warnings_html}
+</body>
+</html>
+"""
+
+
 @dataclass
 class _ReportStep:
     """One step in the diagnostics report."""
@@ -209,76 +348,120 @@ class _ReportStep:
     edb_rows: dict[str, int] = field(default_factory=dict)
     idb_rows: dict[str, int] = field(default_factory=dict)
     peak_residency_mb: float | None = None
+    # Absolute offsets from the pbc process's first progress event (its
+    # `since_start_ms` wire field) -- unlike elapsed_ms (this step's own
+    # duration), these place the step on one timeline shared with every
+    # other step and phase, including Phase A's concurrent per-file workers,
+    # which do not share a single sequential ordering with Phase B.
+    start_since_start_ms: float | None = None
+    end_since_start_ms: float | None = None
+
+
+@dataclass
+class _WorkerInterval:
+    """One file's processing span on one Phase A worker thread."""
+
+    worker: int
+    file: str
+    start_since_start_ms: float
+    end_since_start_ms: float | None
 
 
 class DiagnosticsCollector:
     """Accumulates pipeline events and generates a post-run diagnostics report.
 
     Feed every event from the pbc JSONL stream via on_event(), then call
-    generate_json() / generate_markdown() / write() after the run completes
+    generate_json() / generate_html() / write() after the run completes
     (or is interrupted — partial data is still valid).
     """
 
     def __init__(self) -> None:
         self._start = time.monotonic()
-        self._steps: list[_ReportStep] = []
+        # Keyed by label, one accumulator per distinct step -- NOT a single
+        # "current step" buffer flushed on label change. A flush-on-change
+        # design silently assumes steps never nest, which breaks the moment
+        # one Progress.timedStep wraps another (e.g. runPass67's "Building
+        # call graph" wraps "Taint classification"): the inner step's own
+        # start event would flush the outer step's accumulated-so-far data
+        # as a bogus all-dashes row, and the outer step's later end event
+        # would then open a second, separate row instead of completing the
+        # first. Keying by label instead means an event always updates its
+        # own step's accumulator regardless of what other labels interleave
+        # in between -- nesting, nested-with-a-gap, and the plain sequential
+        # case all fall out of the same rule. dict preserves insertion
+        # order, so the report still lists steps in first-seen order.
+        self._steps_by_label: dict[str, _ReportStep] = {}
         self._phases: list[dict[str, Any]] = []
         self._warnings: list[str] = []
-        # Current step being accumulated
-        self._cur_label: str = ""
-        self._cur_edb: dict[str, int] = {}
-        self._cur_idb: dict[str, int] = {}
-        self._cur_elapsed_ms: float | None = None
-        self._cur_peak_res: float | None = None
+        # Phase A's concurrent per-file workers (PB.Pipeline.Runner's
+        # mapConcurrently_ over workerLoopFiles) emit worker_start/
+        # worker_done, not step/phase -- tracked separately so the timeline
+        # can show what each worker was doing and when, not just Phase B's
+        # sequential analysis passes.
+        self._worker_open: dict[int, tuple[float | None, str]] = {}
+        self._worker_intervals: list[_WorkerInterval] = []
 
     def on_event(self, event: dict) -> None:
         tag = event.get("tag", "")
         if tag == "step":
             self._handle_step(event)
         elif tag == "phase":
-            self._phases.append({"name": event.get("name", "")})
+            self._phases.append({
+                "name": event.get("name", ""),
+                "since_start_ms": event.get("since_start_ms"),
+            })
         elif tag == "warning":
             self._warnings.append(event.get("message", ""))
+        elif tag == "worker_start":
+            worker = event.get("worker")
+            if worker is not None:
+                self._worker_open[worker] = (event.get("since_start_ms"), event.get("file", ""))
+        elif tag == "worker_done":
+            worker = event.get("worker")
+            if worker is None:
+                return
+            start_since, file = self._worker_open.pop(worker, (event.get("since_start_ms"), event.get("file", "")))
+            if start_since is None:
+                return
+            self._worker_intervals.append(_WorkerInterval(
+                worker=worker,
+                file=file,
+                start_since_start_ms=start_since,
+                end_since_start_ms=event.get("since_start_ms"),
+            ))
 
     def _handle_step(self, event: dict) -> None:
         label = event.get("label", "")
+        if not label:
+            return
         edb_rows = event.get("edb_rows") or {}
         idb_rows = event.get("idb_rows") or {}
         elapsed_ms = event.get("elapsed_ms")
         residency_mb = event.get("residency_mb")
+        since_start_ms = event.get("since_start_ms")
 
-        # New label means previous step completed — flush it
-        if label and label != self._cur_label:
-            self._flush_step()
-            self._cur_label = label
-            self._cur_edb = {}
-            self._cur_idb = {}
-            self._cur_elapsed_ms = None
-            self._cur_peak_res = None
+        step = self._steps_by_label.get(label)
+        if step is None:
+            step = _ReportStep(label=label, start_since_start_ms=since_start_ms)
+            self._steps_by_label[label] = step
 
         if edb_rows:
-            self._cur_edb.update(edb_rows)
+            step.edb_rows.update(edb_rows)
         if elapsed_ms is not None:
-            self._cur_elapsed_ms = elapsed_ms
+            step.elapsed_ms = elapsed_ms
         if idb_rows:
-            self._cur_idb.update(idb_rows)
+            step.idb_rows.update(idb_rows)
         if residency_mb is not None:
-            if self._cur_peak_res is None or residency_mb > self._cur_peak_res:
-                self._cur_peak_res = residency_mb
+            if step.peak_residency_mb is None or residency_mb > step.peak_residency_mb:
+                step.peak_residency_mb = residency_mb
+        if since_start_ms is not None:
+            step.end_since_start_ms = since_start_ms
 
-    def _flush_step(self) -> None:
-        if not self._cur_label:
-            return
-        self._steps.append(_ReportStep(
-            label=self._cur_label,
-            elapsed_ms=self._cur_elapsed_ms,
-            edb_rows=dict(self._cur_edb),
-            idb_rows=dict(self._cur_idb),
-            peak_residency_mb=self._cur_peak_res,
-        ))
+    @property
+    def _steps(self) -> list[_ReportStep]:
+        return list(self._steps_by_label.values())
 
     def generate_json(self) -> dict:
-        self._flush_step()
         total_ms = (time.monotonic() - self._start) * 1000
         return {
             "total_elapsed_ms": round(total_ms, 1),
@@ -289,51 +472,236 @@ class DiagnosticsCollector:
                     "edb_rows": s.edb_rows,
                     "idb_rows": s.idb_rows,
                     "peak_residency_mb": s.peak_residency_mb,
+                    "start_since_start_ms": s.start_since_start_ms,
+                    "end_since_start_ms": s.end_since_start_ms,
                 }
                 for s in self._steps
             ],
             "phases": list(self._phases),
             "warnings": list(self._warnings),
+            "phase_a_workers": [
+                {
+                    "worker": iv.worker,
+                    "file": iv.file,
+                    "start_since_start_ms": iv.start_since_start_ms,
+                    "end_since_start_ms": iv.end_since_start_ms,
+                }
+                for iv in self._worker_intervals
+            ],
         }
 
-    def generate_markdown(self) -> str:
-        self._flush_step()
+    def generate_html(self) -> str:
         total_ms = (time.monotonic() - self._start) * 1000
-        lines = [
-            "# Pipeline Diagnostics Report",
-            "",
-            f"**Total elapsed:** {self._fmt_ms(total_ms)}",
-            "",
+
+        phases_html = (
+            "<h2>Phases</h2><ul>"
+            + "".join(f"<li>{html.escape(p['name'])}</li>" for p in self._phases)
+            + "</ul>"
+        ) if self._phases else ""
+
+        warnings_html = (
+            "<h2>Warnings</h2><ul class=\"warnings\">"
+            + "".join(f"<li>{html.escape(w)}</li>" for w in self._warnings)
+            + "</ul>"
+        ) if self._warnings else ""
+
+        rows_html = "".join(
+            "<tr>"
+            f"<td>{html.escape(s.label)}</td>"
+            f"<td>{self._fmt_ms(s.elapsed_ms) if s.elapsed_ms is not None else '—'}</td>"
+            f"<td>{self._fmt_rows(s.edb_rows) if s.edb_rows else '—'}</td>"
+            f"<td>{self._fmt_rows(s.idb_rows) if s.idb_rows else '—'}</td>"
+            f"<td>{self._fmt_res(s.peak_residency_mb) if s.peak_residency_mb is not None else '—'}</td>"
+            "</tr>"
+            for s in self._steps
+        )
+        table_html = (
+            "<h2>Steps</h2>"
+            "<table><thead><tr><th>Step</th><th>Duration</th><th>EDB Rows</th>"
+            "<th>IDB Rows</th><th>Peak RES</th></tr></thead>"
+            f"<tbody>{rows_html}</tbody></table>"
+        ) if self._steps else ""
+
+        return _HTML_TEMPLATE.format(
+            total_elapsed=self._fmt_ms(total_ms),
+            phases_html=phases_html,
+            timeline_html=self._render_timeline_svg(),
+            table_html=table_html,
+            warnings_html=warnings_html,
+        )
+
+    # Beyond this many distinct Phase A workers, per-worker lanes fold into
+    # one aggregate "File parsing (Phase A)" lane -- keeps the chart's
+    # height bounded on a many-core machine while still showing individual
+    # worker contributions on the common case (a handful of workers).
+    _MAX_WORKER_LANES = 16
+
+    def _render_timeline_svg(self) -> str:
+        """Swim-lane timeline positioned by each event's absolute
+        since_start_ms offset rather than its own duration alone -- the only
+        representation that stays meaningful once Phase A's concurrent
+        per-file workers and every other sequential step contribute events
+        to the same report. One lane per Phase A worker (or one aggregate
+        lane past _MAX_WORKER_LANES), then one lane per step-kind category.
+        """
+        steps_with_time = [s for s in self._steps if s.start_since_start_ms is not None]
+        worker_ids = sorted({iv.worker for iv in self._worker_intervals})
+        show_per_worker = 0 < len(worker_ids) <= self._MAX_WORKER_LANES
+
+        def worker_lane(w: int) -> str:
+            return f"Worker {w}" if show_per_worker else "File parsing (Phase A)"
+
+        worker_lanes = (
+            [worker_lane(w) for w in worker_ids] if show_per_worker
+            else (["File parsing (Phase A)"] if self._worker_intervals else [])
+        )
+        category_lanes = [k for k in _KIND_ORDER if any(_step_kind(s.label) == k for s in steps_with_time)]
+        all_lanes = worker_lanes + category_lanes
+
+        instants = [p["since_start_ms"] for p in self._phases if p.get("since_start_ms") is not None]
+        for s in steps_with_time:
+            instants.append(s.start_since_start_ms)
+            if s.end_since_start_ms is not None:
+                instants.append(s.end_since_start_ms)
+        for iv in self._worker_intervals:
+            instants.append(iv.start_since_start_ms)
+            if iv.end_since_start_ms is not None:
+                instants.append(iv.end_since_start_ms)
+        if not instants or not all_lanes:
+            return ""
+        total_span_ms = max(instants)
+        if total_span_ms <= 0:
+            return ""
+
+        # Dedicated label column, like a real Gantt chart's resource axis --
+        # lane labels live here, never in the plot area itself, so a bar
+        # starting near t=0 (a real, common case: Phase A workers and
+        # "Scanning source directory" both start at/near the beginning)
+        # can never paint over its own lane's label.
+        label_gutter = 200.0
+        plot_width = 1200.0
+        total_width = label_gutter + plot_width
+        scale = plot_width / total_span_ms
+
+        lane_index = {lbl: i for i, lbl in enumerate(all_lanes)}
+        lane_h = 22
+        lane_gap = 2
+        top_pad = 24
+        axis_h = 20
+        height = top_pad + len(all_lanes) * (lane_h + lane_gap) + axis_h
+
+        parts = [
+            f'<svg viewBox="0 0 {total_width:.0f} {height:.0f}" width="{total_width:.0f}" '
+            f'height="{height:.0f}" xmlns="http://www.w3.org/2000/svg" '
+            'role="img" aria-label="Pipeline timeline">'
         ]
 
-        if self._phases:
-            lines.append("## Phases")
-            lines.append("")
-            for p in self._phases:
-                lines.append(f"- {p['name']}")
-            lines.append("")
+        # Unaccounted-time bands: any span not covered by a worker interval
+        # or a step, above a noise threshold -- a generic net for whatever
+        # instrumentation gap turns up next, rather than hand-instrumenting
+        # every one found today and hoping that's the last of them. Drawn
+        # first so every real bar renders on top of it.
+        accounted: list[tuple[float, float]] = [
+            (iv.start_since_start_ms, iv.end_since_start_ms if iv.end_since_start_ms is not None else iv.start_since_start_ms)
+            for iv in self._worker_intervals
+        ]
+        for s in steps_with_time:
+            start = s.start_since_start_ms
+            assert start is not None  # guaranteed by the steps_with_time filter above
+            accounted.append((start, s.end_since_start_ms if s.end_since_start_ms is not None else start))
+        for gap_start, gap_end in _find_gaps(accounted, total_span_ms):
+            x = label_gutter + gap_start * scale
+            w = max(1.5, (gap_end - gap_start) * scale)
+            parts.append(
+                f'<rect x="{x:.1f}" y="{top_pad - 4:.1f}" width="{w:.1f}" '
+                f'height="{height - axis_h - top_pad + 4:.1f}" class="gap">'
+                f"<title>Unaccounted time — {self._fmt_ms(gap_end - gap_start)}</title></rect>"
+            )
 
-        if self._steps:
-            lines.append("## Steps")
-            lines.append("")
-            lines.append("| Step | Duration | EDB Rows | IDB Rows | Peak RES |")
-            lines.append("|------|----------|----------|----------|----------|")
-            for s in self._steps:
-                dur = self._fmt_ms(s.elapsed_ms) if s.elapsed_ms is not None else "—"
-                edb = self._fmt_rows(s.edb_rows) if s.edb_rows else "—"
-                idb = self._fmt_rows(s.idb_rows) if s.idb_rows else "—"
-                res = self._fmt_res(s.peak_residency_mb) if s.peak_residency_mb is not None else "—"
-                lines.append(f"| {s.label} | {dur} | {edb} | {idb} | {res} |")
-            lines.append("")
+        # Phase boundaries: vertical dashed guides with a label at the top.
+        for p in self._phases:
+            since = p.get("since_start_ms")
+            if since is None:
+                continue
+            x = label_gutter + since * scale
+            parts.append(
+                f'<line x1="{x:.1f}" y1="{top_pad - 4:.1f}" x2="{x:.1f}" '
+                f'y2="{height - axis_h:.1f}" class="phase-guide"/>'
+            )
+            parts.append(f'<text x="{x + 3:.1f}" y="{top_pad - 8:.1f}" class="phase-label">'
+                         f'{html.escape(p["name"])}</text>')
 
-        if self._warnings:
-            lines.append("## Warnings")
-            lines.append("")
-            for w in self._warnings:
-                lines.append(f"- {w}")
-            lines.append("")
+        # Lane label (in the dedicated gutter) + baseline gridline (in the
+        # plot area only) per lane.
+        for lbl, i in lane_index.items():
+            y = top_pad + i * (lane_h + lane_gap)
+            parts.append(f'<line x1="{label_gutter:.0f}" y1="{y + lane_h:.1f}" '
+                         f'x2="{total_width:.0f}" y2="{y + lane_h:.1f}" class="lane-grid"/>')
+            parts.append(f'<text x="4" y="{y + lane_h - 6:.1f}" class="lane-label">'
+                         f'{html.escape(lbl)}</text>')
 
-        return "\n".join(lines)
+        def render_bar(lane_label: str, start: float, end: float | None, series: int, tooltip: str) -> str:
+            y = top_pad + lane_index[lane_label] * (lane_h + lane_gap)
+            end_ = end if end is not None else start
+            x = label_gutter + start * scale
+            w = max(1.5, (end_ - start) * scale)
+            return (
+                f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{lane_h - 4:.1f}" '
+                f'rx="4" class="bar series-{series}"><title>{html.escape(tooltip)}</title></rect>'
+            )
+
+        # One bar per Phase A file-processing interval, in its worker's lane
+        # (or the aggregate lane once there are too many workers to show
+        # individually).
+        for iv in self._worker_intervals:
+            fname = iv.file.rsplit("/", 1)[-1] if iv.file else "?"
+            parts.append(render_bar(
+                worker_lane(iv.worker), iv.start_since_start_ms, iv.end_since_start_ms,
+                series=6, tooltip=f"Worker {iv.worker}: {fname}",
+            ))
+
+        # One bar per step, in its category's lane.
+        for s in steps_with_time:
+            kind = _step_kind(s.label)
+            start = s.start_since_start_ms
+            assert start is not None  # guaranteed by the steps_with_time filter above
+            dur = self._fmt_ms(s.elapsed_ms) if s.elapsed_ms is not None else "still running"
+            parts.append(render_bar(
+                kind, start, s.end_since_start_ms,
+                series=_KIND_ORDER.index(kind) + 1, tooltip=f"{s.label} — {dur}",
+            ))
+
+        # Time axis: a handful of evenly-spaced ticks along the bottom.
+        n_ticks = 6
+        axis_y = height - axis_h + 12
+        for i in range(n_ticks + 1):
+            t_ms = total_span_ms * i / n_ticks
+            x = label_gutter + t_ms * scale
+            parts.append(f'<line x1="{x:.1f}" y1="{axis_y - 12:.1f}" x2="{x:.1f}" '
+                         f'y2="{axis_y - 6:.1f}" class="lane-grid"/>')
+            parts.append(f'<text x="{x:.1f}" y="{axis_y + 6:.1f}" class="axis-tick">'
+                         f'{self._fmt_ms(t_ms)}</text>')
+
+        parts.append("</svg>")
+
+        legend_items = [
+            f'<span class="legend-item"><span class="swatch series-{_KIND_ORDER.index(k) + 1}"></span>'
+            f"{html.escape(k)}</span>"
+            for k in category_lanes
+        ]
+        if self._worker_intervals:
+            legend_items.insert(
+                0,
+                '<span class="legend-item"><span class="swatch series-6"></span>'
+                "File parsing (Phase A)</span>",
+            )
+        legend = "".join(legend_items)
+
+        return (
+            '<h2>Timeline</h2><div class="timeline">'
+            + "".join(parts)
+            + f'</div><div class="legend">{legend}</div>'
+        )
 
     def write(self, path: str) -> None:
         from pathlib import Path
@@ -341,7 +709,7 @@ class DiagnosticsCollector:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.with_suffix(".json").write_text(json.dumps(self.generate_json(), indent=2))
-        p.with_suffix(".md").write_text(self.generate_markdown())
+        p.with_suffix(".html").write_text(self.generate_html())
 
     @staticmethod
     def _fmt_ms(ms: float) -> str:

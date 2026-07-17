@@ -67,8 +67,8 @@ def index(
     diagnostics_report: Optional[str] = typer.Option(
         None,
         "--diagnostics-report",
-        help="Write a post-run diagnostics report (JSON + Markdown) to this path "
-        "(e.g. /tmp/diagnostics). Produces <path>.json and <path>.md.",
+        help="Write a post-run diagnostics report (JSON + HTML) to this path "
+        "(e.g. /tmp/diagnostics). Produces <path>.json and <path>.html.",
     ),
 ) -> None:
     """Parse → import → analyze, incremental by default (only changed files).
@@ -253,6 +253,12 @@ def explore(
         "resolves against this schema when the DDL catalog confirms it defines that "
         "table; otherwise it stays unresolved. Optional -- omit for single-schema corpora.",
     ),
+    diagnostics_report: Optional[str] = typer.Option(
+        None,
+        "--diagnostics-report",
+        help="Write a post-run diagnostics report (JSON + HTML) to this path "
+        "(e.g. /tmp/diagnostics). Produces <path>.json and <path>.html.",
+    ),
 ) -> None:
     """Start the interactive DuckDB explorer web UI.
 
@@ -268,6 +274,7 @@ def explore(
                 run_pipeline(
                     src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect,
                     input_path=input_path, ddl=ddl, default_namespace=default_namespace,
+                    diagnostics_report_path=diagnostics_report,
                 )
         else:
             typer.echo("Database is up-to-date, skipping index.")

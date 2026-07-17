@@ -70,12 +70,22 @@ import Data.Time.Clock        (UTCTime, getCurrentTime)
 -- 'souffleStart' for the fix, and 'PB.Analysis.Rules.Taint.taintRules'\'
 -- Code Index entry (compiler/CLAUDE.md) for the perf fix this incident
 -- also produced.
+-- | Label stays identical across both firings (unlike an earlier version
+-- of this function, which appended @" materialized (N rows)"@ to the
+-- second event's label only) -- the row count already flows through the
+-- structured @idb_rows@ field below, so baking it into the label text too
+-- just gave the two events different labels and defeated the Python
+-- 'DiagnosticsCollector'\'s flush-on-label-change pairing (the same
+-- mechanism 'souffleLabel' exists to keep 'souffleStart'\/'souffleFinish'
+-- on). The bare start event (no row count yet) would otherwise show up as
+-- its own all-dashes row in the report table instead of merging into its
+-- end event's row.
 souffleProgress :: Souffle.Relation -> Maybe (Int, Double) -> IO ()
 souffleProgress rel Nothing =
   Progress.emitEvent (Progress.EvStep ("Datalog: " <> Souffle.relName rel) Nothing [] [] Nothing)
 souffleProgress rel (Just (n, elapsedMs)) =
   Progress.emitEvent (Progress.EvStep
-    ("Datalog: " <> Souffle.relName rel <> " materialized (" <> T.pack (show n) <> " rows)")
+    ("Datalog: " <> Souffle.relName rel)
     (Just elapsedMs) [] [(Souffle.relName rel, n)] Nothing)
 
 -- | Stable per-ruleset progress-event label, shared by 'souffleStart' and
@@ -90,13 +100,25 @@ souffleLabel rs = "Datalog: running ["
   <> T.intercalate ", " (map Souffle.relName (Souffle.rsRelations rs))
   <> "]"
 
--- | Fires right before each ruleset's @souffle@ subprocess starts (see
--- 'Souffle.runRuleSetWithStart'), naming which ruleset is about to run and
--- its EDB relations' exact row counts -- fixes 'souffleProgress'\'s own
--- staleness caveat above by giving real-time visibility into what's
--- ACTUALLY executing, not just what last finished.
-souffleStart :: Souffle.RuleSet -> [(Souffle.Relation, Int)] -> IO ()
-souffleStart rs counts = Progress.emitEvent (Progress.EvStep
+-- | Fires at the TRUE start of a ruleset's processing -- before its EDB
+-- facts are even queried (see 'Souffle.SouffleHooks.onRuleSetPrepStart').
+-- Anchors the timeline bar's left edge correctly; 'souffleCounts' below
+-- (fired later, once row counts are known) shares the same label and
+-- merges into this same report row rather than opening a second one. A
+-- real corpus timeline showed a ~2s unaccounted gap right before every
+-- ruleset's bar until this hook existed -- the EDB-gathering loop was
+-- genuinely running the whole time, just with no event marking when it
+-- began.
+souffleStart :: Souffle.RuleSet -> IO ()
+souffleStart rs = Progress.emitEvent (Progress.EvStep (souffleLabel rs) Nothing [] [] Nothing)
+
+-- | Fires once EDB facts are queried/written and their row counts are known
+-- (see 'Souffle.SouffleHooks.onRuleSetStart's own doc comment for why this
+-- is deliberately later than 'souffleStart') -- shares 'souffleLabel' with
+-- 'souffleStart' so this just adds row counts to the same already-open
+-- report row instead of anchoring a second one.
+souffleCounts :: Souffle.RuleSet -> [(Souffle.Relation, Int)] -> IO ()
+souffleCounts rs counts = Progress.emitEvent (Progress.EvStep
   (souffleLabel rs)
   Nothing
   [ (Souffle.relName rel, n) | (rel, n) <- counts ]
@@ -119,7 +141,7 @@ souffleFinish rs elapsedMs = do
 -- are queried and written into its @.facts@ file -- the concrete fix for a
 -- production incident where a stall inside this exact loop (suspected on an
 -- oversized @reaches@ relation feeding @risk_count@) produced zero progress
--- events, since 'souffleStart' above only fires once the whole loop has
+-- events, since 'souffleCounts' below only fires once the whole loop has
 -- already finished.
 souffleEdbFact :: Souffle.Relation -> Int -> Double -> IO ()
 souffleEdbFact rel n elapsedMs = do
@@ -142,11 +164,12 @@ souffleHeartbeat elapsedSec = do
 -- rule set run.
 souffleHooks :: Souffle.SouffleHooks
 souffleHooks = Souffle.noSouffleHooks
-  { Souffle.onRuleSetStart  = souffleStart
-  , Souffle.onEdbFact       = souffleEdbFact
-  , Souffle.onIdbRelation   = souffleProgress
-  , Souffle.onHeartbeat     = souffleHeartbeat
-  , Souffle.onRuleSetFinish = souffleFinish
+  { Souffle.onRuleSetPrepStart = souffleStart
+  , Souffle.onRuleSetStart     = souffleCounts
+  , Souffle.onEdbFact          = souffleEdbFact
+  , Souffle.onIdbRelation      = souffleProgress
+  , Souffle.onHeartbeat        = souffleHeartbeat
+  , Souffle.onRuleSetFinish    = souffleFinish
   }
 
 -- | Characterize @leg_source@'s (x, y) key fan-in before 'SchemaRules.legRules'

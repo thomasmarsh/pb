@@ -69,6 +69,7 @@ import PB.Pipeline.Emit
   )
 import PB.Runtime.StdLib (parseStdlibFiles)
 import PB.Pipeline.Passes    (runPhaseB)
+import PB.Pipeline.Progress  qualified as Progress
 import PB.Pipeline.Serialise ()
 import PB.Pipeline.SqlParse
   ( SqlResult (..), ColumnRef (..), RowFilter (..), SqlBridgePool
@@ -80,7 +81,7 @@ import PB.Pipeline.SqlParse
 import PB.Pipeline.FileWalk    (walkAllSrFiles)
 import PB.Pipeline.DuckDb
   ( withWriteConn, initSchema
-  , AppenderPool, withAppenderPool
+  , AppenderPool, withAppenderPoolTimed
   , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
   , DwRetrieveTableRow (..), DwRetrieveColumnRow (..), DwJoinRow (..), SqlStmtRow (..)
   , SqlStmtColumnRow (..), SqlStmtFilterRow (..), SqlStmtTableRow (..)
@@ -119,10 +120,16 @@ import qualified Data.Text.Encoding as TE
 import System.FilePath     (takeBaseName, makeRelative)
 import qualified Data.Map.Strict as Map
 
--- | Emit a single JSON progress event to stderr for the Python reporter.
+-- | Emit a single JSON progress event to stderr for the Python reporter,
+-- stamped with 'Progress.elapsedSinceStartMs' -- shares its origin with
+-- every 'PB.Pipeline.Progress.emitEvent' call in Phase B, so Phase A's
+-- concurrent per-file workers (@mapConcurrently_@ over 'workerLoopFiles'
+-- below) and Phase B's sequential analysis passes land on one consistent
+-- timeline regardless of which one emitted a given event.
 emitProgress :: Value -> IO ()
 emitProgress v = do
-  BS.hPut stderr (BSL.toStrict (encode v) <> "\n")
+  sinceStartMs <- Progress.elapsedSinceStartMs
+  BS.hPut stderr (BSL.toStrict (encode (Progress.stampValue sinceStartMs v)) <> "\n")
   hFlush stderr
 
 -- ---------------------------------------------------------------------------
@@ -712,7 +719,7 @@ validateDdlNamespaceConfig ddlArgs mDefaultNamespace
 -- that namespace -- never guessed.
 runModeDb :: FilePath -> FilePath -> [Text] -> Text -> Maybe FilePath -> Maybe Text -> IO ()
 runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
-  files <- walkAllSrFiles srcDir
+  files <- Progress.timedStep "Scanning source directory" (walkAllSrFiles srcDir)
   let total = length files
   emitProgress (object ["tag" .= ("total" :: Text), "n" .= total])
 
@@ -724,24 +731,30 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
     emitProgress (object ["tag" .= ("file_done" :: Text), "phase" .= ("A0" :: Text)])
     pure outcome) files
   let allParsedSrFiles = map pfSrFile stdlibParsed ++ [pfSrFile pf | PsParsed pf <- outcomes0]
-      wsEnv = buildWorkspaceEnv allParsedSrFiles
-  _ <- evaluate (Map.size (weGlobals wsEnv) + Map.size (weHierarchy wsEnv))
+  wsEnv <- Progress.timedStep "Building workspace type env" $ do
+    let wsEnv' = buildWorkspaceEnv allParsedSrFiles
+    _ <- evaluate (Map.size (weGlobals wsEnv') + Map.size (weHierarchy wsEnv'))
+    pure wsEnv'
 
   -- Plan 164 Phase C: workspace-wide control/object hierarchy index, built
   -- once from the same parsed-file set as wsEnv, so a runtime DW-alias
   -- assignment in one file can resolve a member-chain through controls
   -- declared in a different file (see 'runtimeDwAliasBindings' in
   -- 'compileOne' below).
-  let controlIdx = buildControlIndex allParsedSrFiles
-  _ <- evaluate (Map.size controlIdx)
+  controlIdx <- Progress.timedStep "Building control index" $ do
+    let controlIdx' = buildControlIndex allParsedSrFiles
+    _ <- evaluate (Map.size controlIdx')
+    pure controlIdx'
 
   -- Plan 177 Phase 4: workspace-wide type-check context, built once from
   -- the same parsed-file set as wsEnv/controlIdx above -- every field is a
   -- pure function of allParsedSrFiles (see TypeCheckWorkspace's own doc
   -- comment), so no DuckDB round-trip is needed the way resolveTypes/
   -- resolveCalls's Phase-B inputs require.
-  let tcw = buildTypeCheckWorkspace allParsedSrFiles
-  _ <- evaluate (Map.size (tcwProcMap tcw) + Map.size (tcwParams tcw))
+  tcw <- Progress.timedStep "Building type-check workspace" $ do
+    let tcw' = buildTypeCheckWorkspace allParsedSrFiles
+    _ <- evaluate (Map.size (tcwProcMap tcw') + Map.size (tcwParams tcw'))
+    pure tcw'
 
   -- Every DW file, already parsed in Phase A0 above -- Plan 163 Phase 3
   -- needs this cross-file (a PowerScript SetItem call may reference a DW
@@ -771,7 +784,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
           , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"
           , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
           ]
-    withAppenderPool conn phaseATables $ \appPool -> do
+    withAppenderPoolTimed Progress.emitEvent conn phaseATables $ \appPool -> do
       -- Load stdlib first so type lookups in user-code Phase B see the base classes.
       -- Stdlib has no DW files of its own, so an empty map is correct here.
       mapM_ (\pf -> do
@@ -798,11 +811,12 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
             (\k -> workerLoopFilesNoBridge srcDir Set.empty mDefaultNamespace dwfCtx k workQ wsEnv controlIdx tcw globalDwColumns appPool mutex errCount)
             [0 .. nWorkers - 1]
         Just pythonExe -> do
-          sqlPool <- startSqlBridgePool nWorkers pythonExe sqlWorkerModuleArgs dialect
+          sqlPool <- Progress.timedStep "Starting SQL bridge pool"
+            (startSqlBridgePool nWorkers pythonExe sqlWorkerModuleArgs dialect)
           allColRows <- mapM (\rawArg -> do
             let (mSchema, ddlPath) = parseDdlArg rawArg
             ddlText <- readFile ddlPath
-            resp <- parseDdl sqlPool mSchema ddlText
+            resp <- Progress.timedStep ("Loading DDL: " <> T.pack ddlPath) (parseDdl sqlPool mSchema ddlText)
             let stats = ddlStats resp
                 (colRows, pkRows, fkRows, checkRows) = catalogToRows (ddlCatalog resp)
             appendCatalogColumns appPool colRows

@@ -183,7 +183,19 @@ runRuleSetWith onRelation = runRuleSetWithStart
 -- non-instrumented call site (@runRuleSet@\/@runRuleSets@ below, and every
 -- test that calls them) a single no-op value to start from.
 data SouffleHooks = SouffleHooks
-  { onRuleSetStart :: RuleSet -> [(Relation, Int)] -> IO ()
+  { onRuleSetPrepStart :: RuleSet -> IO ()
+    -- ^ Fires once per ruleset, before its EDB facts are even queried --
+    -- the TRUE start of this ruleset's processing, existing purely to
+    -- anchor a timeline bar's left edge correctly. 'onRuleSetStart' below
+    -- is deliberately fired later (after EDB row counts are known), which
+    -- is the right call for reporting counts cheaply but the wrong anchor
+    -- for "when did this ruleset start" -- a caller that only wired
+    -- 'onRuleSetStart' rendered its bar starting after the EDB-gathering
+    -- loop had already run, leaving that loop's own duration as an
+    -- invisible gap between the previous event and this one (found via a
+    -- real corpus timeline showing an unexplained ~2s gap right before
+    -- every ruleset's "running" bar).
+  , onRuleSetStart :: RuleSet -> [(Relation, Int)] -> IO ()
     -- ^ Fires with this 'RuleSet' and its EDB relations' exact row counts,
     -- right after fact files are written but BEFORE the (possibly
     -- long-running) @souffle@ subprocess starts -- essentially free (the
@@ -237,7 +249,8 @@ data SouffleHooks = SouffleHooks
 -- (including every existing test) starts from and overrides selectively.
 noSouffleHooks :: SouffleHooks
 noSouffleHooks = SouffleHooks
-  { onRuleSetStart  = \_ _ -> pure ()
+  { onRuleSetPrepStart = \_ -> pure ()
+  , onRuleSetStart  = \_ _ -> pure ()
   , onEdbFact       = \_ _ _ -> pure ()
   , onIdbRelation   = \_ _ -> pure ()
   , onHeartbeat     = \_ -> pure ()
@@ -255,6 +268,7 @@ runRuleSetWithStart hooks conn rs =
     createDirectoryIfMissing True factsDir
     createDirectoryIfMissing True outDir
     tRs0 <- getCurrentTime
+    onRuleSetPrepStart hooks rs
     counts <- mapM (\rel -> do
       t0 <- getCurrentTime
       rows <- queryTextRows conn (relName rel) (colNames rel)

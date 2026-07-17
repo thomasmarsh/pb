@@ -296,7 +296,8 @@ def test_all_events_are_json_serialisable():
 def _step_event(label: str, *, elapsed_ms: float | None = None,
                 edb_rows: dict[str, int] | None = None,
                 idb_rows: dict[str, int] | None = None,
-                residency_mb: float | None = None) -> dict:
+                residency_mb: float | None = None,
+                since_start_ms: float | None = None) -> dict:
     ev: dict = {"tag": "step", "label": label}
     if elapsed_ms is not None:
         ev["elapsed_ms"] = elapsed_ms
@@ -306,6 +307,8 @@ def _step_event(label: str, *, elapsed_ms: float | None = None,
         ev["idb_rows"] = idb_rows
     if residency_mb is not None:
         ev["residency_mb"] = residency_mb
+    if since_start_ms is not None:
+        ev["since_start_ms"] = since_start_ms
     return ev
 
 
@@ -373,15 +376,93 @@ def test_diagnostics_collector_empty_run():
     assert "total_elapsed_ms" in report
 
 
-def test_diagnostics_collector_markdown_format():
+def test_diagnostics_collector_html_format():
     c = DiagnosticsCollector()
     c.on_event(_step_event("risk_count", edb_rows={"reaches": 150000}, elapsed_ms=120000, idb_rows={"risk_count": 500}, residency_mb=14800))
     c.on_event(_step_event("taint_reaches", edb_rows={"taint_edge": 5594106}, elapsed_ms=45200, idb_rows={"taint_reaches": 1200}))
-    md = c.generate_markdown()
-    assert "| Step |" in md
-    assert "risk_count" in md
-    assert "taint_reaches" in md
-    assert "14.5GB" in md  # 14800 MB ≈ 14.5GB
+    out = c.generate_html()
+    assert "<table>" in out
+    assert "risk_count" in out
+    assert "taint_reaches" in out
+    assert "14.5GB" in out  # 14800 MB ≈ 14.5GB
+
+
+def test_diagnostics_collector_timeline_svg():
+    c = DiagnosticsCollector()
+    c.on_event({"tag": "phase", "name": "B", "since_start_ms": 0})
+    c.on_event(_step_event("Datalog: running [reaches]", since_start_ms=10))
+    c.on_event(_step_event("Datalog: running [reaches]", elapsed_ms=500, since_start_ms=510))
+    out = c.generate_html()
+    assert "<svg" in out
+    assert "Datalog ruleset run" in out  # legend entry
+    assert "Datalog: running [reaches] — 0.5s" in out  # native <title> tooltip text
+
+
+def test_diagnostics_collector_timeline_omitted_when_no_timing_data():
+    c = DiagnosticsCollector()
+    c.on_event(_step_event("step1", elapsed_ms=1000))  # no since_start_ms
+    out = c.generate_html()
+    assert "<svg" not in out
+
+
+def test_diagnostics_collector_phase_a_workers_rendered_in_timeline():
+    """Phase A's concurrent per-file workers (worker_start/worker_done, not
+    step/phase) must show up in the report -- this is the whole reason
+    since_start_ms was added: worker contributions weren't visible at all
+    before Phase A's own events carried it."""
+    c = DiagnosticsCollector()
+    c.on_event({"tag": "worker_start", "worker": 0, "file": "src/w_order.srw", "since_start_ms": 10})
+    c.on_event({"tag": "worker_start", "worker": 1, "file": "src/w_customer.srw", "since_start_ms": 12})
+    c.on_event({"tag": "worker_done", "worker": 0, "file": "src/w_order.srw", "ok": True, "since_start_ms": 40})
+    c.on_event({"tag": "worker_done", "worker": 1, "file": "src/w_customer.srw", "ok": True, "since_start_ms": 55})
+
+    report = c.generate_json()
+    workers = report["phase_a_workers"]
+    assert len(workers) == 2
+    assert {w["worker"] for w in workers} == {0, 1}
+    assert workers[0]["file"] == "src/w_order.srw"
+    assert workers[0]["end_since_start_ms"] == 40
+
+    out = c.generate_html()
+    assert "Worker 0" in out
+    assert "Worker 1" in out
+    assert "File parsing (Phase A)" in out  # legend entry
+    assert "w_order.srw" in out  # native tooltip uses the basename
+
+
+def test_diagnostics_collector_many_workers_fold_into_one_lane():
+    """Past _MAX_WORKER_LANES, per-worker lanes fold into one aggregate lane
+    -- individual bars still identify their worker via tooltip, but there is
+    no dedicated row per worker (which would make the chart unboundedly
+    tall on a many-core machine)."""
+    c = DiagnosticsCollector()
+    for w in range(20):
+        c.on_event({"tag": "worker_start", "worker": w, "file": f"f{w}.srw", "since_start_ms": w})
+        c.on_event({"tag": "worker_done", "worker": w, "file": f"f{w}.srw", "ok": True, "since_start_ms": w + 5})
+    out = c.generate_html()
+    assert 'class="lane-label">Worker 0<' not in out
+    assert 'class="lane-label">File parsing (Phase A)<' in out
+
+
+def test_diagnostics_collector_nested_steps_merge_not_split():
+    """A Progress.timedStep nested inside another (e.g. runPass67's "Building
+    call graph" wrapping "Taint classification") must not produce a bogus
+    all-dashes row for the outer step, or split its start/end across two
+    separate report rows."""
+    c = DiagnosticsCollector()
+    c.on_event(_step_event("Building call graph", since_start_ms=100))
+    c.on_event(_step_event("Taint classification", since_start_ms=150))
+    c.on_event(_step_event("Taint classification", elapsed_ms=20, since_start_ms=170))
+    c.on_event(_step_event("Building call graph", elapsed_ms=500, since_start_ms=600))
+    report = c.generate_json()
+    by_label = {s["label"]: s for s in report["steps"]}
+    assert len(report["steps"]) == 2
+    assert by_label["Building call graph"]["elapsed_ms"] == 500
+    assert by_label["Building call graph"]["start_since_start_ms"] == 100
+    assert by_label["Building call graph"]["end_since_start_ms"] == 600
+    assert by_label["Taint classification"]["elapsed_ms"] == 20
+    # Outer step is listed first: first-seen order, not completion order.
+    assert report["steps"][0]["label"] == "Building call graph"
 
 
 def test_diagnostics_collector_write(tmp_path):
@@ -390,11 +471,11 @@ def test_diagnostics_collector_write(tmp_path):
     out = tmp_path / "diag"
     c.write(str(out))
     assert (tmp_path / "diag.json").exists()
-    assert (tmp_path / "diag.md").exists()
+    assert (tmp_path / "diag.html").exists()
     data = json.loads((tmp_path / "diag.json").read_text())
     assert len(data["steps"]) == 1
-    md_text = (tmp_path / "diag.md").read_text()
-    assert "step1" in md_text
+    html_text = (tmp_path / "diag.html").read_text()
+    assert "step1" in html_text
 
 
 def test_diagnostics_collector_partial_run():
