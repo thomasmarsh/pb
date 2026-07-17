@@ -32,7 +32,7 @@ import PB.Pipeline.DuckDb
   , TaintKeyRow (..), queryTaintSourceRows, queryTaintSinkRows
   )
 import PB.Analysis.Taint qualified as Taint
-import Database.DuckDB.Simple (query_)
+import Database.DuckDB.Simple (Query (..), query_)
 import Database.DuckDB.Simple.FromRow (FromRow (..), field)
 
 import qualified Data.HashMap.Strict as HM
@@ -58,38 +58,61 @@ import qualified Data.Text           as T
 initTaintEdbViews :: DuckConn -> IO ()
 initTaintEdbViews = initTaintEdbViewsWith (\_ -> pure ())
 
--- | As 'initTaintEdbViews', but additionally invokes @onCounts@ with named
--- row-count checkpoints at two points: right after querying @proc_defs@\/
--- @proc_uses@\/@interproc_edges@\/@taint_sources@\/@taint_sinks@, and again
--- once the four edge shapes have combined into the full @taint_edge@ row
--- list -- lets a caller (e.g. 'PB.Pipeline.Passes.runPhaseB') observe
--- progress through this previously print-free function without threading
--- printing logic into this module (mirrors 'PB.Pipeline.Souffle.runRuleSetWith'\'s
+-- | As 'initTaintEdbViews', but additionally invokes @onCounts@ with a
+-- named checkpoint after every individual step: a cheap metadata-level
+-- @COUNT(*)@ for all five source tables first (fast even if a later full
+-- fetch hangs), then one checkpoint per full-row fetch, one after the four
+-- edge shapes combine into @taint_edge@'s row list, and one after each of
+-- the three DB writes -- lets a caller (e.g.
+-- 'PB.Pipeline.Passes.runPhaseB') narrow a stall down to a specific query,
+-- the in-memory join, or a specific write, without threading printing
+-- logic into this module (mirrors 'PB.Pipeline.Souffle.runRuleSetWith'\'s
 -- callback shape).
 initTaintEdbViewsWith :: ([(Text, Int)] -> IO ()) -> DuckConn -> IO ()
 initTaintEdbViewsWith onCounts conn = do
+  fastCounts <- mapM (\t -> (t,) <$> tableRowCount conn t)
+    ["proc_defs", "proc_uses", "interproc_edges", "taint_sources", "taint_sinks"]
+  onCounts fastCounts
   defs  <- queryProcDefs conn
+  onCounts [("proc_defs_fetched", length defs)]
   uses  <- queryProcUses conn
+  onCounts [("proc_uses_fetched", length uses)]
   edges <- queryInterprocEdges conn
+  onCounts [("interproc_edges_fetched", length edges)]
   srcs  <- queryTaintSourceRows conn
+  onCounts [("taint_sources_fetched", length srcs)]
   snks  <- queryTaintSinkRows conn
-  onCounts
-    [ ("proc_defs", length defs), ("proc_uses", length uses)
-    , ("interproc_edges", length edges)
-    , ("taint_sources", length srcs), ("taint_sinks", length snks)
-    ]
+  onCounts [("taint_sinks_fetched", length snks)]
   let edgeRows = taintEdgeIntraRows defs uses
               ++ taintEdgeArgRows edges
               ++ taintEdgeGlobalRows edges
               ++ taintEdgeReturnRows uses edges
   onCounts [("taint_edge_rows", length edgeRows)]
   materialize "taint_edge"   ["from_key", "to_key", "kind"] edgeRows
+  onCounts [("taint_edge_written", 1)]
   materialize "taint_source" ["x"] (taintKeyRows srcs)
+  onCounts [("taint_source_written", 1)]
   materialize "taint_sink"   ["x"] (taintKeyRows snks)
+  onCounts [("taint_sink_written", 1)]
   where
     materialize name cols rows = do
       recreateTextTable conn name cols
       appendTextRows conn name rows
+
+-- | Cheap metadata-level row count for a table -- lets a caller distinguish
+-- "this table is merely large" (fast @COUNT(*)@) from "fetching every row
+-- into Haskell via 'Database.DuckDB.Simple.FromRow' is itself slow".
+newtype CountRow = CountRow Int
+
+instance FromRow CountRow where
+  fromRow = CountRow <$> field
+
+tableRowCount :: DuckConn -> Text -> IO Int
+tableRowCount conn tbl = do
+  rows <- query_ conn (Query ("SELECT COUNT(*) FROM " <> tbl))
+  pure $ case rows of
+    [CountRow n] -> n
+    _            -> 0
 
 -- | Fan-in characterization for a grouped-join key, mirroring
 -- 'PB.Analysis.Rules.Schema.LegSourceFanout' -- computed directly in
