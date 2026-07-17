@@ -111,7 +111,7 @@ module PB.Pipeline.DuckDb
   ) where
 
 import PB.Prelude
-import PB.AST.Ident             (Ident, IdentSet, identOrig, identSetSingleton, identSetUnion, mkIdent)
+import PB.AST.Ident             (Ident, IdentMap, IdentSet, identMapFromListWith, identOrig, identSetSingleton, identSetUnion, mkIdent)
 import PB.AST.Type             (parseTypeText)
 import PB.Analysis.TypeResolve
   ( LocalVar (..), CallSite (..), GlobalVar (..)
@@ -1053,10 +1053,13 @@ queryGlobalVars conn = query_ conn
 -- parsed files with no cross-row case normalization, so a declaration's own
 -- casing and another file's reference to it as an ancestor can genuinely
 -- differ; 'PB.Analysis.TypeResolve.ancestorChain''s canonical-'Ident' walk
--- is what makes that mismatch harmless.
+-- is what makes that mismatch harmless. The proc map's own outer key is
+-- 'IdentMap'-keyed the same way (Plan 179 procMap-outer-key fix), so
+-- 'PB.Analysis.TypeResolve.resolveVirtual' recovers the target object's own
+-- declared casing even when reached via such a mismatched reference.
 queryObjInfo
   :: DuckConn
-  -> IO (Set.Set Text, Set.Set Text, Map.Map Ident Ident, Map.Map Text IdentSet)
+  -> IO (Set.Set Text, Set.Set Text, Map.Map Ident Ident, IdentMap IdentSet)
 queryObjInfo conn = do
   objRows  <- query_ conn
     "SELECT object FROM objects \
@@ -1071,8 +1074,8 @@ queryObjInfo conn = do
     ( Set.fromList [t | OneText t <- objRows]
     , Set.fromList [t | OneText t <- usrRows]
     , Map.fromList [(mkIdent o, mkIdent a) | TwoText o a <- inhRows]
-    , Map.fromListWith identSetUnion
-        [(o, identSetSingleton (mkIdent p)) | TwoText o p <- procRows]
+    , identMapFromListWith identSetUnion
+        [(mkIdent o, identSetSingleton (mkIdent p)) | TwoText o p <- procRows]
     )
 
 queryProcDefs :: DuckConn -> IO [Taint.DefRow]

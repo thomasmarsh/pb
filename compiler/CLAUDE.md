@@ -319,6 +319,21 @@ identSetMember    :: Ident -> IdentSet -> Bool
 identSetLookup    :: Ident -> IdentSet -> Maybe Ident
 identSetToList    :: IdentSet -> [Ident]
 identSetUnion     :: IdentSet -> IdentSet -> IdentSet   -- left-biased on a canonical collision, same as Map.union
+
+-- Canonical-keyed map to an arbitrary value, recovering both the
+-- originally-declared key casing AND the value on lookup (Plan 179
+-- procMap-outer-key fix, 2026-07-17) -- generalizes IdentSet (a payload-
+-- free IdentMap) for e.g. PB.Analysis.TypeResolve.buildProcMap's
+-- object-name -> proc-IdentSet map, where a consumer needs the matched
+-- object's own declared casing back, not just membership.
+newtype IdentMap a = IdentMap (Map.Map Text (Ident, a))   -- constructor not exported
+identMapEmpty        :: IdentMap a
+identMapSize         :: IdentMap a -> Int
+identMapInsertWith   :: (a -> a -> a) -> Ident -> a -> IdentMap a -> IdentMap a  -- f newValue oldValue; key casing left-biased
+identMapFromList     :: [(Ident, a)] -> IdentMap a         -- last-wins values, like Map.fromList
+identMapFromListWith :: (a -> a -> a) -> [(Ident, a)] -> IdentMap a
+identMapLookup       :: Ident -> IdentMap a -> Maybe (Ident, a)  -- recovered key + value
+identMapToList       :: IdentMap a -> [(Ident, a)]
 ```
 
 `TypeDecl.tdName` (Phase 1), `LvSegment.name` (Phase 2, `PB.AST.Expr`),
@@ -1950,7 +1965,7 @@ those two now feed straight into.
 data ProcSignature = ProcSignature { psParams :: [(Text, PbType)], psReturnType :: Maybe PbType }
 data TypeCheckCtx = TypeCheckCtx
   { tcEnv            :: ScopedTypeEnv        -- was tcScope/tcObject/tcInherits/tcControlIdx (4 fields -> 1)
-  , tcProcMap        :: Map.Map Text (Set.Set Text)
+  , tcProcMap        :: IdentMap IdentSet    -- Plan 179 procMap-outer-key fix, 2026-07-17 (was Map.Map Text IdentSet)
   , tcParams         :: Map.Map (Text, Text) [ProcSignature]  -- overload-aware; selectSignature disambiguates by arity
   , tcObjects        :: IdentSet
   , tcUserTypes      :: IdentSet
@@ -1959,7 +1974,7 @@ data TypeCheckCtx = TypeCheckCtx
   , tcOwnReturnType  :: Maybe PbType          -- this specific procedure instance's own declared return type
   }
 data TypeCheckWorkspace = TypeCheckWorkspace
-  { tcwProcMap :: Map.Map Text (Set.Set Text), tcwInherits :: Map.Map Text Text
+  { tcwProcMap :: IdentMap IdentSet, tcwInherits :: Map.Map Ident Ident
   , tcwParams :: Map.Map (Text, Text) [ProcSignature], tcwObjects, tcwUserTypes :: IdentSet }
 buildTypeCheckWorkspace :: [SrFile] -> TypeCheckWorkspace  -- pure fold, no DuckDB round-trip
 buildParamsMap :: [SrFile] -> Map.Map (Text, Text) [ProcSignature]
@@ -2000,7 +2015,7 @@ extractLocalVars  :: Text -> Text -> SrFile -> [LocalVar]   -- file, object, sf
 extractCallSites  :: Text -> Text -> SrFile -> [CallSite]
 extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
 resolveTypes :: [LocalVar] -> IdentSet -> IdentSet -> [ResolvedType]   -- objs, userTypes; falls back to control-name inference
-resolveCalls :: [CallSite] -> Map Text IdentSet -> Map Ident Ident -> Set Text -> Set Text -> [ResolvedCall]
+resolveCalls :: [CallSite] -> IdentMap IdentSet -> Map Ident Ident -> Set Text -> Set Text -> [ResolvedCall]
 buildInheritsMap :: [SrFile] -> Map Ident Ident
 -- buildInheritsMap now applies PB.AST.SourceFile.splitAncestorRef to
 -- tdAncestor before storing the parent value (Plan 164 Phase A,
@@ -2014,13 +2029,17 @@ buildInheritsMap :: [SrFile] -> Map Ident Ident
 -- case-sensitivity gap (TypeFamily.compatible and
 -- TypeCheck.resolveCallTarget both queried an already-lowercased
 -- projection of this map with original-casing keys and silently missed).
--- resolveVirtual :: Ident -> Ident -> Map Text IdentSet -> Map Ident Ident
--- -> (Maybe Text, Maybe Text, Text, Text) -- objN (2nd arg) is Ident too
--- now; procMap (3rd arg) deliberately stays declared-casing Text-keyed (a
--- separately-scoped follow-up, see BACKLOG's "resolveVirtual's procMap
--- outer key" entry), so every chain member is projected back via
--- identOrig at the point it's used as a procMap key.
-buildProcMap     :: [SrFile] -> Map Text (Set Text)
+-- resolveVirtual :: Ident -> Ident -> IdentMap IdentSet -> Map Ident Ident
+-- -> (Maybe Text, Maybe Text, Text, Text) -- objN (2nd arg) is Ident too.
+-- procMap (3rd arg) is IdentMap-keyed (Plan 179 procMap-outer-key fix,
+-- 2026-07-17) -- identMapLookup recovers both the matched object's own
+-- declared casing and its IdentSet of proc names in one lookup, so the
+-- returned target_object is always the ancestor's own declaration, never
+-- however some other file's inherits entry happened to spell it (those two
+-- can genuinely differ -- see PB.AST.Ident's own entry above). Same fix
+-- applies to resolveStaticCall's object-segment match (now a direct
+-- identMapLookup, not a linear scan).
+buildProcMap     :: [SrFile] -> IdentMap IdentSet
 buildObjectSet, buildUserTypeSet :: [SrFile] -> IdentSet
 -- Plan 178 Phase 6 (2026-07-16): built straight from tdName td :: Ident, no
 -- new mint point (previously degraded it to Text via identOrig).
@@ -2498,7 +2517,13 @@ appendDwWriteColumns, appendDwWhereColumns :: AppenderPool -> [DwRetrieveColumnR
 appendDwRetrieveWhere :: AppenderPool -> [DwRetrieveWhereRow] -> IO ()
 -- Phase B read helpers (SELECT → typed rows):
 queryLocalVars, queryCallSites, queryGlobalVars :: DuckConn -> IO [row]
-queryObjInfo     :: DuckConn -> IO [(Text, Text)]       -- (file, object) pairs per PS file
+-- queryObjInfo builds the four workspace-wide maps Pass 5 needs from the DB:
+-- (objects, userTypes, inherits, procMap). inherits is Ident-keyed (Plan 179
+-- Phase 5); procMap is IdentMap-keyed (Plan 179 procMap-outer-key fix,
+-- 2026-07-17) so resolveVirtual recovers a target object's own declared
+-- casing even when reached via a cross-file reference that spells it
+-- differently -- see PB.Analysis.TypeResolve's own entry above.
+queryObjInfo :: DuckConn -> IO (Set.Set Text, Set.Set Text, Map.Map Ident Ident, IdentMap IdentSet)
 queryProcDefs    :: DuckConn -> IO [Taint.DefRow]
 queryProcUses    :: DuckConn -> IO [Taint.UseRow]
 queryResolvedCalls :: DuckConn -> IO [Taint.ResolvedCallRow]

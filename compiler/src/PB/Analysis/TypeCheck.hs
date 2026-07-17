@@ -42,7 +42,7 @@ module PB.Analysis.TypeCheck
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Ident       (Ident, IdentSet, identCanon, identOrig, identSetFromList, identSetLookup, mkIdent)
+import PB.AST.Ident       (Ident, IdentMap, IdentSet, identCanon, identOrig, identSetFromList, identSetLookup, mkIdent)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText)
@@ -81,7 +81,7 @@ data ProcSignature = ProcSignature
 -- compile run.
 data TypeCheckCtx = TypeCheckCtx
   { tcEnv            :: ScopedTypeEnv
-  , tcProcMap        :: Map.Map Text IdentSet
+  , tcProcMap        :: IdentMap IdentSet
   , tcParams         :: Map.Map (Text, Text) [ProcSignature]
   , tcObjects        :: IdentSet
   , tcUserTypes      :: IdentSet
@@ -170,7 +170,7 @@ selectSignature sigs  arity = case filter ((== arity) . length . psParams) sigs 
 -- post-extraction), every field here is a pure function of @['SrFile']@
 -- alone, already available before any file is compiled.
 data TypeCheckWorkspace = TypeCheckWorkspace
-  { tcwProcMap   :: Map.Map Text IdentSet
+  { tcwProcMap   :: IdentMap IdentSet
   , tcwInherits  :: Map.Map Ident Ident
   , tcwParams    :: Map.Map (Text, Text) [ProcSignature]
   , tcwObjects   :: IdentSet

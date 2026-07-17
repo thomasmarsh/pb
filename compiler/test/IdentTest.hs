@@ -40,4 +40,24 @@ tests = testGroup "Ident"
           let s = identSetFromList ["n_cst_util", "N_CST_UTIL", "n_other"]
           in length (identSetToList s) @?= 2
       ]
+
+  , testGroup "IdentMap"
+      [ testCase "empty map has no entries" $
+          identMapLookup "n_cst_util" identMapEmpty @?= (Nothing :: Maybe (Ident, Int))
+      , testCase "lookup recovers the originally-declared key casing and its value" $
+          let m = identMapFromList [("n_cst_util", (42 :: Int))]
+          in identMapLookup "N_CST_UTIL" m @?= Just (mkIdent "n_cst_util", 42)
+      , testCase "lookup on a miss is Nothing" $
+          let m = identMapFromList [("n_cst_util", (42 :: Int))]
+          in identMapLookup "xyz_unknown" m @?= Nothing
+      , testCase "fromListWith combines values and keeps the first-seen casing on a canonical collision" $
+          let m = identMapFromListWith (+) [("N_Cst_Util", (1 :: Int)), ("n_cst_util", 2)]
+          in identMapLookup "n_cst_util" m @?= Just (mkIdent "N_Cst_Util", 3)
+      , testCase "fromList (last-wins values) still keeps the first-seen casing" $
+          let m = identMapFromList [("N_Cst_Util", (1 :: Int)), ("n_cst_util", 2)]
+          in identMapLookup "n_cst_util" m @?= Just (mkIdent "N_Cst_Util", 2)
+      , testCase "size counts distinct canonical keys" $
+          let m = identMapFromList [("a", (1 :: Int)), ("A", 2), ("b", 3)]
+          in identMapSize m @?= 2
+      ]
   ]

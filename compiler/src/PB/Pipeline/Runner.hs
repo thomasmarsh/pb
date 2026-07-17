@@ -21,7 +21,7 @@ module PB.Pipeline.Runner
 import PB.Prelude
 import PB.AST.BodyStmt   (BodyStmt (..))
 import PB.AST.DataWindow
-import PB.AST.Ident      (Ident, identCanon, identOrig)
+import PB.AST.Ident      (Ident, identCanon, identMapSize, identOrig)
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type           (parseTypeText)
@@ -753,7 +753,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
   -- resolveCalls's Phase-B inputs require.
   tcw <- Progress.timedStep "Building type-check workspace" $ do
     let tcw' = buildTypeCheckWorkspace allParsedSrFiles
-    _ <- evaluate (Map.size (tcwProcMap tcw') + Map.size (tcwParams tcw'))
+    _ <- evaluate (identMapSize (tcwProcMap tcw') + Map.size (tcwParams tcw'))
     pure tcw'
 
   -- Every DW file, already parsed in Phase A0 above -- Plan 163 Phase 3

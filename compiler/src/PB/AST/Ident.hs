@@ -11,6 +11,14 @@ module PB.AST.Ident
   , identSetLookup
   , identSetToList
   , identSetUnion
+  , IdentMap
+  , identMapEmpty
+  , identMapSize
+  , identMapInsertWith
+  , identMapFromList
+  , identMapFromListWith
+  , identMapLookup
+  , identMapToList
   ) where
 
 import PB.Prelude
@@ -82,3 +90,42 @@ identSetToList (IdentSet m) = Map.elems m
 -- 'Data.Map.union'.
 identSetUnion :: IdentSet -> IdentSet -> IdentSet
 identSetUnion (IdentSet a) (IdentSet b) = IdentSet (Map.union a b)
+
+-- | A canonical-keyed map from 'Ident' to a value, recovering the
+-- originally declared casing of the key on lookup -- generalizes
+-- 'IdentSet' (an @IdentMap@ with no payload) to carry an arbitrary value
+-- per key. Used where a consumer needs both a key's own declared casing
+-- back (not just membership) and an associated value, e.g.
+-- 'PB.Analysis.TypeResolve.buildProcMap''s object-name -> proc-set map.
+newtype IdentMap a = IdentMap (Map.Map Text (Ident, a))
+
+identMapEmpty :: IdentMap a
+identMapEmpty = IdentMap Map.empty
+
+identMapSize :: IdentMap a -> Int
+identMapSize (IdentMap m) = Map.size m
+
+-- | Insert, combining with the existing value on a canonical-form
+-- collision via @f newValue oldValue@ (matching 'Map.insertWith''s
+-- argument order) -- the stored key's casing is left-biased, same
+-- precedent as 'identSetUnion'.
+identMapInsertWith :: (a -> a -> a) -> Ident -> a -> IdentMap a -> IdentMap a
+identMapInsertWith f k v (IdentMap m) =
+  IdentMap (Map.insertWith combine (identCanon k) (k, v) m)
+  where combine (_, newV) (oldK, oldV) = (oldK, f newV oldV)
+
+-- | Build from a list, last entry winning on a canonical-form collision --
+-- same convention as 'Data.Map.fromList'.
+identMapFromList :: [(Ident, a)] -> IdentMap a
+identMapFromList = identMapFromListWith (\new _old -> new)
+
+identMapFromListWith :: (a -> a -> a) -> [(Ident, a)] -> IdentMap a
+identMapFromListWith f = foldl' (\acc (k, v) -> identMapInsertWith f k v acc) identMapEmpty
+
+-- | Look up by canonical form, recovering both the originally declared
+-- casing of the stored key and its value.
+identMapLookup :: Ident -> IdentMap a -> Maybe (Ident, a)
+identMapLookup needle (IdentMap m) = Map.lookup (identCanon needle) m
+
+identMapToList :: IdentMap a -> [(Ident, a)]
+identMapToList (IdentMap m) = Map.elems m

@@ -10,7 +10,8 @@ import qualified Data.Text       as T
 
 import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Ident        (mkIdent, identSetEmpty, identSetFromList, identSetMember, identSetSingleton)
+import PB.AST.Ident        (mkIdent, identMapEmpty, identMapFromList, identMapLookup,
+                             identSetEmpty, identSetFromList, identSetMember, identSetSingleton)
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type         (PbType (..))
@@ -305,7 +306,22 @@ tests = testGroup "TypeResolve"
                 , srFunctions  = [ mkFn "f_go" "" [] ]
                 }
               pm = buildProcMap [sf]
-          identSetMember "f_go" (Map.findWithDefault identSetEmpty "w_test" pm) @?= True
+          identSetMember "f_go" (maybe identSetEmpty snd (identMapLookup "w_test" pm)) @?= True
+      ]
+
+  , testGroup "resolveVirtual"
+      [ testCase "recovers the ancestor's own declared casing as target_object even when the child's inherits-map value spells it differently" $ do
+          let sf = emptySrFile
+                { srTypeBlocks = [ mkTB "w_base" "window" ]
+                , srFunctions  = [ mkFn "of_help" "" [] ]
+                }
+              pm  = buildProcMap [sf]
+              -- 'w_child' spells its own ancestor "W_BASE" -- differently
+              -- cased than 'w_base's own declaration, the exact procMap-
+              -- outer-key scenario this fix targets.
+              inh = Map.fromList [(mkIdent "w_child", mkIdent "W_BASE")]
+          resolveVirtual (mkIdent "of_help") (mkIdent "w_child") pm inh
+            @?= (Just "w_base", Just "of_help", "inherited", "high")
       ]
 
   , testGroup "resolveTypes"
@@ -354,7 +370,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Just 5
                 }
-              pm = Map.singleton "w_t" (identSetSingleton "f_helper")
+              pm = identMapFromList [("w_t", identSetSingleton "f_helper")]
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
             [rc] -> do
               rcKind rc         @?= "virtual"
@@ -372,7 +388,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 }
-              pm  = Map.fromList
+              pm  = identMapFromList
                       [ ("w_child",  identSetEmpty)
                       , ("w_parent", identSetSingleton "f_base")
                       ]
@@ -392,7 +408,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 }
-          case resolveCalls [site] Map.empty Map.empty Set.empty Set.empty of
+          case resolveCalls [site] identMapEmpty Map.empty Set.empty Set.empty of
             [rc] -> do
               rcKind rc       @?= "unresolved"
               rcConfidence rc @?= "low"
@@ -409,7 +425,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Just 10
                 }
-              pm = Map.fromList
+              pm = identMapFromList
                      [ ("w_main", identSetEmpty)
                      , ("trn",    identSetSingleton "trn")
                      ]
@@ -431,7 +447,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 }
-              pm = Map.fromList
+              pm = identMapFromList
                      [ ("w_t",     identSetEmpty)
                      , ("w_other", identSetSingleton "f_helper")
                      , ("w_third", identSetSingleton "f_helper")
@@ -449,7 +465,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 }
-              pm = Map.fromList
+              pm = identMapFromList
                      [ ("w_t",     identSetEmpty)
                      , ("w_other", identSetSingleton "f_method")
                      ]
@@ -470,7 +486,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExMethodCall"
                 , csLine     = Nothing
                 }
-          case resolveCalls [site] Map.empty Map.empty Set.empty Set.empty of
+          case resolveCalls [site] identMapEmpty Map.empty Set.empty Set.empty of
             [rc] -> rcKind rc @?= "unresolved"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
 
@@ -483,7 +499,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 }
-              pm = Map.singleton "w_t" (identSetFromList ["f_helper"])
+              pm = identMapFromList [("w_t", identSetFromList ["f_helper"])]
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
             [rc] -> do
               rcKind rc         @?= "virtual"
@@ -500,7 +516,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 }
-              pm = Map.fromList
+              pm = identMapFromList
                      [ ("w_t",     identSetEmpty)
                      , ("w_other", identSetFromList ["f_method"])
                      ]
@@ -523,7 +539,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 }
-          case resolveCalls [site] Map.empty Map.empty (Set.singleton "messagebox") Set.empty of
+          case resolveCalls [site] identMapEmpty Map.empty (Set.singleton "messagebox") Set.empty of
             [rc] -> do
               rcKind rc         @?= "builtin"
               rcConfidence rc   @?= "high"
@@ -540,7 +556,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExMethodCall"
                 , csLine     = Nothing
                 }
-          case resolveCalls [site] Map.empty Map.empty Set.empty (Set.singleton "retrieve") of
+          case resolveCalls [site] identMapEmpty Map.empty Set.empty (Set.singleton "retrieve") of
             [rc] -> do
               rcKind rc         @?= "builtin"
               rcConfidence rc   @?= "high"
@@ -557,7 +573,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 }
-              pm = Map.singleton "w_t" (identSetSingleton "f_helper")
+              pm = identMapFromList [("w_t", identSetSingleton "f_helper")]
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
             [rc] -> rcKind rc @?= "virtual"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
