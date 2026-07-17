@@ -33,11 +33,12 @@ import PB.Prelude
 import PB.Pipeline.DuckDb
   (DuckConn, queryTextRows, recreateTextTable, appendTextRows)
 import PB.Pipeline.Progress qualified as Progress
+import PB.Pipeline.Progress (msBetween)
 
 import qualified Data.List  as List
 import qualified Data.Map.Strict as Map
 import qualified Data.Text  as T
-import Data.Time.Clock       (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
+import Data.Time.Clock       (getCurrentTime)
 import System.Directory     (createDirectoryIfMissing)
 import System.Exit          (ExitCode (..))
 import System.FilePath      ((</>))
@@ -206,12 +207,12 @@ data SouffleHooks = SouffleHooks
     -- found: a stall in this loop (suspected on an oversized @reaches@
     -- EDB) produced zero progress events, because 'onRuleSetStart' above
     -- only fires once the whole loop has already finished.
-  , onIdbRelation :: Relation -> Maybe Int -> IO ()
+  , onIdbRelation :: Relation -> Maybe (Int, Double) -> IO ()
     -- ^ Fires 'Nothing' right before an IDB relation is materialized (same
     -- timing as the old plain @onRelation@ callback), then 'Just' its row
-    -- count right after -- the row count is already computed by the
-    -- existing materialization step, so surfacing it here is close to
-    -- free.
+    -- count and the elapsed milliseconds for the CSV-read +
+    -- 'recreateTextTable'\/'appendTextRows' materialization right after --
+    -- mirrors 'onEdbFact'\'s per-EDB-relation timing on the IDB side.
   , onHeartbeat :: Double -> IO ()
     -- ^ Fires periodically (with elapsed seconds so far) while the
     -- @souffle@ subprocess itself is running, so a long in-Souffle
@@ -272,6 +273,7 @@ runRuleSetWithStart hooks conn rs =
       ExitSuccess -> pure ()
     for_ (rsRelations rs) $ \rel -> do
       onIdbRelation hooks rel Nothing
+      tIdb0 <- getCurrentTime
       contents <- readFile (outDir </> T.unpack (relName rel) <> ".csv")
       -- T.lines correctly excludes the spurious trailing entry a final
       -- newline would otherwise produce, so no line filter is needed for
@@ -286,13 +288,10 @@ runRuleSetWithStart hooks conn rs =
                  else [ T.splitOn "\t" line | line <- T.lines contents ]
       recreateTextTable conn (relName rel) (colNames rel)
       appendTextRows conn (relName rel) rows
-      onIdbRelation hooks rel (Just (length rows))
+      tIdb1 <- getCurrentTime
+      onIdbRelation hooks rel (Just (length rows, msBetween tIdb0 tIdb1))
     tRs1 <- getCurrentTime
     onRuleSetFinish hooks rs (msBetween tRs0 tRs1)
-
--- | Milliseconds elapsed between two timestamps.
-msBetween :: UTCTime -> UTCTime -> Double
-msBetween t0 t1 = realToFrac (diffUTCTime t1 t0 :: NominalDiffTime) * 1000
 
 
 -- ---------------------------------------------------------------------------

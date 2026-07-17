@@ -12,6 +12,7 @@ module PB.Pipeline.Progress
   , timedStepRows
   , withHeartbeat
   , residencySnapshot
+  , msBetween
   ) where
 
 import PB.Prelude

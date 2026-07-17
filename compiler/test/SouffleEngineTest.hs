@@ -70,7 +70,7 @@ souffleHooksTests = testGroup "SouffleHooks"
         fired <- readIORef ref
         fired @?= [("hook_in", 3)]
 
-  , testCase "onIdbRelation fires Nothing before materialization and Just rowCount after" $
+  , testCase "onIdbRelation fires Nothing before materialization and Just (rowCount, elapsedMs) after" $
       withWriteConn ":memory:" $ \conn -> do
         let rel = symRelation "hook_in2" ["c1"]
         recreateTextTable conn (relName rel) (colNames rel)
@@ -80,7 +80,11 @@ souffleHooksTests = testGroup "SouffleHooks"
               { onIdbRelation = \r mn -> modifyIORef ref (++ [(relName r, mn)]) }
         runRuleSetWithStart hooks conn (identityRuleSet rel)
         fired <- readIORef ref
-        fired @?= [("hook_in2_out", Nothing), ("hook_in2_out", Just 2)]
+        case fired of
+          [("hook_in2_out", Nothing), ("hook_in2_out", Just (n, ms))] -> do
+            n @?= 2
+            assertBool "elapsed ms should be non-negative" (ms >= 0)
+          other -> assertFailure ("unexpected hook firings: " <> show other)
 
   , testCase "onRuleSetFinish fires once, after every onIdbRelation call, with a non-negative elapsed time" $
       withWriteConn ":memory:" $ \conn -> do

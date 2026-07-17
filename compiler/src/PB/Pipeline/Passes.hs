@@ -40,6 +40,8 @@ import PB.Pipeline.DuckDb
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
+import Data.IORef             (IORef, newIORef, readIORef, writeIORef)
+import Data.Time.Clock        (UTCTime, getCurrentTime)
 
 -- | Shared per-relation progress hook for 'Souffle.runRuleSetsWithStart' in
 -- 'runPhaseB': fires a @step@ event just before an IDB relation is
@@ -68,13 +70,13 @@ import qualified Data.Text       as T
 -- 'souffleStart' for the fix, and 'PB.Analysis.Rules.Taint.taintRules'\'
 -- Code Index entry (compiler/CLAUDE.md) for the perf fix this incident
 -- also produced.
-souffleProgress :: Souffle.Relation -> Maybe Int -> IO ()
+souffleProgress :: Souffle.Relation -> Maybe (Int, Double) -> IO ()
 souffleProgress rel Nothing =
   Progress.emitEvent (Progress.EvStep ("Datalog: " <> Souffle.relName rel) Nothing [] [] Nothing)
-souffleProgress rel (Just n) =
+souffleProgress rel (Just (n, elapsedMs)) =
   Progress.emitEvent (Progress.EvStep
     ("Datalog: " <> Souffle.relName rel <> " materialized (" <> T.pack (show n) <> " rows)")
-    Nothing [] [(Souffle.relName rel, n)] Nothing)
+    (Just elapsedMs) [] [(Souffle.relName rel, n)] Nothing)
 
 -- | Stable per-ruleset progress-event label, shared by 'souffleStart' and
 -- 'souffleFinish' so the Python 'DiagnosticsCollector' (which flushes a
@@ -158,12 +160,14 @@ souffleHooks = Souffle.noSouffleHooks
 -- regardless of whether the current 'SchemaRules.legRules' handles it fast.
 reportLegSourceFanout :: DuckConn -> IO ()
 reportLegSourceFanout conn = do
+  t0 <- getCurrentTime
   LegSourceFanout total keys maxGroup <- SchemaRules.legSourceFanout conn
+  t1 <- getCurrentTime
   let n = T.pack . show
   Progress.emitEvent (Progress.EvStep
     ("Datalog: leg_source -- " <> n total <> " rows, "
       <> n keys <> " keys, max " <> n maxGroup <> " rows/key")
-    Nothing [("leg_source", total)] [] Nothing)
+    (Just (Progress.msBetween t0 t1)) [("leg_source", total)] [] Nothing)
   when (maxGroup > 500) $ Progress.emitEvent (Progress.EvWarning
     ("leg_source has a key with " <> n maxGroup <> " duplicate rows \
      \(out of " <> n total <> " total, " <> n keys <> " distinct keys) \
@@ -179,28 +183,40 @@ reportLegSourceFanout conn = do
 -- both hit it previously; see compiler/CLAUDE.md's Code Index).
 reportTaintDefUseFanout :: DuckConn -> IO ()
 reportTaintDefUseFanout conn = do
+  t0 <- getCurrentTime
   defFo <- TaintRules.defLineFanout conn
+  t1 <- getCurrentTime
   retFo <- TaintRules.returnUseFanout conn
+  t2 <- getCurrentTime
   let n = T.pack . show
-      report relName label (TaintRules.DefUseFanout total keys maxGroup) = do
+      report relName label elapsedMs (TaintRules.DefUseFanout total keys maxGroup) = do
         Progress.emitEvent (Progress.EvStep
           (label <> " -- " <> n total <> " rows, "
             <> n keys <> " keys, max " <> n maxGroup <> " rows/key")
-          Nothing [(relName, total)] [] Nothing)
+          (Just elapsedMs) [(relName, total)] [] Nothing)
         when (maxGroup > 500) $ Progress.emitEvent (Progress.EvWarning
           (label <> " has a key with " <> n maxGroup
             <> " duplicate rows (out of " <> n total <> " total, " <> n keys
             <> " distinct keys) -- unusually large fan-in, likely duplicate/\
                \near-duplicate extraction rather than legitimate diversity"))
-  report ("proc_defs" :: Text) ("Datalog: proc_defs (object,proc,line)" :: Text) defFo
-  report ("proc_uses_return" :: Text) ("Datalog: proc_uses return (object,proc)" :: Text) retFo
+  report ("proc_defs" :: Text) ("Datalog: proc_defs (object,proc,line)" :: Text)
+    (Progress.msBetween t0 t1) defFo
+  report ("proc_uses_return" :: Text) ("Datalog: proc_uses return (object,proc)" :: Text)
+    (Progress.msBetween t1 t2) retFo
 
 -- | Report the raw 'PB.Analysis.Rules.Taint.initTaintEdbViewsWith' checkpoint
--- counts as a single progress event.
-reportTaintCounts :: [(Text, Int)] -> IO ()
-reportTaintCounts counts = Progress.emitEvent (Progress.EvStep
-  ("Taint EDB counts: " <> T.intercalate ", " [ k <> "=" <> T.pack (show v) | (k, v) <- counts ])
-  Nothing [] counts Nothing)
+-- counts as a single progress event, with elapsed_ms measured since the
+-- previous checkpoint (via 'lastT') -- narrows a stall down to the specific
+-- query\/join\/write between two checkpoints, not just the whole
+-- materialization step.
+reportTaintCounts :: IORef UTCTime -> [(Text, Int)] -> IO ()
+reportTaintCounts lastT counts = do
+  t0 <- readIORef lastT
+  t1 <- getCurrentTime
+  writeIORef lastT t1
+  Progress.emitEvent (Progress.EvStep
+    ("Taint EDB counts: " <> T.intercalate ", " [ k <> "=" <> T.pack (show v) | (k, v) <- counts ])
+    (Just (Progress.msBetween t0 t1)) [] counts Nothing)
 
 -- | Phase B: read Phase A tables from DuckDB, run link analysis, write results.
 -- Structured as two sub-phases:
@@ -271,8 +287,9 @@ materializeAllEdbViews conn = do
   Progress.timedStep "Dead-code EDB views materialized" $ DeadCodeRules.initDeadReachEdbViews conn
   Progress.timedStep "Schema EDB views materialized" $ SchemaRules.initEdbViews conn
   reportTaintDefUseFanout conn
+  taintCheckpointT <- getCurrentTime >>= newIORef
   Progress.timedStep "Taint EDB views materialized" $
-    TaintRules.initTaintEdbViewsWith reportTaintCounts conn
+    TaintRules.initTaintEdbViewsWith (reportTaintCounts taintCheckpointT) conn
 
 -- | Every Soufflé rule set run in Phase B. 'Souffle.runRuleSets' topologically
 -- orders these by their IDB-output ∩ EDB-input edges, so the order listed
