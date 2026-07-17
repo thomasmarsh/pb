@@ -19,7 +19,7 @@ import PB.Prelude
 import PB.Grammar.Body    (pBodyStmt)
 import PB.Grammar.Stream  (FileParser, StmtStream (..), leadingText, satisfyStmt, isModifierToken, currentLine)
 import PB.AST.BodyStmt    (BodyStmt)
-import PB.AST.Ident       (identOrig)
+import PB.AST.Ident       (identOrig, mkIdent)
 import PB.AST.Located     (Located)
 import PB.AST.SourceFile
   ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
@@ -98,7 +98,7 @@ buildVarDecl s =
     (typeT:nameT:_) -> VarDecl
       { vdModifiers = map tkText mods
       , vdType      = tkText typeT
-      , vdName      = tkText nameT
+      , vdName      = mkIdent (tkText nameT)
       }
     _ -> error "impossible: buildVarDecl called on non-VarDecl statement"
 
@@ -121,7 +121,7 @@ pGlobalInstance :: FileParser GlobalInstance
 pGlobalInstance = do
   s <- satisfyStmt isGlobalInstance
   case stmtTokens s of
-    [_, typT, nameT] -> return (GlobalInstance (tkText typT) (tkText nameT))
+    [_, typT, nameT] -> return (GlobalInstance (tkText typT) (mkIdent (tkText nameT)))
     _                -> fail "malformed global instance declaration"
 
 pVariablesBlock :: FileParser VariablesBlock

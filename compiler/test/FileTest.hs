@@ -206,6 +206,13 @@ tests = testGroup "Grammar.File"
         case runSection pVarDecl [stmt] of
           Left _  -> pure ()
           Right _ -> assertFailure "expected parse failure when keyword is used as type name"
+
+    , testCase "case-insensitive equality: differently-cased names parse equal (Ident)" $ do
+        let stmt1 = mkStmt [(TkDatatype, "string"), (TkIdent, "S_Name")]
+            stmt2 = mkStmt [(TkDatatype, "string"), (TkIdent, "s_name")]
+        case (runSection pVarDecl [stmt1], runSection pVarDecl [stmt2]) of
+          (Right vd1, Right vd2) -> vdName vd1 @?= vdName vd2
+          _                      -> assertFailure "expected both parses to succeed"
     ]
 
   , testGroup "pGlobalInstance"
@@ -256,6 +263,15 @@ tests = testGroup "Grammar.File"
 
     , testProperty "giType and giName are non-empty after successful parse"
         prop_globalInstance_nonempty
+
+    , testCase "case-insensitive equality: differently-cased instance names parse equal (Ident)" $ do
+        let stmt1 = mkStmt
+              [ (TkAccessModifier, "global"), (TkIdent, "u_foo"), (TkIdent, "U_Bar") ]
+            stmt2 = mkStmt
+              [ (TkAccessModifier, "global"), (TkIdent, "u_foo"), (TkIdent, "u_bar") ]
+        case (runSection pGlobalInstance [stmt1], runSection pGlobalInstance [stmt2]) of
+          (Right gi1, Right gi2) -> giName gi1 @?= giName gi2
+          _                      -> assertFailure "expected both parses to succeed"
     ]
 
   , testGroup "pVariablesBlock"
@@ -1040,7 +1056,7 @@ prop_globalInstance_nonempty = property $ do
   case runSection pGlobalInstance [stmt] of
     Right gi -> do
       assert (not (T.null (giType gi)))
-      assert (not (T.null (giName gi)))
+      assert (not (T.null (identOrig (giName gi))))
     Left _ -> pure ()
 
 prop_varDecl_names_nonempty :: Property
@@ -1052,7 +1068,7 @@ prop_varDecl_names_nonempty = property $ do
         , (TkIdent,    name)
         ]
   case runSection pVarDecl [stmt] of
-    Right vd -> assert (not (T.null (vdName vd)))
+    Right vd -> assert (not (T.null (identOrig (vdName vd))))
     Left _   -> pure ()
 
 prop_typeDecl_names_nonempty :: Property

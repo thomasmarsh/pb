@@ -479,7 +479,7 @@ extractGlobalVars file obj sf =
         [ GlobalVar
             { gvFile   = file
             , gvObject = obj
-            , gvName   = vdName d
+            , gvName   = identOrig (vdName d)
             , gvType   = vdType d
             , gvMods   = vdModifiers d
             }
@@ -489,7 +489,7 @@ extractGlobalVars file obj sf =
       [ GlobalVar
           { gvFile   = file
           , gvObject = obj
-          , gvName   = giName gi
+          , gvName   = identOrig (giName gi)
           , gvType   = giType gi
           , gvMods   = []
           }
@@ -501,7 +501,7 @@ extractGlobalVars file obj sf =
         [ GlobalVar
             { gvFile   = file
             , gvObject = obj
-            , gvName   = giName gi
+            , gvName   = identOrig (giName gi)
             , gvType   = giType gi
             , gvMods   = []
             }

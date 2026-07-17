@@ -50,17 +50,17 @@ buildWorkspaceTypeEnv = foldl' mergeFile emptyTypeEnv
 -- nodes rather than GlobalInstance entries.
 extractGlobalVars :: SrFile -> Map.Map Text PbType
 extractGlobalVars sf =
-  Map.fromList [ (T.toLower (giName gi), parseTypeText (giType gi))
+  Map.fromList [ (identCanon (giName gi), parseTypeText (giType gi))
                | gi <- srGlobalInstances sf ]
   <> case srForward sf of
        Nothing -> Map.empty
        Just (ForwardBlock { fwdInstances = gis }) ->
-         Map.fromList [ (T.toLower (giName gi), parseTypeText (giType gi))
+         Map.fromList [ (identCanon (giName gi), parseTypeText (giType gi))
                       | gi <- gis ]
   <> case srVariables sf of
        Nothing -> Map.empty
        Just (VariablesBlock { varDecls = decls }) ->
-         Map.fromList [ (T.toLower (vdName d), parseTypeText (vdType d)) | d <- decls ]
+         Map.fromList [ (identCanon (vdName d), parseTypeText (vdType d)) | d <- decls ]
   <> mconcat
        [ Map.fromList
            [ (T.toLower vn, vt)
@@ -144,17 +144,17 @@ buildWorkspaceEnv sfs = WorkspaceEnv
 -- Globals: srGlobalInstances + forward instances + srVariables (NOT TypeBlock body vars).
 extractWsGlobals :: SrFile -> Map.Map Text PbType
 extractWsGlobals sf =
-  Map.fromList [ (T.toLower (giName gi), parseTypeText (giType gi))
+  Map.fromList [ (identCanon (giName gi), parseTypeText (giType gi))
                | gi <- srGlobalInstances sf ]
   <> case srForward sf of
        Nothing -> Map.empty
        Just (ForwardBlock { fwdInstances = gis }) ->
-         Map.fromList [ (T.toLower (giName gi), parseTypeText (giType gi))
+         Map.fromList [ (identCanon (giName gi), parseTypeText (giType gi))
                       | gi <- gis ]
   <> case srVariables sf of
        Nothing -> Map.empty
        Just (VariablesBlock { varDecls = decls }) ->
-         Map.fromList [ (T.toLower (vdName d), parseTypeText (vdType d)) | d <- decls ]
+         Map.fromList [ (identCanon (vdName d), parseTypeText (vdType d)) | d <- decls ]
 
 -- Instance vars: BsLocalVar nodes in non-within TypeBlock bodies, keyed by object name.
 extractInstanceVars :: SrFile -> Map.Map Text (Map.Map Text PbType)

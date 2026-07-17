@@ -95,12 +95,12 @@ data TypeBlock = TypeBlock
 data VarDecl = VarDecl
   { vdModifiers :: [Text]
   , vdType      :: Text
-  , vdName      :: Text
+  , vdName      :: Ident
   } deriving (Eq, Show, Generic)
 
 data GlobalInstance = GlobalInstance
   { giType :: Text
-  , giName :: Text
+  , giName :: Ident
   } deriving (Eq, Show, Generic)
 
 data FnSig = FnSig
