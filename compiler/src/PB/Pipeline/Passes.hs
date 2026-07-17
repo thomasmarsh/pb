@@ -159,7 +159,12 @@ runPhaseB conn mDefaultNamespace = do
   -- B1: prerequisite Haskell analyses + EDB materialization.
   _   <- runPass5  conn
   runPass67 conn
-  _sch <- runPass9 conn mDefaultNamespace
+  sch <- runPass9 conn mDefaultNamespace
+  emitProgress (object
+    [ "tag" .= ("step" :: Text)
+    , "label" .= ("Schema category built: " <> T.pack (show (Set.size (sgObjects sch)))
+                   <> " objects, " <> T.pack (show (length (sgLegs sch))) <> " legs" :: Text)
+    ])
   materializeAllEdbViews conn
   -- B2: all Soufflé rule sets in one dependency-ordered run. Characterize
   -- leg_source's key fan-in first (see reportLegSourceFanout) -- cheap, and
@@ -184,8 +189,11 @@ runPhaseB conn mDefaultNamespace = do
 materializeAllEdbViews :: DuckConn -> IO ()
 materializeAllEdbViews conn = do
   DeadCodeRules.initDeadReachEdbViews conn
+  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Dead-code EDB views materialized" :: Text)])
   SchemaRules.initEdbViews conn
+  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Schema EDB views materialized" :: Text)])
   TaintRules.initTaintEdbViews conn
+  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Taint EDB views materialized" :: Text)])
 
 -- | Every Soufflé rule set run in Phase B. 'Souffle.runRuleSets' topologically
 -- orders these by their IDB-output ∩ EDB-input edges, so the order listed
