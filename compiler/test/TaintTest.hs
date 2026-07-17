@@ -256,57 +256,87 @@ tests = testGroup "Taint"
              [e] -> ieCallerContext e @?= "argVar"
              _   -> error ("expected 1 arg edge, got " <> show (length argEdges))
 
-    , testCase "global_write edge: writer in one proc, reader in another" $
+    , testCase "global_write edge: writer in one proc, reader in another, via the shared hub" $
         let globalVars = Set.fromList ["g_counter"]
             defs = [defRow "w.srf" "oa" "procA" "g_counter" 1 0]
             uses = [useRow "w.srf" "ob" "procB" "g_counter" 2 "rhs"]
             edges = buildInterprocEdges [] defs uses globalVars []
-        in case edges of
-             [e] -> do
-               ieEdgeKind e @?= "global_write"
-               ieCallerObject e @?= "oa"
-               ieCalleeObject e @?= "ob"
-               ieVarName e @?= "g_counter"
-             _ -> error ("expected 1 global edge, got " <> show (length edges))
+            writerToHub = [ e | e <- edges, ieCallerObject e == "oa" ]
+            hubToReader = [ e | e <- edges, ieCalleeObject e == "ob" ]
+        in do
+          length edges @?= 2
+          case writerToHub of
+            [e] -> do
+              ieEdgeKind e @?= "global_write"
+              ieCalleeObject e @?= ""
+              ieCalleeProc e @?= "global::g_counter"
+              ieVarName e @?= "g_counter"
+            _ -> error ("expected 1 writer->hub edge, got " <> show (length writerToHub))
+          case hubToReader of
+            [e] -> do
+              ieEdgeKind e @?= "global_write"
+              ieCallerObject e @?= ""
+              ieCallerProc e @?= "global::g_counter"
+              ieVarName e @?= "g_counter"
+            _ -> error ("expected 1 hub->reader edge, got " <> show (length hubToReader))
 
-    , testCase "same-proc global write+read produces no self-edge" $
+    , testCase "same-proc global write+read produces a harmless self-loop through the hub" $
+        -- The old direct writer x reader product explicitly excluded this
+        -- one (proc,proc) pair; the shared-hub design can't single out just
+        -- this pair without losing the O(writers+readers) win (see
+        -- globalEdges' own comment). The resulting proc->hub->proc self-loop
+        -- adds no reachability beyond what taint_confirmed's separate 0-hop
+        -- rule already provides for a proc confirmed against itself.
         let globalVars = Set.fromList ["g_flag"]
             defs = [defRow "w.srf" "oa" "procA" "g_flag" 1 0]
             uses = [useRow "w.srf" "oa" "procA" "g_flag" 2 "rhs"]
-        in buildInterprocEdges [] defs uses globalVars [] @?= []
+            edges = buildInterprocEdges [] defs uses globalVars []
+        in length edges @?= 2
 
     , testCase "local var not in global set produces no global edge" $
         let defs = [defRow "w.srf" "oa" "procA" "local_x" 1 0]
             uses = [useRow "w.srf" "ob" "procB" "local_x" 2 "rhs"]
         in buildInterprocEdges [] defs uses Set.empty [] @?= []
 
-    , testCase "multiple readers of same global produce multiple edges" $
+    , testCase "multiple readers of same global produce one writer->hub edge and one hub->reader edge per reader" $
         let globalVars = Set.fromList ["g_total"]
             defs = [defRow "w.srf" "ow" "writer" "g_total" 1 0]
             uses = [ useRow "w.srf" "or1" "reader1" "g_total" 2 "rhs"
                    , useRow "w.srf" "or2" "reader2" "g_total" 3 "rhs" ]
             edges = buildInterprocEdges [] defs uses globalVars []
-            callees = Set.fromList (map ieCalleeObject edges)
+            readerCallees = Set.fromList [ ieCalleeObject e | e <- edges, ieCalleeObject e /= "" ]
         in do
-          length edges @?= 2
-          callees @?= Set.fromList ["or1", "or2"]
+          length edges @?= 3  -- 1 writer->hub + 2 hub->reader, not 1*2
+          readerCallees @?= Set.fromList ["or1", "or2"]
+
+    , testCase "many writers x many readers of one global scales linearly, not quadratically" $
+        let globalVars = Set.fromList ["g_shared"]
+            writerCount = 50
+            readerCount = 50
+            defs = [ defRow "w.srf" ("ow" <> T.pack (show i)) "writer" "g_shared" 1 0 | i <- [1 .. writerCount :: Int] ]
+            uses = [ useRow "w.srf" ("or" <> T.pack (show i)) "reader" "g_shared" 2 "rhs" | i <- [1 .. readerCount :: Int] ]
+            edges = buildInterprocEdges [] defs uses globalVars []
+        in length edges @?= writerCount + readerCount  -- not writerCount * readerCount
 
     , testCase "global_write edge matches when writer/reader spell the global differently (case-insensitive)" $
         let globalVars = Set.fromList ["g_counter"]  -- canonical set, as Passes.hs now builds it
             defs = [defRow "w.srf" "oa" "procA" "G_Counter" 1 0]
             uses = [useRow "w.srf" "ob" "procB" "G_COUNTER" 2 "rhs"]
             edges = buildInterprocEdges [] defs uses globalVars []
-        in case edges of
-             [e] -> do
-               ieEdgeKind e @?= "global_write"
-               ieCallerObject e @?= "oa"
-               ieCalleeObject e @?= "ob"
-               -- Reader's casing wins the display tie-break (readers are
-               -- concatenated after writers before nubOrd's Set-based
-               -- dedup) -- see globalEdges' own comment; not asserting on
-               -- this would under-specify a real, deterministic behavior.
-               ieVarName e @?= "G_COUNTER"
-             _ -> error ("expected 1 global edge, got " <> show (length edges))
+            writerToHub = [ e | e <- edges, ieCallerObject e == "oa" ]
+        in do
+          length edges @?= 2
+          case writerToHub of
+            [e] -> do
+              ieEdgeKind e @?= "global_write"
+              ieCalleeProc e @?= "global::G_COUNTER"
+              -- Reader's casing still wins the displayed hub name/var text
+              -- (readers are concatenated after writers before nubOrd's
+              -- Set-based dedup, unchanged by the hub restructuring) -- see
+              -- globalEdges' own comment; not asserting on this would
+              -- under-specify a real, deterministic behavior.
+              ieVarName e @?= "G_COUNTER"
+            _ -> error ("expected 1 writer->hub edge, got " <> show (length writerToHub))
 
     , testCase "mutual recursion A↔B produces two arg edges without looping" $
         let rc = [ ResolvedCallRow "w.srf" "oa" "procA" "procB" "virtual"

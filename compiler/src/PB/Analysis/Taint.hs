@@ -593,17 +593,37 @@ buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
       | T.toLower (fromMaybe "" (rcrReturnType rc)) `Set.member` Set.fromList ["void", "none", ""] = []
       | otherwise = []  -- No callee param info for builtins in this pass
 
+    -- Fans every writer and reader of a global through one synthetic
+    -- per-global "hub" node (object "", proc @"global::<name>"@) instead of
+    -- a direct writer x reader cartesian product: O(writers+readers) edges
+    -- per global instead of O(writers*readers). A widely-shared global (a
+    -- transaction object referenced from most DB-touching procedures, say)
+    -- can have writer/reader counts in the thousands each -- the direct
+    -- product of those is the dominant cost of this whole function on a
+    -- large real corpus. taint_reaches' transitive closure makes the hub
+    -- reachability-equivalent to the direct edges it replaces (any writer
+    -- that reached a reader directly still reaches it via the hub, one hop
+    -- longer), so taint_confirmed output is unaffected; the one visible
+    -- difference is that a global-mediated witness path
+    -- (PB.Analysis.Rules.Taint.reconstructTaintStepKind) now shows two
+    -- "global_write" hops through the hub instead of one direct hop.
+    --
+    -- A proc that is both a writer AND a reader of the same global now gets
+    -- a harmless writer-\>hub-\>itself-as-reader self-loop, where the old
+    -- direct cartesian product explicitly excluded that one pair (there is
+    -- no way to keep a per-pair exclusion once every writer shares one
+    -- hub). This adds no reachability beyond what the proc's own real
+    -- outgoing edges already provide, and taint_confirmed's own separate
+    -- 0-hop rule (@taint_confirmed(s, s) :- taint_source(s),
+    -- taint_sink(s)@, see PB.Analysis.Rules.Taint.taintRules) already
+    -- covers a proc confirmed against itself without this self-loop's help.
+    --
+    -- Keyed/probed by 'Ident' (canonical Eq/Ord) -- globalVarNames is
+    -- already Ident-typed (PB.Pipeline.Passes.runPass67 mints it once), and
+    -- PB variable names are case-insensitive, so a writer/reader pair
+    -- spelling the same global with different casing must still collapse
+    -- onto one hub here (else they'd never be connected at all).
     globalEdges =
-      -- Keyed/probed by 'Ident' (canonical Eq/Ord) -- globalVarNames is
-      -- already Ident-typed (PB.Pipeline.Passes.runPass67 mints it once),
-      -- and PB variable names are case-insensitive, so a writer/reader pair
-      -- spelling the same global with different casing must still collapse
-      -- onto one key here (else they'd never be paired into an edge at
-      -- all). When they disagree, 'nubOrd's Set-based dedup keeps the last
-      -- value inserted on an Ord collision, and readers are concatenated
-      -- after writers below, so the reader's casing wins the displayed
-      -- 'ieVarName'/'ieCallerContext'/'ieCalleeContext' -- an arbitrary but
-      -- deterministic tie-break, not a "canonical declared spelling".
       let writers = HM.fromListWith Set.union
             [ (mkIdent (drVarName d), Set.singleton (drObject d, drProcName d))
             | d <- defs, mkIdent (drVarName d) `Set.member` globalVarNames
@@ -613,16 +633,22 @@ buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
             | u <- uses, mkIdent (urVarName u) `Set.member` globalVarNames
             ]
           allGlobals = nubOrd (HM.keys writers ++ HM.keys readers)
-      in [ InterprocEdge writerObj writerProc Nothing
-              readerObj readerProc "global_write" gvarText gvarText gvarText
-         | gvar <- allGlobals
-         , let gvarText = identOrig gvar
-         , writerKey <- Set.toList (HM.findWithDefault Set.empty gvar writers)
-         , readerKey <- Set.toList (HM.findWithDefault Set.empty gvar readers)
-         , writerKey /= readerKey
-          , let (writerObj, writerProc) = writerKey
-                (readerObj, readerProc) = readerKey
-         ]
+      in concat
+           [ writerToHub ++ hubToReader
+           | gvar <- allGlobals
+           , let gvarText = identOrig gvar
+                 hubProc  = "global::" <> gvarText
+                 writerToHub =
+                   [ InterprocEdge writerObj writerProc Nothing "" hubProc
+                       "global_write" gvarText gvarText gvarText
+                   | (writerObj, writerProc) <- Set.toList (HM.findWithDefault Set.empty gvar writers)
+                   ]
+                 hubToReader =
+                   [ InterprocEdge "" hubProc Nothing readerObj readerProc
+                       "global_write" gvarText gvarText gvarText
+                   | (readerObj, readerProc) <- Set.toList (HM.findWithDefault Set.empty gvar readers)
+                   ]
+           ]
 
 -- ---------------------------------------------------------------------------
 -- Procedure summaries
