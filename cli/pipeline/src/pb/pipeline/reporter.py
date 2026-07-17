@@ -188,6 +188,17 @@ def _format_warning(event: dict) -> str:
     return f"[yellow]⚠[/yellow] {event.get('message', '')}"
 
 
+@dataclass
+class _StepInfo:
+    """One completed step's metadata for the scrolling history."""
+
+    label: str
+    elapsed_ms: float | None = None
+    edb_rows: dict[str, int] = field(default_factory=dict)
+    idb_rows: dict[str, int] = field(default_factory=dict)
+    residency_mb: float | None = None
+
+
 class _LiveRunnerProgress:
     """Drives a Rich Live display from pbc JSONL progress events.
 
@@ -214,6 +225,16 @@ class _LiveRunnerProgress:
         self._step = ""
         self._phase_name = ""
         self._start = time.monotonic()
+
+        # Step history tracking (mirrors _LiveAnalyzeProgress.times pattern)
+        self._current_label: str = ""
+        self._current_start: float = 0.0
+        self._current_elapsed_ms: float | None = None
+        self._current_edb_rows: dict[str, int] = {}
+        self._current_idb_rows: dict[str, int] = {}
+        self._current_residency_mb: float | None = None
+        self._step_history: list[_StepInfo] = []
+        self._max_history = 6
 
     @property
     def parsed_count(self) -> int:
@@ -254,7 +275,45 @@ class _LiveRunnerProgress:
                 if not event.get("ok", True):
                     self._errors += 1
             elif tag == "step":
-                self._step = event["label"]
+                label = event.get("label", "")
+                elapsed_ms = event.get("elapsed_ms")
+                edb_rows = event.get("edb_rows") or {}
+                idb_rows = event.get("idb_rows") or {}
+                residency_mb = event.get("residency_mb")
+
+                # Detect step boundary: a new label means the previous step
+                # completed — push it to history.
+                if label and label != self._current_label:
+                    if self._current_label:
+                        self._step_history.append(_StepInfo(
+                            label=self._current_label,
+                            elapsed_ms=self._current_elapsed_ms,
+                            edb_rows=self._current_edb_rows,
+                            idb_rows=self._current_idb_rows,
+                            residency_mb=self._current_residency_mb,
+                        ))
+                        if len(self._step_history) > self._max_history:
+                            self._step_history = self._step_history[-self._max_history:]
+                    self._current_label = label
+                    self._current_start = time.monotonic()
+                    self._current_elapsed_ms = None
+                    self._current_edb_rows = {}
+                    self._current_idb_rows = {}
+                    self._current_residency_mb = None
+
+                # Inherit edb_rows from start event
+                if edb_rows:
+                    self._current_edb_rows.update(edb_rows)
+
+                # Update elapsed/residency/rows from end/heartbeat events
+                if elapsed_ms is not None:
+                    self._current_elapsed_ms = elapsed_ms
+                if idb_rows:
+                    self._current_idb_rows.update(idb_rows)
+                if residency_mb is not None:
+                    self._current_residency_mb = residency_mb
+
+                self._step = label
             elif tag == "ddl_loaded":
                 for line in _format_ddl_loaded(event):
                     self._console.print(line)
@@ -286,13 +345,27 @@ class _LiveRunnerProgress:
                 line.append(f"  ⚠ {self._errors} error(s)", style="red")
         else:
             label = f"{self._phase_label}"
-            if self._step:
-                label += f" — {self._step}"
+            if self._current_label:
+                label += f" — {self._current_label}"
+                step_elapsed = self._format_current_elapsed()
+                label += f"  {step_elapsed}"
+                res = self._current_residency_mb
+                if res is not None:
+                    if res >= 1000:
+                        label += f", {res / 1024:.1f}GB RES"
+                    else:
+                        label += f", {res:.0f}MB RES"
             line = Text()
             line.append(label, style="bold")
             line.append(f"  {elapsed_str}")
 
         rows: list = [line]
+
+        # ── step history (last N completed steps) ───────────────────────────
+        for info in self._step_history:
+            rows.append(Text.from_markup(
+                f"  [dim]  {self._format_step_summary(info)}[/dim]"
+            ))
 
         # ── per-worker rows ─────────────────────────────────────────────────
         if self._workers:
@@ -312,6 +385,60 @@ class _LiveRunnerProgress:
                     )
 
         return Group(*rows)
+
+    def _format_step_summary(self, info: _StepInfo) -> str:
+        parts = [info.label]
+        if info.elapsed_ms is not None:
+            parts.append(self._format_elapsed_ms(info.elapsed_ms))
+        row_str = self._format_row_counts(info.edb_rows, info.idb_rows)
+        if row_str:
+            parts.append(row_str)
+        return " — ".join(parts)
+
+    def _format_current_elapsed(self) -> str:
+        if self._current_elapsed_ms is not None:
+            return self._format_elapsed_ms(self._current_elapsed_ms)
+        # No end event yet — show live elapsed from start
+        live_ms = (time.monotonic() - self._current_start) * 1000
+        return f"running {self._format_elapsed_ms(live_ms)}"
+
+    @staticmethod
+    def _format_elapsed_ms(ms: float) -> str:
+        secs = ms / 1000
+        if secs < 60:
+            return f"{secs:.1f}s"
+        mins = int(secs // 60)
+        secs_rem = secs - mins * 60
+        return f"{mins}m{secs_rem:.0f}s"
+
+    @staticmethod
+    def _format_row_counts(
+        edb_rows: dict[str, int], idb_rows: dict[str, int]
+    ) -> str:
+        def _fmt(n: int) -> str:
+            if n >= 1_000_000:
+                return f"{n / 1_000_000:.1f}M"
+            if n >= 1_000:
+                return f"{n / 1_000:.1f}K"
+            return str(n)
+
+        if edb_rows:
+            if len(edb_rows) == 1:
+                parts_str = f"{_fmt(next(iter(edb_rows.values())))} in"
+            else:
+                parts_str = f"{_fmt(sum(edb_rows.values()))} in"
+        else:
+            parts_str = ""
+        if idb_rows:
+            if len(idb_rows) == 1:
+                out_str = f"{_fmt(next(iter(idb_rows.values())))} out"
+            else:
+                out_str = f"{_fmt(sum(idb_rows.values()))} out"
+        else:
+            out_str = ""
+        if parts_str and out_str:
+            return f"{parts_str} / {out_str}"
+        return parts_str or out_str
 
 
 class _RecordingRunnerProgress:
