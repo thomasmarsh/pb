@@ -184,7 +184,7 @@ transMethodEffectTags = Map.fromList
 -- | Return True when a method on a type (given by declared name) is side-effecting.
 -- Uses isDescendantOf so user-defined DW/Transaction subclasses are handled
 -- correctly even when the full stdlib inheritance chain is loaded.
-isTypedSuspend :: Map.Map Text Text -> Text -> Text -> Bool
+isTypedSuspend :: Map.Map Ident Ident -> Text -> Text -> Bool
 isTypedSuspend inh ty meth
   | isDescendantOf inh ty dwTypes    = meth `Map.member` dwMethodEffectTags
   | isDescendantOf inh ty transTypes = meth `Map.member` transMethodEffectTags
@@ -193,7 +193,7 @@ isTypedSuspend inh ty meth
 -- | Effect tags for a method call on a resolved receiver type. Mirrors
 -- 'isTypedSuspend's dwTypes/transTypes dispatch, replacing each flat
 -- membership check with a per-method tag lookup against the same tables.
-typedEffectTags :: Map.Map Text Text -> Text -> Text -> Set.Set EffectTag
+typedEffectTags :: Map.Map Ident Ident -> Text -> Text -> Set.Set EffectTag
 typedEffectTags inh ty meth
   | isDescendantOf inh ty dwTypes    = Map.findWithDefault Set.empty meth dwMethodEffectTags
   | isDescendantOf inh ty transTypes = Map.findWithDefault Set.empty meth transMethodEffectTags
@@ -207,7 +207,7 @@ typedEffectTags inh ty meth
 resolveLvalueType :: ScopedTypeEnv -> Lvalue -> Maybe Text
 resolveLvalueType env lv = case segments lv of
   []   -> Nothing
-  [s]  -> fmap (T.toLower . renderPbType) (lookupScopedVar (identCanon (segName s)) env)
+  [s]  -> fmap (T.toLower . renderPbType) (lookupScopedVar (segName s) env)
   segs -> resolveMemberChainType (steControlIndex env) (steHierarchy env)
                                  (steObject env) (map (identCanon . segName) segs)
 
@@ -216,7 +216,7 @@ resolveReceiverType :: ScopedTypeEnv -> Expr -> Maybe Text
 resolveReceiverType env (ExLvalue lv) = resolveLvalueType env lv
 resolveReceiverType env (ExCall lv _) =
   case segments lv of
-    [single] -> fmap (T.toLower . renderPbType) (lookupScopedVar (identCanon (segName single)) env)
+    [single] -> fmap (T.toLower . renderPbType) (lookupScopedVar (segName single) env)
     _        -> Nothing
 resolveReceiverType _ _ = Nothing
 
@@ -265,9 +265,9 @@ parseArgList ts = parseExpr ts
 -- 'BsLocalVar' declarations, so a locally-declared datastore/datawindow/
 -- transaction variable's type can be resolved by classification (e.g.
 -- 'classifyExpr') before that variable's first use.
-collectBodyLocals :: [Located BodyStmt] -> Map.Map Text PbType
+collectBodyLocals :: [Located BodyStmt] -> Map.Map Ident PbType
 collectBodyLocals stmts =
   Map.fromList
-    [ (identCanon varName, varType)
+    [ (varName, varType)
     | Located _ (BsLocalVar _ varType varName _) <- stmts
     ]

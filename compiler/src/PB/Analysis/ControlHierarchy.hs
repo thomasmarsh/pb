@@ -67,7 +67,7 @@ module PB.Analysis.ControlHierarchy
   ) where
 
 import PB.Prelude
-import PB.AST.Ident       (identOrig, identCanon)
+import PB.AST.Ident       (Ident, identOrig, identCanon)
 import PB.AST.SourceFile
 import PB.Analysis.TypeResolve (findLiteralDataObject)
 import qualified Data.Map.Strict as Map
@@ -123,7 +123,7 @@ buildControlIndex sfs = Map.fromList
 -- non-overridden declaration reached after following every D1 override).
 -- 'Nothing' when any hop is unresolvable — no guessing past what the
 -- workspace actually declares.
-resolveMemberChainType :: ControlIndex -> Map.Map Text Text -> Text -> [Text] -> Maybe Text
+resolveMemberChainType :: ControlIndex -> Map.Map Ident Ident -> Text -> [Text] -> Maybe Text
 resolveMemberChainType idx inh obj segs =
   cdAncestorType . snd <$> resolveChain idx (normalizeInherits inh) obj obj segs
 
@@ -133,17 +133,18 @@ resolveMemberChainType idx inh obj segs =
 -- the binding search stops at the closest override that sets a literal
 -- @dataobject@ — a more-derived override's own binding must win over
 -- whatever its ancestor declares (or doesn't declare) further up the chain.
-resolveMemberChainDwBinding :: ControlIndex -> Map.Map Text Text -> Text -> [Text] -> Maybe Text
+resolveMemberChainDwBinding :: ControlIndex -> Map.Map Ident Ident -> Text -> [Text] -> Maybe Text
 resolveMemberChainDwBinding idx inh obj segs =
   case resolveChain idx (normalizeInherits inh) obj obj segs of
     Nothing              -> Nothing
     Just (dwBinding, _)  -> dwBinding
 
--- | Lowercase both sides of an externally-supplied inherits map (e.g.
--- 'PB.Analysis.TypeResolve.buildInheritsMap'\'s raw, case-sensitive output)
--- once per top-level call, so every internal lookup can assume normalized keys.
-normalizeInherits :: Map.Map Text Text -> Map.Map Text Text
-normalizeInherits = Map.fromList . map (\(k, v) -> (T.toLower k, T.toLower v)) . Map.toList
+-- | Project an 'Ident'-keyed inherits map (e.g. 'PB.Analysis.TypeEnv.weHierarchy')
+-- down to the canonical-'Text'-keyed shape the chain walker below still uses
+-- internally ('ControlIndex' itself stays 'Text'-keyed; converting it is
+-- Plan 179 Phase 2's job, not this one's).
+normalizeInherits :: Map.Map Ident Ident -> Map.Map Text Text
+normalizeInherits = Map.fromList . map (\(k, v) -> (identCanon k, identCanon v)) . Map.toList
 
 -- | Walk every chain segment, threading @root@ (Phase E) alongside @owner@.
 -- Each hop resolves via 'resolveHop', then the next lookup scope is chosen:

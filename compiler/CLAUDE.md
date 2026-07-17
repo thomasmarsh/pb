@@ -1782,15 +1782,15 @@ buildTaintAnnotations :: Set (Text,Text,Text) -> [TaintSource] -> [TaintSink] ->
 taintAnalysis      :: [ResolvedCallRow] -> [DefRow] -> [UseRow] -> Set Text -> Text -> SrFile -> TaintResult
 ```
 
-### `PB.Analysis.TypeEnv`
+### `PB.Analysis.TypeEnv` (Ident-keyed maps, Plan 179 Phase 1, 2026-07-17)
 
 ```haskell
 -- Cross-file type environment. Used by PB.Compile.Flatten consumers + Runner (Plan 114 unified them).
-data TypeEnv = TypeEnv { teVars :: Map Text PbType, teUserTypes :: Map Text Text }
+data TypeEnv = TypeEnv { teVars :: Map Ident PbType, teUserTypes :: Map Ident Ident }
 buildWorkspaceTypeEnv :: [SrFile] -> TypeEnv
-lookupVarType    :: Text -> TypeEnv -> Maybe PbType      -- case-insensitive
-lookupUserType   :: Text -> TypeEnv -> Maybe Text        -- case-insensitive
-lookupBaseType   :: Text -> TypeEnv -> Maybe Text        -- resolves var → base type, walks inheritance chain with cycle guard
+lookupVarType    :: Ident -> TypeEnv -> Maybe PbType     -- case-insensitive via Ident's own Ord
+lookupUserType   :: Ident -> TypeEnv -> Maybe Ident      -- case-insensitive
+lookupBaseType   :: Ident -> TypeEnv -> Maybe Ident      -- resolves var → base type, walks inheritance chain with cycle guard
 withProcScope    :: [(Text, PbType)] -> TypeEnv -> TypeEnv  -- overlay params (shadow globals of same name)
 -- extractTypeDecls (internal, feeds teUserTypes/weHierarchy) now applies
 -- PB.AST.SourceFile.splitAncestorRef to tdAncestor before use (Plan 164
@@ -1802,9 +1802,9 @@ withProcScope    :: [(Text, PbType)] -> TypeEnv -> TypeEnv  -- overlay params (s
 -- once per procedure respectively); consumed by CallClassify/CatLower/
 -- GraphBuilder's whole SSA->CatOp pipeline.
 data WorkspaceEnv = WorkspaceEnv
-  { weGlobals      :: Map.Map Text PbType
-  , weInstanceVars :: Map.Map Text (Map.Map Text PbType)  -- object name -> instance vars
-  , weHierarchy    :: Map.Map Text Text                   -- full inheritance map
+  { weGlobals      :: Map.Map Ident PbType
+  , weInstanceVars :: Map.Map Ident (Map.Map Ident PbType)  -- object name -> instance vars
+  , weHierarchy    :: Map.Map Ident Ident                   -- full inheritance map
   }
 buildWorkspaceEnv :: [SrFile] -> WorkspaceEnv
 
@@ -1817,10 +1817,10 @@ buildWorkspaceEnv :: [SrFile] -> WorkspaceEnv
 -- does -- one opaque value threaded through the whole compile pipeline,
 -- no signature changes needed in CatLower/GraphBuilder/CompileCtx.
 data ScopedTypeEnv = ScopedTypeEnv
-  { steGlobal       :: Map.Map Text PbType
-  , steInstance     :: Map.Map Text PbType
-  , steLocal        :: Map.Map Text PbType   -- params only in P2a; body locals added in P2b
-  , steHierarchy    :: Map.Map Text Text
+  { steGlobal       :: Map.Map Ident PbType
+  , steInstance     :: Map.Map Ident PbType
+  , steLocal        :: Map.Map Ident PbType   -- params only in P2a; body locals added in P2b
+  , steHierarchy    :: Map.Map Ident Ident
   , steObject       :: Text          -- enclosing object; root for multi-hop chain resolution
   , steControlIndex :: ControlIndex  -- from PB.Analysis.ControlHierarchy
   }
@@ -1830,8 +1830,25 @@ procEnv :: WorkspaceEnv -> ControlIndex -> Text -> [(Text, PbType)] -> ScopedTyp
 -- controlIdx (already built for SchFootprint's SetItem resolution, Plan 164
 -- Phase C); Emit.hs's single-file wrapSrFile builds `buildControlIndex [sf]`
 -- locally (same single-file scope buildWorkspaceEnv [srFile] already has).
-lookupScopedVar :: Text -> ScopedTypeEnv -> Maybe PbType  -- case-insensitive; steLocal > steInstance > steGlobal
+-- objName/params stay Text -- steObject is a display field read elsewhere
+-- non-case-insensitively; procEnv mints Ident at the map boundary instead.
+lookupScopedVar :: Ident -> ScopedTypeEnv -> Maybe PbType  -- case-insensitive; steLocal > steInstance > steGlobal
 ```
+
+Every direct consumer of `steHierarchy`/`weHierarchy` outside this module keeps
+its own other (deliberately un-migrated, Phase 2/5-scoped) parameters
+untouched via a one-line boundary shim projecting the `Ident`-keyed map back
+to `Map.Map Text Text` (`identCanon` on both sides, reproducing the exact
+prior lowercased shape): `ControlHierarchy.normalizeInherits`,
+`TypeFamily.compatible` (shims internally), and `TypeCheck.hierarchyText`
+(shims at its 2 `resolveVirtual` call sites only — `resolveVirtual`/
+`resolveCalls`/`ancestorChain`/`buildInheritsMap` themselves are untouched,
+since `resolveCalls` also has a third caller, `PB.Pipeline.Passes`' DuckDB
+`queryObjInfo`-sourced inherits map, outside this migration's scope).
+`isTypedSuspend`/`typedEffectTags`/`isDescendantOf` (`CallClassify.hs`) take
+the `Ident`-keyed map directly — their other params (`ty`/`meth`/`targets`)
+are closed builtin-vocabulary `Text`, not identifiers, confirmed out of
+scope by Plan 179's Stage 0 audit.
 
 ### `PB.Analysis.TypeCheck` (Plan 177; unified onto `ScopedTypeEnv` 2026-07-16)
 

@@ -223,7 +223,7 @@ classifyClassName ctx cls
 -- variable reference resolves here exactly as it already does for
 -- 'PB.Analysis.CallClassify''s call classification, instead of only ever
 -- covering params\/body-locals.
-scopeFamily :: TypeCheckCtx -> Text -> Maybe TypeFamily
+scopeFamily :: TypeCheckCtx -> Ident -> Maybe TypeFamily
 scopeFamily ctx n =
   (\t -> classifyFamily t (tcObjects ctx) (tcUserTypes ctx)) <$> lookupScopedVar n (tcEnv ctx)
 
@@ -271,7 +271,7 @@ resolveCallTarget ctx ExCall { callee = lv } =
     [LvSegment nameIdent _] ->
       if identCanon nameIdent `Set.member` tcBuiltinFns ctx
         then Nothing
-        else case resolveVirtual nameIdent (steObject (tcEnv ctx)) (tcProcMap ctx) (steHierarchy (tcEnv ctx)) of
+        else case resolveVirtual nameIdent (steObject (tcEnv ctx)) (tcProcMap ctx) (hierarchyText ctx) of
                (Just o, Just p, _, _) -> Just (o, p)
                _                      -> Nothing
     _ ->
@@ -284,11 +284,21 @@ resolveCallTarget ctx ExMethodCall { receiver = recv, method = m } =
     then Nothing
     else case inferExpr ctx recv of
            Just (FamObject cls) ->
-             case resolveVirtual m (identOrig cls) (tcProcMap ctx) (steHierarchy (tcEnv ctx)) of
+             case resolveVirtual m (identOrig cls) (tcProcMap ctx) (hierarchyText ctx) of
                (Just o, Just p, _, _) -> Just (o, p)
                _                      -> Nothing
            _ -> Nothing
 resolveCallTarget _ _ = Nothing
+
+-- | Project 'tcEnv''s 'Ident'-keyed 'steHierarchy' down to the canonical-
+-- 'Text'-keyed shape 'PB.Analysis.TypeResolve.resolveVirtual'\/'ancestorChain'
+-- still walk internally (that pair's other parameters -- 'tcProcMap',
+-- the DuckDB-sourced inherits map 'PB.Pipeline.Passes.runPass67' feeds via
+-- 'resolveCalls' -- are out of this migration's scope, so the primitive
+-- itself stays untouched; only this one call site bridges to it).
+hierarchyText :: TypeCheckCtx -> Map.Map Text Text
+hierarchyText ctx =
+  Map.fromList (map (\(k, v) -> (identCanon k, identCanon v)) (Map.toList (steHierarchy (tcEnv ctx))))
 
 -- | @arity@ is the actual call's argument count, used to disambiguate an
 -- overloaded target name via 'selectSignature'.
@@ -316,7 +326,7 @@ inferExpr _   ExNull     = Nothing -- handled specially by callers, not a family
 -- 'scopeFamily'\/'lookupScopedVar' are case-insensitive, so a param,
 -- local, instance, or global var referenced with different casing than its
 -- declaration still resolves.
-inferExpr ctx (ExLvalue (Lvalue [LvSegment n Nothing])) = scopeFamily ctx (identCanon n)
+inferExpr ctx (ExLvalue (Lvalue [LvSegment n Nothing])) = scopeFamily ctx n
 inferExpr ctx (ExLvalue (Lvalue segs@(_ : _ : _))) =
   classifyClassName ctx <$>
     resolveMemberChainType (steControlIndex (tcEnv ctx)) (steHierarchy (tcEnv ctx)) (steObject (tcEnv ctx)) (map (identCanon . segName) segs)
@@ -399,7 +409,7 @@ rhsDesc _ = "<expr>"
 assignFinding :: TypeCheckCtx -> Text -> Int -> Ident -> Expr -> [TypeMismatchFinding]
 assignFinding ctx procN line varN rhs =
   [ TypeMismatchFinding (steObject (tcEnv ctx)) procN line (identOrig varN) (renderFamily lhsFam) (rhsDesc rhs) AssignMismatch
-  | Just lhsFam <- [scopeFamily ctx (identCanon varN)]
+  | Just lhsFam <- [scopeFamily ctx varN]
   , Just rhsFam <- [inferExpr ctx rhs]
   , not (compatible (steHierarchy (tcEnv ctx)) lhsFam rhsFam)
   ]

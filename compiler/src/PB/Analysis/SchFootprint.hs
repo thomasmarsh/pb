@@ -31,7 +31,7 @@ import PB.AST.BodyStmt (BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..), C
 import PB.AST.Located (Located (..))
 import PB.AST.Type (renderPbType)
 import PB.Analysis.CallClassify (segName)
-import PB.AST.Ident (identCanon)
+import PB.AST.Ident (Ident, identCanon)
 import PB.Compile.IR (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), Eff (..), EffTerm (..))
 import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainDwBinding)
 import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..), DwRetrieveColRow (..))
@@ -227,7 +227,7 @@ foldSchFootprintEff ctx (EffTerm spine table) = fst (go spine Map.empty)
 -- nothing to the result -- no guessing past what the resolver itself can
 -- resolve.
 runtimeDwAliasBindings
-  :: ControlIndex -> Map.Map Text Text -> Text -> ScopedTypeEnv
+  :: ControlIndex -> Map.Map Ident Ident -> Text -> ScopedTypeEnv
   -> [Located BodyStmt] -> Map.Map (Text, Text) Text
 runtimeDwAliasBindings idx inh obj env stmts = Map.fromList (concatMap go stmts)
   where
@@ -251,6 +251,6 @@ runtimeDwAliasBindings idx inh obj env stmts = Map.fromList (concatMap go stmts)
               <$> resolveMemberChainDwBinding idx inh obj rhsSegs
       _ -> Nothing
 
-    isDwTyped lhsName = case lookupScopedVar (identCanon lhsName) env of
+    isDwTyped lhsName = case lookupScopedVar lhsName env of
       Just ty -> T.toLower (renderPbType ty) `elem` ["datawindow", "datastore"]
       Nothing -> False

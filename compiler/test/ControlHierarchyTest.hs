@@ -1,6 +1,7 @@
 module ControlHierarchyTest (tests, withFyloFixture) where
 
 import PB.Prelude
+import PB.AST.Ident              (Ident, mkIdent)
 import PB.AST.SourceFile        (SrFile (..), TypeBlock (..), mkTypeDecl)
 import PB.AST.BodyStmt          (BodyStmt (..))
 import PB.AST.Expr               (Expr (..))
@@ -289,7 +290,7 @@ tests = testGroup "ControlHierarchy"
 -- u_grid.sru chain) and builds a workspace-wide ControlIndex + inherits map
 -- from it. Mirrors SchFootprintTest.hs's "Phase 3 done-condition" pattern:
 -- vacuous pass if the example corpus isn't present in this environment.
-withFyloFixture :: (ControlIndex -> Map.Map Text Text -> IO ()) -> IO ()
+withFyloFixture :: (ControlIndex -> Map.Map Ident Ident -> IO ()) -> IO ()
 withFyloFixture check = do
   let paths =
         [ "example/openpay-0.1.1b-extract/fylo.pbl/w_misth_fylo_form.srw"
@@ -307,5 +308,5 @@ withFyloFixture check = do
         Right pairs ->
           let sfs = map fst pairs
               idx = buildControlIndex sfs
-              inh = buildInheritsMap sfs
+              inh = Map.fromList (map (\(k, v) -> (mkIdent k, mkIdent v)) (Map.toList (buildInheritsMap sfs)))
           in check idx inh

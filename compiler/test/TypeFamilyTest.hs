@@ -3,7 +3,7 @@ module TypeFamilyTest (tests) where
 import PB.Prelude
 import qualified Data.Map.Strict as Map
 
-import PB.AST.Ident       (identSetEmpty, identSetSingleton, mkIdent)
+import PB.AST.Ident       (Ident, identSetEmpty, identSetSingleton, mkIdent)
 import PB.AST.Type        (PbType (..))
 import PB.Analysis.TypeResolve (ResolvedType (..))
 import PB.Analysis.TypeFamily
@@ -125,7 +125,7 @@ tests = testGroup "TypeFamily"
 -- above -- kept in sync by hand rather than parsed, since this module has
 -- no IO; PB.Runtime.StdLibTest.testInheritance exercises the real parsed
 -- stdlib map end-to-end.
-builtinInherits :: Map.Map Text Text
+builtinInherits :: Map.Map Ident Ident
 builtinInherits = Map.fromList
   [ ("windowobject",  "powerobject")
   , ("graphicobject", "windowobject")

@@ -3,7 +3,6 @@ module TypeCheckTest (tests) where
 import PB.Prelude
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
-import qualified Data.Text       as T
 
 import PB.AST.BodyStmt
 import PB.AST.Expr
@@ -43,10 +42,10 @@ baseCtx = TypeCheckCtx
 
 -- | Set 'tcEnv''s 'steLocal' from a name/'PbType' list -- the common case
 -- across these fixtures, which need a var visible to 'inferExpr' without
--- overriding the enclosing object/hierarchy/control-index too. Lowercased
+-- overriding the enclosing object/hierarchy/control-index too. Ident-keyed
 -- to match 'PB.Analysis.TypeEnv.procEnv''s own convention.
 withVars :: [(Text, PbType)] -> TypeCheckCtx -> TypeCheckCtx
-withVars vs ctx = ctx { tcEnv = (tcEnv ctx) { steLocal = Map.fromList [(T.toLower n, t) | (n, t) <- vs] } }
+withVars vs ctx = ctx { tcEnv = (tcEnv ctx) { steLocal = Map.fromList [(mkIdent n, t) | (n, t) <- vs] } }
 
 scope1Vars :: [(Text, PbType)]
 scope1Vars = [("li_x", PtPrimitive "integer"), ("ls_y", PtPrimitive "string"), ("lb_z", PtPrimitive "boolean")]

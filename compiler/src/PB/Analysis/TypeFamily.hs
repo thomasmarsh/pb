@@ -21,7 +21,7 @@ module PB.Analysis.TypeFamily
   ) where
 
 import PB.Prelude
-import PB.AST.Ident       (Ident, identOrig, mkIdent, IdentSet)
+import PB.AST.Ident       (Ident, identOrig, identCanon, mkIdent, IdentSet)
 import PB.AST.Type        (PbType (..), renderPbType)
 import PB.Analysis.TypeResolve (ResolvedType (..), classifyPbType, ancestorChain)
 import qualified Data.Map.Strict as Map
@@ -117,16 +117,19 @@ familyOfResolvedType rt = case rtKind rt of
 -- downcast -- ordinary, idiomatic PB, not a compile-time error), so a
 -- one-directional ancestor check would flag every such assignment as a
 -- false positive. The direct @l == r@ check is 'Ident''s own
--- case-insensitive 'Eq'; the ancestor-chain walk itself stays exact-'Text'
--- ('inherits' is 'PB.Analysis.TypeResolve.buildInheritsMap''s raw output,
--- not yet migrated -- see BACKLOG).
-compatible :: Map.Map Text Text -> TypeFamily -> TypeFamily -> Bool
+-- case-insensitive 'Eq'. 'inherits' arrives 'Ident'-keyed (its only caller,
+-- 'PB.Analysis.TypeCheck', threads its own 'steHierarchy' through), and is
+-- projected once here to the canonical-'Text'-keyed shape
+-- 'PB.Analysis.TypeResolve.ancestorChain' still walks internally.
+compatible :: Map.Map Ident Ident -> TypeFamily -> TypeFamily -> Bool
 compatible _        FamAny        _            = True
 compatible _        _             FamAny       = True
 compatible inherits (FamObject l) (FamObject r) =
   l == r
-    || identOrig l `elem` ancestorChain (identOrig r) inherits
-    || identOrig r `elem` ancestorChain (identOrig l) inherits
+    || identOrig l `elem` ancestorChain (identOrig r) inheritsText
+    || identOrig r `elem` ancestorChain (identOrig l) inheritsText
+  where
+    inheritsText = Map.fromList (map (\(k, v) -> (identCanon k, identCanon v)) (Map.toList inherits))
 compatible _        l             r             = l == r
 
 -- ---------------------------------------------------------------------------

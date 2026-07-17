@@ -3,7 +3,7 @@ module TypeEnvTest (tests) where
 import PB.Prelude
 import PB.AST.BodyStmt       (BodyStmt (..))
 import PB.AST.Located        (Located (..))
-import PB.AST.Ident          (identOrig, identCanon, identSetMember)
+import PB.AST.Ident          (identOrig, identCanon, identSetMember, mkIdent)
 import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeBlock (..),
                               GlobalInstance (..), srAllTypeDecls, srPrimaryObject,
                               splitAncestorRef, mkTypeDecl)
@@ -95,6 +95,13 @@ tests = testGroup "TypeEnv"
               , teUserTypes = Map.empty
               }
         in lookupBaseType "DW_Main" env @?= Just "datawindow"
+
+    , testCase "walk matches an ancestor-map entry keyed in a different case than the rendered var type, preserving the stored entry's own casing (Ident-keyed teUserTypes, Plan 179 Phase 1)" $
+        let env = TypeEnv
+              { teVars      = Map.fromList [(mkIdent "dw", PtUserDefined "DataWindow")]
+              , teUserTypes = Map.fromList [(mkIdent "DataWindow", mkIdent "NonVisualObject")]
+              }
+        in fmap identOrig (lookupBaseType (mkIdent "dw") env) @?= Just "NonVisualObject"
     ]
 
   , testGroup "parseTypeText"

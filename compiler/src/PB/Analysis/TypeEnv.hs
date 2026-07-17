@@ -16,19 +16,18 @@ module PB.Analysis.TypeEnv
 
 import PB.Prelude
 import PB.AST.BodyStmt (BodyStmt (..))
-import PB.AST.Ident    (identCanon)
+import PB.AST.Ident    (Ident, identCanon, mkIdent)
 import PB.AST.Located  (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type
 import PB.Analysis.ControlHierarchy (ControlIndex)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
-import qualified Data.Text       as T
 
 -- | Cross-file type environment.
 data TypeEnv = TypeEnv
-  { teVars      :: Map.Map Text PbType     -- variable name → type
-  , teUserTypes :: Map.Map Text Text        -- user type name → ancestor (for inheritance)
+  { teVars      :: Map.Map Ident PbType   -- variable name → type
+  , teUserTypes :: Map.Map Ident Ident    -- user type name → ancestor (for inheritance)
   } deriving (Eq, Show)
 
 emptyTypeEnv :: TypeEnv
@@ -48,22 +47,22 @@ buildWorkspaceTypeEnv = foldl' mergeFile emptyTypeEnv
 -- Also picks up instance variable declarations from the global type body
 -- (the typeBlock where within == Nothing), which the parser emits as BsLocalVar
 -- nodes rather than GlobalInstance entries.
-extractGlobalVars :: SrFile -> Map.Map Text PbType
+extractGlobalVars :: SrFile -> Map.Map Ident PbType
 extractGlobalVars sf =
-  Map.fromList [ (identCanon (giName gi), parseTypeText (giType gi))
+  Map.fromList [ (giName gi, parseTypeText (giType gi))
                | gi <- srGlobalInstances sf ]
   <> case srForward sf of
        Nothing -> Map.empty
        Just (ForwardBlock { fwdInstances = gis }) ->
-         Map.fromList [ (identCanon (giName gi), parseTypeText (giType gi))
+         Map.fromList [ (giName gi, parseTypeText (giType gi))
                       | gi <- gis ]
   <> case srVariables sf of
        Nothing -> Map.empty
        Just (VariablesBlock { varDecls = decls }) ->
-         Map.fromList [ (identCanon (vdName d), parseTypeText (vdType d)) | d <- decls ]
+         Map.fromList [ (vdName d, parseTypeText (vdType d)) | d <- decls ]
   <> mconcat
        [ Map.fromList
-           [ (identCanon vn, vt)
+           [ (vn, vt)
            | Located _ (BsLocalVar { varType = vt, varName = vn }) <- tbBody tb
            ]
        | tb <- srTypeBlocks sf
@@ -74,62 +73,67 @@ extractGlobalVars sf =
 -- ancestor (e.g. @w_form_tab2`page1@) resolves to just the ancestor class
 -- part -- see 'splitAncestorRef' and 'PB.Analysis.TypeResolve.buildInheritsMap'
 -- (same fix, same reasoning, applied here for 'lookupBaseType'/'isDescendantOf').
-extractTypeDecls :: SrFile -> Map.Map Text Text
+extractTypeDecls :: SrFile -> Map.Map Ident Ident
 extractTypeDecls sf =
-  Map.fromList [ (identCanon (tdName td), identCanon (tdAncestorClass td))
+  Map.fromList [ (tdName td, tdAncestorClass td)
                | td <- srAllTypeDecls sf ]
 
--- | Look up a variable's type (case-insensitive).
-lookupVarType :: Text -> TypeEnv -> Maybe PbType
-lookupVarType name = Map.lookup (T.toLower name) . teVars
+-- | Look up a variable's type (case-insensitive: 'Ident''s own 'Ord').
+lookupVarType :: Ident -> TypeEnv -> Maybe PbType
+lookupVarType name = Map.lookup name . teVars
 
 -- | Look up a user-defined type's ancestor (case-insensitive).
-lookupUserType :: Text -> TypeEnv -> Maybe Text
-lookupUserType name = Map.lookup (T.toLower name) . teUserTypes
+lookupUserType :: Ident -> TypeEnv -> Maybe Ident
+lookupUserType name = Map.lookup name . teUserTypes
 
 -- | Resolve a variable name to its base type, walking the inheritance chain.
--- Returns the lowercased base type name, or Nothing if the variable is unknown.
-lookupBaseType :: Text -> TypeEnv -> Maybe Text
+-- Returns the terminal ancestor 'Ident' (preserving whatever casing the
+-- ancestor map stored it under), or Nothing if the variable is unknown.
+lookupBaseType :: Ident -> TypeEnv -> Maybe Ident
 lookupBaseType name env =
-  fmap (walkInheritChain (teUserTypes env) . T.toLower . renderPbType)
-       (Map.lookup (T.toLower name) (teVars env))
+  fmap (walkInheritChain (teUserTypes env) . mkIdent . renderPbType)
+       (Map.lookup name (teVars env))
 
-walkInheritChain :: Map.Map Text Text -> Text -> Text
+walkInheritChain :: Map.Map Ident Ident -> Ident -> Ident
 walkInheritChain inh = go Set.empty
   where
     go seen ty
-      | Set.member ty seen             = ty
-      | Just p <- Map.lookup ty inh   = go (Set.insert ty seen) (T.toLower p)
-      | otherwise                      = ty
+      | Set.member ty seen          = ty
+      | Just p <- Map.lookup ty inh = go (Set.insert ty seen) p
+      | otherwise                   = ty
 
--- | True when @ty@ (lowercased) is in @targets@ or has an ancestor in @targets@.
--- Cycle-safe via a visited set.
-isDescendantOf :: Map.Map Text Text -> Text -> Set.Set Text -> Bool
-isDescendantOf inh ty0 targets = go Set.empty (T.toLower ty0)
+-- | True when @ty@ is in @targets@ or has an ancestor in @targets@, walking
+-- @inh@ (the workspace's Ident-keyed ancestor map). Cycle-safe via a visited
+-- set. @ty0@\/@targets@ stay 'Text': they compare against a closed
+-- builtin-class-family vocabulary ('PB.Analysis.CallClassify.dwTypes'\/
+-- 'transTypes'), not a workspace identifier -- see
+-- @doc/plan/179-canonical-identifier-consumers.md@'s Stage 0 audit.
+isDescendantOf :: Map.Map Ident Ident -> Text -> Set.Set Text -> Bool
+isDescendantOf inh ty0 targets = go Set.empty (mkIdent ty0)
   where
     go seen ty
-      | ty `Set.member` targets = True
-      | ty `Set.member` seen    = False
-      | Just p <- Map.lookup ty inh = go (Set.insert ty seen) (T.toLower p)
-      | otherwise                    = False
+      | identCanon ty `Set.member` targets = True
+      | ty `Set.member` seen                = False
+      | Just p <- Map.lookup ty inh         = go (Set.insert ty seen) p
+      | otherwise                            = False
 
 -- ---------------------------------------------------------------------------
 -- Scoped type environment
 
 -- | Workspace-level snapshot built once from all parsed files.
 data WorkspaceEnv = WorkspaceEnv
-  { weGlobals      :: Map.Map Text PbType                       -- srVariables + forward instances
-  , weInstanceVars :: Map.Map Text (Map.Map Text PbType)        -- object name → instance vars
-  , weHierarchy    :: Map.Map Text Text                         -- full inheritance map
+  { weGlobals      :: Map.Map Ident PbType                       -- srVariables + forward instances
+  , weInstanceVars :: Map.Map Ident (Map.Map Ident PbType)       -- object name → instance vars
+  , weHierarchy    :: Map.Map Ident Ident                        -- full inheritance map
   } deriving (Eq, Show)
 
 -- | Procedure-scoped env built per (object, procedure) call site.
 -- Lookup order: steLocal > steInstance > steGlobal.
 data ScopedTypeEnv = ScopedTypeEnv
-  { steGlobal       :: Map.Map Text PbType
-  , steInstance     :: Map.Map Text PbType
-  , steLocal        :: Map.Map Text PbType   -- params only in P2a; body locals added in P2b
-  , steHierarchy    :: Map.Map Text Text
+  { steGlobal       :: Map.Map Ident PbType
+  , steInstance     :: Map.Map Ident PbType
+  , steLocal        :: Map.Map Ident PbType   -- params only in P2a; body locals added in P2b
+  , steHierarchy    :: Map.Map Ident Ident
   , steObject       :: Text          -- enclosing object name; root for multi-hop chain resolution
   , steControlIndex :: ControlIndex  -- workspace-wide control index; see PB.Analysis.ControlHierarchy
   } deriving (Eq, Show)
@@ -142,26 +146,26 @@ buildWorkspaceEnv sfs = WorkspaceEnv
   }
 
 -- Globals: srGlobalInstances + forward instances + srVariables (NOT TypeBlock body vars).
-extractWsGlobals :: SrFile -> Map.Map Text PbType
+extractWsGlobals :: SrFile -> Map.Map Ident PbType
 extractWsGlobals sf =
-  Map.fromList [ (identCanon (giName gi), parseTypeText (giType gi))
+  Map.fromList [ (giName gi, parseTypeText (giType gi))
                | gi <- srGlobalInstances sf ]
   <> case srForward sf of
        Nothing -> Map.empty
        Just (ForwardBlock { fwdInstances = gis }) ->
-         Map.fromList [ (identCanon (giName gi), parseTypeText (giType gi))
+         Map.fromList [ (giName gi, parseTypeText (giType gi))
                       | gi <- gis ]
   <> case srVariables sf of
        Nothing -> Map.empty
        Just (VariablesBlock { varDecls = decls }) ->
-         Map.fromList [ (identCanon (vdName d), parseTypeText (vdType d)) | d <- decls ]
+         Map.fromList [ (vdName d, parseTypeText (vdType d)) | d <- decls ]
 
 -- Instance vars: BsLocalVar nodes in non-within TypeBlock bodies, keyed by object name.
-extractInstanceVars :: SrFile -> Map.Map Text (Map.Map Text PbType)
+extractInstanceVars :: SrFile -> Map.Map Ident (Map.Map Ident PbType)
 extractInstanceVars sf = Map.fromList
-  [ ( identCanon (tdName (tbDecl tb))
+  [ ( tdName (tbDecl tb)
     , Map.fromList
-        [ (identCanon vn, vt)
+        [ (vn, vt)
         | Located _ (BsLocalVar { varType = vt, varName = vn }) <- tbBody tb
         ]
     )
@@ -174,18 +178,16 @@ procEnv :: WorkspaceEnv -> ControlIndex -> Text -> [(Text, PbType)] -> ScopedTyp
 procEnv ws idx objName params = ScopedTypeEnv
   { steGlobal       = weGlobals ws
   , steInstance     = fromMaybe Map.empty
-                         (Map.lookup (T.toLower objName) (weInstanceVars ws))
-  , steLocal        = Map.fromList [(T.toLower n, ty) | (n, ty) <- params]
+                         (Map.lookup (mkIdent objName) (weInstanceVars ws))
+  , steLocal        = Map.fromList [(mkIdent n, ty) | (n, ty) <- params]
   , steHierarchy    = weHierarchy ws
   , steObject       = objName
   , steControlIndex = idx
   }
 
 -- | Case-insensitive lookup: steLocal > steInstance > steGlobal.
-lookupScopedVar :: Text -> ScopedTypeEnv -> Maybe PbType
+lookupScopedVar :: Ident -> ScopedTypeEnv -> Maybe PbType
 lookupScopedVar name env =
-  let k = T.toLower name
-  in Map.lookup k (steLocal env)
-     <|> Map.lookup k (steInstance env)
-     <|> Map.lookup k (steGlobal env)
-
+  Map.lookup name (steLocal env)
+  <|> Map.lookup name (steInstance env)
+  <|> Map.lookup name (steGlobal env)
