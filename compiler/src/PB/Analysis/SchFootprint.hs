@@ -31,7 +31,7 @@ import PB.AST.BodyStmt (BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..), C
 import PB.AST.Located (Located (..))
 import PB.AST.Type (renderPbType)
 import PB.Analysis.CallClassify (segName)
-import PB.AST.Ident (Ident, identCanon)
+import PB.AST.Ident (Ident, mkIdent, identCanon)
 import PB.Compile.IR (Category (..), Cartesian (..), Cocartesian (..), Effectful (..), Eff (..), EffTerm (..))
 import PB.Analysis.ControlHierarchy (ControlIndex, resolveMemberChainDwBinding)
 import PB.Analysis.SchemaCategory (SchMorphism (..), SchObject (..), StmtId (..), LegKind (..), LegSource (..), DwRetrieveColRow (..))
@@ -57,25 +57,29 @@ import qualified Data.Text       as T
 data FunctorCtx = FunctorCtx
   { fcStmtObj         :: StmtId
   , fcTypeEnv         :: ScopedTypeEnv
-  , fcDwColumns       :: Map.Map Text [(TableRef, Text)]
-  , fcControlBindings :: Map.Map (Text, Text) Text
+  , fcDwColumns       :: Map.Map Ident [(TableRef, Text)]
+  , fcControlBindings :: Map.Map (Ident, Ident) Ident
   }
 
 -- | Build 'fcControlBindings' from 'PB.Analysis.TypeResolve.extractDwControlBindings'
--- output. All three key parts are lowercased (PB identifiers are
--- case-insensitive).
-controlBindingsMap :: [DwControlBinding] -> Map.Map (Text, Text) Text
+-- output. All three key parts are 'Ident'-keyed, so comparison is
+-- case-insensitive via 'Ident''s own 'Ord' (PB identifiers are
+-- case-insensitive) — no manual lowercasing needed.
+controlBindingsMap :: [DwControlBinding] -> Map.Map (Ident, Ident) Ident
 controlBindingsMap bindings = Map.fromList
-  [ ((T.toLower (dcbObject b), T.toLower (dcbControlName b)), T.toLower (dcbDwName b))
+  [ ((dcbObject b, dcbControlName b), dcbDwName b)
   | b <- bindings
   ]
 
 -- | Build 'fcDwColumns' from Phase 1b's existing @dw_retrieve_columns@ rows
--- (e.g. 'PB.Pipeline.DuckDb.queryDwRetrieveColumns'). DW-name key is
--- lowercased.
-dwColumnsFromRows :: [DwRetrieveColRow] -> Map.Map Text [(TableRef, Text)]
+-- (e.g. 'PB.Pipeline.DuckDb.queryDwRetrieveColumns'). DW-name key is minted
+-- as 'Ident' at this boundary — 'DwRetrieveColRow' itself stays 'Text'
+-- (a DB-read-shape row), but the DW name it carries is a genuine PB
+-- identifier and must compare case-insensitively against
+-- 'fcControlBindings''s own 'Ident'-typed values.
+dwColumnsFromRows :: [DwRetrieveColRow] -> Map.Map Ident [(TableRef, Text)]
 dwColumnsFromRows rows = Map.fromListWith (<>)
-  [ (T.toLower (drcDwName r), [(TableRef (drcNamespace r) (drcTable r), drcColumn r)])
+  [ (mkIdent (drcDwName r), [(TableRef (drcNamespace r) (drcTable r), drcColumn r)])
   | r <- rows
   ]
 
@@ -98,7 +102,7 @@ resolveSetItem ctx name args = do
   col  <- case args of
             (_ : ExStr c : _) -> Just c
             _                 -> Nothing
-  dwName <- Map.lookup (T.toLower obj, ctrl) (fcControlBindings ctx)
+  dwName <- Map.lookup (mkIdent obj, mkIdent ctrl) (fcControlBindings ctx)
   cols   <- Map.lookup dwName (fcDwColumns ctx)
   case L.filter (\(_, c) -> T.toLower c == T.toLower col) cols of
     [(tbl, c)] -> Just (tbl, c)
@@ -228,7 +232,7 @@ foldSchFootprintEff ctx (EffTerm spine table) = fst (go spine Map.empty)
 -- resolve.
 runtimeDwAliasBindings
   :: ControlIndex -> Map.Map Ident Ident -> Text -> ScopedTypeEnv
-  -> [Located BodyStmt] -> Map.Map (Text, Text) Text
+  -> [Located BodyStmt] -> Map.Map (Ident, Ident) Ident
 runtimeDwAliasBindings idx inh obj env stmts = Map.fromList (concatMap go stmts)
   where
     go (Located _ (BsAssign lhs rhs)) = maybe [] pure (tryBind lhs rhs)
@@ -247,7 +251,7 @@ runtimeDwAliasBindings idx inh obj env stmts = Map.fromList (concatMap go stmts)
         | rhsSegs <- map (\s -> identCanon (segName s)) (segments rhsLv)
         , length rhsSegs > 1
         , isDwTyped lhsName ->
-            (\dwName -> ((T.toLower obj, identCanon lhsName), T.toLower dwName))
+            (\dwName -> ((mkIdent obj, lhsName), mkIdent dwName))
               <$> resolveMemberChainDwBinding idx inh obj rhsSegs
       _ -> Nothing
 

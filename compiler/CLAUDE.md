@@ -1942,7 +1942,11 @@ classifyControlType :: Text -> Maybe Text  -- dw_main → datawindow (naming con
 -- when tdWithin is Just, else (tdName, "this") for the object's own outer
 -- TypeBlock. Static-only by design: does not follow runtime aliasing
 -- (ctrl = other.uo.dw, real corpus pattern in w_misth_fylo_form.srw) — no
--- binding produced rather than guessing.
+-- binding produced rather than guessing. dcbObject/dcbControlName/dcbDwName
+-- are Ident (Plan 179 Phase 3, 2026-07-17; dcbFile stays Text, a path) --
+-- SchFootprint.controlBindingsMap consumes them via Ident's own canonical
+-- Ord instead of a manual T.toLower, same pattern ControlHierarchy's
+-- cdOwner/cdName already use for the identical tdWithin/tdName shape.
 extractDwControlBindings :: Text -> SrFile -> [DwControlBinding]
 -- findLiteralDataObject (Plan 164 Phase B, 2026-07-10): the "dataobject"-
 -- literal-BsLocalVar scan extractDwControlBindings always did, promoted
@@ -2179,7 +2183,7 @@ buildSchema :: SchemaInputs -> SchGraph   -- total, pure
 -- 157-default-namespace.md).
 ```
 
-### `PB.Analysis.SchFootprint` (Plan 148 Phase 3, done 2026-07-07)
+### `PB.Analysis.SchFootprint` (Plan 148 Phase 3, done 2026-07-07; Ident-keyed Plan 179 Phase 3, 2026-07-17)
 
 ```haskell
 -- Pure. The functor F : CatOp -> Sch_|_ (design doc's "(a) Categorical
@@ -2187,13 +2191,23 @@ buildSchema :: SchemaInputs -> SchGraph   -- total, pure
 -- Category/Cartesian/Cocartesian/Effectful classes rather than a
 -- hand-written match -- foldCat folds any compiled CatOp term into it.
 data FunctorCtx = FunctorCtx
-  { fcStmtObj         :: StmtId                              -- CatOp carries no line info; any edge is procedure-granularity
+  { fcStmtObj         :: StmtId                                -- CatOp carries no line info; any edge is procedure-granularity
   , fcTypeEnv         :: ScopedTypeEnv
-  , fcDwColumns       :: Map.Map Text [(TableRef, Text)]      -- DW object name -> (table,col) targets, lowercased key
-  , fcControlBindings :: Map.Map (Text, Text) Text            -- (object, control) -> dw name, all lowercased
+  , fcDwColumns       :: Map.Map Ident [(TableRef, Text)]       -- DW object name -> (table,col) targets
+  , fcControlBindings :: Map.Map (Ident, Ident) Ident           -- (object, control) -> dw name
   }
-controlBindingsMap :: [DwControlBinding] -> Map.Map (Text, Text) Text  -- from TypeResolve.extractDwControlBindings
-dwColumnsFromRows  :: [DwRetrieveColRow] -> Map.Map Text [(TableRef, Text)]  -- from dw_retrieve_columns rows
+-- fcDwColumns/fcControlBindings are Ident-keyed (Plan 179 Phase 3,
+-- 2026-07-17; was Map.Map (Text,Text) Text/Map.Map Text with manual
+-- T.toLower at every site) -- DwControlBinding's dcbObject/dcbControlName/
+-- dcbDwName are Ident (see TypeResolve's own entry above); dwColumnsFromRows
+-- mints Ident from DwRetrieveColRow's drcDwName at this module's own
+-- boundary (DwRetrieveColRow itself stays Text -- a DB-read-shape row --
+-- but the DW name it carries is a genuine PB identifier, matching
+-- fcControlBindings' own Ident-typed values). Column/table-name matching
+-- inside resolveSetItem stays Text/T.toLower -- confirmed DB-domain, not a
+-- PB source identifier.
+controlBindingsMap :: [DwControlBinding] -> Map.Map (Ident, Ident) Ident  -- from TypeResolve.extractDwControlBindings
+dwColumnsFromRows  :: [DwRetrieveColRow] -> Map.Map Ident [(TableRef, Text)]  -- from dw_retrieve_columns rows
 newtype SchFootprint a b = SchFootprint { runSchFootprint :: FunctorCtx -> Set.Set SchMorphism }
 -- Elliott's "compiling to categories" constant-annotation category: erases
 -- a/b entirely. id/exl/exr/inl/inr = const Set.empty; (.)/(&&&)/(|||) = 
@@ -2268,8 +2282,8 @@ foldSchFootprintEff :: FunctorCtx -> EffTerm a b -> Set.Set SchMorphism
 -- design. Confirmed via real --db ingestion: openpay's
 -- cat_footprint_columns now reaches 2/2 rows for w_misth_fylo_form.
 runtimeDwAliasBindings
-  :: ControlIndex -> Map.Map Text Text -> Text -> ScopedTypeEnv
-  -> [Located BodyStmt] -> Map.Map (Text, Text) Text
+  :: ControlIndex -> Map.Map Ident Ident -> Text -> ScopedTypeEnv
+  -> [Located BodyStmt] -> Map.Map (Ident, Ident) Ident
 ```
 
 ### `PB.Analysis.DwFootprint` (Plan 163 Phase 2, done 2026-07-10; wired into production Phase 6, 2026-07-10)

@@ -525,9 +525,9 @@ extractGlobalVars file obj sf =
 -- existing "skip rather than guess" precedent for ambiguous SQL columns.
 data DwControlBinding = DwControlBinding
   { dcbFile        :: Text
-  , dcbObject      :: Text  -- ^ owning window/userobject
-  , dcbControlName :: Text  -- ^ child control name, or "this" for the object's own outer TypeBlock
-  , dcbDwName      :: Text  -- ^ literal dataobject/DataObject string value
+  , dcbObject      :: Ident  -- ^ owning window/userobject
+  , dcbControlName :: Ident  -- ^ child control name, or "this" for the object's own outer TypeBlock
+  , dcbDwName      :: Ident  -- ^ literal dataobject/DataObject string value
   } deriving (Eq, Show)
 
 -- | Extract every static control -> DataWindow-object binding from a file's
@@ -537,12 +537,12 @@ data DwControlBinding = DwControlBinding
 -- 'dataobject' set there binds "this".
 extractDwControlBindings :: Text -> SrFile -> [DwControlBinding]
 extractDwControlBindings file sf =
-  [ DwControlBinding file owner ctrlName dwName
+  [ DwControlBinding file owner ctrlName (mkIdent dwName)
   | tb <- srTypeBlocks sf
   , let decl = tbDecl tb
         (owner, ctrlName) = case tdWithin decl of
-          Just parent -> (parent, identOrig (tdName decl))
-          Nothing     -> (identOrig (tdName decl), "this")
+          Just parent -> (mkIdent parent, tdName decl)
+          Nothing     -> (tdName decl, "this")
   , Just dwName <- [findLiteralDataObject (tbBody tb)]
   ]
 

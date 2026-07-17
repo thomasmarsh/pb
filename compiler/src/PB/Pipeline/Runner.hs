@@ -21,7 +21,7 @@ module PB.Pipeline.Runner
 import PB.Prelude
 import PB.AST.BodyStmt   (BodyStmt (..))
 import PB.AST.DataWindow
-import PB.AST.Ident      (identCanon, identOrig)
+import PB.AST.Ident      (Ident, identCanon, identOrig)
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type           (parseTypeText)
@@ -218,7 +218,7 @@ morphismToColRow _ = Nothing
 -- persist those via the pre-existing @dw_retrieve_columns@\/@dw_joins@
 -- producers; keeping both would double the corresponding rows in
 -- @schema_morphisms@.
-compileOne :: Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> WorkspaceEnv -> ControlIndex -> TypeCheckWorkspace -> Map.Map Text [(TableRef, Text)] -> Maybe (SqlBridgePool, Int) -> Text -> ParseOutcome -> IO CompiledFile
+compileOne :: Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> WorkspaceEnv -> ControlIndex -> TypeCheckWorkspace -> Map.Map Ident [(TableRef, Text)] -> Maybe (SqlBridgePool, Int) -> Text -> ParseOutcome -> IO CompiledFile
 compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColumns mBridge confidence outcome = case outcome of
 
   PsParsed pf -> do
@@ -556,7 +556,7 @@ dwRetrieveColRowsForFootprint resolve fp dw =
 
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each without a SQL bridge.
 -- @root@ is the ingestion root, used to relativize every stored/reported path.
-workerLoopFilesNoBridge :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> WorkspaceEnv -> ControlIndex -> TypeCheckWorkspace -> Map.Map Text [(TableRef, Text)] -> AppenderPool -> MVar () -> IORef Int -> IO ()
+workerLoopFilesNoBridge :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> WorkspaceEnv -> ControlIndex -> TypeCheckWorkspace -> Map.Map Ident [(TableRef, Text)] -> AppenderPool -> MVar () -> IORef Int -> IO ()
 workerLoopFilesNoBridge root catTables mDefaultNamespace dwfCtx k workQ wsEnv controlIdx tcw globalDwColumns appPool mutex errCount = go
   where
     go = do
@@ -579,7 +579,7 @@ workerLoopFilesNoBridge root catTables mDefaultNamespace dwfCtx k workQ wsEnv co
 -- | Worker thread k: drains FilePaths from workQ, parses and compiles each with bridge slot k,
 --   serialises DB writes through a shared mutex (DuckDB connections are not thread-safe).
 -- @root@ is the ingestion root, used to relativize every stored/reported path.
-workerLoopFiles :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> SqlBridgePool -> WorkspaceEnv -> ControlIndex -> TypeCheckWorkspace -> Map.Map Text [(TableRef, Text)] -> AppenderPool -> MVar () -> IORef Int -> IO ()
+workerLoopFiles :: FilePath -> Set.Set (Text, Text) -> Maybe Text -> DwFootprintCtx -> Int -> TQueue FilePath -> SqlBridgePool -> WorkspaceEnv -> ControlIndex -> TypeCheckWorkspace -> Map.Map Ident [(TableRef, Text)] -> AppenderPool -> MVar () -> IORef Int -> IO ()
 workerLoopFiles root catTables mDefaultNamespace dwfCtx k workQ pool wsEnv controlIdx tcw globalDwColumns appPool mutex errCount = go
   where
     go = do
