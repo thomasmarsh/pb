@@ -236,6 +236,47 @@ on a Datalog relation.
   bug.** If Stage 1 should have caught a shared-primitive gap and didn't,
   log why in `doc/plan/BACKLOG.md`'s finding, not only the fix itself.
 
+## Foundational Correctness Overrides Premature-Abstraction Caution
+
+This project overrides the general "don't add abstractions beyond what the
+task requires" default for one specific case. pb-compiler is under active
+foundational development — the AST/identifier representation, analysis
+primitives, and Datalog rule substrate are all still being deliberately
+converged on, not stable systems being incrementally patched. In that mode,
+avoiding rework outweighs the marginal cost of building a structural fix
+correctly the first time.
+
+- **When a real, currently-existing structural or correctness gap is
+  confirmed** — not hypothetical — build the principled fix now, even if
+  only one caller needs it today. "Only one consumer," "small measured
+  payoff," and "three similar lines is fine" are not valid reasons to defer
+  it. That reasoning is for accidental/incidental duplication (a helper
+  function two call sites happen to share), not for a type, primitive, or
+  invariant the codebase is already converging toward everywhere else.
+- **This does not license speculative engineering.** Config knobs for
+  imagined future requirements, extensibility layers nobody has requested,
+  and abstracting over behavior that doesn't exist in the codebase yet are
+  still out of bounds — that half of the general default still applies. The
+  trigger is a gap that is real and present today, grounded the same way
+  Evidence-Based Triangulation requires (a compiler error, a failing test,
+  an `rg` result showing the actual current shape) — not "this might matter
+  someday."
+- **Worked example:** `doc/plan/178-canonical-identifier.md`/`179-
+  canonical-identifier-consumers.md` — `PB.AST.Ident` was minted for every
+  PB-identifier AST field regardless of how many consumers currently read
+  a given one; see `compiler/CLAUDE.md`'s "Identifier typing is a standing
+  goal" rule for the concrete instance. `doc/plan/170-datalog-discipline.md`'s
+  three-question placement test is the same posture applied to a different
+  axis (where logic lives, not how identifiers are typed).
+- **How to apply:** if the argument against a fix is "not needed today
+  since only one caller uses it" and the fix is genuinely a type/primitive/
+  invariant correction (not new behavior or a new feature), that argument
+  does not hold here — propose building it, and say so plainly in the
+  Stage 1 proposal rather than deferring to BACKLOG on cost/benefit
+  grounds. This changes _whether_ to build the structural version, not
+  _whether_ it still needs Stage 0/Stage 1 discipline — an architecturally
+  large fix still gets scoped as its own plan, same as anything else.
+
 ## Testing Discipline
 
 Full-suite verification (Stage 4 above) is mandatory before reporting any task done — not just the tests for the file touched. Subsystem-specific test structure (Haskell `testGroup`/HUnit/Hedgehog, TypeScript `TestStore`/mock-env patterns) lives in the nested `CLAUDE.md` files.
