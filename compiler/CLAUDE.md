@@ -1836,11 +1836,11 @@ lookupScopedVar :: Ident -> ScopedTypeEnv -> Maybe PbType  -- case-insensitive; 
 ```
 
 Every direct consumer of `steHierarchy`/`weHierarchy` outside this module keeps
-its own other (deliberately un-migrated, Phase 2/5-scoped) parameters
+its own other (deliberately un-migrated, Phase 5-scoped) parameters
 untouched via a one-line boundary shim projecting the `Ident`-keyed map back
 to `Map.Map Text Text` (`identCanon` on both sides, reproducing the exact
-prior lowercased shape): `ControlHierarchy.normalizeInherits`,
-`TypeFamily.compatible` (shims internally), and `TypeCheck.hierarchyText`
+prior lowercased shape): `TypeFamily.compatible` (shims internally) and
+`TypeCheck.hierarchyText`
 (shims at its 2 `resolveVirtual` call sites only — `resolveVirtual`/
 `resolveCalls`/`ancestorChain`/`buildInheritsMap` themselves are untouched,
 since `resolveCalls` also has a third caller, `PB.Pipeline.Passes`' DuckDB
@@ -1960,18 +1960,21 @@ findLiteralDataObject :: [Located BodyStmt] -> Maybe Text
 --   (lvPbType exists but is excluded from JSON.)
 ```
 
-### `PB.Analysis.ControlHierarchy` (Plan 164 Phase B, done 2026-07-10; key qualification Phase E, done 2026-07-10)
+### `PB.Analysis.ControlHierarchy` (Plan 164 Phase B, done 2026-07-10; key qualification Phase E, done 2026-07-10; Ident-keyed Plan 179 Phase 2, 2026-07-17)
 
 ```haskell
 -- Pure. Workspace-wide control/object hierarchy index + multi-hop
 -- member-chain resolver -- generalizes TypeResolve.extractDwControlBindings
 -- (per-file) to walk a dotted chain (e.g. tab1.page1.uo_epidom.dw) across
--- file boundaries. All ControlDecl Text fields except cdDwBinding are
--- lowercased at construction time (case-insensitive lookup).
+-- file boundaries. Every ControlDecl field except cdDwBinding is Ident, so
+-- comparison is case-insensitive via Ident's own Eq/Ord (Plan 179 Phase 2 --
+-- was Text, lowercased at construction; no consumer outside this module
+-- reads the raw key/field shape, so this was a pure internal migration, no
+-- caller changes anywhere -- see BACKLOG's closed Plan 179 Phase 2 entry).
 data ControlDecl = ControlDecl
-  { cdOwner :: Text, cdName :: Text, cdAncestorType :: Text
-  , cdOverridesName :: Maybe Text, cdDwBinding :: Maybe Text }
-type ControlIndex = Map.Map (Text, Text, Text) ControlDecl   -- (root, owner, name), all lowercased
+  { cdOwner :: Ident, cdName :: Ident, cdAncestorType :: Ident
+  , cdOverridesName :: Maybe Ident, cdDwBinding :: Maybe Text }
+type ControlIndex = Map.Map (Ident, Ident, Ident) ControlDecl   -- (root, owner, name)
 buildControlIndex :: [SrFile] -> ControlIndex
 -- Uses TypeResolve.findLiteralDataObject for cdDwBinding. root = fst
 -- (srPrimaryObject sf) for whichever file declared the TypeBlock -- the
@@ -1985,15 +1988,23 @@ buildControlIndex :: [SrFile] -> ControlIndex
 -- window's own redeclaration gets its own entry) fixed it: openpay's
 -- cat_footprint_columns reached the targeted 2 rows for w_misth_fylo_form.
 
-resolveMemberChainType      :: ControlIndex -> Map.Map Text Text -> Text -> [Text] -> Maybe Text
-resolveMemberChainDwBinding :: ControlIndex -> Map.Map Text Text -> Text -> [Text] -> Maybe Text
+resolveMemberChainType      :: ControlIndex -> Map.Map Ident Ident -> Text -> [Text] -> Maybe Text
+resolveMemberChainDwBinding :: ControlIndex -> Map.Map Ident Ident -> Text -> [Text] -> Maybe Text
 -- Both take a starting object and chain segments (e.g. "w_misth_fylo_form",
--- ["tab1","page1","uo_epidom","dw"]); the Map.Map Text Text is an inherits
--- map (TypeResolve.buildInheritsMap's raw, case-sensitive output is fine --
--- normalized internally once per call). Public signatures are unchanged
--- since Phase B -- obj already serves as root==owner for the first hop, so
--- Phase E's key-shape change needed zero caller changes (Runner.hs,
--- SchFootprint.hs).
+-- ["tab1","page1","uo_epidom","dw"]) as plain Text/[Text] -- obj/segs stay
+-- Text deliberately (steObject is a display field read elsewhere
+-- non-case-insensitively, Plan 179 Phase 1) -- and an Ident-keyed inherits
+-- map (TypeEnv.weHierarchy/steHierarchy's own shape, Plan 179 Phase 1).
+-- mkIdent'd at the boundary in, identCanon'd at the boundary out (the
+-- returned Maybe Text is always lowercased, byte-identical to pre-Phase-2
+-- behavior) -- ControlIndex's own internal key/field shape (Ident, Phase 2
+-- above) never leaks past this pair. Public signatures are unchanged since
+-- Phase B -- obj already serves as root==owner for the first hop, so Phase
+-- E's key-shape change needed zero caller changes (Runner.hs,
+-- SchFootprint.hs), and Phase 2's Ident migration needed zero caller or
+-- test-fixture changes either (every literal Text key/field in
+-- ControlHierarchyTest.hs/TypeCheckTest.hs's fixtures resolves to Ident
+-- automatically via IsString + the project-wide OverloadedStrings default).
 --
 -- Each hop resolves via lookupScoped (Phase E; replaces the old
 -- lookupWithAncestry): direct (root,owner,name) lookup, else walk root's

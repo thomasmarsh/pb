@@ -67,30 +67,31 @@ module PB.Analysis.ControlHierarchy
   ) where
 
 import PB.Prelude
-import PB.AST.Ident       (Ident, identOrig, identCanon)
+import PB.AST.Ident       (Ident, mkIdent, identOrig, identCanon)
 import PB.AST.SourceFile
 import PB.Analysis.TypeResolve (findLiteralDataObject)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
-import qualified Data.Text       as T
 
 -- | Every declared control across the workspace: which object it belongs to
 -- (owner), what it's declared as (ancestor class, or a same-named override
 -- per 'splitAncestorRef'), and its own static DataWindow binding if any.
--- All 'Text' fields except 'cdDwBinding' are lowercased at construction time
--- for case-insensitive lookup (PowerBuilder identifiers are case-insensitive).
+-- Every 'Ident' field compares case-insensitively via 'Ident''s own 'Eq'\/
+-- 'Ord' (PowerBuilder identifiers are case-insensitive); 'cdDwBinding' is
+-- the only field that isn't a PB identifier, so it stays verbatim 'Text'.
 data ControlDecl = ControlDecl
-  { cdOwner         :: Text          -- ^ lowercased; object/control this control lives within (tdWithin, or its own name when top-level)
-  , cdName          :: Text          -- ^ lowercased; this control's own name (tdName), or "this" for a top-level TypeBlock
-  , cdAncestorType  :: Text          -- ^ lowercased; split ancestor class (D1)
-  , cdOverridesName :: Maybe Text    -- ^ lowercased; D1 backtick override target, if any
+  { cdOwner         :: Ident         -- ^ object/control this control lives within (tdWithin, or its own name when top-level)
+  , cdName          :: Ident         -- ^ this control's own name (tdName), or "this" for a top-level TypeBlock
+  , cdAncestorType  :: Ident         -- ^ split ancestor class (D1)
+  , cdOverridesName :: Maybe Ident   -- ^ D1 backtick override target, if any
   , cdDwBinding     :: Maybe Text    -- ^ verbatim; literal dataobject= value declared directly on this block
   } deriving (Eq, Show)
 
--- | (root, owner, name) -> declaration, all three components lowercased.
--- @root@ is the top-level object of the file that declared this control
--- (Phase E) — see the module haddock for why @owner@ alone is ambiguous.
-type ControlIndex = Map.Map (Text, Text, Text) ControlDecl
+-- | (root, owner, name) -> declaration, all three components 'Ident'-keyed
+-- for case-insensitive lookup. @root@ is the top-level object of the file
+-- that declared this control (Phase E) — see the module haddock for why
+-- @owner@ alone is ambiguous.
+type ControlIndex = Map.Map (Ident, Ident, Ident) ControlDecl
 
 -- | Build the workspace-wide control index from every 'TypeBlock' in every
 -- file, keyed by (that file's own primary object, the block's literal
@@ -101,7 +102,7 @@ type ControlIndex = Map.Map (Text, Text, Text) ControlDecl
 -- stable order.
 buildControlIndex :: [SrFile] -> ControlIndex
 buildControlIndex sfs = Map.fromList
-  [ ((T.toLower root, T.toLower owner, T.toLower name), decl)
+  [ ((mkIdent root, mkIdent owner, mkIdent name), decl)
   | sf <- sfs
   , let root = identOrig (fst (srPrimaryObject sf))
   , tb <- srTypeBlocks sf
@@ -110,10 +111,10 @@ buildControlIndex sfs = Map.fromList
           Just parent -> (parent, identOrig (tdName td))
           Nothing     -> (identOrig (tdName td), "this")
         decl = ControlDecl
-          { cdOwner         = T.toLower owner
-          , cdName          = T.toLower name
-          , cdAncestorType  = identCanon (tdAncestorClass td)
-          , cdOverridesName = identCanon <$> tdAncestorOverride td
+          { cdOwner         = mkIdent owner
+          , cdName          = mkIdent name
+          , cdAncestorType  = tdAncestorClass td
+          , cdOverridesName = tdAncestorOverride td
           , cdDwBinding     = findLiteralDataObject (tbBody tb)
           }
   ]
@@ -125,7 +126,7 @@ buildControlIndex sfs = Map.fromList
 -- workspace actually declares.
 resolveMemberChainType :: ControlIndex -> Map.Map Ident Ident -> Text -> [Text] -> Maybe Text
 resolveMemberChainType idx inh obj segs =
-  cdAncestorType . snd <$> resolveChain idx (normalizeInherits inh) obj obj segs
+  identCanon . cdAncestorType . snd <$> resolveChain idx inh (mkIdent obj) (mkIdent obj) (map mkIdent segs)
 
 -- | Resolve a dotted member-chain to its terminal control's static
 -- DataWindow binding, walking the same chain as 'resolveMemberChainType'.
@@ -135,16 +136,9 @@ resolveMemberChainType idx inh obj segs =
 -- whatever its ancestor declares (or doesn't declare) further up the chain.
 resolveMemberChainDwBinding :: ControlIndex -> Map.Map Ident Ident -> Text -> [Text] -> Maybe Text
 resolveMemberChainDwBinding idx inh obj segs =
-  case resolveChain idx (normalizeInherits inh) obj obj segs of
+  case resolveChain idx inh (mkIdent obj) (mkIdent obj) (map mkIdent segs) of
     Nothing              -> Nothing
     Just (dwBinding, _)  -> dwBinding
-
--- | Project an 'Ident'-keyed inherits map (e.g. 'PB.Analysis.TypeEnv.weHierarchy')
--- down to the canonical-'Text'-keyed shape the chain walker below still uses
--- internally ('ControlIndex' itself stays 'Text'-keyed; converting it is
--- Plan 179 Phase 2's job, not this one's).
-normalizeInherits :: Map.Map Ident Ident -> Map.Map Text Text
-normalizeInherits = Map.fromList . map (\(k, v) -> (identCanon k, identCanon v)) . Map.toList
 
 -- | Walk every chain segment, threading @root@ (Phase E) alongside @owner@.
 -- Each hop resolves via 'resolveHop', then the next lookup scope is chosen:
@@ -155,7 +149,7 @@ normalizeInherits = Map.fromList . map (\(k, v) -> (identCanon k, identCanon v))
 -- fails to resolve the rest of the chain. Returns the closest-wins DW
 -- binding accumulated over the *terminal* hop only (each hop's own binding
 -- is irrelevant once we've moved past it to the next segment).
-resolveChain :: ControlIndex -> Map.Map Text Text -> Text -> Text -> [Text] -> Maybe (Maybe Text, ControlDecl)
+resolveChain :: ControlIndex -> Map.Map Ident Ident -> Ident -> Ident -> [Ident] -> Maybe (Maybe Text, ControlDecl)
 resolveChain _   _   _    _     []         = Nothing
 resolveChain idx inh root owner (seg:rest) = do
   (dwBinding, decl) <- resolveHop idx inh root owner seg
@@ -171,7 +165,7 @@ resolveChain idx inh root owner (seg:rest) = do
 -- terminal (non-overridden) decl, whose 'cdAncestorType' is the control's
 -- true base type. Cycle-safe via a visited (root, owner, name) set on the
 -- override walk.
-resolveHop :: ControlIndex -> Map.Map Text Text -> Text -> Text -> Text -> Maybe (Maybe Text, ControlDecl)
+resolveHop :: ControlIndex -> Map.Map Ident Ident -> Ident -> Ident -> Ident -> Maybe (Maybe Text, ControlDecl)
 resolveHop idx inh root owner name = do
   (foundRoot, decl) <- lookupScoped idx inh root owner name
   Just (unwind Set.empty foundRoot decl)
@@ -206,14 +200,13 @@ resolveHop idx inh root owner name = do
 -- @root@ climbs. Returns the root at which the entry was actually found,
 -- alongside the decl. Mirrors 'PB.Analysis.TypeEnv.walkInheritChain'\'s
 -- cycle guard.
-lookupScoped :: ControlIndex -> Map.Map Text Text -> Text -> Text -> Text -> Maybe (Text, ControlDecl)
-lookupScoped idx inh root0 owner0 name = go Set.empty (T.toLower root0) (T.toLower owner0)
+lookupScoped :: ControlIndex -> Map.Map Ident Ident -> Ident -> Ident -> Ident -> Maybe (Ident, ControlDecl)
+lookupScoped idx inh root0 owner0 name = go Set.empty root0 owner0
   where
-    coupled = T.toLower root0 == T.toLower owner0
-    lname   = T.toLower name
+    coupled = root0 == owner0
     go seen root owner
-      | root `Set.member` seen                          = Nothing
-      | Just decl <- Map.lookup (root, owner, lname) idx = Just (root, decl)
-      | Just parent <- Map.lookup root inh               =
+      | root `Set.member` seen                         = Nothing
+      | Just decl <- Map.lookup (root, owner, name) idx = Just (root, decl)
+      | Just parent <- Map.lookup root inh              =
           go (Set.insert root seen) parent (if coupled then parent else owner)
-      | otherwise                                        = Nothing
+      | otherwise                                       = Nothing
