@@ -2,14 +2,17 @@ module SouffleEngineTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.Souffle
-  ( Relation (..), symRelation, Rule (..), RuleSet (..)
+  ( Relation (..), symRelation, colNames, Rule (..), RuleSet (..)
   , orderRuleSets, edbRelations, compileProgram
+  , SouffleHooks (..), noSouffleHooks, runRuleSetWithStart
   )
+import PB.Pipeline.DuckDb (withWriteConn, recreateTextTable, appendTextRows)
 import PB.Analysis.Rules.DeadCode qualified as DeadCode
   ( deadReachRules, callerCountRules, deadCodeRowsRules, liveProcRules )
 import PB.Analysis.Rules.Schema qualified as Schema
   ( reachesRules, cosliceRules )
 
+import Data.IORef        (modifyIORef, newIORef, readIORef)
 import qualified Data.List  as List (elemIndex)
 import qualified Data.Text as T
 import Test.Tasty       (TestTree, testGroup)
@@ -35,7 +38,50 @@ rs outs ins = RuleSet
 
 tests :: TestTree
 tests = testGroup "SouffleEngine"
-  [ orderRuleSetsTests, productionOrderTests, compileProgramTests ]
+  [ orderRuleSetsTests, productionOrderTests, compileProgramTests, souffleHooksTests ]
+
+-- | @out(c1) :- in(c1)@ against a real @souffle@ CLI run, used to exercise
+-- 'SouffleHooks' end to end (the pure IR tests above never actually invoke
+-- the CLI).
+identityRuleSet :: Relation -> RuleSet
+identityRuleSet rel =
+  let outRel = rel { relName = relName rel <> "_out" }
+  in RuleSet
+       { rsRelations = [outRel]
+       , rsRules =
+           [ Rule (relName outRel <> "(" <> T.intercalate ", " (colNames rel) <> ") :- "
+                     <> relName rel <> "(" <> T.intercalate ", " (colNames rel) <> ")")
+                  [outRel, rel]
+           ]
+       , rsChoiceDomains = []
+       }
+
+souffleHooksTests :: TestTree
+souffleHooksTests = testGroup "SouffleHooks"
+  [ testCase "onEdbFact fires once per EDB relation carrying that relation's own row count" $
+      withWriteConn ":memory:" $ \conn -> do
+        let rel = symRelation "hook_in" ["c1"]
+        recreateTextTable conn (relName rel) (colNames rel)
+        appendTextRows conn (relName rel) [["a"], ["b"], ["c"]]
+        ref <- newIORef []
+        let hooks = noSouffleHooks
+              { onEdbFact = \r n _ms -> modifyIORef ref (++ [(relName r, n)]) }
+        runRuleSetWithStart hooks conn (identityRuleSet rel)
+        fired <- readIORef ref
+        fired @?= [("hook_in", 3)]
+
+  , testCase "onIdbRelation fires Nothing before materialization and Just rowCount after" $
+      withWriteConn ":memory:" $ \conn -> do
+        let rel = symRelation "hook_in2" ["c1"]
+        recreateTextTable conn (relName rel) (colNames rel)
+        appendTextRows conn (relName rel) [["x"], ["y"]]
+        ref <- newIORef []
+        let hooks = noSouffleHooks
+              { onIdbRelation = \r mn -> modifyIORef ref (++ [(relName r, mn)]) }
+        runRuleSetWithStart hooks conn (identityRuleSet rel)
+        fired <- readIORef ref
+        fired @?= [("hook_in2_out", Nothing), ("hook_in2_out", Just 2)]
+  ]
 
 orderRuleSetsTests :: TestTree
 orderRuleSetsTests = testGroup "orderRuleSets"

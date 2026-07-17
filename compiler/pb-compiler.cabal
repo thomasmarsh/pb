@@ -75,6 +75,7 @@ library
     PB.Pipeline.Preprocess
     PB.Pipeline.Emit
     PB.Pipeline.Passes
+    PB.Pipeline.Progress
     PB.Pipeline.Runner
     PB.Pipeline.Serialise
     PB.Pipeline.DuckDb
@@ -156,6 +157,7 @@ test-suite pb-compiler-test
     , IdentTest
     , PbApiTest
     , PipelineTest
+    , ProgressTest
     , RunnerTest
     , SchemaCategoryTest
     , SchFootprintTest

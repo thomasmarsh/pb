@@ -29,6 +29,7 @@ import qualified FileTest
 import qualified IdentTest
 import qualified PbApiTest
 import qualified PipelineTest
+import qualified ProgressTest
 import qualified RunnerTest
 import qualified SchemaCategoryTest
 import qualified SchFootprintTest
@@ -84,6 +85,7 @@ tests = testGroup "pb-compiler"
   , IdentTest.tests
   , PbApiTest.tests
   , PipelineTest.tests
+  , ProgressTest.tests
   , RunnerTest.tests
   , SchemaCategoryTest.tests
   , SchFootprintTest.tests

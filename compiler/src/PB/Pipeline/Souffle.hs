@@ -20,6 +20,8 @@ module PB.Pipeline.Souffle
   , sanitizeFactField
   , runRuleSet
   , runRuleSetWith
+  , SouffleHooks (..)
+  , noSouffleHooks
   , runRuleSetWithStart
   , orderRuleSets
   , runRuleSets
@@ -30,10 +32,12 @@ import PB.Prelude
 
 import PB.Pipeline.DuckDb
   (DuckConn, queryTextRows, recreateTextTable, appendTextRows)
+import PB.Pipeline.Progress qualified as Progress
 
 import qualified Data.List  as List
 import qualified Data.Map.Strict as Map
 import qualified Data.Text  as T
+import Data.Time.Clock       (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
 import System.Directory     (createDirectoryIfMissing)
 import System.Exit          (ExitCode (..))
 import System.FilePath      ((</>))
@@ -165,28 +169,70 @@ runRuleSet = runRuleSetWith (\_ -> pure ())
 -- | Like 'runRuleSet', but calls the given action just before materializing
 -- each IDB relation's result -- a pipeline pass wires this to its own
 -- progress-reporting protocol (see 'PB.Pipeline.Passes.runPass11'). A
--- no-@onStart@ specialization of 'runRuleSetWithStart' below.
+-- 'SouffleHooks'-based specialization of 'runRuleSetWithStart' below, kept
+-- at its original signature so existing callers don't need 'SouffleHooks'.
 runRuleSetWith :: (Relation -> IO ()) -> DuckConn -> RuleSet -> IO ()
-runRuleSetWith = runRuleSetWithStart (\_ _ -> pure ())
+runRuleSetWith onRelation = runRuleSetWithStart
+  noSouffleHooks { onIdbRelation = \rel mn -> when (isNothing mn) (onRelation rel) }
 
--- | Like 'runRuleSetWith', but additionally calls @onStart@ with this
--- 'RuleSet' and its EDB relations' exact row counts, right after fact
--- files are written but BEFORE the (possibly long-running) @souffle@
--- subprocess starts -- essentially free (the row count falls out of the
--- fact-file-writing query already being made), and lets a caller report
--- what is about to run instead of discovering it only after the fact via
--- process\/temp-dir inspection. Found necessary in production (2026-07-15):
--- 'runRuleSets'\' per-relation @onRelation@ callback alone fires only
--- AFTER a ruleset's single monolithic @souffle@ process exits, so while a
--- slow ruleset is mid-flight the last-displayed progress label is whichever
--- relation the PREVIOUS ruleset finished on -- a live run looked stuck on
--- \"Datalog: leg\" for minutes when the actually-running ruleset (confirmed
--- via 'orderRuleSets'\' topological batching -- see
--- 'PB.Pipeline.Passes.souffleProgress'\'s own note) was 'PB.Analysis.Rules.
--- Taint.taintRules', not 'PB.Analysis.Rules.Schema.legRules' at all.
-runRuleSetWithStart
-  :: (RuleSet -> [(Relation, Int)] -> IO ()) -> (Relation -> IO ()) -> DuckConn -> RuleSet -> IO ()
-runRuleSetWithStart onStart onRelation conn rs =
+-- | Every callback hook a caller of 'runRuleSetWithStart'\/'runRuleSetsWithStart'
+-- can wire into progress reporting. Bundled into a record (rather than
+-- growing another positional callback argument each time a new
+-- instrumentation point is needed) so 'noSouffleHooks' gives every
+-- non-instrumented call site (@runRuleSet@\/@runRuleSets@ below, and every
+-- test that calls them) a single no-op value to start from.
+data SouffleHooks = SouffleHooks
+  { onRuleSetStart :: RuleSet -> [(Relation, Int)] -> IO ()
+    -- ^ Fires with this 'RuleSet' and its EDB relations' exact row counts,
+    -- right after fact files are written but BEFORE the (possibly
+    -- long-running) @souffle@ subprocess starts -- essentially free (the
+    -- row count falls out of the fact-file-writing query already being
+    -- made), and lets a caller report what is about to run instead of
+    -- discovering it only after the fact via process\/temp-dir inspection.
+    -- Found necessary in production (2026-07-15): 'onIdbRelation' alone
+    -- fires only AFTER a ruleset's single monolithic @souffle@ process
+    -- exits, so while a slow ruleset is mid-flight the last-displayed
+    -- progress label is whichever relation the PREVIOUS ruleset finished
+    -- on -- a live run looked stuck on \"Datalog: leg\" for minutes when
+    -- the actually-running ruleset (confirmed via 'orderRuleSets'\'
+    -- topological batching -- see 'PB.Pipeline.Passes.souffleProgress'\'s
+    -- own note) was 'PB.Analysis.Rules.Taint.taintRules', not
+    -- 'PB.Analysis.Rules.Schema.legRules' at all.
+  , onEdbFact :: Relation -> Int -> Double -> IO ()
+    -- ^ Fires once per EDB relation, immediately after that relation's
+    -- facts are queried and written (name, row count, elapsed milliseconds
+    -- for that relation alone) -- gives visibility INSIDE the per-relation
+    -- fact-writing loop itself, closing the gap a production incident
+    -- found: a stall in this loop (suspected on an oversized @reaches@
+    -- EDB) produced zero progress events, because 'onRuleSetStart' above
+    -- only fires once the whole loop has already finished.
+  , onIdbRelation :: Relation -> Maybe Int -> IO ()
+    -- ^ Fires 'Nothing' right before an IDB relation is materialized (same
+    -- timing as the old plain @onRelation@ callback), then 'Just' its row
+    -- count right after -- the row count is already computed by the
+    -- existing materialization step, so surfacing it here is close to
+    -- free.
+  , onHeartbeat :: Double -> IO ()
+    -- ^ Fires periodically (with elapsed seconds so far) while the
+    -- @souffle@ subprocess itself is running, so a long in-Souffle
+    -- evaluation doesn't go dark between 'onRuleSetStart' and
+    -- 'onIdbRelation'.
+  }
+
+-- | Every hook is a no-op -- the base value every non-instrumented caller
+-- (including every existing test) starts from and overrides selectively.
+noSouffleHooks :: SouffleHooks
+noSouffleHooks = SouffleHooks
+  { onRuleSetStart = \_ _ -> pure ()
+  , onEdbFact      = \_ _ _ -> pure ()
+  , onIdbRelation  = \_ _ -> pure ()
+  , onHeartbeat    = \_ -> pure ()
+  }
+
+-- | Export EDB facts, run @souffle@, import IDB output back into DuckDB --
+-- see 'SouffleHooks' for the instrumentation points along the way.
+runRuleSetWithStart :: SouffleHooks -> DuckConn -> RuleSet -> IO ()
+runRuleSetWithStart hooks conn rs =
   withSystemTempDirectory "pb-souffle" $ \dir -> do
     let factsDir = dir </> "facts"
         outDir   = dir </> "out"
@@ -194,20 +240,23 @@ runRuleSetWithStart onStart onRelation conn rs =
     createDirectoryIfMissing True factsDir
     createDirectoryIfMissing True outDir
     counts <- mapM (\rel -> do
+      t0 <- getCurrentTime
       rows <- queryTextRows conn (relName rel) (colNames rel)
       writeFile (factsDir </> T.unpack (relName rel) <> ".facts")
         (T.unlines [ T.intercalate "\t" (map sanitizeFactField row) | row <- rows ])
+      t1 <- getCurrentTime
+      onEdbFact hooks rel (length rows) (msBetween t0 t1)
       pure (rel, length rows)) (edbRelations rs)
-    onStart rs counts
+    onRuleSetStart hooks rs counts
     writeFile progFile (compileProgram rs)
-    (exitCode, _out, err) <- readProcessWithExitCode "souffle"
-      ["-F", factsDir, "-D", outDir, progFile] ""
+    (exitCode, _out, err) <- Progress.withHeartbeat 15 (onHeartbeat hooks) $
+      readProcessWithExitCode "souffle" ["-F", factsDir, "-D", outDir, progFile] ""
     case exitCode of
       ExitFailure code -> error ("PB.Pipeline.Souffle.runRuleSet: souffle exited "
                                     <> show code <> ": " <> err)
       ExitSuccess -> pure ()
     for_ (rsRelations rs) $ \rel -> do
-      onRelation rel
+      onIdbRelation hooks rel Nothing
       contents <- readFile (outDir </> T.unpack (relName rel) <> ".csv")
       -- T.lines correctly excludes the spurious trailing entry a final
       -- newline would otherwise produce, so no line filter is needed for
@@ -222,6 +271,11 @@ runRuleSetWithStart onStart onRelation conn rs =
                  else [ T.splitOn "\t" line | line <- T.lines contents ]
       recreateTextTable conn (relName rel) (colNames rel)
       appendTextRows conn (relName rel) rows
+      onIdbRelation hooks rel (Just (length rows))
+
+-- | Milliseconds elapsed between two timestamps.
+msBetween :: UTCTime -> UTCTime -> Double
+msBetween t0 t1 = realToFrac (diffUTCTime t1 t0 :: NominalDiffTime) * 1000
 
 
 -- ---------------------------------------------------------------------------
@@ -305,17 +359,17 @@ orderRuleSets ruleSets = go [] (Set.fromList [0..length ruleSets - 1])
 -- 'error' naming the cyclic rule sets' IDB relations -- this is a static,
 -- programmer-visible configuration error, not a runtime data condition.
 runRuleSets :: (Relation -> IO ()) -> DuckConn -> [RuleSet] -> IO ()
-runRuleSets = runRuleSetsWithStart (\_ _ -> pure ())
+runRuleSets onRelation = runRuleSetsWithStart
+  noSouffleHooks { onIdbRelation = \rel mn -> when (isNothing mn) (onRelation rel) }
 
--- | Like 'runRuleSets', but wires 'runRuleSetWithStart'\'s @onStart@ through
--- each ruleset in the resolved order -- see that function's own doc comment
--- for why this exists.
-runRuleSetsWithStart
-  :: (RuleSet -> [(Relation, Int)] -> IO ()) -> (Relation -> IO ()) -> DuckConn -> [RuleSet] -> IO ()
-runRuleSetsWithStart onStart onRelation conn ruleSets =
+-- | Like 'runRuleSets', but wires 'runRuleSetWithStart'\'s full 'SouffleHooks'
+-- through each ruleset in the resolved order -- see that function's own doc
+-- comment for why this exists.
+runRuleSetsWithStart :: SouffleHooks -> DuckConn -> [RuleSet] -> IO ()
+runRuleSetsWithStart hooks conn ruleSets =
   case orderRuleSets ruleSets of
     Left cyclic ->
       let cyclicNames = [ T.unpack (relName rel) | rs' <- cyclic, rel <- rsRelations rs' ]
       in error ("PB.Pipeline.Souffle.runRuleSets: dependency cycle among rule sets (IDB relations: "
                 <> show cyclicNames <> ")")
-    Right ordered -> for_ ordered (runRuleSetWithStart onStart onRelation conn)
+    Right ordered -> for_ ordered (runRuleSetWithStart hooks conn)

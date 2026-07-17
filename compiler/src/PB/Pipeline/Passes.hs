@@ -15,6 +15,7 @@ import PB.Analysis.Rules.Schema qualified as SchemaRules
 import PB.Analysis.Rules.Schema (LegSourceFanout (..))
 import PB.Analysis.Rules.DeadCode qualified as DeadCodeRules
 import PB.Analysis.Rules.Taint qualified as TaintRules
+import PB.Pipeline.Progress qualified as Progress
 import PB.Pipeline.DuckDb
   ( DuckConn
   , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
@@ -36,39 +37,30 @@ import PB.Pipeline.DuckDb
   , materializeTaintAnnotations
   )
 
-import Data.Aeson          (Value (..), encode, object, (.=))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
-import System.IO           (hFlush, stderr)
-import qualified Data.ByteString      as BS
-import qualified Data.ByteString.Lazy as BSL
 
--- | Emit a single JSON progress event to stderr for the Python reporter.
-emitProgress :: Value -> IO ()
-emitProgress v = do
-  BS.hPut stderr (BSL.toStrict (encode v) <> "\n")
-  hFlush stderr
-
--- | Shared per-relation progress callback for 'Souffle.runRuleSets' in
--- 'runPhaseB': one @step@ event per IDB relation just before it is
--- materialized. The Python reporter's Phase B view shows only the latest
--- step label (no sub-progress bar), so per-relation granularity keeps the
--- label current as each rule set's outputs land rather than stalling on a
--- single blanket label for the whole Datalog run.
+-- | Shared per-relation progress hook for 'Souffle.runRuleSetsWithStart' in
+-- 'runPhaseB': fires a @step@ event just before an IDB relation is
+-- materialized, then a second one right after with its row count. The
+-- Python reporter's Phase B view shows only the latest step label (no
+-- sub-progress bar), so per-relation granularity keeps the label current as
+-- each rule set's outputs land rather than stalling on a single blanket
+-- label for the whole Datalog run.
 --
--- CAVEAT (found in production, 2026-07-15): this callback only fires AFTER
--- a ruleset's single monolithic @souffle@ subprocess exits -- while that
--- subprocess is mid-flight (which can be minutes on a large corpus, see
--- 'souffleStart' below), the displayed label is whatever the PREVIOUS
--- ruleset in 'Souffle.orderRuleSets'\' resolved order last emitted, not
--- the ruleset actually running. Concretely: 'allDatalogRuleSets' lists
--- @taintRules@ last, but 'Souffle.orderRuleSets' batches independent
--- rulesets (no relation-name dependency edge between them) into the same
--- round in list order -- @taintRules@ has no dependency on any other
--- ruleset's output, so it lands in ROUND 1 immediately after @legRules@
--- (verified via @cabal repl@: @orderRuleSets allDatalogRuleSets@ = @[
--- deadReachRules, callerCountRules, legRules, taintRules,
+-- CAVEAT (found in production, 2026-07-15): the "before" firing only
+-- happens once a ruleset's single monolithic @souffle@ subprocess has
+-- already exited -- while that subprocess is mid-flight (which can be
+-- minutes on a large corpus, see 'souffleStart' below), the displayed label
+-- is whatever the PREVIOUS ruleset in 'Souffle.orderRuleSets'\' resolved
+-- order last emitted, not the ruleset actually running. Concretely:
+-- 'allDatalogRuleSets' lists @taintRules@ last, but 'Souffle.orderRuleSets'
+-- batches independent rulesets (no relation-name dependency edge between
+-- them) into the same round in list order -- @taintRules@ has no dependency
+-- on any other ruleset's output, so it lands in ROUND 1 immediately after
+-- @legRules@ (verified via @cabal repl@: @orderRuleSets allDatalogRuleSets@
+-- = @[ deadReachRules, callerCountRules, legRules, taintRules,
 -- deadCodeRowsRules, reachesRules, liveProcRules, cosliceRules ]@). A live
 -- run stuck on "Datalog: leg" for 13+ minutes was actually deep inside
 -- @taintRules@ (301,754-row @taint_edge.facts@) the whole time -- only
@@ -76,11 +68,13 @@ emitProgress v = do
 -- 'souffleStart' for the fix, and 'PB.Analysis.Rules.Taint.taintRules'\'
 -- Code Index entry (compiler/CLAUDE.md) for the perf fix this incident
 -- also produced.
-souffleProgress :: Souffle.Relation -> IO ()
-souffleProgress rel = emitProgress (object
-  [ "tag" .= ("step" :: Text)
-  , "label" .= ("Datalog: " <> Souffle.relName rel)
-  ])
+souffleProgress :: Souffle.Relation -> Maybe Int -> IO ()
+souffleProgress rel Nothing =
+  Progress.emitEvent (Progress.EvStep ("Datalog: " <> Souffle.relName rel) Nothing [] [] Nothing)
+souffleProgress rel (Just n) =
+  Progress.emitEvent (Progress.EvStep
+    ("Datalog: " <> Souffle.relName rel <> " materialized (" <> T.pack (show n) <> " rows)")
+    Nothing [] [(Souffle.relName rel, n)] Nothing)
 
 -- | Fires right before each ruleset's @souffle@ subprocess starts (see
 -- 'Souffle.runRuleSetWithStart'), naming which ruleset is about to run and
@@ -88,15 +82,50 @@ souffleProgress rel = emitProgress (object
 -- staleness caveat above by giving real-time visibility into what's
 -- ACTUALLY executing, not just what last finished.
 souffleStart :: Souffle.RuleSet -> [(Souffle.Relation, Int)] -> IO ()
-souffleStart rs counts = emitProgress (object
-  [ "tag" .= ("step" :: Text)
-  , "label" .= ("Datalog: running ["
-                 <> T.intercalate ", " (map Souffle.relName (Souffle.rsRelations rs))
-                 <> "] (" <> T.intercalate ", "
-                      [ Souffle.relName rel <> ": " <> T.pack (show n) <> " rows"
-                      | (rel, n) <- counts ]
-                 <> ")")
-  ])
+souffleStart rs counts = Progress.emitEvent (Progress.EvStep
+  ("Datalog: running ["
+    <> T.intercalate ", " (map Souffle.relName (Souffle.rsRelations rs))
+    <> "] (" <> T.intercalate ", "
+         [ Souffle.relName rel <> ": " <> T.pack (show n) <> " rows"
+         | (rel, n) <- counts ]
+    <> ")")
+  Nothing
+  [ (Souffle.relName rel, n) | (rel, n) <- counts ]
+  []
+  Nothing)
+
+-- | Fires once per EDB relation, immediately after that relation's facts
+-- are queried and written into its @.facts@ file -- the concrete fix for a
+-- production incident where a stall inside this exact loop (suspected on an
+-- oversized @reaches@ relation feeding @risk_count@) produced zero progress
+-- events, since 'souffleStart' above only fires once the whole loop has
+-- already finished.
+souffleEdbFact :: Souffle.Relation -> Int -> Double -> IO ()
+souffleEdbFact rel n elapsedMs = do
+  mResidency <- Progress.residencySnapshot
+  Progress.emitEvent (Progress.EvStep
+    ("Datalog: EDB " <> Souffle.relName rel <> " written (" <> T.pack (show n) <> " rows)")
+    (Just elapsedMs) [(Souffle.relName rel, n)] [] mResidency)
+
+-- | Fires periodically while a @souffle@ subprocess itself is running, so a
+-- long in-Souffle evaluation doesn't go dark between 'souffleStart' and
+-- 'souffleProgress'.
+souffleHeartbeat :: Double -> IO ()
+souffleHeartbeat elapsedSec = do
+  mResidency <- Progress.residencySnapshot
+  Progress.emitEvent (Progress.EvStep
+    ("Datalog: souffle still running (" <> T.pack (show (round elapsedSec :: Int)) <> "s)")
+    (Just (elapsedSec * 1000)) [] [] mResidency)
+
+-- | The 'Souffle.SouffleHooks' value 'runPhaseB' wires into every Datalog
+-- rule set run.
+souffleHooks :: Souffle.SouffleHooks
+souffleHooks = Souffle.noSouffleHooks
+  { Souffle.onRuleSetStart = souffleStart
+  , Souffle.onEdbFact      = souffleEdbFact
+  , Souffle.onIdbRelation  = souffleProgress
+  , Souffle.onHeartbeat    = souffleHeartbeat
+  }
 
 -- | Characterize @leg_source@'s (x, y) key fan-in before 'SchemaRules.legRules'
 -- runs (see that ruleset's own doc comment for the O(group_size^2) Souffle
@@ -111,19 +140,16 @@ reportLegSourceFanout :: DuckConn -> IO ()
 reportLegSourceFanout conn = do
   LegSourceFanout total keys maxGroup <- SchemaRules.legSourceFanout conn
   let n = T.pack . show
-  emitProgress (object
-    [ "tag" .= ("step" :: Text)
-    , "label" .= ("Datalog: leg_source -- " <> n total <> " rows, "
-                   <> n keys <> " keys, max " <> n maxGroup <> " rows/key")
-    ])
-  when (maxGroup > 500) $ emitProgress (object
-    [ "tag" .= ("warning" :: Text)
-    , "message" .= ("leg_source has a key with " <> n maxGroup <> " duplicate rows \
-                     \(out of " <> n total <> " total, " <> n keys <> " distinct keys) \
-                     \-- unusually large fan-in on one schema edge, likely duplicate/\
-                     \near-duplicate extraction rather than legitimate diversity; \
-                     \worth investigating the source before trusting downstream leg/reaches results" :: Text)
-    ])
+  Progress.emitEvent (Progress.EvStep
+    ("Datalog: leg_source -- " <> n total <> " rows, "
+      <> n keys <> " keys, max " <> n maxGroup <> " rows/key")
+    Nothing [("leg_source", total)] [] Nothing)
+  when (maxGroup > 500) $ Progress.emitEvent (Progress.EvWarning
+    ("leg_source has a key with " <> n maxGroup <> " duplicate rows \
+     \(out of " <> n total <> " total, " <> n keys <> " distinct keys) \
+     \-- unusually large fan-in on one schema edge, likely duplicate/\
+     \near-duplicate extraction rather than legitimate diversity; \
+     \worth investigating the source before trusting downstream leg/reaches results"))
 
 -- | Characterize 'proc_defs'\/'proc_uses' key fan-in for the two joins
 -- 'PB.Analysis.Rules.Taint.initTaintEdbViews' performs in memory
@@ -136,30 +162,25 @@ reportTaintDefUseFanout conn = do
   defFo <- TaintRules.defLineFanout conn
   retFo <- TaintRules.returnUseFanout conn
   let n = T.pack . show
-      report label (TaintRules.DefUseFanout total keys maxGroup) = do
-        emitProgress (object
-          [ "tag" .= ("step" :: Text)
-          , "label" .= (label <> " -- " <> n total <> " rows, "
-                         <> n keys <> " keys, max " <> n maxGroup <> " rows/key")
-          ])
-        when (maxGroup > 500) $ emitProgress (object
-          [ "tag" .= ("warning" :: Text)
-          , "message" .= (label <> " has a key with " <> n maxGroup
-                           <> " duplicate rows (out of " <> n total <> " total, " <> n keys
-                           <> " distinct keys) -- unusually large fan-in, likely duplicate/\
-                              \near-duplicate extraction rather than legitimate diversity" :: Text)
-          ])
-  report ("Datalog: proc_defs (object,proc,line)" :: Text) defFo
-  report ("Datalog: proc_uses return (object,proc)" :: Text) retFo
+      report relName label (TaintRules.DefUseFanout total keys maxGroup) = do
+        Progress.emitEvent (Progress.EvStep
+          (label <> " -- " <> n total <> " rows, "
+            <> n keys <> " keys, max " <> n maxGroup <> " rows/key")
+          Nothing [(relName, total)] [] Nothing)
+        when (maxGroup > 500) $ Progress.emitEvent (Progress.EvWarning
+          (label <> " has a key with " <> n maxGroup
+            <> " duplicate rows (out of " <> n total <> " total, " <> n keys
+            <> " distinct keys) -- unusually large fan-in, likely duplicate/\
+               \near-duplicate extraction rather than legitimate diversity"))
+  report ("proc_defs" :: Text) ("Datalog: proc_defs (object,proc,line)" :: Text) defFo
+  report ("proc_uses_return" :: Text) ("Datalog: proc_uses return (object,proc)" :: Text) retFo
 
 -- | Report the raw 'PB.Analysis.Rules.Taint.initTaintEdbViewsWith' checkpoint
 -- counts as a single progress event.
 reportTaintCounts :: [(Text, Int)] -> IO ()
-reportTaintCounts counts = emitProgress (object
-  [ "tag" .= ("step" :: Text)
-  , "label" .= ("Taint EDB counts: "
-                 <> T.intercalate ", " [ k <> "=" <> T.pack (show v) | (k, v) <- counts ] :: Text)
-  ])
+reportTaintCounts counts = Progress.emitEvent (Progress.EvStep
+  ("Taint EDB counts: " <> T.intercalate ", " [ k <> "=" <> T.pack (show v) | (k, v) <- counts ])
+  Nothing [] counts Nothing)
 
 -- | Phase B: read Phase A tables from DuckDB, run link analysis, write results.
 -- Structured as two sub-phases:
@@ -191,24 +212,27 @@ reportTaintCounts counts = emitProgress (object
 --   @path_leg_fwd@\/@path_leg_back@→@decomposition_coslice@).
 runPhaseB :: DuckConn -> Maybe Text -> IO ()
 runPhaseB conn mDefaultNamespace = do
-  emitProgress (object ["tag" .= ("phase" :: Text), "name" .= ("B" :: Text)])
+  Progress.emitEvent (Progress.EvPhase "B")
   -- B1: prerequisite Haskell analyses + EDB materialization.
   _   <- runPass5  conn
   runPass67 conn
   sch <- runPass9 conn mDefaultNamespace
-  emitProgress (object
-    [ "tag" .= ("step" :: Text)
-    , "label" .= ("Schema category built: " <> T.pack (show (Set.size (sgObjects sch)))
-                   <> " objects, " <> T.pack (show (length (sgLegs sch))) <> " legs" :: Text)
-    ])
+  Progress.emitEvent (Progress.EvStep
+    ("Schema category built: " <> T.pack (show (Set.size (sgObjects sch)))
+      <> " objects, " <> T.pack (show (length (sgLegs sch))) <> " legs")
+    Nothing []
+    [ ("schema_objects", Set.size (sgObjects sch))
+    , ("schema_morphisms", length (sgLegs sch))
+    ]
+    Nothing)
   materializeAllEdbViews conn
   -- B2: all Soufflé rule sets in one dependency-ordered run. Characterize
   -- leg_source's key fan-in first (see reportLegSourceFanout) -- cheap, and
   -- surfaces a pathological corpus shape before the Souffle run rather than
   -- only via its wall-clock/memory symptoms.
   reportLegSourceFanout conn
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Datalog analysis" :: Text)])
-  Souffle.runRuleSetsWithStart souffleStart souffleProgress conn allDatalogRuleSets
+  Progress.emitEvent (Progress.EvStep "Datalog analysis" Nothing [] [] Nothing)
+  Souffle.runRuleSetsWithStart souffleHooks conn allDatalogRuleSets
   TaintRules.reconstructTaintStepKind conn
   materializeDeadCode conn
   materializeDecompositionCoslice conn
@@ -224,13 +248,11 @@ runPhaseB conn mDefaultNamespace = do
 -- @schema_objects@\/@schema_morphisms@).
 materializeAllEdbViews :: DuckConn -> IO ()
 materializeAllEdbViews conn = do
-  DeadCodeRules.initDeadReachEdbViews conn
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Dead-code EDB views materialized" :: Text)])
-  SchemaRules.initEdbViews conn
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Schema EDB views materialized" :: Text)])
+  Progress.timedStep "Dead-code EDB views materialized" $ DeadCodeRules.initDeadReachEdbViews conn
+  Progress.timedStep "Schema EDB views materialized" $ SchemaRules.initEdbViews conn
   reportTaintDefUseFanout conn
-  TaintRules.initTaintEdbViewsWith reportTaintCounts conn
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Taint EDB views materialized" :: Text)])
+  Progress.timedStep "Taint EDB views materialized" $
+    TaintRules.initTaintEdbViewsWith reportTaintCounts conn
 
 -- | Every Soufflé rule set run in Phase B. 'Souffle.runRuleSets' topologically
 -- orders these by their IDB-output ∩ EDB-input edges, so the order listed
@@ -251,8 +273,7 @@ allDatalogRuleSets =
   ]
 
 runPass5 :: DuckConn -> IO (Map.Map Text Text)
-runPass5 conn = do
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Resolving types" :: Text)])
+runPass5 conn = Progress.timedStep "Resolving types" $ do
   lvs                              <- queryLocalVars  conn
   css                              <- queryCallSites  conn
   (objSet, usrTypes, inh, procMap) <- queryObjInfo   conn
@@ -269,8 +290,7 @@ runPass5 conn = do
 -- handled by the Datalog rule set (TaintRules.taintRules) — this
 -- pass only produces the EDB tables those rules read from.
 runPass67 :: DuckConn -> IO ()
-runPass67 conn = do
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Building call graph" :: Text)])
+runPass67 conn = Progress.timedStep "Building call graph" $ do
   gvs  <- queryGlobalVars     conn
   defs <- queryProcDefs       conn
   uses <- queryProcUses       conn
@@ -285,18 +305,16 @@ runPass67 conn = do
       allSinks       = Taint.classifySinks   allSqlStmts
   appendInterprocEdges   conn edges
   appendProcSummaries    conn summaries
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Taint classification" :: Text)])
-  appendTaintSources     conn allSources
-  appendTaintSinks       conn allSinks
-  pure ()
+  Progress.timedStep "Taint classification" $ do
+    appendTaintSources     conn allSources
+    appendTaintSinks       conn allSinks
 
 -- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157
 -- Phase 1): materialize the schema category @Sch@ from Phase A's
 -- DW-retrieve/DW-join/SQL-column/DDL-catalog tables. Returns the graph so
 -- Pass 10 can traverse it without rebuilding from DB rows.
 runPass9 :: DuckConn -> Maybe Text -> IO SchGraph
-runPass9 conn mDefaultNamespace = do
-  emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Building schema category" :: Text)])
+runPass9 conn mDefaultNamespace = Progress.timedStep "Building schema category" $ do
   drCols  <- queryDwRetrieveColumns  conn
   dwCols  <- queryDwWriteColumns     conn
   dwhCols <- queryDwWhereColumns     conn

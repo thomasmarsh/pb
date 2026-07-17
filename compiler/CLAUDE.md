@@ -708,6 +708,49 @@ runPhaseB :: DuckConn -> Maybe Text -> IO ()
 runPass9 :: DuckConn -> Maybe Text -> IO SchGraph
 ```
 
+### `PB.Pipeline.Progress` (Plan 180 Phase 1, 2026-07-17)
+
+```haskell
+-- Structured stderr progress events for the Python reporter, replacing
+-- hand-built Data.Aeson `object [...]` literals at every PB.Pipeline.Passes
+-- emission site. Custom ToJSON omits unset optional EvStep fields (not
+-- `null`) so the common-case wire shape stays the bare
+-- {"tag":"step","label":...} the Python reporter already parses via
+-- event["label"] -- purely additive, no wire-format break.
+type RowCounts = [(Text, Int)]
+data ProgressEvent
+  = EvPhase   { evName :: Text }
+  | EvStep    { evLabel :: Text, evElapsedMs :: Maybe Double
+              , evEdbRows :: RowCounts, evIdbRows :: RowCounts
+              , evResidencyMb :: Maybe Double }
+  | EvWarning { evMessage :: Text }
+
+emitEvent :: ProgressEvent -> IO ()   -- one JSON line to stderr
+timedStepTo     :: (ProgressEvent -> IO ()) -> Text -> IO a -> IO a
+timedStep       :: Text -> IO a -> IO a                      -- = timedStepTo emitEvent
+timedStepRowsTo :: (ProgressEvent -> IO ()) -> Text -> IO (a, RowCounts) -> IO a
+timedStepRows   :: Text -> IO (a, RowCounts) -> IO a          -- = timedStepRowsTo emitEvent
+-- Each emits a start EvStep (no elapsed_ms) then an end EvStep (elapsed_ms
+-- set, rows attached for the *Rows variant) -- the generic wrapper replacing
+-- the one-off XxxWith callback pattern (initTaintEdbViewsWith etc) invented
+-- ad hoc during the risk_count incident. *To variants take an explicit sink
+-- so tests can inject a recording function instead of real stderr.
+
+withHeartbeat :: Double -> (Double -> IO ()) -> IO a -> IO a
+-- Runs `action` via Control.Concurrent.Async.race against a `forever` ticker
+-- that fires onTick(elapsedSeconds) every intervalSec seconds; race cancels
+-- the ticker the instant `action` completes. Lives here (not Souffle-
+-- specific) so it's unit-testable without a real souffle subprocess --
+-- PB.Pipeline.Souffle.runRuleSetWithStart is its only caller today, wrapping
+-- the blocking `souffle` readProcessWithExitCode call at a 15s interval.
+
+residencySnapshot :: IO (Maybe Double)
+-- Just (live bytes / 1e6) from GHC.Stats.getRTSStats's `gc` field
+-- (gcdetails_live_bytes) when getRTSStatsEnabled (needs +RTS -T), else
+-- Nothing -- answers "still climbing or plateaued" without an external
+-- ps/top call.
+```
+
 ### `PB.Pipeline.Souffle` (Plan 161, Souffle migration done 2026-07-11 -- replaces the deleted `PB.Pipeline.Datalog`)
 
 ```haskell
@@ -782,10 +825,7 @@ sanitizeFactField :: Text -> Text
 -- file -> `souffle -F factsDir -D outDir program.dl` via readProcessWithExitCode
 -- (interpreted mode; a non-zero exit is a hard `error`, same tier as the old
 -- module's unstratifiable-ruleset error) -> for each rsRelations member, calls
--- onRelation (runRuleSets' onRelation callback; PB.Pipeline.Passes' runPhaseB
--- wires this to emitProgress, one "step" event per relation, e.g. "Datalog:
--- reaches", same reason as before: the CLI reporter's Phase B view shows only
--- the latest step label with no sub-progress bar), reads back its <name>.csv output, then
+-- onIdbRelation (see SouffleHooks below), reads back its <name>.csv output, then
 -- PB.Pipeline.DuckDb.recreateTextTable + appendTextRows materializes it as a
 -- DuckDB table (drop + create all-TEXT columns, generic-arity append -- see
 -- that module's own entry). Any future, larger Phase 3 rule set MUST use
@@ -801,6 +841,40 @@ sanitizeFactField :: Text -> Text
 -- filter needed. sanitizeFactField exported (was internal) so
 -- SouffleFuzzTest.hs's expected-output computation reuses the real
 -- sanitizer instead of a duplicate that could drift from it.
+
+-- SouffleHooks (Plan 180 Phase 1, 2026-07-17): bundles every progress
+-- callback runRuleSetWithStart/runRuleSetsWithStart accept, replacing what
+-- used to be two positional callback args (onStart :: RuleSet ->
+-- [(Relation, Int)] -> IO (), onRelation :: Relation -> IO ()) -- adding a
+-- 3rd/4th instrumentation point without another positional-arg change.
+data SouffleHooks = SouffleHooks
+  { onRuleSetStart :: RuleSet -> [(Relation, Int)] -> IO ()
+    -- fires with EDB row counts right after facts are written, BEFORE the
+    -- (possibly long) souffle subprocess starts (was: onStart)
+  , onEdbFact :: Relation -> Int -> Double -> IO ()
+    -- NEW: fires per EDB relation, timed, right as ITS OWN facts are
+    -- queried+written inside the fact-writing loop itself -- the concrete
+    -- fix for the risk_count production incident (BACKLOG), which stalled
+    -- 20+ minutes with zero progress events because onRuleSetStart only
+    -- fires once the whole loop has already finished.
+  , onIdbRelation :: Relation -> Maybe Int -> IO ()
+    -- Nothing right before an IDB relation is materialized (was: bare
+    -- onRelation :: Relation -> IO ()), then Just its row count right after
+  , onHeartbeat :: Double -> IO ()
+    -- NEW: fires periodically (elapsed seconds) while souffle itself is
+    -- running, via PB.Pipeline.Progress.withHeartbeat (15s interval,
+    -- hardcoded in runRuleSetWithStart)
+  }
+noSouffleHooks :: SouffleHooks   -- every field a no-op
+runRuleSetWithStart  :: SouffleHooks -> DuckConn -> RuleSet -> IO ()
+runRuleSetsWithStart :: SouffleHooks -> DuckConn -> [RuleSet] -> IO ()
+-- runRuleSetWith/runRuleSet/runRuleSets (above) keep their EXACT pre-Plan-180
+-- signatures -- each builds a SouffleHooks internally (noSouffleHooks with
+-- onIdbRelation wired to the old plain-Relation callback, firing only on the
+-- "before" Nothing case) so none of the ~30 existing test call sites
+-- (SouffleDeadCodeTest/SouffleSchemaTest/SouffleTaintTest/SouffleFuzzTest)
+-- needed touching. PB.Pipeline.Passes.runPhaseB builds the real SouffleHooks
+-- value (souffleHooks) wiring all four fields to PB.Pipeline.Progress.emitEvent.
 
 ```
 
