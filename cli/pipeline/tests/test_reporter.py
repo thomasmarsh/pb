@@ -1,4 +1,4 @@
-"""Unit tests for pb.pipeline.reporter.RecordingReporter.
+"""Unit tests for pb.pipeline.reporter.RecordingReporter and DiagnosticsCollector.
 
 These tests require no cabal build and no duckdb — pure Python.
 """
@@ -6,7 +6,7 @@ These tests require no cabal build and no duckdb — pure Python.
 import json
 
 from pb.lib.state import FileDiff
-from pb.pipeline.reporter import RecordingReporter, _format_ddl_loaded, _format_warning
+from pb.pipeline.reporter import DiagnosticsCollector, RecordingReporter, _format_ddl_loaded, _format_warning
 
 
 def _diff(new=0, changed=0, deleted=0, unchanged=0) -> FileDiff:
@@ -288,3 +288,132 @@ def test_all_events_are_json_serialisable():
 
     # Must not raise
     json.dumps(r.events)
+
+
+# ── DiagnosticsCollector ─────────────────────────────────────────────────────
+
+
+def _step_event(label: str, *, elapsed_ms: float | None = None,
+                edb_rows: dict[str, int] | None = None,
+                idb_rows: dict[str, int] | None = None,
+                residency_mb: float | None = None) -> dict:
+    ev: dict = {"tag": "step", "label": label}
+    if elapsed_ms is not None:
+        ev["elapsed_ms"] = elapsed_ms
+    if edb_rows:
+        ev["edb_rows"] = edb_rows
+    if idb_rows:
+        ev["idb_rows"] = idb_rows
+    if residency_mb is not None:
+        ev["residency_mb"] = residency_mb
+    return ev
+
+
+def test_diagnostics_collector_step_events():
+    c = DiagnosticsCollector()
+    c.on_event(_step_event("risk_count", edb_rows={"schema_objects": 22756}))
+    c.on_event(_step_event("risk_count", elapsed_ms=120000, idb_rows={"risk_count": 500}))
+    report = c.generate_json()
+    steps = report["steps"]
+    assert len(steps) == 1
+    s = steps[0]
+    assert s["label"] == "risk_count"
+    assert s["elapsed_ms"] == 120000
+    assert s["edb_rows"] == {"schema_objects": 22756}
+    assert s["idb_rows"] == {"risk_count": 500}
+
+
+def test_diagnostics_collector_multiple_steps():
+    c = DiagnosticsCollector()
+    c.on_event(_step_event("step_a", edb_rows={"r1": 100}, elapsed_ms=1000, idb_rows={"out": 50}))
+    c.on_event(_step_event("step_b", edb_rows={"r2": 200}, elapsed_ms=2000, idb_rows={"out2": 75}))
+    report = c.generate_json()
+    assert len(report["steps"]) == 2
+    assert report["steps"][0]["label"] == "step_a"
+    assert report["steps"][1]["label"] == "step_b"
+
+
+def test_diagnostics_collector_peak_residency():
+    c = DiagnosticsCollector()
+    c.on_event(_step_event("big_step", edb_rows={"r": 10}))
+    c.on_event(_step_event("big_step", elapsed_ms=5000, residency_mb=1000))
+    c.on_event(_step_event("big_step", elapsed_ms=10000, residency_mb=14800))
+    c.on_event(_step_event("big_step", elapsed_ms=15000, residency_mb=145))
+    report = c.generate_json()
+    s = report["steps"][0]
+    assert s["peak_residency_mb"] == 14800
+
+
+def test_diagnostics_collector_phase_events():
+    c = DiagnosticsCollector()
+    c.on_event({"tag": "phase", "name": "A"})
+    c.on_event(_step_event("parse_file", elapsed_ms=5000, idb_rows={"objects": 1051}))
+    c.on_event({"tag": "phase", "name": "B"})
+    c.on_event(_step_event("risk_count", elapsed_ms=60000))
+    report = c.generate_json()
+    assert len(report["phases"]) == 2
+    assert report["phases"][0]["name"] == "A"
+    assert report["phases"][1]["name"] == "B"
+
+
+def test_diagnostics_collector_warnings():
+    c = DiagnosticsCollector()
+    c.on_event({"tag": "warning", "message": "--ddl given but PB_SQL_WORKER not set"})
+    c.on_event(_step_event("ok_step", elapsed_ms=100))
+    report = c.generate_json()
+    assert report["warnings"] == ["--ddl given but PB_SQL_WORKER not set"]
+
+
+def test_diagnostics_collector_empty_run():
+    c = DiagnosticsCollector()
+    report = c.generate_json()
+    assert report["steps"] == []
+    assert report["phases"] == []
+    assert report["warnings"] == []
+    assert "total_elapsed_ms" in report
+
+
+def test_diagnostics_collector_markdown_format():
+    c = DiagnosticsCollector()
+    c.on_event(_step_event("risk_count", edb_rows={"reaches": 150000}, elapsed_ms=120000, idb_rows={"risk_count": 500}, residency_mb=14800))
+    c.on_event(_step_event("taint_reaches", edb_rows={"taint_edge": 5594106}, elapsed_ms=45200, idb_rows={"taint_reaches": 1200}))
+    md = c.generate_markdown()
+    assert "| Step |" in md
+    assert "risk_count" in md
+    assert "taint_reaches" in md
+    assert "14.5GB" in md  # 14800 MB ≈ 14.5GB
+
+
+def test_diagnostics_collector_write(tmp_path):
+    c = DiagnosticsCollector()
+    c.on_event(_step_event("step1", elapsed_ms=1000))
+    out = tmp_path / "diag"
+    c.write(str(out))
+    assert (tmp_path / "diag.json").exists()
+    assert (tmp_path / "diag.md").exists()
+    data = json.loads((tmp_path / "diag.json").read_text())
+    assert len(data["steps"]) == 1
+    md_text = (tmp_path / "diag.md").read_text()
+    assert "step1" in md_text
+
+
+def test_diagnostics_collector_partial_run():
+    """Collector handles a step that started but never completed (SIGINT scenario)."""
+    c = DiagnosticsCollector()
+    c.on_event(_step_event("started_never_done", edb_rows={"r": 10}))
+    c.on_event(_step_event("next_step", edb_rows={"r2": 20}, elapsed_ms=500))
+    report = c.generate_json()
+    # The incomplete step should still appear with what we know
+    assert len(report["steps"]) == 2
+    incomplete = report["steps"][0]
+    assert incomplete["label"] == "started_never_done"
+    assert incomplete["elapsed_ms"] is None  # never completed
+
+
+def test_diagnostics_collector_json_serialisable():
+    c = DiagnosticsCollector()
+    c.on_event(_step_event("s1", edb_rows={"r": 10}, elapsed_ms=100, idb_rows={"o": 5}))
+    c.on_event({"tag": "phase", "name": "A"})
+    c.on_event({"tag": "warning", "message": "test"})
+    # Must not raise
+    json.dumps(c.generate_json())

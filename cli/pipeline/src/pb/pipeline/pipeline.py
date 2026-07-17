@@ -13,7 +13,7 @@ from pathlib import Path
 from pb.pipeline.db import setup_db_extras
 from pb.pipeline.env import env
 from pb.pipeline.metrics import compute_metrics
-from pb.pipeline.reporter import Reporter
+from pb.pipeline.reporter import DiagnosticsCollector, Reporter
 
 
 def db_is_current(input_path: Path, db: str) -> bool:
@@ -42,6 +42,7 @@ def run(
     input_path: Path | None = None,
     ddl: Sequence[str] = (),
     default_namespace: str | None = None,
+    diagnostics_report_path: str | None = None,
 ) -> None:
     # Normalized once, here, at the single choke point every caller (index/
     # explore) goes through: catalog namespaces are always lowercased by
@@ -79,28 +80,37 @@ def run(
 
     errors = 0
     raw_stderr_lines: list[str] = []
-    with reporter.runner_progress() as prog:
-        proc = subprocess.Popen(
-            argv,
-            stderr=subprocess.PIPE,
-            env=run_env,
-        )
+    collector = DiagnosticsCollector() if diagnostics_report_path else None
 
-        def _read_stderr() -> None:
-            assert proc.stderr is not None
-            for raw in proc.stderr:
-                line = raw.decode(errors="replace").strip()
-                if not line:
-                    continue
-                try:
-                    prog.on_event(json.loads(line))
-                except json.JSONDecodeError:
-                    raw_stderr_lines.append(line)
+    try:
+        with reporter.runner_progress() as prog:
+            proc = subprocess.Popen(
+                argv,
+                stderr=subprocess.PIPE,
+                env=run_env,
+            )
 
-        reader = threading.Thread(target=_read_stderr, daemon=True)
-        reader.start()
-        proc.wait()
-        reader.join()
+            def _read_stderr() -> None:
+                assert proc.stderr is not None
+                for raw in proc.stderr:
+                    line = raw.decode(errors="replace").strip()
+                    if not line:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                        prog.on_event(ev)
+                        if collector is not None:
+                            collector.on_event(ev)
+                    except json.JSONDecodeError:
+                        raw_stderr_lines.append(line)
+
+            reader = threading.Thread(target=_read_stderr, daemon=True)
+            reader.start()
+            proc.wait()
+            reader.join()
+    finally:
+        if collector is not None and diagnostics_report_path:
+            collector.write(diagnostics_report_path)
 
     parsed = prog.parsed_count
 

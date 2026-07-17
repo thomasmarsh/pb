@@ -7,6 +7,7 @@ Two implementations:
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -197,6 +198,174 @@ class _StepInfo:
     edb_rows: dict[str, int] = field(default_factory=dict)
     idb_rows: dict[str, int] = field(default_factory=dict)
     residency_mb: float | None = None
+
+
+@dataclass
+class _ReportStep:
+    """One step in the diagnostics report."""
+
+    label: str
+    elapsed_ms: float | None = None
+    edb_rows: dict[str, int] = field(default_factory=dict)
+    idb_rows: dict[str, int] = field(default_factory=dict)
+    peak_residency_mb: float | None = None
+
+
+class DiagnosticsCollector:
+    """Accumulates pipeline events and generates a post-run diagnostics report.
+
+    Feed every event from the pbc JSONL stream via on_event(), then call
+    generate_json() / generate_markdown() / write() after the run completes
+    (or is interrupted — partial data is still valid).
+    """
+
+    def __init__(self) -> None:
+        self._start = time.monotonic()
+        self._steps: list[_ReportStep] = []
+        self._phases: list[dict[str, Any]] = []
+        self._warnings: list[str] = []
+        # Current step being accumulated
+        self._cur_label: str = ""
+        self._cur_edb: dict[str, int] = {}
+        self._cur_idb: dict[str, int] = {}
+        self._cur_elapsed_ms: float | None = None
+        self._cur_peak_res: float | None = None
+
+    def on_event(self, event: dict) -> None:
+        tag = event.get("tag", "")
+        if tag == "step":
+            self._handle_step(event)
+        elif tag == "phase":
+            self._phases.append({"name": event.get("name", "")})
+        elif tag == "warning":
+            self._warnings.append(event.get("message", ""))
+
+    def _handle_step(self, event: dict) -> None:
+        label = event.get("label", "")
+        edb_rows = event.get("edb_rows") or {}
+        idb_rows = event.get("idb_rows") or {}
+        elapsed_ms = event.get("elapsed_ms")
+        residency_mb = event.get("residency_mb")
+
+        # New label means previous step completed — flush it
+        if label and label != self._cur_label:
+            self._flush_step()
+            self._cur_label = label
+            self._cur_edb = {}
+            self._cur_idb = {}
+            self._cur_elapsed_ms = None
+            self._cur_peak_res = None
+
+        if edb_rows:
+            self._cur_edb.update(edb_rows)
+        if elapsed_ms is not None:
+            self._cur_elapsed_ms = elapsed_ms
+        if idb_rows:
+            self._cur_idb.update(idb_rows)
+        if residency_mb is not None:
+            if self._cur_peak_res is None or residency_mb > self._cur_peak_res:
+                self._cur_peak_res = residency_mb
+
+    def _flush_step(self) -> None:
+        if not self._cur_label:
+            return
+        self._steps.append(_ReportStep(
+            label=self._cur_label,
+            elapsed_ms=self._cur_elapsed_ms,
+            edb_rows=dict(self._cur_edb),
+            idb_rows=dict(self._cur_idb),
+            peak_residency_mb=self._cur_peak_res,
+        ))
+
+    def generate_json(self) -> dict:
+        self._flush_step()
+        total_ms = (time.monotonic() - self._start) * 1000
+        return {
+            "total_elapsed_ms": round(total_ms, 1),
+            "steps": [
+                {
+                    "label": s.label,
+                    "elapsed_ms": s.elapsed_ms,
+                    "edb_rows": s.edb_rows,
+                    "idb_rows": s.idb_rows,
+                    "peak_residency_mb": s.peak_residency_mb,
+                }
+                for s in self._steps
+            ],
+            "phases": list(self._phases),
+            "warnings": list(self._warnings),
+        }
+
+    def generate_markdown(self) -> str:
+        self._flush_step()
+        total_ms = (time.monotonic() - self._start) * 1000
+        lines = [
+            "# Pipeline Diagnostics Report",
+            "",
+            f"**Total elapsed:** {self._fmt_ms(total_ms)}",
+            "",
+        ]
+
+        if self._phases:
+            lines.append("## Phases")
+            lines.append("")
+            for p in self._phases:
+                lines.append(f"- {p['name']}")
+            lines.append("")
+
+        if self._steps:
+            lines.append("## Steps")
+            lines.append("")
+            lines.append("| Step | Duration | EDB Rows | IDB Rows | Peak RES |")
+            lines.append("|------|----------|----------|----------|----------|")
+            for s in self._steps:
+                dur = self._fmt_ms(s.elapsed_ms) if s.elapsed_ms is not None else "—"
+                edb = self._fmt_rows(s.edb_rows) if s.edb_rows else "—"
+                idb = self._fmt_rows(s.idb_rows) if s.idb_rows else "—"
+                res = self._fmt_res(s.peak_residency_mb) if s.peak_residency_mb is not None else "—"
+                lines.append(f"| {s.label} | {dur} | {edb} | {idb} | {res} |")
+            lines.append("")
+
+        if self._warnings:
+            lines.append("## Warnings")
+            lines.append("")
+            for w in self._warnings:
+                lines.append(f"- {w}")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    def write(self, path: str) -> None:
+        from pathlib import Path
+
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.with_suffix(".json").write_text(json.dumps(self.generate_json(), indent=2))
+        p.with_suffix(".md").write_text(self.generate_markdown())
+
+    @staticmethod
+    def _fmt_ms(ms: float) -> str:
+        secs = ms / 1000
+        if secs < 60:
+            return f"{secs:.1f}s"
+        mins = int(secs // 60)
+        secs_rem = secs - mins * 60
+        return f"{mins}m{secs_rem:.0f}s"
+
+    @staticmethod
+    def _fmt_rows(rows: dict[str, int]) -> str:
+        total = sum(rows.values())
+        if total >= 1_000_000:
+            return f"{total / 1_000_000:.1f}M"
+        if total >= 1_000:
+            return f"{total / 1_000:.1f}K"
+        return str(total)
+
+    @staticmethod
+    def _fmt_res(mb: float) -> str:
+        if mb >= 1024:
+            return f"{mb / 1024:.1f}GB"
+        return f"{mb:.0f}MB"
 
 
 class _LiveRunnerProgress:
