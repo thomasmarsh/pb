@@ -121,7 +121,7 @@ buildParamsMap = foldl' addFile Map.empty
     addFile acc sf =
       let obj = srFileObject sf
           fnEntries =
-            [ ( (obj, fnsName (fbSig fb))
+            [ ( (obj, identOrig (fnsName (fbSig fb)))
               , [ProcSignature
                   (parseParams (fnsParams (fbSig fb)))
                   (Just (parseTypeText (fnsReturnType (fbSig fb))))]
@@ -129,7 +129,7 @@ buildParamsMap = foldl' addFile Map.empty
             | fb <- srFunctions sf
             ]
           subEntries =
-            [ ( (obj, ssName (sbSig sb))
+            [ ( (obj, identOrig (ssName (sbSig sb)))
               , [ProcSignature (parseParams (ssParams (sbSig sb))) Nothing]
               )
             | sb <- srSubroutines sf

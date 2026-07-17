@@ -406,19 +406,19 @@ extractProcMeta file sf =
     objName = identOrig (fst (srPrimaryObject sf))
     fnMeta fb = ProcMeta
       { pmFile = file, pmObject = objName
-      , pmName = fnsName (fbSig fb), pmProcType = "function"
+      , pmName = identOrig (fnsName (fbSig fb)), pmProcType = "function"
       , pmParams = fnsParams (fbSig fb)
       , pmReturnType = fnsReturnType (fbSig fb)
       , pmStartLine = Nothing }
     subMeta sb = ProcMeta
       { pmFile = file, pmObject = objName
-      , pmName = ssName (sbSig sb), pmProcType = "subroutine"
+      , pmName = identOrig (ssName (sbSig sb)), pmProcType = "subroutine"
       , pmParams = ssParams (sbSig sb)
       , pmReturnType = ""
       , pmStartLine = Nothing }
     evMeta ev = ProcMeta
       { pmFile = file, pmObject = objName
-      , pmName = esName (evSig ev), pmProcType = "event"
+      , pmName = identOrig (esName (evSig ev)), pmProcType = "event"
       , pmParams = esRawSig (evSig ev)
       , pmReturnType = ""
       , pmStartLine = Nothing }
@@ -435,9 +435,9 @@ extractProcMeta file sf =
 extractTaintInputs :: Text -> SrFile -> TaintFileInputs
 extractTaintInputs file sf =
   let objName  = identOrig (fst (srPrimaryObject sf))
-      bodies   = [ (objName, fnsName (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
-              <> [ (objName, ssName  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
-              <> [ (objName, esName  (evSig ev), evBody ev) | ev <- srEvents      sf ]
+      bodies   = [ (objName, identOrig (fnsName (fbSig fb)), fbBody fb) | fb <- srFunctions   sf ]
+              <> [ (objName, identOrig (ssName  (sbSig sb)), sbBody sb) | sb <- srSubroutines sf ]
+              <> [ (objName, identOrig (esName  (evSig ev)), evBody ev) | ev <- srEvents      sf ]
               <> [ (objName, obEvent ob,          obBody ob) | ob <- srOnBlocks    sf ]
       sqlStmts = concatMap (\(obj, proc, body) -> extractSqlStmts file obj proc body) bodies
       procMetas = extractProcMeta file sf

@@ -195,7 +195,7 @@ extractFnSig s =
       mods = map tkText modToks
       finish retTy name more =
         let (params, throws) = parseParamsAndThrows more
-        in Just (FnSig mods (tkText retTy) (tkText name) params throws)
+        in Just (FnSig mods (tkText retTy) (mkIdent (tkText name)) params throws)
   in case rest of
     (_kw : retTy : name : lparen : more)
       | tkKind lparen == TkLParen -> finish retTy name more
@@ -210,7 +210,7 @@ extractSubSig s =
       mods = map tkText modToks
       finish name more =
         let (params, throws) = parseParamsAndThrows more
-        in Just (SubSig mods (tkText name) params throws)
+        in Just (SubSig mods (mkIdent (tkText name)) params throws)
   in case rest of
     (_kw : name : lparen : more)
       | tkKind lparen == TkLParen -> finish name more
@@ -225,7 +225,7 @@ extractEvSig s =
   in case rest of
     (_kw : name : remainder) ->
         let rawSig = T.intercalate " " (map tkText remainder)
-        in Just (EventSig (tkText name) rawSig)
+        in Just (EventSig (mkIdent (tkText name)) rawSig)
     _ -> Nothing
 
 pFnProto :: FileParser ProtoDecl

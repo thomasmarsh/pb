@@ -431,15 +431,15 @@ callSitesExpr file obj proc_ mLine expr = case expr of
 extractLocalVars :: Text -> Text -> SrFile -> [LocalVar]
 extractLocalVars file obj sf = concat
   [ concatMap (\fb ->
-      paramsToVars file obj (fnsName (fbSig fb)) (fnsParams (fbSig fb)) 0
-      <> walkBodyLocalVars file obj (fnsName (fbSig fb)) (fbBody fb)
+      paramsToVars file obj (identOrig (fnsName (fbSig fb))) (fnsParams (fbSig fb)) 0
+      <> walkBodyLocalVars file obj (identOrig (fnsName (fbSig fb))) (fbBody fb)
     ) (srFunctions sf)
   , concatMap (\sb ->
-      paramsToVars file obj (ssName (sbSig sb)) (ssParams (sbSig sb)) 0
-      <> walkBodyLocalVars file obj (ssName (sbSig sb)) (sbBody sb)
+      paramsToVars file obj (identOrig (ssName (sbSig sb))) (ssParams (sbSig sb)) 0
+      <> walkBodyLocalVars file obj (identOrig (ssName (sbSig sb))) (sbBody sb)
     ) (srSubroutines sf)
   , concatMap (\ev ->
-      walkBodyLocalVars file obj (esName (evSig ev)) (evBody ev)
+      walkBodyLocalVars file obj (identOrig (esName (evSig ev))) (evBody ev)
     ) (srEvents sf)
   , concatMap (\ob ->
       walkBodyLocalVars file obj (obEvent ob) (obBody ob)
@@ -449,11 +449,11 @@ extractLocalVars file obj sf = concat
 -- | Extract call sites from all procedure bodies.
 extractCallSites :: Text -> Text -> SrFile -> [CallSite]
 extractCallSites file obj sf = concat
-  [ concatMap (\fb -> walkBodyCallSites file obj (fnsName (fbSig fb)) (fbBody fb))
+  [ concatMap (\fb -> walkBodyCallSites file obj (identOrig (fnsName (fbSig fb))) (fbBody fb))
       (srFunctions sf)
-  , concatMap (\sb -> walkBodyCallSites file obj (ssName (sbSig sb)) (sbBody sb))
+  , concatMap (\sb -> walkBodyCallSites file obj (identOrig (ssName (sbSig sb))) (sbBody sb))
       (srSubroutines sf)
-  , concatMap (\ev -> walkBodyCallSites file obj (esName (evSig ev)) (evBody ev))
+  , concatMap (\ev -> walkBodyCallSites file obj (identOrig (esName (evSig ev))) (evBody ev))
       (srEvents sf)
   , concatMap (\ob -> walkBodyCallSites file obj (obEvent ob) (obBody ob))
       (srOnBlocks sf)
@@ -572,9 +572,9 @@ buildProcMap = foldl' addFile Map.empty
     addFile acc sf =
       let obj   = srFileObject sf
           names = Set.fromList $
-            map (fnsName . fbSig) (srFunctions sf)
-            <> map (ssName . sbSig) (srSubroutines sf)
-            <> map (esName . evSig) (srEvents sf)
+            map (identOrig . fnsName . fbSig) (srFunctions sf)
+            <> map (identOrig . ssName . sbSig) (srSubroutines sf)
+            <> map (identOrig . esName . evSig) (srEvents sf)
             <> map obEvent (srOnBlocks sf)
       in Map.insertWith Set.union obj names acc
 

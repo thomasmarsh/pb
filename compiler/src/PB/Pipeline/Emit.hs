@@ -144,8 +144,8 @@ wrapSrFile withInstr path sf spans ws =
         -- User-defined function names (lower-cased) for InstrGraph callproc dispatch.
         userFns :: Set.Set Text
         userFns = Set.fromList
-          $  map (T.toLower . fnsName . fbSig) (srFunctions  sf)
-          <> map (T.toLower . ssName  . sbSig) (srSubroutines sf)
+          $  map (identCanon . fnsName . fbSig) (srFunctions  sf)
+          <> map (identCanon . ssName  . sbSig) (srSubroutines sf)
 
         injectMeta :: (Int, Int) -> Value -> Value
         injectMeta (start, end) (Object o) =

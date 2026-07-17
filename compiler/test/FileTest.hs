@@ -627,6 +627,19 @@ tests = testGroup "Grammar.File"
         case runSection pEventBlock stmts of
           Left _  -> pure ()
           Right _ -> assertFailure "expected parse failure when 'end event' is missing"
+
+    , testCase "case-insensitive equality: differently-cased event names parse equal (Ident)" $ do
+        let stmts1 =
+              [ mkStmt [(TkDeclKw, "event"), (TkIdent, "UE_Custom")]
+              , mkStmt [(TkDeclKw, "end event")]
+              ]
+            stmts2 =
+              [ mkStmt [(TkDeclKw, "event"), (TkIdent, "ue_custom")]
+              , mkStmt [(TkDeclKw, "end event")]
+              ]
+        case (runSection pEventBlock stmts1, runSection pEventBlock stmts2) of
+          (Right eb1, Right eb2) -> esName (evSig eb1) @?= esName (evSig eb2)
+          _                      -> assertFailure "expected both parses to succeed"
     ]
 
   , testGroup "Grammar.File.EventOwnership"
@@ -788,6 +801,23 @@ tests = testGroup "Grammar.File"
           Right _ -> assertFailure "expected parse failure: external function has no body"
 
     , testProperty "fnsName non-empty" prop_fnBlock_name_nonempty
+
+    , testCase "case-insensitive equality: differently-cased function names parse equal (Ident)" $ do
+        let stmts1 =
+              [ mkStmt [ (TkDeclKw, "function"), (TkDatatype, "integer"), (TkIdent, "F_Compute")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end function")]
+              ]
+            stmts2 =
+              [ mkStmt [ (TkDeclKw, "function"), (TkDatatype, "integer"), (TkIdent, "f_compute")
+                       , (TkLParen, "("), (TkRParen, ")")
+                       ]
+              , mkStmt [(TkDeclKw, "end function")]
+              ]
+        case (runSection pFunctionBlock stmts1, runSection pFunctionBlock stmts2) of
+          (Right fb1, Right fb2) -> fnsName (fbSig fb1) @?= fnsName (fbSig fb2)
+          _                      -> assertFailure "expected both parses to succeed"
     ]
 
   , testGroup "pSubroutineBlock"
@@ -808,6 +838,19 @@ tests = testGroup "Grammar.File"
           Right _ -> assertFailure "expected parse failure when 'end subroutine' is missing"
 
     , testProperty "ssName non-empty" prop_subBlock_name_nonempty
+
+    , testCase "case-insensitive equality: differently-cased subroutine names parse equal (Ident)" $ do
+        let stmts1 =
+              [ mkStmt [(TkDeclKw, "subroutine"), (TkIdent, "Of_Setup"), (TkLParen, "("), (TkRParen, ")")]
+              , mkStmt [(TkDeclKw, "end subroutine")]
+              ]
+            stmts2 =
+              [ mkStmt [(TkDeclKw, "subroutine"), (TkIdent, "of_setup"), (TkLParen, "("), (TkRParen, ")")]
+              , mkStmt [(TkDeclKw, "end subroutine")]
+              ]
+        case (runSection pSubroutineBlock stmts1, runSection pSubroutineBlock stmts2) of
+          (Right sb1, Right sb2) -> ssName (sbSig sb1) @?= ssName (sbSig sb2)
+          _                      -> assertFailure "expected both parses to succeed"
     ]
 
   , testGroup "pSrFile (flexible ordering)"
@@ -1119,7 +1162,7 @@ prop_fnBlock_name_nonempty = property $ do
         , mkStmt [(TkDeclKw, "end function")]
         ]
   case runSection pFunctionBlock stmts of
-    Right fb -> assert (not (T.null (fnsName (fbSig fb))))
+    Right fb -> assert (not (T.null (identOrig (fnsName (fbSig fb)))))
     Left _   -> pure ()
 
 prop_subBlock_name_nonempty :: Property
@@ -1130,7 +1173,7 @@ prop_subBlock_name_nonempty = property $ do
         , mkStmt [(TkDeclKw, "end subroutine")]
         ]
   case runSection pSubroutineBlock stmts of
-    Right sb -> assert (not (T.null (ssName (sbSig sb))))
+    Right sb -> assert (not (T.null (identOrig (ssName (sbSig sb)))))
     Left _   -> pure ()
 
 prop_flexible_forward_type_order :: Property

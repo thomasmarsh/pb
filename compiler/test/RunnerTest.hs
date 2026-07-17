@@ -17,7 +17,7 @@ import PB.AST.DataWindow
   , DataWindowFile (..), DwObjectAttrs (..), DwTable (..)
   )
 import PB.AST.Expr         (Expr (..))
-import PB.AST.Ident        (identOrig)
+import PB.AST.Ident        (identCanon, identOrig)
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile   (TypeBlock (..), mkTypeDecl, srPrimaryObject, srFunctions, FunctionBlock (..), FnSig (..))
 import PB.AST.Type         (PbType (..))
@@ -350,7 +350,7 @@ tests = testGroup "Pipeline.Runner"
               objName       = identOrig objNameIdent
               fb            = case srFunctions sf of { (f:_) -> f; [] -> error "impossible: fixture has one function" }
               body          = fbBody fb
-              userFns       = Set.fromList [T.toLower (fnsName (fbSig fb))]
+              userFns       = Set.fromList [identCanon (fnsName (fbSig fb))]
               env           = procEnv ws (buildControlIndex [sf]) objName []
               newJson       = toJSON (compileProcedureViaEffTerm env userFns body)
           in testGroup "if/else with shared trailing call"

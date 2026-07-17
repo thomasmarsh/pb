@@ -4,6 +4,7 @@ import PB.Prelude
 import PB.AST.BodyStmt     (BodyStmt (..), IfStmt (..), ForStmt (..))
 import PB.AST.Expr         (Expr (..), Lvalue (..), LvSegment (..))
 import PB.AST.Located      (Located (..))
+import PB.AST.Ident        (mkIdent)
 import PB.AST.SourceFile
 import PB.Analysis.Taint
 
@@ -29,7 +30,7 @@ mkSf fns subs evs obs = SrFile
 
 mkFn :: Text -> [Text] -> Text -> [Located BodyStmt] -> FunctionBlock
 mkFn name params ret body = FunctionBlock
-  { fbSig = FnSig [] ret name (T.intercalate ", " params) Nothing
+  { fbSig = FnSig [] ret (mkIdent name) (T.intercalate ", " params) Nothing
   , fbBody = body
   }
 

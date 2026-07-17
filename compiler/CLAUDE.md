@@ -323,12 +323,13 @@ identSetOrigTexts :: IdentSet -> Set.Set Text
 -- originally-declared spellings an IdentSet recovers on lookup.
 ```
 
-`TypeDecl.tdName` (Phase 1), `LvSegment.name` (Phase 2, `PB.AST.Expr`), and
-`TypeDecl.tdAncestorClass`/`tdAncestorOverride` (Phase 3) are `Ident`. Every
-other identifier-bearing AST field (`VarDecl.vdName`, `GlobalInstance.giName`,
-`FnSig.fnsName`, etc.) is still `Text` — see
-`doc/plan/178-canonical-identifier.md`'s "Deferred scope" for the ordered
-rollout. `TypeDecl.tdAncestor` stays `Text` deliberately (raw
+`TypeDecl.tdName` (Phase 1), `LvSegment.name` (Phase 2, `PB.AST.Expr`),
+`TypeDecl.tdAncestorClass`/`tdAncestorOverride` (Phase 3), `VarDecl.vdName`/
+`GlobalInstance.giName` (Phase 4), and `FnSig.fnsName`/`SubSig.ssName`/
+`EventSig.esName` (Phase 5) are `Ident`. `TypeMismatch.classifyFamily`'s
+`Set Text` interface is the sole remaining deferred item — see
+`doc/plan/178-canonical-identifier.md`'s "Deferred scope" section.
+`TypeDecl.tdAncestor` stays `Text` deliberately (raw
 `AncestorClass\`LocalName` backtick-compound syntax, not a single identifier
 — `splitAncestorRef` parses it further, minted once into
 `tdAncestorClass`/`tdAncestorOverride` by `mkTypeDecl` at construction; see
@@ -547,12 +548,12 @@ mkTypeDecl :: Text -> Text -> Maybe Text -> TypeDecl
 -- tdName via mkIdent and the ancestor split via splitAncestorRef once here,
 -- so no consumer re-derives either independently.
 data TypeBlock = TypeBlock { tbDecl :: TypeDecl, tbBody :: [Located BodyStmt] }
-data VarDecl   = VarDecl  { vdModifiers :: [Text], vdType :: Text, vdName :: Text }
-data GlobalInstance = GlobalInstance { giType :: Text, giName :: Text }
+data VarDecl   = VarDecl  { vdModifiers :: [Text], vdType :: Text, vdName :: Ident }
+data GlobalInstance = GlobalInstance { giType :: Text, giName :: Ident }
 
-data FnSig  = FnSig  { fnsMods :: [Text], fnsReturnType :: Text, fnsName :: Text, fnsParams :: Text, fnsThrows :: Maybe Text }
-data SubSig = SubSig { ssMods  :: [Text], ssName :: Text, ssParams :: Text, ssThrows :: Maybe Text }
-data EventSig = EventSig { esName :: Text, esRawSig :: Text }
+data FnSig  = FnSig  { fnsMods :: [Text], fnsReturnType :: Text, fnsName :: Ident, fnsParams :: Text, fnsThrows :: Maybe Text }
+data SubSig = SubSig { ssMods  :: [Text], ssName :: Ident, ssParams :: Text, ssThrows :: Maybe Text }
+data EventSig = EventSig { esName :: Ident, esRawSig :: Text }
 
 data FunctionBlock   = FunctionBlock   { fbSig :: FnSig,   fbBody :: [Located BodyStmt] }
 data SubroutineBlock = SubroutineBlock { sbSig :: SubSig,  sbBody :: [Located BodyStmt] }

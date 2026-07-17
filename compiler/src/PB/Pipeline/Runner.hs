@@ -21,7 +21,7 @@ module PB.Pipeline.Runner
 import PB.Prelude
 import PB.AST.BodyStmt   (BodyStmt (..))
 import PB.AST.DataWindow
-import PB.AST.Ident      (identOrig, identSetOrigTexts)
+import PB.AST.Ident      (identCanon, identOrig, identSetOrigTexts)
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type           (parseTypeText)
@@ -228,8 +228,8 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
         (objIdent, anc) = srPrimaryObject sf
         obj = identOrig objIdent
         userFns = Set.fromList
-          $  map (T.toLower . fnsName . fbSig) (srFunctions  sf)
-          <> map (T.toLower . ssName  . sbSig) (srSubroutines sf)
+          $  map (identCanon . fnsName . fbSig) (srFunctions  sf)
+          <> map (identCanon . ssName  . sbSig) (srSubroutines sf)
         mkProcEnv params = procEnv wsEnv controlIdx obj (parseParams params)
         lvs  = extractLocalVars  fp obj sf
         css  = extractCallSites  fp obj sf
@@ -239,11 +239,11 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
         -- (sLine, eLine)/(pName, pType, instrParams, taintParams, retType,
         -- body) zip logic exists exactly once.
         procSpecs =
-              zip (spFunctions   sp) [ (fnsName (fbSig fb), "function",   fnsParams (fbSig fb), fnsParams    (fbSig fb), fnsReturnType (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
+              zip (spFunctions   sp) [ (identOrig (fnsName (fbSig fb)), "function",   fnsParams (fbSig fb), fnsParams    (fbSig fb), fnsReturnType (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
               <>
-              zip (spSubroutines sp) [ (ssName  (sbSig sb), "subroutine", ssParams  (sbSig sb), ssParams     (sbSig sb), "",                       sbBody sb) | sb <- srSubroutines sf ]
+              zip (spSubroutines sp) [ (identOrig (ssName  (sbSig sb)), "subroutine", ssParams  (sbSig sb), ssParams     (sbSig sb), "",                       sbBody sb) | sb <- srSubroutines sf ]
               <>
-              zip (spEvents      sp) [ (esName  (evSig ev), "event",      "",                   esRawSig     (evSig ev), "",                       evBody ev) | ev <- srEvents      sf ]
+              zip (spEvents      sp) [ (identOrig (esName  (evSig ev)), "event",      "",                   esRawSig     (evSig ev), "",                       evBody ev) | ev <- srEvents      sf ]
               <>
               zip (spOnBlocks    sp) [ (obEvent ob,         "on",         "",                   "",                      "",                       obBody ob) | ob <- srOnBlocks    sf ]
         -- Plan 164 Phase C / D3: runtime DataWindow-alias assignments
@@ -358,9 +358,9 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
           | ((sLine, eLine), (pName, pType, instrParams, taintParams, retType, body)) <- procSpecs
           ]
         procBodies =
-             [ (fnsName (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
-          <> [ (ssName  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
-          <> [ (esName  (evSig ev), evBody ev) | ev <- srEvents      sf ]
+             [ (identOrig (fnsName (fbSig fb)), fbBody fb) | fb <- srFunctions   sf ]
+          <> [ (identOrig (ssName  (sbSig sb)), sbBody sb) | sb <- srSubroutines sf ]
+          <> [ (identOrig (esName  (evSig ev)), evBody ev) | ev <- srEvents      sf ]
           <> [ (obEvent ob,         obBody ob) | ob <- srOnBlocks    sf ]
     (sqlRows, sqlColRows, sqlFilterRows, sqlTableRows) <- case mBridge of
       Nothing       ->

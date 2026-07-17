@@ -106,20 +106,20 @@ data GlobalInstance = GlobalInstance
 data FnSig = FnSig
   { fnsMods    :: [Text]
   , fnsReturnType :: Text
-  , fnsName    :: Text
+  , fnsName    :: Ident
   , fnsParams  :: Text
   , fnsThrows  :: Maybe Text
   } deriving (Eq, Show, Generic)
 
 data SubSig = SubSig
   { ssMods   :: [Text]
-  , ssName   :: Text
+  , ssName   :: Ident
   , ssParams :: Text
   , ssThrows :: Maybe Text
   } deriving (Eq, Show, Generic)
 
 data EventSig = EventSig
-  { esName   :: Text
+  { esName   :: Ident
   , esRawSig :: Text
   } deriving (Eq, Show, Generic)
 

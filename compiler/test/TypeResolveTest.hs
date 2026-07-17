@@ -45,7 +45,7 @@ mkFn nm params body = FunctionBlock
   { fbSig = FnSig
       { fnsMods       = []
       , fnsReturnType = "integer"
-      , fnsName       = nm
+      , fnsName       = mkIdent nm
       , fnsParams     = params
       , fnsThrows     = Nothing
       }
