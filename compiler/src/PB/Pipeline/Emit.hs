@@ -18,7 +18,7 @@ import PB.Prelude
 import PB.AST.BodyStmt   (BodyStmt (..))
 import PB.AST.DataWindow
 import PB.AST.Expr       (Expr (..))
-import PB.AST.Ident      (identCanon, identOrig)
+import PB.AST.Ident      (identCanon, identOrig, mkIdent)
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.Grammar.DataWindow (parseDataWindow)
@@ -335,19 +335,18 @@ isWindowAncestor amap visited t
 extractWindowLayout :: [TypeBlock] -> Maybe Value
 extractWindowLayout tbs =
   let amap = Map.fromList
-        [ (identCanon (tdName (tbDecl tb)), T.toLower (tdAncestor (tbDecl tb)))
+        [ (identCanon (tdName (tbDecl tb)), identCanon (tdAncestorClass (tbDecl tb)))
         | tb <- tbs ]
       roots = [ tb | tb <- tbs
                    , isNothing (tdWithin (tbDecl tb))
                    , isWindowAncestor amap Set.empty
-                       (T.toLower (tdAncestor (tbDecl tb))) ]
+                       (identCanon (tdAncestorClass (tbDecl tb))) ]
   in case roots of
     []      -> Nothing
     (win:_) ->
-      let winName  = identCanon (tdName (tbDecl win))
-          props    = typeBlockProps win
+      let props    = typeBlockProps win
           children = [ tb | tb <- tbs
-                          , fmap T.toLower (tdWithin (tbDecl tb)) == Just winName ]
+                          , fmap mkIdent (tdWithin (tbDecl tb)) == Just (tdName (tbDecl win)) ]
           mkControl tb =
             let cp      = typeBlockProps tb
                 nm      = tdName (tbDecl tb)

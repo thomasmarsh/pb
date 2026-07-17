@@ -514,6 +514,26 @@ tests = testGroup "Pipeline.Runner"
                let controls = lookupObj "controls" v
                    firstCtl = firstOf controls
                in lookupObj "type" firstCtl @?= String "datawindow"
+
+    , testCase "ancestor walk resolves through a backtick-compound node in the chain" $
+        -- w_top's own ancestor ("mid_class") is a *control* TypeBlock, not a
+        -- window -- its own ancestor is a backtick-compound override
+        -- ("customtype`ctrl_orig"). The chain only reaches the "window"
+        -- terminal by resolving through customtype's own top-level
+        -- declaration. A walk keyed on the raw compound text (rather than
+        -- its already-split class component) can never match "customtype"
+        -- in the map, so w_top's chain silently dead-ends and the other
+        -- (unrelated) root -- customtype itself -- is picked instead.
+        let topDecl        = mkTypeDecl "w_top" "mid_class" Nothing
+            midClassCtrl   = mkTypeDecl "mid_class" "customtype`ctrl_orig" (Just "some_owner")
+            customtypeDecl = mkTypeDecl "customtype" "window" Nothing
+            tbs = [ TypeBlock topDecl []
+                  , TypeBlock midClassCtrl []
+                  , TypeBlock customtypeDecl []
+                  ]
+        in case extractWindowLayout tbs of
+             Nothing -> assertFailure "expected Just with w_top recognized as the window, got Nothing"
+             Just v  -> lookupObj "name" v @?= String "w_top"
     ]
 
   , testGroup "runFile stub extensions"
