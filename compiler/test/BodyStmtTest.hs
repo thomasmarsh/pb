@@ -110,30 +110,60 @@ tests = testGroup "Body"
     , testCase "aug_assign: +=" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "n"), (TkAugmentOp, "+="), (TkIntLiteral, "1")])
-          @?= BsAugAssign [tok "n"] AugAdd [tok "1"]
+          @?= BsAugAssign (Lvalue [LvSegment "n" Nothing]) AugAdd [tok "1"]
 
     , testCase "aug_assign: -=" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "n"), (TkAugmentOp, "-="), (TkIntLiteral, "1")])
-          @?= BsAugAssign [tok "n"] AugSub [tok "1"]
+          @?= BsAugAssign (Lvalue [LvSegment "n" Nothing]) AugSub [tok "1"]
 
     , testCase "aug_assign: *=" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "n"), (TkAugmentOp, "*="), (TkIntLiteral, "2")])
-          @?= BsAugAssign [tok "n"] AugMul [tok "2"]
+          @?= BsAugAssign (Lvalue [LvSegment "n" Nothing]) AugMul [tok "2"]
 
     , testCase "aug_assign: /=" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "n"), (TkAugmentOp, "/="), (TkIntLiteral, "2")])
-          @?= BsAugAssign [tok "n"] AugDiv [tok "2"]
+          @?= BsAugAssign (Lvalue [LvSegment "n" Nothing]) AugDiv [tok "2"]
 
     , testCase "inc: ++" $
         classifyBodyStmt (mkStmt [(TkIdent, "n"), (TkAugmentOp, "++")])
-          @?= BsInc [tok "n"]
+          @?= BsInc (Lvalue [LvSegment "n" Nothing])
 
     , testCase "dec: --" $
         classifyBodyStmt (mkStmt [(TkIdent, "n"), (TkAugmentOp, "--")])
-          @?= BsDec [tok "n"]
+          @?= BsDec (Lvalue [LvSegment "n" Nothing])
+
+    , testCase "BsLocalVar varName is case-insensitive" $
+        BsLocalVar [] (PtPrimitive "integer") "Li_Count" Nothing
+          @?= BsLocalVar [] (PtPrimitive "integer") "li_count" Nothing
+
+    , testCase "BsInc lvalue is case-insensitive" $
+        classifyBodyStmt (mkStmt [(TkIdent, "N"), (TkAugmentOp, "++")])
+          @?= classifyBodyStmt (mkStmt [(TkIdent, "n"), (TkAugmentOp, "++")])
+
+    , testCase "aug_assign: member-chain LHS parses to a multi-segment Lvalue" $
+        classifyBodyStmt
+          (mkStmt [ (TkIdent, "this"), (TkDot, "."), (TkIdent, "count")
+                  , (TkAugmentOp, "+="), (TkIntLiteral, "1") ])
+          @?= BsAugAssign
+                (Lvalue [LvSegment "this" Nothing, LvSegment "count" Nothing])
+                AugAdd [tok "1"]
+
+    , testCase "inc: subscripted LHS parses to a subscripted Lvalue" $
+        classifyBodyStmt
+          (mkStmt [ (TkIdent, "arr"), (TkLBracket, "["), (TkIdent, "i"), (TkRBracket, "]")
+                  , (TkAugmentOp, "++") ])
+          @?= BsInc (Lvalue [LvSegment "arr" (Just ["i"])])
+
+    , testCase "aug_assign: chained-call LHS (not a valid lvalue) falls back to BsRaw" $
+        case classifyBodyStmt
+               (mkStmt [ (TkIdent, "obj"), (TkDot, "."), (TkIdent, "cells")
+                       , (TkLParen, "("), (TkIntLiteral, "1"), (TkRParen, ")")
+                       , (TkAugmentOp, "+="), (TkIntLiteral, "1") ]) of
+          BsRaw _ -> return ()
+          other   -> assertFailure ("expected BsRaw, got: " <> show other)
 
     , testCase "call: method call (obj.method())" $
         classifyBodyStmt

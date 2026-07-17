@@ -92,10 +92,12 @@ classifyByOp s ts =
                             in case lhsExpr of
                                  ExRaw _ -> BsRaw (llText (stmtSource s))
                                  _       -> BsAssignExpr lhsExpr (parseExpr rhs)
-                "++" -> BsInc       lhs
-                "--" -> BsDec       lhs
+                "++" -> maybe (BsRaw (llText (stmtSource s))) BsInc (parseLvalue lhs)
+                "--" -> maybe (BsRaw (llText (stmtSource s))) BsDec (parseLvalue lhs)
                 _    -> case augOp opText of
-                           Just aop -> BsAugAssign lhs aop rhs
+                           Just aop -> maybe (BsRaw (llText (stmtSource s)))
+                                              (\lv -> BsAugAssign lv aop rhs)
+                                              (parseLvalue lhs)
                            Nothing  -> BsRaw (llText (stmtSource s))
 
 -- ---------------------------------------------------------------------------
@@ -403,7 +405,7 @@ classifyBodyStmt s = case stmtTokens s of
                  (typeT : nameT : rest')
                    | isTypeName typeT && tkKind nameT == TkIdent ->
                        let ty    = parseTypeFromTokens typeT rest'
-                           name  = tkText nameT
+                           name  = mkIdent (tkText nameT)
                            initE = parseInit rest'
                        in BsLocalVar mods ty name initE
                  _ -> classifyByOp s ts
@@ -415,7 +417,7 @@ classifyBodyStmt s = case stmtTokens s of
              (typeT : nameT : rest')
                | isTypeName typeT && tkKind nameT == TkIdent ->
                    let ty    = parseTypeFromTokens typeT rest'
-                       name  = tkText nameT
+                       name  = mkIdent (tkText nameT)
                        initE = parseInit rest'
                    in BsLocalVar mods ty name initE
              (typeT : lb : prec : rb : nameT : rest')
@@ -424,7 +426,7 @@ classifyBodyStmt s = case stmtTokens s of
                , tkKind rb   == TkRBrace
                , tkKind nameT == TkIdent ->
                    let ty    = parseTypeWithPrecision typeT prec
-                       name  = tkText nameT
+                       name  = mkIdent (tkText nameT)
                        initE = parseInit rest'
                    in BsLocalVar mods ty name initE
              _ -> classifyByOp s ts

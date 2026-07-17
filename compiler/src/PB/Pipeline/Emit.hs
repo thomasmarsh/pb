@@ -316,7 +316,7 @@ exprScalar _          = Nothing
 
 typeBlockProps :: TypeBlock -> Map.Map Text Value
 typeBlockProps tb = Map.fromList
-  [ (T.toLower nm, v)
+  [ (identCanon nm, v)
   | Located _ BsLocalVar { varName = nm, varInit = Just expr } <- tbBody tb
   , Just v <- [exprScalar expr]
   ]

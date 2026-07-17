@@ -16,6 +16,7 @@ module PB.AST.BodyStmt
 
 import PB.Prelude
 import PB.AST.Expr        (Expr, Lvalue)
+import PB.AST.Ident       (Ident)
 import PB.AST.Located     (Located)
 import PB.AST.Type        (PbType)
 import PB.Lexing.Token    (Token (..))
@@ -94,13 +95,13 @@ data BodyStmt
   = BsLocalVar
       { varMods  :: [Text]        -- ["constant", "public", etc.]
       , varType  :: PbType        -- the declared type
-      , varName  :: Text          -- variable name
+      , varName  :: Ident         -- variable name
       , varInit  :: Maybe Expr    -- optional initializer
       }
   | BsAssign    Lvalue Expr           -- lhs = rhs
-  | BsAugAssign [Token] AugOp [Token]  -- lhs_tokens op= rhs_tokens
-  | BsInc       [Token]               -- lhs_tokens ++
-  | BsDec       [Token]               -- lhs_tokens --
+  | BsAugAssign Lvalue AugOp [Token]  -- lhs op= rhs_tokens
+  | BsInc       Lvalue                -- lhs++
+  | BsDec       Lvalue                -- lhs--
   | BsCall      Expr                  -- standalone call expression
   | BsPbCall    PbCall                -- CALL ancestor[`ctrl] :: event
   | BsReturn    (Maybe Expr)          -- return [expr]

@@ -290,6 +290,13 @@ tests = testGroup "TypeEnv"
             ws  = buildWorkspaceEnv [sfA, sfB]
         in lookupScopedVar "foo" (procEnv ws Map.empty "obj_b" []) @?= Just (PtPrimitive "string")
 
+    , testCase "instance var lookup is case-insensitive when TypeBlock declares mixed-case BsLocalVar" $
+        let sf = emptyFile
+              { srTypeBlocks = [TypeBlock (mkTypeDecl "obj_a" "window" Nothing)
+                  [Located 1 (BsLocalVar [] (PtPrimitive "integer") "Li_Count" Nothing)]] }
+            ws = buildWorkspaceEnv [sf]
+        in lookupScopedVar "li_count" (procEnv ws Map.empty "obj_a" []) @?= Just (PtPrimitive "integer")
+
     ]
 
   , testGroup "isDescendantOf"

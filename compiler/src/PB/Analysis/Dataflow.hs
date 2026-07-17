@@ -181,11 +181,11 @@ isIdent t = case T.uncons t of
 -- | Extract the defined variable name from a definition statement.
 extractDefVar :: BodyStmt -> Maybe Ident
 extractDefVar (BsAssign lv _)    = lvRoot lv
-extractDefVar (BsLocalVar _ _ n _) = Just (mkIdent n)
+extractDefVar (BsLocalVar _ _ n _) = Just n
 extractDefVar (BsFor ft)       = lvRoot (forVar ft)
-extractDefVar (BsAugAssign toks _ _) = listToMaybe (identTokenList toks)
-extractDefVar (BsInc toks)       = listToMaybe (identTokenList toks)
-extractDefVar (BsDec toks)       = listToMaybe (identTokenList toks)
+extractDefVar (BsAugAssign lv _ _) = lvRoot lv
+extractDefVar (BsInc lv)         = lvRoot lv
+extractDefVar (BsDec lv)         = lvRoot lv
 extractDefVar _                  = Nothing
 
 -- | True when a def only writes one member of a multi-segment lvalue

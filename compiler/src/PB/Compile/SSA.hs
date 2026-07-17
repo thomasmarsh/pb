@@ -36,7 +36,7 @@ module PB.Compile.SSA
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Ident    (mkIdent)
+import PB.AST.Ident    (identOrig, mkIdent)
 import PB.AST.Located  (Located (..))
 import PB.Analysis.Cfg (Cfg (..), CfgBlock (..), CfgEdge (..), buildCfg)
 import PB.Analysis.TypeEnv (ScopedTypeEnv)
@@ -140,10 +140,6 @@ assignTarget :: Expr -> Text
 assignTarget (ExLvalue lv) = lvHead lv
 assignTarget _             = "_"
 
-lhsToExpr :: [Token] -> Expr
-lhsToExpr [t] = ExLvalue (Lvalue [LvSegment (mkIdent (tkText t)) Nothing])
-lhsToExpr ts  = ExRaw (map tkText ts)
-
 -- | Wrap a raw token list as an unparsed 'ExRaw' expression. Not a real
 -- parse (unlike 'PB.Analysis.CallClassify.parseArgList', which calls
 -- 'PB.Grammar.Body.parseExpr') — used only where SSA lowering doesn't need
@@ -230,21 +226,18 @@ stmtToAssigns (BsAssign lv expr) =
 stmtToAssigns (BsFor (ForStmt var from _ _ _)) =
   [SsaAssign (SsaVar (lvHead var)) (exprToSsaVal from)]
 stmtToAssigns (BsLocalVar _ _ varName (Just expr)) =
-  [SsaAssign (SsaVar varName) (exprToSsaVal expr)]
+  [SsaAssign (SsaVar (identOrig varName)) (exprToSsaVal expr)]
 stmtToAssigns (BsLocalVar {}) = []
-stmtToAssigns (BsAugAssign toks op rhsToks) =
-  let varName = case toks of { (t:_) -> tkText t; [] -> "_" }
-      augOpToBinOp AugAdd = BopAdd
+stmtToAssigns (BsAugAssign lv op rhsToks) =
+  let augOpToBinOp AugAdd = BopAdd
       augOpToBinOp AugSub = BopSub
       augOpToBinOp AugMul = BopMul
       augOpToBinOp AugDiv = BopDiv
-  in [SsaAssign (SsaVar varName) (SsaBinOp (augOpToBinOp op) (SsaConst (lhsToExpr toks)) (exprToSsaVal (rawArgsToExpr rhsToks)))]
-stmtToAssigns (BsInc toks) =
-  let varName = case toks of { (t:_) -> tkText t; [] -> "_" }
-  in [SsaAssign (SsaVar varName) (SsaBinOp BopAdd (SsaConst (lhsToExpr toks)) (SsaConst (ExInt "1")))]
-stmtToAssigns (BsDec toks) =
-  let varName = case toks of { (t:_) -> tkText t; [] -> "_" }
-  in [SsaAssign (SsaVar varName) (SsaBinOp BopSub (SsaConst (lhsToExpr toks)) (SsaConst (ExInt "1")))]
+  in [SsaAssign (SsaVar (lvHead lv)) (SsaBinOp (augOpToBinOp op) (SsaConst (ExLvalue lv)) (exprToSsaVal (rawArgsToExpr rhsToks)))]
+stmtToAssigns (BsInc lv) =
+  [SsaAssign (SsaVar (lvHead lv)) (SsaBinOp BopAdd (SsaConst (ExLvalue lv)) (SsaConst (ExInt "1")))]
+stmtToAssigns (BsDec lv) =
+  [SsaAssign (SsaVar (lvHead lv)) (SsaBinOp BopSub (SsaConst (ExLvalue lv)) (SsaConst (ExInt "1")))]
 stmtToAssigns (BsAssignExpr lhsExpr rhsExpr) =
   [SsaAssign (SsaVar (assignTarget lhsExpr)) (exprToSsaVal rhsExpr)]
 stmtToAssigns (BsDestroy lv) =

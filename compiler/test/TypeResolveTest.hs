@@ -56,7 +56,7 @@ localVarStmt :: T.Text -> PbType -> Int -> Located BodyStmt
 localVarStmt nm ty line = Located line BsLocalVar
   { varMods = []
   , varType = ty
-  , varName = nm
+  , varName = mkIdent nm
   , varInit = Nothing
   }
 

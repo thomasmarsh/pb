@@ -145,6 +145,24 @@ tests = testGroup "Dataflow"
           Set.fromList (map usVar (bfUses bf)) @?= Set.fromList ["foo", "x", "y"]
           all (\u -> usKind u == "call_arg") (bfUses bf) @?= True
 
+    , testCase "BsAugAssign def on member-chain lvalue extracts root" $
+        let blk = mkBlock "b0" [at 1 (BsAugAssign
+                (Lvalue [LvSegment (mkIdent "this") Nothing, LvSegment (mkIdent "count") Nothing])
+                AugAdd [tok "1"])]
+            bf  = extractDefsUses blk
+        in do
+          length (bfDefs bf) @?= 1
+          dsVar (one (bfDefs bf)) @?= "this"
+          dsKind (one (bfDefs bf)) @?= "augassign"
+
+    , testCase "BsInc/BsDec def is case-insensitive with declaration" $
+        let blk = mkBlock "b0"
+              [ at 1 (BsLocalVar [] (PtPrimitive "integer") "Li_Count" Nothing)
+              , at 2 (BsInc (lv1 "li_count"))
+              ]
+            bf  = extractDefsUses blk
+        in bfKill bf @?= Set.singleton "li_count"
+
     , testCase "gen set matches defs" $
         let blk = mkBlock "b0"
               [ at 1 (BsAssign (lv1 "x") (ExInt "1"))

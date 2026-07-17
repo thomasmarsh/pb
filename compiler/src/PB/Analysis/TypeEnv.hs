@@ -63,7 +63,7 @@ extractGlobalVars sf =
          Map.fromList [ (identCanon (vdName d), parseTypeText (vdType d)) | d <- decls ]
   <> mconcat
        [ Map.fromList
-           [ (T.toLower vn, vt)
+           [ (identCanon vn, vt)
            | Located _ (BsLocalVar { varType = vt, varName = vn }) <- tbBody tb
            ]
        | tb <- srTypeBlocks sf
@@ -161,7 +161,7 @@ extractInstanceVars :: SrFile -> Map.Map Text (Map.Map Text PbType)
 extractInstanceVars sf = Map.fromList
   [ ( identCanon (tdName (tbDecl tb))
     , Map.fromList
-        [ (T.toLower vn, vt)
+        [ (identCanon vn, vt)
         | Located _ (BsLocalVar { varType = vt, varName = vn }) <- tbBody tb
         ]
     )

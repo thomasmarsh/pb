@@ -268,6 +268,6 @@ parseArgList ts = parseExpr ts
 collectBodyLocals :: [Located BodyStmt] -> Map.Map Text PbType
 collectBodyLocals stmts =
   Map.fromList
-    [ (T.toLower varName, varType)
+    [ (identCanon varName, varType)
     | Located _ (BsLocalVar _ varType varName _) <- stmts
     ]

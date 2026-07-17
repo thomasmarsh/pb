@@ -185,6 +185,22 @@ tests = testGroup "SSA"
         case sbAssigns (entryBlock sa) of
           [_, SsaAssign _ (SsaVarRef sv)] -> svName sv @?= "x"
           other -> assertBool ("expected SsaVarRef, got " <> show other) False
+
+    , testCase "BsAugAssign/BsInc/BsDec lower to SsaAssign using declared-casing var name" $ do
+        let sa = buildSsa emptyEnv "proc"
+                  [ at 1 (BsAugAssign (lv1 "N") AugAdd [intTok "1"])
+                  , at 2 (BsInc (lv1 "N"))
+                  , at 3 (BsDec (lv1 "N"))
+                  ]
+        allVarNames sa @?= ["N", "N", "N"]
+
+    , testCase "BsAugAssign on member-chain lvalue lowers via ExLvalue, not ExRaw" $ do
+        let memberLv = Lvalue [LvSegment "this" Nothing, LvSegment "count" Nothing]
+            sa = buildSsa emptyEnv "proc"
+                  [at 1 (BsAugAssign memberLv AugAdd [intTok "1"])]
+        case sbAssigns (entryBlock sa) of
+          [SsaAssign _ (SsaBinOp _ (SsaConst (ExLvalue lv)) _)] -> lv @?= memberLv
+          other -> assertBool ("expected SsaBinOp with SsaConst-wrapped ExLvalue, got " <> show other) False
     ]
 
   , testGroup "if/else"

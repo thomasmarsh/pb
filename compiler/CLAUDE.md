@@ -332,7 +332,10 @@ within that plan's own scope. A follow-up session (2026-07-17, outside Plan
 fixed the sibling procedure-name case-sensitivity gap in
 `TypeResolve.resolveVirtual`/`resolveStaticCall`/`buildProcMap` (now
 `Map.Map Text IdentSet` — see BACKLOG's "found during Plan 178 Phase 5
-scoping" entry, now `[x]`).
+scoping" entry, now `[x]`). A later session (2026-07-17) converted
+`PB.AST.BodyStmt.BsLocalVar.varName` to `Ident` and `BsAugAssign`/
+`BsInc`/`BsDec`'s LHS to `Lvalue` too (see `PB.AST.BodyStmt`'s own entry
+below) — the last raw-`Text`/`[Token]` identifier fields in `BodyStmt`.
 `TypeDecl.tdAncestor` stays `Text` deliberately (raw
 `AncestorClass\`LocalName` backtick-compound syntax, not a single identifier
 — `splitAncestorRef` parses it further, minted once into
@@ -418,11 +421,11 @@ data ChooseStmt = ChooseStmt
   { chooseExpr :: Expr, chooseClauses :: [CaseClause] }
 
 data BodyStmt
-  = BsLocalVar  { varMods :: [Text], varType :: PbType, varName :: Text, varInit :: Maybe Expr }
+  = BsLocalVar  { varMods :: [Text], varType :: PbType, varName :: Ident, varInit :: Maybe Expr }
   | BsAssign    Lvalue Expr           -- lhs = rhs
-  | BsAugAssign [Token] AugOp [Token]   -- lhs_tokens op= rhs_tokens
-  | BsInc       [Token]                -- lhs_tokens ++
-  | BsDec       [Token]                -- lhs_tokens --
+  | BsAugAssign Lvalue AugOp [Token]  -- lhs op= rhs_tokens (RHS stays raw)
+  | BsInc       Lvalue                -- lhs++
+  | BsDec       Lvalue                -- lhs--
   | BsCall      Expr                  -- standalone call expression
   | BsPbCall    PbCall                -- CALL ancestor[`ctrl] :: event
   | BsReturn    (Maybe Expr)          -- return [expr]
@@ -447,6 +450,15 @@ data TryStmt = TryStmt { tryBody :: [Located BodyStmt], tryCatches :: [CatchClau
   --   | PtAny | PtDecimalPrec Int. No IsString instance — always wrap as
   --   PtPrimitive "integer" etc. (the 111a test was wrong about this.)
 ```
+
+`BsLocalVar.varName` and `BsAugAssign`/`BsInc`/`BsDec`'s LHS are `Ident`/
+`Lvalue` (2026-07-17, closing the last raw-`Text`/`[Token]` identifier
+gap in `BodyStmt` — see `PB.AST.Ident`'s entry above). Mint points are
+`PB.Grammar.Body`'s local-var construction sites and `classifyByOp`'s
+`"++"`/`"--"`/aug-op branches (`parseLvalue`, same helper `BsAssign`'s
+LHS already used) — a non-lvalue-parseable LHS falls back to `BsRaw`.
+`PB.Compile.SSA`'s `lhsToExpr` helper is gone; `stmtToAssigns` uses
+`lvHead`/`ExLvalue` directly for all four constructors now.
 
 ### `PB.AST.Type`
 

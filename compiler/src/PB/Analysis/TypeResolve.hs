@@ -327,7 +327,7 @@ walkStmtLocalVars file obj proc_ (Located line stmt) = case stmt of
         { lvFile      = file
         , lvObject    = obj
         , lvProcName  = proc_
-        , lvVarName   = n
+        , lvVarName   = identOrig n
         , lvRawType   = renderPbType ty
         , lvIsParam   = False
         , lvScopeLine = line
@@ -554,7 +554,7 @@ findLiteralDataObject :: [Located BodyStmt] -> Maybe Text
 findLiteralDataObject stmts = case
   [ s
   | Located _ BsLocalVar { varName = n, varInit = Just (ExStr s) } <- stmts
-  , T.toLower n == "dataobject"
+  , identCanon n == "dataobject"
   ] of
     (s:_) -> Just s
     []    -> Nothing
