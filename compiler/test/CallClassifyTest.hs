@@ -77,12 +77,12 @@ tests = testGroup "CallClassify"
     ]
     ++
     [ testCase (T.unpack ("dw method " <> meth <> " -> " <> T.pack (show (Set.toList tags)))) $
-        classifyEffects dwEnv (ExMethodCall (ExLvalue (lv ["dw_1"])) meth []) @?= tags
+        classifyEffects dwEnv (ExMethodCall (ExLvalue (lv ["dw_1"])) (mkIdent meth) []) @?= tags
     | (meth, tags) <- dwMethodCases
     ]
     ++
     [ testCase (T.unpack ("transaction method " <> meth <> " -> " <> T.pack (show (Set.toList tags)))) $
-        classifyEffects transEnv (ExMethodCall (ExLvalue (lv ["tr_1"])) meth []) @?= tags
+        classifyEffects transEnv (ExMethodCall (ExLvalue (lv ["tr_1"])) (mkIdent meth) []) @?= tags
     | (meth, tags) <- transMethodCases
     ]
     ++

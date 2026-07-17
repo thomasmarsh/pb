@@ -575,6 +575,20 @@ tests = testGroup "Expr"
     , testCase "distinct names -> unequal" $
         (LvSegment "Foo" Nothing == LvSegment "Bar" Nothing) @?= False
     ]
+
+  , testGroup "ExMethodCall/DispatchExpr/ExCreate case-insensitive equality"
+    [ testCase "ExMethodCall differing only in method case -> equal" $
+        ExMethodCall (ExLvalue (Lvalue [LvSegment "dw_1" Nothing])) "Retrieve" []
+          @?= ExMethodCall (ExLvalue (Lvalue [LvSegment "dw_1" Nothing])) "retrieve" []
+    , testCase "ExMethodCall differing in method name -> unequal" $
+        (ExMethodCall (ExLvalue (Lvalue [LvSegment "dw_1" Nothing])) "Retrieve" []
+          == ExMethodCall (ExLvalue (Lvalue [LvSegment "dw_1" Nothing])) "Update" []) @?= False
+    , testCase "DispatchExpr differing only in name case -> equal" $
+        DispatchExpr Nothing DmPost False True "Ue_Refresh" []
+          @?= DispatchExpr Nothing DmPost False True "ue_refresh" []
+    , testCase "ExCreate differing only in case -> equal" $
+        ExCreate "N_Service" @?= ExCreate "n_service"
+    ]
   ]
 
 -- ---------------------------------------------------------------------------

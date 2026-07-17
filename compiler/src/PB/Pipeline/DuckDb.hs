@@ -110,7 +110,7 @@ module PB.Pipeline.DuckDb
   ) where
 
 import PB.Prelude
-import PB.AST.Ident             (identOrig)
+import PB.AST.Ident             (IdentSet, identOrig, identSetSingleton, identSetUnion, mkIdent)
 import PB.AST.Type             (parseTypeText)
 import PB.Analysis.TypeResolve
   ( LocalVar (..), CallSite (..), GlobalVar (..)
@@ -1037,7 +1037,7 @@ queryGlobalVars conn = query_ conn
 -- | Build the four workspace-wide maps needed by Pass 5 from the DB.
 queryObjInfo
   :: DuckConn
-  -> IO (Set.Set Text, Set.Set Text, Map.Map Text Text, Map.Map Text (Set.Set Text))
+  -> IO (Set.Set Text, Set.Set Text, Map.Map Text Text, Map.Map Text IdentSet)
 queryObjInfo conn = do
   objRows  <- query_ conn
     "SELECT object FROM objects \
@@ -1052,8 +1052,8 @@ queryObjInfo conn = do
     ( Set.fromList [t | OneText t <- objRows]
     , Set.fromList [t | OneText t <- usrRows]
     , Map.fromList [(o, a) | TwoText o a <- inhRows]
-    , Map.fromListWith Set.union
-        [(o, Set.singleton p) | TwoText o p <- procRows]
+    , Map.fromListWith identSetUnion
+        [(o, identSetSingleton (mkIdent p)) | TwoText o p <- procRows]
     )
 
 queryProcDefs :: DuckConn -> IO [Taint.DefRow]

@@ -119,10 +119,9 @@ walkExprIdents = go
       maybe Set.empty Set.singleton (lvRoot lv) <> lvalueSubscriptIdents lv
     go (ExCall lv args) =
       let root = maybe Set.empty Set.singleton (lvRoot lv)
-          argIdents = Set.fromList [mkIdent (tkText t) | argToks <- args, t <- argToks, isIdent (tkText t)]
-      in root <> argIdents
+      in root <> argTokenIdents args
     go (ExMethodCall recv _ args) =
-      go recv <> Set.fromList [mkIdent (tkText t) | argToks <- args, t <- argToks, isIdent (tkText t)]
+      go recv <> argTokenIdents args
     go (ExBinOp l _ r) = go l <> go r
     go (ExNot e) = go e
     go (ExNeg e) = go e
@@ -130,10 +129,26 @@ walkExprIdents = go
     go (ExCreateUsing e) = go e
     go (ExDispatch de) =
       let objIdents = maybe Set.empty go (fmap ExLvalue (object de))
-          argIdents = Set.fromList [mkIdent (tkText t) | argToks <- args de, t <- argToks, isIdent (tkText t)]
-      in objIdents <> argIdents
-    go (ExRaw toks) = Set.fromList [mkIdent t | t <- toks, isIdent t]
+      in objIdents <> argTokenIdents (args de)
+    go (ExRaw toks) = identTexts toks
     go _ = Set.empty
+
+-- | Mint an 'Ident', in order, for every token in a flat list whose text is
+-- a valid identifier -- the one mint point for token-list identifier
+-- extraction ('argTokenIdents' below and 'extractDefVar''s token-list defs).
+identTokenList :: [Token] -> [Ident]
+identTokenList toks = [ mkIdent (tkText t) | t <- toks, isIdent (tkText t) ]
+
+-- | Mint an 'Ident' for every token across a call's raw argument lists whose
+-- text is a valid identifier -- the one mint point for 'ExCall'\/
+-- 'ExMethodCall'\/'ExDispatch' argument tokens.
+argTokenIdents :: [[Token]] -> Set.Set Ident
+argTokenIdents args = Set.fromList (concatMap identTokenList args)
+
+-- | Mint an 'Ident' for every valid-identifier 'Text' in a flat list -- the
+-- one mint point for 'ExRaw' tokens and 'Lvalue' subscript text.
+identTexts :: [Text] -> Set.Set Ident
+identTexts ts = Set.fromList [ mkIdent t | t <- ts, isIdent t ]
 
 -- | Identifiers referenced in an lvalue's own subscript expressions (e.g.
 -- @arr[i+1]@ reads @i@ to compute which slot to address). Used both by
@@ -144,7 +159,7 @@ walkExprIdents = go
 -- itself wrapped in an 'ExLvalue' node for 'walkExprIdents' to see.
 lvalueSubscriptIdents :: Lvalue -> Set.Set Ident
 lvalueSubscriptIdents (Lvalue segs) =
-  Set.fromList [ mkIdent t | LvSegment _ (Just toks) <- segs, t <- toks, isIdent t ]
+  Set.unions [ identTexts toks | LvSegment _ (Just toks) <- segs ]
 
 -- | A valid PB identifier: first char alpha/underscore, rest alnum/underscore.
 -- Must match Python core/dataflow.py's _IDENT_RE (`^[a-zA-Z_][a-zA-Z0-9_]*$`)
@@ -168,9 +183,9 @@ extractDefVar :: BodyStmt -> Maybe Ident
 extractDefVar (BsAssign lv _)    = lvRoot lv
 extractDefVar (BsLocalVar _ _ n _) = Just (mkIdent n)
 extractDefVar (BsFor ft)       = lvRoot (forVar ft)
-extractDefVar (BsAugAssign toks _ _) = mkIdent <$> listToMaybe [tkText t | t <- toks, isIdent (tkText t)]
-extractDefVar (BsInc toks)       = mkIdent <$> listToMaybe [tkText t | t <- toks, isIdent (tkText t)]
-extractDefVar (BsDec toks)       = mkIdent <$> listToMaybe [tkText t | t <- toks, isIdent (tkText t)]
+extractDefVar (BsAugAssign toks _ _) = listToMaybe (identTokenList toks)
+extractDefVar (BsInc toks)       = listToMaybe (identTokenList toks)
+extractDefVar (BsDec toks)       = listToMaybe (identTokenList toks)
 extractDefVar _                  = Nothing
 
 -- | True when a def only writes one member of a multi-segment lvalue
@@ -233,7 +248,7 @@ extractUseVars (BsChoose cs) =
 extractUseVars (BsReturn mExpr) = maybe Set.empty walkExprIdents mExpr
 extractUseVars (BsCall expr)    = walkExprIdents expr
 extractUseVars (BsDestroy lv)   = maybe Set.empty Set.singleton (lvRoot lv)
-extractUseVars (BsAugAssign _ _ toks) = Set.fromList [mkIdent (tkText t) | t <- toks, isIdent (tkText t)]
+extractUseVars (BsAugAssign _ _ toks) = Set.fromList (identTokenList toks)
 extractUseVars (BsRaw txt)      = Set.fromList (map mkIdent (extractSqlHostVars txt))
 extractUseVars _ = Set.empty
 

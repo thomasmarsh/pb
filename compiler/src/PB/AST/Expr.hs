@@ -40,7 +40,7 @@ data DispatchExpr = DispatchExpr
   , mode    :: DispatchMode
   , dynamic :: Bool
   , event   :: Bool
-  , name    :: Text
+  , name    :: Ident
   , args    :: [[Token]]
   } deriving (Eq, Show, Generic)
 
@@ -64,10 +64,10 @@ data Expr
   | ExLvalue      Lvalue            -- inlines Lvalue.segments into JSON
   -- Calls (record constructors with unique field names)
   | ExCall        { callee :: Lvalue,  callArgs :: [[Token]] }
-  | ExMethodCall  { receiver :: Expr, method :: Text, methodArgs :: [[Token]] }
+  | ExMethodCall  { receiver :: Expr, method :: Ident, methodArgs :: [[Token]] }
   | ExDispatch    DispatchExpr      -- inlines DispatchExpr fields into JSON
   -- Object creation
-  | ExCreate      Text              -- CREATE ClassName
+  | ExCreate      Ident             -- CREATE ClassName
   | ExCreateUsing Expr              -- CREATE USING expr
   -- Compound
   | ExArray       [Expr]

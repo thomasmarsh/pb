@@ -178,7 +178,7 @@ parseDispBodyTokens objLv = go DmSync False False
                     , mode    = mode
                     , dynamic = dyn
                     , event   = isEv
-                    , name    = tkText t
+                    , name    = mkIdent (tkText t)
                     , args    = splitArgs inner
                     }, after)
             _ -> Nothing
@@ -249,13 +249,13 @@ chainCalls e (dot : nm : lp : rest)
       Just (inner, after) ->
         chainCalls ExMethodCall
           { receiver   = e
-          , method     = tkText nm
+          , method     = mkIdent (tkText nm)
           , methodArgs = splitArgs inner
           } after
 chainCalls e (dot : nm : rest)
   | tkKind dot == TkDot
   , isSegmentName nm
-  = chainCalls ExMethodCall { receiver = e, method = tkText nm, methodArgs = [] } rest
+  = chainCalls ExMethodCall { receiver = e, method = mkIdent (tkText nm), methodArgs = [] } rest
 chainCalls e ts = (e, ts)
 
 parseAtom :: [Token] -> Maybe (Expr, [Token])
@@ -281,7 +281,7 @@ parseAtom (t:rest)
         (e, r') <- parseAtom r
         pure (ExCreateUsing e, r')
       (cls:r) | tkKind cls `elem` [TkIdent, TkOtherKw, TkDatatype]
-        -> Just (ExCreate (tkText cls), r)
+        -> Just (ExCreate (mkIdent (tkText cls)), r)
       _ -> Nothing
 
   | tkKind t == TkLBrace

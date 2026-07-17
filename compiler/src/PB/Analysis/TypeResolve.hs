@@ -7,11 +7,11 @@
 --   extractCallSites  :: Text -> Text -> SrFile -> [CallSite]
 --   extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
 --   resolveTypes      :: [LocalVar] -> IdentSet -> IdentSet -> [ResolvedType]
---   resolveCalls      :: [CallSite] -> Map Text (Set Text) -> Map Text Text -> Set Text -> Set Text -> [ResolvedCall]
---   resolveVirtual    :: Text -> Text -> Map Text (Set Text) -> Map Text Text -> (Maybe Text, Maybe Text, Text, Text)
---   resolveStaticCall :: Text -> Map Text (Set Text) -> (Maybe Text, Maybe Text, Text, Text)
+--   resolveCalls      :: [CallSite] -> Map Text IdentSet -> Map Text Text -> Set Text -> Set Text -> [ResolvedCall]
+--   resolveVirtual    :: Ident -> Text -> Map Text IdentSet -> Map Text Text -> (Maybe Text, Maybe Text, Text, Text)
+--   resolveStaticCall :: Text -> Map Text IdentSet -> (Maybe Text, Maybe Text, Text, Text)
 --   buildInheritsMap  :: [SrFile] -> Map Text Text
---   buildProcMap      :: [SrFile] -> Map Text (Set Text)
+--   buildProcMap      :: [SrFile] -> Map Text IdentSet
 --   buildObjectSet    :: [SrFile] -> IdentSet
 --   buildUserTypeSet  :: [SrFile] -> IdentSet
 module PB.Analysis.TypeResolve
@@ -50,7 +50,8 @@ import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.DataWindow  (DataWindowFile (..), DwControl (..))
 import PB.AST.Expr
-import PB.AST.Ident       (Ident, IdentSet, identOrig, identSetFromList, identSetLookup, mkIdent)
+import PB.AST.Ident       (Ident, IdentSet, identCanon, identOrig, identSetEmpty,
+                           identSetFromList, identSetLookup, identSetUnion, mkIdent)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText, renderPbType)
@@ -262,15 +263,17 @@ builtinClassNames = Set.fromList
 -- query's, so every consumer sees one canonical spelling per object.
 classifyPbType :: PbType -> IdentSet -> IdentSet -> (Text, Maybe Text)
 classifyPbType (PtPrimitive t)   _    _
-  | T.toLower t `Set.member` builtinClassNames = ("object",    Just (T.toLower t))
-  | otherwise                                  = ("primitive", Nothing)
+  | identCanon tIdent `Set.member` builtinClassNames = ("object",    Just (identCanon tIdent))
+  | otherwise                                        = ("primitive", Nothing)
+  where tIdent = mkIdent t
 classifyPbType (PtDecimalPrec _) _    _         = ("primitive", Nothing)
 classifyPbType PtAny             _    _         = ("any", Nothing)
 classifyPbType (PtUserDefined n) objs userTypes
-  | Just o <- identSetLookup (mkIdent n) objs       = ("object", Just (identOrig o))
-  | Just u <- identSetLookup (mkIdent n) userTypes  = ("user_type", Just (identOrig u))
-  | T.toLower n `Set.member` pbBuiltins             = ("primitive", Nothing)
+  | Just o <- identSetLookup nIdent objs           = ("object", Just (identOrig o))
+  | Just u <- identSetLookup nIdent userTypes      = ("user_type", Just (identOrig u))
+  | identCanon nIdent `Set.member` pbBuiltins       = ("primitive", Nothing)
   | otherwise                                       = ("unresolved", Nothing)
+  where nIdent = mkIdent n
 
 -- ---------------------------------------------------------------------------
 -- Parameter parsing
@@ -303,7 +306,7 @@ segName :: LvSegment -> Ident
 segName (LvSegment n _) = n
 
 dispatchName :: DispatchExpr -> Text
-dispatchName (DispatchExpr _ _ _ _ n _) = n
+dispatchName (DispatchExpr _ _ _ _ n _) = identOrig n
 
 lvalueName :: Lvalue -> Text
 lvalueName lv = T.intercalate "." (map (identOrig . segName) (segments lv))
@@ -409,7 +412,7 @@ callSitesExpr file obj proc_ mLine expr = case expr of
         { csFile     = file
         , csObject   = obj
         , csFromProc = proc_
-        , csToName   = m
+        , csToName   = identOrig m
         , csCallType = "ExMethodCall"
         , csLine     = mLine
         } ]
@@ -572,17 +575,23 @@ buildInheritsMap = Map.fromList . concatMap fileInherits
       [ (identOrig (tdName td), identOrig (tdAncestorClass td)) | td <- srAllTypeDecls sf ]
 
 -- | Build a proc map (object → set of proc names) from all procedures.
-buildProcMap :: [SrFile] -> Map.Map Text (Set.Set Text)
+-- The outer key stays the object's declared-casing 'Text' (unchanged —
+-- 'resolveVirtual''s ancestor-chain walk and 'resolveStaticCall''s object
+-- match both need to recover this exact declared spelling so the result
+-- round-trips through 'PB.Analysis.TypeCheck.tcParams', which is keyed the
+-- same way). The inner value is an 'IdentSet' so a call written with
+-- different casing than the procedure's own declaration still resolves.
+buildProcMap :: [SrFile] -> Map.Map Text IdentSet
 buildProcMap = foldl' addFile Map.empty
   where
     addFile acc sf =
       let obj   = srFileObject sf
-          names = Set.fromList $
-            map (identOrig . fnsName . fbSig) (srFunctions sf)
-            <> map (identOrig . ssName . sbSig) (srSubroutines sf)
-            <> map (identOrig . esName . evSig) (srEvents sf)
-            <> map obEvent (srOnBlocks sf)
-      in Map.insertWith Set.union obj names acc
+          names = identSetFromList $
+            map (fnsName . fbSig) (srFunctions sf)
+            <> map (ssName . sbSig) (srSubroutines sf)
+            <> map (esName . evSig) (srEvents sf)
+            <> map (mkIdent . obEvent) (srOnBlocks sf)
+      in Map.insertWith identSetUnion obj names acc
 
 -- | All window/userobject-derived type names (not structures).
 buildObjectSet :: [SrFile] -> IdentSet
@@ -645,57 +654,75 @@ ancestorChain start inherits = go [start] start
         else go (chain <> [parent]) parent
 
 -- | Resolve a non-dotted call via the caller's own procs and ancestor chain.
+-- @toName@ is the call site's identifier, minted once by the caller (either
+-- reused directly from an already-'Ident'-typed 'Expr' field, or minted once
+-- from a 'Text' wire field such as 'CallSite.csToName' — never re-derived
+-- via 'T.toLower' downstream of that single mint). The resolved procedure
+-- name in the result is always the matched declaration's own casing
+-- ('identOrig'), recovered via 'IdentSet', not the query's.
 resolveVirtual
-  :: Text
+  :: Ident
   -> Text
-  -> Map.Map Text (Set.Set Text)
+  -> Map.Map Text IdentSet
   -> Map.Map Text Text
   -> (Maybe Text, Maybe Text, Text, Text)
-resolveVirtual toName objN procMap inherits =
+resolveVirtual toNameIdent objN procMap inherits =
   let chain  = ancestorChain objN inherits
-      found  = [ anc
+      found  = [ (anc, orig)
                | anc <- chain
-               , toName `Set.member` Map.findWithDefault Set.empty anc procMap
+               , Just orig <- [identSetLookup toNameIdent (Map.findWithDefault identSetEmpty anc procMap)]
                ]
   in case found of
-       (anc:_) ->
+       ((anc, orig):_) ->
          let kind = if anc == objN then "virtual" else "inherited"
-         in (Just anc, Just toName, kind, "high")
+         in (Just anc, Just (identOrig orig), kind, "high")
        [] ->
          -- Global fallback: if this name exists in exactly one object outside the
          -- caller's ancestor chain, resolve there (matches Python global_procs logic).
          let chainSet    = Set.fromList chain
-             globalMatch = [ obj
+             globalMatch = [ (obj, orig)
                            | (obj, procs) <- Map.toList procMap
-                           , toName `Set.member` procs
+                           , Just orig <- [identSetLookup toNameIdent procs]
                            , obj `Set.notMember` chainSet
                            ]
          in case globalMatch of
-              [obj] -> (Just obj, Just toName, "virtual", "high")
-              _     -> (Nothing, Nothing, "unresolved", "low")
+              [(obj, orig)] -> (Just obj, Just (identOrig orig), "virtual", "high")
+              _             -> (Nothing, Nothing, "unresolved", "low")
 
 -- | Resolve a dotted @ClassName.procName@ static\/global call reference
 -- against the workspace proc map (does not consult @inherits@ — a static
 -- reference names its target class directly, no ancestor walk). Exported so
 -- 'PB.Analysis.TypeCheck.inferExpr''s 'ExCall' case can resolve the same
 -- dotted-call shape directly from an 'Expr' node rather than re-deriving
--- this dispatch a second time.
-resolveStaticCall :: Text -> Map.Map Text (Set.Set Text) -> (Maybe Text, Maybe Text, Text, Text)
+-- this dispatch a second time. Both the class and procedure segments are
+-- minted into 'Ident's here — this is their true origin, carved out of one
+-- compound dotted 'Text' for the first time — and matched case-insensitively;
+-- the returned object name is recovered from 'procMap''s own declared-casing
+-- key (a linear scan over the workspace's objects, once per dotted call site
+-- — negligible next to the corpus-wide volumes this pipeline already
+-- handles), not the call site's own spelling, so the result round-trips
+-- through 'PB.Analysis.TypeCheck.tcParams''s exact-Text keying.
+resolveStaticCall :: Text -> Map.Map Text IdentSet -> (Maybe Text, Maybe Text, Text, Text)
 resolveStaticCall toName procMap =
-  let objSet   = Map.keysSet procMap
-      firstSeg = T.takeWhile (/= '.') toName
-      lastSeg  = T.takeWhileEnd (/= '.') toName
-  in if firstSeg `Set.member` objSet
-       then
-         if lastSeg `Set.member` Map.findWithDefault Set.empty firstSeg procMap
-           then (Just firstSeg, Just lastSeg, "static", "high")
-           else (Just firstSeg, Nothing, "static", "medium")
-       else (Nothing, Nothing, "unresolved", "low")
+  let firstSeg      = T.takeWhile (/= '.') toName
+      lastSeg       = T.takeWhileEnd (/= '.') toName
+      firstSegIdent = mkIdent firstSeg
+      objMatch      = listToMaybe
+        [ (obj, procs)
+        | (obj, procs) <- Map.toList procMap
+        , identCanon (mkIdent obj) == identCanon firstSegIdent
+        ]
+  in case objMatch of
+       Nothing -> (Nothing, Nothing, "unresolved", "low")
+       Just (obj, procsForObj) ->
+         case identSetLookup (mkIdent lastSeg) procsForObj of
+           Just orig -> (Just obj, Just (identOrig orig), "static", "high")
+           Nothing   -> (Just obj, Nothing, "static", "medium")
 
 -- | Resolve all call sites to their targets using cross-file proc and inherits maps.
 resolveCalls
   :: [CallSite]
-  -> Map.Map Text (Set.Set Text)   -- proc_map: object → proc names
+  -> Map.Map Text IdentSet          -- proc_map: object → proc names
   -> Map.Map Text Text              -- inherits: child → parent
   -> Set.Set Text                   -- builtin free-function names (lowercase)
   -> Set.Set Text                   -- builtin method names (lowercase)
@@ -704,7 +731,7 @@ resolveCalls sites procMap inherits builtinFns builtinMethods =
   map (resolveOne procMap inherits builtinFns builtinMethods) sites
 
 resolveOne
-  :: Map.Map Text (Set.Set Text)
+  :: Map.Map Text IdentSet
   -> Map.Map Text Text
   -> Set.Set Text
   -> Set.Set Text
@@ -730,12 +757,14 @@ resolveOne procMap inherits builtinFns builtinMethods cs =
         let toName = csToName site
         in if "." `T.isInfixOf` toName
              then resolveStaticCall toName procMap
-             else if T.toLower toName `Set.member` builtinFns
+             else
+               let toNameIdent = mkIdent toName
+               in if identCanon toNameIdent `Set.member` builtinFns
                     then (Nothing, Nothing, "builtin", "high")
-                    else resolveVirtual toName (csObject site) procMap inherits
-      "ExCallArg"    -> resolveVirtual (csToName cs) (csObject cs) procMap inherits
+                    else resolveVirtual toNameIdent (csObject site) procMap inherits
+      "ExCallArg"    -> resolveVirtual (mkIdent (csToName cs)) (csObject cs) procMap inherits
       "ExMethodCall" ->
-        if T.toLower (csToName site) `Set.member` builtinMethods
+        if identCanon (mkIdent (csToName site)) `Set.member` builtinMethods
           then (Nothing, Nothing, "builtin", "high")
           else (Nothing, Nothing, "unresolved", "low")
       "ExDispatch"   -> (Nothing, Nothing, "unresolved", "low")

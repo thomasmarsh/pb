@@ -10,6 +10,7 @@ module PB.AST.Ident
   , identSetMember
   , identSetLookup
   , identSetToList
+  , identSetUnion
   ) where
 
 import PB.Prelude
@@ -75,3 +76,9 @@ identSetLookup needle (IdentSet m) = Map.lookup (identCanon needle) m
 
 identSetToList :: IdentSet -> [Ident]
 identSetToList (IdentSet m) = Map.elems m
+
+-- | Union of two 'IdentSet's. On a canonical-form collision, the first
+-- set's entry (and its casing) wins -- same left-biased tie-break as
+-- 'Data.Map.union'.
+identSetUnion :: IdentSet -> IdentSet -> IdentSet
+identSetUnion (IdentSet a) (IdentSet b) = IdentSet (Map.union a b)

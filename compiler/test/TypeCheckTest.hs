@@ -138,7 +138,7 @@ tests = testGroup "TypeCheck"
   , testGroup "inferExpr: ExCall/ExMethodCall return-type lookup (new)"
       [ testCase "resolved virtual call -> declared return type" $
           let ctx = baseCtx
-                { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_get"])]
+                { tcProcMap = Map.fromList [("w_main", identSetFromList ["of_get"])]
                 , tcParams  = Map.fromList [(("w_main", "of_get"), [ProcSignature [] (Just (PtPrimitive "integer"))])]
                 }
           in inferExpr ctx (callE "of_get") @?= Just FamNumeric
@@ -147,14 +147,14 @@ tests = testGroup "TypeCheck"
           let ctx = baseCtx
                 { tcEnv = (tcEnv baseCtx)
                     { steObject = "w_child", steHierarchy = Map.fromList [("w_child", "w_base")] }
-                , tcProcMap = Map.fromList [("w_base", Set.fromList ["of_get"])]
+                , tcProcMap = Map.fromList [("w_base", identSetFromList ["of_get"])]
                 , tcParams  = Map.fromList [(("w_base", "of_get"), [ProcSignature [] (Just (PtPrimitive "string"))])]
                 }
           in inferExpr ctx (callE "of_get") @?= Just FamString
 
       , testCase "call to a subroutine (no return type) -> Nothing" $
           let ctx = baseCtx
-                { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_do"])]
+                { tcProcMap = Map.fromList [("w_main", identSetFromList ["of_do"])]
                 , tcParams  = Map.fromList [(("w_main", "of_do"), [ProcSignature [] Nothing])]
                 }
           in inferExpr ctx (callE "of_do") @?= Nothing
@@ -165,7 +165,7 @@ tests = testGroup "TypeCheck"
 
       , testCase "dotted static call to another object's function -> declared return type" $
           let ctx = baseCtx
-                { tcProcMap = Map.fromList [("n_util", Set.fromList ["of_helper"])]
+                { tcProcMap = Map.fromList [("n_util", identSetFromList ["of_helper"])]
                 , tcParams  = Map.fromList [(("n_util", "of_helper"), [ProcSignature [] (Just (PtPrimitive "boolean"))])]
                 }
               e = ExCall { callee = Lvalue [LvSegment "n_util" Nothing, LvSegment "of_helper" Nothing], callArgs = [] }
@@ -174,7 +174,7 @@ tests = testGroup "TypeCheck"
       , testCase "method call on an object-typed local var -> resolved method's return type" $
           let ctx = (withVars [("lu_helper", PtUserDefined "n_util")] baseCtx)
                 { tcObjects = identSetSingleton "n_util"
-                , tcProcMap = Map.fromList [("n_util", Set.fromList ["of_helper"])]
+                , tcProcMap = Map.fromList [("n_util", identSetFromList ["of_helper"])]
                 , tcParams  = Map.fromList [(("n_util", "of_helper"), [ProcSignature [] (Just (PtPrimitive "long"))])]
                 }
               e = ExMethodCall { receiver = varE "lu_helper", method = "of_helper", methodArgs = [] }
@@ -308,7 +308,7 @@ tests = testGroup "TypeCheck"
   , testGroup "checkBody: call-argument checking (new)"
       [ testCase "incompatible call-arg literal flags CallArgMismatch" $
           let ctx = baseCtx
-                { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_take_int"])]
+                { tcProcMap = Map.fromList [("w_main", identSetFromList ["of_take_int"])]
                 , tcParams  = Map.fromList
                     [(("w_main", "of_take_int"), [ProcSignature [("ai_x", PtPrimitive "integer")] Nothing])]
                 }
@@ -317,7 +317,7 @@ tests = testGroup "TypeCheck"
 
       , testCase "compatible call-arg literal is not flagged" $
           let ctx = baseCtx
-                { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_take_int"])]
+                { tcProcMap = Map.fromList [("w_main", identSetFromList ["of_take_int"])]
                 , tcParams  = Map.fromList
                     [(("w_main", "of_take_int"), [ProcSignature [("ai_x", PtPrimitive "integer")] Nothing])]
                 }
@@ -325,7 +325,7 @@ tests = testGroup "TypeCheck"
 
       , testCase "call-arg typed through a caller-local variable is checked" $
           let ctx = (withVars [("ls_name", PtPrimitive "string")] baseCtx)
-                { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_take_int"])]
+                { tcProcMap = Map.fromList [("w_main", identSetFromList ["of_take_int"])]
                 , tcParams  = Map.fromList
                     [(("w_main", "of_take_int"), [ProcSignature [("ai_x", PtPrimitive "integer")] Nothing])]
                 }
@@ -338,7 +338,7 @@ tests = testGroup "TypeCheck"
                     { steLocal     = Map.fromList [("lw_child", PtUserDefined "w_child")]
                     , steHierarchy = Map.fromList [("w_child", "w_base")]
                     }
-                , tcProcMap  = Map.fromList [("w_main", Set.fromList ["of_take_base"])]
+                , tcProcMap  = Map.fromList [("w_main", identSetFromList ["of_take_base"])]
                 , tcParams   = Map.fromList
                     [(("w_main", "of_take_base"), [ProcSignature [("aw_x", PtUserDefined "w_base")] Nothing])]
                 , tcObjects  = identSetFromList ["w_base", "w_child"]
@@ -351,7 +351,7 @@ tests = testGroup "TypeCheck"
 
       , testCase "fewer call-args than declared params is not flagged (arity mismatch ignored)" $
           let ctx = baseCtx
-                { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_take_two"])]
+                { tcProcMap = Map.fromList [("w_main", identSetFromList ["of_take_two"])]
                 , tcParams  = Map.fromList
                     [ ( ("w_main", "of_take_two")
                       , [ProcSignature [("ai_x", PtPrimitive "integer"), ("as_y", PtPrimitive "string")] Nothing]
@@ -362,7 +362,7 @@ tests = testGroup "TypeCheck"
 
       , testCase "more call-args than declared params only checks the overlapping prefix" $
           let ctx = baseCtx
-                { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_take_one"])]
+                { tcProcMap = Map.fromList [("w_main", identSetFromList ["of_take_one"])]
                 , tcParams  = Map.fromList
                     [(("w_main", "of_take_one"), [ProcSignature [("ai_x", PtPrimitive "integer")] Nothing])]
                 }
@@ -371,7 +371,7 @@ tests = testGroup "TypeCheck"
 
       , testCase "a mistyped nested call's own argument is still checked" $
           let ctx = baseCtx
-                { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_outer", "of_inner"])]
+                { tcProcMap = Map.fromList [("w_main", identSetFromList ["of_outer", "of_inner"])]
                 , tcParams  = Map.fromList
                     [ (("w_main", "of_outer"), [ProcSignature [("ai_x", PtPrimitive "integer")] Nothing])
                     , ( ("w_main", "of_inner")
@@ -392,7 +392,7 @@ tests = testGroup "TypeCheck"
       -- overload it actually targets.
       [ testCase "call to a name with 2+ same-arity overloads is skipped (ambiguous, never guessed)" $
           let ctx = baseCtx
-                { tcProcMap = Map.fromList [("w_main", Set.fromList ["getstep"])]
+                { tcProcMap = Map.fromList [("w_main", identSetFromList ["getstep"])]
                 , tcParams  = Map.fromList
                     [ ( ("w_main", "getstep")
                       , [ ProcSignature [("as_stepname", PtPrimitive "string")]  (Just (PtUserDefined "bcv_step"))
@@ -405,7 +405,7 @@ tests = testGroup "TypeCheck"
 
       , testCase "return-type lookup for a same-arity-ambiguous overload is Nothing" $
           let ctx = baseCtx
-                { tcProcMap = Map.fromList [("w_main", Set.fromList ["getstep"])]
+                { tcProcMap = Map.fromList [("w_main", identSetFromList ["getstep"])]
                 , tcParams  = Map.fromList
                     [ ( ("w_main", "getstep")
                       , [ ProcSignature [("as_stepname", PtPrimitive "string")]  (Just (PtUserDefined "bcv_step"))
@@ -418,7 +418,7 @@ tests = testGroup "TypeCheck"
 
       , testCase "overloads differing by arity correctly disambiguate via the call's actual arg count" $
           let ctx = baseCtx
-                { tcProcMap = Map.fromList [("w_main", Set.fromList ["of_get"])]
+                { tcProcMap = Map.fromList [("w_main", identSetFromList ["of_get"])]
                 , tcParams  = Map.fromList
                     [ ( ("w_main", "of_get")
                       , [ ProcSignature [("ai_pos", PtPrimitive "integer")] (Just (PtPrimitive "long"))

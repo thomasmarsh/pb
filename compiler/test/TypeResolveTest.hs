@@ -10,7 +10,7 @@ import qualified Data.Text       as T
 
 import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Ident        (mkIdent, identSetEmpty, identSetSingleton)
+import PB.AST.Ident        (mkIdent, identSetEmpty, identSetFromList, identSetMember, identSetSingleton)
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type         (PbType (..))
@@ -299,7 +299,7 @@ tests = testGroup "TypeResolve"
                 , srFunctions  = [ mkFn "f_go" "" [] ]
                 }
               pm = buildProcMap [sf]
-          Set.member "f_go" (Map.findWithDefault Set.empty "w_test" pm) @?= True
+          identSetMember "f_go" (Map.findWithDefault identSetEmpty "w_test" pm) @?= True
       ]
 
   , testGroup "resolveTypes"
@@ -348,7 +348,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Just 5
                 }
-              pm = Map.singleton "w_t" (Set.singleton "f_helper")
+              pm = Map.singleton "w_t" (identSetSingleton "f_helper")
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
             [rc] -> do
               rcKind rc         @?= "virtual"
@@ -367,8 +367,8 @@ tests = testGroup "TypeResolve"
                 , csLine     = Nothing
                 }
               pm  = Map.fromList
-                      [ ("w_child",  Set.empty)
-                      , ("w_parent", Set.singleton "f_base")
+                      [ ("w_child",  identSetEmpty)
+                      , ("w_parent", identSetSingleton "f_base")
                       ]
               inh = Map.singleton "w_child" "w_parent"
           case resolveCalls [site] pm inh Set.empty Set.empty of
@@ -404,8 +404,8 @@ tests = testGroup "TypeResolve"
                 , csLine     = Just 10
                 }
               pm = Map.fromList
-                     [ ("w_main", Set.empty)
-                     , ("trn",    Set.singleton "trn")
+                     [ ("w_main", identSetEmpty)
+                     , ("trn",    identSetSingleton "trn")
                      ]
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
             [rc] -> do
@@ -426,9 +426,9 @@ tests = testGroup "TypeResolve"
                 , csLine     = Nothing
                 }
               pm = Map.fromList
-                     [ ("w_t",     Set.empty)
-                     , ("w_other", Set.singleton "f_helper")
-                     , ("w_third", Set.singleton "f_helper")
+                     [ ("w_t",     identSetEmpty)
+                     , ("w_other", identSetSingleton "f_helper")
+                     , ("w_third", identSetSingleton "f_helper")
                      ]
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
             [rc] -> rcKind rc @?= "unresolved"
@@ -444,8 +444,8 @@ tests = testGroup "TypeResolve"
                 , csLine     = Nothing
                 }
               pm = Map.fromList
-                     [ ("w_t",     Set.empty)
-                     , ("w_other", Set.singleton "f_method")
+                     [ ("w_t",     identSetEmpty)
+                     , ("w_other", identSetSingleton "f_method")
                      ]
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
             [rc] -> do
@@ -466,6 +466,44 @@ tests = testGroup "TypeResolve"
                 }
           case resolveCalls [site] Map.empty Map.empty Set.empty Set.empty of
             [rc] -> rcKind rc @?= "unresolved"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "bare call written in different case than its declaration → virtual high, declared casing recovered" $ do
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "f_go"
+                , csToName   = "F_Helper"
+                , csCallType = "ExCall"
+                , csLine     = Nothing
+                }
+              pm = Map.singleton "w_t" (identSetFromList ["f_helper"])
+          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
+            [rc] -> do
+              rcKind rc         @?= "virtual"
+              rcConfidence rc   @?= "high"
+              rcTargetProc   rc @?= Just "f_helper"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "dotted ExCall with both segments in different case than declared → static high, declared casing recovered" $ do
+          let site = CallSite
+                { csFile     = "t.srw"
+                , csObject   = "w_t"
+                , csFromProc = "f_go"
+                , csToName   = "W_Other.F_Method"
+                , csCallType = "ExCall"
+                , csLine     = Nothing
+                }
+              pm = Map.fromList
+                     [ ("w_t",     identSetEmpty)
+                     , ("w_other", identSetFromList ["f_method"])
+                     ]
+          case resolveCalls [site] pm Map.empty Set.empty Set.empty of
+            [rc] -> do
+              rcKind rc         @?= "static"
+              rcConfidence rc   @?= "high"
+              rcTargetObject rc @?= Just "w_other"
+              rcTargetProc   rc @?= Just "f_method"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
       ]
 
@@ -513,7 +551,7 @@ tests = testGroup "TypeResolve"
                 , csCallType = "ExCall"
                 , csLine     = Nothing
                 }
-              pm = Map.singleton "w_t" (Set.singleton "f_helper")
+              pm = Map.singleton "w_t" (identSetSingleton "f_helper")
           case resolveCalls [site] pm Map.empty Set.empty Set.empty of
             [rc] -> rcKind rc @?= "virtual"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))

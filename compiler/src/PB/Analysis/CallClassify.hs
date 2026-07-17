@@ -73,7 +73,7 @@ classifyExpr env (ExCall lv _) =
     _ -> PureCall
 classifyExpr env (ExMethodCall recv meth _) =
   case resolveReceiverType env recv of
-    Just ty | isTypedSuspend (steHierarchy env) ty (T.toLower meth) -> SuspendCall
+    Just ty | isTypedSuspend (steHierarchy env) ty (identCanon meth) -> SuspendCall
     _       -> PureCall
 classifyExpr _ _ = PureCall
 
@@ -100,7 +100,7 @@ classifyEffects env (ExCall lv _) =
     _ -> Set.empty
 classifyEffects env (ExMethodCall recv meth _) =
   case resolveReceiverType env recv of
-    Just ty -> typedEffectTags (steHierarchy env) ty (T.toLower meth)
+    Just ty -> typedEffectTags (steHierarchy env) ty (identCanon meth)
     Nothing -> Set.empty
 classifyEffects _ _ = Set.empty
 
@@ -229,7 +229,7 @@ calleeName (ExMethodCall recv m _) =
   let recvName = case recv of
         ExLvalue lv -> T.intercalate "." (map (identOrig . segName) (segments lv))
         _            -> "?"
-  in recvName <> "." <> m
+  in recvName <> "." <> identOrig m
 calleeName _ = "?"
 
 segName :: LvSegment -> Ident

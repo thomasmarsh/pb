@@ -317,6 +317,7 @@ identSetFromList  :: [Ident] -> IdentSet
 identSetMember    :: Ident -> IdentSet -> Bool
 identSetLookup    :: Ident -> IdentSet -> Maybe Ident
 identSetToList    :: IdentSet -> [Ident]
+identSetUnion     :: IdentSet -> IdentSet -> IdentSet   -- left-biased on a canonical collision, same as Map.union
 ```
 
 `TypeDecl.tdName` (Phase 1), `LvSegment.name` (Phase 2, `PB.AST.Expr`),
@@ -324,7 +325,14 @@ identSetToList    :: IdentSet -> [Ident]
 `GlobalInstance.giName` (Phase 4), `FnSig.fnsName`/`SubSig.ssName`/
 `EventSig.esName` (Phase 5), and `TypeFamily`'s `FamObject`/`FamUserType`
 payload plus `classifyFamily`'s `Set Text` args (Phase 6, now `IdentSet`)
-are `Ident` -- Plan 178 is complete, no deferred items remain.
+are `Ident` -- Plan 178 (Phases 1-6) is complete, no deferred items remain
+within that plan's own scope. A follow-up session (2026-07-17, outside Plan
+178's phase numbering) converted `DispatchExpr.name`/`ExMethodCall.method`/
+`ExCreate`'s payload to `Ident` too (see `PB.AST.Expr`'s own entry below) and
+fixed the sibling procedure-name case-sensitivity gap in
+`TypeResolve.resolveVirtual`/`resolveStaticCall`/`buildProcMap` (now
+`Map.Map Text IdentSet` — see BACKLOG's "found during Plan 178 Phase 5
+scoping" entry, now `[x]`).
 `TypeDecl.tdAncestor` stays `Text` deliberately (raw
 `AncestorClass\`LocalName` backtick-compound syntax, not a single identifier
 — `splitAncestorRef` parses it further, minted once into
@@ -335,9 +343,14 @@ are `Ident` -- Plan 178 is complete, no deferred items remain.
 
 ```haskell
 -- Field names are unprefixed (record-dot disambiguation under
--- DuplicateRecordFields). Token lists are [Text], NOT [Token]. name's
--- derived Eq is case-insensitive (Ident's own Eq, Plan 178 Phase 2) --
--- propagates to Lvalue's and Expr's own derived Eq for free.
+-- DuplicateRecordFields). Token lists are [Text], NOT [Token]. LvSegment's
+-- name, DispatchExpr's name, ExMethodCall's method, and ExCreate's payload
+-- are all Ident (not Text) -- every one of them a genuine PB identifier, so
+-- their derived Eq is case-insensitive (Ident's own Eq) and no consumer
+-- re-derives T.toLower for a case-insensitive comparison against them
+-- (2026-07-17 follow-up to Plan 178 Phase 2, closing the same gap for the
+-- remaining Expr identifier fields). ExEnum stays Text deliberately -- no
+-- consumer does case-folding on an enum constant.
 data LvSegment = LvSegment { name :: Ident, subscript :: Maybe [Text] }
 newtype Lvalue = Lvalue { segments :: [LvSegment] }   -- non-empty
 
@@ -349,7 +362,7 @@ data BinOp
 data DispatchMode = DmPost | DmTrigger | DmSync
 data DispatchExpr = DispatchExpr
   { object :: Maybe Lvalue, mode :: DispatchMode, dynamic :: Bool
-  , event :: Bool, name :: Text, args :: [[Token]] }
+  , event :: Bool, name :: Ident, args :: [[Token]] }
 
 data Expr
   = ExBool       Bool             | ExInt Text  | ExReal Text
@@ -357,9 +370,9 @@ data Expr
   | ExEnum       Text             -- enum constant (without trailing '!')
   | ExLvalue     Lvalue           -- bare ident / member chain / subscript
   | ExCall       { callee :: Lvalue, callArgs :: [[Token]] }
-  | ExMethodCall { receiver :: Expr, method :: Text, methodArgs :: [[Token]] }
+  | ExMethodCall { receiver :: Expr, method :: Ident, methodArgs :: [[Token]] }
   | ExDispatch   DispatchExpr     -- POST/TRIGGER/DYNAMIC/EVENT dispatch
-  | ExCreate     Text             -- CREATE ClassName
+  | ExCreate     Ident            -- CREATE ClassName
   | ExCreateUsing Expr            -- CREATE USING expr
   | ExArray      [Expr]
   | ExBinOp      { lhs :: Expr, op :: BinOp, rhs :: Expr }

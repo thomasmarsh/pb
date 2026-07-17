@@ -81,7 +81,7 @@ data ProcSignature = ProcSignature
 -- compile run.
 data TypeCheckCtx = TypeCheckCtx
   { tcEnv            :: ScopedTypeEnv
-  , tcProcMap        :: Map.Map Text (Set.Set Text)
+  , tcProcMap        :: Map.Map Text IdentSet
   , tcParams         :: Map.Map (Text, Text) [ProcSignature]
   , tcObjects        :: IdentSet
   , tcUserTypes      :: IdentSet
@@ -170,7 +170,7 @@ selectSignature sigs  arity = case filter ((== arity) . length . psParams) sigs 
 -- post-extraction), every field here is a pure function of @['SrFile']@
 -- alone, already available before any file is compiled.
 data TypeCheckWorkspace = TypeCheckWorkspace
-  { tcwProcMap   :: Map.Map Text (Set.Set Text)
+  { tcwProcMap   :: Map.Map Text IdentSet
   , tcwInherits  :: Map.Map Text Text
   , tcwParams    :: Map.Map (Text, Text) [ProcSignature]
   , tcwObjects   :: IdentSet
@@ -267,18 +267,20 @@ combineBinOp BopXor _          _          = Nothing
 -- a different root, not a second resolver.
 resolveCallTarget :: TypeCheckCtx -> Expr -> Maybe (Text, Text)
 resolveCallTarget ctx ExCall { callee = lv } =
-  let toName = T.intercalate "." (map (identOrig . segName) (segments lv))
-  in if "." `T.isInfixOf` toName
-       then case resolveStaticCall toName (tcProcMap ctx) of
-              (Just o, Just p, _, _) -> Just (o, p)
-              _                      -> Nothing
-       else if T.toLower toName `Set.member` tcBuiltinFns ctx
-              then Nothing
-              else case resolveVirtual toName (steObject (tcEnv ctx)) (tcProcMap ctx) (steHierarchy (tcEnv ctx)) of
-                     (Just o, Just p, _, _) -> Just (o, p)
-                     _                      -> Nothing
+  case segments lv of
+    [LvSegment nameIdent _] ->
+      if identCanon nameIdent `Set.member` tcBuiltinFns ctx
+        then Nothing
+        else case resolveVirtual nameIdent (steObject (tcEnv ctx)) (tcProcMap ctx) (steHierarchy (tcEnv ctx)) of
+               (Just o, Just p, _, _) -> Just (o, p)
+               _                      -> Nothing
+    _ ->
+      let toName = T.intercalate "." (map (identOrig . segName) (segments lv))
+      in case resolveStaticCall toName (tcProcMap ctx) of
+           (Just o, Just p, _, _) -> Just (o, p)
+           _                      -> Nothing
 resolveCallTarget ctx ExMethodCall { receiver = recv, method = m } =
-  if T.toLower m `Set.member` tcBuiltinMethods ctx
+  if identCanon m `Set.member` tcBuiltinMethods ctx
     then Nothing
     else case inferExpr ctx recv of
            Just (FamObject cls) ->
@@ -328,7 +330,7 @@ inferExpr ctx (ExNot e) = case inferExpr ctx e of
 inferExpr ctx (ExNeg e) = case inferExpr ctx e of
   Just FamNumeric -> Just FamNumeric
   _               -> Nothing
-inferExpr ctx (ExCreate cls) = Just (classifyClassName ctx cls)
+inferExpr ctx (ExCreate cls) = Just (classifyClassName ctx (identOrig cls))
 inferExpr ctx (ExCreateUsing (ExStr cls)) = Just (classifyClassName ctx cls)
 inferExpr _   (ExCreateUsing _) = Nothing
 inferExpr ctx e@ExCall{}       = resolveCallTarget ctx e >>= \t -> procReturnFamily ctx t (length (rawArgs e))
