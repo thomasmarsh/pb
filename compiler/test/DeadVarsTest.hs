@@ -248,4 +248,40 @@ tests = testGroup "DeadVars"
           pf  = analyzeProcedure "obj" "proc" cfg
           fs  = findDeadVars [localVar "li_x" 1] pf
       in kindsFor "li_x" fs @?= [NeverRead]
+
+  , testCase "declared as li_X, read elsewhere as li_x, is not flagged never-read (case-insensitive)" $
+      let blk = mkBlock "b0"
+            [ at 1 (BsLocalVar [] (PtPrimitive "integer") "li_X" (Just (ExInt "0")))
+            , at 2 (BsAssign (lv1 "li_y") (ExLvalue (lv1 "li_x")))
+            ]
+          cfg = mkCfg "b0" [blk] []
+          pf  = analyzeProcedure "obj" "proc" cfg
+          fs  = findDeadVars [localVar "li_X" 1] pf
+      in kindsFor "li_X" fs @?= []
+
+  , testCase "declared as SQLCA, defs/uses spelled sqlca throughout, still detects overwritten-before-read (case-insensitive)" $
+      let blk = mkBlock "b0"
+            [ at 1 (BsAssign (lv1 "sqlca") (ExInt "1"))
+            , at 2 (BsAssign (lv1 "sqlca") (ExInt "2"))
+            , at 3 (BsAssign (lv1 "li_y") (ExLvalue (lv1 "sqlca")))
+            ]
+          cfg = mkCfg "b0" [blk] []
+          pf  = analyzeProcedure "obj" "proc" cfg
+          fs  = findDeadVars [localVar "SQLCA" 0] pf
+      -- dvfVar preserves the def site's own casing ("sqlca" here), not the
+      -- declaration's ("SQLCA") -- lvNames matching is case-insensitive,
+      -- display is not.
+      in kindsFor "sqlca" fs @?= [OverwrittenBeforeRead]
+
+  , testCase "same-block reassignment WITH a differently-cased intervening read is not flagged (case-insensitive)" $
+      let blk = mkBlock "b0"
+            [ at 1 (BsAssign (lv1 "SQLCA") (ExInt "1"))
+            , at 2 (BsAssign (lv1 "li_y") (ExLvalue (lv1 "sqlca")))
+            , at 3 (BsAssign (lv1 "SQLCA") (ExInt "2"))
+            , at 4 (BsAssign (lv1 "li_z") (ExLvalue (lv1 "sqlca")))
+            ]
+          cfg = mkCfg "b0" [blk] []
+          pf  = analyzeProcedure "obj" "proc" cfg
+          fs  = findDeadVars [localVar "SQLCA" 0] pf
+      in kindsFor "SQLCA" fs @?= []
   ]

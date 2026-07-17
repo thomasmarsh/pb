@@ -14,6 +14,7 @@ module PB.Analysis.DeadVars
   ) where
 
 import PB.Prelude
+import PB.AST.Ident (Ident, identOrig, mkIdent)
 import PB.Analysis.Dataflow
   ( ProcFlow (..), BlockFlow (..), DefSite (..), UseSite (..) )
 import PB.Analysis.TypeResolve (LocalVar (..))
@@ -62,16 +63,20 @@ findDeadVars lvs pf = neverReadFindings <> unusedParamFindings <> overwrittenFin
     -- neverReadFindings/unusedParamFindings already apply; otherwise a
     -- read-then-write instance var (e.g. `if ib_flag then ib_flag = false`)
     -- looks identical to a genuine same-block dead store.
-    lvNames = Set.fromList (map lvVarName lvs)
+    -- 'Ident''s Eq/Ord is canonical (case-insensitive, PB variable names are
+    -- case-insensitive) -- minting one here at the declaration boundary is
+    -- the only canonicalization this module needs; the findings below
+    -- report 'lvVarName'/'identOrig (dsVar d)' verbatim for display.
+    lvNames = Set.fromList (map (mkIdent . lvVarName) lvs)
 
     neverReadFindings =
       [ DeadVarFinding (pfObject pf) (pfProc pf) (lvVarName lv) (Just (lvScopeLine lv)) NeverRead
-      | lv <- lvs, not (lvIsParam lv), not (Set.member (lvVarName lv) usedVars)
+      | lv <- lvs, not (lvIsParam lv), not (Set.member (mkIdent (lvVarName lv)) usedVars)
       ]
 
     unusedParamFindings =
       [ DeadVarFinding (pfObject pf) (pfProc pf) (lvVarName lv) (Just (lvScopeLine lv)) UnusedParam
-      | lv <- lvs, lvIsParam lv, not (Set.member (lvVarName lv) usedVars)
+      | lv <- lvs, lvIsParam lv, not (Set.member (mkIdent (lvVarName lv)) usedVars)
       ]
 
     overwrittenFindings =
@@ -84,7 +89,7 @@ findDeadVars lvs pf = neverReadFindings <> unusedParamFindings <> overwrittenFin
 -- | Walk one block's statements backward from its live-out set, flagging
 -- any def whose variable isn't live immediately afterward — i.e. the value
 -- it writes is clobbered or discarded before ever being read.
-deadStoresInBlock :: Text -> Text -> Set.Set Text -> Set.Set Text -> Set.Set Text -> BlockFlow -> [DeadVarFinding]
+deadStoresInBlock :: Text -> Text -> Set.Set Ident -> Set.Set Ident -> Set.Set Ident -> BlockFlow -> [DeadVarFinding]
 deadStoresInBlock obj proc lvNames usedVars blockLiveOut bf = go idxsDesc blockLiveOut
   where
     defByIdx  = Map.fromList [(dsStmtIdx d, d) | d <- bfDefs bf]
@@ -102,7 +107,7 @@ deadStoresInBlock obj proc lvNames usedVars blockLiveOut bf = go idxsDesc blockL
               , Set.member (dsVar d) lvNames
               , not (Set.member (dsVar d) live)
               , Set.member (dsVar d) usedVars
-              -> [DeadVarFinding obj proc (dsVar d) (dsLine d) OverwrittenBeforeRead]
+              -> [DeadVarFinding obj proc (identOrig (dsVar d)) (dsLine d) OverwrittenBeforeRead]
             _ -> []
           -- A partial def (`obj.field = x`) doesn't kill `obj`'s liveness --
           -- it overwrites one member, not the whole value. 'useSet' already

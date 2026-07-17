@@ -231,7 +231,7 @@ runPass67 conn = do
   uses <- queryProcUses       conn
   allRC <- queryResolvedCalls conn
   tfis  <- queryTaintInputs   conn
-  let globalVarNames = Set.fromList (map gvName gvs)
+  let globalVarNames = Set.fromList (map (mkIdent . gvName) gvs)
       allProcMetas   = concatMap Taint.tfiProcMetas tfis
       allSqlStmts    = concatMap Taint.tfiSqlStmts  tfis
       edges          = Taint.buildInterprocEdges allRC defs uses globalVarNames allProcMetas

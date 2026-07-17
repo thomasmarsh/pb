@@ -28,7 +28,7 @@ module PB.Analysis.Dataflow
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
-import PB.AST.Ident    (identOrig)
+import PB.AST.Ident    (Ident, mkIdent)
 import PB.AST.Located  (Located (..))
 import PB.Lexing.Token (Token (..))
 import PB.Analysis.Cfg (Cfg (..), CfgBlock (..), CfgEdge (..))
@@ -43,7 +43,12 @@ import qualified Data.Text       as T
 -- Output types
 
 data DefSite = DefSite
-  { dsVar     :: Text
+  { dsVar     :: Ident
+  -- ^ 'Ident''s 'Eq'/'Ord' compare only the canonical (lowercased) form --
+  -- PB variable names are case-insensitive -- while its 'ToJSON' renders
+  -- only the originally-declared-at-this-occurrence casing, so gen/kill/
+  -- reaching/live Set/Map operations below get case-insensitive identity
+  -- for free and the JSON @var_name@ wire field is unaffected.
   , dsBlock   :: Text
   , dsStmtIdx :: Int
   , dsLine    :: Maybe Int
@@ -58,7 +63,7 @@ data DefSite = DefSite
   } deriving (Eq, Show, Generic)
 
 data UseSite = UseSite
-  { usVar     :: Text
+  { usVar     :: Ident
   , usBlock   :: Text
   , usStmtIdx :: Int
   , usLine    :: Maybe Int
@@ -67,8 +72,8 @@ data UseSite = UseSite
 
 data BlockFlow = BlockFlow
   { bfBlockId :: Text
-  , bfGen     :: Set.Set Text
-  , bfKill    :: Set.Set Text
+  , bfGen     :: Set.Set Ident
+  , bfKill    :: Set.Set Ident
   , bfDefs    :: [DefSite]
   , bfUses    :: [UseSite]
   } deriving (Eq, Show, Generic)
@@ -77,33 +82,30 @@ data ProcFlow = ProcFlow
   { pfObject     :: Text
   , pfProc       :: Text
   , pfBlocks     :: Map.Map Text BlockFlow
-  , pfReachingIn  :: Map.Map Text (Set.Set Text)
-  , pfReachingOut :: Map.Map Text (Set.Set Text)
-  , pfLiveIn     :: Map.Map Text (Set.Set Text)
-  , pfLiveOut    :: Map.Map Text (Set.Set Text)
-  , pfAllDefs    :: Map.Map Text [DefSite]
-  , pfAllUses    :: Map.Map Text [UseSite]
+  , pfReachingIn  :: Map.Map Text (Set.Set Ident)
+  , pfReachingOut :: Map.Map Text (Set.Set Ident)
+  , pfLiveIn     :: Map.Map Text (Set.Set Ident)
+  , pfLiveOut    :: Map.Map Text (Set.Set Ident)
+  , pfAllDefs    :: Map.Map Ident [DefSite]
+  , pfAllUses    :: Map.Map Ident [UseSite]
   } deriving (Eq, Show, Generic)
 
 -- ---------------------------------------------------------------------------
 -- Lvalue root extraction
 
-lvRoot :: Lvalue -> Maybe Text
+lvRoot :: Lvalue -> Maybe Ident
 lvRoot lv = case segments lv of
-  (s:_) -> Just (segName s)
-  []    -> Nothing
-
--- | Original-cased text, not canonicalized -- def/use var-name matching
--- here is exact-Text (see BACKLOG's case-sensitivity finding, Plan 178
--- Phase 2), unlike every other 'segName' consumer in the codebase.
-segName :: LvSegment -> Text
-segName (LvSegment n _) = identOrig n
+  (LvSegment n _ : _) -> Just n
+  []                  -> Nothing
 
 -- ---------------------------------------------------------------------------
 -- Expression identifier extraction
 
--- | Extract all identifier names from an expression tree.
-walkExprIdents :: Expr -> Set.Set Text
+-- | Extract all identifier names from an expression tree. Every raw token/
+-- text source is minted into an 'Ident' via 'mkIdent' right here (the sole
+-- point where these particular occurrences become identity-comparable) --
+-- nothing downstream re-derives canonicalization.
+walkExprIdents :: Expr -> Set.Set Ident
 walkExprIdents = go
   where
     go (ExLvalue lv) =
@@ -117,10 +119,10 @@ walkExprIdents = go
       maybe Set.empty Set.singleton (lvRoot lv) <> lvalueSubscriptIdents lv
     go (ExCall lv args) =
       let root = maybe Set.empty Set.singleton (lvRoot lv)
-          argIdents = Set.fromList [tkText t | argToks <- args, t <- argToks, isIdent (tkText t)]
+          argIdents = Set.fromList [mkIdent (tkText t) | argToks <- args, t <- argToks, isIdent (tkText t)]
       in root <> argIdents
     go (ExMethodCall recv _ args) =
-      go recv <> Set.fromList [tkText t | argToks <- args, t <- argToks, isIdent (tkText t)]
+      go recv <> Set.fromList [mkIdent (tkText t) | argToks <- args, t <- argToks, isIdent (tkText t)]
     go (ExBinOp l _ r) = go l <> go r
     go (ExNot e) = go e
     go (ExNeg e) = go e
@@ -128,9 +130,9 @@ walkExprIdents = go
     go (ExCreateUsing e) = go e
     go (ExDispatch de) =
       let objIdents = maybe Set.empty go (fmap ExLvalue (object de))
-          argIdents = Set.fromList [tkText t | argToks <- args de, t <- argToks, isIdent (tkText t)]
+          argIdents = Set.fromList [mkIdent (tkText t) | argToks <- args de, t <- argToks, isIdent (tkText t)]
       in objIdents <> argIdents
-    go (ExRaw toks) = Set.fromList [t | t <- toks, isIdent t]
+    go (ExRaw toks) = Set.fromList [mkIdent t | t <- toks, isIdent t]
     go _ = Set.empty
 
 -- | Identifiers referenced in an lvalue's own subscript expressions (e.g.
@@ -140,9 +142,9 @@ walkExprIdents = go
 -- 'extractUseVars' for an assignment's own LHS, which is always a read of
 -- its subscript regardless of being the def target, and which is never
 -- itself wrapped in an 'ExLvalue' node for 'walkExprIdents' to see.
-lvalueSubscriptIdents :: Lvalue -> Set.Set Text
+lvalueSubscriptIdents :: Lvalue -> Set.Set Ident
 lvalueSubscriptIdents (Lvalue segs) =
-  Set.fromList [ t | LvSegment _ (Just toks) <- segs, t <- toks, isIdent t ]
+  Set.fromList [ mkIdent t | LvSegment _ (Just toks) <- segs, t <- toks, isIdent t ]
 
 -- | A valid PB identifier: first char alpha/underscore, rest alnum/underscore.
 -- Must match Python core/dataflow.py's _IDENT_RE (`^[a-zA-Z_][a-zA-Z0-9_]*$`)
@@ -162,13 +164,13 @@ isIdent t = case T.uncons t of
 -- Statement def/use extraction
 
 -- | Extract the defined variable name from a definition statement.
-extractDefVar :: BodyStmt -> Maybe Text
+extractDefVar :: BodyStmt -> Maybe Ident
 extractDefVar (BsAssign lv _)    = lvRoot lv
-extractDefVar (BsLocalVar _ _ n _) = Just n
+extractDefVar (BsLocalVar _ _ n _) = Just (mkIdent n)
 extractDefVar (BsFor ft)       = lvRoot (forVar ft)
-extractDefVar (BsAugAssign toks _ _) = listToMaybe [tkText t | t <- toks, isIdent (tkText t)]
-extractDefVar (BsInc toks)       = listToMaybe [tkText t | t <- toks, isIdent (tkText t)]
-extractDefVar (BsDec toks)       = listToMaybe [tkText t | t <- toks, isIdent (tkText t)]
+extractDefVar (BsAugAssign toks _ _) = mkIdent <$> listToMaybe [tkText t | t <- toks, isIdent (tkText t)]
+extractDefVar (BsInc toks)       = mkIdent <$> listToMaybe [tkText t | t <- toks, isIdent (tkText t)]
+extractDefVar (BsDec toks)       = mkIdent <$> listToMaybe [tkText t | t <- toks, isIdent (tkText t)]
 extractDefVar _                  = Nothing
 
 -- | True when a def only writes one member of a multi-segment lvalue
@@ -199,7 +201,7 @@ defKind _                = "assign"
 -- analyzed independently by extractDefsUses. Recursing into the bodies here
 -- would double-count every use inside if/for/do/choose blocks (this was the
 -- 111d-1 over-count bug: proc_uses 13824 vs the 11303 baseline).
-extractUseVars :: BodyStmt -> Set.Set Text
+extractUseVars :: BodyStmt -> Set.Set Ident
 extractUseVars stmt@(BsAssign lv rhs) =
   walkExprIdents rhs <> lvalueSubscriptIdents lv <> partialSelfUse
   where
@@ -231,8 +233,8 @@ extractUseVars (BsChoose cs) =
 extractUseVars (BsReturn mExpr) = maybe Set.empty walkExprIdents mExpr
 extractUseVars (BsCall expr)    = walkExprIdents expr
 extractUseVars (BsDestroy lv)   = maybe Set.empty Set.singleton (lvRoot lv)
-extractUseVars (BsAugAssign _ _ toks) = Set.fromList [tkText t | t <- toks, isIdent (tkText t)]
-extractUseVars (BsRaw txt)      = Set.fromList (extractSqlHostVars txt)
+extractUseVars (BsAugAssign _ _ toks) = Set.fromList [mkIdent (tkText t) | t <- toks, isIdent (tkText t)]
+extractUseVars (BsRaw txt)      = Set.fromList (map mkIdent (extractSqlHostVars txt))
 extractUseVars _ = Set.empty
 
 -- | Extract :identifier host-variable names referenced in embedded SQL.
@@ -310,13 +312,13 @@ buildPredMap = foldl' (\m e -> Map.insertWith (++) (ceDst e) [ceSrc e] m) Map.em
 
 -- | Iterative forward dataflow for reaching definitions.
 -- Returns (reaching_in, reaching_out) mapping block_id → set of variable names.
-reachingDefinitions :: Cfg -> Map.Map Text BlockFlow -> (Map.Map Text (Set.Set Text), Map.Map Text (Set.Set Text))
+reachingDefinitions :: Cfg -> Map.Map Text BlockFlow -> (Map.Map Text (Set.Set Ident), Map.Map Text (Set.Set Ident))
 reachingDefinitions cfg blockFlows = fix initial
   where
     blockIds = map cbId (cfgBlocks cfg)
     predMap  = buildPredMap (cfgEdges cfg)
 
-    initial :: (Map.Map Text (Set.Set Text), Map.Map Text (Set.Set Text))
+    initial :: (Map.Map Text (Set.Set Ident), Map.Map Text (Set.Set Ident))
     initial =
       let rIn  = Map.fromList [(bid, Set.empty) | bid <- blockIds]
           rOut = Map.fromList
@@ -325,8 +327,8 @@ reachingDefinitions cfg blockFlows = fix initial
             ]
       in (rIn, rOut)
 
-    fix :: (Map.Map Text (Set.Set Text), Map.Map Text (Set.Set Text))
-        -> (Map.Map Text (Set.Set Text), Map.Map Text (Set.Set Text))
+    fix :: (Map.Map Text (Set.Set Ident), Map.Map Text (Set.Set Ident))
+        -> (Map.Map Text (Set.Set Ident), Map.Map Text (Set.Set Ident))
     fix (rIn, rOut) =
       let (rIn', rOut', changed) = foldl' step (rIn, rOut, False) blockIds
       in if changed then fix (rIn', rOut') else (rIn', rOut')
@@ -364,7 +366,7 @@ buildSuccMap = foldl' (\m e -> Map.insertWith (++) (ceSrc e) [ceDst e] m) Map.em
 -- whatever reached the block on entry) — the standard liveness equations
 -- require this upward-exposed refinement; a raw union of 'bfUses' does not
 -- satisfy it.
-upwardExposedUses :: BlockFlow -> Set.Set Text
+upwardExposedUses :: BlockFlow -> Set.Set Ident
 upwardExposedUses bf = snd (foldl' step (Set.empty, Set.empty) idxsAsc)
   where
     idxsAsc   = Set.toAscList (Set.fromList (map dsStmtIdx (bfDefs bf) <> map usStmtIdx (bfUses bf)))
@@ -380,20 +382,20 @@ upwardExposedUses bf = snd (foldl' step (Set.empty, Set.empty) idxsAsc)
 -- Returns (live_in, live_out) mapping block_id → set of variable names.
 -- live_in[B]  = use[B] ∪ (live_out[B] − kill[B])
 -- live_out[B] = ∪ live_in[S] for successors S of B
-liveVariables :: Cfg -> Map.Map Text BlockFlow -> (Map.Map Text (Set.Set Text), Map.Map Text (Set.Set Text))
+liveVariables :: Cfg -> Map.Map Text BlockFlow -> (Map.Map Text (Set.Set Ident), Map.Map Text (Set.Set Ident))
 liveVariables cfg blockFlows = fix initial
   where
     blockIds = map cbId (cfgBlocks cfg)
     succMap  = buildSuccMap (cfgEdges cfg)
 
-    initial :: (Map.Map Text (Set.Set Text), Map.Map Text (Set.Set Text))
+    initial :: (Map.Map Text (Set.Set Ident), Map.Map Text (Set.Set Ident))
     initial =
       ( Map.fromList [(bid, Set.empty) | bid <- blockIds]
       , Map.fromList [(bid, Set.empty) | bid <- blockIds]
       )
 
-    fix :: (Map.Map Text (Set.Set Text), Map.Map Text (Set.Set Text))
-        -> (Map.Map Text (Set.Set Text), Map.Map Text (Set.Set Text))
+    fix :: (Map.Map Text (Set.Set Ident), Map.Map Text (Set.Set Ident))
+        -> (Map.Map Text (Set.Set Ident), Map.Map Text (Set.Set Ident))
     fix (lIn, lOut) =
       let (lIn', lOut', changed) = foldl' step (lIn, lOut, False) blockIds
       in if changed then fix (lIn', lOut') else (lIn', lOut')

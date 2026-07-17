@@ -53,7 +53,7 @@ import PB.AST.BodyStmt
   , IfStmt (..), ElseIf (..), ForStmt (..), DoStmt (..)
   , ChooseStmt (..), CaseClause (..)
   )
-import PB.AST.Ident        (identOrig)
+import PB.AST.Ident        (Ident, identOrig, mkIdent)
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.Analysis.Dataflow (extractSqlHostVars)
@@ -505,7 +505,7 @@ matchArgsToParams args params =
 buildInterprocEdges
   :: [ResolvedCallRow]
   -> [DefRow] -> [UseRow]
-  -> Set.Set Text
+  -> Set.Set Ident
   -> [ProcMeta]
   -> [InterprocEdge]
 buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
@@ -594,18 +594,29 @@ buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
       | otherwise = []  -- No callee param info for builtins in this pass
 
     globalEdges =
+      -- Keyed/probed by 'Ident' (canonical Eq/Ord) -- globalVarNames is
+      -- already Ident-typed (PB.Pipeline.Passes.runPass67 mints it once),
+      -- and PB variable names are case-insensitive, so a writer/reader pair
+      -- spelling the same global with different casing must still collapse
+      -- onto one key here (else they'd never be paired into an edge at
+      -- all). When they disagree, 'nubOrd's Set-based dedup keeps the last
+      -- value inserted on an Ord collision, and readers are concatenated
+      -- after writers below, so the reader's casing wins the displayed
+      -- 'ieVarName'/'ieCallerContext'/'ieCalleeContext' -- an arbitrary but
+      -- deterministic tie-break, not a "canonical declared spelling".
       let writers = HM.fromListWith Set.union
-            [ (drVarName d, Set.singleton (drObject d, drProcName d))
-            | d <- defs, drVarName d `Set.member` globalVarNames
+            [ (mkIdent (drVarName d), Set.singleton (drObject d, drProcName d))
+            | d <- defs, mkIdent (drVarName d) `Set.member` globalVarNames
             ]
           readers = HM.fromListWith Set.union
-            [ (urVarName u, Set.singleton (urObject u, urProcName u))
-            | u <- uses, urVarName u `Set.member` globalVarNames
+            [ (mkIdent (urVarName u), Set.singleton (urObject u, urProcName u))
+            | u <- uses, mkIdent (urVarName u) `Set.member` globalVarNames
             ]
           allGlobals = nubOrd (HM.keys writers ++ HM.keys readers)
       in [ InterprocEdge writerObj writerProc Nothing
-              readerObj readerProc "global_write" gvar gvar gvar
+              readerObj readerProc "global_write" gvarText gvarText gvarText
          | gvar <- allGlobals
+         , let gvarText = identOrig gvar
          , writerKey <- Set.toList (HM.findWithDefault Set.empty gvar writers)
          , readerKey <- Set.toList (HM.findWithDefault Set.empty gvar readers)
          , writerKey /= readerKey
@@ -621,7 +632,7 @@ buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
 buildProcedureSummaries
   :: [InterprocEdge]
   -> [DefRow] -> [UseRow]
-  -> Set.Set Text
+  -> Set.Set Ident
   -> [ProcMeta]
   -> [ProcedureSummary]
 buildProcedureSummaries edges defs uses globalVarNames procMetas =
@@ -646,12 +657,16 @@ buildProcedureSummaries edges defs uses globalVarNames procMetas =
     mkSummary pm =
       let key = (pmObject pm, pmName pm)
           paramsIn = map fst (parseParams (pmParams pm))
+          -- Membership probed via a freshly-minted Ident against
+          -- globalVarNames (already Ident-typed); the reported value keeps
+          -- this occurrence's own casing, same display/identity split as
+          -- Dataflow's dsVar/usVar.
           gRead = Set.toAscList $ Set.fromList
             [ urVarName u | u <- HM.findWithDefault [] key usesByProc
-            , urVarName u `Set.member` globalVarNames ]
+            , mkIdent (urVarName u) `Set.member` globalVarNames ]
           gWritten = Set.toAscList $ Set.fromList
             [ drVarName d | d <- HM.findWithDefault [] key defsByProc
-            , drVarName d `Set.member` globalVarNames ]
+            , mkIdent (drVarName d) `Set.member` globalVarNames ]
           retFlows = HM.findWithDefault [] key returnFlowsByCallee
       in ProcedureSummary (pmFile pm) (pmObject pm) (pmName pm)
            paramsIn gRead gWritten retFlows
@@ -869,7 +884,7 @@ taintAnalysis
   :: [ResolvedCallRow]    -- ^ resolved_calls.json
   -> [DefRow]             -- ^ proc_defs.json
   -> [UseRow]             -- ^ proc_uses.json
-  -> Set.Set Text         -- ^ global variable names
+  -> Set.Set Ident        -- ^ global variable names
   -> TaintFileInputs      -- ^ pre-extracted per-file data
   -> TaintResult
 taintAnalysis resolvedCalls defs uses globalVarNames tfi =

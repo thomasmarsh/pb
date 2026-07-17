@@ -94,6 +94,7 @@ library
     , filepath   >=1.4
     , mtl >=2.2
     , unordered-containers >=0.2
+    , hashable >=1.3
     , async >= 2.2
     , ghc-compact
     , time >= 1.9

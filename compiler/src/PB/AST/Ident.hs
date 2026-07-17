@@ -13,8 +13,9 @@ module PB.AST.Ident
   ) where
 
 import PB.Prelude
-import Data.Aeson  (ToJSON (..))
-import Data.String (IsString (..))
+import Data.Aeson     (ToJSON (..))
+import Data.Hashable  (Hashable (..))
+import Data.String    (IsString (..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Text       as T
 
@@ -34,6 +35,9 @@ instance Eq Ident where
 
 instance Ord Ident where
   compare a b = compare (identCanon a) (identCanon b)
+
+instance Hashable Ident where
+  hashWithSalt s = hashWithSalt s . identCanon
 
 instance Show Ident where
   show = show . identOrig

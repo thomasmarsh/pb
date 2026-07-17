@@ -110,6 +110,7 @@ module PB.Pipeline.DuckDb
   ) where
 
 import PB.Prelude
+import PB.AST.Ident             (identOrig)
 import PB.AST.Type             (parseTypeText)
 import PB.Analysis.TypeResolve
   ( LocalVar (..), CallSite (..), GlobalVar (..)
@@ -741,7 +742,7 @@ appendProcDefs pool flows = appendRow pool "proc_defs" $ \app ->
       aText     app file
       aText     app obj
       aText     app proc_
-      aText     app (Dataflow.dsVar d)
+      aText     app (identOrig (Dataflow.dsVar d))
       aText     app (Dataflow.dsBlock d)
       aInt      app (Dataflow.dsStmtIdx d)
       aMaybeInt app (Dataflow.dsLine d)
@@ -756,7 +757,7 @@ appendProcUses pool flows = appendRow pool "proc_uses" $ \app ->
       aText     app file
       aText     app obj
       aText     app proc_
-      aText     app (Dataflow.usVar u)
+      aText     app (identOrig (Dataflow.usVar u))
       aText     app (Dataflow.usBlock u)
       aInt      app (Dataflow.usStmtIdx u)
       aMaybeInt app (Dataflow.usLine u)

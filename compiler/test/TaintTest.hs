@@ -291,6 +291,23 @@ tests = testGroup "Taint"
           length edges @?= 2
           callees @?= Set.fromList ["or1", "or2"]
 
+    , testCase "global_write edge matches when writer/reader spell the global differently (case-insensitive)" $
+        let globalVars = Set.fromList ["g_counter"]  -- canonical set, as Passes.hs now builds it
+            defs = [defRow "w.srf" "oa" "procA" "G_Counter" 1 0]
+            uses = [useRow "w.srf" "ob" "procB" "G_COUNTER" 2 "rhs"]
+            edges = buildInterprocEdges [] defs uses globalVars []
+        in case edges of
+             [e] -> do
+               ieEdgeKind e @?= "global_write"
+               ieCallerObject e @?= "oa"
+               ieCalleeObject e @?= "ob"
+               -- Reader's casing wins the display tie-break (readers are
+               -- concatenated after writers before nubOrd's Set-based
+               -- dedup) -- see globalEdges' own comment; not asserting on
+               -- this would under-specify a real, deterministic behavior.
+               ieVarName e @?= "G_COUNTER"
+             _ -> error ("expected 1 global edge, got " <> show (length edges))
+
     , testCase "mutual recursion A↔B produces two arg edges without looping" $
         let rc = [ ResolvedCallRow "w.srf" "oa" "procA" "procB" "virtual"
                      (Just 1) (Just "ob") (Just "procB") "virtual" "high" Nothing
@@ -323,6 +340,18 @@ tests = testGroup "Taint"
              [s] -> do
                psGlobalsWritten s @?= ["g_a"]
                psGlobalsRead    s @?= ["g_b"]
+             _ -> error "expected 1 summary"
+
+    , testCase "globals_written/globals_read match a canonical global set despite differently-cased occurrences" $
+        let globalVars = Set.fromList ["g_a", "g_b"]  -- canonical set
+            defs = [defRow "w.srf" "obj" "proc1" "G_A" 1 0]
+            uses = [useRow "w.srf" "obj" "proc1" "G_B" 2 "rhs"]
+            metas = [ProcMeta "w.srf" "obj" "proc1" "function" "" "" Nothing]
+            summaries = buildProcedureSummaries [] defs uses globalVars metas
+        in case summaries of
+             [s] -> do
+               psGlobalsWritten s @?= ["G_A"]
+               psGlobalsRead    s @?= ["G_B"]
              _ -> error "expected 1 summary"
 
     , testCase "return_flows_to populated from return edges" $

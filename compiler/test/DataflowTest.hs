@@ -161,6 +161,20 @@ tests = testGroup "Dataflow"
             bf  = extractDefsUses blk
         in bfKill bf @?= Set.fromList ["x", "y"]
 
+    , testCase "gen/kill sets fold differently-cased defs of the same variable into one entry" $
+        -- Real-corpus shape (openpay.open): SQLCA is defined, then
+        -- re-defined as sqlca two lines later -- PB variable names are
+        -- case-insensitive, so these must collapse to a single gen/kill
+        -- entry, not two.
+        let blk = mkBlock "b0"
+              [ at 1 (BsAssign (lv1 "SQLCA") (ExInt "1"))
+              , at 2 (BsAssign (lv1 "sqlca") (ExInt "2"))
+              ]
+            bf  = extractDefsUses blk
+        in do
+          bfGen  bf @?= Set.singleton "sqlca"
+          bfKill bf @?= Set.singleton "sqlca"
+
     , testCase "BsRaw embedded SQL creates a use per :host_var" $
         let blk = mkBlock "b0"
               [ at 1 (BsRaw "select count(kodypal) into :ll_count from misth_ypal \
@@ -253,6 +267,15 @@ tests = testGroup "Dataflow"
             cfg = mkCfg "b0" [b0, b1] [CfgEdge "b0" "b1" ""]
             pf  = analyzeProcedure "obj" "proc" cfg
         in Map.findWithDefault Set.empty "b1" (pfReachingOut pf) @?= Set.singleton "x"
+
+    , testCase "def of SQLCA reaches a later use spelled sqlca (case-insensitive, real-corpus shape)" $
+        let b0 = mkBlock "b0" [at 1 (BsAssign (lv1 "SQLCA") (ExInt "1"))]
+            b1 = mkBlock "b1" [at 2 (BsAssign (lv1 "y") (ExLvalue (lv1 "sqlca")))]
+            cfg = mkCfg "b0" [b0, b1] [CfgEdge "b0" "b1" ""]
+            pf  = analyzeProcedure "obj" "proc" cfg
+        in do
+          Map.findWithDefault Set.empty "b1" (pfReachingIn pf) @?= Set.singleton "sqlca"
+          Map.findWithDefault Set.empty "b1" (pfReachingOut pf) @?= Set.fromList ["sqlca", "y"]
     ]
 
   , testGroup "analyzeProcedure"
@@ -325,6 +348,14 @@ tests = testGroup "Dataflow"
                     ]
             pf  = analyzeProcedure "obj" "proc" cfg
         in assertBool "a should be live-out of b0" ("a" `Set.member` Map.findWithDefault Set.empty "b0" (pfLiveOut pf))
+
+    , testCase "use of sqlca makes a differently-cased def of SQLCA live-out (case-insensitive)" $
+        let b0 = mkBlock "b0" [at 1 (BsAssign (lv1 "SQLCA") (ExInt "1"))]
+            b1 = mkBlock "b1" [at 2 (BsAssign (lv1 "y") (ExLvalue (lv1 "sqlca")))]
+            cfg = mkCfg "b0" [b0, b1] [CfgEdge "b0" "b1" ""]
+            pf  = analyzeProcedure "obj" "proc" cfg
+        in assertBool "sqlca should be live-out of b0"
+             ("sqlca" `Set.member` Map.findWithDefault Set.empty "b0" (pfLiveOut pf))
     ]
 
   -- -----------------------------------------------------------------------
@@ -393,5 +424,21 @@ tests = testGroup "Dataflow"
           assertBool "has kind"       (hasKey "kind" r)
           assertBool "no file key"    (not (hasKey "file" r))
           assertBool "no object key"  (not (hasKey "object" r))
+
+    , testCase "def rows preserve each occurrence's own casing even though gen/kill fold case-insensitively" $
+        -- Wire-format non-regression: canonicalizing variable IDENTITY for
+        -- the internal gen/kill/reaching/live fixpoints (see extractDefsUses
+        -- group) must not change what dsVar/var_name displays -- each row
+        -- keeps its own original per-occurrence spelling.
+        let blk = mkBlock "b0"
+              [ at 1 (BsAssign (lv1 "SQLCA") (ExInt "1"))
+              , at 2 (BsAssign (lv1 "sqlca") (ExInt "2"))
+              ]
+            cfg  = mkCfg "b0" [blk] []
+            pf   = analyzeProcedure "obj" "proc" cfg
+            rows = dataflowDefRows pf
+        in do
+          length rows @?= 2
+          map (fieldStr "var_name") rows @?= [String "SQLCA", String "sqlca"]
     ]
   ]
