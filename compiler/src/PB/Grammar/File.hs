@@ -19,6 +19,7 @@ import PB.Prelude
 import PB.Grammar.Body    (pBodyStmt)
 import PB.Grammar.Stream  (FileParser, StmtStream (..), leadingText, satisfyStmt, isModifierToken, currentLine)
 import PB.AST.BodyStmt    (BodyStmt)
+import PB.AST.Ident       (identOrig, mkIdent)
 import PB.AST.Located     (Located)
 import PB.AST.SourceFile
   ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
@@ -60,7 +61,7 @@ extractTypeDecl s =
       let within = case remainder of
             (w:cT:_) | T.toLower (tkText w) == "within" -> Just (tkText cT)
             _                                            -> Nothing
-      in Just TypeDecl { tdName = tkText nameT, tdAncestor = tkText ancT, tdWithin = within }
+      in Just TypeDecl { tdName = mkIdent (tkText nameT), tdAncestor = tkText ancT, tdWithin = within }
     _ -> Nothing
 
 pTypeDecl :: FileParser TypeDecl
@@ -372,7 +373,7 @@ resolveEventOwners :: [TopLevelBlock] -> [TopLevelBlock]
 resolveEventOwners = go Nothing
   where
     go _   []                          = []
-    go _   (TLType tb      : rest)     = TLType tb : go (Just (tdName (tbDecl tb))) rest
+    go _   (TLType tb      : rest)     = TLType tb : go (Just (identOrig (tdName (tbDecl tb)))) rest
     go ctx (TLEvent s e ev : rest)     = TLEvent s e (ev { evOwner = ctx }) : go ctx rest
     go ctx (other          : rest)     = other      : go ctx rest
 

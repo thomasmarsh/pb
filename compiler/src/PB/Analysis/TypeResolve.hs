@@ -50,6 +50,7 @@ import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.DataWindow  (DataWindowFile (..), DwControl (..))
 import PB.AST.Expr
+import PB.AST.Ident       (identOrig)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText, renderPbType)
@@ -302,7 +303,7 @@ lvalueName :: Lvalue -> Text
 lvalueName lv = T.intercalate "." (map segName (segments lv))
 
 srFileObject :: SrFile -> Text
-srFileObject = fst . srPrimaryObject
+srFileObject = identOrig . fst . srPrimaryObject
 
 -- ---------------------------------------------------------------------------
 -- Local variable extraction
@@ -531,8 +532,8 @@ extractDwControlBindings file sf =
   | tb <- srTypeBlocks sf
   , let decl = tbDecl tb
         (owner, ctrlName) = case tdWithin decl of
-          Just parent -> (parent, tdName decl)
-          Nothing     -> (tdName decl, "this")
+          Just parent -> (parent, identOrig (tdName decl))
+          Nothing     -> (identOrig (tdName decl), "this")
   , Just dwName <- [findLiteralDataObject (tbBody tb)]
   ]
 
@@ -562,7 +563,7 @@ buildInheritsMap :: [SrFile] -> Map.Map Text Text
 buildInheritsMap = Map.fromList . concatMap fileInherits
   where
     fileInherits sf =
-      [ (tdName td, fst (splitAncestorRef (tdAncestor td))) | td <- srAllTypeDecls sf ]
+      [ (identOrig (tdName td), fst (splitAncestorRef (tdAncestor td))) | td <- srAllTypeDecls sf ]
 
 -- | Build a proc map (object → set of proc names) from all procedures.
 buildProcMap :: [SrFile] -> Map.Map Text (Set.Set Text)
@@ -582,7 +583,7 @@ buildObjectSet :: [SrFile] -> Set.Set Text
 buildObjectSet = Set.fromList . concatMap fileObjs
   where
     fileObjs sf =
-      [ tdName td
+      [ identOrig (tdName td)
       | td <- srAllTypeDecls sf
       , T.toLower (tdAncestor td) /= "structure"
       ]
@@ -592,7 +593,7 @@ buildUserTypeSet :: [SrFile] -> Set.Set Text
 buildUserTypeSet = Set.fromList . concatMap fileUserTypes
   where
     fileUserTypes sf =
-      [ tdName td
+      [ identOrig (tdName td)
       | td <- srAllTypeDecls sf
       , T.toLower (tdAncestor td) == "structure"
       ]

@@ -21,6 +21,7 @@ module PB.Pipeline.Runner
 import PB.Prelude
 import PB.AST.BodyStmt   (BodyStmt (..))
 import PB.AST.DataWindow
+import PB.AST.Ident      (identOrig, identSetOrigTexts)
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type           (parseTypeText)
@@ -224,7 +225,8 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
     let sf   = pfSrFile pf
         sp   = pfSpans  pf
         fp   = T.pack (pfPath pf)
-        (obj, anc) = srPrimaryObject sf
+        (objIdent, anc) = srPrimaryObject sf
+        obj = identOrig objIdent
         userFns = Set.fromList
           $  map (T.toLower . fnsName . fbSig) (srFunctions  sf)
           <> map (T.toLower . ssName  . sbSig) (srSubroutines sf)
@@ -320,10 +322,10 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                 -- data" fix 'scopedParams' above already applies for
                 -- DeadVars.
                 paramScope = Map.fromList
-                  [ (T.toLower n, classifyFamily t (tcwObjects tcw) (tcwUserTypes tcw))
+                  [ (T.toLower n, classifyFamily t (identSetOrigTexts (tcwObjects tcw)) (identSetOrigTexts (tcwUserTypes tcw)))
                   | (n, t) <- parseParams instrParams ]
                 bodyScope = Map.map
-                  (\t -> classifyFamily t (tcwObjects tcw) (tcwUserTypes tcw))
+                  (\t -> classifyFamily t (identSetOrigTexts (tcwObjects tcw)) (identSetOrigTexts (tcwUserTypes tcw)))
                   (collectBodyLocals body)
                 -- Same per-instance reasoning as paramScope: the enclosing
                 -- procedure's own declared return type comes straight from

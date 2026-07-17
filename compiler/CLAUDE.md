@@ -297,6 +297,40 @@ data Located a = Located
   } deriving (Eq, Show, Generic)
 ```
 
+### `PB.AST.Ident` (Plan 178 Phase 1, 2026-07-16)
+
+```haskell
+-- A PB identifier: originally-declared casing + canonicalized (lowercase)
+-- form. Eq/Ord compare only identCanon; ToJSON renders identOrig only (wire
+-- format unchanged from the plain-Text fields it replaces). IsString via
+-- mkIdent, so OverloadedStrings literals ("w_main" :: Ident) work.
+data Ident = Ident { identOrig :: Text, identCanon :: Text }
+mkIdent :: Text -> Ident
+
+-- Canonical-keyed set recovering original casing on lookup -- replaces the
+-- Set.toList+T.toLower linear-scan shape PB.Analysis.TypeCheck's
+-- findOriginalCase used to hand-roll.
+newtype IdentSet = IdentSet (Map.Map Text Ident)   -- constructor not exported
+identSetEmpty     :: IdentSet
+identSetSingleton :: Ident -> IdentSet
+identSetFromList  :: [Ident] -> IdentSet
+identSetMember    :: Ident -> IdentSet -> Bool
+identSetLookup    :: Ident -> IdentSet -> Maybe Ident
+identSetToList    :: IdentSet -> [Ident]
+identSetOrigTexts :: IdentSet -> Set.Set Text
+-- ^ Bridge to legacy Set.Set Text consumers not yet migrated to Ident
+-- (e.g. PB.Analysis.TypeMismatch.classifyFamily) -- reconstructs the same
+-- originally-declared spellings an IdentSet recovers on lookup.
+```
+
+Only `TypeDecl.tdName` is `Ident` so far (Phase 1's pilot conversion,
+`PB.AST.SourceFile`). Every other identifier-bearing AST field
+(`LvSegment.name`, `VarDecl.vdName`, `GlobalInstance.giName`, `FnSig.fnsName`,
+etc.) is still `Text` — see `doc/plan/178-canonical-identifier.md`'s
+"Deferred scope" for the ordered rollout. `TypeDecl.tdAncestor` stays `Text`
+deliberately (raw `AncestorClass\`LocalName` backtick-compound syntax, not a
+single identifier — `splitAncestorRef` parses it further).
+
 ### `PB.AST.Expr`
 
 ```haskell
@@ -495,7 +529,9 @@ data ProtoDecl       = ProtoFn FnSig | ProtoSub SubSig | ProtoEv EventSig
 data VariablesBlock = VariablesBlock { varScope :: VarScope, varDecls :: [VarDecl] }
 data VarScope       = GlobalVars | TypeVars
 
-data TypeDecl = TypeDecl { tdName :: Text, tdAncestor :: Text, tdWithin :: Maybe Text }
+data TypeDecl = TypeDecl { tdName :: Ident, tdAncestor :: Text, tdWithin :: Maybe Text }
+-- tdName is Ident (Plan 178 Phase 1); tdAncestor stays Text (backtick-compound
+-- syntax, see PB.AST.Ident's own entry above).
 data TypeBlock = TypeBlock { tbDecl :: TypeDecl, tbBody :: [Located BodyStmt] }
 data VarDecl   = VarDecl  { vdModifiers :: [Text], vdType :: Text, vdName :: Text }
 data GlobalInstance = GlobalInstance { giType :: Text, giName :: Text }
@@ -510,7 +546,7 @@ data EventBlock      = EventBlock      { evSig :: EventSig, evOwner :: Maybe Tex
 data OnBlock         = OnBlock         { obQualName :: Text, obOwner :: Text, obEvent :: Text, obBody :: [Located BodyStmt] }
 
 srAllTypeDecls  :: SrFile -> [TypeDecl]           -- srTypeBlocks decls, then forward-only decls
-srPrimaryObject :: SrFile -> (Text, Maybe Text)   -- (name, ancestor) of the file's own object
+srPrimaryObject :: SrFile -> (Ident, Maybe Text)   -- (name, ancestor) of the file's own object; name is Ident since Plan 178 Phase 1, ancestor stays Text
 splitAncestorRef :: Text -> (Text, Maybe Text)
 -- Plan 164 Phase A (2026-07-10). Splits PowerBuilder's "AncestorClass`LocalName"
 -- control-override syntax (e.g. tdAncestor = "w_form_tab2`page1", meaning

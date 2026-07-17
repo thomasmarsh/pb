@@ -67,6 +67,7 @@ module PB.Analysis.ControlHierarchy
   ) where
 
 import PB.Prelude
+import PB.AST.Ident       (identOrig)
 import PB.AST.SourceFile
 import PB.Analysis.TypeResolve (findLiteralDataObject)
 import qualified Data.Map.Strict as Map
@@ -102,12 +103,12 @@ buildControlIndex :: [SrFile] -> ControlIndex
 buildControlIndex sfs = Map.fromList
   [ ((T.toLower root, T.toLower owner, T.toLower name), decl)
   | sf <- sfs
-  , let root = fst (srPrimaryObject sf)
+  , let root = identOrig (fst (srPrimaryObject sf))
   , tb <- srTypeBlocks sf
   , let td = tbDecl tb
         (owner, name) = case tdWithin td of
-          Just parent -> (parent, tdName td)
-          Nothing     -> (tdName td, "this")
+          Just parent -> (parent, identOrig (tdName td))
+          Nothing     -> (identOrig (tdName td), "this")
         (ancestorClass, overridesName) = splitAncestorRef (tdAncestor td)
         decl = ControlDecl
           { cdOwner         = T.toLower owner

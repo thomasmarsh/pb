@@ -17,6 +17,7 @@ import PB.AST.DataWindow
   , DataWindowFile (..), DwObjectAttrs (..), DwTable (..)
   )
 import PB.AST.Expr         (Expr (..))
+import PB.AST.Ident        (identOrig)
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile   (TypeBlock (..), TypeDecl (..), srPrimaryObject, srFunctions, FunctionBlock (..), FnSig (..))
 import PB.AST.Type         (PbType (..))
@@ -345,7 +346,8 @@ tests = testGroup "Pipeline.Runner"
         Left err -> testCase "fixture parses" (assertFailure ("fixture failed to parse: " <> T.unpack err))
         Right (sf, spans) ->
           let ws           = buildWorkspaceEnv [sf]
-              (objName, _) = srPrimaryObject sf
+              (objNameIdent, _) = srPrimaryObject sf
+              objName       = identOrig objNameIdent
               fb            = case srFunctions sf of { (f:_) -> f; [] -> error "impossible: fixture has one function" }
               body          = fbBody fb
               userFns       = Set.fromList [T.toLower (fnsName (fbSig fb))]

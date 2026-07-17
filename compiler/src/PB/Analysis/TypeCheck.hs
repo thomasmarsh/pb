@@ -42,6 +42,7 @@ module PB.Analysis.TypeCheck
 import PB.Prelude
 import PB.AST.BodyStmt
 import PB.AST.Expr
+import PB.AST.Ident       (IdentSet, identOrig, identSetFromList, identSetLookup, identSetOrigTexts, mkIdent)
 import PB.AST.Located     (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type        (PbType (..), parseTypeText)
@@ -76,8 +77,8 @@ data TypeCheckCtx = TypeCheckCtx
   , tcProcMap        :: Map.Map Text (Set.Set Text)
   , tcInherits       :: Map.Map Text Text
   , tcParams         :: Map.Map (Text, Text) [ProcSignature]
-  , tcObjects        :: Set.Set Text
-  , tcUserTypes      :: Set.Set Text
+  , tcObjects        :: IdentSet
+  , tcUserTypes      :: IdentSet
   , tcObject         :: Text
   , tcControlIdx     :: ControlIndex
   , tcBuiltinFns     :: Set.Set Text
@@ -168,8 +169,8 @@ data TypeCheckWorkspace = TypeCheckWorkspace
   { tcwProcMap   :: Map.Map Text (Set.Set Text)
   , tcwInherits  :: Map.Map Text Text
   , tcwParams    :: Map.Map (Text, Text) [ProcSignature]
-  , tcwObjects   :: Set.Set Text
-  , tcwUserTypes :: Set.Set Text
+  , tcwObjects   :: IdentSet
+  , tcwUserTypes :: IdentSet
   }
 
 -- | Build once from every parsed file in the workspace. The object\/
@@ -183,9 +184,9 @@ buildTypeCheckWorkspace sfs = TypeCheckWorkspace
   { tcwProcMap   = buildProcMap sfs
   , tcwInherits  = buildInheritsMap sfs
   , tcwParams    = buildParamsMap sfs
-  , tcwObjects   = Set.fromList
+  , tcwObjects   = identSetFromList
       [ o | (o, anc) <- allObjs, maybe True ((/= "structure") . T.toLower) anc ]
-  , tcwUserTypes = Set.fromList
+  , tcwUserTypes = identSetFromList
       [ o | (o, Just anc) <- allObjs, T.toLower anc == "structure" ]
   }
   where allObjs = map srPrimaryObject sfs
@@ -206,15 +207,9 @@ segName (LvSegment n _) = n
 -- a lowercased payload would silently never match 'tcInherits'' keys.
 classifyClassName :: TypeCheckCtx -> Text -> TypeFamily
 classifyClassName ctx cls
-  | Just orig <- findOriginalCase cls (tcObjects ctx)   = FamObject orig
-  | Just orig <- findOriginalCase cls (tcUserTypes ctx) = FamUserType orig
-  | otherwise                                           = FamAny
-
-findOriginalCase :: Text -> Set.Set Text -> Maybe Text
-findOriginalCase needle haystack = case matches of
-  (o:_) -> Just o
-  []    -> Nothing
-  where matches = [ o | o <- Set.toList haystack, T.toLower o == T.toLower needle ]
+  | Just orig <- identOrig <$> identSetLookup (mkIdent cls) (tcObjects ctx)   = FamObject orig
+  | Just orig <- identOrig <$> identSetLookup (mkIdent cls) (tcUserTypes ctx) = FamUserType orig
+  | otherwise                                                                 = FamAny
 
 -- | Combine two already-typed operand families through a 'BinOp'. Mirrors
 -- 'PB.Compile.ValueModel.evalBinOp'\/'numericOp''s existing runtime widening
@@ -284,7 +279,7 @@ procReturnFamily ctx target arity = do
   sigs  <- Map.lookup target (tcParams ctx)
   sig   <- selectSignature sigs arity
   retTy <- psReturnType sig
-  Just (classifyFamily retTy (tcObjects ctx) (tcUserTypes ctx))
+  Just (classifyFamily retTy (identSetOrigTexts (tcObjects ctx)) (identSetOrigTexts (tcUserTypes ctx)))
 
 -- | A partial, compositional expression typer. 'Nothing' means "cannot
 -- determine statically" — never a guess. Supersedes
@@ -365,7 +360,7 @@ callArgFindings ctx procN line e = concatMap oneCall (callExprsIn e)
         Just sig ->
           [ TypeMismatchFinding (tcObject ctx) procN line paramN (renderFamily paramFam) (rhsDesc argExpr) CallArgMismatch
           | ((paramN, paramTy), argToks) <- zip (psParams sig) (rawArgs callExpr)
-          , let paramFam = classifyFamily paramTy (tcObjects ctx) (tcUserTypes ctx)
+          , let paramFam = classifyFamily paramTy (identSetOrigTexts (tcObjects ctx)) (identSetOrigTexts (tcUserTypes ctx))
           , let argExpr  = parseExpr argToks
           , Just argFam <- [inferExpr ctx argExpr]
           , not (compatible (tcInherits ctx) paramFam argFam)
@@ -397,7 +392,7 @@ returnFinding :: TypeCheckCtx -> Text -> Int -> Expr -> [TypeMismatchFinding]
 returnFinding ctx procN line e =
   [ TypeMismatchFinding (tcObject ctx) procN line procN (renderFamily retFam) (rhsDesc e) ReturnMismatch
   | Just retTy <- [tcOwnReturnType ctx]
-  , let retFam = classifyFamily retTy (tcObjects ctx) (tcUserTypes ctx)
+  , let retFam = classifyFamily retTy (identSetOrigTexts (tcObjects ctx)) (identSetOrigTexts (tcUserTypes ctx))
   , Just eFam  <- [inferExpr ctx e]
   , not (compatible (tcInherits ctx) retFam eFam)
   ]

@@ -6,6 +6,7 @@ import qualified Data.Set        as Set
 
 import PB.AST.BodyStmt
 import PB.AST.Expr
+import PB.AST.Ident       (identSetEmpty, identSetFromList, identSetSingleton)
 import PB.AST.Located     (Located (..))
 import PB.AST.Type        (PbType (..))
 import PB.Analysis.ControlHierarchy (ControlDecl (..))
@@ -25,8 +26,8 @@ baseCtx = TypeCheckCtx
   , tcProcMap        = Map.empty
   , tcInherits       = Map.empty
   , tcParams         = Map.empty
-  , tcObjects        = Set.empty
-  , tcUserTypes      = Set.empty
+  , tcObjects        = identSetEmpty
+  , tcUserTypes      = identSetEmpty
   , tcObject         = "w_main"
   , tcControlIdx     = Map.empty
   , tcBuiltinFns     = Set.empty
@@ -181,15 +182,15 @@ tests = testGroup "TypeCheck"
 
   , testGroup "inferExpr: ExCreate/ExCreateUsing (new)"
       [ testCase "CREATE a known object class -> FamObject" $
-          let ctx = baseCtx { tcObjects = Set.singleton "n_cst_util" }
+          let ctx = baseCtx { tcObjects = identSetSingleton "n_cst_util" }
           in inferExpr ctx (ExCreate "n_cst_util") @?= Just (FamObject "n_cst_util")
       , testCase "CREATE a known object class, case-insensitive match" $
-          let ctx = baseCtx { tcObjects = Set.singleton "n_cst_util" }
+          let ctx = baseCtx { tcObjects = identSetSingleton "n_cst_util" }
           in inferExpr ctx (ExCreate "N_CST_UTIL") @?= Just (FamObject "n_cst_util")
       , testCase "CREATE an unknown class -> any (never guess)" $
           inferExpr baseCtx (ExCreate "xyz_unknown") @?= Just FamAny
       , testCase "CREATE USING a literal class name -> same as CREATE" $
-          let ctx = baseCtx { tcObjects = Set.singleton "n_cst_util" }
+          let ctx = baseCtx { tcObjects = identSetSingleton "n_cst_util" }
           in inferExpr ctx (ExCreateUsing (ExStr "n_cst_util")) @?= Just (FamObject "n_cst_util")
       , testCase "CREATE USING a non-literal expression -> Nothing" $
           inferExpr baseCtx (ExCreateUsing (varE "ls_classname")) @?= Nothing
@@ -207,7 +208,7 @@ tests = testGroup "TypeCheck"
                                 , cdOverridesName = Nothing, cdDwBinding = Nothing }
                   )
                 ]
-              ctx = baseCtx { tcObjects = Set.singleton "uo_epidom", tcControlIdx = idx }
+              ctx = baseCtx { tcObjects = identSetSingleton "uo_epidom", tcControlIdx = idx }
               e = ExLvalue (Lvalue [LvSegment "tab1" Nothing, LvSegment "page1" Nothing])
           in inferExpr ctx e @?= Just (FamObject "uo_epidom")
 
@@ -325,7 +326,7 @@ tests = testGroup "TypeCheck"
                 , tcProcMap  = Map.fromList [("w_main", Set.fromList ["of_take_base"])]
                 , tcParams   = Map.fromList
                     [(("w_main", "of_take_base"), [ProcSignature [("aw_x", PtUserDefined "w_base")] Nothing])]
-                , tcObjects  = Set.fromList ["w_base", "w_child"]
+                , tcObjects  = identSetFromList ["w_base", "w_child"]
                 }
           in checkBody ctx "of_test" [Located 5 (BsCall (callWithArgs "of_take_base" [identTok "lw_child"]))] @?= []
 

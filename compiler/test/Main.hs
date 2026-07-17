@@ -26,6 +26,7 @@ import qualified CorpusInvariantTest
 import qualified CorpusTest
 import qualified DataWindowTest
 import qualified FileTest
+import qualified IdentTest
 import qualified PbApiTest
 import qualified PipelineTest
 import qualified RunnerTest
@@ -80,6 +81,7 @@ tests = testGroup "pb-compiler"
   , CorpusTest.tests
   , DataWindowTest.tests
   , FileTest.tests
+  , IdentTest.tests
   , PbApiTest.tests
   , PipelineTest.tests
   , RunnerTest.tests

@@ -3,6 +3,7 @@ module ControlHierarchyTest (tests, withFyloFixture) where
 import PB.Prelude
 import PB.AST.SourceFile        (SrFile (..), TypeDecl (..), TypeBlock (..))
 import PB.AST.BodyStmt          (BodyStmt (..))
+import PB.AST.Ident             (mkIdent)
 import PB.AST.Expr               (Expr (..))
 import PB.AST.Located            (Located (..))
 import PB.AST.Type               (PbType (..))
@@ -32,7 +33,7 @@ dataObjectBody dw = [Located 1 (BsLocalVar [] (PtPrimitive "string") "dataobject
 -- how every real .srw/.sru file always self-declares its own outer type
 -- block first.
 topLevel :: Text -> TypeBlock
-topLevel name = TypeBlock (TypeDecl name "window" Nothing) []
+topLevel name = TypeBlock (TypeDecl (mkIdent name) "window" Nothing) []
 
 tests :: TestTree
 tests = testGroup "ControlHierarchy"

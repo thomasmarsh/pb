@@ -53,6 +53,7 @@ import PB.AST.BodyStmt
   , IfStmt (..), ElseIf (..), ForStmt (..), DoStmt (..)
   , ChooseStmt (..), CaseClause (..)
   )
+import PB.AST.Ident        (identOrig)
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.Analysis.Dataflow (extractSqlHostVars)
@@ -402,7 +403,7 @@ extractProcMeta file sf =
   <> map evMeta (srEvents sf)
   <> map obMeta (srOnBlocks sf)
   where
-    objName = fst (srPrimaryObject sf)
+    objName = identOrig (fst (srPrimaryObject sf))
     fnMeta fb = ProcMeta
       { pmFile = file, pmObject = objName
       , pmName = fnsName (fbSig fb), pmProcType = "function"
@@ -433,7 +434,7 @@ extractProcMeta file sf =
 -- can be held cheaply and passed to taintAnalysis after the SrFile is released.
 extractTaintInputs :: Text -> SrFile -> TaintFileInputs
 extractTaintInputs file sf =
-  let objName  = fst (srPrimaryObject sf)
+  let objName  = identOrig (fst (srPrimaryObject sf))
       bodies   = [ (objName, fnsName (fbSig fb), fbBody fb) | fb <- srFunctions   sf ]
               <> [ (objName, ssName  (sbSig sb), sbBody sb) | sb <- srSubroutines sf ]
               <> [ (objName, esName  (evSig ev), evBody ev) | ev <- srEvents      sf ]

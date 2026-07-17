@@ -18,6 +18,7 @@ import PB.Prelude
 import PB.AST.BodyStmt   (BodyStmt (..))
 import PB.AST.DataWindow
 import PB.AST.Expr       (Expr (..))
+import PB.AST.Ident      (identCanon, identOrig)
 import PB.AST.Located    (Located (..))
 import PB.AST.SourceFile
 import PB.Grammar.DataWindow (parseDataWindow)
@@ -125,7 +126,8 @@ parsePowerScriptFile src = do
 
 wrapSrFile :: Bool -> FilePath -> SrFile -> SrSpans -> WorkspaceEnv -> Value
 wrapSrFile withInstr path sf spans ws =
-    let (objName, ancestor) = srPrimaryObject sf
+    let (objNameIdent, ancestor) = srPrimaryObject sf
+        objName = identOrig objNameIdent
         objName' = if T.null objName then T.pack path else objName
 
         -- Single-file mode: no cross-file workspace, so the ControlIndex is
@@ -333,7 +335,7 @@ isWindowAncestor amap visited t
 extractWindowLayout :: [TypeBlock] -> Maybe Value
 extractWindowLayout tbs =
   let amap = Map.fromList
-        [ (T.toLower (tdName (tbDecl tb)), T.toLower (tdAncestor (tbDecl tb)))
+        [ (identCanon (tdName (tbDecl tb)), T.toLower (tdAncestor (tbDecl tb)))
         | tb <- tbs ]
       roots = [ tb | tb <- tbs
                    , isNothing (tdWithin (tbDecl tb))
@@ -342,7 +344,7 @@ extractWindowLayout tbs =
   in case roots of
     []      -> Nothing
     (win:_) ->
-      let winName  = T.toLower (tdName (tbDecl win))
+      let winName  = identCanon (tdName (tbDecl win))
           props    = typeBlockProps win
           children = [ tb | tb <- tbs
                           , fmap T.toLower (tdWithin (tbDecl tb)) == Just winName ]

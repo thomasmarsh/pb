@@ -24,6 +24,7 @@ module PB.AST.SourceFile
 
 import PB.Prelude
 import PB.AST.BodyStmt    (BodyStmt)
+import PB.AST.Ident       (Ident, mkIdent)
 import PB.AST.Located     (Located)
 import GHC.Generics       (Generic)
 import qualified Data.Text as T
@@ -65,7 +66,7 @@ data VarScope = GlobalVars | TypeVars
   deriving (Eq, Show, Generic)
 
 data TypeDecl = TypeDecl
-  { tdName     :: Text
+  { tdName     :: Ident
   , tdAncestor :: Text
   , tdWithin   :: Maybe Text
   } deriving (Eq, Show, Generic)
@@ -146,8 +147,8 @@ srAllTypeDecls sf =
 -- textually declared before the file's real window/user-object type block.
 -- Falls back to the textually-first srTypeBlocks entry (old behavior) when
 -- there's no forward block or no name match, then to the forward block,
--- then ("", Nothing).
-srPrimaryObject :: SrFile -> (Text, Maybe Text)
+-- then (mkIdent "", Nothing).
+srPrimaryObject :: SrFile -> (Ident, Maybe Text)
 srPrimaryObject sf = case matchByForwardHead of
   Just (name, anc) -> (name, Just anc)
   Nothing -> case srTypeBlocks sf of
@@ -155,15 +156,15 @@ srPrimaryObject sf = case matchByForwardHead of
     []     -> case srForward sf of
                 Just (ForwardBlock { fwdTypes = (td:_) }) ->
                   (tdName td, Just (tdAncestor td))
-                _ -> ("", Nothing)
+                _ -> (mkIdent "", Nothing)
   where
-    matchByForwardHead :: Maybe (Text, Text)
+    matchByForwardHead :: Maybe (Ident, Text)
     matchByForwardHead = do
       ForwardBlock { fwdTypes = (fwdHead:_) } <- srForward sf
       case [ decl
            | tb <- srTypeBlocks sf
            , let decl = tbDecl tb
-           , T.toLower (tdName decl) == T.toLower (tdName fwdHead)
+           , tdName decl == tdName fwdHead
            ] of
         (decl:_) -> Just (tdName decl, tdAncestor decl)
         []       -> Nothing

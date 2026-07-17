@@ -16,6 +16,7 @@ module PB.Analysis.TypeEnv
 
 import PB.Prelude
 import PB.AST.BodyStmt (BodyStmt (..))
+import PB.AST.Ident    (identCanon)
 import PB.AST.Located  (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type
@@ -75,7 +76,7 @@ extractGlobalVars sf =
 -- (same fix, same reasoning, applied here for 'lookupBaseType'/'isDescendantOf').
 extractTypeDecls :: SrFile -> Map.Map Text Text
 extractTypeDecls sf =
-  Map.fromList [ (T.toLower (tdName td), T.toLower (fst (splitAncestorRef (tdAncestor td))))
+  Map.fromList [ (identCanon (tdName td), T.toLower (fst (splitAncestorRef (tdAncestor td))))
                | td <- srAllTypeDecls sf ]
 
 -- | Look up a variable's type (case-insensitive).
@@ -158,7 +159,7 @@ extractWsGlobals sf =
 -- Instance vars: BsLocalVar nodes in non-within TypeBlock bodies, keyed by object name.
 extractInstanceVars :: SrFile -> Map.Map Text (Map.Map Text PbType)
 extractInstanceVars sf = Map.fromList
-  [ ( T.toLower (tdName (tbDecl tb))
+  [ ( identCanon (tdName (tbDecl tb))
     , Map.fromList
         [ (T.toLower vn, vt)
         | Located _ (BsLocalVar { varType = vt, varName = vn }) <- tbBody tb

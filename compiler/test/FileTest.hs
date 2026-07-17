@@ -17,6 +17,7 @@ import PB.AST.SourceFile      ( ForwardBlock (..), PrototypesBlock (..), ProtoDe
                               )
 import PB.AST.BodyStmt        (BodyStmt (..))
 import PB.AST.Expr            (Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Ident           (identOrig)
 import PB.AST.Located         (Located (..))
 import PB.AST.Type            (PbType (..))
 import PB.Lexing.Splitter     (Statement (..))
@@ -1065,7 +1066,7 @@ prop_typeDecl_names_nonempty = property $ do
         , (TkIdent,  anc)
         ]
   case runSection pTypeDecl [stmt] of
-    Right td -> assert (not (T.null (tdName td)))
+    Right td -> assert (not (T.null (identOrig (tdName td))))
     Left _   -> pure ()
 
 prop_typeBlock_ancestor_nonempty :: Property

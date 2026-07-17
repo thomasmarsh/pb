@@ -10,6 +10,7 @@ import qualified Data.Text       as T
 
 import PB.AST.BodyStmt
 import PB.AST.Expr
+import PB.AST.Ident        (mkIdent)
 import PB.AST.Located      (Located (..))
 import PB.AST.SourceFile
 import PB.AST.Type         (PbType (..))
@@ -35,7 +36,7 @@ emptySrFile = SrFile
 
 mkTB :: T.Text -> T.Text -> TypeBlock
 mkTB nm anc = TypeBlock
-  { tbDecl = TypeDecl { tdName = nm, tdAncestor = anc, tdWithin = Nothing }
+  { tbDecl = TypeDecl { tdName = mkIdent nm, tdAncestor = anc, tdWithin = Nothing }
   , tbBody = []
   }
 
