@@ -563,7 +563,7 @@ buildInheritsMap :: [SrFile] -> Map.Map Text Text
 buildInheritsMap = Map.fromList . concatMap fileInherits
   where
     fileInherits sf =
-      [ (identOrig (tdName td), fst (splitAncestorRef (tdAncestor td))) | td <- srAllTypeDecls sf ]
+      [ (identOrig (tdName td), identOrig (tdAncestorClass td)) | td <- srAllTypeDecls sf ]
 
 -- | Build a proc map (object → set of proc names) from all procedures.
 buildProcMap :: [SrFile] -> Map.Map Text (Set.Set Text)

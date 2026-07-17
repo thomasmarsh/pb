@@ -8,7 +8,7 @@ import PB.Grammar.File        ( pForwardBlock, pPrototypesBlock, pVariablesBlock
                               )
 import PB.Grammar.Stream      (FileParser, StmtStream (..))
 import PB.AST.SourceFile      ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
-                              , TypeDecl (..), TypeBlock (..)
+                              , TypeDecl (..), TypeBlock (..), mkTypeDecl
                               , VariablesBlock (..), VarScope (..), VarDecl (..)
                               , GlobalInstance (..)
                               , FnSig (..), SubSig (..), EventSig (..)
@@ -69,7 +69,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end forward")]
               ]
         runSection pForwardBlock stmts @?=
-          Right (ForwardBlock [TypeDecl "w_foo" "window" Nothing] [])
+          Right (ForwardBlock [mkTypeDecl "w_foo" "window" Nothing] [])
 
     , testCase "positive: two TypeDecls" $ do
         let stmts =
@@ -81,8 +81,8 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end forward")]
               ]
         runSection pForwardBlock stmts @?=
-          Right (ForwardBlock [ TypeDecl "w_foo" "window" Nothing
-                              , TypeDecl "d_bar" "datawindow" Nothing
+          Right (ForwardBlock [ mkTypeDecl "w_foo" "window" Nothing
+                              , mkTypeDecl "d_bar" "datawindow" Nothing
                               ] [])
 
     , testCase "positive: empty forward block" $ do
@@ -102,7 +102,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end forward")]
               ]
         runSection pForwardBlock stmts @?=
-          Right (ForwardBlock [TypeDecl "w_sub" "window" (Just "w_main")] [])
+          Right (ForwardBlock [mkTypeDecl "w_sub" "window" (Just "w_main")] [])
 
     , testCase "negative: missing end forward" $ do
         let stmts =
@@ -130,7 +130,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end forward")]
               ]
         runSection pForwardBlock stmts @?=
-          Right (ForwardBlock [TypeDecl "u_foo" "userobject" Nothing] [])
+          Right (ForwardBlock [mkTypeDecl "u_foo" "userobject" Nothing] [])
 
     , testCase "positive: two full type blocks inside forward" $ do
         let stmts =
@@ -142,8 +142,8 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end forward")]
               ]
         runSection pForwardBlock stmts @?=
-          Right (ForwardBlock [ TypeDecl "u_foo" "userobject" Nothing
-                              , TypeDecl "u_bar" "nonvisualobject" Nothing
+          Right (ForwardBlock [ mkTypeDecl "u_foo" "userobject" Nothing
+                              , mkTypeDecl "u_bar" "nonvisualobject" Nothing
                               ] [])
 
     , testCase "positive: global instance declarations inside forward" $ do
@@ -155,7 +155,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end forward")]
               ]
         runSection pForwardBlock stmts @?=
-          Right (ForwardBlock [TypeDecl "app" "application" Nothing]
+          Right (ForwardBlock [mkTypeDecl "app" "application" Nothing]
                               [GlobalInstance "transaction" "sqlca"])
 
     , testCase "positive: type with body vars inside forward (w_misth_ypal_form pattern)" $ do
@@ -168,7 +168,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end forward")]
               ]
         runSection pForwardBlock stmts @?=
-          Right (ForwardBlock [TypeDecl "page3" "userobject" (Just "tab1")] [])
+          Right (ForwardBlock [mkTypeDecl "page3" "userobject" (Just "tab1")] [])
 
     , testCase "positive: mixed bare and full type entries now both require end type" $ do
         let stmts =
@@ -180,8 +180,8 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end forward")]
               ]
         runSection pForwardBlock stmts @?=
-          Right (ForwardBlock [ TypeDecl "w_foo" "window" Nothing
-                              , TypeDecl "u_bar" "userobject" Nothing
+          Right (ForwardBlock [ mkTypeDecl "w_foo" "window" Nothing
+                              , mkTypeDecl "u_bar" "userobject" Nothing
                               ] [])
 
     , testProperty "all TypeDecl names are non-empty"
@@ -436,7 +436,7 @@ tests = testGroup "Grammar.File"
               , (TkIdent,  "window")
               ]
         runSection pTypeDecl [stmt] @?=
-          Right (TypeDecl "w_mywindow" "window" Nothing)
+          Right (mkTypeDecl "w_mywindow" "window" Nothing)
 
     , testCase "with within: type Name from Ancestor within Container" $ do
         let stmt = mkStmt
@@ -448,7 +448,7 @@ tests = testGroup "Grammar.File"
               , (TkIdent,  "w_main")
               ]
         runSection pTypeDecl [stmt] @?=
-          Right (TypeDecl "w_mywindow" "window" (Just "w_main"))
+          Right (mkTypeDecl "w_mywindow" "window" (Just "w_main"))
 
     , testCase "negative: missing from" $ do
         let stmt = mkStmt
@@ -468,7 +468,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end type")]
               ]
         runSection pTypeBlock stmts @?=
-          Right (TypeBlock (TypeDecl "w_foo" "window" Nothing) [])
+          Right (TypeBlock (mkTypeDecl "w_foo" "window" Nothing) [])
 
     , testCase "positive: type Name from Ancestor within Container" $ do
         let stmts =
@@ -478,7 +478,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end type")]
               ]
         runSection pTypeBlock stmts @?=
-          Right (TypeBlock (TypeDecl "w_sub" "window" (Just "w_main")) [])
+          Right (TypeBlock (mkTypeDecl "w_sub" "window" (Just "w_main")) [])
 
     , testCase "positive: type block collects body statements" $ do
         let s1 = mkStmt [(TkDatatype, "integer"), (TkIdent, "i_count")]
@@ -489,7 +489,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end type")]
               ]
         runSection pTypeBlock stmts @?=
-          Right (TypeBlock (TypeDecl "w_foo" "window" Nothing)
+          Right (TypeBlock (mkTypeDecl "w_foo" "window" Nothing)
                    [loc1 (BsLocalVar [] (PtPrimitive "integer") "i_count" Nothing), loc1 (BsLocalVar [] (PtPrimitive "string") "s_name" Nothing)])
 
     , testCase "positive: type block with event decl in body" $ do
@@ -501,7 +501,7 @@ tests = testGroup "Grammar.File"
               , mkStmt [(TkDeclKw, "end type")]
               ]
         runSection pTypeBlock stmts @?=
-          Right (TypeBlock (TypeDecl "w_foo" "window" Nothing)
+          Right (TypeBlock (mkTypeDecl "w_foo" "window" Nothing)
                    [loc1 (BsRaw ""), loc1 (BsLocalVar [] (PtUserDefined "cb_delete") "cb_delete" Nothing)])
 
     , testCase "negative: missing end type" $ do
@@ -813,7 +813,7 @@ tests = testGroup "Grammar.File"
             , srPrototypes      = Just (PrototypesBlock [])
             , srVariables       = Nothing
             , srGlobalInstances = []
-            , srTypeBlocks      = [TypeBlock (TypeDecl "n_foo" "nonvisualobject" Nothing) []]
+            , srTypeBlocks      = [TypeBlock (mkTypeDecl "n_foo" "nonvisualobject" Nothing) []]
             , srOnBlocks        = []
             , srEvents          = []
             , srFunctions       = [FunctionBlock (FnSig [] "integer" "f_run" "" Nothing) []]
@@ -838,11 +838,11 @@ tests = testGroup "Grammar.File"
         parseSrFile [] stmts @?=
           Right SrFile
             { srHeaders         = []
-            , srForward         = Just (ForwardBlock [TypeDecl "n_base" "nonvisualobject" Nothing] [])
+            , srForward         = Just (ForwardBlock [mkTypeDecl "n_base" "nonvisualobject" Nothing] [])
             , srPrototypes      = Just (PrototypesBlock [])
             , srVariables       = Just (VariablesBlock TypeVars [VarDecl [] "integer" "i_count"])
             , srGlobalInstances = []
-            , srTypeBlocks      = [TypeBlock (TypeDecl "n_base" "nonvisualobject" Nothing) []]
+            , srTypeBlocks      = [TypeBlock (mkTypeDecl "n_base" "nonvisualobject" Nothing) []]
             , srOnBlocks        = []
             , srEvents          = []
             , srFunctions       = []
@@ -869,8 +869,8 @@ tests = testGroup "Grammar.File"
             , srPrototypes      = Nothing
             , srVariables       = Nothing
             , srGlobalInstances = []
-            , srTypeBlocks      = [ TypeBlock (TypeDecl "w_foo" "window" Nothing) []
-                                  , TypeBlock (TypeDecl "cb_ok" "commandbutton" (Just "w_foo")) []
+            , srTypeBlocks      = [ TypeBlock (mkTypeDecl "w_foo" "window" Nothing) []
+                                  , TypeBlock (mkTypeDecl "cb_ok" "commandbutton" (Just "w_foo")) []
                                   ]
             , srOnBlocks        = [ OnBlock "w_foo.create" "w_foo" "create" []
                                   , OnBlock "cb_ok.clicked" "cb_ok" "clicked" []
@@ -972,7 +972,7 @@ tests = testGroup "Grammar.File"
         parseSrFile [] stmts @?=
           Right SrFile
             { srHeaders         = []
-            , srForward         = Just (ForwardBlock [TypeDecl "u_svc" "nonvisualobject" Nothing] [])
+            , srForward         = Just (ForwardBlock [mkTypeDecl "u_svc" "nonvisualobject" Nothing] [])
             , srPrototypes      = Nothing
             , srVariables       = Just (VariablesBlock TypeVars [VarDecl [] "integer" "i_count"])
             , srGlobalInstances = [GlobalInstance "u_svc" "u_svc"]
@@ -1016,7 +1016,7 @@ tests = testGroup "Grammar.File"
             , srPrototypes      = Nothing
             , srVariables       = Nothing
             , srGlobalInstances = []
-            , srTypeBlocks      = [TypeBlock (TypeDecl "w_main" "window" Nothing) []]
+            , srTypeBlocks      = [TypeBlock (mkTypeDecl "w_main" "window" Nothing) []]
             , srOnBlocks        = [OnBlock "w_main.create" "w_main" "create" []]
             , srEvents          = []
             , srFunctions       = []

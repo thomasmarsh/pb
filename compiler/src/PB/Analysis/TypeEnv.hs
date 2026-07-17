@@ -76,7 +76,7 @@ extractGlobalVars sf =
 -- (same fix, same reasoning, applied here for 'lookupBaseType'/'isDescendantOf').
 extractTypeDecls :: SrFile -> Map.Map Text Text
 extractTypeDecls sf =
-  Map.fromList [ (identCanon (tdName td), T.toLower (fst (splitAncestorRef (tdAncestor td))))
+  Map.fromList [ (identCanon (tdName td), identCanon (tdAncestorClass td))
                | td <- srAllTypeDecls sf ]
 
 -- | Look up a variable's type (case-insensitive).

@@ -67,7 +67,7 @@ module PB.Analysis.ControlHierarchy
   ) where
 
 import PB.Prelude
-import PB.AST.Ident       (identOrig)
+import PB.AST.Ident       (identOrig, identCanon)
 import PB.AST.SourceFile
 import PB.Analysis.TypeResolve (findLiteralDataObject)
 import qualified Data.Map.Strict as Map
@@ -109,12 +109,11 @@ buildControlIndex sfs = Map.fromList
         (owner, name) = case tdWithin td of
           Just parent -> (parent, identOrig (tdName td))
           Nothing     -> (identOrig (tdName td), "this")
-        (ancestorClass, overridesName) = splitAncestorRef (tdAncestor td)
         decl = ControlDecl
           { cdOwner         = T.toLower owner
           , cdName          = T.toLower name
-          , cdAncestorType  = T.toLower ancestorClass
-          , cdOverridesName = T.toLower <$> overridesName
+          , cdAncestorType  = identCanon (tdAncestorClass td)
+          , cdOverridesName = identCanon <$> tdAncestorOverride td
           , cdDwBinding     = findLiteralDataObject (tbBody tb)
           }
   ]

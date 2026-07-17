@@ -19,11 +19,11 @@ import PB.Prelude
 import PB.Grammar.Body    (pBodyStmt)
 import PB.Grammar.Stream  (FileParser, StmtStream (..), leadingText, satisfyStmt, isModifierToken, currentLine)
 import PB.AST.BodyStmt    (BodyStmt)
-import PB.AST.Ident       (identOrig, mkIdent)
+import PB.AST.Ident       (identOrig)
 import PB.AST.Located     (Located)
 import PB.AST.SourceFile
   ( ForwardBlock (..), PrototypesBlock (..), ProtoDecl (..)
-  , TypeDecl (..), TypeBlock (..)
+  , TypeDecl (..), TypeBlock (..), mkTypeDecl
   , VariablesBlock (..), VarScope (..), VarDecl (..)
   , GlobalInstance (..)
   , FnSig (..), SubSig (..), EventSig (..)
@@ -61,7 +61,7 @@ extractTypeDecl s =
       let within = case remainder of
             (w:cT:_) | T.toLower (tkText w) == "within" -> Just (tkText cT)
             _                                            -> Nothing
-      in Just TypeDecl { tdName = mkIdent (tkText nameT), tdAncestor = tkText ancT, tdWithin = within }
+      in Just (mkTypeDecl (tkText nameT) (tkText ancT) within)
     _ -> Nothing
 
 pTypeDecl :: FileParser TypeDecl

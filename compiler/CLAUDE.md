@@ -323,13 +323,16 @@ identSetOrigTexts :: IdentSet -> Set.Set Text
 -- originally-declared spellings an IdentSet recovers on lookup.
 ```
 
-`TypeDecl.tdName` (Phase 1) and `LvSegment.name` (Phase 2, `PB.AST.Expr`) are
-`Ident`. Every other identifier-bearing AST field (`VarDecl.vdName`,
-`GlobalInstance.giName`, `FnSig.fnsName`, etc.) is still `Text` — see
+`TypeDecl.tdName` (Phase 1), `LvSegment.name` (Phase 2, `PB.AST.Expr`), and
+`TypeDecl.tdAncestorClass`/`tdAncestorOverride` (Phase 3) are `Ident`. Every
+other identifier-bearing AST field (`VarDecl.vdName`, `GlobalInstance.giName`,
+`FnSig.fnsName`, etc.) is still `Text` — see
 `doc/plan/178-canonical-identifier.md`'s "Deferred scope" for the ordered
 rollout. `TypeDecl.tdAncestor` stays `Text` deliberately (raw
 `AncestorClass\`LocalName` backtick-compound syntax, not a single identifier
-— `splitAncestorRef` parses it further).
+— `splitAncestorRef` parses it further, minted once into
+`tdAncestorClass`/`tdAncestorOverride` by `mkTypeDecl` at construction; see
+`PB.AST.SourceFile`'s own entry below).
 
 ### `PB.AST.Expr`
 
@@ -531,9 +534,18 @@ data ProtoDecl       = ProtoFn FnSig | ProtoSub SubSig | ProtoEv EventSig
 data VariablesBlock = VariablesBlock { varScope :: VarScope, varDecls :: [VarDecl] }
 data VarScope       = GlobalVars | TypeVars
 
-data TypeDecl = TypeDecl { tdName :: Ident, tdAncestor :: Text, tdWithin :: Maybe Text }
--- tdName is Ident (Plan 178 Phase 1); tdAncestor stays Text (backtick-compound
--- syntax, see PB.AST.Ident's own entry above).
+data TypeDecl = TypeDecl
+  { tdName             :: Ident
+  , tdAncestor         :: Text          -- raw compound syntax, verbatim (backtick-compound, see PB.AST.Ident's entry above)
+  , tdAncestorClass    :: Ident         -- splitAncestorRef's 1st component, minted once by mkTypeDecl (Plan 178 Phase 3)
+  , tdAncestorOverride :: Maybe Ident   -- splitAncestorRef's 2nd component, minted once by mkTypeDecl (Plan 178 Phase 3)
+  , tdWithin           :: Maybe Text
+  }
+mkTypeDecl :: Text -> Text -> Maybe Text -> TypeDecl
+-- name -> ancestor -> within -> TypeDecl. Sole way to construct a TypeDecl
+-- (PB.Grammar.File.extractTypeDecl and every test fixture use it) -- mints
+-- tdName via mkIdent and the ancestor split via splitAncestorRef once here,
+-- so no consumer re-derives either independently.
 data TypeBlock = TypeBlock { tbDecl :: TypeDecl, tbBody :: [Located BodyStmt] }
 data VarDecl   = VarDecl  { vdModifiers :: [Text], vdType :: Text, vdName :: Text }
 data GlobalInstance = GlobalInstance { giType :: Text, giName :: Text }
@@ -549,21 +561,21 @@ data OnBlock         = OnBlock         { obQualName :: Text, obOwner :: Text, ob
 
 srAllTypeDecls  :: SrFile -> [TypeDecl]           -- srTypeBlocks decls, then forward-only decls
 srPrimaryObject :: SrFile -> (Ident, Maybe Text)   -- (name, ancestor) of the file's own object; name is Ident since Plan 178 Phase 1, ancestor stays Text
-splitAncestorRef :: Text -> (Text, Maybe Text)
--- Plan 164 Phase A (2026-07-10). Splits PowerBuilder's "AncestorClass`LocalName"
+splitAncestorRef :: Text -> (Ident, Maybe Ident)
+-- Plan 164 Phase A (2026-07-10); Ident-typed since Plan 178 Phase 3
+-- (2026-07-16). Splits PowerBuilder's "AncestorClass`LocalName"
 -- control-override syntax (e.g. tdAncestor = "w_form_tab2`page1", meaning
 -- "this local override of page1 is based on ancestor w_form_tab2's own
 -- declaration of a control named page1"). The lexer treats backtick as an
 -- identifier-continuation char (isIdentCont), so tdAncestor carries the whole
 -- compound token verbatim with nothing splitting it apart before this.
 -- (class, Nothing) when there's no backtick; splits at the first backtick
--- only. Consumed by TypeResolve.buildInheritsMap and TypeEnv.extractTypeDecls
--- (both build a name->ancestor map used for ancestor-chain walks -- without
--- this, a chain hits a backtick-declared node and silently stops, since no
--- object is ever literally named "w_form_tab2`page1") and by
--- Emit.extractWindowLayout's mkControl (replaced an ad hoc, Just-half-discarding
--- T.takeWhile (/= '`') that did the same job one-off, cosmetically, for the
--- rendered control "type" label).
+-- only. Internal plumbing for mkTypeDecl, which mints tdAncestorClass/
+-- tdAncestorOverride once at TypeDecl construction -- ControlHierarchy.
+-- buildControlIndex, TypeResolve.buildInheritsMap, TypeEnv.extractTypeDecls,
+-- and Emit.extractWindowLayout's mkControl (the rendered control "type"
+-- label) all read those fields directly rather than calling
+-- splitAncestorRef themselves. Still exported for direct unit testing.
 -- srPrimaryObject (fixed Plan 163 Phase 3.5, 2026-07-10): prefers the
 -- srTypeBlocks entry whose tdName matches the forward block's first
 -- fwdTypes entry (PB's exporter always declares the file's own type first

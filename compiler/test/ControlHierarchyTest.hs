@@ -1,9 +1,8 @@
 module ControlHierarchyTest (tests, withFyloFixture) where
 
 import PB.Prelude
-import PB.AST.SourceFile        (SrFile (..), TypeDecl (..), TypeBlock (..))
+import PB.AST.SourceFile        (SrFile (..), TypeBlock (..), mkTypeDecl)
 import PB.AST.BodyStmt          (BodyStmt (..))
-import PB.AST.Ident             (mkIdent)
 import PB.AST.Expr               (Expr (..))
 import PB.AST.Located            (Located (..))
 import PB.AST.Type               (PbType (..))
@@ -33,7 +32,7 @@ dataObjectBody dw = [Located 1 (BsLocalVar [] (PtPrimitive "string") "dataobject
 -- how every real .srw/.sru file always self-declares its own outer type
 -- block first.
 topLevel :: Text -> TypeBlock
-topLevel name = TypeBlock (TypeDecl (mkIdent name) "window" Nothing) []
+topLevel name = TypeBlock (mkTypeDecl name "window" Nothing) []
 
 tests :: TestTree
 tests = testGroup "ControlHierarchy"
@@ -48,7 +47,7 @@ tests = testGroup "ControlHierarchy"
         let sf = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_main"
-                  , TypeBlock (TypeDecl "dw_1" "datawindow" (Just "w_main")) []
+                  , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_main")) []
                   ] }
             idx = buildControlIndex [sf]
         in Map.lookup ("w_main", "w_main", "dw_1") idx @?=
@@ -58,7 +57,7 @@ tests = testGroup "ControlHierarchy"
         let sf = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_main"
-                  , TypeBlock (TypeDecl "page1" "w_form_tab2`page1" (Just "tab1")) []
+                  , TypeBlock (mkTypeDecl "page1" "w_form_tab2`page1" (Just "tab1")) []
                   ] }
             idx = buildControlIndex [sf]
         in Map.lookup ("w_main", "tab1", "page1") idx @?=
@@ -68,7 +67,7 @@ tests = testGroup "ControlHierarchy"
         let sf = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_main"
-                  , TypeBlock (TypeDecl "dw_1" "datawindow" (Just "w_main")) (dataObjectBody "d_items")
+                  , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_main")) (dataObjectBody "d_items")
                   ] }
             idx = buildControlIndex [sf]
         in (cdDwBinding <$> Map.lookup ("w_main", "w_main", "dw_1") idx) @?= Just (Just "d_items")
@@ -77,7 +76,7 @@ tests = testGroup "ControlHierarchy"
         let sf = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_main"
-                  , TypeBlock (TypeDecl "dw_1" "datawindow" (Just "w_main")) []
+                  , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_main")) []
                   ] }
             idx = buildControlIndex [sf]
         in (cdDwBinding <$> Map.lookup ("w_main", "w_main", "dw_1") idx) @?= Just Nothing
@@ -92,7 +91,7 @@ tests = testGroup "ControlHierarchy"
         let sf = emptyFile
               { srTypeBlocks =
                   [ topLevel "W_Main"
-                  , TypeBlock (TypeDecl "DW_1" "DataWindow" (Just "W_Main")) []
+                  , TypeBlock (mkTypeDecl "DW_1" "DataWindow" (Just "W_Main")) []
                   ] }
             idx = buildControlIndex [sf]
         in Map.lookup ("w_main", "w_main", "dw_1") idx @?=
@@ -104,7 +103,7 @@ tests = testGroup "ControlHierarchy"
         let sf = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_main"
-                  , TypeBlock (TypeDecl "dw_1" "datawindow" (Just "w_main")) []
+                  , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_main")) []
                   ] }
             idx = buildControlIndex [sf]
         in resolveMemberChainType idx Map.empty "w_main" ["dw_1"] @?= Just "datawindow"
@@ -113,7 +112,7 @@ tests = testGroup "ControlHierarchy"
         let sf = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_main"
-                  , TypeBlock (TypeDecl "dw_1" "datawindow" (Just "w_main")) []
+                  , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_main")) []
                   ] }
             idx = buildControlIndex [sf]
         in resolveMemberChainType idx Map.empty "w_other" ["dw_1"] @?= Nothing
@@ -122,7 +121,7 @@ tests = testGroup "ControlHierarchy"
         let sf = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_main"
-                  , TypeBlock (TypeDecl "dw_1" "datawindow" (Just "w_main")) []
+                  , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_main")) []
                   ] }
             idx = buildControlIndex [sf]
         in resolveMemberChainType idx Map.empty "w_main" ["dw_unknown"] @?= Nothing
@@ -133,8 +132,8 @@ tests = testGroup "ControlHierarchy"
         let sf = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_main"
-                  , TypeBlock (TypeDecl "tab1" "tab" (Just "w_main")) []
-                  , TypeBlock (TypeDecl "page1" "userobject" (Just "tab1")) []
+                  , TypeBlock (mkTypeDecl "tab1" "tab" (Just "w_main")) []
+                  , TypeBlock (mkTypeDecl "page1" "userobject" (Just "tab1")) []
                   ] }
             idx = buildControlIndex [sf]
         in resolveMemberChainType idx Map.empty "w_main" ["tab1", "page1"] @?= Just "userobject"
@@ -146,12 +145,12 @@ tests = testGroup "ControlHierarchy"
         let sfDescendant = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_descendant"
-                  , TypeBlock (TypeDecl "tab1" "w_form_tab2`tab1" (Just "w_descendant")) []
+                  , TypeBlock (mkTypeDecl "tab1" "w_form_tab2`tab1" (Just "w_descendant")) []
                   ] }
             sfAncestor = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_form_tab2"
-                  , TypeBlock (TypeDecl "tab1" "tab" (Just "w_form_tab2")) []
+                  , TypeBlock (mkTypeDecl "tab1" "tab" (Just "w_form_tab2")) []
                   ] }
             idx = buildControlIndex [sfDescendant, sfAncestor]
         in resolveMemberChainType idx Map.empty "w_descendant" ["tab1"] @?= Just "tab"
@@ -164,12 +163,12 @@ tests = testGroup "ControlHierarchy"
         let sfMain = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_main"
-                  , TypeBlock (TypeDecl "uo_epidom" "uo_grid" (Just "w_main")) []
+                  , TypeBlock (mkTypeDecl "uo_epidom" "uo_grid" (Just "w_main")) []
                   ] }
             sfGrid = emptyFile
               { srTypeBlocks =
                   [ topLevel "uo_grid"
-                  , TypeBlock (TypeDecl "dw" "datawindow" (Just "uo_grid")) []
+                  , TypeBlock (mkTypeDecl "dw" "datawindow" (Just "uo_grid")) []
                   ] }
             idx = buildControlIndex [sfMain, sfGrid]
         in resolveMemberChainType idx Map.empty "w_main" ["uo_epidom", "dw"] @?= Just "datawindow"
@@ -178,7 +177,7 @@ tests = testGroup "ControlHierarchy"
         let sf = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_ancestor"
-                  , TypeBlock (TypeDecl "dw_1" "datawindow" (Just "w_ancestor")) []
+                  , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_ancestor")) []
                   ] }
             idx = buildControlIndex [sf]
             inh = Map.singleton "w_descendant" "w_ancestor"
@@ -196,7 +195,7 @@ tests = testGroup "ControlHierarchy"
         let sf = emptyFile
               { srTypeBlocks =
                   [ topLevel "a"
-                  , TypeBlock (TypeDecl "x" "a`x" (Just "a")) []
+                  , TypeBlock (mkTypeDecl "x" "a`x" (Just "a")) []
                   ] }
             idx = buildControlIndex [sf]
         in resolveMemberChainType idx Map.empty "a" ["x"] @?= Just "a"
@@ -205,7 +204,7 @@ tests = testGroup "ControlHierarchy"
         let sf = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_main"
-                  , TypeBlock (TypeDecl "tab1" "tab" (Just "w_main")) []
+                  , TypeBlock (mkTypeDecl "tab1" "tab" (Just "w_main")) []
                   ] }
             idx = buildControlIndex [sf]
         in resolveMemberChainType idx Map.empty "w_main" ["tab1", "nonexistent", "further"] @?= Nothing
@@ -222,14 +221,14 @@ tests = testGroup "ControlHierarchy"
         let sfWinA = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_win_a"
-                  , TypeBlock (TypeDecl "tab1" "tab" (Just "w_win_a")) []
-                  , TypeBlock (TypeDecl "page1" "usedataA" (Just "tab1")) []
+                  , TypeBlock (mkTypeDecl "tab1" "tab" (Just "w_win_a")) []
+                  , TypeBlock (mkTypeDecl "page1" "usedataA" (Just "tab1")) []
                   ] }
             sfWinB = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_win_b"
-                  , TypeBlock (TypeDecl "tab1" "tab" (Just "w_win_b")) []
-                  , TypeBlock (TypeDecl "page1" "usedataB" (Just "tab1")) []
+                  , TypeBlock (mkTypeDecl "tab1" "tab" (Just "w_win_b")) []
+                  , TypeBlock (mkTypeDecl "page1" "usedataB" (Just "tab1")) []
                   ] }
             idx = buildControlIndex [sfWinA, sfWinB]
         in do
@@ -242,7 +241,7 @@ tests = testGroup "ControlHierarchy"
         let sf = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_main"
-                  , TypeBlock (TypeDecl "dw_1" "datawindow" (Just "w_main")) (dataObjectBody "d_items")
+                  , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_main")) (dataObjectBody "d_items")
                   ] }
             idx = buildControlIndex [sf]
         in resolveMemberChainDwBinding idx Map.empty "w_main" ["dw_1"] @?= Just "d_items"
@@ -251,7 +250,7 @@ tests = testGroup "ControlHierarchy"
         let sf = emptyFile
               { srTypeBlocks =
                   [ topLevel "w_main"
-                  , TypeBlock (TypeDecl "dw_1" "datawindow" (Just "w_main")) []
+                  , TypeBlock (mkTypeDecl "dw_1" "datawindow" (Just "w_main")) []
                   ] }
             idx = buildControlIndex [sf]
         in resolveMemberChainDwBinding idx Map.empty "w_main" ["dw_1"] @?= Nothing
@@ -268,12 +267,12 @@ tests = testGroup "ControlHierarchy"
         let sfConcrete = emptyFile
               { srTypeBlocks =
                   [ topLevel "uo_concrete"
-                  , TypeBlock (TypeDecl "dw" "uo_grid`dw" (Just "uo_concrete")) (dataObjectBody "d_items")
+                  , TypeBlock (mkTypeDecl "dw" "uo_grid`dw" (Just "uo_concrete")) (dataObjectBody "d_items")
                   ] }
             sfGrid = emptyFile
               { srTypeBlocks =
                   [ topLevel "uo_grid"
-                  , TypeBlock (TypeDecl "dw" "datawindow" (Just "uo_grid")) []
+                  , TypeBlock (mkTypeDecl "dw" "datawindow" (Just "uo_grid")) []
                   ] }
             idx = buildControlIndex [sfConcrete, sfGrid]
         in resolveMemberChainDwBinding idx Map.empty "uo_concrete" ["dw"] @?= Just "d_items"

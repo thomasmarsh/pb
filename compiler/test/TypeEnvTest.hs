@@ -3,9 +3,10 @@ module TypeEnvTest (tests) where
 import PB.Prelude
 import PB.AST.BodyStmt       (BodyStmt (..))
 import PB.AST.Located        (Located (..))
-import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeDecl (..), TypeBlock (..),
+import PB.AST.Ident          (identOrig, identCanon)
+import PB.AST.SourceFile     (SrFile (..), ForwardBlock (..), TypeBlock (..),
                               GlobalInstance (..), srAllTypeDecls, srPrimaryObject,
-                              splitAncestorRef)
+                              splitAncestorRef, mkTypeDecl)
 import PB.AST.Type           (PbType (..), parseTypeText)
 import PB.Analysis.TypeEnv   (TypeEnv (..), buildWorkspaceTypeEnv, lookupVarType, lookupUserType,
                               lookupBaseType, isDescendantOf,
@@ -34,14 +35,14 @@ tests = testGroup "TypeEnv"
     [ testCase "type decl from forward block is found" $
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
-                      { fwdTypes = [TypeDecl "w_foo" "window" Nothing]
+                      { fwdTypes = [mkTypeDecl "w_foo" "window" Nothing]
                       , fwdInstances = []
                       })}
             env = buildWorkspaceTypeEnv [sf]
         in lookupUserType "w_foo" env @?= Just "window"
 
     , testCase "type decl from type block is found" $
-        let tb = TypeBlock (TypeDecl "nvo_utils" "nonvisualobject" Nothing) []
+        let tb = TypeBlock (mkTypeDecl "nvo_utils" "nonvisualobject" Nothing) []
             sf = emptyFile { srTypeBlocks = [tb] }
             env = buildWorkspaceTypeEnv [sf]
         in lookupUserType "nvo_utils" env @?= Just "nonvisualobject"
@@ -117,16 +118,16 @@ tests = testGroup "TypeEnv"
     [ testCase "forward fallback when type blocks empty" $
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
-                      { fwdTypes = [TypeDecl "u_st" "pfc_u_st" Nothing]
+                      { fwdTypes = [mkTypeDecl "u_st" "pfc_u_st" Nothing]
                       , fwdInstances = [] })}
         in srPrimaryObject sf @?= ("u_st", Just "pfc_u_st")
 
     , testCase "type block wins over forward block" $
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
-                      { fwdTypes = [TypeDecl "u_st" "pfc_u_st" Nothing]
+                      { fwdTypes = [mkTypeDecl "u_st" "pfc_u_st" Nothing]
                       , fwdInstances = [] })
-                  , srTypeBlocks = [TypeBlock (TypeDecl "u_st" "window" Nothing) []] }
+                  , srTypeBlocks = [TypeBlock (mkTypeDecl "u_st" "window" Nothing) []] }
         in srPrimaryObject sf @?= ("u_st", Just "window")
 
     , testCase "empty file returns empty" $
@@ -146,29 +147,29 @@ tests = testGroup "TypeEnv"
         -- block's first entry names w_dw_copy as the file's own type.
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
-                      { fwdTypes = [TypeDecl "w_dw_copy" "w_center" Nothing]
+                      { fwdTypes = [mkTypeDecl "w_dw_copy" "w_center" Nothing]
                       , fwdInstances = [] })
                   , srTypeBlocks =
-                      [ TypeBlock (TypeDecl "os_data" "structure" Nothing) []
-                      , TypeBlock (TypeDecl "w_dw_copy" "w_center" Nothing) []
+                      [ TypeBlock (mkTypeDecl "os_data" "structure" Nothing) []
+                      , TypeBlock (mkTypeDecl "w_dw_copy" "w_center" Nothing) []
                       ] }
         in srPrimaryObject sf @?= ("w_dw_copy", Just "w_center")
 
     , testCase "falls back to first type block when forward's first entry matches nothing" $
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
-                      { fwdTypes = [TypeDecl "nonexistent" "window" Nothing]
+                      { fwdTypes = [mkTypeDecl "nonexistent" "window" Nothing]
                       , fwdInstances = [] })
-                  , srTypeBlocks = [TypeBlock (TypeDecl "os_data" "structure" Nothing) []] }
+                  , srTypeBlocks = [TypeBlock (mkTypeDecl "os_data" "structure" Nothing) []] }
         in srPrimaryObject sf @?= ("os_data", Just "structure")
     ]
 
   , testGroup "srAllTypeDecls"
     [ testCase "merges type blocks and forward block" $
         let sf = emptyFile
-                  { srTypeBlocks = [TypeBlock (TypeDecl "w_main" "window" Nothing) []]
+                  { srTypeBlocks = [TypeBlock (mkTypeDecl "w_main" "window" Nothing) []]
                   , srForward = Just (ForwardBlock
-                      { fwdTypes = [TypeDecl "u_st" "pfc_u_st" Nothing]
+                      { fwdTypes = [mkTypeDecl "u_st" "pfc_u_st" Nothing]
                       , fwdInstances = [] }) }
             decls = srAllTypeDecls sf
         in length decls @?= 2
@@ -176,13 +177,13 @@ tests = testGroup "TypeEnv"
     , testCase "forward block only" $
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
-                      { fwdTypes = [TypeDecl "u_st" "pfc_u_st" Nothing]
+                      { fwdTypes = [mkTypeDecl "u_st" "pfc_u_st" Nothing]
                       , fwdInstances = [] }) }
         in length (srAllTypeDecls sf) @?= 1
 
     , testCase "type blocks only" $
         let sf = emptyFile
-                  { srTypeBlocks = [TypeBlock (TypeDecl "w_main" "window" Nothing) []] }
+                  { srTypeBlocks = [TypeBlock (mkTypeDecl "w_main" "window" Nothing) []] }
         in length (srAllTypeDecls sf) @?= 1
     ]
 
@@ -190,14 +191,14 @@ tests = testGroup "TypeEnv"
     [ testCase "forward-only non-structure type is included" $
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
-                      { fwdTypes = [TypeDecl "u_st" "pfc_u_st" Nothing]
+                      { fwdTypes = [mkTypeDecl "u_st" "pfc_u_st" Nothing]
                       , fwdInstances = [] }) }
         in Set.member "u_st" (buildObjectSet [sf]) @?= True
 
     , testCase "forward-only structure type is excluded" $
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
-                      { fwdTypes = [TypeDecl "s_data" "structure" Nothing]
+                      { fwdTypes = [mkTypeDecl "s_data" "structure" Nothing]
                       , fwdInstances = [] }) }
         in Set.member "s_data" (buildObjectSet [sf]) @?= False
     ]
@@ -206,14 +207,14 @@ tests = testGroup "TypeEnv"
     [ testCase "forward-only structure type is included" $
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
-                      { fwdTypes = [TypeDecl "s_data" "structure" Nothing]
+                      { fwdTypes = [mkTypeDecl "s_data" "structure" Nothing]
                       , fwdInstances = [] }) }
         in Set.member "s_data" (buildUserTypeSet [sf]) @?= True
 
     , testCase "forward-only non-structure type is excluded" $
         let sf = emptyFile
                   { srForward = Just (ForwardBlock
-                      { fwdTypes = [TypeDecl "u_st" "pfc_u_st" Nothing]
+                      { fwdTypes = [mkTypeDecl "u_st" "pfc_u_st" Nothing]
                       , fwdInstances = [] }) }
         in Set.member "u_st" (buildUserTypeSet [sf]) @?= False
     ]
@@ -271,20 +272,20 @@ tests = testGroup "TypeEnv"
 
     , testCase "procEnv wires correct instance layer for obj_a" $
         let sfA = emptyFile
-              { srTypeBlocks = [TypeBlock (TypeDecl "obj_a" "window" Nothing)
+              { srTypeBlocks = [TypeBlock (mkTypeDecl "obj_a" "window" Nothing)
                   [Located 1 (BsLocalVar [] (PtPrimitive "integer") "foo" Nothing)]] }
             sfB = emptyFile
-              { srTypeBlocks = [TypeBlock (TypeDecl "obj_b" "window" Nothing)
+              { srTypeBlocks = [TypeBlock (mkTypeDecl "obj_b" "window" Nothing)
                   [Located 1 (BsLocalVar [] (PtPrimitive "string") "foo" Nothing)]] }
             ws  = buildWorkspaceEnv [sfA, sfB]
         in lookupScopedVar "foo" (procEnv ws Map.empty "obj_a" []) @?= Just (PtPrimitive "integer")
 
     , testCase "procEnv wires correct instance layer for obj_b" $
         let sfA = emptyFile
-              { srTypeBlocks = [TypeBlock (TypeDecl "obj_a" "window" Nothing)
+              { srTypeBlocks = [TypeBlock (mkTypeDecl "obj_a" "window" Nothing)
                   [Located 1 (BsLocalVar [] (PtPrimitive "integer") "foo" Nothing)]] }
             sfB = emptyFile
-              { srTypeBlocks = [TypeBlock (TypeDecl "obj_b" "window" Nothing)
+              { srTypeBlocks = [TypeBlock (mkTypeDecl "obj_b" "window" Nothing)
                   [Located 1 (BsLocalVar [] (PtPrimitive "string") "foo" Nothing)]] }
             ws  = buildWorkspaceEnv [sfA, sfB]
         in lookupScopedVar "foo" (procEnv ws Map.empty "obj_b" []) @?= Just (PtPrimitive "string")
@@ -340,18 +341,26 @@ tests = testGroup "TypeEnv"
 
     , testCase "multiple backticks split at the first only" $
         splitAncestorRef "a`b`c" @?= ("a", Just "b`c")
+
+    , testCase "identOrig preserves original casing on both split halves" $
+        let (anc, ovr) = splitAncestorRef "W_Form_Tab2`Page1"
+        in (identOrig anc, identOrig <$> ovr) @?= ("W_Form_Tab2", Just "Page1")
+
+    , testCase "identCanon lowercases both split halves" $
+        let (anc, ovr) = splitAncestorRef "W_Form_Tab2`Page1"
+        in (identCanon anc, identCanon <$> ovr) @?= ("w_form_tab2", Just "page1")
     ]
 
   , testGroup "extractTypeDecls backtick handling (via lookupUserType/lookupBaseType)"
     [ testCase "backtick ancestor resolves to the class part, not the raw compound string" $
-        let tb  = TypeBlock (TypeDecl "page1" "w_form_tab2`page1" (Just "tab1")) []
+        let tb  = TypeBlock (mkTypeDecl "page1" "w_form_tab2`page1" (Just "tab1")) []
             sf  = emptyFile { srTypeBlocks = [tb] }
             env = buildWorkspaceTypeEnv [sf]
         in lookupUserType "page1" env @?= Just "w_form_tab2"
 
     , testCase "chain walk continues through a backtick-declared intermediate type" $
-        let tbPage = TypeBlock (TypeDecl "page1" "w_form_tab2`page1" (Just "tab1")) []
-            tbBase = TypeBlock (TypeDecl "w_form_tab2" "window" Nothing) []
+        let tbPage = TypeBlock (mkTypeDecl "page1" "w_form_tab2`page1" (Just "tab1")) []
+            tbBase = TypeBlock (mkTypeDecl "w_form_tab2" "window" Nothing) []
             sf  = emptyFile { srTypeBlocks = [tbPage, tbBase] }
             env = TypeEnv
               { teVars      = Map.fromList [("uo_x", PtUserDefined "page1")]

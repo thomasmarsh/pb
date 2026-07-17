@@ -36,7 +36,7 @@ emptySrFile = SrFile
 
 mkTB :: T.Text -> T.Text -> TypeBlock
 mkTB nm anc = TypeBlock
-  { tbDecl = TypeDecl { tdName = mkIdent nm, tdAncestor = anc, tdWithin = Nothing }
+  { tbDecl = mkTypeDecl nm anc Nothing
   , tbBody = []
   }
 
@@ -615,7 +615,7 @@ tests = testGroup "TypeResolve"
               { varMods = [], varType = PtPrimitive "string"
               , varName = "DataObject", varInit = Just (ExStr "d_items") }
             tb = TypeBlock
-              { tbDecl = TypeDecl { tdName = "dw_dest", tdAncestor = "datawindow", tdWithin = Just "w_dw_copy" }
+              { tbDecl = mkTypeDecl "dw_dest" "datawindow" (Just "w_dw_copy")
               , tbBody = [dataObjectVar]
               }
             sf = emptySrFile { srTypeBlocks = [tb] }
@@ -627,7 +627,7 @@ tests = testGroup "TypeResolve"
               { varMods = [], varType = PtPrimitive "string"
               , varName = "dataobject", varInit = Just (ExStr "dw_misth_final_details_list") }
             tb = TypeBlock
-              { tbDecl = TypeDecl { tdName = "dw", tdAncestor = "w_list`dw", tdWithin = Just "w_misth_final_details_list" }
+              { tbDecl = mkTypeDecl "dw" "w_list`dw" (Just "w_misth_final_details_list")
               , tbBody = [dataObjectVar]
               }
             sf = emptySrFile { srTypeBlocks = [tb] }
@@ -639,7 +639,7 @@ tests = testGroup "TypeResolve"
               { varMods = [], varType = PtPrimitive "integer"
               , varName = "width", varInit = Just (ExInt "3081") }
             tb = TypeBlock
-              { tbDecl = TypeDecl { tdName = "dw", tdAncestor = "datawindow", tdWithin = Just "w_test" }
+              { tbDecl = mkTypeDecl "dw" "datawindow" (Just "w_test")
               , tbBody = [widthVar]
               }
             sf = emptySrFile { srTypeBlocks = [tb] }
@@ -650,7 +650,7 @@ tests = testGroup "TypeResolve"
               { varMods = [], varType = PtPrimitive "string"
               , varName = "dataobject", varInit = Just (ExStr "d_self") }
             tb = TypeBlock
-              { tbDecl = TypeDecl { tdName = "w_selfdw", tdAncestor = "window", tdWithin = Nothing }
+              { tbDecl = mkTypeDecl "w_selfdw" "window" Nothing
               , tbBody = [dataObjectVar]
               }
             sf = emptySrFile { srTypeBlocks = [tb] }

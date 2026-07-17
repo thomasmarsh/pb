@@ -20,6 +20,7 @@ module PB.AST.SourceFile
   , srAllTypeDecls
   , srPrimaryObject
   , splitAncestorRef
+  , mkTypeDecl
   ) where
 
 import PB.Prelude
@@ -66,10 +67,25 @@ data VarScope = GlobalVars | TypeVars
   deriving (Eq, Show, Generic)
 
 data TypeDecl = TypeDecl
-  { tdName     :: Ident
-  , tdAncestor :: Text
-  , tdWithin   :: Maybe Text
+  { tdName             :: Ident
+  , tdAncestor         :: Text
+  , tdAncestorClass    :: Ident
+  , tdAncestorOverride :: Maybe Ident
+  , tdWithin           :: Maybe Text
   } deriving (Eq, Show, Generic)
+
+-- | Construct a 'TypeDecl', minting its ancestor split ('splitAncestorRef')
+-- once here rather than leaving each consumer to recompute it.
+mkTypeDecl :: Text -> Text -> Maybe Text -> TypeDecl
+mkTypeDecl name anc within =
+  let (ancClass, ancOverride) = splitAncestorRef anc
+  in TypeDecl
+       { tdName             = mkIdent name
+       , tdAncestor         = anc
+       , tdAncestorClass    = ancClass
+       , tdAncestorOverride = ancOverride
+       , tdWithin           = within
+       }
 
 data TypeBlock = TypeBlock
   { tbDecl :: TypeDecl
@@ -178,9 +194,10 @@ srPrimaryObject sf = case matchByForwardHead of
 -- that needs to walk the ancestor as a real object name (e.g.
 -- 'PB.Analysis.TypeResolve.buildInheritsMap'). 'Nothing' (2nd component)
 -- when there's no backtick -- the ordinary case. Splits at the first
--- backtick only.
-splitAncestorRef :: Text -> (Text, Maybe Text)
+-- backtick only. Used by 'mkTypeDecl' to mint 'tdAncestorClass'\/
+-- 'tdAncestorOverride' once at construction.
+splitAncestorRef :: Text -> (Ident, Maybe Ident)
 splitAncestorRef t = case T.breakOn "`" t of
   (before, rest)
-    | T.null rest -> (before, Nothing)
-    | otherwise   -> (before, Just (T.drop 1 rest))
+    | T.null rest -> (mkIdent before, Nothing)
+    | otherwise   -> (mkIdent before, Just (mkIdent (T.drop 1 rest)))

@@ -19,7 +19,7 @@ import PB.AST.DataWindow
 import PB.AST.Expr         (Expr (..))
 import PB.AST.Ident        (identOrig)
 import PB.AST.Located      (Located (..))
-import PB.AST.SourceFile   (TypeBlock (..), TypeDecl (..), srPrimaryObject, srFunctions, FunctionBlock (..), FnSig (..))
+import PB.AST.SourceFile   (TypeBlock (..), mkTypeDecl, srPrimaryObject, srFunctions, FunctionBlock (..), FnSig (..))
 import PB.AST.Type         (PbType (..))
 import PB.Analysis.TypeEnv    (buildWorkspaceEnv, procEnv)
 import PB.Analysis.ControlHierarchy (buildControlIndex)
@@ -458,13 +458,13 @@ tests = testGroup "Pipeline.Runner"
         extractWindowLayout [] @?= Nothing
 
     , testCase "extracts window dimensions and two controls" $
-        let winDecl = TypeDecl { tdName = "w_form", tdAncestor = "window", tdWithin = Nothing }
+        let winDecl = mkTypeDecl "w_form" "window" Nothing
             winBody =
               [ Located 1 BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "width",  varInit = Just (ExInt "3200") }
               , Located 2 BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "height", varInit = Just (ExInt "2400") }
               , Located 3 BsLocalVar { varMods = [], varType = PtPrimitive "string",  varName = "title",  varInit = Just (ExStr "My Form") }
               ]
-            cbDecl  = TypeDecl { tdName = "cb_ok",   tdAncestor = "commandbutton", tdWithin = Just "w_form" }
+            cbDecl  = mkTypeDecl "cb_ok" "commandbutton" (Just "w_form")
             cbBody  =
               [ Located 4 BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "x",      varInit = Just (ExInt "100") }
               , Located 5 BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "y",      varInit = Just (ExInt "200") }
@@ -472,7 +472,7 @@ tests = testGroup "Pipeline.Runner"
               , Located 7 BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "height", varInit = Just (ExInt "80") }
               , Located 8 BsLocalVar { varMods = [], varType = PtPrimitive "string",  varName = "text",   varInit = Just (ExStr "OK") }
               ]
-            dwDecl  = TypeDecl { tdName = "dw_list", tdAncestor = "datawindow", tdWithin = Just "w_form" }
+            dwDecl  = mkTypeDecl "dw_list" "datawindow" (Just "w_form")
             dwBody  =
               [ Located 9  BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "x",          varInit = Just (ExInt "0") }
               , Located 10 BsLocalVar { varMods = [], varType = PtPrimitive "integer", varName = "y",          varInit = Just (ExInt "400") }
@@ -501,12 +501,12 @@ tests = testGroup "Pipeline.Runner"
         in extractWindowLayout tbs @?= expected
 
     , testCase "returns Nothing for non-window ancestor (nonvisualobject)" $
-        let decl = TypeDecl { tdName = "uo_service", tdAncestor = "nonvisualobject", tdWithin = Nothing }
+        let decl = mkTypeDecl "uo_service" "nonvisualobject" Nothing
         in extractWindowLayout [TypeBlock decl []] @?= Nothing
 
     , testCase "strips backtick qualifier from ancestor type in control" $
-        let winDecl  = TypeDecl { tdName = "w_parent", tdAncestor = "window", tdWithin = Nothing }
-            ctrlDecl = TypeDecl { tdName = "dw_1", tdAncestor = "datawindow`dw_1", tdWithin = Just "w_parent" }
+        let winDecl  = mkTypeDecl "w_parent" "window" Nothing
+            ctrlDecl = mkTypeDecl "dw_1" "datawindow`dw_1" (Just "w_parent")
             tbs = [TypeBlock winDecl [], TypeBlock ctrlDecl []]
         in case extractWindowLayout tbs of
              Nothing -> assertFailure "expected Just, got Nothing"

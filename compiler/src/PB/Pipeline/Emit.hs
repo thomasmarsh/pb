@@ -351,8 +351,7 @@ extractWindowLayout tbs =
           mkControl tb =
             let cp      = typeBlockProps tb
                 nm      = tdName (tbDecl tb)
-                rawAnc  = tdAncestor (tbDecl tb)
-                typ     = T.toLower (fst (splitAncestorRef rawAnc))
+                typ     = identCanon (tdAncestorClass (tbDecl tb))
                 base    = ["name" .= nm, "type" .= typ]
                 nums    = [ Key.fromText k .= v | k <- ["x","y","width","height"]
                                                , Just v <- [Map.lookup k cp] ]
