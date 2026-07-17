@@ -9,6 +9,10 @@
 -- Haskell -- see 'reconstructTaintStepKind''s own doc comment.
 module PB.Analysis.Rules.Taint
   ( initTaintEdbViews
+  , initTaintEdbViewsWith
+  , DefUseFanout (..)
+  , defLineFanout
+  , returnUseFanout
   , taintRules
   , reconstructTaintStepKind
   , taintEdgeIntraRows
@@ -28,6 +32,8 @@ import PB.Pipeline.DuckDb
   , TaintKeyRow (..), queryTaintSourceRows, queryTaintSinkRows
   )
 import PB.Analysis.Taint qualified as Taint
+import Database.DuckDB.Simple (query_)
+import Database.DuckDB.Simple.FromRow (FromRow (..), field)
 
 import qualified Data.HashMap.Strict as HM
 import qualified Data.List           as List
@@ -50,16 +56,33 @@ import qualified Data.Text           as T
 -- than each materialized under its own name -- nothing reads them except
 -- via this union.
 initTaintEdbViews :: DuckConn -> IO ()
-initTaintEdbViews conn = do
+initTaintEdbViews = initTaintEdbViewsWith (\_ -> pure ())
+
+-- | As 'initTaintEdbViews', but additionally invokes @onCounts@ with named
+-- row-count checkpoints at two points: right after querying @proc_defs@\/
+-- @proc_uses@\/@interproc_edges@\/@taint_sources@\/@taint_sinks@, and again
+-- once the four edge shapes have combined into the full @taint_edge@ row
+-- list -- lets a caller (e.g. 'PB.Pipeline.Passes.runPhaseB') observe
+-- progress through this previously print-free function without threading
+-- printing logic into this module (mirrors 'PB.Pipeline.Souffle.runRuleSetWith'\'s
+-- callback shape).
+initTaintEdbViewsWith :: ([(Text, Int)] -> IO ()) -> DuckConn -> IO ()
+initTaintEdbViewsWith onCounts conn = do
   defs  <- queryProcDefs conn
   uses  <- queryProcUses conn
   edges <- queryInterprocEdges conn
   srcs  <- queryTaintSourceRows conn
   snks  <- queryTaintSinkRows conn
+  onCounts
+    [ ("proc_defs", length defs), ("proc_uses", length uses)
+    , ("interproc_edges", length edges)
+    , ("taint_sources", length srcs), ("taint_sinks", length snks)
+    ]
   let edgeRows = taintEdgeIntraRows defs uses
               ++ taintEdgeArgRows edges
               ++ taintEdgeGlobalRows edges
               ++ taintEdgeReturnRows uses edges
+  onCounts [("taint_edge_rows", length edgeRows)]
   materialize "taint_edge"   ["from_key", "to_key", "kind"] edgeRows
   materialize "taint_source" ["x"] (taintKeyRows srcs)
   materialize "taint_sink"   ["x"] (taintKeyRows snks)
@@ -67,6 +90,51 @@ initTaintEdbViews conn = do
     materialize name cols rows = do
       recreateTextTable conn name cols
       appendTextRows conn name rows
+
+-- | Fan-in characterization for a grouped-join key, mirroring
+-- 'PB.Analysis.Rules.Schema.LegSourceFanout' -- computed directly in
+-- DuckDB SQL against the already-materialized @proc_defs@\/@proc_uses@
+-- tables (not the in-memory Haskell lists), so it's cheap to run even when
+-- the actual join ('taintEdgeIntraRows'\/'taintEdgeReturnRows') is the one
+-- hanging.
+data DefUseFanout = DefUseFanout
+  { dufTotalRows    :: !Int
+  , dufDistinctKeys :: !Int
+  , dufMaxGroupSize :: !Int
+  } deriving (Eq, Show)
+
+newtype FanoutRow = FanoutRow DefUseFanout
+
+instance FromRow FanoutRow where
+  fromRow = (\t k m -> FanoutRow (DefUseFanout t k m)) <$> field <*> field <*> field
+
+-- | Fan-in of @proc_defs@ rows sharing one (object, proc_name, line) key --
+-- 'taintEdgeIntraRows' groups on this exact key via its internal
+-- @defsByLine@.
+defLineFanout :: DuckConn -> IO DefUseFanout
+defLineFanout conn = do
+  rows <- query_ conn
+    "WITH g AS (SELECT object, proc_name, line, COUNT(*) AS cnt FROM proc_defs \
+    \WHERE line IS NOT NULL GROUP BY object, proc_name, line) \
+    \SELECT (SELECT COUNT(*) FROM proc_defs WHERE line IS NOT NULL), \
+    \COUNT(*), COALESCE(MAX(cnt), 0) FROM g"
+  pure $ case rows of
+    [FanoutRow f] -> f
+    _             -> DefUseFanout 0 0 0
+
+-- | Fan-in of @proc_uses@ rows tagged @kind = 'return'@ sharing one
+-- (object, proc_name) key -- 'taintEdgeReturnRows' groups on this exact key
+-- via its internal @returnUsesByCallee@.
+returnUseFanout :: DuckConn -> IO DefUseFanout
+returnUseFanout conn = do
+  rows <- query_ conn
+    "WITH g AS (SELECT object, proc_name, COUNT(*) AS cnt FROM proc_uses \
+    \WHERE kind = 'return' GROUP BY object, proc_name) \
+    \SELECT (SELECT COUNT(*) FROM proc_uses WHERE kind = 'return'), \
+    \COUNT(*), COALESCE(MAX(cnt), 0) FROM g"
+  pure $ case rows of
+    [FanoutRow f] -> f
+    _             -> DefUseFanout 0 0 0
 
 -- | The @object::proc::var@ key every taint EDB relation joins on.
 taintKey :: Text -> Text -> Text -> Text

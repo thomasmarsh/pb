@@ -125,6 +125,42 @@ reportLegSourceFanout conn = do
                      \worth investigating the source before trusting downstream leg/reaches results" :: Text)
     ])
 
+-- | Characterize 'proc_defs'\/'proc_uses' key fan-in for the two joins
+-- 'PB.Analysis.Rules.Taint.initTaintEdbViews' performs in memory
+-- ('taintEdgeIntraRows'\/'taintEdgeReturnRows') before it runs -- mirrors
+-- 'reportLegSourceFanout' above, since a duplicate-key fan-in blowup is the
+-- established failure shape in this neighborhood (leg_source, taint_reaches
+-- both hit it previously; see compiler/CLAUDE.md's Code Index).
+reportTaintDefUseFanout :: DuckConn -> IO ()
+reportTaintDefUseFanout conn = do
+  defFo <- TaintRules.defLineFanout conn
+  retFo <- TaintRules.returnUseFanout conn
+  let n = T.pack . show
+      report label (TaintRules.DefUseFanout total keys maxGroup) = do
+        emitProgress (object
+          [ "tag" .= ("step" :: Text)
+          , "label" .= (label <> " -- " <> n total <> " rows, "
+                         <> n keys <> " keys, max " <> n maxGroup <> " rows/key")
+          ])
+        when (maxGroup > 500) $ emitProgress (object
+          [ "tag" .= ("warning" :: Text)
+          , "message" .= (label <> " has a key with " <> n maxGroup
+                           <> " duplicate rows (out of " <> n total <> " total, " <> n keys
+                           <> " distinct keys) -- unusually large fan-in, likely duplicate/\
+                              \near-duplicate extraction rather than legitimate diversity" :: Text)
+          ])
+  report ("Datalog: proc_defs (object,proc,line)" :: Text) defFo
+  report ("Datalog: proc_uses return (object,proc)" :: Text) retFo
+
+-- | Report the raw 'PB.Analysis.Rules.Taint.initTaintEdbViewsWith' checkpoint
+-- counts as a single progress event.
+reportTaintCounts :: [(Text, Int)] -> IO ()
+reportTaintCounts counts = emitProgress (object
+  [ "tag" .= ("step" :: Text)
+  , "label" .= ("Taint EDB counts: "
+                 <> T.intercalate ", " [ k <> "=" <> T.pack (show v) | (k, v) <- counts ] :: Text)
+  ])
+
 -- | Phase B: read Phase A tables from DuckDB, run link analysis, write results.
 -- Structured as two sub-phases:
 --
@@ -192,7 +228,8 @@ materializeAllEdbViews conn = do
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Dead-code EDB views materialized" :: Text)])
   SchemaRules.initEdbViews conn
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Schema EDB views materialized" :: Text)])
-  TaintRules.initTaintEdbViews conn
+  reportTaintDefUseFanout conn
+  TaintRules.initTaintEdbViewsWith reportTaintCounts conn
   emitProgress (object ["tag" .= ("step" :: Text), "label" .= ("Taint EDB views materialized" :: Text)])
 
 -- | Every Soufflé rule set run in Phase B. 'Souffle.runRuleSets' topologically
