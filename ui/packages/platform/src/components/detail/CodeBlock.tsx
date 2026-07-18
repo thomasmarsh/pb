@@ -1,8 +1,14 @@
-// CodeBlock.tsx — Syntax-highlighted code blocks (PowerScript + SQL).
+// CodeBlock.tsx — Narrowed source view (single function/subroutine snippet).
+//
+// Delegates to the shared SourceView so the narrowed view renders the exact
+// same cross-linked, tooltip-enabled code as the whole-file SourceViewer. Pass
+// linking context (objectName / knownObjects / knownProcs / ...) when available
+// so identifiers link and show tooltips, just like the whole-file view.
 
-import { For } from "solid-js";
 import type { JSX } from "solid-js";
-import { highlightPowerScript, highlightSql } from "@pb/platform";
+import { highlightSql } from "@pb/platform";
+import type { KnownProcInfo, ProcedureInfo, LocalSymbolInfo } from "@pb/platform";
+import { SourceView } from "../source/SourceView.js";
 
 export function SqlBlock(props: { code: string; style?: JSX.CSSProperties }) {
   return <pre class="code-viewer sql-code" style={props.style} innerHTML={highlightSql(props.code)} />;
@@ -13,47 +19,31 @@ interface CodeBlockProps {
   baseLine?: number;
   highlightLine?: number;
   onLineClick?: (line: number) => void;
+  // Linking context — supplied so the narrowed view gains the same cross-linked
+  // identifiers and tooltips as the whole-file view.
+  objectName?: string;
+  knownObjects?: { name: string; kind: string }[];
+  knownProcs?: KnownProcInfo[];
+  procedures?: ProcedureInfo[];
+  localSymbols?: LocalSymbolInfo[];
 }
 
 export function CodeBlock(props: CodeBlockProps) {
-  const highlightedLines = () => highlightPowerScript(props.code).split("\n");
   const base = () => props.baseLine ?? 1;
-  const isErrorLine = (i: number) => base() + i === props.highlightLine;
+  const highlightLines = () => (props.highlightLine != null ? new Set([props.highlightLine]) : null);
+  const lines = () => props.code.split("\n");
 
   return (
-    <div class="source-viewer">
-      <div class="source-gutter">
-        <For each={highlightedLines()}>
-          {(_line, i) => (
-            <div
-              class="source-gutter-line"
-              classList={{
-                "source-gutter-line--error":     isErrorLine(i()),
-                "source-gutter-line--clickable":  props.onLineClick != null,
-              }}
-              onClick={() => props.onLineClick?.(base() + i())}
-            >
-              {String(base() + i())}
-            </div>
-          )}
-        </For>
-      </div>
-      <div class="source-code-area">
-        <pre>
-          <For each={highlightedLines()}>
-            {(line, i) => (
-              <>
-                <span
-                  class="source-code-line"
-                  classList={{ "source-code-line--error": isErrorLine(i()) }}
-                  innerHTML={line}
-                />
-                {i() < highlightedLines().length - 1 ? "\n" : ""}
-              </>
-            )}
-          </For>
-        </pre>
-      </div>
-    </div>
+    <SourceView
+      lines={lines()}
+      baseLine={base()}
+      highlightLines={highlightLines()}
+      onLineClick={props.onLineClick}
+      objectName={props.objectName}
+      knownObjects={props.knownObjects}
+      knownProcs={props.knownProcs}
+      procedures={props.procedures}
+      localSymbols={props.localSymbols}
+    />
   );
 }

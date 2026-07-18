@@ -172,6 +172,10 @@ function ProcedureDetailContent(props: {
           <CodeBlock
             code={p.source_original!}
             baseLine={p.start_line ?? 1}
+            objectName={props.objectName}
+            knownObjects={p.knownObjects}
+            knownProcs={p.knownProcs}
+            localSymbols={p.localSymbols}
             onLineClick={(line) =>
               store.dispatch({ tag: "objects", action: { tag: "go-slice", object: props.objectName, proc: p.name, line, direction: "backward" } })
             }

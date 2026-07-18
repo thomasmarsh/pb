@@ -125,6 +125,9 @@ export interface ProcedureDetailResponse extends ProcedureRow {
   callers?: ProcCallerInfo[];
   callees?: string[];
   sql_statements?: SqlStatementRow[];
+  knownObjects?: { name: string; kind: string }[];
+  knownProcs?: KnownProcInfo[];
+  localSymbols?: LocalSymbolInfo[];
   activeTab?: string;
   loading?: boolean;
 }

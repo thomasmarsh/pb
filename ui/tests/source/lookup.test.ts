@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  buildObjectMap, buildProcMap, buildVarMap, buildProcCountMap, buildProcFirstLine,
+  buildObjectMap, buildProcMap, buildVarMap, buildProcCountMap, buildProcFirstLine, buildProcRangeMap,
 } from "@pb/platform";
 import type { KnownProcInfo, ProcedureInfo, LocalSymbolInfo } from "@pb/platform";
 
@@ -103,5 +103,24 @@ describe("buildProcFirstLine", () => {
     const p: ProcedureInfo = { ...makeProc("f_x"), start_line: null };
     const map = buildProcFirstLine([p]);
     expect(map.size).toBe(0);
+  });
+});
+
+describe("buildProcRangeMap", () => {
+  it("maps every line in [start_line, end_line] to the procedure", () => {
+    const map = buildProcRangeMap([makeProc("f_a", 10, 15)]);
+    expect(map.size).toBe(6);
+    for (let line = 10; line <= 15; line++) expect(map.get(line)?.name).toBe("f_a");
+  });
+
+  it("does not map lines outside the range", () => {
+    const map = buildProcRangeMap([makeProc("f_a", 10, 15)]);
+    expect(map.has(9)).toBe(false);
+    expect(map.has(16)).toBe(false);
+  });
+
+  it("skips procedures with a null start_line or end_line", () => {
+    const p: ProcedureInfo = { ...makeProc("f_x"), start_line: null };
+    expect(buildProcRangeMap([p]).size).toBe(0);
   });
 });

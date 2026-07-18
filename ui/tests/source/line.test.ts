@@ -1,56 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { PIXELS_PER_LINE, lineFromY, overlayTop, overlayHeight, procSelectedRange, dimmedRanges, procedureAtLine } from "@pb/platform";
+import { procSelectedRange, procedureAtLine } from "@pb/platform";
 import type { ProcedureInfo } from "@pb/platform";
 
 function makeProc(name: string, start: number | null, end: number | null): ProcedureInfo {
   return { name, proc_type: "function", modifiers: null, params: null, return_type: null, start_line: start, end_line: end, cyclomatic: null };
 }
-
-describe("PIXELS_PER_LINE", () => {
-  it("is 20.8", () => {
-    expect(PIXELS_PER_LINE).toBe(20.8);
-  });
-});
-
-describe("lineFromY", () => {
-  it("returns 1 for the first pixel of the container", () => {
-    expect(lineFromY(0, 0, 0)).toBe(1);
-  });
-
-  it("clamps to minimum line 1", () => {
-    expect(lineFromY(0, 100, 0)).toBe(1);
-  });
-
-  it("accounts for scroll offset", () => {
-    // clientY=0, containerTop=0, scrollTop=20.8 → pixel 20.8 → line 2
-    expect(lineFromY(0, 0, 20.8)).toBe(2);
-  });
-
-  it("computes correct line from clientY", () => {
-    // clientY=41.6, containerTop=0, scrollTop=0 → pixel 41.6 → floor(41.6/20.8)=2 → line 3
-    expect(lineFromY(41.6, 0, 0)).toBe(3);
-  });
-});
-
-describe("overlayTop", () => {
-  it("line 1 starts at 0px", () => {
-    expect(overlayTop(1)).toBe(0);
-  });
-
-  it("line 5 starts at 4 * PIXELS_PER_LINE", () => {
-    expect(overlayTop(5)).toBeCloseTo(4 * PIXELS_PER_LINE);
-  });
-});
-
-describe("overlayHeight", () => {
-  it("single line has height PIXELS_PER_LINE", () => {
-    expect(overlayHeight(3, 3)).toBeCloseTo(PIXELS_PER_LINE);
-  });
-
-  it("five-line range has height 5 * PIXELS_PER_LINE", () => {
-    expect(overlayHeight(1, 5)).toBeCloseTo(5 * PIXELS_PER_LINE);
-  });
-});
 
 describe("procSelectedRange", () => {
   const procs = [makeProc("f_a", 5, 10), makeProc("f_b", 15, null)];
@@ -69,36 +23,6 @@ describe("procSelectedRange", () => {
 
   it("returns start and end for a found proc", () => {
     expect(procSelectedRange(procs, "f_a")).toEqual({ start: 5, end: 10 });
-  });
-});
-
-describe("dimmedRanges", () => {
-  it("returns empty array for zero lines", () => {
-    expect(dimmedRanges(0, new Set())).toEqual([]);
-  });
-
-  it("returns one full-file range when nothing is highlighted", () => {
-    expect(dimmedRanges(5, new Set())).toEqual([{ start: 1, end: 5 }]);
-  });
-
-  it("returns empty array when every line is highlighted", () => {
-    expect(dimmedRanges(3, new Set([1, 2, 3]))).toEqual([]);
-  });
-
-  it("splits into gaps around highlighted lines", () => {
-    expect(dimmedRanges(10, new Set([3, 4, 7]))).toEqual([
-      { start: 1, end: 2 },
-      { start: 5, end: 6 },
-      { start: 8, end: 10 },
-    ]);
-  });
-
-  it("handles a dimmed range at the start only", () => {
-    expect(dimmedRanges(5, new Set([2, 3, 4, 5]))).toEqual([{ start: 1, end: 1 }]);
-  });
-
-  it("handles a dimmed range at the end only", () => {
-    expect(dimmedRanges(5, new Set([1, 2, 3, 4]))).toEqual([{ start: 5, end: 5 }]);
   });
 });
 

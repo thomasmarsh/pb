@@ -159,6 +159,52 @@ def get_object_detail(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
     return obj
 
 
+def get_linking_context(conn: duckdb.DuckDBPyConnection, object_name: str) -> dict[str, Any]:
+    """Known objects and procedures visible for identifier-linking within `object_name`'s source."""
+    known_objects = rows(conn.execute("SELECT object AS name, kind FROM objects WHERE object != ? ORDER BY object", [object_name]))
+
+    known_procs = rows(
+        conn.execute(
+            "SELECT DISTINCT p.proc_name AS name, p.object, p.proc_type, "
+            "p.params, p.return_type, p.start_line, p.end_line, p.cyclomatic "
+            "FROM procedures p "
+            "JOIN call_sites c ON c.to_name = p.proc_name "
+            "WHERE c.object = ? "
+            "UNION "
+            "SELECT DISTINCT p.proc_name AS name, p.object, p.proc_type, "
+            "p.params, p.return_type, p.start_line, p.end_line, p.cyclomatic "
+            "FROM procedures p "
+            "WHERE p.object = ? AND p.proc_type IN ('function', 'subroutine') "
+            "ORDER BY name",
+            [object_name, object_name],
+        )
+    )
+
+    return {"knownObjects": known_objects, "knownProcs": known_procs}
+
+
+def get_local_symbols(conn: duckdb.DuckDBPyConnection, object_name: str, proc_name: str | None = None) -> list[dict[str, Any]]:
+    """Resolved local-variable types for identifier-linking, optionally scoped to one procedure."""
+    try:
+        if proc_name is not None:
+            return rows(
+                conn.execute(
+                    "SELECT proc_name, var_name, raw_type, resolved_kind, resolved_target, is_parameter "
+                    "FROM resolved_types WHERE object = ? AND proc_name = ? ORDER BY var_name",
+                    [object_name, proc_name],
+                )
+            )
+        return rows(
+            conn.execute(
+                "SELECT proc_name, var_name, raw_type, resolved_kind, resolved_target, is_parameter "
+                "FROM resolved_types WHERE object = ? ORDER BY proc_name, var_name",
+                [object_name],
+            )
+        )
+    except Exception:
+        return []
+
+
 def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, Any] | None:
     obj_rows = rows(conn.execute("SELECT object AS name, kind, file FROM objects WHERE object = ?", [name]))
     if not obj_rows:
@@ -205,43 +251,16 @@ def get_object_source(conn: duckdb.DuckDBPyConnection, name: str) -> dict[str, A
         )
     )
 
-    known_objects = rows(conn.execute("SELECT object AS name, kind FROM objects WHERE object != ? ORDER BY object", [name]))
-
-    known_procs = rows(
-        conn.execute(
-            "SELECT DISTINCT p.proc_name AS name, p.object, p.proc_type, "
-            "p.params, p.return_type, p.start_line, p.end_line, p.cyclomatic "
-            "FROM procedures p "
-            "JOIN call_sites c ON c.to_name = p.proc_name "
-            "WHERE c.object = ? "
-            "UNION "
-            "SELECT DISTINCT p.proc_name AS name, p.object, p.proc_type, "
-            "p.params, p.return_type, p.start_line, p.end_line, p.cyclomatic "
-            "FROM procedures p "
-            "WHERE p.object = ? AND p.proc_type IN ('function', 'subroutine') "
-            "ORDER BY name",
-            [name, name],
-        )
-    )
-
-    try:
-        local_symbols = rows(
-            conn.execute(
-                "SELECT proc_name, var_name, raw_type, resolved_kind, resolved_target, is_parameter "
-                "FROM resolved_types WHERE object = ? ORDER BY proc_name, var_name",
-                [name],
-            )
-        )
-    except Exception:
-        local_symbols = []
+    linking_context = get_linking_context(conn, name)
+    local_symbols = get_local_symbols(conn, name)
 
     return {
         "file": file_path,
         "lines": lines,
         "source_available": bool(lines),
         "procedures": procs,
-        "knownObjects": known_objects,
-        "knownProcs": known_procs,
+        "knownObjects": linking_context["knownObjects"],
+        "knownProcs": linking_context["knownProcs"],
         "localSymbols": local_symbols,
     }
 

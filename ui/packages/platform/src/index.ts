@@ -144,15 +144,14 @@ export { SvgToolbar } from "./components/diagrams/SvgToolbar.js";
 export { MetricsGrid } from "./components/objects/MetricsGrid.js";
 
 // Source
-export { ProcOverlayBars } from "./components/source/ProcOverlayBars.js";
-export { SourceGutter } from "./components/source/SourceGutter.js";
+export { SourceView } from "./components/source/SourceView.js";
 export { SourceTooltip } from "./components/source/SourceTooltip.js";
 export { linkIdentifiers } from "./components/source/pure/identifiers.js";
 export {
-  lineFromY, overlayTop, overlayHeight, procSelectedRange, dimmedRanges, procedureAtLine, PIXELS_PER_LINE,
+  procSelectedRange, procedureAtLine,
 } from "./components/source/pure/line.js";
 export {
-  buildObjectMap, buildProcMap, buildVarMap, buildProcCountMap, buildProcFirstLine,
+  buildObjectMap, buildProcMap, buildVarMap, buildProcCountMap, buildProcFirstLine, buildProcRangeMap,
 } from "./components/source/pure/lookup.js";
 export {
   PROC_COLORS, PROC_BADGE_COLORS,

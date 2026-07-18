@@ -64,3 +64,18 @@ export function buildProcFirstLine(
   }
   return map;
 }
+
+// Maps every line within a procedure's [start_line, end_line] range to that
+// procedure. Rendered per-line (one row at a time) so the resulting overlay
+// strip is pinned to real DOM rows and cannot drift, unlike a pixel-offset
+// overlay sized from a hardcoded line-height constant.
+export function buildProcRangeMap(
+  procedures: ProcedureInfo[],
+): Map<number, ProcedureInfo> {
+  const map = new Map<number, ProcedureInfo>();
+  for (const p of procedures) {
+    if (p.start_line == null || p.end_line == null) continue;
+    for (let line = p.start_line; line <= p.end_line; line++) map.set(line, p);
+  }
+  return map;
+}

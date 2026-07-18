@@ -43,8 +43,8 @@ describe("SourceCard slice highlight", () => {
     expect(banner).not.toBeNull();
     expect(banner?.textContent).toContain("of_bar:2");
     expect(banner?.textContent).toContain("1 statement");
-    // Line 2 is highlighted, lines 1 and 3 fall into two separate dimmed gaps.
-    expect(document.querySelectorAll(".source-dim-overlay").length).toBe(2);
+    // Line 2 is highlighted; lines 1 and 3 dim.
+    expect(document.querySelectorAll(".source-code-line--dim").length).toBe(2);
   });
 
   it("does not surface a highlight computed for a different object", () => {

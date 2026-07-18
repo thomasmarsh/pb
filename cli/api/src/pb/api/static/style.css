@@ -569,6 +569,7 @@ body {
     text-align: right;
 }
 .source-gutter-line {
+    position: relative;
     padding: 0 8px 0 4px;
     color: var(--text-muted);
     background: #0a0c14;
@@ -595,6 +596,9 @@ body {
     background: rgba(248, 113, 113, 0.12);
 }
 .source-gutter-line--error { color: var(--red); }
+.source-gutter-line--range, .source-code-line--range {
+    background: rgba(108, 140, 255, 0.07);
+}
 .source-gutter-line--clickable { cursor: pointer; }
 .source-gutter-line--clickable:hover { color: var(--phase-p3); background: rgba(245, 158, 11, 0.1); }
 
@@ -609,9 +613,9 @@ body {
 }
 .source-proc-bar {
     position: absolute;
-    left: 0;
+    top: 0; right: 0; bottom: 0;
     width: 3px;
-    border-radius: 0 2px 2px 0;
+    border-radius: 2px 0 0 2px;
     cursor: pointer;
     transition: width 0.15s;
     z-index: 2;
@@ -624,19 +628,8 @@ body {
 .source-proc-bar.proc-event { background: #facc15; }
 .source-proc-bar.proc-on { background: #4ade80; }
 .source-proc-bar.selected { width: 5px; }
-.source-proc-range-bg {
-    position: absolute;
-    left: 0; right: 0;
-    background: rgba(108, 140, 255, 0.07);
-    pointer-events: none;
-    z-index: 1;
-}
-.source-dim-overlay {
-    position: absolute;
-    left: 0; right: 0;
+.source-code-line--dim {
     background: rgba(0, 0, 0, 0.75);
-    pointer-events: none;
-    z-index: 2;
 }
 .source-slice-banner {
     display: flex;

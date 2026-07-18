@@ -114,13 +114,13 @@ describe("SourceViewer", () => {
     expect((a as any).action.name).toBe("w_main");
   });
 
-  it("renders no dim overlay or banner when sliceHighlight is absent", () => {
+  it("renders no dimmed lines or banner when sliceHighlight is absent", () => {
     renderViewer();
     expect(document.querySelector(".source-slice-banner")).toBeNull();
-    expect(document.querySelector(".source-dim-overlay")).toBeNull();
+    expect(document.querySelector(".source-code-line--dim")).toBeNull();
   });
 
-  it("renders the slice banner and dim overlays for non-highlighted gaps", () => {
+  it("renders the slice banner and dims every non-highlighted line", () => {
     renderViewer({
       lines: ["a", "b", "c", "d", "e"],
       sliceHighlight: { lines: new Set([3]), label: "Backward slice — 1 statement" },
@@ -128,16 +128,16 @@ describe("SourceViewer", () => {
     const banner = document.querySelector(".source-slice-banner");
     expect(banner).not.toBeNull();
     expect(banner?.textContent).toContain("Backward slice — 1 statement");
-    // Lines 1-2 and 4-5 are dimmed around the single highlighted line 3.
-    expect(document.querySelectorAll(".source-dim-overlay").length).toBe(2);
+    // Lines 1, 2, 4, 5 are dimmed around the single highlighted line 3.
+    expect(document.querySelectorAll(".source-code-line--dim").length).toBe(4);
   });
 
-  it("renders one dim overlay covering the whole file when nothing is highlighted but sliceHighlight is set", () => {
+  it("dims every line when nothing is highlighted but sliceHighlight is set", () => {
     renderViewer({
       lines: ["a", "b", "c"],
       sliceHighlight: { lines: new Set(), label: "Backward slice — 0 statements" },
     });
-    expect(document.querySelectorAll(".source-dim-overlay").length).toBe(1);
+    expect(document.querySelectorAll(".source-code-line--dim").length).toBe(3);
   });
 
   it("Clear button calls onClearSliceHighlight", () => {

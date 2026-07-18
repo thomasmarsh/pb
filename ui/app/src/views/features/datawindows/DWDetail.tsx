@@ -103,7 +103,7 @@ export function DwDetailCore(props: { d: DwDetailResponse; layout: DataWindowFil
         <Show when={d.source}>
           <div class="card">
             <div class="card-header"><h3>Source</h3></div>
-            <CodeBlock code={d.source!} />
+            <CodeBlock code={d.source!} objectName={d.name} />
           </div>
         </Show>
 
