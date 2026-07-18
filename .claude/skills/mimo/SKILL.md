@@ -58,6 +58,21 @@ consequences (a shared branch, a build that others depend on).
   --stat` and the touched files) before deciding whether to proceed —
   don't chain further stages automatically just because mimo's own report
   says it succeeded and offers to continue.
+- When one mimo run writes the tests and a later run writes the
+  implementation, a *wrong test expectation can pull production behavior
+  out of spec*: observed 2026-07-17 (Plan 181) — the test run asserted
+  against `generate_html()` where the spec meant the new `snapshot()`,
+  so the implementation run "fixed" the resulting failures by making
+  `generate_html()` live-render by default (inverting a deliberately
+  preserved legacy default) and reordering SVG attributes to fit its own
+  test regex. All gates passed; the damage was only visible in the diff.
+  Defenses: (a) in the test spec, name the exact assertion *target*
+  (which method/field), not just the expected values; (b) in the
+  implementation spec, call out preserved defaults explicitly ("when the
+  new parameter is absent, output must be byte-identical — do not add
+  fallbacks"); (c) on review, read every production hunk that touches a
+  pre-existing code path and ask "does the default path still do what it
+  did before?", not just "do the new tests pass?".
 
 ### What delegates well vs. what doesn't
 
