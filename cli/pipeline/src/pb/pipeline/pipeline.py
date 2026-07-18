@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from pb.pipeline.db import setup_db_extras
@@ -32,18 +32,22 @@ def db_is_current(input_path: Path, db: str) -> bool:
         return False
 
 
-def run(
+def _prepare_run(
     src_dir: Path,
     db: str,
     binary: Path,
-    reporter: Reporter,
-    reset: bool = False,
-    dialect: str = "oracle",
-    input_path: Path | None = None,
-    ddl: Sequence[str] = (),
-    default_namespace: str | None = None,
-    diagnostics_report_path: str | None = None,
-) -> None:
+    reset: bool,
+    dialect: str,
+    ddl: Sequence[str],
+    default_namespace: str | None,
+) -> tuple[Path, str, list[str], str | None]:
+    """Resolve src_dir, build pbc's argv, and normalize default_namespace.
+
+    Shared by `run()`'s synchronous path and `IndexJob`'s background-thread
+    path so the argv/normalization policy is single-sourced.
+
+    Returns (resolved_src_dir, db_new_path, argv, normalized_default_namespace).
+    """
     # Normalized once, here, at the single choke point every caller (index/
     # explore) goes through: catalog namespaces are always lowercased by
     # ddl.py's _table_ident regardless of --ddl tag casing, so a raw-case
@@ -61,8 +65,6 @@ def run(
     if reset and Path(db).exists():
         Path(db).unlink()
 
-    run_env = os.environ.copy()
-
     # sys.executable is always defined for a running interpreter -- no
     # discovery needed. pbc launches the SQL bridge worker as
     # `sys.executable -m pb.pipeline.bridge.sql_worker`; that module's
@@ -78,45 +80,82 @@ def run(
     if default_namespace:
         argv += ["--default-namespace", default_namespace]
 
-    errors = 0
+    return src_dir, db_new, argv, default_namespace
+
+
+def _run_pbc(argv: list[str], on_event: Callable[[dict], None]) -> tuple[int, list[str]]:
+    """Spawn pbc and feed its parsed stderr JSONL events to on_event.
+
+    Returns (returncode, unparsed raw stderr lines). Shared by `run()`'s
+    synchronous path and `IndexJob`'s background-thread path -- they differ
+    only in what they attach to on_event, not in the subprocess/threading
+    logic itself.
+    """
+    run_env = os.environ.copy()
     raw_stderr_lines: list[str] = []
+
+    proc = subprocess.Popen(
+        argv,
+        stderr=subprocess.PIPE,
+        env=run_env,
+    )
+
+    def _read_stderr() -> None:
+        assert proc.stderr is not None
+        for raw in proc.stderr:
+            line = raw.decode(errors="replace").strip()
+            if not line:
+                continue
+            try:
+                on_event(json.loads(line))
+            except json.JSONDecodeError:
+                raw_stderr_lines.append(line)
+
+    reader = threading.Thread(target=_read_stderr, daemon=True)
+    reader.start()
+    proc.wait()
+    reader.join()
+
+    return proc.returncode, raw_stderr_lines
+
+
+def run(
+    src_dir: Path,
+    db: str,
+    binary: Path,
+    reporter: Reporter,
+    reset: bool = False,
+    dialect: str = "oracle",
+    input_path: Path | None = None,
+    ddl: Sequence[str] = (),
+    default_namespace: str | None = None,
+    diagnostics_report_path: str | None = None,
+) -> None:
+    src_dir, db_new, argv, default_namespace = _prepare_run(
+        src_dir, db, binary, reset, dialect, ddl, default_namespace,
+    )
+
+    errors = 0
     collector = DiagnosticsCollector() if diagnostics_report_path else None
 
     try:
         with reporter.runner_progress() as prog:
-            proc = subprocess.Popen(
-                argv,
-                stderr=subprocess.PIPE,
-                env=run_env,
-            )
 
-            def _read_stderr() -> None:
-                assert proc.stderr is not None
-                for raw in proc.stderr:
-                    line = raw.decode(errors="replace").strip()
-                    if not line:
-                        continue
-                    try:
-                        ev = json.loads(line)
-                        prog.on_event(ev)
-                        if collector is not None:
-                            collector.on_event(ev)
-                    except json.JSONDecodeError:
-                        raw_stderr_lines.append(line)
+            def on_event(ev: dict) -> None:
+                prog.on_event(ev)
+                if collector is not None:
+                    collector.on_event(ev)
 
-            reader = threading.Thread(target=_read_stderr, daemon=True)
-            reader.start()
-            proc.wait()
-            reader.join()
+            returncode, raw_stderr_lines = _run_pbc(argv, on_event)
     finally:
         if collector is not None and diagnostics_report_path:
             collector.write(diagnostics_report_path)
 
     parsed = prog.parsed_count
 
-    if proc.returncode != 0:
+    if returncode != 0:
         import typer
-        typer.echo(f"pbc failed (exit {proc.returncode}):", err=True)
+        typer.echo(f"pbc failed (exit {returncode}):", err=True)
         for line in raw_stderr_lines:
             typer.echo(f"  {line}", err=True)
         reporter.done(parsed=0, errors=1, sql_parse_failures=0)
