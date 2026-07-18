@@ -130,6 +130,7 @@ test-suite pb-compiler-test
   main-is: Main.hs
   other-modules:
       DuckDbTest
+    , SmallCheckInstances
     , SouffleSchemaTest
     , SouffleDeadCodeTest
     , SouffleTaintTest
@@ -182,6 +183,8 @@ test-suite pb-compiler-test
     , tasty
     , tasty-hunit
     , tasty-hedgehog
+    , tasty-smallcheck ==0.8.2
+    , smallcheck       ==1.2.1.1
     , hedgehog       >=1.4
     , megaparsec
     , aeson

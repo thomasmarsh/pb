@@ -12,9 +12,12 @@ import PB.Pipeline.Preprocess (LogicalLine (..))
 import Hedgehog (Gen, Property, assert, failure, footnote, forAll, property, (===))
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
-import Test.Tasty              (TestTree, testGroup)
+import SmallCheckInstances      (StructuredExpr (..))
+import Test.Tasty              (TestTree, localOption, testGroup)
 import Test.Tasty.HUnit        (testCase, (@?=))
 import Test.Tasty.Hedgehog     (testProperty)
+import Test.Tasty.SmallCheck   (SmallCheckDepth (..))
+import qualified Test.Tasty.SmallCheck as SC
 
 -- ---------------------------------------------------------------------------
 -- Helper
@@ -586,6 +589,11 @@ tests = testGroup "Expr"
         unparseExpr (ExRaw ["select", "*", "from", "t"]) @?= "select * from t"
     ]
 
+  , localOption (SmallCheckDepth 3) $ testGroup "unparse exhaustive round-trip (SmallCheck)"
+    [ SC.testProperty "round-trip: parse . unparse . parse == parse, exhaustive to depth 3"
+        prop_exprSmallCheck
+    ]
+
   , testGroup "LvSegment case-insensitive equality (Plan 178 Phase 2)"
     [ testCase "name differing only in case -> equal (PB identifiers are case-insensitive)" $
         LvSegment "Foo" Nothing @?= LvSegment "foo" Nothing
@@ -882,3 +890,19 @@ propUnparseRoundtrip = property $ do
   case lexResult (tokenizeLine ll) of
     Left err   -> footnote ("lex error: " <> show err <> " for unparsed text: " <> show text) >> failure
     Right toks -> stripSpans (parseExpr toks) === stripSpans expr
+
+-- | Exhaustive counterpart to 'propUnparseRoundtrip': enumerates every
+-- 'StructuredExpr' up to the SmallCheck depth (set to 3 at the call site)
+-- rather than sampling. A lex failure here is reported via
+-- 'Either String ()' -- SmallCheck's own failure message is the
+-- counterexample itself, so no extra footnote plumbing is needed the way
+-- Hedgehog's forAll/footnote pairing requires.
+prop_exprSmallCheck :: StructuredExpr -> Either String String
+prop_exprSmallCheck (SE expr) =
+  let text = unparseExpr expr
+      ll   = LogicalLine text 1 1
+  in case lexResult (tokenizeLine ll) of
+       Left err   -> Left ("lex error: " <> show err <> " for unparsed text: " <> show text)
+       Right toks
+         | stripSpans (parseExpr toks) == stripSpans expr -> Right "ok"
+         | otherwise -> Left ("round-trip mismatch for unparsed text: " <> show text)

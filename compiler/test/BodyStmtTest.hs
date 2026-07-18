@@ -23,9 +23,12 @@ import Hedgehog (Gen, Property, assert, failure, footnote, forAll, property, (==
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import qualified Data.Text      as T
-import Test.Tasty              (TestTree, testGroup)
+import SmallCheckInstances      (StructuredLeafBodyStmt (..))
+import Test.Tasty              (TestTree, localOption, testGroup)
 import Test.Tasty.HUnit        (assertFailure, testCase, (@?=))
 import Test.Tasty.Hedgehog     (testProperty)
+import Test.Tasty.SmallCheck   (SmallCheckDepth (..))
+import qualified Test.Tasty.SmallCheck as SC
 import Text.Megaparsec         (eof, many, parse)
 import Text.Megaparsec.Error   (errorBundlePretty)
 
@@ -496,6 +499,11 @@ tests = testGroup "Body"
         in reparseBodyStmt (unparseBodyStmt stmt) @?= Right stmt
     ]
 
+  , localOption (SmallCheckDepth 3) $ testGroup "unparse exhaustive leaf round-trip (SmallCheck)"
+    [ SC.testProperty "round-trip leaf: parse . unparse . parse == parse, exhaustive to depth 3"
+        prop_leafBodyStmtSmallCheck
+    ]
+
   , testGroup "unparse control-flow (Plan 14 Phase C)"
     [ testProperty "round-trip control-flow: parse . unparse . parse == parse" propUnparseControlFlowRoundtrip
     ]
@@ -657,6 +665,18 @@ propUnparseBodyStmtRoundtrip = property $ do
   case reparseBodyStmt text of
     Left err     -> footnote ("reparse error: " <> show err <> " for unparsed text: " <> show text) >> failure
     Right result -> normalizeBodyStmt result === normalizeBodyStmt stmt
+
+-- | Exhaustive counterpart to 'propUnparseBodyStmtRoundtrip': enumerates
+-- every 'StructuredLeafBodyStmt' up to the SmallCheck depth (set to 3 at
+-- the call site) rather than sampling.
+prop_leafBodyStmtSmallCheck :: StructuredLeafBodyStmt -> Either String String
+prop_leafBodyStmtSmallCheck (SLB stmt) =
+  let text = unparseBodyStmt stmt
+  in case reparseBodyStmt text of
+       Left err -> Left ("reparse error: " <> show err <> " for unparsed text: " <> show text)
+       Right result
+         | normalizeBodyStmt result == normalizeBodyStmt stmt -> Right "ok"
+         | otherwise -> Left ("round-trip mismatch for unparsed text: " <> show text)
 
 -- ---------------------------------------------------------------------------
 -- Control-flow round-trip generator (Plan 14 Phase C)
