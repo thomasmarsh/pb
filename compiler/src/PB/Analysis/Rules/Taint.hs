@@ -33,6 +33,7 @@ import PB.Pipeline.DuckDb
   , TaintKeyRow (..), queryTaintSourceRows, queryTaintSinkRows
   )
 import PB.Analysis.Taint qualified as Taint
+import PB.Analysis.TaintEdges qualified as TaintEdges
 import PB.Analysis.TaintAlgebra (taintReachesPairs, taintConfirmed)
 import Database.DuckDB.Simple (Query (..), query_)
 import Database.DuckDB.Simple.FromRow (FromRow (..), field)
@@ -305,11 +306,11 @@ taintRules = RuleSet
 -- 'taintRules' itself is unchanged and still runs on demand (the
 -- oracle-diff test suite, the UI's SQL\/Datalog exploration surface).
 materializeTaintClosure
-  :: [Taint.TaintSource] -> [Taint.TaintSink] -> [Taint.DefRow] -> [Taint.UseRow]
-  -> [Taint.InterprocEdge] -> DuckConn -> IO ()
-materializeTaintClosure sources sinks defs uses edges conn = do
-  let reaches   = taintReachesPairs sources defs uses edges
-      confirmed = taintConfirmed sources sinks defs uses edges
+  :: [Taint.TaintSource] -> [Taint.TaintSink] -> [TaintEdges.TaintIntraEdgeRow]
+  -> [Taint.DefRow] -> [Taint.UseRow] -> [Taint.InterprocEdge] -> DuckConn -> IO ()
+materializeTaintClosure sources sinks intraEdges defs uses edges conn = do
+  let reaches   = taintReachesPairs sources intraEdges defs uses edges
+      confirmed = taintConfirmed sources sinks intraEdges defs uses edges
       reachRows =
         [ [taintKey ox px vx, taintKey oy py vy]
         | ((ox, px, vx), (oy, py, vy)) <- reaches

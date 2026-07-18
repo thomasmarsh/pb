@@ -86,6 +86,7 @@ library
     PB.Runtime.StdLib
     PB.Algebra.Semiring
     PB.Algebra.Closure
+    PB.Analysis.TaintEdges
     PB.Analysis.TaintAlgebra
   build-depends:
     , base ^>=4.20.1.0
@@ -194,6 +195,7 @@ test-suite pb-compiler-test
     , CallClassifyTest
     , CloneDetectTest
     , ClosureTest
+    , TaintEdgesTest
     , TaintAlgebraTest
     , TaintOracleDiffTest
   build-depends:

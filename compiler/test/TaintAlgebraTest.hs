@@ -1,4 +1,4 @@
-module TaintAlgebraTest (tests, defRow, useRow, edge, src, snk) where
+module TaintAlgebraTest (tests, defRow, useRow, edge, src, snk, intraEdgesFromDefUse) where
 
 -- | A/B oracle tests for the algebraic taint closure (Plan 182).
 --
@@ -27,6 +27,7 @@ import PB.Analysis.TaintAlgebra
   , taintConfirmed
   , taintWitnesses
   )
+import PB.Analysis.TaintEdges (TaintIntraEdgeRow (..), foldTaintEdgesEff)
 import PB.Algebra.Semiring (Boolean (..), PathValue (..))
 import PB.Algebra.Closure
   ( star
@@ -34,7 +35,14 @@ import PB.Algebra.Closure
   , fromEdges
   , reconstructPath
   )
+import PB.AST.BodyStmt  (BodyStmt (..))
+import PB.AST.Expr      (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Ident      (mkIdent)
+import PB.AST.Located   (Located (..))
+import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
+import PB.Compile.Flatten (compileProcedureToEff)
 
+import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
@@ -66,6 +74,35 @@ src o p v t l = TaintSource o p v t "db_read" l
 
 snk :: Text -> Text -> Text -> Text -> Maybe Int -> TaintSink
 snk o p v t l = TaintSink o p v t "db_write" "high" l
+
+-- | Test-only reimplementation of the same-line def/use join
+-- 'PB.Analysis.TaintAlgebra.buildTaintIndex' used before Plan 182 Move 2
+-- (2026-07-18). Production now sources intra-proc edges from
+-- 'PB.Analysis.TaintEdges.foldTaintEdgesEff' (a direct fold of the
+-- compiled EffTerm -- see 'TaintEdgesTest' for that path's own coverage);
+-- this helper exists only so the fixtures below (hand-typed 'DefRow'\/
+-- 'UseRow' lists, not compiled 'EffTerm's) can still exercise
+-- 'taintReachable'\/'taintReachesPairs'\/'taintConfirmed'\/'taintWitnesses''s
+-- reachability\/dedup\/cycle logic without being rewritten as EffTerm
+-- fixtures -- those functions are what's under test here, not edge
+-- extraction.
+emptyEnv :: ScopedTypeEnv
+emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Map.empty "" Map.empty
+
+lvExpr :: Text -> Expr
+lvExpr n = ExLvalue (Lvalue [LvSegment (mkIdent n) Nothing])
+
+intraEdgesFromDefUse :: [DefRow] -> [UseRow] -> [TaintIntraEdgeRow]
+intraEdgesFromDefUse defs uses =
+  [ TaintIntraEdgeRow (urObject u) (urProcName u) (urVarName u) (drVarName d)
+  | u <- uses
+  , Just line <- [urLine u]
+  , d <- defs
+  , drObject d == urObject u
+  , drProcName d == urProcName u
+  , drLine d == Just line
+  , drVarName d /= urVarName u
+  ]
 
 tests :: TestTree
 tests = testGroup "TaintAlgebra"
@@ -105,7 +142,7 @@ tests = testGroup "TaintAlgebra"
                      , edge ""  "global::g_x" (Just 1) "oa" "pR" "global_write" "g_x" "g_x" "g_x"
                      ]
               (bfsSet, _) = propagateTaint sources defs uses edges
-              algSet      = taintReachable sources defs uses edges
+              algSet      = taintReachable sources (intraEdgesFromDefUse defs uses) defs uses edges
           in bfsSet @?= algSet
       , testCase "isolated source (zero outgoing edges) keeps its own 0-hop membership" $
           -- Plan 182 corpus finding (doc/plan/182-algebraic-analysis.md
@@ -120,7 +157,7 @@ tests = testGroup "TaintAlgebra"
               uses = []
               edges = []
               (bfsSet, _) = propagateTaint sources defs uses edges
-              algSet      = taintReachable sources defs uses edges
+              algSet      = taintReachable sources (intraEdgesFromDefUse defs uses) defs uses edges
           in bfsSet @?= algSet
       , testCase "confirmed (source, sink) pairs match" $
           let sources = [ src "w" "oa" "pA" "ls_a" (Just 5)
@@ -141,7 +178,7 @@ tests = testGroup "TaintAlgebra"
                      , edge "oa" "pW" (Just 1) ""  "global::g_x" "global_write" "g_x" "g_x" "g_x"
                      , edge ""  "global::g_x" (Just 1) "oa" "pR" "global_write" "g_x" "g_x" "g_x"
                      ]
-              confirmed = taintConfirmed sources sinks defs uses edges
+              confirmed = taintConfirmed sources sinks (intraEdgesFromDefUse defs uses) defs uses edges
               key (s, k) =
                 ( (tsObject s, tsProcName s, tsVarName s)
                 , (tskObject k, tskProcName k, tskVarName k)
@@ -174,7 +211,7 @@ tests = testGroup "TaintAlgebra"
                      , useRow "w" "oa" "pB" "ls_c" 3 "return"
                      ]
               edges = [ edge "oa" "pA" (Just 5) "oa" "pB" "arg"    "ls_b" "ls_b" "ls_c" ]
-              confirmed = taintConfirmed sources sinks defs uses edges
+              confirmed = taintConfirmed sources sinks (intraEdgesFromDefUse defs uses) defs uses edges
           in length confirmed @?= 1
       ]
   , testGroup "taintReachesPairs"
@@ -185,11 +222,11 @@ tests = testGroup "TaintAlgebra"
               edges = [] :: [InterprocEdge]
               srcT = ("oa", "pA", "ls_a")
               bT   = ("oa", "pA", "ls_b")
-          in Set.fromList (taintReachesPairs sources defs uses edges)
+          in Set.fromList (taintReachesPairs sources (intraEdgesFromDefUse defs uses) defs uses edges)
                @?= Set.fromList [ (srcT, bT) ]
       , testCase "isolated source (zero outgoing edges) produces zero pairs" $
           let sources = [ src "w" "oa" "pA" "ls_orphan" (Just 9) ]
-          in taintReachesPairs sources [] [] [] @?= []
+          in taintReachesPairs sources [] [] [] [] @?= []
       , testCase "cycle through the seed: source reachable back to itself" $
           -- ls_a -> ls_b (def-use same line) and ls_b -> ls_a (return edge
           -- back into the same var) forms a genuine 2-node cycle rooted at
@@ -205,7 +242,7 @@ tests = testGroup "TaintAlgebra"
               edges = [ edge "oa" "pA" (Just 3) "oa" "pA" "return" "ls_a" "ls_a" "ls_a" ]
               srcT = ("oa", "pA", "ls_a")
               bT   = ("oa", "pA", "ls_b")
-          in Set.fromList (taintReachesPairs sources defs uses edges)
+          in Set.fromList (taintReachesPairs sources (intraEdgesFromDefUse defs uses) defs uses edges)
                @?= Set.fromList [ (srcT, bT), (srcT, srcT) ]
       ]
   , testGroup "taint witness (Path)"
@@ -221,7 +258,20 @@ tests = testGroup "TaintAlgebra"
               edges = [ edge "oa" "pA" (Just 5) "oa" "pB" "arg"    "ls_b" "ls_b" "ls_c"
                      , edge "oa" "pB" (Just 3) "oa" "pA" "return" "ls_c" "ls_c" "ls_b"
                      ]
-          in null (taintWitnesses sources defs uses edges) @?= False
+          in null (taintWitnesses sources (intraEdgesFromDefUse defs uses) defs uses edges) @?= False
       ]
+
+  , testGroup "Move 2 parity: EffTerm fold vs same-line join (Plan 182, 2026-07-18)"
+    [ testCase "y = x + 1 (single stmt): foldTaintEdgesEff matches intraEdgesFromDefUse" $
+        let defs = [ defRow "w" "oa" "pA" "y" 5 0 ]
+            uses = [ useRow "w" "oa" "pA" "x" 5 "var" ]
+            body = [ Located 5 (BsAssign (Lvalue [LvSegment (mkIdent "y") Nothing])
+                       (ExBinOp (lvExpr "x") BopAdd (ExInt "1"))) ]
+            term = compileProcedureToEff emptyEnv Set.empty body
+            fromRows = Set.fromList (intraEdgesFromDefUse defs uses)
+            fromFold = Set.fromList
+              [ TaintIntraEdgeRow "oa" "pA" u d | (u, d) <- Set.toList (foldTaintEdgesEff term) ]
+        in fromFold @?= fromRows
+    ]
   ]
 

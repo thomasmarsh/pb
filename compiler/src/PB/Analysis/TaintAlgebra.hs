@@ -38,6 +38,7 @@ import PB.Analysis.Taint
   , TaintSource (..)
   , TaintSink (..)
   )
+import PB.Analysis.TaintEdges (TaintIntraEdgeRow (..))
 import PB.Algebra.Semiring (Boolean (..), PathValue (..))
 import PB.Algebra.Closure
   ( Interner (..)
@@ -52,6 +53,7 @@ import PB.Algebra.Closure
   )
 
 import qualified Data.HashMap.Strict as HM
+import qualified Data.HashSet        as HS
 import qualified Data.IntMap.Strict as IM
 import qualified Data.List         as L
 import qualified Data.Map.Strict   as Map
@@ -61,12 +63,12 @@ import           Data.Set          (Set)
 -- | A taint graph node: (object, procedure, variable).
 type TaintTriple = (Text, Text, Text)
 
--- | The five per-corpus indexes 'taintSuccessorsIx' reads. Built ONCE via
+-- | The per-corpus indexes 'taintSuccessorsIx' reads. Built ONCE via
 -- 'buildTaintIndex' and passed around as a plain, already-evaluated
 -- value -- deliberately NOT left as a 'where'-clause under a curried
 -- function's last argument (the shape 'taintSuccessors' used to have).
 -- That shape relies on GHC's full-laziness optimization to float the
--- five 'HM.fromListWith' builds out of the per-call lambda; on the real
+-- 'HM.fromListWith' builds out of the per-call lambda; on the real
 -- corpus (5233 defs/15201 uses/3968 edges, ~28,000 seed lookups in
 -- 'taintRelation'/'taintPathRelation') that sharing did not reliably
 -- happen, rebuilding all five HashMaps from scratch on every seed lookup
@@ -74,22 +76,32 @@ type TaintTriple = (Text, Text, Text)
 -- relaxation (1525 total node-visits across 403 seeds) took 140+
 -- seconds, orders of magnitude more than the real work involved. See
 -- doc/plan/182-algebraic-analysis.md Section 11.
+--
+-- 'tiIntraSuccessors' (Plan 182 Move 2, 2026-07-18) replaces the old
+-- 'tiUsesByTriple'\/'tiDefsByLine' same-line join with a direct read of
+-- 'PB.Analysis.TaintEdges.foldTaintEdgesEff''s @(useVar, defVar)@ pairs,
+-- each already exact (sourced from 'EAssignWithRhs''s fused def+rhs, no
+-- line-number correlation). 'tiReturnUseTriples' is the one piece of the
+-- old 'tiUsesByTriple' role that stays row-derived -- the @ret@ rule below
+-- needs to know whether a var is used with @kind == \"return\"@, which
+-- 'EffTerm' cannot answer: 'PB.Compile.FromSSA' compiles @SsaReturn@ to
+-- @J PId@\/bare @EReturn@, discarding the returned value entirely (see
+-- doc/plan/182-algebraic-analysis.md Section 13/14's scope decision).
 data TaintIndex = TaintIndex
-  { tiUsesByTriple       :: HM.HashMap TaintTriple [UseRow]
-  , tiDefsByLine         :: HM.HashMap (Text, Text, Int) [Text]
+  { tiIntraSuccessors    :: HM.HashMap TaintTriple [Text]
+  , tiReturnUseTriples   :: HS.HashSet TaintTriple
   , tiArgEdgesByCaller   :: HM.HashMap TaintTriple [InterprocEdge]
   , tiReturnEdgesByCallee :: HM.HashMap (Text, Text) [InterprocEdge]
   , tiGlobalWriteEdges   :: HM.HashMap TaintTriple [InterprocEdge]
   }
 
-buildTaintIndex :: [DefRow] -> [UseRow] -> [InterprocEdge] -> TaintIndex
-buildTaintIndex defs uses edges = TaintIndex
-  { tiUsesByTriple = HM.fromListWith (++)
-      [ ((urObject u, urProcName u, urVarName u), [u]) | u <- uses ]
-  -- NB key uses the *Int* line (cf. propagateTaint:720), not the Maybe.
-  , tiDefsByLine = HM.fromListWith (++)
-      [ ((drObject d, drProcName d, line), [drVarName d])
-      | d <- defs, Just line <- [drLine d] ]
+buildTaintIndex :: [TaintIntraEdgeRow] -> [UseRow] -> [InterprocEdge] -> TaintIndex
+buildTaintIndex intraEdges uses edges = TaintIndex
+  { tiIntraSuccessors = HM.fromListWith (++)
+      [ ((tierObject r, tierProcName r, tierUseVar r), [tierDefVar r])
+      | r <- intraEdges ]
+  , tiReturnUseTriples = HS.fromList
+      [ (urObject u, urProcName u, urVarName u) | u <- uses, urKind u == "return" ]
   , tiArgEdgesByCaller = HM.fromListWith (++)
       [ ((ieCallerObject e, ieCallerProc e, ieVarName e), [e])
       | e <- edges, ieEdgeKind e == "arg" ]
@@ -111,12 +123,13 @@ taintSuccessorsIx :: TaintIndex -> TaintTriple -> [(TaintTriple, Text, Text)]
 taintSuccessorsIx TaintIndex{..} (obj, proc, var) =
   intraProc <> arg <> ret <> global
   where
+    -- The 'newVar /= var' self-loop exclusion the old same-line join
+    -- needed is already applied by 'PB.Analysis.TaintEdges''s
+    -- 'assignWithRhs' (it never emits a (var, var) pair), so no filter is
+    -- needed here.
     intraProc =
       [ ((obj, proc, newVar), "def", var <> " used in expression that defines " <> newVar)
-      | u <- HM.findWithDefault [] (obj, proc, var) tiUsesByTriple
-      , Just line <- [urLine u]
-      , newVar <- HM.findWithDefault [] (obj, proc, line) tiDefsByLine
-      , newVar /= var
+      | newVar <- HM.findWithDefault [] (obj, proc, var) tiIntraSuccessors
       ]
     arg =
       [ ((ieCalleeObject e, ieCalleeProc e, ieCalleeContext e), "arg", "passed as argument from " <> obj <> "." <> proc)
@@ -124,8 +137,7 @@ taintSuccessorsIx TaintIndex{..} (obj, proc, var) =
       ]
     ret =
       [ ((ieCallerObject e, ieCallerProc e, ieCallerContext e), "return", "return value of " <> obj <> "." <> proc <> " received by caller")
-      | u <- HM.findWithDefault [] (obj, proc, var) tiUsesByTriple
-      , urKind u == "return"
+      | HS.member (obj, proc, var) tiReturnUseTriples
       , e <- HM.findWithDefault [] (obj, proc) tiReturnEdgesByCallee
       ]
     global =
@@ -138,17 +150,17 @@ taintSuccessorsIx TaintIndex{..} (obj, proc, var) =
 -- (they build the index once themselves, see 'TaintIndex''s doc comment);
 -- kept for exploration/tests that only need one-off successor lookups.
 taintSuccessors
-  :: [DefRow] -> [UseRow] -> [InterprocEdge]
+  :: [TaintIntraEdgeRow] -> [UseRow] -> [InterprocEdge]
   -> TaintTriple -> [(TaintTriple, Text, Text)]
-taintSuccessors defs uses edges = taintSuccessorsIx (buildTaintIndex defs uses edges)
+taintSuccessors intraEdges uses edges = taintSuccessorsIx (buildTaintIndex intraEdges uses edges)
 
 -- | Build the interned Boolean relation for a taint problem. Returns the
 -- interner (for decoding ids back to triples) and the raw relation.
 taintRelation
-  :: [DefRow] -> [UseRow] -> [InterprocEdge] -> [TaintSource]
+  :: [TaintIntraEdgeRow] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> [TaintSource]
   -> (Interner TaintTriple, Relation Boolean)
-taintRelation defs uses edges sources =
-  let !idx = buildTaintIndex defs uses edges
+taintRelation intraEdges defs uses edges sources =
+  let !idx = buildTaintIndex intraEdges uses edges
       successors = taintSuccessorsIx idx
       seeds  = sourceTriples sources
                  ++ [ (drObject d, drProcName d, drVarName d) | d <- defs ]
@@ -175,10 +187,10 @@ taintRelation defs uses edges sources =
 -- edge) for the same taint problem — used for witness reconstruction
 -- via 'PB.Algebra.Closure.reconstructPath'.
 taintPathRelation
-  :: [DefRow] -> [UseRow] -> [InterprocEdge] -> [TaintSource]
+  :: [TaintIntraEdgeRow] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> [TaintSource]
   -> (Interner TaintTriple, Relation (PathValue (Text, Text, Text)))
-taintPathRelation defs uses edges sources =
-  let !idx = buildTaintIndex defs uses edges
+taintPathRelation intraEdges defs uses edges sources =
+  let !idx = buildTaintIndex intraEdges uses edges
       successors = taintSuccessorsIx idx
       seeds  = sourceTriples sources
                  ++ [ (drObject d, drProcName d, drVarName d) | d <- defs ]
@@ -208,10 +220,10 @@ taintPathRelation defs uses edges sources =
 -- | Tainted triples: the reachability set from all sources, as a 'Set'
 -- of triples. Equals the first component of 'propagateTaint'.
 taintReachable
-  :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge]
+  :: [TaintSource] -> [TaintIntraEdgeRow] -> [DefRow] -> [UseRow] -> [InterprocEdge]
   -> Set TaintTriple
-taintReachable sources defs uses edges =
-  let (interner, rel) = taintRelation defs uses edges sources
+taintReachable sources intraEdges defs uses edges =
+  let (interner, rel) = taintRelation intraEdges defs uses edges sources
       idOf t = HM.lookup t (internByVal interner)
       srcIds = [ i | s <- sources
                , let t = (tsObject s, tsProcName s, tsVarName s)
@@ -239,10 +251,10 @@ taintReachable sources defs uses edges =
 -- membership in its own reachable set by a real path back through a
 -- successor -- exactly Souffle's semantics.
 taintReachesPairs
-  :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge]
+  :: [TaintSource] -> [TaintIntraEdgeRow] -> [DefRow] -> [UseRow] -> [InterprocEdge]
   -> [(TaintTriple, TaintTriple)]
-taintReachesPairs sources defs uses edges =
-  let (interner, rel) = taintRelation defs uses edges sources
+taintReachesPairs sources intraEdges defs uses edges =
+  let (interner, rel) = taintRelation intraEdges defs uses edges sources
       idOf t = HM.lookup t (internByVal interner)
       srcIds = dedup [ i | s <- sources
                      , let t = (tsObject s, tsProcName s, tsVarName s)
@@ -274,10 +286,10 @@ taintReachesPairs sources defs uses edges =
 -- openpay corpus, which inflated this function's un-deduplicated output
 -- 26 -> 41 rows before this fix.
 taintConfirmed
-  :: [TaintSource] -> [TaintSink] -> [DefRow] -> [UseRow] -> [InterprocEdge]
+  :: [TaintSource] -> [TaintSink] -> [TaintIntraEdgeRow] -> [DefRow] -> [UseRow] -> [InterprocEdge]
   -> [(TaintSource, TaintSink)]
-taintConfirmed sources sinks defs uses edges =
-  let (interner, rel) = taintRelation defs uses edges sources
+taintConfirmed sources sinks intraEdges defs uses edges =
+  let (interner, rel) = taintRelation intraEdges defs uses edges sources
       idByVal = internByVal interner
       srcIds = [ i | s <- sources
                , let t = (tsObject s, tsProcName s, tsVarName s)
@@ -301,10 +313,10 @@ taintConfirmed sources sinks defs uses edges =
 -- | Convenience: decode a starred PathValue relation back to a list of
 -- (srcTriple, dstTriple, edgeLabel) reachable pairs. Useful for tests.
 taintWitnesses
-  :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge]
+  :: [TaintSource] -> [TaintIntraEdgeRow] -> [DefRow] -> [UseRow] -> [InterprocEdge]
   -> [(TaintTriple, TaintTriple, (Text, Text, Text))]
-taintWitnesses sources defs uses edges =
-  let (interner, rel) = taintPathRelation defs uses edges sources
+taintWitnesses sources intraEdges defs uses edges =
+  let (interner, rel) = taintPathRelation intraEdges defs uses edges sources
       idByVal = internByVal interner
       decode i = unintern i interner
       srcPairs = [ (s, i) | s <- sources

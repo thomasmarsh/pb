@@ -20,7 +20,7 @@ import PB.Pipeline.DuckDb
   ( DuckConn
   , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
   , queryProcDefs, queryProcUses, queryResolvedCalls
-  , queryTaintInputs
+  , queryTaintInputs, queryTaintIntraEdges
   , queryDwRetrieveColumns, queryDwWriteColumns, queryDwWhereColumns
   , queryDwJoinLegs, querySqlCols
   , queryCatFootprintColumns
@@ -369,6 +369,7 @@ runPass67 conn = Progress.timedStep "Building call graph" $ do
   uses <- queryProcUses       conn
   allRC <- queryResolvedCalls conn
   tfis  <- queryTaintInputs   conn
+  intraEdges <- queryTaintIntraEdges conn
   let globalVarNames = Set.fromList (map (mkIdent . gvName) gvs)
       allProcMetas   = concatMap Taint.tfiProcMetas tfis
       allSqlStmts    = concatMap Taint.tfiSqlStmts  tfis
@@ -382,7 +383,7 @@ runPass67 conn = Progress.timedStep "Building call graph" $ do
     appendTaintSources     conn allSources
     appendTaintSinks       conn allSinks
   Progress.timedStep "Taint closure (algebraic)" $
-    TaintRules.materializeTaintClosure allSources allSinks defs uses edges conn
+    TaintRules.materializeTaintClosure allSources allSinks intraEdges defs uses edges conn
 
 -- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157
 -- Phase 1): materialize the schema category @Sch@ from Phase A's

@@ -49,6 +49,8 @@ module PB.Pipeline.DuckDb
   , appendSqlStmtFilters
   , appendSqlStmtTables
   , appendCatFootprintColumns
+  , appendTaintIntraEdges
+  , queryTaintIntraEdges
   , appendCatalogColumns
   , appendCatalogPks
   , appendCatalogFks
@@ -119,6 +121,7 @@ import PB.Analysis.TypeResolve
   )
 import PB.Analysis.Dataflow    qualified as Dataflow
 import PB.Analysis.Taint       qualified as Taint
+import PB.Analysis.TaintEdges  qualified as TaintEdges
 import PB.Analysis.DeadVars    (DeadVarFinding (..), deadVarKindText)
 import PB.Analysis.TypeFamily (TypeMismatchFinding (..), mismatchKindText)
 import PB.Analysis.SchemaCategory
@@ -220,6 +223,13 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       , "CREATE TABLE IF NOT EXISTS cat_footprint_columns \
         \(file TEXT, object TEXT, proc_name TEXT, line INTEGER, \
         \namespace TEXT, table_name TEXT, column_name TEXT, is_write BOOLEAN)"
+      -- Plan 182 Move 2 (2026-07-18): the intra-proc @(useVar, defVar)@
+      -- edges 'PB.Analysis.TaintEdges.foldTaintEdgesEff' folds directly
+      -- from each procedure's compiled EffTerm, populated in Phase A
+      -- (PB.Pipeline.Runner.compileOne, same phase as cat_footprint_columns)
+      -- and consumed by PB.Analysis.TaintAlgebra.buildTaintIndex in Phase B.
+      , "CREATE TABLE IF NOT EXISTS taint_intra_edges \
+        \(object TEXT, proc_name TEXT, use_var TEXT, def_var TEXT)"
       -- Plan 157 Phase 4.5: namespace-aware sibling of sql_statements.tables
       -- (comma-joined, no namespace, kept untouched -- see that field's own
       -- consumers). One row per (statement, table) pair, extracted straight
@@ -822,6 +832,18 @@ appendCatFootprintColumns pool rows = appendRow pool "cat_footprint_columns" $ \
     aBool      app (sscrIsWrite r)
     endRow app
 
+-- | Plan 182 Move 2: writes 'PB.Analysis.TaintEdges.foldTaintEdgesEff'
+-- output, one row per intra-proc @(useVar, defVar)@ edge.
+appendTaintIntraEdges :: AppenderPool -> [TaintEdges.TaintIntraEdgeRow] -> IO ()
+appendTaintIntraEdges _    [] = pure ()
+appendTaintIntraEdges pool rows = appendRow pool "taint_intra_edges" $ \app ->
+  for_ rows $ \r -> do
+    aText app (TaintEdges.tierObject r)
+    aText app (TaintEdges.tierProcName r)
+    aText app (TaintEdges.tierUseVar r)
+    aText app (TaintEdges.tierDefVar r)
+    endRow app
+
 appendSqlStmtFilters :: AppenderPool -> [SqlStmtFilterRow] -> IO ()
 appendSqlStmtFilters _    [] = pure ()
 appendSqlStmtFilters pool rows = appendRow pool "sql_statement_filters" $ \app ->
@@ -961,6 +983,9 @@ instance FromRow Taint.UseRow where
     <$> field <*> field <*> field <*> field
     <*> field <*> field <*> field <*> field
 
+instance FromRow TaintEdges.TaintIntraEdgeRow where
+  fromRow = TaintEdges.TaintIntraEdgeRow <$> field <*> field <*> field <*> field
+
 instance FromRow Taint.ResolvedCallRow where
   fromRow = do
     f_  <- field; o_  <- field; fp_ <- field; tn_ <- field; ct_ <- field
@@ -1087,6 +1112,11 @@ queryProcUses :: DuckConn -> IO [Taint.UseRow]
 queryProcUses conn = query_ conn
   "SELECT file, object, proc_name, var_name, block_id, stmt_index, line, kind \
   \FROM proc_uses"
+
+-- | Plan 182 Move 2: reads back 'appendTaintIntraEdges''s output.
+queryTaintIntraEdges :: DuckConn -> IO [TaintEdges.TaintIntraEdgeRow]
+queryTaintIntraEdges conn = query_ conn
+  "SELECT object, proc_name, use_var, def_var FROM taint_intra_edges"
 
 queryResolvedCalls :: DuckConn -> IO [Taint.ResolvedCallRow]
 queryResolvedCalls conn = query_ conn

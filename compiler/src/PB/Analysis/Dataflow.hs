@@ -17,6 +17,7 @@ module PB.Analysis.Dataflow
   , ProcFlow (..)
   , extractDefsUses
   , extractSqlHostVars
+  , walkExprIdents
   , reachingDefinitions
   , liveVariables
   , analyzeProcedure
