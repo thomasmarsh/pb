@@ -13,7 +13,7 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Test.Tasty           (TestTree, testGroup)
-import Test.Tasty.HUnit     (assertBool, assertFailure, testCase, (@?=))
+import Test.Tasty.HUnit     (assertFailure, testCase, (@?=))
 
 -- ---------------------------------------------------------------------------
 -- Helpers
@@ -130,45 +130,6 @@ tests = testGroup "Taint"
                      "INSERT INTO tbl DEFAULT VALUES" False]
         in classifySinks sql @?=
            [TaintSink "w.srf" "oa" "pA" "*exec" "db_write" "high" (Just 15)]
-    ]
-
-  , testGroup "propagateTaint"
-    [ testCase "intra-proc: tainted ls_a used on same line as ls_b defined" $
-        let sources = [TaintSource "w.srf" "oa" "pA" "ls_a" "db_read" (Just 1)]
-            defs = [defRow "w.srf" "oa" "pA" "ls_b" 5 0]
-            uses = [useRow "w.srf" "oa" "pA" "ls_a" 5 "rhs"]
-            (tainted, _) = propagateTaint sources defs uses []
-        in do
-          assertBool "ls_a is tainted" (("oa", "pA", "ls_a") `Set.member` tainted)
-          assertBool "ls_b is tainted" (("oa", "pA", "ls_b") `Set.member` tainted)
-
-    , testCase "arg edge: tainted caller var → callee param" $
-        let sources = [TaintSource "w.srf" "oa" "pA" "x" "db_read" (Just 1)]
-            e = edge "oa" "pA" Nothing "ob" "pB" "arg" "x" "x" "p1"
-            (tainted, _) = propagateTaint sources [] [] [e]
-        in assertBool "p1 in ob/pB is tainted"
-             (("ob", "pB", "p1") `Set.member` tainted)
-
-    , testCase "return edge: tainted var returned → caller lhs tainted" $
-        let sources = [TaintSource "w.srf" "ob" "pB" "ls_val" "db_read" (Just 1)]
-            retUse = useRow "w.srf" "ob" "pB" "ls_val" 10 "return"
-            e = edge "oa" "pA" Nothing "ob" "pB" "return" "result" "result" "return"
-            (tainted, _) = propagateTaint sources [] [retUse] [e]
-        in assertBool "result in oa/pA is tainted"
-             (("oa", "pA", "result") `Set.member` tainted)
-
-    , testCase "global write edge: tainted global propagates to reader" $
-        let sources = [TaintSource "w.srf" "oa" "pA" "g_val" "db_read" (Just 1)]
-            e = edge "oa" "pA" Nothing "ob" "pB" "global_write" "g_val" "g_val" "g_val"
-            (tainted, _) = propagateTaint sources [] [] [e]
-        in assertBool "g_val in ob/pB is tainted"
-             (("ob", "pB", "g_val") `Set.member` tainted)
-
-    , testCase "no propagation without connection" $
-        let sources = [TaintSource "w.srf" "oa" "pA" "ls_x" "db_read" (Just 1)]
-            (tainted, _) = propagateTaint sources [] [] []
-        in assertBool "unrelated var not tainted"
-             (("ob", "pB", "ls_x") `Set.notMember` tainted)
     ]
 
   , testGroup "buildInterprocEdges"
@@ -395,41 +356,8 @@ tests = testGroup "Taint"
              _ -> error "expected 1 summary"
     ]
 
-  , testGroup "taintAnalysis"
-    [ testCase "SELECT INTO to INSERT in same proc → one path" $
-        let sf = mkSf [mkFn "of_test" [] "long"
-                        [ at 5 (BsRaw "SELECT col INTO :ls_val FROM tbl")
-                        , at 10 (BsRaw "INSERT INTO other (col) VALUES (:ls_val)")
-                        ]] [] [] []
-            result = taintAnalysis [] [] [] Set.empty (extractTaintInputs "w.srf" sf)
-        in case trPaths result of
-             [p] -> do
-               tpSeverity p @?= "high"
-               tpCategory p @?= "sql_injection"
-             ps -> error ("expected 1 path, got " <> show (length ps))
-
-    , testCase "no sources or sinks → empty result" $
-        let sf = mkSf [mkFn "of_clean" [] "" []] [] [] []
-            result = taintAnalysis [] [] [] Set.empty (extractTaintInputs "w.srf" sf)
-        in do
-          trSources result @?= []
-          trSinks result @?= []
-          trPaths result @?= []
-
-    , testCase "SELECT INTO to INSERT in same proc → verify path details" $
-        let sf = mkSf [mkFn "of_test2" [] "long"
-                        [ at 5 (BsRaw "SELECT col INTO :ls_val FROM tbl")
-                        , at 10 (BsRaw "INSERT INTO other (col) VALUES (:ls_val)")
-                        ]] [] [] []
-            result = taintAnalysis [] [] [] Set.empty (extractTaintInputs "w.srf" sf)
-            p = case trPaths result of { (x:_) -> x; [] -> error "no paths" }
-        in do
-          tsVarName (tpSource p) @?= "ls_val"
-          tskVarName (tpSink p) @?= "ls_val"
-          tpSeverity p @?= "high"
-          tpCategory p @?= "sql_injection"
-
-    , testCase "SQL nested inside if-block is found by extractTaintInputs" $
+  , testGroup "extractTaintInputs"
+    [ testCase "SQL nested inside if-block is found by extractTaintInputs" $
         -- extractSqlStmts must recurse into control structures, not just scan top-level BsRaw
         let sf = mkSf [mkFn "of_nested" [] ""
                         [ at 1 (BsIf (IfStmt (ExBool True)

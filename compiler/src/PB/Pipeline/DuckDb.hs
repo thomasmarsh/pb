@@ -85,12 +85,6 @@ module PB.Pipeline.DuckDb
   , queryObjectAncestors
   , queryProcedures
   , queryDwObjects
-  -- Typed EDB-reshaping-layer readers (Taint.hs)
-  , InterprocEdgeRow (..)
-  , queryInterprocEdges
-  , TaintKeyRow (..)
-  , queryTaintSourceRows
-  , queryTaintSinkRows
   -- Phase B appenders
   , appendResolvedTypes
   , appendResolvedCalls
@@ -98,7 +92,6 @@ module PB.Pipeline.DuckDb
   , appendProcSummaries
   , appendTaintSources
   , appendTaintSinks
-  , appendTaintPaths
   , appendTaintAnnotations
   , materializeDeadCode
   , materializeTaintPaths
@@ -1290,53 +1283,6 @@ queryDwObjects conn = do
   rows <- query_ conn "SELECT DISTINCT object FROM dw_objects" :: IO [OneText]
   pure [o | OneText o <- rows]
 
--- | Typed reader over @interproc_edges@, feeding
--- 'PB.Analysis.Rules.Taint.taintEdgeArgRows'\/'taintEdgeGlobalRows'\/
--- 'taintEdgeReturnRows'. Omits @caller_line@ -- none of the three consumers
--- read it, only @caller_context@\/@callee_context@\/@var_name@\/@edge_kind@.
-data InterprocEdgeRow = InterprocEdgeRow
-  { ierCallerObject  :: !Text
-  , ierCallerProc    :: !Text
-  , ierCalleeObject  :: !Text
-  , ierCalleeProc    :: !Text
-  , ierEdgeKind      :: !Text
-  , ierVarName       :: !Text
-  , ierCallerContext :: !Text
-  , ierCalleeContext :: !Text
-  } deriving (Eq, Show)
-
-instance FromRow InterprocEdgeRow where
-  fromRow = InterprocEdgeRow
-    <$> field <*> field <*> field <*> field
-    <*> field <*> field <*> field <*> field
-
-queryInterprocEdges :: DuckConn -> IO [InterprocEdgeRow]
-queryInterprocEdges conn = query_ conn
-  "SELECT caller_object, caller_proc, callee_object, callee_proc, \
-  \edge_kind, var_name, caller_context, callee_context FROM interproc_edges"
-
--- | Typed reader over @taint_sources@\/@taint_sinks@, feeding
--- 'PB.Analysis.Rules.Taint.taintKeyRows'. Both tables reduce to the same
--- (object, proc_name, var_name) key projection under this reader, so one
--- row type and query shape serves both -- neither touches @file@\/
--- @source_type@\/@sink_type@\/@severity@\/@line@.
-data TaintKeyRow = TaintKeyRow
-  { tkrObject   :: !Text
-  , tkrProcName :: !Text
-  , tkrVarName  :: !Text
-  } deriving (Eq, Show)
-
-instance FromRow TaintKeyRow where
-  fromRow = TaintKeyRow <$> field <*> field <*> field
-
-queryTaintSourceRows :: DuckConn -> IO [TaintKeyRow]
-queryTaintSourceRows conn = query_ conn
-  "SELECT object, proc_name, var_name FROM taint_sources"
-
-queryTaintSinkRows :: DuckConn -> IO [TaintKeyRow]
-queryTaintSinkRows conn = query_ conn
-  "SELECT object, proc_name, var_name FROM taint_sinks"
-
 -- | Plan 163 Phase 3: same shape/query as 'querySqlCols', reading
 -- 'cat_footprint_columns' instead -- the existing 'FromRow' 'SqlColRow'
 -- instance is reused verbatim.
@@ -1434,25 +1380,6 @@ appendTaintSinks conn rows = withRaw conn "taint_sinks" $ \app ->
     aText     app (Taint.tskSinkType s)
     aText     app (Taint.tskSeverity s)
     aMaybeInt app (Taint.tskLine     s)
-
-appendTaintPaths :: DuckConn -> [Taint.TaintPath] -> IO ()
-appendTaintPaths _    [] = pure ()
-appendTaintPaths conn rows = withRaw conn "taint_paths" $ \app ->
-  forEachRow app rows $ \_ tp -> do
-    let src = Taint.tpSource tp
-        snk = Taint.tpSink   tp
-        stepsJson = TE.decodeUtf8 . BSL.toStrict . encode $ Taint.tpSteps tp
-    aText app (Taint.tsFile      src)
-    aText app (Taint.tsObject    src)
-    aText app (Taint.tsProcName  src)
-    aText app (Taint.tsVarName   src)
-    aText app (Taint.tskFile     snk)
-    aText app (Taint.tskObject   snk)
-    aText app (Taint.tskProcName snk)
-    aText app (Taint.tskVarName  snk)
-    aText app (Taint.tpSeverity  tp)
-    aText app (Taint.tpCategory  tp)
-    aText app stepsJson
 
 appendTaintAnnotations :: DuckConn -> [Taint.TaintAnnotation] -> IO ()
 appendTaintAnnotations _    [] = pure ()
@@ -1796,26 +1723,36 @@ materializeTaintPaths conn =
       , "LEFT JOIN chains ch ON ch.source_key = c.source_key AND ch.sink_key = c.sink_key"
       ]
 
--- | Materialize @taint_annotations@ from Datalog output.  Reads
--- @taint_source@ (source nodes) and @taint_reaches@ (transitive
--- closure) to rebuild the tainted set, then calls
--- 'Taint.buildTaintAnnotations' (which needs @block_id@ from
--- proc_defs/proc_uses).
+-- | Materialize @taint_annotations@ from the algebraic closure's output.
+-- Reads @taint_sources@ and @taint_reaches@ (transitive closure) to
+-- rebuild the tainted set, then calls 'Taint.buildTaintAnnotations'
+-- (which needs @block_id@ from proc_defs/proc_uses).
 materializeTaintAnnotations :: DuckConn -> IO ()
 materializeTaintAnnotations conn = do
-  -- 1. Read taint_source keys (the source nodes themselves)
-  sourceRows <- queryTextRows conn "taint_source" ["x"]
+  -- 1. Read sources/sinks as Haskell types for buildTaintAnnotations.
+  srcRows <- queryTextRows conn "taint_sources"
+               ["file","object","proc_name","var_name","source_type"]
+  snkRows <- queryTextRows conn "taint_sinks"
+               ["file","object","proc_name","var_name","sink_type","severity"]
+  let allSources = mapMaybe mkSource srcRows
+      allSinks   = mapMaybe mkSink   snkRows
+      mkSource [f,o,p,v,st] = Just Taint.TaintSource
+        { Taint.tsFile = f, Taint.tsObject = o, Taint.tsProcName = p
+        , Taint.tsVarName = v, Taint.tsSourceType = st, Taint.tsLine = Nothing }
+      mkSource _ = Nothing
+      mkSink [f,o,p,v,st,sev] = Just Taint.TaintSink
+        { Taint.tskFile = f, Taint.tskObject = o, Taint.tskProcName = p
+        , Taint.tskVarName = v, Taint.tskSinkType = st
+        , Taint.tskSeverity = sev, Taint.tskLine = Nothing }
+      mkSink _ = Nothing
   -- 2. Read taint_reaches (all reachable pairs)
   reachesRows <- queryTextRows conn "taint_reaches" ["x", "y"]
   -- 3. Build the tainted set: sources ∪ {y | ∃x. taint_source(x) ∧ taint_reaches(x, y)}
   --    Only targets reachable FROM a source are tainted — not all targets
   --    in taint_reaches (which includes nodes reachable from non-source nodes).
-  let sourceKeys = Set.fromList
-        [ key
-        | [key] <- sourceRows
-        , case T.splitOn "::" key of { [_,_,_] -> True; _ -> False }
-        ]
-      -- Filter: only keep (x, y) pairs where x is a source
+  let taintKey o p v = o <> "::" <> p <> "::" <> v
+      sourceKeys = Set.fromList
+        [ taintKey (Taint.tsObject s) (Taint.tsProcName s) (Taint.tsVarName s) | s <- allSources ]
       reachableFromSource = Set.fromList
         [ toKey
         | [fromKey, toKey] <- reachesRows
@@ -1832,23 +1769,7 @@ materializeTaintAnnotations conn = do
   -- 4. Read proc_defs + proc_uses for block_id context
   defs <- queryProcDefs conn
   uses <- queryProcUses conn
-  -- 5. Read sources/sinks as Haskell types for buildTaintAnnotations
-  srcRows <- queryTextRows conn "taint_sources"
-               ["file","object","proc_name","var_name","source_type"]
-  snkRows <- queryTextRows conn "taint_sinks"
-               ["file","object","proc_name","var_name","sink_type","severity"]
-  let allSources = mapMaybe mkSource srcRows
-      allSinks   = mapMaybe mkSink   snkRows
-      mkSource [f,o,p,v,st] = Just Taint.TaintSource
-        { Taint.tsFile = f, Taint.tsObject = o, Taint.tsProcName = p
-        , Taint.tsVarName = v, Taint.tsSourceType = st, Taint.tsLine = Nothing }
-      mkSource _ = Nothing
-      mkSink [f,o,p,v,st,sev] = Just Taint.TaintSink
-        { Taint.tskFile = f, Taint.tskObject = o, Taint.tskProcName = p
-        , Taint.tskVarName = v, Taint.tskSinkType = st
-        , Taint.tskSeverity = sev, Taint.tskLine = Nothing }
-      mkSink _ = Nothing
-      annotations = Taint.buildTaintAnnotations taintedSet allSources allSinks defs uses
+  let annotations = Taint.buildTaintAnnotations taintedSet allSources allSinks defs uses
   appendTaintAnnotations conn annotations
 
 -- ---------------------------------------------------------------------------

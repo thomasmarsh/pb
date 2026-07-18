@@ -40,8 +40,7 @@ import PB.Pipeline.DuckDb
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
-import Data.IORef             (IORef, newIORef, readIORef, writeIORef)
-import Data.Time.Clock        (UTCTime, getCurrentTime)
+import Data.Time.Clock        (getCurrentTime)
 
 -- | Shared per-relation progress hook for 'Souffle.runRuleSetsWithStart' in
 -- 'runPhaseB': fires a @step@ event just before an IDB relation is
@@ -198,12 +197,12 @@ reportLegSourceFanout conn = do
      \near-duplicate extraction rather than legitimate diversity; \
      \worth investigating the source before trusting downstream leg/reaches results"))
 
--- | Characterize 'proc_defs'\/'proc_uses' key fan-in for the two joins
--- 'PB.Analysis.Rules.Taint.initTaintEdbViews' performs in memory
--- ('taintEdgeIntraRows'\/'taintEdgeReturnRows') before it runs -- mirrors
--- 'reportLegSourceFanout' above, since a duplicate-key fan-in blowup is the
--- established failure shape in this neighborhood (leg_source, taint_reaches
--- both hit it previously; see compiler/CLAUDE.md's Code Index).
+-- | Characterize @proc_defs@\/@proc_uses@ key fan-in (by (object, proc_name,
+-- line) and (object, proc_name) respectively) before the taint closure
+-- runs -- mirrors 'reportLegSourceFanout' above, since a duplicate-key
+-- fan-in blowup is the established failure shape in this neighborhood
+-- (leg_source, taint_reaches both hit it previously; see
+-- compiler/CLAUDE.md's Code Index).
 reportTaintDefUseFanout :: DuckConn -> IO ()
 reportTaintDefUseFanout conn = do
   t0 <- getCurrentTime
@@ -226,20 +225,6 @@ reportTaintDefUseFanout conn = do
     (Progress.msBetween t0 t1) defFo
   report ("proc_uses_return" :: Text) ("Datalog: proc_uses return (object,proc)" :: Text)
     (Progress.msBetween t1 t2) retFo
-
--- | Report the raw 'PB.Analysis.Rules.Taint.initTaintEdbViewsWith' checkpoint
--- counts as a single progress event, with elapsed_ms measured since the
--- previous checkpoint (via 'lastT') -- narrows a stall down to the specific
--- query\/join\/write between two checkpoints, not just the whole
--- materialization step.
-reportTaintCounts :: IORef UTCTime -> [(Text, Int)] -> IO ()
-reportTaintCounts lastT counts = do
-  t0 <- readIORef lastT
-  t1 <- getCurrentTime
-  writeIORef lastT t1
-  Progress.emitEvent (Progress.EvStep
-    ("Taint EDB counts: " <> T.intercalate ", " [ k <> "=" <> T.pack (show v) | (k, v) <- counts ])
-    (Just (Progress.msBetween t0 t1)) [] counts Nothing)
 
 -- | Phase B: read Phase A tables from DuckDB, run link analysis, write results.
 -- Structured as two sub-phases:
@@ -294,7 +279,6 @@ runPhaseB conn mDefaultNamespace = do
   reportLegSourceFanout conn
   Progress.emitEvent (Progress.EvStep "Datalog analysis" Nothing [] [] Nothing)
   Souffle.runRuleSetsWithStart souffleHooks conn allDatalogRuleSets
-  TaintRules.reconstructTaintStepKind conn
   materializeDeadCode conn
   materializeDecompositionCoslice conn
   materializeImpliedFk conn
@@ -312,9 +296,6 @@ materializeAllEdbViews conn = do
   Progress.timedStep "Dead-code EDB views materialized" $ DeadCodeRules.initDeadReachEdbViews conn
   Progress.timedStep "Schema EDB views materialized" $ SchemaRules.initEdbViews conn
   reportTaintDefUseFanout conn
-  taintCheckpointT <- getCurrentTime >>= newIORef
-  Progress.timedStep "Taint EDB views materialized" $
-    TaintRules.initTaintEdbViewsWith (reportTaintCounts taintCheckpointT) conn
 
 -- | Every Soufflé rule set run in Phase B. 'Souffle.runRuleSets' topologically
 -- orders these by their IDB-output ∩ EDB-input edges, so the order listed
@@ -353,15 +334,15 @@ runPass5 conn = Progress.timedStep "Resolving types" $ do
 
 -- | Pass 6+7: compute interproc edges and taint classification ONCE
 -- corpus-wide, then the taint closure itself (@taint_reaches@\/
--- @taint_confirmed@) via the algebraic Kleene-star closure
--- ('TaintRules.materializeTaintClosure', Plan 182 cutover) — production's
--- source for those two tables since 2026-07-18. Path reconstruction
--- (@taint_step_kind@, via 'TaintRules.reconstructTaintStepKind') still
--- runs later in 'runPhaseB', once @taint_confirmed@ is populated. The
--- Souffle 'TaintRules.taintRules' fixpoint this replaces is unchanged and
--- still available on demand (the oracle-diff test suite, the UI's
--- SQL\/Datalog exploration surface) — it just no longer runs in the hot
--- path.
+-- @taint_confirmed@) and the witness-path table (@taint_step_kind@) via
+-- the algebraic Kleene-star closure ('TaintRules.materializeTaintClosure'\/
+-- 'TaintRules.materializeTaintStepKind') — production's source for all
+-- three tables. Neither depends on Souffle or a DB round-trip: both read
+-- straight off the same in-memory rows this pass already built. The
+-- Souffle 'TaintRules.taintRules' fixpoint and the Haskell BFS
+-- 'TaintRules.reconstructTaintStepKind' this replaces are unchanged and
+-- still available on demand (the oracle-diff test suite) — neither runs
+-- in the hot path.
 runPass67 :: DuckConn -> IO ()
 runPass67 conn = Progress.timedStep "Building call graph" $ do
   gvs  <- queryGlobalVars     conn
@@ -385,6 +366,8 @@ runPass67 conn = Progress.timedStep "Building call graph" $ do
     appendTaintSinks       conn allSinks
   Progress.timedStep "Taint closure (algebraic)" $
     TaintRules.materializeTaintClosure allSources allSinks intraEdges returnRows defs uses edges conn
+  Progress.timedStep "Taint witness paths (algebraic)" $
+    TaintRules.materializeTaintStepKind allSources allSinks intraEdges returnRows defs uses edges conn
 
 -- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157
 -- Phase 1): materialize the schema category @Sch@ from Phase A's

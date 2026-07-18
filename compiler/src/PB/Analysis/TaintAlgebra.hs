@@ -28,6 +28,7 @@ module PB.Analysis.TaintAlgebra
   , taintReachesPairs
   , taintConfirmed
   , taintWitnesses
+  , taintWitnessLegs
   ) where
 
 import PB.Prelude
@@ -50,6 +51,7 @@ import PB.Algebra.Closure
   , fromEdges
   , reachFrom
   , reachableSet
+  , reconstructPathNodes
   )
 
 import qualified Data.HashMap.Strict as HM
@@ -328,5 +330,37 @@ taintWitnesses sources intraEdges returnRows defs uses edges =
      , dstId <- Set.toList (reachableSet reachRel srcId)
      , Just dstT <- [decode dstId]
      , Just (Reachable _ (Just lbl) _) <- [IM.lookup srcId reachRel >>= IM.lookup dstId]
+     ]
+
+-- | Full leg-by-leg decomposition of a taint witness path: for each
+-- reachable (source, node) pair, the ordered sequence of (fromTriple,
+-- toTriple, kind, description) legs on a shortest src->dst path, decoded
+-- back to 'TaintTriple's via the interner ('taintWitnesses' only keeps the
+-- final hop's label; this walks the full chain via
+-- 'PB.Algebra.Closure.reconstructPathNodes'). Reconciles against
+-- @taint_step_kind@'s per-hop rows -- see
+-- doc/plan/182-algebraic-analysis.md Section 12 item 4.
+taintWitnessLegs
+  :: [TaintSource] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [DefRow] -> [UseRow] -> [InterprocEdge]
+  -> [(TaintTriple, TaintTriple, [(TaintTriple, TaintTriple, Text, Text)])]
+taintWitnessLegs sources intraEdges returnRows defs uses edges =
+  let (interner, rel) = taintPathRelation intraEdges returnRows defs uses edges sources
+      idByVal = internByVal interner
+      decode i = unintern i interner
+      srcPairs = [ (s, i) | s <- sources
+                  , let t = (tsObject s, tsProcName s, tsVarName s)
+                  , Just i <- [HM.lookup t idByVal] ]
+      reachRel = reachFrom rel (map snd srcPairs)
+      decodeLeg (fromId, toId, (kind, desc, _)) = do
+        fromT <- decode fromId
+        toT   <- decode toId
+        pure (fromT, toT, kind, desc)
+  in [ (srcT, dstT, legs)
+     | (_, srcId) <- srcPairs
+     , Just srcT <- [decode srcId]
+     , dstId <- Set.toList (reachableSet reachRel srcId)
+     , Just dstT <- [decode dstId]
+     , Just rawLegs <- [reconstructPathNodes reachRel srcId dstId]
+     , Just legs <- [traverse decodeLeg rawLegs]
      ]
 

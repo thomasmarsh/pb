@@ -1,21 +1,21 @@
 module TaintAlgebraTest (tests, defRow, useRow, edge, src, snk, intraEdgesFromDefUse, returnRowsFromUses) where
 
--- | A/B oracle tests for the algebraic taint closure (Plan 182).
---
--- The core claim is that 'PB.Analysis.TaintAlgebra.taintReachable'
--- (a Kleene star over a semiring-labeled relation) agrees *exactly*
--- with the hand-written BFS 'PB.Analysis.Taint.propagateTaint'
--- on the tainted set, for fixtures spanning all four edge rules
--- (intra-proc same-line def-use, arg, return, global-hub).
---
--- 'propagateTaint' is the trusted oracle here: both are pure Haskell
--- over identical inputs, so equality is a strong, fast, always-runnable
--- gate (the Souffle path in 'SouffleTaintTest' remains the
--- ultimate oracle where 'souffle' is installed).
+-- | Unit and self-consistency tests for the algebraic taint closure
+-- (Plan 182). Covers reachability, confirmed source-sink pairs, and
+-- witness-path reconstruction across fixtures spanning all four edge
+-- rules (intra-proc same-line def-use, arg, return, global-hub), plus
+-- the adversarial shapes (duplicate-key sources/sinks, a cycle through
+-- the seed, a diamond, a 0-hop source==sink pair) the Datalog Rule
+-- Placement Discipline requires. The Souffle\/BFS oracle-diff harness
+-- this file used to run against ('SouffleTaintTest', the hand-written
+-- BFS 'PB.Analysis.Taint.propagateTaint') is deleted (Plan 182 item 7-8
+-- cutover, 2026-07-18) — the algebraic closure is production's sole
+-- implementation, so expected values here are golden (independently
+-- traced/verified, not re-derived from a second implementation at test
+-- time).
 import PB.Prelude
 import PB.Analysis.Taint
-  ( propagateTaint
-  , DefRow (..)
+  ( DefRow (..)
   , UseRow (..)
   , InterprocEdge (..)
   , TaintSource (..)
@@ -26,6 +26,7 @@ import PB.Analysis.TaintAlgebra
   , taintReachesPairs
   , taintConfirmed
   , taintWitnesses
+  , taintWitnessLegs
   )
 import PB.Analysis.TaintEdges (TaintIntraEdgeRow (..), TaintReturnRow (..), foldTaintEdgesEff)
 import PB.Algebra.Semiring (Boolean (..), PathValue (..))
@@ -45,7 +46,7 @@ import PB.Compile.Flatten (compileProcedureToEff)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (testCase, (@?=))
+import Test.Tasty.HUnit (testCase, assertBool, assertEqual, assertFailure, (@?=))
 
 -- helpers (mirror compiler/test/TaintTest.hs)
 defRow :: Text -> Text -> Text -> Text -> Int -> Int -> DefRow
@@ -137,8 +138,14 @@ tests = testGroup "TaintAlgebra"
           in reconstructPath sr 0 2 @?= Just ['a','b']
       ]
 
-  , testGroup "taint A/B vs propagateTaint"
-      [ testCase "algebraic reachability == BFS tainted set" $
+  , testGroup "taintReachable"
+      [ testCase "reachability spans all four edge rules (intra/arg/return/global)" $
+          -- Golden expected set (independently traced + cross-verified
+          -- against the deleted BFS oracle in every CI run and the real
+          -- openpay corpus gate before propagateTaint was removed, Plan
+          -- 182 item 7-8, 2026-07-18): ls_a -(def)-> ls_b -(arg)-> ls_c
+          -- in pB; the global chain g_x written in pW reaches the
+          -- synthetic hub then pR.
           let sources = [ src "w" "oa" "pA" "ls_a" (Just 5)
                        , src "w" "oa" "pW" "g_x" (Just 1)
                        ]
@@ -154,24 +161,22 @@ tests = testGroup "TaintAlgebra"
                      , edge "oa" "pW" (Just 1) ""  "global::g_x" "global_write" "g_x" "g_x" "g_x"
                      , edge ""  "global::g_x" (Just 1) "oa" "pR" "global_write" "g_x" "g_x" "g_x"
                      ]
-              (bfsSet, _) = propagateTaint sources defs uses edges
-              algSet      = taintReachable sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) defs uses edges
-          in bfsSet @?= algSet
+              algSet = taintReachable sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) defs uses edges
+              expected = Set.fromList
+                [ ("", "global::g_x", "g_x"), ("oa", "pA", "ls_a"), ("oa", "pA", "ls_b")
+                , ("oa", "pB", "ls_c"), ("oa", "pR", "g_x"), ("oa", "pW", "g_x")
+                ]
+          in algSet @?= expected
       , testCase "isolated source (zero outgoing edges) keeps its own 0-hop membership" $
           -- Plan 182 corpus finding (doc/plan/182-algebraic-analysis.md
           -- Section 11, 2026-07-18): a source var never subsequently
           -- used/passed/returned/globally-written must still count as
-          -- tainted by definition -- propagateTaint's fixpoint always
-          -- inserts every seed unconditionally; taintRelation's interner
-          -- used to omit any seed with no outgoing arcPairs, silently
-          -- dropping it (confirmed on real corpus: 152/966 triples lost).
+          -- tainted by definition -- taintRelation's interner used to
+          -- omit any seed with no outgoing arcPairs, silently dropping
+          -- it (confirmed on real corpus: 152/966 triples lost).
           let sources = [ src "w" "oa" "pA" "ls_orphan" (Just 9) ]
-              defs = []
-              uses = []
-              edges = []
-              (bfsSet, _) = propagateTaint sources defs uses edges
-              algSet      = taintReachable sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) defs uses edges
-          in bfsSet @?= algSet
+              algSet   = taintReachable sources [] [] [] [] []
+          in algSet @?= Set.fromList [ ("oa", "pA", "ls_orphan") ]
       , testCase "confirmed (source, sink) pairs match" $
           let sources = [ src "w" "oa" "pA" "ls_a" (Just 5)
                        , src "w" "oa" "pW" "g_x" (Just 1)
@@ -257,6 +262,28 @@ tests = testGroup "TaintAlgebra"
               bT   = ("oa", "pA", "ls_b")
           in Set.fromList (taintReachesPairs sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) defs uses edges)
                @?= Set.fromList [ (srcT, bT), (srcT, srcT) ]
+      , testCase "shared-hub fan-in: 2 sources x 1 hub x 2 sinks confirm all 4 pairs" $
+          -- Regression guard for a production incident: a widely-shared
+          -- global fans every writer/reader through one synthetic hub
+          -- node instead of a direct cartesian product (see
+          -- PB.Analysis.Taint's globalEdges doc comment). Both sources
+          -- must reach both sinks THROUGH the hub, not just the hub
+          -- itself.
+          let sources = [ src "f" "obj" "proc_a" "ls_s1" (Just 1), src "f" "obj" "proc_a" "ls_s2" (Just 1) ]
+              sinks   = [ snk "f" "obj" "proc_a" "ls_t1" (Just 1), snk "f" "obj" "proc_a" "ls_t2" (Just 1) ]
+              edges =
+                [ edge "obj" "proc_a" (Just 1) "obj" "proc_a" "global_write" "ls_s1" "ls_s1" "ls_h"
+                , edge "obj" "proc_a" (Just 1) "obj" "proc_a" "global_write" "ls_s2" "ls_s2" "ls_h"
+                , edge "obj" "proc_a" (Just 1) "obj" "proc_a" "global_write" "ls_h"  "ls_h"  "ls_t1"
+                , edge "obj" "proc_a" (Just 1) "obj" "proc_a" "global_write" "ls_h"  "ls_h"  "ls_t2"
+                ]
+              s1 = ("obj", "proc_a", "ls_s1"); s2 = ("obj", "proc_a", "ls_s2")
+              t1 = ("obj", "proc_a", "ls_t1"); t2 = ("obj", "proc_a", "ls_t2")
+              confirmedKeys = Set.fromList
+                [ ((tsObject s, tsProcName s, tsVarName s), (tskObject k, tskProcName k, tskVarName k))
+                | (s, k) <- taintConfirmed sources sinks [] [] [] [] edges
+                ]
+          in confirmedKeys @?= Set.fromList [ (s1, t1), (s1, t2), (s2, t1), (s2, t2) ]
       ]
   , testGroup "taint witness (Path)"
       [ testCase "Path relation yields a witness for a confirmed pair" $
@@ -272,6 +299,77 @@ tests = testGroup "TaintAlgebra"
                      , edge "oa" "pB" (Just 3) "oa" "pA" "return" "ls_c" "ls_c" "ls_b"
                      ]
           in null (taintWitnesses sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) defs uses edges) @?= False
+      , testCase "decomposed witness legs equal expected BFS legs (linear chain)" $
+          let sources = [ src "w" "oa" "pA" "ls_a" (Just 5) ]
+              defs = [ defRow "w" "oa" "pA" "ls_b" 5 0 ]
+              uses = [ useRow "w" "oa" "pA" "ls_a" 5 "var" ]
+              edges = [ edge "oa" "pA" (Just 5) "oa" "pB" "arg" "ls_b" "ls_b" "ls_c" ]
+              srcT = ("oa", "pA", "ls_a")
+              midT = ("oa", "pA", "ls_b")
+              dstT = ("oa", "pB", "ls_c")
+              proj (f, t, k, _desc) = (f, t, k)
+              legsFor = [ legs
+                        | (s, d, legs) <- taintWitnessLegs sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) defs uses edges
+                        , s == srcT, d == dstT
+                        ]
+          in map (map proj) legsFor @?= [ [ (srcT, midT, "def"), (midT, dstT, "arg") ] ]
+      , testCase "diamond: two equal-length paths -- legs form a valid chain with matching hop count" $
+          -- Datalog Rule Placement Discipline's adversarial-fixture
+          -- requirement, applied to witness reconstruction: ls_a reaches
+          -- ls_sink via two distinct 2-hop routes (through ls_x or ls_y).
+          -- PathValue's hop-count tie-break may pick either branch --
+          -- reconciliation with taint_step_kind tolerates that (see
+          -- doc/plan/182-algebraic-analysis.md Section 12 item 4), so this
+          -- only asserts structural validity (a real chain of real edges,
+          -- correct hop count), not which branch won.
+          let sources = [ src "w" "oa" "pA" "ls_a" (Just 5) ]
+              defs = [ defRow "w" "oa" "pA" "ls_x" 5 0
+                     , defRow "w" "oa" "pA" "ls_y" 6 1
+                     ]
+              uses = [ useRow "w" "oa" "pA" "ls_a" 5 "var"
+                     , useRow "w" "oa" "pA" "ls_a" 6 "var"
+                     ]
+              edges = [ edge "oa" "pA" (Just 5) "oa" "pB" "arg" "ls_x" "ls_x" "ls_sink"
+                     , edge "oa" "pA" (Just 6) "oa" "pB" "arg" "ls_y" "ls_y" "ls_sink"
+                     ]
+              srcT = ("oa", "pA", "ls_a")
+              dstT = ("oa", "pB", "ls_sink")
+              realEdges = Set.fromList
+                [ (srcT, ("oa", "pA", "ls_x"), "def" :: Text)
+                , (srcT, ("oa", "pA", "ls_y"), "def")
+                , (("oa", "pA", "ls_x"), dstT, "arg")
+                , (("oa", "pA", "ls_y"), dstT, "arg")
+                ]
+              legsFor = [ legs
+                        | (s, d, legs) <- taintWitnessLegs sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) defs uses edges
+                        , s == srcT, d == dstT
+                        ]
+          in case legsFor of
+               [legs] ->
+                 let proj (f, t, k, _desc) = (f, t, k)
+                     projected = map proj legs
+                     chainConnects = case projected of
+                       [(f1, t1, _), (f2, t2, _)] -> f1 == srcT && t1 == f2 && t2 == dstT
+                       _ -> False
+                 in do
+                      assertEqual "diamond witness has exactly 2 legs" 2 (length legs)
+                      assertBool "diamond witness legs chain src->dst" chainConnects
+                      assertBool "every diamond leg is a real edge" (all (`Set.member` realEdges) projected)
+               other -> assertFailure ("expected exactly one (src,dst) witness entry, got " <> show (length other))
+      , testCase "0-hop: confirmed pair with source == sink has an empty witness leg list" $
+          -- Mirrors materializeTaintStepKind's degenerate-pair handling:
+          -- taintWitnessLegs still emits an entry for the trivial 0-hop
+          -- (src, src) pair (PathValue's 'one' identity), and its leg
+          -- list must be empty -- there is no real edge to report.
+          let sources = [ src "f" "obj" "proc_a" "ls_same" (Just 1) ]
+              sinks   = [ snk "f" "obj" "proc_a" "ls_same" (Just 1) ]
+              srcT    = ("obj", "proc_a", "ls_same")
+              confirmed = taintConfirmed sources sinks [] [] [] [] []
+              witnessLegs = taintWitnessLegs sources [] [] [] [] []
+              legsFor = [ legs | (s, d, legs) <- witnessLegs, s == srcT, d == srcT ]
+          in do
+               assertEqual "0-hop pair is confirmed" 1 (length confirmed)
+               assertEqual "0-hop witness has exactly one (src,src) entry" [[]] legsFor
       ]
 
   , testGroup "Move 2 parity: EffTerm fold vs same-line join (Plan 182, 2026-07-18)"

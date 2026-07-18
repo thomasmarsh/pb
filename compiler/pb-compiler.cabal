@@ -151,7 +151,6 @@ test-suite pb-compiler-test
     , SmallCheckInstances
     , SouffleSchemaTest
     , SouffleDeadCodeTest
-    , SouffleTaintTest
     , SouffleEngineTest
     , SouffleFuzzTest
     , StdLibTest
@@ -197,7 +196,6 @@ test-suite pb-compiler-test
     , ClosureTest
     , TaintEdgesTest
     , TaintAlgebraTest
-    , TaintOracleDiffTest
   build-depends:
     , base ^>=4.20.1.0
     , pb-compiler

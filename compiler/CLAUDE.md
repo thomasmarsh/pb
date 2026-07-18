@@ -240,8 +240,10 @@ datalog-layer.md`), not settled precedent.
    `querySchemaObjects`/`querySchemaMorphismRows`), `PB.Analysis.Rules.DeadCode`'s
    `procRows`/`procMetaRows`/`inheritsRows`/`callRefRows`/`resolvedCallEdgeRows`/
    `entryRows`/`callsRows`, and `PB.Analysis.Rules.Taint`'s
-   `taintEdgeIntraRows`/`taintEdgeArgRows`/`taintEdgeGlobalRows`/
-   `taintEdgeReturnRows`/`taintKeyRows` are the reference pattern. Every
+   `materializeTaintClosure`/`materializeTaintStepKind` (reshaping
+   `PB.Analysis.TaintAlgebra`'s closure output directly into
+   `taint_reaches`/`taint_confirmed`/`taint_step_kind`) are the reference
+   pattern. Every
    `initXEdbViews` in `PB.Analysis.Rules.*` is now a typed Haskell
    materializer — no `CREATE VIEW` SQL remains in this layer; do not write
    a _new_ `CREATE VIEW` for rule-3-shaped logic anywhere in the codebase

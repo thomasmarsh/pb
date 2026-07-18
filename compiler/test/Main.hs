@@ -5,7 +5,6 @@ import qualified SouffleSchemaTest
 import qualified SouffleDeadCodeTest
 import qualified SouffleEngineTest
 import qualified SouffleFuzzTest
-import qualified SouffleTaintTest
 import qualified StdLibTest
 import qualified BodyParserTest
 import qualified BodyStmtTest
@@ -22,7 +21,6 @@ import qualified TaintTest
 import qualified ClosureTest
 import qualified TaintEdgesTest
 import qualified TaintAlgebraTest
-import qualified TaintOracleDiffTest
 import qualified EscapeTest
 import qualified ExprTest
 import qualified CorpusDebtTest
@@ -63,7 +61,6 @@ tests = testGroup "pb-compiler"
   [ DuckDbTest.tests
   , SouffleSchemaTest.tests
   , SouffleDeadCodeTest.tests
-  , SouffleTaintTest.tests
   , SouffleEngineTest.tests
   , SouffleFuzzTest.tests
   , StdLibTest.tests
@@ -82,7 +79,6 @@ tests = testGroup "pb-compiler"
   , ClosureTest.tests
   , TaintEdgesTest.tests
   , TaintAlgebraTest.tests
-  , TaintOracleDiffTest.tests
   , EscapeTest.tests
   , ExprTest.tests
   , CorpusDebtTest.tests

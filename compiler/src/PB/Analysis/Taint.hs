@@ -1,15 +1,12 @@
 {-# LANGUAGE StrictData #-}
--- | Taint analysis: source/sink classification, BFS propagation, path tracing.
+-- | Taint analysis: source/sink classification and per-block annotations.
 --
--- Pure module — no I/O.  Public API:
---
---   taintAnalysis :: TaintEnv -> (sources, sinks, paths, annotations)
---
--- Classifies taint sources (SELECT INTO host vars, event/on handler params)
--- and sinks (INSERT/UPDATE/DELETE bind vars, EXECUTE IMMEDIATE) directly from
--- the AST.  Propagates taint forward through intra-procedural def-use chains
--- and inter-procedural arg/return/global edges.  Reconstructs paths via
--- provenance back-trace.
+-- Pure module — no I/O. Classifies taint sources (SELECT INTO host vars,
+-- event/on handler params) and sinks (INSERT/UPDATE/DELETE bind vars,
+-- EXECUTE IMMEDIATE) directly from the AST, and builds inter-procedural
+-- arg/return/global edges. The taint closure itself (reachability,
+-- confirmed source-sink pairs, witness paths) is
+-- 'PB.Analysis.TaintAlgebra' — an algebraic Kleene-star closure, not BFS.
 module PB.Analysis.Taint
   ( -- * Types
     SqlStmt (..)
@@ -20,10 +17,7 @@ module PB.Analysis.Taint
   , ProcSummaryReturnFlow (..)
   , TaintSource (..)
   , TaintSink (..)
-  , TaintStep (..)
-  , TaintPath (..)
   , TaintAnnotation (..)
-  , TaintResult (..)
   , DefRow (..)
   , UseRow (..)
   , ResolvedCallRow (..)
@@ -33,15 +27,9 @@ module PB.Analysis.Taint
   , classifySinks
   , buildInterprocEdges
   , buildProcedureSummaries
-  , propagateTaint
-  , traceTaintPath
   , buildTaintAnnotations
     -- * Pre-extraction (for streaming pipelines)
   , extractTaintInputs
-    -- * Corpus-wide path building (used by runPhaseB)
-  , buildTaintPaths
-    -- * Entry point
-  , taintAnalysis
     -- * Helpers used by Phase B DuckDB reconstruction
   , classifyOperation
   , hasIntoClause
@@ -65,7 +53,6 @@ import Data.Aeson
   )
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Map.Strict     as Map
-import qualified Data.Sequence       as Seq
 import qualified Data.Set            as Set
 import qualified Data.Text           as T
 
@@ -217,42 +204,6 @@ instance ToJSON TaintSink where
     , "line"      .= tskLine s
     ]
 
-data TaintStep = TaintStep
-  { tstObject    :: Text
-  , tstProcName  :: Text
-  , tstVarName   :: Text
-  , tstLine      :: Maybe Int
-  , tstStepKind  :: Text
-  , tstDescription :: Text
-  } deriving (Eq, Show)
-
-instance ToJSON TaintStep where
-  toJSON s = object
-    [ "object"      .= tstObject s
-    , "proc_name"   .= tstProcName s
-    , "var_name"    .= tstVarName s
-    , "line"        .= tstLine s
-    , "step_kind"   .= tstStepKind s
-    , "description" .= tstDescription s
-    ]
-
-data TaintPath = TaintPath
-  { tpSource   :: TaintSource
-  , tpSink     :: TaintSink
-  , tpSteps    :: [TaintStep]
-  , tpSeverity :: Text
-  , tpCategory :: Text
-  } deriving (Eq, Show)
-
-instance ToJSON TaintPath where
-  toJSON p = object
-    [ "source"   .= tpSource p
-    , "sink"     .= tpSink p
-    , "steps"    .= tpSteps p
-    , "severity" .= tpSeverity p
-    , "category" .= tpCategory p
-    ]
-
 data TaintAnnotation = TaintAnnotation
   { taFile           :: Text
   , taObject         :: Text
@@ -273,15 +224,6 @@ instance ToJSON TaintAnnotation where
     , "is_taint_sink"  .= taIsTaintSink a
     , "tainted_vars"   .= taTaintedVars a
     ]
-
-data TaintResult = TaintResult
-  { trSources     :: [TaintSource]
-  , trSinks       :: [TaintSink]
-  , trPaths       :: [TaintPath]
-  , trAnnotations :: [TaintAnnotation]
-  , trEdges       :: [InterprocEdge]
-  , trProcedureSummaries :: [ProcedureSummary]
-  } deriving (Eq, Show)
 
 -- ---------------------------------------------------------------------------
 -- Inter-procedural edges (computed from resolved_calls + def/use rows)
@@ -321,16 +263,6 @@ data ProcedureSummary = ProcedureSummary
 
 type Triple = (Text, Text, Text)
 
-data ProvEntry = ProvEntry
-  { peParentObj  :: Text
-  , peParentProc :: Text
-  , peParentVar  :: Maybe Text
-  , peStepKind   :: Text
-  , peDesc       :: Text
-  } deriving (Eq, Show)
-
-type Provenance = HM.HashMap Triple ProvEntry
-
 sqlKeywords :: Set.Set Text
 sqlKeywords = Set.fromList
   [ "SELECT", "INSERT", "UPDATE", "DELETE", "DECLARE"
@@ -349,9 +281,6 @@ eventProcTypes = Set.fromList ["event", "on"]
 
 severityMap :: Map.Map Text Text
 severityMap = Map.fromList [("db_write", "high"), ("exec_immediate", "critical")]
-
-categoryMap :: Map.Map Text Text
-categoryMap = Map.fromList [("db_write", "sql_injection"), ("exec_immediate", "exec_immediate")]
 
 -- ---------------------------------------------------------------------------
 -- AST extraction
@@ -698,171 +627,6 @@ buildProcedureSummaries edges defs uses globalVarNames procMetas =
            paramsIn gRead gWritten retFlows
 
 -- ---------------------------------------------------------------------------
--- BFS taint propagation
--- ---------------------------------------------------------------------------
-
--- | Forward BFS taint propagation through def-use chains and inter-proc edges.
--- Returns the set of tainted triples and provenance for path reconstruction.
-propagateTaint
-  :: [TaintSource]
-  -> [DefRow] -> [UseRow]
-  -> [InterprocEdge]
-  -> (Set.Set Triple, Provenance)
-propagateTaint sources defs uses edges =
-  fixpoint Set.empty HM.empty (Seq.fromList initialSeeds)
-  where
-    -- Index uses by (object, proc, var)
-    usesByTriple :: HM.HashMap Triple [UseRow]
-    usesByTriple = HM.fromListWith (++)
-      [ ((urObject u, urProcName u, urVarName u), [u]) | u <- uses ]
-
-    -- Index defs by (object, proc, line)
-    defsByLine :: HM.HashMap (Text, Text, Int) [Text]
-    defsByLine = HM.fromListWith (++)
-      [ ((drObject d, drProcName d, line), [drVarName d])
-      | d <- defs
-      , Just line <- [drLine d]
-      ]
-
-    -- Index interproc edges
-    argEdgesByCaller :: HM.HashMap Triple [InterprocEdge]
-    argEdgesByCaller = HM.fromListWith (++)
-      [ ((ieCallerObject e, ieCallerProc e, ieCallerContext e), [e])
-      | e <- edges, ieEdgeKind e == "arg"
-      ]
-
-    returnEdgesByCallee :: HM.HashMap (Text, Text) [InterprocEdge]
-    returnEdgesByCallee = HM.fromListWith (++)
-      [ ((ieCalleeObject e, ieCalleeProc e), [e])
-      | e <- edges, ieEdgeKind e == "return"
-      ]
-
-    globalWriteEdges :: HM.HashMap Triple [InterprocEdge]
-    globalWriteEdges = HM.fromListWith (++)
-      [ ((ieCallerObject e, ieCallerProc e, ieVarName e), [e])
-      | e <- edges, ieEdgeKind e == "global_write"
-      ]
-
-    -- Queue carries (newTriple, parentTriple, kind, desc).
-    -- parentTriple = Nothing for source seeds (no predecessor to record).
-    initialSeeds :: [(Triple, Maybe Triple, Text, Text)]
-    initialSeeds =
-      [ ((tsObject s, tsProcName s, tsVarName s), Nothing, "source",
-          "taint source: " <> tsSourceType s)
-      | s <- sources
-      ]
-
-    fixpoint
-      :: Set.Set Triple
-      -> Provenance
-      -> Seq.Seq (Triple, Maybe Triple, Text, Text)
-      -> (Set.Set Triple, Provenance)
-    fixpoint tainted prov queue = case Seq.viewl queue of
-      Seq.EmptyL -> (tainted, prov)
-      (t, mParent, sk, desc) Seq.:< rest
-        | t `Set.member` tainted -> fixpoint tainted prov rest
-        | otherwise ->
-            let tainted' = Set.insert t tainted
-                provEntry = case mParent of
-                  Nothing         -> ProvEntry "" "" Nothing sk desc
-                  Just (po,pp,pv) -> ProvEntry po pp (Just pv) sk desc
-                prov'    = HM.insert t provEntry prov
-                newSeeds = propagateOne t tainted'
-            in  fixpoint tainted' prov' (rest Seq.>< Seq.fromList newSeeds)
-
-    propagateOne :: Triple -> Set.Set Triple -> [(Triple, Maybe Triple, Text, Text)]
-    propagateOne cur@(obj, proc, var) tainted =
-      concatMap snd
-        [ (True, intraProcSeeds)
-        , (True, argSeeds)
-        , (True, returnSeeds)
-        , (True, globalSeeds)
-        ]
-      where
-        -- 1. Intra-proc: tainted var used on line with def → def is tainted
-        intraProcSeeds =
-          [ ((obj, proc, newVar), Just cur, "def",
-              var <> " used in expression that defines " <> newVar)
-          | u <- HM.findWithDefault [] (obj, proc, var) usesByTriple
-          , Just line <- [urLine u]
-          , newVar <- HM.findWithDefault [] (obj, proc, line) defsByLine
-          , newVar /= var
-          , (obj, proc, newVar) `Set.notMember` tainted
-          ]
-
-        -- 2. Arg edges: tainted caller_context → callee_context
-        argSeeds =
-          [ ((ieCalleeObject e, ieCalleeProc e, ieCalleeContext e), Just cur, "arg",
-              "passed as argument from " <> obj <> "." <> proc)
-          | e <- HM.findWithDefault [] (obj, proc, var) argEdgesByCaller
-          , (ieCalleeObject e, ieCalleeProc e, ieCalleeContext e) `Set.notMember` tainted
-          ]
-
-        -- 3. Return edges: tainted var returned from callee → caller lhs tainted
-        returnSeeds =
-          [ ((ieCallerObject e, ieCallerProc e, ieCallerContext e), Just cur, "return",
-              "return value of " <> obj <> "." <> proc <> " received by caller")
-          | u <- HM.findWithDefault [] (obj, proc, var) usesByTriple
-          , urKind u == "return"
-          , e <- HM.findWithDefault [] (obj, proc) returnEdgesByCallee
-          , (ieCallerObject e, ieCallerProc e, ieCallerContext e) `Set.notMember` tainted
-          ]
-
-        -- 4. Global write edges: tainted global propagates to readers
-        globalSeeds =
-          [ ((ieCalleeObject e, ieCalleeProc e, ieCalleeContext e), Just cur, "global",
-              "global variable " <> var <> " written in " <> obj <> "." <> proc)
-          | e <- HM.findWithDefault [] (obj, proc, var) globalWriteEdges
-          , (ieCalleeObject e, ieCalleeProc e, ieCalleeContext e) `Set.notMember` tainted
-          ]
-
--- ---------------------------------------------------------------------------
--- Path reconstruction
--- ---------------------------------------------------------------------------
-
--- | Reconstruct taint path from source to sink using provenance back-trace.
-traceTaintPath
-  :: TaintSource
-  -> TaintSink
-  -> Provenance
-  -> [TaintStep]
-traceTaintPath source sink prov =
-  let sourceTriple = (tsObject source, tsProcName source, tsVarName source)
-      sinkTriple   = (tskObject sink, tskProcName sink, tskVarName sink)
-      -- Walk backwards from sink to source, collecting the chain
-      chain = buildChain sinkTriple sourceTriple prov []
-      -- Reverse to get source→sink order
-      ordered = reverse chain
-  in map makeStep ordered
-  where
-    buildChain :: Triple -> Triple -> Provenance -> [Triple] -> [Triple]
-    buildChain current target _ acc | current == target = current : acc
-    buildChain _ _ _ acc | length acc > 50 = acc
-    buildChain current target p acc =
-      case HM.lookup current p of
-        Nothing -> acc
-        Just ProvEntry{ peParentVar = Nothing } -> current : acc  -- source node
-        Just ProvEntry{ peParentObj = po, peParentProc = pp, peParentVar = Just pv } ->
-          buildChain (po, pp, pv) target p (current : acc)
-
-    makeStep :: Triple -> TaintStep
-    makeStep (o, p, v) =
-      let isSource = (o, p, v) == (tsObject source, tsProcName source, tsVarName source)
-          isSink   = (o, p, v) == (tskObject sink, tskProcName sink, tskVarName sink)
-          line | isSource  = tsLine source
-               | isSink    = tskLine sink
-               | otherwise = Nothing
-          sk   | isSource  = "source"
-               | isSink    = "sink"
-               | otherwise = maybe "def" peStepKind (HM.lookup (o, p, v) prov)
-          desc | isSource  = "taint source: " <> tsSourceType source
-               | isSink    = "taint sink: " <> tskSinkType sink
-               | otherwise = maybe ("tainted variable " <> v)
-                                    peDesc
-                                    (HM.lookup (o, p, v) prov)
-      in TaintStep o p v line sk desc
-
--- ---------------------------------------------------------------------------
 -- Taint annotations
 -- ---------------------------------------------------------------------------
 
@@ -898,53 +662,4 @@ buildTaintAnnotations tainted sources sinks defs uses =
 
     mergeAnnotations a b = a
       { taTaintedVars = nubOrd (taTaintedVars a ++ taTaintedVars b) }
-
--- ---------------------------------------------------------------------------
--- Full pipeline
--- ---------------------------------------------------------------------------
-
--- | Run the full taint analysis from pre-extracted per-file inputs.
--- Use extractTaintInputs to produce TaintFileInputs during the streaming
--- per-file pass, then call this after all files are processed.
-taintAnalysis
-  :: [ResolvedCallRow]    -- ^ resolved_calls.json
-  -> [DefRow]             -- ^ proc_defs.json
-  -> [UseRow]             -- ^ proc_uses.json
-  -> Set.Set Ident        -- ^ global variable names
-  -> TaintFileInputs      -- ^ pre-extracted per-file data
-  -> TaintResult
-taintAnalysis resolvedCalls defs uses globalVarNames tfi =
-  let sqlStmts  = tfiSqlStmts  tfi
-      procMetas = tfiProcMetas tfi
-      sources   = classifySources sqlStmts procMetas
-      sinks     = classifySinks sqlStmts
-      edges     = buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas
-      summaries = buildProcedureSummaries edges defs uses globalVarNames procMetas
-      (tainted, prov) = propagateTaint sources defs uses edges
-      paths       = buildTaintPaths sources sinks prov
-      annotations = buildTaintAnnotations tainted sources sinks defs uses
-  in TaintResult sources sinks paths annotations edges summaries
-
-buildTaintPaths :: [TaintSource] -> [TaintSink] -> Provenance -> [TaintPath]
-buildTaintPaths srcs snks prov =
-  [ TaintPath src sink steps (tskSeverity sink)
-      (Map.findWithDefault "general" (tskSinkType sink) categoryMap)
-  | sink <- snks
-  , let sinkTriple = (tskObject sink, tskProcName sink, tskVarName sink)
-  , HM.member sinkTriple prov
-  , src <- findSourceRoot sinkTriple prov srcs
-  , let steps = traceTaintPath src sink prov
-  , not (null steps)
-  ]
-
-findSourceRoot :: Triple -> Provenance -> [TaintSource] -> [TaintSource]
-findSourceRoot triple prov srcs =
-  let rootTriple = walkProvBack triple prov
-  in filter (\s -> (tsObject s, tsProcName s, tsVarName s) == rootTriple) srcs
-
-walkProvBack :: Triple -> Provenance -> Triple
-walkProvBack t p = case HM.lookup t p of
-  Nothing    -> t
-  Just ProvEntry{ peParentVar = Nothing } -> t
-  Just ProvEntry{ peParentObj = po, peParentProc = pp, peParentVar = Just pv } -> walkProvBack (po, pp, pv) p
 
