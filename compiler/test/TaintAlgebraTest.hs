@@ -23,6 +23,7 @@ import PB.Analysis.Taint
   )
 import PB.Analysis.TaintAlgebra
   ( taintReachable
+  , taintReachesPairs
   , taintConfirmed
   , taintWitnesses
   )
@@ -150,6 +151,62 @@ tests = testGroup "TaintAlgebra"
                 , (src "w" "oa" "pW" "g_x" (Just 1), snk "w" "oa" "pR" "g_x" (Just 1))
                 ]
           in Set.fromList (map key confirmed) @?= Set.fromList (map key expected)
+      , testCase "duplicate-key source/sink records collapse to one confirmed pair" $
+          -- Real-corpus finding (Plan 182 cutover, 2026-07-18): the same
+          -- (object, proc, var) is classified as a taint source/sink more
+          -- than once (e.g. a :host_var used in two different SELECT INTO
+          -- occurrences in the same proc) -- 15 duplicate-key groups in
+          -- taint_sources, 19 in taint_sinks, on the real openpay corpus.
+          -- Souffle's taint_confirmed is a SET keyed on the STRING
+          -- object::proc::var key, so duplicate records collapse to one
+          -- row; taintConfirmed must match that (26 vs an inflated 41 rows
+          -- was the observed real-corpus divergence).
+          let sources = [ src "w" "oa" "pA" "ls_a" (Just 5)
+                       , src "w" "oa" "pA" "ls_a" (Just 9)
+                       ]
+              sinks   = [ snk "w" "oa" "pB" "ls_c" (Just 3)
+                       , snk "w" "oa" "pB" "ls_c" (Just 7)
+                       ]
+              defs = [ defRow "w" "oa" "pA" "ls_b" 5 0
+                     , defRow "w" "oa" "pB" "ls_c" 3 2
+                     ]
+              uses = [ useRow "w" "oa" "pA" "ls_a" 5 "var"
+                     , useRow "w" "oa" "pB" "ls_c" 3 "return"
+                     ]
+              edges = [ edge "oa" "pA" (Just 5) "oa" "pB" "arg"    "ls_b" "ls_b" "ls_c" ]
+              confirmed = taintConfirmed sources sinks defs uses edges
+          in length confirmed @?= 1
+      ]
+  , testGroup "taintReachesPairs"
+      [ testCase "linear chain: source pinned to x, y ranges over both hops" $
+          let sources = [ src "w" "oa" "pA" "ls_a" (Just 5) ]
+              defs = [ defRow "w" "oa" "pA" "ls_b" 5 0 ]
+              uses = [ useRow "w" "oa" "pA" "ls_a" 5 "var" ]
+              edges = [] :: [InterprocEdge]
+              srcT = ("oa", "pA", "ls_a")
+              bT   = ("oa", "pA", "ls_b")
+          in Set.fromList (taintReachesPairs sources defs uses edges)
+               @?= Set.fromList [ (srcT, bT) ]
+      , testCase "isolated source (zero outgoing edges) produces zero pairs" $
+          let sources = [ src "w" "oa" "pA" "ls_orphan" (Just 9) ]
+          in taintReachesPairs sources [] [] [] @?= []
+      , testCase "cycle through the seed: source reachable back to itself" $
+          -- ls_a -> ls_b (def-use same line) and ls_b -> ls_a (return edge
+          -- back into the same var) forms a genuine 2-node cycle rooted at
+          -- the source. Souffle's taint_reaches(x, y) rule has no 0-hop
+          -- base case, but a REAL cycle back to x is a legitimate 2-hop
+          -- derivation -- taintReachesPairs must reproduce (srcT, srcT)
+          -- here, not just skip self-pairs unconditionally.
+          let sources = [ src "w" "oa" "pA" "ls_a" (Just 5) ]
+              defs = [ defRow "w" "oa" "pA" "ls_b" 5 0 ]
+              uses = [ useRow "w" "oa" "pA" "ls_a" 5 "var"
+                     , useRow "w" "oa" "pA" "ls_b" 3 "return"
+                     ]
+              edges = [ edge "oa" "pA" (Just 3) "oa" "pA" "return" "ls_a" "ls_a" "ls_a" ]
+              srcT = ("oa", "pA", "ls_a")
+              bT   = ("oa", "pA", "ls_b")
+          in Set.fromList (taintReachesPairs sources defs uses edges)
+               @?= Set.fromList [ (srcT, bT), (srcT, srcT) ]
       ]
   , testGroup "taint witness (Path)"
       [ testCase "Path relation yields a witness for a confirmed pair" $

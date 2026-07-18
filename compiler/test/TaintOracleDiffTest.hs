@@ -1,14 +1,20 @@
 module TaintOracleDiffTest (tests) where
 
--- | Phase 2 gate (doc/plan/182-algebraic-analysis.md, "Oracle-diff test"):
--- the algebraic 'taintConfirmed' (Kleene star over a semiring relation)
--- must agree with the Souffle 'taintRules' fixpoint -- the trusted oracle
--- for fixed-point taint analysis -- on 'taint_confirmed', not merely with
--- the Haskell BFS ('TaintAlgebraTest' covers that agreement separately).
+-- | Plan 182 cutover gate (doc/plan/182-algebraic-analysis.md, "Oracle-diff
+-- test"): the algebraic 'taintReachesPairs'\/'taintConfirmed' (Kleene star
+-- over a semiring relation) must agree EXACTLY with the Souffle
+-- 'taintRules' fixpoint -- the trusted oracle for fixed-point taint
+-- analysis, now demoted to an on-demand oracle -- on both @taint_reaches@
+-- and @taint_confirmed@, not merely with the Haskell BFS
+-- ('TaintAlgebraTest' covers that agreement separately).
 --
 -- Fixtures mirror 'SouffleTaintTest''s four edge-kind cases plus the
 -- shared-hub fan-in shape (regression guard for the production incident
--- referenced in SouffleTaintTest.hs's "hub sharing" test).
+-- referenced in SouffleTaintTest.hs's "hub sharing" test), plus a
+-- self-cycle case (Datalog Rule Placement Discipline's adversarial-fixture
+-- requirement: a cycle THROUGH the seed) -- the shape that distinguishes
+-- 'taintReachesPairs' from a shortcut that unconditionally drops
+-- self-pairs.
 import PB.Prelude
 import PB.Analysis.Taint
   ( DefRow (..)
@@ -17,7 +23,7 @@ import PB.Analysis.Taint
   , TaintSource (..)
   , TaintSink (..)
   )
-import PB.Analysis.TaintAlgebra (taintConfirmed)
+import PB.Analysis.TaintAlgebra (taintConfirmed, taintReachesPairs)
 import TaintAlgebraTest (defRow, useRow, edge, src, snk)
 import PB.Pipeline.Souffle (runRuleSet)
 import PB.Analysis.Rules.Taint (initTaintEdbViews, taintRules)
@@ -74,8 +80,13 @@ insSink conn k = void $ execute_ conn
   (Query ("INSERT INTO taint_sinks VALUES ('" <> tskFile k <> "','" <> tskObject k <> "','"
     <> tskProcName k <> "','" <> tskVarName k <> "','" <> tskSinkType k <> "','" <> tskSeverity k <> "',NULL)") :: Query)
 
-souffleConfirmed :: DuckConn -> Fixture -> IO (Set.Set (Text, Text))
-souffleConfirmed conn fx = do
+data OracleRows = OracleRows
+  { orReaches   :: Set.Set (Text, Text)
+  , orConfirmed :: Set.Set (Text, Text)
+  }
+
+souffleRows :: DuckConn -> Fixture -> IO OracleRows
+souffleRows conn fx = do
   initSchema conn
   mapM_ (insDef conn) (fxDefs fx)
   mapM_ (insUse conn) (fxUses fx)
@@ -84,20 +95,31 @@ souffleConfirmed conn fx = do
   mapM_ (insSink conn) (fxSinks fx)
   initTaintEdbViews conn
   runRuleSet conn taintRules
-  rows <- query_ conn "SELECT s, t FROM taint_confirmed" :: IO [(Text, Text)]
-  pure (Set.fromList rows)
+  reachesRows   <- query_ conn "SELECT x, y FROM taint_reaches" :: IO [(Text, Text)]
+  confirmedRows <- query_ conn "SELECT s, t FROM taint_confirmed" :: IO [(Text, Text)]
+  pure (OracleRows (Set.fromList reachesRows) (Set.fromList confirmedRows))
 
-algConfirmed :: Fixture -> Set.Set (Text, Text)
-algConfirmed fx = Set.fromList
-  [ (taintKey (tsObject s) (tsProcName s) (tsVarName s), taintKey (tskObject k) (tskProcName k) (tskVarName k))
-  | (s, k) <- taintConfirmed (fxSources fx) (fxSinks fx) (fxDefs fx) (fxUses fx) (fxEdges fx)
-  ]
+algRows :: Fixture -> OracleRows
+algRows fx = OracleRows
+  { orReaches = Set.fromList
+      [ (taintKey ox px vx, taintKey oy py vy)
+      | ((ox, px, vx), (oy, py, vy)) <-
+          taintReachesPairs (fxSources fx) (fxDefs fx) (fxUses fx) (fxEdges fx)
+      ]
+  , orConfirmed = Set.fromList
+      [ (taintKey (tsObject s) (tsProcName s) (tsVarName s), taintKey (tskObject k) (tskProcName k) (tskVarName k))
+      | (s, k) <- taintConfirmed (fxSources fx) (fxSinks fx) (fxDefs fx) (fxUses fx) (fxEdges fx)
+      ]
+  }
 
 oracleDiffCase :: String -> Fixture -> TestTree
 oracleDiffCase name fx = testCase name $ withWriteConn ":memory:" $ \conn -> do
-  souffleRows <- souffleConfirmed conn fx
+  souffle <- souffleRows conn fx
+  let alg = algRows fx
+  assertEqual "algebraic taint_reaches matches the Souffle oracle"
+    (orReaches souffle) (orReaches alg)
   assertEqual "algebraic taint_confirmed matches the Souffle oracle"
-    souffleRows (algConfirmed fx)
+    (orConfirmed souffle) (orConfirmed alg)
 
 -- ---------------------------------------------------------------------------
 -- Fixtures: one per edge kind (mirrors SouffleTaintTest's taintRules cases),
@@ -149,5 +171,15 @@ tests = testGroup "TaintOracleDiff"
           , edge "obj" "proc_a" (Just 1) "obj" "proc_a" "global_write" "ls_h"  "ls_h"  "ls_t1"
           , edge "obj" "proc_a" (Just 1) "obj" "proc_a" "global_write" "ls_h"  "ls_h"  "ls_t2"
           ]
+      }
+
+  , oracleDiffCase "cycle through the seed: source reachable back to itself" Fixture
+      { fxSources = [ src "f.srw" "obj" "proc_a" "ls_a" (Just 5) ]
+      , fxSinks   = []
+      , fxDefs    = [ defRow "f.srw" "obj" "proc_a" "ls_b" 5 0 ]
+      , fxUses    = [ useRow "f.srw" "obj" "proc_a" "ls_a" 5 "var"
+                    , useRow "f.srw" "obj" "proc_a" "ls_b" 3 "return"
+                    ]
+      , fxEdges   = [ edge "obj" "proc_a" (Just 3) "obj" "proc_a" "return" "ls_a" "ls_a" "ls_a" ]
       }
   ]

@@ -25,6 +25,7 @@ module PB.Analysis.TaintAlgebra
   , taintRelation
   , taintPathRelation
   , taintReachable
+  , taintReachesPairs
   , taintConfirmed
   , taintWitnesses
   ) where
@@ -53,6 +54,7 @@ import PB.Algebra.Closure
 import qualified Data.HashMap.Strict as HM
 import qualified Data.IntMap.Strict as IM
 import qualified Data.List         as L
+import qualified Data.Map.Strict   as Map
 import qualified Data.Set          as Set
 import           Data.Set          (Set)
 
@@ -221,8 +223,56 @@ taintReachable sources defs uses edges =
        , Just t <- [unintern dstId interner]
        ]
 
+-- | Per-source (source, node reachable via >=1 real edge) pairs, mirroring
+-- Souffle's @taint_reaches(x, y)@ relation exactly -- @x@ stays pinned to
+-- the literal source (unlike 'taintReachable', which flattens per-source
+-- structure into one global tainted set), and a source only re-appears as
+-- its own target when a REAL cycle leads back to it.
+--
+-- 'reachFrom'/'reachableSet' always include a seed's own trivial 0-hop
+-- membership (Section 11's Fix 1, needed for 'taintReachable''s "isolated
+-- source is still tainted" contract) -- Souffle's base rule has no such
+-- case, requiring >=1 real @taint_edge@ hop. Seeding 'reachFrom' from each
+-- source's *direct successors* rather than the source itself sidesteps
+-- this: a successor's own trivial membership genuinely IS one real hop
+-- from the source, so it is never spurious, while a source only regains
+-- membership in its own reachable set by a real path back through a
+-- successor -- exactly Souffle's semantics.
+taintReachesPairs
+  :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge]
+  -> [(TaintTriple, TaintTriple)]
+taintReachesPairs sources defs uses edges =
+  let (interner, rel) = taintRelation defs uses edges sources
+      idOf t = HM.lookup t (internByVal interner)
+      srcIds = dedup [ i | s <- sources
+                     , let t = (tsObject s, tsProcName s, tsVarName s)
+                     , Just i <- [idOf t] ]
+      directSucc i = IM.keys (IM.findWithDefault IM.empty i rel)
+      allSuccSeeds = dedup (concatMap directSucc srcIds)
+      reachRel = reachFrom rel allSuccSeeds
+      reach1Hop srcId = Set.unions
+        [ Set.insert d (reachableSet reachRel d) | d <- directSucc srcId ]
+  in [ (s, y)
+     | srcId <- srcIds
+     , Just s <- [unintern srcId interner]
+     , yId <- Set.toList (reach1Hop srcId)
+     , Just y <- [unintern yId interner]
+     ]
+  where
+    dedup :: Ord a => [a] -> [a]
+    dedup = Set.toList . Set.fromList
+
 -- | Confirmed (source, sink) pairs: a sink reachable from a *specific*
--- source (cf. 'taint_confirmed').
+-- source (cf. 'taint_confirmed'). Deduplicated by (source key, sink key)
+-- -- Souffle's @taint_confirmed@ is a SET keyed on the STRING
+-- object::proc::var key, so two 'TaintSource'\/'TaintSink' records that
+-- differ only in metadata (line, file) but share a key must collapse to
+-- one row, same as they would there. Real-corpus finding (Plan 182
+-- cutover, 2026-07-18): the same var is legitimately classified as a
+-- source\/sink more than once (e.g. two @SELECT INTO@ occurrences of the
+-- same :host_var in one proc) -- 15\/19 duplicate-key groups on the real
+-- openpay corpus, which inflated this function's un-deduplicated output
+-- 26 -> 41 rows before this fix.
 taintConfirmed
   :: [TaintSource] -> [TaintSink] -> [DefRow] -> [UseRow] -> [InterprocEdge]
   -> [(TaintSource, TaintSink)]
@@ -234,15 +284,19 @@ taintConfirmed sources sinks defs uses edges =
                , Just i <- [HM.lookup t idByVal] ]
       reachRel = reachFrom rel srcIds
       sinkTriple snk = (tskObject snk, tskProcName snk, tskVarName snk)
-  in [ (src, snk)
-     | src <- sources
-     , let srcT = (tsObject src, tsProcName src, tsVarName src)
-     , Just srcId <- [HM.lookup srcT idByVal]
-     , snk <- sinks
-     , let snkT = sinkTriple snk
-     , Just sinkId <- [HM.lookup snkT idByVal]
-     , sinkId `Set.member` reachableSet reachRel srcId
-     ]
+      allPairs =
+        [ (src, snk)
+        | src <- sources
+        , let srcT = (tsObject src, tsProcName src, tsVarName src)
+        , Just srcId <- [HM.lookup srcT idByVal]
+        , snk <- sinks
+        , let snkT = sinkTriple snk
+        , Just sinkId <- [HM.lookup snkT idByVal]
+        , sinkId `Set.member` reachableSet reachRel srcId
+        ]
+      keyOf (src, snk) =
+        ((tsObject src, tsProcName src, tsVarName src), sinkTriple snk)
+  in Map.elems (Map.fromList [ (keyOf p, p) | p <- allPairs ])
 
 -- | Convenience: decode a starred PathValue relation back to a list of
 -- (srcTriple, dstTriple, edgeLabel) reachable pairs. Useful for tests.

@@ -247,8 +247,10 @@ reportTaintCounts lastT counts = do
 -- * **B1 (Haskell + EDB materialization):** the analyses that can't be
 --   expressed as Soufflé rules run here — type/call resolution
 --   ('runPass5', populating @resolved_calls@), interproc-edge and taint
---   analysis ('runPass67'), and schema-category construction ('runPass9',
---   populating @schema_objects@\/@schema_morphisms@). Then
+--   analysis, including the taint closure itself
+--   ('runPass67' — @taint_reaches@\/@taint_confirmed@ are algebraic, not
+--   Soufflé, since the Plan 182 cutover), and schema-category construction
+--   ('runPass9', populating @schema_objects@\/@schema_morphisms@). Then
 --   'materializeAllEdbViews' creates every SQL-view EDB relation the
 --   Soufflé rule sets below assume: the dead-code EDBs
 --   ('DeadCodeRules.initDeadReachEdbViews', over @procedures@\/
@@ -318,6 +320,12 @@ materializeAllEdbViews conn = do
 -- orders these by their IDB-output ∩ EDB-input edges, so the order listed
 -- here is the stable tie-break for independent rule sets only — the real
 -- ordering is data-driven. See 'runPhaseB' for the edge inventory.
+--
+-- 'TaintRules.taintRules' is deliberately NOT listed here (Plan 182
+-- cutover, 2026-07-18): @taint_reaches@\/@taint_confirmed@ are now
+-- produced by 'TaintRules.materializeTaintClosure' in 'runPass67', an
+-- algebraic Kleene-star closure over the same EDB inputs. 'taintRules'
+-- itself is unchanged and still callable on demand.
 allDatalogRuleSets :: [Souffle.RuleSet]
 allDatalogRuleSets =
   [ DeadCodeRules.deadReachRules
@@ -329,7 +337,6 @@ allDatalogRuleSets =
   , SchemaRules.impliedFkRules
   , SchemaRules.riskRules
   , DeadCodeRules.liveProcRules
-  , TaintRules.taintRules
   ]
 
 runPass5 :: DuckConn -> IO (Map.Map Ident Ident)
@@ -345,10 +352,16 @@ runPass5 conn = Progress.timedStep "Resolving types" $ do
   pure inh
 
 -- | Pass 6+7: compute interproc edges and taint classification ONCE
--- corpus-wide.  The BFS propagation (propagateTaint) and path
--- reconstruction (buildTaintPaths/buildTaintAnnotations) are now
--- handled by the Datalog rule set (TaintRules.taintRules) — this
--- pass only produces the EDB tables those rules read from.
+-- corpus-wide, then the taint closure itself (@taint_reaches@\/
+-- @taint_confirmed@) via the algebraic Kleene-star closure
+-- ('TaintRules.materializeTaintClosure', Plan 182 cutover) — production's
+-- source for those two tables since 2026-07-18. Path reconstruction
+-- (@taint_step_kind@, via 'TaintRules.reconstructTaintStepKind') still
+-- runs later in 'runPhaseB', once @taint_confirmed@ is populated. The
+-- Souffle 'TaintRules.taintRules' fixpoint this replaces is unchanged and
+-- still available on demand (the oracle-diff test suite, the UI's
+-- SQL\/Datalog exploration surface) — it just no longer runs in the hot
+-- path.
 runPass67 :: DuckConn -> IO ()
 runPass67 conn = Progress.timedStep "Building call graph" $ do
   gvs  <- queryGlobalVars     conn
@@ -368,6 +381,8 @@ runPass67 conn = Progress.timedStep "Building call graph" $ do
   Progress.timedStep "Taint classification" $ do
     appendTaintSources     conn allSources
     appendTaintSinks       conn allSinks
+  Progress.timedStep "Taint closure (algebraic)" $
+    TaintRules.materializeTaintClosure allSources allSinks defs uses edges conn
 
 -- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157
 -- Phase 1): materialize the schema category @Sch@ from Phase A's

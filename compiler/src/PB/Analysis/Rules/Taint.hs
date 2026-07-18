@@ -14,6 +14,7 @@ module PB.Analysis.Rules.Taint
   , defLineFanout
   , returnUseFanout
   , taintRules
+  , materializeTaintClosure
   , reconstructTaintStepKind
   , taintEdgeIntraRows
   , taintEdgeArgRows
@@ -32,6 +33,7 @@ import PB.Pipeline.DuckDb
   , TaintKeyRow (..), queryTaintSourceRows, queryTaintSinkRows
   )
 import PB.Analysis.Taint qualified as Taint
+import PB.Analysis.TaintAlgebra (taintReachesPairs, taintConfirmed)
 import Database.DuckDB.Simple (Query (..), query_)
 import Database.DuckDB.Simple.FromRow (FromRow (..), field)
 
@@ -289,6 +291,39 @@ taintRules = RuleSet
       ]
   , rsChoiceDomains = []
   }
+
+-- ---------------------------------------------------------------------------
+-- Production closure materialization (Plan 182 cutover, 2026-07-18)
+-- ---------------------------------------------------------------------------
+
+-- | Materialize @taint_reaches@\/@taint_confirmed@ from the algebraic
+-- closure ('PB.Analysis.TaintAlgebra') instead of running 'taintRules'
+-- through Souffle -- production's source for those two tables since the
+-- Plan 182 cutover. Takes the same already-computed inputs
+-- 'PB.Pipeline.Passes.runPass67' builds for its interproc-edge\/
+-- source\/sink classification, so no extra DB round-trip is needed.
+-- 'taintRules' itself is unchanged and still runs on demand (the
+-- oracle-diff test suite, the UI's SQL\/Datalog exploration surface).
+materializeTaintClosure
+  :: [Taint.TaintSource] -> [Taint.TaintSink] -> [Taint.DefRow] -> [Taint.UseRow]
+  -> [Taint.InterprocEdge] -> DuckConn -> IO ()
+materializeTaintClosure sources sinks defs uses edges conn = do
+  let reaches   = taintReachesPairs sources defs uses edges
+      confirmed = taintConfirmed sources sinks defs uses edges
+      reachRows =
+        [ [taintKey ox px vx, taintKey oy py vy]
+        | ((ox, px, vx), (oy, py, vy)) <- reaches
+        ]
+      confirmedRows =
+        [ [ taintKey (Taint.tsObject s) (Taint.tsProcName s) (Taint.tsVarName s)
+          , taintKey (Taint.tskObject k) (Taint.tskProcName k) (Taint.tskVarName k)
+          ]
+        | (s, k) <- confirmed
+        ]
+  recreateTextTable conn "taint_reaches" ["x", "y"]
+  appendTextRows conn "taint_reaches" reachRows
+  recreateTextTable conn "taint_confirmed" ["s", "t"]
+  appendTextRows conn "taint_confirmed" confirmedRows
 
 -- ---------------------------------------------------------------------------
 -- Witness-path reconstruction

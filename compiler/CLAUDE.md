@@ -703,6 +703,13 @@ stripBom          :: Text -> Text
 --     sets assume: DeadCodeRules.initDeadReachEdbViews over
 --     procedures/resolved_calls/objects + SchemaRules.initEdbViews over
 --     schema_morphisms/schema_objects).
+--   B1 also computes the taint closure itself: runPass67 calls
+--     TaintRules.materializeTaintClosure to populate taint_reaches/
+--     taint_confirmed via the algebraic Kleene-star closure
+--     (PB.Analysis.TaintAlgebra), not Soufflé (Plan 182 cutover,
+--     2026-07-18). TaintRules.taintRules is unchanged and still callable
+--     on demand (TaintOracleDiffTest, the UI's SQL/Datalog surface) but is
+--     NOT in allDatalogRuleSets -- it no longer runs in the hot path.
 --   B2 (one Soufflé run): every Phase B Datalog rule set runs in a single
 --     Souffle.runRuleSets call (allDatalogRuleSets = deadReachRules,
 --     callerCountRules, deadCodeRowsRules, legRules, reachesRules,
@@ -1172,8 +1179,26 @@ deadCodeRowsRules :: RuleSet
 -- taint_source) and taint_confirmed(s, t) (source→sink reachability, two
 -- rules: the 0-hop s==t case and the general taint_reaches(s,t) case).
 -- rsChoiceDomains is empty -- there is no per-source distance table left
--- to need one.
+-- to need one. NOT in production's allDatalogRuleSets (Plan 182 cutover,
+-- 2026-07-18, see materializeTaintClosure below) -- still callable on
+-- demand (TaintOracleDiffTest, the UI's SQL/Datalog surface).
 taintRules :: RuleSet
+
+-- materializeTaintClosure :: [TaintSource] -> [TaintSink] -> [DefRow] ->
+-- [UseRow] -> [InterprocEdge] -> DuckConn -> IO () writes taint_reaches
+-- (x, y) / taint_confirmed (s, t) from PB.Analysis.TaintAlgebra's
+-- taintReachesPairs/taintConfirmed instead of running taintRules through
+-- Souffle -- production's source for those two tables since the Plan 182
+-- cutover, 2026-07-18. Called from PB.Pipeline.Passes.runPass67 with the
+-- same already-computed sources/sinks/defs/uses/edges runPass67 builds for
+-- classifySources/classifySinks/buildInterprocEdges -- no extra DB
+-- round-trip. Real-corpus gate MET, 2026-07-18: content-exact match (not
+-- just row counts) vs. Souffle recomputed on identical EDB tables --
+-- taint_reaches 806=806, taint_confirmed 26=26, on
+-- example/openpay-0.1.1b-extract.
+materializeTaintClosure
+  :: [Taint.TaintSource] -> [Taint.TaintSink] -> [Taint.DefRow]
+  -> [Taint.UseRow] -> [Taint.InterprocEdge] -> DuckConn -> IO ()
 
 -- reconstructTaintStepKind :: DuckConn -> IO () rebuilds taint_step_kind
 -- (s, t, leg_ord, lf, lt, kind, step_kind, description) as a plain Haskell
@@ -1886,6 +1911,63 @@ propagateTaint     :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge] -
 traceTaintPath     :: TaintSource -> TaintSink -> Provenance -> [TaintStep]
 buildTaintAnnotations :: Set (Text,Text,Text) -> [TaintSource] -> [TaintSink] -> [DefRow] -> [UseRow] -> [TaintAnnotation]
 taintAnalysis      :: [ResolvedCallRow] -> [DefRow] -> [UseRow] -> Set Text -> Text -> SrFile -> TaintResult
+```
+
+### `PB.Analysis.TaintAlgebra` (Plan 182, algebraic taint closure; production cutover 2026-07-18)
+
+```haskell
+-- Algebraic replacement for propagateTaint's BFS (and, since 2026-07-18,
+-- for taintRules' Souffle fixpoint too): a Kleene-star/worklist closure
+-- ('PB.Algebra.Closure.reachFrom', not 'star' -- see that module) over an
+-- interned relation built from the SAME four propagation rules
+-- (taintSuccessorsIx). 'TaintIndex'/'buildTaintIndex' are the corpus's
+-- five successor HashMaps, built ONCE and passed explicitly (NOT a
+-- where-clause under a curried lambda -- that shape relied on GHC
+-- full-laziness sharing across ~28,000 seed lookups and didn't reliably
+-- fire; see doc/plan/182-algebraic-analysis.md Section 11).
+type TaintTriple = (Text, Text, Text)  -- (object, procName, varName)
+data TaintIndex
+buildTaintIndex   :: [DefRow] -> [UseRow] -> [InterprocEdge] -> TaintIndex
+taintSuccessorsIx :: TaintIndex -> TaintTriple -> [(TaintTriple, Text, Text)]
+taintRelation     :: [DefRow] -> [UseRow] -> [InterprocEdge] -> [TaintSource] -> (Interner TaintTriple, Relation Boolean)
+taintPathRelation :: [DefRow] -> [UseRow] -> [InterprocEdge] -> [TaintSource] -> (Interner TaintTriple, Relation (PathValue TaintTriple))
+
+-- taintReachable: flattened union tainted-set, matching propagateTaint's
+-- own return shape (first component). Seeds are unioned directly into the
+-- interner (not derived only from arcPairs' endpoints) so an isolated
+-- source with zero outgoing edges still keeps its own 0-hop membership.
+taintReachable    :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> Set TaintTriple
+
+-- taintReachesPairs: per-source (source, node reachable via >=1 real
+-- edge) pairs, mirroring Souffle's taint_reaches(x, y) relation EXACTLY --
+-- x stays pinned to the literal source (unlike taintReachable above).
+-- Seeds reachFrom from each source's DIRECT SUCCESSORS, not the source
+-- itself, so a source only regains membership in its own reachable set
+-- via a genuine cycle back through a successor -- avoids reachFrom's
+-- usual trivial 0-hop seed membership, which has no Souffle analogue here
+-- (taint_reaches has no reflexive base rule, unlike taint_confirmed's
+-- explicit s==s case below). Production's source for taint_reaches since
+-- the Plan 182 cutover (PB.Analysis.Rules.Taint.materializeTaintClosure).
+taintReachesPairs :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> [(TaintTriple, TaintTriple)]
+
+-- taintConfirmed: source->sink pairs with a path, matching Souffle's
+-- taint_confirmed(s, t) (0-hop s==s rule handled the same way it is
+-- there). Deduplicated by (source key, sink key) -- Souffle's relation is
+-- a SET keyed on the STRING object::proc::var key, so two TaintSource/
+-- TaintSink records differing only in metadata (line, file) but sharing a
+-- key must collapse to one row. Real-corpus bug fixed 2026-07-18: the
+-- pre-dedup version iterated raw records directly, inflating output
+-- 26->41 rows on the real openpay corpus (15/19 duplicate-key groups in
+-- taint_sources/taint_sinks -- the same var legitimately classified more
+-- than once). taintReachesPairs above never had this bug -- it iterates
+-- interned (deduplicated) ids, not raw records.
+taintConfirmed    :: [TaintSource] -> [TaintSink] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> [(TaintSource, TaintSink)]
+
+-- taintWitnesses: decoded (src, dst, edgeLabel) triples from the starred
+-- PathValue relation. NOT wired into production (Plan 182 §12 item 4's
+-- oracle-diff gate vs. taint_step_kind is still open) -- exists for tests
+-- only.
+taintWitnesses    :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> [(TaintTriple, TaintTriple, (Text, Text, Text))]
 ```
 
 ### `PB.Analysis.TypeEnv` (Ident-keyed maps, Plan 179 Phase 1, 2026-07-17)
