@@ -88,6 +88,7 @@ library
     PB.Algebra.Closure
     PB.Analysis.TaintEdges
     PB.Analysis.TaintAlgebra
+    PB.Analysis.DeadCodeAlgebra
   build-depends:
     , base ^>=4.20.1.0
     , text
@@ -140,6 +141,21 @@ executable taint-corpus-bench
     , unordered-containers >=0.2
     , time >= 1.9
     , optparse-applicative ^>=0.18
+
+executable deadcode-corpus-bench
+  import: common-settings
+  hs-source-dirs: bench
+  main-is: DeadCodeCorpusBench.hs
+  ghc-options: -rtsopts -threaded
+  build-depends:
+    , base ^>=4.20.1.0
+    , pb-compiler
+    , text
+    , containers >=0.6
+    , unordered-containers >=0.2
+    , time >= 1.9
+    , optparse-applicative ^>=0.18
+    , duckdb-simple >= 0.1.5.1 && < 0.2
 
 test-suite pb-compiler-test
   import: common-settings
@@ -196,6 +212,7 @@ test-suite pb-compiler-test
     , ClosureTest
     , TaintEdgesTest
     , TaintAlgebraTest
+    , DeadCodeAlgebraTest
   build-depends:
     , base ^>=4.20.1.0
     , pb-compiler

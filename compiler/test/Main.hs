@@ -3,6 +3,7 @@ module Main (main) where
 import qualified DuckDbTest
 import qualified SouffleSchemaTest
 import qualified SouffleDeadCodeTest
+import qualified DeadCodeAlgebraTest
 import qualified SouffleEngineTest
 import qualified SouffleFuzzTest
 import qualified StdLibTest
@@ -61,6 +62,7 @@ tests = testGroup "pb-compiler"
   [ DuckDbTest.tests
   , SouffleSchemaTest.tests
   , SouffleDeadCodeTest.tests
+  , DeadCodeAlgebraTest.tests
   , SouffleEngineTest.tests
   , SouffleFuzzTest.tests
   , StdLibTest.tests

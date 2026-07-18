@@ -1,4 +1,10 @@
-module SouffleDeadCodeTest (tests) where
+module SouffleDeadCodeTest
+  ( tests
+  , ProcInfo (..)
+  , seedDeadCodeFixture
+  , mkResolvedCall
+  , phaseATables
+  ) where
 
 import PB.Prelude
 import PB.Pipeline.Souffle
