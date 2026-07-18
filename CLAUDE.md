@@ -3,12 +3,12 @@
 This file covers protocol common to every subsystem: session start, scoping,
 the staged verification loop, evidence discipline, documentation style,
 change scope, and commit discipline. Subsystem-specific rules — Haskell
-Prelude/module layout/Code Index, TypeScript/SolidJS UI architecture rules,
+Prelude/module layout, TypeScript/SolidJS UI architecture rules,
 Python backend specifics — live in nested files that Claude Code loads
 automatically once a session reads or edits files in that subtree:
 
 - `compiler/CLAUDE.md` — Haskell parser/compiler (Prelude rules, Megaparsec
-  guidance, Module Placement, Code Index, Corpus Coverage Checklist)
+  guidance, Module Placement, Corpus Coverage Checklist)
 - `ui/CLAUDE.md` — TypeScript/SolidJS explorer (the 5 UI architecture rules,
   runtime test pattern)
 - `cli/CLAUDE.md` — Python backend (SQL mock mode, SQL worker bridge)
@@ -61,10 +61,10 @@ using `head`, which `PB.Prelude` hides — the plan file had the full picture,
 but reading `git status` first wasted a step.)
 
 **This file and its nested `CLAUDE.md` siblings are the orientation layer.**
-`compiler/CLAUDE.md`'s Code Index mirrors the real module signatures so you
-don't re-derive them by grepping source. If you change a constructor or add
-a module and skip updating the index, the next session pays for it — so
-treat index updates as part of "post-task grooming," not optional.
+Module signatures are not mirrored here — use `rg` to locate the relevant
+module and read it directly (see Token Efficiency below); at this codebase's
+size a hand-maintained signature index goes stale faster than it can be kept
+current, and a stale entry is worse than no entry.
 
 ## Session Scoping
 
@@ -262,7 +262,7 @@ correctly the first time.
   an `rg` result showing the actual current shape) — not "this might matter
   someday."
 - **Worked example:** `doc/plan/178-canonical-identifier.md`/`179-
-  canonical-identifier-consumers.md` — `PB.AST.Ident` was minted for every
+canonical-identifier-consumers.md` — `PB.AST.Ident` was minted for every
   PB-identifier AST field regardless of how many consumers currently read
   a given one; see `compiler/CLAUDE.md`'s "Identifier typing is a standing
   goal" rule for the concrete instance. `doc/plan/170-datalog-discipline.md`'s
@@ -322,7 +322,7 @@ Parse .srd files into DataWindowFile with typed band/control/table stubs.
 Corpus gate: 262 DW files return non-stub JSON.
 ```
 
-   Or, if there is nothing committable this session (e.g. only gitignored plan-file grooming):
+Or, if there is nothing committable this session (e.g. only gitignored plan-file grooming):
 
 ```
 No commit needed — this session only edited gitignored plan/BACKLOG files.
@@ -348,5 +348,5 @@ These are proposals only — the user decides when and whether to commit. Consid
 - Do not commit with a warning-dirty `cabal build`
 - Failing test stubs (Stage 2) may be committed; mark them clearly with `assertFailure "unimplemented: ..."`
 - Before committing parser changes: `./pb check-corpus`
-  The error count must not increase. Baseline: 0 errors / 1051 files.
+  The error count must not increase. Baseline: 0 errors / 1053 files.
 - Any new failure categories found during a session must be recorded in `doc/plan/BACKLOG.md` before committing.

@@ -25,7 +25,7 @@ uv run pb explore                            # live mode (default)
 
 ## SQL worker bridge
 
-`cli/lib/src/pb/pipeline/bridge/sql_worker.py` is the sqlglot bridge the
+`cli/pipeline/src/pb/pipeline/bridge/sql_worker.py` is the sqlglot bridge the
 Haskell compiler shells out to for SQL/DDL parsing (`PB.Pipeline.SqlParse`
 in `compiler/CLAUDE.md`). It is invoked as `<python> -m
 pb.pipeline.bridge.sql_worker`, never via an installed console-script shim —
