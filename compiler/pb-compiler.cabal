@@ -84,6 +84,9 @@ library
     PB.Pipeline.SqlParse
     PB.Pipeline.FileWalk
     PB.Runtime.StdLib
+    PB.Algebra.Semiring
+    PB.Algebra.Closure
+    PB.Analysis.TaintAlgebra
   build-depends:
     , base ^>=4.20.1.0
     , text
@@ -176,6 +179,8 @@ test-suite pb-compiler-test
     , ControlHierarchyTest
     , CallClassifyTest
     , CloneDetectTest
+    , TaintAlgebraTest
+    , TaintOracleDiffTest
   build-depends:
     , base ^>=4.20.1.0
     , pb-compiler
