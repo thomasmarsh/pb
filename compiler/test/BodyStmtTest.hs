@@ -3,15 +3,18 @@ module BodyStmtTest (tests) where
 import PB.Prelude
 import PB.AST.BodyStmt        (AugOp (..), BodyStmt (..), PbCall (..))
 import PB.AST.Expr            (Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Ident           (mkIdent)
 import PB.AST.Located         (Located (..))
 import PB.AST.Type            (PbType (..))
 import PB.Grammar.Body        (classifyBodyStmt, parseBodyStmts, parseLvalue)
+import PB.Grammar.Unparse     (unparseBodyStmt)
 import PB.Lexing.Splitter     (Statement (..))
-import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
+import PB.Lexing.Lexer        (tokenize, tokenizeLine, LexLine (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
-import PB.Pipeline.Preprocess (LogicalLine (..))
+import PB.Pipeline.Emit       (collectStatements)
+import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText)
 
-import Hedgehog (Property, assert, forAll, property)
+import Hedgehog (Gen, Property, assert, failure, footnote, forAll, property, (===))
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import Test.Tasty              (TestTree, testGroup)
@@ -471,6 +474,19 @@ tests = testGroup "Body"
                                               , LvSegment "m_edit" Nothing ]) ])
       ]
     ]
+
+  , testGroup "unparse (Plan 14 Phase B)"
+    [ testProperty "round-trip leaf: parse . unparse . parse == parse" propUnparseBodyStmtRoundtrip
+    , testCase "BsLocalVar round-trip: constant integer ls_count = 0" $
+        let stmt = BsLocalVar ["constant"] (PtPrimitive "integer") (mkIdent "ls_count") (Just (ExInt "0"))
+        in reparseBodyStmt (unparseBodyStmt stmt) @?= Right stmt
+    , testCase "BsLocalVar round-trip: no initializer" $
+        let stmt = BsLocalVar [] (PtPrimitive "string") (mkIdent "ls_name") Nothing
+        in reparseBodyStmt (unparseBodyStmt stmt) @?= Right stmt
+    , testCase "BsRaw round-trip: verbatim text" $
+        let stmt = BsRaw "select * from t"
+        in reparseBodyStmt (unparseBodyStmt stmt) @?= Right stmt
+    ]
   ]
 
 tag :: BodyStmt -> Text
@@ -535,3 +551,80 @@ propClassifyTotal = property $ do
     BsTry        _    -> True
     BsThrow      _    -> True
     BsRaw        _    -> True
+
+-- ---------------------------------------------------------------------------
+-- Unparse round-trip generator (Plan 14 Phase B)
+
+-- | Feed unparsed text through the real pipeline (normalizeText -> tokenize
+-- -> collectStatements -> parseBodyStmts) and classify the first statement.
+reparseBodyStmt :: Text -> Either Text BodyStmt
+reparseBodyStmt text =
+  case collectStatements (tokenize (normalizeText text)) of
+    Left err     -> Left err
+    Right []     -> Left "no statement parsed"
+    Right stmts0 -> case parseBodyStmts stmts0 of
+      []                   -> Left "no located BodyStmt produced"
+      (Located _ result:_) -> Right result
+
+-- | Zero token spans on the one leaf field that carries raw Tokens
+-- (BsAugAssign's RHS) -- every other leaf field is span-free (Lvalue's
+-- subscript is [Text], not [Token], since Plan 178/179). The generated
+-- token's span is a placeholder; the re-lexed one is real, so comparing
+-- spans would fail spuriously.
+stripStmtSpans :: BodyStmt -> BodyStmt
+stripStmtSpans (BsAugAssign lv op rhs) = BsAugAssign lv op (map zeroSpan rhs)
+  where zeroSpan t = t { tkSpan = SourceSpan 0 0 0 }
+stripStmtSpans other = other
+
+genIdentText :: Gen Text
+genIdentText = Gen.element ["foo", "bar", "n", "dw_1", "ls_val", "idx", "obj"]
+
+genSimpleLvalue :: Gen Lvalue
+genSimpleLvalue = Lvalue <$> Gen.list (Range.linear 1 2) (mkSeg <$> genIdentText)
+  where mkSeg nm = LvSegment (mkIdent nm) Nothing
+
+genSimpleExpr :: Gen Expr
+genSimpleExpr = Gen.choice
+  [ ExBool <$> Gen.bool
+  , ExInt  <$> Gen.element ["0", "1", "42"]
+  , ExReal <$> Gen.element ["1.5", "3.14"]
+  , ExStr  <$> Gen.element ["hello", "abc"]
+  , ExLvalue <$> genSimpleLvalue
+  ]
+
+-- | The only Expr shape that survives real re-parsing as ExMethodCall:
+-- chainCalls only recognises a method chain onto an already call-shaped
+-- receiver ("dw_1()", not bare "dw_1") -- see ExprTest.hs's genExpr
+-- exclusion note for the same finding. Used only for BsAssignExpr's LHS,
+-- where the LHS must fail parseLvalue (else it reparses as BsAssign).
+genComplexLhsExpr :: Gen Expr
+genComplexLhsExpr =
+  (\recv m -> ExMethodCall (ExCall (Lvalue [LvSegment (mkIdent recv) Nothing]) []) (mkIdent m) [])
+    <$> genIdentText <*> genIdentText
+
+genAugRhsTokens :: Gen [Token]
+genAugRhsTokens = (: []) . tok <$> Gen.element ["1", "2", "42"]
+
+genLeafBodyStmt :: Gen BodyStmt
+genLeafBodyStmt = Gen.choice
+  [ BsAssign     <$> genSimpleLvalue <*> genSimpleExpr
+  , BsAugAssign  <$> genSimpleLvalue <*> Gen.element [AugAdd, AugSub, AugMul, AugDiv] <*> genAugRhsTokens
+  , BsInc        <$> genSimpleLvalue
+  , BsDec        <$> genSimpleLvalue
+  , BsCall       <$> genSimpleExpr
+  , BsPbCall     <$> (PbCall <$> Gen.element ["super", "w_ancestor"] <*> Gen.element ["open", "clicked", "create"])
+  , BsReturn     <$> Gen.maybe genSimpleExpr
+  , pure BsExit
+  , pure BsContinue
+  , BsDestroy    <$> genSimpleLvalue
+  , BsThrow      <$> genSimpleExpr
+  , BsAssignExpr <$> genComplexLhsExpr <*> genSimpleExpr
+  ]
+
+propUnparseBodyStmtRoundtrip :: Property
+propUnparseBodyStmtRoundtrip = property $ do
+  stmt <- forAll genLeafBodyStmt
+  let text = unparseBodyStmt stmt
+  case reparseBodyStmt text of
+    Left err     -> footnote ("reparse error: " <> show err <> " for unparsed text: " <> show text) >> failure
+    Right result -> stripStmtSpans result === stripStmtSpans stmt

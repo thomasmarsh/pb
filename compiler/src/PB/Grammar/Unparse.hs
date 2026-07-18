@@ -1,14 +1,23 @@
 module PB.Grammar.Unparse
   ( unparseExpr
   , unparseLvalue
+  , unparseBodyStmt
+  , unparseBody
   ) where
 
 import PB.Prelude
+import PB.AST.BodyStmt
+  ( AugOp (..), BodyStmt (..), CaseClause (..), CatchClause (..)
+  , ChooseStmt (..), DoCondition (..), DoStmt (..), ElseIf (..)
+  , ForStmt (..), IfStmt (..), PbCall (..), TryStmt (..)
+  )
 import PB.AST.Expr
   ( BinOp (..), DispatchExpr (..), DispatchMode (..)
   , Expr (..), LvSegment (..), Lvalue (..)
   )
 import PB.AST.Ident (identOrig)
+import PB.AST.Located (Located (..))
+import PB.AST.Type (renderPbType)
 import PB.Lexing.Token (Token (..))
 
 import qualified Data.Text as T
@@ -103,3 +112,73 @@ unparseDispatch (DispatchExpr mObj md dyn ev nm dargs) =
     modeText DmPost    = "post "
     modeText DmTrigger = "trigger "
     modeText DmSync    = ""
+
+-- | Render a BodyStmt back to PowerScript source text. Same non-goals as
+-- unparseExpr: no whitespace/comment/formatting fidelity, only re-parse
+-- fidelity.
+unparseBodyStmt :: BodyStmt -> Text
+unparseBodyStmt stmt = case stmt of
+  BsLocalVar mods ty nm mInit ->
+    T.unwords mods <> " " <> renderPbType ty <> " " <> identOrig nm
+      <> maybe "" ((" = " <>) . unparseExpr) mInit
+  BsAssign lv e         -> unparseLvalue lv <> " = " <> unparseExpr e
+  BsAugAssign lv op rhs -> unparseLvalue lv <> " " <> augOpText op <> " " <> T.unwords (map tkText rhs)
+  -- A space before "++"/"--" is load-bearing: PB.Lexing.Lexer's isIdentCont
+  -- includes '-' (for the backtick-override compound syntax), so "foo" <>
+  -- "--" with no space re-lexes as a single identifier token "foo--",
+  -- dropping the BsDec wrapper entirely (mirrors unparseExpr's ExNeg note
+  -- above, same collision class, different character).
+  BsInc lv              -> unparseLvalue lv <> " ++"
+  BsDec lv              -> unparseLvalue lv <> " --"
+  BsCall e              -> unparseExpr e
+  BsPbCall (PbCall anc ev) -> "call " <> anc <> " :: " <> ev
+  BsReturn Nothing       -> "return"
+  BsReturn (Just e)      -> "return " <> unparseExpr e
+  BsIf (IfStmt cond then_ elseIfs else_) ->
+    "if " <> unparseExpr cond <> " then\n" <> unparseBody then_
+      <> foldMap unparseElseIf elseIfs
+      <> maybe "" (\b -> "else\n" <> unparseBody b) else_
+      <> "end if"
+  BsFor (ForStmt lv from to step body) ->
+    "for " <> unparseLvalue lv <> " = " <> unparseExpr from <> " to " <> unparseExpr to
+      <> maybe "" ((" step " <>) . unparseExpr) step
+      <> "\n" <> unparseBody body <> "next"
+  BsDo (DoStmt mCond body mLoop) ->
+    maybe "do" (("do " <>) . unparseDoCondition) mCond
+      <> "\n" <> unparseBody body
+      <> maybe "loop" (("loop " <>) . unparseDoCondition) mLoop
+  BsChoose (ChooseStmt e clauses) ->
+    "choose case " <> unparseExpr e <> "\n" <> foldMap unparseCaseClause clauses <> "end choose"
+  BsExit                -> "exit"
+  BsContinue            -> "continue"
+  BsDestroy lv          -> "destroy " <> unparseLvalue lv
+  BsAssignExpr lhs rhs  -> unparseExpr lhs <> " = " <> unparseExpr rhs
+  BsTry (TryStmt body catches) ->
+    "try\n" <> unparseBody body <> foldMap unparseCatchClause catches <> "end try"
+  BsThrow e             -> "throw " <> unparseExpr e
+  BsRaw t               -> t
+
+unparseBody :: [Located BodyStmt] -> Text
+unparseBody = T.unlines . map (unparseBodyStmt . locNode)
+
+augOpText :: AugOp -> Text
+augOpText op = case op of
+  AugAdd -> "+="
+  AugSub -> "-="
+  AugMul -> "*="
+  AugDiv -> "/="
+
+unparseElseIf :: ElseIf -> Text
+unparseElseIf (ElseIf cond body) = "elseif " <> unparseExpr cond <> " then\n" <> unparseBody body
+
+unparseDoCondition :: DoCondition -> Text
+unparseDoCondition (DoWhile e) = "while " <> unparseExpr e
+unparseDoCondition (DoUntil e) = "until " <> unparseExpr e
+
+unparseCaseClause :: CaseClause -> Text
+unparseCaseClause (CaseClause mToks body) =
+  "case " <> maybe "else" (T.unwords . map tkText) mToks <> "\n" <> unparseBody body
+
+unparseCatchClause :: CatchClause -> Text
+unparseCatchClause (CatchClause exnTy exnVar body) =
+  "catch (" <> exnTy <> " " <> exnVar <> ")\n" <> unparseBody body
