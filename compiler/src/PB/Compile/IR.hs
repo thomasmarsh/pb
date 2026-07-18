@@ -113,7 +113,14 @@ class Category k => Effectful k where
   -- needed); a carrier with no value channel (a graph-flattener addressed
   -- only by continuation name, where @eval@\/'(&&&)' erase to no-ops)
   -- overrides it with direct access to the variable and the expression.
-  assignWithRhs :: Text -> Expr -> k a a
+  --
+  -- The middle 'Expr' is the original assignment-target expression (not
+  -- reduced to its root variable) -- 'PB.Analysis.TaintEdges' is the one
+  -- instance that reads it, to recover a subscripted LHS's own free
+  -- identifiers (e.g. @arr[i+1] = x@ reads @i@ to address the write, a use
+  -- 'PB.Compile.SSA.stmtToAssigns' would otherwise erase before this term
+  -- exists). Every other instance ignores it.
+  assignWithRhs :: Text -> Expr -> Expr -> k a a
   -- | Hook for a carrier that must not re-*materialize* a shared 'ELetRef'
   -- body on every occurrence, only re-*reference* it. 'foldFreyd''s own
   -- cache prevents re-folding the same blockId twice within one fold call,
@@ -208,7 +215,7 @@ data Eff a b where
   ELetRef :: Text -> Eff a b
   EComp   :: Eff b c -> Eff a b -> Eff a c
   EAssign       :: Text -> Eff (env, Value) env
-  EAssignWithRhs :: Text -> Expr -> Eff env env
+  EAssignWithRhs :: Text -> Expr -> Expr -> Eff env env
   ECall         :: Text -> [Expr] -> Eff args ()
   ESuspend      :: Text -> [Expr] -> Eff args ()
   ESplitValue   :: Eff (env, Value) (Either env env)
@@ -252,7 +259,7 @@ instance Effectful Eff where
   ret             = EReturn
   loopK body      = ELoop body
   branchK cond thenK elseK = (thenK ||| elseK) . splitValue . J (PId &&& PEval cond)
-  assignWithRhs var e = EAssignWithRhs var e
+  assignWithRhs var lhs e = EAssignWithRhs var lhs e
 
 -- ============================================================================
 -- 4. The Eff shared-term table
@@ -320,7 +327,7 @@ foldFreyd (EffTerm spine table) = fst (go spine Map.empty)
     go (J p)              m = (foldPure p, m)
     go (EComp g f)        m = case go g m of (gK, m1) -> case go f m1 of (fK, m2) -> (gK . fK, m2)
     go (EAssign var)      m = (assign var, m)
-    go (EAssignWithRhs v e') m = (assignWithRhs v e', m)
+    go (EAssignWithRhs v lhs e') m = (assignWithRhs v lhs e', m)
     go (ECall n as)       m = (callProc n as, m)
     go (ESuspend n as)    m = (suspend n as, m)
     go ESplitValue        m = (splitValue, m)

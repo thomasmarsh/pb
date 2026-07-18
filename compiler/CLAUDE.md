@@ -1654,8 +1654,14 @@ class Category k => Cartesian k where { exl, exr, (&&&) }
 class Category k => Cocartesian k where { inl, inr, (|||) }
 class Category k => Effectful k where { eval, assign, lookup, suspend, callProc, splitValue, ret, loopK, branchK, assignWithRhs, memoTag }
 -- branchK: promotes branching to a primitive with direct access to both arms.
--- assignWithRhs: fused assign-with-rhs (avoids erasing the RHS through
--- no-value-channel carriers like NGB/WB).
+-- assignWithRhs :: Text -> Expr -> Expr -> k a a (defVar, lhs, rhs; Plan 182b
+-- Move 2 Stage-1, 2026-07-18): fused assign-with-rhs (avoids erasing the RHS
+-- through no-value-channel carriers like NGB/WB). The middle 'Expr' (lhs) is
+-- a side channel for identifiers a consumer needs as uses without their
+-- being part of the real assigned value -- Interp/NGB/WB/SchFootprint
+-- ignore it; PB.Analysis.TaintEdges is the one instance that reads it, to
+-- recover a subscripted LHS's own reads (`arr[i+1] = x` reads `i`) and a
+-- BsFor loop's `to`/`step` bounds (see SsaAssign's saLhs below).
 -- memoTag: hook for carriers that must not re-materialize shared ELetRef bodies.
 branch  :: (Effectful k, Cartesian k, Cocartesian k) => Expr -> k env b -> k env b -> k env b
 branchEff :: Expr -> Eff env b -> Eff env b -> Eff env b
@@ -1664,8 +1670,9 @@ data Pure a b where  -- the cartesian (duplication-safe) category
   PId, PComp, PFork, PExl, PExr, PInl, PInr, PFanIn, PEval :: ...
 data Eff a b where   -- the premonoidal (effectful) category
   J :: Pure a b -> Eff a b
-  EComp, EBranch, ELetRef, ELoop, EReturn, EAssign, EAssignWithRhs,
+  EComp, EBranch, ELetRef, ELoop, EReturn, EAssign,
   ECall, ESuspend, ESplitValue, EFanIn :: ...
+  EAssignWithRhs :: Text -> Expr -> Expr -> Eff env env  -- (defVar, lhs, rhs)
 data EffTerm a b = EffTerm (Eff a b) (Map Text (Eff () ()))  -- spine + shared-term table
 ```
 
@@ -1684,7 +1691,17 @@ data EffTerm a b = EffTerm (Eff a b) (Map Text (Eff () ()))  -- spine + shared-t
 -- full argument. ~396 lines (was ~700).
 newtype SsaVar = SsaVar { svName :: Text }   -- no version field
 data SsaVal = SsaConst Expr | SsaVarRef SsaVar | SsaBinOp BinOp SsaVal SsaVal | SsaNot SsaVal | SsaNull
-data SsaAssign = SsaAssign { saVar :: SsaVar, saRhs :: SsaVal }
+data SsaAssign = SsaAssign { saVar :: SsaVar, saRhs :: SsaVal, saLhs :: Expr }
+  -- saLhs (Plan 182b Move 2 Stage-1, 2026-07-18): the real LHS Expr for
+  -- BsAssign/BsAssignExpr (the two constructors that erase a subscript via
+  -- lvHead before this point); a subscript-free placeholder for every other
+  -- clause (BsAugAssign/BsInc/BsDec already re-embed their LHS Lvalue in
+  -- saRhs's own SsaBinOp; BsDestroy/BsCall/BsPbCall have no real target to
+  -- read); an ExArray [to, step?] wrapper for BsFor specifically (loop
+  -- bounds, which aren't part of the loop var's real assigned value --
+  -- only saRhs's `from` is). Consumed solely by PB.Analysis.TaintEdges via
+  -- EAssignWithRhs's middle Expr arg -- every real-evaluation Effectful
+  -- instance ignores it.
 data SsaBlock = SsaBlock { sbAssigns :: [SsaAssign], sbTerm :: SsaTerm }
 data SsaTerm = SsaGoto Text | SsaBranch SsaVal Text Text
              | SsaSwitch SsaVal [(SsaVal, Text)] Text | SsaReturn (Maybe SsaVal)

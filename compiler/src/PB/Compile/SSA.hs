@@ -76,7 +76,30 @@ data SsaVal
 data SsaAssign = SsaAssign
   { saVar  :: SsaVar
   , saRhs  :: SsaVal
+  , saLhs  :: Expr
+    -- ^ A side channel of identifiers a consumer like
+    -- 'PB.Analysis.TaintEdges' must be able to read as uses without their
+    -- being part of 'saRhs''s real assigned value ('PB.Compile.Interp' and
+    -- every other real-evaluation 'PB.Compile.IR.Effectful' instance
+    -- ignore this field entirely). Two genuine cases carry real content
+    -- here: the original assignment-target expression, preserved (not
+    -- reduced to 'lvHead') where its own subscript is itself a read
+    -- ('BsAssign'\/'BsAssignExpr' — @arr[i+1] = x@ reads @i@ to address the
+    -- write); and a 'BsFor''s loop bounds ('forTo'\/'forStep'), which are
+    -- reads that inform the loop var's def but aren't its assigned value
+    -- (only 'forFrom' is). Every other clause below sets this to a
+    -- subscript-free placeholder: either their target's subscript is
+    -- already re-embedded in 'saRhs' ('BsAugAssign'\/'BsInc'\/'BsDec'
+    -- compile @lv op= x@ to a 'SsaBinOp' that itself contains @lv@), or
+    -- there is no real target to read ('BsDestroy', a \"_\"-def synthetic
+    -- assign for 'BsCall'\/'BsPbCall').
   } deriving (Eq, Show, Generic)
+
+-- | A subscript-free placeholder 'saLhs' for an 'SsaAssign' clause whose
+-- target's subscript (if any) is not a genuine additional read — see
+-- 'SsaAssign''s own doc comment.
+noSubscriptLhs :: Text -> Expr
+noSubscriptLhs root = ExLvalue (Lvalue [LvSegment (mkIdent root) Nothing])
 
 -- ============================================================================
 -- Basic Blocks
@@ -171,7 +194,8 @@ cfgBlockToSsa edgeMap headerStmts backEdgeStmts label blk =
         Just (BsFor (ForStmt var _ _ mStep _)) ->
           [ SsaAssign (SsaVar (lvHead var))
               (SsaBinOp BopAdd (SsaVarRef (SsaVar (lvHead var)))
-                                (exprToSsaVal (fromMaybe (ExInt "1") mStep))) ]
+                                (exprToSsaVal (fromMaybe (ExInt "1") mStep)))
+              (noSubscriptLhs (lvHead var)) ]
         _ -> []
       assigns  = ownAssigns ++ incrAssigns
       outEdges = Map.findWithDefault [] label edgeMap
@@ -218,32 +242,38 @@ findLoopHeaderStmts edgeMap blockMap = Map.fromList
 
 stmtToAssigns :: BodyStmt -> [SsaAssign]
 stmtToAssigns (BsAssign lv expr) =
-  [SsaAssign (SsaVar (lvHead lv)) (exprToSsaVal expr)]
+  [SsaAssign (SsaVar (lvHead lv)) (exprToSsaVal expr) (ExLvalue lv)]
 -- The old compiler synthesizes the loop variable's init assign by hand
 -- (InstrGraph.hs's BsFor case); the new pipeline needs the same thing here,
 -- since this is the one block that legitimately owns the raw BsFor node in
 -- its own cbStmts (CfgBuild.lowerFor flushes it onto the pre-loop block).
-stmtToAssigns (BsFor (ForStmt var from _ _ _)) =
-  [SsaAssign (SsaVar (lvHead var)) (exprToSsaVal from)]
+stmtToAssigns (BsFor (ForStmt var from to mStep _)) =
+  -- The loop var's real assigned value is 'from' alone -- 'to'/'step' are
+  -- loop-bound reads, not part of the value, so they ride in the 'saLhs'
+  -- channel (same reasoning as a subscripted LHS: a read that must not
+  -- corrupt 'saRhs''s real evaluation semantics) rather than 'saRhs'.
+  [SsaAssign (SsaVar (lvHead var)) (exprToSsaVal from) (ExArray (to : maybe [] (: []) mStep))]
 stmtToAssigns (BsLocalVar _ _ varName (Just expr)) =
-  [SsaAssign (SsaVar (identOrig varName)) (exprToSsaVal expr)]
+  [SsaAssign (SsaVar (identOrig varName)) (exprToSsaVal expr) (noSubscriptLhs (identOrig varName))]
 stmtToAssigns (BsLocalVar {}) = []
 stmtToAssigns (BsAugAssign lv op rhsToks) =
   let augOpToBinOp AugAdd = BopAdd
       augOpToBinOp AugSub = BopSub
       augOpToBinOp AugMul = BopMul
       augOpToBinOp AugDiv = BopDiv
-  in [SsaAssign (SsaVar (lvHead lv)) (SsaBinOp (augOpToBinOp op) (SsaConst (ExLvalue lv)) (exprToSsaVal (rawArgsToExpr rhsToks)))]
+  in [SsaAssign (SsaVar (lvHead lv))
+        (SsaBinOp (augOpToBinOp op) (SsaConst (ExLvalue lv)) (exprToSsaVal (rawArgsToExpr rhsToks)))
+        (noSubscriptLhs (lvHead lv))]
 stmtToAssigns (BsInc lv) =
-  [SsaAssign (SsaVar (lvHead lv)) (SsaBinOp BopAdd (SsaConst (ExLvalue lv)) (SsaConst (ExInt "1")))]
+  [SsaAssign (SsaVar (lvHead lv)) (SsaBinOp BopAdd (SsaConst (ExLvalue lv)) (SsaConst (ExInt "1"))) (noSubscriptLhs (lvHead lv))]
 stmtToAssigns (BsDec lv) =
-  [SsaAssign (SsaVar (lvHead lv)) (SsaBinOp BopSub (SsaConst (ExLvalue lv)) (SsaConst (ExInt "1")))]
+  [SsaAssign (SsaVar (lvHead lv)) (SsaBinOp BopSub (SsaConst (ExLvalue lv)) (SsaConst (ExInt "1"))) (noSubscriptLhs (lvHead lv))]
 stmtToAssigns (BsAssignExpr lhsExpr rhsExpr) =
-  [SsaAssign (SsaVar (assignTarget lhsExpr)) (exprToSsaVal rhsExpr)]
+  [SsaAssign (SsaVar (assignTarget lhsExpr)) (exprToSsaVal rhsExpr) lhsExpr]
 stmtToAssigns (BsDestroy lv) =
-  [SsaAssign (SsaVar (lvHead lv)) SsaNull]
+  [SsaAssign (SsaVar (lvHead lv)) SsaNull (noSubscriptLhs (lvHead lv))]
 stmtToAssigns (BsCall expr) =
-  [SsaAssign (SsaVar "_") (SsaConst expr)]
+  [SsaAssign (SsaVar "_") (SsaConst expr) (noSubscriptLhs "_")]
 -- BsPbCall: CALL ancestor::event super-dispatch. Encoded as a single-segment
 -- synthetic ExCall so it flows through the existing classifyExpr/compileCallExpr
 -- machinery in PB.Compile.FromSSA and lowers to a InstrCallProc, matching
@@ -253,7 +283,8 @@ stmtToAssigns (BsCall expr) =
 -- PureCall.
 stmtToAssigns (BsPbCall (PbCall ancestor event)) =
   [SsaAssign (SsaVar "_")
-             (SsaConst (ExCall (Lvalue [LvSegment (mkIdent (ancestor <> "::" <> event)) Nothing]) []))]
+             (SsaConst (ExCall (Lvalue [LvSegment (mkIdent (ancestor <> "::" <> event)) Nothing]) []))
+             (noSubscriptLhs "_")]
 -- Control-flow statements produce no SSA assign of their own. CfgBuild.lower
 -- keeps the trailing control stmt as the last element of a block's cbStmts
 -- (so cfgTermToSsa's findControlStmt can find it), but its "value" is the

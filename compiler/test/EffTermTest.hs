@@ -88,7 +88,7 @@ hasEffAssign n (EffTerm spine table) = go spine
   where
     go :: Eff x y -> Bool
     go (EAssign t) = n == t
-    go (EAssignWithRhs t _) = n == t
+    go (EAssignWithRhs t _ _) = n == t
     go (EComp f g) = go f P.|| go g
     go (EFanIn f g) = go f P.|| go g
     go (EBranch _ f g) = go f P.|| go g
@@ -238,7 +238,7 @@ tests = testGroup "EffTerm"
         let callExpr = ExCall
               { callee   = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]
               , callArgs = [] }
-            sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr)] (SsaReturn Nothing)
+            sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr) (ExInt "0")] (SsaReturn Nothing)
             result = compileSsaToEff dwEnv Set.empty sa
         in assertBool "should contain ESuspend with effect retrieve:dw_foo"
              (hasEffSuspendEffect "retrieve:dw_foo" result)
@@ -249,14 +249,14 @@ tests = testGroup "EffTerm"
               { receiver   = ExLvalue (Lvalue [LvSegment "sqlca" Nothing])
               , method     = "commit"
               , methodArgs = [] }
-            sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr)] (SsaReturn Nothing)
+            sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr) (ExInt "0")] (SsaReturn Nothing)
             result = compileSsaToEff dwEnv Set.empty sa
         in assertBool "should contain ESuspend with effect executeSql"
              (hasEffSuspendEffect "executeSql" result)
 
     , testCase "ExCall pure user function does not emit ESuspend" $
         let callExpr = ExCall { callee = Lvalue [LvSegment "my_func" Nothing], callArgs = [] }
-            sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr)] (SsaReturn Nothing)
+            sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr) (ExInt "0")] (SsaReturn Nothing)
             result = compileSsaToEff emptyEnv Set.empty sa
         in assertBool "pure call should produce no ESuspend" (not (hasAnyEffSuspend result))
 
@@ -280,7 +280,7 @@ tests = testGroup "EffTerm"
     -- never special-cases a call RHS on BsAssign; it always emits one InstrAssign.
     [ testCase "x = my_func() (pure) assigns, does not emit a bare ECall" $
         let callExpr = ExCall { callee = Lvalue [LvSegment "my_func" Nothing], callArgs = [] }
-            sa = mkSsa [SsaAssign (SsaVar "x") (SsaConst callExpr)] (SsaReturn Nothing)
+            sa = mkSsa [SsaAssign (SsaVar "x") (SsaConst callExpr) (ExInt "0")] (SsaReturn Nothing)
             result = compileSsaToEff emptyEnv Set.empty sa
         in assertBool "x assign present, no bare ECall"
              (hasEffAssign "x" result P.&& not (hasAnyEffCall result))
@@ -289,7 +289,7 @@ tests = testGroup "EffTerm"
         let callExpr = ExCall
               { callee   = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]
               , callArgs = [] }
-            sa = mkSsa [SsaAssign (SsaVar "x") (SsaConst callExpr)] (SsaReturn Nothing)
+            sa = mkSsa [SsaAssign (SsaVar "x") (SsaConst callExpr) (ExInt "0")] (SsaReturn Nothing)
             result = compileSsaToEff dwEnv Set.empty sa
         in assertBool "x assign present, no ESuspend"
              (hasEffAssign "x" result P.&& not (hasAnyEffSuspend result))
@@ -299,7 +299,7 @@ tests = testGroup "EffTerm"
         let callExpr = ExCall
               { callee   = Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]
               , callArgs = [] }
-            sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr)] (SsaReturn Nothing)
+            sa = mkSsa [SsaAssign (SsaVar "_") (SsaConst callExpr) (ExInt "0")] (SsaReturn Nothing)
             result = compileSsaToEff dwEnv Set.empty sa
         in assertBool "should still contain ESuspend" (hasAnyEffSuspend result)
 
@@ -347,27 +347,27 @@ tests = testGroup "EffTerm"
         isTrace st @?= []
 
     , testCase "runEff EAssignWithRhs updates env and emits TeAssign" $ do
-        let term = EAssignWithRhs "x_1" (ExInt "42") :: Eff () ()
+        let term = EAssignWithRhs "x_1" (ExInt "0") (ExInt "42") :: Eff () ()
         (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
         Map.lookup "x_1" (isEnv st) @?= Just (VInt 42)
         P.reverse (isTrace st) @?= [TeAssign "x_1" (VInt 42)]
 
     , testCase "runEff EComp threads env through both assigns in order" $ do
-        let term = EAssignWithRhs "y_1" (ExInt "2") . EAssignWithRhs "x_1" (ExInt "1") :: Eff () ()
+        let term = EAssignWithRhs "y_1" (ExInt "0") (ExInt "2") . EAssignWithRhs "x_1" (ExInt "0") (ExInt "1") :: Eff () ()
         (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
         P.reverse (isTrace st) @?= [TeAssign "x_1" (VInt 1), TeAssign "y_1" (VInt 2)]
 
     , testCase "runEff branchEff emits TeBranch True and takes the then-arm" $ do
         let term = branchEff (ExBool True)
-                     (EAssignWithRhs "then_taken" (ExInt "1"))
-                     (EAssignWithRhs "else_taken" (ExInt "2")) :: Eff () ()
+                     (EAssignWithRhs "then_taken" (ExInt "0") (ExInt "1"))
+                     (EAssignWithRhs "else_taken" (ExInt "0") (ExInt "2")) :: Eff () ()
         (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
         P.reverse (isTrace st) @?= [TeBranch True, TeAssign "then_taken" (VInt 1)]
 
     , testCase "runEff branchEff emits TeBranch False and takes the else-arm" $ do
         let term = branchEff (ExBool False)
-                     (EAssignWithRhs "then_taken" (ExInt "1"))
-                     (EAssignWithRhs "else_taken" (ExInt "2")) :: Eff () ()
+                     (EAssignWithRhs "then_taken" (ExInt "0") (ExInt "1"))
+                     (EAssignWithRhs "else_taken" (ExInt "0") (ExInt "2")) :: Eff () ()
         (_, st) <- runStateT (runInterp (runEff (extractEffTable term)) ()) (InterpState Map.empty [] Map.empty)
         P.reverse (isTrace st) @?= [TeBranch False, TeAssign "else_taken" (VInt 2)]
 
@@ -701,7 +701,7 @@ tests = testGroup "EffTerm"
         ienv @?= genv
 
     , testCase "EAssignWithRhs: same assign trace, same env" $ do
-        let term = extractEffTable (EAssignWithRhs "x_1" (ExInt "42") :: Eff () ())
+        let term = extractEffTable (EAssignWithRhs "x_1" (ExInt "0") (ExInt "42") :: Eff () ())
         (ienv, itrace) <- runEffTermTrace term () Map.empty
         let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphFromEffTerm term) Map.empty
         itrace @?= [TeAssign "x_1" (VInt 42)]
@@ -709,7 +709,7 @@ tests = testGroup "EffTerm"
         ienv @?= genv
 
     , testCase "EComp: two assigns execute in the same order" $ do
-        let term = extractEffTable (EAssignWithRhs "y_1" (ExInt "2") . EAssignWithRhs "x_1" (ExInt "1") :: Eff () ())
+        let term = extractEffTable (EAssignWithRhs "y_1" (ExInt "0") (ExInt "2") . EAssignWithRhs "x_1" (ExInt "0") (ExInt "1") :: Eff () ())
         (ienv, itrace) <- runEffTermTrace term () Map.empty
         let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphFromEffTerm term) Map.empty
         itrace @?= gtrace
@@ -717,8 +717,8 @@ tests = testGroup "EffTerm"
 
     , testCase "branchEff True: then-arm taken on both backends" $ do
         let term = extractEffTable (branchEff (ExBool True)
-                     (EAssignWithRhs "then_taken" (ExInt "1"))
-                     (EAssignWithRhs "else_taken" (ExInt "2")) :: Eff () ())
+                     (EAssignWithRhs "then_taken" (ExInt "0") (ExInt "1"))
+                     (EAssignWithRhs "else_taken" (ExInt "0") (ExInt "2")) :: Eff () ())
         (ienv, itrace) <- runEffTermTrace term () Map.empty
         let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphFromEffTerm term) Map.empty
         itrace @?= gtrace
@@ -726,8 +726,8 @@ tests = testGroup "EffTerm"
 
     , testCase "branchEff False: else-arm taken on both backends" $ do
         let term = extractEffTable (branchEff (ExBool False)
-                     (EAssignWithRhs "then_taken" (ExInt "1"))
-                     (EAssignWithRhs "else_taken" (ExInt "2")) :: Eff () ())
+                     (EAssignWithRhs "then_taken" (ExInt "0") (ExInt "1"))
+                     (EAssignWithRhs "else_taken" (ExInt "0") (ExInt "2")) :: Eff () ())
         (ienv, itrace) <- runEffTermTrace term () Map.empty
         let (genv, gtrace, _) = runInstrGraphTrace 10000 Map.empty (buildInstrGraphFromEffTerm term) Map.empty
         itrace @?= gtrace
@@ -756,7 +756,7 @@ tests = testGroup "EffTerm"
             cond = ExBinOp iVar BopLt (ExInt "3")
             incr = ExBinOp iVar BopAdd (ExInt "1")
             loopBody = branchEff cond
-                         (J PInl . EAssignWithRhs "i" incr)
+                         (J PInl . EAssignWithRhs "i" (ExInt "0") incr)
                          (J PInr) :: Eff () (Either () ())
             term = extractEffTable (ELoop loopBody :: Eff () ())
             initEnv = Map.fromList [("i", VInt 0)]
@@ -858,8 +858,8 @@ tests = testGroup "EffTerm"
             , spVars   = []
             , spBlocks = Map.fromList
                 [ ("entry", SsaBlock
-                    { sbAssigns = [ SsaAssign (SsaVar "oi") (SsaConst (ExInt "0"))
-                                  , SsaAssign (SsaVar "y") (SsaConst (ExInt "0")) ]
+                    { sbAssigns = [ SsaAssign (SsaVar "oi") (SsaConst (ExInt "0")) (ExInt "0")
+                                  , SsaAssign (SsaVar "y") (SsaConst (ExInt "0")) (ExInt "0") ]
                     , sbTerm = SsaGoto "outer_header" })
                 , ("outer_header", SsaBlock
                     { sbAssigns = []
@@ -868,18 +868,18 @@ tests = testGroup "EffTerm"
                     { sbAssigns = []
                     , sbTerm = SsaBranch (SsaConst (ExBool True)) "outer_enter_inner" "outer_merge" })
                 , ("outer_enter_inner", SsaBlock
-                    { sbAssigns = [SsaAssign (SsaVar "ii") (SsaConst (ExInt "0"))]
+                    { sbAssigns = [SsaAssign (SsaVar "ii") (SsaConst (ExInt "0")) (ExInt "0")]
                     , sbTerm = SsaGoto "inner_header" })
                 , ("inner_header", SsaBlock
                     { sbAssigns = []
                     , sbTerm = SsaBranch (SsaBinOp BopLt iiV (SsaConst (ExInt "3"))) "inner_body" "inner_exit" })
                 , ("inner_body", SsaBlock
-                    { sbAssigns = [ SsaAssign (SsaVar "ii") (SsaBinOp BopAdd iiV (SsaConst (ExInt "1")))
-                                  , SsaAssign (SsaVar "y") (SsaBinOp BopAdd yV (SsaConst (ExInt "1"))) ]
+                    { sbAssigns = [ SsaAssign (SsaVar "ii") (SsaBinOp BopAdd iiV (SsaConst (ExInt "1"))) (ExInt "0")
+                                  , SsaAssign (SsaVar "y") (SsaBinOp BopAdd yV (SsaConst (ExInt "1"))) (ExInt "0") ]
                     , sbTerm = SsaGoto "inner_header" })
                 , ("inner_exit", SsaBlock { sbAssigns = [], sbTerm = SsaGoto "outer_merge" })
                 , ("outer_merge", SsaBlock
-                    { sbAssigns = [SsaAssign (SsaVar "oi") (SsaBinOp BopAdd oiV (SsaConst (ExInt "1")))]
+                    { sbAssigns = [SsaAssign (SsaVar "oi") (SsaBinOp BopAdd oiV (SsaConst (ExInt "1"))) (ExInt "0")]
                     , sbTerm = SsaGoto "outer_header" })
                 , ("outer_exit", SsaBlock { sbAssigns = [], sbTerm = SsaReturn Nothing })
                 ]
@@ -922,10 +922,10 @@ tests = testGroup "EffTerm"
             , spVars   = []
             , spBlocks = Map.fromList
                 [ ("entry", SsaBlock
-                    { sbAssigns = [ SsaAssign (SsaVar "x") (SsaConst (ExInt "0"))
-                                  , SsaAssign (SsaVar "y") (SsaConst (ExInt "0"))
-                                  , SsaAssign (SsaVar "skip_count") (SsaConst (ExInt "0"))
-                                  , SsaAssign (SsaVar "done") (SsaConst (ExInt "0")) ]
+                    { sbAssigns = [ SsaAssign (SsaVar "x") (SsaConst (ExInt "0")) (ExInt "0")
+                                  , SsaAssign (SsaVar "y") (SsaConst (ExInt "0")) (ExInt "0")
+                                  , SsaAssign (SsaVar "skip_count") (SsaConst (ExInt "0")) (ExInt "0")
+                                  , SsaAssign (SsaVar "done") (SsaConst (ExInt "0")) (ExInt "0") ]
                     , sbTerm = SsaGoto "header" })
                 , ("header", SsaBlock
                     { sbAssigns = []
@@ -934,15 +934,15 @@ tests = testGroup "EffTerm"
                     { sbAssigns = []
                     , sbTerm = SsaBranch (SsaBinOp BopEq xV (SsaConst (ExInt "1"))) "c_continue" "normal_body" })
                 , ("c_continue", SsaBlock
-                    { sbAssigns = [ SsaAssign (SsaVar "x") (SsaBinOp BopAdd xV (SsaConst (ExInt "1")))
-                                  , SsaAssign (SsaVar "skip_count") (SsaBinOp BopAdd scV (SsaConst (ExInt "1"))) ]
+                    { sbAssigns = [ SsaAssign (SsaVar "x") (SsaBinOp BopAdd xV (SsaConst (ExInt "1"))) (ExInt "0")
+                                  , SsaAssign (SsaVar "skip_count") (SsaBinOp BopAdd scV (SsaConst (ExInt "1"))) (ExInt "0") ]
                     , sbTerm = SsaContinue })
                 , ("normal_body", SsaBlock
-                    { sbAssigns = [ SsaAssign (SsaVar "y") (SsaBinOp BopAdd yV (SsaConst (ExInt "1")))
-                                  , SsaAssign (SsaVar "x") (SsaBinOp BopAdd xV (SsaConst (ExInt "1"))) ]
+                    { sbAssigns = [ SsaAssign (SsaVar "y") (SsaBinOp BopAdd yV (SsaConst (ExInt "1"))) (ExInt "0")
+                                  , SsaAssign (SsaVar "x") (SsaBinOp BopAdd xV (SsaConst (ExInt "1"))) (ExInt "0") ]
                     , sbTerm = SsaGoto "header" })
                 , ("z_exit", SsaBlock
-                    { sbAssigns = [SsaAssign (SsaVar "done") (SsaConst (ExInt "1"))]
+                    { sbAssigns = [SsaAssign (SsaVar "done") (SsaConst (ExInt "1")) (ExInt "0")]
                     , sbTerm = SsaReturn Nothing })
                 ]
             }
@@ -1014,14 +1014,14 @@ tests = testGroup "EffTerm"
                    { sbAssigns = []
                    , sbTerm = SsaBranch (SsaBinOp BopEq trV (SsaConst (ExInt "1"))) "return_block" "normal_body" })
                , ("return_block", SsaBlock
-                   { sbAssigns = [SsaAssign (SsaVar "y") (SsaConst (ExInt "999"))]
+                   { sbAssigns = [SsaAssign (SsaVar "y") (SsaConst (ExInt "999")) (ExInt "0")]
                    , sbTerm = SsaReturn Nothing })
                , ("normal_body", SsaBlock
-                   { sbAssigns = [ SsaAssign (SsaVar "x") (SsaBinOp BopAdd xV (SsaConst (ExInt "1")))
-                                 , SsaAssign (SsaVar "y") (SsaBinOp BopAdd yV (SsaConst (ExInt "1"))) ]
+                   { sbAssigns = [ SsaAssign (SsaVar "x") (SsaBinOp BopAdd xV (SsaConst (ExInt "1"))) (ExInt "0")
+                                 , SsaAssign (SsaVar "y") (SsaBinOp BopAdd yV (SsaConst (ExInt "1"))) (ExInt "0") ]
                    , sbTerm = SsaGoto "header" })
                , ("z_exit", SsaBlock
-                   { sbAssigns = [SsaAssign (SsaVar "done") (SsaConst (ExInt "1"))]
+                   { sbAssigns = [SsaAssign (SsaVar "done") (SsaConst (ExInt "1")) (ExInt "0")]
                    , sbTerm = SsaReturn Nothing })
                ]
            }
@@ -1388,8 +1388,8 @@ tests = testGroup "EffTerm"
     -- replaces; these tests are the behavioral proof, not just a
     -- compile-success check.
     [ testCase "branchK matches branchEff's trace for Eff (via foldFreyd/Interp)" $ do
-        let te = EAssignWithRhs "then_taken" (ExInt "1") :: Eff () ()
-            fe = EAssignWithRhs "else_taken" (ExInt "2") :: Eff () ()
+        let te = EAssignWithRhs "then_taken" (ExInt "0") (ExInt "1") :: Eff () ()
+            fe = EAssignWithRhs "else_taken" (ExInt "0") (ExInt "2") :: Eff () ()
             cond = ExBool True
             viaBranchEff = branchEff cond te fe
             viaBranchK   = branchK cond te fe :: Eff () ()

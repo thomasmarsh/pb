@@ -210,7 +210,7 @@ tests = testGroup "SchFootprint"
     -- one of 'Eff'\'s constructors folds without falling over, not a check
     -- of any real morphism detection.
     [ testCase "J PId / EComp / EAssignWithRhs" $
-        foldSchFootprintEff ctx0 (extractEffTable (EAssignWithRhs "x" (ExInt "1") `EComp` J PId :: Eff () ())) @?= Set.empty
+        foldSchFootprintEff ctx0 (extractEffTable (EAssignWithRhs "x" (ExInt "0") (ExInt "1") `EComp` J PId :: Eff () ())) @?= Set.empty
 
     , testCase "branch: EBranch / ESplitValue / ECall / ESuspend" $
         foldSchFootprintEff ctx0

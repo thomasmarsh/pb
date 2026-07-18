@@ -188,7 +188,7 @@ instance Effectful NGB where
   -- Direct access to the variable and the expression together — the generic
   -- derivation (@assign var . (id &&& eval e)@) would erase through this
   -- carrier's no-value-channel 'eval'\/'(&&&)', silently dropping the RHS.
-  assignWithRhs var e = NGB (\next _loopCont -> do
+  assignWithRhs var _lhs e = NGB (\next _loopCont -> do
     n <- freshName
     defineNode n (InstrAssign' { anVar' = var, anRhs' = e, anNext' = next })
     return n)
@@ -379,7 +379,7 @@ instance Effectful WB where
   -- instance's non-erased 'eval'/'(&&&)') produces directly: a 'WireCond'
   -- node immediately upstream of the 'WireBranch' fork built by '(|||)'.
   branchK cond t f = branch cond t f
-  assignWithRhs var e = WB (\next _loopCont -> do
+  assignWithRhs var _lhs e = WB (\next _loopCont -> do
     n <- freshWireName
     defineWireNode n (WireAssign { waVar = var, waRhs = e, waNext = next })
     return n)

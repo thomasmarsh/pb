@@ -2,7 +2,7 @@ module TaintEdgesTest (tests) where
 
 import PB.Prelude hiding (id, (.))
 import qualified Prelude as P
-import PB.AST.BodyStmt   (BodyStmt (..), IfStmt (..))
+import PB.AST.BodyStmt   (BodyStmt (..), IfStmt (..), ForStmt (..))
 import PB.AST.Expr       (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Ident      (mkIdent)
 import PB.AST.Located    (Located (..))
@@ -37,6 +37,13 @@ lvExpr n = ExLvalue (Lvalue [LvSegment (mkIdent n) Nothing])
 assignStmt :: Int -> Text -> Expr -> Located BodyStmt
 assignStmt line lhs rhs = Located line (BsAssign (Lvalue [LvSegment (mkIdent lhs) Nothing]) rhs)
 
+-- | An assignment whose LHS is a subscripted member (@root.member[subToks]@).
+subscriptedAssignStmt :: Int -> Text -> Text -> [Text] -> Expr -> Located BodyStmt
+subscriptedAssignStmt line root member subToks rhs =
+  Located line (BsAssign
+    (Lvalue [LvSegment (mkIdent root) Nothing, LvSegment (mkIdent member) (Just subToks)])
+    rhs)
+
 foldEdges :: [Located BodyStmt] -> Set.Set (Text, Text)
 foldEdges body = foldTaintEdgesEff (compileProcedureToEff emptyEnv Set.empty body)
 
@@ -65,6 +72,24 @@ tests = testGroup "TaintEdges"
           , assignStmt 2 "z" (ExBinOp (lvExpr "y") BopAdd (ExInt "1"))
           ]
           @?= Set.fromList [("x", "y"), ("y", "z")]
+
+    , testCase "subscripted LHS read recovered: this.Item[UpperBound(this.Item)+1] = this.m_edit_delrec" $
+        foldEdges
+          [ subscriptedAssignStmt 1 "this" "Item"
+              ["UpperBound", "(", "this", ".", "Item", ")", "+", "1"]
+              (ExLvalue (Lvalue [LvSegment (mkIdent "this") Nothing, LvSegment (mkIdent "m_edit_delrec") Nothing]))
+          ]
+          @?= Set.fromList [("Item", "this"), ("UpperBound", "this")]
+    ]
+
+  , testGroup "foldTaintEdgesEff over BsFor loop bounds"
+    [ testCase "for i = 1 to n: loop bound recovered as (n,i)" $
+        foldEdges [Located 1 (BsFor (ForStmt (Lvalue [LvSegment (mkIdent "i") Nothing]) (ExInt "1") (lvExpr "n") Nothing []))]
+          @?= Set.singleton ("n", "i")
+
+    , testCase "for i = 1 to n step s: both bounds recovered as {(n,i),(s,i)}" $
+        foldEdges [Located 1 (BsFor (ForStmt (Lvalue [LvSegment (mkIdent "i") Nothing]) (ExInt "1") (lvExpr "n") (Just (lvExpr "s")) []))]
+          @?= Set.fromList [("n", "i"), ("s", "i")]
     ]
 
   , testGroup "branch fan-in unions both arms' edges"

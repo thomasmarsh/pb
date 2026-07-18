@@ -178,7 +178,7 @@ compileAssignsToEff ctx (a:as) = compileAssignsToEff ctx as . compileAssignToEff
 -- | Compile a single SSA assignment.
 -- Mirrors 'compileAssign' exactly.
 compileAssignToEff :: CompileCtx -> SsaAssign -> Eff () ()
-compileAssignToEff ctx (SsaAssign sv rhs)
+compileAssignToEff ctx (SsaAssign sv rhs lhs)
   | svName sv == "_" = case rhs of
       SsaConst expr@(ExCall lv rawArgs) ->
         let parsedArgs = map parseArgList rawArgs
@@ -192,11 +192,11 @@ compileAssignToEff ctx (SsaAssign sv rhs)
         case classifyExpr (ccEnv ctx) expr of
           SuspendCall -> ESuspend (effectName expr []) []
           PureCall    -> ECall (calleeName expr) []
-      SsaVarRef _ -> EAssignWithRhs (svName sv) (ssaValToExpr rhs)
-      SsaBinOp {} -> EAssignWithRhs (svName sv) (ssaValToExpr rhs)
-      SsaNot _    -> EAssignWithRhs (svName sv) (ssaValToExpr rhs)
-      SsaNull     -> EAssignWithRhs (svName sv) (ssaValToExpr rhs)
-  | otherwise = EAssignWithRhs (svName sv) (ssaValToExpr rhs)
+      SsaVarRef _ -> EAssignWithRhs (svName sv) lhs (ssaValToExpr rhs)
+      SsaBinOp {} -> EAssignWithRhs (svName sv) lhs (ssaValToExpr rhs)
+      SsaNot _    -> EAssignWithRhs (svName sv) lhs (ssaValToExpr rhs)
+      SsaNull     -> EAssignWithRhs (svName sv) lhs (ssaValToExpr rhs)
+  | otherwise = EAssignWithRhs (svName sv) lhs (ssaValToExpr rhs)
 
 -- | Shared logic for compiling an ExCall expression.
 -- Mirrors 'compileCallExpr' exactly.

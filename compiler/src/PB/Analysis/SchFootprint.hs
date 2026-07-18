@@ -162,7 +162,7 @@ instance Effectful SchFootprint where
   ret        = SchFootprint (const Set.empty)
   loopK (SchFootprint f) = SchFootprint f
   branchK cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)
-  assignWithRhs var e = assign var . (id &&& eval e)
+  assignWithRhs var _lhs e = assign var . (id &&& eval e)
 
 -- | A direct, force-time-memoized fold of a compiled 'EffTerm' through the
 -- 'SchFootprint' functor — THE PRODUCTION ENTRY POINT
@@ -188,7 +188,7 @@ foldSchFootprintEff ctx (EffTerm spine table) = fst (go spine Map.empty)
     go (J _)                m = (Set.empty, m)
     go (EComp g f)          m = let (rg, m1) = go g m in let (rf, m2) = go f m1 in (rg <> rf, m2)
     go (EAssign _)          m = (Set.empty, m)
-    go (EAssignWithRhs _ _) m = (Set.empty, m)
+    go (EAssignWithRhs _ _ _) m = (Set.empty, m)
     go (ECall name args)    m = (callFootprint name args, m)
     go (ESuspend _ _)       m = (Set.empty, m)
     go ESplitValue          m = (Set.empty, m)

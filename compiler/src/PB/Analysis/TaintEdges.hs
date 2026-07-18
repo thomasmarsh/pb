@@ -74,42 +74,19 @@ instance Effectful TaintEdges where
   -- @Either a b@), so this unions the underlying sets directly rather than
   -- routing through '(|||)'/'splitValue'/'eval'/'(&&&)'.
   branchK _cond (TaintEdges t) (TaintEdges f) = TaintEdges (t <> f)
-  -- Pairs `var` (the def) with every free identifier of `e` (the uses),
-  -- excluding a self-referencing use/def (`x = x + 1`) -- matches
-  -- 'PB.Analysis.TaintAlgebra.taintSuccessorsIx''s existing
-  -- @newVar /= var@ exclusion in its intra-proc rule.
-  --
-  -- KNOWN SOUNDNESS GAP (documented, NOT silently shipped — see
-  -- doc/plan/182b-move2-intra.md §3): this RHS-only walk drops LHS-subscript
-  -- reads. Real-corpus validation on `example/openpay-0.1.1b-extract` found
-  -- the fold emits 2635 intra edges vs the old same-line join's 2841 —
-  -- 338 missing, 0 extra. All 338 missing are edges whose `use_var` is a
-  -- free identifier of an LHS-subscript expression (e.g.
-  -- `this.Item[UpperBound(this.Item)+1] = this.m_edit_delrec` should also
-  -- yield `(Item→this)` and `(UpperBound→this)`). Root cause: the subscript
-  -- is erased *before SSA exists* — 'PB.Compile.SSA.stmtToAssigns' reduces a
-  -- subscripted Lvalue to its root var via 'lvHead'/'assignTarget'
-  -- ('PB.Compile.SSA.hs:139-141,220-221,241-242'), so 'EAssignWithRhs'
-  -- carries only the RHS 'Expr', whose 'walkExprIdents' returns only
-  -- 'lvRoot' ('PB.Analysis.Dataflow.hs:120'). The fold therefore cannot
-  -- recover LHS-subscript reads.
-  --
-  -- Decision (doc/plan/182b-move2-intra.md §3.4, Option C): ship the
-  -- RHS-only fold now — proven zero confirmed taint findings lost on the
-  -- validation corpus (old_confirmed = new_confirmed = 18). The gap is a
-  -- real soundness hole (strictly *less complete* than the row path for
-  -- subscripted-LHS assignments), so it is tracked, not hidden.
-  --
-  -- DEFERRED Stage-1 (Option A, sibling to the deferred 'EReturn' payload
-  -- change): extend 'assignWithRhs'/'EAssignWithRhs' from `(Text, Expr)` to
-  -- `(Text, Expr, Expr)` (defVar, lhsExpr, rhsExpr) so this method can walk
-  -- `walkExprIdents rhs <> lvalueSubscriptIdents lhs`. That is an
-  -- 'Effectful'-class signature change touching all four instances
-  -- ('Interp'/'NGB'/'WB'/'SchFootprint' ignore the extra arg) — scoped as
-  -- its own Stage-1 proposal, NOT folded into this session.
-  assignWithRhs var e = TaintEdges $ Set.fromList
+  -- Pairs `var` (the def) with every free identifier of the RHS, plus every
+  -- free identifier of 'PB.Compile.SSA.saLhs' -- a subscripted LHS's own
+  -- subscript expression (e.g. `arr[i+1] = x` also reads `i` to address the
+  -- write) or a `for` loop's bounds (`for i = 1 to n` also reads `n`),
+  -- neither of which is part of the def's real assigned value. The def
+  -- var's own root ident always appears in `walkExprIdents lhs` too (an
+  -- ordinary self-reference for a plain LHS, or 'BsFor''s own loop var for
+  -- the loop-bounds case) -- harmless, since the self-guard below excludes
+  -- it either way. Matches 'PB.Analysis.TaintAlgebra.taintSuccessorsIx''s
+  -- existing @newVar /= var@ exclusion in its intra-proc rule.
+  assignWithRhs var lhs rhs = TaintEdges $ Set.fromList
     [ (identOrig u, var)
-    | u <- Set.toList (walkExprIdents e)
+    | u <- Set.toList (walkExprIdents rhs <> walkExprIdents lhs)
     , identCanon u /= identCanon (mkIdent var)
     ]
 
