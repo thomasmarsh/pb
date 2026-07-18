@@ -11,6 +11,7 @@ import PB.Pipeline.DuckDb
   , queryResolvedCalls
   , queryTaintInputs
   , queryTaintIntraEdges
+  , queryTaintReturnRows
   , queryTextRows
   )
 import PB.Analysis.TypeResolve (GlobalVar (..))
@@ -77,6 +78,7 @@ main = do
     allRC <- queryResolvedCalls conn
     tfis  <- queryTaintInputs conn
     intraEdges <- queryTaintIntraEdges conn
+    returnRows <- queryTaintReturnRows conn
     let globalVarNames = Set.fromList (map (mkIdent . gvName) gvs)
         allProcMetas   = concatMap Taint.tfiProcMetas tfis
         allSqlStmts    = concatMap Taint.tfiSqlStmts  tfis
@@ -99,7 +101,7 @@ main = do
     tBfs1 <- bfsCount `seq` getCurrentTime
 
     tAlg0 <- getCurrentTime
-    let taintedAlg = TA.taintReachable allSources intraEdges defs uses edges
+    let taintedAlg = TA.taintReachable allSources intraEdges returnRows defs uses edges
         algCount = Set.size taintedAlg
     tAlg1 <- algCount `seq` getCurrentTime
 
@@ -129,7 +131,7 @@ main = do
     -- Gate 2: algebraic taint_confirmed vs. the real Souffle oracle's
     -- materialized taint_confirmed table.
     tConf0 <- getCurrentTime
-    let algConfirmed = TA.taintConfirmed allSources allSinks intraEdges defs uses edges
+    let algConfirmed = TA.taintConfirmed allSources allSinks intraEdges returnRows defs uses edges
         algConfirmedKeys = Set.fromList
           [ ( taintKey3 (Taint.tsObject s)  (Taint.tsProcName s)  (Taint.tsVarName s)
             , taintKey3 (Taint.tskObject t) (Taint.tskProcName t) (Taint.tskVarName t)
@@ -156,7 +158,7 @@ main = do
     -- (source, reachable-node) with its final incoming edge label) has
     -- coarser granularity than taint_step_kind (one row per hop on the
     -- reconstructed witness path) -- reported for visibility, not diffed.
-    let algWitnesses = TA.taintWitnesses allSources intraEdges defs uses edges
+    let algWitnesses = TA.taintWitnesses allSources intraEdges returnRows defs uses edges
     souffleStepKindRows <- queryTextRows conn "taint_step_kind" ["s", "t"]
     let souffleStepKindPairs = Set.fromList (pairsOf souffleStepKindRows)
 

@@ -113,7 +113,7 @@ instance Effectful Interp where
     modify' (\st -> st { isTrace = TeBranch taken : isTrace st })
     P.pure (if taken then Left env else Right env))
 
-  ret = Interp (\_ -> do
+  ret _e = Interp (\_ -> do
     st <- get
     liftIO (throwIO (ReturnUnwind st)))
 

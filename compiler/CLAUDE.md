@@ -70,7 +70,7 @@ BIN=$(cd compiler && cabal list-bin pbc)
 The custom Prelude is in `compiler/src/PB/Prelude.hs`. These rules are non-negotiable.
 
 | Rule                 | Detail                                                                                      |
-| --------------------- | -------------------------------------------------------------------------------------------- |
+| -------------------- | ------------------------------------------------------------------------------------------- |
 | `Text` everywhere    | No `String` in exposed APIs; `OverloadedStrings` is set                                     |
 | No partial functions | `head`, `tail`, `(!!)`, `fromJust`, `read`, `cycle`, `maximum`, `minimum` are hidden        |
 | No `undefined`       | Hidden from Prelude; use `error "impossible: <reason>"` only when GHC cannot prove totality |
@@ -157,7 +157,7 @@ Every distinct top-level construct found in the 515 non-DataWindow corpus files.
 Mark done/pending as body parsers land.
 
 | Construct                               | File types | Status  |
-| ---------------------------------------- | ---------- | ------- |
+| --------------------------------------- | ---------- | ------- |
 | `forward … end forward`                 | .srw, .sru | done    |
 | `forward prototypes … end prototypes`   | .srw, .sru | done    |
 | `type prototypes … end prototypes`      | .srf, .sru | done    |
@@ -182,15 +182,15 @@ Mark done/pending as body parsers land.
 
 ## Module Placement
 
-| Module          | Purpose                                                                                                                             |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `PB.AST.*`      | Data types only — no parsing logic (Located, Expr, BodyStmt, Type, SourceFile, DataWindow)                                          |
-| `PB.Lexing.*`   | Tokenization, layout, string mode                                                                                                   |
-| `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)                                                                                 |
-| `PB.Compile.*`  | Compilation pipeline: SSA IR (SSA), IR types (IR), loop analysis (LoopAnalysis), SSA lowering (FromSSA), flattening (Flatten), instruction types (InstrTypes), value model (ValueModel), interpreters (Interp, InstrInterp) |
-| `PB.Pipeline.*` | Multi-step transformations: Preprocess, Emit, Passes, Runner, Serialise, FileWalk, DuckDb, SqlParse, Church                        |
+| Module          | Purpose                                                                                                                                                                                                                                            |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PB.AST.*`      | Data types only — no parsing logic (Located, Expr, BodyStmt, Type, SourceFile, DataWindow)                                                                                                                                                         |
+| `PB.Lexing.*`   | Tokenization, layout, string mode                                                                                                                                                                                                                  |
+| `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)                                                                                                                                                                                                |
+| `PB.Compile.*`  | Compilation pipeline: SSA IR (SSA), IR types (IR), loop analysis (LoopAnalysis), SSA lowering (FromSSA), flattening (Flatten), instruction types (InstrTypes), value model (ValueModel), interpreters (Interp, InstrInterp)                        |
+| `PB.Pipeline.*` | Multi-step transformations: Preprocess, Emit, Passes, Runner, Serialise, FileWalk, DuckDb, SqlParse, Church                                                                                                                                        |
 | `PB.Analysis.*` | Pure analysis passes: Cfg, Dataflow, Taint, TypeEnv, TypeResolve, Builtins, SchemaCategory, SchFootprint, DwFootprint, ControlHierarchy. `PB.Analysis.Rules.*` holds the Soufflé rule sets + typed EDB-reshaping readers (DeadCode, Taint, Schema) |
-| `PB.Prelude`    | Custom Prelude — no parsing or transformation logic                                                                                 |
+| `PB.Prelude`    | Custom Prelude — no parsing or transformation logic                                                                                                                                                                                                |
 
 New modules go in the most specific matching directory. If a new layer is needed, propose it in Stage 1.
 
@@ -353,10 +353,8 @@ scoping" entry, now `[x]`). A later session (2026-07-17) converted
 `BsInc`/`BsDec`'s LHS to `Lvalue` too (see `PB.AST.BodyStmt`'s own entry
 below) — the last raw-`Text`/`[Token]` identifier fields in `BodyStmt`.
 `TypeDecl.tdAncestor` stays `Text` deliberately (raw
-`AncestorClass\`LocalName` backtick-compound syntax, not a single identifier
-— `splitAncestorRef` parses it further, minted once into
-`tdAncestorClass`/`tdAncestorOverride` by `mkTypeDecl` at construction; see
-`PB.AST.SourceFile`'s own entry below).
+`AncestorClass\`LocalName`backtick-compound syntax, not a single identifier
+—`splitAncestorRef`parses it further, minted once into`tdAncestorClass`/`tdAncestorOverride`by`mkTypeDecl`at construction; see`PB.AST.SourceFile`'s own entry below).
 
 ### `PB.AST.Expr`
 
@@ -1662,6 +1660,16 @@ class Category k => Effectful k where { eval, assign, lookup, suspend, callProc,
 -- ignore it; PB.Analysis.TaintEdges is the one instance that reads it, to
 -- recover a subscripted LHS's own reads (`arr[i+1] = x` reads `i`) and a
 -- BsFor loop's `to`/`step` bounds (see SsaAssign's saLhs below).
+-- ret :: Expr -> k a b (was 'k a b', payload added Plan 182b, 2026-07-18):
+-- the returned expression. Interp/NGB/WB/SchFootprint ignore it (same
+-- ignore-the-payload shape as assignWithRhs's middle Expr);
+-- PB.Analysis.TaintEdges.ret is the one instance that consumes it, to
+-- recover the vars a `return` uses without a UseRow join. FromSSA compiles
+-- SsaReturn (Just v) to 'EReturn (ssaValToExpr v)' always; SsaReturn
+-- Nothing compiles to 'EReturn ExNull' inside a loop (a return must fully
+-- escape there, so it can't collapse to J PId) but to plain 'J PId' outside
+-- one (matches every other non-loop terminator -- no distinguished return
+-- node when there's no value to carry).
 -- memoTag: hook for carriers that must not re-materialize shared ELetRef bodies.
 branch  :: (Effectful k, Cartesian k, Cocartesian k) => Expr -> k env b -> k env b -> k env b
 branchEff :: Expr -> Eff env b -> Eff env b -> Eff env b
@@ -1670,9 +1678,10 @@ data Pure a b where  -- the cartesian (duplication-safe) category
   PId, PComp, PFork, PExl, PExr, PInl, PInr, PFanIn, PEval :: ...
 data Eff a b where   -- the premonoidal (effectful) category
   J :: Pure a b -> Eff a b
-  EComp, EBranch, ELetRef, ELoop, EReturn, EAssign,
+  EComp, EBranch, ELetRef, ELoop, EAssign,
   ECall, ESuspend, ESplitValue, EFanIn :: ...
   EAssignWithRhs :: Text -> Expr -> Expr -> Eff env env  -- (defVar, lhs, rhs)
+  EReturn :: Expr -> Eff a b  -- (was payload-less; Plan 182b, 2026-07-18) -- the returned expression
 data EffTerm a b = EffTerm (Eff a b) (Map Text (Eff () ()))  -- spine + shared-term table
 ```
 
@@ -1930,7 +1939,39 @@ buildTaintAnnotations :: Set (Text,Text,Text) -> [TaintSource] -> [TaintSink] ->
 taintAnalysis      :: [ResolvedCallRow] -> [DefRow] -> [UseRow] -> Set Text -> Text -> SrFile -> TaintResult
 ```
 
-### `PB.Analysis.TaintAlgebra` (Plan 182, algebraic taint closure; production cutover 2026-07-18)
+### `PB.Analysis.TaintEdges` (Plan 182 Move 2 / 182b, 2026-07-18)
+
+```haskell
+-- The functor F : EffTerm -> TaintEdges: folds a compiled EffTerm directly
+-- into (1) the intra-proc (useVar, defVar) edge set and (2) the set of
+-- vars used in a `return` payload -- Elliott's "compiling to categories"
+-- constant-annotation move (same move SchFootprint makes). Needs no
+-- FunctorCtx (EAssignWithRhs/EReturn already carry everything), so
+-- foldTaintEdgesEff is a bare foldFreyd specialization -- foldFreyd's own
+-- ELetRef memo (keyed on blockId) is sufficient, no hand-rolled
+-- force-time-memoized traversal like foldSchFootprintEff needed.
+data TaintEdges a b = TaintEdges { teEdges :: Set (Text, Text), teReturns :: Set Text }
+-- id/exl/exr/inl/inr = TaintEdges Set.empty Set.empty; (.)/(&&&)/(|||) = pointwise union.
+-- ret e = TaintEdges Set.empty (Set.map identOrig (walkExprIdents e)) -- the
+--   one instance that consumes Effectful's ret payload.
+-- assignWithRhs var lhs rhs = TaintEdges (edges from walkExprIdents rhs <>
+--   walkExprIdents lhs, self-guarded against var) Set.empty.
+foldTaintEdgesEff :: EffTerm a b -> (Set (Text, Text), Set Text)  -- THE PRODUCTION ENTRY POINT
+
+-- Row shapes attached by the caller (PB.Pipeline.Runner.compileOne, which
+-- already knows (object, procName) for the EffTerm it just compiled).
+-- Analysis-owned, mirrors PB.Analysis.Taint.DefRow/UseRow.
+data TaintIntraEdgeRow = TaintIntraEdgeRow { tierObject, tierProcName, tierUseVar, tierDefVar :: Text }
+data TaintReturnRow    = TaintReturnRow    { trrObject, trrProcName, trrVarName :: Text }
+-- TaintReturnRow (182b, 2026-07-18) replaces UseRow's urKind=="return" rows
+-- as buildTaintIndex's tiReturnUseTriples source below -- a term fact
+-- (from EReturn's payload) instead of a row-derived one. The interproc
+-- "return" edge (caller<-callee) itself stays InterprocEdge-sourced
+-- (Phase B, needs call resolution); only the "is this var returned"
+-- trigger moved onto the term.
+```
+
+### `PB.Analysis.TaintAlgebra` (Plan 182, algebraic taint closure; production cutover 2026-07-18; Move 2/182b return-fact cutover same day)
 
 ```haskell
 -- Algebraic replacement for propagateTaint's BFS (and, since 2026-07-18,
@@ -1942,18 +1983,29 @@ taintAnalysis      :: [ResolvedCallRow] -> [DefRow] -> [UseRow] -> Set Text -> T
 -- where-clause under a curried lambda -- that shape relied on GHC
 -- full-laziness sharing across ~28,000 seed lookups and didn't reliably
 -- fire; see doc/plan/182-algebraic-analysis.md Section 11).
+--
+-- [TaintIntraEdgeRow] (Move 2) and [TaintReturnRow] (182b) are both TERM
+-- facts (PB.Analysis.TaintEdges.foldTaintEdgesEff), replacing what used to
+-- be a same-line DefRow/UseRow join and a UseRow urKind=="return" filter
+-- respectively -- buildTaintIndex no longer takes [UseRow] at all (its
+-- sole prior role, tiReturnUseTriples, is now TaintReturnRow-sourced).
+-- Every closure function below still takes [DefRow]/[UseRow] alongside the
+-- two term-fact lists -- NOT for buildTaintIndex, but for the function's
+-- own `seeds` construction (every def/use site must be interned so an
+-- isolated one keeps its 0-hop membership).
 type TaintTriple = (Text, Text, Text)  -- (object, procName, varName)
 data TaintIndex
-buildTaintIndex   :: [DefRow] -> [UseRow] -> [InterprocEdge] -> TaintIndex
+buildTaintIndex   :: [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge] -> TaintIndex
 taintSuccessorsIx :: TaintIndex -> TaintTriple -> [(TaintTriple, Text, Text)]
-taintRelation     :: [DefRow] -> [UseRow] -> [InterprocEdge] -> [TaintSource] -> (Interner TaintTriple, Relation Boolean)
-taintPathRelation :: [DefRow] -> [UseRow] -> [InterprocEdge] -> [TaintSource] -> (Interner TaintTriple, Relation (PathValue TaintTriple))
+taintSuccessors   :: [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge] -> TaintTriple -> [(TaintTriple, Text, Text)]
+taintRelation     :: [TaintIntraEdgeRow] -> [TaintReturnRow] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> [TaintSource] -> (Interner TaintTriple, Relation Boolean)
+taintPathRelation :: [TaintIntraEdgeRow] -> [TaintReturnRow] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> [TaintSource] -> (Interner TaintTriple, Relation (PathValue TaintTriple))
 
 -- taintReachable: flattened union tainted-set, matching propagateTaint's
 -- own return shape (first component). Seeds are unioned directly into the
 -- interner (not derived only from arcPairs' endpoints) so an isolated
 -- source with zero outgoing edges still keeps its own 0-hop membership.
-taintReachable    :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> Set TaintTriple
+taintReachable    :: [TaintSource] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> Set TaintTriple
 
 -- taintReachesPairs: per-source (source, node reachable via >=1 real
 -- edge) pairs, mirroring Souffle's taint_reaches(x, y) relation EXACTLY --
@@ -1965,7 +2017,7 @@ taintReachable    :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge] ->
 -- (taint_reaches has no reflexive base rule, unlike taint_confirmed's
 -- explicit s==s case below). Production's source for taint_reaches since
 -- the Plan 182 cutover (PB.Analysis.Rules.Taint.materializeTaintClosure).
-taintReachesPairs :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> [(TaintTriple, TaintTriple)]
+taintReachesPairs :: [TaintSource] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> [(TaintTriple, TaintTriple)]
 
 -- taintConfirmed: source->sink pairs with a path, matching Souffle's
 -- taint_confirmed(s, t) (0-hop s==s rule handled the same way it is
@@ -1978,13 +2030,13 @@ taintReachesPairs :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge] ->
 -- taint_sources/taint_sinks -- the same var legitimately classified more
 -- than once). taintReachesPairs above never had this bug -- it iterates
 -- interned (deduplicated) ids, not raw records.
-taintConfirmed    :: [TaintSource] -> [TaintSink] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> [(TaintSource, TaintSink)]
+taintConfirmed    :: [TaintSource] -> [TaintSink] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> [(TaintSource, TaintSink)]
 
 -- taintWitnesses: decoded (src, dst, edgeLabel) triples from the starred
 -- PathValue relation. NOT wired into production (Plan 182 §12 item 4's
 -- oracle-diff gate vs. taint_step_kind is still open) -- exists for tests
 -- only.
-taintWitnesses    :: [TaintSource] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> [(TaintTriple, TaintTriple, (Text, Text, Text))]
+taintWitnesses    :: [TaintSource] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [DefRow] -> [UseRow] -> [InterprocEdge] -> [(TaintTriple, TaintTriple, (Text, Text, Text))]
 ```
 
 ### `PB.Analysis.TypeEnv` (Ident-keyed maps, Plan 179 Phase 1, 2026-07-17)
@@ -2427,7 +2479,7 @@ controlBindingsMap :: [DwControlBinding] -> Map.Map (Ident, Ident) Ident  -- fro
 dwColumnsFromRows  :: [DwRetrieveColRow] -> Map.Map Ident [(TableRef, Text)]  -- from dw_retrieve_columns rows
 newtype SchFootprint a b = SchFootprint { runSchFootprint :: FunctorCtx -> Set.Set SchMorphism }
 -- Elliott's "compiling to categories" constant-annotation category: erases
--- a/b entirely. id/exl/exr/inl/inr = const Set.empty; (.)/(&&&)/(|||) = 
+-- a/b entirely. id/exl/exr/inl/inr = const Set.empty; (.)/(&&&)/(|||) =
 -- pointwise union. loopK propagates the loop body's own footprint (not a
 -- constant empty one) -- a static, iteration-count-oblivious analysis must
 -- still count whatever the body touches.
@@ -2737,4 +2789,57 @@ appendTextRows    :: DuckConn -> Text -> [[Text]] -> IO ()
 -- Schema init:
 withWriteConn    :: FilePath -> (DuckConn -> IO a) -> IO a
 initSchema       :: DuckConn -> IO ()
+
+### Appender-pool failure modes (Plan 182b follow-up, 2026-07-18)
+
+Two silent `appender_flush` failure modes have bitten the `--db` pipeline. Both
+surface only at pool teardown (`withAppenderPoolTimed`'s `destroyAll` flush), not
+at the `append_*` call — so a clean per-file append gives no warning and the
+whole corpus run dies at the end with a bare `DuckDB appender error in
+appender_flush` and no table/row context.
+
+1. **Missing `endRow` in a row-marshalling sequence (the 182b bug).** Every
+   `append*` function's body must finalize each row with `endRow app`
+   (`c_duckdb_appender_end_row`). If it doesn't, the N `aText`/`aInt`/…
+   calls for a row are never finalized; the *next* row's values keep advancing
+   the appender's column counter, so by flush time the buffered chunk has
+   N×columns against a table with `columns` → a column-count mismatch that
+   DuckDB only validates at flush. Symptom: `taint-corpus-bench` dies at
+   teardown with `appender_flush` after a clean parse; BFS/algebraic parity is
+   never reached. **Fix (now structural, not a thing to remember):** every
+   `append*` routes its per-row column marshalling through `forEachRow`
+   (`PB.Pipeline.DuckDb`), which brackets `endRow app` via `bracket_` so a
+   forgotten `endRow` is impossible — a new `append*` that calls `forEachRow`
+   can never reintroduce this. The row-marshalling sequence
+   (`aText`/`aInt`/`aMaybeText`/`endRow`) is the invariant Plan 169 calls out
+   as "unchanged" when an `append*` moves from `withRaw` to the pool;
+   `forEachRow` preserves it mechanically.
+
+2. **Table written by `append*` but missing from `phaseATables` (the first
+   182b bug, already fixed).** `appendRow` does `Map.lookup tbl pool` and
+   throws `impossible: appender pool missing table <t>` if the table isn't in
+   `phaseATables` (`Runner.hs`). That one fails loudly at the first append, not
+   at flush — but it's the same class: a new `append*` + table needs BOTH the
+   `CREATE TABLE` in `initSchema` AND the name in `phaseATables`.
+
+**Diagnose fast next time.** `checkAppenderSt` (in `PB.Pipeline.DuckDb`) now
+replaces the bare `checkSt` at both flush sites (`destroyAll` pool teardown and
+the `withAppender` path). On a non-zero DuckDB status it pulls the real
+libduckdb error string via `c_duckdb_appender_error_data` (current FFI; the
+deprecated `c_duckdb_appender_error` is not re-exported by `Database.DuckDB.FFI`)
+and reports it together with the failing table name, e.g.
+`DuckDB appender error in appender_flush:taint_intra_edges: <real libduckdb message>`.
+If you ever see the old bare `DuckDB appender error in appender_flush` with no
+`:<table>:` suffix, that's the non-pool `withAppender` path or a code path still
+on `checkSt` — switch it to `checkAppenderSt`. To bisect without the helper,
+temporarily flush each Phase A appender individually (`c_duckdb_appender_flush`
+in a `for_` over `Map.toList pool`) and watch which table errors first; or grep
+the suspect `append*` for a missing `endRow app`.
+
+Cross-reference: the appender-pool design (pooled create-once / flush-at-boundary,
+`phaseATables`, `appendRow`) is `doc/plan/169-appender-reuse-and-effterm-sharing.md`.
+The `endRow` requirement is part of that plan's "row marshalling code … is
+unchanged" invariant — this 182b incident is the concrete case where it was
+violated on a newly-added `append*`, and `forEachRow` is the mechanical guard
+that now keeps it invariant.
 ```

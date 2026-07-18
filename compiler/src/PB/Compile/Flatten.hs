@@ -164,7 +164,7 @@ instance Effectful NGB where
     defineNode n (InstrCallProc' { cpCallee' = name, cpArgs' = args, cpNext' = next })
     return n)
   splitValue = NGB (\next _loopCont -> return next)
-  ret = NGB (\_next _loopCont -> NamedBuilder (gets nbsExitName))
+  ret _e = NGB (\_next _loopCont -> NamedBuilder (gets nbsExitName))
   -- Installs a fresh loop-header name as the new 'loopCont' for the body's
   -- own fold, while the body's "next" stays THIS loopK call's own incoming
   -- 'next' (the true post-loop exit target). Passing 'loopHeaderName' for
@@ -365,7 +365,7 @@ instance Effectful WB where
     defineWireNode n (WireCall { wclCallee = name, wclArgs = args, wclNext = next })
     return n)
   splitValue = WB (\next _loopCont -> return next)
-  ret = WB (\_next _loopCont -> WiringB (gets wbsExitName))
+  ret _e = WB (\_next _loopCont -> WiringB (gets wbsExitName))
   -- Structurally identical to 'NGB'\'s 'loopK' — loop-header fusion is an
   -- NGB-only ISA concern, not a wiring-diagram one.
   loopK (WB body) = WB (\next _loopCont -> do

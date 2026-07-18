@@ -83,7 +83,7 @@ class Category k => Effectful k where
   -- say what "abort past every enclosing construct" means for it — 'Interp'
   -- throws, a static-analysis target like 'PB.Analysis.SchFootprint' can
   -- just treat it as a no-op.
-  ret        :: k a b
+  ret        :: Expr -> k a b
   -- | Loop combinator ('ELoop'): run the body repeatedly while it returns
   -- 'Left', stopping at the first 'Right'. Added alongside 'ret' so
   -- 'foldFreyd' can be generic over any 'Effectful' instance instead of
@@ -238,7 +238,7 @@ data Eff a b where
   -- 'branchK' body computes — behaviour-preserving.
   EBranch  :: Expr -> Eff a c -> Eff a c -> Eff a c
   ELoop    :: Eff a (Either a b) -> Eff a b
-  EReturn  :: Eff a b
+  EReturn  :: Expr -> Eff a b
 
 instance Category Eff where
   id  = J PId
@@ -256,7 +256,7 @@ instance Effectful Eff where
   suspend n as    = ESuspend n as
   callProc n as   = ECall n as
   splitValue      = ESplitValue
-  ret             = EReturn
+  ret e           = EReturn e
   loopK body      = ELoop body
   branchK cond thenK elseK = (thenK ||| elseK) . splitValue . J (PId &&& PEval cond)
   assignWithRhs var lhs e = EAssignWithRhs var lhs e
@@ -334,7 +334,7 @@ foldFreyd (EffTerm spine table) = fst (go spine Map.empty)
     go (EBranch cond t f) m = case go t m of (tK, m1) -> case go f m1 of (fK, m2) -> (branchK cond tK fK, m2)
     go (EFanIn t f)       m = case go t m of (tK, m1) -> case go f m1 of (fK, m2) -> (tK ||| fK, m2)
     go (ELoop body)       m = case go body m of (bK, m1) -> (loopK bK, m1)
-    go EReturn            m = (ret, m)
+    go (EReturn e)        m = (ret e, m)
     go (ELetRef bid)      m = case Map.lookup bid m of
       Just cached -> (unsafeCoerce cached, m)
       Nothing     -> case Map.lookup bid table of

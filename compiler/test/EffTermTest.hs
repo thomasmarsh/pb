@@ -102,7 +102,7 @@ hasEffReturn :: EffTerm a b -> Bool
 hasEffReturn (EffTerm spine table) = go spine
   where
     go :: Eff x y -> Bool
-    go EReturn = True
+    go (EReturn _) = True
     go (EComp f g) = go f P.|| go g
     go (EFanIn f g) = go f P.|| go g
     go (EBranch _ f g) = go f P.|| go g

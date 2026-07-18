@@ -306,11 +306,11 @@ taintRules = RuleSet
 -- 'taintRules' itself is unchanged and still runs on demand (the
 -- oracle-diff test suite, the UI's SQL\/Datalog exploration surface).
 materializeTaintClosure
-  :: [Taint.TaintSource] -> [Taint.TaintSink] -> [TaintEdges.TaintIntraEdgeRow]
+  :: [Taint.TaintSource] -> [Taint.TaintSink] -> [TaintEdges.TaintIntraEdgeRow] -> [TaintEdges.TaintReturnRow]
   -> [Taint.DefRow] -> [Taint.UseRow] -> [Taint.InterprocEdge] -> DuckConn -> IO ()
-materializeTaintClosure sources sinks intraEdges defs uses edges conn = do
-  let reaches   = taintReachesPairs sources intraEdges defs uses edges
-      confirmed = taintConfirmed sources sinks intraEdges defs uses edges
+materializeTaintClosure sources sinks intraEdges returnRows defs uses edges conn = do
+  let reaches   = taintReachesPairs sources intraEdges returnRows defs uses edges
+      confirmed = taintConfirmed sources sinks intraEdges returnRows defs uses edges
       reachRows =
         [ [taintKey ox px vx, taintKey oy py vy]
         | ((ox, px, vx), (oy, py, vy)) <- reaches

@@ -24,7 +24,7 @@ import PB.Analysis.Taint
   , TaintSink (..)
   )
 import PB.Analysis.TaintAlgebra (taintConfirmed, taintReachesPairs)
-import TaintAlgebraTest (defRow, useRow, edge, src, snk, intraEdgesFromDefUse)
+import TaintAlgebraTest (defRow, useRow, edge, src, snk, intraEdgesFromDefUse, returnRowsFromUses)
 import PB.Pipeline.Souffle (runRuleSet)
 import PB.Analysis.Rules.Taint (initTaintEdbViews, taintRules)
 import PB.Pipeline.DuckDb (DuckConn, withWriteConn, initSchema)
@@ -104,11 +104,11 @@ algRows fx = OracleRows
   { orReaches = Set.fromList
       [ (taintKey ox px vx, taintKey oy py vy)
       | ((ox, px, vx), (oy, py, vy)) <-
-          taintReachesPairs (fxSources fx) (intraEdgesFromDefUse (fxDefs fx) (fxUses fx)) (fxDefs fx) (fxUses fx) (fxEdges fx)
+          taintReachesPairs (fxSources fx) (intraEdgesFromDefUse (fxDefs fx) (fxUses fx)) (returnRowsFromUses (fxUses fx)) (fxDefs fx) (fxUses fx) (fxEdges fx)
       ]
   , orConfirmed = Set.fromList
       [ (taintKey (tsObject s) (tsProcName s) (tsVarName s), taintKey (tskObject k) (tskProcName k) (tskVarName k))
-      | (s, k) <- taintConfirmed (fxSources fx) (fxSinks fx) (intraEdgesFromDefUse (fxDefs fx) (fxUses fx)) (fxDefs fx) (fxUses fx) (fxEdges fx)
+      | (s, k) <- taintConfirmed (fxSources fx) (fxSinks fx) (intraEdgesFromDefUse (fxDefs fx) (fxUses fx)) (returnRowsFromUses (fxUses fx)) (fxDefs fx) (fxUses fx) (fxEdges fx)
       ]
   }
 

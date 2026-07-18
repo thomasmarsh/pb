@@ -51,6 +51,8 @@ module PB.Pipeline.DuckDb
   , appendCatFootprintColumns
   , appendTaintIntraEdges
   , queryTaintIntraEdges
+  , appendTaintReturnRows
+  , queryTaintReturnRows
   , appendCatalogColumns
   , appendCatalogPks
   , appendCatalogFks
@@ -144,6 +146,9 @@ import Database.DuckDB.FFI
   , c_duckdb_appender_flush
   , c_duckdb_appender_destroy
   , c_duckdb_appender_end_row
+  , c_duckdb_appender_error_data
+  , c_duckdb_error_data_message
+  , c_duckdb_destroy_error_data
   , c_duckdb_append_varchar
   , c_duckdb_append_int32
   , c_duckdb_append_bool
@@ -160,10 +165,11 @@ import qualified Data.Map.Strict         as Map
 import qualified Data.Set                as Set
 import qualified Data.Text               as T
 import qualified Data.Text.Encoding      as TE
-import           Control.Exception       (bracket)
+import           Control.Exception       (bracket, bracket_)
 import           Data.Int                (Int32)
 import           Foreign                 (alloca, nullPtr, peek, poke)
 import           Foreign.C.Types         (CBool (..))
+import           Foreign.C.String        (peekCString)
 
 -- ---------------------------------------------------------------------------
 -- Public connection helpers
@@ -230,6 +236,14 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       -- and consumed by PB.Analysis.TaintAlgebra.buildTaintIndex in Phase B.
       , "CREATE TABLE IF NOT EXISTS taint_intra_edges \
         \(object TEXT, proc_name TEXT, use_var TEXT, def_var TEXT)"
+      -- Plan 182b (2026-07-18): one row per var used in a procedure's
+      -- 'PB.Compile.IR.EReturn' payload, populated in Phase A alongside
+      -- taint_intra_edges and consumed by
+      -- PB.Analysis.TaintAlgebra.buildTaintIndex's tiReturnUseTriples in
+      -- Phase B -- replaces that index's prior dependency on proc_uses'
+      -- kind='return' rows.
+      , "CREATE TABLE IF NOT EXISTS taint_return_rows \
+        \(object TEXT, proc_name TEXT, var_name TEXT)"
       -- Plan 157 Phase 4.5: namespace-aware sibling of sql_statements.tables
       -- (comma-joined, no namespace, kept untouched -- see that field's own
       -- consumers). One row per (statement, table) pair, extracted straight
@@ -373,8 +387,9 @@ withAppenderPoolTimed sink conn tables action =
       rest <- createAll rawConn ts
       pure (Map.insert t app rest)
 
-    destroyAll pool = for_ (Map.elems pool) $ \app -> do
-      checkSt "appender_flush" =<< c_duckdb_appender_flush app
+    destroyAll pool = for_ (Map.toList pool) $ \(tbl, app) -> do
+      st <- c_duckdb_appender_flush app
+      checkAppenderSt ("appender_flush:" <> T.unpack tbl) app st
       alloca $ \appPtrPtr -> do
         poke appPtrPtr app
         void $ c_duckdb_appender_destroy appPtrPtr
@@ -387,6 +402,16 @@ appendRow (AppenderPool pool) tbl action =
   case Map.lookup tbl pool of
     Nothing -> error ("impossible: appender pool missing table " <> T.unpack tbl)
     Just app -> action app
+
+-- | Write each row via @writeRow app row@, guaranteeing 'endRow' is called
+-- exactly once after each row (bracketed). A forgotten 'endRow' can never
+-- leave an un-finalized appender row — this is what made the 182b
+-- 'appender_flush' bug impossible to repeat. Every 'append*' function routes
+-- its per-row column marshalling through this helper instead of calling
+-- 'endRow' directly. See compiler/CLAUDE.md's "Appender-pool failure modes"
+-- subsection.
+forEachRow :: DuckDBAppender -> [row] -> (DuckDBAppender -> row -> IO ()) -> IO ()
+forEachRow app rows writeRow = for_ rows $ \r -> bracket_ (pure ()) (endRow app) (writeRow app r)
 
 -- ---------------------------------------------------------------------------
 -- Row types
@@ -563,7 +588,7 @@ data SourceFileRow = SourceFileRow
 appendObjects :: AppenderPool -> [ObjectRow] -> IO ()
 appendObjects _    [] = pure ()
 appendObjects pool rows = appendRow pool "objects" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText      app (orFile           r)
     aText      app (orKind           r)
     aText      app (orObject         r)
@@ -571,12 +596,11 @@ appendObjects pool rows = appendRow pool "objects" $ \app ->
     aMaybeText app (orLayoutJson     r)
     aMaybeText app (orTypeBlocksJson r)
     aText      app (orConfidence     r)
-    endRow app
 
 appendProcedures :: AppenderPool -> [ProcRow] -> IO ()
 appendProcedures _    [] = pure ()
 appendProcedures pool rows = appendRow pool "procedures" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText     app (prFile       r)
     aText     app (prObject     r)
     aText     app (prProcName   r)
@@ -590,23 +614,21 @@ appendProcedures pool rows = appendRow pool "procedures" $ \app ->
     aText     app (prReturnType r)
     aMaybeInt app (prCyclomatic r)
     aText     app (prConfidence r)
-    endRow app
 
 appendDwObjects :: AppenderPool -> [DwObjectRow] -> IO ()
 appendDwObjects _    [] = pure ()
 appendDwObjects pool rows = appendRow pool "dw_objects" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText     app (dorFile        r)
     aText     app (dorObject      r)
     aText     app (dorStyle       r)
     aText     app (dorLayoutJson  r)
     aMaybeText app (dorRetrieveSql r)
-    endRow app
 
 appendDwControls :: AppenderPool -> [DwControlRow] -> IO ()
 appendDwControls _    [] = pure ()
 appendDwControls pool rows = appendRow pool "dw_controls" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText      app (dcrFile r)
     aText      app (dcrObject r)
     aText      app (dcrBand r)
@@ -617,28 +639,25 @@ appendDwControls pool rows = appendRow pool "dw_controls" $ \app ->
     aMaybeInt  app (dcrWidth r)
     aMaybeInt  app (dcrHeight r)
     aMaybeText app (dcrExpression r)
-    endRow app
 
 appendDwRetrieveTables :: AppenderPool -> [DwRetrieveTableRow] -> IO ()
 appendDwRetrieveTables _    [] = pure ()
 appendDwRetrieveTables pool rows = appendRow pool "dw_retrieve_tables" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText app (drtrFile r)
     aText app (drtrDwName r)
     aMaybeText app (drtrNamespace r)
     aText app (drtrTableName r)
-    endRow app
 
 appendDwRetrieveColumns :: AppenderPool -> [DwRetrieveColumnRow] -> IO ()
 appendDwRetrieveColumns _    [] = pure ()
 appendDwRetrieveColumns pool rows = appendRow pool "dw_retrieve_columns" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText      app (drcrFile r)
     aText      app (drcrDwName r)
     aMaybeText app (drcrNamespace r)
     aText      app (drcrTableName r)
     aText      app (drcrColumnName r)
-    endRow app
 
 -- | Plan 163 Phase 6: a DW's update-table columns (@DwColumn@'s @dcUpdate@),
 -- computed via 'PB.Analysis.DwFootprint.dwRetrieveFootprint' at compile
@@ -648,13 +667,12 @@ appendDwRetrieveColumns pool rows = appendRow pool "dw_retrieve_columns" $ \app 
 appendDwWriteColumns :: AppenderPool -> [DwRetrieveColumnRow] -> IO ()
 appendDwWriteColumns _    [] = pure ()
 appendDwWriteColumns pool rows = appendRow pool "dw_write_columns" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText      app (drcrFile r)
     aText      app (drcrDwName r)
     aMaybeText app (drcrNamespace r)
     aText      app (drcrTableName r)
     aText      app (drcrColumnName r)
-    endRow app
 
 -- | Plan 163 Phase 6: a DW retrieve's WHERE-operand columns (catalog-gated
 -- by 'PB.Analysis.DwFootprint.dwRetrieveFootprint' itself), same shape
@@ -662,18 +680,17 @@ appendDwWriteColumns pool rows = appendRow pool "dw_write_columns" $ \app ->
 appendDwWhereColumns :: AppenderPool -> [DwRetrieveColumnRow] -> IO ()
 appendDwWhereColumns _    [] = pure ()
 appendDwWhereColumns pool rows = appendRow pool "dw_where_columns" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText      app (drcrFile r)
     aText      app (drcrDwName r)
     aMaybeText app (drcrNamespace r)
     aText      app (drcrTableName r)
     aText      app (drcrColumnName r)
-    endRow app
 
 appendDwJoins :: AppenderPool -> [DwJoinRow] -> IO ()
 appendDwJoins _    [] = pure ()
 appendDwJoins pool rows = appendRow pool "dw_joins" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText      app (djrFile r)
     aText      app (djrDwName r)
     aText      app (djrLeftRef r)
@@ -681,12 +698,11 @@ appendDwJoins pool rows = appendRow pool "dw_joins" $ \app ->
     aText      app (djrRightRef r)
     aMaybeText app (djrOuter1 r)
     aMaybeText app (djrOuter2 r)
-    endRow app
 
 appendDwRetrieveWhere :: AppenderPool -> [DwRetrieveWhereRow] -> IO ()
 appendDwRetrieveWhere _    [] = pure ()
 appendDwRetrieveWhere pool rows = appendRow pool "dw_retrieve_where" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText      app (drwrFile r)
     aText      app (drwrDwName r)
     aInt       app (drwrIdx r)
@@ -694,12 +710,11 @@ appendDwRetrieveWhere pool rows = appendRow pool "dw_retrieve_where" $ \app ->
     aText      app (drwrOp r)
     aText      app (drwrExp2 r)
     aMaybeText app (drwrLogic r)
-    endRow app
 
 appendLocalVars :: AppenderPool -> [LocalVar] -> IO ()
 appendLocalVars _    [] = pure ()
 appendLocalVars pool lvs = appendRow pool "local_vars" $ \app ->
-  for_ lvs $ \lv -> do
+  forEachRow app lvs $ \_ lv -> do
     aText app (lvFile lv)
     aText app (lvObject lv)
     aText app (lvProcName lv)
@@ -707,23 +722,21 @@ appendLocalVars pool lvs = appendRow pool "local_vars" $ \app ->
     aText app (lvRawType lv)
     aBool app (lvIsParam lv)
     aInt  app (lvScopeLine lv)
-    endRow app
 
 appendDeadVars :: AppenderPool -> [DeadVarFinding] -> IO ()
 appendDeadVars _    [] = pure ()
 appendDeadVars pool rows = appendRow pool "dead_vars" $ \app ->
-  for_ rows $ \f -> do
+  forEachRow app rows $ \_ f -> do
     aText     app (dvfObject f)
     aText     app (dvfProc f)
     aText     app (dvfVar f)
     aMaybeInt app (dvfLine f)
     aText     app (deadVarKindText (dvfKind f))
-    endRow app
 
 appendTypeMismatches :: AppenderPool -> [TypeMismatchFinding] -> IO ()
 appendTypeMismatches _    [] = pure ()
 appendTypeMismatches pool rows = appendRow pool "type_mismatches" $ \app ->
-  for_ rows $ \f -> do
+  forEachRow app rows $ \_ f -> do
     aText app (tmfObject f)
     aText app (tmfProc f)
     aInt  app (tmfLine f)
@@ -731,36 +744,33 @@ appendTypeMismatches pool rows = appendRow pool "type_mismatches" $ \app ->
     aText app (tmfLhsType f)
     aText app (tmfRhsDesc f)
     aText app (mismatchKindText (tmfKind f))
-    endRow app
 
 appendCallSites :: AppenderPool -> [CallSite] -> IO ()
 appendCallSites _    [] = pure ()
 appendCallSites pool css = appendRow pool "call_sites" $ \app ->
-  for_ css $ \cs -> do
+  forEachRow app css $ \_ cs -> do
     aText     app (csFile cs)
     aText     app (csObject cs)
     aText     app (csFromProc cs)
     aText     app (csToName cs)
     aText     app (csCallType cs)
     aMaybeInt app (csLine cs)
-    endRow app
 
 appendGlobalVars :: AppenderPool -> [GlobalVar] -> IO ()
 appendGlobalVars _    [] = pure ()
 appendGlobalVars pool gvs = appendRow pool "global_vars" $ \app ->
-  for_ gvs $ \gv -> do
+  forEachRow app gvs $ \_ gv -> do
     aText app (gvFile gv)
     aText app (gvObject gv)
     aText app (gvName gv)
     aText app (gvType gv)
     aText app (T.intercalate "|" (gvMods gv))
-    endRow app
 
 appendProcDefs :: AppenderPool -> [(Text, Text, Text, Dataflow.ProcFlow)] -> IO ()
 appendProcDefs _    [] = pure ()
 appendProcDefs pool flows = appendRow pool "proc_defs" $ \app ->
   for_ flows $ \(file, obj, proc_, pf) ->
-    for_ (concatMap Dataflow.bfDefs (Map.elems (Dataflow.pfBlocks pf))) $ \d -> do
+    forEachRow app (concatMap Dataflow.bfDefs (Map.elems (Dataflow.pfBlocks pf))) $ \_ d -> do
       aText     app file
       aText     app obj
       aText     app proc_
@@ -769,13 +779,12 @@ appendProcDefs pool flows = appendRow pool "proc_defs" $ \app ->
       aInt      app (Dataflow.dsStmtIdx d)
       aMaybeInt app (Dataflow.dsLine d)
       aText     app (Dataflow.dsKind d)
-      endRow app
 
 appendProcUses :: AppenderPool -> [(Text, Text, Text, Dataflow.ProcFlow)] -> IO ()
 appendProcUses _    [] = pure ()
 appendProcUses pool flows = appendRow pool "proc_uses" $ \app ->
   for_ flows $ \(file, obj, proc_, pf) ->
-    for_ (concatMap Dataflow.bfUses (Map.elems (Dataflow.pfBlocks pf))) $ \u -> do
+    forEachRow app (concatMap Dataflow.bfUses (Map.elems (Dataflow.pfBlocks pf))) $ \_ u -> do
       aText     app file
       aText     app obj
       aText     app proc_
@@ -784,12 +793,11 @@ appendProcUses pool flows = appendRow pool "proc_uses" $ \app ->
       aInt      app (Dataflow.usStmtIdx u)
       aMaybeInt app (Dataflow.usLine u)
       aText     app (Dataflow.usKind u)
-      endRow app
 
 appendSqlStmts :: AppenderPool -> [SqlStmtRow] -> IO ()
 appendSqlStmts _    [] = pure ()
 appendSqlStmts pool rows = appendRow pool "sql_statements" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText      app (ssrFile r)
     aText      app (ssrObject r)
     aText      app (ssrProcName r)
@@ -799,12 +807,11 @@ appendSqlStmts pool rows = appendRow pool "sql_statements" $ \app ->
     aText      app (ssrColumns r)
     aText      app (ssrRawSql r)
     aBool      app (ssrParseOk r)
-    endRow app
 
 appendSqlStmtColumns :: AppenderPool -> [SqlStmtColumnRow] -> IO ()
 appendSqlStmtColumns _    [] = pure ()
 appendSqlStmtColumns pool rows = appendRow pool "sql_statement_columns" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText      app (sscrFile r)
     aText      app (sscrObject r)
     aText      app (sscrProcName r)
@@ -813,7 +820,6 @@ appendSqlStmtColumns pool rows = appendRow pool "sql_statement_columns" $ \app -
     aMaybeText app (sscrTableName r)
     aText      app (sscrColumnName r)
     aBool      app (sscrIsWrite r)
-    endRow app
 
 -- | Plan 163 Phase 3: same row shape/append pattern as
 -- 'appendSqlStmtColumns' (reuses 'SqlStmtColumnRow' rather than a bespoke
@@ -821,7 +827,7 @@ appendSqlStmtColumns pool rows = appendRow pool "sql_statement_columns" $ \app -
 appendCatFootprintColumns :: AppenderPool -> [SqlStmtColumnRow] -> IO ()
 appendCatFootprintColumns _    [] = pure ()
 appendCatFootprintColumns pool rows = appendRow pool "cat_footprint_columns" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText      app (sscrFile r)
     aText      app (sscrObject r)
     aText      app (sscrProcName r)
@@ -830,24 +836,32 @@ appendCatFootprintColumns pool rows = appendRow pool "cat_footprint_columns" $ \
     aMaybeText app (sscrTableName r)
     aText      app (sscrColumnName r)
     aBool      app (sscrIsWrite r)
-    endRow app
 
 -- | Plan 182 Move 2: writes 'PB.Analysis.TaintEdges.foldTaintEdgesEff'
 -- output, one row per intra-proc @(useVar, defVar)@ edge.
 appendTaintIntraEdges :: AppenderPool -> [TaintEdges.TaintIntraEdgeRow] -> IO ()
 appendTaintIntraEdges _    [] = pure ()
 appendTaintIntraEdges pool rows = appendRow pool "taint_intra_edges" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText app (TaintEdges.tierObject r)
     aText app (TaintEdges.tierProcName r)
     aText app (TaintEdges.tierUseVar r)
     aText app (TaintEdges.tierDefVar r)
-    endRow app
+
+-- | Plan 182b: writes 'PB.Analysis.TaintEdges.foldTaintEdgesEff' output,
+-- one row per var used in a procedure's @return@ payload.
+appendTaintReturnRows :: AppenderPool -> [TaintEdges.TaintReturnRow] -> IO ()
+appendTaintReturnRows _    [] = pure ()
+appendTaintReturnRows pool rows = appendRow pool "taint_return_rows" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText app (TaintEdges.trrObject r)
+    aText app (TaintEdges.trrProcName r)
+    aText app (TaintEdges.trrVarName r)
 
 appendSqlStmtFilters :: AppenderPool -> [SqlStmtFilterRow] -> IO ()
 appendSqlStmtFilters _    [] = pure ()
 appendSqlStmtFilters pool rows = appendRow pool "sql_statement_filters" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText      app (ssfrFile r)
     aText      app (ssfrObject r)
     aText      app (ssfrProcName r)
@@ -857,12 +871,11 @@ appendSqlStmtFilters pool rows = appendRow pool "sql_statement_filters" $ \app -
     aText      app (ssfrColumnName r)
     aText      app (ssfrOp r)
     aText      app (ssfrValuesJson r)
-    endRow app
 
 appendSqlStmtTables :: AppenderPool -> [SqlStmtTableRow] -> IO ()
 appendSqlStmtTables _    [] = pure ()
 appendSqlStmtTables pool rows = appendRow pool "sql_statement_tables" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText      app (sstrFile r)
     aText      app (sstrObject r)
     aText      app (sstrProcName r)
@@ -870,32 +883,29 @@ appendSqlStmtTables pool rows = appendRow pool "sql_statement_tables" $ \app ->
     aMaybeText app (sstrOperation r)
     aMaybeText app (sstrNamespace r)
     aText      app (sstrTableName r)
-    endRow app
 
 appendCatalogColumns :: AppenderPool -> [CatalogColumnRow] -> IO ()
 appendCatalogColumns _    [] = pure ()
 appendCatalogColumns pool rows = appendRow pool "catalog_columns" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aMaybeText app (cclrNamespace  r)
     aText      app (cclrTableName  r)
     aText      app (cclrColumnName r)
     aInt       app (cclrOrdinal    r)
-    endRow app
 
 appendCatalogPks :: AppenderPool -> [CatalogPkRow] -> IO ()
 appendCatalogPks _    [] = pure ()
 appendCatalogPks pool rows = appendRow pool "catalog_pks" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aMaybeText app (cpkrNamespace  r)
     aText      app (cpkrTableName  r)
     aText      app (cpkrColumnName r)
     aInt       app (cpkrOrdinal    r)
-    endRow app
 
 appendCatalogFks :: AppenderPool -> [CatalogFkRow] -> IO ()
 appendCatalogFks _    [] = pure ()
 appendCatalogFks pool rows = appendRow pool "catalog_fks" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aMaybeText app (cfkrConstraintName r)
     aMaybeText app (cfkrFromNamespace  r)
     aText      app (cfkrFromTable      r)
@@ -904,33 +914,29 @@ appendCatalogFks pool rows = appendRow pool "catalog_fks" $ \app ->
     aText      app (cfkrToTable        r)
     aText      app (cfkrToColumn       r)
     aInt       app (cfkrOrdinal        r)
-    endRow app
 
 appendCatalogChecks :: AppenderPool -> [CatalogCheckRow] -> IO ()
 appendCatalogChecks _    [] = pure ()
 appendCatalogChecks pool rows = appendRow pool "catalog_checks" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aMaybeText app (cckrConstraintName r)
     aMaybeText app (cckrNamespace      r)
     aText      app (cckrTableName      r)
     aText      app (cckrPredicate      r)
-    endRow app
 
 appendParseErrors :: AppenderPool -> [(FilePath, Text)] -> IO ()
 appendParseErrors _    [] = pure ()
 appendParseErrors pool errs = appendRow pool "parse_errors" $ \app ->
-  for_ errs $ \(path, msg) -> do
+  forEachRow app errs $ \_ (path, msg) -> do
     aText app (T.pack path)
     aText app msg
-    endRow app
 
 appendSourceFiles :: AppenderPool -> [SourceFileRow] -> IO ()
 appendSourceFiles _    [] = pure ()
 appendSourceFiles pool rows = appendRow pool "source_files" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText app (sfrFile r)
     aText app (sfrLines r)
-    endRow app
 
 -- ---------------------------------------------------------------------------
 -- FromRow instances (orphans for external types)
@@ -985,6 +991,9 @@ instance FromRow Taint.UseRow where
 
 instance FromRow TaintEdges.TaintIntraEdgeRow where
   fromRow = TaintEdges.TaintIntraEdgeRow <$> field <*> field <*> field <*> field
+
+instance FromRow TaintEdges.TaintReturnRow where
+  fromRow = TaintEdges.TaintReturnRow <$> field <*> field <*> field
 
 instance FromRow Taint.ResolvedCallRow where
   fromRow = do
@@ -1117,6 +1126,11 @@ queryProcUses conn = query_ conn
 queryTaintIntraEdges :: DuckConn -> IO [TaintEdges.TaintIntraEdgeRow]
 queryTaintIntraEdges conn = query_ conn
   "SELECT object, proc_name, use_var, def_var FROM taint_intra_edges"
+
+-- | Plan 182b: reads back 'appendTaintReturnRows''s output.
+queryTaintReturnRows :: DuckConn -> IO [TaintEdges.TaintReturnRow]
+queryTaintReturnRows conn = query_ conn
+  "SELECT object, proc_name, var_name FROM taint_return_rows"
 
 queryResolvedCalls :: DuckConn -> IO [Taint.ResolvedCallRow]
 queryResolvedCalls conn = query_ conn
@@ -1346,7 +1360,7 @@ queryCatFks conn = query_ conn
 appendResolvedTypes :: DuckConn -> [ResolvedType] -> IO ()
 appendResolvedTypes _    [] = pure ()
 appendResolvedTypes conn rows = withRaw conn "resolved_types" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText      app (rtFile      r)
     aText      app (rtObject    r)
     aText      app (rtProcName  r)
@@ -1356,12 +1370,11 @@ appendResolvedTypes conn rows = withRaw conn "resolved_types" $ \app ->
     aMaybeText app (rtTarget    r)
     aBool      app (rtIsParam   r)
     aInt       app (rtScopeLine r)
-    endRow app
 
 appendResolvedCalls :: DuckConn -> [ResolvedCall] -> IO ()
 appendResolvedCalls _    [] = pure ()
 appendResolvedCalls conn rows = withRaw conn "resolved_calls" $ \app ->
-  for_ rows $ \r -> do
+  forEachRow app rows $ \_ r -> do
     aText      app (rcFile         r)
     aText      app (rcObject       r)
     aText      app (rcFromProc     r)
@@ -1372,12 +1385,11 @@ appendResolvedCalls conn rows = withRaw conn "resolved_calls" $ \app ->
     aMaybeText app (rcTargetProc   r)
     aText      app (rcKind         r)
     aText      app (rcConfidence   r)
-    endRow app
 
 appendInterprocEdges :: DuckConn -> [Taint.InterprocEdge] -> IO ()
 appendInterprocEdges _    [] = pure ()
 appendInterprocEdges conn rows = withRaw conn "interproc_edges" $ \app ->
-  for_ rows $ \e -> do
+  forEachRow app rows $ \_ e -> do
     aText     app (Taint.ieCallerObject  e)
     aText     app (Taint.ieCallerProc    e)
     aMaybeInt app (Taint.ieCallerLine    e)
@@ -1387,12 +1399,11 @@ appendInterprocEdges conn rows = withRaw conn "interproc_edges" $ \app ->
     aText     app (Taint.ieVarName       e)
     aText     app (Taint.ieCallerContext e)
     aText     app (Taint.ieCalleeContext e)
-    endRow app
 
 appendProcSummaries :: DuckConn -> [Taint.ProcedureSummary] -> IO ()
 appendProcSummaries _    [] = pure ()
 appendProcSummaries conn rows = withRaw conn "procedure_summaries" $ \app ->
-  for_ rows $ \s -> do
+  forEachRow app rows $ \_ s -> do
     aText app (Taint.psFile              s)
     aText app (Taint.psObject            s)
     aText app (Taint.psProcName          s)
@@ -1400,24 +1411,22 @@ appendProcSummaries conn rows = withRaw conn "procedure_summaries" $ \app ->
     aText app (jsonList (Taint.psGlobalsRead    s))
     aText app (jsonList (Taint.psGlobalsWritten s))
     aText app (jsonList (Taint.psReturnFlowsTo  s))
-    endRow app
 
 appendTaintSources :: DuckConn -> [Taint.TaintSource] -> IO ()
 appendTaintSources _    [] = pure ()
 appendTaintSources conn rows = withRaw conn "taint_sources" $ \app ->
-  for_ rows $ \s -> do
+  forEachRow app rows $ \_ s -> do
     aText     app (Taint.tsFile       s)
     aText     app (Taint.tsObject     s)
     aText     app (Taint.tsProcName   s)
     aText     app (Taint.tsVarName    s)
     aText     app (Taint.tsSourceType s)
     aMaybeInt app (Taint.tsLine       s)
-    endRow app
 
 appendTaintSinks :: DuckConn -> [Taint.TaintSink] -> IO ()
 appendTaintSinks _    [] = pure ()
 appendTaintSinks conn rows = withRaw conn "taint_sinks" $ \app ->
-  for_ rows $ \s -> do
+  forEachRow app rows $ \_ s -> do
     aText     app (Taint.tskFile     s)
     aText     app (Taint.tskObject   s)
     aText     app (Taint.tskProcName s)
@@ -1425,12 +1434,11 @@ appendTaintSinks conn rows = withRaw conn "taint_sinks" $ \app ->
     aText     app (Taint.tskSinkType s)
     aText     app (Taint.tskSeverity s)
     aMaybeInt app (Taint.tskLine     s)
-    endRow app
 
 appendTaintPaths :: DuckConn -> [Taint.TaintPath] -> IO ()
 appendTaintPaths _    [] = pure ()
 appendTaintPaths conn rows = withRaw conn "taint_paths" $ \app ->
-  for_ rows $ \tp -> do
+  forEachRow app rows $ \_ tp -> do
     let src = Taint.tpSource tp
         snk = Taint.tpSink   tp
         stepsJson = TE.decodeUtf8 . BSL.toStrict . encode $ Taint.tpSteps tp
@@ -1445,12 +1453,11 @@ appendTaintPaths conn rows = withRaw conn "taint_paths" $ \app ->
     aText app (Taint.tpSeverity  tp)
     aText app (Taint.tpCategory  tp)
     aText app stepsJson
-    endRow app
 
 appendTaintAnnotations :: DuckConn -> [Taint.TaintAnnotation] -> IO ()
 appendTaintAnnotations _    [] = pure ()
 appendTaintAnnotations conn rows = withRaw conn "taint_annotations" $ \app ->
-  for_ rows $ \a -> do
+  forEachRow app rows $ \_ a -> do
     aText app (Taint.taFile         a)
     aText app (Taint.taObject       a)
     aText app (Taint.taProcName     a)
@@ -1458,7 +1465,6 @@ appendTaintAnnotations conn rows = withRaw conn "taint_annotations" $ \app ->
     aBool app (Taint.taIsTaintEntry a)
     aBool app (Taint.taIsTaintSink  a)
     aText app (T.intercalate "|" (Taint.taTaintedVars a))
-    endRow app
 
 -- | Plan 166 Stage 6: dead_code is now populated entirely from the
 -- Soufflé-materialized dead_code_rows relation via a mechanical cast
@@ -1515,7 +1521,7 @@ renderLegKind LegFk       = "fk"
 appendSchemaObjects :: DuckConn -> [SchObject] -> IO ()
 appendSchemaObjects _    [] = pure ()
 appendSchemaObjects conn objs = withRaw conn "schema_objects" $ \app ->
-  for_ objs $ \o -> do
+  forEachRow app objs $ \_ o -> do
     aText app (schObjectKey o)
     case o of
       ColumnObj (TableRef ns tbl) col -> do
@@ -1545,17 +1551,15 @@ appendSchemaObjects conn objs = withRaw conn "schema_objects" $ \app ->
         aMaybeText app (Just dw)
         aMaybeText app Nothing
         aMaybeInt  app Nothing
-    endRow app
 
 appendSchemaMorphisms :: DuckConn -> [SchMorphism] -> IO ()
 appendSchemaMorphisms _    [] = pure ()
 appendSchemaMorphisms conn ms = withRaw conn "schema_morphisms" $ \app ->
-  for_ ms $ \m -> do
+  forEachRow app ms $ \_ m -> do
     aText      app (schObjectKey (legFrom m))
     aText      app (schObjectKey (legTo m))
     aText      app (renderLegKind (legKind m))
     aText      app (renderLegSource (legSource m))
-    endRow app
 
 -- | Plan 161 Phase 2c: materialize @decomposition_coslice@ from the Souffle
 -- @path_leg_fwd@\/@path_leg_back@ tables (produced by
@@ -1897,9 +1901,7 @@ recreateTextTable conn tbl cols = do
 appendTextRows :: DuckConn -> Text -> [[Text]] -> IO ()
 appendTextRows _    _   []   = pure ()
 appendTextRows conn tbl rows = withRaw conn tbl $ \app ->
-  for_ rows $ \r -> do
-    for_ r (aText app)
-    endRow app
+  forEachRow app rows $ \_ r -> for_ r (aText app)
 
 -- ---------------------------------------------------------------------------
 -- Internal helpers
@@ -1923,7 +1925,8 @@ withAppender rawConn tbl action =
       (\_ -> void $ c_duckdb_appender_destroy appPtr)
       $ \app -> do
           result <- action app
-          checkSt "appender_flush" =<< c_duckdb_appender_flush app
+          st <- c_duckdb_appender_flush app
+          checkAppenderSt "appender_flush" app st
           pure result
 
 aText :: DuckDBAppender -> Text -> IO ()
@@ -1954,3 +1957,27 @@ checkSt :: String -> DuckDBState -> IO ()
 checkSt ctx (DuckDBState n)
   | n == 0    = pure ()
   | otherwise = error $ "DuckDB appender error in " <> ctx
+
+-- | Appender-aware variant of 'checkSt': on a non-zero DuckDB status, pulls
+-- the real libduckdb error string via 'c_duckdb_appender_error_data' (the
+-- bare status code 'checkSt' reports is undiagnosable — e.g. a missing
+-- 'endRow' leaves every appended value in one un-finalized appender row,
+-- which only fails at flush with a column-count mismatch and no table/row
+-- context). The error data must be copied (via 'peekCString') before
+-- 'c_duckdb_destroy_error_data' invalidates it. See compiler/CLAUDE.md's
+-- appender-pool note for the diagnosis playbook.
+checkAppenderSt :: String -> DuckDBAppender -> DuckDBState -> IO ()
+checkAppenderSt ctx app (DuckDBState n)
+  | n == 0    = pure ()
+  | otherwise = do
+      errData <- c_duckdb_appender_error_data app
+      msg <- if errData == nullPtr
+               then pure "<no error data>"
+               else do
+                 msgPtr <- c_duckdb_error_data_message errData
+                 m <- if msgPtr == nullPtr
+                        then pure "<no error message>"
+                        else peekCString msgPtr
+                 alloca $ \edPtr -> poke edPtr errData >> c_duckdb_destroy_error_data edPtr
+                 pure m
+      error $ "DuckDB appender error in " <> ctx <> ": " <> msg

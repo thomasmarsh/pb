@@ -42,7 +42,7 @@ import PB.Analysis.SchemaCategory
   , CatColumnRow (..), DwRetrieveColRow (..)
   , StmtId (..), SchObject (..), SchMorphism (..), LegKind (..), LegSource (..)
   )
-import PB.Analysis.TaintEdges (foldTaintEdgesEff, TaintIntraEdgeRow (..))
+import PB.Analysis.TaintEdges (foldTaintEdgesEff, TaintIntraEdgeRow (..), TaintReturnRow (..))
 import PB.Analysis.SchFootprint
   ( FunctorCtx (..), foldSchFootprintEff, controlBindingsMap, dwColumnsFromRows
   , runtimeDwAliasBindings
@@ -97,6 +97,7 @@ import PB.Pipeline.DuckDb
   , appendSqlStmtColumns, appendSqlStmtFilters, appendSqlStmtTables
   , appendCatFootprintColumns
   , appendTaintIntraEdges
+  , appendTaintReturnRows
   , appendCatalogColumns, appendCatalogPks, appendCatalogFks, appendCatalogChecks
   , appendParseErrors, appendSourceFiles
   )
@@ -157,6 +158,7 @@ data CompiledPs = CompiledPs
   , cpsSqlStmtTables :: [SqlStmtTableRow]
   , cpsCatFootprintColumns :: [SqlStmtColumnRow]
   , cpsTaintIntraEdges :: [TaintIntraEdgeRow]
+  , cpsTaintReturnRows :: [TaintReturnRow]
   , cpsSourceContent :: Maybe SourceFileRow
   }
 
@@ -292,12 +294,18 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                   }
                 catFpRows = mapMaybe morphismToColRow
                   (Set.toList (foldSchFootprintEff footprintCtx effTerm))
-                -- Plan 182 Move 2: the intra-proc taint edge set, folded
-                -- directly from the same 'effTerm' 'catFpRows' above
-                -- already folds -- no second compile.
+                -- Plan 182 Move 2 / 182b: the intra-proc taint edge set and
+                -- the procedure's returned-var set, folded directly from
+                -- the same 'effTerm' 'catFpRows' above already folds -- no
+                -- second compile.
+                (taintEdgePairs, taintReturnVars) = foldTaintEdgesEff effTerm
                 taintEdgeRows =
                   [ TaintIntraEdgeRow obj pName useV defV
-                  | (useV, defV) <- Set.toList (foldTaintEdgesEff effTerm)
+                  | (useV, defV) <- Set.toList taintEdgePairs
+                  ]
+                taintReturnRows =
+                  [ TaintReturnRow obj pName v
+                  | v <- Set.toList taintReturnVars
                   ]
                 -- DeadVars needs this procedure's own params/body-locals,
                 -- not the file-wide 'lvs' -- 'lvs' tags every param with
@@ -365,7 +373,8 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                , catFpRows
                , deadVars
                , typeMismatches
-               , taintEdgeRows )
+               , taintEdgeRows
+               , taintReturnRows )
           | ((sLine, eLine), (pName, pType, instrParams, taintParams, retType, body)) <- procSpecs
           ]
         procBodies =
@@ -389,19 +398,20 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                              (fmap jsonText (extractWindowLayout (srTypeBlocks sf)))
                              (Just (jsonText (toJSON (srTypeBlocks sf))))
                              confidence
-      , cpsProcRows      = [ r | (r, _, _, _, _, _) <- procs ]
+      , cpsProcRows      = [ r | (r, _, _, _, _, _, _) <- procs ]
       , cpsLocalVars     = lvs
-      , cpsDeadVars      = concat [ dvs | (_, _, _, dvs, _, _) <- procs ]
-      , cpsTypeMismatches = concat [ tms | (_, _, _, _, tms, _) <- procs ]
+      , cpsDeadVars      = concat [ dvs | (_, _, _, dvs, _, _, _) <- procs ]
+      , cpsTypeMismatches = concat [ tms | (_, _, _, _, tms, _, _) <- procs ]
       , cpsCallSites     = css
       , cpsGlobalVars    = gvs
-      , cpsProcFlows     = [ f | (_, f, _, _, _, _) <- procs ]
+      , cpsProcFlows     = [ f | (_, f, _, _, _, _, _) <- procs ]
       , cpsSqlStmts      = sqlRows
       , cpsSqlStmtColumns = sqlColRows
       , cpsSqlStmtFilters = sqlFilterRows
       , cpsSqlStmtTables = sqlTableRows
-      , cpsCatFootprintColumns = concat [ rs | (_, _, rs, _, _, _) <- procs ]
-      , cpsTaintIntraEdges = concat [ tes | (_, _, _, _, _, tes) <- procs ]
+      , cpsCatFootprintColumns = concat [ rs | (_, _, rs, _, _, _, _) <- procs ]
+      , cpsTaintIntraEdges = concat [ tes | (_, _, _, _, _, tes, _) <- procs ]
+      , cpsTaintReturnRows = concat [ trs | (_, _, _, _, _, _, trs) <- procs ]
       , cpsSourceContent = Just (SourceFileRow fp (pfContents pf))
       }
 
@@ -635,6 +645,7 @@ appendToDb pool (CFPs r) = do
   appendSqlStmtTables  pool (cpsSqlStmtTables r)
   appendCatFootprintColumns pool (cpsCatFootprintColumns r)
   appendTaintIntraEdges pool (cpsTaintIntraEdges r)
+  appendTaintReturnRows pool (cpsTaintReturnRows r)
   appendSourceFiles pool (catMaybes [cpsSourceContent r])
 appendToDb pool (CFDw r) = do
   appendDwObjects        pool [cdDwObjectRow r]
@@ -792,7 +803,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
           [ "objects", "procedures", "local_vars", "dead_vars", "type_mismatches", "call_sites", "global_vars"
           , "proc_defs", "proc_uses", "sql_statements", "sql_statement_columns"
           , "sql_statement_filters", "sql_statement_tables", "cat_footprint_columns"
-          , "taint_intra_edges"
+          , "taint_intra_edges", "taint_return_rows"
           , "source_files", "parse_errors"
           , "dw_objects", "dw_controls", "dw_retrieve_tables", "dw_retrieve_columns"
           , "dw_write_columns", "dw_where_columns", "dw_joins", "dw_retrieve_where"

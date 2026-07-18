@@ -115,7 +115,13 @@ compileLoopBodyToEff ctx proc blockId visited table headers exits activeLoop
 compileTermToEff :: CompileCtx -> SsaProc -> Map.Map Text (Eff () ()) -> Map.Map Text (Eff () ())
                  -> Set.Set Text -> Map.Map Text Text
                  -> Maybe Text -> SsaTerm -> (Eff () (), Map.Map Text (Eff () ()), Map.Map Text (Eff () ()))
-compileTermToEff _ctx _proc memo table _headers _exits _activeLoop (SsaReturn _) = (J PId, memo, table)
+-- A valueless 'return' stays structural identity (matches the pre-existing
+-- treatment of every other non-loop terminator here); a return WITH a
+-- value must become a real 'EReturn' terminal so
+-- 'PB.Analysis.TaintEdges.ret' can see it -- see
+-- doc/plan/182b-move2-intra.md Section 1 point 2.
+compileTermToEff _ctx _proc memo table _headers _exits _activeLoop (SsaReturn Nothing) = (J PId, memo, table)
+compileTermToEff _ctx _proc memo table _headers _exits _activeLoop (SsaReturn (Just v)) = (EReturn (ssaValToExpr v), memo, table)
 compileTermToEff ctx proc memo table headers exits activeLoop (SsaGoto target) =
   compileBlockToEff ctx proc target memo table headers exits activeLoop
 compileTermToEff ctx proc memo table headers exits activeLoop (SsaBranch cond t f) =
@@ -147,7 +153,13 @@ compileLoopTermToEff ctx proc visited table headers exits activeLoop (SsaBranch 
       (fOp, v2, table2) = compileLoopBranchPathToEff ctx proc f v1 table1 headers exits activeLoop
       combined  = branchEff (ssaValToExpr cond) tOp fOp
   in (combined, v2, table2)
-compileLoopTermToEff _ctx _proc visited table _ _ _ (SsaReturn _) = (EReturn, visited, table)
+-- A return inside a loop must fully escape the loop (unlike the non-loop
+-- case above, 'J PId' can't express that here), so both shapes compile to
+-- a real 'EReturn'; 'ExNull' is the "no value" sentinel for the valueless
+-- case ('walkExprIdents ExNull' is empty, so it contributes no spurious
+-- returned var to 'PB.Analysis.TaintEdges.ret').
+compileLoopTermToEff _ctx _proc visited table _ _ _ (SsaReturn Nothing)  = (EReturn ExNull, visited, table)
+compileLoopTermToEff _ctx _proc visited table _ _ _ (SsaReturn (Just v)) = (EReturn (ssaValToExpr v), visited, table)
 compileLoopTermToEff _ctx _proc visited table _ _ _ SsaBreak      = (J PInr, visited, table)
 compileLoopTermToEff _ctx _proc visited table _ _ _ SsaContinue   = (J PInl, visited, table)
 compileLoopTermToEff ctx proc visited table headers exits activeLoop (SsaSwitch scrutinee pairs defaultTarget) =

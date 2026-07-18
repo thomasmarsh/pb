@@ -225,7 +225,7 @@ tests = testGroup "SchFootprint"
         foldSchFootprintEff ctx0 (extractEffTable (EAssign "x" :: Eff ((), Value) ())) @?= Set.empty
 
     , testCase "EReturn" $
-        foldSchFootprintEff ctx0 (extractEffTable (EReturn :: Eff () ())) @?= Set.empty
+        foldSchFootprintEff ctx0 (extractEffTable (EReturn (ExInt "0") :: Eff () ())) @?= Set.empty
 
     , testCase "ELoop (immediate break)" $
         foldSchFootprintEff ctx0 (extractEffTable (ELoop (J PInr :: Eff () (Either () ())) :: Eff () ())) @?= Set.empty

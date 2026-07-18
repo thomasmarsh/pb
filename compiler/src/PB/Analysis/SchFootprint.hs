@@ -159,7 +159,7 @@ instance Effectful SchFootprint where
       Just (tbl, col) -> Set.singleton (SchMorphism (StmtObj (fcStmtObj ctx)) (ColumnObj tbl col) LegWrites SrcCatFootprint)
       Nothing         -> Set.empty
   splitValue = SchFootprint (const Set.empty)
-  ret        = SchFootprint (const Set.empty)
+  ret _e     = SchFootprint (const Set.empty)
   loopK (SchFootprint f) = SchFootprint f
   branchK cond thenK elseK = (thenK ||| elseK) . splitValue . (id &&& eval cond)
   assignWithRhs var _lhs e = assign var . (id &&& eval e)
@@ -195,7 +195,7 @@ foldSchFootprintEff ctx (EffTerm spine table) = fst (go spine Map.empty)
     go (EFanIn t f)         m = let (rt, m1) = go t m in let (rf, m2) = go f m1 in (rt <> rf, m2)
     go (EBranch _ t f)      m = let (rt, m1) = go t m in let (rf, m2) = go f m1 in (rt <> rf, m2)
     go (ELoop body)         m = go body m
-    go EReturn              m = (Set.empty, m)
+    go (EReturn _e)         m = (Set.empty, m)
     go (ELetRef bid)        m = case Map.lookup bid m of
         Just cached -> (cached, m)
         Nothing     -> case Map.lookup bid table of

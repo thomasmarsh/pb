@@ -45,7 +45,10 @@ subscriptedAssignStmt line root member subToks rhs =
     rhs)
 
 foldEdges :: [Located BodyStmt] -> Set.Set (Text, Text)
-foldEdges body = foldTaintEdgesEff (compileProcedureToEff emptyEnv Set.empty body)
+foldEdges body = fst (foldTaintEdgesEff (compileProcedureToEff emptyEnv Set.empty body))
+
+foldReturns :: [Located BodyStmt] -> Set.Set Text
+foldReturns body = snd (foldTaintEdgesEff (compileProcedureToEff emptyEnv Set.empty body))
 
 tests :: TestTree
 tests = testGroup "TaintEdges"
@@ -90,6 +93,14 @@ tests = testGroup "TaintEdges"
     , testCase "for i = 1 to n step s: both bounds recovered as {(n,i),(s,i)}" $
         foldEdges [Located 1 (BsFor (ForStmt (Lvalue [LvSegment (mkIdent "i") Nothing]) (ExInt "1") (lvExpr "n") (Just (lvExpr "s")) []))]
           @?= Set.fromList [("n", "i"), ("s", "i")]
+    ]
+
+  , testGroup "foldTaintEdgesEff over EReturn"
+    [ testCase "return x records x as returned" $
+        foldReturns [Located 1 (BsReturn (Just (lvExpr "x")))] @?= Set.singleton "x"
+
+    , testCase "return with no value records nothing" $
+        foldReturns [Located 1 (BsReturn Nothing)] @?= Set.empty
     ]
 
   , testGroup "branch fan-in unions both arms' edges"
