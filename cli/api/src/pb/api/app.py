@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pb.api.routes import (
@@ -13,6 +13,7 @@ from pb.api.routes import (
     datawindows,
     diagrams,
     errors,
+    index_progress,
     libraries,
     objects,
     procedures,
@@ -24,10 +25,10 @@ from pb.api.routes import (
     static,
     tables,
 )
+from pb.api.routes.static import spa_html
 from scalar_fastapi import get_scalar_api_reference
 
 STATIC_DIR = Path(__file__).parent / "static"
-INDEX_HTML = STATIC_DIR / "index.html"
 
 
 class _SuppressStatsFilter(logging.Filter):
@@ -41,6 +42,7 @@ def create_app(db_path: str = "pb.duckdb") -> FastAPI:
 
     app = FastAPI(title="pb explore", version="0.1.0")
     app.state.db_path = db_path
+    app.state.index_job = None
     app.include_router(analysis.router)
     app.include_router(libraries.router)
     app.include_router(objects.router)
@@ -54,6 +56,7 @@ def create_app(db_path: str = "pb.duckdb") -> FastAPI:
     app.include_router(schema.router)
     app.include_router(tables.router)
     app.include_router(errors.router)
+    app.include_router(index_progress.router)
     app.include_router(static.router)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -61,15 +64,16 @@ def create_app(db_path: str = "pb.duckdb") -> FastAPI:
     async def scalar_docs():
         return get_scalar_api_reference(openapi_url=app.openapi_url, title=app.title)
 
-    # SPA catch-all: serve index.html for any non-API, non-static path
-    # This must be registered AFTER the API router and static mount
+    # SPA catch-all: serve index.html (or, while an IndexJob is running,
+    # progress.html) for any non-API, non-static path. This must be
+    # registered AFTER the API router and static mount.
     @app.get("/{path:path}")
-    async def spa_fallback(path: str):
+    async def spa_fallback(path: str, request: Request):
         # Don't intercept API or static routes
         if path.startswith("api/") or path.startswith("static/"):
             from fastapi import HTTPException
 
             raise HTTPException(status_code=404)
-        return HTMLResponse(content=INDEX_HTML.read_text())
+        return HTMLResponse(content=spa_html(request))
 
     return app

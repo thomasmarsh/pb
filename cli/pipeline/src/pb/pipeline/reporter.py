@@ -255,13 +255,11 @@ def _find_gaps(intervals: list[tuple[float, float]], total_span_ms: float) -> li
     return gaps
 
 
-_HTML_TEMPLATE = """<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Pipeline Diagnostics Report</title>
-<style>
-  .viz-root {{
+# Shared by the post-run diagnostics report (_HTML_TEMPLATE below) and the
+# live progress page (cli/api/src/pb/api/static/progress.html), so the two
+# renderings of the same timeline/legend/table markup never drift apart.
+VIZ_ROOT_CSS = """\
+  .viz-root {
     color-scheme: light;
     --surface-1: #fcfcfb;
     --text-primary: #0b0b0b;
@@ -273,9 +271,9 @@ _HTML_TEMPLATE = """<!doctype html>
     --series-4: #eda100;
     --series-5: #1baf7a;
     --series-6: #eb6834;
-  }}
-  @media (prefers-color-scheme: dark) {{
-    .viz-root {{
+  }
+  @media (prefers-color-scheme: dark) {
+    .viz-root {
       color-scheme: dark;
       --surface-1: #1a1a19;
       --text-primary: #ffffff;
@@ -287,8 +285,43 @@ _HTML_TEMPLATE = """<!doctype html>
       --series-4: #c98500;
       --series-5: #199e70;
       --series-6: #d95926;
-    }}
-  }}
+    }
+  }
+  .timeline svg { max-width: 100%; height: auto; display: block; }
+  .gap { fill: var(--text-secondary); opacity: 0.12; stroke: var(--text-secondary); stroke-width: 1; stroke-dasharray: 4,3; }
+  .phase-guide { stroke: var(--grid); stroke-width: 1; stroke-dasharray: 3,3; }
+  .lane-grid { stroke: var(--grid); stroke-width: 1; }
+  .phase-label, .axis-tick { fill: var(--text-secondary); font-size: 10px; }
+  .lane-label { fill: var(--text-secondary); font-size: 10px; }
+  .bar { opacity: 0.92; }
+  .bar.series-1 { fill: var(--series-1); }
+  .bar.series-2 { fill: var(--series-2); }
+  .bar.series-3 { fill: var(--series-3); }
+  .bar.series-4 { fill: var(--series-4); }
+  .bar.series-5 { fill: var(--series-5); }
+  .bar.series-6 { fill: var(--series-6); }
+  .legend { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; margin: 0.5rem 0 1.5rem; font-size: 0.85rem; color: var(--text-secondary); }
+  .legend-item { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .swatch.series-1 { background: var(--series-1); }
+  .swatch.series-2 { background: var(--series-2); }
+  .swatch.series-3 { background: var(--series-3); }
+  .swatch.series-4 { background: var(--series-4); }
+  .swatch.series-5 { background: var(--series-5); }
+  .swatch.series-6 { background: var(--series-6); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 0.35rem 0.75rem; border-bottom: 1px solid var(--grid); }
+  th { color: var(--text-secondary); font-weight: 600; }
+  ul.warnings li { color: #b25400; }
+"""
+
+_HTML_TEMPLATE = """<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Pipeline Diagnostics Report</title>
+<style>
+{viz_root_css}
   body {{
     background: var(--surface-1);
     color: var(--text-primary);
@@ -299,32 +332,6 @@ _HTML_TEMPLATE = """<!doctype html>
   }}
   h1, h2 {{ font-weight: 600; }}
   h2 {{ margin-top: 2rem; font-size: 1.1rem; color: var(--text-secondary); }}
-  .timeline svg {{ max-width: 100%; height: auto; display: block; }}
-  .gap {{ fill: var(--text-secondary); opacity: 0.12; stroke: var(--text-secondary); stroke-width: 1; stroke-dasharray: 4,3; }}
-  .phase-guide {{ stroke: var(--grid); stroke-width: 1; stroke-dasharray: 3,3; }}
-  .lane-grid {{ stroke: var(--grid); stroke-width: 1; }}
-  .phase-label, .axis-tick {{ fill: var(--text-secondary); font-size: 10px; }}
-  .lane-label {{ fill: var(--text-secondary); font-size: 10px; }}
-  .bar {{ opacity: 0.92; }}
-  .bar.series-1 {{ fill: var(--series-1); }}
-  .bar.series-2 {{ fill: var(--series-2); }}
-  .bar.series-3 {{ fill: var(--series-3); }}
-  .bar.series-4 {{ fill: var(--series-4); }}
-  .bar.series-5 {{ fill: var(--series-5); }}
-  .bar.series-6 {{ fill: var(--series-6); }}
-  .legend {{ display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; margin: 0.5rem 0 1.5rem; font-size: 0.85rem; color: var(--text-secondary); }}
-  .legend-item {{ display: inline-flex; align-items: center; gap: 0.4rem; }}
-  .swatch {{ width: 10px; height: 10px; border-radius: 2px; display: inline-block; }}
-  .swatch.series-1 {{ background: var(--series-1); }}
-  .swatch.series-2 {{ background: var(--series-2); }}
-  .swatch.series-3 {{ background: var(--series-3); }}
-  .swatch.series-4 {{ background: var(--series-4); }}
-  .swatch.series-5 {{ background: var(--series-5); }}
-  .swatch.series-6 {{ background: var(--series-6); }}
-  table {{ border-collapse: collapse; width: 100%; font-size: 0.9rem; }}
-  th, td {{ text-align: left; padding: 0.35rem 0.75rem; border-bottom: 1px solid var(--grid); }}
-  th {{ color: var(--text-secondary); font-weight: 600; }}
-  ul.warnings li {{ color: #b25400; }}
 </style>
 </head>
 <body class="viz-root">
@@ -535,6 +542,7 @@ class DiagnosticsCollector:
             ) if self._steps else ""
 
             return _HTML_TEMPLATE.format(
+                viz_root_css=VIZ_ROOT_CSS,
                 total_elapsed=self._fmt_ms(total_ms),
                 phases_html=phases_html,
                 timeline_html=self._render_timeline_svg(now_ms=now_ms),
