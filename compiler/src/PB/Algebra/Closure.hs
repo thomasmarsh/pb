@@ -16,6 +16,7 @@ module PB.Algebra.Closure
   , relUnion
   , relProduct
   , star
+  , reachFrom
   , reachableSet
   , reconstructPath
   ) where
@@ -99,6 +100,34 @@ star m0 =
     identityRel ns = IM.fromList [ (i, IM.singleton i S.one) | i <- ns ]
     allNodes r = Set.toList
       (Set.fromList (IM.keys r) `Set.union` foldMap (Set.fromList . IM.keys) (IM.elems r))
+
+-- | Semiring-weighted reachability from a set of seed nodes, computed via
+-- worklist relaxation (generalized Bellman-Ford \/ semi-naive fixpoint)
+-- instead of 'star's all-pairs iterated squaring. Only visits nodes
+-- actually reachable from a seed, and unlike 'star' a seed keeps its own
+-- 'S.one' membership even with zero outgoing edges (no arcPairs-endpoint
+-- dependency). Returned shape matches 'star's (seed id -> reachable id ->
+-- label), restricted to just the given seeds, so 'reachableSet'\/
+-- 'reconstructPath' work unchanged against either.
+reachFrom :: (S.Semiring s, Eq s) => Relation s -> [Int] -> Relation s
+reachFrom rel seeds = IM.fromList [ (s, relaxFrom s) | s <- seeds ]
+  where
+    -- One worklist relaxation per seed (generalized Bellman-Ford): only
+    -- ever visits nodes reachable from this seed, converging when no
+    -- further relaxation improves any distance.
+    relaxFrom s0 = go (IM.singleton s0 S.one) (Set.singleton s0)
+      where
+        go dist worklist = case Set.minView worklist of
+          Nothing -> dist
+          Just (u, rest) ->
+            let du = IM.findWithDefault S.zero u dist
+                outEdges = IM.findWithDefault IM.empty u rel
+                (dist', worklist') = IM.foldlWithKey' (relax du) (dist, rest) outEdges
+            in go dist' worklist'
+        relax du (d, w) v wuv =
+          let old = IM.findWithDefault S.zero v d
+              new = old `addS` (du `mulS` wuv)
+          in if new == old then (d, w) else (IM.insert v new d, Set.insert v w)
 
 -- | Reachable destination ids from a source id, given a *starred* relation.
 reachableSet :: Relation s -> Int -> Set Int

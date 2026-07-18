@@ -19,6 +19,7 @@ import qualified DeadCodeTest
 import qualified DeadVarsTest
 import qualified InterpCoverageTest
 import qualified TaintTest
+import qualified ClosureTest
 import qualified TaintAlgebraTest
 import qualified TaintOracleDiffTest
 import qualified EscapeTest
@@ -77,6 +78,7 @@ tests = testGroup "pb-compiler"
   , DeadVarsTest.tests
   , InterpCoverageTest.tests
   , TaintTest.tests
+  , ClosureTest.tests
   , TaintAlgebraTest.tests
   , TaintOracleDiffTest.tests
   , EscapeTest.tests

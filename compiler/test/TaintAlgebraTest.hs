@@ -106,6 +106,21 @@ tests = testGroup "TaintAlgebra"
               (bfsSet, _) = propagateTaint sources defs uses edges
               algSet      = taintReachable sources defs uses edges
           in bfsSet @?= algSet
+      , testCase "isolated source (zero outgoing edges) keeps its own 0-hop membership" $
+          -- Plan 182 corpus finding (doc/plan/182-algebraic-analysis.md
+          -- Section 11, 2026-07-18): a source var never subsequently
+          -- used/passed/returned/globally-written must still count as
+          -- tainted by definition -- propagateTaint's fixpoint always
+          -- inserts every seed unconditionally; taintRelation's interner
+          -- used to omit any seed with no outgoing arcPairs, silently
+          -- dropping it (confirmed on real corpus: 152/966 triples lost).
+          let sources = [ src "w" "oa" "pA" "ls_orphan" (Just 9) ]
+              defs = []
+              uses = []
+              edges = []
+              (bfsSet, _) = propagateTaint sources defs uses edges
+              algSet      = taintReachable sources defs uses edges
+          in bfsSet @?= algSet
       , testCase "confirmed (source, sink) pairs match" $
           let sources = [ src "w" "oa" "pA" "ls_a" (Just 5)
                        , src "w" "oa" "pW" "g_x" (Just 1)

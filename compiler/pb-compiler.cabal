@@ -126,6 +126,20 @@ executable pbc
     , filepath     >=1.4
     , optparse-applicative ^>=0.18
 
+executable taint-corpus-bench
+  import: common-settings
+  hs-source-dirs: bench
+  main-is: TaintCorpusBench.hs
+  ghc-options: -rtsopts -threaded
+  build-depends:
+    , base ^>=4.20.1.0
+    , pb-compiler
+    , text
+    , containers >=0.6
+    , unordered-containers >=0.2
+    , time >= 1.9
+    , optparse-applicative ^>=0.18
+
 test-suite pb-compiler-test
   import: common-settings
   type: exitcode-stdio-1.0
@@ -179,6 +193,7 @@ test-suite pb-compiler-test
     , ControlHierarchyTest
     , CallClassifyTest
     , CloneDetectTest
+    , ClosureTest
     , TaintAlgebraTest
     , TaintOracleDiffTest
   build-depends:
