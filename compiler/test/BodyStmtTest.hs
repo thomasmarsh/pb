@@ -1,12 +1,17 @@
 module BodyStmtTest (tests) where
 
 import PB.Prelude
-import PB.AST.BodyStmt        (AugOp (..), BodyStmt (..), PbCall (..))
+import PB.AST.BodyStmt
+  ( AugOp (..), BodyStmt (..), CaseClause (..), CatchClause (..)
+  , ChooseStmt (..), DoCondition (..), DoStmt (..), ElseIf (..)
+  , ForStmt (..), IfStmt (..), PbCall (..), TryStmt (..)
+  )
 import PB.AST.Expr            (Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Ident           (mkIdent)
 import PB.AST.Located         (Located (..))
 import PB.AST.Type            (PbType (..))
-import PB.Grammar.Body        (classifyBodyStmt, parseBodyStmts, parseLvalue)
+import PB.Grammar.Body        (classifyBodyStmt, parseBodyStmts, parseLvalue, pBodyStmt)
+import PB.Grammar.Stream      (StmtStream (..))
 import PB.Grammar.Unparse     (unparseBodyStmt)
 import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Lexer        (tokenize, tokenizeLine, LexLine (..))
@@ -17,9 +22,12 @@ import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText)
 import Hedgehog (Gen, Property, assert, failure, footnote, forAll, property, (===))
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
+import qualified Data.Text      as T
 import Test.Tasty              (TestTree, testGroup)
 import Test.Tasty.HUnit        (assertFailure, testCase, (@?=))
 import Test.Tasty.Hedgehog     (testProperty)
+import Text.Megaparsec         (eof, many, parse)
+import Text.Megaparsec.Error   (errorBundlePretty)
 
 -- ---------------------------------------------------------------------------
 -- Helpers
@@ -487,6 +495,10 @@ tests = testGroup "Body"
         let stmt = BsRaw "select * from t"
         in reparseBodyStmt (unparseBodyStmt stmt) @?= Right stmt
     ]
+
+  , testGroup "unparse control-flow (Plan 14 Phase C)"
+    [ testProperty "round-trip control-flow: parse . unparse . parse == parse" propUnparseControlFlowRoundtrip
+    ]
   ]
 
 tag :: BodyStmt -> Text
@@ -566,15 +578,32 @@ reparseBodyStmt text =
       []                   -> Left "no located BodyStmt produced"
       (Located _ result:_) -> Right result
 
--- | Zero token spans on the one leaf field that carries raw Tokens
--- (BsAugAssign's RHS) -- every other leaf field is span-free (Lvalue's
--- subscript is [Text], not [Token], since Plan 178/179). The generated
--- token's span is a placeholder; the re-lexed one is real, so comparing
--- spans would fail spuriously.
-stripStmtSpans :: BodyStmt -> BodyStmt
-stripStmtSpans (BsAugAssign lv op rhs) = BsAugAssign lv op (map zeroSpan rhs)
-  where zeroSpan t = t { tkSpan = SourceSpan 0 0 0 }
-stripStmtSpans other = other
+-- | Zero token spans and nested locLine numbers before comparing a
+-- reparsed BodyStmt against the value that generated it. Two things a
+-- generator can never predict: (1) real token spans on the one leaf field
+-- that carries raw Tokens (BsAugAssign's RHS, CaseClause's ccExpr) -- every
+-- other leaf field is span-free (Lvalue's subscript is [Text], not
+-- [Token], since Plan 178/179); (2) the real source line numbers pBodyStmt
+-- assigns to every nested [Located BodyStmt] body (BsIf/BsFor/BsDo/
+-- BsChoose/BsTry and their ElseIf/CaseClause/CatchClause sub-bodies).
+-- Recurses into every nested body so a control-flow constructor containing
+-- another control-flow constructor is normalized all the way down.
+normalizeBodyStmt :: BodyStmt -> BodyStmt
+normalizeBodyStmt stmt = case stmt of
+  BsAugAssign lv op rhs -> BsAugAssign lv op (map zeroSpan rhs)
+  BsIf (IfStmt cond thenB eifs elseB) ->
+    BsIf (IfStmt cond (normBody thenB) (map normElseIf eifs) (fmap normBody elseB))
+  BsFor (ForStmt lv from to step body) -> BsFor (ForStmt lv from to step (normBody body))
+  BsDo (DoStmt cond body loop) -> BsDo (DoStmt cond (normBody body) loop)
+  BsChoose (ChooseStmt e clauses) -> BsChoose (ChooseStmt e (map normClause clauses))
+  BsTry (TryStmt body catches) -> BsTry (TryStmt (normBody body) (map normCatch catches))
+  other -> other
+  where
+    zeroSpan t = t { tkSpan = SourceSpan 0 0 0 }
+    normBody = map (\(Located _ s) -> Located 0 (normalizeBodyStmt s))
+    normElseIf (ElseIf cond body) = ElseIf cond (normBody body)
+    normClause (CaseClause pat body) = CaseClause (fmap (map zeroSpan) pat) (normBody body)
+    normCatch (CatchClause ty var body) = CatchClause ty var (normBody body)
 
 genIdentText :: Gen Text
 genIdentText = Gen.element ["foo", "bar", "n", "dw_1", "ls_val", "idx", "obj"]
@@ -627,4 +656,116 @@ propUnparseBodyStmtRoundtrip = property $ do
   let text = unparseBodyStmt stmt
   case reparseBodyStmt text of
     Left err     -> footnote ("reparse error: " <> show err <> " for unparsed text: " <> show text) >> failure
-    Right result -> stripStmtSpans result === stripStmtSpans stmt
+    Right result -> normalizeBodyStmt result === normalizeBodyStmt stmt
+
+-- ---------------------------------------------------------------------------
+-- Control-flow round-trip generator (Plan 14 Phase C)
+
+-- | Feed unparsed text through the real pipeline (normalizeText -> tokenize
+-- -> collectStatements -> pBodyStmt over a StmtStream) and classify the
+-- first result. Unlike Phase B's reparseBodyStmt, this does NOT go through
+-- parseBodyStmts: that function is a flat map over classifyBodyStmt, whose
+-- TkControlKw case only handles return/exit/continue/throw -- if/for/do/
+-- choose/try all fall through to its BsRaw default, so it can never
+-- recover a control-flow constructor. pBodyStmt (run recursively via
+-- manyTill inside the FileParser monad, same as pFunctionBlock/
+-- pEventBlock's real pBodyUntil call) is the actual production entry
+-- point for these constructors.
+reparseControlFlowStmt :: Text -> Either Text BodyStmt
+reparseControlFlowStmt text =
+  case collectStatements (tokenize (normalizeText text)) of
+    Left err     -> Left err
+    Right []     -> Left "no statement parsed"
+    Right stmts0 -> case parse (many pBodyStmt <* eof) "" (StmtStream stmts0) of
+      Left err               -> Left (T.pack (errorBundlePretty err))
+      Right []               -> Left "no located BodyStmt produced"
+      Right (Located _ r:_)  -> Right r
+
+-- | Depth-bounded: at depth 0, only leaf statements are generated, so
+-- recursion into nested control-flow bodies always terminates.
+maxControlFlowDepth :: Int
+maxControlFlowDepth = 2
+
+genLocatedBody :: Int -> Gen [Located BodyStmt]
+genLocatedBody depth = Gen.list (Range.linear 0 2) (Located 1 <$> genControlBodyStmt depth)
+
+genControlBodyStmt :: Int -> Gen BodyStmt
+genControlBodyStmt depth
+  | depth <= 0 = genLeafBodyStmt
+  | otherwise = Gen.choice
+      [ genLeafBodyStmt
+      , genIfStmt (depth - 1)
+      , genForStmt (depth - 1)
+      , genDoStmt (depth - 1)
+      , genChooseStmt (depth - 1)
+      , genTryStmt (depth - 1)
+      ]
+
+genIfStmt :: Int -> Gen BodyStmt
+genIfStmt depth =
+  (\cond thenB eifs elseB -> BsIf (IfStmt cond thenB eifs elseB))
+    <$> genSimpleExpr <*> genLocatedBody depth
+    <*> Gen.list (Range.linear 0 1) (genElseIf depth)
+    <*> Gen.maybe (genLocatedBody depth)
+
+genElseIf :: Int -> Gen ElseIf
+genElseIf depth = ElseIf <$> genSimpleExpr <*> genLocatedBody depth
+
+genForStmt :: Int -> Gen BodyStmt
+genForStmt depth =
+  (\lv from to step body -> BsFor (ForStmt lv from to step body))
+    <$> genSimpleLvalue <*> genSimpleExpr <*> genSimpleExpr
+    <*> Gen.maybe genSimpleExpr <*> genLocatedBody depth
+
+genDoCondition :: Gen DoCondition
+genDoCondition = Gen.choice [DoWhile <$> genSimpleExpr, DoUntil <$> genSimpleExpr]
+
+genDoStmt :: Int -> Gen BodyStmt
+genDoStmt depth =
+  (\cond body loop -> BsDo (DoStmt cond body loop))
+    <$> Gen.maybe genDoCondition <*> genLocatedBody depth <*> Gen.maybe genDoCondition
+
+genChooseStmt :: Int -> Gen BodyStmt
+genChooseStmt depth =
+  (\e clauses -> BsChoose (ChooseStmt e clauses))
+    <$> genSimpleExpr <*> Gen.list (Range.linear 1 2) (genCaseClause depth)
+
+-- | A case pattern token: single-token literals only, re-lexing to exactly
+-- one Token so parseCatchSig-style downstream span-stripping stays simple.
+genCasePatternToken :: Gen Token
+genCasePatternToken = tok <$> Gen.element ["1", "2", "\"a\""]
+
+genCaseClause :: Int -> Gen CaseClause
+genCaseClause depth =
+  (\pat body -> CaseClause pat body)
+    <$> Gen.maybe ((: []) <$> genCasePatternToken) <*> genLocatedBody depth
+
+genTryStmt :: Int -> Gen BodyStmt
+genTryStmt depth =
+  (\body catches -> BsTry (TryStmt body catches))
+    <$> genLocatedBody depth <*> Gen.list (Range.linear 0 2) (genCatchClause depth)
+
+-- | Exception type/var are generated as single-token idents only, since
+-- parseCatchSig extracts them by raw token text -- same "flat generator
+-- shape must stay reparse-recoverable" constraint Phase B's BsPbCall
+-- generator already documented for CALL's ancestor/event.
+genCatchClause :: Int -> Gen CatchClause
+genCatchClause depth =
+  CatchClause <$> genIdentText <*> genIdentText <*> genLocatedBody depth
+
+genControlFlowStmt :: Gen BodyStmt
+genControlFlowStmt = Gen.choice
+  [ genIfStmt maxControlFlowDepth
+  , genForStmt maxControlFlowDepth
+  , genDoStmt maxControlFlowDepth
+  , genChooseStmt maxControlFlowDepth
+  , genTryStmt maxControlFlowDepth
+  ]
+
+propUnparseControlFlowRoundtrip :: Property
+propUnparseControlFlowRoundtrip = property $ do
+  stmt <- forAll genControlFlowStmt
+  let text = unparseBodyStmt stmt
+  case reparseControlFlowStmt text of
+    Left err     -> footnote ("reparse error: " <> show err <> " for unparsed text: " <> show text) >> failure
+    Right result -> normalizeBodyStmt result === normalizeBodyStmt stmt
