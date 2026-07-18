@@ -4,6 +4,9 @@ These tests require no cabal build and no duckdb — pure Python.
 """
 
 import json
+import re
+import threading
+import time
 
 from pb.lib.state import FileDiff
 from pb.pipeline.reporter import DiagnosticsCollector, RecordingReporter, _format_ddl_loaded, _format_warning
@@ -498,3 +501,120 @@ def test_diagnostics_collector_json_serialisable():
     c.on_event({"tag": "warning", "message": "test"})
     # Must not raise
     json.dumps(c.generate_json())
+
+
+def test_diagnostics_collector_snapshot_in_flight_step_grows():
+    c = DiagnosticsCollector()
+    c.on_event(_step_event("Datalog: running [reaches]", since_start_ms=0, edb_rows={"r": 5}))
+    time.sleep(0.02)
+    snap = c.snapshot()
+    assert snap["status"] == "running"
+    assert snap["current"]["label"] == "Datalog: running [reaches]"
+    assert snap["current"]["edb_rows"] == {"r": 5}
+    assert snap["current"]["elapsed_ms"] >= 15
+    assert snap["steps"] == []
+    bar_match = re.search(r'<rect x="[0-9.]+" y="[0-9.]+" width="([0-9.]+)"[^>]*class="bar series-1"', snap["timeline_html"])
+    assert bar_match is not None
+    assert float(bar_match.group(1)) > 1000
+    assert "still running" in snap["timeline_html"]
+
+
+def test_diagnostics_collector_snapshot_open_worker_rendered_live():
+    c = DiagnosticsCollector()
+    c.on_event({"tag": "worker_start", "worker": 0, "file": "src/w_order.srw", "since_start_ms": 0})
+    time.sleep(0.02)
+    snap = c.snapshot()
+    out = snap["timeline_html"]
+    assert 'class="lane-label">Worker 0<' in out
+    assert "w_order.srw" in out
+    assert len(snap["workers"]) == 1
+    assert snap["workers"][0]["worker"] == 0
+    assert snap["workers"][0]["file"] == "src/w_order.srw"
+    assert snap["workers"][0]["start_since_start_ms"] == 0
+    assert snap["workers"][0]["elapsed_ms"] >= 15
+
+
+def test_diagnostics_collector_snapshot_completed_step_not_extended():
+    c = DiagnosticsCollector()
+    c.on_event(_step_event("risk_count", since_start_ms=100))
+    c.on_event(_step_event("risk_count", elapsed_ms=500, idb_rows={"risk_count": 50}, since_start_ms=600))
+    snap = c.snapshot()
+    assert snap["current"] is None
+    assert snap["steps"] == [{"label": "risk_count", "elapsed_ms": 500, "edb_rows": {}, "idb_rows": {"risk_count": 50}, "peak_residency_mb": None}]
+    assert c.generate_json(now_ms=1000)["steps"][0]["end_since_start_ms"] == 600
+
+
+def test_diagnostics_collector_snapshot_current_step_derivation_with_nesting():
+    c = DiagnosticsCollector()
+    c.on_event(_step_event("Building call graph", since_start_ms=100))
+    c.on_event(_step_event("Taint classification", since_start_ms=150))
+    snap = c.snapshot()
+    assert snap["current"]["label"] == "Taint classification"
+    c.on_event(_step_event("Taint classification", elapsed_ms=20, since_start_ms=170))
+    snap = c.snapshot()
+    assert snap["current"]["label"] == "Building call graph"
+    assert [s["label"] for s in snap["steps"]] == ["Taint classification"]
+
+
+def test_diagnostics_collector_snapshot_status_running_then_complete_after_finish():
+    c = DiagnosticsCollector()
+    assert c.snapshot()["status"] == "running"
+    c.finish()
+    assert c.snapshot()["status"] == "complete"
+
+
+def test_diagnostics_collector_snapshot_no_false_gap_for_in_flight_step():
+    c = DiagnosticsCollector()
+    c.on_event(_step_event("Datalog: running [reaches]", since_start_ms=0))
+    snap = c.snapshot()
+    assert "Unaccounted time" not in snap["timeline_html"]
+
+
+def test_diagnostics_collector_snapshot_json_serialisable():
+    c = DiagnosticsCollector()
+    c.on_event(_step_event("completed_step", since_start_ms=100, elapsed_ms=500))
+    c.on_event(_step_event("in_flight_step", since_start_ms=200, edb_rows={"r": 10}))
+    c.on_event({"tag": "worker_start", "worker": 0, "file": "src/w_order.srw", "since_start_ms": 0})
+    json.dumps(c.snapshot())
+
+
+def test_diagnostics_collector_now_ms_default_preserves_postrun_rendering():
+    c = DiagnosticsCollector()
+    c.on_event({"tag": "worker_start", "worker": 0, "file": "src/w_order.srw", "since_start_ms": 10})
+    c.on_event(_step_event("completed", since_start_ms=100, elapsed_ms=500))
+    out = c.generate_html()
+    assert "Worker 0" not in out
+    assert "w_order.srw" not in out
+    c2 = DiagnosticsCollector()
+    c2.on_event(_step_event("started_never_done", since_start_ms=100))
+    assert c2.generate_json()["steps"][0]["end_since_start_ms"] == 100
+
+
+def test_diagnostics_collector_generate_json_now_ms_extends_in_flight():
+    c = DiagnosticsCollector()
+    c.on_event(_step_event("started_never_done", since_start_ms=100))
+    assert c.generate_json(now_ms=1000)["steps"][0]["end_since_start_ms"] == 1000
+
+
+def test_diagnostics_collector_concurrent_on_event_and_snapshot():
+    c = DiagnosticsCollector()
+    stop = threading.Event()
+
+    def writer(n: int) -> None:
+        for i in range(300):
+            if stop.is_set():
+                return
+            c.on_event(_step_event(f"step_{i % 4}", since_start_ms=i))
+            c.on_event({"tag": "worker_start", "worker": n, "file": f"f{i}.srw", "since_start_ms": i})
+            c.on_event({"tag": "worker_done", "worker": n, "file": f"f{i}.srw", "ok": True, "since_start_ms": i + 1})
+
+    writers = [threading.Thread(target=writer, args=(i,)) for i in range(4)]
+    for t in writers:
+        t.start()
+    for _ in range(20):
+        json.dumps(c.snapshot())
+        c.generate_json(now_ms=1000)
+        c.generate_html()
+    stop.set()
+    for t in writers:
+        t.join()

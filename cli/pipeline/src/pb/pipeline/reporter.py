@@ -355,6 +355,8 @@ class _ReportStep:
     # which do not share a single sequential ordering with Phase B.
     start_since_start_ms: float | None = None
     end_since_start_ms: float | None = None
+    last_event_seq: int = 0
+    completed_seq: int | None = None
 
 
 @dataclass
@@ -400,35 +402,40 @@ class DiagnosticsCollector:
         # sequential analysis passes.
         self._worker_open: dict[int, tuple[float | None, str]] = {}
         self._worker_intervals: list[_WorkerInterval] = []
+        self._lock = threading.Lock()
+        self._finished = False
+        self._seq = 0
 
     def on_event(self, event: dict) -> None:
-        tag = event.get("tag", "")
-        if tag == "step":
-            self._handle_step(event)
-        elif tag == "phase":
-            self._phases.append({
-                "name": event.get("name", ""),
-                "since_start_ms": event.get("since_start_ms"),
-            })
-        elif tag == "warning":
-            self._warnings.append(event.get("message", ""))
-        elif tag == "worker_start":
-            worker = event.get("worker")
-            if worker is not None:
-                self._worker_open[worker] = (event.get("since_start_ms"), event.get("file", ""))
-        elif tag == "worker_done":
-            worker = event.get("worker")
-            if worker is None:
-                return
-            start_since, file = self._worker_open.pop(worker, (event.get("since_start_ms"), event.get("file", "")))
-            if start_since is None:
-                return
-            self._worker_intervals.append(_WorkerInterval(
-                worker=worker,
-                file=file,
-                start_since_start_ms=start_since,
-                end_since_start_ms=event.get("since_start_ms"),
-            ))
+        with self._lock:
+            self._seq += 1
+            tag = event.get("tag", "")
+            if tag == "step":
+                self._handle_step(event)
+            elif tag == "phase":
+                self._phases.append({
+                    "name": event.get("name", ""),
+                    "since_start_ms": event.get("since_start_ms"),
+                })
+            elif tag == "warning":
+                self._warnings.append(event.get("message", ""))
+            elif tag == "worker_start":
+                worker = event.get("worker")
+                if worker is not None:
+                    self._worker_open[worker] = (event.get("since_start_ms"), event.get("file", ""))
+            elif tag == "worker_done":
+                worker = event.get("worker")
+                if worker is None:
+                    return
+                start_since, file = self._worker_open.pop(worker, (event.get("since_start_ms"), event.get("file", "")))
+                if start_since is None:
+                    return
+                self._worker_intervals.append(_WorkerInterval(
+                    worker=worker,
+                    file=file,
+                    start_since_start_ms=start_since,
+                    end_since_start_ms=event.get("since_start_ms"),
+                ))
 
     def _handle_step(self, event: dict) -> None:
         label = event.get("label", "")
@@ -449,6 +456,8 @@ class DiagnosticsCollector:
             step.edb_rows.update(edb_rows)
         if elapsed_ms is not None:
             step.elapsed_ms = elapsed_ms
+            if step.completed_seq is None:
+                step.completed_seq = self._seq
         if idb_rows:
             step.idb_rows.update(idb_rows)
         if residency_mb is not None:
@@ -456,79 +465,142 @@ class DiagnosticsCollector:
                 step.peak_residency_mb = residency_mb
         if since_start_ms is not None:
             step.end_since_start_ms = since_start_ms
+        step.last_event_seq = self._seq
 
     @property
     def _steps(self) -> list[_ReportStep]:
         return list(self._steps_by_label.values())
 
-    def generate_json(self) -> dict:
-        total_ms = (time.monotonic() - self._start) * 1000
-        return {
-            "total_elapsed_ms": round(total_ms, 1),
-            "steps": [
-                {
-                    "label": s.label,
-                    "elapsed_ms": s.elapsed_ms,
-                    "edb_rows": s.edb_rows,
-                    "idb_rows": s.idb_rows,
-                    "peak_residency_mb": s.peak_residency_mb,
-                    "start_since_start_ms": s.start_since_start_ms,
-                    "end_since_start_ms": s.end_since_start_ms,
-                }
+    def generate_json(self, *, now_ms: float | None = None) -> dict:
+        with self._lock:
+            total_ms = (time.monotonic() - self._start) * 1000
+            return {
+                "total_elapsed_ms": round(total_ms, 1),
+                "steps": [
+                    {
+                        "label": s.label,
+                        "elapsed_ms": s.elapsed_ms,
+                        "edb_rows": s.edb_rows,
+                        "idb_rows": s.idb_rows,
+                        "peak_residency_mb": s.peak_residency_mb,
+                        "start_since_start_ms": s.start_since_start_ms,
+                        "end_since_start_ms": self._effective_end(s.end_since_start_ms, s.elapsed_ms is None, now_ms),
+                    }
+                    for s in self._steps
+                ],
+                "phases": list(self._phases),
+                "warnings": list(self._warnings),
+                "phase_a_workers": [
+                    {
+                        "worker": iv.worker,
+                        "file": iv.file,
+                        "start_since_start_ms": iv.start_since_start_ms,
+                        "end_since_start_ms": iv.end_since_start_ms,
+                    }
+                    for iv in self._effective_worker_intervals(now_ms)
+                ],
+            }
+
+    def generate_html(self, *, now_ms: float | None = None) -> str:
+        with self._lock:
+            total_ms = (time.monotonic() - self._start) * 1000
+
+            phases_html = (
+                "<h2>Phases</h2><ul>"
+                + "".join(f"<li>{html.escape(p['name'])}</li>" for p in self._phases)
+                + "</ul>"
+            ) if self._phases else ""
+
+            warnings_html = (
+                "<h2>Warnings</h2><ul class=\"warnings\">"
+                + "".join(f"<li>{html.escape(w)}</li>" for w in self._warnings)
+                + "</ul>"
+            ) if self._warnings else ""
+
+            rows_html = "".join(
+                "<tr>"
+                f"<td>{html.escape(s.label)}</td>"
+                f"<td>{self._fmt_ms(s.elapsed_ms) if s.elapsed_ms is not None else '—'}</td>"
+                f"<td>{self._fmt_rows(s.edb_rows) if s.edb_rows else '—'}</td>"
+                f"<td>{self._fmt_rows(s.idb_rows) if s.idb_rows else '—'}</td>"
+                f"<td>{self._fmt_res(s.peak_residency_mb) if s.peak_residency_mb is not None else '—'}</td>"
+                "</tr>"
                 for s in self._steps
-            ],
-            "phases": list(self._phases),
-            "warnings": list(self._warnings),
-            "phase_a_workers": [
-                {
-                    "worker": iv.worker,
-                    "file": iv.file,
-                    "start_since_start_ms": iv.start_since_start_ms,
-                    "end_since_start_ms": iv.end_since_start_ms,
-                }
-                for iv in self._worker_intervals
-            ],
-        }
+            )
+            table_html = (
+                "<h2>Steps</h2>"
+                "<table><thead><tr><th>Step</th><th>Duration</th><th>EDB Rows</th>"
+                "<th>IDB Rows</th><th>Peak RES</th></tr></thead>"
+                f"<tbody>{rows_html}</tbody></table>"
+            ) if self._steps else ""
 
-    def generate_html(self) -> str:
-        total_ms = (time.monotonic() - self._start) * 1000
+            return _HTML_TEMPLATE.format(
+                total_elapsed=self._fmt_ms(total_ms),
+                phases_html=phases_html,
+                timeline_html=self._render_timeline_svg(now_ms=now_ms),
+                table_html=table_html,
+                warnings_html=warnings_html,
+            )
 
-        phases_html = (
-            "<h2>Phases</h2><ul>"
-            + "".join(f"<li>{html.escape(p['name'])}</li>" for p in self._phases)
-            + "</ul>"
-        ) if self._phases else ""
+    def finish(self) -> None:
+        with self._lock:
+            self._finished = True
 
-        warnings_html = (
-            "<h2>Warnings</h2><ul class=\"warnings\">"
-            + "".join(f"<li>{html.escape(w)}</li>" for w in self._warnings)
-            + "</ul>"
-        ) if self._warnings else ""
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            now_ms = (time.monotonic() - self._start) * 1000
+            in_flight = [s for s in self._steps if s.start_since_start_ms is not None and s.elapsed_ms is None]
+            current = max(in_flight, key=lambda s: s.last_event_seq) if in_flight else None
+            current_start = current.start_since_start_ms if current is not None else None
+            completed = sorted(
+                [s for s in self._steps if s.completed_seq is not None],
+                key=lambda s: s.completed_seq or 0,
+            )
+            return {
+                "status": "complete" if self._finished else "running",
+                "elapsed_ms": round(now_ms, 1),
+                "timeline_html": self._render_timeline_svg(now_ms=now_ms),
+                "steps": [
+                    {
+                        "label": s.label,
+                        "elapsed_ms": s.elapsed_ms,
+                        "edb_rows": s.edb_rows,
+                        "idb_rows": s.idb_rows,
+                        "peak_residency_mb": s.peak_residency_mb,
+                    }
+                    for s in completed
+                ],
+                "current": {
+                    "label": current.label,
+                    "start_since_start_ms": current_start,
+                    "elapsed_ms": round(now_ms - current_start, 1) if current_start is not None else 0,
+                    "edb_rows": current.edb_rows,
+                    "idb_rows": current.idb_rows,
+                    "residency_mb": current.peak_residency_mb,
+                } if current is not None else None,
+                "workers": [
+                    {
+                        "worker": w,
+                        "file": f,
+                        "start_since_start_ms": s,
+                        "elapsed_ms": round(now_ms - s, 1) if s is not None else None,
+                    }
+                    for w, (s, f) in sorted(self._worker_open.items())
+                ],
+            }
 
-        rows_html = "".join(
-            "<tr>"
-            f"<td>{html.escape(s.label)}</td>"
-            f"<td>{self._fmt_ms(s.elapsed_ms) if s.elapsed_ms is not None else '—'}</td>"
-            f"<td>{self._fmt_rows(s.edb_rows) if s.edb_rows else '—'}</td>"
-            f"<td>{self._fmt_rows(s.idb_rows) if s.idb_rows else '—'}</td>"
-            f"<td>{self._fmt_res(s.peak_residency_mb) if s.peak_residency_mb is not None else '—'}</td>"
-            "</tr>"
-            for s in self._steps
-        )
-        table_html = (
-            "<h2>Steps</h2>"
-            "<table><thead><tr><th>Step</th><th>Duration</th><th>EDB Rows</th>"
-            "<th>IDB Rows</th><th>Peak RES</th></tr></thead>"
-            f"<tbody>{rows_html}</tbody></table>"
-        ) if self._steps else ""
+    @staticmethod
+    def _effective_end(end: float | None, in_flight: bool, now_ms: float | None) -> float | None:
+        return now_ms if (in_flight and now_ms is not None) else end
 
-        return _HTML_TEMPLATE.format(
-            total_elapsed=self._fmt_ms(total_ms),
-            phases_html=phases_html,
-            timeline_html=self._render_timeline_svg(),
-            table_html=table_html,
-            warnings_html=warnings_html,
-        )
+    def _effective_worker_intervals(self, now_ms: float | None) -> list[_WorkerInterval]:
+        if now_ms is None:
+            return self._worker_intervals
+        result = list(self._worker_intervals)
+        for w, (s, f) in self._worker_open.items():
+            if s is not None and now_ms > s:
+                result.append(_WorkerInterval(worker=w, file=f, start_since_start_ms=s, end_since_start_ms=now_ms))
+        return result
 
     # Beyond this many distinct Phase A workers, per-worker lanes fold into
     # one aggregate "File parsing (Phase A)" lane -- keeps the chart's
@@ -536,7 +608,7 @@ class DiagnosticsCollector:
     # worker contributions on the common case (a handful of workers).
     _MAX_WORKER_LANES = 16
 
-    def _render_timeline_svg(self) -> str:
+    def _render_timeline_svg(self, *, now_ms: float | None = None) -> str:
         """Swim-lane timeline positioned by each event's absolute
         since_start_ms offset rather than its own duration alone -- the only
         representation that stays meaningful once Phase A's concurrent
@@ -545,7 +617,8 @@ class DiagnosticsCollector:
         lane past _MAX_WORKER_LANES), then one lane per step-kind category.
         """
         steps_with_time = [s for s in self._steps if s.start_since_start_ms is not None]
-        worker_ids = sorted({iv.worker for iv in self._worker_intervals})
+        effective_workers = self._effective_worker_intervals(now_ms)
+        worker_ids = sorted({iv.worker for iv in effective_workers})
         show_per_worker = 0 < len(worker_ids) <= self._MAX_WORKER_LANES
 
         def worker_lane(w: int) -> str:
@@ -553,7 +626,7 @@ class DiagnosticsCollector:
 
         worker_lanes = (
             [worker_lane(w) for w in worker_ids] if show_per_worker
-            else (["File parsing (Phase A)"] if self._worker_intervals else [])
+            else (["File parsing (Phase A)"] if effective_workers else [])
         )
         category_lanes = [k for k in _KIND_ORDER if any(_step_kind(s.label) == k for s in steps_with_time)]
         all_lanes = worker_lanes + category_lanes
@@ -563,10 +636,12 @@ class DiagnosticsCollector:
             instants.append(s.start_since_start_ms)
             if s.end_since_start_ms is not None:
                 instants.append(s.end_since_start_ms)
-        for iv in self._worker_intervals:
+        for iv in effective_workers:
             instants.append(iv.start_since_start_ms)
             if iv.end_since_start_ms is not None:
                 instants.append(iv.end_since_start_ms)
+        if now_ms is not None:
+            instants.append(now_ms)
         if not instants or not all_lanes:
             return ""
         total_span_ms = max(instants)
@@ -603,12 +678,13 @@ class DiagnosticsCollector:
         # first so every real bar renders on top of it.
         accounted: list[tuple[float, float]] = [
             (iv.start_since_start_ms, iv.end_since_start_ms if iv.end_since_start_ms is not None else iv.start_since_start_ms)
-            for iv in self._worker_intervals
+            for iv in effective_workers
         ]
         for s in steps_with_time:
             start = s.start_since_start_ms
             assert start is not None  # guaranteed by the steps_with_time filter above
-            accounted.append((start, s.end_since_start_ms if s.end_since_start_ms is not None else start))
+            eff_end = self._effective_end(s.end_since_start_ms, s.elapsed_ms is None, now_ms)
+            accounted.append((start, eff_end if eff_end is not None else start))
         for gap_start, gap_end in _find_gaps(accounted, total_span_ms):
             x = label_gutter + gap_start * scale
             w = max(1.5, (gap_end - gap_start) * scale)
@@ -653,7 +729,7 @@ class DiagnosticsCollector:
         # One bar per Phase A file-processing interval, in its worker's lane
         # (or the aggregate lane once there are too many workers to show
         # individually).
-        for iv in self._worker_intervals:
+        for iv in effective_workers:
             fname = iv.file.rsplit("/", 1)[-1] if iv.file else "?"
             parts.append(render_bar(
                 worker_lane(iv.worker), iv.start_since_start_ms, iv.end_since_start_ms,
@@ -666,8 +742,9 @@ class DiagnosticsCollector:
             start = s.start_since_start_ms
             assert start is not None  # guaranteed by the steps_with_time filter above
             dur = self._fmt_ms(s.elapsed_ms) if s.elapsed_ms is not None else "still running"
+            bar_end = self._effective_end(s.end_since_start_ms, s.elapsed_ms is None, now_ms)
             parts.append(render_bar(
-                kind, start, s.end_since_start_ms,
+                kind, start, bar_end,
                 series=_KIND_ORDER.index(kind) + 1, tooltip=f"{s.label} — {dur}",
             ))
 
@@ -689,7 +766,7 @@ class DiagnosticsCollector:
             f"{html.escape(k)}</span>"
             for k in category_lanes
         ]
-        if self._worker_intervals:
+        if effective_workers:
             legend_items.insert(
                 0,
                 '<span class="legend-item"><span class="swatch series-6"></span>'
