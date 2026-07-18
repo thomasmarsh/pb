@@ -1,16 +1,21 @@
--- | The dead-code Datalog programs: 'deadReachRules' (the seeded-BFS
--- reachability core that materializes @proc_reachable@\/@proc_dead@) and
--- 'liveProcRules' (stratified negation over @proc_dead@), plus the typed
--- Haskell functions that materialize the @proc@\/@entry@\/@calls@\/
--- @inherits@\/@call_ref@\/@resolved_call_edge@\/@proc_meta@ EDB relations
--- those rules assume.
+-- | The dead-code Datalog programs -- 'liveProcRules' (stratified negation
+-- over @proc_dead@), 'callerCountRules'\/'deadCodeRowsRules' (caller-count
+-- aggregates and confidence classification) -- plus the typed Haskell
+-- functions that materialize the @proc@\/@entry@\/@calls@\/@inherits@\/
+-- @call_ref@\/@resolved_call_edge@\/@proc_meta@ EDB relations those rules
+-- assume.
 --
--- @inherits@ is a faithful projection of @objects.ancestor@; the transitive
--- @descendant@ closure and the derived @override_edge@ triple (same method,
--- different object) are IDB rules below.
+-- @proc_dead@ itself is materialized by
+-- 'PB.Analysis.DeadCodeAlgebra.materializeDeadCodeClosure' (Plan 182 item 6
+-- cutover): 'procDeadRel' below is a pure EDB reference now, not a rule
+-- output -- the seeded reachability core (the former @deadReachRules@,
+-- including the @descendant@ transitive closure and derived
+-- @override_edge@ triple) is a Haskell 'PB.Algebra.Closure.reachFrom'
+-- closure, not Datalog.
+--
+-- @inherits@ is a faithful projection of @objects.ancestor@.
 module PB.Analysis.Rules.DeadCode
   ( initDeadReachEdbViews
-  , deadReachRules
   , liveProcRules
   , callerCountRules
   , deadCodeRowsRules
@@ -54,10 +59,11 @@ liveProcRel = symRelation "live_proc" ["object", "proc"]
 -- | @live_proc(Object,Proc) :- stmt(_,Object,Proc,_), !proc_dead(Object,Proc).@
 --
 -- Stratified negation over 'procDeadRel' (@proc_dead@, materialized by
--- 'deadReachRules'). 'deadReachRules' MUST run before this ruleset -- see
--- 'PB.Pipeline.Passes.runPass11' for the required ordering ('queryTextRows'
--- errors if @proc_dead@ doesn't exist yet when this ruleset exports its
--- EDB facts).
+-- 'PB.Analysis.DeadCodeAlgebra.materializeDeadCodeClosure'). That
+-- materializer MUST run before this ruleset -- see
+-- 'PB.Pipeline.Passes.materializeAllEdbViews' for the required ordering
+-- ('queryTextRows' errors if @proc_dead@ doesn't exist yet when this
+-- ruleset exports its EDB facts).
 liveProcRules :: RuleSet
 liveProcRules = RuleSet
   { rsRelations = [liveProcRel]
@@ -69,20 +75,19 @@ liveProcRules = RuleSet
   }
 
 -- ---------------------------------------------------------------------------
--- Reachability: seeds from 'entry', walks 'calls', and folds in inheritance
--- overrides via 'descendant'/'override_edge'. Materializes
--- 'proc_reachable'/'proc_dead'; 'liveProcRules' above and
--- 'callerCountRules'/'deadCodeRowsRules' below all read 'procDeadRel'
+-- EDB relations for the reachability closure: seeds from 'entry', walks
+-- 'calls', folds in inheritance overrides via @descendant@\/@override_edge@
+-- (now a Haskell 'PB.Algebra.Closure.reachFrom' closure in
+-- 'PB.Analysis.DeadCodeAlgebra', not Datalog). 'liveProcRules' above and
+-- 'callerCountRules'\/'deadCodeRowsRules' below all read 'procDeadRel'
 -- directly. Confidence and caller-count classification are Datalog rules
 -- (see 'callerCountRules'\/'deadCodeRowsRules' below); @dead_code@ is
 -- populated from @dead_code_rows@ via 'PB.Pipeline.DuckDb.materializeDeadCode'.
---
--- @descendant@ is a reusable shared predicate for any future
--- inheritance-aware analysis (taint, business-rule reachability).
 
--- | Materializes the EDB relations 'deadReachRules' assumes: @proc@ (every
--- known procedure), @entry@ (event\/on handlers, plus DW-object procedures
--- with outbound calls), @calls@ (same-object case-insensitive name-matched
+-- | Materializes the EDB relations the reachability closure and the
+-- Souffle rule sets below assume: @proc@ (every known procedure), @entry@
+-- (event\/on handlers, plus DW-object procedures with outbound calls),
+-- @calls@ (same-object case-insensitive name-matched
 -- calls, unioned with cross-object resolved calls, both derived from
 -- @resolved_calls@), @inherits@ (a faithful thin projection: @object@\/
 -- @ancestor@ pairs from @objects@, the source inheritance fact -- no
@@ -376,52 +381,11 @@ deadCodeRowsRules = RuleSet
   , rsChoiceDomains = []
   }
 
-procRel, entryRel, callsRel, inheritsRel, descendantRel, overrideEdgeRel, procReachableRel, procDeadRel :: Relation
-procRel          = symRelation "proc"           ["object", "proc"]
-entryRel         = symRelation "entry"          ["object", "proc"]
-callsRel         = symRelation "calls"          ["caller_obj", "caller_proc", "callee_obj", "callee_proc"]
-inheritsRel      = symRelation "inherits"       ["child", "parent"]
-descendantRel    = symRelation "descendant"     ["child", "parent"]
-overrideEdgeRel  = symRelation "override_edge"  ["child_obj", "method", "parent_obj"]
-procReachableRel = symRelation "proc_reachable" ["object", "proc"]
-procDeadRel      = symRelation "proc_dead"      ["object", "proc"]
-
--- | @proc_reachable(Object,Proc) :- entry(Object,Proc).@
--- @proc_reachable(Object,Proc) :- proc_reachable(CObj,CProc), calls(CObj,CProc,Object,Proc).@
--- @proc_reachable(ChildObj,Method) :- proc_reachable(ParentObj,Method), override_edge(ChildObj,Method,ParentObj).@
--- @proc_dead(Object,Proc) :- proc(Object,Proc), !proc_reachable(Object,Proc).@
---
--- @descendant(Child,Parent) :- inherits(Child,Parent).@                    -- shared predicate
--- @descendant(Child,GP) :- inherits(Child,Parent), descendant(Parent,GP).@ -- (transitive closure)
--- @override_edge(ChildObj,Method,ParentObj) :- proc(ParentObj,Method), descendant(ChildObj,ParentObj), proc(ChildObj,Method).@
---
--- Seeded-BFS reachability, expressed as Datalog fixpoint rules: seed from
--- 'entry', propagate through 'calls' and through inheritance overrides via
--- 'override_edge'. @proc_dead@ is every known 'proc' not reached. See
--- 'PB.Pipeline.Passes.runPass8' for how this combines with
--- 'callerCountRules'\/'deadCodeRowsRules' into the final @dead_code@ table.
-deadReachRules :: RuleSet
-deadReachRules = RuleSet
-  { rsRelations = [procReachableRel, procDeadRel, descendantRel, overrideEdgeRel]
-  , rsRules =
-      [ -- Shared predicates: the inheritance transitive closure and the
-        -- derived override triple (child object, method name, ancestor
-        -- object that declares it).
-        Rule "descendant(child, parent) :- inherits(child, parent)"
-             [descendantRel, inheritsRel]
-      , Rule "descendant(child, gp) :- inherits(child, parent), descendant(parent, gp)"
-             [descendantRel, inheritsRel]
-      , Rule "override_edge(child_obj, method, parent_obj) :- proc(parent_obj, method), descendant(child_obj, parent_obj), proc(child_obj, method)"
-             [overrideEdgeRel, procRel, descendantRel]
-      , -- Reachability: seed from entries, walk calls, fold in override edges.
-        Rule "proc_reachable(object, proc) :- entry(object, proc)"
-             [procReachableRel, entryRel]
-      , Rule "proc_reachable(object, proc) :- proc_reachable(cobj, cproc), calls(cobj, cproc, object, proc)"
-             [procReachableRel, callsRel]
-      , Rule "proc_reachable(childobj, method) :- proc_reachable(parentobj, method), override_edge(childobj, method, parentobj)"
-             [procReachableRel, overrideEdgeRel]
-      , Rule "proc_dead(object, proc) :- proc(object, proc), !proc_reachable(object, proc)"
-             [procDeadRel, procRel, procReachableRel]
-      ]
-  , rsChoiceDomains = []
-  }
+-- | @proc_dead@ is materialized in Haskell now (Plan 182 item 6 cutover —
+-- see 'PB.Analysis.DeadCodeAlgebra.materializeDeadCodeClosure'), so
+-- 'procDeadRel' is a pure EDB reference here: 'deadCodeRowsRules' and
+-- 'liveProcRules' read it as an ordinary pre-materialized relation, the same
+-- as any other 'initDeadReachEdbViews' output.
+procRel, procDeadRel :: Relation
+procRel     = symRelation "proc"      ["object", "proc"]
+procDeadRel = symRelation "proc_dead" ["object", "proc"]

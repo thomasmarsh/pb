@@ -14,6 +14,7 @@ import PB.Pipeline.Souffle qualified as Souffle
 import PB.Analysis.Rules.Schema qualified as SchemaRules
 import PB.Analysis.Rules.Schema (LegSourceFanout (..))
 import PB.Analysis.Rules.DeadCode qualified as DeadCodeRules
+import PB.Analysis.DeadCodeAlgebra qualified as DeadCodeAlgebra
 import PB.Analysis.Rules.Taint qualified as TaintRules
 import PB.Pipeline.Progress qualified as Progress
 import PB.Pipeline.DuckDb
@@ -239,14 +240,17 @@ reportTaintDefUseFanout conn = do
 --   'materializeAllEdbViews' creates every SQL-view EDB relation the
 --   Soufflé rule sets below assume: the dead-code EDBs
 --   ('DeadCodeRules.initDeadReachEdbViews', over @procedures@\/
---   @resolved_calls@\/@objects@) and the schema EDBs
+--   @resolved_calls@\/@objects@), @proc_dead@ itself
+--   ('DeadCodeAlgebra.materializeDeadCodeClosure' — algebraic, not
+--   Soufflé, since the Plan 182 item 6 cutover), and the schema EDBs
 --   ('SchemaRules.initEdbViews', over @schema_morphisms@\/
 --   @schema_objects@).
 -- * **B2 (one Soufflé run):** every Phase B Datalog rule set runs in a
 --   single 'Souffle.runRuleSets' call. 'Souffle.orderRuleSets' resolves
---   every Soufflé-internal dependency edge automatically —
---   @proc_dead@ (from 'DeadCodeRules.deadReachRules') before
---   'DeadCodeRules.deadCodeRowsRules' and 'DeadCodeRules.liveProcRules';
+--   every Soufflé-internal dependency edge automatically — @proc_dead@
+--   (an external EDB table since the item 6 cutover, no longer a Soufflé
+--   IDB relation) is read directly by 'DeadCodeRules.deadCodeRowsRules'
+--   and 'DeadCodeRules.liveProcRules';
 --   @leg@ (from 'SchemaRules.legRules') before 'SchemaRules.reachesRules';
 --   @reaches@ (from 'SchemaRules.reachesRules') before
 --   'SchemaRules.cosliceRules'. The only sequencing that remains manual is
@@ -294,6 +298,7 @@ runPhaseB conn mDefaultNamespace = do
 materializeAllEdbViews :: DuckConn -> IO ()
 materializeAllEdbViews conn = do
   Progress.timedStep "Dead-code EDB views materialized" $ DeadCodeRules.initDeadReachEdbViews conn
+  Progress.timedStep "Dead-code closure (algebraic)" $ DeadCodeAlgebra.materializeDeadCodeClosure conn
   Progress.timedStep "Schema EDB views materialized" $ SchemaRules.initEdbViews conn
   reportTaintDefUseFanout conn
 
@@ -307,10 +312,18 @@ materializeAllEdbViews conn = do
 -- produced by 'TaintRules.materializeTaintClosure' in 'runPass67', an
 -- algebraic Kleene-star closure over the same EDB inputs. 'taintRules'
 -- itself is unchanged and still callable on demand.
+--
+-- 'DeadCodeRules.deadReachRules' is likewise NOT listed here (Plan 182
+-- item 6 cutover, 2026-07-18, and deleted entirely — no on-demand oracle
+-- retained): @proc_dead@ is now produced by
+-- 'DeadCodeAlgebra.materializeDeadCodeClosure' in 'materializeAllEdbViews',
+-- an algebraic sparse-worklist closure over the same EDB inputs.
+-- 'DeadCodeRules.deadCodeRowsRules'\/'DeadCodeRules.liveProcRules' read
+-- @proc_dead@ as an ordinary external EDB table, the same as any other
+-- pre-materialized relation.
 allDatalogRuleSets :: [Souffle.RuleSet]
 allDatalogRuleSets =
-  [ DeadCodeRules.deadReachRules
-  , DeadCodeRules.callerCountRules
+  [ DeadCodeRules.callerCountRules
   , DeadCodeRules.deadCodeRowsRules
   , SchemaRules.legRules
   , SchemaRules.reachesRules

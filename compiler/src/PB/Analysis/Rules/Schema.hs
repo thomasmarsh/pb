@@ -51,7 +51,8 @@ import qualified Data.Text as T
 -- their source tables materializes empty relations.
 --
 -- No @dead@ relation is materialized here: 'liveProcRules' reads
--- @proc_dead@ (Datalog, 'deadReachRules') directly. @dead_code@ is
+-- @proc_dead@ (algebraic, 'PB.Analysis.DeadCodeAlgebra.materializeDeadCodeClosure')
+-- directly. @dead_code@ is
 -- populated purely from Datalog's @dead_code_rows@ relation via
 -- 'PB.Pipeline.DuckDb.materializeDeadCode' and is the sole source for the
 -- Dead Code Explorer API (@get_dead_code@).

@@ -8,7 +8,7 @@ import PB.Pipeline.Souffle
   )
 import PB.Pipeline.DuckDb (withWriteConn, recreateTextTable, appendTextRows)
 import PB.Analysis.Rules.DeadCode qualified as DeadCode
-  ( deadReachRules, callerCountRules, deadCodeRowsRules, liveProcRules )
+  ( callerCountRules, deadCodeRowsRules, liveProcRules )
 import PB.Analysis.Rules.Schema qualified as Schema
   ( reachesRules, cosliceRules )
 
@@ -164,15 +164,12 @@ productionOrderTests = testGroup "orderRuleSets (production set)"
                                 <> show (map rsRelations cyclic))
         Right _    -> pure ()
 
-  , testCase "deadReachRules precedes liveProcRules (proc_dead edge)" $
-      -- liveProcRules consumes proc_dead, which only deadReachRules derives.
-      assertBefore DeadCode.deadReachRules DeadCode.liveProcRules
-
-  , testCase "deadReachRules precedes deadCodeRowsRules (proc_dead edge)" $
-      -- deadCodeRowsRules consumes proc_dead, which only deadReachRules derives.
-      assertBefore DeadCode.deadReachRules DeadCode.deadCodeRowsRules
-
-  , testCase "reachesRules precedes cosliceRules (reaches edge)" $
+  , -- 'proc_dead' is no longer a Soufflé IDB relation (Plan 182 item 6
+    -- cutover, 2026-07-18) -- it's an external EDB table
+    -- ('PB.Analysis.DeadCodeAlgebra.materializeDeadCodeClosure' writes it
+    -- before this collection runs), so there is no
+    -- 'deadCodeRowsRules'\/'liveProcRules' ordering edge left to assert here.
+    testCase "reachesRules precedes cosliceRules (reaches edge)" $
       -- cosliceRules consumes reaches, which only reachesRules derives.
       assertBefore Schema.reachesRules Schema.cosliceRules
   ]
@@ -193,7 +190,7 @@ productionOrderTests = testGroup "orderRuleSets (production set)"
 -- one 'runRuleSets' call, in its stable input order.
 productionRuleSets :: [RuleSet]
 productionRuleSets =
-  [ DeadCode.deadReachRules, DeadCode.callerCountRules, DeadCode.deadCodeRowsRules
+  [ DeadCode.callerCountRules, DeadCode.deadCodeRowsRules
   , Schema.reachesRules, Schema.cosliceRules
   , DeadCode.liveProcRules
   ]

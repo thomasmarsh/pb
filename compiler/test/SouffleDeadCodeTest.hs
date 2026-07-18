@@ -10,6 +10,7 @@ import PB.Prelude
 import PB.Pipeline.Souffle
 import PB.Analysis.Rules.Schema (initEdbViews)
 import PB.Analysis.Rules.DeadCode
+import PB.Analysis.DeadCodeAlgebra (materializeDeadCodeClosure)
 import PB.Pipeline.DuckDb
 import PB.Analysis.SchemaCategory (StmtId (..), SchObject (..))
 import PB.Analysis.TypeResolve (ResolvedCall (..))
@@ -114,39 +115,10 @@ mkResolvedCall obj fromProc toName mTarget mLine = Taint.ResolvedCallRow
   , Taint.rcrReturnType     = Nothing
   }
 
-deadObjProcPairs :: DuckConn -> IO (Set.Set (Text, Text))
-deadObjProcPairs conn = do
-  rows <- query_ conn "SELECT object, proc FROM proc_dead" :: IO [(Text, Text)]
-  pure (Set.fromList rows)
-
--- | Assert 'deadReachRules'' materialized @proc_dead@ contains exactly the
--- given expected (object, proc) pairs.
-assertDeadParity
-  :: String
-  -> [ProcInfo] -> [(Text, Text, Text)] -> [(Text, Text, Text, Text)]
-  -> [(Text, Text)] -> Set.Set Text
-  -> Set.Set (Text, Text)
-  -> TestTree
-assertDeadParity name procs calls resolved inherits dwObjs expected =
-  testCase name $ withWriteConn ":memory:" $ \conn -> do
-    initSchema conn
-    withAppenderPool conn phaseATables $ \pool -> do
-      seedDeadCodeFixture conn pool procs calls resolved inherits dwObjs
-    -- Plan 175 Phase 2: initDeadReachEdbViews now reads procedures/objects/
-    -- resolved_calls/dw_objects eagerly (no longer a lazily-evaluated SQL
-    -- view) -- must run after the fixture is seeded, not before.
-    initDeadReachEdbViews conn
-    runRuleSet conn deadReachRules
-    got <- deadObjProcPairs conn
-    got @?= expected
-
 -- | Assert 'callerCountRules'' materialized @confidence@ relation classifies
--- the given (object, proc) at the expected level, given a fixture seeded the
--- same way 'assertDeadParity' seeds its dead-set fixtures. Mirrors
--- 'PB.Pipeline.Passes.runPass8'\'s real ordering: 'deadReachRules' runs
--- before 'callerCountRules' (via 'runRuleSets', which also resolves this
--- automatically), even though confidence classification itself reads only
--- @proc@/@call_ref@/@resolved_call_edge@, not @proc_dead@.
+-- the given (object, proc) at the expected level. Confidence classification
+-- reads only @proc@\/@call_ref@\/@resolved_call_edge@, not @proc_dead@, so
+-- no dead-code closure needs to run first.
 assertConfidence
   :: String
   -> [ProcInfo] -> [(Text, Text, Text)] -> [(Text, Text, Text, Text)]
@@ -158,7 +130,7 @@ assertConfidence name procs calls resolved (obj, proc) expectedLevel =
     withAppenderPool conn phaseATables $ \pool -> do
       seedDeadCodeFixture conn pool procs calls resolved [] Set.empty
     initDeadReachEdbViews conn
-    runRuleSets (\_ -> pure ()) conn [deadReachRules, callerCountRules]
+    runRuleSet conn callerCountRules
     rows <- query conn "SELECT level FROM confidence WHERE object = ? AND proc = ?"
               (obj, proc) :: IO [Only Text]
     [ lvl | Only lvl <- rows ] @?= [expectedLevel]
@@ -174,17 +146,19 @@ tests :: TestTree
 tests = testGroup "Souffle.DeadCode"
 
   [ testGroup "liveProcRules"
-    -- Plan 161 Phase 2b cutover: `dead` now reads `proc_dead` (Datalog),
-    -- not `dead_code` (Haskell) -- see 'initEdbViews'' doc comment. Every
-    -- case here must run 'initDeadReachEdbViews' + 'deadReachRules' before
-    -- 'initEdbViews'/'liveProcRules', mirroring the required
-    -- 'PB.Pipeline.Passes.runPass11' ordering, so the `dead` view has a
-    -- `proc_dead` table to read (even an empty one) before it's queried.
+    -- Plan 161 Phase 2b cutover: `dead` now reads `proc_dead` (materialized
+    -- by 'materializeDeadCodeClosure', algebraic since the Plan 182 item 6
+    -- cutover), not `dead_code` (Haskell) -- see 'initEdbViews'' doc comment.
+    -- Every case here must run 'initDeadReachEdbViews' +
+    -- 'materializeDeadCodeClosure' before 'initEdbViews'/'liveProcRules',
+    -- mirroring the required 'PB.Pipeline.Passes.materializeAllEdbViews'
+    -- ordering, so the `dead` view has a `proc_dead` table to read (even an
+    -- empty one) before it's queried.
     [ testCase "a stmt whose (object,proc) is not in proc_dead appears in live_proc" $
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
           initDeadReachEdbViews conn
-          runRuleSet conn deadReachRules
+          materializeDeadCodeClosure conn
           appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj1" "proc1" 5) ]
           -- initEdbViews now materializes stmt eagerly (Plan 175 Phase 1) --
           -- must run after appendSchemaObjects, not merely after initSchema.
@@ -197,12 +171,12 @@ tests = testGroup "Souffle.DeadCode"
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
           -- obj2/proc2: a function with no entry seed and no caller, so
-          -- deadReachRules naturally computes it as dead.
+          -- materializeDeadCodeClosure naturally computes it as dead.
           withAppenderPool conn phaseATables $ \pool ->
             appendProcedures pool
               [ ProcRow "f.srf" "obj2" "proc2" "function" 1 1 "" "" "" "" "" (Just 1) "confirmed" ]
           initDeadReachEdbViews conn
-          runRuleSet conn deadReachRules
+          materializeDeadCodeClosure conn
           appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj2" "proc2" 9) ]
           initEdbViews conn
           runRuleSet conn liveProcRules
@@ -218,7 +192,7 @@ tests = testGroup "Souffle.DeadCode"
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
           initDeadReachEdbViews conn
-          runRuleSet conn deadReachRules
+          materializeDeadCodeClosure conn
           appendSchemaObjects conn [ StmtObj (DwRetrieveId "d.srd" "d_test") ]
           initEdbViews conn
           runRuleSet conn liveProcRules
@@ -226,34 +200,16 @@ tests = testGroup "Souffle.DeadCode"
           assertBool "no dw_retrieve row leaks into live_proc" (null rows)
     ]
 
-  , testGroup "deadReachRules"
-    [ testCase "same-object call reaches callee via case-insensitive name match" $
-        withWriteConn ":memory:" $ \conn -> do
-          initSchema conn
-          withAppenderPool conn phaseATables $ \pool ->
-            seedDeadCodeFixture conn pool
-              [ ProcInfo "obj" "ev" "event" (Just 1), ProcInfo "obj" "fn_a" "function" (Just 1) ]
-              [ ("obj", "ev", "FN_A") ]
-              [] [] Set.empty
-          initDeadReachEdbViews conn
-          runRuleSet conn deadReachRules
-          got <- deadObjProcPairs conn
-          assertBool "fn_a not dead" (("obj", "fn_a") `Set.notMember` got)
-
-    , testCase "same-object call reaches callee through a dotted (control-qualified) to_name" $
-        withWriteConn ":memory:" $ \conn -> do
-          initSchema conn
-          withAppenderPool conn phaseATables $ \pool ->
-            seedDeadCodeFixture conn pool
-              [ ProcInfo "obj" "ev" "event" (Just 1), ProcInfo "obj" "fn_a" "function" (Just 1) ]
-              [ ("obj", "ev", "dw_1.fn_a") ]
-              [] [] Set.empty
-          initDeadReachEdbViews conn
-          runRuleSet conn deadReachRules
-          got <- deadObjProcPairs conn
-          assertBool "fn_a not dead" (("obj", "fn_a") `Set.notMember` got)
-
-    , testCase "speculative-confidence procedures (builtin method stubs) are excluded from proc/entry/proc_dead" $
+  , -- The full proc_dead-shape fixture set previously here (event-handler
+    -- seeds, dead chains, override propagation, cross-object reachability,
+    -- confidence-shape combinations, case-insensitive/dotted call-name
+    -- matching) moved to 'DeadCodeAlgebraTest.hs' as Souffle-independent
+    -- golden assertions once 'deadReachRules' was deleted (Plan 182 item 6
+    -- cutover, 2026-07-18) -- 'deadReachAlgebraic' is now the sole
+    -- implementation, so there is no second implementation left to
+    -- oracle-diff against.
+    testGroup "EDB view filtering"
+    [ testCase "speculative-confidence procedures (builtin method stubs) are excluded from proc/entry/proc_dead" $
         -- Regression: a real openpay --db run's proc_dead had 45 extra rows,
         -- all speculative-confidence stub procedures registered for PB base
         -- classes (dwobject/powerobject/window/...) -- 'queryProcInfos'
@@ -270,87 +226,6 @@ tests = testGroup "Souffle.DeadCode"
           entryViewRows <- query_ conn "SELECT object, proc FROM entry" :: IO [(Text, Text)]
           assertBool "speculative stub excluded from proc view" (null procViewRows)
           assertBool "speculative stub excluded from entry view" (null entryViewRows)
-
-    , assertDeadParity "event handlers are seeds"
-        [ ProcInfo "obj" "ev" "event" (Just 1) ] [] [] [] Set.empty
-        Set.empty
-
-    , assertDeadParity "on handlers are seeds"
-        [ ProcInfo "obj" "on_h" "on" (Just 1) ] [] [] [] Set.empty
-        Set.empty
-
-    , assertDeadParity "unreachable function is dead"
-        [ ProcInfo "obj" "fn" "function" (Just 2) ] [] [] [] Set.empty
-        (Set.singleton ("obj", "fn"))
-
-    , assertDeadParity "called function is reachable from seed"
-        [ ProcInfo "obj" "ev" "event" (Just 1)
-        , ProcInfo "obj" "fn_a" "function" (Just 1)
-        , ProcInfo "obj" "fn_b" "function" (Just 1)
-        ]
-        [ ("obj", "ev", "fn_a"), ("obj", "fn_a", "fn_b") ]
-        [] [] Set.empty
-        Set.empty
-
-    , assertDeadParity "uncalled function is dead"
-        [ ProcInfo "obj" "fn_a" "function" (Just 1), ProcInfo "obj" "fn_b" "function" (Just 1) ]
-        [] [] [] Set.empty
-        (Set.fromList [("obj", "fn_a"), ("obj", "fn_b")])
-
-    , assertDeadParity "dead chain"
-        [ ProcInfo "obj" "fn_c" "function" (Just 1), ProcInfo "obj" "fn_d" "function" (Just 1) ]
-        [ ("obj", "fn_c", "fn_d") ]
-        [] [] Set.empty
-        (Set.fromList [("obj", "fn_c"), ("obj", "fn_d")])
-
-    , assertDeadParity "cross-object reachability"
-        [ ProcInfo "obj" "ev" "event" (Just 1), ProcInfo "obj2" "fn_x" "function" Nothing ]
-        []
-        [ ("obj", "ev", "obj2", "fn_x") ]
-        [] Set.empty
-        Set.empty
-
-    , assertDeadParity "override propagation"
-        [ ProcInfo "obj_base" "base_hook" "event" Nothing
-        , ProcInfo "obj_child" "base_hook" "function" Nothing
-        ]
-        [ ("obj_base", "base_hook", "base_hook") ]
-        []
-        [ ("obj_child", "obj_base") ]
-        Set.empty
-        Set.empty
-
-    , assertDeadParity "DW object procedures are seeds"
-        [ ProcInfo "obj_dw" "fn_a" "function" Nothing, ProcInfo "obj_dw" "fn_b" "function" Nothing ]
-        [ ("obj_dw", "fn_a", "fn_b") ]
-        [] [] (Set.singleton "obj_dw")
-        Set.empty
-
-    , assertDeadParity "confidence-medium shape: naive callers but no scoped resolution"
-        [ ProcInfo "obj" "fn" "function" (Just 2) ]
-        [ ("other_obj", "other", "fn") ]
-        [] [] Set.empty
-        (Set.singleton ("obj", "fn"))
-
-    , assertDeadParity "confidence-low shape: scoped callers present"
-        [ ProcInfo "obj" "fn" "function" (Just 2) ]
-        [ ("other_obj", "other", "fn") ]
-        [ ("other_obj", "other", "obj", "fn") ]
-        [] Set.empty
-        (Set.singleton ("obj", "fn"))
-
-    , assertDeadParity "sorted by object then name (both dead)"
-        [ ProcInfo "obj_z" "fn_b" "function" Nothing, ProcInfo "obj_a" "fn_a" "function" Nothing ]
-        [] [] [] Set.empty
-        (Set.fromList [("obj_z", "fn_b"), ("obj_a", "fn_a")])
-
-    , assertDeadParity "grandchild override reachable when intermediate lacks the method"
-        [ ProcInfo "gp" "hook" "event" Nothing, ProcInfo "child" "hook" "function" Nothing ]
-        []
-        []
-        [ ("p", "gp"), ("child", "p") ]
-        Set.empty
-        Set.empty
     ]
 
   , testGroup "callerCountRules / confidenceRel"
@@ -407,8 +282,9 @@ tests = testGroup "Souffle.DeadCode"
               [ ("other_obj", "caller_c", "obj", "fn") ]
               [] Set.empty
           initDeadReachEdbViews conn
+          materializeDeadCodeClosure conn
           runRuleSets (\_ -> pure ()) conn
-            [deadReachRules, callerCountRules, deadCodeRowsRules]
+            [callerCountRules, deadCodeRowsRules]
           -- dead_code_rows is a raw Souffle-materialized relation: every
           -- column round-trips as TEXT (see PB.Pipeline.DuckDb.materializeDeadCode's
           -- own TRY_CAST doc comment) -- cast explicitly rather than reading
@@ -435,8 +311,9 @@ tests = testGroup "Souffle.DeadCode"
               ]
             [] [] [] Set.empty
           initDeadReachEdbViews conn
+          materializeDeadCodeClosure conn
           runRuleSets (\_ -> pure ()) conn
-            [deadReachRules, callerCountRules, deadCodeRowsRules]
+            [callerCountRules, deadCodeRowsRules]
           materializeDeadCode conn
           rows <- query_ conn
             "SELECT cyclomatic FROM dead_code WHERE object = 'obj' AND proc_name = 'fn'"
@@ -458,8 +335,9 @@ tests = testGroup "Souffle.DeadCode"
               ]
             [] [] [] Set.empty
           initDeadReachEdbViews conn
+          materializeDeadCodeClosure conn
           runRuleSets (\_ -> pure ()) conn
-            [deadReachRules, callerCountRules, deadCodeRowsRules]
+            [callerCountRules, deadCodeRowsRules]
           materializeDeadCode conn
           rows <- query_ conn
             "SELECT cyclomatic FROM dead_code WHERE object = 'obj' AND proc_name = 'fn'"
