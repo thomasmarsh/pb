@@ -3,6 +3,7 @@
 import shutil
 import socket
 import webbrowser
+from contextlib import nullcontext
 from pathlib import Path
 from threading import Timer
 from typing import Optional
@@ -15,6 +16,7 @@ from pb.pipeline.commands.clean import run as run_clean
 from pb.pipeline.commands.corpus import run as run_corpus
 from pb.pipeline.env import env
 from pb.pipeline.impact import run_impact
+from pb.pipeline.index_job import IndexJob
 from pb.pipeline.metrics import compute_metrics
 from pb.pipeline.pbl import extract_to_dir, resolve_source_dir
 from pb.pipeline.pipeline import db_is_current
@@ -262,22 +264,15 @@ def explore(
 ) -> None:
     """Start the interactive DuckDB explorer web UI.
 
-    If INPUT is given, index the source tree first (equivalent to `pb index`).
+    If INPUT is given, index the source tree first. Indexing runs in the
+    background: the browser opens and the explorer is reachable immediately,
+    with live progress served at `/` until the index run completes.
     """
     reporter = env.reporter
 
-    if input_path is not None:
-        if reset or not db_is_current(input_path, db):
-            repo_path = env.build.find_repo(repo)
-            binary = env.build.find_binary(repo_path) if no_build else _build(repo_path, reporter)
-            with resolve_source_dir(Path(input_path), reporter) as src_dir:
-                run_pipeline(
-                    src_dir, db, binary, reporter, reset=reset, dialect=sql_dialect,
-                    input_path=input_path, ddl=ddl, default_namespace=default_namespace,
-                    diagnostics_report_path=diagnostics_report,
-                )
-        else:
-            typer.echo("Database is up-to-date, skipping index.")
+    need_index = input_path is not None and (reset or not db_is_current(input_path, db))
+    if input_path is not None and not need_index:
+        typer.echo("Database is up-to-date, skipping index.")
 
     url = f"http://{host}:{port}"
 
@@ -296,10 +291,30 @@ def explore(
 
     app = create_app(db)
 
-    if open_browser:
-        Timer(1.0, webbrowser.open, args=[url]).start()
+    binary: Path | None = None
+    src_dir_cm = nullcontext(None)
+    if need_index:
+        assert input_path is not None
+        repo_path = env.build.find_repo(repo)
+        binary = env.build.find_binary(repo_path) if no_build else _build(repo_path, reporter)
+        src_dir_cm = resolve_source_dir(Path(input_path), reporter)
 
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    with src_dir_cm as src_dir:
+        if need_index:
+            assert src_dir is not None and binary is not None
+            index_job = IndexJob(
+                src_dir, db, binary, reset=reset, dialect=sql_dialect,
+                input_path=input_path, ddl=ddl, default_namespace=default_namespace,
+                diagnostics_report_path=diagnostics_report,
+            )
+            app.state.index_job = index_job
+            index_job.start()
+            typer.echo(f"Indexing in the background — progress at {url}")
+
+        if open_browser:
+            Timer(1.0, webbrowser.open, args=[url]).start()
+
+        uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 # ── private helpers ────────────────────────────────────────────────────────────

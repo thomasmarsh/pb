@@ -15,10 +15,10 @@
     padding: 0 1rem;
   }
   h1 { font-weight: 600; font-size: 1.3rem; }
-  #current-line { font-size: 1.05rem; margin: 1rem 0; }
+  #current-line { font-size: 1.05rem; margin: 1rem 0 0.5rem; }
   #current-line .elapsed { color: var(--text-secondary); }
-  ul#step-history, ul#worker-rows { list-style: none; padding: 0; margin: 0 0 1.5rem; font-size: 0.9rem; color: var(--text-secondary); }
-  ul#step-history li, ul#worker-rows li { padding: 0.15rem 0; }
+  ul#worker-rows { list-style: none; padding: 0; margin: 0 0 1.5rem; font-size: 0.9rem; color: var(--text-secondary); }
+  ul#worker-rows li { padding: 0.15rem 0; }
   #status-banner { padding: 0.75rem 1rem; border-radius: 6px; margin: 1rem 0; }
   #status-banner.done { background: color-mix(in srgb, var(--series-5) 15%, transparent); }
   #status-banner.error { background: color-mix(in srgb, #b25400 15%, transparent); color: #b25400; }
@@ -28,21 +28,13 @@
 <body class="viz-root">
 <h1>Indexing…</h1>
 <div id="status-banner" style="display:none"></div>
-<div id="current-line"></div>
-<ul id="step-history"></ul>
-<ul id="worker-rows"></ul>
 <div id="timeline"></div>
+<div id="current-line"></div>
+<ul id="worker-rows"></ul>
 <script>
 function fmtMs(ms) {
   if (ms === null || ms === undefined) return "";
   return (ms / 1000).toFixed(1) + "s";
-}
-
-function fmtRowCounts(edbRows, idbRows) {
-  const parts = [];
-  for (const [k, v] of Object.entries(edbRows || {})) parts.push(k + "=" + v);
-  for (const [k, v] of Object.entries(idbRows || {})) parts.push(k + "=" + v);
-  return parts.join(", ");
 }
 
 function renderCurrent(current) {
@@ -55,20 +47,6 @@ function renderCurrent(current) {
   text += "— " + fmtMs(current.elapsed_ms) + " ";
   if (current.residency_mb) text += "(" + Math.round(current.residency_mb) + "MB RES) ";
   el.textContent = text.trim();
-}
-
-function renderStepHistory(steps) {
-  const el = document.getElementById("step-history");
-  el.innerHTML = "";
-  for (const s of steps) {
-    const li = document.createElement("li");
-    let text = s.label;
-    if (s.elapsed_ms !== null && s.elapsed_ms !== undefined) text += " — " + fmtMs(s.elapsed_ms);
-    const rows = fmtRowCounts(s.edb_rows, s.idb_rows);
-    if (rows) text += " — " + rows;
-    li.textContent = text;
-    el.appendChild(li);
-  }
 }
 
 function renderWorkers(workers) {
@@ -112,7 +90,6 @@ async function poll() {
   }
 
   renderCurrent(data.current);
-  renderStepHistory(data.steps || []);
   renderWorkers(data.workers || []);
   renderTimeline(data.timeline_html);
 
