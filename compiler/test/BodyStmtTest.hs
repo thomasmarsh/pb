@@ -19,7 +19,7 @@ import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Emit       (collectStatements)
 import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText)
 
-import Hedgehog (Gen, Property, assert, failure, footnote, forAll, property, (===))
+import Hedgehog (Gen, Property, assert, eval, failure, footnote, forAll, property, success, (===))
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import qualified Data.Text      as T
@@ -507,6 +507,11 @@ tests = testGroup "Body"
   , testGroup "unparse control-flow (Plan 14 Phase C)"
     [ testProperty "round-trip control-flow: parse . unparse . parse == parse" propUnparseControlFlowRoundtrip
     ]
+
+  , testGroup "no-crash fuzzing"
+    [ testProperty "classifyBodyStmt never raises on arbitrary token input" propClassifyBodyStmtNoCrash
+    , testProperty "pBodyStmt never raises on arbitrary statement input" propPBodyStmtNoCrash
+    ]
   ]
 
 tag :: BodyStmt -> Text
@@ -789,3 +794,103 @@ propUnparseControlFlowRoundtrip = property $ do
   case reparseControlFlowStmt text of
     Left err     -> footnote ("reparse error: " <> show err <> " for unparsed text: " <> show text) >> failure
     Right result -> normalizeBodyStmt result === normalizeBodyStmt stmt
+
+-- ---------------------------------------------------------------------------
+-- No-crash fuzzing (BACKLOG "Body parser no-crash property")
+
+-- | Every 'TokenKind' paired with representative text, including every
+-- control keyword 'classifyBodyStmt'/'pBodyStmt' branch on (so mismatched
+-- kind+text combos, e.g. a "for" spelled with 'TkIdent', and malformed or
+-- unterminated control blocks, get generated too) plus punctuation/literal
+-- edge cases. 'mkStmt'/'mkTok' build a 'Statement' directly from these
+-- pairs with no lexer validation, so any combination is constructible.
+genFuzzTokenPair :: Gen (TokenKind, Text)
+genFuzzTokenPair = Gen.element
+  [ (TkStringDouble,    "\"a\"")
+  , (TkStringSingle,    "'a'")
+  , (TkBoolTrue,        "true")
+  , (TkBoolFalse,       "false")
+  , (TkNull,            "null")
+  , (TkDateLiteral,     "2020-01-01")
+  , (TkTimeLiteral,     "12:00:00")
+  , (TkFloatLiteral,    "3.14")
+  , (TkIntLiteral,      "1")
+  , (TkEnumLiteral,     "red!")
+  , (TkDatatype,        "long")
+  , (TkAccessModifier,  "public")
+  , (TkStorageModifier, "constant")
+  , (TkControlKw,       "if")
+  , (TkControlKw,       "then")
+  , (TkControlKw,       "elseif")
+  , (TkControlKw,       "else")
+  , (TkControlKw,       "end if")
+  , (TkControlKw,       "for")
+  , (TkControlKw,       "to")
+  , (TkControlKw,       "step")
+  , (TkControlKw,       "next")
+  , (TkControlKw,       "do")
+  , (TkControlKw,       "while")
+  , (TkControlKw,       "until")
+  , (TkControlKw,       "loop")
+  , (TkControlKw,       "choose case")
+  , (TkControlKw,       "case")
+  , (TkControlKw,       "end choose")
+  , (TkControlKw,       "try")
+  , (TkControlKw,       "catch")
+  , (TkControlKw,       "end try")
+  , (TkControlKw,       "return")
+  , (TkControlKw,       "exit")
+  , (TkControlKw,       "continue")
+  , (TkControlKw,       "throw")
+  , (TkDeclKw,          "end function")
+  , (TkSqlKw,           "select")
+  , (TkOtherKw,         "call")
+  , (TkOtherKw,         "destroy")
+  , (TkOtherKw,         "super")
+  , (TkCompareOp,       "<>")
+  , (TkAugmentOp,       "+=")
+  , (TkAssignOp,        "=")
+  , (TkArithOp,         "+")
+  , (TkDot,             ".")
+  , (TkDoubleColon,     "::")
+  , (TkLParen,          "(")
+  , (TkRParen,          ")")
+  , (TkLBracket,        "[")
+  , (TkRBracket,        "]")
+  , (TkLBrace,          "{")
+  , (TkRBrace,          "}")
+  , (TkComma,           ",")
+  , (TkSemi,            ";")
+  , (TkColon,           ":")
+  , (TkLabel,           "public:")
+  , (TkIdent,           "foo")
+  , (TkIdent,           "if")   -- keyword text under the wrong kind
+  , (TkIdent,           "")     -- empty text edge case
+  ]
+
+genFuzzStmtTokens :: Gen [(TokenKind, Text)]
+genFuzzStmtTokens = Gen.list (Range.linear 0 6) genFuzzTokenPair
+
+genFuzzStmt :: Gen Statement
+genFuzzStmt = mkStmt <$> genFuzzStmtTokens
+
+genFuzzStmtStream :: Gen [Statement]
+genFuzzStmtStream = Gen.list (Range.linear 0 8) genFuzzStmt
+
+-- | 'length . show' forces the ENTIRE result to full depth, not just the
+-- outer constructor -- unlike a bare pattern match/'assert', which only
+-- forces WHNF and would miss a crash hiding in a nested field. 'eval'
+-- forces its argument and reports any exception as a shrunk test failure
+-- instead of crashing the test binary.
+propClassifyBodyStmtNoCrash :: Property
+propClassifyBodyStmtNoCrash = property $ do
+  pairs <- forAll genFuzzStmtTokens
+  _ <- eval (length (show (classifyBodyStmt (mkStmt pairs))))
+  success
+
+propPBodyStmtNoCrash :: Property
+propPBodyStmtNoCrash = property $ do
+  stmts <- forAll genFuzzStmtStream
+  let outcome = parse (many pBodyStmt <* eof) "" (StmtStream stmts)
+  _ <- eval (either (length . show) (length . show) outcome)
+  success
