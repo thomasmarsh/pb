@@ -39,6 +39,7 @@ library
     PB.Grammar.DataWindow
     PB.Grammar.File
     PB.Grammar.Stream
+    PB.Grammar.Unparse
     PB.Lexing.DataWindow
     PB.Lexing.Escape
     PB.Lexing.Lexer

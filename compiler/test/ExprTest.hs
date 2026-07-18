@@ -2,12 +2,14 @@ module ExprTest (tests) where
 
 import PB.Prelude
 import PB.AST.Expr        (BinOp (..), DispatchExpr (..), DispatchMode (..), Expr (..), LvSegment (..), Lvalue (..))
+import PB.AST.Ident        (mkIdent)
 import PB.Grammar.Body    (parseExpr)
+import PB.Grammar.Unparse (unparseExpr)
 import PB.Lexing.Lexer       (tokenizeLine, LexLine (..))
 import PB.Lexing.Token       (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
 
-import Hedgehog (Property, assert, failure, footnote, forAll, property, (===))
+import Hedgehog (Gen, Property, assert, failure, footnote, forAll, property, (===))
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import Test.Tasty              (TestTree, testGroup)
@@ -569,6 +571,21 @@ tests = testGroup "Expr"
     , testProperty "roundtrip: ExRaw tokens identical to input" propExRawRoundtrip
     ]
 
+  , testGroup "unparse (Plan 14 Phase A)"
+    [ testProperty "round-trip: parse . unparse . parse == parse" propUnparseRoundtrip
+      -- ExMethodCall/ExDispatch/ExRaw are excluded from genExpr (see propUnparseRoundtrip's
+      -- comment) -- pinned here instead so unparseExpr's coverage of them isn't untested.
+    , testCase "ExMethodCall renders receiver.method(args)" $
+        unparseExpr (ExMethodCall (ExCall (Lvalue [LvSegment "dw_1" Nothing]) []) "rowcount" [])
+          @?= "dw_1().rowcount()"
+    , testCase "ExDispatch renders [obj.][dynamic ][post|trigger ][event ]name(args)" $
+        unparseExpr (ExDispatch (DispatchExpr
+          (Just (Lvalue [LvSegment "iw_frame" Nothing])) DmPost True True "ue_close" []))
+          @?= "iw_frame.dynamic post event ue_close()"
+    , testCase "ExRaw renders space-joined verbatim fragments" $
+        unparseExpr (ExRaw ["select", "*", "from", "t"]) @?= "select * from t"
+    ]
+
   , testGroup "LvSegment case-insensitive equality (Plan 178 Phase 2)"
     [ testCase "name differing only in case -> equal (PB identifiers are case-insensitive)" $
         LvSegment "Foo" Nothing @?= LvSegment "foo" Nothing
@@ -750,3 +767,118 @@ propNotBindsAboveAnd = property $ do
   case parseExpr ts of
     ExBinOp (ExNot _) op _ | op == logBop -> pure ()
     other -> footnote (show other) >> failure
+
+-- ---------------------------------------------------------------------------
+-- Unparse round-trip generator (Plan 14 Phase A)
+
+-- Small fixed identifier pool -- avoids PB keywords that parseAtom handles
+-- specially (not/and/or/create/true/false/null) so every generated name
+-- lexes as a plain TkIdent.
+genIdentText :: Gen Text
+genIdentText = Gen.element ["foo", "bar", "baz", "ll_row", "idx", "obj", "dw_1", "is_ok", "count", "value"]
+
+genSubscript :: Gen (Maybe [Text])
+genSubscript = Gen.maybe (Gen.element [["0"], ["1"], ["i"]])
+
+genLvSegment :: Gen LvSegment
+genLvSegment = LvSegment <$> (mkIdent <$> genIdentText) <*> genSubscript
+
+genLvalue :: Gen Lvalue
+genLvalue = Lvalue <$> Gen.list (Range.linear 1 3) genLvSegment
+
+-- One-token argument groups, from a small pool -- ExCall/ExMethodCall/
+-- ExDispatch args stay raw [Token] in the AST (never re-parsed into Expr),
+-- so the generator only needs valid token texts, not sub-expressions.
+genArgTokenGroup :: Gen [Token]
+genArgTokenGroup = Gen.element
+  [ [mkTok TkIdent "x"]
+  , [mkTok TkIntLiteral "1"]
+  , [mkTok TkIdent "y"]
+  ]
+
+allBinOps :: [BinOp]
+allBinOps =
+  [ BopAdd, BopSub, BopMul, BopDiv, BopPow
+  , BopEq, BopNe, BopLt, BopGt, BopLe, BopGe
+  , BopAnd, BopOr, BopXor
+  ]
+
+genLiteral :: Gen Expr
+genLiteral = Gen.choice
+  [ ExBool <$> Gen.bool
+  , ExInt  <$> Gen.element ["0", "1", "42", "100"]
+  , ExReal <$> Gen.element ["0.0", "1.5", "3.14"]
+  , ExStr  <$> Gen.element ["hello", "world", "abc123", ""]
+  , ExDate <$> Gen.element ["2024-01-01", "1999-12-31"]
+  , ExTime <$> Gen.element ["12:00:00", "00:00:01"]
+  , pure ExNull
+  ]
+
+-- | Terminal (non-recursive) and compound (recursive) generators for a
+-- structured Expr, excluding ExRaw/ExMethodCall/ExDispatch/ExHostVar. None
+-- of the four are safely nestable here:
+--   - ExRaw: re-lexing arbitrary raw fragments isn't guaranteed stable
+--     (plan's own documented exclusion), covered by propExRawRoundtrip instead.
+--   - ExMethodCall: only arises from PB.Grammar.Body's chainCalls chaining a
+--     further ".method()" onto an already call-shaped atom -- a flat
+--     ExMethodCall wrapping a bare ExLvalue receiver is not producible by
+--     real parsing, so a naive generator would create values whose
+--     unparse legitimately fails to round-trip (not a bug).
+--   - ExDispatch: a degenerate value (mode=DmSync, dynamic=False,
+--     event=False) unparses to plain "name(args)", which reparses as
+--     ExCall, not ExDispatch -- same generator-domain mismatch.
+--   - ExHostVar: parseExpr (PB.Grammar.Body, line ~337) only recognises
+--     TkColon as a HostVar when it is the FIRST token of the WHOLE
+--     expression being parsed; parseAtom/climbPrec have no TkColon case at
+--     all, so ":foo" can never round-trip as an ExBinOp/ExNot/ExNeg/
+--     ExCreateUsing operand -- found by this property (see plan/BACKLOG
+--     grooming note), not a hypothetical. Safe only at the true top level.
+-- All four are pinned instead via hand-built testCase values, or (ExHostVar)
+-- generated only at the top level below, never as a recursive sub-term.
+genExpr :: Gen Expr
+genExpr = Gen.recursive Gen.choice
+  [ genLiteral
+  , ExEnum <$> Gen.element ["Black", "Red", "White"]
+  , ExLvalue <$> genLvalue
+  ]
+  [ ExCall <$> genLvalue <*> Gen.list (Range.linear 0 2) genArgTokenGroup
+  , ExCreate . mkIdent <$> genIdentText
+  , ExCreateUsing <$> genExpr
+  , ExArray <$> Gen.list (Range.linear 0 2) genExpr
+  , ExNot <$> genExpr
+  , ExNeg <$> genExpr
+  , (\lhs op rhs -> ExBinOp lhs op rhs) <$> genExpr <*> Gen.element allBinOps <*> genExpr
+  ]
+
+-- | genExpr fabricates ExCall/ExMethodCall/ExDispatch argument tokens with a
+-- placeholder SourceSpan (mkTok always uses SourceSpan 1 1 1); the same
+-- tokens re-lexed out of unparseExpr's output naturally land at their real
+-- column. Token's derived Eq includes tkSpan, so comparing raw parseExpr
+-- output to the generated Expr would fail on position alone -- position was
+-- never part of what this property claims to preserve (the plan is
+-- explicit that unparse doesn't need to preserve original formatting).
+-- Strip spans on both sides before comparing.
+stripSpans :: Expr -> Expr
+stripSpans expr = case expr of
+  ExCall callee cargs       -> ExCall callee (stripArgSpans cargs)
+  ExMethodCall recv m margs -> ExMethodCall (stripSpans recv) m (stripArgSpans margs)
+  ExDispatch (DispatchExpr o md dyn ev nm dargs) ->
+    ExDispatch (DispatchExpr o md dyn ev nm (stripArgSpans dargs))
+  ExCreateUsing e    -> ExCreateUsing (stripSpans e)
+  ExArray es         -> ExArray (map stripSpans es)
+  ExBinOp lhs op rhs -> ExBinOp (stripSpans lhs) op (stripSpans rhs)
+  ExNot e            -> ExNot (stripSpans e)
+  ExNeg e            -> ExNeg (stripSpans e)
+  other              -> other
+  where
+    stripArgSpans = map (map (\t -> t { tkSpan = SourceSpan 0 0 0 }))
+
+propUnparseRoundtrip :: Property
+propUnparseRoundtrip = property $ do
+  -- ExHostVar only ever at the top level -- see genExpr's exclusion note.
+  expr <- forAll $ Gen.choice [genExpr, ExHostVar <$> genLvalue]
+  let text = unparseExpr expr
+      ll   = LogicalLine text 1 1
+  case lexResult (tokenizeLine ll) of
+    Left err   -> footnote ("lex error: " <> show err <> " for unparsed text: " <> show text) >> failure
+    Right toks -> stripSpans (parseExpr toks) === stripSpans expr
