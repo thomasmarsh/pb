@@ -495,6 +495,9 @@ tests = testGroup "Lexing"
             r @?= []
         , testCase "unterminated block comment is a lex error" $
             assertLexError "/* no end"
+        , testCase "block comment containing // strips to nothing" $ do
+            r <- tokenKinds "/* a // b */"
+            r @?= []
         ]
     , testGroup "enum beats keyword"
         [ testCase "true! is TkEnumLiteral" $ do
