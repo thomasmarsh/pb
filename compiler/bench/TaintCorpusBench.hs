@@ -95,21 +95,21 @@ main = do
     putStrLn ""
 
     tReach0 <- getCurrentTime
-    let tainted = TA.taintReachable allSources intraEdges returnRows defs uses edges
+    let tainted = TA.taintReachable allSources intraEdges returnRows edges
         reachCount = Set.size tainted
     tReach1 <- reachCount `seq` getCurrentTime
     putStrLn ("algebraic reachable: " <> T.pack (show reachCount)
            <> " triples in " <> showSecs (diffUTCTime tReach1 tReach0))
 
     tConf0 <- getCurrentTime
-    let confirmed = TA.taintConfirmed allSources allSinks intraEdges returnRows defs uses edges
+    let confirmed = TA.taintConfirmed allSources allSinks intraEdges returnRows edges
         confirmedCount = length confirmed
     tConf1 <- confirmedCount `seq` getCurrentTime
     putStrLn ("algebraic taint_confirmed: " <> T.pack (show confirmedCount)
            <> " pairs in " <> showSecs (diffUTCTime tConf1 tConf0))
 
     tWit0 <- getCurrentTime
-    let witnessLegs = TA.taintWitnessLegs allSources intraEdges returnRows defs uses edges
+    let witnessLegs = TA.taintWitnessLegs allSources intraEdges returnRows edges
         witnessPairCount = length witnessLegs
     tWit1 <- witnessPairCount `seq` getCurrentTime
     putStrLn ("algebraic taintWitnessLegs: " <> T.pack (show witnessPairCount)

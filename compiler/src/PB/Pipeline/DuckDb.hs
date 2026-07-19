@@ -227,14 +227,14 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       -- edges 'PB.Analysis.TaintEdges.foldTaintEdgesEff' folds directly
       -- from each procedure's compiled EffTerm, populated in Phase A
       -- (PB.Pipeline.Runner.compileOne, same phase as cat_footprint_columns)
-      -- and consumed by PB.Analysis.TaintAlgebra.buildTaintIndex in Phase B.
+      -- and consumed by PB.Analysis.TaintAlgebra.buildTaintSuccessors in Phase B.
       , "CREATE TABLE IF NOT EXISTS taint_intra_edges \
         \(object TEXT, proc_name TEXT, use_var TEXT, def_var TEXT)"
       -- Plan 182b (2026-07-18): one row per var used in a procedure's
       -- 'PB.Compile.IR.EReturn' payload, populated in Phase A alongside
       -- taint_intra_edges and consumed by
-      -- PB.Analysis.TaintAlgebra.buildTaintIndex's tiReturnUseTriples in
-      -- Phase B -- replaces that index's prior dependency on proc_uses'
+      -- PB.Analysis.TaintAlgebra.buildTaintSuccessors in
+      -- Phase B -- replaces the old index's prior dependency on proc_uses'
       -- kind='return' rows.
       , "CREATE TABLE IF NOT EXISTS taint_return_rows \
         \(object TEXT, proc_name TEXT, var_name TEXT)"

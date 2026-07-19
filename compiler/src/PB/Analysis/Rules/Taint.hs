@@ -74,10 +74,10 @@ taintKey obj proc var = obj <> "::" <> proc <> "::" <> var
 -- source\/sink classification, so no extra DB round-trip is needed.
 materializeTaintClosure
   :: [Taint.TaintSource] -> [Taint.TaintSink] -> [TaintEdges.TaintIntraEdgeRow] -> [TaintEdges.TaintReturnRow]
-  -> [Taint.DefRow] -> [Taint.UseRow] -> [Taint.InterprocEdge] -> DuckConn -> IO ()
-materializeTaintClosure sources sinks intraEdges returnRows defs uses edges conn = do
-  let reaches   = taintReachesPairs sources intraEdges returnRows defs uses edges
-      confirmed = taintConfirmed sources sinks intraEdges returnRows defs uses edges
+  -> [Taint.InterprocEdge] -> DuckConn -> IO ()
+materializeTaintClosure sources sinks intraEdges returnRows edges conn = do
+  let reaches   = taintReachesPairs sources intraEdges returnRows edges
+      confirmed = taintConfirmed sources sinks intraEdges returnRows edges
       reachRows =
         [ [taintKey ox px vx, taintKey oy py vy]
         | ((ox, px, vx), (oy, py, vy)) <- reaches
@@ -106,10 +106,10 @@ materializeTaintClosure sources sinks intraEdges returnRows defs uses edges conn
 -- load-bearing, not incidental formatting.
 materializeTaintStepKind
   :: [Taint.TaintSource] -> [Taint.TaintSink] -> [TaintEdges.TaintIntraEdgeRow] -> [TaintEdges.TaintReturnRow]
-  -> [Taint.DefRow] -> [Taint.UseRow] -> [Taint.InterprocEdge] -> DuckConn -> IO ()
-materializeTaintStepKind sources sinks intraEdges returnRows defs uses edges conn = do
-  let confirmed   = taintConfirmed sources sinks intraEdges returnRows defs uses edges
-      witnessLegs = taintWitnessLegs sources intraEdges returnRows defs uses edges
+  -> [Taint.InterprocEdge] -> DuckConn -> IO ()
+materializeTaintStepKind sources sinks intraEdges returnRows edges conn = do
+  let confirmed   = taintConfirmed sources sinks intraEdges returnRows edges
+      witnessLegs = taintWitnessLegs sources intraEdges returnRows edges
       legsByPair  = HM.fromList [ ((srcT, dstT), legList) | (srcT, dstT, legList) <- witnessLegs ]
       rows        = concatMap (rowsForPair legsByPair) confirmed
   recreateTextTable conn "taint_step_kind"

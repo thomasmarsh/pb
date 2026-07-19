@@ -77,8 +77,9 @@ snk :: Text -> Text -> Text -> Text -> Maybe Int -> TaintSink
 snk o p v t l = TaintSink o p v t "db_write" "high" l
 
 -- | Test-only reimplementation of the same-line def/use join
--- 'PB.Analysis.TaintAlgebra.buildTaintIndex' used before Plan 182 Move 2
--- (2026-07-18). Production now sources intra-proc edges from
+-- 'PB.Analysis.TaintAlgebra.buildTaintSuccessors' derives from the
+-- already-folded 'TaintEdges' output (Plan 182 Move 2, 2026-07-19).
+-- Production now sources intra-proc edges from
 -- 'PB.Analysis.TaintEdges.foldTaintEdgesEff' (a direct fold of the
 -- compiled EffTerm -- see 'TaintEdgesTest' for that path's own coverage);
 -- this helper exists only so the fixtures below (hand-typed 'DefRow'\/
@@ -106,8 +107,9 @@ intraEdgesFromDefUse defs uses =
   ]
 
 -- | Test-only reimplementation of the same @urKind == \"return\"@ row
--- filter 'PB.Analysis.TaintAlgebra.buildTaintIndex' used to apply directly
--- to @uses@ before Plan 182b (2026-07-18) moved that role onto
+-- filter 'PB.Analysis.TaintAlgebra.buildTaintSuccessors' derives from the
+-- already-folded 'TaintEdges' return rows (Plan 182 Move 2, 2026-07-19).
+-- Production sources return rows from
 -- 'PB.Analysis.TaintEdges.TaintReturnRow' (a term fact, not a row one).
 -- Lets the existing hand-typed 'UseRow' fixtures below (which already tag
 -- their return-kind rows) keep driving 'taintReachable'\/'taintReachesPairs'\/
@@ -161,7 +163,7 @@ tests = testGroup "TaintAlgebra"
                      , edge "oa" "pW" (Just 1) ""  "global::g_x" "global_write" "g_x" "g_x" "g_x"
                      , edge ""  "global::g_x" (Just 1) "oa" "pR" "global_write" "g_x" "g_x" "g_x"
                      ]
-              algSet = taintReachable sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) defs uses edges
+              algSet = taintReachable sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) edges
               expected = Set.fromList
                 [ ("", "global::g_x", "g_x"), ("oa", "pA", "ls_a"), ("oa", "pA", "ls_b")
                 , ("oa", "pB", "ls_c"), ("oa", "pR", "g_x"), ("oa", "pW", "g_x")
@@ -175,8 +177,29 @@ tests = testGroup "TaintAlgebra"
           -- omit any seed with no outgoing arcPairs, silently dropping
           -- it (confirmed on real corpus: 152/966 triples lost).
           let sources = [ src "w" "oa" "pA" "ls_orphan" (Just 9) ]
-              algSet   = taintReachable sources [] [] [] [] []
+              algSet   = taintReachable sources [] [] []
           in algSet @?= Set.fromList [ ("oa", "pA", "ls_orphan") ]
+
+      , testCase "intermediate def+use node expands (pure intra chain x->y->z)" $
+          -- Move 2 regression guard (Plan 182 §18.4): the new fold-driven
+          -- seed set must include intra-edge defVars (not just useVars), so
+          -- an intermediate def that is also a use elsewhere expands and its
+          -- own successors are reached. Source x; y = x+1 (def y, use x);
+          -- z = y+1 (def z, use y). Intra edges: x->y, y->z. Reachable must
+          -- be {x, y, z} -- if y failed to seed, z would be unreachable.
+          let sources = [ src "w" "oa" "pA" "x" (Just 1) ]
+              defs = [ defRow "w" "oa" "pA" "y" 1 0
+                     , defRow "w" "oa" "pA" "z" 2 1
+                     ]
+              uses = [ useRow "w" "oa" "pA" "x" 1 "var"
+                     , useRow "w" "oa" "pA" "y" 2 "var"
+                     ]
+              intra = intraEdgesFromDefUse defs uses
+              rets  = returnRowsFromUses uses
+              algSet = taintReachable sources intra rets []
+              expected = Set.fromList
+                [ ("oa", "pA", "x"), ("oa", "pA", "y"), ("oa", "pA", "z") ]
+          in algSet @?= expected
       , testCase "confirmed (source, sink) pairs match" $
           let sources = [ src "w" "oa" "pA" "ls_a" (Just 5)
                        , src "w" "oa" "pW" "g_x" (Just 1)
@@ -196,7 +219,7 @@ tests = testGroup "TaintAlgebra"
                      , edge "oa" "pW" (Just 1) ""  "global::g_x" "global_write" "g_x" "g_x" "g_x"
                      , edge ""  "global::g_x" (Just 1) "oa" "pR" "global_write" "g_x" "g_x" "g_x"
                      ]
-              confirmed = taintConfirmed sources sinks (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) defs uses edges
+              confirmed = taintConfirmed sources sinks (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) edges
               key (s, k) =
                 ( (tsObject s, tsProcName s, tsVarName s)
                 , (tskObject k, tskProcName k, tskVarName k)
@@ -229,7 +252,7 @@ tests = testGroup "TaintAlgebra"
                      , useRow "w" "oa" "pB" "ls_c" 3 "return"
                      ]
               edges = [ edge "oa" "pA" (Just 5) "oa" "pB" "arg"    "ls_b" "ls_b" "ls_c" ]
-              confirmed = taintConfirmed sources sinks (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) defs uses edges
+              confirmed = taintConfirmed sources sinks (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) edges
           in length confirmed @?= 1
       ]
   , testGroup "taintReachesPairs"
@@ -240,11 +263,11 @@ tests = testGroup "TaintAlgebra"
               edges = [] :: [InterprocEdge]
               srcT = ("oa", "pA", "ls_a")
               bT   = ("oa", "pA", "ls_b")
-          in Set.fromList (taintReachesPairs sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) defs uses edges)
+          in Set.fromList (taintReachesPairs sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) edges)
                @?= Set.fromList [ (srcT, bT) ]
       , testCase "isolated source (zero outgoing edges) produces zero pairs" $
           let sources = [ src "w" "oa" "pA" "ls_orphan" (Just 9) ]
-          in taintReachesPairs sources [] [] [] [] [] @?= []
+          in taintReachesPairs sources [] [] [] @?= []
       , testCase "cycle through the seed: source reachable back to itself" $
           -- ls_a -> ls_b (def-use same line) and ls_b -> ls_a (return edge
           -- back into the same var) forms a genuine 2-node cycle rooted at
@@ -260,7 +283,7 @@ tests = testGroup "TaintAlgebra"
               edges = [ edge "oa" "pA" (Just 3) "oa" "pA" "return" "ls_a" "ls_a" "ls_a" ]
               srcT = ("oa", "pA", "ls_a")
               bT   = ("oa", "pA", "ls_b")
-          in Set.fromList (taintReachesPairs sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) defs uses edges)
+          in Set.fromList (taintReachesPairs sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) edges)
                @?= Set.fromList [ (srcT, bT), (srcT, srcT) ]
       , testCase "shared-hub fan-in: 2 sources x 1 hub x 2 sinks confirm all 4 pairs" $
           -- Regression guard for a production incident: a widely-shared
@@ -281,7 +304,7 @@ tests = testGroup "TaintAlgebra"
               t1 = ("obj", "proc_a", "ls_t1"); t2 = ("obj", "proc_a", "ls_t2")
               confirmedKeys = Set.fromList
                 [ ((tsObject s, tsProcName s, tsVarName s), (tskObject k, tskProcName k, tskVarName k))
-                | (s, k) <- taintConfirmed sources sinks [] [] [] [] edges
+                | (s, k) <- taintConfirmed sources sinks [] [] edges
                 ]
           in confirmedKeys @?= Set.fromList [ (s1, t1), (s1, t2), (s2, t1), (s2, t2) ]
       ]
@@ -298,7 +321,7 @@ tests = testGroup "TaintAlgebra"
               edges = [ edge "oa" "pA" (Just 5) "oa" "pB" "arg"    "ls_b" "ls_b" "ls_c"
                      , edge "oa" "pB" (Just 3) "oa" "pA" "return" "ls_c" "ls_c" "ls_b"
                      ]
-          in null (taintWitnesses sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) defs uses edges) @?= False
+          in null (taintWitnesses sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) edges) @?= False
       , testCase "decomposed witness legs equal expected BFS legs (linear chain)" $
           let sources = [ src "w" "oa" "pA" "ls_a" (Just 5) ]
               defs = [ defRow "w" "oa" "pA" "ls_b" 5 0 ]
@@ -309,7 +332,7 @@ tests = testGroup "TaintAlgebra"
               dstT = ("oa", "pB", "ls_c")
               proj (f, t, k, _desc) = (f, t, k)
               legsFor = [ legs
-                        | (s, d, legs) <- taintWitnessLegs sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) defs uses edges
+                        | (s, d, legs) <- taintWitnessLegs sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) edges
                         , s == srcT, d == dstT
                         ]
           in map (map proj) legsFor @?= [ [ (srcT, midT, "def"), (midT, dstT, "arg") ] ]
@@ -341,7 +364,7 @@ tests = testGroup "TaintAlgebra"
                 , (("oa", "pA", "ls_y"), dstT, "arg")
                 ]
               legsFor = [ legs
-                        | (s, d, legs) <- taintWitnessLegs sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) defs uses edges
+                        | (s, d, legs) <- taintWitnessLegs sources (intraEdgesFromDefUse defs uses) (returnRowsFromUses uses) edges
                         , s == srcT, d == dstT
                         ]
           in case legsFor of
@@ -364,8 +387,8 @@ tests = testGroup "TaintAlgebra"
           let sources = [ src "f" "obj" "proc_a" "ls_same" (Just 1) ]
               sinks   = [ snk "f" "obj" "proc_a" "ls_same" (Just 1) ]
               srcT    = ("obj", "proc_a", "ls_same")
-              confirmed = taintConfirmed sources sinks [] [] [] [] []
-              witnessLegs = taintWitnessLegs sources [] [] [] [] []
+              confirmed = taintConfirmed sources sinks [] [] []
+              witnessLegs = taintWitnessLegs sources [] [] []
               legsFor = [ legs | (s, d, legs) <- witnessLegs, s == srcT, d == srcT ]
           in do
                assertEqual "0-hop pair is confirmed" 1 (length confirmed)

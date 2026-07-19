@@ -387,9 +387,9 @@ runPass67 conn = Progress.timedStep "Building call graph" $ do
     appendTaintSources     conn allSources
     appendTaintSinks       conn allSinks
   Progress.timedStep "Taint closure (algebraic)" $
-    TaintRules.materializeTaintClosure allSources allSinks intraEdges returnRows defs uses edges conn
+    TaintRules.materializeTaintClosure allSources allSinks intraEdges returnRows edges conn
   Progress.timedStep "Taint witness paths (algebraic)" $
-    TaintRules.materializeTaintStepKind allSources allSinks intraEdges returnRows defs uses edges conn
+    TaintRules.materializeTaintStepKind allSources allSinks intraEdges returnRows edges conn
 
 -- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157
 -- Phase 1): materialize the schema category @Sch@ from Phase A's
