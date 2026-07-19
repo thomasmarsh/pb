@@ -40,7 +40,7 @@ type RowCounts = [(Text, Int)]
 
 -- | One progress event emitted to stderr as a single JSON object for the
 -- Python reporter to consume. 'EvStep' carries every optional field a
--- caller might have on hand (elapsed time, EDB/IDB row counts, live-heap
+-- caller might have on hand (elapsed time, input/derived row counts, live-heap
 -- residency) rather than composing them into 'evLabel' prose by hand.
 data ProgressEvent
   = EvPhase
@@ -49,8 +49,8 @@ data ProgressEvent
   | EvStep
       { evLabel       :: Text
       , evElapsedMs   :: Maybe Double
-      , evEdbRows     :: RowCounts
-      , evIdbRows     :: RowCounts
+      , evInputRows   :: RowCounts
+      , evDerivedRows :: RowCounts
       , evResidencyMb :: Maybe Double
       }
   | EvWarning
@@ -59,7 +59,7 @@ data ProgressEvent
   deriving (Eq, Show)
 
 -- | Wire shape: @"tag"@/@"label"@ always present on 'EvStep'; every optional
--- field (@elapsed_ms@/@edb_rows@/@idb_rows@/@residency_mb@) is omitted, not
+-- field (@elapsed_ms@/@input_rows@/@derived_rows@/@residency_mb@) is omitted, not
 -- rendered @null@, when unset -- keeps the common-case payload identical to
 -- the bare @{"tag":"step","label":...}@ shape the Python reporter already
 -- parses (it reads @event["label"]@ only), so this is a pure wire-format
@@ -67,11 +67,11 @@ data ProgressEvent
 instance ToJSON ProgressEvent where
   toJSON (EvPhase name) = object [ "tag" .= ("phase" :: Text), "name" .= name ]
   toJSON (EvWarning msg) = object [ "tag" .= ("warning" :: Text), "message" .= msg ]
-  toJSON (EvStep label mElapsed edbRows idbRows mResidency) = object
+  toJSON (EvStep label mElapsed inputRows derivedRows mResidency) = object
     ( [ "tag" .= ("step" :: Text), "label" .= label ]
       <> optField "elapsed_ms"   mElapsed
-      <> rowsField "edb_rows"    edbRows
-      <> rowsField "idb_rows"    idbRows
+      <> rowsField "input_rows"    inputRows
+      <> rowsField "derived_rows"  derivedRows
       <> optField "residency_mb" mResidency
     )
     where
@@ -151,8 +151,8 @@ timedStep :: Text -> IO a -> IO a
 timedStep = timedStepTo emitEvent
 
 -- | Like 'timedStepTo', but the wrapped action also produces its own
--- 'RowCounts' (e.g. an EDB-materialization step), attached to the end
--- event's 'evIdbRows'.
+-- 'RowCounts' (e.g. a relation-materialization step), attached to the end
+-- event's 'evDerivedRows'.
 timedStepRowsTo :: (ProgressEvent -> IO ()) -> Text -> IO (a, RowCounts) -> IO a
 timedStepRowsTo sink label action = do
   sink (EvStep label Nothing [] [] Nothing)

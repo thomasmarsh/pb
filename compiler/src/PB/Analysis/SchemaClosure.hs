@@ -2,7 +2,7 @@
 -- | Schema-category closure — production's sole source for
 -- @reaches@, @path_leg_fwd@, and @path_leg_back@.
 --
--- The closure is a pure Haskell fixpoint over the raw EDB inputs:
+-- The closure is a pure Haskell fixpoint over the raw input relations:
 --
 --   * 'legPriority' is the writes-vs-retrieve priority cascade,
 --     re-expressed as a deterministic per-(x,y) highest-priority-kind pick
@@ -17,8 +17,8 @@
 --     downstream 'PB.Pipeline.DuckDb.materializeDecompositionCoslice'
 --     ROW_NUMBER tie-break picks one witness per ordinal.
 --
--- The EDB construction ('legSourceRows' / 'seedRows') is already Haskell
--- ('PB.Pipeline.DuckDb.Relations.initSchemaRelations'); only the IDB fixpoint is
+-- The input construction ('legSourceRows' / 'seedRows') is already Haskell
+-- ('PB.Pipeline.DuckDb.Relations.initSchemaRelations'); only the derived fixpoint is
 -- computed here.
 module PB.Analysis.SchemaClosure
   ( legPriority
@@ -184,11 +184,11 @@ backForSeed s adjFwd adjRev revReach =
 
 -- | Materialize @reaches@, @path_leg_fwd@, @path_leg_back@ as real DuckDB
 -- tables, computed by 'legPriority' / 'reachClosure' /
--- 'cosliceClosure' over the same raw EDB inputs
+-- 'cosliceClosure' over the same raw input relations
 -- 'PB.Pipeline.DuckDb.Relations.initSchemaRelations' reads. Must run after
 -- @schema_morphisms@\/@schema_objects@ are populated (same prerequisite as
 -- 'initSchemaRelations'); called from 'PB.Pipeline.Passes.materializeAllRelationsViews',
--- before the downstream materializer that reads @reaches@ as an EDB input
+-- before the downstream materializer that reads @reaches@ as an input relation
 -- ('PB.Pipeline.DuckDb.materializeRiskCount') runs and before
 -- 'PB.Pipeline.DuckDb.materializeDecompositionCoslice'.
 materializeSchemaClosure :: Handle -> IO ()

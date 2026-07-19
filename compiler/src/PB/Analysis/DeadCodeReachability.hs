@@ -12,12 +12,12 @@
 -- DuckDB table before the downstream materializers that consume it
 -- ('PB.Pipeline.DuckDb.materializeDeadCodeRows',
 -- 'PB.Pipeline.DuckDb.materializeLiveProc') run — those read it as an ordinary
--- EDB relation, the same mechanism
+-- input relation, the same mechanism
 -- 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations' uses for
 -- @proc@\/@entry@\/@calls@\/etc. Unit-level regression coverage lives entirely
 -- in 'DeadCodeReachabilityTest'.
 --
--- The reachability is a pure Haskell closure over the raw EDB inputs:
+-- The reachability is a pure Haskell closure over the raw input relations:
 --
 --   * 'descendant' (transitive closure of @inherits@) is a small auxiliary
 --     fixpoint over the object-ancestor graph, not via 'reachFrom'.
@@ -28,9 +28,9 @@
 --     (it computes a different, un-seeded relation).
 --   * 'proc_dead' = every 'proc' not in 'proc_reachable'.
 --
--- The EDB construction ('procRows'/'entryRows'/'callsRows'/...) is already
+-- The input construction ('procRows'/'entryRows'/'callsRows'/...) is already
 -- Haskell (see 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations'); only the
--- IDB fixpoint is computed here.
+-- derived fixpoint is computed here.
 module PB.Analysis.DeadCodeReachability
   ( deadReach
   , materializeDeadCodeClosure
@@ -123,12 +123,12 @@ deadReach procs calls inherits dwObjs =
   in procPairs `Set.difference` reachable
 
 -- | Materialize @proc_dead@ as a real DuckDB table, computed by
--- 'deadReach' over the same raw EDB inputs
+-- 'deadReach' over the same raw input relations
 -- 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations' reads. Must run after
 -- @procedures@\/@resolved_calls@\/@objects@\/@dw_objects@ are populated
 -- (same prerequisite as 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations');
 -- called from 'PB.Pipeline.Passes.materializeAllRelationsViews', before the
--- downstream materializers that read @proc_dead@ as an EDB input
+-- downstream materializers that read @proc_dead@ as an input relation
 -- ('PB.Pipeline.DuckDb.materializeDeadCodeRows',
 -- 'PB.Pipeline.DuckDb.materializeLiveProc') run.
 materializeDeadCodeClosure :: Handle -> IO ()

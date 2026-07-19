@@ -297,17 +297,17 @@ def test_all_events_are_json_serialisable():
 
 
 def _step_event(label: str, *, elapsed_ms: float | None = None,
-                edb_rows: dict[str, int] | None = None,
-                idb_rows: dict[str, int] | None = None,
+                input_rows: dict[str, int] | None = None,
+                derived_rows: dict[str, int] | None = None,
                 residency_mb: float | None = None,
                 since_start_ms: float | None = None) -> dict:
     ev: dict = {"tag": "step", "label": label}
     if elapsed_ms is not None:
         ev["elapsed_ms"] = elapsed_ms
-    if edb_rows:
-        ev["edb_rows"] = edb_rows
-    if idb_rows:
-        ev["idb_rows"] = idb_rows
+    if input_rows:
+        ev["input_rows"] = input_rows
+    if derived_rows:
+        ev["derived_rows"] = derived_rows
     if residency_mb is not None:
         ev["residency_mb"] = residency_mb
     if since_start_ms is not None:
@@ -317,22 +317,22 @@ def _step_event(label: str, *, elapsed_ms: float | None = None,
 
 def test_diagnostics_collector_step_events():
     c = DiagnosticsCollector()
-    c.on_event(_step_event("risk_count", edb_rows={"schema_objects": 22756}))
-    c.on_event(_step_event("risk_count", elapsed_ms=120000, idb_rows={"risk_count": 500}))
+    c.on_event(_step_event("risk_count", input_rows={"schema_objects": 22756}))
+    c.on_event(_step_event("risk_count", elapsed_ms=120000, derived_rows={"risk_count": 500}))
     report = c.generate_json()
     steps = report["steps"]
     assert len(steps) == 1
     s = steps[0]
     assert s["label"] == "risk_count"
     assert s["elapsed_ms"] == 120000
-    assert s["edb_rows"] == {"schema_objects": 22756}
-    assert s["idb_rows"] == {"risk_count": 500}
+    assert s["input_rows"] == {"schema_objects": 22756}
+    assert s["derived_rows"] == {"risk_count": 500}
 
 
 def test_diagnostics_collector_multiple_steps():
     c = DiagnosticsCollector()
-    c.on_event(_step_event("step_a", edb_rows={"r1": 100}, elapsed_ms=1000, idb_rows={"out": 50}))
-    c.on_event(_step_event("step_b", edb_rows={"r2": 200}, elapsed_ms=2000, idb_rows={"out2": 75}))
+    c.on_event(_step_event("step_a", input_rows={"r1": 100}, elapsed_ms=1000, derived_rows={"out": 50}))
+    c.on_event(_step_event("step_b", input_rows={"r2": 200}, elapsed_ms=2000, derived_rows={"out2": 75}))
     report = c.generate_json()
     assert len(report["steps"]) == 2
     assert report["steps"][0]["label"] == "step_a"
@@ -341,7 +341,7 @@ def test_diagnostics_collector_multiple_steps():
 
 def test_diagnostics_collector_peak_residency():
     c = DiagnosticsCollector()
-    c.on_event(_step_event("big_step", edb_rows={"r": 10}))
+    c.on_event(_step_event("big_step", input_rows={"r": 10}))
     c.on_event(_step_event("big_step", elapsed_ms=5000, residency_mb=1000))
     c.on_event(_step_event("big_step", elapsed_ms=10000, residency_mb=14800))
     c.on_event(_step_event("big_step", elapsed_ms=15000, residency_mb=145))
@@ -353,7 +353,7 @@ def test_diagnostics_collector_peak_residency():
 def test_diagnostics_collector_phase_events():
     c = DiagnosticsCollector()
     c.on_event({"tag": "phase", "name": "A"})
-    c.on_event(_step_event("parse_file", elapsed_ms=5000, idb_rows={"objects": 1051}))
+    c.on_event(_step_event("parse_file", elapsed_ms=5000, derived_rows={"objects": 1051}))
     c.on_event({"tag": "phase", "name": "B"})
     c.on_event(_step_event("risk_count", elapsed_ms=60000))
     report = c.generate_json()
@@ -381,8 +381,8 @@ def test_diagnostics_collector_empty_run():
 
 def test_diagnostics_collector_html_format():
     c = DiagnosticsCollector()
-    c.on_event(_step_event("risk_count", edb_rows={"reaches": 150000}, elapsed_ms=120000, idb_rows={"risk_count": 500}, residency_mb=14800))
-    c.on_event(_step_event("taint_reaches", edb_rows={"taint_edge": 5594106}, elapsed_ms=45200, idb_rows={"taint_reaches": 1200}))
+    c.on_event(_step_event("risk_count", input_rows={"reaches": 150000}, elapsed_ms=120000, derived_rows={"risk_count": 500}, residency_mb=14800))
+    c.on_event(_step_event("taint_reaches", input_rows={"taint_edge": 5594106}, elapsed_ms=45200, derived_rows={"taint_reaches": 1200}))
     out = c.generate_html()
     assert "<table>" in out
     assert "risk_count" in out
@@ -484,8 +484,8 @@ def test_diagnostics_collector_write(tmp_path):
 def test_diagnostics_collector_partial_run():
     """Collector handles a step that started but never completed (SIGINT scenario)."""
     c = DiagnosticsCollector()
-    c.on_event(_step_event("started_never_done", edb_rows={"r": 10}))
-    c.on_event(_step_event("next_step", edb_rows={"r2": 20}, elapsed_ms=500))
+    c.on_event(_step_event("started_never_done", input_rows={"r": 10}))
+    c.on_event(_step_event("next_step", input_rows={"r2": 20}, elapsed_ms=500))
     report = c.generate_json()
     # The incomplete step should still appear with what we know
     assert len(report["steps"]) == 2
@@ -496,7 +496,7 @@ def test_diagnostics_collector_partial_run():
 
 def test_diagnostics_collector_json_serialisable():
     c = DiagnosticsCollector()
-    c.on_event(_step_event("s1", edb_rows={"r": 10}, elapsed_ms=100, idb_rows={"o": 5}))
+    c.on_event(_step_event("s1", input_rows={"r": 10}, elapsed_ms=100, derived_rows={"o": 5}))
     c.on_event({"tag": "phase", "name": "A"})
     c.on_event({"tag": "warning", "message": "test"})
     # Must not raise
@@ -505,12 +505,12 @@ def test_diagnostics_collector_json_serialisable():
 
 def test_diagnostics_collector_snapshot_in_flight_step_grows():
     c = DiagnosticsCollector()
-    c.on_event(_step_event("Datalog: running [reaches]", since_start_ms=0, edb_rows={"r": 5}))
+    c.on_event(_step_event("Datalog: running [reaches]", since_start_ms=0, input_rows={"r": 5}))
     time.sleep(0.02)
     snap = c.snapshot()
     assert snap["status"] == "running"
     assert snap["current"]["label"] == "Datalog: running [reaches]"
-    assert snap["current"]["edb_rows"] == {"r": 5}
+    assert snap["current"]["input_rows"] == {"r": 5}
     assert snap["current"]["elapsed_ms"] >= 15
     assert snap["steps"] == []
     bar_match = re.search(r'<rect x="[0-9.]+" y="[0-9.]+" width="([0-9.]+)"[^>]*class="bar series-1"', snap["timeline_html"])
@@ -537,10 +537,10 @@ def test_diagnostics_collector_snapshot_open_worker_rendered_live():
 def test_diagnostics_collector_snapshot_completed_step_not_extended():
     c = DiagnosticsCollector()
     c.on_event(_step_event("risk_count", since_start_ms=100))
-    c.on_event(_step_event("risk_count", elapsed_ms=500, idb_rows={"risk_count": 50}, since_start_ms=600))
+    c.on_event(_step_event("risk_count", elapsed_ms=500, derived_rows={"risk_count": 50}, since_start_ms=600))
     snap = c.snapshot()
     assert snap["current"] is None
-    assert snap["steps"] == [{"label": "risk_count", "elapsed_ms": 500, "edb_rows": {}, "idb_rows": {"risk_count": 50}, "peak_residency_mb": None}]
+    assert snap["steps"] == [{"label": "risk_count", "elapsed_ms": 500, "input_rows": {}, "derived_rows": {"risk_count": 50}, "peak_residency_mb": None}]
     assert c.generate_json(now_ms=1000)["steps"][0]["end_since_start_ms"] == 600
 
 
@@ -573,7 +573,7 @@ def test_diagnostics_collector_snapshot_no_false_gap_for_in_flight_step():
 def test_diagnostics_collector_snapshot_json_serialisable():
     c = DiagnosticsCollector()
     c.on_event(_step_event("completed_step", since_start_ms=100, elapsed_ms=500))
-    c.on_event(_step_event("in_flight_step", since_start_ms=200, edb_rows={"r": 10}))
+    c.on_event(_step_event("in_flight_step", since_start_ms=200, input_rows={"r": 10}))
     c.on_event({"tag": "worker_start", "worker": 0, "file": "src/w_order.srw", "since_start_ms": 0})
     json.dumps(c.snapshot())
 

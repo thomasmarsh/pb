@@ -7,7 +7,7 @@ module Main (main) where
 -- Runs the existing pipeline UNMODIFIED (so the production SQL materializers
 -- populate the @reaches@ / @path_leg_fwd@ / @path_leg_back@ tables), then
 -- independently recomputes those same three relations from the raw
--- @schema_morphisms@ / @schema_objects@ EDB inputs via 'SchemaClosure', and
+-- @schema_morphisms@ / @schema_objects@ input relations via 'SchemaClosure', and
 -- asserts the two are content-exact. This is a self-consistency check
 -- (production SQL materializers vs. the algebraic closure), not the
 -- 'DeadCodeCorpusBench' determinism check — it must PASS (exit non-zero on
@@ -85,7 +85,7 @@ main = do
     putStrLn ("production path_leg_back: " <> T.pack (show (Set.size prodBackSet)) <> " rows")
     putStrLn ""
 
-    -- Independent algebraic recomputation from the raw EDB inputs.
+    -- Independent algebraic recomputation from the raw input relations.
     morphisms <- querySchemaMorphismRows conn
     objects   <- querySchemaObjects conn
     let legSource = legSourceRows morphisms

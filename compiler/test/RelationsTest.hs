@@ -1,9 +1,9 @@
 -- | Regression suite for the five relation materializers that build their
--- raw IDB tables directly in DuckDB (see
+-- raw derived tables directly in DuckDB (see
 -- 'PB.Pipeline.DuckDb.materializeImpliedFkPairs', 'materializeRiskCount',
 -- 'materializeLiveProc', 'materializeCallerCounts', 'materializeDeadCodeRows').
 -- The behavioral assertions below are the contract for those materializers;
--- the raw IDB tables the downstream consumers reshape are byte-for-byte the
+-- the raw derived tables the downstream consumers reshape are byte-for-byte the
 -- same as the hand-verified expected sets.
 module RelationsTest (tests) where
 
@@ -51,11 +51,11 @@ import Test.Tasty.HUnit (assertBool, testCase, (@?=))
 -- Their behavioral parity was proven by 'SchemaCorpusBench' against the
 -- real corpus before deletion (see doc/plan/182-algebraic-analysis.md §17),
 -- and the unit-level assertions now live in "SchemaClosureTest". This file
--- keeps the pure-Haskell EDB reshaping checks ('EdbReshaping') plus the
+-- keeps the pure-Haskell relation reshaping checks ('RelationReshaping') plus the
 -- SQL-materialized 'impliedFkPairs' / 'riskCount' rule sets -- and one
 -- integration test that the algebraic 'reaches' table feeds 'riskCount'.
 tests :: TestTree
-tests = testGroup "Edb"
+tests = testGroup "Relations"
 
   [ -- Plan 175 Phase 1 pilot: 'legSourceRows'/'stmtRows'/'seedRows' are the
     -- pure Haskell functions that replaced 'initSchemaRelations''s @CREATE VIEW@
@@ -63,7 +63,7 @@ tests = testGroup "Edb"
     -- file, these need no 'Handle' at all -- the whole point of the
     -- migration (see doc/plan/175-haskell-edb-reshaping-layer.md's
     -- "Testability win" section).
-    testGroup "EdbReshaping"
+    testGroup "RelationReshaping"
     [ testCase "legSourceRows renames from_key/to_key/leg_kind to x/y/kind, drops leg_source" $
         legSourceRows [SchMorphismRow "col:a.x" "stmt:sql:f:o:p:5" "reads" "sql_text"]
           @?= [["col:a.x", "stmt:sql:f:o:p:5", "reads"]]
@@ -86,7 +86,7 @@ tests = testGroup "Edb"
         seedRows [StmtObj (SqlStmtId "f.srf" "obj1" "proc1" 5)] @?= []
 
     , -- Plan 161 Phase 3a: implied_fk_pairs(X, Y) :- join_leg(X, Y), !fk(X, Y),
-      -- !fk(Y, X). join_leg/fk are pure EDB (initSchemaRelations), so this rule set
+      -- !fk(Y, X). join_leg/fk are pure input relations (initSchemaRelations), so this rule set
       -- runs alone -- no dependency on the deleted legRules/reachesRules.
       testCase "joinLegRows: a dw_join-sourced row becomes (x, y), dropping kind/source" $
         joinLegRows [SchMorphismRow "col:a.x" "col:b.y" "fk" "dw_join"]
@@ -108,7 +108,7 @@ tests = testGroup "Edb"
 
   , -- implied_fk_pairs(X, Y) :- join_leg(X, Y), !fk(X, Y), !fk(Y, X).
     -- Materialized directly in DuckDB by 'materializeImpliedFkPairs'.
-    -- join_leg/fk are pure EDB (initSchemaRelations).
+    -- join_leg/fk are pure input relations (initSchemaRelations).
     testGroup "impliedFkPairs"
     [ testCase "a DW-join edge with no declared FK in either direction is reported" $
         withHandle inMemory $ \conn -> do
@@ -157,7 +157,7 @@ tests = testGroup "Edb"
     ]
 
   , -- risk_count(X, N) aggregates the downstream footprint over the 'reaches'
-    -- relation. 'reaches' is an algebraic EDB table materialized by
+    -- relation. 'reaches' is an algebraic input table materialized by
     -- 'SchemaClosure.materializeSchemaClosure' (which also writes
     -- path_leg_fwd/path_leg_back). This group is the integration gate that the
     -- algebraic closure feeds the SQL 'materializeRiskCount' correctly.
@@ -244,7 +244,7 @@ tests = testGroup "Edb"
       , testCase "a DW retrieve StmtObj (no real proc) never appears in live_proc" $
           -- Regression: a 'dw_retrieve'-kind schema_objects row has stmt_proc = NULL,
           -- which can never match proc_dead's (object, proc) rows -- if the
-          -- `stmt` EDB view included it, every DW retrieve would vacuously pass the
+          -- `stmt` input relation view included it, every DW retrieve would vacuously pass the
           -- NOT EXISTS dead check and pollute live_proc with meaningless rows
           -- (found via a real --db smoke run over the openpay corpus).
           withHandle inMemory $ \conn -> do
@@ -264,7 +264,7 @@ tests = testGroup "Edb"
       -- matching) moved to 'DeadCodeReachabilityTest' as golden assertions --
       -- 'deadReach' is the sole implementation, so there is no second
       -- implementation left to oracle-diff against.
-      testGroup "EDB view filtering"
+      testGroup "Relation filtering"
       [ testCase "speculative-confidence procedures (builtin method stubs) are excluded from proc/entry/proc_dead" $
           -- Regression: a real openpay --db run's proc_dead had 45 extra rows,
           -- all speculative-confidence stub procedures registered for PB base
@@ -405,7 +405,7 @@ tests = testGroup "Edb"
     , -- Plan 175 Phase 2: direct unit tests of 'initDeadCodeRelations''s pure
       -- reshaping functions -- no 'Handle'\/external engine needed, mirroring
       -- 'SchemaClosureTest''s Phase 1 precedent.
-      testGroup "EdbRelations"
+      testGroup "MaterializedRelations"
       [ testGroup "procRows"
         [ testCase "includes a confirmed procedure" $
             procRows [ProcSummaryRow "obj" "fn" "function" (Just 1) "confirmed"]

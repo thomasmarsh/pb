@@ -82,12 +82,12 @@ module PB.Pipeline.DuckDb
   , queryCatFootprintColumns
   , queryCatColumns
   , queryCatFks
-  -- Plan 175 Phase 1: typed EDB-reshaping-layer readers
+  -- Plan 175 Phase 1: typed relation-reshaping-layer readers
   , SchMorphismRow (..)
   , querySchemaObjects
   , querySchemaMorphismRows
   , renderLegKind
-  -- Plan 175 Phase 2: typed EDB-reshaping-layer readers (DeadCode.hs)
+  -- Plan 175 Phase 2: typed relation-reshaping-layer readers (DeadCode.hs)
   , ProcSummaryRow (..)
   , queryObjectAncestors
   , queryProcedures
@@ -113,7 +113,7 @@ module PB.Pipeline.DuckDb
   , materializeLiveProc
   , materializeCallerCounts
   , materializeDeadCodeRows
-  -- Generic EDB/IDB bridge (dynamic-arity TEXT relations)
+  -- Generic input/derived relation bridge (dynamic-arity TEXT relations)
   , queryTextRows
   , recreateTextTable
   , appendTextRows
@@ -1538,7 +1538,7 @@ appendSchemaMorphisms conn ms = withRaw conn "schema_morphisms" $ \app ->
 -- | Materialize @decomposition_coslice@ from the @path_leg_fwd@\/@path_leg_back@
 -- tables (produced by 'PB.Analysis.SchemaClosure.cosliceClosure'). A pure SQL
 -- projection -- no traversal, no Haskell graph walk -- satisfying the
--- EDB-discipline functor property (the @path_leg@ tables are the reasoning;
+-- relation-discipline functor property (the @path_leg@ tables are the reasoning;
 -- this is a rename\/join into the 8-column consumer shape).
 --
 -- Three things happen here that a plain rename/join projection can't express:
@@ -1656,8 +1656,8 @@ materializeColumnRisk conn =
       ]
 
 -- ---------------------------------------------------------------------------
--- SQL materializers for the raw IDB tables the downstream materialize*
--- consumers reshape. The EDB tables they read (join_leg, fk, reaches, stmt,
+-- SQL materializers for the raw derived tables the downstream materialize*
+-- consumers reshape. The input tables they read (join_leg, fk, reaches, stmt,
 -- proc_dead, proc, proc_meta, call_ref, resolved_call_edge) are all
 -- materialized earlier in 'PB.Pipeline.Passes.materializeAllRelationsViews'.
 
@@ -1923,14 +1923,14 @@ materializeTaintAnnotations conn = do
   appendTaintAnnotations conn annotations
 
 -- ---------------------------------------------------------------------------
--- Generic EDB/IDB bridge (dynamic-arity TEXT tables)
+-- Generic input/derived relation bridge (dynamic-arity TEXT tables)
 --
 -- The materializers above need to read/write relations whose column count is
 -- a runtime value, not fixed by a Haskell type -- so no per-relation
 -- 'FromRow'/appender pair is possible.
 -- These three are the dynamic-arity counterparts of the typed
 -- query/appender pairs above, values passed through as TEXT throughout
--- (every EDB relation this project builds -- keys,
+-- (every input relation this project builds -- keys,
 -- kinds, names -- is already string-shaped; a numeric column like 'stmt's
 -- 'line' is CAST to VARCHAR at read time since no current rule inspects it
 -- other than by equality/wildcard).

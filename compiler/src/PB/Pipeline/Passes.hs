@@ -53,7 +53,7 @@ import Data.Time.Clock        (getCurrentTime)
 -- 'PB.Pipeline.DuckDb.materializeLiveProc',
 -- 'PB.Pipeline.DuckDb.materializeCallerCounts',
 -- 'PB.Pipeline.DuckDb.materializeDeadCodeRows'), invoked in 'runPhaseB' after
--- the EDB views are built. Per-relation progress is folded into the ordinary
+-- the input relation views are built. Per-relation progress is folded into the ordinary
 -- 'Progress.timedStep' events.
 
 -- | Characterize @leg_source@'s (x, y) key fan-in (see
@@ -113,23 +113,23 @@ reportTaintDefUseFanout conn = do
 -- | Phase B: read Phase A tables from DuckDB, run link analysis, write results.
 -- Structured as two sub-phases:
 --
--- * **B1 (Haskell + EDB materialization):** the analyses that can't be
+-- * **B1 (Haskell + input relation materialization):** the analyses that can't be
 --   expressed as pure SQL run here — type/call resolution
 --   ('runPass5', populating @resolved_calls@), interproc-edge and taint
 --   analysis, including the taint closure itself
 --   ('runPass67' — @taint_reaches@\/@taint_confirmed@ are materialized by 'TaintClosure.materializeTaintClosure'), and
 --   schema-category construction
 --   ('runPass9', populating @schema_objects@\/@schema_morphisms@). Then
---   'materializeAllRelationsViews' creates every EDB relation the
---   downstream materializers assume: the dead-code EDBs
+--   'materializeAllRelationsViews' creates every input relation the
+--   downstream materializers assume: the dead-code input relations
 --   ('Relations.initDeadCodeRelations', over @procedures@\/
 --   @resolved_calls@\/@objects@), @proc_dead@ itself
 --   ('DeadCodeReachability.materializeDeadCodeClosure'), and the
---   schema EDBs
+--   schema input relations
 --   ('Relations.initSchemaRelations', over @schema_morphisms@\/
 --   @schema_objects@).
 -- * **B2 (SQL materializers):** the five relation materializers run as direct
---   DuckDB SQL, in dependency order after the EDB views exist:
+--   DuckDB SQL, in dependency order after the input relation views exist:
 --   'PB.Pipeline.DuckDb.materializeImpliedFkPairs' (consumed by
 --   'materializeImpliedFk'), 'PB.Pipeline.DuckDb.materializeRiskCount'
 --   (consumed by 'materializeColumnRisk'),
@@ -138,15 +138,15 @@ reportTaintDefUseFanout conn = do
 --   'PB.Pipeline.DuckDb.materializeDeadCodeRows' (which depends on the
 --   @confidence@\/@caller_count_*@ tables the previous step built, and is
 --   consumed by 'materializeDeadCode'). The only sequencing that remains
---   manual is the Phase A→B boundary enforced by B1 (the EDB views' source
+--   manual is the Phase A→B boundary enforced by B1 (the input relation views' source
 --   tables must be populated before the views are created), which is a
---   genuine data dependency. Finally the two SQL materializers project IDB
+--   genuine data dependency. Finally the two SQL materializers project derived
 --   output tables into their API-facing shapes (@dead_code_rows@→@dead_code@,
 --   @path_leg_fwd@\/@path_leg_back@→@decomposition_coslice@).
 runPhaseB :: Handle -> Maybe Text -> IO ()
 runPhaseB conn mDefaultNamespace = do
   Progress.emitEvent (Progress.EvPhase "B")
-  -- B1: prerequisite Haskell analyses + EDB materialization.
+  -- B1: prerequisite Haskell analyses + input relation materialization.
   _   <- runPass5  conn
   runPass67 conn
   sch <- runPass9 conn mDefaultNamespace
@@ -178,16 +178,16 @@ runPhaseB conn mDefaultNamespace = do
   materializeTaintPaths conn
   materializeTaintAnnotations conn
 
--- | Materialize every EDB view the downstream SQL materializers assume
--- already exist. Each 'init*EdbViews' is idempotent (@CREATE OR
--- REPLACE VIEW@); together they cover the dead-code and schema EDB layers.
+-- | Materialize every input relation view the downstream SQL materializers assume
+-- already exist. Each 'initXRelations' is idempotent (@CREATE OR
+-- REPLACE VIEW@); together they cover the dead-code and schema input relation layers.
 -- Must run after 'runPass5' (for @resolved_calls@) and 'runPass9' (for
 -- @schema_objects@\/@schema_morphisms@).
 materializeAllRelationsViews :: Handle -> IO ()
 materializeAllRelationsViews conn = do
-  Progress.timedStep "Dead-code EDB views materialized" $ Relations.initDeadCodeRelations conn
+  Progress.timedStep "Dead-code relations materialized" $ Relations.initDeadCodeRelations conn
   Progress.timedStep "Dead-code closure" $ DeadCodeReachability.materializeDeadCodeClosure conn
-  Progress.timedStep "Schema EDB views materialized" $ Relations.initSchemaRelations conn
+  Progress.timedStep "Schema relations materialized" $ Relations.initSchemaRelations conn
   Progress.timedStep "Schema closure" $ SchemaClosure.materializeSchemaClosure conn
   reportTaintDefUseFanout conn
 
@@ -197,7 +197,7 @@ materializeAllRelationsViews conn = do
 -- 'PB.Pipeline.DuckDb.materializeCallerCounts', 'PB.Pipeline.DuckDb.materializeDeadCodeRows').
 -- The taint, dead-reach, and schema-coslice relations are produced
 -- algebraically (Haskell or SQL); the schema/dead-code consumers read the
--- same pre-materialized EDB tables they always did.
+-- same pre-materialized input tables they always did.
 
 runPass5 :: Handle -> IO (Map.Map Ident Ident)
 runPass5 conn = Progress.timedStep "Resolving types" $ do

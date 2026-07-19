@@ -10,7 +10,7 @@ module Main (main) where
 -- Runs the existing pipeline unmodified (which now materializes @proc_dead@
 -- algebraically via 'PB.Analysis.DeadCodeReachability.materializeDeadCodeClosure'
 -- in 'PB.Pipeline.Passes.materializeAllRelationsViews'), then re-reads the same raw
--- EDB inputs (procedures / resolved_calls / object ancestors / dw_objects)
+-- input relations (procedures / resolved_calls / object ancestors / dw_objects)
 -- and recomputes 'deadReach' independently, asserting the two are
 -- content-exact -- a self-consistency check (determinism, no drift between
 -- the production call site and a fresh one), not an oracle-diff. Unit-level
@@ -67,7 +67,7 @@ main = do
   putStrLn ""
 
   withHandle (Config (optDb opts)) $ \conn -> do
-    -- Read raw EDB inputs (already materialized by the pipeline's
+    -- Read raw input relations (already materialized by the pipeline's
     -- initDeadCodeRelations). The algebraic path reads these directly.
     procs    <- queryProcedures conn
     calls    <- queryResolvedCalls conn
@@ -86,7 +86,7 @@ main = do
     let prodDead = Set.fromList prodRows
     putStrLn ("production proc_dead: " <> T.pack (show (Set.size prodDead)) <> " pairs")
 
-    -- Fresh, independent recomputation (closure alone, EDB already read).
+    -- Fresh, independent recomputation (closure alone, inputs already read).
     tAlg0 <- getCurrentTime
     let algDead = deadReach procs calls inherits dwObjs
         algCount = Set.size algDead

@@ -189,7 +189,7 @@ Mark done/pending as body parsers land.
 | `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)                                                                                                                                                                                                |
 | `PB.Compile.*`  | Compilation pipeline: SSA IR (SSA), IR types (IR), loop analysis (LoopAnalysis), SSA lowering (FromSSA), flattening (Flatten), instruction types (InstrTypes), value model (ValueModel), interpreters (Interp, InstrInterp)                        |
 | `PB.Pipeline.*` | Multi-step transformations: Preprocess, Emit, Passes, Runner, Serialise, FileWalk, DuckDb, SqlParse, Church                                                                                                                                        |
-| `PB.Analysis.*` | Pure analysis passes: Cfg, Dataflow, Taint, TypeEnv, TypeResolve, Builtins, SchemaCategory, SchFootprint, DwFootprint, ControlHierarchy, TaintClosure, DeadCodeReachability, SchemaClosure. `PB.Pipeline.DuckDb.Edb` holds the typed EDB-reshaping readers (DeadCode, Schema, Taint fanouts) |
+| `PB.Analysis.*` | Pure analysis passes: Cfg, Dataflow, Taint, TypeEnv, TypeResolve, Builtins, SchemaCategory, SchFootprint, DwFootprint, ControlHierarchy, TaintClosure, DeadCodeReachability, SchemaClosure. `PB.Pipeline.DuckDb.Relations` holds the typed relation-reshaping readers (DeadCode, Schema, Taint fanouts) |
 | `PB.Prelude`    | Custom Prelude — no parsing or transformation logic                                                                                                                                                                                                |
 
 New modules go in the most specific matching directory. If a new layer is needed, propose it in Stage 1.
@@ -198,17 +198,17 @@ New modules go in the most specific matching directory. If a new layer is needed
 
 ## DuckDb Moat & Analysis Placement
 
-Read this before writing or reviewing any EDB reader (`initXEdb` in
-`PB.Pipeline.DuckDb.Edb`), materializer SQL (`materialize*` in
+Read this before writing or reviewing any relation reader (`initXRelations` in
+`PB.Pipeline.DuckDb.Relations`), materializer SQL (`materialize*` in
 `PB.Pipeline.DuckDb`), or analysis closure (`PB.Analysis.*`). Governs where
 logic lives across the surfaces a whole-program analysis touches: compiler
 phases (`PB.Grammar`/`PB.AST`/`PB.Compile`), `PB.Analysis.*` Haskell, the
-DuckDb EDB-loading boundary (`PB.Pipeline.DuckDb.Edb`), and the SQL
+DuckDb relation-loading boundary (`PB.Pipeline.DuckDb.Relations`), and the SQL
 materializers (`PB.Pipeline.DuckDb`).
 
-**The DuckDb moat.** `PB.Pipeline.DuckDb.Edb` is the single boundary
+**The DuckDb moat.** `PB.Pipeline.DuckDb.Relations` is the single boundary
 that loads raw DuckDB tables into the typed row shapes the analyses consume.
-It holds the pure EDB-reshaping readers — `legSourceRows`/`stmtRows`/`seedRows`
+It holds the pure relation-reshaping readers — `legSourceRows`/`stmtRows`/`seedRows`
 (feeding `querySchemaObjects`/`querySchemaMorphismRows`),
 `procRows`/`procMetaRows`/`inheritsRows`/`callRefRows`/`resolvedCallEdgeRows`/
 `entryRows`/`callsRows`, and the `DefUseFanout` taint fanouts. These
@@ -230,7 +230,7 @@ functions only rename, cast, or statically filter; they never decide.
    HUnit fixtures.
 3. Otherwise — moving an already-computed fact from storage shape into
    relation shape (rename, cast, static-predicate filter, union of
-   identically-shaped sources) — it's a typed `PB.Pipeline.DuckDb.Edb`
+   identically-shaped sources) — it's a typed `PB.Pipeline.DuckDb.Relations`
    function, materialized into a plain DuckDB table via
    `recreateTextTable`/`appendTextRows`. `PB.Analysis.TaintClosure`'s
    `materializeTaintClosure`/`materializeTaintStepKind` (reshaping
@@ -240,8 +240,8 @@ functions only rename, cast, or statically filter; they never decide.
    _new_ `CREATE VIEW` for rule-3-shaped logic anywhere in the codebase
    going forward.
 
-**House rule: EDB reshaping logic may not decide anything.** A typed
-`PB.Pipeline.DuckDb.Edb` reshaping function (or a materializer's
+**House rule: relation reshaping logic may not decide anything.** A typed
+`PB.Pipeline.DuckDb.Relations` reshaping function (or a materializer's
 `INSERT ... SELECT`) may only rename, cast, or filter by a
 static/structural predicate. If the logic needs a `CASE`/branch,
 `ROW_NUMBER`/any window function, or a `GROUP BY`/aggregate to produce its

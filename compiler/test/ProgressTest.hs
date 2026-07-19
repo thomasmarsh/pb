@@ -24,15 +24,15 @@ tests = testGroup "Progress"
           toJSON (EvStep "leg_source" Nothing [] [] Nothing) @?=
             object ["tag" .= ("step" :: Text), "label" .= ("leg_source" :: Text)]
 
-      , testCase "EvStep with elapsed_ms/edb_rows/idb_rows/residency_mb populates every field" $
+      , testCase "EvStep with elapsed_ms/input_rows/derived_rows/residency_mb populates every field" $
           toJSON (EvStep "risk_count" (Just 12345.6) [("reaches", 900000)]
                     [("risk_count", 22756)] (Just 14800.0))
             @?= object
                   [ "tag"          .= ("step" :: Text)
                   , "label"        .= ("risk_count" :: Text)
                   , "elapsed_ms"   .= (12345.6 :: Double)
-                  , "edb_rows"     .= object ["reaches" .= (900000 :: Int)]
-                  , "idb_rows"     .= object ["risk_count" .= (22756 :: Int)]
+                  , "input_rows"   .= object ["reaches" .= (900000 :: Int)]
+                  , "derived_rows" .= object ["risk_count" .= (22756 :: Int)]
                   , "residency_mb" .= (14800.0 :: Double)
                   ]
       ]
@@ -83,10 +83,10 @@ tests = testGroup "Progress"
       ]
 
   , testGroup "timedStepRowsTo"
-      [ testCase "end event's idb_rows carries the action's own row counts" $ do
+      [ testCase "end event's derived_rows carries the action's own row counts" $ do
           ref <- newIORef []
           let sink ev = modifyIORef ref (++ [ev])
-          _ <- timedStepRowsTo sink "taint edb views" (pure ((), [("taint_edge", 3), ("taint_source", 5)]))
+          _ <- timedStepRowsTo sink "taint input relations" (pure ((), [("taint_edge", 3), ("taint_source", 5)]))
           events <- readIORef ref
           case events of
             [ EvStep _ Nothing [] [] Nothing

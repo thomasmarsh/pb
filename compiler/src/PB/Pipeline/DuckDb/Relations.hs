@@ -60,9 +60,9 @@ import qualified Data.Set        as Set
 import qualified Data.Text       as T
 
 -- ---------------------------------------------------------------------------
--- Schema EDB relations
+-- Schema input relations
 
--- | (Re)materialize the EDB relations every analysis below assumes already
+-- | (Re)materialize the input relations every analysis below assumes already
 -- exist: @leg_source@ over 'schema_morphisms', @stmt@\/@seed@ over
 -- 'schema_objects'. Must run after 'PB.Pipeline.DuckDb.initSchema' AND after
 -- 'schema_objects'\/'schema_morphisms' have been populated: the read here is
@@ -166,9 +166,9 @@ legSourceFanout conn = do
     _             -> LegSourceFanout 0 0 0
 
 -- ---------------------------------------------------------------------------
--- Dead-code EDB relations
+-- Dead-code input relations
 
--- | Materializes the EDB relations the dead-code analysis reads: @proc@
+-- | Materializes the input relations the dead-code analysis reads: @proc@
 -- (every known procedure), @entry@ (event\/on handlers, plus DW-object
 -- procedures with outbound calls), @calls@ (same-object case-insensitive
 -- name-matched calls, unioned with cross-object resolved calls, both derived

@@ -196,8 +196,8 @@ class _StepInfo:
 
     label: str
     elapsed_ms: float | None = None
-    edb_rows: dict[str, int] = field(default_factory=dict)
-    idb_rows: dict[str, int] = field(default_factory=dict)
+    input_rows: dict[str, int] = field(default_factory=dict)
+    derived_rows: dict[str, int] = field(default_factory=dict)
     residency_mb: float | None = None
 
 
@@ -207,9 +207,7 @@ class _StepInfo:
 # dataviz skill) -- never reordered/cycled per that palette's own rule.
 _KIND_ORDER = [
     "Datalog ruleset run",
-    "Datalog EDB write",
     "Datalog materialize/characterize",
-    "Taint EDB checkpoint",
     "Pipeline orchestration",
 ]
 
@@ -217,12 +215,8 @@ _KIND_ORDER = [
 def _step_kind(label: str) -> str:
     if label.startswith("Datalog: running"):
         return "Datalog ruleset run"
-    if label.startswith("Datalog: EDB"):
-        return "Datalog EDB write"
     if label.startswith("Datalog:"):
         return "Datalog materialize/characterize"
-    if label.startswith("Taint EDB counts"):
-        return "Taint EDB checkpoint"
     return "Pipeline orchestration"
 
 
@@ -352,8 +346,8 @@ class _ReportStep:
 
     label: str
     elapsed_ms: float | None = None
-    edb_rows: dict[str, int] = field(default_factory=dict)
-    idb_rows: dict[str, int] = field(default_factory=dict)
+    input_rows: dict[str, int] = field(default_factory=dict)
+    derived_rows: dict[str, int] = field(default_factory=dict)
     peak_residency_mb: float | None = None
     # Absolute offsets from the pbc process's first progress event (its
     # `since_start_ms` wire field) -- unlike elapsed_ms (this step's own
@@ -448,8 +442,8 @@ class DiagnosticsCollector:
         label = event.get("label", "")
         if not label:
             return
-        edb_rows = event.get("edb_rows") or {}
-        idb_rows = event.get("idb_rows") or {}
+        input_rows = event.get("input_rows") or {}
+        derived_rows = event.get("derived_rows") or {}
         elapsed_ms = event.get("elapsed_ms")
         residency_mb = event.get("residency_mb")
         since_start_ms = event.get("since_start_ms")
@@ -459,14 +453,14 @@ class DiagnosticsCollector:
             step = _ReportStep(label=label, start_since_start_ms=since_start_ms)
             self._steps_by_label[label] = step
 
-        if edb_rows:
-            step.edb_rows.update(edb_rows)
+        if input_rows:
+            step.input_rows.update(input_rows)
         if elapsed_ms is not None:
             step.elapsed_ms = elapsed_ms
             if step.completed_seq is None:
                 step.completed_seq = self._seq
-        if idb_rows:
-            step.idb_rows.update(idb_rows)
+        if derived_rows:
+            step.derived_rows.update(derived_rows)
         if residency_mb is not None:
             if step.peak_residency_mb is None or residency_mb > step.peak_residency_mb:
                 step.peak_residency_mb = residency_mb
@@ -487,8 +481,8 @@ class DiagnosticsCollector:
                     {
                         "label": s.label,
                         "elapsed_ms": s.elapsed_ms,
-                        "edb_rows": s.edb_rows,
-                        "idb_rows": s.idb_rows,
+                        "input_rows": s.input_rows,
+                        "derived_rows": s.derived_rows,
                         "peak_residency_mb": s.peak_residency_mb,
                         "start_since_start_ms": s.start_since_start_ms,
                         "end_since_start_ms": self._effective_end(s.end_since_start_ms, s.elapsed_ms is None, now_ms),
@@ -528,16 +522,16 @@ class DiagnosticsCollector:
                 "<tr>"
                 f"<td>{html.escape(s.label)}</td>"
                 f"<td>{self._fmt_ms(s.elapsed_ms) if s.elapsed_ms is not None else '—'}</td>"
-                f"<td>{self._fmt_rows(s.edb_rows) if s.edb_rows else '—'}</td>"
-                f"<td>{self._fmt_rows(s.idb_rows) if s.idb_rows else '—'}</td>"
+                f"<td>{self._fmt_rows(s.input_rows) if s.input_rows else '—'}</td>"
+                f"<td>{self._fmt_rows(s.derived_rows) if s.derived_rows else '—'}</td>"
                 f"<td>{self._fmt_res(s.peak_residency_mb) if s.peak_residency_mb is not None else '—'}</td>"
                 "</tr>"
                 for s in self._steps
             )
             table_html = (
                 "<h2>Steps</h2>"
-                "<table><thead><tr><th>Step</th><th>Duration</th><th>EDB Rows</th>"
-                "<th>IDB Rows</th><th>Peak RES</th></tr></thead>"
+                "<table><thead><tr><th>Step</th><th>Duration</th><th>Input Rows</th>"
+                "<th>Derived Rows</th><th>Peak RES</th></tr></thead>"
                 f"<tbody>{rows_html}</tbody></table>"
             ) if self._steps else ""
 
@@ -572,8 +566,8 @@ class DiagnosticsCollector:
                     {
                         "label": s.label,
                         "elapsed_ms": s.elapsed_ms,
-                        "edb_rows": s.edb_rows,
-                        "idb_rows": s.idb_rows,
+                        "input_rows": s.input_rows,
+                        "derived_rows": s.derived_rows,
                         "peak_residency_mb": s.peak_residency_mb,
                     }
                     for s in completed
@@ -582,8 +576,8 @@ class DiagnosticsCollector:
                     "label": current.label,
                     "start_since_start_ms": current_start,
                     "elapsed_ms": round(now_ms - current_start, 1) if current_start is not None else 0,
-                    "edb_rows": current.edb_rows,
-                    "idb_rows": current.idb_rows,
+                    "input_rows": current.input_rows,
+                    "derived_rows": current.derived_rows,
                     "residency_mb": current.peak_residency_mb,
                 } if current is not None else None,
                 "workers": [
@@ -852,8 +846,8 @@ class _LiveRunnerProgress:
         self._current_label: str = ""
         self._current_start: float = 0.0
         self._current_elapsed_ms: float | None = None
-        self._current_edb_rows: dict[str, int] = {}
-        self._current_idb_rows: dict[str, int] = {}
+        self._current_input_rows: dict[str, int] = {}
+        self._current_derived_rows: dict[str, int] = {}
         self._current_residency_mb: float | None = None
         self._step_history: list[_StepInfo] = []
         self._max_history = 6
@@ -899,8 +893,8 @@ class _LiveRunnerProgress:
             elif tag == "step":
                 label = event.get("label", "")
                 elapsed_ms = event.get("elapsed_ms")
-                edb_rows = event.get("edb_rows") or {}
-                idb_rows = event.get("idb_rows") or {}
+                input_rows = event.get("input_rows") or {}
+                derived_rows = event.get("derived_rows") or {}
                 residency_mb = event.get("residency_mb")
 
                 # Detect step boundary: a new label means the previous step
@@ -910,8 +904,8 @@ class _LiveRunnerProgress:
                         self._step_history.append(_StepInfo(
                             label=self._current_label,
                             elapsed_ms=self._current_elapsed_ms,
-                            edb_rows=self._current_edb_rows,
-                            idb_rows=self._current_idb_rows,
+                            input_rows=self._current_input_rows,
+                            derived_rows=self._current_derived_rows,
                             residency_mb=self._current_residency_mb,
                         ))
                         if len(self._step_history) > self._max_history:
@@ -919,19 +913,19 @@ class _LiveRunnerProgress:
                     self._current_label = label
                     self._current_start = time.monotonic()
                     self._current_elapsed_ms = None
-                    self._current_edb_rows = {}
-                    self._current_idb_rows = {}
+                    self._current_input_rows = {}
+                    self._current_derived_rows = {}
                     self._current_residency_mb = None
 
-                # Inherit edb_rows from start event
-                if edb_rows:
-                    self._current_edb_rows.update(edb_rows)
+                # Inherit input_rows from start event
+                if input_rows:
+                    self._current_input_rows.update(input_rows)
 
                 # Update elapsed/residency/rows from end/heartbeat events
                 if elapsed_ms is not None:
                     self._current_elapsed_ms = elapsed_ms
-                if idb_rows:
-                    self._current_idb_rows.update(idb_rows)
+                if derived_rows:
+                    self._current_derived_rows.update(derived_rows)
                 if residency_mb is not None:
                     self._current_residency_mb = residency_mb
 
@@ -1012,7 +1006,7 @@ class _LiveRunnerProgress:
         parts = [info.label]
         if info.elapsed_ms is not None:
             parts.append(self._format_elapsed_ms(info.elapsed_ms))
-        row_str = self._format_row_counts(info.edb_rows, info.idb_rows)
+        row_str = self._format_row_counts(info.input_rows, info.derived_rows)
         if row_str:
             parts.append(row_str)
         return " — ".join(parts)
@@ -1035,7 +1029,7 @@ class _LiveRunnerProgress:
 
     @staticmethod
     def _format_row_counts(
-        edb_rows: dict[str, int], idb_rows: dict[str, int]
+        input_rows: dict[str, int], derived_rows: dict[str, int]
     ) -> str:
         def _fmt(n: int) -> str:
             if n >= 1_000_000:
@@ -1044,18 +1038,18 @@ class _LiveRunnerProgress:
                 return f"{n / 1_000:.1f}K"
             return str(n)
 
-        if edb_rows:
-            if len(edb_rows) == 1:
-                parts_str = f"{_fmt(next(iter(edb_rows.values())))} in"
+        if input_rows:
+            if len(input_rows) == 1:
+                parts_str = f"{_fmt(next(iter(input_rows.values())))} in"
             else:
-                parts_str = f"{_fmt(sum(edb_rows.values()))} in"
+                parts_str = f"{_fmt(sum(input_rows.values()))} in"
         else:
             parts_str = ""
-        if idb_rows:
-            if len(idb_rows) == 1:
-                out_str = f"{_fmt(next(iter(idb_rows.values())))} out"
+        if derived_rows:
+            if len(derived_rows) == 1:
+                out_str = f"{_fmt(next(iter(derived_rows.values())))} out"
             else:
-                out_str = f"{_fmt(sum(idb_rows.values()))} out"
+                out_str = f"{_fmt(sum(derived_rows.values()))} out"
         else:
             out_str = ""
         if parts_str and out_str:

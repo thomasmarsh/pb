@@ -2,7 +2,7 @@
 -- that previously held them.
 -- These build the same Phase A-shaped @procedures@\/@resolved_calls@\/
 -- @objects@\/@dw_objects@ tables the production pipeline populates, so the
--- EDB-reshaping and materializer tests in "RulesTest" can exercise the
+-- relation-reshaping and materializer tests can exercise the
 -- SQL-backed dead-code analysis against hand-verified expected sets.
 module DeadCodeFixtures
   ( ProcInfo (..)
@@ -51,13 +51,13 @@ phaseATables =
 -- production, from the same (procs, rawCalls, resolvedCalls, inherits,
 -- dwObjects) shape the old Haskell BFS used to take before it was deleted
 -- (Plan 161 Phase 2b cutover) -- so each fixture below exercises the
--- SQL-view EDB layer ('PB.Pipeline.DuckDb.Relations.initDeadCodeRelations')
+-- SQL-view input relation layer ('PB.Pipeline.DuckDb.Relations.initDeadCodeRelations')
 -- against a hand-verified expected dead set (each one cross-checked against
 -- the old Haskell BFS before it was deleted, and against the real openpay
 -- corpus -- see BACKLOG's Phase 2b session entry).
 --
 -- Plan 166 Stage 2: inheritance is seeded via @objects.ancestor@ (read by
--- the faithful @inherits@ EDB view), not via the deleted
+-- the faithful @inherits@ input relation view), not via the deleted
 -- @procedure_overrides@ table. The @inherits@ (child, parent) tuples below
 -- become @objects@ rows whose @ancestor@ is the parent.
 
@@ -87,14 +87,14 @@ seedDeadCodeFixture conn pool procs calls resolved inherits dwObjs = do
        | (obj, fromProc, tgtObj, tgtProc) <- resolved
        ]
   -- Plan 166 Stage 2: seed inheritance as objects.ancestor rows; the
-  -- faithful `inherits` EDB view (initDeadCodeRelations) reads these, and
-  -- the `descendant`/`override_edge` IDB rules derive the closure.
+  -- faithful `inherits` input relation view (initDeadCodeRelations) reads these, and
+  -- the `descendant`/`override_edge` derived rules derive the closure.
   appendObjects pool
     [ ObjectRow "f.sru" "object" child (Just parent) Nothing Nothing "confirmed"
     | (child, parent) <- inherits
     ]
 
--- | A resolved_calls row builder for the 'EdbRelations' pure-function tests
+-- | A resolved_calls row builder for the 'MaterializedRelations' pure-function tests
 -- below -- fields these functions never read (file, call_type, resolution
 -- kind, confidence, return_type) get fixed placeholder values.
 mkResolvedCall :: Text -> Text -> Text -> Maybe (Text, Text) -> Maybe Int -> Taint.ResolvedCallRow
