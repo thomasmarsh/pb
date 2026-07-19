@@ -11,7 +11,7 @@ import PB.Analysis.SchemaCategory
 import PB.Analysis.DeadVars
   ( DeadVarFinding (..), DeadVarKind (..) )
 import PB.Pipeline.SqlParse (TableRef (..))
-import Database.DuckDB.Simple           (Query (..), execute_, query_)
+import Database.DuckDB.Simple           (Query (..))
 import Database.DuckDB.Simple.FromRow   (FromRow (..), field)
 import Test.Tasty             (TestTree, testGroup)
 import Test.Tasty.HUnit       (testCase, assertEqual)
@@ -28,7 +28,7 @@ phaseATables =
   , "dead_vars"
   ]
 
-withTestPool :: DuckConn -> (AppenderPool -> IO a) -> IO a
+withTestPool :: Handle -> (AppenderPool -> IO a) -> IO a
 withTestPool conn = withAppenderPool conn phaseATables
 
 tests :: TestTree
@@ -52,7 +52,7 @@ tests = testGroup "DuckDb"
   ]
 
 testInitSchema :: IO ()
-testInitSchema = withWriteConn ":memory:" $ \conn -> do
+testInitSchema = withHandle inMemory $ \conn -> do
   initSchema conn
   withTestPool conn $ \pool -> do
     -- Append to a non-stub table proves schema is active (appender throws on unknown table)
@@ -60,7 +60,7 @@ testInitSchema = withWriteConn ":memory:" $ \conn -> do
     appendParseErrors pool []
 
 testAppendObjects :: IO ()
-testAppendObjects = withWriteConn ":memory:" $ \conn -> do
+testAppendObjects = withHandle inMemory $ \conn -> do
   initSchema conn
   withTestPool conn $ \pool -> do
     appendObjects pool
@@ -71,7 +71,7 @@ testAppendObjects = withWriteConn ":memory:" $ \conn -> do
     appendObjects pool []
 
 testAppendProcedures :: IO ()
-testAppendProcedures = withWriteConn ":memory:" $ \conn -> do
+testAppendProcedures = withHandle inMemory $ \conn -> do
   initSchema conn
   withTestPool conn $ \pool -> do
     -- Two procedures with non-empty JSON blobs
@@ -87,7 +87,7 @@ testAppendProcedures = withWriteConn ":memory:" $ \conn -> do
     assertEqual "procedures appended" () ()
 
 testAppendSqlStmtColumnsFilters :: IO ()
-testAppendSqlStmtColumnsFilters = withWriteConn ":memory:" $ \conn -> do
+testAppendSqlStmtColumnsFilters = withHandle inMemory $ \conn -> do
   initSchema conn
   withTestPool conn $ \pool -> do
     appendSqlStmtColumns pool
@@ -102,7 +102,7 @@ testAppendSqlStmtColumnsFilters = withWriteConn ":memory:" $ \conn -> do
     appendSqlStmtFilters pool []
 
 testAppendCatalogRows :: IO ()
-testAppendCatalogRows = withWriteConn ":memory:" $ \conn -> do
+testAppendCatalogRows = withHandle inMemory $ \conn -> do
   initSchema conn
   withTestPool conn $ \pool -> do
     appendCatalogColumns pool
@@ -121,7 +121,7 @@ testAppendCatalogRows = withWriteConn ":memory:" $ \conn -> do
     appendCatalogFks pool []
 
 testAppendDwRetrieveColumns :: IO ()
-testAppendDwRetrieveColumns = withWriteConn ":memory:" $ \conn -> do
+testAppendDwRetrieveColumns = withHandle inMemory $ \conn -> do
   initSchema conn
   withTestPool conn $ \pool -> do
     appendDwRetrieveColumns pool
@@ -132,7 +132,7 @@ testAppendDwRetrieveColumns = withWriteConn ":memory:" $ \conn -> do
     appendDwRetrieveColumns pool []
 
 testAppendDwRetrieveWhere :: IO ()
-testAppendDwRetrieveWhere = withWriteConn ":memory:" $ \conn -> do
+testAppendDwRetrieveWhere = withHandle inMemory $ \conn -> do
   initSchema conn
   withTestPool conn $ \pool -> do
     appendDwRetrieveWhere pool
@@ -147,7 +147,7 @@ testAppendDwRetrieveWhere = withWriteConn ":memory:" $ \conn -> do
 -- FromRow instances reconstruct the same values (column-order mismatches
 -- between the append and query sides would silently corrupt data here).
 testSchemaCategoryQueryRoundTrip :: IO ()
-testSchemaCategoryQueryRoundTrip = withWriteConn ":memory:" $ \conn -> do
+testSchemaCategoryQueryRoundTrip = withHandle inMemory $ \conn -> do
   initSchema conn
   withTestPool conn $ \pool -> do
     appendDwRetrieveColumns pool
@@ -185,7 +185,7 @@ testSchemaCategoryQueryRoundTrip = withWriteConn ":memory:" $ \conn -> do
 -- query round-trip works against the new table name, and that it stays
 -- independent of sql_statement_columns (querySqlCols sees none of these rows).
 testCatFootprintColumnsRoundTrip :: IO ()
-testCatFootprintColumnsRoundTrip = withWriteConn ":memory:" $ \conn -> do
+testCatFootprintColumnsRoundTrip = withHandle inMemory $ \conn -> do
   initSchema conn
   withTestPool conn $ \pool -> do
     appendCatFootprintColumns pool
@@ -210,7 +210,7 @@ instance FromRow DeadVarRow where
   fromRow = DeadVarRow <$> field <*> field <*> field <*> field <*> field
 
 testAppendDeadVars :: IO ()
-testAppendDeadVars = withWriteConn ":memory:" $ \conn -> do
+testAppendDeadVars = withHandle inMemory $ \conn -> do
   initSchema conn
   withTestPool conn $ \pool -> do
     appendDeadVars pool
@@ -220,7 +220,7 @@ testAppendDeadVars = withWriteConn ":memory:" $ \conn -> do
     -- Appending an empty list after a real batch must not throw
     appendDeadVars pool []
 
-  rows <- query_ conn
+  rows <- queryHandle conn
     "SELECT object, proc_name, var_name, line, kind FROM dead_vars ORDER BY var_name"
   assertEqual "dead_vars round-trips DeadVarFinding rows"
     [ DeadVarRow "w_test" "of_save" "as_param"  Nothing   "unused-param"
@@ -238,7 +238,7 @@ instance FromRow KindSourceRow where
   fromRow = KindSourceRow <$> field <*> field
 
 testAppendSchemaObjectsMorphisms :: IO ()
-testAppendSchemaObjectsMorphisms = withWriteConn ":memory:" $ \conn -> do
+testAppendSchemaObjectsMorphisms = withHandle inMemory $ \conn -> do
   initSchema conn
   let colA = ColumnObj (TableRef Nothing "a") "x"
       colB = ColumnObj (TableRef Nothing "b") "y"
@@ -252,13 +252,13 @@ testAppendSchemaObjectsMorphisms = withWriteConn ":memory:" $ \conn -> do
   appendSchemaObjects   conn []
   appendSchemaMorphisms conn []
 
-  rows <- query_ conn "SELECT leg_kind, leg_source FROM schema_morphisms ORDER BY leg_kind"
+  rows <- queryHandle conn "SELECT leg_kind, leg_source FROM schema_morphisms ORDER BY leg_kind"
   assertEqual "leg_source persists per row (Plan 163 Phase 4, D3)"
     [KindSourceRow "fk" "ddl_fk", KindSourceRow "reads" "sql_text"]
     rows
 
 testMaterializeDecompositionCoslice :: IO ()
-testMaterializeDecompositionCoslice = withWriteConn ":memory:" $ \conn -> do
+testMaterializeDecompositionCoslice = withHandle inMemory $ \conn -> do
   initSchema conn
   -- Seed the inputs materializeDecompositionCoslice reads from: a stmt target,
   -- the morphism (leg_source recovery), and a forward path_leg row (seed -> stmt).
@@ -273,13 +273,13 @@ testMaterializeDecompositionCoslice = withWriteConn ":memory:" $ \conn -> do
   -- would materialize, so the SQL projection under test can read it.
   -- recreateTextTable + appendTextRows would be the production path; here the
   -- SQL projection is what's under test, so we hand-create the table.
-  void $ execute_ conn (Query "CREATE TABLE path_leg_fwd (s TEXT, target TEXT, leg_ord TEXT, lf TEXT, lt TEXT, kind TEXT)")
-  void $ execute_ conn (Query ("INSERT INTO path_leg_fwd VALUES ('"
+  void $ executeHandle conn (Query "CREATE TABLE path_leg_fwd (s TEXT, target TEXT, leg_ord TEXT, lf TEXT, lt TEXT, kind TEXT)")
+  void $ executeHandle conn (Query ("INSERT INTO path_leg_fwd VALUES ('"
     <> colAKey <> "', '" <> stmtKey <> "', '0', '" <> colAKey <> "', '" <> stmtKey <> "', 'reads')"))
-  void $ execute_ conn (Query "CREATE TABLE path_leg_back (s TEXT, target TEXT, leg_ord TEXT, lf TEXT, lt TEXT, kind TEXT)")
+  void $ executeHandle conn (Query "CREATE TABLE path_leg_back (s TEXT, target TEXT, leg_ord TEXT, lf TEXT, lt TEXT, kind TEXT)")
   materializeDecompositionCoslice conn
 
-  rows <- query_ conn "SELECT leg_kind, leg_source FROM decomposition_coslice"
+  rows <- queryHandle conn "SELECT leg_kind, leg_source FROM decomposition_coslice"
   assertEqual "leg_source recovered via schema_morphisms join (Plan 161 Phase 2c)"
     [KindSourceRow "reads" "sql_text"]
     rows
@@ -292,19 +292,19 @@ instance FromRow FkPairRow where
   fromRow = FkPairRow <$> field <*> field <*> field <*> field
 
 testMaterializeImpliedFk :: IO ()
-testMaterializeImpliedFk = withWriteConn ":memory:" $ \conn -> do
+testMaterializeImpliedFk = withHandle inMemory $ \conn -> do
   initSchema conn
   let colA = ColumnObj (TableRef Nothing "a") "x"
       colB = ColumnObj (TableRef Nothing "b") "y"
   appendSchemaObjects conn [colA, colB]
   -- Hand-create the implied_fk_pairs output table the production SQL
   -- materializer would populate, so 'materializeImpliedFk' can read it.
-  void $ execute_ conn (Query "CREATE TABLE implied_fk_pairs (x TEXT, y TEXT)")
-  void $ execute_ conn (Query ("INSERT INTO implied_fk_pairs VALUES ('"
+  void $ executeHandle conn (Query "CREATE TABLE implied_fk_pairs (x TEXT, y TEXT)")
+  void $ executeHandle conn (Query ("INSERT INTO implied_fk_pairs VALUES ('"
     <> schObjectKey colA <> "', '" <> schObjectKey colB <> "')"))
   materializeImpliedFk conn
 
-  rows <- query_ conn
+  rows <- queryHandle conn
     "SELECT from_table, from_column, to_table, to_column FROM implied_fk"
   assertEqual "ColKey pair decoded to human-readable table/column names"
     [FkPairRow "a" "x" "b" "y"]
@@ -318,7 +318,7 @@ instance FromRow RiskRow where
   fromRow = RiskRow <$> field <*> field <*> field
 
 testMaterializeColumnRisk :: IO ()
-testMaterializeColumnRisk = withWriteConn ":memory:" $ \conn -> do
+testMaterializeColumnRisk = withHandle inMemory $ \conn -> do
   initSchema conn
   let colA = ColumnObj (TableRef Nothing "a") "x"
       stmt = StmtObj (SqlStmtId "f.srf" "obj" "proc" 1)
@@ -328,12 +328,12 @@ testMaterializeColumnRisk = withWriteConn ":memory:" $ \conn -> do
   -- the openpay corpus: schema_objects has no namespace/table_name/
   -- column_name for stmt/dw_retrieve kinds, so an unfiltered join
   -- materialized 115 opaque all-NULL rows there).
-  void $ execute_ conn (Query "CREATE TABLE risk_count (x TEXT, n TEXT)")
-  void $ execute_ conn (Query ("INSERT INTO risk_count VALUES ('"
+  void $ executeHandle conn (Query "CREATE TABLE risk_count (x TEXT, n TEXT)")
+  void $ executeHandle conn (Query ("INSERT INTO risk_count VALUES ('"
     <> schObjectKey colA <> "', '3'), ('" <> schObjectKey stmt <> "', '7')"))
   materializeColumnRisk conn
 
-  rows <- query_ conn "SELECT table_name, column_name, downstream_count FROM column_risk"
+  rows <- queryHandle conn "SELECT table_name, column_name, downstream_count FROM column_risk"
   assertEqual "only the column-kind node is materialized, with its count"
     [RiskRow "a" "x" 3]
     rows

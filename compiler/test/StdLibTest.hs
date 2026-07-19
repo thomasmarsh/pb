@@ -9,7 +9,7 @@ import PB.Analysis.TypeCheck (buildTypeCheckWorkspace)
 import PB.Analysis.DwFootprint (mkDwFootprintCtx)
 import PB.Runtime.StdLib   (parseStdlibFiles)
 
-import Database.DuckDB.Simple          (Query, query_)
+import Database.DuckDB.Simple          (Query)
 import Database.DuckDB.Simple.FromRow  (FromRow (..), field)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
@@ -39,8 +39,8 @@ expectedClasses =
   , "dwobject", "datastore", "datawindow"
   ]
 
-withStdlibDb :: (DuckConn -> IO a) -> IO a
-withStdlibDb act = withWriteConn ":memory:" $ \conn -> do
+withStdlibDb :: (Handle -> IO a) -> IO a
+withStdlibDb act = withHandle inMemory $ \conn -> do
   initSchema conn
   pfs <- parseStdlibFiles
   let wsEnv = buildWorkspaceEnv (map pfSrFile pfs)
@@ -60,8 +60,8 @@ withStdlibDb act = withWriteConn ":memory:" $ \conn -> do
       , "catalog_columns", "catalog_pks", "catalog_fks", "catalog_checks"
       ]
 
-queryOneTexts :: DuckConn -> Query -> IO [Text]
-queryOneTexts conn sql = map unOneText <$> query_ conn sql
+queryOneTexts :: Handle -> Query -> IO [Text]
+queryOneTexts conn sql = map unOneText <$> queryHandle conn sql
 
 testParsed :: IO ()
 testParsed = do
@@ -106,7 +106,7 @@ testConfidence = withStdlibDb $ \conn -> do
   assertEqual "all procedure rows speculative" [] badProcs
 
 testUserConfirmed :: IO ()
-testUserConfirmed = withWriteConn ":memory:" $ \conn -> do
+testUserConfirmed = withHandle inMemory $ \conn -> do
   initSchema conn
   let src = "HA$PBExportHeader$w_test.srw\n\nglobal type w_test from window\nend type\n"
   case parsePowerScriptFile (stripBom src) of

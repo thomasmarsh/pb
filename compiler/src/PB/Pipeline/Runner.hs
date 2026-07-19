@@ -81,7 +81,7 @@ import PB.Pipeline.SqlParse
   )
 import PB.Pipeline.FileWalk    (walkAllSrFiles)
 import PB.Pipeline.DuckDb
-  ( withWriteConn, initSchema
+  ( withHandle, Config(..), initSchema
   , AppenderPool, withAppenderPoolTimed
   , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
   , DwRetrieveTableRow (..), DwRetrieveColumnRow (..), DwJoinRow (..), SqlStmtRow (..)
@@ -322,7 +322,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                 -- Speculative confidence marks a synthetic builtin-class
                 -- method stub (PB.Runtime.StdLib) whose params are never
                 -- referenced by design -- same exclusion
-                -- PB.Pipeline.DuckDb.Edb's procRows/procMetaRows apply
+                -- PB.Pipeline.DuckDb.Relations's procRows/procMetaRows apply
                 -- to 'procedures', kept here rather than as a query-time
                 -- filter since dead_vars carries no confidence column.
                 deadVars
@@ -794,7 +794,7 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
 
   emitProgress (object ["tag" .= ("phase" :: Text), "name" .= ("A" :: Text), "workers" .= nWorkers, "total" .= total])
 
-  withWriteConn dbPath $ \conn -> do
+  withHandle (Config dbPath) $ \conn -> do
     initSchema conn
     -- Phase A tables: all tables written during the per-file compile loop
     -- and DDL loading. The pool's scope closes (flushing all appenders)

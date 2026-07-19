@@ -15,15 +15,14 @@ module Main (main) where
 import PB.Prelude
 import PB.Pipeline.Runner (runModeDb)
 import PB.Pipeline.DuckDb
-  ( withWriteConn
+  ( withHandle, Config(..), queryHandle
   , querySchemaMorphismRows
   , querySchemaObjects
   )
-import PB.Pipeline.DuckDb.Edb (legSourceRows, seedRows)
+import PB.Pipeline.DuckDb.Relations (legSourceRows, seedRows)
 import PB.Analysis.SchemaClosure
   ( legPriority, reachClosure, cosliceClosure )
 
-import Database.DuckDB.Simple (query_)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
@@ -64,14 +63,14 @@ main = do
   putStrLn ("Full pipeline wall-clock: " <> showSecs (diffUTCTime t1 t0))
   putStrLn ""
 
-  withWriteConn (optDb opts) $ \conn -> do
+  withHandle (Config (optDb opts)) $ \conn -> do
     -- Production outputs materialized by the SQL materializers.
-    prodReaches <- query_ conn "SELECT x, y FROM reaches"
+    prodReaches <- queryHandle conn "SELECT x, y FROM reaches"
                    :: IO [(Text, Text)]
-    prodFwd <- query_ conn
+    prodFwd <- queryHandle conn
                  "SELECT s, target, leg_ord, lf, lt, kind FROM path_leg_fwd"
                  :: IO [(Text, Text, Text, Text, Text, Text)]
-    prodBack <- query_ conn
+    prodBack <- queryHandle conn
                   "SELECT s, target, leg_ord, lf, lt, kind FROM path_leg_back"
                   :: IO [(Text, Text, Text, Text, Text, Text)]
 

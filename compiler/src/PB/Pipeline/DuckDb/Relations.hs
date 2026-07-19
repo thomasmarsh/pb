@@ -1,10 +1,10 @@
--- | The DuckDB moat's EDB-loading boundary: typed Haskell builders that
+-- | The DuckDB moat's Relations-loading boundary: typed Haskell builders that
 -- materialize every relation the cross-file analyses read, plus the
 -- fan-in diagnostics that guard against duplicate-key blow-up.
 --
 -- Two kinds of function live here:
 --
---   * EDB builders ('initSchemaEdb' / 'initDeadCodeEdb' and their pure
+--   * Relations builders ('initSchemaRelations' / 'initDeadCodeRelations' and their pure
 --     row-shaping helpers) read already-populated DuckDB tables and
 --     materialize the plain @leg_source@\/@stmt@\/@seed@\/@proc@\/@entry@\/...
 --     relations via 'recreateTextTable' \/ 'appendTextRows'. They only
@@ -14,8 +14,8 @@
 --   * Fan-in diagnostics ('legSourceFanout' / 'defLineFanout' /
 --     'returnUseFanout') are cheap @GROUP BY@ passes that surface a
 --     pathological duplicate-key shape before the analyses run.
-module PB.Pipeline.DuckDb.Edb
-  ( initSchemaEdb
+module PB.Pipeline.DuckDb.Relations
+  ( initSchemaRelations
   , LegSourceFanout (..)
   , legSourceFanout
   , legSourceRows
@@ -23,7 +23,7 @@ module PB.Pipeline.DuckDb.Edb
   , seedRows
   , joinLegRows
   , fkRows
-  , initDeadCodeEdb
+  , initDeadCodeRelations
   , procRows
   , procMetaRows
   , inheritsRows
@@ -42,17 +42,17 @@ module PB.Pipeline.DuckDb.Edb
 import PB.Prelude
 
 import PB.Pipeline.DuckDb
-  ( DuckConn, SchMorphismRow (..), ProcSummaryRow (..)
+  ( Handle, SchMorphismRow (..), ProcSummaryRow (..)
   , querySchemaObjects, querySchemaMorphismRows, queryCatFks
   , queryObjectAncestors, queryProcedures, queryDwObjects, queryResolvedCalls
   , recreateTextTable, appendTextRows
+  , queryHandle
   )
 import PB.Analysis.SchemaCategory
   ( SchObject (..), StmtId (..), CatFkRow (..), schObjectKey )
 import PB.Pipeline.SqlParse (TableRef (..))
 import PB.Analysis.Taint qualified as Taint
 
-import Database.DuckDB.Simple (query_)
 import Database.DuckDB.Simple.FromRow (FromRow (..), field)
 
 import qualified Data.Map.Strict as Map
@@ -77,8 +77,8 @@ import qualified Data.Text       as T
 -- populated from @dead_code_rows@ via
 -- 'PB.Pipeline.DuckDb.materializeDeadCode' and is the sole source for the
 -- Dead Code Explorer API (@get_dead_code@).
-initSchemaEdb :: DuckConn -> IO ()
-initSchemaEdb conn = do
+initSchemaRelations :: Handle -> IO ()
+initSchemaRelations conn = do
   morphisms <- querySchemaMorphismRows conn
   objects   <- querySchemaObjects conn
   fks       <- queryCatFks conn
@@ -156,9 +156,9 @@ newtype FanoutRow = FanoutRow LegSourceFanout
 instance FromRow FanoutRow where
   fromRow = (\t k m -> FanoutRow (LegSourceFanout t k m)) <$> field <*> field <*> field
 
-legSourceFanout :: DuckConn -> IO LegSourceFanout
+legSourceFanout :: Handle -> IO LegSourceFanout
 legSourceFanout conn = do
-  rows <- query_ conn
+  rows <- queryHandle conn
     "WITH g AS (SELECT x, y, COUNT(*) AS cnt FROM leg_source GROUP BY x, y) \
     \SELECT (SELECT COUNT(*) FROM leg_source), COUNT(*), COALESCE(MAX(cnt), 0) FROM g"
   pure $ case rows of
@@ -190,8 +190,8 @@ legSourceFanout conn = do
 -- (@dwobject@\/@powerobject@\/@window@\/... method resolution), never real
 -- workspace code. An unfiltered @proc@ relation inflates @proc_dead@ with
 -- every one of these builtin stub methods.
-initDeadCodeEdb :: DuckConn -> IO ()
-initDeadCodeEdb conn = do
+initDeadCodeRelations :: Handle -> IO ()
+initDeadCodeRelations conn = do
   procs     <- queryProcedures conn
   calls0    <- queryResolvedCalls conn
   ancestors <- queryObjectAncestors conn
@@ -366,9 +366,9 @@ instance FromRow FanoutRow2 where
   fromRow = (\t k m -> FanoutRow2 (DefUseFanout t k m)) <$> field <*> field <*> field
 
 -- | Fan-in of @proc_defs@ rows sharing one (object, proc_name, line) key.
-defLineFanout :: DuckConn -> IO DefUseFanout
+defLineFanout :: Handle -> IO DefUseFanout
 defLineFanout conn = do
-  rows <- query_ conn
+  rows <- queryHandle conn
     "WITH g AS (SELECT object, proc_name, line, COUNT(*) AS cnt FROM proc_defs \
     \WHERE line IS NOT NULL GROUP BY object, proc_name, line) \
     \SELECT (SELECT COUNT(*) FROM proc_defs WHERE line IS NOT NULL), \
@@ -379,9 +379,9 @@ defLineFanout conn = do
 
 -- | Fan-in of @proc_uses@ rows tagged @kind = 'return'@ sharing one
 -- (object, proc_name) key.
-returnUseFanout :: DuckConn -> IO DefUseFanout
+returnUseFanout :: Handle -> IO DefUseFanout
 returnUseFanout conn = do
-  rows <- query_ conn
+  rows <- queryHandle conn
     "WITH g AS (SELECT object, proc_name, COUNT(*) AS cnt FROM proc_uses \
     \WHERE kind = 'return' GROUP BY object, proc_name) \
     \SELECT (SELECT COUNT(*) FROM proc_uses WHERE kind = 'return'), \

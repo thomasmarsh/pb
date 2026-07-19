@@ -8,12 +8,12 @@
 -- seeded single-source relaxation is near-linear).
 --
 -- 'materializeDeadCodeClosure' is called from
--- 'PB.Pipeline.Passes.materializeAllEdbViews', writing @proc_dead@ as a real
+-- 'PB.Pipeline.Passes.materializeAllRelationsViews', writing @proc_dead@ as a real
 -- DuckDB table before the downstream materializers that consume it
 -- ('PB.Pipeline.DuckDb.materializeDeadCodeRows',
 -- 'PB.Pipeline.DuckDb.materializeLiveProc') run — those read it as an ordinary
 -- EDB relation, the same mechanism
--- 'PB.Pipeline.DuckDb.Edb.initDeadCodeEdb' uses for
+-- 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations' uses for
 -- @proc@\/@entry@\/@calls@\/etc. Unit-level regression coverage lives entirely
 -- in 'DeadCodeReachabilityTest'.
 --
@@ -29,7 +29,7 @@
 --   * 'proc_dead' = every 'proc' not in 'proc_reachable'.
 --
 -- The EDB construction ('procRows'/'entryRows'/'callsRows'/...) is already
--- Haskell (see 'PB.Pipeline.DuckDb.Edb.initDeadCodeEdb'); only the
+-- Haskell (see 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations'); only the
 -- IDB fixpoint is computed here.
 module PB.Analysis.DeadCodeReachability
   ( deadReach
@@ -37,13 +37,13 @@ module PB.Analysis.DeadCodeReachability
   ) where
 
 import PB.Prelude
-import PB.Pipeline.DuckDb.Edb
+import PB.Pipeline.DuckDb.Relations
   ( entryRows, callRefRows, resolvedCallEdgeRows, callsRows
   , CallEdge (..)
   )
 import PB.Analysis.Taint qualified as Taint (ResolvedCallRow)
 import PB.Pipeline.DuckDb
-  ( ProcSummaryRow (..), DuckConn
+  ( ProcSummaryRow (..), Handle
   , queryProcedures, queryResolvedCalls, queryObjectAncestors, queryDwObjects
   , recreateTextTable, appendTextRows
   )
@@ -66,12 +66,12 @@ import qualified Data.Set           as Set
 import           Data.Set           (Set)
 
 -- | Dead-code reachability via 'reachFrom': given the same raw inputs
--- 'PB.Pipeline.DuckDb.Edb.initDeadCodeEdb' reads (procedures,
+-- 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations' reads (procedures,
 -- resolved calls, object ancestors, DW objects), return the set of
 -- (object, proc) pairs the @proc_dead@ table would contain — content-exact.
 --
 -- The confidence filter ('procRows'/'entryRows' exclude @speculative@
--- procedures) is applied exactly as 'initDeadCodeEdb' does, so the
+-- procedures) is applied exactly as 'initDeadCodeRelations' does, so the
 -- algebraic path agrees with the downstream @proc_dead@ consumers.
 deadReach
   :: [ProcSummaryRow]          -- ^ procedures (confidence-filtered by 'procRows')
@@ -124,14 +124,14 @@ deadReach procs calls inherits dwObjs =
 
 -- | Materialize @proc_dead@ as a real DuckDB table, computed by
 -- 'deadReach' over the same raw EDB inputs
--- 'PB.Pipeline.DuckDb.Edb.initDeadCodeEdb' reads. Must run after
+-- 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations' reads. Must run after
 -- @procedures@\/@resolved_calls@\/@objects@\/@dw_objects@ are populated
--- (same prerequisite as 'PB.Pipeline.DuckDb.Edb.initDeadCodeEdb');
--- called from 'PB.Pipeline.Passes.materializeAllEdbViews', before the
+-- (same prerequisite as 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations');
+-- called from 'PB.Pipeline.Passes.materializeAllRelationsViews', before the
 -- downstream materializers that read @proc_dead@ as an EDB input
 -- ('PB.Pipeline.DuckDb.materializeDeadCodeRows',
 -- 'PB.Pipeline.DuckDb.materializeLiveProc') run.
-materializeDeadCodeClosure :: DuckConn -> IO ()
+materializeDeadCodeClosure :: Handle -> IO ()
 materializeDeadCodeClosure conn = do
   procs    <- queryProcedures conn
   calls    <- queryResolvedCalls conn

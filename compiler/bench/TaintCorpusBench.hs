@@ -4,7 +4,7 @@ import PB.Prelude
 import PB.AST.Ident (mkIdent)
 import PB.Pipeline.Runner (runModeDb)
 import PB.Pipeline.DuckDb
-  ( withWriteConn
+  ( withHandle, Config(..)
   , queryGlobalVars
   , queryProcDefs
   , queryProcUses
@@ -69,7 +69,7 @@ main = do
   putStrLn ("Full pipeline wall-clock: " <> showSecs (diffUTCTime t1 t0))
   putStrLn ""
 
-  withWriteConn (optDb opts) $ \conn -> do
+  withHandle (Config (optDb opts)) $ \conn -> do
     -- Reconstruct the algebraic closure's raw inputs exactly as
     -- PB.Pipeline.Passes.runPass67 does.
     gvs   <- queryGlobalVars conn

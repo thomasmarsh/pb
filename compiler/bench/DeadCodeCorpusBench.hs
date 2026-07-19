@@ -9,7 +9,7 @@ module Main (main) where
 --
 -- Runs the existing pipeline unmodified (which now materializes @proc_dead@
 -- algebraically via 'PB.Analysis.DeadCodeReachability.materializeDeadCodeClosure'
--- in 'PB.Pipeline.Passes.materializeAllEdbViews'), then re-reads the same raw
+-- in 'PB.Pipeline.Passes.materializeAllRelationsViews'), then re-reads the same raw
 -- EDB inputs (procedures / resolved_calls / object ancestors / dw_objects)
 -- and recomputes 'deadReach' independently, asserting the two are
 -- content-exact -- a self-consistency check (determinism, no drift between
@@ -19,13 +19,12 @@ module Main (main) where
 import PB.Prelude
 import PB.Pipeline.Runner (runModeDb)
 import PB.Pipeline.DuckDb
-  ( withWriteConn
+  ( withHandle, Config(..), queryHandle
   , queryProcedures
   , queryResolvedCalls
   , queryObjectAncestors
   , queryDwObjects
   )
-import Database.DuckDB.Simple (query_)
 import PB.Analysis.DeadCodeReachability (deadReach)
 
 import qualified Data.Set as Set
@@ -67,9 +66,9 @@ main = do
   putStrLn ("Full pipeline wall-clock: " <> showSecs (diffUTCTime t1 t0))
   putStrLn ""
 
-  withWriteConn (optDb opts) $ \conn -> do
+  withHandle (Config (optDb opts)) $ \conn -> do
     -- Read raw EDB inputs (already materialized by the pipeline's
-    -- initDeadCodeEdb). The algebraic path reads these directly.
+    -- initDeadCodeRelations). The algebraic path reads these directly.
     procs    <- queryProcedures conn
     calls    <- queryResolvedCalls conn
     inherits <- queryObjectAncestors conn
@@ -82,7 +81,7 @@ main = do
 
     -- Production's own proc_dead (materialized by materializeDeadCodeClosure
     -- during the pipeline run above).
-    prodRows <- query_ conn "SELECT object, proc FROM proc_dead"
+    prodRows <- queryHandle conn "SELECT object, proc FROM proc_dead"
                :: IO [(Text, Text)]
     let prodDead = Set.fromList prodRows
     putStrLn ("production proc_dead: " <> T.pack (show (Set.size prodDead)) <> " pairs")

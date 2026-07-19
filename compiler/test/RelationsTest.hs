@@ -5,22 +5,23 @@
 -- The behavioral assertions below are the contract for those materializers;
 -- the raw IDB tables the downstream consumers reshape are byte-for-byte the
 -- same as the hand-verified expected sets.
-module EdbTest (tests) where
+module RelationsTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.DuckDb.Edb
-  ( initSchemaEdb, legSourceRows, stmtRows, seedRows
+import PB.Pipeline.DuckDb.Relations
+  ( initSchemaRelations, legSourceRows, stmtRows, seedRows
   , joinLegRows, fkRows
   )
-import PB.Pipeline.DuckDb.Edb
-  ( initDeadCodeEdb
+import PB.Pipeline.DuckDb.Relations
+  ( initDeadCodeRelations
   , procRows, procMetaRows, inheritsRows, callRefRows, resolvedCallEdgeRows
   , entryRows, callsRows, CallRef (..), ResolvedCallEdge (..), CallEdge (..)
   )
 import PB.Analysis.DeadCodeReachability (materializeDeadCodeClosure)
 import PB.Analysis.SchemaClosure qualified as SchemaClosure
 import PB.Pipeline.DuckDb
-  ( initSchema, withWriteConn, withAppenderPool, appendSchemaObjects
+  ( initSchema, withHandle, withAppenderPool, appendSchemaObjects
+  , queryHandle, executeHandle, inMemory
   , appendSchemaMorphisms, appendProcedures, ProcRow (..)
   , SchMorphismRow (..)
   , materializeDeadCode
@@ -39,7 +40,7 @@ import DeadCodeFixtures (ProcInfo (..), seedDeadCodeFixture, mkResolvedCall, pha
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
-import Database.DuckDB.Simple (query, query_, execute_, Only (..), Query (..))
+import Database.DuckDB.Simple (Only (..), Query (..))
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase, (@?=))
 
@@ -57,9 +58,9 @@ tests :: TestTree
 tests = testGroup "Edb"
 
   [ -- Plan 175 Phase 1 pilot: 'legSourceRows'/'stmtRows'/'seedRows' are the
-    -- pure Haskell functions that replaced 'initSchemaEdb''s @CREATE VIEW@
+    -- pure Haskell functions that replaced 'initSchemaRelations''s @CREATE VIEW@
     -- SQL for @leg_source@/@stmt@/@seed@. Unlike every other test in this
-    -- file, these need no 'DuckConn' at all -- the whole point of the
+    -- file, these need no 'Handle' at all -- the whole point of the
     -- migration (see doc/plan/175-haskell-edb-reshaping-layer.md's
     -- "Testability win" section).
     testGroup "EdbReshaping"
@@ -85,7 +86,7 @@ tests = testGroup "Edb"
         seedRows [StmtObj (SqlStmtId "f.srf" "obj1" "proc1" 5)] @?= []
 
     , -- Plan 161 Phase 3a: implied_fk_pairs(X, Y) :- join_leg(X, Y), !fk(X, Y),
-      -- !fk(Y, X). join_leg/fk are pure EDB (initSchemaEdb), so this rule set
+      -- !fk(Y, X). join_leg/fk are pure EDB (initSchemaRelations), so this rule set
       -- runs alone -- no dependency on the deleted legRules/reachesRules.
       testCase "joinLegRows: a dw_join-sourced row becomes (x, y), dropping kind/source" $
         joinLegRows [SchMorphismRow "col:a.x" "col:b.y" "fk" "dw_join"]
@@ -107,51 +108,51 @@ tests = testGroup "Edb"
 
   , -- implied_fk_pairs(X, Y) :- join_leg(X, Y), !fk(X, Y), !fk(Y, X).
     -- Materialized directly in DuckDB by 'materializeImpliedFkPairs'.
-    -- join_leg/fk are pure EDB (initSchemaEdb).
+    -- join_leg/fk are pure EDB (initSchemaRelations).
     testGroup "impliedFkPairs"
     [ testCase "a DW-join edge with no declared FK in either direction is reported" $
-        withWriteConn ":memory:" $ \conn -> do
+        withHandle inMemory $ \conn -> do
           initSchema conn
           let colA = ColumnObj (TableRef Nothing "a") "x"
               colB = ColumnObj (TableRef Nothing "b") "y"
           appendSchemaMorphisms conn [ SchMorphism colA colB LegFk SrcDwJoin ]
-          initSchemaEdb conn
+          initSchemaRelations conn
           materializeImpliedFkPairs conn
-          rows <- query_ conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
+          rows <- queryHandle conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= [(schObjectKey colA, schObjectKey colB)]
 
     , testCase "a DW-join edge matching a declared FK in the SAME direction is not reported" $
-        withWriteConn ":memory:" $ \conn -> do
+        withHandle inMemory $ \conn -> do
           initSchema conn
           let colA = ColumnObj (TableRef Nothing "a") "x"
               colB = ColumnObj (TableRef Nothing "b") "y"
           appendSchemaMorphisms conn [ SchMorphism colA colB LegFk SrcDwJoin ]
-          _ <- execute_ conn (Query "INSERT INTO catalog_fks VALUES ('c1', NULL, 'a', 'x', NULL, 'b', 'y', 0)")
-          initSchemaEdb conn
+          _ <- executeHandle conn (Query "INSERT INTO catalog_fks VALUES ('c1', NULL, 'a', 'x', NULL, 'b', 'y', 0)")
+          initSchemaRelations conn
           materializeImpliedFkPairs conn
-          rows <- query_ conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
+          rows <- queryHandle conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= []
 
     , testCase "a DW-join edge matching a declared FK in the REVERSED direction is not reported" $
-        withWriteConn ":memory:" $ \conn -> do
+        withHandle inMemory $ \conn -> do
           initSchema conn
           let colA = ColumnObj (TableRef Nothing "a") "x"
               colB = ColumnObj (TableRef Nothing "b") "y"
           appendSchemaMorphisms conn [ SchMorphism colA colB LegFk SrcDwJoin ]
           -- FK declared b.y -> a.x: the opposite orientation from the join edge.
-          _ <- execute_ conn (Query "INSERT INTO catalog_fks VALUES ('c1', NULL, 'b', 'y', NULL, 'a', 'x', 0)")
-          initSchemaEdb conn
+          _ <- executeHandle conn (Query "INSERT INTO catalog_fks VALUES ('c1', NULL, 'b', 'y', NULL, 'a', 'x', 0)")
+          initSchemaRelations conn
           materializeImpliedFkPairs conn
-          rows <- query_ conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
+          rows <- queryHandle conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= []
 
     , testCase "a declared DDL FK with no DW join is not spuriously reported" $
-        withWriteConn ":memory:" $ \conn -> do
+        withHandle inMemory $ \conn -> do
           initSchema conn
-          _ <- execute_ conn (Query "INSERT INTO catalog_fks VALUES ('c1', NULL, 'a', 'x', NULL, 'b', 'y', 0)")
-          initSchemaEdb conn
+          _ <- executeHandle conn (Query "INSERT INTO catalog_fks VALUES ('c1', NULL, 'a', 'x', NULL, 'b', 'y', 0)")
+          initSchemaRelations conn
           materializeImpliedFkPairs conn
-          rows <- query_ conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
+          rows <- queryHandle conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= []
     ]
 
@@ -162,7 +163,7 @@ tests = testGroup "Edb"
     -- algebraic closure feeds the SQL 'materializeRiskCount' correctly.
     testGroup "riskCount"
     [ testCase "risk_count reports each node's downstream footprint, omitting unreachable nodes" $
-        withWriteConn ":memory:" $ \conn -> do
+        withHandle inMemory $ \conn -> do
           initSchema conn
           let colA = ColumnObj (TableRef Nothing "a") "x"
               colB = ColumnObj (TableRef Nothing "b") "y"
@@ -171,10 +172,10 @@ tests = testGroup "Edb"
             [ SchMorphism colA colB LegWrites SrcSqlText
             , SchMorphism colB colC LegWrites SrcSqlText
             ]
-          initSchemaEdb conn
+          initSchemaRelations conn
           SchemaClosure.materializeSchemaClosure conn
           materializeRiskCount conn
-          rows <- query_ conn "SELECT x, n FROM risk_count" :: IO [(Text, Text)]
+          rows <- queryHandle conn "SELECT x, n FROM risk_count" :: IO [(Text, Text)]
           let byNode = Map.fromList rows
           Map.lookup (schObjectKey colA) byNode @?= Just "2"
           Map.lookup (schObjectKey colB) byNode @?= Just "1"
@@ -184,7 +185,7 @@ tests = testGroup "Edb"
       -- risk_count must terminate with a stable, finite count on a cyclic
       -- graph, not just on a DAG.
       testCase "cyclic graph terminates with a stable, finite downstream count" $
-        withWriteConn ":memory:" $ \conn -> do
+        withHandle inMemory $ \conn -> do
           initSchema conn
           let colA = ColumnObj (TableRef Nothing "a") "x"
               colB = ColumnObj (TableRef Nothing "b") "y"
@@ -192,10 +193,10 @@ tests = testGroup "Edb"
             [ SchMorphism colA colB LegFk SrcDdlFk
             , SchMorphism colB colA LegFk SrcDdlFk
             ]
-          initSchemaEdb conn
+          initSchemaRelations conn
           SchemaClosure.materializeSchemaClosure conn
           materializeRiskCount conn
-          rows <- query_ conn "SELECT x, n FROM risk_count" :: IO [(Text, Text)]
+          rows <- queryHandle conn "SELECT x, n FROM risk_count" :: IO [(Text, Text)]
           let byNode = Map.fromList rows
           Map.lookup (schObjectKey colA) byNode @?= Just "2"
           Map.lookup (schObjectKey colB) byNode @?= Just "2"
@@ -205,39 +206,39 @@ tests = testGroup "Edb"
     [ testGroup "liveProc"
       -- Plan 161 Phase 2b cutover: `dead` now reads `proc_dead` (materialized
       -- by 'materializeDeadCodeClosure', algebraic since the Plan 182 item 6
-      -- cutover), not `dead_code` (Haskell) -- see 'initSchemaEdb'' doc comment.
-      -- Every case here must run 'initDeadCodeEdb' +
-      -- 'materializeDeadCodeClosure' before 'initSchemaEdb'/'materializeLiveProc',
-      -- mirroring the required 'PB.Pipeline.Passes.materializeAllEdbViews'
+      -- cutover), not `dead_code` (Haskell) -- see 'initSchemaRelations'' doc comment.
+      -- Every case here must run 'initDeadCodeRelations' +
+      -- 'materializeDeadCodeClosure' before 'initSchemaRelations'/'materializeLiveProc',
+      -- mirroring the required 'PB.Pipeline.Passes.materializeAllRelationsViews'
       -- ordering, so the `dead` view has a `proc_dead` table to read (even an
       -- empty one) before it's queried.
       [ testCase "a stmt whose (object,proc) is not in proc_dead appears in live_proc" $
-          withWriteConn ":memory:" $ \conn -> do
+          withHandle inMemory $ \conn -> do
             initSchema conn
-            initDeadCodeEdb conn
+            initDeadCodeRelations conn
             materializeDeadCodeClosure conn
             appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj1" "proc1" 5) ]
-            -- initSchemaEdb now materializes stmt eagerly (Plan 175 Phase 1) --
+            -- initSchemaRelations now materializes stmt eagerly (Plan 175 Phase 1) --
             -- must run after appendSchemaObjects, not merely after initSchema.
-            initSchemaEdb conn
+            initSchemaRelations conn
             materializeLiveProc conn
-            rows <- query_ conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
+            rows <- queryHandle conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
             assertBool "(obj1,proc1) present" (("obj1", "proc1") `elem` rows)
 
       , testCase "a stmt whose (object,proc) is in proc_dead is excluded from live_proc" $
-          withWriteConn ":memory:" $ \conn -> do
+          withHandle inMemory $ \conn -> do
             initSchema conn
             -- obj2/proc2: a function with no entry seed and no caller, so
             -- materializeDeadCodeClosure naturally computes it as dead.
             withAppenderPool conn phaseATables $ \pool ->
               appendProcedures pool
                 [ ProcRow "f.srf" "obj2" "proc2" "function" 1 1 "" "" "" "" "" (Just 1) "confirmed" ]
-            initDeadCodeEdb conn
+            initDeadCodeRelations conn
             materializeDeadCodeClosure conn
             appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj2" "proc2" 9) ]
-            initSchemaEdb conn
+            initSchemaRelations conn
             materializeLiveProc conn
-            rows <- query_ conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
+            rows <- queryHandle conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
             assertBool "(obj2,proc2) absent" (("obj2", "proc2") `notElem` rows)
 
       , testCase "a DW retrieve StmtObj (no real proc) never appears in live_proc" $
@@ -246,14 +247,14 @@ tests = testGroup "Edb"
           -- `stmt` EDB view included it, every DW retrieve would vacuously pass the
           -- NOT EXISTS dead check and pollute live_proc with meaningless rows
           -- (found via a real --db smoke run over the openpay corpus).
-          withWriteConn ":memory:" $ \conn -> do
+          withHandle inMemory $ \conn -> do
             initSchema conn
-            initDeadCodeEdb conn
+            initDeadCodeRelations conn
             materializeDeadCodeClosure conn
             appendSchemaObjects conn [ StmtObj (DwRetrieveId "d.srd" "d_test") ]
-            initSchemaEdb conn
+            initSchemaRelations conn
             materializeLiveProc conn
-            rows <- query_ conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
+            rows <- queryHandle conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
             assertBool "no dw_retrieve row leaks into live_proc" (null rows)
       ]
 
@@ -271,14 +272,14 @@ tests = testGroup "Edb"
           -- already filters `confidence != 'speculative'`; the raw
           -- `proc`/`entry`/`calls` SQL views must apply the same filter or
           -- they silently disagree.
-          withWriteConn ":memory:" $ \conn -> do
+          withHandle inMemory $ \conn -> do
             initSchema conn
             withAppenderPool conn phaseATables $ \pool ->
               appendProcedures pool
                 [ ProcRow "builtin" "dwobject" "Retrieve" "function" 1 1 "" "" "" "" "" Nothing "speculative" ]
-            initDeadCodeEdb conn
-            procViewRows <- query_ conn "SELECT object, proc FROM proc" :: IO [(Text, Text)]
-            entryViewRows <- query_ conn "SELECT object, proc FROM entry" :: IO [(Text, Text)]
+            initDeadCodeRelations conn
+            procViewRows <- queryHandle conn "SELECT object, proc FROM proc" :: IO [(Text, Text)]
+            entryViewRows <- queryHandle conn "SELECT object, proc FROM entry" :: IO [(Text, Text)]
             assertBool "speculative stub excluded from proc view" (null procViewRows)
             assertBool "speculative stub excluded from entry view" (null entryViewRows)
       ]
@@ -322,7 +323,7 @@ tests = testGroup "Edb"
 
     , testGroup "deadCodeRows / materializeDeadCode"
       [ testCase "caller counts land in dead_code_rows: naive counts every name-match, scoped only resolved edges" $
-          withWriteConn ":memory:" $ \conn -> do
+          withHandle inMemory $ \conn -> do
             initSchema conn
             withAppenderPool conn phaseATables $ \pool ->
               seedDeadCodeFixture conn pool
@@ -332,12 +333,12 @@ tests = testGroup "Edb"
                 -- One resolved call site, from a third caller. A resolved call
                 -- also satisfies the naive (name-match) relation -- 'call_ref'
                 -- is built from every resolved_calls row regardless of
-                -- resolution status (see 'initDeadCodeEdb'' 'call_ref'
+                -- resolution status (see 'initDeadCodeRelations'' 'call_ref'
                 -- reshaping) -- so naive_n counts all three callers while
                 -- scoped_n counts only the one truly-resolved edge.
                 [ ("other_obj", "caller_c", "obj", "fn") ]
                 [] Set.empty
-            initDeadCodeEdb conn
+            initDeadCodeRelations conn
             materializeDeadCodeClosure conn
             materializeCallerCounts conn
             materializeDeadCodeRows conn
@@ -345,7 +346,7 @@ tests = testGroup "Edb"
             -- column round-trips as TEXT (see PB.Pipeline.DuckDb.materializeDeadCode's
             -- own TRY_CAST doc comment) -- cast explicitly rather than reading
             -- into an Int column directly.
-            rows <- query_ conn
+            rows <- queryHandle conn
               "SELECT TRY_CAST(naive_n AS INTEGER), TRY_CAST(scoped_n AS INTEGER) \
               \FROM dead_code_rows WHERE object = 'obj' AND proc = 'fn'"
               :: IO [(Int, Int)]
@@ -358,7 +359,7 @@ tests = testGroup "Edb"
           -- complexity. materializeDeadCode's ROW_NUMBER() tie-break must pick
           -- the highest cyclomatic deterministically (see its own doc comment
           -- in PB.Pipeline.DuckDb).
-          withWriteConn ":memory:" $ \conn -> do
+          withHandle inMemory $ \conn -> do
             initSchema conn
             withAppenderPool conn phaseATables $ \pool ->
               seedDeadCodeFixture conn pool
@@ -366,12 +367,12 @@ tests = testGroup "Edb"
                 , ProcInfo "obj" "fn" "function" (Just 7)
                 ]
               [] [] [] Set.empty
-            initDeadCodeEdb conn
+            initDeadCodeRelations conn
             materializeDeadCodeClosure conn
             materializeCallerCounts conn
             materializeDeadCodeRows conn
             materializeDeadCode conn
-            rows <- query_ conn
+            rows <- queryHandle conn
               "SELECT cyclomatic FROM dead_code WHERE object = 'obj' AND proc_name = 'fn'"
               :: IO [Only Int]
             [ c | Only c <- rows ] @?= [7]
@@ -382,7 +383,7 @@ tests = testGroup "Edb"
           -- cyclomatic would sort ahead of a sibling with a real value,
           -- contradicting materializeDeadCode's documented "keeps the
           -- highest-cyclomatic row" tie-break.
-          withWriteConn ":memory:" $ \conn -> do
+          withHandle inMemory $ \conn -> do
             initSchema conn
             withAppenderPool conn phaseATables $ \pool ->
               seedDeadCodeFixture conn pool
@@ -390,19 +391,19 @@ tests = testGroup "Edb"
                 , ProcInfo "obj" "fn" "function" (Just 5)
                 ]
               [] [] [] Set.empty
-            initDeadCodeEdb conn
+            initDeadCodeRelations conn
             materializeDeadCodeClosure conn
             materializeCallerCounts conn
             materializeDeadCodeRows conn
             materializeDeadCode conn
-            rows <- query_ conn
+            rows <- queryHandle conn
               "SELECT cyclomatic FROM dead_code WHERE object = 'obj' AND proc_name = 'fn'"
               :: IO [Only Int]
             [ c | Only c <- rows ] @?= [5]
       ]
 
-    , -- Plan 175 Phase 2: direct unit tests of 'initDeadCodeEdb''s pure
-      -- reshaping functions -- no 'DuckConn'\/external engine needed, mirroring
+    , -- Plan 175 Phase 2: direct unit tests of 'initDeadCodeRelations''s pure
+      -- reshaping functions -- no 'Handle'\/external engine needed, mirroring
       -- 'SchemaClosureTest''s Phase 1 precedent.
       testGroup "EdbRelations"
       [ testGroup "procRows"
@@ -533,12 +534,12 @@ assertConfidence
   -> (Text, Text) -> Text
   -> TestTree
 assertConfidence name procs calls resolved (obj, proc) expectedLevel =
-  testCase name $ withWriteConn ":memory:" $ \conn -> do
+  testCase name $ withHandle inMemory $ \conn -> do
     initSchema conn
     withAppenderPool conn phaseATables $ \pool -> do
       seedDeadCodeFixture conn pool procs calls resolved [] Set.empty
-    initDeadCodeEdb conn
+    initDeadCodeRelations conn
     materializeCallerCounts conn
-    rows <- query conn "SELECT level FROM confidence WHERE object = ? AND proc = ?"
-              (obj, proc) :: IO [Only Text]
+    rows <- queryHandle conn
+              (Query $ "SELECT level FROM confidence WHERE object = '" <> obj <> "' AND proc = '" <> proc <> "'") :: IO [Only Text]
     [ lvl | Only lvl <- rows ] @?= [expectedLevel]

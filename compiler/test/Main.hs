@@ -1,7 +1,7 @@
 module Main (main) where
 
 import qualified DuckDbTest
-import qualified EdbTest
+import qualified RelationsTest
 import qualified DeadCodeReachabilityTest
 import qualified SchemaClosureTest
 import qualified StdLibTest
@@ -58,7 +58,7 @@ main = defaultMain tests
 tests :: TestTree
 tests = testGroup "pb-compiler"
   [ DuckDbTest.tests
-  , EdbTest.tests
+  , RelationsTest.tests
   , DeadCodeReachabilityTest.tests
   , SchemaClosureTest.tests
   , StdLibTest.tests

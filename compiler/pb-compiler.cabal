@@ -77,7 +77,7 @@ library
     PB.Pipeline.Runner
     PB.Pipeline.Serialise
     PB.Pipeline.DuckDb
-    PB.Pipeline.DuckDb.Edb
+    PB.Pipeline.DuckDb.Relations
     PB.Pipeline.SqlParse
     PB.Pipeline.FileWalk
     PB.Runtime.StdLib
@@ -178,7 +178,7 @@ test-suite pb-compiler-test
   other-modules:
       DuckDbTest
     , SmallCheckInstances
-    , EdbTest
+    , RelationsTest
     , DeadCodeFixtures
     , StdLibTest
     , BodyParserTest

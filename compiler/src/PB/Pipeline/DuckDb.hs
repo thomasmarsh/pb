@@ -1,7 +1,13 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 module PB.Pipeline.DuckDb
-  ( DuckConn
-  , withWriteConn
+  ( Handle
+  , Config(..)
+  , inMemory
+  , new
+  , close
+  , withHandle
+  , queryHandle
+  , executeHandle
   , initSchema
   -- Appender pool
   , AppenderPool
@@ -137,7 +143,8 @@ import PB.Pipeline.Serialise   ()
 import PB.Pipeline.Progress    qualified as Progress
 
 import Database.DuckDB.Simple
-  (Connection, Query (..), execute_, withConnection, query_)
+  (Connection, Query (..), execute_, query_)
+import qualified Database.DuckDB.Simple as DDB
 import Database.DuckDB.Simple.Internal (withConnectionHandle)
 import Database.DuckDB.Simple.FromRow  (FromRow (..), field, numFieldsRemaining)
 import Database.DuckDB.FFI
@@ -171,18 +178,52 @@ import           Foreign.C.Types         (CBool (..))
 import           Foreign.C.String        (peekCString)
 
 -- ---------------------------------------------------------------------------
--- Public connection helpers
+-- Connection handle (Plan 184: opaque moat)
 
-type DuckConn = Connection
+-- | Opaque DuckDB connection handle. The constructor is not exported, so no
+-- caller outside this module can name or construct a raw 'Connection' — the
+-- DuckDb moat is enforced by construction rather than by module layout.
+newtype Handle = Handle { hConn :: Connection }
 
-withWriteConn :: FilePath -> (DuckConn -> IO a) -> IO a
-withWriteConn = withConnection
+-- | Where to open the database: a file path, or @":memory:"@ for an
+-- in-process database.
+data Config = Config { cfgDbPath :: FilePath }
+
+-- | Convenience 'Config' for an in-memory database.
+inMemory :: Config
+inMemory = Config ":memory:"
+
+-- | Open a connection for the given 'Config'. Pair with 'close', or use
+-- 'withHandle' for exception-safe lifecycle management.
+new :: Config -> IO Handle
+new cfg = Handle <$> DDB.open (cfgDbPath cfg)
+
+-- | Close a connection opened by 'new'.
+close :: Handle -> IO ()
+close (Handle c) = DDB.close c
+
+-- | Exception-safe connection lifecycle: opens, runs the action, and closes
+-- even on exception (via 'bracket').
+withHandle :: Config -> (Handle -> IO a) -> IO a
+withHandle cfg = bracket (new cfg) close
+
+-- | Run a query against a 'Handle', unwrapping the opaque 'Connection'. This
+-- is the only way non-'DuckDb' code may issue raw SQL — the 'Connection' is
+-- never exposed, so the moat holds by construction (Plan 184).
+queryHandle :: FromRow r => Handle -> Query -> IO [r]
+queryHandle h q = query_ (hConn h) q
+
+-- | Run a statement against a 'Handle', unwrapping the opaque 'Connection'
+-- (the statement counterpart of 'queryHandle'). Returns the number of rows
+-- affected, matching 'execute_'.
+executeHandle :: Handle -> Query -> IO Int
+executeHandle h q = execute_ (hConn h) q
 
 -- ---------------------------------------------------------------------------
 -- Schema
 
-initSchema :: DuckConn -> IO ()
-initSchema conn = mapM_ (void . execute_ conn) allTables
+initSchema :: Handle -> IO ()
+initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
   where
     allTables :: [Query]
     allTables =
@@ -358,7 +399,7 @@ newtype AppenderPool = AppenderPool (Map.Map Text DuckDBAppender)
 
 -- | Create one appender per table name, then run @action@. All appenders are
 -- flushed and destroyed when the scope exits (even on exception).
-withAppenderPool :: DuckConn -> [Text] -> (AppenderPool -> IO a) -> IO a
+withAppenderPool :: Handle -> [Text] -> (AppenderPool -> IO a) -> IO a
 withAppenderPool = withAppenderPoolTimed (\_ -> pure ())
 
 -- | Like 'withAppenderPool', but times the flush+destroy teardown via
@@ -368,9 +409,9 @@ withAppenderPool = withAppenderPoolTimed (\_ -> pure ())
 -- timed from outside its own scope: by the time control returns to the
 -- caller of 'withAppenderPool', the flush has already silently happened.
 withAppenderPoolTimed
-  :: (Progress.ProgressEvent -> IO ()) -> DuckConn -> [Text] -> (AppenderPool -> IO a) -> IO a
+  :: (Progress.ProgressEvent -> IO ()) -> Handle -> [Text] -> (AppenderPool -> IO a) -> IO a
 withAppenderPoolTimed sink conn tables action =
-  withConnectionHandle conn $ \rawConn ->
+  withConnectionHandle (hConn conn) $ \rawConn ->
     bracket
       (createAll rawConn tables)
       (\pool -> Progress.timedStepTo sink "Flushing Phase A appender pool" (destroyAll pool))
@@ -1066,17 +1107,17 @@ instance FromRow TwoText where
 -- ---------------------------------------------------------------------------
 -- Phase B queries
 
-queryLocalVars :: DuckConn -> IO [LocalVar]
-queryLocalVars conn = query_ conn
+queryLocalVars :: Handle -> IO [LocalVar]
+queryLocalVars conn = query_ (hConn conn)
   "SELECT file, object, proc_name, var_name, raw_type, is_param, scope_line \
   \FROM local_vars"
 
-queryCallSites :: DuckConn -> IO [CallSite]
-queryCallSites conn = query_ conn
+queryCallSites :: Handle -> IO [CallSite]
+queryCallSites conn = query_ (hConn conn)
   "SELECT file, object, from_proc, to_name, call_type, line FROM call_sites"
 
-queryGlobalVars :: DuckConn -> IO [GlobalVar]
-queryGlobalVars conn = query_ conn
+queryGlobalVars :: Handle -> IO [GlobalVar]
+queryGlobalVars conn = query_ (hConn conn)
   "SELECT file, object, var_name, var_type, mods FROM global_vars"
 
 -- | Build the four workspace-wide maps needed by Pass 5 from the DB. The
@@ -1091,17 +1132,17 @@ queryGlobalVars conn = query_ conn
 -- 'PB.Analysis.TypeResolve.resolveVirtual' recovers the target object's own
 -- declared casing even when reached via such a mismatched reference.
 queryObjInfo
-  :: DuckConn
+  :: Handle
   -> IO (Set.Set Text, Set.Set Text, Map.Map Ident Ident, IdentMap IdentSet)
 queryObjInfo conn = do
-  objRows  <- query_ conn
+  objRows  <- query_ (hConn conn)
     "SELECT object FROM objects \
     \WHERE LOWER(COALESCE(ancestor,'')) != 'structure'" :: IO [OneText]
-  usrRows  <- query_ conn
+  usrRows  <- query_ (hConn conn)
     "SELECT object FROM objects WHERE LOWER(ancestor) = 'structure'" :: IO [OneText]
-  inhRows  <- query_ conn
+  inhRows  <- query_ (hConn conn)
     "SELECT object, ancestor FROM objects WHERE ancestor IS NOT NULL" :: IO [TwoText]
-  procRows <- query_ conn
+  procRows <- query_ (hConn conn)
     "SELECT object, proc_name FROM procedures" :: IO [TwoText]
   pure
     ( Set.fromList [t | OneText t <- objRows]
@@ -1111,41 +1152,41 @@ queryObjInfo conn = do
         [(mkIdent o, identSetSingleton (mkIdent p)) | TwoText o p <- procRows]
     )
 
-queryProcDefs :: DuckConn -> IO [Taint.DefRow]
-queryProcDefs conn = query_ conn
+queryProcDefs :: Handle -> IO [Taint.DefRow]
+queryProcDefs conn = query_ (hConn conn)
   "SELECT file, object, proc_name, var_name, block_id, stmt_index, line, kind \
   \FROM proc_defs"
 
-queryProcUses :: DuckConn -> IO [Taint.UseRow]
-queryProcUses conn = query_ conn
+queryProcUses :: Handle -> IO [Taint.UseRow]
+queryProcUses conn = query_ (hConn conn)
   "SELECT file, object, proc_name, var_name, block_id, stmt_index, line, kind \
   \FROM proc_uses"
 
 -- | Plan 182 Move 2: reads back 'appendTaintIntraEdges''s output.
-queryTaintIntraEdges :: DuckConn -> IO [TaintEdges.TaintIntraEdgeRow]
-queryTaintIntraEdges conn = query_ conn
+queryTaintIntraEdges :: Handle -> IO [TaintEdges.TaintIntraEdgeRow]
+queryTaintIntraEdges conn = query_ (hConn conn)
   "SELECT object, proc_name, use_var, def_var FROM taint_intra_edges"
 
 -- | Plan 182b: reads back 'appendTaintReturnRows''s output.
-queryTaintReturnRows :: DuckConn -> IO [TaintEdges.TaintReturnRow]
-queryTaintReturnRows conn = query_ conn
+queryTaintReturnRows :: Handle -> IO [TaintEdges.TaintReturnRow]
+queryTaintReturnRows conn = query_ (hConn conn)
   "SELECT object, proc_name, var_name FROM taint_return_rows"
 
-queryResolvedCalls :: DuckConn -> IO [Taint.ResolvedCallRow]
-queryResolvedCalls conn = query_ conn
+queryResolvedCalls :: Handle -> IO [Taint.ResolvedCallRow]
+queryResolvedCalls conn = query_ (hConn conn)
   "SELECT file, object, from_proc, to_name, call_type, line, \
   \target_object, target_proc, kind, confidence FROM resolved_calls"
 
 -- | Reconstruct per-file TaintFileInputs from the sql_statements and
 -- procedures tables.  SqlStmt values are re-derived from raw_sql using
 -- the same classifyOperation / hasIntoClause logic as extractTaintInputs.
-queryTaintInputs :: DuckConn -> IO [Taint.TaintFileInputs]
+queryTaintInputs :: Handle -> IO [Taint.TaintFileInputs]
 queryTaintInputs conn = do
-  sqlRows  <- query_ conn
+  sqlRows  <- query_ (hConn conn)
     "SELECT file, object, proc_name, line, raw_sql FROM sql_statements"
-  metaRows <- query_ conn
+  metaRows <- query_ (hConn conn)
     "SELECT file, object, proc_name, proc_type, params, return_type FROM procedures"
-  objRows  <- query_ conn
+  objRows  <- query_ (hConn conn)
     "SELECT file, object FROM objects WHERE kind='powerscript'" :: IO [TwoText]
   let stmts   = mapMaybe rowToStmt  (sqlRows  :: [SqlRow5])
       metas   = map      rowToMeta  (metaRows :: [MetaRow6])
@@ -1175,26 +1216,26 @@ queryTaintInputs conn = do
       Taint.ProcMeta f o p pt par rt Nothing
 
 -- | Plan 148 Phase 1b: SchemaCategory read-side queries.
-queryDwRetrieveColumns :: DuckConn -> IO [DwRetrieveColRow]
-queryDwRetrieveColumns conn = query_ conn
+queryDwRetrieveColumns :: Handle -> IO [DwRetrieveColRow]
+queryDwRetrieveColumns conn = query_ (hConn conn)
   "SELECT file, dw_name, namespace, table_name, column_name FROM dw_retrieve_columns"
 
 -- | Plan 163 Phase 6. Same 'DwRetrieveColRow' 'FromRow' shape as
 -- 'queryDwRetrieveColumns' -- only the source table differs.
-queryDwWriteColumns :: DuckConn -> IO [DwRetrieveColRow]
-queryDwWriteColumns conn = query_ conn
+queryDwWriteColumns :: Handle -> IO [DwRetrieveColRow]
+queryDwWriteColumns conn = query_ (hConn conn)
   "SELECT file, dw_name, namespace, table_name, column_name FROM dw_write_columns"
 
-queryDwWhereColumns :: DuckConn -> IO [DwRetrieveColRow]
-queryDwWhereColumns conn = query_ conn
+queryDwWhereColumns :: Handle -> IO [DwRetrieveColRow]
+queryDwWhereColumns conn = query_ (hConn conn)
   "SELECT file, dw_name, namespace, table_name, column_name FROM dw_where_columns"
 
-queryDwJoinLegs :: DuckConn -> IO [DwJoinLegRow]
-queryDwJoinLegs conn = query_ conn
+queryDwJoinLegs :: Handle -> IO [DwJoinLegRow]
+queryDwJoinLegs conn = query_ (hConn conn)
   "SELECT file, dw_name, left_ref, right_ref FROM dw_joins"
 
-querySqlCols :: DuckConn -> IO [SqlColRow]
-querySqlCols conn = query_ conn
+querySqlCols :: Handle -> IO [SqlColRow]
+querySqlCols conn = query_ (hConn conn)
   "SELECT file, object, proc_name, line, namespace, table_name, column_name, is_write \
   \FROM sql_statement_columns"
 
@@ -1210,9 +1251,9 @@ instance FromRow SchObjectRow where
   fromRow = SchObjectRow
     <$> field <*> field <*> field <*> field <*> field <*> field <*> field <*> field
 
-querySchemaObjects :: DuckConn -> IO [SchObject]
+querySchemaObjects :: Handle -> IO [SchObject]
 querySchemaObjects conn = do
-  rows <- query_ conn
+  rows <- query_ (hConn conn)
     "SELECT kind, namespace, table_name, column_name, \
     \stmt_file, stmt_object, stmt_proc, stmt_line FROM schema_objects"
   pure (map toSchObject rows)
@@ -1244,25 +1285,25 @@ data SchMorphismRow = SchMorphismRow
 instance FromRow SchMorphismRow where
   fromRow = SchMorphismRow <$> field <*> field <*> field <*> field
 
-querySchemaMorphismRows :: DuckConn -> IO [SchMorphismRow]
-querySchemaMorphismRows conn = query_ conn
+querySchemaMorphismRows :: Handle -> IO [SchMorphismRow]
+querySchemaMorphismRows conn = query_ (hConn conn)
   "SELECT from_key, to_key, leg_kind, leg_source FROM schema_morphisms"
 
 -- | Plan 175 Phase 2: typed reader over 'objects', feeding
--- 'PB.Pipeline.DuckDb.Edb.inheritsRows'. Deliberately not the write-side
+-- 'PB.Pipeline.DuckDb.Relations.inheritsRows'. Deliberately not the write-side
 -- 'ObjectRow' -- that type carries 'orLayoutJson'\/'orTypeBlocksJson', which
 -- @inherits@ never reads; selecting only the two columns actually needed
 -- avoids transferring that JSON for every object row. The @ancestor IS NOT
 -- NULL@ filter is the same one 'queryObjInfo' already applies for its own
 -- @inhRows@.
-queryObjectAncestors :: DuckConn -> IO [(Text, Text)]
+queryObjectAncestors :: Handle -> IO [(Text, Text)]
 queryObjectAncestors conn = do
-  rows <- query_ conn
+  rows <- query_ (hConn conn)
     "SELECT object, ancestor FROM objects WHERE ancestor IS NOT NULL" :: IO [TwoText]
   pure [(o, a) | TwoText o a <- rows]
 
 -- | Plan 175 Phase 2: typed reader over 'procedures', feeding
--- 'PB.Pipeline.DuckDb.Edb.procRows'\/'procMetaRows'\/'entryRows'\/
+-- 'PB.Pipeline.DuckDb.Relations.procRows'\/'procMetaRows'\/'entryRows'\/
 -- 'callsRows'. Deliberately not the write-side 'ProcRow' -- that type
 -- carries 'prCfgJson'\/'prInstrJson'\/'prWiringJson', none of which any of
 -- the four consumers read; selecting only the five columns actually needed
@@ -1278,38 +1319,38 @@ data ProcSummaryRow = ProcSummaryRow
 instance FromRow ProcSummaryRow where
   fromRow = ProcSummaryRow <$> field <*> field <*> field <*> field <*> field
 
-queryProcedures :: DuckConn -> IO [ProcSummaryRow]
-queryProcedures conn = query_ conn
+queryProcedures :: Handle -> IO [ProcSummaryRow]
+queryProcedures conn = query_ (hConn conn)
   "SELECT object, proc_name, proc_type, cyclomatic, confidence FROM procedures"
 
 -- | Plan 175 Phase 2: typed reader over 'dw_objects', feeding
--- 'PB.Pipeline.DuckDb.Edb.entryRows''s DW-object membership check.
-queryDwObjects :: DuckConn -> IO [Text]
+-- 'PB.Pipeline.DuckDb.Relations.entryRows''s DW-object membership check.
+queryDwObjects :: Handle -> IO [Text]
 queryDwObjects conn = do
-  rows <- query_ conn "SELECT DISTINCT object FROM dw_objects" :: IO [OneText]
+  rows <- query_ (hConn conn) "SELECT DISTINCT object FROM dw_objects" :: IO [OneText]
   pure [o | OneText o <- rows]
 
 -- | Plan 163 Phase 3: same shape/query as 'querySqlCols', reading
 -- 'cat_footprint_columns' instead -- the existing 'FromRow' 'SqlColRow'
 -- instance is reused verbatim.
-queryCatFootprintColumns :: DuckConn -> IO [SqlColRow]
-queryCatFootprintColumns conn = query_ conn
+queryCatFootprintColumns :: Handle -> IO [SqlColRow]
+queryCatFootprintColumns conn = query_ (hConn conn)
   "SELECT file, object, proc_name, line, namespace, table_name, column_name, is_write \
   \FROM cat_footprint_columns"
 
-queryCatColumns :: DuckConn -> IO [CatColumnRow]
-queryCatColumns conn = query_ conn
+queryCatColumns :: Handle -> IO [CatColumnRow]
+queryCatColumns conn = query_ (hConn conn)
   "SELECT namespace, table_name, column_name FROM catalog_columns"
 
-queryCatFks :: DuckConn -> IO [CatFkRow]
-queryCatFks conn = query_ conn
+queryCatFks :: Handle -> IO [CatFkRow]
+queryCatFks conn = query_ (hConn conn)
   "SELECT from_namespace, from_table, from_column, to_namespace, to_table, to_column \
   \FROM catalog_fks"
 
 -- ---------------------------------------------------------------------------
 -- Phase B appenders
 
-appendResolvedTypes :: DuckConn -> [ResolvedType] -> IO ()
+appendResolvedTypes :: Handle -> [ResolvedType] -> IO ()
 appendResolvedTypes _    [] = pure ()
 appendResolvedTypes conn rows = withRaw conn "resolved_types" $ \app ->
   forEachRow app rows $ \_ r -> do
@@ -1323,7 +1364,7 @@ appendResolvedTypes conn rows = withRaw conn "resolved_types" $ \app ->
     aBool      app (rtIsParam   r)
     aInt       app (rtScopeLine r)
 
-appendResolvedCalls :: DuckConn -> [ResolvedCall] -> IO ()
+appendResolvedCalls :: Handle -> [ResolvedCall] -> IO ()
 appendResolvedCalls _    [] = pure ()
 appendResolvedCalls conn rows = withRaw conn "resolved_calls" $ \app ->
   forEachRow app rows $ \_ r -> do
@@ -1338,7 +1379,7 @@ appendResolvedCalls conn rows = withRaw conn "resolved_calls" $ \app ->
     aText      app (rcKind         r)
     aText      app (rcConfidence   r)
 
-appendInterprocEdges :: DuckConn -> [Taint.InterprocEdge] -> IO ()
+appendInterprocEdges :: Handle -> [Taint.InterprocEdge] -> IO ()
 appendInterprocEdges _    [] = pure ()
 appendInterprocEdges conn rows = withRaw conn "interproc_edges" $ \app ->
   forEachRow app rows $ \_ e -> do
@@ -1352,7 +1393,7 @@ appendInterprocEdges conn rows = withRaw conn "interproc_edges" $ \app ->
     aText     app (Taint.ieCallerContext e)
     aText     app (Taint.ieCalleeContext e)
 
-appendProcSummaries :: DuckConn -> [Taint.ProcedureSummary] -> IO ()
+appendProcSummaries :: Handle -> [Taint.ProcedureSummary] -> IO ()
 appendProcSummaries _    [] = pure ()
 appendProcSummaries conn rows = withRaw conn "procedure_summaries" $ \app ->
   forEachRow app rows $ \_ s -> do
@@ -1364,7 +1405,7 @@ appendProcSummaries conn rows = withRaw conn "procedure_summaries" $ \app ->
     aText app (jsonList (Taint.psGlobalsWritten s))
     aText app (jsonList (Taint.psReturnFlowsTo  s))
 
-appendTaintSources :: DuckConn -> [Taint.TaintSource] -> IO ()
+appendTaintSources :: Handle -> [Taint.TaintSource] -> IO ()
 appendTaintSources _    [] = pure ()
 appendTaintSources conn rows = withRaw conn "taint_sources" $ \app ->
   forEachRow app rows $ \_ s -> do
@@ -1375,7 +1416,7 @@ appendTaintSources conn rows = withRaw conn "taint_sources" $ \app ->
     aText     app (Taint.tsSourceType s)
     aMaybeInt app (Taint.tsLine       s)
 
-appendTaintSinks :: DuckConn -> [Taint.TaintSink] -> IO ()
+appendTaintSinks :: Handle -> [Taint.TaintSink] -> IO ()
 appendTaintSinks _    [] = pure ()
 appendTaintSinks conn rows = withRaw conn "taint_sinks" $ \app ->
   forEachRow app rows $ \_ s -> do
@@ -1387,7 +1428,7 @@ appendTaintSinks conn rows = withRaw conn "taint_sinks" $ \app ->
     aText     app (Taint.tskSeverity s)
     aMaybeInt app (Taint.tskLine     s)
 
-appendTaintAnnotations :: DuckConn -> [Taint.TaintAnnotation] -> IO ()
+appendTaintAnnotations :: Handle -> [Taint.TaintAnnotation] -> IO ()
 appendTaintAnnotations _    [] = pure ()
 appendTaintAnnotations conn rows = withRaw conn "taint_annotations" $ \app ->
   forEachRow app rows $ \_ a -> do
@@ -1429,10 +1470,10 @@ appendTaintAnnotations conn rows = withRaw conn "taint_annotations" $ \app ->
 -- Confirmed via real corpus diff (2026-07-11): every one of the 7 rows
 -- this changes vs. the old behavior differs ONLY in cyclomatic -- object,
 -- proc, proc_type, confidence, and both caller counts are unchanged.
-materializeDeadCode :: DuckConn -> IO ()
+materializeDeadCode :: Handle -> IO ()
 materializeDeadCode conn = do
-  _ <- execute_ conn "DELETE FROM dead_code"
-  _ <- execute_ conn
+  _ <- execute_ (hConn conn) "DELETE FROM dead_code"
+  _ <- execute_ (hConn conn)
     "INSERT INTO dead_code \
     \SELECT object, proc, proc_type, TRY_CAST(cyclomatic AS INTEGER), \
     \level, TRY_CAST(naive_n AS INTEGER), TRY_CAST(scoped_n AS INTEGER) \
@@ -1451,7 +1492,7 @@ renderLegKind LegWrites   = "writes"
 renderLegKind LegRetrieve = "retrieve"
 renderLegKind LegFk       = "fk"
 
-appendSchemaObjects :: DuckConn -> [SchObject] -> IO ()
+appendSchemaObjects :: Handle -> [SchObject] -> IO ()
 appendSchemaObjects _    [] = pure ()
 appendSchemaObjects conn objs = withRaw conn "schema_objects" $ \app ->
   forEachRow app objs $ \_ o -> do
@@ -1485,7 +1526,7 @@ appendSchemaObjects conn objs = withRaw conn "schema_objects" $ \app ->
         aMaybeText app Nothing
         aMaybeInt  app Nothing
 
-appendSchemaMorphisms :: DuckConn -> [SchMorphism] -> IO ()
+appendSchemaMorphisms :: Handle -> [SchMorphism] -> IO ()
 appendSchemaMorphisms _    [] = pure ()
 appendSchemaMorphisms conn ms = withRaw conn "schema_morphisms" $ \app ->
   forEachRow app ms $ \_ m -> do
@@ -1528,9 +1569,9 @@ appendSchemaMorphisms conn ms = withRaw conn "schema_morphisms" $ \app ->
 -- ordinals (found via a real-corpus regression: a target's surviving rows
 -- had ordinals 0,4,5,6,7 from 'backward' interleaved with 1,2,3 from
 -- 'forward' -- neither a valid forward nor backward path).
-materializeDecompositionCoslice :: DuckConn -> IO ()
+materializeDecompositionCoslice :: Handle -> IO ()
 materializeDecompositionCoslice conn =
-  void $ execute_ conn (Query sql)
+  void $ execute_ (hConn conn) (Query sql)
   where
     sql = T.unlines
       [ "INSERT INTO decomposition_coslice"
@@ -1579,9 +1620,9 @@ materializeDecompositionCoslice conn =
 -- join-back on @schema_objects.object_key@ -- the same decoding
 -- 'materializeDecompositionCoslice' uses, since 'schObjectKey' has no inverse
 -- parser in this codebase. A pure rename\/join projection, no decision logic.
-materializeImpliedFk :: DuckConn -> IO ()
+materializeImpliedFk :: Handle -> IO ()
 materializeImpliedFk conn =
-  void $ execute_ conn (Query sql)
+  void $ execute_ (hConn conn) (Query sql)
   where
     sql = T.unlines
       [ "INSERT INTO implied_fk"
@@ -1603,9 +1644,9 @@ materializeImpliedFk conn =
 -- question (what breaks if this column changes), so this filters to
 -- @kind = 'column'@ only, the same restriction 'seedRows' already applies
 -- to the coslice walk's own starting points.
-materializeColumnRisk :: DuckConn -> IO ()
+materializeColumnRisk :: Handle -> IO ()
 materializeColumnRisk conn =
-  void $ execute_ conn (Query sql)
+  void $ execute_ (hConn conn) (Query sql)
   where
     sql = T.unlines
       [ "INSERT INTO column_risk (namespace, table_name, column_name, downstream_count)"
@@ -1618,18 +1659,18 @@ materializeColumnRisk conn =
 -- SQL materializers for the raw IDB tables the downstream materialize*
 -- consumers reshape. The EDB tables they read (join_leg, fk, reaches, stmt,
 -- proc_dead, proc, proc_meta, call_ref, resolved_call_edge) are all
--- materialized earlier in 'PB.Pipeline.Passes.materializeAllEdbViews'.
+-- materialized earlier in 'PB.Pipeline.Passes.materializeAllRelationsViews'.
 
 -- | Run a list of single-statement SQL commands, one 'execute_' each. Kept
 -- separate (not a single multi-statement string) because the duckdb-simple
 -- 'execute_' contract in this codebase is single-statement per call (see
 -- 'initSchema').
-runStatements :: DuckConn -> [Text] -> IO ()
-runStatements conn = mapM_ (\s -> void $ execute_ conn (Query s))
+runStatements :: Handle -> [Text] -> IO ()
+runStatements conn = mapM_ (\s -> void $ execute_ (hConn conn) (Query s))
 
 -- | Materialize @implied_fk_pairs@ directly in DuckDB: a DataWindow join edge
 -- with no declared foreign key in EITHER direction.
-materializeImpliedFkPairs :: DuckConn -> IO ()
+materializeImpliedFkPairs :: Handle -> IO ()
 materializeImpliedFkPairs conn = do
   recreateTextTable conn "implied_fk_pairs" ["x", "y"]
   runStatements conn
@@ -1642,7 +1683,7 @@ materializeImpliedFkPairs conn = do
 -- | Materialize @risk_count@ directly in DuckDB: each node's downstream
 -- footprint over the @reaches@ table — the same aggregate
 -- 'materializeCallerCounts' uses for caller fan-in.
-materializeRiskCount :: DuckConn -> IO ()
+materializeRiskCount :: Handle -> IO ()
 materializeRiskCount conn = do
   recreateTextTable conn "risk_count" ["x", "n"]
   runStatements conn
@@ -1654,7 +1695,7 @@ materializeRiskCount conn = do
 -- @live_proc(Object,Proc) :- stmt(_,Object,Proc,_), !proc_dead(Object,Proc)@.
 -- Consumed by the CLI's @/api/analysis/live-procedures@ endpoint
 -- ('cli/api/src/pb/api/services/analysis.py').
-materializeLiveProc :: DuckConn -> IO ()
+materializeLiveProc :: Handle -> IO ()
 materializeLiveProc conn = do
   recreateTextTable conn "live_proc" ["object", "proc"]
   runStatements conn
@@ -1669,7 +1710,7 @@ materializeLiveProc conn = do
 -- DuckDB. Produces @has_naive_caller@, @has_scoped_caller@,
 -- @caller_count_naive@, @caller_count_scoped@, and @confidence@ — the same
 -- intermediate tables 'materializeDeadCodeRows' joins.
-materializeCallerCounts :: DuckConn -> IO ()
+materializeCallerCounts :: Handle -> IO ()
 materializeCallerCounts conn = do
   recreateTextTable conn "has_naive_caller" ["callee_name"]
   recreateTextTable conn "has_scoped_caller" ["callee_obj", "callee_proc"]
@@ -1702,7 +1743,7 @@ materializeCallerCounts conn = do
 -- @caller_count_scoped_final@ intermediates) directly in DuckDB.
 -- Must run AFTER 'materializeCallerCounts' (which produces @confidence@ and
 -- the caller-count relations it joins).
-materializeDeadCodeRows :: DuckConn -> IO ()
+materializeDeadCodeRows :: Handle -> IO ()
 materializeDeadCodeRows conn = do
   recreateTextTable conn "caller_count_naive_final" ["proc_lower", "n"]
   recreateTextTable conn "caller_count_scoped_final" ["object", "proc", "n"]
@@ -1756,9 +1797,9 @@ materializeDeadCodeRows conn = do
 -- PERFORMANCE FIX: @taint_step_kind@ is written directly into a plain DuckDB
 -- table by 'PB.Analysis.TaintClosure.materializeTaintStepKind', a Haskell
 -- BFS-based reconstruction. This materializer reads that table.
-materializeTaintPaths :: DuckConn -> IO ()
+materializeTaintPaths :: Handle -> IO ()
 materializeTaintPaths conn =
-  void $ execute_ conn (Query sql)
+  void $ execute_ (hConn conn) (Query sql)
   where
     sql = T.unlines
       [ "DELETE FROM taint_paths"
@@ -1836,7 +1877,7 @@ materializeTaintPaths conn =
 -- Reads @taint_sources@ and @taint_reaches@ (transitive closure) to
 -- rebuild the tainted set, then calls 'Taint.buildTaintAnnotations'
 -- (which needs @block_id@ from proc_defs/proc_uses).
-materializeTaintAnnotations :: DuckConn -> IO ()
+materializeTaintAnnotations :: Handle -> IO ()
 materializeTaintAnnotations conn = do
   -- 1. Read sources/sinks as Haskell types for buildTaintAnnotations.
   srcRows <- queryTextRows conn "taint_sources"
@@ -1908,9 +1949,9 @@ instance FromRow TextRow where
 -- | Read every row of a table or view as TEXT columns, in the given column
 -- order (CAST to VARCHAR at the SQL level, so this works regardless of the
 -- underlying column type).
-queryTextRows :: DuckConn -> Text -> [Text] -> IO [[Text]]
+queryTextRows :: Handle -> Text -> [Text] -> IO [[Text]]
 queryTextRows conn tblOrView cols = do
-  rows <- query_ conn (Query sql)
+  rows <- query_ (hConn conn) (Query sql)
   pure (map unTextRow rows)
   where
     sql = "SELECT " <> T.intercalate ", "
@@ -1920,15 +1961,15 @@ queryTextRows conn tblOrView cols = do
 -- | (Re)create a table with the given column names, all TEXT, dropping any
 -- previous table of that name first -- the write-side counterpart of
 -- 'queryTextRows', used to materialize a computed relation's result rows.
-recreateTextTable :: DuckConn -> Text -> [Text] -> IO ()
+recreateTextTable :: Handle -> Text -> [Text] -> IO ()
 recreateTextTable conn tbl cols = do
-  void $ execute_ conn (Query ("DROP TABLE IF EXISTS " <> tbl))
-  void $ execute_ conn (Query ("CREATE TABLE " <> tbl <> " ("
+  void $ execute_ (hConn conn) (Query ("DROP TABLE IF EXISTS " <> tbl))
+  void $ execute_ (hConn conn) (Query ("CREATE TABLE " <> tbl <> " ("
     <> T.intercalate ", " [ c <> " TEXT" | c <- cols ] <> ")"))
 
 -- | Append rows of uniform (but runtime-known) arity as TEXT columns -- no
 -- per-arity 'ToRow' instance needed.
-appendTextRows :: DuckConn -> Text -> [[Text]] -> IO ()
+appendTextRows :: Handle -> Text -> [[Text]] -> IO ()
 appendTextRows _    _   []   = pure ()
 appendTextRows conn tbl rows = withRaw conn tbl $ \app ->
   forEachRow app rows $ \_ r -> for_ r (aText app)
@@ -1939,9 +1980,9 @@ appendTextRows conn tbl rows = withRaw conn tbl $ \app ->
 jsonList :: ToJSON a => [a] -> Text
 jsonList = TE.decodeUtf8 . BSL.toStrict . encode
 
-withRaw :: DuckConn -> Text -> (DuckDBAppender -> IO ()) -> IO ()
+withRaw :: Handle -> Text -> (DuckDBAppender -> IO ()) -> IO ()
 withRaw conn tbl action =
-  withConnectionHandle conn $ \rawConn ->
+  withConnectionHandle (hConn conn) $ \rawConn ->
     withAppender rawConn tbl action
 
 withAppender :: DuckDBConnection -> Text -> (DuckDBAppender -> IO a) -> IO a

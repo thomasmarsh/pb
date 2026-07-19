@@ -13,7 +13,7 @@ module DeadCodeFixtures
 
 import PB.Prelude
 import PB.Pipeline.DuckDb
-  ( DuckConn, AppenderPool
+  ( Handle, AppenderPool
   , appendProcedures, ProcRow (..)
   , appendDwObjects, DwObjectRow (..)
   , appendResolvedCalls
@@ -51,7 +51,7 @@ phaseATables =
 -- production, from the same (procs, rawCalls, resolvedCalls, inherits,
 -- dwObjects) shape the old Haskell BFS used to take before it was deleted
 -- (Plan 161 Phase 2b cutover) -- so each fixture below exercises the
--- SQL-view EDB layer ('PB.Pipeline.DuckDb.Edb.initDeadCodeEdb')
+-- SQL-view EDB layer ('PB.Pipeline.DuckDb.Relations.initDeadCodeRelations')
 -- against a hand-verified expected dead set (each one cross-checked against
 -- the old Haskell BFS before it was deleted, and against the real openpay
 -- corpus -- see BACKLOG's Phase 2b session entry).
@@ -62,7 +62,7 @@ phaseATables =
 -- become @objects@ rows whose @ancestor@ is the parent.
 
 seedDeadCodeFixture
-  :: DuckConn
+  :: Handle
   -> AppenderPool
   -> [ProcInfo]
   -> [(Text, Text, Text)]           -- ^ raw calls (object, from_proc, to_name)
@@ -87,7 +87,7 @@ seedDeadCodeFixture conn pool procs calls resolved inherits dwObjs = do
        | (obj, fromProc, tgtObj, tgtProc) <- resolved
        ]
   -- Plan 166 Stage 2: seed inheritance as objects.ancestor rows; the
-  -- faithful `inherits` EDB view (initDeadCodeEdb) reads these, and
+  -- faithful `inherits` EDB view (initDeadCodeRelations) reads these, and
   -- the `descendant`/`override_edge` IDB rules derive the closure.
   appendObjects pool
     [ ObjectRow "f.sru" "object" child (Just parent) Nothing Nothing "confirmed"

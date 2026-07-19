@@ -52,7 +52,7 @@ import PB.Algebra.Closure
   , reconstructPathNodes
   )
 
-import PB.Pipeline.DuckDb (DuckConn, recreateTextTable, appendTextRows)
+import PB.Pipeline.DuckDb (Handle, recreateTextTable, appendTextRows)
 import qualified Data.Text as T
 
 import qualified Data.HashMap.Strict as HM
@@ -338,7 +338,7 @@ taintWitnessLegs sources intraEdges returnRows edges =
 -- source\/sink classification, so no extra DB round-trip is needed.
 materializeTaintClosure
   :: [Taint.TaintSource] -> [Taint.TaintSink] -> [TaintEdges.TaintIntraEdgeRow] -> [TaintEdges.TaintReturnRow]
-  -> [Taint.InterprocEdge] -> DuckConn -> IO ()
+  -> [Taint.InterprocEdge] -> Handle -> IO ()
 materializeTaintClosure sources sinks intraEdges returnRows edges conn = do
   let reaches   = taintReachesPairs sources intraEdges returnRows edges
       confirmed = taintConfirmed sources sinks intraEdges returnRows edges
@@ -370,7 +370,7 @@ materializeTaintClosure sources sinks intraEdges returnRows edges conn = do
 -- load-bearing, not incidental formatting.
 materializeTaintStepKind
   :: [Taint.TaintSource] -> [Taint.TaintSink] -> [TaintEdges.TaintIntraEdgeRow] -> [TaintEdges.TaintReturnRow]
-  -> [Taint.InterprocEdge] -> DuckConn -> IO ()
+  -> [Taint.InterprocEdge] -> Handle -> IO ()
 materializeTaintStepKind sources sinks intraEdges returnRows edges conn = do
   let confirmed   = taintConfirmed sources sinks intraEdges returnRows edges
       witnessLegs = taintWitnessLegs sources intraEdges returnRows edges

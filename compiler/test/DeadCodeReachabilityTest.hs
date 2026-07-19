@@ -17,7 +17,7 @@ import Test.Tasty.HUnit (testCase, (@?=))
 
 -- | Convert a fixture's raw/resolved calls into the 'Taint.ResolvedCallRow'
 -- list 'deadReach' expects — the same shape 'seedDeadCodeFixture'
--- writes into the @resolved_calls@ table (which 'initDeadCodeEdb' reads
+-- writes into the @resolved_calls@ table (which 'initDeadCodeRelations' reads
 -- back via 'queryResolvedCalls'). Only the columns 'callRefRows'/
 -- 'resolvedCallEdgeRows'/'callsRows' actually read are set; the rest are
 -- placeholders, matching 'mkResolvedCall''s contract.

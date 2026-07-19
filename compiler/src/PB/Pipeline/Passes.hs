@@ -10,14 +10,14 @@ import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TypeResolve
 import PB.Analysis.SchemaCategory
   ( SchemaInputs (..), SchGraph (..), buildSchema )
-import PB.Pipeline.DuckDb.Edb qualified as Edb
-import PB.Pipeline.DuckDb.Edb (LegSourceFanout (..))
+import PB.Pipeline.DuckDb.Relations qualified as Relations
+import PB.Pipeline.DuckDb.Relations (LegSourceFanout (..))
 import PB.Analysis.DeadCodeReachability qualified as DeadCodeReachability
 import PB.Analysis.SchemaClosure qualified as SchemaClosure
 import PB.Analysis.TaintClosure qualified as TaintClosure
 import PB.Pipeline.Progress qualified as Progress
 import PB.Pipeline.DuckDb
-  ( DuckConn
+  ( Handle
   , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
   , queryProcDefs, queryProcUses, queryResolvedCalls
   , queryTaintInputs, queryTaintIntraEdges, queryTaintReturnRows
@@ -57,17 +57,17 @@ import Data.Time.Clock        (getCurrentTime)
 -- 'Progress.timedStep' events.
 
 -- | Characterize @leg_source@'s (x, y) key fan-in (see
--- 'PB.Pipeline.DuckDb.Edb.legSourceFanout' for the O(group_size^2)
+-- 'PB.Pipeline.DuckDb.Relations.legSourceFanout' for the O(group_size^2)
 -- aggregate blow-up this guards against). Always emits a one-line summary;
 -- additionally emits a @warning@ event when the largest group looks
 -- disproportionate -- 500 is a heuristic threshold, not a proven safe bound:
 -- 'leg_source' has only ~3 distinct @kind@ buckets, so a group this size is
 -- almost certainly duplicate/near-duplicate extraction on one schema edge
 -- rather than legitimate diversity, and is worth an operator's attention.
-reportLegSourceFanout :: DuckConn -> IO ()
+reportLegSourceFanout :: Handle -> IO ()
 reportLegSourceFanout conn = do
   t0 <- getCurrentTime
-  LegSourceFanout total keys maxGroup <- Edb.legSourceFanout conn
+  LegSourceFanout total keys maxGroup <- Relations.legSourceFanout conn
   t1 <- getCurrentTime
   let n = T.pack . show
   Progress.emitEvent (Progress.EvStep
@@ -87,15 +87,15 @@ reportLegSourceFanout conn = do
 -- fan-in blowup is the established failure shape in this neighborhood
 -- (leg_source, taint_reaches both hit it previously; see
 -- compiler/CLAUDE.md's Code Index).
-reportTaintDefUseFanout :: DuckConn -> IO ()
+reportTaintDefUseFanout :: Handle -> IO ()
 reportTaintDefUseFanout conn = do
   t0 <- getCurrentTime
-  defFo <- Edb.defLineFanout conn
+  defFo <- Relations.defLineFanout conn
   t1 <- getCurrentTime
-  retFo <- Edb.returnUseFanout conn
+  retFo <- Relations.returnUseFanout conn
   t2 <- getCurrentTime
   let n = T.pack . show
-      report relName label elapsedMs (Edb.DefUseFanout total keys maxGroup) = do
+      report relName label elapsedMs (Relations.DefUseFanout total keys maxGroup) = do
         Progress.emitEvent (Progress.EvStep
           (label <> " -- " <> n total <> " rows, "
             <> n keys <> " keys, max " <> n maxGroup <> " rows/key")
@@ -120,13 +120,13 @@ reportTaintDefUseFanout conn = do
 --   ('runPass67' — @taint_reaches@\/@taint_confirmed@ are materialized by 'TaintClosure.materializeTaintClosure'), and
 --   schema-category construction
 --   ('runPass9', populating @schema_objects@\/@schema_morphisms@). Then
---   'materializeAllEdbViews' creates every EDB relation the
+--   'materializeAllRelationsViews' creates every EDB relation the
 --   downstream materializers assume: the dead-code EDBs
---   ('Edb.initDeadCodeEdb', over @procedures@\/
+--   ('Relations.initDeadCodeRelations', over @procedures@\/
 --   @resolved_calls@\/@objects@), @proc_dead@ itself
 --   ('DeadCodeReachability.materializeDeadCodeClosure'), and the
 --   schema EDBs
---   ('Edb.initSchemaEdb', over @schema_morphisms@\/
+--   ('Relations.initSchemaRelations', over @schema_morphisms@\/
 --   @schema_objects@).
 -- * **B2 (SQL materializers):** the five relation materializers run as direct
 --   DuckDB SQL, in dependency order after the EDB views exist:
@@ -143,7 +143,7 @@ reportTaintDefUseFanout conn = do
 --   genuine data dependency. Finally the two SQL materializers project IDB
 --   output tables into their API-facing shapes (@dead_code_rows@→@dead_code@,
 --   @path_leg_fwd@\/@path_leg_back@→@decomposition_coslice@).
-runPhaseB :: DuckConn -> Maybe Text -> IO ()
+runPhaseB :: Handle -> Maybe Text -> IO ()
 runPhaseB conn mDefaultNamespace = do
   Progress.emitEvent (Progress.EvPhase "B")
   -- B1: prerequisite Haskell analyses + EDB materialization.
@@ -158,7 +158,7 @@ runPhaseB conn mDefaultNamespace = do
     , ("schema_morphisms", length (sgLegs sch))
     ]
     Nothing)
-  materializeAllEdbViews conn
+  materializeAllRelationsViews conn
   -- B2: the five SQL materializers run in dependency order. Characterize
   -- leg_source's key
   -- fan-in first (see reportLegSourceFanout) -- cheap, and surfaces a
@@ -183,11 +183,11 @@ runPhaseB conn mDefaultNamespace = do
 -- REPLACE VIEW@); together they cover the dead-code and schema EDB layers.
 -- Must run after 'runPass5' (for @resolved_calls@) and 'runPass9' (for
 -- @schema_objects@\/@schema_morphisms@).
-materializeAllEdbViews :: DuckConn -> IO ()
-materializeAllEdbViews conn = do
-  Progress.timedStep "Dead-code EDB views materialized" $ Edb.initDeadCodeEdb conn
+materializeAllRelationsViews :: Handle -> IO ()
+materializeAllRelationsViews conn = do
+  Progress.timedStep "Dead-code EDB views materialized" $ Relations.initDeadCodeRelations conn
   Progress.timedStep "Dead-code closure" $ DeadCodeReachability.materializeDeadCodeClosure conn
-  Progress.timedStep "Schema EDB views materialized" $ Edb.initSchemaEdb conn
+  Progress.timedStep "Schema EDB views materialized" $ Relations.initSchemaRelations conn
   Progress.timedStep "Schema closure" $ SchemaClosure.materializeSchemaClosure conn
   reportTaintDefUseFanout conn
 
@@ -199,7 +199,7 @@ materializeAllEdbViews conn = do
 -- algebraically (Haskell or SQL); the schema/dead-code consumers read the
 -- same pre-materialized EDB tables they always did.
 
-runPass5 :: DuckConn -> IO (Map.Map Ident Ident)
+runPass5 :: Handle -> IO (Map.Map Ident Ident)
 runPass5 conn = Progress.timedStep "Resolving types" $ do
   lvs                              <- queryLocalVars  conn
   css                              <- queryCallSites  conn
@@ -218,7 +218,7 @@ runPass5 conn = Progress.timedStep "Resolving types" $ do
 -- 'TaintClosure.materializeTaintStepKind') — production's source for all
 -- three tables. Neither depends on a DB round-trip: both read straight off
 -- the same in-memory rows this pass already built.
-runPass67 :: DuckConn -> IO ()
+runPass67 :: Handle -> IO ()
 runPass67 conn = Progress.timedStep "Building call graph" $ do
   gvs  <- queryGlobalVars     conn
   defs <- queryProcDefs       conn
@@ -248,7 +248,7 @@ runPass67 conn = Progress.timedStep "Building call graph" $ do
 -- Phase 1): materialize the schema category @Sch@ from Phase A's
 -- DW-retrieve/DW-join/SQL-column/DDL-catalog tables. Returns the graph so
 -- Pass 10 can traverse it without rebuilding from DB rows.
-runPass9 :: DuckConn -> Maybe Text -> IO SchGraph
+runPass9 :: Handle -> Maybe Text -> IO SchGraph
 runPass9 conn mDefaultNamespace = Progress.timedStep "Building schema category" $ do
   drCols  <- queryDwRetrieveColumns  conn
   dwCols  <- queryDwWriteColumns     conn

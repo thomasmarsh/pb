@@ -18,7 +18,7 @@
 --     ROW_NUMBER tie-break picks one witness per ordinal.
 --
 -- The EDB construction ('legSourceRows' / 'seedRows') is already Haskell
--- ('PB.Pipeline.DuckDb.Edb.initSchemaEdb'); only the IDB fixpoint is
+-- ('PB.Pipeline.DuckDb.Relations.initSchemaRelations'); only the IDB fixpoint is
 -- computed here.
 module PB.Analysis.SchemaClosure
   ( legPriority
@@ -28,9 +28,9 @@ module PB.Analysis.SchemaClosure
   ) where
 
 import PB.Prelude
-import PB.Pipeline.DuckDb.Edb (legSourceRows, seedRows)
+import PB.Pipeline.DuckDb.Relations (legSourceRows, seedRows)
 import PB.Pipeline.DuckDb
-  ( DuckConn
+  ( Handle
   , querySchemaMorphismRows
   , querySchemaObjects
   , recreateTextTable
@@ -185,13 +185,13 @@ backForSeed s adjFwd adjRev revReach =
 -- | Materialize @reaches@, @path_leg_fwd@, @path_leg_back@ as real DuckDB
 -- tables, computed by 'legPriority' / 'reachClosure' /
 -- 'cosliceClosure' over the same raw EDB inputs
--- 'PB.Pipeline.DuckDb.Edb.initSchemaEdb' reads. Must run after
+-- 'PB.Pipeline.DuckDb.Relations.initSchemaRelations' reads. Must run after
 -- @schema_morphisms@\/@schema_objects@ are populated (same prerequisite as
--- 'initSchemaEdb'); called from 'PB.Pipeline.Passes.materializeAllEdbViews',
+-- 'initSchemaRelations'); called from 'PB.Pipeline.Passes.materializeAllRelationsViews',
 -- before the downstream materializer that reads @reaches@ as an EDB input
 -- ('PB.Pipeline.DuckDb.materializeRiskCount') runs and before
 -- 'PB.Pipeline.DuckDb.materializeDecompositionCoslice'.
-materializeSchemaClosure :: DuckConn -> IO ()
+materializeSchemaClosure :: Handle -> IO ()
 materializeSchemaClosure conn = do
   morphisms <- querySchemaMorphismRows conn
   objects   <- querySchemaObjects conn
