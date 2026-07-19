@@ -4,6 +4,7 @@ import qualified DuckDbTest
 import qualified SouffleSchemaTest
 import qualified SouffleDeadCodeTest
 import qualified DeadCodeAlgebraTest
+import qualified SchemaAlgebraTest
 import qualified SouffleEngineTest
 import qualified SouffleFuzzTest
 import qualified StdLibTest
@@ -63,6 +64,7 @@ tests = testGroup "pb-compiler"
   , SouffleSchemaTest.tests
   , SouffleDeadCodeTest.tests
   , DeadCodeAlgebraTest.tests
+  , SchemaAlgebraTest.tests
   , SouffleEngineTest.tests
   , SouffleFuzzTest.tests
   , StdLibTest.tests

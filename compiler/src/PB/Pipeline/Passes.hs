@@ -15,6 +15,7 @@ import PB.Analysis.Rules.Schema qualified as SchemaRules
 import PB.Analysis.Rules.Schema (LegSourceFanout (..))
 import PB.Analysis.Rules.DeadCode qualified as DeadCodeRules
 import PB.Analysis.DeadCodeAlgebra qualified as DeadCodeAlgebra
+import PB.Analysis.SchemaAlgebra qualified as SchemaAlgebra
 import PB.Analysis.Rules.Taint qualified as TaintRules
 import PB.Pipeline.Progress qualified as Progress
 import PB.Pipeline.DuckDb
@@ -300,6 +301,7 @@ materializeAllEdbViews conn = do
   Progress.timedStep "Dead-code EDB views materialized" $ DeadCodeRules.initDeadReachEdbViews conn
   Progress.timedStep "Dead-code closure (algebraic)" $ DeadCodeAlgebra.materializeDeadCodeClosure conn
   Progress.timedStep "Schema EDB views materialized" $ SchemaRules.initEdbViews conn
+  Progress.timedStep "Schema closure (algebraic)" $ SchemaAlgebra.materializeSchemaClosure conn
   reportTaintDefUseFanout conn
 
 -- | Every Soufflé rule set run in Phase B. 'Souffle.runRuleSets' topologically
@@ -321,13 +323,20 @@ materializeAllEdbViews conn = do
 -- 'DeadCodeRules.deadCodeRowsRules'\/'DeadCodeRules.liveProcRules' read
 -- @proc_dead@ as an ordinary external EDB table, the same as any other
 -- pre-materialized relation.
+--
+-- 'SchemaRules.legRules'\/'SchemaRules.reachesRules'\/'SchemaRules.cosliceRules'
+-- are likewise NOT listed here (Plan 182 schema-coslice cutover, 2026-07-18,
+-- and deleted entirely — no on-demand oracle retained, per §12 item 7's
+-- CORRECTION): @reaches@\/@path_leg_fwd@\/@path_leg_back@ are now produced by
+-- 'SchemaAlgebra.materializeSchemaClosure' in 'materializeAllEdbViews', an
+-- algebraic priority-cascade + worklist-closure + multi-witness shortest-path
+-- reconstruction over the same EDB inputs. 'SchemaRules.riskRules' reads
+-- @reaches@ as an ordinary external EDB table, the same as any other
+-- pre-materialized relation.
 allDatalogRuleSets :: [Souffle.RuleSet]
 allDatalogRuleSets =
   [ DeadCodeRules.callerCountRules
   , DeadCodeRules.deadCodeRowsRules
-  , SchemaRules.legRules
-  , SchemaRules.reachesRules
-  , SchemaRules.cosliceRules
   , SchemaRules.impliedFkRules
   , SchemaRules.riskRules
   , DeadCodeRules.liveProcRules

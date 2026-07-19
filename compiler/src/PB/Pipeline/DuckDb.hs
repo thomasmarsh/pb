@@ -80,6 +80,7 @@ module PB.Pipeline.DuckDb
   , SchMorphismRow (..)
   , querySchemaObjects
   , querySchemaMorphismRows
+  , renderLegKind
   -- Plan 175 Phase 2: typed EDB-reshaping-layer readers (DeadCode.hs)
   , ProcSummaryRow (..)
   , queryObjectAncestors

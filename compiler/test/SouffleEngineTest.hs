@@ -8,12 +8,10 @@ import PB.Pipeline.Souffle
   )
 import PB.Pipeline.DuckDb (withWriteConn, recreateTextTable, appendTextRows)
 import PB.Analysis.Rules.DeadCode qualified as DeadCode
-  ( callerCountRules, deadCodeRowsRules, liveProcRules )
-import PB.Analysis.Rules.Schema qualified as Schema
-  ( reachesRules, cosliceRules )
+  ( callerCountRules, deadCodeRowsRules, liveProcRules
+  )
 
 import Data.IORef        (modifyIORef, newIORef, readIORef, writeIORef)
-import qualified Data.List  as List (elemIndex)
 import qualified Data.Text as T
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit ((@?=), assertBool, assertFailure, testCase)
@@ -51,7 +49,7 @@ identityRuleSet rel =
        , rsRules =
            [ Rule (relName outRel <> "(" <> T.intercalate ", " (colNames rel) <> ") :- "
                      <> relName rel <> "(" <> T.intercalate ", " (colNames rel) <> ")")
-                  [outRel, rel]
+                    [outRel, rel]
            ]
        , rsChoiceDomains = []
        }
@@ -156,6 +154,12 @@ orderRuleSetsTests = testGroup "orderRuleSets"
 -- 'orderRuleSets' layer, that the merged production set is cycle-free and
 -- respects the known cross-rule-set edges -- so the single-call structure
 -- in 'runPhaseB' is statically sound, not just runtime-verified.
+--
+-- Plan 182 de-oracle: the schema coslice's 'legRules' / 'reachesRules' /
+-- 'cosliceRules' were deleted and replaced by the algebraic closure in
+-- 'PB.Analysis.SchemaAlgebra' (materialized by
+-- 'SchemaAlgebra.materializeSchemaClosure'), so they no longer appear in
+-- this production collection.
 productionOrderTests :: TestTree
 productionOrderTests = testGroup "orderRuleSets (production set)"
   [ testCase "full Phase B rule-set collection orders without a cycle" $
@@ -163,35 +167,13 @@ productionOrderTests = testGroup "orderRuleSets (production set)"
         Left cyclic -> error ("unexpected cycle in production rule sets: "
                                 <> show (map rsRelations cyclic))
         Right _    -> pure ()
-
-  , -- 'proc_dead' is no longer a Soufflé IDB relation (Plan 182 item 6
-    -- cutover, 2026-07-18) -- it's an external EDB table
-    -- ('PB.Analysis.DeadCodeAlgebra.materializeDeadCodeClosure' writes it
-    -- before this collection runs), so there is no
-    -- 'deadCodeRowsRules'\/'liveProcRules' ordering edge left to assert here.
-    testCase "reachesRules precedes cosliceRules (reaches edge)" $
-      -- cosliceRules consumes reaches, which only reachesRules derives.
-      assertBefore Schema.reachesRules Schema.cosliceRules
   ]
-  where
-    -- Assert producer appears before consumer in orderRuleSets' output.
-    assertBefore producer consumer = case orderRuleSets productionRuleSets of
-      Left cyclic -> error ("unexpected cycle: " <> show (map rsRelations cyclic))
-      Right ordered ->
-        let producerIx = List.elemIndex producer ordered
-            consumerIx = List.elemIndex consumer ordered
-        in case (producerIx, consumerIx) of
-          (Just p, Just c) | p < c -> pure ()
-          _ -> error ("expected " <> show (rsRelations producer)
-                      <> " before " <> show (rsRelations consumer)
-                      <> " in " <> show (map rsRelations ordered))
 
 -- | The exact rule-set collection 'PB.Pipeline.Passes.runPhaseB' passes to
 -- one 'runRuleSets' call, in its stable input order.
 productionRuleSets :: [RuleSet]
 productionRuleSets =
   [ DeadCode.callerCountRules, DeadCode.deadCodeRowsRules
-  , Schema.reachesRules, Schema.cosliceRules
   , DeadCode.liveProcRules
   ]
 
