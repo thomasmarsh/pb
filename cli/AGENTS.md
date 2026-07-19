@@ -3,7 +3,7 @@
 Loaded automatically by Claude Code whenever a session reads or edits files
 under `cli/`. This file covers Python-specific rules only — session
 protocol, the staged verification loop, commit discipline, documentation
-style, and change-scope rules live in the root `CLAUDE.md` and apply here too.
+style, and change-scope rules live in the root `AGENTS.md` and apply here too.
 
 ## Verification
 
@@ -27,7 +27,7 @@ uv run pb explore                            # live mode (default)
 
 `cli/pipeline/src/pb/pipeline/bridge/sql_worker.py` is the sqlglot bridge the
 Haskell compiler shells out to for SQL/DDL parsing (`PB.Pipeline.SqlParse`
-in `compiler/CLAUDE.md`). It is invoked as `<python> -m
+in `compiler/AGENTS.md`). It is invoked as `<python> -m
 pb.pipeline.bridge.sql_worker`, never via an installed console-script shim —
 if you touch its location or entry point, update
 `PB.Pipeline.SqlParse.sqlWorkerModuleArgs` on the Haskell side in the same

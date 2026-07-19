@@ -3,7 +3,7 @@
 Loaded automatically by Claude Code whenever a session reads or edits files
 under `ui/`. This file covers frontend-specific rules only — session
 protocol, the staged verification loop, commit discipline, documentation
-style, and change-scope rules live in the root `CLAUDE.md` and apply here too.
+style, and change-scope rules live in the root `AGENTS.md` and apply here too.
 
 ## UI Architecture Rules
 

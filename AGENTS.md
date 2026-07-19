@@ -7,11 +7,11 @@ Prelude/module layout, TypeScript/SolidJS UI architecture rules,
 Python backend specifics — live in nested files that Claude Code loads
 automatically once a session reads or edits files in that subtree:
 
-- `compiler/CLAUDE.md` — Haskell parser/compiler (Prelude rules, Megaparsec
+- `compiler/AGENTS.md` — Haskell parser/compiler (Prelude rules, Megaparsec
   guidance, Module Placement, Corpus Coverage Checklist)
-- `ui/CLAUDE.md` — TypeScript/SolidJS explorer (the 5 UI architecture rules,
+- `ui/AGENTS.md` — TypeScript/SolidJS explorer (the 5 UI architecture rules,
   runtime test pattern)
-- `cli/CLAUDE.md` — Python backend (SQL mock mode, SQL worker bridge)
+- `cli/AGENTS.md` — Python backend (SQL mock mode, SQL worker bridge)
 
 Read the relevant nested file at Stage 0 of any session touching that
 subtree, even if not explicitly instructed to.
@@ -47,7 +47,7 @@ PB_SQL_MOCK=1 uv run --project cli pb explore  # Run explorer with mock SQL (no 
 3. **`doc/plan/` is gitignored.** Plan files, BACKLOG, and STRATEGY are _not_
    committed — they live only on disk. Grooming edits to them are real work
    but will never appear in a commit; the commit only carries code + tests.
-4. **Read the nested `CLAUDE.md` for whichever subsystem the charter touches**
+4. **Read the nested `AGENTS.md` for whichever subsystem the charter touches**
    (`compiler/`, `ui/`, `cli/`) — see the pointer list at the top of this file.
 
 **Interrupted-session recovery.** When asked to "continue" a prior session,
@@ -60,7 +60,7 @@ deciding whether to continue or revert. (The 111a session left a test file
 using `head`, which `PB.Prelude` hides — the plan file had the full picture,
 but reading `git status` first wasted a step.)
 
-**This file and its nested `CLAUDE.md` siblings are the orientation layer.**
+**This file and its nested `AGENTS.md` siblings are the orientation layer.**
 Module signatures are not mirrored here — use `rg` to locate the relevant
 module and read it directly (see Token Efficiency below); at this codebase's
 size a hand-maintained signature index goes stale faster than it can be kept
@@ -113,7 +113,7 @@ rg -l "LogicalLine" compiler/src/
 
 No change is proposed without a prior read of all relevant modules. Locate callers before modifying a function.
 
-**Subsystem-specific Stage 0 diagnostics live in the nested `CLAUDE.md` files** — e.g. `compiler/CLAUDE.md` covers corpus-error sampling, the JSON wire-format encoding rules, and the canonical `cabal` invocation. Read the relevant one before diagnosing a failure in that subsystem.
+**Subsystem-specific Stage 0 diagnostics live in the nested `AGENTS.md` files** — e.g. `compiler/AGENTS.md` covers corpus-error sampling, the JSON wire-format encoding rules, and the canonical `cabal` invocation. Read the relevant one before diagnosing a failure in that subsystem.
 
 **Confirm hypotheses with a narrow test before Stage 1.** After reading code and forming a theory, write a one-line `testCase` (or the language-appropriate equivalent) that asserts the correct output and run it. A test that currently fails is worth more than a long analysis. Do not skip this step.
 
@@ -264,7 +264,7 @@ correctly the first time.
 - **Worked example:** `doc/plan/178-canonical-identifier.md`/`179-
 canonical-identifier-consumers.md` — `PB.AST.Ident` was minted for every
   PB-identifier AST field regardless of how many consumers currently read
-  a given one; see `compiler/CLAUDE.md`'s "Identifier typing is a standing
+  a given one; see `compiler/AGENTS.md`'s "Identifier typing is a standing
   goal" rule for the concrete instance. `doc/plan/170-datalog-discipline.md`'s
   three-question placement test is the same posture applied to a different
   axis (where logic lives, not how identifiers are typed).
@@ -279,7 +279,7 @@ canonical-identifier-consumers.md` — `PB.AST.Ident` was minted for every
 
 ## Testing Discipline
 
-Full-suite verification (Stage 4 above) is mandatory before reporting any task done — not just the tests for the file touched. Subsystem-specific test structure (Haskell `testGroup`/HUnit/Hedgehog, TypeScript `TestStore`/mock-env patterns) lives in the nested `CLAUDE.md` files.
+Full-suite verification (Stage 4 above) is mandatory before reporting any task done — not just the tests for the file touched. Subsystem-specific test structure (Haskell `testGroup`/HUnit/Hedgehog, TypeScript `TestStore`/mock-env patterns) lives in the nested `AGENTS.md` files.
 
 **Table-driven tests.** When 3+ test cases share the same assertion shape, use a table + loop/helper instead of repeating identical structure (`mapM_` over a list in Haskell, `test.each`/a loop in pytest or vitest).
 

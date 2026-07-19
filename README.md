@@ -82,7 +82,7 @@ The interactive explorer is a SolidJS SPA backed by FastAPI and DuckDB.
 - **[`doc/vision.md`](doc/vision.md)** — architectural rationale, LLM integration workflow, DuckDB schema design, and the full operational pipeline.
 - **[`doc/spec.md`](doc/spec.md)** — parser specification: lexical rules, token forms, file structure, and DataWindow syntax.
 - **[`doc/development.md`](doc/development.md)** — build overview, test commands, adding queries, and corpus/debt analysis.
-- **`CLAUDE.md`** — development protocol: staged verification loop, corpus gates, module placement guide, and code index.
+- **`AGENTS.md`** — development protocol: staged verification loop, corpus gates, module placement guide, and code index.
 
 ## License
 
