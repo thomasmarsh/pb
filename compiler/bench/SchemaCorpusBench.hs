@@ -1,13 +1,13 @@
 module Main (main) where
 
 -- | Corpus-scale parity gate for the algebraic schema-category closure
--- ('PB.Analysis.SchemaAlgebra' — 'legAlgebraic' / 'reachesAlgebraic' /
--- 'cosliceAlgebraic') against the production SQL materializers.
+-- ('PB.Analysis.SchemaClosure' — 'legPriority' / 'reachClosure' /
+-- 'cosliceClosure') against the production SQL materializers.
 --
 -- Runs the existing pipeline UNMODIFIED (so the production SQL materializers
 -- populate the @reaches@ / @path_leg_fwd@ / @path_leg_back@ tables), then
 -- independently recomputes those same three relations from the raw
--- @schema_morphisms@ / @schema_objects@ EDB inputs via 'SchemaAlgebra', and
+-- @schema_morphisms@ / @schema_objects@ EDB inputs via 'SchemaClosure', and
 -- asserts the two are content-exact. This is a self-consistency check
 -- (production SQL materializers vs. the algebraic closure), not the
 -- 'DeadCodeCorpusBench' determinism check — it must PASS (exit non-zero on
@@ -19,9 +19,9 @@ import PB.Pipeline.DuckDb
   , querySchemaMorphismRows
   , querySchemaObjects
   )
-import PB.Analysis.Rules.Schema (legSourceRows, seedRows)
-import PB.Analysis.SchemaAlgebra
-  ( legAlgebraic, reachesAlgebraic, cosliceAlgebraic )
+import PB.Pipeline.DuckDb.Edb (legSourceRows, seedRows)
+import PB.Analysis.SchemaClosure
+  ( legPriority, reachClosure, cosliceClosure )
 
 import Database.DuckDB.Simple (query_)
 import qualified Data.Set as Set
@@ -91,9 +91,9 @@ main = do
     objects   <- querySchemaObjects conn
     let legSource = legSourceRows morphisms
         seeds    = [ k | [k] <- seedRows objects ]
-        leg      = legAlgebraic legSource
-        reaches  = reachesAlgebraic leg
-        (pathFwd, pathBack) = cosliceAlgebraic seeds leg
+        leg      = legPriority legSource
+        reaches  = reachClosure leg
+        (pathFwd, pathBack) = cosliceClosure seeds leg
         algReachSet = Set.fromList reaches
         algFwdSet   = Set.fromList pathFwd
         algBackSet  = Set.fromList pathBack
@@ -124,7 +124,7 @@ main = do
 
   where
     desc = fullDesc <> progDesc
-      "Corpus-scale parity gate for the algebraic schema-category closure (production SQL materializers vs. SchemaAlgebra)."
+      "Corpus-scale parity gate for the algebraic schema-category closure (production SQL materializers vs. SchemaClosure)."
 
     reportDiff :: Text -> Set.Set [Text] -> Set.Set [Text] -> IO ()
     reportDiff name prod alg = do

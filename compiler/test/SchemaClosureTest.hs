@@ -1,12 +1,12 @@
-module SchemaAlgebraTest (tests) where
+module SchemaClosureTest (tests) where
 
--- | Golden regression suite for 'PB.Analysis.SchemaAlgebra' (hand-rolled
+-- | Golden regression suite for 'PB.Analysis.SchemaClosure' (hand-rolled
 -- Haskell closures over the interned leg relation — NOT 'star'). Each
 -- fixture's expected output is hand-verified; the algebraic closures are the
 -- sole implementation, so the assertions below are the regression contract.
 import PB.Prelude
-import PB.Analysis.SchemaAlgebra
-  ( legAlgebraic, reachesAlgebraic, cosliceAlgebraic )
+import PB.Analysis.SchemaClosure
+  ( legPriority, reachClosure, cosliceClosure )
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), SchMorphism (..)
   , SchemaInputs (..), CatFkRow (..)
@@ -34,27 +34,27 @@ legRowsOf ms =
   [ [schObjectKey (legFrom m), schObjectKey (legTo m), renderLegKind (legKind m)] | m <- ms ]
 
 tests :: TestTree
-tests = testGroup "SchemaAlgebra (closures, production)"
-  [ testGroup "legAlgebraic (priority cascade)"
+tests = testGroup "SchemaClosure (closures, production)"
+  [ testGroup "legPriority (priority cascade)"
     [ testCase "writes beats retrieve regardless of insertion order" $
         let colA = col "a" "x"
             rows = [ [schObjectKey colA, schObjectKey colA, "retrieve"]
                    , [schObjectKey colA, schObjectKey colA, "writes"] ]
-        in legAlgebraic rows @?= [[schObjectKey colA, schObjectKey colA, "writes"]]
+        in legPriority rows @?= [[schObjectKey colA, schObjectKey colA, "writes"]]
 
     , testCase "0-hop self-referential collision resolves the same tie-break" $
         let colA = col "a" "x"
             rows = [ [schObjectKey colA, schObjectKey colA, "retrieve"]
                    , [schObjectKey colA, schObjectKey colA, "writes"] ]
-        in legAlgebraic rows @?= [[schObjectKey colA, schObjectKey colA, "writes"]]
+        in legPriority rows @?= [[schObjectKey colA, schObjectKey colA, "writes"]]
     ]
 
-  , testGroup "reachesAlgebraic (forward closure)"
+  , testGroup "reachClosure (forward closure)"
     [ testCase "two-hop chain: reaches contains both hops and the transitive pair" $
         let colA = col "a" "x"; colB = col "b" "y"; s = stmt "f.srf" "obj" "proc" 5
             leg = [ [schObjectKey colA, schObjectKey s, "reads"]
                   , [schObjectKey s, schObjectKey colB, "writes"] ]
-            got = Set.fromList (reachesAlgebraic leg)
+            got = Set.fromList (reachClosure leg)
         in do assertBool "colA -> stmt present"
                  (Set.member [schObjectKey colA, schObjectKey s] got)
               assertBool "stmt -> colB present"
@@ -66,13 +66,13 @@ tests = testGroup "SchemaAlgebra (closures, production)"
         let colA = col "a" "x"; colB = col "b" "y"
             leg = [ [schObjectKey colA, schObjectKey colB, "fk"]
                   , [schObjectKey colB, schObjectKey colA, "fk"] ]
-            got = Set.fromList (reachesAlgebraic leg)
+            got = Set.fromList (reachClosure leg)
         in got @?= Set.fromList
              [ [schObjectKey colA, schObjectKey colA], [schObjectKey colA, schObjectKey colB]
              , [schObjectKey colB, schObjectKey colA], [schObjectKey colB, schObjectKey colB] ]
     ]
 
-  , testGroup "cosliceAlgebraic (multi-witness shortest path)"
+  , testGroup "cosliceClosure (multi-witness shortest path)"
     [ testCase "forward+backward path_leg reaches both StmtObj targets, filters column intermediates" $
         let colA = col "a" "x"; colX = col "x" "w"
             stmtS = stmt "f.srf" "objS" "procS" 5
@@ -84,7 +84,7 @@ tests = testGroup "SchemaAlgebra (closures, production)"
                   , [schObjectKey colC, schObjectKey stmtT, "reads"]
                   , [schObjectKey colX, schObjectKey colA, "writes"] ]
             seeds = [schObjectKey colA]
-            (fwd, back) = cosliceAlgebraic seeds leg
+            (fwd, back) = cosliceClosure seeds leg
             stmtKeys = Set.fromList [schObjectKey stmtS, schObjectKey stmtT]
             fwdTargets = Set.fromList [ t | [_, t, _, _, _, _] <- fwd ]
             backTargets = Set.fromList [ t | [_, t, _, _, _, _] <- back ]
@@ -101,7 +101,7 @@ tests = testGroup "SchemaAlgebra (closures, production)"
                   , [schObjectKey colB, schObjectKey colC, "fk"]
                   , [schObjectKey colC, schObjectKey colB, "fk"] ]
             seeds = [schObjectKey colA]
-            (fwd, _back) = cosliceAlgebraic seeds leg
+            (fwd, _back) = cosliceClosure seeds leg
             expected = Set.fromList
               [ [schObjectKey colA, schObjectKey colB, "0", schObjectKey colA, schObjectKey colB, "fk"]
               , [schObjectKey colA, schObjectKey colC, "1", schObjectKey colB, schObjectKey colC, "fk"]
@@ -124,7 +124,7 @@ tests = testGroup "SchemaAlgebra (closures, production)"
             sch = buildSchema inp
             leg = legRowsOf (sgLegs sch)
             objCount = Set.size (sgObjects sch)
-            (fwd, _back) = cosliceAlgebraic [seedKey] leg
+            (fwd, _back) = cosliceClosure [seedKey] leg
             targetCount = Set.size (Set.fromList [ t | [_, t, _, _, _, _] <- fwd ])
         in assertBool ("target count " <> show targetCount <> " should stay <= object count " <> show objCount)
                       (targetCount <= objCount)

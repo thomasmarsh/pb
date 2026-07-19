@@ -232,13 +232,13 @@ initSchema conn = mapM_ (void . execute_ conn) allTables
       -- edges 'PB.Analysis.TaintEdges.foldTaintEdgesEff' folds directly
       -- from each procedure's compiled EffTerm, populated in Phase A
       -- (PB.Pipeline.Runner.compileOne, same phase as cat_footprint_columns)
-      -- and consumed by PB.Analysis.TaintAlgebra.buildTaintSuccessors in Phase B.
+      -- and consumed by PB.Analysis.TaintClosure.buildTaintSuccessors in Phase B.
       , "CREATE TABLE IF NOT EXISTS taint_intra_edges \
         \(object TEXT, proc_name TEXT, use_var TEXT, def_var TEXT)"
       -- Plan 182b (2026-07-18): one row per var used in a procedure's
       -- 'PB.Compile.IR.EReturn' payload, populated in Phase A alongside
       -- taint_intra_edges and consumed by
-      -- PB.Analysis.TaintAlgebra.buildTaintSuccessors in
+      -- PB.Analysis.TaintClosure.buildTaintSuccessors in
       -- Phase B -- replaces the old index's prior dependency on proc_uses'
       -- kind='return' rows.
       , "CREATE TABLE IF NOT EXISTS taint_return_rows \
@@ -1249,7 +1249,7 @@ querySchemaMorphismRows conn = query_ conn
   "SELECT from_key, to_key, leg_kind, leg_source FROM schema_morphisms"
 
 -- | Plan 175 Phase 2: typed reader over 'objects', feeding
--- 'PB.Analysis.Rules.DeadCode.inheritsRows'. Deliberately not the write-side
+-- 'PB.Pipeline.DuckDb.Edb.inheritsRows'. Deliberately not the write-side
 -- 'ObjectRow' -- that type carries 'orLayoutJson'\/'orTypeBlocksJson', which
 -- @inherits@ never reads; selecting only the two columns actually needed
 -- avoids transferring that JSON for every object row. The @ancestor IS NOT
@@ -1262,7 +1262,7 @@ queryObjectAncestors conn = do
   pure [(o, a) | TwoText o a <- rows]
 
 -- | Plan 175 Phase 2: typed reader over 'procedures', feeding
--- 'PB.Analysis.Rules.DeadCode.procRows'\/'procMetaRows'\/'entryRows'\/
+-- 'PB.Pipeline.DuckDb.Edb.procRows'\/'procMetaRows'\/'entryRows'\/
 -- 'callsRows'. Deliberately not the write-side 'ProcRow' -- that type
 -- carries 'prCfgJson'\/'prInstrJson'\/'prWiringJson', none of which any of
 -- the four consumers read; selecting only the five columns actually needed
@@ -1283,7 +1283,7 @@ queryProcedures conn = query_ conn
   "SELECT object, proc_name, proc_type, cyclomatic, confidence FROM procedures"
 
 -- | Plan 175 Phase 2: typed reader over 'dw_objects', feeding
--- 'PB.Analysis.Rules.DeadCode.entryRows''s DW-object membership check.
+-- 'PB.Pipeline.DuckDb.Edb.entryRows''s DW-object membership check.
 queryDwObjects :: DuckConn -> IO [Text]
 queryDwObjects conn = do
   rows <- query_ conn "SELECT DISTINCT object FROM dw_objects" :: IO [OneText]
@@ -1495,7 +1495,7 @@ appendSchemaMorphisms conn ms = withRaw conn "schema_morphisms" $ \app ->
     aText      app (renderLegSource (legSource m))
 
 -- | Materialize @decomposition_coslice@ from the @path_leg_fwd@\/@path_leg_back@
--- tables (produced by 'PB.Analysis.Rules.Schema.cosliceRules'). A pure SQL
+-- tables (produced by 'PB.Analysis.SchemaClosure.cosliceClosure'). A pure SQL
 -- projection -- no traversal, no Haskell graph walk -- satisfying the
 -- EDB-discipline functor property (the @path_leg@ tables are the reasoning;
 -- this is a rename\/join into the 8-column consumer shape).
@@ -1746,15 +1746,15 @@ materializeDeadCodeRows conn = do
 --   * ORDER BY inside string_agg guarantees ordinal ordering.
 --
 -- Plan 171b (2026-07-15): step_kind/description no longer come from a
--- SQL CASE here — PB.Analysis.Rules.Taint derives them via rule
--- specialization (a house-rule violation this migration closes).
+-- SQL CASE here — they are derived by 'PB.Analysis.TaintClosure.materializeTaintStepKind'
+-- (a house-rule violation this migration closes).
 -- taint_step_kind already includes the terminal "arrived at sink"
 -- marker row (and the 0-hop source==sink degenerate row), so the old
 -- legs_with_sink UNION ALL that synthesized it here is gone too — this
 -- materializer is now a pure rename/dedup/reshape of taint_step_kind.
 --
 -- PERFORMANCE FIX: @taint_step_kind@ is written directly into a plain DuckDB
--- table by 'PB.Analysis.Rules.Taint.reconstructTaintStepKind', a Haskell
+-- table by 'PB.Analysis.TaintClosure.materializeTaintStepKind', a Haskell
 -- BFS-based reconstruction. This materializer reads that table.
 materializeTaintPaths :: DuckConn -> IO ()
 materializeTaintPaths conn =

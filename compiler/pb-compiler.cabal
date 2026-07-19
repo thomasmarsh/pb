@@ -64,9 +64,6 @@ library
     PB.Analysis.SchemaCategory
     PB.Analysis.SchFootprint
     PB.Analysis.DwFootprint
-    PB.Analysis.Rules.DeadCode
-    PB.Analysis.Rules.Schema
-    PB.Analysis.Rules.Taint
     PB.Analysis.Taint
     PB.Analysis.TypeEnv
     PB.Analysis.TypeResolve
@@ -80,15 +77,16 @@ library
     PB.Pipeline.Runner
     PB.Pipeline.Serialise
     PB.Pipeline.DuckDb
+    PB.Pipeline.DuckDb.Edb
     PB.Pipeline.SqlParse
     PB.Pipeline.FileWalk
     PB.Runtime.StdLib
     PB.Algebra.Semiring
     PB.Algebra.Closure
     PB.Analysis.TaintEdges
-    PB.Analysis.TaintAlgebra
-    PB.Analysis.DeadCodeAlgebra
-    PB.Analysis.SchemaAlgebra
+    PB.Analysis.TaintClosure
+    PB.Analysis.DeadCodeReachability
+    PB.Analysis.SchemaClosure
   build-depends:
     , base ^>=4.20.1.0
     , text
@@ -180,7 +178,7 @@ test-suite pb-compiler-test
   other-modules:
       DuckDbTest
     , SmallCheckInstances
-    , RulesTest
+    , EdbTest
     , DeadCodeFixtures
     , StdLibTest
     , BodyParserTest
@@ -225,8 +223,8 @@ test-suite pb-compiler-test
     , ClosureTest
     , TaintEdgesTest
     , TaintAlgebraTest
-    , DeadCodeAlgebraTest
-    , SchemaAlgebraTest
+    , DeadCodeReachabilityTest
+    , SchemaClosureTest
   build-depends:
     , base ^>=4.20.1.0
     , pb-compiler

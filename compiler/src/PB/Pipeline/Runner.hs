@@ -322,7 +322,7 @@ compileOne catTables mDefaultNamespace dwfCtx wsEnv controlIdx tcw globalDwColum
                 -- Speculative confidence marks a synthetic builtin-class
                 -- method stub (PB.Runtime.StdLib) whose params are never
                 -- referenced by design -- same exclusion
-                -- PB.Analysis.Rules.DeadCode's procRows/procMetaRows apply
+                -- PB.Pipeline.DuckDb.Edb's procRows/procMetaRows apply
                 -- to 'procedures', kept here rather than as a query-time
                 -- filter since dead_vars carries no confidence column.
                 deadVars

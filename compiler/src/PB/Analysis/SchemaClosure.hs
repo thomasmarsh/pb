@@ -1,34 +1,34 @@
 {-# LANGUAGE StrictData #-}
--- | Schema-category algebraic closure — production's sole source for
+-- | Schema-category closure — production's sole source for
 -- @reaches@, @path_leg_fwd@, and @path_leg_back@.
 --
 -- The closure is a pure Haskell fixpoint over the raw EDB inputs:
 --
---   * 'legAlgebraic' is the writes-vs-retrieve priority cascade,
+--   * 'legPriority' is the writes-vs-retrieve priority cascade,
 --     re-expressed as a deterministic per-(x,y) highest-priority-kind pick
 --     where ties keep the first input row.
---   * 'reachesAlgebraic' is the forward transitive closure of @leg@,
+--   * 'reachClosure' is the forward transitive closure of @leg@,
 --     computed as a worklist fixpoint — NOT
 --     'PB.Algebra.Closure.star''s all-pairs closure (which is asymptotically
 --     wrong for this large/sparse graph with a small seed set).
---   * 'cosliceAlgebraic' is the forward + backward shortest-path witness
+--   * 'cosliceClosure' is the forward + backward shortest-path witness
 --     reconstruction: for every seed it emits EVERY shortest leg on a path
 --     to a target (set semantics through a diamond, bounded 2x), so the
 --     downstream 'PB.Pipeline.DuckDb.materializeDecompositionCoslice'
 --     ROW_NUMBER tie-break picks one witness per ordinal.
 --
 -- The EDB construction ('legSourceRows' / 'seedRows') is already Haskell
--- ('PB.Analysis.Rules.Schema.initEdbViews'); only the IDB fixpoint is
+-- ('PB.Pipeline.DuckDb.Edb.initSchemaEdb'); only the IDB fixpoint is
 -- computed here.
-module PB.Analysis.SchemaAlgebra
-  ( legAlgebraic
-  , reachesAlgebraic
-  , cosliceAlgebraic
+module PB.Analysis.SchemaClosure
+  ( legPriority
+  , reachClosure
+  , cosliceClosure
   , materializeSchemaClosure
   ) where
 
 import PB.Prelude
-import PB.Analysis.Rules.Schema (legSourceRows, seedRows)
+import PB.Pipeline.DuckDb.Edb (legSourceRows, seedRows)
 import PB.Pipeline.DuckDb
   ( DuckConn
   , querySchemaMorphismRows
@@ -51,8 +51,8 @@ import qualified Data.Text       as T
 -- first row in input order (matching the "first tuple derived for a key is
 -- locked" lock-in — p0 rules derive before p1 before p2, and within p2 the
 -- first @leg_source@ fact wins).
-legAlgebraic :: [[Text]] -> [[Text]]
-legAlgebraic rows = map third (Map.elems (L.foldl' step Map.empty (zip [0 :: Int ..] rows)))
+legPriority :: [[Text]] -> [[Text]]
+legPriority rows = map third (Map.elems (L.foldl' step Map.empty (zip [0 :: Int ..] rows)))
   where
     third (_, _, r) = r
     prio :: Text -> Int
@@ -69,18 +69,18 @@ legAlgebraic rows = map third (Map.elems (L.foldl' step Map.empty (zip [0 :: Int
              | otherwise -> Map.insert key (p', i', row) m
     step m _ = m
 
--- | Forward transitive closure of @leg@ (kind ignored), reproducing
--- 'SchemaRules.reachesRules'. Worklist fixpoint over the adjacency — NOT
--- 'star's all-pairs closure (§12 item 6). Includes self-pairs via cycles
--- (a node in a cycle reaches itself).
-reachesAlgebraic :: [[Text]] -> [[Text]]
-reachesAlgebraic legRows =
-  [ [s, t] | (s, outs) <- Map.toList (reachClosure legRows), t <- Set.toList outs ]
+-- | Forward transitive closure of @leg@ (kind ignored), computed as a
+-- worklist fixpoint — NOT 'PB.Algebra.Closure.star''s all-pairs closure
+-- (§12 item 6). Includes self-pairs via cycles (a node in a cycle reaches
+-- itself).
+reachClosure :: [[Text]] -> [[Text]]
+reachClosure legRows =
+  [ [s, t] | (s, outs) <- Map.toList (reachClosureMap legRows), t <- Set.toList outs ]
 
 -- | Forward transitive closure as a 'Map' (node -> reachable set). Shared by
--- 'reachesAlgebraic' and 'cosliceAlgebraic'.
-reachClosure :: [[Text]] -> Map Text (Set Text)
-reachClosure legRows =
+-- 'reachClosure' and 'cosliceClosure'.
+reachClosureMap :: [[Text]] -> Map Text (Set Text)
+reachClosureMap legRows =
   let adj = Map.fromListWith Set.union [ (x, Set.singleton y) | [x, y, _] <- legRows ]
       -- Iterative: reach(s) starts as direct successors; repeatedly add, for
       -- each s, the successors of everything currently reachable from s.
@@ -125,16 +125,16 @@ bfsDist adj seed = go (Map.singleton seed 0) (Map.singleton seed 0)
 -- the downstream 'PB.Pipeline.DuckDb.materializeDecompositionCoslice'
 -- ROW_NUMBER tie-break picks one witness per ordinal. Returns
 -- @(path_leg_fwd, path_leg_back)@, each @[s, target, leg_ord, lf, lt, kind]@.
-cosliceAlgebraic
+cosliceClosure
   :: [Text]            -- ^ seeds (column object keys)
   -> [[Text]]          -- ^ leg rows (x, y, kind)
   -> ([[Text]], [[Text]])
-cosliceAlgebraic seeds legRows =
-  cosliceAlgebraicWith seeds legRows (reachClosure legRows)
+cosliceClosure seeds legRows =
+  cosliceClosureWith seeds legRows (reachClosureMap legRows)
 
-cosliceAlgebraicWith
+cosliceClosureWith
   :: [Text] -> [[Text]] -> Map Text (Set Text) -> ([[Text]], [[Text]])
-cosliceAlgebraicWith seeds legRows reach =
+cosliceClosureWith seeds legRows reach =
   let adjFwd   = Map.fromListWith (++)
         [ (x, [(y, k)]) | [x, y, k] <- legRows ]
       adjRev   = Map.fromListWith (++)
@@ -171,8 +171,8 @@ backForSeed s adjFwd adjRev revReach =
         case (Map.lookup lt dist, Map.lookup lf dist) of
           (Just o, Just o') | o' == o + 1 ->
             -- lf is the FAR node (dist o+1), lt the NEAR node (dist o); the
-            -- backward head binds target = lf (see Schema.hs cosliceRules
-            -- Rule 2: path_leg_back(s, t, o, t, lt, kind) with leg(t, lt)).
+            -- backward head binds target = lf (path_leg_back(s, t, o, t, lt, kind)
+            -- with leg(t, lt)).
             let finalHop = [s, lf, T.pack (show o), lf, lt, k]
                 inter = [ [s, t, T.pack (show o), lf, lt, k]
                         | t <- Set.toList (Map.findWithDefault Set.empty lf revReach)
@@ -183,11 +183,11 @@ backForSeed s adjFwd adjRev revReach =
   in concatMap emit legs
 
 -- | Materialize @reaches@, @path_leg_fwd@, @path_leg_back@ as real DuckDB
--- tables, computed by 'legAlgebraic' / 'reachesAlgebraic' /
--- 'cosliceAlgebraic' over the same raw EDB inputs
--- 'PB.Analysis.Rules.Schema.initEdbViews' reads. Must run after
+-- tables, computed by 'legPriority' / 'reachClosure' /
+-- 'cosliceClosure' over the same raw EDB inputs
+-- 'PB.Pipeline.DuckDb.Edb.initSchemaEdb' reads. Must run after
 -- @schema_morphisms@\/@schema_objects@ are populated (same prerequisite as
--- 'initEdbViews'); called from 'PB.Pipeline.Passes.materializeAllEdbViews',
+-- 'initSchemaEdb'); called from 'PB.Pipeline.Passes.materializeAllEdbViews',
 -- before the downstream materializer that reads @reaches@ as an EDB input
 -- ('PB.Pipeline.DuckDb.materializeRiskCount') runs and before
 -- 'PB.Pipeline.DuckDb.materializeDecompositionCoslice'.
@@ -197,10 +197,10 @@ materializeSchemaClosure conn = do
   objects   <- querySchemaObjects conn
   let legSource = legSourceRows morphisms
       seeds    = [ k | [k] <- seedRows objects ]
-      leg      = legAlgebraic legSource
-      reach    = reachClosure leg
+      leg      = legPriority legSource
+      reach    = reachClosureMap leg
       reaches  = [ [s, t] | (s, outs) <- Map.toList reach, t <- Set.toList outs ]
-      (pathFwd, pathBack) = cosliceAlgebraicWith seeds leg reach
+      (pathFwd, pathBack) = cosliceClosureWith seeds leg reach
   recreateTextTable conn "reaches" ["x", "y"]
   appendTextRows conn "reaches" reaches
   recreateTextTable conn "path_leg_fwd" ["s", "target", "leg_ord", "lf", "lt", "kind"]

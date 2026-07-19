@@ -1,8 +1,8 @@
 -- | The functor @F : EffTerm -> TaintEdges@: folds a compiled 'EffTerm'
 -- directly into the set of intra-procedural def-use edges
--- 'PB.Analysis.TaintAlgebra' needs, replacing the same-line
+-- 'PB.Analysis.TaintClosure' needs, replacing the same-line
 -- 'PB.Analysis.Taint.DefRow'\/'PB.Analysis.Taint.UseRow' join
--- ('PB.Analysis.TaintAlgebra' formerly built via @tiUsesByTriple@\/
+-- ('PB.Analysis.TaintClosure' formerly built via @tiUsesByTriple@\/
 -- @tiDefsByLine@) with a direct read of 'EAssignWithRhs''s already-paired
 -- (defVar, rhsExpr).
 --
@@ -94,7 +94,7 @@ instance Effectful TaintEdges where
   -- var's own root ident always appears in `walkExprIdents lhs` too (an
   -- ordinary self-reference for a plain LHS, or 'BsFor''s own loop var for
   -- the loop-bounds case) -- harmless, since the self-guard below excludes
-  -- it either way. Matches 'PB.Analysis.TaintAlgebra.buildTaintSuccessors''s
+  -- it either way. Matches 'PB.Analysis.TaintClosure.buildTaintSuccessors''s
   -- existing @newVar /= var@ exclusion in its intra-proc rule.
   assignWithRhs var lhs rhs = TaintEdges (Set.fromList
     [ (identOrig u, var)
@@ -122,7 +122,7 @@ data TaintIntraEdgeRow = TaintIntraEdgeRow
 -- | One "this var is used in a @return@ payload" fact, fully qualified
 -- with the owning procedure — attached by the same caller as
 -- 'TaintIntraEdgeRow'. Replaces 'PB.Analysis.Taint.UseRow'\'s
--- @urKind == \"return\"@ rows as 'PB.Analysis.TaintAlgebra.buildTaintSuccessors'\'s
+-- @urKind == \"return\"@ rows as 'PB.Analysis.TaintClosure.buildTaintSuccessors'\'s
 -- source for the return-triple set -- a term fact instead of a row-derived
 -- one, now that 'PB.Compile.IR.EReturn' carries the returned expression.
 data TaintReturnRow = TaintReturnRow

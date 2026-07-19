@@ -1,12 +1,12 @@
-module DeadCodeAlgebraTest (tests) where
+module DeadCodeReachabilityTest (tests) where
 
--- | Golden regression suite for 'PB.Analysis.DeadCodeAlgebra.deadReachAlgebraic'
+-- | Golden regression suite for 'PB.Analysis.DeadCodeReachability.deadReach'
 -- (a 'PB.Algebra.Closure.reachFrom'-based sparse closure — NOT 'star'),
 -- production's sole source for @proc_dead@. Each fixture's expected dead set
--- was hand-verified; 'deadReachAlgebraic' is the sole implementation, so the
+-- was hand-verified; 'deadReach' is the sole implementation, so the
 -- assertions below are the regression contract.
 import PB.Prelude
-import PB.Analysis.DeadCodeAlgebra (deadReachAlgebraic)
+import PB.Analysis.DeadCodeReachability (deadReach)
 import PB.Pipeline.DuckDb (ProcSummaryRow (..))
 import PB.Analysis.Taint qualified as Taint (ResolvedCallRow)
 import DeadCodeFixtures (ProcInfo (..), mkResolvedCall)
@@ -16,8 +16,8 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 
 -- | Convert a fixture's raw/resolved calls into the 'Taint.ResolvedCallRow'
--- list 'deadReachAlgebraic' expects — the same shape 'seedDeadCodeFixture'
--- writes into the @resolved_calls@ table (which 'initDeadReachEdbViews' reads
+-- list 'deadReach' expects — the same shape 'seedDeadCodeFixture'
+-- writes into the @resolved_calls@ table (which 'initDeadCodeEdb' reads
 -- back via 'queryResolvedCalls'). Only the columns 'callRefRows'/
 -- 'resolvedCallEdgeRows'/'callsRows' actually read are set; the rest are
 -- placeholders, matching 'mkResolvedCall''s contract.
@@ -35,7 +35,7 @@ fixtureCalls calls resolved =
   ]
 
 -- | Convert a fixture's 'ProcInfo' list into the 'ProcSummaryRow' list
--- 'deadReachAlgebraic' expects (confidence forced to "confirmed", matching
+-- 'deadReach' expects (confidence forced to "confirmed", matching
 -- 'seedDeadCodeFixture''s appendProcedures).
 fixtureProcs :: [ProcInfo] -> [ProcSummaryRow]
 fixtureProcs procs =
@@ -53,7 +53,7 @@ assertDeadGolden
   -> TestTree
 assertDeadGolden name procs calls resolved inherits dwObjs expected =
   testCase name $
-    deadReachAlgebraic
+    deadReach
       (fixtureProcs procs)
       (fixtureCalls calls resolved)
       inherits
@@ -61,7 +61,7 @@ assertDeadGolden name procs calls resolved inherits dwObjs expected =
       @?= expected
 
 tests :: TestTree
-tests = testGroup "DeadCodeAlgebra (reachFrom, production)"
+tests = testGroup "DeadCodeReachability (reachFrom, production)"
   [ testGroup "golden proc_dead sets (fixtures)"
     [ assertDeadGolden "event handlers are seeds"
         [ProcInfo "obj" "ev" "event" (Just 1)] [] [] [] Set.empty Set.empty
@@ -134,7 +134,7 @@ tests = testGroup "DeadCodeAlgebra (reachFrom, production)"
 
   , testGroup "direct golden (hand-traced)"
     [ testCase "override propagation: child override reached via parent seed" $
-        let algDead = deadReachAlgebraic
+        let algDead = deadReach
               (fixtureProcs
                 [ ProcInfo "obj_base" "base_hook" "event" Nothing
                 , ProcInfo "obj_child" "base_hook" "function" Nothing
@@ -144,7 +144,7 @@ tests = testGroup "DeadCodeAlgebra (reachFrom, production)"
               []
         in algDead @?= Set.empty
     , testCase "dead chain: both procs dead, no entry seed" $
-        let algDead = deadReachAlgebraic
+        let algDead = deadReach
               (fixtureProcs
                 [ ProcInfo "obj" "fn_c" "function" (Just 1)
                 , ProcInfo "obj" "fn_d" "function" (Just 1)

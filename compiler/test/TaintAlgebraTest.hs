@@ -17,7 +17,7 @@ import PB.Analysis.Taint
   , TaintSource (..)
   , TaintSink (..)
   )
-import PB.Analysis.TaintAlgebra
+import PB.Analysis.TaintClosure
   ( taintReachable
   , taintReachesPairs
   , taintConfirmed
@@ -73,7 +73,7 @@ snk :: Text -> Text -> Text -> Text -> Maybe Int -> TaintSink
 snk o p v t l = TaintSink o p v t "db_write" "high" l
 
 -- | Test-only reimplementation of the same-line def/use join
--- 'PB.Analysis.TaintAlgebra.buildTaintSuccessors' derives from the
+-- 'PB.Analysis.TaintClosure.buildTaintSuccessors' derives from the
 -- already-folded 'TaintEdges' output (Plan 182 Move 2, 2026-07-19).
 -- Production now sources intra-proc edges from
 -- 'PB.Analysis.TaintEdges.foldTaintEdgesEff' (a direct fold of the
@@ -103,7 +103,7 @@ intraEdgesFromDefUse defs uses =
   ]
 
 -- | Test-only reimplementation of the same @urKind == \"return\"@ row
--- filter 'PB.Analysis.TaintAlgebra.buildTaintSuccessors' derives from the
+-- filter 'PB.Analysis.TaintClosure.buildTaintSuccessors' derives from the
 -- already-folded 'TaintEdges' return rows (Plan 182 Move 2, 2026-07-19).
 -- Production sources return rows from
 -- 'PB.Analysis.TaintEdges.TaintReturnRow' (a term fact, not a row one).

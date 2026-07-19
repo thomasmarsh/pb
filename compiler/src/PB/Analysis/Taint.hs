@@ -6,7 +6,7 @@
 -- EXECUTE IMMEDIATE) directly from the AST, and builds inter-procedural
 -- arg/return/global edges. The taint closure itself (reachability,
 -- confirmed source-sink pairs, witness paths) is
--- 'PB.Analysis.TaintAlgebra' — an algebraic Kleene-star closure, not BFS.
+-- 'PB.Analysis.TaintClosure' — an algebraic Kleene-star closure, not BFS.
 module PB.Analysis.Taint
   ( -- * Types
     SqlStmt (..)
@@ -534,7 +534,7 @@ buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
     -- that reached a reader directly still reaches it via the hub, one hop
     -- longer), so taint_confirmed output is unaffected; the one visible
     -- difference is that a global-mediated witness path
-    -- (PB.Analysis.Rules.Taint.reconstructTaintStepKind) now shows two
+    -- (PB.Analysis.TaintClosure.materializeTaintStepKind) now shows two
     -- "global_write" hops through the hub instead of one direct hop.
     --
     -- A proc that is both a writer AND a reader of the same global now gets
@@ -544,7 +544,7 @@ buildInterprocEdges resolvedCalls defs uses globalVarNames procMetas =
     -- hub). This adds no reachability beyond what the proc's own real
     -- outgoing edges already provide, and taint_confirmed's own separate
     -- 0-hop rule (@taint_confirmed(s, s) :- taint_source(s),
-    -- taint_sink(s)@, see PB.Analysis.Rules.Taint.taintRules) already
+    -- taint_sink(s)@, see PB.Analysis.TaintClosure.materializeTaintClosure) already
     -- covers a proc confirmed against itself without this self-loop's help.
     --
     -- Keyed/probed by 'Ident' (canonical Eq/Ord) -- globalVarNames is

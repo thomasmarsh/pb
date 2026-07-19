@@ -5,20 +5,20 @@
 -- The behavioral assertions below are the contract for those materializers;
 -- the raw IDB tables the downstream consumers reshape are byte-for-byte the
 -- same as the hand-verified expected sets.
-module RulesTest (tests) where
+module EdbTest (tests) where
 
 import PB.Prelude
-import PB.Analysis.Rules.Schema
-  ( initEdbViews, legSourceRows, stmtRows, seedRows
+import PB.Pipeline.DuckDb.Edb
+  ( initSchemaEdb, legSourceRows, stmtRows, seedRows
   , joinLegRows, fkRows
   )
-import PB.Analysis.Rules.DeadCode
-  ( initDeadReachEdbViews
+import PB.Pipeline.DuckDb.Edb
+  ( initDeadCodeEdb
   , procRows, procMetaRows, inheritsRows, callRefRows, resolvedCallEdgeRows
   , entryRows, callsRows, CallRef (..), ResolvedCallEdge (..), CallEdge (..)
   )
-import PB.Analysis.DeadCodeAlgebra (materializeDeadCodeClosure)
-import PB.Analysis.SchemaAlgebra qualified as SchemaAlgebra
+import PB.Analysis.DeadCodeReachability (materializeDeadCodeClosure)
+import PB.Analysis.SchemaClosure qualified as SchemaClosure
 import PB.Pipeline.DuckDb
   ( initSchema, withWriteConn, withAppenderPool, appendSchemaObjects
   , appendSchemaMorphisms, appendProcedures, ProcRow (..)
@@ -44,20 +44,20 @@ import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase, (@?=))
 
 -- | The schema coslice's three relations are produced by the hand-rolled
--- algebraic closure in "PB.Analysis.SchemaAlgebra"
--- ('legAlgebraic' / 'reachesAlgebraic' / 'cosliceAlgebraic'), materialized
--- into the same DuckDB tables by 'SchemaAlgebra.materializeSchemaClosure'.
+-- algebraic closure in "PB.Analysis.SchemaClosure"
+-- ('legPriority' / 'reachClosure' / 'cosliceClosure'), materialized
+-- into the same DuckDB tables by 'SchemaClosure.materializeSchemaClosure'.
 -- Their behavioral parity was proven by 'SchemaCorpusBench' against the
 -- real corpus before deletion (see doc/plan/182-algebraic-analysis.md §17),
--- and the unit-level assertions now live in "SchemaAlgebraTest". This file
+-- and the unit-level assertions now live in "SchemaClosureTest". This file
 -- keeps the pure-Haskell EDB reshaping checks ('EdbReshaping') plus the
 -- SQL-materialized 'impliedFkPairs' / 'riskCount' rule sets -- and one
 -- integration test that the algebraic 'reaches' table feeds 'riskCount'.
 tests :: TestTree
-tests = testGroup "Rules"
+tests = testGroup "Edb"
 
   [ -- Plan 175 Phase 1 pilot: 'legSourceRows'/'stmtRows'/'seedRows' are the
-    -- pure Haskell functions that replaced 'initEdbViews''s @CREATE VIEW@
+    -- pure Haskell functions that replaced 'initSchemaEdb''s @CREATE VIEW@
     -- SQL for @leg_source@/@stmt@/@seed@. Unlike every other test in this
     -- file, these need no 'DuckConn' at all -- the whole point of the
     -- migration (see doc/plan/175-haskell-edb-reshaping-layer.md's
@@ -85,7 +85,7 @@ tests = testGroup "Rules"
         seedRows [StmtObj (SqlStmtId "f.srf" "obj1" "proc1" 5)] @?= []
 
     , -- Plan 161 Phase 3a: implied_fk_pairs(X, Y) :- join_leg(X, Y), !fk(X, Y),
-      -- !fk(Y, X). join_leg/fk are pure EDB (initEdbViews), so this rule set
+      -- !fk(Y, X). join_leg/fk are pure EDB (initSchemaEdb), so this rule set
       -- runs alone -- no dependency on the deleted legRules/reachesRules.
       testCase "joinLegRows: a dw_join-sourced row becomes (x, y), dropping kind/source" $
         joinLegRows [SchMorphismRow "col:a.x" "col:b.y" "fk" "dw_join"]
@@ -107,7 +107,7 @@ tests = testGroup "Rules"
 
   , -- implied_fk_pairs(X, Y) :- join_leg(X, Y), !fk(X, Y), !fk(Y, X).
     -- Materialized directly in DuckDB by 'materializeImpliedFkPairs'.
-    -- join_leg/fk are pure EDB (initEdbViews).
+    -- join_leg/fk are pure EDB (initSchemaEdb).
     testGroup "impliedFkPairs"
     [ testCase "a DW-join edge with no declared FK in either direction is reported" $
         withWriteConn ":memory:" $ \conn -> do
@@ -115,7 +115,7 @@ tests = testGroup "Rules"
           let colA = ColumnObj (TableRef Nothing "a") "x"
               colB = ColumnObj (TableRef Nothing "b") "y"
           appendSchemaMorphisms conn [ SchMorphism colA colB LegFk SrcDwJoin ]
-          initEdbViews conn
+          initSchemaEdb conn
           materializeImpliedFkPairs conn
           rows <- query_ conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= [(schObjectKey colA, schObjectKey colB)]
@@ -127,7 +127,7 @@ tests = testGroup "Rules"
               colB = ColumnObj (TableRef Nothing "b") "y"
           appendSchemaMorphisms conn [ SchMorphism colA colB LegFk SrcDwJoin ]
           _ <- execute_ conn (Query "INSERT INTO catalog_fks VALUES ('c1', NULL, 'a', 'x', NULL, 'b', 'y', 0)")
-          initEdbViews conn
+          initSchemaEdb conn
           materializeImpliedFkPairs conn
           rows <- query_ conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= []
@@ -140,7 +140,7 @@ tests = testGroup "Rules"
           appendSchemaMorphisms conn [ SchMorphism colA colB LegFk SrcDwJoin ]
           -- FK declared b.y -> a.x: the opposite orientation from the join edge.
           _ <- execute_ conn (Query "INSERT INTO catalog_fks VALUES ('c1', NULL, 'b', 'y', NULL, 'a', 'x', 0)")
-          initEdbViews conn
+          initSchemaEdb conn
           materializeImpliedFkPairs conn
           rows <- query_ conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= []
@@ -149,7 +149,7 @@ tests = testGroup "Rules"
         withWriteConn ":memory:" $ \conn -> do
           initSchema conn
           _ <- execute_ conn (Query "INSERT INTO catalog_fks VALUES ('c1', NULL, 'a', 'x', NULL, 'b', 'y', 0)")
-          initEdbViews conn
+          initSchemaEdb conn
           materializeImpliedFkPairs conn
           rows <- query_ conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= []
@@ -157,7 +157,7 @@ tests = testGroup "Rules"
 
   , -- risk_count(X, N) aggregates the downstream footprint over the 'reaches'
     -- relation. 'reaches' is an algebraic EDB table materialized by
-    -- 'SchemaAlgebra.materializeSchemaClosure' (which also writes
+    -- 'SchemaClosure.materializeSchemaClosure' (which also writes
     -- path_leg_fwd/path_leg_back). This group is the integration gate that the
     -- algebraic closure feeds the SQL 'materializeRiskCount' correctly.
     testGroup "riskCount"
@@ -171,8 +171,8 @@ tests = testGroup "Rules"
             [ SchMorphism colA colB LegWrites SrcSqlText
             , SchMorphism colB colC LegWrites SrcSqlText
             ]
-          initEdbViews conn
-          SchemaAlgebra.materializeSchemaClosure conn
+          initSchemaEdb conn
+          SchemaClosure.materializeSchemaClosure conn
           materializeRiskCount conn
           rows <- query_ conn "SELECT x, n FROM risk_count" :: IO [(Text, Text)]
           let byNode = Map.fromList rows
@@ -192,8 +192,8 @@ tests = testGroup "Rules"
             [ SchMorphism colA colB LegFk SrcDdlFk
             , SchMorphism colB colA LegFk SrcDdlFk
             ]
-          initEdbViews conn
-          SchemaAlgebra.materializeSchemaClosure conn
+          initSchemaEdb conn
+          SchemaClosure.materializeSchemaClosure conn
           materializeRiskCount conn
           rows <- query_ conn "SELECT x, n FROM risk_count" :: IO [(Text, Text)]
           let byNode = Map.fromList rows
@@ -205,21 +205,21 @@ tests = testGroup "Rules"
     [ testGroup "liveProc"
       -- Plan 161 Phase 2b cutover: `dead` now reads `proc_dead` (materialized
       -- by 'materializeDeadCodeClosure', algebraic since the Plan 182 item 6
-      -- cutover), not `dead_code` (Haskell) -- see 'initEdbViews'' doc comment.
-      -- Every case here must run 'initDeadReachEdbViews' +
-      -- 'materializeDeadCodeClosure' before 'initEdbViews'/'materializeLiveProc',
+      -- cutover), not `dead_code` (Haskell) -- see 'initSchemaEdb'' doc comment.
+      -- Every case here must run 'initDeadCodeEdb' +
+      -- 'materializeDeadCodeClosure' before 'initSchemaEdb'/'materializeLiveProc',
       -- mirroring the required 'PB.Pipeline.Passes.materializeAllEdbViews'
       -- ordering, so the `dead` view has a `proc_dead` table to read (even an
       -- empty one) before it's queried.
       [ testCase "a stmt whose (object,proc) is not in proc_dead appears in live_proc" $
           withWriteConn ":memory:" $ \conn -> do
             initSchema conn
-            initDeadReachEdbViews conn
+            initDeadCodeEdb conn
             materializeDeadCodeClosure conn
             appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj1" "proc1" 5) ]
-            -- initEdbViews now materializes stmt eagerly (Plan 175 Phase 1) --
+            -- initSchemaEdb now materializes stmt eagerly (Plan 175 Phase 1) --
             -- must run after appendSchemaObjects, not merely after initSchema.
-            initEdbViews conn
+            initSchemaEdb conn
             materializeLiveProc conn
             rows <- query_ conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
             assertBool "(obj1,proc1) present" (("obj1", "proc1") `elem` rows)
@@ -232,10 +232,10 @@ tests = testGroup "Rules"
             withAppenderPool conn phaseATables $ \pool ->
               appendProcedures pool
                 [ ProcRow "f.srf" "obj2" "proc2" "function" 1 1 "" "" "" "" "" (Just 1) "confirmed" ]
-            initDeadReachEdbViews conn
+            initDeadCodeEdb conn
             materializeDeadCodeClosure conn
             appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj2" "proc2" 9) ]
-            initEdbViews conn
+            initSchemaEdb conn
             materializeLiveProc conn
             rows <- query_ conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
             assertBool "(obj2,proc2) absent" (("obj2", "proc2") `notElem` rows)
@@ -248,10 +248,10 @@ tests = testGroup "Rules"
           -- (found via a real --db smoke run over the openpay corpus).
           withWriteConn ":memory:" $ \conn -> do
             initSchema conn
-            initDeadReachEdbViews conn
+            initDeadCodeEdb conn
             materializeDeadCodeClosure conn
             appendSchemaObjects conn [ StmtObj (DwRetrieveId "d.srd" "d_test") ]
-            initEdbViews conn
+            initSchemaEdb conn
             materializeLiveProc conn
             rows <- query_ conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
             assertBool "no dw_retrieve row leaks into live_proc" (null rows)
@@ -260,8 +260,8 @@ tests = testGroup "Rules"
     , -- The full proc_dead-shape fixture set previously here (event-handler
       -- seeds, dead chains, override propagation, cross-object reachability,
       -- confidence-shape combinations, case-insensitive/dotted call-name
-      -- matching) moved to 'DeadCodeAlgebraTest' as golden assertions --
-      -- 'deadReachAlgebraic' is the sole implementation, so there is no second
+      -- matching) moved to 'DeadCodeReachabilityTest' as golden assertions --
+      -- 'deadReach' is the sole implementation, so there is no second
       -- implementation left to oracle-diff against.
       testGroup "EDB view filtering"
       [ testCase "speculative-confidence procedures (builtin method stubs) are excluded from proc/entry/proc_dead" $
@@ -276,7 +276,7 @@ tests = testGroup "Rules"
             withAppenderPool conn phaseATables $ \pool ->
               appendProcedures pool
                 [ ProcRow "builtin" "dwobject" "Retrieve" "function" 1 1 "" "" "" "" "" Nothing "speculative" ]
-            initDeadReachEdbViews conn
+            initDeadCodeEdb conn
             procViewRows <- query_ conn "SELECT object, proc FROM proc" :: IO [(Text, Text)]
             entryViewRows <- query_ conn "SELECT object, proc FROM entry" :: IO [(Text, Text)]
             assertBool "speculative stub excluded from proc view" (null procViewRows)
@@ -332,12 +332,12 @@ tests = testGroup "Rules"
                 -- One resolved call site, from a third caller. A resolved call
                 -- also satisfies the naive (name-match) relation -- 'call_ref'
                 -- is built from every resolved_calls row regardless of
-                -- resolution status (see 'initDeadReachEdbViews'' 'call_ref'
+                -- resolution status (see 'initDeadCodeEdb'' 'call_ref'
                 -- reshaping) -- so naive_n counts all three callers while
                 -- scoped_n counts only the one truly-resolved edge.
                 [ ("other_obj", "caller_c", "obj", "fn") ]
                 [] Set.empty
-            initDeadReachEdbViews conn
+            initDeadCodeEdb conn
             materializeDeadCodeClosure conn
             materializeCallerCounts conn
             materializeDeadCodeRows conn
@@ -366,7 +366,7 @@ tests = testGroup "Rules"
                 , ProcInfo "obj" "fn" "function" (Just 7)
                 ]
               [] [] [] Set.empty
-            initDeadReachEdbViews conn
+            initDeadCodeEdb conn
             materializeDeadCodeClosure conn
             materializeCallerCounts conn
             materializeDeadCodeRows conn
@@ -390,7 +390,7 @@ tests = testGroup "Rules"
                 , ProcInfo "obj" "fn" "function" (Just 5)
                 ]
               [] [] [] Set.empty
-            initDeadReachEdbViews conn
+            initDeadCodeEdb conn
             materializeDeadCodeClosure conn
             materializeCallerCounts conn
             materializeDeadCodeRows conn
@@ -401,9 +401,9 @@ tests = testGroup "Rules"
             [ c | Only c <- rows ] @?= [5]
       ]
 
-    , -- Plan 175 Phase 2: direct unit tests of 'initDeadReachEdbViews''s pure
+    , -- Plan 175 Phase 2: direct unit tests of 'initDeadCodeEdb''s pure
       -- reshaping functions -- no 'DuckConn'\/external engine needed, mirroring
-      -- 'SchemaAlgebraTest''s Phase 1 precedent.
+      -- 'SchemaClosureTest''s Phase 1 precedent.
       testGroup "EdbRelations"
       [ testGroup "procRows"
         [ testCase "includes a confirmed procedure" $
@@ -537,7 +537,7 @@ assertConfidence name procs calls resolved (obj, proc) expectedLevel =
     initSchema conn
     withAppenderPool conn phaseATables $ \pool -> do
       seedDeadCodeFixture conn pool procs calls resolved [] Set.empty
-    initDeadReachEdbViews conn
+    initDeadCodeEdb conn
     materializeCallerCounts conn
     rows <- query conn "SELECT level FROM confidence WHERE object = ? AND proc = ?"
               (obj, proc) :: IO [Only Text]

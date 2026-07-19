@@ -737,7 +737,7 @@ tests = testGroup "Pipeline.Runner"
               _ -> assertFailure "expected CFPs"
 
     , testCase "speculative confidence (builtin-class stub) produces no findings" $ do
-        -- Same exclusion PB.Analysis.Rules.DeadCode applies to 'procedures'
+        -- Same exclusion PB.Pipeline.DuckDb.Edb applies to 'procedures'
         -- (confidence='speculative' marks a synthetic stdlib stub whose
         -- unreferenced params are by design, not a real finding).
         let src = T.unlines

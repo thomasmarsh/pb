@@ -15,7 +15,7 @@ import PB.Pipeline.DuckDb
   )
 import PB.Analysis.TypeResolve (GlobalVar (..))
 import PB.Analysis.Taint qualified as Taint
-import PB.Analysis.TaintAlgebra qualified as TA
+import PB.Analysis.TaintClosure qualified as TA
 
 import Data.Set qualified as Set
 import Data.Text qualified as T
@@ -24,7 +24,7 @@ import GHC.Conc (getNumProcessors, setNumCapabilities)
 import Options.Applicative
 
 -- | Corpus-scale shape\/wall-clock report for the algebraic taint closure
--- ('PB.Analysis.TaintAlgebra', a sparse 'PB.Algebra.Closure.reachFrom'
+-- ('PB.Analysis.TaintClosure', a sparse 'PB.Algebra.Closure.reachFrom'
 -- worklist -- NOT 'star's all-pairs closure, see
 -- doc/plan/182-algebraic-analysis.md Section 11), production's sole
 -- source for @taint_reaches@\/@taint_confirmed@\/@taint_step_kind@ since

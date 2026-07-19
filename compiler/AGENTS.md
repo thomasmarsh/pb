@@ -189,31 +189,30 @@ Mark done/pending as body parsers land.
 | `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)                                                                                                                                                                                                |
 | `PB.Compile.*`  | Compilation pipeline: SSA IR (SSA), IR types (IR), loop analysis (LoopAnalysis), SSA lowering (FromSSA), flattening (Flatten), instruction types (InstrTypes), value model (ValueModel), interpreters (Interp, InstrInterp)                        |
 | `PB.Pipeline.*` | Multi-step transformations: Preprocess, Emit, Passes, Runner, Serialise, FileWalk, DuckDb, SqlParse, Church                                                                                                                                        |
-| `PB.Analysis.*` | Pure analysis passes: Cfg, Dataflow, Taint, TypeEnv, TypeResolve, Builtins, SchemaCategory, SchFootprint, DwFootprint, ControlHierarchy. `PB.Analysis.Rules.*` holds the Soufflé rule sets + typed EDB-reshaping readers (DeadCode, Taint, Schema) |
+| `PB.Analysis.*` | Pure analysis passes: Cfg, Dataflow, Taint, TypeEnv, TypeResolve, Builtins, SchemaCategory, SchFootprint, DwFootprint, ControlHierarchy, TaintClosure, DeadCodeReachability, SchemaClosure. `PB.Pipeline.DuckDb.Edb` holds the typed EDB-reshaping readers (DeadCode, Schema, Taint fanouts) |
 | `PB.Prelude`    | Custom Prelude — no parsing or transformation logic                                                                                                                                                                                                |
 
 New modules go in the most specific matching directory. If a new layer is needed, propose it in Stage 1.
 
 ---
 
-## Datalog Rule Placement Discipline (Plan 170)
+## DuckDb Moat & Analysis Placement
 
-Read this before writing or reviewing any EDB view (`initXEdbViews`
-in `PB.Analysis.Rules.*`), materializer SQL (`materialize*` in
-`PB.Pipeline.DuckDb`), or Datalog rule. Governs where logic lives across the
-four surfaces a whole-program analysis touches: compiler phases
-(`PB.Grammar`/`PB.AST`/`PB.Compile`), `PB.Analysis.*` Haskell, EDB-view SQL,
-and Datalog rules (`PB.Analysis.Rules.*`).
+Read this before writing or reviewing any EDB reader (`initXEdb` in
+`PB.Pipeline.DuckDb.Edb`), materializer SQL (`materialize*` in
+`PB.Pipeline.DuckDb`), or analysis closure (`PB.Analysis.*`). Governs where
+logic lives across the surfaces a whole-program analysis touches: compiler
+phases (`PB.Grammar`/`PB.AST`/`PB.Compile`), `PB.Analysis.*` Haskell, the
+DuckDb EDB-loading boundary (`PB.Pipeline.DuckDb.Edb`), and the SQL
+materializers (`PB.Pipeline.DuckDb`).
 
-**History.** The original `PB.Pipeline.Datalog` (a hand-rolled DuckDB
-`WITH RECURSIVE` rule compiler — `stratify`/`compileBody`/`compileRule`,
-since deleted) was built from scratch on a misreading of project direction
-as a misreading of project direction. The `Rule`/`RuleSet` IR
-(literal-text rules, a `ruleRefs` list the caller must hand-sync) and the
-EDB-view-heavy pattern in `PB.Analysis.Rules.*` partly inherit that
-detour's shape rather than being chosen specifically for Datalog. Treat
-them as legacy defaults open to revision (see `doc/plan/172-categorical-
-datalog-layer.md`), not settled precedent.
+**The DuckDb moat.** `PB.Pipeline.DuckDb.Edb` is the single boundary
+that loads raw DuckDB tables into the typed row shapes the analyses consume.
+It holds the pure EDB-reshaping readers — `legSourceRows`/`stmtRows`/`seedRows`
+(feeding `querySchemaObjects`/`querySchemaMorphismRows`),
+`procRows`/`procMetaRows`/`inheritsRows`/`callRefRows`/`resolvedCallEdgeRows`/
+`entryRows`/`callsRows`, and the `DefUseFanout` taint fanouts. These
+functions only rename, cast, or statically filter; they never decide.
 
 **The three-question placement test.** For any new piece of logic:
 
@@ -224,60 +223,50 @@ datalog-layer.md`), not settled precedent.
    still a bounded fold, never a fixpoint). Test with hand-typed HUnit
    fixtures.
 2. Does answering it require an unbounded walk, a fixpoint, a count,
-   stratified negation, or picking a winner among competing derived facts?
-   → a Datalog rule. "Picking a winner among competing facts" is
-   the one people miss — that's what `choice-domain` and rule
-   specialization are _for_; it is not a SQL `CASE`'s job. Test via
-   Datalog-test-style fixtures against the real Datalog engine.
+   or picking a winner among competing derived facts? → a Haskell closure in
+   `PB.Analysis.*` (use `PB.Algebra.Closure`/`Semiring` when it is a real
+   semiring closure; otherwise a plain worklist/BFS fold). A deterministic
+   tie-break is analysis Haskell, not SQL `CASE`. Test with hand-typed
+   HUnit fixtures.
 3. Otherwise — moving an already-computed fact from storage shape into
    relation shape (rename, cast, static-predicate filter, union of
-   identically-shaped sources) — it's a typed `PB.Analysis.Rules.*` Haskell
+   identically-shaped sources) — it's a typed `PB.Pipeline.DuckDb.Edb`
    function, materialized into a plain DuckDB table via
-   `recreateTextTable`/`appendTextRows` (amended 2026-07-15 per Plan 175,
-   backed by that plan's Phase 1 real-corpus gate; this destination used to
-   be "an EDB view" — a `CREATE VIEW` string — before that evidence landed).
-   `PB.Analysis.Rules.Schema`'s `legSourceRows`/`stmtRows`/`seedRows` (feeding
-   `querySchemaObjects`/`querySchemaMorphismRows`), `PB.Analysis.Rules.DeadCode`'s
-   `procRows`/`procMetaRows`/`inheritsRows`/`callRefRows`/`resolvedCallEdgeRows`/
-   `entryRows`/`callsRows`, and `PB.Analysis.Rules.Taint`'s
+   `recreateTextTable`/`appendTextRows`. `PB.Analysis.TaintClosure`'s
    `materializeTaintClosure`/`materializeTaintStepKind` (reshaping
-   `PB.Analysis.TaintAlgebra`'s closure output directly into
+   `PB.Analysis.TaintClosure`'s closure output directly into
    `taint_reaches`/`taint_confirmed`/`taint_step_kind`) are the reference
-   pattern. Every
-   `initXEdbViews` in `PB.Analysis.Rules.*` is now a typed Haskell
-   materializer — no `CREATE VIEW` SQL remains in this layer; do not write
-   a _new_ `CREATE VIEW` for rule-3-shaped logic anywhere in the codebase
+   pattern. No `CREATE VIEW` SQL belongs in this layer; do not write a
+   _new_ `CREATE VIEW` for rule-3-shaped logic anywhere in the codebase
    going forward.
 
 **House rule: EDB reshaping logic may not decide anything.** A typed
-`PB.Analysis.Rules.*` reshaping function (or a not-yet-migrated legacy
-`CREATE VIEW` in `initXEdbViews`, or a materializer's `INSERT ... SELECT`)
-may only rename, cast, or filter by a static/structural predicate. If the
-logic needs a `CASE`/branch, `ROW_NUMBER`/any window function, or a
-`GROUP BY`/aggregate to produce its answer, that is a decision (question 2's
-territory — a tie-break, a label, a count) and does not belong here. Move it
-into a Datalog rule (`choice-domain` for tie-breaks, rule specialization for
-labels, Datalog's own `count :` aggregate). This rule exists because every
-real bug found in the Datalog substrate to date — `leg`'s writes-vs-retrieve
+`PB.Pipeline.DuckDb.Edb` reshaping function (or a materializer's
+`INSERT ... SELECT`) may only rename, cast, or filter by a
+static/structural predicate. If the logic needs a `CASE`/branch,
+`ROW_NUMBER`/any window function, or a `GROUP BY`/aggregate to produce its
+answer, that is a decision (question 2's territory — a tie-break, a label,
+a count) and does not belong in SQL. Move it into analysis Haskell (a
+deterministic tie-break) or, if it is a pure projection over already-computed
+analysis output, into a `materialize*` in `PB.Pipeline.DuckDb`. This rule
+exists because every real bug found to date — `leg`'s writes-vs-retrieve
 tie-break, `decomposition_coslice`'s direction-interleaved ordinals,
 `taint_paths`' `step_kind` mislabeling of 0-hop paths — lived in exactly
 this kind of logic, caught only by real-corpus/real-UI spot checks, never by
-a test that ran before the fact. See
-`doc/plan/171-datalog-decision-migration.md` for the concrete migration of
-the two still-open instances.
+a test that ran before the fact.
 
 **Adversarial fixture requirement.** Any test-fixture set for a
-Datalog-backed relation must cover, not just the "interesting" connected
-case: (a) a duplicate-key collision (two facts competing for the same
-derived key), (b) a 0-hop/degenerate case (source == sink, self-loop), (c)
-a cycle not passing through the seed, where structurally possible for that
-relation. All three shapes have independently caused a real, shipped bug in
-this project and none were caught by the fixtures that existed at the time
-— a new relation's test group is incomplete without them.
+relation must cover, not just the "interesting" connected case: (a) a
+duplicate-key collision (two facts competing for the same derived key), (b) a
+0-hop/degenerate case (source == sink, self-loop), (c) a cycle not passing
+through the seed, where structurally possible for that relation. All three
+shapes have independently caused a real, shipped bug in this project and none
+were caught by the fixtures that existed at the time — a new relation's test
+group is incomplete without them.
 
-**Roadmap.** `doc/plan/170-datalog-discipline.md` is the index (history,
-rationale, and links to the concrete follow-on plans); this section is the
-enforceable summary and takes precedence if the two ever drift.
+**Roadmap.** `doc/plan/183-duckdb-moat-restructure.md` is the index
+(history, rationale, and links to the concrete follow-on plans); this section
+is the enforceable summary and takes precedence if the two ever drift.
 
 ---
 

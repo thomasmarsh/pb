@@ -160,7 +160,7 @@ reconstructPath starRel src dst
 -- | Like 'reconstructPath', but keeps each leg's endpoint node ids
 -- alongside its label instead of discarding them -- 'pvPred' already
 -- names each leg's from-node, this just surfaces it to the caller so a
--- domain layer (e.g. 'PB.Analysis.TaintAlgebra') can decode both
+-- domain layer (e.g. 'PB.Analysis.TaintClosure') can decode both
 -- endpoints of every hop, not only the edge label.
 reconstructPathNodes :: Relation (S.PathValue e) -> Int -> Int -> Maybe [(Int, Int, e)]
 reconstructPathNodes starRel src dst

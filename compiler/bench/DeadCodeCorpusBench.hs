@@ -1,21 +1,21 @@
 module Main (main) where
 
 -- | Corpus-scale self-consistency + wall-clock report for the algebraic
--- dead-code reachability closure ('PB.Analysis.DeadCodeAlgebra', a sparse
+-- dead-code reachability closure ('PB.Analysis.DeadCodeReachability', a sparse
 -- 'PB.Algebra.Closure.reachFrom' worklist -- NOT 'star's all-pairs closure,
 -- see doc/plan/182-algebraic-analysis.md Section 11 / §12 item 6),
 -- production's sole source for @proc_dead@ since the Plan 182 item 6
 -- cutover.
 --
 -- Runs the existing pipeline unmodified (which now materializes @proc_dead@
--- algebraically via 'PB.Analysis.DeadCodeAlgebra.materializeDeadCodeClosure'
+-- algebraically via 'PB.Analysis.DeadCodeReachability.materializeDeadCodeClosure'
 -- in 'PB.Pipeline.Passes.materializeAllEdbViews'), then re-reads the same raw
 -- EDB inputs (procedures / resolved_calls / object ancestors / dw_objects)
--- and recomputes 'deadReachAlgebraic' independently, asserting the two are
+-- and recomputes 'deadReach' independently, asserting the two are
 -- content-exact -- a self-consistency check (determinism, no drift between
 -- the production call site and a fresh one), not an oracle-diff. Unit-level
 -- regression coverage for the closure's correctness lives entirely in
--- 'DeadCodeAlgebraTest.hs'.
+-- 'DeadCodeReachabilityTest.hs'.
 import PB.Prelude
 import PB.Pipeline.Runner (runModeDb)
 import PB.Pipeline.DuckDb
@@ -26,7 +26,7 @@ import PB.Pipeline.DuckDb
   , queryDwObjects
   )
 import Database.DuckDB.Simple (query_)
-import PB.Analysis.DeadCodeAlgebra (deadReachAlgebraic)
+import PB.Analysis.DeadCodeReachability (deadReach)
 
 import qualified Data.Set as Set
 import Data.Text qualified as T
@@ -69,7 +69,7 @@ main = do
 
   withWriteConn (optDb opts) $ \conn -> do
     -- Read raw EDB inputs (already materialized by the pipeline's
-    -- initDeadReachEdbViews). The algebraic path reads these directly.
+    -- initDeadCodeEdb). The algebraic path reads these directly.
     procs    <- queryProcedures conn
     calls    <- queryResolvedCalls conn
     inherits <- queryObjectAncestors conn
@@ -89,7 +89,7 @@ main = do
 
     -- Fresh, independent recomputation (closure alone, EDB already read).
     tAlg0 <- getCurrentTime
-    let algDead = deadReachAlgebraic procs calls inherits dwObjs
+    let algDead = deadReach procs calls inherits dwObjs
         algCount = Set.size algDead
     tAlg1 <- algCount `seq` getCurrentTime
     putStrLn ("recomputed proc_dead: " <> T.pack (show algCount)

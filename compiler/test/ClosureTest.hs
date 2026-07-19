@@ -35,7 +35,7 @@ tests = testGroup "Closure.reachFrom"
       in reachableSet r 0 @?= Set.fromList [0,1]
 
   , testCase "isolated seed with no outgoing edges reaches only itself" $
-      -- The exact adversarial shape that broke TaintAlgebra.taintRelation:
+      -- The exact adversarial shape that broke TaintClosure.taintRelation:
       -- node 5 has no outgoing arcs at all (not even present in `rel`).
       let rel = fromEdges [ (0,1,Boolean True) ]
           r   = reachFrom rel [5]
@@ -44,7 +44,7 @@ tests = testGroup "Closure.reachFrom"
   , testCase "two seeds give independent per-seed reachable sets" $
       -- Seed 0 reaches {0,1}; seed 10 reaches {10,11}; neither set leaks
       -- into the other's row (per-source attribution, unlike a merged
-      -- multi-source union -- TaintAlgebra.taintConfirmed needs this).
+      -- multi-source union -- TaintClosure.taintConfirmed needs this).
       let rel = fromEdges [ (0,1,Boolean True), (10,11,Boolean True) ]
           r   = reachFrom rel [0, 10]
       in (reachableSet r 0, reachableSet r 10)

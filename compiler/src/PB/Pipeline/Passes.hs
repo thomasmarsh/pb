@@ -10,12 +10,11 @@ import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TypeResolve
 import PB.Analysis.SchemaCategory
   ( SchemaInputs (..), SchGraph (..), buildSchema )
-import PB.Analysis.Rules.Schema qualified as SchemaRules
-import PB.Analysis.Rules.Schema (LegSourceFanout (..))
-import PB.Analysis.Rules.DeadCode qualified as DeadCodeRules
-import PB.Analysis.DeadCodeAlgebra qualified as DeadCodeAlgebra
-import PB.Analysis.SchemaAlgebra qualified as SchemaAlgebra
-import PB.Analysis.Rules.Taint qualified as TaintRules
+import PB.Pipeline.DuckDb.Edb qualified as Edb
+import PB.Pipeline.DuckDb.Edb (LegSourceFanout (..))
+import PB.Analysis.DeadCodeReachability qualified as DeadCodeReachability
+import PB.Analysis.SchemaClosure qualified as SchemaClosure
+import PB.Analysis.TaintClosure qualified as TaintClosure
 import PB.Pipeline.Progress qualified as Progress
 import PB.Pipeline.DuckDb
   ( DuckConn
@@ -58,7 +57,7 @@ import Data.Time.Clock        (getCurrentTime)
 -- 'Progress.timedStep' events.
 
 -- | Characterize @leg_source@'s (x, y) key fan-in (see
--- 'PB.Analysis.Rules.Schema.legSourceFanout' for the O(group_size^2)
+-- 'PB.Pipeline.DuckDb.Edb.legSourceFanout' for the O(group_size^2)
 -- aggregate blow-up this guards against). Always emits a one-line summary;
 -- additionally emits a @warning@ event when the largest group looks
 -- disproportionate -- 500 is a heuristic threshold, not a proven safe bound:
@@ -68,7 +67,7 @@ import Data.Time.Clock        (getCurrentTime)
 reportLegSourceFanout :: DuckConn -> IO ()
 reportLegSourceFanout conn = do
   t0 <- getCurrentTime
-  LegSourceFanout total keys maxGroup <- SchemaRules.legSourceFanout conn
+  LegSourceFanout total keys maxGroup <- Edb.legSourceFanout conn
   t1 <- getCurrentTime
   let n = T.pack . show
   Progress.emitEvent (Progress.EvStep
@@ -91,12 +90,12 @@ reportLegSourceFanout conn = do
 reportTaintDefUseFanout :: DuckConn -> IO ()
 reportTaintDefUseFanout conn = do
   t0 <- getCurrentTime
-  defFo <- TaintRules.defLineFanout conn
+  defFo <- Edb.defLineFanout conn
   t1 <- getCurrentTime
-  retFo <- TaintRules.returnUseFanout conn
+  retFo <- Edb.returnUseFanout conn
   t2 <- getCurrentTime
   let n = T.pack . show
-      report relName label elapsedMs (TaintRules.DefUseFanout total keys maxGroup) = do
+      report relName label elapsedMs (Edb.DefUseFanout total keys maxGroup) = do
         Progress.emitEvent (Progress.EvStep
           (label <> " -- " <> n total <> " rows, "
             <> n keys <> " keys, max " <> n maxGroup <> " rows/key")
@@ -118,16 +117,16 @@ reportTaintDefUseFanout conn = do
 --   expressed as pure SQL run here — type/call resolution
 --   ('runPass5', populating @resolved_calls@), interproc-edge and taint
 --   analysis, including the taint closure itself
---   ('runPass67' — @taint_reaches@\/@taint_confirmed@ are algebraic), and
+--   ('runPass67' — @taint_reaches@\/@taint_confirmed@ are materialized by 'TaintClosure.materializeTaintClosure'), and
 --   schema-category construction
 --   ('runPass9', populating @schema_objects@\/@schema_morphisms@). Then
---   'materializeAllEdbViews' creates every SQL-view EDB relation the
+--   'materializeAllEdbViews' creates every EDB relation the
 --   downstream materializers assume: the dead-code EDBs
---   ('DeadCodeRules.initDeadReachEdbViews', over @procedures@\/
+--   ('Edb.initDeadCodeEdb', over @procedures@\/
 --   @resolved_calls@\/@objects@), @proc_dead@ itself
---   ('DeadCodeAlgebra.materializeDeadCodeClosure' — algebraic), and the
+--   ('DeadCodeReachability.materializeDeadCodeClosure'), and the
 --   schema EDBs
---   ('SchemaRules.initEdbViews', over @schema_morphisms@\/
+--   ('Edb.initSchemaEdb', over @schema_morphisms@\/
 --   @schema_objects@).
 -- * **B2 (SQL materializers):** the five relation materializers run as direct
 --   DuckDB SQL, in dependency order after the EDB views exist:
@@ -186,10 +185,10 @@ runPhaseB conn mDefaultNamespace = do
 -- @schema_objects@\/@schema_morphisms@).
 materializeAllEdbViews :: DuckConn -> IO ()
 materializeAllEdbViews conn = do
-  Progress.timedStep "Dead-code EDB views materialized" $ DeadCodeRules.initDeadReachEdbViews conn
-  Progress.timedStep "Dead-code closure (algebraic)" $ DeadCodeAlgebra.materializeDeadCodeClosure conn
-  Progress.timedStep "Schema EDB views materialized" $ SchemaRules.initEdbViews conn
-  Progress.timedStep "Schema closure (algebraic)" $ SchemaAlgebra.materializeSchemaClosure conn
+  Progress.timedStep "Dead-code EDB views materialized" $ Edb.initDeadCodeEdb conn
+  Progress.timedStep "Dead-code closure" $ DeadCodeReachability.materializeDeadCodeClosure conn
+  Progress.timedStep "Schema EDB views materialized" $ Edb.initSchemaEdb conn
+  Progress.timedStep "Schema closure" $ SchemaClosure.materializeSchemaClosure conn
   reportTaintDefUseFanout conn
 
 -- | The five relation materializers run as direct DuckDB SQL, invoked in
@@ -215,8 +214,8 @@ runPass5 conn = Progress.timedStep "Resolving types" $ do
 -- | Pass 6+7: compute interproc edges and taint classification ONCE
 -- corpus-wide, then the taint closure itself (@taint_reaches@\/
 -- @taint_confirmed@) and the witness-path table (@taint_step_kind@) via
--- the algebraic Kleene-star closure ('TaintRules.materializeTaintClosure'\/
--- 'TaintRules.materializeTaintStepKind') — production's source for all
+-- the algebraic Kleene-star closure ('TaintClosure.materializeTaintClosure'\/
+-- 'TaintClosure.materializeTaintStepKind') — production's source for all
 -- three tables. Neither depends on a DB round-trip: both read straight off
 -- the same in-memory rows this pass already built.
 runPass67 :: DuckConn -> IO ()
@@ -240,10 +239,10 @@ runPass67 conn = Progress.timedStep "Building call graph" $ do
   Progress.timedStep "Taint classification" $ do
     appendTaintSources     conn allSources
     appendTaintSinks       conn allSinks
-  Progress.timedStep "Taint closure (algebraic)" $
-    TaintRules.materializeTaintClosure allSources allSinks intraEdges returnRows edges conn
-  Progress.timedStep "Taint witness paths (algebraic)" $
-    TaintRules.materializeTaintStepKind allSources allSinks intraEdges returnRows edges conn
+  Progress.timedStep "Taint closure" $
+    TaintClosure.materializeTaintClosure allSources allSinks intraEdges returnRows edges conn
+  Progress.timedStep "Taint witness paths" $
+    TaintClosure.materializeTaintStepKind allSources allSinks intraEdges returnRows edges conn
 
 -- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157
 -- Phase 1): materialize the schema category @Sch@ from Phase A's
