@@ -269,7 +269,8 @@ testMaterializeDecompositionCoslice = withWriteConn ":memory:" $ \conn -> do
   appendSchemaMorphisms conn [ SchMorphism (ColumnObj (TableRef Nothing "a") "x")
                                (StmtObj (SqlStmtId "f.srf" "obj" "proc" 1))
                                LegReads SrcSqlText ]
-  -- Simulate the Souffle path_leg_fwd output table (materialized by runRuleSet).
+  -- Hand-create the path_leg_fwd output table the production SQL projection
+  -- would materialize, so the SQL projection under test can read it.
   -- recreateTextTable + appendTextRows would be the production path; here the
   -- SQL projection is what's under test, so we hand-create the table.
   void $ execute_ conn (Query "CREATE TABLE path_leg_fwd (s TEXT, target TEXT, leg_ord TEXT, lf TEXT, lt TEXT, kind TEXT)")
@@ -296,8 +297,8 @@ testMaterializeImpliedFk = withWriteConn ":memory:" $ \conn -> do
   let colA = ColumnObj (TableRef Nothing "a") "x"
       colB = ColumnObj (TableRef Nothing "b") "y"
   appendSchemaObjects conn [colA, colB]
-  -- Simulate Souffle's implied_fk_pairs output (materialized by runRuleSet
-  -- via recreateTextTable/appendTextRows in production).
+  -- Hand-create the implied_fk_pairs output table the production SQL
+  -- materializer would populate, so 'materializeImpliedFk' can read it.
   void $ execute_ conn (Query "CREATE TABLE implied_fk_pairs (x TEXT, y TEXT)")
   void $ execute_ conn (Query ("INSERT INTO implied_fk_pairs VALUES ('"
     <> schObjectKey colA <> "', '" <> schObjectKey colB <> "')"))
@@ -322,7 +323,7 @@ testMaterializeColumnRisk = withWriteConn ":memory:" $ \conn -> do
   let colA = ColumnObj (TableRef Nothing "a") "x"
       stmt = StmtObj (SqlStmtId "f.srf" "obj" "proc" 1)
   appendSchemaObjects conn [colA, stmt]
-  -- Simulate Souffle's risk_count output: one column node, one stmt node --
+  -- Hand-create the risk_count output table: one column node, one stmt node --
   -- the stmt row exercises the kind = 'column' filter (a real bug found on
   -- the openpay corpus: schema_objects has no namespace/table_name/
   -- column_name for stmt/dw_retrieve kinds, so an unfiltered join

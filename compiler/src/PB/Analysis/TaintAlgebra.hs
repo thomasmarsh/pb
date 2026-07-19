@@ -198,21 +198,20 @@ taintReachable sources intraEdges returnRows edges =
        , Just t <- [unintern dstId interner]
        ]
 
--- | Per-source (source, node reachable via >=1 real edge) pairs, mirroring
--- Souffle's @taint_reaches(x, y)@ relation exactly -- @x@ stays pinned to
--- the literal source (unlike 'taintReachable', which flattens per-source
--- structure into one global tainted set), and a source only re-appears as
--- its own target when a REAL cycle leads back to it.
+-- | Per-source (source, node reachable via >=1 real edge) pairs, matching the
+-- @taint_reaches(x, y)@ relation -- @x@ stays pinned to the literal source
+-- (unlike 'taintReachable', which flattens per-source structure into one
+-- global tainted set), and a source only re-appears as its own target when a
+-- REAL cycle leads back to it.
 --
 -- 'reachFrom'/'reachableSet' always include a seed's own trivial 0-hop
--- membership (Section 11's Fix 1, needed for 'taintReachable''s "isolated
--- source is still tainted" contract) -- Souffle's base rule has no such
--- case, requiring >=1 real @taint_edge@ hop. Seeding 'reachFrom' from each
--- source's *direct successors* rather than the source itself sidesteps
--- this: a successor's own trivial membership genuinely IS one real hop
--- from the source, so it is never spurious, while a source only regains
--- membership in its own reachable set by a real path back through a
--- successor -- exactly Souffle's semantics.
+-- membership (needed for 'taintReachable''s "isolated source is still
+-- tainted" contract) -- the base relation has no such case, requiring >=1
+-- real @taint_edge@ hop. Seeding 'reachFrom' from each source's *direct
+-- successors* rather than the source itself sidesteps this: a successor's
+-- own trivial membership genuinely IS one real hop from the source, so it is
+-- never spurious, while a source only regains membership in its own
+-- reachable set by a real path back through a successor.
 taintReachesPairs
   :: [TaintSource] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge]
   -> [(TaintTriple, TaintTriple)]
@@ -239,7 +238,7 @@ taintReachesPairs sources intraEdges returnRows edges =
 
 -- | Confirmed (source, sink) pairs: a sink reachable from a *specific*
 -- source (cf. 'taint_confirmed'). Deduplicated by (source key, sink key)
--- -- Souffle's @taint_confirmed@ is a SET keyed on the STRING
+-- -- @taint_confirmed@ is a SET keyed on the STRING
 -- object::proc::var key, so two 'TaintSource'\/'TaintSink' records that
 -- differ only in metadata (line, file) but share a key must collapse to
 -- one row, same as they would there. Real-corpus finding (Plan 182

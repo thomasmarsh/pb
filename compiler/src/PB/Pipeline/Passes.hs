@@ -10,7 +10,6 @@ import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TypeResolve
 import PB.Analysis.SchemaCategory
   ( SchemaInputs (..), SchGraph (..), buildSchema )
-import PB.Pipeline.Souffle qualified as Souffle
 import PB.Analysis.Rules.Schema qualified as SchemaRules
 import PB.Analysis.Rules.Schema (LegSourceFanout (..))
 import PB.Analysis.Rules.DeadCode qualified as DeadCodeRules
@@ -33,8 +32,13 @@ import PB.Pipeline.DuckDb
   , appendSchemaObjects, appendSchemaMorphisms
   , materializeDecompositionCoslice
   , materializeImpliedFk
+  , materializeImpliedFkPairs
   , materializeColumnRisk
+  , materializeRiskCount
   , materializeDeadCode
+  , materializeLiveProc
+  , materializeCallerCounts
+  , materializeDeadCodeRows
   , materializeTaintPaths
   , materializeTaintAnnotations
   )
@@ -44,144 +48,23 @@ import qualified Data.Set        as Set
 import qualified Data.Text       as T
 import Data.Time.Clock        (getCurrentTime)
 
--- | Shared per-relation progress hook for 'Souffle.runRuleSetsWithStart' in
--- 'runPhaseB': fires a @step@ event just before an IDB relation is
--- materialized, then a second one right after with its row count. The
--- Python reporter's Phase B view shows only the latest step label (no
--- sub-progress bar), so per-relation granularity keeps the label current as
--- each rule set's outputs land rather than stalling on a single blanket
--- label for the whole Datalog run.
---
--- CAVEAT (found in production, 2026-07-15): the "before" firing only
--- happens once a ruleset's single monolithic @souffle@ subprocess has
--- already exited -- while that subprocess is mid-flight (which can be
--- minutes on a large corpus, see 'souffleStart' below), the displayed label
--- is whatever the PREVIOUS ruleset in 'Souffle.orderRuleSets'\' resolved
--- order last emitted, not the ruleset actually running. Concretely:
--- 'allDatalogRuleSets' lists @taintRules@ last, but 'Souffle.orderRuleSets'
--- batches independent rulesets (no relation-name dependency edge between
--- them) into the same round in list order -- @taintRules@ has no dependency
--- on any other ruleset's output, so it lands in ROUND 1 immediately after
--- @legRules@ (verified via @cabal repl@: @orderRuleSets allDatalogRuleSets@
--- = @[ deadReachRules, callerCountRules, legRules, taintRules,
--- deadCodeRowsRules, reachesRules, liveProcRules, cosliceRules ]@). A live
--- run stuck on "Datalog: leg" for 13+ minutes was actually deep inside
--- @taintRules@ (301,754-row @taint_edge.facts@) the whole time -- only
--- confirmed via process\/temp-dir inspection, not this progress label. See
--- 'souffleStart' for the fix, and 'PB.Analysis.Rules.Taint.taintRules'\'
--- Code Index entry (compiler/CLAUDE.md) for the perf fix this incident
--- also produced.
--- | Label stays identical across both firings (unlike an earlier version
--- of this function, which appended @" materialized (N rows)"@ to the
--- second event's label only) -- the row count already flows through the
--- structured @idb_rows@ field below, so baking it into the label text too
--- just gave the two events different labels and defeated the Python
--- 'DiagnosticsCollector'\'s flush-on-label-change pairing (the same
--- mechanism 'souffleLabel' exists to keep 'souffleStart'\/'souffleFinish'
--- on). The bare start event (no row count yet) would otherwise show up as
--- its own all-dashes row in the report table instead of merging into its
--- end event's row.
-souffleProgress :: Souffle.Relation -> Maybe (Int, Double) -> IO ()
-souffleProgress rel Nothing =
-  Progress.emitEvent (Progress.EvStep ("Datalog: " <> Souffle.relName rel) Nothing [] [] Nothing)
-souffleProgress rel (Just (n, elapsedMs)) =
-  Progress.emitEvent (Progress.EvStep
-    ("Datalog: " <> Souffle.relName rel)
-    (Just elapsedMs) [] [(Souffle.relName rel, n)] Nothing)
+-- | Phase B computes the five relation materializers directly in DuckDB
+-- (see 'PB.Pipeline.DuckDb.materializeImpliedFkPairs',
+-- 'PB.Pipeline.DuckDb.materializeRiskCount',
+-- 'PB.Pipeline.DuckDb.materializeLiveProc',
+-- 'PB.Pipeline.DuckDb.materializeCallerCounts',
+-- 'PB.Pipeline.DuckDb.materializeDeadCodeRows'), invoked in 'runPhaseB' after
+-- the EDB views are built. Per-relation progress is folded into the ordinary
+-- 'Progress.timedStep' events.
 
--- | Stable per-ruleset progress-event label, shared by 'souffleStart' and
--- 'souffleFinish' so the Python 'DiagnosticsCollector' (which flushes a
--- report row only when the @"step"@ event label changes) pairs the two into
--- one row carrying both the start event's @edb_rows@ and the finish event's
--- @elapsed_ms@ -- row counts live entirely in the structured fields, not
--- baked into the label text, so the label stays identical between the two
--- events regardless of what those counts are.
-souffleLabel :: Souffle.RuleSet -> Text
-souffleLabel rs = "Datalog: running ["
-  <> T.intercalate ", " (map Souffle.relName (Souffle.rsRelations rs))
-  <> "]"
-
--- | Fires at the TRUE start of a ruleset's processing -- before its EDB
--- facts are even queried (see 'Souffle.SouffleHooks.onRuleSetPrepStart').
--- Anchors the timeline bar's left edge correctly; 'souffleCounts' below
--- (fired later, once row counts are known) shares the same label and
--- merges into this same report row rather than opening a second one. A
--- real corpus timeline showed a ~2s unaccounted gap right before every
--- ruleset's bar until this hook existed -- the EDB-gathering loop was
--- genuinely running the whole time, just with no event marking when it
--- began.
-souffleStart :: Souffle.RuleSet -> IO ()
-souffleStart rs = Progress.emitEvent (Progress.EvStep (souffleLabel rs) Nothing [] [] Nothing)
-
--- | Fires once EDB facts are queried/written and their row counts are known
--- (see 'Souffle.SouffleHooks.onRuleSetStart's own doc comment for why this
--- is deliberately later than 'souffleStart') -- shares 'souffleLabel' with
--- 'souffleStart' so this just adds row counts to the same already-open
--- report row instead of anchoring a second one.
-souffleCounts :: Souffle.RuleSet -> [(Souffle.Relation, Int)] -> IO ()
-souffleCounts rs counts = Progress.emitEvent (Progress.EvStep
-  (souffleLabel rs)
-  Nothing
-  [ (Souffle.relName rel, n) | (rel, n) <- counts ]
-  []
-  Nothing)
-
--- | Fires once the ruleset's @souffle@ subprocess has exited and every IDB
--- relation has been read back into DuckDB -- the actual cost of running
--- this ruleset's Datalog evaluation, previously untimed anywhere (see
--- 'Souffle.SouffleHooks'\' 'Souffle.onRuleSetFinish' doc comment). Shares
--- 'souffleLabel' with 'souffleStart' so the diagnostics report renders one
--- row per ruleset with a real duration instead of two disconnected,
--- undurated rows.
-souffleFinish :: Souffle.RuleSet -> Double -> IO ()
-souffleFinish rs elapsedMs = do
-  mResidency <- Progress.residencySnapshot
-  Progress.emitEvent (Progress.EvStep (souffleLabel rs) (Just elapsedMs) [] [] mResidency)
-
--- | Fires once per EDB relation, immediately after that relation's facts
--- are queried and written into its @.facts@ file -- the concrete fix for a
--- production incident where a stall inside this exact loop (suspected on an
--- oversized @reaches@ relation feeding @risk_count@) produced zero progress
--- events, since 'souffleCounts' below only fires once the whole loop has
--- already finished.
-souffleEdbFact :: Souffle.Relation -> Int -> Double -> IO ()
-souffleEdbFact rel n elapsedMs = do
-  mResidency <- Progress.residencySnapshot
-  Progress.emitEvent (Progress.EvStep
-    ("Datalog: EDB " <> Souffle.relName rel <> " written (" <> T.pack (show n) <> " rows)")
-    (Just elapsedMs) [(Souffle.relName rel, n)] [] mResidency)
-
--- | Fires periodically while a @souffle@ subprocess itself is running, so a
--- long in-Souffle evaluation doesn't go dark between 'souffleStart' and
--- 'souffleProgress'.
-souffleHeartbeat :: Double -> IO ()
-souffleHeartbeat elapsedSec = do
-  mResidency <- Progress.residencySnapshot
-  Progress.emitEvent (Progress.EvStep
-    ("Datalog: souffle still running (" <> T.pack (show (round elapsedSec :: Int)) <> "s)")
-    (Just (elapsedSec * 1000)) [] [] mResidency)
-
--- | The 'Souffle.SouffleHooks' value 'runPhaseB' wires into every Datalog
--- rule set run.
-souffleHooks :: Souffle.SouffleHooks
-souffleHooks = Souffle.noSouffleHooks
-  { Souffle.onRuleSetPrepStart = souffleStart
-  , Souffle.onRuleSetStart     = souffleCounts
-  , Souffle.onEdbFact          = souffleEdbFact
-  , Souffle.onIdbRelation      = souffleProgress
-  , Souffle.onHeartbeat        = souffleHeartbeat
-  , Souffle.onRuleSetFinish    = souffleFinish
-  }
-
--- | Characterize @leg_source@'s (x, y) key fan-in before 'SchemaRules.legRules'
--- runs (see that ruleset's own doc comment for the O(group_size^2) Souffle
--- aggregate bug this was written to catch early). Always emits a one-line
--- summary; additionally emits a @warning@ event when the largest group looks
+-- | Characterize @leg_source@'s (x, y) key fan-in (see
+-- 'PB.Analysis.Rules.Schema.legSourceFanout' for the O(group_size^2)
+-- aggregate blow-up this guards against). Always emits a one-line summary;
+-- additionally emits a @warning@ event when the largest group looks
 -- disproportionate -- 500 is a heuristic threshold, not a proven safe bound:
 -- 'leg_source' has only ~3 distinct @kind@ buckets, so a group this size is
 -- almost certainly duplicate/near-duplicate extraction on one schema edge
--- rather than legitimate diversity, and is worth an operator's attention
--- regardless of whether the current 'SchemaRules.legRules' handles it fast.
+-- rather than legitimate diversity, and is worth an operator's attention.
 reportLegSourceFanout :: DuckConn -> IO ()
 reportLegSourceFanout conn = do
   t0 <- getCurrentTime
@@ -189,7 +72,7 @@ reportLegSourceFanout conn = do
   t1 <- getCurrentTime
   let n = T.pack . show
   Progress.emitEvent (Progress.EvStep
-    ("Datalog: leg_source -- " <> n total <> " rows, "
+    ("leg_source -- " <> n total <> " rows, "
       <> n keys <> " keys, max " <> n maxGroup <> " rows/key")
     (Just (Progress.msBetween t0 t1)) [("leg_source", total)] [] Nothing)
   when (maxGroup > 500) $ Progress.emitEvent (Progress.EvWarning
@@ -223,43 +106,43 @@ reportTaintDefUseFanout conn = do
             <> " duplicate rows (out of " <> n total <> " total, " <> n keys
             <> " distinct keys) -- unusually large fan-in, likely duplicate/\
                \near-duplicate extraction rather than legitimate diversity"))
-  report ("proc_defs" :: Text) ("Datalog: proc_defs (object,proc,line)" :: Text)
+  report ("proc_defs" :: Text) ("proc_defs (object,proc,line)" :: Text)
     (Progress.msBetween t0 t1) defFo
-  report ("proc_uses_return" :: Text) ("Datalog: proc_uses return (object,proc)" :: Text)
+  report ("proc_uses_return" :: Text) ("proc_uses return (object,proc)" :: Text)
     (Progress.msBetween t1 t2) retFo
 
 -- | Phase B: read Phase A tables from DuckDB, run link analysis, write results.
 -- Structured as two sub-phases:
 --
 -- * **B1 (Haskell + EDB materialization):** the analyses that can't be
---   expressed as Soufflé rules run here — type/call resolution
+--   expressed as pure SQL run here — type/call resolution
 --   ('runPass5', populating @resolved_calls@), interproc-edge and taint
 --   analysis, including the taint closure itself
---   ('runPass67' — @taint_reaches@\/@taint_confirmed@ are algebraic, not
---   Soufflé, since the Plan 182 cutover), and schema-category construction
+--   ('runPass67' — @taint_reaches@\/@taint_confirmed@ are algebraic), and
+--   schema-category construction
 --   ('runPass9', populating @schema_objects@\/@schema_morphisms@). Then
 --   'materializeAllEdbViews' creates every SQL-view EDB relation the
---   Soufflé rule sets below assume: the dead-code EDBs
+--   downstream materializers assume: the dead-code EDBs
 --   ('DeadCodeRules.initDeadReachEdbViews', over @procedures@\/
 --   @resolved_calls@\/@objects@), @proc_dead@ itself
---   ('DeadCodeAlgebra.materializeDeadCodeClosure' — algebraic, not
---   Soufflé, since the Plan 182 item 6 cutover), and the schema EDBs
+--   ('DeadCodeAlgebra.materializeDeadCodeClosure' — algebraic), and the
+--   schema EDBs
 --   ('SchemaRules.initEdbViews', over @schema_morphisms@\/
 --   @schema_objects@).
--- * **B2 (one Soufflé run):** every Phase B Datalog rule set runs in a
---   single 'Souffle.runRuleSets' call. 'Souffle.orderRuleSets' resolves
---   every Soufflé-internal dependency edge automatically — @proc_dead@
---   (an external EDB table since the item 6 cutover, no longer a Soufflé
---   IDB relation) is read directly by 'DeadCodeRules.deadCodeRowsRules'
---   and 'DeadCodeRules.liveProcRules';
---   @leg@ (from 'SchemaRules.legRules') before 'SchemaRules.reachesRules';
---   @reaches@ (from 'SchemaRules.reachesRules') before
---   'SchemaRules.cosliceRules'. The only sequencing that remains manual is
---   the Phase A→B boundary enforced by B1 (the EDB views' source tables
---   must be populated before the views are created), which is a genuine
---   data dependency, not an on-demand coupling between rule sets. Finally
---   the two SQL materializers project IDB output tables into their
---   API-facing shapes (@dead_code_rows@→@dead_code@,
+-- * **B2 (SQL materializers):** the five relation materializers run as direct
+--   DuckDB SQL, in dependency order after the EDB views exist:
+--   'PB.Pipeline.DuckDb.materializeImpliedFkPairs' (consumed by
+--   'materializeImpliedFk'), 'PB.Pipeline.DuckDb.materializeRiskCount'
+--   (consumed by 'materializeColumnRisk'),
+--   'PB.Pipeline.DuckDb.materializeLiveProc' (the @live_proc@ table the CLI
+--   reads), 'PB.Pipeline.DuckDb.materializeCallerCounts', and finally
+--   'PB.Pipeline.DuckDb.materializeDeadCodeRows' (which depends on the
+--   @confidence@\/@caller_count_*@ tables the previous step built, and is
+--   consumed by 'materializeDeadCode'). The only sequencing that remains
+--   manual is the Phase A→B boundary enforced by B1 (the EDB views' source
+--   tables must be populated before the views are created), which is a
+--   genuine data dependency. Finally the two SQL materializers project IDB
+--   output tables into their API-facing shapes (@dead_code_rows@→@dead_code@,
 --   @path_leg_fwd@\/@path_leg_back@→@decomposition_coslice@).
 runPhaseB :: DuckConn -> Maybe Text -> IO ()
 runPhaseB conn mDefaultNamespace = do
@@ -277,13 +160,18 @@ runPhaseB conn mDefaultNamespace = do
     ]
     Nothing)
   materializeAllEdbViews conn
-  -- B2: all Soufflé rule sets in one dependency-ordered run. Characterize
-  -- leg_source's key fan-in first (see reportLegSourceFanout) -- cheap, and
-  -- surfaces a pathological corpus shape before the Souffle run rather than
-  -- only via its wall-clock/memory symptoms.
+  -- B2: the five SQL materializers run in dependency order. Characterize
+  -- leg_source's key
+  -- fan-in first (see reportLegSourceFanout) -- cheap, and surfaces a
+  -- pathological corpus shape before the materialization rather than only
+  -- via its wall-clock/memory symptoms.
   reportLegSourceFanout conn
-  Progress.emitEvent (Progress.EvStep "Datalog analysis" Nothing [] [] Nothing)
-  Souffle.runRuleSetsWithStart souffleHooks conn allDatalogRuleSets
+  Progress.emitEvent (Progress.EvStep "Phase B analysis (SQL)" Nothing [] [] Nothing)
+  materializeImpliedFkPairs conn
+  materializeRiskCount conn
+  materializeLiveProc conn
+  materializeCallerCounts conn
+  materializeDeadCodeRows conn
   materializeDeadCode conn
   materializeDecompositionCoslice conn
   materializeImpliedFk conn
@@ -291,8 +179,8 @@ runPhaseB conn mDefaultNamespace = do
   materializeTaintPaths conn
   materializeTaintAnnotations conn
 
--- | Materialize every EDB view the Soufflé rule sets in 'allDatalogRuleSets'
--- assume already exist. Each 'init*EdbViews' is idempotent (@CREATE OR
+-- | Materialize every EDB view the downstream SQL materializers assume
+-- already exist. Each 'init*EdbViews' is idempotent (@CREATE OR
 -- REPLACE VIEW@); together they cover the dead-code and schema EDB layers.
 -- Must run after 'runPass5' (for @resolved_calls@) and 'runPass9' (for
 -- @schema_objects@\/@schema_morphisms@).
@@ -304,43 +192,13 @@ materializeAllEdbViews conn = do
   Progress.timedStep "Schema closure (algebraic)" $ SchemaAlgebra.materializeSchemaClosure conn
   reportTaintDefUseFanout conn
 
--- | Every Soufflé rule set run in Phase B. 'Souffle.runRuleSets' topologically
--- orders these by their IDB-output ∩ EDB-input edges, so the order listed
--- here is the stable tie-break for independent rule sets only — the real
--- ordering is data-driven. See 'runPhaseB' for the edge inventory.
---
--- 'TaintRules.taintRules' is deliberately NOT listed here (Plan 182
--- cutover, 2026-07-18): @taint_reaches@\/@taint_confirmed@ are now
--- produced by 'TaintRules.materializeTaintClosure' in 'runPass67', an
--- algebraic Kleene-star closure over the same EDB inputs. 'taintRules'
--- itself is unchanged and still callable on demand.
---
--- 'DeadCodeRules.deadReachRules' is likewise NOT listed here (Plan 182
--- item 6 cutover, 2026-07-18, and deleted entirely — no on-demand oracle
--- retained): @proc_dead@ is now produced by
--- 'DeadCodeAlgebra.materializeDeadCodeClosure' in 'materializeAllEdbViews',
--- an algebraic sparse-worklist closure over the same EDB inputs.
--- 'DeadCodeRules.deadCodeRowsRules'\/'DeadCodeRules.liveProcRules' read
--- @proc_dead@ as an ordinary external EDB table, the same as any other
--- pre-materialized relation.
---
--- 'SchemaRules.legRules'\/'SchemaRules.reachesRules'\/'SchemaRules.cosliceRules'
--- are likewise NOT listed here (Plan 182 schema-coslice cutover, 2026-07-18,
--- and deleted entirely — no on-demand oracle retained, per §12 item 7's
--- CORRECTION): @reaches@\/@path_leg_fwd@\/@path_leg_back@ are now produced by
--- 'SchemaAlgebra.materializeSchemaClosure' in 'materializeAllEdbViews', an
--- algebraic priority-cascade + worklist-closure + multi-witness shortest-path
--- reconstruction over the same EDB inputs. 'SchemaRules.riskRules' reads
--- @reaches@ as an ordinary external EDB table, the same as any other
--- pre-materialized relation.
-allDatalogRuleSets :: [Souffle.RuleSet]
-allDatalogRuleSets =
-  [ DeadCodeRules.callerCountRules
-  , DeadCodeRules.deadCodeRowsRules
-  , SchemaRules.impliedFkRules
-  , SchemaRules.riskRules
-  , DeadCodeRules.liveProcRules
-  ]
+-- | The five relation materializers run as direct DuckDB SQL, invoked in
+-- dependency order inside 'runPhaseB' (see 'PB.Pipeline.DuckDb.materializeImpliedFkPairs',
+-- 'PB.Pipeline.DuckDb.materializeRiskCount', 'PB.Pipeline.DuckDb.materializeLiveProc',
+-- 'PB.Pipeline.DuckDb.materializeCallerCounts', 'PB.Pipeline.DuckDb.materializeDeadCodeRows').
+-- The taint, dead-reach, and schema-coslice relations are produced
+-- algebraically (Haskell or SQL); the schema/dead-code consumers read the
+-- same pre-materialized EDB tables they always did.
 
 runPass5 :: DuckConn -> IO (Map.Map Ident Ident)
 runPass5 conn = Progress.timedStep "Resolving types" $ do
@@ -359,12 +217,8 @@ runPass5 conn = Progress.timedStep "Resolving types" $ do
 -- @taint_confirmed@) and the witness-path table (@taint_step_kind@) via
 -- the algebraic Kleene-star closure ('TaintRules.materializeTaintClosure'\/
 -- 'TaintRules.materializeTaintStepKind') — production's source for all
--- three tables. Neither depends on Souffle or a DB round-trip: both read
--- straight off the same in-memory rows this pass already built. The
--- Souffle 'TaintRules.taintRules' fixpoint and the Haskell BFS
--- 'TaintRules.reconstructTaintStepKind' this replaces are unchanged and
--- still available on demand (the oracle-diff test suite) — neither runs
--- in the hot path.
+-- three tables. Neither depends on a DB round-trip: both read straight off
+-- the same in-memory rows this pass already built.
 runPass67 :: DuckConn -> IO ()
 runPass67 conn = Progress.timedStep "Building call graph" $ do
   gvs  <- queryGlobalVars     conn

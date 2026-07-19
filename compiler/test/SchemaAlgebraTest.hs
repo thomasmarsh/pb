@@ -1,14 +1,9 @@
 module SchemaAlgebraTest (tests) where
 
 -- | Golden regression suite for 'PB.Analysis.SchemaAlgebra' (hand-rolled
--- Haskell closures over the interned leg relation — NOT Souffle's
--- 'PB.Analysis.Rules.Schema.legRules'/'reachesRules'/'cosliceRules', which
--- are deleted as of the Plan 182 schema-coslice cutover, §17). Each
--- fixture's expected output was cross-checked against the (now-deleted)
--- Souffle oracle during the cutover — see doc/plan/182-algebraic-analysis.md
--- §17 for the oracle-diff history. No Souffle round-trip runs here any more:
--- the algebraic closures are the sole implementation, so there is nothing
--- left to diff against.
+-- Haskell closures over the interned leg relation — NOT 'star'). Each
+-- fixture's expected output is hand-verified; the algebraic closures are the
+-- sole implementation, so the assertions below are the regression contract.
 import PB.Prelude
 import PB.Analysis.SchemaAlgebra
   ( legAlgebraic, reachesAlgebraic, cosliceAlgebraic )

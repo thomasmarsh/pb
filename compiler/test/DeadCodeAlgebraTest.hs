@@ -2,18 +2,14 @@ module DeadCodeAlgebraTest (tests) where
 
 -- | Golden regression suite for 'PB.Analysis.DeadCodeAlgebra.deadReachAlgebraic'
 -- (a 'PB.Algebra.Closure.reachFrom'-based sparse closure — NOT 'star'),
--- production's sole source for @proc_dead@ since the Plan 182 item 6
--- cutover. Each fixture's expected dead set was hand-verified, then
--- cross-checked against the (now-deleted) Souffle 'deadReachRules' oracle
--- during the PoC/cutover sessions — see doc/plan/182-algebraic-analysis.md
--- §11-§12/§16 for the oracle-diff history. No Souffle round-trip runs here
--- any more: 'deadReachAlgebraic' is the sole implementation, so there is
--- nothing left to diff against.
+-- production's sole source for @proc_dead@. Each fixture's expected dead set
+-- was hand-verified; 'deadReachAlgebraic' is the sole implementation, so the
+-- assertions below are the regression contract.
 import PB.Prelude
 import PB.Analysis.DeadCodeAlgebra (deadReachAlgebraic)
 import PB.Pipeline.DuckDb (ProcSummaryRow (..))
 import PB.Analysis.Taint qualified as Taint (ResolvedCallRow)
-import SouffleDeadCodeTest (ProcInfo (..), mkResolvedCall)
+import DeadCodeFixtures (ProcInfo (..), mkResolvedCall)
 
 import qualified Data.Set as Set
 import Test.Tasty (TestTree, testGroup)

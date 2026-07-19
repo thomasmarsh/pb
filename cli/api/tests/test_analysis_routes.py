@@ -792,7 +792,7 @@ def test_report_endpoint_works_against_real_corpus(db_path):
 
 
 def test_live_procedures_endpoint_works_against_real_corpus(db_path):
-    """Ensure the live-procedures endpoint (Plan 161 Souffle live_proc table)
+    """Ensure the live-procedures endpoint (Plan 161 live_proc table)
     works against the real openpay corpus, produced by pbc --db's runPass11."""
     from fastapi.testclient import TestClient
     from pb.api import create_app

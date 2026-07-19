@@ -164,8 +164,18 @@ export interface DwDetailResponse {
   file: string;
   controls: DwControlRow[];
   retrieve_tables: { table_name: string; namespace: string | null }[];
-  retrieve_columns: { column_fqn: string; table_name: string; column_name: string }[];
-  retrieve_where: { idx: number; exp1: string; op: string; exp2: string; logic: string }[];
+  retrieve_columns: {
+    column_fqn: string;
+    table_name: string;
+    column_name: string;
+  }[];
+  retrieve_where: {
+    idx: number;
+    exp1: string;
+    op: string;
+    exp2: string;
+    logic: string;
+  }[];
   arguments: { arg_name: string; arg_type: string }[];
   source: string | null;
   used_by_objects?: string[];
@@ -186,9 +196,24 @@ export interface ProcedureListItem {
 
 export interface SearchResponse {
   objects: ObjectRow[];
-  procedures: { object: string; proc_type: string; name: string; modifiers: string; start_line: number }[];
-  datawindows: { dw_name: string; control_name: string; control_type: string }[];
-  tables: { table_name: string; namespace: string | null; dw_count: number; ps_count: number }[];
+  procedures: {
+    object: string;
+    proc_type: string;
+    name: string;
+    modifiers: string;
+    start_line: number;
+  }[];
+  datawindows: {
+    dw_name: string;
+    control_name: string;
+    control_type: string;
+  }[];
+  tables: {
+    table_name: string;
+    namespace: string | null;
+    dw_count: number;
+    ps_count: number;
+  }[];
 }
 
 export interface StatsResponse {
@@ -204,7 +229,12 @@ export interface StatsResponse {
   tables: number;
   by_kind: { kind: string; count: number }[];
   top_complex: ProcedureRow[];
-  top_pagerank: { object: string; pagerank: number; in_degree: number; out_degree: number }[];
+  top_pagerank: {
+    object: string;
+    pagerank: number;
+    in_degree: number;
+    out_degree: number;
+  }[];
   files_indexed?: number;
   parse_error_count?: number;
   taint_path_count?: number;
@@ -221,10 +251,18 @@ export interface StatsResponse {
 }
 
 export interface CodeQualityReportResponse {
-  top_complexity_procedures: { object: string; proc_name: string; proc_type: string; cyclomatic: number }[];
+  top_complexity_procedures: {
+    object: string;
+    proc_name: string;
+    proc_type: string;
+    cyclomatic: number;
+  }[];
   dead_procedures_by_object: { object: string; dead_count: number }[];
   taint_severity_distribution: { severity: string; count: number }[];
-  sql_statement_complexity_histogram: { table_count: number; statement_count: number }[];
+  sql_statement_complexity_histogram: {
+    table_count: number;
+    statement_count: number;
+  }[];
 }
 
 export interface QueryParam {
@@ -253,67 +291,74 @@ export interface QueryResult {
 // ── Tables ───────────────────────────────────────────────────────────────────
 
 export interface SchemaSummary {
-  namespace:   string;
+  namespace: string;
   table_count: number;
 }
 
 export interface TableSummary {
   table_name: string;
-  namespace:  string | null;
-  dw_count:   number;
-  ps_count:   number;
+  namespace: string | null;
+  dw_count: number;
+  ps_count: number;
   file_count: number;
 }
 
 export interface TableProcedureRef {
-  object:    string;
+  object: string;
   proc_name: string | null;
   operation: string;
 }
 
 export interface ColumnPsRef {
-  object:    string;
+  object: string;
   proc_name: string | null;
   operation: string;
 }
 
 export interface ColumnDetail {
-  column:      string;
-  dw_readers:  string[];
-  ps_readers:  ColumnPsRef[];
-  ps_writers:  ColumnPsRef[];
-  read_count:  number;
+  column: string;
+  dw_readers: string[];
+  ps_readers: ColumnPsRef[];
+  ps_writers: ColumnPsRef[];
+  read_count: number;
   write_count: number;
 }
 
 export interface ImpactDirectRef {
-  object:    string;
-  source:    "datawindow" | "powerscript";
+  object: string;
+  source: "datawindow" | "powerscript";
   operation: string;
 }
 
 export interface ImpactInheritedRef {
   descendant: string;
-  ancestor:   string;
-  depth:      number;
+  ancestor: string;
+  depth: number;
 }
 
 export interface TableImpact {
-  direct:    ImpactDirectRef[];
+  direct: ImpactDirectRef[];
   inherited: ImpactInheritedRef[];
 }
 
 export interface TableDetail {
-  table_name:     string;
-  namespace:      string | null;
-  dw_count:       number;
-  ps_count:       number;
-  datawindows:    { dw_name: string; file: string }[];
-  columns:        { dw_name: string; column_fqn: string; column_name: string }[];
+  table_name: string;
+  namespace: string | null;
+  dw_count: number;
+  ps_count: number;
+  datawindows: { dw_name: string; file: string }[];
+  columns: { dw_name: string; column_fqn: string; column_name: string }[];
   columns_detail: ColumnDetail[];
-  where:          { dw_name: string; idx: number; exp1: string; op: string; exp2: string; logic: string }[];
-  procedures:     TableProcedureRef[];
-  impact:         TableImpact;
+  where: {
+    dw_name: string;
+    idx: number;
+    exp1: string;
+    op: string;
+    exp2: string;
+    logic: string;
+  }[];
+  procedures: TableProcedureRef[];
+  impact: TableImpact;
 }
 
 // ── Explore tree ─────────────────────────────────────────────────────────────
@@ -402,7 +447,7 @@ export interface DeadCodeResponse {
   total: number;
 }
 
-// ── Live procedures (Plan 161 Phase 4 — Souffle live_proc IDB) ──────────────
+// ── Live procedures (Plan 161 Phase 4 — live_proc table) ──────────────
 
 export interface LiveProcedureRef {
   object: string;

@@ -80,7 +80,6 @@ library
     PB.Pipeline.Runner
     PB.Pipeline.Serialise
     PB.Pipeline.DuckDb
-    PB.Pipeline.Souffle
     PB.Pipeline.SqlParse
     PB.Pipeline.FileWalk
     PB.Runtime.StdLib
@@ -181,10 +180,8 @@ test-suite pb-compiler-test
   other-modules:
       DuckDbTest
     , SmallCheckInstances
-    , SouffleSchemaTest
-    , SouffleDeadCodeTest
-    , SouffleEngineTest
-    , SouffleFuzzTest
+    , RulesTest
+    , DeadCodeFixtures
     , StdLibTest
     , BodyParserTest
     , BodyStmtTest

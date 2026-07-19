@@ -198,20 +198,20 @@ New modules go in the most specific matching directory. If a new layer is needed
 
 ## Datalog Rule Placement Discipline (Plan 170)
 
-Read this before writing or reviewing any Souffle EDB view (`initXEdbViews`
+Read this before writing or reviewing any EDB view (`initXEdbViews`
 in `PB.Analysis.Rules.*`), materializer SQL (`materialize*` in
 `PB.Pipeline.DuckDb`), or Datalog rule. Governs where logic lives across the
 four surfaces a whole-program analysis touches: compiler phases
 (`PB.Grammar`/`PB.AST`/`PB.Compile`), `PB.Analysis.*` Haskell, EDB-view SQL,
-and Souffle Datalog rules (`PB.Pipeline.Souffle`/`PB.Analysis.Rules.*`).
+and Datalog rules (`PB.Analysis.Rules.*`).
 
 **History.** The original `PB.Pipeline.Datalog` (a hand-rolled DuckDB
 `WITH RECURSIVE` rule compiler — `stratify`/`compileBody`/`compileRule`,
 since deleted) was built from scratch on a misreading of project direction
-as "avoid Souffle." `PB.Pipeline.Souffle`'s current `Rule`/`RuleSet` IR
+as a misreading of project direction. The `Rule`/`RuleSet` IR
 (literal-text rules, a `ruleRefs` list the caller must hand-sync) and the
 EDB-view-heavy pattern in `PB.Analysis.Rules.*` partly inherit that
-detour's shape rather than being chosen specifically for Souffle. Treat
+detour's shape rather than being chosen specifically for Datalog. Treat
 them as legacy defaults open to revision (see `doc/plan/172-categorical-
 datalog-layer.md`), not settled precedent.
 
@@ -225,10 +225,10 @@ datalog-layer.md`), not settled precedent.
    fixtures.
 2. Does answering it require an unbounded walk, a fixpoint, a count,
    stratified negation, or picking a winner among competing derived facts?
-   → a Souffle Datalog rule. "Picking a winner among competing facts" is
+   → a Datalog rule. "Picking a winner among competing facts" is
    the one people miss — that's what `choice-domain` and rule
    specialization are _for_; it is not a SQL `CASE`'s job. Test via
-   `SouffleTest.hs`-style fixtures against the real `souffle` CLI.
+   Datalog-test-style fixtures against the real Datalog engine.
 3. Otherwise — moving an already-computed fact from storage shape into
    relation shape (rename, cast, static-predicate filter, union of
    identically-shaped sources) — it's a typed `PB.Analysis.Rules.*` Haskell
@@ -257,7 +257,7 @@ logic needs a `CASE`/branch, `ROW_NUMBER`/any window function, or a
 `GROUP BY`/aggregate to produce its answer, that is a decision (question 2's
 territory — a tie-break, a label, a count) and does not belong here. Move it
 into a Datalog rule (`choice-domain` for tie-breaks, rule specialization for
-labels, Souffle's own `count :` aggregate). This rule exists because every
+labels, Datalog's own `count :` aggregate). This rule exists because every
 real bug found in the Datalog substrate to date — `leg`'s writes-vs-retrieve
 tie-break, `decomposition_coslice`'s direction-interleaved ordinals,
 `taint_paths`' `step_kind` mislabeling of 0-hop paths — lived in exactly
@@ -280,7 +280,6 @@ rationale, and links to the concrete follow-on plans); this section is the
 enforceable summary and takes precedence if the two ever drift.
 
 ---
-
 
 ## Module Signature Lookup
 
@@ -311,7 +310,7 @@ appender_flush` and no table/row context.
 1. **Missing `endRow` in a row-marshalling sequence (the 182b bug).** Every
    `append*` function's body must finalize each row with `endRow app`
    (`c_duckdb_appender_end_row`). If it doesn't, the N `aText`/`aInt`/…
-   calls for a row are never finalized; the *next* row's values keep advancing
+   calls for a row are never finalized; the _next_ row's values keep advancing
    the appender's column counter, so by flush time the buffered chunk has
    N×columns against a table with `columns` → a column-count mismatch that
    DuckDB only validates at flush. Symptom: `taint-corpus-bench` dies at
@@ -352,4 +351,7 @@ The `endRow` requirement is part of that plan's "row marshalling code … is
 unchanged" invariant — this 182b incident is the concrete case where it was
 violated on a newly-added `append*`, and `forEachRow` is the mechanical guard
 that now keeps it invariant.
+
+```
+
 ```

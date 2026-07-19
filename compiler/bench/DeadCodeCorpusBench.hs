@@ -13,10 +13,9 @@ module Main (main) where
 -- EDB inputs (procedures / resolved_calls / object ancestors / dw_objects)
 -- and recomputes 'deadReachAlgebraic' independently, asserting the two are
 -- content-exact -- a self-consistency check (determinism, no drift between
--- the production call site and a fresh one), not an oracle-diff. Souffle's
--- 'deadReachRules' oracle this bench used to diff against is deleted (Plan
--- 182 item 6 cutover, 2026-07-18) -- unit-level regression coverage for the
--- closure's correctness now lives entirely in 'DeadCodeAlgebraTest.hs'.
+-- the production call site and a fresh one), not an oracle-diff. Unit-level
+-- regression coverage for the closure's correctness lives entirely in
+-- 'DeadCodeAlgebraTest.hs'.
 import PB.Prelude
 import PB.Pipeline.Runner (runModeDb)
 import PB.Pipeline.DuckDb

@@ -102,7 +102,12 @@ module PB.Pipeline.DuckDb
   , materializeDecompositionCoslice
   , materializeImpliedFk
   , materializeColumnRisk
-  -- Generic EDB/IDB bridge (Plan 161 -- Souffle)
+  , materializeImpliedFkPairs
+  , materializeRiskCount
+  , materializeLiveProc
+  , materializeCallerCounts
+  , materializeDeadCodeRows
+  -- Generic EDB/IDB bridge (dynamic-arity TEXT relations)
   , queryTextRows
   , recreateTextTable
   , appendTextRows
@@ -1416,7 +1421,7 @@ appendTaintAnnotations conn rows = withRaw conn "taint_annotations" $ \app ->
 -- cyclomatic does NOT win the tie-break over a real value), but that
 -- default is an engine behavior, not a documented guarantee this module
 -- depends on elsewhere, so it's spelled out here rather than left implicit.
--- (Regression test: 'SouffleDeadCodeTest.hs'\'s "overloaded procedure with
+-- (Regression test: 'RulesTest.hs'\'s "overloaded procedure with
 -- one unknown cyclomatic" case.) The pre-Stage-6 Haskell 'classifyDeadProcedures' used
 -- 'Map.fromListWith (\a _b -> a)', which kept whichever row DuckDB's
 -- unordered table scan happened to return first -- not a rule, an
@@ -1489,17 +1494,15 @@ appendSchemaMorphisms conn ms = withRaw conn "schema_morphisms" $ \app ->
     aText      app (renderLegKind (legKind m))
     aText      app (renderLegSource (legSource m))
 
--- | Plan 161 Phase 2c: materialize @decomposition_coslice@ from the Souffle
--- @path_leg_fwd@\/@path_leg_back@ tables (produced by
--- 'PB.Analysis.Rules.Schema.cosliceRules'), replacing the old
--- Haskell-walked 'appendDecompositionCoslice'. A pure SQL projection -- no
--- traversal, no Haskell graph walk -- satisfying the Plan 166 EDB-discipline
--- functor property (the @path_leg@ tables are the reasoning; this is a
--- rename\/join into the 8-column consumer shape).
+-- | Materialize @decomposition_coslice@ from the @path_leg_fwd@\/@path_leg_back@
+-- tables (produced by 'PB.Analysis.Rules.Schema.cosliceRules'). A pure SQL
+-- projection -- no traversal, no Haskell graph walk -- satisfying the
+-- EDB-discipline functor property (the @path_leg@ tables are the reasoning;
+-- this is a rename\/join into the 8-column consumer shape).
 --
--- Three things happen here that the Datalog layer can't express:
+-- Three things happen here that a plain rename/join projection can't express:
 --
--- 1. __Tie-break.__ Souffle set semantics emit every shortest leg through a
+-- 1. __Tie-break.__ Set semantics emit every shortest leg through a
 --    diamond (a bounded 2x, not exponential -- verified on a 15-diamond
 --    stress fixture). @ROW_NUMBER() OVER (PARTITION BY seed, target,
 --    leg_ord ORDER BY leg_from, leg_to)@ picks one deterministic witness
@@ -1507,7 +1510,7 @@ appendSchemaMorphisms conn ms = withRaw conn "schema_morphisms" $ \app ->
 --    groups by @(seed, target)@ and orders by @leg_ordinal@) sees exactly
 --    one contiguous leg chain per path.
 --
--- 2. __leg_source recovery.@ The Souffle @path_leg@ tables carry
+-- 2. __leg_source recovery.@ The @path_leg@ tables carry
 --    @leg_from@\/@leg_to@\/@leg_kind@ but not @leg_source@ (the
 --    provenance column 'appendSchemaMorphisms' writes). Joined back from
 --    @schema_morphisms@ on the three keys it shares with @path_leg@.
@@ -1537,11 +1540,10 @@ materializeDecompositionCoslice conn =
       , "         CAST(leg_ord AS INTEGER) AS leg_ordinal, lf AS leg_from, lt AS leg_to, kind AS leg_kind"
       , "    FROM path_leg_fwd"
       , "  UNION ALL"
-      -- Backward legs are reversed to target->seed ordering: the Datalog
-      -- `path_leg_back` emit (ascending ordinal, seed=0 outward) reads
-      -- seed->target, but the deleted Haskell `validationWalkBack`'s
-      -- `extendBackward (leg : spLegs path)` prepended each walked-back leg,
-      -- so its `spLegs` read target->seed -- the convention
+      -- Backward legs are reversed to target->seed ordering: the
+      -- `path_leg_back` table (ascending ordinal, seed=0 outward) reads
+      -- seed->target, but the walk-back reconstruction prepends each
+      -- walked-back leg, so its legs read target->seed -- the convention
       -- `PB.Analysis.SchemaCategory.columnCoslice` shipped and every Python/UI
       -- consumer (incl. `seedRootedChain` in `DecompositionCandidatesCore.tsx`,
       -- which expects the path's non-seed end to be the target) inherits.
@@ -1572,13 +1574,11 @@ materializeDecompositionCoslice conn =
       , "  FROM ranked WHERE rn = 1"
       ]
 
--- | Plan 161 Phase 3a: materialize @implied_fk@ from Souffle's
--- @implied_fk_pairs@ (produced by 'PB.Analysis.Rules.Schema.impliedFkRules'),
--- decoding each ColKey pair back to human-readable (namespace, table,
--- column) via a join-back on @schema_objects.object_key@ -- the same
--- decoding 'materializeDecompositionCoslice' uses, since 'schObjectKey' has
--- no inverse parser in this codebase. A pure rename\/join projection, no
--- decision logic.
+-- | Materialize @implied_fk@ from the @implied_fk_pairs@ table, decoding each
+-- ColKey pair back to human-readable (namespace, table, column) via a
+-- join-back on @schema_objects.object_key@ -- the same decoding
+-- 'materializeDecompositionCoslice' uses, since 'schObjectKey' has no inverse
+-- parser in this codebase. A pure rename\/join projection, no decision logic.
 materializeImpliedFk :: DuckConn -> IO ()
 materializeImpliedFk conn =
   void $ execute_ conn (Query sql)
@@ -1593,8 +1593,7 @@ materializeImpliedFk conn =
       , "  JOIN schema_objects so2 ON so2.object_key = ifk.y"
       ]
 
--- | Plan 161 Phase 3a: materialize @column_risk@ from Souffle's
--- @risk_count@ (produced by 'PB.Analysis.Rules.Schema.riskRules'), same
+-- | Materialize @column_risk@ from the @risk_count@ table, same
 -- join-back-on-@object_key@ decoding as 'materializeImpliedFk'. @risk_count@
 -- scores every 'reaches' node, including 'StmtObj' ones ('stmt'\/
 -- @dw_retrieve@ kinds), which carry no @namespace@\/@table_name@\/
@@ -1616,10 +1615,125 @@ materializeColumnRisk conn =
       ]
 
 -- ---------------------------------------------------------------------------
+-- SQL materializers for the raw IDB tables the downstream materialize*
+-- consumers reshape. The EDB tables they read (join_leg, fk, reaches, stmt,
+-- proc_dead, proc, proc_meta, call_ref, resolved_call_edge) are all
+-- materialized earlier in 'PB.Pipeline.Passes.materializeAllEdbViews'.
+
+-- | Run a list of single-statement SQL commands, one 'execute_' each. Kept
+-- separate (not a single multi-statement string) because the duckdb-simple
+-- 'execute_' contract in this codebase is single-statement per call (see
+-- 'initSchema').
+runStatements :: DuckConn -> [Text] -> IO ()
+runStatements conn = mapM_ (\s -> void $ execute_ conn (Query s))
+
+-- | Materialize @implied_fk_pairs@ directly in DuckDB: a DataWindow join edge
+-- with no declared foreign key in EITHER direction.
+materializeImpliedFkPairs :: DuckConn -> IO ()
+materializeImpliedFkPairs conn = do
+  recreateTextTable conn "implied_fk_pairs" ["x", "y"]
+  runStatements conn
+    [ "INSERT INTO implied_fk_pairs (x, y) "
+      <> "SELECT j.x, j.y FROM join_leg j "
+      <> "WHERE NOT EXISTS (SELECT 1 FROM fk f WHERE f.x = j.x AND f.y = j.y) "
+      <> "AND NOT EXISTS (SELECT 1 FROM fk f2 WHERE f2.x = j.y AND f2.y = j.x)"
+    ]
+
+-- | Materialize @risk_count@ directly in DuckDB: each node's downstream
+-- footprint over the @reaches@ table — the same aggregate
+-- 'materializeCallerCounts' uses for caller fan-in.
+materializeRiskCount :: DuckConn -> IO ()
+materializeRiskCount conn = do
+  recreateTextTable conn "risk_count" ["x", "n"]
+  runStatements conn
+    [ "INSERT INTO risk_count (x, n) "
+      <> "SELECT x, CAST(COUNT(*) AS VARCHAR) FROM reaches GROUP BY x"
+    ]
+
+-- | Materialize @live_proc@ directly in DuckDB:
+-- @live_proc(Object,Proc) :- stmt(_,Object,Proc,_), !proc_dead(Object,Proc)@.
+-- Consumed by the CLI's @/api/analysis/live-procedures@ endpoint
+-- ('cli/api/src/pb/api/services/analysis.py').
+materializeLiveProc :: DuckConn -> IO ()
+materializeLiveProc conn = do
+  recreateTextTable conn "live_proc" ["object", "proc"]
+  runStatements conn
+    [ "INSERT INTO live_proc (object, proc) "
+      <> "SELECT s.object, s.proc FROM stmt s "
+      <> "WHERE NOT EXISTS ("
+      <> "SELECT 1 FROM proc_dead pd "
+      <> "WHERE pd.object = s.object AND pd.proc = s.proc)"
+    ]
+
+-- | Materialize the caller-count and confidence relations directly in
+-- DuckDB. Produces @has_naive_caller@, @has_scoped_caller@,
+-- @caller_count_naive@, @caller_count_scoped@, and @confidence@ — the same
+-- intermediate tables 'materializeDeadCodeRows' joins.
+materializeCallerCounts :: DuckConn -> IO ()
+materializeCallerCounts conn = do
+  recreateTextTable conn "has_naive_caller" ["callee_name"]
+  recreateTextTable conn "has_scoped_caller" ["callee_obj", "callee_proc"]
+  recreateTextTable conn "caller_count_naive" ["callee_name", "n"]
+  recreateTextTable conn "caller_count_scoped" ["callee_obj", "callee_proc", "n"]
+  recreateTextTable conn "confidence" ["object", "proc", "level"]
+  runStatements conn
+    [ "INSERT INTO has_naive_caller (callee_name) SELECT DISTINCT callee_name FROM call_ref"
+    , "INSERT INTO has_scoped_caller (callee_obj, callee_proc) "
+        <> "SELECT DISTINCT callee_obj, callee_proc FROM resolved_call_edge"
+    , "INSERT INTO caller_count_naive (callee_name, n) "
+        <> "SELECT callee_name, CAST(COUNT(*) AS VARCHAR) FROM call_ref GROUP BY callee_name"
+    , "INSERT INTO caller_count_scoped (callee_obj, callee_proc, n) "
+        <> "SELECT callee_obj, callee_proc, CAST(COUNT(*) AS VARCHAR) "
+        <> "FROM resolved_call_edge GROUP BY callee_obj, callee_proc"
+    , "INSERT INTO confidence (object, proc, level) "
+        <> "SELECT pm.object, pm.proc, 'high' FROM proc_meta pm "
+        <> "WHERE NOT EXISTS (SELECT 1 FROM has_naive_caller h WHERE h.callee_name = pm.proc_lower) "
+        <> "UNION ALL "
+        <> "SELECT pm.object, pm.proc, 'medium' FROM proc_meta pm "
+        <> "WHERE EXISTS (SELECT 1 FROM has_naive_caller h WHERE h.callee_name = pm.proc_lower) "
+        <> "AND NOT EXISTS (SELECT 1 FROM has_scoped_caller s WHERE s.callee_obj = pm.object AND s.callee_proc = pm.proc) "
+        <> "UNION ALL "
+        <> "SELECT pm.object, pm.proc, 'low' FROM proc_meta pm "
+        <> "WHERE EXISTS (SELECT 1 FROM has_naive_caller h WHERE h.callee_name = pm.proc_lower) "
+        <> "AND EXISTS (SELECT 1 FROM has_scoped_caller s WHERE s.callee_obj = pm.object AND s.callee_proc = pm.proc)"
+    ]
+
+-- | Materialize @dead_code_rows@ (and its @caller_count_naive_final@ /
+-- @caller_count_scoped_final@ intermediates) directly in DuckDB.
+-- Must run AFTER 'materializeCallerCounts' (which produces @confidence@ and
+-- the caller-count relations it joins).
+materializeDeadCodeRows :: DuckConn -> IO ()
+materializeDeadCodeRows conn = do
+  recreateTextTable conn "caller_count_naive_final" ["proc_lower", "n"]
+  recreateTextTable conn "caller_count_scoped_final" ["object", "proc", "n"]
+  recreateTextTable conn "dead_code_rows"
+    ["object", "proc", "proc_type", "cyclomatic", "level", "naive_n", "scoped_n"]
+  runStatements conn
+    [ "INSERT INTO caller_count_naive_final (proc_lower, n) "
+        <> "SELECT callee_name, n FROM caller_count_naive "
+        <> "UNION ALL "
+        <> "SELECT pm.proc_lower, '0' FROM proc_meta pm "
+        <> "WHERE NOT EXISTS (SELECT 1 FROM has_naive_caller h WHERE h.callee_name = pm.proc_lower)"
+    , "INSERT INTO caller_count_scoped_final (object, proc, n) "
+        <> "SELECT callee_obj, callee_proc, n FROM caller_count_scoped "
+        <> "UNION ALL "
+        <> "SELECT p.object, p.proc, '0' FROM proc p "
+        <> "WHERE NOT EXISTS (SELECT 1 FROM has_scoped_caller s WHERE s.callee_obj = p.object AND s.callee_proc = p.proc)"
+    , "INSERT INTO dead_code_rows (object, proc, proc_type, cyclomatic, level, naive_n, scoped_n) "
+        <> "SELECT pd.object, pd.proc, pm.proc_type, pm.cyclomatic, c.level, cnf.n, csf.n "
+        <> "FROM proc_dead pd "
+        <> "JOIN proc_meta pm ON pm.object = pd.object AND pm.proc = pd.proc "
+        <> "JOIN confidence c ON c.object = pd.object AND c.proc = pd.proc "
+        <> "JOIN caller_count_naive_final cnf ON cnf.proc_lower = pm.proc_lower "
+        <> "JOIN caller_count_scoped_final csf ON csf.object = pd.object AND csf.proc = pd.proc"
+    ]
+
+-- ---------------------------------------------------------------------------
 -- Plan 161 Phase 2d: taint path materialization
 -- ---------------------------------------------------------------------------
 
--- | Materialize @taint_paths@ from Datalog\/Haskell output.  Reads
+-- | Materialize @taint_paths@ from the taint closure tables (@taint_step_kind@
+-- and @taint_confirmed@).  Reads
 -- @taint_step_kind@ (witness legs) and @taint_confirmed@
 -- (source→sink reachability), joins back to @taint_sources@\/
 -- @taint_sinks@ for file info, and reproduces the existing
@@ -1633,21 +1747,15 @@ materializeColumnRisk conn =
 --
 -- Plan 171b (2026-07-15): step_kind/description no longer come from a
 -- SQL CASE here — PB.Analysis.Rules.Taint derives them via rule
--- specialization (a house-rule violation this migration closes; see
--- compiler/CLAUDE.md's Datalog Rule Placement Discipline).
+-- specialization (a house-rule violation this migration closes).
 -- taint_step_kind already includes the terminal "arrived at sink"
 -- marker row (and the 0-hop source==sink degenerate row), so the old
 -- legs_with_sink UNION ALL that synthesized it here is gone too — this
 -- materializer is now a pure rename/dedup/reshape of taint_step_kind.
 --
--- PERFORMANCE FIX (2026-07-16): @taint_step_kind@ itself is no longer
--- Souffle-derived (the per-source shortest-distance fixpoint that used to
--- produce it, @taint_min_dist@\/@taint_path_leg@, is gone) — it is now
--- written directly into a plain DuckDB table by
--- 'PB.Analysis.Rules.Taint.reconstructTaintStepKind', a Haskell BFS-based
--- reconstruction. This materializer's SQL is unchanged; it just reads a
--- table populated a different way. See that function's own doc comment
--- for the full rationale.
+-- PERFORMANCE FIX: @taint_step_kind@ is written directly into a plain DuckDB
+-- table by 'PB.Analysis.Rules.Taint.reconstructTaintStepKind', a Haskell
+-- BFS-based reconstruction. This materializer reads that table.
 materializeTaintPaths :: DuckConn -> IO ()
 materializeTaintPaths conn =
   void $ execute_ conn (Query sql)
@@ -1774,14 +1882,14 @@ materializeTaintAnnotations conn = do
   appendTaintAnnotations conn annotations
 
 -- ---------------------------------------------------------------------------
--- Generic EDB/IDB bridge (Plan 161 -- Souffle rewrite)
+-- Generic EDB/IDB bridge (dynamic-arity TEXT tables)
 --
--- 'PB.Pipeline.Souffle' needs to read/write relations whose column count is
--- a runtime value ('PB.Pipeline.Souffle.Relation''s 'relCols'), not fixed by
--- a Haskell type -- so no per-relation 'FromRow'/appender pair is possible.
+-- The materializers above need to read/write relations whose column count is
+-- a runtime value, not fixed by a Haskell type -- so no per-relation
+-- 'FromRow'/appender pair is possible.
 -- These three are the dynamic-arity counterparts of the typed
 -- query/appender pairs above, values passed through as TEXT throughout
--- (every EDB relation this project currently feeds Datalog/Souffle -- keys,
+-- (every EDB relation this project builds -- keys,
 -- kinds, names -- is already string-shaped; a numeric column like 'stmt's
 -- 'line' is CAST to VARCHAR at read time since no current rule inspects it
 -- other than by equality/wildcard).

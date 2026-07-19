@@ -54,12 +54,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y graphviz
 
-      - name: Install Souffle
-        run: |
-          curl -sL -o /tmp/souffle.deb https://github.com/souffle-lang/souffle/releases/download/2.5/x86_64-ubuntu-2204-souffle-2.5-Linux.deb
-          sudo apt-get update
-          sudo apt-get install -y /tmp/souffle.deb
-
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 

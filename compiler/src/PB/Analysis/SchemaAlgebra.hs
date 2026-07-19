@@ -1,31 +1,25 @@
 {-# LANGUAGE StrictData #-}
 -- | Schema-category algebraic closure — production's sole source for
--- @reaches@, @path_leg_fwd@, and @path_leg_back@ since the Plan 182
--- schema-coslice cutover, replacing Souffle's 'PB.Analysis.Rules.Schema'
--- 'legRules' / 'reachesRules' / 'cosliceRules' (deleted, no on-demand oracle
--- retained — per §12 item 7's CORRECTION, schema is now fully de-oracled,
--- completing Phase B). Mirrors 'PB.Analysis.DeadCodeAlgebra''s item-6
--- cutover (doc/plan/182-algebraic-analysis.md §16 / §17).
+-- @reaches@, @path_leg_fwd@, and @path_leg_back@.
 --
--- Faithful re-statement of the deleted Datalog as pure Haskell closures:
+-- The closure is a pure Haskell fixpoint over the raw EDB inputs:
 --
---   * 'legAlgebraic' is the writes-vs-retrieve priority cascade
---     ('legRules'' choice-domain), re-expressed as a deterministic
---     per-(x,y) highest-priority-kind pick (ties keep first input row,
---     matching Souffle's "first tuple derived for a key is locked" lock-in).
---   * 'reachesAlgebraic' is the forward transitive closure of @leg@
---     ('reachesRules'), computed as a worklist fixpoint — NOT
---     'PB.Algebra.Closure.star''s all-pairs closure (§12 item 6 trap).
+--   * 'legAlgebraic' is the writes-vs-retrieve priority cascade,
+--     re-expressed as a deterministic per-(x,y) highest-priority-kind pick
+--     where ties keep the first input row.
+--   * 'reachesAlgebraic' is the forward transitive closure of @leg@,
+--     computed as a worklist fixpoint — NOT
+--     'PB.Algebra.Closure.star''s all-pairs closure (which is asymptotically
+--     wrong for this large/sparse graph with a small seed set).
 --   * 'cosliceAlgebraic' is the forward + backward shortest-path witness
---     reconstruction ('cosliceRules'): for every seed it emits EVERY
---     shortest leg on a path to a target (Souffle's set semantics through a
---     diamond, bounded 2x), so the downstream
---     'PB.Pipeline.DuckDb.materializeDecompositionCoslice' ROW_NUMBER
---     tie-break picks one witness per ordinal.
+--     reconstruction: for every seed it emits EVERY shortest leg on a path
+--     to a target (set semantics through a diamond, bounded 2x), so the
+--     downstream 'PB.Pipeline.DuckDb.materializeDecompositionCoslice'
+--     ROW_NUMBER tie-break picks one witness per ordinal.
 --
 -- The EDB construction ('legSourceRows' / 'seedRows') is already Haskell
 -- ('PB.Analysis.Rules.Schema.initEdbViews'); only the IDB fixpoint is
--- swapped here — exactly the §1 "surgical cut" the plan describes.
+-- computed here.
 module PB.Analysis.SchemaAlgebra
   ( legAlgebraic
   , reachesAlgebraic
@@ -50,13 +44,13 @@ import qualified Data.Set        as Set
 import           Data.Set        (Set)
 import qualified Data.Text       as T
 
--- | Priority-cascade leg selection, reproducing 'SchemaRules.legRules''
+-- | Priority-cascade leg selection, reproducing the writes-vs-retrieve
 -- choice-domain result deterministically. Groups @leg_source@ rows by
 -- (x, y) and keeps the highest-priority kind
 -- (writes = 0 > retrieve = 1 > reads\/fk = 2); ties within a tier keep the
--- first row in input order (matching Souffle's "first tuple derived for a
--- key is locked" lock-in — p0 rules derive before p1 before p2, and within
--- p2 the first @leg_source@ fact wins).
+-- first row in input order (matching the "first tuple derived for a key is
+-- locked" lock-in — p0 rules derive before p1 before p2, and within p2 the
+-- first @leg_source@ fact wins).
 legAlgebraic :: [[Text]] -> [[Text]]
 legAlgebraic rows = map third (Map.elems (L.foldl' step Map.empty (zip [0 :: Int ..] rows)))
   where
@@ -126,12 +120,11 @@ bfsDist adj seed = go (Map.singleton seed 0) (Map.singleton seed 0)
           in go (Map.union dist next) next
 
 -- | Multi-witness shortest-path reconstruction from seeds over @leg@,
--- reproducing 'SchemaRules.cosliceRules'' @path_leg_fwd@ / @path_leg_back@.
--- Emits EVERY shortest leg on a path from seed to target (Souffle's set
--- semantics through a diamond, bounded 2x), so the downstream
--- 'PB.Pipeline.DuckDb.materializeDecompositionCoslice' ROW_NUMBER tie-break
--- picks one witness per ordinal. Returns @(path_leg_fwd, path_leg_back)@,
--- each @[s, target, leg_ord, lf, lt, kind]@.
+-- emitting @path_leg_fwd@ / @path_leg_back@. Emits EVERY shortest leg on a
+-- path from seed to target (set semantics through a diamond, bounded 2x), so
+-- the downstream 'PB.Pipeline.DuckDb.materializeDecompositionCoslice'
+-- ROW_NUMBER tie-break picks one witness per ordinal. Returns
+-- @(path_leg_fwd, path_leg_back)@, each @[s, target, leg_ord, lf, lt, kind]@.
 cosliceAlgebraic
   :: [Text]            -- ^ seeds (column object keys)
   -> [[Text]]          -- ^ leg rows (x, y, kind)
@@ -195,8 +188,9 @@ backForSeed s adjFwd adjRev revReach =
 -- 'PB.Analysis.Rules.Schema.initEdbViews' reads. Must run after
 -- @schema_morphisms@\/@schema_objects@ are populated (same prerequisite as
 -- 'initEdbViews'); called from 'PB.Pipeline.Passes.materializeAllEdbViews',
--- before the remaining Souffle rule sets that read @reaches@ as an EDB input
--- ('riskRules') run and before 'PB.Pipeline.DuckDb.materializeDecompositionCoslice'.
+-- before the downstream materializer that reads @reaches@ as an EDB input
+-- ('PB.Pipeline.DuckDb.materializeRiskCount') runs and before
+-- 'PB.Pipeline.DuckDb.materializeDecompositionCoslice'.
 materializeSchemaClosure :: DuckConn -> IO ()
 materializeSchemaClosure conn = do
   morphisms <- querySchemaMorphismRows conn

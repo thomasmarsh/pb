@@ -1,8 +1,12 @@
 // LiveProcedures.tsx — Live Procedures report (Plan 161 Phase 4): procedures
-// the Souffle live_proc IDB confirms reachable and not dead.
+// the live_proc table confirms reachable and not dead.
 
 import { Show, For, onMount, createSignal } from "solid-js";
-import { Code2, AnalysisExplainer, type AnalysisExplainerContent } from "@pb/platform";
+import {
+  Code2,
+  AnalysisExplainer,
+  type AnalysisExplainerContent,
+} from "@pb/platform";
 import type { Store } from "@pb/core";
 import type { AppState } from "../../../state.js";
 import type { AppAction } from "../../../actions.js";
@@ -12,8 +16,8 @@ const LIVE_PROCEDURES_EXPLAINER: AnalysisExplainerContent = {
   whatItIs:
     "A cross-check, not a discovery tool: every procedure listed here both " +
     "touches tracked SQL or schema (it owns a SQL statement or DataWindow " +
-    "retrieve) and is confirmed reachable by a second, independent engine " +
-    "— Souffle, a Datalog fixpoint solver — rather than the hand-written " +
+    "retrieve) and is confirmed reachable by the live_proc SQL materializer " +
+    "rather than the hand-written " +
     "Haskell call-graph walk that produces the Dead Code report. The rule " +
     "is two lines: a procedure is live if it owns a tracked SQL statement " +
     "and does NOT appear in Dead Code's own reachability result " +
@@ -28,14 +32,23 @@ const LIVE_PROCEDURES_EXPLAINER: AnalysisExplainerContent = {
   tips: [
     "This list is deliberately narrow — most procedures in a typical app touch no SQL or schema object at all, and none of those ever appear here, live or dead.",
     "An empty list doesn't mean nothing is alive — it means no SQL-touching procedure passed the reachability check, which can also point at an embedded-SQL or DDL-catalog extraction gap worth checking first.",
-    "This table is computed by a separate engine (Souffle) from Dead Code's own Haskell BFS — a procedure Dead Code calls reachable that never shows up here is worth investigating as a real discrepancy, not noise.",
+    "This table is computed by the live_proc SQL materializer (materializeLiveProc) from Dead Code's own reachability result — a procedure Dead Code calls reachable that never shows up here is worth investigating as a real discrepancy, not noise.",
   ],
   example: () => (
     <>
-      <p style={{ margin: "0 0 8px", "font-size": "12px", color: "var(--text-muted)" }}>
+      <p
+        style={{
+          margin: "0 0 8px",
+          "font-size": "12px",
+          color: "var(--text-muted)",
+        }}
+      >
         Three procedures in the same object, only one of which shows up here:
       </p>
-      <table class="data-table" style={{ "font-size": "12px", margin: "10px 0" }}>
+      <table
+        class="data-table"
+        style={{ "font-size": "12px", margin: "10px 0" }}
+      >
         <thead>
           <tr>
             <th>Procedure</th>
@@ -61,7 +74,9 @@ const LIVE_PROCEDURES_EXPLAINER: AnalysisExplainerContent = {
             <td>of_save_order</td>
             <td>Yes</td>
             <td>Yes</td>
-            <td><strong>Live Procedures</strong></td>
+            <td>
+              <strong>Live Procedures</strong>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -75,16 +90,23 @@ export function LiveProcedures(props: { store: Store<AppState, AppAction> }) {
   const [showHelp, setShowHelp] = createSignal(false);
 
   onMount(() => {
-    store.dispatch({ tag: "analysis", action: { tag: "load-live-procedures" } });
+    store.dispatch({
+      tag: "analysis",
+      action: { tag: "load-live-procedures" },
+    });
   });
 
   return (
     <div class="card">
-      <div class="card-header" style={{ display: "flex", "align-items": "center", gap: "8px" }}>
+      <div
+        class="card-header"
+        style={{ display: "flex", "align-items": "center", gap: "8px" }}
+      >
         <h2 style={{ flex: 1 }}>Live Procedures</h2>
         <Show when={snap().analysis.liveProceduresLoaded}>
           <span style={{ color: "var(--text-muted)", "font-size": "13px" }}>
-            {snap().analysis.liveProcedures.length} procedure{snap().analysis.liveProcedures.length === 1 ? "" : "s"}
+            {snap().analysis.liveProcedures.length} procedure
+            {snap().analysis.liveProcedures.length === 1 ? "" : "s"}
           </span>
         </Show>
         <button
@@ -105,15 +127,33 @@ export function LiveProcedures(props: { store: Store<AppState, AppAction> }) {
         </button>
       </div>
 
-      <AnalysisExplainer open={showHelp()} onClose={() => setShowHelp(false)} content={LIVE_PROCEDURES_EXPLAINER} />
+      <AnalysisExplainer
+        open={showHelp()}
+        onClose={() => setShowHelp(false)}
+        content={LIVE_PROCEDURES_EXPLAINER}
+      />
 
       <Show when={!snap().analysis.liveProceduresLoaded}>
-        <div style={{ color: "var(--text-muted)", "font-size": "13px", padding: "8px 0" }}>Loading…</div>
+        <div
+          style={{
+            color: "var(--text-muted)",
+            "font-size": "13px",
+            padding: "8px 0",
+          }}
+        >
+          Loading…
+        </div>
       </Show>
 
       <Show when={snap().analysis.liveProceduresLoaded}>
         <Show when={snap().analysis.liveProcedures.length === 0}>
-          <div style={{ color: "var(--text-muted)", "font-size": "13px", padding: "8px 0" }}>
+          <div
+            style={{
+              color: "var(--text-muted)",
+              "font-size": "13px",
+              padding: "8px 0",
+            }}
+          >
             No SQL-touching procedures confirmed live.
           </div>
         </Show>
@@ -131,11 +171,32 @@ export function LiveProcedures(props: { store: Store<AppState, AppAction> }) {
                 {(item) => (
                   <tr
                     class="clickable"
-                    onClick={() => store.dispatch({ tag: "objects", action: { tag: "proc-select", objectName: item.object, procName: item.proc_name } })}
+                    onClick={() =>
+                      store.dispatch({
+                        tag: "objects",
+                        action: {
+                          tag: "proc-select",
+                          objectName: item.object,
+                          procName: item.proc_name,
+                        },
+                      })
+                    }
                   >
-                    <td style={{ color: "var(--text-muted)", "font-size": "12px" }}>{item.object}</td>
+                    <td
+                      style={{
+                        color: "var(--text-muted)",
+                        "font-size": "12px",
+                      }}
+                    >
+                      {item.object}
+                    </td>
                     <td>
-                      <span class="entity-card-icon" style={{ "margin-right": "4px" }}><Code2 size={13} /></span>
+                      <span
+                        class="entity-card-icon"
+                        style={{ "margin-right": "4px" }}
+                      >
+                        <Code2 size={13} />
+                      </span>
                       {item.proc_name}
                     </td>
                   </tr>

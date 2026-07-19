@@ -1,17 +1,13 @@
--- | The schema-category Datalog program, split out of 'PB.Pipeline.Souffle'
--- so the engine adapter stays free of domain knowledge. Now holds only the
--- @leg@\/@stmt@ EDB-view projections ('initEdbViews') and the remaining
--- 'impliedFkRules'\/'riskRules' rule sets; the former 'legRules' /
--- 'reachesRules' / 'cosliceRules' (which derived @reaches@ \/ @path_leg_fwd@
--- \/ @path_leg_back@) were deleted in the Plan 182 schema-coslice cutover
--- (2026-07-18) — those three relations are now produced algebraically by
--- 'PB.Analysis.SchemaAlgebra.materializeSchemaClosure', per §12 item 7's
--- CORRECTION (no on-demand oracle retained). 'riskRules' reads the algebraic
--- @reaches@ as an ordinary external EDB table.
+-- | The schema-category EDB reshaping for Phase B link analysis. Holds the
+-- @leg@\/@stmt@ EDB-view projections ('initEdbViews') and the
+-- 'legSourceFanout' diagnostic. The implied-FK and risk relations
+-- (@implied_fk_pairs@, @risk_count@) are materialized directly in DuckDB by
+-- 'PB.Pipeline.DuckDb.materializeImpliedFkPairs' \/
+-- 'PB.Pipeline.DuckDb.materializeRiskCount'; the @reaches@ \/ @path_leg_fwd@
+-- \/ @path_leg_back@ relations are produced algebraically by
+-- 'PB.Analysis.SchemaAlgebra.materializeSchemaClosure'.
 module PB.Analysis.Rules.Schema
   ( initEdbViews
-  , impliedFkRules
-  , riskRules
   , LegSourceFanout (..)
   , legSourceFanout
   -- pure EDB-reshaping functions (exported for unit tests)
@@ -24,7 +20,6 @@ module PB.Analysis.Rules.Schema
 
 import PB.Prelude
 
-import PB.Pipeline.Souffle (Relation (..), symRelation, Rule (..), RuleSet (..))
 import PB.Pipeline.DuckDb
   ( DuckConn, SchMorphismRow (..)
   , querySchemaObjects, querySchemaMorphismRows, queryCatFks
@@ -40,8 +35,7 @@ import qualified Data.Text as T
 
 -- ---------------------------------------------------------------------------
 -- EDB relations materialized from existing DuckDB tables (no fact
--- marshalling in DuckDB itself -- 'PB.Pipeline.Souffle.queryTextRows' reads
--- these directly)
+-- marshalling in DuckDB itself -- 'queryTextRows' reads these directly)
 
 -- | (Re)materialize the EDB relations every 'RuleSet' below assumes already
 -- exist: @leg_source@ over 'schema_morphisms', @stmt@\/@seed@ over
@@ -52,10 +46,10 @@ import qualified Data.Text as T
 -- 'PB.Pipeline.DuckDb.appendSchemaObjects'\/'appendSchemaMorphisms' populate
 -- their source tables materializes empty relations.
 --
--- No @dead@ relation is materialized here: 'liveProcRules' reads
--- @proc_dead@ (algebraic, 'PB.Analysis.DeadCodeAlgebra.materializeDeadCodeClosure')
--- directly. @dead_code@ is
--- populated purely from Datalog's @dead_code_rows@ relation via
+-- No @dead@ relation is materialized here: @proc_dead@ is computed
+-- algebraically by 'PB.Analysis.DeadCodeAlgebra.materializeDeadCodeClosure'
+-- and read directly. @dead_code@ is
+-- populated from @dead_code_rows@ via
 -- 'PB.Pipeline.DuckDb.materializeDeadCode' and is the sole source for the
 -- Dead Code Explorer API (@get_dead_code@).
 initEdbViews :: DuckConn -> IO ()
@@ -115,15 +109,12 @@ fkRows = map $ \f ->
 -- ---------------------------------------------------------------------------
 -- Concrete program
 
-reachesRel :: Relation
-reachesRel = symRelation "reaches" ["x", "y"]
-
 -- | Fan-in characterization for 'leg_source': total row count, distinct
 -- (x, y) key count, and the largest number of rows sharing one key. A
 -- single cheap DuckDB @GROUP BY@ pass, logged before 'SchemaAlgebra.materializeSchemaClosure' runs so a
 -- corpus with pathological duplicate fan-in on one schema edge is visible
--- immediately rather than discovered only via a slow\/memory-hungry Souffle
--- run. A large 'lsfMaxGroupSize' is worth an operator's attention on its
+-- immediately rather than discovered only via a slow\/memory-hungry
+-- recomputation. A large 'lsfMaxGroupSize' is worth an operator's attention on its
 -- own terms: 'leg_source' has only ~3 distinct @kind@ buckets, so
 -- hundreds\/thousands of rows sharing one exact (x, y) pair signals real
 -- duplication in the upstream extractors (e.g. the same statement\/column
@@ -150,71 +141,10 @@ legSourceFanout conn = do
     _             -> LegSourceFanout 0 0 0
 
 -- ---------------------------------------------------------------------------
--- Plan 161 Phase 3a: implied-FK discovery + composed risk scoring.
-
-joinLegRel, fkRel, impliedFkRel :: Relation
-joinLegRel   = symRelation "join_leg" ["x", "y"]
-fkRel        = symRelation "fk" ["x", "y"]
-impliedFkRel = symRelation "implied_fk_pairs" ["x", "y"]
-
--- | @implied_fk_pairs(X, Y) :- join_leg(X, Y), !fk(X, Y), !fk(Y, X).@
+-- Implied-FK discovery + composed risk scoring.
 --
--- A DataWindow join edge with no matching declared foreign key in EITHER
--- direction -- a DW join's column order need not match the FK's declared
--- from\/to side, so both orientations of 'fk' are negated. 'fk' contains
--- only DDL-declared pairs, keyed identically to the 'SrcDdlFk' legs
--- 'PB.Analysis.SchemaCategory.buildSchema' derives from the same
--- 'catalog_fks' rows, so a real declared FK always negates out here; only a
--- join with no backing declaration survives.
---
--- Materializes to 'implied_fk_pairs', a raw two-column ColKey table --
--- deliberately NOT named @implied_fk@, so
--- 'PB.Pipeline.DuckDb.materializeImpliedFk''s structured, human-readable
--- @implied_fk@ consumer table (namespace\/table\/column pairs) is never
--- clobbered by the generic-arity @recreateTextTable@ every IDB relation
--- goes through -- the same raw-vs-consumer name separation 'SchemaAlgebra.materializeSchemaClosure'
--- keeps between @path_leg_fwd@\/@path_leg_back@ and @decomposition_coslice@.
-impliedFkRules :: RuleSet
-impliedFkRules = RuleSet
-  { rsRelations = [impliedFkRel]
-  , rsRules =
-      [ Rule "implied_fk_pairs(x, y) :- join_leg(x, y), !fk(x, y), !fk(y, x)"
-             [impliedFkRel, joinLegRel, fkRel]
-      ]
-  , rsChoiceDomains = []
-  }
-
-hasReachesRel, riskCountRel :: Relation
-hasReachesRel = symRelation "has_reaches" ["x"]
-riskCountRel  = Relation "risk_count" [("x", "symbol"), ("n", "number")]
-
--- | Migration blast-radius \/ risk scoring: counts each node's downstream
--- footprint by aggregating directly over the algebraic 'reaches' table (materialized by 'SchemaAlgebra.materializeSchemaClosure')
--- relation, via the same @count :@ idiom
--- 'PB.Analysis.Rules.DeadCode.callerCountRules' already uses for caller
--- fan-in (the @has_reaches@ seeding relation plays the same grounding role
--- that rule's @has_naive_caller@ does).
---
--- Deliberately NOT a second traversal unioning 'leg' with
--- 'impliedFkRules''s undeclared-join edges: every 'LegFk' edge -- DDL-declared
--- ('SrcDdlFk') or DW-join-derived ('SrcDwJoin') -- already renders as a
--- @kind = "fk"@ row in 'leg_source', hence in @leg@, regardless of which
--- 'PB.Analysis.SchemaCategory.LegSource' produced it (see 'legSourceRows'
--- above -- it drops provenance entirely). So the algebraic 'reaches' table's
--- @reaches@ already walks through every undeclared join edge 'implied_fk'
--- flags; re-deriving a parallel @risk_reach@ over the identical edge set
--- would be a second, wasted fixpoint computation of the same relation, not
--- a genuinely new traversal. 'implied_fk' stays a standalone
--- data-quality/schema-hygiene finding (Phase 4 can later join a hop's
--- @implied_fk@ membership into a risk-scored evidence path without this
--- ruleset needing to know about it).
-riskRules :: RuleSet
-riskRules = RuleSet
-  { rsRelations = [hasReachesRel, riskCountRel]
-  , rsRules =
-      [ Rule "has_reaches(x) :- reaches(x, _)" [hasReachesRel, reachesRel]
-      , Rule "risk_count(x, n) :- has_reaches(x), n = count : { reaches(x, _) }"
-             [riskCountRel, hasReachesRel, reachesRel]
-      ]
-  , rsChoiceDomains = []
-  }
+-- 'PB.Pipeline.DuckDb.materializeImpliedFkPairs' \/ 'materializeRiskCount'
+-- populate the raw IDB tables (@implied_fk_pairs@ \/ @risk_count@) the
+-- downstream 'materializeImpliedFk' \/ 'materializeColumnRisk' consumers
+-- read. The EDB inputs (@join_leg@, @fk@, algebraic @reaches@) are
+-- materialized earlier in 'PB.Pipeline.Passes.materializeAllEdbViews'.

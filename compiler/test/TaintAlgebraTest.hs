@@ -1,15 +1,11 @@
 module TaintAlgebraTest (tests, defRow, useRow, edge, src, snk, intraEdgesFromDefUse, returnRowsFromUses) where
 
--- | Unit and self-consistency tests for the algebraic taint closure
--- (Plan 182). Covers reachability, confirmed source-sink pairs, and
--- witness-path reconstruction across fixtures spanning all four edge
--- rules (intra-proc same-line def-use, arg, return, global-hub), plus
--- the adversarial shapes (duplicate-key sources/sinks, a cycle through
--- the seed, a diamond, a 0-hop source==sink pair) the Datalog Rule
--- Placement Discipline requires. The Souffle\/BFS oracle-diff harness
--- this file used to run against ('SouffleTaintTest', the hand-written
--- BFS 'PB.Analysis.Taint.propagateTaint') is deleted (Plan 182 item 7-8
--- cutover, 2026-07-18) — the algebraic closure is production's sole
+-- | Unit and self-consistency tests for the algebraic taint closure.
+-- Covers reachability, confirmed source-sink pairs, and witness-path
+-- reconstruction across fixtures spanning all four edge rules (intra-proc
+-- same-line def-use, arg, return, global-hub), plus the adversarial shapes
+-- (duplicate-key sources/sinks, a cycle through the seed, a diamond, a
+-- 0-hop source==sink pair). The algebraic closure is production's sole
 -- implementation, so expected values here are golden (independently
 -- traced/verified, not re-derived from a second implementation at test
 -- time).
@@ -235,7 +231,7 @@ tests = testGroup "TaintAlgebra"
           -- than once (e.g. a :host_var used in two different SELECT INTO
           -- occurrences in the same proc) -- 15 duplicate-key groups in
           -- taint_sources, 19 in taint_sinks, on the real openpay corpus.
-          -- Souffle's taint_confirmed is a SET keyed on the STRING
+          -- taint_confirmed is a SET keyed on the STRING
           -- object::proc::var key, so duplicate records collapse to one
           -- row; taintConfirmed must match that (26 vs an inflated 41 rows
           -- was the observed real-corpus divergence).
@@ -271,7 +267,7 @@ tests = testGroup "TaintAlgebra"
       , testCase "cycle through the seed: source reachable back to itself" $
           -- ls_a -> ls_b (def-use same line) and ls_b -> ls_a (return edge
           -- back into the same var) forms a genuine 2-node cycle rooted at
-          -- the source. Souffle's taint_reaches(x, y) rule has no 0-hop
+          -- the source. The taint_reaches(x, y) relation has no 0-hop
           -- base case, but a REAL cycle back to x is a legitimate 2-hop
           -- derivation -- taintReachesPairs must reproduce (srcT, srcT)
           -- here, not just skip self-pairs unconditionally.

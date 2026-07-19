@@ -1,38 +1,36 @@
 {-# LANGUAGE StrictData #-}
 -- | Dead-code reachability via 'PB.Algebra.Closure.reachFrom' (sparse
--- worklist relaxation) — production's sole source for @proc_dead@ since the
--- Plan 182 cutover, NOT 'PB.Algebra.Closure.star''s all-pairs closure (which
--- is asymptotically wrong for this large/sparse graph with a small seed set;
--- see doc/plan/182-algebraic-analysis.md Section 11 / §12 item 6).
+-- worklist relaxation) — production's sole source for @proc_dead@.
+--
+-- This is deliberately NOT 'PB.Algebra.Closure.star''s all-pairs closure:
+-- for this large/sparse call graph with a small entry-point seed set, the
+-- all-pairs variant is asymptotically wrong (quadratic in node count where a
+-- seeded single-source relaxation is near-linear).
 --
 -- 'materializeDeadCodeClosure' is called from
 -- 'PB.Pipeline.Passes.materializeAllEdbViews', writing @proc_dead@ as a real
--- DuckDB table before the remaining Souffle rule sets that consume it
--- (@deadCodeRowsRules@, @liveProcRules@) run — those read it as an ordinary
--- EDB relation, the same mechanism 'PB.Analysis.Rules.DeadCode.initDeadReachEdbViews'
--- uses for @proc@\/@entry@\/@calls@\/etc. Souffle's own 'deadReachRules' fixpoint
--- is deleted (per the de-oracle discipline, §12 item 7 CORRECTION); unit-level
--- regression coverage now lives entirely in 'DeadCodeAlgebraTest'.
+-- DuckDB table before the downstream materializers that consume it
+-- ('PB.Pipeline.DuckDb.materializeDeadCodeRows',
+-- 'PB.Pipeline.DuckDb.materializeLiveProc') run — those read it as an ordinary
+-- EDB relation, the same mechanism
+-- 'PB.Analysis.Rules.DeadCode.initDeadReachEdbViews' uses for
+-- @proc@\/@entry@\/@calls@\/etc. Unit-level regression coverage lives entirely
+-- in 'DeadCodeAlgebraTest'.
 --
--- Faithful re-statement of the deleted 'deadReachRules' as a pure Haskell
--- closure:
+-- The reachability is a pure Haskell closure over the raw EDB inputs:
 --
 --   * 'descendant' (transitive closure of @inherits@) is a small auxiliary
---     fixpoint — Souffle computed it the same way (its own Datalog fixpoint),
---     not via 'reachFrom'.
+--     fixpoint over the object-ancestor graph, not via 'reachFrom'.
 --   * 'override_edge' is the same 3-way join
 --     (@proc(parent,method) ∧ descendant(child,parent) ∧ proc(child,method)@).
 --   * 'proc_reachable' is the seeded 'reachFrom' from @entry@ over the call
---     graph + override edges — the sparse primitive 'star' was wrongly used
---     for in the taint cutover's first pass.
+--     graph + override edges — the all-pairs 'star' primitive is unsound here
+--     (it computes a different, un-seeded relation).
 --   * 'proc_dead' = every 'proc' not in 'proc_reachable'.
 --
 -- The EDB construction ('procRows'/'entryRows'/'callsRows'/...) is already
 -- Haskell (see 'PB.Analysis.Rules.DeadCode.initDeadReachEdbViews'); only the
--- IDB fixpoint is swapped here — exactly the §1 "surgical cut" the plan
--- describes.
---
--- See doc/plan/182-algebraic-analysis.md §12 item 6 / §16.
+-- IDB fixpoint is computed here.
 module PB.Analysis.DeadCodeAlgebra
   ( deadReachAlgebraic
   , materializeDeadCodeClosure
@@ -70,11 +68,11 @@ import           Data.Set           (Set)
 -- | Dead-code reachability via 'reachFrom': given the same raw inputs
 -- 'PB.Analysis.Rules.DeadCode.initDeadReachEdbViews' reads (procedures,
 -- resolved calls, object ancestors, DW objects), return the set of
--- (object, proc) pairs Souffle's @proc_dead@ would contain — content-exact.
+-- (object, proc) pairs the @proc_dead@ table would contain — content-exact.
 --
 -- The confidence filter ('procRows'/'entryRows' exclude @speculative@
 -- procedures) is applied exactly as 'initDeadReachEdbViews' does, so the
--- algebraic path agrees with the Souffle EDB layer it replaces.
+-- algebraic path agrees with the downstream @proc_dead@ consumers.
 deadReachAlgebraic
   :: [ProcSummaryRow]          -- ^ procedures (confidence-filtered by 'procRows')
   -> [Taint.ResolvedCallRow]   -- ^ resolved calls
@@ -130,8 +128,9 @@ deadReachAlgebraic procs calls inherits dwObjs =
 -- @procedures@\/@resolved_calls@\/@objects@\/@dw_objects@ are populated
 -- (same prerequisite as 'PB.Analysis.Rules.DeadCode.initDeadReachEdbViews');
 -- called from 'PB.Pipeline.Passes.materializeAllEdbViews', before the
--- Souffle rule sets that read @proc_dead@ as an EDB input
--- (@deadCodeRowsRules@, @liveProcRules@) run.
+-- downstream materializers that read @proc_dead@ as an EDB input
+-- ('PB.Pipeline.DuckDb.materializeDeadCodeRows',
+-- 'PB.Pipeline.DuckDb.materializeLiveProc') run.
 materializeDeadCodeClosure :: DuckConn -> IO ()
 materializeDeadCodeClosure conn = do
   procs    <- queryProcedures conn
@@ -143,16 +142,15 @@ materializeDeadCodeClosure conn = do
   appendTextRows conn "proc_dead" [ [o, p] | (o, p) <- Set.toList dead ]
 
 -- | Transitive closure of @inherits@: @descendant(child, parent)@ holds when
--- @parent@ is an ancestor of @child@. Mirrors Souffle's two
--- 'deadReachRules' rules:
+-- @parent@ is an ancestor of @child@. Mirrors the two-rule transitive-closure
+-- definition:
 --
 -- @
 --   descendant(child, parent) :- inherits(child, parent).
 --   descendant(child, gp) :- inherits(child, parent), descendant(parent, gp).
 -- @
 --
--- A small auxiliary fixpoint (the object graph is tiny); Souffle computes it
--- the same way, not via 'reachFrom'.
+-- A small auxiliary fixpoint (the object graph is tiny), not via 'reachFrom'.
 descendantClosure :: Set (Text, Text) -> Set (Text, Text)
 descendantClosure inherits =
   let step d = d `Set.union` Set.fromList

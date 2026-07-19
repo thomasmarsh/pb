@@ -1,20 +1,17 @@
 module Main (main) where
 
--- | Corpus-scale oracle-diff gate for the algebraic schema-category closure
+-- | Corpus-scale parity gate for the algebraic schema-category closure
 -- ('PB.Analysis.SchemaAlgebra' — 'legAlgebraic' / 'reachesAlgebraic' /
--- 'cosliceAlgebraic'), run BEFORE the Plan 182 schema-coslice cutover deletes
--- Souffle's 'PB.Analysis.Rules.Schema.legRules' / 'reachesRules' /
--- 'cosliceRules' (doc/plan/182-algebraic-analysis.md §17).
+-- 'cosliceAlgebraic') against the production SQL materializers.
 --
--- Runs the existing pipeline UNMODIFIED (so the three Souffle rule sets are
--- still in 'PB.Pipeline.Passes.allDatalogRuleSets' and still materialize the
--- production @reaches@ / @path_leg_fwd@ / @path_leg_back@ tables), then
+-- Runs the existing pipeline UNMODIFIED (so the production SQL materializers
+-- populate the @reaches@ / @path_leg_fwd@ / @path_leg_back@ tables), then
 -- independently recomputes those same three relations from the raw
 -- @schema_morphisms@ / @schema_objects@ EDB inputs via 'SchemaAlgebra', and
--- asserts the two are content-exact. This is a true oracle-diff (Souffle is
--- the oracle), not the post-cutover self-consistency check
--- 'DeadCodeCorpusBench' performs — it must PASS (exit non-zero on any
--- mismatch) before the Souffle rule sets are deleted.
+-- asserts the two are content-exact. This is a self-consistency check
+-- (production SQL materializers vs. the algebraic closure), not the
+-- 'DeadCodeCorpusBench' determinism check — it must PASS (exit non-zero on
+-- any mismatch).
 import PB.Prelude
 import PB.Pipeline.Runner (runModeDb)
 import PB.Pipeline.DuckDb
@@ -59,7 +56,7 @@ main = do
   getNumProcessors >>= setNumCapabilities
   opts <- execParser (info (optParser <**> helper) desc)
 
-  putStrLn ("Running full pipeline (Souffle oracle still active): "
+  putStrLn ("Running full pipeline (production SQL materializers): "
             <> T.pack (optInput opts) <> " -> " <> T.pack (optDb opts))
   t0 <- getCurrentTime
   runModeDb (optInput opts) (optDb opts) (optDdl opts) (optSqlDialect opts) (optSqlWorkerPython opts) Nothing
@@ -68,7 +65,7 @@ main = do
   putStrLn ""
 
   withWriteConn (optDb opts) $ \conn -> do
-    -- Production outputs materialized by the (still-active) Souffle rule sets.
+    -- Production outputs materialized by the SQL materializers.
     prodReaches <- query_ conn "SELECT x, y FROM reaches"
                    :: IO [(Text, Text)]
     prodFwd <- query_ conn
@@ -121,21 +118,20 @@ main = do
               <> ", path_leg_fwd=" <> T.pack (show fwdOk)
               <> ", path_leg_back=" <> T.pack (show backOk) <> ")")
 
-    -- Gate: fail loudly if parity is not proven — the Souffle rule sets must
-    -- NOT be deleted until this passes on the real corpus.
+    -- Gate: fail loudly if parity is not proven.
     unless allOk $
-      error "SchemaCorpusBench: oracle-diff MISMATCH — do not delete Souffle legRules/reachesRules/cosliceRules yet."
+      error "SchemaCorpusBench: parity MISMATCH — production SQL materializers and algebraic closure disagree."
 
   where
     desc = fullDesc <> progDesc
-      "Corpus-scale oracle-diff gate for the algebraic schema-category closure (Souffle oracle vs. SchemaAlgebra)."
+      "Corpus-scale parity gate for the algebraic schema-category closure (production SQL materializers vs. SchemaAlgebra)."
 
     reportDiff :: Text -> Set.Set [Text] -> Set.Set [Text] -> IO ()
     reportDiff name prod alg = do
-      let missing = Set.difference prod alg   -- in Souffle, not in algebraic
-          extra   = Set.difference alg prod   -- in algebraic, not in Souffle
+      let missing = Set.difference prod alg   -- in production, not in algebraic
+          extra   = Set.difference alg prod   -- in algebraic, not in production
       putStrLn ("  " <> name <> " mismatch:")
-      putStrLn ("    Souffle-only: " <> T.pack (show (Set.size missing)))
+      putStrLn ("    production-only: " <> T.pack (show (Set.size missing)))
       putStrLn ("    algebraic-only: " <> T.pack (show (Set.size extra)))
 
     showSecs :: NominalDiffTime -> Text

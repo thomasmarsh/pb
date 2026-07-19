@@ -32,10 +32,9 @@ import Options.Applicative
 -- reconstructs the algebraic closure's raw inputs from the resulting
 -- DuckDB tables the same way 'PB.Pipeline.Passes.runPass67' does, and
 -- reports set sizes plus wall-clock. The Haskell BFS
--- ('PB.Analysis.Taint.propagateTaint') and Souffle 'taintRules' oracles
--- this bench used to diff against are deleted (Plan 182 item 7-8
--- cutover, 2026-07-18) -- unit-level regression coverage for the
--- closure's correctness now lives in 'TaintAlgebraTest.hs'.
+-- ('PB.Analysis.Taint.propagateTaint') is the reference closure this bench
+-- reports against; unit-level regression coverage for the closure's
+-- correctness lives in 'TaintAlgebraTest.hs'.
 
 data Options = Options
   { optInput           :: FilePath
