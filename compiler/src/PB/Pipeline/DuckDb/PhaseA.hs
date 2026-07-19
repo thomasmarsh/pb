@@ -1,0 +1,589 @@
+module PB.Pipeline.DuckDb.PhaseA
+  ( -- Row types
+    ObjectRow (..)
+  , ProcRow (..)
+  , DwObjectRow (..)
+  , DwControlRow (..)
+  , DwRetrieveTableRow (..)
+  , DwRetrieveColumnRow (..)
+  , DwJoinRow (..)
+  , DwRetrieveWhereRow (..)
+  , SqlStmtRow (..)
+  , SqlStmtColumnRow (..)
+  , SqlStmtFilterRow (..)
+  , SqlStmtTableRow (..)
+  , CatalogColumnRow (..)
+  , CatalogPkRow (..)
+  , CatalogFkRow (..)
+  , CatalogCheckRow (..)
+  , SourceFileRow (..)
+  -- Phase A appenders
+  , appendObjects
+  , appendProcedures
+  , appendDwObjects
+  , appendDwControls
+  , appendDwRetrieveTables
+  , appendDwRetrieveColumns
+  , appendDwWriteColumns
+  , appendDwWhereColumns
+  , appendDwJoins
+  , appendDwRetrieveWhere
+  , appendLocalVars
+  , appendDeadVars
+  , appendTypeMismatches
+  , appendCallSites
+  , appendGlobalVars
+  , appendProcDefs
+  , appendProcUses
+  , appendSqlStmts
+  , appendSqlStmtColumns
+  , appendSqlStmtFilters
+  , appendSqlStmtTables
+  , appendCatFootprintColumns
+  , appendTaintIntraEdges
+  , appendTaintReturnRows
+  , appendCatalogColumns
+  , appendCatalogPks
+  , appendCatalogFks
+  , appendCatalogChecks
+  , appendParseErrors
+  , appendSourceFiles
+  ) where
+
+import PB.Prelude
+import PB.AST.Ident             (identOrig)
+import PB.Analysis.TypeResolve  (LocalVar (..), CallSite (..), GlobalVar (..))
+import PB.Analysis.Dataflow     qualified as Dataflow
+import PB.Analysis.TaintEdges   qualified as TaintEdges
+import PB.Analysis.DeadVars     (DeadVarFinding (..), deadVarKindText)
+import PB.Analysis.TypeFamily   (TypeMismatchFinding (..), mismatchKindText)
+import PB.Pipeline.DuckDb       (aText, aMaybeText, aInt, aMaybeInt, aBool)
+import PB.Pipeline.DuckDb.Appender (AppenderPool, appendRow, forEachRow)
+
+import qualified Data.Map.Strict as Map
+import qualified Data.Text       as T
+
+-- ---------------------------------------------------------------------------
+-- Row types
+
+data ObjectRow = ObjectRow
+  { orFile           :: Text
+  , orKind           :: Text
+  , orObject         :: Text
+  , orAncestor       :: Maybe Text
+  , orLayoutJson     :: Maybe Text
+  , orTypeBlocksJson :: Maybe Text
+  , orConfidence     :: Text
+  }
+
+data ProcRow = ProcRow
+  { prFile       :: Text
+  , prObject     :: Text
+  , prProcName   :: Text
+  , prProcType   :: Text
+  , prStartLine  :: Int
+  , prEndLine    :: Int
+  , prCfgJson    :: Text
+  , prInstrJson    :: Text
+  , prWiringJson :: Text
+  , prParams     :: Text
+  , prReturnType :: Text
+  , prCyclomatic :: Maybe Int
+  , prConfidence :: Text
+  }
+
+data DwObjectRow = DwObjectRow
+  { dorFile        :: Text
+  , dorObject      :: Text
+  , dorStyle       :: Text
+  , dorLayoutJson  :: Text
+  , dorRetrieveSql :: Maybe Text
+  }
+
+data DwControlRow = DwControlRow
+  { dcrFile        :: Text
+  , dcrObject      :: Text
+  , dcrBand        :: Text
+  , dcrControlType :: Text
+  , dcrName        :: Text
+  , dcrX           :: Maybe Int
+  , dcrY           :: Maybe Int
+  , dcrWidth       :: Maybe Int
+  , dcrHeight      :: Maybe Int
+  , dcrExpression  :: Maybe Text
+  }
+
+data DwRetrieveTableRow = DwRetrieveTableRow
+  { drtrFile      :: Text
+  , drtrDwName    :: Text
+  , drtrNamespace :: Maybe Text
+  , drtrTableName :: Text
+  }
+
+data DwRetrieveColumnRow = DwRetrieveColumnRow
+  { drcrFile       :: Text
+  , drcrDwName     :: Text
+  , drcrNamespace  :: Maybe Text
+  , drcrTableName  :: Text
+  , drcrColumnName :: Text
+  }
+
+data DwJoinRow = DwJoinRow
+  { djrFile     :: Text
+  , djrDwName   :: Text
+  , djrLeftRef  :: Text
+  , djrOp       :: Text
+  , djrRightRef :: Text
+  , djrOuter1   :: Maybe Text
+  , djrOuter2   :: Maybe Text
+  }
+
+data DwRetrieveWhereRow = DwRetrieveWhereRow
+  { drwrFile   :: Text
+  , drwrDwName :: Text
+  , drwrIdx    :: Int
+  , drwrExp1   :: Text
+  , drwrOp     :: Text
+  , drwrExp2   :: Text
+  , drwrLogic  :: Maybe Text
+  }
+
+data SqlStmtRow = SqlStmtRow
+  { ssrFile      :: Text
+  , ssrObject    :: Text
+  , ssrProcName  :: Text
+  , ssrLine      :: Int
+  , ssrOperation :: Maybe Text
+  , ssrTables    :: Text
+  , ssrColumns   :: Text
+  , ssrRawSql    :: Text
+  , ssrParseOk   :: Bool
+  }
+
+data SqlStmtColumnRow = SqlStmtColumnRow
+  { sscrFile       :: Text
+  , sscrObject     :: Text
+  , sscrProcName   :: Text
+  , sscrLine       :: Int
+  , sscrNamespace  :: Maybe Text
+  , sscrTableName  :: Maybe Text
+  , sscrColumnName :: Text
+  , sscrIsWrite    :: Bool
+  }
+
+data SqlStmtFilterRow = SqlStmtFilterRow
+  { ssfrFile       :: Text
+  , ssfrObject     :: Text
+  , ssfrProcName   :: Text
+  , ssfrLine       :: Int
+  , ssfrNamespace  :: Maybe Text
+  , ssfrTableName  :: Maybe Text
+  , ssfrColumnName :: Text
+  , ssfrOp         :: Text
+  , ssfrValuesJson :: Text
+  }
+
+-- | One row of sql_statement_tables (Plan 157 Phase 4.5): a namespace-aware
+-- sibling of sql_statements.tables, one row per (statement, table) pair.
+data SqlStmtTableRow = SqlStmtTableRow
+  { sstrFile      :: Text
+  , sstrObject    :: Text
+  , sstrProcName  :: Text
+  , sstrLine      :: Int
+  , sstrOperation :: Maybe Text
+  , sstrNamespace :: Maybe Text
+  , sstrTableName :: Text
+  }
+
+data CatalogColumnRow = CatalogColumnRow
+  { cclrNamespace  :: Maybe Text
+  , cclrTableName  :: Text
+  , cclrColumnName :: Text
+  , cclrOrdinal    :: Int
+  }
+
+data CatalogPkRow = CatalogPkRow
+  { cpkrNamespace  :: Maybe Text
+  , cpkrTableName  :: Text
+  , cpkrColumnName :: Text
+  , cpkrOrdinal    :: Int
+  }
+
+data CatalogFkRow = CatalogFkRow
+  { cfkrConstraintName :: Maybe Text
+  , cfkrFromNamespace  :: Maybe Text
+  , cfkrFromTable      :: Text
+  , cfkrFromColumn     :: Text
+  , cfkrToNamespace    :: Maybe Text
+  , cfkrToTable        :: Text
+  , cfkrToColumn       :: Text
+  , cfkrOrdinal        :: Int
+  }
+
+data CatalogCheckRow = CatalogCheckRow
+  { cckrConstraintName :: Maybe Text
+  , cckrNamespace      :: Maybe Text
+  , cckrTableName      :: Text
+  , cckrPredicate      :: Text
+  }
+
+data SourceFileRow = SourceFileRow
+  { sfrFile :: Text
+  , sfrLines :: Text
+  }
+
+-- ---------------------------------------------------------------------------
+-- Phase A appenders
+
+appendObjects :: AppenderPool -> [ObjectRow] -> IO ()
+appendObjects _    [] = pure ()
+appendObjects pool rows = appendRow pool "objects" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText      app (orFile           r)
+    aText      app (orKind           r)
+    aText      app (orObject         r)
+    aMaybeText app (orAncestor       r)
+    aMaybeText app (orLayoutJson     r)
+    aMaybeText app (orTypeBlocksJson r)
+    aText      app (orConfidence     r)
+
+appendProcedures :: AppenderPool -> [ProcRow] -> IO ()
+appendProcedures _    [] = pure ()
+appendProcedures pool rows = appendRow pool "procedures" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText     app (prFile       r)
+    aText     app (prObject     r)
+    aText     app (prProcName   r)
+    aText     app (prProcType   r)
+    aInt      app (prStartLine  r)
+    aInt      app (prEndLine    r)
+    aText     app (prCfgJson    r)
+    aText     app (prInstrJson    r)
+    aText     app (prWiringJson r)
+    aText     app (prParams     r)
+    aText     app (prReturnType r)
+    aMaybeInt app (prCyclomatic r)
+    aText     app (prConfidence r)
+
+appendDwObjects :: AppenderPool -> [DwObjectRow] -> IO ()
+appendDwObjects _    [] = pure ()
+appendDwObjects pool rows = appendRow pool "dw_objects" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText     app (dorFile        r)
+    aText     app (dorObject      r)
+    aText     app (dorStyle       r)
+    aText     app (dorLayoutJson  r)
+    aMaybeText app (dorRetrieveSql r)
+
+appendDwControls :: AppenderPool -> [DwControlRow] -> IO ()
+appendDwControls _    [] = pure ()
+appendDwControls pool rows = appendRow pool "dw_controls" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText      app (dcrFile r)
+    aText      app (dcrObject r)
+    aText      app (dcrBand r)
+    aText      app (dcrControlType r)
+    aText      app (dcrName r)
+    aMaybeInt  app (dcrX r)
+    aMaybeInt  app (dcrY r)
+    aMaybeInt  app (dcrWidth r)
+    aMaybeInt  app (dcrHeight r)
+    aMaybeText app (dcrExpression r)
+
+appendDwRetrieveTables :: AppenderPool -> [DwRetrieveTableRow] -> IO ()
+appendDwRetrieveTables _    [] = pure ()
+appendDwRetrieveTables pool rows = appendRow pool "dw_retrieve_tables" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText app (drtrFile r)
+    aText app (drtrDwName r)
+    aMaybeText app (drtrNamespace r)
+    aText app (drtrTableName r)
+
+appendDwRetrieveColumns :: AppenderPool -> [DwRetrieveColumnRow] -> IO ()
+appendDwRetrieveColumns _    [] = pure ()
+appendDwRetrieveColumns pool rows = appendRow pool "dw_retrieve_columns" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText      app (drcrFile r)
+    aText      app (drcrDwName r)
+    aMaybeText app (drcrNamespace r)
+    aText      app (drcrTableName r)
+    aText      app (drcrColumnName r)
+
+-- | Plan 163 Phase 6: a DW's update-table columns (@DwColumn@'s @dcUpdate@),
+-- computed via 'PB.Analysis.DwFootprint.dwRetrieveFootprint' at compile
+-- time -- same row shape as 'appendDwRetrieveColumns', a separate table so
+-- the leg_kind (LegWrites, not LegRetrieve) stays evident from which table
+-- a row came from, matching 'appendCatFootprintColumns's own precedent.
+appendDwWriteColumns :: AppenderPool -> [DwRetrieveColumnRow] -> IO ()
+appendDwWriteColumns _    [] = pure ()
+appendDwWriteColumns pool rows = appendRow pool "dw_write_columns" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText      app (drcrFile r)
+    aText      app (drcrDwName r)
+    aMaybeText app (drcrNamespace r)
+    aText      app (drcrTableName r)
+    aText      app (drcrColumnName r)
+
+-- | Plan 163 Phase 6: a DW retrieve's WHERE-operand columns (catalog-gated
+-- by 'PB.Analysis.DwFootprint.dwRetrieveFootprint' itself), same shape
+-- as 'appendDwWriteColumns'.
+appendDwWhereColumns :: AppenderPool -> [DwRetrieveColumnRow] -> IO ()
+appendDwWhereColumns _    [] = pure ()
+appendDwWhereColumns pool rows = appendRow pool "dw_where_columns" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText      app (drcrFile r)
+    aText      app (drcrDwName r)
+    aMaybeText app (drcrNamespace r)
+    aText      app (drcrTableName r)
+    aText      app (drcrColumnName r)
+
+appendDwJoins :: AppenderPool -> [DwJoinRow] -> IO ()
+appendDwJoins _    [] = pure ()
+appendDwJoins pool rows = appendRow pool "dw_joins" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText      app (djrFile r)
+    aText      app (djrDwName r)
+    aText      app (djrLeftRef r)
+    aText      app (djrOp r)
+    aText      app (djrRightRef r)
+    aMaybeText app (djrOuter1 r)
+    aMaybeText app (djrOuter2 r)
+
+appendDwRetrieveWhere :: AppenderPool -> [DwRetrieveWhereRow] -> IO ()
+appendDwRetrieveWhere _    [] = pure ()
+appendDwRetrieveWhere pool rows = appendRow pool "dw_retrieve_where" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText      app (drwrFile r)
+    aText      app (drwrDwName r)
+    aInt       app (drwrIdx r)
+    aText      app (drwrExp1 r)
+    aText      app (drwrOp r)
+    aText      app (drwrExp2 r)
+    aMaybeText app (drwrLogic r)
+
+appendLocalVars :: AppenderPool -> [LocalVar] -> IO ()
+appendLocalVars _    [] = pure ()
+appendLocalVars pool lvs = appendRow pool "local_vars" $ \app ->
+  forEachRow app lvs $ \_ lv -> do
+    aText app (lvFile lv)
+    aText app (lvObject lv)
+    aText app (lvProcName lv)
+    aText app (lvVarName lv)
+    aText app (lvRawType lv)
+    aBool app (lvIsParam lv)
+    aInt  app (lvScopeLine lv)
+
+appendDeadVars :: AppenderPool -> [DeadVarFinding] -> IO ()
+appendDeadVars _    [] = pure ()
+appendDeadVars pool rows = appendRow pool "dead_vars" $ \app ->
+  forEachRow app rows $ \_ f -> do
+    aText     app (dvfObject f)
+    aText     app (dvfProc f)
+    aText     app (dvfVar f)
+    aMaybeInt app (dvfLine f)
+    aText     app (deadVarKindText (dvfKind f))
+
+appendTypeMismatches :: AppenderPool -> [TypeMismatchFinding] -> IO ()
+appendTypeMismatches _    [] = pure ()
+appendTypeMismatches pool rows = appendRow pool "type_mismatches" $ \app ->
+  forEachRow app rows $ \_ f -> do
+    aText app (tmfObject f)
+    aText app (tmfProc f)
+    aInt  app (tmfLine f)
+    aText app (tmfTarget f)
+    aText app (tmfLhsType f)
+    aText app (tmfRhsDesc f)
+    aText app (mismatchKindText (tmfKind f))
+
+appendCallSites :: AppenderPool -> [CallSite] -> IO ()
+appendCallSites _    [] = pure ()
+appendCallSites pool css = appendRow pool "call_sites" $ \app ->
+  forEachRow app css $ \_ cs -> do
+    aText     app (csFile cs)
+    aText     app (csObject cs)
+    aText     app (csFromProc cs)
+    aText     app (csToName cs)
+    aText     app (csCallType cs)
+    aMaybeInt app (csLine cs)
+
+appendGlobalVars :: AppenderPool -> [GlobalVar] -> IO ()
+appendGlobalVars _    [] = pure ()
+appendGlobalVars pool gvs = appendRow pool "global_vars" $ \app ->
+  forEachRow app gvs $ \_ gv -> do
+    aText app (gvFile gv)
+    aText app (gvObject gv)
+    aText app (gvName gv)
+    aText app (gvType gv)
+    aText app (T.intercalate "|" (gvMods gv))
+
+appendProcDefs :: AppenderPool -> [(Text, Text, Text, Dataflow.ProcFlow)] -> IO ()
+appendProcDefs _    [] = pure ()
+appendProcDefs pool flows = appendRow pool "proc_defs" $ \app ->
+  for_ flows $ \(file, obj, proc_, pf) ->
+    forEachRow app (concatMap Dataflow.bfDefs (Map.elems (Dataflow.pfBlocks pf))) $ \_ d -> do
+      aText     app file
+      aText     app obj
+      aText     app proc_
+      aText     app (identOrig (Dataflow.dsVar d))
+      aText     app (Dataflow.dsBlock d)
+      aInt      app (Dataflow.dsStmtIdx d)
+      aMaybeInt app (Dataflow.dsLine d)
+      aText     app (Dataflow.dsKind d)
+
+appendProcUses :: AppenderPool -> [(Text, Text, Text, Dataflow.ProcFlow)] -> IO ()
+appendProcUses _    [] = pure ()
+appendProcUses pool flows = appendRow pool "proc_uses" $ \app ->
+  for_ flows $ \(file, obj, proc_, pf) ->
+    forEachRow app (concatMap Dataflow.bfUses (Map.elems (Dataflow.pfBlocks pf))) $ \_ u -> do
+      aText     app file
+      aText     app obj
+      aText     app proc_
+      aText     app (identOrig (Dataflow.usVar u))
+      aText     app (Dataflow.usBlock u)
+      aInt      app (Dataflow.usStmtIdx u)
+      aMaybeInt app (Dataflow.usLine u)
+      aText     app (Dataflow.usKind u)
+
+appendSqlStmts :: AppenderPool -> [SqlStmtRow] -> IO ()
+appendSqlStmts _    [] = pure ()
+appendSqlStmts pool rows = appendRow pool "sql_statements" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText      app (ssrFile r)
+    aText      app (ssrObject r)
+    aText      app (ssrProcName r)
+    aInt       app (ssrLine r)
+    aMaybeText app (ssrOperation r)
+    aText      app (ssrTables r)
+    aText      app (ssrColumns r)
+    aText      app (ssrRawSql r)
+    aBool      app (ssrParseOk r)
+
+appendSqlStmtColumns :: AppenderPool -> [SqlStmtColumnRow] -> IO ()
+appendSqlStmtColumns _    [] = pure ()
+appendSqlStmtColumns pool rows = appendRow pool "sql_statement_columns" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText      app (sscrFile r)
+    aText      app (sscrObject r)
+    aText      app (sscrProcName r)
+    aInt       app (sscrLine r)
+    aMaybeText app (sscrNamespace r)
+    aMaybeText app (sscrTableName r)
+    aText      app (sscrColumnName r)
+    aBool      app (sscrIsWrite r)
+
+-- | Plan 163 Phase 3: same row shape/append pattern as
+-- 'appendSqlStmtColumns' (reuses 'SqlStmtColumnRow' rather than a bespoke
+-- type), writing to 'cat_footprint_columns' instead.
+appendCatFootprintColumns :: AppenderPool -> [SqlStmtColumnRow] -> IO ()
+appendCatFootprintColumns _    [] = pure ()
+appendCatFootprintColumns pool rows = appendRow pool "cat_footprint_columns" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText      app (sscrFile r)
+    aText      app (sscrObject r)
+    aText      app (sscrProcName r)
+    aInt       app (sscrLine r)
+    aMaybeText app (sscrNamespace r)
+    aMaybeText app (sscrTableName r)
+    aText      app (sscrColumnName r)
+    aBool      app (sscrIsWrite r)
+
+-- | Plan 182 Move 2: writes 'PB.Analysis.TaintEdges.foldTaintEdgesEff'
+-- output, one row per intra-proc @(useVar, defVar)@ edge.
+appendTaintIntraEdges :: AppenderPool -> [TaintEdges.TaintIntraEdgeRow] -> IO ()
+appendTaintIntraEdges _    [] = pure ()
+appendTaintIntraEdges pool rows = appendRow pool "taint_intra_edges" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText app (TaintEdges.tierObject r)
+    aText app (TaintEdges.tierProcName r)
+    aText app (TaintEdges.tierUseVar r)
+    aText app (TaintEdges.tierDefVar r)
+
+-- | Plan 182b: writes 'PB.Analysis.TaintEdges.foldTaintEdgesEff' output,
+-- one row per var used in a procedure's @return@ payload.
+appendTaintReturnRows :: AppenderPool -> [TaintEdges.TaintReturnRow] -> IO ()
+appendTaintReturnRows _    [] = pure ()
+appendTaintReturnRows pool rows = appendRow pool "taint_return_rows" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText app (TaintEdges.trrObject r)
+    aText app (TaintEdges.trrProcName r)
+    aText app (TaintEdges.trrVarName r)
+
+appendSqlStmtFilters :: AppenderPool -> [SqlStmtFilterRow] -> IO ()
+appendSqlStmtFilters _    [] = pure ()
+appendSqlStmtFilters pool rows = appendRow pool "sql_statement_filters" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText      app (ssfrFile r)
+    aText      app (ssfrObject r)
+    aText      app (ssfrProcName r)
+    aInt       app (ssfrLine r)
+    aMaybeText app (ssfrNamespace r)
+    aMaybeText app (ssfrTableName r)
+    aText      app (ssfrColumnName r)
+    aText      app (ssfrOp r)
+    aText      app (ssfrValuesJson r)
+
+appendSqlStmtTables :: AppenderPool -> [SqlStmtTableRow] -> IO ()
+appendSqlStmtTables _    [] = pure ()
+appendSqlStmtTables pool rows = appendRow pool "sql_statement_tables" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText      app (sstrFile r)
+    aText      app (sstrObject r)
+    aText      app (sstrProcName r)
+    aInt       app (sstrLine r)
+    aMaybeText app (sstrOperation r)
+    aMaybeText app (sstrNamespace r)
+    aText      app (sstrTableName r)
+
+appendCatalogColumns :: AppenderPool -> [CatalogColumnRow] -> IO ()
+appendCatalogColumns _    [] = pure ()
+appendCatalogColumns pool rows = appendRow pool "catalog_columns" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aMaybeText app (cclrNamespace  r)
+    aText      app (cclrTableName  r)
+    aText      app (cclrColumnName r)
+    aInt       app (cclrOrdinal    r)
+
+appendCatalogPks :: AppenderPool -> [CatalogPkRow] -> IO ()
+appendCatalogPks _    [] = pure ()
+appendCatalogPks pool rows = appendRow pool "catalog_pks" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aMaybeText app (cpkrNamespace  r)
+    aText      app (cpkrTableName  r)
+    aText      app (cpkrColumnName r)
+    aInt       app (cpkrOrdinal    r)
+
+appendCatalogFks :: AppenderPool -> [CatalogFkRow] -> IO ()
+appendCatalogFks _    [] = pure ()
+appendCatalogFks pool rows = appendRow pool "catalog_fks" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aMaybeText app (cfkrConstraintName r)
+    aMaybeText app (cfkrFromNamespace  r)
+    aText      app (cfkrFromTable      r)
+    aText      app (cfkrFromColumn     r)
+    aMaybeText app (cfkrToNamespace    r)
+    aText      app (cfkrToTable        r)
+    aText      app (cfkrToColumn       r)
+    aInt       app (cfkrOrdinal        r)
+
+appendCatalogChecks :: AppenderPool -> [CatalogCheckRow] -> IO ()
+appendCatalogChecks _    [] = pure ()
+appendCatalogChecks pool rows = appendRow pool "catalog_checks" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aMaybeText app (cckrConstraintName r)
+    aMaybeText app (cckrNamespace      r)
+    aText      app (cckrTableName      r)
+    aText      app (cckrPredicate      r)
+
+appendParseErrors :: AppenderPool -> [(FilePath, Text)] -> IO ()
+appendParseErrors _    [] = pure ()
+appendParseErrors pool errs = appendRow pool "parse_errors" $ \app ->
+  forEachRow app errs $ \_ (path, msg) -> do
+    aText app (T.pack path)
+    aText app msg
+
+appendSourceFiles :: AppenderPool -> [SourceFileRow] -> IO ()
+appendSourceFiles _    [] = pure ()
+appendSourceFiles pool rows = appendRow pool "source_files" $ \app ->
+  forEachRow app rows $ \_ r -> do
+    aText app (sfrFile r)
+    aText app (sfrLines r)

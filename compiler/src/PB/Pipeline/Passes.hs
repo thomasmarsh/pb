@@ -16,20 +16,24 @@ import PB.Analysis.DeadCodeReachability qualified as DeadCodeReachability
 import PB.Analysis.SchemaClosure qualified as SchemaClosure
 import PB.Analysis.TaintClosure qualified as TaintClosure
 import PB.Pipeline.Progress qualified as Progress
-import PB.Pipeline.DuckDb
-  ( Handle
-  , queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
+import PB.Pipeline.DuckDb (Handle)
+import PB.Pipeline.DuckDb.PhaseB.Query
+  ( queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
   , queryProcDefs, queryProcUses, queryResolvedCalls
   , queryTaintInputs, queryTaintIntraEdges, queryTaintReturnRows
   , queryDwRetrieveColumns, queryDwWriteColumns, queryDwWhereColumns
   , queryDwJoinLegs, querySqlCols
   , queryCatFootprintColumns
   , queryCatColumns, queryCatFks
-  , appendResolvedTypes, appendResolvedCalls
+  )
+import PB.Pipeline.DuckDb.PhaseB.Append
+  ( appendResolvedTypes, appendResolvedCalls
   , appendInterprocEdges, appendProcSummaries
   , appendTaintSources, appendTaintSinks
   , appendSchemaObjects, appendSchemaMorphisms
-  , materializeDecompositionCoslice
+  )
+import PB.Pipeline.DuckDb.Materialize
+  ( materializeDecompositionCoslice
   , materializeImpliedFk
   , materializeImpliedFkPairs
   , materializeColumnRisk

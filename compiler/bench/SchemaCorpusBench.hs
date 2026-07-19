@@ -16,7 +16,9 @@ import PB.Prelude
 import PB.Pipeline.Runner (runModeDb)
 import PB.Pipeline.DuckDb
   ( withHandle, Config(..), queryHandle
-  , querySchemaMorphismRows
+  )
+import PB.Pipeline.DuckDb.PhaseB.Query
+  ( querySchemaMorphismRows
   , querySchemaObjects
   )
 import PB.Pipeline.DuckDb.Relations (legSourceRows, seedRows)

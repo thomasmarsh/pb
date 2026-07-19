@@ -2,6 +2,7 @@ module StdLibTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.DuckDb
+import PB.Pipeline.DuckDb.Appender (withAppenderPool)
 import PB.Pipeline.Emit    (ParsedFile (..), ParseOutcome (..), parsePowerScriptFile, stripBom)
 import PB.Pipeline.Runner  (compileOne, appendToDb)
 import PB.Analysis.TypeEnv (WorkspaceEnv (..), buildWorkspaceEnv)

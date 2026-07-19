@@ -20,14 +20,17 @@ import PB.Pipeline.DuckDb.Relations
 import PB.Analysis.DeadCodeReachability (materializeDeadCodeClosure)
 import PB.Analysis.SchemaClosure qualified as SchemaClosure
 import PB.Pipeline.DuckDb
-  ( initSchema, withHandle, withAppenderPool, appendSchemaObjects
+  ( initSchema, withHandle
   , queryHandle, executeHandle, inMemory
-  , appendSchemaMorphisms, appendProcedures, ProcRow (..)
-  , SchMorphismRow (..)
-  , materializeDeadCode
+  )
+import PB.Pipeline.DuckDb.Appender (withAppenderPool)
+import PB.Pipeline.DuckDb.PhaseA (appendProcedures, ProcRow (..))
+import PB.Pipeline.DuckDb.PhaseB.Query (SchMorphismRow (..), ProcSummaryRow (..))
+import PB.Pipeline.DuckDb.PhaseB.Append (appendSchemaObjects, appendSchemaMorphisms)
+import PB.Pipeline.DuckDb.Materialize
+  ( materializeDeadCode
   , materializeImpliedFkPairs, materializeRiskCount
   , materializeLiveProc, materializeCallerCounts, materializeDeadCodeRows
-  , ProcSummaryRow (..)
   )
 import PB.Analysis.SchemaCategory
   ( StmtId (..), SchObject (..), LegKind (..), LegSource (..), SchMorphism (..)

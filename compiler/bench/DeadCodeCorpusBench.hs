@@ -20,7 +20,9 @@ import PB.Prelude
 import PB.Pipeline.Runner (runModeDb)
 import PB.Pipeline.DuckDb
   ( withHandle, Config(..), queryHandle
-  , queryProcedures
+  )
+import PB.Pipeline.DuckDb.PhaseB.Query
+  ( queryProcedures
   , queryResolvedCalls
   , queryObjectAncestors
   , queryDwObjects

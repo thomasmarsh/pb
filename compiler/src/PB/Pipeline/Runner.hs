@@ -82,8 +82,10 @@ import PB.Pipeline.SqlParse
 import PB.Pipeline.FileWalk    (walkAllSrFiles)
 import PB.Pipeline.DuckDb
   ( withHandle, Config(..), initSchema
-  , AppenderPool, withAppenderPoolTimed
-  , ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
+  )
+import PB.Pipeline.DuckDb.Appender (AppenderPool, withAppenderPoolTimed)
+import PB.Pipeline.DuckDb.PhaseA
+  ( ObjectRow (..), ProcRow (..), DwObjectRow (..), DwControlRow (..)
   , DwRetrieveTableRow (..), DwRetrieveColumnRow (..), DwJoinRow (..), SqlStmtRow (..)
   , SqlStmtColumnRow (..), SqlStmtFilterRow (..), SqlStmtTableRow (..)
   , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..), CatalogCheckRow (..)

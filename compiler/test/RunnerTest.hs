@@ -3,7 +3,7 @@ module RunnerTest (tests) where
 import PB.Prelude
 import PB.Pipeline.Runner  (runFile, extractWindowLayout, reconstructRetrieveSql, wrapSrFile, compileOne, catalogToRows, validateDdlNamespaceConfig, CompiledFile (..), CompiledPs (..), CompiledDw (..))
 import PB.Pipeline.Emit    (parsePowerScriptFile, parseOutcome, ParsedFile (..), ParseOutcome (..))
-import PB.Pipeline.DuckDb
+import PB.Pipeline.DuckDb.PhaseA
   ( ProcRow (..), SqlStmtColumnRow (..), SqlStmtFilterRow (..)
   , CatalogColumnRow (..), CatalogPkRow (..), CatalogFkRow (..), CatalogCheckRow (..)
   , DwRetrieveColumnRow (..)

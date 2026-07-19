@@ -188,7 +188,7 @@ Mark done/pending as body parsers land.
 | `PB.Lexing.*`   | Tokenization, layout, string mode                                                                                                                                                                                                                  |
 | `PB.Grammar.*`  | megaparsec parsers (Body, File, Stream, DataWindow)                                                                                                                                                                                                |
 | `PB.Compile.*`  | Compilation pipeline: SSA IR (SSA), IR types (IR), loop analysis (LoopAnalysis), SSA lowering (FromSSA), flattening (Flatten), instruction types (InstrTypes), value model (ValueModel), interpreters (Interp, InstrInterp)                        |
-| `PB.Pipeline.*` | Multi-step transformations: Preprocess, Emit, Passes, Runner, Serialise, FileWalk, DuckDb, SqlParse, Church                                                                                                                                        |
+| `PB.Pipeline.*` | Multi-step transformations: Preprocess, Emit, Passes, Runner, Serialise, FileWalk, DuckDb, SqlParse, Church. `PB.Pipeline.DuckDb` is the opaque `Handle`/`Config` moat core plus the generic TEXT-table bridge and shared appender primitives; siblings `DuckDb.Appender` (pool lifecycle), `DuckDb.PhaseA` (Phase A row types/appenders), `DuckDb.PhaseB.Query`/`DuckDb.PhaseB.Append` (Phase B queries/appenders), `DuckDb.Materialize` (all `materialize*` SQL), and `DuckDb.Relations` (typed relation-reshaping readers) hold the rest |
 | `PB.Analysis.*` | Pure analysis passes: Cfg, Dataflow, Taint, TypeEnv, TypeResolve, Builtins, SchemaCategory, SchFootprint, DwFootprint, ControlHierarchy, TaintClosure, DeadCodeReachability, SchemaClosure. `PB.Pipeline.DuckDb.Relations` holds the typed relation-reshaping readers (DeadCode, Schema, Taint fanouts) |
 | `PB.Prelude`    | Custom Prelude — no parsing or transformation logic                                                                                                                                                                                                |
 
@@ -200,11 +200,11 @@ New modules go in the most specific matching directory. If a new layer is needed
 
 Read this before writing or reviewing any relation reader (`initXRelations` in
 `PB.Pipeline.DuckDb.Relations`), materializer SQL (`materialize*` in
-`PB.Pipeline.DuckDb`), or analysis closure (`PB.Analysis.*`). Governs where
-logic lives across the surfaces a whole-program analysis touches: compiler
-phases (`PB.Grammar`/`PB.AST`/`PB.Compile`), `PB.Analysis.*` Haskell, the
-DuckDb relation-loading boundary (`PB.Pipeline.DuckDb.Relations`), and the SQL
-materializers (`PB.Pipeline.DuckDb`).
+`PB.Pipeline.DuckDb.Materialize`), or analysis closure (`PB.Analysis.*`).
+Governs where logic lives across the surfaces a whole-program analysis
+touches: compiler phases (`PB.Grammar`/`PB.AST`/`PB.Compile`), `PB.Analysis.*`
+Haskell, the DuckDb relation-loading boundary (`PB.Pipeline.DuckDb.Relations`),
+and the SQL materializers (`PB.Pipeline.DuckDb.Materialize`).
 
 **The DuckDb moat.** `PB.Pipeline.DuckDb.Relations` is the single boundary
 that loads raw DuckDB tables into the typed row shapes the analyses consume.
@@ -232,7 +232,9 @@ functions only rename, cast, or statically filter; they never decide.
    relation shape (rename, cast, static-predicate filter, union of
    identically-shaped sources) — it's a typed `PB.Pipeline.DuckDb.Relations`
    function, materialized into a plain DuckDB table via
-   `recreateTextTable`/`appendTextRows`. `PB.Analysis.TaintClosure`'s
+   `recreateTextTable`/`appendTextRows` (both in `PB.Pipeline.DuckDb`, the
+   moat core every `DuckDb.*` submodule imports).
+   `PB.Analysis.TaintClosure`'s
    `materializeTaintClosure`/`materializeTaintStepKind` (reshaping
    `PB.Analysis.TaintClosure`'s closure output directly into
    `taint_reaches`/`taint_confirmed`/`taint_step_kind`) are the reference

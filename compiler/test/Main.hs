@@ -1,6 +1,9 @@
 module Main (main) where
 
-import qualified DuckDbTest
+import qualified PhaseATest
+import qualified PhaseBQueryTest
+import qualified PhaseBAppendTest
+import qualified MaterializeTest
 import qualified RelationsTest
 import qualified DeadCodeReachabilityTest
 import qualified SchemaClosureTest
@@ -57,7 +60,10 @@ main = defaultMain tests
 
 tests :: TestTree
 tests = testGroup "pb-compiler"
-  [ DuckDbTest.tests
+  [ PhaseATest.tests
+  , PhaseBQueryTest.tests
+  , PhaseBAppendTest.tests
+  , MaterializeTest.tests
   , RelationsTest.tests
   , DeadCodeReachabilityTest.tests
   , SchemaClosureTest.tests

@@ -12,7 +12,7 @@ import PB.Analysis.SchemaCategory
   , SchemaInputs (..), CatFkRow (..)
   , buildSchema, schObjectKey, sgLegs, sgObjects
   )
-import PB.Pipeline.DuckDb (renderLegKind)
+import PB.Pipeline.DuckDb.PhaseB.Append (renderLegKind)
 import PB.Pipeline.SqlParse (TableRef (..))
 
 import qualified Data.Set as Set

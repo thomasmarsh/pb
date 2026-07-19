@@ -77,6 +77,11 @@ library
     PB.Pipeline.Runner
     PB.Pipeline.Serialise
     PB.Pipeline.DuckDb
+    PB.Pipeline.DuckDb.Appender
+    PB.Pipeline.DuckDb.PhaseA
+    PB.Pipeline.DuckDb.PhaseB.Query
+    PB.Pipeline.DuckDb.PhaseB.Append
+    PB.Pipeline.DuckDb.Materialize
     PB.Pipeline.DuckDb.Relations
     PB.Pipeline.SqlParse
     PB.Pipeline.FileWalk
@@ -176,7 +181,10 @@ test-suite pb-compiler-test
   hs-source-dirs: test
   main-is: Main.hs
   other-modules:
-      DuckDbTest
+      PhaseATest
+    , PhaseBQueryTest
+    , PhaseBAppendTest
+    , MaterializeTest
     , SmallCheckInstances
     , RelationsTest
     , DeadCodeFixtures

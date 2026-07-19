@@ -43,9 +43,12 @@ import PB.Pipeline.DuckDb.Relations
   )
 import PB.Analysis.Taint qualified as Taint (ResolvedCallRow)
 import PB.Pipeline.DuckDb
-  ( ProcSummaryRow (..), Handle
-  , queryProcedures, queryResolvedCalls, queryObjectAncestors, queryDwObjects
+  ( Handle
   , recreateTextTable, appendTextRows
+  )
+import PB.Pipeline.DuckDb.PhaseB.Query
+  ( ProcSummaryRow (..)
+  , queryProcedures, queryResolvedCalls, queryObjectAncestors, queryDwObjects
   )
 import PB.Algebra.Semiring (Boolean (..))
 import PB.Algebra.Closure

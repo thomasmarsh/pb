@@ -12,13 +12,14 @@ module DeadCodeFixtures
   ) where
 
 import PB.Prelude
-import PB.Pipeline.DuckDb
-  ( Handle, AppenderPool
-  , appendProcedures, ProcRow (..)
+import PB.Pipeline.DuckDb (Handle)
+import PB.Pipeline.DuckDb.Appender (AppenderPool)
+import PB.Pipeline.DuckDb.PhaseA
+  ( appendProcedures, ProcRow (..)
   , appendDwObjects, DwObjectRow (..)
-  , appendResolvedCalls
   , appendObjects, ObjectRow (..)
   )
+import PB.Pipeline.DuckDb.PhaseB.Append (appendResolvedCalls)
 import PB.Analysis.TypeResolve (ResolvedCall (..))
 import PB.Analysis.Taint qualified as Taint
 

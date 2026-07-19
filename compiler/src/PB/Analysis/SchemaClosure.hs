@@ -31,10 +31,12 @@ import PB.Prelude
 import PB.Pipeline.DuckDb.Relations (legSourceRows, seedRows)
 import PB.Pipeline.DuckDb
   ( Handle
-  , querySchemaMorphismRows
-  , querySchemaObjects
   , recreateTextTable
   , appendTextRows
+  )
+import PB.Pipeline.DuckDb.PhaseB.Query
+  ( querySchemaMorphismRows
+  , querySchemaObjects
   )
 
 import qualified Data.List       as L

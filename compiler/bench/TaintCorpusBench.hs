@@ -5,7 +5,9 @@ import PB.AST.Ident (mkIdent)
 import PB.Pipeline.Runner (runModeDb)
 import PB.Pipeline.DuckDb
   ( withHandle, Config(..)
-  , queryGlobalVars
+  )
+import PB.Pipeline.DuckDb.PhaseB.Query
+  ( queryGlobalVars
   , queryProcDefs
   , queryProcUses
   , queryResolvedCalls

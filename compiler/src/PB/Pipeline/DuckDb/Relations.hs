@@ -42,11 +42,11 @@ module PB.Pipeline.DuckDb.Relations
 import PB.Prelude
 
 import PB.Pipeline.DuckDb
-  ( Handle, SchMorphismRow (..), ProcSummaryRow (..)
+  ( Handle, queryHandle, recreateTextTable, appendTextRows )
+import PB.Pipeline.DuckDb.PhaseB.Query
+  ( SchMorphismRow (..), ProcSummaryRow (..)
   , querySchemaObjects, querySchemaMorphismRows, queryCatFks
   , queryObjectAncestors, queryProcedures, queryDwObjects, queryResolvedCalls
-  , recreateTextTable, appendTextRows
-  , queryHandle
   )
 import PB.Analysis.SchemaCategory
   ( SchObject (..), StmtId (..), CatFkRow (..), schObjectKey )

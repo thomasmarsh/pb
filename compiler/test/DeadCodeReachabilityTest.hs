@@ -7,7 +7,7 @@ module DeadCodeReachabilityTest (tests) where
 -- assertions below are the regression contract.
 import PB.Prelude
 import PB.Analysis.DeadCodeReachability (deadReach)
-import PB.Pipeline.DuckDb (ProcSummaryRow (..))
+import PB.Pipeline.DuckDb.PhaseB.Query (ProcSummaryRow (..))
 import PB.Analysis.Taint qualified as Taint (ResolvedCallRow)
 import DeadCodeFixtures (ProcInfo (..), mkResolvedCall)
 
