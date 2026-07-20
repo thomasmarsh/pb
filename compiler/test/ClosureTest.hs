@@ -1,24 +1,21 @@
 module ClosureTest (tests) where
 
--- | Unit tests for 'PB.Algebra.Closure.reachFrom', the sparse worklist-
--- relaxation alternative to 'star's all-pairs iterated squaring (Plan
--- 182 corpus-validation follow-up, doc/plan/182-algebraic-analysis.md
--- Section 11). Covers the adversarial shapes compiler/CLAUDE.md's Datalog
--- Rule Placement Discipline requires for any closure-shaped relation:
--- a duplicate-key/parallel-edge collision, a 0-hop/isolated-seed
--- degenerate case, and a cycle not passing through the seed.
+-- | Unit tests for 'PB.Algebra.Closure.reachFrom' — the sparse worklist
+-- relaxation used for every production closure in this codebase (Plan 182
+-- corpus-validation follow-up, doc/plan/182-algebraic-analysis.md Section
+-- 11). Covers the adversarial shapes compiler/CLAUDE.md's Datalog Rule
+-- Placement Discipline requires for any closure-shaped relation: a
+-- duplicate-key/parallel-edge collision, a 0-hop/isolated-seed degenerate
+-- case, and a cycle not passing through the seed.
 import PB.Prelude
-import PB.Algebra.Semiring (Boolean (..), PathValue (..))
+import PB.Algebra.Semiring (Boolean (..))
 import PB.Algebra.Closure
   ( fromEdges
-  , star
   , reachFrom
   , reachableSet
-  , reconstructPath
   )
 
 import qualified Data.Set as Set
-import qualified Data.IntMap.Strict as IM
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 
@@ -62,19 +59,4 @@ tests = testGroup "Closure.reachFrom"
           r   = reachFrom rel [0]
       in reachableSet r 0 @?= Set.fromList [0,1,2]
 
-  , testCase "agrees with star's row for a seed with outgoing edges (Boolean)" $
-      let rel = fromEdges
-            [ (0,1,Boolean True), (1,2,Boolean True), (2,3,Boolean True) ]
-          starRow = IM.lookup 0 (star rel)
-          fromRow = IM.lookup 0 (reachFrom rel [0])
-      in fromRow @?= starRow
-
-  , testCase "witness path via reachFrom matches star's (PathValue)" $
-      let rel = fromEdges
-            [ (0,1, Reachable 1 (Just 'a') 0)
-            , (1,2, Reachable 1 (Just 'b') 1)
-            ]
-          starPath = reconstructPath (star rel) 0 2
-          fromPath = reconstructPath (reachFrom rel [0]) 0 2
-      in fromPath @?= starPath
   ]

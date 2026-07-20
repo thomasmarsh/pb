@@ -27,7 +27,7 @@ import Options.Applicative
 
 -- | Corpus-scale shape\/wall-clock report for the algebraic taint closure
 -- ('PB.Analysis.TaintClosure', a sparse 'PB.Algebra.Closure.reachFrom'
--- worklist -- NOT 'star's all-pairs closure, see
+-- worklist -- NOT an all-pairs closure, see
 -- doc/plan/182-algebraic-analysis.md Section 11), production's sole
 -- source for @taint_reaches@\/@taint_confirmed@\/@taint_step_kind@ since
 -- the Plan 182 cutover. Runs the existing pipeline unmodified, then
@@ -36,7 +36,7 @@ import Options.Applicative
 -- reports set sizes plus wall-clock. The Haskell BFS
 -- ('PB.Analysis.Taint.propagateTaint') is the reference closure this bench
 -- reports against; unit-level regression coverage for the closure's
--- correctness lives in 'TaintAlgebraTest.hs'.
+-- correctness lives in 'TaintClosureTest.hs'.
 
 data Options = Options
   { optInput           :: FilePath

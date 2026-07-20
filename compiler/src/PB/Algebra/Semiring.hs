@@ -1,7 +1,7 @@
 -- | Semiring algebra for fixed-point / graph-closure computations.
 --
 -- A semiring @(s, 'zero', 'one', ('.+.'), ('.*.))@ lets us express transitive
--- closure (Kleene star) uniformly: 'PB.Algebra.Closure.star' is the
+-- closure uniformly: the seeded 'reachFrom' is the
 -- fixpoint of @r ↣ r '.+.' (r '.*.' r)@.  Picking the semiring
 -- picks the analysis:
 --

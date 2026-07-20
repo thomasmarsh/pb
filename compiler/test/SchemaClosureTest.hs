@@ -1,7 +1,7 @@
 module SchemaClosureTest (tests) where
 
 -- | Golden regression suite for 'PB.Analysis.SchemaClosure' (hand-rolled
--- Haskell closures over the interned leg relation — NOT 'star'). Each
+-- Haskell closures over the interned leg relation — not an all-pairs closure). Each
 -- fixture's expected output is hand-verified; the algebraic closures are the
 -- sole implementation, so the assertions below are the regression contract.
 import PB.Prelude

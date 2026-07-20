@@ -1,11 +1,14 @@
 {-# LANGUAGE BangPatterns #-}
--- | Kleene-star closure over an interned, semiring-labeled relation.
+-- | Transitive closure over an interned, semiring-labeled relation.
 --
--- 'Relation' is a finite directed graph with semiring-labeled arcs.  'star'
--- computes the transitive closure as the fixpoint of @r ↣ r '.+.' (r '.*.' r)@
--- via iterated squaring — O(log n) matrix squarings, no worklist / BFS.
---
--- See doc/plan/182-algebraic-analysis.md.
+-- 'Relation' is a finite directed graph with semiring-labeled arcs.  The
+-- production primitive is 'reachFrom' — a seeded worklist relaxation
+-- (generalized Bellman-Ford / semi-naive fixpoint) that computes only the
+-- closure rows for the actual seed set, which is asymptotically right for the
+-- large/sparse graphs in this codebase (see doc/plan/182-algebraic-analysis.md
+-- Section 11).  'relProduct' / 'relUnion' are the underlying semiring
+-- operations; 'reconstructPathNodes' backtracks a witness over a
+-- 'PathValue'-labeled relation.
 module PB.Algebra.Closure
   ( Interner (..)
   , emptyInterner
@@ -15,7 +18,6 @@ module PB.Algebra.Closure
   , fromEdges
   , relUnion
   , relProduct
-  , star
   , reachFrom
   , reachableSet
   , reconstructPath
@@ -83,33 +85,14 @@ relProduct p q =
     , Just qInner <- [IM.lookup k q]
     , (j, qkj)    <- IM.toList qInner
     ]
-
--- | Kleene star via iterated squaring.  Converges in O(log n) squarings
--- for an n-node graph; we also early-exit on fixpoint.
-star :: (S.Semiring s, Eq s) => Relation s -> Relation s
-star m0 =
-  let nodes  = allNodes m0
-      ident  = identityRel nodes
-      r0     = relUnion ident m0
-      maxIter = ceiling (logBase 2 (fromIntegral (max 1 (length nodes)) :: Double)) + 1 :: Int
-  in iterateFix maxIter r0
-  where
-    iterateFix 0 r = r
-    iterateFix n r =
-      let r' = relUnion r (relProduct r r)
-      in if r' == r then r else iterateFix (n - 1) r'
-    identityRel ns = IM.fromList [ (i, IM.singleton i S.one) | i <- ns ]
-    allNodes r = Set.toList
-      (Set.fromList (IM.keys r) `Set.union` foldMap (Set.fromList . IM.keys) (IM.elems r))
-
--- | Semiring-weighted reachability from a set of seed nodes, computed via
--- worklist relaxation (generalized Bellman-Ford \/ semi-naive fixpoint)
--- instead of 'star's all-pairs iterated squaring. Only visits nodes
--- actually reachable from a seed, and unlike 'star' a seed keeps its own
--- 'S.one' membership even with zero outgoing edges (no arcPairs-endpoint
--- dependency). Returned shape matches 'star's (seed id -> reachable id ->
--- label), restricted to just the given seeds, so 'reachableSet'\/
--- 'reconstructPath' work unchanged against either.
+  
+  -- | Semiring-weighted reachability from a set of seed nodes, computed via
+-- worklist relaxation (generalized Bellman-Ford / semi-naive fixpoint)
+-- instead of an all-pairs closure. Only visits nodes actually reachable from a
+-- seed, and a seed keeps its own 'S.one' membership even with zero outgoing
+-- edges (no arcPairs-endpoint dependency). Returned shape is a 'Relation' keyed
+-- by seed id -> reachable id -> label, so 'reachableSet' / 'reconstructPath'
+-- work directly against it.
 reachFrom :: (S.Semiring s, Eq s) => Relation s -> [Int] -> Relation s
 reachFrom rel seeds = IM.fromList [ (s, relaxFrom s) | s <- seeds ]
   where

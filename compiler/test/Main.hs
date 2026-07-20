@@ -22,7 +22,7 @@ import qualified InterpCoverageTest
 import qualified TaintTest
 import qualified ClosureTest
 import qualified TaintEdgesTest
-import qualified TaintAlgebraTest
+import qualified TaintClosureTest
 import qualified EscapeTest
 import qualified ExprTest
 import qualified CorpusDebtTest
@@ -82,7 +82,7 @@ tests = testGroup "pb-compiler"
   , TaintTest.tests
   , ClosureTest.tests
   , TaintEdgesTest.tests
-  , TaintAlgebraTest.tests
+  , TaintClosureTest.tests
   , EscapeTest.tests
   , ExprTest.tests
   , CorpusDebtTest.tests

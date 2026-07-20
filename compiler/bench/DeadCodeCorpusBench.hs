@@ -2,7 +2,7 @@ module Main (main) where
 
 -- | Corpus-scale self-consistency + wall-clock report for the algebraic
 -- dead-code reachability closure ('PB.Analysis.DeadCodeReachability', a sparse
--- 'PB.Algebra.Closure.reachFrom' worklist -- NOT 'star's all-pairs closure,
+-- 'PB.Algebra.Closure.reachFrom' worklist -- NOT an all-pairs closure,
 -- see doc/plan/182-algebraic-analysis.md Section 11 / §12 item 6),
 -- production's sole source for @proc_dead@ since the Plan 182 item 6
 -- cutover.

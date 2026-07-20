@@ -1,4 +1,4 @@
-module TaintAlgebraTest (tests, defRow, useRow, edge, src, snk, intraEdgesFromDefUse, returnRowsFromUses) where
+module TaintClosureTest (tests, defRow, useRow, edge, src, snk, intraEdgesFromDefUse, returnRowsFromUses) where
 
 -- | Unit and self-consistency tests for the algebraic taint closure.
 -- Covers reachability, confirmed source-sink pairs, and witness-path
@@ -25,13 +25,6 @@ import PB.Analysis.TaintClosure
   , taintWitnessLegs
   )
 import PB.Analysis.TaintEdges (TaintIntraEdgeRow (..), TaintReturnRow (..), foldTaintEdgesEff)
-import PB.Algebra.Semiring (Boolean (..), PathValue (..))
-import PB.Algebra.Closure
-  ( star
-  , reachableSet
-  , fromEdges
-  , reconstructPath
-  )
 import PB.AST.BodyStmt  (BodyStmt (..))
 import PB.AST.Expr      (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Ident      (mkIdent)
@@ -117,26 +110,8 @@ returnRowsFromUses uses =
   ]
 
 tests :: TestTree
-tests = testGroup "TaintAlgebra"
-  [ testGroup "Semiring closure"
-      [ testCase "reachability on a 3-chain" $
-          let rel = fromEdges [ (0,1,Boolean True), (1,2,Boolean True) ]
-              sr  = star rel
-          in reachableSet sr 0 @?= Set.fromList [0,1,2]
-      , testCase "cycle terminates and is idempotent" $
-          let rel = fromEdges [ (0,1,Boolean True), (1,0,Boolean True) ]
-              sr  = star rel
-          in reachableSet sr 0 @?= Set.fromList [0,1]
-      , testCase "witness path reconstructs 0->1->2" $
-          let rel = fromEdges
-                [ (0,1, Reachable 1 (Just 'a') 0)
-                , (1,2, Reachable 1 (Just 'b') 1)
-                ]
-              sr  = star rel
-          in reconstructPath sr 0 2 @?= Just ['a','b']
-      ]
-
-  , testGroup "taintReachable"
+tests = testGroup "TaintClosure"
+  [ testGroup "taintReachable"
       [ testCase "reachability spans all four edge rules (intra/arg/return/global)" $
           -- Golden expected set (independently traced + cross-verified
           -- against the deleted BFS oracle in every CI run and the real

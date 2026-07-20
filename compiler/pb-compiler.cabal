@@ -230,7 +230,7 @@ test-suite pb-compiler-test
     , CloneDetectTest
     , ClosureTest
     , TaintEdgesTest
-    , TaintAlgebraTest
+    , TaintClosureTest
     , DeadCodeReachabilityTest
     , SchemaClosureTest
   build-depends:

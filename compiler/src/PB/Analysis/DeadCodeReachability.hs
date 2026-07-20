@@ -2,7 +2,7 @@
 -- | Dead-code reachability via 'PB.Algebra.Closure.reachFrom' (sparse
 -- worklist relaxation) — production's sole source for @proc_dead@.
 --
--- This is deliberately NOT 'PB.Algebra.Closure.star''s all-pairs closure:
+-- This is deliberately NOT an all-pairs closure:
 -- for this large/sparse call graph with a small entry-point seed set, the
 -- all-pairs variant is asymptotically wrong (quadratic in node count where a
 -- seeded single-source relaxation is near-linear).
@@ -24,7 +24,7 @@
 --   * 'override_edge' is the same 3-way join
 --     (@proc(parent,method) ∧ descendant(child,parent) ∧ proc(child,method)@).
 --   * 'proc_reachable' is the seeded 'reachFrom' from @entry@ over the call
---     graph + override edges — the all-pairs 'star' primitive is unsound here
+--     graph + override edges — the all-pairs closure primitive is unsound here
 --     (it computes a different, un-seeded relation).
 --   * 'proc_dead' = every 'proc' not in 'proc_reachable'.
 --

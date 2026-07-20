@@ -4,15 +4,15 @@
 -- over an interned relation, replacing 'PB.Analysis.Taint.propagateTaint''s
 -- BFS (and the separate backward walk) with
 -- 'PB.Algebra.Closure.reachFrom' — a sparse worklist relaxation from the
--- taint sources, not 'PB.Algebra.Closure.star''s all-pairs closure (which
+-- taint sources, not an all-pairs closure (which
 -- is asymptotically wrong for a large sparse graph with a small seed set;
 -- see doc/plan/182-algebraic-analysis.md Section 11 for the real-corpus
--- evidence: 'star' was >15,000x slower than the BFS oracle).
+-- evidence: an all-pairs closure was >15,000x slower than the BFS oracle).
 --
 -- The edge relation is *identical* to the one 'propagateTaint' walks: the
 -- four rules (intra-proc same-line def-use, arg, return, global-hub)
 -- are re-stated as a pure successor function so the BFS and the algebraic
--- closure consume the same arcs — the A/B test in 'TaintAlgebraTest'
+-- closure consume the same arcs — the A/B test in 'TaintClosureTest'
 -- proves they agree.
 --
 -- See doc/plan/182-algebraic-analysis.md.

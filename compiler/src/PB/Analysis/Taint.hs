@@ -6,7 +6,7 @@
 -- EXECUTE IMMEDIATE) directly from the AST, and builds inter-procedural
 -- arg/return/global edges. The taint closure itself (reachability,
 -- confirmed source-sink pairs, witness paths) is
--- 'PB.Analysis.TaintClosure' — an algebraic Kleene-star closure, not BFS.
+-- 'PB.Analysis.TaintClosure' — an algebraic closure, not BFS.
 module PB.Analysis.Taint
   ( -- * Types
     SqlStmt (..)

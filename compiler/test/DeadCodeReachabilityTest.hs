@@ -1,7 +1,7 @@
 module DeadCodeReachabilityTest (tests) where
 
 -- | Golden regression suite for 'PB.Analysis.DeadCodeReachability.deadReach'
--- (a 'PB.Algebra.Closure.reachFrom'-based sparse closure — NOT 'star'),
+-- (a 'PB.Algebra.Closure.reachFrom'-based sparse closure — not an all-pairs closure),
 -- production's sole source for @proc_dead@. Each fixture's expected dead set
 -- was hand-verified; 'deadReach' is the sole implementation, so the
 -- assertions below are the regression contract.

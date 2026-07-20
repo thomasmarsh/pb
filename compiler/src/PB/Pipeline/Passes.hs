@@ -218,7 +218,7 @@ runPass5 conn = Progress.timedStep "Resolving types" $ do
 -- | Pass 6+7: compute interproc edges and taint classification ONCE
 -- corpus-wide, then the taint closure itself (@taint_reaches@\/
 -- @taint_confirmed@) and the witness-path table (@taint_step_kind@) via
--- the algebraic Kleene-star closure ('TaintClosure.materializeTaintClosure'\/
+-- the algebraic closure ('TaintClosure.materializeTaintClosure'\/
 -- 'TaintClosure.materializeTaintStepKind') — production's source for all
 -- three tables. Neither depends on a DB round-trip: both read straight off
 -- the same in-memory rows this pass already built.
