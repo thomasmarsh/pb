@@ -18,7 +18,8 @@
 -- See doc/plan/182-algebraic-analysis.md.
 module PB.Analysis.TaintClosure
   ( TaintTriple
-  , taintRelation
+  , TaintClosure
+  , buildTaintClosure
   , taintPathRelation
   , taintReachable
   , taintReachesPairs
@@ -37,8 +38,7 @@ import PB.Analysis.Taint
   )
 import PB.Analysis.Taint qualified as Taint
 import PB.Analysis.TaintEdges (TaintIntraEdgeRow (..), TaintReturnRow (..))
-import PB.Analysis.TaintEdges qualified as TaintEdges
-import PB.Algebra.Semiring (Boolean (..), PathValue (..))
+import PB.Algebra.Semiring (PathValue (..))
 import PB.Algebra.Closure
   ( Interner (..)
   , emptyInterner
@@ -75,7 +75,7 @@ type TaintTriple = (Text, Text, Text)
 -- built ONCE from the already-folded 'TaintEdges' output (the
 -- 'TaintIntraEdgeRow'/'TaintReturnRow' tables written in Phase A) plus the
 -- cross-procedure 'InterprocEdge's, and returned as a plain function so the
--- per-seed relaxation in 'taintRelation'/'taintPathRelation' never rebuilds
+-- per-seed relaxation in 'taintPathRelation' never rebuilds
 -- the HashMaps. (The old 'TaintIndex'/'taintSuccessorsIx' shape relied on
 -- GHC full-laziness to float those builds out of a curried lambda and did
 -- not reliably share on the real corpus -- see
@@ -124,34 +124,45 @@ buildTaintSuccessors intraEdges returnRows edges = \triple -> successorsOf tripl
           | e <- HM.findWithDefault [] (obj, proc, var) globalEdges
           ]
 
--- | Build the interned Boolean relation for a taint problem. Returns the
--- interner (for decoding ids back to triples) and the raw relation.
-taintRelation
+-- | The shared taint closure: a single PathValue relation built once, plus
+-- the interner and the two starred reachability relations the derived
+-- outputs need. All three production outputs (@taint_reaches@ \/
+-- @taint_confirmed@ \/ @taint_step_kind@) are derived from this one
+-- structure (doc/plan/187-perf-hotspots.md §11.3), replacing the previous
+-- 3×-redundant Boolean 'taintRelation' builds. The PathValue relation
+-- carries the same arcs as the old Boolean relation, so every derived
+-- reachable set is unchanged.
+--
+-- Fields: (1) interner, (2) base PathValue relation (for direct-successor
+-- lookup), (3) source ids, (4) 'reachFrom' starred relation seeded from
+-- the sources directly (so a source that is also a sink keeps its 0-hop
+-- membership), (5) 'reachFrom' starred relation seeded from each source's
+-- direct successors (so a source stays out of its own @taint_reaches@ set
+-- unless a real cycle returns to it).
+data TaintClosure = TaintClosure
+  (Interner TaintTriple)
+  (Relation (PathValue (Text, Text, Text)))
+  [Int]
+  (Relation (PathValue (Text, Text, Text)))
+  (Relation (PathValue (Text, Text, Text)))
+
+-- | Build the shared 'TaintClosure' once: intern the PathValue relation and
+-- precompute the two 'reachFrom' fixpoints the derived outputs consume.
+buildTaintClosure
   :: [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge] -> [TaintSource]
-  -> (Interner TaintTriple, Relation Boolean)
-taintRelation intraEdges returnRows edges sources =
-  let successors = buildTaintSuccessors intraEdges returnRows edges
-      seeds  = sourceTriples sources
-                 ++ [ (tierObject r, tierProcName r, tierUseVar r) | r <- intraEdges ]
-                 ++ [ (tierObject r, tierProcName r, tierDefVar r) | r <- intraEdges ]
-                 ++ [ (trrObject r, trrProcName r, trrVarName r) | r <- returnRows ]
-                 ++ [ (ieCalleeObject e, ieCalleeProc e, ieCalleeContext e) | e <- edges ]
-                 ++ [ (ieCallerObject e, ieCallerProc e, ieCallerContext e) | e <- edges ]
-      arcPairs = dedup [ (cur, dst) | cur <- seeds, (dst, _, _) <- successors cur ]
-      -- `seeds` is unioned in directly (not just derived from arcPairs'
-      -- endpoints) so a seed with zero outgoing successors -- e.g. a
-      -- taint source var never subsequently used/passed/returned -- still
-      -- gets interned and keeps its own trivial 0-hop membership. See
-      -- doc/plan/182-algebraic-analysis.md Section 11.
-      allTriples = dedup (seeds ++ concatMap (\(a, b) -> [a, b]) arcPairs)
-      interner = L.foldl' (\acc t -> snd (intern t acc)) emptyInterner allTriples
-      idOf t = HM.lookup t (internByVal interner)
-      rawArcs = [ (i, j) | (a, b) <- arcPairs, Just i <- [idOf a], Just j <- [idOf b] ]
-  in (interner, fromEdges [ (i, j, Boolean True) | (i, j) <- rawArcs ])
-  where
-    sourceTriples ss = [ (tsObject s, tsProcName s, tsVarName s) | s <- ss ]
-    dedup :: Ord a => [a] -> [a]
-    dedup = Set.toList . Set.fromList
+  -> TaintClosure
+buildTaintClosure intraEdges returnRows edges sources =
+  let (interner, rel) = taintPathRelation intraEdges returnRows edges sources
+      idByVal = internByVal interner
+      srcIds = Set.toList (Set.fromList
+                 [ i | s <- sources
+                     , let t = (tsObject s, tsProcName s, tsVarName s)
+                     , Just i <- [HM.lookup t idByVal] ])
+      directSucc i = IM.keys (IM.findWithDefault IM.empty i rel)
+      allSuccSeeds = Set.toList (Set.fromList (concatMap directSucc srcIds))
+      reachSrc  = reachFrom rel srcIds
+      reachSucc = reachFrom rel allSuccSeeds
+  in TaintClosure interner rel srcIds reachSrc reachSucc
 
 -- | Build the interned PathValue relation (carrying a witness label per
 -- edge) for the same taint problem — used for witness reconstruction
@@ -169,7 +180,7 @@ taintPathRelation intraEdges returnRows edges sources =
                  ++ [ (ieCallerObject e, ieCallerProc e, ieCallerContext e) | e <- edges ]
       labeled = [ (cur, dst, kind, desc)
                    | cur <- seeds, (dst, kind, desc) <- successors cur ]
-      -- Same interner-seeding fix as taintRelation above -- see its
+      -- Same interner-seeding fix as 'buildTaintClosure' above -- see its
       -- comment.
       allTriples = dedup (seeds
                      ++ concatMap (\(a, _, _, _) -> [a]) labeled
@@ -188,12 +199,13 @@ taintPathRelation intraEdges returnRows edges sources =
     snd3 (_, _, z) = z
 
 -- | Tainted triples: the reachability set from all sources, as a 'Set'
--- of triples. Equals the first component of 'propagateTaint'.
+-- of triples. Equals the first component of 'propagateTaint'. Derived from
+-- the single PathValue relation (same arc set as the old Boolean relation).
 taintReachable
   :: [TaintSource] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge]
   -> Set TaintTriple
 taintReachable sources intraEdges returnRows edges =
-  let (interner, rel) = taintRelation intraEdges returnRows edges sources
+  let (interner, rel) = taintPathRelation intraEdges returnRows edges sources
       idOf t = HM.lookup t (internByVal interner)
       srcIds = [ i | s <- sources
                , let t = (tsObject s, tsProcName s, tsVarName s)
@@ -201,8 +213,8 @@ taintReachable sources intraEdges returnRows edges =
       reachRel = reachFrom rel srcIds
   in Set.fromList
        [ t | srcId <- srcIds
-       , dstId <- Set.toList (reachableSet reachRel srcId)
-       , Just t <- [unintern dstId interner]
+           , dstId <- Set.toList (reachableSet reachRel srcId)
+           , Just t <- [unintern dstId interner]
        ]
 
 -- | Per-source (source, node reachable via >=1 real edge) pairs, matching the
@@ -223,25 +235,21 @@ taintReachesPairs
   :: [TaintSource] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge]
   -> [(TaintTriple, TaintTriple)]
 taintReachesPairs sources intraEdges returnRows edges =
-  let (interner, rel) = taintRelation intraEdges returnRows edges sources
-      idOf t = HM.lookup t (internByVal interner)
-      srcIds = dedup [ i | s <- sources
-                     , let t = (tsObject s, tsProcName s, tsVarName s)
-                     , Just i <- [idOf t] ]
+  taintReachesPairsClosure (buildTaintClosure intraEdges returnRows edges sources)
+
+-- | 'taintReachesPairs' over a prebuilt 'TaintClosure' (no relation rebuild).
+taintReachesPairsClosure :: TaintClosure -> [(TaintTriple, TaintTriple)]
+taintReachesPairsClosure (TaintClosure interner rel srcIds _reachSrc reachSucc) =
+  let decode i = unintern i interner
       directSucc i = IM.keys (IM.findWithDefault IM.empty i rel)
-      allSuccSeeds = dedup (concatMap directSucc srcIds)
-      reachRel = reachFrom rel allSuccSeeds
       reach1Hop srcId = Set.unions
-        [ Set.insert d (reachableSet reachRel d) | d <- directSucc srcId ]
+        [ Set.insert d (reachableSet reachSucc d) | d <- directSucc srcId ]
   in [ (s, y)
      | srcId <- srcIds
-     , Just s <- [unintern srcId interner]
+     , Just s <- [decode srcId]
      , yId <- Set.toList (reach1Hop srcId)
-     , Just y <- [unintern yId interner]
+     , Just y <- [decode yId]
      ]
-  where
-    dedup :: Ord a => [a] -> [a]
-    dedup = Set.toList . Set.fromList
 
 -- | Confirmed (source, sink) pairs: a sink reachable from a *specific*
 -- source (cf. 'taint_confirmed'). Deduplicated by (source key, sink key)
@@ -258,12 +266,13 @@ taintConfirmed
   :: [TaintSource] -> [TaintSink] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge]
   -> [(TaintSource, TaintSink)]
 taintConfirmed sources sinks intraEdges returnRows edges =
-  let (interner, rel) = taintRelation intraEdges returnRows edges sources
-      idByVal = internByVal interner
-      srcIds = [ i | s <- sources
-               , let t = (tsObject s, tsProcName s, tsVarName s)
-               , Just i <- [HM.lookup t idByVal] ]
-      reachRel = reachFrom rel srcIds
+  taintConfirmedClosure (buildTaintClosure intraEdges returnRows edges sources) sources sinks
+
+-- | 'taintConfirmed' over a prebuilt 'TaintClosure' (no relation rebuild).
+taintConfirmedClosure
+  :: TaintClosure -> [TaintSource] -> [TaintSink] -> [(TaintSource, TaintSink)]
+taintConfirmedClosure (TaintClosure interner _rel _srcIds reachSrc _reachSucc) sources sinks =
+  let idByVal = internByVal interner
       sinkTriple snk = (tskObject snk, tskProcName snk, tskVarName snk)
       allPairs =
         [ (src, snk)
@@ -273,7 +282,7 @@ taintConfirmed sources sinks intraEdges returnRows edges =
         , snk <- sinks
         , let snkT = sinkTriple snk
         , Just sinkId <- [HM.lookup snkT idByVal]
-        , sinkId `Set.member` reachableSet reachRel srcId
+        , sinkId `Set.member` reachableSet reachSrc srcId
         ]
       keyOf (src, snk) =
         ((tsObject src, tsProcName src, tsVarName src), sinkTriple snk)
@@ -312,19 +321,21 @@ taintWitnessLegs
   :: [TaintSource] -> [TaintIntraEdgeRow] -> [TaintReturnRow] -> [InterprocEdge]
   -> [(TaintTriple, TaintTriple, [(TaintTriple, TaintTriple, Text, Text)])]
 taintWitnessLegs sources intraEdges returnRows edges =
-  let (interner, rel) = taintPathRelation intraEdges returnRows edges sources
-      idByVal = internByVal interner
-      decode i = unintern i interner
-      srcPairs = [ (s, i) | s <- sources
-                  , let t = (tsObject s, tsProcName s, tsVarName s)
-                  , Just i <- [HM.lookup t idByVal] ]
-      reachRel = reachFrom rel (map snd srcPairs)
+  taintWitnessLegsClosure (buildTaintClosure intraEdges returnRows edges sources)
+
+-- | 'taintWitnessLegs' over a prebuilt 'TaintClosure' (no relation rebuild).
+taintWitnessLegsClosure
+  :: TaintClosure
+  -> [(TaintTriple, TaintTriple, [(TaintTriple, TaintTriple, Text, Text)])]
+taintWitnessLegsClosure (TaintClosure interner _rel srcIds reachSrc _reachSucc) =
+  let decode i = unintern i interner
+      reachRel = reachSrc
       decodeLeg (fromId, toId, (kind, desc, _)) = do
         fromT <- decode fromId
         toT   <- decode toId
         pure (fromT, toT, kind, desc)
   in [ (srcT, dstT, legs)
-     | (_, srcId) <- srcPairs
+     | srcId <- srcIds
      , Just srcT <- [decode srcId]
      , dstId <- Set.toList (reachableSet reachRel srcId)
      , Just dstT <- [decode dstId]
@@ -332,16 +343,15 @@ taintWitnessLegs sources intraEdges returnRows edges =
      , Just legs <- [traverse decodeLeg rawLegs]
      ]
 
--- | Materialize @taint_reaches@\/@taint_confirmed@ from the closure
--- ('taintReachesPairs' / 'taintConfirmed'). Takes the same already-computed
--- inputs 'PB.Pipeline.Passes.runPass67' builds for its interproc-edge\/
--- source\/sink classification, so no extra DB round-trip is needed.
+-- | Materialize @taint_reaches@\/@taint_confirmed@ from the shared closure
+-- ('taintReachesPairsClosure' / 'taintConfirmedClosure'). Takes the
+-- prebuilt 'TaintClosure' 'PB.Pipeline.Passes.runPass67' constructs once,
+-- so no relation is rebuilt and no extra DB round-trip is needed.
 materializeTaintClosure
-  :: [Taint.TaintSource] -> [Taint.TaintSink] -> [TaintEdges.TaintIntraEdgeRow] -> [TaintEdges.TaintReturnRow]
-  -> [Taint.InterprocEdge] -> Handle -> IO ()
-materializeTaintClosure sources sinks intraEdges returnRows edges conn = do
-  let reaches   = taintReachesPairs sources intraEdges returnRows edges
-      confirmed = taintConfirmed sources sinks intraEdges returnRows edges
+  :: TaintClosure -> [Taint.TaintSource] -> [Taint.TaintSink] -> Handle -> IO ()
+materializeTaintClosure closure sources sinks conn = do
+  let reaches   = taintReachesPairsClosure closure
+      confirmed = taintConfirmedClosure closure sources sinks
       reachRows =
         [ [taintKey ox px vx, taintKey oy py vy]
         | ((ox, px, vx), (oy, py, vy)) <- reaches
@@ -358,8 +368,8 @@ materializeTaintClosure sources sinks intraEdges returnRows edges conn = do
   appendTextRows conn "taint_confirmed" confirmedRows
 
 -- | Materialize @taint_step_kind@ from the witness
--- ('taintWitnessLegs'), restricted to CONFIRMED (source,
--- sink) pairs -- 'taintWitnessLegs' is per-reachable-node, a strict
+-- ('taintWitnessLegsClosure'), restricted to CONFIRMED (source,
+-- sink) pairs -- 'taintWitnessLegsClosure' is per-reachable-node, a strict
 -- superset of the confirmed pairs this table reports one row per hop
 -- for. Row shape and @step_kind@\/@description@ conventions: leg_ord 0 is
 -- always "source", every other leg's @step_kind@\/@description@ echo its
@@ -369,11 +379,10 @@ materializeTaintClosure sources sinks intraEdges returnRows edges conn = do
 -- embeds these verbatim into @taint_paths.steps_json@, so the shape is
 -- load-bearing, not incidental formatting.
 materializeTaintStepKind
-  :: [Taint.TaintSource] -> [Taint.TaintSink] -> [TaintEdges.TaintIntraEdgeRow] -> [TaintEdges.TaintReturnRow]
-  -> [Taint.InterprocEdge] -> Handle -> IO ()
-materializeTaintStepKind sources sinks intraEdges returnRows edges conn = do
-  let confirmed   = taintConfirmed sources sinks intraEdges returnRows edges
-      witnessLegs = taintWitnessLegs sources intraEdges returnRows edges
+  :: TaintClosure -> [Taint.TaintSource] -> [Taint.TaintSink] -> Handle -> IO ()
+materializeTaintStepKind closure sources sinks conn = do
+  let confirmed   = taintConfirmedClosure closure sources sinks
+      witnessLegs = taintWitnessLegsClosure closure
       legsByPair  = HM.fromList [ ((srcT, dstT), legList) | (srcT, dstT, legList) <- witnessLegs ]
       rows        = concatMap (rowsForPair legsByPair) confirmed
   recreateTextTable conn "taint_step_kind"
