@@ -224,22 +224,28 @@ runPass5 conn = Progress.timedStep "Resolving types" $ do
 -- the same in-memory rows this pass already built.
 runPass67 :: Handle -> IO ()
 runPass67 conn = Progress.timedStep "Building call graph" $ do
-  gvs  <- queryGlobalVars     conn
-  defs <- queryProcDefs       conn
-  uses <- queryProcUses       conn
-  allRC <- queryResolvedCalls conn
-  tfis  <- queryTaintInputs   conn
-  intraEdges <- queryTaintIntraEdges conn
-  returnRows <- queryTaintReturnRows conn
-  let globalVarNames = Set.fromList (map (mkIdent . gvName) gvs)
-      allProcMetas   = concatMap Taint.tfiProcMetas tfis
-      allSqlStmts    = concatMap Taint.tfiSqlStmts  tfis
-      edges          = Taint.buildInterprocEdges allRC defs uses globalVarNames allProcMetas
-      summaries      = Taint.buildProcedureSummaries edges defs uses globalVarNames allProcMetas
-      allSources     = Taint.classifySources allSqlStmts allProcMetas
-      allSinks       = Taint.classifySinks   allSqlStmts
-  appendInterprocEdges   conn edges
-  appendProcSummaries    conn summaries
+  (gvs, defs, uses, allRC, tfis, intraEdges, returnRows) <-
+    Progress.timedStep "Load taint inputs (7 queries)" $ do
+      gvs  <- queryGlobalVars     conn
+      defs <- queryProcDefs       conn
+      uses <- queryProcUses       conn
+      allRC <- queryResolvedCalls conn
+      tfis  <- queryTaintInputs   conn
+      intraEdges <- queryTaintIntraEdges conn
+      returnRows <- queryTaintReturnRows conn
+      pure (gvs, defs, uses, allRC, tfis, intraEdges, returnRows)
+  (allSources, allSinks, edges) <-
+    Progress.timedStep "Build interproc edges + summaries + classify" $ do
+      let globalVarNames = Set.fromList (map (mkIdent . gvName) gvs)
+          allProcMetas   = concatMap Taint.tfiProcMetas tfis
+          allSqlStmts    = concatMap Taint.tfiSqlStmts  tfis
+          edges          = Taint.buildInterprocEdges allRC defs uses globalVarNames allProcMetas
+          summaries      = Taint.buildProcedureSummaries edges defs uses globalVarNames allProcMetas
+          allSources     = Taint.classifySources allSqlStmts allProcMetas
+          allSinks       = Taint.classifySinks   allSqlStmts
+      appendInterprocEdges   conn edges
+      appendProcSummaries    conn summaries
+      pure (allSources, allSinks, edges)
   Progress.timedStep "Taint classification" $ do
     appendTaintSources     conn allSources
     appendTaintSinks       conn allSinks
