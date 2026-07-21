@@ -3,10 +3,22 @@ module CorpusInvariantTest (tests) where
 import PB.Prelude
 import PB.Pipeline.Runner (runFile)
 import PB.Pipeline.FileWalk   (walkDwFiles, walkPsFiles)
+import PB.Pipeline.Emit       (parsePowerScriptFile)
+import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText)
+import PB.AST.SourceFile
+  ( SrFile (..), FunctionBlock (..), SubroutineBlock (..)
+  , EventBlock (..), OnBlock (..), TypeBlock (..)
+  )
+import PB.AST.BodyStmt
+  ( BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..)
+  , ChooseStmt (..), TryStmt (..), ElseIf (..), CaseClause (..), CatchClause (..)
+  )
+import PB.AST.Located (Located (..))
 
 import Data.Aeson (Value (..))
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
+import qualified Data.Map.Strict   as Map
 import qualified Data.Text as T
 
 import Test.Tasty       (TestTree, testGroup)
@@ -285,6 +297,254 @@ chkDwTableColumnNameNonEmpty (Object m)
 chkDwTableColumnNameNonEmpty _ = []
 
 -- ---------------------------------------------------------------------------
+-- Comma-declarator truncation check (Plan 194)
+--
+-- Coarse corpus-level second signal against silent truncation of a
+-- comma-separated declarator list (the bug class Plan 193 found in
+-- 'PB.Grammar.Body.classifyBodyStmt'/'PB.Grammar.File.buildVarDecls' --
+-- both shipped silently since a truncated statement still parses
+-- successfully, so the corpus error-count gate can't see it). Compares an
+-- independent raw-text scan of every logical line against the real
+-- typed parse, restricted to 'BsLocalVar' declarations (function/event/
+-- subroutine/on-block/type-block bodies) -- 'PB.AST.SourceFile.VarDecl'
+-- has no per-declaration source line ('buildVarDecls' flattens a comma
+-- statement into a bare list with no 'Located' wrapper), so a symmetric
+-- raw-vs-extracted comparison can't group its declarations by original
+-- statement; that gap is covered instead by the exact per-statement
+-- Hedgehog properties in FileTest.hs's "pVarDecl" group.
+--
+-- Both sides are restricted to lines/statements with at least one
+-- top-level comma (i.e. 2+ names) -- a single-name declaration
+-- contributes to neither side, keeping the check scoped to the
+-- truncation bug's actual shape instead of needing every declarator
+-- line to be raw-text-matchable.
+
+-- | Every source file that parses, paired with its raw text (for the raw
+-- side of the comparison) and its typed 'SrFile' (for the extracted side).
+loadTypedCorpus :: IO [(FilePath, Text, SrFile)]
+loadTypedCorpus = do
+    paths <- fmap concat $ mapM walkPsFiles
+        [ "example/PowerBuilder-Example-extract"
+        , "example/openpay-0.1.1b-extract"
+        ]
+    results <- mapM loadTypedFile paths
+    pure (concatMap maybeToList results)
+  where
+    loadTypedFile path = do
+        src <- readFile path
+        pure $ case parsePowerScriptFile src of
+            Left _        -> Nothing
+            Right (sf, _) -> Just (path, src, sf)
+
+-- | Sum of 'declaredNamesInSegment' over every top-level (depth-0)
+-- ';'-separated statement segment in the line -- PowerScript routinely
+-- packs multiple statements onto one physical/logical line (e.g.
+-- @event ue_x;call ancestor::ue_x;String ls_a, ls_b@), and checking only
+-- the line's first two words would either miss a real declarator later
+-- in the line or (worse) misattribute its comma to an unrelated header.
+declaredNamesInLine :: Text -> Int
+declaredNamesInLine raw =
+    sum [n | seg <- splitTopLevelSemicolons (fst (T.breakOn "//" raw))
+            , Just n <- [declaredNamesInSegment seg]]
+
+-- | Depth-0 (bracket/paren-aware) comma count in the tail of a statement
+-- segment after its first two bare-identifier tokens, if it has one.
+-- 'Nothing' means "doesn't look like a multi-name declarator segment" --
+-- deliberately conservative (see the module-level note above): the
+-- two-bare-word-then-comma shape is what every PowerScript var-decl
+-- segment shares and control-flow keywords never produce, with one
+-- corpus-confirmed exception needing an explicit deny-list on word1:
+-- "case NEW!, NEWMODIFIED!" -- PB enum-literal case values are
+-- bare-word-shaped ('!' isn't an identifier char so word2 stops right
+-- after "New"). Block comments are stripped upstream by
+-- 'stripBlockComments' before this ever runs; not a second parser: a
+-- comma inside a string literal is still not specially handled (a
+-- documented, accepted false-positive source for this coarse signal).
+declaredNamesInSegment :: Text -> Maybe Int
+declaredNamesInSegment raw =
+    let t             = T.stripStart raw
+        (w1, rest1)   = T.span isIdentChar t
+        rest1'        = skipBracePrecision (T.stripStart rest1)
+        (w2, rest2)   = T.span isIdentChar (T.stripStart rest1')
+    in if not (isBareIdent w1) || isNeverDeclKw w1 || not (isBareIdent w2)
+       then Nothing
+       else case countTopLevelCommas rest2 of
+              0      -> Nothing
+              commas -> Just (commas + 1)
+  where
+    isIdentStart c = c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+    isIdentChar  c = isIdentStart c || (c >= '0' && c <= '9')
+    isBareIdent w  = not (T.null w) && isIdentStart (T.head w)
+    -- Keywords that start a statement shape a comma can legitimately
+    -- follow without it ever being a declarator list (see the
+    -- corpus-confirmed case in the docs above; the rest are precautionary
+    -- -- all are reserved words, so excluding them can never reject a
+    -- real type name).
+    isNeverDeclKw w = T.toLower w `elem`
+        [ "case", "event", "on", "call", "choose", "do", "for", "if"
+        , "return", "while", "loop", "try", "catch", "throw"
+        -- Embedded SQL leading keywords (grammar coverage for embedded SQL
+        -- is "pending" per compiler/AGENTS.md's Corpus Coverage Checklist
+        -- -- it stays 'BsRaw' text, and a multi-line SQL statement's own
+        -- clause keywords land as word1/word2 of their own logical line
+        -- just as often as a real declarator does, e.g. "FROM customer,
+        -- orders" or "fetch lcur into :a, :b").
+        , "select", "insert", "update", "delete", "from", "where"
+        , "order", "group", "having", "values", "set", "into", "fetch"
+        , "declare", "execute", "exec", "commit", "rollback", "grant"
+        , "revoke", "join", "union"
+        ]
+    -- Skip a `{N}` precision qualifier directly after the type keyword
+    -- (e.g. `decimal{2} lc_x, lc_y` -- 'PB.AST.Type.PtDecimalPrec's
+    -- surface syntax), so word2 extraction lands on the real first name.
+    skipBracePrecision s = case T.uncons s of
+        Just ('{', rest) -> T.drop 1 (T.dropWhile (/= '}') rest)
+        _                -> s
+
+-- | Split on depth-0 (bracket/paren/brace/string-aware) ';' characters.
+splitTopLevelSemicolons :: Text -> [Text]
+splitTopLevelSemicolons = go (0 :: Int) False []
+  where
+    go _     _     acc t | T.null t = [T.concat (reverse acc)]
+    go depth inStr acc t = case T.head t of
+        '"'                             -> go depth (not inStr) (T.singleton '"' : acc) (T.tail t)
+        c | inStr                       -> go depth inStr (T.singleton c : acc) (T.tail t)
+        c | c `elem` ("([{" :: String)  -> go (depth + 1) inStr (T.singleton c : acc) (T.tail t)
+        c | c `elem` (")]}" :: String)  -> go (max 0 (depth - 1)) inStr (T.singleton c : acc) (T.tail t)
+        ';' | depth == 0                -> T.concat (reverse acc) : go depth inStr [] (T.tail t)
+        c                               -> go depth inStr (T.singleton c : acc) (T.tail t)
+
+-- | Depth-0 comma count, skipping bracket/paren/brace-nested commas (array
+-- subscripts, initializer lists, call args) and any comma inside a
+-- double-quoted string literal (a plain open/close toggle -- doesn't
+-- handle a doubled @""@-escaped quote inside a string, a known residual
+-- gap for that specific case).
+countTopLevelCommas :: Text -> Int
+countTopLevelCommas = go (0 :: Int) False (0 :: Int)
+  where
+    go _     _     acc t | T.null t = acc
+    go depth inStr acc t = case T.head t of
+        '"'                            -> go depth (not inStr) acc (T.tail t)
+        _ | inStr                      -> go depth inStr acc (T.tail t)
+        c | c `elem` ("([{" :: String) -> go (depth + 1) inStr acc (T.tail t)
+        c | c `elem` (")]}" :: String) -> go (max 0 (depth - 1)) inStr acc (T.tail t)
+        ',' | depth == 0               -> go depth inStr (acc + 1) (T.tail t)
+        _                              -> go depth inStr acc (T.tail t)
+
+-- | Drop every `/* ... */` block comment span (comment markers seen
+-- outside a double-quoted string only, so a literal @/*@ inside a string
+-- isn't mistaken for one). Confirmed load-bearing on the real corpus: PB
+-- source comments are free-form English prose, not code, so English
+-- sentence punctuation (a semicolon mid-sentence splits a
+-- 'declaredNamesInLine' segment; a comma-joined list reads as a
+-- declarator list) reliably produces false-positive raw-side matches
+-- otherwise. Applied to the whole file before 'normalizeText' so its own
+-- continuation-joining runs on already-comment-free text.
+stripBlockComments :: Text -> Text
+stripBlockComments = T.concat . reverse . go False False []
+  where
+    go :: Bool -> Bool -> [Text] -> Text -> [Text]
+    go _     _         acc t | T.null t = acc
+    go inStr inComment acc t
+        | inComment = case T.stripPrefix "*/" t of
+            Just rest -> go inStr False acc rest
+            Nothing   -> go inStr inComment acc (T.drop 1 t)
+        | inStr, Just rest <- T.stripPrefix "\"" t =
+            go False inComment (T.singleton '"' : acc) rest
+        | inStr =
+            go inStr inComment (T.singleton (T.head t) : acc) (T.drop 1 t)
+        -- A `//` line comment is skipped wholesale (not scanned char-by-
+        -- char) so a decorative banner like `//****...` -- whose 2nd/3rd
+        -- characters are literally "/*" -- can never be misread as a real
+        -- block comment opener (corpus-confirmed: this is the single most
+        -- common comment style across the example corpus).
+        | Just _    <- T.stripPrefix "//" t =
+            let (thisLine, rest) = T.break (== '\n') t
+            in go inStr inComment (thisLine : acc) rest
+        | Just rest <- T.stripPrefix "/*" t = go inStr True acc rest
+        | Just rest <- T.stripPrefix "\"" t =
+            go True inComment (T.singleton '"' : acc) rest
+        | otherwise =
+            go inStr inComment (T.singleton (T.head t) : acc) (T.drop 1 t)
+
+-- | Sum of 'declaredNamesInLine' over every logical line in the file,
+-- excluding lines inside a `[global|shared|type] variables ... end
+-- variables` block -- those are 'VarDecl' declarations, out of this
+-- check's scope (see the module-level note above), and would otherwise
+-- inflate the raw side relative to the 'BsLocalVar'-only extracted side
+-- (confirmed: real corpus `.sru` files have exactly this shape).
+-- 'normalizeText' (shared preprocessing, not 'PB.Grammar.*') joins '&'
+-- continuations first, so a declarator list split across physical lines
+-- is still seen as one line here, matching how the real statement
+-- splitter sees it.
+rawCommaDeclaredNameTotal :: Text -> Int
+rawCommaDeclaredNameTotal src = go False (normalizeText (stripBlockComments src))
+  where
+    go :: Bool -> [LogicalLine] -> Int
+    go _      []         = 0
+    go inVars (ll : rest)
+        | isVarsOpener line = go True rest
+        | isVarsCloser line = go False rest
+        | inVars             = go inVars rest
+        | otherwise          = declaredNamesInLine (llText ll) + go inVars rest
+      where line = T.toLower (T.strip (llText ll))
+
+    isVarsOpener t = t == "variables"
+                   || "global variables" `T.isPrefixOf` t
+                   || "shared variables" `T.isPrefixOf` t
+                   || "type variables"   `T.isPrefixOf` t
+    isVarsCloser t = "end variables" `T.isPrefixOf` t
+
+-- | Every 'BsLocalVar' leaf reachable from a body, paired with its source
+-- line. 'PB.Grammar.Body.pBodyStmt' assigns the same line to every
+-- 'BodyStmt' split out of one comma statement
+-- (@map (Located ln) . classifyBodyStmt@) -- so grouping by line recovers
+-- exactly which extracted names came from one original comma statement.
+collectLocalVarLines :: [Located BodyStmt] -> [Int]
+collectLocalVarLines = concatMap go
+  where
+    go (Located ln stmt) = case stmt of
+        BsLocalVar{} -> [ln]
+        BsIf (IfStmt _ thenB eifs elseB) ->
+            collectLocalVarLines thenB
+            ++ concatMap (collectLocalVarLines . eifBody) eifs
+            ++ maybe [] collectLocalVarLines elseB
+        BsFor (ForStmt _ _ _ _ body)      -> collectLocalVarLines body
+        BsDo (DoStmt _ body _)            -> collectLocalVarLines body
+        BsChoose (ChooseStmt _ clauses)   -> concatMap (collectLocalVarLines . ccBody) clauses
+        BsTry (TryStmt body catches)      ->
+            collectLocalVarLines body ++ concatMap (collectLocalVarLines . catchBody) catches
+        _ -> []
+
+-- | Sum of extracted 'BsLocalVar' names, restricted to lines that produced
+-- 2+ of them (i.e. came from a real comma statement) -- symmetric with
+-- 'rawCommaDeclaredNameTotal's "only lines with a comma count".
+extractedCommaLocalVarTotal :: SrFile -> Int
+extractedCommaLocalVarTotal sf =
+    sum (filter (>= 2) (Map.elems lineCounts))
+  where
+    lineCounts = Map.fromListWith (+) [(ln, 1 :: Int) | ln <- collectLocalVarLines (allBodies sf)]
+    allBodies s =
+        concatMap fbBody (srFunctions s)
+        ++ concatMap sbBody (srSubroutines s)
+        ++ concatMap evBody (srEvents s)
+        ++ concatMap obBody (srOnBlocks s)
+        ++ concatMap tbBody (srTypeBlocks s)
+
+chkCommaDeclaredNamesMatch :: IO [(FilePath, Text)]
+chkCommaDeclaredNamesMatch = do
+    files <- loadTypedCorpus
+    pure
+        [ (path, msg)
+        | (path, src, sf) <- files
+        , let raw       = rawCommaDeclaredNameTotal src
+        , let extracted = extractedCommaLocalVarTotal sf
+        , raw /= extracted
+        , let msg = "raw comma-declarator count " <> T.pack (show raw)
+                  <> " != extracted BsLocalVar count " <> T.pack (show extracted)
+        ]
+
+-- ---------------------------------------------------------------------------
 -- Test tree
 
 invariant :: String -> NodeCheck -> TestTree
@@ -321,6 +581,9 @@ tests = testGroup "Corpus.Invariants"
     , invariant "choose expr not empty ExRaw"        chkChooseExpr
     , fileInvariant "function sig.name non-empty"    chkFnNames
     , fileInvariant "subroutine sig.name non-empty"  chkSubNames
+    , testCase "comma-declarator count: raw text matches extracted BsLocalVar count" $ do
+        viols <- chkCommaDeclaredNamesMatch
+        assertNoViolations "comma-declarator count" viols
     , testGroup "Corpus.Meta.PS"
         [ fileInvariant "callable blocks have meta.file"                 chkPsMetaFile
         , fileInvariant "callable blocks have meta.object"               chkPsMetaObject

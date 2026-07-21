@@ -7,7 +7,7 @@ import PB.AST.BodyStmt
   , ForStmt (..), IfStmt (..), PbCall (..), TryStmt (..)
   )
 import PB.AST.Expr            (Expr (..), LvSegment (..), Lvalue (..))
-import PB.AST.Ident           (mkIdent)
+import PB.AST.Ident           (identOrig, mkIdent)
 import PB.AST.Located         (Located (..))
 import PB.AST.Type            (PbType (..))
 import PB.Grammar.Body        (classifyBodyStmt, parseBodyStmts, parseLvalue, pBodyStmt)
@@ -19,6 +19,7 @@ import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Emit       (collectStatements)
 import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText)
 
+import Data.List               (nub)
 import Hedgehog (Gen, Property, assert, eval, failure, footnote, forAll, property, success, (===))
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
@@ -394,6 +395,12 @@ tests = testGroup "Body"
                        , (TkComma, ","), (TkIdent, "n") ] ]
             names = [ varName v | Located _ v@BsLocalVar{} <- parseBodyStmts stmts ]
         in names @?= ["ll_rows", "i", "n"]
+
+    , testProperty "comma-separated local var decl: one BsLocalVar per name, order preserved"
+        propCommaLocalVarNamesPreserved
+
+    , testProperty "comma-separated local var decl: count matches comma count in the statement's own tokens"
+        propCommaLocalVarCount
     ]
 
   , testGroup "Lvalue"
@@ -668,6 +675,41 @@ normalizeBodyStmt stmt = case stmt of
 
 genIdentText :: Gen Text
 genIdentText = Gen.element ["foo", "bar", "n", "dw_1", "ls_val", "idx", "obj"]
+
+-- | 2-4 distinct names for a comma-separated declarator list. Deduped with
+-- 'nub' (order-preserving first-occurrence dedup), not a Set-based dedup
+-- (e.g. 'PB.Prelude.nubOrd') -- the properties below assert the input name
+-- order survives the round trip, and a Set-based dedup would sort it away.
+genLocalVarNames :: Gen [Text]
+genLocalVarNames =
+  Gen.filter ((>= 2) . length) (nub <$> Gen.list (Range.linear 2 4) genIdentText)
+
+-- | Tokens for `<datatype> name1, name2, ...` -- the comma-truncation shape
+-- 'PB.Grammar.Body.mkLocalVarStmts' splits.
+mkCommaVarDeclTokens :: [Text] -> [(TokenKind, Text)]
+mkCommaVarDeclTokens names =
+  (TkDatatype, "long") : go names
+  where
+    go []       = []
+    go [n]      = [(TkIdent, n)]
+    go (n : ns) = (TkIdent, n) : (TkComma, ",") : go ns
+
+propCommaLocalVarNamesPreserved :: Property
+propCommaLocalVarNamesPreserved = property $ do
+  names <- forAll genLocalVarNames
+  let stmts = [mkStmt (mkCommaVarDeclTokens names)]
+      got   = [ identOrig (varName v) | Located _ v@BsLocalVar{} <- parseBodyStmts stmts ]
+  got === names
+
+-- | Comma count is read back from the generated statement's own tokens
+-- (not the generator's 'names' list length) so this checks the parser's
+-- behaviour on its actual input, not just the generator's arithmetic.
+propCommaLocalVarCount :: Property
+propCommaLocalVarCount = property $ do
+  names <- forAll genLocalVarNames
+  let stmt   = mkStmt (mkCommaVarDeclTokens names)
+      commas = length (filter ((== TkComma) . tkKind) (stmtTokens stmt))
+  length (parseBodyStmts [stmt]) === commas + 1
 
 genSimpleLvalue :: Gen Lvalue
 genSimpleLvalue = Lvalue <$> Gen.list (Range.linear 1 2) (mkSeg <$> genIdentText)

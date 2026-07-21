@@ -24,7 +24,8 @@ import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Preprocess (LogicalLine (..))
 
-import Hedgehog (Property, forAll, property, assert)
+import Data.List                (nub)
+import Hedgehog (Gen, Property, forAll, property, assert, failure, footnote, (===))
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import Test.Tasty (TestTree, testGroup)
@@ -208,6 +209,12 @@ tests = testGroup "Grammar.File"
               ]
         runSection pVarDecl [stmt]
           @?= Right [VarDecl [] "string" "s_name", VarDecl [] "string" "s_other"]
+
+    , testProperty "comma-separated: one VarDecl per name, order preserved"
+        prop_varDecl_comma_names_preserved
+
+    , testProperty "comma-separated: count matches comma count in the statement's own tokens"
+        prop_varDecl_comma_count
 
     , testCase "negative: keyword as type name is rejected" $ do
         let stmt = mkStmt [(TkDeclKw, "function"), (TkIdent, "i_count")]
@@ -1136,6 +1143,44 @@ prop_varDecl_names_nonempty = property $ do
   case runSection pVarDecl [stmt] of
     Right vds -> assert (all (not . T.null . identOrig . vdName) vds)
     Left _    -> pure ()
+
+-- | 2-4 distinct names for a comma-separated declarator list. Deduped with
+-- 'nub' (order-preserving), not a Set-based dedup -- the properties below
+-- assert the input name order survives the round trip.
+genVarDeclNames :: Gen [Text]
+genVarDeclNames =
+  Gen.filter ((>= 2) . length) (nub <$> Gen.list (Range.linear 2 4) genVarDeclNamePool)
+  where
+    genVarDeclNamePool = Gen.element ["s_name", "s_other", "i_count", "ls_val", "lb_flag"]
+
+-- | Tokens for `<datatype> name1, name2, ...` -- the comma-truncation shape
+-- 'PB.Grammar.File.buildVarDecls' splits.
+mkCommaVarDeclTokens :: [Text] -> [(TokenKind, Text)]
+mkCommaVarDeclTokens names = (TkDatatype, "string") : go names
+  where
+    go []       = []
+    go [n]      = [(TkIdent, n)]
+    go (n : ns) = (TkIdent, n) : (TkComma, ",") : go ns
+
+prop_varDecl_comma_names_preserved :: Property
+prop_varDecl_comma_names_preserved = property $ do
+  names <- forAll genVarDeclNames
+  let stmt = mkStmt (mkCommaVarDeclTokens names)
+  case runSection pVarDecl [stmt] of
+    Right vds -> map (identOrig . vdName) vds === names
+    Left err  -> footnote err >> failure
+
+-- | Comma count is read back from the generated statement's own tokens
+-- (not the generator's 'names' list length) so this checks the parser's
+-- behaviour on its actual input, not just the generator's arithmetic.
+prop_varDecl_comma_count :: Property
+prop_varDecl_comma_count = property $ do
+  names <- forAll genVarDeclNames
+  let stmt   = mkStmt (mkCommaVarDeclTokens names)
+      commas = length (filter ((== TkComma) . tkKind) (stmtTokens stmt))
+  case runSection pVarDecl [stmt] of
+    Right vds -> length vds === commas + 1
+    Left err  -> footnote err >> failure
 
 prop_typeDecl_names_nonempty :: Property
 prop_typeDecl_names_nonempty = property $ do
