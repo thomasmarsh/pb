@@ -16,7 +16,9 @@ export function linkIdentifiers(
     }
     if (varMap.has(lower)) {
       const sym = varMap.get(lower)!;
-      const cls = sym.is_parameter ? "src-link-param" : "src-link-var";
+      const cls = sym.scope === "param" ? "src-link-param"
+        : sym.scope === "instance" ? "src-link-instance"
+        : "src-link-var";
       return `<span class="src-link ${cls}" data-link-type="var" data-link-name="${word}">${match}</span>`;
     }
     // Self-reference exclusion only applies to the object-link fallback below — a global

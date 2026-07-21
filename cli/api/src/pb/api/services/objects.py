@@ -184,19 +184,24 @@ def get_linking_context(conn: duckdb.DuckDBPyConnection, object_name: str) -> di
 
 
 def get_local_symbols(conn: duckdb.DuckDBPyConnection, object_name: str, proc_name: str | None = None) -> list[dict[str, Any]]:
-    """Resolved local-variable types for identifier-linking, optionally scoped to one procedure."""
+    """Resolved local/param/instance variable types for identifier-linking, optionally scoped to one procedure.
+
+    Instance vars carry ``scope = 'instance'`` and an empty ``proc_name`` (they have
+    no owning procedure — visible from every procedure body in the object), so a
+    proc-scoped lookup must include them alongside that procedure's own locals/params.
+    """
     try:
         if proc_name is not None:
             return rows(
                 conn.execute(
-                    "SELECT proc_name, var_name, raw_type, resolved_kind, resolved_target, is_parameter "
-                    "FROM resolved_types WHERE object = ? AND proc_name = ? ORDER BY var_name",
+                    "SELECT proc_name, var_name, raw_type, kind AS resolved_kind, target AS resolved_target, scope "
+                    "FROM resolved_types WHERE object = ? AND (proc_name = ? OR scope = 'instance') ORDER BY var_name",
                     [object_name, proc_name],
                 )
             )
         return rows(
             conn.execute(
-                "SELECT proc_name, var_name, raw_type, resolved_kind, resolved_target, is_parameter "
+                "SELECT proc_name, var_name, raw_type, kind AS resolved_kind, target AS resolved_target, scope "
                 "FROM resolved_types WHERE object = ? ORDER BY proc_name, var_name",
                 [object_name],
             )

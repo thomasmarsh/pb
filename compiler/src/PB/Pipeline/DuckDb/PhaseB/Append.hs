@@ -37,7 +37,7 @@ appendResolvedTypes conn rows = withRaw conn "resolved_types" $ \app ->
     aText      app (rtRawType   r)
     aText      app (rtKind      r)
     aMaybeText app (rtTarget    r)
-    aBool      app (rtIsParam   r)
+    aText      app (rtScope     r)
     aInt       app (rtScopeLine r)
 
 appendResolvedCalls :: Handle -> [ResolvedCall] -> IO ()

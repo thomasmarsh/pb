@@ -101,7 +101,7 @@ export interface LocalSymbolInfo {
   raw_type: string;
   resolved_kind: string;
   resolved_target: string | null;
-  is_parameter: boolean;
+  scope: "local" | "param" | "instance";
 }
 
 export interface ObjectSourceResponse {

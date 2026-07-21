@@ -6,8 +6,8 @@ function makeProc(name: string): KnownProcInfo {
   return { name, object: "w_test", proc_type: "function", params: null, return_type: null, modifiers: null, start_line: 1, end_line: 10, cyclomatic: null };
 }
 
-function makeVar(name: string, isParam = false): LocalSymbolInfo {
-  return { proc_name: "f_go", var_name: name, raw_type: "string", resolved_kind: "primitive", resolved_target: null, is_parameter: isParam };
+function makeVar(name: string, scope: LocalSymbolInfo["scope"] = "local"): LocalSymbolInfo {
+  return { proc_name: "f_go", var_name: name, raw_type: "string", resolved_kind: "primitive", resolved_target: null, scope };
 }
 
 const emptyObj = new Map<string, { name: string; kind: string }>();
@@ -44,9 +44,15 @@ describe("linkIdentifiers", () => {
   });
 
   it("links a parameter with param class", () => {
-    const vars = new Map([["as_name", makeVar("as_name", true)]]);
+    const vars = new Map([["as_name", makeVar("as_name", "param")]]);
     const result = linkIdentifiers("as_name", emptyObj, emptyProc, vars, "self");
     expect(result).toContain("src-link-param");
+  });
+
+  it("links an instance var with instance class", () => {
+    const vars = new Map([["ii_count", makeVar("ii_count", "instance")]]);
+    const result = linkIdentifiers("ii_count", emptyObj, emptyProc, vars, "self");
+    expect(result).toContain("src-link-instance");
   });
 
   it("skips self-references (case-insensitive)", () => {

@@ -13,7 +13,7 @@ function makeKnownProc(name: string, object = "w_other"): KnownProcInfo {
 }
 
 function makeVar(name: string): LocalSymbolInfo {
-  return { proc_name: "f_go", var_name: name, raw_type: "integer", resolved_kind: "primitive", resolved_target: null, is_parameter: false };
+  return { proc_name: "f_go", var_name: name, raw_type: "integer", resolved_kind: "primitive", resolved_target: null, scope: "local" };
 }
 
 describe("buildObjectMap", () => {

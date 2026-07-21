@@ -219,7 +219,7 @@ initSchema conn = mapM_ (void . execute_ (hConn conn)) allTables
       -- Phase B tables
       , "CREATE TABLE IF NOT EXISTS resolved_types \
         \(file TEXT, object TEXT, proc_name TEXT, var_name TEXT, \
-        \raw_type TEXT, kind TEXT, target TEXT, is_param BOOLEAN, scope_line INTEGER)"
+        \raw_type TEXT, kind TEXT, target TEXT, scope TEXT, scope_line INTEGER)"
       , "CREATE TABLE IF NOT EXISTS resolved_calls \
         \(file TEXT, object TEXT, from_proc TEXT, to_name TEXT, \
         \call_type TEXT, line INTEGER, \

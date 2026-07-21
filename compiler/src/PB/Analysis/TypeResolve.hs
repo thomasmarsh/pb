@@ -28,6 +28,7 @@ module PB.Analysis.TypeResolve
   , extractDwControlBindings
   , findLiteralDataObject
   , resolveTypes
+  , resolveGlobalTypes
   , resolveCalls
   , resolveVirtual
   , resolveStaticCall
@@ -194,7 +195,7 @@ data ResolvedType = ResolvedType
   , rtRawType   :: Text
   , rtKind      :: Text    -- "primitive" | "user_type" | "object" | "any" | "unresolved"
   , rtTarget    :: Maybe Text
-  , rtIsParam   :: Bool
+  , rtScope     :: Text    -- "local" | "param" | "instance"
   , rtScopeLine :: Int
   } deriving (Eq, Show)
 
@@ -207,7 +208,7 @@ instance ToJSON ResolvedType where
     , "rawType"   .= rtRawType   rt
     , "kind"      .= rtKind      rt
     , "target"    .= rtTarget    rt
-    , "isParam"   .= rtIsParam   rt
+    , "scope"     .= rtScope     rt
     , "scopeLine" .= rtScopeLine rt
     ]
 
@@ -644,8 +645,37 @@ resolveTypes vars objs userTypes = map resolve vars
            , rtRawType   = lvRawType lv
            , rtKind      = kind'
            , rtTarget    = target'
-           , rtIsParam   = lvIsParam lv
+           , rtScope     = if lvIsParam lv then "param" else "local"
            , rtScopeLine = lvScopeLine lv
+           }
+
+-- | Classify each instance (data member) variable's type. Unlike
+-- 'resolveTypes', an instance var has no owning procedure -- it is visible
+-- from every procedure body in its object -- so 'rtProcName' is the empty
+-- text and consumers key visibility off 'rtScope' == "instance" instead of
+-- a proc-name match (mirrors 'paramsToVars' using scope line 0 for "no
+-- specific line" rather than inventing a Maybe).
+resolveGlobalTypes :: [GlobalVar] -> IdentSet -> IdentSet -> [ResolvedType]
+resolveGlobalTypes vars objs userTypes = map resolve vars
+  where
+    resolve gv =
+      let pbTy = parseTypeText (gvType gv)
+          (kind, target) = classifyPbType pbTy objs userTypes
+          (kind', target') = case kind of
+            "unresolved" -> case classifyControlType (gvName gv) of
+              Just ctrlType -> ("primitive", Just ctrlType)
+              Nothing       -> (kind, target)
+            _            -> (kind, target)
+      in ResolvedType
+           { rtFile      = gvFile gv
+           , rtObject    = gvObject gv
+           , rtProcName  = ""
+           , rtVarName   = gvName gv
+           , rtRawType   = gvType gv
+           , rtKind      = kind'
+           , rtTarget    = target'
+           , rtScope     = "instance"
+           , rtScopeLine = 0
            }
 
 -- ---------------------------------------------------------------------------

@@ -23,7 +23,7 @@ mkRT obj proc varN rawTy kind target = ResolvedType
   , rtRawType   = rawTy
   , rtKind      = kind
   , rtTarget    = target
-  , rtIsParam   = False
+  , rtScope     = "local"
   , rtScopeLine = 1
   }
 

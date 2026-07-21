@@ -99,7 +99,9 @@ export function SourceView(props: SourceViewProps): JSX.Element {
       setTooltip({ html: t.html, x: e.clientX + 12, y: e.clientY + 12 });
     } else if (linkType === "var") {
       const sym = varMap().get(lower);
-      link.style.color = sym?.is_parameter ? "#4fc1ff" : "#9cdcfe";
+      link.style.color = sym?.scope === "param" ? "#4fc1ff"
+        : sym?.scope === "instance" ? "#c586c0"
+        : "#9cdcfe";
       const t = buildVarTooltip(linkName, sym);
       if (t) setTooltip({ html: t.html, x: e.clientX + 12, y: e.clientY + 12 });
     }

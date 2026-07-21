@@ -50,15 +50,25 @@ export function buildProcTooltip(
   return { color, html };
 }
 
+const VAR_SCOPE_COLORS: Record<LocalSymbolInfo["scope"], string> = {
+  param: "#4fc1ff",
+  instance: "#c586c0",
+  local: "#9cdcfe",
+};
+
+const VAR_SCOPE_BADGES: Record<LocalSymbolInfo["scope"], string> = {
+  param: `<span class="badge badge-param">param</span>`,
+  instance: `<span class="badge badge-instance">instance</span>`,
+  local: `<span class="badge badge-var">local</span>`,
+};
+
 export function buildVarTooltip(
   linkName: string,
   sym: LocalSymbolInfo | undefined,
 ): TooltipContent | null {
   if (!sym) return null;
-  const color = sym.is_parameter ? "#4fc1ff" : "#9cdcfe";
-  const badge = sym.is_parameter
-    ? `<span class="badge badge-param">param</span>`
-    : `<span class="badge badge-var">local</span>`;
+  const color = VAR_SCOPE_COLORS[sym.scope];
+  const badge = VAR_SCOPE_BADGES[sym.scope];
   const kindColor = sym.resolved_kind === "object" ? "#5B8DD9"
     : sym.resolved_kind === "primitive" ? "#4ec9b0"
     : "#9cdcfe";

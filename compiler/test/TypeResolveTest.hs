@@ -382,6 +382,42 @@ tests = testGroup "TypeResolve"
             other -> assertFailure ("expected 1 result, got " ++ show (length other))
       ]
 
+  , testGroup "resolveGlobalTypes"
+      [ testCase "primitive instance var -> primitive kind, instance scope" $ do
+          let gv = GlobalVar
+                { gvFile   = "t.srw"
+                , gvObject = "w_t"
+                , gvName   = "ii_count"
+                , gvType   = "integer"
+                , gvMods   = []
+                }
+          case resolveGlobalTypes [gv] identSetEmpty identSetEmpty of
+            [rt] -> do
+              rtKind rt     @?= "primitive"
+              rtTarget rt   @?= Nothing
+              rtScope rt    @?= "instance"
+              rtProcName rt @?= ""
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "object-typed instance var -> object kind with target, instance scope" $ do
+          let gv = GlobalVar
+                { gvFile   = "t.srw"
+                , gvObject = "w_t"
+                , gvName   = "iw_child"
+                , gvType   = "w_main"
+                , gvMods   = []
+                }
+          case resolveGlobalTypes [gv] (identSetSingleton (mkIdent "w_main")) identSetEmpty of
+            [rt] -> do
+              rtKind rt   @?= "object"
+              rtTarget rt @?= Just "w_main"
+              rtScope rt  @?= "instance"
+            other -> assertFailure ("expected 1 result, got " ++ show (length other))
+
+      , testCase "empty input yields no results" $
+          resolveGlobalTypes [] identSetEmpty identSetEmpty @?= []
+      ]
+
   , testGroup "resolveCalls"
       [ testCase "bare call to own proc → virtual high" $ do
           let site = CallSite

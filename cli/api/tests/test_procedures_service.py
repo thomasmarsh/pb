@@ -20,9 +20,15 @@ def test_get_procedure_detail_includes_linking_context(db_conn: duckdb.DuckDBPyC
 
 
 def test_get_procedure_detail_local_symbols_scoped_to_proc(db_conn: duckdb.DuckDBPyConnection):
+    """Every symbol either belongs to fn_perm itself or is an instance var
+    (scope == "instance", empty proc_name) visible from every procedure body."""
     result = get_procedure_detail(db_conn, "fn_perm", "fn_perm")
     assert result is not None
-    assert all(s["proc_name"] == "fn_perm" for s in result["localSymbols"])
+    assert len(result["localSymbols"]) > 0
+    assert all(
+        s["proc_name"] == "fn_perm" or s["scope"] == "instance"
+        for s in result["localSymbols"]
+    )
 
 
 def test_get_procedure_detail_not_found(db_conn: duckdb.DuckDBPyConnection):

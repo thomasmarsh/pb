@@ -149,7 +149,7 @@ class ResolvedTypeRow(NamedTuple):
     raw_type: str
     resolved_kind: str  # primitive/object/user_type/any/unresolved
     resolved_target: str | None
-    is_parameter: bool
+    scope: str  # local/param/instance
     scope_line: int | None
 
 

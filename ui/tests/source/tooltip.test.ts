@@ -17,7 +17,7 @@ function makeKnownProc(overrides: Partial<KnownProcInfo> = {}): KnownProcInfo {
 function makeVar(overrides: Partial<LocalSymbolInfo> = {}): LocalSymbolInfo {
   return {
     proc_name: "f_go", var_name: "li_x", raw_type: "integer",
-    resolved_kind: "primitive", resolved_target: null, is_parameter: false,
+    resolved_kind: "primitive", resolved_target: null, scope: "local",
     ...overrides,
   };
 }
@@ -92,15 +92,21 @@ describe("buildVarTooltip", () => {
   });
 
   it("uses parameter color for params", () => {
-    const t = buildVarTooltip("as_name", makeVar({ is_parameter: true }));
+    const t = buildVarTooltip("as_name", makeVar({ scope: "param" }));
     expect(t?.color).toBe("#4fc1ff");
     expect(t?.html).toContain("badge-param");
   });
 
-  it("uses local color for non-params", () => {
-    const t = buildVarTooltip("li_x", makeVar({ is_parameter: false }));
+  it("uses local color for locals", () => {
+    const t = buildVarTooltip("li_x", makeVar({ scope: "local" }));
     expect(t?.color).toBe("#9cdcfe");
     expect(t?.html).toContain("badge-var");
+  });
+
+  it("uses instance color and badge for instance vars", () => {
+    const t = buildVarTooltip("ii_count", makeVar({ scope: "instance" }));
+    expect(t?.color).toBe("#c586c0");
+    expect(t?.html).toContain("badge-instance");
   });
 
   it("includes resolved_target when present", () => {

@@ -227,12 +227,15 @@ materializeAllRelationsViews conn catFks = do
 runPass5 :: Handle -> IO (Map.Map Ident Ident)
 runPass5 conn = Progress.timedStep "Resolving types" $ do
   lvs                              <- queryLocalVars  conn
+  gvs                              <- queryGlobalVars conn
   css                              <- queryCallSites  conn
   (objSet, usrTypes, inh, procMap) <- queryObjInfo   conn
-  let rt = resolveTypes lvs (identSetFromList (map mkIdent (Set.toList objSet)))
-                             (identSetFromList (map mkIdent (Set.toList usrTypes)))
-      rc = resolveCalls css procMap inh builtinFnNames builtinMethodNames
-  appendResolvedTypes conn rt
+  let objIdents  = identSetFromList (map mkIdent (Set.toList objSet))
+      userIdents = identSetFromList (map mkIdent (Set.toList usrTypes))
+      rt  = resolveTypes lvs objIdents userIdents
+      rtG = resolveGlobalTypes gvs objIdents userIdents
+      rc  = resolveCalls css procMap inh builtinFnNames builtinMethodNames
+  appendResolvedTypes conn (rt <> rtG)
   appendResolvedCalls conn rc
   pure inh
 
