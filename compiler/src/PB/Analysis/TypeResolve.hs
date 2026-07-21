@@ -483,18 +483,17 @@ extractGlobalVars :: Text -> Text -> SrFile -> [GlobalVar]
 extractGlobalVars file obj sf =
   declGlobals <> instanceGlobals <> forwardInstanceGlobals
   where
-    declGlobals = case srVariables sf of
-      Nothing -> []
-      Just VariablesBlock { varDecls = ds } ->
-        [ GlobalVar
-            { gvFile   = file
-            , gvObject = obj
-            , gvName   = identOrig (vdName d)
-            , gvType   = vdType d
-            , gvMods   = vdModifiers d
-            }
-        | d <- ds
-        ]
+    declGlobals =
+      [ GlobalVar
+          { gvFile   = file
+          , gvObject = obj
+          , gvName   = identOrig (vdName d)
+          , gvType   = vdType d
+          , gvMods   = vdModifiers d
+          }
+      | VariablesBlock { varDecls = ds } <- srVariables sf
+      , d <- ds
+      ]
     instanceGlobals =
       [ GlobalVar
           { gvFile   = file

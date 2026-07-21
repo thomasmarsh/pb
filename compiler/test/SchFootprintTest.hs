@@ -35,6 +35,8 @@ import qualified Data.Set        as Set
 import qualified Data.Text       as T
 
 import System.Directory      (doesFileExist)
+import System.FilePath       ((</>))
+import RepoRoot              (repoRoot)
 
 import Hedgehog             (forAll, property, (===), Gen)
 import qualified Hedgehog.Gen   as Gen
@@ -286,13 +288,16 @@ tests = testGroup "SchFootprint"
             srdPath  = "example/PowerBuilder-Example-extract/pbexamd2.pbl/d_items.srd" :: FilePath
             srwPathT = T.pack srwPath
             srdPathT = T.pack srdPath
-        srwExists <- doesFileExist srwPath
-        srdExists <- doesFileExist srdPath
+        root <- repoRoot
+        let fullSrwPath = root </> srwPath
+            fullSrdPath = root </> srdPath
+        srwExists <- doesFileExist fullSrwPath
+        srdExists <- doesFileExist fullSrdPath
         if not (srwExists && srdExists)
           then pure ()  -- corpus not present in this environment; vacuous pass (mirrors CorpusTest's withCorpusFile)
           else do
-            srwSrc <- readFile srwPath
-            srdSrc <- readFile srdPath
+            srwSrc <- readFile fullSrwPath
+            srdSrc <- readFile fullSrdPath
             case (parsePowerScriptFile srwSrc, parseDataWindow srdSrc) of
               (Left e, _) -> assertFailure ("failed to parse w_dw_copy.srw: " <> T.unpack e)
               (_, Left e) -> assertFailure ("failed to parse d_items.srd: " <> T.unpack e)
@@ -349,13 +354,16 @@ tests = testGroup "SchFootprint"
               ]
             srdPath  = "example/openpay-0.1.1b-extract/fylo.pbl/dw_misth_fylo_epidom_list.srd"
             srwPathT = T.pack srwPath
-        exist    <- traverse doesFileExist paths
-        srdExists <- doesFileExist srdPath
+        root <- repoRoot
+        let fullPaths  = map (root </>) paths
+            fullSrdPath = root </> srdPath
+        exist    <- traverse doesFileExist fullPaths
+        srdExists <- doesFileExist fullSrdPath
         if not (and exist && srdExists)
           then pure ()  -- corpus not present in this environment; vacuous pass
           else do
-            parsed <- traverse (\p -> parsePowerScriptFile <$> readFile p) paths
-            srdSrc <- readFile srdPath
+            parsed <- traverse (\p -> parsePowerScriptFile <$> readFile p) fullPaths
+            srdSrc <- readFile fullSrdPath
             case (sequence parsed, parseDataWindow srdSrc) of
               (Left e, _)  -> assertFailure ("failed to parse fylo fixture: " <> T.unpack e)
               (_, Left e)  -> assertFailure ("failed to parse dw_misth_fylo_epidom_list.srd: " <> T.unpack e)

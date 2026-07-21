@@ -14,12 +14,14 @@ import PB.AST.BodyStmt
   , ChooseStmt (..), TryStmt (..), ElseIf (..), CaseClause (..), CatchClause (..)
   )
 import PB.AST.Located (Located (..))
+import RepoRoot (repoRoot)
 
-import Data.Aeson (Value (..))
+import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Map.Strict   as Map
 import qualified Data.Text as T
+import System.FilePath  ((</>))
 
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase)
@@ -37,8 +39,22 @@ tagOf v = case lk "tag" v of { String t -> t; _ -> "" }
 segsOf :: Value -> [Value]
 segsOf v = case lk "segments" v of { Array vs -> toList vs; _ -> [] }
 
+-- Every single-positional-argument constructor (one field, no record syntax)
+-- wraps its payload under a top-level "contents" key -- see
+-- compiler/AGENTS.md's "JSON body-statement encoding" note.
+contentsOf :: Value -> Value
+contentsOf = lk "contents"
+
+-- First element of a "contents" array -- for two-*unnamed*-positional-arg
+-- constructors (e.g. 'BsAssign'), which Aeson serialises as
+-- @{"tag":...,"contents":[fst,snd]}@, not a record with named fields.
+firstContentsOf :: Value -> Value
+firstContentsOf v = case contentsOf v of
+    Array vs -> case toList vs of { (x : _) -> x; [] -> Null }
+    _        -> Null
+
 isEmptyExRaw :: Value -> Bool
-isEmptyExRaw v = tagOf v == "raw" && case lk "tokens" v of
+isEmptyExRaw v = tagOf v == "ExRaw" && case contentsOf v of
     Array ts -> null (toList ts)
     _        -> False
 
@@ -63,23 +79,29 @@ loadFile path = do
         Left  _  -> Nothing
         Right v  -> Just (path, v)
 
+-- The two corpus directories, resolved against the repo root -- Cabal runs
+-- the built test binary with cwd = the package directory (@compiler/@), but
+-- these directories live at the repo root, one level up.
+corpusDirs :: IO [FilePath]
+corpusDirs = do
+    root <- repoRoot
+    pure [ root </> "example" </> "PowerBuilder-Example-extract"
+         , root </> "example" </> "openpay-0.1.1b-extract"
+         ]
+
 -- Load all successfully-parsed files from both corpora.
 loadCorpus :: IO [(FilePath, Value)]
 loadCorpus = do
-    paths <- fmap concat $ mapM walkPsFiles
-        [ "example/PowerBuilder-Example-extract"
-        , "example/openpay-0.1.1b-extract"
-        ]
+    dirs  <- corpusDirs
+    paths <- fmap concat $ mapM walkPsFiles dirs
     results <- mapM loadFile paths
     pure (concatMap maybeToList results)
 
 -- Load all successfully-parsed .srd files.
 loadDwCorpus :: IO [(FilePath, Value)]
 loadDwCorpus = do
-    paths <- fmap concat $ mapM walkDwFiles
-        [ "example/PowerBuilder-Example-extract"
-        , "example/openpay-0.1.1b-extract"
-        ]
+    dirs  <- corpusDirs
+    paths <- fmap concat $ mapM walkDwFiles dirs
     results <- mapM loadFile paths
     pure (concatMap maybeToList results)
 
@@ -124,32 +146,37 @@ assertNoViolations name viols =
 
 chkLvalueSegs :: NodeCheck
 chkLvalueSegs v
-    | tagOf v == "lvalue" && null (segsOf v) = ["lvalue with empty segments"]
-    | otherwise                               = []
+    | tagOf v == "ExLvalue" && null (segsOf (contentsOf v)) = ["lvalue with empty segments"]
+    | otherwise                                              = []
 
 chkCallExprCallee :: NodeCheck
 chkCallExprCallee v
-    | tagOf v == "call_expr"
+    | tagOf v == "ExCall"
     , null (segsOf (lk "callee" v)) = ["call_expr with empty callee segments"]
     | otherwise                      = []
 
+-- 'BsAssign' has two *unnamed* positional args (@Lvalue Expr@), so Aeson
+-- serialises it as @{"tag":"BsAssign","contents":[lhsJson,rhsJson]}@ -- an
+-- array, not a record with an "lhs" key.
 chkAssignLhs :: NodeCheck
 chkAssignLhs v
-    | tagOf v == "assign"
-    , null (segsOf (lk "lhs" v)) = ["assign with empty lhs segments"]
-    | otherwise                   = []
+    | tagOf v == "BsAssign"
+    , null (segsOf (firstContentsOf v)) = ["assign with empty lhs segments"]
+    | otherwise                          = []
 
+-- 'ExHostVar' wraps a bare 'Lvalue' (single positional arg), so "contents"
+-- *is* the lvalue object directly -- no separate "lvalue" key.
 chkHostVarSegs :: NodeCheck
 chkHostVarSegs v
-    | tagOf v == "host_var"
-    , null (segsOf (lk "lvalue" v)) = ["host_var with empty lvalue segments"]
-    | otherwise                      = []
+    | tagOf v == "ExHostVar"
+    , null (segsOf (contentsOf v)) = ["host_var with empty lvalue segments"]
+    | otherwise                     = []
 
 chkForVarSegs :: NodeCheck
 chkForVarSegs v
-    | tagOf v == "for"
-    , null (segsOf (lk "var" v)) = ["for with empty var segments"]
-    | otherwise                   = []
+    | tagOf v == "BsFor"
+    , null (segsOf (lk "var" (contentsOf v))) = ["for with empty var segments"]
+    | otherwise                                = []
 
 chkNoEmptyExRaw :: NodeCheck
 chkNoEmptyExRaw v
@@ -158,7 +185,7 @@ chkNoEmptyExRaw v
 
 chkBinopOperands :: NodeCheck
 chkBinopOperands v
-    | tagOf v == "binop"
+    | tagOf v == "ExBinOp"
     = [msg | (field, side) <- [("lhs", lk "lhs" v), ("rhs", lk "rhs" v)]
             , isEmptyExRaw side
             , let msg = "binop " <> field <> " is empty ExRaw"]
@@ -166,21 +193,21 @@ chkBinopOperands v
 
 chkIfCond :: NodeCheck
 chkIfCond v
-    | tagOf v == "if" && isEmptyExRaw (lk "cond" v) = ["if cond is empty ExRaw"]
-    | otherwise                                       = []
+    | tagOf v == "BsIf" && isEmptyExRaw (lk "cond" (contentsOf v)) = ["if cond is empty ExRaw"]
+    | otherwise                                                     = []
 
 chkForBounds :: NodeCheck
 chkForBounds v
-    | tagOf v == "for"
-    = [msg | (field, side) <- [("from", lk "from" v), ("to", lk "to" v)]
+    | tagOf v == "BsFor"
+    = [msg | (field, side) <- [("from", lk "from" (contentsOf v)), ("to", lk "to" (contentsOf v))]
             , isEmptyExRaw side
             , let msg = "for " <> field <> " is empty ExRaw"]
     | otherwise = []
 
 chkChooseExpr :: NodeCheck
 chkChooseExpr v
-    | tagOf v == "choose" && isEmptyExRaw (lk "expr" v) = ["choose expr is empty ExRaw"]
-    | otherwise                                           = []
+    | tagOf v == "BsChoose" && isEmptyExRaw (lk "expr" (contentsOf v)) = ["choose expr is empty ExRaw"]
+    | otherwise                                                         = []
 
 -- ---------------------------------------------------------------------------
 -- File-level checks
@@ -323,10 +350,8 @@ chkDwTableColumnNameNonEmpty _ = []
 -- side of the comparison) and its typed 'SrFile' (for the extracted side).
 loadTypedCorpus :: IO [(FilePath, Text, SrFile)]
 loadTypedCorpus = do
-    paths <- fmap concat $ mapM walkPsFiles
-        [ "example/PowerBuilder-Example-extract"
-        , "example/openpay-0.1.1b-extract"
-        ]
+    dirs  <- corpusDirs
+    paths <- fmap concat $ mapM walkPsFiles dirs
     results <- mapM loadTypedFile paths
     pure (concatMap maybeToList results)
   where
@@ -545,6 +570,65 @@ chkCommaDeclaredNamesMatch = do
         ]
 
 -- ---------------------------------------------------------------------------
+-- Self-test fixtures: hand-built 'Value's matching the real
+-- 'PB.Pipeline.Serialise' wire shape (confirmed via 'cabal repl' against the
+-- real 'ToJSON' instances, not guessed from field names), each deliberately
+-- violating one of the node checks above. Proves each check actually fires
+-- -- these ten checks previously compared against tag strings/field paths
+-- that could never match a real encoded node, so every one of them was a
+-- silent no-op regardless of corpus content.
+
+lvalueJson :: [Value] -> Value
+lvalueJson segs = object ["segments" .= segs]
+
+emptySegLvalue, oneSegLvalue :: Value
+emptySegLvalue = lvalueJson []
+oneSegLvalue   = lvalueJson [object ["name" .= ("x" :: Text), "subscript" .= Null]]
+
+exRawJson :: [Text] -> Value
+exRawJson toks = object ["tag" .= ("ExRaw" :: Text), "contents" .= toks]
+
+emptyExRaw, nonEmptyExRaw :: Value
+emptyExRaw    = exRawJson []
+nonEmptyExRaw = exRawJson ["1"]
+
+selfTestFixtures :: TestTree
+selfTestFixtures = testGroup "Corpus.Invariants.SelfTest"
+    [ fires "chkLvalueSegs fires on ExLvalue with empty segments" chkLvalueSegs $
+        object ["tag" .= ("ExLvalue" :: Text), "contents" .= emptySegLvalue]
+    , fires "chkCallExprCallee fires on ExCall with empty callee segments" chkCallExprCallee $
+        object ["tag" .= ("ExCall" :: Text), "callee" .= emptySegLvalue, "args" .= ([] :: [Value])]
+    , fires "chkAssignLhs fires on BsAssign with empty lhs segments" chkAssignLhs $
+        object ["tag" .= ("BsAssign" :: Text), "contents" .= [emptySegLvalue, nonEmptyExRaw]]
+    , fires "chkHostVarSegs fires on ExHostVar with empty segments" chkHostVarSegs $
+        object ["tag" .= ("ExHostVar" :: Text), "contents" .= emptySegLvalue]
+    , fires "chkForVarSegs fires on BsFor with empty var segments" chkForVarSegs $
+        object [ "tag" .= ("BsFor" :: Text)
+               , "contents" .= object
+                   [ "var" .= emptySegLvalue, "from" .= nonEmptyExRaw, "to" .= nonEmptyExRaw
+                   , "step" .= Null, "body" .= ([] :: [Value]) ] ]
+    , fires "chkNoEmptyExRaw fires on empty ExRaw" chkNoEmptyExRaw emptyExRaw
+    , fires "chkBinopOperands fires on ExBinOp with empty ExRaw operand" chkBinopOperands $
+        object ["tag" .= ("ExBinOp" :: Text), "lhs" .= emptyExRaw, "op" .= ("BopAdd" :: Text), "rhs" .= nonEmptyExRaw]
+    , fires "chkIfCond fires on BsIf with empty ExRaw cond" chkIfCond $
+        object [ "tag" .= ("BsIf" :: Text)
+               , "contents" .= object
+                   [ "cond" .= emptyExRaw, "then" .= ([] :: [Value])
+                   , "elseIfs" .= ([] :: [Value]), "else" .= Null ] ]
+    , fires "chkForBounds fires on BsFor with empty ExRaw from/to" chkForBounds $
+        object [ "tag" .= ("BsFor" :: Text)
+               , "contents" .= object
+                   [ "var" .= oneSegLvalue, "from" .= emptyExRaw, "to" .= nonEmptyExRaw
+                   , "step" .= Null, "body" .= ([] :: [Value]) ] ]
+    , fires "chkChooseExpr fires on BsChoose with empty ExRaw expr" chkChooseExpr $
+        object [ "tag" .= ("BsChoose" :: Text)
+               , "contents" .= object ["expr" .= emptyExRaw, "clauses" .= ([] :: [Value])] ]
+    ]
+  where
+    fires name check fixture = testCase name $
+        assertBool (name <> " did not fire on a deliberately-broken fixture") (not (null (check fixture)))
+
+-- ---------------------------------------------------------------------------
 -- Test tree
 
 invariant :: String -> NodeCheck -> TestTree
@@ -569,7 +653,14 @@ fileInvariantDw name check = testCase name $ do
 
 tests :: TestTree
 tests = testGroup "Corpus.Invariants"
-    [ invariant "lvalue segments non-empty"          chkLvalueSegs
+    [ testCase "corpus loader resolves 500+ files regardless of cwd" $ do
+        pairs <- loadCorpus
+        assertBool
+            ("loadCorpus found only " <> show (length pairs)
+              <> " parsed files -- expected 500+; this is the exact vacuous-corpus \
+                 \regression RepoRoot exists to prevent")
+            (length pairs >= 500)
+    , invariant "lvalue segments non-empty"          chkLvalueSegs
     , invariant "call_expr callee non-empty"         chkCallExprCallee
     , invariant "assign lhs non-empty"               chkAssignLhs
     , invariant "host_var lvalue segments non-empty" chkHostVarSegs
@@ -581,6 +672,7 @@ tests = testGroup "Corpus.Invariants"
     , invariant "choose expr not empty ExRaw"        chkChooseExpr
     , fileInvariant "function sig.name non-empty"    chkFnNames
     , fileInvariant "subroutine sig.name non-empty"  chkSubNames
+    , selfTestFixtures
     , testCase "comma-declarator count: raw text matches extracted BsLocalVar count" $ do
         viols <- chkCommaDeclaredNamesMatch
         assertNoViolations "comma-declarator count" viols

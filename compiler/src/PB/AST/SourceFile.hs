@@ -35,7 +35,7 @@ data SrFile = SrFile
   { srHeaders         :: [Text]
   , srForward         :: Maybe ForwardBlock
   , srPrototypes      :: Maybe PrototypesBlock
-  , srVariables       :: Maybe VariablesBlock
+  , srVariables       :: [VariablesBlock]
   , srGlobalInstances :: [GlobalInstance]
   , srTypeBlocks      :: [TypeBlock]
   , srOnBlocks        :: [OnBlock]

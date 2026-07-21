@@ -15,12 +15,14 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Text       as T
 
 import System.Directory      (doesFileExist)
+import System.FilePath       ((</>))
+import RepoRoot              (repoRoot)
 
 import Test.Tasty           (TestTree, testGroup)
 import Test.Tasty.HUnit     (assertFailure, testCase, (@?=))
 
 emptyFile :: SrFile
-emptyFile = SrFile [] Nothing Nothing Nothing [] [] [] [] [] []
+emptyFile = SrFile [] Nothing Nothing [] [] [] [] [] [] []
 
 -- | A dataobject= literal, the shape extractDwControlBindings/buildControlIndex scan for.
 dataObjectBody :: Text -> [Located BodyStmt]
@@ -292,7 +294,9 @@ tests = testGroup "ControlHierarchy"
 -- vacuous pass if the example corpus isn't present in this environment.
 withFyloFixture :: (ControlIndex -> Map.Map Ident Ident -> IO ()) -> IO ()
 withFyloFixture check = do
+  root <- repoRoot
   let paths =
+        map (root </>)
         [ "example/openpay-0.1.1b-extract/fylo.pbl/w_misth_fylo_form.srw"
         , "example/openpay-0.1.1b-extract/afxlib.pbl/w_form_tab2.srw"
         , "example/openpay-0.1.1b-extract/fylo.pbl/uo_misth_fylo_epidom_grid.sru"

@@ -30,7 +30,7 @@ emptySrFile = SrFile
   { srHeaders         = []
   , srForward         = Nothing
   , srPrototypes      = Nothing
-  , srVariables       = Nothing
+  , srVariables       = []
   , srGlobalInstances = []
   , srTypeBlocks      = []
   , srOnBlocks        = []
@@ -661,8 +661,8 @@ tests = testGroup "TypeResolve"
     [ testCase "global variable declaration extracted" $ do
         let sf = SrFile
               { srHeaders = [], srForward = Nothing, srPrototypes = Nothing
-              , srVariables = Just (VariablesBlock GlobalVars
-                  [VarDecl [] "long" "g_counter"])
+              , srVariables = [VariablesBlock GlobalVars
+                  [VarDecl [] "long" "g_counter"]]
               , srGlobalInstances = [], srTypeBlocks = []
               , srOnBlocks = [], srEvents = [], srFunctions = [], srSubroutines = []
               }
@@ -676,7 +676,7 @@ tests = testGroup "TypeResolve"
     , testCase "empty file yields no global vars" $
         let sf = SrFile
               { srHeaders = [], srForward = Nothing, srPrototypes = Nothing
-              , srVariables = Nothing, srGlobalInstances = []
+              , srVariables = [], srGlobalInstances = []
               , srTypeBlocks = [], srOnBlocks = [], srEvents = []
               , srFunctions = [], srSubroutines = []
               }

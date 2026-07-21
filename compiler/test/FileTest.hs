@@ -29,7 +29,7 @@ import Hedgehog (Gen, Property, forAll, property, assert, failure, footnote, (==
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
+import Test.Tasty.HUnit (Assertion, assertFailure, testCase, (@?=))
 import Test.Tasty.Hedgehog (testProperty)
 import Text.Megaparsec (parse)
 import Text.Megaparsec.Error (errorBundlePretty)
@@ -900,7 +900,7 @@ tests = testGroup "Grammar.File"
             { srHeaders         = []
             , srForward         = Nothing
             , srPrototypes      = Just (PrototypesBlock [])
-            , srVariables       = Nothing
+            , srVariables       = []
             , srGlobalInstances = []
             , srTypeBlocks      = [TypeBlock (mkTypeDecl "n_foo" "nonvisualobject" Nothing) []]
             , srOnBlocks        = []
@@ -929,7 +929,7 @@ tests = testGroup "Grammar.File"
             { srHeaders         = []
             , srForward         = Just (ForwardBlock [mkTypeDecl "n_base" "nonvisualobject" Nothing] [])
             , srPrototypes      = Just (PrototypesBlock [])
-            , srVariables       = Just (VariablesBlock TypeVars [VarDecl [] "integer" "i_count"])
+            , srVariables       = [VariablesBlock TypeVars [VarDecl [] "integer" "i_count"]]
             , srGlobalInstances = []
             , srTypeBlocks      = [TypeBlock (mkTypeDecl "n_base" "nonvisualobject" Nothing) []]
             , srOnBlocks        = []
@@ -956,7 +956,7 @@ tests = testGroup "Grammar.File"
             { srHeaders         = []
             , srForward         = Nothing
             , srPrototypes      = Nothing
-            , srVariables       = Nothing
+            , srVariables       = []
             , srGlobalInstances = []
             , srTypeBlocks      = [ TypeBlock (mkTypeDecl "w_foo" "window" Nothing) []
                                   , TypeBlock (mkTypeDecl "cb_ok" "commandbutton" (Just "w_foo")) []
@@ -984,14 +984,17 @@ tests = testGroup "Grammar.File"
     , testProperty "at most one prototypes block extracted"
         prop_at_most_one_prototypes
 
-    , testProperty "at most one variables block extracted"
-        prop_at_most_one_variables
+    , testProperty "single variables block parses"
+        prop_single_variables_block_parses
+
+    , testCase "two variables blocks (global + type) both survive, in order"
+        unitTest_two_variables_blocks_both_survive
     ]
 
   , testGroup "parseSrFile (integration)"
     [ testCase "empty file" $
         parseSrFile [] [] @?=
-          Right (SrFile [] Nothing Nothing Nothing [] [] [] [] [] [])
+          Right (SrFile [] Nothing Nothing [] [] [] [] [] [] [])
 
     , testCase "header + forward block + one function" $ do
         let headers = ["$PBExportHeader$foo.srf"]
@@ -1008,7 +1011,7 @@ tests = testGroup "Grammar.File"
             { srHeaders         = headers
             , srForward         = Just (ForwardBlock [] [])
             , srPrototypes      = Nothing
-            , srVariables       = Nothing
+            , srVariables       = []
             , srGlobalInstances = []
             , srTypeBlocks      = []
             , srOnBlocks        = []
@@ -1033,7 +1036,7 @@ tests = testGroup "Grammar.File"
             { srHeaders         = []
             , srForward         = Nothing
             , srPrototypes      = Nothing
-            , srVariables       = Nothing
+            , srVariables       = []
             , srGlobalInstances = []
             , srTypeBlocks      = []
             , srOnBlocks        = []
@@ -1063,7 +1066,7 @@ tests = testGroup "Grammar.File"
             { srHeaders         = []
             , srForward         = Just (ForwardBlock [mkTypeDecl "u_svc" "nonvisualobject" Nothing] [])
             , srPrototypes      = Nothing
-            , srVariables       = Just (VariablesBlock TypeVars [VarDecl [] "integer" "i_count"])
+            , srVariables       = [VariablesBlock TypeVars [VarDecl [] "integer" "i_count"]]
             , srGlobalInstances = [GlobalInstance "u_svc" "u_svc"]
             , srTypeBlocks      = []
             , srOnBlocks        = []
@@ -1082,7 +1085,7 @@ tests = testGroup "Grammar.File"
             { srHeaders         = []
             , srForward         = Nothing
             , srPrototypes      = Nothing
-            , srVariables       = Nothing
+            , srVariables       = []
             , srGlobalInstances = [GlobalInstance "u_foo" "u_foo", GlobalInstance "u_bar" "u_bar"]
             , srTypeBlocks      = []
             , srOnBlocks        = []
@@ -1103,7 +1106,7 @@ tests = testGroup "Grammar.File"
             { srHeaders         = []
             , srForward         = Nothing
             , srPrototypes      = Nothing
-            , srVariables       = Nothing
+            , srVariables       = []
             , srGlobalInstances = []
             , srTypeBlocks      = [TypeBlock (mkTypeDecl "w_main" "window" Nothing) []]
             , srOnBlocks        = [OnBlock "w_main.create" "w_main" "create" []]
@@ -1278,8 +1281,8 @@ prop_at_most_one_prototypes = property $ do
     Right sf -> assert (isJust (srPrototypes sf))
     Left _   -> assert False
 
-prop_at_most_one_variables :: Property
-prop_at_most_one_variables = property $ do
+prop_single_variables_block_parses :: Property
+prop_single_variables_block_parses = property $ do
   typ  <- forAll $ Gen.text (Range.linear 1 10) Gen.alphaNum
   name <- forAll $ Gen.text (Range.linear 1 10) Gen.alphaNum
   let stmts = [ mkStmt [(TkDeclKw, "type variables")]
@@ -1287,5 +1290,28 @@ prop_at_most_one_variables = property $ do
               , mkStmt [(TkDeclKw, "end variables")]
               ]
   case parseSrFile [] stmts of
-    Right sf -> assert (isJust (srVariables sf))
+    Right sf -> assert (not (null (srVariables sf)))
     Left _   -> assert False
+
+-- A file with both a 'global variables' and a 'type variables' block --
+-- confirmed real shape (11 files in the example corpus, e.g.
+-- pbexamw3.pbl/w_train.srw has 'shared variables' + 'type variables') --
+-- must keep both blocks, not silently drop every block after the first.
+unitTest_two_variables_blocks_both_survive :: Assertion
+unitTest_two_variables_blocks_both_survive = do
+  let stmts = [ mkStmt [(TkAccessModifier, "global"), (TkDeclKw, "variables")]
+              , mkStmt [(TkDatatype, "integer"), (TkIdent, "ig_count")]
+              , mkStmt [(TkDeclKw, "end variables")]
+              , mkStmt [(TkDeclKw, "type variables")]
+              , mkStmt [(TkDatatype, "string"), (TkIdent, "is_name")]
+              , mkStmt [(TkDeclKw, "end variables")]
+              ]
+  case parseSrFile [] stmts of
+    Left e   -> assertFailure ("expected parse success, got: " <> T.unpack e)
+    Right sf -> do
+      length (srVariables sf) @?= 2
+      map varScope (srVariables sf) @?= [GlobalVars, TypeVars]
+      map varDecls (srVariables sf)
+        @?= [ [VarDecl [] "integer" "ig_count"]
+            , [VarDecl [] "string" "is_name"]
+            ]

@@ -182,7 +182,8 @@ test-suite pb-compiler-test
   hs-source-dirs: test
   main-is: Main.hs
   other-modules:
-      PhaseATest
+      RepoRoot
+    , PhaseATest
     , PhaseBQueryTest
     , PhaseBAppendTest
     , MaterializeTest

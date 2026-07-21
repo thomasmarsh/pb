@@ -9,6 +9,8 @@ module CorpusDebtTest (tests) where
 import PB.Prelude
 import PB.Pipeline.Runner (runFile)
 import PB.Pipeline.FileWalk   (walkDwFiles, walkPsFiles)
+import RepoRoot (repoRoot)
+import System.FilePath  ((</>))
 
 import Data.Aeson (Value (..))
 import qualified Data.Aeson.Key    as Key
@@ -31,12 +33,20 @@ tagOf v = case lk "tag" v of { String t -> t; _ -> "" }
 -- ---------------------------------------------------------------------------
 -- Corpus loader
 
+-- The two corpus directories, resolved against the repo root -- Cabal runs
+-- the built test binary with cwd = the package directory (@compiler/@), but
+-- these directories live at the repo root, one level up.
+corpusDirs :: IO [FilePath]
+corpusDirs = do
+    root <- repoRoot
+    pure [ root </> "example" </> "PowerBuilder-Example-extract"
+         , root </> "example" </> "openpay-0.1.1b-extract"
+         ]
+
 loadCorpus :: IO [Value]
 loadCorpus = do
-    paths <- fmap concat $ mapM walkPsFiles
-        [ "example/PowerBuilder-Example-extract"
-        , "example/openpay-0.1.1b-extract"
-        ]
+    dirs  <- corpusDirs
+    paths <- fmap concat $ mapM walkPsFiles dirs
     results <- mapM (\p -> do
         src <- readFile p
         pure $ case runFile p src of { Left _ -> Nothing; Right v -> Just v }
@@ -104,9 +114,8 @@ tests = testGroup "Corpus.Debt"
         let total = sum (map (countWhere isBsRawOther) vals)
         assertBool ("BsRaw 'other' total = " <> show total <> ", expected 0") (total == 0)
     , testCase "DW files not stub" $ do
-        paths <- fmap concat $ mapM walkDwFiles
-            [ "example/PowerBuilder-Example-extract"
-            , "example/openpay-0.1.1b-extract" ]
+        dirs  <- corpusDirs
+        paths <- fmap concat $ mapM walkDwFiles dirs
         results <- mapM (\p -> do
             src <- readFile p
             pure $ runFile p src
@@ -117,9 +126,8 @@ tests = testGroup "Corpus.Debt"
         assertBool ("DW stub count = " <> show stubCount <> ", expected 0")
                    (stubCount == 0)
     , testCase "PBSELECT: zero parse failures" $ do
-        paths <- fmap concat $ mapM walkDwFiles
-            [ "example/PowerBuilder-Example-extract"
-            , "example/openpay-0.1.1b-extract" ]
+        dirs  <- corpusDirs
+        paths <- fmap concat $ mapM walkDwFiles dirs
         results <- mapM (\p -> do
             src <- readFile p
             pure $ runFile p src
@@ -132,9 +140,8 @@ tests = testGroup "Corpus.Debt"
         assertBool ("PBSELECT parse failures: " <> show failCount <> ", expected 0")
                    (failCount == 0)
     , testCase "DW table-block parsed" $ do
-        paths <- fmap concat $ mapM walkDwFiles
-            [ "example/PowerBuilder-Example-extract"
-            , "example/openpay-0.1.1b-extract" ]
+        dirs  <- corpusDirs
+        paths <- fmap concat $ mapM walkDwFiles dirs
         triples <- mapM (\p -> do
             src <- readFile p
             let hasTable = any (T.isPrefixOf "table(") (T.lines src)

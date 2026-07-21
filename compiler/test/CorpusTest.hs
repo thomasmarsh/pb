@@ -2,6 +2,7 @@ module CorpusTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.Runner (runFile)
+import RepoRoot (repoRoot)
 
 import Data.Aeson (Value (..))
 import qualified Data.Aeson.Key    as Key
@@ -9,6 +10,7 @@ import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Text         as T
 
 import System.Directory (doesFileExist)
+import System.FilePath  ((</>))
 
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertFailure, testCase, (@?=))
@@ -30,14 +32,19 @@ firstOf _         = Null
 
 -- Run assertions against a corpus file; passes vacuously if the file is absent
 -- (allows tests to run in environments where only a subset of corpora are present).
+-- 'path' is repo-root-relative (e.g. @example/...@) -- resolved against
+-- 'repoRoot' since Cabal runs the built test binary with cwd = the package
+-- directory, not the repo root.
 withCorpusFile :: FilePath -> (Value -> Assertion) -> Assertion
 withCorpusFile path check = do
-  exists <- doesFileExist path
+  root <- repoRoot
+  let fullPath = root </> path
+  exists <- doesFileExist fullPath
   if not exists
     then pure ()
     else do
-      src <- readFile path
-      case runFile path src of
+      src <- readFile fullPath
+      case runFile fullPath src of
         Left err -> assertFailure (T.unpack err)
         Right v  -> check v
 

@@ -20,7 +20,7 @@ import Test.Tasty            (TestTree, testGroup)
 import Test.Tasty.HUnit      (testCase, (@?=))
 
 emptyFile :: SrFile
-emptyFile = SrFile [] Nothing Nothing Nothing [] [] [] [] [] []
+emptyFile = SrFile [] Nothing Nothing [] [] [] [] [] [] []
 
 tests :: TestTree
 tests = testGroup "TypeEnv"

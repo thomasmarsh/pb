@@ -56,10 +56,11 @@ extractGlobalVars sf =
        Just (ForwardBlock { fwdInstances = gis }) ->
          Map.fromList [ (giName gi, parseTypeText (giType gi))
                       | gi <- gis ]
-  <> case srVariables sf of
-       Nothing -> Map.empty
-       Just (VariablesBlock { varDecls = decls }) ->
-         Map.fromList [ (vdName d, parseTypeText (vdType d)) | d <- decls ]
+  <> Map.fromList
+       [ (vdName d, parseTypeText (vdType d))
+       | VariablesBlock { varDecls = decls } <- srVariables sf
+       , d <- decls
+       ]
   <> mconcat
        [ Map.fromList
            [ (vn, vt)
@@ -155,10 +156,11 @@ extractWsGlobals sf =
        Just (ForwardBlock { fwdInstances = gis }) ->
          Map.fromList [ (giName gi, parseTypeText (giType gi))
                       | gi <- gis ]
-  <> case srVariables sf of
-       Nothing -> Map.empty
-       Just (VariablesBlock { varDecls = decls }) ->
-         Map.fromList [ (vdName d, parseTypeText (vdType d)) | d <- decls ]
+  <> Map.fromList
+       [ (vdName d, parseTypeText (vdType d))
+       | VariablesBlock { varDecls = decls } <- srVariables sf
+       , d <- decls
+       ]
 
 -- Instance vars: BsLocalVar nodes in non-within TypeBlock bodies, keyed by object name.
 extractInstanceVars :: SrFile -> Map.Map Ident (Map.Map Ident PbType)
