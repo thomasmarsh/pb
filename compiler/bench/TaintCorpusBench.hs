@@ -18,11 +18,13 @@ import PB.Pipeline.DuckDb.PhaseB.Query
 import PB.Analysis.TypeResolve (GlobalVar (..))
 import PB.Analysis.Taint qualified as Taint
 import PB.Analysis.TaintClosure qualified as TA
-import PB.Algebra.Closure (reachFrom, reconstructPathNodes, internByVal, unintern)
+import PB.Algebra.Closure (reachFrom, reachableSet, reconstructPathNodes, internByVal, unintern)
 
+import Data.Graph (SCC (..), stronglyConnComp)
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import qualified Data.HashMap.Strict as HM
+import qualified Data.IntMap.Strict as IM
 import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
 import GHC.Conc (getNumProcessors, setNumCapabilities)
 import Options.Applicative
@@ -161,6 +163,40 @@ main = do
     putStrLn ("  build taintPathRelation: " <> showSecs (diffUTCTime tBuild1 tBuild0))
     putStrLn ("  reachFrom (PathValue fixpoint): " <> showSecs (diffUTCTime tFix1 tFix0))
     putStrLn ("  reconstructPathNodes (26 pairs): " <> showSecs (diffUTCTime tRec1 tRec0))
+    putStrLn ""
+
+    -- Stage 0 (Plan 187 follow-up): does the taint graph have non-trivial
+    -- SCCs, and does the current per-seed 'reachFrom' redo overlapping work
+    -- across seeds? Both are preconditions for an SCC-condensation closure
+    -- to pay off; measure rather than assume (doc/plan/187-perf-hotspots.md
+    -- §11 evidence discipline).
+    let nodeIds = IM.keys relP
+        outIds  = concatMap IM.keys (IM.elems relP)
+        allIds  = Set.toList (Set.fromList (nodeIds ++ outIds))
+        arcCount = sum (map IM.size (IM.elems relP))
+        adjOf i = IM.keys (IM.findWithDefault IM.empty i relP)
+        sccs = stronglyConnComp [ (i, i, adjOf i) | i <- allIds ]
+        sccSize (AcyclicSCC _)  = 1 :: Int
+        sccSize (CyclicSCC xs)  = length xs
+        sccSizes = map sccSize sccs
+        nontrivial = filter (> 1) sccSizes
+        directSucc i = IM.keys (IM.findWithDefault IM.empty i relP)
+        allSuccSeedsP = Set.toList (Set.fromList (concatMap directSucc srcIdsP))
+        reachSuccP = reachFrom relP allSuccSeedsP
+        totalReachSrc  = sum [ Set.size (reachableSet reachRelP  s) | s <- srcIdsP ]
+        totalReachSucc = sum [ Set.size (reachableSet reachSuccP s) | s <- allSuccSeedsP ]
+
+    putStrLn ("SCC diagnostic: " <> T.pack (show (length allIds)) <> " nodes, "
+           <> T.pack (show arcCount) <> " arcs, "
+           <> T.pack (show (length sccs)) <> " SCCs, "
+           <> T.pack (show (length nontrivial)) <> " non-trivial (size>1), "
+           <> "largest=" <> T.pack (show (foldl' max 0 sccSizes)) <> ", "
+           <> "nodes-in-nontrivial=" <> T.pack (show (sum nontrivial)))
+    putStrLn ("Per-seed redundancy: " <> T.pack (show (length srcIdsP)) <> " source seeds, "
+           <> "sum|reach(seed)|=" <> T.pack (show totalReachSrc) <> "; "
+           <> T.pack (show (length allSuccSeedsP)) <> " succ seeds, "
+           <> "sum|reach(seed)|=" <> T.pack (show totalReachSucc) <> "; "
+           <> "graph V+E=" <> T.pack (show (length allIds + arcCount)))
 
   where
     desc = fullDesc <> progDesc

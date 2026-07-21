@@ -22,6 +22,7 @@ module PB.AST.Ident
   ) where
 
 import PB.Prelude
+import Control.DeepSeq (NFData (..))
 import Data.Aeson     (ToJSON (..))
 import Data.Hashable  (Hashable (..))
 import Data.String    (IsString (..))
@@ -57,6 +58,9 @@ instance IsString Ident where
 instance ToJSON Ident where
   toJSON = toJSON . identOrig
 
+instance NFData Ident where
+  rnf (Ident a b) = rnf a `seq` rnf b
+
 mkIdent :: Text -> Ident
 mkIdent t = Ident t (T.toLower t)
 
@@ -64,6 +68,9 @@ mkIdent t = Ident t (T.toLower t)
 -- declared casing on lookup -- the shape 'PB.Analysis.TypeCheck''s
 -- @findOriginalCase@ used to hand-roll as an O(n) linear scan per query.
 newtype IdentSet = IdentSet (Map.Map Text Ident)
+
+instance NFData IdentSet where
+  rnf (IdentSet m) = rnf m
 
 identSetEmpty :: IdentSet
 identSetEmpty = IdentSet Map.empty
@@ -98,6 +105,9 @@ identSetUnion (IdentSet a) (IdentSet b) = IdentSet (Map.union a b)
 -- back (not just membership) and an associated value, e.g.
 -- 'PB.Analysis.TypeResolve.buildProcMap''s object-name -> proc-set map.
 newtype IdentMap a = IdentMap (Map.Map Text (Ident, a))
+
+instance NFData a => NFData (IdentMap a) where
+  rnf (IdentMap m) = rnf m
 
 identMapEmpty :: IdentMap a
 identMapEmpty = IdentMap Map.empty

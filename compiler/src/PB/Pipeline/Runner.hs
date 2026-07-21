@@ -115,6 +115,7 @@ import Control.Concurrent.STM
   , writeTQueue, isEmptyTQueue, readTQueue
   )
 import GHC.Conc   (getNumCapabilities)
+import Control.DeepSeq     (force)
 import Control.Exception   (finally, evaluate)
 import System.Environment  (lookupEnv)
 import System.IO           (hFlush, stderr)
@@ -752,8 +753,23 @@ runModeDb srcDir dbPath ddlArgs dialect mSqlWorkerFlag mDefaultNamespace = do
   -- Phase A0: parse stdlib + all user files to build workspace TypeEnv.
   stdlibParsed <- parseStdlibFiles
   emitProgress (object ["tag" .= ("phase" :: Text), "name" .= ("A0" :: Text), "total" .= total])
-  outcomes0 <- mapConcurrently (\file -> do
+  -- 'mapConcurrently' only spawns the parse; the parsed tree it returns is
+  -- otherwise a lazy thunk chain that nothing forces until the first
+  -- single-threaded traversal below (originally 'buildWorkspaceEnv'), which
+  -- silently serializes the real megaparsec work onto one core and makes
+  -- this concurrency pointless for the CPU-bound cost (doc/plan/187-perf-
+  -- hotspots.md §16 -- measured 235x on openpay: forcing here instead of
+  -- after the loop dropped "Building workspace type env" from 518ms to
+  -- 2.2ms). Forcing each outcome's payload to normal form here, on its own
+  -- worker, is what makes the parallelism real. This 'timedStep' also gives
+  -- that real cost its own labeled, visible step instead of leaving it to
+  -- land wherever the next traversal happens to be.
+  outcomes0 <- Progress.timedStep "Parsing files (phase A0)" $ mapConcurrently (\file -> do
     outcome <- parseOutcome srcDir file
+    case outcome of
+      PsParsed pf -> void (evaluate (force (pfSrFile pf)))
+      PsDw _ _ dw -> void (evaluate (force dw))
+      _           -> pure ()
     emitProgress (object ["tag" .= ("file_done" :: Text), "phase" .= ("A0" :: Text)])
     pure outcome) files
   let allParsedSrFiles = map pfSrFile stdlibParsed ++ [pfSrFile pf | PsParsed pf <- outcomes0]

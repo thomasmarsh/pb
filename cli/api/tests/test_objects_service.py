@@ -137,9 +137,20 @@ def test_dw_layout_parsed_expression_has_tag(db_conn: duckdb.DuckDBPyConnection)
 
 
 def test_get_object_layout_returns_window_shape(db_conn: duckdb.DuckDBPyConnection):
-    """get_object_layout returns {name, type, width, height, controls} for a .srw object."""
+    """get_object_layout returns {name, type, width, height, controls} for a .srw object.
+
+    Filters on layout_json actually having a "height" key, not just being
+    non-null: extractWindowLayout (PB.Pipeline.Emit) only emits width/height
+    when the source window declares them explicitly, so plenty of real
+    objects have layout_json with width but no height. An unfiltered/
+    unordered LIMIT 1 over "any object with layout_json" is a coin flip on
+    whether the picked window happens to have one -- it must pick
+    deterministically from windows that actually satisfy what the test
+    asserts, not from all non-null rows.
+    """
     row = db_conn.execute(
-        "SELECT object FROM objects WHERE kind = 'powerscript' AND layout_json IS NOT NULL LIMIT 1"
+        "SELECT object FROM objects WHERE kind = 'powerscript' "
+        "AND json_extract(layout_json, '$.height') IS NOT NULL ORDER BY object LIMIT 1"
     ).fetchone()
     if row is None:
         pytest.skip("no objects with layout_json in fixture corpus")

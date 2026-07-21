@@ -35,6 +35,7 @@ import PB.Pipeline.SqlParse
   , CatalogCheckConstraint (..), SchemaCatalog (..)
   )
 
+import Control.DeepSeq (force)
 import Data.Aeson (Value (..), object, decodeStrict, toJSON, (.=))
 import qualified Data.Aeson.Key    as Key
 import qualified Data.Aeson.KeyMap as KM
@@ -1216,6 +1217,39 @@ tests = testGroup "Pipeline.Runner"
         case outcome of
           PsParsed pf -> pfPath pf @?= absPath
           _           -> assertFailure "expected PsParsed"
+    ]
+
+  , testGroup "NFData instances used to force parsing inside mapConcurrently (doc/plan/187-perf-hotspots.md sec 16)"
+    [ testCase "force (pfSrFile pf) matches the unforced value on a representative fixture" $ do
+        let src = T.unlines
+              [ "forward"
+              , "  global type w_test from window"
+              , "end type"
+              , "end forward"
+              , "global type w_test from window"
+              , "end type"
+              , "type variables"
+              , "  integer ii_count"
+              , "end variables"
+              , "public function integer of_compute (integer ai_x, integer ai_y)"
+              , "  integer li_result"
+              , "  if ai_x > ai_y then"
+              , "    li_result = ai_x + ai_y * 2"
+              , "  else"
+              , "    li_result = ai_x - ai_y"
+              , "  end if"
+              , "  choose case li_result"
+              , "    case 0"
+              , "      li_result = -1"
+              , "    case else"
+              , "      li_result = li_result + ii_count"
+              , "  end choose"
+              , "  return li_result"
+              , "end function"
+              ]
+        case parsePowerScriptFile src of
+          Left err -> assertFailure ("fixture failed to parse: " <> T.unpack err)
+          Right (sf, _) -> force sf @?= sf
     ]
   ]
 

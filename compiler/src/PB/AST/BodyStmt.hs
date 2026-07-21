@@ -20,6 +20,7 @@ import PB.AST.Ident       (Ident)
 import PB.AST.Located     (Located)
 import PB.AST.Type        (PbType)
 import PB.Lexing.Token    (Token (..))
+import Control.DeepSeq    (NFData)
 import GHC.Generics       (Generic)
 
 data AugOp = AugAdd | AugSub | AugMul | AugDiv
@@ -117,3 +118,16 @@ data BodyStmt
   | BsThrow      Expr
   | BsRaw       Text                  -- SQL, event decls, unclassified (source text)
   deriving (Eq, Show, Generic)
+
+instance NFData AugOp
+instance NFData PbCall
+instance NFData ElseIf
+instance NFData IfStmt
+instance NFData ForStmt
+instance NFData DoCondition
+instance NFData DoStmt
+instance NFData CaseClause
+instance NFData ChooseStmt
+instance NFData CatchClause
+instance NFData TryStmt
+instance NFData BodyStmt

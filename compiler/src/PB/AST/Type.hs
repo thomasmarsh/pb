@@ -6,6 +6,7 @@ module PB.AST.Type
   ) where
 
 import PB.Prelude
+import Control.DeepSeq (NFData)
 import GHC.Generics (Generic)
 import qualified Data.Text as T
 
@@ -18,6 +19,8 @@ data PbType
   | PtAny                 -- the dynamic catch-all
   | PtDecimalPrec Int     -- "decimal{10}" with explicit precision
   deriving (Eq, Show, Generic)
+
+instance NFData PbType
 
 renderPbType :: PbType -> Text
 renderPbType (PtPrimitive t)    = t

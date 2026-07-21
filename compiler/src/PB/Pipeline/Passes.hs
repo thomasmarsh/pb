@@ -114,6 +114,15 @@ reportTaintDefUseFanout conn = do
   report ("proc_uses_return" :: Text) ("proc_uses return (object,proc)" :: Text)
     (Progress.msBetween t1 t2) retFo
 
+-- | Time a single DB read and report its row count under 'label' -- splits
+-- the "Load taint inputs (7 queries)" step (runPass67) so a private-corpus
+-- run can attribute that step's cost to a specific query/table instead of
+-- one opaque combined number (doc/plan/187-perf-hotspots.md §14).
+timedQueryRows :: Text -> IO [a] -> IO [a]
+timedQueryRows label action = Progress.timedStepRows label (do
+  rows <- action
+  pure (rows, [(label, length rows)]))
+
 -- | Phase B: read Phase A tables from DuckDB, run link analysis, write results.
 -- Structured as two sub-phases:
 --
@@ -226,13 +235,13 @@ runPass67 :: Handle -> IO ()
 runPass67 conn = Progress.timedStep "Building call graph" $ do
   (gvs, defs, uses, allRC, tfis, intraEdges, returnRows) <-
     Progress.timedStep "Load taint inputs (7 queries)" $ do
-      gvs  <- queryGlobalVars     conn
-      defs <- queryProcDefs       conn
-      uses <- queryProcUses       conn
-      allRC <- queryResolvedCalls conn
-      tfis  <- queryTaintInputs   conn
-      intraEdges <- queryTaintIntraEdges conn
-      returnRows <- queryTaintReturnRows conn
+      gvs  <- timedQueryRows "  queryGlobalVars"       (queryGlobalVars     conn)
+      defs <- timedQueryRows "  queryProcDefs"         (queryProcDefs       conn)
+      uses <- timedQueryRows "  queryProcUses"         (queryProcUses       conn)
+      allRC <- timedQueryRows "  queryResolvedCalls"   (queryResolvedCalls  conn)
+      tfis  <- timedQueryRows "  queryTaintInputs"     (queryTaintInputs    conn)
+      intraEdges <- timedQueryRows "  queryTaintIntraEdges" (queryTaintIntraEdges conn)
+      returnRows <- timedQueryRows "  queryTaintReturnRows" (queryTaintReturnRows conn)
       pure (gvs, defs, uses, allRC, tfis, intraEdges, returnRows)
   (allSources, allSinks, edges) <-
     Progress.timedStep "Build interproc edges + summaries + classify" $ do

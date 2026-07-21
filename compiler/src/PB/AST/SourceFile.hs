@@ -27,6 +27,7 @@ import PB.Prelude
 import PB.AST.BodyStmt    (BodyStmt)
 import PB.AST.Ident       (Ident, mkIdent)
 import PB.AST.Located     (Located)
+import Control.DeepSeq    (NFData)
 import GHC.Generics       (Generic)
 import qualified Data.Text as T
 
@@ -145,6 +146,24 @@ data OnBlock = OnBlock
   , obEvent    :: Text
   , obBody     :: [Located BodyStmt]
   } deriving (Eq, Show, Generic)
+
+instance NFData SrFile
+instance NFData ForwardBlock
+instance NFData PrototypesBlock
+instance NFData ProtoDecl
+instance NFData VariablesBlock
+instance NFData VarScope
+instance NFData TypeDecl
+instance NFData TypeBlock
+instance NFData VarDecl
+instance NFData GlobalInstance
+instance NFData FnSig
+instance NFData SubSig
+instance NFData EventSig
+instance NFData FunctionBlock
+instance NFData SubroutineBlock
+instance NFData EventBlock
+instance NFData OnBlock
 
 -- | All type declarations: type-blocks first (authoritative), then forward.
 -- Type-block entries win when both declare the same name (left-bias in fromList).

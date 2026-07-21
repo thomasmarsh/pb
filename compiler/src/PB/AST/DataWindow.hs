@@ -18,6 +18,7 @@ module PB.AST.DataWindow
 
 import PB.Prelude
 import PB.AST.Expr     (Expr)
+import Control.DeepSeq (NFData)
 import Data.Map.Strict (Map)
 import GHC.Generics    (Generic)
 
@@ -141,3 +142,18 @@ data DwUnknownBlock = DwUnknownBlock
   { dubKeyword :: Text
   , dubAttrs   :: Map Text Text
   } deriving (Eq, Show, Generic)
+
+instance NFData DataWindowFile
+instance NFData DwObjectAttrs
+instance NFData DwTable
+instance NFData DwWhereClause
+instance NFData DwJoin
+instance NFData DwRetrieve
+instance NFData DwRetrieveOrRaw
+instance NFData DwColumn
+instance NFData DwArgument
+instance NFData DwBandKind
+instance NFData DwBand
+instance NFData DwGroup
+instance NFData DwControl
+instance NFData DwUnknownBlock

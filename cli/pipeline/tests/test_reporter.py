@@ -9,7 +9,13 @@ import threading
 import time
 
 from pb.lib.state import FileDiff
-from pb.pipeline.reporter import DiagnosticsCollector, RecordingReporter, _format_ddl_loaded, _format_warning
+from pb.pipeline.reporter import (
+    DiagnosticsCollector,
+    RecordingReporter,
+    _format_ddl_loaded,
+    _format_warning,
+    _LiveRunnerProgress,
+)
 
 
 def _diff(new=0, changed=0, deleted=0, unchanged=0) -> FileDiff:
@@ -618,3 +624,49 @@ def test_diagnostics_collector_concurrent_on_event_and_snapshot():
     stop.set()
     for t in writers:
         t.join()
+
+
+# ── _LiveRunnerProgress render branch (doc/plan/187-perf-hotspots.md sec16) ────
+#
+# pbc runs several more named steps after phase A0's files finish parsing
+# (building the workspace type env, the control index, the type-check
+# workspace) before Phase B's own "phase" event arrives. Regression coverage
+# for the bug this exposed: the live progress line stayed frozen on the
+# N/N file-count bar for that entire span, with no indication anything was
+# still running, because the bar view was gated on phase_name alone.
+
+
+def _render_text(prog: _LiveRunnerProgress) -> str:
+    from rich.console import Console
+
+    console = Console(record=True, width=200, force_terminal=False)
+    console.print(prog._render())
+    return console.export_text()
+
+
+def test_runner_progress_shows_bar_while_files_still_parsing():
+    prog = _LiveRunnerProgress(console=None)
+    prog.on_event({"tag": "total", "n": 3})
+    prog.on_event({"tag": "phase", "name": "A0", "total": 3})
+    prog.on_event({"tag": "file_done", "phase": "A0"})
+
+    text = _render_text(prog)
+    assert "1/3" in text
+    assert "█" in text or "░" in text
+
+
+def test_runner_progress_switches_to_step_label_once_parsing_done():
+    prog = _LiveRunnerProgress(console=None)
+    prog.on_event({"tag": "total", "n": 2})
+    prog.on_event({"tag": "phase", "name": "A0", "total": 2})
+    prog.on_event({"tag": "file_done", "phase": "A0"})
+    prog.on_event({"tag": "file_done", "phase": "A0"})
+    # Still phase "A0" -- no new "phase" event yet -- but every file is done,
+    # and a named step is now running (mirrors runModeDb's
+    # "Building workspace type env" landing after the parse loop).
+    prog.on_event({"tag": "step", "label": "Building workspace type env"})
+
+    text = _render_text(prog)
+    assert "2/2" not in text
+    assert "█" not in text and "░" not in text
+    assert "Building workspace type env" in text

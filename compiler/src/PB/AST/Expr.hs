@@ -11,6 +11,7 @@ module PB.AST.Expr
 import PB.Prelude
 import PB.AST.Ident (Ident)
 import PB.Lexing.Token (Token (..))
+import Control.DeepSeq (NFData)
 import GHC.Generics (Generic)
 
 -- | One segment of a dotted name, e.g. the `arr[i]` in `obj.arr[i].field`.
@@ -78,3 +79,10 @@ data Expr
   | ExHostVar     Lvalue            -- SQL host variable :varname
   | ExRaw         [Text]            -- unrecognised / SQL fragment tokens
   deriving (Eq, Show, Generic)
+
+instance NFData LvSegment
+instance NFData Lvalue
+instance NFData BinOp
+instance NFData DispatchMode
+instance NFData DispatchExpr
+instance NFData Expr

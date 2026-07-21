@@ -867,7 +867,13 @@ class _LiveRunnerProgress:
                 if name in ("A", "A0"):
                     self._done = 0  # reset counter for each parsing phase
                 if name == "A0":
-                    self._phase_label = "Building type env"
+                    # Doubles as the umbrella label once parsing finishes and
+                    # rendering falls through to the step-label branch (see
+                    # the self._done < self._total check in _render) -- must
+                    # read sensibly as a prefix to a named step ("Parsing —
+                    # Building workspace type env"), not just as the bar's
+                    # phase name.
+                    self._phase_label = "Parsing"
                     self._total = event.get("total", self._total)
                     self._workers = {}
                     self._step = ""
@@ -949,7 +955,18 @@ class _LiveRunnerProgress:
         elapsed_str = f"{elapsed:.1f}s"
 
         # ── main progress line ──────────────────────────────────────────────
-        if self._phase_name in ("A", "A0") and self._total > 0:
+        # Once every file's file_done has landed (self._done >= self._total),
+        # fall through to the step-label branch below even though no new
+        # "phase" event has fired yet (Phase B's "phase" event only arrives
+        # once link analysis starts) -- pbc runs several more named steps
+        # after parsing finishes (building the workspace type env, the
+        # control index, the type-check workspace; see runModeDb) before
+        # Phase B begins, and without this check the bar stayed frozen at
+        # N/N for their entire duration with no indication of what was
+        # actually running (doc/plan/187-perf-hotspots.md sec16 -- this is
+        # the reporter-side half of that fix, not just a display tweak: the
+        # bar looked "done" while pbc was still doing real, now-labeled work).
+        if self._phase_name in ("A", "A0") and self._total > 0 and self._done < self._total:
             pct = self._done / self._total
             bar_w = 24
             filled = round(bar_w * pct)

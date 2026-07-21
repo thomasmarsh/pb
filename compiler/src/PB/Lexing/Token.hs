@@ -6,6 +6,8 @@ module PB.Lexing.Token
   ) where
 
 import PB.Prelude
+import Control.DeepSeq (NFData)
+import GHC.Generics    (Generic)
 
 -- | Source location for a token.
 --   ssStartLine/ssEndLine are the physical line numbers from the originating
@@ -14,7 +16,9 @@ data SourceSpan = SourceSpan
   { ssStartLine :: Int
   , ssEndLine   :: Int
   , ssCol       :: Int
-  } deriving (Eq, Ord, Show)
+  } deriving (Eq, Ord, Show, Generic)
+
+instance NFData SourceSpan
 
 data TokenKind
   = TkStringDouble
@@ -51,10 +55,14 @@ data TokenKind
   | TkColon
   | TkLabel
   | TkIdent
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData TokenKind
 
 data Token = Token
   { tkKind :: TokenKind
   , tkText :: Text
   , tkSpan :: SourceSpan
-  } deriving (Eq, Ord, Show)
+  } deriving (Eq, Ord, Show, Generic)
+
+instance NFData Token
