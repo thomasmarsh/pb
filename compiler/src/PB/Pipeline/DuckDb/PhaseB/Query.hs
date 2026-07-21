@@ -6,6 +6,7 @@ module PB.Pipeline.DuckDb.PhaseB.Query
   , queryObjInfo
   , queryProcDefs
   , queryProcUses
+  , ProcRows (..)
   , queryResolvedCalls
   , queryTaintInputs
   , queryDwRetrieveColumns
@@ -234,6 +235,15 @@ queryProcUses :: Handle -> IO [Taint.UseRow]
 queryProcUses conn = queryHandle conn
   "SELECT file, object, proc_name, var_name, block_id, stmt_index, line, kind \
   \FROM proc_uses"
+
+-- | @proc_defs@\/@proc_uses@ rows 'PB.Pipeline.Passes.runPass67' already
+-- fetched for interproc-edge building, threaded into
+-- 'PB.Pipeline.DuckDb.materializeTaintAnnotations' instead of it re-querying
+-- the same two tables (Plan 187 §18 tier 3).
+data ProcRows = ProcRows
+  { prDefs :: [Taint.DefRow]
+  , prUses :: [Taint.UseRow]
+  }
 
 -- | Plan 182 Move 2: reads back 'PB.Pipeline.DuckDb.PhaseA.appendTaintIntraEdges''s output.
 queryTaintIntraEdges :: Handle -> IO [TaintEdges.TaintIntraEdgeRow]

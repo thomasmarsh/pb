@@ -16,7 +16,7 @@ import PB.Prelude
 import PB.Analysis.Taint       qualified as Taint
 import PB.Pipeline.DuckDb
   ( Handle, executeHandle, recreateTextTable, queryTextRows )
-import PB.Pipeline.DuckDb.PhaseB.Query  (queryProcDefs, queryProcUses)
+import PB.Pipeline.DuckDb.PhaseB.Query  (ProcRows (..))
 import PB.Pipeline.DuckDb.PhaseB.Append (appendTaintAnnotations)
 
 import Database.DuckDB.Simple  (Query (..))
@@ -399,9 +399,12 @@ materializeTaintPaths conn =
 -- | Materialize @taint_annotations@ from the algebraic closure's output.
 -- Reads @taint_sources@ and @taint_reaches@ (transitive closure) to
 -- rebuild the tainted set, then calls 'Taint.buildTaintAnnotations'
--- (which needs @block_id@ from proc_defs/proc_uses).
-materializeTaintAnnotations :: Handle -> IO ()
-materializeTaintAnnotations conn = do
+-- (which needs @block_id@ from proc_defs/proc_uses — passed in as
+-- 'ProcRows', already fetched by 'PB.Pipeline.Passes.runPass67' and threaded
+-- through 'PB.Pipeline.Passes.runPhaseB' instead of re-querying the same two
+-- tables here; Plan 187 §18 tier 3).
+materializeTaintAnnotations :: ProcRows -> Handle -> IO ()
+materializeTaintAnnotations ProcRows{prDefs, prUses} conn = do
   -- 1. Read sources/sinks as Haskell types for buildTaintAnnotations.
   srcRows <- queryTextRows conn "taint_sources"
                ["file","object","proc_name","var_name","source_type"]
@@ -439,8 +442,5 @@ materializeTaintAnnotations conn = do
         [ t | key <- Set.toList (sourceKeys <> reachableFromSource)
             , Just t <- [parseTriple key]
         ]
-  -- 4. Read proc_defs + proc_uses for block_id context
-  defs <- queryProcDefs conn
-  uses <- queryProcUses conn
-  let annotations = Taint.buildTaintAnnotations taintedSet allSources allSinks defs uses
+  let annotations = Taint.buildTaintAnnotations taintedSet allSources allSinks prDefs prUses
   appendTaintAnnotations conn annotations

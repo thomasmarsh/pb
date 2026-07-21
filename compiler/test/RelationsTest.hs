@@ -9,11 +9,11 @@ module RelationsTest (tests) where
 
 import PB.Prelude
 import PB.Pipeline.DuckDb.Relations
-  ( initSchemaRelations, legSourceRows, stmtRows, seedRows
+  ( initSchemaRelations, SchemaInputRows (..), legSourceRows, stmtRows, seedRows
   , joinLegRows, fkRows
   )
 import PB.Pipeline.DuckDb.Relations
-  ( initDeadCodeRelations
+  ( initDeadCodeRelations, DeadCodeInputRows (..)
   , procRows, procMetaRows, inheritsRows, callRefRows, resolvedCallEdgeRows
   , entryRows, callsRows, CallRef (..), ResolvedCallEdge (..), CallEdge (..)
   )
@@ -25,7 +25,11 @@ import PB.Pipeline.DuckDb
   )
 import PB.Pipeline.DuckDb.Appender (withAppenderPool)
 import PB.Pipeline.DuckDb.PhaseA (appendProcedures, ProcRow (..))
-import PB.Pipeline.DuckDb.PhaseB.Query (SchMorphismRow (..), ProcSummaryRow (..))
+import PB.Pipeline.DuckDb.PhaseB.Query
+  ( SchMorphismRow (..), ProcSummaryRow (..), queryCatFks
+  , queryProcedures, queryResolvedCalls, queryObjectAncestors, queryDwObjects
+  , querySchemaMorphismRows, querySchemaObjects
+  )
 import PB.Pipeline.DuckDb.PhaseB.Append (appendSchemaObjects, appendSchemaMorphisms)
 import PB.Pipeline.DuckDb.Materialize
   ( materializeDeadCode
@@ -119,7 +123,7 @@ tests = testGroup "Relations"
           let colA = ColumnObj (TableRef Nothing "a") "x"
               colB = ColumnObj (TableRef Nothing "b") "y"
           appendSchemaMorphisms conn [ SchMorphism colA colB LegFk SrcDwJoin ]
-          initSchemaRelations conn
+          _ <- initSchemaRelations conn []
           materializeImpliedFkPairs conn
           rows <- queryHandle conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= [(schObjectKey colA, schObjectKey colB)]
@@ -131,7 +135,8 @@ tests = testGroup "Relations"
               colB = ColumnObj (TableRef Nothing "b") "y"
           appendSchemaMorphisms conn [ SchMorphism colA colB LegFk SrcDwJoin ]
           _ <- executeHandle conn (Query "INSERT INTO catalog_fks VALUES ('c1', NULL, 'a', 'x', NULL, 'b', 'y', 0)")
-          initSchemaRelations conn
+          catFks <- queryCatFks conn
+          _ <- initSchemaRelations conn catFks
           materializeImpliedFkPairs conn
           rows <- queryHandle conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= []
@@ -144,7 +149,8 @@ tests = testGroup "Relations"
           appendSchemaMorphisms conn [ SchMorphism colA colB LegFk SrcDwJoin ]
           -- FK declared b.y -> a.x: the opposite orientation from the join edge.
           _ <- executeHandle conn (Query "INSERT INTO catalog_fks VALUES ('c1', NULL, 'b', 'y', NULL, 'a', 'x', 0)")
-          initSchemaRelations conn
+          catFks <- queryCatFks conn
+          _ <- initSchemaRelations conn catFks
           materializeImpliedFkPairs conn
           rows <- queryHandle conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= []
@@ -153,7 +159,8 @@ tests = testGroup "Relations"
         withHandle inMemory $ \conn -> do
           initSchema conn
           _ <- executeHandle conn (Query "INSERT INTO catalog_fks VALUES ('c1', NULL, 'a', 'x', NULL, 'b', 'y', 0)")
-          initSchemaRelations conn
+          catFks <- queryCatFks conn
+          _ <- initSchemaRelations conn catFks
           materializeImpliedFkPairs conn
           rows <- queryHandle conn "SELECT x, y FROM implied_fk_pairs" :: IO [(Text, Text)]
           rows @?= []
@@ -175,8 +182,8 @@ tests = testGroup "Relations"
             [ SchMorphism colA colB LegWrites SrcSqlText
             , SchMorphism colB colC LegWrites SrcSqlText
             ]
-          initSchemaRelations conn
-          SchemaClosure.materializeSchemaClosure conn
+          schRows <- initSchemaRelations conn []
+          SchemaClosure.materializeSchemaClosure schRows conn
           materializeRiskCount conn
           rows <- queryHandle conn "SELECT x, n FROM risk_count" :: IO [(Text, Text)]
           let byNode = Map.fromList rows
@@ -196,8 +203,8 @@ tests = testGroup "Relations"
             [ SchMorphism colA colB LegFk SrcDdlFk
             , SchMorphism colB colA LegFk SrcDdlFk
             ]
-          initSchemaRelations conn
-          SchemaClosure.materializeSchemaClosure conn
+          schRows <- initSchemaRelations conn []
+          SchemaClosure.materializeSchemaClosure schRows conn
           materializeRiskCount conn
           rows <- queryHandle conn "SELECT x, n FROM risk_count" :: IO [(Text, Text)]
           let byNode = Map.fromList rows
@@ -218,12 +225,12 @@ tests = testGroup "Relations"
       [ testCase "a stmt whose (object,proc) is not in proc_dead appears in live_proc" $
           withHandle inMemory $ \conn -> do
             initSchema conn
-            initDeadCodeRelations conn
-            materializeDeadCodeClosure conn
+            dcRows <- initDeadCodeRelations conn
+            materializeDeadCodeClosure dcRows conn
             appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj1" "proc1" 5) ]
             -- initSchemaRelations now materializes stmt eagerly (Plan 175 Phase 1) --
             -- must run after appendSchemaObjects, not merely after initSchema.
-            initSchemaRelations conn
+            _ <- initSchemaRelations conn []
             materializeLiveProc conn
             rows <- queryHandle conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
             assertBool "(obj1,proc1) present" (("obj1", "proc1") `elem` rows)
@@ -236,10 +243,10 @@ tests = testGroup "Relations"
             withAppenderPool conn phaseATables $ \pool ->
               appendProcedures pool
                 [ ProcRow "f.srf" "obj2" "proc2" "function" 1 1 "" "" "" "" "" (Just 1) "confirmed" ]
-            initDeadCodeRelations conn
-            materializeDeadCodeClosure conn
+            dcRows <- initDeadCodeRelations conn
+            materializeDeadCodeClosure dcRows conn
             appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj2" "proc2" 9) ]
-            initSchemaRelations conn
+            _ <- initSchemaRelations conn []
             materializeLiveProc conn
             rows <- queryHandle conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
             assertBool "(obj2,proc2) absent" (("obj2", "proc2") `notElem` rows)
@@ -252,10 +259,10 @@ tests = testGroup "Relations"
           -- (found via a real --db smoke run over the openpay corpus).
           withHandle inMemory $ \conn -> do
             initSchema conn
-            initDeadCodeRelations conn
-            materializeDeadCodeClosure conn
+            dcRows <- initDeadCodeRelations conn
+            materializeDeadCodeClosure dcRows conn
             appendSchemaObjects conn [ StmtObj (DwRetrieveId "d.srd" "d_test") ]
-            initSchemaRelations conn
+            _ <- initSchemaRelations conn []
             materializeLiveProc conn
             rows <- queryHandle conn "SELECT object, proc FROM live_proc" :: IO [(Text, Text)]
             assertBool "no dw_retrieve row leaks into live_proc" (null rows)
@@ -280,7 +287,7 @@ tests = testGroup "Relations"
             withAppenderPool conn phaseATables $ \pool ->
               appendProcedures pool
                 [ ProcRow "builtin" "dwobject" "Retrieve" "function" 1 1 "" "" "" "" "" Nothing "speculative" ]
-            initDeadCodeRelations conn
+            _ <- initDeadCodeRelations conn
             procViewRows <- queryHandle conn "SELECT object, proc FROM proc" :: IO [(Text, Text)]
             entryViewRows <- queryHandle conn "SELECT object, proc FROM entry" :: IO [(Text, Text)]
             assertBool "speculative stub excluded from proc view" (null procViewRows)
@@ -341,8 +348,8 @@ tests = testGroup "Relations"
                 -- scoped_n counts only the one truly-resolved edge.
                 [ ("other_obj", "caller_c", "obj", "fn") ]
                 [] Set.empty
-            initDeadCodeRelations conn
-            materializeDeadCodeClosure conn
+            dcRows <- initDeadCodeRelations conn
+            materializeDeadCodeClosure dcRows conn
             materializeCallerCounts conn
             materializeDeadCodeRows conn
             -- dead_code_rows is a raw materialized relation: every
@@ -370,8 +377,8 @@ tests = testGroup "Relations"
                 , ProcInfo "obj" "fn" "function" (Just 7)
                 ]
               [] [] [] Set.empty
-            initDeadCodeRelations conn
-            materializeDeadCodeClosure conn
+            dcRows <- initDeadCodeRelations conn
+            materializeDeadCodeClosure dcRows conn
             materializeCallerCounts conn
             materializeDeadCodeRows conn
             materializeDeadCode conn
@@ -394,8 +401,8 @@ tests = testGroup "Relations"
                 , ProcInfo "obj" "fn" "function" (Just 5)
                 ]
               [] [] [] Set.empty
-            initDeadCodeRelations conn
-            materializeDeadCodeClosure conn
+            dcRows <- initDeadCodeRelations conn
+            materializeDeadCodeClosure dcRows conn
             materializeCallerCounts conn
             materializeDeadCodeRows conn
             materializeDeadCode conn
@@ -403,6 +410,54 @@ tests = testGroup "Relations"
               "SELECT cyclomatic FROM dead_code WHERE object = 'obj' AND proc_name = 'fn'"
               :: IO [Only Int]
             [ c | Only c <- rows ] @?= [5]
+      ]
+
+    , -- Plan 187 §18 tier 1: 'initDeadCodeRelations' now returns the rows it
+      -- fetched (as 'DeadCodeInputRows') instead of 'materializeDeadCodeClosure'
+      -- re-querying the same four tables. This guards against the returned
+      -- bundle silently drifting from what was actually fetched/materialized
+      -- (e.g. a future edit returning stale or swapped fields) -- not against
+      -- 'deadReach' correctness, which 'DeadCodeReachabilityTest' already covers.
+      testGroup "initDeadCodeRelations returns fetched rows"
+      [ testCase "returned DeadCodeInputRows matches independently re-querying the same tables" $
+          withHandle inMemory $ \conn -> do
+            initSchema conn
+            withAppenderPool conn phaseATables $ \pool ->
+              seedDeadCodeFixture conn pool
+                [ ProcInfo "obj" "fn" "function" (Just 1) ]
+                []
+                [ ("obj", "fn", "callee_obj", "callee_fn") ]
+                [ ("child_obj", "parent_obj") ]
+                (Set.fromList ["dw_obj"])
+            dcRows <- initDeadCodeRelations conn
+            procsIndependent     <- queryProcedures conn
+            callsIndependent     <- queryResolvedCalls conn
+            ancestorsIndependent <- queryObjectAncestors conn
+            dwObjsIndependent    <- queryDwObjects conn
+            dcrProcs dcRows     @?= procsIndependent
+            dcrCalls dcRows     @?= callsIndependent
+            dcrAncestors dcRows @?= ancestorsIndependent
+            dcrDwObjects dcRows @?= dwObjsIndependent
+      ]
+
+    , -- Plan 187 §18 tier 1: 'initSchemaRelations' now returns the rows it
+      -- fetched (as 'SchemaInputRows') instead of 'materializeSchemaClosure'
+      -- re-querying the same two tables. Same rationale as the DeadCode
+      -- group above -- guards the plumbing, not 'legPriority'/'reachClosure'
+      -- correctness ('SchemaClosureTest' already covers that.)
+      testGroup "initSchemaRelations returns fetched rows"
+      [ testCase "returned SchemaInputRows matches independently re-querying the same tables" $
+          withHandle inMemory $ \conn -> do
+            initSchema conn
+            let colA = ColumnObj (TableRef Nothing "a") "x"
+                colB = ColumnObj (TableRef Nothing "b") "y"
+            appendSchemaMorphisms conn [ SchMorphism colA colB LegFk SrcDwJoin ]
+            appendSchemaObjects conn [ StmtObj (SqlStmtId "f.srf" "obj" "proc" 5) ]
+            schRows <- initSchemaRelations conn []
+            morphismsIndependent <- querySchemaMorphismRows conn
+            objectsIndependent   <- querySchemaObjects conn
+            sirMorphisms schRows @?= morphismsIndependent
+            sirObjects schRows   @?= objectsIndependent
       ]
 
     , -- Plan 175 Phase 2: direct unit tests of 'initDeadCodeRelations''s pure
@@ -541,7 +596,7 @@ assertConfidence name procs calls resolved (obj, proc) expectedLevel =
     initSchema conn
     withAppenderPool conn phaseATables $ \pool -> do
       seedDeadCodeFixture conn pool procs calls resolved [] Set.empty
-    initDeadCodeRelations conn
+    _ <- initDeadCodeRelations conn
     materializeCallerCounts conn
     rows <- queryHandle conn
               (Query $ "SELECT level FROM confidence WHERE object = '" <> obj <> "' AND proc = '" <> proc <> "'") :: IO [Only Text]

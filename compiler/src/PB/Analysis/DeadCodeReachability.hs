@@ -39,7 +39,7 @@ module PB.Analysis.DeadCodeReachability
 import PB.Prelude
 import PB.Pipeline.DuckDb.Relations
   ( entryRows, callRefRows, resolvedCallEdgeRows, callsRows
-  , CallEdge (..)
+  , CallEdge (..), DeadCodeInputRows (..)
   )
 import PB.Analysis.Taint qualified as Taint (ResolvedCallRow)
 import PB.Pipeline.DuckDb
@@ -48,7 +48,6 @@ import PB.Pipeline.DuckDb
   )
 import PB.Pipeline.DuckDb.PhaseB.Query
   ( ProcSummaryRow (..)
-  , queryProcedures, queryResolvedCalls, queryObjectAncestors, queryDwObjects
   )
 import PB.Algebra.Semiring (Boolean (..))
 import PB.Algebra.Closure
@@ -126,21 +125,18 @@ deadReach procs calls inherits dwObjs =
   in procPairs `Set.difference` reachable
 
 -- | Materialize @proc_dead@ as a real DuckDB table, computed by
--- 'deadReach' over the same raw input relations
--- 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations' reads. Must run after
--- @procedures@\/@resolved_calls@\/@objects@\/@dw_objects@ are populated
--- (same prerequisite as 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations');
--- called from 'PB.Pipeline.Passes.materializeAllRelationsViews', before the
--- downstream materializers that read @proc_dead@ as an input relation
+-- 'deadReach' over the same raw input rows
+-- 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations' already fetched and
+-- passes in as 'DeadCodeInputRows' (Plan 187 §18 tier 1 — no re-query of
+-- @procedures@\/@resolved_calls@\/@objects@\/@dw_objects@). Called from
+-- 'PB.Pipeline.Passes.materializeAllRelationsViews', immediately after
+-- 'PB.Pipeline.DuckDb.Relations.initDeadCodeRelations', before the downstream
+-- materializers that read @proc_dead@ as an input relation
 -- ('PB.Pipeline.DuckDb.materializeDeadCodeRows',
 -- 'PB.Pipeline.DuckDb.materializeLiveProc') run.
-materializeDeadCodeClosure :: Handle -> IO ()
-materializeDeadCodeClosure conn = do
-  procs    <- queryProcedures conn
-  calls    <- queryResolvedCalls conn
-  inherits <- queryObjectAncestors conn
-  dwObjs   <- queryDwObjects conn
-  let dead = deadReach procs calls inherits dwObjs
+materializeDeadCodeClosure :: DeadCodeInputRows -> Handle -> IO ()
+materializeDeadCodeClosure DeadCodeInputRows{dcrProcs, dcrCalls, dcrAncestors, dcrDwObjects} conn = do
+  let dead = deadReach dcrProcs dcrCalls dcrAncestors dcrDwObjects
   recreateTextTable conn "proc_dead" ["object", "proc"]
   appendTextRows conn "proc_dead" [ [o, p] | (o, p) <- Set.toList dead ]
 

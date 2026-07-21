@@ -34,15 +34,11 @@ module PB.Analysis.SchemaClosure
   ) where
 
 import PB.Prelude
-import PB.Pipeline.DuckDb.Relations (legSourceRows, seedRows)
+import PB.Pipeline.DuckDb.Relations (legSourceRows, seedRows, SchemaInputRows (..))
 import PB.Pipeline.DuckDb
   ( Handle
   , recreateTextTable
   , appendTextRows
-  )
-import PB.Pipeline.DuckDb.PhaseB.Query
-  ( querySchemaMorphismRows
-  , querySchemaObjects
   )
 
 import PB.Algebra.Closure
@@ -235,18 +231,20 @@ backForSeed s adjFwd revReach dist =
 
 -- | Materialize @reaches@, @path_leg_fwd@, @path_leg_back@ as real DuckDB
 -- tables, computed by 'legPriority' / 'reachClosure' /
--- 'cosliceClosure' over the same raw input relations
--- 'PB.Pipeline.DuckDb.Relations.initSchemaRelations' reads. Must run after
--- @schema_morphisms@\/@schema_objects@ are populated (same prerequisite as
--- 'initSchemaRelations'); called from 'PB.Pipeline.Passes.materializeAllRelationsViews',
--- before the downstream materializer that reads @reaches@ as an input relation
+-- 'cosliceClosure' over the same raw input rows
+-- 'PB.Pipeline.DuckDb.Relations.initSchemaRelations' already fetched and
+-- passes in as 'SchemaInputRows' (Plan 187 §18 tier 1 — no re-query of
+-- @schema_morphisms@\/@schema_objects@). Called from
+-- 'PB.Pipeline.Passes.materializeAllRelationsViews', immediately after
+-- 'PB.Pipeline.DuckDb.Relations.initSchemaRelations', before the downstream
+-- materializer that reads @reaches@ as an input relation
 -- ('PB.Pipeline.DuckDb.materializeRiskCount') runs and before
 -- 'PB.Pipeline.DuckDb.materializeDecompositionCoslice'.
-materializeSchemaClosure :: Handle -> IO ()
-materializeSchemaClosure conn = do
-  morphisms <- querySchemaMorphismRows conn
-  objects   <- querySchemaObjects conn
-  let legSource = legSourceRows morphisms
+materializeSchemaClosure :: SchemaInputRows -> Handle -> IO ()
+materializeSchemaClosure SchemaInputRows{sirMorphisms, sirObjects} conn = do
+  let morphisms = sirMorphisms
+      objects   = sirObjects
+      legSource = legSourceRows morphisms
       seeds    = [ k | [k] <- seedRows objects ]
       leg      = legPriority legSource
       reach    = reachClosureMap leg

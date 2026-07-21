@@ -9,7 +9,7 @@ import PB.Analysis.Builtins    (builtinFnNames, builtinMethodNames)
 import PB.Analysis.Taint       qualified as Taint
 import PB.Analysis.TypeResolve
 import PB.Analysis.SchemaCategory
-  ( SchemaInputs (..), SchGraph (..), buildSchema )
+  ( SchemaInputs (..), SchGraph (..), buildSchema, CatFkRow )
 import PB.Pipeline.DuckDb.Relations qualified as Relations
 import PB.Pipeline.DuckDb.Relations (LegSourceFanout (..))
 import PB.Analysis.DeadCodeReachability qualified as DeadCodeReachability
@@ -19,7 +19,7 @@ import PB.Pipeline.Progress qualified as Progress
 import PB.Pipeline.DuckDb (Handle)
 import PB.Pipeline.DuckDb.PhaseB.Query
   ( queryLocalVars, queryCallSites, queryGlobalVars, queryObjInfo
-  , queryProcDefs, queryProcUses, queryResolvedCalls
+  , queryProcDefs, queryProcUses, ProcRows (..), queryResolvedCalls
   , queryTaintInputs, queryTaintIntraEdges, queryTaintReturnRows
   , queryDwRetrieveColumns, queryDwWriteColumns, queryDwWhereColumns
   , queryDwJoinLegs, querySqlCols
@@ -160,9 +160,15 @@ runPhaseB :: Handle -> Maybe Text -> IO ()
 runPhaseB conn mDefaultNamespace = do
   Progress.emitEvent (Progress.EvPhase "B")
   -- B1: prerequisite Haskell analyses + input relation materialization.
-  _   <- runPass5  conn
-  runPass67 conn
-  sch <- runPass9 conn mDefaultNamespace
+  _        <- runPass5  conn
+  procRows <- runPass67 conn
+  -- catalog_fks is read once here and threaded into both runPass9 (which
+  -- builds the schema category from it) and materializeAllRelationsViews's
+  -- initSchemaRelations (which builds the fk relation from it) -- the same
+  -- rows, nothing writes to catalog_fks between the two uses (Plan 187 §18
+  -- tier 2).
+  catFks <- queryCatFks conn
+  sch <- runPass9 conn mDefaultNamespace catFks
   Progress.emitEvent (Progress.EvStep
     ("Schema category built: " <> T.pack (show (Set.size (sgObjects sch)))
       <> " objects, " <> T.pack (show (length (sgLegs sch))) <> " legs")
@@ -171,7 +177,7 @@ runPhaseB conn mDefaultNamespace = do
     , ("schema_morphisms", length (sgLegs sch))
     ]
     Nothing)
-  materializeAllRelationsViews conn
+  materializeAllRelationsViews conn catFks
   -- B2: the five SQL materializers run in dependency order. Characterize
   -- leg_source's key
   -- fan-in first (see reportLegSourceFanout) -- cheap, and surfaces a
@@ -189,19 +195,25 @@ runPhaseB conn mDefaultNamespace = do
   materializeImpliedFk conn
   materializeColumnRisk conn
   materializeTaintPaths conn
-  materializeTaintAnnotations conn
+  materializeTaintAnnotations procRows conn
 
 -- | Materialize every input relation view the downstream SQL materializers assume
 -- already exist. Each 'initXRelations' is idempotent (@CREATE OR
 -- REPLACE VIEW@); together they cover the dead-code and schema input relation layers.
 -- Must run after 'runPass5' (for @resolved_calls@) and 'runPass9' (for
 -- @schema_objects@\/@schema_morphisms@).
-materializeAllRelationsViews :: Handle -> IO ()
-materializeAllRelationsViews conn = do
-  Progress.timedStep "Dead-code relations materialized" $ Relations.initDeadCodeRelations conn
-  Progress.timedStep "Dead-code closure" $ DeadCodeReachability.materializeDeadCodeClosure conn
-  Progress.timedStep "Schema relations materialized" $ Relations.initSchemaRelations conn
-  Progress.timedStep "Schema closure" $ SchemaClosure.materializeSchemaClosure conn
+--
+-- @catFks@ is the same rows 'runPhaseB' already fetched for 'runPass9';
+-- threaded here instead of re-querying @catalog_fks@ (Plan 187 §18 tier 2).
+-- Each @init*Relations@ returns the rows it fetched, passed directly into its
+-- paired closure materializer instead of that materializer re-querying the
+-- same tables (tier 1).
+materializeAllRelationsViews :: Handle -> [CatFkRow] -> IO ()
+materializeAllRelationsViews conn catFks = do
+  dcRows <- Progress.timedStep "Dead-code relations materialized" $ Relations.initDeadCodeRelations conn
+  Progress.timedStep "Dead-code closure" $ DeadCodeReachability.materializeDeadCodeClosure dcRows conn
+  schRows <- Progress.timedStep "Schema relations materialized" $ Relations.initSchemaRelations conn catFks
+  Progress.timedStep "Schema closure" $ SchemaClosure.materializeSchemaClosure schRows conn
   reportTaintDefUseFanout conn
 
 -- | The five relation materializers run as direct DuckDB SQL, invoked in
@@ -231,7 +243,12 @@ runPass5 conn = Progress.timedStep "Resolving types" $ do
 -- 'TaintClosure.materializeTaintStepKind') — production's source for all
 -- three tables. Neither depends on a DB round-trip: both read straight off
 -- the same in-memory rows this pass already built.
-runPass67 :: Handle -> IO ()
+--
+-- Returns the @proc_defs@\/@proc_uses@ rows fetched here as 'ProcRows',
+-- threaded by 'runPhaseB' into 'PB.Pipeline.DuckDb.materializeTaintAnnotations'
+-- (run much later in Phase B2) instead of it re-querying the same two
+-- tables (Plan 187 §18 tier 3).
+runPass67 :: Handle -> IO ProcRows
 runPass67 conn = Progress.timedStep "Building call graph" $ do
   (gvs, defs, uses, allRC, tfis, intraEdges, returnRows) <-
     Progress.timedStep "Load taint inputs (7 queries)" $ do
@@ -263,13 +280,20 @@ runPass67 conn = Progress.timedStep "Building call graph" $ do
     TaintClosure.materializeTaintClosure taintClosure allSources allSinks conn
   Progress.timedStep "Taint witness paths" $
     TaintClosure.materializeTaintStepKind taintClosure allSources allSinks conn
+  pure ProcRows { prDefs = defs, prUses = uses }
 
 -- | Pass 9 (Plan 148 Phase 1b; default-namespace resolution added Plan 157
 -- Phase 1): materialize the schema category @Sch@ from Phase A's
 -- DW-retrieve/DW-join/SQL-column/DDL-catalog tables. Returns the graph so
 -- Pass 10 can traverse it without rebuilding from DB rows.
-runPass9 :: Handle -> Maybe Text -> IO SchGraph
-runPass9 conn mDefaultNamespace = Progress.timedStep "Building schema category" $ do
+--
+-- @catFks@ is taken as a parameter rather than queried here: 'runPhaseB'
+-- fetches it once and passes the same rows to both this function and
+-- 'PB.Pipeline.DuckDb.Relations.initSchemaRelations', which independently
+-- needs it to build the @fk@ relation (Plan 187 §18 tier 2 — no re-query of
+-- @catalog_fks@).
+runPass9 :: Handle -> Maybe Text -> [CatFkRow] -> IO SchGraph
+runPass9 conn mDefaultNamespace catFks = Progress.timedStep "Building schema category" $ do
   drCols  <- queryDwRetrieveColumns  conn
   dwCols  <- queryDwWriteColumns     conn
   dwhCols <- queryDwWhereColumns     conn
@@ -277,7 +301,6 @@ runPass9 conn mDefaultNamespace = Progress.timedStep "Building schema category" 
   sqlCols <- querySqlCols            conn
   cfCols  <- queryCatFootprintColumns conn
   catCols <- queryCatColumns         conn
-  catFks  <- queryCatFks             conn
   let sch = buildSchema SchemaInputs
         { inDwRetrieveColumns   = drCols
         , inDwJoins             = djLegs

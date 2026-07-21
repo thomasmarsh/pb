@@ -16,6 +16,7 @@
 --     pathological duplicate-key shape before the analyses run.
 module PB.Pipeline.DuckDb.Relations
   ( initSchemaRelations
+  , SchemaInputRows (..)
   , LegSourceFanout (..)
   , legSourceFanout
   , legSourceRows
@@ -24,6 +25,7 @@ module PB.Pipeline.DuckDb.Relations
   , joinLegRows
   , fkRows
   , initDeadCodeRelations
+  , DeadCodeInputRows (..)
   , procRows
   , procMetaRows
   , inheritsRows
@@ -45,7 +47,7 @@ import PB.Pipeline.DuckDb
   ( Handle, queryHandle, recreateTextTable, appendTextRows )
 import PB.Pipeline.DuckDb.PhaseB.Query
   ( SchMorphismRow (..), ProcSummaryRow (..)
-  , querySchemaObjects, querySchemaMorphismRows, queryCatFks
+  , querySchemaObjects, querySchemaMorphismRows
   , queryObjectAncestors, queryProcedures, queryDwObjects, queryResolvedCalls
   )
 import PB.Analysis.SchemaCategory
@@ -62,6 +64,15 @@ import qualified Data.Text       as T
 -- ---------------------------------------------------------------------------
 -- Schema input relations
 
+-- | Rows 'initSchemaRelations' already fetched from @schema_morphisms@\/
+-- @schema_objects@, threaded into
+-- 'PB.Analysis.SchemaClosure.materializeSchemaClosure' instead of it
+-- re-querying the same two tables (Plan 187 §18 tier 1).
+data SchemaInputRows = SchemaInputRows
+  { sirMorphisms :: [SchMorphismRow]
+  , sirObjects   :: [SchObject]
+  }
+
 -- | (Re)materialize the input relations every analysis below assumes already
 -- exist: @leg_source@ over 'schema_morphisms', @stmt@\/@seed@ over
 -- 'schema_objects'. Must run after 'PB.Pipeline.DuckDb.initSchema' AND after
@@ -77,16 +88,23 @@ import qualified Data.Text       as T
 -- populated from @dead_code_rows@ via
 -- 'PB.Pipeline.DuckDb.materializeDeadCode' and is the sole source for the
 -- Dead Code Explorer API (@get_dead_code@).
-initSchemaRelations :: Handle -> IO ()
-initSchemaRelations conn = do
+--
+-- @catFks@ is taken as a parameter rather than queried here: 'runPhaseB'
+-- fetches it once and passes the same rows to both this function and
+-- 'PB.Pipeline.Passes.runPass9' (which independently needs it to build the
+-- schema category) — see Plan 187 §18. Returns the morphisms\/objects rows
+-- already fetched so 'PB.Analysis.SchemaClosure.materializeSchemaClosure'
+-- can reuse them instead of re-querying the same two tables.
+initSchemaRelations :: Handle -> [CatFkRow] -> IO SchemaInputRows
+initSchemaRelations conn fks = do
   morphisms <- querySchemaMorphismRows conn
   objects   <- querySchemaObjects conn
-  fks       <- queryCatFks conn
   materialize "leg_source" ["x", "y", "kind"]                  (legSourceRows morphisms)
   materialize "stmt"       ["file", "object", "proc", "line"]  (stmtRows objects)
   materialize "seed"       ["x"]                                (seedRows objects)
   materialize "join_leg"   ["x", "y"]                           (joinLegRows morphisms)
   materialize "fk"         ["x", "y"]                           (fkRows fks)
+  pure SchemaInputRows { sirMorphisms = morphisms, sirObjects = objects }
   where
     materialize name cols rows = do
       recreateTextTable conn name cols
@@ -190,7 +208,18 @@ legSourceFanout conn = do
 -- (@dwobject@\/@powerobject@\/@window@\/... method resolution), never real
 -- workspace code. An unfiltered @proc@ relation inflates @proc_dead@ with
 -- every one of these builtin stub methods.
-initDeadCodeRelations :: Handle -> IO ()
+-- | Rows 'initDeadCodeRelations' already fetched from @procedures@\/
+-- @resolved_calls@\/object ancestors\/@dw_objects@, threaded into
+-- 'PB.Analysis.DeadCodeReachability.materializeDeadCodeClosure' instead of
+-- it re-querying the same four tables (Plan 187 §18 tier 1).
+data DeadCodeInputRows = DeadCodeInputRows
+  { dcrProcs     :: [ProcSummaryRow]
+  , dcrCalls     :: [Taint.ResolvedCallRow]
+  , dcrAncestors :: [(Text, Text)]
+  , dcrDwObjects :: [Text]
+  }
+
+initDeadCodeRelations :: Handle -> IO DeadCodeInputRows
 initDeadCodeRelations conn = do
   procs     <- queryProcedures conn
   calls0    <- queryResolvedCalls conn
@@ -211,6 +240,8 @@ initDeadCodeRelations conn = do
     (map (\e -> [ceCallerObj e, ceCallerProc e, ceCalleeObj e, ceCalleeProc e]) callEdges)
   materialize "proc_meta" ["object", "proc", "proc_type", "cyclomatic", "proc_lower"]
     (procMetaRows procs)
+  pure DeadCodeInputRows
+    { dcrProcs = procs, dcrCalls = calls0, dcrAncestors = ancestors, dcrDwObjects = dwObjs }
   where
     materialize name cols rows = do
       recreateTextTable conn name cols
