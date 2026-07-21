@@ -22,7 +22,7 @@ import PB.AST.Located         (Located (..))
 import PB.AST.Type            (PbType (..))
 import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
-import PB.Pipeline.Preprocess (LogicalLine (..))
+import PB.Pipeline.Preprocess (mkLogicalLine)
 
 import Data.List                (nub)
 import Hedgehog (Gen, Property, forAll, property, assert, failure, footnote, (===))
@@ -39,12 +39,12 @@ import qualified Data.Text as T
 -- Helpers
 
 mkTok :: TokenKind -> Text -> Token
-mkTok k t = Token k t (SourceSpan 1 1 1)
+mkTok k t = Token k t (SourceSpan 1 1 1 1)
 
 mkStmt :: [(TokenKind, Text)] -> Statement
 mkStmt pairs = Statement
   { stmtTokens    = map (uncurry mkTok) pairs
-  , stmtSource    = LogicalLine "" 1 1
+  , stmtSource    = mkLogicalLine "" 1
   , stmtTerminated = False
   }
 

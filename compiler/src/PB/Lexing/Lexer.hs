@@ -10,7 +10,7 @@ module PB.Lexing.Lexer
 import PB.Prelude
 import PB.Lexing.Escape (pbStringChunk)
 import PB.Lexing.Token (SourceSpan (..), Token (..), TokenKind (..))
-import PB.Pipeline.Preprocess (LogicalLine (..))
+import PB.Pipeline.Preprocess (LogicalLine (..), resolveRawPos)
 
 import Data.Char (isAlpha, isAlphaNum, isSpace)
 import qualified Data.List.NonEmpty as NE
@@ -44,12 +44,9 @@ tokenize = map tokenizeLine
 
 tokenizeLine :: LogicalLine -> LexLine
 tokenizeLine ll =
-  case parse (sc *> many (oneToken sl el <* sc) <* eof) "" (llText ll) of
+  case parse (sc *> many (oneToken ll <* sc) <* eof) "" (llText ll) of
     Left  bundle -> LexLine ll (Left  (LexError ll (bundleErrorOffset bundle)))
     Right ts     -> LexLine ll (Right ts)
-  where
-    sl = llStartLine ll
-    el = llEndLine ll
 
 bundleErrorOffset :: ParseErrorBundle Text Void -> Int
 bundleErrorOffset bundle = case NE.head (bundleErrors bundle) of
@@ -65,42 +62,45 @@ type Lexer = Parsec Void Text
 sc :: Lexer ()
 sc = L.space space1 (L.skipLineComment "//") (L.skipBlockComment "/*" "*/")
 
+-- Column within the joined logical-line text -- used only by 'pIdentOrEnum's
+-- label heuristic (label must start the line), not for 'SourceSpan'
+-- construction, which resolves the true raw position via 'resolveRawPos'.
 currentCol :: Lexer Int
 currentCol = fromIntegral . unPos . sourceColumn <$> getSourcePos
-
-mkTok :: Int -> Int -> Int -> TokenKind -> Text -> Token
-mkTok sl el c k t = Token k t (SourceSpan sl el c)
 
 -- ---------------------------------------------------------------------------
 -- Token dispatcher (try ordering follows §11.1)
 
-oneToken :: Int -> Int -> Lexer Token
-oneToken sl el = do
-  c <- currentCol
-  let mk = mkTok sl el c
-  choice
-    [ pTwoWordKw sl el c
-    , pStringLiteral mk
-    , try (pDateLiteral mk)
-    , try (pTimeLiteral mk)
-    , try (pFloatLiteral mk)
-    , try (pIntLiteral mk)
-    , pIdentOrEnum c mk
-    , pOperator mk
-    , pPunctuation mk
+oneToken :: LogicalLine -> Lexer Token
+oneToken ll = do
+  startOff <- getOffset
+  (k, t) <- choice
+    [ pTwoWordKw
+    , pStringLiteral
+    , try pDateLiteral
+    , try pTimeLiteral
+    , try pFloatLiteral
+    , try pIntLiteral
+    , pIdentOrEnum
+    , pOperator
+    , pPunctuation
     ]
+  endOff <- getOffset
+  let (sLine, sCol) = resolveRawPos ll startOff
+      (eLine, eCol) = resolveRawPos ll endOff
+  return (Token k t (SourceSpan sLine sCol eLine eCol))
 
 -- ---------------------------------------------------------------------------
 -- Two-word keywords  (§2.2; tried before single-word keywords)
 
-pTwoWordKw :: Int -> Int -> Int -> Lexer Token
-pTwoWordKw sl el c = try $ do
+pTwoWordKw :: Lexer (TokenKind, Text)
+pTwoWordKw = try $ do
   w1 <- identText
   _ <- space1
   w2 <- identText
   let combined = T.toLower w1 <> " " <> T.toLower w2
   case Map.lookup combined twoWordKwMap of
-    Just k  -> return (Token k (w1 <> " " <> w2) (SourceSpan sl el c))
+    Just k  -> return (k, w1 <> " " <> w2)
     Nothing -> fail "not a two-word keyword"
 
 twoWordKwMap :: Map.Map Text TokenKind
@@ -125,32 +125,32 @@ twoWordKwMap = Map.fromList
 -- ---------------------------------------------------------------------------
 -- String literals  (§2.5)
 
-pStringLiteral :: (TokenKind -> Text -> Token) -> Lexer Token
-pStringLiteral mk = do
+pStringLiteral :: Lexer (TokenKind, Text)
+pStringLiteral = do
   delim <- char '"' <|> char '\''
   let kind = if delim == '"' then TkStringDouble else TkStringSingle
   chunks <- many (pbStringChunk delim)
   _ <- char delim
-  return (mk kind (T.singleton delim <> T.concat chunks <> T.singleton delim))
+  return (kind, T.singleton delim <> T.concat chunks <> T.singleton delim)
 
 
 -- ---------------------------------------------------------------------------
 -- Numeric literals  (§2.6)
 
 -- YYYY-MM-DD
-pDateLiteral :: (TokenKind -> Text -> Token) -> Lexer Token
-pDateLiteral mk = try $ do
+pDateLiteral :: Lexer (TokenKind, Text)
+pDateLiteral = try $ do
   y  <- T.pack <$> count 4 digitChar
   _  <- char '-'
   mo <- T.pack <$> count 2 digitChar
   _  <- char '-'
   d  <- T.pack <$> count 2 digitChar
   notFollowedBy (satisfy isNumericCont)
-  return (mk TkDateLiteral (y <> "-" <> mo <> "-" <> d))
+  return (TkDateLiteral, y <> "-" <> mo <> "-" <> d)
 
 -- HH:MM:SS[.frac]
-pTimeLiteral :: (TokenKind -> Text -> Token) -> Lexer Token
-pTimeLiteral mk = try $ do
+pTimeLiteral :: Lexer (TokenKind, Text)
+pTimeLiteral = try $ do
   h  <- T.pack <$> count 2 digitChar
   _  <- char ':'
   m  <- T.pack <$> count 2 digitChar
@@ -158,11 +158,11 @@ pTimeLiteral mk = try $ do
   s  <- T.pack <$> count 2 digitChar
   fr <- option "" $ do { _ <- char '.'; ds <- T.pack <$> some digitChar; return ("." <> ds) }
   notFollowedBy (satisfy isNumericCont)
-  return (mk TkTimeLiteral (h <> ":" <> m <> ":" <> s <> fr))
+  return (TkTimeLiteral, h <> ":" <> m <> ":" <> s <> fr)
 
 -- Floating-point: must contain a '.' or exponent
-pFloatLiteral :: (TokenKind -> Text -> Token) -> Lexer Token
-pFloatLiteral mk = try $ do
+pFloatLiteral :: Lexer (TokenKind, Text)
+pFloatLiteral = try $ do
   sign    <- option "" (T.singleton <$> (char '+' <|> char '-'))
   intPart <- T.pack <$> many digitChar
   dot     <- optional (char '.')
@@ -170,7 +170,7 @@ pFloatLiteral mk = try $ do
     Nothing -> do
       exp' <- pExp
       notFollowedBy (satisfy isNumericCont)
-      return (mk TkFloatLiteral (sign <> intPart <> exp'))
+      return (TkFloatLiteral, sign <> intPart <> exp')
     Just _  -> do
       fracPart <- T.pack <$> many digitChar
       exp'     <- option "" pExp
@@ -179,7 +179,7 @@ pFloatLiteral mk = try $ do
       -- Require at least one digit on either side of the dot
       if T.null intPart && T.null fracPart
         then fail "not a float"
-        else return (mk TkFloatLiteral raw)
+        else return (TkFloatLiteral, raw)
 
 pExp :: Lexer Text
 pExp = do
@@ -188,22 +188,23 @@ pExp = do
   ds   <- T.pack <$> some digitChar
   return (T.singleton e <> sign <> ds)
 
-pIntLiteral :: (TokenKind -> Text -> Token) -> Lexer Token
-pIntLiteral mk = do
+pIntLiteral :: Lexer (TokenKind, Text)
+pIntLiteral = do
   ds <- T.pack <$> some digitChar
   notFollowedBy (satisfy isNumericCont)
-  return (mk TkIntLiteral ds)
+  return (TkIntLiteral, ds)
 
 -- ---------------------------------------------------------------------------
 -- Identifiers, keywords, enum literals, labels  (§2.1, §2.2, §2.7)
 
-pIdentOrEnum :: Int -> (TokenKind -> Text -> Token) -> Lexer Token
-pIdentOrEnum atCol mk = do
+pIdentOrEnum :: Lexer (TokenKind, Text)
+pIdentOrEnum = do
+  atCol <- currentCol
   t <- identText
   -- Enum literal: Ident! (§2.7)
   isEnum <- option False (True <$ char '!')
   if isEnum
-    then return (mk TkEnumLiteral (t <> "!"))
+    then return (TkEnumLiteral, t <> "!")
     else do
       -- Label: Ident: at column 1, not ::, colon followed by space or EOL  (§10)
       isLabel <- if atCol == 1
@@ -214,8 +215,8 @@ pIdentOrEnum atCol mk = do
                    return True
                  else return False
       if isLabel
-        then return (mk TkLabel (t <> ":"))
-        else return (mk (classifyIdent (T.toLower t)) t)
+        then return (TkLabel, t <> ":")
+        else return (classifyIdent (T.toLower t), t)
 
 identText :: Lexer Text
 identText = do
@@ -237,44 +238,44 @@ isNumericCont c = isAlphaNum c || c `elem` ("_$#%`" :: String)
 -- ---------------------------------------------------------------------------
 -- Operators  (§2.9; multi-char alternatives tried first)
 
-pOperator :: (TokenKind -> Text -> Token) -> Lexer Token
-pOperator mk = choice
-  [ try (string "<>" >> return (mk TkCompareOp "<>"))
-  , try (string ">=" >> return (mk TkCompareOp ">="))
-  , try (string "<=" >> return (mk TkCompareOp "<="))
-  , try (string "++" >> return (mk TkAugmentOp "++"))
-  , try (string "--" >> return (mk TkAugmentOp "--"))
-  , try (string "+=" >> return (mk TkAugmentOp "+="))
-  , try (string "-=" >> return (mk TkAugmentOp "-="))
-  , try (string "*=" >> return (mk TkAugmentOp "*="))
-  , try (string "/=" >> return (mk TkAugmentOp "/="))
-  , try (string "||" >> return (mk TkArithOp     "||"))
-  , try (string "::" >> return (mk TkDoubleColon "::"))
-  , char '>'  >> return (mk TkCompareOp ">")
-  , char '<'  >> return (mk TkCompareOp "<")
-  , char '+'  >> return (mk TkArithOp   "+")
-  , char '-'  >> return (mk TkArithOp   "-")
-  , char '*'  >> return (mk TkArithOp   "*")
-  , char '/'  >> return (mk TkArithOp   "/")
-  , char '^'  >> return (mk TkArithOp   "^")
-  , char '='  >> return (mk TkAssignOp  "=")
-  , char '.'  >> return (mk TkDot       ".")
-  , char ':'  >> return (mk TkColon     ":")
+pOperator :: Lexer (TokenKind, Text)
+pOperator = choice
+  [ try (string "<>" >> return (TkCompareOp, "<>"))
+  , try (string ">=" >> return (TkCompareOp, ">="))
+  , try (string "<=" >> return (TkCompareOp, "<="))
+  , try (string "++" >> return (TkAugmentOp, "++"))
+  , try (string "--" >> return (TkAugmentOp, "--"))
+  , try (string "+=" >> return (TkAugmentOp, "+="))
+  , try (string "-=" >> return (TkAugmentOp, "-="))
+  , try (string "*=" >> return (TkAugmentOp, "*="))
+  , try (string "/=" >> return (TkAugmentOp, "/="))
+  , try (string "||" >> return (TkArithOp,     "||"))
+  , try (string "::" >> return (TkDoubleColon, "::"))
+  , char '>'  >> return (TkCompareOp, ">")
+  , char '<'  >> return (TkCompareOp, "<")
+  , char '+'  >> return (TkArithOp,   "+")
+  , char '-'  >> return (TkArithOp,   "-")
+  , char '*'  >> return (TkArithOp,   "*")
+  , char '/'  >> return (TkArithOp,   "/")
+  , char '^'  >> return (TkArithOp,   "^")
+  , char '='  >> return (TkAssignOp,  "=")
+  , char '.'  >> return (TkDot,       ".")
+  , char ':'  >> return (TkColon,     ":")
   ]
 
 -- ---------------------------------------------------------------------------
 -- Punctuation  (§2.9)
 
-pPunctuation :: (TokenKind -> Text -> Token) -> Lexer Token
-pPunctuation mk = choice
-  [ char '(' >> return (mk TkLParen   "(")
-  , char ')' >> return (mk TkRParen   ")")
-  , char '[' >> return (mk TkLBracket "[")
-  , char ']' >> return (mk TkRBracket "]")
-  , char '{' >> return (mk TkLBrace   "{")
-  , char '}' >> return (mk TkRBrace   "}")
-  , char ',' >> return (mk TkComma    ",")
-  , char ';' >> return (mk TkSemi     ";")
+pPunctuation :: Lexer (TokenKind, Text)
+pPunctuation = choice
+  [ char '(' >> return (TkLParen,   "(")
+  , char ')' >> return (TkRParen,   ")")
+  , char '[' >> return (TkLBracket, "[")
+  , char ']' >> return (TkRBracket, "]")
+  , char '{' >> return (TkLBrace,   "{")
+  , char '}' >> return (TkRBrace,   "}")
+  , char ',' >> return (TkComma,    ",")
+  , char ';' >> return (TkSemi,     ";")
   ]
 
 -- ---------------------------------------------------------------------------

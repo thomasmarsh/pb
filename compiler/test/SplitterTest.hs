@@ -4,7 +4,7 @@ import PB.Prelude
 import PB.Lexing.Lexer (LexError (..), LexLine (..), tokenize)
 import PB.Lexing.Splitter (Statement (..), splitStatements)
 import PB.Lexing.Token (Token (..), TokenKind (..))
-import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText)
+import PB.Pipeline.Preprocess (LogicalLine (..), mkLogicalLine, normalizeText)
 
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
@@ -17,7 +17,7 @@ import Test.Tasty.Hedgehog (testProperty)
 -- Helpers
 
 mkLine :: Text -> LogicalLine
-mkLine t = LogicalLine t 1 1
+mkLine t = mkLogicalLine t 1
 
 tokenKindsOf :: Statement -> [TokenKind]
 tokenKindsOf = map tkKind . stmtTokens

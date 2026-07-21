@@ -3,7 +3,7 @@ module TokenTest (tests) where
 import PB.Prelude
 import PB.Lexing.Lexer (LexError (..), LexLine (..), tokenize)
 import PB.Lexing.Token (SourceSpan (..), Token (..), TokenKind (..))
-import PB.Pipeline.Preprocess (LogicalLine (..))
+import PB.Pipeline.Preprocess (LogicalLine (..), mkLogicalLine, normalizeText)
 
 import qualified Data.Text as T
 
@@ -18,7 +18,7 @@ import Test.Tasty.Hedgehog (testProperty)
 -- Helpers
 
 mkLine :: Text -> LogicalLine
-mkLine t = LogicalLine t 1 1
+mkLine t = mkLogicalLine t 1
 
 tokenKinds :: Text -> IO [TokenKind]
 tokenKinds t =
@@ -580,30 +580,62 @@ tests = testGroup "Lexing"
         [ testProperty "tokens carry correct line number" prop_tokensCorrectLine
         , testProperty "token text reconstructs input"   prop_tokenTextReconstructsInput
         ]
+    , testGroup "raw spans across a preprocessor join"
+        [ testCase "identifier after a & continuation reports its true raw line" $ do
+            case tokenize (normalizeText "foo &\nbar") of
+              [LexLine _ (Right [foo, bar])] -> do
+                tkSpan foo @?= SourceSpan 1 1 1 4
+                tkSpan bar @?= SourceSpan 2 1 2 4
+              _ -> assertFailure "expected exactly one lex line with two tokens"
+
+        , testCase "identifier after a joined block comment reports its true raw line" $ do
+            case tokenize (normalizeText "a /* hi\nthere */ b") of
+              [LexLine _ (Right [a, b])] -> do
+                tkSpan a @?= SourceSpan 1 1 1 2
+                tkSpan b @?= SourceSpan 2 10 2 11
+              _ -> assertFailure "expected exactly one lex line with two tokens"
+
+        , testCase "a two-word keyword split across a continuation spans both raw lines" $ do
+            -- spec.md §2.10's own documented example: `end &\n if` must still
+            -- lex as one TkControlKw "end if" token -- and now that token's
+            -- span legitimately starts on line 1 and ends on line 2.
+            case tokenize (normalizeText "end &\n if") of
+              [LexLine _ (Right [endIf])] -> do
+                tkKind endIf @?= TkControlKw
+                tkText endIf @?= "end if"
+                tkSpan endIf @?= SourceSpan 1 1 2 4
+              _ -> assertFailure "expected exactly one lex line with one token"
+        ]
     ]
   ]
 
 -- ---------------------------------------------------------------------------
 -- Properties
 
+-- | For text with no embedded continuation or comment join (the common
+-- case), every token's raw span collapses to the single physical line --
+-- unlike the old version of this property, which asserted a *fabricated*
+-- 'LogicalLine' claiming a text span lines 5-7 regardless of content. That
+-- shape is no longer constructible (a real 'LogicalLine' always carries
+-- 'SourceChunk' provenance matching its text), and the real multi-line-join
+-- cases are covered by the named regression tests above instead.
 prop_tokensCorrectLine :: Property
 prop_tokensCorrectLine = property $ do
   t  <- forAll $ Gen.text (Range.linear 0 80)
                    (Gen.filter (\c -> c /= '\n' && c /= '\r') Gen.ascii)
-  let ll  = LogicalLine t 5 7
-      res = tokenize [ll]
+  let res = tokenize (normalizeText t)
   case res of
     [LexLine _ (Right ts)] ->
       for_ ts $ \tk -> do
-        assert (ssStartLine (tkSpan tk) == 5)
-        assert (ssEndLine   (tkSpan tk) == 7)
+        assert (ssStartLine (tkSpan tk) == 1)
+        assert (ssEndLine   (tkSpan tk) == 1)
     _ -> success
 
 prop_tokenTextReconstructsInput :: Property
 prop_tokenTextReconstructsInput = property $ do
   t <- forAll $ Gen.text (Range.linear 0 80)
                   (Gen.filter (\c -> c /= '\n' && c /= '\r') Gen.ascii)
-  let ll  = LogicalLine t 1 1
+  let ll  = mkLogicalLine t 1
       res = tokenize [ll]
   case res of
     [LexLine _ (Right ts)] ->

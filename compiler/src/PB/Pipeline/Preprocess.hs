@@ -3,19 +3,60 @@ module PB.Pipeline.Preprocess
   ( normalizeText
   , stripHeaders
   , LogicalLine(..)
+  , SourceChunk(..)
+  , mkLogicalLine
+  , resolveRawPos
   ) where
 
 import PB.Prelude
 import Data.Bifunctor (second)
+import Data.List.NonEmpty (NonEmpty (..), (<|))
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Text as T
 
+-- | One contiguous run of 'llText' that came verbatim from a single raw
+-- physical line, recording where in the original file it started and
+-- where in the joined text it landed -- the provenance 'resolveRawPos'
+-- walks to map a joined-text offset back to a true raw (line, col).
+data SourceChunk = SourceChunk
+  { scRawLine     :: Int  -- ^ Physical line this run came from.
+  , scRawCol      :: Int  -- ^ 1-based column on that physical line where the run starts.
+  , scJoinedStart :: Int  -- ^ 0-based offset into 'llText' where the run starts.
+  , scLength      :: Int  -- ^ Length of the run, in both the raw line and 'llText'.
+  } deriving (Show, Eq, Ord)
+
 -- | A logical line after preprocessing.
---   Keeps the original physical line numbers for error reporting.
+--   Keeps the original physical line numbers for error reporting, plus
+--   per-physical-line provenance ('llChunks') so a joined-text offset
+--   (e.g. a token's column) can be mapped back to its true raw position
+--   even across a `&` continuation or block-comment join.
 data LogicalLine = LogicalLine
-  { llText      :: Text        -- ^ The joined logical line
+  { llText      :: Text
   , llStartLine :: Int         -- ^ First physical line number
   , llEndLine   :: Int         -- ^ Last physical line number
+  , llChunks    :: NonEmpty SourceChunk
   } deriving (Show, Eq, Ord)
+
+-- | Build a 'LogicalLine' for text that occupies exactly one physical line
+-- (the common case in tests and any call site with no real join to model)
+-- -- one chunk, spanning the whole text from column 1.
+mkLogicalLine :: Text -> Int -> LogicalLine
+mkLogicalLine t lineNo =
+  LogicalLine t lineNo lineNo (SourceChunk lineNo 1 0 (T.length t) :| [])
+
+-- | Map a 0-based offset into 'llText' back to the true raw (line, col) it
+-- came from, via 'llChunks'. An offset that lands on a synthetic separator
+-- character (the single space substituted for a joined `&`/newline/block
+-- comment) resolves to one past the end of the preceding chunk -- no real
+-- token content starts or ends exactly there.
+resolveRawPos :: LogicalLine -> Int -> (Int, Int)
+resolveRawPos ll offset =
+  let c = findChunk (llChunks ll) offset
+  in (scRawLine c, scRawCol c + (offset - scJoinedStart c))
+
+findChunk :: NonEmpty SourceChunk -> Int -> SourceChunk
+findChunk (c0 :| cs) offset = foldl' pick c0 cs
+  where pick best c = if scJoinedStart c <= offset then c else best
 
 -- | Normalize newlines, strip trailing spaces, join continuation lines,
 --   and merge physical lines that span a block comment /* … */.
@@ -40,24 +81,39 @@ stripTrailing = map (second (T.dropWhileEnd isSpace))
 joinContinuations :: [(Int, Text)] -> [LogicalLine]
 joinContinuations [] = []
 joinContinuations ((n, t) : rest) =
-    let (joined, endLine, remaining) = consumeContinuation n n t rest
-    in LogicalLine joined n endLine : joinContinuations remaining
+    let (joined, endLine, chunks, remaining) = consumeContinuation n t rest
+    in LogicalLine joined n endLine chunks : joinContinuations remaining
 
+-- | Fold physical lines into one logical line while the current one ends in
+-- a continuation marker. Recurses tail-first (handle this line, recurse on
+-- the rest, then splice) so each line's own chunk length is always taken
+-- from what that line actually contributes to the joined text -- its full
+-- raw text when terminal, or its continuation-marker-stripped text when
+-- another line follows -- never computed before that's known.
 consumeContinuation
-  :: Int           -- ^ startLine (first physical line of this logical line)
-  -> Int           -- ^ currentEnd (last physical line consumed so far)
-  -> Text
-  -> [(Int, Text)]
-  -> (Text, Int, [(Int, Text)])
-consumeContinuation _startLine currentEnd current [] =
-  (current, currentEnd, [])
-consumeContinuation startLine currentEnd current ((n, t) : rest)
-  | endsWithContinuation current =
-      let stripped = stripContinuationMarker current
-          newText  = stripped <> " " <> t
-      in consumeContinuation startLine n newText rest
+  :: Int            -- ^ this line's physical line number
+  -> Text            -- ^ this line's own raw text
+  -> [(Int, Text)]   -- ^ remaining physical lines
+  -> (Text, Int, NonEmpty SourceChunk, [(Int, Text)])
+consumeContinuation lineNo lineText rest
+  | endsWithContinuation lineText =
+      case rest of
+        [] -> (lineText, lineNo, SourceChunk lineNo 1 0 (T.length lineText) :| [], [])
+        ((n2, t2) : rest2) ->
+          let stripped  = stripContinuationMarker lineText
+              thisChunk = SourceChunk lineNo 1 0 (T.length stripped)
+              (joinedRest, endLine, restChunks, remaining) =
+                consumeContinuation n2 t2 rest2
+              offset            = T.length stripped + 1
+              shiftedRestChunks = NE.map
+                (\c -> c { scJoinedStart = scJoinedStart c + offset }) restChunks
+          in ( stripped <> " " <> joinedRest
+             , endLine
+             , thisChunk <| shiftedRestChunks
+             , remaining
+             )
   | otherwise =
-      (current, currentEnd, (n, t) : rest)
+      (lineText, lineNo, SourceChunk lineNo 1 0 (T.length lineText) :| [], rest)
 
 -- | True if the last non-space character is '&'.
 -- PowerBuilder allows & continuation both outside strings (statement
@@ -87,22 +143,26 @@ joinBlockComments :: [LogicalLine] -> [LogicalLine]
 joinBlockComments [] = []
 joinBlockComments (ll : rest)
   | lineCommentDepth (llText ll) > 0 =
-      let (joined, endLine, remaining) =
-            consumeBlockComment (llEndLine ll) (llText ll)
+      let (joined, endLine, chunks, remaining) =
+            consumeBlockComment (llEndLine ll) (llText ll) (llChunks ll)
                                 (lineCommentDepth (llText ll)) rest
-      in LogicalLine joined (llStartLine ll) endLine
+      in LogicalLine joined (llStartLine ll) endLine chunks
            : joinBlockComments remaining
   | otherwise = ll : joinBlockComments rest
 
 consumeBlockComment
-  :: Int -> Text -> Int -> [LogicalLine] -> (Text, Int, [LogicalLine])
-consumeBlockComment currentEnd acc _depth [] = (acc, currentEnd, [])
-consumeBlockComment _currentEnd acc depth (ll : rest) =
-  let newAcc   = acc <> " " <> llText ll
-      newDepth = depth + lineCommentDepth (llText ll)
+  :: Int -> Text -> NonEmpty SourceChunk -> Int -> [LogicalLine]
+  -> (Text, Int, NonEmpty SourceChunk, [LogicalLine])
+consumeBlockComment currentEnd acc chunks _depth [] = (acc, currentEnd, chunks, [])
+consumeBlockComment _currentEnd acc chunks depth (ll : rest) =
+  let newAcc     = acc <> " " <> llText ll
+      offset     = T.length acc + 1
+      shifted    = NE.map (\c -> c { scJoinedStart = scJoinedStart c + offset }) (llChunks ll)
+      newChunks  = chunks <> shifted
+      newDepth   = depth + lineCommentDepth (llText ll)
   in if newDepth > 0
-     then consumeBlockComment (llEndLine ll) newAcc newDepth rest
-     else (newAcc, llEndLine ll, rest)
+     then consumeBlockComment (llEndLine ll) newAcc newChunks newDepth rest
+     else (newAcc, llEndLine ll, newChunks, rest)
 
 -- | Net /* … */ depth contributed by a single line.
 --   Scans left-to-right so that */ immediately before // (e.g. "*///")

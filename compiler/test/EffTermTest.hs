@@ -25,7 +25,7 @@ import PB.Compile.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (.
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Lexing.Lexer     (tokenizeLine, LexLine (..))
 import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
-import PB.Pipeline.Preprocess (LogicalLine (..))
+import PB.Pipeline.Preprocess (mkLogicalLine)
 import Control.Monad.State.Strict (runStateT)
 import qualified Control.Exception as CE
 import GHC.Conc             (getAllocationCounter, setAllocationCounter)
@@ -65,11 +65,14 @@ emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Set.empty Map.empty "" Ma
 -- (mirrors 'InstrGraphTest.hs's identical helper) — used to build genuine
 -- 'ExCall' @callArgs@ ([[Token]]) for tests that need real argument shapes
 -- (e.g. a string literal arg) rather than empty argument lists.
+-- | Real-lex a single value for its correct TokenKind, then normalize its
+-- span to a constant dummy -- callers compare against hand-built ASTs that
+-- carry the same dummy span, not a real per-character position.
 tok :: Text -> Token
 tok t = case lexResult (tokenizeLine ll) of
-  Right (tk:_) -> tk
-  _            -> Token TkIdent t (SourceSpan 1 1 1)
-  where ll = LogicalLine t 1 1
+  Right (tk:_) -> tk { tkSpan = SourceSpan 1 1 1 1 }
+  _            -> Token TkIdent t (SourceSpan 1 1 1 1)
+  where ll = mkLogicalLine t 1
 
 -- | Build a minimal SsaProc with a single entry block.
 mkSsa :: [SsaAssign] -> SsaTerm -> SsaProc

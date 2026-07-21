@@ -7,7 +7,7 @@ import PB.Grammar.Body    (parseExpr)
 import PB.Grammar.Unparse (unparseExpr)
 import PB.Lexing.Lexer       (tokenizeLine, LexLine (..))
 import PB.Lexing.Token       (Token (..), TokenKind (..), SourceSpan (..))
-import PB.Pipeline.Preprocess (LogicalLine (..))
+import PB.Pipeline.Preprocess (mkLogicalLine)
 
 import Hedgehog (Gen, Property, assert, failure, footnote, forAll, property, (===))
 import qualified Hedgehog.Gen   as Gen
@@ -23,7 +23,7 @@ import qualified Test.Tasty.SmallCheck as SC
 -- Helper
 
 mkTok :: TokenKind -> Text -> Token
-mkTok k t = Token k t (SourceSpan 1 1 1)
+mkTok k t = Token k t (SourceSpan 1 1 1 1)
 
 countNodes :: [()] -> Int
 countNodes = length
@@ -937,7 +937,7 @@ propUnparseRoundtrip = property $ do
   -- ExHostVar only ever at the top level -- see genExpr's exclusion note.
   expr <- forAll $ Gen.choice [genExpr, ExHostVar <$> genLvalue]
   let text = unparseExpr expr
-      ll   = LogicalLine text 1 1
+      ll   = mkLogicalLine text 1
   case lexResult (tokenizeLine ll) of
     Left err   -> footnote ("lex error: " <> show err <> " for unparsed text: " <> show text) >> failure
     Right toks -> parseExpr toks === expr
@@ -951,7 +951,7 @@ propUnparseRoundtrip = property $ do
 prop_exprSmallCheck :: StructuredExpr -> Either String String
 prop_exprSmallCheck (SE expr) =
   let text = unparseExpr expr
-      ll   = LogicalLine text 1 1
+      ll   = mkLogicalLine text 1
   in case lexResult (tokenizeLine ll) of
        Left err   -> Left ("lex error: " <> show err <> " for unparsed text: " <> show text)
        Right toks

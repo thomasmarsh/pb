@@ -33,7 +33,7 @@ import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.AST.Type         (PbType (..))
 import PB.Lexing.Lexer     (tokenizeLine, LexLine (..))
 import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
-import PB.Pipeline.Preprocess (LogicalLine (..))
+import PB.Pipeline.Preprocess (mkLogicalLine)
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
@@ -65,11 +65,14 @@ ex n = ExLvalue (lv n)
 -- | Tokenize a source snippet into one real 'Token' (mirrors the identical
 -- helper in 'EffTermTest.hs') — used to build genuine call-argument token
 -- streams (e.g. a bare identifier reference) rather than hand-rolled fakes.
+-- | Real-lex a single value for its correct TokenKind, then normalize its
+-- span to a constant dummy -- callers compare against hand-built ASTs that
+-- carry the same dummy span, not a real per-character position.
 tok :: Text -> Token
 tok t = case lexResult (tokenizeLine ll) of
-  Right (tk:_) -> tk
-  _            -> Token TkIdent t (SourceSpan 1 1 1)
-  where ll = LogicalLine t 1 1
+  Right (tk:_) -> tk { tkSpan = SourceSpan 1 1 1 1 }
+  _            -> Token TkIdent t (SourceSpan 1 1 1 1)
+  where ll = mkLogicalLine t 1
 
 -- | @dw_foo.retrieve(argToks)@ as a standalone call statement -- argToks is
 -- parsed the same way the real grammar parses call arguments, so fixture

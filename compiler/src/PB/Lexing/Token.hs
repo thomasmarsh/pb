@@ -9,13 +9,17 @@ import PB.Prelude
 import Control.DeepSeq (NFData)
 import GHC.Generics    (Generic)
 
--- | Source location for a token.
---   ssStartLine/ssEndLine are the physical line numbers from the originating
---   LogicalLine; ssCol is the 1-based column within the joined logical line text.
+-- | Source location for a token, resolved back to the true raw file
+--   position via 'PB.Pipeline.Preprocess.resolveRawPos' -- meaningful
+--   against the original source even when the token was produced by a
+--   `&`-continuation or block-comment join. ssStartLine/ssStartCol and
+--   ssEndLine/ssEndCol can differ (e.g. a two-word keyword split across a
+--   continuation, `end &\n if`) since a join can land inside a single token.
 data SourceSpan = SourceSpan
   { ssStartLine :: Int
+  , ssStartCol  :: Int
   , ssEndLine   :: Int
-  , ssCol       :: Int
+  , ssEndCol    :: Int
   } deriving (Eq, Ord, Show, Generic)
 
 instance NFData SourceSpan

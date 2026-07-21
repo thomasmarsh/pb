@@ -1,12 +1,14 @@
 module PipelineTest (tests) where
 
 import PB.Prelude
-import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText, stripHeaders)
+import PB.Pipeline.Preprocess
+  (LogicalLine (..), SourceChunk (..), mkLogicalLine, resolveRawPos, normalizeText, stripHeaders)
 
 import Test.Tasty             (testGroup, TestTree)
 import Test.Tasty.HUnit       (assertFailure, testCase, (@?=))
 import Test.Tasty.Hedgehog    (testProperty)
 
+import Data.List.NonEmpty (NonEmpty (..))
 import Hedgehog (Property, assert, forAll, property, (===))
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
@@ -37,12 +39,25 @@ tests = testGroup "Pipeline"
         , testCase "continuation: & outside ~\"-escaped string is joined" $ do
             let input = "string s = \"say ~\"hello\" and &\nworld!\""
             normalizeText input @?=
-                [ LogicalLine "string s = \"say ~\"hello\" and  world!\"" 1 2 ]
+                [ LogicalLine "string s = \"say ~\"hello\" and  world!\"" 1 2
+                    (SourceChunk 1 1 0 29 :| [SourceChunk 2 1 30 7]) ]
 
         , testCase "continuation: & inside open string with ~\" escape is joined" $ do
             let input = "string s = \"say ~\"hi &\nworld!\""
             normalizeText input @?=
-                [ LogicalLine "string s = \"say ~\"hi  world!\"" 1 2 ]
+                [ LogicalLine "string s = \"say ~\"hi  world!\"" 1 2
+                    (SourceChunk 1 1 0 21 :| [SourceChunk 2 1 22 7]) ]
+
+        , testCase "token spans resolve to true raw position across a continuation" $ do
+            -- The identifier "world" sits on raw physical line 2, even though
+            -- the joined logical line reports llStartLine=1/llEndLine=2 as a
+            -- whole -- resolveRawPos must recover its true (line, col), not
+            -- stamp every token in the join with the same (1, 2) bounds.
+            case normalizeText "hello &\nworld" of
+                [ll] -> do
+                    resolveRawPos ll 0 @?= (1, 1)  -- "hello" starts on line 1, col 1
+                    resolveRawPos ll 7 @?= (2, 1)  -- "world" starts on line 2, col 1
+                lls  -> assertFailure ("expected one logical line, got " <> show (length lls))
 
         , testCase "block comment spanning two lines is joined" $ do
             map llText (normalizeText "/* start\nend */") @?=
@@ -70,7 +85,7 @@ tests = testGroup "Pipeline"
                 ["code /* open */// line cmt", "next line"]
 
         , testCase "empty input yields one empty logical line" $
-            normalizeText "" @?= [LogicalLine "" 1 1]
+            normalizeText "" @?= [mkLogicalLine "" 1]
 
         , testCase "start and end lines tracked for continuation" $ do
             let lls = normalizeText "x &\ny"
@@ -83,32 +98,32 @@ tests = testGroup "Pipeline"
         , testProperty "no trailing continuation marker" prop_noTrailingAmpersand
 
         , testCase "stripHeaders: single header extracted" $ do
-            let h = LogicalLine "$PBExportHeader$foo.srs" 1 1
-                r = LogicalLine "x = 1" 2 2
+            let h = mkLogicalLine "$PBExportHeader$foo.srs" 1
+                r = mkLogicalLine "x = 1" 2
             stripHeaders [h, r] @?= (["$PBExportHeader$foo.srs"], [r])
 
         , testCase "stripHeaders: non-header line not extracted" $ do
-            let l = LogicalLine "x = 1" 1 1
+            let l = mkLogicalLine "x = 1" 1
             stripHeaders [l] @?= ([], [l])
 
         , testCase "stripHeaders: two headers then code" $ do
-            let h1 = LogicalLine "$PBExportHeader$foo.srs" 1 1
-                h2 = LogicalLine "$PBExportComments$some text" 2 2
-                r  = LogicalLine "x = 1" 3 3
+            let h1 = mkLogicalLine "$PBExportHeader$foo.srs" 1
+                h2 = mkLogicalLine "$PBExportComments$some text" 2
+                r  = mkLogicalLine "x = 1" 3
             stripHeaders [h1, h2, r] @?= (["$PBExportHeader$foo.srs", "$PBExportComments$some text"], [r])
 
         , testCase "stripHeaders: empty list returns empty headers" $
             stripHeaders [] @?= ([], [])
 
         , testCase "stripHeaders: HA$ prefix is stripped and normalised" $ do
-            let h = LogicalLine "HA$PBExportHeader$foo.srf" 1 1
-                r = LogicalLine "global type foo from function_object" 2 2
+            let h = mkLogicalLine "HA$PBExportHeader$foo.srf" 1
+                r = mkLogicalLine "global type foo from function_object" 2
             stripHeaders [h, r] @?= (["$PBExportHeader$foo.srf"], [r])
 
         , testCase "stripHeaders: stops at first non-header even if later line looks like header" $ do
-            let h  = LogicalLine "$PBExportHeader$foo.srs" 1 1
-                r  = LogicalLine "x = 1" 2 2
-                h2 = LogicalLine "$PBExportComments$later" 3 3
+            let h  = mkLogicalLine "$PBExportHeader$foo.srs" 1
+                r  = mkLogicalLine "x = 1" 2
+                h2 = mkLogicalLine "$PBExportComments$later" 3
             stripHeaders [h, r, h2] @?= (["$PBExportHeader$foo.srs"], [r, h2])
 
         , testProperty "stripHeaders: header count + remaining count == total count" $
@@ -142,13 +157,13 @@ prop_noTrailingAmpersand = property $ do
 prop_stripHeaders_countInvariant :: Property
 prop_stripHeaders_countInvariant = property $ do
   lls <- forAll $ Gen.list (Range.linear 0 20)
-           ((\t -> LogicalLine t 1 1) <$> Gen.text (Range.linear 0 40) Gen.unicode)
+           ((\t -> mkLogicalLine t 1) <$> Gen.text (Range.linear 0 40) Gen.unicode)
   let (hdrs, rest) = stripHeaders lls
   length hdrs + length rest === length lls
 
 prop_stripHeaders_allHeadersStartWithDollar :: Property
 prop_stripHeaders_allHeadersStartWithDollar = property $ do
   lls <- forAll $ Gen.list (Range.linear 0 20)
-           ((\t -> LogicalLine t 1 1) <$> Gen.text (Range.linear 0 40) Gen.unicode)
+           ((\t -> mkLogicalLine t 1) <$> Gen.text (Range.linear 0 40) Gen.unicode)
   let (hdrs, _) = stripHeaders lls
   for_ hdrs $ \h -> assert (T.isPrefixOf "$" h)

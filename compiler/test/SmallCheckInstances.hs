@@ -73,7 +73,7 @@ leafBodyStmts =
   ]
   where
     simpleExpr     = ExInt "0"
-    augToken       = Token TkIntLiteral "1" (SourceSpan 0 0 0)
+    augToken       = Token TkIntLiteral "1" (SourceSpan 0 0 0 0)
     complexLhsExpr =
       ExMethodCall (ExCall (Lvalue [LvSegment (mkIdent "obj") Nothing]) [])
                    (mkIdent "m") []

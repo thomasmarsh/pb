@@ -36,7 +36,7 @@ lv1 n = Lvalue [LvSegment (mkIdent n) Nothing]
 
 -- A minimal int-literal token for case-clause values.
 tok :: Text -> Token
-tok t = Token TkIntLiteral t (SourceSpan 1 1 1)
+tok t = Token TkIntLiteral t (SourceSpan 1 1 1 1)
 
 tests :: TestTree
 tests = testGroup "CfgBuild"

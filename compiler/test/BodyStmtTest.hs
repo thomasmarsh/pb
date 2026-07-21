@@ -18,7 +18,7 @@ import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Lexer        (tokenize, tokenizeLine, LexLine (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Pipeline.Emit       (collectStatements)
-import PB.Pipeline.Preprocess (LogicalLine (..), normalizeText)
+import PB.Pipeline.Preprocess (mkLogicalLine, normalizeText)
 
 import Data.List               (nub)
 import Hedgehog (Gen, Property, assert, eval, failure, footnote, forAll, property, success, (===))
@@ -38,13 +38,17 @@ import Text.Megaparsec.Error   (errorBundlePretty)
 -- Helpers
 
 mkTok :: TokenKind -> Text -> Token
-mkTok k t = Token k t (SourceSpan 1 1 1)
+mkTok k t = Token k t (SourceSpan 1 1 1 1)
 
+-- | Real-lex a single value for its correct TokenKind (int/string/enum/...),
+-- then normalize its span to match 'mkTok''s constant dummy -- 'mkStmt'
+-- feeds every token the same dummy span regardless of position, so a
+-- real per-character span here would spuriously disagree with it.
 tok :: Text -> Token
 tok t = case lexResult (tokenizeLine ll) of
-  Right (tk:_) -> tk
-  _            -> Token TkIdent t (SourceSpan 1 1 1)
-  where ll = LogicalLine t 1 1
+  Right (tk:_) -> tk { tkSpan = SourceSpan 1 1 1 1 }
+  _            -> Token TkIdent t (SourceSpan 1 1 1 1)
+  where ll = mkLogicalLine t 1
 
 at :: Int -> BodyStmt -> Located BodyStmt
 at = Located
@@ -58,7 +62,7 @@ rawTexts = foldStmts classify
 mkStmt :: [(TokenKind, Text)] -> Statement
 mkStmt pairs = Statement
   { stmtTokens    = map (uncurry mkTok) pairs
-  , stmtSource    = LogicalLine "" 1 1
+  , stmtSource    = mkLogicalLine "" 1
   , stmtTerminated = False
   }
 
@@ -760,7 +764,7 @@ normalizeBodyStmt stmt = case stmt of
   BsTry (TryStmt body catches) -> BsTry (TryStmt (normBody body) (map normCatch catches))
   other -> other
   where
-    zeroSpan t = t { tkSpan = SourceSpan 0 0 0 }
+    zeroSpan t = t { tkSpan = SourceSpan 0 0 0 0 }
     normBody = map (\(Located _ s) -> Located 0 (normalizeBodyStmt s))
     normElseIf (ElseIf cond body) = ElseIf cond (normBody body)
     normClause (CaseClause pat body) = CaseClause (fmap (map zeroSpan) pat) (normBody body)

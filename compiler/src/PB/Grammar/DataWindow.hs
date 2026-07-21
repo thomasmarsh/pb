@@ -19,7 +19,7 @@ import PB.Lexing.DataWindow  (DwBlock (..), DwAttr (..), scanBlocks, scanBlockAt
 import PB.Lexing.Escape      (pbSelectTildeStr)
 import PB.Lexing.Lexer       (LexLine (..), tokenize)
 import qualified PB.Lexing.Token as Tok
-import PB.Pipeline.Preprocess (LogicalLine (..))
+import PB.Pipeline.Preprocess (mkLogicalLine)
 
 import Data.List     (nubBy)
 import Text.Read     (readMaybe)
@@ -304,7 +304,7 @@ parseDwControl kw content =
 
 tokenizeExpr :: Text -> [Tok.Token]
 tokenizeExpr txt =
-    case tokenize [LogicalLine { llText = txt, llStartLine = 0, llEndLine = 0 }] of
+    case tokenize [mkLogicalLine txt 0] of
         [ll] -> case lexResult ll of { Left _ -> []; Right ts -> ts }
         _    -> []
 

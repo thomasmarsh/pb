@@ -9,7 +9,7 @@ import PB.AST.Located      (Located (..))
 import PB.Lexing.Lexer        (tokenizeLine, LexLine (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
 import PB.Analysis.Cfg (Cfg (..), CfgBlock (..), CfgEdge (..))
-import PB.Pipeline.Preprocess (LogicalLine (..))
+import PB.Pipeline.Preprocess (mkLogicalLine)
 import PB.Analysis.Dataflow
 
 import Data.Aeson          (Value (..), toJSON)
@@ -29,11 +29,14 @@ at n x = Located n x
 lv1 :: Text -> Lvalue
 lv1 n = Lvalue [LvSegment (mkIdent n) Nothing]
 
+-- | Real-lex a single value for its correct TokenKind, then normalize its
+-- span to a constant dummy -- callers compare against hand-built ASTs that
+-- carry the same dummy span, not a real per-character position.
 tok :: Text -> Token
 tok t = case lexResult (tokenizeLine ll) of
-  Right (tk:_) -> tk
-  _            -> Token TkIdent t (SourceSpan 1 1 1)
-  where ll = LogicalLine t 1 1
+  Right (tk:_) -> tk { tkSpan = SourceSpan 1 1 1 1 }
+  _            -> Token TkIdent t (SourceSpan 1 1 1 1)
+  where ll = mkLogicalLine t 1
 
 -- | Make a simple CfgBlock for testing.
 mkBlock :: Text -> [Located BodyStmt] -> CfgBlock

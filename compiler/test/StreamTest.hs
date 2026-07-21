@@ -4,7 +4,7 @@ import PB.Prelude
 import PB.Grammar.Stream      (StmtStream (..), FileParser, satisfyStmt, leadingKind, leadingText)
 import PB.Lexing.Splitter     (Statement (..))
 import PB.Lexing.Token        (Token (..), TokenKind (..), SourceSpan (..))
-import PB.Pipeline.Preprocess (LogicalLine (..))
+import PB.Pipeline.Preprocess (mkLogicalLine)
 
 import Hedgehog (Gen, Property, forAll, property, failure, footnote, (===))
 import qualified Hedgehog.Gen   as Gen
@@ -19,8 +19,8 @@ import Text.Megaparsec (parse)
 
 mkStmt :: [(TokenKind, Text)] -> Statement
 mkStmt pairs = Statement
-  { stmtTokens    = [ Token k t (SourceSpan 1 1 1) | (k, t) <- pairs ]
-  , stmtSource    = LogicalLine "" 1 1
+  { stmtTokens    = [ Token k t (SourceSpan 1 1 1 1) | (k, t) <- pairs ]
+  , stmtSource    = mkLogicalLine "" 1
   , stmtTerminated = False
   }
 

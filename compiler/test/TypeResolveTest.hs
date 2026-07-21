@@ -19,7 +19,7 @@ import PB.Grammar.Body     (parseBodyStmts)
 import PB.Grammar.DataWindow (parseDataWindow)
 import PB.Lexing.Splitter  (Statement (..))
 import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
-import PB.Pipeline.Preprocess (LogicalLine (..))
+import PB.Pipeline.Preprocess (mkLogicalLine)
 import PB.Analysis.ControlHierarchy (ControlIndex, buildControlIndex)
 import PB.Analysis.TypeEnv (WorkspaceEnv, buildWorkspaceEnv)
 import PB.Analysis.TypeResolve
@@ -234,11 +234,11 @@ tests = testGroup "TypeResolve"
           -- Confirms Body.classifyBodyStmt's comma-split fix (Plan 193 Phase 1)
           -- cascades for free: walkStmtLocalVars/extractLocalVars need no
           -- change since they already concatMap over [Located BodyStmt].
-          let mkTok k t = Token k t (SourceSpan 30 30 30)
+          let mkTok k t = Token k t (SourceSpan 30 30 30 30)
               stmt = Statement
                 { stmtTokens     = [ mkTok TkDatatype "long", mkTok TkIdent "ll_rows"
                                    , mkTok TkComma ",", mkTok TkIdent "i" ]
-                , stmtSource     = LogicalLine "" 30 30
+                , stmtSource     = mkLogicalLine "" 30
                 , stmtTerminated = False
                 }
               sf = emptySrFile { srFunctions = [ mkFn "f_go" "" (parseBodyStmts [stmt]) ] }

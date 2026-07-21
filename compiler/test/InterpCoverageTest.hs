@@ -10,7 +10,7 @@ import PB.AST.BodyStmt
   )
 import PB.Lexing.Lexer     (tokenizeLine, LexLine (..))
 import PB.Lexing.Token     (Token (..), TokenKind (..), SourceSpan (..))
-import PB.Pipeline.Preprocess (LogicalLine (..))
+import PB.Pipeline.Preprocess (mkLogicalLine)
 import PB.Analysis.InterpCoverage
   ( SiteKind (..)
   , ExprCoverage (..)
@@ -43,11 +43,14 @@ loc = Located 1
 -- | Tokenize a single source snippet into one 'Token' via the real lexer
 -- (mirrors 'EffTermTest.hs's identical helper) -- used to build genuine
 -- call-argument token lists.
+-- | Real-lex a single value for its correct TokenKind, then normalize its
+-- span to a constant dummy -- callers compare against hand-built ASTs that
+-- carry the same dummy span, not a real per-character position.
 tok :: Text -> Token
 tok t = case lexResult (tokenizeLine ll) of
-  Right (tk:_) -> tk
-  _            -> Token TkIdent t (SourceSpan 1 1 1)
-  where ll = LogicalLine t 1 1
+  Right (tk:_) -> tk { tkSpan = SourceSpan 1 1 1 1 }
+  _            -> Token TkIdent t (SourceSpan 1 1 1 1)
+  where ll = mkLogicalLine t 1
 
 tests :: TestTree
 tests = testGroup "InterpCoverage"

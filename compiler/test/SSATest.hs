@@ -30,10 +30,10 @@ lv1 :: Text -> Lvalue
 lv1 n = Lvalue [LvSegment (mkIdent n) Nothing]
 
 intTok :: Text -> Token
-intTok t = Token TkIntLiteral t (SourceSpan 1 1 1)
+intTok t = Token TkIntLiteral t (SourceSpan 1 1 1 1)
 
 strTok :: Text -> Token
-strTok t = Token TkStringDouble t (SourceSpan 1 1 1)
+strTok t = Token TkStringDouble t (SourceSpan 1 1 1 1)
 
 emptyEnv :: ScopedTypeEnv
 emptyEnv = ScopedTypeEnv Map.empty Map.empty Map.empty Set.empty Map.empty "" Map.empty
