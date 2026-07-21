@@ -21,7 +21,7 @@ export type { InstrEnv, InstrGraph, InstrNode } from "./instr/types.js";
 export type { InstrResumeAction } from "./instr/runner.js";
 export { step } from "./instr/runner.js";
 export { loadInstrGraph } from "./instr/load.js";
-export { evalExpr, evalTokenArg } from "./instr/expr.js";
+export { evalExpr } from "./instr/expr.js";
 export type { VarEnv } from "./instr/var-env.js";
 export { makeVarEnv, readVar, writeVar, declareLocal, pushFrame, popFrame, flattenVarEnv } from "./instr/var-env.js";
 

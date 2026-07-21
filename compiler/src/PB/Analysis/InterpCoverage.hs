@@ -34,7 +34,6 @@ import PB.AST.BodyStmt
   ( BodyStmt (..), IfStmt (..), ElseIf (..), ForStmt (..), DoStmt (..)
   , DoCondition (..), ChooseStmt (..), CaseClause (..), TryStmt (..), CatchClause (..)
   )
-import PB.Analysis.CallClassify (parseArgList)
 
 import qualified Data.Map.Strict as Map
 
@@ -121,15 +120,14 @@ branchCondSite e = [CoverageSite BranchCond (classifyExprCoverage e)]
 assignRhsSite :: Expr -> [CoverageSite]
 assignRhsSite e = [CoverageSite AssignRhs (classifyExprCoverage e)]
 
--- | One 'CallArg' site per argument, parsed via the same 'parseArgList'
--- 'PB.Compile.ValueModel.evalExprMocked' itself uses to resolve a real
--- call's raw token-list arguments -- so a site here is classified exactly
--- as that evaluator would classify it. Any 'Expr' shape other than
--- 'ExCall'\/'ExMethodCall' standing alone as a statement (rare; classifyBodyStmt
--- normally only produces those two here) contributes nothing.
+-- | One 'CallArg' site per argument -- classified the same way
+-- 'PB.Compile.ValueModel.evalExprMocked' would resolve a real call's
+-- arguments. Any 'Expr' shape other than 'ExCall'\/'ExMethodCall' standing
+-- alone as a statement (rare; classifyBodyStmt normally only produces those
+-- two here) contributes nothing.
 callArgSites :: Expr -> [CoverageSite]
-callArgSites (ExCall _ rawArgs) = map (argSite . parseArgList) rawArgs
-callArgSites (ExMethodCall _ _ rawArgs) = map (argSite . parseArgList) rawArgs
+callArgSites (ExCall _ args) = map argSite args
+callArgSites (ExMethodCall _ _ args) = map argSite args
 callArgSites _ = []
 
 argSite :: Expr -> CoverageSite

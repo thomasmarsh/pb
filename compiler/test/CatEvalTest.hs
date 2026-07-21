@@ -3,7 +3,6 @@ module CatEvalTest (tests) where
 import PB.Prelude
 import PB.AST.Expr (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
 import PB.Compile.ValueModel (Value (..), MockResponses, evalExpr, evalExprMocked)
-import PB.Lexing.Token (Token (..), TokenKind (..), SourceSpan (..))
 
 import qualified Data.Map.Strict as Map
 import Test.Tasty       (TestTree, testGroup)
@@ -11,9 +10,6 @@ import Test.Tasty.HUnit (assertBool, testCase, (@?=))
 
 emptyEnv :: Map.Map Text Value
 emptyEnv = Map.empty
-
-mkTok :: TokenKind -> Text -> Token
-mkTok k t = Token k t (SourceSpan 1 1 1)
 
 tests :: TestTree
 tests = testGroup "CatEval"
@@ -129,12 +125,12 @@ tests = testGroup "CatEval"
         in evalExprMocked mocks emptyEnv callExpr @?= VInt 5
 
     , testCase "ExCall with evaluated args matches on the parsed argument values" $
-        let callExpr = ExCall (Lvalue [LvSegment "f" Nothing]) [[mkTok TkIntLiteral "5"]]
+        let callExpr = ExCall (Lvalue [LvSegment "f" Nothing]) [ExInt "5"]
             mocks     = Map.fromList [(("f", [VInt 5]), VStr "matched")] :: MockResponses
         in evalExprMocked mocks emptyEnv callExpr @?= VStr "matched"
 
     , testCase "ExCall args are evaluated against env before the mock lookup" $
-        let callExpr = ExCall (Lvalue [LvSegment "f" Nothing]) [[mkTok TkIdent "x_1"]]
+        let callExpr = ExCall (Lvalue [LvSegment "f" Nothing]) [ExLvalue (Lvalue [LvSegment "x_1" Nothing])]
             env       = Map.fromList [("x_1", VInt 7)]
             mocks     = Map.fromList [(("f", [VInt 7]), VStr "matched")] :: MockResponses
         in evalExprMocked mocks env callExpr @?= VStr "matched"

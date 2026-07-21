@@ -20,7 +20,7 @@ export function evalExpr(env: VarEnv, expr: Expr): unknown {
     }
     case "ExCall": {
       const callee = expr.callee.segments.map((s) => s.name).join(".");
-      const args = expr.args.map((a) => evalTokenArg(env, a));
+      const args = expr.args.map((a) => evalExpr(env, a));
       const fn = PB_BUILTINS[callee];
       return fn ? fn(...args) : undefined;
     }
@@ -30,23 +30,6 @@ export function evalExpr(env: VarEnv, expr: Expr): unknown {
     case "ExNeg":    return -(evalExpr(env, expr.contents) as number);
     default:         return undefined;
   }
-}
-
-export function evalTokenArg(env: VarEnv, tokens: string[]): unknown {
-  if (tokens.length === 0) return undefined;
-  const raw = tokens.join("").trim();
-  if (raw === "null") return null;
-  if (raw === "true") return true;
-  if (raw === "false") return false;
-  if (raw.startsWith('"') && raw.endsWith('"')) return raw.slice(1, -1);
-  if (/^-?\d+$/.test(raw)) return parseInt(raw, 10);
-  if (/^-?\d+\.\d+$/.test(raw)) return parseFloat(raw);
-  if (/^[a-zA-Z_]/.test(raw)) {
-    const dotIdx = raw.indexOf(".");
-    const base = dotIdx >= 0 ? raw.slice(0, dotIdx) : raw;
-    return readVar(env, base);
-  }
-  return raw;
 }
 
 function evalBinOp(l: unknown, op: string, r: unknown): unknown {

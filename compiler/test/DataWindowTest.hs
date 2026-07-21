@@ -4,9 +4,6 @@ import PB.Prelude
 import PB.AST.DataWindow
 import PB.AST.Expr           (Expr (..), Lvalue (..), LvSegment (..))
 import PB.Lexing.DataWindow  (DwAttr (..), extractParenBlock, scanBlockAttrs)
-import PB.Lexing.Lexer       (tokenizeLine, LexLine (..))
-import PB.Lexing.Token       (Token (..), TokenKind (..), SourceSpan (..))
-import PB.Pipeline.Preprocess (LogicalLine (..))
 import PB.Grammar.DataWindow (parseDataWindow, parseBandKind, parseDwTable, parsePbSelect,
                                parseColumn, parseDwBand, parseDwGroup, parseGroupBy,
                                parseDwObjectAttrs)
@@ -20,15 +17,6 @@ import qualified Hedgehog.Range as Range
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 import Test.Tasty.Hedgehog (testProperty)
-
--- ---------------------------------------------------------------------------
--- Helpers
-
-tok :: Text -> Token
-tok t = case lexResult (tokenizeLine ll) of
-  Right (tk:_) -> tk
-  _            -> Token TkIdent t (SourceSpan 1 1 1)
-  where ll = LogicalLine t 1 1
 
 -- ---------------------------------------------------------------------------
 -- Tests
@@ -476,8 +464,8 @@ tests = testGroup "DataWindow"
               [c] -> do
                 dwcExpression c @?= Just "fn_foo( bar )"
                 let expected = ExCall { callee   = Lvalue [LvSegment "fn_foo" Nothing]
-                                      , callArgs = [[tok "bar"]] }
-                stripExprSpans (dwcParsedExpression c) @?= stripExprSpans (Just expected)
+                                      , callArgs = [ExLvalue (Lvalue [LvSegment "bar" Nothing])] }
+                dwcParsedExpression c @?= Just expected
               cs -> assertFailure ("expected 1 control, got " <> show (length cs))
 
       , testCase "compute expression — multi-arg fn call preserves args" $ do
@@ -487,8 +475,10 @@ tests = testGroup "DataWindow"
             Right dw -> case dwControls dw of
               [c] -> do
                 let expected = ExCall { callee   = Lvalue [LvSegment "fn_fullname" Nothing]
-                                      , callArgs = [[tok "a"], [tok "b"]] }
-                stripExprSpans (dwcParsedExpression c) @?= stripExprSpans (Just expected)
+                                      , callArgs = [ ExLvalue (Lvalue [LvSegment "a" Nothing])
+                                                   , ExLvalue (Lvalue [LvSegment "b" Nothing])
+                                                   ] }
+                dwcParsedExpression c @?= Just expected
               cs -> assertFailure ("expected 1 control, got " <> show (length cs))
 
       , testCase "control without expression — parsedExpression is Nothing" $ do
@@ -787,8 +777,8 @@ tests = testGroup "DataWindow"
                      \WHERE( EXP1 =~\"t.x~\" OP =~\"=~\" EXP2 =~\"upper(x)~\" ) )" of
                 DwRetrieveRaw _ -> assertFailure "expected DwRetrieveOk"
                 DwRetrieveOk dr ->
-                  stripExprSpans (dwcParsedExp2 (head' (drWhere dr))) @?=
-                    stripExprSpans (Just (ExCall (Lvalue [LvSegment "upper" Nothing]) [[tok "x"]]))
+                  dwcParsedExp2 (head' (drWhere dr)) @?=
+                    Just (ExCall (Lvalue [LvSegment "upper" Nothing]) [ExLvalue (Lvalue [LvSegment "x" Nothing])])
           ]
 
       , testGroup "PBSELECT JOIN"
@@ -1165,11 +1155,3 @@ lookupUnquoted :: Text -> [DwAttr] -> Maybe Text
 lookupUnquoted key attrs =
     listToMaybe [v | DwAttrUnquoted k v <- attrs, T.toLower k == T.toLower key]
 
--- | Normalize token spans to SourceSpan 0 0 0 for comparison.
--- The DW expression parser produces tokens with different spans than @tok@.
-stripExprSpans :: Maybe Expr -> Maybe Expr
-stripExprSpans = fmap go
-  where
-    normToken t = t { tkSpan = SourceSpan 0 0 0 }
-    go (ExCall c args) = ExCall c (map (map normToken) args)
-    go e = e

@@ -18,7 +18,7 @@ import PB.Analysis.SchFootprint (FunctorCtx (..), SchFootprint (..))
 import PB.Analysis.SchemaCategory (StmtId (..), SchMorphism (..), SchObject (..), LegKind (..), LegSource (..))
 import PB.Pipeline.SqlParse (TableRef (..))
 import PB.Compile.InstrTypes (ShapeNode (..), canonicalize, normalizeCallTag, linearize)
-import PB.Analysis.CallClassify (parseArgList, collectBodyLocals)
+import PB.Analysis.CallClassify (collectBodyLocals)
 import PB.Compile.InstrInterp (runInstrGraphTrace, TraceOutcome (..))
 import PB.Compile.SSA     (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                             SsaTerm (..), SsaProc (..), buildSsa)
@@ -783,7 +783,7 @@ tests = testGroup "EffTerm"
 
     , testCase "ExMethodCall with mixed-case receiver/method: TeCall preserves case" $
         let recv = ExLvalue (Lvalue [LvSegment "parentwindow" Nothing])
-            body = [Located 1 (BsCall (ExMethodCall recv "TriggerEvent" [[]]))]
+            body = [Located 1 (BsCall (ExMethodCall recv "TriggerEvent" [ExRaw []]))]
             expectedTrace = (Map.empty, [TeCall "parentwindow.TriggerEvent" [VNull]], NaturalHalt)
             newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaEffTerm emptyEnv Set.empty body) Map.empty
         in newTrace @?= expectedTrace
@@ -796,7 +796,7 @@ tests = testGroup "EffTerm"
         -- reference behaviour of falling back to `"?." <> meth` for any
         -- receiver that isn't a plain `ExLvalue`.
         let recv = ExCall (Lvalue [LvSegment "ParentWindow" Nothing, LvSegment "GetActiveSheet" Nothing]) []
-            body = [Located 1 (BsCall (ExMethodCall recv "TriggerEvent" [[]]))]
+            body = [Located 1 (BsCall (ExMethodCall recv "TriggerEvent" [ExRaw []]))]
             expectedTrace = (Map.empty, [TeCall "?.TriggerEvent" [VNull]], NaturalHalt)
             newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaEffTerm emptyEnv Set.empty body) Map.empty
         in newTrace @?= expectedTrace
@@ -812,7 +812,10 @@ tests = testGroup "EffTerm"
     [ testCase "fn_retrievechild(adw, \"col\", var): suspend args are just [var], matching old compiler" $
         let body = [Located 1 (BsCall (ExCall
               { callee   = Lvalue [LvSegment "fn_retrievechild" Nothing]
-              , callArgs = [[tok "dw_misth_final"], [tok "\"kodkat\""], [tok "gs_kodxrisi"]]
+              , callArgs = [ ExLvalue (Lvalue [LvSegment "dw_misth_final" Nothing])
+                           , ExStr "kodkat"
+                           , ExLvalue (Lvalue [LvSegment "gs_kodxrisi" Nothing])
+                           ]
               }))]
             expectedTrace = (Map.empty, [TeSuspend "retrieve:child_kodkat:dw_misth_final" [VNull]], NaturalHalt)
             newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaEffTerm emptyEnv Set.empty body) Map.empty
@@ -827,7 +830,7 @@ tests = testGroup "EffTerm"
     -- PureCall default.
     [ testCase "local datastore var .retrieve() classifies as SuspendCall" $
         let body = [ Located 1 (BsLocalVar [] (PtPrimitive "datastore") "lds_x" Nothing)
-                   , Located 2 (BsCall (ExMethodCall (ExLvalue (Lvalue [LvSegment "lds_x" Nothing])) "retrieve" [[]]))
+                   , Located 2 (BsCall (ExMethodCall (ExLvalue (Lvalue [LvSegment "lds_x" Nothing])) "retrieve" [ExRaw []]))
                    ]
             expectedTrace = (Map.empty, [TeSuspend "retrieve:lds_x" [VNull]], NaturalHalt)
             newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaEffTerm emptyEnv Set.empty body) Map.empty
@@ -835,7 +838,7 @@ tests = testGroup "EffTerm"
 
     , testCase "local transaction var .commit() classifies as SuspendCall" $
         let body = [ Located 1 (BsLocalVar [] (PtPrimitive "transaction") "ltrans_x" Nothing)
-                   , Located 2 (BsCall (ExMethodCall (ExLvalue (Lvalue [LvSegment "ltrans_x" Nothing])) "commit" [[]]))
+                   , Located 2 (BsCall (ExMethodCall (ExLvalue (Lvalue [LvSegment "ltrans_x" Nothing])) "commit" [ExRaw []]))
                    ]
             expectedTrace = (Map.empty, [TeSuspend "executeSql" [VNull]], NaturalHalt)
             newTrace = runInstrGraphTrace 100 Map.empty (compileProcedureViaEffTerm emptyEnv Set.empty body) Map.empty
@@ -1165,46 +1168,23 @@ tests = testGroup "EffTerm"
         in canonicalize graph @?= [SAsgn 1, SRet]
     ]
 
-  , testGroup "parseArgList / collectBodyLocals (retained helpers, Plan 144 Phase 5 Step 7)"
-    -- Ported from the now-deleted InstrGraphTest.hs's "Gap 3" and "body locals"
-    -- groups: these exercised two PB.Analysis.InstrGraph helpers that survive
-    -- the old compiler's deletion (both are still imported directly by
-    -- PB.Analysis.CatLowerEff) indirectly, through compileProcedure. Direct
-    -- unit tests on the pure functions themselves, rather than losing the
-    -- coverage.
-    [ testGroup "parseArgList"
-      [ testCase "single-token ident becomes ExLvalue" $
-          parseArgList [tok "w_test"] @?= ExLvalue (Lvalue [LvSegment "w_test" Nothing])
-
-      , testCase "multi-token binary a + 1 -> ExBinOp BopAdd" $
-          case parseArgList [tok "a", tok "+", tok "1"] of
-            ExBinOp { op = BopAdd } -> pure ()
-            e -> assertBool ("expected ExBinOp BopAdd, got: " <> show e) False
-
-      , testCase "quoted string -> ExStr" $
-          parseArgList [tok "\"hello\""] @?= ExStr "hello"
-
-      , testCase "bool literal true -> ExBool True" $
-          parseArgList [tok "true"] @?= ExBool True
-
-      , testCase "null -> ExNull" $
-          parseArgList [tok "null"] @?= ExNull
-
-      , testCase "multi-token sub b - 2 -> ExBinOp BopSub" $
-          case parseArgList [tok "b", tok "-", tok "2"] of
-            ExBinOp { op = BopSub } -> pure ()
-            e -> assertBool ("expected ExBinOp BopSub, got: " <> show e) False
-      ]
-
-    , testGroup "collectBodyLocals"
-      [ testCase "collects BsLocalVar declarations, lower-casing the variable name" $
-          let body = [ Located 1 (BsLocalVar [] (PtPrimitive "datawindow") "dw" Nothing)
-                     , Located 2 (BsLocalVar [] (PtPrimitive "integer") "Li_Count" Nothing)
-                     ]
-          in collectBodyLocals body @?= Map.fromList
-               [ ("dw", PtPrimitive "datawindow"), ("li_count", PtPrimitive "integer") ]
+  , testGroup "collectBodyLocals (retained helper, Plan 144 Phase 5 Step 7)"
+    -- Ported from the now-deleted InstrGraphTest.hs's "body locals" group:
+    -- this exercised a PB.Analysis.InstrGraph helper that survives the old
+    -- compiler's deletion (still imported directly by PB.Analysis.CatLowerEff)
+    -- indirectly, through compileProcedure. Direct unit test on the pure
+    -- function itself, rather than losing the coverage. ('parseArgList' had
+    -- its own sibling group here pre-Plan-195-Phase-C; it was deleted along
+    -- with the function once call/method arguments became typed 'Expr' at
+    -- construction time -- 'PB.Grammar.Body.parseExpr' is already covered by
+    -- 'ExprTest'.)
+    [ testCase "collects BsLocalVar declarations, lower-casing the variable name" $
+        let body = [ Located 1 (BsLocalVar [] (PtPrimitive "datawindow") "dw" Nothing)
+                   , Located 2 (BsLocalVar [] (PtPrimitive "integer") "Li_Count" Nothing)
+                   ]
+        in collectBodyLocals body @?= Map.fromList
+             [ ("dw", PtPrimitive "datawindow"), ("li_count", PtPrimitive "integer") ]
     ]
-  ]
 
   , testGroup "Plan 167 Phase 7 Step 2: EffTerm table + inlineEffTable rehydration"
     -- 'ELetRef' carries no body (unlike the retired 'CatTagged'), so

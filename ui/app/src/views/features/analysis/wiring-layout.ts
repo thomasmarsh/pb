@@ -61,10 +61,6 @@ function prettyLvalue(lv: Lvalue): string {
     .join(".");
 }
 
-function prettyTokenArgs(args: string[][]): string {
-  return args.map((a) => a.join(" ")).join(", ");
-}
-
 function prettyExprArgs(args: Expr[]): string {
   return args.map(prettyExpr).join(", ");
 }
@@ -80,9 +76,9 @@ export function prettyExpr(e: Expr): string {
   case "ExNull":       return "null";
   case "ExEnum":       return `${e.contents}!`;
   case "ExLvalue":     return prettyLvalue(e.contents);
-  case "ExCall":       return `${prettyLvalue(e.callee)}(${prettyTokenArgs(e.args)})`;
-  case "ExMethodCall": return `${prettyExpr(e.receiver)}.${e.method}(${prettyTokenArgs(e.args)})`;
-  case "ExDispatch":   return `${e.contents.object ? prettyLvalue(e.contents.object) + "." : ""}${e.contents.name}(${prettyTokenArgs(e.contents.args)})`;
+  case "ExCall":       return `${prettyLvalue(e.callee)}(${prettyExprArgs(e.args)})`;
+  case "ExMethodCall": return `${prettyExpr(e.receiver)}.${e.method}(${prettyExprArgs(e.args)})`;
+  case "ExDispatch":   return `${e.contents.object ? prettyLvalue(e.contents.object) + "." : ""}${e.contents.name}(${prettyExprArgs(e.contents.args)})`;
   case "ExCreate":     return `CREATE ${e.contents}`;
   case "ExCreateUsing": return `CREATE USING ${prettyExpr(e.contents)}`;
   case "ExArray":      return `{${e.contents.map(prettyExpr).join(", ")}}`;

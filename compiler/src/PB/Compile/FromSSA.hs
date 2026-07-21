@@ -13,7 +13,7 @@ import PB.Compile.IR (Category (..), Eff (..), EffTerm (..), Pure (..), branchEf
 import PB.Compile.LoopAnalysis (CompileCtx (..), computeMergePoints, ssaValToExpr,
                               computeLoopHeaders, computeAllLoopExits, isLoopExit)
 import PB.Analysis.CallClassify (CallKind (..), classifyExpr, effectName,
-                                 calleeName, isTriggerEvent, segName, parseArgList)
+                                 calleeName, isTriggerEvent, segName)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Compile.SSA (SsaVar (..), SsaVal (..), SsaAssign (..), SsaBlock (..),
                          SsaTerm (..), SsaProc (..))
@@ -192,12 +192,10 @@ compileAssignsToEff ctx (a:as) = compileAssignsToEff ctx as . compileAssignToEff
 compileAssignToEff :: CompileCtx -> SsaAssign -> Eff () ()
 compileAssignToEff ctx (SsaAssign sv rhs lhs)
   | svName sv == "_" = case rhs of
-      SsaConst expr@(ExCall lv rawArgs) ->
-        let parsedArgs = map parseArgList rawArgs
-        in compileCallExprToEff ctx sv expr lv parsedArgs
-      SsaConst expr@(ExMethodCall _recv _meth rawArgs) ->
-        let parsedArgs = map parseArgList rawArgs
-        in case classifyExpr (ccEnv ctx) expr of
+      SsaConst expr@(ExCall lv parsedArgs) ->
+        compileCallExprToEff ctx sv expr lv parsedArgs
+      SsaConst expr@(ExMethodCall _recv _meth parsedArgs) ->
+        case classifyExpr (ccEnv ctx) expr of
              SuspendCall -> ESuspend (effectName expr parsedArgs) parsedArgs
              PureCall    -> ECall (calleeName expr) parsedArgs
       SsaConst expr ->

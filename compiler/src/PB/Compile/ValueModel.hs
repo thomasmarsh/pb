@@ -17,8 +17,7 @@ module PB.Compile.ValueModel
 import PB.Prelude
 import PB.AST.Expr (BinOp (..), Expr (..), LvSegment (..), Lvalue (..))
 import PB.AST.Ident (identOrig)
-import PB.Analysis.CallClassify (calleeName, parseArgList)
-import PB.Lexing.Token (Token)
+import PB.Analysis.CallClassify (calleeName)
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -86,13 +85,10 @@ evalExpr = evalExprMocked Map.empty
 -- 'ExCall'\/'ExMethodCall' —
 -- the shape 'PB.Compile.FromSSA.compileAssignToEff' embeds directly for
 -- @x = f()@, never as an 'ESuspend'\/'ECall' node with a result slot — resolve via
--- 'MockResponses', keyed on 'calleeName' and the evaluated argument list
--- (raw argument token lists are parsed with the same
--- 'PB.Analysis.CallClassify.parseArgList' the compiled pipeline itself uses,
--- so the key matches what a real call site would look like). A miss, and
--- everything else (multi-segment or subscripted lvalues, dispatch, object
--- creation, arrays, host vars, raw SQL fragments), falls back to 'VNull' —
--- total, not a crash.
+-- 'MockResponses', keyed on 'calleeName' and the evaluated argument list. A
+-- miss, and everything else (multi-segment or subscripted lvalues,
+-- dispatch, object creation, arrays, host vars, raw SQL fragments), falls
+-- back to 'VNull' — total, not a crash.
 evalExprMocked :: MockResponses -> Map.Map Text Value -> Expr -> Value
 evalExprMocked _     _   (ExBool b) = VBool b
 evalExprMocked _     _   (ExInt t)  = VInt (fromMaybe 0 (readMaybe (T.unpack t)))
@@ -106,17 +102,16 @@ evalExprMocked mocks env (ExNeg e) = case evalExprMocked mocks env e of
   VInt i  -> VInt (negate i)
   VReal r -> VReal (negate r)
   v       -> v
-evalExprMocked mocks env e@(ExCall _ rawArgs) = lookupMock mocks env e rawArgs
-evalExprMocked mocks env e@(ExMethodCall _ _ rawArgs) = lookupMock mocks env e rawArgs
+evalExprMocked mocks env e@(ExCall _ args) = lookupMock mocks env e args
+evalExprMocked mocks env e@(ExMethodCall _ _ args) = lookupMock mocks env e args
 evalExprMocked _     _   _ = VNull
 
--- | Shared call-resolution step for 'ExCall'\/'ExMethodCall': parse each raw
--- argument's token list into an 'Expr' (via 'parseArgList', the same parser
--- the compiled pipeline uses for call arguments), evaluate it, and look up
--- @(calleeName, evaluatedArgs)@ in the mock table.
-lookupMock :: MockResponses -> Map.Map Text Value -> Expr -> [[Token]] -> Value
-lookupMock mocks env e rawArgs =
-  let argVals = map (evalExprMocked mocks env . parseArgList) rawArgs
+-- | Shared call-resolution step for 'ExCall'\/'ExMethodCall': evaluate each
+-- argument expression and look up @(calleeName, evaluatedArgs)@ in the mock
+-- table.
+lookupMock :: MockResponses -> Map.Map Text Value -> Expr -> [Expr] -> Value
+lookupMock mocks env e args =
+  let argVals = map (evalExprMocked mocks env) args
   in Map.findWithDefault VNull (calleeName e, argVals) mocks
 
 evalBinOp :: BinOp -> Value -> Value -> Value

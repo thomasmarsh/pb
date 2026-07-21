@@ -37,7 +37,7 @@ describe("prettyExpr", () => {
     const e: Expr = {
       tag: "ExCall",
       callee: { segments: [{ name: "tv_1", subscript: null }, { name: "FindItem", subscript: null }] },
-      args: [["ParentTreeItem!"], ["al_Item"]],
+      args: [{ tag: "ExEnum", contents: "ParentTreeItem" }, EX_LVALUE("al_Item")],
     };
     expect(prettyExpr(e)).toBe("tv_1.FindItem(ParentTreeItem!, al_Item)");
   });

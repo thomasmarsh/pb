@@ -99,7 +99,7 @@ tests = testGroup "InterpCoverage"
         collectCoverage [loc (BsAssign (mkLv "x") (ExArray []))]
           @?= [CoverageSite AssignRhs StructurallyUnmodeled]
     , testCase "BsCall records one CallArg site per argument" $
-        collectCoverage [loc (BsCall (ExCall (mkLv "proc") [[tok "1"], [tok "g", tok "(", tok ")"]]))]
+        collectCoverage [loc (BsCall (ExCall (mkLv "proc") [ExInt "1", ExCall (mkLv "g") []]))]
           @?= [CoverageSite CallArg FullyModeled, CoverageSite CallArg NeedsMock]
     , testCase "BsIf records a BranchCond site plus both arms' sites, no replication" $
         collectCoverage

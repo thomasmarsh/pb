@@ -12,7 +12,6 @@ module PB.AST.Expr
 
 import PB.Prelude
 import PB.AST.Ident (Ident)
-import PB.Lexing.Token (Token (..))
 import Control.DeepSeq (NFData)
 import GHC.Generics (Generic)
 
@@ -44,15 +43,14 @@ data DispatchExpr = DispatchExpr
   , dynamic :: Bool
   , event   :: Bool
   , name    :: Ident
-  , args    :: [[Token]]
+  , args    :: [Expr]
   } deriving (Eq, Show, Generic)
 
 -- | Expression AST.
 --
 -- Single-argument constructors use positional syntax; Aeson serialises them
 -- as @{"tag":"…","contents":…}@.  Multi-argument constructors use record
--- syntax with unique field names.  Token lists are stored as Text at
--- parse time.
+-- syntax with unique field names.
 data Expr
   -- Literals (positional → "contents" in JSON)
   = ExBool        Bool
@@ -66,8 +64,8 @@ data Expr
   | ExEnum        Text              -- enum constant (without trailing '!')
   | ExLvalue      Lvalue            -- inlines Lvalue.segments into JSON
   -- Calls (record constructors with unique field names)
-  | ExCall        { callee :: Lvalue,  callArgs :: [[Token]] }
-  | ExMethodCall  { receiver :: Expr, method :: Ident, methodArgs :: [[Token]] }
+  | ExCall        { callee :: Lvalue,  callArgs :: [Expr] }
+  | ExMethodCall  { receiver :: Expr, method :: Ident, methodArgs :: [Expr] }
   | ExDispatch    DispatchExpr      -- inlines DispatchExpr fields into JSON
   -- Object creation
   | ExCreate      Ident             -- CREATE ClassName
@@ -82,18 +80,22 @@ data Expr
   | ExRaw         [Text]            -- unrecognised / SQL fragment tokens
   deriving (Eq, Show, Generic)
 
--- | Direct child expressions of a compound Expr. Note: callArgs/methodArgs/
--- dispatchArgs are [[Token]], not [Expr], so ExCall/ExDispatch have no Expr
--- children here -- recovering typed Expr nodes from those token lists is
--- 'PB.Grammar.Body.parseExpr''s job, not this traversal's.
+-- | Direct child expressions of a compound Expr. Call/method/dispatch
+-- arguments are parsed 'Expr' nodes (via 'PB.Grammar.Body.parseExpr' at
+-- construction time), so they are real children here -- a nested call
+-- inside another call's argument list (e.g.
+-- @PopMenu(parentwindow().pointerx())@) is reachable by 'foldExprs' without
+-- any walker needing to know about arguments specifically.
 exprChildren :: Expr -> [Expr]
-exprChildren (ExBinOp l _ r)      = [l, r]
-exprChildren (ExNot e)            = [e]
-exprChildren (ExNeg e)            = [e]
-exprChildren (ExMethodCall r _ _) = [r]
-exprChildren (ExCreateUsing e)    = [e]
-exprChildren (ExArray es)         = es
-exprChildren _                    = []
+exprChildren (ExBinOp l _ r)         = [l, r]
+exprChildren (ExNot e)               = [e]
+exprChildren (ExNeg e)               = [e]
+exprChildren (ExCall _ args)         = args
+exprChildren (ExMethodCall r _ args) = r : args
+exprChildren (ExDispatch de)         = args de
+exprChildren (ExCreateUsing e)       = [e]
+exprChildren (ExArray es)            = es
+exprChildren _                       = []
 
 -- | Monoidal pre-order fold over every Expr node in an expression tree.
 foldExprs :: Monoid m => (Expr -> m) -> Expr -> m

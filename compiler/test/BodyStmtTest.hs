@@ -165,7 +165,7 @@ tests = testGroup "Body"
                   , (TkAssignOp, "="), (TkIntLiteral, "42") ])
           @?= [BsAssignExpr
                 (ExMethodCall
-                  (ExMethodCall (ExLvalue (Lvalue [LvSegment "obj" Nothing])) "cells" [[tok "1"]])
+                  (ExMethodCall (ExLvalue (Lvalue [LvSegment "obj" Nothing])) "cells" [ExInt "1"])
                   "value" [])
                 (ExInt "42")]
 
@@ -238,7 +238,7 @@ tests = testGroup "Body"
     , testCase "call: free function (f(arg))" $
         classifyBodyStmt
           (mkStmt [(TkIdent, "messagebox"), (TkLParen, "("), (TkIdent, "msg"), (TkRParen, ")")])
-          @?= [BsCall (ExCall (Lvalue [LvSegment "messagebox" Nothing]) [[tok "msg"]])]
+          @?= [BsCall (ExCall (Lvalue [LvSegment "messagebox" Nothing]) [ExLvalue (Lvalue [LvSegment "msg" Nothing])])]
 
     , testCase "return: with value" $
         classifyBodyStmt (mkStmt [(TkControlKw, "return"), (TkBoolTrue, "true")])
@@ -273,24 +273,27 @@ tests = testGroup "Body"
     , testCase "call: close(parent) — sql-kw callee no space" $
         classifyBodyStmt
           (mkStmt [(TkSqlKw, "close"), (TkLParen, "("), (TkOtherKw, "parent"), (TkRParen, ")")])
-          @?= [BsCall (ExCall (Lvalue [LvSegment "close" Nothing]) [[tok "parent"]])]
+          @?= [BsCall (ExCall (Lvalue [LvSegment "close" Nothing]) [ExLvalue (Lvalue [LvSegment "parent" Nothing])])]
 
     , testCase "call: Close (lw_sheet) — sql-kw callee with space before paren" $
         classifyBodyStmt
           (mkStmt [(TkSqlKw, "Close"), (TkLParen, "("), (TkIdent, "lw_sheet"), (TkRParen, ")")])
-          @?= [BsCall (ExCall (Lvalue [LvSegment "Close" Nothing]) [[tok "lw_sheet"]])]
+          @?= [BsCall (ExCall (Lvalue [LvSegment "Close" Nothing]) [ExLvalue (Lvalue [LvSegment "lw_sheet" Nothing])])]
 
     , testCase "call: open(w_main) — single-arg open" $
         classifyBodyStmt
           (mkStmt [(TkSqlKw, "open"), (TkLParen, "("), (TkIdent, "w_main"), (TkRParen, ")")])
-          @?= [BsCall (ExCall (Lvalue [LvSegment "open" Nothing]) [[tok "w_main"]])]
+          @?= [BsCall (ExCall (Lvalue [LvSegment "open" Nothing]) [ExLvalue (Lvalue [LvSegment "w_main" Nothing])])]
 
     , testCase "call: open(w_main, this) — two-arg open" $
         classifyBodyStmt
           (mkStmt [ (TkSqlKw, "open"), (TkLParen, "(")
                   , (TkIdent, "w_main"), (TkComma, ","), (TkOtherKw, "this")
                   , (TkRParen, ")")])
-          @?= [BsCall (ExCall (Lvalue [LvSegment "open" Nothing]) [[tok "w_main"], [tok "this"]])]
+          @?= [BsCall (ExCall (Lvalue [LvSegment "open" Nothing])
+                [ ExLvalue (Lvalue [LvSegment "w_main" Nothing])
+                , ExLvalue (Lvalue [LvSegment "this" Nothing])
+                ])]
 
     , testCase "raw: OPEN DYNAMIC — sql cursor op stays BsRaw" $
         case classifyBodyStmt
@@ -378,7 +381,8 @@ tests = testGroup "Body"
           (mkStmt [ (TkOtherKw, "destroy"), (TkLParen, "(")
                   , (TkOtherKw, "this"), (TkDot, "."), (TkIdent, "m_foo")
                   , (TkRParen, ")") ])
-          @?= [BsCall (ExCall (Lvalue [LvSegment "destroy" Nothing]) [[tok "this", tok ".", tok "m_foo"]])]
+          @?= [BsCall (ExCall (Lvalue [LvSegment "destroy" Nothing])
+                [ExLvalue (Lvalue [LvSegment "this" Nothing, LvSegment "m_foo" Nothing])])]
     ]
 
   , testGroup "parseBodyStmts"

@@ -26,7 +26,7 @@ export interface DispatchExpr {
   dynamic: boolean;
   event: boolean;
   name: string;
-  args: string[][];
+  args: Expr[];
 }
 
 export type Expr =
@@ -39,8 +39,8 @@ export type Expr =
   | { tag: "ExNull" }
   | { tag: "ExEnum";        contents: string }
   | { tag: "ExLvalue";      contents: Lvalue }
-  | { tag: "ExCall";        callee: Lvalue; args: string[][] }
-  | { tag: "ExMethodCall";  receiver: Expr; method: string; args: string[][] }
+  | { tag: "ExCall";        callee: Lvalue; args: Expr[] }
+  | { tag: "ExMethodCall";  receiver: Expr; method: string; args: Expr[] }
   | { tag: "ExDispatch";    contents: DispatchExpr }
   | { tag: "ExCreate";      contents: string }
   | { tag: "ExCreateUsing"; contents: Expr }

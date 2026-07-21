@@ -80,8 +80,8 @@ unparseLvalue (Lvalue segs) = T.intercalate "." (map unparseSeg segs)
     unparseSeg (LvSegment nm sub) =
       identOrig nm <> maybe "" (\ts -> "[" <> T.unwords ts <> "]") sub
 
-unparseArgGroups :: [[Token]] -> Text
-unparseArgGroups = T.intercalate ", " . map (T.unwords . map tkText)
+unparseArgGroups :: [Expr] -> Text
+unparseArgGroups = T.intercalate ", " . map unparseExpr
 
 binOpText :: BinOp -> Text
 binOpText op = case op of

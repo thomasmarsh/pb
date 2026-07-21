@@ -118,32 +118,29 @@ walkExprIdents = foldExprs identOf
       -- 'extractUseVars' for that LHS case since the LHS is never itself
       -- wrapped in an 'ExLvalue' node).
       maybe Set.empty Set.singleton (lvRoot lv) <> lvalueSubscriptIdents lv
-    identOf (ExCall lv args) =
-      let root = maybe Set.empty Set.singleton (lvRoot lv)
-      in root <> argTokenIdents args
-    -- Receiver identifiers come from 'foldExprs' recursing via
-    -- 'exprChildren' (ExMethodCall's receiver is a child); this leaf only
-    -- contributes the method's own argument-token identifiers.
-    identOf (ExMethodCall _ _ args) = argTokenIdents args
+    -- Call/method-call arguments are real 'Expr' children ('exprChildren'),
+    -- so 'foldExprs' already recurses into them -- this leaf only
+    -- contributes the callee's own root identifier.
+    identOf (ExCall lv _) = maybe Set.empty Set.singleton (lvRoot lv)
+    -- Receiver and argument identifiers both come from 'foldExprs' recursing
+    -- via 'exprChildren' (ExMethodCall's receiver and args are children);
+    -- this leaf contributes nothing of its own.
+    identOf (ExMethodCall _ _ _) = Set.empty
+    -- Dispatch's object lvalue is not itself an 'Expr' child ('exprChildren'
+    -- only exposes the arguments), so its root/subscript idents are minted
+    -- here; the arguments are covered by 'foldExprs' recursion.
     identOf (ExDispatch de) =
-      let objIdents = maybe Set.empty
-            (\lv -> maybe Set.empty Set.singleton (lvRoot lv) <> lvalueSubscriptIdents lv)
-            (object de)
-      in objIdents <> argTokenIdents (args de)
+      maybe Set.empty
+        (\lv -> maybe Set.empty Set.singleton (lvRoot lv) <> lvalueSubscriptIdents lv)
+        (object de)
     identOf (ExRaw toks) = identTexts toks
     identOf _ = Set.empty
 
 -- | Mint an 'Ident', in order, for every token in a flat list whose text is
--- a valid identifier -- the one mint point for token-list identifier
--- extraction ('argTokenIdents' below and 'extractDefVar''s token-list defs).
+-- a valid identifier -- the one mint point for 'extractDefVar''s token-list
+-- defs (and 'extractUseVars''s 'BsAugAssign' case).
 identTokenList :: [Token] -> [Ident]
 identTokenList toks = [ mkIdent (tkText t) | t <- toks, isIdent (tkText t) ]
-
--- | Mint an 'Ident' for every token across a call's raw argument lists whose
--- text is a valid identifier -- the one mint point for 'ExCall'\/
--- 'ExMethodCall'\/'ExDispatch' argument tokens.
-argTokenIdents :: [[Token]] -> Set.Set Ident
-argTokenIdents args = Set.fromList (concatMap identTokenList args)
 
 -- | Mint an 'Ident' for every valid-identifier 'Text' in a flat list -- the
 -- one mint point for 'ExRaw' tokens and 'Lvalue' subscript text.
@@ -162,8 +159,7 @@ lvalueSubscriptIdents (Lvalue segs) =
   Set.unions [ identTexts toks | LvSegment _ (Just toks) <- segs ]
 
 -- | A valid PB identifier: first char alpha/underscore, rest alnum/underscore.
--- Must match Python core/dataflow.py's _IDENT_RE (`^[a-zA-Z_][a-zA-Z0-9_]*$`)
--- exactly — it is applied to ExCall/ExMethodCall/ExDispatch/ExRaw token strings,
+-- Applied to 'ExRaw'/lvalue-subscript/augmented-assignment token strings,
 -- where enum constants like "Original!" live. A first-char-only check would
 -- wrongly admit "Original!" as an identifier (the 111d-1 over-count bug).
 isIdent :: Text -> Bool

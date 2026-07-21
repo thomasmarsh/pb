@@ -136,11 +136,12 @@ tests = testGroup "Dataflow"
 
     , testCase "BsCall creates call_arg uses (callee + args)" $
         let blk = mkBlock "b0" [at 1 (BsCall (ExCall (lv1 "foo")
-                [ [tok "x", tok "y"] ]))]
+                [ ExLvalue (lv1 "x"), ExLvalue (lv1 "y") ]))]
             bf  = extractDefsUses blk
         in do
-          -- Matches Python dataflow.py: ExCall counts the callee root plus
-          -- every arg ident, so foo(x, y) → {foo, x, y} = 3 uses.
+          -- ExCall counts the callee root plus every arg ident (now real
+          -- Expr children, reached via exprChildren/foldExprs), so
+          -- foo(x, y) → {foo, x, y} = 3 uses.
           length (bfUses bf) @?= 3
           Set.fromList (map usVar (bfUses bf)) @?= Set.fromList ["foo", "x", "y"]
           all (\u -> usKind u == "call_arg") (bfUses bf) @?= True
@@ -398,7 +399,7 @@ tests = testGroup "Dataflow"
         -- Mirrors the 111a invariant: walkExprIdents counts the ExCall callee
         -- root as a use, so foo(x, y) → {foo, x, y} = 3 uses. This is the
         -- reason proc_uses = 1162 (not fewer) on the openpay corpus.
-        let blk = mkBlock "b0" [at 9 (BsCall (ExCall (lv1 "foo") [[tok "x", tok "y"]]))]
+        let blk = mkBlock "b0" [at 9 (BsCall (ExCall (lv1 "foo") [ExLvalue (lv1 "x"), ExLvalue (lv1 "y")]))]
             cfg  = mkCfg "b0" [blk] []
             pf   = analyzeProcedure "obj" "proc" cfg
             rows = dataflowUseRows pf

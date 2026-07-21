@@ -53,8 +53,6 @@ import PB.Analysis.TypeResolve
   ( resolveVirtual, resolveStaticCall, parseParams, srFileObject
   , buildProcMap, buildInheritsMap
   )
-import PB.Grammar.Body   (parseExpr)
-import PB.Lexing.Token   (Token)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set        as Set
 import qualified Data.Text       as T
@@ -347,8 +345,8 @@ inferExpr _   _ = Nothing -- ExEnum/ExDispatch/ExArray/ExHostVar/ExRaw: no stati
 -- checked wherever it appears.
 callExprsIn :: Expr -> [Expr]
 callExprsIn e = case e of
-  ExCall { callArgs = as }                       -> e : concatMap (callExprsIn . parseExpr) as
-  ExMethodCall { receiver = r, methodArgs = as }  -> e : callExprsIn r <> concatMap (callExprsIn . parseExpr) as
+  ExCall { callArgs = as }                       -> e : concatMap callExprsIn as
+  ExMethodCall { receiver = r, methodArgs = as }  -> e : callExprsIn r <> concatMap callExprsIn as
   ExBinOp { lhs = l, rhs = r }                    -> callExprsIn l <> callExprsIn r
   ExNot inner                                     -> callExprsIn inner
   ExNeg inner                                     -> callExprsIn inner
@@ -356,7 +354,7 @@ callExprsIn e = case e of
   ExCreateUsing inner                             -> callExprsIn inner
   _                                                -> []
 
-rawArgs :: Expr -> [[Token]]
+rawArgs :: Expr -> [Expr]
 rawArgs ExCall { callArgs = as }        = as
 rawArgs ExMethodCall { methodArgs = as } = as
 rawArgs _                                = []
@@ -375,9 +373,8 @@ callArgFindings ctx procN line e = concatMap oneCall (callExprsIn e)
         Nothing  -> []
         Just sig ->
           [ TypeMismatchFinding (steObject (tcEnv ctx)) procN line paramN (renderFamily paramFam) (rhsDesc argExpr) CallArgMismatch
-          | ((paramN, paramTy), argToks) <- zip (psParams sig) (rawArgs callExpr)
+          | ((paramN, paramTy), argExpr) <- zip (psParams sig) (rawArgs callExpr)
           , let paramFam = classifyFamily paramTy (tcObjects ctx) (tcUserTypes ctx)
-          , let argExpr  = parseExpr argToks
           , Just argFam <- [inferExpr ctx argExpr]
           , not (compatible (steHierarchy (tcEnv ctx)) paramFam argFam)
           ]

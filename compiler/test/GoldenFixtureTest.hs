@@ -26,6 +26,7 @@ import PB.AST.BodyStmt     (BodyStmt (..), IfStmt (..), ForStmt (..), DoStmt (..
                             ChooseStmt (..), CaseClause (..))
 import PB.AST.Located      (Located (..))
 import PB.Compile.Flatten (compileProcedureViaEffTerm)
+import PB.Grammar.Body    (parseExpr)
 import PB.Compile.ValueModel (Value (..), TraceEvent (..))
 import PB.Compile.InstrInterp  (runInstrGraphTrace)
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
@@ -62,18 +63,19 @@ ex :: Text -> Expr
 ex n = ExLvalue (lv n)
 
 -- | Tokenize a source snippet into one real 'Token' (mirrors the identical
--- helper in 'EffTermTest.hs') — used to build genuine
--- @callArgs@ token lists (e.g. a bare identifier reference) rather than
--- hand-rolled fakes.
+-- helper in 'EffTermTest.hs') — used to build genuine call-argument token
+-- streams (e.g. a bare identifier reference) rather than hand-rolled fakes.
 tok :: Text -> Token
 tok t = case lexResult (tokenizeLine ll) of
   Right (tk:_) -> tk
   _            -> Token TkIdent t (SourceSpan 1 1 1)
   where ll = LogicalLine t 1 1
 
--- | @dw_foo.retrieve(argToks)@ as a standalone call statement.
+-- | @dw_foo.retrieve(argToks)@ as a standalone call statement -- argToks is
+-- parsed the same way the real grammar parses call arguments, so fixture
+-- call sites keep passing a raw token stream rather than a hand-built 'Expr'.
 retrieveCall :: [Token] -> BodyStmt
-retrieveCall argToks = BsCall (ExCall (Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]) [argToks])
+retrieveCall argToks = BsCall (ExCall (Lvalue [LvSegment "dw_foo" Nothing, LvSegment "retrieve" Nothing]) [parseExpr argToks])
 
 -- | Run one body through the compiler (bounded fuel — none of these
 -- fixtures should ever need more than a few hundred steps; a fixture that

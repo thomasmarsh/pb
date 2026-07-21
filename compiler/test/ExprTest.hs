@@ -28,12 +28,6 @@ mkTok k t = Token k t (SourceSpan 1 1 1)
 countNodes :: [()] -> Int
 countNodes = length
 
-tok :: Text -> Token
-tok t = case lexResult (tokenizeLine ll) of
-  Right (tk:_) -> tk
-  _            -> Token TkIdent t (SourceSpan 1 1 1)
-  where ll = LogicalLine t 1 1
-
 -- ---------------------------------------------------------------------------
 -- Tests
 
@@ -99,18 +93,21 @@ tests = testGroup "Expr"
       , testCase "OtherKw callee (builtin fn) → ExCall" $
           parseExpr [ mkTok TkOtherKw "count", mkTok TkLParen "("
                     , mkTok TkIdent "kodypal", mkTok TkRParen ")" ]
-            @?= ExCall (Lvalue [LvSegment "count" Nothing]) [[tok "kodypal"]]
+            @?= ExCall (Lvalue [LvSegment "count" Nothing]) [ExLvalue (Lvalue [LvSegment "kodypal" Nothing])]
 
       , testCase "single-arg call → ExCall singleton callArgs" $
           parseExpr [ mkTok TkIdent "trn", mkTok TkLParen "("
                     , mkTok TkIntLiteral "411", mkTok TkRParen ")" ]
-            @?= ExCall (Lvalue [LvSegment "trn" Nothing]) [[tok "411"]]
+            @?= ExCall (Lvalue [LvSegment "trn" Nothing]) [ExInt "411"]
 
       , testCase "multi-arg call → ExCall multiple callArgs" $
           parseExpr [ mkTok TkIdent "f", mkTok TkLParen "("
                     , mkTok TkIdent "x", mkTok TkComma ","
                     , mkTok TkIdent "y", mkTok TkRParen ")" ]
-            @?= ExCall (Lvalue [LvSegment "f" Nothing]) [[tok "x"], [tok "y"]]
+            @?= ExCall (Lvalue [LvSegment "f" Nothing])
+                  [ ExLvalue (Lvalue [LvSegment "x" Nothing])
+                  , ExLvalue (Lvalue [LvSegment "y" Nothing])
+                  ]
 
       , testCase "method call obj.method() → ExMethodCall" $
           parseExpr [ mkTok TkIdent "adw", mkTok TkDot "."
@@ -144,22 +141,34 @@ tests = testGroup "Expr"
                     , mkTok TkIdent "y", mkTok TkLParen "(", mkTok TkRParen ")" ]
             @?= ExMethodCall (ExLvalue (Lvalue [LvSegment "super" Nothing])) "y" []
 
-      , testCase "args containing operators stay as text in callArgs" $
+      , testCase "args containing operators parse into a structured ExBinOp arg" $
           parseExpr [ mkTok TkIdent "foo", mkTok TkLParen "("
                     , mkTok TkIdent "x", mkTok TkArithOp "+", mkTok TkIntLiteral "1"
                     , mkTok TkRParen ")" ]
-            @?= ExCall (Lvalue [LvSegment "foo" Nothing]) [[tok "x", tok "+", tok "1"]]
+            @?= ExCall (Lvalue [LvSegment "foo" Nothing])
+                  [ExBinOp (ExLvalue (Lvalue [LvSegment "x" Nothing])) BopAdd (ExInt "1")]
 
-      , testCase "nested call arg stays as text tokens in callArgs" $
+      , testCase "nested call arg parses into a nested ExCall (Plan 195 Phase C)" $
           parseExpr [ mkTok TkIdent "MessageBox", mkTok TkLParen "("
                     , mkTok TkIdent "title", mkTok TkComma ","
                     , mkTok TkIdent "trn", mkTok TkLParen "("
                     , mkTok TkIntLiteral "157", mkTok TkRParen ")"
                     , mkTok TkRParen ")" ]
             @?= ExCall (Lvalue [LvSegment "MessageBox" Nothing])
-                       [ [tok "title"]
-                       , [tok "trn", tok "(", tok "157", tok ")"]
+                       [ ExLvalue (Lvalue [LvSegment "title" Nothing])
+                       , ExCall (Lvalue [LvSegment "trn" Nothing]) [ExInt "157"]
                        ]
+
+      , testCase "nested call arg is reachable via foldExprs (PopMenu blind spot closed)" $
+          let expr = parseExpr
+                [ mkTok TkIdent "MessageBox", mkTok TkLParen "("
+                , mkTok TkIdent "title", mkTok TkComma ","
+                , mkTok TkIdent "trn", mkTok TkLParen "("
+                , mkTok TkIntLiteral "157", mkTok TkRParen ")"
+                , mkTok TkRParen ")" ]
+              isCall ExCall{} = [()]
+              isCall _        = []
+          in countNodes (foldExprs isCall expr) @?= 2
       ]
 
     , testGroup "array"
@@ -202,12 +211,12 @@ tests = testGroup "Expr"
       [ testCase "Integer(x) → ExCall" $
           parseExpr [ mkTok TkDatatype "Integer", mkTok TkLParen "("
                     , mkTok TkIdent "x", mkTok TkRParen ")" ]
-            @?= ExCall (Lvalue [LvSegment "Integer" Nothing]) [[tok "x"]]
+            @?= ExCall (Lvalue [LvSegment "Integer" Nothing]) [ExLvalue (Lvalue [LvSegment "x" Nothing])]
 
       , testCase "String(x) → ExCall" $
           parseExpr [ mkTok TkDatatype "String", mkTok TkLParen "("
                     , mkTok TkIdent "myhours", mkTok TkRParen ")" ]
-            @?= ExCall (Lvalue [LvSegment "String" Nothing]) [[tok "myhours"]]
+            @?= ExCall (Lvalue [LvSegment "String" Nothing]) [ExLvalue (Lvalue [LvSegment "myhours" Nothing])]
 
       , testCase "bare Integer → ExLvalue" $
           parseExpr [mkTok TkDatatype "Integer"]
@@ -218,7 +227,7 @@ tests = testGroup "Expr"
                     , mkTok TkIdent "x", mkTok TkRParen ")"
                     , mkTok TkArithOp "+", mkTok TkIntLiteral "1" ]
             @?= ExBinOp
-                  (ExCall (Lvalue [LvSegment "Integer" Nothing]) [[tok "x"]])
+                  (ExCall (Lvalue [LvSegment "Integer" Nothing]) [ExLvalue (Lvalue [LvSegment "x" Nothing])])
                   BopAdd
                   (ExInt "1")
       ]
@@ -250,7 +259,7 @@ tests = testGroup "Expr"
       , testCase "not call → ExNot (ExCall)" $
           parseExpr [ mkTok TkOtherKw "not", mkTok TkIdent "IsNull"
                     , mkTok TkLParen "(", mkTok TkIdent "x", mkTok TkRParen ")" ]
-            @?= ExNot (ExCall (Lvalue [LvSegment "IsNull" Nothing]) [[tok "x"]])
+            @?= ExNot (ExCall (Lvalue [LvSegment "IsNull" Nothing]) [ExLvalue (Lvalue [LvSegment "x" Nothing])])
 
       , testCase "not ll_rc > 0 → ExNot (ExBinOp BopGt)" $
           parseExpr [ mkTok TkOtherKw "not", mkTok TkIdent "ll_rc"
@@ -299,7 +308,7 @@ tests = testGroup "Expr"
             @?= ExMethodCall
                   (ExCall (Lvalue [LvSegment "getparent" Nothing]) [])
                   "TriggerEvent"
-                  [[tok "\"ie_checkbuttons\""]]
+                  [ExStr "ie_checkbuttons"]
 
       , testCase "a.b().method(x) — dotted lvalue receiver" $
           parseExpr [ mkTok TkIdent "ParentWindow"
@@ -312,7 +321,7 @@ tests = testGroup "Expr"
                     (ExLvalue (Lvalue [LvSegment "ParentWindow" Nothing]))
                     "GetActiveSheet" [])
                   "TriggerEvent"
-                  [[tok "\"graph_color\""]]
+                  [ExStr "graph_color"]
 
       , testCase "f().a().b() — chain of two → nested ExMethodCall" $
           parseExpr [ mkTok TkIdent "f", mkTok TkLParen "(", mkTok TkRParen ")"
@@ -343,7 +352,7 @@ tests = testGroup "Expr"
             @?= ExMethodCall
                   (ExMethodCall
                     (ExLvalue (Lvalue [LvSegment "obj" Nothing]))
-                    "cells" [[tok "1"], [tok "1"]])
+                    "cells" [ExInt "1", ExInt "1"])
                   "value" []
       ]
 
@@ -448,7 +457,7 @@ tests = testGroup "Expr"
                     , mkTok TkIdent "x", mkTok TkRParen ")"
                     , mkTok TkOtherKw "or", mkTok TkIdent "y" ]
             @?= ExBinOp
-                  (ExCall (Lvalue [LvSegment "IsNull" Nothing]) [[tok "x"]])
+                  (ExCall (Lvalue [LvSegment "IsNull" Nothing]) [ExLvalue (Lvalue [LvSegment "x" Nothing])])
                   BopOr
                   (ExLvalue (Lvalue [LvSegment "y" Nothing]))
 
@@ -526,7 +535,7 @@ tests = testGroup "Expr"
                   (Just (Lvalue [LvSegment "ParentWindow" Nothing]))
                   DmPost True False "of_new" [])
 
-      , testCase "lvalue.Trigger Event name(complex-arg) → args kept as text" $
+      , testCase "lvalue.Trigger Event name(complex-arg) → arg parses into nested ExMethodCall" $
           parseExpr [ mkTok TkIdent "dw_dept", mkTok TkDot "."
                     , mkTok TkOtherKw "Trigger", mkTok TkDeclKw "Event"
                     , mkTok TkIdent "RowFocusChanged", mkTok TkLParen "("
@@ -536,7 +545,7 @@ tests = testGroup "Expr"
             @?= ExDispatch (DispatchExpr
                   (Just (Lvalue [LvSegment "dw_dept" Nothing]))
                   DmTrigger False True "RowFocusChanged"
-                  [[tok "dw_dept", tok ".", tok "GetRow", tok "(", tok ")"]])
+                  [ExMethodCall (ExLvalue (Lvalue [LvSegment "dw_dept" Nothing])) "GetRow" []])
 
       , testCase "lvalue.Event name() (no qualifier) → DmSync isEvent" $
           parseExpr [ mkTok TkIdent "gb_htick", mkTok TkDot "."
@@ -556,7 +565,7 @@ tests = testGroup "Expr"
                     , mkTok TkRParen ")" ]
             @?= ExDispatch (DispatchExpr
                   (Just (Lvalue [LvSegment "MenuID" Nothing]))
-                  DmTrigger True True "ie_checkmenu" [[tok "dw"]])
+                  DmTrigger True True "ie_checkmenu" [ExLvalue (Lvalue [LvSegment "dw" Nothing])])
 
       , testCase "deep-chain lvalue.Post Event name() → all segments in object" $
           parseExpr [ mkTok TkIdent "lm_Menu",    mkTok TkDot "."
@@ -613,8 +622,8 @@ tests = testGroup "Expr"
 
   , testGroup "exprChildren"
     [ testCase "ExBool -> []" $ exprChildren (ExBool True) @?= []
-    , testCase "ExCall -> [] (args are [[Token]])" $
-        exprChildren (ExCall (Lvalue [LvSegment "f" Nothing]) [[tok "x"]]) @?= []
+    , testCase "ExCall -> args (call arguments are Expr children, Plan 195 Phase C)" $
+        exprChildren (ExCall (Lvalue [LvSegment "f" Nothing]) [ExInt "1"]) @?= [ExInt "1"]
     , testCase "ExBinOp -> [lhs, rhs]" $
         exprChildren (ExBinOp (ExInt "1") BopAdd (ExInt "2")) @?= [ExInt "1", ExInt "2"]
     , testCase "ExNot -> [e]" $
@@ -624,6 +633,12 @@ tests = testGroup "Expr"
     , testCase "ExMethodCall -> [receiver]" $
         exprChildren (ExMethodCall (ExLvalue (Lvalue [LvSegment "dw_1" Nothing])) "retrieve" [])
           @?= [ExLvalue (Lvalue [LvSegment "dw_1" Nothing])]
+    , testCase "ExMethodCall -> receiver : args" $
+        exprChildren (ExMethodCall (ExLvalue (Lvalue [LvSegment "dw_1" Nothing])) "retrieve" [ExInt "1"])
+          @?= [ExLvalue (Lvalue [LvSegment "dw_1" Nothing]), ExInt "1"]
+    , testCase "ExDispatch -> args" $
+        exprChildren (ExDispatch (DispatchExpr Nothing DmSync False True "ue_foo" [ExInt "1"]))
+          @?= [ExInt "1"]
     , testCase "ExCreateUsing -> [e]" $
         exprChildren (ExCreateUsing (ExLvalue (Lvalue [LvSegment "x" Nothing])))
           @?= [ExLvalue (Lvalue [LvSegment "x" Nothing])]
@@ -858,16 +873,6 @@ genLvalue = Lvalue <$> Gen.list (Range.linear 1 3) genLvSegment
 genBareLvalue :: Gen Lvalue
 genBareLvalue = Lvalue . (:[]) <$> genLvSegment
 
--- One-token argument groups, from a small pool -- ExCall/ExMethodCall/
--- ExDispatch args stay raw [Token] in the AST (never re-parsed into Expr),
--- so the generator only needs valid token texts, not sub-expressions.
-genArgTokenGroup :: Gen [Token]
-genArgTokenGroup = Gen.element
-  [ [mkTok TkIdent "x"]
-  , [mkTok TkIntLiteral "1"]
-  , [mkTok TkIdent "y"]
-  ]
-
 allBinOps :: [BinOp]
 allBinOps =
   [ BopAdd, BopSub, BopMul, BopDiv, BopPow
@@ -918,7 +923,7 @@ genExpr = Gen.recursive Gen.choice
   , ExEnum <$> Gen.element ["Black", "Red", "White"]
   , ExLvalue <$> genLvalue
   ]
-  [ ExCall <$> genBareLvalue <*> Gen.list (Range.linear 0 2) genArgTokenGroup
+  [ ExCall <$> genBareLvalue <*> Gen.list (Range.linear 0 2) genExpr
   , ExCreate . mkIdent <$> genIdentText
   , ExCreateUsing <$> genExpr
   , ExArray <$> Gen.list (Range.linear 0 2) genExpr
@@ -926,29 +931,6 @@ genExpr = Gen.recursive Gen.choice
   , ExNeg <$> genExpr
   , (\lhs op rhs -> ExBinOp lhs op rhs) <$> genExpr <*> Gen.element allBinOps <*> genExpr
   ]
-
--- | genExpr fabricates ExCall/ExMethodCall/ExDispatch argument tokens with a
--- placeholder SourceSpan (mkTok always uses SourceSpan 1 1 1); the same
--- tokens re-lexed out of unparseExpr's output naturally land at their real
--- column. Token's derived Eq includes tkSpan, so comparing raw parseExpr
--- output to the generated Expr would fail on position alone -- position was
--- never part of what this property claims to preserve (the plan is
--- explicit that unparse doesn't need to preserve original formatting).
--- Strip spans on both sides before comparing.
-stripSpans :: Expr -> Expr
-stripSpans expr = case expr of
-  ExCall callee cargs       -> ExCall callee (stripArgSpans cargs)
-  ExMethodCall recv m margs -> ExMethodCall (stripSpans recv) m (stripArgSpans margs)
-  ExDispatch (DispatchExpr o md dyn ev nm dargs) ->
-    ExDispatch (DispatchExpr o md dyn ev nm (stripArgSpans dargs))
-  ExCreateUsing e    -> ExCreateUsing (stripSpans e)
-  ExArray es         -> ExArray (map stripSpans es)
-  ExBinOp lhs op rhs -> ExBinOp (stripSpans lhs) op (stripSpans rhs)
-  ExNot e            -> ExNot (stripSpans e)
-  ExNeg e            -> ExNeg (stripSpans e)
-  other              -> other
-  where
-    stripArgSpans = map (map (\t -> t { tkSpan = SourceSpan 0 0 0 }))
 
 propUnparseRoundtrip :: Property
 propUnparseRoundtrip = property $ do
@@ -958,7 +940,7 @@ propUnparseRoundtrip = property $ do
       ll   = LogicalLine text 1 1
   case lexResult (tokenizeLine ll) of
     Left err   -> footnote ("lex error: " <> show err <> " for unparsed text: " <> show text) >> failure
-    Right toks -> stripSpans (parseExpr toks) === stripSpans expr
+    Right toks -> parseExpr toks === expr
 
 -- | Exhaustive counterpart to 'propUnparseRoundtrip': enumerates every
 -- 'StructuredExpr' up to the SmallCheck depth (set to 3 at the call site)
@@ -973,5 +955,5 @@ prop_exprSmallCheck (SE expr) =
   in case lexResult (tokenizeLine ll) of
        Left err   -> Left ("lex error: " <> show err <> " for unparsed text: " <> show text)
        Right toks
-         | stripSpans (parseExpr toks) == stripSpans expr -> Right "ok"
+         | parseExpr toks == expr -> Right "ok"
          | otherwise -> Left ("round-trip mismatch for unparsed text: " <> show text)

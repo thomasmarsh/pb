@@ -13,7 +13,6 @@ import PB.Analysis.ControlHierarchy (ControlDecl (..))
 import PB.Analysis.TypeEnv (ScopedTypeEnv (..))
 import PB.Analysis.TypeFamily
 import PB.Analysis.TypeCheck
-import PB.Lexing.Token    (Token (..), TokenKind (..), SourceSpan (..))
 
 import Test.Tasty       (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
@@ -69,28 +68,22 @@ ifWrap :: [Located BodyStmt] -> Int -> Located BodyStmt
 ifWrap thenBody line = Located line (BsIf IfStmt
   { ifCond = ExBool True, ifThen = thenBody, ifElseIfs = [], ifElse = Nothing })
 
--- Token-list construction for call-argument fixtures ('ExCall'\/'ExMethodCall'
--- args are raw '[Token]', not 'Expr' -- see 'PB.Analysis.TypeCheck's use of
--- 'PB.Grammar.Body.parseExpr').
-mkTok :: TokenKind -> Text -> Token
-mkTok k t = Token { tkKind = k, tkText = t, tkSpan = SourceSpan 0 0 0 }
+intArg :: Text -> Expr
+intArg = ExInt
 
-intTok :: Text -> [Token]
-intTok t = [mkTok TkIntLiteral t]
+strArg :: Text -> Expr
+strArg = ExStr
 
-strTok :: Text -> [Token]
-strTok t = [mkTok TkStringDouble ("\"" <> t <> "\"")]
+identArg :: Text -> Expr
+identArg n = ExLvalue (Lvalue [LvSegment (mkIdent n) Nothing])
 
-identTok :: Text -> [Token]
-identTok n = [mkTok TkIdent n]
-
-callWithArgs :: Text -> [[Token]] -> Expr
+callWithArgs :: Text -> [Expr] -> Expr
 callWithArgs n args = ExCall { callee = Lvalue [LvSegment (mkIdent n) Nothing], callArgs = args }
 
--- | Token list for @name(argToks)@ -- one argument, itself a call -- used to
--- build a "nested call as argument" fixture.
-nestedCallArgTok :: Text -> [Token] -> [Token]
-nestedCallArgTok n argToks = [mkTok TkIdent n, mkTok TkLParen "("] <> argToks <> [mkTok TkRParen ")"]
+-- | @name(arg)@ as a one-argument call, itself used as another call's
+-- argument -- builds a "nested call as argument" fixture.
+nestedCallArg :: Text -> Expr -> Expr
+nestedCallArg n arg = ExCall { callee = Lvalue [LvSegment (mkIdent n) Nothing], callArgs = [arg] }
 
 -- ---------------------------------------------------------------------------
 -- Tests
@@ -351,7 +344,7 @@ tests = testGroup "TypeCheck"
                 , tcParams  = Map.fromList
                     [(("w_main", "of_take_int"), [ProcSignature [("ai_x", PtPrimitive "integer")] Nothing])]
                 }
-              fs = checkBody ctx "of_test" [Located 3 (BsCall (callWithArgs "of_take_int" [strTok "oops"]))]
+              fs = checkBody ctx "of_test" [Located 3 (BsCall (callWithArgs "of_take_int" [strArg "oops"]))]
           in fs @?= [TypeMismatchFinding "w_main" "of_test" 3 "ai_x" "numeric" "\"oops\"" CallArgMismatch]
 
       , testCase "compatible call-arg literal is not flagged" $
@@ -360,7 +353,7 @@ tests = testGroup "TypeCheck"
                 , tcParams  = Map.fromList
                     [(("w_main", "of_take_int"), [ProcSignature [("ai_x", PtPrimitive "integer")] Nothing])]
                 }
-          in checkBody ctx "of_test" [Located 3 (BsCall (callWithArgs "of_take_int" [intTok "5"]))] @?= []
+          in checkBody ctx "of_test" [Located 3 (BsCall (callWithArgs "of_take_int" [intArg "5"]))] @?= []
 
       , testCase "call-arg typed through a caller-local variable is checked" $
           let ctx = (withVars [("ls_name", PtPrimitive "string")] baseCtx)
@@ -368,7 +361,7 @@ tests = testGroup "TypeCheck"
                 , tcParams  = Map.fromList
                     [(("w_main", "of_take_int"), [ProcSignature [("ai_x", PtPrimitive "integer")] Nothing])]
                 }
-              fs = checkBody ctx "of_test" [Located 4 (BsCall (callWithArgs "of_take_int" [identTok "ls_name"]))]
+              fs = checkBody ctx "of_test" [Located 4 (BsCall (callWithArgs "of_take_int" [identArg "ls_name"]))]
           in map tmfKind fs @?= [CallArgMismatch]
 
       , testCase "object-subtype-compatible call-arg is not flagged" $
@@ -382,11 +375,11 @@ tests = testGroup "TypeCheck"
                     [(("w_main", "of_take_base"), [ProcSignature [("aw_x", PtUserDefined "w_base")] Nothing])]
                 , tcObjects  = identSetFromList ["w_base", "w_child"]
                 }
-          in checkBody ctx "of_test" [Located 5 (BsCall (callWithArgs "of_take_base" [identTok "lw_child"]))] @?= []
+          in checkBody ctx "of_test" [Located 5 (BsCall (callWithArgs "of_take_base" [identArg "lw_child"]))] @?= []
 
       , testCase "call to an unresolved/builtin target is skipped for arg-checking" $
           let ctx = baseCtx { tcBuiltinFns = Set.singleton "messagebox" }
-          in checkBody ctx "of_test" [Located 6 (BsCall (callWithArgs "MessageBox" [intTok "5"]))] @?= []
+          in checkBody ctx "of_test" [Located 6 (BsCall (callWithArgs "MessageBox" [intArg "5"]))] @?= []
 
       , testCase "fewer call-args than declared params is not flagged (arity mismatch ignored)" $
           let ctx = baseCtx
@@ -397,7 +390,7 @@ tests = testGroup "TypeCheck"
                       )
                     ]
                 }
-          in checkBody ctx "of_test" [Located 7 (BsCall (callWithArgs "of_take_two" [intTok "5"]))] @?= []
+          in checkBody ctx "of_test" [Located 7 (BsCall (callWithArgs "of_take_two" [intArg "5"]))] @?= []
 
       , testCase "more call-args than declared params only checks the overlapping prefix" $
           let ctx = baseCtx
@@ -405,7 +398,7 @@ tests = testGroup "TypeCheck"
                 , tcParams  = Map.fromList
                     [(("w_main", "of_take_one"), [ProcSignature [("ai_x", PtPrimitive "integer")] Nothing])]
                 }
-          in checkBody ctx "of_test" [Located 8 (BsCall (callWithArgs "of_take_one" [intTok "5", strTok "extra"]))]
+          in checkBody ctx "of_test" [Located 8 (BsCall (callWithArgs "of_take_one" [intArg "5", strArg "extra"]))]
                @?= []
 
       , testCase "a mistyped nested call's own argument is still checked" $
@@ -418,7 +411,7 @@ tests = testGroup "TypeCheck"
                       )
                     ]
                 }
-              stmt = BsCall (callWithArgs "of_outer" [nestedCallArgTok "of_inner" (strTok "bad")])
+              stmt = BsCall (callWithArgs "of_outer" [nestedCallArg "of_inner" (strArg "bad")])
               fs   = checkBody ctx "of_test" [Located 9 stmt]
           in map tmfKind fs @?= [CallArgMismatch]
       ]
@@ -440,7 +433,7 @@ tests = testGroup "TypeCheck"
                       )
                     ]
                 }
-          in checkBody ctx "of_test" [Located 1 (BsCall (callWithArgs "getstep" [strTok "kratsel"]))] @?= []
+          in checkBody ctx "of_test" [Located 1 (BsCall (callWithArgs "getstep" [strArg "kratsel"]))] @?= []
 
       , testCase "return-type lookup for a same-arity-ambiguous overload is Nothing" $
           let ctx = baseCtx
@@ -453,7 +446,7 @@ tests = testGroup "TypeCheck"
                       )
                     ]
                 }
-          in inferExpr ctx (callWithArgs "getstep" [strTok "kratsel"]) @?= Nothing
+          in inferExpr ctx (callWithArgs "getstep" [strArg "kratsel"]) @?= Nothing
 
       , testCase "overloads differing by arity correctly disambiguate via the call's actual arg count" $
           let ctx = baseCtx
@@ -467,7 +460,7 @@ tests = testGroup "TypeCheck"
                       )
                     ]
                 }
-              fs = checkBody ctx "of_test" [Located 2 (BsCall (callWithArgs "of_get" [strTok "kratsel"]))]
+              fs = checkBody ctx "of_test" [Located 2 (BsCall (callWithArgs "of_get" [strArg "kratsel"]))]
           in fs @?= [TypeMismatchFinding "w_main" "of_test" 2 "ai_pos" "numeric" "\"kratsel\"" CallArgMismatch]
       ]
   ]

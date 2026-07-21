@@ -193,7 +193,7 @@ parseDispBodyTokens objLv = go DmSync False False
                     , dynamic = dyn
                     , event   = isEv
                     , name    = mkIdent (tkText t)
-                    , args    = splitArgs inner
+                    , args    = map parseExpr (splitArgs inner)
                     }, after)
             _ -> Nothing
       | otherwise = Nothing
@@ -264,7 +264,7 @@ chainCalls e (dot : nm : lp : rest)
         chainCalls ExMethodCall
           { receiver   = e
           , method     = mkIdent (tkText nm)
-          , methodArgs = splitArgs inner
+          , methodArgs = map parseExpr (splitArgs inner)
           } after
 chainCalls e (dot : nm : rest)
   | tkKind dot == TkDot
@@ -314,7 +314,7 @@ parseAtom (t:rest)
       case remaining of
         (lp:r) | tkKind lp == TkLParen -> do
           (inner, after) <- findMatchingClose r
-          let callArgs' = splitArgs inner
+          let callArgs' = map parseExpr (splitArgs inner)
               -- A dotted callee (2+ segments) is a receiver-qualified method
               -- call, not a bare function call -- the last segment is the
               -- method, the rest form the receiver lvalue. A subscript on
